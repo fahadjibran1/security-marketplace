@@ -1,0 +1,27 @@
+{
+  "name": "security-mobile-app",
+  "version": "0.2.0",
+  "private": true,
+  "main": "node_modules/expo/AppEntry.js",
+  "scripts": {
+    "install:mobile": "npm install",
+    "start": "node backend/server.js",
+    "start:backend": "node backend/server.js",
+    "start:mobile": "expo start",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "web": "expo start --web",
+    "build": "npm run build:backend && npm run build:frontend",
+    "build:backend": "node --check backend/server.js && node --check backend/modules/auth.js && node --check backend/modules/http.js && node --check backend/data/store.js",
+    "build:frontend": "tsc --noEmit"
+  },
+  "dependencies": {
+    "expo": "~51.0.28",
+    "react": "18.2.0",
+    "react-native": "0.74.5"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.25.2",
+    "typescript": "~5.3.3"
+  }
+}

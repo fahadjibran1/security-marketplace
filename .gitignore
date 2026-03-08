@@ -1,0 +1,6 @@
+node_modules
+security-backend/node_modules
+.env
+security-backend/.env
+dist
+security-backend/dist
