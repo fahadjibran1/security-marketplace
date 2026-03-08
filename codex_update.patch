@@ -3938,10 +3938,10 @@ index 0000000000000000000000000000000000000000..b6f17e0828ce5c5b512faa8d0955e525
 +
 diff --git a/security-backend/README.md b/security-backend/README.md
 new file mode 100644
-index 0000000000000000000000000000000000000000..6bf1904520c7aec60b40f88aaa8da9a128a9be9f
+index 0000000000000000000000000000000000000000..b59ac872a9baa63e5c7bcf1fcf36d9729efaaaa6
 --- /dev/null
 +++ b/security-backend/README.md
-@@ -0,0 +1,90 @@
+@@ -0,0 +1,89 @@
 +# Security Backend (NestJS + PostgreSQL)
 +
 +Standalone backend-first MVP for the security companies/guards platform.
@@ -3956,35 +3956,44 @@ index 0000000000000000000000000000000000000000..6bf1904520c7aec60b40f88aaa8da9a1
 +- Auth
 +- CompanyProfile
 +- GuardProfile
++- CompanyGuard (company-approved/internal workforce)
 +- Job
-+- JobApplication
-+- Assignment
++- JobSlot
++- JobApplication (marketplace only)
++- Assignment (unified assignment model)
 +- Shift
 +- Timesheet
 +
-+## Domain guarantees
-+- `Job` is a requirement with `guardsRequired`.
-+- A `Job` can have multiple hired guards.
-+- Hiring a `JobApplication` creates an `Assignment`.
-+- `Shift` is separate from `Job` and linked to `Assignment`.
-+- `Timesheet` is separate from `Shift` and auto-created for each new shift.
++## Unified workforce architecture
++- A `Job` represents the requirement (`MARKETPLACE` or `INTERNAL`).
++- Every job auto-generates `JobSlot` rows equal to `guardsRequired`.
++- `Assignment` always targets a `JobSlot`.
++- Marketplace flow: `JobApplication` -> hire -> `Assignment` fills one open slot.
++- Internal flow: company directly assigns approved guard (`CompanyGuard`) to open slot.
++- `Assignment` is parent of `Shift`.
++- `Shift` owns one `Timesheet`.
 +
 +## Database configuration
-+You can configure database in two ways:
++Configure DB either with `DATABASE_URL` OR split fields (`DATABASE_HOST`, etc).
 +
-+1) `DATABASE_URL` (recommended for Supabase/hosted DB)
-+2) split fields (`DATABASE_HOST`, `DATABASE_PORT`, `DATABASE_USER`, `DATABASE_PASSWORD`, `DATABASE_NAME`)
-+
-+Additional flags:
-+- `DATABASE_SSL` (`true` for Supabase)
-+- `DATABASE_SYNCHRONIZE` (`true` for local MVP only)
++Key envs:
++- `DATABASE_URL`
++- `DATABASE_HOST`, `DATABASE_PORT`, `DATABASE_USER`, `DATABASE_PASSWORD`, `DATABASE_NAME`
++- `DATABASE_SSL`
++- `DATABASE_SYNCHRONIZE`
 +- `DATABASE_LOGGING`
-+- `DATABASE_RETRY_ATTEMPTS`
-+- `DATABASE_RETRY_DELAY_MS`
++- `ALLOW_START_WITHOUT_DB`
 +
-+If database is unavailable, app can still start in fallback mode (health endpoint only):
-+- `ALLOW_START_WITHOUT_DB=true` (default)
-+- fallback endpoint: `GET /health`
++If DB is unavailable and `ALLOW_START_WITHOUT_DB=true`, app starts fallback health-only mode.
++
++## Migrations
++Migrations are under `src/migrations/` and datasource is `src/config/typeorm.datasource.ts`.
++
++```bash
++npm run migration:show
++npm run migration:run
++npm run migration:revert
++```
 +
 +## Local PostgreSQL setup
 +```bash
@@ -3994,18 +4003,7 @@ index 0000000000000000000000000000000000000000..6bf1904520c7aec60b40f88aaa8da9a1
 +createdb security_mvp
 +```
 +
-+Then set in `.env`:
-+```env
-+DATABASE_HOST=localhost
-+DATABASE_PORT=5432
-+DATABASE_USER=postgres
-+DATABASE_PASSWORD=postgres
-+DATABASE_NAME=security_mvp
-+DATABASE_SSL=false
-+```
-+
 +## Supabase setup
-+In Supabase project settings, copy the PostgreSQL connection string and set:
 +```env
 +DATABASE_URL=postgresql://postgres:<password>@db.<project-ref>.supabase.co:5432/postgres
 +DATABASE_SSL=true
@@ -4020,18 +4018,19 @@ index 0000000000000000000000000000000000000000..6bf1904520c7aec60b40f88aaa8da9a1
 +npm run start:dev
 +```
 +
-+## Production start
-+```bash
-+npm run build
-+npm run start:prod
-+```
-+
-+## MVP flow
-+1. Register and login (`/auth/register`, `/auth/login`)
-+2. Company creates job (`POST /jobs`)
-+3. Guard applies (`POST /job-applications`)
-+4. Company hires application (`POST /job-applications/:id/hire`) => Assignment
-+5. Company creates shift (`POST /shifts`) => Timesheet auto-created
++## Primary endpoints
++- `POST /auth/register`
++- `POST /auth/login`
++- `GET/POST /jobs`
++- `GET /job-slots`
++- `GET/POST /job-applications` (marketplace)
++- `POST /job-applications/:id/hire` (fills one open slot)
++- `GET/POST /company-guards` (internal workforce links)
++- `GET /assignments`
++- `POST /assignments/internal` (internal slot assignment)
++- `PATCH /assignments/:id/status` (supports replacement flow by reopening slot)
++- `GET/POST /shifts`
++- `GET/PATCH /timesheets`
 diff --git a/security-backend/nest-cli.json b/security-backend/nest-cli.json
 new file mode 100644
 index 0000000000000000000000000000000000000000..256648114a9983377debfde44bda4368fb045a39
@@ -4045,10 +4044,10 @@ index 0000000000000000000000000000000000000000..256648114a9983377debfde44bda4368
 +}
 diff --git a/security-backend/package.json b/security-backend/package.json
 new file mode 100644
-index 0000000000000000000000000000000000000000..4baa400efa17c6aff0836153d22ffebeb3572321
+index 0000000000000000000000000000000000000000..86b152e4e4b6066390f8d894fb7fe081264e9b67
 --- /dev/null
 +++ b/security-backend/package.json
-@@ -0,0 +1,47 @@
+@@ -0,0 +1,51 @@
 +{
 +  "name": "security-backend",
 +  "version": "0.1.0",
@@ -4059,7 +4058,10 @@ index 0000000000000000000000000000000000000000..4baa400efa17c6aff0836153d22ffebe
 +    "build": "nest build",
 +    "lint": "eslint \"src/**/*.ts\"",
 +    "typeorm": "ts-node -r tsconfig-paths/register ./node_modules/typeorm/cli.js",
-+    "start:prod": "node dist/main.js"
++    "start:prod": "node dist/main.js",
++    "migration:run": "npm run typeorm -- migration:run -d src/config/typeorm.datasource.ts",
++    "migration:revert": "npm run typeorm -- migration:revert -d src/config/typeorm.datasource.ts",
++    "migration:show": "npm run typeorm -- migration:show -d src/config/typeorm.datasource.ts"
 +  },
 +  "dependencies": {
 +    "@nestjs/common": "^10.4.2",
@@ -4077,7 +4079,8 @@ index 0000000000000000000000000000000000000000..4baa400efa17c6aff0836153d22ffebe
 +    "pg": "^8.13.1",
 +    "reflect-metadata": "^0.2.2",
 +    "rxjs": "^7.8.1",
-+    "typeorm": "^0.3.20"
++    "typeorm": "^0.3.20",
++    "dotenv": "^16.4.5"
 +  },
 +  "devDependencies": {
 +    "@nestjs/cli": "^10.4.5",
@@ -4098,10 +4101,10 @@ index 0000000000000000000000000000000000000000..4baa400efa17c6aff0836153d22ffebe
 +}
 diff --git a/security-backend/src/app.module.ts b/security-backend/src/app.module.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..c851fb9bcafd606d32ae87c9f7261e65acf36e57
+index 0000000000000000000000000000000000000000..a01d12809e21e954d2bff5a107d7067bd5b31c1f
 --- /dev/null
 +++ b/security-backend/src/app.module.ts
-@@ -0,0 +1,33 @@
+@@ -0,0 +1,37 @@
 +import { Module } from '@nestjs/common';
 +import { ConfigModule, ConfigService } from '@nestjs/config';
 +import { TypeOrmModule } from '@nestjs/typeorm';
@@ -4114,6 +4117,8 @@ index 0000000000000000000000000000000000000000..c851fb9bcafd606d32ae87c9f7261e65
 +import { ShiftModule } from './shift/shift.module';
 +import { TimesheetModule } from './timesheet/timesheet.module';
 +import { UserModule } from './user/user.module';
++import { JobSlotModule } from './job-slot/job-slot.module';
++import { CompanyGuardModule } from './company-guard/company-guard.module';
 +import { buildDatabaseConfig } from './config/database.config';
 +
 +@Module({
@@ -4132,21 +4137,25 @@ index 0000000000000000000000000000000000000000..c851fb9bcafd606d32ae87c9f7261e65
 +    AssignmentModule,
 +    ShiftModule,
 +    TimesheetModule,
++    JobSlotModule,
++    CompanyGuardModule,
 +  ],
 +})
 +export class AppModule {}
 diff --git a/security-backend/src/assignment/assignment.controller.ts b/security-backend/src/assignment/assignment.controller.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..ab7e75d149df8604e6b2c4c2cb620646e893c41d
+index 0000000000000000000000000000000000000000..a0b7997a93f4eda3ca5c8aaef265a005a0a1121e
 --- /dev/null
 +++ b/security-backend/src/assignment/assignment.controller.ts
-@@ -0,0 +1,24 @@
-+import { Controller, Get, Param, ParseIntPipe, UseGuards } from '@nestjs/common';
+@@ -0,0 +1,38 @@
++import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, UseGuards } from '@nestjs/common';
 +import { AssignmentService } from './assignment.service';
 +import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 +import { RolesGuard } from '../common/guards/roles.guard';
 +import { Roles } from '../common/decorators/roles.decorator';
 +import { UserRole } from '../user/entities/user.entity';
++import { CreateInternalAssignmentDto } from './dto/create-internal-assignment.dto';
++import { UpdateAssignmentStatusDto } from './dto/update-assignment-status.dto';
 +
 +@Controller('assignments')
 +@UseGuards(JwtAuthGuard, RolesGuard)
@@ -4164,41 +4173,70 @@ index 0000000000000000000000000000000000000000..ab7e75d149df8604e6b2c4c2cb620646
 +  findOne(@Param('id', ParseIntPipe) id: number) {
 +    return this.assignmentService.findOne(id);
 +  }
++
++  @Post('internal')
++  @Roles(UserRole.ADMIN, UserRole.COMPANY)
++  createInternal(@Body() dto: CreateInternalAssignmentDto) {
++    return this.assignmentService.createInternal(dto);
++  }
++
++  @Patch(':id/status')
++  @Roles(UserRole.ADMIN, UserRole.COMPANY)
++  updateStatus(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateAssignmentStatusDto) {
++    return this.assignmentService.updateStatus(id, dto.status);
++  }
 +}
 diff --git a/security-backend/src/assignment/assignment.module.ts b/security-backend/src/assignment/assignment.module.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..81238fd74a8fbff5e8b94723c2c2bdd6dc661860
+index 0000000000000000000000000000000000000000..135ffadf9a9cce745f6b2283243afc6cdae40fcd
 --- /dev/null
 +++ b/security-backend/src/assignment/assignment.module.ts
-@@ -0,0 +1,13 @@
+@@ -0,0 +1,21 @@
 +import { Module } from '@nestjs/common';
 +import { TypeOrmModule } from '@nestjs/typeorm';
 +import { Assignment } from './entities/assignment.entity';
 +import { AssignmentController } from './assignment.controller';
 +import { AssignmentService } from './assignment.service';
++import { JobSlotModule } from '../job-slot/job-slot.module';
++import { GuardProfileModule } from '../guard-profile/guard-profile.module';
++import { CompanyGuardModule } from '../company-guard/company-guard.module';
 +
 +@Module({
-+  imports: [TypeOrmModule.forFeature([Assignment])],
++  imports: [
++    TypeOrmModule.forFeature([Assignment]),
++    JobSlotModule,
++    GuardProfileModule,
++    CompanyGuardModule,
++  ],
 +  controllers: [AssignmentController],
 +  providers: [AssignmentService],
-+  exports: [AssignmentService, TypeOrmModule]
++  exports: [AssignmentService, TypeOrmModule],
 +})
 +export class AssignmentModule {}
 diff --git a/security-backend/src/assignment/assignment.service.ts b/security-backend/src/assignment/assignment.service.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..695fbb98192ff07665abd2778d4f5e402037d63b
+index 0000000000000000000000000000000000000000..5950a11f445adca24c2f36cd922c46fb5c95550a
 --- /dev/null
 +++ b/security-backend/src/assignment/assignment.service.ts
-@@ -0,0 +1,36 @@
-+import { Injectable, NotFoundException } from '@nestjs/common';
+@@ -0,0 +1,89 @@
++import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 +import { InjectRepository } from '@nestjs/typeorm';
 +import { Repository } from 'typeorm';
-+import { Assignment } from './entities/assignment.entity';
++import { Assignment, AssignmentSource } from './entities/assignment.entity';
 +import { JobApplication } from '../job-application/entities/job-application.entity';
++import { JobSlotService } from '../job-slot/job-slot.service';
++import { GuardProfileService } from '../guard-profile/guard-profile.service';
++import { CompanyGuardService } from '../company-guard/company-guard.service';
++import { CreateInternalAssignmentDto } from './dto/create-internal-assignment.dto';
 +
 +@Injectable()
 +export class AssignmentService {
-+  constructor(@InjectRepository(Assignment) private readonly assignmentRepo: Repository<Assignment>) {}
++  constructor(
++    @InjectRepository(Assignment) private readonly assignmentRepo: Repository<Assignment>,
++    private readonly slotService: JobSlotService,
++    private readonly guardService: GuardProfileService,
++    private readonly companyGuardService: CompanyGuardService,
++  ) {}
 +
 +  findAll(): Promise<Assignment[]> {
 +    return this.assignmentRepo.find();
@@ -4211,41 +4249,128 @@ index 0000000000000000000000000000000000000000..695fbb98192ff07665abd2778d4f5e40
 +  }
 +
 +  async countActiveByJob(jobId: number): Promise<number> {
-+    return this.assignmentRepo.count({ where: { job: { id: jobId }, status: 'active' } });
++    return this.assignmentRepo.count({ where: { jobSlot: { job: { id: jobId } }, status: 'active' } });
 +  }
 +
-+  async createFromHire(application: JobApplication): Promise<Assignment> {
++  private async ensureNoActiveAssignmentForSlot(slotId: number): Promise<void> {
++    const existing = await this.assignmentRepo.findOne({ where: { jobSlot: { id: slotId }, status: 'active' } });
++    if (existing) throw new ConflictException('Job slot already has an active assignment');
++  }
++
++  async createFromMarketplaceHire(application: JobApplication) {
++    const slot = await this.slotService.findOpenSlotForJob(application.job.id);
++    await this.ensureNoActiveAssignmentForSlot(slot.id);
++
 +    const assignment = this.assignmentRepo.create({
-+      job: application.job,
++      jobSlot: slot,
 +      company: application.job.company,
 +      guard: application.guard,
 +      application,
-+      status: 'active'
++      assignmentSource: AssignmentSource.MARKETPLACE,
++      status: 'active',
 +    });
 +
-+    return this.assignmentRepo.save(assignment);
++    const saved = await this.assignmentRepo.save(assignment);
++    await this.slotService.markFilled(slot.id, application.guard);
++    return saved;
 +  }
++
++  async createInternal(dto: CreateInternalAssignmentDto) {
++    const slot = await this.slotService.findById(dto.jobSlotId);
++    await this.ensureNoActiveAssignmentForSlot(slot.id);
++
++    const guard = await this.guardService.findOne(dto.guardId);
++
++    await this.companyGuardService.ensureActiveRelationship(slot.job.company.id, guard.id);
++
++    const assignment = this.assignmentRepo.create({
++      jobSlot: slot,
++      company: slot.job.company,
++      guard,
++      assignmentSource: AssignmentSource.INTERNAL,
++      status: 'active',
++    });
++
++    const saved = await this.assignmentRepo.save(assignment);
++    await this.slotService.markFilled(slot.id, guard);
++    return saved;
++  }
++
++  async updateStatus(id: number, status: string) {
++    const assignment = await this.findOne(id);
++    assignment.status = status;
++    const saved = await this.assignmentRepo.save(assignment);
++
++    if (status !== 'active') {
++      await this.slotService.reopenSlot(assignment.jobSlot.id);
++    }
++
++    return saved;
++  }
++}
+diff --git a/security-backend/src/assignment/dto/create-internal-assignment.dto.ts b/security-backend/src/assignment/dto/create-internal-assignment.dto.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..665f19bf8e76b0dd2d54e74ddc1d7fee5273d75c
+--- /dev/null
++++ b/security-backend/src/assignment/dto/create-internal-assignment.dto.ts
+@@ -0,0 +1,9 @@
++import { IsInt } from 'class-validator';
++
++export class CreateInternalAssignmentDto {
++  @IsInt()
++  jobSlotId!: number;
++
++  @IsInt()
++  guardId!: number;
++}
+diff --git a/security-backend/src/assignment/dto/update-assignment-status.dto.ts b/security-backend/src/assignment/dto/update-assignment-status.dto.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..13766206d2275fce50fe9a08c6998c77a56bb28b
+--- /dev/null
++++ b/security-backend/src/assignment/dto/update-assignment-status.dto.ts
+@@ -0,0 +1,6 @@
++import { IsString } from 'class-validator';
++
++export class UpdateAssignmentStatusDto {
++  @IsString()
++  status!: string;
 +}
 diff --git a/security-backend/src/assignment/entities/assignment.entity.ts b/security-backend/src/assignment/entities/assignment.entity.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..ab8df85d70f20aec1caf3a6a738f087377bfc826
+index 0000000000000000000000000000000000000000..6fc619e996454cf0bb4f9892a195ebb19a342bb9
 --- /dev/null
 +++ b/security-backend/src/assignment/entities/assignment.entity.ts
-@@ -0,0 +1,33 @@
-+import { Column, CreateDateColumn, Entity, ManyToOne, OneToMany, PrimaryGeneratedColumn } from 'typeorm';
-+import { Job } from '../../job/entities/job.entity';
+@@ -0,0 +1,55 @@
++import {
++  Column,
++  CreateDateColumn,
++  Entity,
++  ManyToOne,
++  OneToMany,
++  OneToOne,
++  JoinColumn,
++  PrimaryGeneratedColumn,
++  UpdateDateColumn,
++} from 'typeorm';
 +import { Company } from '../../company/entities/company.entity';
 +import { GuardProfile } from '../../guard-profile/entities/guard-profile.entity';
 +import { JobApplication } from '../../job-application/entities/job-application.entity';
 +import { Shift } from '../../shift/entities/shift.entity';
++import { JobSlot } from '../../job-slot/entities/job-slot.entity';
++
++export enum AssignmentSource {
++  MARKETPLACE = 'MARKETPLACE',
++  INTERNAL = 'INTERNAL',
++}
 +
 +@Entity('assignments')
 +export class Assignment {
 +  @PrimaryGeneratedColumn()
 +  id!: number;
 +
-+  @ManyToOne(() => Job, (job) => job.assignments, { eager: true })
-+  job!: Job;
++  @OneToOne(() => JobSlot, (slot) => slot.assignment, { eager: true })
++  @JoinColumn({ name: 'jobSlotId' })
++  jobSlot!: JobSlot;
 +
 +  @ManyToOne(() => Company, (company) => company.assignments, { eager: true })
 +  company!: Company;
@@ -4253,14 +4378,20 @@ index 0000000000000000000000000000000000000000..ab8df85d70f20aec1caf3a6a738f0873
 +  @ManyToOne(() => GuardProfile, (guard) => guard.assignments, { eager: true })
 +  guard!: GuardProfile;
 +
-+  @ManyToOne(() => JobApplication, (application) => application.assignments, { eager: true })
-+  application!: JobApplication;
++  @ManyToOne(() => JobApplication, (application) => application.assignments, { eager: true, nullable: true })
++  application?: JobApplication | null;
++
++  @Column({ type: 'enum', enum: AssignmentSource })
++  assignmentSource!: AssignmentSource;
 +
 +  @Column({ default: 'active' })
 +  status!: string;
 +
 +  @CreateDateColumn()
-+  hiredAt!: Date;
++  createdAt!: Date;
++
++  @UpdateDateColumn()
++  updatedAt!: Date;
 +
 +  @OneToMany(() => Shift, (shift) => shift.assignment)
 +  shifts?: Shift[];
@@ -4580,6 +4711,191 @@ index 0000000000000000000000000000000000000000..05af0f4773126bbf632f1d664bc21000
 +    return !!role && requiredRoles.includes(role);
 +  }
 +}
+diff --git a/security-backend/src/company-guard/company-guard.controller.ts b/security-backend/src/company-guard/company-guard.controller.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..3acb9329bf4e67fe24c3355f97ff047a784502d0
+--- /dev/null
++++ b/security-backend/src/company-guard/company-guard.controller.ts
+@@ -0,0 +1,25 @@
++import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
++import { CompanyGuardService } from './company-guard.service';
++import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
++import { RolesGuard } from '../common/guards/roles.guard';
++import { Roles } from '../common/decorators/roles.decorator';
++import { UserRole } from '../user/entities/user.entity';
++import { CreateCompanyGuardDto } from './dto/create-company-guard.dto';
++
++@Controller('company-guards')
++@UseGuards(JwtAuthGuard, RolesGuard)
++export class CompanyGuardController {
++  constructor(private readonly companyGuardService: CompanyGuardService) {}
++
++  @Get()
++  @Roles(UserRole.ADMIN, UserRole.COMPANY)
++  findAll() {
++    return this.companyGuardService.findAll();
++  }
++
++  @Post()
++  @Roles(UserRole.ADMIN, UserRole.COMPANY)
++  create(@Body() dto: CreateCompanyGuardDto) {
++    return this.companyGuardService.create(dto);
++  }
++}
+diff --git a/security-backend/src/company-guard/company-guard.module.ts b/security-backend/src/company-guard/company-guard.module.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..5e2c08f3973aaf96c813a0e797c88e3a59bc80bc
+--- /dev/null
++++ b/security-backend/src/company-guard/company-guard.module.ts
+@@ -0,0 +1,15 @@
++import { Module } from '@nestjs/common';
++import { TypeOrmModule } from '@nestjs/typeorm';
++import { CompanyGuard } from './entities/company-guard.entity';
++import { CompanyGuardService } from './company-guard.service';
++import { CompanyGuardController } from './company-guard.controller';
++import { CompanyModule } from '../company/company.module';
++import { GuardProfileModule } from '../guard-profile/guard-profile.module';
++
++@Module({
++  imports: [TypeOrmModule.forFeature([CompanyGuard]), CompanyModule, GuardProfileModule],
++  providers: [CompanyGuardService],
++  controllers: [CompanyGuardController],
++  exports: [CompanyGuardService, TypeOrmModule],
++})
++export class CompanyGuardModule {}
+diff --git a/security-backend/src/company-guard/company-guard.service.ts b/security-backend/src/company-guard/company-guard.service.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..821e1699e42a4e98a62b301d895482d83d0b4569
+--- /dev/null
++++ b/security-backend/src/company-guard/company-guard.service.ts
+@@ -0,0 +1,49 @@
++import { ConflictException, Injectable } from '@nestjs/common';
++import { InjectRepository } from '@nestjs/typeorm';
++import { Repository } from 'typeorm';
++import { CompanyGuard, CompanyGuardStatus } from './entities/company-guard.entity';
++import { CreateCompanyGuardDto } from './dto/create-company-guard.dto';
++import { CompanyService } from '../company/company.service';
++import { GuardProfileService } from '../guard-profile/guard-profile.service';
++
++@Injectable()
++export class CompanyGuardService {
++  constructor(
++    @InjectRepository(CompanyGuard) private readonly companyGuardRepo: Repository<CompanyGuard>,
++    private readonly companyService: CompanyService,
++    private readonly guardService: GuardProfileService,
++  ) {}
++
++  findAll(): Promise<CompanyGuard[]> {
++    return this.companyGuardRepo.find();
++  }
++
++  async create(dto: CreateCompanyGuardDto): Promise<CompanyGuard> {
++    const company = await this.companyService.findOne(dto.companyId);
++    const guard = await this.guardService.findOne(dto.guardId);
++
++    const exists = await this.companyGuardRepo.findOne({ where: { company: { id: company.id }, guard: { id: guard.id } } });
++    if (exists) throw new ConflictException('Company-guard relationship already exists');
++
++    const row = this.companyGuardRepo.create({
++      company,
++      guard,
++      status: dto.status ?? CompanyGuardStatus.ACTIVE,
++      relationshipType: dto.relationshipType,
++    });
++
++    return this.companyGuardRepo.save(row);
++  }
++
++  async ensureActiveRelationship(companyId: number, guardId: number): Promise<CompanyGuard> {
++    const relation = await this.companyGuardRepo.findOne({
++      where: { company: { id: companyId }, guard: { id: guardId }, status: CompanyGuardStatus.ACTIVE },
++    });
++
++    if (!relation) {
++      throw new ConflictException('Guard is not active/approved for this company');
++    }
++
++    return relation;
++  }
++}
+diff --git a/security-backend/src/company-guard/dto/create-company-guard.dto.ts b/security-backend/src/company-guard/dto/create-company-guard.dto.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..1db14e7bf73a9defd2a7ec76c29082b622473190
+--- /dev/null
++++ b/security-backend/src/company-guard/dto/create-company-guard.dto.ts
+@@ -0,0 +1,18 @@
++import { IsEnum, IsInt, IsOptional } from 'class-validator';
++import { CompanyGuardRelationshipType, CompanyGuardStatus } from '../entities/company-guard.entity';
++
++export class CreateCompanyGuardDto {
++  @IsInt()
++  companyId!: number;
++
++  @IsInt()
++  guardId!: number;
++
++  @IsOptional()
++  @IsEnum(CompanyGuardStatus)
++  status?: CompanyGuardStatus;
++
++  @IsOptional()
++  @IsEnum(CompanyGuardRelationshipType)
++  relationshipType?: CompanyGuardRelationshipType;
++}
+diff --git a/security-backend/src/company-guard/entities/company-guard.entity.ts b/security-backend/src/company-guard/entities/company-guard.entity.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..4a1f10bf34cb1cbe2b45b495e778f4b4ead8f4e7
+--- /dev/null
++++ b/security-backend/src/company-guard/entities/company-guard.entity.ts
+@@ -0,0 +1,48 @@
++import {
++  Column,
++  CreateDateColumn,
++  Entity,
++  ManyToOne,
++  PrimaryGeneratedColumn,
++  Unique,
++} from 'typeorm';
++import { Company } from '../../company/entities/company.entity';
++import { GuardProfile } from '../../guard-profile/entities/guard-profile.entity';
++
++export enum CompanyGuardStatus {
++  ACTIVE = 'ACTIVE',
++  INACTIVE = 'INACTIVE',
++  BLOCKED = 'BLOCKED',
++}
++
++export enum CompanyGuardRelationshipType {
++  EMPLOYEE = 'EMPLOYEE',
++  PREFERRED = 'PREFERRED',
++  APPROVED_CONTRACTOR = 'APPROVED_CONTRACTOR',
++}
++
++@Entity('company_guards')
++@Unique(['company', 'guard'])
++export class CompanyGuard {
++  @PrimaryGeneratedColumn()
++  id!: number;
++
++  @ManyToOne(() => Company, (company) => company.companyGuards, { eager: true })
++  company!: Company;
++
++  @ManyToOne(() => GuardProfile, (guard) => guard.companyGuards, { eager: true })
++  guard!: GuardProfile;
++
++  @Column({ type: 'enum', enum: CompanyGuardStatus, default: CompanyGuardStatus.ACTIVE })
++  status!: CompanyGuardStatus;
++
++  @Column({
++    type: 'enum',
++    enum: CompanyGuardRelationshipType,
++    default: CompanyGuardRelationshipType.APPROVED_CONTRACTOR,
++  })
++  relationshipType!: CompanyGuardRelationshipType;
++
++  @CreateDateColumn()
++  createdAt!: Date;
++}
 diff --git a/security-backend/src/company/company.controller.ts b/security-backend/src/company/company.controller.ts
 new file mode 100644
 index 0000000000000000000000000000000000000000..8056fb9ee526ff9a4d998ef3f00ecddfec0f7fab
@@ -4699,16 +5015,17 @@ index 0000000000000000000000000000000000000000..705c327e0320c72d1c1022917cabc6da
 +}
 diff --git a/security-backend/src/company/entities/company.entity.ts b/security-backend/src/company/entities/company.entity.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..d1910efa707847cc1ae56a32dfe5811d8330832a
+index 0000000000000000000000000000000000000000..419c782b7f70cd6f8a38e950259e90db1d823c5a
 --- /dev/null
 +++ b/security-backend/src/company/entities/company.entity.ts
-@@ -0,0 +1,40 @@
+@@ -0,0 +1,44 @@
 +import { Column, Entity, JoinColumn, OneToMany, OneToOne, PrimaryGeneratedColumn } from 'typeorm';
 +import { User } from '../../user/entities/user.entity';
 +import { Job } from '../../job/entities/job.entity';
 +import { Assignment } from '../../assignment/entities/assignment.entity';
 +import { Shift } from '../../shift/entities/shift.entity';
 +import { Timesheet } from '../../timesheet/entities/timesheet.entity';
++import { CompanyGuard } from '../../company-guard/entities/company-guard.entity';
 +
 +@Entity('companies')
 +export class Company {
@@ -4742,6 +5059,9 @@ index 0000000000000000000000000000000000000000..d1910efa707847cc1ae56a32dfe5811d
 +
 +  @OneToMany(() => Timesheet, (timesheet) => timesheet.company)
 +  timesheets?: Timesheet[];
++
++  @OneToMany(() => CompanyGuard, (companyGuard) => companyGuard.company)
++  companyGuards?: CompanyGuard[];
 +}
 diff --git a/security-backend/src/config/database.config.ts b/security-backend/src/config/database.config.ts
 new file mode 100644
@@ -4787,6 +5107,49 @@ index 0000000000000000000000000000000000000000..f20c9df3cb90600fd3ae4b515c0b5a26
 +    database: config.get<string>('DATABASE_NAME', 'security_mvp'),
 +  };
 +}
+diff --git a/security-backend/src/config/typeorm.datasource.ts b/security-backend/src/config/typeorm.datasource.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..e3e120932d68966fdd5f4ba9aa3c96bd0257ec3c
+--- /dev/null
++++ b/security-backend/src/config/typeorm.datasource.ts
+@@ -0,0 +1,37 @@
++import 'reflect-metadata';
++import { DataSource } from 'typeorm';
++import { config as loadEnv } from 'dotenv';
++import { User } from '../user/entities/user.entity';
++import { Company } from '../company/entities/company.entity';
++import { GuardProfile } from '../guard-profile/entities/guard-profile.entity';
++import { Job } from '../job/entities/job.entity';
++import { JobApplication } from '../job-application/entities/job-application.entity';
++import { JobSlot } from '../job-slot/entities/job-slot.entity';
++import { Assignment } from '../assignment/entities/assignment.entity';
++import { Shift } from '../shift/entities/shift.entity';
++import { Timesheet } from '../timesheet/entities/timesheet.entity';
++import { CompanyGuard } from '../company-guard/entities/company-guard.entity';
++import { AddUnifiedWorkforceModel1710000000000 } from '../migrations/1710000000000-AddUnifiedWorkforceModel';
++import { AddCompanyGuardsAndTimesheetOneToOne1710000001000 } from '../migrations/1710000001000-AddCompanyGuardsAndTimesheetOneToOne';
++
++loadEnv();
++
++const databaseUrl = process.env.DATABASE_URL;
++const sslEnabled = (process.env.DATABASE_SSL || 'false').toLowerCase() === 'true';
++
++export default new DataSource({
++  type: 'postgres',
++  ...(databaseUrl
++    ? { url: databaseUrl }
++    : {
++        host: process.env.DATABASE_HOST || 'localhost',
++        port: Number(process.env.DATABASE_PORT || '5432'),
++        username: process.env.DATABASE_USER || 'postgres',
++        password: process.env.DATABASE_PASSWORD || 'postgres',
++        database: process.env.DATABASE_NAME || 'security_mvp',
++      }),
++  ssl: sslEnabled ? { rejectUnauthorized: false } : false,
++  entities: [User, Company, GuardProfile, Job, JobApplication, JobSlot, Assignment, Shift, Timesheet, CompanyGuard],
++  migrations: [AddUnifiedWorkforceModel1710000000000, AddCompanyGuardsAndTimesheetOneToOne1710000001000],
++  synchronize: false,
++});
 diff --git a/security-backend/src/fallback/fallback.controller.ts b/security-backend/src/fallback/fallback.controller.ts
 new file mode 100644
 index 0000000000000000000000000000000000000000..81efe4a0bb7f2c26e556157256f2ce99a136a45a
@@ -4851,16 +5214,17 @@ index 0000000000000000000000000000000000000000..2abc70d5d871567a481f53331ff69373
 +}
 diff --git a/security-backend/src/guard-profile/entities/guard-profile.entity.ts b/security-backend/src/guard-profile/entities/guard-profile.entity.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..7497a02ba8faa9ea069c2eb5ede88e0c75a229a2
+index 0000000000000000000000000000000000000000..500025751d4098336bbc6e352605211be593c581
 --- /dev/null
 +++ b/security-backend/src/guard-profile/entities/guard-profile.entity.ts
-@@ -0,0 +1,43 @@
+@@ -0,0 +1,47 @@
 +import { Column, Entity, JoinColumn, OneToMany, OneToOne, PrimaryGeneratedColumn } from 'typeorm';
 +import { User } from '../../user/entities/user.entity';
 +import { JobApplication } from '../../job-application/entities/job-application.entity';
 +import { Assignment } from '../../assignment/entities/assignment.entity';
 +import { Shift } from '../../shift/entities/shift.entity';
 +import { Timesheet } from '../../timesheet/entities/timesheet.entity';
++import { CompanyGuard } from '../../company-guard/entities/company-guard.entity';
 +
 +@Entity('guard_profiles')
 +export class GuardProfile {
@@ -4897,6 +5261,9 @@ index 0000000000000000000000000000000000000000..7497a02ba8faa9ea069c2eb5ede88e0c
 +
 +  @OneToMany(() => Timesheet, (timesheet) => timesheet.guard)
 +  timesheets?: Timesheet[];
++
++  @OneToMany(() => CompanyGuard, (companyGuard) => companyGuard.guard)
++  companyGuards?: CompanyGuard[];
 +}
 diff --git a/security-backend/src/guard-profile/guard-profile.controller.ts b/security-backend/src/guard-profile/guard-profile.controller.ts
 new file mode 100644
@@ -5139,10 +5506,10 @@ index 0000000000000000000000000000000000000000..e2886027a131b35860c821a9d6f5d3a0
 +export class JobApplicationModule {}
 diff --git a/security-backend/src/job-application/job-application.service.ts b/security-backend/src/job-application/job-application.service.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..d005918620bc4e871282a6782996cc881087bdea
+index 0000000000000000000000000000000000000000..bae54a6850caabc68fe655b65fc3296b6a2229b5
 --- /dev/null
 +++ b/security-backend/src/job-application/job-application.service.ts
-@@ -0,0 +1,85 @@
+@@ -0,0 +1,89 @@
 +import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 +import { InjectRepository } from '@nestjs/typeorm';
 +import { Repository } from 'typeorm';
@@ -5153,6 +5520,7 @@ index 0000000000000000000000000000000000000000..d005918620bc4e871282a6782996cc88
 +import { AssignmentService } from '../assignment/assignment.service';
 +import { HireApplicationDto } from './dto/hire-application.dto';
 +import { ShiftService } from '../shift/shift.service';
++import { JobSourceType } from '../job/entities/job.entity';
 +
 +@Injectable()
 +export class JobApplicationService {
@@ -5179,6 +5547,10 @@ index 0000000000000000000000000000000000000000..d005918620bc4e871282a6782996cc88
 +    const job = await this.jobsService.findOne(dto.jobId);
 +    const guard = await this.guardService.findOne(dto.guardId);
 +
++    if (job.sourceType !== JobSourceType.MARKETPLACE) {
++      throw new BadRequestException('Applications are only allowed for MARKETPLACE jobs');
++    }
++
 +    const existing = await this.appRepo.findOne({
 +      where: {
 +        job: { id: job.id },
@@ -5196,16 +5568,15 @@ index 0000000000000000000000000000000000000000..d005918620bc4e871282a6782996cc88
 +    const application = await this.findOne(applicationId);
 +    if (application.status === 'hired') throw new ConflictException('Application already hired');
 +
-+    const activeCount = await this.assignmentService.countActiveByJob(application.job.id);
-+    if (activeCount >= application.job.guardsRequired) {
-+      throw new ConflictException('Job guard capacity reached');
-+    }
-+
 +    application.status = 'hired';
 +    application.hiredAt = new Date();
 +    await this.appRepo.save(application);
 +
-+    const assignment = await this.assignmentService.createFromHire(application);
++    if (application.job.sourceType !== JobSourceType.MARKETPLACE) {
++      throw new BadRequestException('Only MARKETPLACE jobs can be hired from applications');
++    }
++
++    const assignment = await this.assignmentService.createFromMarketplaceHire(application);
 +
 +    let shiftResult: unknown = null;
 +    if (dto.createShift) {
@@ -5228,13 +5599,202 @@ index 0000000000000000000000000000000000000000..d005918620bc4e871282a6782996cc88
 +    };
 +  }
 +}
+diff --git a/security-backend/src/job-slot/dto/create-job-slot.dto.ts b/security-backend/src/job-slot/dto/create-job-slot.dto.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..f0dbc5b0ec2b0836b22d49c252fb5d0c76166166
+--- /dev/null
++++ b/security-backend/src/job-slot/dto/create-job-slot.dto.ts
+@@ -0,0 +1,13 @@
++import { IsInt, IsOptional, IsString } from 'class-validator';
++
++export class CreateJobSlotDto {
++  @IsInt()
++  jobId!: number;
++
++  @IsInt()
++  slotNumber!: number;
++
++  @IsOptional()
++  @IsString()
++  status?: string;
++}
+diff --git a/security-backend/src/job-slot/entities/job-slot.entity.ts b/security-backend/src/job-slot/entities/job-slot.entity.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..2ee5abe10f3449e9dc5901593022ca1bedb39cf0
+--- /dev/null
++++ b/security-backend/src/job-slot/entities/job-slot.entity.ts
+@@ -0,0 +1,45 @@
++import {
++  Column,
++  CreateDateColumn,
++  Entity,
++  ManyToOne,
++  OneToOne,
++  PrimaryGeneratedColumn,
++  UpdateDateColumn,
++} from 'typeorm';
++import { Job } from '../../job/entities/job.entity';
++import { GuardProfile } from '../../guard-profile/entities/guard-profile.entity';
++import { Assignment } from '../../assignment/entities/assignment.entity';
++
++export enum JobSlotStatus {
++  OPEN = 'OPEN',
++  FILLED = 'FILLED',
++  CANCELLED = 'CANCELLED',
++}
++
++@Entity('job_slots')
++export class JobSlot {
++  @PrimaryGeneratedColumn()
++  id!: number;
++
++  @ManyToOne(() => Job, (job) => job.slots, { eager: true })
++  job!: Job;
++
++  @Column({ type: 'int' })
++  slotNumber!: number;
++
++  @Column({ type: 'enum', enum: JobSlotStatus, default: JobSlotStatus.OPEN })
++  status!: JobSlotStatus;
++
++  @ManyToOne(() => GuardProfile, { eager: true, nullable: true })
++  assignedGuard?: GuardProfile | null;
++
++  @OneToOne(() => Assignment, (assignment) => assignment.jobSlot)
++  assignment?: Assignment | null;
++
++  @CreateDateColumn()
++  createdAt!: Date;
++
++  @UpdateDateColumn()
++  updatedAt!: Date;
++}
+diff --git a/security-backend/src/job-slot/job-slot.controller.ts b/security-backend/src/job-slot/job-slot.controller.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..8b20319759c8432d912cfdc65d853a656cacf797
+--- /dev/null
++++ b/security-backend/src/job-slot/job-slot.controller.ts
+@@ -0,0 +1,18 @@
++import { Controller, Get, UseGuards } from '@nestjs/common';
++import { JobSlotService } from './job-slot.service';
++import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
++import { RolesGuard } from '../common/guards/roles.guard';
++import { Roles } from '../common/decorators/roles.decorator';
++import { UserRole } from '../user/entities/user.entity';
++
++@Controller('job-slots')
++@UseGuards(JwtAuthGuard, RolesGuard)
++export class JobSlotController {
++  constructor(private readonly slotService: JobSlotService) {}
++
++  @Get()
++  @Roles(UserRole.ADMIN, UserRole.COMPANY)
++  findAll() {
++    return this.slotService.findAll();
++  }
++}
+diff --git a/security-backend/src/job-slot/job-slot.module.ts b/security-backend/src/job-slot/job-slot.module.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..4b04ab28374548ba57fa8f47ddace64a9561b974
+--- /dev/null
++++ b/security-backend/src/job-slot/job-slot.module.ts
+@@ -0,0 +1,13 @@
++import { Module } from '@nestjs/common';
++import { TypeOrmModule } from '@nestjs/typeorm';
++import { JobSlot } from './entities/job-slot.entity';
++import { JobSlotService } from './job-slot.service';
++import { JobSlotController } from './job-slot.controller';
++
++@Module({
++  imports: [TypeOrmModule.forFeature([JobSlot])],
++  providers: [JobSlotService],
++  controllers: [JobSlotController],
++  exports: [JobSlotService, TypeOrmModule],
++})
++export class JobSlotModule {}
+diff --git a/security-backend/src/job-slot/job-slot.service.ts b/security-backend/src/job-slot/job-slot.service.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..9244c6fb28c2cbb16b8f040771ade8978677c8e0
+--- /dev/null
++++ b/security-backend/src/job-slot/job-slot.service.ts
+@@ -0,0 +1,69 @@
++import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
++import { InjectRepository } from '@nestjs/typeorm';
++import { Repository } from 'typeorm';
++import { JobSlot, JobSlotStatus } from './entities/job-slot.entity';
++import { Job } from '../job/entities/job.entity';
++import { GuardProfile } from '../guard-profile/entities/guard-profile.entity';
++
++@Injectable()
++export class JobSlotService {
++  constructor(@InjectRepository(JobSlot) private readonly slotRepo: Repository<JobSlot>) {}
++
++  async createSlotsForJob(job: Job): Promise<JobSlot[]> {
++    if (job.guardsRequired < 1) {
++      throw new BadRequestException('guardsRequired must be at least 1');
++    }
++
++    const slots = Array.from({ length: job.guardsRequired }, (_, idx) =>
++      this.slotRepo.create({
++        job,
++        slotNumber: idx + 1,
++        status: JobSlotStatus.OPEN,
++      }),
++    );
++
++    return this.slotRepo.save(slots);
++  }
++
++  findAll(): Promise<JobSlot[]> {
++    return this.slotRepo.find();
++  }
++
++  async findOpenSlotForJob(jobId: number): Promise<JobSlot> {
++    const slot = await this.slotRepo.findOne({
++      where: { job: { id: jobId }, status: JobSlotStatus.OPEN },
++      order: { slotNumber: 'ASC' },
++    });
++
++    if (!slot) {
++      throw new NotFoundException('No open job slot available for this job');
++    }
++
++    return slot;
++  }
++
++  async findById(id: number): Promise<JobSlot> {
++    const slot = await this.slotRepo.findOne({ where: { id } });
++    if (!slot) throw new NotFoundException('Job slot not found');
++    return slot;
++  }
++
++  async markFilled(slotId: number, guard: GuardProfile): Promise<JobSlot> {
++    const slot = await this.findById(slotId);
++    if (slot.status !== JobSlotStatus.OPEN) {
++      throw new BadRequestException('Job slot is not open');
++    }
++
++    slot.status = JobSlotStatus.FILLED;
++    slot.assignedGuard = guard;
++    return this.slotRepo.save(slot);
++  }
++
++  async reopenSlot(slotId: number): Promise<JobSlot> {
++    const slot = await this.findById(slotId);
++    slot.status = JobSlotStatus.OPEN;
++    slot.assignedGuard = null;
++    return this.slotRepo.save(slot);
++  }
++
++}
 diff --git a/security-backend/src/job/dto/create-job.dto.ts b/security-backend/src/job/dto/create-job.dto.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..de263b8e5a9bd06bbe057bd43fb24a4ba5e1a62d
+index 0000000000000000000000000000000000000000..172df3539335822e9847e4f8019900d0a58badd1
 --- /dev/null
 +++ b/security-backend/src/job/dto/create-job.dto.ts
-@@ -0,0 +1,25 @@
-+import { IsInt, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+@@ -0,0 +1,29 @@
++import { IsEnum, IsInt, IsNumber, IsOptional, IsString, Min } from 'class-validator';
++import { JobSourceType } from '../entities/job.entity';
 +
 +export class CreateJobDto {
 +  @IsInt()
@@ -5246,6 +5806,9 @@ index 0000000000000000000000000000000000000000..de263b8e5a9bd06bbe057bd43fb24a4b
 +  @IsOptional()
 +  @IsString()
 +  description?: string;
++
++  @IsEnum(JobSourceType)
++  sourceType!: JobSourceType;
 +
 +  @IsInt()
 +  @Min(1)
@@ -5261,14 +5824,27 @@ index 0000000000000000000000000000000000000000..de263b8e5a9bd06bbe057bd43fb24a4b
 +}
 diff --git a/security-backend/src/job/entities/job.entity.ts b/security-backend/src/job/entities/job.entity.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..28438c80d1b4d4c718e020783536f63bde13badf
+index 0000000000000000000000000000000000000000..e03f0002a348daee6e823c7ea6b7ec2c30d95ce9
 --- /dev/null
 +++ b/security-backend/src/job/entities/job.entity.ts
-@@ -0,0 +1,34 @@
-+import { Column, Entity, ManyToOne, OneToMany, PrimaryGeneratedColumn } from 'typeorm';
+@@ -0,0 +1,56 @@
++import {
++  Column,
++  CreateDateColumn,
++  Entity,
++  ManyToOne,
++  OneToMany,
++  PrimaryGeneratedColumn,
++  UpdateDateColumn,
++} from 'typeorm';
 +import { Company } from '../../company/entities/company.entity';
 +import { JobApplication } from '../../job-application/entities/job-application.entity';
-+import { Assignment } from '../../assignment/entities/assignment.entity';
++import { JobSlot } from '../../job-slot/entities/job-slot.entity';
++
++export enum JobSourceType {
++  MARKETPLACE = 'MARKETPLACE',
++  INTERNAL = 'INTERNAL',
++}
 +
 +@Entity('jobs')
 +export class Job {
@@ -5284,6 +5860,9 @@ index 0000000000000000000000000000000000000000..28438c80d1b4d4c718e020783536f63b
 +  @Column({ type: 'text', nullable: true })
 +  description?: string;
 +
++  @Column({ type: 'enum', enum: JobSourceType, default: JobSourceType.MARKETPLACE })
++  sourceType!: JobSourceType;
++
 +  @Column({ type: 'int' })
 +  guardsRequired!: number;
 +
@@ -5293,11 +5872,17 @@ index 0000000000000000000000000000000000000000..28438c80d1b4d4c718e020783536f63b
 +  @Column({ default: 'open' })
 +  status!: string;
 +
++  @CreateDateColumn()
++  createdAt!: Date;
++
++  @UpdateDateColumn()
++  updatedAt!: Date;
++
 +  @OneToMany(() => JobApplication, (application) => application.job)
 +  applications?: JobApplication[];
 +
-+  @OneToMany(() => Assignment, (assignment) => assignment.job)
-+  assignments?: Assignment[];
++  @OneToMany(() => JobSlot, (slot) => slot.job)
++  slots?: JobSlot[];
 +}
 diff --git a/security-backend/src/job/job.controller.ts b/security-backend/src/job/job.controller.ts
 new file mode 100644
@@ -5338,42 +5923,45 @@ index 0000000000000000000000000000000000000000..1996cd6ba839bedc32338b09882ede7e
 +}
 diff --git a/security-backend/src/job/job.module.ts b/security-backend/src/job/job.module.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..1d4ac94bf6a4e1619c0d2dcf2abbe803999b7fe6
+index 0000000000000000000000000000000000000000..f366b9e5da485b5a2ac8a10bc4e6353bd67769f0
 --- /dev/null
 +++ b/security-backend/src/job/job.module.ts
-@@ -0,0 +1,14 @@
-+import { Module } from '@nestjs/common';
+@@ -0,0 +1,15 @@
++import { Module, forwardRef } from '@nestjs/common';
 +import { TypeOrmModule } from '@nestjs/typeorm';
 +import { Job } from './entities/job.entity';
 +import { JobController } from './job.controller';
 +import { JobService } from './job.service';
 +import { CompanyModule } from '../company/company.module';
++import { JobSlotModule } from '../job-slot/job-slot.module';
 +
 +@Module({
-+  imports: [TypeOrmModule.forFeature([Job]), CompanyModule],
++  imports: [TypeOrmModule.forFeature([Job]), CompanyModule, forwardRef(() => JobSlotModule)],
 +  controllers: [JobController],
 +  providers: [JobService],
-+  exports: [JobService, TypeOrmModule]
++  exports: [JobService, TypeOrmModule],
 +})
 +export class JobModule {}
 diff --git a/security-backend/src/job/job.service.ts b/security-backend/src/job/job.service.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..03f6c7f96b1a77b494ac5ab2bc12f061c01ba4aa
+index 0000000000000000000000000000000000000000..83cd2249e0993d2deabb071e3f7bf86b3993795a
 --- /dev/null
 +++ b/security-backend/src/job/job.service.ts
-@@ -0,0 +1,37 @@
+@@ -0,0 +1,43 @@
 +import { Injectable, NotFoundException } from '@nestjs/common';
 +import { InjectRepository } from '@nestjs/typeorm';
 +import { Repository } from 'typeorm';
 +import { Job } from './entities/job.entity';
 +import { CreateJobDto } from './dto/create-job.dto';
 +import { CompanyService } from '../company/company.service';
++import { JobSlotService } from '../job-slot/job-slot.service';
 +
 +@Injectable()
 +export class JobService {
 +  constructor(
 +    @InjectRepository(Job) private readonly jobRepo: Repository<Job>,
-+    private readonly companyService: CompanyService
++    private readonly companyService: CompanyService,
++    private readonly jobSlotService: JobSlotService,
 +  ) {}
 +
 +  async create(dto: CreateJobDto): Promise<Job> {
@@ -5382,11 +5970,15 @@ index 0000000000000000000000000000000000000000..03f6c7f96b1a77b494ac5ab2bc12f061
 +      company,
 +      title: dto.title,
 +      description: dto.description,
++      sourceType: dto.sourceType,
 +      guardsRequired: dto.guardsRequired,
 +      hourlyRate: dto.hourlyRate,
-+      status: dto.status ?? 'open'
++      status: dto.status ?? 'open',
 +    });
-+    return this.jobRepo.save(job);
++
++    const savedJob = await this.jobRepo.save(job);
++    await this.jobSlotService.createSlotsForJob(savedJob);
++    return this.findOne(savedJob.id);
 +  }
 +
 +  findAll(): Promise<Job[]> {
@@ -5438,6 +6030,108 @@ index 0000000000000000000000000000000000000000..d20aee0539499de02851f63b0e89f3b3
 +}
 +
 +bootstrap();
+diff --git a/security-backend/src/migrations/1710000000000-AddUnifiedWorkforceModel.ts b/security-backend/src/migrations/1710000000000-AddUnifiedWorkforceModel.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..3724989573a8f8c106067a6fbc0aceb58e8056c4
+--- /dev/null
++++ b/security-backend/src/migrations/1710000000000-AddUnifiedWorkforceModel.ts
+@@ -0,0 +1,55 @@
++import { MigrationInterface, QueryRunner } from 'typeorm';
++
++export class AddUnifiedWorkforceModel1710000000000 implements MigrationInterface {
++  name = 'AddUnifiedWorkforceModel1710000000000';
++
++  public async up(queryRunner: QueryRunner): Promise<void> {
++    await queryRunner.query(`CREATE TYPE "public"."jobs_sourcetype_enum" AS ENUM('MARKETPLACE', 'INTERNAL')`);
++    await queryRunner.query(`ALTER TABLE "jobs" ADD "sourceType" "public"."jobs_sourcetype_enum" NOT NULL DEFAULT 'MARKETPLACE'`);
++    await queryRunner.query(`ALTER TABLE "jobs" ADD "createdAt" TIMESTAMP NOT NULL DEFAULT now()`);
++    await queryRunner.query(`ALTER TABLE "jobs" ADD "updatedAt" TIMESTAMP NOT NULL DEFAULT now()`);
++
++    await queryRunner.query(`CREATE TYPE "public"."job_slots_status_enum" AS ENUM('OPEN', 'FILLED', 'CANCELLED')`);
++    await queryRunner.query(`CREATE TABLE "job_slots" (
++      "id" SERIAL NOT NULL,
++      "slotNumber" integer NOT NULL,
++      "status" "public"."job_slots_status_enum" NOT NULL DEFAULT 'OPEN',
++      "createdAt" TIMESTAMP NOT NULL DEFAULT now(),
++      "updatedAt" TIMESTAMP NOT NULL DEFAULT now(),
++      "jobId" integer,
++      "assignedGuardId" integer,
++      CONSTRAINT "PK_job_slots_id" PRIMARY KEY ("id")
++    )`);
++
++    await queryRunner.query(`ALTER TABLE "job_slots" ADD CONSTRAINT "FK_job_slots_job" FOREIGN KEY ("jobId") REFERENCES "jobs"("id") ON DELETE NO ACTION ON UPDATE NO ACTION`);
++    await queryRunner.query(`ALTER TABLE "job_slots" ADD CONSTRAINT "FK_job_slots_guard" FOREIGN KEY ("assignedGuardId") REFERENCES "guard_profiles"("id") ON DELETE NO ACTION ON UPDATE NO ACTION`);
++
++    await queryRunner.query(`ALTER TABLE "assignments" ADD COLUMN "jobSlotId" integer`);
++    await queryRunner.query(`ALTER TABLE "assignments" ADD COLUMN "createdAt" TIMESTAMP NOT NULL DEFAULT now()`);
++    await queryRunner.query(`ALTER TABLE "assignments" ADD COLUMN "updatedAt" TIMESTAMP NOT NULL DEFAULT now()`);
++    await queryRunner.query(`CREATE TYPE "public"."assignments_assignmentsource_enum" AS ENUM('MARKETPLACE', 'INTERNAL')`);
++    await queryRunner.query(`ALTER TABLE "assignments" ADD COLUMN "assignmentSource" "public"."assignments_assignmentsource_enum"`);
++    await queryRunner.query(`ALTER TABLE "assignments" ADD CONSTRAINT "UQ_assignments_jobSlotId" UNIQUE ("jobSlotId")`);
++    await queryRunner.query(`ALTER TABLE "assignments" ADD CONSTRAINT "FK_assignments_jobslot" FOREIGN KEY ("jobSlotId") REFERENCES "job_slots"("id") ON DELETE NO ACTION ON UPDATE NO ACTION`);
++  }
++
++  public async down(queryRunner: QueryRunner): Promise<void> {
++    await queryRunner.query(`ALTER TABLE "assignments" DROP CONSTRAINT "FK_assignments_jobslot"`);
++    await queryRunner.query(`ALTER TABLE "assignments" DROP CONSTRAINT "UQ_assignments_jobSlotId"`);
++    await queryRunner.query(`ALTER TABLE "assignments" DROP COLUMN "assignmentSource"`);
++    await queryRunner.query(`DROP TYPE "public"."assignments_assignmentsource_enum"`);
++    await queryRunner.query(`ALTER TABLE "assignments" DROP COLUMN "updatedAt"`);
++    await queryRunner.query(`ALTER TABLE "assignments" DROP COLUMN "createdAt"`);
++    await queryRunner.query(`ALTER TABLE "assignments" DROP COLUMN "jobSlotId"`);
++
++    await queryRunner.query(`ALTER TABLE "job_slots" DROP CONSTRAINT "FK_job_slots_guard"`);
++    await queryRunner.query(`ALTER TABLE "job_slots" DROP CONSTRAINT "FK_job_slots_job"`);
++    await queryRunner.query(`DROP TABLE "job_slots"`);
++    await queryRunner.query(`DROP TYPE "public"."job_slots_status_enum"`);
++
++    await queryRunner.query(`ALTER TABLE "jobs" DROP COLUMN "updatedAt"`);
++    await queryRunner.query(`ALTER TABLE "jobs" DROP COLUMN "createdAt"`);
++    await queryRunner.query(`ALTER TABLE "jobs" DROP COLUMN "sourceType"`);
++    await queryRunner.query(`DROP TYPE "public"."jobs_sourcetype_enum"`);
++  }
++}
+diff --git a/security-backend/src/migrations/1710000001000-AddCompanyGuardsAndTimesheetOneToOne.ts b/security-backend/src/migrations/1710000001000-AddCompanyGuardsAndTimesheetOneToOne.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..61ae3cbb16acafaf2c349b9b12db02ef41e78efd
+--- /dev/null
++++ b/security-backend/src/migrations/1710000001000-AddCompanyGuardsAndTimesheetOneToOne.ts
+@@ -0,0 +1,35 @@
++import { MigrationInterface, QueryRunner } from 'typeorm';
++
++export class AddCompanyGuardsAndTimesheetOneToOne1710000001000 implements MigrationInterface {
++  name = 'AddCompanyGuardsAndTimesheetOneToOne1710000001000';
++
++  public async up(queryRunner: QueryRunner): Promise<void> {
++    await queryRunner.query(`CREATE TYPE "public"."company_guards_status_enum" AS ENUM('ACTIVE', 'INACTIVE', 'BLOCKED')`);
++    await queryRunner.query(`CREATE TYPE "public"."company_guards_relationshiptype_enum" AS ENUM('EMPLOYEE', 'PREFERRED', 'APPROVED_CONTRACTOR')`);
++
++    await queryRunner.query(`CREATE TABLE "company_guards" (
++      "id" SERIAL NOT NULL,
++      "status" "public"."company_guards_status_enum" NOT NULL DEFAULT 'ACTIVE',
++      "relationshipType" "public"."company_guards_relationshiptype_enum" NOT NULL DEFAULT 'APPROVED_CONTRACTOR',
++      "createdAt" TIMESTAMP NOT NULL DEFAULT now(),
++      "companyId" integer,
++      "guardId" integer,
++      CONSTRAINT "UQ_company_guard" UNIQUE ("companyId", "guardId"),
++      CONSTRAINT "PK_company_guards_id" PRIMARY KEY ("id")
++    )`);
++
++    await queryRunner.query(`ALTER TABLE "company_guards" ADD CONSTRAINT "FK_company_guard_company" FOREIGN KEY ("companyId") REFERENCES "companies"("id") ON DELETE NO ACTION ON UPDATE NO ACTION`);
++    await queryRunner.query(`ALTER TABLE "company_guards" ADD CONSTRAINT "FK_company_guard_guard" FOREIGN KEY ("guardId") REFERENCES "guard_profiles"("id") ON DELETE NO ACTION ON UPDATE NO ACTION`);
++
++    await queryRunner.query(`ALTER TABLE "timesheets" ADD CONSTRAINT "UQ_timesheets_shift" UNIQUE ("shiftId")`);
++  }
++
++  public async down(queryRunner: QueryRunner): Promise<void> {
++    await queryRunner.query(`ALTER TABLE "timesheets" DROP CONSTRAINT "UQ_timesheets_shift"`);
++    await queryRunner.query(`ALTER TABLE "company_guards" DROP CONSTRAINT "FK_company_guard_guard"`);
++    await queryRunner.query(`ALTER TABLE "company_guards" DROP CONSTRAINT "FK_company_guard_company"`);
++    await queryRunner.query(`DROP TABLE "company_guards"`);
++    await queryRunner.query(`DROP TYPE "public"."company_guards_relationshiptype_enum"`);
++    await queryRunner.query(`DROP TYPE "public"."company_guards_status_enum"`);
++  }
++}
 diff --git a/security-backend/src/shift/dto/create-shift.dto.ts b/security-backend/src/shift/dto/create-shift.dto.ts
 new file mode 100644
 index 0000000000000000000000000000000000000000..4abeeac9cae4562eecacf7c55ef470ad2ae3810c
@@ -5465,11 +6159,11 @@ index 0000000000000000000000000000000000000000..4abeeac9cae4562eecacf7c55ef470ad
 +}
 diff --git a/security-backend/src/shift/entities/shift.entity.ts b/security-backend/src/shift/entities/shift.entity.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..cc1c5907e0d76e9c1376df75c0e173116164b917
+index 0000000000000000000000000000000000000000..b4ac7802780ff28bd3fa32bcb4f39282fdbd8eaa
 --- /dev/null
 +++ b/security-backend/src/shift/entities/shift.entity.ts
 @@ -0,0 +1,35 @@
-+import { Column, Entity, ManyToOne, OneToMany, PrimaryGeneratedColumn } from 'typeorm';
++import { Column, Entity, ManyToOne, OneToOne, PrimaryGeneratedColumn } from 'typeorm';
 +import { Assignment } from '../../assignment/entities/assignment.entity';
 +import { Company } from '../../company/entities/company.entity';
 +import { GuardProfile } from '../../guard-profile/entities/guard-profile.entity';
@@ -5501,8 +6195,8 @@ index 0000000000000000000000000000000000000000..cc1c5907e0d76e9c1376df75c0e17311
 +  @Column({ default: 'scheduled' })
 +  status!: string;
 +
-+  @OneToMany(() => Timesheet, (timesheet) => timesheet.shift)
-+  timesheets?: Timesheet[];
++  @OneToOne(() => Timesheet, (timesheet) => timesheet.shift)
++  timesheet?: Timesheet;
 +}
 diff --git a/security-backend/src/shift/shift.controller.ts b/security-backend/src/shift/shift.controller.ts
 new file mode 100644
@@ -5633,11 +6327,11 @@ index 0000000000000000000000000000000000000000..da11548d2c248c4ecc5ab160a5dfa28f
 +}
 diff --git a/security-backend/src/timesheet/entities/timesheet.entity.ts b/security-backend/src/timesheet/entities/timesheet.entity.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..2fad9daba06560a09bfd1fcec33af374a34fd848
+index 0000000000000000000000000000000000000000..c8a7b8fade4e0ef549f85569716bd7d95a631d39
 --- /dev/null
 +++ b/security-backend/src/timesheet/entities/timesheet.entity.ts
-@@ -0,0 +1,28 @@
-+import { Column, CreateDateColumn, Entity, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+@@ -0,0 +1,29 @@
++import { Column, CreateDateColumn, Entity, JoinColumn, ManyToOne, OneToOne, PrimaryGeneratedColumn } from 'typeorm';
 +import { Shift } from '../../shift/entities/shift.entity';
 +import { GuardProfile } from '../../guard-profile/entities/guard-profile.entity';
 +import { Company } from '../../company/entities/company.entity';
@@ -5647,7 +6341,8 @@ index 0000000000000000000000000000000000000000..2fad9daba06560a09bfd1fcec33af374
 +  @PrimaryGeneratedColumn()
 +  id!: number;
 +
-+  @ManyToOne(() => Shift, (shift) => shift.timesheets, { eager: true })
++  @OneToOne(() => Shift, (shift) => shift.timesheet, { eager: true })
++  @JoinColumn({ name: 'shiftId' })
 +  shift!: Shift;
 +
 +  @ManyToOne(() => GuardProfile, (guard) => guard.timesheets, { eager: true })
