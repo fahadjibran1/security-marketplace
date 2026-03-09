@@ -16,16 +16,32 @@ import { UserModule } from './user/user.module';
     ConfigModule.forRoot({ isGlobal: true }),
     TypeOrmModule.forRootAsync({
       inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        type: 'postgres',
-        host: config.get<string>('DATABASE_HOST', 'localhost'),
-        port: config.get<number>('DATABASE_PORT', 5432),
-        username: config.get<string>('DATABASE_USER', 'postgres'),
-        password: config.get<string>('DATABASE_PASSWORD', 'postgres'),
-        database: config.get<string>('DATABASE_NAME', 'security_mvp'),
-        autoLoadEntities: true,
-        synchronize: true
-      })
+      useFactory: (config: ConfigService) => {
+        const databaseUrl = config.get<string>('DATABASE_URL');
+        const databaseSsl =
+          (config.get<string>('DATABASE_SSL', 'false') || 'false').toLowerCase() === 'true';
+
+        if (databaseUrl) {
+          return {
+            type: 'postgres' as const,
+            url: databaseUrl,
+            ssl: databaseSsl ? { rejectUnauthorized: false } : false,
+            autoLoadEntities: true,
+            synchronize: true,
+          };
+        }
+
+        return {
+          type: 'postgres' as const,
+          host: config.get<string>('DATABASE_HOST', 'localhost'),
+          port: parseInt(config.get<string>('DATABASE_PORT', '5432'), 10),
+          username: config.get<string>('DATABASE_USER', 'postgres'),
+          password: config.get<string>('DATABASE_PASSWORD', 'postgres'),
+          database: config.get<string>('DATABASE_NAME', 'security_mvp'),
+          autoLoadEntities: true,
+          synchronize: true,
+        };
+      },
     }),
     UserModule,
     AuthModule,
@@ -35,7 +51,7 @@ import { UserModule } from './user/user.module';
     JobApplicationModule,
     AssignmentModule,
     ShiftModule,
-    TimesheetModule
-  ]
+    TimesheetModule,
+  ],
 })
 export class AppModule {}
