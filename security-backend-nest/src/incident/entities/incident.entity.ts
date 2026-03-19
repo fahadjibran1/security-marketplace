@@ -43,7 +43,7 @@ export class Incident {
   })
   severity!: IncidentSeverity;
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   locationText?: string | null;
 
   @Column({ default: 'open' })
