@@ -66,11 +66,22 @@ export class AuthService {
     return this.signToken(user.id, user.email, user.role);
   }
 
-  private signToken(userId: number, email: string, role: UserRole) {
+  private async signToken(userId: number, email: string, role: UserRole) {
+    const companyProfile =
+      role === UserRole.COMPANY ? await this.companyService.findByUserId(userId) : null;
+    const guardProfile =
+      role === UserRole.GUARD ? await this.guardProfileService.findByUserId(userId) : null;
+
     const payload = { sub: userId, email, role };
     return {
       accessToken: this.jwtService.sign(payload),
-      user: { id: userId, email, role }
+      user: {
+        id: userId,
+        email,
+        role,
+        companyId: companyProfile?.id,
+        guardId: guardProfile?.id,
+      }
     };
   }
 }

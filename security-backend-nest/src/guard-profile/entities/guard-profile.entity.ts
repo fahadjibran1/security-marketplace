@@ -1,9 +1,19 @@
-import { Column, Entity, JoinColumn, OneToMany, OneToOne, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  Column,
+  Entity,
+  JoinColumn,
+  OneToMany,
+  OneToOne,
+  PrimaryGeneratedColumn,
+} from 'typeorm';
+
 import { User } from '../../user/entities/user.entity';
 import { JobApplication } from '../../job-application/entities/job-application.entity';
 import { Assignment } from '../../assignment/entities/assignment.entity';
 import { Shift } from '../../shift/entities/shift.entity';
 import { Timesheet } from '../../timesheet/entities/timesheet.entity';
+import { CompanyGuard } from '../../company-guard/entities/company-guard.entity';
+import { JobMatch } from '../../job-match/entities/job-match.entity';
 
 @Entity('guard_profiles')
 export class GuardProfile {
@@ -40,4 +50,10 @@ export class GuardProfile {
 
   @OneToMany(() => Timesheet, (timesheet) => timesheet.guard)
   timesheets?: Timesheet[];
+
+  @OneToMany(() => CompanyGuard, (companyGuard) => companyGuard.guard)
+  companyGuards?: CompanyGuard[];
+
+  @OneToMany(() => JobMatch, (jobMatch) => jobMatch.guard)
+  jobMatches?: JobMatch[];
 }

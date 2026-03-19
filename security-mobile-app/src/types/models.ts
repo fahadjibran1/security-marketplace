@@ -9,7 +9,7 @@ export interface AuthUser {
 }
 
 export interface AuthSession {
-  token: string;
+  accessToken: string;
   user: AuthUser;
 }
 
@@ -19,15 +19,18 @@ export interface CompanyProfile {
   companyNumber: string;
   address: string;
   contactDetails: string;
+  user?: AuthUser;
 }
 
 export interface GuardProfile {
   id: number;
   fullName: string;
-  siaLicenceNumber: string;
+  siaLicenseNumber?: string;
+  siaLicenceNumber?: string;
   phone: string;
   locationSharingEnabled: boolean;
   status: string;
+  user?: AuthUser;
 }
 
 // Job = company requirement
@@ -39,6 +42,7 @@ export interface Job {
   guardsRequired: number;
   hourlyRate: number;
   status: string;
+  company?: CompanyProfile;
 }
 
 // JobApplication = guard applying to a job
@@ -49,6 +53,8 @@ export interface JobApplication {
   status: string;
   appliedAt: string;
   hiredAt?: string;
+  job?: Job;
+  guard?: GuardProfile;
 }
 
 // Assignment = hired guard linked to job
@@ -60,18 +66,25 @@ export interface Assignment {
   applicationId: number;
   status: string;
   hiredAt: string;
+  job?: Job;
+  company?: CompanyProfile;
+  guard?: GuardProfile;
+  application?: JobApplication;
 }
 
 // Shift = planned work linked to assignment
 export interface Shift {
   id: number;
-  assignmentId: number;
-  companyId: number;
-  guardId: number;
   siteName: string;
   start: string;
   end: string;
   status: string;
+  assignmentId?: number;
+  companyId?: number;
+  guardId?: number;
+  assignment?: Assignment;
+  company?: CompanyProfile;
+  guard?: GuardProfile;
 }
 
 // Timesheet = payroll record linked to shift
@@ -83,4 +96,98 @@ export interface Timesheet {
   hoursWorked: number;
   approvalStatus: string;
   createdAt: string;
+  shift?: Shift;
+  guard?: GuardProfile;
+  company?: CompanyProfile;
+}
+
+export interface UpdateTimesheetPayload {
+  hoursWorked?: number;
+  approvalStatus?: string;
+}
+
+export interface CreateJobPayload {
+  companyId: number;
+  title: string;
+  description?: string;
+  guardsRequired: number;
+  hourlyRate: number;
+  status?: string;
+}
+
+export interface CreateJobApplicationPayload {
+  jobId: number;
+  guardId: number;
+}
+
+export interface HireApplicationPayload {
+  createShift?: boolean;
+  siteName?: string;
+  start?: string;
+  end?: string;
+}
+
+export interface RegisterPayload {
+  email: string;
+  password: string;
+  role: AppRole;
+  fullName?: string;
+  siaLicenseNumber?: string;
+  phone?: string;
+  companyName?: string;
+  companyNumber?: string;
+  address?: string;
+  contactDetails?: string;
+}
+
+export interface UpdateCompanyPayload {
+  name?: string;
+  companyNumber?: string;
+  address?: string;
+  contactDetails?: string;
+}
+
+export interface UpdateGuardPayload {
+  fullName?: string;
+  siaLicenseNumber?: string;
+  phone?: string;
+  locationSharingEnabled?: boolean;
+  status?: string;
+}
+
+export interface AttendanceEvent {
+  id: number;
+  type: 'check-in' | 'check-out';
+  nfcTag?: string | null;
+  notes?: string | null;
+  occurredAt: string;
+  shift?: Shift;
+  guard?: GuardProfile;
+}
+
+export interface RecordAttendancePayload {
+  shiftId: number;
+  nfcTag?: string;
+  notes?: string;
+}
+
+export interface Incident {
+  id: number;
+  title: string;
+  notes: string;
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  locationText?: string | null;
+  status: string;
+  createdAt: string;
+  shift?: Shift | null;
+  company?: CompanyProfile;
+  guard?: GuardProfile;
+}
+
+export interface CreateIncidentPayload {
+  title: string;
+  notes: string;
+  severity: Incident['severity'];
+  locationText?: string;
+  shiftId?: number;
 }

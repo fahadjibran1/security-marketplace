@@ -10,7 +10,13 @@ import { AssignmentModule } from './assignment/assignment.module';
 import { ShiftModule } from './shift/shift.module';
 import { TimesheetModule } from './timesheet/timesheet.module';
 import { UserModule } from './user/user.module';
-
+import { JobSlotModule } from './job-slot/job-slot.module';
+import { JobMatchModule } from './job-match/job-match.module';
+import { CompanyGuardModule } from './company-guard/company-guard.module';
+import { MatchingModule } from './matching/matching.module';
+import { AttendanceModule } from './attendance/attendance.module';
+import { IncidentModule } from './incident/incident.module';
+import { HealthController } from './health.controller';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
@@ -20,6 +26,11 @@ import { UserModule } from './user/user.module';
         const databaseUrl = config.get<string>('DATABASE_URL');
         const databaseSsl =
           (config.get<string>('DATABASE_SSL', 'false') || 'false').toLowerCase() === 'true';
+        const nodeEnv = config.get<string>('NODE_ENV', 'development');
+        const synchronize =
+          (config.get<string>('DATABASE_SYNCHRONIZE') ||
+            (nodeEnv === 'production' ? 'false' : 'true')
+          ).toLowerCase() === 'true';
 
         if (databaseUrl) {
           return {
@@ -27,7 +38,7 @@ import { UserModule } from './user/user.module';
             url: databaseUrl,
             ssl: databaseSsl ? { rejectUnauthorized: false } : false,
             autoLoadEntities: true,
-            synchronize: true,
+            synchronize,
           };
         }
 
@@ -39,7 +50,7 @@ import { UserModule } from './user/user.module';
           password: config.get<string>('DATABASE_PASSWORD', 'postgres'),
           database: config.get<string>('DATABASE_NAME', 'security_mvp'),
           autoLoadEntities: true,
-          synchronize: true,
+          synchronize,
         };
       },
     }),
@@ -52,6 +63,13 @@ import { UserModule } from './user/user.module';
     AssignmentModule,
     ShiftModule,
     TimesheetModule,
+    JobSlotModule,
+    JobMatchModule,
+    CompanyGuardModule,
+    MatchingModule,
+    AttendanceModule,
+    IncidentModule,
   ],
+  controllers: [HealthController],
 })
 export class AppModule {}

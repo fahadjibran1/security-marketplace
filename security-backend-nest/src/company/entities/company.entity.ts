@@ -1,9 +1,18 @@
-import { Column, Entity, JoinColumn, OneToMany, OneToOne, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  Column,
+  Entity,
+  JoinColumn,
+  OneToMany,
+  OneToOne,
+  PrimaryGeneratedColumn,
+} from 'typeorm';
+
 import { User } from '../../user/entities/user.entity';
 import { Job } from '../../job/entities/job.entity';
 import { Assignment } from '../../assignment/entities/assignment.entity';
 import { Shift } from '../../shift/entities/shift.entity';
 import { Timesheet } from '../../timesheet/entities/timesheet.entity';
+import { CompanyGuard } from '../../company-guard/entities/company-guard.entity';
 
 @Entity('companies')
 export class Company {
@@ -37,4 +46,7 @@ export class Company {
 
   @OneToMany(() => Timesheet, (timesheet) => timesheet.company)
   timesheets?: Timesheet[];
+
+  @OneToMany(() => CompanyGuard, (companyGuard) => companyGuard.company)
+  companyGuards?: CompanyGuard[];
 }

@@ -1,7 +1,20 @@
-import { Column, Entity, ManyToOne, OneToMany, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  Column,
+  Entity,
+  ManyToOne,
+  OneToMany,
+  PrimaryGeneratedColumn,
+} from 'typeorm';
+
 import { Company } from '../../company/entities/company.entity';
 import { JobApplication } from '../../job-application/entities/job-application.entity';
 import { Assignment } from '../../assignment/entities/assignment.entity';
+import { JobSlot } from '../../job-slot/entities/job-slot.entity';
+
+export enum JobSourceType {
+  INTERNAL = 'internal',
+  MARKETPLACE = 'marketplace',
+}
 
 @Entity('jobs')
 export class Job {
@@ -26,9 +39,25 @@ export class Job {
   @Column({ default: 'open' })
   status!: string;
 
+  @Column({
+    type: 'enum',
+    enum: JobSourceType,
+    default: JobSourceType.INTERNAL,
+  })
+  sourceType!: JobSourceType;
+
+  @Column({ type: 'timestamp', nullable: true })
+  startAt?: Date;
+
+  @Column({ type: 'timestamp', nullable: true })
+  endAt?: Date;
+
   @OneToMany(() => JobApplication, (application) => application.job)
   applications?: JobApplication[];
 
   @OneToMany(() => Assignment, (assignment) => assignment.job)
   assignments?: Assignment[];
+
+  @OneToMany(() => JobSlot, (slot) => slot.job)
+  slots?: JobSlot[];
 }

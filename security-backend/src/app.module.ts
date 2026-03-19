@@ -10,6 +10,10 @@ import { AssignmentModule } from './assignment/assignment.module';
 import { ShiftModule } from './shift/shift.module';
 import { TimesheetModule } from './timesheet/timesheet.module';
 import { UserModule } from './user/user.module';
+import { JobSlotModule } from './job-slot/job-slot.module';
+import { JobMatchModule } from './job-match/job-match.module';
+import { MatchingModule } from './matching/matching.module';
+import { CompanyGuardModule } from './company-guard/company-guard.module';
 
 @Module({
   imports: [
@@ -18,15 +22,14 @@ import { UserModule } from './user/user.module';
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
         type: 'postgres',
-        host: config.get<string>('DATABASE_HOST', 'localhost'),
-        port: config.get<number>('DATABASE_PORT', 5432),
-        username: config.get<string>('DATABASE_USER', 'postgres'),
-        password: config.get<string>('DATABASE_PASSWORD', 'postgres'),
-        database: config.get<string>('DATABASE_NAME', 'security_mvp'),
+        url: config.get<string>('DATABASE_URL'),
         autoLoadEntities: true,
         synchronize: true,
-        ssl: config.get<string>('DATABASE_SSL', 'false') === 'true' ? { rejectUnauthorized: false } : false
-      })
+        ssl:
+          config.get<string>('DATABASE_SSL', 'true') === 'true'
+            ? { rejectUnauthorized: false }
+            : false,
+      }),
     }),
     UserModule,
     AuthModule,
@@ -36,7 +39,11 @@ import { UserModule } from './user/user.module';
     JobApplicationModule,
     AssignmentModule,
     ShiftModule,
-    TimesheetModule
-  ]
+    TimesheetModule,
+    CompanyGuardModule,
+    JobSlotModule,
+    JobMatchModule,
+    MatchingModule,
+  ],
 })
 export class AppModule {}

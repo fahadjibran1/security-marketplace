@@ -5,6 +5,9 @@ import { AppModule } from './app.module';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  const port = Number(process.env.PORT || 3000);
+  const corsOrigin = process.env.CORS_ORIGIN || '*';
+  const enableSwagger = (process.env.ENABLE_SWAGGER || 'true').toLowerCase() === 'true';
 
   app.useGlobalPipes(
     new ValidationPipe({
@@ -14,21 +17,30 @@ async function bootstrap() {
     }),
   );
 
-  const config = new DocumentBuilder()
-    .setTitle('Security Marketplace API')
-    .setDescription(
-      'Backend API for companies, guards, jobs, assignments, shifts, and timesheets',
-    )
-    .setVersion('1.0')
-    .addBearerAuth()
-    .build();
+  app.enableCors({
+    origin: corsOrigin === '*' ? true : corsOrigin.split(',').map((origin) => origin.trim()),
+    credentials: true,
+  });
 
-  const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api-docs', app, document);
+  if (enableSwagger) {
+    const config = new DocumentBuilder()
+      .setTitle('Security Marketplace API')
+      .setDescription(
+        'Backend API for companies, guards, jobs, assignments, shifts, timesheets, attendance, and incidents',
+      )
+      .setVersion('1.0')
+      .addBearerAuth()
+      .build();
 
-  await app.listen(process.env.PORT || 3000);
-  console.log(`Security MVP backend running on http://localhost:3000`);
-  console.log(`Swagger docs available at http://localhost:3000/api-docs`);
+    const document = SwaggerModule.createDocument(app, config);
+    SwaggerModule.setup('api-docs', app, document);
+  }
+
+  await app.listen(port);
+  console.log(`Security MVP backend running on http://localhost:${port}`);
+  if (enableSwagger) {
+    console.log(`Swagger docs available at http://localhost:${port}/api-docs`);
+  }
 }
 
 bootstrap();

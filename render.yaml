@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: security-marketplace-api
+    runtime: node
+    rootDir: security-backend-nest
+    plan: starter
+    autoDeploy: true
+    buildCommand: npm ci && npm run build
+    startCommand: npm run start:prod
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: ENABLE_SWAGGER
+        value: "false"
+      - key: DATABASE_SYNCHRONIZE
+        value: "false"
+      - key: DATABASE_SSL
+        value: "true"
+      - key: CORS_ORIGIN
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true

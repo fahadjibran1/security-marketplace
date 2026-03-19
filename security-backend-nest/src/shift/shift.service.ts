@@ -9,18 +9,28 @@ import { TimesheetService } from '../timesheet/timesheet.service';
 @Injectable()
 export class ShiftService {
   constructor(
-    @InjectRepository(Shift) private readonly shiftRepo: Repository<Shift>,
+    @InjectRepository(Shift)
+    private readonly shiftRepo: Repository<Shift>,
     private readonly assignmentService: AssignmentService,
-    private readonly timesheetService: TimesheetService
+    private readonly timesheetService: TimesheetService,
   ) {}
 
-  findAll(): Promise<Shift[]> {
-    return this.shiftRepo.find();
+  async findAll(): Promise<Shift[]> {
+    return this.shiftRepo.find({
+      relations: ['assignment', 'company', 'guard'],
+    });
   }
 
   async findOne(id: number): Promise<Shift> {
-    const shift = await this.shiftRepo.findOne({ where: { id } });
-    if (!shift) throw new NotFoundException('Shift not found');
+    const shift = await this.shiftRepo.findOne({
+      where: { id },
+      relations: ['assignment', 'company', 'guard'],
+    });
+
+    if (!shift) {
+      throw new NotFoundException(`Shift with id ${id} not found`);
+    }
+
     return shift;
   }
 
@@ -34,12 +44,16 @@ export class ShiftService {
       siteName: dto.siteName,
       start: new Date(dto.start),
       end: new Date(dto.end),
-      status: dto.status ?? 'scheduled'
+      status: dto.status ?? 'scheduled',
     });
 
     const savedShift = await this.shiftRepo.save(shift);
     const timesheet = await this.timesheetService.createForShift(savedShift);
 
     return { shift: savedShift, timesheet };
+  }
+
+  save(shift: Shift): Promise<Shift> {
+    return this.shiftRepo.save(shift);
   }
 }

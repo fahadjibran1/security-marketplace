@@ -1,4 +1,11 @@
-import { Column, Entity, ManyToOne, OneToMany, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  Column,
+  Entity,
+  ManyToOne,
+  OneToMany,
+  PrimaryGeneratedColumn,
+} from 'typeorm';
+
 import { Assignment } from '../../assignment/entities/assignment.entity';
 import { Company } from '../../company/entities/company.entity';
 import { GuardProfile } from '../../guard-profile/entities/guard-profile.entity';
