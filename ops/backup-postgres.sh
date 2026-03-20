@@ -4,7 +4,7 @@ set -euo pipefail
 APP_ENV_FILE="${APP_ENV_FILE:-/root/security-marketplace/security-backend-nest/.env}"
 BACKUP_DIR="${BACKUP_DIR:-/var/backups/security-marketplace}"
 RETENTION_DAYS="${RETENTION_DAYS:-14}"
-IMAGE="${POSTGRES_TOOLS_IMAGE:-postgres:16-alpine}"
+IMAGE="${POSTGRES_TOOLS_IMAGE:-postgres:17-alpine}"
 
 if [[ ! -f "$APP_ENV_FILE" ]]; then
   echo "Missing env file: $APP_ENV_FILE" >&2

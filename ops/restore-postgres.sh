@@ -2,7 +2,7 @@
 set -euo pipefail
 
 APP_ENV_FILE="${APP_ENV_FILE:-/root/security-marketplace/security-backend-nest/.env}"
-IMAGE="${POSTGRES_TOOLS_IMAGE:-postgres:16-alpine}"
+IMAGE="${POSTGRES_TOOLS_IMAGE:-postgres:17-alpine}"
 BACKUP_FILE="${1:-}"
 
 if [[ -z "$BACKUP_FILE" ]]; then
