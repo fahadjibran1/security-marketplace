@@ -40,12 +40,67 @@ npm run start:prod
 
 ### Production env recommendations
 - `NODE_ENV=production`
-- `DATABASE_SYNCHRONIZE=false`
+- `DATABASE_SYNCHRONIZE=false` after the baseline migration has been applied
 - `ENABLE_SWAGGER=false` unless you explicitly want public docs
 - `CORS_ORIGIN` set to only your app/dev origins
 - strong `JWT_SECRET`
 - hosted Postgres with SSL if required by provider
 - Render health check path: `/health`
+
+### Migrations
+This repo now includes a TypeORM data source and migration scripts in
+[security-backend-nest/src/database](/C:/Users/Admin/security-marketplace/security-backend-nest/src/database).
+
+Run migrations from [security-backend-nest](/C:/Users/Admin/security-marketplace/security-backend-nest):
+
+```bash
+npm ci
+npm run migration:run
+```
+
+Recommended production sequence:
+1. Keep `DATABASE_SYNCHRONIZE=true` only long enough to bootstrap an existing pilot database.
+2. Run `npm run migration:run`.
+3. Set `DATABASE_SYNCHRONIZE=false`.
+4. Restart the backend.
+
+### Basic Postgres backups
+Backup scripts live in [ops](/C:/Users/Admin/security-marketplace/ops):
+- [backup-postgres.sh](/C:/Users/Admin/security-marketplace/ops/backup-postgres.sh)
+- [restore-postgres.sh](/C:/Users/Admin/security-marketplace/ops/restore-postgres.sh)
+- [install-backup-cron.sh](/C:/Users/Admin/security-marketplace/ops/install-backup-cron.sh)
+
+Typical Hetzner setup:
+
+```bash
+sudo cp ops/backup-postgres.sh /usr/local/bin/backup-postgres.sh
+sudo cp ops/restore-postgres.sh /usr/local/bin/restore-postgres.sh
+sudo cp ops/install-backup-cron.sh /usr/local/bin/install-backup-cron.sh
+sudo chmod +x /usr/local/bin/backup-postgres.sh /usr/local/bin/restore-postgres.sh /usr/local/bin/install-backup-cron.sh
+sudo /usr/local/bin/install-backup-cron.sh
+```
+
+Backups default to:
+
+```text
+/var/backups/security-marketplace
+```
+
+### Static download page
+A simple pilot download site is included in
+[download-site](/C:/Users/Admin/security-marketplace/download-site).
+
+Serve it from:
+
+```text
+download.observantsecurity.co.uk
+```
+
+and place the latest APK at:
+
+```text
+/var/www/download.observantsecurity.co.uk/app/observant-security-pilot.apk
+```
 
 ## 2. Mobile app deployment
 
