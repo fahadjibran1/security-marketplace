@@ -22,4 +22,8 @@ export class CreateJobDto {
   @IsOptional()
   @IsString()
   status?: string;
+
+  @IsOptional()
+  @IsInt()
+  siteId?: number;
 }

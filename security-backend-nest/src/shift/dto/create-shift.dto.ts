@@ -4,8 +4,13 @@ export class CreateShiftDto {
   @IsInt()
   assignmentId!: number;
 
+  @IsOptional()
+  @IsInt()
+  siteId?: number;
+
+  @IsOptional()
   @IsString()
-  siteName!: string;
+  siteName?: string;
 
   @IsDateString()
   start!: string;

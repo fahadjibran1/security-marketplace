@@ -51,7 +51,8 @@ export class TimesheetService {
       company: shift.company,
       guard: shift.guard,
       hoursWorked: 0,
-      approvalStatus: 'pending'
+      approvalStatus: 'draft',
+      submittedAt: null,
     });
 
     return this.timesheetRepo.save(timesheet);
@@ -61,6 +62,26 @@ export class TimesheetService {
     const timesheet = await this.findOne(id);
     if (dto.hoursWorked !== undefined) timesheet.hoursWorked = dto.hoursWorked;
     if (dto.approvalStatus !== undefined) timesheet.approvalStatus = dto.approvalStatus;
+    if (dto.submittedAt !== undefined) {
+      timesheet.submittedAt = dto.submittedAt ? new Date(dto.submittedAt) : null;
+    }
+    return this.timesheetRepo.save(timesheet);
+  }
+
+  async updateForCompany(userId: number, id: number, dto: UpdateTimesheetDto): Promise<Timesheet> {
+    const company = await this.companyService.findByUserId(userId);
+    if (!company) throw new NotFoundException('Company not found');
+
+    const timesheet = await this.timesheetRepo.findOne({
+      where: { id, company: { id: company.id } },
+    });
+    if (!timesheet) throw new NotFoundException('Timesheet not found');
+
+    if (dto.hoursWorked !== undefined) timesheet.hoursWorked = dto.hoursWorked;
+    if (dto.approvalStatus !== undefined) timesheet.approvalStatus = dto.approvalStatus;
+    if (dto.submittedAt !== undefined) {
+      timesheet.submittedAt = dto.submittedAt ? new Date(dto.submittedAt) : null;
+    }
     return this.timesheetRepo.save(timesheet);
   }
 
@@ -69,6 +90,24 @@ export class TimesheetService {
     if (!timesheet) throw new NotFoundException('Timesheet not found');
 
     timesheet.hoursWorked = hoursWorked;
+    return this.timesheetRepo.save(timesheet);
+  }
+
+  async submitMine(userId: number, id: number, dto: UpdateTimesheetDto): Promise<Timesheet> {
+    const guard = await this.guardProfileService.findByUserId(userId);
+    if (!guard) throw new NotFoundException('Guard profile not found');
+
+    const timesheet = await this.timesheetRepo.findOne({
+      where: { id, guard: { id: guard.id } },
+    });
+    if (!timesheet) throw new NotFoundException('Timesheet not found');
+
+    if (dto.hoursWorked !== undefined) {
+      timesheet.hoursWorked = dto.hoursWorked;
+    }
+
+    timesheet.approvalStatus = 'submitted';
+    timesheet.submittedAt = new Date();
     return this.timesheetRepo.save(timesheet);
   }
 }

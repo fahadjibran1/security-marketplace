@@ -33,7 +33,33 @@ export class TimesheetController {
 
   @Patch(':id')
   @Roles(UserRole.ADMIN, UserRole.COMPANY)
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateTimesheetDto) {
-    return this.timesheetService.update(id, dto);
+  update(
+    @CurrentUser() user: JwtPayload,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateTimesheetDto,
+  ) {
+    if (user.role === UserRole.ADMIN) {
+      return this.timesheetService.update(id, dto);
+    }
+
+    return this.timesheetService.updateForCompany(user.sub, id, dto);
+  }
+
+  @Patch(':id/submit')
+  @Roles(UserRole.GUARD, UserRole.ADMIN)
+  submitMine(
+    @CurrentUser() user: JwtPayload,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateTimesheetDto,
+  ) {
+    if (user.role === UserRole.ADMIN) {
+      return this.timesheetService.update(id, {
+        ...dto,
+        approvalStatus: 'submitted',
+        submittedAt: new Date().toISOString(),
+      });
+    }
+
+    return this.timesheetService.submitMine(user.sub, id, dto);
   }
 }

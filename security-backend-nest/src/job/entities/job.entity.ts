@@ -10,6 +10,7 @@ import { Company } from '../../company/entities/company.entity';
 import { JobApplication } from '../../job-application/entities/job-application.entity';
 import { Assignment } from '../../assignment/entities/assignment.entity';
 import { JobSlot } from '../../job-slot/entities/job-slot.entity';
+import { Site } from '../../site/entities/site.entity';
 
 export enum JobSourceType {
   INTERNAL = 'internal',
@@ -23,6 +24,9 @@ export class Job {
 
   @ManyToOne(() => Company, (company) => company.jobs, { eager: true })
   company!: Company;
+
+  @ManyToOne(() => Site, (site) => site.jobs, { eager: true, nullable: true })
+  site?: Site | null;
 
   @Column()
   title!: string;

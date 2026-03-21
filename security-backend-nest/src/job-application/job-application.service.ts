@@ -64,12 +64,13 @@ export class JobApplicationService {
 
     let shiftResult: unknown = null;
     if (dto.createShift) {
-      if (!dto.siteName || !dto.start || !dto.end) {
-        throw new BadRequestException('siteName, start, end are required when createShift=true');
+      if ((!dto.siteName && !dto.siteId) || !dto.start || !dto.end) {
+        throw new BadRequestException('siteId or siteName, start, end are required when createShift=true');
       }
 
       shiftResult = await this.shiftService.create({
         assignmentId: assignment.id,
+        siteId: dto.siteId,
         siteName: dto.siteName,
         start: dto.start,
         end: dto.end

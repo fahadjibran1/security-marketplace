@@ -1,3 +1,4 @@
+import Constants from 'expo-constants';
 import {
   AttendanceEvent,
   Assignment,
@@ -12,15 +13,21 @@ import {
   Job,
   JobApplication,
   RegisterPayload,
+  Site,
   Shift,
   Timesheet,
   UpdateCompanyPayload,
   UpdateGuardPayload,
+  UpdateSitePayload,
   UpdateTimesheetPayload,
   RecordAttendancePayload,
+  CreateSitePayload,
 } from '../types/models';
 
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000';
+const API_BASE_URL =
+  process.env.EXPO_PUBLIC_API_URL ||
+  (Constants.expoConfig?.extra?.apiBaseUrl as string | undefined) ||
+  'http://localhost:3000';
 let accessToken: string | null = null;
 
 function normalizeSession(session: AuthSession | { accessToken: string; user: AuthSession['user'] }): AuthSession {
@@ -100,6 +107,24 @@ export function listGuards() {
   return request<GuardProfile[]>('/guards');
 }
 
+export function listSites() {
+  return request<Site[]>('/sites');
+}
+
+export function createSite(payload: CreateSitePayload) {
+  return request<Site>('/sites', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateSite(id: number, payload: UpdateSitePayload) {
+  return request<Site>(`/sites/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
 export function getMyGuard() {
   return request<GuardProfile>('/guards/me');
 }
@@ -141,6 +166,13 @@ export function listMyTimesheets() {
 
 export function updateTimesheet(id: number, payload: UpdateTimesheetPayload) {
   return request<Timesheet>(`/timesheets/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function submitTimesheet(id: number, payload: UpdateTimesheetPayload = {}) {
+  return request<Timesheet>(`/timesheets/${id}/submit`, {
     method: 'PATCH',
     body: JSON.stringify(payload),
   });

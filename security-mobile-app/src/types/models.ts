@@ -33,16 +33,30 @@ export interface GuardProfile {
   user?: AuthUser;
 }
 
+export interface Site {
+  id: number;
+  companyId?: number;
+  name: string;
+  clientName?: string;
+  address: string;
+  contactDetails?: string;
+  status: string;
+  welfareCheckIntervalMinutes: number;
+  company?: CompanyProfile;
+}
+
 // Job = company requirement
 export interface Job {
   id: number;
   companyId: number;
+  siteId?: number;
   title: string;
   description?: string;
   guardsRequired: number;
   hourlyRate: number;
   status: string;
   company?: CompanyProfile;
+  site?: Site | null;
 }
 
 // JobApplication = guard applying to a job
@@ -75,6 +89,7 @@ export interface Assignment {
 // Shift = planned work linked to assignment
 export interface Shift {
   id: number;
+  siteId?: number;
   siteName: string;
   start: string;
   end: string;
@@ -85,6 +100,7 @@ export interface Shift {
   assignment?: Assignment;
   company?: CompanyProfile;
   guard?: GuardProfile;
+  site?: Site | null;
 }
 
 // Timesheet = payroll record linked to shift
@@ -96,6 +112,7 @@ export interface Timesheet {
   hoursWorked: number;
   approvalStatus: string;
   createdAt: string;
+  submittedAt?: string | null;
   shift?: Shift;
   guard?: GuardProfile;
   company?: CompanyProfile;
@@ -104,10 +121,12 @@ export interface Timesheet {
 export interface UpdateTimesheetPayload {
   hoursWorked?: number;
   approvalStatus?: string;
+  submittedAt?: string | null;
 }
 
 export interface CreateJobPayload {
   companyId: number;
+  siteId?: number;
   title: string;
   description?: string;
   guardsRequired: number;
@@ -122,10 +141,22 @@ export interface CreateJobApplicationPayload {
 
 export interface HireApplicationPayload {
   createShift?: boolean;
+  siteId?: number;
   siteName?: string;
   start?: string;
   end?: string;
 }
+
+export interface CreateSitePayload {
+  name: string;
+  clientName?: string;
+  address: string;
+  contactDetails?: string;
+  status?: string;
+  welfareCheckIntervalMinutes?: number;
+}
+
+export interface UpdateSitePayload extends Partial<CreateSitePayload> {}
 
 export interface RegisterPayload {
   email: string;

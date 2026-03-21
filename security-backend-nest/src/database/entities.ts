@@ -9,6 +9,7 @@ import { JobMatch } from '../job-match/entities/job-match.entity';
 import { JobSlot } from '../job-slot/entities/job-slot.entity';
 import { Job } from '../job/entities/job.entity';
 import { Shift } from '../shift/entities/shift.entity';
+import { Site } from '../site/entities/site.entity';
 import { Timesheet } from '../timesheet/entities/timesheet.entity';
 import { User } from '../user/entities/user.entity';
 
@@ -24,6 +25,7 @@ export const appEntities = [
   JobMatch,
   JobSlot,
   Shift,
+  Site,
   Timesheet,
   User,
 ];

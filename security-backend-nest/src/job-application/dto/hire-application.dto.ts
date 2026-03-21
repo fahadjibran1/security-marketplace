@@ -1,4 +1,4 @@
-import { IsBoolean, IsDateString, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsDateString, IsInt, IsOptional, IsString } from 'class-validator';
 
 export class HireApplicationDto {
   @IsOptional()
@@ -8,6 +8,10 @@ export class HireApplicationDto {
   @IsOptional()
   @IsString()
   siteName?: string;
+
+  @IsOptional()
+  @IsInt()
+  siteId?: number;
 
   @IsOptional()
   @IsDateString()

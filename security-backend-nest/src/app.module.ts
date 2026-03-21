@@ -16,6 +16,7 @@ import { CompanyGuardModule } from './company-guard/company-guard.module';
 import { MatchingModule } from './matching/matching.module';
 import { AttendanceModule } from './attendance/attendance.module';
 import { IncidentModule } from './incident/incident.module';
+import { SiteModule } from './site/site.module';
 import { HealthController } from './health.controller';
 import { buildNestTypeOrmOptions } from './database/typeorm.config';
 @Module({
@@ -51,6 +52,7 @@ import { buildNestTypeOrmOptions } from './database/typeorm.config';
     MatchingModule,
     AttendanceModule,
     IncidentModule,
+    SiteModule,
   ],
   controllers: [HealthController],
 })

@@ -8,13 +8,15 @@ import {
   createJobApplication,
   getMyGuard,
   listJobApplications,
+  listMyTimesheets,
   listMyIncidents,
   listJobs,
   listMyAttendance,
   listShifts,
+  submitTimesheet,
   updateMyGuard,
 } from '../services/api';
-import { AttendanceEvent, AuthUser, Incident, Job, JobApplication, Shift } from '../types/models';
+import { AttendanceEvent, AuthUser, Incident, Job, JobApplication, Shift, Timesheet } from '../types/models';
 
 interface GuardDashboardScreenProps {
   user: AuthUser;
@@ -29,6 +31,7 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
   const [applications, setApplications] = useState<JobApplication[]>([]);
   const [attendance, setAttendance] = useState<AttendanceEvent[]>([]);
   const [incidents, setIncidents] = useState<Incident[]>([]);
+  const [timesheets, setTimesheets] = useState<Timesheet[]>([]);
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
   const [savingProfile, setSavingProfile] = useState(false);
@@ -37,18 +40,19 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
   const [incidentNotes, setIncidentNotes] = useState('');
   const [incidentSeverity, setIncidentSeverity] = useState<Incident['severity']>('medium');
   const [incidentLocation, setIncidentLocation] = useState('');
-  const [incidentShiftId, setIncidentShiftId] = useState('');
   const [submittingIncident, setSubmittingIncident] = useState(false);
+  const [submittingTimesheetId, setSubmittingTimesheetId] = useState<number | null>(null);
 
   async function loadData() {
     try {
-      const [myGuard, shiftRows, jobRows, applicationRows, attendanceRows, incidentRows] = await Promise.all([
+      const [myGuard, shiftRows, jobRows, applicationRows, attendanceRows, incidentRows, timesheetRows] = await Promise.all([
         getMyGuard(),
         listShifts(),
         listJobs(),
         listJobApplications(),
         listMyAttendance(),
         listMyIncidents(),
+        listMyTimesheets(),
       ]);
 
       const ownShifts = shiftRows.filter((shift) => (shift.guard?.id ?? shift.guardId) === user.guardId);
@@ -65,6 +69,7 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
       setApplications(ownApplications);
       setAttendance(attendanceRows);
       setIncidents(incidentRows);
+      setTimesheets(timesheetRows);
     } catch (error) {
       Alert.alert('Load failed', error instanceof Error ? error.message : 'Unknown error');
     }
@@ -121,13 +126,12 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
         notes: incidentNotes,
         severity: incidentSeverity,
         locationText: incidentLocation || undefined,
-        shiftId: incidentShiftId ? Number(incidentShiftId) : undefined,
+        shiftId: operationsShift?.id,
       });
       setIncidentTitle('');
       setIncidentNotes('');
       setIncidentSeverity('medium');
       setIncidentLocation('');
-      setIncidentShiftId('');
       await loadData();
       Alert.alert('Incident submitted', 'Your incident report has been recorded.');
     } catch (error) {
@@ -156,48 +160,53 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
     }
   }
 
+  async function handleSubmitTimesheet(timesheet: Timesheet) {
+    try {
+      setSubmittingTimesheetId(timesheet.id);
+      await submitTimesheet(timesheet.id, { hoursWorked: timesheet.hoursWorked });
+      await loadData();
+      Alert.alert('Timesheet submitted', 'Your completed hours have been submitted to the company for approval.');
+    } catch (error) {
+      Alert.alert('Timesheet failed', error instanceof Error ? error.message : 'Unknown error');
+    } finally {
+      setSubmittingTimesheetId(null);
+    }
+  }
+
   const appliedJobIds = new Set(applications.map((application) => application.job?.id ?? application.jobId));
   const availableJobs = jobs.filter((job) => !appliedJobIds.has(job.id));
+  const activeShift = shifts.find((shift) => shift.status === 'in_progress') || null;
+  const upcomingShift = shifts.find((shift) => shift.status === 'scheduled') || null;
+  const operationsShift = activeShift || upcomingShift;
+  const completedTimesheets = timesheets.filter((timesheet) => timesheet.shift?.status === 'completed');
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <Text style={styles.title}>Guard Dashboard</Text>
-      <Text style={styles.subtitle}>Run patrol operations and stay safety-compliant.</Text>
+      <Text style={styles.subtitle}>Apply for jobs, manage assigned shifts, and run live site operations.</Text>
 
       <FeatureCard
-        title="Profile + SIA Recruitment"
-        subtitle="Complete onboarding details and keep your operational profile up to date."
+        title="Profile + SIA"
+        subtitle="Complete onboarding details and keep your security profile up to date."
       >
         <TextInput style={styles.input} placeholder="Full name" value={fullName} onChangeText={setFullName} />
         <TextInput style={styles.input} placeholder="Phone number" value={phone} onChangeText={setPhone} />
-        <Pressable style={styles.button} onPress={handleSaveProfile} disabled={savingProfile}>
-          <Text style={styles.buttonText}>{savingProfile ? 'Saving...' : 'Save Profile'}</Text>
-        </Pressable>
-      </FeatureCard>
-
-      <FeatureCard
-        title="SIA Licence Verification"
-        subtitle="Enter your SIA licence number for verification checks."
-      >
         <TextInput
           style={styles.input}
           placeholder="SIA licence number"
           value={siaLicence}
           onChangeText={setSiaLicence}
         />
+        <View style={styles.switchRow}>
+          <Text style={styles.helperText}>Share live location on assigned shifts</Text>
+          <Switch value={locationSharing} onValueChange={setLocationSharing} />
+        </View>
         <Pressable style={styles.button} onPress={handleSaveProfile} disabled={savingProfile}>
-          <Text style={styles.buttonText}>Save SIA Details</Text>
+          <Text style={styles.buttonText}>{savingProfile ? 'Saving...' : 'Save Profile'}</Text>
         </Pressable>
       </FeatureCard>
 
-      <FeatureCard title="Location Sharing" subtitle="Share your live location with recruited companies.">
-        <Switch value={locationSharing} onValueChange={setLocationSharing} />
-        <Pressable style={styles.button} onPress={handleSaveProfile} disabled={savingProfile}>
-          <Text style={styles.buttonText}>Save Sharing Preference</Text>
-        </Pressable>
-      </FeatureCard>
-
-      <FeatureCard title="Apply for Open Jobs" subtitle={`Open jobs available: ${availableJobs.length}`}>
+      <FeatureCard title="Job Marketplace" subtitle={`Open jobs available: ${availableJobs.length}`}>
         {availableJobs.length === 0 ? (
           <Text style={styles.helperText}>You have applied to all currently open jobs.</Text>
         ) : (
@@ -216,7 +225,7 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
         )}
       </FeatureCard>
 
-      <FeatureCard title="My Applications" subtitle={`Submitted applications: ${applications.length}`}>
+      <FeatureCard title="My Applications" subtitle={`Submitted recruitment applications: ${applications.length}`}>
         {applications.length === 0 ? (
           <Text style={styles.helperText}>You have not applied for any jobs yet.</Text>
         ) : (
@@ -230,44 +239,108 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
       </FeatureCard>
 
       <FeatureCard
-        title="NFC Patrol Checkpoints"
-        subtitle={`Today's scheduled patrol shifts: ${shifts.length}`}
+        title="Assigned Shift Operations"
+        subtitle={
+          operationsShift
+            ? `${operationsShift.siteName} | ${operationsShift.status}`
+            : 'All live shift actions should sit under the assigned shift.'
+        }
       >
-        {shifts.length === 0 ? (
-          <Text style={styles.helperText}>No active shifts available for attendance actions.</Text>
+        {!operationsShift ? (
+          <Text style={styles.helperText}>No assigned shift is currently available for live operations.</Text>
         ) : (
-          shifts.map((shift) => (
-            <View key={shift.id} style={styles.listItem}>
-              <Text style={styles.listTitle}>{shift.siteName}</Text>
-              <Text style={styles.helperText}>Status: {shift.status}</Text>
-              {shift.status === 'scheduled' ? (
-                <Pressable
-                  style={styles.button}
-                  onPress={() => handleCheckIn(shift.id)}
-                  disabled={attendanceBusyShiftId === shift.id}
-                >
-                  <Text style={styles.buttonText}>
-                    {attendanceBusyShiftId === shift.id ? 'Checking in...' : 'Check In'}
-                  </Text>
-                </Pressable>
-              ) : null}
-              {shift.status === 'in_progress' ? (
-                <Pressable
-                  style={styles.button}
-                  onPress={() => handleCheckOut(shift.id)}
-                  disabled={attendanceBusyShiftId === shift.id}
-                >
-                  <Text style={styles.buttonText}>
-                    {attendanceBusyShiftId === shift.id ? 'Checking out...' : 'Check Out'}
-                  </Text>
-                </Pressable>
-              ) : null}
+          <View style={styles.listItem}>
+            <Text style={styles.listTitle}>{operationsShift.siteName}</Text>
+            <Text style={styles.helperText}>
+              {new Date(operationsShift.start).toLocaleString()} to {new Date(operationsShift.end).toLocaleString()}
+            </Text>
+            <Text style={styles.helperText}>
+              Employer: {operationsShift.company?.name || `#${operationsShift.company?.id ?? operationsShift.companyId ?? 'N/A'}`}
+            </Text>
+            <Text style={styles.helperText}>
+              Shift actions here should contain check-in, check calls, patrols, daily logs, incidents, and location sharing.
+            </Text>
+            {operationsShift.status === 'scheduled' ? (
+              <Pressable
+                style={styles.button}
+                onPress={() => handleCheckIn(operationsShift.id)}
+                disabled={attendanceBusyShiftId === operationsShift.id}
+              >
+                <Text style={styles.buttonText}>
+                  {attendanceBusyShiftId === operationsShift.id ? 'Checking in...' : 'Check In'}
+                </Text>
+              </Pressable>
+            ) : null}
+            {operationsShift.status === 'in_progress' ? (
+              <Pressable
+                style={styles.button}
+                onPress={() => handleCheckOut(operationsShift.id)}
+                disabled={attendanceBusyShiftId === operationsShift.id}
+              >
+                <Text style={styles.buttonText}>
+                  {attendanceBusyShiftId === operationsShift.id ? 'Checking out...' : 'Check Out'}
+                </Text>
+              </Pressable>
+            ) : null}
+
+            <TextInput
+              style={[styles.input, styles.logInput]}
+              placeholder="Daily log book notes for this shift..."
+              multiline
+              value={dailyLog}
+              onChangeText={setDailyLog}
+            />
+
+            <TextInput style={styles.input} placeholder="Incident title" value={incidentTitle} onChangeText={setIncidentTitle} />
+            <TextInput
+              style={styles.input}
+              placeholder="Severity: low, medium, high, critical"
+              value={incidentSeverity}
+              onChangeText={(value: string) => setIncidentSeverity((value as Incident['severity']) || 'medium')}
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="Location details"
+              value={incidentLocation}
+              onChangeText={setIncidentLocation}
+            />
+            <TextInput
+              style={[styles.input, styles.logInput]}
+              placeholder="Describe what happened..."
+              multiline
+              value={incidentNotes}
+              onChangeText={setIncidentNotes}
+            />
+            <Pressable style={styles.button} onPress={handleCreateIncident} disabled={submittingIncident}>
+              <Text style={styles.buttonText}>{submittingIncident ? 'Submitting...' : 'Submit Incident'}</Text>
+            </Pressable>
+
+            <View style={styles.actionRow}>
+              <Pressable
+                style={styles.secondaryButton}
+                onPress={() => Alert.alert('Welfare Check', 'Hourly welfare check call recorded for this shift.')}
+              >
+                <Text style={styles.secondaryButtonText}>Hourly Check Call</Text>
+              </Pressable>
+              <Pressable
+                style={styles.secondaryButton}
+                onPress={() => Alert.alert('Patrol', 'Patrol checkpoint flow should be linked to this shift.')}
+              >
+                <Text style={styles.secondaryButtonText}>Start Patrol</Text>
+              </Pressable>
             </View>
-          ))
+
+            <Pressable
+              style={styles.emergencyButton}
+              onPress={() => Alert.alert('Panic Alert Triggered', 'Emergency alert has been sent.')}
+            >
+              <Text style={styles.buttonText}>Activate Panic Alert</Text>
+            </Pressable>
+          </View>
         )}
       </FeatureCard>
 
-      <FeatureCard title="Upcoming Shifts" subtitle={`Assigned shifts: ${shifts.length}`}>
+      <FeatureCard title="My Shifts" subtitle={`Assigned shifts: ${shifts.length}`}>
         {shifts.length === 0 ? (
           <Text style={styles.helperText}>You do not have any assigned shifts yet.</Text>
         ) : (
@@ -285,7 +358,40 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
         )}
       </FeatureCard>
 
-      <FeatureCard title="Attendance History" subtitle={`Recorded events: ${attendance.length}`}>
+      <FeatureCard title="My Timesheets" subtitle={`Completed/worked jobs: ${completedTimesheets.length}`}>
+        {timesheets.length === 0 ? (
+          <Text style={styles.helperText}>Timesheets will appear as you complete assigned shifts.</Text>
+        ) : (
+          timesheets.map((timesheet) => (
+            <View key={timesheet.id} style={styles.listItem}>
+              <Text style={styles.listTitle}>
+                {timesheet.shift?.siteName || `Shift #${timesheet.shift?.id ?? timesheet.shiftId}`}
+              </Text>
+              <Text style={styles.helperText}>
+                Hours: {timesheet.hoursWorked} | Status: {timesheet.approvalStatus}
+              </Text>
+              {timesheet.shift ? (
+                <Text style={styles.helperText}>
+                  {new Date(timesheet.shift.start).toLocaleString()} to {new Date(timesheet.shift.end).toLocaleString()}
+                </Text>
+              ) : null}
+              {timesheet.approvalStatus === 'draft' ? (
+                <Pressable
+                  style={styles.button}
+                  onPress={() => handleSubmitTimesheet(timesheet)}
+                  disabled={submittingTimesheetId === timesheet.id}
+                >
+                  <Text style={styles.buttonText}>
+                    {submittingTimesheetId === timesheet.id ? 'Submitting...' : 'Submit Timesheet'}
+                  </Text>
+                </Pressable>
+              ) : null}
+            </View>
+          ))
+        )}
+      </FeatureCard>
+
+      <FeatureCard title="Attendance History" subtitle={`Recorded attendance events: ${attendance.length}`}>
         {attendance.length === 0 ? (
           <Text style={styles.helperText}>No attendance events recorded yet.</Text>
         ) : (
@@ -300,71 +406,21 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
         )}
       </FeatureCard>
 
-      <FeatureCard title="Incident Reporting" subtitle={`Submitted incidents: ${incidents.length}`}>
-        <TextInput style={styles.input} placeholder="Incident title" value={incidentTitle} onChangeText={setIncidentTitle} />
-        <TextInput
-          style={styles.input}
-          placeholder="Severity: low, medium, high, critical"
-          value={incidentSeverity}
-          onChangeText={(value: string) => setIncidentSeverity((value as Incident['severity']) || 'medium')}
-        />
-        <TextInput
-          style={styles.input}
-          placeholder="Linked shift ID"
-          keyboardType="number-pad"
-          value={incidentShiftId}
-          onChangeText={setIncidentShiftId}
-        />
-        <TextInput
-          style={styles.input}
-          placeholder="Location details"
-          value={incidentLocation}
-          onChangeText={setIncidentLocation}
-        />
-        <TextInput
-          style={[styles.input, styles.logInput]}
-          placeholder="Describe what happened..."
-          multiline
-          value={incidentNotes}
-          onChangeText={setIncidentNotes}
-        />
-        <Pressable style={styles.button} onPress={handleCreateIncident} disabled={submittingIncident}>
-          <Text style={styles.buttonText}>{submittingIncident ? 'Submitting...' : 'Submit Incident'}</Text>
-        </Pressable>
-        {incidents.slice(0, 5).map((incident) => (
-          <View key={incident.id} style={styles.listItem}>
-            <Text style={styles.listTitle}>{incident.title}</Text>
-            <Text style={styles.helperText}>
-              {incident.severity} | {incident.status} | {new Date(incident.createdAt).toLocaleString()}
-            </Text>
-            <Text style={styles.helperText}>{incident.notes}</Text>
-          </View>
-        ))}
+      <FeatureCard title="Incident History" subtitle={`Submitted incidents: ${incidents.length}`}>
+        {incidents.length === 0 ? (
+          <Text style={styles.helperText}>No incident reports submitted yet.</Text>
+        ) : (
+          incidents.slice(0, 5).map((incident) => (
+            <View key={incident.id} style={styles.listItem}>
+              <Text style={styles.listTitle}>{incident.title}</Text>
+              <Text style={styles.helperText}>
+                {incident.severity} | {incident.status} | {new Date(incident.createdAt).toLocaleString()}
+              </Text>
+              <Text style={styles.helperText}>{incident.notes}</Text>
+            </View>
+          ))
+        )}
       </FeatureCard>
-
-      <FeatureCard title="Daily Log Book" subtitle="Maintain shift-by-shift activity logs.">
-        <TextInput
-          style={[styles.input, styles.logInput]}
-          placeholder="Write your daily log notes..."
-          multiline
-          value={dailyLog}
-          onChangeText={setDailyLog}
-        />
-      </FeatureCard>
-
-      <FeatureCard
-        title="Automated Safety Check Calls"
-        subtitle="Receive timed check-ins to confirm your status on shift."
-        ctaLabel="Confirm Safe"
-        onPress={() => Alert.alert('Safety Check', 'Safety check-in confirmed.')}
-      />
-
-      <FeatureCard
-        title="Emergency Panic Button"
-        subtitle="Trigger immediate alerts to company control room and emergency contacts."
-        ctaLabel="Activate Panic Alert"
-        onPress={() => Alert.alert('Panic Alert Triggered', 'Emergency alert has been sent.')}
-      />
     </ScrollView>
   );
 }
@@ -394,9 +450,20 @@ const styles = StyleSheet.create({
     paddingTop: 10,
     gap: 8,
   },
+  actionRow: {
+    flexDirection: 'row',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
   listTitle: {
     color: '#111827',
     fontWeight: '600',
+  },
+  switchRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 12,
   },
   button: {
     backgroundColor: '#111827',
@@ -408,5 +475,23 @@ const styles = StyleSheet.create({
   buttonText: {
     color: '#fff',
     fontWeight: '600',
+  },
+  secondaryButton: {
+    backgroundColor: '#e5e7eb',
+    alignSelf: 'flex-start',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  secondaryButtonText: {
+    color: '#111827',
+    fontWeight: '600',
+  },
+  emergencyButton: {
+    backgroundColor: '#991b1b',
+    alignSelf: 'flex-start',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
   },
 });

@@ -23,6 +23,9 @@ export class Timesheet {
   @Column({ default: 'pending' })
   approvalStatus!: string;
 
+  @Column({ type: 'timestamp', nullable: true })
+  submittedAt?: Date | null;
+
   @CreateDateColumn()
   createdAt!: Date;
 }

@@ -13,6 +13,7 @@ import { Assignment } from '../../assignment/entities/assignment.entity';
 import { Shift } from '../../shift/entities/shift.entity';
 import { Timesheet } from '../../timesheet/entities/timesheet.entity';
 import { CompanyGuard } from '../../company-guard/entities/company-guard.entity';
+import { Site } from '../../site/entities/site.entity';
 
 @Entity('companies')
 export class Company {
@@ -49,4 +50,7 @@ export class Company {
 
   @OneToMany(() => CompanyGuard, (companyGuard) => companyGuard.company)
   companyGuards?: CompanyGuard[];
+
+  @OneToMany(() => Site, (site) => site.company)
+  sites?: Site[];
 }

@@ -5,9 +5,10 @@ import { ShiftController } from './shift.controller';
 import { ShiftService } from './shift.service';
 import { AssignmentModule } from '../assignment/assignment.module';
 import { TimesheetModule } from '../timesheet/timesheet.module';
+import { SiteModule } from '../site/site.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Shift]), AssignmentModule, TimesheetModule],
+  imports: [TypeOrmModule.forFeature([Shift]), AssignmentModule, TimesheetModule, SiteModule],
   controllers: [ShiftController],
   providers: [ShiftService],
   exports: [ShiftService, TypeOrmModule]

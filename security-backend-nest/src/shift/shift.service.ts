@@ -5,6 +5,7 @@ import { Shift } from './entities/shift.entity';
 import { CreateShiftDto } from './dto/create-shift.dto';
 import { AssignmentService } from '../assignment/assignment.service';
 import { TimesheetService } from '../timesheet/timesheet.service';
+import { SiteService } from '../site/site.service';
 
 @Injectable()
 export class ShiftService {
@@ -13,6 +14,7 @@ export class ShiftService {
     private readonly shiftRepo: Repository<Shift>,
     private readonly assignmentService: AssignmentService,
     private readonly timesheetService: TimesheetService,
+    private readonly siteService: SiteService,
   ) {}
 
   async findAll(): Promise<Shift[]> {
@@ -36,12 +38,14 @@ export class ShiftService {
 
   async create(dto: CreateShiftDto) {
     const assignment = await this.assignmentService.findOne(dto.assignmentId);
+    const site = dto.siteId ? await this.siteService.findOne(dto.siteId) : null;
 
     const shift = this.shiftRepo.create({
       assignment,
       company: assignment.company,
       guard: assignment.guard,
-      siteName: dto.siteName,
+      site,
+      siteName: site?.name || dto.siteName || 'Unassigned Site',
       start: new Date(dto.start),
       end: new Date(dto.end),
       status: dto.status ?? 'scheduled',

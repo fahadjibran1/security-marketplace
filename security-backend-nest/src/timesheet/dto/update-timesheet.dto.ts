@@ -9,4 +9,8 @@ export class UpdateTimesheetDto {
   @IsOptional()
   @IsString()
   approvalStatus?: string;
+
+  @IsOptional()
+  @IsString()
+  submittedAt?: string;
 }

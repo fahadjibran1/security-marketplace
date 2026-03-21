@@ -9,6 +9,7 @@ import {
 import { Assignment } from '../../assignment/entities/assignment.entity';
 import { Company } from '../../company/entities/company.entity';
 import { GuardProfile } from '../../guard-profile/entities/guard-profile.entity';
+import { Site } from '../../site/entities/site.entity';
 import { Timesheet } from '../../timesheet/entities/timesheet.entity';
 
 @Entity('shifts')
@@ -24,6 +25,9 @@ export class Shift {
 
   @ManyToOne(() => GuardProfile, (guard) => guard.shifts, { eager: true })
   guard!: GuardProfile;
+
+  @ManyToOne(() => Site, (site) => site.shifts, { eager: true, nullable: true })
+  site?: Site | null;
 
   @Column()
   siteName!: string;
