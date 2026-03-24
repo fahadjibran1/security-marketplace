@@ -1,9 +1,14 @@
-export type AppRole = 'company' | 'guard';
+export type AppRole = 'admin' | 'company' | 'company_admin' | 'company_staff' | 'guard';
+
+export function isCompanyAppRole(role?: AppRole | null): boolean {
+  return role === 'company' || role === 'company_admin' || role === 'company_staff';
+}
 
 export interface AuthUser {
   id: number;
   email: string;
   role: AppRole;
+  status?: string;
   companyId?: number;
   guardId?: number;
 }

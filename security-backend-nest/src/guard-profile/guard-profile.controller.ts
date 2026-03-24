@@ -6,7 +6,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
-import { UserRole } from '../user/entities/user.entity';
+import { COMPANY_VIEW_ROLES, UserRole } from '../user/entities/user.entity';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 
 @Controller('guards')
@@ -15,7 +15,7 @@ export class GuardProfileController {
   constructor(private readonly guardService: GuardProfileService) {}
 
   @Get()
-  @Roles(UserRole.ADMIN, UserRole.COMPANY)
+  @Roles(UserRole.ADMIN, ...COMPANY_VIEW_ROLES)
   findAll() {
     return this.guardService.findAll();
   }
@@ -27,7 +27,7 @@ export class GuardProfileController {
   }
 
   @Get(':id')
-  @Roles(UserRole.ADMIN, UserRole.COMPANY, UserRole.GUARD)
+  @Roles(UserRole.ADMIN, ...COMPANY_VIEW_ROLES, UserRole.GUARD)
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.guardService.findOne(id);
   }

@@ -6,7 +6,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
-import { UserRole } from '../user/entities/user.entity';
+import { COMPANY_ADMIN_ROLES, COMPANY_VIEW_ROLES, UserRole } from '../user/entities/user.entity';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 
 @Controller('companies')
@@ -15,19 +15,19 @@ export class CompanyController {
   constructor(private readonly companyService: CompanyService) {}
 
   @Get()
-  @Roles(UserRole.ADMIN, UserRole.COMPANY)
+  @Roles(UserRole.ADMIN, ...COMPANY_VIEW_ROLES)
   findAll() {
     return this.companyService.findAll();
   }
 
   @Get('me')
-  @Roles(UserRole.COMPANY)
+  @Roles(...COMPANY_VIEW_ROLES)
   findMine(@CurrentUser() user: JwtPayload) {
     return this.companyService.findByUserId(user.sub);
   }
 
   @Get(':id')
-  @Roles(UserRole.ADMIN, UserRole.COMPANY)
+  @Roles(UserRole.ADMIN, ...COMPANY_VIEW_ROLES)
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.companyService.findOne(id);
   }
@@ -39,7 +39,7 @@ export class CompanyController {
   }
 
   @Patch('me')
-  @Roles(UserRole.COMPANY)
+  @Roles(...COMPANY_ADMIN_ROLES)
   updateMine(@CurrentUser() user: JwtPayload, @Body() dto: UpdateCompanyDto) {
     return this.companyService.updateByUserId(user.sub, dto);
   }

@@ -3,7 +3,7 @@ import { SiteService } from './site.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
-import { UserRole } from '../user/entities/user.entity';
+import { COMPANY_ADMIN_ROLES, COMPANY_VIEW_ROLES, UserRole } from '../user/entities/user.entity';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { CreateSiteDto } from './dto/create-site.dto';
@@ -15,7 +15,7 @@ export class SiteController {
   constructor(private readonly siteService: SiteService) {}
 
   @Get()
-  @Roles(UserRole.ADMIN, UserRole.COMPANY)
+  @Roles(UserRole.ADMIN, ...COMPANY_VIEW_ROLES)
   findAll(@CurrentUser() user: JwtPayload) {
     if (user.role === UserRole.ADMIN) {
       return this.siteService.findAll();
@@ -25,19 +25,19 @@ export class SiteController {
   }
 
   @Get(':id')
-  @Roles(UserRole.ADMIN, UserRole.COMPANY)
+  @Roles(UserRole.ADMIN, ...COMPANY_VIEW_ROLES)
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.siteService.findOne(id);
   }
 
   @Post()
-  @Roles(UserRole.COMPANY)
+  @Roles(...COMPANY_ADMIN_ROLES)
   create(@CurrentUser() user: JwtPayload, @Body() dto: CreateSiteDto) {
     return this.siteService.createForCompanyUser(user.sub, dto);
   }
 
   @Patch(':id')
-  @Roles(UserRole.COMPANY)
+  @Roles(...COMPANY_ADMIN_ROLES)
   update(
     @CurrentUser() user: JwtPayload,
     @Param('id', ParseIntPipe) id: number,

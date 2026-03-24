@@ -4,7 +4,7 @@ import { CreateJobApplicationDto } from './dto/create-job-application.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
-import { UserRole } from '../user/entities/user.entity';
+import { COMPANY_ADMIN_ROLES, COMPANY_VIEW_ROLES, UserRole } from '../user/entities/user.entity';
 import { HireApplicationDto } from './dto/hire-application.dto';
 
 @Controller('job-applications')
@@ -13,7 +13,7 @@ export class JobApplicationController {
   constructor(private readonly jobApplicationService: JobApplicationService) {}
 
   @Get()
-  @Roles(UserRole.ADMIN, UserRole.COMPANY, UserRole.GUARD)
+  @Roles(UserRole.ADMIN, ...COMPANY_VIEW_ROLES, UserRole.GUARD)
   findAll() {
     return this.jobApplicationService.findAll();
   }
@@ -25,7 +25,7 @@ export class JobApplicationController {
   }
 
   @Post(':id/hire')
-  @Roles(UserRole.COMPANY, UserRole.ADMIN)
+  @Roles(UserRole.ADMIN, ...COMPANY_ADMIN_ROLES)
   hire(@Param('id', ParseIntPipe) id: number, @Body() dto: HireApplicationDto) {
     return this.jobApplicationService.hire(id, dto);
   }

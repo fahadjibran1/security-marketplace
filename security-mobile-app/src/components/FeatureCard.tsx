@@ -6,11 +6,12 @@ type FeatureCardProps = PropsWithChildren<{
   subtitle: string;
   ctaLabel?: string;
   onPress?: () => void;
+  style?: any;
 }>;
 
-export function FeatureCard({ title, subtitle, ctaLabel, onPress, children }: FeatureCardProps) {
+export function FeatureCard({ title, subtitle, ctaLabel, onPress, children, style }: FeatureCardProps) {
   return (
-    <View style={styles.card}>
+    <View style={[styles.card, style]}>
       <Text style={styles.title}>{title}</Text>
       <Text style={styles.subtitle}>{subtitle}</Text>
       {children}

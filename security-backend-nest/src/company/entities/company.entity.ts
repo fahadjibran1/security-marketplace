@@ -15,6 +15,13 @@ import { Timesheet } from '../../timesheet/entities/timesheet.entity';
 import { CompanyGuard } from '../../company-guard/entities/company-guard.entity';
 import { Site } from '../../site/entities/site.entity';
 
+export enum CompanyStatus {
+  ONBOARDING = 'onboarding',
+  ACTIVE = 'active',
+  INACTIVE = 'inactive',
+  SUSPENDED = 'suspended',
+}
+
 @Entity('companies')
 export class Company {
   @PrimaryGeneratedColumn()
@@ -35,6 +42,13 @@ export class Company {
 
   @Column()
   contactDetails!: string;
+
+  @Column({
+    type: 'enum',
+    enum: CompanyStatus,
+    default: CompanyStatus.ONBOARDING,
+  })
+  status!: CompanyStatus;
 
   @OneToMany(() => Job, (job) => job.company)
   jobs?: Job[];

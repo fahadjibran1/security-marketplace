@@ -3,7 +3,7 @@ import { TimesheetService } from './timesheet.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
-import { UserRole } from '../user/entities/user.entity';
+import { COMPANY_ADMIN_ROLES, COMPANY_VIEW_ROLES, UserRole } from '../user/entities/user.entity';
 import { UpdateTimesheetDto } from './dto/update-timesheet.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
@@ -14,13 +14,13 @@ export class TimesheetController {
   constructor(private readonly timesheetService: TimesheetService) {}
 
   @Get()
-  @Roles(UserRole.ADMIN, UserRole.COMPANY, UserRole.GUARD)
+  @Roles(UserRole.ADMIN, ...COMPANY_VIEW_ROLES, UserRole.GUARD)
   findAll() {
     return this.timesheetService.findAll();
   }
 
   @Get('company')
-  @Roles(UserRole.COMPANY, UserRole.ADMIN)
+  @Roles(UserRole.ADMIN, ...COMPANY_VIEW_ROLES)
   findForCompany(@CurrentUser() user: JwtPayload) {
     return this.timesheetService.findForCompany(user.sub);
   }
@@ -32,7 +32,7 @@ export class TimesheetController {
   }
 
   @Patch(':id')
-  @Roles(UserRole.ADMIN, UserRole.COMPANY)
+  @Roles(UserRole.ADMIN, ...COMPANY_ADMIN_ROLES)
   update(
     @CurrentUser() user: JwtPayload,
     @Param('id', ParseIntPipe) id: number,

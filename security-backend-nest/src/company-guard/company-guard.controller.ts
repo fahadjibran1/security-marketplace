@@ -3,7 +3,7 @@ import { CompanyGuardService } from './company-guard.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
-import { UserRole } from '../user/entities/user.entity';
+import { COMPANY_ADMIN_ROLES, COMPANY_VIEW_ROLES, UserRole } from '../user/entities/user.entity';
 import { CreateCompanyGuardDto } from './dto/create-company-guard.dto';
 
 @Controller('company-guards')
@@ -12,13 +12,13 @@ export class CompanyGuardController {
   constructor(private readonly companyGuardService: CompanyGuardService) {}
 
   @Get()
-  @Roles(UserRole.ADMIN, UserRole.COMPANY)
+  @Roles(UserRole.ADMIN, ...COMPANY_VIEW_ROLES)
   findAll() {
     return this.companyGuardService.findAll();
   }
 
   @Post()
-  @Roles(UserRole.ADMIN, UserRole.COMPANY)
+  @Roles(UserRole.ADMIN, ...COMPANY_ADMIN_ROLES)
   create(@Body() dto: CreateCompanyGuardDto) {
     return this.companyGuardService.create(dto);
   }

@@ -5,7 +5,7 @@ import { GuardDashboardScreen } from './src/screens/GuardDashboardScreen';
 import { AuthScreen } from './src/screens/AuthScreen';
 import { logout, restoreSession } from './src/services/api';
 import { clearStoredSession, loadStoredSession, persistSession } from './src/services/session';
-import { AuthSession } from './src/types/models';
+import { AuthSession, isCompanyAppRole } from './src/types/models';
 
 export default function App() {
   const [session, setSession] = useState<AuthSession | null>(null);
@@ -13,12 +13,15 @@ export default function App() {
 
   useEffect(() => {
     async function bootstrapSession() {
-      const storedSession = await loadStoredSession();
-      if (storedSession) {
-        restoreSession(storedSession);
-        setSession(storedSession);
+      try {
+        const storedSession = await loadStoredSession();
+        if (storedSession) {
+          restoreSession(storedSession);
+          setSession(storedSession);
+        }
+      } finally {
+        setBooting(false);
       }
-      setBooting(false);
     }
 
     bootstrapSession();
@@ -61,12 +64,12 @@ export default function App() {
       <StatusBar barStyle="dark-content" />
       <View style={styles.screenContainer}>
         <View style={styles.topBar}>
-          <Text style={styles.topBarText}>{session.user.role === 'company' ? 'Company View' : 'Guard View'}</Text>
+          <Text style={styles.topBarText}>{isCompanyAppRole(session.user.role) ? 'Company View' : 'Guard View'}</Text>
           <Pressable onPress={handleLogout}>
             <Text style={styles.switchText}>Logout</Text>
           </Pressable>
         </View>
-        {session.user.role === 'company' ? (
+        {isCompanyAppRole(session.user.role) ? (
           <CompanyDashboardScreen user={session.user} />
         ) : (
           <GuardDashboardScreen user={session.user} />

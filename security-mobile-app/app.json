@@ -3,6 +3,7 @@
     "name": "Security Marketplace",
     "slug": "security-marketplace",
     "version": "1.0.0",
+    "scheme": "securitymarketplace",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "splash": {
@@ -13,16 +14,24 @@
     ],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.securitymarketplace.mobile"
+      "bundleIdentifier": "com.securitymarketplace.mobile",
+      "buildNumber": "1",
+      "config": {
+        "usesNonExemptEncryption": false
+      },
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
+      "versionCode": 1,
       "package": "com.securitymarketplace.mobile"
     },
     "plugins": [
       "expo-secure-store"
     ],
     "extra": {
-      "apiBaseUrl": "http://localhost:3000",
+      "apiBaseUrl": "https://api.observantsecurity.co.uk",
       "eas": {
         "projectId": "c786f15c-7d60-4122-9001-02cabbb7692b"
       }

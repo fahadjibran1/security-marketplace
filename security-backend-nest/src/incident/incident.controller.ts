@@ -3,7 +3,7 @@ import { IncidentService } from './incident.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
-import { UserRole } from '../user/entities/user.entity';
+import { COMPANY_ADMIN_ROLES, COMPANY_VIEW_ROLES, UserRole } from '../user/entities/user.entity';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { CreateIncidentDto } from './dto/create-incident.dto';
@@ -21,7 +21,7 @@ export class IncidentController {
   }
 
   @Get('company')
-  @Roles(UserRole.COMPANY, UserRole.ADMIN)
+  @Roles(UserRole.ADMIN, ...COMPANY_VIEW_ROLES)
   findForCompany(@CurrentUser() user: JwtPayload) {
     return this.incidentService.findForCompany(user.sub);
   }
@@ -33,7 +33,7 @@ export class IncidentController {
   }
 
   @Patch(':id/status')
-  @Roles(UserRole.COMPANY, UserRole.ADMIN)
+  @Roles(UserRole.ADMIN, ...COMPANY_ADMIN_ROLES)
   updateStatus(
     @CurrentUser() user: JwtPayload,
     @Param('id', ParseIntPipe) id: number,

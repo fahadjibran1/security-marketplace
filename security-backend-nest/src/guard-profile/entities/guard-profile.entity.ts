@@ -15,6 +15,19 @@ import { Timesheet } from '../../timesheet/entities/timesheet.entity';
 import { CompanyGuard } from '../../company-guard/entities/company-guard.entity';
 import { JobMatch } from '../../job-match/entities/job-match.entity';
 
+export enum GuardAvailability {
+  AVAILABLE = 'available',
+  LIMITED = 'limited',
+  UNAVAILABLE = 'unavailable',
+}
+
+export enum GuardApprovalStatus {
+  PENDING = 'pending',
+  APPROVED = 'approved',
+  REJECTED = 'rejected',
+  SUSPENDED = 'suspended',
+}
+
 @Entity('guard_profiles')
 export class GuardProfile {
   @PrimaryGeneratedColumn()
@@ -38,6 +51,26 @@ export class GuardProfile {
 
   @Column({ default: 'pending' })
   status!: string;
+
+  @Column({
+    type: 'enum',
+    enum: GuardAvailability,
+    default: GuardAvailability.AVAILABLE,
+  })
+  availability!: GuardAvailability;
+
+  @Column({
+    type: 'enum',
+    enum: GuardApprovalStatus,
+    default: GuardApprovalStatus.PENDING,
+  })
+  approvalStatus!: GuardApprovalStatus;
+
+  @Column({ default: false })
+  isApproved!: boolean;
+
+  @Column({ type: 'text', nullable: true })
+  notes?: string | null;
 
   @OneToMany(() => JobApplication, (application) => application.guard)
   applications?: JobApplication[];

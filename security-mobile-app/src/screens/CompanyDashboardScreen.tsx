@@ -1,20 +1,28 @@
-import { useEffect, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  Alert,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { FeatureCard } from '../components/FeatureCard';
 import {
-  createSite,
   createJob,
+  createSite,
   getMyCompany,
   hireJobApplication,
   listAssignments,
-  listCompanyIncidents,
-  listSites,
-  listCompanyTimesheets,
   listCompanies,
+  listCompanyIncidents,
+  listCompanyTimesheets,
   listGuards,
   listJobApplications,
   listJobs,
   listShifts,
+  listSites,
   updateIncidentStatus,
   updateMyCompany,
   updateSite,
@@ -28,14 +36,24 @@ import {
   Incident,
   Job,
   JobApplication,
-  Site,
   Shift,
+  Site,
   Timesheet,
 } from '../types/models';
 
 interface CompanyDashboardScreenProps {
   user: AuthUser;
 }
+
+type CompanySectionId =
+  | 'overview'
+  | 'sites'
+  | 'guards'
+  | 'recruitment'
+  | 'shifts'
+  | 'timesheets'
+  | 'incidents'
+  | 'invoices';
 
 type HireDraft = {
   siteId: string;
@@ -67,7 +85,7 @@ function defaultShiftEnd() {
   return end.toISOString();
 }
 
-function createFallbackSiteDraft(_siteId: number): SiteDraft {
+function createFallbackSiteDraft(): SiteDraft {
   return {
     name: '',
     clientName: '',
@@ -78,7 +96,45 @@ function createFallbackSiteDraft(_siteId: number): SiteDraft {
   };
 }
 
+function formatDateTimeRange(start: string, end: string) {
+  return `${new Date(start).toLocaleString()} to ${new Date(end).toLocaleString()}`;
+}
+
+function sectionLabel(section: CompanySectionId) {
+  switch (section) {
+    case 'overview':
+      return 'Overview';
+    case 'sites':
+      return 'Sites';
+    case 'guards':
+      return 'Guards';
+    case 'recruitment':
+      return 'Recruitment';
+    case 'shifts':
+      return 'Shift Ops';
+    case 'timesheets':
+      return 'Timesheets';
+    case 'incidents':
+      return 'Incidents';
+    case 'invoices':
+      return 'Invoices';
+    default:
+      return section;
+  }
+}
+
+function countUniqueGuards(shiftsForSite: Shift[]) {
+  return new Set(
+    shiftsForSite
+      .map((shift) => shift.guard?.id ?? shift.guardId)
+      .filter((guardId): guardId is number => typeof guardId === 'number'),
+  ).size;
+}
+
 export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
+  const width = typeof window !== 'undefined' ? window.innerWidth : 0;
+  const isDesktopWeb = width >= 1180;
+
   const [company, setCompany] = useState<CompanyProfile | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [sites, setSites] = useState<Site[]>([]);
@@ -107,6 +163,7 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
   const [siteStatus, setSiteStatus] = useState('active');
   const [welfareCheckIntervalMinutes, setWelfareCheckIntervalMinutes] = useState('60');
   const [submittingSite, setSubmittingSite] = useState(false);
+  const [activeSection, setActiveSection] = useState<CompanySectionId>('overview');
 
   async function loadData() {
     try {
@@ -152,9 +209,7 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
         assignmentRows.filter((assignment) => (assignment.company?.id ?? assignment.companyId) === companyId),
       );
       setShifts(shiftsData.filter((shift) => (shift.company?.id ?? shift.companyId) === companyId));
-      setApplications(
-        applicationsData.filter((application) => application.job?.company?.id === companyId),
-      );
+      setApplications(applicationsData.filter((application) => application.job?.company?.id === companyId));
       setIncidents(incidentRows);
       setTimesheets(timesheetRows);
     } catch (error) {
@@ -180,11 +235,11 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
   function updateHireDraft(applicationId: number, field: keyof HireDraft, value: string) {
     setHireDrafts((current) => ({
       ...current,
-        [applicationId]: {
-          ...draftFor(applicationId),
-          [field]: value,
-        },
-      }));
+      [applicationId]: {
+        ...draftFor(applicationId),
+        [field]: value,
+      },
+    }));
   }
 
   function siteDraftFor(site: Site): SiteDraft {
@@ -202,8 +257,7 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
 
   function updateSiteDraft(siteId: number, field: keyof SiteDraft, value: string) {
     const existingSite = sites.find((site) => site.id === siteId);
-    const baseDraft = existingSite ? siteDraftFor(existingSite) : createFallbackSiteDraft(siteId);
-
+    const baseDraft = existingSite ? siteDraftFor(existingSite) : createFallbackSiteDraft();
     setSiteDrafts((current) => ({
       ...current,
       [siteId]: {
@@ -245,9 +299,7 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
       Alert.alert('Site not found', 'The selected site could not be loaded.');
       return;
     }
-
     const draft = siteDraftFor(site);
-
     try {
       await updateSite(siteId, {
         name: draft.name,
@@ -269,7 +321,6 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
       Alert.alert('Missing company', 'Your company profile was not found for this account.');
       return;
     }
-
     try {
       setSubmittingJob(true);
       await createJob({
@@ -312,7 +363,6 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
 
   async function handleHire(application: JobApplication) {
     const draft = draftFor(application.id);
-
     try {
       await hireJobApplication(application.id, {
         createShift: true,
@@ -348,384 +398,795 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
     }
   }
 
-  const pendingApplications = applications.filter((application) => application.status === 'submitted');
-  const openJobs = jobs.filter((job) => job.status === 'open');
-  const submittedTimesheets = timesheets.filter((timesheet) => timesheet.approvalStatus === 'submitted');
-  const activeShifts = shifts.filter((shift) => shift.status === 'in_progress');
-  const scheduledShifts = shifts.filter((shift) => shift.status === 'scheduled');
-  const linkedGuardIds = new Set(assignments.map((assignment) => assignment.guard?.id ?? assignment.guardId));
-  const linkedGuards = guards.filter((guard) => linkedGuardIds.has(guard.id));
-  const siteSummaries = Array.from(
-    shifts.reduce((map, shift) => {
-      const key = shift.siteName || 'Unassigned Site';
-      const entry = map.get(key) || {
-        name: key,
-        totalShifts: 0,
-        liveShifts: 0,
-        upcomingShifts: 0,
-        incidents: 0,
-        guardIds: new Set<number>(),
-      };
+  const pendingApplications = useMemo(
+    () => applications.filter((application) => application.status === 'submitted'),
+    [applications],
+  );
+  const openJobs = useMemo(() => jobs.filter((job) => job.status === 'open'), [jobs]);
+  const submittedTimesheets = useMemo(
+    () => timesheets.filter((timesheet) => timesheet.approvalStatus === 'submitted'),
+    [timesheets],
+  );
+  const activeShifts = useMemo(() => shifts.filter((shift) => shift.status === 'in_progress'), [shifts]);
+  const scheduledShifts = useMemo(() => shifts.filter((shift) => shift.status === 'scheduled'), [shifts]);
+  const linkedGuardIds = useMemo(
+    () => new Set(assignments.map((assignment) => assignment.guard?.id ?? assignment.guardId)),
+    [assignments],
+  );
+  const linkedGuards = useMemo(
+    () => guards.filter((guard) => linkedGuardIds.has(guard.id)),
+    [guards, linkedGuardIds],
+  );
+  const openIncidentCount = useMemo(
+    () => incidents.filter((incident) => incident.status === 'open').length,
+    [incidents],
+  );
 
-      entry.totalShifts += 1;
-      if (shift.status === 'in_progress') entry.liveShifts += 1;
-      if (shift.status === 'scheduled') entry.upcomingShifts += 1;
-      if (shift.guard?.id ?? shift.guardId) {
-        entry.guardIds.add((shift.guard?.id ?? shift.guardId) as number);
-      }
-      map.set(key, entry);
-      return map;
-    }, new Map<string, { name: string; totalShifts: number; liveShifts: number; upcomingShifts: number; incidents: number; guardIds: Set<number> }>()),
-  ).map(([name, summary]) => ({
-    ...summary,
-    incidents: incidents.filter((incident) => incident.shift?.siteName === name && incident.status !== 'resolved').length,
-  }));
+  const siteSummaries = useMemo(
+    () =>
+      Array.from(
+        shifts.reduce((map, shift) => {
+          const key = shift.siteName || 'Unassigned Site';
+          const entry = map.get(key) || {
+            name: key,
+            totalShifts: 0,
+            liveShifts: 0,
+            upcomingShifts: 0,
+            incidents: 0,
+            guardIds: new Set<number>(),
+          };
+          entry.totalShifts += 1;
+          if (shift.status === 'in_progress') entry.liveShifts += 1;
+          if (shift.status === 'scheduled') entry.upcomingShifts += 1;
+          if (shift.guard?.id ?? shift.guardId) {
+            entry.guardIds.add((shift.guard?.id ?? shift.guardId) as number);
+          }
+          map.set(key, entry);
+          return map;
+        }, new Map<string, { name: string; totalShifts: number; liveShifts: number; upcomingShifts: number; incidents: number; guardIds: Set<number> }>()),
+      ).map(([name, summary]) => ({
+        ...summary,
+        incidents: incidents.filter((incident) => incident.shift?.siteName === name && incident.status !== 'resolved').length,
+      })),
+    [incidents, shifts],
+  );
+
+  const statItems = [
+    { label: 'Managed Sites', value: sites.length, tone: '#0f766e' },
+    { label: 'Linked Guards', value: linkedGuards.length, tone: '#1d4ed8' },
+    { label: 'Live Shifts', value: activeShifts.length, tone: '#7c3aed' },
+    { label: 'Submitted Timesheets', value: submittedTimesheets.length, tone: '#b45309' },
+  ];
+
+  const sectionItems: Array<{ id: CompanySectionId; label: string; description: string }> = [
+    { id: 'overview', label: 'Overview', description: 'Command center, metrics, and live activity.' },
+    { id: 'sites', label: 'Sites', description: 'Manage client sites and welfare settings.' },
+    { id: 'guards', label: 'Guards', description: 'View linked guards and operational status.' },
+    { id: 'recruitment', label: 'Recruitment', description: 'Advertise jobs and hire applicants.' },
+    { id: 'shifts', label: 'Shift Ops', description: 'Track live shifts, patrols, and compliance.' },
+    { id: 'timesheets', label: 'Timesheets', description: 'Review submitted hours and approvals.' },
+    { id: 'incidents', label: 'Incidents', description: 'Monitor site issues and resolutions.' },
+    { id: 'invoices', label: 'Invoices', description: 'Prepare client billing by site and work period.' },
+  ];
+
+  function renderOverviewSection() {
+    return (
+      <View style={styles.sectionStack}>
+        <View style={[styles.sectionHeaderCard, isDesktopWeb && styles.sectionHeaderCardDesktop]}>
+          <View style={styles.sectionHeaderCopy}>
+            <Text style={styles.sectionEyebrow}>Operations Control</Text>
+            <Text style={[styles.sectionTitle, isDesktopWeb && styles.sectionTitleOnDark]}>Company Dashboard</Text>
+            <Text style={[styles.sectionSubtitle, isDesktopWeb && styles.sectionSubtitleOnDark]}>
+              Monitor sites, guards, live shifts, incidents, and client billing from one desktop view.
+            </Text>
+          </View>
+          <View style={styles.metricGrid}>
+            {statItems.map((item) => (
+              <View key={item.label} style={styles.metricCard}>
+                <Text style={[styles.metricValue, { color: item.tone }]}>{item.value}</Text>
+                <Text style={styles.metricLabel}>{item.label}</Text>
+              </View>
+            ))}
+          </View>
+        </View>
+
+        <View style={[styles.sectionColumns, isDesktopWeb && styles.sectionColumnsDesktop]}>
+          <FeatureCard
+            title="Operations Overview"
+            subtitle={`Live shifts: ${activeShifts.length} | Upcoming shifts: ${scheduledShifts.length}`}
+            style={styles.desktopPanel}
+          >
+            <View style={styles.kpiList}>
+              <Text style={styles.helperText}>Sites under management: {siteSummaries.length}</Text>
+              <Text style={styles.helperText}>Linked guards: {linkedGuards.length}</Text>
+              <Text style={styles.helperText}>Pending recruitment applications: {pendingApplications.length}</Text>
+              <Text style={styles.helperText}>Open incidents: {openIncidentCount}</Text>
+              <Text style={styles.helperText}>Submitted timesheets: {submittedTimesheets.length}</Text>
+            </View>
+          </FeatureCard>
+
+          <FeatureCard title="Guard Team Snapshot" subtitle={`Linked guards: ${linkedGuards.length}`} style={styles.desktopPanel}>
+            {linkedGuards.length === 0 ? (
+              <Text style={styles.helperText}>No guards have been linked yet.</Text>
+            ) : (
+              linkedGuards.slice(0, 4).map((guard) => {
+                const guardAssignments = assignments.filter((assignment) => (assignment.guard?.id ?? assignment.guardId) === guard.id);
+                return (
+                  <View key={guard.id} style={styles.rowCard}>
+                    <Text style={styles.listTitle}>{guard.fullName}</Text>
+                    <Text style={styles.helperText}>Status: {guard.status}</Text>
+                    <Text style={styles.helperText}>Assignments: {guardAssignments.length}</Text>
+                  </View>
+                );
+              })
+            )}
+          </FeatureCard>
+        </View>
+
+        <View style={[styles.sectionColumns, isDesktopWeb && styles.sectionColumnsDesktop]}>
+          <FeatureCard title="Site Activity" subtitle="Every live operation should belong to a site." style={styles.desktopPanel}>
+            {siteSummaries.length === 0 ? (
+              <Text style={styles.helperText}>Create a site to start running controlled operations.</Text>
+            ) : (
+              siteSummaries.map((siteSummary) => (
+                <View key={siteSummary.name} style={styles.tableRowCard}>
+                  <Text style={styles.listTitle}>{siteSummary.name}</Text>
+                  <View style={styles.inlineStats}>
+                    <Text style={styles.helperText}>Live shifts: {siteSummary.liveShifts}</Text>
+                    <Text style={styles.helperText}>Upcoming: {siteSummary.upcomingShifts}</Text>
+                    <Text style={styles.helperText}>Guards: {siteSummary.guardIds.size}</Text>
+                    <Text style={styles.helperText}>Open incidents: {siteSummary.incidents}</Text>
+                  </View>
+                </View>
+              ))
+            )}
+          </FeatureCard>
+
+          <FeatureCard title="Urgent Items" subtitle="What needs action right now." style={styles.desktopPanel}>
+            <View style={styles.kpiList}>
+              <Text style={styles.helperText}>Pending hires: {pendingApplications.length}</Text>
+              <Text style={styles.helperText}>Submitted timesheets to approve: {submittedTimesheets.length}</Text>
+              <Text style={styles.helperText}>Open incidents to resolve: {openIncidentCount}</Text>
+              <Text style={styles.helperText}>Shifts currently in progress: {activeShifts.length}</Text>
+            </View>
+          </FeatureCard>
+        </View>
+      </View>
+    );
+  }
+
+  function renderSitesSection() {
+    return (
+      <View style={styles.sectionStack}>
+        <View style={styles.sectionBanner}>
+          <Text style={styles.sectionTitle}>Site Management</Text>
+          <Text style={styles.sectionSubtitle}>
+            Create and manage client sites. Jobs, shifts, patrols, incidents, and welfare checks should all live under a site.
+          </Text>
+        </View>
+
+        <View style={[styles.sectionColumns, isDesktopWeb && styles.sectionColumnsDesktop]}>
+          <FeatureCard title="Create Site" subtitle="Register a client site before assigning jobs or shifts." style={styles.desktopPanel}>
+            <TextInput style={styles.input} placeholder="Site name" value={siteName} onChangeText={setSiteName} />
+            <TextInput style={styles.input} placeholder="Client name" value={clientName} onChangeText={setClientName} />
+            <TextInput style={styles.input} placeholder="Site address" value={siteAddress} onChangeText={setSiteAddress} />
+            <TextInput style={styles.input} placeholder="Site contact details" value={siteContactDetails} onChangeText={setSiteContactDetails} />
+            <TextInput style={styles.input} placeholder="Status" value={siteStatus} onChangeText={setSiteStatus} />
+            <TextInput
+              style={styles.input}
+              placeholder="Welfare check interval minutes"
+              keyboardType="number-pad"
+              value={welfareCheckIntervalMinutes}
+              onChangeText={setWelfareCheckIntervalMinutes}
+            />
+            <Pressable style={styles.button} onPress={handleCreateSite} disabled={submittingSite}>
+              <Text style={styles.buttonText}>{submittingSite ? 'Creating site...' : 'Create Site'}</Text>
+            </Pressable>
+          </FeatureCard>
+
+          <FeatureCard title="Company Setup" subtitle={company ? company.name : 'Loading company profile...'} style={styles.desktopPanel}>
+            <TextInput style={styles.input} placeholder="Company name" value={companyName} onChangeText={setCompanyName} />
+            <TextInput style={styles.input} placeholder="Company number" value={companyNumber} onChangeText={setCompanyNumber} />
+            <TextInput style={styles.input} placeholder="Address" value={address} onChangeText={setAddress} />
+            <TextInput style={styles.input} placeholder="Contact details" value={contactDetails} onChangeText={setContactDetails} />
+            <Pressable style={styles.button} onPress={handleSaveProfile}>
+              <Text style={styles.buttonText}>Save Profile</Text>
+            </Pressable>
+          </FeatureCard>
+        </View>
+
+        <FeatureCard title="Managed Sites" subtitle={`${sites.length} configured`} style={styles.desktopPanel}>
+          {sites.length === 0 ? (
+            <Text style={styles.helperText}>No sites yet. Start with your first active client site.</Text>
+          ) : (
+            sites.map((site) => {
+              const draft = siteDraftFor(site);
+              const siteShifts = shifts.filter((shift) => (shift.siteId ?? shift.site?.id) === site.id || shift.siteName === site.name);
+              const siteIncidents = incidents.filter((incident) => incident.shift?.siteName === site.name && incident.status !== 'resolved');
+              return (
+                <View key={site.id} style={styles.sectionRecord}>
+                  <View style={styles.recordHeader}>
+                    <View>
+                      <Text style={styles.recordTitle}>{site.name}</Text>
+                      <Text style={styles.helperText}>{site.clientName || 'Client not set'} | {site.status}</Text>
+                    </View>
+                    <View style={styles.inlineStats}>
+                      <Text style={styles.helperText}>Guards: {countUniqueGuards(siteShifts)}</Text>
+                      <Text style={styles.helperText}>Live shifts: {siteShifts.filter((shift) => shift.status === 'in_progress').length}</Text>
+                      <Text style={styles.helperText}>Incidents: {siteIncidents.length}</Text>
+                    </View>
+                  </View>
+                  <View style={[styles.formGrid, isDesktopWeb && styles.formGridDesktop]}>
+                    <TextInput style={styles.input} placeholder="Site name" value={draft.name} onChangeText={(value: string) => updateSiteDraft(site.id, 'name', value)} />
+                    <TextInput style={styles.input} placeholder="Client name" value={draft.clientName} onChangeText={(value: string) => updateSiteDraft(site.id, 'clientName', value)} />
+                    <TextInput style={styles.input} placeholder="Address" value={draft.address} onChangeText={(value: string) => updateSiteDraft(site.id, 'address', value)} />
+                    <TextInput style={styles.input} placeholder="Contact details" value={draft.contactDetails} onChangeText={(value: string) => updateSiteDraft(site.id, 'contactDetails', value)} />
+                    <TextInput style={styles.input} placeholder="Status" value={draft.status} onChangeText={(value: string) => updateSiteDraft(site.id, 'status', value)} />
+                    <TextInput
+                      style={styles.input}
+                      placeholder="Welfare check interval minutes"
+                      keyboardType="number-pad"
+                      value={draft.welfareCheckIntervalMinutes}
+                      onChangeText={(value: string) => updateSiteDraft(site.id, 'welfareCheckIntervalMinutes', value)}
+                    />
+                  </View>
+                  <Pressable style={styles.button} onPress={() => handleUpdateSite(site.id)}>
+                    <Text style={styles.buttonText}>Save Site</Text>
+                  </Pressable>
+                </View>
+              );
+            })
+          )}
+        </FeatureCard>
+      </View>
+    );
+  }
+
+  function renderGuardsSection() {
+    return (
+      <View style={styles.sectionStack}>
+        <View style={styles.sectionBanner}>
+          <Text style={styles.sectionTitle}>Guard Team</Text>
+          <Text style={styles.sectionSubtitle}>
+            Existing guards should be tied to sites, shifts, and live operational activity.
+          </Text>
+        </View>
+
+        <FeatureCard title="Linked Guards" subtitle={`${linkedGuards.length} linked to this company`} style={styles.desktopPanel}>
+          {linkedGuards.length === 0 ? (
+            <Text style={styles.helperText}>Guards will appear here after recruitment and assignment.</Text>
+          ) : (
+            linkedGuards.map((guard) => {
+              const guardAssignments = assignments.filter((assignment) => (assignment.guard?.id ?? assignment.guardId) === guard.id);
+              const guardShifts = shifts.filter((shift) => (shift.guard?.id ?? shift.guardId) === guard.id);
+              const guardTimesheets = timesheets.filter((timesheet) => (timesheet.guard?.id ?? timesheet.guardId) === guard.id);
+              return (
+                <View key={guard.id} style={styles.sectionRecord}>
+                  <View style={styles.recordHeader}>
+                    <View>
+                      <Text style={styles.recordTitle}>{guard.fullName}</Text>
+                      <Text style={styles.helperText}>SIA: {guard.siaLicenseNumber || guard.siaLicenceNumber || 'Not supplied'}</Text>
+                    </View>
+                    <View style={styles.statusPill}>
+                      <Text style={styles.statusPillText}>{guard.status}</Text>
+                    </View>
+                  </View>
+                  <View style={styles.inlineStats}>
+                    <Text style={styles.helperText}>Assignments: {guardAssignments.length}</Text>
+                    <Text style={styles.helperText}>Shifts: {guardShifts.length}</Text>
+                    <Text style={styles.helperText}>Timesheets: {guardTimesheets.length}</Text>
+                  </View>
+                  {guardAssignments.length > 0 ? (
+                    <Text style={styles.helperText}>
+                      Sites: {guardAssignments
+                        .map((assignment) => assignment.job?.site?.name || assignment.job?.title || 'Assigned')
+                        .join(' | ')}
+                    </Text>
+                  ) : null}
+                </View>
+              );
+            })
+          )}
+        </FeatureCard>
+      </View>
+    );
+  }
+
+  function renderRecruitmentSection() {
+    return (
+      <View style={styles.sectionStack}>
+        <View style={styles.sectionBanner}>
+          <Text style={styles.sectionTitle}>Recruitment & Open Jobs</Text>
+          <Text style={styles.sectionSubtitle}>
+            Use jobs only for recruitment. Once accepted, guards move into site-based shift operations.
+          </Text>
+        </View>
+
+        <View style={[styles.sectionColumns, isDesktopWeb && styles.sectionColumnsDesktop]}>
+          <FeatureCard title="Advertise Job" subtitle={`Open jobs: ${openJobs.length}`} style={styles.desktopPanel}>
+            <View style={styles.stackedForm}>
+              {sites.length > 0 ? <Text style={styles.helperText}>Site IDs: {sites.map((site) => `${site.id}=${site.name}`).join(' | ')}</Text> : null}
+              <TextInput
+                style={styles.stackedInput}
+                placeholder="Site ID for this job (optional)"
+                keyboardType="number-pad"
+                value={jobSiteId}
+                onChangeText={setJobSiteId}
+              />
+              <TextInput style={styles.stackedInput} placeholder="Job title" value={jobTitle} onChangeText={setJobTitle} />
+              <TextInput
+                style={[styles.stackedInput, styles.multiLineInput]}
+                placeholder="Job description"
+                multiline
+                value={jobDescription}
+                onChangeText={setJobDescription}
+              />
+              <TextInput
+                style={styles.stackedInput}
+                placeholder="Guards required"
+                keyboardType="number-pad"
+                value={guardsRequired}
+                onChangeText={setGuardsRequired}
+              />
+              <TextInput
+                style={styles.stackedInput}
+                placeholder="Hourly rate"
+                keyboardType="decimal-pad"
+                value={hourlyRate}
+                onChangeText={setHourlyRate}
+              />
+              <Pressable style={styles.button} onPress={handleCreateJob} disabled={submittingJob}>
+                <Text style={styles.buttonText}>{submittingJob ? 'Creating job...' : 'Create Job'}</Text>
+              </Pressable>
+            </View>
+          </FeatureCard>
+
+          <FeatureCard title="Open Jobs" subtitle={`${jobs.length} total`} style={styles.desktopPanel}>
+            {jobs.length === 0 ? (
+              <Text style={styles.helperText}>No jobs have been advertised yet.</Text>
+            ) : (
+              jobs.map((job) => (
+                <View key={job.id} style={styles.tableRowCard}>
+                  <Text style={styles.listTitle}>{job.title}</Text>
+                  <Text style={styles.helperText}>{job.description || 'No description provided'}</Text>
+                  <View style={styles.inlineStats}>
+                    <Text style={styles.helperText}>Status: {job.status}</Text>
+                    <Text style={styles.helperText}>Rate: {job.hourlyRate}</Text>
+                    <Text style={styles.helperText}>Site: {job.site?.name || 'Not linked'}</Text>
+                  </View>
+                </View>
+              ))
+            )}
+          </FeatureCard>
+        </View>
+
+        <FeatureCard title="Recruitment Pipeline" subtitle={`Pending applications: ${pendingApplications.length}`} style={styles.desktopPanel}>
+          {pendingApplications.length === 0 ? (
+            <Text style={styles.helperText}>New applications will appear here for review and hiring.</Text>
+          ) : (
+            pendingApplications.map((application) => {
+              const draft = draftFor(application.id);
+              return (
+                <View key={application.id} style={styles.sectionRecord}>
+                  <View style={styles.recordHeader}>
+                    <View>
+                      <Text style={styles.recordTitle}>{application.guard?.fullName || `Guard #${application.guardId}`}</Text>
+                      <Text style={styles.helperText}>Applied for {application.job?.title || `Job #${application.jobId}`}</Text>
+                    </View>
+                    <View style={styles.statusPill}>
+                      <Text style={styles.statusPillText}>{application.status}</Text>
+                    </View>
+                  </View>
+                  <View style={[styles.formGrid, isDesktopWeb && styles.formGridDesktop]}>
+                    <TextInput style={styles.input} placeholder="Site ID" keyboardType="number-pad" value={draft.siteId} onChangeText={(value: string) => updateHireDraft(application.id, 'siteId', value)} />
+                    <TextInput style={styles.input} placeholder="Site name" value={draft.siteName} onChangeText={(value: string) => updateHireDraft(application.id, 'siteName', value)} />
+                    <TextInput style={styles.input} placeholder="Shift start ISO" value={draft.start} onChangeText={(value: string) => updateHireDraft(application.id, 'start', value)} />
+                    <TextInput style={styles.input} placeholder="Shift end ISO" value={draft.end} onChangeText={(value: string) => updateHireDraft(application.id, 'end', value)} />
+                  </View>
+                  <Pressable style={styles.button} onPress={() => handleHire(application)}>
+                    <Text style={styles.buttonText}>Hire + Create Shift</Text>
+                  </Pressable>
+                </View>
+              );
+            })
+          )}
+        </FeatureCard>
+      </View>
+    );
+  }
+
+  function renderShiftSection() {
+    return (
+      <View style={styles.sectionStack}>
+        <View style={styles.sectionBanner}>
+          <Text style={styles.sectionTitle}>Shift Operations</Text>
+          <Text style={styles.sectionSubtitle}>
+            Every live shift should become the operational container for check-in, welfare calls, patrols, logs, incidents, and attendance.
+          </Text>
+        </View>
+
+        <FeatureCard title="Live & Upcoming Shifts" subtitle={`${activeShifts.length} live | ${scheduledShifts.length} upcoming`} style={styles.desktopPanel}>
+          {shifts.length === 0 ? (
+            <Text style={styles.helperText}>No shifts are currently scheduled.</Text>
+          ) : (
+            shifts.map((shift) => (
+              <View key={shift.id} style={styles.sectionRecord}>
+                <View style={styles.recordHeader}>
+                  <View>
+                    <Text style={styles.recordTitle}>{shift.siteName || 'Unassigned site'}</Text>
+                    <Text style={styles.helperText}>{formatDateTimeRange(shift.start, shift.end)}</Text>
+                  </View>
+                  <View style={styles.statusPill}>
+                    <Text style={styles.statusPillText}>{shift.status}</Text>
+                  </View>
+                </View>
+                <View style={styles.inlineStats}>
+                  <Text style={styles.helperText}>Guard: {shift.guard?.fullName || `#${shift.guard?.id ?? shift.guardId ?? 'N/A'}`}</Text>
+                  <Text style={styles.helperText}>Check calls: hourly</Text>
+                  <Text style={styles.helperText}>Patrol/logs: tracked inside shift</Text>
+                </View>
+              </View>
+            ))
+          )}
+        </FeatureCard>
+      </View>
+    );
+  }
+
+  function renderTimesheetSection() {
+    return (
+      <View style={styles.sectionStack}>
+        <View style={styles.sectionBanner}>
+          <Text style={styles.sectionTitle}>Timesheets</Text>
+          <Text style={styles.sectionSubtitle}>
+            Guards submit worked time after completed shifts. Company admins review and approve submitted hours.
+          </Text>
+        </View>
+
+        <FeatureCard title="Submitted & Completed Timesheets" subtitle={`${submittedTimesheets.length} awaiting approval`} style={styles.desktopPanel}>
+          {timesheets.length === 0 ? (
+            <Text style={styles.helperText}>No timesheets are available yet.</Text>
+          ) : (
+            timesheets.map((timesheet) => (
+              <View key={timesheet.id} style={styles.sectionRecord}>
+                <View style={styles.recordHeader}>
+                  <View>
+                    <Text style={styles.recordTitle}>{timesheet.shift?.siteName || `Shift #${timesheet.shift?.id ?? timesheet.shiftId}`}</Text>
+                    <Text style={styles.helperText}>
+                      {timesheet.shift ? formatDateTimeRange(timesheet.shift.start, timesheet.shift.end) : 'Shift details unavailable'}
+                    </Text>
+                  </View>
+                  <View style={styles.statusPill}>
+                    <Text style={styles.statusPillText}>{timesheet.approvalStatus}</Text>
+                  </View>
+                </View>
+                <View style={styles.inlineStats}>
+                  <Text style={styles.helperText}>Guard: {timesheet.guard?.fullName || `#${timesheet.guard?.id ?? timesheet.guardId ?? 'N/A'}`}</Text>
+                  <Text style={styles.helperText}>Hours: {timesheet.hoursWorked}</Text>
+                  <Text style={styles.helperText}>Submitted: {timesheet.submittedAt ? new Date(timesheet.submittedAt).toLocaleString() : 'Not yet'}</Text>
+                </View>
+                {timesheet.approvalStatus === 'submitted' ? (
+                  <View style={styles.actionRow}>
+                    <Pressable style={styles.button} onPress={() => handleUpdateTimesheet(timesheet.id, 'approved')}>
+                      <Text style={styles.buttonText}>Approve</Text>
+                    </Pressable>
+                    <Pressable style={styles.secondaryButton} onPress={() => handleUpdateTimesheet(timesheet.id, 'rejected')}>
+                      <Text style={styles.secondaryButtonText}>Reject</Text>
+                    </Pressable>
+                  </View>
+                ) : null}
+              </View>
+            ))
+          )}
+        </FeatureCard>
+      </View>
+    );
+  }
+
+  function renderIncidentsSection() {
+    return (
+      <View style={styles.sectionStack}>
+        <View style={styles.sectionBanner}>
+          <Text style={styles.sectionTitle}>Incident Reports</Text>
+          <Text style={styles.sectionSubtitle}>
+            Review incident activity by site, guard, and shift, then resolve issues from the operations desk.
+          </Text>
+        </View>
+
+        <FeatureCard title="Open & Resolved Incidents" subtitle={`${openIncidentCount} open`} style={styles.desktopPanel}>
+          {incidents.length === 0 ? (
+            <Text style={styles.helperText}>No incident reports have been submitted yet.</Text>
+          ) : (
+            incidents.map((incident) => (
+              <View key={incident.id} style={styles.sectionRecord}>
+                  <View style={styles.recordHeader}>
+                    <View>
+                      <Text style={styles.recordTitle}>{incident.title}</Text>
+                      <Text style={styles.helperText}>{incident.shift?.siteName || 'Unknown site'} | {incident.severity}</Text>
+                    </View>
+                  <View style={styles.statusPill}>
+                    <Text style={styles.statusPillText}>{incident.status}</Text>
+                  </View>
+                </View>
+                <Text style={styles.helperText}>{incident.notes}</Text>
+                <View style={styles.inlineStats}>
+                  <Text style={styles.helperText}>Guard: {incident.guard?.fullName || 'Unknown'}</Text>
+                  <Text style={styles.helperText}>Location: {incident.locationText || 'Not supplied'}</Text>
+                </View>
+                {incident.status !== 'resolved' ? (
+                  <Pressable style={styles.button} onPress={() => handleUpdateIncidentStatus(incident.id, 'resolved')}>
+                    <Text style={styles.buttonText}>Mark Resolved</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            ))
+          )}
+        </FeatureCard>
+      </View>
+    );
+  }
+
+  function renderInvoicesSection() {
+    return (
+      <View style={styles.sectionStack}>
+        <View style={styles.sectionBanner}>
+          <Text style={styles.sectionTitle}>Client Invoices</Text>
+          <Text style={styles.sectionSubtitle}>
+            Keep billing separate from recruitment and daily operations. Roll up approved hours by site and client period.
+          </Text>
+        </View>
+
+        <FeatureCard
+          title="Invoice Preparation"
+          subtitle="Use approved timesheets and site activity to raise client invoices."
+          style={styles.desktopPanel}
+          ctaLabel="Create Invoice"
+          onPress={() => Alert.alert('Invoice', 'Invoice generation flow is the next dedicated browser workflow.')}
+        >
+          <View style={styles.kpiList}>
+            <Text style={styles.helperText}>Approved timesheets available: {timesheets.filter((row) => row.approvalStatus === 'approved').length}</Text>
+            <Text style={styles.helperText}>Managed sites: {sites.length}</Text>
+            <Text style={styles.helperText}>Current live shifts: {activeShifts.length}</Text>
+          </View>
+        </FeatureCard>
+      </View>
+    );
+  }
+
+  function renderActiveSection() {
+    switch (activeSection) {
+      case 'sites':
+        return renderSitesSection();
+      case 'guards':
+        return renderGuardsSection();
+      case 'recruitment':
+        return renderRecruitmentSection();
+      case 'shifts':
+        return renderShiftSection();
+      case 'timesheets':
+        return renderTimesheetSection();
+      case 'incidents':
+        return renderIncidentsSection();
+      case 'invoices':
+        return renderInvoicesSection();
+      case 'overview':
+      default:
+        return renderOverviewSection();
+    }
+  }
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Text style={styles.title}>Company Dashboard</Text>
-      <Text style={styles.subtitle}>Manage sites, guards, recruitment, live shifts, and client billing.</Text>
-
-      <FeatureCard
-        title="Company Setup"
-        subtitle={
-          company
-            ? `${company.name}\nNo: ${company.companyNumber}\n${company.address}\n${company.contactDetails}`
-            : 'Loading company profile...'
-        }
-      >
-        <TextInput style={styles.input} placeholder="Company name" value={companyName} onChangeText={setCompanyName} />
-        <TextInput
-          style={styles.input}
-          placeholder="Company number"
-          value={companyNumber}
-          onChangeText={setCompanyNumber}
-        />
-        <TextInput style={styles.input} placeholder="Address" value={address} onChangeText={setAddress} />
-        <TextInput
-          style={styles.input}
-          placeholder="Contact details"
-          value={contactDetails}
-          onChangeText={setContactDetails}
-        />
-        <Pressable style={styles.button} onPress={handleSaveProfile}>
-          <Text style={styles.buttonText}>Save Profile</Text>
-        </Pressable>
-      </FeatureCard>
-
-      <FeatureCard
-        title="Operations Overview"
-        subtitle={`Live shifts: ${activeShifts.length} | Upcoming shifts: ${scheduledShifts.length}`}
-      >
-        <Text style={styles.helperText}>Sites under management: {siteSummaries.length}</Text>
-        <Text style={styles.helperText}>Linked guards: {linkedGuards.length}</Text>
-        <Text style={styles.helperText}>Pending recruitment applications: {pendingApplications.length}</Text>
-        <Text style={styles.helperText}>
-          Open incidents: {incidents.filter((incident) => incident.status === 'open').length}
-        </Text>
-        <Text style={styles.helperText}>
-          Submitted timesheets: {submittedTimesheets.length}
-        </Text>
-      </FeatureCard>
-
-      <FeatureCard title="Sites & Live Operations" subtitle={`Managed sites: ${sites.length}`}>
-        <TextInput style={styles.input} placeholder="Site name" value={siteName} onChangeText={setSiteName} />
-        <TextInput style={styles.input} placeholder="Client name" value={clientName} onChangeText={setClientName} />
-        <TextInput style={styles.input} placeholder="Site address" value={siteAddress} onChangeText={setSiteAddress} />
-        <TextInput
-          style={styles.input}
-          placeholder="Site contact details"
-          value={siteContactDetails}
-          onChangeText={setSiteContactDetails}
-        />
-        <TextInput style={styles.input} placeholder="Status" value={siteStatus} onChangeText={setSiteStatus} />
-        <TextInput
-          style={styles.input}
-          placeholder="Welfare check interval minutes"
-          keyboardType="number-pad"
-          value={welfareCheckIntervalMinutes}
-          onChangeText={setWelfareCheckIntervalMinutes}
-        />
-        <Pressable style={styles.button} onPress={handleCreateSite} disabled={submittingSite}>
-          <Text style={styles.buttonText}>{submittingSite ? 'Creating site...' : 'Create Site'}</Text>
-        </Pressable>
-
-        {sites.length === 0 ? (
-          <Text style={styles.helperText}>Create sites first so recruitment, shifts, logs, and incidents can live under them.</Text>
-        ) : (
-          sites.map((site) => {
-            const draft = siteDraftFor(site);
-            const siteSummary = siteSummaries.find((entry) => entry.name === site.name);
-
-            return (
-              <View key={site.id} style={styles.listItem}>
-                <Text style={styles.listTitle}>{site.name}</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Site name"
-                  value={draft.name}
-                  onChangeText={(value: string) => updateSiteDraft(site.id, 'name', value)}
-                />
-                <TextInput
-                  style={styles.input}
-                  placeholder="Client name"
-                  value={draft.clientName}
-                  onChangeText={(value: string) => updateSiteDraft(site.id, 'clientName', value)}
-                />
-                <TextInput
-                  style={styles.input}
-                  placeholder="Address"
-                  value={draft.address}
-                  onChangeText={(value: string) => updateSiteDraft(site.id, 'address', value)}
-                />
-                <TextInput
-                  style={styles.input}
-                  placeholder="Contact details"
-                  value={draft.contactDetails}
-                  onChangeText={(value: string) => updateSiteDraft(site.id, 'contactDetails', value)}
-                />
-                <TextInput
-                  style={styles.input}
-                  placeholder="Status"
-                  value={draft.status}
-                  onChangeText={(value: string) => updateSiteDraft(site.id, 'status', value)}
-                />
-                <TextInput
-                  style={styles.input}
-                  placeholder="Welfare check interval minutes"
-                  keyboardType="number-pad"
-                  value={draft.welfareCheckIntervalMinutes}
-                  onChangeText={(value: string) => updateSiteDraft(site.id, 'welfareCheckIntervalMinutes', value)}
-                />
-                <Text style={styles.helperText}>
-                  Client: {site.clientName || 'Not set'} | Check calls every {site.welfareCheckIntervalMinutes} mins
-                </Text>
-                {siteSummary ? (
-                  <Text style={styles.helperText}>
-                    Guards assigned: {siteSummary.guardIds.size} | Live shifts: {siteSummary.liveShifts} | Open incidents: {siteSummary.incidents}
-                  </Text>
-                ) : null}
-                <Pressable style={styles.button} onPress={() => handleUpdateSite(site.id)}>
-                  <Text style={styles.buttonText}>Save Site</Text>
-                </Pressable>
-              </View>
-            );
-          })
-        )}
-      </FeatureCard>
-
-      <FeatureCard title="Guard Team" subtitle={`Existing guards linked to your company: ${linkedGuards.length}`}>
-        {linkedGuards.length === 0 ? (
-          <Text style={styles.helperText}>Guards move into this pool after recruitment and shift assignment.</Text>
-        ) : (
-          linkedGuards.map((guard) => {
-            const guardAssignments = assignments.filter(
-              (assignment) => (assignment.guard?.id ?? assignment.guardId) === guard.id,
-            );
-            return (
-              <View key={guard.id} style={styles.listItem}>
-                <Text style={styles.listTitle}>{guard.fullName}</Text>
-                <Text style={styles.helperText}>Status: {guard.status}</Text>
-                <Text style={styles.helperText}>
-                  Assigned jobs/shifts: {guardAssignments.length} | SIA: {guard.siaLicenseNumber || guard.siaLicenceNumber}
-                </Text>
-              </View>
-            );
-          })
-        )}
-      </FeatureCard>
-
-      <FeatureCard title="Recruitment / Open Jobs" subtitle={`Open advertised jobs: ${openJobs.length}`}>
-        {sites.length > 0 ? (
-          <Text style={styles.helperText}>
-            Site IDs: {sites.map((site) => `${site.id}=${site.name}`).join(' | ')}
-          </Text>
-        ) : null}
-        <TextInput
-          style={styles.input}
-          placeholder="Site ID for this job (optional)"
-          keyboardType="number-pad"
-          value={jobSiteId}
-          onChangeText={setJobSiteId}
-        />
-        <TextInput style={styles.input} placeholder="Job title" value={jobTitle} onChangeText={setJobTitle} />
-        <TextInput
-          style={[styles.input, styles.multiLineInput]}
-          placeholder="Job description"
-          multiline
-          value={jobDescription}
-          onChangeText={setJobDescription}
-        />
-        <TextInput
-          style={styles.input}
-          placeholder="Guards required"
-          keyboardType="number-pad"
-          value={guardsRequired}
-          onChangeText={setGuardsRequired}
-        />
-        <TextInput
-          style={styles.input}
-          placeholder="Hourly rate"
-          keyboardType="decimal-pad"
-          value={hourlyRate}
-          onChangeText={setHourlyRate}
-        />
-        <Pressable style={styles.button} onPress={handleCreateJob} disabled={submittingJob}>
-          <Text style={styles.buttonText}>{submittingJob ? 'Creating job...' : 'Create Job'}</Text>
-        </Pressable>
-      </FeatureCard>
-
-      <FeatureCard title="Recruitment Pipeline" subtitle={`Pending applications: ${pendingApplications.length}`}>
-        {pendingApplications.length === 0 ? (
-          <Text style={styles.helperText}>New guard applications will appear here.</Text>
-        ) : (
-          pendingApplications.map((application) => {
-            const draft = draftFor(application.id);
-
-            return (
-              <View key={application.id} style={styles.listItem}>
-                <Text style={styles.listTitle}>
-                  {application.guard?.fullName || `Guard #${application.guardId}`} to{' '}
-                  {application.job?.title || `Job #${application.jobId}`}
-                </Text>
-                <Text style={styles.helperText}>Create the first shift while hiring this application.</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Site ID"
-                  keyboardType="number-pad"
-                  value={draft.siteId}
-                  onChangeText={(value: string) => updateHireDraft(application.id, 'siteId', value)}
-                />
-                <TextInput
-                  style={styles.input}
-                  placeholder="Site name"
-                  value={draft.siteName}
-                  onChangeText={(value: string) => updateHireDraft(application.id, 'siteName', value)}
-                />
-                <TextInput
-                  style={styles.input}
-                  placeholder="Shift start ISO"
-                  value={draft.start}
-                  onChangeText={(value: string) => updateHireDraft(application.id, 'start', value)}
-                />
-                <TextInput
-                  style={styles.input}
-                  placeholder="Shift end ISO"
-                  value={draft.end}
-                  onChangeText={(value: string) => updateHireDraft(application.id, 'end', value)}
-                />
-                <Pressable style={styles.button} onPress={() => handleHire(application)}>
-                  <Text style={styles.buttonText}>Hire + Create Shift</Text>
-                </Pressable>
-              </View>
-            );
-          })
-        )}
-      </FeatureCard>
-
-      <FeatureCard
-        title="Shift Operations / Compliance"
-        subtitle="Track live shifts, check-ins, check calls, patrols, logs, and incident actions."
-      >
-        {shifts.length === 0 ? (
-          <Text style={styles.helperText}>No live or scheduled shifts yet.</Text>
-        ) : (
-          shifts.slice(0, 6).map((shift) => (
-            <View key={shift.id} style={styles.listItem}>
-              <Text style={styles.listTitle}>{shift.siteName}</Text>
-              <Text style={styles.helperText}>
-                {new Date(shift.start).toLocaleString()} to {new Date(shift.end).toLocaleString()}
-              </Text>
-              <Text style={styles.helperText}>Status: {shift.status}</Text>
-              <Text style={styles.helperText}>
-                Guard: {shift.guard?.fullName || `#${shift.guard?.id ?? shift.guardId ?? 'N/A'}`}
+      <View style={[styles.pageShell, isDesktopWeb && styles.pageShellDesktop]}>
+        <View style={[styles.adminLayout, isDesktopWeb && styles.adminLayoutDesktop]}>
+          <View style={[styles.sidebar, !isDesktopWeb && styles.sidebarMobile]}>
+            <View style={styles.sidebarHeader}>
+              <Text style={styles.sidebarEyebrow}>Observant Security</Text>
+              <Text style={styles.sidebarTitle}>Company Admin</Text>
+              <Text style={styles.sidebarSubtitle}>
+                Sites, recruitment, live operations, timesheets, and billing in one browser portal.
               </Text>
             </View>
-          ))
-        )}
-      </FeatureCard>
-
-      <FeatureCard
-        title="Hours Management"
-        subtitle={`Awaiting approval: ${submittedTimesheets.length}`}
-      >
-        {timesheets.length === 0 ? (
-          <Text style={styles.helperText}>No timesheets are available yet.</Text>
-        ) : (
-          timesheets.slice(0, 6).map((timesheet) => (
-            <View key={timesheet.id} style={styles.listItem}>
-              <Text style={styles.listTitle}>{timesheet.shift?.siteName || `Shift #${timesheet.shift?.id ?? timesheet.shiftId}`}</Text>
-              <Text style={styles.helperText}>
-                Hours: {timesheet.hoursWorked} | Status: {timesheet.approvalStatus}
-              </Text>
-              <Text style={styles.helperText}>
-                Guard: {timesheet.guard?.fullName || `#${timesheet.guard?.id ?? timesheet.guardId ?? 'N/A'}`}
-              </Text>
-              {timesheet.shift ? (
-                <Text style={styles.helperText}>
-                  {new Date(timesheet.shift.start).toLocaleString()} to {new Date(timesheet.shift.end).toLocaleString()}
-                </Text>
-              ) : null}
-              {timesheet.approvalStatus === 'submitted' ? (
-                <View style={styles.actionRow}>
-                  <Pressable style={styles.button} onPress={() => handleUpdateTimesheet(timesheet.id, 'approved')}>
-                    <Text style={styles.buttonText}>Approve</Text>
+            <View style={[styles.sidebarNav, !isDesktopWeb && styles.sidebarNavMobile]}>
+              {sectionItems.map((section) => {
+                const selected = section.id === activeSection;
+                return (
+                  <Pressable
+                    key={section.id}
+                    onPress={() => setActiveSection(section.id)}
+                    style={[styles.sidebarLink, selected && styles.sidebarLinkActive, !isDesktopWeb && styles.sidebarLinkMobile]}
+                  >
+                    <Text style={[styles.sidebarLinkTitle, selected && styles.sidebarLinkTitleActive]}>{section.label}</Text>
+                    {isDesktopWeb ? (
+                      <Text style={[styles.sidebarLinkSubtitle, selected && styles.sidebarLinkSubtitleActive]}>{section.description}</Text>
+                    ) : null}
                   </Pressable>
-                  <Pressable style={styles.secondaryButton} onPress={() => handleUpdateTimesheet(timesheet.id, 'rejected')}>
-                    <Text style={styles.secondaryButtonText}>Reject</Text>
-                  </Pressable>
-                </View>
-              ) : null}
+                );
+              })}
             </View>
-          ))
-        )}
-      </FeatureCard>
+          </View>
 
-      <FeatureCard
-        title="Incident Reports"
-        subtitle={`Open incidents: ${incidents.filter((incident) => incident.status === 'open').length}`}
-      >
-        {incidents.length === 0 ? (
-          <Text style={styles.helperText}>No incident reports have been submitted yet.</Text>
-        ) : (
-          incidents.slice(0, 6).map((incident) => (
-            <View key={incident.id} style={styles.listItem}>
-              <Text style={styles.listTitle}>{incident.title}</Text>
-              <Text style={styles.helperText}>
-                {incident.severity} | {incident.status} | Guard: {incident.guard?.fullName || 'Unknown'}
+          <View style={styles.mainPanel}>
+            <View style={styles.mainPanelHeader}>
+              <Text style={styles.mainPanelTitle}>{sectionLabel(activeSection)}</Text>
+              <Text style={styles.mainPanelSubtitle}>
+                {sectionItems.find((section) => section.id === activeSection)?.description}
               </Text>
-              <Text style={styles.helperText}>{incident.notes}</Text>
-              {incident.status !== 'resolved' ? (
-                <Pressable style={styles.button} onPress={() => handleUpdateIncidentStatus(incident.id, 'resolved')}>
-                  <Text style={styles.buttonText}>Mark Resolved</Text>
-                </Pressable>
-              ) : null}
             </View>
-          ))
-        )}
-      </FeatureCard>
-
-      <FeatureCard
-        title="Invoices"
-        subtitle="Manage client invoices separately from sites, guards, and live shift operations."
-        ctaLabel="Create Invoice"
-        onPress={() => Alert.alert('Invoice', 'Invoice generation flow is next after timesheet approval.')}
-      />
+            {renderActiveSection()}
+          </View>
+        </View>
+      </View>
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f3f4f6' },
-  content: { padding: 16, paddingBottom: 24 },
-  title: { fontSize: 24, fontWeight: '700', color: '#111827', marginBottom: 4 },
-  subtitle: { color: '#374151', marginBottom: 14 },
+  container: { flex: 1, backgroundColor: '#eef2f7' },
+  content: { padding: 16, paddingBottom: 28 },
+  pageShell: { gap: 16 },
+  pageShellDesktop: {
+    width: '100%',
+    maxWidth: 1520,
+    alignSelf: 'center',
+    paddingHorizontal: 20,
+    paddingTop: 12,
+  },
+  adminLayout: { gap: 16 },
+  adminLayoutDesktop: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 24,
+  },
+  sidebar: {
+    backgroundColor: '#0f172a',
+    borderRadius: 28,
+    padding: 20,
+    gap: 16,
+  },
+  sidebarMobile: {
+    borderRadius: 22,
+  },
+  sidebarHeader: { gap: 8 },
+  sidebarEyebrow: {
+    color: '#60a5fa',
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 1.1,
+  },
+  sidebarTitle: { color: '#fff', fontSize: 28, fontWeight: '700' },
+  sidebarSubtitle: { color: '#cbd5e1', lineHeight: 20 },
+  sidebarNav: { gap: 10 },
+  sidebarNavMobile: { flexDirection: 'row', flexWrap: 'wrap' },
+  sidebarLink: {
+    padding: 14,
+    borderRadius: 16,
+    backgroundColor: '#111827',
+    borderWidth: 1,
+    borderColor: '#1f2937',
+    gap: 4,
+  },
+  sidebarLinkMobile: {
+    minWidth: 120,
+    flexGrow: 1,
+  },
+  sidebarLinkActive: {
+    backgroundColor: '#eff6ff',
+    borderColor: '#bfdbfe',
+  },
+  sidebarLinkTitle: { color: '#f9fafb', fontWeight: '700', fontSize: 15 },
+  sidebarLinkTitleActive: { color: '#1d4ed8' },
+  sidebarLinkSubtitle: { color: '#94a3b8', fontSize: 12, lineHeight: 18 },
+  sidebarLinkSubtitleActive: { color: '#475569' },
+  mainPanel: { flex: 1, gap: 16 },
+  mainPanelHeader: {
+    paddingHorizontal: 4,
+    paddingTop: 4,
+  },
+  mainPanelTitle: { color: '#0f172a', fontSize: 30, fontWeight: '700' },
+  mainPanelSubtitle: { color: '#475569', marginTop: 4 },
+  sectionStack: { gap: 18 },
+  sectionBanner: {
+    backgroundColor: '#fff',
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    padding: 20,
+    gap: 6,
+  },
+  sectionHeaderCard: { gap: 16 },
+  sectionHeaderCardDesktop: {
+    backgroundColor: '#111827',
+    borderRadius: 28,
+    padding: 28,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 24,
+  },
+  sectionHeaderCopy: { flex: 1, gap: 8 },
+  sectionEyebrow: {
+    color: '#60a5fa',
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 1.2,
+  },
+  sectionTitle: { fontSize: 30, fontWeight: '700', color: '#0f172a' },
+  sectionTitleOnDark: { color: '#fff' },
+  sectionSubtitle: { color: '#475569', lineHeight: 22 },
+  sectionSubtitleOnDark: { color: '#d1d5db' },
+  metricGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
+  metricCard: {
+    minWidth: 160,
+    flexGrow: 1,
+    backgroundColor: '#fff',
+    borderRadius: 18,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#dbe4f0',
+    gap: 4,
+  },
+  metricValue: { fontSize: 28, fontWeight: '700' },
+  metricLabel: { color: '#374151', fontWeight: '600' },
+  sectionColumns: { gap: 16 },
+  sectionColumnsDesktop: { flexDirection: 'row', alignItems: 'flex-start' },
+  desktopPanel: { marginBottom: 0, borderRadius: 20, padding: 20, flex: 1 },
+  kpiList: { gap: 8 },
+  sectionRecord: {
+    borderTopWidth: 1,
+    borderTopColor: '#e5e7eb',
+    paddingTop: 14,
+    gap: 10,
+  },
+  recordHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  recordTitle: { color: '#111827', fontWeight: '700', fontSize: 16 },
+  statusPill: {
+    borderRadius: 999,
+    backgroundColor: '#eff6ff',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  statusPillText: { color: '#1d4ed8', fontWeight: '700', fontSize: 12, textTransform: 'capitalize' },
+  inlineStats: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
+  rowCard: {
+    borderTopWidth: 1,
+    borderTopColor: '#e5e7eb',
+    paddingTop: 12,
+    gap: 4,
+  },
+  tableRowCard: {
+    borderTopWidth: 1,
+    borderTopColor: '#e5e7eb',
+    paddingTop: 12,
+    gap: 8,
+  },
+  formGrid: { gap: 10 },
+  formGridDesktop: { flexDirection: 'row', flexWrap: 'wrap' },
+  stackedForm: { gap: 10, width: '100%' },
+  stackedInput: {
+    width: '100%',
+    minWidth: 0,
+    flexGrow: 0,
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 10,
+    padding: 10,
+    backgroundColor: '#fff',
+  },
   input: {
     borderWidth: 1,
     borderColor: '#d1d5db',
-    borderRadius: 8,
+    borderRadius: 10,
     padding: 10,
     backgroundColor: '#fff',
+    flexGrow: 1,
+    minWidth: 180,
   },
   multiLineInput: {
     minHeight: 80,
@@ -734,40 +1195,20 @@ const styles = StyleSheet.create({
   button: {
     backgroundColor: '#111827',
     alignSelf: 'flex-start',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
   },
-  buttonText: {
-    color: '#fff',
-    fontWeight: '600',
-  },
-  helperText: {
-    color: '#4b5563',
-  },
-  listItem: {
-    borderTopWidth: 1,
-    borderTopColor: '#e5e7eb',
-    paddingTop: 10,
-    gap: 8,
-  },
-  actionRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  listTitle: {
-    color: '#111827',
-    fontWeight: '600',
-  },
+  buttonText: { color: '#fff', fontWeight: '600' },
+  helperText: { color: '#4b5563' },
+  listTitle: { color: '#111827', fontWeight: '600' },
+  actionRow: { flexDirection: 'row', gap: 8 },
   secondaryButton: {
     backgroundColor: '#e5e7eb',
     alignSelf: 'flex-start',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
   },
-  secondaryButtonText: {
-    color: '#111827',
-    fontWeight: '600',
-  },
+  secondaryButtonText: { color: '#111827', fontWeight: '600' },
 });
