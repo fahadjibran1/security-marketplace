@@ -10,6 +10,9 @@ import {
 } from 'react-native';
 import { FeatureCard } from '../components/FeatureCard';
 import {
+  listCompanyAttachments,
+  listCompanyAuditLogs,
+  listCompanyNotifications,
   createJob,
   createSite,
   getMyCompany,
@@ -29,6 +32,8 @@ import {
   updateTimesheet,
 } from '../services/api';
 import {
+  Attachment,
+  AuditLog,
   Assignment,
   AuthUser,
   CompanyProfile,
@@ -36,6 +41,7 @@ import {
   Incident,
   Job,
   JobApplication,
+  Notification,
   Shift,
   Site,
   Timesheet,
@@ -144,6 +150,9 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
   const [applications, setApplications] = useState<JobApplication[]>([]);
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [timesheets, setTimesheets] = useState<Timesheet[]>([]);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [companyName, setCompanyName] = useState('');
   const [companyNumber, setCompanyNumber] = useState('');
   const [address, setAddress] = useState('');
@@ -178,6 +187,9 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
         applicationsData,
         incidentRows,
         timesheetRows,
+        notificationRows,
+        attachmentRows,
+        auditRows,
       ] = await Promise.all([
         getMyCompany(),
         listCompanies(),
@@ -189,6 +201,9 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
         listJobApplications(),
         listCompanyIncidents(),
         listCompanyTimesheets(),
+        listCompanyNotifications(),
+        listCompanyAttachments(),
+        listCompanyAuditLogs(),
       ]);
 
       const currentCompany =
@@ -212,6 +227,9 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
       setApplications(applicationsData.filter((application) => application.job?.company?.id === companyId));
       setIncidents(incidentRows);
       setTimesheets(timesheetRows);
+      setNotifications(notificationRows);
+      setAttachments(attachmentRows);
+      setAuditLogs(auditRows);
     } catch (error) {
       Alert.alert('Load failed', error instanceof Error ? error.message : 'Unknown error');
     }
@@ -407,6 +425,13 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
     () => timesheets.filter((timesheet) => timesheet.approvalStatus === 'submitted'),
     [timesheets],
   );
+  const unreadNotifications = useMemo(
+    () => notifications.filter((notification) => notification.status === 'unread'),
+    [notifications],
+  );
+  const recentNotifications = useMemo(() => notifications.slice(0, 5), [notifications]);
+  const recentAttachments = useMemo(() => attachments.slice(0, 5), [attachments]);
+  const recentAuditLogs = useMemo(() => auditLogs.slice(0, 5), [auditLogs]);
   const activeShifts = useMemo(() => shifts.filter((shift) => shift.status === 'in_progress'), [shifts]);
   const scheduledShifts = useMemo(() => shifts.filter((shift) => shift.status === 'scheduled'), [shifts]);
   const linkedGuardIds = useMemo(
@@ -551,6 +576,69 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
             </View>
           </FeatureCard>
         </View>
+
+        <View style={[styles.sectionColumns, isDesktopWeb && styles.sectionColumnsDesktop]}>
+          <FeatureCard
+            title="Control Room Notifications"
+            subtitle={`${unreadNotifications.length} unread across company operations`}
+            style={styles.desktopPanel}
+          >
+            {recentNotifications.length === 0 ? (
+              <Text style={styles.helperText}>No notifications yet. Alerts, timesheets, and incidents will appear here.</Text>
+            ) : (
+              recentNotifications.map((notification) => (
+                <View key={notification.id} style={styles.rowCard}>
+                  <Text style={styles.listTitle}>{notification.title}</Text>
+                  <Text style={styles.helperText}>{notification.message}</Text>
+                  <Text style={styles.helperText}>
+                    {notification.status} | {new Date(notification.createdAt).toLocaleString()}
+                  </Text>
+                </View>
+              ))
+            )}
+          </FeatureCard>
+
+          <FeatureCard
+            title="Evidence & Attachments"
+            subtitle={`${attachments.length} uploaded records across incidents, logs, and shifts`}
+            style={styles.desktopPanel}
+          >
+            {recentAttachments.length === 0 ? (
+              <Text style={styles.helperText}>No evidence uploaded yet.</Text>
+            ) : (
+              recentAttachments.map((attachment) => (
+                <View key={attachment.id} style={styles.rowCard}>
+                  <Text style={styles.listTitle}>{attachment.fileName}</Text>
+                  <Text style={styles.helperText}>
+                    {attachment.entityType} #{attachment.entityId}
+                  </Text>
+                  <Text style={styles.helperText}>{new Date(attachment.createdAt).toLocaleString()}</Text>
+                </View>
+              ))
+            )}
+          </FeatureCard>
+        </View>
+
+        <FeatureCard
+          title="Audit Trail"
+          subtitle={`${auditLogs.length} company audit events recorded`}
+          style={styles.desktopPanel}
+        >
+          {recentAuditLogs.length === 0 ? (
+            <Text style={styles.helperText}>No audit entries available yet.</Text>
+          ) : (
+            recentAuditLogs.map((entry) => (
+              <View key={entry.id} style={styles.tableRowCard}>
+                <Text style={styles.listTitle}>{entry.action}</Text>
+                <Text style={styles.helperText}>
+                  {entry.entityType}
+                  {entry.entityId ? ` #${entry.entityId}` : ''}
+                </Text>
+                <Text style={styles.helperText}>{new Date(entry.createdAt).toLocaleString()}</Text>
+              </View>
+            ))
+          )}
+        </FeatureCard>
       </View>
     );
   }

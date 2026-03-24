@@ -1,7 +1,21 @@
-import { Column, CreateDateColumn, Entity, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  Column,
+  CreateDateColumn,
+  Entity,
+  ManyToOne,
+  PrimaryGeneratedColumn,
+  UpdateDateColumn,
+} from 'typeorm';
 import { Shift } from '../../shift/entities/shift.entity';
 import { GuardProfile } from '../../guard-profile/entities/guard-profile.entity';
 import { Company } from '../../company/entities/company.entity';
+
+export enum TimesheetStatus {
+  DRAFT = 'draft',
+  SUBMITTED = 'submitted',
+  APPROVED = 'approved',
+  REJECTED = 'rejected',
+}
 
 @Entity('timesheets')
 export class Timesheet {
@@ -20,12 +34,49 @@ export class Timesheet {
   @Column({ type: 'numeric', precision: 8, scale: 2, default: 0 })
   hoursWorked!: number;
 
-  @Column({ default: 'pending' })
+  @Column({
+    type: 'enum',
+    enum: TimesheetStatus,
+    default: TimesheetStatus.DRAFT,
+  })
   approvalStatus!: string;
+
+  @Column({ type: 'timestamp', nullable: true })
+  scheduledStartAt?: Date | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  scheduledEndAt?: Date | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  actualCheckInAt?: Date | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  actualCheckOutAt?: Date | null;
+
+  @Column({ type: 'int', default: 0 })
+  workedMinutes!: number;
+
+  @Column({ type: 'int', default: 0 })
+  breakMinutes!: number;
+
+  @Column({ type: 'int', default: 0 })
+  roundedMinutes!: number;
 
   @Column({ type: 'timestamp', nullable: true })
   submittedAt?: Date | null;
 
+  @Column({ type: 'timestamp', nullable: true })
+  reviewedAt?: Date | null;
+
+  @Column({ type: 'int', nullable: true })
+  reviewedByUserId?: number | null;
+
+  @Column({ type: 'text', nullable: true })
+  rejectionReason?: string | null;
+
   @CreateDateColumn()
   createdAt!: Date;
+
+  @UpdateDateColumn()
+  updatedAt!: Date;
 }

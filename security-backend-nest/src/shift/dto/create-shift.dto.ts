@@ -1,8 +1,29 @@
 import { IsDateString, IsInt, IsOptional, IsString } from 'class-validator';
 
 export class CreateShiftDto {
+  @IsOptional()
   @IsInt()
-  assignmentId!: number;
+  assignmentId?: number;
+
+  @IsOptional()
+  @IsInt()
+  companyId?: number;
+
+  @IsOptional()
+  @IsInt()
+  guardId?: number;
+
+  @IsOptional()
+  @IsInt()
+  jobId?: number;
+
+  @IsOptional()
+  @IsInt()
+  jobApplicationId?: number;
+
+  @IsOptional()
+  @IsInt()
+  createdByUserId?: number;
 
   @IsOptional()
   @IsInt()

@@ -8,6 +8,9 @@ import { GuardProfileService } from '../guard-profile/guard-profile.service';
 import { AssignmentService } from '../assignment/assignment.service';
 import { HireApplicationDto } from './dto/hire-application.dto';
 import { ShiftService } from '../shift/shift.service';
+import { AuditLogService } from '../audit-log/audit-log.service';
+import { NotificationService } from '../notification/notification.service';
+import { NotificationType } from '../notification/entities/notification.entity';
 
 @Injectable()
 export class JobApplicationService {
@@ -17,7 +20,9 @@ export class JobApplicationService {
     private readonly jobsService: JobService,
     private readonly guardService: GuardProfileService,
     private readonly assignmentService: AssignmentService,
-    private readonly shiftService: ShiftService
+    private readonly shiftService: ShiftService,
+    private readonly auditLogService: AuditLogService,
+    private readonly notificationService: NotificationService,
   ) {}
 
   findAll(): Promise<JobApplication[]> {
@@ -74,6 +79,28 @@ export class JobApplicationService {
         siteName: dto.siteName,
         start: dto.start,
         end: dto.end
+      });
+    }
+
+    await this.auditLogService.log({
+      company: application.job.company,
+      user: application.job.company?.user ? { id: application.job.company.user.id } : null,
+      action: 'job_application.hired',
+      entityType: 'job_application',
+      entityId: application.id,
+      afterData: {
+        applicationStatus: application.status,
+        assignmentId: assignment.id,
+      },
+    });
+
+    if (application.guard?.user?.id) {
+      await this.notificationService.createForUser({
+        userId: application.guard.user.id,
+        company: application.job.company,
+        type: NotificationType.JOB_ASSIGNED,
+        title: 'Job assigned',
+        message: `You have been hired for ${application.job.title}.`,
       });
     }
 

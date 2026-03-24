@@ -5,12 +5,14 @@ import { Site } from './entities/site.entity';
 import { CreateSiteDto } from './dto/create-site.dto';
 import { UpdateSiteDto } from './dto/update-site.dto';
 import { CompanyService } from '../company/company.service';
+import { AuditLogService } from '../audit-log/audit-log.service';
 
 @Injectable()
 export class SiteService {
   constructor(
     @InjectRepository(Site) private readonly siteRepo: Repository<Site>,
     private readonly companyService: CompanyService,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   findAll(): Promise<Site[]> {
@@ -47,7 +49,20 @@ export class SiteService {
       welfareCheckIntervalMinutes: dto.welfareCheckIntervalMinutes ?? 60,
     });
 
-    return this.siteRepo.save(site);
+    const saved = await this.siteRepo.save(site);
+    await this.auditLogService.log({
+      company,
+      user: { id: userId },
+      action: 'site.created',
+      entityType: 'site',
+      entityId: saved.id,
+      afterData: {
+        name: saved.name,
+        clientName: saved.clientName,
+        status: saved.status,
+      },
+    });
+    return saved;
   }
 
   async updateForCompanyUser(userId: number, id: number, dto: UpdateSiteDto): Promise<Site> {
@@ -59,7 +74,33 @@ export class SiteService {
     });
     if (!site) throw new NotFoundException('Site not found');
 
+    const beforeData = {
+      name: site.name,
+      clientName: site.clientName,
+      address: site.address,
+      contactDetails: site.contactDetails,
+      status: site.status,
+      welfareCheckIntervalMinutes: site.welfareCheckIntervalMinutes,
+    };
+
     Object.assign(site, dto);
-    return this.siteRepo.save(site);
+    const saved = await this.siteRepo.save(site);
+    await this.auditLogService.log({
+      company,
+      user: { id: userId },
+      action: 'site.updated',
+      entityType: 'site',
+      entityId: saved.id,
+      beforeData,
+      afterData: {
+        name: saved.name,
+        clientName: saved.clientName,
+        address: saved.address,
+        contactDetails: saved.contactDetails,
+        status: saved.status,
+        welfareCheckIntervalMinutes: saved.welfareCheckIntervalMinutes,
+      },
+    });
+    return saved;
   }
 }

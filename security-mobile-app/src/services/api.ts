@@ -1,5 +1,7 @@
 import Constants from 'expo-constants';
 import {
+  Attachment,
+  AuditLog,
   AttendanceEvent,
   Assignment,
   AuthSession,
@@ -12,7 +14,10 @@ import {
   Incident,
   Job,
   JobApplication,
+  DailyLog,
+  Notification,
   RegisterPayload,
+  SafetyAlert,
   Site,
   Shift,
   Timesheet,
@@ -22,6 +27,8 @@ import {
   UpdateTimesheetPayload,
   RecordAttendancePayload,
   CreateSitePayload,
+  CreateSafetyAlertPayload,
+  CreateDailyLogPayload,
 } from '../types/models';
 
 const API_BASE_URL =
@@ -216,6 +223,74 @@ export function updateIncidentStatus(id: number, status: string) {
     method: 'PATCH',
     body: JSON.stringify({ status }),
   });
+}
+
+export function createSafetyAlert(payload: CreateSafetyAlertPayload) {
+  return request<SafetyAlert>('/alerts', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function listMySafetyAlerts() {
+  return request<SafetyAlert[]>('/alerts/mine');
+}
+
+export function listCompanySafetyAlerts() {
+  return request<SafetyAlert[]>('/alerts/company');
+}
+
+export function acknowledgeSafetyAlert(id: number) {
+  return request<SafetyAlert>(`/alerts/${id}/ack`, {
+    method: 'PATCH',
+  });
+}
+
+export function closeSafetyAlert(id: number) {
+  return request<SafetyAlert>(`/alerts/${id}/close`, {
+    method: 'PATCH',
+  });
+}
+
+export function createDailyLog(payload: CreateDailyLogPayload) {
+  return request<DailyLog>('/daily-logs', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function listMyDailyLogs() {
+  return request<DailyLog[]>('/daily-logs/mine');
+}
+
+export function listCompanyDailyLogs() {
+  return request<DailyLog[]>('/daily-logs/company');
+}
+
+export function listMyNotifications() {
+  return request<Notification[]>('/notifications/mine');
+}
+
+export function listCompanyNotifications() {
+  return request<Notification[]>('/notifications/company');
+}
+
+export function markNotificationRead(id: number) {
+  return request<Notification>(`/notifications/${id}/read`, {
+    method: 'PATCH',
+  });
+}
+
+export function listMyAttachments() {
+  return request<Attachment[]>('/attachments/mine');
+}
+
+export function listCompanyAttachments() {
+  return request<Attachment[]>('/attachments/company');
+}
+
+export function listCompanyAuditLogs() {
+  return request<AuditLog[]>('/audit-logs/company');
 }
 
 export function createJob(payload: CreateJobPayload) {

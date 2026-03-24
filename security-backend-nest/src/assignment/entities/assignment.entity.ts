@@ -15,6 +15,16 @@ import { JobApplication } from '../../job-application/entities/job-application.e
 import { Shift } from '../../shift/entities/shift.entity';
 import { JobSlot } from '../../job-slot/entities/job-slot.entity';
 
+export enum AssignmentStatus {
+  ASSIGNED = 'assigned',
+  ACCEPTED = 'accepted',
+  DECLINED = 'declined',
+  CHECKED_IN = 'checked_in',
+  CHECKED_OUT = 'checked_out',
+  NO_SHOW = 'no_show',
+  ACTIVE = 'active',
+}
+
 @Entity('assignments')
 export class Assignment {
   @PrimaryGeneratedColumn()
@@ -35,11 +45,35 @@ export class Assignment {
   })
   application?: JobApplication;
 
-  @Column({ default: 'active' })
+  @Column({ type: 'varchar', default: AssignmentStatus.ASSIGNED })
   status!: string;
 
   @CreateDateColumn()
   hiredAt!: Date;
+
+  @Column({ type: 'timestamp', nullable: true })
+  assignedAt?: Date | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  acceptedAt?: Date | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  checkedInAt?: Date | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  checkedOutAt?: Date | null;
+
+  @Column({ type: 'numeric', precision: 10, scale: 7, nullable: true })
+  checkInLat?: number | null;
+
+  @Column({ type: 'numeric', precision: 10, scale: 7, nullable: true })
+  checkInLng?: number | null;
+
+  @Column({ type: 'numeric', precision: 10, scale: 7, nullable: true })
+  checkOutLat?: number | null;
+
+  @Column({ type: 'numeric', precision: 10, scale: 7, nullable: true })
+  checkOutLng?: number | null;
 
   @OneToMany(() => Shift, (shift) => shift.assignment)
   shifts?: Shift[];

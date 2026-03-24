@@ -118,6 +118,17 @@ export interface Timesheet {
   approvalStatus: string;
   createdAt: string;
   submittedAt?: string | null;
+  scheduledStartAt?: string | null;
+  scheduledEndAt?: string | null;
+  actualCheckInAt?: string | null;
+  actualCheckOutAt?: string | null;
+  workedMinutes?: number;
+  breakMinutes?: number;
+  roundedMinutes?: number;
+  reviewedAt?: string | null;
+  reviewedByUserId?: number | null;
+  rejectionReason?: string | null;
+  updatedAt?: string;
   shift?: Shift;
   guard?: GuardProfile;
   company?: CompanyProfile;
@@ -127,6 +138,14 @@ export interface UpdateTimesheetPayload {
   hoursWorked?: number;
   approvalStatus?: string;
   submittedAt?: string | null;
+  actualCheckInAt?: string | null;
+  actualCheckOutAt?: string | null;
+  workedMinutes?: number;
+  breakMinutes?: number;
+  roundedMinutes?: number;
+  reviewedAt?: string | null;
+  reviewedByUserId?: number;
+  rejectionReason?: string | null;
 }
 
 export interface CreateJobPayload {
@@ -211,11 +230,19 @@ export interface Incident {
   id: number;
   title: string;
   notes: string;
+  category?: 'trespass' | 'theft' | 'damage' | 'violence' | 'fire' | 'health_safety' | 'access_control' | 'other';
   severity: 'low' | 'medium' | 'high' | 'critical';
   locationText?: string | null;
   status: string;
+  reportedAt?: string;
+  reviewedAt?: string | null;
+  reviewedByUserId?: number | null;
+  closedAt?: string | null;
+  closedByUserId?: number | null;
+  updatedAt?: string;
   createdAt: string;
   shift?: Shift | null;
+  site?: Site | null;
   company?: CompanyProfile;
   guard?: GuardProfile;
 }
@@ -224,6 +251,100 @@ export interface CreateIncidentPayload {
   title: string;
   notes: string;
   severity: Incident['severity'];
+  category?: Incident['category'];
   locationText?: string;
   shiftId?: number;
+}
+
+export interface SafetyAlert {
+  id: number;
+  type: 'check_call' | 'panic' | 'welfare' | 'late_checkin' | 'missed_checkcall' | 'other';
+  priority: 'low' | 'medium' | 'high' | 'critical';
+  message: string;
+  status: 'open' | 'acknowledged' | 'closed';
+  acknowledgedAt?: string | null;
+  closedAt?: string | null;
+  createdAt: string;
+  shift?: Shift | null;
+  company?: CompanyProfile;
+  guard?: GuardProfile;
+}
+
+export interface CreateSafetyAlertPayload {
+  shiftId?: number;
+  type?: SafetyAlert['type'];
+  priority?: SafetyAlert['priority'];
+  message: string;
+}
+
+export interface DailyLog {
+  id: number;
+  message: string;
+  logType: 'patrol' | 'observation' | 'visitor' | 'delivery' | 'maintenance' | 'other';
+  createdAt: string;
+  updatedAt: string;
+  shift?: Shift;
+  company?: CompanyProfile;
+  guard?: GuardProfile;
+}
+
+export interface CreateDailyLogPayload {
+  shiftId: number;
+  message: string;
+  logType?: DailyLog['logType'];
+}
+
+export interface UserSummary {
+  id: number;
+  email?: string;
+  firstName?: string | null;
+  lastName?: string | null;
+}
+
+export interface Attachment {
+  id: number;
+  entityType: 'incident' | 'alert' | 'daily_log' | 'timesheet' | 'shift';
+  entityId: number;
+  fileName: string;
+  fileUrl: string;
+  mimeType: string;
+  sizeBytes: number;
+  createdAt: string;
+  company?: CompanyProfile | null;
+  uploadedBy?: UserSummary | null;
+}
+
+export interface Notification {
+  id: number;
+  type:
+    | 'job_assigned'
+    | 'shift_reminder'
+    | 'check_call_missed'
+    | 'incident_reported'
+    | 'timesheet_submitted'
+    | 'timesheet_approved'
+    | 'timesheet_rejected'
+    | 'alert_raised';
+  title: string;
+  message: string;
+  status: 'unread' | 'read';
+  sentAt?: string | null;
+  readAt?: string | null;
+  createdAt: string;
+  user?: UserSummary | null;
+  company?: CompanyProfile | null;
+}
+
+export interface AuditLog {
+  id: number;
+  action: string;
+  entityType: string;
+  entityId?: number | null;
+  beforeData?: Record<string, unknown> | null;
+  afterData?: Record<string, unknown> | null;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+  createdAt: string;
+  company?: CompanyProfile | null;
+  user?: UserSummary | null;
 }

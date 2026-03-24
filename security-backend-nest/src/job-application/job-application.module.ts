@@ -7,6 +7,8 @@ import { JobModule } from '../job/job.module';
 import { GuardProfileModule } from '../guard-profile/guard-profile.module';
 import { AssignmentModule } from '../assignment/assignment.module';
 import { ShiftModule } from '../shift/shift.module';
+import { AuditLogModule } from '../audit-log/audit-log.module';
+import { NotificationModule } from '../notification/notification.module';
 
 @Module({
   imports: [
@@ -14,7 +16,9 @@ import { ShiftModule } from '../shift/shift.module';
     JobModule,
     GuardProfileModule,
     forwardRef(() => AssignmentModule),
-    forwardRef(() => ShiftModule)
+    forwardRef(() => ShiftModule),
+    AuditLogModule,
+    NotificationModule,
   ],
   controllers: [JobApplicationController],
   providers: [JobApplicationService],

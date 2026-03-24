@@ -1,5 +1,5 @@
 import { IsEnum, IsInt, IsOptional, IsString } from 'class-validator';
-import { IncidentSeverity } from '../entities/incident.entity';
+import { IncidentCategory, IncidentSeverity } from '../entities/incident.entity';
 
 export class CreateIncidentDto {
   @IsString()
@@ -10,6 +10,10 @@ export class CreateIncidentDto {
 
   @IsEnum(IncidentSeverity)
   severity!: IncidentSeverity;
+
+  @IsOptional()
+  @IsEnum(IncidentCategory)
+  category?: IncidentCategory;
 
   @IsOptional()
   @IsString()

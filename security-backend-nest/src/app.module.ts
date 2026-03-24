@@ -17,6 +17,11 @@ import { MatchingModule } from './matching/matching.module';
 import { AttendanceModule } from './attendance/attendance.module';
 import { IncidentModule } from './incident/incident.module';
 import { SiteModule } from './site/site.module';
+import { SafetyAlertModule } from './safety-alert/safety-alert.module';
+import { DailyLogModule } from './daily-log/daily-log.module';
+import { AttachmentModule } from './attachment/attachment.module';
+import { AuditLogModule } from './audit-log/audit-log.module';
+import { NotificationModule } from './notification/notification.module';
 import { HealthController } from './health.controller';
 import { buildNestTypeOrmOptions } from './database/typeorm.config';
 @Module({
@@ -53,6 +58,11 @@ import { buildNestTypeOrmOptions } from './database/typeorm.config';
     AttendanceModule,
     IncidentModule,
     SiteModule,
+    SafetyAlertModule,
+    DailyLogModule,
+    AttachmentModule,
+    AuditLogModule,
+    NotificationModule,
   ],
   controllers: [HealthController],
 })

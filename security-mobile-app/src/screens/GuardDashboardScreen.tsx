@@ -7,16 +7,28 @@ import {
   createIncident,
   createJobApplication,
   getMyGuard,
+  listMyAttachments,
   listJobApplications,
-  listMyTimesheets,
+  listMyNotifications,
   listMyIncidents,
+  listMyTimesheets,
   listJobs,
   listMyAttendance,
   listShifts,
   submitTimesheet,
   updateMyGuard,
 } from '../services/api';
-import { AttendanceEvent, AuthUser, Incident, Job, JobApplication, Shift, Timesheet } from '../types/models';
+import {
+  Attachment,
+  AttendanceEvent,
+  AuthUser,
+  Incident,
+  Job,
+  JobApplication,
+  Notification,
+  Shift,
+  Timesheet,
+} from '../types/models';
 
 interface GuardDashboardScreenProps {
   user: AuthUser;
@@ -32,6 +44,8 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
   const [attendance, setAttendance] = useState<AttendanceEvent[]>([]);
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [timesheets, setTimesheets] = useState<Timesheet[]>([]);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
   const [savingProfile, setSavingProfile] = useState(false);
@@ -45,7 +59,7 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
 
   async function loadData() {
     try {
-      const [myGuard, shiftRows, jobRows, applicationRows, attendanceRows, incidentRows, timesheetRows] = await Promise.all([
+      const [myGuard, shiftRows, jobRows, applicationRows, attendanceRows, incidentRows, timesheetRows, notificationRows, attachmentRows] = await Promise.all([
         getMyGuard(),
         listShifts(),
         listJobs(),
@@ -53,6 +67,8 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
         listMyAttendance(),
         listMyIncidents(),
         listMyTimesheets(),
+        listMyNotifications(),
+        listMyAttachments(),
       ]);
 
       const ownShifts = shiftRows.filter((shift) => (shift.guard?.id ?? shift.guardId) === user.guardId);
@@ -70,6 +86,8 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
       setAttendance(attendanceRows);
       setIncidents(incidentRows);
       setTimesheets(timesheetRows);
+      setNotifications(notificationRows);
+      setAttachments(attachmentRows);
     } catch (error) {
       Alert.alert('Load failed', error instanceof Error ? error.message : 'Unknown error');
     }
@@ -179,6 +197,7 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
   const upcomingShift = shifts.find((shift) => shift.status === 'scheduled') || null;
   const operationsShift = activeShift || upcomingShift;
   const completedTimesheets = timesheets.filter((timesheet) => timesheet.shift?.status === 'completed');
+  const unreadNotifications = notifications.filter((notification) => notification.status === 'unread');
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
@@ -386,6 +405,38 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
                   </Text>
                 </Pressable>
               ) : null}
+            </View>
+          ))
+        )}
+      </FeatureCard>
+
+      <FeatureCard title="My Notifications" subtitle={`${unreadNotifications.length} unread alerts or workflow updates`}>
+        {notifications.length === 0 ? (
+          <Text style={styles.helperText}>No notifications yet. Shift reminders and approvals will appear here.</Text>
+        ) : (
+          notifications.slice(0, 5).map((notification) => (
+            <View key={notification.id} style={styles.listItem}>
+              <Text style={styles.listTitle}>{notification.title}</Text>
+              <Text style={styles.helperText}>{notification.message}</Text>
+              <Text style={styles.helperText}>
+                {notification.status} | {new Date(notification.createdAt).toLocaleString()}
+              </Text>
+            </View>
+          ))
+        )}
+      </FeatureCard>
+
+      <FeatureCard title="Evidence & Attachments" subtitle={`${attachments.length} uploaded records linked to your work`}>
+        {attachments.length === 0 ? (
+          <Text style={styles.helperText}>No attachments available yet.</Text>
+        ) : (
+          attachments.slice(0, 5).map((attachment) => (
+            <View key={attachment.id} style={styles.listItem}>
+              <Text style={styles.listTitle}>{attachment.fileName}</Text>
+              <Text style={styles.helperText}>
+                {attachment.entityType} #{attachment.entityId}
+              </Text>
+              <Text style={styles.helperText}>{new Date(attachment.createdAt).toLocaleString()}</Text>
             </View>
           ))
         )}

@@ -6,9 +6,18 @@ import { ShiftService } from './shift.service';
 import { AssignmentModule } from '../assignment/assignment.module';
 import { TimesheetModule } from '../timesheet/timesheet.module';
 import { SiteModule } from '../site/site.module';
+import { Company } from '../company/entities/company.entity';
+import { GuardProfile } from '../guard-profile/entities/guard-profile.entity';
+import { Job } from '../job/entities/job.entity';
+import { JobApplication } from '../job-application/entities/job-application.entity';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Shift]), AssignmentModule, TimesheetModule, SiteModule],
+  imports: [
+    TypeOrmModule.forFeature([Shift, Company, GuardProfile, Job, JobApplication]),
+    AssignmentModule,
+    TimesheetModule,
+    SiteModule,
+  ],
   controllers: [ShiftController],
   providers: [ShiftService],
   exports: [ShiftService, TypeOrmModule]

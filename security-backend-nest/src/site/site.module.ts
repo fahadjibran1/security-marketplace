@@ -4,9 +4,10 @@ import { Site } from './entities/site.entity';
 import { SiteController } from './site.controller';
 import { SiteService } from './site.service';
 import { CompanyModule } from '../company/company.module';
+import { AuditLogModule } from '../audit-log/audit-log.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Site]), CompanyModule],
+  imports: [TypeOrmModule.forFeature([Site]), CompanyModule, AuditLogModule],
   controllers: [SiteController],
   providers: [SiteService],
   exports: [SiteService, TypeOrmModule],

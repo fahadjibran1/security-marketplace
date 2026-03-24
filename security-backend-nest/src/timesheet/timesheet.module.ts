@@ -5,9 +5,17 @@ import { TimesheetController } from './timesheet.controller';
 import { TimesheetService } from './timesheet.service';
 import { CompanyModule } from '../company/company.module';
 import { GuardProfileModule } from '../guard-profile/guard-profile.module';
+import { AuditLogModule } from '../audit-log/audit-log.module';
+import { NotificationModule } from '../notification/notification.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Timesheet]), CompanyModule, GuardProfileModule],
+  imports: [
+    TypeOrmModule.forFeature([Timesheet]),
+    CompanyModule,
+    GuardProfileModule,
+    AuditLogModule,
+    NotificationModule,
+  ],
   controllers: [TimesheetController],
   providers: [TimesheetService],
   exports: [TimesheetService, TypeOrmModule]

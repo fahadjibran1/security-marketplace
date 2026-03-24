@@ -5,6 +5,8 @@ import { AttendanceEvent, AttendanceEventType } from './entities/attendance.enti
 import { ShiftService } from '../shift/shift.service';
 import { GuardProfileService } from '../guard-profile/guard-profile.service';
 import { TimesheetService } from '../timesheet/timesheet.service';
+import { AssignmentStatus } from '../assignment/entities/assignment.entity';
+import { AssignmentService } from '../assignment/assignment.service';
 
 @Injectable()
 export class AttendanceService {
@@ -14,6 +16,7 @@ export class AttendanceService {
     private readonly shiftService: ShiftService,
     private readonly guardProfileService: GuardProfileService,
     private readonly timesheetService: TimesheetService,
+    private readonly assignmentService: AssignmentService,
   ) {}
 
   async findMine(userId: number): Promise<AttendanceEvent[]> {
@@ -49,6 +52,13 @@ export class AttendanceService {
     shift.status = 'in_progress';
     await this.shiftService.save(shift);
 
+    if (shift.assignment) {
+      shift.assignment.status = AssignmentStatus.CHECKED_IN;
+      shift.assignment.acceptedAt = shift.assignment.acceptedAt ?? new Date();
+      shift.assignment.checkedInAt = new Date();
+      await this.assignmentService.save(shift.assignment);
+    }
+
     return this.attendanceRepo.save(event);
   }
 
@@ -72,6 +82,12 @@ export class AttendanceService {
 
     const savedEvent = await this.attendanceRepo.save(event);
 
+    if (shift.assignment) {
+      shift.assignment.status = AssignmentStatus.CHECKED_OUT;
+      shift.assignment.checkedOutAt = savedEvent.occurredAt;
+      await this.assignmentService.save(shift.assignment);
+    }
+
     const hoursWorked = Math.max(
       0,
       (savedEvent.occurredAt.getTime() - latest.occurredAt.getTime()) / (1000 * 60 * 60),
@@ -86,7 +102,8 @@ export class AttendanceService {
     if (!guard) throw new NotFoundException('Guard profile not found');
 
     const shift = await this.shiftService.findOne(shiftId);
-    if (shift.guard.id !== guard.id) {
+    const assignedGuardId = shift.guard?.id ?? shift.assignment?.guard?.id;
+    if (assignedGuardId !== guard.id) {
       throw new BadRequestException('This shift is not assigned to the current guard');
     }
 

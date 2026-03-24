@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { Assignment } from './entities/assignment.entity';
+import { In, Repository } from 'typeorm';
+import { Assignment, AssignmentStatus } from './entities/assignment.entity';
 import { JobApplication } from '../job-application/entities/job-application.entity';
 
 @Injectable()
@@ -19,7 +19,18 @@ export class AssignmentService {
   }
 
   async countActiveByJob(jobId: number): Promise<number> {
-    return this.assignmentRepo.count({ where: { job: { id: jobId }, status: 'active' } });
+    return this.assignmentRepo.count({
+      where: {
+        job: { id: jobId },
+        status: In([
+          AssignmentStatus.ACTIVE,
+          AssignmentStatus.ASSIGNED,
+          AssignmentStatus.ACCEPTED,
+          AssignmentStatus.CHECKED_IN,
+          AssignmentStatus.CHECKED_OUT,
+        ]),
+      },
+    });
   }
 
   async createFromHire(application: JobApplication): Promise<Assignment> {
@@ -28,9 +39,14 @@ export class AssignmentService {
       company: application.job.company,
       guard: application.guard,
       application,
-      status: 'active'
+      status: AssignmentStatus.ASSIGNED,
+      assignedAt: new Date(),
     });
 
+    return this.assignmentRepo.save(assignment);
+  }
+
+  save(assignment: Assignment): Promise<Assignment> {
     return this.assignmentRepo.save(assignment);
   }
 }

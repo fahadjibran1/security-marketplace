@@ -6,6 +6,8 @@ import { IncidentService } from './incident.service';
 import { GuardProfileModule } from '../guard-profile/guard-profile.module';
 import { ShiftModule } from '../shift/shift.module';
 import { CompanyModule } from '../company/company.module';
+import { AuditLogModule } from '../audit-log/audit-log.module';
+import { NotificationModule } from '../notification/notification.module';
 
 @Module({
   imports: [
@@ -13,6 +15,8 @@ import { CompanyModule } from '../company/company.module';
     GuardProfileModule,
     ShiftModule,
     CompanyModule,
+    AuditLogModule,
+    NotificationModule,
   ],
   controllers: [IncidentController],
   providers: [IncidentService],
