@@ -6,6 +6,7 @@ import { AttendanceEvent } from './entities/attendance.entity';
 import { ShiftModule } from '../shift/shift.module';
 import { GuardProfileModule } from '../guard-profile/guard-profile.module';
 import { TimesheetModule } from '../timesheet/timesheet.module';
+import { AssignmentModule } from '../assignment/assignment.module';
 
 @Module({
   imports: [
@@ -13,6 +14,7 @@ import { TimesheetModule } from '../timesheet/timesheet.module';
     ShiftModule,
     GuardProfileModule,
     TimesheetModule,
+    AssignmentModule,
   ],
   controllers: [AttendanceController],
   providers: [AttendanceService],
