@@ -11,6 +11,8 @@ import {
   NotificationService,
 } from '../notification/notification.service';
 import { NotificationType } from '../notification/entities/notification.entity';
+import { JwtPayload } from '../auth/types/jwt-payload.type';
+import { isCompanyRole, UserRole } from '../user/entities/user.entity';
 
 @Injectable()
 export class TimesheetService {
@@ -24,6 +26,18 @@ export class TimesheetService {
 
   findAll(): Promise<Timesheet[]> {
     return this.timesheetRepo.find();
+  }
+
+  async findAllForUser(user: JwtPayload): Promise<Timesheet[]> {
+    if (user.role === UserRole.ADMIN) {
+      return this.findAll();
+    }
+
+    if (isCompanyRole(user.role)) {
+      return this.findForCompany(user.sub);
+    }
+
+    return this.findMine(user.sub);
   }
 
   async findForCompany(userId: number): Promise<Timesheet[]> {

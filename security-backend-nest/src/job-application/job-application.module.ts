@@ -9,6 +9,8 @@ import { AssignmentModule } from '../assignment/assignment.module';
 import { ShiftModule } from '../shift/shift.module';
 import { AuditLogModule } from '../audit-log/audit-log.module';
 import { NotificationModule } from '../notification/notification.module';
+import { SiteModule } from '../site/site.module';
+import { CompanyModule } from '../company/company.module';
 
 @Module({
   imports: [
@@ -19,6 +21,8 @@ import { NotificationModule } from '../notification/notification.module';
     forwardRef(() => ShiftModule),
     AuditLogModule,
     NotificationModule,
+    SiteModule,
+    CompanyModule,
   ],
   controllers: [JobApplicationController],
   providers: [JobApplicationService],

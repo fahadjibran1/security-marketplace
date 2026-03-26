@@ -10,6 +10,8 @@ import { Company } from '../company/entities/company.entity';
 import { GuardProfile } from '../guard-profile/entities/guard-profile.entity';
 import { Job } from '../job/entities/job.entity';
 import { JobApplication } from '../job-application/entities/job-application.entity';
+import { CompanyModule } from '../company/company.module';
+import { GuardProfileModule } from '../guard-profile/guard-profile.module';
 
 @Module({
   imports: [
@@ -17,6 +19,8 @@ import { JobApplication } from '../job-application/entities/job-application.enti
     AssignmentModule,
     TimesheetModule,
     SiteModule,
+    CompanyModule,
+    GuardProfileModule,
   ],
   controllers: [ShiftController],
   providers: [ShiftService],

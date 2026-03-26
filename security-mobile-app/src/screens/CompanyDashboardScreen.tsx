@@ -10,9 +10,13 @@ import {
 } from 'react-native';
 import { FeatureCard } from '../components/FeatureCard';
 import {
+  acknowledgeSafetyAlert,
+  approveGuard,
+  closeSafetyAlert,
   listCompanyAttachments,
   listCompanyAuditLogs,
   listCompanyNotifications,
+  listCompanySafetyAlerts,
   createJob,
   createSite,
   getMyCompany,
@@ -42,6 +46,7 @@ import {
   Job,
   JobApplication,
   Notification,
+  SafetyAlert,
   Shift,
   Site,
   Timesheet,
@@ -59,6 +64,7 @@ type CompanySectionId =
   | 'shifts'
   | 'timesheets'
   | 'incidents'
+  | 'alerts'
   | 'invoices';
 
 type HireDraft = {
@@ -122,6 +128,8 @@ function sectionLabel(section: CompanySectionId) {
       return 'Timesheets';
     case 'incidents':
       return 'Incidents';
+    case 'alerts':
+      return 'Safety Alerts';
     case 'invoices':
       return 'Invoices';
     default:
@@ -149,6 +157,7 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [applications, setApplications] = useState<JobApplication[]>([]);
   const [incidents, setIncidents] = useState<Incident[]>([]);
+  const [alerts, setAlerts] = useState<SafetyAlert[]>([]);
   const [timesheets, setTimesheets] = useState<Timesheet[]>([]);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -186,6 +195,7 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
         shiftsData,
         applicationsData,
         incidentRows,
+        alertRows,
         timesheetRows,
         notificationRows,
         attachmentRows,
@@ -200,6 +210,7 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
         listShifts(),
         listJobApplications(),
         listCompanyIncidents(),
+        listCompanySafetyAlerts(),
         listCompanyTimesheets(),
         listCompanyNotifications(),
         listCompanyAttachments(),
@@ -226,6 +237,7 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
       setShifts(shiftsData.filter((shift) => (shift.company?.id ?? shift.companyId) === companyId));
       setApplications(applicationsData.filter((application) => application.job?.company?.id === companyId));
       setIncidents(incidentRows);
+      setAlerts(alertRows);
       setTimesheets(timesheetRows);
       setNotifications(notificationRows);
       setAttachments(attachmentRows);
@@ -406,6 +418,36 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
     }
   }
 
+  async function handleApproveGuard(guardId: number) {
+    try {
+      await approveGuard(guardId);
+      await loadData();
+      Alert.alert('Guard approved', 'The guard is now active and can log in.');
+    } catch (error) {
+      Alert.alert('Approval failed', error instanceof Error ? error.message : 'Unknown error');
+    }
+  }
+
+  async function handleAcknowledgeAlert(id: number) {
+    try {
+      await acknowledgeSafetyAlert(id);
+      await loadData();
+      Alert.alert('Alert acknowledged', 'The safety alert is now acknowledged.');
+    } catch (error) {
+      Alert.alert('Acknowledge failed', error instanceof Error ? error.message : 'Unknown error');
+    }
+  }
+
+  async function handleCloseAlert(id: number) {
+    try {
+      await closeSafetyAlert(id);
+      await loadData();
+      Alert.alert('Alert resolved', 'The safety alert has been closed.');
+    } catch (error) {
+      Alert.alert('Resolve failed', error instanceof Error ? error.message : 'Unknown error');
+    }
+  }
+
   async function handleUpdateTimesheet(id: number, approvalStatus: string) {
     try {
       await updateTimesheet(id, { approvalStatus });
@@ -421,9 +463,15 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
     [applications],
   );
   const openJobs = useMemo(() => jobs.filter((job) => job.status === 'open'), [jobs]);
+  const filledJobs = useMemo(() => jobs.filter((job) => job.status === 'filled'), [jobs]);
   const submittedTimesheets = useMemo(
     () => timesheets.filter((timesheet) => timesheet.approvalStatus === 'submitted'),
     [timesheets],
+  );
+  const openAlerts = useMemo(() => alerts.filter((alert) => alert.status !== 'closed'), [alerts]);
+  const pendingGuardApprovals = useMemo(
+    () => guards.filter((guard) => guard.approvalStatus === 'pending' || guard.status === 'pending'),
+    [guards],
   );
   const unreadNotifications = useMemo(
     () => notifications.filter((notification) => notification.status === 'unread'),
@@ -480,6 +528,7 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
     { label: 'Managed Sites', value: sites.length, tone: '#0f766e' },
     { label: 'Linked Guards', value: linkedGuards.length, tone: '#1d4ed8' },
     { label: 'Live Shifts', value: activeShifts.length, tone: '#7c3aed' },
+    { label: 'Open Alerts', value: openAlerts.length, tone: '#b91c1c' },
     { label: 'Submitted Timesheets', value: submittedTimesheets.length, tone: '#b45309' },
   ];
 
@@ -491,6 +540,7 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
     { id: 'shifts', label: 'Shift Ops', description: 'Track live shifts, patrols, and compliance.' },
     { id: 'timesheets', label: 'Timesheets', description: 'Review submitted hours and approvals.' },
     { id: 'incidents', label: 'Incidents', description: 'Monitor site issues and resolutions.' },
+    { id: 'alerts', label: 'Safety Alerts', description: 'Respond to welfare and panic alerts from guards.' },
     { id: 'invoices', label: 'Invoices', description: 'Prepare client billing by site and work period.' },
   ];
 
@@ -526,6 +576,7 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
               <Text style={styles.helperText}>Linked guards: {linkedGuards.length}</Text>
               <Text style={styles.helperText}>Pending recruitment applications: {pendingApplications.length}</Text>
               <Text style={styles.helperText}>Open incidents: {openIncidentCount}</Text>
+              <Text style={styles.helperText}>Open safety alerts: {openAlerts.length}</Text>
               <Text style={styles.helperText}>Submitted timesheets: {submittedTimesheets.length}</Text>
             </View>
           </FeatureCard>
@@ -544,6 +595,22 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
                   </View>
                 );
               })
+            )}
+          </FeatureCard>
+
+          <FeatureCard title="Safety Alerts" subtitle={`${openAlerts.length} open or acknowledged`} style={styles.desktopPanel}>
+            {alerts.length === 0 ? (
+              <Text style={styles.helperText}>No manual safety alerts have been raised yet.</Text>
+            ) : (
+              openAlerts.slice(0, 4).map((alert) => (
+                <View key={alert.id} style={styles.rowCard}>
+                  <Text style={styles.listTitle}>{alert.type.toUpperCase()}</Text>
+                  <Text style={styles.helperText}>{alert.message}</Text>
+                  <Text style={styles.helperText}>
+                    {alert.status} | {alert.guard?.fullName || 'Unknown guard'} | {alert.shift?.siteName || 'Unknown site'}
+                  </Text>
+                </View>
+              ))
             )}
           </FeatureCard>
         </View>
@@ -570,8 +637,10 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
           <FeatureCard title="Urgent Items" subtitle="What needs action right now." style={styles.desktopPanel}>
             <View style={styles.kpiList}>
               <Text style={styles.helperText}>Pending hires: {pendingApplications.length}</Text>
+              <Text style={styles.helperText}>Pending guard approvals: {pendingGuardApprovals.length}</Text>
               <Text style={styles.helperText}>Submitted timesheets to approve: {submittedTimesheets.length}</Text>
               <Text style={styles.helperText}>Open incidents to resolve: {openIncidentCount}</Text>
+              <Text style={styles.helperText}>Open safety alerts: {openAlerts.length}</Text>
               <Text style={styles.helperText}>Shifts currently in progress: {activeShifts.length}</Text>
             </View>
           </FeatureCard>
@@ -739,6 +808,32 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
             Existing guards should be tied to sites, shifts, and live operational activity.
           </Text>
         </View>
+
+        <FeatureCard title="Pending Guard Approvals" subtitle={`${pendingGuardApprovals.length} awaiting activation`} style={styles.desktopPanel}>
+          {pendingGuardApprovals.length === 0 ? (
+            <Text style={styles.helperText}>No guard approvals are waiting right now.</Text>
+          ) : (
+            pendingGuardApprovals.map((guard) => (
+              <View key={guard.id} style={styles.sectionRecord}>
+                <View style={styles.recordHeader}>
+                  <View>
+                    <Text style={styles.recordTitle}>{guard.fullName}</Text>
+                    <Text style={styles.helperText}>
+                      SIA: {guard.siaLicenseNumber || guard.siaLicenceNumber || 'Not supplied'}
+                    </Text>
+                  </View>
+                  <View style={styles.statusPill}>
+                    <Text style={styles.statusPillText}>{guard.approvalStatus || guard.status}</Text>
+                  </View>
+                </View>
+                <Text style={styles.helperText}>Phone: {guard.phone || 'Not supplied'}</Text>
+                <Pressable style={styles.button} onPress={() => handleApproveGuard(guard.id)}>
+                  <Text style={styles.buttonText}>Approve Guard</Text>
+                </Pressable>
+              </View>
+            ))
+          )}
+        </FeatureCard>
 
         <FeatureCard title="Linked Guards" subtitle={`${linkedGuards.length} linked to this company`} style={styles.desktopPanel}>
           {linkedGuards.length === 0 ? (
@@ -1014,6 +1109,61 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
     );
   }
 
+  function renderAlertsSection() {
+    return (
+      <View style={styles.sectionStack}>
+        <View style={styles.sectionBanner}>
+          <Text style={styles.sectionTitle}>Safety Alerts</Text>
+          <Text style={styles.sectionSubtitle}>
+            Manual welfare and panic alerts raised by guards should be visible here for acknowledgement and closure.
+          </Text>
+        </View>
+
+        <FeatureCard title="Open & Resolved Alerts" subtitle={`${openAlerts.length} open or acknowledged`} style={styles.desktopPanel}>
+          {alerts.length === 0 ? (
+            <Text style={styles.helperText}>No safety alerts have been raised yet.</Text>
+          ) : (
+            alerts.map((alert) => (
+              <View key={alert.id} style={styles.sectionRecord}>
+                <View style={styles.recordHeader}>
+                  <View>
+                    <Text style={styles.recordTitle}>{alert.type.toUpperCase()}</Text>
+                    <Text style={styles.helperText}>
+                      {alert.guard?.fullName || 'Unknown guard'} | {alert.shift?.siteName || 'Unknown site'}
+                    </Text>
+                  </View>
+                  <View style={styles.statusPill}>
+                    <Text style={styles.statusPillText}>{alert.status}</Text>
+                  </View>
+                </View>
+                <Text style={styles.helperText}>{alert.message}</Text>
+                <View style={styles.inlineStats}>
+                  <Text style={styles.helperText}>Priority: {alert.priority}</Text>
+                  <Text style={styles.helperText}>Raised: {new Date(alert.createdAt).toLocaleString()}</Text>
+                </View>
+                {alert.status === 'open' ? (
+                  <View style={styles.actionRow}>
+                    <Pressable style={styles.button} onPress={() => handleAcknowledgeAlert(alert.id)}>
+                      <Text style={styles.buttonText}>Acknowledge</Text>
+                    </Pressable>
+                    <Pressable style={styles.secondaryButton} onPress={() => handleCloseAlert(alert.id)}>
+                      <Text style={styles.secondaryButtonText}>Resolve</Text>
+                    </Pressable>
+                  </View>
+                ) : null}
+                {alert.status === 'acknowledged' ? (
+                  <Pressable style={styles.button} onPress={() => handleCloseAlert(alert.id)}>
+                    <Text style={styles.buttonText}>Resolve Alert</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            ))
+          )}
+        </FeatureCard>
+      </View>
+    );
+  }
+
   function renderInvoicesSection() {
     return (
       <View style={styles.sectionStack}>
@@ -1055,6 +1205,8 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
         return renderTimesheetSection();
       case 'incidents':
         return renderIncidentsSection();
+      case 'alerts':
+        return renderAlertsSection();
       case 'invoices':
         return renderInvoicesSection();
       case 'overview':

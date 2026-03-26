@@ -143,6 +143,12 @@ export function updateMyGuard(payload: UpdateGuardPayload) {
   });
 }
 
+export function approveGuard(id: number) {
+  return request<GuardProfile>(`/guards/${id}/approve`, {
+    method: 'PATCH',
+  });
+}
+
 export function listJobs() {
   return request<Job[]>('/jobs');
 }

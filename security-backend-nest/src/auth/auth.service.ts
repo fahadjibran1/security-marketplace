@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { UserService } from '../user/user.service';
@@ -70,8 +70,12 @@ export class AuthService {
     const valid = await bcrypt.compare(dto.password, user.passwordHash);
     if (!valid) throw new UnauthorizedException('Invalid credentials');
 
+    if (user.status !== UserStatus.ACTIVE) {
+      throw new ForbiddenException(`Account status ${user.status} is not allowed to log in`);
+    }
+
     await this.usersService.updateLastLogin(user.id);
-    return this.signToken(user.id, user.email, user.role, UserStatus.ACTIVE);
+    return this.signToken(user.id, user.email, user.role, user.status);
   }
 
   private async signToken(userId: number, email: string, role: UserRole, status: UserStatus) {

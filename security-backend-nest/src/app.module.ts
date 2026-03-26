@@ -29,8 +29,9 @@ import { buildNestTypeOrmOptions } from './database/typeorm.config';
     ConfigModule.forRoot({ isGlobal: true }),
     TypeOrmModule.forRootAsync({
       inject: [ConfigService],
-      useFactory: (config: ConfigService) =>
-        buildNestTypeOrmOptions({
+      useFactory: (config: ConfigService) => ({
+        ...buildNestTypeOrmOptions({
+          DATABASE_POOLER_URL: config.get<string>('DATABASE_POOLER_URL'),
           DATABASE_URL: config.get<string>('DATABASE_URL'),
           DATABASE_SSL: config.get<string>('DATABASE_SSL'),
           NODE_ENV: config.get<string>('NODE_ENV'),
@@ -41,6 +42,9 @@ import { buildNestTypeOrmOptions } from './database/typeorm.config';
           DATABASE_PASSWORD: config.get<string>('DATABASE_PASSWORD'),
           DATABASE_NAME: config.get<string>('DATABASE_NAME'),
         }),
+        retryAttempts: 1,
+        retryDelay: 0,
+      }),
     }),
     UserModule,
     AuthModule,

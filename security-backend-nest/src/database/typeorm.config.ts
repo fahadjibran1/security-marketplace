@@ -5,6 +5,7 @@ import * as path from 'path';
 import { appEntities } from './entities';
 
 type DatabaseEnv = {
+  DATABASE_POOLER_URL?: string;
   DATABASE_URL?: string;
   DATABASE_SSL?: string;
   NODE_ENV?: string;
@@ -31,22 +32,29 @@ export function buildTypeOrmOptions(env: DatabaseEnv): DataSourceOptions {
     nodeEnv === 'production' ? false : true
   );
   const databaseSsl = parseBoolean(env.DATABASE_SSL, false);
+  const connectionUrl = env.DATABASE_POOLER_URL || env.DATABASE_URL;
 
   const shared: Pick<
     PostgresConnectionOptions,
-    'type' | 'entities' | 'migrations' | 'migrationsTableName' | 'synchronize'
+    'type' | 'entities' | 'migrations' | 'migrationsTableName' | 'synchronize' | 'extra'
   > = {
     type: 'postgres',
     entities: appEntities,
     migrations: [path.join(__dirname, 'migrations', '*{.ts,.js}')],
     migrationsTableName: 'typeorm_migrations',
     synchronize,
+    extra: {
+      connectionTimeoutMillis: 10000,
+      idleTimeoutMillis: 30000,
+      max: 10,
+      keepAlive: true,
+    },
   };
 
-  if (env.DATABASE_URL) {
+  if (connectionUrl) {
     return {
       ...shared,
-      url: env.DATABASE_URL,
+      url: connectionUrl,
       ssl: databaseSsl ? { rejectUnauthorized: false } : false,
     };
   }

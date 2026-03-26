@@ -38,7 +38,10 @@ export class UserService {
   async updateLastLogin(id: number): Promise<void> {
     await this.usersRepo.update(id, {
       lastLoginAt: new Date(),
-      status: UserStatus.ACTIVE,
     });
+  }
+
+  async updateStatus(id: number, status: UserStatus): Promise<void> {
+    await this.usersRepo.update(id, { status });
   }
 }

@@ -6,7 +6,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
-import { COMPANY_VIEW_ROLES, UserRole } from '../user/entities/user.entity';
+import { COMPANY_ADMIN_ROLES, COMPANY_VIEW_ROLES, UserRole } from '../user/entities/user.entity';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 
 @Controller('guards')
@@ -28,14 +28,20 @@ export class GuardProfileController {
 
   @Get(':id')
   @Roles(UserRole.ADMIN, ...COMPANY_VIEW_ROLES, UserRole.GUARD)
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.guardService.findOne(id);
+  findOne(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
+    return this.guardService.findOneForUser(user, id);
   }
 
   @Post()
   @Roles(UserRole.ADMIN)
   create(@Body() dto: CreateGuardProfileDto) {
     return this.guardService.create(dto);
+  }
+
+  @Patch(':id/approve')
+  @Roles(UserRole.ADMIN, ...COMPANY_ADMIN_ROLES)
+  approve(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
+    return this.guardService.approveForUser(user, id);
   }
 
   @Patch('me')

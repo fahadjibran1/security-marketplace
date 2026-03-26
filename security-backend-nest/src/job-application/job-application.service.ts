@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { JobApplication } from './entities/job-application.entity';
@@ -11,6 +11,10 @@ import { ShiftService } from '../shift/shift.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { NotificationService } from '../notification/notification.service';
 import { NotificationType } from '../notification/entities/notification.entity';
+import { JwtPayload } from '../auth/types/jwt-payload.type';
+import { isCompanyRole, UserRole } from '../user/entities/user.entity';
+import { CompanyService } from '../company/company.service';
+import { SiteService } from '../site/site.service';
 
 @Injectable()
 export class JobApplicationService {
@@ -23,10 +27,40 @@ export class JobApplicationService {
     private readonly shiftService: ShiftService,
     private readonly auditLogService: AuditLogService,
     private readonly notificationService: NotificationService,
+    private readonly companyService: CompanyService,
+    private readonly siteService: SiteService,
   ) {}
 
   findAll(): Promise<JobApplication[]> {
     return this.appRepo.find();
+  }
+
+  async findAllForUser(user: JwtPayload): Promise<JobApplication[]> {
+    if (user.role === UserRole.ADMIN) {
+      return this.findAll();
+    }
+
+    if (isCompanyRole(user.role)) {
+      const company = await this.companyService.findByUserId(user.sub);
+      if (!company) {
+        throw new NotFoundException('Company not found');
+      }
+
+      return this.appRepo.find({
+        where: { job: { company: { id: company.id } } },
+        order: { appliedAt: 'DESC' },
+      });
+    }
+
+    const guard = await this.guardService.findByUserId(user.sub);
+    if (!guard) {
+      throw new NotFoundException('Guard profile not found');
+    }
+
+    return this.appRepo.find({
+      where: { guard: { id: guard.id } },
+      order: { appliedAt: 'DESC' },
+    });
   }
 
   async findOne(id: number): Promise<JobApplication> {
@@ -52,6 +86,22 @@ export class JobApplicationService {
     return this.appRepo.save(application);
   }
 
+  async createForUser(user: JwtPayload, dto: CreateJobApplicationDto): Promise<JobApplication> {
+    if (user.role === UserRole.ADMIN) {
+      return this.create(dto);
+    }
+
+    const guard = await this.guardService.findByUserId(user.sub);
+    if (!guard) {
+      throw new NotFoundException('Guard profile not found');
+    }
+
+    return this.create({
+      ...dto,
+      guardId: guard.id,
+    });
+  }
+
   async hire(applicationId: number, dto: HireApplicationDto) {
     const application = await this.findOne(applicationId);
     if (application.status === 'hired') throw new ConflictException('Application already hired');
@@ -66,6 +116,9 @@ export class JobApplicationService {
     await this.appRepo.save(application);
 
     const assignment = await this.assignmentService.createFromHire(application);
+    const updatedActiveCount = await this.assignmentService.countActiveByJob(application.job.id);
+    application.job.status = updatedActiveCount >= application.job.guardsRequired ? 'filled' : 'open';
+    await this.jobsService.save(application.job);
 
     let shiftResult: unknown = null;
     if (dto.createShift) {
@@ -109,5 +162,29 @@ export class JobApplicationService {
       assignment,
       shiftBundle: shiftResult
     };
+  }
+
+  async hireForUser(user: JwtPayload, applicationId: number, dto: HireApplicationDto) {
+    const application = await this.findOne(applicationId);
+
+    if (user.role !== UserRole.ADMIN) {
+      const company = await this.companyService.findByUserId(user.sub);
+      if (!company) {
+        throw new NotFoundException('Company not found');
+      }
+
+      if (application.job.company.id !== company.id) {
+        throw new ForbiddenException('Job application does not belong to the current company');
+      }
+
+      if (dto.siteId) {
+        const site = await this.siteService.findOne(dto.siteId);
+        if (site.company.id !== company.id) {
+          throw new ForbiddenException('Site does not belong to the current company');
+        }
+      }
+    }
+
+    return this.hire(applicationId, dto);
   }
 }

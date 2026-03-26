@@ -6,6 +6,7 @@ import {
   checkOutShift,
   createIncident,
   createJobApplication,
+  createSafetyAlert,
   getMyGuard,
   listMyAttachments,
   listJobApplications,
@@ -56,6 +57,7 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
   const [incidentLocation, setIncidentLocation] = useState('');
   const [submittingIncident, setSubmittingIncident] = useState(false);
   const [submittingTimesheetId, setSubmittingTimesheetId] = useState<number | null>(null);
+  const [submittingAlertType, setSubmittingAlertType] = useState<'welfare' | 'panic' | null>(null);
 
   async function loadData() {
     try {
@@ -156,6 +158,35 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
       Alert.alert('Incident failed', error instanceof Error ? error.message : 'Unknown error');
     } finally {
       setSubmittingIncident(false);
+    }
+  }
+
+  async function handleCreateSafetyAlert(type: 'welfare' | 'panic') {
+    if (!operationsShift?.id) {
+      Alert.alert('No assigned shift', 'Safety alerts require an assigned or active shift.');
+      return;
+    }
+
+    try {
+      setSubmittingAlertType(type);
+      await createSafetyAlert({
+        shiftId: operationsShift.id,
+        type,
+        priority: type === 'panic' ? 'critical' : 'high',
+        message:
+          type === 'panic'
+            ? 'Emergency alert raised by guard from the mobile app.'
+            : 'Welfare alert raised by guard from the mobile app.',
+      });
+      await loadData();
+      Alert.alert(
+        type === 'panic' ? 'Emergency alert sent' : 'Welfare alert sent',
+        'The company control room can now see this safety alert.',
+      );
+    } catch (error) {
+      Alert.alert('Safety alert failed', error instanceof Error ? error.message : 'Unknown error');
+    } finally {
+      setSubmittingAlertType(null);
     }
   }
 
@@ -337,9 +368,12 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
             <View style={styles.actionRow}>
               <Pressable
                 style={styles.secondaryButton}
-                onPress={() => Alert.alert('Welfare Check', 'Hourly welfare check call recorded for this shift.')}
+                onPress={() => handleCreateSafetyAlert('welfare')}
+                disabled={submittingAlertType !== null}
               >
-                <Text style={styles.secondaryButtonText}>Hourly Check Call</Text>
+                <Text style={styles.secondaryButtonText}>
+                  {submittingAlertType === 'welfare' ? 'Sending...' : 'Raise Welfare Alert'}
+                </Text>
               </Pressable>
               <Pressable
                 style={styles.secondaryButton}
@@ -351,9 +385,12 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
 
             <Pressable
               style={styles.emergencyButton}
-              onPress={() => Alert.alert('Panic Alert Triggered', 'Emergency alert has been sent.')}
+              onPress={() => handleCreateSafetyAlert('panic')}
+              disabled={submittingAlertType !== null}
             >
-              <Text style={styles.buttonText}>Activate Panic Alert</Text>
+              <Text style={styles.buttonText}>
+                {submittingAlertType === 'panic' ? 'Sending Emergency Alert...' : 'Activate Panic Alert'}
+              </Text>
             </Pressable>
           </View>
         )}

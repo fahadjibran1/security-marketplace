@@ -35,6 +35,8 @@ export interface GuardProfile {
   phone: string;
   locationSharingEnabled: boolean;
   status: string;
+  approvalStatus?: string;
+  isApproved?: boolean;
   user?: AuthUser;
 }
 
