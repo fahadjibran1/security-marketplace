@@ -619,7 +619,7 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
       setApprovingGuardId(guardId);
       await approveGuard(guardId);
       await loadData();
-      showAlert('Guard approved', 'The guard is now active and can log in.');
+      showAlert('Guard linked', 'The guard has been added to your active company roster.');
     } catch (error) {
       showAlert('Approval failed', formatApiErrorMessage(error, 'Unable to approve this guard.'));
     } finally {
@@ -961,7 +961,7 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
           <FeatureCard title="Urgent Items" subtitle="What needs action right now." style={styles.desktopPanel}>
             <View style={styles.kpiList}>
               <Text style={styles.helperText}>Pending hires: {pendingApplications.length}</Text>
-              <Text style={styles.helperText}>Pending guard approvals: {pendingGuardApprovals.length}</Text>
+              <Text style={styles.helperText}>Legacy guard approvals: {pendingGuardApprovals.length}</Text>
               <Text style={styles.helperText}>Submitted timesheets to approve: {submittedTimesheets.length}</Text>
               <Text style={styles.helperText}>Open incidents to resolve: {openIncidentCount}</Text>
               <Text style={styles.helperText}>Open safety alerts: {openAlerts.length}</Text>
@@ -1137,9 +1137,9 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
           </Text>
         </View>
 
-        <FeatureCard title="Pending Guard Approvals" subtitle={`${pendingGuardApprovals.length} awaiting activation`} style={styles.desktopPanel}>
+        <FeatureCard title="Legacy Guard Approvals" subtitle={`${pendingGuardApprovals.length} older records still available to link`} style={styles.desktopPanel}>
           {pendingGuardApprovals.length === 0 ? (
-            <Text style={styles.helperText}>No guard approvals are waiting right now.</Text>
+            <Text style={styles.helperText}>No legacy pending guard records are waiting right now.</Text>
           ) : (
             pendingGuardApprovals.map((guard) => (
               <View key={guard.id} style={styles.sectionRecord}>
@@ -1160,7 +1160,7 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
                   {...pressHandlers(() => handleApproveGuard(guard.id))}
                   disabled={approvingGuardId === guard.id}
                 >
-                  <Text style={styles.buttonText}>{approvingGuardId === guard.id ? 'Approving...' : 'Approve Guard'}</Text>
+                  <Text style={styles.buttonText}>{approvingGuardId === guard.id ? 'Linking...' : 'Link Guard'}</Text>
                 </Pressable>
               </View>
             ))
@@ -1325,7 +1325,7 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
         </View>
 
         <View style={[styles.sectionColumns, isDesktopWeb && styles.sectionColumnsDesktop]}>
-          <FeatureCard title="Schedule Shift" subtitle="Minimum company scheduling flow for approved hires." style={styles.desktopPanel}>
+          <FeatureCard title="Schedule Shift" subtitle="Minimum company scheduling flow for hired guards." style={styles.desktopPanel}>
             {assignments.length > 0 ? (
               <View style={styles.infoBox}>
                 <Text style={styles.infoBoxText}>Assignment IDs: {assignmentOptionsText}</Text>
@@ -1373,7 +1373,7 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
 
           <FeatureCard title="Approved Guard Pool" subtitle={`${companyGuards.length} linked guard records`} style={styles.desktopPanel}>
             {companyGuards.length === 0 ? (
-              <Text style={styles.helperText}>Approved guards will appear here after dashboard approval.</Text>
+              <Text style={styles.helperText}>Linked guards will appear here after you add them to the company roster.</Text>
             ) : (
               companyGuards.map((companyGuard) => (
                 <View key={companyGuard.id} style={styles.rowCard}>

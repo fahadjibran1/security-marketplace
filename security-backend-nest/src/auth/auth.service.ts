@@ -25,7 +25,7 @@ export class AuthService {
       email: dto.email,
       password: dto.password,
       role: normalizedRole,
-      status: normalizedRole === UserRole.GUARD ? UserStatus.PENDING : UserStatus.ACTIVE,
+      status: UserStatus.ACTIVE,
     });
 
     if (isCompanyRole(normalizedRole)) {
@@ -54,9 +54,9 @@ export class AuthService {
         siaLicenseNumber: dto.siaLicenseNumber,
         phone: dto.phone,
         locationSharingEnabled: false,
-        status: GuardApprovalStatus.PENDING,
-        approvalStatus: GuardApprovalStatus.PENDING,
-        isApproved: false,
+        status: GuardApprovalStatus.APPROVED,
+        approvalStatus: GuardApprovalStatus.APPROVED,
+        isApproved: true,
       });
     }
 

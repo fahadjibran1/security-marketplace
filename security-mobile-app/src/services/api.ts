@@ -34,9 +34,13 @@ import {
 } from '../types/models';
 
 const LIVE_API_BASE_URL = 'https://api.observantsecurity.co.uk';
-const isWeb = typeof window !== 'undefined';
+const hasBrowserWindow =
+  typeof window !== 'undefined' &&
+  typeof window.location !== 'undefined' &&
+  typeof window.location.hostname === 'string';
+const isWeb = hasBrowserWindow;
 const isLocalWebHost =
-  isWeb && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+  hasBrowserWindow && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
 const devFallbackApiBaseUrl = isLocalWebHost ? 'http://localhost:3000' : LIVE_API_BASE_URL;
 const API_BASE_URL =
   process.env.EXPO_PUBLIC_API_URL ||
@@ -154,7 +158,7 @@ export function formatApiErrorMessage(error: unknown, fallbackMessage: string) {
 
   if (error instanceof ApiError) {
     if (error.status === 401 || error.status === 403) {
-      return 'Sign-in failed. Check your email, password, and account approval status.';
+      return 'Sign-in failed. Check your email and password, or contact support if access is restricted.';
     }
 
     if (typeof error.body === 'string' && error.body.trim()) {
