@@ -14,6 +14,7 @@ import { Shift } from '../../shift/entities/shift.entity';
 import { Timesheet } from '../../timesheet/entities/timesheet.entity';
 import { CompanyGuard } from '../../company-guard/entities/company-guard.entity';
 import { Site } from '../../site/entities/site.entity';
+import { Client } from '../../client/entities/client.entity';
 
 export enum CompanyStatus {
   ONBOARDING = 'onboarding',
@@ -67,4 +68,7 @@ export class Company {
 
   @OneToMany(() => Site, (site) => site.company)
   sites?: Site[];
+
+  @OneToMany(() => Client, (client) => client.company)
+  clients?: Client[];
 }
