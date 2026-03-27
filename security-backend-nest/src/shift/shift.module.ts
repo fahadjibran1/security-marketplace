@@ -12,6 +12,7 @@ import { Job } from '../job/entities/job.entity';
 import { JobApplication } from '../job-application/entities/job-application.entity';
 import { CompanyModule } from '../company/company.module';
 import { GuardProfileModule } from '../guard-profile/guard-profile.module';
+import { CompanyGuardModule } from '../company-guard/company-guard.module';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { GuardProfileModule } from '../guard-profile/guard-profile.module';
     SiteModule,
     CompanyModule,
     GuardProfileModule,
+    CompanyGuardModule,
   ],
   controllers: [ShiftController],
   providers: [ShiftService],
