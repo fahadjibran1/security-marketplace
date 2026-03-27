@@ -21,16 +21,16 @@ export class Client {
   @Column()
   name!: string;
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   contactName?: string | null;
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   contactEmail?: string | null;
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   contactPhone?: string | null;
 
-  @Column({ nullable: true })
+  @Column({ type: 'text', nullable: true })
   contactDetails?: string | null;
 
   @Column({ default: 'active' })
