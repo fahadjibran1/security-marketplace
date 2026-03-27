@@ -8,6 +8,10 @@ export class CreateSiteDto {
   @IsString()
   clientName?: string;
 
+  @IsOptional()
+  @IsInt()
+  clientId?: number;
+
   @IsString()
   address!: string;
 
@@ -21,6 +25,27 @@ export class CreateSiteDto {
 
   @IsOptional()
   @IsInt()
-  @Min(15)
+  @Min(1)
+  requiredGuardCount?: number;
+
+  @IsOptional()
+  @IsString()
+  operatingDays?: string;
+
+  @IsOptional()
+  @IsString()
+  operatingStartTime?: string;
+
+  @IsOptional()
+  @IsString()
+  operatingEndTime?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(5)
   welfareCheckIntervalMinutes?: number;
+
+  @IsOptional()
+  @IsString()
+  specialInstructions?: string;
 }

@@ -2,6 +2,7 @@ import { Column, Entity, ManyToOne, OneToMany, PrimaryGeneratedColumn } from 'ty
 import { Company } from '../../company/entities/company.entity';
 import { Job } from '../../job/entities/job.entity';
 import { Shift } from '../../shift/entities/shift.entity';
+import { Client } from '../../client/entities/client.entity';
 
 @Entity('sites')
 export class Site {
@@ -10,6 +11,9 @@ export class Site {
 
   @ManyToOne(() => Company, (company) => company.sites, { eager: true })
   company!: Company;
+
+  @ManyToOne(() => Client, (client) => client.sites, { eager: true, nullable: true, onDelete: 'SET NULL' })
+  client?: Client | null;
 
   @Column()
   name!: string;
@@ -26,8 +30,23 @@ export class Site {
   @Column({ default: 'active' })
   status!: string;
 
+  @Column({ type: 'int', default: 1 })
+  requiredGuardCount!: number;
+
+  @Column({ nullable: true })
+  operatingDays?: string | null;
+
+  @Column({ nullable: true })
+  operatingStartTime?: string | null;
+
+  @Column({ nullable: true })
+  operatingEndTime?: string | null;
+
   @Column({ type: 'int', default: 60 })
   welfareCheckIntervalMinutes!: number;
+
+  @Column({ type: 'text', nullable: true })
+  specialInstructions?: string | null;
 
   @OneToMany(() => Job, (job) => job.site)
   jobs?: Job[];
