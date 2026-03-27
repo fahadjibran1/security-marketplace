@@ -186,21 +186,20 @@ export class ShiftService {
       throw new BadRequestException('Shift status is invalid');
     }
 
-    const shift: Shift = this.shiftRepo.create({
-      assignment,
-      company,
-      guard,
-      site,
-      job,
-      jobApplication,
-      createdByUserId: dto.createdByUserId ?? company.user?.id ?? null,
-      siteName: site.name,
-      start,
-      end,
-      checkCallIntervalMinutes:
-        dto.checkCallIntervalMinutes ?? site.welfareCheckIntervalMinutes ?? 60,
-      status: normalizedStatus ?? 'assigned',
-    });
+    const shift = new Shift();
+    shift.assignment = assignment;
+    shift.company = company;
+    shift.guard = guard;
+    shift.site = site;
+    shift.job = job;
+    shift.jobApplication = jobApplication;
+    shift.createdByUserId = dto.createdByUserId ?? company.user?.id ?? null;
+    shift.siteName = site.name;
+    shift.start = start;
+    shift.end = end;
+    shift.checkCallIntervalMinutes =
+      dto.checkCallIntervalMinutes ?? site.welfareCheckIntervalMinutes ?? 60;
+    shift.status = normalizedStatus ?? 'assigned';
 
     const savedShift: Shift = await this.shiftRepo.save(shift);
     const timesheet = await this.timesheetService.createForShift(savedShift);
