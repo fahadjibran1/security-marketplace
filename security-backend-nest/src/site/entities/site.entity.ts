@@ -18,13 +18,13 @@ export class Site {
   @Column()
   name!: string;
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   clientName?: string;
 
   @Column()
   address!: string;
 
-  @Column({ nullable: true })
+  @Column({ type: 'text', nullable: true })
   contactDetails?: string;
 
   @Column({ default: 'active' })
@@ -33,13 +33,13 @@ export class Site {
   @Column({ type: 'int', default: 1 })
   requiredGuardCount!: number;
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   operatingDays?: string | null;
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   operatingStartTime?: string | null;
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   operatingEndTime?: string | null;
 
   @Column({ type: 'int', default: 60 })
