@@ -4,6 +4,29 @@
 
 Use [security-backend-nest](/C:/Users/Admin/security-marketplace/security-backend-nest) as the production API.
 
+### Run These Locally First
+From [security-backend-nest](/C:/Users/Admin/security-marketplace/security-backend-nest):
+
+```powershell
+Copy-Item .env.production.example .env
+notepad .env
+cmd /c npm ci
+cmd /c npm run build
+cmd /c npm run migration:run
+cmd /c npm run start:prod
+```
+
+Then verify locally:
+
+```powershell
+Invoke-WebRequest http://localhost:10000/health
+```
+
+Important:
+- fill in real `DATABASE_URL`, `CORS_ORIGIN`, and `JWT_SECRET` before `npm run start:prod`
+- if you want to keep using Render Blueprint deploys, commit and push the repo after verifying the local production boot
+- the backend now refuses to boot in production if `JWT_SECRET` is default, `CORS_ORIGIN` is wildcard/missing, or `DATABASE_SYNCHRONIZE=true`
+
 ### Recommended option: Render
 This repo now includes [render.yaml](/C:/Users/Admin/security-marketplace/render.yaml).
 
@@ -112,6 +135,16 @@ Set:
 EXPO_PUBLIC_API_URL=https://your-api-domain.example.com
 ```
 
+Local production-style check from [security-mobile-app](/C:/Users/Admin/security-marketplace/security-mobile-app):
+
+```powershell
+Copy-Item .env.production.example .env
+notepad .env
+cmd /c npm install
+cmd /c npm run build
+cmd /c npm run export:web
+```
+
 ### EAS build setup
 ```bash
 cd security-mobile-app
@@ -138,6 +171,30 @@ npx eas build --platform ios --profile production
 - set `EXPO_PUBLIC_API_URL` to the deployed Render URL
 - test company signup -> guard signup -> apply -> hire -> shift -> check-in/out -> timesheet approval -> incident report
 - test on physical devices, not just emulator/simulator
+
+## 3. Local Command Summary
+Backend:
+
+```powershell
+Set-Location "C:\Users\Admin\security-marketplace\security-backend-nest"
+Copy-Item .env.production.example .env
+notepad .env
+cmd /c npm ci
+cmd /c npm run build
+cmd /c npm run migration:run
+cmd /c npm run start:prod
+```
+
+Mobile/web bundle:
+
+```powershell
+Set-Location "C:\Users\Admin\security-marketplace\security-mobile-app"
+Copy-Item .env.production.example .env
+notepad .env
+cmd /c npm install
+cmd /c npm run build
+cmd /c npm run export:web
+```
 
 ## 4. Before store submission
 - final app icon and splash assets

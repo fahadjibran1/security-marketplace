@@ -24,9 +24,10 @@ import { AuditLogModule } from './audit-log/audit-log.module';
 import { NotificationModule } from './notification/notification.module';
 import { HealthController } from './health.controller';
 import { buildNestTypeOrmOptions } from './database/typeorm.config';
+import { validateRuntimeEnv } from './config/runtime-env';
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true }),
+    ConfigModule.forRoot({ isGlobal: true, validate: validateRuntimeEnv }),
     TypeOrmModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({

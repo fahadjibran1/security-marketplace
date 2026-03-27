@@ -16,8 +16,10 @@ services:
       - key: ENABLE_SWAGGER
         value: "false"
       - key: DATABASE_SYNCHRONIZE
-        value: "true"
+        value: "false"
       - key: DATABASE_SSL
+        value: "true"
+      - key: TRUST_PROXY
         value: "true"
       - key: CORS_ORIGIN
         sync: false

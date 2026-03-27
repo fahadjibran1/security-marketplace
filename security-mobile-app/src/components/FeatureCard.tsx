@@ -10,13 +10,20 @@ type FeatureCardProps = PropsWithChildren<{
 }>;
 
 export function FeatureCard({ title, subtitle, ctaLabel, onPress, children, style }: FeatureCardProps) {
+  const pressHandlers = onPress
+    ? ({
+        onPress,
+        onClick: onPress,
+      } as const)
+    : {};
+
   return (
     <View style={[styles.card, style]}>
       <Text style={styles.title}>{title}</Text>
       <Text style={styles.subtitle}>{subtitle}</Text>
       {children}
       {ctaLabel && onPress ? (
-        <Pressable onPress={onPress} style={styles.button}>
+        <Pressable {...pressHandlers} style={styles.button}>
           <Text style={styles.buttonText}>{ctaLabel}</Text>
         </Pressable>
       ) : null}
@@ -34,8 +41,8 @@ const styles = StyleSheet.create({
     borderColor: '#e5e7eb',
     gap: 8,
   },
-  title: { fontWeight: '700', fontSize: 16, color: '#111827' },
-  subtitle: { color: '#374151' },
+  title: { fontWeight: '700', fontSize: 16, color: '#111827', lineHeight: 22, flexShrink: 1 },
+  subtitle: { color: '#374151', lineHeight: 20, flexShrink: 1 },
   button: {
     backgroundColor: '#111827',
     alignSelf: 'flex-start',

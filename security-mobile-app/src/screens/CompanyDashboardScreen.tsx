@@ -13,8 +13,11 @@ import {
   acknowledgeSafetyAlert,
   approveGuard,
   closeSafetyAlert,
+  createShift,
+  formatApiErrorMessage,
   listCompanyAttachments,
   listCompanyAuditLogs,
+  listCompanyGuards,
   listCompanyNotifications,
   listCompanySafetyAlerts,
   createJob,
@@ -40,6 +43,7 @@ import {
   AuditLog,
   Assignment,
   AuthUser,
+  CompanyGuard,
   CompanyProfile,
   GuardProfile,
   Incident,
@@ -83,6 +87,14 @@ type SiteDraft = {
   welfareCheckIntervalMinutes: string;
 };
 
+type ShiftDraft = {
+  assignmentId: string;
+  siteId: string;
+  siteName: string;
+  start: string;
+  end: string;
+};
+
 function defaultShiftStart() {
   const start = new Date();
   start.setDate(start.getDate() + 1);
@@ -108,8 +120,54 @@ function createFallbackSiteDraft(): SiteDraft {
   };
 }
 
+function createDefaultShiftDraft(): ShiftDraft {
+  return {
+    assignmentId: '',
+    siteId: '',
+    siteName: 'Main Site',
+    start: defaultShiftStart(),
+    end: defaultShiftEnd(),
+  };
+}
+
 function formatDateTimeRange(start: string, end: string) {
   return `${new Date(start).toLocaleString()} to ${new Date(end).toLocaleString()}`;
+}
+
+function formatCurrency(value: number) {
+  return new Intl.NumberFormat('en-GB', {
+    style: 'currency',
+    currency: 'GBP',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
+function csvCell(value: string | number) {
+  const text = String(value ?? '');
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+function toFiniteNumber(value: unknown, fallback = 0) {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : fallback;
+  }
+
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  }
+
+  return fallback;
+}
+
+function showAlert(title: string, message: string) {
+  if (typeof window !== 'undefined' && typeof window.alert === 'function') {
+    window.alert(`${title}\n\n${message}`);
+    return;
+  }
+
+  Alert.alert(title, message);
 }
 
 function sectionLabel(section: CompanySectionId) {
@@ -145,6 +203,23 @@ function countUniqueGuards(shiftsForSite: Shift[]) {
   ).size;
 }
 
+function createTextDownload(filename: string, contents: string, mimeType = 'text/plain;charset=utf-8') {
+  if (typeof window === 'undefined' || typeof document === 'undefined') {
+    return false;
+  }
+
+  const blob = new Blob([contents], { type: mimeType });
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  window.URL.revokeObjectURL(url);
+  return true;
+}
+
 export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
   const width = typeof window !== 'undefined' ? window.innerWidth : 0;
   const isDesktopWeb = width >= 1180;
@@ -153,6 +228,7 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [sites, setSites] = useState<Site[]>([]);
   const [guards, setGuards] = useState<GuardProfile[]>([]);
+  const [companyGuards, setCompanyGuards] = useState<CompanyGuard[]>([]);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [applications, setApplications] = useState<JobApplication[]>([]);
@@ -181,31 +257,53 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
   const [siteStatus, setSiteStatus] = useState('active');
   const [welfareCheckIntervalMinutes, setWelfareCheckIntervalMinutes] = useState('60');
   const [submittingSite, setSubmittingSite] = useState(false);
+  const [shiftDraft, setShiftDraft] = useState<ShiftDraft>(createDefaultShiftDraft());
+  const [submittingShift, setSubmittingShift] = useState(false);
+  const [savingCompanyProfile, setSavingCompanyProfile] = useState(false);
+  const [savingSiteId, setSavingSiteId] = useState<number | null>(null);
+  const [hiringApplicationId, setHiringApplicationId] = useState<number | null>(null);
+  const [approvingGuardId, setApprovingGuardId] = useState<number | null>(null);
+  const [updatingIncidentId, setUpdatingIncidentId] = useState<number | null>(null);
+  const [updatingAlertId, setUpdatingAlertId] = useState<number | null>(null);
+  const [updatingTimesheetId, setUpdatingTimesheetId] = useState<number | null>(null);
   const [activeSection, setActiveSection] = useState<CompanySectionId>('overview');
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  function pressHandlers(action: () => void) {
+    return {
+      onPress: action,
+      onClick: action,
+    } as const;
+  }
 
   async function loadData() {
     try {
+      setLoading(true);
+      setLoadError(null);
       const [
-        myCompany,
-        companiesData,
-        sitesData,
-        jobsData,
-        guardsData,
-        assignmentRows,
-        shiftsData,
-        applicationsData,
-        incidentRows,
-        alertRows,
-        timesheetRows,
-        notificationRows,
-        attachmentRows,
-        auditRows,
-      ] = await Promise.all([
+        myCompanyResult,
+        companiesResult,
+        sitesResult,
+        jobsResult,
+        guardsResult,
+        companyGuardsResult,
+        assignmentsResult,
+        shiftsResult,
+        applicationsResult,
+        incidentsResult,
+        alertsResult,
+        timesheetsResult,
+        notificationsResult,
+        attachmentsResult,
+        auditLogsResult,
+      ] = await Promise.allSettled([
         getMyCompany(),
         listCompanies(),
         listSites(),
         listJobs(),
         listGuards(),
+        listCompanyGuards(),
         listAssignments(),
         listShifts(),
         listJobApplications(),
@@ -217,10 +315,31 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
         listCompanyAuditLogs(),
       ]);
 
+      const myCompany = myCompanyResult.status === 'fulfilled' ? myCompanyResult.value : null;
+      const companiesData = companiesResult.status === 'fulfilled' ? companiesResult.value : [];
+      const sitesData = sitesResult.status === 'fulfilled' ? sitesResult.value : [];
+      const jobsData = jobsResult.status === 'fulfilled' ? jobsResult.value : [];
+      const guardsData = guardsResult.status === 'fulfilled' ? guardsResult.value : [];
+      const companyGuardRows = companyGuardsResult.status === 'fulfilled' ? companyGuardsResult.value : [];
+      const assignmentRows = assignmentsResult.status === 'fulfilled' ? assignmentsResult.value : [];
+      const shiftsData = shiftsResult.status === 'fulfilled' ? shiftsResult.value : [];
+      const applicationsData = applicationsResult.status === 'fulfilled' ? applicationsResult.value : [];
+      const incidentRows = incidentsResult.status === 'fulfilled' ? incidentsResult.value : [];
+      const alertRows = alertsResult.status === 'fulfilled' ? alertsResult.value : [];
+      const timesheetRows = timesheetsResult.status === 'fulfilled' ? timesheetsResult.value : [];
+      const notificationRows = notificationsResult.status === 'fulfilled' ? notificationsResult.value : [];
+      const attachmentRows = attachmentsResult.status === 'fulfilled' ? attachmentsResult.value : [];
+      const auditRows = auditLogsResult.status === 'fulfilled' ? auditLogsResult.value : [];
+
       const currentCompany =
         myCompany ||
         companiesData.find((entry) => entry.id === user.companyId || entry.user?.id === user.id) ||
         null;
+
+      if (!currentCompany) {
+        throw new Error('Company profile was not found for this account.');
+      }
+
       const companyId = currentCompany?.id;
 
       setCompany(currentCompany);
@@ -228,6 +347,7 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
       setCompanyNumber(currentCompany?.companyNumber || '');
       setAddress(currentCompany?.address || '');
       setContactDetails(currentCompany?.contactDetails || '');
+      setCompanyGuards(companyGuardRows);
       setSites(sitesData.filter((site) => (site.company?.id ?? site.companyId) === companyId));
       setJobs(jobsData.filter((job) => (job.company?.id ?? job.companyId) === companyId));
       setGuards(guardsData);
@@ -243,13 +363,26 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
       setAttachments(attachmentRows);
       setAuditLogs(auditRows);
     } catch (error) {
-      Alert.alert('Load failed', error instanceof Error ? error.message : 'Unknown error');
+      setLoadError(formatApiErrorMessage(error, 'Failed to load the company dashboard.'));
+    } finally {
+      setLoading(false);
     }
   }
 
   useEffect(() => {
     loadData();
   }, [user.companyId, user.id]);
+
+  useEffect(() => {
+    if (assignments.length === 1 && !shiftDraft.assignmentId) {
+      setShiftDraft((current) => ({
+        ...current,
+        assignmentId: String(assignments[0].id),
+        siteId: current.siteId || (assignments[0].job?.site?.id ? String(assignments[0].job?.site?.id) : ''),
+        siteName: assignments[0].job?.site?.name || current.siteName,
+      }));
+    }
+  }, [assignments, shiftDraft.assignmentId]);
 
   function draftFor(applicationId: number): HireDraft {
     return (
@@ -315,9 +448,9 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
       setSiteStatus('active');
       setWelfareCheckIntervalMinutes('60');
       await loadData();
-      Alert.alert('Site created', 'The site is now available for jobs, shifts, and live operations.');
+      showAlert('Site created', 'The site is now available for jobs, shifts, and live operations.');
     } catch (error) {
-      Alert.alert('Create site failed', error instanceof Error ? error.message : 'Unknown error');
+      showAlert('Create site failed', formatApiErrorMessage(error, 'Unable to create this site.'));
     } finally {
       setSubmittingSite(false);
     }
@@ -326,11 +459,12 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
   async function handleUpdateSite(siteId: number) {
     const site = sites.find((entry) => entry.id === siteId);
     if (!site) {
-      Alert.alert('Site not found', 'The selected site could not be loaded.');
+      showAlert('Site not found', 'The selected site could not be loaded.');
       return;
     }
     const draft = siteDraftFor(site);
     try {
+      setSavingSiteId(siteId);
       await updateSite(siteId, {
         name: draft.name,
         clientName: draft.clientName || undefined,
@@ -340,21 +474,19 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
         welfareCheckIntervalMinutes: Number(draft.welfareCheckIntervalMinutes) || 60,
       });
       await loadData();
-      Alert.alert('Site updated', 'Site details have been saved.');
+      showAlert('Site updated', 'Site details have been saved.');
     } catch (error) {
-      Alert.alert('Update site failed', error instanceof Error ? error.message : 'Unknown error');
+      showAlert('Update site failed', formatApiErrorMessage(error, 'Unable to save this site.'));
+    } finally {
+      setSavingSiteId(null);
     }
   }
 
   async function handleCreateJob() {
-    if (!company) {
-      Alert.alert('Missing company', 'Your company profile was not found for this account.');
-      return;
-    }
     try {
       setSubmittingJob(true);
       await createJob({
-        companyId: company.id,
+        companyId: company?.id,
         siteId: jobSiteId ? Number(jobSiteId) : undefined,
         title: jobTitle,
         description: jobDescription || undefined,
@@ -368,16 +500,72 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
       setHourlyRate('16.50');
       setJobSiteId('');
       await loadData();
-      Alert.alert('Job created', 'The job is now open for guard applications.');
+      showAlert('Job created', 'The job is now open for guard applications.');
     } catch (error) {
-      Alert.alert('Create job failed', error instanceof Error ? error.message : 'Unknown error');
+      showAlert('Create job failed', formatApiErrorMessage(error, 'Unable to create this job.'));
     } finally {
       setSubmittingJob(false);
     }
   }
 
+  async function handleCreateShift() {
+    if (!shiftDraft.assignmentId) {
+      showAlert('Assignment required', 'Enter an assignment ID to schedule a company shift.');
+      return;
+    }
+
+    const parsedAssignmentId = Number(shiftDraft.assignmentId);
+    if (!Number.isFinite(parsedAssignmentId)) {
+      showAlert('Invalid assignment ID', 'Use one of the listed numeric assignment IDs before creating a shift.');
+      return;
+    }
+
+    const assignment = assignments.find((entry) => entry.id === parsedAssignmentId);
+    if (!assignment) {
+      showAlert(
+        'Assignment not found',
+        assignmentOptionsText
+          ? `Use one of the listed assignment IDs.\n\n${assignmentOptionsText}`
+          : 'Hire a guard first so the dashboard has a valid assignment to schedule.',
+      );
+      return;
+    }
+
+    try {
+      setSubmittingShift(true);
+      await createShift({
+        assignmentId: parsedAssignmentId,
+        siteId: shiftDraft.siteId ? Number(shiftDraft.siteId) : assignment.job?.site?.id,
+        siteName: shiftDraft.siteName || assignment.job?.site?.name || undefined,
+        start: shiftDraft.start,
+        end: shiftDraft.end,
+      });
+      setShiftDraft(createDefaultShiftDraft());
+      await loadData();
+      showAlert('Shift created', 'The shift is now scheduled and a draft timesheet has been created.');
+    } catch (error) {
+      showAlert('Create shift failed', formatApiErrorMessage(error, 'Unable to create this shift.'));
+    } finally {
+      setSubmittingShift(false);
+    }
+  }
+
+  async function handleCreateInvoice() {
+    if (!invoiceDraft) {
+      showAlert('Invoice unavailable', 'Approve at least one timesheet before generating a client invoice.');
+      return;
+    }
+
+    const downloaded = createTextDownload(invoiceDraft.fileName, invoiceDraft.csv, 'text/csv;charset=utf-8');
+    showAlert(
+      'Invoice created',
+      `${downloaded ? 'Invoice CSV downloaded' : 'Invoice draft prepared'} for ${invoiceDraft.periodLabel}.\n\nTotal: ${formatCurrency(invoiceDraft.total)}`,
+    );
+  }
+
   async function handleSaveProfile() {
     try {
+      setSavingCompanyProfile(true);
       const updatedCompany = await updateMyCompany({
         name: companyName,
         companyNumber,
@@ -385,15 +573,18 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
         contactDetails,
       });
       setCompany(updatedCompany);
-      Alert.alert('Profile updated', 'Your company onboarding details have been saved.');
+      showAlert('Profile updated', 'Your company onboarding details have been saved.');
     } catch (error) {
-      Alert.alert('Profile update failed', error instanceof Error ? error.message : 'Unknown error');
+      showAlert('Profile update failed', formatApiErrorMessage(error, 'Unable to save the company profile.'));
+    } finally {
+      setSavingCompanyProfile(false);
     }
   }
 
   async function handleHire(application: JobApplication) {
     const draft = draftFor(application.id);
     try {
+      setHiringApplicationId(application.id);
       await hireJobApplication(application.id, {
         createShift: true,
         siteId: draft.siteId ? Number(draft.siteId) : undefined,
@@ -402,59 +593,76 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
         end: draft.end,
       });
       await loadData();
-      Alert.alert('Guard hired', 'Assignment and first shift created successfully.');
+      showAlert('Guard hired', 'Assignment and first shift created successfully.');
     } catch (error) {
-      Alert.alert('Hire failed', error instanceof Error ? error.message : 'Unknown error');
+      showAlert('Hire failed', formatApiErrorMessage(error, 'Unable to hire this applicant.'));
+    } finally {
+      setHiringApplicationId(null);
     }
   }
 
   async function handleUpdateIncidentStatus(id: number, status: string) {
     try {
+      setUpdatingIncidentId(id);
       await updateIncidentStatus(id, status);
       await loadData();
-      Alert.alert('Incident updated', `Incident marked as ${status}.`);
+      showAlert('Incident updated', `Incident marked as ${status}.`);
     } catch (error) {
-      Alert.alert('Incident update failed', error instanceof Error ? error.message : 'Unknown error');
+      showAlert('Incident update failed', formatApiErrorMessage(error, 'Unable to update this incident.'));
+    } finally {
+      setUpdatingIncidentId(null);
     }
   }
 
   async function handleApproveGuard(guardId: number) {
     try {
+      setApprovingGuardId(guardId);
       await approveGuard(guardId);
       await loadData();
-      Alert.alert('Guard approved', 'The guard is now active and can log in.');
+      showAlert('Guard approved', 'The guard is now active and can log in.');
     } catch (error) {
-      Alert.alert('Approval failed', error instanceof Error ? error.message : 'Unknown error');
+      showAlert('Approval failed', formatApiErrorMessage(error, 'Unable to approve this guard.'));
+    } finally {
+      setApprovingGuardId(null);
     }
   }
 
   async function handleAcknowledgeAlert(id: number) {
     try {
+      setUpdatingAlertId(id);
       await acknowledgeSafetyAlert(id);
       await loadData();
-      Alert.alert('Alert acknowledged', 'The safety alert is now acknowledged.');
+      showAlert('Alert acknowledged', 'The safety alert is now acknowledged.');
     } catch (error) {
-      Alert.alert('Acknowledge failed', error instanceof Error ? error.message : 'Unknown error');
+      showAlert('Acknowledge failed', formatApiErrorMessage(error, 'Unable to acknowledge this alert.'));
+    } finally {
+      setUpdatingAlertId(null);
     }
   }
 
   async function handleCloseAlert(id: number) {
     try {
+      setUpdatingAlertId(id);
       await closeSafetyAlert(id);
       await loadData();
-      Alert.alert('Alert resolved', 'The safety alert has been closed.');
+      showAlert('Alert resolved', 'The safety alert has been closed.');
     } catch (error) {
-      Alert.alert('Resolve failed', error instanceof Error ? error.message : 'Unknown error');
+      showAlert('Resolve failed', formatApiErrorMessage(error, 'Unable to resolve this alert.'));
+    } finally {
+      setUpdatingAlertId(null);
     }
   }
 
   async function handleUpdateTimesheet(id: number, approvalStatus: string) {
     try {
+      setUpdatingTimesheetId(id);
       await updateTimesheet(id, { approvalStatus });
       await loadData();
-      Alert.alert('Timesheet updated', `Timesheet marked as ${approvalStatus}.`);
+      showAlert('Timesheet updated', `Timesheet marked as ${approvalStatus}.`);
     } catch (error) {
-      Alert.alert('Timesheet update failed', error instanceof Error ? error.message : 'Unknown error');
+      showAlert('Timesheet update failed', formatApiErrorMessage(error, 'Unable to update this timesheet.'));
+    } finally {
+      setUpdatingTimesheetId(null);
     }
   }
 
@@ -468,10 +676,19 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
     () => timesheets.filter((timesheet) => timesheet.approvalStatus === 'submitted'),
     [timesheets],
   );
+  const approvedTimesheets = useMemo(
+    () => timesheets.filter((timesheet) => timesheet.approvalStatus === 'approved'),
+    [timesheets],
+  );
   const openAlerts = useMemo(() => alerts.filter((alert) => alert.status !== 'closed'), [alerts]);
   const pendingGuardApprovals = useMemo(
-    () => guards.filter((guard) => guard.approvalStatus === 'pending' || guard.status === 'pending'),
-    [guards],
+    () =>
+      guards.filter((guard) => {
+        const isPending = guard.approvalStatus === 'pending' || guard.status === 'pending';
+        const alreadyLinked = companyGuards.some((companyGuard) => companyGuard.guard?.id === guard.id);
+        return isPending && !alreadyLinked;
+      }),
+    [companyGuards, guards],
   );
   const unreadNotifications = useMemo(
     () => notifications.filter((notification) => notification.status === 'unread'),
@@ -483,8 +700,12 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
   const activeShifts = useMemo(() => shifts.filter((shift) => shift.status === 'in_progress'), [shifts]);
   const scheduledShifts = useMemo(() => shifts.filter((shift) => shift.status === 'scheduled'), [shifts]);
   const linkedGuardIds = useMemo(
-    () => new Set(assignments.map((assignment) => assignment.guard?.id ?? assignment.guardId)),
-    [assignments],
+    () =>
+      new Set([
+        ...assignments.map((assignment) => assignment.guard?.id ?? assignment.guardId),
+        ...companyGuards.map((companyGuard) => companyGuard.guard?.id),
+      ]),
+    [assignments, companyGuards],
   );
   const linkedGuards = useMemo(
     () => guards.filter((guard) => linkedGuardIds.has(guard.id)),
@@ -494,6 +715,109 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
     () => incidents.filter((incident) => incident.status === 'open').length,
     [incidents],
   );
+  const assignmentOptionsText = useMemo(
+    () =>
+      assignments.length === 0
+        ? ''
+        : assignments
+            .map((assignment) => `${assignment.id}=${assignment.guard?.fullName || `Guard #${assignment.guardId}`}`)
+            .join(' | '),
+    [assignments],
+  );
+  const siteOptionsText = useMemo(
+    () =>
+      sites.length === 0
+        ? ''
+        : sites.map((site) => `${site.id}=${site.name}`).join(' | '),
+    [sites],
+  );
+
+  const invoiceDraft = useMemo(() => {
+    if (!company || approvedTimesheets.length === 0) {
+      return null;
+    }
+
+    const shiftById = new Map(shifts.map((shift) => [shift.id, shift]));
+    const assignmentById = new Map(assignments.map((assignment) => [assignment.id, assignment]));
+    const siteById = new Map(sites.map((site) => [site.id, site]));
+    const periodStart = approvedTimesheets
+      .map((timesheet) => new Date(timesheet.submittedAt || timesheet.createdAt))
+      .sort((a, b) => a.getTime() - b.getTime())[0];
+    const periodEnd = approvedTimesheets
+      .map((timesheet) => new Date(timesheet.submittedAt || timesheet.createdAt))
+      .sort((a, b) => b.getTime() - a.getTime())[0];
+
+    const rows = approvedTimesheets.map((timesheet) => {
+      const shift = timesheet.shift || shiftById.get(timesheet.shiftId);
+      const assignment = shift?.assignmentId ? assignmentById.get(shift.assignmentId) : shift?.assignment;
+      const linkedSite =
+        (shift?.siteId ? siteById.get(shift.siteId) : undefined) ||
+        shift?.site ||
+        sites.find((site) => site.name === shift?.siteName);
+      const siteName = linkedSite?.name || shift?.siteName || 'Unassigned Site';
+      const explicitHoursWorked = toFiniteNumber(timesheet.hoursWorked);
+      const workedMinutes = toFiniteNumber(timesheet.roundedMinutes ?? timesheet.workedMinutes);
+      const hoursWorked =
+        explicitHoursWorked > 0
+          ? explicitHoursWorked
+          : Math.max(0, workedMinutes / 60);
+      const hourlyRate = toFiniteNumber(assignment?.job?.hourlyRate);
+      const total = Number((hoursWorked * hourlyRate).toFixed(2));
+
+      return {
+        timesheetId: timesheet.id,
+        siteName,
+        guardName: timesheet.guard?.fullName || shift?.guard?.fullName || `Guard #${timesheet.guardId}`,
+        shiftWindow:
+          shift && shift.start && shift.end ? formatDateTimeRange(shift.start, shift.end) : 'Shift details unavailable',
+        hoursWorked,
+        hourlyRate,
+        total,
+      };
+    });
+
+    const siteTotals = Array.from(
+      rows.reduce((map, row) => {
+        const current = map.get(row.siteName) || { siteName: row.siteName, hours: 0, total: 0 };
+        current.hours += row.hoursWorked;
+        current.total += row.total;
+        map.set(row.siteName, current);
+        return map;
+      }, new Map<string, { siteName: string; hours: number; total: number }>()),
+    ).map(([, summary]) => summary);
+
+    const invoiceTotal = siteTotals.reduce((sum, summary) => sum + summary.total, 0);
+    const today = new Date();
+    const invoiceNumber = `INV-${company.id}-${today.toISOString().slice(0, 10)}`;
+    const periodLabel =
+      periodStart && periodEnd
+        ? `${periodStart.toLocaleDateString('en-GB')} to ${periodEnd.toLocaleDateString('en-GB')}`
+        : today.toLocaleDateString('en-GB');
+
+    const summaryLines = [
+      `Invoice Number,${csvCell(invoiceNumber)}`,
+      `Company,${csvCell(company.name)}`,
+      `Billing Period,${csvCell(periodLabel)}`,
+      '',
+      'Site,Hours,Amount',
+      ...siteTotals.map((summary) => `${csvCell(summary.siteName)},${summary.hours.toFixed(2)},${summary.total.toFixed(2)}`),
+      '',
+      'Timesheet ID,Site,Guard,Shift Window,Hours,Hourly Rate,Amount',
+      ...rows.map(
+        (row) =>
+          `${row.timesheetId},${csvCell(row.siteName)},${csvCell(row.guardName)},${csvCell(row.shiftWindow)},${row.hoursWorked.toFixed(2)},${row.hourlyRate.toFixed(2)},${row.total.toFixed(2)}`,
+      ),
+    ].join('\n');
+
+    return {
+      invoiceNumber,
+      periodLabel,
+      total: invoiceTotal,
+      siteTotals,
+      csv: summaryLines,
+      fileName: `${invoiceNumber}.csv`,
+    };
+  }, [approvedTimesheets, assignments, company, shifts, sites]);
 
   const siteSummaries = useMemo(
     () =>
@@ -736,7 +1060,7 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
               value={welfareCheckIntervalMinutes}
               onChangeText={setWelfareCheckIntervalMinutes}
             />
-            <Pressable style={styles.button} onPress={handleCreateSite} disabled={submittingSite}>
+            <Pressable style={[styles.button, submittingSite && styles.buttonDisabled]} {...pressHandlers(handleCreateSite)} disabled={submittingSite}>
               <Text style={styles.buttonText}>{submittingSite ? 'Creating site...' : 'Create Site'}</Text>
             </Pressable>
           </FeatureCard>
@@ -746,8 +1070,8 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
             <TextInput style={styles.input} placeholder="Company number" value={companyNumber} onChangeText={setCompanyNumber} />
             <TextInput style={styles.input} placeholder="Address" value={address} onChangeText={setAddress} />
             <TextInput style={styles.input} placeholder="Contact details" value={contactDetails} onChangeText={setContactDetails} />
-            <Pressable style={styles.button} onPress={handleSaveProfile}>
-              <Text style={styles.buttonText}>Save Profile</Text>
+            <Pressable style={[styles.button, savingCompanyProfile && styles.buttonDisabled]} {...pressHandlers(handleSaveProfile)} disabled={savingCompanyProfile}>
+              <Text style={styles.buttonText}>{savingCompanyProfile ? 'Saving...' : 'Save Profile'}</Text>
             </Pressable>
           </FeatureCard>
         </View>
@@ -763,7 +1087,7 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
               return (
                 <View key={site.id} style={styles.sectionRecord}>
                   <View style={styles.recordHeader}>
-                    <View>
+                    <View style={styles.recordCopy}>
                       <Text style={styles.recordTitle}>{site.name}</Text>
                       <Text style={styles.helperText}>{site.clientName || 'Client not set'} | {site.status}</Text>
                     </View>
@@ -787,8 +1111,12 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
                       onChangeText={(value: string) => updateSiteDraft(site.id, 'welfareCheckIntervalMinutes', value)}
                     />
                   </View>
-                  <Pressable style={styles.button} onPress={() => handleUpdateSite(site.id)}>
-                    <Text style={styles.buttonText}>Save Site</Text>
+                  <Pressable
+                    style={[styles.button, savingSiteId === site.id && styles.buttonDisabled]}
+                    {...pressHandlers(() => handleUpdateSite(site.id))}
+                    disabled={savingSiteId === site.id}
+                  >
+                    <Text style={styles.buttonText}>{savingSiteId === site.id ? 'Saving...' : 'Save Site'}</Text>
                   </Pressable>
                 </View>
               );
@@ -816,7 +1144,7 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
             pendingGuardApprovals.map((guard) => (
               <View key={guard.id} style={styles.sectionRecord}>
                 <View style={styles.recordHeader}>
-                  <View>
+                  <View style={styles.recordCopy}>
                     <Text style={styles.recordTitle}>{guard.fullName}</Text>
                     <Text style={styles.helperText}>
                       SIA: {guard.siaLicenseNumber || guard.siaLicenceNumber || 'Not supplied'}
@@ -827,8 +1155,12 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
                   </View>
                 </View>
                 <Text style={styles.helperText}>Phone: {guard.phone || 'Not supplied'}</Text>
-                <Pressable style={styles.button} onPress={() => handleApproveGuard(guard.id)}>
-                  <Text style={styles.buttonText}>Approve Guard</Text>
+                <Pressable
+                  style={[styles.button, approvingGuardId === guard.id && styles.buttonDisabled]}
+                  {...pressHandlers(() => handleApproveGuard(guard.id))}
+                  disabled={approvingGuardId === guard.id}
+                >
+                  <Text style={styles.buttonText}>{approvingGuardId === guard.id ? 'Approving...' : 'Approve Guard'}</Text>
                 </Pressable>
               </View>
             ))
@@ -846,7 +1178,7 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
               return (
                 <View key={guard.id} style={styles.sectionRecord}>
                   <View style={styles.recordHeader}>
-                    <View>
+                    <View style={styles.recordCopy}>
                       <Text style={styles.recordTitle}>{guard.fullName}</Text>
                       <Text style={styles.helperText}>SIA: {guard.siaLicenseNumber || guard.siaLicenceNumber || 'Not supplied'}</Text>
                     </View>
@@ -918,7 +1250,7 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
                 value={hourlyRate}
                 onChangeText={setHourlyRate}
               />
-              <Pressable style={styles.button} onPress={handleCreateJob} disabled={submittingJob}>
+              <Pressable style={[styles.button, submittingJob && styles.buttonDisabled]} {...pressHandlers(handleCreateJob)} disabled={submittingJob}>
                 <Text style={styles.buttonText}>{submittingJob ? 'Creating job...' : 'Create Job'}</Text>
               </Pressable>
             </View>
@@ -952,7 +1284,7 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
               return (
                 <View key={application.id} style={styles.sectionRecord}>
                   <View style={styles.recordHeader}>
-                    <View>
+                    <View style={styles.recordCopy}>
                       <Text style={styles.recordTitle}>{application.guard?.fullName || `Guard #${application.guardId}`}</Text>
                       <Text style={styles.helperText}>Applied for {application.job?.title || `Job #${application.jobId}`}</Text>
                     </View>
@@ -966,8 +1298,12 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
                     <TextInput style={styles.input} placeholder="Shift start ISO" value={draft.start} onChangeText={(value: string) => updateHireDraft(application.id, 'start', value)} />
                     <TextInput style={styles.input} placeholder="Shift end ISO" value={draft.end} onChangeText={(value: string) => updateHireDraft(application.id, 'end', value)} />
                   </View>
-                  <Pressable style={styles.button} onPress={() => handleHire(application)}>
-                    <Text style={styles.buttonText}>Hire + Create Shift</Text>
+                  <Pressable
+                    style={[styles.button, hiringApplicationId === application.id && styles.buttonDisabled]}
+                    {...pressHandlers(() => handleHire(application))}
+                    disabled={hiringApplicationId === application.id}
+                  >
+                    <Text style={styles.buttonText}>{hiringApplicationId === application.id ? 'Hiring...' : 'Hire + Create Shift'}</Text>
                   </Pressable>
                 </View>
               );
@@ -988,6 +1324,69 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
           </Text>
         </View>
 
+        <View style={[styles.sectionColumns, isDesktopWeb && styles.sectionColumnsDesktop]}>
+          <FeatureCard title="Schedule Shift" subtitle="Minimum company scheduling flow for approved hires." style={styles.desktopPanel}>
+            {assignments.length > 0 ? (
+              <View style={styles.infoBox}>
+                <Text style={styles.infoBoxText}>Assignment IDs: {assignmentOptionsText}</Text>
+                {siteOptionsText ? <Text style={styles.infoBoxText}>Site IDs: {siteOptionsText}</Text> : null}
+              </View>
+            ) : (
+              <Text style={styles.helperText}>Hire a guard first to create a shift from an assignment.</Text>
+            )}
+            <TextInput
+              style={styles.input}
+              placeholder="Assignment ID"
+              keyboardType="number-pad"
+              value={shiftDraft.assignmentId}
+              onChangeText={(value: string) => setShiftDraft((current) => ({ ...current, assignmentId: value }))}
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="Site ID (optional)"
+              keyboardType="number-pad"
+              value={shiftDraft.siteId}
+              onChangeText={(value: string) => setShiftDraft((current) => ({ ...current, siteId: value }))}
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="Site name fallback"
+              value={shiftDraft.siteName}
+              onChangeText={(value: string) => setShiftDraft((current) => ({ ...current, siteName: value }))}
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="Shift start ISO"
+              value={shiftDraft.start}
+              onChangeText={(value: string) => setShiftDraft((current) => ({ ...current, start: value }))}
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="Shift end ISO"
+              value={shiftDraft.end}
+              onChangeText={(value: string) => setShiftDraft((current) => ({ ...current, end: value }))}
+            />
+            <Pressable style={[styles.button, submittingShift && styles.buttonDisabled]} {...pressHandlers(handleCreateShift)} disabled={submittingShift}>
+              <Text style={styles.buttonText}>{submittingShift ? 'Creating shift...' : 'Create Shift'}</Text>
+            </Pressable>
+          </FeatureCard>
+
+          <FeatureCard title="Approved Guard Pool" subtitle={`${companyGuards.length} linked guard records`} style={styles.desktopPanel}>
+            {companyGuards.length === 0 ? (
+              <Text style={styles.helperText}>Approved guards will appear here after dashboard approval.</Text>
+            ) : (
+              companyGuards.map((companyGuard) => (
+                <View key={companyGuard.id} style={styles.rowCard}>
+                  <Text style={styles.listTitle}>{companyGuard.guard?.fullName || `Guard #${companyGuard.guard?.id ?? companyGuard.id}`}</Text>
+                  <Text style={styles.helperText}>
+                    {companyGuard.relationshipType} | {companyGuard.status}
+                  </Text>
+                </View>
+              ))
+            )}
+          </FeatureCard>
+        </View>
+
         <FeatureCard title="Live & Upcoming Shifts" subtitle={`${activeShifts.length} live | ${scheduledShifts.length} upcoming`} style={styles.desktopPanel}>
           {shifts.length === 0 ? (
             <Text style={styles.helperText}>No shifts are currently scheduled.</Text>
@@ -995,7 +1394,7 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
             shifts.map((shift) => (
               <View key={shift.id} style={styles.sectionRecord}>
                 <View style={styles.recordHeader}>
-                  <View>
+                  <View style={styles.recordCopy}>
                     <Text style={styles.recordTitle}>{shift.siteName || 'Unassigned site'}</Text>
                     <Text style={styles.helperText}>{formatDateTimeRange(shift.start, shift.end)}</Text>
                   </View>
@@ -1033,7 +1432,7 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
             timesheets.map((timesheet) => (
               <View key={timesheet.id} style={styles.sectionRecord}>
                 <View style={styles.recordHeader}>
-                  <View>
+                  <View style={styles.recordCopy}>
                     <Text style={styles.recordTitle}>{timesheet.shift?.siteName || `Shift #${timesheet.shift?.id ?? timesheet.shiftId}`}</Text>
                     <Text style={styles.helperText}>
                       {timesheet.shift ? formatDateTimeRange(timesheet.shift.start, timesheet.shift.end) : 'Shift details unavailable'}
@@ -1050,11 +1449,19 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
                 </View>
                 {timesheet.approvalStatus === 'submitted' ? (
                   <View style={styles.actionRow}>
-                    <Pressable style={styles.button} onPress={() => handleUpdateTimesheet(timesheet.id, 'approved')}>
-                      <Text style={styles.buttonText}>Approve</Text>
+                    <Pressable
+                      style={[styles.button, updatingTimesheetId === timesheet.id && styles.buttonDisabled]}
+                      {...pressHandlers(() => handleUpdateTimesheet(timesheet.id, 'approved'))}
+                      disabled={updatingTimesheetId === timesheet.id}
+                    >
+                      <Text style={styles.buttonText}>{updatingTimesheetId === timesheet.id ? 'Updating...' : 'Approve'}</Text>
                     </Pressable>
-                    <Pressable style={styles.secondaryButton} onPress={() => handleUpdateTimesheet(timesheet.id, 'rejected')}>
-                      <Text style={styles.secondaryButtonText}>Reject</Text>
+                    <Pressable
+                      style={[styles.secondaryButton, updatingTimesheetId === timesheet.id && styles.buttonDisabled]}
+                      {...pressHandlers(() => handleUpdateTimesheet(timesheet.id, 'rejected'))}
+                      disabled={updatingTimesheetId === timesheet.id}
+                    >
+                      <Text style={styles.secondaryButtonText}>{updatingTimesheetId === timesheet.id ? 'Updating...' : 'Reject'}</Text>
                     </Pressable>
                   </View>
                 ) : null}
@@ -1083,7 +1490,7 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
             incidents.map((incident) => (
               <View key={incident.id} style={styles.sectionRecord}>
                   <View style={styles.recordHeader}>
-                    <View>
+                    <View style={styles.recordCopy}>
                       <Text style={styles.recordTitle}>{incident.title}</Text>
                       <Text style={styles.helperText}>{incident.shift?.siteName || 'Unknown site'} | {incident.severity}</Text>
                     </View>
@@ -1097,8 +1504,12 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
                   <Text style={styles.helperText}>Location: {incident.locationText || 'Not supplied'}</Text>
                 </View>
                 {incident.status !== 'resolved' ? (
-                  <Pressable style={styles.button} onPress={() => handleUpdateIncidentStatus(incident.id, 'resolved')}>
-                    <Text style={styles.buttonText}>Mark Resolved</Text>
+                  <Pressable
+                    style={[styles.button, updatingIncidentId === incident.id && styles.buttonDisabled]}
+                    {...pressHandlers(() => handleUpdateIncidentStatus(incident.id, 'resolved'))}
+                    disabled={updatingIncidentId === incident.id}
+                  >
+                    <Text style={styles.buttonText}>{updatingIncidentId === incident.id ? 'Updating...' : 'Mark Resolved'}</Text>
                   </Pressable>
                 ) : null}
               </View>
@@ -1126,7 +1537,7 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
             alerts.map((alert) => (
               <View key={alert.id} style={styles.sectionRecord}>
                 <View style={styles.recordHeader}>
-                  <View>
+                  <View style={styles.recordCopy}>
                     <Text style={styles.recordTitle}>{alert.type.toUpperCase()}</Text>
                     <Text style={styles.helperText}>
                       {alert.guard?.fullName || 'Unknown guard'} | {alert.shift?.siteName || 'Unknown site'}
@@ -1143,17 +1554,29 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
                 </View>
                 {alert.status === 'open' ? (
                   <View style={styles.actionRow}>
-                    <Pressable style={styles.button} onPress={() => handleAcknowledgeAlert(alert.id)}>
-                      <Text style={styles.buttonText}>Acknowledge</Text>
+                    <Pressable
+                      style={[styles.button, updatingAlertId === alert.id && styles.buttonDisabled]}
+                      {...pressHandlers(() => handleAcknowledgeAlert(alert.id))}
+                      disabled={updatingAlertId === alert.id}
+                    >
+                      <Text style={styles.buttonText}>{updatingAlertId === alert.id ? 'Updating...' : 'Acknowledge'}</Text>
                     </Pressable>
-                    <Pressable style={styles.secondaryButton} onPress={() => handleCloseAlert(alert.id)}>
-                      <Text style={styles.secondaryButtonText}>Resolve</Text>
+                    <Pressable
+                      style={[styles.secondaryButton, updatingAlertId === alert.id && styles.buttonDisabled]}
+                      {...pressHandlers(() => handleCloseAlert(alert.id))}
+                      disabled={updatingAlertId === alert.id}
+                    >
+                      <Text style={styles.secondaryButtonText}>{updatingAlertId === alert.id ? 'Updating...' : 'Resolve'}</Text>
                     </Pressable>
                   </View>
                 ) : null}
                 {alert.status === 'acknowledged' ? (
-                  <Pressable style={styles.button} onPress={() => handleCloseAlert(alert.id)}>
-                    <Text style={styles.buttonText}>Resolve Alert</Text>
+                  <Pressable
+                    style={[styles.button, updatingAlertId === alert.id && styles.buttonDisabled]}
+                    {...pressHandlers(() => handleCloseAlert(alert.id))}
+                    disabled={updatingAlertId === alert.id}
+                  >
+                    <Text style={styles.buttonText}>{updatingAlertId === alert.id ? 'Updating...' : 'Resolve Alert'}</Text>
                   </Pressable>
                 ) : null}
               </View>
@@ -1179,12 +1602,18 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
           subtitle="Use approved timesheets and site activity to raise client invoices."
           style={styles.desktopPanel}
           ctaLabel="Create Invoice"
-          onPress={() => Alert.alert('Invoice', 'Invoice generation flow is the next dedicated browser workflow.')}
+          onPress={handleCreateInvoice}
         >
           <View style={styles.kpiList}>
-            <Text style={styles.helperText}>Approved timesheets available: {timesheets.filter((row) => row.approvalStatus === 'approved').length}</Text>
+            <Text style={styles.helperText}>Approved timesheets available: {approvedTimesheets.length}</Text>
             <Text style={styles.helperText}>Managed sites: {sites.length}</Text>
             <Text style={styles.helperText}>Current live shifts: {activeShifts.length}</Text>
+            <Text style={styles.helperText}>
+              Invoice total ready: {invoiceDraft ? formatCurrency(invoiceDraft.total) : 'Approve timesheets to unlock billing'}
+            </Text>
+            {invoiceDraft ? (
+              <Text style={styles.helperText}>Billing period: {invoiceDraft.periodLabel}</Text>
+            ) : null}
           </View>
         </FeatureCard>
       </View>
@@ -1215,11 +1644,24 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
     }
   }
 
+  if (loading && !company) {
+    return (
+      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+        <View style={styles.pageShell}>
+          <Text style={styles.mainPanelTitle}>Company Dashboard</Text>
+          <Text style={styles.mainPanelSubtitle}>
+            Loading company jobs, applicants, shifts, incidents, alerts, and timesheets...
+          </Text>
+        </View>
+      </ScrollView>
+    );
+  }
+
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <View style={[styles.pageShell, isDesktopWeb && styles.pageShellDesktop]}>
         <View style={[styles.adminLayout, isDesktopWeb && styles.adminLayoutDesktop]}>
-          <View style={[styles.sidebar, !isDesktopWeb && styles.sidebarMobile]}>
+          <View style={[styles.sidebar, isDesktopWeb ? styles.sidebarDesktop : styles.sidebarMobile]}>
             <View style={styles.sidebarHeader}>
               <Text style={styles.sidebarEyebrow}>Observant Security</Text>
               <Text style={styles.sidebarTitle}>Company Admin</Text>
@@ -1233,7 +1675,7 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
                 return (
                   <Pressable
                     key={section.id}
-                    onPress={() => setActiveSection(section.id)}
+                    {...pressHandlers(() => setActiveSection(section.id))}
                     style={[styles.sidebarLink, selected && styles.sidebarLinkActive, !isDesktopWeb && styles.sidebarLinkMobile]}
                   >
                     <Text style={[styles.sidebarLinkTitle, selected && styles.sidebarLinkTitleActive]}>{section.label}</Text>
@@ -1246,13 +1688,26 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
             </View>
           </View>
 
-          <View style={styles.mainPanel}>
+          <View style={[styles.mainPanel, isDesktopWeb && styles.mainPanelDesktop]}>
             <View style={styles.mainPanelHeader}>
-              <Text style={styles.mainPanelTitle}>{sectionLabel(activeSection)}</Text>
-              <Text style={styles.mainPanelSubtitle}>
-                {sectionItems.find((section) => section.id === activeSection)?.description}
-              </Text>
+              <View style={styles.mainPanelHeaderCopy}>
+                <Text style={styles.mainPanelTitle}>{sectionLabel(activeSection)}</Text>
+                <Text style={styles.mainPanelSubtitle}>
+                  {sectionItems.find((section) => section.id === activeSection)?.description}
+                </Text>
+              </View>
+              <Pressable style={styles.refreshButton} {...pressHandlers(loadData)}>
+                <Text style={styles.refreshButtonText}>{loading ? 'Refreshing...' : 'Refresh'}</Text>
+              </Pressable>
             </View>
+            {loadError ? (
+              <View style={styles.loadErrorBanner}>
+                <Text style={styles.loadErrorText}>{loadError}</Text>
+                <Pressable style={styles.button} {...pressHandlers(loadData)}>
+                  <Text style={styles.buttonText}>Retry</Text>
+                </Pressable>
+              </View>
+            ) : null}
             {renderActiveSection()}
           </View>
         </View>
@@ -1284,6 +1739,10 @@ const styles = StyleSheet.create({
     padding: 20,
     gap: 16,
   },
+  sidebarDesktop: {
+    width: 320,
+    flexShrink: 0,
+  },
   sidebarMobile: {
     borderRadius: 22,
   },
@@ -1296,7 +1755,7 @@ const styles = StyleSheet.create({
     letterSpacing: 1.1,
   },
   sidebarTitle: { color: '#fff', fontSize: 28, fontWeight: '700' },
-  sidebarSubtitle: { color: '#cbd5e1', lineHeight: 20 },
+  sidebarSubtitle: { color: '#cbd5e1', lineHeight: 20, flexShrink: 1 },
   sidebarNav: { gap: 10 },
   sidebarNavMobile: { flexDirection: 'row', flexWrap: 'wrap' },
   sidebarLink: {
@@ -1319,13 +1778,50 @@ const styles = StyleSheet.create({
   sidebarLinkTitleActive: { color: '#1d4ed8' },
   sidebarLinkSubtitle: { color: '#94a3b8', fontSize: 12, lineHeight: 18 },
   sidebarLinkSubtitleActive: { color: '#475569' },
-  mainPanel: { flex: 1, gap: 16 },
+  mainPanel: { flex: 1, gap: 16, minWidth: 0 },
+  mainPanelDesktop: {
+    flexBasis: 0,
+    width: 0,
+  },
   mainPanelHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: 12,
     paddingHorizontal: 4,
     paddingTop: 4,
   },
-  mainPanelTitle: { color: '#0f172a', fontSize: 30, fontWeight: '700' },
-  mainPanelSubtitle: { color: '#475569', marginTop: 4 },
+  mainPanelHeaderCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  mainPanelTitle: { color: '#0f172a', fontSize: 30, fontWeight: '700', lineHeight: 36 },
+  mainPanelSubtitle: { color: '#475569', marginTop: 4, lineHeight: 20 },
+  refreshButton: {
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  refreshButtonText: {
+    color: '#111827',
+    fontWeight: '600',
+  },
+  loadErrorBanner: {
+    backgroundColor: '#fef2f2',
+    borderWidth: 1,
+    borderColor: '#fecaca',
+    borderRadius: 16,
+    padding: 16,
+    gap: 10,
+  },
+  loadErrorText: {
+    color: '#b91c1c',
+    fontWeight: '600',
+    lineHeight: 20,
+  },
   sectionStack: { gap: 18 },
   sectionBanner: {
     backgroundColor: '#fff',
@@ -1342,9 +1838,11 @@ const styles = StyleSheet.create({
     padding: 28,
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    flexWrap: 'wrap',
     gap: 24,
   },
-  sectionHeaderCopy: { flex: 1, gap: 8 },
+  sectionHeaderCopy: { flex: 1, gap: 8, minWidth: 320 },
   sectionEyebrow: {
     color: '#60a5fa',
     fontSize: 12,
@@ -1352,14 +1850,15 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 1.2,
   },
-  sectionTitle: { fontSize: 30, fontWeight: '700', color: '#0f172a' },
+  sectionTitle: { fontSize: 30, fontWeight: '700', color: '#0f172a', lineHeight: 36 },
   sectionTitleOnDark: { color: '#fff' },
-  sectionSubtitle: { color: '#475569', lineHeight: 22 },
+  sectionSubtitle: { color: '#475569', lineHeight: 22, flexShrink: 1 },
   sectionSubtitleOnDark: { color: '#d1d5db' },
-  metricGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
+  metricGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, flex: 1, minWidth: 320, maxWidth: 720 },
   metricCard: {
-    minWidth: 160,
+    minWidth: 140,
     flexGrow: 1,
+    flexBasis: 140,
     backgroundColor: '#fff',
     borderRadius: 18,
     padding: 16,
@@ -1367,44 +1866,51 @@ const styles = StyleSheet.create({
     borderColor: '#dbe4f0',
     gap: 4,
   },
-  metricValue: { fontSize: 28, fontWeight: '700' },
-  metricLabel: { color: '#374151', fontWeight: '600' },
+  metricValue: { fontSize: 28, fontWeight: '700', lineHeight: 34 },
+  metricLabel: { color: '#374151', fontWeight: '600', lineHeight: 18, flexShrink: 1 },
   sectionColumns: { gap: 16 },
-  sectionColumnsDesktop: { flexDirection: 'row', alignItems: 'flex-start' },
-  desktopPanel: { marginBottom: 0, borderRadius: 20, padding: 20, flex: 1 },
+  sectionColumnsDesktop: { flexDirection: 'row', alignItems: 'flex-start', flexWrap: 'wrap' },
+  desktopPanel: { marginBottom: 0, borderRadius: 20, padding: 20, flexGrow: 1, flexShrink: 1, flexBasis: 320, minWidth: 320 },
   kpiList: { gap: 8 },
   sectionRecord: {
     borderTopWidth: 1,
     borderTopColor: '#e5e7eb',
     paddingTop: 14,
     gap: 10,
+    minWidth: 0,
   },
   recordHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
     gap: 12,
+    minWidth: 0,
   },
-  recordTitle: { color: '#111827', fontWeight: '700', fontSize: 16 },
+  recordCopy: { flex: 1, minWidth: 0, gap: 4 },
+  recordTitle: { color: '#111827', fontWeight: '700', fontSize: 16, lineHeight: 22, flexShrink: 1 },
   statusPill: {
     borderRadius: 999,
     backgroundColor: '#eff6ff',
     paddingHorizontal: 10,
     paddingVertical: 6,
+    flexShrink: 0,
+    alignSelf: 'flex-start',
   },
   statusPillText: { color: '#1d4ed8', fontWeight: '700', fontSize: 12, textTransform: 'capitalize' },
-  inlineStats: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
+  inlineStats: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, width: '100%', minWidth: 0 },
   rowCard: {
     borderTopWidth: 1,
     borderTopColor: '#e5e7eb',
     paddingTop: 12,
     gap: 4,
+    minWidth: 0,
   },
   tableRowCard: {
     borderTopWidth: 1,
     borderTopColor: '#e5e7eb',
     paddingTop: 12,
     gap: 8,
+    minWidth: 0,
   },
   formGrid: { gap: 10 },
   formGridDesktop: { flexDirection: 'row', flexWrap: 'wrap' },
@@ -1439,9 +1945,21 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
   },
+  buttonDisabled: {
+    opacity: 0.7,
+  },
   buttonText: { color: '#fff', fontWeight: '600' },
-  helperText: { color: '#4b5563' },
-  listTitle: { color: '#111827', fontWeight: '600' },
+  helperText: { color: '#4b5563', lineHeight: 18, flexShrink: 1, minWidth: 0 },
+  listTitle: { color: '#111827', fontWeight: '600', lineHeight: 20, flexShrink: 1 },
+  infoBox: {
+    borderWidth: 1,
+    borderColor: '#dbe4f0',
+    backgroundColor: '#f8fafc',
+    borderRadius: 12,
+    padding: 12,
+    gap: 6,
+  },
+  infoBoxText: { color: '#334155', lineHeight: 18, flexShrink: 1 },
   actionRow: { flexDirection: 'row', gap: 8 },
   secondaryButton: {
     backgroundColor: '#e5e7eb',

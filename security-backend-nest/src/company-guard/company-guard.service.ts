@@ -1,10 +1,12 @@
-import { ConflictException, Injectable } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { CompanyGuard, CompanyGuardStatus } from './entities/company-guard.entity';
 import { CreateCompanyGuardDto } from './dto/create-company-guard.dto';
 import { CompanyService } from '../company/company.service';
 import { GuardProfileService } from '../guard-profile/guard-profile.service';
+import { JwtPayload } from '../auth/types/jwt-payload.type';
+import { UserRole } from '../user/entities/user.entity';
 
 @Injectable()
 export class CompanyGuardService {
@@ -16,6 +18,22 @@ export class CompanyGuardService {
 
   findAll(): Promise<CompanyGuard[]> {
     return this.companyGuardRepo.find();
+  }
+
+  async findAllForUser(user: JwtPayload): Promise<CompanyGuard[]> {
+    if (user.role === UserRole.ADMIN) {
+      return this.findAll();
+    }
+
+    const company = await this.companyService.findByUserId(user.sub);
+    if (!company) {
+      throw new NotFoundException('Company not found');
+    }
+
+    return this.companyGuardRepo.find({
+      where: { company: { id: company.id } },
+      order: { createdAt: 'DESC' },
+    });
   }
 
   async create(dto: CreateCompanyGuardDto): Promise<CompanyGuard> {

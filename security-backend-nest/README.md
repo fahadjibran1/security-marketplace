@@ -36,9 +36,15 @@ NestJS + PostgreSQL backend for the security companies and guards mobile app.
 - `PORT`: API port, default `3000`
 - `JWT_SECRET`: required for non-demo deployments
 - `CORS_ORIGIN`: comma-separated allowed origins
+- `TRUST_PROXY`: set `true` behind Render/Nginx or pass a hop count such as `1`
 - `ENABLE_SWAGGER`: `true` or `false`
 - `DATABASE_SSL`: `true` for hosted Postgres providers that require SSL
 - `DATABASE_SYNCHRONIZE`: keep `true` only for development; set `false` for production
+
+## Production safeguards
+- Startup now fails fast in production if `JWT_SECRET` is missing/default, `CORS_ORIGIN` is unset or wildcard, or `DATABASE_SYNCHRONIZE=true`
+- `/health` now checks database connectivity and returns `503` when the API is up but the database is unavailable
+- The API disables `x-powered-by`, enables proxy awareness, and sends a minimal set of baseline security headers
 
 ## API docs
 - Swagger: `/api-docs` when `ENABLE_SWAGGER=true`

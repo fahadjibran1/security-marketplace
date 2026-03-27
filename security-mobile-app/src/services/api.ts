@@ -5,10 +5,12 @@ import {
   AttendanceEvent,
   Assignment,
   AuthSession,
+  CompanyGuard,
   CompanyProfile,
   CreateIncidentPayload,
   CreateJobApplicationPayload,
   CreateJobPayload,
+  CreateShiftPayload,
   GuardProfile,
   HireApplicationPayload,
   Incident,
@@ -31,11 +33,65 @@ import {
   CreateDailyLogPayload,
 } from '../types/models';
 
+const LIVE_API_BASE_URL = 'https://api.observantsecurity.co.uk';
+const isWeb = typeof window !== 'undefined';
+const isLocalWebHost =
+  isWeb && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+const devFallbackApiBaseUrl = isLocalWebHost ? 'http://localhost:3000' : LIVE_API_BASE_URL;
 const API_BASE_URL =
   process.env.EXPO_PUBLIC_API_URL ||
   (Constants.expoConfig?.extra?.apiBaseUrl as string | undefined) ||
-  'http://localhost:3000';
+  (__DEV__ ? devFallbackApiBaseUrl : LIVE_API_BASE_URL);
 let accessToken: string | null = null;
+let unauthorizedHandler: ((message: string) => void | Promise<void>) | null = null;
+
+export class ApiError extends Error {
+  status: number;
+  body: unknown;
+
+  constructor(status: number, statusText: string, body: unknown) {
+    const detail =
+      typeof body === 'string'
+        ? body
+        : body && typeof body === 'object'
+          ? JSON.stringify(body)
+          : '';
+    super(`${status} ${statusText}${detail ? ` - ${detail}` : ''}`);
+    this.name = 'ApiError';
+    this.status = status;
+    this.body = body;
+  }
+}
+
+export class NetworkError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'NetworkError';
+  }
+}
+
+export function setUnauthorizedHandler(handler: ((message: string) => void | Promise<void>) | null) {
+  unauthorizedHandler = handler;
+}
+
+async function parseResponseBody(response: Response) {
+  const contentType = response.headers.get('content-type') || '';
+  const raw = await response.text();
+
+  if (!raw) {
+    return null;
+  }
+
+  if (contentType.includes('application/json')) {
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return raw;
+    }
+  }
+
+  return raw;
+}
 
 function normalizeSession(session: AuthSession | { accessToken: string; user: AuthSession['user'] }): AuthSession {
   return {
@@ -46,23 +102,84 @@ function normalizeSession(session: AuthSession | { accessToken: string; user: Au
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const headers = new Headers(options?.headers);
-  headers.set('Content-Type', 'application/json');
+  if (!headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
 
   if (accessToken) {
     headers.set('Authorization', `Bearer ${accessToken}`);
   }
 
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    headers,
-    ...options,
-  });
-
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`${response.status} ${response.statusText} - ${body}`);
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      headers,
+      ...options,
+    });
+  } catch (error) {
+    throw new NetworkError(
+      error instanceof Error && error.message
+        ? `Unable to reach the live API at ${API_BASE_URL}. ${error.message}`
+        : `Unable to reach the live API at ${API_BASE_URL}.`,
+    );
   }
 
-  return response.json() as Promise<T>;
+  const body = await parseResponseBody(response);
+
+  if (!response.ok) {
+    if (
+      response.status === 401 &&
+      accessToken &&
+      !path.startsWith('/auth/login') &&
+      !path.startsWith('/auth/register') &&
+      unauthorizedHandler
+    ) {
+      await unauthorizedHandler('Your session expired. Please sign in again.');
+    }
+
+    throw new ApiError(response.status, response.statusText, body);
+  }
+
+  return body as T;
+}
+
+export function getApiBaseUrl() {
+  return API_BASE_URL;
+}
+
+export function formatApiErrorMessage(error: unknown, fallbackMessage: string) {
+  if (error instanceof NetworkError) {
+    return 'The live backend is unreachable right now. Check internet access and server health, then retry.';
+  }
+
+  if (error instanceof ApiError) {
+    if (error.status === 401 || error.status === 403) {
+      return 'Sign-in failed. Check your email, password, and account approval status.';
+    }
+
+    if (typeof error.body === 'string' && error.body.trim()) {
+      return error.body;
+    }
+
+    if (error.body && typeof error.body === 'object') {
+      const body = error.body as { message?: unknown; error?: unknown };
+      if (typeof body.message === 'string' && body.message.trim()) {
+        return body.message;
+      }
+      if (Array.isArray(body.message) && body.message.length > 0) {
+        return body.message.join(', ');
+      }
+      if (typeof body.error === 'string' && body.error.trim()) {
+        return body.error;
+      }
+    }
+  }
+
+  if (error instanceof Error && error.message.trim()) {
+    return error.message;
+  }
+
+  return fallbackMessage;
 }
 
 export async function login(email: string, password: string) {
@@ -114,6 +231,10 @@ export function listGuards() {
   return request<GuardProfile[]>('/guards');
 }
 
+export function listCompanyGuards() {
+  return request<CompanyGuard[]>('/company-guards');
+}
+
 export function listSites() {
   return request<Site[]>('/sites');
 }
@@ -163,6 +284,16 @@ export function listAssignments() {
 
 export function listShifts() {
   return request<Shift[]>('/shifts');
+}
+
+export function createShift(payload: CreateShiftPayload) {
+  return request<{
+    shift: Shift;
+    timesheet: Timesheet;
+  }>('/shifts', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
 }
 
 export function listTimesheets() {

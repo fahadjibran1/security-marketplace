@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Job } from './entities/job.entity';
@@ -17,6 +17,10 @@ export class JobService {
   ) {}
 
   async create(dto: CreateJobDto): Promise<Job> {
+    if (!dto.companyId) {
+      throw new BadRequestException('companyId is required for admin job creation');
+    }
+
     const company = await this.companyService.findOne(dto.companyId);
     const site = dto.siteId ? await this.siteService.findOne(dto.siteId) : null;
     const job = this.jobRepo.create({

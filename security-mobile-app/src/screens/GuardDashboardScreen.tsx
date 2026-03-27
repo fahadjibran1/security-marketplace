@@ -7,6 +7,7 @@ import {
   createIncident,
   createJobApplication,
   createSafetyAlert,
+  formatApiErrorMessage,
   getMyGuard,
   listMyAttachments,
   listJobApplications,
@@ -35,10 +36,18 @@ interface GuardDashboardScreenProps {
   user: AuthUser;
 }
 
+function showAlert(title: string, message: string) {
+  if (typeof window !== 'undefined' && typeof window.alert === 'function') {
+    window.alert(`${title}\n\n${message}`);
+    return;
+  }
+
+  Alert.alert(title, message);
+}
+
 export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
   const [siaLicence, setSiaLicence] = useState('');
   const [locationSharing, setLocationSharing] = useState(false);
-  const [dailyLog, setDailyLog] = useState('');
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [applications, setApplications] = useState<JobApplication[]>([]);
@@ -58,9 +67,14 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
   const [submittingIncident, setSubmittingIncident] = useState(false);
   const [submittingTimesheetId, setSubmittingTimesheetId] = useState<number | null>(null);
   const [submittingAlertType, setSubmittingAlertType] = useState<'welfare' | 'panic' | null>(null);
+  const [applyingJobId, setApplyingJobId] = useState<number | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   async function loadData() {
     try {
+      setLoading(true);
+      setLoadError(null);
       const [myGuard, shiftRows, jobRows, applicationRows, attendanceRows, incidentRows, timesheetRows, notificationRows, attachmentRows] = await Promise.all([
         getMyGuard(),
         listShifts(),
@@ -91,7 +105,9 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
       setNotifications(notificationRows);
       setAttachments(attachmentRows);
     } catch (error) {
-      Alert.alert('Load failed', error instanceof Error ? error.message : 'Unknown error');
+      setLoadError(formatApiErrorMessage(error, 'Failed to load guard dashboard.'));
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -104,9 +120,9 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
         phone,
         locationSharingEnabled: locationSharing,
       });
-      Alert.alert('Profile updated', 'Your guard onboarding details have been saved.');
+      showAlert('Profile updated', 'Your guard onboarding details have been saved.');
     } catch (error) {
-      Alert.alert('Profile update failed', error instanceof Error ? error.message : 'Unknown error');
+      showAlert('Profile update failed', formatApiErrorMessage(error, 'Unable to save your guard profile.'));
     } finally {
       setSavingProfile(false);
     }
@@ -117,9 +133,9 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
       setAttendanceBusyShiftId(shiftId);
       await checkInShift({ shiftId });
       await loadData();
-      Alert.alert('Checked in', 'Your shift is now marked as in progress.');
+      showAlert('Checked in', 'Your shift is now marked as in progress.');
     } catch (error) {
-      Alert.alert('Check-in failed', error instanceof Error ? error.message : 'Unknown error');
+      showAlert('Check-in failed', formatApiErrorMessage(error, 'Unable to check in to this shift.'));
     } finally {
       setAttendanceBusyShiftId(null);
     }
@@ -130,9 +146,9 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
       setAttendanceBusyShiftId(shiftId);
       await checkOutShift({ shiftId });
       await loadData();
-      Alert.alert('Checked out', 'Your shift is complete and hours were added to the timesheet.');
+      showAlert('Checked out', 'Your shift is complete and hours were added to the timesheet.');
     } catch (error) {
-      Alert.alert('Check-out failed', error instanceof Error ? error.message : 'Unknown error');
+      showAlert('Check-out failed', formatApiErrorMessage(error, 'Unable to check out of this shift.'));
     } finally {
       setAttendanceBusyShiftId(null);
     }
@@ -153,9 +169,9 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
       setIncidentSeverity('medium');
       setIncidentLocation('');
       await loadData();
-      Alert.alert('Incident submitted', 'Your incident report has been recorded.');
+      showAlert('Incident submitted', 'Your incident report has been recorded.');
     } catch (error) {
-      Alert.alert('Incident failed', error instanceof Error ? error.message : 'Unknown error');
+      showAlert('Incident failed', formatApiErrorMessage(error, 'Unable to submit this incident.'));
     } finally {
       setSubmittingIncident(false);
     }
@@ -163,7 +179,7 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
 
   async function handleCreateSafetyAlert(type: 'welfare' | 'panic') {
     if (!operationsShift?.id) {
-      Alert.alert('No assigned shift', 'Safety alerts require an assigned or active shift.');
+      showAlert('No assigned shift', 'Safety alerts require an assigned or active shift.');
       return;
     }
 
@@ -179,12 +195,12 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
             : 'Welfare alert raised by guard from the mobile app.',
       });
       await loadData();
-      Alert.alert(
+      showAlert(
         type === 'panic' ? 'Emergency alert sent' : 'Welfare alert sent',
         'The company control room can now see this safety alert.',
       );
     } catch (error) {
-      Alert.alert('Safety alert failed', error instanceof Error ? error.message : 'Unknown error');
+      showAlert('Safety alert failed', formatApiErrorMessage(error, 'Unable to raise this safety alert.'));
     } finally {
       setSubmittingAlertType(null);
     }
@@ -196,16 +212,19 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
 
   async function handleApply(jobId: number) {
     if (!user.guardId) {
-      Alert.alert('Missing guard profile', 'This account does not have a linked guard profile yet.');
+      showAlert('Missing guard profile', 'This account does not have a linked guard profile yet.');
       return;
     }
 
     try {
+      setApplyingJobId(jobId);
       await createJobApplication({ jobId, guardId: user.guardId });
       await loadData();
-      Alert.alert('Application sent', 'Your application has been submitted to the company.');
+      showAlert('Application sent', 'Your application has been submitted to the company.');
     } catch (error) {
-      Alert.alert('Apply failed', error instanceof Error ? error.message : 'Unknown error');
+      showAlert('Apply failed', formatApiErrorMessage(error, 'Unable to submit this job application.'));
+    } finally {
+      setApplyingJobId(null);
     }
   }
 
@@ -214,9 +233,9 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
       setSubmittingTimesheetId(timesheet.id);
       await submitTimesheet(timesheet.id, { hoursWorked: timesheet.hoursWorked });
       await loadData();
-      Alert.alert('Timesheet submitted', 'Your completed hours have been submitted to the company for approval.');
+      showAlert('Timesheet submitted', 'Your completed hours have been submitted to the company for approval.');
     } catch (error) {
-      Alert.alert('Timesheet failed', error instanceof Error ? error.message : 'Unknown error');
+      showAlert('Timesheet failed', formatApiErrorMessage(error, 'Unable to submit this timesheet.'));
     } finally {
       setSubmittingTimesheetId(null);
     }
@@ -230,10 +249,28 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
   const completedTimesheets = timesheets.filter((timesheet) => timesheet.shift?.status === 'completed');
   const unreadNotifications = notifications.filter((notification) => notification.status === 'unread');
 
+  if (loading) {
+    return (
+      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+        <Text style={styles.title}>Guard Dashboard</Text>
+        <Text style={styles.subtitle}>Loading your jobs, shifts, incidents, alerts, and timesheets...</Text>
+      </ScrollView>
+    );
+  }
+
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <Text style={styles.title}>Guard Dashboard</Text>
       <Text style={styles.subtitle}>Apply for jobs, manage assigned shifts, and run live site operations.</Text>
+
+      {loadError ? (
+        <FeatureCard title="Load Issue" subtitle="The latest guard data could not be loaded.">
+          <Text style={styles.errorText}>{loadError}</Text>
+          <Pressable style={[styles.button, loading && styles.buttonDisabled]} onPress={loadData} disabled={loading}>
+            <Text style={styles.buttonText}>Retry</Text>
+          </Pressable>
+        </FeatureCard>
+      ) : null}
 
       <FeatureCard
         title="Profile + SIA"
@@ -251,7 +288,7 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
           <Text style={styles.helperText}>Share live location on assigned shifts</Text>
           <Switch value={locationSharing} onValueChange={setLocationSharing} />
         </View>
-        <Pressable style={styles.button} onPress={handleSaveProfile} disabled={savingProfile}>
+        <Pressable style={[styles.button, savingProfile && styles.buttonDisabled]} onPress={handleSaveProfile} disabled={savingProfile}>
           <Text style={styles.buttonText}>{savingProfile ? 'Saving...' : 'Save Profile'}</Text>
         </Pressable>
       </FeatureCard>
@@ -267,8 +304,8 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
                 Guards needed: {job.guardsRequired} | Rate: {job.hourlyRate}
               </Text>
               {job.description ? <Text style={styles.helperText}>{job.description}</Text> : null}
-              <Pressable style={styles.button} onPress={() => handleApply(job.id)}>
-                <Text style={styles.buttonText}>Apply</Text>
+              <Pressable style={[styles.button, applyingJobId === job.id && styles.buttonDisabled]} onPress={() => handleApply(job.id)} disabled={applyingJobId === job.id}>
+                <Text style={styles.buttonText}>{applyingJobId === job.id ? 'Applying...' : 'Apply'}</Text>
               </Pressable>
             </View>
           ))
@@ -308,7 +345,7 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
               Employer: {operationsShift.company?.name || `#${operationsShift.company?.id ?? operationsShift.companyId ?? 'N/A'}`}
             </Text>
             <Text style={styles.helperText}>
-              Shift actions here should contain check-in, check calls, patrols, daily logs, incidents, and location sharing.
+              Use this assigned shift to check in, check out, raise incidents, and send welfare or emergency alerts.
             </Text>
             {operationsShift.status === 'scheduled' ? (
               <Pressable
@@ -333,14 +370,6 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
               </Pressable>
             ) : null}
 
-            <TextInput
-              style={[styles.input, styles.logInput]}
-              placeholder="Daily log book notes for this shift..."
-              multiline
-              value={dailyLog}
-              onChangeText={setDailyLog}
-            />
-
             <TextInput style={styles.input} placeholder="Incident title" value={incidentTitle} onChangeText={setIncidentTitle} />
             <TextInput
               style={styles.input}
@@ -361,7 +390,7 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
               value={incidentNotes}
               onChangeText={setIncidentNotes}
             />
-            <Pressable style={styles.button} onPress={handleCreateIncident} disabled={submittingIncident}>
+            <Pressable style={[styles.button, submittingIncident && styles.buttonDisabled]} onPress={handleCreateIncident} disabled={submittingIncident}>
               <Text style={styles.buttonText}>{submittingIncident ? 'Submitting...' : 'Submit Incident'}</Text>
             </Pressable>
 
@@ -374,12 +403,6 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
                 <Text style={styles.secondaryButtonText}>
                   {submittingAlertType === 'welfare' ? 'Sending...' : 'Raise Welfare Alert'}
                 </Text>
-              </Pressable>
-              <Pressable
-                style={styles.secondaryButton}
-                onPress={() => Alert.alert('Patrol', 'Patrol checkpoint flow should be linked to this shift.')}
-              >
-                <Text style={styles.secondaryButtonText}>Start Patrol</Text>
               </Pressable>
             </View>
 
@@ -532,6 +555,10 @@ const styles = StyleSheet.create({
   helperText: {
     color: '#4b5563',
   },
+  errorText: {
+    color: '#b91c1c',
+    fontWeight: '600',
+  },
   listItem: {
     borderTopWidth: 1,
     borderTopColor: '#e5e7eb',
@@ -559,6 +586,9 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     paddingHorizontal: 10,
     paddingVertical: 8,
+  },
+  buttonDisabled: {
+    opacity: 0.7,
   },
   buttonText: {
     color: '#fff',

@@ -3,13 +3,14 @@ import { SafeAreaView, StatusBar, StyleSheet, View, Pressable, Text } from 'reac
 import { CompanyDashboardScreen } from './src/screens/CompanyDashboardScreen';
 import { GuardDashboardScreen } from './src/screens/GuardDashboardScreen';
 import { AuthScreen } from './src/screens/AuthScreen';
-import { logout, restoreSession } from './src/services/api';
+import { logout, restoreSession, setUnauthorizedHandler } from './src/services/api';
 import { clearStoredSession, loadStoredSession, persistSession } from './src/services/session';
 import { AuthSession, isCompanyAppRole } from './src/types/models';
 
 export default function App() {
   const [session, setSession] = useState<AuthSession | null>(null);
   const [booting, setBooting] = useState(true);
+  const [authNotice, setAuthNotice] = useState<string | null>(null);
 
   useEffect(() => {
     async function bootstrapSession() {
@@ -27,15 +28,30 @@ export default function App() {
     bootstrapSession();
   }, []);
 
+  useEffect(() => {
+    setUnauthorizedHandler(async (message: string) => {
+      logout();
+      await clearStoredSession();
+      setSession(null);
+      setAuthNotice(message);
+    });
+
+    return () => {
+      setUnauthorizedHandler(null);
+    };
+  }, []);
+
   async function handleLoggedIn(nextSession: AuthSession) {
     restoreSession(nextSession);
     await persistSession(nextSession);
+    setAuthNotice(null);
     setSession(nextSession);
   }
 
   async function handleLogout() {
     logout();
     await clearStoredSession();
+    setAuthNotice(null);
     setSession(null);
   }
 
@@ -54,7 +70,11 @@ export default function App() {
     return (
       <SafeAreaView style={styles.safeArea}>
         <StatusBar barStyle="dark-content" />
-        <AuthScreen onLoggedIn={handleLoggedIn} />
+        <AuthScreen
+          onLoggedIn={handleLoggedIn}
+          noticeMessage={authNotice}
+          onDismissNotice={() => setAuthNotice(null)}
+        />
       </SafeAreaView>
     );
   }

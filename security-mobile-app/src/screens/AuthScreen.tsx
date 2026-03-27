@@ -1,16 +1,18 @@
 import { useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { login, register } from '../services/api';
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { formatApiErrorMessage, login, register } from '../services/api';
 import { AuthSession, AppRole } from '../types/models';
 
 interface AuthScreenProps {
   onLoggedIn: (session: AuthSession) => void | Promise<void>;
+  noticeMessage?: string | null;
+  onDismissNotice?: () => void;
 }
 
 type AuthMode = 'login' | 'register';
 type RegistrationRole = 'company' | 'guard';
 
-export function AuthScreen({ onLoggedIn }: AuthScreenProps) {
+export function AuthScreen({ onLoggedIn, noticeMessage, onDismissNotice }: AuthScreenProps) {
   const width = typeof window !== 'undefined' ? window.innerWidth : 0;
   const [mode, setMode] = useState<AuthMode>('login');
   const [role, setRole] = useState<RegistrationRole>('company');
@@ -24,11 +26,14 @@ export function AuthScreen({ onLoggedIn }: AuthScreenProps) {
   const [address, setAddress] = useState('');
   const [contactDetails, setContactDetails] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const isDesktopWeb = width >= 980;
 
   async function handleSubmit() {
     try {
       setSubmitting(true);
+      setErrorMessage(null);
+      onDismissNotice?.();
 
       const session =
         mode === 'login'
@@ -48,9 +53,11 @@ export function AuthScreen({ onLoggedIn }: AuthScreenProps) {
 
       await onLoggedIn(session);
     } catch (error) {
-      Alert.alert(
-        mode === 'login' ? 'Login failed' : 'Sign up failed',
-        error instanceof Error ? error.message : 'Unknown error',
+      setErrorMessage(
+        formatApiErrorMessage(
+          error,
+          mode === 'login' ? 'Sign-in failed. Please try again.' : 'Account creation failed. Please try again.',
+        ),
       );
     } finally {
       setSubmitting(false);
@@ -76,16 +83,34 @@ export function AuthScreen({ onLoggedIn }: AuthScreenProps) {
         </View>
 
         <View style={styles.formCard}>
+          {noticeMessage ? (
+            <View style={styles.noticeBanner}>
+              <Text style={styles.noticeText}>{noticeMessage}</Text>
+            </View>
+          ) : null}
+
+          {errorMessage ? (
+            <View style={styles.errorBanner}>
+              <Text style={styles.errorText}>{errorMessage}</Text>
+            </View>
+          ) : null}
+
           <View style={styles.modeRow}>
             <Pressable
               style={[styles.modeButton, mode === 'login' && styles.modeButtonActive]}
-              onPress={() => setMode('login')}
+              onPress={() => {
+                setMode('login');
+                setErrorMessage(null);
+              }}
             >
               <Text style={[styles.modeButtonText, mode === 'login' && styles.modeButtonTextActive]}>Sign In</Text>
             </Pressable>
             <Pressable
               style={[styles.modeButton, mode === 'register' && styles.modeButtonActive]}
-              onPress={() => setMode('register')}
+              onPress={() => {
+                setMode('register');
+                setErrorMessage(null);
+              }}
             >
               <Text style={[styles.modeButtonText, mode === 'register' && styles.modeButtonTextActive]}>Create Account</Text>
             </Pressable>
@@ -110,16 +135,17 @@ export function AuthScreen({ onLoggedIn }: AuthScreenProps) {
             </View>
           )}
 
-          <TextInput style={styles.input} autoCapitalize="none" value={email} onChangeText={setEmail} placeholder="Email" />
-          <TextInput style={styles.input} secureTextEntry value={password} onChangeText={setPassword} placeholder="Password" />
+          <TextInput style={styles.input} autoCapitalize="none" editable={!submitting} value={email} onChangeText={setEmail} placeholder="Email" />
+          <TextInput style={styles.input} secureTextEntry editable={!submitting} value={password} onChangeText={setPassword} placeholder="Password" />
 
           {mode === 'register' && role === 'company' ? (
             <>
-              <TextInput style={styles.input} value={companyName} onChangeText={setCompanyName} placeholder="Company name" />
-              <TextInput style={styles.input} value={companyNumber} onChangeText={setCompanyNumber} placeholder="Company number" />
-              <TextInput style={styles.input} value={address} onChangeText={setAddress} placeholder="Address" />
+              <TextInput style={styles.input} editable={!submitting} value={companyName} onChangeText={setCompanyName} placeholder="Company name" />
+              <TextInput style={styles.input} editable={!submitting} value={companyNumber} onChangeText={setCompanyNumber} placeholder="Company number" />
+              <TextInput style={styles.input} editable={!submitting} value={address} onChangeText={setAddress} placeholder="Address" />
               <TextInput
                 style={styles.input}
+                editable={!submitting}
                 value={contactDetails}
                 onChangeText={setContactDetails}
                 placeholder="Contact details"
@@ -129,18 +155,19 @@ export function AuthScreen({ onLoggedIn }: AuthScreenProps) {
 
           {mode === 'register' && role === 'guard' ? (
             <>
-              <TextInput style={styles.input} value={fullName} onChangeText={setFullName} placeholder="Full name" />
+              <TextInput style={styles.input} editable={!submitting} value={fullName} onChangeText={setFullName} placeholder="Full name" />
               <TextInput
                 style={styles.input}
+                editable={!submitting}
                 value={siaLicenseNumber}
                 onChangeText={setSiaLicenseNumber}
                 placeholder="SIA licence number"
               />
-              <TextInput style={styles.input} value={phone} onChangeText={setPhone} placeholder="Phone number" />
+              <TextInput style={styles.input} editable={!submitting} value={phone} onChangeText={setPhone} placeholder="Phone number" />
             </>
           ) : null}
 
-          <Pressable style={styles.button} onPress={handleSubmit} disabled={submitting}>
+          <Pressable style={[styles.button, submitting && styles.buttonDisabled]} onPress={handleSubmit} disabled={submitting}>
             <Text style={styles.buttonText}>
               {submitting
                 ? mode === 'login'
@@ -204,6 +231,28 @@ const styles = StyleSheet.create({
   subtitleDesktop: { textAlign: 'left', color: '#d1d5db' },
   heroText: { color: '#d1d5db', lineHeight: 22 },
   helperText: { color: '#4b5563', textAlign: 'center' },
+  noticeBanner: {
+    backgroundColor: '#eff6ff',
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+    borderRadius: 10,
+    padding: 12,
+  },
+  noticeText: {
+    color: '#1d4ed8',
+    fontWeight: '600',
+  },
+  errorBanner: {
+    backgroundColor: '#fef2f2',
+    borderWidth: 1,
+    borderColor: '#fecaca',
+    borderRadius: 10,
+    padding: 12,
+  },
+  errorText: {
+    color: '#b91c1c',
+    fontWeight: '600',
+  },
   formCard: {
     backgroundColor: '#fff',
     borderRadius: 20,
@@ -270,6 +319,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#111827',
     paddingVertical: 12,
     borderRadius: 10,
+  },
+  buttonDisabled: {
+    opacity: 0.7,
   },
   buttonText: {
     color: '#fff',

@@ -93,6 +93,15 @@ export interface Assignment {
   application?: JobApplication;
 }
 
+export interface CompanyGuard {
+  id: number;
+  status: 'ACTIVE' | 'INACTIVE' | 'BLOCKED';
+  relationshipType: 'EMPLOYEE' | 'PREFERRED' | 'APPROVED_CONTRACTOR';
+  createdAt: string;
+  company?: CompanyProfile;
+  guard?: GuardProfile;
+}
+
 // Shift = planned work linked to assignment
 export interface Shift {
   id: number;
@@ -151,12 +160,26 @@ export interface UpdateTimesheetPayload {
 }
 
 export interface CreateJobPayload {
-  companyId: number;
+  companyId?: number;
   siteId?: number;
   title: string;
   description?: string;
   guardsRequired: number;
   hourlyRate: number;
+  status?: string;
+}
+
+export interface CreateShiftPayload {
+  assignmentId?: number;
+  companyId?: number;
+  guardId?: number;
+  jobId?: number;
+  jobApplicationId?: number;
+  createdByUserId?: number;
+  siteId?: number;
+  siteName?: string;
+  start: string;
+  end: string;
   status?: string;
 }
 
