@@ -186,7 +186,7 @@ export class ShiftService {
       throw new BadRequestException('Shift status is invalid');
     }
 
-    const shift = this.shiftRepo.create({
+    const shift: Shift = this.shiftRepo.create({
       assignment,
       company,
       guard,
@@ -202,7 +202,7 @@ export class ShiftService {
       status: normalizedStatus ?? 'assigned',
     });
 
-    const savedShift = await this.shiftRepo.save(shift);
+    const savedShift: Shift = await this.shiftRepo.save(shift);
     const timesheet = await this.timesheetService.createForShift(savedShift);
 
     return { shift: savedShift, timesheet };
