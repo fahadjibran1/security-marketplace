@@ -38,6 +38,7 @@ import {
   listSites,
   updateIncidentStatus,
   updateMyCompany,
+  updateClient,
   updateSite,
   updateTimesheet,
 } from '../services/api';
@@ -67,6 +68,7 @@ interface CompanyDashboardScreenProps {
 
 type CompanySectionId =
   | 'overview'
+  | 'clients'
   | 'sites'
   | 'guards'
   | 'recruitment'
@@ -86,61 +88,125 @@ type HireDraft = {
 type SiteDraft = {
   name: string;
   clientId: string;
-  clientName: string;
   address: string;
   contactDetails: string;
   status: string;
+  requiredGuardCount: string;
+  operatingDays: string;
+  operatingStartTime: string;
+  operatingEndTime: string;
   welfareCheckIntervalMinutes: string;
+  specialInstructions: string;
 };
 
 type ShiftDraft = {
-  guardId: string;
+  guardIds: number[];
   siteId: string;
   checkCallIntervalMinutes: string;
-  start: string;
-  end: string;
+  shiftDate: string;
+  additionalDates: string;
+  startTime: string;
+  endTime: string;
+};
+
+type ClientDraft = {
+  name: string;
+  contactName: string;
+  contactEmail: string;
+  contactPhone: string;
   status: string;
 };
 
 function defaultShiftStart() {
   const start = new Date();
   start.setDate(start.getDate() + 1);
-  start.setHours(20, 0, 0, 0);
-  return start.toISOString();
+  return start.toISOString().slice(0, 10);
 }
 
 function defaultShiftEnd() {
-  const end = new Date();
-  end.setDate(end.getDate() + 2);
-  end.setHours(6, 0, 0, 0);
-  return end.toISOString();
+  return defaultShiftStart();
+}
+
+function defaultTime(hours: number, minutes = 0) {
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
 }
 
 function createFallbackSiteDraft(): SiteDraft {
   return {
     name: '',
     clientId: '',
-    clientName: '',
     address: '',
     contactDetails: '',
     status: 'active',
+    requiredGuardCount: '1',
+    operatingDays: 'Mon,Tue,Wed,Thu,Fri',
+    operatingStartTime: '08:00',
+    operatingEndTime: '18:00',
     welfareCheckIntervalMinutes: '60',
+    specialInstructions: '',
   };
 }
 
 function createDefaultShiftDraft(): ShiftDraft {
   return {
-    guardId: '',
+    guardIds: [],
     siteId: '',
     checkCallIntervalMinutes: '60',
-    start: defaultShiftStart(),
-    end: defaultShiftEnd(),
-    status: 'assigned',
+    shiftDate: defaultShiftStart(),
+    additionalDates: '',
+    startTime: defaultTime(20, 0),
+    endTime: defaultTime(6, 0),
+  };
+}
+
+function createClientDraft(client?: Client): ClientDraft {
+  return {
+    name: client?.name || '',
+    contactName: client?.contactName || '',
+    contactEmail: client?.contactEmail || '',
+    contactPhone: client?.contactPhone || '',
+    status: client?.status || 'active',
   };
 }
 
 function formatDateTimeRange(start: string, end: string) {
   return `${new Date(start).toLocaleString()} to ${new Date(end).toLocaleString()}`;
+}
+
+function combineDateAndTime(date: string, time: string) {
+  return `${date}T${time}:00`;
+}
+
+function buildShiftDateTimes(date: string, startTime: string, endTime: string) {
+  const startDate = new Date(combineDateAndTime(date, startTime));
+  const endDate = new Date(combineDateAndTime(date, endTime));
+
+  if (endDate <= startDate) {
+    endDate.setDate(endDate.getDate() + 1);
+  }
+
+  return {
+    start: startDate.toISOString(),
+    end: endDate.toISOString(),
+  };
+}
+
+function parseDateList(primaryDate: string, extraDates: string) {
+  return Array.from(
+    new Set(
+      [primaryDate, ...extraDates.split(',').map((value) => value.trim())].filter(Boolean),
+    ),
+  );
+}
+
+function weekdayOptions() {
+  return ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+}
+
+function toggleListValue(current: string[], value: string) {
+  return current.includes(value)
+    ? current.filter((entry) => entry !== value)
+    : [...current, value];
 }
 
 function formatCurrency(value: number) {
@@ -183,6 +249,8 @@ function sectionLabel(section: CompanySectionId) {
   switch (section) {
     case 'overview':
       return 'Overview';
+    case 'clients':
+      return 'Clients';
     case 'sites':
       return 'Sites';
     case 'guards':
@@ -260,25 +328,32 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
   const [jobSiteId, setJobSiteId] = useState('');
   const [submittingJob, setSubmittingJob] = useState(false);
   const [hireDrafts, setHireDrafts] = useState<Record<number, HireDraft>>({});
+  const [clientDrafts, setClientDrafts] = useState<Record<number, ClientDraft>>({});
   const [siteDrafts, setSiteDrafts] = useState<Record<number, SiteDraft>>({});
   const [clientDraftName, setClientDraftName] = useState('');
   const [clientDraftContactName, setClientDraftContactName] = useState('');
-  const [clientDraftContactDetails, setClientDraftContactDetails] = useState('');
+  const [clientDraftContactEmail, setClientDraftContactEmail] = useState('');
+  const [clientDraftContactPhone, setClientDraftContactPhone] = useState('');
   const [clientDraftStatus, setClientDraftStatus] = useState('active');
   const [submittingClient, setSubmittingClient] = useState(false);
   const [siteName, setSiteName] = useState('');
   const [siteClientId, setSiteClientId] = useState('');
-  const [clientName, setClientName] = useState('');
   const [siteAddress, setSiteAddress] = useState('');
   const [siteContactDetails, setSiteContactDetails] = useState('');
   const [siteStatus, setSiteStatus] = useState('active');
+  const [siteRequiredGuardCount, setSiteRequiredGuardCount] = useState('1');
+  const [siteOperatingDays, setSiteOperatingDays] = useState<string[]>(['Mon', 'Tue', 'Wed', 'Thu', 'Fri']);
+  const [siteOperatingStartTime, setSiteOperatingStartTime] = useState('08:00');
+  const [siteOperatingEndTime, setSiteOperatingEndTime] = useState('18:00');
   const [welfareCheckIntervalMinutes, setWelfareCheckIntervalMinutes] = useState('60');
+  const [siteSpecialInstructions, setSiteSpecialInstructions] = useState('');
   const [submittingSite, setSubmittingSite] = useState(false);
   const [shiftDraft, setShiftDraft] = useState<ShiftDraft>(createDefaultShiftDraft());
   const [selectedShiftId, setSelectedShiftId] = useState<number | null>(null);
   const [submittingShift, setSubmittingShift] = useState(false);
   const [savingCompanyProfile, setSavingCompanyProfile] = useState(false);
   const [savingSiteId, setSavingSiteId] = useState<number | null>(null);
+  const [savingClientId, setSavingClientId] = useState<number | null>(null);
   const [hiringApplicationId, setHiringApplicationId] = useState<number | null>(null);
   const [approvingGuardId, setApprovingGuardId] = useState<number | null>(null);
   const [updatingIncidentId, setUpdatingIncidentId] = useState<number | null>(null);
@@ -420,16 +495,36 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
     }));
   }
 
+  function clientDraftFor(client: Client): ClientDraft {
+    return clientDrafts[client.id] || createClientDraft(client);
+  }
+
+  function updateClientDraft(clientId: number, field: keyof ClientDraft, value: string) {
+    const existingClient = clients.find((client) => client.id === clientId);
+    const baseDraft = existingClient ? clientDraftFor(existingClient) : createClientDraft();
+    setClientDrafts((current) => ({
+      ...current,
+      [clientId]: {
+        ...baseDraft,
+        [field]: value,
+      },
+    }));
+  }
+
   function siteDraftFor(site: Site): SiteDraft {
     return (
       siteDrafts[site.id] || {
         name: site.name,
         clientId: site.client?.id ? String(site.client.id) : '',
-        clientName: site.clientName || '',
         address: site.address,
         contactDetails: site.contactDetails || '',
         status: site.status,
+        requiredGuardCount: String(site.requiredGuardCount ?? 1),
+        operatingDays: site.operatingDays || '',
+        operatingStartTime: site.operatingStartTime || '',
+        operatingEndTime: site.operatingEndTime || '',
         welfareCheckIntervalMinutes: String(site.welfareCheckIntervalMinutes ?? 60),
+        specialInstructions: site.specialInstructions || '',
       }
     );
   }
@@ -447,24 +542,37 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
   }
 
   async function handleCreateSite() {
+    if (!siteClientId) {
+      showAlert('Client required', 'Select a saved client before creating a site.');
+      return;
+    }
+
     try {
       setSubmittingSite(true);
       await createSite({
         name: siteName,
-        clientId: siteClientId ? Number(siteClientId) : undefined,
-        clientName: clientName || undefined,
+        clientId: Number(siteClientId),
         address: siteAddress,
         contactDetails: siteContactDetails || undefined,
         status: siteStatus,
+        requiredGuardCount: Number(siteRequiredGuardCount) || 1,
+        operatingDays: siteOperatingDays.join(','),
+        operatingStartTime: siteOperatingStartTime || undefined,
+        operatingEndTime: siteOperatingEndTime || undefined,
         welfareCheckIntervalMinutes: Number(welfareCheckIntervalMinutes) || 60,
+        specialInstructions: siteSpecialInstructions || undefined,
       });
       setSiteName('');
       setSiteClientId('');
-      setClientName('');
       setSiteAddress('');
       setSiteContactDetails('');
       setSiteStatus('active');
+      setSiteRequiredGuardCount('1');
+      setSiteOperatingDays(['Mon', 'Tue', 'Wed', 'Thu', 'Fri']);
+      setSiteOperatingStartTime('08:00');
+      setSiteOperatingEndTime('18:00');
       setWelfareCheckIntervalMinutes('60');
+      setSiteSpecialInstructions('');
       await loadData();
       showAlert('Site created', 'The site is now available for jobs, shifts, and live operations.');
     } catch (error) {
@@ -480,12 +588,14 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
       await createClient({
         name: clientDraftName,
         contactName: clientDraftContactName || undefined,
-        contactDetails: clientDraftContactDetails || undefined,
+        contactEmail: clientDraftContactEmail || undefined,
+        contactPhone: clientDraftContactPhone || undefined,
         status: clientDraftStatus,
       });
       setClientDraftName('');
       setClientDraftContactName('');
-      setClientDraftContactDetails('');
+      setClientDraftContactEmail('');
+      setClientDraftContactPhone('');
       setClientDraftStatus('active');
       await loadData();
       showAlert('Client created', 'The client is now available to link to company sites.');
@@ -493,6 +603,32 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
       showAlert('Create client failed', formatApiErrorMessage(error, 'Unable to create this client.'));
     } finally {
       setSubmittingClient(false);
+    }
+  }
+
+  async function handleUpdateClient(clientId: number) {
+    const client = clients.find((entry) => entry.id === clientId);
+    if (!client) {
+      showAlert('Client not found', 'The selected client could not be loaded.');
+      return;
+    }
+
+    const draft = clientDraftFor(client);
+    try {
+      setSavingClientId(clientId);
+      await updateClient(clientId, {
+        name: draft.name,
+        contactName: draft.contactName || undefined,
+        contactEmail: draft.contactEmail || undefined,
+        contactPhone: draft.contactPhone || undefined,
+        status: draft.status,
+      });
+      await loadData();
+      showAlert('Client updated', 'Client details have been saved.');
+    } catch (error) {
+      showAlert('Update client failed', formatApiErrorMessage(error, 'Unable to save this client.'));
+    } finally {
+      setSavingClientId(null);
     }
   }
 
@@ -508,11 +644,15 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
       await updateSite(siteId, {
         name: draft.name,
         clientId: draft.clientId ? Number(draft.clientId) : undefined,
-        clientName: draft.clientName || undefined,
         address: draft.address,
         contactDetails: draft.contactDetails || undefined,
         status: draft.status,
+        requiredGuardCount: Number(draft.requiredGuardCount) || 1,
+        operatingDays: draft.operatingDays || undefined,
+        operatingStartTime: draft.operatingStartTime || undefined,
+        operatingEndTime: draft.operatingEndTime || undefined,
         welfareCheckIntervalMinutes: Number(draft.welfareCheckIntervalMinutes) || 60,
+        specialInstructions: draft.specialInstructions || undefined,
       });
       await loadData();
       showAlert('Site updated', 'Site details have been saved.');
@@ -555,9 +695,6 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
       return;
     }
 
-    const directGuard = shiftDraft.guardId
-      ? linkedGuards.find((guard) => guard.id === Number(shiftDraft.guardId))
-      : undefined;
     const selectedSite = sites.find((site) => site.id === Number(shiftDraft.siteId));
 
     if (!Number.isFinite(Number(shiftDraft.siteId)) || !selectedSite) {
@@ -570,29 +707,42 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
       return;
     }
 
-    if (!directGuard) {
+    if (shiftDraft.guardIds.length === 0) {
       showAlert(
         'Guard required',
         linkedGuardOptionsText
-          ? `Choose one of the linked guard IDs.\n\n${linkedGuardOptionsText}`
+          ? `Choose one or more linked guards.\n\n${linkedGuardOptionsText}`
           : 'Link a guard to the company before creating site shifts.',
       );
       return;
     }
 
+    const shiftDates = parseDateList(shiftDraft.shiftDate, shiftDraft.additionalDates);
+    if (shiftDates.length === 0) {
+      showAlert('Shift date required', 'Enter at least one valid shift date.');
+      return;
+    }
+
     try {
       setSubmittingShift(true);
-      await createShift({
-        guardId: directGuard?.id,
-        siteId: selectedSite.id,
-        checkCallIntervalMinutes: Number(shiftDraft.checkCallIntervalMinutes) || undefined,
-        start: shiftDraft.start,
-        end: shiftDraft.end,
-        status: shiftDraft.status || undefined,
-      });
+      let createdCount = 0;
+      for (const date of shiftDates) {
+        const { start, end } = buildShiftDateTimes(date, shiftDraft.startTime, shiftDraft.endTime);
+        for (const guardId of shiftDraft.guardIds) {
+          await createShift({
+            guardId,
+            siteId: selectedSite.id,
+            checkCallIntervalMinutes: Number(shiftDraft.checkCallIntervalMinutes) || undefined,
+            start,
+            end,
+            status: 'assigned',
+          });
+          createdCount += 1;
+        }
+      }
       setShiftDraft(createDefaultShiftDraft());
       await loadData();
-      showAlert('Shift created', 'The shift is now scheduled and a draft timesheet has been created.');
+      showAlert('Shift created', `${createdCount} site-based shift record(s) have been created.`);
     } catch (error) {
       showAlert('Create shift failed', formatApiErrorMessage(error, 'Unable to create this shift.'));
     } finally {
@@ -731,6 +881,7 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
     [timesheets],
   );
   const openAlerts = useMemo(() => alerts.filter((alert) => alert.status !== 'closed'), [alerts]);
+  const completedShifts = useMemo(() => shifts.filter((shift) => shift.status === 'completed'), [shifts]);
   const pendingGuardApprovals = useMemo(
     () =>
       guards.filter((guard) => {
@@ -749,7 +900,10 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
   const recentAttachments = useMemo(() => attachments.slice(0, 5), [attachments]);
   const recentAuditLogs = useMemo(() => auditLogs.slice(0, 5), [auditLogs]);
   const activeShifts = useMemo(() => shifts.filter((shift) => shift.status === 'in_progress'), [shifts]);
-  const scheduledShifts = useMemo(() => shifts.filter((shift) => shift.status === 'scheduled'), [shifts]);
+  const scheduledShifts = useMemo(
+    () => shifts.filter((shift) => ['draft', 'scheduled', 'assigned'].includes(shift.status)),
+    [shifts],
+  );
   const linkedGuardIds = useMemo(
     () =>
       new Set([
@@ -762,6 +916,16 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
     () => guards.filter((guard) => linkedGuardIds.has(guard.id)),
     [guards, linkedGuardIds],
   );
+  const assignableGuards = useMemo(() => {
+    const approvedGuardIds = new Set(
+      companyGuards
+        .filter((companyGuard) => companyGuard.status === 'ACTIVE')
+        .map((companyGuard) => companyGuard.guard?.id)
+        .filter((guardId): guardId is number => typeof guardId === 'number'),
+    );
+
+    return linkedGuards.filter((guard) => approvedGuardIds.has(guard.id));
+  }, [companyGuards, linkedGuards]);
   const openIncidentCount = useMemo(
     () => incidents.filter((incident) => incident.status === 'open').length,
     [incidents],
@@ -773,19 +937,12 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
         : sites.map((site) => `${site.id}=${site.name}`).join(' | '),
     [sites],
   );
-  const clientOptionsText = useMemo(
-    () =>
-      clients.length === 0
-        ? ''
-        : clients.map((client) => `${client.id}=${client.name}`).join(' | '),
-    [clients],
-  );
   const linkedGuardOptionsText = useMemo(
     () =>
-      linkedGuards.length === 0
+      assignableGuards.length === 0
         ? ''
-        : linkedGuards.map((guard) => `${guard.id}=${guard.fullName}`).join(' | '),
-    [linkedGuards],
+        : assignableGuards.map((guard) => `${guard.id}=${guard.fullName}`).join(' | '),
+    [assignableGuards],
   );
   const selectedShift =
     shifts.find((shift) => shift.id === selectedShiftId) ||
@@ -930,10 +1087,11 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
 
   const sectionItems: Array<{ id: CompanySectionId; label: string; description: string }> = [
     { id: 'overview', label: 'Overview', description: 'Command center, metrics, and live activity.' },
-    { id: 'sites', label: 'Sites', description: 'Manage client sites and welfare settings.' },
+    { id: 'clients', label: 'Clients', description: 'Create and maintain operational client records.' },
+    { id: 'sites', label: 'Sites', description: 'Manage client-linked sites, staffing targets, and operating windows.' },
     { id: 'guards', label: 'Guards', description: 'View linked guards and operational status.' },
     { id: 'recruitment', label: 'Legacy Recruitment', description: 'Keep older job hiring available without driving daily operations.' },
-    { id: 'shifts', label: 'Shift Ops', description: 'Track live shifts, patrols, and compliance.' },
+    { id: 'shifts', label: 'Shift Ops', description: 'Plan site-based shifts and review live operational activity.' },
     { id: 'timesheets', label: 'Timesheets', description: 'Review submitted hours and approvals.' },
     { id: 'incidents', label: 'Incidents', description: 'Monitor site issues and resolutions.' },
     { id: 'alerts', label: 'Safety Alerts', description: 'Respond to welfare and panic alerts from guards.' },
@@ -962,6 +1120,16 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
         </View>
 
         <View style={[styles.sectionColumns, isDesktopWeb && styles.sectionColumnsDesktop]}>
+          <FeatureCard title="Company Setup" subtitle={company ? company.name : 'Loading company profile...'} style={styles.desktopPanel}>
+            <TextInput style={styles.input} placeholder="Company name" value={companyName} onChangeText={setCompanyName} />
+            <TextInput style={styles.input} placeholder="Company number" value={companyNumber} onChangeText={setCompanyNumber} />
+            <TextInput style={styles.input} placeholder="Address" value={address} onChangeText={setAddress} />
+            <TextInput style={styles.input} placeholder="Contact details" value={contactDetails} onChangeText={setContactDetails} />
+            <Pressable style={[styles.button, savingCompanyProfile && styles.buttonDisabled]} {...pressHandlers(handleSaveProfile)} disabled={savingCompanyProfile}>
+              <Text style={styles.buttonText}>{savingCompanyProfile ? 'Saving...' : 'Save Profile'}</Text>
+            </Pressable>
+          </FeatureCard>
+
           <FeatureCard
             title="Operations Overview"
             subtitle={`Live shifts: ${activeShifts.length} | Upcoming shifts: ${scheduledShifts.length}`}
@@ -1108,55 +1276,137 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
     );
   }
 
+  function renderClientsSection() {
+    return (
+      <View style={styles.sectionStack}>
+        <View style={styles.sectionBanner}>
+          <Text style={styles.sectionTitle}>Clients</Text>
+          <Text style={styles.sectionSubtitle}>
+            Keep client records separate from sites so shift planning always starts with a real operational account.
+          </Text>
+        </View>
+
+        <View style={[styles.sectionColumns, isDesktopWeb && styles.sectionColumnsDesktop]}>
+          <FeatureCard title="Create Client" subtitle={`${clients.length} client records`} style={styles.desktopPanel}>
+            <TextInput style={styles.input} placeholder="Client name" value={clientDraftName} onChangeText={setClientDraftName} />
+            <TextInput style={styles.input} placeholder="Contact name" value={clientDraftContactName} onChangeText={setClientDraftContactName} />
+            <TextInput style={styles.input} placeholder="Contact email" value={clientDraftContactEmail} onChangeText={setClientDraftContactEmail} />
+            <TextInput style={styles.input} placeholder="Contact phone" value={clientDraftContactPhone} onChangeText={setClientDraftContactPhone} />
+            <TextInput style={styles.input} placeholder="Status" value={clientDraftStatus} onChangeText={setClientDraftStatus} />
+            <Pressable style={[styles.button, submittingClient && styles.buttonDisabled]} {...pressHandlers(handleCreateClient)} disabled={submittingClient}>
+              <Text style={styles.buttonText}>{submittingClient ? 'Creating client...' : 'Create Client'}</Text>
+            </Pressable>
+          </FeatureCard>
+
+          <FeatureCard title="Client Directory" subtitle="Operational client contacts for sites and shifts." style={styles.desktopPanel}>
+            {clients.length === 0 ? (
+              <Text style={styles.helperText}>No clients yet. Create your first client before setting up sites.</Text>
+            ) : (
+              clients.map((client) => {
+                const draft = clientDraftFor(client);
+                const clientSites = sites.filter((site) => (site.client?.id ?? site.clientId) === client.id);
+                return (
+                  <View key={client.id} style={styles.sectionRecord}>
+                    <View style={styles.recordHeader}>
+                      <View style={styles.recordCopy}>
+                        <Text style={styles.recordTitle}>{client.name}</Text>
+                        <Text style={styles.helperText}>{client.status} | Sites: {clientSites.length}</Text>
+                      </View>
+                    </View>
+                    <View style={[styles.formGrid, isDesktopWeb && styles.formGridDesktop]}>
+                      <TextInput style={styles.input} placeholder="Client name" value={draft.name} onChangeText={(value: string) => updateClientDraft(client.id, 'name', value)} />
+                      <TextInput style={styles.input} placeholder="Contact name" value={draft.contactName} onChangeText={(value: string) => updateClientDraft(client.id, 'contactName', value)} />
+                      <TextInput style={styles.input} placeholder="Contact email" value={draft.contactEmail} onChangeText={(value: string) => updateClientDraft(client.id, 'contactEmail', value)} />
+                      <TextInput style={styles.input} placeholder="Contact phone" value={draft.contactPhone} onChangeText={(value: string) => updateClientDraft(client.id, 'contactPhone', value)} />
+                      <TextInput style={styles.input} placeholder="Status" value={draft.status} onChangeText={(value: string) => updateClientDraft(client.id, 'status', value)} />
+                    </View>
+                    <Pressable
+                      style={[styles.button, savingClientId === client.id && styles.buttonDisabled]}
+                      {...pressHandlers(() => handleUpdateClient(client.id))}
+                      disabled={savingClientId === client.id}
+                    >
+                      <Text style={styles.buttonText}>{savingClientId === client.id ? 'Saving...' : 'Save Client'}</Text>
+                    </Pressable>
+                  </View>
+                );
+              })
+            )}
+          </FeatureCard>
+        </View>
+      </View>
+    );
+  }
+
   function renderSitesSection() {
     return (
       <View style={styles.sectionStack}>
         <View style={styles.sectionBanner}>
           <Text style={styles.sectionTitle}>Site Management</Text>
           <Text style={styles.sectionSubtitle}>
-            Create and manage client sites. Jobs, shifts, patrols, incidents, and welfare checks should all live under a site.
+            Create and manage client-linked sites with staffing requirements, operating windows, and special instructions.
           </Text>
         </View>
 
         <View style={[styles.sectionColumns, isDesktopWeb && styles.sectionColumnsDesktop]}>
-          <FeatureCard title="Create Client" subtitle={`${clients.length} client records`} style={styles.desktopPanel}>
-            {clientOptionsText ? <Text style={styles.helperText}>Client IDs: {clientOptionsText}</Text> : null}
-            <TextInput style={styles.input} placeholder="Client name" value={clientDraftName} onChangeText={setClientDraftName} />
-            <TextInput style={styles.input} placeholder="Client contact name" value={clientDraftContactName} onChangeText={setClientDraftContactName} />
-            <TextInput style={styles.input} placeholder="Client contact details" value={clientDraftContactDetails} onChangeText={setClientDraftContactDetails} />
-            <TextInput style={styles.input} placeholder="Client status" value={clientDraftStatus} onChangeText={setClientDraftStatus} />
-            <Pressable style={[styles.button, submittingClient && styles.buttonDisabled]} {...pressHandlers(handleCreateClient)} disabled={submittingClient}>
-              <Text style={styles.buttonText}>{submittingClient ? 'Creating client...' : 'Create Client'}</Text>
-            </Pressable>
-          </FeatureCard>
-
-          <FeatureCard title="Create Site" subtitle="Register a client site before assigning jobs or shifts." style={styles.desktopPanel}>
-            {clientOptionsText ? <Text style={styles.helperText}>Client IDs: {clientOptionsText}</Text> : null}
+          <FeatureCard title="Create Site" subtitle="Register a site under a saved client before assigning shifts." style={styles.desktopPanel}>
+            {clients.length === 0 ? (
+              <Text style={styles.helperText}>Create a client first. Site setup now requires selecting a saved client.</Text>
+            ) : null}
+            <View style={styles.kpiList}>
+              <Text style={styles.helperText}>Linked client</Text>
+              <View style={styles.actionRow}>
+                {clients.map((client) => {
+                  const selected = siteClientId === String(client.id);
+                  return (
+                    <Pressable
+                      key={client.id}
+                      style={[styles.secondaryButton, selected && styles.button]}
+                      {...pressHandlers(() => setSiteClientId(String(client.id)))}
+                    >
+                      <Text style={selected ? styles.buttonText : styles.secondaryButtonText}>{client.name}</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
             <TextInput style={styles.input} placeholder="Site name" value={siteName} onChangeText={setSiteName} />
-            <TextInput style={styles.input} placeholder="Client ID (recommended)" keyboardType="number-pad" value={siteClientId} onChangeText={setSiteClientId} />
-            <TextInput style={styles.input} placeholder="Client name" value={clientName} onChangeText={setClientName} />
             <TextInput style={styles.input} placeholder="Site address" value={siteAddress} onChangeText={setSiteAddress} />
             <TextInput style={styles.input} placeholder="Site contact details" value={siteContactDetails} onChangeText={setSiteContactDetails} />
-            <TextInput style={styles.input} placeholder="Status" value={siteStatus} onChangeText={setSiteStatus} />
+            <TextInput style={styles.input} placeholder="Required security guards" keyboardType="number-pad" value={siteRequiredGuardCount} onChangeText={setSiteRequiredGuardCount} />
+            <View style={styles.kpiList}>
+              <Text style={styles.helperText}>Operating days</Text>
+              <View style={styles.actionRow}>
+                {weekdayOptions().map((day) => {
+                  const selected = siteOperatingDays.includes(day);
+                  return (
+                    <Pressable
+                      key={day}
+                      style={[styles.secondaryButton, selected && styles.button]}
+                      {...pressHandlers(() => setSiteOperatingDays((current) => toggleListValue(current, day)))}
+                    >
+                      <Text style={selected ? styles.buttonText : styles.secondaryButtonText}>{day}</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+            <TextInput style={styles.input} placeholder="Operating start time (HH:MM)" value={siteOperatingStartTime} onChangeText={setSiteOperatingStartTime} />
+            <TextInput style={styles.input} placeholder="Operating end time (HH:MM)" value={siteOperatingEndTime} onChangeText={setSiteOperatingEndTime} />
             <TextInput
               style={styles.input}
-              placeholder="Welfare check interval minutes"
+              placeholder="Check call interval minutes"
               keyboardType="number-pad"
               value={welfareCheckIntervalMinutes}
               onChangeText={setWelfareCheckIntervalMinutes}
             />
-            <Pressable style={[styles.button, submittingSite && styles.buttonDisabled]} {...pressHandlers(handleCreateSite)} disabled={submittingSite}>
+            <TextInput style={styles.input} placeholder="Status" value={siteStatus} onChangeText={setSiteStatus} />
+            <TextInput style={styles.input} placeholder="Special instructions / site notes" value={siteSpecialInstructions} onChangeText={setSiteSpecialInstructions} multiline />
+            <Pressable
+              style={[styles.button, submittingSite && styles.buttonDisabled]}
+              {...pressHandlers(handleCreateSite)}
+              disabled={submittingSite || clients.length === 0}
+            >
               <Text style={styles.buttonText}>{submittingSite ? 'Creating site...' : 'Create Site'}</Text>
-            </Pressable>
-          </FeatureCard>
-
-          <FeatureCard title="Company Setup" subtitle={company ? company.name : 'Loading company profile...'} style={styles.desktopPanel}>
-            <TextInput style={styles.input} placeholder="Company name" value={companyName} onChangeText={setCompanyName} />
-            <TextInput style={styles.input} placeholder="Company number" value={companyNumber} onChangeText={setCompanyNumber} />
-            <TextInput style={styles.input} placeholder="Address" value={address} onChangeText={setAddress} />
-            <TextInput style={styles.input} placeholder="Contact details" value={contactDetails} onChangeText={setContactDetails} />
-            <Pressable style={[styles.button, savingCompanyProfile && styles.buttonDisabled]} {...pressHandlers(handleSaveProfile)} disabled={savingCompanyProfile}>
-              <Text style={styles.buttonText}>{savingCompanyProfile ? 'Saving...' : 'Save Profile'}</Text>
             </Pressable>
           </FeatureCard>
         </View>
@@ -1179,6 +1429,7 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
                       </Text>
                     </View>
                     <View style={styles.inlineStats}>
+                      <Text style={styles.helperText}>Required guards: {site.requiredGuardCount ?? 1}</Text>
                       <Text style={styles.helperText}>Guards: {countUniqueGuards(siteShifts)}</Text>
                       <Text style={styles.helperText}>Live shifts: {siteShifts.filter((shift) => shift.status === 'in_progress').length}</Text>
                       <Text style={styles.helperText}>Incidents: {siteIncidents.length}</Text>
@@ -1186,18 +1437,38 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
                   </View>
                   <View style={[styles.formGrid, isDesktopWeb && styles.formGridDesktop]}>
                     <TextInput style={styles.input} placeholder="Site name" value={draft.name} onChangeText={(value: string) => updateSiteDraft(site.id, 'name', value)} />
-                    <TextInput style={styles.input} placeholder="Client ID" keyboardType="number-pad" value={draft.clientId} onChangeText={(value: string) => updateSiteDraft(site.id, 'clientId', value)} />
-                    <TextInput style={styles.input} placeholder="Client name" value={draft.clientName} onChangeText={(value: string) => updateSiteDraft(site.id, 'clientName', value)} />
+                    <View style={styles.kpiList}>
+                      <Text style={styles.helperText}>Linked client</Text>
+                      <View style={styles.actionRow}>
+                        {clients.map((client) => {
+                          const selected = draft.clientId === String(client.id);
+                          return (
+                            <Pressable
+                              key={client.id}
+                              style={[styles.secondaryButton, selected && styles.button]}
+                              {...pressHandlers(() => updateSiteDraft(site.id, 'clientId', String(client.id)))}
+                            >
+                              <Text style={selected ? styles.buttonText : styles.secondaryButtonText}>{client.name}</Text>
+                            </Pressable>
+                          );
+                        })}
+                      </View>
+                    </View>
                     <TextInput style={styles.input} placeholder="Address" value={draft.address} onChangeText={(value: string) => updateSiteDraft(site.id, 'address', value)} />
                     <TextInput style={styles.input} placeholder="Contact details" value={draft.contactDetails} onChangeText={(value: string) => updateSiteDraft(site.id, 'contactDetails', value)} />
+                    <TextInput style={styles.input} placeholder="Required security guards" keyboardType="number-pad" value={draft.requiredGuardCount} onChangeText={(value: string) => updateSiteDraft(site.id, 'requiredGuardCount', value)} />
+                    <TextInput style={styles.input} placeholder="Operating days (Mon,Tue,...)" value={draft.operatingDays} onChangeText={(value: string) => updateSiteDraft(site.id, 'operatingDays', value)} />
+                    <TextInput style={styles.input} placeholder="Operating start time (HH:MM)" value={draft.operatingStartTime} onChangeText={(value: string) => updateSiteDraft(site.id, 'operatingStartTime', value)} />
+                    <TextInput style={styles.input} placeholder="Operating end time (HH:MM)" value={draft.operatingEndTime} onChangeText={(value: string) => updateSiteDraft(site.id, 'operatingEndTime', value)} />
                     <TextInput style={styles.input} placeholder="Status" value={draft.status} onChangeText={(value: string) => updateSiteDraft(site.id, 'status', value)} />
                     <TextInput
                       style={styles.input}
-                      placeholder="Welfare check interval minutes"
+                      placeholder="Check call interval minutes"
                       keyboardType="number-pad"
                       value={draft.welfareCheckIntervalMinutes}
                       onChangeText={(value: string) => updateSiteDraft(site.id, 'welfareCheckIntervalMinutes', value)}
                     />
+                    <TextInput style={styles.input} placeholder="Special instructions / site notes" value={draft.specialInstructions} onChangeText={(value: string) => updateSiteDraft(site.id, 'specialInstructions', value)} multiline />
                   </View>
                   <Pressable
                     style={[styles.button, savingSiteId === site.id && styles.buttonDisabled]}
@@ -1414,27 +1685,77 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
 
         <View style={[styles.sectionColumns, isDesktopWeb && styles.sectionColumnsDesktop]}>
           <FeatureCard title="Schedule Shift" subtitle="Primary workflow: site -> shift -> assigned guard." style={styles.desktopPanel}>
-            {linkedGuards.length > 0 ? (
+            {assignableGuards.length > 0 ? (
               <View style={styles.infoBox}>
-                {linkedGuardOptionsText ? <Text style={styles.infoBoxText}>Linked guard IDs: {linkedGuardOptionsText}</Text> : null}
-                {siteOptionsText ? <Text style={styles.infoBoxText}>Site IDs: {siteOptionsText}</Text> : null}
+                <Text style={styles.infoBoxText}>Select one site, choose one or more linked guards, then create the shift plan.</Text>
               </View>
             ) : (
               <Text style={styles.helperText}>Link a guard to the company roster first, then schedule that guard onto a site shift.</Text>
             )}
+            <View style={styles.kpiList}>
+              <Text style={styles.helperText}>Select site</Text>
+              <View style={styles.actionRow}>
+                {sites.map((site) => {
+                  const selected = shiftDraft.siteId === String(site.id);
+                  return (
+                    <Pressable
+                      key={site.id}
+                      style={[styles.secondaryButton, selected && styles.button]}
+                      {...pressHandlers(() => setShiftDraft((current) => ({ ...current, siteId: String(site.id) })))}
+                    >
+                      <Text style={selected ? styles.buttonText : styles.secondaryButtonText}>{site.name}</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+            <View style={styles.kpiList}>
+              <Text style={styles.helperText}>Assign guards</Text>
+              <View style={styles.actionRow}>
+                {assignableGuards.map((guard) => {
+                  const selected = shiftDraft.guardIds.includes(guard.id);
+                  return (
+                    <Pressable
+                      key={guard.id}
+                      style={[styles.secondaryButton, selected && styles.button]}
+                      {...pressHandlers(() =>
+                        setShiftDraft((current) => ({
+                          ...current,
+                          guardIds: selected
+                            ? current.guardIds.filter((id) => id !== guard.id)
+                            : [...current.guardIds, guard.id],
+                        }))
+                      )}
+                    >
+                      <Text style={selected ? styles.buttonText : styles.secondaryButtonText}>{guard.fullName}</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
             <TextInput
               style={styles.input}
-              placeholder="Guard ID (for direct assignment)"
-              keyboardType="number-pad"
-              value={shiftDraft.guardId}
-              onChangeText={(value: string) => setShiftDraft((current) => ({ ...current, guardId: value }))}
+              placeholder="Shift date (YYYY-MM-DD)"
+              value={shiftDraft.shiftDate}
+              onChangeText={(value: string) => setShiftDraft((current) => ({ ...current, shiftDate: value }))}
             />
             <TextInput
               style={styles.input}
-              placeholder="Site ID"
-              keyboardType="number-pad"
-              value={shiftDraft.siteId}
-              onChangeText={(value: string) => setShiftDraft((current) => ({ ...current, siteId: value }))}
+              placeholder="Additional dates (comma separated YYYY-MM-DD)"
+              value={shiftDraft.additionalDates}
+              onChangeText={(value: string) => setShiftDraft((current) => ({ ...current, additionalDates: value }))}
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="Start time (HH:MM)"
+              value={shiftDraft.startTime}
+              onChangeText={(value: string) => setShiftDraft((current) => ({ ...current, startTime: value }))}
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="End time (HH:MM)"
+              value={shiftDraft.endTime}
+              onChangeText={(value: string) => setShiftDraft((current) => ({ ...current, endTime: value }))}
             />
             <TextInput
               style={styles.input}
@@ -1443,69 +1764,56 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
               value={shiftDraft.checkCallIntervalMinutes}
               onChangeText={(value: string) => setShiftDraft((current) => ({ ...current, checkCallIntervalMinutes: value }))}
             />
-            <TextInput
-              style={styles.input}
-              placeholder="Shift status"
-              value={shiftDraft.status}
-              onChangeText={(value: string) => setShiftDraft((current) => ({ ...current, status: value }))}
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="Shift start ISO"
-              value={shiftDraft.start}
-              onChangeText={(value: string) => setShiftDraft((current) => ({ ...current, start: value }))}
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="Shift end ISO"
-              value={shiftDraft.end}
-              onChangeText={(value: string) => setShiftDraft((current) => ({ ...current, end: value }))}
-            />
             <Pressable style={[styles.button, submittingShift && styles.buttonDisabled]} {...pressHandlers(handleCreateShift)} disabled={submittingShift}>
               <Text style={styles.buttonText}>{submittingShift ? 'Creating shift...' : 'Create Shift'}</Text>
             </Pressable>
           </FeatureCard>
 
-          <FeatureCard title="Approved Guard Pool" subtitle={`${companyGuards.length} linked guard records`} style={styles.desktopPanel}>
-            {companyGuards.length === 0 ? (
+          <FeatureCard title="Approved Guard Pool" subtitle={`${assignableGuards.length} active guards available for shift planning`} style={styles.desktopPanel}>
+            {assignableGuards.length === 0 ? (
               <Text style={styles.helperText}>Linked guards will appear here after you add them to the company roster.</Text>
             ) : (
-              companyGuards.map((companyGuard) => (
-                <View key={companyGuard.id} style={styles.rowCard}>
-                  <Text style={styles.listTitle}>{companyGuard.guard?.fullName || `Guard #${companyGuard.guard?.id ?? companyGuard.id}`}</Text>
-                  <Text style={styles.helperText}>
-                    {companyGuard.relationshipType} | {companyGuard.status}
-                  </Text>
+              assignableGuards.map((guard) => (
+                <View key={guard.id} style={styles.rowCard}>
+                  <Text style={styles.listTitle}>{guard.fullName}</Text>
+                  <Text style={styles.helperText}>Ready for direct site assignment</Text>
                 </View>
               ))
             )}
           </FeatureCard>
         </View>
 
-        <FeatureCard title="Live & Upcoming Shifts" subtitle={`${activeShifts.length} live | ${scheduledShifts.length} upcoming`} style={styles.desktopPanel}>
+        <FeatureCard title="Shift Schedule" subtitle={`${scheduledShifts.length} scheduled | ${activeShifts.length} live | ${completedShifts.length} completed`} style={styles.desktopPanel}>
           {shifts.length === 0 ? (
             <Text style={styles.helperText}>No shifts are currently scheduled.</Text>
           ) : (
-            shifts.map((shift) => (
-              <View key={shift.id} style={styles.sectionRecord}>
-                <View style={styles.recordHeader}>
-                  <View style={styles.recordCopy}>
-                    <Text style={styles.recordTitle}>{shift.siteName || 'Unassigned site'}</Text>
-                    <Text style={styles.helperText}>{formatDateTimeRange(shift.start, shift.end)}</Text>
-                  </View>
-                  <View style={styles.statusPill}>
-                    <Text style={styles.statusPillText}>{shift.status}</Text>
-                  </View>
-                </View>
-                <View style={styles.inlineStats}>
-                  <Text style={styles.helperText}>Guard: {shift.guard?.fullName || `#${shift.guard?.id ?? shift.guardId ?? 'N/A'}`}</Text>
-                  <Text style={styles.helperText}>Site: {shift.site?.name || shift.siteName || 'Unassigned site'}</Text>
-                  <Text style={styles.helperText}>Check calls: every {shift.checkCallIntervalMinutes || 60} mins</Text>
-                  <Text style={styles.helperText}>Logs/incidents/timesheets tracked inside shift</Text>
-                </View>
-                <Pressable style={styles.secondaryButton} {...pressHandlers(() => setSelectedShiftId(shift.id))}>
-                  <Text style={styles.secondaryButtonText}>{selectedShift?.id === shift.id ? 'Open Shift' : 'View Shift'}</Text>
-                </Pressable>
+            ([
+              { title: 'Scheduled Shifts', rows: scheduledShifts },
+              { title: 'Live / In Progress', rows: activeShifts },
+              { title: 'Completed Shifts', rows: completedShifts },
+            ] as const).map((group) => (
+              <View key={group.title} style={styles.sectionRecord}>
+                <Text style={styles.recordTitle}>{group.title}</Text>
+                {group.rows.length === 0 ? (
+                  <Text style={styles.helperText}>No shifts in this state.</Text>
+                ) : (
+                  group.rows.map((shift) => {
+                    const linkedSite = shift.site || sites.find((site) => site.id === shift.siteId) || null;
+                    const linkedClient = linkedSite?.client || clients.find((client) => client.id === linkedSite?.clientId) || null;
+                    return (
+                      <View key={shift.id} style={styles.rowCard}>
+                        <Text style={styles.listTitle}>{linkedSite?.name || shift.siteName || `Shift #${shift.id}`}</Text>
+                        <Text style={styles.helperText}>{linkedClient?.name || 'Client not linked'} | {formatDateTimeRange(shift.start, shift.end)}</Text>
+                        <Text style={styles.helperText}>Guard: {shift.guard?.fullName || `#${shift.guard?.id ?? shift.guardId ?? 'N/A'}`}</Text>
+                        <Text style={styles.helperText}>Check call interval: {shift.checkCallIntervalMinutes || linkedSite?.welfareCheckIntervalMinutes || 60} minutes</Text>
+                        <Text style={styles.helperText}>Status: {shift.status}</Text>
+                        <Pressable style={styles.secondaryButton} {...pressHandlers(() => setSelectedShiftId(shift.id))}>
+                          <Text style={styles.secondaryButtonText}>{selectedShift?.id === shift.id ? 'Open Shift' : 'View Shift'}</Text>
+                        </Pressable>
+                      </View>
+                    );
+                  })
+                )}
               </View>
             ))
           )}
@@ -1520,9 +1828,16 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
             <Text style={styles.helperText}>No shift is selected yet.</Text>
           ) : (
             <View style={styles.sectionRecord}>
+              {(() => {
+                const linkedSite = selectedShift.site || sites.find((site) => site.id === selectedShift.siteId) || null;
+                const linkedClient =
+                  linkedSite?.client || clients.find((client) => client.id === linkedSite?.clientId) || null;
+
+                return (
+                  <>
               <View style={styles.recordHeader}>
                 <View style={styles.recordCopy}>
-                  <Text style={styles.recordTitle}>{selectedShift.siteName}</Text>
+                  <Text style={styles.recordTitle}>{linkedSite?.name || selectedShift.siteName}</Text>
                   <Text style={styles.helperText}>{formatDateTimeRange(selectedShift.start, selectedShift.end)}</Text>
                 </View>
                 <View style={styles.statusPill}>
@@ -1530,8 +1845,10 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
                 </View>
               </View>
               <View style={styles.inlineStats}>
+                <Text style={styles.helperText}>Client: {linkedClient?.name || 'Client not linked'}</Text>
                 <Text style={styles.helperText}>Guard: {selectedShift.guard?.fullName || `#${selectedShift.guard?.id ?? selectedShift.guardId ?? 'N/A'}`}</Text>
-                <Text style={styles.helperText}>Site: {selectedShift.site?.name || selectedShift.siteName}</Text>
+                <Text style={styles.helperText}>Site: {linkedSite?.name || selectedShift.site?.name || selectedShift.siteName}</Text>
+                <Text style={styles.helperText}>Check calls: every {selectedShift.checkCallIntervalMinutes || linkedSite?.welfareCheckIntervalMinutes || 60} mins</Text>
                 <Text style={styles.helperText}>Logs: {selectedShiftDailyLogs.length}</Text>
                 <Text style={styles.helperText}>Incidents: {selectedShiftIncidents.length}</Text>
                 <Text style={styles.helperText}>Timesheets: {selectedShiftTimesheets.length}</Text>
@@ -1560,6 +1877,9 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
               {selectedShiftDailyLogs.length === 0 && selectedShiftIncidents.length === 0 && selectedShiftTimesheets.length === 0 ? (
                 <Text style={styles.helperText}>No activity has been recorded for this shift yet.</Text>
               ) : null}
+                  </>
+                );
+              })()}
             </View>
           )}
         </FeatureCard>
@@ -1792,6 +2112,8 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
 
   function renderActiveSection() {
     switch (activeSection) {
+      case 'clients':
+        return renderClientsSection();
       case 'sites':
         return renderSitesSection();
       case 'guards':
