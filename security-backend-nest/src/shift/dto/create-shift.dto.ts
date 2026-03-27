@@ -1,4 +1,4 @@
-import { IsDateString, IsInt, IsOptional, IsString } from 'class-validator';
+import { IsDateString, IsInt, IsOptional, IsString, Min } from 'class-validator';
 
 export class CreateShiftDto {
   @IsOptional()
@@ -25,9 +25,13 @@ export class CreateShiftDto {
   @IsInt()
   createdByUserId?: number;
 
-  @IsOptional()
   @IsInt()
   siteId?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(5)
+  checkCallIntervalMinutes?: number;
 
   @IsOptional()
   @IsString()

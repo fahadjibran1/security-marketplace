@@ -13,10 +13,12 @@ import {
   acknowledgeSafetyAlert,
   approveGuard,
   closeSafetyAlert,
+  createClient,
   createShift,
   formatApiErrorMessage,
   listCompanyAttachments,
   listCompanyAuditLogs,
+  listCompanyDailyLogs,
   listCompanyGuards,
   listCompanyNotifications,
   listCompanySafetyAlerts,
@@ -25,6 +27,7 @@ import {
   getMyCompany,
   hireJobApplication,
   listAssignments,
+  listClients,
   listCompanies,
   listCompanyIncidents,
   listCompanyTimesheets,
@@ -43,8 +46,10 @@ import {
   AuditLog,
   Assignment,
   AuthUser,
+  Client,
   CompanyGuard,
   CompanyProfile,
+  DailyLog,
   GuardProfile,
   Incident,
   Job,
@@ -80,6 +85,7 @@ type HireDraft = {
 
 type SiteDraft = {
   name: string;
+  clientId: string;
   clientName: string;
   address: string;
   contactDetails: string;
@@ -88,11 +94,12 @@ type SiteDraft = {
 };
 
 type ShiftDraft = {
-  assignmentId: string;
+  guardId: string;
   siteId: string;
-  siteName: string;
+  checkCallIntervalMinutes: string;
   start: string;
   end: string;
+  status: string;
 };
 
 function defaultShiftStart() {
@@ -112,6 +119,7 @@ function defaultShiftEnd() {
 function createFallbackSiteDraft(): SiteDraft {
   return {
     name: '',
+    clientId: '',
     clientName: '',
     address: '',
     contactDetails: '',
@@ -122,11 +130,12 @@ function createFallbackSiteDraft(): SiteDraft {
 
 function createDefaultShiftDraft(): ShiftDraft {
   return {
-    assignmentId: '',
+    guardId: '',
     siteId: '',
-    siteName: 'Main Site',
+    checkCallIntervalMinutes: '60',
     start: defaultShiftStart(),
     end: defaultShiftEnd(),
+    status: 'assigned',
   };
 }
 
@@ -225,6 +234,7 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
   const isDesktopWeb = width >= 1180;
 
   const [company, setCompany] = useState<CompanyProfile | null>(null);
+  const [clients, setClients] = useState<Client[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [sites, setSites] = useState<Site[]>([]);
   const [guards, setGuards] = useState<GuardProfile[]>([]);
@@ -234,6 +244,7 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
   const [applications, setApplications] = useState<JobApplication[]>([]);
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [alerts, setAlerts] = useState<SafetyAlert[]>([]);
+  const [dailyLogs, setDailyLogs] = useState<DailyLog[]>([]);
   const [timesheets, setTimesheets] = useState<Timesheet[]>([]);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -250,7 +261,13 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
   const [submittingJob, setSubmittingJob] = useState(false);
   const [hireDrafts, setHireDrafts] = useState<Record<number, HireDraft>>({});
   const [siteDrafts, setSiteDrafts] = useState<Record<number, SiteDraft>>({});
+  const [clientDraftName, setClientDraftName] = useState('');
+  const [clientDraftContactName, setClientDraftContactName] = useState('');
+  const [clientDraftContactDetails, setClientDraftContactDetails] = useState('');
+  const [clientDraftStatus, setClientDraftStatus] = useState('active');
+  const [submittingClient, setSubmittingClient] = useState(false);
   const [siteName, setSiteName] = useState('');
+  const [siteClientId, setSiteClientId] = useState('');
   const [clientName, setClientName] = useState('');
   const [siteAddress, setSiteAddress] = useState('');
   const [siteContactDetails, setSiteContactDetails] = useState('');
@@ -258,6 +275,7 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
   const [welfareCheckIntervalMinutes, setWelfareCheckIntervalMinutes] = useState('60');
   const [submittingSite, setSubmittingSite] = useState(false);
   const [shiftDraft, setShiftDraft] = useState<ShiftDraft>(createDefaultShiftDraft());
+  const [selectedShiftId, setSelectedShiftId] = useState<number | null>(null);
   const [submittingShift, setSubmittingShift] = useState(false);
   const [savingCompanyProfile, setSavingCompanyProfile] = useState(false);
   const [savingSiteId, setSavingSiteId] = useState<number | null>(null);
@@ -284,6 +302,7 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
       const [
         myCompanyResult,
         companiesResult,
+        clientsResult,
         sitesResult,
         jobsResult,
         guardsResult,
@@ -293,6 +312,7 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
         applicationsResult,
         incidentsResult,
         alertsResult,
+        dailyLogsResult,
         timesheetsResult,
         notificationsResult,
         attachmentsResult,
@@ -300,6 +320,7 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
       ] = await Promise.allSettled([
         getMyCompany(),
         listCompanies(),
+        listClients(),
         listSites(),
         listJobs(),
         listGuards(),
@@ -309,6 +330,7 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
         listJobApplications(),
         listCompanyIncidents(),
         listCompanySafetyAlerts(),
+        listCompanyDailyLogs(),
         listCompanyTimesheets(),
         listCompanyNotifications(),
         listCompanyAttachments(),
@@ -318,6 +340,7 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
       const myCompany = myCompanyResult.status === 'fulfilled' ? myCompanyResult.value : null;
       const companiesData = companiesResult.status === 'fulfilled' ? companiesResult.value : [];
       const sitesData = sitesResult.status === 'fulfilled' ? sitesResult.value : [];
+      const clientsData = clientsResult.status === 'fulfilled' ? clientsResult.value : [];
       const jobsData = jobsResult.status === 'fulfilled' ? jobsResult.value : [];
       const guardsData = guardsResult.status === 'fulfilled' ? guardsResult.value : [];
       const companyGuardRows = companyGuardsResult.status === 'fulfilled' ? companyGuardsResult.value : [];
@@ -326,6 +349,7 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
       const applicationsData = applicationsResult.status === 'fulfilled' ? applicationsResult.value : [];
       const incidentRows = incidentsResult.status === 'fulfilled' ? incidentsResult.value : [];
       const alertRows = alertsResult.status === 'fulfilled' ? alertsResult.value : [];
+      const dailyLogRows = dailyLogsResult.status === 'fulfilled' ? dailyLogsResult.value : [];
       const timesheetRows = timesheetsResult.status === 'fulfilled' ? timesheetsResult.value : [];
       const notificationRows = notificationsResult.status === 'fulfilled' ? notificationsResult.value : [];
       const attachmentRows = attachmentsResult.status === 'fulfilled' ? attachmentsResult.value : [];
@@ -347,6 +371,7 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
       setCompanyNumber(currentCompany?.companyNumber || '');
       setAddress(currentCompany?.address || '');
       setContactDetails(currentCompany?.contactDetails || '');
+      setClients(clientsData);
       setCompanyGuards(companyGuardRows);
       setSites(sitesData.filter((site) => (site.company?.id ?? site.companyId) === companyId));
       setJobs(jobsData.filter((job) => (job.company?.id ?? job.companyId) === companyId));
@@ -358,6 +383,7 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
       setApplications(applicationsData.filter((application) => application.job?.company?.id === companyId));
       setIncidents(incidentRows);
       setAlerts(alertRows);
+      setDailyLogs(dailyLogRows);
       setTimesheets(timesheetRows);
       setNotifications(notificationRows);
       setAttachments(attachmentRows);
@@ -372,17 +398,6 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
   useEffect(() => {
     loadData();
   }, [user.companyId, user.id]);
-
-  useEffect(() => {
-    if (assignments.length === 1 && !shiftDraft.assignmentId) {
-      setShiftDraft((current) => ({
-        ...current,
-        assignmentId: String(assignments[0].id),
-        siteId: current.siteId || (assignments[0].job?.site?.id ? String(assignments[0].job?.site?.id) : ''),
-        siteName: assignments[0].job?.site?.name || current.siteName,
-      }));
-    }
-  }, [assignments, shiftDraft.assignmentId]);
 
   function draftFor(applicationId: number): HireDraft {
     return (
@@ -409,6 +424,7 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
     return (
       siteDrafts[site.id] || {
         name: site.name,
+        clientId: site.client?.id ? String(site.client.id) : '',
         clientName: site.clientName || '',
         address: site.address,
         contactDetails: site.contactDetails || '',
@@ -435,6 +451,7 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
       setSubmittingSite(true);
       await createSite({
         name: siteName,
+        clientId: siteClientId ? Number(siteClientId) : undefined,
         clientName: clientName || undefined,
         address: siteAddress,
         contactDetails: siteContactDetails || undefined,
@@ -442,6 +459,7 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
         welfareCheckIntervalMinutes: Number(welfareCheckIntervalMinutes) || 60,
       });
       setSiteName('');
+      setSiteClientId('');
       setClientName('');
       setSiteAddress('');
       setSiteContactDetails('');
@@ -456,6 +474,28 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
     }
   }
 
+  async function handleCreateClient() {
+    try {
+      setSubmittingClient(true);
+      await createClient({
+        name: clientDraftName,
+        contactName: clientDraftContactName || undefined,
+        contactDetails: clientDraftContactDetails || undefined,
+        status: clientDraftStatus,
+      });
+      setClientDraftName('');
+      setClientDraftContactName('');
+      setClientDraftContactDetails('');
+      setClientDraftStatus('active');
+      await loadData();
+      showAlert('Client created', 'The client is now available to link to company sites.');
+    } catch (error) {
+      showAlert('Create client failed', formatApiErrorMessage(error, 'Unable to create this client.'));
+    } finally {
+      setSubmittingClient(false);
+    }
+  }
+
   async function handleUpdateSite(siteId: number) {
     const site = sites.find((entry) => entry.id === siteId);
     if (!site) {
@@ -467,6 +507,7 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
       setSavingSiteId(siteId);
       await updateSite(siteId, {
         name: draft.name,
+        clientId: draft.clientId ? Number(draft.clientId) : undefined,
         clientName: draft.clientName || undefined,
         address: draft.address,
         contactDetails: draft.contactDetails || undefined,
@@ -509,24 +550,32 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
   }
 
   async function handleCreateShift() {
-    if (!shiftDraft.assignmentId) {
-      showAlert('Assignment required', 'Enter an assignment ID to schedule a company shift.');
+    if (!shiftDraft.siteId) {
+      showAlert('Site required', 'Choose a site ID before creating a shift.');
       return;
     }
 
-    const parsedAssignmentId = Number(shiftDraft.assignmentId);
-    if (!Number.isFinite(parsedAssignmentId)) {
-      showAlert('Invalid assignment ID', 'Use one of the listed numeric assignment IDs before creating a shift.');
-      return;
-    }
+    const directGuard = shiftDraft.guardId
+      ? linkedGuards.find((guard) => guard.id === Number(shiftDraft.guardId))
+      : undefined;
+    const selectedSite = sites.find((site) => site.id === Number(shiftDraft.siteId));
 
-    const assignment = assignments.find((entry) => entry.id === parsedAssignmentId);
-    if (!assignment) {
+    if (!Number.isFinite(Number(shiftDraft.siteId)) || !selectedSite) {
       showAlert(
-        'Assignment not found',
-        assignmentOptionsText
-          ? `Use one of the listed assignment IDs.\n\n${assignmentOptionsText}`
-          : 'Hire a guard first so the dashboard has a valid assignment to schedule.',
+        'Invalid site ID',
+        siteOptionsText
+          ? `Use one of the listed site IDs.\n\n${siteOptionsText}`
+          : 'Create a site first before scheduling shifts.',
+      );
+      return;
+    }
+
+    if (!directGuard) {
+      showAlert(
+        'Guard required',
+        linkedGuardOptionsText
+          ? `Choose one of the linked guard IDs.\n\n${linkedGuardOptionsText}`
+          : 'Link a guard to the company before creating site shifts.',
       );
       return;
     }
@@ -534,11 +583,12 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
     try {
       setSubmittingShift(true);
       await createShift({
-        assignmentId: parsedAssignmentId,
-        siteId: shiftDraft.siteId ? Number(shiftDraft.siteId) : assignment.job?.site?.id,
-        siteName: shiftDraft.siteName || assignment.job?.site?.name || undefined,
+        guardId: directGuard?.id,
+        siteId: selectedSite.id,
+        checkCallIntervalMinutes: Number(shiftDraft.checkCallIntervalMinutes) || undefined,
         start: shiftDraft.start,
         end: shiftDraft.end,
+        status: shiftDraft.status || undefined,
       });
       setShiftDraft(createDefaultShiftDraft());
       await loadData();
@@ -694,6 +744,7 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
     () => notifications.filter((notification) => notification.status === 'unread'),
     [notifications],
   );
+  const recentDailyLogs = useMemo(() => dailyLogs.slice(0, 8), [dailyLogs]);
   const recentNotifications = useMemo(() => notifications.slice(0, 5), [notifications]);
   const recentAttachments = useMemo(() => attachments.slice(0, 5), [attachments]);
   const recentAuditLogs = useMemo(() => auditLogs.slice(0, 5), [auditLogs]);
@@ -715,15 +766,6 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
     () => incidents.filter((incident) => incident.status === 'open').length,
     [incidents],
   );
-  const assignmentOptionsText = useMemo(
-    () =>
-      assignments.length === 0
-        ? ''
-        : assignments
-            .map((assignment) => `${assignment.id}=${assignment.guard?.fullName || `Guard #${assignment.guardId}`}`)
-            .join(' | '),
-    [assignments],
-  );
   const siteOptionsText = useMemo(
     () =>
       sites.length === 0
@@ -731,6 +773,36 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
         : sites.map((site) => `${site.id}=${site.name}`).join(' | '),
     [sites],
   );
+  const clientOptionsText = useMemo(
+    () =>
+      clients.length === 0
+        ? ''
+        : clients.map((client) => `${client.id}=${client.name}`).join(' | '),
+    [clients],
+  );
+  const linkedGuardOptionsText = useMemo(
+    () =>
+      linkedGuards.length === 0
+        ? ''
+        : linkedGuards.map((guard) => `${guard.id}=${guard.fullName}`).join(' | '),
+    [linkedGuards],
+  );
+  const selectedShift =
+    shifts.find((shift) => shift.id === selectedShiftId) ||
+    activeShifts[0] ||
+    scheduledShifts[0] ||
+    shifts[0] ||
+    null;
+  const selectedShiftDailyLogs = dailyLogs.filter((entry) => entry.shift?.id === selectedShift?.id);
+  const selectedShiftIncidents = incidents.filter((incident) => incident.shift?.id === selectedShift?.id);
+  const selectedShiftTimesheets = timesheets.filter((timesheet) => timesheet.shift?.id === selectedShift?.id);
+
+  useEffect(() => {
+    const selectedStillExists = selectedShiftId ? shifts.some((shift) => shift.id === selectedShiftId) : false;
+    if ((!selectedShiftId || !selectedStillExists) && selectedShift?.id) {
+      setSelectedShiftId(selectedShift.id);
+    }
+  }, [selectedShift?.id, selectedShiftId, shifts]);
 
   const invoiceDraft = useMemo(() => {
     if (!company || approvedTimesheets.length === 0) {
@@ -860,7 +932,7 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
     { id: 'overview', label: 'Overview', description: 'Command center, metrics, and live activity.' },
     { id: 'sites', label: 'Sites', description: 'Manage client sites and welfare settings.' },
     { id: 'guards', label: 'Guards', description: 'View linked guards and operational status.' },
-    { id: 'recruitment', label: 'Recruitment', description: 'Advertise jobs and hire applicants.' },
+    { id: 'recruitment', label: 'Legacy Recruitment', description: 'Keep older job hiring available without driving daily operations.' },
     { id: 'shifts', label: 'Shift Ops', description: 'Track live shifts, patrols, and compliance.' },
     { id: 'timesheets', label: 'Timesheets', description: 'Review submitted hours and approvals.' },
     { id: 'incidents', label: 'Incidents', description: 'Monitor site issues and resolutions.' },
@@ -1047,8 +1119,21 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
         </View>
 
         <View style={[styles.sectionColumns, isDesktopWeb && styles.sectionColumnsDesktop]}>
+          <FeatureCard title="Create Client" subtitle={`${clients.length} client records`} style={styles.desktopPanel}>
+            {clientOptionsText ? <Text style={styles.helperText}>Client IDs: {clientOptionsText}</Text> : null}
+            <TextInput style={styles.input} placeholder="Client name" value={clientDraftName} onChangeText={setClientDraftName} />
+            <TextInput style={styles.input} placeholder="Client contact name" value={clientDraftContactName} onChangeText={setClientDraftContactName} />
+            <TextInput style={styles.input} placeholder="Client contact details" value={clientDraftContactDetails} onChangeText={setClientDraftContactDetails} />
+            <TextInput style={styles.input} placeholder="Client status" value={clientDraftStatus} onChangeText={setClientDraftStatus} />
+            <Pressable style={[styles.button, submittingClient && styles.buttonDisabled]} {...pressHandlers(handleCreateClient)} disabled={submittingClient}>
+              <Text style={styles.buttonText}>{submittingClient ? 'Creating client...' : 'Create Client'}</Text>
+            </Pressable>
+          </FeatureCard>
+
           <FeatureCard title="Create Site" subtitle="Register a client site before assigning jobs or shifts." style={styles.desktopPanel}>
+            {clientOptionsText ? <Text style={styles.helperText}>Client IDs: {clientOptionsText}</Text> : null}
             <TextInput style={styles.input} placeholder="Site name" value={siteName} onChangeText={setSiteName} />
+            <TextInput style={styles.input} placeholder="Client ID (recommended)" keyboardType="number-pad" value={siteClientId} onChangeText={setSiteClientId} />
             <TextInput style={styles.input} placeholder="Client name" value={clientName} onChangeText={setClientName} />
             <TextInput style={styles.input} placeholder="Site address" value={siteAddress} onChangeText={setSiteAddress} />
             <TextInput style={styles.input} placeholder="Site contact details" value={siteContactDetails} onChangeText={setSiteContactDetails} />
@@ -1089,7 +1174,9 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
                   <View style={styles.recordHeader}>
                     <View style={styles.recordCopy}>
                       <Text style={styles.recordTitle}>{site.name}</Text>
-                      <Text style={styles.helperText}>{site.clientName || 'Client not set'} | {site.status}</Text>
+                      <Text style={styles.helperText}>
+                        {site.client?.name || site.clientName || 'Client not set'} | {site.status}
+                      </Text>
                     </View>
                     <View style={styles.inlineStats}>
                       <Text style={styles.helperText}>Guards: {countUniqueGuards(siteShifts)}</Text>
@@ -1099,6 +1186,7 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
                   </View>
                   <View style={[styles.formGrid, isDesktopWeb && styles.formGridDesktop]}>
                     <TextInput style={styles.input} placeholder="Site name" value={draft.name} onChangeText={(value: string) => updateSiteDraft(site.id, 'name', value)} />
+                    <TextInput style={styles.input} placeholder="Client ID" keyboardType="number-pad" value={draft.clientId} onChangeText={(value: string) => updateSiteDraft(site.id, 'clientId', value)} />
                     <TextInput style={styles.input} placeholder="Client name" value={draft.clientName} onChangeText={(value: string) => updateSiteDraft(site.id, 'clientName', value)} />
                     <TextInput style={styles.input} placeholder="Address" value={draft.address} onChangeText={(value: string) => updateSiteDraft(site.id, 'address', value)} />
                     <TextInput style={styles.input} placeholder="Contact details" value={draft.contactDetails} onChangeText={(value: string) => updateSiteDraft(site.id, 'contactDetails', value)} />
@@ -1320,39 +1408,46 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
         <View style={styles.sectionBanner}>
           <Text style={styles.sectionTitle}>Shift Operations</Text>
           <Text style={styles.sectionSubtitle}>
-            Every live shift should become the operational container for check-in, welfare calls, patrols, logs, incidents, and attendance.
+            Schedule work by site, assign a guard directly, and manage all live activity from the shift context.
           </Text>
         </View>
 
         <View style={[styles.sectionColumns, isDesktopWeb && styles.sectionColumnsDesktop]}>
-          <FeatureCard title="Schedule Shift" subtitle="Minimum company scheduling flow for hired guards." style={styles.desktopPanel}>
-            {assignments.length > 0 ? (
+          <FeatureCard title="Schedule Shift" subtitle="Primary workflow: site -> shift -> assigned guard." style={styles.desktopPanel}>
+            {linkedGuards.length > 0 ? (
               <View style={styles.infoBox}>
-                <Text style={styles.infoBoxText}>Assignment IDs: {assignmentOptionsText}</Text>
+                {linkedGuardOptionsText ? <Text style={styles.infoBoxText}>Linked guard IDs: {linkedGuardOptionsText}</Text> : null}
                 {siteOptionsText ? <Text style={styles.infoBoxText}>Site IDs: {siteOptionsText}</Text> : null}
               </View>
             ) : (
-              <Text style={styles.helperText}>Hire a guard first to create a shift from an assignment.</Text>
+              <Text style={styles.helperText}>Link a guard to the company roster first, then schedule that guard onto a site shift.</Text>
             )}
             <TextInput
               style={styles.input}
-              placeholder="Assignment ID"
+              placeholder="Guard ID (for direct assignment)"
               keyboardType="number-pad"
-              value={shiftDraft.assignmentId}
-              onChangeText={(value: string) => setShiftDraft((current) => ({ ...current, assignmentId: value }))}
+              value={shiftDraft.guardId}
+              onChangeText={(value: string) => setShiftDraft((current) => ({ ...current, guardId: value }))}
             />
             <TextInput
               style={styles.input}
-              placeholder="Site ID (optional)"
+              placeholder="Site ID"
               keyboardType="number-pad"
               value={shiftDraft.siteId}
               onChangeText={(value: string) => setShiftDraft((current) => ({ ...current, siteId: value }))}
             />
             <TextInput
               style={styles.input}
-              placeholder="Site name fallback"
-              value={shiftDraft.siteName}
-              onChangeText={(value: string) => setShiftDraft((current) => ({ ...current, siteName: value }))}
+              placeholder="Check call interval minutes"
+              keyboardType="number-pad"
+              value={shiftDraft.checkCallIntervalMinutes}
+              onChangeText={(value: string) => setShiftDraft((current) => ({ ...current, checkCallIntervalMinutes: value }))}
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="Shift status"
+              value={shiftDraft.status}
+              onChangeText={(value: string) => setShiftDraft((current) => ({ ...current, status: value }))}
             />
             <TextInput
               style={styles.input}
@@ -1404,9 +1499,84 @@ export function CompanyDashboardScreen({ user }: CompanyDashboardScreenProps) {
                 </View>
                 <View style={styles.inlineStats}>
                   <Text style={styles.helperText}>Guard: {shift.guard?.fullName || `#${shift.guard?.id ?? shift.guardId ?? 'N/A'}`}</Text>
-                  <Text style={styles.helperText}>Check calls: hourly</Text>
-                  <Text style={styles.helperText}>Patrol/logs: tracked inside shift</Text>
+                  <Text style={styles.helperText}>Site: {shift.site?.name || shift.siteName || 'Unassigned site'}</Text>
+                  <Text style={styles.helperText}>Check calls: every {shift.checkCallIntervalMinutes || 60} mins</Text>
+                  <Text style={styles.helperText}>Logs/incidents/timesheets tracked inside shift</Text>
                 </View>
+                <Pressable style={styles.secondaryButton} {...pressHandlers(() => setSelectedShiftId(shift.id))}>
+                  <Text style={styles.secondaryButtonText}>{selectedShift?.id === shift.id ? 'Open Shift' : 'View Shift'}</Text>
+                </Pressable>
+              </View>
+            ))
+          )}
+        </FeatureCard>
+
+        <FeatureCard
+          title="Selected Shift Context"
+          subtitle={selectedShift ? `${selectedShift.siteName} | ${selectedShift.status}` : 'Select a shift to inspect activity and timesheets.'}
+          style={styles.desktopPanel}
+        >
+          {!selectedShift ? (
+            <Text style={styles.helperText}>No shift is selected yet.</Text>
+          ) : (
+            <View style={styles.sectionRecord}>
+              <View style={styles.recordHeader}>
+                <View style={styles.recordCopy}>
+                  <Text style={styles.recordTitle}>{selectedShift.siteName}</Text>
+                  <Text style={styles.helperText}>{formatDateTimeRange(selectedShift.start, selectedShift.end)}</Text>
+                </View>
+                <View style={styles.statusPill}>
+                  <Text style={styles.statusPillText}>{selectedShift.status}</Text>
+                </View>
+              </View>
+              <View style={styles.inlineStats}>
+                <Text style={styles.helperText}>Guard: {selectedShift.guard?.fullName || `#${selectedShift.guard?.id ?? selectedShift.guardId ?? 'N/A'}`}</Text>
+                <Text style={styles.helperText}>Site: {selectedShift.site?.name || selectedShift.siteName}</Text>
+                <Text style={styles.helperText}>Logs: {selectedShiftDailyLogs.length}</Text>
+                <Text style={styles.helperText}>Incidents: {selectedShiftIncidents.length}</Text>
+                <Text style={styles.helperText}>Timesheets: {selectedShiftTimesheets.length}</Text>
+              </View>
+              {selectedShiftDailyLogs.slice(0, 3).map((entry) => (
+                <View key={entry.id} style={styles.rowCard}>
+                  <Text style={styles.listTitle}>{entry.logType}</Text>
+                  <Text style={styles.helperText}>{entry.message}</Text>
+                  <Text style={styles.helperText}>{new Date(entry.createdAt).toLocaleString()}</Text>
+                </View>
+              ))}
+              {selectedShiftIncidents.slice(0, 2).map((incident) => (
+                <View key={incident.id} style={styles.rowCard}>
+                  <Text style={styles.listTitle}>{incident.title}</Text>
+                  <Text style={styles.helperText}>{incident.status} | {incident.severity}</Text>
+                </View>
+              ))}
+              {selectedShiftTimesheets.map((timesheet) => (
+                <View key={timesheet.id} style={styles.rowCard}>
+                  <Text style={styles.listTitle}>Timesheet #{timesheet.id}</Text>
+                  <Text style={styles.helperText}>
+                    {timesheet.approvalStatus} | {timesheet.hoursWorked} hours
+                  </Text>
+                </View>
+              ))}
+              {selectedShiftDailyLogs.length === 0 && selectedShiftIncidents.length === 0 && selectedShiftTimesheets.length === 0 ? (
+                <Text style={styles.helperText}>No activity has been recorded for this shift yet.</Text>
+              ) : null}
+            </View>
+          )}
+        </FeatureCard>
+
+        <FeatureCard title="Recent Shift Log Book" subtitle={`${recentDailyLogs.length} recent entries`} style={styles.desktopPanel}>
+          {recentDailyLogs.length === 0 ? (
+            <Text style={styles.helperText}>No shift log entries recorded yet.</Text>
+          ) : (
+            recentDailyLogs.map((entry) => (
+              <View key={entry.id} style={styles.sectionRecord}>
+                <View style={styles.recordHeader}>
+                  <View style={styles.recordCopy}>
+                    <Text style={styles.recordTitle}>{entry.shift?.siteName || `Shift #${entry.shift?.id ?? entry.id}`}</Text>
+                    <Text style={styles.helperText}>{entry.logType} | {new Date(entry.createdAt).toLocaleString()}</Text>
+                  </View>
+                </View>
+                <Text style={styles.helperText}>{entry.message}</Text>
               </View>
             ))
           )}

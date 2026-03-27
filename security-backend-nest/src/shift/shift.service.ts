@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Shift } from './entities/shift.entity';
@@ -14,6 +14,7 @@ import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { CompanyService } from '../company/company.service';
 import { GuardProfileService } from '../guard-profile/guard-profile.service';
 import { isCompanyRole, UserRole } from '../user/entities/user.entity';
+import { CompanyGuardService } from '../company-guard/company-guard.service';
 
 @Injectable()
 export class ShiftService {
@@ -33,6 +34,7 @@ export class ShiftService {
     private readonly siteService: SiteService,
     private readonly companyService: CompanyService,
     private readonly guardProfileService: GuardProfileService,
+    private readonly companyGuardService: CompanyGuardService,
   ) {}
 
   async findAll(): Promise<Shift[]> {
@@ -122,6 +124,19 @@ export class ShiftService {
   }
 
   async create(dto: CreateShiftDto) {
+    const start = new Date(dto.start);
+    const end = new Date(dto.end);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+      throw new BadRequestException('Shift start and end must be valid dates');
+    }
+    if (end <= start) {
+      throw new BadRequestException('Shift end must be after shift start');
+    }
+
+    if (!dto.siteId) {
+      throw new BadRequestException('Shift creation requires a siteId');
+    }
+
     const assignment = dto.assignmentId
       ? await this.assignmentService.findOne(dto.assignmentId)
       : null;
@@ -154,7 +169,10 @@ export class ShiftService {
         })
       : assignment?.guard ?? jobApplication?.guard ?? null;
 
-    const site = dto.siteId ? await this.siteService.findOne(dto.siteId) : job?.site ?? null;
+    const siteId = dto.siteId;
+    const site = await this.siteService.findOne(siteId);
+    const normalizedStatus = dto.status?.trim().toLowerCase();
+    const allowedStatuses = new Set(['draft', 'assigned', 'in_progress', 'completed']);
 
     if (!company) {
       throw new NotFoundException('Company context is required to create a shift');
@@ -162,6 +180,10 @@ export class ShiftService {
 
     if (!guard) {
       throw new NotFoundException('Guard assignment context is required to create a shift');
+    }
+
+    if (normalizedStatus && !allowedStatuses.has(normalizedStatus)) {
+      throw new BadRequestException('Shift status is invalid');
     }
 
     const shift = this.shiftRepo.create({
@@ -172,10 +194,12 @@ export class ShiftService {
       job,
       jobApplication,
       createdByUserId: dto.createdByUserId ?? company.user?.id ?? null,
-      siteName: site?.name || dto.siteName || 'Unassigned Site',
-      start: new Date(dto.start),
-      end: new Date(dto.end),
-      status: dto.status ?? 'scheduled',
+      siteName: site.name,
+      start,
+      end,
+      checkCallIntervalMinutes:
+        dto.checkCallIntervalMinutes ?? site.welfareCheckIntervalMinutes ?? 60,
+      status: normalizedStatus ?? 'assigned',
     });
 
     const savedShift = await this.shiftRepo.save(shift);
@@ -213,21 +237,22 @@ export class ShiftService {
       throw new ForbiddenException('Job application does not belong to the current company');
     }
 
-    if (!assignment && !jobApplication) {
-      throw new ForbiddenException(
-        'Company shift creation requires an assignment or hired job application context',
-      );
-    }
-
-    const contextGuard = assignment?.guard ?? jobApplication?.guard ?? null;
+    const directGuard = dto.guardId
+      ? await this.guardProfileService.findOne(dto.guardId)
+      : null;
+    const contextGuard = assignment?.guard ?? jobApplication?.guard ?? directGuard ?? null;
     if (!contextGuard) {
       throw new ForbiddenException('Shift creation requires a validated guard context');
     }
 
-    if (dto.guardId && dto.guardId !== contextGuard.id) {
+    if ((assignment || jobApplication) && dto.guardId && dto.guardId !== contextGuard.id) {
       throw new ForbiddenException(
         'Guard must match the validated assignment or application context',
       );
+    }
+
+    if (!assignment && !jobApplication) {
+      await this.companyGuardService.ensureActiveRelationship(company.id, contextGuard.id);
     }
 
     const job = dto.jobId
@@ -241,8 +266,13 @@ export class ShiftService {
       throw new ForbiddenException('Job does not belong to the current company');
     }
 
-    const site = dto.siteId ? await this.siteService.findOne(dto.siteId) : job?.site ?? null;
-    if (site && site.company.id !== company.id) {
+    if (!dto.siteId) {
+      throw new BadRequestException('Shift creation requires a siteId');
+    }
+
+    const siteId = dto.siteId;
+    const site = await this.siteService.findOne(siteId);
+    if (site.company.id !== company.id) {
       throw new ForbiddenException('Site does not belong to the current company');
     }
 
@@ -254,7 +284,10 @@ export class ShiftService {
       jobId: job?.id ?? dto.jobId,
       jobApplicationId: jobApplication?.id ?? dto.jobApplicationId,
       createdByUserId: user.sub,
-      siteId: site?.id ?? dto.siteId,
+      siteId: site.id,
+      checkCallIntervalMinutes:
+        dto.checkCallIntervalMinutes ?? site.welfareCheckIntervalMinutes ?? undefined,
+      status: dto.status ?? 'assigned',
     });
   }
 

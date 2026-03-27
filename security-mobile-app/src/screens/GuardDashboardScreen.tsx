@@ -4,19 +4,18 @@ import { FeatureCard } from '../components/FeatureCard';
 import {
   checkInShift,
   checkOutShift,
+  createDailyLog,
   createIncident,
-  createJobApplication,
   createSafetyAlert,
   formatApiErrorMessage,
   getMyGuard,
   listMyAttachments,
-  listJobApplications,
+  listMyShifts,
   listMyNotifications,
+  listMyDailyLogs,
   listMyIncidents,
   listMyTimesheets,
-  listJobs,
   listMyAttendance,
-  listShifts,
   submitTimesheet,
   updateMyGuard,
 } from '../services/api';
@@ -24,9 +23,8 @@ import {
   Attachment,
   AttendanceEvent,
   AuthUser,
+  DailyLog,
   Incident,
-  Job,
-  JobApplication,
   Notification,
   Shift,
   Timesheet,
@@ -49,10 +47,9 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
   const [siaLicence, setSiaLicence] = useState('');
   const [locationSharing, setLocationSharing] = useState(false);
   const [shifts, setShifts] = useState<Shift[]>([]);
-  const [jobs, setJobs] = useState<Job[]>([]);
-  const [applications, setApplications] = useState<JobApplication[]>([]);
   const [attendance, setAttendance] = useState<AttendanceEvent[]>([]);
   const [incidents, setIncidents] = useState<Incident[]>([]);
+  const [dailyLogs, setDailyLogs] = useState<DailyLog[]>([]);
   const [timesheets, setTimesheets] = useState<Timesheet[]>([]);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -64,43 +61,37 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
   const [incidentNotes, setIncidentNotes] = useState('');
   const [incidentSeverity, setIncidentSeverity] = useState<Incident['severity']>('medium');
   const [incidentLocation, setIncidentLocation] = useState('');
+  const [dailyLogMessage, setDailyLogMessage] = useState('');
+  const [submittingDailyLogType, setSubmittingDailyLogType] = useState<DailyLog['logType'] | null>(null);
   const [submittingIncident, setSubmittingIncident] = useState(false);
   const [submittingTimesheetId, setSubmittingTimesheetId] = useState<number | null>(null);
   const [submittingAlertType, setSubmittingAlertType] = useState<'welfare' | 'panic' | null>(null);
-  const [applyingJobId, setApplyingJobId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [selectedShiftId, setSelectedShiftId] = useState<number | null>(null);
 
   async function loadData() {
     try {
       setLoading(true);
       setLoadError(null);
-      const [myGuard, shiftRows, jobRows, applicationRows, attendanceRows, incidentRows, timesheetRows, notificationRows, attachmentRows] = await Promise.all([
+      const [myGuard, shiftRows, attendanceRows, incidentRows, dailyLogRows, timesheetRows, notificationRows, attachmentRows] = await Promise.all([
         getMyGuard(),
-        listShifts(),
-        listJobs(),
-        listJobApplications(),
+        listMyShifts(),
         listMyAttendance(),
         listMyIncidents(),
+        listMyDailyLogs(),
         listMyTimesheets(),
         listMyNotifications(),
         listMyAttachments(),
       ]);
-
-      const ownShifts = shiftRows.filter((shift) => (shift.guard?.id ?? shift.guardId) === user.guardId);
-      const ownApplications = applicationRows.filter(
-        (application) => (application.guard?.id ?? application.guardId) === user.guardId,
-      );
-
       setFullName(myGuard.fullName || '');
       setSiaLicence(myGuard.siaLicenseNumber || myGuard.siaLicenceNumber || '');
       setPhone(myGuard.phone || '');
       setLocationSharing(myGuard.locationSharingEnabled ?? false);
-      setShifts(ownShifts);
-      setJobs(jobRows.filter((job) => job.status === 'open'));
-      setApplications(ownApplications);
+      setShifts(shiftRows);
       setAttendance(attendanceRows);
       setIncidents(incidentRows);
+      setDailyLogs(dailyLogRows);
       setTimesheets(timesheetRows);
       setNotifications(notificationRows);
       setAttachments(attachmentRows);
@@ -162,7 +153,7 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
         notes: incidentNotes,
         severity: incidentSeverity,
         locationText: incidentLocation || undefined,
-        shiftId: operationsShift?.id,
+        shiftId: selectedShift?.id,
       });
       setIncidentTitle('');
       setIncidentNotes('');
@@ -178,7 +169,7 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
   }
 
   async function handleCreateSafetyAlert(type: 'welfare' | 'panic') {
-    if (!operationsShift?.id) {
+    if (!selectedShift?.id) {
       showAlert('No assigned shift', 'Safety alerts require an assigned or active shift.');
       return;
     }
@@ -186,7 +177,7 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
     try {
       setSubmittingAlertType(type);
       await createSafetyAlert({
-        shiftId: operationsShift.id,
+        shiftId: selectedShift.id,
         type,
         priority: type === 'panic' ? 'critical' : 'high',
         message:
@@ -210,24 +201,6 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
     loadData();
   }, [user.guardId]);
 
-  async function handleApply(jobId: number) {
-    if (!user.guardId) {
-      showAlert('Missing guard profile', 'This account does not have a linked guard profile yet.');
-      return;
-    }
-
-    try {
-      setApplyingJobId(jobId);
-      await createJobApplication({ jobId, guardId: user.guardId });
-      await loadData();
-      showAlert('Application sent', 'Your application has been submitted to the company.');
-    } catch (error) {
-      showAlert('Apply failed', formatApiErrorMessage(error, 'Unable to submit this job application.'));
-    } finally {
-      setApplyingJobId(null);
-    }
-  }
-
   async function handleSubmitTimesheet(timesheet: Timesheet) {
     try {
       setSubmittingTimesheetId(timesheet.id);
@@ -241,13 +214,49 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
     }
   }
 
-  const appliedJobIds = new Set(applications.map((application) => application.job?.id ?? application.jobId));
-  const availableJobs = jobs.filter((job) => !appliedJobIds.has(job.id));
+  async function handleCreateDailyLog(logType: DailyLog['logType']) {
+    if (!selectedShift?.id) {
+      showAlert('No assigned shift', 'Select an assigned shift before recording a log entry.');
+      return;
+    }
+
+    if (!dailyLogMessage.trim()) {
+      showAlert('Log message required', 'Enter a short operational note before saving the log entry.');
+      return;
+    }
+
+    try {
+      setSubmittingDailyLogType(logType);
+      await createDailyLog({
+        shiftId: selectedShift.id,
+        message: dailyLogMessage.trim(),
+        logType,
+      });
+      setDailyLogMessage('');
+      await loadData();
+      showAlert('Shift activity saved', 'The log book entry has been linked to the selected shift.');
+    } catch (error) {
+      showAlert('Shift log failed', formatApiErrorMessage(error, 'Unable to save this shift log entry.'));
+    } finally {
+      setSubmittingDailyLogType(null);
+    }
+  }
+
   const activeShift = shifts.find((shift) => shift.status === 'in_progress') || null;
-  const upcomingShift = shifts.find((shift) => shift.status === 'scheduled') || null;
-  const operationsShift = activeShift || upcomingShift;
+  const upcomingShift =
+    shifts.find((shift) => shift.status === 'assigned' || shift.status === 'scheduled') || null;
+  const selectedShift =
+    shifts.find((shift) => shift.id === selectedShiftId) || activeShift || upcomingShift || shifts[0] || null;
   const completedTimesheets = timesheets.filter((timesheet) => timesheet.shift?.status === 'completed');
   const unreadNotifications = notifications.filter((notification) => notification.status === 'unread');
+  const selectedShiftLogs = dailyLogs.filter((entry) => entry.shift?.id === selectedShift?.id);
+
+  useEffect(() => {
+    const selectedStillExists = selectedShiftId ? shifts.some((shift) => shift.id === selectedShiftId) : false;
+    if ((!selectedShiftId || !selectedStillExists) && selectedShift?.id) {
+      setSelectedShiftId(selectedShift.id);
+    }
+  }, [selectedShift?.id, selectedShiftId, shifts]);
 
   if (loading) {
     return (
@@ -261,7 +270,7 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <Text style={styles.title}>Guard Dashboard</Text>
-      <Text style={styles.subtitle}>Apply for jobs, manage assigned shifts, and run live site operations.</Text>
+      <Text style={styles.subtitle}>Manage assigned site shifts, run live operations, and submit timesheets from one shift context.</Text>
 
       {loadError ? (
         <FeatureCard title="Load Issue" subtitle="The latest guard data could not be loaded.">
@@ -293,82 +302,87 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
         </Pressable>
       </FeatureCard>
 
-      <FeatureCard title="Job Marketplace" subtitle={`Open jobs available: ${availableJobs.length}`}>
-        {availableJobs.length === 0 ? (
-          <Text style={styles.helperText}>You have applied to all currently open jobs.</Text>
-        ) : (
-          availableJobs.slice(0, 5).map((job) => (
-            <View key={job.id} style={styles.listItem}>
-              <Text style={styles.listTitle}>{job.title}</Text>
-              <Text style={styles.helperText}>
-                Guards needed: {job.guardsRequired} | Rate: {job.hourlyRate}
-              </Text>
-              {job.description ? <Text style={styles.helperText}>{job.description}</Text> : null}
-              <Pressable style={[styles.button, applyingJobId === job.id && styles.buttonDisabled]} onPress={() => handleApply(job.id)} disabled={applyingJobId === job.id}>
-                <Text style={styles.buttonText}>{applyingJobId === job.id ? 'Applying...' : 'Apply'}</Text>
-              </Pressable>
-            </View>
-          ))
-        )}
-      </FeatureCard>
-
-      <FeatureCard title="My Applications" subtitle={`Submitted recruitment applications: ${applications.length}`}>
-        {applications.length === 0 ? (
-          <Text style={styles.helperText}>You have not applied for any jobs yet.</Text>
-        ) : (
-          applications.map((application) => (
-            <View key={application.id} style={styles.listItem}>
-              <Text style={styles.listTitle}>{application.job?.title || `Job #${application.jobId}`}</Text>
-              <Text style={styles.helperText}>Status: {application.status}</Text>
-            </View>
-          ))
-        )}
-      </FeatureCard>
-
       <FeatureCard
         title="Assigned Shift Operations"
         subtitle={
-          operationsShift
-            ? `${operationsShift.siteName} | ${operationsShift.status}`
+          selectedShift
+            ? `${selectedShift.siteName} | ${selectedShift.status}`
             : 'All live shift actions should sit under the assigned shift.'
         }
       >
-        {!operationsShift ? (
+        {!selectedShift ? (
           <Text style={styles.helperText}>No assigned shift is currently available for live operations.</Text>
         ) : (
           <View style={styles.listItem}>
-            <Text style={styles.listTitle}>{operationsShift.siteName}</Text>
+            <Text style={styles.listTitle}>{selectedShift.siteName}</Text>
             <Text style={styles.helperText}>
-              {new Date(operationsShift.start).toLocaleString()} to {new Date(operationsShift.end).toLocaleString()}
+              {new Date(selectedShift.start).toLocaleString()} to {new Date(selectedShift.end).toLocaleString()}
             </Text>
             <Text style={styles.helperText}>
-              Employer: {operationsShift.company?.name || `#${operationsShift.company?.id ?? operationsShift.companyId ?? 'N/A'}`}
+              Employer: {selectedShift.company?.name || `#${selectedShift.company?.id ?? selectedShift.companyId ?? 'N/A'}`}
             </Text>
             <Text style={styles.helperText}>
-              Use this assigned shift to check in, check out, raise incidents, and send welfare or emergency alerts.
+              Check calls every {selectedShift.checkCallIntervalMinutes || 60} minutes. Use this shift to check in, log activity, raise incidents, and submit the linked timesheet.
             </Text>
-            {operationsShift.status === 'scheduled' ? (
+            {(selectedShift.status === 'scheduled' || selectedShift.status === 'assigned') ? (
               <Pressable
                 style={styles.button}
-                onPress={() => handleCheckIn(operationsShift.id)}
-                disabled={attendanceBusyShiftId === operationsShift.id}
+                onPress={() => handleCheckIn(selectedShift.id)}
+                disabled={attendanceBusyShiftId === selectedShift.id}
               >
                 <Text style={styles.buttonText}>
-                  {attendanceBusyShiftId === operationsShift.id ? 'Checking in...' : 'Check In'}
+                  {attendanceBusyShiftId === selectedShift.id ? 'Checking in...' : 'Check In'}
                 </Text>
               </Pressable>
             ) : null}
-            {operationsShift.status === 'in_progress' ? (
+            {selectedShift.status === 'in_progress' ? (
               <Pressable
                 style={styles.button}
-                onPress={() => handleCheckOut(operationsShift.id)}
-                disabled={attendanceBusyShiftId === operationsShift.id}
+                onPress={() => handleCheckOut(selectedShift.id)}
+                disabled={attendanceBusyShiftId === selectedShift.id}
               >
                 <Text style={styles.buttonText}>
-                  {attendanceBusyShiftId === operationsShift.id ? 'Checking out...' : 'Check Out'}
+                  {attendanceBusyShiftId === selectedShift.id ? 'Checking out...' : 'Check Out'}
                 </Text>
               </Pressable>
             ) : null}
+
+            <TextInput
+              style={[styles.input, styles.logInput]}
+              placeholder="Shift log / handover / check-call note"
+              multiline
+              value={dailyLogMessage}
+              onChangeText={setDailyLogMessage}
+            />
+            <View style={styles.actionRow}>
+              <Pressable
+                style={[styles.secondaryButton, submittingDailyLogType !== null && styles.buttonDisabled]}
+                onPress={() => handleCreateDailyLog('observation')}
+                disabled={submittingDailyLogType !== null}
+              >
+                <Text style={styles.secondaryButtonText}>
+                  {submittingDailyLogType === 'observation' ? 'Saving...' : 'Add Log Entry'}
+                </Text>
+              </Pressable>
+              <Pressable
+                style={[styles.secondaryButton, submittingDailyLogType !== null && styles.buttonDisabled]}
+                onPress={() => handleCreateDailyLog('check_call')}
+                disabled={submittingDailyLogType !== null}
+              >
+                <Text style={styles.secondaryButtonText}>
+                  {submittingDailyLogType === 'check_call' ? 'Saving...' : 'Record Check Call'}
+                </Text>
+              </Pressable>
+              <Pressable
+                style={[styles.secondaryButton, submittingDailyLogType !== null && styles.buttonDisabled]}
+                onPress={() => handleCreateDailyLog('welfare_check')}
+                disabled={submittingDailyLogType !== null}
+              >
+                <Text style={styles.secondaryButtonText}>
+                  {submittingDailyLogType === 'welfare_check' ? 'Saving...' : 'Record Welfare Check'}
+                </Text>
+              </Pressable>
+            </View>
 
             <TextInput style={styles.input} placeholder="Incident title" value={incidentTitle} onChangeText={setIncidentTitle} />
             <TextInput
@@ -432,6 +446,26 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
               <Text style={styles.helperText}>
                 Company: {shift.company?.name || `#${shift.company?.id ?? shift.companyId ?? 'N/A'}`}
               </Text>
+              <Text style={styles.helperText}>
+                Status: {shift.status} | Check calls every {shift.checkCallIntervalMinutes || 60} mins
+              </Text>
+              <Pressable style={styles.secondaryButton} onPress={() => setSelectedShiftId(shift.id)}>
+                <Text style={styles.secondaryButtonText}>{selectedShift?.id === shift.id ? 'Open Shift' : 'View Shift'}</Text>
+              </Pressable>
+            </View>
+          ))
+        )}
+      </FeatureCard>
+
+      <FeatureCard title="Shift Log Book" subtitle={`${selectedShiftLogs.length} entries for the selected shift`}>
+        {selectedShiftLogs.length === 0 ? (
+          <Text style={styles.helperText}>No log book activity recorded for the selected shift yet.</Text>
+        ) : (
+          selectedShiftLogs.map((entry) => (
+            <View key={entry.id} style={styles.listItem}>
+              <Text style={styles.listTitle}>{entry.logType}</Text>
+              <Text style={styles.helperText}>{entry.message}</Text>
+              <Text style={styles.helperText}>{new Date(entry.createdAt).toLocaleString()}</Text>
             </View>
           ))
         )}
