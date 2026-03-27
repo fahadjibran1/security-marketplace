@@ -52,6 +52,9 @@ export class Shift {
   @Column({ type: 'timestamp' })
   end!: Date;
 
+  @Column({ type: 'int', default: 60 })
+  checkCallIntervalMinutes!: number;
+
   @Column({ default: 'scheduled' })
   status!: string;
 
