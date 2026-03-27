@@ -2,6 +2,7 @@ import { AttendanceEvent } from '../attendance/entities/attendance.entity';
 import { Assignment } from '../assignment/entities/assignment.entity';
 import { Attachment } from '../attachment/entities/attachment.entity';
 import { AuditLog } from '../audit-log/entities/audit-log.entity';
+import { Client } from '../client/entities/client.entity';
 import { Company } from '../company/entities/company.entity';
 import { CompanyGuard } from '../company-guard/entities/company-guard.entity';
 import { DailyLog } from '../daily-log/entities/daily-log.entity';
@@ -23,6 +24,7 @@ export const appEntities = [
   Assignment,
   Attachment,
   AuditLog,
+  Client,
   Company,
   CompanyGuard,
   DailyLog,
