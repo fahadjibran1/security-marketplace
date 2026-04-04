@@ -108,7 +108,7 @@ export class JobApplicationService {
 
     const guard = await this.resolveGuardForUser(user);
 
-    return this.create(dto, guard.id);
+    return this.createForGuard(dto.jobId, guard.id);
   }
 
   async hire(applicationId: number, dto: HireApplicationDto) {
