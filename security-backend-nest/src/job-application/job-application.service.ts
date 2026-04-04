@@ -35,6 +35,34 @@ export class JobApplicationService {
     return this.appRepo.find();
   }
 
+  private async resolveGuardForUser(user: JwtPayload) {
+    const guard = await this.guardService.findByUserId(user.sub);
+    if (!guard) {
+      throw new NotFoundException('Guard profile not found');
+    }
+
+    return guard;
+  }
+
+  private async createForGuard(jobId: number, guardId: number): Promise<JobApplication> {
+    const job = await this.jobsService.findOne(jobId);
+    const guard = await this.guardService.findOne(guardId);
+
+    const existing = await this.appRepo.findOne({
+      where: {
+        job: { id: job.id },
+        guard: { id: guard.id },
+      },
+    });
+
+    if (existing) {
+      throw new ConflictException('Application already exists for this guard/job');
+    }
+
+    const application = this.appRepo.create({ job, guard, status: 'submitted' });
+    return this.appRepo.save(application);
+  }
+
   async findAllForUser(user: JwtPayload): Promise<JobApplication[]> {
     if (user.role === UserRole.ADMIN) {
       return this.findAll();
@@ -69,37 +97,18 @@ export class JobApplicationService {
     return app;
   }
 
-  async create(dto: CreateJobApplicationDto): Promise<JobApplication> {
-    const job = await this.jobsService.findOne(dto.jobId);
-    const guard = await this.guardService.findOne(dto.guardId);
-
-    const existing = await this.appRepo.findOne({
-      where: {
-        job: { id: job.id },
-        guard: { id: guard.id }
-      }
-    });
-
-    if (existing) throw new ConflictException('Application already exists for this guard/job');
-
-    const application = this.appRepo.create({ job, guard, status: 'submitted' });
-    return this.appRepo.save(application);
+  async create(dto: CreateJobApplicationDto, guardId: number): Promise<JobApplication> {
+    return this.createForGuard(dto.jobId, guardId);
   }
 
   async createForUser(user: JwtPayload, dto: CreateJobApplicationDto): Promise<JobApplication> {
     if (user.role === UserRole.ADMIN) {
-      return this.create(dto);
+      throw new BadRequestException('Admin job application creation requires an explicit guard selection flow');
     }
 
-    const guard = await this.guardService.findByUserId(user.sub);
-    if (!guard) {
-      throw new NotFoundException('Guard profile not found');
-    }
+    const guard = await this.resolveGuardForUser(user);
 
-    return this.create({
-      ...dto,
-      guardId: guard.id,
-    });
+    return this.create(dto, guard.id);
   }
 
   async hire(applicationId: number, dto: HireApplicationDto) {
