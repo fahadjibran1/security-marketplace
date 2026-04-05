@@ -130,7 +130,7 @@ export class ShiftService {
     }
 
     const guard = await this.guardProfileService.findByUserId(user.sub);
-    if (!guard || shift.guard.id !== guard.id) {
+    if (!guard || !shift.guard || shift.guard.id !== guard.id) {
       throw new NotFoundException(`Shift with id ${id} not found`);
     }
 

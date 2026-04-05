@@ -173,12 +173,12 @@ export class JobMatchService {
 
     const blockedGuardIds = new Set(
       overlappingShifts
-        .filter((shift) => {
-          if (!shift.start || !shift.end || !shift.guard) return false;
-          return shift.start < endAt && shift.end > startAt;
-        })
-        .map((shift) => shift.guard.id),
-    );
+          .filter((shift) => {
+            if (!shift.start || !shift.end || !shift.guard) return false;
+            return shift.start < endAt && shift.end > startAt;
+          })
+          .map((shift) => shift.guard!.id),
+      );
 
     return candidates.filter((guard) => !blockedGuardIds.has(guard.id));
   }
