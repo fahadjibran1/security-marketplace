@@ -26,6 +26,12 @@ export class JobApplicationController {
     return this.jobApplicationService.createForUser(user, dto);
   }
 
+  @Post('self')
+  @Roles(UserRole.GUARD)
+  createSelf(@CurrentUser() user: JwtPayload, @Body() dto: CreateJobApplicationDto) {
+    return this.jobApplicationService.createForUser(user, dto);
+  }
+
   @Post(':id/hire')
   @Roles(UserRole.ADMIN, ...COMPANY_ADMIN_ROLES)
   hire(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number, @Body() dto: HireApplicationDto) {

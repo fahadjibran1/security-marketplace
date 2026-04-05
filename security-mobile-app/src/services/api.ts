@@ -7,6 +7,8 @@ import {
   AuthSession,
   CompanyGuard,
   CompanyProfile,
+  Client,
+  CreateClientPayload,
   CreateIncidentPayload,
   CreateJobApplicationPayload,
   CreateJobPayload,
@@ -24,6 +26,7 @@ import {
   Shift,
   Timesheet,
   UpdateCompanyPayload,
+  UpdateClientPayload,
   UpdateGuardPayload,
   UpdateSitePayload,
   UpdateTimesheetPayload,
@@ -33,7 +36,7 @@ import {
   CreateDailyLogPayload,
 } from '../types/models';
 
-const LIVE_API_BASE_URL = 'https://api.observantsecurity.co.uk';
+const LIVE_API_BASE_URL = 'https://security-marketplace-api.onrender.com';
 const hasBrowserWindow =
   typeof window !== 'undefined' &&
   typeof window.location !== 'undefined' &&
@@ -239,6 +242,24 @@ export function listCompanyGuards() {
   return request<CompanyGuard[]>('/company-guards');
 }
 
+export function listClients() {
+  return request<Client[]>('/clients');
+}
+
+export function createClient(payload: CreateClientPayload) {
+  return request<Client>('/clients', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateClient(id: number, payload: UpdateClientPayload) {
+  return request<Client>(`/clients/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
 export function listSites() {
   return request<Site[]>('/sites');
 }
@@ -288,6 +309,10 @@ export function listAssignments() {
 
 export function listShifts() {
   return request<Shift[]>('/shifts');
+}
+
+export function listMyShifts() {
+  return request<Shift[]>('/shifts/my');
 }
 
 export function createShift(payload: CreateShiftPayload) {
@@ -442,7 +467,7 @@ export function createJob(payload: CreateJobPayload) {
 }
 
 export function createJobApplication(payload: CreateJobApplicationPayload) {
-  return request<JobApplication>('/job-applications', {
+  return request<JobApplication>('/job-applications/self', {
     method: 'POST',
     body: JSON.stringify(payload),
   });
