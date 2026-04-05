@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException, forwardRef } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Shift } from './entities/shift.entity';
@@ -45,6 +45,7 @@ export class ShiftService {
     private readonly timesheetRepo: Repository<Timesheet>,
     private readonly assignmentService: AssignmentService,
     private readonly timesheetService: TimesheetService,
+    @Inject(forwardRef(() => SiteService))
     private readonly siteService: SiteService,
     private readonly companyService: CompanyService,
     private readonly guardProfileService: GuardProfileService,
