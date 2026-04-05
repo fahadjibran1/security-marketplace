@@ -22,6 +22,7 @@ import { DailyLogModule } from './daily-log/daily-log.module';
 import { AttachmentModule } from './attachment/attachment.module';
 import { AuditLogModule } from './audit-log/audit-log.module';
 import { NotificationModule } from './notification/notification.module';
+import { ClientModule } from './client/client.module';
 import { HealthController } from './health.controller';
 import { buildNestTypeOrmOptions } from './database/typeorm.config';
 import { validateRuntimeEnv } from './config/runtime-env';
@@ -50,6 +51,7 @@ import { validateRuntimeEnv } from './config/runtime-env';
     UserModule,
     AuthModule,
     CompanyModule,
+    ClientModule,
     GuardProfileModule,
     JobModule,
     JobApplicationModule,

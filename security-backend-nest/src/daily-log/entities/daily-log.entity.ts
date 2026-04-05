@@ -13,6 +13,8 @@ import { Shift } from '../../shift/entities/shift.entity';
 export enum DailyLogType {
   PATROL = 'patrol',
   OBSERVATION = 'observation',
+  CHECK_CALL = 'check_call',
+  WELFARE_CHECK = 'welfare_check',
   VISITOR = 'visitor',
   DELIVERY = 'delivery',
   MAINTENANCE = 'maintenance',

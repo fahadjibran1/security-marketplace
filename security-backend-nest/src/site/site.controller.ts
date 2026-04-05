@@ -26,8 +26,12 @@ export class SiteController {
 
   @Get(':id')
   @Roles(UserRole.ADMIN, ...COMPANY_VIEW_ROLES)
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.siteService.findOne(id);
+  findOne(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
+    if (user.role === UserRole.ADMIN) {
+      return this.siteService.findOne(id);
+    }
+
+    return this.siteService.findOneForCompanyUser(user.sub, id);
   }
 
   @Post()

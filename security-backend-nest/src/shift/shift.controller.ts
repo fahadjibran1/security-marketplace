@@ -1,6 +1,7 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, UseGuards } from '@nestjs/common';
 import { ShiftService } from './shift.service';
 import { CreateShiftDto } from './dto/create-shift.dto';
+import { UpdateShiftDto } from './dto/update-shift.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -32,6 +33,18 @@ export class ShiftController {
   @Roles(UserRole.ADMIN, ...COMPANY_ADMIN_ROLES)
   create(@CurrentUser() user: JwtPayload, @Body() dto: CreateShiftDto) {
     return this.shiftService.createForUser(user, dto);
+  }
+
+  @Patch(':id')
+  @Roles(UserRole.ADMIN, ...COMPANY_ADMIN_ROLES)
+  update(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number, @Body() dto: UpdateShiftDto) {
+    return this.shiftService.updateForUser(user, id, dto);
+  }
+
+  @Delete(':id')
+  @Roles(UserRole.ADMIN, ...COMPANY_ADMIN_ROLES)
+  remove(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
+    return this.shiftService.removeForUser(user, id);
   }
 
   // Get single shift (must stay LAST)
