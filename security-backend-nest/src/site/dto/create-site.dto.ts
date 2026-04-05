@@ -48,4 +48,16 @@ export class CreateSiteDto {
   @IsOptional()
   @IsString()
   specialInstructions?: string;
+
+  @IsOptional()
+  @IsString()
+  initialShiftDate?: string;
+
+  @IsOptional()
+  @IsString()
+  initialShiftStartTime?: string;
+
+  @IsOptional()
+  @IsString()
+  initialShiftEndTime?: string;
 }

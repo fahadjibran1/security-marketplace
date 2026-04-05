@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, NotFoundException, forwardRef } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Site } from './entities/site.entity';
@@ -7,6 +7,7 @@ import { UpdateSiteDto } from './dto/update-site.dto';
 import { CompanyService } from '../company/company.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { ClientService } from '../client/client.service';
+import { ShiftService } from '../shift/shift.service';
 
 @Injectable()
 export class SiteService {
@@ -15,6 +16,8 @@ export class SiteService {
     private readonly companyService: CompanyService,
     private readonly auditLogService: AuditLogService,
     private readonly clientService: ClientService,
+    @Inject(forwardRef(() => ShiftService))
+    private readonly shiftService: ShiftService,
   ) {}
 
   findAll(): Promise<Site[]> {
@@ -73,6 +76,17 @@ export class SiteService {
     site.specialInstructions = dto.specialInstructions?.trim() || null;
 
     const saved = await this.siteRepo.save(site);
+    if (dto.initialShiftDate?.trim() && dto.initialShiftStartTime?.trim()) {
+      await this.shiftService.createStarterShiftForSite({
+        companyId: company.id,
+        siteId: saved.id,
+        createdByUserId: userId,
+        date: dto.initialShiftDate.trim(),
+        startTime: dto.initialShiftStartTime.trim(),
+        endTime: dto.initialShiftEndTime?.trim() || saved.operatingEndTime || undefined,
+        instructions: saved.specialInstructions,
+      });
+    }
     await this.auditLogService.log({
       company,
       user: { id: userId },

@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Shift } from './entities/shift.entity';
 import { ShiftController } from './shift.controller';
@@ -13,13 +13,14 @@ import { JobApplication } from '../job-application/entities/job-application.enti
 import { CompanyModule } from '../company/company.module';
 import { GuardProfileModule } from '../guard-profile/guard-profile.module';
 import { CompanyGuardModule } from '../company-guard/company-guard.module';
+import { Timesheet } from '../timesheet/entities/timesheet.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Shift, Company, GuardProfile, Job, JobApplication]),
+    TypeOrmModule.forFeature([Shift, Company, GuardProfile, Job, JobApplication, Timesheet]),
     AssignmentModule,
     TimesheetModule,
-    SiteModule,
+    forwardRef(() => SiteModule),
     CompanyModule,
     GuardProfileModule,
     CompanyGuardModule,

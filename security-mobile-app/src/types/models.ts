@@ -27,6 +27,20 @@ export interface CompanyProfile {
   user?: AuthUser;
 }
 
+export interface Client {
+  id: number;
+  companyId?: number;
+  name: string;
+  contactName?: string | null;
+  contactEmail?: string | null;
+  contactPhone?: string | null;
+  contactDetails?: string | null;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+  company?: CompanyProfile;
+}
+
 export interface GuardProfile {
   id: number;
   fullName: string;
@@ -43,13 +57,20 @@ export interface GuardProfile {
 export interface Site {
   id: number;
   companyId?: number;
+  clientId?: number;
   name: string;
   clientName?: string;
   address: string;
   contactDetails?: string;
   status: string;
+  requiredGuardCount: number;
+  operatingDays?: string | null;
+  operatingStartTime?: string | null;
+  operatingEndTime?: string | null;
   welfareCheckIntervalMinutes: number;
+  specialInstructions?: string | null;
   company?: CompanyProfile;
+  client?: Client | null;
 }
 
 // Job = company requirement
@@ -109,7 +130,9 @@ export interface Shift {
   siteName: string;
   start: string;
   end: string;
+  checkCallIntervalMinutes?: number;
   status: string;
+  instructions?: string | null;
   assignmentId?: number;
   companyId?: number;
   guardId?: number;
@@ -172,20 +195,31 @@ export interface CreateJobPayload {
 export interface CreateShiftPayload {
   assignmentId?: number;
   companyId?: number;
-  guardId?: number;
+  guardId?: number | null;
   jobId?: number;
   jobApplicationId?: number;
   createdByUserId?: number;
   siteId?: number;
+  checkCallIntervalMinutes?: number;
   siteName?: string;
   start: string;
   end: string;
   status?: string;
+  instructions?: string;
+}
+
+export interface UpdateShiftPayload {
+  siteId?: number;
+  guardId?: number | null;
+  start?: string;
+  end?: string;
+  checkCallIntervalMinutes?: number;
+  status?: string;
+  instructions?: string;
 }
 
 export interface CreateJobApplicationPayload {
   jobId: number;
-  guardId: number;
 }
 
 export interface HireApplicationPayload {
@@ -198,14 +232,34 @@ export interface HireApplicationPayload {
 
 export interface CreateSitePayload {
   name: string;
+  clientId?: number;
   clientName?: string;
   address: string;
   contactDetails?: string;
   status?: string;
+  requiredGuardCount?: number;
+  operatingDays?: string;
+  operatingStartTime?: string;
+  operatingEndTime?: string;
   welfareCheckIntervalMinutes?: number;
+  specialInstructions?: string;
+  initialShiftDate?: string;
+  initialShiftStartTime?: string;
+  initialShiftEndTime?: string;
 }
 
 export interface UpdateSitePayload extends Partial<CreateSitePayload> {}
+
+export interface CreateClientPayload {
+  name: string;
+  contactName?: string;
+  contactEmail?: string;
+  contactPhone?: string;
+  contactDetails?: string;
+  status?: string;
+}
+
+export interface UpdateClientPayload extends Partial<CreateClientPayload> {}
 
 export interface RegisterPayload {
   email: string;
@@ -305,7 +359,15 @@ export interface CreateSafetyAlertPayload {
 export interface DailyLog {
   id: number;
   message: string;
-  logType: 'patrol' | 'observation' | 'visitor' | 'delivery' | 'maintenance' | 'other';
+  logType:
+    | 'patrol'
+    | 'observation'
+    | 'check_call'
+    | 'welfare_check'
+    | 'visitor'
+    | 'delivery'
+    | 'maintenance'
+    | 'other';
   createdAt: string;
   updatedAt: string;
   shift?: Shift;

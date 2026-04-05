@@ -25,8 +25,8 @@ export class Shift {
   @ManyToOne(() => Company, (company) => company.shifts, { eager: true })
   company!: Company;
 
-  @ManyToOne(() => GuardProfile, (guard) => guard.shifts, { eager: true })
-  guard!: GuardProfile;
+  @ManyToOne(() => GuardProfile, (guard) => guard.shifts, { eager: true, nullable: true })
+  guard?: GuardProfile | null;
 
   @ManyToOne(() => Site, (site) => site.shifts, { eager: true, nullable: true })
   site?: Site | null;
@@ -54,6 +54,9 @@ export class Shift {
 
   @Column({ type: 'int', default: 60 })
   checkCallIntervalMinutes!: number;
+
+  @Column({ type: 'text', nullable: true })
+  instructions?: string | null;
 
   @Column({ default: 'scheduled' })
   status!: string;

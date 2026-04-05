@@ -46,4 +46,8 @@ export class CreateShiftDto {
   @IsOptional()
   @IsString()
   status?: string;
+
+  @IsOptional()
+  @IsString()
+  instructions?: string;
 }
