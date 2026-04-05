@@ -12,6 +12,9 @@
     "assetBundlePatterns": [
       "**/*"
     ],
+    "updates": {
+      "enabled": false
+    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.securitymarketplace.mobile",
@@ -31,7 +34,7 @@
       "expo-secure-store"
     ],
     "extra": {
-      "apiBaseUrl": "https://api.observantsecurity.co.uk",
+      "apiBaseUrl": "https://security-marketplace-api.onrender.com",
       "eas": {
         "projectId": "c786f15c-7d60-4122-9001-02cabbb7692b"
       }

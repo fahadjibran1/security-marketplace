@@ -28,6 +28,7 @@ import {
   UpdateCompanyPayload,
   UpdateClientPayload,
   UpdateGuardPayload,
+  UpdateShiftPayload,
   UpdateSitePayload,
   UpdateTimesheetPayload,
   RecordAttendancePayload,
@@ -322,6 +323,19 @@ export function createShift(payload: CreateShiftPayload) {
   }>('/shifts', {
     method: 'POST',
     body: JSON.stringify(payload),
+  });
+}
+
+export function updateShift(id: number, payload: UpdateShiftPayload) {
+  return request<Shift>(`/shifts/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteShift(id: number) {
+  return request<{ success: true }>(`/shifts/${id}`, {
+    method: 'DELETE',
   });
 }
 

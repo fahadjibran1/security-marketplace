@@ -6,10 +6,13 @@ import {
   checkOutShift,
   createDailyLog,
   createIncident,
+  createJobApplication,
   createSafetyAlert,
   formatApiErrorMessage,
   getMyGuard,
   listMyAttachments,
+  listJobApplications,
+  listJobs,
   listMyShifts,
   listMyNotifications,
   listMyDailyLogs,
@@ -25,6 +28,8 @@ import {
   AuthUser,
   DailyLog,
   Incident,
+  Job,
+  JobApplication,
   Notification,
   Shift,
   Timesheet,
@@ -53,6 +58,8 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
   const [timesheets, setTimesheets] = useState<Timesheet[]>([]);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [applications, setApplications] = useState<JobApplication[]>([]);
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
   const [savingProfile, setSavingProfile] = useState(false);
@@ -66,6 +73,7 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
   const [submittingIncident, setSubmittingIncident] = useState(false);
   const [submittingTimesheetId, setSubmittingTimesheetId] = useState<number | null>(null);
   const [submittingAlertType, setSubmittingAlertType] = useState<'welfare' | 'panic' | null>(null);
+  const [applyingJobId, setApplyingJobId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [selectedShiftId, setSelectedShiftId] = useState<number | null>(null);
@@ -74,7 +82,18 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
     try {
       setLoading(true);
       setLoadError(null);
-      const [myGuard, shiftRows, attendanceRows, incidentRows, dailyLogRows, timesheetRows, notificationRows, attachmentRows] = await Promise.all([
+      const [
+        myGuard,
+        shiftRows,
+        attendanceRows,
+        incidentRows,
+        dailyLogRows,
+        timesheetRows,
+        notificationRows,
+        attachmentRows,
+        jobRows,
+        applicationRows,
+      ] = await Promise.all([
         getMyGuard(),
         listMyShifts(),
         listMyAttendance(),
@@ -83,6 +102,8 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
         listMyTimesheets(),
         listMyNotifications(),
         listMyAttachments(),
+        listJobs(),
+        listJobApplications(),
       ]);
       setFullName(myGuard.fullName || '');
       setSiaLicence(myGuard.siaLicenseNumber || myGuard.siaLicenceNumber || '');
@@ -95,6 +116,8 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
       setTimesheets(timesheetRows);
       setNotifications(notificationRows);
       setAttachments(attachmentRows);
+      setJobs(jobRows.filter((job) => (job.status || '').toLowerCase() === 'open'));
+      setApplications(applicationRows);
     } catch (error) {
       setLoadError(formatApiErrorMessage(error, 'Failed to load guard dashboard.'));
     } finally {
@@ -197,6 +220,19 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
     }
   }
 
+  async function handleApplyToJob(jobId: number) {
+    try {
+      setApplyingJobId(jobId);
+      await createJobApplication({ jobId });
+      await loadData();
+      showAlert('Application sent', 'Your application has been shared with the company.');
+    } catch (error) {
+      showAlert('Application failed', formatApiErrorMessage(error, 'Unable to apply for this job right now.'));
+    } finally {
+      setApplyingJobId(null);
+    }
+  }
+
   useEffect(() => {
     loadData();
   }, [user.guardId]);
@@ -250,6 +286,11 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
   const completedTimesheets = timesheets.filter((timesheet) => timesheet.shift?.status === 'completed');
   const unreadNotifications = notifications.filter((notification) => notification.status === 'unread');
   const selectedShiftLogs = dailyLogs.filter((entry) => entry.shift?.id === selectedShift?.id);
+  const appliedJobIds = new Set(applications.map((application) => application.job?.id ?? application.jobId));
+  const openJobs = jobs.filter((job) => !appliedJobIds.has(job.id));
+  const myApplications = applications
+    .slice()
+    .sort((a, b) => new Date(b.appliedAt).getTime() - new Date(a.appliedAt).getTime());
 
   useEffect(() => {
     const selectedStillExists = selectedShiftId ? shifts.some((shift) => shift.id === selectedShiftId) : false;
@@ -430,6 +471,57 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
               </Text>
             </Pressable>
           </View>
+        )}
+      </FeatureCard>
+
+      <FeatureCard title="Open Jobs" subtitle={`${openJobs.length} recruitment jobs available right now`}>
+        {openJobs.length === 0 ? (
+          <Text style={styles.helperText}>No open jobs are available at the moment. Check back soon.</Text>
+        ) : (
+          openJobs.map((job) => (
+            <View key={job.id} style={styles.listItem}>
+              <Text style={styles.listTitle}>{job.title}</Text>
+              <Text style={styles.helperText}>
+                Company: {job.company?.name || `#${job.company?.id ?? job.companyId ?? 'N/A'}`}
+              </Text>
+              <Text style={styles.helperText}>
+                Site: {job.site?.name || 'Site to be confirmed'}
+              </Text>
+              <Text style={styles.helperText}>
+                Guards required: {job.guardsRequired ?? 1}
+                {typeof job.hourlyRate === 'number' ? ` | Hourly rate: £${job.hourlyRate}` : ''}
+              </Text>
+              <Pressable
+                style={[styles.button, applyingJobId === job.id && styles.buttonDisabled]}
+                onPress={() => handleApplyToJob(job.id)}
+                disabled={applyingJobId === job.id}
+              >
+                <Text style={styles.buttonText}>{applyingJobId === job.id ? 'Applying...' : 'Apply'}</Text>
+              </Pressable>
+            </View>
+          ))
+        )}
+      </FeatureCard>
+
+      <FeatureCard title="My Applications" subtitle={`${applications.length} recruitment applications submitted`}>
+        {myApplications.length === 0 ? (
+          <Text style={styles.helperText}>You have not applied to any jobs yet.</Text>
+        ) : (
+          myApplications.map((application) => (
+            <View key={application.id} style={styles.listItem}>
+              <Text style={styles.listTitle}>{application.job?.title || `Job #${application.jobId}`}</Text>
+              <Text style={styles.helperText}>
+                Company:{' '}
+                {application.job?.company?.name ||
+                  `#${application.job?.company?.id ?? application.job?.companyId ?? 'N/A'}`}
+              </Text>
+              <Text style={styles.helperText}>
+                Site: {application.job?.site?.name || 'Site to be confirmed'}
+              </Text>
+              <Text style={styles.helperText}>Status: {application.status}</Text>
+              <Text style={styles.helperText}>Applied: {new Date(application.appliedAt).toLocaleString()}</Text>
+            </View>
+          ))
         )}
       </FeatureCard>
 

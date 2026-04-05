@@ -1,4 +1,4 @@
-import React from 'react';
+import * as React from 'react';
 import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 
 import {
@@ -167,6 +167,8 @@ const JOB_FORM_EMPTY: JobFormState = {
   siteId: '',
 };
 
+const UK_LOCALE = 'en-GB';
+
 function toNumber(value?: string | number | null) {
   if (typeof value === 'number') {
     return Number.isFinite(value) ? value : undefined;
@@ -186,7 +188,16 @@ function formatDateTimeLabel(value?: string | null) {
   }
 
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+  return Number.isNaN(date.getTime())
+    ? value
+    : date.toLocaleString(UK_LOCALE, {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      });
 }
 
 function formatDateLabel(value?: string | null) {
@@ -194,8 +205,19 @@ function formatDateLabel(value?: string | null) {
     return 'Not set';
   }
 
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    const [year, month, day] = value.split('-');
+    return `${day}/${month}/${year}`;
+  }
+
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString();
+  return Number.isNaN(date.getTime())
+    ? value
+    : date.toLocaleDateString(UK_LOCALE, {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+      });
 }
 
 function formatTimeLabel(value?: string | null) {
@@ -203,9 +225,13 @@ function formatTimeLabel(value?: string | null) {
     return 'Not set';
   }
 
+  if (/^\d{2}:\d{2}$/.test(value)) {
+    return value;
+  }
+
   const date = new Date(value);
   if (!Number.isNaN(date.getTime())) {
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
   }
 
   return value;
@@ -221,8 +247,73 @@ function formatStatusLabel(value?: string | null) {
     .replace(/\b\w/g, (match) => match.toUpperCase());
 }
 
-function buildLocalDateTime(date: string, time: string) {
+function buildIsoDateTime(date: string, time: string) {
   return `${date}T${time}:00`;
+}
+
+function isValidDateInput(value: string) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+function isValidTimeInput(value: string) {
+  return /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+}
+
+function validateSameDayShiftTiming(date: string, startTime: string, endTime: string) {
+  if (!date || !startTime || !endTime) {
+    return 'Date, start time, and end time are required.';
+  }
+
+  if (!isValidDateInput(date)) {
+    return 'Use a valid date in DD/MM/YYYY format.';
+  }
+
+  if (!isValidTimeInput(startTime) || !isValidTimeInput(endTime)) {
+    return 'Use valid 24-hour times for both start and end.';
+  }
+
+  if (endTime <= startTime) {
+    return 'End time must be after start time for the selected date.';
+  }
+
+  return null;
+}
+
+function isoToDateInput(value?: string | null) {
+  if (!value) {
+    return '';
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return value;
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function isoToTimeInput(value?: string | null) {
+  if (!value) {
+    return '';
+  }
+
+  if (/^\d{2}:\d{2}$/.test(value)) {
+    return value;
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 }
 
 function addDays(date: Date, days: number) {
@@ -291,6 +382,72 @@ function WebSelect({
       placeholder={placeholder || (options[0] ? `${options[0].label}` : 'Enter value')}
       style={webSelectStyle}
       placeholderTextColor="#6b7280"
+    />
+  );
+}
+
+function ControlledDateInput({
+  value,
+  onChange,
+  placeholder = 'DD/MM/YYYY',
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+}) {
+  if (typeof document === 'undefined') {
+    return (
+      <TextInput
+        value={value}
+        onChangeText={onChange}
+        placeholder={placeholder}
+        style={webSelectStyle}
+        placeholderTextColor="#6b7280"
+      />
+    );
+  }
+
+  const InputTag: any = 'input';
+
+  return (
+    <InputTag
+      type="date"
+      value={value}
+      onChange={(event: any) => onChange(event.target.value)}
+      style={webSelectStyle}
+    />
+  );
+}
+
+function ControlledTimeInput({
+  value,
+  onChange,
+  placeholder = 'HH:MM',
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+}) {
+  if (typeof document === 'undefined') {
+    return (
+      <TextInput
+        value={value}
+        onChangeText={onChange}
+        placeholder={placeholder}
+        style={webSelectStyle}
+        placeholderTextColor="#6b7280"
+      />
+    );
+  }
+
+  const InputTag: any = 'input';
+
+  return (
+    <InputTag
+      type="time"
+      value={value}
+      onChange={(event: any) => onChange(event.target.value)}
+      style={webSelectStyle}
     />
   );
 }
@@ -606,8 +763,8 @@ export function CompanyDashboardScreen() {
     const rows = matchingShifts.map((shift) => ({
       localId: `shift-${shift.id}`,
       date: shift.start.slice(0, 10),
-      startTime: new Date(shift.start).toISOString().slice(11, 16),
-      endTime: new Date(shift.end).toISOString().slice(11, 16),
+      startTime: isoToTimeInput(shift.start),
+      endTime: isoToTimeInput(shift.end),
       guardsRequired: '1',
       assignedGuardId: shift.guard?.id ? String(shift.guard.id) : '',
       status: shift.status || 'planned',
@@ -701,6 +858,21 @@ export function CompanyDashboardScreen() {
   const handleSaveSite = async () => {
     try {
       setSavingSite(true);
+      const hasStarterShiftValue = Boolean(
+        siteForm.initialShiftDate || siteForm.initialShiftStartTime || siteForm.initialShiftEndTime,
+      );
+
+      if (hasStarterShiftValue) {
+        const starterValidationError = validateSameDayShiftTiming(
+          siteForm.initialShiftDate,
+          siteForm.initialShiftStartTime,
+          siteForm.initialShiftEndTime,
+        );
+        if (starterValidationError) {
+          throw new Error(`Starter planned shift: ${starterValidationError}`);
+        }
+      }
+
       const payload: CreateSitePayload | UpdateSitePayload = {
         clientId: toNumber(siteForm.clientId),
         name: siteForm.name.trim(),
@@ -713,9 +885,9 @@ export function CompanyDashboardScreen() {
         operatingEndTime: siteForm.operatingEndTime.trim() || undefined,
         welfareCheckIntervalMinutes: toNumber(siteForm.checkCallIntervalMinutes) || 60,
         specialInstructions: siteForm.specialInstructions.trim() || undefined,
-        initialShiftDate: siteForm.initialShiftDate.trim() || undefined,
-        initialShiftStartTime: siteForm.initialShiftStartTime.trim() || undefined,
-        initialShiftEndTime: siteForm.initialShiftEndTime.trim() || undefined,
+        initialShiftDate: hasStarterShiftValue ? siteForm.initialShiftDate : undefined,
+        initialShiftStartTime: hasStarterShiftValue ? siteForm.initialShiftStartTime : undefined,
+        initialShiftEndTime: hasStarterShiftValue ? siteForm.initialShiftEndTime : undefined,
       };
 
       if (!payload.clientId || !payload.name || !payload.address) {
@@ -790,13 +962,14 @@ export function CompanyDashboardScreen() {
       }
 
       for (const row of plannerRows) {
-        const guardsRequired = Math.max(1, toNumber(row.guardsRequired) || 1);
-        const startAt = buildLocalDateTime(row.date, row.startTime);
-        let endDate = row.date;
-        if (row.endTime <= row.startTime) {
-          endDate = addDays(new Date(`${row.date}T00:00:00`), 1).toISOString().slice(0, 10);
+        const validationError = validateSameDayShiftTiming(row.date, row.startTime, row.endTime);
+        if (validationError) {
+          throw new Error(`${formatDateLabel(row.date)}: ${validationError}`);
         }
-        const endAt = buildLocalDateTime(endDate, row.endTime);
+
+        const guardsRequired = Math.max(1, toNumber(row.guardsRequired) || 1);
+        const startAt = buildIsoDateTime(row.date, row.startTime);
+        const endAt = buildIsoDateTime(row.date, row.endTime);
         const plannedStatus = normalizePlannerStatus(row.status, row.assignedGuardId);
         const existingIds = [...row.sourceShiftIds];
 
@@ -1070,19 +1243,59 @@ export function CompanyDashboardScreen() {
             <TextInput style={styles.input} value={siteForm.contactDetails} onChangeText={(value: string) => setSiteForm((current) => ({ ...current, contactDetails: value }))} placeholder="Site contact details" />
             <View style={styles.formRow}>
               <TextInput style={[styles.input, styles.formCell]} value={siteForm.requiredGuardCount} onChangeText={(value: string) => setSiteForm((current) => ({ ...current, requiredGuardCount: value }))} placeholder="Guards required" />
-              <TextInput style={[styles.input, styles.formCell]} value={siteForm.checkCallIntervalMinutes} onChangeText={(value: string) => setSiteForm((current) => ({ ...current, checkCallIntervalMinutes: value }))} placeholder="Check-call mins" />
+              <View style={styles.formCell}>
+                <Text style={styles.subtleLabel}>Check-call interval (minutes)</Text>
+                <TextInput
+                  style={styles.input}
+                  value={siteForm.checkCallIntervalMinutes}
+                  onChangeText={(value: string) => setSiteForm((current) => ({ ...current, checkCallIntervalMinutes: value }))}
+                  placeholder="60"
+                />
+              </View>
             </View>
             <TextInput style={styles.input} value={siteForm.operatingDays} onChangeText={(value: string) => setSiteForm((current) => ({ ...current, operatingDays: value }))} placeholder="Operating days" />
             <View style={styles.formRow}>
-              <TextInput style={[styles.input, styles.formCell]} value={siteForm.operatingStartTime} onChangeText={(value: string) => setSiteForm((current) => ({ ...current, operatingStartTime: value }))} placeholder="Start time" />
-              <TextInput style={[styles.input, styles.formCell]} value={siteForm.operatingEndTime} onChangeText={(value: string) => setSiteForm((current) => ({ ...current, operatingEndTime: value }))} placeholder="End time" />
+              <View style={styles.formCell}>
+                <Text style={styles.subtleLabel}>Start time (24h)</Text>
+                <ControlledTimeInput
+                  value={siteForm.operatingStartTime}
+                  onChange={(value: string) => setSiteForm((current) => ({ ...current, operatingStartTime: value }))}
+                />
+              </View>
+              <View style={styles.formCell}>
+                <Text style={styles.subtleLabel}>End time (24h)</Text>
+                <ControlledTimeInput
+                  value={siteForm.operatingEndTime}
+                  onChange={(value: string) => setSiteForm((current) => ({ ...current, operatingEndTime: value }))}
+                />
+              </View>
             </View>
+            <Text style={styles.subtleLabel}>Shift instructions / notes</Text>
             <TextInput style={[styles.input, styles.textArea]} multiline value={siteForm.specialInstructions} onChangeText={(value: string) => setSiteForm((current) => ({ ...current, specialInstructions: value }))} placeholder="Special instructions" />
             <Text style={styles.subtleLabel}>Starter planned shift</Text>
             <View style={styles.formRow}>
-              <TextInput style={[styles.input, styles.formCell]} value={siteForm.initialShiftDate} onChangeText={(value: string) => setSiteForm((current) => ({ ...current, initialShiftDate: value }))} placeholder="YYYY-MM-DD" />
-              <TextInput style={[styles.input, styles.formCell]} value={siteForm.initialShiftStartTime} onChangeText={(value: string) => setSiteForm((current) => ({ ...current, initialShiftStartTime: value }))} placeholder="08:00" />
-              <TextInput style={[styles.input, styles.formCell]} value={siteForm.initialShiftEndTime} onChangeText={(value: string) => setSiteForm((current) => ({ ...current, initialShiftEndTime: value }))} placeholder="18:00" />
+              <View style={styles.formCell}>
+                <Text style={styles.subtleLabel}>Date (DD/MM/YYYY)</Text>
+                <ControlledDateInput
+                  value={siteForm.initialShiftDate}
+                  onChange={(value: string) => setSiteForm((current) => ({ ...current, initialShiftDate: value }))}
+                />
+                <Text style={styles.helperText}>{siteForm.initialShiftDate ? formatDateLabel(siteForm.initialShiftDate) : 'DD/MM/YYYY'}</Text>
+              </View>
+              <View style={styles.formCell}>
+                <Text style={styles.subtleLabel}>Start time (24h)</Text>
+                <ControlledTimeInput
+                  value={siteForm.initialShiftStartTime}
+                  onChange={(value: string) => setSiteForm((current) => ({ ...current, initialShiftStartTime: value }))}
+                />
+              </View>
+              <View style={styles.formCell}>
+                <Text style={styles.subtleLabel}>End time (24h)</Text>
+                <ControlledTimeInput
+                  value={siteForm.initialShiftEndTime}
+                  onChange={(value: string) => setSiteForm((current) => ({ ...current, initialShiftEndTime: value }))}
+                />
+              </View>
             </View>
             <View style={styles.formActions}>
               <Pressable style={styles.primaryButton} onPress={handleSaveSite} disabled={savingSite}>
@@ -1140,7 +1353,11 @@ export function CompanyDashboardScreen() {
       <View style={styles.filterBar}>
         <WebSelect value={plannerClientId} onChange={setPlannerClientId} options={clientOptions} placeholder="Client" />
         <WebSelect value={plannerSiteId} onChange={setPlannerSiteId} options={plannerSiteOptions} placeholder="Site" />
-        <TextInput style={styles.input} value={plannerWeekCommencing} onChangeText={setPlannerWeekCommencing} placeholder="Week commencing" />
+        <View style={styles.inputGroup}>
+          <Text style={styles.subtleLabel}>Date (DD/MM/YYYY)</Text>
+          <ControlledDateInput value={plannerWeekCommencing} onChange={setPlannerWeekCommencing} />
+          <Text style={styles.helperText}>{plannerWeekCommencing ? formatDateLabel(plannerWeekCommencing) : 'DD/MM/YYYY'}</Text>
+        </View>
       </View>
 
       <View style={styles.weekGrid}>
@@ -1161,8 +1378,28 @@ export function CompanyDashboardScreen() {
               {rows.map((row) => (
                 <View key={row.localId} style={styles.plannerRow}>
                   <View style={styles.formRow}>
-                    <TextInput style={[styles.input, styles.formCell]} value={row.startTime} onChangeText={(value: string) => handlePlannerRowChange(row.localId, { startTime: value })} placeholder="Start" />
-                    <TextInput style={[styles.input, styles.formCell]} value={row.endTime} onChangeText={(value: string) => handlePlannerRowChange(row.localId, { endTime: value })} placeholder="End" />
+                    <View style={styles.formCell}>
+                      <Text style={styles.subtleLabel}>Date (DD/MM/YYYY)</Text>
+                      <ControlledDateInput
+                        value={row.date}
+                        onChange={(value: string) => handlePlannerRowChange(row.localId, { date: value })}
+                      />
+                      <Text style={styles.helperText}>{formatDateLabel(row.date)}</Text>
+                    </View>
+                    <View style={styles.formCell}>
+                      <Text style={styles.subtleLabel}>Start time (24h)</Text>
+                      <ControlledTimeInput
+                        value={row.startTime}
+                        onChange={(value: string) => handlePlannerRowChange(row.localId, { startTime: value })}
+                      />
+                    </View>
+                    <View style={styles.formCell}>
+                      <Text style={styles.subtleLabel}>End time (24h)</Text>
+                      <ControlledTimeInput
+                        value={row.endTime}
+                        onChange={(value: string) => handlePlannerRowChange(row.localId, { endTime: value })}
+                      />
+                    </View>
                   </View>
                   <View style={styles.formRow}>
                     <TextInput style={[styles.input, styles.formCell]} value={row.guardsRequired} onChangeText={(value: string) => handlePlannerRowChange(row.localId, { guardsRequired: value })} placeholder="Guards" />
@@ -1182,6 +1419,7 @@ export function CompanyDashboardScreen() {
                     ]}
                     placeholder="Status"
                   />
+                  <Text style={styles.subtleLabel}>Shift instructions / notes</Text>
                   <TextInput style={[styles.input, styles.textAreaSmall]} multiline value={row.instructions} onChangeText={(value: string) => handlePlannerRowChange(row.localId, { instructions: value })} placeholder="Instructions" />
                   <Pressable style={styles.ghostButton} onPress={() => handleRemovePlannerRow(row.localId)}>
                     <Text style={styles.ghostButtonText}>Remove</Text>
@@ -1677,6 +1915,10 @@ const styles = StyleSheet.create({
   },
   formCell: {
     flex: 1,
+  },
+  inputGroup: {
+    flex: 1,
+    gap: 6,
   },
   formActions: {
     flexDirection: 'row',
