@@ -15,6 +15,8 @@ import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { isCompanyRole, UserRole } from '../user/entities/user.entity';
 import { CompanyService } from '../company/company.service';
 import { SiteService } from '../site/site.service';
+import { CompanyGuardService } from '../company-guard/company-guard.service';
+import { CompanyGuardRelationshipType } from '../company-guard/entities/company-guard.entity';
 
 @Injectable()
 export class JobApplicationService {
@@ -29,6 +31,7 @@ export class JobApplicationService {
     private readonly notificationService: NotificationService,
     private readonly companyService: CompanyService,
     private readonly siteService: SiteService,
+    private readonly companyGuardService: CompanyGuardService,
   ) {}
 
   findAll(): Promise<JobApplication[]> {
@@ -123,6 +126,12 @@ export class JobApplicationService {
     application.status = 'hired';
     application.hiredAt = new Date();
     await this.appRepo.save(application);
+
+    await this.companyGuardService.ensureRelationship({
+      companyId: application.job.company.id,
+      guardId: application.guard.id,
+      relationshipType: CompanyGuardRelationshipType.APPROVED_CONTRACTOR,
+    });
 
     const assignment = await this.assignmentService.createFromHire(application);
     const updatedActiveCount = await this.assignmentService.countActiveByJob(application.job.id);
