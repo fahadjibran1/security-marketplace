@@ -701,21 +701,42 @@ export function CompanyDashboardScreen() {
     loadData();
   }, [loadData]);
 
-  const linkedGuardIds = React.useMemo(
-    () => new Set(companyGuards.map((entry) => entry.guard?.id).filter((value): value is number => typeof value === 'number')),
+  const activeCompanyGuards = React.useMemo(
+    () =>
+      companyGuards.filter((entry) => {
+        const relationActive = (entry.status || '').toUpperCase() === 'ACTIVE';
+        const guardStatus = (entry.guard?.status || '').toLowerCase();
+        const guardApproval = (entry.guard?.approvalStatus || '').toLowerCase();
+        const operationalStatus = !guardStatus || guardStatus === 'active' || guardStatus === 'approved';
+        const approvedStatus = !guardApproval || guardApproval === 'approved';
+        return relationActive && operationalStatus && approvedStatus;
+      }),
     [companyGuards],
   );
 
-  const linkedGuards = React.useMemo(
-    () => guards.filter((guard) => linkedGuardIds.has(guard.id)),
-    [guards, linkedGuardIds],
+  const linkedGuardIds = React.useMemo(
+    () => new Set(activeCompanyGuards.map((entry) => entry.guard?.id).filter((value): value is number => typeof value === 'number')),
+    [activeCompanyGuards],
   );
+
+  const linkedGuards = React.useMemo(() => {
+    const unique = new Map<number, GuardProfile>();
+    activeCompanyGuards.forEach((entry) => {
+      if (entry.guard?.id) {
+        unique.set(entry.guard.id, entry.guard);
+      }
+    });
+    return Array.from(unique.values()).sort((left, right) => left.fullName.localeCompare(right.fullName));
+  }, [activeCompanyGuards]);
 
   const availablePlatformGuards = React.useMemo(
     () =>
       guards.filter((guard) => {
-        const isActive = !guard.status || guard.status.toLowerCase() === 'active';
-        return isActive && !linkedGuardIds.has(guard.id);
+        const guardStatus = (guard.status || '').toLowerCase();
+        const guardApproval = (guard.approvalStatus || '').toLowerCase();
+        const operationalStatus = !guardStatus || guardStatus === 'active' || guardStatus === 'approved';
+        const approvedStatus = !guardApproval || guardApproval === 'approved';
+        return operationalStatus && approvedStatus && !linkedGuardIds.has(guard.id);
       }),
     [guards, linkedGuardIds],
   );
@@ -769,6 +790,21 @@ export function CompanyDashboardScreen() {
     });
     return map;
   }, [dailyLogs]);
+  const lastCheckCallByShiftId = React.useMemo(() => {
+    const map = new Map<number, DailyLog>();
+    dailyLogs.forEach((log) => {
+      const shiftId = log.shift?.id;
+      if (!shiftId || !['check_call', 'welfare_check'].includes(log.logType)) {
+        return;
+      }
+
+      const current = map.get(shiftId);
+      if (!current || current.createdAt.localeCompare(log.createdAt) < 0) {
+        map.set(shiftId, log);
+      }
+    });
+    return map;
+  }, [dailyLogs]);
 
   const activeClients = React.useMemo(
     () => clients.filter((client) => (client.status || 'active').toLowerCase() !== 'archived'),
@@ -800,6 +836,14 @@ export function CompanyDashboardScreen() {
   const outstandingAlerts = React.useMemo(
     () => alerts.filter((alert) => (alert.status || '').toLowerCase() !== 'closed'),
     [alerts],
+  );
+  const missedCheckCalls = React.useMemo(
+    () => outstandingAlerts.filter((alert) => ['check_call', 'missed_checkcall'].includes((alert.type || '').toLowerCase())),
+    [outstandingAlerts],
+  );
+  const activePanicAlerts = React.useMemo(
+    () => outstandingAlerts.filter((alert) => (alert.type || '').toLowerCase() === 'panic'),
+    [outstandingAlerts],
   );
   const recentActivity = React.useMemo(
     () =>
@@ -850,8 +894,8 @@ export function CompanyDashboardScreen() {
   );
 
   const siteClientOptions = React.useMemo(
-    () => clients.map((client) => ({ label: client.name, value: String(client.id) })),
-    [clients],
+    () => activeClients.map((client) => ({ label: client.name, value: String(client.id) })),
+    [activeClients],
   );
 
   const selectedSiteClient = React.useMemo(
@@ -1211,22 +1255,32 @@ export function CompanyDashboardScreen() {
   };
 
   const liveOperationRows = React.useMemo(() => {
-    return shifts.filter((shift) => {
-      const clientId = String(shift.site?.client?.id ?? shift.site?.clientId ?? '');
-      const siteId = String(shift.site?.id ?? shift.siteId ?? '');
-      const guardId = String(shift.guard?.id ?? shift.guardId ?? '');
-      const date = shift.start.slice(0, 10);
-      const status = (shift.status || '').toLowerCase();
+    return shifts
+      .filter((shift) => {
+        const clientId = String(shift.site?.client?.id ?? shift.site?.clientId ?? '');
+        const siteId = String(shift.site?.id ?? shift.siteId ?? '');
+        const guardId = String(shift.guard?.id ?? shift.guardId ?? '');
+        const date = shift.start.slice(0, 10);
+        const status = (shift.status || '').toLowerCase();
 
-      return (
-        (!liveFilters.clientId || clientId === liveFilters.clientId) &&
-        (!liveFilters.siteId || siteId === liveFilters.siteId) &&
-        (!liveFilters.guardId || guardId === liveFilters.guardId) &&
-        (!liveFilters.date || date === liveFilters.date) &&
-        (!liveFilters.status || status === liveFilters.status.toLowerCase())
-      );
-    });
+        return (
+          (!liveFilters.clientId || clientId === liveFilters.clientId) &&
+          (!liveFilters.siteId || siteId === liveFilters.siteId) &&
+          (!liveFilters.guardId || guardId === liveFilters.guardId) &&
+          (!liveFilters.date || date === liveFilters.date) &&
+          (!liveFilters.status || status === liveFilters.status.toLowerCase())
+        );
+      })
+      .sort((left, right) => right.start.localeCompare(left.start));
   }, [liveFilters, shifts]);
+  const guardsNotBookedOn = React.useMemo(
+    () =>
+      liveOperationRows.filter((shift) => {
+        const timesheet = timesheetByShiftId.get(shift.id);
+        return ['offered', 'accepted'].includes((shift.status || '').toLowerCase()) && !timesheet?.actualCheckInAt;
+      }),
+    [liveOperationRows, timesheetByShiftId],
+  );
 
   const renderTableHeader = (columns: string[]) => (
     <View style={styles.tableHeader}>
@@ -1599,75 +1653,220 @@ export function CompanyDashboardScreen() {
           <Text style={styles.secondaryButtonText}>{refreshing ? 'Refreshing...' : 'Refresh'}</Text>
         </Pressable>
       </View>
+
+      <View style={styles.kpiGrid}>
+        {[
+          ['Live Shifts', String(liveShifts.length)],
+          ['Guards Not Booked On', String(guardsNotBookedOn.length)],
+          ['Open Incidents', String(openIncidents.length)],
+          ['Missed Check Calls', String(missedCheckCalls.length)],
+          ['Active Panic Alerts', String(activePanicAlerts.length)],
+          ['Pending Timesheets', String(pendingTimesheets.length)],
+        ].map(([label, value]) => (
+          <View key={label} style={styles.kpiCard}>
+            <Text style={styles.kpiLabel}>{label}</Text>
+            <Text style={styles.kpiValue}>{value}</Text>
+          </View>
+        ))}
+      </View>
+
       <View style={styles.filterBar}>
-        <WebSelect value={liveFilters.clientId} onChange={(value: string) => setLiveFilters((current) => ({ ...current, clientId: value }))} options={siteClientOptions} placeholder="Client" />
-        <WebSelect value={liveFilters.siteId} onChange={(value: string) => setLiveFilters((current) => ({ ...current, siteId: value }))} options={siteOptions} placeholder="Site" />
-        <WebSelect value={liveFilters.guardId} onChange={(value: string) => setLiveFilters((current) => ({ ...current, guardId: value }))} options={linkedGuardOptions} placeholder="Guard" />
-        <TextInput style={styles.input} value={liveFilters.date} onChangeText={(value: string) => setLiveFilters((current) => ({ ...current, date: value }))} placeholder="YYYY-MM-DD" />
-        <WebSelect value={liveFilters.status} onChange={(value: string) => setLiveFilters((current) => ({ ...current, status: value }))} options={SHIFT_STATUS_OPTIONS} placeholder="Status" />
+        <WebSelect
+          value={liveFilters.clientId}
+          onChange={(value: string) => setLiveFilters((current) => ({ ...current, clientId: value }))}
+          options={siteClientOptions}
+          placeholder="Client"
+        />
+        <WebSelect
+          value={liveFilters.siteId}
+          onChange={(value: string) => setLiveFilters((current) => ({ ...current, siteId: value }))}
+          options={siteOptions}
+          placeholder="Site"
+        />
+        <WebSelect
+          value={liveFilters.guardId}
+          onChange={(value: string) => setLiveFilters((current) => ({ ...current, guardId: value }))}
+          options={linkedGuardOptions}
+          placeholder="Guard"
+        />
+        <TextInput
+          style={styles.input}
+          value={liveFilters.date}
+          onChangeText={(value: string) => setLiveFilters((current) => ({ ...current, date: value }))}
+          placeholder="YYYY-MM-DD"
+        />
+        <WebSelect
+          value={liveFilters.status}
+          onChange={(value: string) => setLiveFilters((current) => ({ ...current, status: value }))}
+          options={SHIFT_STATUS_OPTIONS}
+          placeholder="Status"
+        />
       </View>
-      <View style={styles.tableCard}>
-        {renderTableHeader(['Shift', 'Client', 'Site', 'Guard', 'Date', 'Status', 'Book On', 'Book Off', 'Logs', 'Incidents', 'Timesheet'])}
-        {liveOperationRows.map((shift: Shift) => {
-          const shiftId = shift.id;
-          const timesheet = timesheetByShiftId.get(shiftId);
-          const shiftLogs = logsByShiftId.get(shiftId) || [];
-          const shiftIncidents = incidentsByShiftId.get(shiftId) || [];
-          return (
-            <Pressable key={shift.id} style={[styles.tableRow, selectedShiftId === shift.id && styles.tableRowSelected]} onPress={() => setSelectedShiftId(shift.id)}>
-              <Text style={styles.tableCellStrong}>#{shift.id}</Text>
-              <Text style={styles.tableCell}>{shift.site?.client?.name || clientMap.get(shift.site?.clientId || 0)?.name || '—'}</Text>
-              <Text style={styles.tableCell}>{shift.site?.name || shift.siteName}</Text>
-              <Text style={styles.tableCell}>{shift.guard?.fullName || 'Unassigned'}</Text>
-              <Text style={styles.tableCell}>{formatDateLabel(shift.start)}</Text>
-              <Text style={styles.tableCell}>{formatStatusLabel(shift.status)}</Text>
-              <Text style={styles.tableCell}>{timesheet?.actualCheckInAt ? 'Booked on' : 'Pending'}</Text>
-              <Text style={styles.tableCell}>{timesheet?.actualCheckOutAt ? 'Booked off' : 'Pending'}</Text>
-              <Text style={styles.tableCell}>{shiftLogs.length}</Text>
-              <Text style={styles.tableCell}>{shiftIncidents.length}</Text>
-              <Text style={styles.tableCell}>{formatStatusLabel(timesheet?.approvalStatus || 'pending')}</Text>
-            </Pressable>
-          );
-        })}
+
+      <View style={styles.panelGrid}>
+        <View style={[styles.tableCard, styles.operationsBoardCard]}>
+          <Text style={styles.panelTitle}>Live Shift Board</Text>
+          {renderTableHeader([
+            'Shift',
+            'Site',
+            'Guard',
+            'Status',
+            'Book On',
+            'Book Off',
+            'Last Check Call',
+            'Logs',
+            'Incidents',
+            'Panic / Welfare',
+            'Timesheet',
+          ])}
+          {liveOperationRows.map((shift) => {
+            const timesheet = timesheetByShiftId.get(shift.id);
+            const shiftLogs = logsByShiftId.get(shift.id) || [];
+            const shiftIncidents = incidentsByShiftId.get(shift.id) || [];
+            const shiftAlerts = alertsByShiftId.get(shift.id) || [];
+            const lastCheckCall = lastCheckCallByShiftId.get(shift.id);
+            const panicOrWelfareCount = shiftAlerts.filter((alert) =>
+              ['panic', 'welfare', 'late_checkin'].includes((alert.type || '').toLowerCase()),
+            ).length;
+
+            return (
+              <Pressable
+                key={shift.id}
+                style={[styles.tableRow, selectedShiftId === shift.id && styles.tableRowSelected]}
+                onPress={() => setSelectedShiftId(shift.id)}
+              >
+                <Text style={styles.tableCellStrong}>#{shift.id}</Text>
+                <Text style={styles.tableCell}>{shift.site?.name || shift.siteName || 'Unknown site'}</Text>
+                <Text style={styles.tableCell}>{shift.guard?.fullName || 'Unassigned'}</Text>
+                <Text style={styles.tableCell}>{formatStatusLabel(shift.status)}</Text>
+                <Text style={styles.tableCell}>
+                  {timesheet?.actualCheckInAt ? formatTimeLabel(timesheet.actualCheckInAt) : 'Pending'}
+                </Text>
+                <Text style={styles.tableCell}>
+                  {timesheet?.actualCheckOutAt ? formatTimeLabel(timesheet.actualCheckOutAt) : 'Pending'}
+                </Text>
+                <Text style={styles.tableCell}>
+                  {lastCheckCall ? formatTimeLabel(lastCheckCall.createdAt) : 'No check call'}
+                </Text>
+                <Text style={styles.tableCell}>{String(shiftLogs.length)}</Text>
+                <Text style={styles.tableCell}>{String(shiftIncidents.length)}</Text>
+                <Text style={styles.tableCell}>{String(panicOrWelfareCount)}</Text>
+                <Text style={styles.tableCell}>{formatStatusLabel(timesheet?.approvalStatus || 'pending')}</Text>
+              </Pressable>
+            );
+          })}
+          {liveOperationRows.length === 0 ? (
+            <Text style={styles.helperText}>No shifts match the current live operations filters.</Text>
+          ) : null}
+        </View>
+
+        <View style={styles.operationsSideColumn}>
+          <View style={styles.panel}>
+            <Text style={styles.panelTitle}>Open Incidents</Text>
+            {openIncidents.slice(0, 6).map((incident) => (
+              <View key={incident.id} style={styles.recordRow}>
+                <Text style={styles.recordTitle}>{incident.title}</Text>
+                <Text style={styles.recordMeta}>
+                  {incident.site?.name || incident.shift?.site?.name || 'Unknown site'} | {formatStatusLabel(incident.status)}
+                </Text>
+              </View>
+            ))}
+            {openIncidents.length === 0 ? <Text style={styles.helperText}>No open incidents.</Text> : null}
+          </View>
+
+          <View style={styles.panel}>
+            <Text style={styles.panelTitle}>Safety / Welfare / Panic</Text>
+            {outstandingAlerts.slice(0, 6).map((alert) => (
+              <View key={alert.id} style={styles.recordRow}>
+                <Text style={styles.recordTitle}>{formatStatusLabel(alert.type)}</Text>
+                <Text style={styles.recordMeta}>
+                  {alert.shift?.site?.name || alert.shift?.siteName || 'Unknown shift'} | {formatStatusLabel(alert.status)}
+                </Text>
+              </View>
+            ))}
+            {outstandingAlerts.length === 0 ? <Text style={styles.helperText}>No active alerts.</Text> : null}
+          </View>
+
+          <View style={styles.panel}>
+            <Text style={styles.panelTitle}>Recent Log Activity</Text>
+            {recentActivity.map((log) => (
+              <View key={log.id} style={styles.recordRow}>
+                <Text style={styles.recordTitle}>{log.message}</Text>
+                <Text style={styles.recordMeta}>
+                  {log.shift?.site?.name || log.shift?.siteName || 'Unknown shift'} | {formatDateTimeLabel(log.createdAt)}
+                </Text>
+              </View>
+            ))}
+            {recentActivity.length === 0 ? <Text style={styles.helperText}>No recent log activity.</Text> : null}
+          </View>
+        </View>
       </View>
-      {selectedShift && (
+
+      {selectedShift ? (
         <View style={styles.panel}>
           <Text style={styles.panelTitle}>Shift #{selectedShift.id} Operations</Text>
-          <Text style={styles.recordMeta}>{selectedShift.site?.client?.name || clientMap.get(selectedShift.site?.clientId || 0)?.name || 'No client'} · {selectedShift.site?.name || selectedShift.siteName}</Text>
-          <Text style={styles.recordMeta}>{selectedShift.guard?.fullName || 'No guard assigned'} · {formatDateLabel(selectedShift.start)} · {formatTimeLabel(selectedShift.start)}-{formatTimeLabel(selectedShift.end)}</Text>
-          <Text style={styles.recordMeta}>Status: {formatStatusLabel(selectedShift.status)} · Check calls: {selectedShift.checkCallIntervalMinutes || 60} mins</Text>
-          {selectedShift.status === 'offered' ? <Text style={styles.recordMeta}>Waiting for guard confirmation before live shift controls should be used.</Text> : null}
-          {selectedShift.status === 'rejected' ? <Text style={styles.recordMeta}>Guard rejected this shift. This slot still needs cover.</Text> : null}
-          <Text style={styles.recordMeta}>Instructions: {selectedShift.instructions || 'No instructions recorded.'}</Text>
+          <Text style={styles.recordMeta}>
+            {selectedShift.site?.client?.name || clientMap.get(selectedShift.site?.clientId || 0)?.name || 'No client'} | {selectedShift.site?.name || selectedShift.siteName}
+          </Text>
+          <Text style={styles.recordMeta}>
+            {selectedShift.guard?.fullName || 'No guard assigned'} | {formatDateLabel(selectedShift.start)} | {formatTimeLabel(selectedShift.start)}-{formatTimeLabel(selectedShift.end)}
+          </Text>
+          <Text style={styles.recordMeta}>
+            Status: {formatStatusLabel(selectedShift.status)} | Check calls: {selectedShift.checkCallIntervalMinutes || 60} mins
+          </Text>
+          {selectedShift.status === 'offered' ? (
+            <Text style={styles.recordMeta}>Waiting for guard confirmation before live controls are used.</Text>
+          ) : null}
+          {selectedShift.status === 'rejected' ? (
+            <Text style={styles.recordMeta}>Guard rejected this shift. New cover is still required.</Text>
+          ) : null}
+          <Text style={styles.recordMeta}>
+            Instructions: {selectedShift.instructions || 'No instructions recorded.'}
+          </Text>
 
           <View style={styles.detailGrid}>
             <View style={styles.detailCard}>
               <Text style={styles.detailTitle}>Attendance & Timesheet</Text>
-              <Text style={styles.recordMeta}>Book on: {formatDateTimeLabel(timesheetByShiftId.get(selectedShift.id)?.actualCheckInAt)}</Text>
-              <Text style={styles.recordMeta}>Book off: {formatDateTimeLabel(timesheetByShiftId.get(selectedShift.id)?.actualCheckOutAt)}</Text>
-              <Text style={styles.recordMeta}>Timesheet: {formatStatusLabel(timesheetByShiftId.get(selectedShift.id)?.approvalStatus || 'pending')}</Text>
+              <Text style={styles.recordMeta}>
+                Book on: {formatDateTimeLabel(timesheetByShiftId.get(selectedShift.id)?.actualCheckInAt)}
+              </Text>
+              <Text style={styles.recordMeta}>
+                Book off: {formatDateTimeLabel(timesheetByShiftId.get(selectedShift.id)?.actualCheckOutAt)}
+              </Text>
+              <Text style={styles.recordMeta}>
+                Timesheet: {formatStatusLabel(timesheetByShiftId.get(selectedShift.id)?.approvalStatus || 'pending')}
+              </Text>
             </View>
             <View style={styles.detailCard}>
               <Text style={styles.detailTitle}>Daily Logs</Text>
               {(logsByShiftId.get(selectedShift.id) || []).map((log) => (
-                <Text key={log.id} style={styles.recordMeta}>• {log.message}</Text>
+                <Text key={log.id} style={styles.recordMeta}>- {log.message}</Text>
               ))}
+              {(logsByShiftId.get(selectedShift.id) || []).length === 0 ? (
+                <Text style={styles.helperText}>No daily logs for this shift.</Text>
+              ) : null}
             </View>
             <View style={styles.detailCard}>
               <Text style={styles.detailTitle}>Incidents</Text>
               {(incidentsByShiftId.get(selectedShift.id) || []).map((incident) => (
-                <Text key={incident.id} style={styles.recordMeta}>• {incident.title} ({formatStatusLabel(incident.status)})</Text>
+                <Text key={incident.id} style={styles.recordMeta}>- {incident.title} ({formatStatusLabel(incident.status)})</Text>
               ))}
+              {(incidentsByShiftId.get(selectedShift.id) || []).length === 0 ? (
+                <Text style={styles.helperText}>No incidents linked to this shift.</Text>
+              ) : null}
             </View>
             <View style={styles.detailCard}>
               <Text style={styles.detailTitle}>Safety / Check Calls</Text>
               {(alertsByShiftId.get(selectedShift.id) || []).map((alert) => (
-                <Text key={alert.id} style={styles.recordMeta}>• {formatStatusLabel(alert.type)} ({formatStatusLabel(alert.status)})</Text>
+                <Text key={alert.id} style={styles.recordMeta}>- {formatStatusLabel(alert.type)} ({formatStatusLabel(alert.status)})</Text>
               ))}
+              {(alertsByShiftId.get(selectedShift.id) || []).length === 0 ? (
+                <Text style={styles.helperText}>No safety or welfare events linked to this shift.</Text>
+              ) : null}
             </View>
           </View>
         </View>
-      )}
+      ) : null}
     </View>
   );
 
@@ -2027,6 +2226,15 @@ const styles = StyleSheet.create({
     padding: 20,
     gap: 10,
   },
+  operationsBoardCard: {
+    flex: 2.2,
+    minWidth: 760,
+  },
+  operationsSideColumn: {
+    flex: 1,
+    minWidth: 320,
+    gap: 18,
+  },
   formCard: {
     flex: 1,
     backgroundColor: '#ffffff',
@@ -2253,3 +2461,4 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 });
+
