@@ -32,6 +32,10 @@ export class AttendanceService {
   async checkIn(userId: number, shiftId: number, nfcTag?: string, notes?: string) {
     const { guard, shift } = await this.getGuardAndOwnedShift(userId, shiftId);
 
+    if (shift.status === 'offered' || shift.status === 'rejected') {
+      throw new BadRequestException('Shift must be accepted before check-in is available');
+    }
+
     if (shift.status === 'completed') {
       throw new BadRequestException('Completed shifts cannot be checked in again');
     }

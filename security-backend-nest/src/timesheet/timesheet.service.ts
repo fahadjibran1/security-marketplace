@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Timesheet, TimesheetStatus } from './entities/timesheet.entity';
@@ -186,6 +186,9 @@ export class TimesheetService {
       where: { id, guard: { id: guard.id } },
     });
     if (!timesheet) throw new NotFoundException('Timesheet not found');
+    if (!timesheet.shift || !['accepted', 'in_progress', 'completed'].includes(timesheet.shift.status)) {
+      throw new BadRequestException('Shift must be accepted before timesheet progression is available');
+    }
 
     if (dto.hoursWorked !== undefined) {
       timesheet.hoursWorked = dto.hoursWorked;

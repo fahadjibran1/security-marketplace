@@ -34,9 +34,7 @@ export class SafetyAlertService {
     let shift = null;
     if (dto.shiftId) {
       shift = await this.shiftService.findOne(dto.shiftId);
-      if (!shift.guard || shift.guard.id !== guard.id) {
-        throw new BadRequestException('This shift is not assigned to the current guard');
-      }
+      this.shiftService.assertGuardCanOperateShift(shift, guard.id, 'raise a safety alert');
     }
 
     const company = shift?.company;

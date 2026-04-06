@@ -17,6 +17,7 @@ import { isCompanyRole, UserRole } from '../user/entities/user.entity';
 import { CompanyGuardService } from '../company-guard/company-guard.service';
 import { Timesheet } from '../timesheet/entities/timesheet.entity';
 import { UpdateShiftDto } from './dto/update-shift.dto';
+import { RespondShiftDto } from './dto/respond-shift.dto';
 
 @Injectable()
 export class ShiftService {
@@ -24,6 +25,9 @@ export class ShiftService {
     'planned',
     'unassigned',
     'assigned',
+    'offered',
+    'accepted',
+    'rejected',
     'in_progress',
     'completed',
     'missed',
@@ -196,11 +200,10 @@ export class ShiftService {
       throw new BadRequestException('Shift status is invalid');
     }
 
-    if (normalizedStatus === 'assigned' && !guard) {
-      throw new BadRequestException('Assigned shifts require a guard');
-    }
-
-    const status = normalizedStatus ?? (guard ? 'assigned' : 'unassigned');
+    const status = this.resolveAssignmentStatus({
+      requestedStatus: normalizedStatus,
+      hasGuard: Boolean(guard),
+    });
 
     const shift = new Shift();
     shift.assignment = assignment;
@@ -345,6 +348,40 @@ export class ShiftService {
     return this.shiftRepo.save(shift);
   }
 
+  async respondForGuard(user: JwtPayload, id: number, dto: RespondShiftDto): Promise<Shift> {
+    const shift = await this.findOneForUser(user, id);
+    const guard = await this.guardProfileService.findByUserId(user.sub);
+    if (!guard) {
+      throw new NotFoundException('Guard profile not found');
+    }
+
+    if (!shift.guard || shift.guard.id !== guard.id) {
+      throw new ForbiddenException('This shift is not assigned to the current guard');
+    }
+
+    if (shift.status !== 'offered') {
+      throw new BadRequestException('Only offered shifts can be accepted or rejected');
+    }
+
+    shift.status = dto.response;
+    const savedShift = await this.shiftRepo.save(shift);
+
+    return this.findOne(savedShift.id);
+  }
+
+  assertGuardCanOperateShift(shift: Shift, guardId: number, action: string): void {
+    const assignedGuardId = shift.guard?.id ?? shift.assignment?.guard?.id;
+    if (assignedGuardId !== guardId) {
+      throw new BadRequestException('This shift is not assigned to the current guard');
+    }
+
+    if (!['accepted', 'in_progress', 'completed'].includes(shift.status)) {
+      throw new BadRequestException(
+        `Shift must be accepted before a guard can ${action}`,
+      );
+    }
+  }
+
   async updateForUser(user: JwtPayload, id: number, dto: UpdateShiftDto): Promise<Shift> {
     const shift = await this.findOneForUser(user, id);
     const actorCompany =
@@ -396,10 +433,15 @@ export class ShiftService {
       if (!this.allowedStatuses.has(normalizedStatus)) {
         throw new BadRequestException('Shift status is invalid');
       }
-      if (normalizedStatus === 'assigned' && !shift.guard) {
-        throw new BadRequestException('Assigned shifts require a guard');
-      }
-      shift.status = normalizedStatus;
+      shift.status = this.resolveAssignmentStatus({
+        requestedStatus: normalizedStatus,
+        hasGuard: Boolean(shift.guard),
+      });
+    } else if (dto.guardId !== undefined) {
+      shift.status = this.resolveAssignmentStatus({
+        requestedStatus: shift.status,
+        hasGuard: Boolean(shift.guard),
+      });
     }
     if (dto.checkCallIntervalMinutes) {
       shift.checkCallIntervalMinutes = dto.checkCallIntervalMinutes;
@@ -438,5 +480,39 @@ export class ShiftService {
     await this.timesheetRepo.delete({ shift: { id: shift.id } });
     await this.shiftRepo.delete({ id: shift.id });
     return { success: true };
+  }
+
+  private resolveAssignmentStatus(params: {
+    requestedStatus?: string | null;
+    hasGuard: boolean;
+  }): string {
+    const requestedStatus = params.requestedStatus?.trim().toLowerCase() || null;
+
+    if (requestedStatus && !this.allowedStatuses.has(requestedStatus)) {
+      throw new BadRequestException('Shift status is invalid');
+    }
+
+    if (!params.hasGuard) {
+      if (
+        requestedStatus &&
+        ['offered', 'accepted', 'assigned', 'in_progress', 'completed', 'missed', 'no_show', 'rejected'].includes(
+          requestedStatus,
+        )
+      ) {
+        throw new BadRequestException('This shift status requires a guard assignment');
+      }
+
+      return requestedStatus ?? 'unassigned';
+    }
+
+    if (!requestedStatus) {
+      return 'offered';
+    }
+
+    if (['planned', 'unassigned', 'assigned'].includes(requestedStatus)) {
+      return 'offered';
+    }
+
+    return requestedStatus;
   }
 }

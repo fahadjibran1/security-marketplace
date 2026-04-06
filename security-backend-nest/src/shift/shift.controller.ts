@@ -2,6 +2,7 @@ import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, UseGua
 import { ShiftService } from './shift.service';
 import { CreateShiftDto } from './dto/create-shift.dto';
 import { UpdateShiftDto } from './dto/update-shift.dto';
+import { RespondShiftDto } from './dto/respond-shift.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -39,6 +40,16 @@ export class ShiftController {
   @Roles(UserRole.ADMIN, ...COMPANY_ADMIN_ROLES)
   update(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number, @Body() dto: UpdateShiftDto) {
     return this.shiftService.updateForUser(user, id, dto);
+  }
+
+  @Patch(':id/respond')
+  @Roles(UserRole.GUARD)
+  respond(
+    @CurrentUser() user: JwtPayload,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: RespondShiftDto,
+  ) {
+    return this.shiftService.respondForGuard(user, id, dto);
   }
 
   @Delete(':id')

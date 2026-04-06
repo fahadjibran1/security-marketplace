@@ -24,9 +24,7 @@ export class DailyLogService {
     if (!guard) throw new NotFoundException('Guard profile not found');
 
     const shift = await this.shiftService.findOne(dto.shiftId);
-    if (!shift.guard || shift.guard.id !== guard.id) {
-      throw new BadRequestException('This shift is not assigned to the current guard');
-    }
+    this.shiftService.assertGuardCanOperateShift(shift, guard.id, 'record a daily log');
 
     const dailyLog = this.dailyLogRepo.create({
       company: shift.company,
