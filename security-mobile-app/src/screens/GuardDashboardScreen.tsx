@@ -19,6 +19,7 @@ import {
   listMyIncidents,
   listMyTimesheets,
   listMyAttendance,
+  respondToShift,
   submitTimesheet,
   updateMyGuard,
 } from '../services/api';
@@ -74,6 +75,7 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
   const [submittingTimesheetId, setSubmittingTimesheetId] = useState<number | null>(null);
   const [submittingAlertType, setSubmittingAlertType] = useState<'welfare' | 'panic' | null>(null);
   const [applyingJobId, setApplyingJobId] = useState<number | null>(null);
+  const [respondingShiftId, setRespondingShiftId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [selectedShiftId, setSelectedShiftId] = useState<number | null>(null);
@@ -169,6 +171,11 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
   }
 
   async function handleCreateIncident() {
+    if (!selectedShift?.id || !selectedShiftOperationalReady) {
+      showAlert('Shift not ready', 'Incident reporting becomes available after the guard accepts the shift.');
+      return;
+    }
+
     try {
       setSubmittingIncident(true);
       await createIncident({
@@ -194,6 +201,11 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
   async function handleCreateSafetyAlert(type: 'welfare' | 'panic') {
     if (!selectedShift?.id) {
       showAlert('No assigned shift', 'Safety alerts require an assigned or active shift.');
+      return;
+    }
+
+    if (!selectedShiftOperationalReady) {
+      showAlert('Shift not ready', 'Safety alerts become available after the guard accepts the shift.');
       return;
     }
 
@@ -238,6 +250,11 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
   }, [user.guardId]);
 
   async function handleSubmitTimesheet(timesheet: Timesheet) {
+    if (!timesheet.shift || !['accepted', 'in_progress', 'completed'].includes(timesheet.shift.status)) {
+      showAlert('Shift not ready', 'Timesheet progression becomes available after the guard accepts the shift.');
+      return;
+    }
+
     try {
       setSubmittingTimesheetId(timesheet.id);
       await submitTimesheet(timesheet.id, { hoursWorked: timesheet.hoursWorked });
@@ -253,6 +270,11 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
   async function handleCreateDailyLog(logType: DailyLog['logType']) {
     if (!selectedShift?.id) {
       showAlert('No assigned shift', 'Select an assigned shift before recording a log entry.');
+      return;
+    }
+
+    if (!selectedShiftOperationalReady) {
+      showAlert('Shift not ready', 'Operational logs become available after the guard accepts the shift.');
       return;
     }
 
@@ -278,11 +300,36 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
     }
   }
 
+  async function handleRespondToShift(shiftId: number, response: 'accepted' | 'rejected') {
+    try {
+      setRespondingShiftId(shiftId);
+      await respondToShift(shiftId, { response });
+      await loadData();
+      showAlert(
+        response === 'accepted' ? 'Shift accepted' : 'Shift rejected',
+        response === 'accepted'
+          ? 'The company can now see your confirmation and live controls are enabled.'
+          : 'The company can now see that this shift needs new cover.',
+      );
+    } catch (error) {
+      showAlert(
+        response === 'accepted' ? 'Accept failed' : 'Reject failed',
+        formatApiErrorMessage(error, 'Unable to update this shift response.'),
+      );
+    } finally {
+      setRespondingShiftId(null);
+    }
+  }
+
   const activeShift = shifts.find((shift) => shift.status === 'in_progress') || null;
   const upcomingShift =
-    shifts.find((shift) => shift.status === 'assigned' || shift.status === 'scheduled') || null;
+    shifts.find((shift) => ['offered', 'accepted', 'assigned', 'scheduled'].includes(shift.status)) || null;
   const selectedShift =
     shifts.find((shift) => shift.id === selectedShiftId) || activeShift || upcomingShift || shifts[0] || null;
+  const selectedShiftResponsePending = selectedShift?.status === 'offered';
+  const selectedShiftOperationalReady = Boolean(
+    selectedShift && ['accepted', 'in_progress'].includes(selectedShift.status),
+  );
   const completedTimesheets = timesheets.filter((timesheet) => timesheet.shift?.status === 'completed');
   const unreadNotifications = notifications.filter((notification) => notification.status === 'unread');
   const selectedShiftLogs = dailyLogs.filter((entry) => entry.shift?.id === selectedShift?.id);
@@ -362,10 +409,37 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
             <Text style={styles.helperText}>
               Employer: {selectedShift.company?.name || `#${selectedShift.company?.id ?? selectedShift.companyId ?? 'N/A'}`}
             </Text>
+            {selectedShiftResponsePending ? (
+              <>
+                <Text style={styles.helperText}>
+                  This shift has been offered to you. Accept it to unlock book on, logs, incidents, welfare checks, panic alert, and timesheet progression.
+                </Text>
+                <View style={styles.actionRow}>
+                  <Pressable
+                    style={styles.button}
+                    onPress={() => handleRespondToShift(selectedShift.id, 'accepted')}
+                    disabled={respondingShiftId === selectedShift.id}
+                  >
+                    <Text style={styles.buttonText}>
+                      {respondingShiftId === selectedShift.id ? 'Updating...' : 'Accept Shift'}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    style={styles.secondaryButton}
+                    onPress={() => handleRespondToShift(selectedShift.id, 'rejected')}
+                    disabled={respondingShiftId === selectedShift.id}
+                  >
+                    <Text style={styles.secondaryButtonText}>
+                      {respondingShiftId === selectedShift.id ? 'Updating...' : 'Reject Shift'}
+                    </Text>
+                  </Pressable>
+                </View>
+              </>
+            ) : null}
             <Text style={styles.helperText}>
-              Check calls every {selectedShift.checkCallIntervalMinutes || 60} minutes. Use this shift to check in, log activity, raise incidents, and submit the linked timesheet.
+              Check calls every {selectedShift.checkCallIntervalMinutes || 60} minutes. Operational controls are enabled only after the guard accepts the shift.
             </Text>
-            {(selectedShift.status === 'scheduled' || selectedShift.status === 'assigned') ? (
+            {selectedShift.status === 'accepted' ? (
               <Pressable
                 style={styles.button}
                 onPress={() => handleCheckIn(selectedShift.id)}
@@ -387,89 +461,96 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
                 </Text>
               </Pressable>
             ) : null}
-
-            <TextInput
-              style={[styles.input, styles.logInput]}
-              placeholder="Shift log / handover / check-call note"
-              multiline
-              value={dailyLogMessage}
-              onChangeText={setDailyLogMessage}
-            />
-            <View style={styles.actionRow}>
-              <Pressable
-                style={[styles.secondaryButton, submittingDailyLogType !== null && styles.buttonDisabled]}
-                onPress={() => handleCreateDailyLog('observation')}
-                disabled={submittingDailyLogType !== null}
-              >
-                <Text style={styles.secondaryButtonText}>
-                  {submittingDailyLogType === 'observation' ? 'Saving...' : 'Add Log Entry'}
-                </Text>
-              </Pressable>
-              <Pressable
-                style={[styles.secondaryButton, submittingDailyLogType !== null && styles.buttonDisabled]}
-                onPress={() => handleCreateDailyLog('check_call')}
-                disabled={submittingDailyLogType !== null}
-              >
-                <Text style={styles.secondaryButtonText}>
-                  {submittingDailyLogType === 'check_call' ? 'Saving...' : 'Record Check Call'}
-                </Text>
-              </Pressable>
-              <Pressable
-                style={[styles.secondaryButton, submittingDailyLogType !== null && styles.buttonDisabled]}
-                onPress={() => handleCreateDailyLog('welfare_check')}
-                disabled={submittingDailyLogType !== null}
-              >
-                <Text style={styles.secondaryButtonText}>
-                  {submittingDailyLogType === 'welfare_check' ? 'Saving...' : 'Record Welfare Check'}
-                </Text>
-              </Pressable>
-            </View>
-
-            <TextInput style={styles.input} placeholder="Incident title" value={incidentTitle} onChangeText={setIncidentTitle} />
-            <TextInput
-              style={styles.input}
-              placeholder="Severity: low, medium, high, critical"
-              value={incidentSeverity}
-              onChangeText={(value: string) => setIncidentSeverity((value as Incident['severity']) || 'medium')}
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="Location details"
-              value={incidentLocation}
-              onChangeText={setIncidentLocation}
-            />
-            <TextInput
-              style={[styles.input, styles.logInput]}
-              placeholder="Describe what happened..."
-              multiline
-              value={incidentNotes}
-              onChangeText={setIncidentNotes}
-            />
-            <Pressable style={[styles.button, submittingIncident && styles.buttonDisabled]} onPress={handleCreateIncident} disabled={submittingIncident}>
-              <Text style={styles.buttonText}>{submittingIncident ? 'Submitting...' : 'Submit Incident'}</Text>
-            </Pressable>
-
-            <View style={styles.actionRow}>
-              <Pressable
-                style={styles.secondaryButton}
-                onPress={() => handleCreateSafetyAlert('welfare')}
-                disabled={submittingAlertType !== null}
-              >
-                <Text style={styles.secondaryButtonText}>
-                  {submittingAlertType === 'welfare' ? 'Sending...' : 'Raise Welfare Alert'}
-                </Text>
-              </Pressable>
-            </View>
-
-            <Pressable
-              style={styles.emergencyButton}
-              onPress={() => handleCreateSafetyAlert('panic')}
-              disabled={submittingAlertType !== null}
-            >
-              <Text style={styles.buttonText}>
-                {submittingAlertType === 'panic' ? 'Sending Emergency Alert...' : 'Activate Panic Alert'}
+            {!selectedShiftOperationalReady ? (
+              <Text style={styles.helperText}>
+                Operational controls stay locked until the shift status is Accepted.
               </Text>
-            </Pressable>
+            ) : (
+              <>
+                <TextInput
+                  style={[styles.input, styles.logInput]}
+                  placeholder="Shift log / handover / check-call note"
+                  multiline
+                  value={dailyLogMessage}
+                  onChangeText={setDailyLogMessage}
+                />
+                <View style={styles.actionRow}>
+                  <Pressable
+                    style={[styles.secondaryButton, submittingDailyLogType !== null && styles.buttonDisabled]}
+                    onPress={() => handleCreateDailyLog('observation')}
+                    disabled={submittingDailyLogType !== null}
+                  >
+                    <Text style={styles.secondaryButtonText}>
+                      {submittingDailyLogType === 'observation' ? 'Saving...' : 'Add Log Entry'}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    style={[styles.secondaryButton, submittingDailyLogType !== null && styles.buttonDisabled]}
+                    onPress={() => handleCreateDailyLog('check_call')}
+                    disabled={submittingDailyLogType !== null}
+                  >
+                    <Text style={styles.secondaryButtonText}>
+                      {submittingDailyLogType === 'check_call' ? 'Saving...' : 'Record Check Call'}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    style={[styles.secondaryButton, submittingDailyLogType !== null && styles.buttonDisabled]}
+                    onPress={() => handleCreateDailyLog('welfare_check')}
+                    disabled={submittingDailyLogType !== null}
+                  >
+                    <Text style={styles.secondaryButtonText}>
+                      {submittingDailyLogType === 'welfare_check' ? 'Saving...' : 'Record Welfare Check'}
+                    </Text>
+                  </Pressable>
+                </View>
+
+                <TextInput style={styles.input} placeholder="Incident title" value={incidentTitle} onChangeText={setIncidentTitle} />
+                <TextInput
+                  style={styles.input}
+                  placeholder="Severity: low, medium, high, critical"
+                  value={incidentSeverity}
+                  onChangeText={(value: string) => setIncidentSeverity((value as Incident['severity']) || 'medium')}
+                />
+                <TextInput
+                  style={styles.input}
+                  placeholder="Location details"
+                  value={incidentLocation}
+                  onChangeText={setIncidentLocation}
+                />
+                <TextInput
+                  style={[styles.input, styles.logInput]}
+                  placeholder="Describe what happened..."
+                  multiline
+                  value={incidentNotes}
+                  onChangeText={setIncidentNotes}
+                />
+                <Pressable style={[styles.button, submittingIncident && styles.buttonDisabled]} onPress={handleCreateIncident} disabled={submittingIncident}>
+                  <Text style={styles.buttonText}>{submittingIncident ? 'Submitting...' : 'Submit Incident'}</Text>
+                </Pressable>
+
+                <View style={styles.actionRow}>
+                  <Pressable
+                    style={styles.secondaryButton}
+                    onPress={() => handleCreateSafetyAlert('welfare')}
+                    disabled={submittingAlertType !== null}
+                  >
+                    <Text style={styles.secondaryButtonText}>
+                      {submittingAlertType === 'welfare' ? 'Sending...' : 'Raise Welfare Alert'}
+                    </Text>
+                  </Pressable>
+                </View>
+
+                <Pressable
+                  style={styles.emergencyButton}
+                  onPress={() => handleCreateSafetyAlert('panic')}
+                  disabled={submittingAlertType !== null}
+                >
+                  <Text style={styles.buttonText}>
+                    {submittingAlertType === 'panic' ? 'Sending Emergency Alert...' : 'Activate Panic Alert'}
+                  </Text>
+                </Pressable>
+              </>
+            )}
           </View>
         )}
       </FeatureCard>
@@ -541,6 +622,28 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
               <Text style={styles.helperText}>
                 Status: {shift.status} | Check calls every {shift.checkCallIntervalMinutes || 60} mins
               </Text>
+              {shift.status === 'offered' ? (
+                <View style={styles.actionRow}>
+                  <Pressable
+                    style={styles.button}
+                    onPress={() => handleRespondToShift(shift.id, 'accepted')}
+                    disabled={respondingShiftId === shift.id}
+                  >
+                    <Text style={styles.buttonText}>
+                      {respondingShiftId === shift.id ? 'Updating...' : 'Accept'}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    style={styles.secondaryButton}
+                    onPress={() => handleRespondToShift(shift.id, 'rejected')}
+                    disabled={respondingShiftId === shift.id}
+                  >
+                    <Text style={styles.secondaryButtonText}>
+                      {respondingShiftId === shift.id ? 'Updating...' : 'Reject'}
+                    </Text>
+                  </Pressable>
+                </View>
+              ) : null}
               <Pressable style={styles.secondaryButton} onPress={() => setSelectedShiftId(shift.id)}>
                 <Text style={styles.secondaryButtonText}>{selectedShift?.id === shift.id ? 'Open Shift' : 'View Shift'}</Text>
               </Pressable>

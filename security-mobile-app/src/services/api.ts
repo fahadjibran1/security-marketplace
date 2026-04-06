@@ -333,6 +333,13 @@ export function updateShift(id: number, payload: UpdateShiftPayload) {
   });
 }
 
+export function respondToShift(id: number, payload: { response: 'accepted' | 'rejected'; reason?: string }) {
+  return request<Shift>(`/shifts/${id}/respond`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
 export function deleteShift(id: number) {
   return request<{ success: true }>(`/shifts/${id}`, {
     method: 'DELETE',

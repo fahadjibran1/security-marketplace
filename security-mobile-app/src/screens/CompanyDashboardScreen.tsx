@@ -120,6 +120,12 @@ type NavItem = {
   caption: string;
 };
 
+type SettledLoader = {
+  label: string;
+  run: () => Promise<any>;
+  apply: (value: any) => void;
+};
+
 const NAV_ITEMS: NavItem[] = [
   { id: 'dashboard', label: 'Dashboard', caption: 'Control-room overview and KPIs.' },
   { id: 'clients', label: 'Clients', caption: 'Client accounts and contacts.' },
@@ -166,6 +172,18 @@ const JOB_FORM_EMPTY: JobFormState = {
   hourlyRate: '12',
   siteId: '',
 };
+
+const SHIFT_STATUS_OPTIONS = [
+  { label: 'Planned', value: 'planned' },
+  { label: 'Unassigned', value: 'unassigned' },
+  { label: 'Offered', value: 'offered' },
+  { label: 'Accepted', value: 'accepted' },
+  { label: 'Rejected', value: 'rejected' },
+  { label: 'In Progress', value: 'in_progress' },
+  { label: 'Completed', value: 'completed' },
+  { label: 'Missed', value: 'missed' },
+  { label: 'No Show', value: 'no_show' },
+];
 
 const UK_LOCALE = 'en-GB';
 
@@ -347,7 +365,7 @@ function normalizePlannerStatus(status: string, assignedGuardId: string) {
     return status;
   }
 
-  return assignedGuardId ? 'assigned' : 'planned';
+  return assignedGuardId ? 'offered' : 'planned';
 }
 
 function buildPlannerRow(date: string): PlannerRow {
@@ -375,11 +393,87 @@ function WebSelect({
   options: Array<{ label: string; value: string }>;
   placeholder?: string;
 }) {
+  const [isBrowserSelectReady, setIsBrowserSelectReady] = React.useState(false);
+
+  React.useEffect(() => {
+    setIsBrowserSelectReady(typeof document !== 'undefined');
+  }, []);
+
+  if (isBrowserSelectReady) {
+    const SelectTag: any = 'select';
+    const OptionTag: any = 'option';
+
+    return (
+      <SelectTag
+        value={value}
+        onChange={(event: any) => onChange(event.target.value)}
+        style={webSelectStyle}
+        aria-label={placeholder || 'Select an option'}
+      >
+        <OptionTag value="">{placeholder || 'Select an option'}</OptionTag>
+        {options.map((option) => (
+          <OptionTag key={option.value} value={option.value}>
+            {option.label}
+          </OptionTag>
+        ))}
+      </SelectTag>
+    );
+  }
+
   return (
     <TextInput
       value={value}
       onChangeText={(nextValue: string) => onChange(nextValue)}
       placeholder={placeholder || (options[0] ? `${options[0].label}` : 'Enter value')}
+      style={webSelectStyle}
+      placeholderTextColor="#6b7280"
+    />
+  );
+}
+
+function NativeBrowserSelect({
+  value,
+  onChange,
+  options,
+  placeholder,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  options: Array<{ label: string; value: string }>;
+  placeholder?: string;
+}) {
+  const [isBrowserMounted, setIsBrowserMounted] = React.useState(false);
+
+  React.useEffect(() => {
+    setIsBrowserMounted(typeof document !== 'undefined');
+  }, []);
+
+  if (isBrowserMounted) {
+    const SelectTag: any = 'select';
+    const OptionTag: any = 'option';
+
+    return (
+      <SelectTag
+        value={value}
+        onChange={(event: any) => onChange(event.target.value)}
+        style={webSelectStyle}
+        aria-label={placeholder || 'Select an option'}
+      >
+        <OptionTag value="">{placeholder || 'Select an option'}</OptionTag>
+        {options.map((option) => (
+          <OptionTag key={option.value} value={option.value}>
+            {option.label}
+          </OptionTag>
+        ))}
+      </SelectTag>
+    );
+  }
+
+  return (
+    <TextInput
+      value={options.find((option) => option.value === value)?.label || ''}
+      editable={false}
+      placeholder={placeholder || 'Select an option'}
       style={webSelectStyle}
       placeholderTextColor="#6b7280"
     />
@@ -493,67 +587,115 @@ export function CompanyDashboardScreen() {
   const [hiringApplicationId, setHiringApplicationId] = React.useState<number | null>(null);
   const [showArchivedClients, setShowArchivedClients] = React.useState(false);
 
-  const loadData = async (isRefresh = false) => {
-    try {
-      setError(null);
-      if (isRefresh) {
-        setRefreshing(true);
+  const runSettledLoaders = React.useMemo(
+    () => async (loaders: SettledLoader[]) => {
+      const results = await Promise.allSettled(loaders.map((loader) => loader.run()));
+      const failures: unknown[] = [];
+
+      results.forEach((result, index) => {
+        if (result.status === 'fulfilled') {
+        loaders[index].apply(result.value);
       } else {
-        setLoading(true);
+        failures.push(result.reason);
       }
+      });
 
-      const [
-        clientRows,
-        siteRows,
-        shiftRows,
-        guardRows,
-        companyGuardRows,
-        jobRows,
-        applicationRows,
-        timesheetRows,
-        incidentRows,
-        alertRows,
-        dailyLogRows,
-      ] = await Promise.all([
-        listClients(),
-        listSites(),
-        listShifts(),
-        listGuards(),
-        listCompanyGuards(),
-        listJobs(),
-        listJobApplications(),
-        listCompanyTimesheets(),
-        listCompanyIncidents(),
-        listCompanySafetyAlerts(),
-        listCompanyDailyLogs(),
-      ]);
+      return failures;
+    },
+    [],
+  );
 
-      setClients(clientRows);
-      setSites(siteRows);
-      setShifts(shiftRows);
-      setGuards(guardRows);
-      setCompanyGuards(companyGuardRows);
-      setJobs(jobRows);
-      setApplications(applicationRows);
-      setTimesheets(timesheetRows);
-      setIncidents(incidentRows);
-      setAlerts(alertRows);
-      setDailyLogs(dailyLogRows);
+  const loadData = React.useMemo(
+    () =>
+    async (isRefresh = false) => {
+      try {
+        setError(null);
+        if (isRefresh) {
+          setRefreshing(true);
+        } else {
+          setLoading(true);
+        }
 
-      if (!selectedSiteId && siteRows[0]) {
-        setSelectedSiteId(siteRows[0].id);
+        let latestSites: Site[] = [];
+        let latestShifts: Shift[] = [];
+
+        const coreFailures = await runSettledLoaders([
+          {
+            label: 'clients',
+            run: listClients,
+            apply: (value: Client[]) => setClients(value),
+          },
+          {
+            label: 'sites',
+            run: listSites,
+            apply: (value: Site[]) => {
+              latestSites = value;
+              setSites(latestSites);
+            },
+          },
+          {
+            label: 'shifts',
+            run: listShifts,
+            apply: (value: Shift[]) => {
+              latestShifts = value;
+              setShifts(latestShifts);
+            },
+          },
+          {
+            label: 'guards',
+            run: listGuards,
+            apply: (value: GuardProfile[]) => setGuards(value),
+          },
+          {
+            label: 'company guards',
+            run: listCompanyGuards,
+            apply: (value: CompanyGuard[]) => setCompanyGuards(value),
+          },
+        ]);
+
+        if (!selectedSiteId && latestSites[0]) {
+          setSelectedSiteId(latestSites[0].id);
+        }
+
+        if (!selectedShiftId && latestShifts[0]) {
+          setSelectedShiftId(latestShifts[0].id);
+        }
+
+        const sectionLoaders: Partial<Record<CompanySection, SettledLoader[]>> = {
+          'live-operations': [
+            { label: 'timesheets', run: listCompanyTimesheets, apply: (value: Timesheet[]) => setTimesheets(value) },
+            { label: 'incidents', run: listCompanyIncidents, apply: (value: Incident[]) => setIncidents(value) },
+            { label: 'alerts', run: listCompanySafetyAlerts, apply: (value: SafetyAlert[]) => setAlerts(value) },
+            { label: 'daily logs', run: listCompanyDailyLogs, apply: (value: DailyLog[]) => setDailyLogs(value) },
+          ],
+          recruitment: [
+            { label: 'jobs', run: listJobs, apply: (value: Job[]) => setJobs(value) },
+            { label: 'applications', run: listJobApplications, apply: (value: JobApplication[]) => setApplications(value) },
+          ],
+          timesheets: [
+            { label: 'timesheets', run: listCompanyTimesheets, apply: (value: Timesheet[]) => setTimesheets(value) },
+          ],
+          incidents: [
+            { label: 'incidents', run: listCompanyIncidents, apply: (value: Incident[]) => setIncidents(value) },
+          ],
+          alerts: [
+            { label: 'alerts', run: listCompanySafetyAlerts, apply: (value: SafetyAlert[]) => setAlerts(value) },
+          ],
+        };
+
+        const sectionFailures = await runSettledLoaders(sectionLoaders[activeSection] || []);
+        const failures = [...coreFailures, ...sectionFailures];
+
+        if (failures.length > 0) {
+          setError(formatApiErrorMessage(failures[0], 'Some company workspace data could not be loaded.'));
+        }
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
       }
-
-      if (!selectedShiftId && shiftRows[0]) {
-        setSelectedShiftId(shiftRows[0].id);
-      }
-    } catch (loadError) {
-      setError(formatApiErrorMessage(loadError, 'Unable to load the company operations workspace right now.'));
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  };
+    },
+    [activeSection, runSettledLoaders, selectedShiftId, selectedSiteId],
+  );
 
   React.useEffect(() => {
     loadData();
@@ -644,7 +786,7 @@ export function CompanyDashboardScreen() {
     [shifts, todayIso],
   );
   const liveShifts = React.useMemo(
-    () => shifts.filter((shift) => ['in_progress', 'assigned'].includes((shift.status || '').toLowerCase())),
+    () => shifts.filter((shift) => ['accepted', 'in_progress'].includes((shift.status || '').toLowerCase())),
     [shifts],
   );
   const pendingTimesheets = React.useMemo(
@@ -707,9 +849,14 @@ export function CompanyDashboardScreen() {
     [sites],
   );
 
-  const clientOptions = React.useMemo(
+  const siteClientOptions = React.useMemo(
     () => clients.map((client) => ({ label: client.name, value: String(client.id) })),
     [clients],
+  );
+
+  const selectedSiteClient = React.useMemo(
+    () => clients.find((client) => String(client.id) === siteForm.clientId) ?? null,
+    [clients, siteForm.clientId],
   );
 
   const linkedGuardOptions = React.useMemo(
@@ -802,7 +949,7 @@ export function CompanyDashboardScreen() {
         contactEmail: clientForm.contactEmail.trim() || undefined,
         contactPhone: clientForm.contactPhone.trim() || undefined,
         contactDetails: clientForm.notes.trim() || undefined,
-        status: clientForm.status,
+        status: clientForm.status || 'active',
       };
 
       if (!payload.name) {
@@ -858,6 +1005,9 @@ export function CompanyDashboardScreen() {
   const handleSaveSite = async () => {
     try {
       setSavingSite(true);
+      const selectedClientId = toNumber(siteForm.clientId);
+      const trimmedSiteName = siteForm.name.trim();
+      const trimmedAddress = siteForm.address.trim();
       const hasStarterShiftValue = Boolean(
         siteForm.initialShiftDate || siteForm.initialShiftStartTime || siteForm.initialShiftEndTime,
       );
@@ -874,9 +1024,9 @@ export function CompanyDashboardScreen() {
       }
 
       const payload: CreateSitePayload | UpdateSitePayload = {
-        clientId: toNumber(siteForm.clientId),
-        name: siteForm.name.trim(),
-        address: siteForm.address.trim(),
+        clientId: selectedClientId,
+        name: trimmedSiteName,
+        address: trimmedAddress,
         contactDetails: siteForm.contactDetails.trim() || undefined,
         status: siteForm.status,
         requiredGuardCount: toNumber(siteForm.requiredGuardCount) || 1,
@@ -889,6 +1039,8 @@ export function CompanyDashboardScreen() {
         initialShiftStartTime: hasStarterShiftValue ? siteForm.initialShiftStartTime : undefined,
         initialShiftEndTime: hasStarterShiftValue ? siteForm.initialShiftEndTime : undefined,
       };
+
+      console.log('[CompanyDashboardScreen] handleSaveSite payload', payload);
 
       if (!payload.clientId || !payload.name || !payload.address) {
         throw new Error('Client, site name, and address are required.');
@@ -1237,7 +1389,16 @@ export function CompanyDashboardScreen() {
           </View>
           <View style={styles.formCard}>
             <Text style={styles.panelTitle}>{siteForm.id ? 'Edit Site' : 'New Site'}</Text>
-            <WebSelect value={siteForm.clientId} onChange={(value: string) => setSiteForm((current) => ({ ...current, clientId: value }))} options={clientOptions} placeholder="Linked client" />
+            <NativeBrowserSelect
+              value={siteForm.clientId}
+              onChange={(value: string) => setSiteForm((current) => ({ ...current, clientId: value }))}
+              options={siteClientOptions}
+              placeholder="Linked client"
+            />
+            <Text style={styles.helperText}>
+              Selected client id: {siteForm.clientId || 'none'}
+              {selectedSiteClient ? ` · ${selectedSiteClient.name}` : ''}
+            </Text>
             <TextInput style={styles.input} value={siteForm.name} onChangeText={(value: string) => setSiteForm((current) => ({ ...current, name: value }))} placeholder="Site name" />
             <TextInput style={styles.input} value={siteForm.address} onChangeText={(value: string) => setSiteForm((current) => ({ ...current, address: value }))} placeholder="Address" />
             <TextInput style={styles.input} value={siteForm.contactDetails} onChangeText={(value: string) => setSiteForm((current) => ({ ...current, contactDetails: value }))} placeholder="Site contact details" />
@@ -1351,7 +1512,12 @@ export function CompanyDashboardScreen() {
       </View>
 
       <View style={styles.filterBar}>
-        <WebSelect value={plannerClientId} onChange={setPlannerClientId} options={clientOptions} placeholder="Client" />
+        <NativeBrowserSelect
+          value={plannerClientId}
+          onChange={setPlannerClientId}
+          options={siteClientOptions}
+          placeholder="Client"
+        />
         <WebSelect value={plannerSiteId} onChange={setPlannerSiteId} options={plannerSiteOptions} placeholder="Site" />
         <View style={styles.inputGroup}>
           <Text style={styles.subtleLabel}>Date (DD/MM/YYYY)</Text>
@@ -1408,15 +1574,7 @@ export function CompanyDashboardScreen() {
                   <WebSelect
                     value={row.status}
                     onChange={(value: string) => handlePlannerRowChange(row.localId, { status: value })}
-                    options={[
-                      { label: 'Planned', value: 'planned' },
-                      { label: 'Unassigned', value: 'unassigned' },
-                      { label: 'Assigned', value: 'assigned' },
-                      { label: 'In Progress', value: 'in_progress' },
-                      { label: 'Completed', value: 'completed' },
-                      { label: 'Missed', value: 'missed' },
-                      { label: 'No Show', value: 'no_show' },
-                    ]}
+                    options={SHIFT_STATUS_OPTIONS}
                     placeholder="Status"
                   />
                   <Text style={styles.subtleLabel}>Shift instructions / notes</Text>
@@ -1442,11 +1600,11 @@ export function CompanyDashboardScreen() {
         </Pressable>
       </View>
       <View style={styles.filterBar}>
-        <WebSelect value={liveFilters.clientId} onChange={(value: string) => setLiveFilters((current) => ({ ...current, clientId: value }))} options={clientOptions} placeholder="Client" />
+        <WebSelect value={liveFilters.clientId} onChange={(value: string) => setLiveFilters((current) => ({ ...current, clientId: value }))} options={siteClientOptions} placeholder="Client" />
         <WebSelect value={liveFilters.siteId} onChange={(value: string) => setLiveFilters((current) => ({ ...current, siteId: value }))} options={siteOptions} placeholder="Site" />
         <WebSelect value={liveFilters.guardId} onChange={(value: string) => setLiveFilters((current) => ({ ...current, guardId: value }))} options={linkedGuardOptions} placeholder="Guard" />
         <TextInput style={styles.input} value={liveFilters.date} onChangeText={(value: string) => setLiveFilters((current) => ({ ...current, date: value }))} placeholder="YYYY-MM-DD" />
-        <WebSelect value={liveFilters.status} onChange={(value: string) => setLiveFilters((current) => ({ ...current, status: value }))} options={[{ label: 'Planned', value: 'planned' }, { label: 'Unassigned', value: 'unassigned' }, { label: 'Assigned', value: 'assigned' }, { label: 'In Progress', value: 'in_progress' }, { label: 'Completed', value: 'completed' }, { label: 'Missed', value: 'missed' }, { label: 'No Show', value: 'no_show' }]} placeholder="Status" />
+        <WebSelect value={liveFilters.status} onChange={(value: string) => setLiveFilters((current) => ({ ...current, status: value }))} options={SHIFT_STATUS_OPTIONS} placeholder="Status" />
       </View>
       <View style={styles.tableCard}>
         {renderTableHeader(['Shift', 'Client', 'Site', 'Guard', 'Date', 'Status', 'Book On', 'Book Off', 'Logs', 'Incidents', 'Timesheet'])}
@@ -1478,6 +1636,8 @@ export function CompanyDashboardScreen() {
           <Text style={styles.recordMeta}>{selectedShift.site?.client?.name || clientMap.get(selectedShift.site?.clientId || 0)?.name || 'No client'} · {selectedShift.site?.name || selectedShift.siteName}</Text>
           <Text style={styles.recordMeta}>{selectedShift.guard?.fullName || 'No guard assigned'} · {formatDateLabel(selectedShift.start)} · {formatTimeLabel(selectedShift.start)}-{formatTimeLabel(selectedShift.end)}</Text>
           <Text style={styles.recordMeta}>Status: {formatStatusLabel(selectedShift.status)} · Check calls: {selectedShift.checkCallIntervalMinutes || 60} mins</Text>
+          {selectedShift.status === 'offered' ? <Text style={styles.recordMeta}>Waiting for guard confirmation before live shift controls should be used.</Text> : null}
+          {selectedShift.status === 'rejected' ? <Text style={styles.recordMeta}>Guard rejected this shift. This slot still needs cover.</Text> : null}
           <Text style={styles.recordMeta}>Instructions: {selectedShift.instructions || 'No instructions recorded.'}</Text>
 
           <View style={styles.detailGrid}>
