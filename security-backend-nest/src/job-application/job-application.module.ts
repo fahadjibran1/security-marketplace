@@ -11,6 +11,7 @@ import { AuditLogModule } from '../audit-log/audit-log.module';
 import { NotificationModule } from '../notification/notification.module';
 import { SiteModule } from '../site/site.module';
 import { CompanyModule } from '../company/company.module';
+import { CompanyGuardModule } from '../company-guard/company-guard.module';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { CompanyModule } from '../company/company.module';
     NotificationModule,
     SiteModule,
     CompanyModule,
+    CompanyGuardModule,
   ],
   controllers: [JobApplicationController],
   providers: [JobApplicationService],
