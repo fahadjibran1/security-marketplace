@@ -14,7 +14,7 @@ export class JobApplication {
   @ManyToOne(() => GuardProfile, (guard) => guard.applications, { eager: true })
   guard!: GuardProfile;
 
-  @Column({ default: 'submitted' })
+  @Column({ default: 'applied' })
   status!: string;
 
   @CreateDateColumn()

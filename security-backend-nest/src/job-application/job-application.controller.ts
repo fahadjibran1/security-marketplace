@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, UseGuards } from '@nestjs/common';
 import { JobApplicationService } from './job-application.service';
 import { CreateJobApplicationDto } from './dto/create-job-application.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -8,6 +8,7 @@ import { COMPANY_ADMIN_ROLES, COMPANY_VIEW_ROLES, UserRole } from '../user/entit
 import { HireApplicationDto } from './dto/hire-application.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
+import { ReviewJobApplicationDto } from './dto/review-job-application.dto';
 
 @Controller('job-applications')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -36,5 +37,15 @@ export class JobApplicationController {
   @Roles(UserRole.ADMIN, ...COMPANY_ADMIN_ROLES)
   hire(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number, @Body() dto: HireApplicationDto) {
     return this.jobApplicationService.hireForUser(user, id, dto);
+  }
+
+  @Patch(':id/review')
+  @Roles(UserRole.ADMIN, ...COMPANY_ADMIN_ROLES)
+  review(
+    @CurrentUser() user: JwtPayload,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ReviewJobApplicationDto,
+  ) {
+    return this.jobApplicationService.reviewForUser(user, id, dto);
   }
 }

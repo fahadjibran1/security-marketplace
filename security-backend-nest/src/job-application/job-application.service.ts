@@ -17,6 +17,7 @@ import { CompanyService } from '../company/company.service';
 import { SiteService } from '../site/site.service';
 import { CompanyGuardService } from '../company-guard/company-guard.service';
 import { CompanyGuardRelationshipType } from '../company-guard/entities/company-guard.entity';
+import { ReviewJobApplicationDto } from './dto/review-job-application.dto';
 
 @Injectable()
 export class JobApplicationService {
@@ -36,6 +37,27 @@ export class JobApplicationService {
 
   findAll(): Promise<JobApplication[]> {
     return this.appRepo.find();
+  }
+
+  private normalizeApplicationStatus(status?: string | null) {
+    if (!status) {
+      return 'applied';
+    }
+
+    if (status === 'submitted') {
+      return 'applied';
+    }
+
+    if (status === 'hired') {
+      return 'accepted';
+    }
+
+    return status;
+  }
+
+  private normalizeApplication(application: JobApplication): JobApplication {
+    application.status = this.normalizeApplicationStatus(application.status);
+    return application;
   }
 
   private async resolveGuardForUser(user: JwtPayload) {
@@ -62,7 +84,7 @@ export class JobApplicationService {
       throw new ConflictException('Application already exists for this guard/job');
     }
 
-    const application = this.appRepo.create({ job, guard, status: 'submitted' });
+    const application = this.appRepo.create({ job, guard, status: 'applied' });
     return this.appRepo.save(application);
   }
 
@@ -77,10 +99,13 @@ export class JobApplicationService {
         throw new NotFoundException('Company not found');
       }
 
-      return this.appRepo.find({
+      const applications = await this.appRepo.find({
         where: { job: { company: { id: company.id } } },
+        relations: { assignments: { shifts: true } },
         order: { appliedAt: 'DESC' },
       });
+
+      return applications.map((application) => this.normalizeApplication(application));
     }
 
     const guard = await this.guardService.findByUserId(user.sub);
@@ -88,16 +113,22 @@ export class JobApplicationService {
       throw new NotFoundException('Guard profile not found');
     }
 
-    return this.appRepo.find({
+    const applications = await this.appRepo.find({
       where: { guard: { id: guard.id } },
+      relations: { assignments: { shifts: true } },
       order: { appliedAt: 'DESC' },
     });
+
+    return applications.map((application) => this.normalizeApplication(application));
   }
 
   async findOne(id: number): Promise<JobApplication> {
-    const app = await this.appRepo.findOne({ where: { id } });
+    const app = await this.appRepo.findOne({
+      where: { id },
+      relations: { assignments: { shifts: true } },
+    });
     if (!app) throw new NotFoundException('Job application not found');
-    return app;
+    return this.normalizeApplication(app);
   }
 
   async create(dto: CreateJobApplicationDto, guardId: number): Promise<JobApplication> {
@@ -116,14 +147,20 @@ export class JobApplicationService {
 
   async hire(applicationId: number, dto: HireApplicationDto) {
     const application = await this.findOne(applicationId);
-    if (application.status === 'hired') throw new ConflictException('Application already hired');
+    if (application.status === 'accepted') {
+      throw new ConflictException('Application already accepted');
+    }
+
+    if (application.status === 'rejected') {
+      throw new ConflictException('Rejected applications cannot be accepted');
+    }
 
     const activeCount = await this.assignmentService.countActiveByJob(application.job.id);
     if (activeCount >= application.job.guardsRequired) {
       throw new ConflictException('Job guard capacity reached');
     }
 
-    application.status = 'hired';
+    application.status = 'accepted';
     application.hiredAt = new Date();
     await this.appRepo.save(application);
 
@@ -133,7 +170,7 @@ export class JobApplicationService {
       relationshipType: CompanyGuardRelationshipType.APPROVED_CONTRACTOR,
     });
 
-    const assignment = await this.assignmentService.createFromHire(application);
+    const assignment = application.assignments?.[0] ?? (await this.assignmentService.createFromHire(application));
     const updatedActiveCount = await this.assignmentService.countActiveByJob(application.job.id);
     application.job.status = updatedActiveCount >= application.job.guardsRequired ? 'filled' : 'open';
     await this.jobsService.save(application.job);
@@ -149,14 +186,14 @@ export class JobApplicationService {
         siteId: dto.siteId,
         siteName: dto.siteName,
         start: dto.start,
-        end: dto.end
+        end: dto.end,
       });
     }
 
     await this.auditLogService.log({
       company: application.job.company,
       user: application.job.company?.user ? { id: application.job.company.user.id } : null,
-      action: 'job_application.hired',
+      action: 'job_application.accepted',
       entityType: 'job_application',
       entityId: application.id,
       afterData: {
@@ -170,16 +207,69 @@ export class JobApplicationService {
         userId: application.guard.user.id,
         company: application.job.company,
         type: NotificationType.JOB_ASSIGNED,
-        title: 'Job assigned',
-        message: `You have been hired for ${application.job.title}.`,
+        title: 'Application accepted',
+        message: `Your application for ${application.job.title} has been accepted. Shift offers can now be assigned to you.`,
       });
     }
 
     return {
-      application,
+      application: this.normalizeApplication(application),
       assignment,
-      shiftBundle: shiftResult
+      shiftBundle: shiftResult,
     };
+  }
+
+  async reviewForUser(user: JwtPayload, applicationId: number, dto: ReviewJobApplicationDto) {
+    const application = await this.findOne(applicationId);
+
+    if (user.role !== UserRole.ADMIN) {
+      const company = await this.companyService.findByUserId(user.sub);
+      if (!company) {
+        throw new NotFoundException('Company not found');
+      }
+
+      if (application.job.company.id !== company.id) {
+        throw new ForbiddenException('Job application does not belong to the current company');
+      }
+    }
+
+    if (dto.status === 'accepted') {
+      return this.hire(applicationId, {});
+    }
+
+    if (application.status === 'accepted') {
+      throw new ConflictException('Accepted applications cannot be moved back to review or rejected');
+    }
+
+    application.status = dto.status;
+    await this.appRepo.save(application);
+
+    await this.auditLogService.log({
+      company: application.job.company,
+      user: application.job.company?.user ? { id: application.job.company.user.id } : null,
+      action: `job_application.${dto.status}`,
+      entityType: 'job_application',
+      entityId: application.id,
+      afterData: {
+        applicationStatus: application.status,
+      },
+    });
+
+    if (application.guard?.user?.id) {
+      await this.notificationService.createForUser({
+        userId: application.guard.user.id,
+        company: application.job.company,
+        type: NotificationType.SHIFT_REMINDER,
+        title:
+          dto.status === 'rejected' ? 'Application rejected' : 'Application under review',
+        message:
+          dto.status === 'rejected'
+            ? `Your application for ${application.job.title} was rejected.`
+            : `Your application for ${application.job.title} is under review.`,
+      });
+    }
+
+    return this.normalizeApplication(application);
   }
 
   async hireForUser(user: JwtPayload, applicationId: number, dto: HireApplicationDto) {
