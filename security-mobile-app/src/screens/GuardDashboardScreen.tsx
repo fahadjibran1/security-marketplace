@@ -348,6 +348,12 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
       return [application.id, latestShift];
     }),
   );
+  const shiftOffers = shifts
+    .filter((shift) => ['offered', 'accepted', 'rejected'].includes(shift.status))
+    .sort((a, b) => new Date(b.start).getTime() - new Date(a.start).getTime());
+  const operationalShifts = shifts
+    .filter((shift) => !['offered', 'rejected'].includes(shift.status))
+    .sort((a, b) => new Date(b.start).getTime() - new Date(a.start).getTime());
 
   useEffect(() => {
     const selectedStillExists = selectedShiftId ? shifts.some((shift) => shift.id === selectedShiftId) : false;
@@ -610,23 +616,17 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
                 Site: {application.job?.site?.name || 'Site to be confirmed'}
               </Text>
               <Text style={styles.helperText}>Status: {application.status}</Text>
-              <Text style={styles.helperText}>
-                Shift offer:{' '}
-                {applicationShiftOfferById.get(application.id)
-                  ? `${applicationShiftOfferById.get(application.id)?.status} (${applicationShiftOfferById.get(application.id)?.siteName || applicationShiftOfferById.get(application.id)?.site?.name || 'Site TBD'})`
-                  : 'No shift offered yet'}
-              </Text>
               <Text style={styles.helperText}>Applied: {new Date(application.appliedAt).toLocaleString()}</Text>
             </View>
           ))
         )}
       </FeatureCard>
 
-      <FeatureCard title="My Shifts" subtitle={`Assigned shifts: ${shifts.length}`}>
-        {shifts.length === 0 ? (
-          <Text style={styles.helperText}>You do not have any assigned shifts yet.</Text>
+      <FeatureCard title="Shift Offers" subtitle={`${shiftOffers.length} offered or decided shift offers`}>
+        {shiftOffers.length === 0 ? (
+          <Text style={styles.helperText}>No shift offers have been sent to you yet.</Text>
         ) : (
-          shifts.map((shift) => (
+          shiftOffers.map((shift) => (
             <View key={shift.id} style={styles.listItem}>
               <Text style={styles.listTitle}>{shift.siteName}</Text>
               <Text style={styles.helperText}>
@@ -660,6 +660,30 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
                   </Pressable>
                 </View>
               ) : null}
+              <Pressable style={styles.secondaryButton} onPress={() => setSelectedShiftId(shift.id)}>
+                <Text style={styles.secondaryButtonText}>{selectedShift?.id === shift.id ? 'Open Shift' : 'View Shift'}</Text>
+              </Pressable>
+            </View>
+          ))
+        )}
+      </FeatureCard>
+
+      <FeatureCard title="Operational Shifts" subtitle={`${operationalShifts.length} accepted or active shifts`}>
+        {operationalShifts.length === 0 ? (
+          <Text style={styles.helperText}>No accepted or active shifts are ready for operations yet.</Text>
+        ) : (
+          operationalShifts.map((shift) => (
+            <View key={shift.id} style={styles.listItem}>
+              <Text style={styles.listTitle}>{shift.siteName}</Text>
+              <Text style={styles.helperText}>
+                {new Date(shift.start).toLocaleString()} to {new Date(shift.end).toLocaleString()}
+              </Text>
+              <Text style={styles.helperText}>
+                Company: {shift.company?.name || `#${shift.company?.id ?? shift.companyId ?? 'N/A'}`}
+              </Text>
+              <Text style={styles.helperText}>
+                Status: {shift.status} | Check calls every {shift.checkCallIntervalMinutes || 60} mins
+              </Text>
               <Pressable style={styles.secondaryButton} onPress={() => setSelectedShiftId(shift.id)}>
                 <Text style={styles.secondaryButtonText}>{selectedShift?.id === shift.id ? 'Open Shift' : 'View Shift'}</Text>
               </Pressable>

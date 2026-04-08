@@ -1335,6 +1335,11 @@ export function CompanyDashboardScreen() {
     return map;
   }, [applications, shifts]);
 
+  const acceptedApplications = React.useMemo(
+    () => applications.filter((application) => application.status === 'accepted'),
+    [applications],
+  );
+
   const renderTableHeader = (columns: string[]) => (
     <View style={styles.tableHeader}>
       {columns.map((column) => (
@@ -1973,6 +1978,9 @@ export function CompanyDashboardScreen() {
         </View>
         <View style={styles.tableCard}>
           <Text style={styles.panelTitle}>Applications</Text>
+          <Text style={styles.helperText}>
+            Application review approves a guard for future work with this company. Shift offers are tracked separately once rota or shift assignment is made.
+          </Text>
           {applications.map((application) => (
             <View key={application.id} style={styles.tableRow}>
               <Text style={styles.tableCellStrong}>{application.job?.title || `Job #${application.jobId}`}</Text>
@@ -2023,6 +2031,32 @@ export function CompanyDashboardScreen() {
               </View>
             </View>
           ))}
+        </View>
+        <View style={styles.tableCard}>
+          <Text style={styles.panelTitle}>Approved Guards Ready For Shift Offers</Text>
+          <Text style={styles.helperText}>
+            These guards are recruitment-approved. Offer them specific shifts from Rota Planner or shift assignment without changing the application decision.
+          </Text>
+          {acceptedApplications.length === 0 ? (
+            <Text style={styles.helperText}>No approved applications yet.</Text>
+          ) : (
+            acceptedApplications.map((application) => {
+              const latestOffer = applicationShiftSummaryById.get(application.id);
+
+              return (
+                <View key={`approved-${application.id}`} style={styles.tableRow}>
+                  <Text style={styles.tableCellStrong}>{application.guard?.fullName || `Guard #${application.guardId}`}</Text>
+                  <Text style={styles.tableCell}>{application.job?.title || `Job #${application.jobId}`}</Text>
+                  <Text style={styles.tableCell}>Application Accepted</Text>
+                  <Text style={styles.tableCell}>
+                    {latestOffer
+                      ? `${formatStatusLabel(latestOffer.status)} · ${latestOffer.siteName}`
+                      : 'No shift offered yet'}
+                  </Text>
+                </View>
+              );
+            })
+          )}
         </View>
       </View>
     </View>
