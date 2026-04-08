@@ -338,6 +338,16 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
   const myApplications = applications
     .slice()
     .sort((a, b) => new Date(b.appliedAt).getTime() - new Date(a.appliedAt).getTime());
+  const applicationShiftOfferById = new Map(
+    myApplications.map((application) => {
+      const assignmentShifts =
+        application.assignments?.flatMap((assignment) => assignment.shifts || []) || [];
+      const latestShift =
+        assignmentShifts.sort((left, right) => right.start.localeCompare(left.start))[0] || null;
+
+      return [application.id, latestShift];
+    }),
+  );
 
   useEffect(() => {
     const selectedStillExists = selectedShiftId ? shifts.some((shift) => shift.id === selectedShiftId) : false;
@@ -600,6 +610,12 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
                 Site: {application.job?.site?.name || 'Site to be confirmed'}
               </Text>
               <Text style={styles.helperText}>Status: {application.status}</Text>
+              <Text style={styles.helperText}>
+                Shift offer:{' '}
+                {applicationShiftOfferById.get(application.id)
+                  ? `${applicationShiftOfferById.get(application.id)?.status} (${applicationShiftOfferById.get(application.id)?.siteName || applicationShiftOfferById.get(application.id)?.site?.name || 'Site TBD'})`
+                  : 'No shift offered yet'}
+              </Text>
               <Text style={styles.helperText}>Applied: {new Date(application.appliedAt).toLocaleString()}</Text>
             </View>
           ))

@@ -97,6 +97,7 @@ export interface JobApplication {
   hiredAt?: string;
   job?: Job;
   guard?: GuardProfile;
+  assignments?: Assignment[];
 }
 
 // Assignment = hired guard linked to job
@@ -112,6 +113,7 @@ export interface Assignment {
   company?: CompanyProfile;
   guard?: GuardProfile;
   application?: JobApplication;
+  shifts?: Shift[];
 }
 
 export interface CompanyGuard {
@@ -228,6 +230,10 @@ export interface HireApplicationPayload {
   siteName?: string;
   start?: string;
   end?: string;
+}
+
+export interface ReviewJobApplicationPayload {
+  status: 'under_review' | 'accepted' | 'rejected';
 }
 
 export interface CreateSitePayload {

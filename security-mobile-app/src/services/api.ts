@@ -18,6 +18,7 @@ import {
   Incident,
   Job,
   JobApplication,
+  ReviewJobApplicationPayload,
   DailyLog,
   Notification,
   RegisterPayload,
@@ -504,6 +505,20 @@ export function hireJobApplication(id: number, payload: HireApplicationPayload) 
     } | null;
   }>(`/job-applications/${id}/hire`, {
     method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function reviewJobApplication(id: number, payload: ReviewJobApplicationPayload) {
+  return request<JobApplication | {
+    application: JobApplication;
+    assignment?: Assignment;
+    shiftBundle?: {
+      shift: Shift;
+      timesheet: Timesheet;
+    } | null;
+  }>(`/job-applications/${id}/review`, {
+    method: 'PATCH',
     body: JSON.stringify(payload),
   });
 }

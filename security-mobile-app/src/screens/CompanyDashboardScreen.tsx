@@ -9,7 +9,6 @@ import {
   createSite,
   deleteShift,
   formatApiErrorMessage,
-  hireJobApplication,
   listClients,
   listCompanyDailyLogs,
   listCompanyGuards,
@@ -21,6 +20,7 @@ import {
   listJobs,
   listShifts,
   listSites,
+  reviewJobApplication,
   updateClient,
   updateShift,
   updateSite,
@@ -584,7 +584,7 @@ export function CompanyDashboardScreen() {
   const [savingRota, setSavingRota] = React.useState(false);
   const [creatingJob, setCreatingJob] = React.useState(false);
   const [approvingGuardId, setApprovingGuardId] = React.useState<number | null>(null);
-  const [hiringApplicationId, setHiringApplicationId] = React.useState<number | null>(null);
+  const [reviewingApplicationId, setReviewingApplicationId] = React.useState<number | null>(null);
   const [showArchivedClients, setShowArchivedClients] = React.useState(false);
 
   const runSettledLoaders = React.useMemo(
@@ -1241,16 +1241,30 @@ export function CompanyDashboardScreen() {
     }
   };
 
-  const handleHireApplication = async (applicationId: number) => {
+  const handleReviewApplication = async (
+    applicationId: number,
+    status: 'under_review' | 'accepted' | 'rejected',
+  ) => {
     try {
-      setHiringApplicationId(applicationId);
-      await hireJobApplication(applicationId, {});
+      setReviewingApplicationId(applicationId);
+      await reviewJobApplication(applicationId, { status });
       await loadData(true);
-      setActiveSection('guards');
-    } catch (hireError) {
-      setError(formatApiErrorMessage(hireError, 'Unable to approve this application right now.'));
+      if (status === 'accepted') {
+        setActiveSection('guards');
+      }
+    } catch (reviewError) {
+      setError(
+        formatApiErrorMessage(
+          reviewError,
+          status === 'accepted'
+            ? 'Unable to accept this application right now.'
+            : status === 'rejected'
+              ? 'Unable to reject this application right now.'
+              : 'Unable to update this application right now.',
+        ),
+      );
     } finally {
-      setHiringApplicationId(null);
+      setReviewingApplicationId(null);
     }
   };
 
@@ -1281,6 +1295,45 @@ export function CompanyDashboardScreen() {
       }),
     [liveOperationRows, timesheetByShiftId],
   );
+
+  const applicationShiftSummaryById = React.useMemo(() => {
+    const map = new Map<
+      number,
+      {
+        status: string;
+        siteName: string;
+        start: string;
+      } | null
+    >();
+
+    applications.forEach((application) => {
+      const assignmentShiftCandidates =
+        application.assignments?.flatMap((assignment) => assignment.shifts || []) || [];
+      const fallbackShiftCandidates = shifts.filter((shift) => {
+        const sameGuard = (shift.guard?.id ?? shift.guardId) === application.guardId;
+        const shiftCompanyId = shift.company?.id ?? shift.companyId ?? shift.assignment?.companyId;
+        const applicationCompanyId = application.job?.company?.id ?? application.job?.companyId;
+        return sameGuard && Boolean(applicationCompanyId) && shiftCompanyId === applicationCompanyId;
+      });
+
+      const latestShift =
+        [...assignmentShiftCandidates, ...fallbackShiftCandidates]
+          .sort((left, right) => right.start.localeCompare(left.start))[0] || null;
+
+      map.set(
+        application.id,
+        latestShift
+          ? {
+              status: latestShift.status,
+              siteName: latestShift.site?.name || latestShift.siteName || 'Site TBD',
+              start: latestShift.start,
+            }
+          : null,
+      );
+    });
+
+    return map;
+  }, [applications, shifts]);
 
   const renderTableHeader = (columns: string[]) => (
     <View style={styles.tableHeader}>
@@ -1925,10 +1978,48 @@ export function CompanyDashboardScreen() {
               <Text style={styles.tableCellStrong}>{application.job?.title || `Job #${application.jobId}`}</Text>
               <Text style={styles.tableCell}>{application.guard?.fullName || `Guard #${application.guardId}`}</Text>
               <Text style={styles.tableCell}>{formatStatusLabel(application.status)}</Text>
+              <Text style={styles.tableCell}>
+                {applicationShiftSummaryById.get(application.id)
+                  ? `${formatStatusLabel(applicationShiftSummaryById.get(application.id)?.status || '')} · ${applicationShiftSummaryById.get(application.id)?.siteName}`
+                  : 'No shift offered'}
+              </Text>
               <View style={styles.rowActions}>
-                <Pressable style={styles.primaryButton} onPress={() => handleHireApplication(application.id)} disabled={hiringApplicationId === application.id}>
-                  <Text style={styles.primaryButtonText}>{hiringApplicationId === application.id ? 'Approving...' : 'Link / Approve'}</Text>
-                </Pressable>
+                {application.status === 'applied' ? (
+                  <Pressable
+                    style={styles.secondaryButton}
+                    onPress={() => handleReviewApplication(application.id, 'under_review')}
+                    disabled={reviewingApplicationId === application.id}
+                  >
+                    <Text style={styles.secondaryButtonText}>
+                      {reviewingApplicationId === application.id ? 'Updating...' : 'Under Review'}
+                    </Text>
+                  </Pressable>
+                ) : null}
+                {application.status !== 'accepted' && application.status !== 'rejected' ? (
+                  <>
+                    <Pressable
+                      style={styles.primaryButton}
+                      onPress={() => handleReviewApplication(application.id, 'accepted')}
+                      disabled={reviewingApplicationId === application.id}
+                    >
+                      <Text style={styles.primaryButtonText}>
+                        {reviewingApplicationId === application.id ? 'Updating...' : 'Accept Application'}
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      style={styles.secondaryButton}
+                      onPress={() => handleReviewApplication(application.id, 'rejected')}
+                      disabled={reviewingApplicationId === application.id}
+                    >
+                      <Text style={styles.secondaryButtonText}>
+                        {reviewingApplicationId === application.id ? 'Updating...' : 'Reject'}
+                      </Text>
+                    </Pressable>
+                  </>
+                ) : null}
+                {application.status === 'accepted' ? (
+                  <Text style={styles.helperText}>Approved for company assignment</Text>
+                ) : null}
               </View>
             </View>
           ))}
