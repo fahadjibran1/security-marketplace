@@ -50,4 +50,8 @@ export class CreateShiftDto {
   @IsOptional()
   @IsString()
   instructions?: string;
+
+  @IsOptional()
+  @IsString()
+  closeOutNotes?: string;
 }

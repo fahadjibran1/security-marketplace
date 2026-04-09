@@ -58,6 +58,9 @@ export class Shift {
   @Column({ type: 'text', nullable: true })
   instructions?: string | null;
 
+  @Column({ type: 'text', nullable: true })
+  closeOutNotes?: string | null;
+
   @Column({ default: 'unfilled' })
   status!: string;
 

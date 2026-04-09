@@ -216,6 +216,7 @@ export class ShiftService {
     shift.checkCallIntervalMinutes =
       dto.checkCallIntervalMinutes ?? site.welfareCheckIntervalMinutes ?? 60;
     shift.instructions = dto.instructions?.trim() || null;
+    shift.closeOutNotes = dto.closeOutNotes?.trim() || null;
     shift.status = status;
 
     const savedShift: Shift = await this.shiftRepo.save(shift);
@@ -458,6 +459,9 @@ export class ShiftService {
     }
     if (dto.instructions !== undefined) {
       shift.instructions = dto.instructions?.trim() || null;
+    }
+    if (dto.closeOutNotes !== undefined) {
+      shift.closeOutNotes = dto.closeOutNotes?.trim() || null;
     }
 
     const savedShift = await this.shiftRepo.save(shift);
