@@ -31,13 +31,10 @@ export class AttendanceService {
 
   async checkIn(userId: number, shiftId: number, nfcTag?: string, notes?: string) {
     const { guard, shift } = await this.getGuardAndOwnedShift(userId, shiftId);
+    const normalizedStatus = this.shiftService.normalizeLifecycleStatus(shift.status);
 
-    if (shift.status === 'offered' || shift.status === 'rejected') {
-      throw new BadRequestException('Shift must be accepted before check-in is available');
-    }
-
-    if (shift.status === 'completed') {
-      throw new BadRequestException('Completed shifts cannot be checked in again');
+    if (normalizedStatus !== 'ready') {
+      throw new BadRequestException('Only ready shifts can be checked in');
     }
 
     const latest = await this.latestForShift(shift.id);
@@ -68,7 +65,12 @@ export class AttendanceService {
 
   async checkOut(userId: number, shiftId: number, notes?: string) {
     const { guard, shift } = await this.getGuardAndOwnedShift(userId, shiftId);
+    const normalizedStatus = this.shiftService.normalizeLifecycleStatus(shift.status);
     const latest = await this.latestForShift(shift.id);
+
+    if (normalizedStatus !== 'in_progress') {
+      throw new BadRequestException('Only in-progress shifts can be checked out');
+    }
 
     if (!latest || latest.type !== AttendanceEventType.CHECK_IN) {
       throw new BadRequestException('Shift must be checked in before checkout');

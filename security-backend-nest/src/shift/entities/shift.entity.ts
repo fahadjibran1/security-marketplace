@@ -58,7 +58,7 @@ export class Shift {
   @Column({ type: 'text', nullable: true })
   instructions?: string | null;
 
-  @Column({ default: 'scheduled' })
+  @Column({ default: 'unfilled' })
   status!: string;
 
   @OneToMany(() => Timesheet, (timesheet) => timesheet.shift)

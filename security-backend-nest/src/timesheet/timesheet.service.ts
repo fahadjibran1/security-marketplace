@@ -186,8 +186,10 @@ export class TimesheetService {
       where: { id, guard: { id: guard.id } },
     });
     if (!timesheet) throw new NotFoundException('Timesheet not found');
-    if (!timesheet.shift || !['accepted', 'in_progress', 'completed'].includes(timesheet.shift.status)) {
-      throw new BadRequestException('Shift must be accepted before timesheet progression is available');
+    const shiftStatus = timesheet.shift ? timesheet.shift.status : null;
+    const normalizedShiftStatus = shiftStatus ? ['accepted'].includes(shiftStatus) ? 'ready' : ['planned', 'unassigned', 'scheduled'].includes(shiftStatus) ? 'unfilled' : ['assigned'].includes(shiftStatus) ? 'offered' : shiftStatus : null;
+    if (normalizedShiftStatus !== 'in_progress') {
+      throw new BadRequestException('Shift must be in progress before timesheet progression is available');
     }
 
     if (dto.hoursWorked !== undefined) {

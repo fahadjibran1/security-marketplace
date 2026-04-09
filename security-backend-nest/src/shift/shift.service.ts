@@ -22,16 +22,13 @@ import { RespondShiftDto } from './dto/respond-shift.dto';
 @Injectable()
 export class ShiftService {
   private readonly allowedStatuses = new Set([
-    'planned',
-    'unassigned',
-    'assigned',
+    'unfilled',
     'offered',
-    'accepted',
+    'ready',
+    'cancelled',
     'rejected',
     'in_progress',
     'completed',
-    'missed',
-    'no_show',
   ]);
 
   constructor(
@@ -190,7 +187,7 @@ export class ShiftService {
 
     const siteId = dto.siteId;
     const site = await this.siteService.findOne(siteId);
-    const normalizedStatus = dto.status?.trim().toLowerCase();
+    const normalizedStatus = this.normalizeLifecycleStatus(dto.status);
 
     if (!company) {
       throw new NotFoundException('Company context is required to create a shift');
@@ -200,7 +197,7 @@ export class ShiftService {
       throw new BadRequestException('Shift status is invalid');
     }
 
-    const status = this.resolveAssignmentStatus({
+    const status = this.resolveInitialStatus({
       requestedStatus: normalizedStatus,
       hasGuard: Boolean(guard),
     });
@@ -305,7 +302,7 @@ export class ShiftService {
       siteId: site.id,
       checkCallIntervalMinutes:
         dto.checkCallIntervalMinutes ?? site.welfareCheckIntervalMinutes ?? undefined,
-      status: dto.status ?? (contextGuard ? 'assigned' : 'unassigned'),
+      status: dto.status ?? (contextGuard ? 'offered' : 'unfilled'),
     });
   }
 
@@ -339,7 +336,7 @@ export class ShiftService {
       createdByUserId: params.createdByUserId,
       start,
       end: `${endDate}T${endTime}:00`,
-      status: 'planned',
+      status: 'unfilled',
       instructions: params.instructions ?? undefined,
     });
   }
@@ -363,7 +360,7 @@ export class ShiftService {
       throw new BadRequestException('Only offered shifts can be accepted or rejected');
     }
 
-    shift.status = dto.response;
+    shift.status = dto.response === 'accepted' ? 'ready' : 'rejected';
     const savedShift = await this.shiftRepo.save(shift);
 
     return this.findOne(savedShift.id);
@@ -375,9 +372,10 @@ export class ShiftService {
       throw new BadRequestException('This shift is not assigned to the current guard');
     }
 
-    if (!['accepted', 'in_progress', 'completed'].includes(shift.status)) {
+    const normalizedStatus = this.normalizeLifecycleStatus(shift.status);
+    if (normalizedStatus !== 'in_progress') {
       throw new BadRequestException(
-        `Shift must be accepted before a guard can ${action}`,
+        `Shift must be in progress before a guard can ${action}`,
       );
     }
   }
@@ -412,13 +410,16 @@ export class ShiftService {
       }
     }
 
+    const currentStatus = this.normalizeLifecycleStatus(shift.status);
+    let nextGuard = shift.guard ?? null;
+
     if (dto.guardId !== undefined && dto.guardId !== shift.guard?.id) {
       if (dto.guardId) {
         const guard = await this.guardProfileService.findOne(dto.guardId);
         await this.companyGuardService.ensureActiveRelationship(actorCompany.id, guard.id);
-        shift.guard = guard;
+        nextGuard = guard;
       } else {
-        shift.guard = null;
+        nextGuard = null;
       }
     }
 
@@ -428,21 +429,30 @@ export class ShiftService {
     if (dto.end) {
       shift.end = nextEnd;
     }
+    let nextStatus = currentStatus;
+    const requestedStatus = dto.status !== undefined ? this.normalizeLifecycleStatus(dto.status) : null;
+
     if (dto.status?.trim()) {
-      const normalizedStatus = dto.status.trim().toLowerCase();
-      if (!this.allowedStatuses.has(normalizedStatus)) {
-        throw new BadRequestException('Shift status is invalid');
-      }
-      shift.status = this.resolveAssignmentStatus({
-        requestedStatus: normalizedStatus,
-        hasGuard: Boolean(shift.guard),
+      nextStatus = this.resolveUpdatedStatus({
+        currentStatus,
+        requestedStatus,
+        currentGuardId: shift.guard?.id ?? null,
+        nextGuardId: nextGuard?.id ?? null,
       });
     } else if (dto.guardId !== undefined) {
-      shift.status = this.resolveAssignmentStatus({
-        requestedStatus: shift.status,
-        hasGuard: Boolean(shift.guard),
+      nextStatus = this.resolveStatusFromGuardChange({
+        currentStatus,
+        currentGuardId: shift.guard?.id ?? null,
+        nextGuardId: nextGuard?.id ?? null,
       });
     }
+
+    if (nextStatus === 'unfilled') {
+      nextGuard = null;
+    }
+
+    shift.guard = nextGuard;
+    shift.status = nextStatus;
     if (dto.checkCallIntervalMinutes) {
       shift.checkCallIntervalMinutes = dto.checkCallIntervalMinutes;
     }
@@ -482,37 +492,119 @@ export class ShiftService {
     return { success: true };
   }
 
-  private resolveAssignmentStatus(params: {
+  normalizeLifecycleStatus(status?: string | null): string {
+    const normalizedStatus = status?.trim().toLowerCase() || '';
+
+    switch (normalizedStatus) {
+      case 'planned':
+      case 'unassigned':
+      case 'scheduled':
+        return 'unfilled';
+      case 'assigned':
+      case 'accepted':
+        return normalizedStatus === 'accepted' ? 'ready' : 'offered';
+      default:
+        return normalizedStatus || 'unfilled';
+    }
+  }
+
+  private resolveInitialStatus(params: {
     requestedStatus?: string | null;
     hasGuard: boolean;
   }): string {
-    const requestedStatus = params.requestedStatus?.trim().toLowerCase() || null;
+    const requestedStatus = params.requestedStatus || null;
 
     if (requestedStatus && !this.allowedStatuses.has(requestedStatus)) {
       throw new BadRequestException('Shift status is invalid');
     }
 
     if (!params.hasGuard) {
-      if (
-        requestedStatus &&
-        ['offered', 'accepted', 'assigned', 'in_progress', 'completed', 'missed', 'no_show', 'rejected'].includes(
-          requestedStatus,
-        )
-      ) {
+      if (requestedStatus && ['offered', 'ready', 'rejected', 'in_progress', 'completed'].includes(requestedStatus)) {
         throw new BadRequestException('This shift status requires a guard assignment');
       }
 
-      return requestedStatus ?? 'unassigned';
+      return requestedStatus ?? 'unfilled';
     }
 
-    if (!requestedStatus) {
+    if (!requestedStatus || requestedStatus === 'unfilled') {
       return 'offered';
     }
 
-    if (['planned', 'unassigned', 'assigned'].includes(requestedStatus)) {
-      return 'offered';
+    if (!['offered', 'cancelled'].includes(requestedStatus)) {
+      throw new BadRequestException('New assigned shifts must start as offered or cancelled');
     }
 
     return requestedStatus;
+  }
+
+  private resolveUpdatedStatus(params: {
+    currentStatus: string;
+    requestedStatus: string | null;
+    currentGuardId: number | null;
+    nextGuardId: number | null;
+  }): string {
+    const requestedStatus = params.requestedStatus;
+
+    if (!requestedStatus || !this.allowedStatuses.has(requestedStatus)) {
+      throw new BadRequestException('Shift status is invalid');
+    }
+
+    if (requestedStatus === 'unfilled' && params.nextGuardId) {
+      throw new BadRequestException('Unfilled shifts cannot keep a guard assignment');
+    }
+
+    if (['offered', 'ready', 'rejected', 'in_progress', 'completed'].includes(requestedStatus) && !params.nextGuardId) {
+      throw new BadRequestException('This shift status requires a guard assignment');
+    }
+
+    this.assertTransition(params.currentStatus, requestedStatus);
+    return requestedStatus;
+  }
+
+  private resolveStatusFromGuardChange(params: {
+    currentStatus: string;
+    currentGuardId: number | null;
+    nextGuardId: number | null;
+  }): string {
+    if (params.currentGuardId === params.nextGuardId) {
+      return params.currentStatus;
+    }
+
+    if (!params.nextGuardId) {
+      if (!['unfilled', 'rejected'].includes(params.currentStatus)) {
+        throw new BadRequestException('Only unfilled or rejected shifts can be cleared back to the guard pool');
+      }
+      return 'unfilled';
+    }
+
+    if (params.currentStatus === 'cancelled') {
+      throw new BadRequestException('Cancelled shifts cannot be reassigned');
+    }
+
+    if (['ready', 'in_progress', 'completed'].includes(params.currentStatus)) {
+      throw new BadRequestException('This shift is already committed or closed and cannot be reassigned');
+    }
+
+    return 'offered';
+  }
+
+  private assertTransition(currentStatus: string, nextStatus: string): void {
+    if (currentStatus === nextStatus) {
+      return;
+    }
+
+    const allowedTransitions: Record<string, string[]> = {
+      unfilled: ['offered', 'cancelled'],
+      offered: ['ready', 'rejected', 'cancelled'],
+      ready: ['in_progress', 'cancelled'],
+      in_progress: ['completed'],
+      completed: [],
+      rejected: ['unfilled'],
+      cancelled: [],
+    };
+
+    if (!(allowedTransitions[currentStatus] || []).includes(nextStatus)) {
+      throw new BadRequestException(`Shift cannot move from ${currentStatus} to ${nextStatus}`);
+    }
   }
 }
