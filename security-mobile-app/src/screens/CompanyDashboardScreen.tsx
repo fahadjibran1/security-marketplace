@@ -2,7 +2,9 @@ import * as React from 'react';
 import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 
 import {
+  acknowledgeSafetyAlert,
   approveGuard,
+  closeSafetyAlert,
   createClient,
   createJob,
   createShift,
@@ -13,6 +15,7 @@ import {
   listCompanyDailyLogs,
   listCompanyGuards,
   listCompanyIncidents,
+  listCompanyNotifications,
   listCompanySafetyAlerts,
   listCompanyTimesheets,
   listGuards,
@@ -21,6 +24,7 @@ import {
   listShifts,
   listSites,
   reviewJobApplication,
+  updateIncidentStatus,
   updateClient,
   updateShift,
   updateSite,
@@ -37,6 +41,7 @@ import {
   Incident,
   Job,
   JobApplication,
+  Notification,
   SafetyAlert,
   Shift,
   Site,
@@ -125,6 +130,40 @@ type SettledLoader = {
   label: string;
   run: () => Promise<any>;
   apply: (value: any) => void;
+};
+
+type OperationalActivityItem = {
+  id: string;
+  shiftId?: number | null;
+  siteName: string;
+  guardName: string;
+  eventType: string;
+  message: string;
+  occurredAt: string;
+};
+
+type UrgentOperationalItem = {
+  id: string;
+  shiftId?: number | null;
+  incidentId?: number | null;
+  alertId?: number | null;
+  status?: string | null;
+  siteName: string;
+  guardName: string;
+  category: 'panic' | 'incident' | 'late_start' | 'missed_check_call' | 'rejected_offer' | 'safety';
+  issueType: string;
+  message: string;
+  occurredAt: string;
+};
+
+type ManagementActionItem = {
+  id: string;
+  shiftId?: number | null;
+  siteName: string;
+  guardName: string;
+  itemType: string;
+  actionTaken: string;
+  occurredAt: string;
 };
 
 const NAV_ITEMS: NavItem[] = [
@@ -612,6 +651,7 @@ export function CompanyDashboardScreen() {
   const [incidents, setIncidents] = React.useState<Incident[]>([]);
   const [alerts, setAlerts] = React.useState<SafetyAlert[]>([]);
   const [dailyLogs, setDailyLogs] = React.useState<DailyLog[]>([]);
+  const [notifications, setNotifications] = React.useState<Notification[]>([]);
   const [selectedSiteId, setSelectedSiteId] = React.useState<number | null>(null);
   const [selectedShiftId, setSelectedShiftId] = React.useState<number | null>(null);
   const [clientForm, setClientForm] = React.useState<ClientFormState>(CLIENT_FORM_EMPTY);
@@ -641,6 +681,14 @@ export function CompanyDashboardScreen() {
     tone: 'success' | 'error';
     message: string;
   } | null>(null);
+  const [liveOperationsFeedback, setLiveOperationsFeedback] = React.useState<{
+    tone: 'success' | 'error';
+    message: string;
+  } | null>(null);
+  const [urgentActionItemId, setUrgentActionItemId] = React.useState<string | null>(null);
+  const [managementActions, setManagementActions] = React.useState<ManagementActionItem[]>([]);
+  const [closeOutNotesDraft, setCloseOutNotesDraft] = React.useState('');
+  const [savingCloseOutNotes, setSavingCloseOutNotes] = React.useState(false);
   const [showArchivedClients, setShowArchivedClients] = React.useState(false);
 
   const runSettledLoaders = React.useMemo(
@@ -722,11 +770,12 @@ export function CompanyDashboardScreen() {
 
         const sectionLoaders: Partial<Record<CompanySection, SettledLoader[]>> = {
           'live-operations': [
-            { label: 'timesheets', run: listCompanyTimesheets, apply: (value: Timesheet[]) => setTimesheets(value) },
-            { label: 'incidents', run: listCompanyIncidents, apply: (value: Incident[]) => setIncidents(value) },
-            { label: 'alerts', run: listCompanySafetyAlerts, apply: (value: SafetyAlert[]) => setAlerts(value) },
-            { label: 'daily logs', run: listCompanyDailyLogs, apply: (value: DailyLog[]) => setDailyLogs(value) },
-          ],
+              { label: 'timesheets', run: listCompanyTimesheets, apply: (value: Timesheet[]) => setTimesheets(value) },
+              { label: 'incidents', run: listCompanyIncidents, apply: (value: Incident[]) => setIncidents(value) },
+              { label: 'alerts', run: listCompanySafetyAlerts, apply: (value: SafetyAlert[]) => setAlerts(value) },
+              { label: 'daily logs', run: listCompanyDailyLogs, apply: (value: DailyLog[]) => setDailyLogs(value) },
+              { label: 'notifications', run: listCompanyNotifications, apply: (value: Notification[]) => setNotifications(value) },
+            ],
           recruitment: [
             { label: 'jobs', run: listJobs, apply: (value: Job[]) => setJobs(value) },
             { label: 'applications', run: listJobApplications, apply: (value: JobApplication[]) => setApplications(value) },
@@ -889,7 +938,7 @@ export function CompanyDashboardScreen() {
     [timesheets],
   );
   const openIncidents = React.useMemo(
-    () => incidents.filter((incident) => (incident.status || '').toLowerCase() !== 'closed'),
+    () => incidents.filter((incident) => ['open', 'in_review'].includes((incident.status || '').toLowerCase())),
     [incidents],
   );
   const outstandingAlerts = React.useMemo(
@@ -930,6 +979,254 @@ export function CompanyDashboardScreen() {
     () => shiftOfferRows.filter((shift) => normalizeShiftLifecycleStatus(shift.status) === 'rejected'),
     [shiftOfferRows],
   );
+  const urgentOperationalItems = React.useMemo(() => {
+    const now = new Date();
+    const items: UrgentOperationalItem[] = [];
+    const readyShiftsNotBookedOn = shifts.filter((shift) => {
+      const timesheet = timesheetByShiftId.get(shift.id);
+      return (
+        normalizeShiftLifecycleStatus(shift.status) === 'ready' &&
+        !timesheet?.actualCheckInAt &&
+        new Date(shift.start).getTime() <= now.getTime()
+      );
+    });
+
+    activePanicAlerts.forEach((alert) => {
+      items.push({
+        id: `panic-${alert.id}`,
+        alertId: alert.id,
+        shiftId: alert.shift?.id ?? null,
+        status: alert.status,
+        siteName: alert.shift?.site?.name || alert.shift?.siteName || 'Unknown site',
+        guardName: alert.guard?.fullName || 'Unknown guard',
+        category: 'panic',
+        issueType: 'Active panic alert',
+        message: alert.message || 'Emergency assistance requested from a live shift.',
+        occurredAt: alert.createdAt,
+      });
+    });
+
+    openIncidents.forEach((incident) => {
+      items.push({
+        id: `incident-${incident.id}`,
+        incidentId: incident.id,
+        shiftId: incident.shift?.id ?? null,
+        status: incident.status,
+        siteName: incident.site?.name || incident.shift?.site?.name || 'Unknown site',
+        guardName: incident.guard?.fullName || 'Unknown guard',
+        category: 'incident',
+        issueType: 'Unresolved incident',
+        message: incident.title,
+        occurredAt: incident.createdAt,
+      });
+    });
+
+    readyShiftsNotBookedOn.forEach((shift) => {
+      items.push({
+        id: `ready-overdue-${shift.id}`,
+        shiftId: shift.id,
+        status: shift.status,
+        siteName: shift.site?.name || shift.siteName || 'Unknown site',
+        guardName: shift.guard?.fullName || 'Unassigned',
+        category: 'late_start',
+        issueType: 'Ready shift not booked on',
+        message: 'Shift start time has passed but the guard has not booked on yet.',
+        occurredAt: shift.start,
+      });
+    });
+
+    missedCheckCalls.forEach((alert) => {
+      items.push({
+        id: `checkcall-${alert.id}`,
+        alertId: alert.id,
+        shiftId: alert.shift?.id ?? null,
+        status: alert.status,
+        siteName: alert.shift?.site?.name || alert.shift?.siteName || 'Unknown site',
+        guardName: alert.guard?.fullName || 'Unknown guard',
+        category: 'missed_check_call',
+        issueType: 'Missed or overdue check call',
+        message: alert.message || 'A scheduled check call needs attention.',
+        occurredAt: alert.createdAt,
+      });
+    });
+
+    rejectedShiftOffers.forEach((shift) => {
+      items.push({
+        id: `rejected-${shift.id}`,
+        shiftId: shift.id,
+        status: shift.status,
+        siteName: shift.site?.name || shift.siteName || 'Unknown site',
+        guardName: shift.guard?.fullName || 'No guard',
+        category: 'rejected_offer',
+        issueType: 'Rejected shift needs re-cover',
+        message: 'The offered guard rejected this shift and replacement cover is still needed.',
+        occurredAt: shift.start,
+      });
+    });
+
+    outstandingAlerts
+      .filter((alert) => ['welfare', 'late_checkin', 'other'].includes((alert.type || '').toLowerCase()))
+      .forEach((alert) => {
+      items.push({
+        id: `attention-${alert.id}`,
+        alertId: alert.id,
+        shiftId: alert.shift?.id ?? null,
+        status: alert.status,
+        siteName: alert.shift?.site?.name || alert.shift?.siteName || 'Unknown site',
+        guardName: alert.guard?.fullName || 'Unknown guard',
+        category: 'safety',
+        issueType: 'Safety / welfare needs attention',
+        message: alert.message || 'A safety or welfare item needs review.',
+        occurredAt: alert.createdAt,
+        });
+      });
+
+    return items
+      .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt))
+      .slice(0, 10);
+  }, [
+    activePanicAlerts,
+    missedCheckCalls,
+    openIncidents,
+    outstandingAlerts,
+    rejectedShiftOffers,
+    shifts,
+    timesheetByShiftId,
+  ]);
+  const recentOperationalActivity = React.useMemo(() => {
+    const items: OperationalActivityItem[] = [];
+
+    shiftOfferRows.forEach((shift) => {
+      const lifecycleStatus = normalizeShiftLifecycleStatus(shift.status);
+      items.push({
+        id: `shift-${shift.id}-${lifecycleStatus}`,
+        shiftId: shift.id,
+        siteName: shift.site?.name || shift.siteName || 'Unknown site',
+        guardName: shift.guard?.fullName || 'Unassigned',
+        eventType:
+          lifecycleStatus === 'offered'
+            ? 'Shift offered'
+            : lifecycleStatus === 'ready'
+              ? 'Shift accepted'
+              : 'Shift rejected',
+        message:
+          lifecycleStatus === 'offered'
+            ? 'Waiting for guard response.'
+            : lifecycleStatus === 'ready'
+              ? 'Guard accepted and shift is ready to start.'
+              : 'Guard rejected and new cover is required.',
+        occurredAt: shift.start,
+      });
+    });
+
+    timesheets.forEach((timesheet) => {
+      if (timesheet.actualCheckInAt) {
+        items.push({
+          id: `timesheet-in-${timesheet.id}`,
+          shiftId: timesheet.shift?.id ?? timesheet.shiftId,
+          siteName: timesheet.shift?.site?.name || timesheet.shift?.siteName || 'Unknown site',
+          guardName: timesheet.guard?.fullName || 'Unknown guard',
+          eventType: 'Guard checked in',
+          message: 'Guard booked on and the shift is now live.',
+          occurredAt: timesheet.actualCheckInAt,
+        });
+      }
+
+      if (timesheet.actualCheckOutAt) {
+        items.push({
+          id: `timesheet-out-${timesheet.id}`,
+          shiftId: timesheet.shift?.id ?? timesheet.shiftId,
+          siteName: timesheet.shift?.site?.name || timesheet.shift?.siteName || 'Unknown site',
+          guardName: timesheet.guard?.fullName || 'Unknown guard',
+          eventType: 'Guard checked out',
+          message: 'Guard booked off and the shift is completed.',
+          occurredAt: timesheet.actualCheckOutAt,
+        });
+      }
+
+      if (timesheet.submittedAt) {
+        items.push({
+          id: `timesheet-submitted-${timesheet.id}`,
+          shiftId: timesheet.shift?.id ?? timesheet.shiftId,
+          siteName: timesheet.shift?.site?.name || timesheet.shift?.siteName || 'Unknown site',
+          guardName: timesheet.guard?.fullName || 'Unknown guard',
+          eventType: 'Timesheet submitted',
+          message: 'Worked hours were submitted for company review.',
+          occurredAt: timesheet.submittedAt,
+        });
+      }
+    });
+
+    dailyLogs.forEach((log) => {
+      items.push({
+        id: `log-${log.id}`,
+        shiftId: log.shift?.id,
+        siteName: log.shift?.site?.name || log.shift?.siteName || 'Unknown site',
+        guardName: log.guard?.fullName || 'Unknown guard',
+        eventType:
+          log.logType === 'check_call'
+            ? 'Check call recorded'
+            : log.logType === 'welfare_check'
+              ? 'Welfare update recorded'
+              : 'Log entry added',
+        message: log.message,
+        occurredAt: log.createdAt,
+      });
+    });
+
+    incidents.forEach((incident) => {
+      items.push({
+        id: `incident-${incident.id}`,
+        shiftId: incident.shift?.id,
+        siteName: incident.site?.name || incident.shift?.site?.name || 'Unknown site',
+        guardName: incident.guard?.fullName || 'Unknown guard',
+        eventType: 'Incident raised',
+        message: incident.title,
+        occurredAt: incident.createdAt,
+      });
+    });
+
+    alerts.forEach((alert) => {
+      items.push({
+        id: `alert-${alert.id}`,
+        shiftId: alert.shift?.id,
+        siteName: alert.shift?.site?.name || alert.shift?.siteName || 'Unknown site',
+        guardName: alert.guard?.fullName || 'Unknown guard',
+        eventType:
+          (alert.type || '').toLowerCase() === 'panic'
+            ? 'Panic alert sent'
+            : (alert.type || '').toLowerCase() === 'welfare'
+              ? 'Welfare update recorded'
+              : 'Safety alert raised',
+        message: alert.message,
+        occurredAt: alert.createdAt,
+      });
+    });
+
+    notifications.forEach((notification) => {
+      items.push({
+        id: `notification-${notification.id}`,
+        shiftId: null,
+        siteName: 'Control room',
+        guardName: notification.user?.firstName || 'System',
+        eventType: notification.title,
+        message: notification.message,
+        occurredAt: notification.sentAt || notification.createdAt,
+      });
+    });
+
+    return items
+      .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt))
+      .slice(0, 12);
+  }, [alerts, dailyLogs, incidents, notifications, shiftOfferRows, timesheets]);
+
+  const recentManagementActivity = React.useMemo(
+    () =>
+      [...managementActions]
+        .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt))
+        .slice(0, 8),
+    [managementActions],
+  );
 
   const filteredClients = React.useMemo(
     () =>
@@ -948,6 +1245,47 @@ export function CompanyDashboardScreen() {
     () => shifts.find((shift) => shift.id === selectedShiftId) ?? null,
     [selectedShiftId, shifts],
   );
+  const selectedShiftCloseOutSummary = React.useMemo(() => {
+    if (!selectedShift) {
+      return null;
+    }
+
+    const timesheet = timesheetByShiftId.get(selectedShift.id);
+    const shiftLogs = logsByShiftId.get(selectedShift.id) || [];
+    const shiftIncidents = incidentsByShiftId.get(selectedShift.id) || [];
+    const shiftAlerts = alertsByShiftId.get(selectedShift.id) || [];
+    const completedCheckCalls = shiftLogs.filter((log) => log.logType === 'check_call').length;
+    const missedCheckCallsForShift = shiftAlerts.filter(
+      (alert) => (alert.type || '').toLowerCase() === 'missed_checkcall',
+    ).length;
+    const safetyEventsCount = shiftAlerts.filter(
+      (alert) => !['check_call', 'missed_checkcall'].includes((alert.type || '').toLowerCase()),
+    ).length;
+    const unresolvedIncidentsCount = shiftIncidents.filter((incident) =>
+      ['open', 'in_review'].includes((incident.status || '').toLowerCase()),
+    ).length;
+    const unresolvedAlertsCount = shiftAlerts.filter((alert) => (alert.status || '').toLowerCase() !== 'closed').length;
+    const unresolvedFollowUpCount = unresolvedIncidentsCount + unresolvedAlertsCount;
+
+    return {
+      scheduledStart: selectedShift.start,
+      scheduledEnd: selectedShift.end,
+      actualCheckInAt: timesheet?.actualCheckInAt || null,
+      actualCheckOutAt: timesheet?.actualCheckOutAt || null,
+      logsCount: shiftLogs.length,
+      incidentsCount: shiftIncidents.length,
+      safetyEventsCount,
+      completedCheckCalls,
+      missedCheckCalls: missedCheckCallsForShift,
+      timesheetStatus: timesheet?.approvalStatus || 'pending',
+      unresolvedFollowUpCount,
+      closedCleanly: unresolvedFollowUpCount === 0,
+    };
+  }, [selectedShift, timesheetByShiftId, logsByShiftId, incidentsByShiftId, alertsByShiftId]);
+
+  React.useEffect(() => {
+    setCloseOutNotesDraft(selectedShift?.closeOutNotes || '');
+  }, [selectedShift?.id, selectedShift?.closeOutNotes]);
 
   const siteShiftCounts = React.useMemo(() => {
     const counts = new Map<number, number>();
@@ -1354,12 +1692,35 @@ export function CompanyDashboardScreen() {
     }
   };
 
+  const recordManagementAction = (
+    item: Omit<ManagementActionItem, 'id' | 'occurredAt'>,
+  ) => {
+    setManagementActions((current) =>
+      [
+        {
+          ...item,
+          id: `management-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          occurredAt: new Date().toISOString(),
+        },
+        ...current,
+      ].slice(0, 12),
+    );
+  };
+
   const handleCancelShiftOffer = async (shiftId: number) => {
     try {
       setOfferActionShiftId(shiftId);
       setShiftOffersFeedback(null);
+      const shift = shifts.find((entry) => entry.id === shiftId) ?? null;
       await updateShift(shiftId, { status: 'cancelled' });
       await loadData(true);
+      recordManagementAction({
+        shiftId,
+        siteName: shift?.site?.name || shift?.siteName || 'Unknown site',
+        guardName: shift?.guard?.fullName || 'Unassigned',
+        itemType: 'Shift offer',
+        actionTaken: 'Shift offer withdrawn',
+      });
       setShiftOffersFeedback({
         tone: 'success',
         message: `Shift #${shiftId} was withdrawn successfully and is no longer pending a guard response.`,
@@ -1390,12 +1751,21 @@ export function CompanyDashboardScreen() {
     try {
       setOfferActionShiftId(shiftId);
       setShiftOffersFeedback(null);
+      const shift = shifts.find((entry) => entry.id === shiftId) ?? null;
+      const replacementGuardName = linkedGuardNameById.get(nextGuardId) || `Guard #${nextGuardId}`;
       await updateShift(shiftId, { guardId: nextGuardId });
       setReassignGuardByShiftId((current) => ({ ...current, [shiftId]: '' }));
       await loadData(true);
+      recordManagementAction({
+        shiftId,
+        siteName: shift?.site?.name || shift?.siteName || 'Unknown site',
+        guardName: replacementGuardName,
+        itemType: 'Rejected shift',
+        actionTaken: `Shift re-offered to ${replacementGuardName}`,
+      });
       setShiftOffersFeedback({
         tone: 'success',
-        message: `Shift #${shiftId} was re-offered to ${linkedGuardNameById.get(nextGuardId) || `Guard #${nextGuardId}`} and is now back in offered status.`,
+        message: `Shift #${shiftId} was re-offered to ${replacementGuardName} and is now back in offered status.`,
       });
     } catch (shiftError) {
       setError(formatApiErrorMessage(shiftError, 'Unable to re-offer this shift right now.'));
@@ -1405,6 +1775,226 @@ export function CompanyDashboardScreen() {
       });
     } finally {
       setOfferActionShiftId(null);
+    }
+  };
+
+  const handleOpenUrgentShift = (item: UrgentOperationalItem) => {
+    if (!item.shiftId) {
+      setLiveOperationsFeedback({
+        tone: 'error',
+        message: `No linked shift is available for "${item.issueType}".`,
+      });
+      return;
+    }
+
+    setSelectedShiftId(item.shiftId);
+    setLiveOperationsFeedback({
+      tone: 'success',
+      message: `Opening Shift #${item.shiftId} for ${item.issueType.toLowerCase()}.`,
+    });
+  };
+
+  const handleOpenUrgentDetail = (item: UrgentOperationalItem) => {
+    if (item.category === 'rejected_offer') {
+      if (item.shiftId) {
+        setSelectedShiftId(item.shiftId);
+      }
+      setShiftOffersFeedback({
+        tone: 'success',
+        message: item.shiftId
+          ? `Shift #${item.shiftId} is ready for re-offer in Shift Offers.`
+          : 'Open Shift Offers to re-cover this rejected shift.',
+      });
+      setActiveSection('shift-offers');
+      return;
+    }
+
+    if (!item.shiftId) {
+      setLiveOperationsFeedback({
+        tone: 'error',
+        message: `No linked shift is available for "${item.issueType}".`,
+      });
+      return;
+    }
+
+    setSelectedShiftId(item.shiftId);
+
+    if (item.category === 'incident') {
+      setActiveSection('incidents');
+      setLiveOperationsFeedback({
+        tone: 'success',
+        message: `Opening incident context for Shift #${item.shiftId}.`,
+      });
+      return;
+    }
+
+    if (item.category === 'panic' || item.category === 'missed_check_call' || item.category === 'safety') {
+      setActiveSection('alerts');
+      setLiveOperationsFeedback({
+        tone: 'success',
+        message: `Opening safety detail for Shift #${item.shiftId}.`,
+      });
+      return;
+    }
+
+    setActiveSection('live-operations');
+    setLiveOperationsFeedback({
+      tone: 'success',
+      message: `Opening Shift #${item.shiftId} in Live Operations.`,
+    });
+  };
+
+  const handleUrgentIncidentFollowUp = async (
+    item: UrgentOperationalItem,
+    nextStatus: 'in_review' | 'resolved',
+  ) => {
+    if (!item.incidentId) {
+      setLiveOperationsFeedback({
+        tone: 'error',
+        message: 'No incident is linked to this urgent item.',
+      });
+      return;
+    }
+
+    try {
+      setUrgentActionItemId(item.id);
+      if (item.shiftId) {
+        setSelectedShiftId(item.shiftId);
+      }
+      await updateIncidentStatus(item.incidentId, nextStatus);
+      await loadData(true);
+      recordManagementAction({
+        shiftId: item.shiftId,
+        siteName: item.siteName,
+        guardName: item.guardName,
+        itemType: 'Incident',
+        actionTaken:
+          nextStatus === 'in_review' ? 'Incident acknowledged' : 'Incident resolved',
+      });
+      setLiveOperationsFeedback({
+        tone: 'success',
+        message:
+          nextStatus === 'in_review'
+            ? `Incident #${item.incidentId} was acknowledged and moved to in review.`
+            : `Incident #${item.incidentId} was resolved successfully.`,
+      });
+    } catch (followUpError) {
+      setError(formatApiErrorMessage(followUpError, 'Unable to update this incident right now.'));
+      setLiveOperationsFeedback({
+        tone: 'error',
+        message: formatApiErrorMessage(followUpError, 'Unable to update this incident right now.'),
+      });
+    } finally {
+      setUrgentActionItemId(null);
+    }
+  };
+
+  const handleUrgentAlertFollowUp = async (
+    item: UrgentOperationalItem,
+    action: 'acknowledge' | 'close',
+  ) => {
+    if (!item.alertId) {
+      setLiveOperationsFeedback({
+        tone: 'error',
+        message: 'No safety alert is linked to this urgent item.',
+      });
+      return;
+    }
+
+    try {
+      setUrgentActionItemId(item.id);
+      if (item.shiftId) {
+        setSelectedShiftId(item.shiftId);
+      }
+      if (action === 'acknowledge') {
+        await acknowledgeSafetyAlert(item.alertId);
+      } else {
+        await closeSafetyAlert(item.alertId);
+      }
+      await loadData(true);
+      recordManagementAction({
+        shiftId: item.shiftId,
+        siteName: item.siteName,
+        guardName: item.guardName,
+        itemType:
+          item.category === 'panic'
+            ? 'Panic alert'
+            : item.category === 'missed_check_call'
+              ? 'Missed check call'
+              : 'Safety alert',
+        actionTaken:
+          action === 'acknowledge'
+            ? item.category === 'panic'
+              ? 'Panic alert escalated'
+              : item.category === 'missed_check_call'
+                ? 'Missed check call followed up'
+                : 'Safety alert acknowledged'
+            : item.category === 'panic'
+              ? 'Panic alert resolved'
+              : item.category === 'missed_check_call'
+                ? 'Missed check call closed'
+                : 'Safety alert closed',
+      });
+      setLiveOperationsFeedback({
+        tone: 'success',
+        message:
+          action === 'acknowledge'
+            ? `${
+                item.category === 'panic'
+                  ? 'Panic alert'
+                  : item.category === 'missed_check_call'
+                    ? 'Missed check call'
+                    : 'Safety alert'
+              } was marked for follow-up.`
+            : `${
+                item.category === 'panic'
+                  ? 'Panic alert'
+                  : item.category === 'missed_check_call'
+                    ? 'Missed check call'
+                    : 'Safety alert'
+              } was closed successfully.`,
+      });
+    } catch (followUpError) {
+      setError(formatApiErrorMessage(followUpError, 'Unable to update this safety item right now.'));
+      setLiveOperationsFeedback({
+        tone: 'error',
+        message: formatApiErrorMessage(followUpError, 'Unable to update this safety item right now.'),
+      });
+    } finally {
+      setUrgentActionItemId(null);
+    }
+  };
+
+  const handleSaveCloseOutNotes = async () => {
+    if (!selectedShift) {
+      setLiveOperationsFeedback({
+        tone: 'error',
+        message: 'Choose a shift before saving close-out notes.',
+      });
+      return;
+    }
+
+    try {
+      setSavingCloseOutNotes(true);
+      const nextNotes = closeOutNotesDraft.trim();
+      await updateShift(selectedShift.id, {
+        closeOutNotes: nextNotes || null,
+      });
+      await loadData(true);
+      setLiveOperationsFeedback({
+        tone: 'success',
+        message: nextNotes
+          ? `Close-out notes saved for Shift #${selectedShift.id}.`
+          : `Close-out notes cleared for Shift #${selectedShift.id}.`,
+      });
+    } catch (notesError) {
+      setError(formatApiErrorMessage(notesError, 'Unable to save close-out notes right now.'));
+      setLiveOperationsFeedback({
+        tone: 'error',
+        message: formatApiErrorMessage(notesError, 'Unable to save close-out notes right now.'),
+      });
+    } finally {
+      setSavingCloseOutNotes(false);
     }
   };
 
@@ -1868,6 +2458,159 @@ export function CompanyDashboardScreen() {
         ))}
       </View>
 
+      <View style={styles.panel}>
+        <Text style={styles.panelTitle}>Urgent / Needs Attention</Text>
+        <Text style={styles.helperText}>
+          Priority operational items that need action now are shown here separately from the general activity feed.
+        </Text>
+        {liveOperationsFeedback ? (
+          <View
+            style={[
+              styles.feedbackCard,
+              liveOperationsFeedback.tone === 'error' ? styles.feedbackCardError : styles.feedbackCardSuccess,
+            ]}
+          >
+            <Text
+              style={[
+                styles.feedbackTitle,
+                liveOperationsFeedback.tone === 'error' ? styles.feedbackTitleError : styles.feedbackTitleSuccess,
+              ]}
+            >
+              {liveOperationsFeedback.tone === 'error' ? 'Action failed' : 'Action completed'}
+            </Text>
+            <Text
+              style={[
+                styles.feedbackText,
+                liveOperationsFeedback.tone === 'error' ? styles.feedbackTextError : styles.feedbackTextSuccess,
+              ]}
+            >
+              {liveOperationsFeedback.message}
+            </Text>
+          </View>
+        ) : null}
+        {urgentOperationalItems.map((item) => (
+          <View key={item.id} style={styles.recordRow}>
+            <Text style={styles.recordTitle}>{item.issueType}</Text>
+            <Text style={styles.recordMeta}>
+              Shift {item.shiftId ? `#${item.shiftId}` : 'N/A'} | {item.siteName} | {item.guardName}
+            </Text>
+            <Text style={styles.recordMeta}>{item.message}</Text>
+            <Text style={styles.recordMeta}>{formatDateTimeLabel(item.occurredAt)}</Text>
+            <View style={styles.urgentItemActions}>
+              {item.shiftId ? (
+                <Pressable style={styles.secondaryButton} onPress={() => handleOpenUrgentShift(item)}>
+                  <Text style={styles.secondaryButtonText}>Open Shift</Text>
+                </Pressable>
+              ) : null}
+              {item.category === 'incident' && (item.status || '').toLowerCase() === 'open' ? (
+                <Pressable
+                  style={styles.secondaryButton}
+                  onPress={() => handleUrgentIncidentFollowUp(item, 'in_review')}
+                  disabled={urgentActionItemId === item.id}
+                >
+                  <Text style={styles.secondaryButtonText}>
+                    {urgentActionItemId === item.id ? 'Saving...' : 'Acknowledge'}
+                  </Text>
+                </Pressable>
+              ) : null}
+              {item.category === 'incident' ? (
+                <Pressable
+                  style={styles.primaryButton}
+                  onPress={() => handleOpenUrgentDetail(item)}
+                >
+                  <Text style={styles.primaryButtonText}>View Incident</Text>
+                </Pressable>
+              ) : null}
+              {item.category === 'panic' && item.status !== 'acknowledged' ? (
+                <Pressable
+                  style={styles.secondaryButton}
+                  onPress={() => handleUrgentAlertFollowUp(item, 'acknowledge')}
+                  disabled={urgentActionItemId === item.id}
+                >
+                  <Text style={styles.secondaryButtonText}>
+                    {urgentActionItemId === item.id ? 'Saving...' : 'Mark Escalated'}
+                  </Text>
+                </Pressable>
+              ) : null}
+              {item.category === 'panic' ? (
+                <Pressable
+                  style={styles.primaryButton}
+                  onPress={() =>
+                    item.status === 'acknowledged'
+                      ? handleUrgentAlertFollowUp(item, 'close')
+                      : handleOpenUrgentDetail(item)
+                  }
+                  disabled={urgentActionItemId === item.id && item.status === 'acknowledged'}
+                >
+                  <Text style={styles.primaryButtonText}>
+                    {item.status === 'acknowledged'
+                      ? urgentActionItemId === item.id
+                        ? 'Saving...'
+                        : 'Resolve'
+                      : 'View Alert'}
+                  </Text>
+                </Pressable>
+              ) : null}
+              {(item.category === 'missed_check_call' || item.category === 'safety') ? (
+                <>
+                  {item.status !== 'acknowledged' ? (
+                    <Pressable
+                      style={styles.secondaryButton}
+                      onPress={() => handleUrgentAlertFollowUp(item, 'acknowledge')}
+                      disabled={urgentActionItemId === item.id}
+                    >
+                      <Text style={styles.secondaryButtonText}>
+                        {urgentActionItemId === item.id
+                          ? 'Saving...'
+                          : item.category === 'missed_check_call'
+                            ? 'Mark Followed Up'
+                            : 'Acknowledge'}
+                      </Text>
+                    </Pressable>
+                  ) : null}
+                  <Pressable
+                    style={styles.primaryButton}
+                    onPress={() =>
+                      item.status === 'acknowledged'
+                        ? handleUrgentAlertFollowUp(item, 'close')
+                        : handleOpenUrgentDetail(item)
+                    }
+                    disabled={urgentActionItemId === item.id && item.status === 'acknowledged'}
+                  >
+                    <Text style={styles.primaryButtonText}>
+                      {item.status === 'acknowledged'
+                        ? urgentActionItemId === item.id
+                          ? 'Saving...'
+                          : 'Close'
+                        : 'View Safety Detail'}
+                    </Text>
+                  </Pressable>
+                </>
+              ) : null}
+              {item.category === 'incident' && ['open', 'in_review'].includes((item.status || '').toLowerCase()) ? (
+                <Pressable
+                  style={styles.primaryButton}
+                  onPress={() => handleUrgentIncidentFollowUp(item, 'resolved')}
+                  disabled={urgentActionItemId === item.id}
+                >
+                  <Text style={styles.primaryButtonText}>
+                    {urgentActionItemId === item.id ? 'Saving...' : 'Resolve'}
+                  </Text>
+                </Pressable>
+              ) : null}
+              {item.category === 'rejected_offer' ? (
+                <Pressable style={styles.primaryButton} onPress={() => handleOpenUrgentDetail(item)}>
+                  <Text style={styles.primaryButtonText}>Re-offer Shift</Text>
+                </Pressable>
+              ) : null}
+            </View>
+          </View>
+        ))}
+        {urgentOperationalItems.length === 0 ? (
+          <Text style={styles.helperText}>No urgent operational items need attention right now.</Text>
+        ) : null}
+      </View>
+
       <View style={styles.filterBar}>
         <WebSelect
           value={liveFilters.clientId}
@@ -1962,6 +2705,33 @@ export function CompanyDashboardScreen() {
 
         <View style={styles.operationsSideColumn}>
           <View style={styles.panel}>
+            <Text style={styles.panelTitle}>Recent Management Actions</Text>
+            <Text style={styles.helperText}>
+              Recent control-room follow-up and closure actions taken from this operational workflow.
+            </Text>
+            {recentManagementActivity.map((activity) => (
+              <Pressable
+                key={activity.id}
+                style={styles.recordRow}
+                onPress={() => {
+                  if (activity.shiftId) {
+                    setSelectedShiftId(activity.shiftId);
+                  }
+                }}
+              >
+                <Text style={styles.recordTitle}>{activity.actionTaken}</Text>
+                <Text style={styles.recordMeta}>
+                  {activity.itemType} | Shift {activity.shiftId ? `#${activity.shiftId}` : 'N/A'} | {activity.siteName} | {activity.guardName}
+                </Text>
+                <Text style={styles.recordMeta}>{formatDateTimeLabel(activity.occurredAt)}</Text>
+              </Pressable>
+            ))}
+            {recentManagementActivity.length === 0 ? (
+              <Text style={styles.helperText}>No recent management actions have been taken yet.</Text>
+            ) : null}
+          </View>
+
+          <View style={styles.panel}>
             <Text style={styles.panelTitle}>Open Incidents</Text>
             {openIncidents.slice(0, 6).map((incident) => (
               <View key={incident.id} style={styles.recordRow}>
@@ -1988,16 +2758,26 @@ export function CompanyDashboardScreen() {
           </View>
 
           <View style={styles.panel}>
-            <Text style={styles.panelTitle}>Recent Log Activity</Text>
-            {recentActivity.map((log) => (
-              <View key={log.id} style={styles.recordRow}>
-                <Text style={styles.recordTitle}>{log.message}</Text>
+            <Text style={styles.panelTitle}>Recent Operational Activity</Text>
+            {recentOperationalActivity.map((activity) => (
+              <Pressable
+                key={activity.id}
+                style={styles.recordRow}
+                onPress={() => {
+                  if (activity.shiftId) {
+                    setSelectedShiftId(activity.shiftId);
+                  }
+                }}
+              >
+                <Text style={styles.recordTitle}>{activity.eventType}</Text>
                 <Text style={styles.recordMeta}>
-                  {log.shift?.site?.name || log.shift?.siteName || 'Unknown shift'} | {formatDateTimeLabel(log.createdAt)}
+                  Shift {activity.shiftId ? `#${activity.shiftId}` : 'N/A'} | {activity.siteName} | {activity.guardName}
                 </Text>
-              </View>
+                <Text style={styles.recordMeta}>{activity.message}</Text>
+                <Text style={styles.recordMeta}>{formatDateTimeLabel(activity.occurredAt)}</Text>
+              </Pressable>
             ))}
-            {recentActivity.length === 0 ? <Text style={styles.helperText}>No recent log activity.</Text> : null}
+            {recentOperationalActivity.length === 0 ? <Text style={styles.helperText}>No recent operational activity.</Text> : null}
           </View>
         </View>
       </View>
@@ -2041,6 +2821,81 @@ export function CompanyDashboardScreen() {
           </Text>
 
           <View style={styles.detailGrid}>
+            {normalizeShiftLifecycleStatus(selectedShift.status) === 'completed' && selectedShiftCloseOutSummary ? (
+              <View style={[styles.detailCard, styles.closeOutCard]}>
+                <Text style={styles.detailTitle}>Completed Shift Close-Out</Text>
+                <Text
+                  style={[
+                    styles.recordTitle,
+                    selectedShiftCloseOutSummary.closedCleanly
+                      ? styles.closeOutStatusGood
+                      : styles.closeOutStatusAttention,
+                  ]}
+                >
+                  {selectedShiftCloseOutSummary.closedCleanly
+                    ? 'Closed cleanly'
+                    : `Needs follow-up (${selectedShiftCloseOutSummary.unresolvedFollowUpCount})`}
+                </Text>
+                <Text style={styles.recordMeta}>
+                  Shift #{selectedShift.id} | {selectedShift.site?.name || selectedShift.siteName || 'Unknown site'} |{' '}
+                  {selectedShift.guard?.fullName || 'No guard assigned'}
+                </Text>
+                <Text style={styles.recordMeta}>
+                  Scheduled: {formatDateTimeLabel(selectedShiftCloseOutSummary.scheduledStart)} to{' '}
+                  {formatDateTimeLabel(selectedShiftCloseOutSummary.scheduledEnd)}
+                </Text>
+                <Text style={styles.recordMeta}>
+                  Actual: {formatDateTimeLabel(selectedShiftCloseOutSummary.actualCheckInAt)} to{' '}
+                  {formatDateTimeLabel(selectedShiftCloseOutSummary.actualCheckOutAt)}
+                </Text>
+                <Text style={styles.recordMeta}>
+                  Logs: {selectedShiftCloseOutSummary.logsCount} | Incidents: {selectedShiftCloseOutSummary.incidentsCount}
+                </Text>
+                <Text style={styles.recordMeta}>
+                  Safety / welfare / panic: {selectedShiftCloseOutSummary.safetyEventsCount}
+                </Text>
+                <Text style={styles.recordMeta}>
+                  Check calls completed / missed: {selectedShiftCloseOutSummary.completedCheckCalls} /{' '}
+                  {selectedShiftCloseOutSummary.missedCheckCalls}
+                </Text>
+                <Text style={styles.recordMeta}>
+                  Timesheet: {formatStatusLabel(selectedShiftCloseOutSummary.timesheetStatus)}
+                </Text>
+                {selectedShiftCloseOutSummary.unresolvedFollowUpCount > 0 ? (
+                  <Text style={styles.recordMeta}>
+                    Unresolved follow-up items: {selectedShiftCloseOutSummary.unresolvedFollowUpCount}
+                  </Text>
+                ) : (
+                  <Text style={styles.recordMeta}>No unresolved follow-up items remain for this shift.</Text>
+                )}
+                <View style={styles.closeOutNotesSection}>
+                  <Text style={styles.subtleLabel}>Close-out / handover notes</Text>
+                  <TextInput
+                    style={[styles.input, styles.textAreaSmall]}
+                    multiline
+                    value={closeOutNotesDraft}
+                    onChangeText={setCloseOutNotesDraft}
+                    placeholder="Short operational handover note for management review or next-shift awareness"
+                  />
+                  <View style={styles.rowActions}>
+                    <Pressable
+                      style={styles.primaryButton}
+                      onPress={handleSaveCloseOutNotes}
+                      disabled={savingCloseOutNotes}
+                    >
+                      <Text style={styles.primaryButtonText}>
+                        {savingCloseOutNotes ? 'Saving...' : 'Save Close-Out Note'}
+                      </Text>
+                    </Pressable>
+                  </View>
+                  {selectedShift.closeOutNotes && !closeOutNotesDraft.trim() ? (
+                    <Text style={styles.helperText}>
+                      Existing note will be cleared if you save with an empty value.
+                    </Text>
+                  ) : null}
+                </View>
+              </View>
+            ) : null}
             <View style={styles.detailCard}>
               <Text style={styles.detailTitle}>Attendance & Timesheet</Text>
               <Text style={styles.recordMeta}>
@@ -2951,6 +3806,12 @@ const styles = StyleSheet.create({
     color: '#64748b',
     fontSize: 13,
   },
+  urgentItemActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 8,
+  },
   statusBadge: {
     alignSelf: 'flex-start',
     borderRadius: 999,
@@ -3019,6 +3880,19 @@ const styles = StyleSheet.create({
     color: '#0f172a',
     fontWeight: '800',
     fontSize: 16,
+  },
+  closeOutCard: {
+    backgroundColor: '#f1f5f9',
+  },
+  closeOutNotesSection: {
+    gap: 8,
+    marginTop: 8,
+  },
+  closeOutStatusGood: {
+    color: '#166534',
+  },
+  closeOutStatusAttention: {
+    color: '#b45309',
   },
   errorCard: {
     backgroundColor: '#fee2e2',

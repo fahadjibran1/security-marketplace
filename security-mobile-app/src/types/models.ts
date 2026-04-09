@@ -135,6 +135,7 @@ export interface Shift {
   checkCallIntervalMinutes?: number;
   status: string;
   instructions?: string | null;
+  closeOutNotes?: string | null;
   assignmentId?: number;
   companyId?: number;
   guardId?: number;
@@ -208,6 +209,7 @@ export interface CreateShiftPayload {
   end: string;
   status?: string;
   instructions?: string;
+  closeOutNotes?: string;
 }
 
 export interface UpdateShiftPayload {
@@ -218,6 +220,7 @@ export interface UpdateShiftPayload {
   checkCallIntervalMinutes?: number;
   status?: string;
   instructions?: string;
+  closeOutNotes?: string | null;
 }
 
 export interface CreateJobApplicationPayload {
