@@ -51,6 +51,7 @@ type CompanySection =
   | 'clients'
   | 'sites'
   | 'rota-planner'
+  | 'shift-offers'
   | 'live-operations'
   | 'guards'
   | 'recruitment'
@@ -131,6 +132,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'clients', label: 'Clients', caption: 'Client accounts and contacts.' },
   { id: 'sites', label: 'Sites', caption: 'Site setup, instructions, and coverage.' },
   { id: 'rota-planner', label: 'Rota Planner', caption: 'Plan weekly cover and assignments.' },
+  { id: 'shift-offers', label: 'Shift Offers', caption: 'Track pending responses and re-cover needs.' },
   { id: 'live-operations', label: 'Live Operations', caption: 'Monitor book-ons, logs, and incidents.' },
   { id: 'guards', label: 'Guards', caption: 'Available platform guards and linked team.' },
   { id: 'recruitment', label: 'Recruitment', caption: 'Open jobs and incoming applications.' },
@@ -174,15 +176,13 @@ const JOB_FORM_EMPTY: JobFormState = {
 };
 
 const SHIFT_STATUS_OPTIONS = [
-  { label: 'Planned', value: 'planned' },
-  { label: 'Unassigned', value: 'unassigned' },
+  { label: 'Unfilled', value: 'unfilled' },
   { label: 'Offered', value: 'offered' },
-  { label: 'Accepted', value: 'accepted' },
+  { label: 'Ready', value: 'ready' },
+  { label: 'Cancelled', value: 'cancelled' },
   { label: 'Rejected', value: 'rejected' },
   { label: 'In Progress', value: 'in_progress' },
   { label: 'Completed', value: 'completed' },
-  { label: 'Missed', value: 'missed' },
-  { label: 'No Show', value: 'no_show' },
 ];
 
 const UK_LOCALE = 'en-GB';
@@ -263,6 +263,54 @@ function formatStatusLabel(value?: string | null) {
   return value
     .replace(/_/g, ' ')
     .replace(/\b\w/g, (match) => match.toUpperCase());
+}
+
+function normalizeShiftLifecycleStatus(value?: string | null) {
+  const normalized = (value || '').trim().toLowerCase();
+
+  switch (normalized) {
+    case 'planned':
+    case 'unassigned':
+    case 'scheduled':
+      return 'unfilled';
+    case 'assigned':
+      return 'offered';
+    case 'accepted':
+      return 'ready';
+    default:
+      return normalized || 'unfilled';
+  }
+}
+
+function getShiftStatusBadgeStyle(status: string) {
+  switch (status) {
+    case 'offered':
+      return { backgroundColor: '#dbeafe', color: '#1d4ed8' };
+    case 'ready':
+      return { backgroundColor: '#ffedd5', color: '#c2410c' };
+    case 'in_progress':
+      return { backgroundColor: '#dcfce7', color: '#166534' };
+    case 'completed':
+      return { backgroundColor: '#e5e7eb', color: '#111827' };
+    case 'rejected':
+      return { backgroundColor: '#fee2e2', color: '#b91c1c' };
+    case 'cancelled':
+      return { backgroundColor: '#e5e7eb', color: '#7f1d1d' };
+    case 'unfilled':
+    default:
+      return { backgroundColor: '#f3f4f6', color: '#475569' };
+  }
+}
+
+function ShiftStatusBadge({ status }: { status?: string | null }) {
+  const lifecycleStatus = normalizeShiftLifecycleStatus(status);
+  const palette = getShiftStatusBadgeStyle(lifecycleStatus);
+
+  return (
+    <View style={[styles.statusBadge, { backgroundColor: palette.backgroundColor }]}>
+      <Text style={[styles.statusBadgeText, { color: palette.color }]}>{lifecycleStatus.replace('_', ' ')}</Text>
+    </View>
+  );
 }
 
 function buildIsoDateTime(date: string, time: string) {
@@ -361,11 +409,13 @@ function buildWeekDays(weekCommencing: string) {
 }
 
 function normalizePlannerStatus(status: string, assignedGuardId: string) {
-  if (status) {
-    return status;
+  const normalizedStatus = normalizeShiftLifecycleStatus(status);
+
+  if (normalizedStatus) {
+    return normalizedStatus;
   }
 
-  return assignedGuardId ? 'offered' : 'planned';
+  return assignedGuardId ? 'offered' : 'unfilled';
 }
 
 function buildPlannerRow(date: string): PlannerRow {
@@ -376,7 +426,7 @@ function buildPlannerRow(date: string): PlannerRow {
     endTime: '18:00',
     guardsRequired: '1',
     assignedGuardId: '',
-    status: 'planned',
+    status: 'unfilled',
     instructions: '',
     sourceShiftIds: [],
   };
@@ -585,6 +635,12 @@ export function CompanyDashboardScreen() {
   const [creatingJob, setCreatingJob] = React.useState(false);
   const [approvingGuardId, setApprovingGuardId] = React.useState<number | null>(null);
   const [reviewingApplicationId, setReviewingApplicationId] = React.useState<number | null>(null);
+  const [offerActionShiftId, setOfferActionShiftId] = React.useState<number | null>(null);
+  const [reassignGuardByShiftId, setReassignGuardByShiftId] = React.useState<Record<number, string>>({});
+  const [shiftOffersFeedback, setShiftOffersFeedback] = React.useState<{
+    tone: 'success' | 'error';
+    message: string;
+  } | null>(null);
   const [showArchivedClients, setShowArchivedClients] = React.useState(false);
 
   const runSettledLoaders = React.useMemo(
@@ -637,7 +693,10 @@ export function CompanyDashboardScreen() {
             label: 'shifts',
             run: listShifts,
             apply: (value: Shift[]) => {
-              latestShifts = value;
+              latestShifts = value.map((shift) => ({
+                ...shift,
+                status: normalizeShiftLifecycleStatus(shift.status),
+              }));
               setShifts(latestShifts);
             },
           },
@@ -822,7 +881,7 @@ export function CompanyDashboardScreen() {
     [shifts, todayIso],
   );
   const liveShifts = React.useMemo(
-    () => shifts.filter((shift) => ['accepted', 'in_progress'].includes((shift.status || '').toLowerCase())),
+    () => shifts.filter((shift) => ['ready', 'in_progress'].includes(normalizeShiftLifecycleStatus(shift.status))),
     [shifts],
   );
   const pendingTimesheets = React.useMemo(
@@ -851,6 +910,25 @@ export function CompanyDashboardScreen() {
         .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
         .slice(0, 6),
     [dailyLogs],
+  );
+  const shiftOfferRows = React.useMemo(
+    () =>
+      shifts
+        .filter((shift) => ['offered', 'ready', 'rejected'].includes(normalizeShiftLifecycleStatus(shift.status)))
+        .sort((left, right) => left.start.localeCompare(right.start)),
+    [shifts],
+  );
+  const pendingShiftOffers = React.useMemo(
+    () => shiftOfferRows.filter((shift) => normalizeShiftLifecycleStatus(shift.status) === 'offered'),
+    [shiftOfferRows],
+  );
+  const readyShiftOffers = React.useMemo(
+    () => shiftOfferRows.filter((shift) => normalizeShiftLifecycleStatus(shift.status) === 'ready'),
+    [shiftOfferRows],
+  );
+  const rejectedShiftOffers = React.useMemo(
+    () => shiftOfferRows.filter((shift) => normalizeShiftLifecycleStatus(shift.status) === 'rejected'),
+    [shiftOfferRows],
   );
 
   const filteredClients = React.useMemo(
@@ -912,6 +990,14 @@ export function CompanyDashboardScreen() {
     [linkedGuards],
   );
 
+  const linkedGuardNameById = React.useMemo(() => {
+    const map = new Map<number, string>();
+    linkedGuards.forEach((guard) => {
+      map.set(guard.id, guard.fullName);
+    });
+    return map;
+  }, [linkedGuards]);
+
   const plannerSiteOptions = React.useMemo(
     () =>
       sites
@@ -958,7 +1044,7 @@ export function CompanyDashboardScreen() {
       endTime: isoToTimeInput(shift.end),
       guardsRequired: '1',
       assignedGuardId: shift.guard?.id ? String(shift.guard.id) : '',
-      status: shift.status || 'planned',
+      status: normalizeShiftLifecycleStatus(shift.status),
       instructions: shift.instructions || '',
       sourceShiftIds: [shift.id],
     }));
@@ -1176,7 +1262,7 @@ export function CompanyDashboardScreen() {
             guardId: assignedGuardId,
             start: startAt,
             end: endAt,
-            status: assignedGuardId ? plannedStatus : plannedStatus === 'assigned' ? 'unassigned' : plannedStatus,
+            status: assignedGuardId ? plannedStatus : plannedStatus === 'cancelled' ? 'cancelled' : 'unfilled',
             checkCallIntervalMinutes: plannerSite.welfareCheckIntervalMinutes || 60,
             instructions: row.instructions.trim() || undefined,
           };
@@ -1268,6 +1354,60 @@ export function CompanyDashboardScreen() {
     }
   };
 
+  const handleCancelShiftOffer = async (shiftId: number) => {
+    try {
+      setOfferActionShiftId(shiftId);
+      setShiftOffersFeedback(null);
+      await updateShift(shiftId, { status: 'cancelled' });
+      await loadData(true);
+      setShiftOffersFeedback({
+        tone: 'success',
+        message: `Shift #${shiftId} was withdrawn successfully and is no longer pending a guard response.`,
+      });
+    } catch (shiftError) {
+      setError(formatApiErrorMessage(shiftError, 'Unable to cancel this shift offer right now.'));
+      setShiftOffersFeedback({
+        tone: 'error',
+        message: formatApiErrorMessage(shiftError, 'Unable to withdraw this shift offer right now.'),
+      });
+    } finally {
+      setOfferActionShiftId(null);
+    }
+  };
+
+  const handleReofferShift = async (shiftId: number) => {
+    const nextGuardId = toNumber(reassignGuardByShiftId[shiftId]);
+
+    if (!nextGuardId) {
+      setError('Choose a replacement guard before re-offering this shift.');
+      setShiftOffersFeedback({
+        tone: 'error',
+        message: 'Choose a replacement guard before re-offering this shift.',
+      });
+      return;
+    }
+
+    try {
+      setOfferActionShiftId(shiftId);
+      setShiftOffersFeedback(null);
+      await updateShift(shiftId, { guardId: nextGuardId });
+      setReassignGuardByShiftId((current) => ({ ...current, [shiftId]: '' }));
+      await loadData(true);
+      setShiftOffersFeedback({
+        tone: 'success',
+        message: `Shift #${shiftId} was re-offered to ${linkedGuardNameById.get(nextGuardId) || `Guard #${nextGuardId}`} and is now back in offered status.`,
+      });
+    } catch (shiftError) {
+      setError(formatApiErrorMessage(shiftError, 'Unable to re-offer this shift right now.'));
+      setShiftOffersFeedback({
+        tone: 'error',
+        message: formatApiErrorMessage(shiftError, 'Unable to re-offer this shift right now.'),
+      });
+    } finally {
+      setOfferActionShiftId(null);
+    }
+  };
+
   const liveOperationRows = React.useMemo(() => {
     return shifts
       .filter((shift) => {
@@ -1291,7 +1431,7 @@ export function CompanyDashboardScreen() {
     () =>
       liveOperationRows.filter((shift) => {
         const timesheet = timesheetByShiftId.get(shift.id);
-        return ['offered', 'accepted'].includes((shift.status || '').toLowerCase()) && !timesheet?.actualCheckInAt;
+        return ['ready'].includes(normalizeShiftLifecycleStatus(shift.status)) && !timesheet?.actualCheckInAt;
       }),
     [liveOperationRows, timesheetByShiftId],
   );
@@ -1545,7 +1685,7 @@ export function CompanyDashboardScreen() {
             </View>
             <Text style={styles.subtleLabel}>Shift instructions / notes</Text>
             <TextInput style={[styles.input, styles.textArea]} multiline value={siteForm.specialInstructions} onChangeText={(value: string) => setSiteForm((current) => ({ ...current, specialInstructions: value }))} placeholder="Special instructions" />
-            <Text style={styles.subtleLabel}>Starter planned shift</Text>
+            <Text style={styles.subtleLabel}>Starter unfilled shift</Text>
             <View style={styles.formRow}>
               <View style={styles.formCell}>
                 <Text style={styles.subtleLabel}>Date (DD/MM/YYYY)</Text>
@@ -1599,7 +1739,7 @@ export function CompanyDashboardScreen() {
               }}>
                 <Text style={styles.recordTitle}>Shift #{shift.id}</Text>
                 <Text style={styles.recordMeta}>
-                  {formatDateLabel(shift.start)} · {formatTimeLabel(shift.start)}-{formatTimeLabel(shift.end)} · {formatStatusLabel(shift.status)}
+                  {formatDateLabel(shift.start)} · {formatTimeLabel(shift.start)}-{formatTimeLabel(shift.end)} · {formatStatusLabel(normalizeShiftLifecycleStatus(shift.status))}
                 </Text>
               </Pressable>
             ))}
@@ -1795,8 +1935,10 @@ export function CompanyDashboardScreen() {
               >
                 <Text style={styles.tableCellStrong}>#{shift.id}</Text>
                 <Text style={styles.tableCell}>{shift.site?.name || shift.siteName || 'Unknown site'}</Text>
-                <Text style={styles.tableCell}>{shift.guard?.fullName || 'Unassigned'}</Text>
-                <Text style={styles.tableCell}>{formatStatusLabel(shift.status)}</Text>
+              <Text style={styles.tableCell}>{shift.guard?.fullName || 'Unassigned'}</Text>
+                <View style={styles.tableCell}>
+                  <ShiftStatusBadge status={shift.status} />
+                </View>
                 <Text style={styles.tableCell}>
                   {timesheet?.actualCheckInAt ? formatTimeLabel(timesheet.actualCheckInAt) : 'Pending'}
                 </Text>
@@ -1870,13 +2012,29 @@ export function CompanyDashboardScreen() {
             {selectedShift.guard?.fullName || 'No guard assigned'} | {formatDateLabel(selectedShift.start)} | {formatTimeLabel(selectedShift.start)}-{formatTimeLabel(selectedShift.end)}
           </Text>
           <Text style={styles.recordMeta}>
-            Status: {formatStatusLabel(selectedShift.status)} | Check calls: {selectedShift.checkCallIntervalMinutes || 60} mins
+            Status: {formatStatusLabel(normalizeShiftLifecycleStatus(selectedShift.status))} | Check calls: {selectedShift.checkCallIntervalMinutes || 60} mins
           </Text>
-          {selectedShift.status === 'offered' ? (
+          <ShiftStatusBadge status={selectedShift.status} />
+          {normalizeShiftLifecycleStatus(selectedShift.status) === 'offered' ? (
             <Text style={styles.recordMeta}>Waiting for guard confirmation before live controls are used.</Text>
           ) : null}
-          {selectedShift.status === 'rejected' ? (
+          {normalizeShiftLifecycleStatus(selectedShift.status) === 'unfilled' ? (
+            <Text style={styles.recordMeta}>No confirmed guard is linked yet. This shift still needs cover.</Text>
+          ) : null}
+          {normalizeShiftLifecycleStatus(selectedShift.status) === 'in_progress' ? (
+            <Text style={styles.recordMeta}>Guard is booked on and the shift is live in operations.</Text>
+          ) : null}
+          {normalizeShiftLifecycleStatus(selectedShift.status) === 'completed' ? (
+            <Text style={styles.recordMeta}>Shift is completed. Operational records remain visible but no new live activity should be added.</Text>
+          ) : null}
+          {normalizeShiftLifecycleStatus(selectedShift.status) === 'ready' ? (
+            <Text style={styles.recordMeta}>Guard confirmed this shift. It is ready for book on.</Text>
+          ) : null}
+          {normalizeShiftLifecycleStatus(selectedShift.status) === 'rejected' ? (
             <Text style={styles.recordMeta}>Guard rejected this shift. New cover is still required.</Text>
+          ) : null}
+          {normalizeShiftLifecycleStatus(selectedShift.status) === 'cancelled' ? (
+            <Text style={styles.recordMeta}>This shift was cancelled and is now read-only.</Text>
           ) : null}
           <Text style={styles.recordMeta}>
             Instructions: {selectedShift.instructions || 'No instructions recorded.'}
@@ -1957,6 +2115,272 @@ export function CompanyDashboardScreen() {
           ))}
         </View>
       </View>
+    </View>
+  );
+
+  const renderShiftOffersSection = () => (
+    <View style={styles.sectionStack}>
+      <View style={styles.toolbar}>
+        <Text style={styles.sectionTitle}>Shift Offers / Pending Responses</Text>
+        <Pressable style={styles.secondaryButton} onPress={() => loadData(true)}>
+          <Text style={styles.secondaryButtonText}>{refreshing ? 'Refreshing...' : 'Refresh'}</Text>
+        </Pressable>
+      </View>
+
+      {shiftOffersFeedback ? (
+        <View
+          style={[
+            styles.feedbackCard,
+            shiftOffersFeedback.tone === 'error' ? styles.feedbackCardError : styles.feedbackCardSuccess,
+          ]}
+        >
+          <Text
+            style={[
+              styles.feedbackTitle,
+              shiftOffersFeedback.tone === 'error' ? styles.feedbackTitleError : styles.feedbackTitleSuccess,
+            ]}
+          >
+            {shiftOffersFeedback.tone === 'error' ? 'Action failed' : 'Action completed'}
+          </Text>
+          <Text
+            style={[
+              styles.feedbackText,
+              shiftOffersFeedback.tone === 'error' ? styles.feedbackTextError : styles.feedbackTextSuccess,
+            ]}
+          >
+            {shiftOffersFeedback.message}
+          </Text>
+        </View>
+      ) : null}
+
+      <View style={styles.kpiGrid}>
+        {[
+          ['Waiting Response', String(pendingShiftOffers.length)],
+          ['Ready To Start', String(readyShiftOffers.length)],
+          ['Rejected / Re-cover', String(rejectedShiftOffers.length)],
+        ].map(([label, value]) => (
+          <View key={label} style={styles.kpiCard}>
+            <Text style={styles.kpiLabel}>{label}</Text>
+            <Text style={styles.kpiValue}>{value}</Text>
+          </View>
+        ))}
+      </View>
+
+      <View style={styles.panelGrid}>
+        <View style={[styles.tableCard, styles.operationsBoardCard]}>
+          <Text style={styles.panelTitle}>Offer Response Board</Text>
+          <Text style={styles.helperText}>
+            Track guard responses after rota planning. Offered shifts are waiting, ready shifts are confirmed, and rejected shifts need fresh cover.
+          </Text>
+          {renderTableHeader(['Shift', 'Site', 'Guard', 'Date', 'Time', 'State', 'Response'])}
+          {shiftOfferRows.map((shift) => {
+            const lifecycleStatus = normalizeShiftLifecycleStatus(shift.status);
+            const responseText =
+              lifecycleStatus === 'offered'
+                ? 'Waiting for guard response'
+                : lifecycleStatus === 'ready'
+                  ? 'Accepted and ready to start'
+                  : 'Rejected and needs reassignment';
+
+            const reassignmentOptions = linkedGuardOptions.filter(
+              (option) => option.value !== String(shift.guard?.id ?? shift.guardId ?? ''),
+            );
+
+            return (
+              <View
+                key={shift.id}
+                style={[styles.tableRow, selectedShiftId === shift.id && styles.tableRowSelected, styles.offerRow]}
+              >
+                <Pressable
+                  style={styles.offerRowSummary}
+                  onPress={() => {
+                    setSelectedShiftId(shift.id);
+                    setActiveSection('shift-offers');
+                  }}
+                >
+                  <Text style={styles.tableCellStrong}>#{shift.id}</Text>
+                  <Text style={styles.tableCell}>{shift.site?.name || shift.siteName || 'Unknown site'}</Text>
+                  <Text style={styles.tableCell}>{shift.guard?.fullName || 'Unassigned'}</Text>
+                  <Text style={styles.tableCell}>{formatDateLabel(shift.start)}</Text>
+                  <Text style={styles.tableCell}>
+                    {formatTimeLabel(shift.start)}-{formatTimeLabel(shift.end)}
+                  </Text>
+                  <View style={styles.tableCell}>
+                    <ShiftStatusBadge status={shift.status} />
+                  </View>
+                  <Text style={styles.tableCell}>{responseText}</Text>
+                </Pressable>
+                <View style={styles.offerRowActions}>
+                  {lifecycleStatus === 'offered' ? (
+                    <Pressable
+                      style={styles.secondaryButton}
+                      onPress={() => handleCancelShiftOffer(shift.id)}
+                      disabled={offerActionShiftId === shift.id}
+                    >
+                      <Text style={styles.secondaryButtonText}>
+                        {offerActionShiftId === shift.id ? 'Cancelling...' : 'Withdraw Offer'}
+                      </Text>
+                    </Pressable>
+                  ) : null}
+                  {lifecycleStatus === 'ready' ? (
+                    <Pressable
+                      style={styles.primaryButton}
+                      onPress={() => {
+                        setShiftOffersFeedback({
+                          tone: 'success',
+                          message: `Opening Shift #${shift.id} in Live Operations.`,
+                        });
+                        setSelectedShiftId(shift.id);
+                        setActiveSection('live-operations');
+                      }}
+                    >
+                      <Text style={styles.primaryButtonText}>Open In Live Ops</Text>
+                    </Pressable>
+                  ) : null}
+                  {lifecycleStatus === 'rejected' ? (
+                    <View style={styles.offerReassignBox}>
+                      <WebSelect
+                        value={reassignGuardByShiftId[shift.id] || ''}
+                        onChange={(value: string) =>
+                          setReassignGuardByShiftId((current) => ({ ...current, [shift.id]: value }))
+                        }
+                        options={reassignmentOptions}
+                        placeholder="Choose replacement guard"
+                      />
+                      <Pressable
+                        style={styles.primaryButton}
+                        onPress={() => handleReofferShift(shift.id)}
+                        disabled={offerActionShiftId === shift.id}
+                      >
+                        <Text style={styles.primaryButtonText}>
+                          {offerActionShiftId === shift.id ? 'Re-offering...' : 'Re-offer Shift'}
+                        </Text>
+                      </Pressable>
+                    </View>
+                  ) : null}
+                </View>
+              </View>
+            );
+          })}
+          {shiftOfferRows.length === 0 ? (
+            <Text style={styles.helperText}>No current shift offers are waiting for response.</Text>
+          ) : null}
+        </View>
+
+        <View style={styles.operationsSideColumn}>
+          <View style={styles.panel}>
+            <Text style={styles.panelTitle}>Waiting Response</Text>
+            {pendingShiftOffers.slice(0, 6).map((shift) => (
+              <View key={shift.id} style={styles.recordRow}>
+                <Text style={styles.recordTitle}>Shift #{shift.id} · {shift.site?.name || shift.siteName}</Text>
+                <Text style={styles.recordMeta}>
+                  {shift.guard?.fullName || 'Unassigned'} | {formatDateTimeLabel(shift.start)}
+                </Text>
+              </View>
+            ))}
+            {pendingShiftOffers.length === 0 ? <Text style={styles.helperText}>No outstanding guard responses.</Text> : null}
+          </View>
+
+          <View style={styles.panel}>
+            <Text style={styles.panelTitle}>Ready To Start</Text>
+            {readyShiftOffers.slice(0, 6).map((shift) => (
+              <View key={shift.id} style={styles.recordRow}>
+                <Text style={styles.recordTitle}>Shift #{shift.id} · {shift.site?.name || shift.siteName}</Text>
+                <Text style={styles.recordMeta}>
+                  {shift.guard?.fullName || 'Unassigned'} | Accepted and ready for book on
+                </Text>
+              </View>
+            ))}
+            {readyShiftOffers.length === 0 ? <Text style={styles.helperText}>No accepted offers are waiting to start.</Text> : null}
+          </View>
+
+          <View style={styles.panel}>
+            <Text style={styles.panelTitle}>Rejected / Needs Re-cover</Text>
+            {rejectedShiftOffers.slice(0, 6).map((shift) => (
+              <View key={shift.id} style={styles.recordRow}>
+                <Text style={styles.recordTitle}>Shift #{shift.id} · {shift.site?.name || shift.siteName}</Text>
+                <Text style={styles.recordMeta}>
+                  {shift.guard?.fullName || 'No guard'} | Offer rejected, find replacement cover
+                </Text>
+              </View>
+            ))}
+            {rejectedShiftOffers.length === 0 ? <Text style={styles.helperText}>No rejected offers need re-cover right now.</Text> : null}
+          </View>
+        </View>
+      </View>
+
+      {selectedShift && ['offered', 'ready', 'rejected'].includes(normalizeShiftLifecycleStatus(selectedShift.status)) ? (
+        <View style={styles.panel}>
+          <Text style={styles.panelTitle}>Selected Offer Detail</Text>
+          <Text style={styles.recordMeta}>
+            {selectedShift.site?.client?.name || clientMap.get(selectedShift.site?.clientId || 0)?.name || 'No client'} | {selectedShift.site?.name || selectedShift.siteName}
+          </Text>
+          <Text style={styles.recordMeta}>
+            {selectedShift.guard?.fullName || 'No guard assigned'} | {formatDateLabel(selectedShift.start)} | {formatTimeLabel(selectedShift.start)}-{formatTimeLabel(selectedShift.end)}
+          </Text>
+          <ShiftStatusBadge status={selectedShift.status} />
+          {normalizeShiftLifecycleStatus(selectedShift.status) === 'offered' ? (
+            <Text style={styles.recordMeta}>Waiting for this guard to accept or reject the offer.</Text>
+          ) : null}
+          {normalizeShiftLifecycleStatus(selectedShift.status) === 'ready' ? (
+            <Text style={styles.recordMeta}>Guard accepted this shift. It is ready to move into live operations.</Text>
+          ) : null}
+          {normalizeShiftLifecycleStatus(selectedShift.status) === 'rejected' ? (
+            <Text style={styles.recordMeta}>Guard rejected this shift. New cover is still required.</Text>
+          ) : null}
+          <Text style={styles.recordMeta}>Instructions: {selectedShift.instructions || 'No instructions recorded.'}</Text>
+          <View style={styles.rowActions}>
+            {normalizeShiftLifecycleStatus(selectedShift.status) === 'offered' ? (
+              <Pressable
+                style={styles.secondaryButton}
+                onPress={() => handleCancelShiftOffer(selectedShift.id)}
+                disabled={offerActionShiftId === selectedShift.id}
+              >
+                <Text style={styles.secondaryButtonText}>
+                  {offerActionShiftId === selectedShift.id ? 'Cancelling...' : 'Withdraw Offer'}
+                </Text>
+              </Pressable>
+            ) : null}
+            {normalizeShiftLifecycleStatus(selectedShift.status) === 'ready' ? (
+              <Pressable
+                style={styles.primaryButton}
+                onPress={() => {
+                  setShiftOffersFeedback({
+                    tone: 'success',
+                    message: `Opening Shift #${selectedShift.id} in Live Operations.`,
+                  });
+                  setActiveSection('live-operations');
+                }}
+              >
+                <Text style={styles.primaryButtonText}>Open In Live Operations</Text>
+              </Pressable>
+            ) : null}
+          </View>
+          {normalizeShiftLifecycleStatus(selectedShift.status) === 'rejected' ? (
+            <View style={styles.offerReassignBox}>
+              <WebSelect
+                value={reassignGuardByShiftId[selectedShift.id] || ''}
+                onChange={(value: string) =>
+                  setReassignGuardByShiftId((current) => ({ ...current, [selectedShift.id]: value }))
+                }
+                options={linkedGuardOptions.filter(
+                  (option) => option.value !== String(selectedShift.guard?.id ?? selectedShift.guardId ?? ''),
+                )}
+                placeholder="Choose replacement guard"
+              />
+              <Pressable
+                style={styles.primaryButton}
+                onPress={() => handleReofferShift(selectedShift.id)}
+                disabled={offerActionShiftId === selectedShift.id}
+              >
+                <Text style={styles.primaryButtonText}>
+                  {offerActionShiftId === selectedShift.id ? 'Re-offering...' : 'Re-offer Shift'}
+                </Text>
+              </Pressable>
+            </View>
+          ) : null}
+        </View>
+      ) : null}
     </View>
   );
 
@@ -2086,6 +2510,8 @@ export function CompanyDashboardScreen() {
         return renderSitesSection();
       case 'rota-planner':
         return renderRotaPlannerSection();
+      case 'shift-offers':
+        return renderShiftOffersSection();
       case 'live-operations':
         return renderLiveOperationsSection();
       case 'guards':
@@ -2484,6 +2910,28 @@ const styles = StyleSheet.create({
   rowActions: {
     flexDirection: 'row',
     gap: 8,
+    flexWrap: 'wrap',
+  },
+  offerRow: {
+    flexDirection: 'column',
+    alignItems: 'stretch',
+    gap: 10,
+  },
+  offerRowSummary: {
+    flexDirection: 'row',
+    gap: 12,
+    alignItems: 'center',
+  },
+  offerRowActions: {
+    flexDirection: 'row',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  offerReassignBox: {
+    flexDirection: 'row',
+    gap: 8,
+    flexWrap: 'wrap',
+    alignItems: 'center',
   },
   recordRow: {
     gap: 4,
@@ -2502,6 +2950,17 @@ const styles = StyleSheet.create({
   helperText: {
     color: '#64748b',
     fontSize: 13,
+  },
+  statusBadge: {
+    alignSelf: 'flex-start',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  statusBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'capitalize',
   },
   subtleLabel: {
     color: '#475569',
@@ -2572,6 +3031,35 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   errorText: {
+    color: '#7f1d1d',
+  },
+  feedbackCard: {
+    borderRadius: 18,
+    padding: 16,
+    gap: 4,
+  },
+  feedbackCardSuccess: {
+    backgroundColor: '#dcfce7',
+  },
+  feedbackCardError: {
+    backgroundColor: '#fee2e2',
+  },
+  feedbackTitle: {
+    fontWeight: '800',
+  },
+  feedbackTitleSuccess: {
+    color: '#166534',
+  },
+  feedbackTitleError: {
+    color: '#991b1b',
+  },
+  feedbackText: {
+    fontSize: 14,
+  },
+  feedbackTextSuccess: {
+    color: '#166534',
+  },
+  feedbackTextError: {
     color: '#7f1d1d',
   },
   loadingShell: {
