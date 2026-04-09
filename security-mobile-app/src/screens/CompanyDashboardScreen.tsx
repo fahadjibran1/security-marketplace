@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 
 import {
+  ApiError,
   acknowledgeSafetyAlert,
   approveGuard,
   closeSafetyAlert,
@@ -1569,6 +1570,18 @@ export function CompanyDashboardScreen() {
     setPlannerRemovedShiftIds([]);
   };
 
+  const deletePlannerShiftIfPresent = async (shiftId: number) => {
+    try {
+      await deleteShift(shiftId);
+    } catch (shiftError) {
+      if (shiftError instanceof ApiError && shiftError.status === 404) {
+        return;
+      }
+
+      throw shiftError;
+    }
+  };
+
   const handleSaveRota = async () => {
     try {
       if (!plannerSite || !plannerSiteId) {
@@ -1577,8 +1590,8 @@ export function CompanyDashboardScreen() {
 
       setSavingRota(true);
 
-      for (const shiftId of plannerRemovedShiftIds) {
-        await deleteShift(shiftId);
+      for (const shiftId of Array.from(new Set(plannerRemovedShiftIds))) {
+        await deletePlannerShiftIfPresent(shiftId);
       }
 
       for (const row of plannerRows) {
@@ -1614,7 +1627,7 @@ export function CompanyDashboardScreen() {
         }
 
         for (const extraId of existingIds) {
-          await deleteShift(extraId);
+          await deletePlannerShiftIfPresent(extraId);
         }
       }
 
