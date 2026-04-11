@@ -19,6 +19,12 @@ export class AttendanceController {
     return this.attendanceService.findMine(user.sub);
   }
 
+  @Get('company')
+  @Roles(UserRole.COMPANY, UserRole.COMPANY_ADMIN, UserRole.COMPANY_STAFF, UserRole.ADMIN)
+  findCompany(@CurrentUser() user: JwtPayload) {
+    return this.attendanceService.findForCompany(user);
+  }
+
   @Post('check-in')
   @Roles(UserRole.GUARD, UserRole.ADMIN)
   checkIn(@CurrentUser() user: JwtPayload, @Body() dto: RecordAttendanceDto) {
