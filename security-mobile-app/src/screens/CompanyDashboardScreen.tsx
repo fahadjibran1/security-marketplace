@@ -12,6 +12,7 @@ import {
   createSite,
   deleteShift,
   formatApiErrorMessage,
+  listCompanyAttendance,
   listClients,
   listCompanyDailyLogs,
   listCompanyGuards,
@@ -31,6 +32,7 @@ import {
   updateSite,
 } from '../services/api';
 import {
+  AttendanceEvent,
   Client,
   CompanyGuard,
   CreateClientPayload,
@@ -151,7 +153,15 @@ type UrgentOperationalItem = {
   status?: string | null;
   siteName: string;
   guardName: string;
-  category: 'panic' | 'incident' | 'late_start' | 'missed_check_call' | 'rejected_offer' | 'safety';
+  category:
+    | 'panic'
+    | 'incident'
+    | 'late_start'
+    | 'missed_check_call'
+    | 'rejected_offer'
+    | 'safety'
+    | 'upcoming_risk'
+    | 'missed_shift';
   issueType: string;
   message: string;
   occurredAt: string;
@@ -219,6 +229,7 @@ const SHIFT_STATUS_OPTIONS = [
   { label: 'Unfilled', value: 'unfilled' },
   { label: 'Offered', value: 'offered' },
   { label: 'Ready', value: 'ready' },
+  { label: 'Missed', value: 'missed' },
   { label: 'Cancelled', value: 'cancelled' },
   { label: 'Rejected', value: 'rejected' },
   { label: 'In Progress', value: 'in_progress' },
@@ -226,6 +237,7 @@ const SHIFT_STATUS_OPTIONS = [
 ];
 
 const UK_LOCALE = 'en-GB';
+const MISSED_CHECK_IN_GRACE_MINUTES = 15;
 
 function toNumber(value?: string | number | null) {
   if (typeof value === 'number') {
@@ -322,33 +334,237 @@ function normalizeShiftLifecycleStatus(value?: string | null) {
   }
 }
 
-function getShiftStatusBadgeStyle(status: string) {
-  switch (status) {
+function getShiftStatusBadge(status: string) {
+  switch (normalizeShiftLifecycleStatus(status)) {
     case 'offered':
-      return { backgroundColor: '#dbeafe', color: '#1d4ed8' };
+      return { label: 'Offered', color: '#3B82F6', icon: '🔵' };
     case 'ready':
-      return { backgroundColor: '#ffedd5', color: '#c2410c' };
+      return { label: 'Ready', color: '#F59E0B', icon: '🟡' };
     case 'in_progress':
-      return { backgroundColor: '#dcfce7', color: '#166534' };
+      return { label: 'Live', color: '#10B981', icon: '🟢' };
     case 'completed':
-      return { backgroundColor: '#e5e7eb', color: '#111827' };
+      return { label: 'Completed', color: '#374151', icon: '⚫' };
     case 'rejected':
-      return { backgroundColor: '#fee2e2', color: '#b91c1c' };
+      return { label: 'Rejected', color: '#EF4444', icon: '🔴' };
     case 'cancelled':
-      return { backgroundColor: '#e5e7eb', color: '#7f1d1d' };
+      return { label: 'Cancelled', color: '#9CA3AF', icon: '⚫' };
     case 'unfilled':
     default:
-      return { backgroundColor: '#f3f4f6', color: '#475569' };
+      return { label: 'Unfilled', color: '#6B7280', icon: '⚪' };
   }
 }
 
+function getLiveShiftRowTone(status: string) {
+  switch (normalizeShiftLifecycleStatus(status)) {
+    case 'in_progress':
+      return '#ECFDF5';
+    case 'ready':
+      return '#FFFBEB';
+    case 'missed':
+    case 'rejected':
+      return '#FEF2F2';
+    default:
+      return '#ffffff';
+  }
+}
+
+function getShiftRisk(
+  shift: Shift,
+  attendance?: { checkInAt: string | null; checkOutAt: string | null } | null,
+  incidents: Incident[] = [],
+  alerts: SafetyAlert[] = [],
+) {
+  let score = 0;
+  const lifecycleStatus = normalizeShiftLifecycleStatus(shift.status);
+  const now = new Date();
+  const shiftStart = new Date(shift.start);
+  const hasStarted = !Number.isNaN(shiftStart.getTime()) && now.getTime() > shiftStart.getTime();
+
+  if (
+    alerts.some(
+      (alert) =>
+        (alert.type || '').toLowerCase() === 'panic' &&
+        !['closed', 'resolved'].includes((alert.status || '').toLowerCase()),
+    )
+  ) {
+    score += 100;
+  }
+
+  if (incidents.some((incident) => ['open', 'in_review'].includes((incident.status || '').toLowerCase()))) {
+    score += 50;
+  }
+
+  if (lifecycleStatus === 'ready' && hasStarted && !attendance?.checkInAt) {
+    score += 40;
+  }
+
+  if (isLikelyToMissCheckIn(shift, attendance)) {
+    score += 35;
+  }
+
+  if (
+    alerts.some(
+      (alert) =>
+        (alert.type || '').toLowerCase() === 'missed_checkcall' &&
+        !['closed', 'resolved'].includes((alert.status || '').toLowerCase()),
+    )
+  ) {
+    score += 30;
+  }
+
+  if (lifecycleStatus === 'rejected') {
+    score += 25;
+  }
+
+  if (lifecycleStatus === 'missed') {
+    score += 45;
+  }
+
+  if (score >= 80) {
+    return { level: 'high' as const, color: '#EF4444', label: 'HIGH 🔴' };
+  }
+
+  if (score >= 40) {
+    return { level: 'medium' as const, color: '#F59E0B', label: 'MEDIUM 🟡' };
+  }
+
+  return { level: 'low' as const, color: '#10B981', label: 'LOW 🟢' };
+}
+
+function getShiftDelay(
+  shift: Shift,
+  attendance?: { checkInAt: string | null; checkOutAt: string | null } | null,
+) {
+  if (normalizeShiftLifecycleStatus(shift.status) !== 'ready') {
+    return null;
+  }
+
+  const shiftStart = new Date(shift.start);
+  const now = new Date();
+
+  if (Number.isNaN(shiftStart.getTime()) || now.getTime() <= shiftStart.getTime() || attendance?.checkInAt) {
+    return null;
+  }
+
+  return Math.max(1, Math.floor((now.getTime() - shiftStart.getTime()) / 60000));
+}
+
+function isShiftPastMissedGracePeriod(
+  shift: Shift,
+  attendance?: { checkInAt: string | null; checkOutAt: string | null } | null,
+) {
+  if (normalizeShiftLifecycleStatus(shift.status) !== 'ready' || attendance?.checkInAt) {
+    return false;
+  }
+
+  const shiftStart = new Date(shift.start);
+  const now = new Date();
+
+  if (Number.isNaN(shiftStart.getTime())) {
+    return false;
+  }
+
+  return now.getTime() - shiftStart.getTime() >= MISSED_CHECK_IN_GRACE_MINUTES * 60000;
+}
+
+function isLikelyToMissCheckIn(
+  shift: Shift,
+  attendance?: { checkInAt: string | null; checkOutAt: string | null } | null,
+) {
+  if (normalizeShiftLifecycleStatus(shift.status) !== 'ready') {
+    return false;
+  }
+
+  const now = new Date();
+  const shiftStart = new Date(shift.start);
+
+  if (Number.isNaN(shiftStart.getTime()) || attendance?.checkInAt) {
+    return false;
+  }
+
+  const minutesToStart = (shiftStart.getTime() - now.getTime()) / 60000;
+  return minutesToStart <= 15 && minutesToStart > 0;
+}
+
+function getSiteRiskLevel(
+  siteId: number | undefined,
+  shifts: Shift[],
+  attendanceByShiftId: Map<number, { checkInAt: string | null; checkOutAt: string | null }>,
+  incidentsByShiftId: Map<number, Incident[]>,
+  alertsByShiftId: Map<number, SafetyAlert[]>,
+) {
+  if (!siteId) {
+    return 'LOW';
+  }
+
+  let rejectedCount = 0;
+  let highRiskCount = 0;
+  let lateCount = 0;
+
+  shifts.forEach((shift) => {
+    const currentSiteId = shift.site?.id ?? shift.siteId;
+    if (currentSiteId !== siteId) {
+      return;
+    }
+
+    const attendance = attendanceByShiftId.get(shift.id);
+    const risk = getShiftRisk(
+      shift,
+      attendance,
+      incidentsByShiftId.get(shift.id) || [],
+      alertsByShiftId.get(shift.id) || [],
+    );
+
+    if (normalizeShiftLifecycleStatus(shift.status) === 'rejected') {
+      rejectedCount += 1;
+    }
+
+    if (risk.level === 'high') {
+      highRiskCount += 1;
+    }
+
+    if (getShiftDelay(shift, attendance) !== null) {
+      lateCount += 1;
+    }
+  });
+
+  const score = rejectedCount + highRiskCount + lateCount;
+  if (highRiskCount >= 2 || score >= 3) {
+    return 'HIGH';
+  }
+
+  if (score >= 1) {
+    return 'MEDIUM';
+  }
+
+  return 'LOW';
+}
+
+function getLiveShiftBoardRowTone(
+  status: string,
+  riskLevel?: 'high' | 'medium' | 'low',
+) {
+  if (riskLevel === 'high') {
+    return '#FEF2F2';
+  }
+
+  return getLiveShiftRowTone(status);
+}
+
 function ShiftStatusBadge({ status }: { status?: string | null }) {
-  const lifecycleStatus = normalizeShiftLifecycleStatus(status);
-  const palette = getShiftStatusBadgeStyle(lifecycleStatus);
+  if (normalizeShiftLifecycleStatus(status || 'unfilled') === 'missed') {
+    return (
+      <View style={[styles.statusBadge, { borderColor: '#EF4444', backgroundColor: '#FEE2E2' }]}>
+        <Text style={[styles.statusBadgeText, { color: '#EF4444' }]}>⚠️ Missed</Text>
+      </View>
+    );
+  }
+
+  const badge = getShiftStatusBadge(status || 'unfilled');
 
   return (
-    <View style={[styles.statusBadge, { backgroundColor: palette.backgroundColor }]}>
-      <Text style={[styles.statusBadgeText, { color: palette.color }]}>{lifecycleStatus.replace('_', ' ')}</Text>
+    <View style={[styles.statusBadge, { borderColor: badge.color, backgroundColor: `${badge.color}14` }]}>
+      <Text style={[styles.statusBadgeText, { color: badge.color }]}>{`${badge.icon} ${badge.label}`}</Text>
     </View>
   );
 }
@@ -648,6 +864,7 @@ export function CompanyDashboardScreen() {
   const [companyGuards, setCompanyGuards] = React.useState<CompanyGuard[]>([]);
   const [jobs, setJobs] = React.useState<Job[]>([]);
   const [applications, setApplications] = React.useState<JobApplication[]>([]);
+  const [attendanceEvents, setAttendanceEvents] = React.useState<AttendanceEvent[]>([]);
   const [timesheets, setTimesheets] = React.useState<Timesheet[]>([]);
   const [incidents, setIncidents] = React.useState<Incident[]>([]);
   const [alerts, setAlerts] = React.useState<SafetyAlert[]>([]);
@@ -691,6 +908,10 @@ export function CompanyDashboardScreen() {
   const [closeOutNotesDraft, setCloseOutNotesDraft] = React.useState('');
   const [savingCloseOutNotes, setSavingCloseOutNotes] = React.useState(false);
   const [showArchivedClients, setShowArchivedClients] = React.useState(false);
+  const [liveBoardAnchorY, setLiveBoardAnchorY] = React.useState(0);
+  const [highlightedLiveShiftId, setHighlightedLiveShiftId] = React.useState<number | null>(null);
+  const [liveBoardHighlightTimeoutId, setLiveBoardHighlightTimeoutId] = React.useState<ReturnType<typeof setTimeout> | null>(null);
+  const [autoMarkingMissedShiftIds, setAutoMarkingMissedShiftIds] = React.useState<number[]>([]);
 
   const runSettledLoaders = React.useMemo(
     () => async (loaders: SettledLoader[]) => {
@@ -771,6 +992,7 @@ export function CompanyDashboardScreen() {
 
         const sectionLoaders: Partial<Record<CompanySection, SettledLoader[]>> = {
           'live-operations': [
+              { label: 'attendance', run: listCompanyAttendance, apply: (value: AttendanceEvent[]) => setAttendanceEvents(value) },
               { label: 'timesheets', run: listCompanyTimesheets, apply: (value: Timesheet[]) => setTimesheets(value) },
               { label: 'incidents', run: listCompanyIncidents, apply: (value: Incident[]) => setIncidents(value) },
               { label: 'alerts', run: listCompanySafetyAlerts, apply: (value: SafetyAlert[]) => setAlerts(value) },
@@ -809,6 +1031,26 @@ export function CompanyDashboardScreen() {
   React.useEffect(() => {
     loadData();
   }, [loadData]);
+
+  React.useEffect(() => {
+    if (activeSection !== 'live-operations') {
+      return;
+    }
+
+    const intervalId = setInterval(() => {
+      loadData(true);
+    }, 15000);
+
+    return () => clearInterval(intervalId);
+  }, [activeSection, loadData]);
+
+  React.useEffect(() => {
+    return () => {
+      if (liveBoardHighlightTimeoutId) {
+        clearTimeout(liveBoardHighlightTimeoutId);
+      }
+    };
+  }, [liveBoardHighlightTimeoutId]);
 
   const activeCompanyGuards = React.useMemo(
     () =>
@@ -857,6 +1099,32 @@ export function CompanyDashboardScreen() {
     () => new Map(timesheets.map((timesheet) => [timesheet.shiftId, timesheet])),
     [timesheets],
   );
+  const attendanceByShiftId = React.useMemo(() => {
+    const map = new Map<number, { checkInAt: string | null; checkOutAt: string | null }>();
+
+    attendanceEvents.forEach((event) => {
+      const shiftId = event.shift?.id;
+      if (!shiftId) {
+        return;
+      }
+
+      const current = map.get(shiftId) || { checkInAt: null, checkOutAt: null };
+      if (event.type === 'check-in') {
+        if (!current.checkInAt || current.checkInAt.localeCompare(event.occurredAt) < 0) {
+          current.checkInAt = event.occurredAt;
+        }
+      }
+      if (event.type === 'check-out') {
+        if (!current.checkOutAt || current.checkOutAt.localeCompare(event.occurredAt) < 0) {
+          current.checkOutAt = event.occurredAt;
+        }
+      }
+
+      map.set(shiftId, current);
+    });
+
+    return map;
+  }, [attendanceEvents]);
   const incidentsByShiftId = React.useMemo(() => {
     const map = new Map<number, Incident[]>();
     incidents.forEach((incident) => {
@@ -915,6 +1183,69 @@ export function CompanyDashboardScreen() {
     return map;
   }, [dailyLogs]);
 
+  React.useEffect(() => {
+    if (activeSection !== 'live-operations') {
+      return;
+    }
+
+    const overdueReadyShifts = shifts.filter((shift) =>
+      isShiftPastMissedGracePeriod(shift, attendanceByShiftId.get(shift.id)),
+    );
+
+    if (overdueReadyShifts.length === 0) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const runAutomation = async () => {
+      let automatedAny = false;
+
+      for (const shift of overdueReadyShifts) {
+        if (cancelled || autoMarkingMissedShiftIds.includes(shift.id)) {
+          continue;
+        }
+
+        setAutoMarkingMissedShiftIds((current) => [...current, shift.id]);
+
+        try {
+          await updateShift(shift.id, { status: 'missed' });
+          automatedAny = true;
+          recordManagementAction({
+            shiftId: shift.id,
+            siteName: shift.site?.name || shift.siteName || 'Unknown site',
+            guardName: shift.guard?.fullName || 'Unassigned',
+            itemType: 'Shift automation',
+            actionTaken: `Shift auto-marked missed after ${MISSED_CHECK_IN_GRACE_MINUTES} minutes without check-in`,
+          });
+          setLiveOperationsFeedback({
+            tone: 'success',
+            message: `Shift #${shift.id} was automatically marked as missed after ${MISSED_CHECK_IN_GRACE_MINUTES} minutes without check-in.`,
+          });
+        } catch (automationError) {
+          setAutoMarkingMissedShiftIds((current) => current.filter((id) => id !== shift.id));
+          if (!cancelled) {
+            setError(formatApiErrorMessage(automationError, 'Unable to mark this missed shift automatically.'));
+            setLiveOperationsFeedback({
+              tone: 'error',
+              message: formatApiErrorMessage(automationError, 'Unable to mark this missed shift automatically.'),
+            });
+          }
+        }
+      }
+
+      if (automatedAny && !cancelled) {
+        await loadData(true);
+      }
+    };
+
+    runAutomation();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSection, attendanceByShiftId, autoMarkingMissedShiftIds, loadData, shifts]);
+
   const activeClients = React.useMemo(
     () => clients.filter((client) => (client.status || 'active').toLowerCase() !== 'archived'),
     [clients],
@@ -964,7 +1295,7 @@ export function CompanyDashboardScreen() {
   const shiftOfferRows = React.useMemo(
     () =>
       shifts
-        .filter((shift) => ['offered', 'ready', 'rejected'].includes(normalizeShiftLifecycleStatus(shift.status)))
+        .filter((shift) => ['offered', 'ready', 'rejected', 'missed'].includes(normalizeShiftLifecycleStatus(shift.status)))
         .sort((left, right) => left.start.localeCompare(right.start)),
     [shifts],
   );
@@ -977,20 +1308,26 @@ export function CompanyDashboardScreen() {
     [shiftOfferRows],
   );
   const rejectedShiftOffers = React.useMemo(
-    () => shiftOfferRows.filter((shift) => normalizeShiftLifecycleStatus(shift.status) === 'rejected'),
+    () =>
+      shiftOfferRows.filter((shift) =>
+        ['rejected', 'missed'].includes(normalizeShiftLifecycleStatus(shift.status)),
+      ),
     [shiftOfferRows],
   );
   const urgentOperationalItems = React.useMemo(() => {
     const now = new Date();
     const items: UrgentOperationalItem[] = [];
     const readyShiftsNotBookedOn = shifts.filter((shift) => {
-      const timesheet = timesheetByShiftId.get(shift.id);
+      const attendance = attendanceByShiftId.get(shift.id);
       return (
         normalizeShiftLifecycleStatus(shift.status) === 'ready' &&
-        !timesheet?.actualCheckInAt &&
+        !attendance?.checkInAt &&
         new Date(shift.start).getTime() <= now.getTime()
       );
     });
+    const upcomingRiskShifts = shifts.filter((shift) =>
+      isLikelyToMissCheckIn(shift, attendanceByShiftId.get(shift.id)),
+    );
 
     activePanicAlerts.forEach((alert) => {
       items.push({
@@ -1035,6 +1372,36 @@ export function CompanyDashboardScreen() {
         occurredAt: shift.start,
       });
     });
+
+    upcomingRiskShifts.forEach((shift) => {
+      items.push({
+        id: `upcoming-risk-${shift.id}`,
+        shiftId: shift.id,
+        status: shift.status,
+        siteName: shift.site?.name || shift.siteName || 'Unknown site',
+        guardName: shift.guard?.fullName || 'Unassigned',
+        category: 'upcoming_risk',
+        issueType: 'Upcoming Risk',
+        message: 'Starting soon – no check-in ⚠️',
+        occurredAt: shift.start,
+      });
+    });
+
+    shifts
+      .filter((shift) => normalizeShiftLifecycleStatus(shift.status) === 'missed')
+      .forEach((shift) => {
+        items.push({
+          id: `missed-${shift.id}`,
+          shiftId: shift.id,
+          status: shift.status,
+          siteName: shift.site?.name || shift.siteName || 'Unknown site',
+          guardName: shift.guard?.fullName || 'Unassigned',
+          category: 'missed_shift',
+          issueType: 'Missed shift needs re-cover',
+          message: `No check-in was recorded within ${MISSED_CHECK_IN_GRACE_MINUTES} minutes of shift start.`,
+          occurredAt: shift.start,
+        });
+      });
 
     missedCheckCalls.forEach((alert) => {
       items.push({
@@ -1087,12 +1454,12 @@ export function CompanyDashboardScreen() {
       .slice(0, 10);
   }, [
     activePanicAlerts,
+    attendanceByShiftId,
     missedCheckCalls,
     openIncidents,
     outstandingAlerts,
     rejectedShiftOffers,
     shifts,
-    timesheetByShiftId,
   ]);
   const recentOperationalActivity = React.useMemo(() => {
     const items: OperationalActivityItem[] = [];
@@ -1109,42 +1476,67 @@ export function CompanyDashboardScreen() {
             ? 'Shift offered'
             : lifecycleStatus === 'ready'
               ? 'Shift accepted'
-              : 'Shift rejected',
+              : lifecycleStatus === 'missed'
+                ? 'Shift missed'
+                : 'Shift rejected',
         message:
           lifecycleStatus === 'offered'
             ? 'Waiting for guard response.'
             : lifecycleStatus === 'ready'
               ? 'Guard accepted and shift is ready to start.'
-              : 'Guard rejected and new cover is required.',
+              : lifecycleStatus === 'missed'
+                ? `No check-in was recorded within ${MISSED_CHECK_IN_GRACE_MINUTES} minutes of shift start.`
+                : 'Guard rejected and new cover is required.',
         occurredAt: shift.start,
       });
     });
 
-    timesheets.forEach((timesheet) => {
-      if (timesheet.actualCheckInAt) {
+    shifts
+      .filter((shift) => isLikelyToMissCheckIn(shift, attendanceByShiftId.get(shift.id)))
+      .forEach((shift) => {
         items.push({
-          id: `timesheet-in-${timesheet.id}`,
-          shiftId: timesheet.shift?.id ?? timesheet.shiftId,
-          siteName: timesheet.shift?.site?.name || timesheet.shift?.siteName || 'Unknown site',
-          guardName: timesheet.guard?.fullName || 'Unknown guard',
+          id: `likely-late-${shift.id}`,
+          shiftId: shift.id,
+          siteName: shift.site?.name || shift.siteName || 'Unknown site',
+          guardName: shift.guard?.fullName || 'Unassigned',
+          eventType: 'Likely late',
+          message: 'Starting soon with no recorded check-in yet.',
+          occurredAt: shift.start,
+        });
+      });
+
+    attendanceEvents.forEach((event) => {
+      const shiftId = event.shift?.id;
+      if (!shiftId) {
+        return;
+      }
+
+      if (event.type === 'check-in') {
+        items.push({
+          id: `attendance-in-${event.id}`,
+          shiftId,
+          siteName: event.shift?.site?.name || event.shift?.siteName || 'Unknown site',
+          guardName: event.guard?.fullName || 'Unknown guard',
           eventType: 'Guard checked in',
           message: 'Guard booked on and the shift is now live.',
-          occurredAt: timesheet.actualCheckInAt,
+          occurredAt: event.occurredAt,
         });
       }
 
-      if (timesheet.actualCheckOutAt) {
+      if (event.type === 'check-out') {
         items.push({
-          id: `timesheet-out-${timesheet.id}`,
-          shiftId: timesheet.shift?.id ?? timesheet.shiftId,
-          siteName: timesheet.shift?.site?.name || timesheet.shift?.siteName || 'Unknown site',
-          guardName: timesheet.guard?.fullName || 'Unknown guard',
+          id: `attendance-out-${event.id}`,
+          shiftId,
+          siteName: event.shift?.site?.name || event.shift?.siteName || 'Unknown site',
+          guardName: event.guard?.fullName || 'Unknown guard',
           eventType: 'Guard checked out',
           message: 'Guard booked off and the shift is completed.',
-          occurredAt: timesheet.actualCheckOutAt,
+          occurredAt: event.occurredAt,
         });
       }
+    });
 
+    timesheets.forEach((timesheet) => {
       if (timesheet.submittedAt) {
         items.push({
           id: `timesheet-submitted-${timesheet.id}`,
@@ -1219,7 +1611,7 @@ export function CompanyDashboardScreen() {
     return items
       .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt))
       .slice(0, 12);
-  }, [alerts, dailyLogs, incidents, notifications, shiftOfferRows, timesheets]);
+  }, [alerts, attendanceByShiftId, attendanceEvents, dailyLogs, incidents, notifications, shiftOfferRows, shifts, timesheets]);
 
   const recentManagementActivity = React.useMemo(
     () =>
@@ -1252,6 +1644,7 @@ export function CompanyDashboardScreen() {
     }
 
     const timesheet = timesheetByShiftId.get(selectedShift.id);
+    const attendance = attendanceByShiftId.get(selectedShift.id);
     const shiftLogs = logsByShiftId.get(selectedShift.id) || [];
     const shiftIncidents = incidentsByShiftId.get(selectedShift.id) || [];
     const shiftAlerts = alertsByShiftId.get(selectedShift.id) || [];
@@ -1271,8 +1664,8 @@ export function CompanyDashboardScreen() {
     return {
       scheduledStart: selectedShift.start,
       scheduledEnd: selectedShift.end,
-      actualCheckInAt: timesheet?.actualCheckInAt || null,
-      actualCheckOutAt: timesheet?.actualCheckOutAt || null,
+      actualCheckInAt: attendance?.checkInAt || null,
+      actualCheckOutAt: attendance?.checkOutAt || null,
       logsCount: shiftLogs.length,
       incidentsCount: shiftIncidents.length,
       safetyEventsCount,
@@ -1282,7 +1675,7 @@ export function CompanyDashboardScreen() {
       unresolvedFollowUpCount,
       closedCleanly: unresolvedFollowUpCount === 0,
     };
-  }, [selectedShift, timesheetByShiftId, logsByShiftId, incidentsByShiftId, alertsByShiftId]);
+  }, [selectedShift, timesheetByShiftId, attendanceByShiftId, logsByShiftId, incidentsByShiftId, alertsByShiftId]);
 
   React.useEffect(() => {
     setCloseOutNotesDraft(selectedShift?.closeOutNotes || '');
@@ -1720,6 +2113,30 @@ export function CompanyDashboardScreen() {
     );
   };
 
+  const focusShiftInLiveBoard = (shiftId: number) => {
+    setSelectedShiftId(shiftId);
+    setActiveSection('live-operations');
+    setHighlightedLiveShiftId(shiftId);
+
+    if (liveBoardHighlightTimeoutId) {
+      clearTimeout(liveBoardHighlightTimeoutId);
+    }
+
+    setTimeout(() => {
+      if (typeof window !== 'undefined' && typeof window.scrollTo === 'function') {
+        window.scrollTo({
+          top: Math.max(liveBoardAnchorY - 24, 0),
+          behavior: 'smooth',
+        });
+      }
+    }, 0);
+
+    const nextTimeoutId = setTimeout(() => {
+      setHighlightedLiveShiftId((current) => (current === shiftId ? null : current));
+    }, 2000);
+    setLiveBoardHighlightTimeoutId(nextTimeoutId);
+  };
+
   const handleCancelShiftOffer = async (shiftId: number) => {
     try {
       setOfferActionShiftId(shiftId);
@@ -1800,7 +2217,7 @@ export function CompanyDashboardScreen() {
       return;
     }
 
-    setSelectedShiftId(item.shiftId);
+    focusShiftInLiveBoard(item.shiftId);
     setLiveOperationsFeedback({
       tone: 'success',
       message: `Opening Shift #${item.shiftId} for ${item.issueType.toLowerCase()}.`,
@@ -1808,7 +2225,7 @@ export function CompanyDashboardScreen() {
   };
 
   const handleOpenUrgentDetail = (item: UrgentOperationalItem) => {
-    if (item.category === 'rejected_offer') {
+    if (item.category === 'rejected_offer' || item.category === 'missed_shift') {
       if (item.shiftId) {
         setSelectedShiftId(item.shiftId);
       }
@@ -1816,7 +2233,7 @@ export function CompanyDashboardScreen() {
         tone: 'success',
         message: item.shiftId
           ? `Shift #${item.shiftId} is ready for re-offer in Shift Offers.`
-          : 'Open Shift Offers to re-cover this rejected shift.',
+          : 'Open Shift Offers to re-cover this shift.',
       });
       setActiveSection('shift-offers');
       return;
@@ -1830,7 +2247,7 @@ export function CompanyDashboardScreen() {
       return;
     }
 
-    setSelectedShiftId(item.shiftId);
+    focusShiftInLiveBoard(item.shiftId);
 
     if (item.category === 'incident') {
       setActiveSection('incidents');
@@ -1854,6 +2271,41 @@ export function CompanyDashboardScreen() {
     setLiveOperationsFeedback({
       tone: 'success',
       message: `Opening Shift #${item.shiftId} in Live Operations.`,
+    });
+  };
+
+  const handleLiveBoardPrimaryAction = (shift: Shift) => {
+    const lifecycleStatus = normalizeShiftLifecycleStatus(shift.status);
+
+    if (lifecycleStatus === 'offered') {
+      setSelectedShiftId(shift.id);
+      setActiveSection('shift-offers');
+      setShiftOffersFeedback({
+        tone: 'success',
+        message: `Viewing offer details for Shift #${shift.id}.`,
+      });
+      return;
+    }
+
+    if (lifecycleStatus === 'rejected') {
+      setSelectedShiftId(shift.id);
+      setActiveSection('shift-offers');
+      setShiftOffersFeedback({
+        tone: 'success',
+        message: `Shift #${shift.id} is ready to be re-offered.`,
+      });
+      return;
+    }
+
+    focusShiftInLiveBoard(shift.id);
+    setLiveOperationsFeedback({
+      tone: 'success',
+      message:
+        lifecycleStatus === 'ready'
+          ? `Opening Shift #${shift.id}.`
+          : lifecycleStatus === 'in_progress'
+            ? `Monitoring live Shift #${shift.id}.`
+            : `Reviewing Shift #${shift.id}.`,
     });
   };
 
@@ -2012,6 +2464,8 @@ export function CompanyDashboardScreen() {
   };
 
   const liveOperationRows = React.useMemo(() => {
+    const priority = { high: 3, medium: 2, low: 1 };
+
     return shifts
       .filter((shift) => {
         const clientId = String(shift.site?.client?.id ?? shift.site?.clientId ?? '');
@@ -2028,15 +2482,41 @@ export function CompanyDashboardScreen() {
           (!liveFilters.status || status === liveFilters.status.toLowerCase())
         );
       })
-      .sort((left, right) => right.start.localeCompare(left.start));
-  }, [liveFilters, shifts]);
+      .sort((left, right) => {
+        const riskA = getShiftRisk(
+          left,
+          attendanceByShiftId.get(left.id),
+          incidentsByShiftId.get(left.id) || [],
+          alertsByShiftId.get(left.id) || [],
+        );
+        const riskB = getShiftRisk(
+          right,
+          attendanceByShiftId.get(right.id),
+          incidentsByShiftId.get(right.id) || [],
+          alertsByShiftId.get(right.id) || [],
+        );
+
+        const priorityDelta = priority[riskB.level] - priority[riskA.level];
+        if (priorityDelta !== 0) {
+          return priorityDelta;
+        }
+
+        const delayA = getShiftDelay(left, attendanceByShiftId.get(left.id)) || 0;
+        const delayB = getShiftDelay(right, attendanceByShiftId.get(right.id)) || 0;
+        if (delayB !== delayA) {
+          return delayB - delayA;
+        }
+
+        return right.start.localeCompare(left.start);
+      });
+  }, [alertsByShiftId, attendanceByShiftId, incidentsByShiftId, liveFilters, shifts]);
   const guardsNotBookedOn = React.useMemo(
     () =>
       liveOperationRows.filter((shift) => {
-        const timesheet = timesheetByShiftId.get(shift.id);
-        return ['ready'].includes(normalizeShiftLifecycleStatus(shift.status)) && !timesheet?.actualCheckInAt;
+        const attendance = attendanceByShiftId.get(shift.id);
+        return ['ready'].includes(normalizeShiftLifecycleStatus(shift.status)) && !attendance?.checkInAt;
       }),
-    [liveOperationRows, timesheetByShiftId],
+    [liveOperationRows, attendanceByShiftId],
   );
 
   const applicationShiftSummaryById = React.useMemo(() => {
@@ -2502,7 +2982,15 @@ export function CompanyDashboardScreen() {
           </View>
         ) : null}
         {urgentOperationalItems.map((item) => (
-          <View key={item.id} style={styles.recordRow}>
+          <Pressable
+            key={item.id}
+            style={styles.recordRow}
+            onPress={() => {
+              if (item.shiftId) {
+                handleOpenUrgentShift(item);
+              }
+            }}
+          >
             <Text style={styles.recordTitle}>{item.issueType}</Text>
             <Text style={styles.recordMeta}>
               Shift {item.shiftId ? `#${item.shiftId}` : 'N/A'} | {item.siteName} | {item.guardName}
@@ -2611,13 +3099,13 @@ export function CompanyDashboardScreen() {
                   </Text>
                 </Pressable>
               ) : null}
-              {item.category === 'rejected_offer' ? (
+              {item.category === 'rejected_offer' || item.category === 'missed_shift' ? (
                 <Pressable style={styles.primaryButton} onPress={() => handleOpenUrgentDetail(item)}>
                   <Text style={styles.primaryButtonText}>Re-offer Shift</Text>
                 </Pressable>
               ) : null}
             </View>
-          </View>
+          </Pressable>
         ))}
         {urgentOperationalItems.length === 0 ? (
           <Text style={styles.helperText}>No urgent operational items need attention right now.</Text>
@@ -2658,13 +3146,18 @@ export function CompanyDashboardScreen() {
       </View>
 
       <View style={styles.panelGrid}>
-        <View style={[styles.tableCard, styles.operationsBoardCard]}>
+        <View
+          style={[styles.tableCard, styles.operationsBoardCard]}
+          onLayout={(event: any) => setLiveBoardAnchorY(event.nativeEvent.layout.y)}
+        >
           <Text style={styles.panelTitle}>Live Shift Board</Text>
           {renderTableHeader([
             'Shift',
             'Site',
             'Guard',
             'Status',
+            'Risk',
+            'Delay',
             'Book On',
             'Book Off',
             'Last Check Call',
@@ -2672,9 +3165,11 @@ export function CompanyDashboardScreen() {
             'Incidents',
             'Panic / Welfare',
             'Timesheet',
+            'Action',
           ])}
           {liveOperationRows.map((shift) => {
             const timesheet = timesheetByShiftId.get(shift.id);
+            const attendance = attendanceByShiftId.get(shift.id);
             const shiftLogs = logsByShiftId.get(shift.id) || [];
             const shiftIncidents = incidentsByShiftId.get(shift.id) || [];
             const shiftAlerts = alertsByShiftId.get(shift.id) || [];
@@ -2682,24 +3177,64 @@ export function CompanyDashboardScreen() {
             const panicOrWelfareCount = shiftAlerts.filter((alert) =>
               ['panic', 'welfare', 'late_checkin'].includes((alert.type || '').toLowerCase()),
             ).length;
+            const lifecycleStatus = normalizeShiftLifecycleStatus(shift.status);
+            const risk = getShiftRisk(shift, attendance, shiftIncidents, shiftAlerts);
+            const delay = getShiftDelay(shift, attendance);
+            const likelyLate = isLikelyToMissCheckIn(shift, attendance);
+            const siteRiskLabel = getSiteRiskLevel(
+              shift.site?.id ?? shift.siteId,
+              shifts,
+              attendanceByShiftId,
+              incidentsByShiftId,
+              alertsByShiftId,
+            );
+            const primaryActionLabel =
+              lifecycleStatus === 'offered'
+                ? 'View Offer'
+                : lifecycleStatus === 'ready'
+                  ? 'Open Shift'
+                  : lifecycleStatus === 'in_progress'
+                    ? 'Monitor'
+                    : lifecycleStatus === 'rejected'
+                      ? 'Re-offer'
+                      : 'Review';
 
             return (
               <Pressable
                 key={shift.id}
-                style={[styles.tableRow, selectedShiftId === shift.id && styles.tableRowSelected]}
+                style={[
+                  styles.tableRow,
+                  styles.liveBoardRow,
+                  { backgroundColor: getLiveShiftBoardRowTone(lifecycleStatus, risk.level) },
+                  likelyLate ? { borderLeftWidth: 4, borderLeftColor: '#F59E0B' } : null,
+                  selectedShiftId === shift.id && styles.tableRowSelected,
+                  highlightedLiveShiftId === shift.id && styles.liveBoardRowHighlighted,
+                ]}
                 onPress={() => setSelectedShiftId(shift.id)}
               >
                 <Text style={styles.tableCellStrong}>#{shift.id}</Text>
-                <Text style={styles.tableCell}>{shift.site?.name || shift.siteName || 'Unknown site'}</Text>
-              <Text style={styles.tableCell}>{shift.guard?.fullName || 'Unassigned'}</Text>
+                <View style={styles.tableCell}>
+                  <Text style={styles.tableCell}>{shift.site?.name || shift.siteName || 'Unknown site'}</Text>
+                  <Text style={[styles.helperText, { fontSize: 12 }]}>{siteRiskLabel}</Text>
+                </View>
+                <Text style={styles.tableCell}>{shift.guard?.fullName || 'Unassigned'}</Text>
                 <View style={styles.tableCell}>
                   <ShiftStatusBadge status={shift.status} />
                 </View>
-                <Text style={styles.tableCell}>
-                  {timesheet?.actualCheckInAt ? formatTimeLabel(timesheet.actualCheckInAt) : 'Pending'}
+                <View style={styles.tableCell}>
+                  <Text style={[styles.tableCell, { color: risk.color, fontWeight: '700' }]}>{risk.label}</Text>
+                  {likelyLate ? (
+                    <Text style={{ color: '#F59E0B', fontWeight: '600' }}>Likely late ⚠️</Text>
+                  ) : null}
+                </View>
+                <Text style={[styles.tableCell, delay !== null ? { color: '#EF4444', fontWeight: '600' } : null]}>
+                  {delay !== null ? `Late by ${delay} min` : '—'}
                 </Text>
                 <Text style={styles.tableCell}>
-                  {timesheet?.actualCheckOutAt ? formatTimeLabel(timesheet.actualCheckOutAt) : 'Pending'}
+                  {attendance?.checkInAt ? formatTimeLabel(attendance.checkInAt) : 'Pending'}
+                </Text>
+                <Text style={styles.tableCell}>
+                  {attendance?.checkOutAt ? formatTimeLabel(attendance.checkOutAt) : 'Pending'}
                 </Text>
                 <Text style={styles.tableCell}>
                   {lastCheckCall ? formatTimeLabel(lastCheckCall.createdAt) : 'No check call'}
@@ -2708,6 +3243,11 @@ export function CompanyDashboardScreen() {
                 <Text style={styles.tableCell}>{String(shiftIncidents.length)}</Text>
                 <Text style={styles.tableCell}>{String(panicOrWelfareCount)}</Text>
                 <Text style={styles.tableCell}>{formatStatusLabel(timesheet?.approvalStatus || 'pending')}</Text>
+                <View style={styles.tableCell}>
+                  <Pressable style={styles.secondaryButton} onPress={() => handleLiveBoardPrimaryAction(shift)}>
+                    <Text style={styles.secondaryButtonText}>{primaryActionLabel}</Text>
+                  </Pressable>
+                </View>
               </Pressable>
             );
           })}
@@ -2797,6 +3337,15 @@ export function CompanyDashboardScreen() {
 
       {selectedShift ? (
         <View style={styles.panel}>
+          {(() => {
+            const selectedAttendance = attendanceByShiftId.get(selectedShift.id);
+            const selectedTimesheet = timesheetByShiftId.get(selectedShift.id);
+            const selectedShiftBadge =
+              normalizeShiftLifecycleStatus(selectedShift.status) === 'missed'
+                ? { icon: '⚠️', label: 'Missed' }
+                : getShiftStatusBadge(selectedShift.status || 'unfilled');
+            return (
+              <>
           <Text style={styles.panelTitle}>Shift #{selectedShift.id} Operations</Text>
           <Text style={styles.recordMeta}>
             {selectedShift.site?.client?.name || clientMap.get(selectedShift.site?.clientId || 0)?.name || 'No client'} | {selectedShift.site?.name || selectedShift.siteName}
@@ -2805,7 +3354,7 @@ export function CompanyDashboardScreen() {
             {selectedShift.guard?.fullName || 'No guard assigned'} | {formatDateLabel(selectedShift.start)} | {formatTimeLabel(selectedShift.start)}-{formatTimeLabel(selectedShift.end)}
           </Text>
           <Text style={styles.recordMeta}>
-            Status: {formatStatusLabel(normalizeShiftLifecycleStatus(selectedShift.status))} | Check calls: {selectedShift.checkCallIntervalMinutes || 60} mins
+            Status: {`${selectedShiftBadge.icon} ${selectedShiftBadge.label}`} | Check calls: {selectedShift.checkCallIntervalMinutes || 60} mins
           </Text>
           <ShiftStatusBadge status={selectedShift.status} />
           {normalizeShiftLifecycleStatus(selectedShift.status) === 'offered' ? (
@@ -2822,6 +3371,9 @@ export function CompanyDashboardScreen() {
           ) : null}
           {normalizeShiftLifecycleStatus(selectedShift.status) === 'ready' ? (
             <Text style={styles.recordMeta}>Guard confirmed this shift. It is ready for book on.</Text>
+          ) : null}
+          {normalizeShiftLifecycleStatus(selectedShift.status) === 'missed' ? (
+            <Text style={styles.recordMeta}>No check-in was recorded within the grace period. This shift needs re-cover or follow-up.</Text>
           ) : null}
           {normalizeShiftLifecycleStatus(selectedShift.status) === 'rejected' ? (
             <Text style={styles.recordMeta}>Guard rejected this shift. New cover is still required.</Text>
@@ -2912,13 +3464,13 @@ export function CompanyDashboardScreen() {
             <View style={styles.detailCard}>
               <Text style={styles.detailTitle}>Attendance & Timesheet</Text>
               <Text style={styles.recordMeta}>
-                Book on: {formatDateTimeLabel(timesheetByShiftId.get(selectedShift.id)?.actualCheckInAt)}
+                Book on: {selectedAttendance?.checkInAt ? formatDateTimeLabel(selectedAttendance.checkInAt) : 'Pending'}
               </Text>
               <Text style={styles.recordMeta}>
-                Book off: {formatDateTimeLabel(timesheetByShiftId.get(selectedShift.id)?.actualCheckOutAt)}
+                Book off: {selectedAttendance?.checkOutAt ? formatDateTimeLabel(selectedAttendance.checkOutAt) : 'Pending'}
               </Text>
               <Text style={styles.recordMeta}>
-                Timesheet: {formatStatusLabel(timesheetByShiftId.get(selectedShift.id)?.approvalStatus || 'pending')}
+                Timesheet: {formatStatusLabel(selectedTimesheet?.approvalStatus || 'pending')}
               </Text>
             </View>
             <View style={styles.detailCard}>
@@ -2949,6 +3501,9 @@ export function CompanyDashboardScreen() {
               ) : null}
             </View>
           </View>
+              </>
+            );
+          })()}
         </View>
       ) : null}
     </View>
@@ -3038,7 +3593,7 @@ export function CompanyDashboardScreen() {
         <View style={[styles.tableCard, styles.operationsBoardCard]}>
           <Text style={styles.panelTitle}>Offer Response Board</Text>
           <Text style={styles.helperText}>
-            Track guard responses after rota planning. Offered shifts are waiting, ready shifts are confirmed, and rejected shifts need fresh cover.
+            Track guard responses after rota planning. Offered shifts are waiting, ready shifts are confirmed, and rejected or missed shifts need fresh cover.
           </Text>
           {renderTableHeader(['Shift', 'Site', 'Guard', 'Date', 'Time', 'State', 'Response'])}
           {shiftOfferRows.map((shift) => {
@@ -3048,7 +3603,9 @@ export function CompanyDashboardScreen() {
                 ? 'Waiting for guard response'
                 : lifecycleStatus === 'ready'
                   ? 'Accepted and ready to start'
-                  : 'Rejected and needs reassignment';
+                  : lifecycleStatus === 'missed'
+                    ? 'Missed check-in and needs reassignment'
+                    : 'Rejected and needs reassignment';
 
             const reassignmentOptions = linkedGuardOptions.filter(
               (option) => option.value !== String(shift.guard?.id ?? shift.guardId ?? ''),
@@ -3105,7 +3662,7 @@ export function CompanyDashboardScreen() {
                       <Text style={styles.primaryButtonText}>Open In Live Ops</Text>
                     </Pressable>
                   ) : null}
-                  {lifecycleStatus === 'rejected' ? (
+                  {['rejected', 'missed'].includes(lifecycleStatus) ? (
                     <View style={styles.offerReassignBox}>
                       <WebSelect
                         value={reassignGuardByShiftId[shift.id] || ''}
@@ -3168,7 +3725,7 @@ export function CompanyDashboardScreen() {
               <View key={shift.id} style={styles.recordRow}>
                 <Text style={styles.recordTitle}>Shift #{shift.id} · {shift.site?.name || shift.siteName}</Text>
                 <Text style={styles.recordMeta}>
-                  {shift.guard?.fullName || 'No guard'} | Offer rejected, find replacement cover
+                  {shift.guard?.fullName || 'No guard'} | {normalizeShiftLifecycleStatus(shift.status) === 'missed' ? 'Missed check-in, find replacement cover' : 'Offer rejected, find replacement cover'}
                 </Text>
               </View>
             ))}
@@ -3177,7 +3734,7 @@ export function CompanyDashboardScreen() {
         </View>
       </View>
 
-      {selectedShift && ['offered', 'ready', 'rejected'].includes(normalizeShiftLifecycleStatus(selectedShift.status)) ? (
+      {selectedShift && ['offered', 'ready', 'rejected', 'missed'].includes(normalizeShiftLifecycleStatus(selectedShift.status)) ? (
         <View style={styles.panel}>
           <Text style={styles.panelTitle}>Selected Offer Detail</Text>
           <Text style={styles.recordMeta}>
@@ -3195,6 +3752,9 @@ export function CompanyDashboardScreen() {
           ) : null}
           {normalizeShiftLifecycleStatus(selectedShift.status) === 'rejected' ? (
             <Text style={styles.recordMeta}>Guard rejected this shift. New cover is still required.</Text>
+          ) : null}
+          {normalizeShiftLifecycleStatus(selectedShift.status) === 'missed' ? (
+            <Text style={styles.recordMeta}>No check-in was recorded within the grace period. New cover is still required.</Text>
           ) : null}
           <Text style={styles.recordMeta}>Instructions: {selectedShift.instructions || 'No instructions recorded.'}</Text>
           <View style={styles.rowActions}>
@@ -3224,7 +3784,7 @@ export function CompanyDashboardScreen() {
               </Pressable>
             ) : null}
           </View>
-          {normalizeShiftLifecycleStatus(selectedShift.status) === 'rejected' ? (
+          {['rejected', 'missed'].includes(normalizeShiftLifecycleStatus(selectedShift.status)) ? (
             <View style={styles.offerReassignBox}>
               <WebSelect
                 value={reassignGuardByShiftId[selectedShift.id] || ''}
@@ -3761,6 +4321,14 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#e2e8f0',
   },
+  liveBoardRow: {
+    cursor: 'pointer',
+  },
+  liveBoardRowHighlighted: {
+    borderWidth: 2,
+    borderColor: '#2563EB',
+    borderRadius: 14,
+  },
   tableRowSelected: {
     backgroundColor: '#f8fafc',
     borderRadius: 14,
@@ -3830,6 +4398,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 4,
+    borderWidth: 1,
   },
   statusBadgeText: {
     fontSize: 12,
