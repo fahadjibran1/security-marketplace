@@ -336,6 +336,8 @@ function normalizeShiftLifecycleStatus(value?: string | null) {
 
 function getShiftStatusBadge(status: string) {
   switch (normalizeShiftLifecycleStatus(status)) {
+    case 'missed':
+      return { label: 'Missed', color: '#C2410C', icon: '⚠️' };
     case 'offered':
       return { label: 'Offered', color: '#3B82F6', icon: '🔵' };
     case 'ready':
@@ -361,11 +363,100 @@ function getLiveShiftRowTone(status: string) {
     case 'ready':
       return '#FFFBEB';
     case 'missed':
+      return '#FFF7ED';
     case 'rejected':
       return '#FEF2F2';
     default:
       return '#ffffff';
   }
+}
+
+function getShiftExceptionSummary(status?: string | null) {
+  switch (normalizeShiftLifecycleStatus(status || 'unfilled')) {
+    case 'missed':
+      return {
+        title: 'Missed check-in exception',
+        message: `No attendance check-in was recorded within ${MISSED_CHECK_IN_GRACE_MINUTES} minutes of shift start.`,
+        outcome: 'Needs re-cover now and may need attendance follow-up.',
+      };
+    case 'rejected':
+      return {
+        title: 'Offer rejected',
+        message: 'The assigned guard rejected this shift before it became live.',
+        outcome: 'Needs fresh cover, but not attendance escalation.',
+      };
+    case 'cancelled':
+      return {
+        title: 'Shift cancelled',
+        message: 'This shift was cancelled by the company.',
+        outcome: 'No re-cover action is needed unless the work is replanned.',
+      };
+    default:
+      return null;
+  }
+}
+
+function getUrgentPrimaryActionLabel(item: UrgentOperationalItem) {
+  switch (item.category) {
+    case 'rejected_offer':
+    case 'missed_shift':
+      return 'Open Re-cover';
+    case 'incident':
+      return 'View Incident';
+    case 'panic':
+      return item.status === 'acknowledged' ? 'Resolve Alert' : 'View Alert';
+    case 'missed_check_call':
+      return item.status === 'acknowledged' ? 'Close Follow-up' : 'View Safety Detail';
+    case 'safety':
+      return item.status === 'acknowledged' ? 'Close Alert' : 'View Safety Detail';
+    case 'late_start':
+    case 'upcoming_risk':
+    default:
+      return 'Open Shift';
+  }
+}
+
+function getUrgentNextActionText(item: UrgentOperationalItem) {
+  switch (item.category) {
+    case 'missed_shift':
+      return 'Next action: arrange replacement cover.';
+    case 'rejected_offer':
+      return 'Next action: re-offer the shift.';
+    case 'incident':
+      return (item.status || '').toLowerCase() === 'open'
+        ? 'Next action: acknowledge or review the incident.'
+        : 'Next action: resolve or review the incident.';
+    case 'panic':
+      return item.status === 'acknowledged'
+        ? 'Next action: close once the escalation is resolved.'
+        : 'Next action: open the alert or escalate immediately.';
+    case 'missed_check_call':
+      return item.status === 'acknowledged'
+        ? 'Next action: close once follow-up is complete.'
+        : 'Next action: review and mark followed up.';
+    case 'safety':
+      return item.status === 'acknowledged'
+        ? 'Next action: close once the issue is resolved.'
+        : 'Next action: review and acknowledge.';
+    case 'late_start':
+      return 'Next action: open the shift and confirm attendance.';
+    case 'upcoming_risk':
+      return 'Next action: open the shift and contact the guard if needed.';
+    default:
+      return 'Next action: review this item.';
+  }
+}
+
+function shouldShowOperationalActivityMessage(eventType: string) {
+  return ![
+    'Shift offered',
+    'Shift accepted',
+    'Shift missed',
+    'Shift rejected',
+    'Guard checked in',
+    'Guard checked out',
+    'Timesheet submitted',
+  ].includes(eventType);
 }
 
 function getShiftRisk(
@@ -552,14 +643,6 @@ function getLiveShiftBoardRowTone(
 }
 
 function ShiftStatusBadge({ status }: { status?: string | null }) {
-  if (normalizeShiftLifecycleStatus(status || 'unfilled') === 'missed') {
-    return (
-      <View style={[styles.statusBadge, { borderColor: '#EF4444', backgroundColor: '#FEE2E2' }]}>
-        <Text style={[styles.statusBadgeText, { color: '#EF4444' }]}>⚠️ Missed</Text>
-      </View>
-    );
-  }
-
   const badge = getShiftStatusBadge(status || 'unfilled');
 
   return (
@@ -1307,10 +1390,14 @@ export function CompanyDashboardScreen() {
     () => shiftOfferRows.filter((shift) => normalizeShiftLifecycleStatus(shift.status) === 'ready'),
     [shiftOfferRows],
   );
+  const missedShiftOffers = React.useMemo(
+    () => shiftOfferRows.filter((shift) => normalizeShiftLifecycleStatus(shift.status) === 'missed'),
+    [shiftOfferRows],
+  );
   const rejectedShiftOffers = React.useMemo(
     () =>
       shiftOfferRows.filter((shift) =>
-        ['rejected', 'missed'].includes(normalizeShiftLifecycleStatus(shift.status)),
+        normalizeShiftLifecycleStatus(shift.status) === 'rejected',
       ),
     [shiftOfferRows],
   );
@@ -1353,7 +1440,7 @@ export function CompanyDashboardScreen() {
         siteName: incident.site?.name || incident.shift?.site?.name || 'Unknown site',
         guardName: incident.guard?.fullName || 'Unknown guard',
         category: 'incident',
-        issueType: 'Unresolved incident',
+        issueType: 'Incident unresolved',
         message: incident.title,
         occurredAt: incident.createdAt,
       });
@@ -1367,7 +1454,7 @@ export function CompanyDashboardScreen() {
         siteName: shift.site?.name || shift.siteName || 'Unknown site',
         guardName: shift.guard?.fullName || 'Unassigned',
         category: 'late_start',
-        issueType: 'Ready shift not booked on',
+        issueType: 'Guard not booked on',
         message: 'Shift start time has passed but the guard has not booked on yet.',
         occurredAt: shift.start,
       });
@@ -1394,13 +1481,13 @@ export function CompanyDashboardScreen() {
           id: `missed-${shift.id}`,
           shiftId: shift.id,
           status: shift.status,
-          siteName: shift.site?.name || shift.siteName || 'Unknown site',
-          guardName: shift.guard?.fullName || 'Unassigned',
-          category: 'missed_shift',
-          issueType: 'Missed shift needs re-cover',
-          message: `No check-in was recorded within ${MISSED_CHECK_IN_GRACE_MINUTES} minutes of shift start.`,
-          occurredAt: shift.start,
-        });
+        siteName: shift.site?.name || shift.siteName || 'Unknown site',
+        guardName: shift.guard?.fullName || 'Unassigned',
+        category: 'missed_shift',
+        issueType: 'Re-cover required',
+        message: `No check-in was recorded within ${MISSED_CHECK_IN_GRACE_MINUTES} minutes of shift start.`,
+        occurredAt: shift.start,
+      });
       });
 
     missedCheckCalls.forEach((alert) => {
@@ -1426,7 +1513,7 @@ export function CompanyDashboardScreen() {
         siteName: shift.site?.name || shift.siteName || 'Unknown site',
         guardName: shift.guard?.fullName || 'No guard',
         category: 'rejected_offer',
-        issueType: 'Rejected shift needs re-cover',
+        issueType: 'Re-offer required',
         message: 'The offered guard rejected this shift and replacement cover is still needed.',
         occurredAt: shift.start,
       });
@@ -1450,11 +1537,13 @@ export function CompanyDashboardScreen() {
       });
 
     return items
+      .filter((item, index, current) => current.findIndex((candidate) => candidate.id === item.id) === index)
       .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt))
       .slice(0, 10);
   }, [
     activePanicAlerts,
     attendanceByShiftId,
+    missedShiftOffers,
     missedCheckCalls,
     openIncidents,
     outstandingAlerts,
@@ -1609,15 +1698,16 @@ export function CompanyDashboardScreen() {
     });
 
     return items
+      .filter((item, index, current) => current.findIndex((candidate) => candidate.id === item.id) === index)
       .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt))
-      .slice(0, 12);
+      .slice(0, 8);
   }, [alerts, attendanceByShiftId, attendanceEvents, dailyLogs, incidents, notifications, shiftOfferRows, shifts, timesheets]);
 
   const recentManagementActivity = React.useMemo(
     () =>
       [...managementActions]
         .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt))
-        .slice(0, 8),
+        .slice(0, 6),
     [managementActions],
   );
 
@@ -2101,16 +2191,32 @@ export function CompanyDashboardScreen() {
   const recordManagementAction = (
     item: Omit<ManagementActionItem, 'id' | 'occurredAt'>,
   ) => {
-    setManagementActions((current) =>
-      [
+    setManagementActions((current) => {
+      const nowIso = new Date().toISOString();
+      const existingRecentMatch = current.find((entry) => {
+        const occurredMs = Date.parse(entry.occurredAt);
+        const isRecent = Number.isFinite(occurredMs) && Date.now() - occurredMs < 60_000;
+        return (
+          isRecent &&
+          entry.shiftId === item.shiftId &&
+          entry.itemType === item.itemType &&
+          entry.actionTaken === item.actionTaken
+        );
+      });
+
+      if (existingRecentMatch) {
+        return current;
+      }
+
+      return [
         {
           ...item,
           id: `management-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          occurredAt: new Date().toISOString(),
+          occurredAt: nowIso,
         },
         ...current,
-      ].slice(0, 12),
-    );
+      ].slice(0, 12);
+    });
   };
 
   const focusShiftInLiveBoard = (shiftId: number) => {
@@ -2232,7 +2338,7 @@ export function CompanyDashboardScreen() {
       setShiftOffersFeedback({
         tone: 'success',
         message: item.shiftId
-          ? `Shift #${item.shiftId} is ready for re-offer in Shift Offers.`
+          ? `Shift #${item.shiftId} is ready for re-cover in Shift Offers.`
           : 'Open Shift Offers to re-cover this shift.',
       });
       setActiveSection('shift-offers');
@@ -2253,7 +2359,7 @@ export function CompanyDashboardScreen() {
       setActiveSection('incidents');
       setLiveOperationsFeedback({
         tone: 'success',
-        message: `Opening incident context for Shift #${item.shiftId}.`,
+        message: `Opening incident review for Shift #${item.shiftId}.`,
       });
       return;
     }
@@ -2262,7 +2368,7 @@ export function CompanyDashboardScreen() {
       setActiveSection('alerts');
       setLiveOperationsFeedback({
         tone: 'success',
-        message: `Opening safety detail for Shift #${item.shiftId}.`,
+        message: `Opening safety review for Shift #${item.shiftId}.`,
       });
       return;
     }
@@ -2287,12 +2393,15 @@ export function CompanyDashboardScreen() {
       return;
     }
 
-    if (lifecycleStatus === 'rejected') {
+    if (['rejected', 'missed'].includes(lifecycleStatus)) {
       setSelectedShiftId(shift.id);
       setActiveSection('shift-offers');
       setShiftOffersFeedback({
         tone: 'success',
-        message: `Shift #${shift.id} is ready to be re-offered.`,
+        message:
+          lifecycleStatus === 'missed'
+            ? `Shift #${shift.id} missed check-in and is ready for re-cover.`
+            : `Shift #${shift.id} is ready to be re-offered.`,
       });
       return;
     }
@@ -2305,6 +2414,8 @@ export function CompanyDashboardScreen() {
           ? `Opening Shift #${shift.id}.`
           : lifecycleStatus === 'in_progress'
             ? `Monitoring live Shift #${shift.id}.`
+            : lifecycleStatus === 'missed'
+              ? `Reviewing missed Shift #${shift.id}.`
             : `Reviewing Shift #${shift.id}.`,
     });
   };
@@ -2951,10 +3062,10 @@ export function CompanyDashboardScreen() {
         ))}
       </View>
 
-      <View style={styles.panel}>
-        <Text style={styles.panelTitle}>Urgent / Needs Attention</Text>
+      <View style={[styles.panel, styles.priorityPanel, styles.urgentPanel]}>
+        <Text style={styles.panelTitle}>1. Urgent / Needs Attention</Text>
         <Text style={styles.helperText}>
-          Priority operational items that need action now are shown here separately from the general activity feed.
+          Highest-priority issues are shown here first so control-room actions are obvious.
         </Text>
         {liveOperationsFeedback ? (
           <View
@@ -2996,13 +3107,9 @@ export function CompanyDashboardScreen() {
               Shift {item.shiftId ? `#${item.shiftId}` : 'N/A'} | {item.siteName} | {item.guardName}
             </Text>
             <Text style={styles.recordMeta}>{item.message}</Text>
+            <Text style={styles.nextActionText}>{getUrgentNextActionText(item)}</Text>
             <Text style={styles.recordMeta}>{formatDateTimeLabel(item.occurredAt)}</Text>
             <View style={styles.urgentItemActions}>
-              {item.shiftId ? (
-                <Pressable style={styles.secondaryButton} onPress={() => handleOpenUrgentShift(item)}>
-                  <Text style={styles.secondaryButtonText}>Open Shift</Text>
-                </Pressable>
-              ) : null}
               {item.category === 'incident' && (item.status || '').toLowerCase() === 'open' ? (
                 <Pressable
                   style={styles.secondaryButton}
@@ -3047,8 +3154,8 @@ export function CompanyDashboardScreen() {
                     {item.status === 'acknowledged'
                       ? urgentActionItemId === item.id
                         ? 'Saving...'
-                        : 'Resolve'
-                      : 'View Alert'}
+                        : 'Resolve Alert'
+                      : getUrgentPrimaryActionLabel(item)}
                   </Text>
                 </Pressable>
               ) : null}
@@ -3082,8 +3189,8 @@ export function CompanyDashboardScreen() {
                       {item.status === 'acknowledged'
                         ? urgentActionItemId === item.id
                           ? 'Saving...'
-                          : 'Close'
-                        : 'View Safety Detail'}
+                          : getUrgentPrimaryActionLabel(item)
+                        : getUrgentPrimaryActionLabel(item)}
                     </Text>
                   </Pressable>
                 </>
@@ -3099,9 +3206,9 @@ export function CompanyDashboardScreen() {
                   </Text>
                 </Pressable>
               ) : null}
-              {item.category === 'rejected_offer' || item.category === 'missed_shift' ? (
+              {['rejected_offer', 'missed_shift', 'late_start', 'upcoming_risk'].includes(item.category) ? (
                 <Pressable style={styles.primaryButton} onPress={() => handleOpenUrgentDetail(item)}>
-                  <Text style={styles.primaryButtonText}>Re-offer Shift</Text>
+                  <Text style={styles.primaryButtonText}>{getUrgentPrimaryActionLabel(item)}</Text>
                 </Pressable>
               ) : null}
             </View>
@@ -3147,10 +3254,11 @@ export function CompanyDashboardScreen() {
 
       <View style={styles.panelGrid}>
         <View
-          style={[styles.tableCard, styles.operationsBoardCard]}
+          style={[styles.tableCard, styles.operationsBoardCard, styles.priorityPanel]}
           onLayout={(event: any) => setLiveBoardAnchorY(event.nativeEvent.layout.y)}
         >
-          <Text style={styles.panelTitle}>Live Shift Board</Text>
+          <Text style={styles.panelTitle}>2. Live Shift Board</Text>
+          <Text style={styles.helperText}>Scan live and exception shifts here, then use the row action.</Text>
           {renderTableHeader([
             'Shift',
             'Site',
@@ -3195,9 +3303,11 @@ export function CompanyDashboardScreen() {
                   ? 'Open Shift'
                   : lifecycleStatus === 'in_progress'
                     ? 'Monitor'
-                    : lifecycleStatus === 'rejected'
-                      ? 'Re-offer'
-                      : 'Review';
+                    : lifecycleStatus === 'missed'
+                      ? 'Re-cover'
+                      : lifecycleStatus === 'rejected'
+                        ? 'Re-offer'
+                        : 'Review Shift';
 
             return (
               <Pressable
@@ -3257,10 +3367,35 @@ export function CompanyDashboardScreen() {
         </View>
 
         <View style={styles.operationsSideColumn}>
-          <View style={styles.panel}>
-            <Text style={styles.panelTitle}>Recent Management Actions</Text>
+          <View style={[styles.panel, styles.secondaryPanel]}>
+            <Text style={[styles.panelTitle, styles.secondaryPanelTitle]}>4. Recent Operational Activity</Text>
+            {recentOperationalActivity.map((activity) => (
+              <Pressable
+                key={activity.id}
+                style={styles.recordRow}
+                onPress={() => {
+                  if (activity.shiftId) {
+                    setSelectedShiftId(activity.shiftId);
+                  }
+                }}
+              >
+                <Text style={styles.recordTitle}>{activity.eventType}</Text>
+                <Text style={styles.recordMeta}>
+                  Shift {activity.shiftId ? `#${activity.shiftId}` : 'N/A'} | {activity.siteName} | {activity.guardName}
+                </Text>
+                {shouldShowOperationalActivityMessage(activity.eventType) ? (
+                  <Text style={styles.recordMeta}>{activity.message}</Text>
+                ) : null}
+                <Text style={styles.recordMeta}>{formatDateTimeLabel(activity.occurredAt)}</Text>
+              </Pressable>
+            ))}
+            {recentOperationalActivity.length === 0 ? <Text style={styles.helperText}>No recent operational activity.</Text> : null}
+          </View>
+
+          <View style={[styles.panel, styles.secondaryPanel]}>
+            <Text style={[styles.panelTitle, styles.secondaryPanelTitle]}>5. Recent Management Actions</Text>
             <Text style={styles.helperText}>
-              Recent control-room follow-up and closure actions taken from this operational workflow.
+              Follow-up and closure actions taken from the control room.
             </Text>
             {recentManagementActivity.map((activity) => (
               <Pressable
@@ -3284,7 +3419,7 @@ export function CompanyDashboardScreen() {
             ) : null}
           </View>
 
-          <View style={styles.panel}>
+          <View style={[styles.panel, styles.secondaryPanel]}>
             <Text style={styles.panelTitle}>Open Incidents</Text>
             {openIncidents.slice(0, 6).map((incident) => (
               <View key={incident.id} style={styles.recordRow}>
@@ -3297,7 +3432,7 @@ export function CompanyDashboardScreen() {
             {openIncidents.length === 0 ? <Text style={styles.helperText}>No open incidents.</Text> : null}
           </View>
 
-          <View style={styles.panel}>
+          <View style={[styles.panel, styles.secondaryPanel]}>
             <Text style={styles.panelTitle}>Safety / Welfare / Panic</Text>
             {outstandingAlerts.slice(0, 6).map((alert) => (
               <View key={alert.id} style={styles.recordRow}>
@@ -3310,43 +3445,24 @@ export function CompanyDashboardScreen() {
             {outstandingAlerts.length === 0 ? <Text style={styles.helperText}>No active alerts.</Text> : null}
           </View>
 
-          <View style={styles.panel}>
-            <Text style={styles.panelTitle}>Recent Operational Activity</Text>
-            {recentOperationalActivity.map((activity) => (
-              <Pressable
-                key={activity.id}
-                style={styles.recordRow}
-                onPress={() => {
-                  if (activity.shiftId) {
-                    setSelectedShiftId(activity.shiftId);
-                  }
-                }}
-              >
-                <Text style={styles.recordTitle}>{activity.eventType}</Text>
-                <Text style={styles.recordMeta}>
-                  Shift {activity.shiftId ? `#${activity.shiftId}` : 'N/A'} | {activity.siteName} | {activity.guardName}
-                </Text>
-                <Text style={styles.recordMeta}>{activity.message}</Text>
-                <Text style={styles.recordMeta}>{formatDateTimeLabel(activity.occurredAt)}</Text>
-              </Pressable>
-            ))}
-            {recentOperationalActivity.length === 0 ? <Text style={styles.helperText}>No recent operational activity.</Text> : null}
-          </View>
         </View>
       </View>
 
       {selectedShift ? (
-        <View style={styles.panel}>
+        <View style={[styles.panel, styles.priorityPanel, styles.selectedShiftPanel]}>
           {(() => {
             const selectedAttendance = attendanceByShiftId.get(selectedShift.id);
             const selectedTimesheet = timesheetByShiftId.get(selectedShift.id);
+            const selectedShiftException = getShiftExceptionSummary(selectedShift.status);
             const selectedShiftBadge =
               normalizeShiftLifecycleStatus(selectedShift.status) === 'missed'
                 ? { icon: '⚠️', label: 'Missed' }
                 : getShiftStatusBadge(selectedShift.status || 'unfilled');
             return (
               <>
-          <Text style={styles.panelTitle}>Shift #{selectedShift.id} Operations</Text>
+          <Text style={styles.panelTitle}>3. Selected Shift Detail</Text>
+          <Text style={styles.helperText}>Compact summary for the selected shift, follow-up, and close-out.</Text>
+          <Text style={styles.recordTitle}>Shift #{selectedShift.id} Operations</Text>
           <Text style={styles.recordMeta}>
             {selectedShift.site?.client?.name || clientMap.get(selectedShift.site?.clientId || 0)?.name || 'No client'} | {selectedShift.site?.name || selectedShift.siteName}
           </Text>
@@ -3357,6 +3473,13 @@ export function CompanyDashboardScreen() {
             Status: {`${selectedShiftBadge.icon} ${selectedShiftBadge.label}`} | Check calls: {selectedShift.checkCallIntervalMinutes || 60} mins
           </Text>
           <ShiftStatusBadge status={selectedShift.status} />
+          {selectedShiftException ? (
+            <>
+              <Text style={styles.recordMeta}>{selectedShiftException.title}</Text>
+              <Text style={styles.recordMeta}>{selectedShiftException.message}</Text>
+              <Text style={styles.recordMeta}>{selectedShiftException.outcome}</Text>
+            </>
+          ) : null}
           {normalizeShiftLifecycleStatus(selectedShift.status) === 'offered' ? (
             <Text style={styles.recordMeta}>Waiting for guard confirmation before live controls are used.</Text>
           ) : null}
@@ -3371,15 +3494,6 @@ export function CompanyDashboardScreen() {
           ) : null}
           {normalizeShiftLifecycleStatus(selectedShift.status) === 'ready' ? (
             <Text style={styles.recordMeta}>Guard confirmed this shift. It is ready for book on.</Text>
-          ) : null}
-          {normalizeShiftLifecycleStatus(selectedShift.status) === 'missed' ? (
-            <Text style={styles.recordMeta}>No check-in was recorded within the grace period. This shift needs re-cover or follow-up.</Text>
-          ) : null}
-          {normalizeShiftLifecycleStatus(selectedShift.status) === 'rejected' ? (
-            <Text style={styles.recordMeta}>Guard rejected this shift. New cover is still required.</Text>
-          ) : null}
-          {normalizeShiftLifecycleStatus(selectedShift.status) === 'cancelled' ? (
-            <Text style={styles.recordMeta}>This shift was cancelled and is now read-only.</Text>
           ) : null}
           <Text style={styles.recordMeta}>
             Instructions: {selectedShift.instructions || 'No instructions recorded.'}
@@ -3580,6 +3694,7 @@ export function CompanyDashboardScreen() {
         {[
           ['Waiting Response', String(pendingShiftOffers.length)],
           ['Ready To Start', String(readyShiftOffers.length)],
+          ['Missed / Re-cover', String(missedShiftOffers.length)],
           ['Rejected / Re-cover', String(rejectedShiftOffers.length)],
         ].map(([label, value]) => (
           <View key={label} style={styles.kpiCard}>
@@ -3593,7 +3708,7 @@ export function CompanyDashboardScreen() {
         <View style={[styles.tableCard, styles.operationsBoardCard]}>
           <Text style={styles.panelTitle}>Offer Response Board</Text>
           <Text style={styles.helperText}>
-            Track guard responses after rota planning. Offered shifts are waiting, ready shifts are confirmed, and rejected or missed shifts need fresh cover.
+            Track guard responses after rota planning. Offered shifts are waiting, ready shifts are confirmed, missed shifts need exception follow-up and re-cover, and rejected shifts need fresh cover.
           </Text>
           {renderTableHeader(['Shift', 'Site', 'Guard', 'Date', 'Time', 'State', 'Response'])}
           {shiftOfferRows.map((shift) => {
@@ -3604,7 +3719,7 @@ export function CompanyDashboardScreen() {
                 : lifecycleStatus === 'ready'
                   ? 'Accepted and ready to start'
                   : lifecycleStatus === 'missed'
-                    ? 'Missed check-in and needs reassignment'
+                    ? 'Missed check-in, exception follow-up and re-cover required'
                     : 'Rejected and needs reassignment';
 
             const reassignmentOptions = linkedGuardOptions.filter(
@@ -3720,12 +3835,25 @@ export function CompanyDashboardScreen() {
           </View>
 
           <View style={styles.panel}>
-            <Text style={styles.panelTitle}>Rejected / Needs Re-cover</Text>
-            {rejectedShiftOffers.slice(0, 6).map((shift) => (
+            <Text style={styles.panelTitle}>Missed / Needs Re-cover</Text>
+            {missedShiftOffers.slice(0, 6).map((shift) => (
               <View key={shift.id} style={styles.recordRow}>
                 <Text style={styles.recordTitle}>Shift #{shift.id} · {shift.site?.name || shift.siteName}</Text>
                 <Text style={styles.recordMeta}>
-                  {shift.guard?.fullName || 'No guard'} | {normalizeShiftLifecycleStatus(shift.status) === 'missed' ? 'Missed check-in, find replacement cover' : 'Offer rejected, find replacement cover'}
+                  {shift.guard?.fullName || 'No guard'} | Missed check-in, follow up if needed and find replacement cover
+                </Text>
+              </View>
+            ))}
+            {missedShiftOffers.length === 0 ? <Text style={styles.helperText}>No missed shifts need re-cover right now.</Text> : null}
+          </View>
+
+          <View style={styles.panel}>
+            <Text style={styles.panelTitle}>Rejected / Needs Re-cover</Text>
+            {rejectedShiftOffers.slice(0, 6).map((shift) => (
+              <View key={shift.id} style={styles.recordRow}>
+                <Text style={styles.recordTitle}>Shift #{shift.id} Â· {shift.site?.name || shift.siteName}</Text>
+                <Text style={styles.recordMeta}>
+                  {shift.guard?.fullName || 'No guard'} | Offer rejected, find replacement cover
                 </Text>
               </View>
             ))}
@@ -3751,10 +3879,10 @@ export function CompanyDashboardScreen() {
             <Text style={styles.recordMeta}>Guard accepted this shift. It is ready to move into live operations.</Text>
           ) : null}
           {normalizeShiftLifecycleStatus(selectedShift.status) === 'rejected' ? (
-            <Text style={styles.recordMeta}>Guard rejected this shift. New cover is still required.</Text>
+            <Text style={styles.recordMeta}>Offer was rejected before the shift went live. Fresh cover is still required.</Text>
           ) : null}
           {normalizeShiftLifecycleStatus(selectedShift.status) === 'missed' ? (
-            <Text style={styles.recordMeta}>No check-in was recorded within the grace period. New cover is still required.</Text>
+            <Text style={styles.recordMeta}>Missed check-in exception: no attendance was recorded within the grace period. Re-cover is now required, and attendance follow-up may still be needed.</Text>
           ) : null}
           <Text style={styles.recordMeta}>Instructions: {selectedShift.instructions || 'No instructions recorded.'}</Text>
           <View style={styles.rowActions}>
@@ -4185,10 +4313,35 @@ const styles = StyleSheet.create({
     padding: 20,
     gap: 12,
   },
+  priorityPanel: {
+    shadowColor: '#0f172a',
+    shadowOpacity: 0.05,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
+  },
+  urgentPanel: {
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    backgroundColor: '#FFF7F7',
+  },
+  selectedShiftPanel: {
+    borderWidth: 1,
+    borderColor: '#DBEAFE',
+  },
+  secondaryPanel: {
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
   panelTitle: {
     color: '#0f172a',
     fontSize: 20,
     fontWeight: '800',
+  },
+  secondaryPanelTitle: {
+    fontSize: 18,
+    color: '#334155',
   },
   panelTitleInline: {
     marginTop: 12,
@@ -4392,6 +4545,11 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 8,
     marginTop: 8,
+  },
+  nextActionText: {
+    color: '#0f172a',
+    fontSize: 13,
+    fontWeight: '700',
   },
   statusBadge: {
     alignSelf: 'flex-start',
