@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import { FeatureCard } from '../components/FeatureCard';
 import {
@@ -10,28 +10,26 @@ import {
   createSafetyAlert,
   formatApiErrorMessage,
   getMyGuard,
-  listMyAttachments,
   listJobApplications,
   listJobs,
-  listMyShifts,
-  listMyNotifications,
+  listMyAttendance,
   listMyDailyLogs,
   listMyIncidents,
+  listMyShifts,
   listMyTimesheets,
-  listMyAttendance,
+  logout,
   respondToShift,
   submitTimesheet,
   updateMyGuard,
 } from '../services/api';
+import { clearStoredSession } from '../services/session';
 import {
-  Attachment,
   AttendanceEvent,
   AuthUser,
   DailyLog,
   Incident,
   Job,
   JobApplication,
-  Notification,
   Shift,
   Timesheet,
 } from '../types/models';
@@ -39,6 +37,9 @@ import {
 interface GuardDashboardScreenProps {
   user: AuthUser;
 }
+
+type GuardTab = 'home' | 'offers' | 'history' | 'profile';
+type QuickActionModal = 'log' | 'incident' | 'welfare' | 'panic' | null;
 
 type LocalTimelineEvent = {
   id: string;
@@ -50,11 +51,10 @@ type LocalTimelineEvent = {
 
 function normalizeShiftLifecycleStatus(status?: string | null) {
   const normalized = (status || '').trim().toLowerCase();
-
   switch (normalized) {
     case 'planned':
-    case 'unassigned':
     case 'scheduled':
+    case 'unassigned':
       return 'unfilled';
     case 'assigned':
       return 'offered';
@@ -65,35 +65,19 @@ function normalizeShiftLifecycleStatus(status?: string | null) {
   }
 }
 
-function getShiftStatusBadgeStyle(status: string) {
-  switch (status) {
-    case 'offered':
-      return { backgroundColor: '#dbeafe', color: '#1d4ed8' };
-    case 'ready':
-      return { backgroundColor: '#ffedd5', color: '#c2410c' };
-    case 'in_progress':
-      return { backgroundColor: '#dcfce7', color: '#166534' };
-    case 'completed':
-      return { backgroundColor: '#e5e7eb', color: '#111827' };
-    case 'rejected':
-      return { backgroundColor: '#fee2e2', color: '#b91c1c' };
-    case 'cancelled':
-      return { backgroundColor: '#e5e7eb', color: '#7f1d1d' };
-    case 'unfilled':
-    default:
-      return { backgroundColor: '#f3f4f6', color: '#4b5563' };
-  }
+function formatDateLabel(value?: string | null) {
+  if (!value) return 'TBC';
+  return new Date(value).toLocaleDateString(undefined, {
+    weekday: 'short',
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  });
 }
 
-function ShiftStatusBadge({ status }: { status?: string | null }) {
-  const lifecycleStatus = normalizeShiftLifecycleStatus(status);
-  const palette = getShiftStatusBadgeStyle(lifecycleStatus);
-
-  return (
-    <View style={[styles.statusBadge, { backgroundColor: palette.backgroundColor }]}>
-      <Text style={[styles.statusBadgeText, { color: palette.color }]}>{lifecycleStatus.replace('_', ' ')}</Text>
-    </View>
-  );
+function formatTimeLabel(value?: string | null) {
+  if (!value) return 'TBC';
+  return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
 function showAlert(title: string, message: string) {
@@ -101,40 +85,87 @@ function showAlert(title: string, message: string) {
     window.alert(`${title}\n\n${message}`);
     return;
   }
-
   Alert.alert(title, message);
 }
 
+function getShiftStatusPalette(status?: string | null) {
+  switch (normalizeShiftLifecycleStatus(status)) {
+    case 'offered':
+      return { bg: '#DBEAFE', text: '#1D4ED8' };
+    case 'ready':
+      return { bg: '#FEF3C7', text: '#B45309' };
+    case 'in_progress':
+      return { bg: '#DCFCE7', text: '#15803D' };
+    case 'completed':
+      return { bg: '#E5E7EB', text: '#1F2937' };
+    case 'missed':
+      return { bg: '#FEE2E2', text: '#991B1B' };
+    case 'rejected':
+      return { bg: '#FEE2E2', text: '#B91C1C' };
+    case 'cancelled':
+      return { bg: '#E5E7EB', text: '#6B7280' };
+    default:
+      return { bg: '#F3F4F6', text: '#4B5563' };
+  }
+}
+
+function ShiftStatusBadge({ status }: { status?: string | null }) {
+  const normalized = normalizeShiftLifecycleStatus(status);
+  const palette = getShiftStatusPalette(status);
+  return (
+    <View style={[styles.statusBadge, { backgroundColor: palette.bg }]}>
+      <Text style={[styles.statusBadgeText, { color: palette.text }]}>{normalized.replace('_', ' ')}</Text>
+    </View>
+  );
+}
+
+function getPrimaryActionLabel(status?: string | null) {
+  switch (normalizeShiftLifecycleStatus(status)) {
+    case 'offered':
+      return 'Review Offer';
+    case 'ready':
+      return 'Start Shift';
+    case 'in_progress':
+      return 'End Shift';
+    case 'completed':
+      return 'View Summary';
+    default:
+      return null;
+  }
+}
+
 export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
+  const [activeTab, setActiveTab] = useState<GuardTab>('home');
+  const [quickActionModal, setQuickActionModal] = useState<QuickActionModal>(null);
+  const [fullName, setFullName] = useState('');
+  const [phone, setPhone] = useState('');
   const [siaLicence, setSiaLicence] = useState('');
+  const [availabilityStatus, setAvailabilityStatus] = useState('');
   const [locationSharing, setLocationSharing] = useState(false);
+  const [signedOut, setSignedOut] = useState(false);
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [attendance, setAttendance] = useState<AttendanceEvent[]>([]);
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [dailyLogs, setDailyLogs] = useState<DailyLog[]>([]);
   const [timesheets, setTimesheets] = useState<Timesheet[]>([]);
-  const [notifications, setNotifications] = useState<Notification[]>([]);
-  const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [applications, setApplications] = useState<JobApplication[]>([]);
-  const [fullName, setFullName] = useState('');
-  const [phone, setPhone] = useState('');
+  const [selectedShiftId, setSelectedShiftId] = useState<number | null>(null);
+  const [historySummaryShiftId, setHistorySummaryShiftId] = useState<number | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
   const [savingProfile, setSavingProfile] = useState(false);
   const [attendanceBusyShiftId, setAttendanceBusyShiftId] = useState<number | null>(null);
-  const [incidentTitle, setIncidentTitle] = useState('');
-  const [incidentNotes, setIncidentNotes] = useState('');
-  const [incidentSeverity, setIncidentSeverity] = useState<Incident['severity']>('medium');
-  const [incidentLocation, setIncidentLocation] = useState('');
-  const [dailyLogMessage, setDailyLogMessage] = useState('');
   const [submittingDailyLogType, setSubmittingDailyLogType] = useState<DailyLog['logType'] | null>(null);
   const [submittingIncident, setSubmittingIncident] = useState(false);
-  const [submittingTimesheetId, setSubmittingTimesheetId] = useState<number | null>(null);
   const [submittingAlertType, setSubmittingAlertType] = useState<'welfare' | 'panic' | null>(null);
+  const [submittingTimesheetId, setSubmittingTimesheetId] = useState<number | null>(null);
   const [applyingJobId, setApplyingJobId] = useState<number | null>(null);
   const [respondingShiftId, setRespondingShiftId] = useState<number | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [selectedShiftId, setSelectedShiftId] = useState<number | null>(null);
+  const [dailyLogMessage, setDailyLogMessage] = useState('');
+  const [incidentMessage, setIncidentMessage] = useState('');
+  const [welfareMessage, setWelfareMessage] = useState('');
+  const [panicConfirmation, setPanicConfirmation] = useState('');
   const [actionFeedback, setActionFeedback] = useState<{
     tone: 'success' | 'error' | 'info';
     title: string;
@@ -156,7 +187,7 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
         occurredAt: new Date().toISOString(),
       },
       ...current,
-    ].slice(0, 30));
+    ].slice(0, 20));
   }
 
   function updateShiftStatusLocally(shiftId: number, nextStatus: string) {
@@ -171,50 +202,34 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
     try {
       setLoading(true);
       setLoadError(null);
-      const [
-        myGuard,
-        shiftRows,
-        attendanceRows,
-        incidentRows,
-        dailyLogRows,
-        timesheetRows,
-        notificationRows,
-        attachmentRows,
-        jobRows,
-        applicationRows,
-      ] = await Promise.all([
-        getMyGuard(),
-        listMyShifts(),
-        listMyAttendance(),
-        listMyIncidents(),
-        listMyDailyLogs(),
-        listMyTimesheets(),
-        listMyNotifications(),
-        listMyAttachments(),
-        listJobs(),
-        listJobApplications(),
-      ]);
+      const [myGuard, shiftRows, attendanceRows, incidentRows, dailyLogRows, timesheetRows, jobRows, applicationRows] =
+        await Promise.all([
+          getMyGuard(),
+          listMyShifts(),
+          listMyAttendance(),
+          listMyIncidents(),
+          listMyDailyLogs(),
+          listMyTimesheets(),
+          listJobs(),
+          listJobApplications(),
+        ]);
+
       setFullName(myGuard.fullName || '');
-      setSiaLicence(myGuard.siaLicenseNumber || myGuard.siaLicenceNumber || '');
       setPhone(myGuard.phone || '');
+      setSiaLicence(myGuard.siaLicenseNumber || myGuard.siaLicenceNumber || '');
+      setAvailabilityStatus(myGuard.status || '');
       setLocationSharing(myGuard.locationSharingEnabled ?? false);
-      setShifts(
-        shiftRows.map((shift) => ({
-          ...shift,
-          status: normalizeShiftLifecycleStatus(shift.status),
-        })),
-      );
+      setShifts(shiftRows.map((shift) => ({ ...shift, status: normalizeShiftLifecycleStatus(shift.status) })));
       setAttendance(attendanceRows);
       setIncidents(incidentRows);
       setDailyLogs(dailyLogRows);
       setTimesheets(timesheetRows);
-      setNotifications(notificationRows);
-      setAttachments(attachmentRows);
       setJobs(jobRows.filter((job) => (job.status || '').toLowerCase() === 'open'));
       setApplications(applicationRows);
     } catch (error) {
-      setLoadError(formatApiErrorMessage(error, 'Failed to load guard dashboard.'));
-      pushFeedback('error', 'Load failed', formatApiErrorMessage(error, 'Failed to load guard dashboard.'));
+      const message = formatApiErrorMessage(error, 'Failed to load guard dashboard.');
+      setLoadError(message);
+      pushFeedback('error', 'Load failed', message);
     } finally {
       setLoading(false);
     }
@@ -225,17 +240,28 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
       setSavingProfile(true);
       await updateMyGuard({
         fullName,
-        siaLicenseNumber: siaLicence,
         phone,
+        siaLicenseNumber: siaLicence,
         locationSharingEnabled: locationSharing,
+        status: availabilityStatus,
       });
-      pushFeedback('success', 'Profile updated', 'Your guard onboarding details have been saved.');
-      showAlert('Profile updated', 'Your guard onboarding details have been saved.');
+      pushFeedback('success', 'Profile updated', 'Your profile changes have been saved.');
+      showAlert('Profile updated', 'Your guard profile has been saved successfully.');
     } catch (error) {
-      pushFeedback('error', 'Profile update failed', formatApiErrorMessage(error, 'Unable to save your guard profile.'));
-      showAlert('Profile update failed', formatApiErrorMessage(error, 'Unable to save your guard profile.'));
+      const message = formatApiErrorMessage(error, 'Unable to save your profile.');
+      pushFeedback('error', 'Profile update failed', message);
+      showAlert('Profile update failed', message);
     } finally {
       setSavingProfile(false);
+    }
+  }
+
+  async function handleLogout() {
+    logout();
+    await clearStoredSession();
+    setSignedOut(true);
+    if (typeof window !== 'undefined' && typeof window.location?.reload === 'function') {
+      window.location.reload();
     }
   }
 
@@ -244,17 +270,14 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
       setAttendanceBusyShiftId(shiftId);
       await checkInShift({ shiftId });
       updateShiftStatusLocally(shiftId, 'in_progress');
-      pushTimelineEvent(
-        shiftId,
-        'Checked in',
-        'Guard booked on successfully and the shift moved to in progress.',
-      );
+      pushTimelineEvent(shiftId, 'Shift started', 'Checked in successfully.');
       await loadData();
-      pushFeedback('success', 'Checked in successfully', 'You are now booked on and the shift is live for logs, incidents, check calls, welfare, panic, and timesheet actions.');
+      pushFeedback('success', 'Checked in', 'Your shift is now live.');
       showAlert('Checked in', 'Your shift is now marked as in progress.');
     } catch (error) {
-      pushFeedback('error', 'Check-in failed', formatApiErrorMessage(error, 'Unable to check in to this shift.'));
-      showAlert('Check-in failed', formatApiErrorMessage(error, 'Unable to check in to this shift.'));
+      const message = formatApiErrorMessage(error, 'Unable to start this shift.');
+      pushFeedback('error', 'Start shift failed', message);
+      showAlert('Start shift failed', message);
     } finally {
       setAttendanceBusyShiftId(null);
     }
@@ -265,204 +288,16 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
       setAttendanceBusyShiftId(shiftId);
       await checkOutShift({ shiftId });
       updateShiftStatusLocally(shiftId, 'completed');
-      pushTimelineEvent(
-        shiftId,
-        'Checked out',
-        'Guard booked off successfully and the shift moved to completed.',
-      );
+      pushTimelineEvent(shiftId, 'Shift ended', 'Checked out successfully.');
       await loadData();
-      pushFeedback('success', 'Checked out successfully', 'Your shift is now completed and worked hours were added to the timesheet.');
-      showAlert('Checked out', 'Your shift is complete and hours were added to the timesheet.');
+      pushFeedback('success', 'Checked out', 'Your shift is now completed.');
+      showAlert('Shift ended', 'Your shift has been checked out successfully.');
     } catch (error) {
-      pushFeedback('error', 'Check-out failed', formatApiErrorMessage(error, 'Unable to check out of this shift.'));
-      showAlert('Check-out failed', formatApiErrorMessage(error, 'Unable to check out of this shift.'));
+      const message = formatApiErrorMessage(error, 'Unable to end this shift.');
+      pushFeedback('error', 'End shift failed', message);
+      showAlert('End shift failed', message);
     } finally {
       setAttendanceBusyShiftId(null);
-    }
-  }
-
-  async function handleCreateIncident() {
-    if (!selectedShift?.id || !selectedShiftLiveControlsEnabled) {
-      pushFeedback('info', 'Incident unavailable', 'Incident reporting is only available while the selected shift is in progress.');
-      showAlert('Shift not in progress', 'Incident reporting becomes available after you book on to the shift.');
-      return;
-    }
-
-    try {
-      setSubmittingIncident(true);
-      await createIncident({
-        title: incidentTitle,
-        notes: incidentNotes,
-        severity: incidentSeverity,
-        locationText: incidentLocation || undefined,
-        shiftId: selectedShift?.id,
-      });
-      setIncidentTitle('');
-      setIncidentNotes('');
-      setIncidentSeverity('medium');
-      setIncidentLocation('');
-      pushTimelineEvent(
-        selectedShift.id,
-        'Incident raised',
-        `Incident "${incidentTitle.trim() || 'Untitled incident'}" was reported from this live shift.`,
-      );
-      await loadData();
-      pushFeedback('success', 'Incident reported', 'Your incident report has been linked to the selected in-progress shift.');
-      showAlert('Incident submitted', 'Your incident report has been recorded.');
-    } catch (error) {
-      pushFeedback('error', 'Incident failed', formatApiErrorMessage(error, 'Unable to submit this incident.'));
-      showAlert('Incident failed', formatApiErrorMessage(error, 'Unable to submit this incident.'));
-    } finally {
-      setSubmittingIncident(false);
-    }
-  }
-
-  async function handleCreateSafetyAlert(type: 'welfare' | 'panic') {
-    if (!selectedShift?.id) {
-      pushFeedback('info', 'No shift selected', 'Choose a valid shift before sending a welfare or panic update.');
-      showAlert('No assigned shift', 'Safety alerts require an assigned or active shift.');
-      return;
-    }
-
-    if (!selectedShiftLiveControlsEnabled) {
-      pushFeedback('info', 'Safety action unavailable', 'Welfare updates and panic alerts are only available while the shift is in progress.');
-      showAlert('Shift not in progress', 'Safety alerts become available after you book on to the shift.');
-      return;
-    }
-
-    try {
-      setSubmittingAlertType(type);
-      await createSafetyAlert({
-        shiftId: selectedShift.id,
-        type,
-        priority: type === 'panic' ? 'critical' : 'high',
-        message:
-          type === 'panic'
-          ? 'Emergency alert raised by guard from the mobile app.'
-          : 'Welfare alert raised by guard from the mobile app.',
-      });
-      pushTimelineEvent(
-        selectedShift.id,
-        type === 'panic' ? 'Panic alert sent' : 'Welfare update recorded',
-        type === 'panic'
-          ? 'Emergency alert sent to the company control room.'
-          : 'Welfare status update was recorded for this live shift.',
-      );
-      await loadData();
-      pushFeedback(
-        'success',
-        type === 'panic' ? 'Panic alert sent' : 'Welfare update sent',
-        type === 'panic'
-          ? 'Emergency alert sent to the company control room from this live shift.'
-          : 'Welfare update recorded successfully for this live shift.',
-      );
-      showAlert(
-        type === 'panic' ? 'Emergency alert sent' : 'Welfare alert sent',
-        'The company control room can now see this safety alert.',
-      );
-    } catch (error) {
-      pushFeedback('error', 'Safety alert failed', formatApiErrorMessage(error, 'Unable to raise this safety alert.'));
-      showAlert('Safety alert failed', formatApiErrorMessage(error, 'Unable to raise this safety alert.'));
-    } finally {
-      setSubmittingAlertType(null);
-    }
-  }
-
-  async function handleApplyToJob(jobId: number) {
-    try {
-      setApplyingJobId(jobId);
-      await createJobApplication({ jobId });
-      await loadData();
-      pushFeedback('success', 'Application sent', 'Your application has been shared with the company for recruitment review.');
-      showAlert('Application sent', 'Your application has been shared with the company.');
-    } catch (error) {
-      pushFeedback('error', 'Application failed', formatApiErrorMessage(error, 'Unable to apply for this job right now.'));
-      showAlert('Application failed', formatApiErrorMessage(error, 'Unable to apply for this job right now.'));
-    } finally {
-      setApplyingJobId(null);
-    }
-  }
-
-  useEffect(() => {
-    loadData();
-  }, [user.guardId]);
-
-  async function handleSubmitTimesheet(timesheet: Timesheet) {
-    if (!timesheet.shift || normalizeShiftLifecycleStatus(timesheet.shift.status) !== 'in_progress') {
-      pushFeedback('info', 'Timesheet unavailable', 'Timesheet submission is only available while the linked shift is in progress.');
-      showAlert('Shift not in progress', 'Timesheet progression is only available while the shift is in progress.');
-      return;
-    }
-
-    try {
-      setSubmittingTimesheetId(timesheet.id);
-      await submitTimesheet(timesheet.id, { hoursWorked: timesheet.hoursWorked });
-      if (timesheet.shift?.id) {
-        pushTimelineEvent(
-          timesheet.shift.id,
-          'Timesheet submitted',
-          'Hours were submitted successfully for company review.',
-        );
-      }
-      await loadData();
-      pushFeedback('success', 'Timesheet submitted', 'Your hours were submitted successfully for company review.');
-      showAlert('Timesheet submitted', 'Your completed hours have been submitted to the company for approval.');
-    } catch (error) {
-      pushFeedback('error', 'Timesheet failed', formatApiErrorMessage(error, 'Unable to submit this timesheet.'));
-      showAlert('Timesheet failed', formatApiErrorMessage(error, 'Unable to submit this timesheet.'));
-    } finally {
-      setSubmittingTimesheetId(null);
-    }
-  }
-
-  async function handleCreateDailyLog(logType: DailyLog['logType']) {
-    if (!selectedShift?.id) {
-      pushFeedback('info', 'No shift selected', 'Select a shift before recording a log, check call, or welfare entry.');
-      showAlert('No assigned shift', 'Select an assigned shift before recording a log entry.');
-      return;
-    }
-
-    if (!selectedShiftLiveControlsEnabled) {
-      pushFeedback('info', 'Log unavailable', 'Logs, check calls, and welfare entries are only available while the shift is in progress.');
-      showAlert('Shift not in progress', 'Operational logs become available after you book on to the shift.');
-      return;
-    }
-
-    if (!dailyLogMessage.trim()) {
-      pushFeedback('error', 'Log message required', 'Enter a short note before saving a log, check call, or welfare entry.');
-      showAlert('Log message required', 'Enter a short operational note before saving the log entry.');
-      return;
-    }
-
-    try {
-      setSubmittingDailyLogType(logType);
-      await createDailyLog({
-        shiftId: selectedShift.id,
-        message: dailyLogMessage.trim(),
-        logType,
-      });
-      pushTimelineEvent(
-        selectedShift.id,
-        logType === 'check_call' ? 'Check call recorded' : logType === 'welfare_check' ? 'Welfare update recorded' : 'Log entry added',
-        dailyLogMessage.trim(),
-      );
-      setDailyLogMessage('');
-      await loadData();
-      pushFeedback(
-        'success',
-        logType === 'check_call' ? 'Check call recorded' : logType === 'welfare_check' ? 'Welfare update recorded' : 'Log entry added',
-        logType === 'observation'
-          ? 'Your log entry was added to the selected live shift.'
-          : logType === 'check_call'
-            ? 'Your check call was recorded successfully for the selected live shift.'
-            : 'Your welfare update was recorded successfully for the selected live shift.',
-      );
-      showAlert('Shift activity saved', 'The log book entry has been linked to the selected shift.');
-    } catch (error) {
-      pushFeedback('error', 'Shift log failed', formatApiErrorMessage(error, 'Unable to save this shift log entry.'));
-      showAlert('Shift log failed', formatApiErrorMessage(error, 'Unable to save this shift log entry.'));
-    } finally {
-      setSubmittingDailyLogType(null);
     }
   }
 
@@ -474,728 +309,835 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
       pushTimelineEvent(
         shiftId,
         response === 'accepted' ? 'Shift accepted' : 'Shift rejected',
-        response === 'accepted'
-          ? 'Guard accepted the shift offer and the shift is now ready.'
-          : 'Guard rejected the shift offer and the company will need to reassign cover.',
+        response === 'accepted' ? 'Shift is ready to start.' : 'Company will need to re-cover this shift.',
       );
       await loadData();
+      setActiveTab(response === 'accepted' ? 'home' : 'offers');
       pushFeedback(
         'success',
-        response === 'accepted' ? 'Shift accepted' : 'Shift rejected',
-        response === 'accepted'
-          ? 'This shift is now ready. Book on when you arrive on site.'
-          : 'You rejected this shift offer. The company will now need to reassign cover.',
-      );
-      showAlert(
-        response === 'accepted' ? 'Shift confirmed' : 'Shift rejected',
-        response === 'accepted'
-          ? 'The company can now see your confirmation. Check-in will unlock when the shift is ready to start.'
-          : 'The company can now see that this shift needs new cover.',
+        response === 'accepted' ? 'Offer accepted' : 'Offer rejected',
+        response === 'accepted' ? 'This shift is now ready for you to start.' : 'The company can now re-cover this shift.',
       );
     } catch (error) {
-      pushFeedback(
-        'error',
-        response === 'accepted' ? 'Accept failed' : 'Reject failed',
-        formatApiErrorMessage(error, 'Unable to update this shift response.'),
-      );
-      showAlert(
-        response === 'accepted' ? 'Accept failed' : 'Reject failed',
-        formatApiErrorMessage(error, 'Unable to update this shift response.'),
-      );
+      const message = formatApiErrorMessage(error, 'Unable to update this shift response.');
+      pushFeedback('error', response === 'accepted' ? 'Accept failed' : 'Reject failed', message);
+      showAlert(response === 'accepted' ? 'Accept failed' : 'Reject failed', message);
     } finally {
       setRespondingShiftId(null);
     }
   }
 
-  const activeShift = shifts.find((shift) => normalizeShiftLifecycleStatus(shift.status) === 'in_progress') || null;
-  const upcomingShift =
-    shifts.find((shift) => ['offered', 'ready', 'unfilled'].includes(normalizeShiftLifecycleStatus(shift.status))) || null;
-  const selectedShift =
-    shifts.find((shift) => shift.id === selectedShiftId) || activeShift || upcomingShift || shifts[0] || null;
-  const selectedShiftStatus = normalizeShiftLifecycleStatus(selectedShift?.status);
-  const selectedShiftResponsePending = selectedShiftStatus === 'offered';
-  const selectedShiftCanCheckIn = selectedShiftStatus === 'ready';
-  const selectedShiftLiveControlsEnabled = selectedShiftStatus === 'in_progress';
-  const completedTimesheets = timesheets.filter(
-    (timesheet) => normalizeShiftLifecycleStatus(timesheet.shift?.status) === 'completed',
-  );
-  const unreadNotifications = notifications.filter((notification) => notification.status === 'unread');
-  const selectedShiftLogs = dailyLogs.filter((entry) => entry.shift?.id === selectedShift?.id);
-  const appliedJobIds = new Set(applications.map((application) => application.job?.id ?? application.jobId));
-  const openJobs = jobs.filter((job) => !appliedJobIds.has(job.id));
-  const myApplications = applications
-    .slice()
-    .sort((a, b) => new Date(b.appliedAt).getTime() - new Date(a.appliedAt).getTime());
-  const applicationShiftOfferById = new Map(
-    myApplications.map((application) => {
-      const assignmentShifts =
-        application.assignments?.flatMap((assignment) => assignment.shifts || []) || [];
-      const latestShift =
-        assignmentShifts.sort((left, right) => right.start.localeCompare(left.start))[0] || null;
+  async function handleCreateLog(logType: DailyLog['logType']) {
+    if (!selectedShift?.id || selectedShiftStatus !== 'in_progress') {
+      pushFeedback('info', 'Log unavailable', 'Logs are only available during an active shift.');
+      return;
+    }
+    if (!dailyLogMessage.trim()) {
+      pushFeedback('error', 'Note required', 'Write a short update before saving the log.');
+      return;
+    }
+    try {
+      setSubmittingDailyLogType(logType);
+      await createDailyLog({
+        shiftId: selectedShift.id,
+        message: dailyLogMessage.trim(),
+        logType,
+      });
+      pushTimelineEvent(
+        selectedShift.id,
+        logType === 'check_call' ? 'Check call recorded' : 'Log added',
+        dailyLogMessage.trim(),
+      );
+      setDailyLogMessage('');
+      setQuickActionModal(null);
+      await loadData();
+      pushFeedback(
+        'success',
+        logType === 'check_call' ? 'Check call recorded' : 'Log added',
+        logType === 'check_call' ? 'Your check call was recorded.' : 'Your log entry was saved.',
+      );
+    } catch (error) {
+      const message = formatApiErrorMessage(error, 'Unable to save this log.');
+      pushFeedback('error', 'Log failed', message);
+      showAlert('Log failed', message);
+    } finally {
+      setSubmittingDailyLogType(null);
+    }
+  }
 
-      return [application.id, latestShift];
-    }),
-  );
-  const shiftOffers = shifts
-    .filter((shift) => ['offered', 'rejected'].includes(normalizeShiftLifecycleStatus(shift.status)))
-    .sort((a, b) => new Date(b.start).getTime() - new Date(a.start).getTime());
-  const operationalShifts = shifts
-    .filter((shift) => ['ready', 'in_progress', 'completed'].includes(normalizeShiftLifecycleStatus(shift.status)))
-    .sort((a, b) => new Date(b.start).getTime() - new Date(a.start).getTime());
+  async function handleCreateIncident() {
+    if (!selectedShift?.id || selectedShiftStatus !== 'in_progress') {
+      pushFeedback('info', 'Incident unavailable', 'Incident reporting is only available during an active shift.');
+      return;
+    }
+    if (!incidentMessage.trim()) {
+      pushFeedback('error', 'Description required', 'Add a short incident description before submitting.');
+      return;
+    }
+    try {
+      setSubmittingIncident(true);
+      await createIncident({
+        title: 'Guard incident',
+        notes: incidentMessage.trim(),
+        severity: 'medium',
+        shiftId: selectedShift.id,
+      });
+      pushTimelineEvent(selectedShift.id, 'Incident raised', incidentMessage.trim());
+      setIncidentMessage('');
+      setQuickActionModal(null);
+      await loadData();
+      pushFeedback('success', 'Incident reported', 'The company can now see this incident.');
+    } catch (error) {
+      const message = formatApiErrorMessage(error, 'Unable to submit this incident.');
+      pushFeedback('error', 'Incident failed', message);
+      showAlert('Incident failed', message);
+    } finally {
+      setSubmittingIncident(false);
+    }
+  }
+
+  async function handleCreateWelfareAlert() {
+    if (!selectedShift?.id || selectedShiftStatus !== 'in_progress') {
+      pushFeedback('info', 'Welfare unavailable', 'Welfare actions are only available during an active shift.');
+      return;
+    }
+    if (!welfareMessage.trim()) {
+      pushFeedback('error', 'Update required', 'Add a short welfare update before sending it.');
+      return;
+    }
+    try {
+      setSubmittingAlertType('welfare');
+      await createSafetyAlert({
+        shiftId: selectedShift.id,
+        type: 'welfare',
+        priority: 'high',
+        message: welfareMessage.trim(),
+      });
+      pushTimelineEvent(selectedShift.id, 'Welfare update recorded', welfareMessage.trim());
+      setWelfareMessage('');
+      setQuickActionModal(null);
+      await loadData();
+      pushFeedback('success', 'Welfare update sent', 'The control room can now see your welfare update.');
+    } catch (error) {
+      const message = formatApiErrorMessage(error, 'Unable to send this welfare update.');
+      pushFeedback('error', 'Welfare failed', message);
+      showAlert('Welfare failed', message);
+    } finally {
+      setSubmittingAlertType(null);
+    }
+  }
+
+  async function handleCreatePanicAlert() {
+    if (!selectedShift?.id || selectedShiftStatus !== 'in_progress') {
+      pushFeedback('info', 'Panic unavailable', 'Panic alerts are only available during an active shift.');
+      return;
+    }
+    if (panicConfirmation.trim().toUpperCase() !== 'PANIC') {
+      pushFeedback('error', 'Confirmation required', 'Type PANIC to confirm sending this alert.');
+      return;
+    }
+    try {
+      setSubmittingAlertType('panic');
+      await createSafetyAlert({
+        shiftId: selectedShift.id,
+        type: 'panic',
+        priority: 'critical',
+        message: 'Emergency alert raised by guard from the mobile app.',
+      });
+      pushTimelineEvent(selectedShift.id, 'Panic alert sent', 'Emergency alert sent to control room.');
+      setPanicConfirmation('');
+      setQuickActionModal(null);
+      await loadData();
+      pushFeedback('success', 'Panic alert sent', 'Emergency alert sent to control room.');
+    } catch (error) {
+      const message = formatApiErrorMessage(error, 'Unable to send the panic alert.');
+      pushFeedback('error', 'Panic failed', message);
+      showAlert('Panic failed', message);
+    } finally {
+      setSubmittingAlertType(null);
+    }
+  }
+
+  async function handleSubmitTimesheet(timesheet: Timesheet) {
+    try {
+      setSubmittingTimesheetId(timesheet.id);
+      await submitTimesheet(timesheet.id, { hoursWorked: timesheet.hoursWorked });
+      if (timesheet.shiftId) {
+        pushTimelineEvent(timesheet.shiftId, 'Timesheet submitted', 'Hours sent for company review.');
+      }
+      await loadData();
+      pushFeedback('success', 'Timesheet submitted', 'Your hours were submitted successfully.');
+    } catch (error) {
+      const message = formatApiErrorMessage(error, 'Unable to submit this timesheet.');
+      pushFeedback('error', 'Timesheet failed', message);
+      showAlert('Timesheet failed', message);
+    } finally {
+      setSubmittingTimesheetId(null);
+    }
+  }
+
+  async function handleApplyToJob(jobId: number) {
+    try {
+      setApplyingJobId(jobId);
+      await createJobApplication({ jobId });
+      await loadData();
+      pushFeedback('success', 'Application sent', 'Your application has been submitted.');
+    } catch (error) {
+      const message = formatApiErrorMessage(error, 'Unable to apply for this job.');
+      pushFeedback('error', 'Application failed', message);
+      showAlert('Application failed', message);
+    } finally {
+      setApplyingJobId(null);
+    }
+  }
 
   useEffect(() => {
-    const selectedStillExists = selectedShiftId ? shifts.some((shift) => shift.id === selectedShiftId) : false;
-    if ((!selectedShiftId || !selectedStillExists) && selectedShift?.id) {
-      setSelectedShiftId(selectedShift.id);
-    }
-  }, [selectedShift?.id, selectedShiftId, shifts]);
+    loadData();
+  }, [user.guardId]);
 
-  if (loading) {
+  const attendanceByShiftId = useMemo(() => {
+    const map: Record<number, { checkInAt?: string; checkOutAt?: string }> = {};
+    attendance.forEach((event) => {
+      const shiftId = event.shift?.id;
+      if (!shiftId) return;
+      const current = map[shiftId] || {};
+      if (event.type === 'check-in') current.checkInAt = event.occurredAt;
+      if (event.type === 'check-out') current.checkOutAt = event.occurredAt;
+      map[shiftId] = current;
+    });
+    return map;
+  }, [attendance]);
+
+  const sortedShifts = useMemo(
+    () => [...shifts].sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime()),
+    [shifts],
+  );
+
+  const currentHomeShift = useMemo(() => {
+    const priority = (shift: Shift) => {
+      const status = normalizeShiftLifecycleStatus(shift.status);
+      if (status === 'in_progress') return 0;
+      if (status === 'ready') return 1;
+      if (status === 'offered') return 2;
+      if (status === 'completed') return 4;
+      return 3;
+    };
+    return [...sortedShifts].sort((a, b) => {
+      const delta = priority(a) - priority(b);
+      if (delta !== 0) return delta;
+      return new Date(a.start).getTime() - new Date(b.start).getTime();
+    })[0];
+  }, [sortedShifts]);
+
+  useEffect(() => {
+    if (!selectedShiftId && currentHomeShift?.id) {
+      setSelectedShiftId(currentHomeShift.id);
+      return;
+    }
+    if (selectedShiftId && !sortedShifts.some((shift) => shift.id === selectedShiftId)) {
+      setSelectedShiftId(currentHomeShift?.id ?? null);
+    }
+  }, [currentHomeShift?.id, selectedShiftId, sortedShifts]);
+
+  const selectedShift = sortedShifts.find((shift) => shift.id === selectedShiftId) || currentHomeShift || null;
+  const selectedShiftStatus = normalizeShiftLifecycleStatus(selectedShift?.status);
+  const selectedShiftAttendance = selectedShift?.id ? attendanceByShiftId[selectedShift.id] : undefined;
+  const selectedShiftLogs = dailyLogs
+    .filter((entry) => entry.shift?.id === selectedShift?.id)
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  const selectedShiftIncidents = incidents
+    .filter((entry) => entry.shift?.id === selectedShift?.id)
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  const selectedShiftTimesheet = timesheets.find((timesheet) => timesheet.shiftId === selectedShift?.id) || null;
+  const activeShift =
+    sortedShifts.find((shift) => normalizeShiftLifecycleStatus(shift.status) === 'in_progress') || null;
+  const shiftOffers = sortedShifts.filter((shift) => normalizeShiftLifecycleStatus(shift.status) === 'offered');
+  const historyShifts = [...sortedShifts]
+    .filter((shift) =>
+      ['completed', 'missed', 'cancelled', 'rejected'].includes(normalizeShiftLifecycleStatus(shift.status)),
+    )
+    .sort((a, b) => new Date(b.end).getTime() - new Date(a.end).getTime());
+  const openJobs = jobs.filter(
+    (job) => !applications.some((application) => application.jobId === job.id && application.guardId === user.guardId),
+  );
+  const myApplications = applications
+    .filter((application) => application.guardId === user.guardId)
+    .sort((a, b) => new Date(b.appliedAt).getTime() - new Date(a.appliedAt).getTime());
+
+  const selectedShiftTimeline = [
+    ...localTimelineEvents.filter((event) => event.shiftId === selectedShift?.id),
+    ...selectedShiftLogs.map((entry) => ({
+      id: `log-${entry.id}`,
+      shiftId: entry.shift?.id ?? 0,
+      title: entry.logType === 'check_call' ? 'Check call recorded' : 'Log added',
+      message: entry.message,
+      occurredAt: entry.createdAt,
+    })),
+    ...selectedShiftIncidents.map((entry) => ({
+      id: `incident-${entry.id}`,
+      shiftId: entry.shift?.id ?? 0,
+      title: 'Incident raised',
+      message: entry.notes,
+      occurredAt: entry.createdAt,
+    })),
+  ]
+    .sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime())
+    .slice(0, 4);
+
+  function getHelperLine(shift: Shift | null) {
+    if (!shift) return 'No urgent actions.';
+    const status = normalizeShiftLifecycleStatus(shift.status);
+    if (status === 'offered') return 'Waiting for your response.';
+    if (status === 'ready') return 'Ready to start.';
+    if (status === 'in_progress') {
+      if (!shift.checkCallIntervalMinutes) return 'Shift is live.';
+      const lastCheckCall = dailyLogs
+        .filter((entry) => entry.shift?.id === shift.id && entry.logType === 'check_call')
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
+      const nextDueAt = new Date(
+        (lastCheckCall ? new Date(lastCheckCall.createdAt) : new Date(shift.start)).getTime() +
+          shift.checkCallIntervalMinutes * 60 * 1000,
+      );
+      const minutes = Math.max(0, Math.round((nextDueAt.getTime() - Date.now()) / 60000));
+      return minutes > 0 ? `Next check call due in ${minutes} min.` : 'Check call due now.';
+    }
+    if (status === 'completed') return 'Shift completed.';
+    if (status === 'missed') return 'Missed shift. Await company follow-up.';
+    if (status === 'rejected') return 'You rejected this shift.';
+    if (status === 'cancelled') return 'Shift cancelled.';
+    return 'No urgent actions.';
+  }
+
+  function handlePrimaryHomeAction() {
+    if (!currentHomeShift) return;
+    const status = normalizeShiftLifecycleStatus(currentHomeShift.status);
+    if (status === 'offered') {
+      setSelectedShiftId(currentHomeShift.id);
+      setActiveTab('offers');
+      return;
+    }
+    if (status === 'ready') {
+      handleCheckIn(currentHomeShift.id);
+      return;
+    }
+    if (status === 'in_progress') {
+      handleCheckOut(currentHomeShift.id);
+      return;
+    }
+    if (status === 'completed') {
+      setHistorySummaryShiftId(currentHomeShift.id);
+      setActiveTab('history');
+    }
+  }
+
+  const historySummaryShift =
+    historyShifts.find((shift) => shift.id === historySummaryShiftId) ||
+    historyShifts.find((shift) => shift.id === selectedShiftId) ||
+    null;
+  const historySummaryAttendance = historySummaryShift?.id ? attendanceByShiftId[historySummaryShift.id] : undefined;
+  const historySummaryTimesheet = timesheets.find((timesheet) => timesheet.shiftId === historySummaryShift?.id) || null;
+
+  if (signedOut) {
     return (
-      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-        <Text style={styles.title}>Guard Dashboard</Text>
-        <Text style={styles.subtitle}>Loading your jobs, shifts, incidents, alerts, and timesheets...</Text>
-      </ScrollView>
+      <View style={styles.signedOutScreen}>
+        <Text style={styles.headerTitle}>Signed out</Text>
+        <Text style={styles.helperText}>Your session has been cleared. Reopen the app or refresh to sign in again.</Text>
+      </View>
     );
   }
 
-  const selectedShiftStateHelp =
-    selectedShiftStatus === 'offered'
-      ? 'Waiting for you to accept or reject this shift offer.'
-      : selectedShiftStatus === 'ready'
-        ? 'This shift is confirmed and ready. Book on when you arrive on site.'
-        : selectedShiftStatus === 'in_progress'
-          ? 'This shift is live. Logs, incidents, check calls, welfare, panic, and timesheet actions are enabled.'
-          : selectedShiftStatus === 'completed'
-            ? 'This shift is completed. Live controls are now read-only.'
-            : selectedShiftStatus === 'rejected'
-              ? 'You rejected this shift offer. The company will need to reassign cover.'
-              : selectedShiftStatus === 'cancelled'
-                ? 'This shift was cancelled by the company and is read-only.'
-                : 'This shift is not yet live.';
-  const selectedShiftTimeline = [
-    ...localTimelineEvents
-      .filter((event) => event.shiftId === selectedShift?.id)
-      .map((event) => ({
-        id: `local-${event.id}`,
-        occurredAt: event.occurredAt,
-        title: event.title,
-        message: event.message,
-      })),
-    ...attendance
-      .filter((event) => event.shift?.id === selectedShift?.id)
-      .map((event) => ({
-        id: `attendance-${event.id}`,
-        occurredAt: event.occurredAt,
-        title: event.type === 'check-in' ? 'Checked in' : 'Checked out',
-        message: event.notes || `Attendance event recorded for ${event.shift?.siteName || 'this shift'}.`,
-      })),
-    ...selectedShiftLogs.map((entry) => ({
-      id: `log-${entry.id}`,
-      occurredAt: entry.createdAt,
-      title:
-        entry.logType === 'check_call'
-          ? 'Check call recorded'
-          : entry.logType === 'welfare_check'
-            ? 'Welfare update recorded'
-            : 'Log entry added',
-      message: entry.message,
-    })),
-    ...incidents
-      .filter((incident) => incident.shift?.id === selectedShift?.id)
-      .map((incident) => ({
-        id: `incident-${incident.id}`,
-        occurredAt: incident.createdAt,
-        title: 'Incident raised',
-        message: incident.title,
-      })),
-    ...notifications
-      .filter((notification) => selectedShift?.id && notification.message.includes(`shift #${selectedShift.id}`))
-      .map((notification) => ({
-        id: `notification-${notification.id}`,
-        occurredAt: notification.createdAt,
-        title: notification.title,
-        message: notification.message,
-      })),
-  ]
-    .sort((left, right) => new Date(right.occurredAt).getTime() - new Date(left.occurredAt).getTime())
-    .slice(0, 8);
+  if (loading && shifts.length === 0) {
+    return (
+      <View style={styles.signedOutScreen}>
+        <Text style={styles.headerTitle}>Loading...</Text>
+        <Text style={styles.helperText}>Preparing your mobile shift workspace.</Text>
+      </View>
+    );
+  }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Text style={styles.title}>Guard Dashboard</Text>
-      <Text style={styles.subtitle}>Review shift offers, confirm readiness, and run live controls from one shift context.</Text>
-
-      {loadError ? (
-        <FeatureCard title="Load Issue" subtitle="The latest guard data could not be loaded.">
-          <Text style={styles.errorText}>{loadError}</Text>
-          <Pressable style={[styles.button, loading && styles.buttonDisabled]} onPress={loadData} disabled={loading}>
-            <Text style={styles.buttonText}>Retry</Text>
-          </Pressable>
-        </FeatureCard>
-      ) : null}
+    <View style={styles.container}>
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>
+          {activeTab === 'home' ? 'My Shift' : activeTab === 'offers' ? 'Shift Offers' : activeTab === 'history' ? 'History' : 'Profile'}
+        </Text>
+      </View>
 
       {actionFeedback ? (
-        <FeatureCard
-          title={actionFeedback.title}
-          subtitle={
+        <View
+          style={[
+            styles.feedbackBanner,
             actionFeedback.tone === 'success'
-              ? 'Latest shift action completed successfully.'
+              ? styles.feedbackSuccess
               : actionFeedback.tone === 'error'
-                ? 'Latest shift action needs attention.'
-                : 'Shift state guidance'
-          }
+                ? styles.feedbackError
+                : styles.feedbackInfo,
+          ]}
         >
-          <Text
-            style={
-              actionFeedback.tone === 'success'
-                ? styles.successText
-                : actionFeedback.tone === 'error'
-                  ? styles.errorText
-                  : styles.helperText
-            }
-          >
-            {actionFeedback.message}
-          </Text>
-        </FeatureCard>
+          <Text style={styles.feedbackTitle}>{actionFeedback.title}</Text>
+          <Text style={styles.feedbackMessage}>{actionFeedback.message}</Text>
+        </View>
       ) : null}
 
-      <FeatureCard
-        title="Profile + SIA"
-        subtitle="Complete onboarding details and keep your security profile up to date."
-      >
-        <TextInput style={styles.input} placeholder="Full name" value={fullName} onChangeText={setFullName} />
-        <TextInput style={styles.input} placeholder="Phone number" value={phone} onChangeText={setPhone} />
-        <TextInput
-          style={styles.input}
-          placeholder="SIA licence number"
-          value={siaLicence}
-          onChangeText={setSiaLicence}
-        />
-        <View style={styles.switchRow}>
-          <Text style={styles.helperText}>Share live location on assigned shifts</Text>
-          <Switch value={locationSharing} onValueChange={setLocationSharing} />
+      {loadError ? (
+        <View style={[styles.feedbackBanner, styles.feedbackError]}>
+          <Text style={styles.feedbackTitle}>Action required</Text>
+          <Text style={styles.feedbackMessage}>{loadError}</Text>
         </View>
-        <Pressable style={[styles.button, savingProfile && styles.buttonDisabled]} onPress={handleSaveProfile} disabled={savingProfile}>
-          <Text style={styles.buttonText}>{savingProfile ? 'Saving...' : 'Save Profile'}</Text>
-        </Pressable>
-      </FeatureCard>
+      ) : null}
 
-      <FeatureCard
-        title="Assigned Shift Operations"
-        subtitle={
-          selectedShift
-            ? `${selectedShift.siteName} | ${selectedShiftStatus}`
-            : 'All live shift actions should sit under the assigned shift.'
-        }
-      >
-        {!selectedShift ? (
-          <Text style={styles.helperText}>No assigned shift is currently available for live operations.</Text>
-        ) : (
-          <View style={styles.listItem}>
-            <Text style={styles.listTitle}>{selectedShift.siteName}</Text>
-            <ShiftStatusBadge status={selectedShift.status} />
-            <Text style={styles.helperText}>
-              {new Date(selectedShift.start).toLocaleString()} to {new Date(selectedShift.end).toLocaleString()}
-            </Text>
-            <Text style={styles.helperText}>
-              Employer: {selectedShift.company?.name || `#${selectedShift.company?.id ?? selectedShift.companyId ?? 'N/A'}`}
-            </Text>
-            <Text style={styles.helperText}>{selectedShiftStateHelp}</Text>
-            {selectedShiftResponsePending ? (
-              <>
-                <View style={styles.actionRow}>
-                  <Pressable
-                    style={styles.button}
-                    onPress={() => handleRespondToShift(selectedShift.id, 'accepted')}
-                    disabled={respondingShiftId === selectedShift.id}
-                  >
-                    <Text style={styles.buttonText}>
-                      {respondingShiftId === selectedShift.id ? 'Updating...' : 'Accept Shift'}
-                    </Text>
-                  </Pressable>
-                  <Pressable
-                    style={styles.secondaryButton}
-                    onPress={() => handleRespondToShift(selectedShift.id, 'rejected')}
-                    disabled={respondingShiftId === selectedShift.id}
-                  >
-                    <Text style={styles.secondaryButtonText}>
-                      {respondingShiftId === selectedShift.id ? 'Updating...' : 'Reject Shift'}
-                    </Text>
-                  </Pressable>
-                </View>
-              </>
-            ) : null}
-            <Text style={styles.helperText}>
-              Check calls every {selectedShift.checkCallIntervalMinutes || 60} minutes. Live controls are enabled only while the shift is in progress.
-            </Text>
-            {selectedShiftCanCheckIn ? (
-              <Pressable
-                style={styles.button}
-                onPress={() => handleCheckIn(selectedShift.id)}
-                disabled={attendanceBusyShiftId === selectedShift.id}
-              >
-                <Text style={styles.buttonText}>
-                  {attendanceBusyShiftId === selectedShift.id ? 'Checking in...' : 'Check In'}
-                </Text>
-              </Pressable>
-            ) : null}
-            {selectedShiftLiveControlsEnabled ? (
-              <Pressable
-                style={styles.button}
-                onPress={() => handleCheckOut(selectedShift.id)}
-                disabled={attendanceBusyShiftId === selectedShift.id}
-              >
-                <Text style={styles.buttonText}>
-                  {attendanceBusyShiftId === selectedShift.id ? 'Checking out...' : 'Check Out'}
-                </Text>
-              </Pressable>
-            ) : null}
-            {!selectedShiftLiveControlsEnabled ? (
-              <Text style={styles.helperText}>
-                {selectedShiftStatus === 'ready'
-                  ? 'Book on is the next valid action. Live controls unlock once the shift is in progress.'
-                  : selectedShiftStatus === 'offered'
-                    ? 'Accept this shift first. Live controls stay disabled until the shift reaches in progress.'
-                    : 'Live controls are unavailable for this shift state.'}
-              </Text>
-            ) : (
-              <>
-                <TextInput
-                  style={[styles.input, styles.logInput]}
-                  placeholder="Shift log / handover / check-call note"
-                  multiline
-                  value={dailyLogMessage}
-                  onChangeText={setDailyLogMessage}
-                />
-                <View style={styles.actionRow}>
-                  <Pressable
-                    style={[styles.secondaryButton, submittingDailyLogType !== null && styles.buttonDisabled]}
-                    onPress={() => handleCreateDailyLog('observation')}
-                    disabled={submittingDailyLogType !== null}
-                  >
-                    <Text style={styles.secondaryButtonText}>
-                      {submittingDailyLogType === 'observation' ? 'Saving...' : 'Add Log Entry'}
-                    </Text>
-                  </Pressable>
-                  <Pressable
-                    style={[styles.secondaryButton, submittingDailyLogType !== null && styles.buttonDisabled]}
-                    onPress={() => handleCreateDailyLog('check_call')}
-                    disabled={submittingDailyLogType !== null}
-                  >
-                    <Text style={styles.secondaryButtonText}>
-                      {submittingDailyLogType === 'check_call' ? 'Saving...' : 'Record Check Call'}
-                    </Text>
-                  </Pressable>
-                  <Pressable
-                    style={[styles.secondaryButton, submittingDailyLogType !== null && styles.buttonDisabled]}
-                    onPress={() => handleCreateDailyLog('welfare_check')}
-                    disabled={submittingDailyLogType !== null}
-                  >
-                    <Text style={styles.secondaryButtonText}>
-                      {submittingDailyLogType === 'welfare_check' ? 'Saving...' : 'Record Welfare Check'}
-                    </Text>
-                  </Pressable>
-                </View>
-
-                <TextInput style={styles.input} placeholder="Incident title" value={incidentTitle} onChangeText={setIncidentTitle} />
-                <TextInput
-                  style={styles.input}
-                  placeholder="Severity: low, medium, high, critical"
-                  value={incidentSeverity}
-                  onChangeText={(value: string) => setIncidentSeverity((value as Incident['severity']) || 'medium')}
-                />
-                <TextInput
-                  style={styles.input}
-                  placeholder="Location details"
-                  value={incidentLocation}
-                  onChangeText={setIncidentLocation}
-                />
-                <TextInput
-                  style={[styles.input, styles.logInput]}
-                  placeholder="Describe what happened..."
-                  multiline
-                  value={incidentNotes}
-                  onChangeText={setIncidentNotes}
-                />
-                <Pressable style={[styles.button, submittingIncident && styles.buttonDisabled]} onPress={handleCreateIncident} disabled={submittingIncident}>
-                  <Text style={styles.buttonText}>{submittingIncident ? 'Submitting...' : 'Submit Incident'}</Text>
-                </Pressable>
-
-                <View style={styles.actionRow}>
-                  <Pressable
-                    style={styles.secondaryButton}
-                    onPress={() => handleCreateSafetyAlert('welfare')}
-                    disabled={submittingAlertType !== null}
-                  >
-                    <Text style={styles.secondaryButtonText}>
-                      {submittingAlertType === 'welfare' ? 'Sending...' : 'Raise Welfare Alert'}
-                    </Text>
-                  </Pressable>
-                </View>
-
-                <Pressable
-                  style={styles.emergencyButton}
-                  onPress={() => handleCreateSafetyAlert('panic')}
-                  disabled={submittingAlertType !== null}
-                >
-                  <Text style={styles.buttonText}>
-                    {submittingAlertType === 'panic' ? 'Sending Emergency Alert...' : 'Activate Panic Alert'}
-                  </Text>
-                </Pressable>
-              </>
-            )}
+      {activeShift ? (
+        <View style={styles.quickActionShell}>
+          <Text style={styles.quickActionTitle}>Active Shift Quick Actions</Text>
+          <View style={styles.quickActionGrid}>
+            <Pressable style={styles.quickActionButton} onPress={() => setQuickActionModal('log')}>
+              <Text style={styles.quickActionIcon}>📝</Text>
+              <Text style={styles.quickActionText}>Add Log</Text>
+            </Pressable>
+            <Pressable style={styles.quickActionButton} onPress={() => setQuickActionModal('incident')}>
+              <Text style={styles.quickActionIcon}>⚠️</Text>
+              <Text style={styles.quickActionText}>Incident</Text>
+            </Pressable>
+            <Pressable style={styles.quickActionButton} onPress={() => setQuickActionModal('welfare')}>
+              <Text style={styles.quickActionIcon}>💙</Text>
+              <Text style={styles.quickActionText}>Welfare</Text>
+            </Pressable>
+            <Pressable style={[styles.quickActionButton, styles.quickActionDanger]} onPress={() => setQuickActionModal('panic')}>
+              <Text style={styles.quickActionIcon}>🚨</Text>
+              <Text style={styles.quickActionDangerText}>Panic</Text>
+            </Pressable>
           </View>
-        )}
-      </FeatureCard>
+        </View>
+      ) : null}
 
-      <FeatureCard title="Open Jobs" subtitle={`${openJobs.length} recruitment jobs available right now`}>
-        {openJobs.length === 0 ? (
-          <Text style={styles.helperText}>No open jobs are available at the moment. Check back soon.</Text>
-        ) : (
-          openJobs.map((job) => (
-            <View key={job.id} style={styles.listItem}>
-              <Text style={styles.listTitle}>{job.title}</Text>
-              <Text style={styles.helperText}>
-                Company: {job.company?.name || `#${job.company?.id ?? job.companyId ?? 'N/A'}`}
-              </Text>
-              <Text style={styles.helperText}>
-                Site: {job.site?.name || 'Site to be confirmed'}
-              </Text>
-              <Text style={styles.helperText}>
-                Guards required: {job.guardsRequired ?? 1}
-                {typeof job.hourlyRate === 'number' ? ` | Hourly rate: £${job.hourlyRate}` : ''}
-              </Text>
-              <Pressable
-                style={[styles.button, applyingJobId === job.id && styles.buttonDisabled]}
-                onPress={() => handleApplyToJob(job.id)}
-                disabled={applyingJobId === job.id}
-              >
-                <Text style={styles.buttonText}>{applyingJobId === job.id ? 'Applying...' : 'Apply'}</Text>
-              </Pressable>
-            </View>
-          ))
-        )}
-      </FeatureCard>
-
-      <FeatureCard title="My Applications" subtitle={`${applications.length} recruitment applications submitted`}>
-        {myApplications.length === 0 ? (
-          <Text style={styles.helperText}>You have not applied to any jobs yet.</Text>
-        ) : (
-          myApplications.map((application) => (
-            <View key={application.id} style={styles.listItem}>
-              <Text style={styles.listTitle}>{application.job?.title || `Job #${application.jobId}`}</Text>
-              <Text style={styles.helperText}>
-                Company:{' '}
-                {application.job?.company?.name ||
-                  `#${application.job?.company?.id ?? application.job?.companyId ?? 'N/A'}`}
-              </Text>
-              <Text style={styles.helperText}>
-                Site: {application.job?.site?.name || 'Site to be confirmed'}
-              </Text>
-              <Text style={styles.helperText}>Status: {application.status}</Text>
-              <Text style={styles.helperText}>Applied: {new Date(application.appliedAt).toLocaleString()}</Text>
-            </View>
-          ))
-        )}
-      </FeatureCard>
-
-      <FeatureCard title="Shift Offers" subtitle={`${shiftOffers.length} offered or decided shift offers`}>
-        {shiftOffers.length === 0 ? (
-          <Text style={styles.helperText}>No shift offers have been sent to you yet.</Text>
-        ) : (
-          shiftOffers.map((shift) => (
-            <View key={shift.id} style={styles.listItem}>
-              <Text style={styles.listTitle}>{shift.siteName}</Text>
-              <ShiftStatusBadge status={shift.status} />
-              <Text style={styles.helperText}>
-                {new Date(shift.start).toLocaleString()} to {new Date(shift.end).toLocaleString()}
-              </Text>
-              <Text style={styles.helperText}>
-                Company: {shift.company?.name || `#${shift.company?.id ?? shift.companyId ?? 'N/A'}`}
-              </Text>
-              <Text style={styles.helperText}>
-                Status: {normalizeShiftLifecycleStatus(shift.status)} | Check calls every {shift.checkCallIntervalMinutes || 60} mins
-              </Text>
-              {normalizeShiftLifecycleStatus(shift.status) === 'offered' ? (
-                <View style={styles.actionRow}>
-                  <Pressable
-                    style={styles.button}
-                    onPress={() => handleRespondToShift(shift.id, 'accepted')}
-                    disabled={respondingShiftId === shift.id}
-                  >
-                    <Text style={styles.buttonText}>
-                      {respondingShiftId === shift.id ? 'Updating...' : 'Accept'}
+      <ScrollView style={styles.scrollView} contentContainerStyle={styles.content}>
+        {activeTab === 'home' ? (
+          <FeatureCard
+            title="My Shift"
+            subtitle={currentHomeShift ? 'The single most important shift on your device right now.' : 'No shift needs action right now.'}
+            style={styles.primaryCard}
+          >
+            {currentHomeShift ? (
+              <>
+                <View style={styles.cardTopRow}>
+                  <View style={styles.flexGrow}>
+                    <Text style={styles.siteName}>{currentHomeShift.siteName}</Text>
+                    <Text style={styles.shiftDate}>{formatDateLabel(currentHomeShift.start)}</Text>
+                    <Text style={styles.shiftTime}>
+                      {formatTimeLabel(currentHomeShift.start)} - {formatTimeLabel(currentHomeShift.end)}
                     </Text>
-                  </Pressable>
-                  <Pressable
-                    style={styles.secondaryButton}
-                    onPress={() => handleRespondToShift(shift.id, 'rejected')}
-                    disabled={respondingShiftId === shift.id}
-                  >
-                    <Text style={styles.secondaryButtonText}>
-                      {respondingShiftId === shift.id ? 'Updating...' : 'Reject'}
-                    </Text>
-                  </Pressable>
+                  </View>
+                  <ShiftStatusBadge status={currentHomeShift.status} />
                 </View>
+                <Text style={styles.helperLine}>{getHelperLine(currentHomeShift)}</Text>
+                {getPrimaryActionLabel(currentHomeShift.status) ? (
+                  <Pressable
+                    style={[styles.primaryActionButton, attendanceBusyShiftId === currentHomeShift.id && styles.buttonDisabled]}
+                    onPress={handlePrimaryHomeAction}
+                    disabled={attendanceBusyShiftId === currentHomeShift.id}
+                  >
+                    <Text style={styles.primaryActionText}>
+                      {attendanceBusyShiftId === currentHomeShift.id
+                        ? normalizeShiftLifecycleStatus(currentHomeShift.status) === 'ready'
+                          ? 'Starting...'
+                          : 'Ending...'
+                        : getPrimaryActionLabel(currentHomeShift.status)}
+                    </Text>
+                  </Pressable>
+                ) : (
+                  <View style={styles.readOnlyChip}>
+                    <Text style={styles.readOnlyChipText}>Read only</Text>
+                  </View>
+                )}
+              </>
+            ) : (
+              <Text style={styles.helperText}>No upcoming or active shift requires action.</Text>
+            )}
+          </FeatureCard>
+        ) : null}
+
+        {activeTab === 'offers' ? (
+          <>
+            <FeatureCard title="Shift Offers" subtitle={shiftOffers.length ? 'Review each offer without live-shift clutter.' : 'No shift offers right now'}>
+              {shiftOffers.length === 0 ? (
+                <Text style={styles.helperText}>No shift offers right now.</Text>
               ) : (
-                <Text style={styles.helperText}>
-                  {normalizeShiftLifecycleStatus(shift.status) === 'rejected'
-                    ? 'This offer was rejected and is now read-only.'
-                    : 'This offer no longer needs a response.'}
-                </Text>
+                shiftOffers.map((shift) => (
+                  <View key={shift.id} style={styles.offerCard}>
+                    <View style={styles.cardTopRow}>
+                      <View style={styles.flexGrow}>
+                        <Text style={styles.cardTitle}>{shift.siteName}</Text>
+                        <Text style={styles.metaText}>{formatDateLabel(shift.start)}</Text>
+                        <Text style={styles.metaText}>
+                          {formatTimeLabel(shift.start)} - {formatTimeLabel(shift.end)}
+                        </Text>
+                      </View>
+                      <ShiftStatusBadge status={shift.status} />
+                    </View>
+                    <View style={styles.offerActionRow}>
+                      <Pressable
+                        style={[styles.primaryHalfButton, respondingShiftId === shift.id && styles.buttonDisabled]}
+                        onPress={() => handleRespondToShift(shift.id, 'accepted')}
+                        disabled={respondingShiftId === shift.id}
+                      >
+                        <Text style={styles.primaryHalfButtonText}>{respondingShiftId === shift.id ? 'Updating...' : 'Accept'}</Text>
+                      </Pressable>
+                      <Pressable
+                        style={[styles.secondaryHalfButton, respondingShiftId === shift.id && styles.buttonDisabled]}
+                        onPress={() => handleRespondToShift(shift.id, 'rejected')}
+                        disabled={respondingShiftId === shift.id}
+                      >
+                        <Text style={styles.secondaryHalfButtonText}>{respondingShiftId === shift.id ? 'Updating...' : 'Reject'}</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                ))
               )}
-              <Pressable style={styles.secondaryButton} onPress={() => setSelectedShiftId(shift.id)}>
-                <Text style={styles.secondaryButtonText}>{selectedShift?.id === shift.id ? 'Open Shift' : 'View Shift'}</Text>
+            </FeatureCard>
+            <FeatureCard title="Open Jobs" subtitle={openJobs.length ? 'Optional job applications still available.' : 'No open jobs right now'}>
+              {openJobs.length === 0 ? (
+                <Text style={styles.helperText}>No open jobs right now.</Text>
+              ) : (
+                openJobs.slice(0, 4).map((job) => (
+                  <View key={job.id} style={styles.listCard}>
+                    <Text style={styles.cardTitle}>{job.title}</Text>
+                    <Text style={styles.metaText}>{job.site?.name || 'Site to be confirmed'}</Text>
+                    <Pressable
+                      style={[styles.secondaryActionButton, applyingJobId === job.id && styles.buttonDisabled]}
+                      onPress={() => handleApplyToJob(job.id)}
+                      disabled={applyingJobId === job.id}
+                    >
+                      <Text style={styles.secondaryActionButtonText}>{applyingJobId === job.id ? 'Applying...' : 'Apply'}</Text>
+                    </Pressable>
+                  </View>
+                ))
+              )}
+            </FeatureCard>
+            <FeatureCard title="My Applications" subtitle={`${myApplications.length} submitted`}>
+              {myApplications.length === 0 ? (
+                <Text style={styles.helperText}>No applications submitted yet.</Text>
+              ) : (
+                myApplications.slice(0, 4).map((application) => (
+                  <View key={application.id} style={styles.simpleRow}>
+                    <View style={styles.flexGrow}>
+                      <Text style={styles.cardTitle}>{application.job?.title || `Job #${application.jobId}`}</Text>
+                      <Text style={styles.metaText}>{new Date(application.appliedAt).toLocaleString()}</Text>
+                    </View>
+                    <Text style={styles.applicationStatus}>{application.status.replace('_', ' ')}</Text>
+                  </View>
+                ))
+              )}
+            </FeatureCard>
+          </>
+        ) : null}
+
+        {activeTab === 'history' ? (
+          <>
+            <FeatureCard title="Past Shifts" subtitle={`${historyShifts.length} past shifts`}>
+              {historyShifts.length === 0 ? (
+                <Text style={styles.helperText}>Past shifts will appear here.</Text>
+              ) : (
+                historyShifts.map((shift) => (
+                  <Pressable key={shift.id} style={styles.simpleRow} onPress={() => setHistorySummaryShiftId(shift.id)}>
+                    <View style={styles.flexGrow}>
+                      <Text style={styles.cardTitle}>{shift.siteName}</Text>
+                      <Text style={styles.metaText}>
+                        {formatDateLabel(shift.start)} - {formatTimeLabel(shift.start)} - {formatTimeLabel(shift.end)}
+                      </Text>
+                    </View>
+                    <ShiftStatusBadge status={shift.status} />
+                  </Pressable>
+                ))
+              )}
+            </FeatureCard>
+            <FeatureCard title="Timesheets" subtitle={`${timesheets.length} recorded`}>
+              {timesheets.length === 0 ? (
+                <Text style={styles.helperText}>Timesheets will appear here once shifts are completed.</Text>
+              ) : (
+                timesheets.map((timesheet) => (
+                  <View key={timesheet.id} style={styles.listCard}>
+                    <Text style={styles.cardTitle}>{timesheet.shift?.siteName || `Shift #${timesheet.shiftId}`}</Text>
+                    <Text style={styles.metaText}>{timesheet.hoursWorked} hours</Text>
+                    <Text style={styles.metaText}>Status: {timesheet.approvalStatus}</Text>
+                    {timesheet.approvalStatus === 'draft' ? (
+                      <Pressable
+                        style={[styles.secondaryActionButton, submittingTimesheetId === timesheet.id && styles.buttonDisabled]}
+                        onPress={() => handleSubmitTimesheet(timesheet)}
+                        disabled={submittingTimesheetId === timesheet.id}
+                      >
+                        <Text style={styles.secondaryActionButtonText}>
+                          {submittingTimesheetId === timesheet.id ? 'Submitting...' : 'Submit Timesheet'}
+                        </Text>
+                      </Pressable>
+                    ) : null}
+                  </View>
+                ))
+              )}
+            </FeatureCard>
+          </>
+        ) : null}
+
+        {activeTab === 'profile' ? (
+          <>
+            <FeatureCard title="Profile" subtitle="Personal and setup details only.">
+              <TextInput style={styles.input} placeholder="Name" value={fullName} onChangeText={setFullName} />
+              <TextInput style={styles.input} placeholder="SIA details" value={siaLicence} onChangeText={setSiaLicence} />
+              <TextInput style={styles.input} placeholder="Contact details" value={phone} onChangeText={setPhone} />
+              <TextInput
+                style={styles.input}
+                placeholder="Availability"
+                value={availabilityStatus}
+                onChangeText={setAvailabilityStatus}
+              />
+              <View style={styles.switchRow}>
+                <View style={styles.flexGrow}>
+                  <Text style={styles.cardTitle}>Live location sharing</Text>
+                  <Text style={styles.metaText}>Keep on while actively deployed.</Text>
+                </View>
+                <Switch value={locationSharing} onValueChange={setLocationSharing} />
+              </View>
+              <Pressable
+                style={[styles.primaryActionButton, savingProfile && styles.buttonDisabled]}
+                onPress={handleSaveProfile}
+                disabled={savingProfile}
+              >
+                <Text style={styles.primaryActionText}>{savingProfile ? 'Saving...' : 'Save Profile'}</Text>
               </Pressable>
-            </View>
-          ))
-        )}
-      </FeatureCard>
-
-      <FeatureCard title="Operational Shifts" subtitle={`${operationalShifts.length} ready, live, or completed shifts`}>
-        {operationalShifts.length === 0 ? (
-          <Text style={styles.helperText}>No ready or live shifts are available for operations yet.</Text>
-        ) : (
-          operationalShifts.map((shift) => (
-            <View key={shift.id} style={styles.listItem}>
-              <Text style={styles.listTitle}>{shift.siteName}</Text>
-              <ShiftStatusBadge status={shift.status} />
-              <Text style={styles.helperText}>
-                {new Date(shift.start).toLocaleString()} to {new Date(shift.end).toLocaleString()}
-              </Text>
-              <Text style={styles.helperText}>
-                Company: {shift.company?.name || `#${shift.company?.id ?? shift.companyId ?? 'N/A'}`}
-              </Text>
-              <Text style={styles.helperText}>
-                Status: {normalizeShiftLifecycleStatus(shift.status)} | Check calls every {shift.checkCallIntervalMinutes || 60} mins
-              </Text>
-              <Pressable style={styles.secondaryButton} onPress={() => setSelectedShiftId(shift.id)}>
-                <Text style={styles.secondaryButtonText}>{selectedShift?.id === shift.id ? 'Open Shift' : 'View Shift'}</Text>
+              <Pressable style={styles.logoutButton} onPress={handleLogout}>
+                <Text style={styles.logoutButtonText}>Logout</Text>
               </Pressable>
-            </View>
-          ))
-        )}
-      </FeatureCard>
+            </FeatureCard>
+          </>
+        ) : null}
+      </ScrollView>
 
-      <FeatureCard title="Shift Log Book" subtitle={`${selectedShiftLogs.length} entries for the selected shift`}>
-        {selectedShiftLogs.length === 0 ? (
-          <Text style={styles.helperText}>No log book activity recorded for the selected shift yet.</Text>
-        ) : (
-          selectedShiftLogs.map((entry) => (
-            <View key={entry.id} style={styles.listItem}>
-              <Text style={styles.listTitle}>{entry.logType}</Text>
-              <Text style={styles.helperText}>{entry.message}</Text>
-              <Text style={styles.helperText}>{new Date(entry.createdAt).toLocaleString()}</Text>
-            </View>
-          ))
-        )}
-      </FeatureCard>
+      <View style={styles.bottomNav}>
+        {([
+          ['home', 'Home'],
+          ['offers', 'Offers'],
+          ['history', 'History'],
+          ['profile', 'Profile'],
+        ] as Array<[GuardTab, string]>).map(([tab, label]) => (
+          <Pressable key={tab} style={styles.bottomNavItem} onPress={() => setActiveTab(tab)}>
+            <Text style={[styles.bottomNavLabel, activeTab === tab && styles.bottomNavLabelActive]}>{label}</Text>
+          </Pressable>
+        ))}
+      </View>
 
-      <FeatureCard title="Selected Shift Timeline" subtitle={`${selectedShiftTimeline.length} recent events for the selected shift`}>
-        {!selectedShift ? (
-          <Text style={styles.helperText}>Choose a shift to view its recent activity timeline.</Text>
-        ) : selectedShiftTimeline.length === 0 ? (
-          <Text style={styles.helperText}>No recent activity recorded for this shift yet.</Text>
-        ) : (
-          selectedShiftTimeline.map((entry) => (
-            <View key={entry.id} style={styles.listItem}>
-              <Text style={styles.listTitle}>{entry.title}</Text>
-              <Text style={styles.helperText}>{entry.message}</Text>
-              <Text style={styles.helperText}>{new Date(entry.occurredAt).toLocaleString()}</Text>
+      {quickActionModal === 'log' ? (
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Add Log</Text>
+              <Pressable onPress={() => setQuickActionModal(null)}><Text style={styles.modalClose}>Close</Text></Pressable>
             </View>
-          ))
-        )}
-      </FeatureCard>
+            <TextInput
+              style={[styles.input, styles.modalInput]}
+              placeholder="Write a short operational update"
+              value={dailyLogMessage}
+              onChangeText={setDailyLogMessage}
+              multiline
+            />
+            <Pressable
+              style={[styles.primaryActionButton, submittingDailyLogType !== null && styles.buttonDisabled]}
+              onPress={() => handleCreateLog('observation')}
+              disabled={submittingDailyLogType !== null}
+            >
+              <Text style={styles.primaryActionText}>{submittingDailyLogType ? 'Saving...' : 'Submit Log'}</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
 
-      <FeatureCard title="My Timesheets" subtitle={`Completed/worked jobs: ${completedTimesheets.length}`}>
-        {timesheets.length === 0 ? (
-          <Text style={styles.helperText}>Timesheets will appear as you complete assigned shifts.</Text>
-        ) : (
-          timesheets.map((timesheet) => (
-            <View key={timesheet.id} style={styles.listItem}>
-              <Text style={styles.listTitle}>
-                {timesheet.shift?.siteName || `Shift #${timesheet.shift?.id ?? timesheet.shiftId}`}
+      {quickActionModal === 'incident' ? (
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Incident</Text>
+              <Pressable onPress={() => setQuickActionModal(null)}><Text style={styles.modalClose}>Close</Text></Pressable>
+            </View>
+            <TextInput
+              style={[styles.input, styles.modalInput]}
+              placeholder="Short incident description"
+              value={incidentMessage}
+              onChangeText={setIncidentMessage}
+              multiline
+            />
+            <Pressable
+              style={[styles.primaryActionButton, submittingIncident && styles.buttonDisabled]}
+              onPress={handleCreateIncident}
+              disabled={submittingIncident}
+            >
+              <Text style={styles.primaryActionText}>{submittingIncident ? 'Submitting...' : 'Submit Incident'}</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
+
+      {quickActionModal === 'welfare' ? (
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Welfare</Text>
+              <Pressable onPress={() => setQuickActionModal(null)}><Text style={styles.modalClose}>Close</Text></Pressable>
+            </View>
+            <TextInput
+              style={[styles.input, styles.modalInput]}
+              placeholder="Quick welfare update"
+              value={welfareMessage}
+              onChangeText={setWelfareMessage}
+              multiline
+            />
+            <Pressable
+              style={[styles.primaryActionButton, submittingAlertType !== null && styles.buttonDisabled]}
+              onPress={handleCreateWelfareAlert}
+              disabled={submittingAlertType !== null}
+            >
+              <Text style={styles.primaryActionText}>{submittingAlertType ? 'Sending...' : 'Send Welfare Update'}</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
+
+      {quickActionModal === 'panic' ? (
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Panic</Text>
+              <Pressable onPress={() => setQuickActionModal(null)}><Text style={styles.modalClose}>Close</Text></Pressable>
+            </View>
+            <Text style={styles.helperText}>Type PANIC to confirm you want to send an emergency alert.</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Type PANIC"
+              value={panicConfirmation}
+              onChangeText={setPanicConfirmation}
+              autoCapitalize="characters"
+            />
+            <Pressable
+              style={[styles.panicConfirmButton, submittingAlertType !== null && styles.buttonDisabled]}
+              onPress={handleCreatePanicAlert}
+              disabled={submittingAlertType !== null}
+            >
+              <Text style={styles.panicConfirmButtonText}>{submittingAlertType ? 'Sending...' : 'Confirm Panic Alert'}</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
+
+      {historySummaryShift ? (
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Shift Summary</Text>
+              <Pressable onPress={() => setHistorySummaryShiftId(null)}><Text style={styles.modalClose}>Close</Text></Pressable>
+            </View>
+            <Text style={styles.cardTitle}>{historySummaryShift.siteName}</Text>
+            <Text style={styles.metaText}>
+              {formatDateLabel(historySummaryShift.start)} - {formatTimeLabel(historySummaryShift.start)} - {formatTimeLabel(historySummaryShift.end)}
+            </Text>
+            <ShiftStatusBadge status={historySummaryShift.status} />
+            <View style={styles.summaryBlock}>
+              <Text style={styles.summaryLabel}>Booked on</Text>
+              <Text style={styles.summaryValue}>
+                {historySummaryAttendance?.checkInAt ? new Date(historySummaryAttendance.checkInAt).toLocaleString() : 'Pending'}
               </Text>
-              <Text style={styles.helperText}>
-                Hours: {timesheet.hoursWorked} | Status: {timesheet.approvalStatus}
+            </View>
+            <View style={styles.summaryBlock}>
+              <Text style={styles.summaryLabel}>Booked off</Text>
+              <Text style={styles.summaryValue}>
+                {historySummaryAttendance?.checkOutAt ? new Date(historySummaryAttendance.checkOutAt).toLocaleString() : 'Pending'}
               </Text>
-              {timesheet.shift ? (
-                <Text style={styles.helperText}>
-                  {new Date(timesheet.shift.start).toLocaleString()} to {new Date(timesheet.shift.end).toLocaleString()}
+            </View>
+            <View style={styles.summaryBlock}>
+              <Text style={styles.summaryLabel}>Incidents</Text>
+              <Text style={styles.summaryValue}>
+                {incidents.filter((incident) => incident.shift?.id === historySummaryShift.id).length}
+              </Text>
+            </View>
+            {historySummaryTimesheet ? (
+              <View style={styles.summaryBlock}>
+                <Text style={styles.summaryLabel}>Timesheet</Text>
+                <Text style={styles.summaryValue}>
+                  {historySummaryTimesheet.hoursWorked} hours - {historySummaryTimesheet.approvalStatus}
                 </Text>
-              ) : null}
-              {timesheet.approvalStatus === 'draft' ? (
-                <Pressable
-                  style={styles.button}
-                  onPress={() => handleSubmitTimesheet(timesheet)}
-                  disabled={submittingTimesheetId === timesheet.id}
-                >
-                  <Text style={styles.buttonText}>
-                    {submittingTimesheetId === timesheet.id ? 'Submitting...' : 'Submit Timesheet'}
-                  </Text>
-                </Pressable>
-              ) : null}
-            </View>
-          ))
-        )}
-      </FeatureCard>
-
-      <FeatureCard title="My Notifications" subtitle={`${unreadNotifications.length} unread alerts or workflow updates`}>
-        {notifications.length === 0 ? (
-          <Text style={styles.helperText}>No notifications yet. Shift reminders and approvals will appear here.</Text>
-        ) : (
-          notifications.slice(0, 5).map((notification) => (
-            <View key={notification.id} style={styles.listItem}>
-              <Text style={styles.listTitle}>{notification.title}</Text>
-              <Text style={styles.helperText}>{notification.message}</Text>
-              <Text style={styles.helperText}>
-                {notification.status} | {new Date(notification.createdAt).toLocaleString()}
-              </Text>
-            </View>
-          ))
-        )}
-      </FeatureCard>
-
-      <FeatureCard title="Evidence & Attachments" subtitle={`${attachments.length} uploaded records linked to your work`}>
-        {attachments.length === 0 ? (
-          <Text style={styles.helperText}>No attachments available yet.</Text>
-        ) : (
-          attachments.slice(0, 5).map((attachment) => (
-            <View key={attachment.id} style={styles.listItem}>
-              <Text style={styles.listTitle}>{attachment.fileName}</Text>
-              <Text style={styles.helperText}>
-                {attachment.entityType} #{attachment.entityId}
-              </Text>
-              <Text style={styles.helperText}>{new Date(attachment.createdAt).toLocaleString()}</Text>
-            </View>
-          ))
-        )}
-      </FeatureCard>
-
-      <FeatureCard title="Attendance History" subtitle={`Recorded attendance events: ${attendance.length}`}>
-        {attendance.length === 0 ? (
-          <Text style={styles.helperText}>No attendance events recorded yet.</Text>
-        ) : (
-          attendance.slice(0, 6).map((event) => (
-            <View key={event.id} style={styles.listItem}>
-              <Text style={styles.listTitle}>
-                {event.type} for {event.shift?.siteName || `Shift #${event.shift?.id ?? 'N/A'}`}
-              </Text>
-              <Text style={styles.helperText}>{new Date(event.occurredAt).toLocaleString()}</Text>
-            </View>
-          ))
-        )}
-      </FeatureCard>
-
-      <FeatureCard title="Incident History" subtitle={`Submitted incidents: ${incidents.length}`}>
-        {incidents.length === 0 ? (
-          <Text style={styles.helperText}>No incident reports submitted yet.</Text>
-        ) : (
-          incidents.slice(0, 5).map((incident) => (
-            <View key={incident.id} style={styles.listItem}>
-              <Text style={styles.listTitle}>{incident.title}</Text>
-              <Text style={styles.helperText}>
-                {incident.severity} | {incident.status} | {new Date(incident.createdAt).toLocaleString()}
-              </Text>
-              <Text style={styles.helperText}>{incident.notes}</Text>
-            </View>
-          ))
-        )}
-      </FeatureCard>
-    </ScrollView>
+              </View>
+            ) : null}
+          </View>
+        </View>
+      ) : null}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f3f4f6' },
-  content: { padding: 16, paddingBottom: 24 },
-  title: { fontSize: 24, fontWeight: '700', color: '#111827', marginBottom: 4 },
-  subtitle: { color: '#374151', marginBottom: 14 },
-  input: {
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 8,
-    padding: 10,
-    backgroundColor: '#fff',
-  },
-  logInput: {
-    minHeight: 80,
-    textAlignVertical: 'top',
-  },
-  helperText: {
-    color: '#4b5563',
-  },
-  statusBadge: {
-    alignSelf: 'flex-start',
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-  },
-  statusBadgeText: {
-    fontSize: 12,
-    fontWeight: '700',
-    textTransform: 'capitalize',
-  },
-  errorText: {
-    color: '#b91c1c',
-    fontWeight: '600',
-  },
-  successText: {
-    color: '#166534',
-    fontWeight: '600',
-  },
-  listItem: {
-    borderTopWidth: 1,
-    borderTopColor: '#e5e7eb',
-    paddingTop: 10,
-    gap: 8,
-  },
-  actionRow: {
-    flexDirection: 'row',
-    gap: 8,
-    flexWrap: 'wrap',
-  },
-  listTitle: {
-    color: '#111827',
-    fontWeight: '600',
-  },
-  switchRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    gap: 12,
-  },
-  button: {
-    backgroundColor: '#111827',
-    alignSelf: 'flex-start',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-  },
-  buttonDisabled: {
-    opacity: 0.7,
-  },
-  buttonText: {
-    color: '#fff',
-    fontWeight: '600',
-  },
-  secondaryButton: {
-    backgroundColor: '#e5e7eb',
-    alignSelf: 'flex-start',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-  },
-  secondaryButtonText: {
-    color: '#111827',
-    fontWeight: '600',
-  },
-  emergencyButton: {
-    backgroundColor: '#991b1b',
-    alignSelf: 'flex-start',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-  },
+  container: { flex: 1, backgroundColor: '#F3F4F6' },
+  header: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 8 },
+  headerTitle: { fontSize: 28, fontWeight: '800', color: '#111827' },
+  scrollView: { flex: 1 },
+  content: { paddingHorizontal: 16, paddingBottom: 104 },
+  signedOutScreen: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, backgroundColor: '#F3F4F6', gap: 8 },
+  feedbackBanner: { marginHorizontal: 16, marginBottom: 10, borderRadius: 16, paddingHorizontal: 14, paddingVertical: 12, gap: 4 },
+  feedbackSuccess: { backgroundColor: '#DCFCE7' },
+  feedbackError: { backgroundColor: '#FEE2E2' },
+  feedbackInfo: { backgroundColor: '#DBEAFE' },
+  feedbackTitle: { fontWeight: '700', color: '#111827' },
+  feedbackMessage: { color: '#374151', lineHeight: 20 },
+  primaryCard: { borderRadius: 20, padding: 18 },
+  cardTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 },
+  flexGrow: { flex: 1 },
+  siteName: { fontSize: 26, lineHeight: 30, fontWeight: '800', color: '#111827' },
+  shiftDate: { color: '#4B5563', fontWeight: '600' },
+  shiftTime: { color: '#111827', fontSize: 16, fontWeight: '700' },
+  helperLine: { color: '#4B5563', lineHeight: 20 },
+  helperText: { color: '#4B5563', lineHeight: 20 },
+  statusBadge: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, alignSelf: 'flex-start' },
+  statusBadgeText: { fontSize: 12, fontWeight: '700', textTransform: 'capitalize' },
+  primaryActionButton: { backgroundColor: '#111827', borderRadius: 18, minHeight: 56, paddingHorizontal: 16, paddingVertical: 16, alignItems: 'center', justifyContent: 'center' },
+  primaryActionText: { color: '#FFFFFF', fontSize: 16, fontWeight: '800' },
+  readOnlyChip: { alignSelf: 'flex-start', backgroundColor: '#E5E7EB', borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8 },
+  readOnlyChipText: { color: '#374151', fontWeight: '700' },
+  quickActionShell: { marginHorizontal: 16, marginBottom: 10, borderRadius: 18, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E5E7EB', padding: 14, gap: 10 },
+  quickActionTitle: { fontSize: 16, fontWeight: '800', color: '#111827' },
+  quickActionGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  quickActionButton: { width: '48%', minHeight: 88, borderRadius: 18, backgroundColor: '#111827', alignItems: 'center', justifyContent: 'center', gap: 6, paddingHorizontal: 12 },
+  quickActionDanger: { backgroundColor: '#991B1B' },
+  quickActionIcon: { fontSize: 24 },
+  quickActionText: { color: '#FFFFFF', fontWeight: '800', fontSize: 15 },
+  quickActionDangerText: { color: '#FFFFFF', fontWeight: '800', fontSize: 15 },
+  offerCard: { borderTopWidth: 1, borderTopColor: '#E5E7EB', paddingTop: 12, gap: 12 },
+  offerActionRow: { flexDirection: 'row', gap: 10 },
+  primaryHalfButton: { flex: 1, backgroundColor: '#111827', borderRadius: 16, minHeight: 52, alignItems: 'center', justifyContent: 'center' },
+  primaryHalfButtonText: { color: '#FFFFFF', fontWeight: '800' },
+  secondaryHalfButton: { flex: 1, backgroundColor: '#E5E7EB', borderRadius: 16, minHeight: 52, alignItems: 'center', justifyContent: 'center' },
+  secondaryHalfButtonText: { color: '#111827', fontWeight: '700' },
+  secondaryActionButton: { alignSelf: 'flex-start', backgroundColor: '#E5E7EB', borderRadius: 14, paddingHorizontal: 14, paddingVertical: 12, minHeight: 46, alignItems: 'center', justifyContent: 'center' },
+  secondaryActionButtonText: { color: '#111827', fontWeight: '700' },
+  cardTitle: { color: '#111827', fontWeight: '700', fontSize: 16 },
+  metaText: { color: '#6B7280', fontSize: 13, lineHeight: 18 },
+  simpleRow: { borderTopWidth: 1, borderTopColor: '#E5E7EB', paddingTop: 12, paddingBottom: 2, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  listCard: { borderTopWidth: 1, borderTopColor: '#E5E7EB', paddingTop: 12, gap: 8 },
+  applicationStatus: { color: '#111827', fontWeight: '700', textTransform: 'capitalize' },
+  input: { borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 14, paddingHorizontal: 12, paddingVertical: 12, backgroundColor: '#FFFFFF', color: '#111827' },
+  switchRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12 },
+  logoutButton: { borderRadius: 16, borderWidth: 1, borderColor: '#D1D5DB', minHeight: 52, alignItems: 'center', justifyContent: 'center' },
+  logoutButtonText: { color: '#111827', fontWeight: '700' },
+  bottomNav: { position: 'absolute', left: 0, right: 0, bottom: 0, flexDirection: 'row', backgroundColor: '#FFFFFF', borderTopWidth: 1, borderTopColor: '#E5E7EB', paddingBottom: 18, paddingTop: 10, paddingHorizontal: 8 },
+  bottomNavItem: { flex: 1, alignItems: 'center', justifyContent: 'center', minHeight: 48 },
+  bottomNavLabel: { color: '#6B7280', fontWeight: '700' },
+  bottomNavLabelActive: { color: '#111827' },
+  modalBackdrop: { flex: 1, backgroundColor: 'rgba(17,24,39,0.45)', justifyContent: 'flex-end', padding: 16 },
+  modalCard: { backgroundColor: '#FFFFFF', borderRadius: 24, padding: 18, gap: 12 },
+  modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  modalTitle: { fontSize: 20, fontWeight: '800', color: '#111827' },
+  modalClose: { color: '#2563EB', fontWeight: '700' },
+  modalInput: { minHeight: 120, textAlignVertical: 'top' },
+  panicConfirmButton: { backgroundColor: '#991B1B', borderRadius: 18, minHeight: 56, alignItems: 'center', justifyContent: 'center' },
+  panicConfirmButtonText: { color: '#FFFFFF', fontWeight: '800', fontSize: 16 },
+  summaryBlock: { borderRadius: 14, backgroundColor: '#F9FAFB', padding: 12, gap: 4 },
+  summaryLabel: { color: '#6B7280', fontSize: 12, fontWeight: '700', textTransform: 'uppercase' },
+  summaryValue: { color: '#111827', fontWeight: '700' },
+  timelineWrap: { gap: 8 },
+  timelineItem: { borderTopWidth: 1, borderTopColor: '#E5E7EB', paddingTop: 10, gap: 4 },
+  buttonDisabled: { opacity: 0.7 },
 });
