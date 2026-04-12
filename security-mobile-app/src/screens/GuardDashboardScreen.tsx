@@ -487,19 +487,26 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
   );
 
   const currentHomeShift = useMemo(() => {
-    const priority = (shift: Shift) => {
-      const status = normalizeShiftLifecycleStatus(shift.status);
-      if (status === 'in_progress') return 0;
-      if (status === 'ready') return 1;
-      if (status === 'offered') return 2;
-      if (status === 'completed') return 4;
-      return 3;
-    };
-    return [...sortedShifts].sort((a, b) => {
-      const delta = priority(a) - priority(b);
-      if (delta !== 0) return delta;
-      return new Date(a.start).getTime() - new Date(b.start).getTime();
-    })[0];
+    const inProgressShift = sortedShifts.find(
+      (shift) => normalizeShiftLifecycleStatus(shift.status) === 'in_progress',
+    );
+    if (inProgressShift) return inProgressShift;
+
+    const readyShift = sortedShifts.find(
+      (shift) => normalizeShiftLifecycleStatus(shift.status) === 'ready',
+    );
+    if (readyShift) return readyShift;
+
+    const offeredShift = sortedShifts.find(
+      (shift) => normalizeShiftLifecycleStatus(shift.status) === 'offered',
+    );
+    if (offeredShift) return offeredShift;
+
+    const mostRecentCompletedShift = [...sortedShifts]
+      .filter((shift) => normalizeShiftLifecycleStatus(shift.status) === 'completed')
+      .sort((a, b) => new Date(b.end).getTime() - new Date(a.end).getTime())[0];
+
+    return mostRecentCompletedShift ?? null;
   }, [sortedShifts]);
 
   useEffect(() => {
@@ -681,22 +688,22 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
       {activeShift ? (
         <View style={styles.quickActionShell}>
           <Text style={styles.quickActionTitle}>Active Shift Quick Actions</Text>
-          <Text style={styles.quickActionSubtitle}>Use these during the shift without hunting through other screens.</Text>
+          <Text style={styles.quickActionSubtitle}>Fast field actions for your live shift.</Text>
           <View style={styles.quickActionGrid}>
             <Pressable style={styles.quickActionButton} onPress={() => setQuickActionModal('log')}>
-              <Text style={styles.quickActionIcon}>📝</Text>
+              <Text style={styles.quickActionIcon}>LOG</Text>
               <Text style={styles.quickActionText}>Add Log</Text>
             </Pressable>
             <Pressable style={styles.quickActionButton} onPress={() => setQuickActionModal('incident')}>
-              <Text style={styles.quickActionIcon}>⚠️</Text>
+              <Text style={styles.quickActionIcon}>INC</Text>
               <Text style={styles.quickActionText}>Incident</Text>
             </Pressable>
             <Pressable style={styles.quickActionButton} onPress={() => setQuickActionModal('welfare')}>
-              <Text style={styles.quickActionIcon}>💙</Text>
+              <Text style={styles.quickActionIcon}>CARE</Text>
               <Text style={styles.quickActionText}>Welfare</Text>
             </Pressable>
             <Pressable style={[styles.quickActionButton, styles.quickActionDanger]} onPress={() => setQuickActionModal('panic')}>
-              <Text style={styles.quickActionIcon}>🚨</Text>
+              <Text style={styles.quickActionIcon}>SOS</Text>
               <Text style={styles.quickActionDangerText}>Panic</Text>
             </Pressable>
           </View>
@@ -707,7 +714,7 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
         {activeTab === 'home' ? (
           <FeatureCard
             title="My Shift"
-            subtitle={currentHomeShift ? 'The single most important shift on your device right now.' : 'No shift needs action right now.'}
+            subtitle={currentHomeShift ? 'The single most important shift on your device right now.' : 'No active shift requiring action.'}
             style={styles.primaryCard}
           >
             {currentHomeShift ? (
@@ -754,7 +761,7 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
                 )}
               </>
             ) : (
-              <Text style={styles.helperText}>No upcoming or active shift requires action.</Text>
+              <Text style={styles.helperText}>No active shift requiring action.</Text>
             )}
           </FeatureCard>
         ) : null}
@@ -1115,7 +1122,13 @@ const styles = StyleSheet.create({
     borderColor: '#374151',
   },
   quickActionDanger: { backgroundColor: '#991B1B', borderColor: '#B91C1C' },
-  quickActionIcon: { fontSize: 24, color: '#FFFFFF', fontWeight: '800' },
+  quickActionIcon: {
+    fontSize: 12,
+    color: '#FFFFFF',
+    fontWeight: '800',
+    letterSpacing: 1.1,
+    textTransform: 'uppercase',
+  },
   quickActionText: { color: '#FFFFFF', fontWeight: '800', fontSize: 15 },
   quickActionDangerText: { color: '#FFFFFF', fontWeight: '800', fontSize: 15 },
   offerCard: { borderTopWidth: 1, borderTopColor: '#E5E7EB', paddingTop: 12, gap: 12 },
