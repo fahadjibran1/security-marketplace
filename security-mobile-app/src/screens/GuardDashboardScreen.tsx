@@ -6,9 +6,12 @@ import {
   checkOutShift,
   createDailyLog,
   createIncident,
+  createJobApplication,
   createSafetyAlert,
   formatApiErrorMessage,
   getMyGuard,
+  listJobApplications,
+  listJobs,
   listMyAttendance,
   listMyDailyLogs,
   listMyIncidents,
@@ -25,6 +28,8 @@ import {
   AuthUser,
   DailyLog,
   Incident,
+  Job,
+  JobApplication,
   Shift,
   Timesheet,
 } from '../types/models';
@@ -33,7 +38,7 @@ interface GuardDashboardScreenProps {
   user: AuthUser;
 }
 
-type GuardTab = 'home' | 'offers' | 'history' | 'profile';
+type GuardTab = 'home' | 'offers' | 'jobs' | 'history' | 'profile';
 type QuickActionModal = 'log' | 'incident' | 'welfare' | 'panic' | null;
 
 type LocalTimelineEvent = {
@@ -129,9 +134,23 @@ function getPrimaryActionLabel(status?: string | null) {
   }
 }
 
+function formatDurationLabel(startAt?: string | null, endAt?: string | null, nowMs?: number) {
+  if (!startAt) return '0m';
+  const start = new Date(startAt).getTime();
+  const end = endAt ? new Date(endAt).getTime() : nowMs ?? Date.now();
+  const totalMinutes = Math.max(0, Math.round((end - start) / 60000));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+
+  if (hours <= 0) return `${minutes}m`;
+  if (minutes <= 0) return `${hours}h`;
+  return `${hours}h ${minutes}m`;
+}
+
 export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
   const [activeTab, setActiveTab] = useState<GuardTab>('home');
   const [quickActionModal, setQuickActionModal] = useState<QuickActionModal>(null);
+  const [liveNow, setLiveNow] = useState<number>(Date.now());
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
   const [siaLicence, setSiaLicence] = useState('');
@@ -139,6 +158,8 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
   const [locationSharing, setLocationSharing] = useState(false);
   const [signedOut, setSignedOut] = useState(false);
   const [shifts, setShifts] = useState<Shift[]>([]);
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [applications, setApplications] = useState<JobApplication[]>([]);
   const [attendance, setAttendance] = useState<AttendanceEvent[]>([]);
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [dailyLogs, setDailyLogs] = useState<DailyLog[]>([]);
@@ -154,6 +175,7 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
   const [submittingAlertType, setSubmittingAlertType] = useState<'welfare' | 'panic' | null>(null);
   const [submittingTimesheetId, setSubmittingTimesheetId] = useState<number | null>(null);
   const [respondingShiftId, setRespondingShiftId] = useState<number | null>(null);
+  const [applyingJobId, setApplyingJobId] = useState<number | null>(null);
   const [dailyLogMessage, setDailyLogMessage] = useState('');
   const [incidentMessage, setIncidentMessage] = useState('');
   const [welfareMessage, setWelfareMessage] = useState('');
@@ -194,10 +216,12 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
     try {
       setLoading(true);
       setLoadError(null);
-      const [myGuard, shiftRows, attendanceRows, incidentRows, dailyLogRows, timesheetRows] =
+      const [myGuard, shiftRows, jobRows, applicationRows, attendanceRows, incidentRows, dailyLogRows, timesheetRows] =
         await Promise.all([
           getMyGuard(),
           listMyShifts(),
+          listJobs(),
+          listJobApplications(),
           listMyAttendance(),
           listMyIncidents(),
           listMyDailyLogs(),
@@ -210,6 +234,8 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
       setAvailabilityStatus(myGuard.status || '');
       setLocationSharing(myGuard.locationSharingEnabled ?? false);
       setShifts(shiftRows.map((shift) => ({ ...shift, status: normalizeShiftLifecycleStatus(shift.status) })));
+      setJobs(jobRows.filter((job) => (job.status || '').trim().toLowerCase() === 'open'));
+      setApplications(applicationRows);
       setAttendance(attendanceRows);
       setIncidents(incidentRows);
       setDailyLogs(dailyLogRows);
@@ -312,6 +338,22 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
       showAlert(response === 'accepted' ? 'Accept failed' : 'Reject failed', message);
     } finally {
       setRespondingShiftId(null);
+    }
+  }
+
+  async function handleApplyToJob(jobId: number) {
+    try {
+      setApplyingJobId(jobId);
+      await createJobApplication({ jobId });
+      await loadData();
+      pushFeedback('success', 'Application sent', 'Your application has been submitted.');
+      showAlert('Application sent', 'Your application has been submitted successfully.');
+    } catch (error) {
+      const message = formatApiErrorMessage(error, 'Unable to apply for this job.');
+      pushFeedback('error', 'Application failed', message);
+      showAlert('Application failed', message);
+    } finally {
+      setApplyingJobId(null);
     }
   }
 
@@ -510,6 +552,19 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
   }, [sortedShifts]);
 
   useEffect(() => {
+    if (normalizeShiftLifecycleStatus(currentHomeShift?.status) !== 'in_progress') {
+      return;
+    }
+
+    setLiveNow(Date.now());
+    const intervalId = setInterval(() => {
+      setLiveNow(Date.now());
+    }, 60000);
+
+    return () => clearInterval(intervalId);
+  }, [currentHomeShift?.id, currentHomeShift?.status]);
+
+  useEffect(() => {
     if (!selectedShiftId && currentHomeShift?.id) {
       setSelectedShiftId(currentHomeShift.id);
       return;
@@ -556,6 +611,86 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
   ]
     .sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime())
     .slice(0, 4);
+  const currentHomeShiftAttendance = currentHomeShift?.id ? attendanceByShiftId[currentHomeShift.id] : undefined;
+  const myApplications = applications
+    .filter((application) => application.guardId === user.guardId)
+    .sort((a, b) => new Date(b.appliedAt).getTime() - new Date(a.appliedAt).getTime());
+  const openJobs = jobs.filter(
+    (job) => !myApplications.some((application) => application.jobId === job.id),
+  );
+  const currentHomeShiftTimeline = [
+    ...localTimelineEvents.filter((event) => event.shiftId === currentHomeShift?.id),
+    ...dailyLogs
+      .filter((entry) => entry.shift?.id === currentHomeShift?.id)
+      .map((entry) => ({
+        id: `home-log-${entry.id}`,
+        title: entry.logType === 'check_call' ? 'Check call recorded' : 'Log added',
+        message: entry.message,
+        occurredAt: entry.createdAt,
+      })),
+    ...incidents
+      .filter((entry) => entry.shift?.id === currentHomeShift?.id)
+      .map((entry) => ({
+        id: `home-incident-${entry.id}`,
+        title: 'Incident raised',
+        message: entry.notes || entry.title,
+        occurredAt: entry.createdAt,
+      })),
+    ...(currentHomeShiftAttendance?.checkInAt
+      ? [
+          {
+            id: `home-check-in-${currentHomeShift?.id}`,
+            title: 'Checked in',
+            message: 'Shift started successfully.',
+            occurredAt: currentHomeShiftAttendance.checkInAt,
+          },
+        ]
+      : []),
+    ...(currentHomeShiftAttendance?.checkOutAt
+      ? [
+          {
+            id: `home-check-out-${currentHomeShift?.id}`,
+            title: 'Checked out',
+            message: 'Shift completed.',
+            occurredAt: currentHomeShiftAttendance.checkOutAt,
+          },
+        ]
+      : []),
+  ]
+    .sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime())
+    .slice(0, 4);
+
+  function renderHomeQuickActions() {
+    return (
+      <FeatureCard
+        title="Live Shift Actions"
+        subtitle="Use these during the active shift without leaving Home."
+        style={styles.quickActionCard}
+      >
+        <View style={styles.quickActionGrid}>
+          <Pressable style={styles.quickActionButton} onPress={() => setQuickActionModal('log')}>
+            <Text style={styles.quickActionIcon}>LOG</Text>
+            <Text style={styles.quickActionText}>Add Log</Text>
+          </Pressable>
+          <Pressable style={styles.quickActionButton} onPress={() => setQuickActionModal('incident')}>
+            <Text style={styles.quickActionIcon}>INC</Text>
+            <Text style={styles.quickActionText}>Incident</Text>
+          </Pressable>
+          <Pressable style={styles.quickActionButton} onPress={() => setQuickActionModal('welfare')}>
+            <Text style={styles.quickActionIcon}>CARE</Text>
+            <Text style={styles.quickActionText}>Welfare</Text>
+          </Pressable>
+          <Pressable
+            style={[styles.quickActionButton, styles.quickActionDanger]}
+            onPress={() => setQuickActionModal('panic')}
+          >
+            <Text style={styles.quickActionIcon}>SOS</Text>
+            <Text style={styles.quickActionDangerText}>Panic</Text>
+          </Pressable>
+        </View>
+      </FeatureCard>
+    );
+  }
 
   function getHelperLine(shift: Shift | null) {
     if (!shift) return 'No urgent actions.';
@@ -572,7 +707,9 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
           shift.checkCallIntervalMinutes * 60 * 1000,
       );
       const minutes = Math.max(0, Math.round((nextDueAt.getTime() - Date.now()) / 60000));
-      return minutes > 0 ? `Next check call due in ${minutes} min.` : 'Check call due now.';
+      if (minutes <= 0) return 'Check call overdue';
+      if (minutes <= 10) return `Check call due in ${minutes} min.`;
+      return 'All tasks up to date.';
     }
     if (status === 'completed') return 'No urgent actions.';
     if (status === 'missed') return 'Shift missed.';
@@ -658,7 +795,15 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>
-          {activeTab === 'home' ? 'My Shift' : activeTab === 'offers' ? 'Shift Offers' : activeTab === 'history' ? 'History' : 'Profile'}
+          {activeTab === 'home'
+            ? 'My Shift'
+            : activeTab === 'offers'
+              ? 'Shift Offers'
+              : activeTab === 'jobs'
+                ? 'Jobs'
+                : activeTab === 'history'
+                  ? 'History'
+                  : 'Profile'}
         </Text>
       </View>
 
@@ -685,83 +830,128 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
         </View>
       ) : null}
 
-      {activeShift ? (
-        <View style={styles.quickActionShell}>
-          <Text style={styles.quickActionTitle}>Active Shift Quick Actions</Text>
-          <Text style={styles.quickActionSubtitle}>Fast field actions for your live shift.</Text>
-          <View style={styles.quickActionGrid}>
-            <Pressable style={styles.quickActionButton} onPress={() => setQuickActionModal('log')}>
-              <Text style={styles.quickActionIcon}>LOG</Text>
-              <Text style={styles.quickActionText}>Add Log</Text>
-            </Pressable>
-            <Pressable style={styles.quickActionButton} onPress={() => setQuickActionModal('incident')}>
-              <Text style={styles.quickActionIcon}>INC</Text>
-              <Text style={styles.quickActionText}>Incident</Text>
-            </Pressable>
-            <Pressable style={styles.quickActionButton} onPress={() => setQuickActionModal('welfare')}>
-              <Text style={styles.quickActionIcon}>CARE</Text>
-              <Text style={styles.quickActionText}>Welfare</Text>
-            </Pressable>
-            <Pressable style={[styles.quickActionButton, styles.quickActionDanger]} onPress={() => setQuickActionModal('panic')}>
-              <Text style={styles.quickActionIcon}>SOS</Text>
-              <Text style={styles.quickActionDangerText}>Panic</Text>
-            </Pressable>
-          </View>
-        </View>
-      ) : null}
-
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.content}>
         {activeTab === 'home' ? (
-          <FeatureCard
-            title="My Shift"
-            subtitle={currentHomeShift ? 'The single most important shift on your device right now.' : 'No active shift requiring action.'}
-            style={styles.primaryCard}
-          >
-            {currentHomeShift ? (
-              <>
-                <View style={styles.cardTopRow}>
-                  <View style={styles.flexGrow}>
-                    <Text style={styles.siteName}>{currentHomeShift.siteName}</Text>
-                    <Text style={styles.shiftDate}>{formatDateLabel(currentHomeShift.start)}</Text>
-                    <Text style={styles.shiftTime}>
-                      {formatTimeLabel(currentHomeShift.start)} - {formatTimeLabel(currentHomeShift.end)}
-                    </Text>
+          <>
+            <FeatureCard
+              title="My Shift"
+              subtitle={currentHomeShift ? 'The single most important shift on your device right now.' : 'No active shift requiring action.'}
+              style={styles.primaryCard}
+            >
+              {currentHomeShift ? (
+                <>
+                  <View style={styles.cardTopRow}>
+                    <View style={styles.flexGrow}>
+                      <Text style={styles.siteName}>{currentHomeShift.siteName}</Text>
+                      <Text style={styles.shiftDate}>{formatDateLabel(currentHomeShift.start)}</Text>
+                      <Text style={styles.shiftTime}>
+                        {formatTimeLabel(currentHomeShift.start)} - {formatTimeLabel(currentHomeShift.end)}
+                      </Text>
+                      {normalizeShiftLifecycleStatus(currentHomeShift.status) === 'in_progress' ? (
+                        <View style={styles.liveBanner}>
+                          <View style={styles.liveDot} />
+                          <Text style={styles.liveBannerText}>LIVE</Text>
+                        </View>
+                      ) : null}
+                    </View>
+                    <ShiftStatusBadge status={currentHomeShift.status} />
                   </View>
-                  <ShiftStatusBadge status={currentHomeShift.status} />
-                </View>
-                <Text style={styles.helperLine}>{getHelperLine(currentHomeShift)}</Text>
-                {getPrimaryActionLabel(currentHomeShift.status) ? (
-                  <Pressable
-                    style={[styles.primaryActionButton, attendanceBusyShiftId === currentHomeShift.id && styles.buttonDisabled]}
-                    onPress={handlePrimaryHomeAction}
-                    disabled={attendanceBusyShiftId === currentHomeShift.id}
+                  <Text
+                    style={[
+                      styles.helperLine,
+                      normalizeShiftLifecycleStatus(currentHomeShift.status) === 'in_progress' &&
+                      getHelperLine(currentHomeShift).includes('overdue')
+                        ? styles.helperLineUrgent
+                        : normalizeShiftLifecycleStatus(currentHomeShift.status) === 'in_progress' &&
+                            getHelperLine(currentHomeShift).includes('due in')
+                          ? styles.helperLineWarning
+                          : null,
+                    ]}
                   >
-                    <Text style={styles.primaryActionText}>
-                      {attendanceBusyShiftId === currentHomeShift.id
-                        ? normalizeShiftLifecycleStatus(currentHomeShift.status) === 'ready'
-                          ? 'Starting...'
-                          : 'Ending...'
-                        : getPrimaryActionLabel(currentHomeShift.status)}
-                    </Text>
-                  </Pressable>
-                ) : (
-                  <Pressable
-                    style={styles.secondarySummaryButton}
-                    onPress={() => {
-                      setHistorySummaryShiftId(currentHomeShift.id);
-                      if (normalizeShiftLifecycleStatus(currentHomeShift.status) === 'completed') {
-                        setActiveTab('history');
-                      }
-                    }}
-                  >
-                    <Text style={styles.secondarySummaryButtonText}>
-                      {getReadOnlyHomeActionLabel(currentHomeShift.status)}
-                    </Text>
-                  </Pressable>
-                )}
-              </>
+                    {getHelperLine(currentHomeShift)}
+                  </Text>
+                  {getPrimaryActionLabel(currentHomeShift.status) ? (
+                    <Pressable
+                      style={[styles.primaryActionButton, attendanceBusyShiftId === currentHomeShift.id && styles.buttonDisabled]}
+                      onPress={handlePrimaryHomeAction}
+                      disabled={attendanceBusyShiftId === currentHomeShift.id}
+                    >
+                      <Text style={styles.primaryActionText}>
+                        {attendanceBusyShiftId === currentHomeShift.id
+                          ? normalizeShiftLifecycleStatus(currentHomeShift.status) === 'ready'
+                            ? 'Starting...'
+                            : 'Ending...'
+                          : getPrimaryActionLabel(currentHomeShift.status)}
+                      </Text>
+                    </Pressable>
+                  ) : (
+                    <Pressable
+                      style={styles.secondarySummaryButton}
+                      onPress={() => {
+                        setHistorySummaryShiftId(currentHomeShift.id);
+                        if (normalizeShiftLifecycleStatus(currentHomeShift.status) === 'completed') {
+                          setActiveTab('history');
+                        }
+                      }}
+                    >
+                      <Text style={styles.secondarySummaryButtonText}>
+                        {getReadOnlyHomeActionLabel(currentHomeShift.status)}
+                      </Text>
+                    </Pressable>
+                  )}
+
+                  {normalizeShiftLifecycleStatus(currentHomeShift.status) === 'in_progress' ? (
+                    <View style={styles.liveStatusBlock}>
+                      <View style={styles.liveStatusItem}>
+                        <Text style={styles.liveStatusLabel}>Checked in</Text>
+                        <Text style={styles.liveStatusValue}>
+                          {currentHomeShiftAttendance?.checkInAt
+                            ? formatTimeLabel(currentHomeShiftAttendance.checkInAt)
+                            : 'Pending'}
+                        </Text>
+                      </View>
+                      <View style={styles.liveStatusItem}>
+                        <Text style={styles.liveStatusLabel}>Duration</Text>
+                        <Text style={styles.liveStatusValue}>
+                          {formatDurationLabel(
+                            currentHomeShiftAttendance?.checkInAt || currentHomeShift.start,
+                            currentHomeShiftAttendance?.checkOutAt,
+                            liveNow,
+                          )}
+                        </Text>
+                      </View>
+                    </View>
+                  ) : null}
+                </>
+              ) : (
+                <Text style={styles.helperText}>No active shift requiring action.</Text>
+              )}
+            </FeatureCard>
+
+            {normalizeShiftLifecycleStatus(currentHomeShift?.status) === 'in_progress'
+              ? renderHomeQuickActions()
+              : null}
+          </>
+        ) : null}
+
+        {activeTab === 'home' && normalizeShiftLifecycleStatus(currentHomeShift?.status) === 'in_progress' ? (
+          <FeatureCard
+            title="Recent Activity"
+            subtitle="Latest updates for this live shift."
+          >
+            {currentHomeShiftTimeline.length === 0 ? (
+              <Text style={styles.helperText}>No activity recorded yet.</Text>
             ) : (
-              <Text style={styles.helperText}>No active shift requiring action.</Text>
+              currentHomeShiftTimeline.map((entry) => (
+                <View key={entry.id} style={styles.activityRow}>
+                  <View style={styles.activityBullet} />
+                  <View style={styles.flexGrow}>
+                    <Text style={styles.activityTitle}>{entry.title}</Text>
+                    <Text style={styles.metaText}>{entry.message}</Text>
+                  </View>
+                  <Text style={styles.activityTime}>{formatTimeLabel(entry.occurredAt)}</Text>
+                </View>
+              ))
             )}
           </FeatureCard>
         ) : null}
@@ -803,6 +993,56 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
               ))
             )}
           </FeatureCard>
+        ) : null}
+
+        {activeTab === 'jobs' ? (
+          <>
+            <FeatureCard title="Open Jobs" subtitle={openJobs.length ? 'Available jobs you can apply for.' : 'No open jobs right now'}>
+              {openJobs.length === 0 ? (
+                <Text style={styles.helperText}>No open jobs right now.</Text>
+              ) : (
+                openJobs.map((job) => (
+                  <View key={job.id} style={styles.listCard}>
+                    <Text style={styles.cardTitle}>{job.title}</Text>
+                    <Text style={styles.metaText}>{job.site?.name || job.company?.name || 'Location pending'}</Text>
+                    <Text style={styles.metaText} numberOfLines={2}>
+                      {job.description?.trim() || 'Shift details available when you open the job.'}
+                    </Text>
+                    <Pressable
+                      style={[styles.secondaryActionButton, applyingJobId === job.id && styles.buttonDisabled]}
+                      onPress={() => handleApplyToJob(job.id)}
+                      disabled={applyingJobId === job.id}
+                    >
+                      <Text style={styles.secondaryActionButtonText}>
+                        {applyingJobId === job.id ? 'Applying...' : 'Apply'}
+                      </Text>
+                    </Pressable>
+                  </View>
+                ))
+              )}
+            </FeatureCard>
+
+            <FeatureCard
+              title="My Applications"
+              subtitle={myApplications.length ? `${myApplications.length} submitted` : 'No applications yet'}
+            >
+              {myApplications.length === 0 ? (
+                <Text style={styles.helperText}>Your submitted applications will appear here.</Text>
+              ) : (
+                myApplications.map((application) => (
+                  <View key={application.id} style={styles.simpleRow}>
+                    <View style={styles.flexGrow}>
+                      <Text style={styles.cardTitle}>{application.job?.title || `Job #${application.jobId}`}</Text>
+                      <Text style={styles.metaText}>
+                        {application.job?.site?.name || application.job?.company?.name || 'Location pending'}
+                      </Text>
+                    </View>
+                    <Text style={styles.applicationStatus}>{application.status}</Text>
+                  </View>
+                ))
+              )}
+            </FeatureCard>
+          </>
         ) : null}
 
         {activeTab === 'history' ? (
@@ -900,6 +1140,7 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
         {([
           ['home', 'Home'],
           ['offers', 'Offers'],
+          ['jobs', 'Jobs'],
           ['history', 'History'],
           ['profile', 'Profile'],
         ] as Array<[GuardTab, string]>).map(([tab, label]) => (
@@ -1075,11 +1316,60 @@ const styles = StyleSheet.create({
   shiftDate: { color: '#4B5563', fontWeight: '600' },
   shiftTime: { color: '#111827', fontSize: 16, fontWeight: '700' },
   helperLine: { color: '#4B5563', lineHeight: 20 },
+  helperLineWarning: { color: '#B45309', fontWeight: '700' },
+  helperLineUrgent: { color: '#B91C1C', fontWeight: '800' },
   helperText: { color: '#4B5563', lineHeight: 20 },
+  liveBanner: {
+    marginTop: 10,
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#DCFCE7',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  liveDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 999,
+    backgroundColor: '#16A34A',
+  },
+  liveBannerText: {
+    color: '#166534',
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.6,
+  },
   statusBadge: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, alignSelf: 'flex-start' },
   statusBadgeText: { fontSize: 12, fontWeight: '700', textTransform: 'capitalize' },
   primaryActionButton: { backgroundColor: '#111827', borderRadius: 18, minHeight: 56, paddingHorizontal: 16, paddingVertical: 16, alignItems: 'center', justifyContent: 'center' },
   primaryActionText: { color: '#FFFFFF', fontSize: 16, fontWeight: '800' },
+  liveStatusBlock: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 12,
+  },
+  liveStatusItem: {
+    flex: 1,
+    backgroundColor: '#F9FAFB',
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    gap: 4,
+  },
+  liveStatusLabel: {
+    color: '#6B7280',
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  liveStatusValue: {
+    color: '#111827',
+    fontSize: 16,
+    fontWeight: '800',
+  },
   secondarySummaryButton: {
     alignSelf: 'stretch',
     borderRadius: 16,
@@ -1091,9 +1381,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   secondarySummaryButtonText: { color: '#111827', fontWeight: '700', fontSize: 15 },
-  quickActionShell: {
-    marginHorizontal: 16,
-    marginBottom: 10,
+  quickActionCard: {
     borderRadius: 20,
     backgroundColor: '#111827',
     borderWidth: 1,
@@ -1142,6 +1430,24 @@ const styles = StyleSheet.create({
   timesheetHint: { color: '#6B7280', fontSize: 12, lineHeight: 18 },
   cardTitle: { color: '#111827', fontWeight: '700', fontSize: 16 },
   metaText: { color: '#6B7280', fontSize: 13, lineHeight: 18 },
+  activityRow: {
+    borderTopWidth: 1,
+    borderTopColor: '#E5E7EB',
+    paddingTop: 12,
+    paddingBottom: 4,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  activityBullet: {
+    width: 8,
+    height: 8,
+    borderRadius: 999,
+    backgroundColor: '#16A34A',
+    marginTop: 5,
+  },
+  activityTitle: { color: '#111827', fontWeight: '700' },
+  activityTime: { color: '#6B7280', fontSize: 12, fontWeight: '700' },
   simpleRow: { borderTopWidth: 1, borderTopColor: '#E5E7EB', paddingTop: 12, paddingBottom: 2, flexDirection: 'row', alignItems: 'center', gap: 12 },
   listCard: { borderTopWidth: 1, borderTopColor: '#E5E7EB', paddingTop: 12, gap: 8 },
   applicationStatus: { color: '#111827', fontWeight: '700', textTransform: 'capitalize' },
