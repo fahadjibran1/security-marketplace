@@ -6,12 +6,9 @@ import {
   checkOutShift,
   createDailyLog,
   createIncident,
-  createJobApplication,
   createSafetyAlert,
   formatApiErrorMessage,
   getMyGuard,
-  listJobApplications,
-  listJobs,
   listMyAttendance,
   listMyDailyLogs,
   listMyIncidents,
@@ -28,8 +25,6 @@ import {
   AuthUser,
   DailyLog,
   Incident,
-  Job,
-  JobApplication,
   Shift,
   Timesheet,
 } from '../types/models';
@@ -148,8 +143,6 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [dailyLogs, setDailyLogs] = useState<DailyLog[]>([]);
   const [timesheets, setTimesheets] = useState<Timesheet[]>([]);
-  const [jobs, setJobs] = useState<Job[]>([]);
-  const [applications, setApplications] = useState<JobApplication[]>([]);
   const [selectedShiftId, setSelectedShiftId] = useState<number | null>(null);
   const [historySummaryShiftId, setHistorySummaryShiftId] = useState<number | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -160,7 +153,6 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
   const [submittingIncident, setSubmittingIncident] = useState(false);
   const [submittingAlertType, setSubmittingAlertType] = useState<'welfare' | 'panic' | null>(null);
   const [submittingTimesheetId, setSubmittingTimesheetId] = useState<number | null>(null);
-  const [applyingJobId, setApplyingJobId] = useState<number | null>(null);
   const [respondingShiftId, setRespondingShiftId] = useState<number | null>(null);
   const [dailyLogMessage, setDailyLogMessage] = useState('');
   const [incidentMessage, setIncidentMessage] = useState('');
@@ -202,7 +194,7 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
     try {
       setLoading(true);
       setLoadError(null);
-      const [myGuard, shiftRows, attendanceRows, incidentRows, dailyLogRows, timesheetRows, jobRows, applicationRows] =
+      const [myGuard, shiftRows, attendanceRows, incidentRows, dailyLogRows, timesheetRows] =
         await Promise.all([
           getMyGuard(),
           listMyShifts(),
@@ -210,8 +202,6 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
           listMyIncidents(),
           listMyDailyLogs(),
           listMyTimesheets(),
-          listJobs(),
-          listJobApplications(),
         ]);
 
       setFullName(myGuard.fullName || '');
@@ -224,8 +214,6 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
       setIncidents(incidentRows);
       setDailyLogs(dailyLogRows);
       setTimesheets(timesheetRows);
-      setJobs(jobRows.filter((job) => (job.status || '').toLowerCase() === 'open'));
-      setApplications(applicationRows);
     } catch (error) {
       const message = formatApiErrorMessage(error, 'Failed to load guard dashboard.');
       setLoadError(message);
@@ -476,21 +464,6 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
     }
   }
 
-  async function handleApplyToJob(jobId: number) {
-    try {
-      setApplyingJobId(jobId);
-      await createJobApplication({ jobId });
-      await loadData();
-      pushFeedback('success', 'Application sent', 'Your application has been submitted.');
-    } catch (error) {
-      const message = formatApiErrorMessage(error, 'Unable to apply for this job.');
-      pushFeedback('error', 'Application failed', message);
-      showAlert('Application failed', message);
-    } finally {
-      setApplyingJobId(null);
-    }
-  }
-
   useEffect(() => {
     loadData();
   }, [user.guardId]);
@@ -557,13 +530,6 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
       ['completed', 'missed', 'cancelled', 'rejected'].includes(normalizeShiftLifecycleStatus(shift.status)),
     )
     .sort((a, b) => new Date(b.end).getTime() - new Date(a.end).getTime());
-  const openJobs = jobs.filter(
-    (job) => !applications.some((application) => application.jobId === job.id && application.guardId === user.guardId),
-  );
-  const myApplications = applications
-    .filter((application) => application.guardId === user.guardId)
-    .sort((a, b) => new Date(b.appliedAt).getTime() - new Date(a.appliedAt).getTime());
-
   const selectedShiftTimeline = [
     ...localTimelineEvents.filter((event) => event.shiftId === selectedShift?.id),
     ...selectedShiftLogs.map((entry) => ({
@@ -601,11 +567,37 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
       const minutes = Math.max(0, Math.round((nextDueAt.getTime() - Date.now()) / 60000));
       return minutes > 0 ? `Next check call due in ${minutes} min.` : 'Check call due now.';
     }
-    if (status === 'completed') return 'Shift completed.';
-    if (status === 'missed') return 'Missed shift. Await company follow-up.';
-    if (status === 'rejected') return 'You rejected this shift.';
+    if (status === 'completed') return 'No urgent actions.';
+    if (status === 'missed') return 'Shift missed.';
+    if (status === 'rejected') return 'Offer declined.';
     if (status === 'cancelled') return 'Shift cancelled.';
     return 'No urgent actions.';
+  }
+
+  function getReadOnlyHomeActionLabel(status?: string | null) {
+    const normalized = normalizeShiftLifecycleStatus(status);
+    if (normalized === 'completed') return 'View Summary';
+    if (normalized === 'missed') return 'Missed Shift';
+    if (normalized === 'rejected') return 'Offer Declined';
+    if (normalized === 'cancelled') return 'Shift Cancelled';
+    return 'View Shift';
+  }
+
+  function getTimesheetSubmissionState(timesheet: Timesheet) {
+    const hours = Number(timesheet.hoursWorked);
+    const hasValidHours = Number.isFinite(hours) && hours > 0;
+    const attendanceState = attendanceByShiftId[timesheet.shiftId];
+    const hasCheckedOut = Boolean(attendanceState?.checkOutAt || timesheet.actualCheckOutAt);
+
+    if (!hasCheckedOut) {
+      return { canSubmit: false, reason: 'Timesheet available after shift end' };
+    }
+
+    if (!hasValidHours) {
+      return { canSubmit: false, reason: 'Worked hours not ready yet' };
+    }
+
+    return { canSubmit: true, reason: '' };
   }
 
   function handlePrimaryHomeAction() {
@@ -689,6 +681,7 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
       {activeShift ? (
         <View style={styles.quickActionShell}>
           <Text style={styles.quickActionTitle}>Active Shift Quick Actions</Text>
+          <Text style={styles.quickActionSubtitle}>Use these during the shift without hunting through other screens.</Text>
           <View style={styles.quickActionGrid}>
             <Pressable style={styles.quickActionButton} onPress={() => setQuickActionModal('log')}>
               <Text style={styles.quickActionIcon}>📝</Text>
@@ -745,9 +738,19 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
                     </Text>
                   </Pressable>
                 ) : (
-                  <View style={styles.readOnlyChip}>
-                    <Text style={styles.readOnlyChipText}>Read only</Text>
-                  </View>
+                  <Pressable
+                    style={styles.secondarySummaryButton}
+                    onPress={() => {
+                      setHistorySummaryShiftId(currentHomeShift.id);
+                      if (normalizeShiftLifecycleStatus(currentHomeShift.status) === 'completed') {
+                        setActiveTab('history');
+                      }
+                    }}
+                  >
+                    <Text style={styles.secondarySummaryButtonText}>
+                      {getReadOnlyHomeActionLabel(currentHomeShift.status)}
+                    </Text>
+                  </Pressable>
                 )}
               </>
             ) : (
@@ -757,78 +760,42 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
         ) : null}
 
         {activeTab === 'offers' ? (
-          <>
-            <FeatureCard title="Shift Offers" subtitle={shiftOffers.length ? 'Review each offer without live-shift clutter.' : 'No shift offers right now'}>
-              {shiftOffers.length === 0 ? (
-                <Text style={styles.helperText}>No shift offers right now.</Text>
-              ) : (
-                shiftOffers.map((shift) => (
-                  <View key={shift.id} style={styles.offerCard}>
-                    <View style={styles.cardTopRow}>
-                      <View style={styles.flexGrow}>
-                        <Text style={styles.cardTitle}>{shift.siteName}</Text>
-                        <Text style={styles.metaText}>{formatDateLabel(shift.start)}</Text>
-                        <Text style={styles.metaText}>
-                          {formatTimeLabel(shift.start)} - {formatTimeLabel(shift.end)}
-                        </Text>
-                      </View>
-                      <ShiftStatusBadge status={shift.status} />
+          <FeatureCard title="Shift Offers" subtitle={shiftOffers.length ? 'Review each offer without live-shift clutter.' : 'No shift offers right now'}>
+            {shiftOffers.length === 0 ? (
+              <Text style={styles.helperText}>No shift offers right now.</Text>
+            ) : (
+              shiftOffers.map((shift) => (
+                <View key={shift.id} style={styles.offerCard}>
+                  <View style={styles.cardTopRow}>
+                    <View style={styles.flexGrow}>
+                      <Text style={styles.cardTitle}>{shift.siteName}</Text>
+                      <Text style={styles.metaText}>{formatDateLabel(shift.start)}</Text>
+                      <Text style={styles.metaText}>
+                        {formatTimeLabel(shift.start)} - {formatTimeLabel(shift.end)}
+                      </Text>
                     </View>
-                    <View style={styles.offerActionRow}>
-                      <Pressable
-                        style={[styles.primaryHalfButton, respondingShiftId === shift.id && styles.buttonDisabled]}
-                        onPress={() => handleRespondToShift(shift.id, 'accepted')}
-                        disabled={respondingShiftId === shift.id}
-                      >
-                        <Text style={styles.primaryHalfButtonText}>{respondingShiftId === shift.id ? 'Updating...' : 'Accept'}</Text>
-                      </Pressable>
-                      <Pressable
-                        style={[styles.secondaryHalfButton, respondingShiftId === shift.id && styles.buttonDisabled]}
-                        onPress={() => handleRespondToShift(shift.id, 'rejected')}
-                        disabled={respondingShiftId === shift.id}
-                      >
-                        <Text style={styles.secondaryHalfButtonText}>{respondingShiftId === shift.id ? 'Updating...' : 'Reject'}</Text>
-                      </Pressable>
-                    </View>
+                    <ShiftStatusBadge status={shift.status} />
                   </View>
-                ))
-              )}
-            </FeatureCard>
-            <FeatureCard title="Open Jobs" subtitle={openJobs.length ? 'Optional job applications still available.' : 'No open jobs right now'}>
-              {openJobs.length === 0 ? (
-                <Text style={styles.helperText}>No open jobs right now.</Text>
-              ) : (
-                openJobs.slice(0, 4).map((job) => (
-                  <View key={job.id} style={styles.listCard}>
-                    <Text style={styles.cardTitle}>{job.title}</Text>
-                    <Text style={styles.metaText}>{job.site?.name || 'Site to be confirmed'}</Text>
+                  <View style={styles.offerActionRow}>
                     <Pressable
-                      style={[styles.secondaryActionButton, applyingJobId === job.id && styles.buttonDisabled]}
-                      onPress={() => handleApplyToJob(job.id)}
-                      disabled={applyingJobId === job.id}
+                      style={[styles.primaryHalfButton, respondingShiftId === shift.id && styles.buttonDisabled]}
+                      onPress={() => handleRespondToShift(shift.id, 'accepted')}
+                      disabled={respondingShiftId === shift.id}
                     >
-                      <Text style={styles.secondaryActionButtonText}>{applyingJobId === job.id ? 'Applying...' : 'Apply'}</Text>
+                      <Text style={styles.primaryHalfButtonText}>{respondingShiftId === shift.id ? 'Updating...' : 'Accept'}</Text>
+                    </Pressable>
+                    <Pressable
+                      style={[styles.secondaryHalfButton, respondingShiftId === shift.id && styles.buttonDisabled]}
+                      onPress={() => handleRespondToShift(shift.id, 'rejected')}
+                      disabled={respondingShiftId === shift.id}
+                    >
+                      <Text style={styles.secondaryHalfButtonText}>{respondingShiftId === shift.id ? 'Updating...' : 'Reject'}</Text>
                     </Pressable>
                   </View>
-                ))
-              )}
-            </FeatureCard>
-            <FeatureCard title="My Applications" subtitle={`${myApplications.length} submitted`}>
-              {myApplications.length === 0 ? (
-                <Text style={styles.helperText}>No applications submitted yet.</Text>
-              ) : (
-                myApplications.slice(0, 4).map((application) => (
-                  <View key={application.id} style={styles.simpleRow}>
-                    <View style={styles.flexGrow}>
-                      <Text style={styles.cardTitle}>{application.job?.title || `Job #${application.jobId}`}</Text>
-                      <Text style={styles.metaText}>{new Date(application.appliedAt).toLocaleString()}</Text>
-                    </View>
-                    <Text style={styles.applicationStatus}>{application.status.replace('_', ' ')}</Text>
-                  </View>
-                ))
-              )}
-            </FeatureCard>
-          </>
+                </View>
+              ))
+            )}
+          </FeatureCard>
         ) : null}
 
         {activeTab === 'history' ? (
@@ -859,17 +826,28 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
                     <Text style={styles.cardTitle}>{timesheet.shift?.siteName || `Shift #${timesheet.shiftId}`}</Text>
                     <Text style={styles.metaText}>{timesheet.hoursWorked} hours</Text>
                     <Text style={styles.metaText}>Status: {timesheet.approvalStatus}</Text>
-                    {timesheet.approvalStatus === 'draft' ? (
-                      <Pressable
-                        style={[styles.secondaryActionButton, submittingTimesheetId === timesheet.id && styles.buttonDisabled]}
-                        onPress={() => handleSubmitTimesheet(timesheet)}
-                        disabled={submittingTimesheetId === timesheet.id}
-                      >
-                        <Text style={styles.secondaryActionButtonText}>
-                          {submittingTimesheetId === timesheet.id ? 'Submitting...' : 'Submit Timesheet'}
-                        </Text>
-                      </Pressable>
-                    ) : null}
+                    {timesheet.approvalStatus === 'draft' ? (() => {
+                      const submissionState = getTimesheetSubmissionState(timesheet);
+                      return (
+                        <>
+                          <Pressable
+                            style={[
+                              styles.secondaryActionButton,
+                              (!submissionState.canSubmit || submittingTimesheetId === timesheet.id) && styles.buttonDisabled,
+                            ]}
+                            onPress={() => handleSubmitTimesheet(timesheet)}
+                            disabled={!submissionState.canSubmit || submittingTimesheetId === timesheet.id}
+                          >
+                            <Text style={styles.secondaryActionButtonText}>
+                              {submittingTimesheetId === timesheet.id ? 'Submitting...' : 'Submit Timesheet'}
+                            </Text>
+                          </Pressable>
+                          {!submissionState.canSubmit ? (
+                            <Text style={styles.timesheetHint}>{submissionState.reason}</Text>
+                          ) : null}
+                        </>
+                      );
+                    })() : null}
                   </View>
                 ))
               )}
@@ -1095,14 +1073,49 @@ const styles = StyleSheet.create({
   statusBadgeText: { fontSize: 12, fontWeight: '700', textTransform: 'capitalize' },
   primaryActionButton: { backgroundColor: '#111827', borderRadius: 18, minHeight: 56, paddingHorizontal: 16, paddingVertical: 16, alignItems: 'center', justifyContent: 'center' },
   primaryActionText: { color: '#FFFFFF', fontSize: 16, fontWeight: '800' },
-  readOnlyChip: { alignSelf: 'flex-start', backgroundColor: '#E5E7EB', borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8 },
-  readOnlyChipText: { color: '#374151', fontWeight: '700' },
-  quickActionShell: { marginHorizontal: 16, marginBottom: 10, borderRadius: 18, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E5E7EB', padding: 14, gap: 10 },
-  quickActionTitle: { fontSize: 16, fontWeight: '800', color: '#111827' },
+  secondarySummaryButton: {
+    alignSelf: 'stretch',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    backgroundColor: '#FFFFFF',
+    minHeight: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  secondarySummaryButtonText: { color: '#111827', fontWeight: '700', fontSize: 15 },
+  quickActionShell: {
+    marginHorizontal: 16,
+    marginBottom: 10,
+    borderRadius: 20,
+    backgroundColor: '#111827',
+    borderWidth: 1,
+    borderColor: '#111827',
+    padding: 16,
+    gap: 10,
+    shadowColor: '#000',
+    shadowOpacity: 0.16,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 4,
+  },
+  quickActionTitle: { fontSize: 16, fontWeight: '800', color: '#FFFFFF' },
+  quickActionSubtitle: { color: '#D1D5DB', lineHeight: 18 },
   quickActionGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  quickActionButton: { width: '48%', minHeight: 88, borderRadius: 18, backgroundColor: '#111827', alignItems: 'center', justifyContent: 'center', gap: 6, paddingHorizontal: 12 },
-  quickActionDanger: { backgroundColor: '#991B1B' },
-  quickActionIcon: { fontSize: 24 },
+  quickActionButton: {
+    width: '48%',
+    minHeight: 94,
+    borderRadius: 18,
+    backgroundColor: '#1F2937',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: '#374151',
+  },
+  quickActionDanger: { backgroundColor: '#991B1B', borderColor: '#B91C1C' },
+  quickActionIcon: { fontSize: 24, color: '#FFFFFF', fontWeight: '800' },
   quickActionText: { color: '#FFFFFF', fontWeight: '800', fontSize: 15 },
   quickActionDangerText: { color: '#FFFFFF', fontWeight: '800', fontSize: 15 },
   offerCard: { borderTopWidth: 1, borderTopColor: '#E5E7EB', paddingTop: 12, gap: 12 },
@@ -1113,6 +1126,7 @@ const styles = StyleSheet.create({
   secondaryHalfButtonText: { color: '#111827', fontWeight: '700' },
   secondaryActionButton: { alignSelf: 'flex-start', backgroundColor: '#E5E7EB', borderRadius: 14, paddingHorizontal: 14, paddingVertical: 12, minHeight: 46, alignItems: 'center', justifyContent: 'center' },
   secondaryActionButtonText: { color: '#111827', fontWeight: '700' },
+  timesheetHint: { color: '#6B7280', fontSize: 12, lineHeight: 18 },
   cardTitle: { color: '#111827', fontWeight: '700', fontSize: 16 },
   metaText: { color: '#6B7280', fontSize: 13, lineHeight: 18 },
   simpleRow: { borderTopWidth: 1, borderTopColor: '#E5E7EB', paddingTop: 12, paddingBottom: 2, flexDirection: 'row', alignItems: 'center', gap: 12 },
