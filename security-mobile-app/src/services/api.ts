@@ -377,6 +377,10 @@ export function listMyAttendance() {
   return request<AttendanceEvent[]>('/attendance/mine');
 }
 
+export function listCompanyAttendance() {
+  return request<AttendanceEvent[]>('/attendance/company');
+}
+
 export function checkInShift(payload: RecordAttendancePayload) {
   return request<AttendanceEvent>('/attendance/check-in', {
     method: 'POST',

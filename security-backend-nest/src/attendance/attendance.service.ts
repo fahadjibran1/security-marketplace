@@ -34,6 +34,12 @@ export class AttendanceService {
   }
 
   async findForCompany(user: JwtPayload): Promise<AttendanceEvent[]> {
+    console.log('[AttendanceService] findForCompany reached', {
+      sub: user?.sub,
+      role: user?.role,
+      status: user?.status,
+    });
+
     if (user.role === UserRole.ADMIN) {
       return this.attendanceRepo.find({
         order: { occurredAt: 'DESC' },
@@ -41,13 +47,27 @@ export class AttendanceService {
     }
 
     if (!isCompanyRole(user.role)) {
+      console.log('[AttendanceService] rejecting non-company role', {
+        sub: user?.sub,
+        role: user?.role,
+      });
       throw new NotFoundException('Company not found');
     }
 
     const company = await this.companyService.findByUserId(user.sub);
     if (!company) {
+      console.log('[AttendanceService] company lookup failed', {
+        sub: user?.sub,
+        role: user?.role,
+      });
       throw new NotFoundException('Company not found');
     }
+
+    console.log('[AttendanceService] company attendance scope resolved', {
+      sub: user?.sub,
+      role: user?.role,
+      companyId: company.id,
+    });
 
     return this.attendanceRepo.find({
       where: { shift: { company: { id: company.id } } },

@@ -17,6 +17,12 @@ export default function App() {
       try {
         const storedSession = await loadStoredSession();
         if (storedSession) {
+          console.log('[App] restoring stored session', {
+            userId: storedSession.user.id,
+            role: storedSession.user.role,
+            email: storedSession.user.email,
+            hasAccessToken: Boolean(storedSession.accessToken),
+          });
           restoreSession(storedSession);
           setSession(storedSession);
         }
@@ -42,6 +48,12 @@ export default function App() {
   }, []);
 
   async function handleLoggedIn(nextSession: AuthSession) {
+    console.log('[App] handleLoggedIn session received', {
+      userId: nextSession.user.id,
+      role: nextSession.user.role,
+      email: nextSession.user.email,
+      hasAccessToken: Boolean(nextSession.accessToken),
+    });
     restoreSession(nextSession);
     await persistSession(nextSession);
     setAuthNotice(null);
