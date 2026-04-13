@@ -656,6 +656,35 @@ function buildIsoDateTime(date: string, time: string) {
   return `${date}T${time}:00`;
 }
 
+function parseDateInput(value: string) {
+  if (!isValidDateInput(value)) {
+    return null;
+  }
+
+  const [year, month, day] = value.split('-').map(Number);
+  return new Date(year, month - 1, day);
+}
+
+function formatDateInput(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function buildShiftDateTimes(date: string, startTime: string, endTime: string) {
+  const startAt = buildIsoDateTime(date, startTime);
+  const endDate =
+    endTime <= startTime
+      ? formatDateInput(addDays(parseDateInput(date) || new Date(`${date}T00:00:00`), 1))
+      : date;
+
+  return {
+    startAt,
+    endAt: buildIsoDateTime(endDate, endTime),
+  };
+}
+
 function isValidDateInput(value: string) {
   return /^\d{4}-\d{2}-\d{2}$/.test(value);
 }
@@ -675,10 +704,6 @@ function validateSameDayShiftTiming(date: string, startTime: string, endTime: st
 
   if (!isValidTimeInput(startTime) || !isValidTimeInput(endTime)) {
     return 'Use valid 24-hour times for both start and end.';
-  }
-
-  if (endTime <= startTime) {
-    return 'End time must be after start time for the selected date.';
   }
 
   return null;
@@ -728,19 +753,19 @@ function addDays(date: Date, days: number) {
 }
 
 function weekCommencingFor(raw?: string) {
-  const base = raw ? new Date(`${raw}T00:00:00`) : new Date();
+  const base = raw ? parseDateInput(raw) || new Date(`${raw}T00:00:00`) : new Date();
   const day = base.getDay();
   const mondayOffset = day === 0 ? -6 : 1 - day;
   const monday = addDays(base, mondayOffset);
-  return monday.toISOString().slice(0, 10);
+  return formatDateInput(monday);
 }
 
 function buildWeekDays(weekCommencing: string) {
-  const start = new Date(`${weekCommencing}T00:00:00`);
+  const start = parseDateInput(weekCommencing) || new Date(`${weekCommencing}T00:00:00`);
   return Array.from({ length: 7 }, (_, index) => {
     const date = addDays(start, index);
     return {
-      date: date.toISOString().slice(0, 10),
+      date: formatDateInput(date),
       label: date.toLocaleDateString([], { weekday: 'long' }),
       shortLabel: date.toLocaleDateString([], { weekday: 'short', day: '2-digit', month: 'short' }),
     };
@@ -1339,7 +1364,7 @@ export function CompanyDashboardScreen() {
     [sites],
   );
 
-  const todayIso = new Date().toISOString().slice(0, 10);
+  const todayIso = formatDateInput(new Date());
   const shiftsToday = React.useMemo(
     () => shifts.filter((shift) => shift.start.slice(0, 10) === todayIso),
     [shifts, todayIso],
@@ -2044,11 +2069,17 @@ export function CompanyDashboardScreen() {
     const nextRows = plannerRows.map((row) => ({
       ...row,
       localId: `${row.localId}-copy-${Math.random().toString(36).slice(2, 8)}`,
-      date: addDays(new Date(`${row.date}T00:00:00`), 7).toISOString().slice(0, 10),
+      date: formatDateInput(addDays(parseDateInput(row.date) || new Date(`${row.date}T00:00:00`), 7)),
       sourceShiftIds: [],
     }));
 
-    setPlannerWeekCommencing(weekCommencingFor(addDays(new Date(`${plannerWeekCommencing}T00:00:00`), 7).toISOString().slice(0, 10)));
+    setPlannerWeekCommencing(
+      weekCommencingFor(
+        formatDateInput(
+          addDays(parseDateInput(plannerWeekCommencing) || new Date(`${plannerWeekCommencing}T00:00:00`), 7),
+        ),
+      ),
+    );
     setPlannerRows(nextRows);
     setPlannerRemovedShiftIds([]);
   };
@@ -2084,8 +2115,7 @@ export function CompanyDashboardScreen() {
         }
 
         const guardsRequired = Math.max(1, toNumber(row.guardsRequired) || 1);
-        const startAt = buildIsoDateTime(row.date, row.startTime);
-        const endAt = buildIsoDateTime(row.date, row.endTime);
+        const { startAt, endAt } = buildShiftDateTimes(row.date, row.startTime, row.endTime);
         const plannedStatus = normalizePlannerStatus(row.status, row.assignedGuardId);
         const existingIds = [...row.sourceShiftIds];
 
