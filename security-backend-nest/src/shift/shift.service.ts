@@ -25,6 +25,7 @@ export class ShiftService {
     'unfilled',
     'offered',
     'ready',
+    'missed',
     'cancelled',
     'rejected',
     'in_progress',
@@ -317,18 +318,29 @@ export class ShiftService {
     instructions?: string | null;
   }) {
     const start = `${params.date}T${params.startTime}:00`;
+    const formatLocalDate = (date: Date) => {
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    };
+    const formatLocalTime = (date: Date) => {
+      const hours = String(date.getHours()).padStart(2, '0');
+      const minutes = String(date.getMinutes()).padStart(2, '0');
+      return `${hours}:${minutes}`;
+    };
 
     let endDate = params.date;
     let endTime = params.endTime?.trim();
     if (!endTime) {
       const startDate = new Date(start);
       startDate.setHours(startDate.getHours() + 8);
-      endDate = startDate.toISOString().slice(0, 10);
-      endTime = startDate.toISOString().slice(11, 16);
+      endDate = formatLocalDate(startDate);
+      endTime = formatLocalTime(startDate);
     } else if (endTime <= params.startTime) {
       const nextDay = new Date(`${params.date}T00:00:00`);
       nextDay.setDate(nextDay.getDate() + 1);
-      endDate = nextDay.toISOString().slice(0, 10);
+      endDate = formatLocalDate(nextDay);
     }
 
     return this.create({
@@ -523,7 +535,7 @@ export class ShiftService {
     }
 
     if (!params.hasGuard) {
-      if (requestedStatus && ['offered', 'ready', 'rejected', 'in_progress', 'completed'].includes(requestedStatus)) {
+      if (requestedStatus && ['offered', 'ready', 'missed', 'rejected', 'in_progress', 'completed'].includes(requestedStatus)) {
         throw new BadRequestException('This shift status requires a guard assignment');
       }
 
@@ -557,7 +569,7 @@ export class ShiftService {
       throw new BadRequestException('Unfilled shifts cannot keep a guard assignment');
     }
 
-    if (['offered', 'ready', 'rejected', 'in_progress', 'completed'].includes(requestedStatus) && !params.nextGuardId) {
+    if (['offered', 'ready', 'missed', 'rejected', 'in_progress', 'completed'].includes(requestedStatus) && !params.nextGuardId) {
       throw new BadRequestException('This shift status requires a guard assignment');
     }
 
@@ -575,7 +587,7 @@ export class ShiftService {
     }
 
     if (!params.nextGuardId) {
-      if (!['unfilled', 'rejected'].includes(params.currentStatus)) {
+      if (!['unfilled', 'rejected', 'missed'].includes(params.currentStatus)) {
         throw new BadRequestException('Only unfilled or rejected shifts can be cleared back to the guard pool');
       }
       return 'unfilled';
@@ -600,10 +612,11 @@ export class ShiftService {
     const allowedTransitions: Record<string, string[]> = {
       unfilled: ['offered', 'cancelled'],
       offered: ['ready', 'rejected', 'cancelled'],
-      ready: ['in_progress', 'cancelled'],
+      ready: ['in_progress', 'missed', 'cancelled'],
       in_progress: ['completed'],
       completed: [],
       rejected: ['unfilled'],
+      missed: ['unfilled', 'cancelled'],
       cancelled: [],
     };
 

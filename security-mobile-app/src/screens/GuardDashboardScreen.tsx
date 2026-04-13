@@ -39,7 +39,7 @@ interface GuardDashboardScreenProps {
 }
 
 type GuardTab = 'home' | 'offers' | 'jobs' | 'history' | 'profile';
-type QuickActionModal = 'log' | 'incident' | 'welfare' | 'panic' | null;
+type QuickActionModal = 'log' | 'checkCall' | 'incident' | 'welfare' | 'panic' | null;
 
 type LocalTimelineEvent = {
   id: string;
@@ -65,8 +65,34 @@ function normalizeShiftLifecycleStatus(status?: string | null) {
   }
 }
 
+function getLiteralDateTimeParts(value?: string | null) {
+  if (!value) return null;
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s](\d{2}):(\d{2})(?::(\d{2}))?)?/);
+  if (!match) return null;
+  return {
+    year: match[1],
+    month: match[2],
+    day: match[3],
+    hour: match[4] || null,
+    minute: match[5] || null,
+  };
+}
+
 function formatDateLabel(value?: string | null) {
   if (!value) return 'TBC';
+  const literalParts = getLiteralDateTimeParts(value);
+  if (literalParts) {
+    return new Date(
+      Number(literalParts.year),
+      Number(literalParts.month) - 1,
+      Number(literalParts.day),
+    ).toLocaleDateString(undefined, {
+      weekday: 'short',
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    });
+  }
   return new Date(value).toLocaleDateString(undefined, {
     weekday: 'short',
     day: '2-digit',
@@ -77,6 +103,10 @@ function formatDateLabel(value?: string | null) {
 
 function formatTimeLabel(value?: string | null) {
   if (!value) return 'TBC';
+  const literalParts = getLiteralDateTimeParts(value);
+  if (literalParts?.hour && literalParts?.minute) {
+    return `${literalParts.hour}:${literalParts.minute}`;
+  }
   return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
@@ -334,8 +364,20 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
       );
     } catch (error) {
       const message = formatApiErrorMessage(error, 'Unable to update this shift response.');
-      pushFeedback('error', response === 'accepted' ? 'Accept failed' : 'Reject failed', message);
-      showAlert(response === 'accepted' ? 'Accept failed' : 'Reject failed', message);
+      const isStaleOffer =
+        message.toLowerCase().includes('only offered shifts can be accepted or rejected') ||
+        message.toLowerCase().includes('only offered shifts');
+
+      await loadData();
+
+      if (isStaleOffer) {
+        const staleMessage = 'This shift is no longer available. It may have been cancelled or reassigned.';
+        pushFeedback('info', 'Offer updated', staleMessage);
+        showAlert('Offer updated', staleMessage);
+      } else {
+        pushFeedback('error', response === 'accepted' ? 'Accept failed' : 'Reject failed', message);
+        showAlert(response === 'accepted' ? 'Accept failed' : 'Reject failed', message);
+      }
     } finally {
       setRespondingShiftId(null);
     }
@@ -671,6 +713,10 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
           <Pressable style={styles.quickActionButton} onPress={() => setQuickActionModal('log')}>
             <Text style={styles.quickActionIcon}>LOG</Text>
             <Text style={styles.quickActionText}>Add Log</Text>
+          </Pressable>
+          <Pressable style={styles.quickActionButton} onPress={() => setQuickActionModal('checkCall')}>
+            <Text style={styles.quickActionIcon}>CALL</Text>
+            <Text style={styles.quickActionText}>Check Call</Text>
           </Pressable>
           <Pressable style={styles.quickActionButton} onPress={() => setQuickActionModal('incident')}>
             <Text style={styles.quickActionIcon}>INC</Text>
@@ -1320,6 +1366,33 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
               <Pressable style={styles.summaryDoneButton} onPress={() => setHistorySummaryShiftId(null)}>
                 <Text style={styles.summaryDoneButtonText}>Close Summary</Text>
               </Pressable>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
+
+      {quickActionModal === 'checkCall' ? (
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Check Call</Text>
+              <Pressable style={styles.modalCloseButton} onPress={() => setQuickActionModal(null)}>
+                <Text style={styles.modalClose}>Close</Text>
+              </Pressable>
+            </View>
+            <TextInput
+              style={[styles.input, styles.modalInput]}
+              placeholder="Short check call update"
+              value={dailyLogMessage}
+              onChangeText={setDailyLogMessage}
+              multiline
+            />
+            <Pressable
+              style={[styles.primaryActionButton, submittingDailyLogType !== null && styles.buttonDisabled]}
+              onPress={() => handleCreateLog('check_call')}
+              disabled={submittingDailyLogType !== null}
+            >
+              <Text style={styles.primaryActionText}>{submittingDailyLogType ? 'Saving...' : 'Record Check Call'}</Text>
             </Pressable>
           </View>
         </View>

@@ -270,14 +270,33 @@ function formatDateTimeLabel(value?: string | null) {
       });
 }
 
+function getLiteralDateTimeParts(value?: string | null) {
+  if (!value) {
+    return null;
+  }
+
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s](\d{2}):(\d{2})(?::(\d{2}))?)?/);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    year: match[1],
+    month: match[2],
+    day: match[3],
+    hour: match[4] || null,
+    minute: match[5] || null,
+  };
+}
+
 function formatDateLabel(value?: string | null) {
   if (!value) {
     return 'Not set';
   }
 
-  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    const [year, month, day] = value.split('-');
-    return `${day}/${month}/${year}`;
+  const literalParts = getLiteralDateTimeParts(value);
+  if (literalParts) {
+    return `${literalParts.day}/${literalParts.month}/${literalParts.year}`;
   }
 
   const date = new Date(value);
@@ -297,6 +316,11 @@ function formatTimeLabel(value?: string | null) {
 
   if (/^\d{2}:\d{2}$/.test(value)) {
     return value;
+  }
+
+  const literalParts = getLiteralDateTimeParts(value);
+  if (literalParts?.hour && literalParts?.minute) {
+    return `${literalParts.hour}:${literalParts.minute}`;
   }
 
   const date = new Date(value);
