@@ -767,9 +767,9 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
   }
 
   const historySummaryShift =
-    historyShifts.find((shift) => shift.id === historySummaryShiftId) ||
-    historyShifts.find((shift) => shift.id === selectedShiftId) ||
-    null;
+    historySummaryShiftId !== null
+      ? historyShifts.find((shift) => shift.id === historySummaryShiftId) || null
+      : null;
   const historySummaryAttendance = historySummaryShift?.id ? attendanceByShiftId[historySummaryShift.id] : undefined;
   const historySummaryTimesheet = timesheets.find((timesheet) => timesheet.shiftId === historySummaryShift?.id) || null;
 
@@ -807,6 +807,8 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
         </Text>
       </View>
 
+      <View style={styles.mainArea}>
+
       {actionFeedback ? (
         <View
           style={[
@@ -830,6 +832,7 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
         </View>
       ) : null}
 
+      <View style={styles.contentArea}>
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.content}>
         {activeTab === 'home' ? (
           <>
@@ -1023,8 +1026,12 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
             </FeatureCard>
 
             <FeatureCard
-              title="My Applications"
-              subtitle={myApplications.length ? `${myApplications.length} submitted` : 'No applications yet'}
+              title="Applied Jobs"
+              subtitle={
+                myApplications.length
+                  ? `${myApplications.length} application${myApplications.length === 1 ? '' : 's'} submitted`
+                  : 'No applications yet'
+              }
             >
               {myApplications.length === 0 ? (
                 <Text style={styles.helperText}>Your submitted applications will appear here.</Text>
@@ -1037,7 +1044,9 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
                         {application.job?.site?.name || application.job?.company?.name || 'Location pending'}
                       </Text>
                     </View>
-                    <Text style={styles.applicationStatus}>{application.status}</Text>
+                    <View style={styles.applicationStatusBadge}>
+                      <Text style={styles.applicationStatus}>{application.status}</Text>
+                    </View>
                   </View>
                 ))
               )}
@@ -1135,6 +1144,7 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
           </>
         ) : null}
       </ScrollView>
+      </View>
 
       <View style={styles.bottomNav}>
         {([
@@ -1144,10 +1154,16 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
           ['history', 'History'],
           ['profile', 'Profile'],
         ] as Array<[GuardTab, string]>).map(([tab, label]) => (
-          <Pressable key={tab} style={styles.bottomNavItem} onPress={() => setActiveTab(tab)}>
+          <Pressable
+            key={tab}
+            style={[styles.bottomNavItem, activeTab === tab && styles.bottomNavItemActive]}
+            onPress={() => setActiveTab(tab)}
+          >
+            <View style={[styles.bottomNavIndicator, activeTab === tab && styles.bottomNavIndicatorActive]} />
             <Text style={[styles.bottomNavLabel, activeTab === tab && styles.bottomNavLabelActive]}>{label}</Text>
           </Pressable>
         ))}
+      </View>
       </View>
 
       {quickActionModal === 'log' ? (
@@ -1155,7 +1171,9 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
           <View style={styles.modalCard}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Add Log</Text>
-              <Pressable onPress={() => setQuickActionModal(null)}><Text style={styles.modalClose}>Close</Text></Pressable>
+              <Pressable style={styles.modalCloseButton} onPress={() => setQuickActionModal(null)}>
+                <Text style={styles.modalClose}>Close</Text>
+              </Pressable>
             </View>
             <TextInput
               style={[styles.input, styles.modalInput]}
@@ -1180,7 +1198,9 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
           <View style={styles.modalCard}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Incident</Text>
-              <Pressable onPress={() => setQuickActionModal(null)}><Text style={styles.modalClose}>Close</Text></Pressable>
+              <Pressable style={styles.modalCloseButton} onPress={() => setQuickActionModal(null)}>
+                <Text style={styles.modalClose}>Close</Text>
+              </Pressable>
             </View>
             <TextInput
               style={[styles.input, styles.modalInput]}
@@ -1205,7 +1225,9 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
           <View style={styles.modalCard}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Welfare</Text>
-              <Pressable onPress={() => setQuickActionModal(null)}><Text style={styles.modalClose}>Close</Text></Pressable>
+              <Pressable style={styles.modalCloseButton} onPress={() => setQuickActionModal(null)}>
+                <Text style={styles.modalClose}>Close</Text>
+              </Pressable>
             </View>
             <TextInput
               style={[styles.input, styles.modalInput]}
@@ -1230,7 +1252,9 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
           <View style={styles.modalCard}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Panic</Text>
-              <Pressable onPress={() => setQuickActionModal(null)}><Text style={styles.modalClose}>Close</Text></Pressable>
+              <Pressable style={styles.modalCloseButton} onPress={() => setQuickActionModal(null)}>
+                <Text style={styles.modalClose}>Close</Text>
+              </Pressable>
             </View>
             <Text style={styles.helperText}>Type PANIC to confirm you want to send an emergency alert.</Text>
             <TextInput
@@ -1253,42 +1277,50 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
 
       {historySummaryShift ? (
         <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Shift Summary</Text>
-              <Pressable onPress={() => setHistorySummaryShiftId(null)}><Text style={styles.modalClose}>Close</Text></Pressable>
-            </View>
-            <Text style={styles.cardTitle}>{historySummaryShift.siteName}</Text>
-            <Text style={styles.metaText}>
-              {formatDateLabel(historySummaryShift.start)} - {formatTimeLabel(historySummaryShift.start)} - {formatTimeLabel(historySummaryShift.end)}
-            </Text>
-            <ShiftStatusBadge status={historySummaryShift.status} />
-            <View style={styles.summaryBlock}>
-              <Text style={styles.summaryLabel}>Booked on</Text>
-              <Text style={styles.summaryValue}>
-                {historySummaryAttendance?.checkInAt ? new Date(historySummaryAttendance.checkInAt).toLocaleString() : 'Pending'}
+          <Pressable style={styles.summaryBackdropTapZone} onPress={() => setHistorySummaryShiftId(null)} />
+          <View style={styles.summarySheetWrap}>
+            <Pressable style={[styles.modalCard, styles.summarySheetCard]} onPress={() => {}}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>Shift Summary</Text>
+                <Pressable style={styles.modalCloseButton} onPress={() => setHistorySummaryShiftId(null)}>
+                  <Text style={styles.modalClose}>Close</Text>
+                </Pressable>
+              </View>
+              <Text style={styles.cardTitle}>{historySummaryShift.siteName}</Text>
+              <Text style={styles.metaText}>
+                {formatDateLabel(historySummaryShift.start)} - {formatTimeLabel(historySummaryShift.start)} - {formatTimeLabel(historySummaryShift.end)}
               </Text>
-            </View>
-            <View style={styles.summaryBlock}>
-              <Text style={styles.summaryLabel}>Booked off</Text>
-              <Text style={styles.summaryValue}>
-                {historySummaryAttendance?.checkOutAt ? new Date(historySummaryAttendance.checkOutAt).toLocaleString() : 'Pending'}
-              </Text>
-            </View>
-            <View style={styles.summaryBlock}>
-              <Text style={styles.summaryLabel}>Incidents</Text>
-              <Text style={styles.summaryValue}>
-                {incidents.filter((incident) => incident.shift?.id === historySummaryShift.id).length}
-              </Text>
-            </View>
-            {historySummaryTimesheet ? (
+              <ShiftStatusBadge status={historySummaryShift.status} />
               <View style={styles.summaryBlock}>
-                <Text style={styles.summaryLabel}>Timesheet</Text>
+                <Text style={styles.summaryLabel}>Booked on</Text>
                 <Text style={styles.summaryValue}>
-                  {historySummaryTimesheet.hoursWorked} hours - {historySummaryTimesheet.approvalStatus}
+                  {historySummaryAttendance?.checkInAt ? new Date(historySummaryAttendance.checkInAt).toLocaleString() : 'Pending'}
                 </Text>
               </View>
-            ) : null}
+              <View style={styles.summaryBlock}>
+                <Text style={styles.summaryLabel}>Booked off</Text>
+                <Text style={styles.summaryValue}>
+                  {historySummaryAttendance?.checkOutAt ? new Date(historySummaryAttendance.checkOutAt).toLocaleString() : 'Pending'}
+                </Text>
+              </View>
+              <View style={styles.summaryBlock}>
+                <Text style={styles.summaryLabel}>Incidents</Text>
+                <Text style={styles.summaryValue}>
+                  {incidents.filter((incident) => incident.shift?.id === historySummaryShift.id).length}
+                </Text>
+              </View>
+              {historySummaryTimesheet ? (
+                <View style={styles.summaryBlock}>
+                  <Text style={styles.summaryLabel}>Timesheet</Text>
+                  <Text style={styles.summaryValue}>
+                    {historySummaryTimesheet.hoursWorked} hours - {historySummaryTimesheet.approvalStatus}
+                  </Text>
+                </View>
+              ) : null}
+              <Pressable style={styles.summaryDoneButton} onPress={() => setHistorySummaryShiftId(null)}>
+                <Text style={styles.summaryDoneButtonText}>Close Summary</Text>
+              </Pressable>
+            </Pressable>
           </View>
         </View>
       ) : null}
@@ -1300,8 +1332,10 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F3F4F6' },
   header: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 8 },
   headerTitle: { fontSize: 28, fontWeight: '800', color: '#111827' },
+  mainArea: { flex: 1 },
+  contentArea: { flex: 1 },
   scrollView: { flex: 1 },
-  content: { paddingHorizontal: 16, paddingBottom: 104 },
+  content: { paddingHorizontal: 16, paddingBottom: 20, flexGrow: 1 },
   signedOutScreen: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, backgroundColor: '#F3F4F6', gap: 8 },
   feedbackBanner: { marginHorizontal: 16, marginBottom: 10, borderRadius: 16, paddingHorizontal: 14, paddingVertical: 12, gap: 4 },
   feedbackSuccess: { backgroundColor: '#DCFCE7' },
@@ -1450,19 +1484,103 @@ const styles = StyleSheet.create({
   activityTime: { color: '#6B7280', fontSize: 12, fontWeight: '700' },
   simpleRow: { borderTopWidth: 1, borderTopColor: '#E5E7EB', paddingTop: 12, paddingBottom: 2, flexDirection: 'row', alignItems: 'center', gap: 12 },
   listCard: { borderTopWidth: 1, borderTopColor: '#E5E7EB', paddingTop: 12, gap: 8 },
-  applicationStatus: { color: '#111827', fontWeight: '700', textTransform: 'capitalize' },
+  applicationStatusBadge: {
+    borderRadius: 999,
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    alignSelf: 'flex-start',
+  },
+  applicationStatus: { color: '#1D4ED8', fontWeight: '700', textTransform: 'capitalize', fontSize: 12 },
   input: { borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 14, paddingHorizontal: 12, paddingVertical: 12, backgroundColor: '#FFFFFF', color: '#111827' },
   switchRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12 },
   logoutButton: { borderRadius: 16, borderWidth: 1, borderColor: '#D1D5DB', minHeight: 52, alignItems: 'center', justifyContent: 'center' },
   logoutButtonText: { color: '#111827', fontWeight: '700' },
-  bottomNav: { position: 'absolute', left: 0, right: 0, bottom: 0, flexDirection: 'row', backgroundColor: '#FFFFFF', borderTopWidth: 1, borderTopColor: '#E5E7EB', paddingBottom: 18, paddingTop: 10, paddingHorizontal: 8 },
-  bottomNavItem: { flex: 1, alignItems: 'center', justifyContent: 'center', minHeight: 48 },
-  bottomNavLabel: { color: '#6B7280', fontWeight: '700' },
+  bottomNav: {
+    flexDirection: 'row',
+    backgroundColor: '#FFFFFF',
+    borderTopWidth: 1,
+    borderTopColor: '#D1D5DB',
+    paddingBottom: 18,
+    paddingTop: 8,
+    paddingHorizontal: 8,
+    shadowColor: '#111827',
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: -2 },
+    elevation: 6,
+  },
+  bottomNavItem: { flex: 1, alignItems: 'center', justifyContent: 'center', minHeight: 56, gap: 6 },
+  bottomNavItemActive: { opacity: 1 },
+  bottomNavIndicator: {
+    width: 28,
+    height: 3,
+    borderRadius: 999,
+    backgroundColor: 'transparent',
+  },
+  bottomNavIndicatorActive: {
+    backgroundColor: '#111827',
+  },
+  bottomNavLabel: { color: '#6B7280', fontWeight: '700', fontSize: 13 },
   bottomNavLabelActive: { color: '#111827' },
-  modalBackdrop: { flex: 1, backgroundColor: 'rgba(17,24,39,0.45)', justifyContent: 'flex-end', padding: 16 },
-  modalCard: { backgroundColor: '#FFFFFF', borderRadius: 24, padding: 18, gap: 12 },
+  modalBackdrop: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    backgroundColor: 'rgba(17,24,39,0.45)',
+    justifyContent: 'flex-end',
+    padding: 16,
+    zIndex: 20,
+  },
+  summaryBackdropTapZone: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+  },
+  summarySheetWrap: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  modalCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    padding: 18,
+    gap: 12,
+    maxWidth: 720,
+    width: '100%',
+    alignSelf: 'center',
+  },
+  summarySheetCard: {
+    maxHeight: '78%',
+  },
+  summaryDoneButton: {
+    marginTop: 8,
+    minHeight: 52,
+    borderRadius: 16,
+    backgroundColor: '#111827',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  summaryDoneButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+    fontSize: 15,
+  },
   modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
   modalTitle: { fontSize: 20, fontWeight: '800', color: '#111827' },
+  modalCloseButton: {
+    minHeight: 36,
+    minWidth: 64,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#EFF6FF',
+  },
   modalClose: { color: '#2563EB', fontWeight: '700' },
   modalInput: { minHeight: 120, textAlignVertical: 'top' },
   panicConfirmButton: { backgroundColor: '#991B1B', borderRadius: 18, minHeight: 56, alignItems: 'center', justifyContent: 'center' },
