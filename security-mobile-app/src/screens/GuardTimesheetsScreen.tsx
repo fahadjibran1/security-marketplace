@@ -110,14 +110,18 @@ function getSubmissionState(
   claimedHours: number,
 ) {
   const hasValidHours = Number.isFinite(claimedHours) && claimedHours > 0;
-  const hasCheckedOut = Boolean(attendanceSlice?.checkOutAt || timesheet.actualCheckOutAt);
-
-  if (!hasCheckedOut) {
-    return { canSubmit: false, reason: 'Submit after you have checked out of the shift.' };
-  }
 
   if (!hasValidHours) {
     return { canSubmit: false, reason: 'Enter the hours you are claiming before submitting.' };
+  }
+
+  const hasCheckedOut = Boolean(attendanceSlice?.checkOutAt || timesheet.actualCheckOutAt);
+  if (!hasCheckedOut) {
+    return {
+      canSubmit: true,
+      reason:
+        'No checkout was recorded for this shift. You can still submit now, and the company can review your note if needed.',
+    };
   }
 
   return { canSubmit: true, reason: '' };
@@ -303,7 +307,7 @@ function TimesheetCard({
               <Text style={styles.primaryBtnText}>{submitting ? 'Submitting…' : 'Submit'}</Text>
             </Pressable>
           </View>
-          {!submission.canSubmit ? <Text style={styles.hint}>{submission.reason}</Text> : null}
+          {submission.reason ? <Text style={styles.hint}>{submission.reason}</Text> : null}
         </>
       ) : null}
     </View>
