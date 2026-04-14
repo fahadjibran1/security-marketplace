@@ -5,6 +5,7 @@ declare module 'react' {
   export type Dispatch<A> = (value: A) => void;
   export function useState<T>(initial: T): [T, Dispatch<SetStateAction<T>>];
   export function useMemo<T>(factory: () => T, deps: unknown[]): T;
+  export function useCallback<T extends (...args: any[]) => any>(callback: T, deps: unknown[]): T;
   export function useEffect(effect: () => void | (() => void), deps?: unknown[]): void;
   export type PropsWithChildren<P = unknown> = P & { children?: unknown };
 }
@@ -16,6 +17,7 @@ declare module 'react/jsx-runtime' {
 }
 
 declare module 'react-native' {
+  export const ActivityIndicator: any;
   export const Alert: { alert: (...args: any[]) => void };
   export const Pressable: any;
   export const SafeAreaView: any;

@@ -102,6 +102,23 @@ export class TimesheetService {
     return this.timesheetRepo.save(timesheet);
   }
 
+  async updateMine(userId: number, id: number, dto: UpdateTimesheetDto): Promise<Timesheet> {
+    const guard = await this.guardProfileService.findByUserId(userId);
+    if (!guard) throw new NotFoundException('Guard profile not found');
+
+    const timesheet = await this.timesheetRepo.findOne({
+      where: { id, guard: { id: guard.id } },
+    });
+    if (!timesheet) throw new NotFoundException('Timesheet not found');
+
+    if (timesheet.approvalStatus !== TimesheetStatus.DRAFT) {
+      throw new BadRequestException('Only draft timesheets can be edited by the guard');
+    }
+
+    this.applyGuardEditableUpdates(timesheet, dto);
+    return this.timesheetRepo.save(timesheet);
+  }
+
   async updateForCompany(userId: number, id: number, dto: UpdateTimesheetDto): Promise<Timesheet> {
     const company = await this.companyService.findByUserId(userId);
     if (!company) throw new NotFoundException('Company not found');
@@ -186,19 +203,12 @@ export class TimesheetService {
       where: { id, guard: { id: guard.id } },
     });
     if (!timesheet) throw new NotFoundException('Timesheet not found');
-    const shiftStatus = timesheet.shift ? timesheet.shift.status : null;
-    const normalizedShiftStatus = shiftStatus ? ['accepted'].includes(shiftStatus) ? 'ready' : ['planned', 'unassigned', 'scheduled'].includes(shiftStatus) ? 'unfilled' : ['assigned'].includes(shiftStatus) ? 'offered' : shiftStatus : null;
-    if (normalizedShiftStatus !== 'in_progress') {
-      throw new BadRequestException('Shift must be in progress before timesheet progression is available');
+
+    if (timesheet.approvalStatus !== TimesheetStatus.DRAFT) {
+      throw new BadRequestException('Only draft timesheets can be submitted by the guard');
     }
 
-    if (dto.hoursWorked !== undefined) {
-      timesheet.hoursWorked = dto.hoursWorked;
-      timesheet.workedMinutes = Math.max(0, Math.round(dto.hoursWorked * 60));
-      timesheet.roundedMinutes = timesheet.workedMinutes;
-    }
-
-    this.applyTimesheetUpdates(timesheet, dto);
+    this.applyGuardEditableUpdates(timesheet, dto);
     timesheet.approvalStatus = TimesheetStatus.SUBMITTED;
     timesheet.submittedAt = new Date();
     timesheet.reviewedAt = null;
@@ -214,6 +224,9 @@ export class TimesheetService {
       afterData: {
         approvalStatus: saved.approvalStatus,
         submittedAt: saved.submittedAt,
+        actualCheckInAt: saved.actualCheckInAt,
+        actualCheckOutAt: saved.actualCheckOutAt,
+        guardNote: saved.guardNote,
         workedMinutes: saved.workedMinutes,
         roundedMinutes: saved.roundedMinutes,
       },
@@ -249,6 +262,10 @@ export class TimesheetService {
     if (dto.actualCheckOutAt !== undefined) {
       timesheet.actualCheckOutAt = dto.actualCheckOutAt ? new Date(dto.actualCheckOutAt) : null;
     }
+    if (dto.guardNote !== undefined) {
+      const trimmedGuardNote = dto.guardNote?.trim();
+      timesheet.guardNote = trimmedGuardNote ? trimmedGuardNote : null;
+    }
     if (dto.workedMinutes !== undefined) timesheet.workedMinutes = dto.workedMinutes;
     if (dto.breakMinutes !== undefined) timesheet.breakMinutes = dto.breakMinutes;
     if (dto.roundedMinutes !== undefined) timesheet.roundedMinutes = dto.roundedMinutes;
@@ -257,5 +274,14 @@ export class TimesheetService {
     }
     if (dto.reviewedByUserId !== undefined) timesheet.reviewedByUserId = dto.reviewedByUserId;
     if (dto.rejectionReason !== undefined) timesheet.rejectionReason = dto.rejectionReason;
+  }
+
+  private applyGuardEditableUpdates(timesheet: Timesheet, dto: UpdateTimesheetDto): void {
+    this.applyTimesheetUpdates(timesheet, {
+      hoursWorked: dto.hoursWorked,
+      actualCheckInAt: dto.actualCheckInAt,
+      actualCheckOutAt: dto.actualCheckOutAt,
+      guardNote: dto.guardNote,
+    });
   }
 }

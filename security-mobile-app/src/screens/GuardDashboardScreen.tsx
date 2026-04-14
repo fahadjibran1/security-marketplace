@@ -1,17 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import { FeatureCard } from '../components/FeatureCard';
+import { JobsScreen } from './JobsScreen';
+import { GuardTimesheetsScreen } from './GuardTimesheetsScreen';
 import {
   checkInShift,
   checkOutShift,
   createDailyLog,
   createIncident,
-  createJobApplication,
   createSafetyAlert,
   formatApiErrorMessage,
   getMyGuard,
-  listJobApplications,
-  listJobs,
   listMyAttendance,
   listMyDailyLogs,
   listMyIncidents,
@@ -19,7 +18,6 @@ import {
   listMyTimesheets,
   logout,
   respondToShift,
-  submitTimesheet,
   updateMyGuard,
 } from '../services/api';
 import { clearStoredSession } from '../services/session';
@@ -28,8 +26,6 @@ import {
   AuthUser,
   DailyLog,
   Incident,
-  Job,
-  JobApplication,
   Shift,
   Timesheet,
 } from '../types/models';
@@ -188,8 +184,6 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
   const [locationSharing, setLocationSharing] = useState(false);
   const [signedOut, setSignedOut] = useState(false);
   const [shifts, setShifts] = useState<Shift[]>([]);
-  const [jobs, setJobs] = useState<Job[]>([]);
-  const [applications, setApplications] = useState<JobApplication[]>([]);
   const [attendance, setAttendance] = useState<AttendanceEvent[]>([]);
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [dailyLogs, setDailyLogs] = useState<DailyLog[]>([]);
@@ -203,9 +197,7 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
   const [submittingDailyLogType, setSubmittingDailyLogType] = useState<DailyLog['logType'] | null>(null);
   const [submittingIncident, setSubmittingIncident] = useState(false);
   const [submittingAlertType, setSubmittingAlertType] = useState<'welfare' | 'panic' | null>(null);
-  const [submittingTimesheetId, setSubmittingTimesheetId] = useState<number | null>(null);
   const [respondingShiftId, setRespondingShiftId] = useState<number | null>(null);
-  const [applyingJobId, setApplyingJobId] = useState<number | null>(null);
   const [dailyLogMessage, setDailyLogMessage] = useState('');
   const [incidentMessage, setIncidentMessage] = useState('');
   const [welfareMessage, setWelfareMessage] = useState('');
@@ -246,17 +238,14 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
     try {
       setLoading(true);
       setLoadError(null);
-      const [myGuard, shiftRows, jobRows, applicationRows, attendanceRows, incidentRows, dailyLogRows, timesheetRows] =
-        await Promise.all([
-          getMyGuard(),
-          listMyShifts(),
-          listJobs(),
-          listJobApplications(),
-          listMyAttendance(),
-          listMyIncidents(),
-          listMyDailyLogs(),
-          listMyTimesheets(),
-        ]);
+      const [myGuard, shiftRows, attendanceRows, incidentRows, dailyLogRows, timesheetRows] = await Promise.all([
+        getMyGuard(),
+        listMyShifts(),
+        listMyAttendance(),
+        listMyIncidents(),
+        listMyDailyLogs(),
+        listMyTimesheets(),
+      ]);
 
       setFullName(myGuard.fullName || '');
       setPhone(myGuard.phone || '');
@@ -264,8 +253,6 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
       setAvailabilityStatus(myGuard.status || '');
       setLocationSharing(myGuard.locationSharingEnabled ?? false);
       setShifts(shiftRows.map((shift) => ({ ...shift, status: normalizeShiftLifecycleStatus(shift.status) })));
-      setJobs(jobRows.filter((job) => (job.status || '').trim().toLowerCase() === 'open'));
-      setApplications(applicationRows);
       setAttendance(attendanceRows);
       setIncidents(incidentRows);
       setDailyLogs(dailyLogRows);
@@ -380,22 +367,6 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
       }
     } finally {
       setRespondingShiftId(null);
-    }
-  }
-
-  async function handleApplyToJob(jobId: number) {
-    try {
-      setApplyingJobId(jobId);
-      await createJobApplication({ jobId });
-      await loadData();
-      pushFeedback('success', 'Application sent', 'Your application has been submitted.');
-      showAlert('Application sent', 'Your application has been submitted successfully.');
-    } catch (error) {
-      const message = formatApiErrorMessage(error, 'Unable to apply for this job.');
-      pushFeedback('error', 'Application failed', message);
-      showAlert('Application failed', message);
-    } finally {
-      setApplyingJobId(null);
     }
   }
 
@@ -530,24 +501,6 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
     }
   }
 
-  async function handleSubmitTimesheet(timesheet: Timesheet) {
-    try {
-      setSubmittingTimesheetId(timesheet.id);
-      await submitTimesheet(timesheet.id, { hoursWorked: timesheet.hoursWorked });
-      if (timesheet.shiftId) {
-        pushTimelineEvent(timesheet.shiftId, 'Timesheet submitted', 'Hours sent for company review.');
-      }
-      await loadData();
-      pushFeedback('success', 'Timesheet submitted', 'Your hours were submitted successfully.');
-    } catch (error) {
-      const message = formatApiErrorMessage(error, 'Unable to submit this timesheet.');
-      pushFeedback('error', 'Timesheet failed', message);
-      showAlert('Timesheet failed', message);
-    } finally {
-      setSubmittingTimesheetId(null);
-    }
-  }
-
   useEffect(() => {
     loadData();
   }, [user.guardId]);
@@ -654,12 +607,6 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
     .sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime())
     .slice(0, 4);
   const currentHomeShiftAttendance = currentHomeShift?.id ? attendanceByShiftId[currentHomeShift.id] : undefined;
-  const myApplications = applications
-    .filter((application) => application.guardId === user.guardId)
-    .sort((a, b) => new Date(b.appliedAt).getTime() - new Date(a.appliedAt).getTime());
-  const openJobs = jobs.filter(
-    (job) => !myApplications.some((application) => application.jobId === job.id),
-  );
   const currentHomeShiftTimeline = [
     ...localTimelineEvents.filter((event) => event.shiftId === currentHomeShift?.id),
     ...dailyLogs
@@ -771,23 +718,6 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
     if (normalized === 'rejected') return 'Offer Declined';
     if (normalized === 'cancelled') return 'Shift Cancelled';
     return 'View Shift';
-  }
-
-  function getTimesheetSubmissionState(timesheet: Timesheet) {
-    const hours = Number(timesheet.hoursWorked);
-    const hasValidHours = Number.isFinite(hours) && hours > 0;
-    const attendanceState = attendanceByShiftId[timesheet.shiftId];
-    const hasCheckedOut = Boolean(attendanceState?.checkOutAt || timesheet.actualCheckOutAt);
-
-    if (!hasCheckedOut) {
-      return { canSubmit: false, reason: 'Timesheet available after shift end' };
-    }
-
-    if (!hasValidHours) {
-      return { canSubmit: false, reason: 'Worked hours not ready yet' };
-    }
-
-    return { canSubmit: true, reason: '' };
   }
 
   function handlePrimaryHomeAction() {
@@ -1044,61 +974,7 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
           </FeatureCard>
         ) : null}
 
-        {activeTab === 'jobs' ? (
-          <>
-            <FeatureCard title="Open Jobs" subtitle={openJobs.length ? 'Available jobs you can apply for.' : 'No open jobs right now'}>
-              {openJobs.length === 0 ? (
-                <Text style={styles.helperText}>No open jobs right now.</Text>
-              ) : (
-                openJobs.map((job) => (
-                  <View key={job.id} style={styles.listCard}>
-                    <Text style={styles.cardTitle}>{job.title}</Text>
-                    <Text style={styles.metaText}>{job.site?.name || job.company?.name || 'Location pending'}</Text>
-                    <Text style={styles.metaText} numberOfLines={2}>
-                      {job.description?.trim() || 'Shift details available when you open the job.'}
-                    </Text>
-                    <Pressable
-                      style={[styles.secondaryActionButton, applyingJobId === job.id && styles.buttonDisabled]}
-                      onPress={() => handleApplyToJob(job.id)}
-                      disabled={applyingJobId === job.id}
-                    >
-                      <Text style={styles.secondaryActionButtonText}>
-                        {applyingJobId === job.id ? 'Applying...' : 'Apply'}
-                      </Text>
-                    </Pressable>
-                  </View>
-                ))
-              )}
-            </FeatureCard>
-
-            <FeatureCard
-              title="Applied Jobs"
-              subtitle={
-                myApplications.length
-                  ? `${myApplications.length} application${myApplications.length === 1 ? '' : 's'} submitted`
-                  : 'No applications yet'
-              }
-            >
-              {myApplications.length === 0 ? (
-                <Text style={styles.helperText}>Your submitted applications will appear here.</Text>
-              ) : (
-                myApplications.map((application) => (
-                  <View key={application.id} style={styles.simpleRow}>
-                    <View style={styles.flexGrow}>
-                      <Text style={styles.cardTitle}>{application.job?.title || `Job #${application.jobId}`}</Text>
-                      <Text style={styles.metaText}>
-                        {application.job?.site?.name || application.job?.company?.name || 'Location pending'}
-                      </Text>
-                    </View>
-                    <View style={styles.applicationStatusBadge}>
-                      <Text style={styles.applicationStatus}>{application.status}</Text>
-                    </View>
-                  </View>
-                ))
-              )}
-            </FeatureCard>
-          </>
-        ) : null}
+        {activeTab === 'jobs' ? <JobsScreen user={user} /> : null}
 
         {activeTab === 'history' ? (
           <>
@@ -1119,41 +995,15 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
                 ))
               )}
             </FeatureCard>
-            <FeatureCard title="Timesheets" subtitle={`${timesheets.length} recorded`}>
-              {timesheets.length === 0 ? (
-                <Text style={styles.helperText}>Timesheets will appear here once shifts are completed.</Text>
-              ) : (
-                timesheets.map((timesheet) => (
-                  <View key={timesheet.id} style={styles.listCard}>
-                    <Text style={styles.cardTitle}>{timesheet.shift?.siteName || `Shift #${timesheet.shiftId}`}</Text>
-                    <Text style={styles.metaText}>{timesheet.hoursWorked} hours</Text>
-                    <Text style={styles.metaText}>Status: {timesheet.approvalStatus}</Text>
-                    {timesheet.approvalStatus === 'draft' ? (() => {
-                      const submissionState = getTimesheetSubmissionState(timesheet);
-                      return (
-                        <>
-                          <Pressable
-                            style={[
-                              styles.secondaryActionButton,
-                              (!submissionState.canSubmit || submittingTimesheetId === timesheet.id) && styles.buttonDisabled,
-                            ]}
-                            onPress={() => handleSubmitTimesheet(timesheet)}
-                            disabled={!submissionState.canSubmit || submittingTimesheetId === timesheet.id}
-                          >
-                            <Text style={styles.secondaryActionButtonText}>
-                              {submittingTimesheetId === timesheet.id ? 'Submitting...' : 'Submit Timesheet'}
-                            </Text>
-                          </Pressable>
-                          {!submissionState.canSubmit ? (
-                            <Text style={styles.timesheetHint}>{submissionState.reason}</Text>
-                          ) : null}
-                        </>
-                      );
-                    })() : null}
-                  </View>
-                ))
-              )}
-            </FeatureCard>
+            <GuardTimesheetsScreen
+              timesheets={timesheets}
+              attendance={attendance}
+              onReload={loadData}
+              onNotify={pushFeedback}
+              onTimesheetSubmitted={(shiftId) => {
+                pushTimelineEvent(shiftId, 'Timesheet submitted', 'Hours sent for company review.');
+              }}
+            />
           </>
         ) : null}
 
@@ -1534,7 +1384,6 @@ const styles = StyleSheet.create({
   secondaryHalfButtonText: { color: '#111827', fontWeight: '700' },
   secondaryActionButton: { alignSelf: 'flex-start', backgroundColor: '#E5E7EB', borderRadius: 14, paddingHorizontal: 14, paddingVertical: 12, minHeight: 46, alignItems: 'center', justifyContent: 'center' },
   secondaryActionButtonText: { color: '#111827', fontWeight: '700' },
-  timesheetHint: { color: '#6B7280', fontSize: 12, lineHeight: 18 },
   cardTitle: { color: '#111827', fontWeight: '700', fontSize: 16 },
   metaText: { color: '#6B7280', fontSize: 13, lineHeight: 18 },
   activityRow: {

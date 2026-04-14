@@ -305,6 +305,10 @@ export function listJobApplications() {
   return request<JobApplication[]>('/job-applications');
 }
 
+export function listMyJobApplications() {
+  return request<JobApplication[]>('/job-applications/self');
+}
+
 export function listAssignments() {
   return request<Assignment[]>('/assignments');
 }

@@ -23,6 +23,10 @@ export class UpdateTimesheetDto {
   actualCheckOutAt?: string;
 
   @IsOptional()
+  @IsString()
+  guardNote?: string | null;
+
+  @IsOptional()
   @IsNumber()
   @Min(0)
   workedMinutes?: number;

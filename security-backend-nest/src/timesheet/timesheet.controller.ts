@@ -32,7 +32,7 @@ export class TimesheetController {
   }
 
   @Patch(':id')
-  @Roles(UserRole.ADMIN, ...COMPANY_ADMIN_ROLES)
+  @Roles(UserRole.ADMIN, ...COMPANY_ADMIN_ROLES, UserRole.GUARD)
   update(
     @CurrentUser() user: JwtPayload,
     @Param('id', ParseIntPipe) id: number,
@@ -40,6 +40,10 @@ export class TimesheetController {
   ) {
     if (user.role === UserRole.ADMIN) {
       return this.timesheetService.update(id, dto);
+    }
+
+    if (user.role === UserRole.GUARD) {
+      return this.timesheetService.updateMine(user.sub, id, dto);
     }
 
     return this.timesheetService.updateForCompany(user.sub, id, dto);

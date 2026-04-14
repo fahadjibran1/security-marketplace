@@ -53,6 +53,9 @@ export class Timesheet {
   @Column({ type: 'timestamp', nullable: true })
   actualCheckOutAt?: Date | null;
 
+  @Column({ type: 'text', nullable: true })
+  guardNote?: string | null;
+
   @Column({ type: 'int', default: 0 })
   workedMinutes!: number;
 
