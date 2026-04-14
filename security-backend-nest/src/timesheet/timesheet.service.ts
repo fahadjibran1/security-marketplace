@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Brackets, Repository } from 'typeorm';
 import { Timesheet, TimesheetStatus } from './entities/timesheet.entity';
 import { Shift } from '../shift/entities/shift.entity';
 import { UpdateTimesheetDto } from './dto/update-timesheet.dto';
@@ -54,10 +54,9 @@ export class TimesheetService {
     const guard = await this.guardProfileService.findByUserId(userId);
     if (!guard) throw new NotFoundException('Guard profile not found');
 
-    return this.timesheetRepo.find({
-      where: { guard: { id: guard.id } },
-      order: { createdAt: 'DESC' },
-    });
+    return this.buildGuardTimesheetQuery(guard.id)
+      .orderBy('timesheet.createdAt', 'DESC')
+      .getMany();
   }
 
   async findOne(id: number): Promise<Timesheet> {
@@ -276,8 +275,11 @@ export class TimesheetService {
       throw new NotFoundException('Guard profile not found');
     }
 
-    const timesheet = await this.findOne(timesheetId);
-    if (!timesheet.guard || timesheet.guard.id !== guard.id) {
+    const timesheet = await this.buildGuardTimesheetQuery(guard.id)
+      .andWhere('timesheet.id = :timesheetId', { timesheetId })
+      .getOne();
+
+    if (!timesheet) {
       throw new ForbiddenException('This timesheet does not belong to the current guard');
     }
 
@@ -286,5 +288,24 @@ export class TimesheetService {
     }
 
     return timesheet;
+  }
+
+  private buildGuardTimesheetQuery(guardId: number) {
+    return this.timesheetRepo
+      .createQueryBuilder('timesheet')
+      .leftJoinAndSelect('timesheet.shift', 'shift')
+      .leftJoinAndSelect('shift.assignment', 'assignment')
+      .leftJoinAndSelect('assignment.guard', 'assignmentGuard')
+      .leftJoinAndSelect('shift.guard', 'shiftGuard')
+      .leftJoinAndSelect('shift.site', 'site')
+      .leftJoinAndSelect('timesheet.guard', 'timesheetGuard')
+      .leftJoinAndSelect('timesheet.company', 'company')
+      .where(
+        new Brackets((qb) => {
+          qb.where('timesheetGuard.id = :guardId', { guardId })
+            .orWhere('shiftGuard.id = :guardId', { guardId })
+            .orWhere('assignmentGuard.id = :guardId', { guardId });
+        }),
+      );
   }
 }
