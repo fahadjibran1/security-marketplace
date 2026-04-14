@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 
+import { CompanyTimesheetsWorkspace } from '../components/company/CompanyTimesheetsWorkspace';
 import {
   ApiError,
   acknowledgeSafetyAlert,
@@ -4129,6 +4130,7 @@ export function CompanyDashboardScreen() {
       case 'recruitment':
         return renderRecruitmentSection();
       case 'timesheets':
+        return <CompanyTimesheetsWorkspace timesheets={timesheets} refreshing={refreshing} onRefresh={() => loadData(true)} />;
         return renderSimpleTableSection(
           'Timesheets',
           ['Guard', 'Site', 'Shift', 'Date', 'Hours', 'Status'],
