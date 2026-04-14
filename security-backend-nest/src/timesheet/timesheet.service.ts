@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Timesheet, TimesheetStatus } from './entities/timesheet.entity';
@@ -103,18 +103,7 @@ export class TimesheetService {
   }
 
   async updateMine(userId: number, id: number, dto: UpdateTimesheetDto): Promise<Timesheet> {
-    const guard = await this.guardProfileService.findByUserId(userId);
-    if (!guard) throw new NotFoundException('Guard profile not found');
-
-    const timesheet = await this.timesheetRepo.findOne({
-      where: { id, guard: { id: guard.id } },
-    });
-    if (!timesheet) throw new NotFoundException('Timesheet not found');
-
-    if (timesheet.approvalStatus !== TimesheetStatus.DRAFT) {
-      throw new BadRequestException('Only draft timesheets can be edited by the guard');
-    }
-
+    const timesheet = await this.getGuardOwnedDraftTimesheet(userId, id, 'edited');
     this.applyGuardEditableUpdates(timesheet, dto);
     return this.timesheetRepo.save(timesheet);
   }
@@ -196,18 +185,7 @@ export class TimesheetService {
   }
 
   async submitMine(userId: number, id: number, dto: UpdateTimesheetDto): Promise<Timesheet> {
-    const guard = await this.guardProfileService.findByUserId(userId);
-    if (!guard) throw new NotFoundException('Guard profile not found');
-
-    const timesheet = await this.timesheetRepo.findOne({
-      where: { id, guard: { id: guard.id } },
-    });
-    if (!timesheet) throw new NotFoundException('Timesheet not found');
-
-    if (timesheet.approvalStatus !== TimesheetStatus.DRAFT) {
-      throw new BadRequestException('Only draft timesheets can be submitted by the guard');
-    }
-
+    const timesheet = await this.getGuardOwnedDraftTimesheet(userId, id, 'submitted');
     this.applyGuardEditableUpdates(timesheet, dto);
     timesheet.approvalStatus = TimesheetStatus.SUBMITTED;
     timesheet.submittedAt = new Date();
@@ -282,6 +260,31 @@ export class TimesheetService {
       actualCheckInAt: dto.actualCheckInAt,
       actualCheckOutAt: dto.actualCheckOutAt,
       guardNote: dto.guardNote,
+      workedMinutes: dto.workedMinutes,
+      breakMinutes: dto.breakMinutes,
+      roundedMinutes: dto.roundedMinutes,
     });
+  }
+
+  private async getGuardOwnedDraftTimesheet(
+    userId: number,
+    timesheetId: number,
+    action: 'edited' | 'submitted',
+  ): Promise<Timesheet> {
+    const guard = await this.guardProfileService.findByUserId(userId);
+    if (!guard) {
+      throw new NotFoundException('Guard profile not found');
+    }
+
+    const timesheet = await this.findOne(timesheetId);
+    if (!timesheet.guard || timesheet.guard.id !== guard.id) {
+      throw new ForbiddenException('This timesheet does not belong to the current guard');
+    }
+
+    if (timesheet.approvalStatus !== TimesheetStatus.DRAFT) {
+      throw new ForbiddenException(`Only draft timesheets can be ${action} by the guard`);
+    }
+
+    return timesheet;
   }
 }
