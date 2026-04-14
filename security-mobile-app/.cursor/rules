@@ -1,0 +1,14 @@
+PROJECT RULES
+
+1. Backend is source of truth
+2. Never invent API fields
+3. Always use real endpoints
+4. Always handle loading, empty, error, success states
+5. Do not create giant screen files
+6. Split logic into small components
+7. Keep navigation stable
+8. Avoid multiple uncontrolled modals
+9. Use consistent date/time formatting
+10. Do not redesign the app unless explicitly asked
+11. Output complete working code only
+12. Preserve existing structure

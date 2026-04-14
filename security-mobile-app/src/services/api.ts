@@ -162,8 +162,26 @@ export function formatApiErrorMessage(error: unknown, fallbackMessage: string) {
   }
 
   if (error instanceof ApiError) {
-    if (error.status === 401 || error.status === 403) {
+    if (error.status === 401) {
       return 'Sign-in failed. Check your email and password, or contact support if access is restricted.';
+    }
+
+    if (error.status === 403) {
+      if (typeof error.body === 'string' && error.body.trim()) {
+        return error.body;
+      }
+
+      if (error.body && typeof error.body === 'object') {
+        const body = error.body as { message?: unknown; error?: unknown };
+        if (typeof body.message === 'string' && body.message.trim()) {
+          return body.message;
+        }
+        if (Array.isArray(body.message) && body.message.length > 0) {
+          return body.message.join(', ');
+        }
+      }
+
+      return 'You are not allowed to perform this action.';
     }
 
     if (typeof error.body === 'string' && error.body.trim()) {
