@@ -56,6 +56,9 @@ export class Timesheet {
   @Column({ type: 'text', nullable: true })
   guardNote?: string | null;
 
+  @Column({ type: 'text', nullable: true })
+  companyNote?: string | null;
+
   @Column({ type: 'int', default: 0 })
   workedMinutes!: number;
 

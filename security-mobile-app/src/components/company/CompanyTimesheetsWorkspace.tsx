@@ -372,7 +372,7 @@ export function CompanyTimesheetsWorkspace({
             timesheet.id,
             timesheet.shiftId,
             timesheet.guardNote || '',
-            timesheet.rejectionReason || '',
+            timesheet.companyNote || '',
           ]
             .join(' ')
             .toLowerCase(),
@@ -497,8 +497,8 @@ export function CompanyTimesheetsWorkspace({
   }, [filteredTimesheets, selectedTimesheetId]);
 
   React.useEffect(() => {
-    setCompanyNote(selectedTimesheet?.timesheet.rejectionReason || '');
-  }, [selectedTimesheet?.timesheet.id, selectedTimesheet?.timesheet.rejectionReason, selectedTimesheet?.timesheet.updatedAt]);
+    setCompanyNote(selectedTimesheet?.timesheet.companyNote || '');
+  }, [selectedTimesheet?.timesheet.id, selectedTimesheet?.timesheet.companyNote, selectedTimesheet?.timesheet.updatedAt]);
 
   const setGroupCollapsed = React.useCallback((groupKey: string) => {
     setCollapsedGroupKeys((current) => ({ ...current, [groupKey]: !current[groupKey] }));
@@ -517,7 +517,7 @@ export function CompanyTimesheetsWorkspace({
           entry.attendanceLabel,
           String(toHours(entry.timesheet.hoursWorked)),
           formatStatusLabel(entry.displayStatus),
-          entry.timesheet.rejectionReason || '',
+          entry.timesheet.companyNote || '',
         ]),
       ),
     ];
@@ -555,7 +555,7 @@ export function CompanyTimesheetsWorkspace({
     await runCompanyAction(
       `note-${selectedTimesheet.timesheet.id}`,
       selectedTimesheet.timesheet.id,
-      { rejectionReason: companyNote.trim() || null },
+      { companyNote: companyNote.trim() || null },
       'Company note saved',
       'The reviewer note was saved for this timesheet.',
     );

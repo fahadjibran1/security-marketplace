@@ -118,6 +118,7 @@ export class TimesheetService {
 
     const beforeData = {
       approvalStatus: timesheet.approvalStatus,
+      companyNote: timesheet.companyNote,
       rejectionReason: timesheet.rejectionReason,
       reviewedAt: timesheet.reviewedAt,
       reviewedByUserId: timesheet.reviewedByUserId,
@@ -146,6 +147,7 @@ export class TimesheetService {
       beforeData,
       afterData: {
         approvalStatus: saved.approvalStatus,
+        companyNote: saved.companyNote,
         rejectionReason: saved.rejectionReason,
         reviewedAt: saved.reviewedAt,
         reviewedByUserId: saved.reviewedByUserId,
@@ -204,6 +206,7 @@ export class TimesheetService {
         actualCheckInAt: saved.actualCheckInAt,
         actualCheckOutAt: saved.actualCheckOutAt,
         guardNote: saved.guardNote,
+        companyNote: saved.companyNote,
         workedMinutes: saved.workedMinutes,
         roundedMinutes: saved.roundedMinutes,
       },
@@ -242,6 +245,10 @@ export class TimesheetService {
     if (dto.guardNote !== undefined) {
       const trimmedGuardNote = dto.guardNote?.trim();
       timesheet.guardNote = trimmedGuardNote ? trimmedGuardNote : null;
+    }
+    if (dto.companyNote !== undefined) {
+      const trimmedCompanyNote = dto.companyNote?.trim();
+      timesheet.companyNote = trimmedCompanyNote ? trimmedCompanyNote : null;
     }
     if (dto.workedMinutes !== undefined) timesheet.workedMinutes = dto.workedMinutes;
     if (dto.breakMinutes !== undefined) timesheet.breakMinutes = dto.breakMinutes;

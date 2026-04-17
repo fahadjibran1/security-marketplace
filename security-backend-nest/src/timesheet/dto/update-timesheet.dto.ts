@@ -27,6 +27,10 @@ export class UpdateTimesheetDto {
   guardNote?: string | null;
 
   @IsOptional()
+  @IsString()
+  companyNote?: string | null;
+
+  @IsOptional()
   @IsNumber()
   @Min(0)
   workedMinutes?: number;
