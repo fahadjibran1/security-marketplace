@@ -184,6 +184,22 @@ function roundHours(value: number) {
   return Math.round(value * 100) / 100;
 }
 
+function formatHoursInput(value?: number | null) {
+  if (value === undefined || value === null || Number.isNaN(Number(value))) {
+    return '';
+  }
+
+  const normalized = roundHours(Number(value));
+  return Number.isInteger(normalized) ? String(normalized) : normalized.toFixed(2);
+}
+
+function parseHoursInput(value: string) {
+  const normalized = value.trim().replace(',', '.');
+  if (!normalized) return null;
+  const parsed = Number.parseFloat(normalized);
+  return Number.isFinite(parsed) ? roundHours(parsed) : Number.NaN;
+}
+
 function toIsoDateInput(value: Date) {
   const year = value.getFullYear();
   const month = String(value.getMonth() + 1).padStart(2, '0');
@@ -343,6 +359,7 @@ export function CompanyTimesheetsWorkspace({
   const [feedback, setFeedback] = React.useState<WorkspaceFeedback>(null);
   const [selectedTimesheetId, setSelectedTimesheetId] = React.useState<number | null>(null);
   const [companyNote, setCompanyNote] = React.useState('');
+  const [approvedHoursInput, setApprovedHoursInput] = React.useState('');
   const [busyAction, setBusyAction] = React.useState<string | null>(null);
   const [collapsedGroupKeys, setCollapsedGroupKeys] = React.useState<Record<string, boolean>>({});
 
@@ -443,7 +460,7 @@ export function CompanyTimesheetsWorkspace({
       existing.totals.count += 1;
       existing.totals.claimedHours += toHours(entry.timesheet.hoursWorked);
       if (normalizeStatus(entry.displayStatus) === 'approved') {
-        existing.totals.approvedHours += toHours(entry.timesheet.hoursWorked);
+        existing.totals.approvedHours += toHours(entry.timesheet.approvedHours ?? entry.timesheet.hoursWorked);
       }
       if (normalizeStatus(entry.displayStatus) === 'submitted') {
         existing.totals.pendingCount += 1;
@@ -500,6 +517,22 @@ export function CompanyTimesheetsWorkspace({
     setCompanyNote(selectedTimesheet?.timesheet.companyNote || '');
   }, [selectedTimesheet?.timesheet.id, selectedTimesheet?.timesheet.companyNote, selectedTimesheet?.timesheet.updatedAt]);
 
+  React.useEffect(() => {
+    if (!selectedTimesheet) {
+      setApprovedHoursInput('');
+      return;
+    }
+
+    const currentApprovedHours =
+      selectedTimesheet.timesheet.approvedHours ?? selectedTimesheet.timesheet.hoursWorked;
+    setApprovedHoursInput(formatHoursInput(currentApprovedHours));
+  }, [
+    selectedTimesheet?.timesheet.id,
+    selectedTimesheet?.timesheet.approvedHours,
+    selectedTimesheet?.timesheet.hoursWorked,
+    selectedTimesheet?.timesheet.updatedAt,
+  ]);
+
   const setGroupCollapsed = React.useCallback((groupKey: string) => {
     setCollapsedGroupKeys((current) => ({ ...current, [groupKey]: !current[groupKey] }));
   }, []);
@@ -550,28 +583,88 @@ export function CompanyTimesheetsWorkspace({
     [onRefresh],
   );
 
+  const buildApprovalPayload = React.useCallback(
+    (mode: 'save' | 'approve') => {
+      if (!selectedTimesheet) {
+        return null;
+      }
+
+      const claimedHours = toHours(selectedTimesheet.timesheet.hoursWorked);
+      const trimmedCompanyNote = companyNote.trim();
+      const parsedApprovedHours = parseHoursInput(approvedHoursInput);
+      const hasApprovedHoursValue = approvedHoursInput.trim().length > 0;
+      const finalApprovedHours =
+        mode === 'approve'
+          ? hasApprovedHoursValue
+            ? parsedApprovedHours
+            : claimedHours
+          : hasApprovedHoursValue
+            ? parsedApprovedHours
+            : undefined;
+
+      if (finalApprovedHours != null && (!Number.isFinite(finalApprovedHours) || finalApprovedHours < 0)) {
+        setFeedback({
+          tone: 'error',
+          title: 'Invalid approved hours',
+          message: 'Approved hours must be 0 or more.',
+        });
+        return null;
+      }
+
+      if (
+        finalApprovedHours != null &&
+        Math.abs(finalApprovedHours - claimedHours) > 0.009 &&
+        !trimmedCompanyNote
+      ) {
+        setFeedback({
+          tone: 'error',
+          title: 'Company note required',
+          message: 'Add a company note when approved hours differ from claimed hours.',
+        });
+        return null;
+      }
+
+      return {
+        companyNote: trimmedCompanyNote || null,
+        approvedHours: finalApprovedHours,
+      };
+    },
+    [approvedHoursInput, companyNote, selectedTimesheet],
+  );
+
   const handleSaveCompanyNote = React.useCallback(async () => {
     if (!selectedTimesheet) return;
+    const payload = buildApprovalPayload('save');
+    if (!payload) return;
     await runCompanyAction(
       `note-${selectedTimesheet.timesheet.id}`,
       selectedTimesheet.timesheet.id,
-      { companyNote: companyNote.trim() || null },
-      'Company note saved',
-      'The reviewer note was saved for this timesheet.',
+      payload,
+      'Review details saved',
+      'The company note and approved hours were saved for this timesheet.',
     );
-  }, [companyNote, runCompanyAction, selectedTimesheet]);
+  }, [buildApprovalPayload, runCompanyAction, selectedTimesheet]);
 
   const handleApprove = React.useCallback(
     async (entry: EnrichedTimesheet) => {
+      const payload =
+        entry.timesheet.id === selectedTimesheet?.timesheet.id
+          ? buildApprovalPayload('approve')
+          : {
+              approvedHours: entry.timesheet.approvedHours ?? entry.timesheet.hoursWorked,
+              companyNote: entry.timesheet.companyNote ?? null,
+            };
+      if (!payload) return;
+
       await runCompanyAction(
         `approve-${entry.timesheet.id}`,
         entry.timesheet.id,
-        { approvalStatus: 'approved', rejectionReason: null },
+        { ...payload, approvalStatus: 'approved', rejectionReason: null },
         'Timesheet approved',
         'The claimed hours were approved for payroll and client sign-off.',
       );
     },
-    [runCompanyAction],
+    [buildApprovalPayload, runCompanyAction, selectedTimesheet?.timesheet.id],
   );
 
   const handleReturn = React.useCallback(
@@ -607,6 +700,15 @@ export function CompanyTimesheetsWorkspace({
   );
 
   const activeSelected = selectedTimesheet?.timesheet;
+  const selectedClaimedHours = activeSelected ? toHours(activeSelected.hoursWorked) : 0;
+  const parsedSelectedApprovedHours = parseHoursInput(approvedHoursInput);
+  const hasSelectedApprovedHoursValue = approvedHoursInput.trim().length > 0;
+  const adjustedHoursRequireNote =
+    hasSelectedApprovedHoursValue &&
+    parsedSelectedApprovedHours !== null &&
+    Number.isFinite(parsedSelectedApprovedHours) &&
+    Math.abs(parsedSelectedApprovedHours - selectedClaimedHours) > 0.009 &&
+    !companyNote.trim();
 
   return (
     <View style={styles.workspace}>
@@ -823,7 +925,10 @@ export function CompanyTimesheetsWorkspace({
                 <Text style={styles.detailLine}>Check-in: {formatDateTimeLabel(activeSelected.actualCheckInAt)}</Text>
                 <Text style={styles.detailLine}>Check-out: {formatDateTimeLabel(activeSelected.actualCheckOutAt)}</Text>
                 <Text style={styles.detailLine}>Recorded minutes: {activeSelected.workedMinutes ?? 0}</Text>
-                <Text style={styles.detailLine}>Claimed hours: {toHours(activeSelected.hoursWorked).toFixed(2)}</Text>
+                <Text style={styles.detailLine}>Claimed hours: {selectedClaimedHours.toFixed(2)}</Text>
+                <Text style={styles.detailLine}>
+                  Approved hours: {toHours(activeSelected.approvedHours ?? activeSelected.hoursWorked).toFixed(2)}
+                </Text>
                 <Text style={styles.detailLine}>Submitted: {activeSelected.submittedAt ? formatDateTimeLabel(activeSelected.submittedAt) : 'Not submitted'}</Text>
               </View>
 
@@ -845,9 +950,25 @@ export function CompanyTimesheetsWorkspace({
                 />
               </View>
 
+              <View style={styles.detailSection}>
+                <Text style={styles.detailSectionTitle}>Approved hours</Text>
+                <Text style={styles.detailLine}>Claimed hours remain read-only so the original submission stays intact.</Text>
+                <TextInput
+                  value={approvedHoursInput}
+                  onChangeText={setApprovedHoursInput}
+                  style={styles.input}
+                  keyboardType="decimal-pad"
+                  placeholder={formatHoursInput(activeSelected.hoursWorked)}
+                  placeholderTextColor="#64748b"
+                />
+                {adjustedHoursRequireNote ? (
+                  <Text style={styles.validationText}>Add a company note when approved hours differ from claimed hours.</Text>
+                ) : null}
+              </View>
+
               <View style={styles.detailActions}>
                 <Pressable style={styles.secondaryButton} onPress={handleSaveCompanyNote} disabled={busyAction === `note-${activeSelected.id}` || Boolean(busyAction)}>
-                  <Text style={styles.secondaryButtonText}>{busyAction === `note-${activeSelected.id}` ? 'Saving...' : 'Save company note'}</Text>
+                  <Text style={styles.secondaryButtonText}>{busyAction === `note-${activeSelected.id}` ? 'Saving...' : 'Save review details'}</Text>
                 </Pressable>
                 <Pressable style={styles.primaryButton} onPress={() => handleApprove(selectedTimesheet)} disabled={busyAction === `approve-${activeSelected.id}` || Boolean(busyAction)}>
                   <Text style={styles.primaryButtonText}>{busyAction === `approve-${activeSelected.id}` ? 'Approving...' : 'Approve'}</Text>
@@ -954,6 +1075,7 @@ const styles = StyleSheet.create({
   detailSectionTitle: { color: '#0f172a', fontSize: 15, fontWeight: '800' },
   detailLine: { color: '#334155', fontSize: 13, lineHeight: 18 },
   detailParagraph: { color: '#334155', fontSize: 13, lineHeight: 20 },
+  validationText: { color: '#B45309', fontSize: 12, lineHeight: 18, fontWeight: '700' },
   noteInput: { minHeight: 110, textAlignVertical: 'top' },
   detailActions: { gap: 10 },
   emptyText: { color: '#64748b', fontSize: 14, lineHeight: 20 },

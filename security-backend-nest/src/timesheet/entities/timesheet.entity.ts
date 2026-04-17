@@ -59,6 +59,9 @@ export class Timesheet {
   @Column({ type: 'text', nullable: true })
   companyNote?: string | null;
 
+  @Column({ type: 'numeric', precision: 8, scale: 2, nullable: true })
+  approvedHours?: number | null;
+
   @Column({ type: 'int', default: 0 })
   workedMinutes!: number;
 

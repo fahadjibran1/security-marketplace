@@ -161,6 +161,7 @@ export interface Timesheet {
   actualCheckOutAt?: string | null;
   guardNote?: string | null;
   companyNote?: string | null;
+  approvedHours?: number | null;
   workedMinutes?: number;
   breakMinutes?: number;
   roundedMinutes?: number;
@@ -181,6 +182,7 @@ export interface UpdateTimesheetPayload {
   actualCheckOutAt?: string | null;
   guardNote?: string | null;
   companyNote?: string | null;
+  approvedHours?: number | null;
   workedMinutes?: number;
   breakMinutes?: number;
   roundedMinutes?: number;

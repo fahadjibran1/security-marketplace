@@ -33,6 +33,11 @@ export class UpdateTimesheetDto {
   @IsOptional()
   @IsNumber()
   @Min(0)
+  approvedHours?: number | null;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
   workedMinutes?: number;
 
   @IsOptional()

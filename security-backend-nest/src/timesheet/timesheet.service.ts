@@ -118,24 +118,31 @@ export class TimesheetService {
 
     const beforeData = {
       approvalStatus: timesheet.approvalStatus,
+      approvedHours: timesheet.approvedHours,
       companyNote: timesheet.companyNote,
       rejectionReason: timesheet.rejectionReason,
       reviewedAt: timesheet.reviewedAt,
       reviewedByUserId: timesheet.reviewedByUserId,
     };
 
+    this.validateCompanyReviewRequest(timesheet, dto);
     this.applyTimesheetUpdates(timesheet, dto);
-    if (
-      dto.approvalStatus === TimesheetStatus.APPROVED ||
-      dto.approvalStatus === TimesheetStatus.REJECTED
-    ) {
+    this.validateCompanyReviewUpdate(timesheet, dto);
+    if (dto.approvalStatus === TimesheetStatus.APPROVED) {
       timesheet.reviewedAt = new Date();
       timesheet.reviewedByUserId = userId;
-      if (dto.approvalStatus === TimesheetStatus.APPROVED) {
-        timesheet.rejectionReason = null;
-      } else if (dto.rejectionReason !== undefined) {
-        timesheet.rejectionReason = dto.rejectionReason;
+      if (timesheet.approvedHours === undefined || timesheet.approvedHours === null) {
+        timesheet.approvedHours = Number(timesheet.hoursWorked);
       }
+      timesheet.rejectionReason = null;
+    } else if (dto.approvalStatus === TimesheetStatus.REJECTED) {
+      timesheet.reviewedAt = new Date();
+      timesheet.reviewedByUserId = userId;
+      timesheet.approvedHours = null;
+    } else if (dto.approvalStatus === TimesheetStatus.DRAFT) {
+      timesheet.reviewedAt = new Date();
+      timesheet.reviewedByUserId = userId;
+      timesheet.approvedHours = null;
     }
     const saved = await this.timesheetRepo.save(timesheet);
     await this.auditLogService.log({
@@ -147,6 +154,7 @@ export class TimesheetService {
       beforeData,
       afterData: {
         approvalStatus: saved.approvalStatus,
+        approvedHours: saved.approvedHours,
         companyNote: saved.companyNote,
         rejectionReason: saved.rejectionReason,
         reviewedAt: saved.reviewedAt,
@@ -206,6 +214,7 @@ export class TimesheetService {
         actualCheckInAt: saved.actualCheckInAt,
         actualCheckOutAt: saved.actualCheckOutAt,
         guardNote: saved.guardNote,
+        approvedHours: saved.approvedHours,
         companyNote: saved.companyNote,
         workedMinutes: saved.workedMinutes,
         roundedMinutes: saved.roundedMinutes,
@@ -250,6 +259,9 @@ export class TimesheetService {
       const trimmedCompanyNote = dto.companyNote?.trim();
       timesheet.companyNote = trimmedCompanyNote ? trimmedCompanyNote : null;
     }
+    if (dto.approvedHours !== undefined) {
+      timesheet.approvedHours = dto.approvedHours;
+    }
     if (dto.workedMinutes !== undefined) timesheet.workedMinutes = dto.workedMinutes;
     if (dto.breakMinutes !== undefined) timesheet.breakMinutes = dto.breakMinutes;
     if (dto.roundedMinutes !== undefined) timesheet.roundedMinutes = dto.roundedMinutes;
@@ -270,6 +282,96 @@ export class TimesheetService {
       breakMinutes: dto.breakMinutes,
       roundedMinutes: dto.roundedMinutes,
     });
+  }
+
+  private validateCompanyReviewUpdate(timesheet: Timesheet, dto: UpdateTimesheetDto): void {
+    const claimedHours = Number(timesheet.hoursWorked);
+    const approvedHours =
+      timesheet.approvedHours === undefined || timesheet.approvedHours === null
+        ? null
+        : Number(timesheet.approvedHours);
+
+    if (approvedHours !== null && (!Number.isFinite(approvedHours) || approvedHours < 0)) {
+      throw new BadRequestException('Approved hours must be 0 or more.');
+    }
+
+    const companyNote = timesheet.companyNote?.trim() || '';
+    const approvalStatus = dto.approvalStatus ? String(dto.approvalStatus).trim().toLowerCase() : '';
+    const finalApprovedHours =
+      approvalStatus === TimesheetStatus.APPROVED
+        ? approvedHours ?? claimedHours
+        : approvedHours;
+
+    if (
+      finalApprovedHours !== null &&
+      Math.abs(finalApprovedHours - claimedHours) > 0.009 &&
+      !companyNote
+    ) {
+      throw new BadRequestException('Add a company note when approved hours differ from claimed hours.');
+    }
+  }
+
+  private validateCompanyReviewRequest(timesheet: Timesheet, dto: UpdateTimesheetDto): void {
+    const disallowedCompanyFields = [
+      dto.hoursWorked !== undefined,
+      dto.submittedAt !== undefined,
+      dto.actualCheckInAt !== undefined,
+      dto.actualCheckOutAt !== undefined,
+      dto.guardNote !== undefined,
+      dto.workedMinutes !== undefined,
+      dto.breakMinutes !== undefined,
+      dto.roundedMinutes !== undefined,
+      dto.reviewedAt !== undefined,
+      dto.reviewedByUserId !== undefined,
+    ];
+
+    if (disallowedCompanyFields.some(Boolean)) {
+      throw new BadRequestException('Company review cannot change claimed guard timesheet fields.');
+    }
+
+    const currentStatus = String(timesheet.approvalStatus).trim().toLowerCase();
+    if (currentStatus === TimesheetStatus.APPROVED) {
+      throw new ForbiddenException('Approved timesheets are final and cannot be edited.');
+    }
+
+    if (currentStatus === TimesheetStatus.REJECTED) {
+      throw new ForbiddenException('Rejected timesheets are final and cannot be edited.');
+    }
+
+    if (currentStatus === TimesheetStatus.DRAFT) {
+      throw new ForbiddenException('Draft timesheets must be resubmitted by the guard before company review.');
+    }
+
+    if (currentStatus !== TimesheetStatus.SUBMITTED) {
+      throw new ForbiddenException('Only submitted timesheets can be reviewed by the company.');
+    }
+
+    if (dto.approvalStatus === undefined) {
+      return;
+    }
+
+    const requestedStatus = String(dto.approvalStatus).trim().toLowerCase();
+    if (
+      requestedStatus !== TimesheetStatus.APPROVED &&
+      requestedStatus !== TimesheetStatus.REJECTED &&
+      requestedStatus !== TimesheetStatus.DRAFT
+    ) {
+      throw new BadRequestException('Company review can only approve, reject, or return a submitted timesheet.');
+    }
+
+    if (requestedStatus === TimesheetStatus.DRAFT) {
+      const returnReason = dto.rejectionReason?.trim();
+      if (!returnReason) {
+        throw new BadRequestException('A return reason is required when sending a timesheet back to draft.');
+      }
+    }
+
+    if (requestedStatus === TimesheetStatus.REJECTED) {
+      const rejectionReason = dto.rejectionReason?.trim();
+      if (!rejectionReason) {
+        throw new BadRequestException('A rejection reason is required when rejecting a timesheet.');
+      }
+    }
   }
 
   private async getGuardOwnedDraftTimesheet(
