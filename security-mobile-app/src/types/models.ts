@@ -1,6 +1,9 @@
 export type AppRole = 'admin' | 'company' | 'company_admin' | 'company_staff' | 'guard';
 export type TimesheetApprovalStatus = 'draft' | 'submitted' | 'approved' | 'rejected' | 'returned';
 export type TimesheetPayrollStatus = 'unpaid' | 'included' | 'paid';
+export type PayrollBatchStatus = 'draft' | 'finalised' | 'paid';
+export type TimesheetBillingStatus = 'uninvoiced' | 'included' | 'invoiced';
+export type InvoiceBatchStatus = 'draft' | 'finalised' | 'issued' | 'paid';
 
 export function isCompanyAppRole(role?: AppRole | null): boolean {
   return role === 'company' || role === 'company_admin' || role === 'company_staff';
@@ -84,6 +87,7 @@ export interface Job {
   description?: string;
   guardsRequired: number;
   hourlyRate: number;
+  billingRate?: number | null;
   status: string;
   company?: CompanyProfile;
   site?: Site | null;
@@ -168,6 +172,16 @@ export interface Timesheet {
   payrollStatus?: TimesheetPayrollStatus | string;
   payrollIncludedAt?: string | null;
   payrollPaidAt?: string | null;
+  payrollBatch?: PayrollBatch | null;
+  billingStatus?: TimesheetBillingStatus | string;
+  invoiceIssuedAt?: string | null;
+  invoicePaidAt?: string | null;
+  invoiceBatch?: InvoiceBatch | null;
+  billingRate?: number | null;
+  costAmount?: number | null;
+  revenueAmount?: number | null;
+  marginAmount?: number | null;
+  marginPercent?: number | null;
   workedMinutes?: number;
   breakMinutes?: number;
   roundedMinutes?: number;
@@ -202,6 +216,74 @@ export interface UpdateTimesheetPayrollPayload {
   payrollStatus: TimesheetPayrollStatus | string;
 }
 
+export interface PayrollBatchTotals {
+  recordsCount: number;
+  approvedHours: number;
+  approvedAmount: number;
+  totalCostAmount?: number;
+  missingRateCount: number;
+}
+
+export interface PayrollBatch {
+  id: number;
+  companyId?: number;
+  periodStart: string;
+  periodEnd: string;
+  status: PayrollBatchStatus | string;
+  notes?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  finalisedAt?: string | null;
+  paidAt?: string | null;
+  createdByUserId?: number | null;
+  totals: PayrollBatchTotals;
+  timesheets?: Timesheet[];
+}
+
+export interface CreatePayrollBatchPayload {
+  periodStart: string;
+  periodEnd: string;
+  notes?: string | null;
+  timesheetIds: number[];
+}
+
+export interface InvoiceBatchTotals {
+  recordsCount: number;
+  approvedHours: number;
+  invoiceAmount: number;
+  totalRevenueAmount?: number;
+  missingRateCount: number;
+}
+
+export interface InvoiceBatch {
+  id: number;
+  companyId?: number;
+  clientId?: number;
+  client?: Client;
+  periodStart: string;
+  periodEnd: string;
+  status: InvoiceBatchStatus | string;
+  invoiceReference?: string | null;
+  notes?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  finalisedAt?: string | null;
+  issuedAt?: string | null;
+  paidAt?: string | null;
+  createdByUserId?: number | null;
+  totals: InvoiceBatchTotals;
+  timesheets?: Timesheet[];
+}
+
+export interface CreateInvoiceBatchPayload {
+  clientId: number;
+  periodStart: string;
+  periodEnd: string;
+  invoiceReference?: string | null;
+  notes?: string | null;
+  timesheetIds: number[];
+}
+
 export interface CreateJobPayload {
   companyId?: number;
   siteId?: number;
@@ -209,7 +291,25 @@ export interface CreateJobPayload {
   description?: string;
   guardsRequired: number;
   hourlyRate: number;
+  billingRate?: number | null;
   status?: string;
+}
+
+export interface MarginReportBreakdown {
+  clientId: number | null;
+  clientName: string;
+  cost: number;
+  revenue: number;
+  margin: number;
+  marginPercent: number | null;
+}
+
+export interface MarginReport {
+  totalCost: number;
+  totalRevenue: number;
+  totalMargin: number;
+  marginPercent: number | null;
+  breakdown: MarginReportBreakdown[];
 }
 
 export interface CreateShiftPayload {

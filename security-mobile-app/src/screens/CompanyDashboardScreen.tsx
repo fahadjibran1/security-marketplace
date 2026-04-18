@@ -1,6 +1,9 @@
 import * as React from 'react';
 import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 
+import { CompanyInvoiceWorkspace } from '../components/company/CompanyInvoiceWorkspace';
+import { CompanyMarginWorkspace } from '../components/company/CompanyMarginWorkspace';
+import { CompanyPayrollBatchesWorkspace } from '../components/company/CompanyPayrollBatchesWorkspace';
 import { CompanyPayrollWorkspace } from '../components/company/CompanyPayrollWorkspace';
 import { CompanyTimesheetsWorkspace } from '../components/company/CompanyTimesheetsWorkspace';
 import {
@@ -67,6 +70,9 @@ type CompanySection =
   | 'recruitment'
   | 'timesheets'
   | 'payroll'
+  | 'payroll-batches'
+  | 'invoices'
+  | 'margins'
   | 'incidents'
   | 'alerts';
 
@@ -103,6 +109,7 @@ type JobFormState = {
   description: string;
   guardsRequired: string;
   hourlyRate: string;
+  billingRate: string;
   siteId: string;
 };
 
@@ -191,6 +198,9 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'recruitment', label: 'Recruitment', caption: 'Open jobs and incoming applications.' },
   { id: 'timesheets', label: 'Timesheets', caption: 'Review worked hours and approvals.' },
   { id: 'payroll', label: 'Payroll', caption: 'Approved hours and payment totals.' },
+  { id: 'payroll-batches', label: 'Payroll Batches', caption: 'Draft, finalised, and paid payroll runs.' },
+  { id: 'invoices', label: 'Invoices', caption: 'Client billing and invoice batches.' },
+  { id: 'margins', label: 'Margins', caption: 'Revenue, cost, and profit reporting.' },
   { id: 'incidents', label: 'Incidents', caption: 'Track reported site issues.' },
   { id: 'alerts', label: 'Safety Alerts', caption: 'Watch welfare and check-call alerts.' },
 ];
@@ -226,6 +236,7 @@ const JOB_FORM_EMPTY: JobFormState = {
   description: '',
   guardsRequired: '1',
   hourlyRate: '12',
+  billingRate: '',
   siteId: '',
 };
 
@@ -2190,6 +2201,7 @@ export function CompanyDashboardScreen() {
         description: jobForm.description.trim() || undefined,
         guardsRequired: toNumber(jobForm.guardsRequired) || 1,
         hourlyRate: toNumber(jobForm.hourlyRate) || 12,
+        billingRate: toNumber(jobForm.billingRate) ?? null,
         siteId: toNumber(jobForm.siteId),
       };
 
@@ -4009,6 +4021,7 @@ export function CompanyDashboardScreen() {
           <View style={styles.formRow}>
             <TextInput style={[styles.input, styles.formCell]} value={jobForm.guardsRequired} onChangeText={(value: string) => setJobForm((current) => ({ ...current, guardsRequired: value }))} placeholder="Guards required" />
             <TextInput style={[styles.input, styles.formCell]} value={jobForm.hourlyRate} onChangeText={(value: string) => setJobForm((current) => ({ ...current, hourlyRate: value }))} placeholder="Hourly rate" />
+            <TextInput style={[styles.input, styles.formCell]} value={jobForm.billingRate} onChangeText={(value: string) => setJobForm((current) => ({ ...current, billingRate: value }))} placeholder="Billing rate (optional)" />
           </View>
           <Pressable style={styles.primaryButton} onPress={handleCreateJob} disabled={creatingJob}>
             <Text style={styles.primaryButtonText}>{creatingJob ? 'Saving...' : 'Create Job'}</Text>
@@ -4136,6 +4149,12 @@ export function CompanyDashboardScreen() {
         return <CompanyTimesheetsWorkspace timesheets={timesheets} refreshing={refreshing} onRefresh={() => loadData(true)} />;
       case 'payroll':
         return <CompanyPayrollWorkspace timesheets={timesheets} refreshing={refreshing} onRefresh={() => loadData(true)} />;
+      case 'payroll-batches':
+        return <CompanyPayrollBatchesWorkspace />;
+      case 'invoices':
+        return <CompanyInvoiceWorkspace timesheets={timesheets} refreshing={refreshing} onRefresh={() => loadData(true)} />;
+      case 'margins':
+        return <CompanyMarginWorkspace />;
       case 'incidents':
         return renderSimpleTableSection(
           'Incidents',

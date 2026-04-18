@@ -30,6 +30,7 @@ export class JobService {
       description: dto.description,
       guardsRequired: dto.guardsRequired,
       hourlyRate: dto.hourlyRate,
+      billingRate: dto.billingRate ?? null,
       status: dto.status ?? 'open'
     });
     return this.jobRepo.save(job);
@@ -112,6 +113,7 @@ export class JobService {
       description: dto.description,
       guardsRequired: dto.guardsRequired,
       hourlyRate: dto.hourlyRate,
+      billingRate: dto.billingRate ?? null,
       status: dto.status ?? 'open',
     });
 

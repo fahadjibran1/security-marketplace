@@ -8,6 +8,7 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 import { Company } from '../../company/entities/company.entity';
+import { InvoiceBatch } from '../../invoice-batch/entities/invoice-batch.entity';
 import { Site } from '../../site/entities/site.entity';
 
 @Entity('clients')
@@ -38,6 +39,9 @@ export class Client {
 
   @OneToMany(() => Site, (site) => site.client)
   sites?: Site[];
+
+  @OneToMany(() => InvoiceBatch, (invoiceBatch) => invoiceBatch.client)
+  invoiceBatches?: InvoiceBatch[];
 
   @CreateDateColumn()
   createdAt!: Date;

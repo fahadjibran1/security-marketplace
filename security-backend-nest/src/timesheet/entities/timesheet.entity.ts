@@ -2,6 +2,7 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  JoinColumn,
   ManyToOne,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
@@ -9,6 +10,8 @@ import {
 import { Shift } from '../../shift/entities/shift.entity';
 import { GuardProfile } from '../../guard-profile/entities/guard-profile.entity';
 import { Company } from '../../company/entities/company.entity';
+import { InvoiceBatch } from '../../invoice-batch/entities/invoice-batch.entity';
+import { PayrollBatch } from '../../payroll-batch/entities/payroll-batch.entity';
 
 export enum TimesheetStatus {
   DRAFT = 'draft',
@@ -22,6 +25,12 @@ export enum TimesheetPayrollStatus {
   UNPAID = 'unpaid',
   INCLUDED = 'included',
   PAID = 'paid',
+}
+
+export enum TimesheetBillingStatus {
+  UNINVOICED = 'uninvoiced',
+  INCLUDED = 'included',
+  INVOICED = 'invoiced',
 }
 
 @Entity('timesheets')
@@ -82,6 +91,35 @@ export class Timesheet {
   @Column({ type: 'timestamp', nullable: true })
   payrollPaidAt?: Date | null;
 
+  @ManyToOne(() => PayrollBatch, (payrollBatch) => payrollBatch.timesheets, {
+    eager: true,
+    nullable: true,
+    onDelete: 'SET NULL',
+  })
+  @JoinColumn({ name: 'payrollBatchId' })
+  payrollBatch?: PayrollBatch | null;
+
+  @Column({
+    type: 'enum',
+    enum: TimesheetBillingStatus,
+    default: TimesheetBillingStatus.UNINVOICED,
+  })
+  billingStatus!: string;
+
+  @Column({ type: 'timestamp', nullable: true })
+  invoiceIssuedAt?: Date | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  invoicePaidAt?: Date | null;
+
+  @ManyToOne(() => InvoiceBatch, (invoiceBatch) => invoiceBatch.timesheets, {
+    eager: true,
+    nullable: true,
+    onDelete: 'SET NULL',
+  })
+  @JoinColumn({ name: 'invoiceBatchId' })
+  invoiceBatch?: InvoiceBatch | null;
+
   @Column({ type: 'int', default: 0 })
   workedMinutes!: number;
 
@@ -108,4 +146,10 @@ export class Timesheet {
 
   @UpdateDateColumn()
   updatedAt!: Date;
+
+  billingRate?: number | null;
+  costAmount?: number | null;
+  revenueAmount?: number | null;
+  marginAmount?: number | null;
+  marginPercent?: number | null;
 }

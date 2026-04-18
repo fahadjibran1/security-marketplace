@@ -1,7 +1,7 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Brackets, In, Repository } from 'typeorm';
-import { Timesheet, TimesheetPayrollStatus, TimesheetStatus } from './entities/timesheet.entity';
+import { Timesheet, TimesheetBillingStatus, TimesheetPayrollStatus, TimesheetStatus } from './entities/timesheet.entity';
 import { Shift } from '../shift/entities/shift.entity';
 import { UpdateTimesheetDto } from './dto/update-timesheet.dto';
 import { UpdateTimesheetPayrollDto } from './dto/update-timesheet-payroll.dto';
@@ -25,8 +25,9 @@ export class TimesheetService {
     private readonly notificationService: NotificationService,
   ) {}
 
-  findAll(): Promise<Timesheet[]> {
-    return this.timesheetRepo.find();
+  async findAll(): Promise<Timesheet[]> {
+    const timesheets = await this.timesheetRepo.find();
+    return this.withFinancials(timesheets);
   }
 
   async findAllForUser(user: JwtPayload): Promise<Timesheet[]> {
@@ -45,25 +46,27 @@ export class TimesheetService {
     const company = await this.companyService.findByUserId(userId);
     if (!company) throw new NotFoundException('Company not found');
 
-    return this.timesheetRepo.find({
+    const timesheets = await this.timesheetRepo.find({
       where: { company: { id: company.id } },
       order: { createdAt: 'DESC' },
     });
+    return this.withFinancials(timesheets);
   }
 
   async findMine(userId: number): Promise<Timesheet[]> {
     const guard = await this.guardProfileService.findByUserId(userId);
     if (!guard) throw new NotFoundException('Guard profile not found');
 
-    return this.buildGuardTimesheetQuery(guard.id)
+    const timesheets = await this.buildGuardTimesheetQuery(guard.id)
       .orderBy('timesheet.createdAt', 'DESC')
       .getMany();
+    return this.withFinancials(timesheets);
   }
 
   async findOne(id: number): Promise<Timesheet> {
     const timesheet = await this.timesheetRepo.findOne({ where: { id } });
     if (!timesheet) throw new NotFoundException('Timesheet not found');
-    return timesheet;
+    return this.withFinancials(timesheet);
   }
 
   async createForShift(shift: Shift): Promise<Timesheet> {
@@ -90,25 +93,31 @@ export class TimesheetService {
       payrollStatus: TimesheetPayrollStatus.UNPAID,
       payrollIncludedAt: null,
       payrollPaidAt: null,
+      billingStatus: TimesheetBillingStatus.UNINVOICED,
+      invoiceIssuedAt: null,
+      invoicePaidAt: null,
       submittedAt: null,
       reviewedAt: null,
       reviewedByUserId: null,
       rejectionReason: null,
     });
 
-    return this.timesheetRepo.save(timesheet);
+    const saved = await this.timesheetRepo.save(timesheet);
+    return this.withFinancials(saved);
   }
 
   async update(id: number, dto: UpdateTimesheetDto): Promise<Timesheet> {
     const timesheet = await this.findOne(id);
     this.applyTimesheetUpdates(timesheet, dto);
-    return this.timesheetRepo.save(timesheet);
+    const saved = await this.timesheetRepo.save(timesheet);
+    return this.withFinancials(saved);
   }
 
   async updateMine(userId: number, id: number, dto: UpdateTimesheetDto): Promise<Timesheet> {
     const timesheet = await this.getGuardOwnedEditableTimesheet(userId, id, 'edited');
     this.applyGuardEditableUpdates(timesheet, dto);
-    return this.timesheetRepo.save(timesheet);
+    const saved = await this.timesheetRepo.save(timesheet);
+    return this.withFinancials(saved);
   }
 
   async updateForCompany(userId: number, id: number, dto: UpdateTimesheetDto): Promise<Timesheet> {
@@ -141,6 +150,9 @@ export class TimesheetService {
       if (!timesheet.payrollStatus) {
         timesheet.payrollStatus = TimesheetPayrollStatus.UNPAID;
       }
+      if (!timesheet.billingStatus) {
+        timesheet.billingStatus = TimesheetBillingStatus.UNINVOICED;
+      }
       timesheet.rejectionReason = null;
     } else if (dto.approvalStatus === TimesheetStatus.REJECTED) {
       timesheet.reviewedAt = new Date();
@@ -149,6 +161,10 @@ export class TimesheetService {
       timesheet.payrollStatus = TimesheetPayrollStatus.UNPAID;
       timesheet.payrollIncludedAt = null;
       timesheet.payrollPaidAt = null;
+      timesheet.billingStatus = TimesheetBillingStatus.UNINVOICED;
+      timesheet.invoiceIssuedAt = null;
+      timesheet.invoicePaidAt = null;
+      timesheet.invoiceBatch = null;
     } else if (dto.approvalStatus === TimesheetStatus.RETURNED) {
       timesheet.reviewedAt = new Date();
       timesheet.reviewedByUserId = userId;
@@ -156,6 +172,10 @@ export class TimesheetService {
       timesheet.payrollStatus = TimesheetPayrollStatus.UNPAID;
       timesheet.payrollIncludedAt = null;
       timesheet.payrollPaidAt = null;
+      timesheet.billingStatus = TimesheetBillingStatus.UNINVOICED;
+      timesheet.invoiceIssuedAt = null;
+      timesheet.invoicePaidAt = null;
+      timesheet.invoiceBatch = null;
     }
     const saved = await this.timesheetRepo.save(timesheet);
     await this.auditLogService.log({
@@ -197,7 +217,7 @@ export class TimesheetService {
       });
     }
 
-    return saved;
+    return this.withFinancials(saved);
   }
 
   async updateHoursForShift(shiftId: number, hoursWorked: number): Promise<Timesheet> {
@@ -210,7 +230,8 @@ export class TimesheetService {
     timesheet.roundedMinutes = workedMinutes;
     timesheet.actualCheckInAt = timesheet.shift.assignment?.checkedInAt ?? timesheet.actualCheckInAt ?? null;
     timesheet.actualCheckOutAt = timesheet.shift.assignment?.checkedOutAt ?? timesheet.actualCheckOutAt ?? null;
-    return this.timesheetRepo.save(timesheet);
+    const saved = await this.timesheetRepo.save(timesheet);
+    return this.withFinancials(saved);
   }
 
   async submitMine(userId: number, id: number, dto: UpdateTimesheetDto): Promise<Timesheet> {
@@ -222,6 +243,10 @@ export class TimesheetService {
     timesheet.payrollStatus = TimesheetPayrollStatus.UNPAID;
     timesheet.payrollIncludedAt = null;
     timesheet.payrollPaidAt = null;
+    timesheet.billingStatus = TimesheetBillingStatus.UNINVOICED;
+    timesheet.invoiceIssuedAt = null;
+    timesheet.invoicePaidAt = null;
+    timesheet.invoiceBatch = null;
     timesheet.reviewedAt = null;
     timesheet.reviewedByUserId = null;
     timesheet.rejectionReason = null;
@@ -255,7 +280,7 @@ export class TimesheetService {
       });
     }
 
-    return saved;
+    return this.withFinancials(saved);
   }
 
   async updatePayrollForCompany(userId: number, dto: UpdateTimesheetPayrollDto): Promise<Timesheet[]> {
@@ -358,6 +383,10 @@ export class TimesheetService {
       if (String(timesheet.approvalStatus).trim().toLowerCase() !== TimesheetStatus.APPROVED) {
         throw new ForbiddenException('Only approved timesheets can be managed in payroll.');
       }
+
+      if (timesheet.payrollBatch) {
+        throw new ForbiddenException('Timesheets attached to a payroll batch must be managed through that batch.');
+      }
     });
 
     const now = new Date();
@@ -405,7 +434,80 @@ export class TimesheetService {
       ),
     );
 
-    return saved;
+    return this.withFinancials(saved);
+  }
+
+  private withFinancials<T extends Timesheet | Timesheet[]>(timesheetOrTimesheets: T): T {
+    if (Array.isArray(timesheetOrTimesheets)) {
+      timesheetOrTimesheets.forEach((timesheet) => this.attachFinancials(timesheet));
+      return timesheetOrTimesheets;
+    }
+
+    this.attachFinancials(timesheetOrTimesheets);
+    return timesheetOrTimesheets;
+  }
+
+  private attachFinancials(timesheet: Timesheet) {
+    if (String(timesheet.approvalStatus).trim().toLowerCase() !== TimesheetStatus.APPROVED) {
+      timesheet.billingRate = null;
+      timesheet.costAmount = null;
+      timesheet.revenueAmount = null;
+      timesheet.marginAmount = null;
+      timesheet.marginPercent = null;
+      return;
+    }
+
+    const approvedHours =
+      timesheet.approvedHours !== undefined && timesheet.approvedHours !== null && Number.isFinite(Number(timesheet.approvedHours))
+        ? Number(timesheet.approvedHours)
+        : Number(timesheet.hoursWorked) || 0;
+    const hourlyRate = this.getTimesheetHourlyRate(timesheet);
+    const billingRate = this.getTimesheetBillingRate(timesheet);
+    const costAmount = hourlyRate === null ? null : this.roundCurrency(approvedHours * hourlyRate);
+    const revenueAmount = billingRate === null ? null : this.roundCurrency(approvedHours * billingRate);
+    const marginAmount = costAmount === null || revenueAmount === null ? null : this.roundCurrency(revenueAmount - costAmount);
+    const marginPercent =
+      marginAmount === null || revenueAmount === null || Math.abs(revenueAmount) < 0.0001
+        ? null
+        : Math.round((marginAmount / revenueAmount) * 10000) / 100;
+
+    timesheet.billingRate = billingRate;
+    timesheet.costAmount = costAmount;
+    timesheet.revenueAmount = revenueAmount;
+    timesheet.marginAmount = marginAmount;
+    timesheet.marginPercent = marginPercent;
+  }
+
+  private getTimesheetHourlyRate(timesheet: Timesheet) {
+    const directJobRate = timesheet.shift?.job?.hourlyRate;
+    if (directJobRate !== undefined && directJobRate !== null && Number.isFinite(Number(directJobRate))) {
+      return Number(directJobRate);
+    }
+
+    const assignmentJobRate = timesheet.shift?.assignment?.job?.hourlyRate;
+    if (assignmentJobRate !== undefined && assignmentJobRate !== null && Number.isFinite(Number(assignmentJobRate))) {
+      return Number(assignmentJobRate);
+    }
+
+    return null;
+  }
+
+  private getTimesheetBillingRate(timesheet: Timesheet) {
+    const directBillingRate = timesheet.shift?.job?.billingRate;
+    if (directBillingRate !== undefined && directBillingRate !== null && Number.isFinite(Number(directBillingRate))) {
+      return Number(directBillingRate);
+    }
+
+    const assignmentBillingRate = timesheet.shift?.assignment?.job?.billingRate;
+    if (assignmentBillingRate !== undefined && assignmentBillingRate !== null && Number.isFinite(Number(assignmentBillingRate))) {
+      return Number(assignmentBillingRate);
+    }
+
+    return this.getTimesheetHourlyRate(timesheet);
+  }
+
+  private roundCurrency(value: number) {
+    return Math.round(value * 100) / 100;
   }
 
   private validateCompanyReviewUpdate(timesheet: Timesheet, dto: UpdateTimesheetDto): void {
@@ -523,7 +625,7 @@ export class TimesheetService {
       throw new ForbiddenException(`Only draft or returned timesheets can be ${action} by the guard`);
     }
 
-    return timesheet;
+    return this.withFinancials(timesheet);
   }
 
   private buildGuardTimesheetQuery(guardId: number) {

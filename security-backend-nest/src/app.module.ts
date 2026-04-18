@@ -23,6 +23,9 @@ import { AttachmentModule } from './attachment/attachment.module';
 import { AuditLogModule } from './audit-log/audit-log.module';
 import { NotificationModule } from './notification/notification.module';
 import { ClientModule } from './client/client.module';
+import { InvoiceBatchModule } from './invoice-batch/invoice-batch.module';
+import { PayrollBatchModule } from './payroll-batch/payroll-batch.module';
+import { ReportModule } from './report/report.module';
 import { HealthController } from './health.controller';
 import { buildNestTypeOrmOptions } from './database/typeorm.config';
 import { validateRuntimeEnv } from './config/runtime-env';
@@ -70,6 +73,9 @@ import { validateRuntimeEnv } from './config/runtime-env';
     AttachmentModule,
     AuditLogModule,
     NotificationModule,
+    PayrollBatchModule,
+    InvoiceBatchModule,
+    ReportModule,
   ],
   controllers: [HealthController],
 })

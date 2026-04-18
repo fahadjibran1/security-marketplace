@@ -107,6 +107,18 @@ function parseClaimedHours(text: string): number {
   return Number.parseFloat(normalized);
 }
 
+function getApprovedHoursValue(timesheet: Timesheet) {
+  if (timesheet.approvedHours !== undefined && timesheet.approvedHours !== null && Number.isFinite(Number(timesheet.approvedHours))) {
+    return Number(timesheet.approvedHours);
+  }
+
+  if (normalizeTimesheetStatus(timesheet.approvalStatus) === 'approved') {
+    return Number(timesheet.hoursWorked) || 0;
+  }
+
+  return null;
+}
+
 function getSubmissionState(
   timesheet: Timesheet,
   attendanceSlice: { checkInAt?: string; checkOutAt?: string } | undefined,
@@ -176,6 +188,10 @@ function TimesheetCard({
   const dirty = hoursChanged || noteDirty;
 
   const submission = getSubmissionState(timesheet, attendanceSlice, claimedHours);
+  const approvedHoursValue = getApprovedHoursValue(timesheet);
+  const approvedHoursAdjusted =
+    approvedHoursValue !== null && Math.abs(approvedHoursValue - Number(timesheet.hoursWorked || 0)) > 0.009;
+  const companyReviewNote = timesheet.companyNote?.trim() || null;
 
   async function handleSaveDraft() {
     if (!isEditable || !hoursValid) return;
@@ -287,6 +303,25 @@ function TimesheetCard({
             {statusKey === 'returned' ? 'Returned for correction' : 'Company note'}
           </Text>
           <Text style={styles.rejectionText}>{timesheet.rejectionReason}</Text>
+        </View>
+      ) : null}
+
+      {(statusKey === 'approved' || statusKey === 'returned') && approvedHoursValue !== null ? (
+        <View style={styles.reviewContextBox}>
+          <Text style={styles.reviewContextLabel}>
+            {approvedHoursAdjusted ? 'Company adjusted approved hours' : 'Approved hours'}
+          </Text>
+          <Text style={styles.reviewContextText}>
+            Approved: {approvedHoursValue.toFixed(2)} h
+            {approvedHoursAdjusted ? ` | Claimed: ${Number(timesheet.hoursWorked || 0).toFixed(2)} h` : ''}
+          </Text>
+        </View>
+      ) : null}
+
+      {(statusKey === 'approved' || statusKey === 'returned') && companyReviewNote ? (
+        <View style={styles.reviewContextBox}>
+          <Text style={styles.reviewContextLabel}>Company review note</Text>
+          <Text style={styles.reviewContextText}>{companyReviewNote}</Text>
         </View>
       ) : null}
 
@@ -408,6 +443,14 @@ const styles = StyleSheet.create({
   },
   rejectionLabel: { color: '#991B1B', fontSize: 11, fontWeight: '700', textTransform: 'uppercase' },
   rejectionText: { color: '#7F1D1D', fontSize: 14, lineHeight: 20 },
+  reviewContextBox: {
+    backgroundColor: '#EFF6FF',
+    borderRadius: 12,
+    padding: 10,
+    gap: 4,
+  },
+  reviewContextLabel: { color: '#1D4ED8', fontSize: 11, fontWeight: '700', textTransform: 'uppercase' },
+  reviewContextText: { color: '#1E3A8A', fontSize: 14, lineHeight: 20 },
   actionsRow: { flexDirection: 'row', gap: 10, marginTop: 4 },
   secondaryBtn: {
     flex: 1,

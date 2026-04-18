@@ -8,6 +8,8 @@ import {
   CompanyGuard,
   CompanyProfile,
   Client,
+  CreateInvoiceBatchPayload,
+  CreatePayrollBatchPayload,
   CreateClientPayload,
   CreateIncidentPayload,
   CreateJobApplicationPayload,
@@ -18,9 +20,12 @@ import {
   Incident,
   Job,
   JobApplication,
+  InvoiceBatch,
+  MarginReport,
   ReviewJobApplicationPayload,
   DailyLog,
   Notification,
+  PayrollBatch,
   RegisterPayload,
   SafetyAlert,
   Site,
@@ -401,6 +406,76 @@ export function updateCompanyTimesheetPayroll(payload: UpdateTimesheetPayrollPay
     method: 'PATCH',
     body: JSON.stringify(payload),
   });
+}
+
+export function createCompanyPayrollBatch(payload: CreatePayrollBatchPayload) {
+  return request<PayrollBatch>('/payroll-batches', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function listCompanyPayrollBatches() {
+  return request<PayrollBatch[]>('/payroll-batches/company');
+}
+
+export function getCompanyPayrollBatch(id: number) {
+  return request<PayrollBatch>(`/payroll-batches/${id}`);
+}
+
+export function finaliseCompanyPayrollBatch(id: number) {
+  return request<PayrollBatch>(`/payroll-batches/${id}/finalise`, {
+    method: 'PATCH',
+  });
+}
+
+export function payCompanyPayrollBatch(id: number) {
+  return request<PayrollBatch>(`/payroll-batches/${id}/pay`, {
+    method: 'PATCH',
+  });
+}
+
+export function createCompanyInvoiceBatch(payload: CreateInvoiceBatchPayload) {
+  return request<InvoiceBatch>('/invoice-batches', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function listCompanyInvoiceBatches() {
+  return request<InvoiceBatch[]>('/invoice-batches/company');
+}
+
+export function getCompanyInvoiceBatch(id: number) {
+  return request<InvoiceBatch>(`/invoice-batches/${id}`);
+}
+
+export function finaliseCompanyInvoiceBatch(id: number) {
+  return request<InvoiceBatch>(`/invoice-batches/${id}/finalise`, {
+    method: 'PATCH',
+  });
+}
+
+export function issueCompanyInvoiceBatch(id: number) {
+  return request<InvoiceBatch>(`/invoice-batches/${id}/issue`, {
+    method: 'PATCH',
+  });
+}
+
+export function payCompanyInvoiceBatch(id: number) {
+  return request<InvoiceBatch>(`/invoice-batches/${id}/pay`, {
+    method: 'PATCH',
+  });
+}
+
+export function getCompanyMarginReport(filters: { startDate?: string; endDate?: string; clientId?: number; siteId?: number } = {}) {
+  const query = new URLSearchParams();
+  if (filters.startDate) query.set('startDate', filters.startDate);
+  if (filters.endDate) query.set('endDate', filters.endDate);
+  if (filters.clientId) query.set('clientId', String(filters.clientId));
+  if (filters.siteId) query.set('siteId', String(filters.siteId));
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return request<MarginReport>(`/reports/margin${suffix}`);
 }
 
 export function listMyAttendance() {

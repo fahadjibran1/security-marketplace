@@ -8,6 +8,7 @@ import { CompanyGuard } from '../company-guard/entities/company-guard.entity';
 import { DailyLog } from '../daily-log/entities/daily-log.entity';
 import { GuardProfile } from '../guard-profile/entities/guard-profile.entity';
 import { Incident } from '../incident/entities/incident.entity';
+import { InvoiceBatch } from '../invoice-batch/entities/invoice-batch.entity';
 import { JobApplication } from '../job-application/entities/job-application.entity';
 import { JobMatch } from '../job-match/entities/job-match.entity';
 import { JobSlot } from '../job-slot/entities/job-slot.entity';
@@ -17,6 +18,7 @@ import { Shift } from '../shift/entities/shift.entity';
 import { Site } from '../site/entities/site.entity';
 import { Timesheet } from '../timesheet/entities/timesheet.entity';
 import { Notification } from '../notification/entities/notification.entity';
+import { PayrollBatch } from '../payroll-batch/entities/payroll-batch.entity';
 import { User } from '../user/entities/user.entity';
 
 export const appEntities = [
@@ -30,11 +32,13 @@ export const appEntities = [
   DailyLog,
   GuardProfile,
   Incident,
+  InvoiceBatch,
   Job,
   JobApplication,
   JobMatch,
   JobSlot,
   Notification,
+  PayrollBatch,
   SafetyAlert,
   Shift,
   Site,

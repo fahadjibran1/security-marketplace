@@ -40,6 +40,9 @@ export class Job {
   @Column({ type: 'numeric', precision: 10, scale: 2 })
   hourlyRate!: number;
 
+  @Column({ type: 'numeric', precision: 10, scale: 2, nullable: true })
+  billingRate?: number | null;
+
   @Column({ default: 'open' })
   status!: string;
 

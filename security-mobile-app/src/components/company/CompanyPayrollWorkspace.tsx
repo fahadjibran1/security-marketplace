@@ -1,8 +1,12 @@
 import * as React from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { formatApiErrorMessage, updateCompanyTimesheetPayroll } from '../../services/api';
-import { Timesheet, TimesheetPayrollStatus } from '../../types/models';
+import {
+  createCompanyPayrollBatch,
+  formatApiErrorMessage,
+  updateCompanyTimesheetPayroll,
+} from '../../services/api';
+import { PayrollBatchStatus, Timesheet, TimesheetPayrollStatus } from '../../types/models';
 
 type WorkspaceFeedback = {
   tone: 'success' | 'error' | 'info';
@@ -29,7 +33,6 @@ type WebSelectProps = {
 type WebCheckboxProps = {
   checked: boolean;
   onChange: (checked: boolean) => void;
-  label?: string;
 };
 
 type EnrichedTimesheet = {
@@ -43,13 +46,17 @@ type EnrichedTimesheet = {
   scheduledLabel: string;
   attendanceLabel: string;
   hourlyRate: number | null;
-  claimedAmount: number | null;
   approvedHours: number;
   approvedAmount: number | null;
+  costAmount: number | null;
   payrollStatus: TimesheetPayrollStatus;
   payrollIncludedAtLabel: string;
   payrollPaidAtLabel: string;
+  batchStateLabel: string;
+  batchStateTone: 'neutral' | 'draft' | 'finalised' | 'paid';
   searchText: string;
+  selectableForPayrollActions: boolean;
+  selectableForBatchCreation: boolean;
 };
 
 type GroupedPayrollTimesheets = {
@@ -62,6 +69,7 @@ type GroupedPayrollTimesheets = {
     count: number;
     approvedHours: number;
     approvedAmount: number;
+    costAmount: number;
     missingRateCount: number;
     unpaidCount: number;
     includedCount: number;
@@ -155,6 +163,14 @@ function normalizePayrollStatus(value?: string | null): TimesheetPayrollStatus {
   return 'unpaid';
 }
 
+function normalizeBatchStatus(value?: string | null): PayrollBatchStatus | null {
+  const normalized = (value || '').trim().toLowerCase();
+  if (normalized === 'draft') return 'draft';
+  if (normalized === 'finalised') return 'finalised';
+  if (normalized === 'paid') return 'paid';
+  return null;
+}
+
 function formatPayrollStatusLabel(value?: string | null) {
   switch (normalizePayrollStatus(value)) {
     case 'included':
@@ -165,6 +181,20 @@ function formatPayrollStatusLabel(value?: string | null) {
     default:
       return 'Unpaid';
   }
+}
+
+function getBatchState(timesheet: Timesheet) {
+  const batchStatus = normalizeBatchStatus(timesheet.payrollBatch?.status);
+  if (batchStatus === 'paid') {
+    return { label: `Batch #${timesheet.payrollBatch?.id} Paid`, tone: 'paid' as const };
+  }
+  if (batchStatus === 'finalised') {
+    return { label: `Batch #${timesheet.payrollBatch?.id} Finalised`, tone: 'finalised' as const };
+  }
+  if (batchStatus === 'draft') {
+    return { label: `Batch #${timesheet.payrollBatch?.id} Draft`, tone: 'draft' as const };
+  }
+  return { label: 'Unbatched', tone: 'neutral' as const };
 }
 
 function getApprovedStatusPalette() {
@@ -180,6 +210,20 @@ function getPayrollStatusPalette(status: TimesheetPayrollStatus) {
     case 'unpaid':
     default:
       return { bg: '#FEF3C7', text: '#B45309' };
+  }
+}
+
+function getBatchStatePalette(tone: EnrichedTimesheet['batchStateTone']) {
+  switch (tone) {
+    case 'paid':
+      return { bg: '#DCFCE7', text: '#166534' };
+    case 'finalised':
+      return { bg: '#DBEAFE', text: '#1D4ED8' };
+    case 'draft':
+      return { bg: '#FEF3C7', text: '#B45309' };
+    case 'neutral':
+    default:
+      return { bg: '#E5E7EB', text: '#374151' };
   }
 }
 
@@ -378,7 +422,7 @@ function WebSelect({ value, onChange, options, placeholder }: WebSelectProps) {
   );
 }
 
-function WebCheckbox({ checked, onChange, label }: WebCheckboxProps) {
+function WebCheckbox({ checked, onChange }: WebCheckboxProps) {
   const [isBrowserReady, setIsBrowserReady] = React.useState(false);
 
   React.useEffect(() => {
@@ -387,25 +431,19 @@ function WebCheckbox({ checked, onChange, label }: WebCheckboxProps) {
 
   if (isBrowserReady) {
     const InputTag: any = 'input';
-    const LabelTag: any = 'label';
-
     return (
-      <LabelTag style={styles.webCheckboxLabel}>
-        <InputTag
-          type="checkbox"
-          checked={checked}
-          onChange={(event: any) => onChange(Boolean(event.target.checked))}
-          style={styles.webCheckbox}
-        />
-        {label ? <Text style={styles.webCheckboxText}>{label}</Text> : null}
-      </LabelTag>
+      <InputTag
+        type="checkbox"
+        checked={checked}
+        onChange={(event: any) => onChange(Boolean(event.target.checked))}
+        style={styles.webCheckbox}
+      />
     );
   }
 
   return (
     <Pressable style={styles.nativeCheckboxWrap} onPress={() => onChange(!checked)}>
       <View style={[styles.nativeCheckbox, checked && styles.nativeCheckboxChecked]} />
-      {label ? <Text style={styles.webCheckboxText}>{label}</Text> : null}
     </Pressable>
   );
 }
@@ -464,6 +502,7 @@ function buildGroups(rows: EnrichedTimesheet[], periodView: PeriodView) {
           count: 0,
           approvedHours: 0,
           approvedAmount: 0,
+          costAmount: 0,
           missingRateCount: 0,
           unpaidCount: 0,
           includedCount: 0,
@@ -478,6 +517,9 @@ function buildGroups(rows: EnrichedTimesheet[], periodView: PeriodView) {
       existing.totals.approvedAmount += entry.approvedAmount;
     } else {
       existing.totals.missingRateCount += 1;
+    }
+    if (entry.costAmount !== null) {
+      existing.totals.costAmount += entry.costAmount;
     }
 
     if (entry.payrollStatus === 'paid') {
@@ -499,6 +541,7 @@ function buildGroups(rows: EnrichedTimesheet[], periodView: PeriodView) {
         ...group.totals,
         approvedHours: roundHours(group.totals.approvedHours),
         approvedAmount: roundCurrency(group.totals.approvedAmount),
+        costAmount: roundCurrency(group.totals.costAmount),
       },
     }))
     .sort((left, right) => {
@@ -522,8 +565,11 @@ export function CompanyPayrollWorkspace({
   const [feedback, setFeedback] = React.useState<WorkspaceFeedback>(null);
   const [selectedTimesheetId, setSelectedTimesheetId] = React.useState<number | null>(null);
   const [selectedIds, setSelectedIds] = React.useState<number[]>([]);
-  const [busyAction, setBusyAction] = React.useState<TimesheetPayrollStatus | null>(null);
+  const [busyAction, setBusyAction] = React.useState<'unpaid' | 'included' | 'paid' | 'batch' | null>(null);
   const [collapsedGroupKeys, setCollapsedGroupKeys] = React.useState<Record<string, boolean>>({});
+  const [batchPeriodStart, setBatchPeriodStart] = React.useState('');
+  const [batchPeriodEnd, setBatchPeriodEnd] = React.useState('');
+  const [batchNotes, setBatchNotes] = React.useState('');
 
   const enrichedTimesheets = React.useMemo<EnrichedTimesheet[]>(() => {
     return timesheets
@@ -539,9 +585,15 @@ export function CompanyPayrollWorkspace({
         const scheduledEnd = timesheet.scheduledEndAt || timesheet.shift?.end || null;
         const approvedHours = getApprovedHoursValue(timesheet);
         const hourlyRate = getTimesheetRate(timesheet);
-        const claimedAmount = getAmountForHours(toHours(timesheet.hoursWorked), hourlyRate);
         const approvedAmount = getAmountForHours(approvedHours, hourlyRate);
+        const costAmount = typeof timesheet.costAmount === 'number' ? timesheet.costAmount : approvedAmount;
         const payrollStatus = normalizePayrollStatus(timesheet.payrollStatus);
+        const batchState = getBatchState(timesheet);
+        const isBatchLocked =
+          normalizeBatchStatus(timesheet.payrollBatch?.status) === 'finalised' ||
+          normalizeBatchStatus(timesheet.payrollBatch?.status) === 'paid';
+        const selectableForPayrollActions = !timesheet.payrollBatch && payrollStatus !== 'paid';
+        const selectableForBatchCreation = !timesheet.payrollBatch && payrollStatus !== 'paid' && !isBatchLocked;
 
         return {
           timesheet,
@@ -554,12 +606,14 @@ export function CompanyPayrollWorkspace({
           scheduledLabel: `${formatTimeLabel(scheduledStart)} - ${formatTimeLabel(scheduledEnd)}`,
           attendanceLabel: `${formatTimeLabel(timesheet.actualCheckInAt)} / ${formatTimeLabel(timesheet.actualCheckOutAt)}`,
           hourlyRate,
-          claimedAmount,
           approvedHours,
           approvedAmount,
+          costAmount,
           payrollStatus,
           payrollIncludedAtLabel: formatDateTimeLabel(timesheet.payrollIncludedAt),
           payrollPaidAtLabel: formatDateTimeLabel(timesheet.payrollPaidAt),
+          batchStateLabel: batchState.label,
+          batchStateTone: batchState.tone,
           searchText: [
             siteName,
             guardName,
@@ -568,9 +622,12 @@ export function CompanyPayrollWorkspace({
             timesheet.guardNote || '',
             timesheet.companyNote || '',
             payrollStatus,
+            batchState.label,
           ]
             .join(' ')
             .toLowerCase(),
+          selectableForPayrollActions,
+          selectableForBatchCreation,
         };
       })
       .sort((left, right) => right.shiftDate.getTime() - left.shiftDate.getTime());
@@ -629,11 +686,12 @@ export function CompanyPayrollWorkspace({
     const approvedCount = filteredTimesheets.length;
     const approvedHours = roundHours(filteredTimesheets.reduce((sum, entry) => sum + entry.approvedHours, 0));
     const approvedAmount = roundCurrency(filteredTimesheets.reduce((sum, entry) => sum + (entry.approvedAmount ?? 0), 0));
+    const costAmount = roundCurrency(filteredTimesheets.reduce((sum, entry) => sum + (entry.costAmount ?? 0), 0));
     const unpaidCount = filteredTimesheets.filter((entry) => entry.payrollStatus === 'unpaid').length;
     const includedCount = filteredTimesheets.filter((entry) => entry.payrollStatus === 'included').length;
     const paidCount = filteredTimesheets.filter((entry) => entry.payrollStatus === 'paid').length;
 
-    return { approvedCount, approvedHours, approvedAmount, unpaidCount, includedCount, paidCount };
+    return { approvedCount, approvedHours, approvedAmount, costAmount, unpaidCount, includedCount, paidCount };
   }, [filteredTimesheets]);
 
   const selectedTimesheet = React.useMemo(
@@ -641,10 +699,8 @@ export function CompanyPayrollWorkspace({
     [filteredTimesheets, selectedTimesheetId],
   );
 
-  const allFilteredSelected = filteredTimesheets.length > 0 && filteredTimesheets.every((entry) => selectedIds.includes(entry.timesheet.id));
-
   React.useEffect(() => {
-    const validIds = new Set(enrichedTimesheets.map((entry) => entry.timesheet.id));
+    const validIds = new Set(enrichedTimesheets.filter((entry) => entry.selectableForPayrollActions).map((entry) => entry.timesheet.id));
     setSelectedIds((current) => current.filter((id) => validIds.has(id)));
   }, [enrichedTimesheets]);
 
@@ -672,16 +728,6 @@ export function CompanyPayrollWorkspace({
     });
   }, []);
 
-  const toggleAllFiltered = React.useCallback((checked: boolean) => {
-    setSelectedIds((current) => {
-      const filteredIds = filteredTimesheets.map((entry) => entry.timesheet.id);
-      if (checked) {
-        return Array.from(new Set([...current, ...filteredIds]));
-      }
-      return current.filter((id) => !filteredIds.includes(id));
-    });
-  }, [filteredTimesheets]);
-
   const buildExportRows = React.useCallback((groups: GroupedPayrollTimesheets[]) => {
     return [
       [
@@ -694,6 +740,7 @@ export function CompanyPayrollWorkspace({
         'Hourly Rate',
         'Approved Hours',
         'Approved Amount',
+        'Cost Amount',
         'Payroll Status',
         'Payroll Included At',
         'Payroll Paid At',
@@ -710,6 +757,7 @@ export function CompanyPayrollWorkspace({
           entry.hourlyRate !== null ? formatCurrency(entry.hourlyRate) : 'Rate unavailable',
           entry.approvedHours.toFixed(2),
           entry.approvedAmount !== null ? formatCurrency(entry.approvedAmount) : 'Rate unavailable',
+          entry.costAmount !== null ? formatCurrency(entry.costAmount) : 'Rate unavailable',
           formatPayrollStatusLabel(entry.payrollStatus),
           entry.timesheet.payrollIncludedAt ? entry.payrollIncludedAtLabel : '',
           entry.timesheet.payrollPaidAt ? entry.payrollPaidAtLabel : '',
@@ -725,10 +773,11 @@ export function CompanyPayrollWorkspace({
           `${group.totals.missingRateCount} rate unavailable`,
           group.totals.approvedHours.toFixed(2),
           formatCurrency(group.totals.approvedAmount),
+          formatCurrency(group.totals.costAmount),
           `Unpaid ${group.totals.unpaidCount} | Included ${group.totals.includedCount} | Paid ${group.totals.paidCount}`,
           '',
           '',
-          `Approved ${group.totals.count} | Missing rate ${group.totals.missingRateCount}`,
+          `Approved ${group.totals.count}`,
         ],
       ]),
     ];
@@ -783,7 +832,7 @@ export function CompanyPayrollWorkspace({
   const runBulkPayrollAction = React.useCallback(
     async (nextStatus: TimesheetPayrollStatus) => {
       if (!selectedIds.length) {
-        setFeedback({ tone: 'info', title: 'No selection', message: 'Select one or more approved payroll rows first.' });
+        setFeedback({ tone: 'info', title: 'No selection', message: 'Select one or more unbatched payroll rows first.' });
         return;
       }
 
@@ -818,13 +867,53 @@ export function CompanyPayrollWorkspace({
     [onRefresh, selectedIds],
   );
 
+  const handleCreateBatch = React.useCallback(async () => {
+    if (!selectedIds.length) {
+      setFeedback({ tone: 'info', title: 'No selection', message: 'Select approved payroll rows before creating a batch.' });
+      return;
+    }
+
+    if (!batchPeriodStart || !batchPeriodEnd) {
+      setFeedback({ tone: 'error', title: 'Batch period required', message: 'Enter a period start and end before creating a payroll batch.' });
+      return;
+    }
+
+    try {
+      setBusyAction('batch');
+      const batch = await createCompanyPayrollBatch({
+        periodStart: batchPeriodStart,
+        periodEnd: batchPeriodEnd,
+        notes: batchNotes.trim() || null,
+        timesheetIds: selectedIds,
+      });
+      await onRefresh();
+      setSelectedIds([]);
+      setBatchPeriodStart('');
+      setBatchPeriodEnd('');
+      setBatchNotes('');
+      setFeedback({
+        tone: 'success',
+        title: 'Payroll batch created',
+        message: `Created payroll batch #${batch.id} with ${batch.totals.recordsCount} records. Open Payroll Batches to finalise or pay it.`,
+      });
+    } catch (error) {
+      setFeedback({
+        tone: 'error',
+        title: 'Batch creation failed',
+        message: formatApiErrorMessage(error, 'Unable to create a payroll batch from the selected rows.'),
+      });
+    } finally {
+      setBusyAction(null);
+    }
+  }, [batchNotes, batchPeriodEnd, batchPeriodStart, onRefresh, selectedIds]);
+
   const activeSelected = selectedTimesheet?.timesheet;
-  const selectedClaimedHours = activeSelected ? toHours(activeSelected.hoursWorked) : 0;
   const selectedApprovedHours = selectedTimesheet?.approvedHours ?? null;
   const selectedHourlyRate = selectedTimesheet?.hourlyRate ?? null;
-  const selectedClaimedAmount = selectedTimesheet?.claimedAmount ?? null;
   const selectedApprovedAmount = selectedTimesheet?.approvedAmount ?? null;
+  const selectedCostAmount = selectedTimesheet?.costAmount ?? null;
   const selectedPayrollStatus = selectedTimesheet?.payrollStatus ?? 'unpaid';
+  const selectedBatchState = selectedTimesheet?.batchStateLabel ?? 'Unbatched';
 
   const emptyStateMessage =
     timesheets.some((timesheet) => normalizeApprovalStatus(timesheet.approvalStatus) === 'approved')
@@ -836,7 +925,7 @@ export function CompanyPayrollWorkspace({
       <View style={styles.workspaceHeader}>
         <View style={styles.headerCopy}>
           <Text style={styles.title}>Payroll</Text>
-          <Text style={styles.subtitle}>Approved hours, payroll lifecycle, and payment totals.</Text>
+          <Text style={styles.subtitle}>Approved hours, payroll lifecycle, and batch preparation.</Text>
         </View>
         <View style={styles.headerActions}>
           <PeriodToggle value={periodView} onChange={setPeriodView} />
@@ -901,7 +990,7 @@ export function CompanyPayrollWorkspace({
               value={searchTerm}
               onChangeText={setSearchTerm}
               style={styles.input}
-              placeholder="Guard, site, note, shift"
+              placeholder="Guard, site, note, batch"
               placeholderTextColor="#64748b"
             />
           </View>
@@ -913,12 +1002,8 @@ export function CompanyPayrollWorkspace({
       </View>
 
       <View style={styles.bulkCard}>
-        <View style={styles.bulkHeader}>
-          <Text style={styles.bulkTitle}>Payroll actions</Text>
-          <Text style={styles.bulkSubtitle}>{selectedIds.length} selected</Text>
-        </View>
+        <Text style={styles.bulkTitle}>Payroll controls</Text>
         <View style={styles.bulkActions}>
-          <WebCheckbox checked={allFilteredSelected} onChange={toggleAllFiltered} label="Select all filtered rows" />
           <Pressable style={[styles.inlineAction, !selectedIds.length && styles.disabledAction]} onPress={handleExportSelected} disabled={!selectedIds.length || Boolean(busyAction)}>
             <Text style={styles.inlineActionText}>Export selected</Text>
           </Pressable>
@@ -932,12 +1017,34 @@ export function CompanyPayrollWorkspace({
             <Text style={styles.primaryButtonText}>{busyAction === 'paid' ? 'Updating...' : 'Mark paid'}</Text>
           </Pressable>
         </View>
+
+        <View style={styles.batchBuilder}>
+          <Text style={styles.batchBuilderTitle}>Create Payroll Batch</Text>
+          <Text style={styles.batchBuilderCopy}>Use selected approved rows to open a new draft batch. Batch lifecycle is managed separately in Payroll Batches.</Text>
+          <View style={styles.batchBuilderRow}>
+            <TextInput value={batchPeriodStart} onChangeText={setBatchPeriodStart} style={styles.input} placeholder="Period start YYYY-MM-DD" placeholderTextColor="#64748b" />
+            <TextInput value={batchPeriodEnd} onChangeText={setBatchPeriodEnd} style={styles.input} placeholder="Period end YYYY-MM-DD" placeholderTextColor="#64748b" />
+          </View>
+          <TextInput
+            value={batchNotes}
+            onChangeText={setBatchNotes}
+            style={[styles.input, styles.noteInput]}
+            placeholder="Optional pay-run notes"
+            placeholderTextColor="#64748b"
+            multiline
+            textAlignVertical="top"
+          />
+          <Pressable style={[styles.primaryButton, !selectedIds.length && styles.disabledPrimaryButton]} onPress={handleCreateBatch} disabled={!selectedIds.length || Boolean(busyAction)}>
+            <Text style={styles.primaryButtonText}>{busyAction === 'batch' ? 'Creating batch...' : 'Create Payroll Batch'}</Text>
+          </Pressable>
+        </View>
       </View>
 
       <View style={styles.summaryGrid}>
         <SummaryCard label="Approved Records" value={String(summary.approvedCount)} />
         <SummaryCard label="Approved Hours" value={`${summary.approvedHours.toFixed(2)} h`} />
         <SummaryCard label="Approved Amount" value={formatCurrency(summary.approvedAmount)} />
+        <SummaryCard label="Total Cost" value={formatCurrency(summary.costAmount)} />
         <SummaryCard label="Unpaid / Included / Paid" value={`${summary.unpaidCount} / ${summary.includedCount} / ${summary.paidCount}`} />
       </View>
 
@@ -953,7 +1060,7 @@ export function CompanyPayrollWorkspace({
                   <View style={styles.groupHeaderCopy}>
                     <Text style={styles.groupSite}>{group.siteName}</Text>
                     <Text style={styles.groupPeriod}>
-                      {group.periodLabel} | {group.totals.count} approved | {group.totals.approvedHours.toFixed(2)} approved h | {formatCurrency(group.totals.approvedAmount)} approved
+                      {group.periodLabel} | {group.totals.count} approved | {group.totals.approvedHours.toFixed(2)} approved h | {formatCurrency(group.totals.costAmount)} cost
                     </Text>
                   </View>
                   <View style={styles.groupHeaderActions}>
@@ -970,19 +1077,19 @@ export function CompanyPayrollWorkspace({
                       <Text style={[styles.rowsHeaderText, styles.checkboxCol]}>Select</Text>
                       <Text style={[styles.rowsHeaderText, styles.guardCol]}>Guard</Text>
                       <Text style={[styles.rowsHeaderText, styles.dateCol]}>Shift Date</Text>
-                      <Text style={[styles.rowsHeaderText, styles.scheduleCol]}>Scheduled</Text>
-                      <Text style={[styles.rowsHeaderText, styles.attendanceCol]}>Attendance</Text>
                       <Text style={[styles.rowsHeaderText, styles.hoursCol]}>Approved Hours</Text>
                       <Text style={[styles.rowsHeaderText, styles.rateCol]}>Rate</Text>
                       <Text style={[styles.rowsHeaderText, styles.amountCol]}>Approved Amount</Text>
+                      <Text style={[styles.rowsHeaderText, styles.amountCol]}>Cost</Text>
                       <Text style={[styles.rowsHeaderText, styles.payrollCol]}>Payroll</Text>
-                      <Text style={[styles.rowsHeaderText, styles.paidAtCol]}>Paid At</Text>
+                      <Text style={[styles.rowsHeaderText, styles.batchCol]}>Batch</Text>
                       <Text style={[styles.rowsHeaderText, styles.statusCol]}>Review</Text>
                     </View>
 
                     {group.rows.map((entry) => {
                       const approvedStatusPalette = getApprovedStatusPalette();
                       const payrollPalette = getPayrollStatusPalette(entry.payrollStatus);
+                      const batchPalette = getBatchStatePalette(entry.batchStateTone);
                       const isSelectedRow = entry.timesheet.id === selectedTimesheetId;
                       const isChecked = selectedIds.includes(entry.timesheet.id);
 
@@ -993,21 +1100,24 @@ export function CompanyPayrollWorkspace({
                           onPress={() => setSelectedTimesheetId(entry.timesheet.id)}
                         >
                           <View style={styles.checkboxCol}>
-                            <WebCheckbox checked={isChecked} onChange={(checked) => toggleSelectedId(entry.timesheet.id, checked)} />
+                            {entry.selectableForBatchCreation ? (
+                              <WebCheckbox checked={isChecked} onChange={(checked) => toggleSelectedId(entry.timesheet.id, checked)} />
+                            ) : (
+                              <Text style={styles.disabledSelectText}>Locked</Text>
+                            )}
                           </View>
                           <Text style={[styles.rowTextStrong, styles.guardCol]}>{entry.guardName}</Text>
                           <Text style={[styles.rowText, styles.dateCol]}>{entry.shiftDateLabel}</Text>
-                          <Text style={[styles.rowText, styles.scheduleCol]}>{entry.scheduledLabel}</Text>
-                          <Text style={[styles.rowText, styles.attendanceCol]}>{entry.attendanceLabel}</Text>
                           <Text style={[styles.rowText, styles.hoursCol]}>{entry.approvedHours.toFixed(2)}</Text>
                           <Text style={[styles.rowText, styles.rateCol]}>{formatRate(entry.hourlyRate)}</Text>
                           <Text style={[styles.rowText, styles.amountCol]}>{entry.approvedAmount !== null ? formatCurrency(entry.approvedAmount) : 'Rate unavailable'}</Text>
+                          <Text style={[styles.rowText, styles.amountCol]}>{entry.costAmount !== null ? formatCurrency(entry.costAmount) : 'Rate unavailable'}</Text>
                           <View style={[styles.statusBadge, styles.payrollCol, { backgroundColor: payrollPalette.bg }]}>
                             <Text style={[styles.statusBadgeText, { color: payrollPalette.text }]}>{formatPayrollStatusLabel(entry.payrollStatus)}</Text>
                           </View>
-                          <Text style={[styles.rowText, styles.paidAtCol]}>
-                            {entry.timesheet.payrollPaidAt ? entry.payrollPaidAtLabel : 'Not paid'}
-                          </Text>
+                          <View style={[styles.statusBadge, styles.batchCol, { backgroundColor: batchPalette.bg }]}>
+                            <Text style={[styles.statusBadgeText, { color: batchPalette.text }]}>{entry.batchStateLabel}</Text>
+                          </View>
                           <View style={[styles.statusBadge, styles.statusCol, { backgroundColor: approvedStatusPalette.bg }]}>
                             <Text style={[styles.statusBadgeText, { color: approvedStatusPalette.text }]}>Approved</Text>
                           </View>
@@ -1019,10 +1129,10 @@ export function CompanyPayrollWorkspace({
                       <Text style={styles.groupFooterText}>Approved records: {group.totals.count}</Text>
                       <Text style={styles.groupFooterText}>Approved hours: {group.totals.approvedHours.toFixed(2)} h</Text>
                       <Text style={styles.groupFooterText}>Approved amount: {formatCurrency(group.totals.approvedAmount)}</Text>
+                      <Text style={styles.groupFooterText}>Total cost: {formatCurrency(group.totals.costAmount)}</Text>
                       <Text style={styles.groupFooterText}>Unpaid: {group.totals.unpaidCount}</Text>
                       <Text style={styles.groupFooterText}>Included: {group.totals.includedCount}</Text>
                       <Text style={styles.groupFooterText}>Paid: {group.totals.paidCount}</Text>
-                      <Text style={styles.groupFooterText}>Rate unavailable: {group.totals.missingRateCount}</Text>
                     </View>
                   </>
                 ) : null}
@@ -1033,7 +1143,7 @@ export function CompanyPayrollWorkspace({
 
         <View style={styles.detailCard}>
           <Text style={styles.detailTitle}>Payroll detail</Text>
-          <Text style={styles.detailSubtitle}>Select an approved row to review payroll metadata and finalized amounts.</Text>
+          <Text style={styles.detailSubtitle}>Select an approved row to review payroll metadata and batch state.</Text>
 
           {activeSelected ? (
             <>
@@ -1051,10 +1161,10 @@ export function CompanyPayrollWorkspace({
                   <Text style={styles.detailMetaValue}>{selectedTimesheet?.shiftDateLabel}</Text>
                 </View>
                 <View style={styles.detailMetaItem}>
-                  <Text style={styles.detailMetaLabel}>Payroll status</Text>
-                  <View style={[styles.detailStatusBadge, { backgroundColor: getPayrollStatusPalette(selectedPayrollStatus).bg }]}>
-                    <Text style={[styles.detailStatusBadgeText, { color: getPayrollStatusPalette(selectedPayrollStatus).text }]}>
-                      {formatPayrollStatusLabel(selectedPayrollStatus)}
+                  <Text style={styles.detailMetaLabel}>Batch state</Text>
+                  <View style={[styles.detailStatusBadge, { backgroundColor: getBatchStatePalette(selectedTimesheet?.batchStateTone || 'neutral').bg }]}>
+                    <Text style={[styles.detailStatusBadgeText, { color: getBatchStatePalette(selectedTimesheet?.batchStateTone || 'neutral').text }]}>
+                      {selectedBatchState}
                     </Text>
                   </View>
                 </View>
@@ -1067,16 +1177,21 @@ export function CompanyPayrollWorkspace({
                 </Text>
                 <Text style={styles.detailLine}>Check-in: {formatDateTimeLabel(activeSelected.actualCheckInAt)}</Text>
                 <Text style={styles.detailLine}>Check-out: {formatDateTimeLabel(activeSelected.actualCheckOutAt)}</Text>
-                <Text style={styles.detailLine}>Claimed hours: {selectedClaimedHours.toFixed(2)}</Text>
                 <Text style={styles.detailLine}>Approved hours: {selectedApprovedHours !== null ? selectedApprovedHours.toFixed(2) : '0.00'}</Text>
-                <Text style={styles.detailLine}>Reviewed: {activeSelected.reviewedAt ? formatDateTimeLabel(activeSelected.reviewedAt) : 'Not recorded'}</Text>
               </View>
 
               <View style={styles.detailSection}>
                 <Text style={styles.detailSectionTitle}>Rate & amounts</Text>
                 <Text style={styles.detailLine}>Hourly rate: {formatRate(selectedHourlyRate)}</Text>
-                <Text style={styles.detailLine}>Claimed amount: {formatCurrency(selectedClaimedAmount)}</Text>
                 <Text style={styles.detailLine}>Approved amount: {selectedApprovedAmount !== null ? formatCurrency(selectedApprovedAmount) : 'Rate unavailable'}</Text>
+              </View>
+
+              <View style={styles.detailSection}>
+                <Text style={styles.detailSectionTitle}>Financial Breakdown</Text>
+                <Text style={styles.detailLine}>Cost (guard pay): {selectedCostAmount !== null ? formatCurrency(selectedCostAmount) : 'Rate unavailable'}</Text>
+                <Text style={styles.detailLine}>Revenue (client charge): {activeSelected.revenueAmount !== null && activeSelected.revenueAmount !== undefined ? formatCurrency(activeSelected.revenueAmount) : 'Rate unavailable'}</Text>
+                <Text style={styles.detailLine}>Profit: {activeSelected.marginAmount !== null && activeSelected.marginAmount !== undefined ? formatCurrency(activeSelected.marginAmount) : 'Rate unavailable'}</Text>
+                <Text style={styles.detailLine}>Margin: {activeSelected.marginPercent !== null && activeSelected.marginPercent !== undefined ? `${activeSelected.marginPercent.toFixed(2)}%` : 'Unavailable'}</Text>
               </View>
 
               <View style={styles.detailSection}>
@@ -1084,6 +1199,7 @@ export function CompanyPayrollWorkspace({
                 <Text style={styles.detailLine}>Payroll status: {formatPayrollStatusLabel(selectedPayrollStatus)}</Text>
                 <Text style={styles.detailLine}>Included in payroll: {activeSelected.payrollIncludedAt ? formatDateTimeLabel(activeSelected.payrollIncludedAt) : 'Not included yet'}</Text>
                 <Text style={styles.detailLine}>Paid at: {activeSelected.payrollPaidAt ? formatDateTimeLabel(activeSelected.payrollPaidAt) : 'Not paid yet'}</Text>
+                <Text style={styles.detailLine}>Batch: {selectedBatchState}</Text>
               </View>
 
               <View style={styles.detailSection}>
@@ -1132,21 +1248,22 @@ const styles = StyleSheet.create({
   filterField: { minWidth: 150, flexGrow: 1, gap: 6 },
   searchField: { minWidth: 220, flexGrow: 1.4 },
   filterLabel: { color: '#64748b', fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.4 },
-  input: { minHeight: 48, borderRadius: 14, borderWidth: 1, borderColor: '#d6dce5', backgroundColor: '#ffffff', paddingHorizontal: 14, paddingVertical: 12, color: '#132238' },
+  input: { minHeight: 48, borderRadius: 14, borderWidth: 1, borderColor: '#d6dce5', backgroundColor: '#ffffff', paddingHorizontal: 14, paddingVertical: 12, color: '#132238', minWidth: 180 },
   webSelect: { borderRadius: 14, borderWidth: 1, borderColor: '#d6dce5', backgroundColor: '#ffffff', padding: '14px 16px', fontSize: 14, color: '#132238', minHeight: 48 },
-  bulkCard: { backgroundColor: '#FFFFFF', borderRadius: 22, padding: 18, gap: 12 },
-  bulkHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' },
+  bulkCard: { backgroundColor: '#FFFFFF', borderRadius: 22, padding: 18, gap: 14 },
   bulkTitle: { color: '#0f172a', fontSize: 18, fontWeight: '800' },
-  bulkSubtitle: { color: '#475569', fontSize: 13, fontWeight: '700' },
   bulkActions: { flexDirection: 'row', gap: 10, alignItems: 'center', flexWrap: 'wrap' },
   inlineAction: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, backgroundColor: '#E2E8F0' },
   inlineActionText: { color: '#0f172a', fontWeight: '700', fontSize: 12 },
   disabledAction: { opacity: 0.45 },
   disabledPrimaryButton: { opacity: 0.45 },
-  webCheckboxLabel: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  batchBuilder: { gap: 10, borderTopWidth: 1, borderTopColor: '#E2E8F0', paddingTop: 14 },
+  batchBuilderTitle: { color: '#0f172a', fontSize: 16, fontWeight: '800' },
+  batchBuilderCopy: { color: '#64748b', fontSize: 13, lineHeight: 18 },
+  batchBuilderRow: { flexDirection: 'row', gap: 12, flexWrap: 'wrap' },
+  noteInput: { minHeight: 88, textAlignVertical: 'top' },
   webCheckbox: { width: 16, height: 16 },
-  webCheckboxText: { color: '#334155', fontSize: 13, fontWeight: '600' },
-  nativeCheckboxWrap: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  nativeCheckboxWrap: { justifyContent: 'center', alignItems: 'center' },
   nativeCheckbox: { width: 16, height: 16, borderWidth: 1, borderColor: '#64748b', borderRadius: 4, backgroundColor: '#FFFFFF' },
   nativeCheckboxChecked: { backgroundColor: '#0f172a', borderColor: '#0f172a' },
   summaryGrid: { flexDirection: 'row', gap: 14, flexWrap: 'wrap' },
@@ -1154,7 +1271,7 @@ const styles = StyleSheet.create({
   summaryLabel: { color: '#64748b', fontSize: 13, fontWeight: '700' },
   summaryValue: { color: '#0f172a', fontSize: 28, fontWeight: '800' },
   reviewLayout: { flexDirection: 'row', gap: 18, alignItems: 'flex-start', flexWrap: 'wrap' },
-  reviewListCard: { flex: 2.2, minWidth: 900, backgroundColor: '#FFFFFF', borderRadius: 22, padding: 18, gap: 14 },
+  reviewListCard: { flex: 2.2, minWidth: 880, backgroundColor: '#FFFFFF', borderRadius: 22, padding: 18, gap: 14 },
   detailCard: { flex: 1, minWidth: 340, backgroundColor: '#FFFFFF', borderRadius: 22, padding: 18, gap: 14, borderWidth: 1, borderColor: '#DBEAFE' },
   detailTitle: { color: '#0f172a', fontSize: 20, fontWeight: '800' },
   detailSubtitle: { color: '#64748b', fontSize: 13, lineHeight: 18 },
@@ -1171,16 +1288,15 @@ const styles = StyleSheet.create({
   timesheetRowSelected: { backgroundColor: '#EFF6FF' },
   rowText: { color: '#334155', fontSize: 13 },
   rowTextStrong: { color: '#0f172a', fontSize: 13, fontWeight: '700' },
-  checkboxCol: { width: 58, justifyContent: 'center' },
+  disabledSelectText: { color: '#94A3B8', fontSize: 11, fontWeight: '700' },
+  checkboxCol: { width: 54, justifyContent: 'center', alignItems: 'center' },
   guardCol: { flex: 1.2 },
   dateCol: { flex: 0.9 },
-  scheduleCol: { flex: 1.1 },
-  attendanceCol: { flex: 1.1 },
-  hoursCol: { flex: 0.75 },
+  hoursCol: { flex: 0.8 },
   rateCol: { flex: 1 },
   amountCol: { flex: 1 },
   payrollCol: { flex: 0.9 },
-  paidAtCol: { flex: 1.05 },
+  batchCol: { flex: 1.3 },
   statusCol: { flex: 0.85 },
   statusBadge: { alignSelf: 'flex-start', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 },
   statusBadgeText: { fontWeight: '800', fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.4 },

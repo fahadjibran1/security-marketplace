@@ -1,0 +1,168 @@
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+
+import { CompanyService } from '../company/company.service';
+import { Timesheet, TimesheetStatus } from '../timesheet/entities/timesheet.entity';
+import { MarginReportQueryDto } from './dto/margin-report-query.dto';
+
+type MarginSummary = {
+  totalCost: number;
+  totalRevenue: number;
+  totalMargin: number;
+  marginPercent: number | null;
+  breakdown: Array<{
+    clientId: number | null;
+    clientName: string;
+    cost: number;
+    revenue: number;
+    margin: number;
+    marginPercent: number | null;
+  }>;
+};
+
+@Injectable()
+export class ReportService {
+  constructor(
+    @InjectRepository(Timesheet) private readonly timesheetRepo: Repository<Timesheet>,
+    private readonly companyService: CompanyService,
+  ) {}
+
+  async getCompanyMarginReport(userId: number, query: MarginReportQueryDto): Promise<MarginSummary> {
+    const company = await this.companyService.findByUserId(userId);
+    if (!company) throw new NotFoundException('Company not found');
+
+    const startDate = this.parseOptionalDate(query.startDate, false);
+    const endDate = this.parseOptionalDate(query.endDate, true);
+    if (startDate && endDate && endDate.getTime() < startDate.getTime()) {
+      throw new BadRequestException('Report end date must be on or after start date.');
+    }
+
+    const timesheets = await this.timesheetRepo.find({
+      where: { company: { id: company.id } },
+      order: { createdAt: 'DESC' },
+    });
+
+    const breakdown = new Map<string, { clientId: number | null; clientName: string; cost: number; revenue: number; margin: number }>();
+    let totalCost = 0;
+    let totalRevenue = 0;
+
+    timesheets.forEach((timesheet) => {
+      if (String(timesheet.approvalStatus).trim().toLowerCase() !== TimesheetStatus.APPROVED) return;
+
+      const shiftDate = this.getTimesheetDate(timesheet);
+      if (startDate && shiftDate && shiftDate.getTime() < startDate.getTime()) return;
+      if (endDate && shiftDate && shiftDate.getTime() > endDate.getTime()) return;
+
+      const client = this.getTimesheetClient(timesheet);
+      const site = timesheet.shift?.site ?? timesheet.shift?.job?.site ?? timesheet.shift?.assignment?.job?.site ?? null;
+      if (query.clientId && client?.id !== query.clientId) return;
+      if (query.siteId && site?.id !== query.siteId) return;
+
+      const approvedHours = this.getApprovedHours(timesheet);
+      const hourlyRate = this.getHourlyRate(timesheet);
+      const billingRate = this.getBillingRate(timesheet);
+      const cost = hourlyRate === null ? 0 : approvedHours * hourlyRate;
+      const revenue = billingRate === null ? 0 : approvedHours * billingRate;
+      const margin = revenue - cost;
+      const key = String(client?.id ?? 'unassigned');
+      const current =
+        breakdown.get(key) ||
+        {
+          clientId: client?.id ?? null,
+          clientName: client?.name || site?.clientName || 'Client unavailable',
+          cost: 0,
+          revenue: 0,
+          margin: 0,
+        };
+
+      current.cost += cost;
+      current.revenue += revenue;
+      current.margin += margin;
+      breakdown.set(key, current);
+      totalCost += cost;
+      totalRevenue += revenue;
+    });
+
+    const totalMargin = totalRevenue - totalCost;
+    return {
+      totalCost: this.roundCurrency(totalCost),
+      totalRevenue: this.roundCurrency(totalRevenue),
+      totalMargin: this.roundCurrency(totalMargin),
+      marginPercent: this.getMarginPercent(totalMargin, totalRevenue),
+      breakdown: Array.from(breakdown.values())
+        .map((entry) => ({
+          clientId: entry.clientId,
+          clientName: entry.clientName,
+          cost: this.roundCurrency(entry.cost),
+          revenue: this.roundCurrency(entry.revenue),
+          margin: this.roundCurrency(entry.margin),
+          marginPercent: this.getMarginPercent(entry.margin, entry.revenue),
+        }))
+        .sort((left, right) => right.revenue - left.revenue),
+    };
+  }
+
+  private parseOptionalDate(value: string | undefined, endOfDay: boolean) {
+    if (!value) return null;
+    const date = new Date(endOfDay && /^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T23:59:59` : value);
+    if (Number.isNaN(date.getTime())) {
+      throw new BadRequestException('Report dates must be valid date strings.');
+    }
+    return date;
+  }
+
+  private getTimesheetDate(timesheet: Timesheet) {
+    const value = timesheet.scheduledStartAt ?? timesheet.shift?.start ?? timesheet.createdAt;
+    const date = value ? new Date(value) : null;
+    return date && !Number.isNaN(date.getTime()) ? date : null;
+  }
+
+  private getTimesheetClient(timesheet: Timesheet) {
+    return timesheet.shift?.site?.client ?? timesheet.shift?.job?.site?.client ?? timesheet.shift?.assignment?.job?.site?.client ?? null;
+  }
+
+  private getApprovedHours(timesheet: Timesheet) {
+    if (timesheet.approvedHours !== undefined && timesheet.approvedHours !== null && Number.isFinite(Number(timesheet.approvedHours))) {
+      return Number(timesheet.approvedHours);
+    }
+    return Number(timesheet.hoursWorked) || 0;
+  }
+
+  private getHourlyRate(timesheet: Timesheet) {
+    const directJobRate = timesheet.shift?.job?.hourlyRate;
+    if (directJobRate !== undefined && directJobRate !== null && Number.isFinite(Number(directJobRate))) {
+      return Number(directJobRate);
+    }
+
+    const assignmentJobRate = timesheet.shift?.assignment?.job?.hourlyRate;
+    if (assignmentJobRate !== undefined && assignmentJobRate !== null && Number.isFinite(Number(assignmentJobRate))) {
+      return Number(assignmentJobRate);
+    }
+
+    return null;
+  }
+
+  private getBillingRate(timesheet: Timesheet) {
+    const directBillingRate = timesheet.shift?.job?.billingRate;
+    if (directBillingRate !== undefined && directBillingRate !== null && Number.isFinite(Number(directBillingRate))) {
+      return Number(directBillingRate);
+    }
+
+    const assignmentBillingRate = timesheet.shift?.assignment?.job?.billingRate;
+    if (assignmentBillingRate !== undefined && assignmentBillingRate !== null && Number.isFinite(Number(assignmentBillingRate))) {
+      return Number(assignmentBillingRate);
+    }
+
+    return this.getHourlyRate(timesheet);
+  }
+
+  private getMarginPercent(margin: number, revenue: number) {
+    if (!Number.isFinite(revenue) || Math.abs(revenue) < 0.0001) return null;
+    return Math.round((margin / revenue) * 10000) / 100;
+  }
+
+  private roundCurrency(value: number) {
+    return Math.round(value * 100) / 100;
+  }
+}

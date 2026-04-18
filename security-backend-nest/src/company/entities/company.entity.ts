@@ -15,6 +15,8 @@ import { Timesheet } from '../../timesheet/entities/timesheet.entity';
 import { CompanyGuard } from '../../company-guard/entities/company-guard.entity';
 import { Site } from '../../site/entities/site.entity';
 import { Client } from '../../client/entities/client.entity';
+import { InvoiceBatch } from '../../invoice-batch/entities/invoice-batch.entity';
+import { PayrollBatch } from '../../payroll-batch/entities/payroll-batch.entity';
 
 export enum CompanyStatus {
   ONBOARDING = 'onboarding',
@@ -71,4 +73,10 @@ export class Company {
 
   @OneToMany(() => Client, (client) => client.company)
   clients?: Client[];
+
+  @OneToMany(() => PayrollBatch, (payrollBatch) => payrollBatch.company)
+  payrollBatches?: PayrollBatch[];
+
+  @OneToMany(() => InvoiceBatch, (invoiceBatch) => invoiceBatch.company)
+  invoiceBatches?: InvoiceBatch[];
 }

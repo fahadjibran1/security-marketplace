@@ -21,6 +21,11 @@ export class CreateJobDto {
   hourlyRate!: number;
 
   @IsOptional()
+  @IsNumber()
+  @Min(0)
+  billingRate?: number | null;
+
+  @IsOptional()
   @IsString()
   status?: string;
 
