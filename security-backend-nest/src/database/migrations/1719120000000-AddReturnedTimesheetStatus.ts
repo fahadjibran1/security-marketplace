@@ -2,6 +2,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
 
 export class AddReturnedTimesheetStatus1719120000000 implements MigrationInterface {
   name = 'AddReturnedTimesheetStatus1719120000000';
+  transaction = false;
 
   public async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(`
