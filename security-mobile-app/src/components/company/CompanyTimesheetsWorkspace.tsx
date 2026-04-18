@@ -42,6 +42,7 @@ type EnrichedTimesheet = {
 type GroupedTimesheets = {
   key: string;
   siteName: string;
+  periodKey: string;
   periodLabel: string;
   rows: EnrichedTimesheet[];
   totals: {
@@ -265,6 +266,24 @@ function downloadCsv(filename: string, rows: string[][]) {
   return true;
 }
 
+function sanitizeFilenamePart(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80) || 'export';
+}
+
+function getDownloadTimestamp(value = new Date()) {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, '0');
+  const day = String(value.getDate()).padStart(2, '0');
+  const hours = String(value.getHours()).padStart(2, '0');
+  const minutes = String(value.getMinutes()).padStart(2, '0');
+  const seconds = String(value.getSeconds()).padStart(2, '0');
+  return `${year}${month}${day}-${hours}${minutes}${seconds}`;
+}
+
 function WebSelect({ value, onChange, options, placeholder }: WebSelectProps) {
   const [isBrowserReady, setIsBrowserReady] = React.useState(false);
 
@@ -447,6 +466,7 @@ export function CompanyTimesheetsWorkspace({
         {
           key: groupKey,
           siteName: entry.siteName,
+          periodKey,
           periodLabel,
           rows: [],
           totals: { count: 0, claimedHours: 0, approvedHours: 0, pendingCount: 0, approvedCount: 0 },
@@ -538,29 +558,46 @@ export function CompanyTimesheetsWorkspace({
     return [
       ['Site', 'Period', 'Guard', 'Shift Date', 'Scheduled', 'Attendance', 'Claimed Hours', 'Approved Hours', 'Status', 'Company Note'],
       ...groups.flatMap((group) =>
-        group.rows.map((entry) => [
-          group.siteName,
-          group.periodLabel,
-          entry.guardName,
-          entry.shiftDateLabel,
-          entry.scheduledLabel,
-          entry.attendanceLabel,
-          toHours(entry.timesheet.hoursWorked).toFixed(2),
-          entry.timesheet.approvedHours != null
-            ? toHours(entry.timesheet.approvedHours).toFixed(2)
-            : normalizeStatus(entry.displayStatus) === 'approved'
-              ? toHours(entry.timesheet.hoursWorked).toFixed(2)
-              : '',
-          formatStatusLabel(entry.displayStatus),
-          entry.timesheet.companyNote || '',
-        ]),
+        [
+          ...group.rows.map((entry) => [
+            group.siteName,
+            group.periodLabel,
+            entry.guardName,
+            entry.shiftDateLabel,
+            entry.scheduledLabel,
+            entry.attendanceLabel,
+            toHours(entry.timesheet.hoursWorked).toFixed(2),
+            entry.timesheet.approvedHours != null
+              ? toHours(entry.timesheet.approvedHours).toFixed(2)
+              : normalizeStatus(entry.displayStatus) === 'approved'
+                ? toHours(entry.timesheet.hoursWorked).toFixed(2)
+                : '',
+            formatStatusLabel(entry.displayStatus),
+            entry.timesheet.companyNote || '',
+          ]),
+          [
+            group.siteName,
+            group.periodLabel,
+            'SUMMARY',
+            '',
+            '',
+            '',
+            group.totals.claimedHours.toFixed(2),
+            group.totals.approvedHours.toFixed(2),
+            `Pending ${group.totals.pendingCount} | Approved ${group.totals.approvedCount}`,
+            `Timesheets ${group.totals.count}`,
+          ],
+        ],
       ),
     ];
   }, []);
 
   const handleExportFiltered = React.useCallback(() => {
     const rows = buildExportRows(groupedTimesheets);
-    const didDownload = downloadCsv(`timesheets-${periodView}-${toIsoDateInput(new Date())}.csv`, rows);
+    const didDownload = downloadCsv(
+      `timesheets-filtered-${sanitizeFilenamePart(periodView)}-${getDownloadTimestamp()}.csv`,
+      rows,
+    );
     setFeedback(
       didDownload
         ? { tone: 'success', title: 'Export ready', message: `Exported ${filteredTimesheets.length} filtered timesheets.` }
@@ -570,14 +607,18 @@ export function CompanyTimesheetsWorkspace({
 
   const handleExportGroup = React.useCallback((group: GroupedTimesheets) => {
     const rows = buildExportRows([group]);
-    const safeSiteName = group.siteName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'site';
-    const didDownload = downloadCsv(`timesheets-${safeSiteName}-${periodView}-${toIsoDateInput(new Date())}.csv`, rows);
+    const safeSiteName = sanitizeFilenamePart(group.siteName);
+    const safePeriodKey = sanitizeFilenamePart(group.periodKey);
+    const didDownload = downloadCsv(
+      `timesheets-group-${safeSiteName}-${safePeriodKey}-${getDownloadTimestamp()}.csv`,
+      rows,
+    );
     setFeedback(
       didDownload
-        ? { tone: 'success', title: 'Group export ready', message: `Exported ${group.totals.count} timesheets for ${group.siteName}.` }
+        ? { tone: 'success', title: 'Group export ready', message: `Exported ${group.totals.count} timesheets for ${group.siteName} (${group.periodLabel}).` }
         : { tone: 'info', title: 'Export unavailable', message: 'CSV export is only available in the browser workspace.' },
     );
-  }, [buildExportRows, periodView]);
+  }, [buildExportRows]);
 
   const handleExport = React.useCallback(() => {
     handleExportFiltered();
