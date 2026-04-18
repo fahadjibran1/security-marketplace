@@ -5,6 +5,7 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { COMPANY_ADMIN_ROLES, COMPANY_VIEW_ROLES, UserRole } from '../user/entities/user.entity';
 import { UpdateTimesheetDto } from './dto/update-timesheet.dto';
+import { UpdateTimesheetPayrollDto } from './dto/update-timesheet-payroll.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 
@@ -23,6 +24,19 @@ export class TimesheetController {
   @Roles(UserRole.ADMIN, ...COMPANY_VIEW_ROLES)
   findForCompany(@CurrentUser() user: JwtPayload) {
     return this.timesheetService.findForCompany(user.sub);
+  }
+
+  @Patch('company/payroll')
+  @Roles(UserRole.ADMIN, ...COMPANY_ADMIN_ROLES)
+  updatePayrollForCompany(
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: UpdateTimesheetPayrollDto,
+  ) {
+    if (user.role === UserRole.ADMIN) {
+      return this.timesheetService.updatePayrollAsAdmin(dto);
+    }
+
+    return this.timesheetService.updatePayrollForCompany(user.sub, dto);
   }
 
   @Get('mine')

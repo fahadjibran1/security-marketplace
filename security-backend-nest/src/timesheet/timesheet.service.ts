@@ -1,9 +1,10 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Brackets, Repository } from 'typeorm';
-import { Timesheet, TimesheetStatus } from './entities/timesheet.entity';
+import { Brackets, In, Repository } from 'typeorm';
+import { Timesheet, TimesheetPayrollStatus, TimesheetStatus } from './entities/timesheet.entity';
 import { Shift } from '../shift/entities/shift.entity';
 import { UpdateTimesheetDto } from './dto/update-timesheet.dto';
+import { UpdateTimesheetPayrollDto } from './dto/update-timesheet-payroll.dto';
 import { CompanyService } from '../company/company.service';
 import { GuardProfileService } from '../guard-profile/guard-profile.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
@@ -86,6 +87,9 @@ export class TimesheetService {
       workedMinutes: 0,
       breakMinutes: 0,
       roundedMinutes: 0,
+      payrollStatus: TimesheetPayrollStatus.UNPAID,
+      payrollIncludedAt: null,
+      payrollPaidAt: null,
       submittedAt: null,
       reviewedAt: null,
       reviewedByUserId: null,
@@ -134,15 +138,24 @@ export class TimesheetService {
       if (timesheet.approvedHours === undefined || timesheet.approvedHours === null) {
         timesheet.approvedHours = Number(timesheet.hoursWorked);
       }
+      if (!timesheet.payrollStatus) {
+        timesheet.payrollStatus = TimesheetPayrollStatus.UNPAID;
+      }
       timesheet.rejectionReason = null;
     } else if (dto.approvalStatus === TimesheetStatus.REJECTED) {
       timesheet.reviewedAt = new Date();
       timesheet.reviewedByUserId = userId;
       timesheet.approvedHours = null;
+      timesheet.payrollStatus = TimesheetPayrollStatus.UNPAID;
+      timesheet.payrollIncludedAt = null;
+      timesheet.payrollPaidAt = null;
     } else if (dto.approvalStatus === TimesheetStatus.RETURNED) {
       timesheet.reviewedAt = new Date();
       timesheet.reviewedByUserId = userId;
       timesheet.approvedHours = null;
+      timesheet.payrollStatus = TimesheetPayrollStatus.UNPAID;
+      timesheet.payrollIncludedAt = null;
+      timesheet.payrollPaidAt = null;
     }
     const saved = await this.timesheetRepo.save(timesheet);
     await this.auditLogService.log({
@@ -206,6 +219,9 @@ export class TimesheetService {
     timesheet.approvalStatus = TimesheetStatus.SUBMITTED;
     timesheet.submittedAt = new Date();
     timesheet.approvedHours = null;
+    timesheet.payrollStatus = TimesheetPayrollStatus.UNPAID;
+    timesheet.payrollIncludedAt = null;
+    timesheet.payrollPaidAt = null;
     timesheet.reviewedAt = null;
     timesheet.reviewedByUserId = null;
     timesheet.rejectionReason = null;
@@ -240,6 +256,17 @@ export class TimesheetService {
     }
 
     return saved;
+  }
+
+  async updatePayrollForCompany(userId: number, dto: UpdateTimesheetPayrollDto): Promise<Timesheet[]> {
+    const company = await this.companyService.findByUserId(userId);
+    if (!company) throw new NotFoundException('Company not found');
+
+    return this.applyPayrollUpdate({ companyId: company.id, userId, dto });
+  }
+
+  async updatePayrollAsAdmin(dto: UpdateTimesheetPayrollDto): Promise<Timesheet[]> {
+    return this.applyPayrollUpdate({ userId: 0, dto });
   }
 
   private applyTimesheetUpdates(timesheet: Timesheet, dto: UpdateTimesheetDto): void {
@@ -290,6 +317,95 @@ export class TimesheetService {
       breakMinutes: dto.breakMinutes,
       roundedMinutes: dto.roundedMinutes,
     });
+  }
+
+  private async applyPayrollUpdate({
+    companyId,
+    userId,
+    dto,
+  }: {
+    companyId?: number;
+    userId: number;
+    dto: UpdateTimesheetPayrollDto;
+  }): Promise<Timesheet[]> {
+    const uniqueIds = Array.from(new Set((dto.ids || []).filter((value) => Number.isInteger(value) && value > 0)));
+    if (!uniqueIds.length) {
+      throw new BadRequestException('Select at least one approved timesheet for payroll updates.');
+    }
+
+    const requestedPayrollStatus = String(dto.payrollStatus || '').trim().toLowerCase();
+    if (
+      requestedPayrollStatus !== TimesheetPayrollStatus.UNPAID &&
+      requestedPayrollStatus !== TimesheetPayrollStatus.INCLUDED &&
+      requestedPayrollStatus !== TimesheetPayrollStatus.PAID
+    ) {
+      throw new BadRequestException('Payroll status must be unpaid, included, or paid.');
+    }
+
+    const timesheets = companyId
+      ? await this.timesheetRepo.find({
+          where: uniqueIds.map((id) => ({ id, company: { id: companyId } })),
+        })
+      : await this.timesheetRepo.find({
+          where: { id: In(uniqueIds) },
+        });
+
+    if (timesheets.length !== uniqueIds.length) {
+      throw new NotFoundException('One or more timesheets were not found for this company.');
+    }
+
+    timesheets.forEach((timesheet) => {
+      if (String(timesheet.approvalStatus).trim().toLowerCase() !== TimesheetStatus.APPROVED) {
+        throw new ForbiddenException('Only approved timesheets can be managed in payroll.');
+      }
+    });
+
+    const now = new Date();
+    const updatedTimesheets = timesheets.map((timesheet) => {
+      const beforeData = {
+        payrollStatus: timesheet.payrollStatus,
+        payrollIncludedAt: timesheet.payrollIncludedAt,
+        payrollPaidAt: timesheet.payrollPaidAt,
+      };
+
+      if (requestedPayrollStatus === TimesheetPayrollStatus.UNPAID) {
+        timesheet.payrollStatus = TimesheetPayrollStatus.UNPAID;
+        timesheet.payrollIncludedAt = null;
+        timesheet.payrollPaidAt = null;
+      } else if (requestedPayrollStatus === TimesheetPayrollStatus.INCLUDED) {
+        timesheet.payrollStatus = TimesheetPayrollStatus.INCLUDED;
+        timesheet.payrollIncludedAt = timesheet.payrollIncludedAt ?? now;
+        timesheet.payrollPaidAt = null;
+      } else {
+        timesheet.payrollStatus = TimesheetPayrollStatus.PAID;
+        timesheet.payrollIncludedAt = timesheet.payrollIncludedAt ?? now;
+        timesheet.payrollPaidAt = now;
+      }
+
+      return { beforeData, timesheet };
+    });
+
+    const saved = await this.timesheetRepo.save(updatedTimesheets.map((entry) => entry.timesheet));
+
+    await Promise.all(
+      saved.map((timesheet, index) =>
+        this.auditLogService.log({
+          company: timesheet.company,
+          user: userId ? { id: userId } : undefined,
+          action: 'timesheet.payroll_updated',
+          entityType: 'timesheet',
+          entityId: timesheet.id,
+          beforeData: updatedTimesheets[index].beforeData,
+          afterData: {
+            payrollStatus: timesheet.payrollStatus,
+            payrollIncludedAt: timesheet.payrollIncludedAt,
+            payrollPaidAt: timesheet.payrollPaidAt,
+          },
+        }),
+      ),
+    );
+
+    return saved;
   }
 
   private validateCompanyReviewUpdate(timesheet: Timesheet, dto: UpdateTimesheetDto): void {

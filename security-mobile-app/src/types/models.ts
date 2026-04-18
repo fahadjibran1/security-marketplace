@@ -1,5 +1,6 @@
 export type AppRole = 'admin' | 'company' | 'company_admin' | 'company_staff' | 'guard';
 export type TimesheetApprovalStatus = 'draft' | 'submitted' | 'approved' | 'rejected' | 'returned';
+export type TimesheetPayrollStatus = 'unpaid' | 'included' | 'paid';
 
 export function isCompanyAppRole(role?: AppRole | null): boolean {
   return role === 'company' || role === 'company_admin' || role === 'company_staff';
@@ -141,6 +142,7 @@ export interface Shift {
   companyId?: number;
   guardId?: number;
   assignment?: Assignment;
+  job?: Job | null;
   company?: CompanyProfile;
   guard?: GuardProfile;
   site?: Site | null;
@@ -163,6 +165,9 @@ export interface Timesheet {
   guardNote?: string | null;
   companyNote?: string | null;
   approvedHours?: number | null;
+  payrollStatus?: TimesheetPayrollStatus | string;
+  payrollIncludedAt?: string | null;
+  payrollPaidAt?: string | null;
   workedMinutes?: number;
   breakMinutes?: number;
   roundedMinutes?: number;
@@ -190,6 +195,11 @@ export interface UpdateTimesheetPayload {
   reviewedAt?: string | null;
   reviewedByUserId?: number;
   rejectionReason?: string | null;
+}
+
+export interface UpdateTimesheetPayrollPayload {
+  ids: number[];
+  payrollStatus: TimesheetPayrollStatus | string;
 }
 
 export interface CreateJobPayload {

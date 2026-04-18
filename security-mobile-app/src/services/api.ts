@@ -31,6 +31,7 @@ import {
   UpdateGuardPayload,
   UpdateShiftPayload,
   UpdateSitePayload,
+  UpdateTimesheetPayrollPayload,
   UpdateTimesheetPayload,
   RecordAttendancePayload,
   CreateSitePayload,
@@ -390,6 +391,13 @@ export function updateTimesheet(id: number, payload: UpdateTimesheetPayload) {
 
 export function submitTimesheet(id: number, payload: UpdateTimesheetPayload = {}) {
   return request<Timesheet>(`/timesheets/${id}/submit`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateCompanyTimesheetPayroll(payload: UpdateTimesheetPayrollPayload) {
+  return request<Timesheet[]>('/timesheets/company/payroll', {
     method: 'PATCH',
     body: JSON.stringify(payload),
   });

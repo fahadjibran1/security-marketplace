@@ -18,6 +18,12 @@ export enum TimesheetStatus {
   RETURNED = 'returned',
 }
 
+export enum TimesheetPayrollStatus {
+  UNPAID = 'unpaid',
+  INCLUDED = 'included',
+  PAID = 'paid',
+}
+
 @Entity('timesheets')
 export class Timesheet {
   @PrimaryGeneratedColumn()
@@ -62,6 +68,19 @@ export class Timesheet {
 
   @Column({ type: 'numeric', precision: 8, scale: 2, nullable: true })
   approvedHours?: number | null;
+
+  @Column({
+    type: 'enum',
+    enum: TimesheetPayrollStatus,
+    default: TimesheetPayrollStatus.UNPAID,
+  })
+  payrollStatus!: string;
+
+  @Column({ type: 'timestamp', nullable: true })
+  payrollIncludedAt?: Date | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  payrollPaidAt?: Date | null;
 
   @Column({ type: 'int', default: 0 })
   workedMinutes!: number;
