@@ -37,6 +37,9 @@ type EnrichedTimesheet = {
   shiftDateLabel: string;
   scheduledLabel: string;
   attendanceLabel: string;
+  hourlyRate: number | null;
+  claimedAmount: number | null;
+  approvedAmount: number | null;
 };
 
 type GroupedTimesheets = {
@@ -49,12 +52,16 @@ type GroupedTimesheets = {
     count: number;
     claimedHours: number;
     approvedHours: number;
+    claimedAmount: number;
+    approvedAmount: number;
     pendingCount: number;
     approvedCount: number;
+    missingRateCount: number;
   };
 };
 
 const UK_LOCALE = 'en-GB';
+const GBP_CURRENCY = 'GBP';
 
 function getLiteralDateTimeParts(value?: string | null) {
   if (!value) return null;
@@ -177,6 +184,65 @@ function toHours(value?: number | null) {
 
 function roundHours(value: number) {
   return Math.round(value * 100) / 100;
+}
+
+function roundCurrency(value: number) {
+  return Math.round(value * 100) / 100;
+}
+
+function formatCurrency(value?: number | null) {
+  if (value === undefined || value === null || !Number.isFinite(Number(value))) {
+    return 'Rate unavailable';
+  }
+
+  return Number(value).toLocaleString(UK_LOCALE, {
+    style: 'currency',
+    currency: GBP_CURRENCY,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+function formatRate(value?: number | null) {
+  if (value === undefined || value === null || !Number.isFinite(Number(value))) {
+    return 'Rate unavailable';
+  }
+
+  return `${formatCurrency(value)} / h`;
+}
+
+function getTimesheetRate(timesheet: Timesheet) {
+  const directJobRate = timesheet.shift?.job?.hourlyRate;
+  if (directJobRate !== undefined && directJobRate !== null && Number.isFinite(Number(directJobRate))) {
+    return roundCurrency(Number(directJobRate));
+  }
+
+  const assignmentJobRate = timesheet.shift?.assignment?.job?.hourlyRate;
+  if (assignmentJobRate !== undefined && assignmentJobRate !== null && Number.isFinite(Number(assignmentJobRate))) {
+    return roundCurrency(Number(assignmentJobRate));
+  }
+
+  return null;
+}
+
+function getApprovedHoursValue(timesheet: Timesheet) {
+  if (timesheet.approvedHours !== undefined && timesheet.approvedHours !== null && Number.isFinite(Number(timesheet.approvedHours))) {
+    return Number(timesheet.approvedHours);
+  }
+
+  if (normalizeStatus(timesheet.approvalStatus) === 'approved') {
+    return toHours(timesheet.hoursWorked);
+  }
+
+  return null;
+}
+
+function getAmountForHours(hours: number | null, rate: number | null) {
+  if (hours === null || rate === null) {
+    return null;
+  }
+
+  return roundCurrency(hours * rate);
 }
 
 function formatHoursInput(value?: number | null) {
@@ -390,6 +456,9 @@ export function CompanyTimesheetsWorkspace({
         const scheduledStart = timesheet.scheduledStartAt || timesheet.shift?.start || null;
         const scheduledEnd = timesheet.scheduledEndAt || timesheet.shift?.end || null;
         const displayStatus = getDisplayStatus(timesheet);
+        const hourlyRate = getTimesheetRate(timesheet);
+        const claimedAmount = getAmountForHours(toHours(timesheet.hoursWorked), hourlyRate);
+        const approvedAmount = getAmountForHours(getApprovedHoursValue(timesheet), hourlyRate);
 
         return {
           timesheet,
@@ -412,6 +481,9 @@ export function CompanyTimesheetsWorkspace({
           shiftDateLabel: formatDateLabel(scheduledStart || timesheet.createdAt),
           scheduledLabel: `${formatTimeLabel(scheduledStart)} - ${formatTimeLabel(scheduledEnd)}`,
           attendanceLabel: `${formatTimeLabel(timesheet.actualCheckInAt)} / ${formatTimeLabel(timesheet.actualCheckOutAt)}`,
+          hourlyRate,
+          claimedAmount,
+          approvedAmount,
         };
       })
       .sort((left, right) => right.shiftDate.getTime() - left.shiftDate.getTime());
@@ -469,18 +541,36 @@ export function CompanyTimesheetsWorkspace({
           periodKey,
           periodLabel,
           rows: [],
-          totals: { count: 0, claimedHours: 0, approvedHours: 0, pendingCount: 0, approvedCount: 0 },
+          totals: {
+            count: 0,
+            claimedHours: 0,
+            approvedHours: 0,
+            claimedAmount: 0,
+            approvedAmount: 0,
+            pendingCount: 0,
+            approvedCount: 0,
+            missingRateCount: 0,
+          },
         };
 
       existing.rows.push(entry);
       existing.totals.count += 1;
       existing.totals.claimedHours += toHours(entry.timesheet.hoursWorked);
+      if (entry.claimedAmount !== null) {
+        existing.totals.claimedAmount += entry.claimedAmount;
+      }
       if (normalizeStatus(entry.displayStatus) === 'approved') {
         existing.totals.approvedHours += toHours(entry.timesheet.approvedHours ?? entry.timesheet.hoursWorked);
+        if (entry.approvedAmount !== null) {
+          existing.totals.approvedAmount += entry.approvedAmount;
+        }
         existing.totals.approvedCount += 1;
       }
       if (normalizeStatus(entry.displayStatus) === 'submitted') {
         existing.totals.pendingCount += 1;
+      }
+      if (entry.hourlyRate === null) {
+        existing.totals.missingRateCount += 1;
       }
 
       groups.set(groupKey, existing);
@@ -494,6 +584,8 @@ export function CompanyTimesheetsWorkspace({
           ...group.totals,
           claimedHours: roundHours(group.totals.claimedHours),
           approvedHours: roundHours(group.totals.approvedHours),
+          claimedAmount: roundCurrency(group.totals.claimedAmount),
+          approvedAmount: roundCurrency(group.totals.approvedAmount),
         },
       }))
       .sort((left, right) => {
@@ -556,25 +648,42 @@ export function CompanyTimesheetsWorkspace({
 
   const buildExportRows = React.useCallback((groups: GroupedTimesheets[]) => {
     return [
-      ['Site', 'Period', 'Guard', 'Shift Date', 'Scheduled', 'Attendance', 'Claimed Hours', 'Approved Hours', 'Status', 'Company Note'],
+      [
+        'Site',
+        'Period',
+        'Guard',
+        'Shift Date',
+        'Scheduled',
+        'Attendance',
+        'Hourly Rate',
+        'Claimed Hours',
+        'Approved Hours',
+        'Claimed Amount',
+        'Approved Amount',
+        'Status',
+        'Company Note',
+      ],
       ...groups.flatMap((group) =>
         [
-          ...group.rows.map((entry) => [
-            group.siteName,
-            group.periodLabel,
-            entry.guardName,
-            entry.shiftDateLabel,
-            entry.scheduledLabel,
-            entry.attendanceLabel,
-            toHours(entry.timesheet.hoursWorked).toFixed(2),
-            entry.timesheet.approvedHours != null
-              ? toHours(entry.timesheet.approvedHours).toFixed(2)
-              : normalizeStatus(entry.displayStatus) === 'approved'
-                ? toHours(entry.timesheet.hoursWorked).toFixed(2)
-                : '',
-            formatStatusLabel(entry.displayStatus),
-            entry.timesheet.companyNote || '',
-          ]),
+          ...group.rows.map((entry) => {
+            const approvedHoursValue = getApprovedHoursValue(entry.timesheet);
+
+            return [
+              group.siteName,
+              group.periodLabel,
+              entry.guardName,
+              entry.shiftDateLabel,
+              entry.scheduledLabel,
+              entry.attendanceLabel,
+              entry.hourlyRate !== null ? formatCurrency(entry.hourlyRate) : 'Rate unavailable',
+              toHours(entry.timesheet.hoursWorked).toFixed(2),
+              approvedHoursValue !== null ? approvedHoursValue.toFixed(2) : '',
+              entry.claimedAmount !== null ? formatCurrency(entry.claimedAmount) : 'Rate unavailable',
+              entry.approvedAmount !== null ? formatCurrency(entry.approvedAmount) : '',
+              formatStatusLabel(entry.displayStatus),
+              entry.timesheet.companyNote || '',
+            ];
+          }),
           [
             group.siteName,
             group.periodLabel,
@@ -582,8 +691,11 @@ export function CompanyTimesheetsWorkspace({
             '',
             '',
             '',
+            group.totals.missingRateCount > 0 ? `${group.totals.missingRateCount} rate unavailable` : '',
             group.totals.claimedHours.toFixed(2),
             group.totals.approvedHours.toFixed(2),
+            formatCurrency(group.totals.claimedAmount),
+            formatCurrency(group.totals.approvedAmount),
             `Pending ${group.totals.pendingCount} | Approved ${group.totals.approvedCount}`,
             `Timesheets ${group.totals.count}`,
           ],
@@ -762,6 +874,13 @@ export function CompanyTimesheetsWorkspace({
 
   const activeSelected = selectedTimesheet?.timesheet;
   const selectedClaimedHours = activeSelected ? toHours(activeSelected.hoursWorked) : 0;
+  const selectedApprovedHours =
+    activeSelected && getApprovedHoursValue(activeSelected) !== null
+      ? Number(getApprovedHoursValue(activeSelected))
+      : null;
+  const selectedHourlyRate = selectedTimesheet?.hourlyRate ?? null;
+  const selectedClaimedAmount = selectedTimesheet?.claimedAmount ?? null;
+  const selectedApprovedAmount = selectedTimesheet?.approvedAmount ?? null;
   const parsedSelectedApprovedHours = parseHoursInput(approvedHoursInput);
   const hasSelectedApprovedHoursValue = approvedHoursInput.trim().length > 0;
   const adjustedHoursRequireNote =
@@ -940,8 +1059,13 @@ export function CompanyTimesheetsWorkspace({
                       <Text style={styles.groupFooterText}>Timesheets: {group.totals.count}</Text>
                       <Text style={styles.groupFooterText}>Claimed: {group.totals.claimedHours.toFixed(2)} h</Text>
                       <Text style={styles.groupFooterText}>Approved: {group.totals.approvedHours.toFixed(2)} h</Text>
+                      <Text style={styles.groupFooterText}>Claimed amount: {formatCurrency(group.totals.claimedAmount)}</Text>
+                      <Text style={styles.groupFooterText}>Approved amount: {formatCurrency(group.totals.approvedAmount)}</Text>
                       <Text style={styles.groupFooterText}>Pending: {group.totals.pendingCount}</Text>
                       <Text style={styles.groupFooterText}>Approved count: {group.totals.approvedCount}</Text>
+                      {group.totals.missingRateCount > 0 ? (
+                        <Text style={styles.groupFooterText}>Rate unavailable: {group.totals.missingRateCount}</Text>
+                      ) : null}
                     </View>
                   </>
                 ) : null}
@@ -988,10 +1112,17 @@ export function CompanyTimesheetsWorkspace({
                 <Text style={styles.detailLine}>Check-out: {formatDateTimeLabel(activeSelected.actualCheckOutAt)}</Text>
                 <Text style={styles.detailLine}>Recorded minutes: {activeSelected.workedMinutes ?? 0}</Text>
                 <Text style={styles.detailLine}>Claimed hours: {selectedClaimedHours.toFixed(2)}</Text>
-                <Text style={styles.detailLine}>
-                  Approved hours: {toHours(activeSelected.approvedHours ?? activeSelected.hoursWorked).toFixed(2)}
-                </Text>
+                <Text style={styles.detailLine}>Approved hours: {selectedApprovedHours !== null ? selectedApprovedHours.toFixed(2) : 'Not approved yet'}</Text>
                 <Text style={styles.detailLine}>Submitted: {activeSelected.submittedAt ? formatDateTimeLabel(activeSelected.submittedAt) : 'Not submitted'}</Text>
+              </View>
+
+              <View style={styles.detailSection}>
+                <Text style={styles.detailSectionTitle}>Rate & amounts</Text>
+                <Text style={styles.detailLine}>Hourly rate: {formatRate(selectedHourlyRate)}</Text>
+                <Text style={styles.detailLine}>Claimed amount: {formatCurrency(selectedClaimedAmount)}</Text>
+                <Text style={styles.detailLine}>
+                  Approved amount: {selectedApprovedAmount !== null ? formatCurrency(selectedApprovedAmount) : 'Not approved yet'}
+                </Text>
               </View>
 
               <View style={styles.detailSection}>
