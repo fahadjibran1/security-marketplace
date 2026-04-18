@@ -18,21 +18,7 @@ export class AddReturnedTimesheetStatus1719120000000 implements MigrationInterfa
         END IF;
       END $$;
     `);
-
-    await queryRunner.query(`
-      UPDATE "timesheets"
-      SET "approvalStatus" = 'returned'
-      WHERE "approvalStatus" = 'draft'
-        AND "rejectionReason" IS NOT NULL
-        AND btrim("rejectionReason") <> '';
-    `);
   }
 
-  public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(`
-      UPDATE "timesheets"
-      SET "approvalStatus" = 'draft'
-      WHERE "approvalStatus" = 'returned';
-    `);
-  }
+  public async down(_queryRunner: QueryRunner): Promise<void> {}
 }
