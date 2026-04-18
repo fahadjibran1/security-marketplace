@@ -49,6 +49,7 @@ type GroupedTimesheets = {
     claimedHours: number;
     approvedHours: number;
     pendingCount: number;
+    approvedCount: number;
   };
 };
 
@@ -123,7 +124,7 @@ function formatTimeLabel(value?: string | null) {
 
 function formatDateTimeLabel(value?: string | null) {
   if (!value) return 'Not recorded';
-  return `${formatDateLabel(value)} · ${formatTimeLabel(value)}`;
+  return `${formatDateLabel(value)} | ${formatTimeLabel(value)}`;
 }
 
 function normalizeStatus(value?: string | null) {
@@ -217,21 +218,23 @@ function getWeekEnd(value: Date) {
   return end;
 }
 
-function getMonthEnd(value: Date) {
-  return new Date(value.getFullYear(), value.getMonth() + 1, 0, 23, 59, 59, 999);
+function getDayEnd(value: Date) {
+  const end = new Date(value);
+  end.setHours(23, 59, 59, 999);
+  return end;
 }
 
 function getPeriodLabel(value: Date, periodView: PeriodView) {
   if (periodView === 'month') {
-    return value.toLocaleDateString(UK_LOCALE, {
+    return `Month of ${value.toLocaleDateString(UK_LOCALE, {
       month: 'long',
       year: 'numeric',
-    });
+    })}`;
   }
 
   const weekStart = getWeekStart(value);
   const weekEnd = getWeekEnd(value);
-  return `${formatDateLabel(weekStart.toISOString())} – ${formatDateLabel(weekEnd.toISOString())}`;
+  return `Week of ${formatDateLabel(weekStart.toISOString())} - ${formatDateLabel(weekEnd.toISOString())}`;
 }
 
 function getPeriodKey(value: Date, periodView: PeriodView) {
@@ -388,7 +391,7 @@ export function CompanyTimesheetsWorkspace({
             .toLowerCase(),
           shiftDate,
           shiftDateLabel: formatDateLabel(scheduledStart || timesheet.createdAt),
-          scheduledLabel: `${formatTimeLabel(scheduledStart)} – ${formatTimeLabel(scheduledEnd)}`,
+          scheduledLabel: `${formatTimeLabel(scheduledStart)} - ${formatTimeLabel(scheduledEnd)}`,
           attendanceLabel: `${formatTimeLabel(timesheet.actualCheckInAt)} / ${formatTimeLabel(timesheet.actualCheckOutAt)}`,
         };
       })
@@ -424,7 +427,7 @@ export function CompanyTimesheetsWorkspace({
 
       if (endDate) {
         const maxDate = parseDateValue(endDate);
-        if (maxDate && entry.shiftDate > getMonthEnd(maxDate)) return false;
+        if (maxDate && entry.shiftDate > getDayEnd(maxDate)) return false;
       }
 
       if (searchTerm.trim() && !entry.searchText.includes(searchTerm.trim().toLowerCase())) return false;
@@ -446,7 +449,7 @@ export function CompanyTimesheetsWorkspace({
           siteName: entry.siteName,
           periodLabel,
           rows: [],
-          totals: { count: 0, claimedHours: 0, approvedHours: 0, pendingCount: 0 },
+          totals: { count: 0, claimedHours: 0, approvedHours: 0, pendingCount: 0, approvedCount: 0 },
         };
 
       existing.rows.push(entry);
@@ -454,6 +457,7 @@ export function CompanyTimesheetsWorkspace({
       existing.totals.claimedHours += toHours(entry.timesheet.hoursWorked);
       if (normalizeStatus(entry.displayStatus) === 'approved') {
         existing.totals.approvedHours += toHours(entry.timesheet.approvedHours ?? entry.timesheet.hoursWorked);
+        existing.totals.approvedCount += 1;
       }
       if (normalizeStatus(entry.displayStatus) === 'submitted') {
         existing.totals.pendingCount += 1;
@@ -530,10 +534,10 @@ export function CompanyTimesheetsWorkspace({
     setCollapsedGroupKeys((current) => ({ ...current, [groupKey]: !current[groupKey] }));
   }, []);
 
-  const handleExport = React.useCallback(() => {
-    const rows = [
-      ['Site', 'Period', 'Guard', 'Shift Date', 'Scheduled', 'Attendance', 'Claimed Hours', 'Status', 'Company Note'],
-      ...groupedTimesheets.flatMap((group) =>
+  const buildExportRows = React.useCallback((groups: GroupedTimesheets[]) => {
+    return [
+      ['Site', 'Period', 'Guard', 'Shift Date', 'Scheduled', 'Attendance', 'Claimed Hours', 'Approved Hours', 'Status', 'Company Note'],
+      ...groups.flatMap((group) =>
         group.rows.map((entry) => [
           group.siteName,
           group.periodLabel,
@@ -541,20 +545,43 @@ export function CompanyTimesheetsWorkspace({
           entry.shiftDateLabel,
           entry.scheduledLabel,
           entry.attendanceLabel,
-          String(toHours(entry.timesheet.hoursWorked)),
+          toHours(entry.timesheet.hoursWorked).toFixed(2),
+          entry.timesheet.approvedHours != null
+            ? toHours(entry.timesheet.approvedHours).toFixed(2)
+            : normalizeStatus(entry.displayStatus) === 'approved'
+              ? toHours(entry.timesheet.hoursWorked).toFixed(2)
+              : '',
           formatStatusLabel(entry.displayStatus),
           entry.timesheet.companyNote || '',
         ]),
       ),
     ];
+  }, []);
 
+  const handleExportFiltered = React.useCallback(() => {
+    const rows = buildExportRows(groupedTimesheets);
     const didDownload = downloadCsv(`timesheets-${periodView}-${toIsoDateInput(new Date())}.csv`, rows);
     setFeedback(
       didDownload
         ? { tone: 'success', title: 'Export ready', message: `Exported ${filteredTimesheets.length} filtered timesheets.` }
         : { tone: 'info', title: 'Export unavailable', message: 'CSV export is only available in the browser workspace.' },
     );
-  }, [filteredTimesheets.length, groupedTimesheets, periodView]);
+  }, [buildExportRows, filteredTimesheets.length, groupedTimesheets, periodView]);
+
+  const handleExportGroup = React.useCallback((group: GroupedTimesheets) => {
+    const rows = buildExportRows([group]);
+    const safeSiteName = group.siteName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'site';
+    const didDownload = downloadCsv(`timesheets-${safeSiteName}-${periodView}-${toIsoDateInput(new Date())}.csv`, rows);
+    setFeedback(
+      didDownload
+        ? { tone: 'success', title: 'Group export ready', message: `Exported ${group.totals.count} timesheets for ${group.siteName}.` }
+        : { tone: 'info', title: 'Export unavailable', message: 'CSV export is only available in the browser workspace.' },
+    );
+  }, [buildExportRows, periodView]);
+
+  const handleExport = React.useCallback(() => {
+    handleExportFiltered();
+  }, [handleExportFiltered]);
 
   const runCompanyAction = React.useCallback(
     async (actionKey: string, timesheetId: number, payload: Parameters<typeof updateTimesheet>[1], successTitle: string, successMessage: string) => {
@@ -716,7 +743,7 @@ export function CompanyTimesheetsWorkspace({
             <Text style={styles.secondaryButtonText}>{refreshing ? 'Refreshing...' : 'Refresh'}</Text>
           </Pressable>
           <Pressable style={styles.primaryButton} onPress={handleExport}>
-            <Text style={styles.primaryButtonText}>Export</Text>
+            <Text style={styles.primaryButtonText}>Export filtered view</Text>
           </Pressable>
         </View>
       </View>
@@ -805,12 +832,12 @@ export function CompanyTimesheetsWorkspace({
                   <View style={styles.groupHeaderCopy}>
                     <Text style={styles.groupSite}>{group.siteName}</Text>
                     <Text style={styles.groupPeriod}>
-                      {group.periodLabel} · {group.totals.count} timesheets · {group.totals.claimedHours.toFixed(2)} claimed hours
+                      {group.periodLabel} | {group.totals.count} timesheets | {group.totals.claimedHours.toFixed(2)} claimed h | {group.totals.approvedHours.toFixed(2)} approved h
                     </Text>
                   </View>
                   <View style={styles.groupHeaderActions}>
-                    <Pressable style={styles.inlineAction} onPress={handleExport}>
-                      <Text style={styles.inlineActionText}>Export filtered</Text>
+                    <Pressable style={styles.inlineAction} onPress={() => handleExportGroup(group)}>
+                      <Text style={styles.inlineActionText}>Export group</Text>
                     </Pressable>
                     <Text style={styles.groupToggle}>{isCollapsed ? 'Expand' : 'Collapse'}</Text>
                   </View>
@@ -873,6 +900,7 @@ export function CompanyTimesheetsWorkspace({
                       <Text style={styles.groupFooterText}>Claimed: {group.totals.claimedHours.toFixed(2)} h</Text>
                       <Text style={styles.groupFooterText}>Approved: {group.totals.approvedHours.toFixed(2)} h</Text>
                       <Text style={styles.groupFooterText}>Pending: {group.totals.pendingCount}</Text>
+                      <Text style={styles.groupFooterText}>Approved count: {group.totals.approvedCount}</Text>
                     </View>
                   </>
                 ) : null}
@@ -913,7 +941,7 @@ export function CompanyTimesheetsWorkspace({
               <View style={styles.detailSection}>
                 <Text style={styles.detailSectionTitle}>Attendance & hours</Text>
                 <Text style={styles.detailLine}>
-                  Scheduled: {formatDateTimeLabel(activeSelected.scheduledStartAt || activeSelected.shift?.start)} – {formatTimeLabel(activeSelected.scheduledEndAt || activeSelected.shift?.end)}
+                  Scheduled: {formatDateTimeLabel(activeSelected.scheduledStartAt || activeSelected.shift?.start)} - {formatTimeLabel(activeSelected.scheduledEndAt || activeSelected.shift?.end)}
                 </Text>
                 <Text style={styles.detailLine}>Check-in: {formatDateTimeLabel(activeSelected.actualCheckInAt)}</Text>
                 <Text style={styles.detailLine}>Check-out: {formatDateTimeLabel(activeSelected.actualCheckOutAt)}</Text>
