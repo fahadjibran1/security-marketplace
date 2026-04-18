@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { formatApiErrorMessage, updateTimesheet } from '../../services/api';
 import { Timesheet } from '../../types/models';
 
 type WorkspaceFeedback = {
@@ -12,7 +11,7 @@ type WorkspaceFeedback = {
 
 type PeriodView = 'week' | 'month';
 
-type CompanyTimesheetsWorkspaceProps = {
+type CompanyPayrollWorkspaceProps = {
   timesheets: Timesheet[];
   refreshing: boolean;
   onRefresh: () => Promise<void>;
@@ -31,18 +30,18 @@ type EnrichedTimesheet = {
   siteName: string;
   guardId: string;
   guardName: string;
-  displayStatus: string;
-  searchText: string;
   shiftDate: Date;
   shiftDateLabel: string;
   scheduledLabel: string;
   attendanceLabel: string;
   hourlyRate: number | null;
   claimedAmount: number | null;
+  approvedHours: number;
   approvedAmount: number | null;
+  searchText: string;
 };
 
-type GroupedTimesheets = {
+type GroupedPayrollTimesheets = {
   key: string;
   siteName: string;
   periodKey: string;
@@ -50,12 +49,8 @@ type GroupedTimesheets = {
   rows: EnrichedTimesheet[];
   totals: {
     count: number;
-    claimedHours: number;
     approvedHours: number;
-    claimedAmount: number;
     approvedAmount: number;
-    pendingCount: number;
-    approvedCount: number;
     missingRateCount: number;
   };
 };
@@ -139,22 +134,18 @@ function normalizeStatus(value?: string | null) {
   return (value || '').trim().toLowerCase();
 }
 
-function getDisplayStatus(timesheet: Timesheet) {
-  return normalizeStatus(timesheet.approvalStatus) || 'unknown';
-}
-
 function formatStatusLabel(value?: string | null) {
   switch (normalizeStatus(value)) {
-    case 'draft':
-      return 'Draft';
-    case 'submitted':
-      return 'Submitted';
     case 'approved':
       return 'Approved';
-    case 'rejected':
-      return 'Rejected';
+    case 'submitted':
+      return 'Submitted';
     case 'returned':
       return 'Returned';
+    case 'rejected':
+      return 'Rejected';
+    case 'draft':
+      return 'Draft';
     default:
       return value
         ? value.replace(/_/g, ' ').replace(/\b\w/g, (match) => match.toUpperCase())
@@ -166,13 +157,6 @@ function getStatusPalette(status: string) {
   switch (normalizeStatus(status)) {
     case 'approved':
       return { bg: '#DCFCE7', text: '#166534' };
-    case 'submitted':
-      return { bg: '#DBEAFE', text: '#1D4ED8' };
-    case 'returned':
-      return { bg: '#FEF3C7', text: '#B45309' };
-    case 'rejected':
-      return { bg: '#FEE2E2', text: '#B91C1C' };
-    case 'draft':
     default:
       return { bg: '#E5E7EB', text: '#374151' };
   }
@@ -234,7 +218,7 @@ function getApprovedHoursValue(timesheet: Timesheet) {
     return toHours(timesheet.hoursWorked);
   }
 
-  return null;
+  return 0;
 }
 
 function getAmountForHours(hours: number | null, rate: number | null) {
@@ -243,22 +227,6 @@ function getAmountForHours(hours: number | null, rate: number | null) {
   }
 
   return roundCurrency(hours * rate);
-}
-
-function formatHoursInput(value?: number | null) {
-  if (value === undefined || value === null || Number.isNaN(Number(value))) {
-    return '';
-  }
-
-  const normalized = roundHours(Number(value));
-  return Number.isInteger(normalized) ? String(normalized) : normalized.toFixed(2);
-}
-
-function parseHoursInput(value: string) {
-  const normalized = value.trim().replace(',', '.');
-  if (!normalized) return null;
-  const parsed = Number.parseFloat(normalized);
-  return Number.isFinite(parsed) ? roundHours(parsed) : Number.NaN;
 }
 
 function toIsoDateInput(value: Date) {
@@ -425,13 +393,12 @@ function SummaryCard({ label, value }: { label: string; value: string }) {
   );
 }
 
-export function CompanyTimesheetsWorkspace({
+export function CompanyPayrollWorkspace({
   timesheets,
   refreshing,
   onRefresh,
-}: CompanyTimesheetsWorkspaceProps) {
+}: CompanyPayrollWorkspaceProps) {
   const [siteFilter, setSiteFilter] = React.useState('');
-  const [statusFilter, setStatusFilter] = React.useState('submitted');
   const [guardFilter, setGuardFilter] = React.useState('');
   const [startDate, setStartDate] = React.useState('');
   const [endDate, setEndDate] = React.useState('');
@@ -439,13 +406,11 @@ export function CompanyTimesheetsWorkspace({
   const [periodView, setPeriodView] = React.useState<PeriodView>('week');
   const [feedback, setFeedback] = React.useState<WorkspaceFeedback>(null);
   const [selectedTimesheetId, setSelectedTimesheetId] = React.useState<number | null>(null);
-  const [companyNote, setCompanyNote] = React.useState('');
-  const [approvedHoursInput, setApprovedHoursInput] = React.useState('');
-  const [busyAction, setBusyAction] = React.useState<string | null>(null);
   const [collapsedGroupKeys, setCollapsedGroupKeys] = React.useState<Record<string, boolean>>({});
 
   const enrichedTimesheets = React.useMemo<EnrichedTimesheet[]>(() => {
     return timesheets
+      .filter((timesheet) => normalizeStatus(timesheet.approvalStatus) === 'approved')
       .map((timesheet) => {
         const siteId = String(timesheet.shift?.site?.id ?? timesheet.shift?.siteId ?? timesheet.shiftId ?? 'unknown');
         const siteName = timesheet.shift?.site?.name || timesheet.shift?.siteName || `Site ${siteId}`;
@@ -455,10 +420,10 @@ export function CompanyTimesheetsWorkspace({
           parseDateValue(timesheet.scheduledStartAt || timesheet.shift?.start || timesheet.createdAt) || new Date();
         const scheduledStart = timesheet.scheduledStartAt || timesheet.shift?.start || null;
         const scheduledEnd = timesheet.scheduledEndAt || timesheet.shift?.end || null;
-        const displayStatus = getDisplayStatus(timesheet);
+        const approvedHours = getApprovedHoursValue(timesheet);
         const hourlyRate = getTimesheetRate(timesheet);
         const claimedAmount = getAmountForHours(toHours(timesheet.hoursWorked), hourlyRate);
-        const approvedAmount = getAmountForHours(getApprovedHoursValue(timesheet), hourlyRate);
+        const approvedAmount = getAmountForHours(approvedHours, hourlyRate);
 
         return {
           timesheet,
@@ -466,7 +431,14 @@ export function CompanyTimesheetsWorkspace({
           siteName,
           guardId,
           guardName,
-          displayStatus,
+          shiftDate,
+          shiftDateLabel: formatDateLabel(scheduledStart || timesheet.createdAt),
+          scheduledLabel: `${formatTimeLabel(scheduledStart)} - ${formatTimeLabel(scheduledEnd)}`,
+          attendanceLabel: `${formatTimeLabel(timesheet.actualCheckInAt)} / ${formatTimeLabel(timesheet.actualCheckOutAt)}`,
+          hourlyRate,
+          claimedAmount,
+          approvedHours,
+          approvedAmount,
           searchText: [
             siteName,
             guardName,
@@ -477,13 +449,6 @@ export function CompanyTimesheetsWorkspace({
           ]
             .join(' ')
             .toLowerCase(),
-          shiftDate,
-          shiftDateLabel: formatDateLabel(scheduledStart || timesheet.createdAt),
-          scheduledLabel: `${formatTimeLabel(scheduledStart)} - ${formatTimeLabel(scheduledEnd)}`,
-          attendanceLabel: `${formatTimeLabel(timesheet.actualCheckInAt)} / ${formatTimeLabel(timesheet.actualCheckOutAt)}`,
-          hourlyRate,
-          claimedAmount,
-          approvedAmount,
         };
       })
       .sort((left, right) => right.shiftDate.getTime() - left.shiftDate.getTime());
@@ -509,7 +474,6 @@ export function CompanyTimesheetsWorkspace({
     return enrichedTimesheets.filter((entry) => {
       if (siteFilter && entry.siteId !== siteFilter) return false;
       if (guardFilter && entry.guardId !== guardFilter) return false;
-      if (statusFilter !== 'all' && statusFilter && normalizeStatus(entry.displayStatus) !== normalizeStatus(statusFilter)) return false;
 
       if (startDate) {
         const minDate = parseDateValue(startDate);
@@ -524,18 +488,17 @@ export function CompanyTimesheetsWorkspace({
       if (searchTerm.trim() && !entry.searchText.includes(searchTerm.trim().toLowerCase())) return false;
       return true;
     });
-  }, [enrichedTimesheets, endDate, guardFilter, searchTerm, siteFilter, startDate, statusFilter]);
+  }, [enrichedTimesheets, endDate, guardFilter, searchTerm, siteFilter, startDate]);
 
-  const groupedTimesheets = React.useMemo<GroupedTimesheets[]>(() => {
-    const groups = new Map<string, GroupedTimesheets>();
+  const groupedTimesheets = React.useMemo<GroupedPayrollTimesheets[]>(() => {
+    const groups = new Map<string, GroupedPayrollTimesheets>();
 
     filteredTimesheets.forEach((entry) => {
       const periodKey = getPeriodKey(entry.shiftDate, periodView);
       const periodLabel = getPeriodLabel(entry.shiftDate, periodView);
       const groupKey = `${entry.siteName}__${periodKey}`;
       const existing =
-        groups.get(groupKey) ||
-        {
+        groups.get(groupKey) || {
           key: groupKey,
           siteName: entry.siteName,
           periodKey,
@@ -543,33 +506,18 @@ export function CompanyTimesheetsWorkspace({
           rows: [],
           totals: {
             count: 0,
-            claimedHours: 0,
             approvedHours: 0,
-            claimedAmount: 0,
             approvedAmount: 0,
-            pendingCount: 0,
-            approvedCount: 0,
             missingRateCount: 0,
           },
         };
 
       existing.rows.push(entry);
       existing.totals.count += 1;
-      existing.totals.claimedHours += toHours(entry.timesheet.hoursWorked);
-      if (entry.claimedAmount !== null) {
-        existing.totals.claimedAmount += entry.claimedAmount;
-      }
-      if (normalizeStatus(entry.displayStatus) === 'approved') {
-        existing.totals.approvedHours += toHours(entry.timesheet.approvedHours ?? entry.timesheet.hoursWorked);
-        if (entry.approvedAmount !== null) {
-          existing.totals.approvedAmount += entry.approvedAmount;
-        }
-        existing.totals.approvedCount += 1;
-      }
-      if (normalizeStatus(entry.displayStatus) === 'submitted') {
-        existing.totals.pendingCount += 1;
-      }
-      if (entry.hourlyRate === null) {
+      existing.totals.approvedHours += entry.approvedHours;
+      if (entry.approvedAmount !== null) {
+        existing.totals.approvedAmount += entry.approvedAmount;
+      } else {
         existing.totals.missingRateCount += 1;
       }
 
@@ -582,9 +530,7 @@ export function CompanyTimesheetsWorkspace({
         rows: group.rows.sort((left, right) => right.shiftDate.getTime() - left.shiftDate.getTime()),
         totals: {
           ...group.totals,
-          claimedHours: roundHours(group.totals.claimedHours),
           approvedHours: roundHours(group.totals.approvedHours),
-          claimedAmount: roundCurrency(group.totals.claimedAmount),
           approvedAmount: roundCurrency(group.totals.approvedAmount),
         },
       }))
@@ -595,15 +541,14 @@ export function CompanyTimesheetsWorkspace({
   }, [filteredTimesheets, periodView]);
 
   const summary = React.useMemo(() => {
-    const submitted = filteredTimesheets.filter((entry) => normalizeStatus(entry.displayStatus) === 'submitted').length;
-    const approved = filteredTimesheets.filter((entry) => normalizeStatus(entry.displayStatus) === 'approved').length;
-    const returnedOrRejected = filteredTimesheets.filter((entry) => {
-      const status = normalizeStatus(entry.displayStatus);
-      return status === 'returned' || status === 'rejected';
-    }).length;
-    const totalHours = roundHours(filteredTimesheets.reduce((sum, entry) => sum + toHours(entry.timesheet.hoursWorked), 0));
+    const approvedCount = filteredTimesheets.length;
+    const approvedHours = roundHours(filteredTimesheets.reduce((sum, entry) => sum + entry.approvedHours, 0));
+    const approvedAmount = roundCurrency(
+      filteredTimesheets.reduce((sum, entry) => sum + (entry.approvedAmount ?? 0), 0),
+    );
+    const missingRateCount = filteredTimesheets.filter((entry) => entry.hourlyRate === null).length;
 
-    return { submitted, approved, returnedOrRejected, totalHours };
+    return { approvedCount, approvedHours, approvedAmount, missingRateCount };
   }, [filteredTimesheets]);
 
   const selectedTimesheet = React.useMemo(
@@ -622,31 +567,11 @@ export function CompanyTimesheetsWorkspace({
     }
   }, [filteredTimesheets, selectedTimesheetId]);
 
-  React.useEffect(() => {
-    setCompanyNote(selectedTimesheet?.timesheet.companyNote || '');
-  }, [selectedTimesheet?.timesheet.id, selectedTimesheet?.timesheet.companyNote, selectedTimesheet?.timesheet.updatedAt]);
-
-  React.useEffect(() => {
-    if (!selectedTimesheet) {
-      setApprovedHoursInput('');
-      return;
-    }
-
-    const currentApprovedHours =
-      selectedTimesheet.timesheet.approvedHours ?? selectedTimesheet.timesheet.hoursWorked;
-    setApprovedHoursInput(formatHoursInput(currentApprovedHours));
-  }, [
-    selectedTimesheet?.timesheet.id,
-    selectedTimesheet?.timesheet.approvedHours,
-    selectedTimesheet?.timesheet.hoursWorked,
-    selectedTimesheet?.timesheet.updatedAt,
-  ]);
-
   const setGroupCollapsed = React.useCallback((groupKey: string) => {
     setCollapsedGroupKeys((current) => ({ ...current, [groupKey]: !current[groupKey] }));
   }, []);
 
-  const buildExportRows = React.useCallback((groups: GroupedTimesheets[]) => {
+  const buildExportRows = React.useCallback((groups: GroupedPayrollTimesheets[]) => {
     return [
       [
         'Site',
@@ -663,250 +588,95 @@ export function CompanyTimesheetsWorkspace({
         'Status',
         'Company Note',
       ],
-      ...groups.flatMap((group) =>
+      ...groups.flatMap((group) => [
+        ...group.rows.map((entry) => [
+          group.siteName,
+          group.periodLabel,
+          entry.guardName,
+          entry.shiftDateLabel,
+          entry.scheduledLabel,
+          entry.attendanceLabel,
+          entry.hourlyRate !== null ? formatCurrency(entry.hourlyRate) : 'Rate unavailable',
+          toHours(entry.timesheet.hoursWorked).toFixed(2),
+          entry.approvedHours.toFixed(2),
+          entry.claimedAmount !== null ? formatCurrency(entry.claimedAmount) : 'Rate unavailable',
+          entry.approvedAmount !== null ? formatCurrency(entry.approvedAmount) : 'Rate unavailable',
+          'Approved',
+          entry.timesheet.companyNote || '',
+        ]),
         [
-          ...group.rows.map((entry) => {
-            const approvedHoursValue = getApprovedHoursValue(entry.timesheet);
-
-            return [
-              group.siteName,
-              group.periodLabel,
-              entry.guardName,
-              entry.shiftDateLabel,
-              entry.scheduledLabel,
-              entry.attendanceLabel,
-              entry.hourlyRate !== null ? formatCurrency(entry.hourlyRate) : 'Rate unavailable',
-              toHours(entry.timesheet.hoursWorked).toFixed(2),
-              approvedHoursValue !== null ? approvedHoursValue.toFixed(2) : '',
-              entry.claimedAmount !== null ? formatCurrency(entry.claimedAmount) : 'Rate unavailable',
-              entry.approvedAmount !== null ? formatCurrency(entry.approvedAmount) : '',
-              formatStatusLabel(entry.displayStatus),
-              entry.timesheet.companyNote || '',
-            ];
-          }),
-          [
-            group.siteName,
-            group.periodLabel,
-            'SUMMARY',
-            '',
-            '',
-            '',
-            group.totals.missingRateCount > 0 ? `${group.totals.missingRateCount} rate unavailable` : '',
-            group.totals.claimedHours.toFixed(2),
-            group.totals.approvedHours.toFixed(2),
-            formatCurrency(group.totals.claimedAmount),
-            formatCurrency(group.totals.approvedAmount),
-            `Pending ${group.totals.pendingCount} | Approved ${group.totals.approvedCount}`,
-            `Timesheets ${group.totals.count}`,
-          ],
+          group.siteName,
+          group.periodLabel,
+          'SUMMARY',
+          '',
+          '',
+          '',
+          `${group.totals.missingRateCount} rate unavailable`,
+          '',
+          group.totals.approvedHours.toFixed(2),
+          '',
+          formatCurrency(group.totals.approvedAmount),
+          `Approved ${group.totals.count}`,
+          `Missing rate ${group.totals.missingRateCount}`,
         ],
-      ),
+      ]),
     ];
   }, []);
 
   const handleExportFiltered = React.useCallback(() => {
     const rows = buildExportRows(groupedTimesheets);
     const didDownload = downloadCsv(
-      `timesheets-filtered-${sanitizeFilenamePart(periodView)}-${getDownloadTimestamp()}.csv`,
+      `payroll-filtered-${sanitizeFilenamePart(periodView)}-${getDownloadTimestamp()}.csv`,
       rows,
     );
     setFeedback(
       didDownload
-        ? { tone: 'success', title: 'Export ready', message: `Exported ${filteredTimesheets.length} filtered timesheets.` }
+        ? { tone: 'success', title: 'Payroll export ready', message: `Exported ${filteredTimesheets.length} approved timesheets.` }
         : { tone: 'info', title: 'Export unavailable', message: 'CSV export is only available in the browser workspace.' },
     );
   }, [buildExportRows, filteredTimesheets.length, groupedTimesheets, periodView]);
 
-  const handleExportGroup = React.useCallback((group: GroupedTimesheets) => {
+  const handleExportGroup = React.useCallback((group: GroupedPayrollTimesheets) => {
     const rows = buildExportRows([group]);
     const safeSiteName = sanitizeFilenamePart(group.siteName);
     const safePeriodKey = sanitizeFilenamePart(group.periodKey);
     const didDownload = downloadCsv(
-      `timesheets-group-${safeSiteName}-${safePeriodKey}-${getDownloadTimestamp()}.csv`,
+      `payroll-group-${safeSiteName}-${safePeriodKey}-${getDownloadTimestamp()}.csv`,
       rows,
     );
     setFeedback(
       didDownload
-        ? { tone: 'success', title: 'Group export ready', message: `Exported ${group.totals.count} timesheets for ${group.siteName} (${group.periodLabel}).` }
+        ? { tone: 'success', title: 'Group export ready', message: `Exported ${group.totals.count} approved timesheets for ${group.siteName} (${group.periodLabel}).` }
         : { tone: 'info', title: 'Export unavailable', message: 'CSV export is only available in the browser workspace.' },
     );
   }, [buildExportRows]);
 
-  const handleExport = React.useCallback(() => {
-    handleExportFiltered();
-  }, [handleExportFiltered]);
-
-  const runCompanyAction = React.useCallback(
-    async (actionKey: string, timesheetId: number, payload: Parameters<typeof updateTimesheet>[1], successTitle: string, successMessage: string) => {
-      try {
-        setBusyAction(actionKey);
-        await updateTimesheet(timesheetId, payload);
-        await onRefresh();
-        setFeedback({ tone: 'success', title: successTitle, message: successMessage });
-      } catch (error) {
-        setFeedback({
-          tone: 'error',
-          title: 'Review action failed',
-          message: formatApiErrorMessage(error, 'Unable to update this timesheet.'),
-        });
-      } finally {
-        setBusyAction(null);
-      }
-    },
-    [onRefresh],
-  );
-
-  const buildApprovalPayload = React.useCallback(
-    (mode: 'save' | 'approve') => {
-      if (!selectedTimesheet) {
-        return null;
-      }
-
-      const claimedHours = toHours(selectedTimesheet.timesheet.hoursWorked);
-      const trimmedCompanyNote = companyNote.trim();
-      const parsedApprovedHours = parseHoursInput(approvedHoursInput);
-      const hasApprovedHoursValue = approvedHoursInput.trim().length > 0;
-      const finalApprovedHours =
-        mode === 'approve'
-          ? hasApprovedHoursValue
-            ? parsedApprovedHours
-            : claimedHours
-          : hasApprovedHoursValue
-            ? parsedApprovedHours
-            : undefined;
-
-      if (finalApprovedHours != null && (!Number.isFinite(finalApprovedHours) || finalApprovedHours < 0)) {
-        setFeedback({
-          tone: 'error',
-          title: 'Invalid approved hours',
-          message: 'Approved hours must be 0 or more.',
-        });
-        return null;
-      }
-
-      if (
-        finalApprovedHours != null &&
-        Math.abs(finalApprovedHours - claimedHours) > 0.009 &&
-        !trimmedCompanyNote
-      ) {
-        setFeedback({
-          tone: 'error',
-          title: 'Company note required',
-          message: 'Add a company note when approved hours differ from claimed hours.',
-        });
-        return null;
-      }
-
-      return {
-        companyNote: trimmedCompanyNote || null,
-        approvedHours: finalApprovedHours,
-      };
-    },
-    [approvedHoursInput, companyNote, selectedTimesheet],
-  );
-
-  const handleSaveCompanyNote = React.useCallback(async () => {
-    if (!selectedTimesheet) return;
-    const payload = buildApprovalPayload('save');
-    if (!payload) return;
-    await runCompanyAction(
-      `note-${selectedTimesheet.timesheet.id}`,
-      selectedTimesheet.timesheet.id,
-      payload,
-      'Review details saved',
-      'The company note and approved hours were saved for this timesheet.',
-    );
-  }, [buildApprovalPayload, runCompanyAction, selectedTimesheet]);
-
-  const handleApprove = React.useCallback(
-    async (entry: EnrichedTimesheet) => {
-      const payload =
-        entry.timesheet.id === selectedTimesheet?.timesheet.id
-          ? buildApprovalPayload('approve')
-          : {
-              approvedHours: entry.timesheet.approvedHours ?? entry.timesheet.hoursWorked,
-              companyNote: entry.timesheet.companyNote ?? null,
-            };
-      if (!payload) return;
-
-      await runCompanyAction(
-        `approve-${entry.timesheet.id}`,
-        entry.timesheet.id,
-        { ...payload, approvalStatus: 'approved', rejectionReason: null },
-        'Timesheet approved',
-        normalizeStatus(statusFilter) === 'submitted'
-          ? 'Timesheet approved. It has moved to Payroll.'
-          : 'The claimed hours were approved for payroll and client sign-off.',
-      );
-    },
-    [buildApprovalPayload, runCompanyAction, selectedTimesheet?.timesheet.id, statusFilter],
-  );
-
-  const handleReturn = React.useCallback(
-    async (entry: EnrichedTimesheet) => {
-      const noteSource =
-        entry.timesheet.id === selectedTimesheet?.timesheet.id ? companyNote.trim() : '';
-      const note = noteSource || entry.timesheet.rejectionReason?.trim() || 'Returned for correction by company reviewer.';
-      await runCompanyAction(
-        `return-${entry.timesheet.id}`,
-        entry.timesheet.id,
-        { approvalStatus: 'returned', rejectionReason: note },
-        'Returned for correction',
-        'The timesheet was returned to the guard for correction.',
-      );
-    },
-    [companyNote, runCompanyAction, selectedTimesheet?.timesheet.id],
-  );
-
-  const handleReject = React.useCallback(
-    async (entry: EnrichedTimesheet) => {
-      const noteSource =
-        entry.timesheet.id === selectedTimesheet?.timesheet.id ? companyNote.trim() : '';
-      const note = noteSource || entry.timesheet.rejectionReason?.trim() || 'Rejected by company reviewer.';
-      await runCompanyAction(
-        `reject-${entry.timesheet.id}`,
-        entry.timesheet.id,
-        { approvalStatus: 'rejected', rejectionReason: note },
-        'Timesheet rejected',
-        'The timesheet was rejected and marked for follow-up.',
-      );
-    },
-    [companyNote, runCompanyAction, selectedTimesheet?.timesheet.id],
-  );
-
   const activeSelected = selectedTimesheet?.timesheet;
   const selectedClaimedHours = activeSelected ? toHours(activeSelected.hoursWorked) : 0;
-  const selectedApprovedHours =
-    activeSelected && getApprovedHoursValue(activeSelected) !== null
-      ? Number(getApprovedHoursValue(activeSelected))
-      : null;
+  const selectedApprovedHours = selectedTimesheet?.approvedHours ?? null;
   const selectedHourlyRate = selectedTimesheet?.hourlyRate ?? null;
   const selectedClaimedAmount = selectedTimesheet?.claimedAmount ?? null;
   const selectedApprovedAmount = selectedTimesheet?.approvedAmount ?? null;
-  const parsedSelectedApprovedHours = parseHoursInput(approvedHoursInput);
-  const hasSelectedApprovedHoursValue = approvedHoursInput.trim().length > 0;
-  const adjustedHoursRequireNote =
-    hasSelectedApprovedHoursValue &&
-    parsedSelectedApprovedHours !== null &&
-    Number.isFinite(parsedSelectedApprovedHours) &&
-    Math.abs(parsedSelectedApprovedHours - selectedClaimedHours) > 0.009 &&
-    !companyNote.trim();
+
+  const emptyStateMessage =
+    timesheets.some((timesheet) => normalizeStatus(timesheet.approvalStatus) === 'approved')
+      ? 'No approved timesheets match the current filters.'
+      : 'No approved timesheets yet. Approved records will appear here for payroll and client sign-off.';
 
   return (
     <View style={styles.workspace}>
       <View style={styles.workspaceHeader}>
         <View style={styles.headerCopy}>
-          <Text style={styles.title}>Timesheets Review</Text>
-          <Text style={styles.subtitle}>Operational review queue for submitted guard hours.</Text>
-          <Text style={styles.helperText}>Approved records move to Payroll.</Text>
+          <Text style={styles.title}>Payroll</Text>
+          <Text style={styles.subtitle}>Approved hours, payment totals, and client sign-off records.</Text>
         </View>
         <View style={styles.headerActions}>
           <PeriodToggle value={periodView} onChange={setPeriodView} />
           <Pressable style={styles.secondaryButton} onPress={() => onRefresh()} disabled={refreshing}>
             <Text style={styles.secondaryButtonText}>{refreshing ? 'Refreshing...' : 'Refresh'}</Text>
           </Pressable>
-          <Pressable style={styles.primaryButton} onPress={handleExport}>
-            <Text style={styles.primaryButtonText}>Export review view</Text>
+          <Pressable style={styles.primaryButton} onPress={handleExportFiltered}>
+            <Text style={styles.primaryButtonText}>Export payroll view</Text>
           </Pressable>
         </View>
       </View>
@@ -930,22 +700,6 @@ export function CompanyTimesheetsWorkspace({
           <View style={styles.filterField}>
             <Text style={styles.filterLabel}>Site</Text>
             <WebSelect value={siteFilter} onChange={setSiteFilter} options={siteOptions} placeholder="All sites" />
-          </View>
-          <View style={styles.filterField}>
-            <Text style={styles.filterLabel}>Status</Text>
-            <WebSelect
-              value={statusFilter}
-              onChange={setStatusFilter}
-              options={[
-                { label: 'Submitted', value: 'submitted' },
-                { label: 'Approved', value: 'approved' },
-                { label: 'Returned', value: 'returned' },
-                { label: 'Rejected', value: 'rejected' },
-                { label: 'Draft', value: 'draft' },
-                { label: 'All statuses', value: 'all' },
-              ]}
-              placeholder="Status"
-            />
           </View>
           <View style={styles.filterField}>
             <Text style={styles.filterLabel}>Guard</Text>
@@ -977,21 +731,15 @@ export function CompanyTimesheetsWorkspace({
       </View>
 
       <View style={styles.summaryGrid}>
-        <SummaryCard label="Submitted" value={String(summary.submitted)} />
-        <SummaryCard label="Approved" value={String(summary.approved)} />
-        <SummaryCard label="Returned / Rejected" value={String(summary.returnedOrRejected)} />
-        <SummaryCard label="Total Hours" value={`${summary.totalHours.toFixed(2)} h`} />
+        <SummaryCard label="Approved Records" value={String(summary.approvedCount)} />
+        <SummaryCard label="Approved Hours" value={`${summary.approvedHours.toFixed(2)} h`} />
+        <SummaryCard label="Approved Amount" value={formatCurrency(summary.approvedAmount)} />
+        <SummaryCard label="Missing Rate" value={String(summary.missingRateCount)} />
       </View>
 
       <View style={styles.reviewLayout}>
         <View style={styles.reviewListCard}>
-          {groupedTimesheets.length === 0 ? (
-            <Text style={styles.emptyText}>
-              {normalizeStatus(statusFilter) === 'submitted'
-                ? 'Review queue is clear. Approved records move to Payroll.'
-                : 'No timesheets match the current filters.'}
-            </Text>
-          ) : null}
+          {groupedTimesheets.length === 0 ? <Text style={styles.emptyText}>{emptyStateMessage}</Text> : null}
           {groupedTimesheets.map((group) => {
             const isCollapsed = Boolean(collapsedGroupKeys[group.key]);
 
@@ -1001,12 +749,12 @@ export function CompanyTimesheetsWorkspace({
                   <View style={styles.groupHeaderCopy}>
                     <Text style={styles.groupSite}>{group.siteName}</Text>
                     <Text style={styles.groupPeriod}>
-                      {group.periodLabel} | {group.totals.count} timesheets | {group.totals.claimedHours.toFixed(2)} claimed h | {group.totals.approvedHours.toFixed(2)} approved h
+                      {group.periodLabel} | {group.totals.count} approved | {group.totals.approvedHours.toFixed(2)} approved h | {formatCurrency(group.totals.approvedAmount)} approved
                     </Text>
                   </View>
                   <View style={styles.groupHeaderActions}>
                     <Pressable style={styles.inlineAction} onPress={() => handleExportGroup(group)}>
-                      <Text style={styles.inlineActionText}>Export review group</Text>
+                      <Text style={styles.inlineActionText}>Export payroll group</Text>
                     </Pressable>
                     <Text style={styles.groupToggle}>{isCollapsed ? 'Expand' : 'Collapse'}</Text>
                   </View>
@@ -1019,17 +767,15 @@ export function CompanyTimesheetsWorkspace({
                       <Text style={[styles.rowsHeaderText, styles.dateCol]}>Shift Date</Text>
                       <Text style={[styles.rowsHeaderText, styles.scheduleCol]}>Scheduled</Text>
                       <Text style={[styles.rowsHeaderText, styles.attendanceCol]}>Attendance</Text>
-                      <Text style={[styles.rowsHeaderText, styles.hoursCol]}>Claimed Hours</Text>
+                      <Text style={[styles.rowsHeaderText, styles.hoursCol]}>Approved Hours</Text>
+                      <Text style={[styles.rowsHeaderText, styles.rateCol]}>Rate</Text>
+                      <Text style={[styles.rowsHeaderText, styles.amountCol]}>Approved Amount</Text>
                       <Text style={[styles.rowsHeaderText, styles.statusCol]}>Status</Text>
-                      <Text style={[styles.rowsHeaderText, styles.actionsCol]}>Actions</Text>
                     </View>
 
                     {group.rows.map((entry) => {
-                      const statusPalette = getStatusPalette(entry.displayStatus);
+                      const statusPalette = getStatusPalette('approved');
                       const isSelected = entry.timesheet.id === selectedTimesheetId;
-                      const isSubmitted = normalizeStatus(entry.displayStatus) === 'submitted';
-                      const approveBusy = busyAction === `approve-${entry.timesheet.id}`;
-                      const returnBusy = busyAction === `return-${entry.timesheet.id}`;
 
                       return (
                         <Pressable
@@ -1041,40 +787,21 @@ export function CompanyTimesheetsWorkspace({
                           <Text style={[styles.rowText, styles.dateCol]}>{entry.shiftDateLabel}</Text>
                           <Text style={[styles.rowText, styles.scheduleCol]}>{entry.scheduledLabel}</Text>
                           <Text style={[styles.rowText, styles.attendanceCol]}>{entry.attendanceLabel}</Text>
-                          <Text style={[styles.rowText, styles.hoursCol]}>{toHours(entry.timesheet.hoursWorked).toFixed(2)}</Text>
+                          <Text style={[styles.rowText, styles.hoursCol]}>{entry.approvedHours.toFixed(2)}</Text>
+                          <Text style={[styles.rowText, styles.rateCol]}>{formatRate(entry.hourlyRate)}</Text>
+                          <Text style={[styles.rowText, styles.amountCol]}>{entry.approvedAmount !== null ? formatCurrency(entry.approvedAmount) : 'Rate unavailable'}</Text>
                           <View style={[styles.statusBadge, styles.statusCol, { backgroundColor: statusPalette.bg }]}>
-                            <Text style={[styles.statusBadgeText, { color: statusPalette.text }]}>{formatStatusLabel(entry.displayStatus)}</Text>
-                          </View>
-                          <View style={[styles.rowActions, styles.actionsCol]}>
-                            <Pressable style={styles.secondaryChip} onPress={() => setSelectedTimesheetId(entry.timesheet.id)}>
-                              <Text style={styles.secondaryChipText}>View</Text>
-                            </Pressable>
-                            {isSubmitted ? (
-                              <>
-                                <Pressable style={styles.primaryChip} onPress={() => handleApprove(entry)} disabled={approveBusy || Boolean(busyAction)}>
-                                  <Text style={styles.primaryChipText}>{approveBusy ? 'Approving...' : 'Approve'}</Text>
-                                </Pressable>
-                                <Pressable style={styles.warningChip} onPress={() => handleReturn(entry)} disabled={returnBusy || Boolean(busyAction)}>
-                                  <Text style={styles.warningChipText}>{returnBusy ? 'Returning...' : 'Return'}</Text>
-                                </Pressable>
-                              </>
-                            ) : null}
+                            <Text style={[styles.statusBadgeText, { color: statusPalette.text }]}>Approved</Text>
                           </View>
                         </Pressable>
                       );
                     })}
 
                     <View style={styles.groupFooter}>
-                      <Text style={styles.groupFooterText}>Timesheets: {group.totals.count}</Text>
-                      <Text style={styles.groupFooterText}>Claimed: {group.totals.claimedHours.toFixed(2)} h</Text>
-                      <Text style={styles.groupFooterText}>Approved: {group.totals.approvedHours.toFixed(2)} h</Text>
-                      <Text style={styles.groupFooterText}>Claimed amount: {formatCurrency(group.totals.claimedAmount)}</Text>
+                      <Text style={styles.groupFooterText}>Approved records: {group.totals.count}</Text>
+                      <Text style={styles.groupFooterText}>Approved hours: {group.totals.approvedHours.toFixed(2)} h</Text>
                       <Text style={styles.groupFooterText}>Approved amount: {formatCurrency(group.totals.approvedAmount)}</Text>
-                      <Text style={styles.groupFooterText}>Pending: {group.totals.pendingCount}</Text>
-                      <Text style={styles.groupFooterText}>Approved count: {group.totals.approvedCount}</Text>
-                      {group.totals.missingRateCount > 0 ? (
-                        <Text style={styles.groupFooterText}>Rate unavailable: {group.totals.missingRateCount}</Text>
-                      ) : null}
+                      <Text style={styles.groupFooterText}>Rate unavailable: {group.totals.missingRateCount}</Text>
                     </View>
                   </>
                 ) : null}
@@ -1084,8 +811,8 @@ export function CompanyTimesheetsWorkspace({
         </View>
 
         <View style={styles.detailCard}>
-          <Text style={styles.detailTitle}>Timesheet review</Text>
-          <Text style={styles.detailSubtitle}>Open a row to review guard hours, notes, and action outcomes.</Text>
+          <Text style={styles.detailTitle}>Payroll detail</Text>
+          <Text style={styles.detailSubtitle}>Select an approved row to review finalized hours, amounts, and notes.</Text>
 
           {activeSelected ? (
             <>
@@ -1104,10 +831,8 @@ export function CompanyTimesheetsWorkspace({
                 </View>
                 <View style={styles.detailMetaItem}>
                   <Text style={styles.detailMetaLabel}>Status</Text>
-                  <View style={[styles.detailStatusBadge, { backgroundColor: getStatusPalette(selectedTimesheet?.displayStatus || '').bg }]}>
-                    <Text style={[styles.detailStatusBadgeText, { color: getStatusPalette(selectedTimesheet?.displayStatus || '').text }]}>
-                      {formatStatusLabel(selectedTimesheet?.displayStatus)}
-                    </Text>
+                  <View style={[styles.detailStatusBadge, { backgroundColor: getStatusPalette('approved').bg }]}>
+                    <Text style={[styles.detailStatusBadgeText, { color: getStatusPalette('approved').text }]}>Approved</Text>
                   </View>
                 </View>
               </View>
@@ -1119,19 +844,16 @@ export function CompanyTimesheetsWorkspace({
                 </Text>
                 <Text style={styles.detailLine}>Check-in: {formatDateTimeLabel(activeSelected.actualCheckInAt)}</Text>
                 <Text style={styles.detailLine}>Check-out: {formatDateTimeLabel(activeSelected.actualCheckOutAt)}</Text>
-                <Text style={styles.detailLine}>Recorded minutes: {activeSelected.workedMinutes ?? 0}</Text>
                 <Text style={styles.detailLine}>Claimed hours: {selectedClaimedHours.toFixed(2)}</Text>
-                <Text style={styles.detailLine}>Approved hours: {selectedApprovedHours !== null ? selectedApprovedHours.toFixed(2) : 'Not approved yet'}</Text>
-                <Text style={styles.detailLine}>Submitted: {activeSelected.submittedAt ? formatDateTimeLabel(activeSelected.submittedAt) : 'Not submitted'}</Text>
+                <Text style={styles.detailLine}>Approved hours: {selectedApprovedHours !== null ? selectedApprovedHours.toFixed(2) : '0.00'}</Text>
+                <Text style={styles.detailLine}>Reviewed: {activeSelected.reviewedAt ? formatDateTimeLabel(activeSelected.reviewedAt) : 'Not recorded'}</Text>
               </View>
 
               <View style={styles.detailSection}>
                 <Text style={styles.detailSectionTitle}>Rate & amounts</Text>
                 <Text style={styles.detailLine}>Hourly rate: {formatRate(selectedHourlyRate)}</Text>
                 <Text style={styles.detailLine}>Claimed amount: {formatCurrency(selectedClaimedAmount)}</Text>
-                <Text style={styles.detailLine}>
-                  Approved amount: {selectedApprovedAmount !== null ? formatCurrency(selectedApprovedAmount) : 'Not approved yet'}
-                </Text>
+                <Text style={styles.detailLine}>Approved amount: {selectedApprovedAmount !== null ? formatCurrency(selectedApprovedAmount) : 'Rate unavailable'}</Text>
               </View>
 
               <View style={styles.detailSection}>
@@ -1141,50 +863,11 @@ export function CompanyTimesheetsWorkspace({
 
               <View style={styles.detailSection}>
                 <Text style={styles.detailSectionTitle}>Company note</Text>
-                <TextInput
-                  value={companyNote}
-                  onChangeText={setCompanyNote}
-                  style={[styles.input, styles.noteInput]}
-                  multiline
-                  textAlignVertical="top"
-                  placeholder="Add payroll / client approval context, or note why this should be returned."
-                  placeholderTextColor="#64748b"
-                />
-              </View>
-
-              <View style={styles.detailSection}>
-                <Text style={styles.detailSectionTitle}>Approved hours</Text>
-                <Text style={styles.detailLine}>Claimed hours remain read-only so the original submission stays intact.</Text>
-                <TextInput
-                  value={approvedHoursInput}
-                  onChangeText={setApprovedHoursInput}
-                  style={styles.input}
-                  keyboardType="decimal-pad"
-                  placeholder={formatHoursInput(activeSelected.hoursWorked)}
-                  placeholderTextColor="#64748b"
-                />
-                {adjustedHoursRequireNote ? (
-                  <Text style={styles.validationText}>Add a company note when approved hours differ from claimed hours.</Text>
-                ) : null}
-              </View>
-
-              <View style={styles.detailActions}>
-                <Pressable style={styles.secondaryButton} onPress={handleSaveCompanyNote} disabled={busyAction === `note-${activeSelected.id}` || Boolean(busyAction)}>
-                  <Text style={styles.secondaryButtonText}>{busyAction === `note-${activeSelected.id}` ? 'Saving...' : 'Save review details'}</Text>
-                </Pressable>
-                <Pressable style={styles.primaryButton} onPress={() => handleApprove(selectedTimesheet)} disabled={busyAction === `approve-${activeSelected.id}` || Boolean(busyAction)}>
-                  <Text style={styles.primaryButtonText}>{busyAction === `approve-${activeSelected.id}` ? 'Approving...' : 'Approve'}</Text>
-                </Pressable>
-                <Pressable style={styles.warningButton} onPress={() => handleReturn(selectedTimesheet)} disabled={busyAction === `return-${activeSelected.id}` || Boolean(busyAction)}>
-                  <Text style={styles.warningButtonText}>{busyAction === `return-${activeSelected.id}` ? 'Returning...' : 'Return for correction'}</Text>
-                </Pressable>
-                <Pressable style={styles.dangerButton} onPress={() => handleReject(selectedTimesheet)} disabled={busyAction === `reject-${activeSelected.id}` || Boolean(busyAction)}>
-                  <Text style={styles.dangerButtonText}>{busyAction === `reject-${activeSelected.id}` ? 'Rejecting...' : 'Reject'}</Text>
-                </Pressable>
+                <Text style={styles.detailParagraph}>{activeSelected.companyNote?.trim() ? activeSelected.companyNote : 'No company note provided.'}</Text>
               </View>
             </>
           ) : (
-            <Text style={styles.emptyText}>Select a timesheet row to review guard hours and record an approval decision.</Text>
+            <Text style={styles.emptyText}>Select an approved timesheet to review payroll detail.</Text>
           )}
         </View>
       </View>
@@ -1198,16 +881,11 @@ const styles = StyleSheet.create({
   headerCopy: { gap: 4 },
   title: { color: '#0f172a', fontSize: 28, fontWeight: '800' },
   subtitle: { color: '#475569', fontSize: 14 },
-  helperText: { color: '#1D4ED8', fontSize: 12, fontWeight: '700' },
   headerActions: { flexDirection: 'row', gap: 10, alignItems: 'center', flexWrap: 'wrap' },
   primaryButton: { backgroundColor: '#0f172a', borderRadius: 14, paddingHorizontal: 16, paddingVertical: 12 },
   primaryButtonText: { color: '#f8fafc', fontWeight: '700' },
   secondaryButton: { borderRadius: 14, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: '#e2e8f0' },
   secondaryButtonText: { color: '#0f172a', fontWeight: '700' },
-  warningButton: { borderRadius: 14, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: '#FEF3C7' },
-  warningButtonText: { color: '#B45309', fontWeight: '700' },
-  dangerButton: { borderRadius: 14, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: '#FEE2E2' },
-  dangerButtonText: { color: '#B91C1C', fontWeight: '700' },
   segmentedControl: { flexDirection: 'row', borderWidth: 1, borderColor: '#CBD5E1', borderRadius: 14, overflow: 'hidden', backgroundColor: '#FFFFFF' },
   segmentedOption: { paddingHorizontal: 14, paddingVertical: 10, backgroundColor: '#FFFFFF' },
   segmentedOptionActive: { backgroundColor: '#0f172a' },
@@ -1255,17 +933,11 @@ const styles = StyleSheet.create({
   scheduleCol: { flex: 1.1 },
   attendanceCol: { flex: 1.1 },
   hoursCol: { flex: 0.8 },
+  rateCol: { flex: 1 },
+  amountCol: { flex: 1 },
   statusCol: { flex: 0.9 },
-  actionsCol: { flex: 1.4 },
   statusBadge: { alignSelf: 'flex-start', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 },
   statusBadgeText: { fontWeight: '800', fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.4 },
-  rowActions: { flexDirection: 'row', gap: 8, flexWrap: 'wrap', alignItems: 'center' },
-  secondaryChip: { borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: '#E2E8F0' },
-  secondaryChipText: { color: '#0f172a', fontWeight: '700', fontSize: 12 },
-  primaryChip: { borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: '#DBEAFE' },
-  primaryChipText: { color: '#1D4ED8', fontWeight: '700', fontSize: 12 },
-  warningChip: { borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: '#FEF3C7' },
-  warningChipText: { color: '#B45309', fontWeight: '700', fontSize: 12 },
   groupFooter: { flexDirection: 'row', flexWrap: 'wrap', gap: 16, paddingHorizontal: 16, paddingVertical: 14, backgroundColor: '#F8FAFC' },
   groupFooterText: { color: '#475569', fontSize: 13, fontWeight: '700' },
   detailMetaGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
@@ -1278,8 +950,5 @@ const styles = StyleSheet.create({
   detailSectionTitle: { color: '#0f172a', fontSize: 15, fontWeight: '800' },
   detailLine: { color: '#334155', fontSize: 13, lineHeight: 18 },
   detailParagraph: { color: '#334155', fontSize: 13, lineHeight: 20 },
-  validationText: { color: '#B45309', fontSize: 12, lineHeight: 18, fontWeight: '700' },
-  noteInput: { minHeight: 110, textAlignVertical: 'top' },
-  detailActions: { gap: 10 },
   emptyText: { color: '#64748b', fontSize: 14, lineHeight: 20 },
 });

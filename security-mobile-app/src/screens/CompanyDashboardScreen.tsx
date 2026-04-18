@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 
+import { CompanyPayrollWorkspace } from '../components/company/CompanyPayrollWorkspace';
 import { CompanyTimesheetsWorkspace } from '../components/company/CompanyTimesheetsWorkspace';
 import {
   ApiError,
@@ -65,6 +66,7 @@ type CompanySection =
   | 'guards'
   | 'recruitment'
   | 'timesheets'
+  | 'payroll'
   | 'incidents'
   | 'alerts';
 
@@ -188,6 +190,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'guards', label: 'Guards', caption: 'Available platform guards and linked team.' },
   { id: 'recruitment', label: 'Recruitment', caption: 'Open jobs and incoming applications.' },
   { id: 'timesheets', label: 'Timesheets', caption: 'Review worked hours and approvals.' },
+  { id: 'payroll', label: 'Payroll', caption: 'Approved hours and payment totals.' },
   { id: 'incidents', label: 'Incidents', caption: 'Track reported site issues.' },
   { id: 'alerts', label: 'Safety Alerts', caption: 'Watch welfare and check-call alerts.' },
 ];
@@ -4131,20 +4134,8 @@ export function CompanyDashboardScreen() {
         return renderRecruitmentSection();
       case 'timesheets':
         return <CompanyTimesheetsWorkspace timesheets={timesheets} refreshing={refreshing} onRefresh={() => loadData(true)} />;
-        return renderSimpleTableSection(
-          'Timesheets',
-          ['Guard', 'Site', 'Shift', 'Date', 'Hours', 'Status'],
-          timesheets.map((timesheet) => (
-            <View key={timesheet.id} style={styles.tableRow}>
-              <Text style={styles.tableCellStrong}>{timesheet.guard?.fullName || 'Unassigned'}</Text>
-              <Text style={styles.tableCell}>{timesheet.shift?.site?.name || timesheet.shift?.siteName || '—'}</Text>
-              <Text style={styles.tableCell}>#{timesheet.shiftId}</Text>
-              <Text style={styles.tableCell}>{formatDateLabel(timesheet.shift?.start)}</Text>
-              <Text style={styles.tableCell}>{timesheet.hoursWorked ?? 0}</Text>
-              <Text style={styles.tableCell}>{formatStatusLabel(timesheet.approvalStatus)}</Text>
-            </View>
-          )),
-        );
+      case 'payroll':
+        return <CompanyPayrollWorkspace timesheets={timesheets} refreshing={refreshing} onRefresh={() => loadData(true)} />;
       case 'incidents':
         return renderSimpleTableSection(
           'Incidents',
