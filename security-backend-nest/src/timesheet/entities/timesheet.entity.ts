@@ -15,6 +15,7 @@ export enum TimesheetStatus {
   SUBMITTED = 'submitted',
   APPROVED = 'approved',
   REJECTED = 'rejected',
+  RETURNED = 'returned',
 }
 
 @Entity('timesheets')

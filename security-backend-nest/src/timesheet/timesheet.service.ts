@@ -102,7 +102,7 @@ export class TimesheetService {
   }
 
   async updateMine(userId: number, id: number, dto: UpdateTimesheetDto): Promise<Timesheet> {
-    const timesheet = await this.getGuardOwnedDraftTimesheet(userId, id, 'edited');
+    const timesheet = await this.getGuardOwnedEditableTimesheet(userId, id, 'edited');
     this.applyGuardEditableUpdates(timesheet, dto);
     return this.timesheetRepo.save(timesheet);
   }
@@ -139,7 +139,7 @@ export class TimesheetService {
       timesheet.reviewedAt = new Date();
       timesheet.reviewedByUserId = userId;
       timesheet.approvedHours = null;
-    } else if (dto.approvalStatus === TimesheetStatus.DRAFT) {
+    } else if (dto.approvalStatus === TimesheetStatus.RETURNED) {
       timesheet.reviewedAt = new Date();
       timesheet.reviewedByUserId = userId;
       timesheet.approvedHours = null;
@@ -164,16 +164,23 @@ export class TimesheetService {
 
     if (saved.guard?.user?.id) {
       const isApproved = saved.approvalStatus === TimesheetStatus.APPROVED;
+      const isReturned = saved.approvalStatus === TimesheetStatus.RETURNED;
       await this.notificationService.createForUser({
         userId: saved.guard.user.id,
         company,
         type: isApproved
           ? NotificationType.TIMESHEET_APPROVED
           : NotificationType.TIMESHEET_REJECTED,
-        title: isApproved ? 'Timesheet approved' : 'Timesheet rejected',
+        title: isApproved
+          ? 'Timesheet approved'
+          : isReturned
+            ? 'Timesheet returned'
+            : 'Timesheet rejected',
         message: isApproved
           ? `Your timesheet for shift #${saved.shift?.id ?? saved.id} has been approved.`
-          : `Your timesheet for shift #${saved.shift?.id ?? saved.id} was rejected.`,
+          : isReturned
+            ? `Your timesheet for shift #${saved.shift?.id ?? saved.id} was returned for correction.`
+            : `Your timesheet for shift #${saved.shift?.id ?? saved.id} was rejected.`,
       });
     }
 
@@ -194,10 +201,11 @@ export class TimesheetService {
   }
 
   async submitMine(userId: number, id: number, dto: UpdateTimesheetDto): Promise<Timesheet> {
-    const timesheet = await this.getGuardOwnedDraftTimesheet(userId, id, 'submitted');
+    const timesheet = await this.getGuardOwnedEditableTimesheet(userId, id, 'submitted');
     this.applyGuardEditableUpdates(timesheet, dto);
     timesheet.approvalStatus = TimesheetStatus.SUBMITTED;
     timesheet.submittedAt = new Date();
+    timesheet.approvedHours = null;
     timesheet.reviewedAt = null;
     timesheet.reviewedByUserId = null;
     timesheet.rejectionReason = null;
@@ -338,8 +346,8 @@ export class TimesheetService {
       throw new ForbiddenException('Rejected timesheets are final and cannot be edited.');
     }
 
-    if (currentStatus === TimesheetStatus.DRAFT) {
-      throw new ForbiddenException('Draft timesheets must be resubmitted by the guard before company review.');
+    if (currentStatus === TimesheetStatus.DRAFT || currentStatus === TimesheetStatus.RETURNED) {
+      throw new ForbiddenException('Only submitted timesheets can be reviewed by the company.');
     }
 
     if (currentStatus !== TimesheetStatus.SUBMITTED) {
@@ -354,15 +362,15 @@ export class TimesheetService {
     if (
       requestedStatus !== TimesheetStatus.APPROVED &&
       requestedStatus !== TimesheetStatus.REJECTED &&
-      requestedStatus !== TimesheetStatus.DRAFT
+      requestedStatus !== TimesheetStatus.RETURNED
     ) {
       throw new BadRequestException('Company review can only approve, reject, or return a submitted timesheet.');
     }
 
-    if (requestedStatus === TimesheetStatus.DRAFT) {
+    if (requestedStatus === TimesheetStatus.RETURNED) {
       const returnReason = dto.rejectionReason?.trim();
       if (!returnReason) {
-        throw new BadRequestException('A return reason is required when sending a timesheet back to draft.');
+        throw new BadRequestException('A return reason is required when returning a timesheet for correction.');
       }
     }
 
@@ -374,7 +382,7 @@ export class TimesheetService {
     }
   }
 
-  private async getGuardOwnedDraftTimesheet(
+  private async getGuardOwnedEditableTimesheet(
     userId: number,
     timesheetId: number,
     action: 'edited' | 'submitted',
@@ -392,8 +400,11 @@ export class TimesheetService {
       throw new ForbiddenException('This timesheet does not belong to the current guard');
     }
 
-    if (timesheet.approvalStatus !== TimesheetStatus.DRAFT) {
-      throw new ForbiddenException(`Only draft timesheets can be ${action} by the guard`);
+    if (
+      timesheet.approvalStatus !== TimesheetStatus.DRAFT &&
+      timesheet.approvalStatus !== TimesheetStatus.RETURNED
+    ) {
+      throw new ForbiddenException(`Only draft or returned timesheets can be ${action} by the guard`);
     }
 
     return timesheet;

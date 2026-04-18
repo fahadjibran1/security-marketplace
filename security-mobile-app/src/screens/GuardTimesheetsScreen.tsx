@@ -80,6 +80,7 @@ function formatStatusLabel(status?: string | null) {
   if (s === 'submitted') return 'SUBMITTED';
   if (s === 'approved') return 'APPROVED';
   if (s === 'rejected') return 'REJECTED';
+  if (s === 'returned') return 'RETURNED';
   return (status || 'UNKNOWN').replace(/_/g, ' ').toUpperCase();
 }
 
@@ -93,6 +94,8 @@ function statusBadgeStyle(status: string) {
       return { bg: '#DCFCE7', text: '#15803D' };
     case 'rejected':
       return { bg: '#FEE2E2', text: '#991B1B' };
+    case 'returned':
+      return { bg: '#FEF3C7', text: '#B45309' };
     default:
       return { bg: '#E5E7EB', text: '#4B5563' };
   }
@@ -146,7 +149,7 @@ function TimesheetCard({
   const [submitting, setSubmitting] = useState(false);
 
   const statusKey = normalizeTimesheetStatus(timesheet.approvalStatus);
-  const isDraft = statusKey === 'draft';
+  const isEditable = statusKey === 'draft' || statusKey === 'returned';
   const palette = statusBadgeStyle(statusKey);
 
   useEffect(() => {
@@ -175,7 +178,7 @@ function TimesheetCard({
   const submission = getSubmissionState(timesheet, attendanceSlice, claimedHours);
 
   async function handleSaveDraft() {
-    if (!isDraft || !hoursValid) return;
+    if (!isEditable || !hoursValid) return;
     try {
       setSaving(true);
       await updateTimesheet(timesheet.id, {
@@ -195,7 +198,7 @@ function TimesheetCard({
   }
 
   async function handleSubmit() {
-    if (!isDraft || !submission.canSubmit || !hoursValid) return;
+    if (!isEditable || !submission.canSubmit || !hoursValid) return;
     try {
       setSubmitting(true);
       await submitTimesheet(timesheet.id, {
@@ -243,8 +246,8 @@ function TimesheetCard({
       </View>
 
       <View style={styles.block}>
-        <Text style={styles.blockLabel}>{isDraft ? 'Hours you are claiming' : 'Claimed hours'}</Text>
-        {isDraft ? (
+        <Text style={styles.blockLabel}>{isEditable ? 'Hours you are claiming' : 'Claimed hours'}</Text>
+        {isEditable ? (
           <TextInput
             style={styles.input}
             value={hoursText}
@@ -263,7 +266,7 @@ function TimesheetCard({
 
       <View style={styles.block}>
         <Text style={styles.blockLabel}>Note (overtime, corrections)</Text>
-        {isDraft ? (
+        {isEditable ? (
           <TextInput
             style={[styles.input, styles.noteInput]}
             value={noteText}
@@ -278,18 +281,20 @@ function TimesheetCard({
         )}
       </View>
 
-      {statusKey === 'rejected' && timesheet.rejectionReason ? (
+      {(statusKey === 'returned' || statusKey === 'rejected') && timesheet.rejectionReason ? (
         <View style={styles.rejectionBox}>
-          <Text style={styles.rejectionLabel}>Company note</Text>
+          <Text style={styles.rejectionLabel}>
+            {statusKey === 'returned' ? 'Returned for correction' : 'Company note'}
+          </Text>
           <Text style={styles.rejectionText}>{timesheet.rejectionReason}</Text>
         </View>
       ) : null}
 
-      {!isDraft && timesheet.submittedAt ? (
+      {!isEditable && timesheet.submittedAt ? (
         <Text style={styles.metaMuted}>Submitted {formatDateTimeLabel(timesheet.submittedAt)}</Text>
       ) : null}
 
-      {isDraft ? (
+      {isEditable ? (
         <>
           <View style={styles.actionsRow}>
             <Pressable

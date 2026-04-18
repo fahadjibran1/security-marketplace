@@ -1,4 +1,5 @@
 export type AppRole = 'admin' | 'company' | 'company_admin' | 'company_staff' | 'guard';
+export type TimesheetApprovalStatus = 'draft' | 'submitted' | 'approved' | 'rejected' | 'returned';
 
 export function isCompanyAppRole(role?: AppRole | null): boolean {
   return role === 'company' || role === 'company_admin' || role === 'company_staff';
@@ -152,7 +153,7 @@ export interface Timesheet {
   guardId: number;
   companyId: number;
   hoursWorked: number;
-  approvalStatus: string;
+  approvalStatus: TimesheetApprovalStatus | string;
   createdAt: string;
   submittedAt?: string | null;
   scheduledStartAt?: string | null;
@@ -176,7 +177,7 @@ export interface Timesheet {
 
 export interface UpdateTimesheetPayload {
   hoursWorked?: number;
-  approvalStatus?: string;
+  approvalStatus?: TimesheetApprovalStatus | string;
   submittedAt?: string | null;
   actualCheckInAt?: string | null;
   actualCheckOutAt?: string | null;

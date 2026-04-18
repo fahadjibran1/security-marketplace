@@ -131,14 +131,7 @@ function normalizeStatus(value?: string | null) {
 }
 
 function getDisplayStatus(timesheet: Timesheet) {
-  const normalized = normalizeStatus(timesheet.approvalStatus);
-  const hasReviewerNote = Boolean(timesheet.rejectionReason?.trim());
-
-  if (normalized === 'draft' && hasReviewerNote) {
-    return 'returned';
-  }
-
-  return normalized || 'unknown';
+  return normalizeStatus(timesheet.approvalStatus) || 'unknown';
 }
 
 function formatStatusLabel(value?: string | null) {
@@ -675,9 +668,9 @@ export function CompanyTimesheetsWorkspace({
       await runCompanyAction(
         `return-${entry.timesheet.id}`,
         entry.timesheet.id,
-        { approvalStatus: 'draft', rejectionReason: note },
-        'Returned to draft',
-        'The timesheet was moved back to draft for correction.',
+        { approvalStatus: 'returned', rejectionReason: note },
+        'Returned for correction',
+        'The timesheet was returned to the guard for correction.',
       );
     },
     [companyNote, runCompanyAction, selectedTimesheet?.timesheet.id],
