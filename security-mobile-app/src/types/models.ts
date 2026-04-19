@@ -153,6 +153,52 @@ export interface Shift {
   site?: Site | null;
 }
 
+export interface PayBreakdown {
+  hourlyRate: number | null;
+  baseHours: number;
+  unpaidBreakHours: number;
+  minimumPaidHoursApplied: number | null;
+  regularHours: number;
+  overtimeHours: number;
+  nightHours: number;
+  weekendHours: number;
+  bankHolidayHours: number;
+  regularAmount: number | null;
+  overtimeAmount: number | null;
+  nightPremiumAmount: number | null;
+  weekendPremiumAmount: number | null;
+  bankHolidayPremiumAmount: number | null;
+  source: 'rule' | 'fallback' | string;
+}
+
+export interface PayRuleConfig {
+  id: number;
+  company?: CompanyProfile;
+  overtimeThresholdHours?: number | null;
+  overtimeMultiplier: number;
+  nightStart?: string | null;
+  nightEnd?: string | null;
+  nightMultiplier: number;
+  weekendMultiplier: number;
+  bankHolidayMultiplier: number;
+  minimumPaidHours?: number | null;
+  unpaidBreakMinutes: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PayRuleConfigPayload {
+  overtimeThresholdHours?: number | null;
+  overtimeMultiplier?: number;
+  nightStart?: string | null;
+  nightEnd?: string | null;
+  nightMultiplier?: number;
+  weekendMultiplier?: number;
+  bankHolidayMultiplier?: number;
+  minimumPaidHours?: number | null;
+  unpaidBreakMinutes?: number;
+}
+
 // Timesheet = payroll record linked to shift
 export interface Timesheet {
   id: number;
@@ -187,6 +233,11 @@ export interface Timesheet {
   marginPercent?: number | null;
   matchedContractRuleId?: number | null;
   matchedContractRuleName?: string | null;
+  payableHours?: number | null;
+  payableAmount?: number | null;
+  payBreakdown?: PayBreakdown | null;
+  payableHoursSnapshot?: number | null;
+  payableAmountSnapshot?: number | null;
   workedMinutes?: number;
   breakMinutes?: number;
   roundedMinutes?: number;
@@ -224,6 +275,7 @@ export interface UpdateTimesheetPayrollPayload {
 export interface PayrollBatchTotals {
   recordsCount: number;
   approvedHours: number;
+  payableHours?: number;
   approvedAmount: number;
   totalCostAmount?: number;
   missingRateCount: number;

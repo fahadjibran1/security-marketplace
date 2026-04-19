@@ -6,6 +6,7 @@ import { Company } from '../company/entities/company.entity';
 import { InvoiceBatch, InvoiceBatchStatus } from '../invoice-batch/entities/invoice-batch.entity';
 import { InvoiceBatchService } from '../invoice-batch/invoice-batch.service';
 import { Notification, NotificationStatus, NotificationType } from '../notification/entities/notification.entity';
+import { PayRuleService } from '../pay-rule/pay-rule.service';
 import { PayrollBatch, PayrollBatchStatus } from '../payroll-batch/entities/payroll-batch.entity';
 import { PayrollBatchService } from '../payroll-batch/payroll-batch.service';
 import {
@@ -42,6 +43,7 @@ export class AutomationSchedulerService implements OnModuleInit, OnModuleDestroy
     @InjectRepository(Notification) private readonly notificationRepo: Repository<Notification>,
     private readonly payrollBatchService: PayrollBatchService,
     private readonly invoiceBatchService: InvoiceBatchService,
+    private readonly payRuleService: PayRuleService,
   ) {}
 
   onModuleInit() {
@@ -222,6 +224,7 @@ export class AutomationSchedulerService implements OnModuleInit, OnModuleDestroy
     });
 
     const map = new Map<string, Suggestion>();
+    const payRuleConfig = await this.payRuleService.getConfigForCompany(companyId);
     timesheets.forEach((timesheet) => {
       const period = this.getWeekPeriod(this.getTimesheetDate(timesheet));
       const key = `${companyId}-${period.periodStart}`;
@@ -234,11 +237,10 @@ export class AutomationSchedulerService implements OnModuleInit, OnModuleDestroy
         totalHours: 0,
         totalCost: 0,
       };
-      const hours = this.getApprovedHours(timesheet);
-      const rate = this.getHourlyRate(timesheet);
+      const pay = this.payRuleService.calculatePay(timesheet, payRuleConfig);
       suggestion.timesheetIds.push(timesheet.id);
-      suggestion.totalHours += hours;
-      suggestion.totalCost = (suggestion.totalCost || 0) + (rate === null ? 0 : hours * rate);
+      suggestion.totalHours += pay.payableHours;
+      suggestion.totalCost = (suggestion.totalCost || 0) + (pay.payableAmount ?? 0);
       map.set(key, suggestion);
     });
 
@@ -333,11 +335,6 @@ export class AutomationSchedulerService implements OnModuleInit, OnModuleDestroy
 
   private getApprovedHours(timesheet: Timesheet) {
     return Number(timesheet.approvedHoursSnapshot ?? timesheet.approvedHours ?? timesheet.hoursWorked ?? 0) || 0;
-  }
-
-  private getHourlyRate(timesheet: Timesheet) {
-    const rate = timesheet.hourlyRateSnapshot ?? timesheet.shift?.job?.hourlyRate ?? timesheet.shift?.assignment?.job?.hourlyRate;
-    return rate === undefined || rate === null || !Number.isFinite(Number(rate)) ? null : Number(rate);
   }
 
   private getBillingRate(timesheet: Timesheet) {

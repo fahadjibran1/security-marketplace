@@ -13,6 +13,7 @@ import {
   NotificationService,
 } from '../notification/notification.service';
 import { NotificationType } from '../notification/entities/notification.entity';
+import { PayRuleService } from '../pay-rule/pay-rule.service';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { isCompanyRole, UserRole } from '../user/entities/user.entity';
 
@@ -25,11 +26,12 @@ export class TimesheetService {
     private readonly guardProfileService: GuardProfileService,
     private readonly auditLogService: AuditLogService,
     private readonly notificationService: NotificationService,
+    private readonly payRuleService: PayRuleService,
   ) {}
 
   async findAll(): Promise<Timesheet[]> {
     const timesheets = await this.timesheetRepo.find();
-    return this.contractPricingService.applyFinancials(timesheets);
+    return this.applyDerivedFinancials(timesheets);
   }
 
   async findAllForUser(user: JwtPayload): Promise<Timesheet[]> {
@@ -52,7 +54,7 @@ export class TimesheetService {
       where: { company: { id: company.id } },
       order: { createdAt: 'DESC' },
     });
-    return this.contractPricingService.applyFinancials(timesheets);
+    return this.applyDerivedFinancials(timesheets);
   }
 
   async findMine(userId: number): Promise<Timesheet[]> {
@@ -62,13 +64,13 @@ export class TimesheetService {
     const timesheets = await this.buildGuardTimesheetQuery(guard.id)
       .orderBy('timesheet.createdAt', 'DESC')
       .getMany();
-    return this.contractPricingService.applyFinancials(timesheets);
+    return this.applyDerivedFinancials(timesheets);
   }
 
   async findOne(id: number): Promise<Timesheet> {
     const timesheet = await this.timesheetRepo.findOne({ where: { id } });
     if (!timesheet) throw new NotFoundException('Timesheet not found');
-    return this.contractPricingService.applyFinancials(timesheet);
+    return this.applyDerivedFinancials(timesheet);
   }
 
   async createForShift(shift: Shift): Promise<Timesheet> {
@@ -105,21 +107,21 @@ export class TimesheetService {
     });
 
     const saved = await this.timesheetRepo.save(timesheet);
-    return this.contractPricingService.applyFinancials(saved);
+    return this.applyDerivedFinancials(saved);
   }
 
   async update(id: number, dto: UpdateTimesheetDto): Promise<Timesheet> {
     const timesheet = await this.findOne(id);
     this.applyTimesheetUpdates(timesheet, dto);
     const saved = await this.timesheetRepo.save(timesheet);
-    return this.contractPricingService.applyFinancials(saved);
+    return this.applyDerivedFinancials(saved);
   }
 
   async updateMine(userId: number, id: number, dto: UpdateTimesheetDto): Promise<Timesheet> {
     const timesheet = await this.getGuardOwnedEditableTimesheet(userId, id, 'edited');
     this.applyGuardEditableUpdates(timesheet, dto);
     const saved = await this.timesheetRepo.save(timesheet);
-    return this.contractPricingService.applyFinancials(saved);
+    return this.applyDerivedFinancials(saved);
   }
 
   async updateForCompany(userId: number, id: number, dto: UpdateTimesheetDto): Promise<Timesheet> {
@@ -167,7 +169,7 @@ export class TimesheetService {
           reviewedByUserId: saved.reviewedByUserId,
         },
       });
-      return this.contractPricingService.applyFinancials(saved);
+      return this.applyDerivedFinancials(saved);
     }
 
     this.validateCompanyReviewRequest(timesheet, dto);
@@ -256,7 +258,7 @@ export class TimesheetService {
       });
     }
 
-    return this.contractPricingService.applyFinancials(saved);
+    return this.applyDerivedFinancials(saved);
   }
 
   async updateHoursForShift(shiftId: number, hoursWorked: number): Promise<Timesheet> {
@@ -270,7 +272,7 @@ export class TimesheetService {
     timesheet.actualCheckInAt = timesheet.shift.assignment?.checkedInAt ?? timesheet.actualCheckInAt ?? null;
     timesheet.actualCheckOutAt = timesheet.shift.assignment?.checkedOutAt ?? timesheet.actualCheckOutAt ?? null;
     const saved = await this.timesheetRepo.save(timesheet);
-    return this.contractPricingService.applyFinancials(saved);
+    return this.applyDerivedFinancials(saved);
   }
 
   async submitMine(userId: number, id: number, dto: UpdateTimesheetDto): Promise<Timesheet> {
@@ -326,7 +328,7 @@ export class TimesheetService {
       });
     }
 
-    return this.contractPricingService.applyFinancials(saved);
+    return this.applyDerivedFinancials(saved);
   }
 
   async updatePayrollForCompany(userId: number, dto: UpdateTimesheetPayrollDto): Promise<Timesheet[]> {
@@ -480,7 +482,7 @@ export class TimesheetService {
       ),
     );
 
-    return this.contractPricingService.applyFinancials(saved);
+    return this.applyDerivedFinancials(saved);
   }
 
   private validateCompanyReviewUpdate(timesheet: Timesheet, dto: UpdateTimesheetDto): void {
@@ -598,7 +600,12 @@ export class TimesheetService {
       throw new ForbiddenException(`Only draft or returned timesheets can be ${action} by the guard`);
     }
 
-    return this.contractPricingService.applyFinancials(timesheet);
+    return this.applyDerivedFinancials(timesheet);
+  }
+
+  private async applyDerivedFinancials<T extends Timesheet | Timesheet[]>(timesheetOrTimesheets: T): Promise<T> {
+    const withCommercials = await this.contractPricingService.applyFinancials(timesheetOrTimesheets);
+    return this.payRuleService.applyPayCalculations(withCommercials);
   }
 
   private buildGuardTimesheetQuery(guardId: number) {

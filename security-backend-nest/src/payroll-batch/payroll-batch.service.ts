@@ -4,6 +4,7 @@ import { In, Repository } from 'typeorm';
 
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { CompanyService } from '../company/company.service';
+import { PayRuleService } from '../pay-rule/pay-rule.service';
 import { CreatePayrollBatchDto } from './dto/create-payroll-batch.dto';
 import { PayrollBatch, PayrollBatchStatus } from './entities/payroll-batch.entity';
 import { Timesheet, TimesheetPayrollStatus, TimesheetStatus } from '../timesheet/entities/timesheet.entity';
@@ -15,6 +16,7 @@ export class PayrollBatchService {
     @InjectRepository(Timesheet) private readonly timesheetRepo: Repository<Timesheet>,
     private readonly companyService: CompanyService,
     private readonly auditLogService: AuditLogService,
+    private readonly payRuleService: PayRuleService,
   ) {}
 
   async createForCompany(userId: number, dto: CreatePayrollBatchDto) {
@@ -59,9 +61,13 @@ export class PayrollBatchService {
 
     const savedBatch = await this.payrollBatchRepo.save(batch);
     const now = new Date();
+    const payRuleConfig = await this.payRuleService.getConfigForCompany(company.id);
     timesheets.forEach((timesheet) => {
       timesheet.approvedHoursSnapshot = timesheet.approvedHoursSnapshot ?? this.getApprovedHours(timesheet);
       timesheet.hourlyRateSnapshot = timesheet.hourlyRateSnapshot ?? this.getTimesheetRate(timesheet);
+      const pay = this.payRuleService.calculatePay(timesheet, payRuleConfig);
+      timesheet.payableHoursSnapshot = timesheet.payableHoursSnapshot ?? pay.payableHours;
+      timesheet.payableAmountSnapshot = timesheet.payableAmountSnapshot ?? pay.payableAmount;
       timesheet.payrollBatch = savedBatch;
       timesheet.payrollStatus = TimesheetPayrollStatus.INCLUDED;
       timesheet.payrollIncludedAt = timesheet.payrollIncludedAt ?? now;
@@ -96,6 +102,8 @@ export class PayrollBatchService {
         payrollStatus: timesheet.payrollStatus,
         approvedHoursSnapshot: timesheet.approvedHoursSnapshot,
         hourlyRateSnapshot: timesheet.hourlyRateSnapshot,
+        payableHoursSnapshot: timesheet.payableHoursSnapshot,
+        payableAmountSnapshot: timesheet.payableAmountSnapshot,
       },
     })));
 
@@ -114,7 +122,7 @@ export class PayrollBatchService {
       order: { createdAt: 'DESC' },
     });
 
-    return batches.map((batch) => this.toBatchSummary(batch, false));
+    return Promise.all(batches.map((batch) => this.toBatchSummary(batch, false)));
   }
 
   async findOneForCompany(userId: number, id: number) {
@@ -308,23 +316,25 @@ export class PayrollBatchService {
     return 0;
   }
 
-  private toBatchSummary(batch: PayrollBatch, includeTimesheets: boolean) {
+  private async toBatchSummary(batch: PayrollBatch, includeTimesheets: boolean) {
     const timesheets = batch.timesheets || [];
+    const payRuleConfig = batch.company?.id ? await this.payRuleService.getConfigForCompany(batch.company.id) : null;
     const totals = timesheets.reduce(
       (summary, timesheet) => {
         const approvedHours = this.getApprovedHours(timesheet);
-        const rate = this.getTimesheetRate(timesheet);
+        const pay = this.getPayCalculation(timesheet, payRuleConfig);
         summary.recordsCount += 1;
         summary.approvedHours += approvedHours;
-        if (rate !== null) {
-        summary.approvedAmount += approvedHours * rate;
-        summary.totalCostAmount += approvedHours * rate;
+        summary.payableHours += pay.payableHours;
+        if (pay.payableAmount !== null) {
+          summary.approvedAmount += pay.payableAmount;
+          summary.totalCostAmount += pay.payableAmount;
         } else {
           summary.missingRateCount += 1;
         }
         return summary;
       },
-      { recordsCount: 0, approvedHours: 0, approvedAmount: 0, totalCostAmount: 0, missingRateCount: 0 },
+      { recordsCount: 0, approvedHours: 0, payableHours: 0, approvedAmount: 0, totalCostAmount: 0, missingRateCount: 0 },
     );
 
     return {
@@ -342,11 +352,31 @@ export class PayrollBatchService {
       totals: {
         recordsCount: totals.recordsCount,
         approvedHours: Math.round(totals.approvedHours * 100) / 100,
+        payableHours: Math.round(totals.payableHours * 100) / 100,
         approvedAmount: Math.round(totals.approvedAmount * 100) / 100,
         totalCostAmount: Math.round(totals.totalCostAmount * 100) / 100,
         missingRateCount: totals.missingRateCount,
       },
       timesheets: includeTimesheets ? timesheets : undefined,
     };
+  }
+
+  private getPayCalculation(timesheet: Timesheet, config: Awaited<ReturnType<PayRuleService['getConfigForCompany']>>) {
+    const snapshotHours =
+      timesheet.payableHoursSnapshot !== undefined && timesheet.payableHoursSnapshot !== null && Number.isFinite(Number(timesheet.payableHoursSnapshot))
+        ? Number(timesheet.payableHoursSnapshot)
+        : null;
+    const snapshotAmount =
+      timesheet.payableAmountSnapshot !== undefined && timesheet.payableAmountSnapshot !== null && Number.isFinite(Number(timesheet.payableAmountSnapshot))
+        ? Number(timesheet.payableAmountSnapshot)
+        : null;
+    if (snapshotHours !== null) {
+      return {
+        payableHours: snapshotHours,
+        payableAmount: snapshotAmount,
+      };
+    }
+    const calculation = this.payRuleService.calculatePay(timesheet, config);
+    return { payableHours: calculation.payableHours, payableAmount: calculation.payableAmount };
   }
 }

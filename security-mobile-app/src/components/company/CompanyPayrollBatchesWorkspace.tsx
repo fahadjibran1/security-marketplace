@@ -103,6 +103,26 @@ function getApprovedAmount(timesheet: Timesheet) {
   return Math.round(getApprovedHours(timesheet) * rate * 100) / 100;
 }
 
+function getPayableHours(timesheet: Timesheet) {
+  if (timesheet.payableHoursSnapshot !== undefined && timesheet.payableHoursSnapshot !== null && Number.isFinite(Number(timesheet.payableHoursSnapshot))) {
+    return Number(timesheet.payableHoursSnapshot);
+  }
+  if (timesheet.payableHours !== undefined && timesheet.payableHours !== null && Number.isFinite(Number(timesheet.payableHours))) {
+    return Number(timesheet.payableHours);
+  }
+  return getApprovedHours(timesheet);
+}
+
+function getPayableAmount(timesheet: Timesheet) {
+  if (timesheet.payableAmountSnapshot !== undefined && timesheet.payableAmountSnapshot !== null && Number.isFinite(Number(timesheet.payableAmountSnapshot))) {
+    return Math.round(Number(timesheet.payableAmountSnapshot) * 100) / 100;
+  }
+  if (timesheet.payableAmount !== undefined && timesheet.payableAmount !== null && Number.isFinite(Number(timesheet.payableAmount))) {
+    return Math.round(Number(timesheet.payableAmount) * 100) / 100;
+  }
+  return getApprovedAmount(timesheet);
+}
+
 function getStatusPalette(status: string) {
   switch (normalizeBatchStatus(status)) {
     case 'paid':
@@ -279,13 +299,15 @@ export function CompanyPayrollBatchesWorkspace() {
     }
 
     const rows = [
-      ['Batch ID', 'Period', 'Site', 'Guard', 'Shift Date', 'Approved Hours', 'Hourly Rate', 'Approved Amount', 'Payroll Status', 'Batch Status', 'Company Note'],
+      ['Batch ID', 'Period', 'Site', 'Guard', 'Shift Date', 'Approved Hours', 'Payable Hours', 'Hourly Rate', 'Approved Amount', 'Payable Amount', 'Payroll Status', 'Batch Status', 'Company Note'],
       ...(selectedBatch.timesheets || []).map((timesheet) => {
         const siteName = timesheet.shift?.site?.name || timesheet.shift?.siteName || `Site ${timesheet.shiftId}`;
         const guardName = timesheet.guard?.fullName || `Guard #${timesheet.guardId}`;
         const approvedHours = getApprovedHours(timesheet);
+        const payableHours = getPayableHours(timesheet);
         const rate = getTimesheetRate(timesheet);
         const approvedAmount = getApprovedAmount(timesheet);
+        const payableAmount = getPayableAmount(timesheet);
 
         return [
           String(selectedBatch.id),
@@ -294,8 +316,10 @@ export function CompanyPayrollBatchesWorkspace() {
           guardName,
           formatDateLabel(timesheet.scheduledStartAt || timesheet.shift?.start || timesheet.createdAt),
           approvedHours.toFixed(2),
+          payableHours.toFixed(2),
           rate !== null ? formatCurrency(rate) : 'Rate unavailable',
           approvedAmount !== null ? formatCurrency(approvedAmount) : 'Rate unavailable',
+          payableAmount !== null ? formatCurrency(payableAmount) : 'Rate unavailable',
           String(timesheet.payrollStatus || ''),
           formatBatchStatusLabel(selectedBatch.status),
           timesheet.companyNote || '',
@@ -366,7 +390,7 @@ export function CompanyPayrollBatchesWorkspace() {
                 <View style={styles.batchRowCopy}>
                   <Text style={styles.batchTitle}>Batch #{batch.id}</Text>
                   <Text style={styles.batchMeta}>
-                    {formatDateLabel(batch.periodStart)} - {formatDateLabel(batch.periodEnd)} | {batch.totals.recordsCount} records | {batch.totals.approvedHours.toFixed(2)} h | {formatCurrency(batch.totals.approvedAmount)}
+                    {formatDateLabel(batch.periodStart)} - {formatDateLabel(batch.periodEnd)} | {batch.totals.recordsCount} records | {(batch.totals.payableHours ?? batch.totals.approvedHours).toFixed(2)} payable h | {formatCurrency(batch.totals.approvedAmount)}
                   </Text>
                 </View>
                 <View style={[styles.statusBadge, { backgroundColor: palette.bg }]}>
@@ -397,7 +421,11 @@ export function CompanyPayrollBatchesWorkspace() {
                   <Text style={styles.summaryValueSmall}>{selectedBatch.totals.approvedHours.toFixed(2)} h</Text>
                 </View>
                 <View style={styles.summaryCard}>
-                  <Text style={styles.summaryLabel}>Approved Amount</Text>
+                  <Text style={styles.summaryLabel}>Payable Hours</Text>
+                  <Text style={styles.summaryValueSmall}>{(selectedBatch.totals.payableHours ?? selectedBatch.totals.approvedHours).toFixed(2)} h</Text>
+                </View>
+                <View style={styles.summaryCard}>
+                  <Text style={styles.summaryLabel}>Payable Amount</Text>
                   <Text style={styles.summaryValueSmall}>{formatCurrency(selectedBatch.totals.approvedAmount)}</Text>
                 </View>
               </View>

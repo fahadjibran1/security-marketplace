@@ -6,6 +6,7 @@ import { CompanyContractPricingWorkspace } from '../components/company/CompanyCo
 import { CompanyFinanceControlWorkspace } from '../components/company/CompanyFinanceControlWorkspace';
 import { CompanyInvoiceWorkspace } from '../components/company/CompanyInvoiceWorkspace';
 import { CompanyMarginWorkspace } from '../components/company/CompanyMarginWorkspace';
+import { CompanyPayRulesSettings } from '../components/company/CompanyPayRulesSettings';
 import { CompanyPayrollBatchesWorkspace } from '../components/company/CompanyPayrollBatchesWorkspace';
 import { CompanyPayrollWorkspace } from '../components/company/CompanyPayrollWorkspace';
 import { CompanyTimesheetsWorkspace } from '../components/company/CompanyTimesheetsWorkspace';
@@ -78,6 +79,7 @@ type CompanySection =
   | 'finance-control'
   | 'margins'
   | 'contract-pricing'
+  | 'pay-rules'
   | 'audit'
   | 'incidents'
   | 'alerts';
@@ -209,6 +211,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'finance-control', label: 'Finance Control', caption: 'Commercial exposure and settlement visibility.' },
   { id: 'margins', label: 'Margins', caption: 'Revenue, cost, and profit reporting.' },
   { id: 'contract-pricing', label: 'Contract Pricing', caption: 'Client and site commercial rules.' },
+  { id: 'pay-rules', label: 'Pay Rules', caption: 'Guard payable-hours calculation settings.' },
   { id: 'audit', label: 'Audit Trail', caption: 'Trace financial actions and before/after data.' },
   { id: 'incidents', label: 'Incidents', caption: 'Track reported site issues.' },
   { id: 'alerts', label: 'Safety Alerts', caption: 'Watch welfare and check-call alerts.' },
@@ -4225,6 +4228,8 @@ export function CompanyDashboardScreen() {
         return <CompanyMarginWorkspace />;
       case 'contract-pricing':
         return <CompanyContractPricingWorkspace />;
+      case 'pay-rules':
+        return <CompanyPayRulesSettings />;
       case 'audit':
         return <CompanyAuditWorkspace />;
       case 'incidents':

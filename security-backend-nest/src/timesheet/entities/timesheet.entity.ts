@@ -84,6 +84,12 @@ export class Timesheet {
   @Column({ type: 'numeric', precision: 10, scale: 2, nullable: true })
   hourlyRateSnapshot?: number | null;
 
+  @Column({ type: 'numeric', precision: 8, scale: 2, nullable: true })
+  payableHoursSnapshot?: number | null;
+
+  @Column({ type: 'numeric', precision: 10, scale: 2, nullable: true })
+  payableAmountSnapshot?: number | null;
+
   @Column({ type: 'numeric', precision: 10, scale: 2, nullable: true })
   billingRateSnapshot?: number | null;
 
@@ -165,4 +171,7 @@ export class Timesheet {
   marginPercent?: number | null;
   matchedContractRuleId?: number | null;
   matchedContractRuleName?: string | null;
+  payableHours?: number | null;
+  payableAmount?: number | null;
+  payBreakdown?: Record<string, unknown> | null;
 }

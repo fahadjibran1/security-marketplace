@@ -50,6 +50,8 @@ type EnrichedTimesheet = {
   approvedHours: number;
   approvedAmount: number | null;
   costAmount: number | null;
+  payableHours: number;
+  payableAmount: number | null;
   payrollStatus: TimesheetPayrollStatus;
   payrollIncludedAtLabel: string;
   payrollPaidAtLabel: string;
@@ -69,6 +71,7 @@ type GroupedPayrollTimesheets = {
   totals: {
     count: number;
     approvedHours: number;
+    payableHours: number;
     approvedAmount: number;
     costAmount: number;
     missingRateCount: number;
@@ -295,6 +298,26 @@ function getAmountForHours(hours: number | null, rate: number | null) {
   return roundCurrency(hours * rate);
 }
 
+function getPayableHoursValue(timesheet: Timesheet, approvedHours: number) {
+  if (timesheet.payableHours !== undefined && timesheet.payableHours !== null && Number.isFinite(Number(timesheet.payableHours))) {
+    return Number(timesheet.payableHours);
+  }
+  if (timesheet.payableHoursSnapshot !== undefined && timesheet.payableHoursSnapshot !== null && Number.isFinite(Number(timesheet.payableHoursSnapshot))) {
+    return Number(timesheet.payableHoursSnapshot);
+  }
+  return approvedHours;
+}
+
+function getPayableAmountValue(timesheet: Timesheet, fallbackAmount: number | null) {
+  if (timesheet.payableAmount !== undefined && timesheet.payableAmount !== null && Number.isFinite(Number(timesheet.payableAmount))) {
+    return roundCurrency(Number(timesheet.payableAmount));
+  }
+  if (timesheet.payableAmountSnapshot !== undefined && timesheet.payableAmountSnapshot !== null && Number.isFinite(Number(timesheet.payableAmountSnapshot))) {
+    return roundCurrency(Number(timesheet.payableAmountSnapshot));
+  }
+  return fallbackAmount;
+}
+
 function toIsoDateInput(value: Date) {
   const year = value.getFullYear();
   const month = String(value.getMonth() + 1).padStart(2, '0');
@@ -502,6 +525,7 @@ function buildGroups(rows: EnrichedTimesheet[], periodView: PeriodView) {
         totals: {
           count: 0,
           approvedHours: 0,
+          payableHours: 0,
           approvedAmount: 0,
           costAmount: 0,
           missingRateCount: 0,
@@ -514,6 +538,7 @@ function buildGroups(rows: EnrichedTimesheet[], periodView: PeriodView) {
     existing.rows.push(entry);
     existing.totals.count += 1;
     existing.totals.approvedHours += entry.approvedHours;
+    existing.totals.payableHours += entry.payableHours;
     if (entry.approvedAmount !== null) {
       existing.totals.approvedAmount += entry.approvedAmount;
     } else {
@@ -541,6 +566,7 @@ function buildGroups(rows: EnrichedTimesheet[], periodView: PeriodView) {
       totals: {
         ...group.totals,
         approvedHours: roundHours(group.totals.approvedHours),
+        payableHours: roundHours(group.totals.payableHours),
         approvedAmount: roundCurrency(group.totals.approvedAmount),
         costAmount: roundCurrency(group.totals.costAmount),
       },
@@ -588,7 +614,9 @@ export function CompanyPayrollWorkspace({
         const approvedHours = getApprovedHoursValue(timesheet);
         const hourlyRate = getTimesheetRate(timesheet);
         const approvedAmount = getAmountForHours(approvedHours, hourlyRate);
-        const costAmount = typeof timesheet.costAmount === 'number' ? timesheet.costAmount : approvedAmount;
+        const payableHours = getPayableHoursValue(timesheet, approvedHours);
+        const payableAmount = getPayableAmountValue(timesheet, approvedAmount);
+        const costAmount = payableAmount ?? (typeof timesheet.costAmount === 'number' ? timesheet.costAmount : approvedAmount);
         const payrollStatus = normalizePayrollStatus(timesheet.payrollStatus);
         const batchState = getBatchState(timesheet);
         const isBatchLocked =
@@ -611,6 +639,8 @@ export function CompanyPayrollWorkspace({
           approvedHours,
           approvedAmount,
           costAmount,
+          payableHours,
+          payableAmount,
           payrollStatus,
           payrollIncludedAtLabel: formatDateTimeLabel(timesheet.payrollIncludedAt),
           payrollPaidAtLabel: formatDateTimeLabel(timesheet.payrollPaidAt),
@@ -687,13 +717,14 @@ export function CompanyPayrollWorkspace({
   const summary = React.useMemo(() => {
     const approvedCount = filteredTimesheets.length;
     const approvedHours = roundHours(filteredTimesheets.reduce((sum, entry) => sum + entry.approvedHours, 0));
+    const payableHours = roundHours(filteredTimesheets.reduce((sum, entry) => sum + entry.payableHours, 0));
     const approvedAmount = roundCurrency(filteredTimesheets.reduce((sum, entry) => sum + (entry.approvedAmount ?? 0), 0));
     const costAmount = roundCurrency(filteredTimesheets.reduce((sum, entry) => sum + (entry.costAmount ?? 0), 0));
     const unpaidCount = filteredTimesheets.filter((entry) => entry.payrollStatus === 'unpaid').length;
     const includedCount = filteredTimesheets.filter((entry) => entry.payrollStatus === 'included').length;
     const paidCount = filteredTimesheets.filter((entry) => entry.payrollStatus === 'paid').length;
 
-    return { approvedCount, approvedHours, approvedAmount, costAmount, unpaidCount, includedCount, paidCount };
+    return { approvedCount, approvedHours, payableHours, approvedAmount, costAmount, unpaidCount, includedCount, paidCount };
   }, [filteredTimesheets]);
 
   const selectedTimesheet = React.useMemo(
@@ -753,7 +784,9 @@ export function CompanyPayrollWorkspace({
         'Attendance',
         'Hourly Rate',
         'Approved Hours',
+        'Payable Hours',
         'Approved Amount',
+        'Payable Amount',
         'Cost Amount',
         'Payroll Status',
         'Payroll Included At',
@@ -770,7 +803,9 @@ export function CompanyPayrollWorkspace({
           entry.attendanceLabel,
           entry.hourlyRate !== null ? formatCurrency(entry.hourlyRate) : 'Rate unavailable',
           entry.approvedHours.toFixed(2),
+          entry.payableHours.toFixed(2),
           entry.approvedAmount !== null ? formatCurrency(entry.approvedAmount) : 'Rate unavailable',
+          entry.payableAmount !== null ? formatCurrency(entry.payableAmount) : 'Rate unavailable',
           entry.costAmount !== null ? formatCurrency(entry.costAmount) : 'Rate unavailable',
           formatPayrollStatusLabel(entry.payrollStatus),
           entry.timesheet.payrollIncludedAt ? entry.payrollIncludedAtLabel : '',
@@ -786,7 +821,9 @@ export function CompanyPayrollWorkspace({
           '',
           `${group.totals.missingRateCount} rate unavailable`,
           group.totals.approvedHours.toFixed(2),
+          group.totals.payableHours.toFixed(2),
           formatCurrency(group.totals.approvedAmount),
+          formatCurrency(group.totals.costAmount),
           formatCurrency(group.totals.costAmount),
           `Unpaid ${group.totals.unpaidCount} | Included ${group.totals.includedCount} | Paid ${group.totals.paidCount}`,
           '',
@@ -950,6 +987,9 @@ export function CompanyPayrollWorkspace({
   const selectedHourlyRate = selectedTimesheet?.hourlyRate ?? null;
   const selectedApprovedAmount = selectedTimesheet?.approvedAmount ?? null;
   const selectedCostAmount = selectedTimesheet?.costAmount ?? null;
+  const selectedPayableHours = selectedTimesheet?.payableHours ?? null;
+  const selectedPayableAmount = selectedTimesheet?.payableAmount ?? null;
+  const selectedPayBreakdown = activeSelected?.payBreakdown ?? null;
   const selectedPayrollStatus = selectedTimesheet?.payrollStatus ?? 'unpaid';
   const selectedBatchState = selectedTimesheet?.batchStateLabel ?? 'Unbatched';
 
@@ -1081,8 +1121,9 @@ export function CompanyPayrollWorkspace({
       <View style={styles.summaryGrid}>
         <SummaryCard label="Approved Records" value={String(summary.approvedCount)} />
         <SummaryCard label="Approved Hours" value={`${summary.approvedHours.toFixed(2)} h`} />
+        <SummaryCard label="Payable Hours" value={`${summary.payableHours.toFixed(2)} h`} />
         <SummaryCard label="Approved Amount" value={formatCurrency(summary.approvedAmount)} />
-        <SummaryCard label="Total Cost" value={formatCurrency(summary.costAmount)} />
+        <SummaryCard label="Payable Amount" value={formatCurrency(summary.costAmount)} />
         <SummaryCard label="Unpaid / Included / Paid" value={`${summary.unpaidCount} / ${summary.includedCount} / ${summary.paidCount}`} />
       </View>
 
@@ -1127,7 +1168,7 @@ export function CompanyPayrollWorkspace({
                   <View style={styles.groupHeaderCopy}>
                     <Text style={styles.groupSite}>{group.siteName}</Text>
                     <Text style={styles.groupPeriod}>
-                      {group.periodLabel} | {group.totals.count} approved | {group.totals.approvedHours.toFixed(2)} approved h | {formatCurrency(group.totals.costAmount)} cost
+                      {group.periodLabel} | {group.totals.count} approved | {group.totals.payableHours.toFixed(2)} payable h | {formatCurrency(group.totals.costAmount)} payable
                     </Text>
                   </View>
                   <View style={styles.groupHeaderActions}>
@@ -1145,8 +1186,10 @@ export function CompanyPayrollWorkspace({
                       <Text style={[styles.rowsHeaderText, styles.guardCol]}>Guard</Text>
                       <Text style={[styles.rowsHeaderText, styles.dateCol]}>Shift Date</Text>
                       <Text style={[styles.rowsHeaderText, styles.hoursCol]}>Approved Hours</Text>
+                      <Text style={[styles.rowsHeaderText, styles.hoursCol]}>Payable Hours</Text>
                       <Text style={[styles.rowsHeaderText, styles.rateCol]}>Rate</Text>
                       <Text style={[styles.rowsHeaderText, styles.amountCol]}>Approved Amount</Text>
+                      <Text style={[styles.rowsHeaderText, styles.amountCol]}>Payable Amount</Text>
                       <Text style={[styles.rowsHeaderText, styles.amountCol]}>Cost</Text>
                       <Text style={[styles.rowsHeaderText, styles.payrollCol]}>Payroll</Text>
                       <Text style={[styles.rowsHeaderText, styles.batchCol]}>Batch</Text>
@@ -1176,8 +1219,10 @@ export function CompanyPayrollWorkspace({
                           <Text style={[styles.rowTextStrong, styles.guardCol]}>{entry.guardName}</Text>
                           <Text style={[styles.rowText, styles.dateCol]}>{entry.shiftDateLabel}</Text>
                           <Text style={[styles.rowText, styles.hoursCol]}>{entry.approvedHours.toFixed(2)}</Text>
+                          <Text style={[styles.rowText, styles.hoursCol]}>{entry.payableHours.toFixed(2)}</Text>
                           <Text style={[styles.rowText, styles.rateCol]}>{formatRate(entry.hourlyRate)}</Text>
                           <Text style={[styles.rowText, styles.amountCol]}>{entry.approvedAmount !== null ? formatCurrency(entry.approvedAmount) : 'Rate unavailable'}</Text>
+                          <Text style={[styles.rowText, styles.amountCol]}>{entry.payableAmount !== null ? formatCurrency(entry.payableAmount) : 'Rate unavailable'}</Text>
                           <Text style={[styles.rowText, styles.amountCol]}>{entry.costAmount !== null ? formatCurrency(entry.costAmount) : 'Rate unavailable'}</Text>
                           <View style={[styles.statusBadge, styles.payrollCol, { backgroundColor: payrollPalette.bg }]}>
                             <Text style={[styles.statusBadgeText, { color: payrollPalette.text }]}>{formatPayrollStatusLabel(entry.payrollStatus)}</Text>
@@ -1195,8 +1240,9 @@ export function CompanyPayrollWorkspace({
                     <View style={styles.groupFooter}>
                       <Text style={styles.groupFooterText}>Approved records: {group.totals.count}</Text>
                       <Text style={styles.groupFooterText}>Approved hours: {group.totals.approvedHours.toFixed(2)} h</Text>
+                      <Text style={styles.groupFooterText}>Payable hours: {group.totals.payableHours.toFixed(2)} h</Text>
                       <Text style={styles.groupFooterText}>Approved amount: {formatCurrency(group.totals.approvedAmount)}</Text>
-                      <Text style={styles.groupFooterText}>Total cost: {formatCurrency(group.totals.costAmount)}</Text>
+                      <Text style={styles.groupFooterText}>Payable amount: {formatCurrency(group.totals.costAmount)}</Text>
                       <Text style={styles.groupFooterText}>Unpaid: {group.totals.unpaidCount}</Text>
                       <Text style={styles.groupFooterText}>Included: {group.totals.includedCount}</Text>
                       <Text style={styles.groupFooterText}>Paid: {group.totals.paidCount}</Text>
@@ -1245,12 +1291,24 @@ export function CompanyPayrollWorkspace({
                 <Text style={styles.detailLine}>Check-in: {formatDateTimeLabel(activeSelected.actualCheckInAt)}</Text>
                 <Text style={styles.detailLine}>Check-out: {formatDateTimeLabel(activeSelected.actualCheckOutAt)}</Text>
                 <Text style={styles.detailLine}>Approved hours: {selectedApprovedHours !== null ? selectedApprovedHours.toFixed(2) : '0.00'}</Text>
+                <Text style={styles.detailLine}>Payable hours: {selectedPayableHours !== null ? selectedPayableHours.toFixed(2) : '0.00'}</Text>
               </View>
 
               <View style={styles.detailSection}>
                 <Text style={styles.detailSectionTitle}>Rate & amounts</Text>
                 <Text style={styles.detailLine}>Hourly rate: {formatRate(selectedHourlyRate)}</Text>
                 <Text style={styles.detailLine}>Approved amount: {selectedApprovedAmount !== null ? formatCurrency(selectedApprovedAmount) : 'Rate unavailable'}</Text>
+                <Text style={styles.detailLine}>Payable amount: {selectedPayableAmount !== null ? formatCurrency(selectedPayableAmount) : 'Rate unavailable'}</Text>
+              </View>
+
+              <View style={styles.detailSection}>
+                <Text style={styles.detailSectionTitle}>Pay Rule Breakdown</Text>
+                <Text style={styles.detailLine}>Source: {selectedPayBreakdown?.source === 'rule' ? 'Company pay rules' : 'Fallback approved hours x hourly rate'}</Text>
+                <Text style={styles.detailLine}>Regular hours: {selectedPayBreakdown?.regularHours?.toFixed(2) ?? '0.00'}</Text>
+                <Text style={styles.detailLine}>Overtime hours: {selectedPayBreakdown?.overtimeHours?.toFixed(2) ?? '0.00'}</Text>
+                <Text style={styles.detailLine}>Night hours: {selectedPayBreakdown?.nightHours?.toFixed(2) ?? '0.00'}</Text>
+                <Text style={styles.detailLine}>Weekend hours: {selectedPayBreakdown?.weekendHours?.toFixed(2) ?? '0.00'}</Text>
+                <Text style={styles.detailLine}>Unpaid break: {selectedPayBreakdown?.unpaidBreakHours?.toFixed(2) ?? '0.00'} h</Text>
               </View>
 
               <View style={styles.detailSection}>

@@ -31,6 +31,8 @@ import {
   Notification,
   PayrollBatch,
   PayrollSuggestion,
+  PayRuleConfig,
+  PayRuleConfigPayload,
   RegisterPayload,
   SafetyAlert,
   Site,
@@ -426,6 +428,17 @@ export function listCompanyPayrollBatches() {
 
 export function listPayrollSuggestions() {
   return request<PayrollSuggestion[]>('/payroll/suggestions');
+}
+
+export function getPayRuleConfig() {
+  return request<PayRuleConfig | null>('/pay-rules');
+}
+
+export function savePayRuleConfig(payload: PayRuleConfigPayload) {
+  return request<PayRuleConfig>('/pay-rules', {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
 }
 
 export function getCompanyPayrollBatch(id: number) {
