@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, LessThan, Repository } from 'typeorm';
 
 import { Company } from '../company/entities/company.entity';
+import { ComplianceService } from '../compliance/compliance.service';
 import { InvoiceBatch, InvoiceBatchStatus } from '../invoice-batch/entities/invoice-batch.entity';
 import { InvoiceBatchService } from '../invoice-batch/invoice-batch.service';
 import { Notification, NotificationStatus, NotificationType } from '../notification/entities/notification.entity';
@@ -44,6 +45,7 @@ export class AutomationSchedulerService implements OnModuleInit, OnModuleDestroy
     private readonly payrollBatchService: PayrollBatchService,
     private readonly invoiceBatchService: InvoiceBatchService,
     private readonly payRuleService: PayRuleService,
+    private readonly complianceService: ComplianceService,
   ) {}
 
   onModuleInit() {
@@ -137,6 +139,7 @@ export class AutomationSchedulerService implements OnModuleInit, OnModuleDestroy
     const submittedCutoff = new Date(now.getTime() - 24 * 60 * 60 * 1000);
     const financeCutoff = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     const companies = await this.companyRepo.find();
+    const compliance = await this.complianceService.runDailyComplianceReminders();
     const summaries = [];
 
     for (const company of companies) {
@@ -204,7 +207,7 @@ export class AutomationSchedulerService implements OnModuleInit, OnModuleDestroy
       summaries.push({ companyId: company.id, submitted, unpaid, uninvoiced, draftPayroll, draftInvoices });
     }
 
-    return { companiesChecked: companies.length, summaries };
+    return { companiesChecked: companies.length, summaries, compliance };
   }
 
   private async runAutomationSuggestions() {

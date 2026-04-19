@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 
 import { CompanyAuditWorkspace } from '../components/company/CompanyAuditWorkspace';
+import { CompanyComplianceWorkspace } from '../components/company/CompanyComplianceWorkspace';
 import { CompanyContractPricingWorkspace } from '../components/company/CompanyContractPricingWorkspace';
 import { CompanyFinanceControlWorkspace } from '../components/company/CompanyFinanceControlWorkspace';
 import { CompanyInvoiceWorkspace } from '../components/company/CompanyInvoiceWorkspace';
@@ -78,6 +79,7 @@ type CompanySection =
   | 'invoices'
   | 'finance-control'
   | 'margins'
+  | 'compliance'
   | 'contract-pricing'
   | 'pay-rules'
   | 'audit'
@@ -210,6 +212,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'invoices', label: 'Invoices', caption: 'Client billing and invoice batches.' },
   { id: 'finance-control', label: 'Finance Control', caption: 'Commercial exposure and settlement visibility.' },
   { id: 'margins', label: 'Margins', caption: 'Revenue, cost, and profit reporting.' },
+  { id: 'compliance', label: 'Compliance', caption: 'Licence expiry and right-to-work controls.' },
   { id: 'contract-pricing', label: 'Contract Pricing', caption: 'Client and site commercial rules.' },
   { id: 'pay-rules', label: 'Pay Rules', caption: 'Guard payable-hours calculation settings.' },
   { id: 'audit', label: 'Audit Trail', caption: 'Trace financial actions and before/after data.' },
@@ -4226,6 +4229,8 @@ export function CompanyDashboardScreen() {
         return <CompanyFinanceControlWorkspace timesheets={timesheets} refreshing={refreshing} onRefresh={() => loadData(true)} />;
       case 'margins':
         return <CompanyMarginWorkspace />;
+      case 'compliance':
+        return <CompanyComplianceWorkspace />;
       case 'contract-pricing':
         return <CompanyContractPricingWorkspace />;
       case 'pay-rules':

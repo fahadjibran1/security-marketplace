@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { Company } from '../company/entities/company.entity';
+import { ComplianceModule } from '../compliance/compliance.module';
 import { InvoiceBatch } from '../invoice-batch/entities/invoice-batch.entity';
 import { InvoiceBatchModule } from '../invoice-batch/invoice-batch.module';
 import { Notification } from '../notification/entities/notification.entity';
@@ -18,6 +19,7 @@ import { AutomationSchedulerService } from './scheduler.service';
     PayrollBatchModule,
     InvoiceBatchModule,
     PayRuleModule,
+    ComplianceModule,
   ],
   controllers: [SchedulerController],
   providers: [AutomationSchedulerService],

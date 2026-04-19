@@ -6,6 +6,8 @@ import {
   Assignment,
   AuthSession,
   CompanyGuard,
+  ComplianceRecord,
+  ComplianceRecordPayload,
   ContractPricingRule,
   ContractPricingRulePayload,
   CompanyProfile,
@@ -424,6 +426,21 @@ export function createCompanyPayrollBatch(payload: CreatePayrollBatchPayload) {
 
 export function listCompanyPayrollBatches() {
   return request<PayrollBatch[]>('/payroll-batches/company');
+}
+
+export function listComplianceRecords() {
+  return request<ComplianceRecord[]>('/compliance');
+}
+
+export function listMyComplianceRecords() {
+  return request<ComplianceRecord[]>('/compliance/mine');
+}
+
+export function saveComplianceRecord(payload: ComplianceRecordPayload) {
+  return request<ComplianceRecord>('/compliance', {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
 }
 
 export function listPayrollSuggestions() {

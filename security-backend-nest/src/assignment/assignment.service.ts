@@ -5,6 +5,7 @@ import { Assignment, AssignmentStatus } from './entities/assignment.entity';
 import { JobApplication } from '../job-application/entities/job-application.entity';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { CompanyService } from '../company/company.service';
+import { ComplianceService } from '../compliance/compliance.service';
 import { GuardProfileService } from '../guard-profile/guard-profile.service';
 import { isCompanyRole, UserRole } from '../user/entities/user.entity';
 
@@ -14,6 +15,7 @@ export class AssignmentService {
     @InjectRepository(Assignment) private readonly assignmentRepo: Repository<Assignment>,
     private readonly companyService: CompanyService,
     private readonly guardProfileService: GuardProfileService,
+    private readonly complianceService: ComplianceService,
   ) {}
 
   findAll(): Promise<Assignment[]> {
@@ -93,6 +95,7 @@ export class AssignmentService {
   }
 
   async createFromHire(application: JobApplication): Promise<Assignment> {
+    await this.complianceService.assertGuardAssignable(application.job.company.id, application.guard.id);
     const assignment = this.assignmentRepo.create({
       job: application.job,
       company: application.job.company,

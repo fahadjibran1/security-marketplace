@@ -15,6 +15,7 @@ import { CompanyService } from '../company/company.service';
 import { GuardProfileService } from '../guard-profile/guard-profile.service';
 import { isCompanyRole, UserRole } from '../user/entities/user.entity';
 import { CompanyGuardService } from '../company-guard/company-guard.service';
+import { ComplianceService } from '../compliance/compliance.service';
 import { Timesheet } from '../timesheet/entities/timesheet.entity';
 import { UpdateShiftDto } from './dto/update-shift.dto';
 import { RespondShiftDto } from './dto/respond-shift.dto';
@@ -52,6 +53,7 @@ export class ShiftService {
     private readonly companyService: CompanyService,
     private readonly guardProfileService: GuardProfileService,
     private readonly companyGuardService: CompanyGuardService,
+    private readonly complianceService: ComplianceService,
   ) {}
 
   async findAll(): Promise<Shift[]> {
@@ -198,6 +200,10 @@ export class ShiftService {
       throw new BadRequestException('Shift status is invalid');
     }
 
+    if (guard) {
+      await this.complianceService.assertGuardAssignable(company.id, guard.id);
+    }
+
     const status = this.resolveInitialStatus({
       requestedStatus: normalizedStatus,
       hasGuard: Boolean(guard),
@@ -270,6 +276,10 @@ export class ShiftService {
 
     if (contextGuard && !assignment && !jobApplication) {
       await this.companyGuardService.ensureActiveRelationship(company.id, contextGuard.id);
+    }
+
+    if (contextGuard) {
+      await this.complianceService.assertGuardAssignable(company.id, contextGuard.id);
     }
 
     const job = dto.jobId
@@ -430,6 +440,7 @@ export class ShiftService {
       if (dto.guardId) {
         const guard = await this.guardProfileService.findOne(dto.guardId);
         await this.companyGuardService.ensureActiveRelationship(actorCompany.id, guard.id);
+        await this.complianceService.assertGuardAssignable(actorCompany.id, guard.id);
         nextGuard = guard;
       } else {
         nextGuard = null;

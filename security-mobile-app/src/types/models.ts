@@ -5,6 +5,8 @@ export type PayrollBatchStatus = 'draft' | 'finalised' | 'paid';
 export type TimesheetBillingStatus = 'uninvoiced' | 'included' | 'invoiced';
 export type InvoiceBatchStatus = 'draft' | 'finalised' | 'issued' | 'paid';
 export type ContractPricingRuleStatus = 'active' | 'inactive';
+export type ComplianceRecordType = 'SIA' | 'RIGHT_TO_WORK' | 'TRAINING' | 'OTHER';
+export type ComplianceRecordStatus = 'valid' | 'expiring' | 'expired';
 
 export function isCompanyAppRole(role?: AppRole | null): boolean {
   return role === 'company' || role === 'company_admin' || role === 'company_staff';
@@ -130,6 +132,30 @@ export interface CompanyGuard {
   createdAt: string;
   company?: CompanyProfile;
   guard?: GuardProfile;
+}
+
+export interface ComplianceRecord {
+  id: number;
+  company?: CompanyProfile;
+  guard?: GuardProfile;
+  type: ComplianceRecordType | string;
+  documentName: string;
+  documentNumber?: string | null;
+  issueDate?: string | null;
+  expiryDate: string;
+  status: ComplianceRecordStatus | string;
+  reminderSentAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ComplianceRecordPayload {
+  guardId: number;
+  type: ComplianceRecordType | string;
+  documentName: string;
+  documentNumber?: string | null;
+  issueDate?: string | null;
+  expiryDate: string;
 }
 
 // Shift = planned work linked to assignment

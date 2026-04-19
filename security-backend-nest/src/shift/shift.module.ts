@@ -14,6 +14,7 @@ import { CompanyModule } from '../company/company.module';
 import { GuardProfileModule } from '../guard-profile/guard-profile.module';
 import { CompanyGuardModule } from '../company-guard/company-guard.module';
 import { Timesheet } from '../timesheet/entities/timesheet.entity';
+import { ComplianceModule } from '../compliance/compliance.module';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { Timesheet } from '../timesheet/entities/timesheet.entity';
     CompanyModule,
     GuardProfileModule,
     CompanyGuardModule,
+    ComplianceModule,
   ],
   controllers: [ShiftController],
   providers: [ShiftService],

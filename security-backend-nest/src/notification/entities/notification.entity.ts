@@ -20,6 +20,7 @@ export enum NotificationType {
   FINANCIAL_REMINDER = 'financial_reminder',
   PAYROLL_SUGGESTION = 'payroll_suggestion',
   INVOICE_SUGGESTION = 'invoice_suggestion',
+  COMPLIANCE_ALERT = 'compliance_alert',
   ALERT_RAISED = 'alert_raised',
 }
 

@@ -29,6 +29,7 @@ import { PayrollBatchModule } from './payroll-batch/payroll-batch.module';
 import { ReportModule } from './report/report.module';
 import { SchedulerModule } from './scheduler/scheduler.module';
 import { PayRuleModule } from './pay-rule/pay-rule.module';
+import { ComplianceModule } from './compliance/compliance.module';
 import { HealthController } from './health.controller';
 import { buildNestTypeOrmOptions } from './database/typeorm.config';
 import { validateRuntimeEnv } from './config/runtime-env';
@@ -82,6 +83,7 @@ import { validateRuntimeEnv } from './config/runtime-env';
     ReportModule,
     SchedulerModule,
     PayRuleModule,
+    ComplianceModule,
   ],
   controllers: [HealthController],
 })
