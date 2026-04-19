@@ -8,6 +8,9 @@ import {
   AvailabilityRulePayload,
   AuthSession,
   CompanyGuard,
+  GuardComplianceSummary,
+  GuardDocument,
+  GuardDocumentPayload,
   ComplianceRecord,
   ComplianceRecordPayload,
   CoverageShiftRow,
@@ -473,6 +476,43 @@ export function saveComplianceRecord(payload: ComplianceRecordPayload) {
   return request<ComplianceRecord>('/compliance', {
     method: 'PUT',
     body: JSON.stringify(payload),
+  });
+}
+
+export function listCompanyGuardComplianceStatuses(status?: string) {
+  return request<GuardComplianceSummary[]>(`/compliance/statuses${status ? `?status=${encodeURIComponent(status)}` : ''}`);
+}
+
+export function getMyGuardComplianceStatus() {
+  return request<GuardComplianceSummary>('/compliance/mine/status');
+}
+
+export function listGuardDocuments(guardId?: number) {
+  return request<GuardDocument[]>(`/compliance/documents${guardId ? `?guardId=${guardId}` : ''}`);
+}
+
+export function listMyGuardDocuments() {
+  return request<GuardDocument[]>('/compliance/documents/mine');
+}
+
+export function uploadGuardDocument(payload: GuardDocumentPayload) {
+  return request<GuardDocument>('/compliance/documents', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function uploadMyGuardDocument(payload: GuardDocumentPayload) {
+  return request<GuardDocument>('/compliance/documents/mine', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function verifyGuardDocument(id: number, verified: boolean) {
+  return request<GuardDocument>(`/compliance/documents/${id}/verify`, {
+    method: 'PATCH',
+    body: JSON.stringify({ verified }),
   });
 }
 

@@ -1,4 +1,4 @@
-import { IsBoolean, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsDateString, IsOptional, IsString } from 'class-validator';
 
 export class UpdateGuardProfileDto {
   @IsOptional()
@@ -8,6 +8,18 @@ export class UpdateGuardProfileDto {
   @IsOptional()
   @IsString()
   siaLicenseNumber?: string;
+
+  @IsOptional()
+  @IsDateString()
+  siaExpiryDate?: string;
+
+  @IsOptional()
+  @IsString()
+  rightToWorkStatus?: string;
+
+  @IsOptional()
+  @IsDateString()
+  rightToWorkExpiryDate?: string;
 
   @IsOptional()
   @IsString()

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import { FeatureCard } from '../components/FeatureCard';
+import { GuardCompliancePanel } from '../components/guard/GuardCompliancePanel';
 import { JobsScreen } from './JobsScreen';
 import { GuardTimesheetsScreen } from './GuardTimesheetsScreen';
 import { GuardAvailabilityScreen } from './GuardAvailabilityScreen';
@@ -13,7 +14,6 @@ import {
   formatApiErrorMessage,
   getMyGuard,
   listMyAttendance,
-  listMyComplianceRecords,
   listMyDailyLogs,
   listMyIncidents,
   listMyShifts,
@@ -26,7 +26,6 @@ import { clearStoredSession } from '../services/session';
 import {
   AttendanceEvent,
   AuthUser,
-  ComplianceRecord,
   DailyLog,
   Incident,
   Shift,
@@ -191,7 +190,6 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [dailyLogs, setDailyLogs] = useState<DailyLog[]>([]);
   const [timesheets, setTimesheets] = useState<Timesheet[]>([]);
-  const [complianceRecords, setComplianceRecords] = useState<ComplianceRecord[]>([]);
   const [selectedShiftId, setSelectedShiftId] = useState<number | null>(null);
   const [historySummaryShiftId, setHistorySummaryShiftId] = useState<number | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -242,14 +240,13 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
     try {
       setLoading(true);
       setLoadError(null);
-      const [myGuard, shiftRows, attendanceRows, incidentRows, dailyLogRows, timesheetRows, complianceRows] = await Promise.all([
+      const [myGuard, shiftRows, attendanceRows, incidentRows, dailyLogRows, timesheetRows] = await Promise.all([
         getMyGuard(),
         listMyShifts(),
         listMyAttendance(),
         listMyIncidents(),
         listMyDailyLogs(),
         listMyTimesheets(),
-        listMyComplianceRecords(),
       ]);
 
       setFullName(myGuard.fullName || '');
@@ -262,7 +259,6 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
       setIncidents(incidentRows);
       setDailyLogs(dailyLogRows);
       setTimesheets(timesheetRows);
-      setComplianceRecords(complianceRows);
     } catch (error) {
       const message = formatApiErrorMessage(error, 'Failed to load guard dashboard.');
       setLoadError(message);
@@ -1043,25 +1039,7 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
                 <Text style={styles.logoutButtonText}>Logout</Text>
               </Pressable>
             </FeatureCard>
-            <FeatureCard title="Compliance" subtitle="Licence and right-to-work status shared by your company.">
-              {complianceRecords.length === 0 ? (
-                <Text style={styles.metaText}>No compliance records have been added yet.</Text>
-              ) : (
-                complianceRecords.map((record) => (
-                  <View key={record.id} style={styles.simpleRow}>
-                    <View style={styles.flexGrow}>
-                      <Text style={styles.cardTitle}>{record.type === 'RIGHT_TO_WORK' ? 'Right to work' : record.type}</Text>
-                      <Text style={styles.metaText}>{record.documentName} expires {formatDateLabel(record.expiryDate)}</Text>
-                    </View>
-                    <View style={[styles.statusBadge, { backgroundColor: record.status === 'expired' ? '#FEE2E2' : record.status === 'expiring' ? '#FEF3C7' : '#DCFCE7' }]}>
-                      <Text style={[styles.statusBadgeText, { color: record.status === 'expired' ? '#991B1B' : record.status === 'expiring' ? '#B45309' : '#15803D' }]}>
-                        {String(record.status)}
-                      </Text>
-                    </View>
-                  </View>
-                ))
-              )}
-            </FeatureCard>
+            <GuardCompliancePanel />
             <GuardAvailabilityScreen />
           </>
         ) : null}

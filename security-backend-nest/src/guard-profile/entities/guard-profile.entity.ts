@@ -14,6 +14,7 @@ import { Shift } from '../../shift/entities/shift.entity';
 import { Timesheet } from '../../timesheet/entities/timesheet.entity';
 import { CompanyGuard } from '../../company-guard/entities/company-guard.entity';
 import { JobMatch } from '../../job-match/entities/job-match.entity';
+import { GuardDocument } from '../../compliance/entities/guard-document.entity';
 
 export enum GuardAvailability {
   AVAILABLE = 'available',
@@ -42,6 +43,15 @@ export class GuardProfile {
 
   @Column({ unique: true })
   siaLicenseNumber!: string;
+
+  @Column({ type: 'date', nullable: true })
+  siaExpiryDate?: string | null;
+
+  @Column({ type: 'varchar', nullable: true })
+  rightToWorkStatus?: string | null;
+
+  @Column({ type: 'date', nullable: true })
+  rightToWorkExpiryDate?: string | null;
 
   @Column()
   phone!: string;
@@ -89,4 +99,7 @@ export class GuardProfile {
 
   @OneToMany(() => JobMatch, (jobMatch) => jobMatch.guard)
   jobMatches?: JobMatch[];
+
+  @OneToMany(() => GuardDocument, (document) => document.guard)
+  documents?: GuardDocument[];
 }

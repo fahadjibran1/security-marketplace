@@ -9,6 +9,8 @@ export type PaymentMethod = 'bank_transfer' | 'cash' | 'card' | 'other';
 export type ContractPricingRuleStatus = 'active' | 'inactive';
 export type ComplianceRecordType = 'SIA' | 'RIGHT_TO_WORK' | 'TRAINING' | 'OTHER';
 export type ComplianceRecordStatus = 'valid' | 'expiring' | 'expired';
+export type GuardComplianceStatus = 'valid' | 'expiring' | 'expired' | 'invalid';
+export type GuardDocumentType = 'sia_licence' | 'right_to_work' | 'id_proof' | 'training';
 export type AvailabilityOverrideStatus = 'available' | 'unavailable';
 export type GuardLeaveType = 'annual_leave' | 'sick' | 'unavailable' | 'training' | 'suspension' | 'other';
 export type GuardLeaveStatus = 'pending' | 'approved' | 'rejected';
@@ -64,6 +66,9 @@ export interface GuardProfile {
   fullName: string;
   siaLicenseNumber?: string;
   siaLicenceNumber?: string;
+  siaExpiryDate?: string | null;
+  rightToWorkStatus?: string | null;
+  rightToWorkExpiryDate?: string | null;
   phone: string;
   locationSharingEnabled: boolean;
   status: string;
@@ -166,6 +171,38 @@ export interface ComplianceRecordPayload {
   documentNumber?: string | null;
   issueDate?: string | null;
   expiryDate: string;
+}
+
+export interface GuardDocument {
+  id: number;
+  guard?: GuardProfile;
+  type: GuardDocumentType | string;
+  fileUrl: string;
+  expiryDate?: string | null;
+  verified: boolean;
+  uploadedAt: string;
+}
+
+export interface GuardDocumentPayload {
+  guardId?: number;
+  type: GuardDocumentType | string;
+  fileUrl: string;
+  expiryDate?: string | null;
+}
+
+export interface GuardComplianceSummary {
+  guardId: number;
+  fullName: string;
+  siaLicenceNumber?: string | null;
+  siaExpiryDate?: string | null;
+  rightToWorkStatus?: string | null;
+  rightToWorkExpiryDate?: string | null;
+  complianceStatus: GuardComplianceStatus | string;
+  assignable: boolean;
+  blockingReasons: string[];
+  expiringReasons: string[];
+  missingDocuments: string[];
+  documents: GuardDocument[];
 }
 
 export interface GuardAvailabilityRule {
@@ -1074,6 +1111,9 @@ export interface UpdateCompanyPayload {
 export interface UpdateGuardPayload {
   fullName?: string;
   siaLicenseNumber?: string;
+  siaExpiryDate?: string | null;
+  rightToWorkStatus?: string | null;
+  rightToWorkExpiryDate?: string | null;
   phone?: string;
   locationSharingEnabled?: boolean;
   status?: string;
@@ -1201,6 +1241,7 @@ export interface Notification {
     | 'timesheet_submitted'
     | 'timesheet_approved'
     | 'timesheet_rejected'
+    | 'compliance_alert'
     | 'alert_raised';
   title: string;
   message: string;

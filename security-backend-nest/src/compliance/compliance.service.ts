@@ -8,6 +8,7 @@ import { GuardProfileService } from '../guard-profile/guard-profile.service';
 import { NotificationService } from '../notification/notification.service';
 import { NotificationType } from '../notification/entities/notification.entity';
 import { UpsertComplianceRecordDto } from './dto/upsert-compliance-record.dto';
+import { GuardComplianceService } from './guard-compliance.service';
 import {
   ComplianceRecord,
   ComplianceRecordStatus,
@@ -21,6 +22,7 @@ export class ComplianceService {
     private readonly companyService: CompanyService,
     private readonly guardProfileService: GuardProfileService,
     private readonly notificationService: NotificationService,
+    private readonly guardComplianceService: GuardComplianceService,
   ) {}
 
   async listForCompanyUser(userId: number) {
@@ -72,60 +74,18 @@ export class ComplianceService {
   }
 
   async assertGuardAssignable(companyId: number, guardId: number) {
-    const blockers = await this.getBlockingRecords(companyId, guardId);
+    const blockers = await this.guardComplianceService.getBlockingReasons(companyId, guardId);
     if (blockers.length) {
-      const blocker = blockers[0];
-      throw new ForbiddenException(`Guard compliance invalid: ${this.formatType(blocker.type)} expired`);
+      throw new ForbiddenException(`Guard compliance invalid: ${blockers[0]}`);
     }
   }
 
   async getBlockingRecords(companyId: number, guardId: number) {
-    const records = await this.complianceRepo.find({
-      where: {
-        company: { id: companyId },
-        guard: { id: guardId },
-      },
-    });
-    const updated = await this.refreshStatuses(records);
-    return updated.filter(
-      (record) =>
-        record.status === ComplianceRecordStatus.EXPIRED &&
-        (record.type === ComplianceRecordType.SIA || record.type === ComplianceRecordType.RIGHT_TO_WORK),
-    );
+    return this.guardComplianceService.getBlockingReasons(companyId, guardId);
   }
 
   async runDailyComplianceReminders() {
-    const records = await this.complianceRepo.find();
-    const updated = await this.refreshStatuses(records);
-    let expiring = 0;
-    let expired = 0;
-
-    for (const record of updated) {
-      if (record.status !== ComplianceRecordStatus.EXPIRING && record.status !== ComplianceRecordStatus.EXPIRED) {
-        continue;
-      }
-      if (record.reminderSentAt) {
-        continue;
-      }
-      const company = record.company;
-      if (!company?.user?.id) {
-        continue;
-      }
-      const isExpired = record.status === ComplianceRecordStatus.EXPIRED;
-      await this.notificationService.createForUser({
-        userId: company.user.id,
-        company,
-        type: NotificationType.COMPLIANCE_ALERT,
-        title: isExpired ? 'Compliance document expired' : 'Compliance document expiring soon',
-        message: `${record.guard?.fullName || 'A guard'} has ${this.formatType(record.type)} ${isExpired ? 'expired' : 'expiring'} on ${record.expiryDate}.`,
-      });
-      record.reminderSentAt = new Date();
-      await this.complianceRepo.save(record);
-      if (isExpired) expired += 1;
-      else expiring += 1;
-    }
-
-    return { recordsChecked: records.length, expiring, expired };
+    return this.guardComplianceService.runDailyComplianceReminders();
   }
 
   deriveStatus(expiryDate: string | Date) {
@@ -167,11 +127,5 @@ export class ComplianceService {
     if (Number.isNaN(date.getTime())) return null;
     date.setHours(0, 0, 0, 0);
     return date;
-  }
-
-  private formatType(type: ComplianceRecordType | string) {
-    if (type === ComplianceRecordType.SIA) return 'SIA';
-    if (type === ComplianceRecordType.RIGHT_TO_WORK) return 'right-to-work';
-    return String(type).toLowerCase().replace(/_/g, ' ');
   }
 }

@@ -3,11 +3,20 @@ import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import {
   formatApiErrorMessage,
+  listCompanyGuardComplianceStatuses,
   listCompanyGuards,
-  listComplianceRecords,
+  listGuardDocuments,
   saveComplianceRecord,
+  verifyGuardDocument,
 } from '../../services/api';
-import { CompanyGuard, ComplianceRecord, ComplianceRecordPayload, ComplianceRecordType } from '../../types/models';
+import {
+  CompanyGuard,
+  ComplianceRecordPayload,
+  ComplianceRecordType,
+  GuardComplianceStatus,
+  GuardComplianceSummary,
+  GuardDocument,
+} from '../../types/models';
 
 type FormState = {
   guardId: string;
@@ -28,6 +37,13 @@ const EMPTY_FORM: FormState = {
 };
 
 const TYPES: ComplianceRecordType[] = ['SIA', 'RIGHT_TO_WORK', 'TRAINING', 'OTHER'];
+const FILTERS: Array<{ value: 'all' | GuardComplianceStatus; label: string }> = [
+  { value: 'all', label: 'All' },
+  { value: 'valid', label: 'Valid' },
+  { value: 'expiring', label: 'Expiring' },
+  { value: 'expired', label: 'Expired' },
+  { value: 'invalid', label: 'Invalid' },
+];
 
 function formatDate(value?: string | null) {
   if (!value) return 'Not recorded';
@@ -40,15 +56,11 @@ function typeLabel(type?: string | null) {
   return (type || 'Other').replace(/_/g, ' ');
 }
 
-function getRecordTone(record?: ComplianceRecord | null) {
-  if (!record) return styles.statusMissing;
-  if (record.status === 'expired') return styles.statusExpired;
-  if (record.status === 'expiring') return styles.statusExpiring;
+function getStatusTone(status?: string | null) {
+  if (status === 'invalid') return styles.statusInvalid;
+  if (status === 'expired') return styles.statusExpired;
+  if (status === 'expiring') return styles.statusExpiring;
   return styles.statusValid;
-}
-
-function getRecord(records: ComplianceRecord[], guardId: number, type: ComplianceRecordType) {
-  return records.find((record) => record.guard?.id === guardId && record.type === type) || null;
 }
 
 function WebSelect({
@@ -78,30 +90,98 @@ function WebSelect({
   return <TextInput value={value} onChangeText={onChange} style={styles.input} />;
 }
 
+function GuardDocumentsList({
+  documents,
+  onVerify,
+  verifyingId,
+}: {
+  documents: GuardDocument[];
+  onVerify: (documentId: number, verified: boolean) => Promise<void>;
+  verifyingId: number | null;
+}) {
+  if (!documents.length) {
+    return <Text style={styles.helperText}>No guard documents uploaded yet.</Text>;
+  }
+
+  return (
+    <View style={styles.documentList}>
+      {documents.map((document) => (
+        <View key={document.id} style={styles.documentRow}>
+          <View style={styles.flexGrow}>
+            <Text style={styles.documentTitle}>{String(document.type).replace(/_/g, ' ')}</Text>
+            <Text style={styles.helperText}>Expiry: {formatDate(document.expiryDate)} | Uploaded: {formatDate(document.uploadedAt)}</Text>
+            <Text style={styles.documentUrl}>{document.fileUrl}</Text>
+          </View>
+          <View style={styles.documentActions}>
+            <View style={[styles.statusPill, document.verified ? styles.statusValid : styles.statusMissing]}>
+              <Text style={styles.statusText}>{document.verified ? 'Verified' : 'Pending'}</Text>
+            </View>
+            <Pressable
+              style={styles.secondaryButton}
+              onPress={() => onVerify(document.id, !document.verified)}
+              disabled={verifyingId === document.id}
+            >
+              <Text style={styles.secondaryButtonText}>
+                {verifyingId === document.id ? 'Saving...' : document.verified ? 'Mark unverified' : 'Verify'}
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+      ))}
+    </View>
+  );
+}
+
 export function CompanyComplianceWorkspace() {
   const [companyGuards, setCompanyGuards] = React.useState<CompanyGuard[]>([]);
-  const [records, setRecords] = React.useState<ComplianceRecord[]>([]);
+  const [summaries, setSummaries] = React.useState<GuardComplianceSummary[]>([]);
+  const [documents, setDocuments] = React.useState<GuardDocument[]>([]);
+  const [selectedGuardId, setSelectedGuardId] = React.useState('');
+  const [statusFilter, setStatusFilter] = React.useState<'all' | GuardComplianceStatus>('all');
   const [form, setForm] = React.useState<FormState>(EMPTY_FORM);
   const [feedback, setFeedback] = React.useState<{ tone: 'success' | 'error'; message: string } | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
+  const [verifyingId, setVerifyingId] = React.useState<number | null>(null);
 
   const loadData = React.useCallback(async () => {
     setLoading(true);
     try {
-      const [nextGuards, nextRecords] = await Promise.all([listCompanyGuards(), listComplianceRecords()]);
+      const [nextGuards, nextSummaries] = await Promise.all([
+        listCompanyGuards(),
+        listCompanyGuardComplianceStatuses(statusFilter === 'all' ? undefined : statusFilter),
+      ]);
       setCompanyGuards(nextGuards);
-      setRecords(nextRecords);
+      setSummaries(nextSummaries);
+
+      const effectiveGuardId = selectedGuardId || (nextSummaries[0]?.guardId ? String(nextSummaries[0].guardId) : '');
+      if (effectiveGuardId && effectiveGuardId !== selectedGuardId) {
+        setSelectedGuardId(effectiveGuardId);
+      }
+      if (effectiveGuardId) {
+        setDocuments(await listGuardDocuments(Number(effectiveGuardId)));
+      } else {
+        setDocuments([]);
+      }
     } catch (error) {
       setFeedback({ tone: 'error', message: formatApiErrorMessage(error, 'Unable to load compliance records.') });
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [selectedGuardId, statusFilter]);
 
   React.useEffect(() => {
     loadData();
   }, [loadData]);
+
+  React.useEffect(() => {
+    if (!selectedGuardId) return;
+    listGuardDocuments(Number(selectedGuardId))
+      .then(setDocuments)
+      .catch((error) => {
+        setFeedback({ tone: 'error', message: formatApiErrorMessage(error, 'Unable to load guard documents.') });
+      });
+  }, [selectedGuardId]);
 
   const guardOptions = React.useMemo(
     () => [
@@ -113,10 +193,15 @@ export function CompanyComplianceWorkspace() {
     [companyGuards],
   );
 
+  const selectedSummary = React.useMemo(
+    () => summaries.find((item) => String(item.guardId) === selectedGuardId) || summaries[0] || null,
+    [selectedGuardId, summaries],
+  );
+
   const updateForm = (patch: Partial<FormState>) => setForm((current) => ({ ...current, ...patch }));
 
   const saveRecord = React.useCallback(async () => {
-    const guardId = Number(form.guardId);
+    const guardId = Number(form.guardId || selectedGuardId);
     if (!guardId || !form.documentName.trim() || !form.expiryDate.trim()) {
       setFeedback({ tone: 'error', message: 'Choose a guard, document name, and expiry date before saving.' });
       return;
@@ -140,7 +225,23 @@ export function CompanyComplianceWorkspace() {
     } finally {
       setSaving(false);
     }
-  }, [form, loadData]);
+  }, [form, loadData, selectedGuardId]);
+
+  const toggleVerify = React.useCallback(async (documentId: number, verified: boolean) => {
+    setVerifyingId(documentId);
+    try {
+      await verifyGuardDocument(documentId, verified);
+      setFeedback({ tone: 'success', message: `Document ${verified ? 'verified' : 'marked unverified'}.` });
+      if (selectedGuardId) {
+        setDocuments(await listGuardDocuments(Number(selectedGuardId)));
+      }
+      await loadData();
+    } catch (error) {
+      setFeedback({ tone: 'error', message: formatApiErrorMessage(error, 'Unable to update document verification.') });
+    } finally {
+      setVerifyingId(null);
+    }
+  }, [loadData, selectedGuardId]);
 
   return (
     <View style={styles.workspace}>
@@ -148,7 +249,7 @@ export function CompanyComplianceWorkspace() {
         <View>
           <Text style={styles.eyebrow}>Compliance</Text>
           <Text style={styles.title}>Licence Management</Text>
-          <Text style={styles.subtitle}>Track critical expiry dates and prevent unsafe guard assignment.</Text>
+          <Text style={styles.subtitle}>Track legal eligibility, document expiry, and verification before assignment.</Text>
         </View>
         <Pressable style={styles.secondaryButton} onPress={loadData}>
           <Text style={styles.secondaryButtonText}>{loading ? 'Loading...' : 'Refresh'}</Text>
@@ -162,9 +263,17 @@ export function CompanyComplianceWorkspace() {
       ) : null}
 
       <View style={styles.panel}>
+        <Text style={styles.panelTitle}>Filters</Text>
+        <View style={styles.formGrid}>
+          <WebSelect value={statusFilter} onChange={(value: string) => setStatusFilter(value as 'all' | GuardComplianceStatus)} options={FILTERS} />
+          <WebSelect value={selectedGuardId} onChange={setSelectedGuardId} options={guardOptions} />
+        </View>
+      </View>
+
+      <View style={styles.panel}>
         <Text style={styles.panelTitle}>Add / Update Compliance Record</Text>
         <View style={styles.formGrid}>
-          <WebSelect value={form.guardId} onChange={(value: string) => updateForm({ guardId: value })} options={guardOptions} />
+          <WebSelect value={form.guardId || selectedGuardId} onChange={(value: string) => updateForm({ guardId: value })} options={guardOptions} />
           <WebSelect value={form.type} onChange={(value: string) => updateForm({ type: value as ComplianceRecordType })} options={TYPES.map((type) => ({ value: type, label: typeLabel(type) }))} />
           <TextInput style={styles.input} value={form.documentName} onChangeText={(value: string) => updateForm({ documentName: value })} placeholder="Document name" />
           <TextInput style={styles.input} value={form.documentNumber} onChangeText={(value: string) => updateForm({ documentNumber: value })} placeholder="Document number optional" />
@@ -177,32 +286,48 @@ export function CompanyComplianceWorkspace() {
       </View>
 
       <View style={styles.panel}>
-        <Text style={styles.panelTitle}>Guard Compliance Overview</Text>
-        {companyGuards.length === 0 ? <Text style={styles.helperText}>No linked guards yet.</Text> : null}
-        {companyGuards.filter((item) => item.guard).map((item) => {
-          const guard = item.guard!;
-          const sia = getRecord(records, guard.id, 'SIA');
-          const rightToWork = getRecord(records, guard.id, 'RIGHT_TO_WORK');
-          const training = getRecord(records, guard.id, 'TRAINING');
-          return (
-            <View key={guard.id} style={styles.guardRow}>
-              <View style={styles.guardCopy}>
-                <Text style={styles.guardName}>{guard.fullName}</Text>
-                <Text style={styles.helperText}>{guard.siaLicenseNumber || 'No SIA number on profile'}</Text>
-              </View>
-              {[
-                ['SIA', sia],
-                ['Right to work', rightToWork],
-                ['Training', training],
-              ].map(([label, record]) => (
-                <View key={String(label)} style={[styles.statusPill, getRecordTone(record as ComplianceRecord | null)]}>
-                  <Text style={styles.statusText}>{label}</Text>
-                  <Text style={styles.statusText}>{record ? `${formatDate((record as ComplianceRecord).expiryDate)} / ${(record as ComplianceRecord).status}` : 'Missing'}</Text>
-                </View>
-              ))}
+        <Text style={styles.panelTitle}>Guard Compliance List</Text>
+        {summaries.length === 0 ? <Text style={styles.helperText}>No linked guards match the current filter.</Text> : null}
+        {summaries.map((summary) => (
+          <Pressable
+            key={summary.guardId}
+            style={[styles.guardRow, selectedGuardId === String(summary.guardId) && styles.guardRowActive]}
+            onPress={() => setSelectedGuardId(String(summary.guardId))}
+          >
+            <View style={styles.guardCopy}>
+              <Text style={styles.guardName}>{summary.fullName}</Text>
+              <Text style={styles.helperText}>
+                SIA: {summary.siaLicenceNumber || 'Missing'} | Expires: {formatDate(summary.siaExpiryDate)}
+              </Text>
+              <Text style={styles.helperText}>
+                Right to work: {summary.rightToWorkStatus || 'Missing'} | Expires: {formatDate(summary.rightToWorkExpiryDate)}
+              </Text>
+              {summary.blockingReasons.length ? (
+                <Text style={styles.blockingText}>{summary.blockingReasons[0]}</Text>
+              ) : summary.expiringReasons.length ? (
+                <Text style={styles.expiringText}>{summary.expiringReasons[0]}</Text>
+              ) : null}
             </View>
-          );
-        })}
+            <View style={[styles.statusPill, getStatusTone(summary.complianceStatus)]}>
+              <Text style={styles.statusText}>{summary.complianceStatus}</Text>
+            </View>
+          </Pressable>
+        ))}
+      </View>
+
+      <View style={styles.panel}>
+        <Text style={styles.panelTitle}>Selected Guard Documents</Text>
+        {selectedSummary ? (
+          <>
+            <Text style={styles.guardName}>{selectedSummary.fullName}</Text>
+            {selectedSummary.missingDocuments.length ? (
+              <Text style={styles.blockingText}>Missing: {selectedSummary.missingDocuments.join(', ')}</Text>
+            ) : null}
+            <GuardDocumentsList documents={documents} onVerify={toggleVerify} verifyingId={verifyingId} />
+          </>
+        ) : (
+          <Text style={styles.helperText}>Choose a guard to review documents and verification status.</Text>
+        )}
       </View>
     </View>
   );
@@ -236,6 +361,8 @@ const styles = StyleSheet.create({
   panel: { backgroundColor: '#ffffff', borderRadius: 22, padding: 18, borderColor: '#dbe4ef', borderWidth: 1, gap: 14 },
   panelTitle: { color: '#0f172a', fontSize: 18, fontWeight: '800' },
   helperText: { color: '#64748b', fontSize: 13, lineHeight: 19 },
+  blockingText: { color: '#B91C1C', fontWeight: '700' },
+  expiringText: { color: '#B45309', fontWeight: '700' },
   formGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   input: {
     minWidth: 190,
@@ -265,14 +392,24 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 12,
     alignItems: 'center',
-    flexWrap: 'wrap',
   },
-  guardCopy: { flex: 1, minWidth: 180 },
+  guardRowActive: {
+    borderColor: '#0f766e',
+    backgroundColor: '#f0fdfa',
+  },
+  guardCopy: { flex: 1, gap: 4 },
   guardName: { color: '#0f172a', fontWeight: '800' },
-  statusPill: { borderRadius: 14, padding: 10, borderWidth: 1, minWidth: 145, gap: 3 },
+  statusPill: { borderRadius: 14, padding: 10, borderWidth: 1, minWidth: 110, gap: 3, alignItems: 'center' },
   statusValid: { backgroundColor: '#ecfdf5', borderColor: '#bbf7d0' },
   statusExpiring: { backgroundColor: '#fffbeb', borderColor: '#fde68a' },
   statusExpired: { backgroundColor: '#fef2f2', borderColor: '#fecaca' },
+  statusInvalid: { backgroundColor: '#fee2e2', borderColor: '#fca5a5' },
   statusMissing: { backgroundColor: '#f8fafc', borderColor: '#cbd5e1' },
-  statusText: { color: '#0f172a', fontSize: 12, fontWeight: '800' },
+  statusText: { color: '#0f172a', fontSize: 12, fontWeight: '800', textTransform: 'capitalize' },
+  documentList: { gap: 10 },
+  documentRow: { borderColor: '#e2e8f0', borderWidth: 1, borderRadius: 16, padding: 14, flexDirection: 'row', gap: 12, alignItems: 'center' },
+  documentTitle: { color: '#0f172a', fontWeight: '800', textTransform: 'capitalize' },
+  documentUrl: { color: '#2563EB', fontSize: 12, marginTop: 4 },
+  documentActions: { gap: 8, alignItems: 'flex-end' },
+  flexGrow: { flex: 1 },
 });

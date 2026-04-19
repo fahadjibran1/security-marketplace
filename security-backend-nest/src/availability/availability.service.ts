@@ -113,7 +113,7 @@ export class AvailabilityService {
     if (hasShiftClash) reasons.push('Guard already has an overlapping shift.');
     const blockers = await this.complianceService.getBlockingRecords(input.companyId, input.guardId);
     const complianceValid = blockers.length === 0;
-    if (!complianceValid) reasons.push(`Compliance invalid: ${blockers[0].type} expired.`);
+    if (!complianceValid) reasons.push(`Compliance invalid: ${blockers[0]}`);
     const availabilityStatus = await this.getAvailabilityStatus(input.companyId, input.guardId, input.startAt, input.endAt);
     if (availabilityStatus === 'unavailable') reasons.push('Guard is marked unavailable for this time.');
     if (availabilityStatus === 'no_rule') reasons.push('No availability rule found for this time.');
