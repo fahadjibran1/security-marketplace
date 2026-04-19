@@ -5,6 +5,7 @@ import { AuditLog } from '../audit-log/entities/audit-log.entity';
 import { GuardAvailabilityOverride } from '../availability/entities/guard-availability-override.entity';
 import { GuardAvailabilityRule } from '../availability/entities/guard-availability-rule.entity';
 import { Client } from '../client/entities/client.entity';
+import { ClientPortalUser } from '../client-portal-user/entities/client-portal-user.entity';
 import { Company } from '../company/entities/company.entity';
 import { CompanyGuard } from '../company-guard/entities/company-guard.entity';
 import { ComplianceRecord } from '../compliance/entities/compliance-record.entity';
@@ -35,6 +36,7 @@ export const appEntities = [
   GuardAvailabilityOverride,
   GuardAvailabilityRule,
   Client,
+  ClientPortalUser,
   Company,
   CompanyGuard,
   ComplianceRecord,

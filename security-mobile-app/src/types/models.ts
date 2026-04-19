@@ -1,4 +1,4 @@
-export type AppRole = 'admin' | 'company' | 'company_admin' | 'company_staff' | 'guard';
+export type AppRole = 'admin' | 'company' | 'company_admin' | 'company_staff' | 'guard' | 'client_admin' | 'client_viewer';
 export type TimesheetApprovalStatus = 'draft' | 'submitted' | 'approved' | 'rejected' | 'returned';
 export type TimesheetPayrollStatus = 'unpaid' | 'included' | 'paid';
 export type PayrollBatchStatus = 'draft' | 'finalised' | 'paid';
@@ -15,6 +15,10 @@ export function isCompanyAppRole(role?: AppRole | null): boolean {
   return role === 'company' || role === 'company_admin' || role === 'company_staff';
 }
 
+export function isClientAppRole(role?: AppRole | null): boolean {
+  return role === 'client_admin' || role === 'client_viewer';
+}
+
 export interface AuthUser {
   id: number;
   email: string;
@@ -22,6 +26,7 @@ export interface AuthUser {
   status?: string;
   companyId?: number;
   guardId?: number;
+  clientId?: number;
 }
 
 export interface AuthSession {
@@ -481,6 +486,79 @@ export interface InvoiceBatch {
   createdByUserId?: number | null;
   totals: InvoiceBatchTotals;
   timesheets?: Timesheet[];
+}
+
+export interface ClientPortalDashboard {
+  client: {
+    id: number;
+    name: string;
+    contactName?: string | null;
+    contactEmail?: string | null;
+    contactPhone?: string | null;
+  };
+  activeSites: number;
+  recentIncidents: ClientPortalIncident[];
+  approvedHoursThisPeriod: number;
+  invoicesSummary: {
+    total: number;
+    outstanding: number;
+    issued: number;
+  };
+  welfareSummary: ClientPortalWelfareRow[];
+}
+
+export interface ClientPortalSite {
+  id: number;
+  name: string;
+  address: string;
+  status: string;
+  requiredGuardCount: number;
+  welfareCheckIntervalMinutes: number;
+  recentIncidents: number;
+  openIncidents: number;
+  upcomingShifts: number;
+}
+
+export interface ClientPortalServiceRecord {
+  id: number;
+  siteId?: number | null;
+  siteName: string;
+  shiftDate: string;
+  periodKey: string;
+  approvedHours: number;
+  status: 'approved' | string;
+}
+
+export interface ClientPortalIncident {
+  id: number;
+  title: string;
+  summary: string;
+  category: string;
+  severity: string;
+  status: string;
+  siteName: string;
+  reportedAt: string;
+}
+
+export interface ClientPortalWelfareRow {
+  shiftId: number;
+  site: string;
+  period: string;
+  expectedCheckCalls: number;
+  completedCheckCalls: number;
+  missedCheckCalls: number;
+  complianceRate: number;
+  welfareAlerts: number;
+}
+
+export interface ClientPortalInvoiceSummary {
+  id: number;
+  invoiceNumber: string;
+  issueDate: string;
+  dueDate?: string | null;
+  amount: number;
+  currency: string;
+  status: string;
 }
 
 export interface CreateInvoiceBatchPayload {

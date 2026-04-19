@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { formatApiErrorMessage, login, register } from '../services/api';
+import { clientLogin, formatApiErrorMessage, login, register } from '../services/api';
 import { AuthSession, AppRole } from '../types/models';
 
 interface AuthScreenProps {
@@ -11,11 +11,13 @@ interface AuthScreenProps {
 
 type AuthMode = 'login' | 'register';
 type RegistrationRole = 'company' | 'guard';
+type LoginRole = 'company' | 'guard' | 'client';
 
 export function AuthScreen({ onLoggedIn, noticeMessage, onDismissNotice }: AuthScreenProps) {
   const width = typeof window !== 'undefined' ? window.innerWidth : 0;
   const [mode, setMode] = useState<AuthMode>('login');
   const [role, setRole] = useState<RegistrationRole>('company');
+  const [loginRole, setLoginRole] = useState<LoginRole>('company');
   const [email, setEmail] = useState('admin@sentinel.com');
   const [password, setPassword] = useState('pass1234');
   const [fullName, setFullName] = useState('');
@@ -37,7 +39,9 @@ export function AuthScreen({ onLoggedIn, noticeMessage, onDismissNotice }: AuthS
 
       const session =
         mode === 'login'
-          ? await login(email, password)
+          ? loginRole === 'client'
+            ? await clientLogin(email, password)
+            : await login(email, password)
           : await register({
               email,
               password,
@@ -117,7 +121,22 @@ export function AuthScreen({ onLoggedIn, noticeMessage, onDismissNotice }: AuthS
           </View>
 
           {mode === 'login' ? (
-            <Text style={styles.helperText}>Demo credentials still work while we finish the full onboarding experience.</Text>
+            <>
+              <Text style={styles.helperText}>Choose the portal you want to sign in to.</Text>
+              <View style={styles.roleRow}>
+                {(['company', 'guard', 'client'] as LoginRole[]).map((value) => (
+                  <Pressable
+                    key={value}
+                    style={[styles.roleButton, loginRole === value && styles.roleButtonActive]}
+                    onPress={() => setLoginRole(value)}
+                  >
+                    <Text style={[styles.roleButtonText, loginRole === value && styles.roleButtonTextActive]}>
+                      {value === 'company' ? 'Company' : value === 'guard' ? 'Guard' : 'Client'}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            </>
           ) : (
             <View style={styles.roleRow}>
               <Pressable

@@ -14,7 +14,9 @@ export enum UserRole {
   COMPANY_ADMIN = 'company_admin',
   COMPANY_STAFF = 'company_staff',
   COMPANY = 'company',
-  GUARD = 'guard'
+  GUARD = 'guard',
+  CLIENT_ADMIN = 'client_admin',
+  CLIENT_VIEWER = 'client_viewer',
 }
 
 export enum UserStatus {
@@ -30,6 +32,8 @@ export const COMPANY_VIEW_ROLES = [
   UserRole.COMPANY_ADMIN,
   UserRole.COMPANY_STAFF,
 ] as const;
+
+export const CLIENT_PORTAL_ROLES = [UserRole.CLIENT_ADMIN, UserRole.CLIENT_VIEWER] as const;
 
 export function isCompanyRole(role?: UserRole | null): boolean {
   return !!role && (COMPANY_VIEW_ROLES as readonly UserRole[]).includes(role);

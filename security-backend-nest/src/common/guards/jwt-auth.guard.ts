@@ -32,7 +32,11 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       ]) ?? [UserStatus.ACTIVE];
 
     const requestUser = user as unknown as JwtPayload;
-    if (!allowedStatuses.includes(requestUser.status)) {
+    if (requestUser.principalType === 'client_portal') {
+      return user;
+    }
+
+    if (!allowedStatuses.includes(requestUser.status as UserStatus)) {
       throw new ForbiddenException(`Account status ${requestUser.status} is not allowed`);
     }
 

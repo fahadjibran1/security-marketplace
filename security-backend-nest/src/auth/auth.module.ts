@@ -8,6 +8,8 @@ import { UserModule } from '../user/user.module';
 import { JwtStrategy } from './jwt.strategy';
 import { CompanyModule } from '../company/company.module';
 import { GuardProfileModule } from '../guard-profile/guard-profile.module';
+import { ClientPortalUserModule } from '../client-portal-user/client-portal-user.module';
+import { AuditLogModule } from '../audit-log/audit-log.module';
 
 @Module({
   imports: [
@@ -15,6 +17,8 @@ import { GuardProfileModule } from '../guard-profile/guard-profile.module';
     UserModule,
     CompanyModule,
     GuardProfileModule,
+    ClientPortalUserModule,
+    AuditLogModule,
     PassportModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],

@@ -9,6 +9,8 @@ import { CompanyService } from '../company/company.service';
 import { GuardProfileService } from '../guard-profile/guard-profile.service';
 import { CompanyStatus } from '../company/entities/company.entity';
 import { GuardApprovalStatus } from '../guard-profile/entities/guard-profile.entity';
+import { ClientPortalUserService } from '../client-portal-user/client-portal-user.service';
+import { AuditLogService } from '../audit-log/audit-log.service';
 
 @Injectable()
 export class AuthService {
@@ -16,7 +18,9 @@ export class AuthService {
     private readonly usersService: UserService,
     private readonly jwtService: JwtService,
     private readonly companyService: CompanyService,
-    private readonly guardProfileService: GuardProfileService
+    private readonly guardProfileService: GuardProfileService,
+    private readonly clientPortalUserService: ClientPortalUserService,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   async register(dto: RegisterDto) {
@@ -78,13 +82,40 @@ export class AuthService {
     return this.signToken(user.id, user.email, user.role, user.status);
   }
 
+  async clientLogin(dto: LoginDto) {
+    const clientUser = await this.clientPortalUserService.findByEmail(dto.email);
+    if (!clientUser) throw new UnauthorizedException('Invalid credentials');
+
+    const valid = await bcrypt.compare(dto.password, clientUser.passwordHash);
+    if (!valid) throw new UnauthorizedException('Invalid credentials');
+    if (!clientUser.isActive) {
+      throw new ForbiddenException('Client portal access is disabled for this account');
+    }
+
+    await this.clientPortalUserService.updateLastLogin(clientUser.id);
+    await this.auditLogService.log({
+      company: { id: clientUser.client.company.id },
+      user: null,
+      action: 'client_portal_user.login',
+      entityType: 'client_portal_user',
+      entityId: clientUser.id,
+      afterData: {
+        clientId: clientUser.client.id,
+        email: clientUser.email,
+        role: clientUser.role,
+      },
+    });
+
+    return this.signClientToken(clientUser.id, clientUser.email, clientUser.role, clientUser.client.id);
+  }
+
   private async signToken(userId: number, email: string, role: UserRole, status: UserStatus) {
     const companyProfile =
       isCompanyRole(role) ? await this.companyService.findByUserId(userId) : null;
     const guardProfile =
       role === UserRole.GUARD ? await this.guardProfileService.findByUserId(userId) : null;
 
-    const payload = { sub: userId, email, role, status };
+    const payload = { sub: userId, email, role, status, principalType: 'user' as const };
     return {
       accessToken: this.jwtService.sign(payload),
       user: {
@@ -95,6 +126,32 @@ export class AuthService {
         companyId: companyProfile?.id,
         guardId: guardProfile?.id,
       }
+    };
+  }
+
+  private signClientToken(
+    clientPortalUserId: number,
+    email: string,
+    role: UserRole.CLIENT_ADMIN | UserRole.CLIENT_VIEWER,
+    clientId: number,
+  ) {
+    const payload = {
+      sub: clientPortalUserId,
+      email,
+      role,
+      status: 'active' as const,
+      principalType: 'client_portal' as const,
+      clientId,
+    };
+    return {
+      accessToken: this.jwtService.sign(payload),
+      user: {
+        id: clientPortalUserId,
+        email,
+        role,
+        status: 'active',
+        clientId,
+      },
     };
   }
 }

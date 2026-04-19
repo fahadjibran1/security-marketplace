@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 import { SafeAreaView, StatusBar, StyleSheet, View, Pressable, Text } from 'react-native';
 import { CompanyDashboardScreen } from './src/screens/CompanyDashboardScreen';
+import { ClientPortalScreen } from './src/screens/ClientPortalScreen';
 import { GuardDashboardScreen } from './src/screens/GuardDashboardScreen';
 import { AuthScreen } from './src/screens/AuthScreen';
 import { logout, restoreSession, setUnauthorizedHandler } from './src/services/api';
 import { clearStoredSession, loadStoredSession, persistSession } from './src/services/session';
-import { AuthSession, isCompanyAppRole } from './src/types/models';
+import { AuthSession, isClientAppRole, isCompanyAppRole } from './src/types/models';
 
 export default function App() {
   const [session, setSession] = useState<AuthSession | null>(null);
@@ -96,13 +97,15 @@ export default function App() {
       <StatusBar barStyle="dark-content" />
       <View style={styles.screenContainer}>
         <View style={styles.topBar}>
-          <Text style={styles.topBarText}>{isCompanyAppRole(session.user.role) ? 'Company View' : 'Guard View'}</Text>
+          <Text style={styles.topBarText}>{isCompanyAppRole(session.user.role) ? 'Company View' : isClientAppRole(session.user.role) ? 'Client Portal' : 'Guard View'}</Text>
           <Pressable onPress={handleLogout}>
             <Text style={styles.switchText}>Logout</Text>
           </Pressable>
         </View>
         {isCompanyAppRole(session.user.role) ? (
           <CompanyDashboardScreen user={session.user} />
+        ) : isClientAppRole(session.user.role) ? (
+          <ClientPortalScreen user={session.user} />
         ) : (
           <GuardDashboardScreen user={session.user} />
         )}

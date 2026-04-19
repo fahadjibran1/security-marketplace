@@ -317,6 +317,53 @@ export class InvoiceBatchService {
     };
   }
 
+  async getDocumentForClient(clientId: number, id: number) {
+    const batch = await this.invoiceBatchRepo.findOne({
+      where: { id, client: { id: clientId } },
+      relations: { timesheets: true },
+    });
+
+    if (!batch) {
+      throw new NotFoundException('Invoice batch not found');
+    }
+
+    await this.hydrateBatchFinancials(batch);
+    const totals = this.calculateDocumentTotals(batch);
+    const lineItems = this.buildDocumentLineItems(batch);
+    const invoiceNumber = batch.invoiceNumber ?? this.previewInvoiceNumber(batch);
+    const issueDate = batch.issuedAt ?? batch.finalisedAt ?? new Date();
+    const dueDate = batch.dueDate ?? this.calculateDueDate(issueDate, batch.paymentTermsDays ?? 30);
+
+    return {
+      id: batch.id,
+      status: batch.status,
+      invoiceNumber,
+      invoiceReference: batch.invoiceReference ?? null,
+      issueDate,
+      dueDate,
+      periodStart: batch.periodStart,
+      periodEnd: batch.periodEnd,
+      currency: batch.currency ?? 'GBP',
+      paymentTermsDays: batch.paymentTermsDays ?? 30,
+      vatRate: Number(batch.vatRate ?? 20),
+      notes: batch.notes ?? null,
+      company: {
+        name: batch.companyNameSnapshot || batch.company?.name || 'Company',
+        address: batch.companyAddressSnapshot || batch.company?.address || '',
+        contactDetails: batch.company?.contactDetails || '',
+      },
+      client: {
+        name: batch.clientNameSnapshot || batch.client?.name || 'Client',
+        billingAddress: batch.billingAddressSnapshot || batch.client?.contactDetails || '',
+        contactName: batch.client?.contactName ?? null,
+        contactEmail: batch.client?.contactEmail ?? null,
+        contactPhone: batch.client?.contactPhone ?? null,
+      },
+      lineItems,
+      totals,
+    };
+  }
+
   async payForCompany(userId: number, id: number) {
     const company = await this.companyService.findByUserId(userId);
     if (!company) throw new NotFoundException('Company not found');

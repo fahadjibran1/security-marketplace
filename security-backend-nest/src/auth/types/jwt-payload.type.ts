@@ -4,5 +4,7 @@ export interface JwtPayload {
   sub: number;
   email: string;
   role: UserRole;
-  status: UserStatus;
+  status: UserStatus | 'active';
+  principalType?: 'user' | 'client_portal';
+  clientId?: number;
 }

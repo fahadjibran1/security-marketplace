@@ -16,6 +16,12 @@ import {
   ContractPricingRulePayload,
   CompanyProfile,
   Client,
+  ClientPortalDashboard,
+  ClientPortalIncident,
+  ClientPortalInvoiceSummary,
+  ClientPortalServiceRecord,
+  ClientPortalSite,
+  ClientPortalWelfareRow,
   CreateInvoiceBatchPayload,
   CreatePayrollBatchPayload,
   CreateClientPayload,
@@ -238,6 +244,17 @@ export function formatApiErrorMessage(error: unknown, fallbackMessage: string) {
 
 export async function login(email: string, password: string) {
   const session = await request<AuthSession>('/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ email, password }),
+  });
+
+  const normalizedSession = normalizeSession(session);
+  accessToken = normalizedSession.accessToken;
+  return normalizedSession;
+}
+
+export async function clientLogin(email: string, password: string) {
+  const session = await request<AuthSession>('/auth/client-login', {
     method: 'POST',
     body: JSON.stringify({ email, password }),
   });
@@ -671,6 +688,67 @@ export function getSiteRiskReport(filters: { startDate?: string; endDate?: strin
   if (filters.guardId) query.set('guardId', String(filters.guardId));
   const suffix = query.toString() ? `?${query.toString()}` : '';
   return request<SiteRiskReport>(`/reports/sites-risk${suffix}`);
+}
+
+export function getClientPortalDashboard() {
+  return request<ClientPortalDashboard>('/client-portal/dashboard');
+}
+
+export function listClientPortalSites() {
+  return request<ClientPortalSite[]>('/client-portal/sites');
+}
+
+export function listClientPortalServiceRecords(filters: { startDate?: string; endDate?: string; siteId?: number } = {}) {
+  const query = new URLSearchParams();
+  if (filters.startDate) query.set('startDate', filters.startDate);
+  if (filters.endDate) query.set('endDate', filters.endDate);
+  if (filters.siteId) query.set('siteId', String(filters.siteId));
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return request<ClientPortalServiceRecord[]>(`/client-portal/service-records${suffix}`);
+}
+
+export function listClientPortalIncidents(filters: { startDate?: string; endDate?: string; siteId?: number } = {}) {
+  const query = new URLSearchParams();
+  if (filters.startDate) query.set('startDate', filters.startDate);
+  if (filters.endDate) query.set('endDate', filters.endDate);
+  if (filters.siteId) query.set('siteId', String(filters.siteId));
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return request<ClientPortalIncident[]>(`/client-portal/incidents${suffix}`);
+}
+
+export function listClientPortalInvoices() {
+  return request<ClientPortalInvoiceSummary[]>('/client-portal/invoices');
+}
+
+export function getClientPortalInvoiceDocument(id: number) {
+  return request<InvoiceDocument>(`/client-portal/invoices/${id}/document`);
+}
+
+export function getClientPortalServiceHoursReport(filters: { startDate?: string; endDate?: string; siteId?: number } = {}) {
+  const query = new URLSearchParams();
+  if (filters.startDate) query.set('startDate', filters.startDate);
+  if (filters.endDate) query.set('endDate', filters.endDate);
+  if (filters.siteId) query.set('siteId', String(filters.siteId));
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return request<Array<{ site: string; period: string; approvedHours: number }>>(`/client-portal/reports/service-hours${suffix}`);
+}
+
+export function getClientPortalIncidentReport(filters: { startDate?: string; endDate?: string; siteId?: number } = {}) {
+  const query = new URLSearchParams();
+  if (filters.startDate) query.set('startDate', filters.startDate);
+  if (filters.endDate) query.set('endDate', filters.endDate);
+  if (filters.siteId) query.set('siteId', String(filters.siteId));
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return request<ClientPortalIncident[]>(`/client-portal/reports/incidents${suffix}`);
+}
+
+export function getClientPortalWelfareReport(filters: { startDate?: string; endDate?: string; siteId?: number } = {}) {
+  const query = new URLSearchParams();
+  if (filters.startDate) query.set('startDate', filters.startDate);
+  if (filters.endDate) query.set('endDate', filters.endDate);
+  if (filters.siteId) query.set('siteId', String(filters.siteId));
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return request<ClientPortalWelfareRow[]>(`/client-portal/reports/welfare${suffix}`);
 }
 
 export function listMyAttendance() {
