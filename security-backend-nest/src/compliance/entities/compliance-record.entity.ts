@@ -46,7 +46,7 @@ export class ComplianceRecord {
   @Column()
   documentName!: string;
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   documentNumber?: string | null;
 
   @Column({ type: 'date', nullable: true })
