@@ -18,8 +18,8 @@ export function AuthScreen({ onLoggedIn, noticeMessage, onDismissNotice }: AuthS
   const [mode, setMode] = useState<AuthMode>('login');
   const [role, setRole] = useState<RegistrationRole>('company');
   const [loginRole, setLoginRole] = useState<LoginRole>('company');
-  const [email, setEmail] = useState('admin@sentinel.com');
-  const [password, setPassword] = useState('pass1234');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
   const [siaLicenseNumber, setSiaLicenseNumber] = useState('');
   const [phone, setPhone] = useState('');
