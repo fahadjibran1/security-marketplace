@@ -46,6 +46,18 @@ export class Company {
   @Column()
   contactDetails!: string;
 
+  @Column({ default: false })
+  autoCreatePayrollBatch!: boolean;
+
+  @Column({ default: false })
+  autoCreateInvoiceBatch!: boolean;
+
+  @Column({ default: false })
+  autoFinalisePayrollBatch!: boolean;
+
+  @Column({ default: false })
+  autoIssueInvoiceBatch!: boolean;
+
   @Column({
     type: 'enum',
     enum: CompanyStatus,

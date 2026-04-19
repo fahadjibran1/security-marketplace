@@ -8,10 +8,11 @@ import {
   getCompanyInvoiceBatch,
   getCompanyInvoiceBatchDocument,
   issueCompanyInvoiceBatch,
+  listInvoiceSuggestions,
   listCompanyInvoiceBatches,
   payCompanyInvoiceBatch,
 } from '../../services/api';
-import { Client, InvoiceBatch, InvoiceBatchStatus, InvoiceDocument, Timesheet, TimesheetBillingStatus } from '../../types/models';
+import { Client, InvoiceBatch, InvoiceBatchStatus, InvoiceDocument, InvoiceSuggestion, Timesheet, TimesheetBillingStatus } from '../../types/models';
 
 type PeriodView = 'week' | 'month';
 type BillingFilter = 'all' | TimesheetBillingStatus;
@@ -462,6 +463,7 @@ export function CompanyInvoiceWorkspace({ timesheets, refreshing, onRefresh }: C
   const [selectedBatchId, setSelectedBatchId] = React.useState<number | null>(null);
   const [selectedBatch, setSelectedBatch] = React.useState<InvoiceBatch | null>(null);
   const [selectedDocument, setSelectedDocument] = React.useState<InvoiceDocument | null>(null);
+  const [invoiceSuggestions, setInvoiceSuggestions] = React.useState<InvoiceSuggestion[]>([]);
   const [loadingBatches, setLoadingBatches] = React.useState(false);
   const [loadingDocument, setLoadingDocument] = React.useState(false);
 
@@ -566,6 +568,18 @@ export function CompanyInvoiceWorkspace({ timesheets, refreshing, onRefresh }: C
   const refreshAll = React.useCallback(async (preferredBatchId?: number | null) => {
     await Promise.all([Promise.resolve(onRefresh?.()), loadBatches(preferredBatchId)]);
   }, [loadBatches, onRefresh]);
+
+  const loadSuggestions = React.useCallback(async () => {
+    try {
+      setInvoiceSuggestions(await listInvoiceSuggestions());
+    } catch (error) {
+      setFeedback({ tone: 'error', message: formatApiErrorMessage(error, 'Unable to load invoice suggestions.') });
+    }
+  }, []);
+
+  React.useEffect(() => {
+    loadSuggestions();
+  }, [loadSuggestions]);
 
   const toggleSelected = React.useCallback((entry: InvoiceEntry) => {
     if (!entry.selectable) return;
@@ -720,12 +734,38 @@ export function CompanyInvoiceWorkspace({ timesheets, refreshing, onRefresh }: C
       setBatchNotes('');
       setFeedback({ tone: 'success', message: `Invoice batch #${batch.id} created as a draft.` });
       await refreshAll(batch.id);
+      await loadSuggestions();
     } catch (error) {
       setFeedback({ tone: 'error', message: formatApiErrorMessage(error, 'Unable to create invoice batch.') });
     } finally {
       setBatchAction(false);
     }
-  }, [batchNotes, batchPeriodEnd, batchPeriodStart, invoiceReference, refreshAll, selectedClientId, selectedClientMismatch, selectedEntries.length, selectedIds]);
+  }, [batchNotes, batchPeriodEnd, batchPeriodStart, invoiceReference, loadSuggestions, refreshAll, selectedClientId, selectedClientMismatch, selectedEntries.length, selectedIds]);
+
+  const createBatchFromSuggestion = React.useCallback(async (suggestion: InvoiceSuggestion) => {
+    setBatchAction(true);
+    try {
+      const batch = await createCompanyInvoiceBatch({
+        clientId: suggestion.clientId,
+        periodStart: suggestion.periodStart,
+        periodEnd: suggestion.periodEnd,
+        invoiceReference: null,
+        notes: 'Created from suggested invoice batch.',
+        timesheetIds: suggestion.timesheetIds,
+      });
+      setSelectedIds([]);
+      setFeedback({
+        tone: 'success',
+        message: `Invoice batch #${batch.id} created from ${suggestion.timesheetIds.length} suggested row(s).`,
+      });
+      await refreshAll(batch.id);
+      await loadSuggestions();
+    } catch (error) {
+      setFeedback({ tone: 'error', message: formatApiErrorMessage(error, 'Unable to create invoice batch from suggestion.') });
+    } finally {
+      setBatchAction(false);
+    }
+  }, [loadSuggestions, refreshAll]);
 
   const runBatchAction = React.useCallback(async (action: 'finalise' | 'issue' | 'pay') => {
     if (!selectedBatch) return;
@@ -816,6 +856,39 @@ export function CompanyInvoiceWorkspace({ timesheets, refreshing, onRefresh }: C
         <MetricCard label="Included" value={String(totals.included)} />
         <MetricCard label="Invoiced" value={String(totals.invoiced)} />
         <MetricCard label="Missing Rate" value={String(totals.missingRate)} />
+      </View>
+
+      <View style={styles.panel}>
+        <View style={styles.panelHeader}>
+          <View>
+            <Text style={styles.panelTitle}>Suggested Invoice Batches</Text>
+            <Text style={styles.helperText}>Safe draft suggestions from approved, uninvoiced rows. Nothing is issued or paid automatically.</Text>
+          </View>
+          <Pressable style={styles.secondaryButton} onPress={loadSuggestions}>
+            <Text style={styles.secondaryButtonText}>Refresh Suggestions</Text>
+          </Pressable>
+        </View>
+        {invoiceSuggestions.length === 0 ? (
+          <Text style={styles.helperText}>No invoice suggestions right now.</Text>
+        ) : (
+          invoiceSuggestions.map((suggestion) => (
+            <View key={`${suggestion.clientId}-${suggestion.periodStart}-${suggestion.periodEnd}`} style={styles.suggestionRow}>
+              <View style={styles.suggestionCopy}>
+                <Text style={styles.suggestionTitle}>{suggestion.clientName}</Text>
+                <Text style={styles.helperText}>
+                  {formatDateLabel(suggestion.periodStart)} - {formatDateLabel(suggestion.periodEnd)} | {suggestion.timesheetIds.length} row(s) | {formatNumber(suggestion.totalHours)} hrs | Revenue {formatMoney(suggestion.totalRevenue)}
+                </Text>
+              </View>
+              <Pressable
+                style={[styles.primaryButton, batchAction && styles.disabledButton]}
+                onPress={() => createBatchFromSuggestion(suggestion)}
+                disabled={batchAction}
+              >
+                <Text style={styles.primaryButtonText}>{batchAction ? 'Working...' : 'Create Draft Batch'}</Text>
+              </Pressable>
+            </View>
+          ))
+        )}
       </View>
 
       <View style={styles.panel}>
@@ -1307,6 +1380,25 @@ const styles = StyleSheet.create({
     color: '#64748b',
     fontSize: 13,
     lineHeight: 19,
+  },
+  suggestionRow: {
+    borderColor: '#e2e8f0',
+    borderWidth: 1,
+    borderRadius: 16,
+    padding: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    backgroundColor: '#f8fafc',
+  },
+  suggestionCopy: {
+    flex: 1,
+    gap: 4,
+  },
+  suggestionTitle: {
+    color: '#0f172a',
+    fontWeight: '800',
   },
   errorText: {
     color: '#b91c1c',

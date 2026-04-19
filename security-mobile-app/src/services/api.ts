@@ -24,11 +24,13 @@ import {
   JobApplication,
   InvoiceBatch,
   InvoiceDocument,
+  InvoiceSuggestion,
   MarginReport,
   ReviewJobApplicationPayload,
   DailyLog,
   Notification,
   PayrollBatch,
+  PayrollSuggestion,
   RegisterPayload,
   SafetyAlert,
   Site,
@@ -422,6 +424,10 @@ export function listCompanyPayrollBatches() {
   return request<PayrollBatch[]>('/payroll-batches/company');
 }
 
+export function listPayrollSuggestions() {
+  return request<PayrollSuggestion[]>('/payroll/suggestions');
+}
+
 export function getCompanyPayrollBatch(id: number) {
   return request<PayrollBatch>(`/payroll-batches/${id}`);
 }
@@ -447,6 +453,10 @@ export function createCompanyInvoiceBatch(payload: CreateInvoiceBatchPayload) {
 
 export function listCompanyInvoiceBatches() {
   return request<InvoiceBatch[]>('/invoice-batches/company');
+}
+
+export function listInvoiceSuggestions() {
+  return request<InvoiceSuggestion[]>('/invoices/suggestions');
 }
 
 export function getCompanyInvoiceBatch(id: number) {

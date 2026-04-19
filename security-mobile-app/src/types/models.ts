@@ -303,6 +303,28 @@ export interface CreateInvoiceBatchPayload {
   timesheetIds: number[];
 }
 
+export interface PayrollSuggestion {
+  companyId: number;
+  companyName: string;
+  periodStart: string;
+  periodEnd: string;
+  timesheetIds: number[];
+  totalHours: number;
+  totalCost: number;
+}
+
+export interface InvoiceSuggestion {
+  companyId: number;
+  companyName: string;
+  clientId: number;
+  clientName: string;
+  periodStart: string;
+  periodEnd: string;
+  timesheetIds: number[];
+  totalHours: number;
+  totalRevenue: number;
+}
+
 export interface InvoiceDocumentLineItem {
   timesheetId: number;
   site: string;

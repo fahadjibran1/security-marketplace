@@ -17,6 +17,9 @@ export enum NotificationType {
   TIMESHEET_SUBMITTED = 'timesheet_submitted',
   TIMESHEET_APPROVED = 'timesheet_approved',
   TIMESHEET_REJECTED = 'timesheet_rejected',
+  FINANCIAL_REMINDER = 'financial_reminder',
+  PAYROLL_SUGGESTION = 'payroll_suggestion',
+  INVOICE_SUGGESTION = 'invoice_suggestion',
   ALERT_RAISED = 'alert_raised',
 }
 

@@ -4,9 +4,10 @@ import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import {
   createCompanyPayrollBatch,
   formatApiErrorMessage,
+  listPayrollSuggestions,
   updateCompanyTimesheetPayroll,
 } from '../../services/api';
-import { PayrollBatchStatus, Timesheet, TimesheetPayrollStatus } from '../../types/models';
+import { PayrollBatchStatus, PayrollSuggestion, Timesheet, TimesheetPayrollStatus } from '../../types/models';
 
 type WorkspaceFeedback = {
   tone: 'success' | 'error' | 'info';
@@ -570,6 +571,7 @@ export function CompanyPayrollWorkspace({
   const [batchPeriodStart, setBatchPeriodStart] = React.useState('');
   const [batchPeriodEnd, setBatchPeriodEnd] = React.useState('');
   const [batchNotes, setBatchNotes] = React.useState('');
+  const [payrollSuggestions, setPayrollSuggestions] = React.useState<PayrollSuggestion[]>([]);
 
   const enrichedTimesheets = React.useMemo<EnrichedTimesheet[]>(() => {
     return timesheets
@@ -714,6 +716,18 @@ export function CompanyPayrollWorkspace({
       setSelectedTimesheetId(filteredTimesheets[0].timesheet.id);
     }
   }, [filteredTimesheets, selectedTimesheetId]);
+
+  const loadSuggestions = React.useCallback(async () => {
+    try {
+      setPayrollSuggestions(await listPayrollSuggestions());
+    } catch (error) {
+      setFeedback({ tone: 'error', title: 'Suggestions unavailable', message: formatApiErrorMessage(error, 'Unable to load payroll suggestions.') });
+    }
+  }, []);
+
+  React.useEffect(() => {
+    loadSuggestions();
+  }, [loadSuggestions]);
 
   const setGroupCollapsed = React.useCallback((groupKey: string) => {
     setCollapsedGroupKeys((current) => ({ ...current, [groupKey]: !current[groupKey] }));
@@ -887,6 +901,7 @@ export function CompanyPayrollWorkspace({
         timesheetIds: selectedIds,
       });
       await onRefresh();
+      await loadSuggestions();
       setSelectedIds([]);
       setBatchPeriodStart('');
       setBatchPeriodEnd('');
@@ -905,7 +920,30 @@ export function CompanyPayrollWorkspace({
     } finally {
       setBusyAction(null);
     }
-  }, [batchNotes, batchPeriodEnd, batchPeriodStart, onRefresh, selectedIds]);
+  }, [batchNotes, batchPeriodEnd, batchPeriodStart, loadSuggestions, onRefresh, selectedIds]);
+
+  const createBatchFromSuggestion = React.useCallback(async (suggestion: PayrollSuggestion) => {
+    try {
+      setBusyAction('batch');
+      const batch = await createCompanyPayrollBatch({
+        periodStart: suggestion.periodStart,
+        periodEnd: suggestion.periodEnd,
+        notes: 'Created from suggested payroll batch.',
+        timesheetIds: suggestion.timesheetIds,
+      });
+      await onRefresh();
+      await loadSuggestions();
+      setFeedback({
+        tone: 'success',
+        title: 'Suggested payroll batch created',
+        message: `Created draft payroll batch #${batch.id} from ${suggestion.timesheetIds.length} timesheet(s).`,
+      });
+    } catch (error) {
+      setFeedback({ tone: 'error', title: 'Suggestion failed', message: formatApiErrorMessage(error, 'Unable to create payroll batch from suggestion.') });
+    } finally {
+      setBusyAction(null);
+    }
+  }, [loadSuggestions, onRefresh]);
 
   const activeSelected = selectedTimesheet?.timesheet;
   const selectedApprovedHours = selectedTimesheet?.approvedHours ?? null;
@@ -1046,6 +1084,35 @@ export function CompanyPayrollWorkspace({
         <SummaryCard label="Approved Amount" value={formatCurrency(summary.approvedAmount)} />
         <SummaryCard label="Total Cost" value={formatCurrency(summary.costAmount)} />
         <SummaryCard label="Unpaid / Included / Paid" value={`${summary.unpaidCount} / ${summary.includedCount} / ${summary.paidCount}`} />
+      </View>
+
+      <View style={styles.bulkCard}>
+        <View style={styles.bulkHeader}>
+          <View>
+            <Text style={styles.bulkTitle}>Suggested Payroll Batches</Text>
+            <Text style={styles.bulkSubtitle}>Draft suggestions only. Nothing is finalised or paid automatically.</Text>
+          </View>
+          <Pressable style={styles.secondaryButton} onPress={loadSuggestions}>
+            <Text style={styles.secondaryButtonText}>Refresh Suggestions</Text>
+          </Pressable>
+        </View>
+        {payrollSuggestions.length === 0 ? (
+          <Text style={styles.batchBuilderCopy}>No suggested payroll batches right now.</Text>
+        ) : (
+          payrollSuggestions.map((suggestion) => (
+            <View key={`${suggestion.periodStart}-${suggestion.periodEnd}`} style={styles.suggestionRow}>
+              <View style={styles.suggestionCopy}>
+                <Text style={styles.suggestionTitle}>{formatDateLabel(suggestion.periodStart)} - {formatDateLabel(suggestion.periodEnd)}</Text>
+                <Text style={styles.batchBuilderCopy}>
+                  {suggestion.timesheetIds.length} timesheet(s) | {suggestion.totalHours.toFixed(2)} h | {formatCurrency(suggestion.totalCost)}
+                </Text>
+              </View>
+              <Pressable style={styles.primaryButton} onPress={() => createBatchFromSuggestion(suggestion)} disabled={Boolean(busyAction)}>
+                <Text style={styles.primaryButtonText}>Create Draft Batch</Text>
+              </Pressable>
+            </View>
+          ))
+        )}
       </View>
 
       <View style={styles.reviewLayout}>
@@ -1253,8 +1320,13 @@ const styles = StyleSheet.create({
   input: { minHeight: 48, borderRadius: 14, borderWidth: 1, borderColor: '#d6dce5', backgroundColor: '#ffffff', paddingHorizontal: 14, paddingVertical: 12, color: '#132238', minWidth: 180 },
   webSelect: { borderRadius: 14, borderWidth: 1, borderColor: '#d6dce5', backgroundColor: '#ffffff', padding: '14px 16px', fontSize: 14, color: '#132238', minHeight: 48 },
   bulkCard: { backgroundColor: '#FFFFFF', borderRadius: 22, padding: 18, gap: 14 },
+  bulkHeader: { flexDirection: 'row', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap' },
   bulkTitle: { color: '#0f172a', fontSize: 18, fontWeight: '800' },
+  bulkSubtitle: { color: '#64748b', fontSize: 13, marginTop: 4 },
   bulkActions: { flexDirection: 'row', gap: 10, alignItems: 'center', flexWrap: 'wrap' },
+  suggestionRow: { borderTopColor: '#e2e8f0', borderTopWidth: 1, paddingTop: 12, flexDirection: 'row', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'center' },
+  suggestionCopy: { flex: 1, minWidth: 240 },
+  suggestionTitle: { color: '#0f172a', fontWeight: '800' },
   inlineAction: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, backgroundColor: '#E2E8F0' },
   inlineActionText: { color: '#0f172a', fontWeight: '700', fontSize: 12 },
   disabledAction: { opacity: 0.45 },

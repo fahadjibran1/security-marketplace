@@ -1425,6 +1425,34 @@ export function CompanyDashboardScreen() {
     () => timesheets.filter((timesheet) => (timesheet.approvalStatus || '').toLowerCase() !== 'approved'),
     [timesheets],
   );
+  const overdueReviewTimesheets = React.useMemo(() => {
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    return timesheets.filter((timesheet) => {
+      if ((timesheet.approvalStatus || '').toLowerCase() !== 'submitted') return false;
+      const submittedAt = timesheet.submittedAt ? new Date(timesheet.submittedAt).getTime() : null;
+      return submittedAt !== null && !Number.isNaN(submittedAt) && submittedAt <= cutoff;
+    });
+  }, [timesheets]);
+  const pendingPayrollTimesheets = React.useMemo(
+    () =>
+      timesheets.filter(
+        (timesheet) =>
+          (timesheet.approvalStatus || '').toLowerCase() === 'approved' &&
+          (timesheet.payrollStatus || 'unpaid').toLowerCase() === 'unpaid' &&
+          !timesheet.payrollBatch,
+      ),
+    [timesheets],
+  );
+  const pendingInvoiceTimesheets = React.useMemo(
+    () =>
+      timesheets.filter(
+        (timesheet) =>
+          (timesheet.approvalStatus || '').toLowerCase() === 'approved' &&
+          (timesheet.billingStatus || 'uninvoiced').toLowerCase() === 'uninvoiced' &&
+          !timesheet.invoiceBatch,
+      ),
+    [timesheets],
+  );
   const openIncidents = React.useMemo(
     () => incidents.filter((incident) => ['open', 'in_review'].includes((incident.status || '').toLowerCase())),
     [incidents],
@@ -2780,6 +2808,35 @@ export function CompanyDashboardScreen() {
             <Text style={styles.kpiLabel}>{label}</Text>
             <Text style={styles.kpiValue}>{value}</Text>
           </View>
+        ))}
+      </View>
+
+      <View style={styles.panel}>
+        <Text style={styles.panelTitle}>Automation Alerts</Text>
+        <Text style={styles.helperText}>
+          Suggested actions are read-only signals until a company user creates or updates a batch.
+        </Text>
+        {[
+          {
+            label: 'Pending payroll',
+            value: `${pendingPayrollTimesheets.length} approved unpaid row(s) ready for payroll suggestions`,
+            target: 'payroll' as CompanySection,
+          },
+          {
+            label: 'Pending invoices',
+            value: `${pendingInvoiceTimesheets.length} approved uninvoiced row(s) ready for invoice suggestions`,
+            target: 'invoices' as CompanySection,
+          },
+          {
+            label: 'Overdue reviews',
+            value: `${overdueReviewTimesheets.length} submitted timesheet(s) older than 24 hours`,
+            target: 'timesheets' as CompanySection,
+          },
+        ].map((alert) => (
+          <Pressable key={alert.label} style={styles.recordRow} onPress={() => setActiveSection(alert.target)}>
+            <Text style={styles.recordTitle}>{alert.label}</Text>
+            <Text style={styles.recordMeta}>{alert.value}</Text>
+          </Pressable>
         ))}
       </View>
 
