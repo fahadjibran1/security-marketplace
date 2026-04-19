@@ -79,7 +79,10 @@ export class InvoiceBatchService {
     });
 
     const savedBatch = await this.invoiceBatchRepo.save(batch);
+    await this.contractPricingService.applyFinancials(timesheets);
     timesheets.forEach((timesheet) => {
+      timesheet.approvedHoursSnapshot = timesheet.approvedHoursSnapshot ?? this.getApprovedHours(timesheet);
+      timesheet.billingRateSnapshot = timesheet.billingRateSnapshot ?? this.getBillingRate(timesheet);
       timesheet.invoiceBatch = savedBatch;
       timesheet.billingStatus = TimesheetBillingStatus.INCLUDED;
       timesheet.invoiceIssuedAt = null;
@@ -93,6 +96,7 @@ export class InvoiceBatchService {
       action: 'invoice_batch.created',
       entityType: 'invoice_batch',
       entityId: savedBatch.id,
+      beforeData: null,
       afterData: {
         clientId: client.id,
         periodStart: savedBatch.periodStart,
@@ -101,6 +105,21 @@ export class InvoiceBatchService {
         timesheetIds: timesheets.map((timesheet) => timesheet.id),
       },
     });
+
+    await Promise.all(timesheets.map((timesheet) => this.auditLogService.log({
+      company,
+      user: { id: userId },
+      action: 'timesheet.added_to_invoice_batch',
+      entityType: 'timesheet',
+      entityId: timesheet.id,
+      beforeData: { invoiceBatchId: null, billingStatus: TimesheetBillingStatus.UNINVOICED },
+      afterData: {
+        invoiceBatchId: savedBatch.id,
+        billingStatus: timesheet.billingStatus,
+        approvedHoursSnapshot: timesheet.approvedHoursSnapshot,
+        billingRateSnapshot: timesheet.billingRateSnapshot,
+      },
+    })));
 
     return this.findOneForCompany(userId, savedBatch.id);
   }
@@ -157,6 +176,12 @@ export class InvoiceBatchService {
       throw new BadRequestException('An invoice batch must contain at least one timesheet before it can be finalised.');
     }
 
+    const beforeData = {
+      status: batch.status,
+      finalisedAt: batch.finalisedAt,
+      invoiceNumber: batch.invoiceNumber,
+      timesheetIds: batch.timesheets.map((timesheet) => timesheet.id),
+    };
     await this.ensureInvoiceDocumentMetadata(batch, company);
     batch.status = InvoiceBatchStatus.FINALISED;
     batch.finalisedAt = new Date();
@@ -168,9 +193,14 @@ export class InvoiceBatchService {
       action: 'invoice_batch.finalised',
       entityType: 'invoice_batch',
       entityId: batch.id,
+      beforeData,
       afterData: {
         status: batch.status,
         finalisedAt: batch.finalisedAt,
+        invoiceNumber: batch.invoiceNumber,
+        netAmountSnapshot: batch.netAmountSnapshot,
+        vatAmountSnapshot: batch.vatAmountSnapshot,
+        grossAmountSnapshot: batch.grossAmountSnapshot,
       },
     });
 
@@ -196,6 +226,15 @@ export class InvoiceBatchService {
 
     const now = new Date();
     const batchTimesheets = batch.timesheets || [];
+    if (!batchTimesheets.length) {
+      throw new BadRequestException('An invoice batch must contain at least one timesheet before it can be issued.');
+    }
+    const beforeData = {
+      status: batch.status,
+      issuedAt: batch.issuedAt,
+      invoiceNumber: batch.invoiceNumber,
+      timesheetIds: batchTimesheets.map((timesheet) => timesheet.id),
+    };
     await this.ensureInvoiceDocumentMetadata(batch, company);
     batch.status = InvoiceBatchStatus.ISSUED;
     batch.issuedAt = now;
@@ -214,9 +253,14 @@ export class InvoiceBatchService {
       action: 'invoice_batch.issued',
       entityType: 'invoice_batch',
       entityId: batch.id,
+      beforeData,
       afterData: {
         status: batch.status,
         issuedAt: batch.issuedAt,
+        invoiceNumber: batch.invoiceNumber,
+        netAmountSnapshot: batch.netAmountSnapshot,
+        vatAmountSnapshot: batch.vatAmountSnapshot,
+        grossAmountSnapshot: batch.grossAmountSnapshot,
       },
     });
 
@@ -292,6 +336,11 @@ export class InvoiceBatchService {
 
     const now = new Date();
     const batchTimesheets = batch.timesheets || [];
+    const beforeData = {
+      status: batch.status,
+      paidAt: batch.paidAt,
+      timesheetIds: batchTimesheets.map((timesheet) => timesheet.id),
+    };
     batch.status = InvoiceBatchStatus.PAID;
     batch.paidAt = now;
     batchTimesheets.forEach((timesheet) => {
@@ -309,11 +358,22 @@ export class InvoiceBatchService {
       action: 'invoice_batch.paid',
       entityType: 'invoice_batch',
       entityId: batch.id,
+      beforeData,
       afterData: {
         status: batch.status,
         paidAt: batch.paidAt,
       },
     });
+
+    await Promise.all(batchTimesheets.map((timesheet) => this.auditLogService.log({
+      company,
+      user: { id: userId },
+      action: 'timesheet.invoice_paid',
+      entityType: 'timesheet',
+      entityId: timesheet.id,
+      beforeData: { billingStatus: TimesheetBillingStatus.INVOICED, invoicePaidAt: null },
+      afterData: { billingStatus: timesheet.billingStatus, invoicePaidAt: timesheet.invoicePaidAt, invoiceBatchId: batch.id },
+    })));
 
     return this.findOneForCompany(userId, batch.id);
   }
@@ -346,6 +406,9 @@ export class InvoiceBatchService {
   }
 
   private getBillingRate(timesheet: Timesheet) {
+    if (timesheet.billingRateSnapshot !== undefined && timesheet.billingRateSnapshot !== null && Number.isFinite(Number(timesheet.billingRateSnapshot))) {
+      return Number(timesheet.billingRateSnapshot);
+    }
     if (timesheet.effectiveBillingRate !== undefined && timesheet.effectiveBillingRate !== null) {
       return Number(timesheet.effectiveBillingRate);
     }
@@ -374,6 +437,9 @@ export class InvoiceBatchService {
   }
 
   private getApprovedHours(timesheet: Timesheet) {
+    if (timesheet.approvedHoursSnapshot !== undefined && timesheet.approvedHoursSnapshot !== null && Number.isFinite(Number(timesheet.approvedHoursSnapshot))) {
+      return Number(timesheet.approvedHoursSnapshot);
+    }
     if (timesheet.approvedHours !== undefined && timesheet.approvedHours !== null && Number.isFinite(Number(timesheet.approvedHours))) {
       return Number(timesheet.approvedHours);
     }

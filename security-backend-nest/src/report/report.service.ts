@@ -140,6 +140,45 @@ export class ReportService {
     };
   }
 
+  async getFinancialConsistency(userId: number) {
+    const company = await this.companyService.findByUserId(userId);
+    if (!company) throw new NotFoundException('Company not found');
+
+    const timesheets = await this.contractPricingService.applyFinancials(await this.timesheetRepo.find({
+      where: { company: { id: company.id } },
+      order: { createdAt: 'DESC' },
+    }));
+
+    let totalPayrollCost = 0;
+    let totalInvoiceRevenue = 0;
+    let totalMargin = 0;
+    const warnings: string[] = [];
+
+    timesheets.forEach((timesheet) => {
+      if (String(timesheet.approvalStatus).trim().toLowerCase() !== TimesheetStatus.APPROVED) return;
+      const cost = Number(timesheet.costAmount ?? 0);
+      const revenue = Number(timesheet.revenueAmount ?? 0);
+      if (!Number.isFinite(cost)) warnings.push(`Timesheet #${timesheet.id} has invalid cost.`);
+      if (!Number.isFinite(revenue)) warnings.push(`Timesheet #${timesheet.id} has invalid revenue.`);
+      totalPayrollCost += Number.isFinite(cost) ? cost : 0;
+      totalInvoiceRevenue += Number.isFinite(revenue) ? revenue : 0;
+      totalMargin += (Number.isFinite(revenue) ? revenue : 0) - (Number.isFinite(cost) ? cost : 0);
+      if (timesheet.payrollBatch?.status === 'paid' && !timesheet.hourlyRateSnapshot) {
+        warnings.push(`Paid payroll timesheet #${timesheet.id} is missing hourly rate snapshot.`);
+      }
+      if (['issued', 'paid'].includes(String(timesheet.invoiceBatch?.status || '')) && !timesheet.billingRateSnapshot) {
+        warnings.push(`Issued invoice timesheet #${timesheet.id} is missing billing rate snapshot.`);
+      }
+    });
+
+    return {
+      totalPayrollCost: this.roundCurrency(totalPayrollCost),
+      totalInvoiceRevenue: this.roundCurrency(totalInvoiceRevenue),
+      totalMargin: this.roundCurrency(totalMargin),
+      warnings,
+    };
+  }
+
   private parseOptionalDate(value: string | undefined, endOfDay: boolean) {
     if (!value) return null;
     const date = new Date(endOfDay && /^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T23:59:59` : value);

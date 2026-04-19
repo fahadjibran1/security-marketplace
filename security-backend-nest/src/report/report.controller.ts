@@ -19,4 +19,10 @@ export class ReportController {
   getMarginReport(@CurrentUser() user: JwtPayload, @Query() query: MarginReportQueryDto) {
     return this.reportService.getCompanyMarginReport(user.sub, query);
   }
+
+  @Get('financial-consistency')
+  @Roles(...COMPANY_VIEW_ROLES)
+  getFinancialConsistency(@CurrentUser() user: JwtPayload) {
+    return this.reportService.getFinancialConsistency(user.sub);
+  }
 }

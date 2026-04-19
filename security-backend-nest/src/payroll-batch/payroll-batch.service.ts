@@ -60,6 +60,8 @@ export class PayrollBatchService {
     const savedBatch = await this.payrollBatchRepo.save(batch);
     const now = new Date();
     timesheets.forEach((timesheet) => {
+      timesheet.approvedHoursSnapshot = timesheet.approvedHoursSnapshot ?? this.getApprovedHours(timesheet);
+      timesheet.hourlyRateSnapshot = timesheet.hourlyRateSnapshot ?? this.getTimesheetRate(timesheet);
       timesheet.payrollBatch = savedBatch;
       timesheet.payrollStatus = TimesheetPayrollStatus.INCLUDED;
       timesheet.payrollIncludedAt = timesheet.payrollIncludedAt ?? now;
@@ -73,6 +75,7 @@ export class PayrollBatchService {
       action: 'payroll_batch.created',
       entityType: 'payroll_batch',
       entityId: savedBatch.id,
+      beforeData: null,
       afterData: {
         periodStart: savedBatch.periodStart,
         periodEnd: savedBatch.periodEnd,
@@ -80,6 +83,21 @@ export class PayrollBatchService {
         timesheetIds: timesheets.map((timesheet) => timesheet.id),
       },
     });
+
+    await Promise.all(timesheets.map((timesheet) => this.auditLogService.log({
+      company,
+      user: { id: userId },
+      action: 'timesheet.added_to_payroll_batch',
+      entityType: 'timesheet',
+      entityId: timesheet.id,
+      beforeData: { payrollBatchId: null, payrollStatus: TimesheetPayrollStatus.UNPAID },
+      afterData: {
+        payrollBatchId: savedBatch.id,
+        payrollStatus: timesheet.payrollStatus,
+        approvedHoursSnapshot: timesheet.approvedHoursSnapshot,
+        hourlyRateSnapshot: timesheet.hourlyRateSnapshot,
+      },
+    })));
 
     return this.findOneForCompany(userId, savedBatch.id);
   }
@@ -141,6 +159,11 @@ export class PayrollBatchService {
     }
 
     const batchTimesheets = batch.timesheets;
+    const beforeData = {
+      status: batch.status,
+      finalisedAt: batch.finalisedAt,
+      timesheetIds: batchTimesheets.map((timesheet) => timesheet.id),
+    };
     const now = new Date();
     batch.status = PayrollBatchStatus.FINALISED;
     batch.finalisedAt = now;
@@ -159,6 +182,7 @@ export class PayrollBatchService {
       action: 'payroll_batch.finalised',
       entityType: 'payroll_batch',
       entityId: batch.id,
+      beforeData,
       afterData: {
         status: batch.status,
         finalisedAt: batch.finalisedAt,
@@ -188,6 +212,11 @@ export class PayrollBatchService {
     }
 
     const batchTimesheets = batch.timesheets || [];
+    const beforeData = {
+      status: batch.status,
+      paidAt: batch.paidAt,
+      timesheetIds: batchTimesheets.map((timesheet) => timesheet.id),
+    };
     const now = new Date();
     batch.status = PayrollBatchStatus.PAID;
     batch.paidAt = now;
@@ -206,11 +235,22 @@ export class PayrollBatchService {
       action: 'payroll_batch.paid',
       entityType: 'payroll_batch',
       entityId: batch.id,
+      beforeData,
       afterData: {
         status: batch.status,
         paidAt: batch.paidAt,
       },
     });
+
+    await Promise.all(batchTimesheets.map((timesheet) => this.auditLogService.log({
+      company,
+      user: { id: userId },
+      action: 'timesheet.payroll_paid',
+      entityType: 'timesheet',
+      entityId: timesheet.id,
+      beforeData: { payrollStatus: TimesheetPayrollStatus.INCLUDED, payrollPaidAt: null },
+      afterData: { payrollStatus: timesheet.payrollStatus, payrollPaidAt: timesheet.payrollPaidAt, payrollBatchId: batch.id },
+    })));
 
     return this.findOneForCompany(userId, batch.id);
   }
@@ -237,6 +277,9 @@ export class PayrollBatchService {
   }
 
   private getTimesheetRate(timesheet: Timesheet) {
+    if (timesheet.hourlyRateSnapshot !== undefined && timesheet.hourlyRateSnapshot !== null && Number.isFinite(Number(timesheet.hourlyRateSnapshot))) {
+      return Number(timesheet.hourlyRateSnapshot);
+    }
     const directJobRate = timesheet.shift?.job?.hourlyRate;
     if (directJobRate !== undefined && directJobRate !== null && Number.isFinite(Number(directJobRate))) {
       return Number(directJobRate);
@@ -251,6 +294,9 @@ export class PayrollBatchService {
   }
 
   private getApprovedHours(timesheet: Timesheet) {
+    if (timesheet.approvedHoursSnapshot !== undefined && timesheet.approvedHoursSnapshot !== null && Number.isFinite(Number(timesheet.approvedHoursSnapshot))) {
+      return Number(timesheet.approvedHoursSnapshot);
+    }
     if (timesheet.approvedHours !== undefined && timesheet.approvedHours !== null && Number.isFinite(Number(timesheet.approvedHours))) {
       return Number(timesheet.approvedHours);
     }

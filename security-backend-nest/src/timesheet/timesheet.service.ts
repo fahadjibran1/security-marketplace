@@ -140,6 +140,36 @@ export class TimesheetService {
       reviewedByUserId: timesheet.reviewedByUserId,
     };
 
+    const currentStatus = String(timesheet.approvalStatus).trim().toLowerCase();
+    const approvedNoteOnlyUpdate =
+      currentStatus === TimesheetStatus.APPROVED &&
+      dto.companyNote !== undefined &&
+      dto.approvalStatus === undefined &&
+      dto.approvedHours === undefined &&
+      dto.rejectionReason === undefined;
+    if (approvedNoteOnlyUpdate) {
+      const trimmedCompanyNote = dto.companyNote?.trim();
+      timesheet.companyNote = trimmedCompanyNote ? trimmedCompanyNote : null;
+      const saved = await this.timesheetRepo.save(timesheet);
+      await this.auditLogService.log({
+        company,
+        user: { id: userId },
+        action: 'timesheet.company_note_updated',
+        entityType: 'timesheet',
+        entityId: saved.id,
+        beforeData,
+        afterData: {
+          approvalStatus: saved.approvalStatus,
+          approvedHours: saved.approvedHours,
+          companyNote: saved.companyNote,
+          rejectionReason: saved.rejectionReason,
+          reviewedAt: saved.reviewedAt,
+          reviewedByUserId: saved.reviewedByUserId,
+        },
+      });
+      return this.contractPricingService.applyFinancials(saved);
+    }
+
     this.validateCompanyReviewRequest(timesheet, dto);
     this.applyTimesheetUpdates(timesheet, dto);
     this.validateCompanyReviewUpdate(timesheet, dto);
@@ -183,7 +213,14 @@ export class TimesheetService {
     await this.auditLogService.log({
       company,
       user: { id: userId },
-      action: 'timesheet.reviewed',
+      action:
+        saved.approvalStatus === TimesheetStatus.APPROVED
+          ? 'timesheet.approved'
+          : saved.approvalStatus === TimesheetStatus.RETURNED
+            ? 'timesheet.returned'
+            : saved.approvalStatus === TimesheetStatus.REJECTED
+              ? 'timesheet.rejected'
+              : 'timesheet.reviewed',
       entityType: 'timesheet',
       entityId: saved.id,
       beforeData,
@@ -238,6 +275,12 @@ export class TimesheetService {
 
   async submitMine(userId: number, id: number, dto: UpdateTimesheetDto): Promise<Timesheet> {
     const timesheet = await this.getGuardOwnedEditableTimesheet(userId, id, 'submitted');
+    const beforeData = {
+      approvalStatus: timesheet.approvalStatus,
+      hoursWorked: timesheet.hoursWorked,
+      guardNote: timesheet.guardNote,
+      submittedAt: timesheet.submittedAt,
+    };
     this.applyGuardEditableUpdates(timesheet, dto);
     timesheet.approvalStatus = TimesheetStatus.SUBMITTED;
     timesheet.submittedAt = new Date();
@@ -259,6 +302,7 @@ export class TimesheetService {
       action: 'timesheet.submitted',
       entityType: 'timesheet',
       entityId: saved.id,
+      beforeData,
       afterData: {
         approvalStatus: saved.approvalStatus,
         submittedAt: saved.submittedAt,

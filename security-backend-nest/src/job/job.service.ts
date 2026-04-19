@@ -7,6 +7,7 @@ import { CompanyService } from '../company/company.service';
 import { SiteService } from '../site/site.service';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { isCompanyRole, UserRole } from '../user/entities/user.entity';
+import { AuditLogService } from '../audit-log/audit-log.service';
 
 @Injectable()
 export class JobService {
@@ -14,6 +15,7 @@ export class JobService {
     @InjectRepository(Job) private readonly jobRepo: Repository<Job>,
     private readonly companyService: CompanyService,
     private readonly siteService: SiteService,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   async create(dto: CreateJobDto): Promise<Job> {
@@ -33,7 +35,22 @@ export class JobService {
       billingRate: dto.billingRate ?? null,
       status: dto.status ?? 'open'
     });
-    return this.jobRepo.save(job);
+    const saved = await this.jobRepo.save(job);
+    await this.auditLogService.log({
+      company,
+      user: company.user ? { id: company.user.id } : null,
+      action: 'job.created',
+      entityType: 'job',
+      entityId: saved.id,
+      beforeData: null,
+      afterData: {
+        hourlyRate: saved.hourlyRate,
+        billingRate: saved.billingRate,
+        status: saved.status,
+        siteId: saved.site?.id ?? null,
+      },
+    });
+    return saved;
   }
 
   findAll(): Promise<Job[]> {
@@ -117,7 +134,22 @@ export class JobService {
       status: dto.status ?? 'open',
     });
 
-    return this.jobRepo.save(job);
+    const saved = await this.jobRepo.save(job);
+    await this.auditLogService.log({
+      company,
+      user: { id: user.sub },
+      action: 'job.created',
+      entityType: 'job',
+      entityId: saved.id,
+      beforeData: null,
+      afterData: {
+        hourlyRate: saved.hourlyRate,
+        billingRate: saved.billingRate,
+        status: saved.status,
+        siteId: saved.site?.id ?? null,
+      },
+    });
+    return saved;
   }
 
   save(job: Job): Promise<Job> {

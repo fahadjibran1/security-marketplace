@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 
+import { CompanyAuditWorkspace } from '../components/company/CompanyAuditWorkspace';
 import { CompanyContractPricingWorkspace } from '../components/company/CompanyContractPricingWorkspace';
 import { CompanyFinanceControlWorkspace } from '../components/company/CompanyFinanceControlWorkspace';
 import { CompanyInvoiceWorkspace } from '../components/company/CompanyInvoiceWorkspace';
@@ -77,6 +78,7 @@ type CompanySection =
   | 'finance-control'
   | 'margins'
   | 'contract-pricing'
+  | 'audit'
   | 'incidents'
   | 'alerts';
 
@@ -207,6 +209,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'finance-control', label: 'Finance Control', caption: 'Commercial exposure and settlement visibility.' },
   { id: 'margins', label: 'Margins', caption: 'Revenue, cost, and profit reporting.' },
   { id: 'contract-pricing', label: 'Contract Pricing', caption: 'Client and site commercial rules.' },
+  { id: 'audit', label: 'Audit Trail', caption: 'Trace financial actions and before/after data.' },
   { id: 'incidents', label: 'Incidents', caption: 'Track reported site issues.' },
   { id: 'alerts', label: 'Safety Alerts', caption: 'Watch welfare and check-call alerts.' },
 ];
@@ -4165,6 +4168,8 @@ export function CompanyDashboardScreen() {
         return <CompanyMarginWorkspace />;
       case 'contract-pricing':
         return <CompanyContractPricingWorkspace />;
+      case 'audit':
+        return <CompanyAuditWorkspace />;
       case 'incidents':
         return renderSimpleTableSection(
           'Incidents',
