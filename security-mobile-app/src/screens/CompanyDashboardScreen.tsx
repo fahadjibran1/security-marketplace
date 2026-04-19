@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 
 import { CompanyContractPricingWorkspace } from '../components/company/CompanyContractPricingWorkspace';
+import { CompanyFinanceControlWorkspace } from '../components/company/CompanyFinanceControlWorkspace';
 import { CompanyInvoiceWorkspace } from '../components/company/CompanyInvoiceWorkspace';
 import { CompanyMarginWorkspace } from '../components/company/CompanyMarginWorkspace';
 import { CompanyPayrollBatchesWorkspace } from '../components/company/CompanyPayrollBatchesWorkspace';
@@ -73,6 +74,7 @@ type CompanySection =
   | 'payroll'
   | 'payroll-batches'
   | 'invoices'
+  | 'finance-control'
   | 'margins'
   | 'contract-pricing'
   | 'incidents'
@@ -202,6 +204,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'payroll', label: 'Payroll', caption: 'Approved hours and payment totals.' },
   { id: 'payroll-batches', label: 'Payroll Batches', caption: 'Draft, finalised, and paid payroll runs.' },
   { id: 'invoices', label: 'Invoices', caption: 'Client billing and invoice batches.' },
+  { id: 'finance-control', label: 'Finance Control', caption: 'Commercial exposure and settlement visibility.' },
   { id: 'margins', label: 'Margins', caption: 'Revenue, cost, and profit reporting.' },
   { id: 'contract-pricing', label: 'Contract Pricing', caption: 'Client and site commercial rules.' },
   { id: 'incidents', label: 'Incidents', caption: 'Track reported site issues.' },
@@ -4156,6 +4159,8 @@ export function CompanyDashboardScreen() {
         return <CompanyPayrollBatchesWorkspace />;
       case 'invoices':
         return <CompanyInvoiceWorkspace timesheets={timesheets} refreshing={refreshing} onRefresh={() => loadData(true)} />;
+      case 'finance-control':
+        return <CompanyFinanceControlWorkspace timesheets={timesheets} refreshing={refreshing} onRefresh={() => loadData(true)} />;
       case 'margins':
         return <CompanyMarginWorkspace />;
       case 'contract-pricing':
