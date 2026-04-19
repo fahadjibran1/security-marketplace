@@ -6,12 +6,14 @@ import { AuditLogService } from '../audit-log/audit-log.service';
 import { Client } from '../client/entities/client.entity';
 import { CompanyService } from '../company/company.service';
 import { ContractPricingService } from '../contract-pricing/contract-pricing.service';
+import { PaymentRecord } from '../payment-record/entities/payment-record.entity';
 import {
   Timesheet,
   TimesheetBillingStatus,
   TimesheetStatus,
 } from '../timesheet/entities/timesheet.entity';
 import { CreateInvoiceBatchDto } from './dto/create-invoice-batch.dto';
+import { CreatePaymentRecordDto } from './dto/create-payment-record.dto';
 import { InvoiceBatch, InvoiceBatchStatus } from './entities/invoice-batch.entity';
 
 @Injectable()
@@ -20,6 +22,7 @@ export class InvoiceBatchService {
     @InjectRepository(InvoiceBatch) private readonly invoiceBatchRepo: Repository<InvoiceBatch>,
     @InjectRepository(Timesheet) private readonly timesheetRepo: Repository<Timesheet>,
     @InjectRepository(Client) private readonly clientRepo: Repository<Client>,
+    @InjectRepository(PaymentRecord) private readonly paymentRecordRepo: Repository<PaymentRecord>,
     private readonly companyService: CompanyService,
     private readonly contractPricingService: ContractPricingService,
     private readonly auditLogService: AuditLogService,
@@ -130,7 +133,7 @@ export class InvoiceBatchService {
 
     const batches = await this.invoiceBatchRepo.find({
       where: { company: { id: company.id } },
-      relations: { timesheets: true },
+      relations: { timesheets: true, paymentRecords: true },
       order: { createdAt: 'DESC' },
     });
 
@@ -144,7 +147,7 @@ export class InvoiceBatchService {
 
     const batch = await this.invoiceBatchRepo.findOne({
       where: { id, company: { id: company.id } },
-      relations: { timesheets: true },
+      relations: { timesheets: true, paymentRecords: true },
     });
 
     if (!batch) {
@@ -161,7 +164,7 @@ export class InvoiceBatchService {
 
     const batch = await this.invoiceBatchRepo.findOne({
       where: { id, company: { id: company.id } },
-      relations: { timesheets: true },
+      relations: { timesheets: true, paymentRecords: true },
     });
 
     if (!batch) {
@@ -213,7 +216,7 @@ export class InvoiceBatchService {
 
     const batch = await this.invoiceBatchRepo.findOne({
       where: { id, company: { id: company.id } },
-      relations: { timesheets: true },
+      relations: { timesheets: true, paymentRecords: true },
     });
 
     if (!batch) {
@@ -273,7 +276,7 @@ export class InvoiceBatchService {
 
     const batch = await this.invoiceBatchRepo.findOne({
       where: { id, company: { id: company.id } },
-      relations: { timesheets: true },
+      relations: { timesheets: true, paymentRecords: true },
     });
 
     if (!batch) {
@@ -300,6 +303,14 @@ export class InvoiceBatchService {
       paymentTermsDays: batch.paymentTermsDays ?? 30,
       vatRate: Number(batch.vatRate ?? 20),
       notes: batch.notes ?? null,
+      payments: (batch.paymentRecords || []).map((record) => ({
+        id: record.id,
+        amount: this.roundCurrency(Number(record.amount)),
+        paymentDate: record.paymentDate,
+        method: record.method,
+        reference: record.reference ?? null,
+        notes: record.notes ?? null,
+      })),
       company: {
         name: batch.companyNameSnapshot || batch.company?.name || 'Company',
         address: batch.companyAddressSnapshot || batch.company?.address || '',
@@ -320,7 +331,7 @@ export class InvoiceBatchService {
   async getDocumentForClient(clientId: number, id: number) {
     const batch = await this.invoiceBatchRepo.findOne({
       where: { id, client: { id: clientId } },
-      relations: { timesheets: true },
+      relations: { timesheets: true, paymentRecords: true },
     });
 
     if (!batch) {
@@ -347,6 +358,14 @@ export class InvoiceBatchService {
       paymentTermsDays: batch.paymentTermsDays ?? 30,
       vatRate: Number(batch.vatRate ?? 20),
       notes: batch.notes ?? null,
+      payments: (batch.paymentRecords || []).map((record) => ({
+        id: record.id,
+        amount: this.roundCurrency(Number(record.amount)),
+        paymentDate: record.paymentDate,
+        method: record.method,
+        reference: record.reference ?? null,
+        notes: record.notes ?? null,
+      })),
       company: {
         name: batch.companyNameSnapshot || batch.company?.name || 'Company',
         address: batch.companyAddressSnapshot || batch.company?.address || '',
@@ -370,7 +389,7 @@ export class InvoiceBatchService {
 
     const batch = await this.invoiceBatchRepo.findOne({
       where: { id, company: { id: company.id } },
-      relations: { timesheets: true },
+      relations: { timesheets: true, paymentRecords: true },
     });
 
     if (!batch) {
@@ -379,6 +398,11 @@ export class InvoiceBatchService {
 
     if (batch.status !== InvoiceBatchStatus.ISSUED) {
       throw new ForbiddenException('Only issued invoice batches can be marked paid.');
+    }
+
+    await this.hydrateBatchFinancials(batch);
+    if (this.getOutstandingAmount(batch) > 0.009) {
+      throw new BadRequestException('Record full payment before marking this invoice batch as paid.');
     }
 
     const now = new Date();
@@ -421,6 +445,74 @@ export class InvoiceBatchService {
       beforeData: { billingStatus: TimesheetBillingStatus.INVOICED, invoicePaidAt: null },
       afterData: { billingStatus: timesheet.billingStatus, invoicePaidAt: timesheet.invoicePaidAt, invoiceBatchId: batch.id },
     })));
+
+    return this.findOneForCompany(userId, batch.id);
+  }
+
+  async createPaymentRecordForCompany(userId: number, id: number, dto: CreatePaymentRecordDto) {
+    const company = await this.companyService.findByUserId(userId);
+    if (!company) throw new NotFoundException('Company not found');
+
+    const batch = await this.invoiceBatchRepo.findOne({
+      where: { id, company: { id: company.id } },
+      relations: { timesheets: true, paymentRecords: true },
+    });
+
+    if (!batch) {
+      throw new NotFoundException('Invoice batch not found');
+    }
+
+    if (batch.status !== InvoiceBatchStatus.ISSUED && batch.status !== InvoiceBatchStatus.PAID) {
+      throw new ForbiddenException('Payments can only be recorded against issued invoices.');
+    }
+
+    const paymentDate = new Date(dto.paymentDate);
+    if (Number.isNaN(paymentDate.getTime())) {
+      throw new BadRequestException('A valid payment date is required.');
+    }
+
+    const amount = this.roundCurrency(Number(dto.amount) || 0);
+    if (amount <= 0) {
+      throw new BadRequestException('Payment amount must be greater than zero.');
+    }
+
+    await this.hydrateBatchFinancials(batch);
+    const invoiceAmount = this.getBatchInvoiceBaseAmount(batch);
+    const paidToDate = this.getPaidAmount(batch);
+
+    if (paidToDate + amount > invoiceAmount + 0.009) {
+      throw new BadRequestException('Payment cannot exceed the invoice total.');
+    }
+
+    const paymentRecord = this.paymentRecordRepo.create({
+      company,
+      invoiceBatch: batch,
+      amount,
+      paymentDate,
+      method: dto.method,
+      reference: dto.reference?.trim() ? dto.reference.trim() : null,
+      notes: dto.notes?.trim() ? dto.notes.trim() : null,
+    });
+
+    const savedRecord = await this.paymentRecordRepo.save(paymentRecord);
+    batch.paymentRecords = [...(batch.paymentRecords || []), savedRecord];
+
+    await this.auditLogService.log({
+      company,
+      user: { id: userId },
+      action: 'invoice_payment.recorded',
+      entityType: 'payment_record',
+      entityId: savedRecord.id,
+      beforeData: null,
+      afterData: {
+        invoiceBatchId: batch.id,
+        amount: savedRecord.amount,
+        paymentDate: savedRecord.paymentDate,
+        method: savedRecord.method,
+        reference: savedRecord.reference,
+        outstandingAmount: this.getOutstandingAmount(batch),
+      },
+    });
 
     return this.findOneForCompany(userId, batch.id);
   }
@@ -522,6 +614,51 @@ export class InvoiceBatchService {
     return Math.round(value * 100) / 100;
   }
 
+  private getBatchInvoiceBaseAmount(batch: InvoiceBatch) {
+    const snapshot =
+      batch.netAmountSnapshot !== undefined && batch.netAmountSnapshot !== null
+        ? Number(batch.netAmountSnapshot)
+        : null;
+
+    if (snapshot !== null && Number.isFinite(snapshot)) {
+      return this.roundCurrency(snapshot);
+    }
+
+    return this.roundCurrency(
+      (batch.timesheets || []).reduce((sum, timesheet) => {
+        if (timesheet.revenueAmount !== undefined && timesheet.revenueAmount !== null) {
+          return sum + Number(timesheet.revenueAmount);
+        }
+        const rate = this.getBillingRate(timesheet);
+        return rate === null ? sum : sum + this.getBillableHours(timesheet) * rate;
+      }, 0),
+    );
+  }
+
+  private getPaidAmount(batch: InvoiceBatch) {
+    return this.roundCurrency(
+      (batch.paymentRecords || []).reduce((sum, record) => {
+        const amount = Number(record.amount);
+        return Number.isFinite(amount) ? sum + amount : sum;
+      }, 0),
+    );
+  }
+
+  private getOutstandingAmount(batch: InvoiceBatch) {
+    return this.roundCurrency(Math.max(0, this.getBatchInvoiceBaseAmount(batch) - this.getPaidAmount(batch)));
+  }
+
+  private getPaymentStatus(batch: InvoiceBatch) {
+    const paidAmount = this.getPaidAmount(batch);
+    const outstandingAmount = this.getOutstandingAmount(batch);
+
+    if (outstandingAmount <= 0.009) {
+      return 'paid';
+    }
+
+    return paidAmount > 0 ? 'partially_paid' : 'unpaid';
+  }
+
   private calculateDocumentTotals(batch: InvoiceBatch) {
     const netAmount =
       batch.netAmountSnapshot !== undefined && batch.netAmountSnapshot !== null
@@ -548,6 +685,9 @@ export class InvoiceBatchService {
       vatRate: this.roundCurrency(vatRate),
       vatAmount: this.roundCurrency(vatAmount),
       grossAmount: this.roundCurrency(grossAmount),
+      paidAmount: this.getPaidAmount(batch),
+      outstandingAmount: this.getOutstandingAmount(batch),
+      paymentStatus: this.getPaymentStatus(batch),
     };
   }
 
@@ -674,6 +814,9 @@ export class InvoiceBatchService {
       netAmountSnapshot: batch.netAmountSnapshot ?? null,
       vatAmountSnapshot: batch.vatAmountSnapshot ?? null,
       grossAmountSnapshot: batch.grossAmountSnapshot ?? null,
+      paidAmount: this.getPaidAmount(batch),
+      outstandingAmount: this.getOutstandingAmount(batch),
+      paymentStatus: this.getPaymentStatus(batch),
       createdAt: batch.createdAt,
       updatedAt: batch.updatedAt,
       finalisedAt: batch.finalisedAt ?? null,
@@ -687,6 +830,14 @@ export class InvoiceBatchService {
         totalRevenueAmount: Math.round(totals.totalRevenueAmount * 100) / 100,
         missingRateCount: totals.missingRateCount,
       },
+      paymentRecords: (batch.paymentRecords || []).map((record) => ({
+        id: record.id,
+        amount: this.roundCurrency(Number(record.amount)),
+        paymentDate: record.paymentDate,
+        method: record.method,
+        reference: record.reference ?? null,
+        notes: record.notes ?? null,
+      })),
       timesheets: includeTimesheets ? timesheets : undefined,
     };
   }

@@ -42,6 +42,9 @@ import {
   ReviewJobApplicationPayload,
   DailyLog,
   EligibleGuardRow,
+  FinanceReceivablesResponse,
+  FinanceReconciliationResponse,
+  FinanceSummaryResponse,
   GuardAvailabilityOverride,
   GuardAvailabilityRule,
   GuardLeave,
@@ -51,6 +54,7 @@ import {
   PayrollSuggestion,
   PayRuleConfig,
   PayRuleConfigPayload,
+  RecordInvoicePaymentPayload,
   RegisterPayload,
   SafetyAlert,
   SiteRiskReport,
@@ -618,6 +622,13 @@ export function payCompanyInvoiceBatch(id: number) {
   });
 }
 
+export function recordCompanyInvoicePayment(id: number, payload: RecordInvoicePaymentPayload) {
+  return request<InvoiceBatch>(`/invoice-batches/${id}/payments`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
 export function listContractPricingRules(filters: { clientId?: number; siteId?: number; status?: string } = {}) {
   const query = new URLSearchParams();
   if (filters.clientId) query.set('clientId', String(filters.clientId));
@@ -688,6 +699,36 @@ export function getSiteRiskReport(filters: { startDate?: string; endDate?: strin
   if (filters.guardId) query.set('guardId', String(filters.guardId));
   const suffix = query.toString() ? `?${query.toString()}` : '';
   return request<SiteRiskReport>(`/reports/sites-risk${suffix}`);
+}
+
+export function getFinanceSummary(filters: { startDate?: string; endDate?: string; clientId?: number; siteId?: number } = {}) {
+  const query = new URLSearchParams();
+  if (filters.startDate) query.set('startDate', filters.startDate);
+  if (filters.endDate) query.set('endDate', filters.endDate);
+  if (filters.clientId) query.set('clientId', String(filters.clientId));
+  if (filters.siteId) query.set('siteId', String(filters.siteId));
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return request<FinanceSummaryResponse>(`/finance/summary${suffix}`);
+}
+
+export function getFinanceReceivables(filters: { startDate?: string; endDate?: string; clientId?: number; siteId?: number } = {}) {
+  const query = new URLSearchParams();
+  if (filters.startDate) query.set('startDate', filters.startDate);
+  if (filters.endDate) query.set('endDate', filters.endDate);
+  if (filters.clientId) query.set('clientId', String(filters.clientId));
+  if (filters.siteId) query.set('siteId', String(filters.siteId));
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return request<FinanceReceivablesResponse>(`/finance/receivables${suffix}`);
+}
+
+export function getFinanceReconciliation(filters: { startDate?: string; endDate?: string; clientId?: number; siteId?: number } = {}) {
+  const query = new URLSearchParams();
+  if (filters.startDate) query.set('startDate', filters.startDate);
+  if (filters.endDate) query.set('endDate', filters.endDate);
+  if (filters.clientId) query.set('clientId', String(filters.clientId));
+  if (filters.siteId) query.set('siteId', String(filters.siteId));
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return request<FinanceReconciliationResponse>(`/finance/reconciliation${suffix}`);
 }
 
 export function getClientPortalDashboard() {

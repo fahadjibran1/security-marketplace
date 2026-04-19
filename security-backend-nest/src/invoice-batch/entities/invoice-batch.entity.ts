@@ -10,6 +10,7 @@ import {
 
 import { Client } from '../../client/entities/client.entity';
 import { Company } from '../../company/entities/company.entity';
+import { PaymentRecord } from '../../payment-record/entities/payment-record.entity';
 import { Timesheet } from '../../timesheet/entities/timesheet.entity';
 
 export enum InvoiceBatchStatus {
@@ -99,6 +100,9 @@ export class InvoiceBatch {
 
   @OneToMany(() => Timesheet, (timesheet) => timesheet.invoiceBatch)
   timesheets?: Timesheet[];
+
+  @OneToMany(() => PaymentRecord, (paymentRecord) => paymentRecord.invoiceBatch)
+  paymentRecords?: PaymentRecord[];
 
   @CreateDateColumn()
   createdAt!: Date;

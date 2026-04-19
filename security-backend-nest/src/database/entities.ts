@@ -24,6 +24,7 @@ import { Shift } from '../shift/entities/shift.entity';
 import { Site } from '../site/entities/site.entity';
 import { Timesheet } from '../timesheet/entities/timesheet.entity';
 import { Notification } from '../notification/entities/notification.entity';
+import { PaymentRecord } from '../payment-record/entities/payment-record.entity';
 import { PayrollBatch } from '../payroll-batch/entities/payroll-batch.entity';
 import { PayRuleConfig } from '../pay-rule/entities/pay-rule-config.entity';
 import { User } from '../user/entities/user.entity';
@@ -51,6 +52,7 @@ export const appEntities = [
   JobMatch,
   JobSlot,
   Notification,
+  PaymentRecord,
   PayrollBatch,
   PayRuleConfig,
   SafetyAlert,

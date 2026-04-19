@@ -11,8 +11,9 @@ import {
   listInvoiceSuggestions,
   listCompanyInvoiceBatches,
   payCompanyInvoiceBatch,
+  recordCompanyInvoicePayment,
 } from '../../services/api';
-import { Client, InvoiceBatch, InvoiceBatchStatus, InvoiceDocument, InvoiceSuggestion, Timesheet, TimesheetBillingStatus } from '../../types/models';
+import { Client, InvoiceBatch, InvoiceBatchStatus, InvoiceDocument, InvoiceSuggestion, PaymentMethod, Timesheet, TimesheetBillingStatus } from '../../types/models';
 
 type PeriodView = 'week' | 'month';
 type BillingFilter = 'all' | TimesheetBillingStatus;
@@ -59,6 +60,12 @@ type InvoiceGroup = {
 
 const UK_LOCALE = 'en-GB';
 const MONEY_FORMATTER = new Intl.NumberFormat(UK_LOCALE, { style: 'currency', currency: 'GBP' });
+const PAYMENT_METHOD_OPTIONS: Array<{ value: PaymentMethod; label: string }> = [
+  { value: 'bank_transfer', label: 'Bank transfer' },
+  { value: 'cash', label: 'Cash' },
+  { value: 'card', label: 'Card' },
+  { value: 'other', label: 'Other' },
+];
 
 function toNumber(value?: string | number | null) {
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;
@@ -466,6 +473,12 @@ export function CompanyInvoiceWorkspace({ timesheets, refreshing, onRefresh }: C
   const [invoiceSuggestions, setInvoiceSuggestions] = React.useState<InvoiceSuggestion[]>([]);
   const [loadingBatches, setLoadingBatches] = React.useState(false);
   const [loadingDocument, setLoadingDocument] = React.useState(false);
+  const [showPaymentForm, setShowPaymentForm] = React.useState(false);
+  const [paymentAmount, setPaymentAmount] = React.useState('');
+  const [paymentDate, setPaymentDate] = React.useState(() => new Date().toISOString().slice(0, 10));
+  const [paymentMethod, setPaymentMethod] = React.useState<PaymentMethod>('bank_transfer');
+  const [paymentReference, setPaymentReference] = React.useState('');
+  const [paymentNotes, setPaymentNotes] = React.useState('');
 
   const entries = React.useMemo(
     () => timesheets.map(buildEntry).filter((entry): entry is InvoiceEntry => Boolean(entry)),
@@ -786,6 +799,42 @@ export function CompanyInvoiceWorkspace({ timesheets, refreshing, onRefresh }: C
     }
   }, [refreshAll, selectedBatch]);
 
+  const recordPayment = React.useCallback(async () => {
+    if (!selectedBatch) return;
+
+    const amount = Number(paymentAmount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setFeedback({ tone: 'error', message: 'Enter a valid payment amount greater than zero.' });
+      return;
+    }
+
+    if (!paymentDate.trim()) {
+      setFeedback({ tone: 'error', message: 'Enter a valid payment date.' });
+      return;
+    }
+
+    setBatchAction(true);
+    try {
+      const updated = await recordCompanyInvoicePayment(selectedBatch.id, {
+        amount,
+        paymentDate: paymentDate.trim(),
+        method: paymentMethod,
+        reference: paymentReference.trim() || null,
+        notes: paymentNotes.trim() || null,
+      });
+      setFeedback({ tone: 'success', message: `Payment recorded for invoice batch #${updated.id}.` });
+      setShowPaymentForm(false);
+      setPaymentAmount('');
+      setPaymentReference('');
+      setPaymentNotes('');
+      await refreshAll(updated.id);
+    } catch (error) {
+      setFeedback({ tone: 'error', message: formatApiErrorMessage(error, 'Unable to record invoice payment.') });
+    } finally {
+      setBatchAction(false);
+    }
+  }, [paymentAmount, paymentDate, paymentMethod, paymentNotes, paymentReference, refreshAll, selectedBatch]);
+
   const downloadInvoiceDocument = React.useCallback(() => {
     if (!selectedDocument) return;
     downloadHtml(
@@ -1094,6 +1143,9 @@ export function CompanyInvoiceWorkspace({ timesheets, refreshing, onRefresh }: C
                 <Detail label="Records" value={String(selectedBatch.totals.recordsCount)} />
                 <Detail label="Approved Hours" value={formatNumber(selectedBatch.totals.approvedHours)} />
                 <Detail label="Total Revenue" value={formatMoney(selectedBatch.totals.totalRevenueAmount ?? selectedBatch.totals.invoiceAmount)} />
+                <Detail label="Paid Amount" value={formatMoney(selectedBatch.paidAmount ?? selectedDocument?.totals.paidAmount ?? 0)} />
+                <Detail label="Outstanding" value={formatMoney(selectedBatch.outstandingAmount ?? selectedDocument?.totals.outstandingAmount ?? (selectedBatch.totals.totalRevenueAmount ?? selectedBatch.totals.invoiceAmount))} />
+                <Detail label="Payment Status" value={formatStatusLabel(selectedBatch.paymentStatus || selectedDocument?.totals.paymentStatus || 'unpaid')} />
                 <Detail label="Created" value={formatDateTimeLabel(selectedBatch.createdAt)} />
                 <Detail label="Finalised" value={formatDateTimeLabel(selectedBatch.finalisedAt)} />
                 <Detail label="Issued" value={formatDateTimeLabel(selectedBatch.issuedAt)} />
@@ -1119,12 +1171,75 @@ export function CompanyInvoiceWorkspace({ timesheets, refreshing, onRefresh }: C
                       <Text style={styles.primaryButtonText}>Mark Issued</Text>
                     </Pressable>
                   ) : null}
+                  {((selectedBatch.status === 'issued') || (selectedBatch.status === 'paid' && Number(selectedBatch.outstandingAmount ?? 0) > 0.009)) ? (
+                    <Pressable style={styles.secondaryButton} onPress={() => setShowPaymentForm((current) => !current)} disabled={batchAction}>
+                      <Text style={styles.secondaryButtonText}>{showPaymentForm ? 'Hide Payment Form' : 'Record Payment'}</Text>
+                    </Pressable>
+                  ) : null}
                   {selectedBatch.status === 'issued' ? (
                     <Pressable style={styles.primaryButton} onPress={() => runBatchAction('pay')} disabled={batchAction}>
                       <Text style={styles.primaryButtonText}>Mark Paid</Text>
                     </Pressable>
                   ) : null}
                 </View>
+                {showPaymentForm && ((selectedBatch.status === 'issued') || (selectedBatch.status === 'paid' && Number(selectedBatch.outstandingAmount ?? 0) > 0.009)) ? (
+                  <View style={styles.paymentForm}>
+                    <Text style={styles.sectionSubheading}>Record Payment</Text>
+                    <View style={styles.filterGrid}>
+                      <TextInput
+                        style={styles.input}
+                        value={paymentAmount}
+                        onChangeText={setPaymentAmount}
+                        placeholder="Amount"
+                        keyboardType="decimal-pad"
+                      />
+                      <TextInput
+                        style={styles.input}
+                        value={paymentDate}
+                        onChangeText={setPaymentDate}
+                        placeholder="Payment date YYYY-MM-DD"
+                      />
+                      <WebSelect
+                        value={paymentMethod}
+                        onChange={(value) => setPaymentMethod(value as PaymentMethod)}
+                        options={PAYMENT_METHOD_OPTIONS}
+                      />
+                      <TextInput
+                        style={styles.input}
+                        value={paymentReference}
+                        onChangeText={setPaymentReference}
+                        placeholder="Reference (optional)"
+                      />
+                      <TextInput
+                        style={[styles.input, styles.notesInput]}
+                        value={paymentNotes}
+                        onChangeText={setPaymentNotes}
+                        placeholder="Notes (optional)"
+                        multiline
+                      />
+                    </View>
+                    <View style={styles.rowActions}>
+                      <Pressable style={styles.primaryButton} onPress={recordPayment} disabled={batchAction}>
+                        <Text style={styles.primaryButtonText}>{batchAction ? 'Saving...' : 'Save Payment'}</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                ) : null}
+                <Text style={styles.sectionSubheading}>Payments</Text>
+                {(selectedBatch.paymentRecords || selectedDocument?.payments || []).length ? (
+                  (selectedBatch.paymentRecords || selectedDocument?.payments || []).map((payment) => (
+                    <View key={payment.id} style={styles.batchRow}>
+                      <Text style={styles.batchRowTitle}>{formatMoney(payment.amount)} · {formatStatusLabel(payment.method)}</Text>
+                      <Text style={styles.batchMeta}>
+                        {formatDateLabel(payment.paymentDate)}
+                        {payment.reference ? ` | ${payment.reference}` : ''}
+                        {payment.notes ? ` | ${payment.notes}` : ''}
+                      </Text>
+                    </View>
+                  ))
+                ) : (
+                  <Text style={styles.helperText}>No payments recorded yet.</Text>
+                )}
                 <Text style={styles.sectionSubheading}>Invoice Document Preview</Text>
                 {loadingDocument ? (
                   <Text style={styles.helperText}>Loading invoice document...</Text>
@@ -1220,6 +1335,8 @@ function InvoiceDocumentPreview({ document }: { document: InvoiceDocument }) {
         <Detail label="Net" value={MONEY_FORMATTER.format(document.totals.netAmount)} />
         <Detail label={`VAT (${document.totals.vatRate.toFixed(2)}%)`} value={MONEY_FORMATTER.format(document.totals.vatAmount)} />
         <Detail label="Grand Total" value={MONEY_FORMATTER.format(document.totals.grossAmount)} />
+        <Detail label="Paid" value={formatMoney(document.totals.paidAmount ?? 0)} />
+        <Detail label="Outstanding" value={formatMoney(document.totals.outstandingAmount ?? document.totals.netAmount)} />
       </View>
 
       <View style={styles.invoiceNotes}>
@@ -1591,6 +1708,18 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 10,
+  },
+  paymentForm: {
+    borderColor: '#e2e8f0',
+    borderWidth: 1,
+    borderRadius: 16,
+    padding: 14,
+    gap: 10,
+    backgroundColor: '#f8fafc',
+  },
+  notesInput: {
+    minHeight: 76,
+    textAlignVertical: 'top',
   },
   sectionSubheading: {
     color: '#0f172a',

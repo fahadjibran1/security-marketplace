@@ -4,6 +4,8 @@ export type TimesheetPayrollStatus = 'unpaid' | 'included' | 'paid';
 export type PayrollBatchStatus = 'draft' | 'finalised' | 'paid';
 export type TimesheetBillingStatus = 'uninvoiced' | 'included' | 'invoiced';
 export type InvoiceBatchStatus = 'draft' | 'finalised' | 'issued' | 'paid';
+export type InvoicePaymentStatus = 'unpaid' | 'partially_paid' | 'paid';
+export type PaymentMethod = 'bank_transfer' | 'cash' | 'card' | 'other';
 export type ContractPricingRuleStatus = 'active' | 'inactive';
 export type ComplianceRecordType = 'SIA' | 'RIGHT_TO_WORK' | 'TRAINING' | 'OTHER';
 export type ComplianceRecordStatus = 'valid' | 'expiring' | 'expired';
@@ -478,6 +480,9 @@ export interface InvoiceBatch {
   netAmountSnapshot?: number | null;
   vatAmountSnapshot?: number | null;
   grossAmountSnapshot?: number | null;
+  paidAmount?: number;
+  outstandingAmount?: number;
+  paymentStatus?: InvoicePaymentStatus | string;
   createdAt: string;
   updatedAt: string;
   finalisedAt?: string | null;
@@ -485,7 +490,19 @@ export interface InvoiceBatch {
   paidAt?: string | null;
   createdByUserId?: number | null;
   totals: InvoiceBatchTotals;
+  paymentRecords?: PaymentRecord[];
   timesheets?: Timesheet[];
+}
+
+export interface PaymentRecord {
+  id: number;
+  amount: number;
+  paymentDate: string;
+  method: PaymentMethod | string;
+  reference?: string | null;
+  notes?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface ClientPortalDashboard {
@@ -632,12 +649,96 @@ export interface InvoiceDocument {
     contactPhone?: string | null;
   };
   lineItems: InvoiceDocumentLineItem[];
+  payments?: PaymentRecord[];
   totals: {
     netAmount: number;
     vatRate: number;
     vatAmount: number;
     grossAmount: number;
+    paidAmount?: number;
+    outstandingAmount?: number;
+    paymentStatus?: InvoicePaymentStatus | string;
   };
+}
+
+export interface RecordInvoicePaymentPayload {
+  amount: number;
+  paymentDate: string;
+  method: PaymentMethod;
+  reference?: string | null;
+  notes?: string | null;
+}
+
+export interface FinanceSummaryResponse {
+  filters: {
+    startDate?: string | null;
+    endDate?: string | null;
+    clientId?: number | null;
+    siteId?: number | null;
+  };
+  revenueSummary: {
+    totalRevenue: number;
+    totalInvoiced: number;
+    totalPaid: number;
+    outstandingRevenue: number;
+  };
+  costSummary: {
+    totalCost: number;
+    totalPaidToGuards: number;
+    pendingPayroll: number;
+  };
+  profitSummary: {
+    totalProfit: number;
+    realisedProfit: number;
+    unrealisedProfit: number;
+  };
+  monthly: FinanceMonthlyPoint[];
+}
+
+export interface FinanceMonthlyPoint {
+  month: string;
+  revenue: number;
+  cost: number;
+  profit: number;
+}
+
+export interface FinanceReconciliationRow {
+  invoiceBatchId: number;
+  invoiceNumber?: string | null;
+  invoiceReference?: string | null;
+  clientId?: number | null;
+  clientName: string;
+  siteNames: string[];
+  issuedDate?: string | null;
+  dueDate?: string | null;
+  amount: number;
+  paid: number;
+  outstanding: number;
+  paymentStatus: InvoicePaymentStatus | string;
+  ageDays: number;
+  ageBucket: '0-30' | '31-60' | '61-90' | '90+';
+  payments: PaymentRecord[];
+}
+
+export interface FinanceReceivablesResponse {
+  filters: FinanceSummaryResponse['filters'];
+  totals: {
+    invoiced: number;
+    paid: number;
+    outstanding: number;
+  };
+  buckets: {
+    '0-30': number;
+    '31-60': number;
+    '61-90': number;
+    '90+': number;
+  };
+  rows: FinanceReconciliationRow[];
+}
+
+export interface FinanceReconciliationResponse {
+  filters: FinanceSummaryResponse['filters'];
+  rows: FinanceReconciliationRow[];
 }
 
 export interface CreateJobPayload {

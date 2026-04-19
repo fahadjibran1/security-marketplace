@@ -7,6 +7,7 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { COMPANY_ADMIN_ROLES, COMPANY_VIEW_ROLES } from '../user/entities/user.entity';
 import { CreateInvoiceBatchDto } from './dto/create-invoice-batch.dto';
+import { CreatePaymentRecordDto } from './dto/create-payment-record.dto';
 import { InvoiceBatchService } from './invoice-batch.service';
 
 @Controller('invoice-batches')
@@ -54,5 +55,15 @@ export class InvoiceBatchController {
   @Roles(...COMPANY_ADMIN_ROLES)
   pay(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
     return this.invoiceBatchService.payForCompany(user.sub, id);
+  }
+
+  @Post(':id/payments')
+  @Roles(...COMPANY_ADMIN_ROLES)
+  recordPayment(
+    @CurrentUser() user: JwtPayload,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: CreatePaymentRecordDto,
+  ) {
+    return this.invoiceBatchService.createPaymentRecordForCompany(user.sub, id, dto);
   }
 }

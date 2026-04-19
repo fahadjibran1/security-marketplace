@@ -35,6 +35,7 @@ import { ComplianceModule } from './compliance/compliance.module';
 import { AvailabilityModule } from './availability/availability.module';
 import { LeaveModule } from './leave/leave.module';
 import { CoverageModule } from './coverage/coverage.module';
+import { FinanceModule } from './finance/finance.module';
 import { HealthController } from './health.controller';
 import { buildNestTypeOrmOptions } from './database/typeorm.config';
 import { validateRuntimeEnv } from './config/runtime-env';
@@ -94,6 +95,7 @@ import { validateRuntimeEnv } from './config/runtime-env';
     AvailabilityModule,
     LeaveModule,
     CoverageModule,
+    FinanceModule,
   ],
   controllers: [HealthController],
 })

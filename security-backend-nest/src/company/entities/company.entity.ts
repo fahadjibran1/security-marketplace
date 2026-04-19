@@ -16,6 +16,7 @@ import { CompanyGuard } from '../../company-guard/entities/company-guard.entity'
 import { Site } from '../../site/entities/site.entity';
 import { Client } from '../../client/entities/client.entity';
 import { InvoiceBatch } from '../../invoice-batch/entities/invoice-batch.entity';
+import { PaymentRecord } from '../../payment-record/entities/payment-record.entity';
 import { PayrollBatch } from '../../payroll-batch/entities/payroll-batch.entity';
 
 export enum CompanyStatus {
@@ -91,4 +92,7 @@ export class Company {
 
   @OneToMany(() => InvoiceBatch, (invoiceBatch) => invoiceBatch.company)
   invoiceBatches?: InvoiceBatch[];
+
+  @OneToMany(() => PaymentRecord, (paymentRecord) => paymentRecord.company)
+  paymentRecords?: PaymentRecord[];
 }
