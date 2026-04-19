@@ -596,6 +596,145 @@ export interface MarginReport {
   breakdown: MarginReportBreakdown[];
 }
 
+export interface IncidentAnalyticsBucket {
+  key: string;
+  count: number;
+}
+
+export interface IncidentAnalyticsSite {
+  siteId: number | null;
+  site: string;
+  client: string;
+  count: number;
+  highSeverityCount: number;
+}
+
+export interface IncidentAnalyticsClient {
+  clientId: number | null;
+  client: string;
+  count: number;
+  highSeverityCount: number;
+}
+
+export interface IncidentAnalyticsGuard {
+  guardId: number | null;
+  guard: string;
+  count: number;
+  highSeverityCount: number;
+}
+
+export interface IncidentAnalyticsTrend {
+  period: string;
+  count: number;
+}
+
+export interface IncidentReportRow {
+  id: number;
+  reportedAt: string;
+  site: string;
+  client: string;
+  guard: string;
+  category: string;
+  severity: string;
+  notes: string;
+}
+
+export interface IncidentAnalyticsReport {
+  totalIncidents: number;
+  byCategory: IncidentAnalyticsBucket[];
+  bySeverity: IncidentAnalyticsBucket[];
+  bySite: IncidentAnalyticsSite[];
+  byClient: IncidentAnalyticsClient[];
+  byGuard: IncidentAnalyticsGuard[];
+  trends: IncidentAnalyticsTrend[];
+  highRiskSites: IncidentAnalyticsSite[];
+  records: IncidentReportRow[];
+}
+
+export interface WelfareSiteBreakdown {
+  siteId: number | null;
+  site: string;
+  client: string;
+  expected: number;
+  completed: number;
+  missed: number;
+  complianceRate: number;
+  lateCheckIns: number;
+}
+
+export interface WelfareGuardBreakdown {
+  guardId: number | null;
+  guard: string;
+  expected: number;
+  completed: number;
+  missed: number;
+  complianceRate: number;
+  lateCheckIns: number;
+}
+
+export interface WelfareTrend {
+  period: string;
+  panicAlerts: number;
+  welfareAlerts: number;
+  missedCheckCalls: number;
+  lateCheckIns: number;
+}
+
+export interface WelfareReportRow {
+  shiftId: number;
+  shiftDate: string;
+  site: string;
+  client: string;
+  guard: string;
+  expectedCheckCalls: number;
+  completedCheckCalls: number;
+  missedCheckCalls: number;
+  complianceRate: number;
+  lateCheckIn: boolean;
+  welfareAlerts: number;
+  panicAlerts: number;
+}
+
+export interface WelfareAnalyticsReport {
+  expectedCheckCalls: number;
+  completedCheckCalls: number;
+  missedCheckCalls: number;
+  checkCallComplianceRate: number;
+  panicAlerts: number;
+  welfareAlerts: number;
+  lateCheckIns: number;
+  bySite: WelfareSiteBreakdown[];
+  byGuard: WelfareGuardBreakdown[];
+  trends: WelfareTrend[];
+  records: WelfareReportRow[];
+}
+
+export interface SiteRiskRow {
+  siteId: number | null;
+  site: string;
+  client: string;
+  incidents: number;
+  highSeverityIncidents: number;
+  missedCheckCalls: number;
+  welfareAlerts: number;
+  panicAlerts: number;
+  lateCheckIns: number;
+  riskScore: number;
+  riskLevel: 'low' | 'medium' | 'high' | string;
+}
+
+export interface SiteRiskReport {
+  sites: SiteRiskRow[];
+  summary: {
+    lowRisk: number;
+    mediumRisk: number;
+    highRisk: number;
+    totalIncidents: number;
+    totalAlerts: number;
+    totalMissedCheckCalls: number;
+  };
+}
+
 export interface ContractPricingRule {
   id: number;
   company?: CompanyProfile;

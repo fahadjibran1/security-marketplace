@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { MoreThanOrEqual, Repository } from 'typeorm';
 import {
   Notification,
   NotificationStatus,
@@ -37,6 +37,27 @@ export class NotificationService {
     });
 
     return this.notificationRepo.save(notification);
+  }
+
+  async createForUserUnlessRecentDuplicate(
+    input: NotificationInput,
+    recentMinutes = 240,
+  ): Promise<Notification | null> {
+    const threshold = new Date(Date.now() - recentMinutes * 60 * 1000);
+    const existing = await this.notificationRepo.findOne({
+      where: {
+        user: { id: input.userId },
+        company: input.company?.id ? { id: input.company.id } : undefined,
+        type: input.type,
+        title: input.title,
+        message: input.message,
+        createdAt: MoreThanOrEqual(threshold),
+      },
+      order: { createdAt: 'DESC' },
+    });
+
+    if (existing) return existing;
+    return this.createForUser(input);
   }
 
   findMine(userId: number): Promise<Notification[]> {

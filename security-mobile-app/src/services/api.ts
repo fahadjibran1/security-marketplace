@@ -26,6 +26,7 @@ import {
   GuardProfile,
   HireApplicationPayload,
   Incident,
+  IncidentAnalyticsReport,
   Job,
   JobApplication,
   InvoiceBatch,
@@ -46,6 +47,7 @@ import {
   PayRuleConfigPayload,
   RegisterPayload,
   SafetyAlert,
+  SiteRiskReport,
   Site,
   Shift,
   Timesheet,
@@ -56,6 +58,7 @@ import {
   UpdateSitePayload,
   UpdateTimesheetPayrollPayload,
   UpdateTimesheetPayload,
+  WelfareAnalyticsReport,
   RecordAttendancePayload,
   CreateSitePayload,
   CreateSafetyAlertPayload,
@@ -635,6 +638,39 @@ export function getCompanyMarginReport(filters: { startDate?: string; endDate?: 
   if (filters.siteId) query.set('siteId', String(filters.siteId));
   const suffix = query.toString() ? `?${query.toString()}` : '';
   return request<MarginReport>(`/reports/margin${suffix}`);
+}
+
+export function getIncidentAnalyticsReport(filters: { startDate?: string; endDate?: string; clientId?: number; siteId?: number; guardId?: number } = {}) {
+  const query = new URLSearchParams();
+  if (filters.startDate) query.set('startDate', filters.startDate);
+  if (filters.endDate) query.set('endDate', filters.endDate);
+  if (filters.clientId) query.set('clientId', String(filters.clientId));
+  if (filters.siteId) query.set('siteId', String(filters.siteId));
+  if (filters.guardId) query.set('guardId', String(filters.guardId));
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return request<IncidentAnalyticsReport>(`/reports/incidents${suffix}`);
+}
+
+export function getWelfareAnalyticsReport(filters: { startDate?: string; endDate?: string; clientId?: number; siteId?: number; guardId?: number } = {}) {
+  const query = new URLSearchParams();
+  if (filters.startDate) query.set('startDate', filters.startDate);
+  if (filters.endDate) query.set('endDate', filters.endDate);
+  if (filters.clientId) query.set('clientId', String(filters.clientId));
+  if (filters.siteId) query.set('siteId', String(filters.siteId));
+  if (filters.guardId) query.set('guardId', String(filters.guardId));
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return request<WelfareAnalyticsReport>(`/reports/welfare${suffix}`);
+}
+
+export function getSiteRiskReport(filters: { startDate?: string; endDate?: string; clientId?: number; siteId?: number; guardId?: number } = {}) {
+  const query = new URLSearchParams();
+  if (filters.startDate) query.set('startDate', filters.startDate);
+  if (filters.endDate) query.set('endDate', filters.endDate);
+  if (filters.clientId) query.set('clientId', String(filters.clientId));
+  if (filters.siteId) query.set('siteId', String(filters.siteId));
+  if (filters.guardId) query.set('guardId', String(filters.guardId));
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return request<SiteRiskReport>(`/reports/sites-risk${suffix}`);
 }
 
 export function listMyAttendance() {

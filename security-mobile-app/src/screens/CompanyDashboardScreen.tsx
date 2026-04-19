@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 
 import { CompanyAuditWorkspace } from '../components/company/CompanyAuditWorkspace';
+import { CompanyAnalyticsWorkspace } from '../components/company/CompanyAnalyticsWorkspace';
 import { CompanyAvailabilityWorkspace } from '../components/company/CompanyAvailabilityWorkspace';
 import { CompanyComplianceWorkspace } from '../components/company/CompanyComplianceWorkspace';
 import { CompanyContractPricingWorkspace } from '../components/company/CompanyContractPricingWorkspace';
@@ -73,6 +74,7 @@ type CompanySection =
   | 'rota-planner'
   | 'shift-offers'
   | 'live-operations'
+  | 'analytics'
   | 'coverage'
   | 'guards'
   | 'availability'
@@ -208,6 +210,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'rota-planner', label: 'Rota Planner', caption: 'Plan weekly cover and assignments.' },
   { id: 'shift-offers', label: 'Shift Offers', caption: 'Track pending responses and re-cover needs.' },
   { id: 'live-operations', label: 'Live Operations', caption: 'Monitor book-ons, logs, and incidents.' },
+  { id: 'analytics', label: 'Analytics', caption: 'Incident, welfare, and site-risk reporting.' },
   { id: 'coverage', label: 'Coverage', caption: 'Coverage gaps and eligible guards.' },
   { id: 'guards', label: 'Guards', caption: 'Available platform guards and linked team.' },
   { id: 'availability', label: 'Availability', caption: 'Guard availability, overrides, and leave.' },
@@ -4219,6 +4222,8 @@ export function CompanyDashboardScreen() {
         return renderShiftOffersSection();
       case 'live-operations':
         return renderLiveOperationsSection();
+      case 'analytics':
+        return <CompanyAnalyticsWorkspace />;
       case 'coverage':
         return <CompanyCoverageWorkspace />;
       case 'guards':
