@@ -7,6 +7,9 @@ export type InvoiceBatchStatus = 'draft' | 'finalised' | 'issued' | 'paid';
 export type ContractPricingRuleStatus = 'active' | 'inactive';
 export type ComplianceRecordType = 'SIA' | 'RIGHT_TO_WORK' | 'TRAINING' | 'OTHER';
 export type ComplianceRecordStatus = 'valid' | 'expiring' | 'expired';
+export type AvailabilityOverrideStatus = 'available' | 'unavailable';
+export type GuardLeaveType = 'annual_leave' | 'sick' | 'unavailable' | 'training' | 'suspension' | 'other';
+export type GuardLeaveStatus = 'pending' | 'approved' | 'rejected';
 
 export function isCompanyAppRole(role?: AppRole | null): boolean {
   return role === 'company' || role === 'company_admin' || role === 'company_staff';
@@ -156,6 +159,116 @@ export interface ComplianceRecordPayload {
   documentNumber?: string | null;
   issueDate?: string | null;
   expiryDate: string;
+}
+
+export interface GuardAvailabilityRule {
+  id: number;
+  company?: CompanyProfile | null;
+  guard?: GuardProfile;
+  weekday: number;
+  startTime: string;
+  endTime: string;
+  isAvailable: boolean;
+  effectiveFrom?: string | null;
+  effectiveTo?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface GuardAvailabilityOverride {
+  id: number;
+  guard?: GuardProfile;
+  date: string;
+  startTime?: string | null;
+  endTime?: string | null;
+  status: AvailabilityOverrideStatus | string;
+  note?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface GuardLeave {
+  id: number;
+  company?: CompanyProfile;
+  guard?: GuardProfile;
+  leaveType: GuardLeaveType | string;
+  startAt: string;
+  endAt: string;
+  reason?: string | null;
+  status: GuardLeaveStatus | string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AvailabilityRulePayload {
+  id?: number;
+  guardId?: number;
+  weekday: number;
+  startTime: string;
+  endTime: string;
+  isAvailable: boolean;
+  effectiveFrom?: string | null;
+  effectiveTo?: string | null;
+}
+
+export interface AvailabilityOverridePayload {
+  id?: number;
+  guardId?: number;
+  date: string;
+  startTime?: string | null;
+  endTime?: string | null;
+  status: AvailabilityOverrideStatus | string;
+  note?: string | null;
+}
+
+export interface GuardLeavePayload {
+  id?: number;
+  guardId?: number;
+  leaveType: GuardLeaveType | string;
+  startAt: string;
+  endAt: string;
+  reason?: string | null;
+  status?: GuardLeaveStatus | string;
+}
+
+export interface CoverageShiftRow {
+  shiftId: number;
+  siteId?: number | null;
+  siteName: string;
+  clientId?: number | null;
+  clientName: string;
+  start: string;
+  end: string;
+  requiredGuardCount: number;
+  assignedGuardCount: number;
+  coverageGap: number;
+  coverageStatus: string;
+  guardId?: number | null;
+  guardName?: string | null;
+}
+
+export interface CoverageSiteRow {
+  siteId?: number | null;
+  siteName: string;
+  clientName: string;
+  shifts: number;
+  requiredGuards: number;
+  assignedGuards: number;
+  coverageGap: number;
+  unfilled: number;
+  partiallyCovered: number;
+}
+
+export interface EligibleGuardRow {
+  guardId: number;
+  fullName?: string;
+  relationshipStatus?: string | null;
+  isEligible: boolean;
+  availabilityStatus: 'available' | 'unavailable' | 'no_rule' | string;
+  hasShiftClash: boolean;
+  hasApprovedLeave: boolean;
+  complianceValid: boolean;
+  reasons: string[];
 }
 
 // Shift = planned work linked to assignment

@@ -4,10 +4,14 @@ import {
   AuditLog,
   AttendanceEvent,
   Assignment,
+  AvailabilityOverridePayload,
+  AvailabilityRulePayload,
   AuthSession,
   CompanyGuard,
   ComplianceRecord,
   ComplianceRecordPayload,
+  CoverageShiftRow,
+  CoverageSiteRow,
   ContractPricingRule,
   ContractPricingRulePayload,
   CompanyProfile,
@@ -30,6 +34,11 @@ import {
   MarginReport,
   ReviewJobApplicationPayload,
   DailyLog,
+  EligibleGuardRow,
+  GuardAvailabilityOverride,
+  GuardAvailabilityRule,
+  GuardLeave,
+  GuardLeavePayload,
   Notification,
   PayrollBatch,
   PayrollSuggestion,
@@ -441,6 +450,80 @@ export function saveComplianceRecord(payload: ComplianceRecordPayload) {
     method: 'PUT',
     body: JSON.stringify(payload),
   });
+}
+
+export function listAvailabilityRules(guardId?: number) {
+  return request<GuardAvailabilityRule[]>(`/availability/rules${guardId ? `?guardId=${guardId}` : ''}`);
+}
+
+export function listAvailabilityOverrides(guardId?: number) {
+  return request<GuardAvailabilityOverride[]>(`/availability/overrides${guardId ? `?guardId=${guardId}` : ''}`);
+}
+
+export function listMyAvailabilityRules() {
+  return request<GuardAvailabilityRule[]>('/availability/mine/rules');
+}
+
+export function listMyAvailabilityOverrides() {
+  return request<GuardAvailabilityOverride[]>('/availability/mine/overrides');
+}
+
+export function saveAvailabilityRule(payload: AvailabilityRulePayload, mine = false) {
+  return request<GuardAvailabilityRule>(mine ? '/availability/mine/rules' : '/availability/rules', {
+    method: mine && !payload.id ? 'POST' : 'PUT',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function saveAvailabilityOverride(payload: AvailabilityOverridePayload, mine = false) {
+  return request<GuardAvailabilityOverride>(mine ? '/availability/mine/overrides' : '/availability/overrides', {
+    method: mine && !payload.id ? 'POST' : 'PUT',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function listGuardLeave() {
+  return request<GuardLeave[]>('/leave');
+}
+
+export function listMyGuardLeave() {
+  return request<GuardLeave[]>('/leave/mine');
+}
+
+export function saveGuardLeave(payload: GuardLeavePayload) {
+  return request<GuardLeave>('/leave', {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function saveMyGuardLeave(payload: GuardLeavePayload) {
+  return request<GuardLeave>('/leave/mine', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function listCoverageShifts(params: { from?: string; to?: string; siteId?: string; clientId?: string } = {}) {
+  const query = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value) query.set(key, value);
+  });
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return request<CoverageShiftRow[]>(`/coverage/shifts${suffix}`);
+}
+
+export function listCoverageSites(params: { from?: string; to?: string } = {}) {
+  const query = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value) query.set(key, value);
+  });
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return request<CoverageSiteRow[]>(`/coverage/sites${suffix}`);
+}
+
+export function listEligibleGuardsForShift(shiftId: number) {
+  return request<EligibleGuardRow[]>(`/coverage/shifts/${shiftId}/eligible-guards`);
 }
 
 export function listPayrollSuggestions() {

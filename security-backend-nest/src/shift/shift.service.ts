@@ -15,6 +15,7 @@ import { CompanyService } from '../company/company.service';
 import { GuardProfileService } from '../guard-profile/guard-profile.service';
 import { isCompanyRole, UserRole } from '../user/entities/user.entity';
 import { CompanyGuardService } from '../company-guard/company-guard.service';
+import { AvailabilityService } from '../availability/availability.service';
 import { ComplianceService } from '../compliance/compliance.service';
 import { Timesheet } from '../timesheet/entities/timesheet.entity';
 import { UpdateShiftDto } from './dto/update-shift.dto';
@@ -53,6 +54,7 @@ export class ShiftService {
     private readonly companyService: CompanyService,
     private readonly guardProfileService: GuardProfileService,
     private readonly companyGuardService: CompanyGuardService,
+    private readonly availabilityService: AvailabilityService,
     private readonly complianceService: ComplianceService,
   ) {}
 
@@ -202,6 +204,7 @@ export class ShiftService {
 
     if (guard) {
       await this.complianceService.assertGuardAssignable(company.id, guard.id);
+      await this.availabilityService.assertGuardCanTakeShift(company.id, guard.id, start, end);
     }
 
     const status = this.resolveInitialStatus({
@@ -280,6 +283,7 @@ export class ShiftService {
 
     if (contextGuard) {
       await this.complianceService.assertGuardAssignable(company.id, contextGuard.id);
+      await this.availabilityService.assertGuardCanTakeShift(company.id, contextGuard.id, new Date(dto.start), new Date(dto.end));
     }
 
     const job = dto.jobId
@@ -441,6 +445,7 @@ export class ShiftService {
         const guard = await this.guardProfileService.findOne(dto.guardId);
         await this.companyGuardService.ensureActiveRelationship(actorCompany.id, guard.id);
         await this.complianceService.assertGuardAssignable(actorCompany.id, guard.id);
+        await this.availabilityService.assertGuardCanTakeShift(actorCompany.id, guard.id, nextStart, nextEnd, shift.id);
         nextGuard = guard;
       } else {
         nextGuard = null;

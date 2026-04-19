@@ -2,8 +2,10 @@ import * as React from 'react';
 import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 
 import { CompanyAuditWorkspace } from '../components/company/CompanyAuditWorkspace';
+import { CompanyAvailabilityWorkspace } from '../components/company/CompanyAvailabilityWorkspace';
 import { CompanyComplianceWorkspace } from '../components/company/CompanyComplianceWorkspace';
 import { CompanyContractPricingWorkspace } from '../components/company/CompanyContractPricingWorkspace';
+import { CompanyCoverageWorkspace } from '../components/company/CompanyCoverageWorkspace';
 import { CompanyFinanceControlWorkspace } from '../components/company/CompanyFinanceControlWorkspace';
 import { CompanyInvoiceWorkspace } from '../components/company/CompanyInvoiceWorkspace';
 import { CompanyMarginWorkspace } from '../components/company/CompanyMarginWorkspace';
@@ -71,7 +73,9 @@ type CompanySection =
   | 'rota-planner'
   | 'shift-offers'
   | 'live-operations'
+  | 'coverage'
   | 'guards'
+  | 'availability'
   | 'recruitment'
   | 'timesheets'
   | 'payroll'
@@ -204,7 +208,9 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'rota-planner', label: 'Rota Planner', caption: 'Plan weekly cover and assignments.' },
   { id: 'shift-offers', label: 'Shift Offers', caption: 'Track pending responses and re-cover needs.' },
   { id: 'live-operations', label: 'Live Operations', caption: 'Monitor book-ons, logs, and incidents.' },
+  { id: 'coverage', label: 'Coverage', caption: 'Coverage gaps and eligible guards.' },
   { id: 'guards', label: 'Guards', caption: 'Available platform guards and linked team.' },
+  { id: 'availability', label: 'Availability', caption: 'Guard availability, overrides, and leave.' },
   { id: 'recruitment', label: 'Recruitment', caption: 'Open jobs and incoming applications.' },
   { id: 'timesheets', label: 'Timesheets', caption: 'Review worked hours and approvals.' },
   { id: 'payroll', label: 'Payroll', caption: 'Approved hours and payment totals.' },
@@ -4213,8 +4219,12 @@ export function CompanyDashboardScreen() {
         return renderShiftOffersSection();
       case 'live-operations':
         return renderLiveOperationsSection();
+      case 'coverage':
+        return <CompanyCoverageWorkspace />;
       case 'guards':
         return renderGuardsSection();
+      case 'availability':
+        return <CompanyAvailabilityWorkspace />;
       case 'recruitment':
         return renderRecruitmentSection();
       case 'timesheets':

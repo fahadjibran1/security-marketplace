@@ -3,6 +3,7 @@ import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View
 import { FeatureCard } from '../components/FeatureCard';
 import { JobsScreen } from './JobsScreen';
 import { GuardTimesheetsScreen } from './GuardTimesheetsScreen';
+import { GuardAvailabilityScreen } from './GuardAvailabilityScreen';
 import {
   checkInShift,
   checkOutShift,
@@ -1061,6 +1062,7 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
                 ))
               )}
             </FeatureCard>
+            <GuardAvailabilityScreen />
           </>
         ) : null}
       </ScrollView>

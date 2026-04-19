@@ -30,6 +30,9 @@ import { ReportModule } from './report/report.module';
 import { SchedulerModule } from './scheduler/scheduler.module';
 import { PayRuleModule } from './pay-rule/pay-rule.module';
 import { ComplianceModule } from './compliance/compliance.module';
+import { AvailabilityModule } from './availability/availability.module';
+import { LeaveModule } from './leave/leave.module';
+import { CoverageModule } from './coverage/coverage.module';
 import { HealthController } from './health.controller';
 import { buildNestTypeOrmOptions } from './database/typeorm.config';
 import { validateRuntimeEnv } from './config/runtime-env';
@@ -84,6 +87,9 @@ import { validateRuntimeEnv } from './config/runtime-env';
     SchedulerModule,
     PayRuleModule,
     ComplianceModule,
+    AvailabilityModule,
+    LeaveModule,
+    CoverageModule,
   ],
   controllers: [HealthController],
 })
