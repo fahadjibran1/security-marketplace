@@ -4005,7 +4005,7 @@ export function CompanyDashboardScreen() {
             <Text style={styles.panelTitle}>Rejected / Needs Re-cover</Text>
             {rejectedShiftOffers.slice(0, 6).map((shift) => (
               <View key={shift.id} style={styles.recordRow}>
-                <Text style={styles.recordTitle}>Shift #{shift.id} Â· {shift.site?.name || shift.siteName}</Text>
+                <Text style={styles.recordTitle}>Shift #{shift.id} | {shift.site?.name || shift.siteName}</Text>
                 <Text style={styles.recordMeta}>
                   {shift.guard?.fullName || 'No guard'} | Offer rejected, find replacement cover
                 </Text>

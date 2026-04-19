@@ -475,7 +475,7 @@ export function CompanyInvoiceWorkspace({ timesheets, refreshing, onRefresh }: C
   const [loadingDocument, setLoadingDocument] = React.useState(false);
   const [showPaymentForm, setShowPaymentForm] = React.useState(false);
   const [paymentAmount, setPaymentAmount] = React.useState('');
-  const [paymentDate, setPaymentDate] = React.useState(() => new Date().toISOString().slice(0, 10));
+  const [paymentDate, setPaymentDate] = React.useState(new Date().toISOString().slice(0, 10));
   const [paymentMethod, setPaymentMethod] = React.useState<PaymentMethod>('bank_transfer');
   const [paymentReference, setPaymentReference] = React.useState('');
   const [paymentNotes, setPaymentNotes] = React.useState('');

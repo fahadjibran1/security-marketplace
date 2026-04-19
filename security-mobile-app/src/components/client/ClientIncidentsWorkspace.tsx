@@ -14,7 +14,7 @@ export function ClientIncidentsWorkspace({ incidents }: { incidents: ClientPorta
           <View key={incident.id} style={styles.row}>
             <View style={styles.flexGrow}>
               <Text style={styles.rowTitle}>{incident.title}</Text>
-              <Text style={styles.meta}>{incident.siteName} · {incident.category} · {incident.severity}</Text>
+              <Text style={styles.meta}>{incident.siteName} | {incident.category} | {incident.severity}</Text>
               <Text style={styles.summary}>{incident.summary}</Text>
             </View>
             <Text style={styles.status}>{incident.status}</Text>

@@ -55,12 +55,15 @@ export function GuardAvailabilityScreen() {
 
   async function handleSaveRule() {
     try {
-      await saveAvailabilityRule({
-        weekday: Number(ruleForm.weekday),
-        startTime: ruleForm.startTime,
-        endTime: ruleForm.endTime,
-        isAvailable: ruleForm.isAvailable === 'true',
-      }, true);
+      await saveAvailabilityRule(
+        {
+          weekday: Number(ruleForm.weekday),
+          startTime: ruleForm.startTime,
+          endTime: ruleForm.endTime,
+          isAvailable: ruleForm.isAvailable === 'true',
+        },
+        true,
+      );
       setFeedback({ tone: 'success', message: 'Weekly availability saved.' });
       await loadData();
     } catch (error) {
@@ -70,13 +73,16 @@ export function GuardAvailabilityScreen() {
 
   async function handleSaveOverride() {
     try {
-      await saveAvailabilityOverride({
-        date: overrideForm.date,
-        startTime: overrideForm.startTime || null,
-        endTime: overrideForm.endTime || null,
-        status: overrideForm.status,
-        note: overrideForm.note || null,
-      }, true);
+      await saveAvailabilityOverride(
+        {
+          date: overrideForm.date,
+          startTime: overrideForm.startTime || null,
+          endTime: overrideForm.endTime || null,
+          status: overrideForm.status,
+          note: overrideForm.note || null,
+        },
+        true,
+      );
       setOverrideForm({ date: '', startTime: '', endTime: '', status: 'unavailable', note: '' });
       setFeedback({ tone: 'success', message: 'One-off availability saved.' });
       await loadData();
@@ -110,10 +116,30 @@ export function GuardAvailabilityScreen() {
       ) : null}
       <Text style={styles.sectionTitle}>Weekly availability</Text>
       <View style={styles.grid}>
-        <TextInput style={styles.input} placeholder="Weekday 0-6" value={ruleForm.weekday} onChangeText={(weekday) => setRuleForm((prev) => ({ ...prev, weekday }))} />
-        <TextInput style={styles.input} placeholder="Start HH:mm" value={ruleForm.startTime} onChangeText={(startTime) => setRuleForm((prev) => ({ ...prev, startTime }))} />
-        <TextInput style={styles.input} placeholder="End HH:mm" value={ruleForm.endTime} onChangeText={(endTime) => setRuleForm((prev) => ({ ...prev, endTime }))} />
-        <TextInput style={styles.input} placeholder="true or false" value={ruleForm.isAvailable} onChangeText={(isAvailable) => setRuleForm((prev) => ({ ...prev, isAvailable }))} />
+        <TextInput
+          style={styles.input}
+          placeholder="Weekday 0-6"
+          value={ruleForm.weekday}
+          onChangeText={(weekday: string) => setRuleForm((prev) => ({ ...prev, weekday }))}
+        />
+        <TextInput
+          style={styles.input}
+          placeholder="Start HH:mm"
+          value={ruleForm.startTime}
+          onChangeText={(startTime: string) => setRuleForm((prev) => ({ ...prev, startTime }))}
+        />
+        <TextInput
+          style={styles.input}
+          placeholder="End HH:mm"
+          value={ruleForm.endTime}
+          onChangeText={(endTime: string) => setRuleForm((prev) => ({ ...prev, endTime }))}
+        />
+        <TextInput
+          style={styles.input}
+          placeholder="true or false"
+          value={ruleForm.isAvailable}
+          onChangeText={(isAvailable: string) => setRuleForm((prev) => ({ ...prev, isAvailable }))}
+        />
       </View>
       <Pressable style={styles.primaryButton} onPress={handleSaveRule}>
         <Text style={styles.primaryButtonText}>Save weekly availability</Text>
@@ -125,7 +151,9 @@ export function GuardAvailabilityScreen() {
           rules.map((rule) => (
             <View key={rule.id} style={styles.simpleRow}>
               <Text style={styles.rowTitle}>{WEEKDAYS[rule.weekday] || `Day ${rule.weekday}`}</Text>
-              <Text style={styles.metaText}>{rule.startTime}-{rule.endTime} · {rule.isAvailable ? 'Available' : 'Unavailable'}</Text>
+              <Text style={styles.metaText}>
+                {rule.startTime}-{rule.endTime} | {rule.isAvailable ? 'Available' : 'Unavailable'}
+              </Text>
             </View>
           ))
         )}
@@ -133,12 +161,37 @@ export function GuardAvailabilityScreen() {
 
       <Text style={styles.sectionTitle}>One-off availability</Text>
       <View style={styles.grid}>
-        <TextInput style={styles.input} placeholder="Date YYYY-MM-DD" value={overrideForm.date} onChangeText={(date) => setOverrideForm((prev) => ({ ...prev, date }))} />
-        <TextInput style={styles.input} placeholder="Start HH:mm optional" value={overrideForm.startTime} onChangeText={(startTime) => setOverrideForm((prev) => ({ ...prev, startTime }))} />
-        <TextInput style={styles.input} placeholder="End HH:mm optional" value={overrideForm.endTime} onChangeText={(endTime) => setOverrideForm((prev) => ({ ...prev, endTime }))} />
-        <TextInput style={styles.input} placeholder="available/unavailable" value={overrideForm.status} onChangeText={(status) => setOverrideForm((prev) => ({ ...prev, status }))} />
+        <TextInput
+          style={styles.input}
+          placeholder="Date YYYY-MM-DD"
+          value={overrideForm.date}
+          onChangeText={(date: string) => setOverrideForm((prev) => ({ ...prev, date }))}
+        />
+        <TextInput
+          style={styles.input}
+          placeholder="Start HH:mm optional"
+          value={overrideForm.startTime}
+          onChangeText={(startTime: string) => setOverrideForm((prev) => ({ ...prev, startTime }))}
+        />
+        <TextInput
+          style={styles.input}
+          placeholder="End HH:mm optional"
+          value={overrideForm.endTime}
+          onChangeText={(endTime: string) => setOverrideForm((prev) => ({ ...prev, endTime }))}
+        />
+        <TextInput
+          style={styles.input}
+          placeholder="available/unavailable"
+          value={overrideForm.status}
+          onChangeText={(status: string) => setOverrideForm((prev) => ({ ...prev, status }))}
+        />
       </View>
-      <TextInput style={styles.input} placeholder="Note optional" value={overrideForm.note} onChangeText={(note) => setOverrideForm((prev) => ({ ...prev, note }))} />
+      <TextInput
+        style={styles.input}
+        placeholder="Note optional"
+        value={overrideForm.note}
+        onChangeText={(note: string) => setOverrideForm((prev) => ({ ...prev, note }))}
+      />
       <Pressable style={styles.secondaryButton} onPress={handleSaveOverride}>
         <Text style={styles.secondaryButtonText}>Save one-off availability</Text>
       </Pressable>
@@ -149,7 +202,9 @@ export function GuardAvailabilityScreen() {
           overrides.slice(0, 5).map((override) => (
             <View key={override.id} style={styles.simpleRow}>
               <Text style={styles.rowTitle}>{formatDate(override.date)}</Text>
-              <Text style={styles.metaText}>{override.status} · {override.startTime || 'All day'}-{override.endTime || 'All day'}</Text>
+              <Text style={styles.metaText}>
+                {override.status} | {override.startTime || 'All day'}-{override.endTime || 'All day'}
+              </Text>
             </View>
           ))
         )}
@@ -157,11 +212,31 @@ export function GuardAvailabilityScreen() {
 
       <Text style={styles.sectionTitle}>Leave request</Text>
       <View style={styles.grid}>
-        <TextInput style={styles.input} placeholder="Type" value={leaveForm.leaveType} onChangeText={(leaveType) => setLeaveForm((prev) => ({ ...prev, leaveType }))} />
-        <TextInput style={styles.input} placeholder="Start ISO/date" value={leaveForm.startAt} onChangeText={(startAt) => setLeaveForm((prev) => ({ ...prev, startAt }))} />
-        <TextInput style={styles.input} placeholder="End ISO/date" value={leaveForm.endAt} onChangeText={(endAt) => setLeaveForm((prev) => ({ ...prev, endAt }))} />
+        <TextInput
+          style={styles.input}
+          placeholder="Type"
+          value={leaveForm.leaveType}
+          onChangeText={(leaveType: string) => setLeaveForm((prev) => ({ ...prev, leaveType }))}
+        />
+        <TextInput
+          style={styles.input}
+          placeholder="Start ISO/date"
+          value={leaveForm.startAt}
+          onChangeText={(startAt: string) => setLeaveForm((prev) => ({ ...prev, startAt }))}
+        />
+        <TextInput
+          style={styles.input}
+          placeholder="End ISO/date"
+          value={leaveForm.endAt}
+          onChangeText={(endAt: string) => setLeaveForm((prev) => ({ ...prev, endAt }))}
+        />
       </View>
-      <TextInput style={styles.input} placeholder="Reason optional" value={leaveForm.reason} onChangeText={(reason) => setLeaveForm((prev) => ({ ...prev, reason }))} />
+      <TextInput
+        style={styles.input}
+        placeholder="Reason optional"
+        value={leaveForm.reason}
+        onChangeText={(reason: string) => setLeaveForm((prev) => ({ ...prev, reason }))}
+      />
       <Pressable style={styles.secondaryButton} onPress={handleSaveLeave}>
         <Text style={styles.secondaryButtonText}>Request leave</Text>
       </Pressable>
@@ -172,7 +247,9 @@ export function GuardAvailabilityScreen() {
           leaveRows.slice(0, 5).map((leave) => (
             <View key={leave.id} style={styles.simpleRow}>
               <Text style={styles.rowTitle}>{String(leave.leaveType).replace(/_/g, ' ')}</Text>
-              <Text style={styles.metaText}>{formatDate(leave.startAt)} to {formatDate(leave.endAt)} · {leave.status}</Text>
+              <Text style={styles.metaText}>
+                {formatDate(leave.startAt)} to {formatDate(leave.endAt)} | {leave.status}
+              </Text>
             </View>
           ))
         )}

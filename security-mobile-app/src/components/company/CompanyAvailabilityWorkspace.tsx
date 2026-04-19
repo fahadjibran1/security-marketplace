@@ -150,11 +150,11 @@ export function CompanyAvailabilityWorkspace() {
         <View style={styles.panel}>
           <Text style={styles.panelTitle}>Recurring Availability</Text>
           <View style={styles.formGrid}>
-            <WebSelect value={ruleForm.guardId} onChange={(value) => setRuleForm((current) => ({ ...current, guardId: value }))} options={guardOptions} />
-            <WebSelect value={ruleForm.weekday} onChange={(value) => setRuleForm((current) => ({ ...current, weekday: value }))} options={WEEKDAYS.map((label, index) => ({ value: String(index), label }))} />
-            <TextInput style={styles.input} value={ruleForm.startTime} onChangeText={(value) => setRuleForm((current) => ({ ...current, startTime: value }))} placeholder="Start HH:mm" />
-            <TextInput style={styles.input} value={ruleForm.endTime} onChangeText={(value) => setRuleForm((current) => ({ ...current, endTime: value }))} placeholder="End HH:mm" />
-            <WebSelect value={ruleForm.isAvailable} onChange={(value) => setRuleForm((current) => ({ ...current, isAvailable: value }))} options={[{ value: 'true', label: 'Available' }, { value: 'false', label: 'Unavailable' }]} />
+            <WebSelect value={ruleForm.guardId} onChange={(value: string) => setRuleForm((current) => ({ ...current, guardId: value }))} options={guardOptions} />
+            <WebSelect value={ruleForm.weekday} onChange={(value: string) => setRuleForm((current) => ({ ...current, weekday: value }))} options={WEEKDAYS.map((label, index) => ({ value: String(index), label }))} />
+            <TextInput style={styles.input} value={ruleForm.startTime} onChangeText={(value: string) => setRuleForm((current) => ({ ...current, startTime: value }))} placeholder="Start HH:mm" />
+            <TextInput style={styles.input} value={ruleForm.endTime} onChangeText={(value: string) => setRuleForm((current) => ({ ...current, endTime: value }))} placeholder="End HH:mm" />
+            <WebSelect value={ruleForm.isAvailable} onChange={(value: string) => setRuleForm((current) => ({ ...current, isAvailable: value }))} options={[{ value: 'true', label: 'Available' }, { value: 'false', label: 'Unavailable' }]} />
           </View>
           <Pressable style={styles.primaryButton} onPress={saveRule}><Text style={styles.primaryButtonText}>Save Rule</Text></Pressable>
           {rules.map((rule) => <Text key={rule.id} style={styles.rowText}>{rule.guard?.fullName}: {WEEKDAYS[rule.weekday]} {rule.startTime}-{rule.endTime} {rule.isAvailable ? 'available' : 'unavailable'}</Text>)}
@@ -162,25 +162,25 @@ export function CompanyAvailabilityWorkspace() {
         <View style={styles.panel}>
           <Text style={styles.panelTitle}>One-Off Override</Text>
           <View style={styles.formGrid}>
-            <WebSelect value={overrideForm.guardId} onChange={(value) => setOverrideForm((current) => ({ ...current, guardId: value }))} options={guardOptions} />
-            <TextInput style={styles.input} value={overrideForm.date} onChangeText={(value) => setOverrideForm((current) => ({ ...current, date: value }))} placeholder="Date YYYY-MM-DD" />
-            <TextInput style={styles.input} value={overrideForm.startTime} onChangeText={(value) => setOverrideForm((current) => ({ ...current, startTime: value }))} placeholder="Start optional" />
-            <TextInput style={styles.input} value={overrideForm.endTime} onChangeText={(value) => setOverrideForm((current) => ({ ...current, endTime: value }))} placeholder="End optional" />
-            <WebSelect value={overrideForm.status} onChange={(value) => setOverrideForm((current) => ({ ...current, status: value }))} options={[{ value: 'unavailable', label: 'Unavailable' }, { value: 'available', label: 'Available' }]} />
+            <WebSelect value={overrideForm.guardId} onChange={(value: string) => setOverrideForm((current) => ({ ...current, guardId: value }))} options={guardOptions} />
+            <TextInput style={styles.input} value={overrideForm.date} onChangeText={(value: string) => setOverrideForm((current) => ({ ...current, date: value }))} placeholder="Date YYYY-MM-DD" />
+            <TextInput style={styles.input} value={overrideForm.startTime} onChangeText={(value: string) => setOverrideForm((current) => ({ ...current, startTime: value }))} placeholder="Start optional" />
+            <TextInput style={styles.input} value={overrideForm.endTime} onChangeText={(value: string) => setOverrideForm((current) => ({ ...current, endTime: value }))} placeholder="End optional" />
+            <WebSelect value={overrideForm.status} onChange={(value: string) => setOverrideForm((current) => ({ ...current, status: value }))} options={[{ value: 'unavailable', label: 'Unavailable' }, { value: 'available', label: 'Available' }]} />
           </View>
-          <TextInput style={styles.input} value={overrideForm.note} onChangeText={(value) => setOverrideForm((current) => ({ ...current, note: value }))} placeholder="Note optional" />
+          <TextInput style={styles.input} value={overrideForm.note} onChangeText={(value: string) => setOverrideForm((current) => ({ ...current, note: value }))} placeholder="Note optional" />
           <Pressable style={styles.primaryButton} onPress={saveOverride}><Text style={styles.primaryButtonText}>Save Override</Text></Pressable>
           {overrides.map((row) => <Text key={row.id} style={styles.rowText}>{row.guard?.fullName}: {formatDate(row.date)} {row.status}</Text>)}
         </View>
         <View style={styles.panel}>
           <Text style={styles.panelTitle}>Leave</Text>
           <View style={styles.formGrid}>
-            <WebSelect value={leaveForm.guardId} onChange={(value) => setLeaveForm((current) => ({ ...current, guardId: value }))} options={guardOptions} />
-            <TextInput style={styles.input} value={leaveForm.startAt} onChangeText={(value) => setLeaveForm((current) => ({ ...current, startAt: value }))} placeholder="Start ISO/date" />
-            <TextInput style={styles.input} value={leaveForm.endAt} onChangeText={(value) => setLeaveForm((current) => ({ ...current, endAt: value }))} placeholder="End ISO/date" />
-            <WebSelect value={leaveForm.status} onChange={(value) => setLeaveForm((current) => ({ ...current, status: value }))} options={[{ value: 'approved', label: 'Approved' }, { value: 'pending', label: 'Pending' }, { value: 'rejected', label: 'Rejected' }]} />
+            <WebSelect value={leaveForm.guardId} onChange={(value: string) => setLeaveForm((current) => ({ ...current, guardId: value }))} options={guardOptions} />
+            <TextInput style={styles.input} value={leaveForm.startAt} onChangeText={(value: string) => setLeaveForm((current) => ({ ...current, startAt: value }))} placeholder="Start ISO/date" />
+            <TextInput style={styles.input} value={leaveForm.endAt} onChangeText={(value: string) => setLeaveForm((current) => ({ ...current, endAt: value }))} placeholder="End ISO/date" />
+            <WebSelect value={leaveForm.status} onChange={(value: string) => setLeaveForm((current) => ({ ...current, status: value }))} options={[{ value: 'approved', label: 'Approved' }, { value: 'pending', label: 'Pending' }, { value: 'rejected', label: 'Rejected' }]} />
           </View>
-          <TextInput style={styles.input} value={leaveForm.reason} onChangeText={(value) => setLeaveForm((current) => ({ ...current, reason: value }))} placeholder="Reason optional" />
+          <TextInput style={styles.input} value={leaveForm.reason} onChangeText={(value: string) => setLeaveForm((current) => ({ ...current, reason: value }))} placeholder="Reason optional" />
           <Pressable style={styles.primaryButton} onPress={saveLeave}><Text style={styles.primaryButtonText}>Save Leave</Text></Pressable>
           {leaveRows.map((row) => <Text key={row.id} style={styles.rowText}>{row.guard?.fullName}: {formatDate(row.startAt)} to {formatDate(row.endAt)} / {row.status}</Text>)}
         </View>

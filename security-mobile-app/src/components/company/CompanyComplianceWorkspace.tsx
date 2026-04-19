@@ -164,12 +164,12 @@ export function CompanyComplianceWorkspace() {
       <View style={styles.panel}>
         <Text style={styles.panelTitle}>Add / Update Compliance Record</Text>
         <View style={styles.formGrid}>
-          <WebSelect value={form.guardId} onChange={(value) => updateForm({ guardId: value })} options={guardOptions} />
-          <WebSelect value={form.type} onChange={(value) => updateForm({ type: value as ComplianceRecordType })} options={TYPES.map((type) => ({ value: type, label: typeLabel(type) }))} />
-          <TextInput style={styles.input} value={form.documentName} onChangeText={(value) => updateForm({ documentName: value })} placeholder="Document name" />
-          <TextInput style={styles.input} value={form.documentNumber} onChangeText={(value) => updateForm({ documentNumber: value })} placeholder="Document number optional" />
-          <TextInput style={styles.input} value={form.issueDate} onChangeText={(value) => updateForm({ issueDate: value })} placeholder="Issue date YYYY-MM-DD" />
-          <TextInput style={styles.input} value={form.expiryDate} onChangeText={(value) => updateForm({ expiryDate: value })} placeholder="Expiry date YYYY-MM-DD" />
+          <WebSelect value={form.guardId} onChange={(value: string) => updateForm({ guardId: value })} options={guardOptions} />
+          <WebSelect value={form.type} onChange={(value: string) => updateForm({ type: value as ComplianceRecordType })} options={TYPES.map((type) => ({ value: type, label: typeLabel(type) }))} />
+          <TextInput style={styles.input} value={form.documentName} onChangeText={(value: string) => updateForm({ documentName: value })} placeholder="Document name" />
+          <TextInput style={styles.input} value={form.documentNumber} onChangeText={(value: string) => updateForm({ documentNumber: value })} placeholder="Document number optional" />
+          <TextInput style={styles.input} value={form.issueDate} onChangeText={(value: string) => updateForm({ issueDate: value })} placeholder="Issue date YYYY-MM-DD" />
+          <TextInput style={styles.input} value={form.expiryDate} onChangeText={(value: string) => updateForm({ expiryDate: value })} placeholder="Expiry date YYYY-MM-DD" />
         </View>
         <Pressable style={[styles.primaryButton, saving && styles.disabledButton]} onPress={saveRecord} disabled={saving}>
           <Text style={styles.primaryButtonText}>{saving ? 'Saving...' : 'Save Compliance Record'}</Text>

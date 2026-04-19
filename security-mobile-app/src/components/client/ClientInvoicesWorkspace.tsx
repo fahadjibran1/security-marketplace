@@ -6,29 +6,34 @@ import { ClientPortalInvoiceSummary, InvoiceDocument } from '../../types/models'
 
 const MONEY = new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' });
 
-function downloadInvoiceHtml(document: InvoiceDocument) {
+function downloadInvoiceHtml(invoiceDocument: InvoiceDocument) {
   if (typeof window === 'undefined' || typeof document === 'undefined') return;
-  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>${document.invoiceNumber}</title></head><body style="font-family:Arial,sans-serif;padding:32px;color:#0f172a">
-  <h1>${document.company.name}</h1>
-  <p>${document.company.address || ''}</p>
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>${invoiceDocument.invoiceNumber}</title></head><body style="font-family:Arial,sans-serif;padding:32px;color:#0f172a">
+  <h1>${invoiceDocument.company.name}</h1>
+  <p>${invoiceDocument.company.address || ''}</p>
   <hr/>
-  <h2>Invoice ${document.invoiceNumber}</h2>
-  <p>Issue date: ${document.issueDate}</p>
-  <p>Due date: ${document.dueDate}</p>
+  <h2>Invoice ${invoiceDocument.invoiceNumber}</h2>
+  <p>Issue date: ${invoiceDocument.issueDate}</p>
+  <p>Due date: ${invoiceDocument.dueDate}</p>
   <h3>Client</h3>
-  <p>${document.client.name}</p>
-  <p>${document.client.billingAddress || ''}</p>
+  <p>${invoiceDocument.client.name}</p>
+  <p>${invoiceDocument.client.billingAddress || ''}</p>
   <table border="1" cellspacing="0" cellpadding="8" style="border-collapse:collapse;width:100%;margin-top:16px">
   <tr><th>Site</th><th>Date</th><th>Hours</th><th>Rate</th><th>Amount</th></tr>
-  ${document.lineItems.map((item) => `<tr><td>${item.site}</td><td>${item.shiftDate}</td><td>${item.billableHours}</td><td>${item.billingRate ?? ''}</td><td>${item.amount}</td></tr>`).join('')}
+  ${invoiceDocument.lineItems
+    .map(
+      (item) =>
+        `<tr><td>${item.site}</td><td>${item.shiftDate}</td><td>${item.billableHours}</td><td>${item.billingRate ?? ''}</td><td>${item.amount}</td></tr>`,
+    )
+    .join('')}
   </table>
-  <h3 style="margin-top:16px">Total: ${document.totals.grossAmount}</h3>
+  <h3 style="margin-top:16px">Total: ${invoiceDocument.totals.grossAmount}</h3>
   </body></html>`;
   const blob = new Blob([html], { type: 'text/html;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const link = window.document.createElement('a');
   link.href = url;
-  link.download = `invoice-${document.invoiceNumber}.html`;
+  link.download = `invoice-${invoiceDocument.invoiceNumber}.html`;
   window.document.body.appendChild(link);
   link.click();
   window.document.body.removeChild(link);
@@ -42,8 +47,8 @@ export function ClientInvoicesWorkspace({ invoices }: { invoices: ClientPortalIn
   const handleViewInvoice = React.useCallback(async (invoiceId: number) => {
     setError(null);
     try {
-      const document = await getClientPortalInvoiceDocument(invoiceId);
-      setSelectedDocument(document);
+      const invoiceDocument = await getClientPortalInvoiceDocument(invoiceId);
+      setSelectedDocument(invoiceDocument);
     } catch (err) {
       setError(formatApiErrorMessage(err, 'Unable to load the invoice document.'));
     }
@@ -61,7 +66,7 @@ export function ClientInvoicesWorkspace({ invoices }: { invoices: ClientPortalIn
             <View key={invoice.id} style={styles.row}>
               <View style={styles.flexGrow}>
                 <Text style={styles.rowTitle}>{invoice.invoiceNumber}</Text>
-                <Text style={styles.meta}>Issued: {invoice.issueDate} · Due: {invoice.dueDate || 'Not set'}</Text>
+                <Text style={styles.meta}>Issued: {invoice.issueDate} | Due: {invoice.dueDate || 'Not set'}</Text>
               </View>
               <Text style={styles.amount}>{MONEY.format(Number(invoice.amount || 0))}</Text>
               <Pressable style={styles.viewButton} onPress={() => handleViewInvoice(invoice.id)}>
@@ -77,7 +82,7 @@ export function ClientInvoicesWorkspace({ invoices }: { invoices: ClientPortalIn
           <View style={styles.documentHeader}>
             <View style={styles.flexGrow}>
               <Text style={styles.title}>Invoice Document</Text>
-              <Text style={styles.meta}>{selectedDocument.invoiceNumber} · {selectedDocument.client.name}</Text>
+              <Text style={styles.meta}>{selectedDocument.invoiceNumber} | {selectedDocument.client.name}</Text>
             </View>
             <Pressable style={styles.viewButton} onPress={() => downloadInvoiceHtml(selectedDocument)}>
               <Text style={styles.viewButtonText}>Download</Text>
@@ -87,7 +92,7 @@ export function ClientInvoicesWorkspace({ invoices }: { invoices: ClientPortalIn
             <View key={`${selectedDocument.id}-${item.timesheetId}`} style={styles.row}>
               <View style={styles.flexGrow}>
                 <Text style={styles.rowTitle}>{item.site}</Text>
-                <Text style={styles.meta}>{item.shiftDate} · {item.billableHours}h</Text>
+                <Text style={styles.meta}>{item.shiftDate} | {item.billableHours}h</Text>
               </View>
               <Text style={styles.amount}>{MONEY.format(Number(item.amount || 0))}</Text>
             </View>

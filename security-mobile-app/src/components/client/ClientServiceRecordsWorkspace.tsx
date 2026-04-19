@@ -26,7 +26,7 @@ export function ClientServiceRecordsWorkspace({ records }: { records: ClientPort
           <View key={group.key} style={styles.row}>
             <View style={styles.flexGrow}>
               <Text style={styles.rowTitle}>{group.siteName}</Text>
-              <Text style={styles.meta}>Period: {group.periodKey} · Records: {group.count}</Text>
+              <Text style={styles.meta}>Period: {group.periodKey} | Records: {group.count}</Text>
             </View>
             <Text style={styles.hours}>{group.approvedHours.toFixed(2)}h</Text>
           </View>
