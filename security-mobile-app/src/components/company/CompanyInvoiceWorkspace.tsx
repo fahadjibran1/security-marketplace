@@ -6,11 +6,12 @@ import {
   finaliseCompanyInvoiceBatch,
   formatApiErrorMessage,
   getCompanyInvoiceBatch,
+  getCompanyInvoiceBatchDocument,
   issueCompanyInvoiceBatch,
   listCompanyInvoiceBatches,
   payCompanyInvoiceBatch,
 } from '../../services/api';
-import { Client, InvoiceBatch, InvoiceBatchStatus, Timesheet, TimesheetBillingStatus } from '../../types/models';
+import { Client, InvoiceBatch, InvoiceBatchStatus, InvoiceDocument, Timesheet, TimesheetBillingStatus } from '../../types/models';
 
 type PeriodView = 'week' | 'month';
 type BillingFilter = 'all' | TimesheetBillingStatus;
@@ -211,6 +212,114 @@ function downloadCsv(filename: string, rows: Array<Array<string | number | null 
   URL.revokeObjectURL(url);
 }
 
+function escapeHtml(value: string | number | null | undefined) {
+  const text = value === undefined || value === null ? '' : String(value);
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function buildInvoiceHtml(document: InvoiceDocument) {
+  const rows = document.lineItems.map((item) => `
+    <tr>
+      <td>${escapeHtml(item.site)}</td>
+      <td>${escapeHtml(formatDateLabel(item.shiftDate))}</td>
+      <td>${escapeHtml(item.guard)}</td>
+      <td class="num">${escapeHtml(formatNumber(item.billableHours))}</td>
+      <td class="num">${escapeHtml(item.billingRate === null ? 'Rate unavailable' : MONEY_FORMATTER.format(item.billingRate))}</td>
+      <td class="num">${escapeHtml(MONEY_FORMATTER.format(item.amount))}</td>
+    </tr>
+  `).join('');
+
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>${escapeHtml(document.invoiceNumber)}</title>
+  <style>
+    body { font-family: Arial, sans-serif; color: #0f172a; margin: 40px; }
+    .header { display: flex; justify-content: space-between; gap: 32px; border-bottom: 2px solid #0f172a; padding-bottom: 24px; }
+    h1 { margin: 0; font-size: 34px; letter-spacing: 2px; }
+    h2 { margin: 0 0 8px; font-size: 16px; }
+    .muted { color: #64748b; white-space: pre-line; }
+    .meta { text-align: right; }
+    .blocks { display: flex; justify-content: space-between; gap: 32px; margin: 28px 0; }
+    .block { width: 48%; }
+    table { width: 100%; border-collapse: collapse; margin-top: 24px; }
+    th { text-align: left; color: #64748b; font-size: 12px; text-transform: uppercase; border-bottom: 1px solid #cbd5e1; padding: 10px; }
+    td { border-bottom: 1px solid #e2e8f0; padding: 10px; }
+    .num { text-align: right; }
+    .totals { margin-left: auto; width: 320px; margin-top: 24px; }
+    .totals div { display: flex; justify-content: space-between; padding: 8px 0; }
+    .grand { font-weight: 800; font-size: 18px; border-top: 2px solid #0f172a; }
+    .notes { margin-top: 32px; padding: 16px; background: #f8fafc; border-radius: 12px; }
+    @media print { body { margin: 24px; } button { display: none; } }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <h1>INVOICE</h1>
+      <h2>${escapeHtml(document.company.name)}</h2>
+      <div class="muted">${escapeHtml(document.company.address)}</div>
+      <div class="muted">${escapeHtml(document.company.contactDetails || '')}</div>
+    </div>
+    <div class="meta">
+      <h2>${escapeHtml(document.invoiceNumber)}</h2>
+      <div>Issue date: ${escapeHtml(formatDateLabel(document.issueDate))}</div>
+      <div>Due date: ${escapeHtml(formatDateLabel(document.dueDate))}</div>
+      <div>Status: ${escapeHtml(formatStatusLabel(document.status))}</div>
+    </div>
+  </div>
+  <div class="blocks">
+    <div class="block">
+      <h2>Bill To</h2>
+      <div>${escapeHtml(document.client.name)}</div>
+      <div class="muted">${escapeHtml(document.client.billingAddress || '')}</div>
+      <div class="muted">${escapeHtml(document.client.contactEmail || '')}</div>
+    </div>
+    <div class="block meta">
+      <h2>Invoice Period</h2>
+      <div>${escapeHtml(formatDateLabel(document.periodStart))} - ${escapeHtml(formatDateLabel(document.periodEnd))}</div>
+      <div>Terms: ${escapeHtml(document.paymentTermsDays)} days</div>
+      <div>Currency: ${escapeHtml(document.currency)}</div>
+    </div>
+  </div>
+  <table>
+    <thead>
+      <tr><th>Site</th><th>Date</th><th>Guard</th><th class="num">Hours</th><th class="num">Rate</th><th class="num">Amount</th></tr>
+    </thead>
+    <tbody>${rows}</tbody>
+  </table>
+  <div class="totals">
+    <div><span>Net</span><span>${escapeHtml(MONEY_FORMATTER.format(document.totals.netAmount))}</span></div>
+    <div><span>VAT (${escapeHtml(document.totals.vatRate)}%)</span><span>${escapeHtml(MONEY_FORMATTER.format(document.totals.vatAmount))}</span></div>
+    <div class="grand"><span>Total</span><span>${escapeHtml(MONEY_FORMATTER.format(document.totals.grossAmount))}</span></div>
+  </div>
+  <div class="notes">
+    <h2>Notes</h2>
+    <div class="muted">${escapeHtml(document.notes || 'Thank you for your business.')}</div>
+  </div>
+</body>
+</html>`;
+}
+
+function downloadHtml(filename: string, html: string) {
+  if (typeof document === 'undefined') return;
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
 function buildEntry(timesheet: Timesheet): InvoiceEntry | null {
   if (String(timesheet.approvalStatus).trim().toLowerCase() !== 'approved') return null;
   const client = getTimesheetClient(timesheet);
@@ -352,7 +461,9 @@ export function CompanyInvoiceWorkspace({ timesheets, refreshing, onRefresh }: C
   const [batches, setBatches] = React.useState<InvoiceBatch[]>([]);
   const [selectedBatchId, setSelectedBatchId] = React.useState<number | null>(null);
   const [selectedBatch, setSelectedBatch] = React.useState<InvoiceBatch | null>(null);
+  const [selectedDocument, setSelectedDocument] = React.useState<InvoiceDocument | null>(null);
   const [loadingBatches, setLoadingBatches] = React.useState(false);
+  const [loadingDocument, setLoadingDocument] = React.useState(false);
 
   const entries = React.useMemo(
     () => timesheets.map(buildEntry).filter((entry): entry is InvoiceEntry => Boolean(entry)),
@@ -415,8 +526,14 @@ export function CompanyInvoiceWorkspace({ timesheets, refreshing, onRefresh }: C
       if (nextId) {
         const detail = await getCompanyInvoiceBatch(nextId);
         setSelectedBatch(detail);
+        try {
+          setSelectedDocument(await getCompanyInvoiceBatchDocument(nextId));
+        } catch {
+          setSelectedDocument(null);
+        }
       } else {
         setSelectedBatch(null);
+        setSelectedDocument(null);
       }
     } catch (error) {
       setFeedback({ tone: 'error', message: formatApiErrorMessage(error, 'Unable to load invoice batches.') });
@@ -424,6 +541,23 @@ export function CompanyInvoiceWorkspace({ timesheets, refreshing, onRefresh }: C
       setLoadingBatches(false);
     }
   }, [selectedBatchId]);
+
+  const selectBatch = React.useCallback(async (id: number) => {
+    setSelectedBatchId(id);
+    setLoadingDocument(true);
+    try {
+      const [detail, document] = await Promise.all([
+        getCompanyInvoiceBatch(id),
+        getCompanyInvoiceBatchDocument(id),
+      ]);
+      setSelectedBatch(detail);
+      setSelectedDocument(document);
+    } catch (error) {
+      setFeedback({ tone: 'error', message: formatApiErrorMessage(error, 'Unable to load invoice document.') });
+    } finally {
+      setLoadingDocument(false);
+    }
+  }, []);
 
   React.useEffect(() => {
     loadBatches(null);
@@ -611,6 +745,28 @@ export function CompanyInvoiceWorkspace({ timesheets, refreshing, onRefresh }: C
       setBatchAction(false);
     }
   }, [refreshAll, selectedBatch]);
+
+  const downloadInvoiceDocument = React.useCallback(() => {
+    if (!selectedDocument) return;
+    downloadHtml(
+      `invoice-${sanitizeFilenamePart(selectedDocument.invoiceNumber)}.html`,
+      buildInvoiceHtml(selectedDocument),
+    );
+  }, [selectedDocument]);
+
+  const printInvoiceDocument = React.useCallback(() => {
+    if (!selectedDocument || typeof window === 'undefined') return;
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      downloadInvoiceDocument();
+      return;
+    }
+    printWindow.document.open();
+    printWindow.document.write(buildInvoiceHtml(selectedDocument));
+    printWindow.document.close();
+    printWindow.focus();
+    printWindow.print();
+  }, [downloadInvoiceDocument, selectedDocument]);
 
   const totals = React.useMemo(() => {
     return filteredEntries.reduce(
@@ -837,12 +993,9 @@ export function CompanyInvoiceWorkspace({ timesheets, refreshing, onRefresh }: C
                     <Pressable
                       key={batch.id}
                       style={[styles.batchListItem, selectedBatchId === batch.id && styles.batchListItemActive]}
-                      onPress={async () => {
-                        setSelectedBatchId(batch.id);
-                        setSelectedBatch(await getCompanyInvoiceBatch(batch.id));
-                      }}
+                      onPress={() => selectBatch(batch.id)}
                     >
-                      <Text style={styles.batchTitle}>Batch #{batch.id} · {batch.client?.name || `Client #${batch.clientId}`}</Text>
+                      <Text style={styles.batchTitle}>{batch.invoiceNumber || `Batch #${batch.id}`} · {batch.client?.name || `Client #${batch.clientId}`}</Text>
                       <Text style={styles.batchMeta}>{formatDateLabel(batch.periodStart)} - {formatDateLabel(batch.periodEnd)}</Text>
                       <View style={[styles.statusBadge, { backgroundColor: palette.background, borderColor: palette.border }]}>
                         <Text style={[styles.statusBadgeText, { color: palette.text }]}>{formatStatusLabel(batch.status)}</Text>
@@ -861,7 +1014,10 @@ export function CompanyInvoiceWorkspace({ timesheets, refreshing, onRefresh }: C
                 <Detail label="Client" value={selectedBatch.client?.name || `Client #${selectedBatch.clientId}`} />
                 <Detail label="Period" value={`${formatDateLabel(selectedBatch.periodStart)} - ${formatDateLabel(selectedBatch.periodEnd)}`} />
                 <Detail label="Status" value={formatStatusLabel(selectedBatch.status)} />
+                <Detail label="Invoice Number" value={selectedBatch.invoiceNumber || selectedDocument?.invoiceNumber || 'Assigned on finalise'} />
                 <Detail label="Invoice Reference" value={selectedBatch.invoiceReference || 'Not set'} />
+                <Detail label="Due Date" value={formatDateLabel(selectedBatch.dueDate || selectedDocument?.dueDate)} />
+                <Detail label="VAT Rate" value={`${Number(selectedBatch.vatRate ?? selectedDocument?.vatRate ?? 20).toFixed(2)}%`} />
                 <Detail label="Records" value={String(selectedBatch.totals.recordsCount)} />
                 <Detail label="Approved Hours" value={formatNumber(selectedBatch.totals.approvedHours)} />
                 <Detail label="Total Revenue" value={formatMoney(selectedBatch.totals.totalRevenueAmount ?? selectedBatch.totals.invoiceAmount)} />
@@ -873,6 +1029,12 @@ export function CompanyInvoiceWorkspace({ timesheets, refreshing, onRefresh }: C
                 <View style={styles.rowActions}>
                   <Pressable style={styles.secondaryButton} onPress={() => exportBatch(selectedBatch)}>
                     <Text style={styles.secondaryButtonText}>Export Batch</Text>
+                  </Pressable>
+                  <Pressable style={[styles.secondaryButton, !selectedDocument && styles.disabledButton]} onPress={downloadInvoiceDocument} disabled={!selectedDocument}>
+                    <Text style={styles.secondaryButtonText}>Download Invoice HTML</Text>
+                  </Pressable>
+                  <Pressable style={[styles.secondaryButton, !selectedDocument && styles.disabledButton]} onPress={printInvoiceDocument} disabled={!selectedDocument}>
+                    <Text style={styles.secondaryButtonText}>Print Invoice</Text>
                   </Pressable>
                   {selectedBatch.status === 'draft' ? (
                     <Pressable style={styles.primaryButton} onPress={() => runBatchAction('finalise')} disabled={batchAction}>
@@ -890,6 +1052,14 @@ export function CompanyInvoiceWorkspace({ timesheets, refreshing, onRefresh }: C
                     </Pressable>
                   ) : null}
                 </View>
+                <Text style={styles.sectionSubheading}>Invoice Document Preview</Text>
+                {loadingDocument ? (
+                  <Text style={styles.helperText}>Loading invoice document...</Text>
+                ) : selectedDocument ? (
+                  <InvoiceDocumentPreview document={selectedDocument} />
+                ) : (
+                  <Text style={styles.helperText}>Invoice document preview is unavailable for this batch.</Text>
+                )}
                 <Text style={styles.sectionSubheading}>Included Timesheets</Text>
                 {(selectedBatch.timesheets || []).map((timesheet) => {
                   const entry = buildEntry(timesheet);
@@ -919,6 +1089,70 @@ function MetricCard({ label, value }: { label: string; value: string }) {
     <View style={styles.metricCard}>
       <Text style={styles.metricLabel}>{label}</Text>
       <Text style={styles.metricValue}>{value}</Text>
+    </View>
+  );
+}
+
+function InvoiceDocumentPreview({ document }: { document: InvoiceDocument }) {
+  return (
+    <View style={styles.invoiceDocument}>
+      <View style={styles.invoiceHeader}>
+        <View style={styles.invoiceBlock}>
+          <Text style={styles.invoiceEyebrow}>Invoice</Text>
+          <Text style={styles.invoiceNumber}>{document.invoiceNumber}</Text>
+          <Text style={styles.invoiceMuted}>{formatStatusLabel(document.status)}</Text>
+        </View>
+        <View style={styles.invoiceBlockRight}>
+          <Text style={styles.invoiceCompany}>{document.company.name}</Text>
+          <Text style={styles.invoiceMuted}>{document.company.address || 'Company address not set'}</Text>
+          <Text style={styles.invoiceMuted}>{document.company.contactDetails || ''}</Text>
+        </View>
+      </View>
+
+      <View style={styles.invoiceMetaGrid}>
+        <View style={styles.invoiceMetaCard}>
+          <Text style={styles.invoiceMetaLabel}>Bill To</Text>
+          <Text style={styles.invoiceMetaValue}>{document.client.name}</Text>
+          <Text style={styles.invoiceMuted}>{document.client.billingAddress || 'Billing address not set'}</Text>
+          <Text style={styles.invoiceMuted}>{document.client.contactEmail || ''}</Text>
+        </View>
+        <View style={styles.invoiceMetaCard}>
+          <Text style={styles.invoiceMetaLabel}>Invoice Dates</Text>
+          <Text style={styles.invoiceMetaValue}>Issue: {formatDateLabel(document.issueDate)}</Text>
+          <Text style={styles.invoiceMetaValue}>Due: {formatDateLabel(document.dueDate)}</Text>
+          <Text style={styles.invoiceMuted}>Period: {formatDateLabel(document.periodStart)} - {formatDateLabel(document.periodEnd)}</Text>
+        </View>
+      </View>
+
+      <View style={styles.invoiceTable}>
+        <View style={styles.invoiceTableHeader}>
+          <Text style={[styles.invoiceHeaderCell, styles.invoiceSiteCol]}>Site</Text>
+          <Text style={styles.invoiceHeaderCell}>Date</Text>
+          <Text style={styles.invoiceHeaderCell}>Hours</Text>
+          <Text style={styles.invoiceHeaderCell}>Rate</Text>
+          <Text style={styles.invoiceHeaderCell}>Amount</Text>
+        </View>
+        {document.lineItems.map((item) => (
+          <View key={item.timesheetId} style={styles.invoiceTableRow}>
+            <Text style={[styles.invoiceCell, styles.invoiceSiteCol]}>{item.site}</Text>
+            <Text style={styles.invoiceCell}>{formatDateLabel(item.shiftDate)}</Text>
+            <Text style={styles.invoiceCell}>{formatNumber(item.billableHours)}</Text>
+            <Text style={styles.invoiceCell}>{item.billingRate === null ? 'No rate' : MONEY_FORMATTER.format(item.billingRate)}</Text>
+            <Text style={styles.invoiceCell}>{MONEY_FORMATTER.format(item.amount)}</Text>
+          </View>
+        ))}
+      </View>
+
+      <View style={styles.invoiceTotals}>
+        <Detail label="Net" value={MONEY_FORMATTER.format(document.totals.netAmount)} />
+        <Detail label={`VAT (${document.totals.vatRate.toFixed(2)}%)`} value={MONEY_FORMATTER.format(document.totals.vatAmount)} />
+        <Detail label="Grand Total" value={MONEY_FORMATTER.format(document.totals.grossAmount)} />
+      </View>
+
+      <View style={styles.invoiceNotes}>
+        <Text style={styles.invoiceMetaLabel}>Notes / Payment Terms</Text>
+        <Text style={styles.invoiceMuted}>{document.notes || `Payment due within ${document.paymentTermsDays} days.`}</Text>
+      </View>
     </View>
   );
 }
@@ -1280,5 +1514,118 @@ const styles = StyleSheet.create({
   batchRowTitle: {
     color: '#0f172a',
     fontWeight: '800',
+  },
+  invoiceDocument: {
+    borderColor: '#cbd5e1',
+    borderWidth: 1,
+    borderRadius: 18,
+    padding: 16,
+    gap: 14,
+    backgroundColor: '#ffffff',
+  },
+  invoiceHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 16,
+    borderBottomColor: '#0f172a',
+    borderBottomWidth: 2,
+    paddingBottom: 14,
+  },
+  invoiceBlock: {
+    flex: 1,
+  },
+  invoiceBlockRight: {
+    flex: 1,
+    alignItems: 'flex-end',
+  },
+  invoiceEyebrow: {
+    color: '#0f766e',
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+  },
+  invoiceNumber: {
+    color: '#0f172a',
+    fontSize: 22,
+    fontWeight: '900',
+    marginTop: 4,
+  },
+  invoiceCompany: {
+    color: '#0f172a',
+    fontWeight: '900',
+    textAlign: 'right',
+  },
+  invoiceMuted: {
+    color: '#64748b',
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  invoiceMetaGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  invoiceMetaCard: {
+    flex: 1,
+    minWidth: 180,
+    backgroundColor: '#f8fafc',
+    borderRadius: 14,
+    padding: 12,
+    gap: 3,
+  },
+  invoiceMetaLabel: {
+    color: '#64748b',
+    fontSize: 11,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
+  invoiceMetaValue: {
+    color: '#0f172a',
+    fontWeight: '800',
+  },
+  invoiceTable: {
+    borderColor: '#e2e8f0',
+    borderWidth: 1,
+    borderRadius: 14,
+    overflow: 'hidden',
+  },
+  invoiceTableHeader: {
+    flexDirection: 'row',
+    backgroundColor: '#f8fafc',
+    borderBottomColor: '#e2e8f0',
+    borderBottomWidth: 1,
+  },
+  invoiceTableRow: {
+    flexDirection: 'row',
+    borderBottomColor: '#f1f5f9',
+    borderBottomWidth: 1,
+  },
+  invoiceHeaderCell: {
+    flex: 1,
+    color: '#64748b',
+    fontSize: 11,
+    fontWeight: '900',
+    padding: 8,
+    textTransform: 'uppercase',
+  },
+  invoiceCell: {
+    flex: 1,
+    color: '#0f172a',
+    fontSize: 12,
+    padding: 8,
+  },
+  invoiceSiteCol: {
+    flex: 1.4,
+  },
+  invoiceTotals: {
+    alignSelf: 'flex-end',
+    minWidth: 220,
+  },
+  invoiceNotes: {
+    backgroundColor: '#f8fafc',
+    borderRadius: 14,
+    padding: 12,
+    gap: 4,
   },
 });

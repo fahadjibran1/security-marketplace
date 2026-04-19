@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Like, Repository } from 'typeorm';
 
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { Client } from '../client/entities/client.entity';
@@ -69,6 +69,9 @@ export class InvoiceBatchService {
       status: InvoiceBatchStatus.DRAFT,
       invoiceReference: dto.invoiceReference?.trim() ? dto.invoiceReference.trim() : null,
       notes: dto.notes?.trim() ? dto.notes.trim() : null,
+      paymentTermsDays: dto.paymentTermsDays ?? 30,
+      vatRate: dto.vatRate ?? 20,
+      currency: 'GBP',
       createdByUserId: userId,
       finalisedAt: null,
       issuedAt: null,
@@ -154,6 +157,7 @@ export class InvoiceBatchService {
       throw new BadRequestException('An invoice batch must contain at least one timesheet before it can be finalised.');
     }
 
+    await this.ensureInvoiceDocumentMetadata(batch, company);
     batch.status = InvoiceBatchStatus.FINALISED;
     batch.finalisedAt = new Date();
     await this.invoiceBatchRepo.save(batch);
@@ -192,6 +196,7 @@ export class InvoiceBatchService {
 
     const now = new Date();
     const batchTimesheets = batch.timesheets || [];
+    await this.ensureInvoiceDocumentMetadata(batch, company);
     batch.status = InvoiceBatchStatus.ISSUED;
     batch.issuedAt = now;
     batchTimesheets.forEach((timesheet) => {
@@ -216,6 +221,56 @@ export class InvoiceBatchService {
     });
 
     return this.findOneForCompany(userId, batch.id);
+  }
+
+  async getDocumentForCompany(userId: number, id: number) {
+    const company = await this.companyService.findByUserId(userId);
+    if (!company) throw new NotFoundException('Company not found');
+
+    const batch = await this.invoiceBatchRepo.findOne({
+      where: { id, company: { id: company.id } },
+      relations: { timesheets: true },
+    });
+
+    if (!batch) {
+      throw new NotFoundException('Invoice batch not found');
+    }
+
+    await this.hydrateBatchFinancials(batch);
+    const totals = this.calculateDocumentTotals(batch);
+    const lineItems = this.buildDocumentLineItems(batch);
+    const invoiceNumber = batch.invoiceNumber ?? this.previewInvoiceNumber(batch);
+    const issueDate = batch.issuedAt ?? batch.finalisedAt ?? new Date();
+    const dueDate = batch.dueDate ?? this.calculateDueDate(issueDate, batch.paymentTermsDays ?? 30);
+
+    return {
+      id: batch.id,
+      status: batch.status,
+      invoiceNumber,
+      invoiceReference: batch.invoiceReference ?? null,
+      issueDate,
+      dueDate,
+      periodStart: batch.periodStart,
+      periodEnd: batch.periodEnd,
+      currency: batch.currency ?? 'GBP',
+      paymentTermsDays: batch.paymentTermsDays ?? 30,
+      vatRate: Number(batch.vatRate ?? 20),
+      notes: batch.notes ?? null,
+      company: {
+        name: batch.companyNameSnapshot || batch.company?.name || 'Company',
+        address: batch.companyAddressSnapshot || batch.company?.address || '',
+        contactDetails: batch.company?.contactDetails || '',
+      },
+      client: {
+        name: batch.clientNameSnapshot || batch.client?.name || 'Client',
+        billingAddress: batch.billingAddressSnapshot || batch.client?.contactDetails || '',
+        contactName: batch.client?.contactName ?? null,
+        contactEmail: batch.client?.contactEmail ?? null,
+        contactPhone: batch.client?.contactPhone ?? null,
+      },
+      lineItems,
+      totals,
+    };
   }
 
   async payForCompany(userId: number, id: number) {
@@ -330,6 +385,137 @@ export class InvoiceBatchService {
     return 0;
   }
 
+  private getBillableHours(timesheet: Timesheet) {
+    if (timesheet.billableHours !== undefined && timesheet.billableHours !== null && Number.isFinite(Number(timesheet.billableHours))) {
+      return Number(timesheet.billableHours);
+    }
+
+    return this.getApprovedHours(timesheet);
+  }
+
+  private getTimesheetSiteName(timesheet: Timesheet) {
+    return timesheet.shift?.site?.name || timesheet.shift?.siteName || 'Unknown site';
+  }
+
+  private getTimesheetGuardName(timesheet: Timesheet) {
+    return timesheet.guard?.fullName || timesheet.shift?.guard?.fullName || timesheet.shift?.assignment?.guard?.fullName || `Guard #${timesheet.guard?.id ?? 'unknown'}`;
+  }
+
+  private getTimesheetShiftDate(timesheet: Timesheet) {
+    return timesheet.scheduledStartAt ?? timesheet.shift?.start ?? timesheet.createdAt;
+  }
+
+  private roundCurrency(value: number) {
+    return Math.round(value * 100) / 100;
+  }
+
+  private calculateDocumentTotals(batch: InvoiceBatch) {
+    const netAmount =
+      batch.netAmountSnapshot !== undefined && batch.netAmountSnapshot !== null
+        ? Number(batch.netAmountSnapshot)
+        : (batch.timesheets || []).reduce((sum, timesheet) => {
+            if (timesheet.revenueAmount !== undefined && timesheet.revenueAmount !== null) {
+              return sum + Number(timesheet.revenueAmount);
+            }
+            const rate = this.getBillingRate(timesheet);
+            return rate === null ? sum : sum + this.getBillableHours(timesheet) * rate;
+          }, 0);
+    const vatRate = Number(batch.vatRate ?? 20);
+    const vatAmount =
+      batch.vatAmountSnapshot !== undefined && batch.vatAmountSnapshot !== null
+        ? Number(batch.vatAmountSnapshot)
+        : netAmount * (vatRate / 100);
+    const grossAmount =
+      batch.grossAmountSnapshot !== undefined && batch.grossAmountSnapshot !== null
+        ? Number(batch.grossAmountSnapshot)
+        : netAmount + vatAmount;
+
+    return {
+      netAmount: this.roundCurrency(netAmount),
+      vatRate: this.roundCurrency(vatRate),
+      vatAmount: this.roundCurrency(vatAmount),
+      grossAmount: this.roundCurrency(grossAmount),
+    };
+  }
+
+  private buildDocumentLineItems(batch: InvoiceBatch) {
+    return [...(batch.timesheets || [])]
+      .sort((left, right) => {
+        const siteCompare = this.getTimesheetSiteName(left).localeCompare(this.getTimesheetSiteName(right));
+        if (siteCompare !== 0) return siteCompare;
+        return new Date(this.getTimesheetShiftDate(left)).getTime() - new Date(this.getTimesheetShiftDate(right)).getTime();
+      })
+      .map((timesheet) => {
+        const billableHours = this.getBillableHours(timesheet);
+        const billingRate = this.getBillingRate(timesheet);
+        const amount =
+          timesheet.revenueAmount !== undefined && timesheet.revenueAmount !== null
+            ? Number(timesheet.revenueAmount)
+            : billingRate === null
+              ? 0
+              : billableHours * billingRate;
+        return {
+          timesheetId: timesheet.id,
+          site: this.getTimesheetSiteName(timesheet),
+          guard: this.getTimesheetGuardName(timesheet),
+          shiftDate: this.getTimesheetShiftDate(timesheet),
+          approvedHours: this.roundCurrency(this.getApprovedHours(timesheet)),
+          billableHours: this.roundCurrency(billableHours),
+          billingRate: billingRate === null ? null : this.roundCurrency(billingRate),
+          amount: this.roundCurrency(amount),
+          companyNote: timesheet.companyNote ?? null,
+        };
+      });
+  }
+
+  private previewInvoiceNumber(batch: InvoiceBatch) {
+    const year = (batch.finalisedAt ?? batch.issuedAt ?? new Date()).getFullYear();
+    return `INV-${year}-${String(batch.id).padStart(4, '0')}`;
+  }
+
+  private calculateDueDate(issueDate: Date, paymentTermsDays: number) {
+    const dueDate = new Date(issueDate);
+    dueDate.setDate(dueDate.getDate() + paymentTermsDays);
+    return dueDate;
+  }
+
+  private async generateInvoiceNumber(companyId: number, date: Date) {
+    const year = date.getFullYear();
+    const prefix = `INV-${year}-`;
+    const existingCount = await this.invoiceBatchRepo.count({
+      where: {
+        company: { id: companyId },
+        invoiceNumber: Like(`${prefix}%`),
+      },
+    });
+    return `${prefix}${String(existingCount + 1).padStart(4, '0')}`;
+  }
+
+  private async ensureInvoiceDocumentMetadata(batch: InvoiceBatch, company: any) {
+    if (batch.invoiceNumber && batch.companyNameSnapshot && batch.clientNameSnapshot && batch.netAmountSnapshot !== null && batch.netAmountSnapshot !== undefined) {
+      return;
+    }
+
+    await this.hydrateBatchFinancials(batch);
+    const now = batch.finalisedAt ?? batch.issuedAt ?? new Date();
+    if (!batch.invoiceNumber) {
+      batch.invoiceNumber = await this.generateInvoiceNumber(company.id, now);
+    }
+    batch.invoiceReference = batch.invoiceReference ?? batch.invoiceNumber;
+    batch.paymentTermsDays = batch.paymentTermsDays ?? 30;
+    batch.currency = batch.currency ?? 'GBP';
+    batch.vatRate = batch.vatRate ?? 20;
+    batch.companyNameSnapshot = batch.companyNameSnapshot || company.name || batch.company?.name || null;
+    batch.companyAddressSnapshot = batch.companyAddressSnapshot || company.address || batch.company?.address || null;
+    batch.clientNameSnapshot = batch.clientNameSnapshot || batch.client?.name || null;
+    batch.billingAddressSnapshot = batch.billingAddressSnapshot || batch.client?.contactDetails || null;
+    batch.dueDate = batch.dueDate ?? this.calculateDueDate(now, batch.paymentTermsDays);
+    const totals = this.calculateDocumentTotals(batch);
+    batch.netAmountSnapshot = batch.netAmountSnapshot ?? totals.netAmount;
+    batch.vatAmountSnapshot = batch.vatAmountSnapshot ?? totals.vatAmount;
+    batch.grossAmountSnapshot = batch.grossAmountSnapshot ?? totals.grossAmount;
+  }
+
   private toBatchSummary(batch: InvoiceBatch, includeTimesheets: boolean) {
     const timesheets = batch.timesheets || [];
     const totals = timesheets.reduce(
@@ -362,7 +548,19 @@ export class InvoiceBatchService {
       periodEnd: batch.periodEnd,
       status: batch.status,
       invoiceReference: batch.invoiceReference ?? null,
+      invoiceNumber: batch.invoiceNumber ?? null,
       notes: batch.notes ?? null,
+      dueDate: batch.dueDate ?? null,
+      billingAddressSnapshot: batch.billingAddressSnapshot ?? null,
+      clientNameSnapshot: batch.clientNameSnapshot ?? null,
+      companyNameSnapshot: batch.companyNameSnapshot ?? null,
+      companyAddressSnapshot: batch.companyAddressSnapshot ?? null,
+      paymentTermsDays: batch.paymentTermsDays ?? 30,
+      currency: batch.currency ?? 'GBP',
+      vatRate: batch.vatRate ?? 20,
+      netAmountSnapshot: batch.netAmountSnapshot ?? null,
+      vatAmountSnapshot: batch.vatAmountSnapshot ?? null,
+      grossAmountSnapshot: batch.grossAmountSnapshot ?? null,
       createdAt: batch.createdAt,
       updatedAt: batch.updatedAt,
       finalisedAt: batch.finalisedAt ?? null,

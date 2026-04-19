@@ -26,6 +26,12 @@ export class InvoiceBatchController {
     return this.invoiceBatchService.listForCompany(user.sub);
   }
 
+  @Get(':id/document')
+  @Roles(...COMPANY_VIEW_ROLES)
+  getDocument(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
+    return this.invoiceBatchService.getDocumentForCompany(user.sub, id);
+  }
+
   @Get(':id')
   @Roles(...COMPANY_VIEW_ROLES)
   findOne(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {

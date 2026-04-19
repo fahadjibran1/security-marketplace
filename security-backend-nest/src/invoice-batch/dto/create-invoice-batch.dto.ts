@@ -1,4 +1,4 @@
-import { IsArray, IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { IsArray, IsInt, IsNumber, IsOptional, IsString, Min } from 'class-validator';
 
 export class CreateInvoiceBatchDto {
   @IsInt()
@@ -18,6 +18,16 @@ export class CreateInvoiceBatchDto {
   @IsOptional()
   @IsString()
   notes?: string | null;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  paymentTermsDays?: number | null;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  vatRate?: number | null;
 
   @IsArray()
   @IsInt({ each: true })

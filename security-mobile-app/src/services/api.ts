@@ -23,6 +23,7 @@ import {
   Job,
   JobApplication,
   InvoiceBatch,
+  InvoiceDocument,
   MarginReport,
   ReviewJobApplicationPayload,
   DailyLog,
@@ -450,6 +451,10 @@ export function listCompanyInvoiceBatches() {
 
 export function getCompanyInvoiceBatch(id: number) {
   return request<InvoiceBatch>(`/invoice-batches/${id}`);
+}
+
+export function getCompanyInvoiceBatchDocument(id: number) {
+  return request<InvoiceDocument>(`/invoice-batches/${id}/document`);
 }
 
 export function finaliseCompanyInvoiceBatch(id: number) {

@@ -269,7 +269,19 @@ export interface InvoiceBatch {
   periodEnd: string;
   status: InvoiceBatchStatus | string;
   invoiceReference?: string | null;
+  invoiceNumber?: string | null;
   notes?: string | null;
+  dueDate?: string | null;
+  billingAddressSnapshot?: string | null;
+  clientNameSnapshot?: string | null;
+  companyNameSnapshot?: string | null;
+  companyAddressSnapshot?: string | null;
+  paymentTermsDays?: number | null;
+  currency?: string | null;
+  vatRate?: number | null;
+  netAmountSnapshot?: number | null;
+  vatAmountSnapshot?: number | null;
+  grossAmountSnapshot?: number | null;
   createdAt: string;
   updatedAt: string;
   finalisedAt?: string | null;
@@ -286,7 +298,55 @@ export interface CreateInvoiceBatchPayload {
   periodEnd: string;
   invoiceReference?: string | null;
   notes?: string | null;
+  paymentTermsDays?: number | null;
+  vatRate?: number | null;
   timesheetIds: number[];
+}
+
+export interface InvoiceDocumentLineItem {
+  timesheetId: number;
+  site: string;
+  guard: string;
+  shiftDate: string;
+  approvedHours: number;
+  billableHours: number;
+  billingRate: number | null;
+  amount: number;
+  companyNote?: string | null;
+}
+
+export interface InvoiceDocument {
+  id: number;
+  status: InvoiceBatchStatus | string;
+  invoiceNumber: string;
+  invoiceReference?: string | null;
+  issueDate: string;
+  dueDate: string;
+  periodStart: string;
+  periodEnd: string;
+  currency: string;
+  paymentTermsDays: number;
+  vatRate: number;
+  notes?: string | null;
+  company: {
+    name: string;
+    address: string;
+    contactDetails?: string | null;
+  };
+  client: {
+    name: string;
+    billingAddress?: string | null;
+    contactName?: string | null;
+    contactEmail?: string | null;
+    contactPhone?: string | null;
+  };
+  lineItems: InvoiceDocumentLineItem[];
+  totals: {
+    netAmount: number;
+    vatRate: number;
+    vatAmount: number;
+    grossAmount: number;
+  };
 }
 
 export interface CreateJobPayload {
