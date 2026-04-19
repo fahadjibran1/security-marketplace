@@ -4,6 +4,7 @@ export type TimesheetPayrollStatus = 'unpaid' | 'included' | 'paid';
 export type PayrollBatchStatus = 'draft' | 'finalised' | 'paid';
 export type TimesheetBillingStatus = 'uninvoiced' | 'included' | 'invoiced';
 export type InvoiceBatchStatus = 'draft' | 'finalised' | 'issued' | 'paid';
+export type ContractPricingRuleStatus = 'active' | 'inactive';
 
 export function isCompanyAppRole(role?: AppRole | null): boolean {
   return role === 'company' || role === 'company_admin' || role === 'company_staff';
@@ -178,10 +179,14 @@ export interface Timesheet {
   invoicePaidAt?: string | null;
   invoiceBatch?: InvoiceBatch | null;
   billingRate?: number | null;
+  effectiveBillingRate?: number | null;
+  billableHours?: number | null;
   costAmount?: number | null;
   revenueAmount?: number | null;
   marginAmount?: number | null;
   marginPercent?: number | null;
+  matchedContractRuleId?: number | null;
+  matchedContractRuleName?: string | null;
   workedMinutes?: number;
   breakMinutes?: number;
   roundedMinutes?: number;
@@ -298,6 +303,12 @@ export interface CreateJobPayload {
 export interface MarginReportBreakdown {
   clientId: number | null;
   clientName: string;
+  siteId?: number | null;
+  siteName?: string;
+  contractRuleId?: number | null;
+  contractRuleName?: string;
+  approvedHours?: number;
+  billableHours?: number;
   cost: number;
   revenue: number;
   margin: number;
@@ -310,6 +321,68 @@ export interface MarginReport {
   totalMargin: number;
   marginPercent: number | null;
   breakdown: MarginReportBreakdown[];
+}
+
+export interface ContractPricingRule {
+  id: number;
+  company?: CompanyProfile;
+  client: Client;
+  site?: Site | null;
+  name: string;
+  status: ContractPricingRuleStatus | string;
+  priority: number;
+  effectiveFrom?: string | null;
+  effectiveTo?: string | null;
+  billingRate?: number | null;
+  minimumBillableHours?: number | null;
+  roundUpToMinutes?: number | null;
+  graceMinutes?: number | null;
+  appliesOnMonday: boolean;
+  appliesOnTuesday: boolean;
+  appliesOnWednesday: boolean;
+  appliesOnThursday: boolean;
+  appliesOnFriday: boolean;
+  appliesOnSaturday: boolean;
+  appliesOnSunday: boolean;
+  startTime?: string | null;
+  endTime?: string | null;
+  appliesOnBankHoliday?: boolean | null;
+  appliesOnWeekendOnly: boolean;
+  appliesOnOvernightShift?: boolean | null;
+  flatCallOutFee?: number | null;
+  deductionHoursBeforeBilling?: number | null;
+  notes?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ContractPricingRulePayload {
+  clientId: number;
+  siteId?: number | null;
+  name: string;
+  status?: ContractPricingRuleStatus | string;
+  priority?: number;
+  effectiveFrom?: string | null;
+  effectiveTo?: string | null;
+  billingRate?: number | null;
+  minimumBillableHours?: number | null;
+  roundUpToMinutes?: number | null;
+  graceMinutes?: number | null;
+  appliesOnMonday?: boolean;
+  appliesOnTuesday?: boolean;
+  appliesOnWednesday?: boolean;
+  appliesOnThursday?: boolean;
+  appliesOnFriday?: boolean;
+  appliesOnSaturday?: boolean;
+  appliesOnSunday?: boolean;
+  startTime?: string | null;
+  endTime?: string | null;
+  appliesOnBankHoliday?: boolean | null;
+  appliesOnWeekendOnly?: boolean;
+  appliesOnOvernightShift?: boolean | null;
+  flatCallOutFee?: number | null;
+  deductionHoursBeforeBilling?: number | null;
+  notes?: string | null;
 }
 
 export interface CreateShiftPayload {

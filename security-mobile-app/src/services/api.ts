@@ -6,6 +6,8 @@ import {
   Assignment,
   AuthSession,
   CompanyGuard,
+  ContractPricingRule,
+  ContractPricingRulePayload,
   CompanyProfile,
   Client,
   CreateInvoiceBatchPayload,
@@ -464,6 +466,35 @@ export function issueCompanyInvoiceBatch(id: number) {
 
 export function payCompanyInvoiceBatch(id: number) {
   return request<InvoiceBatch>(`/invoice-batches/${id}/pay`, {
+    method: 'PATCH',
+  });
+}
+
+export function listContractPricingRules(filters: { clientId?: number; siteId?: number; status?: string } = {}) {
+  const query = new URLSearchParams();
+  if (filters.clientId) query.set('clientId', String(filters.clientId));
+  if (filters.siteId) query.set('siteId', String(filters.siteId));
+  if (filters.status) query.set('status', filters.status);
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return request<ContractPricingRule[]>(`/contract-pricing${suffix}`);
+}
+
+export function createContractPricingRule(payload: ContractPricingRulePayload) {
+  return request<ContractPricingRule>('/contract-pricing', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateContractPricingRule(id: number, payload: Partial<ContractPricingRulePayload>) {
+  return request<ContractPricingRule>(`/contract-pricing/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deactivateContractPricingRule(id: number) {
+  return request<ContractPricingRule>(`/contract-pricing/${id}/deactivate`, {
     method: 'PATCH',
   });
 }

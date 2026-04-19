@@ -15,6 +15,10 @@ function formatPercent(value?: number | null) {
   return value === null || value === undefined || !Number.isFinite(value) ? 'Unavailable' : `${value.toFixed(2)}%`;
 }
 
+function formatHours(value?: number | null) {
+  return Number.isFinite(Number(value)) ? Number(value).toFixed(2) : '0.00';
+}
+
 function getMarginTone(marginPercent?: number | null, margin?: number | null) {
   if ((margin ?? 0) < 0) return { label: 'Negative', color: '#B91C1C', background: '#FEE2E2' };
   if (marginPercent !== null && marginPercent !== undefined && marginPercent < 20) {
@@ -62,7 +66,7 @@ export function CompanyMarginWorkspace() {
         <View>
           <Text style={styles.eyebrow}>Commercial Intelligence</Text>
           <Text style={styles.title}>Margins</Text>
-          <Text style={styles.subtitle}>Approved-timesheet revenue, guard cost, and profit by client.</Text>
+          <Text style={styles.subtitle}>Approved-timesheet revenue, guard cost, and profit by client, site, and contract rule.</Text>
         </View>
         <Pressable style={styles.primaryButton} onPress={loadReport} disabled={loading}>
           <Text style={styles.primaryButtonText}>{loading ? 'Refreshing...' : 'Refresh Report'}</Text>
@@ -92,9 +96,12 @@ export function CompanyMarginWorkspace() {
       </View>
 
       <View style={styles.panel}>
-        <Text style={styles.panelTitle}>Client Breakdown</Text>
+        <Text style={styles.panelTitle}>Commercial Breakdown</Text>
         <View style={styles.tableHeader}>
           <Text style={[styles.headerCell, styles.clientCol]}>Client</Text>
+          <Text style={styles.headerCell}>Site</Text>
+          <Text style={styles.headerCell}>Contract Rule</Text>
+          <Text style={styles.headerCell}>Hours</Text>
           <Text style={styles.headerCell}>Revenue</Text>
           <Text style={styles.headerCell}>Cost</Text>
           <Text style={styles.headerCell}>Profit</Text>
@@ -106,8 +113,11 @@ export function CompanyMarginWorkspace() {
           report.breakdown.map((row) => {
             const tone = getMarginTone(row.marginPercent, row.margin);
             return (
-              <View key={`${row.clientId ?? 'unassigned'}-${row.clientName}`} style={styles.tableRow}>
+              <View key={`${row.clientId ?? 'unassigned'}-${row.siteId ?? 'all-sites'}-${row.contractRuleId ?? 'fallback'}-${row.clientName}`} style={styles.tableRow}>
                 <Text style={[styles.tableCellStrong, styles.clientCol]}>{row.clientName}</Text>
+                <Text style={styles.tableCell}>{row.siteName || 'All sites'}</Text>
+                <Text style={styles.tableCell}>{row.contractRuleName || 'Fallback rate'}</Text>
+                <Text style={styles.tableCell}>{formatHours(row.approvedHours)} / {formatHours(row.billableHours)}</Text>
                 <Text style={styles.tableCell}>{formatMoney(row.revenue)}</Text>
                 <Text style={styles.tableCell}>{formatMoney(row.cost)}</Text>
                 <Text style={[styles.tableCell, { color: tone.color }]}>{formatMoney(row.margin)}</Text>

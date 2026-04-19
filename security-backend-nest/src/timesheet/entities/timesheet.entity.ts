@@ -148,8 +148,12 @@ export class Timesheet {
   updatedAt!: Date;
 
   billingRate?: number | null;
+  effectiveBillingRate?: number | null;
+  billableHours?: number | null;
   costAmount?: number | null;
   revenueAmount?: number | null;
   marginAmount?: number | null;
   marginPercent?: number | null;
+  matchedContractRuleId?: number | null;
+  matchedContractRuleName?: string | null;
 }

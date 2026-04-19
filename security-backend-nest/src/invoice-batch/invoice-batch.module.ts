@@ -4,6 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuditLogModule } from '../audit-log/audit-log.module';
 import { Client } from '../client/entities/client.entity';
 import { CompanyModule } from '../company/company.module';
+import { ContractPricingModule } from '../contract-pricing/contract-pricing.module';
 import { Timesheet } from '../timesheet/entities/timesheet.entity';
 import { InvoiceBatchController } from './invoice-batch.controller';
 import { InvoiceBatch } from './entities/invoice-batch.entity';
@@ -13,6 +14,7 @@ import { InvoiceBatchService } from './invoice-batch.service';
   imports: [
     TypeOrmModule.forFeature([InvoiceBatch, Timesheet, Client]),
     CompanyModule,
+    ContractPricingModule,
     AuditLogModule,
   ],
   controllers: [InvoiceBatchController],

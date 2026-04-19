@@ -32,8 +32,10 @@ type InvoiceEntry = {
   shiftDateValue: Date | null;
   scheduledTime: string;
   approvedHours: number;
+  billableHours: number;
   billingRate: number | null;
   invoiceAmount: number | null;
+  contractRuleName: string;
   billingStatus: TimesheetBillingStatus;
   invoiceBatchStatus: InvoiceBatchStatus | null;
   selectable: boolean;
@@ -48,6 +50,7 @@ type InvoiceGroup = {
   periodLabel: string;
   entries: InvoiceEntry[];
   approvedHours: number;
+  billableHours: number;
   invoiceAmount: number;
   missingRateCount: number;
 };
@@ -213,6 +216,7 @@ function buildEntry(timesheet: Timesheet): InvoiceEntry | null {
   const client = getTimesheetClient(timesheet);
   const dateValue = new Date(getShiftDate(timesheet));
   const approvedHours = getApprovedHours(timesheet);
+  const billableHours = toNumber(timesheet.billableHours) ?? approvedHours;
   const billingRate = getBillingRate(timesheet);
   const computedRevenue = toNumber(timesheet.revenueAmount);
   const billingStatus = normalizeBillingStatus(timesheet.billingStatus);
@@ -229,8 +233,10 @@ function buildEntry(timesheet: Timesheet): InvoiceEntry | null {
     shiftDateValue: Number.isNaN(dateValue.getTime()) ? null : dateValue,
     scheduledTime: `${formatTimeLabel(timesheet.scheduledStartAt || timesheet.shift?.start)}-${formatTimeLabel(timesheet.scheduledEndAt || timesheet.shift?.end)}`,
     approvedHours,
+    billableHours,
     billingRate,
     invoiceAmount: computedRevenue !== null ? computedRevenue : billingRate === null ? null : approvedHours * billingRate,
+    contractRuleName: timesheet.matchedContractRuleName || 'Fallback rate',
     billingStatus,
     invoiceBatchStatus,
     selectable: Boolean(client?.id) && !timesheet.invoiceBatch && billingStatus !== 'invoiced',
@@ -254,12 +260,14 @@ function makeGroup(entries: InvoiceEntry[], periodView: PeriodView) {
         periodLabel: period.label,
         entries: [],
         approvedHours: 0,
+        billableHours: 0,
         invoiceAmount: 0,
         missingRateCount: 0,
       };
 
     current.entries.push(entry);
     current.approvedHours += entry.approvedHours;
+    current.billableHours += entry.billableHours;
     if (entry.invoiceAmount !== null) {
       current.invoiceAmount += entry.invoiceAmount;
     } else {
@@ -443,8 +451,12 @@ export function CompanyInvoiceWorkspace({ timesheets, refreshing, onRefresh }: C
       'guard',
       'shift date',
       'approved hours',
-      'billing rate',
-      'invoice amount',
+      'billable hours',
+      'matched contract rule',
+      'effective billing rate',
+      'revenue amount',
+      'cost amount',
+      'margin amount',
       'billing status',
       'batch status',
       'company note',
@@ -459,8 +471,12 @@ export function CompanyInvoiceWorkspace({ timesheets, refreshing, onRefresh }: C
         entry.guardName,
         entry.shiftDate,
         formatNumber(entry.approvedHours),
+        formatNumber(entry.billableHours),
+        entry.contractRuleName,
         entry.billingRate === null ? 'Rate unavailable' : entry.billingRate.toFixed(2),
         entry.invoiceAmount === null ? 'Rate unavailable' : entry.invoiceAmount.toFixed(2),
+        entry.timesheet.costAmount === null || entry.timesheet.costAmount === undefined ? '' : entry.timesheet.costAmount.toFixed(2),
+        entry.timesheet.marginAmount === null || entry.timesheet.marginAmount === undefined ? '' : entry.timesheet.marginAmount.toFixed(2),
         formatStatusLabel(entry.billingStatus),
         entry.timesheet.invoiceBatch?.status ? formatStatusLabel(entry.timesheet.invoiceBatch.status) : 'Unbatched',
         entry.timesheet.companyNote || '',
@@ -476,8 +492,12 @@ export function CompanyInvoiceWorkspace({ timesheets, refreshing, onRefresh }: C
         `${group.entries.length} records`,
         group.periodLabel,
         formatNumber(group.approvedHours),
+        formatNumber(group.billableHours),
+        '',
         '',
         group.invoiceAmount.toFixed(2),
+        '',
+        '',
         `${group.missingRateCount} missing rate`,
         '',
         '',
@@ -511,16 +531,22 @@ export function CompanyInvoiceWorkspace({ timesheets, refreshing, onRefresh }: C
   const exportBatch = React.useCallback((batch: InvoiceBatch) => {
     const batchEntries = (batch.timesheets || []).map(buildEntry).filter((entry): entry is InvoiceEntry => Boolean(entry));
     const rows = buildCsvRows(batchEntries);
+    const batchBillableHours = batchEntries.reduce((sum, entry) => sum + entry.billableHours, 0);
+    const batchRevenue = batch.totals.totalRevenueAmount ?? batch.totals.invoiceAmount;
     rows.push([
       'SUMMARY',
       batch.invoiceReference || '',
       batch.client?.name || `Client #${batch.clientId}`,
-      `${batch.totals.recordsCount} records`,
       '',
+      `${batch.totals.recordsCount} records`,
       `${formatDateLabel(batch.periodStart)} - ${formatDateLabel(batch.periodEnd)}`,
       formatNumber(batch.totals.approvedHours),
+      formatNumber(batchBillableHours),
       '',
-      batch.totals.invoiceAmount.toFixed(2),
+      '',
+      batchRevenue.toFixed(2),
+      '',
+      '',
       '',
       formatStatusLabel(batch.status),
       '',
@@ -722,6 +748,7 @@ export function CompanyInvoiceWorkspace({ timesheets, refreshing, onRefresh }: C
                     <View style={styles.groupTotals}>
                       <Text style={styles.groupTotalText}>{group.entries.length} records</Text>
                       <Text style={styles.groupTotalText}>{formatNumber(group.approvedHours)} hrs</Text>
+                      <Text style={styles.groupTotalText}>{formatNumber(group.billableHours)} billable hrs</Text>
                       <Text style={styles.groupTotalText}>Revenue {formatMoney(group.invoiceAmount)}</Text>
                     </View>
                     <Pressable style={styles.secondaryButton} onPress={() => exportGroup(group)}>
@@ -744,9 +771,12 @@ export function CompanyInvoiceWorkspace({ timesheets, refreshing, onRefresh }: C
                         </Pressable>
                         <View style={styles.rowMain}>
                           <Text style={styles.rowTitle}>{entry.guardName}</Text>
-                          <Text style={styles.rowMeta}>{entry.shiftDate} | {entry.scheduledTime} | {entry.siteName}</Text>
+                          <Text style={styles.rowMeta}>
+                            {entry.shiftDate} | {entry.scheduledTime} | {entry.siteName} | {entry.contractRuleName}
+                          </Text>
                         </View>
                         <Text style={styles.rowAmount}>{formatNumber(entry.approvedHours)} hrs</Text>
+                        <Text style={styles.rowAmount}>{formatNumber(entry.billableHours)} billable</Text>
                         <Text style={styles.rowAmount}>{entry.billingRate === null ? 'No rate' : MONEY_FORMATTER.format(entry.billingRate)}</Text>
                         <Text style={styles.rowAmount}>{formatMoney(entry.invoiceAmount)}</Text>
                         <View style={[styles.statusBadge, { backgroundColor: billingPalette.background, borderColor: billingPalette.border }]}>
@@ -776,7 +806,9 @@ export function CompanyInvoiceWorkspace({ timesheets, refreshing, onRefresh }: C
                 <Detail label="Guard" value={selectedEntry.guardName} />
                 <Detail label="Shift Date" value={selectedEntry.shiftDate} />
                 <Detail label="Approved Hours" value={formatNumber(selectedEntry.approvedHours)} />
-                <Detail label="Billing Rate" value={selectedEntry.billingRate === null ? 'Rate unavailable' : MONEY_FORMATTER.format(selectedEntry.billingRate)} />
+                <Detail label="Billable Hours" value={formatNumber(selectedEntry.billableHours)} />
+                <Detail label="Matched Contract Rule" value={selectedEntry.contractRuleName} />
+                <Detail label="Effective Billing Rate" value={selectedEntry.billingRate === null ? 'Rate unavailable' : MONEY_FORMATTER.format(selectedEntry.billingRate)} />
                 <Detail label="Revenue" value={formatMoney(selectedEntry.invoiceAmount)} />
                 <Detail label="Cost (Guard Pay)" value={selectedEntry.timesheet.costAmount !== null && selectedEntry.timesheet.costAmount !== undefined ? formatMoney(selectedEntry.timesheet.costAmount) : 'Rate unavailable'} />
                 <Detail label="Profit" value={selectedEntry.timesheet.marginAmount !== null && selectedEntry.timesheet.marginAmount !== undefined ? formatMoney(selectedEntry.timesheet.marginAmount) : 'Rate unavailable'} />
@@ -865,7 +897,9 @@ export function CompanyInvoiceWorkspace({ timesheets, refreshing, onRefresh }: C
                   return (
                     <View key={timesheet.id} style={styles.batchRow}>
                       <Text style={styles.batchRowTitle}>{entry.guardName}</Text>
-                      <Text style={styles.batchMeta}>{entry.siteName} | {entry.shiftDate} | {formatNumber(entry.approvedHours)} hrs | {formatMoney(entry.invoiceAmount)}</Text>
+                      <Text style={styles.batchMeta}>
+                        {entry.siteName} | {entry.shiftDate} | {formatNumber(entry.billableHours)} billable hrs | {entry.contractRuleName} | {formatMoney(entry.invoiceAmount)}
+                      </Text>
                     </View>
                   );
                 })}

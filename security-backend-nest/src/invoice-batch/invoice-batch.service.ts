@@ -5,6 +5,7 @@ import { Repository } from 'typeorm';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { Client } from '../client/entities/client.entity';
 import { CompanyService } from '../company/company.service';
+import { ContractPricingService } from '../contract-pricing/contract-pricing.service';
 import {
   Timesheet,
   TimesheetBillingStatus,
@@ -20,6 +21,7 @@ export class InvoiceBatchService {
     @InjectRepository(Timesheet) private readonly timesheetRepo: Repository<Timesheet>,
     @InjectRepository(Client) private readonly clientRepo: Repository<Client>,
     private readonly companyService: CompanyService,
+    private readonly contractPricingService: ContractPricingService,
     private readonly auditLogService: AuditLogService,
   ) {}
 
@@ -110,6 +112,7 @@ export class InvoiceBatchService {
       order: { createdAt: 'DESC' },
     });
 
+    await Promise.all(batches.map((batch) => this.hydrateBatchFinancials(batch)));
     return batches.map((batch) => this.toBatchSummary(batch, false));
   }
 
@@ -126,6 +129,7 @@ export class InvoiceBatchService {
       throw new NotFoundException('Invoice batch not found');
     }
 
+    await this.hydrateBatchFinancials(batch);
     return this.toBatchSummary(batch, true);
   }
 
@@ -287,6 +291,10 @@ export class InvoiceBatchService {
   }
 
   private getBillingRate(timesheet: Timesheet) {
+    if (timesheet.effectiveBillingRate !== undefined && timesheet.effectiveBillingRate !== null) {
+      return Number(timesheet.effectiveBillingRate);
+    }
+
     const directBillingRate = timesheet.shift?.job?.billingRate;
     if (directBillingRate !== undefined && directBillingRate !== null && Number.isFinite(Number(directBillingRate))) {
       return Number(directBillingRate);
@@ -328,9 +336,13 @@ export class InvoiceBatchService {
       (summary, timesheet) => {
         const approvedHours = this.getApprovedHours(timesheet);
         const rate = this.getBillingRate(timesheet);
+        const revenueAmount = timesheet.revenueAmount !== undefined && timesheet.revenueAmount !== null ? Number(timesheet.revenueAmount) : null;
         summary.recordsCount += 1;
         summary.approvedHours += approvedHours;
-        if (rate !== null) {
+        if (revenueAmount !== null) {
+          summary.invoiceAmount += revenueAmount;
+          summary.totalRevenueAmount += revenueAmount;
+        } else if (rate !== null) {
           summary.invoiceAmount += approvedHours * rate;
           summary.totalRevenueAmount += approvedHours * rate;
         } else {
@@ -366,5 +378,11 @@ export class InvoiceBatchService {
       },
       timesheets: includeTimesheets ? timesheets : undefined,
     };
+  }
+
+  private async hydrateBatchFinancials(batch: InvoiceBatch) {
+    if (batch.timesheets?.length) {
+      await this.contractPricingService.applyFinancials(batch.timesheets);
+    }
   }
 }

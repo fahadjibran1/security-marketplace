@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 
+import { CompanyContractPricingWorkspace } from '../components/company/CompanyContractPricingWorkspace';
 import { CompanyInvoiceWorkspace } from '../components/company/CompanyInvoiceWorkspace';
 import { CompanyMarginWorkspace } from '../components/company/CompanyMarginWorkspace';
 import { CompanyPayrollBatchesWorkspace } from '../components/company/CompanyPayrollBatchesWorkspace';
@@ -73,6 +74,7 @@ type CompanySection =
   | 'payroll-batches'
   | 'invoices'
   | 'margins'
+  | 'contract-pricing'
   | 'incidents'
   | 'alerts';
 
@@ -201,6 +203,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'payroll-batches', label: 'Payroll Batches', caption: 'Draft, finalised, and paid payroll runs.' },
   { id: 'invoices', label: 'Invoices', caption: 'Client billing and invoice batches.' },
   { id: 'margins', label: 'Margins', caption: 'Revenue, cost, and profit reporting.' },
+  { id: 'contract-pricing', label: 'Contract Pricing', caption: 'Client and site commercial rules.' },
   { id: 'incidents', label: 'Incidents', caption: 'Track reported site issues.' },
   { id: 'alerts', label: 'Safety Alerts', caption: 'Watch welfare and check-call alerts.' },
 ];
@@ -4155,6 +4158,8 @@ export function CompanyDashboardScreen() {
         return <CompanyInvoiceWorkspace timesheets={timesheets} refreshing={refreshing} onRefresh={() => loadData(true)} />;
       case 'margins':
         return <CompanyMarginWorkspace />;
+      case 'contract-pricing':
+        return <CompanyContractPricingWorkspace />;
       case 'incidents':
         return renderSimpleTableSection(
           'Incidents',

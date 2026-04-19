@@ -1189,6 +1189,8 @@ export function CompanyPayrollWorkspace({
               <View style={styles.detailSection}>
                 <Text style={styles.detailSectionTitle}>Financial Breakdown</Text>
                 <Text style={styles.detailLine}>Cost (guard pay): {selectedCostAmount !== null ? formatCurrency(selectedCostAmount) : 'Rate unavailable'}</Text>
+                <Text style={styles.detailLine}>Contract rule: {activeSelected.matchedContractRuleName || 'Fallback rate'}</Text>
+                <Text style={styles.detailLine}>Billable hours: {activeSelected.billableHours !== null && activeSelected.billableHours !== undefined ? activeSelected.billableHours.toFixed(2) : 'Unavailable'}</Text>
                 <Text style={styles.detailLine}>Revenue (client charge): {activeSelected.revenueAmount !== null && activeSelected.revenueAmount !== undefined ? formatCurrency(activeSelected.revenueAmount) : 'Rate unavailable'}</Text>
                 <Text style={styles.detailLine}>Profit: {activeSelected.marginAmount !== null && activeSelected.marginAmount !== undefined ? formatCurrency(activeSelected.marginAmount) : 'Rate unavailable'}</Text>
                 <Text style={styles.detailLine}>Margin: {activeSelected.marginPercent !== null && activeSelected.marginPercent !== undefined ? `${activeSelected.marginPercent.toFixed(2)}%` : 'Unavailable'}</Text>

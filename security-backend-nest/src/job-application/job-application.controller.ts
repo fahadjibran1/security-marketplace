@@ -27,6 +27,12 @@ export class JobApplicationController {
     return this.jobApplicationService.createForUser(user, dto);
   }
 
+  @Get('self')
+  @Roles(UserRole.GUARD)
+  findSelf(@CurrentUser() user: JwtPayload) {
+    return this.jobApplicationService.findAllForUser(user);
+  }
+
   @Post('self')
   @Roles(UserRole.GUARD)
   createSelf(@CurrentUser() user: JwtPayload, @Body() dto: CreateJobApplicationDto) {

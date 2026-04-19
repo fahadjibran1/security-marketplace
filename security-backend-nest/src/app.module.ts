@@ -23,6 +23,7 @@ import { AttachmentModule } from './attachment/attachment.module';
 import { AuditLogModule } from './audit-log/audit-log.module';
 import { NotificationModule } from './notification/notification.module';
 import { ClientModule } from './client/client.module';
+import { ContractPricingModule } from './contract-pricing/contract-pricing.module';
 import { InvoiceBatchModule } from './invoice-batch/invoice-batch.module';
 import { PayrollBatchModule } from './payroll-batch/payroll-batch.module';
 import { ReportModule } from './report/report.module';
@@ -55,6 +56,7 @@ import { validateRuntimeEnv } from './config/runtime-env';
     AuthModule,
     CompanyModule,
     ClientModule,
+    ContractPricingModule,
     GuardProfileModule,
     JobModule,
     JobApplicationModule,

@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
 import { CompanyService } from '../company/company.service';
+import { ContractPricingService } from '../contract-pricing/contract-pricing.service';
 import { Timesheet, TimesheetStatus } from '../timesheet/entities/timesheet.entity';
 import { MarginReportQueryDto } from './dto/margin-report-query.dto';
 
@@ -14,6 +15,12 @@ type MarginSummary = {
   breakdown: Array<{
     clientId: number | null;
     clientName: string;
+    siteId: number | null;
+    siteName: string;
+    contractRuleId: number | null;
+    contractRuleName: string;
+    approvedHours: number;
+    billableHours: number;
     cost: number;
     revenue: number;
     margin: number;
@@ -26,6 +33,7 @@ export class ReportService {
   constructor(
     @InjectRepository(Timesheet) private readonly timesheetRepo: Repository<Timesheet>,
     private readonly companyService: CompanyService,
+    private readonly contractPricingService: ContractPricingService,
   ) {}
 
   async getCompanyMarginReport(userId: number, query: MarginReportQueryDto): Promise<MarginSummary> {
@@ -38,12 +46,24 @@ export class ReportService {
       throw new BadRequestException('Report end date must be on or after start date.');
     }
 
-    const timesheets = await this.timesheetRepo.find({
+    const timesheets = await this.contractPricingService.applyFinancials(await this.timesheetRepo.find({
       where: { company: { id: company.id } },
       order: { createdAt: 'DESC' },
-    });
+    }));
 
-    const breakdown = new Map<string, { clientId: number | null; clientName: string; cost: number; revenue: number; margin: number }>();
+    const breakdown = new Map<string, {
+      clientId: number | null;
+      clientName: string;
+      siteId: number | null;
+      siteName: string;
+      contractRuleId: number | null;
+      contractRuleName: string;
+      approvedHours: number;
+      billableHours: number;
+      cost: number;
+      revenue: number;
+      margin: number;
+    }>();
     let totalCost = 0;
     let totalRevenue = 0;
 
@@ -60,22 +80,33 @@ export class ReportService {
       if (query.siteId && site?.id !== query.siteId) return;
 
       const approvedHours = this.getApprovedHours(timesheet);
-      const hourlyRate = this.getHourlyRate(timesheet);
-      const billingRate = this.getBillingRate(timesheet);
-      const cost = hourlyRate === null ? 0 : approvedHours * hourlyRate;
-      const revenue = billingRate === null ? 0 : approvedHours * billingRate;
+      const billableHours = Number(timesheet.billableHours) || approvedHours;
+      const cost = Number(timesheet.costAmount) || 0;
+      const revenue = Number(timesheet.revenueAmount) || 0;
       const margin = revenue - cost;
-      const key = String(client?.id ?? 'unassigned');
+      const key = [
+        client?.id ?? 'unassigned',
+        site?.id ?? 'no-site',
+        timesheet.matchedContractRuleId ?? 'fallback',
+      ].join('|');
       const current =
         breakdown.get(key) ||
         {
           clientId: client?.id ?? null,
           clientName: client?.name || site?.clientName || 'Client unavailable',
+          siteId: site?.id ?? null,
+          siteName: site?.name || timesheet.shift?.siteName || 'Site unavailable',
+          contractRuleId: timesheet.matchedContractRuleId ?? null,
+          contractRuleName: timesheet.matchedContractRuleName || 'Fallback rate',
+          approvedHours: 0,
+          billableHours: 0,
           cost: 0,
           revenue: 0,
           margin: 0,
         };
 
+      current.approvedHours += approvedHours;
+      current.billableHours += billableHours;
       current.cost += cost;
       current.revenue += revenue;
       current.margin += margin;
@@ -94,6 +125,12 @@ export class ReportService {
         .map((entry) => ({
           clientId: entry.clientId,
           clientName: entry.clientName,
+          siteId: entry.siteId,
+          siteName: entry.siteName,
+          contractRuleId: entry.contractRuleId,
+          contractRuleName: entry.contractRuleName,
+          approvedHours: Math.round(entry.approvedHours * 100) / 100,
+          billableHours: Math.round(entry.billableHours * 100) / 100,
           cost: this.roundCurrency(entry.cost),
           revenue: this.roundCurrency(entry.revenue),
           margin: this.roundCurrency(entry.margin),

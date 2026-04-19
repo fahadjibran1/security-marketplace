@@ -5,6 +5,7 @@ import { AuditLog } from '../audit-log/entities/audit-log.entity';
 import { Client } from '../client/entities/client.entity';
 import { Company } from '../company/entities/company.entity';
 import { CompanyGuard } from '../company-guard/entities/company-guard.entity';
+import { ContractPricingRule } from '../contract-pricing/entities/contract-pricing-rule.entity';
 import { DailyLog } from '../daily-log/entities/daily-log.entity';
 import { GuardProfile } from '../guard-profile/entities/guard-profile.entity';
 import { Incident } from '../incident/entities/incident.entity';
@@ -29,6 +30,7 @@ export const appEntities = [
   Client,
   Company,
   CompanyGuard,
+  ContractPricingRule,
   DailyLog,
   GuardProfile,
   Incident,
