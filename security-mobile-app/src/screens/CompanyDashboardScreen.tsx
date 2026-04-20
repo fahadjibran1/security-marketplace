@@ -67,6 +67,7 @@ import {
   UpdateShiftPayload,
   UpdateSitePayload,
 } from '../types/models';
+import { CompanySidebar } from '../components/company/CompanySidebar';
 
 type CompanySection =
   | 'dashboard'
@@ -230,6 +231,34 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'audit', label: 'Audit Trail', caption: 'Trace financial actions and before/after data.' },
   { id: 'incidents', label: 'Incidents', caption: 'Track reported site issues.' },
   { id: 'alerts', label: 'Safety Alerts', caption: 'Watch welfare and check-call alerts.' },
+];
+
+const COMPANY_NAV_GROUPS: Array<{ id: string; title: string; itemIds: CompanySection[] }> = [
+  {
+    id: 'operations',
+    title: 'Operations',
+    itemIds: ['dashboard', 'live-operations', 'sites', 'clients', 'rota-planner', 'shift-offers', 'coverage', 'analytics'],
+  },
+  {
+    id: 'workforce',
+    title: 'Workforce',
+    itemIds: ['guards', 'availability', 'recruitment'],
+  },
+  {
+    id: 'timesheets-pay',
+    title: 'Timesheets & Pay',
+    itemIds: ['timesheets', 'payroll', 'payroll-batches', 'pay-rules'],
+  },
+  {
+    id: 'billing-finance',
+    title: 'Billing & Finance',
+    itemIds: ['invoices', 'finance', 'finance-control', 'margins', 'contract-pricing'],
+  },
+  {
+    id: 'risk-compliance',
+    title: 'Risk & Compliance',
+    itemIds: ['compliance', 'audit', 'incidents', 'alerts'],
+  },
 ];
 
 const CLIENT_FORM_EMPTY: ClientFormState = {
@@ -4303,44 +4332,42 @@ export function CompanyDashboardScreen() {
 
   return (
     <View style={styles.screen}>
-      <View style={styles.sidebar}>
-        <Text style={styles.brandEyebrow}>Observant Security</Text>
-        <Text style={styles.brandTitle}>Company Operations</Text>
-        <Text style={styles.brandCopy}>Clients, sites, rota planning, and live shift monitoring in one control room.</Text>
-        {NAV_ITEMS.map((item) => (
-          <Pressable
-            key={item.id}
-            style={[styles.navItem, activeSection === item.id && styles.navItemActive]}
-            onPress={() => setActiveSection(item.id)}
-          >
-            <Text style={[styles.navLabel, activeSection === item.id && styles.navLabelActive]}>{item.label}</Text>
-            <Text style={[styles.navCaption, activeSection === item.id && styles.navCaptionActive]}>{item.caption}</Text>
-          </Pressable>
-        ))}
+      <View style={styles.sidebarShell}>
+        <CompanySidebar
+          title="Company Operations"
+          subtitle="Observant Security"
+          description="Clients, sites, rota planning, and live shift monitoring in one control room."
+          activeId={activeSection}
+          navItems={NAV_ITEMS}
+          groups={COMPANY_NAV_GROUPS}
+          onNavigate={setActiveSection}
+        />
       </View>
 
-      <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
-        <View style={styles.header}>
-          <View>
-            <Text style={styles.eyebrow}>Operations Console</Text>
-            <Text style={styles.headerTitle}>
-              {NAV_ITEMS.find((item) => item.id === activeSection)?.label || 'Company Dashboard'}
-            </Text>
+      <View style={styles.contentShell}>
+        <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
+          <View style={styles.header}>
+            <View>
+              <Text style={styles.eyebrow}>Operations Console</Text>
+              <Text style={styles.headerTitle}>
+                {NAV_ITEMS.find((item) => item.id === activeSection)?.label || 'Company Dashboard'}
+              </Text>
+            </View>
+            <Pressable style={styles.secondaryButton} onPress={() => loadData(true)}>
+              <Text style={styles.secondaryButtonText}>{refreshing ? 'Refreshing...' : 'Refresh Data'}</Text>
+            </Pressable>
           </View>
-          <Pressable style={styles.secondaryButton} onPress={() => loadData(true)}>
-            <Text style={styles.secondaryButtonText}>{refreshing ? 'Refreshing...' : 'Refresh Data'}</Text>
-          </Pressable>
-        </View>
 
-        {error ? (
-          <View style={styles.errorCard}>
-            <Text style={styles.errorTitle}>Action required</Text>
-            <Text style={styles.errorText}>{error}</Text>
-          </View>
-        ) : null}
+          {error ? (
+            <View style={styles.errorCard}>
+              <Text style={styles.errorTitle}>Action required</Text>
+              <Text style={styles.errorText}>{error}</Text>
+            </View>
+          ) : null}
 
-        {renderContent()}
-      </ScrollView>
+          {renderContent()}
+        </ScrollView>
+      </View>
     </View>
   );
 }
@@ -4361,57 +4388,19 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     backgroundColor: '#eef3f8',
+    overflow: 'hidden',
+    minHeight: 0,
   },
-  sidebar: {
-    width: 300,
+  sidebarShell: {
+    width: 310,
     backgroundColor: '#0f1a2b',
-    paddingHorizontal: 24,
-    paddingVertical: 28,
-    gap: 12,
+    overflow: 'hidden',
+    minHeight: 0,
   },
-  brandEyebrow: {
-    color: '#7dd3fc',
-    fontSize: 12,
-    letterSpacing: 2,
-    textTransform: 'uppercase',
-    fontWeight: '700',
-  },
-  brandTitle: {
-    color: '#f8fafc',
-    fontSize: 32,
-    fontWeight: '800',
-  },
-  brandCopy: {
-    color: '#cbd5e1',
-    fontSize: 14,
-    lineHeight: 22,
-    marginBottom: 10,
-  },
-  navItem: {
-    borderRadius: 18,
-    paddingHorizontal: 18,
-    paddingVertical: 16,
-    backgroundColor: 'rgba(148, 163, 184, 0.08)',
-    gap: 4,
-  },
-  navItemActive: {
-    backgroundColor: '#e0f2fe',
-  },
-  navLabel: {
-    color: '#f8fafc',
-    fontWeight: '700',
-    fontSize: 16,
-  },
-  navLabelActive: {
-    color: '#0f172a',
-  },
-  navCaption: {
-    color: '#cbd5e1',
-    fontSize: 12,
-    lineHeight: 18,
-  },
-  navCaptionActive: {
-    color: '#334155',
+  contentShell: {
+    flex: 1,
+    overflow: 'hidden',
+    minHeight: 0,
   },
   content: {
     flex: 1,

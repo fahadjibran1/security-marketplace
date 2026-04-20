@@ -8,6 +8,8 @@ import { logout, restoreSession, setUnauthorizedHandler } from './src/services/a
 import { clearStoredSession, loadStoredSession, persistSession } from './src/services/session';
 import { AuthSession, isClientAppRole, isCompanyAppRole } from './src/types/models';
 
+const IS_WEB = typeof document !== 'undefined';
+
 export default function App() {
   const [session, setSession] = useState<AuthSession | null>(null);
   const [booting, setBooting] = useState(true);
@@ -115,8 +117,16 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: '#f3f4f6' },
-  screenContainer: { flex: 1 },
+  safeArea: {
+    flex: 1,
+    backgroundColor: '#f3f4f6',
+    ...(IS_WEB ? { height: '100vh', overflow: 'hidden' } : null),
+  },
+  screenContainer: {
+    flex: 1,
+    minHeight: 0,
+    ...(IS_WEB ? { overflow: 'hidden' } : null),
+  },
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   loadingText: { color: '#374151', fontSize: 16, fontWeight: '600' },
   topBar: {
