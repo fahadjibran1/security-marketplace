@@ -68,6 +68,8 @@ import {
   UpdateSitePayload,
 } from '../types/models';
 import { CompanySidebar } from '../components/company/CompanySidebar';
+import { Card } from '../components/ui/Card';
+import { KpiCard, KpiTone } from '../components/ui/KpiCard';
 
 type CompanySection =
   | 'dashboard'
@@ -2838,102 +2840,182 @@ export function CompanyDashboardScreen() {
     </View>
   );
 
+  const dashboardKpis = React.useMemo(() => {
+    const kpis: Array<{
+      label: string;
+      value: number;
+      icon: string;
+      tone: KpiTone;
+    }> = [
+      { label: 'Active Clients', value: activeClients.length, icon: '🏢', tone: activeClients.length > 0 ? 'good' : 'warning' },
+      { label: 'Active Sites', value: activeSites.length, icon: '📍', tone: activeSites.length > 0 ? 'good' : 'warning' },
+      { label: 'Linked Guards', value: linkedGuards.length, icon: '🛡️', tone: linkedGuards.length > 0 ? 'good' : 'warning' },
+      { label: 'Shifts Today', value: shiftsToday.length, icon: '🗓️', tone: shiftsToday.length > 0 ? 'neutral' : 'warning' },
+      { label: 'Live Shifts', value: liveShifts.length, icon: '🟢', tone: liveShifts.length > 0 ? 'good' : 'neutral' },
+      { label: 'Pending Timesheets', value: pendingTimesheets.length, icon: '⏱️', tone: pendingTimesheets.length > 0 ? 'warning' : 'good' },
+      { label: 'Open Incidents', value: openIncidents.length, icon: '🚨', tone: openIncidents.length > 0 ? 'attention' : 'good' },
+      { label: 'Alerts', value: outstandingAlerts.length, icon: '🔔', tone: outstandingAlerts.length > 0 ? 'attention' : 'good' },
+    ];
+    return kpis;
+  }, [
+    activeClients.length,
+    activeSites.length,
+    linkedGuards.length,
+    liveShifts.length,
+    openIncidents.length,
+    outstandingAlerts.length,
+    pendingTimesheets.length,
+    shiftsToday.length,
+  ]);
+
+  const actionRequiredRows = React.useMemo(() => {
+    const payrollCount = pendingPayrollTimesheets.length;
+    const invoiceCount = pendingInvoiceTimesheets.length;
+    const overdueCount = overdueReviewTimesheets.length;
+
+    return [
+      {
+        key: 'payroll',
+        title: 'Payroll batches',
+        description: 'Approved unpaid rows ready for payroll suggestions.',
+        count: payrollCount,
+        countLabel: `${payrollCount} row(s)`,
+        target: 'payroll' as CompanySection,
+        tone: payrollCount > 0 ? ('attention' as const) : ('good' as const),
+      },
+      {
+        key: 'invoices',
+        title: 'Invoice batches',
+        description: 'Approved uninvoiced rows ready for invoice suggestions.',
+        count: invoiceCount,
+        countLabel: `${invoiceCount} row(s)`,
+        target: 'invoices' as CompanySection,
+        tone: invoiceCount > 0 ? ('attention' as const) : ('good' as const),
+      },
+      {
+        key: 'timesheets',
+        title: 'Overdue reviews',
+        description: 'Submitted timesheets older than 24 hours.',
+        count: overdueCount,
+        countLabel: `${overdueCount} row(s)`,
+        target: 'timesheets' as CompanySection,
+        tone: overdueCount > 0 ? ('warning' as const) : ('good' as const),
+      },
+    ];
+  }, [overdueReviewTimesheets.length, pendingInvoiceTimesheets.length, pendingPayrollTimesheets.length]);
+
+  const actionRequiredTotal = React.useMemo(
+    () => actionRequiredRows.reduce((sum, row) => sum + row.count, 0),
+    [actionRequiredRows],
+  );
+
   const renderDashboardSection = () => (
     <View style={styles.sectionStack}>
-      <View style={styles.kpiGrid}>
-        {[
-          ['Active Clients', String(activeClients.length)],
-          ['Active Sites', String(activeSites.length)],
-          ['Linked Guards', String(linkedGuards.length)],
-          ['Shifts Today', String(shiftsToday.length)],
-          ['Live Shifts', String(liveShifts.length)],
-          ['Pending Timesheets', String(pendingTimesheets.length)],
-          ['Open Incidents', String(openIncidents.length)],
-          ['Outstanding Alerts', String(outstandingAlerts.length)],
-        ].map(([label, value]) => (
-          <View key={label} style={styles.kpiCard}>
-            <Text style={styles.kpiLabel}>{label}</Text>
-            <Text style={styles.kpiValue}>{value}</Text>
-          </View>
-        ))}
+      <View style={styles.dashboardSection}>
+        <View style={styles.dashboardSectionHeader}>
+          <Text style={styles.dashboardSectionTitle}>KPIs</Text>
+          <Text style={styles.dashboardSectionSubtle}>At-a-glance operational health.</Text>
+        </View>
+        <View style={styles.kpiGrid}>
+          {dashboardKpis.map((kpi) => (
+            <View key={kpi.label} style={styles.kpiCell}>
+              <KpiCard label={kpi.label} value={String(kpi.value)} icon={kpi.icon} tone={kpi.tone} />
+            </View>
+          ))}
+        </View>
       </View>
 
-      <View style={styles.panel}>
-        <Text style={styles.panelTitle}>Automation Alerts</Text>
-        <Text style={styles.helperText}>
-          Suggested actions are read-only signals until a company user creates or updates a batch.
-        </Text>
-        {[
-          {
-            label: 'Pending payroll',
-            value: `${pendingPayrollTimesheets.length} approved unpaid row(s) ready for payroll suggestions`,
-            target: 'payroll' as CompanySection,
-          },
-          {
-            label: 'Pending invoices',
-            value: `${pendingInvoiceTimesheets.length} approved uninvoiced row(s) ready for invoice suggestions`,
-            target: 'invoices' as CompanySection,
-          },
-          {
-            label: 'Overdue reviews',
-            value: `${overdueReviewTimesheets.length} submitted timesheet(s) older than 24 hours`,
-            target: 'timesheets' as CompanySection,
-          },
-        ].map((alert) => (
-          <Pressable key={alert.label} style={styles.recordRow} onPress={() => setActiveSection(alert.target)}>
-            <Text style={styles.recordTitle}>{alert.label}</Text>
-            <Text style={styles.recordMeta}>{alert.value}</Text>
-          </Pressable>
-        ))}
-      </View>
-
-      <View style={styles.panelGrid}>
-        <View style={styles.panel}>
-          <Text style={styles.panelTitle}>Today&apos;s Live Shifts</Text>
-          {liveShifts.slice(0, 6).map((shift) => (
-            <Pressable key={shift.id} style={styles.recordRow} onPress={() => {
-              setSelectedShiftId(shift.id);
-              setActiveSection('live-operations');
-            }}>
-              <Text style={styles.recordTitle}>{shift.site?.name || shift.siteName}</Text>
-              <Text style={styles.recordMeta}>
-                {formatDateLabel(shift.start)} · {formatTimeLabel(shift.start)}-{formatTimeLabel(shift.end)}
-              </Text>
+      <Card
+        title="⚠️ Action Required"
+        subtitle={
+          actionRequiredTotal === 0
+            ? 'All clear — no finance or timesheet actions are currently pending.'
+            : 'These items need attention to keep payroll and billing on track.'
+        }
+        tone={actionRequiredTotal === 0 ? 'success' : 'warning'}
+      >
+        <View style={styles.actionRequiredList}>
+          {actionRequiredRows.map((row) => (
+            <Pressable
+              key={row.key}
+              onPress={() => setActiveSection(row.target)}
+              style={({ hovered, pressed }: any) => [
+                styles.actionRequiredRow,
+                row.count > 0 ? styles.actionRequiredRowHot : styles.actionRequiredRowCool,
+                hovered ? styles.actionRequiredRowHover : null,
+                pressed ? styles.actionRequiredRowPressed : null,
+              ]}
+            >
+              <View style={styles.actionRequiredLeft}>
+                <Text style={[styles.actionRequiredTitle, row.count > 0 && styles.actionRequiredTitleHot]}>
+                  {row.title}
+                </Text>
+                <Text style={styles.actionRequiredDescription}>{row.description}</Text>
+              </View>
+              <View style={styles.actionRequiredRight}>
+                <Text style={[styles.actionRequiredCount, row.count > 0 && styles.actionRequiredCountHot]}>
+                  {row.countLabel}
+                </Text>
+                <Text style={styles.actionRequiredCta}>Open</Text>
+              </View>
             </Pressable>
           ))}
         </View>
-        <View style={styles.panel}>
-          <Text style={styles.panelTitle}>Urgent Alerts</Text>
-          {outstandingAlerts.slice(0, 6).map((alert) => (
-            <View key={alert.id} style={styles.recordRow}>
-              <Text style={styles.recordTitle}>{formatStatusLabel(alert.type)}</Text>
-              <Text style={styles.recordMeta}>
-                {alert.shift?.site?.name || alert.shift?.siteName || 'Shift alert'} · {formatDateTimeLabel(alert.createdAt)}
-              </Text>
-            </View>
-          ))}
+      </Card>
+
+      <View style={styles.dashboardSection}>
+        <View style={styles.dashboardSectionHeader}>
+          <Text style={styles.dashboardSectionTitle}>Live Ops</Text>
+          <Text style={styles.dashboardSectionSubtle}>What’s happening right now across sites.</Text>
         </View>
-        <View style={styles.panel}>
-          <Text style={styles.panelTitle}>Recent Incidents</Text>
-          {openIncidents.slice(0, 6).map((incident) => (
-            <View key={incident.id} style={styles.recordRow}>
-              <Text style={styles.recordTitle}>{incident.title}</Text>
-              <Text style={styles.recordMeta}>
-                {incident.site?.name || incident.shift?.site?.name || 'Site'} · {formatStatusLabel(incident.severity)}
-              </Text>
-            </View>
-          ))}
-        </View>
-        <View style={styles.panel}>
-          <Text style={styles.panelTitle}>Recent Activity</Text>
-          {recentActivity.map((log) => (
-            <View key={log.id} style={styles.recordRow}>
-              <Text style={styles.recordTitle}>{log.message}</Text>
-              <Text style={styles.recordMeta}>
-                {log.shift?.site?.name || log.shift?.siteName || 'Shift'} · {formatDateTimeLabel(log.createdAt)}
-              </Text>
-            </View>
-          ))}
+        <View style={styles.panelGrid}>
+          <Card title="Today's Live Shifts" subtitle="Quick jump into the live board.">
+            {liveShifts.slice(0, 6).map((shift) => (
+              <Pressable
+                key={shift.id}
+                style={({ hovered, pressed }: any) => [styles.recordRow, hovered ? styles.recordRowHover : null, pressed ? styles.recordRowPressed : null]}
+                onPress={() => {
+                  setSelectedShiftId(shift.id);
+                  setActiveSection('live-operations');
+                }}
+              >
+                <Text style={styles.recordTitle}>{shift.site?.name || shift.siteName}</Text>
+                <Text style={styles.recordMeta}>
+                  {formatDateLabel(shift.start)} · {formatTimeLabel(shift.start)}-{formatTimeLabel(shift.end)}
+                </Text>
+              </Pressable>
+            ))}
+          </Card>
+          <Card title="Urgent Alerts" subtitle="Safety and welfare items needing follow-up." tone={outstandingAlerts.length > 0 ? 'danger' : 'default'}>
+            {outstandingAlerts.slice(0, 6).map((alert) => (
+              <View key={alert.id} style={styles.recordRow}>
+                <Text style={styles.recordTitle}>{formatStatusLabel(alert.type)}</Text>
+                <Text style={styles.recordMeta}>
+                  {alert.shift?.site?.name || alert.shift?.siteName || 'Shift alert'} · {formatDateTimeLabel(alert.createdAt)}
+                </Text>
+              </View>
+            ))}
+          </Card>
+          <Card title="Recent Incidents" subtitle="Latest open incidents across sites." tone={openIncidents.length > 0 ? 'warning' : 'default'}>
+            {openIncidents.slice(0, 6).map((incident) => (
+              <View key={incident.id} style={styles.recordRow}>
+                <Text style={styles.recordTitle}>{incident.title}</Text>
+                <Text style={styles.recordMeta}>
+                  {incident.site?.name || incident.shift?.site?.name || 'Site'} · {formatStatusLabel(incident.severity)}
+                </Text>
+              </View>
+            ))}
+          </Card>
+          <Card title="Recent Activity" subtitle="Most recent shift logs and updates.">
+            {recentActivity.map((log) => (
+              <View key={log.id} style={styles.recordRow}>
+                <Text style={styles.recordTitle}>{log.message}</Text>
+                <Text style={styles.recordMeta}>
+                  {log.shift?.site?.name || log.shift?.siteName || 'Shift'} · {formatDateTimeLabel(log.createdAt)}
+                </Text>
+              </View>
+            ))}
+          </Card>
         </View>
       </View>
     </View>
@@ -4429,6 +4511,26 @@ const styles = StyleSheet.create({
   sectionStack: {
     gap: 20,
   },
+  dashboardSection: {
+    gap: 14,
+  },
+  dashboardSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  dashboardSectionTitle: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#0f172a',
+    letterSpacing: 0.2,
+  },
+  dashboardSectionSubtle: {
+    fontSize: 12,
+    color: '#64748b',
+    fontWeight: '600',
+  },
   sectionTitle: {
     fontSize: 24,
     fontWeight: '800',
@@ -4438,6 +4540,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 16,
+  },
+  kpiCell: {
+    minWidth: 220,
+    flexGrow: 1,
+    flexBasis: 240,
+    maxWidth: 320,
   },
   kpiCard: {
     minWidth: 180,
@@ -4685,6 +4793,14 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#edf2f7',
   },
+  recordRowHover: {
+    backgroundColor: 'rgba(15, 23, 42, 0.03)',
+    borderRadius: 12,
+    paddingHorizontal: 10,
+  },
+  recordRowPressed: {
+    backgroundColor: 'rgba(15, 23, 42, 0.05)',
+  },
   recordTitle: {
     color: '#0f172a',
     fontWeight: '700',
@@ -4692,6 +4808,73 @@ const styles = StyleSheet.create({
   recordMeta: {
     color: '#64748b',
     fontSize: 13,
+  },
+  actionRequiredList: {
+    gap: 10,
+  },
+  actionRequiredRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+  },
+  actionRequiredRowCool: {
+    backgroundColor: '#ffffff',
+    borderColor: '#e5e7eb',
+  },
+  actionRequiredRowHot: {
+    backgroundColor: 'rgba(239, 68, 68, 0.06)',
+    borderColor: 'rgba(239, 68, 68, 0.24)',
+  },
+  actionRequiredRowHover: {
+    shadowColor: '#0f172a',
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+    transform: [{ translateY: -1 }],
+  },
+  actionRequiredRowPressed: {
+    transform: [{ translateY: 0 }],
+  },
+  actionRequiredLeft: {
+    flex: 1,
+    gap: 2,
+  },
+  actionRequiredRight: {
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+    gap: 2,
+  },
+  actionRequiredTitle: {
+    color: '#0f172a',
+    fontWeight: '900',
+    fontSize: 14,
+  },
+  actionRequiredTitleHot: {
+    color: '#7f1d1d',
+  },
+  actionRequiredDescription: {
+    color: '#64748b',
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '600',
+  },
+  actionRequiredCount: {
+    color: '#0f172a',
+    fontWeight: '900',
+    fontSize: 14,
+  },
+  actionRequiredCountHot: {
+    color: '#991b1b',
+  },
+  actionRequiredCta: {
+    color: '#2563eb',
+    fontSize: 12,
+    fontWeight: '800',
   },
   helperText: {
     color: '#64748b',
