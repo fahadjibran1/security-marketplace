@@ -1,5 +1,4 @@
 import * as React from 'react';
-import type { ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 type CardTone = 'default' | 'success' | 'warning' | 'danger';
@@ -8,7 +7,7 @@ type CardProps = React.PropsWithChildren<{
   title?: string;
   subtitle?: string;
   tone?: CardTone;
-  right?: ReactNode;
+  right?: any;
   onPress?: () => void;
   style?: any;
 }>;

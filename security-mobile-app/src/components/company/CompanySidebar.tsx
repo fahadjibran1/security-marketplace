@@ -115,10 +115,20 @@ export function CompanySidebar<Id extends string>({
                     .map((item) => (
                       <Pressable
                         key={item.id}
-                        style={[styles.navItem, activeId === item.id && styles.navItemActive]}
+                        style={({ hovered, pressed }: any) => [
+                          styles.navItem,
+                          hovered ? styles.navItemHover : null,
+                          pressed ? styles.navItemPressed : null,
+                          activeId === item.id ? styles.navItemActive : null,
+                        ]}
                         onPress={() => onNavigate(item.id)}
                       >
-                        <Text style={[styles.navLabel, activeId === item.id && styles.navLabelActive]}>{item.label}</Text>
+                        <View style={styles.navLabelRow}>
+                          <Text style={styles.navIcon} aria-hidden>
+                            {getNavIcon(String(item.id))}
+                          </Text>
+                          <Text style={[styles.navLabel, activeId === item.id && styles.navLabelActive]}>{item.label}</Text>
+                        </View>
                         <Text style={[styles.navCaption, activeId === item.id && styles.navCaptionActive]}>{item.caption}</Text>
                       </Pressable>
                     ))}
@@ -134,6 +144,61 @@ export function CompanySidebar<Id extends string>({
       </ScrollView>
     </View>
   );
+}
+
+function getNavIcon(id: string) {
+  switch (id) {
+    case 'dashboard':
+      return '🎛️';
+    case 'live-operations':
+      return '🟢';
+    case 'sites':
+      return '📍';
+    case 'clients':
+      return '🏢';
+    case 'rota-planner':
+      return '🗓️';
+    case 'shift-offers':
+      return '📨';
+    case 'coverage':
+      return '🧭';
+    case 'analytics':
+      return '📈';
+    case 'guards':
+      return '🛡️';
+    case 'availability':
+      return '🕒';
+    case 'recruitment':
+      return '🧲';
+    case 'timesheets':
+      return '⏱️';
+    case 'payroll':
+      return '💳';
+    case 'payroll-batches':
+      return '🧾';
+    case 'pay-rules':
+      return '🧮';
+    case 'invoices':
+      return '🧾';
+    case 'finance':
+      return '💰';
+    case 'finance-control':
+      return '🧮';
+    case 'margins':
+      return '📊';
+    case 'contract-pricing':
+      return '🏷️';
+    case 'compliance':
+      return '✅';
+    case 'audit':
+      return '🕵️';
+    case 'incidents':
+      return '🚨';
+    case 'alerts':
+      return '🔔';
+    default:
+      return '•';
+  }
 }
 
 const styles = StyleSheet.create({
@@ -193,7 +258,7 @@ const styles = StyleSheet.create({
   },
   groupTitle: {
     color: 'rgba(226, 232, 240, 0.82)',
-    fontSize: 12,
+    fontSize: 11,
     letterSpacing: 1.2,
     textTransform: 'uppercase',
     fontWeight: '800',
@@ -229,9 +294,27 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(148, 163, 184, 0.04)',
   },
+  navItemHover: {
+    backgroundColor: 'rgba(148, 163, 184, 0.12)',
+  },
+  navItemPressed: {
+    backgroundColor: 'rgba(148, 163, 184, 0.16)',
+  },
   navItemActive: {
     backgroundColor: '#e0f2fe',
     borderColor: 'rgba(14, 116, 144, 0.25)',
+  },
+  navLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  navIcon: {
+    width: 18,
+    textAlign: 'center',
+    color: '#e2e8f0',
+    fontSize: 14,
+    fontWeight: '800',
   },
   navLabel: {
     color: '#f8fafc',
