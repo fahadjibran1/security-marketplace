@@ -1478,38 +1478,81 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
         ) : null}
 
         {activeTab === 'profile' ? (
-          <>
-            <FeatureCard title="Profile" subtitle="Personal and setup details only.">
-              <TextInput style={styles.input} placeholder="Name" value={fullName} onChangeText={setFullName} />
-              <TextInput style={styles.input} placeholder="SIA details" value={siaLicence} onChangeText={setSiaLicence} />
-              <TextInput style={styles.input} placeholder="Contact details" value={phone} onChangeText={setPhone} />
-              <TextInput
-                style={styles.input}
-                placeholder="Availability"
-                value={availabilityStatus}
-                onChangeText={setAvailabilityStatus}
-              />
-              <View style={styles.switchRow}>
-                <View style={styles.flexGrow}>
-                  <Text style={styles.cardTitle}>Live location sharing</Text>
-                  <Text style={styles.metaText}>Keep on while actively deployed.</Text>
+          <View style={styles.guardProfileRoot}>
+            <FeatureCard
+              title="Your profile"
+              subtitle="What your company and payroll see. Save when you change anything below."
+              style={styles.guardProfileCard}
+            >
+              <View style={styles.guardProfileBody}>
+                <View style={styles.guardProfileSection}>
+                  <Text style={styles.guardSectionLabel}>Contact & identity</Text>
+                  <View style={styles.guardProfileFields}>
+                    <TextInput
+                      style={[styles.input, styles.guardProfileInput]}
+                      placeholder="Name"
+                      value={fullName}
+                      onChangeText={setFullName}
+                    />
+                    <TextInput
+                      style={[styles.input, styles.guardProfileInput]}
+                      placeholder="SIA details"
+                      value={siaLicence}
+                      onChangeText={setSiaLicence}
+                    />
+                    <TextInput
+                      style={[styles.input, styles.guardProfileInput]}
+                      placeholder="Contact details"
+                      value={phone}
+                      onChangeText={setPhone}
+                    />
+                  </View>
                 </View>
-                <Switch value={locationSharing} onValueChange={setLocationSharing} />
+                <View style={styles.guardProfileSection}>
+                  <Text style={styles.guardSectionLabel}>Availability note</Text>
+                  <TextInput
+                    style={[styles.input, styles.guardProfileInput]}
+                    placeholder="Availability"
+                    value={availabilityStatus}
+                    onChangeText={setAvailabilityStatus}
+                  />
+                </View>
+                <View style={[styles.guardProfileSection, styles.guardProfileSwitchSection]}>
+                  <Text style={styles.guardSectionLabel}>On shift</Text>
+                  <View style={styles.switchRow}>
+                    <View style={styles.flexGrow}>
+                      <Text style={styles.guardProfileSwitchTitle}>Live location sharing</Text>
+                      <Text style={styles.guardProfileSwitchHint}>Keep on while you are deployed.</Text>
+                    </View>
+                    <Switch value={locationSharing} onValueChange={setLocationSharing} />
+                  </View>
+                </View>
+                <View style={styles.guardProfileActions}>
+                  <Pressable
+                    style={[
+                      styles.primaryActionButton,
+                      styles.guardHomeCta,
+                      styles.guardProfileSaveCta,
+                      savingProfile && styles.buttonDisabled,
+                    ]}
+                    onPress={handleSaveProfile}
+                    disabled={savingProfile}
+                  >
+                    <Text style={[styles.primaryActionText, styles.guardHomeCtaText]}>
+                      {savingProfile ? 'Saving...' : 'Save profile'}
+                    </Text>
+                  </Pressable>
+                  <Pressable style={[styles.offerRejectBtn, styles.guardProfileLogoutBtn]} onPress={handleLogout}>
+                    <Text style={styles.offerRejectBtnText}>Log out</Text>
+                  </Pressable>
+                </View>
               </View>
-              <Pressable
-                style={[styles.primaryActionButton, savingProfile && styles.buttonDisabled]}
-                onPress={handleSaveProfile}
-                disabled={savingProfile}
-              >
-                <Text style={styles.primaryActionText}>{savingProfile ? 'Saving...' : 'Save Profile'}</Text>
-              </Pressable>
-              <Pressable style={styles.logoutButton} onPress={handleLogout}>
-                <Text style={styles.logoutButtonText}>Logout</Text>
-              </Pressable>
             </FeatureCard>
-            <GuardCompliancePanel />
-            <GuardAvailabilityScreen />
-          </>
+            <View style={styles.guardProfileBelowStack}>
+              <GuardCompliancePanel />
+              <GuardAvailabilityScreen />
+            </View>
+          </View>
         ) : null}
       </ScrollView>
       </View>
@@ -1767,14 +1810,14 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F3F4F6' },
-  header: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 8 },
-  headerTitle: { fontSize: 28, fontWeight: '800', color: '#111827' },
+  container: { flex: 1, backgroundColor: '#F1F5F9' },
+  header: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 12 },
+  headerTitle: { fontSize: 24, fontWeight: '800', color: '#111827', letterSpacing: -0.3 },
   mainArea: { flex: 1 },
   contentArea: { flex: 1 },
   scrollView: { flex: 1 },
-  content: { paddingHorizontal: 16, paddingBottom: 20, flexGrow: 1 },
-  signedOutScreen: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, backgroundColor: '#F3F4F6', gap: 8 },
+  content: { paddingHorizontal: 16, paddingBottom: 28, flexGrow: 1 },
+  signedOutScreen: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, backgroundColor: '#F1F5F9', gap: 8 },
   feedbackBanner: { marginHorizontal: 16, marginBottom: 10, borderRadius: 16, paddingHorizontal: 14, paddingVertical: 12, gap: 4 },
   feedbackSuccess: { backgroundColor: '#DCFCE7' },
   feedbackError: { backgroundColor: '#FEE2E2' },
@@ -2142,6 +2185,42 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 6 },
     elevation: 2,
   },
+  guardProfileRoot: { width: '100%', gap: 12, paddingBottom: 8 },
+  guardProfileCard: {
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
+    padding: 16,
+    marginBottom: 0,
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.05,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 2,
+  },
+  guardProfileBody: { gap: 18, marginTop: 4 },
+  guardProfileSection: { gap: 8 },
+  guardProfileFields: { gap: 10 },
+  guardProfileInput: {
+    minHeight: 48,
+    borderRadius: 14,
+  },
+  guardProfileSwitchSection: {
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#EDF0F5',
+    gap: 10,
+  },
+  guardProfileSwitchTitle: { fontSize: 15, fontWeight: '700', color: '#0F172A' },
+  guardProfileSwitchHint: { fontSize: 13, lineHeight: 19, color: '#64748B', marginTop: 2 },
+  guardProfileActions: { gap: 10, marginTop: 4 },
+  guardProfileSaveCta: { marginTop: 0 },
+  guardProfileLogoutBtn: { minHeight: 48 },
+  guardProfileBelowStack: { gap: 12, width: '100%' },
   historyEmptyState: { gap: 8, paddingVertical: 8 },
   historyEmptyTitle: { fontSize: 16, fontWeight: '800', color: '#0F172A' },
   historyEmptyBody: { fontSize: 14, lineHeight: 22, color: '#475569' },

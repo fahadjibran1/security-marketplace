@@ -423,28 +423,56 @@ export function GuardTimesheetsScreen({
   );
 
   return (
-    <FeatureCard title="Timesheets" subtitle={sorted.length ? `${sorted.length} on your record` : 'No timesheets yet'}>
-      {sorted.length === 0 ? (
-        <Text style={styles.emptyText}>Timesheets will appear here once shifts are completed.</Text>
-      ) : (
-        sorted.map((ts) => (
-          <View key={ts.id}>
-            <TimesheetCard
-              timesheet={ts}
-              attendanceSlice={attendanceByShiftId[ts.shiftId]}
-              onReload={onReload}
-              onNotify={onNotify}
-              onTimesheetSubmitted={onTimesheetSubmitted}
-            />
+    <View style={styles.guardTimesheetsRoot}>
+      <FeatureCard
+        title="Timesheets"
+        subtitle={sorted.length ? `${sorted.length} on your record` : 'No timesheets yet'}
+        style={styles.guardTimesheetsCard}
+      >
+        {sorted.length === 0 ? (
+          <View style={styles.timesheetsEmptyState}>
+            <Text style={styles.timesheetsEmptyTitle}>Nothing here yet</Text>
+            <Text style={styles.timesheetsEmptyBody}>
+              Timesheets will appear here once shifts are completed.
+            </Text>
           </View>
-        ))
-      )}
-    </FeatureCard>
+        ) : (
+          sorted.map((ts) => (
+            <View key={ts.id}>
+              <TimesheetCard
+                timesheet={ts}
+                attendanceSlice={attendanceByShiftId[ts.shiftId]}
+                onReload={onReload}
+                onNotify={onNotify}
+                onTimesheetSubmitted={onTimesheetSubmitted}
+              />
+            </View>
+          ))
+        )}
+      </FeatureCard>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  emptyText: { color: '#4B5563', lineHeight: 20 },
+  guardTimesheetsRoot: { width: '100%' },
+  guardTimesheetsCard: {
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
+    padding: 16,
+    marginBottom: 0,
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.05,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 2,
+    gap: 12,
+  },
+  timesheetsEmptyState: { gap: 8, paddingVertical: 10, paddingHorizontal: 2 },
+  timesheetsEmptyTitle: { fontSize: 16, fontWeight: '800', color: '#0F172A', letterSpacing: -0.2 },
+  timesheetsEmptyBody: { fontSize: 14, lineHeight: 22, color: '#475569', fontWeight: '500' },
   card: {
     borderTopWidth: 1,
     borderTopColor: '#E5E7EB',
