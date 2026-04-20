@@ -1,6 +1,10 @@
 import * as React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+const IS_WEB = typeof document !== 'undefined';
+
+const WEB_POINTER = IS_WEB ? ({ cursor: 'pointer' } as const) : {};
+
 export type KpiTone = 'neutral' | 'good' | 'warning' | 'attention';
 
 type KpiCardProps = {
@@ -11,116 +15,161 @@ type KpiCardProps = {
   onPress?: () => void;
 };
 
-const TONE: Record<KpiTone, { pillBg: string; pillText: string; iconBg: string; value: string; border: string }> = {
+const TONE: Record<KpiTone, { iconBg: string; value: string; border: string }> = {
   neutral: {
-    pillBg: 'rgba(15, 23, 42, 0.06)',
-    pillText: '#0f172a',
-    iconBg: 'rgba(37, 99, 235, 0.10)',
+    iconBg: 'rgba(37, 99, 235, 0.08)',
     value: '#0f172a',
-    border: '#e5e7eb',
+    border: '#e8edf3',
   },
   good: {
-    pillBg: 'rgba(16, 185, 129, 0.12)',
-    pillText: '#065f46',
-    iconBg: 'rgba(16, 185, 129, 0.14)',
+    iconBg: 'rgba(16, 185, 129, 0.12)',
     value: '#064e3b',
-    border: 'rgba(16, 185, 129, 0.26)',
+    border: 'rgba(16, 185, 129, 0.22)',
   },
   warning: {
-    pillBg: 'rgba(249, 115, 22, 0.12)',
-    pillText: '#9a3412',
-    iconBg: 'rgba(249, 115, 22, 0.14)',
+    iconBg: 'rgba(249, 115, 22, 0.12)',
     value: '#7c2d12',
-    border: 'rgba(249, 115, 22, 0.26)',
+    border: 'rgba(249, 115, 22, 0.22)',
   },
   attention: {
-    pillBg: 'rgba(239, 68, 68, 0.12)',
-    pillText: '#991b1b',
-    iconBg: 'rgba(239, 68, 68, 0.14)',
+    iconBg: 'rgba(239, 68, 68, 0.12)',
     value: '#7f1d1d',
-    border: 'rgba(239, 68, 68, 0.26)',
+    border: 'rgba(239, 68, 68, 0.22)',
   },
 };
 
 export function KpiCard({ label, value, icon, tone = 'neutral', onPress }: KpiCardProps) {
   const toneStyle = TONE[tone] || TONE.neutral;
-  const Container: any = onPress ? Pressable : View;
+  const [surfaceHovered, setSurfaceHovered] = React.useState(false);
 
-  return (
-    <Container
-      {...(onPress ? ({ onPress, onClick: onPress } as const) : {})}
-      style={({ hovered, pressed }: any) => [
-        styles.card,
-        { borderColor: toneStyle.border },
-        hovered && onPress ? styles.cardHover : null,
-        pressed && onPress ? styles.cardPressed : null,
-      ]}
-    >
-      <View style={styles.topRow}>
+  const inner = (
+    <View style={styles.cardInner}>
+      <View style={styles.headerRow}>
+        <Text style={styles.label} numberOfLines={2}>
+          {label}
+        </Text>
         <View style={[styles.iconPuck, { backgroundColor: toneStyle.iconBg }]}>
           <Text style={styles.iconText}>{icon}</Text>
         </View>
-        <View style={[styles.tonePill, { backgroundColor: toneStyle.pillBg }]}>
-          <Text style={[styles.tonePillText, { color: toneStyle.pillText }]}>{label}</Text>
-        </View>
       </View>
-      <Text style={[styles.value, { color: toneStyle.value }]}>{value}</Text>
-    </Container>
+      <Text
+        style={[styles.value, { color: toneStyle.value }, IS_WEB ? (styles.valueWeb as any) : null]}
+        numberOfLines={1}
+        adjustsFontSizeToFit
+        minimumFontScale={0.85}
+      >
+        {value}
+      </Text>
+    </View>
   );
+
+  const cardChrome = (hovered: boolean) => [
+    styles.card,
+    { borderColor: toneStyle.border },
+    IS_WEB && hovered ? styles.kpiCardWebHover : null,
+  ];
+
+  if (onPress) {
+    return (
+      <Pressable
+        {...({ onPress, onClick: onPress } as const)}
+        style={({ hovered, pressed }: any) => [
+          ...cardChrome(Boolean(hovered && !pressed)),
+          hovered && !pressed ? styles.cardHover : null,
+          pressed ? styles.cardPressed : null,
+          WEB_POINTER as any,
+        ]}
+      >
+        {inner}
+      </Pressable>
+    );
+  }
+
+  if (IS_WEB) {
+    return (
+      <View
+        onPointerEnter={() => setSurfaceHovered(true)}
+        onPointerLeave={() => setSurfaceHovered(false)}
+        style={[...cardChrome(surfaceHovered), IS_WEB ? (styles.kpiCardWebCursor as any) : null]}
+      >
+        {inner}
+      </View>
+    );
+  }
+
+  return <View style={cardChrome(false)}>{inner}</View>;
 }
 
 const styles = StyleSheet.create({
   card: {
     backgroundColor: '#ffffff',
     borderRadius: 18,
-    padding: 16,
+    padding: 0,
     borderWidth: 1,
     shadowColor: '#0f172a',
-    shadowOpacity: 0.06,
-    shadowRadius: 14,
+    shadowOpacity: 0.045,
+    shadowRadius: 16,
     shadowOffset: { width: 0, height: 8 },
-    gap: 12,
-    minHeight: 96,
+    minHeight: 118,
+    flex: 1,
   },
+  kpiCardWebHover: {
+    shadowOpacity: 0.08,
+    borderColor: 'rgba(15, 23, 42, 0.14)',
+    transform: [{ translateY: -1 }],
+  } as any,
+  kpiCardWebCursor: {
+    cursor: 'default',
+  } as any,
   cardHover: {
-    shadowOpacity: 0.12,
+    shadowOpacity: 0.08,
     transform: [{ translateY: -1 }],
   },
   cardPressed: {
     transform: [{ translateY: 0 }],
   },
-  topRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  cardInner: {
+    flex: 1,
+    paddingHorizontal: 20,
+    paddingTop: 18,
+    paddingBottom: 18,
     justifyContent: 'space-between',
-    gap: 10,
+    gap: 12,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  label: {
+    flex: 1,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.9,
+    textTransform: 'uppercase',
+    color: '#64748b',
+    lineHeight: 16,
   },
   iconPuck: {
-    width: 34,
-    height: 34,
+    width: 32,
+    height: 32,
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
+    flexShrink: 0,
   },
   iconText: {
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  tonePill: {
-    flex: 1,
-    borderRadius: 999,
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-  },
-  tonePillText: {
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 0.2,
+    fontSize: 15,
+    lineHeight: 18,
   },
   value: {
-    fontSize: 34,
+    fontSize: 36,
     fontWeight: '900',
-    letterSpacing: -0.5,
+    letterSpacing: -1,
+    lineHeight: 40,
   },
+  valueWeb: {
+    fontVariantNumeric: 'tabular-nums',
+  } as any,
 });
-

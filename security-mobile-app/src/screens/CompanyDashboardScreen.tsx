@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 
 import { CompanyAuditWorkspace } from '../components/company/CompanyAuditWorkspace';
 import { CompanyAnalyticsWorkspace } from '../components/company/CompanyAnalyticsWorkspace';
@@ -70,6 +70,10 @@ import {
 import { CompanySidebar } from '../components/company/CompanySidebar';
 import { Card } from '../components/ui/Card';
 import { KpiCard, KpiTone } from '../components/ui/KpiCard';
+
+const IS_WEB = typeof document !== 'undefined';
+
+const WEB_POINTER_STYLE = IS_WEB ? ({ cursor: 'pointer' } as const) : null;
 
 type CompanySection =
   | 'dashboard'
@@ -898,17 +902,27 @@ function WebSelect({
   onChange,
   options,
   placeholder,
+  style,
 }: {
   value: string;
   onChange: (value: string) => void;
   options: Array<{ label: string; value: string }>;
   placeholder?: string;
+  /** Merged on top of shared select chrome (e.g. Live Operations filter bar). */
+  style?: any;
 }) {
   const [isBrowserSelectReady, setIsBrowserSelectReady] = React.useState(false);
 
   React.useEffect(() => {
     setIsBrowserSelectReady(typeof document !== 'undefined');
   }, []);
+
+  const mergedDomSelectStyle = React.useMemo(() => {
+    const flat = (StyleSheet as unknown as { flatten: (s: any) => Record<string, unknown> }).flatten(
+      [webSelectStyle as any, style].filter(Boolean),
+    );
+    return flat && typeof flat === 'object' ? flat : webSelectStyle;
+  }, [style]);
 
   if (isBrowserSelectReady) {
     const SelectTag: any = 'select';
@@ -918,7 +932,7 @@ function WebSelect({
       <SelectTag
         value={value}
         onChange={(event: any) => onChange(event.target.value)}
-        style={webSelectStyle}
+        style={mergedDomSelectStyle}
         aria-label={placeholder || 'Select an option'}
       >
         <OptionTag value="">{placeholder || 'Select an option'}</OptionTag>
@@ -936,7 +950,7 @@ function WebSelect({
       value={value}
       onChangeText={(nextValue: string) => onChange(nextValue)}
       placeholder={placeholder || (options[0] ? `${options[0].label}` : 'Enter value')}
-      style={webSelectStyle}
+      style={[webSelectStyle, style] as any}
       placeholderTextColor="#6b7280"
     />
   );
@@ -2786,6 +2800,56 @@ export function CompanyDashboardScreen() {
     [liveOperationRows, attendanceByShiftId],
   );
 
+  const liveOperationsKpis = React.useMemo(
+    () =>
+      [
+        {
+          label: 'Live Shifts',
+          value: String(liveShifts.length),
+          icon: '🟢',
+          tone: (liveShifts.length > 0 ? 'good' : 'neutral') as KpiTone,
+        },
+        {
+          label: 'Guards Not Booked On',
+          value: String(guardsNotBookedOn.length),
+          icon: '🚪',
+          tone: (guardsNotBookedOn.length > 0 ? 'warning' : 'good') as KpiTone,
+        },
+        {
+          label: 'Open Incidents',
+          value: String(openIncidents.length),
+          icon: '🚨',
+          tone: (openIncidents.length > 0 ? 'attention' : 'good') as KpiTone,
+        },
+        {
+          label: 'Missed Check Calls',
+          value: String(missedCheckCalls.length),
+          icon: '📞',
+          tone: (missedCheckCalls.length > 0 ? 'warning' : 'good') as KpiTone,
+        },
+        {
+          label: 'Active Panic Alerts',
+          value: String(activePanicAlerts.length),
+          icon: '🆘',
+          tone: (activePanicAlerts.length > 0 ? 'attention' : 'good') as KpiTone,
+        },
+        {
+          label: 'Pending Timesheets',
+          value: String(pendingTimesheets.length),
+          icon: '⏱️',
+          tone: (pendingTimesheets.length > 0 ? 'warning' : 'good') as KpiTone,
+        },
+      ] as const,
+    [
+      activePanicAlerts.length,
+      guardsNotBookedOn.length,
+      liveShifts.length,
+      missedCheckCalls.length,
+      openIncidents.length,
+      pendingTimesheets.length,
+    ],
+  );
+
   const applicationShiftSummaryById = React.useMemo(() => {
     const map = new Map<
       number,
@@ -2847,10 +2911,10 @@ export function CompanyDashboardScreen() {
       icon: string;
       tone: KpiTone;
     }> = [
-      { label: 'Active Clients', value: activeClients.length, icon: '🏢', tone: activeClients.length > 0 ? 'good' : 'warning' },
-      { label: 'Active Sites', value: activeSites.length, icon: '📍', tone: activeSites.length > 0 ? 'good' : 'warning' },
-      { label: 'Linked Guards', value: linkedGuards.length, icon: '🛡️', tone: linkedGuards.length > 0 ? 'good' : 'warning' },
-      { label: 'Shifts Today', value: shiftsToday.length, icon: '🗓️', tone: shiftsToday.length > 0 ? 'neutral' : 'warning' },
+      { label: 'Active Clients', value: activeClients.length, icon: '🏢', tone: activeClients.length > 0 ? 'good' : 'neutral' },
+      { label: 'Active Sites', value: activeSites.length, icon: '📍', tone: activeSites.length > 0 ? 'good' : 'neutral' },
+      { label: 'Linked Guards', value: linkedGuards.length, icon: '🛡️', tone: linkedGuards.length > 0 ? 'good' : 'neutral' },
+      { label: 'Shifts Today', value: shiftsToday.length, icon: '🗓️', tone: 'neutral' },
       { label: 'Live Shifts', value: liveShifts.length, icon: '🟢', tone: liveShifts.length > 0 ? 'good' : 'neutral' },
       { label: 'Pending Timesheets', value: pendingTimesheets.length, icon: '⏱️', tone: pendingTimesheets.length > 0 ? 'warning' : 'good' },
       { label: 'Open Incidents', value: openIncidents.length, icon: '🚨', tone: openIncidents.length > 0 ? 'attention' : 'good' },
@@ -2911,11 +2975,7 @@ export function CompanyDashboardScreen() {
 
   const renderDashboardSection = () => (
     <View style={styles.sectionStack}>
-      <View style={styles.dashboardSection}>
-        <View style={styles.dashboardSectionHeader}>
-          <Text style={styles.dashboardSectionTitle}>KPIs</Text>
-          <Text style={styles.dashboardSectionSubtle}>At-a-glance operational health.</Text>
-        </View>
+      <DashboardSection title="KPIs" subtitle="At-a-glance operational health.">
         <View style={styles.kpiGrid}>
           {dashboardKpis.map((kpi) => (
             <View key={kpi.label} style={styles.kpiCell}>
@@ -2923,101 +2983,220 @@ export function CompanyDashboardScreen() {
             </View>
           ))}
         </View>
-      </View>
+      </DashboardSection>
 
-      <Card
-        title="⚠️ Action Required"
-        subtitle={
-          actionRequiredTotal === 0
-            ? 'All clear — no finance or timesheet actions are currently pending.'
-            : 'These items need attention to keep payroll and billing on track.'
-        }
-        tone={actionRequiredTotal === 0 ? 'success' : 'warning'}
-      >
-        <View style={styles.actionRequiredList}>
-          {actionRequiredRows.map((row) => (
-            <Pressable
-              key={row.key}
-              onPress={() => setActiveSection(row.target)}
-              style={({ hovered, pressed }: any) => [
-                styles.actionRequiredRow,
-                row.count > 0 ? styles.actionRequiredRowHot : styles.actionRequiredRowCool,
-                hovered ? styles.actionRequiredRowHover : null,
-                pressed ? styles.actionRequiredRowPressed : null,
+      <DashboardSection>
+        <View
+          style={[
+            styles.actionRequiredAnchor,
+            actionRequiredTotal === 0 ? styles.actionRequiredAnchorClear : styles.actionRequiredAnchorActive,
+          ]}
+        >
+          <Card
+            style={styles.actionRequiredCard}
+            webSurfaceHover
+            title="⚠️ Action Required"
+            subtitle={
+              actionRequiredTotal === 0
+                ? 'All clear — no finance or timesheet actions are currently pending.'
+                : 'These items need attention to keep payroll and billing on track.'
+            }
+            tone={actionRequiredTotal === 0 ? 'success' : 'warning'}
+          >
+            <View
+              style={[
+                styles.actionRequiredList,
+                actionRequiredTotal === 0 ? styles.actionRequiredListInnerClear : styles.actionRequiredListInnerActive,
               ]}
             >
-              <View style={styles.actionRequiredLeft}>
-                <Text style={[styles.actionRequiredTitle, row.count > 0 && styles.actionRequiredTitleHot]}>
-                  {row.title}
-                </Text>
-                <Text style={styles.actionRequiredDescription}>{row.description}</Text>
-              </View>
-              <View style={styles.actionRequiredRight}>
-                <Text style={[styles.actionRequiredCount, row.count > 0 && styles.actionRequiredCountHot]}>
-                  {row.countLabel}
-                </Text>
-                <Text style={styles.actionRequiredCta}>Open</Text>
-              </View>
-            </Pressable>
-          ))}
+              {actionRequiredRows.map((row) => (
+                <Pressable
+                  key={row.key}
+                  onPress={() => setActiveSection(row.target)}
+                  style={({ hovered, pressed }: any) => [
+                    styles.actionRequiredRow,
+                    row.count > 0
+                      ? row.tone === 'attention'
+                        ? styles.actionRequiredRowAttention
+                        : styles.actionRequiredRowWarn
+                      : styles.actionRequiredRowCool,
+                    hovered ? styles.actionRequiredRowHover : null,
+                    hovered && IS_WEB ? styles.actionRequiredRowWebHover : null,
+                    pressed ? styles.actionRequiredRowPressed : null,
+                    WEB_POINTER_STYLE,
+                  ]}
+                >
+                  <View
+                    style={[
+                      styles.actionRequiredAccent,
+                      row.count === 0 && styles.actionRequiredAccentMuted,
+                      row.count > 0 && row.tone === 'attention' && styles.actionRequiredAccentBarAttention,
+                      row.count > 0 && row.tone === 'warning' && styles.actionRequiredAccentBarWarning,
+                    ]}
+                  />
+                  <View style={styles.actionRequiredRowMain}>
+                    <View style={styles.actionRequiredLeft}>
+                      <Text style={[styles.actionRequiredTitle, row.count > 0 && styles.actionRequiredTitleHot]}>
+                        {row.title}
+                      </Text>
+                      <Text style={styles.actionRequiredDescription}>{row.description}</Text>
+                    </View>
+                    <View style={styles.actionRequiredRight}>
+                      <View
+                        style={[
+                          styles.actionRequiredCountBadge,
+                          row.count > 0 ? styles.actionRequiredCountBadgeHot : styles.actionRequiredCountBadgeCool,
+                        ]}
+                      >
+                        <Text style={[styles.actionRequiredCount, row.count > 0 && styles.actionRequiredCountHot]}>
+                          {row.countLabel}
+                        </Text>
+                      </View>
+                      <View style={styles.actionRequiredCtaWrap}>
+                        <Text style={styles.actionRequiredCta}>Open</Text>
+                      </View>
+                    </View>
+                  </View>
+                </Pressable>
+              ))}
+            </View>
+          </Card>
         </View>
-      </Card>
+      </DashboardSection>
 
-      <View style={styles.dashboardSection}>
-        <View style={styles.dashboardSectionHeader}>
-          <Text style={styles.dashboardSectionTitle}>Live Ops</Text>
-          <Text style={styles.dashboardSectionSubtle}>What’s happening right now across sites.</Text>
-        </View>
+      <DashboardSection title="Live Ops" subtitle="What’s happening right now across sites.">
         <View style={styles.panelGrid}>
-          <Card title="Today's Live Shifts" subtitle="Quick jump into the live board.">
-            {liveShifts.slice(0, 6).map((shift) => (
-              <Pressable
-                key={shift.id}
-                style={({ hovered, pressed }: any) => [styles.recordRow, hovered ? styles.recordRowHover : null, pressed ? styles.recordRowPressed : null]}
-                onPress={() => {
-                  setSelectedShiftId(shift.id);
-                  setActiveSection('live-operations');
-                }}
-              >
-                <Text style={styles.recordTitle}>{shift.site?.name || shift.siteName}</Text>
-                <Text style={styles.recordMeta}>
-                  {formatDateLabel(shift.start)} · {formatTimeLabel(shift.start)}-{formatTimeLabel(shift.end)}
-                </Text>
-              </Pressable>
-            ))}
-          </Card>
-          <Card title="Urgent Alerts" subtitle="Safety and welfare items needing follow-up." tone={outstandingAlerts.length > 0 ? 'danger' : 'default'}>
-            {outstandingAlerts.slice(0, 6).map((alert) => (
-              <View key={alert.id} style={styles.recordRow}>
-                <Text style={styles.recordTitle}>{formatStatusLabel(alert.type)}</Text>
-                <Text style={styles.recordMeta}>
-                  {alert.shift?.site?.name || alert.shift?.siteName || 'Shift alert'} · {formatDateTimeLabel(alert.createdAt)}
-                </Text>
-              </View>
-            ))}
-          </Card>
-          <Card title="Recent Incidents" subtitle="Latest open incidents across sites." tone={openIncidents.length > 0 ? 'warning' : 'default'}>
-            {openIncidents.slice(0, 6).map((incident) => (
-              <View key={incident.id} style={styles.recordRow}>
-                <Text style={styles.recordTitle}>{incident.title}</Text>
-                <Text style={styles.recordMeta}>
-                  {incident.site?.name || incident.shift?.site?.name || 'Site'} · {formatStatusLabel(incident.severity)}
-                </Text>
-              </View>
-            ))}
-          </Card>
-          <Card title="Recent Activity" subtitle="Most recent shift logs and updates.">
-            {recentActivity.map((log) => (
-              <View key={log.id} style={styles.recordRow}>
-                <Text style={styles.recordTitle}>{log.message}</Text>
-                <Text style={styles.recordMeta}>
-                  {log.shift?.site?.name || log.shift?.siteName || 'Shift'} · {formatDateTimeLabel(log.createdAt)}
-                </Text>
-              </View>
-            ))}
-          </Card>
+          <View style={styles.panelCell}>
+            <Card
+              style={styles.dashLivePanelCard}
+              webSurfaceHover
+              title="Today's Live Shifts"
+              subtitle="Quick jump into the live board."
+            >
+              {liveShifts.slice(0, 6).length === 0 ? (
+                <DashboardPanelEmpty
+                  title="No live shifts right now"
+                  description="When guards are on duty, shifts appear here so you can jump straight into monitoring."
+                  actionLabel="Open Live Operations"
+                  onAction={() => setActiveSection('live-operations')}
+                />
+              ) : (
+                liveShifts.slice(0, 6).map((shift, index, arr) => (
+                  <Pressable
+                    key={shift.id}
+                    style={({ hovered, pressed }: any) => [
+                      styles.dashListRow,
+                      IS_WEB ? styles.dashListRowWeb : null,
+                      index === arr.length - 1 ? styles.dashListRowLast : null,
+                      hovered ? styles.dashListRowHovered : null,
+                      hovered && IS_WEB ? styles.dashListRowWebHover : null,
+                      pressed ? styles.dashListRowPressed : null,
+                      WEB_POINTER_STYLE,
+                    ]}
+                    onPress={() => {
+                      setSelectedShiftId(shift.id);
+                      setActiveSection('live-operations');
+                    }}
+                  >
+                    <Text style={styles.dashListRowTitle}>{shift.site?.name || shift.siteName}</Text>
+                    <Text style={styles.dashListRowMeta}>
+                      {formatDateLabel(shift.start)} · {formatTimeLabel(shift.start)}-{formatTimeLabel(shift.end)}
+                    </Text>
+                  </Pressable>
+                ))
+              )}
+            </Card>
+          </View>
+          <View style={styles.panelCell}>
+            <Card
+              style={styles.dashLivePanelCard}
+              webSurfaceHover
+              title="Urgent Alerts"
+              subtitle="Safety and welfare items needing follow-up."
+              tone={outstandingAlerts.length > 0 ? 'danger' : 'default'}
+            >
+              {outstandingAlerts.slice(0, 6).length === 0 ? (
+                <DashboardPanelEmpty
+                  title="No urgent alerts"
+                  description="Outstanding safety and welfare items will appear here when they need your attention."
+                />
+              ) : (
+                outstandingAlerts.slice(0, 6).map((alert, index, arr) => (
+                  <View
+                    key={alert.id}
+                    style={[styles.dashListRow, IS_WEB ? styles.dashListRowWeb : null, index === arr.length - 1 ? styles.dashListRowLast : null]}
+                  >
+                    <Text style={styles.dashListRowTitle}>{formatStatusLabel(alert.type)}</Text>
+                    <Text style={styles.dashListRowMeta}>
+                      {alert.shift?.site?.name || alert.shift?.siteName || 'Shift alert'} ·{' '}
+                      {formatDateTimeLabel(alert.createdAt)}
+                    </Text>
+                  </View>
+                ))
+              )}
+            </Card>
+          </View>
+          <View style={styles.panelCell}>
+            <Card
+              style={styles.dashLivePanelCard}
+              webSurfaceHover
+              title="Recent Incidents"
+              subtitle="Latest open incidents across sites."
+              tone={openIncidents.length > 0 ? 'warning' : 'default'}
+            >
+              {openIncidents.slice(0, 6).length === 0 ? (
+                <DashboardPanelEmpty
+                  title="No open incidents"
+                  description="Reported site issues in an open state are listed here so you can triage quickly."
+                  actionLabel="View all incidents"
+                  onAction={() => setActiveSection('incidents')}
+                />
+              ) : (
+                openIncidents.slice(0, 6).map((incident, index, arr) => (
+                  <View
+                    key={incident.id}
+                    style={[styles.dashListRow, IS_WEB ? styles.dashListRowWeb : null, index === arr.length - 1 ? styles.dashListRowLast : null]}
+                  >
+                    <Text style={styles.dashListRowTitle}>{incident.title}</Text>
+                    <Text style={styles.dashListRowMeta}>
+                      {incident.site?.name || incident.shift?.site?.name || 'Site'} ·{' '}
+                      {formatStatusLabel(incident.severity)}
+                    </Text>
+                  </View>
+                ))
+              )}
+            </Card>
+          </View>
+          <View style={styles.panelCell}>
+            <Card
+              style={styles.dashLivePanelCard}
+              webSurfaceHover
+              title="Recent Activity"
+              subtitle="Most recent shift logs and updates."
+            >
+              {recentActivity.length === 0 ? (
+                <DashboardPanelEmpty
+                  title="No recent activity"
+                  description="Operational updates and shift logs will appear here as work happens. Use Refresh Data above to reload."
+                />
+              ) : (
+                recentActivity.map((log, index, arr) => (
+                  <View
+                    key={log.id}
+                    style={[styles.dashListRow, IS_WEB ? styles.dashListRowWeb : null, index === arr.length - 1 ? styles.dashListRowLast : null]}
+                  >
+                    <Text style={styles.dashListRowTitle}>{log.message}</Text>
+                    <Text style={styles.dashListRowMeta}>
+                      {log.shift?.site?.name || log.shift?.siteName || 'Shift'} ·{' '}
+                      {formatDateTimeLabel(log.createdAt)}
+                    </Text>
+                  </View>
+                ))
+              )}
+            </Card>
+          </View>
         </View>
-      </View>
+      </DashboardSection>
     </View>
   );
 
@@ -3304,34 +3483,43 @@ export function CompanyDashboardScreen() {
 
   const renderLiveOperationsSection = () => (
     <View style={styles.sectionStack}>
-      <View style={styles.toolbar}>
-        <Text style={styles.sectionTitle}>Live Operations</Text>
-        <Pressable style={styles.secondaryButton} onPress={() => loadData(true)}>
-          <Text style={styles.secondaryButtonText}>{refreshing ? 'Refreshing...' : 'Refresh'}</Text>
-        </Pressable>
-      </View>
-
-      <View style={styles.kpiGrid}>
-        {[
-          ['Live Shifts', String(liveShifts.length)],
-          ['Guards Not Booked On', String(guardsNotBookedOn.length)],
-          ['Open Incidents', String(openIncidents.length)],
-          ['Missed Check Calls', String(missedCheckCalls.length)],
-          ['Active Panic Alerts', String(activePanicAlerts.length)],
-          ['Pending Timesheets', String(pendingTimesheets.length)],
-        ].map(([label, value]) => (
-          <View key={label} style={styles.kpiCard}>
-            <Text style={styles.kpiLabel}>{label}</Text>
-            <Text style={styles.kpiValue}>{value}</Text>
+      <View style={[styles.dashSectionShell, IS_WEB ? styles.dashSectionShellWeb : null]}>
+        <View style={styles.liveOpsToolbarRow}>
+          <View style={styles.liveOpsToolbarTitleBlock}>
+            <Text style={styles.dashSectionTitle}>Live Operations</Text>
           </View>
-        ))}
+          <Pressable
+            onPress={() => loadData(true)}
+            style={({ hovered, pressed }: any) => [
+              styles.liveOpsToolbarSync,
+              IS_WEB && hovered ? styles.liveOpsToolbarSyncHover : null,
+              pressed ? styles.liveOpsToolbarSyncPressed : null,
+              WEB_POINTER_STYLE,
+            ]}
+          >
+            <View style={styles.liveOpsToolbarRefreshInner}>
+              {refreshing ? <ActivityIndicator size="small" color="#64748b" /> : null}
+              <Text style={styles.liveOpsToolbarSyncText}>{refreshing ? 'Refreshing...' : 'Refresh'}</Text>
+            </View>
+          </Pressable>
+        </View>
       </View>
 
-      <View style={[styles.panel, styles.priorityPanel, styles.urgentPanel]}>
-        <Text style={styles.panelTitle}>1. Urgent / Needs Attention</Text>
-        <Text style={styles.helperText}>
-          Highest-priority issues are shown here first so control-room actions are obvious.
-        </Text>
+      <DashboardSection title="KPIs" subtitle="At-a-glance operational health.">
+        <View style={styles.kpiGrid}>
+          {liveOperationsKpis.map((kpi) => (
+            <View key={kpi.label} style={styles.kpiCell}>
+              <KpiCard label={kpi.label} value={kpi.value} icon={kpi.icon} tone={kpi.tone} />
+            </View>
+          ))}
+        </View>
+      </DashboardSection>
+
+      <DashboardSection
+        title="Urgent queue"
+        subtitle="Highest-priority items appear here first so control-room actions stay obvious."
+      >
+        <View style={styles.liveOpsUrgentInset}>
         {liveOperationsFeedback ? (
           <View
             style={[
@@ -3357,57 +3545,67 @@ export function CompanyDashboardScreen() {
             </Text>
           </View>
         ) : null}
-        {urgentOperationalItems.map((item) => (
+        {urgentOperationalItems.map((item, index, arr) => (
           <Pressable
             key={item.id}
-            style={styles.recordRow}
+            style={[
+              styles.liveOpsListRow,
+              styles.liveOpsUrgentRow,
+              index === arr.length - 1 ? styles.liveOpsListRowLast : null,
+              IS_WEB ? styles.liveOpsListRowWeb : null,
+            ]}
             onPress={() => {
               if (item.shiftId) {
                 handleOpenUrgentShift(item);
               }
             }}
           >
-            <Text style={styles.recordTitle}>{item.issueType}</Text>
-            <Text style={styles.recordMeta}>
-              Shift {item.shiftId ? `#${item.shiftId}` : 'N/A'} | {item.siteName} | {item.guardName}
-            </Text>
-            <Text style={styles.recordMeta}>{item.message}</Text>
-            <Text style={styles.nextActionText}>{getUrgentNextActionText(item)}</Text>
-            <Text style={styles.recordMeta}>{formatDateTimeLabel(item.occurredAt)}</Text>
-            <View style={styles.urgentItemActions}>
+            <View style={styles.liveOpsUrgentRowBody}>
+              <Text style={[styles.liveOpsRowTitle, styles.liveOpsUrgentIssue]}>{item.issueType}</Text>
+              <Text style={styles.liveOpsUrgentMeta}>
+                Shift {item.shiftId ? `#${item.shiftId}` : 'N/A'} | {item.siteName} | {item.guardName}
+              </Text>
+              <Text style={styles.liveOpsUrgentMessage} numberOfLines={IS_WEB ? 3 : 4}>
+                {item.message}
+              </Text>
+              <View style={styles.liveOpsUrgentMetaFooter}>
+                <Text style={styles.liveOpsUrgentGuidance}>{getUrgentNextActionText(item)}</Text>
+                <Text style={styles.liveOpsUrgentOccurred}>{formatDateTimeLabel(item.occurredAt)}</Text>
+              </View>
+              <View style={[styles.urgentItemActions, styles.liveOpsUrgentActionBar]}>
               {item.category === 'incident' && (item.status || '').toLowerCase() === 'open' ? (
                 <Pressable
-                  style={styles.secondaryButton}
+                  style={[styles.secondaryButton, styles.liveOpsUrgentBtnSecondary]}
                   onPress={() => handleUrgentIncidentFollowUp(item, 'in_review')}
                   disabled={urgentActionItemId === item.id}
                 >
-                  <Text style={styles.secondaryButtonText}>
+                  <Text style={[styles.secondaryButtonText, styles.liveOpsUrgentBtnSecondaryText]}>
                     {urgentActionItemId === item.id ? 'Saving...' : 'Acknowledge'}
                   </Text>
                 </Pressable>
               ) : null}
               {item.category === 'incident' ? (
                 <Pressable
-                  style={styles.primaryButton}
+                  style={[styles.primaryButton, styles.liveOpsUrgentBtnPrimary]}
                   onPress={() => handleOpenUrgentDetail(item)}
                 >
-                  <Text style={styles.primaryButtonText}>View Incident</Text>
+                  <Text style={[styles.primaryButtonText, styles.liveOpsUrgentBtnPrimaryText]}>View Incident</Text>
                 </Pressable>
               ) : null}
               {item.category === 'panic' && item.status !== 'acknowledged' ? (
                 <Pressable
-                  style={styles.secondaryButton}
+                  style={[styles.secondaryButton, styles.liveOpsUrgentBtnSecondary]}
                   onPress={() => handleUrgentAlertFollowUp(item, 'acknowledge')}
                   disabled={urgentActionItemId === item.id}
                 >
-                  <Text style={styles.secondaryButtonText}>
+                  <Text style={[styles.secondaryButtonText, styles.liveOpsUrgentBtnSecondaryText]}>
                     {urgentActionItemId === item.id ? 'Saving...' : 'Mark Escalated'}
                   </Text>
                 </Pressable>
               ) : null}
               {item.category === 'panic' ? (
                 <Pressable
-                  style={styles.primaryButton}
+                  style={[styles.primaryButton, styles.liveOpsUrgentBtnPrimary]}
                   onPress={() =>
                     item.status === 'acknowledged'
                       ? handleUrgentAlertFollowUp(item, 'close')
@@ -3415,7 +3613,7 @@ export function CompanyDashboardScreen() {
                   }
                   disabled={urgentActionItemId === item.id && item.status === 'acknowledged'}
                 >
-                  <Text style={styles.primaryButtonText}>
+                  <Text style={[styles.primaryButtonText, styles.liveOpsUrgentBtnPrimaryText]}>
                     {item.status === 'acknowledged'
                       ? urgentActionItemId === item.id
                         ? 'Saving...'
@@ -3428,11 +3626,11 @@ export function CompanyDashboardScreen() {
                 <>
                   {item.status !== 'acknowledged' ? (
                     <Pressable
-                      style={styles.secondaryButton}
+                      style={[styles.secondaryButton, styles.liveOpsUrgentBtnSecondary]}
                       onPress={() => handleUrgentAlertFollowUp(item, 'acknowledge')}
                       disabled={urgentActionItemId === item.id}
                     >
-                      <Text style={styles.secondaryButtonText}>
+                      <Text style={[styles.secondaryButtonText, styles.liveOpsUrgentBtnSecondaryText]}>
                         {urgentActionItemId === item.id
                           ? 'Saving...'
                           : item.category === 'missed_check_call'
@@ -3442,7 +3640,7 @@ export function CompanyDashboardScreen() {
                     </Pressable>
                   ) : null}
                   <Pressable
-                    style={styles.primaryButton}
+                    style={[styles.primaryButton, styles.liveOpsUrgentBtnPrimary]}
                     onPress={() =>
                       item.status === 'acknowledged'
                         ? handleUrgentAlertFollowUp(item, 'close')
@@ -3450,7 +3648,7 @@ export function CompanyDashboardScreen() {
                     }
                     disabled={urgentActionItemId === item.id && item.status === 'acknowledged'}
                   >
-                    <Text style={styles.primaryButtonText}>
+                    <Text style={[styles.primaryButtonText, styles.liveOpsUrgentBtnPrimaryText]}>
                       {item.status === 'acknowledged'
                         ? urgentActionItemId === item.id
                           ? 'Saving...'
@@ -3462,84 +3660,141 @@ export function CompanyDashboardScreen() {
               ) : null}
               {item.category === 'incident' && ['open', 'in_review'].includes((item.status || '').toLowerCase()) ? (
                 <Pressable
-                  style={styles.primaryButton}
+                  style={[styles.primaryButton, styles.liveOpsUrgentBtnPrimary]}
                   onPress={() => handleUrgentIncidentFollowUp(item, 'resolved')}
                   disabled={urgentActionItemId === item.id}
                 >
-                  <Text style={styles.primaryButtonText}>
+                  <Text style={[styles.primaryButtonText, styles.liveOpsUrgentBtnPrimaryText]}>
                     {urgentActionItemId === item.id ? 'Saving...' : 'Resolve'}
                   </Text>
                 </Pressable>
               ) : null}
               {['rejected_offer', 'missed_shift', 'late_start', 'upcoming_risk'].includes(item.category) ? (
-                <Pressable style={styles.primaryButton} onPress={() => handleOpenUrgentDetail(item)}>
-                  <Text style={styles.primaryButtonText}>{getUrgentPrimaryActionLabel(item)}</Text>
+                <Pressable
+                  style={[styles.primaryButton, styles.liveOpsUrgentBtnPrimary]}
+                  onPress={() => handleOpenUrgentDetail(item)}
+                >
+                  <Text style={[styles.primaryButtonText, styles.liveOpsUrgentBtnPrimaryText]}>
+                    {getUrgentPrimaryActionLabel(item)}
+                  </Text>
                 </Pressable>
               ) : null}
+            </View>
             </View>
           </Pressable>
         ))}
         {urgentOperationalItems.length === 0 ? (
-          <Text style={styles.helperText}>No urgent operational items need attention right now.</Text>
+          <DashboardPanelEmpty
+            title="Urgent queue is clear"
+            description="No urgent operational items need attention right now. The board and feeds continue to update on refresh."
+          />
         ) : null}
-      </View>
+        </View>
+      </DashboardSection>
 
-      <View style={styles.filterBar}>
-        <WebSelect
-          value={liveFilters.clientId}
-          onChange={(value: string) => setLiveFilters((current) => ({ ...current, clientId: value }))}
-          options={siteClientOptions}
-          placeholder="Client"
-        />
-        <WebSelect
-          value={liveFilters.siteId}
-          onChange={(value: string) => setLiveFilters((current) => ({ ...current, siteId: value }))}
-          options={siteOptions}
-          placeholder="Site"
-        />
-        <WebSelect
-          value={liveFilters.guardId}
-          onChange={(value: string) => setLiveFilters((current) => ({ ...current, guardId: value }))}
-          options={linkedGuardOptions}
-          placeholder="Guard"
-        />
-        <TextInput
-          style={styles.input}
-          value={liveFilters.date}
-          onChangeText={(value: string) => setLiveFilters((current) => ({ ...current, date: value }))}
-          placeholder="YYYY-MM-DD"
-        />
-        <WebSelect
-          value={liveFilters.status}
-          onChange={(value: string) => setLiveFilters((current) => ({ ...current, status: value }))}
-          options={SHIFT_STATUS_OPTIONS}
-          placeholder="Status"
-        />
-      </View>
+      <DashboardSection
+        title="Board filters"
+        subtitle="Refine which shifts appear on the live board in this workspace — client, site, guard, date, and status."
+      >
+        <View style={styles.liveOpsFilterStack}>
+          <View style={[styles.liveOpsFilterGroup, IS_WEB ? styles.liveOpsFilterGroupWeb : null]}>
+            <Text style={styles.liveOpsFilterGroupLabel}>Scope</Text>
+            <Text style={styles.liveOpsFilterGroupHint}>Client, site, and guard narrow the board together.</Text>
+            <View style={styles.liveOpsFilterGroupRow}>
+              <View style={[styles.liveOpsFilterField, styles.liveOpsFilterFieldGrow]}>
+                <Text style={styles.liveOpsFilterFieldLabel}>Client</Text>
+                <WebSelect
+                  value={liveFilters.clientId}
+                  onChange={(value: string) => setLiveFilters((current) => ({ ...current, clientId: value }))}
+                  options={siteClientOptions}
+                  placeholder="Client"
+                  style={styles.liveOpsFilterWebSelectChrome}
+                />
+              </View>
+              <View style={[styles.liveOpsFilterField, styles.liveOpsFilterFieldGrow]}>
+                <Text style={styles.liveOpsFilterFieldLabel}>Site</Text>
+                <WebSelect
+                  value={liveFilters.siteId}
+                  onChange={(value: string) => setLiveFilters((current) => ({ ...current, siteId: value }))}
+                  options={siteOptions}
+                  placeholder="Site"
+                  style={styles.liveOpsFilterWebSelectChrome}
+                />
+              </View>
+              <View style={[styles.liveOpsFilterField, styles.liveOpsFilterFieldGrow]}>
+                <Text style={styles.liveOpsFilterFieldLabel}>Guard</Text>
+                <WebSelect
+                  value={liveFilters.guardId}
+                  onChange={(value: string) => setLiveFilters((current) => ({ ...current, guardId: value }))}
+                  options={linkedGuardOptions}
+                  placeholder="Guard"
+                  style={styles.liveOpsFilterWebSelectChrome}
+                />
+              </View>
+            </View>
+          </View>
 
+          <View style={[styles.liveOpsFilterGroup, IS_WEB ? styles.liveOpsFilterGroupWeb : null]}>
+            <Text style={styles.liveOpsFilterGroupLabel}>Timing & status</Text>
+            <Text style={styles.liveOpsFilterGroupHint}>Shift date (YYYY-MM-DD) and lifecycle status.</Text>
+            <View style={styles.liveOpsFilterGroupRow}>
+              <View style={[styles.liveOpsFilterField, styles.liveOpsFilterDateSlot]}>
+                <Text style={styles.liveOpsFilterFieldLabel}>Shift date</Text>
+                <TextInput
+                  style={styles.liveOpsFilterTextInput}
+                  value={liveFilters.date}
+                  onChangeText={(value: string) => setLiveFilters((current) => ({ ...current, date: value }))}
+                  placeholder="YYYY-MM-DD"
+                  placeholderTextColor="#6b7280"
+                />
+              </View>
+              <View style={[styles.liveOpsFilterField, styles.liveOpsFilterFieldGrow]}>
+                <Text style={styles.liveOpsFilterFieldLabel}>Status</Text>
+                <WebSelect
+                  value={liveFilters.status}
+                  onChange={(value: string) => setLiveFilters((current) => ({ ...current, status: value }))}
+                  options={SHIFT_STATUS_OPTIONS}
+                  placeholder="Status"
+                  style={styles.liveOpsFilterWebSelectChrome}
+                />
+              </View>
+            </View>
+          </View>
+        </View>
+      </DashboardSection>
+
+      <DashboardSection
+        title="Live workspace"
+        subtitle="Live board with context feeds alongside it. Selected shift detail loads at the bottom when you highlight a board row."
+      >
       <View style={styles.panelGrid}>
         <View
-          style={[styles.tableCard, styles.operationsBoardCard, styles.priorityPanel]}
+          style={[styles.liveOpsBoardWrap, styles.operationsBoardCard]}
           onLayout={(event: any) => setLiveBoardAnchorY(event.nativeEvent.layout.y)}
         >
-          <Text style={styles.panelTitle}>2. Live Shift Board</Text>
-          <Text style={styles.helperText}>Scan live and exception shifts here, then use the row action.</Text>
-          {renderTableHeader([
-            'Shift',
-            'Site',
-            'Guard',
-            'Status',
-            'Risk',
-            'Delay',
-            'Book On',
-            'Book Off',
-            'Last Check Call',
-            'Logs',
-            'Incidents',
-            'Panic / Welfare',
-            'Timesheet',
-            'Action',
-          ])}
+          <Card
+            style={styles.liveOpsBoardCard}
+            title="Live shift board"
+            subtitle="Scan live and exception shifts, then use the row action. Selecting a row updates the detail panel below."
+            webSurfaceHover
+          >
+          {liveOperationRows.length === 0 ? (
+            <DashboardPanelEmpty
+              title="No shifts match these filters"
+              description="Try broadening client, site, guard, date, or status filters, or refresh to pull the latest operational data."
+              actionLabel="Refresh data"
+              onAction={() => loadData(true)}
+            />
+          ) : (
+          <ScrollView
+            horizontal
+            nestedScrollEnabled
+            showsHorizontalScrollIndicator
+            style={styles.liveBoardScroll}
+            contentContainerStyle={[styles.liveBoardScrollContent, IS_WEB ? styles.liveBoardScrollContentWeb : null]}
+          >
+            <View>
+              <LiveShiftBoardTableHeader />
           {liveOperationRows.map((shift) => {
             const timesheet = timesheetByShiftId.get(shift.id);
             const attendance = attendanceByShiftId.get(shift.id);
@@ -3579,142 +3834,248 @@ export function CompanyDashboardScreen() {
                 key={shift.id}
                 style={[
                   styles.tableRow,
+                  styles.liveBoardTableRow,
                   styles.liveBoardRow,
                   { backgroundColor: getLiveShiftBoardRowTone(lifecycleStatus, risk.level) },
                   likelyLate ? { borderLeftWidth: 4, borderLeftColor: '#F59E0B' } : null,
-                  selectedShiftId === shift.id && styles.tableRowSelected,
+                  selectedShiftId === shift.id && styles.liveBoardTableRowSelected,
                   highlightedLiveShiftId === shift.id && styles.liveBoardRowHighlighted,
                 ]}
                 onPress={() => setSelectedShiftId(shift.id)}
               >
-                <Text style={styles.tableCellStrong}>#{shift.id}</Text>
-                <View style={styles.tableCell}>
-                  <Text style={styles.tableCell}>{shift.site?.name || shift.siteName || 'Unknown site'}</Text>
-                  <Text style={[styles.helperText, { fontSize: 12 }]}>{siteRiskLabel}</Text>
+                <Text style={[LIVE_BOARD_COL_STYLES[0], styles.liveBoardShiftId]}>#{shift.id}</Text>
+                <View style={[LIVE_BOARD_COL_STYLES[1], styles.liveBoardCellCol]}>
+                  <Text
+                    style={styles.liveBoardSiteTitle}
+                    numberOfLines={IS_WEB ? 2 : 4}
+                    ellipsizeMode="tail"
+                  >
+                    {shift.site?.name || shift.siteName || 'Unknown site'}
+                  </Text>
+                  <Text style={styles.liveBoardSiteRisk} numberOfLines={2}>
+                    {siteRiskLabel}
+                  </Text>
                 </View>
-                <Text style={styles.tableCell}>{shift.guard?.fullName || 'Unassigned'}</Text>
-                <View style={styles.tableCell}>
+                <Text
+                  style={[LIVE_BOARD_COL_STYLES[2], styles.liveBoardCellBody]}
+                  numberOfLines={IS_WEB ? 2 : 4}
+                  ellipsizeMode="tail"
+                >
+                  {shift.guard?.fullName || 'Unassigned'}
+                </Text>
+                <View style={LIVE_BOARD_COL_STYLES[3]}>
                   <ShiftStatusBadge status={shift.status} />
                 </View>
-                <View style={styles.tableCell}>
-                  <Text style={[styles.tableCell, { color: risk.color, fontWeight: '700' }]}>{risk.label}</Text>
+                <View style={[LIVE_BOARD_COL_STYLES[4], styles.liveBoardCellCol]}>
+                  <Text style={[styles.liveBoardCellBody, { color: risk.color, fontWeight: '700' }]}>{risk.label}</Text>
                   {likelyLate ? (
-                    <Text style={{ color: '#F59E0B', fontWeight: '600' }}>Likely late ⚠️</Text>
+                    <Text style={{ color: '#F59E0B', fontWeight: '600', fontSize: 12 }}>Likely late</Text>
                   ) : null}
                 </View>
-                <Text style={[styles.tableCell, delay !== null ? { color: '#EF4444', fontWeight: '600' } : null]}>
+                <Text
+                  style={[
+                    LIVE_BOARD_COL_STYLES[5],
+                    styles.liveBoardCellBody,
+                    delay !== null ? { color: '#EF4444', fontWeight: '600' } : null,
+                  ]}
+                  numberOfLines={2}
+                >
                   {delay !== null ? `Late by ${delay} min` : '—'}
                 </Text>
-                <Text style={styles.tableCell}>
+                <Text style={[LIVE_BOARD_COL_STYLES[6], styles.liveBoardCellBody]}>
                   {attendance?.checkInAt ? formatTimeLabel(attendance.checkInAt) : 'Pending'}
                 </Text>
-                <Text style={styles.tableCell}>
+                <Text style={[LIVE_BOARD_COL_STYLES[7], styles.liveBoardCellBody]}>
                   {attendance?.checkOutAt ? formatTimeLabel(attendance.checkOutAt) : 'Pending'}
                 </Text>
-                <Text style={styles.tableCell}>
+                <Text style={[LIVE_BOARD_COL_STYLES[8], styles.liveBoardCellBody]} numberOfLines={2}>
                   {lastCheckCall ? formatTimeLabel(lastCheckCall.createdAt) : 'No check call'}
                 </Text>
-                <Text style={styles.tableCell}>{String(shiftLogs.length)}</Text>
-                <Text style={styles.tableCell}>{String(shiftIncidents.length)}</Text>
-                <Text style={styles.tableCell}>{String(panicOrWelfareCount)}</Text>
-                <Text style={styles.tableCell}>{formatStatusLabel(timesheet?.approvalStatus || 'pending')}</Text>
-                <View style={styles.tableCell}>
-                  <Pressable style={styles.secondaryButton} onPress={() => handleLiveBoardPrimaryAction(shift)}>
+                <Text style={[LIVE_BOARD_COL_STYLES[9], styles.liveBoardCellBody]}>{String(shiftLogs.length)}</Text>
+                <Text style={[LIVE_BOARD_COL_STYLES[10], styles.liveBoardCellBody]}>{String(shiftIncidents.length)}</Text>
+                <Text style={[LIVE_BOARD_COL_STYLES[11], styles.liveBoardCellBody]}>{String(panicOrWelfareCount)}</Text>
+                <Text style={[LIVE_BOARD_COL_STYLES[12], styles.liveBoardCellBody]}>
+                  {formatStatusLabel(timesheet?.approvalStatus || 'pending')}
+                </Text>
+                <View style={LIVE_BOARD_COL_STYLES[13]}>
+                  <Pressable
+                    style={[styles.secondaryButton, styles.liveBoardActionButton]}
+                    onPress={() => handleLiveBoardPrimaryAction(shift)}
+                  >
                     <Text style={styles.secondaryButtonText}>{primaryActionLabel}</Text>
                   </Pressable>
                 </View>
               </Pressable>
             );
           })}
-          {liveOperationRows.length === 0 ? (
-            <Text style={styles.helperText}>No shifts match the current live operations filters.</Text>
-          ) : null}
+            </View>
+          </ScrollView>
+          )}
+          </Card>
         </View>
 
-        <View style={styles.operationsSideColumn}>
-          <View style={[styles.panel, styles.secondaryPanel]}>
-            <Text style={[styles.panelTitle, styles.secondaryPanelTitle]}>4. Recent Operational Activity</Text>
-            {recentOperationalActivity.map((activity) => (
+        <View style={[styles.operationsSideColumn, styles.liveOpsSideColumn]}>
+          {IS_WEB ? (
+            <View style={styles.liveOpsSideRailIntro}>
+              <Text style={styles.liveOpsSideRailEyebrow}>Context rail</Text>
+              <Text style={styles.liveOpsSideRailHint}>
+                Activity, management, incidents, and alerts beside the board — read together with the row list.
+              </Text>
+            </View>
+          ) : null}
+          <Card
+            style={styles.liveOpsSideCard}
+            title="Recent operational activity"
+            subtitle="Operational events tied to shifts on the board."
+            webSurfaceHover
+          >
+            {recentOperationalActivity.map((activity, index, arr) => (
               <Pressable
                 key={activity.id}
-                style={styles.recordRow}
+                style={[
+                  styles.liveOpsListRow,
+                  styles.liveOpsListRowSide,
+                  index === arr.length - 1 ? styles.liveOpsListRowLast : null,
+                  IS_WEB ? styles.liveOpsListRowWeb : null,
+                  IS_WEB ? styles.liveOpsListRowSideWeb : null,
+                ]}
                 onPress={() => {
                   if (activity.shiftId) {
                     setSelectedShiftId(activity.shiftId);
                   }
                 }}
               >
-                <Text style={styles.recordTitle}>{activity.eventType}</Text>
-                <Text style={styles.recordMeta}>
+                <Text style={styles.liveOpsRowTitleSide}>{activity.eventType}</Text>
+                <Text style={styles.liveOpsRowMetaSide}>
                   Shift {activity.shiftId ? `#${activity.shiftId}` : 'N/A'} | {activity.siteName} | {activity.guardName}
                 </Text>
                 {shouldShowOperationalActivityMessage(activity.eventType) ? (
-                  <Text style={styles.recordMeta}>{activity.message}</Text>
+                  <Text style={styles.liveOpsSideRowMessage}>{activity.message}</Text>
                 ) : null}
-                <Text style={styles.recordMeta}>{formatDateTimeLabel(activity.occurredAt)}</Text>
+                <Text style={styles.liveOpsSideRowTimestamp}>{formatDateTimeLabel(activity.occurredAt)}</Text>
               </Pressable>
             ))}
-            {recentOperationalActivity.length === 0 ? <Text style={styles.helperText}>No recent operational activity.</Text> : null}
-          </View>
+            {recentOperationalActivity.length === 0 ? (
+              <DashboardPanelEmpty
+                title="No recent operational activity"
+                description="As guards book on, log activity, and sites generate signals, the latest events will appear in this feed."
+              />
+            ) : null}
+          </Card>
 
-          <View style={[styles.panel, styles.secondaryPanel]}>
-            <Text style={[styles.panelTitle, styles.secondaryPanelTitle]}>5. Recent Management Actions</Text>
-            <Text style={styles.helperText}>
-              Follow-up and closure actions taken from the control room.
-            </Text>
-            {recentManagementActivity.map((activity) => (
+          <Card
+            style={styles.liveOpsSideCard}
+            title="Recent management actions"
+            subtitle="Follow-up and closure actions taken from the control room."
+            webSurfaceHover
+          >
+            {recentManagementActivity.map((activity, index, arr) => (
               <Pressable
                 key={activity.id}
-                style={styles.recordRow}
+                style={[
+                  styles.liveOpsListRow,
+                  styles.liveOpsListRowSide,
+                  index === arr.length - 1 ? styles.liveOpsListRowLast : null,
+                  IS_WEB ? styles.liveOpsListRowWeb : null,
+                  IS_WEB ? styles.liveOpsListRowSideWeb : null,
+                ]}
                 onPress={() => {
                   if (activity.shiftId) {
                     setSelectedShiftId(activity.shiftId);
                   }
                 }}
               >
-                <Text style={styles.recordTitle}>{activity.actionTaken}</Text>
-                <Text style={styles.recordMeta}>
+                <Text style={styles.liveOpsRowTitleSide}>{activity.actionTaken}</Text>
+                <Text style={styles.liveOpsRowMetaSide}>
                   {activity.itemType} | Shift {activity.shiftId ? `#${activity.shiftId}` : 'N/A'} | {activity.siteName} | {activity.guardName}
                 </Text>
-                <Text style={styles.recordMeta}>{formatDateTimeLabel(activity.occurredAt)}</Text>
+                <Text style={styles.liveOpsSideRowTimestamp}>{formatDateTimeLabel(activity.occurredAt)}</Text>
               </Pressable>
             ))}
             {recentManagementActivity.length === 0 ? (
-              <Text style={styles.helperText}>No recent management actions have been taken yet.</Text>
+              <DashboardPanelEmpty
+                title="No recent management actions"
+                description="Acknowledgements, escalations, and closures taken from this console will show here for audit context."
+              />
             ) : null}
-          </View>
+          </Card>
 
-          <View style={[styles.panel, styles.secondaryPanel]}>
-            <Text style={styles.panelTitle}>Open Incidents</Text>
-            {openIncidents.slice(0, 6).map((incident) => (
-              <View key={incident.id} style={styles.recordRow}>
-                <Text style={styles.recordTitle}>{incident.title}</Text>
-                <Text style={styles.recordMeta}>
+          <Card
+            style={styles.liveOpsSideCard}
+            title="Open incidents"
+            subtitle="Open company incidents (up to six shown)."
+            webSurfaceHover
+          >
+            {openIncidents.slice(0, 6).map((incident, index, arr) => (
+              <View
+                key={incident.id}
+                style={[
+                  styles.liveOpsListRow,
+                  styles.liveOpsListRowSide,
+                  index === arr.length - 1 ? styles.liveOpsListRowLast : null,
+                  IS_WEB ? styles.liveOpsListRowWeb : null,
+                  IS_WEB ? styles.liveOpsListRowSideWeb : null,
+                ]}
+              >
+                <Text style={styles.liveOpsRowTitleSide}>{incident.title}</Text>
+                <Text style={styles.liveOpsRowMetaSide}>
                   {incident.site?.name || incident.shift?.site?.name || 'Unknown site'} | {formatStatusLabel(incident.status)}
                 </Text>
               </View>
             ))}
-            {openIncidents.length === 0 ? <Text style={styles.helperText}>No open incidents.</Text> : null}
-          </View>
+            {openIncidents.length === 0 ? (
+              <DashboardPanelEmpty
+                title="No open incidents"
+                description="Open incidents across the company will surface here (up to six) when they need visibility next to the board."
+              />
+            ) : null}
+          </Card>
 
-          <View style={[styles.panel, styles.secondaryPanel]}>
-            <Text style={styles.panelTitle}>Safety / Welfare / Panic</Text>
-            {outstandingAlerts.slice(0, 6).map((alert) => (
-              <View key={alert.id} style={styles.recordRow}>
-                <Text style={styles.recordTitle}>{formatStatusLabel(alert.type)}</Text>
-                <Text style={styles.recordMeta}>
+          <Card
+            style={styles.liveOpsSideCard}
+            title="Safety / welfare / panic"
+            subtitle="Outstanding alerts (up to six shown)."
+            webSurfaceHover
+          >
+            {outstandingAlerts.slice(0, 6).map((alert, index, arr) => (
+              <View
+                key={alert.id}
+                style={[
+                  styles.liveOpsListRow,
+                  styles.liveOpsListRowSide,
+                  index === arr.length - 1 ? styles.liveOpsListRowLast : null,
+                  IS_WEB ? styles.liveOpsListRowWeb : null,
+                  IS_WEB ? styles.liveOpsListRowSideWeb : null,
+                ]}
+              >
+                <Text style={styles.liveOpsRowTitleSide}>{formatStatusLabel(alert.type)}</Text>
+                <Text style={styles.liveOpsRowMetaSide}>
                   {alert.shift?.site?.name || alert.shift?.siteName || 'Unknown shift'} | {formatStatusLabel(alert.status)}
                 </Text>
               </View>
             ))}
-            {outstandingAlerts.length === 0 ? <Text style={styles.helperText}>No active alerts.</Text> : null}
-          </View>
+            {outstandingAlerts.length === 0 ? (
+              <DashboardPanelEmpty
+                title="No active safety alerts"
+                description="Outstanding welfare, panic, and related alerts will appear here (up to six) when they require attention."
+              />
+            ) : null}
+          </Card>
 
         </View>
       </View>
+      </DashboardSection>
 
-      {selectedShift ? (
-        <View style={[styles.panel, styles.priorityPanel, styles.selectedShiftPanel]}>
+      <DashboardSection
+        title="Selected shift detail"
+        subtitle={
+          selectedShift
+            ? 'Row-level summary for the shift highlighted on the board above — follow-up, close-out, and records.'
+            : 'Select a shift row on the live board to load attendance, logs, incidents, and safety context in this panel.'
+        }
+      >
+        {selectedShift ? (
+          <View style={[styles.liveOpsSelectedInset, IS_WEB ? styles.liveOpsSelectedInsetWeb : null]}>
           {(() => {
             const selectedAttendance = attendanceByShiftId.get(selectedShift.id);
             const selectedTimesheet = timesheetByShiftId.get(selectedShift.id);
@@ -3725,49 +4086,51 @@ export function CompanyDashboardScreen() {
                 : getShiftStatusBadge(selectedShift.status || 'unfilled');
             return (
               <>
-          <Text style={styles.panelTitle}>3. Selected Shift Detail</Text>
-          <Text style={styles.helperText}>Compact summary for the selected shift, follow-up, and close-out.</Text>
-          <Text style={styles.recordTitle}>Shift #{selectedShift.id} Operations</Text>
-          <Text style={styles.recordMeta}>
+          <View style={styles.liveOpsSelectedHeader}>
+          <Text style={styles.liveOpsDetailTitle}>Shift #{selectedShift.id} Operations</Text>
+          <Text style={styles.liveOpsSelectedSummaryLine}>
             {selectedShift.site?.client?.name || clientMap.get(selectedShift.site?.clientId || 0)?.name || 'No client'} | {selectedShift.site?.name || selectedShift.siteName}
           </Text>
-          <Text style={styles.recordMeta}>
+          <Text style={styles.liveOpsSelectedSummaryLine}>
             {selectedShift.guard?.fullName || 'No guard assigned'} | {formatDateLabel(selectedShift.start)} | {formatTimeLabel(selectedShift.start)}-{formatTimeLabel(selectedShift.end)}
           </Text>
-          <Text style={styles.recordMeta}>
+          <Text style={styles.liveOpsSelectedSummaryLine}>
             Status: {`${selectedShiftBadge.icon} ${selectedShiftBadge.label}`} | Check calls: {selectedShift.checkCallIntervalMinutes || 60} mins
           </Text>
-          <ShiftStatusBadge status={selectedShift.status} />
+          <View style={styles.liveOpsSelectedBadgeRow}>
+            <ShiftStatusBadge status={selectedShift.status} />
+          </View>
           {selectedShiftException ? (
             <>
-              <Text style={styles.recordMeta}>{selectedShiftException.title}</Text>
-              <Text style={styles.recordMeta}>{selectedShiftException.message}</Text>
-              <Text style={styles.recordMeta}>{selectedShiftException.outcome}</Text>
+              <Text style={styles.liveOpsSelectedSummaryLine}>{selectedShiftException.title}</Text>
+              <Text style={styles.liveOpsSelectedSummaryLine}>{selectedShiftException.message}</Text>
+              <Text style={styles.liveOpsSelectedSummaryLine}>{selectedShiftException.outcome}</Text>
             </>
           ) : null}
           {normalizeShiftLifecycleStatus(selectedShift.status) === 'offered' ? (
-            <Text style={styles.recordMeta}>Waiting for guard confirmation before live controls are used.</Text>
+            <Text style={styles.liveOpsSelectedSummaryLine}>Waiting for guard confirmation before live controls are used.</Text>
           ) : null}
           {normalizeShiftLifecycleStatus(selectedShift.status) === 'unfilled' ? (
-            <Text style={styles.recordMeta}>No confirmed guard is linked yet. This shift still needs cover.</Text>
+            <Text style={styles.liveOpsSelectedSummaryLine}>No confirmed guard is linked yet. This shift still needs cover.</Text>
           ) : null}
           {normalizeShiftLifecycleStatus(selectedShift.status) === 'in_progress' ? (
-            <Text style={styles.recordMeta}>Guard is booked on and the shift is live in operations.</Text>
+            <Text style={styles.liveOpsSelectedSummaryLine}>Guard is booked on and the shift is live in operations.</Text>
           ) : null}
           {normalizeShiftLifecycleStatus(selectedShift.status) === 'completed' ? (
-            <Text style={styles.recordMeta}>Shift is completed. Operational records remain visible but no new live activity should be added.</Text>
+            <Text style={styles.liveOpsSelectedSummaryLine}>Shift is completed. Operational records remain visible but no new live activity should be added.</Text>
           ) : null}
           {normalizeShiftLifecycleStatus(selectedShift.status) === 'ready' ? (
-            <Text style={styles.recordMeta}>Guard confirmed this shift. It is ready for book on.</Text>
+            <Text style={styles.liveOpsSelectedSummaryLine}>Guard confirmed this shift. It is ready for book on.</Text>
           ) : null}
-          <Text style={styles.recordMeta}>
+          <Text style={styles.liveOpsSelectedInstructions}>
             Instructions: {selectedShift.instructions || 'No instructions recorded.'}
           </Text>
+          </View>
 
-          <View style={styles.detailGrid}>
+          <View style={[styles.detailGrid, styles.liveOpsDetailGrid]}>
             {normalizeShiftLifecycleStatus(selectedShift.status) === 'completed' && selectedShiftCloseOutSummary ? (
-              <View style={[styles.detailCard, styles.closeOutCard]}>
-                <Text style={styles.detailTitle}>Completed Shift Close-Out</Text>
+              <View style={[styles.detailCard, styles.liveOpsDetailCard, styles.closeOutCard]}>
+                <Text style={[styles.detailTitle, styles.liveOpsDetailSectionTitle]}>Completed Shift Close-Out</Text>
                 <Text
                   style={[
                     styles.recordTitle,
@@ -3780,42 +4143,42 @@ export function CompanyDashboardScreen() {
                     ? 'Closed cleanly'
                     : `Needs follow-up (${selectedShiftCloseOutSummary.unresolvedFollowUpCount})`}
                 </Text>
-                <Text style={styles.recordMeta}>
+                <Text style={styles.liveOpsDetailTileLine}>
                   Shift #{selectedShift.id} | {selectedShift.site?.name || selectedShift.siteName || 'Unknown site'} |{' '}
                   {selectedShift.guard?.fullName || 'No guard assigned'}
                 </Text>
-                <Text style={styles.recordMeta}>
+                <Text style={styles.liveOpsDetailTileLine}>
                   Scheduled: {formatDateTimeLabel(selectedShiftCloseOutSummary.scheduledStart)} to{' '}
                   {formatDateTimeLabel(selectedShiftCloseOutSummary.scheduledEnd)}
                 </Text>
-                <Text style={styles.recordMeta}>
+                <Text style={styles.liveOpsDetailTileLine}>
                   Actual: {formatDateTimeLabel(selectedShiftCloseOutSummary.actualCheckInAt)} to{' '}
                   {formatDateTimeLabel(selectedShiftCloseOutSummary.actualCheckOutAt)}
                 </Text>
-                <Text style={styles.recordMeta}>
+                <Text style={styles.liveOpsDetailTileLine}>
                   Logs: {selectedShiftCloseOutSummary.logsCount} | Incidents: {selectedShiftCloseOutSummary.incidentsCount}
                 </Text>
-                <Text style={styles.recordMeta}>
+                <Text style={styles.liveOpsDetailTileLine}>
                   Safety / welfare / panic: {selectedShiftCloseOutSummary.safetyEventsCount}
                 </Text>
-                <Text style={styles.recordMeta}>
+                <Text style={styles.liveOpsDetailTileLine}>
                   Check calls completed / missed: {selectedShiftCloseOutSummary.completedCheckCalls} /{' '}
                   {selectedShiftCloseOutSummary.missedCheckCalls}
                 </Text>
-                <Text style={styles.recordMeta}>
+                <Text style={styles.liveOpsDetailTileLine}>
                   Timesheet: {formatStatusLabel(selectedShiftCloseOutSummary.timesheetStatus)}
                 </Text>
                 {selectedShiftCloseOutSummary.unresolvedFollowUpCount > 0 ? (
-                  <Text style={styles.recordMeta}>
+                  <Text style={styles.liveOpsDetailTileLine}>
                     Unresolved follow-up items: {selectedShiftCloseOutSummary.unresolvedFollowUpCount}
                   </Text>
                 ) : (
-                  <Text style={styles.recordMeta}>No unresolved follow-up items remain for this shift.</Text>
+                  <Text style={styles.liveOpsDetailTileLine}>No unresolved follow-up items remain for this shift.</Text>
                 )}
                 <View style={styles.closeOutNotesSection}>
                   <Text style={styles.subtleLabel}>Close-out / handover notes</Text>
                   <TextInput
-                    style={[styles.input, styles.textAreaSmall]}
+                    style={[styles.input, styles.textAreaSmall, styles.liveOpsChromeInputBorder]}
                     multiline
                     value={closeOutNotesDraft}
                     onChangeText={setCloseOutNotesDraft}
@@ -3840,51 +4203,72 @@ export function CompanyDashboardScreen() {
                 </View>
               </View>
             ) : null}
-            <View style={styles.detailCard}>
-              <Text style={styles.detailTitle}>Attendance & Timesheet</Text>
-              <Text style={styles.recordMeta}>
+            <View style={[styles.detailCard, styles.liveOpsDetailCard]}>
+              <Text style={[styles.detailTitle, styles.liveOpsDetailSectionTitle]}>Attendance & Timesheet</Text>
+              <Text style={styles.liveOpsDetailTileLine}>
                 Book on: {selectedAttendance?.checkInAt ? formatDateTimeLabel(selectedAttendance.checkInAt) : 'Pending'}
               </Text>
-              <Text style={styles.recordMeta}>
+              <Text style={styles.liveOpsDetailTileLine}>
                 Book off: {selectedAttendance?.checkOutAt ? formatDateTimeLabel(selectedAttendance.checkOutAt) : 'Pending'}
               </Text>
-              <Text style={styles.recordMeta}>
+              <Text style={styles.liveOpsDetailTileLine}>
                 Timesheet: {formatStatusLabel(selectedTimesheet?.approvalStatus || 'pending')}
               </Text>
             </View>
-            <View style={styles.detailCard}>
-              <Text style={styles.detailTitle}>Daily Logs</Text>
+            <View style={[styles.detailCard, styles.liveOpsDetailCard]}>
+              <Text style={[styles.detailTitle, styles.liveOpsDetailSectionTitle]}>Daily Logs</Text>
               {(logsByShiftId.get(selectedShift.id) || []).map((log) => (
-                <Text key={log.id} style={styles.recordMeta}>- {log.message}</Text>
+                <Text key={log.id} style={styles.liveOpsDetailListLine}>
+                  - {log.message}
+                </Text>
               ))}
               {(logsByShiftId.get(selectedShift.id) || []).length === 0 ? (
-                <Text style={styles.helperText}>No daily logs for this shift.</Text>
+                <LiveOpsDetailEmpty
+                  title="No daily logs"
+                  description="Logs recorded for this shift will appear here when available."
+                />
               ) : null}
             </View>
-            <View style={styles.detailCard}>
-              <Text style={styles.detailTitle}>Incidents</Text>
+            <View style={[styles.detailCard, styles.liveOpsDetailCard]}>
+              <Text style={[styles.detailTitle, styles.liveOpsDetailSectionTitle]}>Incidents</Text>
               {(incidentsByShiftId.get(selectedShift.id) || []).map((incident) => (
-                <Text key={incident.id} style={styles.recordMeta}>- {incident.title} ({formatStatusLabel(incident.status)})</Text>
+                <Text key={incident.id} style={styles.liveOpsDetailListLine}>
+                  - {incident.title} ({formatStatusLabel(incident.status)})
+                </Text>
               ))}
               {(incidentsByShiftId.get(selectedShift.id) || []).length === 0 ? (
-                <Text style={styles.helperText}>No incidents linked to this shift.</Text>
+                <LiveOpsDetailEmpty
+                  title="No incidents on this shift"
+                  description="Incidents linked to this shift will be listed here when they exist."
+                />
               ) : null}
             </View>
-            <View style={styles.detailCard}>
-              <Text style={styles.detailTitle}>Safety / Check Calls</Text>
+            <View style={[styles.detailCard, styles.liveOpsDetailCard]}>
+              <Text style={[styles.detailTitle, styles.liveOpsDetailSectionTitle]}>Safety / Check Calls</Text>
               {(alertsByShiftId.get(selectedShift.id) || []).map((alert) => (
-                <Text key={alert.id} style={styles.recordMeta}>- {formatStatusLabel(alert.type)} ({formatStatusLabel(alert.status)})</Text>
+                <Text key={alert.id} style={styles.liveOpsDetailListLine}>
+                  - {formatStatusLabel(alert.type)} ({formatStatusLabel(alert.status)})
+                </Text>
               ))}
               {(alertsByShiftId.get(selectedShift.id) || []).length === 0 ? (
-                <Text style={styles.helperText}>No safety or welfare events linked to this shift.</Text>
+                <LiveOpsDetailEmpty
+                  title="No safety or welfare events"
+                  description="Safety, welfare, and check-call items tied to this shift will show here when present."
+                />
               ) : null}
             </View>
           </View>
               </>
             );
           })()}
-        </View>
-      ) : null}
+          </View>
+        ) : (
+          <DashboardPanelEmpty
+            title="No shift selected"
+            description="Tap a row on the live shift board to attach its operational detail, attendance, and records to this panel."
+          />
+        )}
+      </DashboardSection>
     </View>
   );
 
@@ -4412,6 +4796,9 @@ export function CompanyDashboardScreen() {
     );
   }
 
+  const activeNavItem = NAV_ITEMS.find((item) => item.id === activeSection);
+  const headerContextCaption = activeNavItem?.caption;
+
   return (
     <View style={styles.screen}>
       <View style={styles.sidebarShell}>
@@ -4427,17 +4814,38 @@ export function CompanyDashboardScreen() {
       </View>
 
       <View style={styles.contentShell}>
-        <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
-          <View style={styles.header}>
-            <View>
+        <ScrollView
+          style={styles.content}
+          contentContainerStyle={[styles.contentContainer, IS_WEB ? styles.contentContainerWeb : null]}
+        >
+          <View style={[styles.header, IS_WEB ? styles.headerWeb : null]}>
+            <View style={styles.headerLeft}>
               <Text style={styles.eyebrow}>Operations Console</Text>
-              <Text style={styles.headerTitle}>
-                {NAV_ITEMS.find((item) => item.id === activeSection)?.label || 'Company Dashboard'}
+              <Text style={[styles.headerTitle, IS_WEB ? styles.headerTitleWeb : null]}>
+                {activeNavItem?.label || 'Company Dashboard'}
               </Text>
+              {headerContextCaption ? (
+                <Text style={styles.headerContext} numberOfLines={2}>
+                  {headerContextCaption}
+                </Text>
+              ) : null}
             </View>
-            <Pressable style={styles.secondaryButton} onPress={() => loadData(true)}>
-              <Text style={styles.secondaryButtonText}>{refreshing ? 'Refreshing...' : 'Refresh Data'}</Text>
-            </Pressable>
+            <View style={styles.headerActions}>
+              <Pressable
+                onPress={() => loadData(true)}
+                style={({ hovered, pressed }: any) => [
+                  styles.secondaryButton,
+                  IS_WEB ? styles.headerRefreshButton : null,
+                  IS_WEB && hovered ? styles.headerRefreshButtonHover : null,
+                  IS_WEB && pressed ? styles.headerRefreshButtonPressed : null,
+                  WEB_POINTER_STYLE,
+                ]}
+              >
+                <Text style={[styles.secondaryButtonText, IS_WEB ? styles.headerRefreshButtonText : null]}>
+                  {refreshing ? 'Refreshing...' : 'Refresh Data'}
+                </Text>
+              </Pressable>
+            </View>
           </View>
 
           {error ? (
@@ -4488,48 +4896,544 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   contentContainer: {
-    padding: 28,
-    gap: 20,
+    paddingVertical: 28,
+    paddingHorizontal: 18,
+    gap: 26,
   },
+  contentContainerWeb: {
+    paddingHorizontal: 32,
+    paddingTop: 30,
+    paddingBottom: 36,
+    gap: 30,
+    maxWidth: 1280,
+    width: '100%',
+    alignSelf: 'center',
+  } as any,
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    gap: 16,
+    paddingBottom: 18,
+    marginBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(148, 163, 184, 0.35)',
+  },
+  headerWeb: {
+    paddingBottom: 22,
+    marginBottom: 16,
+    borderBottomColor: 'rgba(226, 232, 240, 0.95)',
+  },
+  headerLeft: {
+    flex: 1,
+    minWidth: 0,
+    gap: 6,
+    paddingRight: 8,
+  },
+  headerActions: {
+    flexShrink: 0,
   },
   eyebrow: {
     textTransform: 'uppercase',
-    letterSpacing: 2,
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#f97316',
+    letterSpacing: 1.6,
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#64748b',
   },
   headerTitle: {
-    fontSize: 34,
-    fontWeight: '800',
-    color: '#0f172a',
-  },
-  sectionStack: {
-    gap: 20,
-  },
-  dashboardSection: {
-    gap: 14,
-  },
-  dashboardSectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  dashboardSectionTitle: {
-    fontSize: 18,
+    fontSize: 30,
     fontWeight: '900',
     color: '#0f172a',
+    letterSpacing: -0.4,
+    lineHeight: 36,
+  },
+  headerTitleWeb: {
+    fontSize: 34,
+    lineHeight: 40,
+    letterSpacing: -0.6,
+  },
+  headerContext: {
+    marginTop: 2,
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: '500',
+    color: '#64748b',
+    maxWidth: 720,
+  },
+  headerRefreshButton: {
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#e8edf3',
+    borderRadius: 14,
+    paddingHorizontal: 18,
+    paddingVertical: 11,
+    shadowColor: '#0f172a',
+    shadowOpacity: 0.045,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+  } as any,
+  headerRefreshButtonHover: {
+    borderColor: 'rgba(15, 23, 42, 0.14)',
+    shadowOpacity: 0.08,
+  } as any,
+  headerRefreshButtonPressed: {
+    opacity: 0.94,
+  } as any,
+  headerRefreshButtonText: {
+    fontWeight: '800',
+    fontSize: 13,
     letterSpacing: 0.2,
   },
-  dashboardSectionSubtle: {
-    fontSize: 12,
+  sectionStack: {
+    gap: 28,
+  },
+  dashSectionShell: {
+    backgroundColor: '#ffffff',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#e8edf3',
+    padding: 22,
+    shadowColor: '#0f172a',
+    shadowOpacity: 0.035,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+  },
+  dashSectionShellWeb: {
+    paddingVertical: 24,
+    paddingHorizontal: 26,
+    shadowOpacity: 0.045,
+  },
+  dashSectionHeader: {
+    gap: 8,
+    paddingBottom: 16,
+    marginBottom: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(226, 232, 240, 0.95)',
+  },
+  dashSectionTitle: {
+    fontSize: 17,
+    fontWeight: '900',
+    color: '#0f172a',
+    letterSpacing: 0.25,
+  },
+  dashSectionSubtitle: {
+    fontSize: 13,
+    fontWeight: '500',
     color: '#64748b',
+    lineHeight: 20,
+    letterSpacing: 0.08,
+    maxWidth: 720,
+  },
+  dashSectionBody: {
+    gap: 20,
+  },
+  dashSectionBodyFlush: {
+    marginTop: -2,
+  },
+  liveOpsToolbarRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 16,
+  },
+  liveOpsToolbarTitleBlock: {
+    flex: 1,
+    minWidth: 0,
+  },
+  liveOpsToolbarRefreshInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  liveOpsToolbarSync: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    backgroundColor: 'rgba(255, 255, 255, 0.92)',
+  },
+  liveOpsToolbarSyncText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#64748b',
+    letterSpacing: 0.05,
+  },
+  liveOpsToolbarSyncHover: {
+    borderColor: 'rgba(148, 163, 184, 0.55)',
+    backgroundColor: '#ffffff',
+  } as any,
+  liveOpsToolbarSyncPressed: {
+    opacity: 0.9,
+  } as any,
+  liveOpsUrgentRow: {
+    paddingVertical: 13,
+    borderBottomColor: 'rgba(254, 202, 202, 0.55)',
+  },
+  liveOpsUrgentRowBody: {
+    gap: 8,
+  },
+  liveOpsUrgentIssue: {
+    fontSize: 15,
+    letterSpacing: 0.06,
+    lineHeight: 21,
+  },
+  liveOpsUrgentMeta: {
+    color: '#64748b',
+    fontSize: 12,
+    lineHeight: 18,
     fontWeight: '600',
+  },
+  liveOpsUrgentMessage: {
+    color: '#475569',
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: '500',
+  },
+  liveOpsUrgentMetaFooter: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: 10,
+    marginTop: 2,
+  },
+  liveOpsUrgentGuidance: {
+    flexGrow: 1,
+    flexShrink: 1,
+    minWidth: 140,
+    color: '#334155',
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: '700',
+  },
+  liveOpsUrgentOccurred: {
+    flexShrink: 0,
+    color: '#94a3b8',
+    fontSize: 11,
+    lineHeight: 16,
+    fontWeight: '700',
+    letterSpacing: 0.05,
+  },
+  liveOpsUrgentActionBar: {
+    marginTop: 4,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(254, 202, 202, 0.75)',
+    alignItems: 'center',
+  },
+  liveOpsUrgentBtnPrimary: {
+    paddingVertical: 9,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+  },
+  liveOpsUrgentBtnSecondary: {
+    paddingVertical: 9,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    backgroundColor: '#f1f5f9',
+  },
+  liveOpsUrgentBtnPrimaryText: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  liveOpsUrgentBtnSecondaryText: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  liveOpsDetailEmpty: {
+    paddingVertical: 10,
+    paddingHorizontal: 2,
+    gap: 6,
+  },
+  liveOpsDetailEmptyTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0f172a',
+    letterSpacing: 0.02,
+  },
+  liveOpsDetailEmptyDesc: {
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '500',
+    color: '#64748b',
+    maxWidth: 520,
+  },
+  liveOpsUrgentInset: {
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    backgroundColor: '#FFF7F7',
+    padding: 16,
+    gap: 12,
+  },
+  liveOpsSideRailIntro: {
+    gap: 6,
+    marginBottom: 4,
+    paddingBottom: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(226, 232, 240, 0.85)',
+  },
+  liveOpsSideRailEyebrow: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.14,
+    textTransform: 'uppercase',
+    color: '#64748b',
+  },
+  liveOpsSideRailHint: {
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: '500',
+    color: '#64748b',
+    maxWidth: 420,
+  },
+  liveOpsFilterStack: {
+    gap: 14,
+  },
+  liveOpsFilterGroup: {
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#e8edf3',
+    backgroundColor: '#f8fafc',
+    padding: 14,
+    gap: 8,
+  },
+  liveOpsFilterGroupWeb: {
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+  } as any,
+  liveOpsFilterGroupLabel: {
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.1,
+    color: '#0f172a',
+  },
+  liveOpsFilterGroupHint: {
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '500',
+    color: '#64748b',
+    marginTop: -2,
+  },
+  liveOpsFilterGroupRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+    alignItems: 'flex-end',
+  },
+  liveOpsFilterField: {
+    gap: 6,
+    minWidth: 0,
+  },
+  liveOpsFilterFieldGrow: {
+    flexGrow: 1,
+    flexBasis: 168,
+    minWidth: 148,
+  },
+  liveOpsFilterDateSlot: {
+    flexGrow: 1,
+    flexBasis: 200,
+    minWidth: 160,
+    maxWidth: 280,
+  },
+  liveOpsFilterFieldLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.08,
+    textTransform: 'uppercase',
+    color: '#64748b',
+  },
+  liveOpsFilterTextInput: {
+    minHeight: 48,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#e8edf3',
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    fontSize: 14,
+    color: '#132238',
+    width: '100%' as any,
+  },
+  liveOpsFilterWebSelectChrome: {
+    borderColor: '#e8edf3',
+    width: '100%' as any,
+    boxSizing: 'border-box' as any,
+  } as any,
+  liveOpsChromeInputBorder: {
+    borderColor: '#e8edf3',
+  },
+  liveOpsBoardWrap: {
+    alignSelf: 'stretch',
+  },
+  liveOpsBoardCard: {
+    alignSelf: 'stretch',
+  },
+  liveOpsSideCard: {
+    alignSelf: 'stretch',
+    width: '100%',
+  },
+  liveOpsSideColumn: {
+    gap: 16,
+  },
+  liveOpsListRowSide: {
+    gap: 7,
+    paddingVertical: 11,
+    borderBottomColor: 'rgba(226, 232, 240, 0.78)',
+  },
+  liveOpsListRowSideWeb: {
+    paddingVertical: 13,
+    paddingHorizontal: 10,
+  } as any,
+  liveOpsRowTitleSide: {
+    color: '#0f172a',
+    fontWeight: '800',
+    fontSize: 14,
+    letterSpacing: 0.06,
+    lineHeight: 20,
+  },
+  liveOpsRowMetaSide: {
+    color: '#64748b',
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: '500',
+  },
+  liveOpsSideRowMessage: {
+    color: '#475569',
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: '500',
+  },
+  liveOpsSideRowTimestamp: {
+    color: '#94a3b8',
+    fontSize: 11,
+    lineHeight: 16,
+    fontWeight: '700',
+    letterSpacing: 0.06,
+    marginTop: 2,
+  },
+  liveOpsListRow: {
+    gap: 6,
+    paddingVertical: 12,
+    paddingHorizontal: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(226, 232, 240, 0.88)',
+  },
+  liveOpsListRowWeb: {
+    paddingVertical: 14,
+    paddingHorizontal: 8,
+    borderBottomColor: 'rgba(226, 232, 240, 0.8)',
+  } as any,
+  liveOpsListRowLast: {
+    borderBottomWidth: 0,
+    paddingBottom: 6,
+  },
+  liveOpsRowTitle: {
+    color: '#0f172a',
+    fontWeight: '800',
+    fontSize: 14,
+    letterSpacing: 0.05,
+    lineHeight: 20,
+  },
+  liveOpsRowMeta: {
+    color: '#64748b',
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: '500',
+  },
+  liveOpsNextAction: {
+    color: '#0f172a',
+    fontSize: 12,
+    fontWeight: '700',
+    lineHeight: 18,
+    letterSpacing: 0.02,
+  },
+  liveOpsSelectedInset: {
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(37, 99, 235, 0.22)',
+    backgroundColor: 'rgba(239, 246, 255, 0.55)',
+    padding: 18,
+    gap: 12,
+  },
+  liveOpsSelectedInsetWeb: {
+    padding: 22,
+    gap: 14,
+  } as any,
+  liveOpsSelectedHeader: {
+    gap: 8,
+    paddingBottom: 16,
+    marginBottom: 2,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(226, 232, 240, 0.95)',
+  },
+  liveOpsSelectedSummaryLine: {
+    color: '#475569',
+    fontSize: 13,
+    lineHeight: 20,
+    fontWeight: '500',
+  },
+  liveOpsSelectedInstructions: {
+    color: '#334155',
+    fontSize: 13,
+    lineHeight: 20,
+    fontWeight: '500',
+    marginTop: 4,
+  },
+  liveOpsSelectedBadgeRow: {
+    alignSelf: 'flex-start',
+    marginTop: 4,
+    marginBottom: 2,
+  },
+  liveOpsDetailTitle: {
+    fontSize: 17,
+    fontWeight: '900',
+    color: '#0f172a',
+    letterSpacing: 0.25,
+    lineHeight: 24,
+  },
+  liveOpsDetailGrid: {
+    gap: 18,
+    marginTop: 8,
+  },
+  liveOpsDetailCard: {
+    padding: 18,
+    gap: 10,
+    borderRadius: 16,
+  },
+  liveOpsDetailSectionTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.14,
+    textTransform: 'uppercase',
+    color: '#64748b',
+    marginBottom: 2,
+  },
+  liveOpsDetailTileLine: {
+    color: '#334155',
+    fontSize: 13,
+    lineHeight: 20,
+    fontWeight: '500',
+  },
+  liveOpsDetailListLine: {
+    color: '#334155',
+    fontSize: 13,
+    lineHeight: 20,
+    fontWeight: '500',
+    paddingVertical: 8,
+    paddingLeft: 12,
+    marginLeft: 2,
+    borderLeftWidth: 2,
+    borderLeftColor: '#e2e8f0',
+  },
+  dashLivePanelCard: {
+    flex: 1,
+    alignSelf: 'stretch',
+    minHeight: 112,
   },
   sectionTitle: {
     fontSize: 24,
@@ -4539,13 +5443,20 @@ const styles = StyleSheet.create({
   kpiGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 16,
+    gap: 18,
   },
   kpiCell: {
     minWidth: 220,
     flexGrow: 1,
     flexBasis: 240,
     maxWidth: 320,
+    alignSelf: 'stretch',
+  },
+  panelCell: {
+    minWidth: 320,
+    flexGrow: 1,
+    flexBasis: 380,
+    maxWidth: 620,
   },
   kpiCard: {
     minWidth: 180,
@@ -4568,7 +5479,7 @@ const styles = StyleSheet.create({
   panelGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 18,
+    gap: 22,
   },
   panel: {
     flexGrow: 1,
@@ -4731,6 +5642,149 @@ const styles = StyleSheet.create({
     fontSize: 12,
     textTransform: 'uppercase',
   },
+  liveBoardScroll: {
+    marginHorizontal: -2,
+  } as any,
+  liveBoardScrollContent: {
+    minWidth: 860,
+    paddingBottom: 4,
+    paddingRight: 2,
+  },
+  liveBoardScrollContentWeb: {
+    minWidth: 1200,
+  } as any,
+  liveBoardTableHeader: {
+    alignItems: 'flex-end',
+    paddingBottom: 12,
+    borderBottomColor: 'rgba(226, 232, 240, 0.95)',
+    gap: 10,
+  },
+  liveBoardHdrText: {
+    color: '#64748b',
+    fontWeight: '800',
+    fontSize: 11,
+    letterSpacing: 0.12,
+    textTransform: 'uppercase',
+    lineHeight: 14,
+  },
+  liveBoardColShift: {
+    flex: 4,
+    minWidth: 56,
+    maxWidth: 80,
+  },
+  liveBoardColSite: {
+    flex: 22,
+    minWidth: 148,
+    flexShrink: 1,
+  },
+  liveBoardColGuard: {
+    flex: 14,
+    minWidth: 108,
+    flexShrink: 1,
+  },
+  liveBoardColStatus: {
+    flex: 7,
+    minWidth: 84,
+    maxWidth: 112,
+    justifyContent: 'center',
+    alignItems: 'flex-start',
+    paddingTop: 2,
+  },
+  liveBoardColRisk: {
+    flex: 11,
+    minWidth: 96,
+    flexShrink: 1,
+  },
+  liveBoardColDelay: {
+    flex: 10,
+    minWidth: 88,
+    flexShrink: 0,
+  },
+  liveBoardColBookOn: {
+    flex: 7,
+    minWidth: 72,
+    flexShrink: 0,
+  },
+  liveBoardColBookOff: {
+    flex: 7,
+    minWidth: 72,
+    flexShrink: 0,
+  },
+  liveBoardColLastCheck: {
+    flex: 10,
+    minWidth: 100,
+    flexShrink: 0,
+  },
+  liveBoardColLogs: {
+    flex: 4,
+    minWidth: 44,
+    maxWidth: 56,
+    flexShrink: 0,
+  },
+  liveBoardColIncidents: {
+    flex: 4,
+    minWidth: 44,
+    maxWidth: 56,
+    flexShrink: 0,
+  },
+  liveBoardColPanic: {
+    flex: 7,
+    minWidth: 72,
+    flexShrink: 0,
+  },
+  liveBoardColTimesheet: {
+    flex: 9,
+    minWidth: 86,
+    flexShrink: 0,
+  },
+  liveBoardColAction: {
+    flex: 11,
+    minWidth: 116,
+    maxWidth: 200,
+    alignItems: 'flex-start',
+    paddingTop: 2,
+  },
+  liveBoardTableRow: {
+    alignItems: 'flex-start',
+    gap: 10,
+    paddingVertical: 12,
+  },
+  liveBoardCellCol: {
+    gap: 4,
+    minWidth: 0,
+  },
+  liveBoardCellBody: {
+    color: '#334155',
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  liveBoardShiftId: {
+    color: '#0f172a',
+    fontWeight: '800',
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  liveBoardSiteTitle: {
+    color: '#0f172a',
+    fontWeight: '700',
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  liveBoardSiteRisk: {
+    color: '#64748b',
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '500',
+  },
+  liveBoardTableRowSelected: {
+    backgroundColor: '#f1f5f9',
+    borderRadius: 12,
+    paddingHorizontal: 6,
+  },
+  liveBoardActionButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  },
   tableRow: {
     flexDirection: 'row',
     gap: 12,
@@ -4798,6 +5852,10 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingHorizontal: 10,
   },
+  recordRowWebHover: {
+    backgroundColor: 'rgba(15, 23, 42, 0.045)',
+    borderRadius: 12,
+  } as any,
   recordRowPressed: {
     backgroundColor: 'rgba(15, 23, 42, 0.05)',
   },
@@ -4809,50 +5867,164 @@ const styles = StyleSheet.create({
     color: '#64748b',
     fontSize: 13,
   },
+  dashListRow: {
+    gap: 6,
+    paddingVertical: 13,
+    paddingHorizontal: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(226, 232, 240, 0.88)',
+  },
+  dashListRowWeb: {
+    paddingVertical: 14,
+    paddingHorizontal: 12,
+    borderBottomColor: 'rgba(226, 232, 240, 0.8)',
+  } as any,
+  dashListRowLast: {
+    borderBottomWidth: 0,
+    paddingBottom: 6,
+  },
+  dashListRowTitle: {
+    color: '#0f172a',
+    fontWeight: '800',
+    fontSize: 14,
+    letterSpacing: 0.05,
+    lineHeight: 20,
+  },
+  dashListRowMeta: {
+    color: '#64748b',
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: '500',
+  },
+  dashListRowHovered: {
+    backgroundColor: 'rgba(15, 23, 42, 0.032)',
+    borderRadius: 12,
+  },
+  dashListRowWebHover: {
+    backgroundColor: 'rgba(15, 23, 42, 0.045)',
+  } as any,
+  dashListRowPressed: {
+    backgroundColor: 'rgba(15, 23, 42, 0.055)',
+    borderRadius: 12,
+  },
+  actionRequiredAnchor: {
+    borderRadius: 18,
+    padding: IS_WEB ? 6 : 6,
+  },
+  actionRequiredAnchorClear: {
+    backgroundColor: 'rgba(16, 185, 129, 0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.22)',
+    shadowColor: '#0f172a',
+    shadowOpacity: 0.045,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+  },
+  actionRequiredAnchorActive: {
+    backgroundColor: 'rgba(254, 243, 199, 0.35)',
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.35)',
+    shadowColor: '#0f172a',
+    shadowOpacity: 0.055,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+  },
+  actionRequiredCard: {
+    borderRadius: 18,
+  },
   actionRequiredList: {
-    gap: 10,
+    gap: 12,
+  },
+  actionRequiredListInnerClear: {
+    padding: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: 'rgba(16, 185, 129, 0.22)',
+    backgroundColor: 'rgba(255, 255, 255, 0.65)',
+  },
+  actionRequiredListInnerActive: {
+    padding: 12,
+    borderRadius: 16,
+    backgroundColor: 'rgba(248, 250, 252, 0.9)',
+    borderWidth: 1,
+    borderColor: 'rgba(226, 232, 240, 0.9)',
   },
   actionRequiredRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+    alignItems: 'stretch',
     borderRadius: 16,
     borderWidth: 1,
+    overflow: 'hidden',
   },
   actionRequiredRowCool: {
     backgroundColor: '#ffffff',
-    borderColor: '#e5e7eb',
+    borderColor: '#e2e8f0',
   },
-  actionRequiredRowHot: {
-    backgroundColor: 'rgba(239, 68, 68, 0.06)',
-    borderColor: 'rgba(239, 68, 68, 0.24)',
+  actionRequiredRowAttention: {
+    backgroundColor: 'rgba(254, 242, 242, 0.85)',
+    borderColor: 'rgba(239, 68, 68, 0.28)',
+  },
+  actionRequiredRowWarn: {
+    backgroundColor: 'rgba(255, 247, 237, 0.95)',
+    borderColor: 'rgba(249, 115, 22, 0.28)',
   },
   actionRequiredRowHover: {
     shadowColor: '#0f172a',
-    shadowOpacity: 0.06,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.05,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
     transform: [{ translateY: -1 }],
   },
+  actionRequiredRowWebHover: {
+    borderColor: 'rgba(15, 23, 42, 0.14)',
+    shadowOpacity: 0.08,
+  } as any,
   actionRequiredRowPressed: {
     transform: [{ translateY: 0 }],
   },
+  actionRequiredAccent: {
+    width: 4,
+    alignSelf: 'stretch',
+    backgroundColor: '#e2e8f0',
+  },
+  actionRequiredAccentMuted: {
+    backgroundColor: '#e2e8f0',
+  },
+  actionRequiredAccentBarAttention: {
+    backgroundColor: '#ef4444',
+  },
+  actionRequiredAccentBarWarning: {
+    backgroundColor: '#f97316',
+  },
+  actionRequiredRowMain: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    minHeight: 70,
+  },
   actionRequiredLeft: {
     flex: 1,
-    gap: 2,
+    gap: 5,
+    paddingRight: 8,
+    minWidth: 0,
   },
   actionRequiredRight: {
     alignItems: 'flex-end',
     justifyContent: 'center',
-    gap: 2,
+    gap: 6,
+    flexShrink: 0,
   },
   actionRequiredTitle: {
     color: '#0f172a',
     fontWeight: '900',
-    fontSize: 14,
+    fontSize: 15,
+    letterSpacing: 0.1,
+    lineHeight: 20,
   },
   actionRequiredTitleHot: {
     color: '#7f1d1d',
@@ -4860,21 +6032,50 @@ const styles = StyleSheet.create({
   actionRequiredDescription: {
     color: '#64748b',
     fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '600',
+    lineHeight: 18,
+    fontWeight: '500',
+    marginTop: 1,
+  },
+  actionRequiredCountBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 999,
+    paddingHorizontal: 11,
+    paddingVertical: 5,
+    borderWidth: 1,
+    minWidth: 56,
+  },
+  actionRequiredCountBadgeCool: {
+    backgroundColor: '#f1f5f9',
+    borderColor: '#e2e8f0',
+  },
+  actionRequiredCountBadgeHot: {
+    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+    borderColor: 'rgba(239, 68, 68, 0.22)',
   },
   actionRequiredCount: {
     color: '#0f172a',
     fontWeight: '900',
-    fontSize: 14,
+    fontSize: 13,
+    letterSpacing: 0.2,
   },
   actionRequiredCountHot: {
     color: '#991b1b',
   },
+  actionRequiredCtaWrap: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(37, 99, 235, 0.22)',
+    backgroundColor: 'rgba(37, 99, 235, 0.06)',
+  },
   actionRequiredCta: {
-    color: '#2563eb',
+    color: '#1d4ed8',
     fontSize: 12,
-    fontWeight: '800',
+    fontWeight: '900',
+    letterSpacing: 0.2,
   },
   helperText: {
     color: '#64748b',
@@ -4953,6 +6154,8 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     backgroundColor: '#f8fafc',
     borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#e8edf3',
     padding: 16,
     gap: 8,
   },
@@ -5027,5 +6230,151 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
   },
+  dashEmptyWrap: {
+    paddingVertical: 18,
+    paddingHorizontal: 4,
+    gap: 8,
+    alignItems: 'flex-start',
+  },
+  dashEmptyTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#0f172a',
+    letterSpacing: 0.1,
+  },
+  dashEmptyDesc: {
+    fontSize: 13,
+    lineHeight: 20,
+    color: '#64748b',
+    fontWeight: '500',
+    maxWidth: 520,
+  },
+  dashEmptyCta: {
+    marginTop: 6,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 12,
+    backgroundColor: 'rgba(37, 99, 235, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(37, 99, 235, 0.22)',
+  },
+  dashEmptyCtaWebHover: {
+    backgroundColor: 'rgba(37, 99, 235, 0.11)',
+    borderColor: 'rgba(29, 78, 216, 0.35)',
+  } as any,
+  dashEmptyCtaWebPressed: {
+    opacity: 0.92,
+  } as any,
+  dashEmptyCtaText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#1d4ed8',
+  },
 });
+
+const LIVE_SHIFT_BOARD_COLUMN_LABELS = [
+  'Shift',
+  'Site',
+  'Guard',
+  'Status',
+  'Risk',
+  'Delay',
+  'Book On',
+  'Book Off',
+  'Last Check Call',
+  'Logs',
+  'Incidents',
+  'Panic / Welfare',
+  'Timesheet',
+  'Action',
+] as const;
+
+const LIVE_BOARD_COL_STYLES = [
+  styles.liveBoardColShift,
+  styles.liveBoardColSite,
+  styles.liveBoardColGuard,
+  styles.liveBoardColStatus,
+  styles.liveBoardColRisk,
+  styles.liveBoardColDelay,
+  styles.liveBoardColBookOn,
+  styles.liveBoardColBookOff,
+  styles.liveBoardColLastCheck,
+  styles.liveBoardColLogs,
+  styles.liveBoardColIncidents,
+  styles.liveBoardColPanic,
+  styles.liveBoardColTimesheet,
+  styles.liveBoardColAction,
+];
+
+function LiveShiftBoardTableHeader() {
+  return (
+    <View style={[styles.tableHeader, styles.liveBoardTableHeader]}>
+      {LIVE_SHIFT_BOARD_COLUMN_LABELS.map((label, index) => (
+        <Text key={label} style={[styles.liveBoardHdrText, LIVE_BOARD_COL_STYLES[index]]}>
+          {label}
+        </Text>
+      ))}
+    </View>
+  );
+}
+
+function LiveOpsDetailEmpty({ title, description }: { title: string; description: string }) {
+  return (
+    <View style={styles.liveOpsDetailEmpty}>
+      <Text style={styles.liveOpsDetailEmptyTitle}>{title}</Text>
+      <Text style={styles.liveOpsDetailEmptyDesc}>{description}</Text>
+    </View>
+  );
+}
+
+type DashboardSectionProps = React.PropsWithChildren<{
+  title?: string;
+  subtitle?: string;
+}>;
+
+function DashboardSection({ title, subtitle, children }: DashboardSectionProps) {
+  const showHeader = Boolean((title && title.trim()) || (subtitle && subtitle.trim()));
+
+  return (
+    <View style={[styles.dashSectionShell, IS_WEB ? styles.dashSectionShellWeb : null]}>
+      {showHeader ? (
+        <View style={styles.dashSectionHeader}>
+          {title ? <Text style={styles.dashSectionTitle}>{title}</Text> : null}
+          {subtitle ? <Text style={styles.dashSectionSubtitle}>{subtitle}</Text> : null}
+        </View>
+      ) : null}
+      <View style={[styles.dashSectionBody, !showHeader ? styles.dashSectionBodyFlush : null]}>{children}</View>
+    </View>
+  );
+}
+
+type DashboardPanelEmptyProps = {
+  title: string;
+  description: string;
+  actionLabel?: string;
+  onAction?: () => void;
+};
+
+function DashboardPanelEmpty({ title, description, actionLabel, onAction }: DashboardPanelEmptyProps) {
+  return (
+    <View style={styles.dashEmptyWrap}>
+      <Text style={styles.dashEmptyTitle}>{title}</Text>
+      <Text style={styles.dashEmptyDesc}>{description}</Text>
+      {actionLabel && onAction ? (
+        <Pressable
+          onPress={onAction}
+          style={({ hovered, pressed }: any) => [
+            styles.dashEmptyCta,
+            hovered && IS_WEB ? styles.dashEmptyCtaWebHover : null,
+            pressed && IS_WEB ? styles.dashEmptyCtaWebPressed : null,
+            WEB_POINTER_STYLE,
+          ]}
+        >
+          <Text style={styles.dashEmptyCtaText}>{actionLabel}</Text>
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
 
