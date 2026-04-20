@@ -56,6 +56,22 @@ function isOpenJob(job: Job) {
   return (job.status || '').trim().toLowerCase() === 'open';
 }
 
+/** Guard-facing pay line from existing `hourlyRate` only (presentation). */
+function formatJobHourlyPay(rate: number | undefined | null): string {
+  const n = Number(rate);
+  if (!Number.isFinite(n)) return '';
+  try {
+    const formatted = new Intl.NumberFormat(undefined, {
+      style: 'currency',
+      currency: 'GBP',
+      maximumFractionDigits: 2,
+    }).format(n);
+    return `${formatted} / hr`;
+  } catch {
+    return `£${n.toFixed(2)} / hr`;
+  }
+}
+
 export function JobsScreen({ user }: JobsScreenProps) {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [applications, setApplications] = useState<JobApplication[]>([]);
@@ -119,15 +135,25 @@ export function JobsScreen({ user }: JobsScreenProps) {
 
   if (loading && jobs.length === 0 && applications.length === 0) {
     return (
-      <View style={styles.loadingBlock}>
-        <ActivityIndicator size="large" color="#111827" />
-        <Text style={styles.loadingText}>Loading jobs…</Text>
+      <View style={styles.guardJobsRoot}>
+        <View style={styles.loadingBlock}>
+          <ActivityIndicator size="large" color="#111827" />
+          <Text style={styles.loadingText}>Loading jobs…</Text>
+        </View>
       </View>
     );
   }
 
+  const openJobsSubtitle = openJobs.length
+    ? `${openJobs.length} role${openJobs.length === 1 ? '' : 's'} open — tap Apply to send your interest.`
+    : 'Nothing is accepting applications right now.';
+
+  const applicationsSubtitle = myApplications.length
+    ? `${myApplications.length} application${myApplications.length === 1 ? '' : 's'} on record.`
+    : 'You have not applied to any roles yet.';
+
   return (
-    <>
+    <View style={styles.guardJobsRoot}>
       {error ? (
         <View style={[styles.feedbackBanner, styles.feedbackError]}>
           <Text style={styles.feedbackTitle}>Could not load jobs</Text>
@@ -138,10 +164,7 @@ export function JobsScreen({ user }: JobsScreenProps) {
         </View>
       ) : null}
 
-      <FeatureCard
-        title="Open Jobs"
-        subtitle={openJobs.length ? 'Available jobs you can apply for.' : 'No open jobs right now'}
-      >
+      <FeatureCard title="Open Jobs" subtitle={openJobsSubtitle} style={styles.guardJobsCard}>
         {loading && !error ? (
           <View style={styles.inlineLoadingRow}>
             <ActivityIndicator size="small" color="#111827" />
@@ -149,36 +172,61 @@ export function JobsScreen({ user }: JobsScreenProps) {
           </View>
         ) : null}
         {!loading && !error && openJobs.length === 0 ? (
-          <Text style={styles.helperText}>No open jobs right now.</Text>
-        ) : null}
-        {openJobs.map((job) => (
-          <View key={job.id} style={styles.listCard}>
-            <Text style={styles.cardTitle}>{job.title}</Text>
-            <Text style={styles.metaText}>{job.site?.name || job.company?.name || 'Location pending'}</Text>
-            <Text style={styles.metaText} numberOfLines={2}>
-              {job.description?.trim() || 'Shift details available when you open the job.'}
+          <View style={styles.jobsEmptyBlock}>
+            <Text style={styles.jobsEmptyTitle}>No open roles</Text>
+            <Text style={styles.jobsEmptyBody}>
+              When your coordinator publishes work, it will show here with pay and site so you can apply in one tap.
             </Text>
-            <Pressable
-              style={[styles.secondaryActionButton, applyingJobId === job.id && styles.buttonDisabled]}
-              onPress={() => handleApplyToJob(job.id)}
-              disabled={applyingJobId === job.id || appliedJobIds.has(job.id)}
-            >
-              <Text style={styles.secondaryActionButtonText}>
-                {applyingJobId === job.id ? 'Applying…' : 'Apply'}
-              </Text>
-            </Pressable>
           </View>
-        ))}
+        ) : null}
+        {openJobs.map((job, index) => {
+          const payLine = formatJobHourlyPay(job.hourlyRate);
+          const siteLine = job.site?.name || job.company?.name || 'Location pending';
+          const teamLine =
+            typeof job.guardsRequired === 'number' && job.guardsRequired > 0
+              ? `${job.guardsRequired} guard${job.guardsRequired === 1 ? '' : 's'} needed`
+              : null;
+          return (
+            <View key={job.id} style={[styles.jobsOpenCard, index === 0 && styles.jobsOpenCardFirst]}>
+              <View style={styles.jobsOpenCardInner}>
+                <Text style={styles.jobsOpenTitle}>{job.title}</Text>
+                <Text style={styles.jobsOpenSite}>{siteLine}</Text>
+                {payLine || teamLine ? (
+                  <View style={styles.jobsOpenMetaRow}>
+                    {payLine ? <Text style={styles.jobsOpenPay}>{payLine}</Text> : null}
+                    {teamLine ? (
+                      <Text style={[styles.jobsOpenTeam, !payLine && styles.jobsOpenTeamSolo]}>{teamLine}</Text>
+                    ) : null}
+                  </View>
+                ) : null}
+                <Text style={styles.jobsOpenDescription} numberOfLines={3}>
+                  {job.description?.trim() || 'Shift details available when you open the job.'}
+                </Text>
+                <Pressable
+                  style={[styles.jobsApplyButton, applyingJobId === job.id && styles.buttonDisabled]}
+                  onPress={() => handleApplyToJob(job.id)}
+                  disabled={applyingJobId === job.id || appliedJobIds.has(job.id)}
+                >
+                  <Text style={styles.jobsApplyButtonText}>
+                    {applyingJobId === job.id ? 'Applying…' : 'Apply'}
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
+          );
+        })}
       </FeatureCard>
 
-      <FeatureCard
-        title="My Applications"
-        subtitle={
-          myApplications.length
-            ? `${myApplications.length} application${myApplications.length === 1 ? '' : 's'} submitted`
-            : 'No applications yet'
-        }
-      >
+      {!error ? (
+        <View style={styles.jobsSectionBridge}>
+          <Text style={styles.jobsSectionBridgeLabel}>How this tab works</Text>
+          <Text style={styles.jobsSectionBridgeBody}>
+            Open roles are above. After you apply, each submission moves to My Applications with the latest status.
+          </Text>
+        </View>
+      ) : null}
+
+      <FeatureCard title="My Applications" subtitle={applicationsSubtitle} style={styles.guardJobsCard}>
         {loading && !error && myApplications.length === 0 ? (
           <View style={styles.inlineLoadingRow}>
             <ActivityIndicator size="small" color="#111827" />
@@ -186,28 +234,135 @@ export function JobsScreen({ user }: JobsScreenProps) {
           </View>
         ) : null}
         {!loading && !error && myApplications.length === 0 ? (
-          <Text style={styles.helperText}>Your submitted applications will appear here.</Text>
+          <View style={styles.jobsEmptyBlock}>
+            <Text style={styles.jobsEmptyTitle}>No applications yet</Text>
+            <Text style={styles.jobsEmptyBody}>
+              Your submitted applications will appear here with site, date applied, and status so you can see what is
+              moving.
+            </Text>
+          </View>
         ) : null}
-        {myApplications.map((application) => (
-          <View key={application.id} style={styles.simpleRow}>
-            <View style={styles.flexGrow}>
-              <Text style={styles.cardTitle}>{application.job?.title || `Job #${application.jobId}`}</Text>
-              <Text style={styles.metaText}>
-                {application.job?.site?.name || application.job?.company?.name || 'Location pending'}
-              </Text>
-              <Text style={styles.metaText}>Applied {formatAppliedDateLabel(application.appliedAt)}</Text>
-            </View>
-            <View style={styles.applicationStatusBadge}>
-              <Text style={styles.applicationStatus}>{application.status}</Text>
+        {myApplications.map((application, index) => (
+          <View key={application.id} style={[styles.jobsApplicationCard, index === 0 && styles.jobsApplicationCardFirst]}>
+            <View style={styles.jobsApplicationRow}>
+              <View style={styles.flexGrow}>
+                <Text style={styles.jobsApplicationTitle}>
+                  {application.job?.title || `Job #${application.jobId}`}
+                </Text>
+                <Text style={styles.jobsApplicationSite}>
+                  {application.job?.site?.name || application.job?.company?.name || 'Location pending'}
+                </Text>
+                <Text style={styles.jobsApplicationApplied}>
+                  Applied {formatAppliedDateLabel(application.appliedAt)}
+                </Text>
+              </View>
+              <View style={styles.applicationStatusBadge}>
+                <Text style={styles.applicationStatus}>{application.status}</Text>
+              </View>
             </View>
           </View>
         ))}
       </FeatureCard>
-    </>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  guardJobsRoot: { width: '100%', gap: 12, paddingBottom: 4 },
+  guardJobsCard: {
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
+    padding: 16,
+    marginBottom: 0,
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.05,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 2,
+    gap: 12,
+  },
+  jobsSectionBridge: {
+    borderRadius: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    gap: 6,
+  },
+  jobsSectionBridgeLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#64748B',
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+  },
+  jobsSectionBridgeBody: { fontSize: 13, lineHeight: 20, color: '#475569', fontWeight: '600' },
+  jobsEmptyBlock: { gap: 8, paddingVertical: 8, paddingHorizontal: 2 },
+  jobsEmptyTitle: { fontSize: 16, fontWeight: '800', color: '#0F172A', letterSpacing: -0.2 },
+  jobsEmptyBody: { fontSize: 14, lineHeight: 22, color: '#475569', fontWeight: '500' },
+  jobsOpenCard: { marginTop: 12 },
+  jobsOpenCardFirst: { marginTop: 2 },
+  jobsOpenCardInner: {
+    padding: 14,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#E8ECF2',
+    backgroundColor: '#F8FAFC',
+    gap: 10,
+  },
+  jobsOpenTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#0F172A',
+    lineHeight: 22,
+    letterSpacing: -0.2,
+  },
+  jobsOpenSite: { fontSize: 15, fontWeight: '700', color: '#334155', lineHeight: 22 },
+  jobsOpenMetaRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 10 },
+  jobsOpenPay: { fontSize: 15, fontWeight: '800', color: '#0F172A', letterSpacing: -0.1 },
+  jobsOpenTeam: { fontSize: 13, fontWeight: '600', color: '#64748B' },
+  jobsOpenTeamSolo: { fontSize: 14, fontWeight: '700', color: '#475569' },
+  jobsOpenDescription: { fontSize: 13, lineHeight: 19, color: '#64748B', fontWeight: '500' },
+  jobsApplyButton: {
+    alignSelf: 'stretch',
+    marginTop: 2,
+    minHeight: 52,
+    borderRadius: 16,
+    backgroundColor: '#111827',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
+  },
+  jobsApplyButtonText: { color: '#FFFFFF', fontWeight: '800', fontSize: 16, letterSpacing: 0.2 },
+  jobsApplicationCard: { marginTop: 12 },
+  jobsApplicationCardFirst: { marginTop: 2 },
+  jobsApplicationRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#EEF2F7',
+    backgroundColor: '#FAFBFC',
+  },
+  jobsApplicationTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0F172A',
+    lineHeight: 21,
+    letterSpacing: -0.15,
+  },
+  jobsApplicationSite: { fontSize: 14, fontWeight: '600', color: '#475569', marginTop: 4, lineHeight: 20 },
+  jobsApplicationApplied: { fontSize: 13, fontWeight: '600', color: '#64748B', marginTop: 6, lineHeight: 19 },
   loadingBlock: {
     alignItems: 'center',
     justifyContent: 'center',
@@ -233,35 +388,13 @@ const styles = StyleSheet.create({
   retryButtonText: { color: '#FFFFFF', fontWeight: '700' },
   helperText: { color: '#4B5563', lineHeight: 20 },
   flexGrow: { flex: 1 },
-  secondaryActionButton: {
-    alignSelf: 'flex-start',
-    backgroundColor: '#E5E7EB',
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    minHeight: 46,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  secondaryActionButtonText: { color: '#111827', fontWeight: '700' },
-  cardTitle: { color: '#111827', fontWeight: '700', fontSize: 16 },
-  metaText: { color: '#6B7280', fontSize: 13, lineHeight: 18 },
-  simpleRow: {
-    borderTopWidth: 1,
-    borderTopColor: '#E5E7EB',
-    paddingTop: 12,
-    paddingBottom: 2,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  listCard: { borderTopWidth: 1, borderTopColor: '#E5E7EB', paddingTop: 12, gap: 8 },
   applicationStatusBadge: {
     borderRadius: 999,
     backgroundColor: '#EFF6FF',
     paddingHorizontal: 10,
     paddingVertical: 6,
     alignSelf: 'flex-start',
+    marginTop: 2,
   },
   applicationStatus: { color: '#1D4ED8', fontWeight: '700', textTransform: 'capitalize', fontSize: 12 },
   buttonDisabled: { opacity: 0.7 },
