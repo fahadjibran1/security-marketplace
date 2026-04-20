@@ -76,12 +76,30 @@ function normalizeTimesheetStatus(status?: string | null) {
 
 function formatStatusLabel(status?: string | null) {
   const s = normalizeTimesheetStatus(status);
-  if (s === 'draft') return 'DRAFT';
-  if (s === 'submitted') return 'SUBMITTED';
-  if (s === 'approved') return 'APPROVED';
-  if (s === 'rejected') return 'REJECTED';
-  if (s === 'returned') return 'RETURNED';
-  return (status || 'UNKNOWN').replace(/_/g, ' ').toUpperCase();
+  if (s === 'draft') return 'Draft';
+  if (s === 'submitted') return 'Submitted';
+  if (s === 'approved') return 'Approved';
+  if (s === 'rejected') return 'Rejected';
+  if (s === 'returned') return 'Returned';
+  return (status || 'Unknown').replace(/_/g, ' ');
+}
+
+/** Plain-language line for guards (presentation only). */
+function getTimesheetStatusMeaning(statusKey: string): string {
+  switch (statusKey) {
+    case 'draft':
+      return 'Not sent yet — add your hours, then submit when they are correct.';
+    case 'returned':
+      return 'Your company sent this back — update the details below, then submit again.';
+    case 'rejected':
+      return 'This submission was not accepted — read the note and speak with your supervisor if you need help.';
+    case 'submitted':
+      return 'Waiting on the company — you are done unless they return it for changes.';
+    case 'approved':
+      return 'Accepted — these hours are on record for payroll.';
+    default:
+      return 'Check the details below or with your office if this status is unclear.';
+  }
 }
 
 function statusBadgeStyle(status: string) {
@@ -238,21 +256,20 @@ function TimesheetCard({
 
   return (
     <View style={styles.card}>
-      <View style={styles.cardHeaderRow}>
-        <View style={styles.flexGrow}>
-          <Text style={styles.siteTitle}>{timesheet.shift?.siteName || `Shift #${timesheet.shiftId}`}</Text>
-          <Text style={styles.metaMuted}>Timesheet #{timesheet.id}</Text>
-        </View>
-        <View style={[styles.statusPill, { backgroundColor: palette.bg }]}>
-          <Text style={[styles.statusPillText, { color: palette.text }]}>{formatStatusLabel(timesheet.approvalStatus)}</Text>
-        </View>
-      </View>
-
-      <View style={styles.block}>
-        <Text style={styles.blockLabel}>Scheduled</Text>
-        <Text style={styles.blockValue}>
+      <View style={styles.cardHeaderBlock}>
+        <Text style={styles.siteTitle}>{timesheet.shift?.siteName || `Shift #${timesheet.shiftId}`}</Text>
+        <Text style={styles.headerSchedule}>
           {formatDateLabel(schedStart)} · {formatTimeLabel(schedStart)} – {formatTimeLabel(schedEnd)}
         </Text>
+        <View style={styles.statusBlock}>
+          <View style={[styles.statusPill, { backgroundColor: palette.bg }]}>
+            <Text style={[styles.statusPillText, { color: palette.text }]}>
+              {formatStatusLabel(timesheet.approvalStatus)}
+            </Text>
+          </View>
+          <Text style={styles.statusMeaning}>{getTimesheetStatusMeaning(statusKey)}</Text>
+        </View>
+        <Text style={styles.headerRef}>Reference #{timesheet.id}</Text>
       </View>
 
       <View style={styles.block}>
@@ -276,7 +293,10 @@ function TimesheetCard({
           <Text style={styles.readonlyValue}>{Number(timesheet.hoursWorked) || 0} h</Text>
         )}
         {typeof timesheet.workedMinutes === 'number' && timesheet.workedMinutes > 0 ? (
-          <Text style={styles.metaMuted}>Recorded minutes (system): {timesheet.workedMinutes}</Text>
+          <Text style={styles.metaMuted}>
+            System recorded {timesheet.workedMinutes} minutes on shift (for reference — your claim is what you enter
+            above).
+          </Text>
         ) : null}
       </View>
 
@@ -298,11 +318,13 @@ function TimesheetCard({
       </View>
 
       {(statusKey === 'returned' || statusKey === 'rejected') && timesheet.rejectionReason ? (
-        <View style={styles.rejectionBox}>
-          <Text style={styles.rejectionLabel}>
+        <View style={statusKey === 'returned' ? styles.returnedNoteBox : styles.rejectionBox}>
+          <Text style={statusKey === 'returned' ? styles.returnedNoteLabel : styles.rejectionLabel}>
             {statusKey === 'returned' ? 'Returned for correction' : 'Company note'}
           </Text>
-          <Text style={styles.rejectionText}>{timesheet.rejectionReason}</Text>
+          <Text style={statusKey === 'returned' ? styles.returnedNoteText : styles.rejectionText}>
+            {timesheet.rejectionReason}
+          </Text>
         </View>
       ) : null}
 
@@ -331,23 +353,39 @@ function TimesheetCard({
 
       {isEditable ? (
         <>
-          <View style={styles.actionsRow}>
+          {submission.reason ? (
+            <View
+              style={[
+                styles.submitNoticeBox,
+                !submission.canSubmit ? styles.submitNoticeBoxBlocking : styles.submitNoticeBoxInfo,
+              ]}
+            >
+              <Text style={styles.submitNoticeTitle}>
+                {!submission.canSubmit ? 'Before you can submit' : 'Heads up'}
+              </Text>
+              <Text style={styles.submitNoticeBody}>{submission.reason}</Text>
+            </View>
+          ) : null}
+          <View style={styles.actionsColumn}>
             <Pressable
-              style={[styles.secondaryBtn, (saving || !dirty || !hoursValid) && styles.btnDisabled]}
+              style={[
+                styles.primaryBtn,
+                styles.primaryBtnProminent,
+                (!submission.canSubmit || submitting || !hoursValid) && styles.btnDisabled,
+              ]}
+              onPress={handleSubmit}
+              disabled={!submission.canSubmit || submitting || !hoursValid}
+            >
+              <Text style={styles.primaryBtnText}>{submitting ? 'Submitting…' : 'Submit timesheet'}</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.secondaryBtn, styles.secondaryBtnDraft, (saving || !dirty || !hoursValid) && styles.btnDisabled]}
               onPress={handleSaveDraft}
               disabled={saving || !dirty || !hoursValid}
             >
               <Text style={styles.secondaryBtnText}>{saving ? 'Saving…' : 'Save draft'}</Text>
             </Pressable>
-            <Pressable
-              style={[styles.primaryBtn, (!submission.canSubmit || submitting || !hoursValid) && styles.btnDisabled]}
-              onPress={handleSubmit}
-              disabled={!submission.canSubmit || submitting || !hoursValid}
-            >
-              <Text style={styles.primaryBtnText}>{submitting ? 'Submitting…' : 'Submit'}</Text>
-            </Pressable>
           </View>
-          {submission.reason ? <Text style={styles.hint}>{submission.reason}</Text> : null}
         </>
       ) : null}
     </View>
@@ -406,20 +444,23 @@ export function GuardTimesheetsScreen({
 }
 
 const styles = StyleSheet.create({
-  flexGrow: { flex: 1 },
   emptyText: { color: '#4B5563', lineHeight: 20 },
   card: {
     borderTopWidth: 1,
     borderTopColor: '#E5E7EB',
-    paddingTop: 14,
-    marginTop: 4,
-    gap: 10,
+    paddingTop: 16,
+    marginTop: 8,
+    gap: 12,
   },
-  cardHeaderRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
-  siteTitle: { color: '#111827', fontWeight: '700', fontSize: 16 },
+  cardHeaderBlock: { gap: 8, marginBottom: 2 },
+  siteTitle: { color: '#0F172A', fontWeight: '800', fontSize: 18, lineHeight: 24, letterSpacing: -0.2 },
+  headerSchedule: { color: '#334155', fontSize: 15, fontWeight: '600', lineHeight: 22 },
+  statusBlock: { gap: 6, marginTop: 2 },
+  statusMeaning: { color: '#475569', fontSize: 14, lineHeight: 21, fontWeight: '500' },
+  headerRef: { color: '#94A3B8', fontSize: 11, fontWeight: '600', letterSpacing: 0.2 },
   metaMuted: { color: '#6B7280', fontSize: 12, lineHeight: 18 },
-  statusPill: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, alignSelf: 'flex-start' },
-  statusPillText: { fontWeight: '800', fontSize: 11, letterSpacing: 0.4 },
+  statusPill: { borderRadius: 999, paddingHorizontal: 12, paddingVertical: 7, alignSelf: 'flex-start' },
+  statusPillText: { fontWeight: '800', fontSize: 12, letterSpacing: 0.2 },
   block: { gap: 4 },
   blockLabel: { color: '#6B7280', fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.3 },
   blockValue: { color: '#111827', fontSize: 14, lineHeight: 20, fontWeight: '600' },
@@ -438,11 +479,39 @@ const styles = StyleSheet.create({
   rejectionBox: {
     backgroundColor: '#FEF2F2',
     borderRadius: 12,
-    padding: 10,
-    gap: 4,
+    padding: 12,
+    gap: 6,
+    borderWidth: 1,
+    borderColor: '#FECACA',
   },
   rejectionLabel: { color: '#991B1B', fontSize: 11, fontWeight: '700', textTransform: 'uppercase' },
-  rejectionText: { color: '#7F1D1D', fontSize: 14, lineHeight: 20 },
+  rejectionText: { color: '#7F1D1D', fontSize: 14, lineHeight: 21, fontWeight: '500' },
+  returnedNoteBox: {
+    backgroundColor: '#FFFBEB',
+    borderRadius: 12,
+    padding: 12,
+    gap: 6,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  returnedNoteLabel: { color: '#B45309', fontSize: 11, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.4 },
+  returnedNoteText: { color: '#92400E', fontSize: 14, lineHeight: 21, fontWeight: '500' },
+  submitNoticeBox: {
+    borderRadius: 14,
+    padding: 14,
+    gap: 6,
+    borderWidth: 1,
+  },
+  submitNoticeBoxBlocking: {
+    backgroundColor: '#FEF2F2',
+    borderColor: '#FECACA',
+  },
+  submitNoticeBoxInfo: {
+    backgroundColor: '#FFFBEB',
+    borderColor: '#FDE68A',
+  },
+  submitNoticeTitle: { fontSize: 12, fontWeight: '800', color: '#0F172A', letterSpacing: 0.3, textTransform: 'uppercase' },
+  submitNoticeBody: { fontSize: 14, lineHeight: 22, color: '#334155', fontWeight: '600' },
   reviewContextBox: {
     backgroundColor: '#EFF6FF',
     borderRadius: 12,
@@ -451,25 +520,38 @@ const styles = StyleSheet.create({
   },
   reviewContextLabel: { color: '#1D4ED8', fontSize: 11, fontWeight: '700', textTransform: 'uppercase' },
   reviewContextText: { color: '#1E3A8A', fontSize: 14, lineHeight: 20 },
-  actionsRow: { flexDirection: 'row', gap: 10, marginTop: 4 },
+  actionsColumn: { gap: 10, marginTop: 4 },
   secondaryBtn: {
-    flex: 1,
-    backgroundColor: '#E5E7EB',
+    alignSelf: 'stretch',
+    backgroundColor: '#F8FAFC',
     borderRadius: 14,
-    minHeight: 48,
+    minHeight: 46,
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
   },
-  secondaryBtnText: { color: '#111827', fontWeight: '700', fontSize: 15 },
+  secondaryBtnDraft: {
+    minHeight: 44,
+  },
+  secondaryBtnText: { color: '#475569', fontWeight: '700', fontSize: 14 },
   primaryBtn: {
-    flex: 1,
+    alignSelf: 'stretch',
     backgroundColor: '#111827',
     borderRadius: 14,
     minHeight: 48,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  primaryBtnText: { color: '#FFFFFF', fontWeight: '800', fontSize: 15 },
+  primaryBtnProminent: {
+    minHeight: 52,
+    borderRadius: 16,
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
+  },
+  primaryBtnText: { color: '#FFFFFF', fontWeight: '800', fontSize: 16, letterSpacing: 0.2 },
   btnDisabled: { opacity: 0.55 },
-  hint: { color: '#6B7280', fontSize: 12, lineHeight: 18 },
 });
