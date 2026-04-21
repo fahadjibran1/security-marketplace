@@ -7,6 +7,7 @@ import { AuthScreen } from './src/screens/AuthScreen';
 import { logout, restoreSession, setUnauthorizedHandler } from './src/services/api';
 import { clearStoredSession, loadStoredSession, persistSession } from './src/services/session';
 import { AuthSession, isClientAppRole, isCompanyAppRole } from './src/types/models';
+import { colors } from './src/theme';
 
 const IS_WEB = typeof document !== 'undefined';
 
@@ -119,7 +120,7 @@ export default function App() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#f3f4f6',
+    backgroundColor: colors.background,
     ...(IS_WEB ? { height: '100vh', overflow: 'hidden' } : null),
   },
   screenContainer: {
@@ -128,7 +129,7 @@ const styles = StyleSheet.create({
     ...(IS_WEB ? { overflow: 'hidden' } : null),
   },
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  loadingText: { color: '#374151', fontSize: 16, fontWeight: '600' },
+  loadingText: { color: colors.textSecondary, fontSize: 16, fontWeight: '600' },
   topBar: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -136,10 +137,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
-    backgroundColor: '#fff',
+    borderBottomColor: colors.border,
+    backgroundColor: colors.card,
     gap: 8,
   },
-  topBarText: { fontWeight: '700', color: '#111827' },
-  switchText: { color: '#2563eb', fontWeight: '600' },
+  topBarText: { fontWeight: '700', color: colors.textPrimary },
+  switchText: { color: colors.supportBlue, fontWeight: '600' },
 });

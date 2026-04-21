@@ -1,13 +1,18 @@
 {
   "expo": {
-    "name": "Security Marketplace",
+    "name": "S4 Security",
+    "description": "Staff. Sites. Shifts. Security.",
     "slug": "security-marketplace",
     "version": "1.0.0",
     "scheme": "securitymarketplace",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
+    "primaryColor": "#0B1B2B",
+    "icon": "./assets/icon.png",
     "splash": {
-      "backgroundColor": "#ffffff"
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#F1F5F9"
     },
     "assetBundlePatterns": [
       "**/*"
@@ -28,7 +33,14 @@
     },
     "android": {
       "versionCode": 1,
-      "package": "com.securitymarketplace.mobile"
+      "package": "com.securitymarketplace.mobile",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0B1B2B"
+      }
+    },
+    "web": {
+      "favicon": "./assets/icon.png"
     },
     "plugins": [
       "expo-secure-store"

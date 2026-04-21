@@ -3,6 +3,7 @@ import { Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-nativ
 import { FeatureCard } from '../components/FeatureCard';
 import { formatApiErrorMessage, submitTimesheet, updateTimesheet } from '../services/api';
 import { AttendanceEvent, Timesheet } from '../types/models';
+import { colors } from '../theme';
 
 export interface GuardTimesheetsScreenProps {
   timesheets: Timesheet[];
@@ -105,9 +106,9 @@ function getTimesheetStatusMeaning(statusKey: string): string {
 function statusBadgeStyle(status: string) {
   switch (status) {
     case 'draft':
-      return { bg: '#F3F4F6', text: '#374151' };
+      return { bg: colors.background, text: colors.textSecondary };
     case 'submitted':
-      return { bg: '#DBEAFE', text: '#1D4ED8' };
+      return { bg: '#DBEAFE', text: colors.supportBlue };
     case 'approved':
       return { bg: '#DCFCE7', text: '#15803D' };
     case 'rejected':
@@ -115,7 +116,7 @@ function statusBadgeStyle(status: string) {
     case 'returned':
       return { bg: '#FEF3C7', text: '#B45309' };
     default:
-      return { bg: '#E5E7EB', text: '#4B5563' };
+      return { bg: colors.border, text: colors.textSecondary };
   }
 }
 
@@ -459,11 +460,11 @@ const styles = StyleSheet.create({
   guardTimesheetsCard: {
     borderRadius: 22,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
-    backgroundColor: '#FFFFFF',
+    borderColor: colors.border,
+    backgroundColor: colors.card,
     padding: 16,
     marginBottom: 0,
-    shadowColor: '#0F172A',
+    shadowColor: colors.primaryNavy,
     shadowOpacity: 0.05,
     shadowRadius: 14,
     shadowOffset: { width: 0, height: 6 },
@@ -471,36 +472,36 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   timesheetsEmptyState: { gap: 8, paddingVertical: 10, paddingHorizontal: 2 },
-  timesheetsEmptyTitle: { fontSize: 16, fontWeight: '800', color: '#0F172A', letterSpacing: -0.2 },
-  timesheetsEmptyBody: { fontSize: 14, lineHeight: 22, color: '#475569', fontWeight: '500' },
+  timesheetsEmptyTitle: { fontSize: 16, fontWeight: '800', color: colors.textPrimary, letterSpacing: -0.2 },
+  timesheetsEmptyBody: { fontSize: 14, lineHeight: 22, color: colors.textSecondary, fontWeight: '500' },
   card: {
     borderTopWidth: 1,
-    borderTopColor: '#E5E7EB',
+    borderTopColor: colors.border,
     paddingTop: 16,
     marginTop: 8,
     gap: 12,
   },
   cardHeaderBlock: { gap: 8, marginBottom: 2 },
-  siteTitle: { color: '#0F172A', fontWeight: '800', fontSize: 18, lineHeight: 24, letterSpacing: -0.2 },
-  headerSchedule: { color: '#334155', fontSize: 15, fontWeight: '600', lineHeight: 22 },
+  siteTitle: { color: colors.textPrimary, fontWeight: '800', fontSize: 18, lineHeight: 24, letterSpacing: -0.2 },
+  headerSchedule: { color: colors.textSecondary, fontSize: 15, fontWeight: '600', lineHeight: 22 },
   statusBlock: { gap: 6, marginTop: 2 },
-  statusMeaning: { color: '#475569', fontSize: 14, lineHeight: 21, fontWeight: '500' },
-  headerRef: { color: '#94A3B8', fontSize: 11, fontWeight: '600', letterSpacing: 0.2 },
-  metaMuted: { color: '#6B7280', fontSize: 12, lineHeight: 18 },
+  statusMeaning: { color: colors.textSecondary, fontSize: 14, lineHeight: 21, fontWeight: '500' },
+  headerRef: { color: colors.neutralSlate, fontSize: 11, fontWeight: '600', letterSpacing: 0.2 },
+  metaMuted: { color: colors.textSecondary, fontSize: 12, lineHeight: 18 },
   statusPill: { borderRadius: 999, paddingHorizontal: 12, paddingVertical: 7, alignSelf: 'flex-start' },
   statusPillText: { fontWeight: '800', fontSize: 12, letterSpacing: 0.2 },
   block: { gap: 4 },
-  blockLabel: { color: '#6B7280', fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.3 },
-  blockValue: { color: '#111827', fontSize: 14, lineHeight: 20, fontWeight: '600' },
-  readonlyValue: { color: '#111827', fontSize: 15, lineHeight: 22, fontWeight: '600' },
+  blockLabel: { color: colors.textSecondary, fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.3 },
+  blockValue: { color: colors.textPrimary, fontSize: 14, lineHeight: 20, fontWeight: '600' },
+  readonlyValue: { color: colors.textPrimary, fontSize: 15, lineHeight: 22, fontWeight: '600' },
   input: {
     borderWidth: 1,
-    borderColor: '#D1D5DB',
+    borderColor: colors.border,
     borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    backgroundColor: '#FFFFFF',
-    color: '#111827',
+    backgroundColor: colors.card,
+    color: colors.textPrimary,
     fontSize: 16,
   },
   noteInput: { minHeight: 88, paddingTop: 10 },
@@ -538,34 +539,36 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFBEB',
     borderColor: '#FDE68A',
   },
-  submitNoticeTitle: { fontSize: 12, fontWeight: '800', color: '#0F172A', letterSpacing: 0.3, textTransform: 'uppercase' },
-  submitNoticeBody: { fontSize: 14, lineHeight: 22, color: '#334155', fontWeight: '600' },
+  submitNoticeTitle: { fontSize: 12, fontWeight: '800', color: colors.textPrimary, letterSpacing: 0.3, textTransform: 'uppercase' },
+  submitNoticeBody: { fontSize: 14, lineHeight: 22, color: colors.textSecondary, fontWeight: '600' },
   reviewContextBox: {
-    backgroundColor: '#EFF6FF',
+    backgroundColor: colors.background,
     borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
     padding: 10,
     gap: 4,
   },
-  reviewContextLabel: { color: '#1D4ED8', fontSize: 11, fontWeight: '700', textTransform: 'uppercase' },
-  reviewContextText: { color: '#1E3A8A', fontSize: 14, lineHeight: 20 },
+  reviewContextLabel: { color: colors.supportBlue, fontSize: 11, fontWeight: '700', textTransform: 'uppercase' },
+  reviewContextText: { color: colors.textPrimary, fontSize: 14, lineHeight: 20 },
   actionsColumn: { gap: 10, marginTop: 4 },
   secondaryBtn: {
     alignSelf: 'stretch',
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.card,
     borderRadius: 14,
     minHeight: 46,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.border,
   },
   secondaryBtnDraft: {
     minHeight: 44,
   },
-  secondaryBtnText: { color: '#475569', fontWeight: '700', fontSize: 14 },
+  secondaryBtnText: { color: colors.textSecondary, fontWeight: '700', fontSize: 14 },
   primaryBtn: {
     alignSelf: 'stretch',
-    backgroundColor: '#111827',
+    backgroundColor: colors.primaryNavy,
     borderRadius: 14,
     minHeight: 48,
     alignItems: 'center',
@@ -574,7 +577,7 @@ const styles = StyleSheet.create({
   primaryBtnProminent: {
     minHeight: 52,
     borderRadius: 16,
-    shadowColor: '#0F172A',
+    shadowColor: colors.primaryNavy,
     shadowOpacity: 0.12,
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 4 },

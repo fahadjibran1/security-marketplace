@@ -12,6 +12,7 @@ import {
   saveMyGuardLeave,
 } from '../services/api';
 import { GuardAvailabilityOverride, GuardAvailabilityRule, GuardLeave } from '../types/models';
+import { colors } from '../theme';
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -259,29 +260,50 @@ export function GuardAvailabilityScreen() {
 }
 
 const styles = StyleSheet.create({
-  sectionTitle: { color: '#111827', fontSize: 15, fontWeight: '800', marginTop: 12, marginBottom: 8 },
+  sectionTitle: { color: colors.textPrimary, fontSize: 15, fontWeight: '800', marginTop: 12, marginBottom: 8 },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   input: {
     minWidth: 150,
     flexGrow: 1,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: colors.border,
     borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    color: '#111827',
-    backgroundColor: '#FFFFFF',
+    color: colors.textPrimary,
+    backgroundColor: colors.card,
   },
-  primaryButton: { alignSelf: 'flex-start', marginTop: 10, backgroundColor: '#111827', borderRadius: 999, paddingHorizontal: 16, paddingVertical: 10 },
+  primaryButton: {
+    alignSelf: 'flex-start',
+    marginTop: 10,
+    backgroundColor: colors.primaryNavy,
+    borderRadius: 999,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
   primaryButtonText: { color: '#FFFFFF', fontWeight: '800' },
-  secondaryButton: { alignSelf: 'flex-start', marginTop: 10, borderWidth: 1, borderColor: '#111827', borderRadius: 999, paddingHorizontal: 16, paddingVertical: 10 },
-  secondaryButtonText: { color: '#111827', fontWeight: '800' },
+  secondaryButton: {
+    alignSelf: 'flex-start',
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: colors.primaryNavy,
+    borderRadius: 999,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  secondaryButtonText: { color: colors.textPrimary, fontWeight: '800' },
   list: { gap: 8, marginTop: 10 },
-  simpleRow: { borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 12, padding: 10, backgroundColor: '#F9FAFB' },
-  rowTitle: { color: '#111827', fontWeight: '800' },
-  metaText: { color: '#6B7280', fontSize: 13, marginTop: 2 },
+  simpleRow: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 12,
+    padding: 10,
+    backgroundColor: colors.card,
+  },
+  rowTitle: { color: colors.textPrimary, fontWeight: '800' },
+  metaText: { color: colors.textSecondary, fontSize: 13, marginTop: 2 },
   feedback: { borderRadius: 12, padding: 10, marginBottom: 10 },
   feedbackError: { backgroundColor: '#FEE2E2' },
   feedbackSuccess: { backgroundColor: '#DCFCE7' },
-  feedbackText: { color: '#111827', fontWeight: '700' },
+  feedbackText: { color: colors.textPrimary, fontWeight: '700' },
 });

@@ -3,6 +3,7 @@ import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'rea
 import { FeatureCard } from '../components/FeatureCard';
 import { createJobApplication, formatApiErrorMessage, listJobs, listMyJobApplications } from '../services/api';
 import { AuthUser, Job, JobApplication } from '../types/models';
+import { colors } from '../theme';
 
 interface JobsScreenProps {
   user: AuthUser;
@@ -137,7 +138,7 @@ export function JobsScreen({ user }: JobsScreenProps) {
     return (
       <View style={styles.guardJobsRoot}>
         <View style={styles.loadingBlock}>
-          <ActivityIndicator size="large" color="#111827" />
+          <ActivityIndicator size="large" color={colors.primaryNavy} />
           <Text style={styles.loadingText}>Loading jobs…</Text>
         </View>
       </View>
@@ -167,7 +168,7 @@ export function JobsScreen({ user }: JobsScreenProps) {
       <FeatureCard title="Open Jobs" subtitle={openJobsSubtitle} style={styles.guardJobsCard}>
         {loading && !error ? (
           <View style={styles.inlineLoadingRow}>
-            <ActivityIndicator size="small" color="#111827" />
+            <ActivityIndicator size="small" color={colors.primaryNavy} />
             <Text style={styles.helperText}>Updating…</Text>
           </View>
         ) : null}
@@ -229,7 +230,7 @@ export function JobsScreen({ user }: JobsScreenProps) {
       <FeatureCard title="My Applications" subtitle={applicationsSubtitle} style={styles.guardJobsCard}>
         {loading && !error && myApplications.length === 0 ? (
           <View style={styles.inlineLoadingRow}>
-            <ActivityIndicator size="small" color="#111827" />
+            <ActivityIndicator size="small" color={colors.primaryNavy} />
             <Text style={styles.helperText}>Updating…</Text>
           </View>
         ) : null}
@@ -272,11 +273,11 @@ const styles = StyleSheet.create({
   guardJobsCard: {
     borderRadius: 22,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
-    backgroundColor: '#FFFFFF',
+    borderColor: colors.border,
+    backgroundColor: colors.card,
     padding: 16,
     marginBottom: 0,
-    shadowColor: '#0F172A',
+    shadowColor: colors.primaryNavy,
     shadowOpacity: 0.05,
     shadowRadius: 14,
     shadowOffset: { width: 0, height: 6 },
@@ -287,54 +288,54 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     paddingVertical: 12,
     paddingHorizontal: 14,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: colors.background,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.border,
     gap: 6,
   },
   jobsSectionBridgeLabel: {
     fontSize: 11,
     fontWeight: '800',
-    color: '#64748B',
+    color: colors.textSecondary,
     letterSpacing: 0.6,
     textTransform: 'uppercase',
   },
-  jobsSectionBridgeBody: { fontSize: 13, lineHeight: 20, color: '#475569', fontWeight: '600' },
+  jobsSectionBridgeBody: { fontSize: 13, lineHeight: 20, color: colors.textSecondary, fontWeight: '600' },
   jobsEmptyBlock: { gap: 8, paddingVertical: 8, paddingHorizontal: 2 },
-  jobsEmptyTitle: { fontSize: 16, fontWeight: '800', color: '#0F172A', letterSpacing: -0.2 },
-  jobsEmptyBody: { fontSize: 14, lineHeight: 22, color: '#475569', fontWeight: '500' },
+  jobsEmptyTitle: { fontSize: 16, fontWeight: '800', color: colors.textPrimary, letterSpacing: -0.2 },
+  jobsEmptyBody: { fontSize: 14, lineHeight: 22, color: colors.textSecondary, fontWeight: '500' },
   jobsOpenCard: { marginTop: 12 },
   jobsOpenCardFirst: { marginTop: 2 },
   jobsOpenCardInner: {
     padding: 14,
     borderRadius: 18,
     borderWidth: 1,
-    borderColor: '#E8ECF2',
-    backgroundColor: '#F8FAFC',
+    borderColor: colors.border,
+    backgroundColor: colors.card,
     gap: 10,
   },
   jobsOpenTitle: {
     fontSize: 17,
     fontWeight: '800',
-    color: '#0F172A',
+    color: colors.textPrimary,
     lineHeight: 22,
     letterSpacing: -0.2,
   },
-  jobsOpenSite: { fontSize: 15, fontWeight: '700', color: '#334155', lineHeight: 22 },
+  jobsOpenSite: { fontSize: 15, fontWeight: '700', color: colors.textSecondary, lineHeight: 22 },
   jobsOpenMetaRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 10 },
-  jobsOpenPay: { fontSize: 15, fontWeight: '800', color: '#0F172A', letterSpacing: -0.1 },
-  jobsOpenTeam: { fontSize: 13, fontWeight: '600', color: '#64748B' },
-  jobsOpenTeamSolo: { fontSize: 14, fontWeight: '700', color: '#475569' },
-  jobsOpenDescription: { fontSize: 13, lineHeight: 19, color: '#64748B', fontWeight: '500' },
+  jobsOpenPay: { fontSize: 15, fontWeight: '800', color: colors.textPrimary, letterSpacing: -0.1 },
+  jobsOpenTeam: { fontSize: 13, fontWeight: '600', color: colors.textSecondary },
+  jobsOpenTeamSolo: { fontSize: 14, fontWeight: '700', color: colors.textSecondary },
+  jobsOpenDescription: { fontSize: 13, lineHeight: 19, color: colors.textSecondary, fontWeight: '500' },
   jobsApplyButton: {
     alignSelf: 'stretch',
     marginTop: 2,
     minHeight: 52,
     borderRadius: 16,
-    backgroundColor: '#111827',
+    backgroundColor: colors.primaryNavy,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#0F172A',
+    shadowColor: colors.primaryNavy,
     shadowOpacity: 0.12,
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 4 },
@@ -351,33 +352,33 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#EEF2F7',
-    backgroundColor: '#FAFBFC',
+    borderColor: colors.border,
+    backgroundColor: colors.card,
   },
   jobsApplicationTitle: {
     fontSize: 16,
     fontWeight: '800',
-    color: '#0F172A',
+    color: colors.textPrimary,
     lineHeight: 21,
     letterSpacing: -0.15,
   },
-  jobsApplicationSite: { fontSize: 14, fontWeight: '600', color: '#475569', marginTop: 4, lineHeight: 20 },
-  jobsApplicationApplied: { fontSize: 13, fontWeight: '600', color: '#64748B', marginTop: 6, lineHeight: 19 },
+  jobsApplicationSite: { fontSize: 14, fontWeight: '600', color: colors.textSecondary, marginTop: 4, lineHeight: 20 },
+  jobsApplicationApplied: { fontSize: 13, fontWeight: '600', color: colors.textSecondary, marginTop: 6, lineHeight: 19 },
   loadingBlock: {
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 32,
     gap: 12,
   },
-  loadingText: { color: '#4B5563', fontWeight: '600', fontSize: 15 },
+  loadingText: { color: colors.textSecondary, fontWeight: '600', fontSize: 15 },
   inlineLoadingRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   feedbackBanner: { borderRadius: 16, paddingHorizontal: 14, paddingVertical: 12, gap: 8, marginBottom: 12 },
   feedbackError: { backgroundColor: '#FEE2E2' },
-  feedbackTitle: { fontWeight: '700', color: '#111827' },
-  feedbackMessage: { color: '#374151', lineHeight: 20 },
+  feedbackTitle: { fontWeight: '700', color: colors.textPrimary },
+  feedbackMessage: { color: colors.textSecondary, lineHeight: 20 },
   retryButton: {
     alignSelf: 'flex-start',
-    backgroundColor: '#111827',
+    backgroundColor: colors.primaryNavy,
     borderRadius: 14,
     paddingHorizontal: 14,
     paddingVertical: 12,
@@ -386,16 +387,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   retryButtonText: { color: '#FFFFFF', fontWeight: '700' },
-  helperText: { color: '#4B5563', lineHeight: 20 },
+  helperText: { color: colors.textSecondary, lineHeight: 20 },
   flexGrow: { flex: 1 },
   applicationStatusBadge: {
     borderRadius: 999,
-    backgroundColor: '#EFF6FF',
+    backgroundColor: colors.background,
+    borderWidth: 1,
+    borderColor: colors.border,
     paddingHorizontal: 10,
     paddingVertical: 6,
     alignSelf: 'flex-start',
     marginTop: 2,
   },
-  applicationStatus: { color: '#1D4ED8', fontWeight: '700', textTransform: 'capitalize', fontSize: 12 },
+  applicationStatus: { color: colors.supportBlue, fontWeight: '700', textTransform: 'capitalize', fontSize: 12 },
   buttonDisabled: { opacity: 0.7 },
 });
