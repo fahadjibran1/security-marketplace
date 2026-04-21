@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Image, ImageSourcePropType, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 type NavItem<Id extends string> = {
   id: Id;
@@ -16,6 +16,8 @@ type NavGroup<Id extends string> = {
 type CompanySidebarProps<Id extends string> = {
   title: string;
   subtitle?: string;
+  /** When set, shown instead of `subtitle` text (e.g. S4 mark). */
+  brandLogo?: ImageSourcePropType;
   description?: string;
   activeId: Id;
   navItems: Array<NavItem<Id>>;
@@ -36,6 +38,7 @@ function groupContainsActive<Id extends string>(group: NavGroup<Id>, activeId: I
 export function CompanySidebar<Id extends string>({
   title,
   subtitle,
+  brandLogo,
   description,
   activeId,
   navItems,
@@ -84,7 +87,11 @@ export function CompanySidebar<Id extends string>({
   return (
     <View style={styles.shell}>
       <View style={styles.header}>
-        {subtitle ? <Text style={styles.brandEyebrow}>{subtitle}</Text> : null}
+        {brandLogo ? (
+          <Image source={brandLogo} style={styles.brandLogoImage} accessibilityLabel="S4 Security" />
+        ) : subtitle ? (
+          <Text style={styles.brandEyebrow}>{subtitle}</Text>
+        ) : null}
         <Text style={styles.brandTitle}>{title}</Text>
         {description ? <Text style={styles.brandCopy}>{description}</Text> : null}
       </View>
@@ -211,6 +218,13 @@ const styles = StyleSheet.create({
   },
   header: {
     gap: 8,
+  },
+  brandLogoImage: {
+    height: 32,
+    width: 120,
+    resizeMode: 'contain',
+    alignSelf: 'flex-start',
+    marginBottom: 2,
   },
   divider: {
     height: 1,

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 
 import { CompanyAuditWorkspace } from '../components/company/CompanyAuditWorkspace';
 import { CompanyAnalyticsWorkspace } from '../components/company/CompanyAnalyticsWorkspace';
@@ -4804,7 +4804,7 @@ export function CompanyDashboardScreen() {
       <View style={styles.sidebarShell}>
         <CompanySidebar
           title="Company Operations"
-          subtitle="Observant Security"
+          brandLogo={require('../../assets/icon.png')}
           description="Clients, sites, rota planning, and live shift monitoring in one control room."
           activeId={activeSection}
           navItems={NAV_ITEMS}
@@ -4820,7 +4820,14 @@ export function CompanyDashboardScreen() {
         >
           <View style={[styles.header, IS_WEB ? styles.headerWeb : null]}>
             <View style={styles.headerLeft}>
-              <Text style={styles.eyebrow}>Operations Console</Text>
+              <View style={styles.headerBrandRow}>
+                <Image
+                  source={require('../../assets/icon.png')}
+                  style={styles.headerBrandLogo}
+                  accessibilityLabel="S4 Security"
+                />
+                <Text style={styles.eyebrow}>Operations Console</Text>
+              </View>
               <Text style={[styles.headerTitle, IS_WEB ? styles.headerTitleWeb : null]}>
                 {activeNavItem?.label || 'Company Dashboard'}
               </Text>
@@ -4929,6 +4936,17 @@ const styles = StyleSheet.create({
     minWidth: 0,
     gap: 6,
     paddingRight: 8,
+  },
+  headerBrandRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flexWrap: 'wrap',
+  },
+  headerBrandLogo: {
+    width: 36,
+    height: 36,
+    resizeMode: 'contain',
   },
   headerActions: {
     flexShrink: 0,
