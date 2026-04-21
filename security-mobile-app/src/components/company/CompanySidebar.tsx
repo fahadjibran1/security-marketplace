@@ -16,7 +16,7 @@ type NavGroup<Id extends string> = {
 type CompanySidebarProps<Id extends string> = {
   title: string;
   subtitle?: string;
-  /** When set, shown instead of `subtitle` text (e.g. S4 mark). */
+  /** Optional mark (e.g. S4); may be combined with `subtitle` for logo + wordmark. */
   brandLogo?: ImageSourcePropType;
   description?: string;
   activeId: Id;
@@ -88,10 +88,9 @@ export function CompanySidebar<Id extends string>({
     <View style={styles.shell}>
       <View style={styles.header}>
         {brandLogo ? (
-          <Image source={brandLogo} style={styles.brandLogoImage} accessibilityLabel="S4 Security" />
-        ) : subtitle ? (
-          <Text style={styles.brandEyebrow}>{subtitle}</Text>
+          <Image source={brandLogo} style={styles.brandLogoImage} resizeMode="contain" accessibilityLabel="S4 Security" />
         ) : null}
+        {subtitle ? <Text style={styles.brandEyebrow}>{subtitle}</Text> : null}
         <Text style={styles.brandTitle}>{title}</Text>
         {description ? <Text style={styles.brandCopy}>{description}</Text> : null}
       </View>
@@ -222,7 +221,6 @@ const styles = StyleSheet.create({
   brandLogoImage: {
     height: 32,
     width: 120,
-    resizeMode: 'contain',
     alignSelf: 'flex-start',
     marginBottom: 2,
   },

@@ -4805,6 +4805,7 @@ export function CompanyDashboardScreen() {
         <CompanySidebar
           title="Company Operations"
           brandLogo={require('../../assets/icon.png')}
+          subtitle="S4 Security"
           description="Clients, sites, rota planning, and live shift monitoring in one control room."
           activeId={activeSection}
           navItems={NAV_ITEMS}
@@ -4824,6 +4825,7 @@ export function CompanyDashboardScreen() {
                 <Image
                   source={require('../../assets/icon.png')}
                   style={styles.headerBrandLogo}
+                  resizeMode="contain"
                   accessibilityLabel="S4 Security"
                 />
                 <Text style={styles.eyebrow}>Operations Console</Text>
@@ -4946,7 +4948,6 @@ const styles = StyleSheet.create({
   headerBrandLogo: {
     width: 36,
     height: 36,
-    resizeMode: 'contain',
   },
   headerActions: {
     flexShrink: 0,
