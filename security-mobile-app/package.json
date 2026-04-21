@@ -17,7 +17,8 @@
     "export:web": "expo export --platform web",
     "build": "npm run build:backend && npm run build:frontend",
     "build:backend": "node --check backend/server.js && node --check backend/modules/auth.js && node --check backend/modules/http.js && node --check backend/data/store.js",
-    "build:frontend": "tsc --noEmit"
+    "build:frontend": "tsc --noEmit",
+    "build:brand-assets": "node scripts/build-s4-assets.cjs"
   },
   "dependencies": {
     "@expo/metro-runtime": "~6.1.2",
@@ -32,6 +33,7 @@
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
+    "jimp": "^0.22.12",
     "typescript": "~5.9.2"
   }
 }
