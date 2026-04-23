@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { FeatureCard } from '../components/FeatureCard';
 import { GuardCompliancePanel } from '../components/guard/GuardCompliancePanel';
 import { JobsScreen } from './JobsScreen';
@@ -428,6 +429,7 @@ function getSecondaryActionsHelper(
 }
 
 export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
+  const insets = useSafeAreaInsets();
   const [activeTab, setActiveTab] = useState<GuardTab>('home');
   const [quickActionModal, setQuickActionModal] = useState<QuickActionModal>(null);
   const [liveNow, setLiveNow] = useState<number>(Date.now());
@@ -1558,7 +1560,7 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
       </ScrollView>
       </View>
 
-      <View style={styles.bottomNav}>
+      <View style={[styles.bottomNav, { paddingBottom: Math.max(18, insets.bottom + 8) }]}>
         {([
           ['home', 'Home'],
           ['offers', 'Offers'],
@@ -2308,7 +2310,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.card,
     borderTopWidth: 1,
     borderTopColor: colors.border,
-    paddingBottom: 18,
     paddingTop: 8,
     paddingHorizontal: 8,
     shadowColor: colors.primaryNavy,

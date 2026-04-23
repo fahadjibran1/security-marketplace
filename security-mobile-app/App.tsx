@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { SafeAreaView, StatusBar, StyleSheet, View, Pressable, Text } from 'react-native';
+import { StatusBar, StyleSheet, View, Pressable, Text } from 'react-native';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { CompanyDashboardScreen } from './src/screens/CompanyDashboardScreen';
 import { ClientPortalScreen } from './src/screens/ClientPortalScreen';
 import { GuardDashboardScreen } from './src/screens/GuardDashboardScreen';
@@ -71,49 +72,45 @@ export default function App() {
     setSession(null);
   }
 
-  if (booting) {
-    return (
-      <SafeAreaView style={styles.safeArea}>
-        <StatusBar barStyle="dark-content" />
-        <View style={styles.loadingContainer}>
-          <Text style={styles.loadingText}>Restoring session...</Text>
-        </View>
-      </SafeAreaView>
-    );
-  }
-
-  if (!session) {
-    return (
-      <SafeAreaView style={styles.safeArea}>
-        <StatusBar barStyle="dark-content" />
-        <AuthScreen
-          onLoggedIn={handleLoggedIn}
-          noticeMessage={authNotice}
-          onDismissNotice={() => setAuthNotice(null)}
-        />
-      </SafeAreaView>
-    );
-  }
-
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <StatusBar barStyle="dark-content" />
-      <View style={styles.screenContainer}>
-        <View style={styles.topBar}>
-          <Text style={styles.topBarText}>{isCompanyAppRole(session.user.role) ? 'Company View' : isClientAppRole(session.user.role) ? 'Client Portal' : 'Guard View'}</Text>
-          <Pressable onPress={handleLogout}>
-            <Text style={styles.switchText}>Logout</Text>
-          </Pressable>
-        </View>
-        {isCompanyAppRole(session.user.role) ? (
-          <CompanyDashboardScreen user={session.user} />
-        ) : isClientAppRole(session.user.role) ? (
-          <ClientPortalScreen user={session.user} />
-        ) : (
-          <GuardDashboardScreen user={session.user} />
-        )}
-      </View>
-    </SafeAreaView>
+    <SafeAreaProvider>
+      {booting ? (
+        <SafeAreaView style={styles.safeArea} edges={['top', 'right', 'bottom', 'left']}>
+          <StatusBar barStyle="dark-content" />
+          <View style={styles.loadingContainer}>
+            <Text style={styles.loadingText}>Restoring session...</Text>
+          </View>
+        </SafeAreaView>
+      ) : !session ? (
+        <SafeAreaView style={styles.safeArea} edges={['top', 'right', 'bottom', 'left']}>
+          <StatusBar barStyle="dark-content" />
+          <AuthScreen
+            onLoggedIn={handleLoggedIn}
+            noticeMessage={authNotice}
+            onDismissNotice={() => setAuthNotice(null)}
+          />
+        </SafeAreaView>
+      ) : (
+        <SafeAreaView style={styles.safeArea} edges={['top', 'right', 'bottom', 'left']}>
+          <StatusBar barStyle="dark-content" />
+          <View style={styles.screenContainer}>
+            <View style={styles.topBar}>
+              <Text style={styles.topBarText}>{isCompanyAppRole(session.user.role) ? 'Company View' : isClientAppRole(session.user.role) ? 'Client Portal' : 'Guard View'}</Text>
+              <Pressable onPress={handleLogout}>
+                <Text style={styles.switchText}>Logout</Text>
+              </Pressable>
+            </View>
+            {isCompanyAppRole(session.user.role) ? (
+              <CompanyDashboardScreen user={session.user} />
+            ) : isClientAppRole(session.user.role) ? (
+              <ClientPortalScreen user={session.user} />
+            ) : (
+              <GuardDashboardScreen user={session.user} />
+            )}
+          </View>
+        </SafeAreaView>
+      )}
+    </SafeAreaProvider>
   );
 }
 

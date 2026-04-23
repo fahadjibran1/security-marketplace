@@ -18,6 +18,10 @@ export const colors = {
   background: '#F1F5F9',
   card: '#FFFFFF',
   border: '#E2E8F0',
+  /** Text fields on white cards (e.g. auth): clearer edge than `border` on Android. */
+  fieldBorder: '#94A3B8',
+  /** Placeholders on light field fills: darker than `textSecondary` for Android legibility. */
+  fieldPlaceholder: '#475569',
   textPrimary: '#0B1B2B',
   textSecondary: '#64748B',
 } as const;

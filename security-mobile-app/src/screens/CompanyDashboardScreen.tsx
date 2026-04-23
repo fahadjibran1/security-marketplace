@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, useWindowDimensions, View } from 'react-native';
 
 import { CompanyAuditWorkspace } from '../components/company/CompanyAuditWorkspace';
 import { CompanyAnalyticsWorkspace } from '../components/company/CompanyAnalyticsWorkspace';
@@ -47,6 +47,7 @@ import {
 } from '../services/api';
 import {
   AttendanceEvent,
+  AuthUser,
   Client,
   CompanyGuard,
   CreateClientPayload,
@@ -70,6 +71,7 @@ import {
 import { CompanySidebar } from '../components/company/CompanySidebar';
 import { Card } from '../components/ui/Card';
 import { KpiCard, KpiTone } from '../components/ui/KpiCard';
+import { colors } from '../theme';
 
 const IS_WEB = typeof document !== 'undefined';
 
@@ -1071,7 +1073,17 @@ function ControlledTimeInput({
   );
 }
 
-export function CompanyDashboardScreen() {
+type CompanyDashboardScreenProps = {
+  user?: AuthUser;
+};
+
+/** Native phones below this width show a pilot message instead of the desktop company workspace. */
+const COMPANY_NATIVE_MIN_WIDTH = 768;
+
+export function CompanyDashboardScreen(_props: CompanyDashboardScreenProps = {}) {
+  const { width: layoutWidth } = useWindowDimensions();
+  const companyMobileLayoutDisabled = !IS_WEB && layoutWidth < COMPANY_NATIVE_MIN_WIDTH;
+
   const [activeSection, setActiveSection] = React.useState<CompanySection>('dashboard');
   const [loading, setLoading] = React.useState(true);
   const [refreshing, setRefreshing] = React.useState(false);
@@ -1153,6 +1165,11 @@ export function CompanyDashboardScreen() {
   const loadData = React.useMemo(
     () =>
     async (isRefresh = false) => {
+      if (companyMobileLayoutDisabled) {
+        setLoading(false);
+        setRefreshing(false);
+        return;
+      }
       try {
         setError(null);
         if (isRefresh) {
@@ -1244,7 +1261,7 @@ export function CompanyDashboardScreen() {
         setRefreshing(false);
       }
     },
-    [activeSection, runSettledLoaders, selectedShiftId, selectedSiteId],
+    [activeSection, runSettledLoaders, selectedShiftId, selectedSiteId, companyMobileLayoutDisabled],
   );
 
   React.useEffect(() => {
@@ -1252,6 +1269,9 @@ export function CompanyDashboardScreen() {
   }, [loadData]);
 
   React.useEffect(() => {
+    if (companyMobileLayoutDisabled) {
+      return;
+    }
     if (activeSection !== 'live-operations') {
       return;
     }
@@ -1261,7 +1281,7 @@ export function CompanyDashboardScreen() {
     }, 15000);
 
     return () => clearInterval(intervalId);
-  }, [activeSection, loadData]);
+  }, [activeSection, loadData, companyMobileLayoutDisabled]);
 
   React.useEffect(() => {
     return () => {
@@ -1403,6 +1423,9 @@ export function CompanyDashboardScreen() {
   }, [dailyLogs]);
 
   React.useEffect(() => {
+    if (companyMobileLayoutDisabled) {
+      return;
+    }
     if (activeSection !== 'live-operations') {
       return;
     }
@@ -1463,7 +1486,7 @@ export function CompanyDashboardScreen() {
     return () => {
       cancelled = true;
     };
-  }, [activeSection, attendanceByShiftId, autoMarkingMissedShiftIds, loadData, shifts]);
+  }, [activeSection, attendanceByShiftId, autoMarkingMissedShiftIds, companyMobileLayoutDisabled, loadData, shifts]);
 
   const activeClients = React.useMemo(
     () => clients.filter((client) => (client.status || 'active').toLowerCase() !== 'archived'),
@@ -4788,6 +4811,17 @@ export function CompanyDashboardScreen() {
     }
   };
 
+  if (companyMobileLayoutDisabled) {
+    return (
+      <View style={styles.companyMobileFallback}>
+        <Text style={styles.companyMobileFallbackTitle}>Company operations</Text>
+        <Text style={styles.companyMobileFallbackBody}>
+          The company dashboard is designed for tablet or desktop screens. For pilot testing, please open this app in a web browser on a larger display, or use a device at least {COMPANY_NATIVE_MIN_WIDTH}dp wide. Log out here if you need to switch accounts.
+        </Text>
+      </View>
+    );
+  }
+
   if (loading) {
     return (
       <View style={styles.loadingShell}>
@@ -6237,6 +6271,24 @@ const styles = StyleSheet.create({
   },
   feedbackTextError: {
     color: '#7f1d1d',
+  },
+  companyMobileFallback: {
+    flex: 1,
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+    paddingVertical: 32,
+    backgroundColor: colors.background,
+    gap: 16,
+  },
+  companyMobileFallbackTitle: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: colors.textPrimary,
+  },
+  companyMobileFallbackBody: {
+    fontSize: 16,
+    lineHeight: 24,
+    color: colors.textSecondary,
   },
   loadingShell: {
     flex: 1,
