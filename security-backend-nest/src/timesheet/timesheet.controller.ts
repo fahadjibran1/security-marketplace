@@ -23,6 +23,9 @@ export class TimesheetController {
   @Get('company')
   @Roles(UserRole.ADMIN, ...COMPANY_VIEW_ROLES)
   findForCompany(@CurrentUser() user: JwtPayload) {
+    if (user.role === UserRole.ADMIN) {
+      return this.timesheetService.findAll();
+    }
     return this.timesheetService.findForCompany(user.sub);
   }
 
