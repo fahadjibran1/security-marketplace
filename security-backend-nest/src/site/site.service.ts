@@ -30,6 +30,16 @@ export class SiteService {
     return site;
   }
 
+  async findVerificationConfig(id: number): Promise<Site> {
+    const site = await this.siteRepo
+      .createQueryBuilder('site')
+      .addSelect('site.attendanceNfcTag')
+      .where('site.id = :id', { id })
+      .getOne();
+    if (!site) throw new NotFoundException('Site not found');
+    return site;
+  }
+
   async findOneForCompanyUser(userId: number, id: number): Promise<Site> {
     const company = await this.companyService.findByUserId(userId);
     if (!company) throw new NotFoundException('Company not found');
@@ -54,10 +64,9 @@ export class SiteService {
   async createForCompanyUser(userId: number, dto: CreateSiteDto): Promise<Site> {
     const company = await this.companyService.findByUserId(userId);
     if (!company) throw new NotFoundException('Company not found');
-    if (!dto.clientId) {
-      throw new BadRequestException('Site creation requires a clientId');
-    }
+    if (!dto.clientId) throw new BadRequestException('Site creation requires a clientId');
 
+    this.validateVerificationSettings(dto);
     const client = await this.clientService.findOneForCompanyUser(userId, dto.clientId);
 
     const site = new Site();
@@ -74,6 +83,12 @@ export class SiteService {
     site.operatingEndTime = dto.operatingEndTime?.trim() || null;
     site.welfareCheckIntervalMinutes = dto.welfareCheckIntervalMinutes ?? 60;
     site.specialInstructions = dto.specialInstructions?.trim() || null;
+    site.latitude = dto.latitude ?? null;
+    site.longitude = dto.longitude ?? null;
+    site.geofenceRadiusMeters = dto.geofenceRadiusMeters ?? 150;
+    site.requireGpsCheckIn = dto.requireGpsCheckIn ?? false;
+    site.attendanceNfcTag = dto.attendanceNfcTag?.trim() || null;
+    site.requireNfcCheckIn = dto.requireNfcCheckIn ?? false;
 
     const saved = await this.siteRepo.save(site);
     if (dto.initialShiftDate?.trim() && dto.initialShiftStartTime?.trim()) {
@@ -103,6 +118,9 @@ export class SiteService {
         operatingStartTime: saved.operatingStartTime,
         operatingEndTime: saved.operatingEndTime,
         welfareCheckIntervalMinutes: saved.welfareCheckIntervalMinutes,
+        requireGpsCheckIn: saved.requireGpsCheckIn,
+        geofenceRadiusMeters: saved.geofenceRadiusMeters,
+        requireNfcCheckIn: saved.requireNfcCheckIn,
       },
     });
     return saved;
@@ -112,10 +130,22 @@ export class SiteService {
     const company = await this.companyService.findByUserId(userId);
     if (!company) throw new NotFoundException('Company not found');
 
-    const site = await this.siteRepo.findOne({
-      where: { id, company: { id: company.id } },
-    });
+    const site = await this.siteRepo
+      .createQueryBuilder('site')
+      .addSelect('site.attendanceNfcTag')
+      .where('site.id = :id', { id })
+      .andWhere('site.companyId = :companyId', { companyId: company.id })
+      .getOne();
     if (!site) throw new NotFoundException('Site not found');
+
+    const nextConfig = {
+      latitude: dto.latitude !== undefined ? dto.latitude : site.latitude,
+      longitude: dto.longitude !== undefined ? dto.longitude : site.longitude,
+      requireGpsCheckIn: dto.requireGpsCheckIn !== undefined ? dto.requireGpsCheckIn : site.requireGpsCheckIn,
+      attendanceNfcTag: dto.attendanceNfcTag !== undefined ? dto.attendanceNfcTag : site.attendanceNfcTag,
+      requireNfcCheckIn: dto.requireNfcCheckIn !== undefined ? dto.requireNfcCheckIn : site.requireNfcCheckIn,
+    };
+    this.validateVerificationSettings(nextConfig);
 
     const beforeData = {
       name: site.name,
@@ -130,6 +160,11 @@ export class SiteService {
       operatingEndTime: site.operatingEndTime,
       welfareCheckIntervalMinutes: site.welfareCheckIntervalMinutes,
       specialInstructions: site.specialInstructions,
+      latitude: site.latitude,
+      longitude: site.longitude,
+      geofenceRadiusMeters: site.geofenceRadiusMeters,
+      requireGpsCheckIn: site.requireGpsCheckIn,
+      requireNfcCheckIn: site.requireNfcCheckIn,
     };
 
     const client =
@@ -144,21 +179,13 @@ export class SiteService {
     site.name = dto.name?.trim() ?? site.name;
     site.clientName = client?.name ?? site.clientName ?? undefined;
     site.address = dto.address?.trim() ?? site.address;
-    if (dto.contactDetails !== undefined) {
-      site.contactDetails = dto.contactDetails?.trim() || undefined;
-    }
-    if (dto.operatingDays !== undefined) {
-      site.operatingDays = dto.operatingDays?.trim() || null;
-    }
-    if (dto.operatingStartTime !== undefined) {
-      site.operatingStartTime = dto.operatingStartTime?.trim() || null;
-    }
-    if (dto.operatingEndTime !== undefined) {
-      site.operatingEndTime = dto.operatingEndTime?.trim() || null;
-    }
-    if (dto.specialInstructions !== undefined) {
-      site.specialInstructions = dto.specialInstructions?.trim() || null;
-    }
+    if (dto.contactDetails !== undefined) site.contactDetails = dto.contactDetails?.trim() || undefined;
+    if (dto.operatingDays !== undefined) site.operatingDays = dto.operatingDays?.trim() || null;
+    if (dto.operatingStartTime !== undefined) site.operatingStartTime = dto.operatingStartTime?.trim() || null;
+    if (dto.operatingEndTime !== undefined) site.operatingEndTime = dto.operatingEndTime?.trim() || null;
+    if (dto.specialInstructions !== undefined) site.specialInstructions = dto.specialInstructions?.trim() || null;
+    if (dto.attendanceNfcTag !== undefined) site.attendanceNfcTag = dto.attendanceNfcTag?.trim() || null;
+
     const saved = await this.siteRepo.save(site);
     await this.auditLogService.log({
       company,
@@ -180,8 +207,28 @@ export class SiteService {
         operatingEndTime: saved.operatingEndTime,
         welfareCheckIntervalMinutes: saved.welfareCheckIntervalMinutes,
         specialInstructions: saved.specialInstructions,
+        latitude: saved.latitude,
+        longitude: saved.longitude,
+        geofenceRadiusMeters: saved.geofenceRadiusMeters,
+        requireGpsCheckIn: saved.requireGpsCheckIn,
+        requireNfcCheckIn: saved.requireNfcCheckIn,
       },
     });
     return saved;
+  }
+
+  private validateVerificationSettings(input: {
+    latitude?: number | null;
+    longitude?: number | null;
+    requireGpsCheckIn?: boolean;
+    attendanceNfcTag?: string | null;
+    requireNfcCheckIn?: boolean;
+  }) {
+    if (input.requireGpsCheckIn && (input.latitude == null || input.longitude == null)) {
+      throw new BadRequestException('GPS check-in requires site latitude and longitude');
+    }
+    if (input.requireNfcCheckIn && !input.attendanceNfcTag?.trim()) {
+      throw new BadRequestException('NFC check-in requires an attendance NFC tag');
+    }
   }
 }
