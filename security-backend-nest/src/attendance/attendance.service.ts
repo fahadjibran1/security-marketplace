@@ -128,8 +128,16 @@ export class AttendanceService {
       await this.assignmentService.save(shift.assignment);
     }
 
-    const hoursWorked = Math.max(0, (savedEvent.occurredAt.getTime() - latest.occurredAt.getTime()) / 3600000);
-    await this.timesheetService.updateHoursForShift(shift.id, Number(hoursWorked.toFixed(2)));
+    // RB-007: verifiedMinutes is the attendance-verified duration — the elapsed time
+    // between the two server-timestamped attendance events. This becomes the payroll
+    // default; hoursWorked/workedMinutes remain the guard-facing claimed values.
+    const verifiedMs = Math.max(0, savedEvent.occurredAt.getTime() - latest.occurredAt.getTime());
+    const verifiedMinutes = Math.round(verifiedMs / 60000);
+    const hoursWorked = verifiedMinutes / 60;
+    await this.timesheetService.updateHoursForShift(shift.id, {
+      hoursWorked: Number(hoursWorked.toFixed(2)),
+      verifiedMinutes,
+    });
     return savedEvent;
   }
 

@@ -301,16 +301,16 @@ export class PayrollBatchService {
     return null;
   }
 
+  // RB-007: payroll totals derive from approvedMinutes (attendance-verified,
+  // manager-approved), never hoursWorked (the guard's unverified claim). The
+  // approvedHoursSnapshot check preserves the frozen amount for timesheets
+  // already attached to a batch.
   private getApprovedHours(timesheet: Timesheet) {
     if (timesheet.approvedHoursSnapshot !== undefined && timesheet.approvedHoursSnapshot !== null && Number.isFinite(Number(timesheet.approvedHoursSnapshot))) {
       return Number(timesheet.approvedHoursSnapshot);
     }
-    if (timesheet.approvedHours !== undefined && timesheet.approvedHours !== null && Number.isFinite(Number(timesheet.approvedHours))) {
-      return Number(timesheet.approvedHours);
-    }
-
-    if (String(timesheet.approvalStatus).trim().toLowerCase() === TimesheetStatus.APPROVED) {
-      return Number(timesheet.hoursWorked) || 0;
+    if (timesheet.approvedMinutes !== undefined && timesheet.approvedMinutes !== null && Number.isFinite(Number(timesheet.approvedMinutes))) {
+      return Number(timesheet.approvedMinutes) / 60;
     }
 
     return 0;

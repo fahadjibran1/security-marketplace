@@ -156,6 +156,26 @@ export class Timesheet {
   @Column({ type: 'text', nullable: true })
   rejectionReason?: string | null;
 
+  // RB-007: server-computed duration between verified CHECK_IN/CHECK_OUT
+  // attendance events (attendance.service.ts). Never guard- or company-editable.
+  @Column({ type: 'int', nullable: true })
+  verifiedMinutes?: number | null;
+
+  // RB-007: the payroll-authoritative duration. Defaults to verifiedMinutes on
+  // manager approval; only differs when overrideReason/overrideBy/overrideAt
+  // are also set. Payroll calculations must read this, never hoursWorked.
+  @Column({ type: 'int', nullable: true })
+  approvedMinutes?: number | null;
+
+  @Column({ type: 'text', nullable: true })
+  overrideReason?: string | null;
+
+  @Column({ type: 'int', nullable: true })
+  overrideBy?: number | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  overrideAt?: Date | null;
+
   @CreateDateColumn()
   createdAt!: Date;
 

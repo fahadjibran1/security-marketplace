@@ -12,7 +12,11 @@ import { CompanyController } from '../src/company/company.controller';
 import { CompanyService } from '../src/company/company.service';
 import { CompanyStatus } from '../src/company/entities/company.entity';
 import { GuardApprovalStatus } from '../src/guard-profile/entities/guard-profile.entity';
+import { PayRuleService } from '../src/pay-rule/pay-rule.service';
+import { PayrollBatchService } from '../src/payroll-batch/payroll-batch.service';
 import { Site } from '../src/site/entities/site.entity';
+import { TimesheetService } from '../src/timesheet/timesheet.service';
+import { TimesheetStatus } from '../src/timesheet/entities/timesheet.entity';
 import { User, UserRole, UserStatus } from '../src/user/entities/user.entity';
 
 type Calls = {
@@ -242,6 +246,292 @@ async function testCompanyFindByUserIdNeverResolvesAnotherTenant() {
   ok(resolvedForUserA?.id !== resolvedForUserB?.id, "Company A's session must never resolve Company B's record");
 }
 
+// RB-007: fake TimesheetService dependencies. findOne()/save() model a real ORM
+// round trip — findOne() returns a deep clone so mutating the returned entity
+// (as the service does in place) never silently "persists" without save().
+function buildTimesheetHarness(seedTimesheets: any[]) {
+  const store = new Map<number, any>(seedTimesheets.map((timesheet) => [timesheet.id, timesheet]));
+  const auditLogs: any[] = [];
+  const notifications: any[] = [];
+
+  const timesheetRepo = {
+    findOne: async ({ where }: any) => {
+      const timesheet = store.get(where.id);
+      if (!timesheet) return null;
+      if (where.company && timesheet.company?.id !== where.company.id) return null;
+      if (where.shift && timesheet.shift?.id !== where.shift.id) return null;
+      return structuredClone(timesheet);
+    },
+    save: async (entity: any) => {
+      if (Array.isArray(entity)) {
+        entity.forEach((item) => store.set(item.id, structuredClone(item)));
+        return entity;
+      }
+      store.set(entity.id, structuredClone(entity));
+      return entity;
+    },
+  };
+
+  const companyService = { findByUserId: async (userId: number) => (userId === 501 ? { id: 501, name: 'Test Co' } : null) };
+  const guardProfileService = { findByUserId: async (userId: number) => (userId === 301 ? { id: 301 } : null) };
+  const contractPricingService = { applyFinancials: async (x: any) => x };
+  const payRuleService = { applyPayCalculations: async (x: any) => x };
+  const notificationService = { createForUser: async (input: any) => { notifications.push(input); } };
+  const auditLogService = { log: async (input: any) => { auditLogs.push(input); return input; } };
+
+  const service = new TimesheetService(
+    timesheetRepo as any,
+    companyService as any,
+    contractPricingService as any,
+    guardProfileService as any,
+    auditLogService as any,
+    notificationService as any,
+    payRuleService as any,
+  );
+
+  return { service, store, auditLogs, notifications };
+}
+
+function buildSubmittedTimesheet(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 1,
+    company: { id: 501 },
+    guard: { id: 301, user: { id: 9001 } },
+    shift: { id: 701 },
+    hoursWorked: 8,
+    approvalStatus: TimesheetStatus.SUBMITTED,
+    scheduledStartAt: null,
+    scheduledEndAt: null,
+    actualCheckInAt: null,
+    actualCheckOutAt: null,
+    guardNote: null,
+    companyNote: null,
+    approvedHours: null,
+    approvedHoursSnapshot: null,
+    hourlyRateSnapshot: null,
+    payableHoursSnapshot: null,
+    payableAmountSnapshot: null,
+    billingRateSnapshot: null,
+    payrollStatus: 'unpaid',
+    payrollIncludedAt: null,
+    payrollPaidAt: null,
+    payrollBatch: null,
+    billingStatus: 'uninvoiced',
+    invoiceIssuedAt: null,
+    invoicePaidAt: null,
+    invoiceBatch: null,
+    workedMinutes: 480,
+    breakMinutes: 0,
+    roundedMinutes: 480,
+    submittedAt: new Date('2026-01-01T00:00:00Z'),
+    reviewedAt: null,
+    reviewedByUserId: null,
+    rejectionReason: null,
+    verifiedMinutes: null,
+    approvedMinutes: null,
+    overrideReason: null,
+    overrideBy: null,
+    overrideAt: null,
+    createdAt: new Date('2026-01-01T00:00:00Z'),
+    updatedAt: new Date('2026-01-01T00:00:00Z'),
+    ...overrides,
+  };
+}
+
+// ✓ Normal attendance: manager approves with no override input, approvedMinutes
+// must default to the attendance-verified duration, not the guard's claimed hoursWorked.
+async function testNormalAttendanceApprovalDefaultsToVerifiedMinutes() {
+  const timesheet = buildSubmittedTimesheet({ id: 1, hoursWorked: 8, verifiedMinutes: 235 });
+  const { service, auditLogs } = buildTimesheetHarness([timesheet]);
+
+  const result = await service.updateForCompany(501, 1, { approvalStatus: TimesheetStatus.APPROVED } as any);
+
+  equal(result.approvedMinutes, 235, 'approvedMinutes must default to verifiedMinutes, not hoursWorked (480)');
+  equal(result.approvedHours, 3.92, 'approvedHours must be derived from verifiedMinutes (235/60)');
+  equal(result.overrideReason, null, 'No override reason expected when using the verified default');
+  equal(result.overrideBy, null, 'No override actor expected when using the verified default');
+  equal(result.overrideAt, null, 'No override timestamp expected when using the verified default');
+  ok(
+    !auditLogs.some((entry) => entry.action === 'timesheet.approved_duration_overridden'),
+    'A non-override approval must not emit an override audit entry',
+  );
+}
+
+// ✓ Override: manager approves a different duration than verified, with a reason.
+async function testManagerOverrideRequiresReasonAndRecordsAudit() {
+  const timesheet = buildSubmittedTimesheet({ id: 2, hoursWorked: 8, verifiedMinutes: 235 });
+  const { service, auditLogs } = buildTimesheetHarness([timesheet]);
+
+  const result = await service.updateForCompany(501, 2, {
+    approvalStatus: TimesheetStatus.APPROVED,
+    approvedMinutes: 300,
+    overrideReason: 'Guard stayed late per site supervisor confirmation',
+  } as any);
+
+  equal(result.approvedMinutes, 300, 'approvedMinutes must reflect the manager override, not verifiedMinutes');
+  equal(result.overrideReason, 'Guard stayed late per site supervisor confirmation');
+  equal(result.overrideBy, 501, 'overrideBy must be the server-derived reviewer id, never client-supplied');
+  ok(result.overrideAt instanceof Date, 'overrideAt must be a server-derived timestamp');
+
+  const overrideEntry = auditLogs.find((entry) => entry.action === 'timesheet.approved_duration_overridden');
+  ok(overrideEntry, 'An override must emit a dedicated audit log entry');
+  equal(overrideEntry.afterData.approvedMinutes, 300);
+  equal(overrideEntry.afterData.overrideReason, 'Guard stayed late per site supervisor confirmation');
+  equal(overrideEntry.beforeData.verifiedMinutes, 235);
+}
+
+// ✓ Missing reason: overriding without a reason must be rejected, and nothing persisted.
+async function testApprovalWithoutOverrideReasonIsRejected() {
+  const timesheet = buildSubmittedTimesheet({ id: 3, hoursWorked: 8, verifiedMinutes: 235 });
+  const { service, store } = buildTimesheetHarness([timesheet]);
+
+  await expectBadRequest(() =>
+    service.updateForCompany(501, 3, { approvalStatus: TimesheetStatus.APPROVED, approvedMinutes: 300 } as any),
+  );
+
+  const persisted = store.get(3);
+  equal(persisted.approvalStatus, TimesheetStatus.SUBMITTED, 'Rejected override attempt must not change approval status');
+  equal(persisted.approvedMinutes, null, 'Rejected override attempt must not persist approvedMinutes');
+
+  // Also reject when there is no verified duration at all and no override is supplied.
+  const noAttendance = buildSubmittedTimesheet({ id: 4, hoursWorked: 8, verifiedMinutes: null });
+  const harness2 = buildTimesheetHarness([noAttendance]);
+  await expectBadRequest(() =>
+    harness2.service.updateForCompany(501, 4, { approvalStatus: TimesheetStatus.APPROVED } as any),
+  );
+}
+
+// ✓ Payroll totals (1/2): PayRuleService must compute pay from approvedMinutes, ignoring
+// an inflated hoursWorked claim.
+async function testPayRuleServiceUsesApprovedMinutesNotHoursWorked() {
+  const configRepo = { findOne: async () => null };
+  const companyService = { findByUserId: async () => null };
+  const payRuleService = new PayRuleService(configRepo as any, companyService as any);
+
+  const timesheet: any = {
+    approvalStatus: TimesheetStatus.APPROVED,
+    hoursWorked: 999,
+    approvedHoursSnapshot: null,
+    approvedMinutes: 235,
+    hourlyRateSnapshot: 20,
+    company: { id: 501 },
+    shift: {},
+  };
+
+  const result = payRuleService.calculatePay(timesheet, null);
+
+  equal(result.baseHours, 3.92, 'PayRuleService must use approvedMinutes/60 (3.92h), not the claimed hoursWorked (999h)');
+  equal(result.payableHours, 3.92);
+  equal(result.payableAmount, 78.4, 'payableAmount must be 3.92h * £20/h, not 999h * £20/h');
+}
+
+// ✓ Payroll totals (2/2): payroll batch creation snapshots approvedMinutes-derived
+// hours, not hoursWorked.
+async function testPayrollBatchSnapshotUsesApprovedMinutesNotHoursWorked() {
+  const timesheet = {
+    id: 10,
+    company: { id: 501 },
+    approvalStatus: TimesheetStatus.APPROVED,
+    payrollStatus: 'unpaid',
+    payrollBatch: null,
+    payrollIncludedAt: null,
+    payrollPaidAt: null,
+    hoursWorked: 999,
+    approvedMinutes: 235,
+    approvedHoursSnapshot: null,
+    hourlyRateSnapshot: 20,
+    payableHoursSnapshot: null,
+    payableAmountSnapshot: null,
+    shift: {},
+  };
+
+  const timesheetStore = new Map<number, any>([[10, timesheet]]);
+  const timesheetRepo = {
+    find: async ({ where }: any) => {
+      const ids = (Array.isArray(where) ? where : [where]).map((clause: any) => clause.id);
+      return Array.from(timesheetStore.values()).filter((t) => ids.includes(t.id));
+    },
+    save: async (entities: any[]) => {
+      entities.forEach((entity) => timesheetStore.set(entity.id, entity));
+      return entities;
+    },
+  };
+
+  let savedBatch: any = null;
+  const payrollBatchRepo = {
+    create: (input: any) => ({ id: 900, timesheets: [], ...input }),
+    save: async (batch: any) => {
+      savedBatch = batch;
+      return batch;
+    },
+    findOne: async () => ({ ...savedBatch, timesheets: Array.from(timesheetStore.values()) }),
+  };
+
+  const companyService = { findByUserId: async () => ({ id: 501 }) };
+  const auditLogService = { log: async () => undefined };
+  const configRepo = { findOne: async () => null };
+  const payRuleService = new PayRuleService(configRepo as any, companyService as any);
+
+  const service = new PayrollBatchService(
+    payrollBatchRepo as any,
+    timesheetRepo as any,
+    companyService as any,
+    auditLogService as any,
+    payRuleService as any,
+  );
+
+  const batch = await service.createForCompany(501, {
+    periodStart: '2026-01-01',
+    periodEnd: '2026-01-07',
+    timesheetIds: [10],
+  } as any);
+
+  equal(batch.totals.approvedHours, 3.92, 'Payroll batch totals must derive from approvedMinutes (3.92h), not hoursWorked (999h)');
+}
+
+// ✓ Existing behaviour preserved: guards can still self-edit their claimed hours, but
+// the approval-duration fields remain out of their reach even if smuggled into the DTO;
+// reject/return still clear approval-duration state as before.
+async function testExistingBehaviourPreserved() {
+  const timesheet = buildSubmittedTimesheet({
+    id: 5,
+    approvalStatus: TimesheetStatus.DRAFT,
+    approvedMinutes: null,
+    verifiedMinutes: 235,
+  });
+  const { service } = buildTimesheetHarness([timesheet]);
+
+  // Guard-editable whitelist: hoursWorked passes through, approvedMinutes/verifiedMinutes do not.
+  (service as any).applyGuardEditableUpdates(timesheet, {
+    hoursWorked: 5,
+    approvedMinutes: 999,
+    verifiedMinutes: 999,
+  });
+  equal(timesheet.hoursWorked, 5, 'Guard must still be able to edit their claimed hoursWorked');
+  equal(timesheet.approvedMinutes, null, 'Guard-editable path must not be able to set approvedMinutes');
+  equal(timesheet.verifiedMinutes, 235, 'Guard-editable path must not be able to overwrite verifiedMinutes');
+
+  // Reject flow still requires a reason and clears approval-duration state, as before.
+  const approvedTimesheet = buildSubmittedTimesheet({
+    id: 6,
+    approvedMinutes: 235,
+    overrideReason: null,
+    overrideBy: null,
+    overrideAt: null,
+  });
+  const harness2 = buildTimesheetHarness([approvedTimesheet]);
+  await expectBadRequest(() =>
+    harness2.service.updateForCompany(501, 6, { approvalStatus: TimesheetStatus.REJECTED } as any),
+  );
+
+  const rejected = await harness2.service.updateForCompany(501, 6, {
+    approvalStatus: TimesheetStatus.REJECTED,
+    rejectionReason: 'Duplicate submission',
+  } as any);
+  equal(rejected.approvedMinutes, null, 'Rejecting a timesheet must clear approvedMinutes as before');
+  equal(rejected.approvalStatus, TimesheetStatus.REJECTED);
+}
+
 async function main() {
   await testPrivilegedRoleCannotSelfRegister();
   await testInvalidGuardPayloadHasNoSideEffects();
@@ -250,6 +540,12 @@ async function main() {
   await testCompanySideRolesCannotEnumerateOrFetchAnyCompany();
   await testPlatformAdminRetainsCompanyDirectoryAccess();
   await testCompanyFindByUserIdNeverResolvesAnotherTenant();
+  await testNormalAttendanceApprovalDefaultsToVerifiedMinutes();
+  await testManagerOverrideRequiresReasonAndRecordsAudit();
+  await testApprovalWithoutOverrideReasonIsRejected();
+  await testPayRuleServiceUsesApprovedMinutesNotHoursWorked();
+  await testPayrollBatchSnapshotUsesApprovedMinutesNotHoursWorked();
+  await testExistingBehaviourPreserved();
   assertColumnExcluded(User, 'passwordHash', 'User.passwordHash');
   assertColumnExcluded(ClientPortalUser, 'passwordHash', 'ClientPortalUser.passwordHash');
   assertColumnExcluded(Site, 'attendanceNfcTag', 'Site.attendanceNfcTag');
@@ -258,8 +554,9 @@ async function main() {
   console.log(
     JSON.stringify({
       event: 'release_smoke_passed',
-      tests: 11,
-      scope: 'auth-registration-credential-attendance-secret-exposure-and-RB006-tenant-isolation',
+      tests: 17,
+      scope:
+        'auth-registration-credential-attendance-secret-exposure-RB006-tenant-isolation-and-RB007-payroll-integrity',
     }),
   );
 }

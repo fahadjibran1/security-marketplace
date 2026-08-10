@@ -3,7 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
 import { CompanyService } from '../company/company.service';
-import { Timesheet, TimesheetStatus } from '../timesheet/entities/timesheet.entity';
+import { Timesheet } from '../timesheet/entities/timesheet.entity';
 import { UpsertPayRuleConfigDto } from './dto/upsert-pay-rule-config.dto';
 import { PayRuleConfig } from './entities/pay-rule-config.entity';
 
@@ -226,15 +226,17 @@ export class PayRuleService {
     };
   }
 
+  // RB-007: payroll reads approvedMinutes — the attendance-verified, manager-approved
+  // duration — never hoursWorked (the guard's unverified self-reported claim).
+  // approvedHoursSnapshot is a frozen-at-batch-creation value (see payroll-batch.service.ts)
+  // that takes priority once a timesheet has been included in a payroll batch, so a
+  // later correction to approvedMinutes doesn't silently change an already-batched amount.
   private getApprovedHours(timesheet: Timesheet) {
     const snapshot = this.toNumber(timesheet.approvedHoursSnapshot);
     if (snapshot !== null) return snapshot;
-    const approved = this.toNumber(timesheet.approvedHours);
-    if (approved !== null) return approved;
-    if (String(timesheet.approvalStatus).trim().toLowerCase() === TimesheetStatus.APPROVED) {
-      return this.toNumber(timesheet.hoursWorked) ?? 0;
-    }
-    return this.toNumber(timesheet.hoursWorked) ?? 0;
+    const approvedMinutes = this.toNumber(timesheet.approvedMinutes);
+    if (approvedMinutes !== null) return approvedMinutes / 60;
+    return 0;
   }
 
   private getHourlyRate(timesheet: Timesheet) {

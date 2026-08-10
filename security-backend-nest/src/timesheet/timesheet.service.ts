@@ -148,6 +148,8 @@ export class TimesheetService {
       dto.companyNote !== undefined &&
       dto.approvalStatus === undefined &&
       dto.approvedHours === undefined &&
+      dto.approvedMinutes === undefined &&
+      dto.overrideReason === undefined &&
       dto.rejectionReason === undefined;
     if (approvedNoteOnlyUpdate) {
       const trimmedCompanyNote = dto.companyNote?.trim();
@@ -174,13 +176,12 @@ export class TimesheetService {
 
     this.validateCompanyReviewRequest(timesheet, dto);
     this.applyTimesheetUpdates(timesheet, dto);
-    this.validateCompanyReviewUpdate(timesheet, dto);
+
+    let overrideApplied = false;
     if (dto.approvalStatus === TimesheetStatus.APPROVED) {
       timesheet.reviewedAt = new Date();
       timesheet.reviewedByUserId = userId;
-      if (timesheet.approvedHours === undefined || timesheet.approvedHours === null) {
-        timesheet.approvedHours = Number(timesheet.hoursWorked);
-      }
+      overrideApplied = this.applyApprovalDuration(timesheet, dto, userId);
       if (!timesheet.payrollStatus) {
         timesheet.payrollStatus = TimesheetPayrollStatus.UNPAID;
       }
@@ -191,7 +192,7 @@ export class TimesheetService {
     } else if (dto.approvalStatus === TimesheetStatus.REJECTED) {
       timesheet.reviewedAt = new Date();
       timesheet.reviewedByUserId = userId;
-      timesheet.approvedHours = null;
+      this.clearApprovalDuration(timesheet);
       timesheet.payrollStatus = TimesheetPayrollStatus.UNPAID;
       timesheet.payrollIncludedAt = null;
       timesheet.payrollPaidAt = null;
@@ -202,7 +203,7 @@ export class TimesheetService {
     } else if (dto.approvalStatus === TimesheetStatus.RETURNED) {
       timesheet.reviewedAt = new Date();
       timesheet.reviewedByUserId = userId;
-      timesheet.approvedHours = null;
+      this.clearApprovalDuration(timesheet);
       timesheet.payrollStatus = TimesheetPayrollStatus.UNPAID;
       timesheet.payrollIncludedAt = null;
       timesheet.payrollPaidAt = null;
@@ -229,12 +230,34 @@ export class TimesheetService {
       afterData: {
         approvalStatus: saved.approvalStatus,
         approvedHours: saved.approvedHours,
+        verifiedMinutes: saved.verifiedMinutes,
+        approvedMinutes: saved.approvedMinutes,
+        overrideReason: saved.overrideReason,
+        overrideBy: saved.overrideBy,
+        overrideAt: saved.overrideAt,
         companyNote: saved.companyNote,
         rejectionReason: saved.rejectionReason,
         reviewedAt: saved.reviewedAt,
         reviewedByUserId: saved.reviewedByUserId,
       },
     });
+
+    if (overrideApplied) {
+      await this.auditLogService.log({
+        company,
+        user: { id: userId },
+        action: 'timesheet.approved_duration_overridden',
+        entityType: 'timesheet',
+        entityId: saved.id,
+        beforeData: { verifiedMinutes: saved.verifiedMinutes },
+        afterData: {
+          approvedMinutes: saved.approvedMinutes,
+          overrideReason: saved.overrideReason,
+          overrideBy: saved.overrideBy,
+          overrideAt: saved.overrideAt,
+        },
+      });
+    }
 
     if (saved.guard?.user?.id) {
       const isApproved = saved.approvalStatus === TimesheetStatus.APPROVED;
@@ -261,14 +284,22 @@ export class TimesheetService {
     return this.applyDerivedFinancials(saved);
   }
 
-  async updateHoursForShift(shiftId: number, hoursWorked: number): Promise<Timesheet> {
+  // RB-007: called only from attendance.service.ts checkOut(), once both the
+  // CHECK_IN and CHECK_OUT events have real server timestamps. verifiedMinutes
+  // is the attendance-verified duration and is never guard- or company-editable
+  // (it's not part of applyGuardEditableUpdates or the company review DTO path).
+  async updateHoursForShift(
+    shiftId: number,
+    input: { hoursWorked: number; verifiedMinutes: number },
+  ): Promise<Timesheet> {
     const timesheet = await this.timesheetRepo.findOne({ where: { shift: { id: shiftId } } });
     if (!timesheet) throw new NotFoundException('Timesheet not found');
 
-    const workedMinutes = Math.max(0, Math.round(hoursWorked * 60));
-    timesheet.hoursWorked = hoursWorked;
+    const workedMinutes = Math.max(0, Math.round(input.hoursWorked * 60));
+    timesheet.hoursWorked = input.hoursWorked;
     timesheet.workedMinutes = workedMinutes;
     timesheet.roundedMinutes = workedMinutes;
+    timesheet.verifiedMinutes = Math.max(0, Math.round(input.verifiedMinutes));
     timesheet.actualCheckInAt = timesheet.shift.assignment?.checkedInAt ?? timesheet.actualCheckInAt ?? null;
     timesheet.actualCheckOutAt = timesheet.shift.assignment?.checkedOutAt ?? timesheet.actualCheckOutAt ?? null;
     const saved = await this.timesheetRepo.save(timesheet);
@@ -286,7 +317,7 @@ export class TimesheetService {
     this.applyGuardEditableUpdates(timesheet, dto);
     timesheet.approvalStatus = TimesheetStatus.SUBMITTED;
     timesheet.submittedAt = new Date();
-    timesheet.approvedHours = null;
+    this.clearApprovalDuration(timesheet);
     timesheet.payrollStatus = TimesheetPayrollStatus.UNPAID;
     timesheet.payrollIncludedAt = null;
     timesheet.payrollPaidAt = null;
@@ -367,9 +398,10 @@ export class TimesheetService {
       const trimmedCompanyNote = dto.companyNote?.trim();
       timesheet.companyNote = trimmedCompanyNote ? trimmedCompanyNote : null;
     }
-    if (dto.approvedHours !== undefined) {
-      timesheet.approvedHours = dto.approvedHours;
-    }
+    // RB-007: approvedHours/approvedMinutes are deliberately NOT set here. They are
+    // payroll-authoritative and can only change via applyApprovalDuration(), which
+    // enforces the verified-attendance-default + override-reason gate. A raw
+    // dto.approvedHours passthrough would let a reviewer bypass that gate entirely.
     if (dto.workedMinutes !== undefined) timesheet.workedMinutes = dto.workedMinutes;
     if (dto.breakMinutes !== undefined) timesheet.breakMinutes = dto.breakMinutes;
     if (dto.roundedMinutes !== undefined) timesheet.roundedMinutes = dto.roundedMinutes;
@@ -390,6 +422,73 @@ export class TimesheetService {
       breakMinutes: dto.breakMinutes,
       roundedMinutes: dto.roundedMinutes,
     });
+  }
+
+  // RB-007: sets the payroll-authoritative approvedMinutes on approval.
+  // Defaults to the attendance-verified duration (timesheet.verifiedMinutes).
+  // A reviewer may request a different duration (via dto.approvedMinutes, or
+  // legacy dto.approvedHours converted to minutes), but that is an override:
+  // it requires a non-empty overrideReason, and overrideBy/overrideAt are
+  // always server-derived (never accepted from the client). Returns true if
+  // an override was applied, so the caller can emit a dedicated audit entry.
+  private applyApprovalDuration(timesheet: Timesheet, dto: UpdateTimesheetDto, userId: number): boolean {
+    const verifiedMinutes =
+      timesheet.verifiedMinutes === undefined || timesheet.verifiedMinutes === null
+        ? null
+        : Math.round(Number(timesheet.verifiedMinutes));
+
+    const requestedMinutes = this.resolveRequestedApprovedMinutes(dto, verifiedMinutes);
+
+    if (requestedMinutes === null) {
+      throw new BadRequestException(
+        'No verified attendance duration is available for this shift. Provide approvedMinutes and an overrideReason to approve it.',
+      );
+    }
+
+    if (!Number.isFinite(requestedMinutes) || requestedMinutes < 0) {
+      throw new BadRequestException('Approved minutes must be 0 or more.');
+    }
+
+    const isOverride = verifiedMinutes === null || requestedMinutes !== verifiedMinutes;
+
+    if (isOverride) {
+      const overrideReason = dto.overrideReason?.trim();
+      if (!overrideReason) {
+        throw new BadRequestException(
+          'An override reason is required when approved duration differs from verified attendance duration.',
+        );
+      }
+      timesheet.overrideReason = overrideReason;
+      timesheet.overrideBy = userId;
+      timesheet.overrideAt = new Date();
+    } else {
+      timesheet.overrideReason = null;
+      timesheet.overrideBy = null;
+      timesheet.overrideAt = null;
+    }
+
+    timesheet.approvedMinutes = requestedMinutes;
+    timesheet.approvedHours = Math.round((requestedMinutes / 60) * 100) / 100;
+
+    return isOverride;
+  }
+
+  private resolveRequestedApprovedMinutes(dto: UpdateTimesheetDto, verifiedMinutes: number | null): number | null {
+    if (dto.approvedMinutes !== undefined && dto.approvedMinutes !== null) {
+      return Math.round(Number(dto.approvedMinutes));
+    }
+    if (dto.approvedHours !== undefined && dto.approvedHours !== null) {
+      return Math.round(Number(dto.approvedHours) * 60);
+    }
+    return verifiedMinutes;
+  }
+
+  private clearApprovalDuration(timesheet: Timesheet): void {
+    timesheet.approvedHours = null;
+    timesheet.approvedMinutes = null;
+    timesheet.overrideReason = null;
+    timesheet.overrideBy = null;
+    timesheet.overrideAt = null;
   }
 
   private async applyPayrollUpdate({
@@ -483,33 +582,6 @@ export class TimesheetService {
     );
 
     return this.applyDerivedFinancials(saved);
-  }
-
-  private validateCompanyReviewUpdate(timesheet: Timesheet, dto: UpdateTimesheetDto): void {
-    const claimedHours = Number(timesheet.hoursWorked);
-    const approvedHours =
-      timesheet.approvedHours === undefined || timesheet.approvedHours === null
-        ? null
-        : Number(timesheet.approvedHours);
-
-    if (approvedHours !== null && (!Number.isFinite(approvedHours) || approvedHours < 0)) {
-      throw new BadRequestException('Approved hours must be 0 or more.');
-    }
-
-    const companyNote = timesheet.companyNote?.trim() || '';
-    const approvalStatus = dto.approvalStatus ? String(dto.approvalStatus).trim().toLowerCase() : '';
-    const finalApprovedHours =
-      approvalStatus === TimesheetStatus.APPROVED
-        ? approvedHours ?? claimedHours
-        : approvedHours;
-
-    if (
-      finalApprovedHours !== null &&
-      Math.abs(finalApprovedHours - claimedHours) > 0.009 &&
-      !companyNote
-    ) {
-      throw new BadRequestException('Add a company note when approved hours differ from claimed hours.');
-    }
   }
 
   private validateCompanyReviewRequest(timesheet: Timesheet, dto: UpdateTimesheetDto): void {

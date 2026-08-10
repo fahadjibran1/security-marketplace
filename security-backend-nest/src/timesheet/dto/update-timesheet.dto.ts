@@ -62,4 +62,17 @@ export class UpdateTimesheetDto {
   @IsOptional()
   @IsString()
   rejectionReason?: string | null;
+
+  // RB-007: manager-supplied approved duration, in minutes — the payroll-authoritative
+  // field. When it differs from the timesheet's verifiedMinutes, overrideReason is required.
+  // overrideBy/overrideAt are never client-supplied; the server derives them from the
+  // authenticated reviewer and the current time.
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  approvedMinutes?: number;
+
+  @IsOptional()
+  @IsString()
+  overrideReason?: string | null;
 }
