@@ -18,7 +18,13 @@ export class ClientPortalUserService {
   ) {}
 
   findByEmail(email: string) {
-    return this.clientPortalUserRepo.findOne({ where: { email: email.trim().toLowerCase() } });
+    return this.clientPortalUserRepo
+      .createQueryBuilder('clientPortalUser')
+      .addSelect('clientPortalUser.passwordHash')
+      .leftJoinAndSelect('clientPortalUser.client', 'client')
+      .leftJoinAndSelect('client.company', 'company')
+      .where('clientPortalUser.email = :email', { email: email.trim().toLowerCase() })
+      .getOne();
   }
 
   async findById(id: number) {
