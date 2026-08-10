@@ -14,9 +14,11 @@ export class ReconcileReleaseSchema1719300000000 implements MigrationInterface {
     await queryRunner.query(`ALTER TABLE "assignments" ALTER COLUMN "status" SET DEFAULT 'assigned'`);
     await queryRunner.query(`ALTER TABLE "shifts" ALTER COLUMN "status" SET DEFAULT 'unfilled'`);
 
-    // A shift can exist before a guard is assigned. Keep the assignment relation nullable
-    // while the company ownership remains mandatory.
+    // A shift can exist before a guard is assigned.
     await queryRunner.query(`ALTER TABLE "shifts" ALTER COLUMN "assignmentId" DROP NOT NULL`);
+
+    // Availability may be guard-wide rather than scoped to a single employer.
+    await queryRunner.query(`ALTER TABLE "guard_availability_rules" ALTER COLUMN "companyId" DROP NOT NULL`);
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
