@@ -9,7 +9,7 @@ export class Site {
   @PrimaryGeneratedColumn()
   id!: number;
 
-  @ManyToOne(() => Company, (company) => company.sites, { eager: true })
+  @ManyToOne(() => Company, (company) => company.sites, { eager: true, nullable: false })
   company!: Company;
 
   @ManyToOne(() => Client, (client) => client.sites, { eager: true, nullable: true, onDelete: 'SET NULL' })
