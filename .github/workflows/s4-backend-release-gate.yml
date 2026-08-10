@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - s4-release-stabilization
+    paths:
+      - 'security-backend-nest/**'
+      - '.github/workflows/s4-backend-release-gate.yml'
   pull_request:
     paths:
       - 'security-backend-nest/**'
