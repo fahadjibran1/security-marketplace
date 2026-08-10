@@ -1,4 +1,4 @@
-import { IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { IsBoolean, IsInt, IsNumber, IsOptional, IsString, Max, Min } from 'class-validator';
 
 export class CreateSiteDto {
   @IsString()
@@ -48,6 +48,36 @@ export class CreateSiteDto {
   @IsOptional()
   @IsString()
   specialInstructions?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(-90)
+  @Max(90)
+  latitude?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(-180)
+  @Max(180)
+  longitude?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(25)
+  @Max(5000)
+  geofenceRadiusMeters?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  requireGpsCheckIn?: boolean;
+
+  @IsOptional()
+  @IsString()
+  attendanceNfcTag?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  requireNfcCheckIn?: boolean;
 
   @IsOptional()
   @IsString()
