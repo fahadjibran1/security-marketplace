@@ -42,9 +42,32 @@ export class CompanyGuardService {
 
   async create(dto: CreateCompanyGuardDto): Promise<CompanyGuard> {
     const company = await this.companyService.findOne(dto.companyId);
+    return this.createForCompany(company.id, dto);
+  }
+
+  async createForUser(user: JwtPayload, dto: CreateCompanyGuardDto): Promise<CompanyGuard> {
+    if (user.role === UserRole.ADMIN) {
+      return this.create(dto);
+    }
+
+    const company = await this.companyService.findByUserId(user.sub);
+    if (!company) {
+      throw new NotFoundException('Company not found');
+    }
+
+    return this.createForCompany(company.id, {
+      ...dto,
+      companyId: company.id,
+    });
+  }
+
+  private async createForCompany(companyId: number, dto: CreateCompanyGuardDto): Promise<CompanyGuard> {
+    const company = await this.companyService.findOne(companyId);
     const guard = await this.guardService.findOne(dto.guardId);
 
-    const exists = await this.companyGuardRepo.findOne({ where: { company: { id: company.id }, guard: { id: guard.id } } });
+    const exists = await this.companyGuardRepo.findOne({
+      where: { company: { id: company.id }, guard: { id: guard.id } },
+    });
     if (exists) throw new ConflictException('Company-guard relationship already exists');
 
     const row = this.companyGuardRepo.create({
