@@ -26,7 +26,7 @@ export class JobSlot {
   @PrimaryGeneratedColumn()
   id!: number;
 
-  @ManyToOne(() => Job, (job) => job.slots, { eager: true, onDelete: 'CASCADE' })
+  @ManyToOne(() => Job, (job) => job.slots, { eager: true, nullable: false, onDelete: 'CASCADE' })
   job!: Job;
 
   @Column({ type: 'int' })
