@@ -55,7 +55,6 @@ jobs:
         run: npx expo export --platform android --output-dir dist-android
 
       - name: Commit deterministic lockfile reconciliation
-        if: github.event_name == 'push'
         working-directory: .
         shell: bash
         run: |
