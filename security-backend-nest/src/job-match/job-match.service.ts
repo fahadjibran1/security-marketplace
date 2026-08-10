@@ -14,7 +14,7 @@ import {
   CompanyGuardStatus,
 } from '../company-guard/entities/company-guard.entity';
 import { GuardProfile } from '../guard-profile/entities/guard-profile.entity';
-import { Shift } from '../shift/entities/shift.entity';
+import { AvailabilityService } from '../availability/availability.service';
 
 @Injectable()
 export class JobMatchService {
@@ -25,9 +25,8 @@ export class JobMatchService {
     private readonly companyGuardRepo: Repository<CompanyGuard>,
     @InjectRepository(GuardProfile)
     private readonly guardRepo: Repository<GuardProfile>,
-    @InjectRepository(Shift)
-    private readonly shiftRepo: Repository<Shift>,
     private readonly slotService: JobSlotService,
+    private readonly availabilityService: AvailabilityService,
   ) {}
 
   async findBySlot(slotId: number): Promise<JobMatch[]> {
@@ -57,8 +56,9 @@ export class JobMatchService {
         ? await this.internalCandidates(slot.job.company.id)
         : await this.marketplaceCandidates(slot.job.company.id);
 
-    const available = await this.excludeUnavailableByShift(
+    const available = await this.excludeUnavailable(
       candidates,
+      slot.job.company.id,
       slot.job.startAt,
       slot.job.endAt,
     );
@@ -155,8 +155,9 @@ export class JobMatchService {
     });
   }
 
-  private async excludeUnavailableByShift(
+  private async excludeUnavailable(
     candidates: GuardProfile[],
+    companyId: number,
     startAt?: Date,
     endAt?: Date,
   ): Promise<GuardProfile[]> {
@@ -164,23 +165,21 @@ export class JobMatchService {
       return candidates;
     }
 
-    const overlappingShifts = await this.shiftRepo.find({
-      where: {
-        status: In(['scheduled', 'in_progress']),
-      },
-      relations: ['guard'],
-    });
+    const evaluations = await Promise.all(
+      candidates.map(async (guard) => ({
+        guard,
+        result: await this.availabilityService.evaluateGuardForShift({
+          companyId,
+          guardId: guard.id,
+          startAt: new Date(startAt),
+          endAt: new Date(endAt),
+        }),
+      })),
+    );
 
-    const blockedGuardIds = new Set(
-      overlappingShifts
-          .filter((shift) => {
-            if (!shift.start || !shift.end || !shift.guard) return false;
-            return shift.start < endAt && shift.end > startAt;
-          })
-          .map((shift) => shift.guard!.id),
-      );
-
-    return candidates.filter((guard) => !blockedGuardIds.has(guard.id));
+    return evaluations
+      .filter(({ result }) => result.isEligible)
+      .map(({ guard }) => guard);
   }
 
   private reasonFor(sourceType: JobSourceType): string {
