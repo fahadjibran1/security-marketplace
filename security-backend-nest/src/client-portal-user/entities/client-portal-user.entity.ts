@@ -23,7 +23,7 @@ export class ClientPortalUser {
   @Column({ type: 'varchar', unique: true })
   email!: string;
 
-  @Column({ type: 'varchar' })
+  @Column({ type: 'varchar', select: false })
   passwordHash!: string;
 
   @Column({ type: 'varchar' })
