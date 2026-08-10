@@ -15,7 +15,7 @@ export class AttendanceController {
 
   @Get('mine')
   @UseGuards(RolesGuard)
-  @Roles(UserRole.GUARD, UserRole.ADMIN)
+  @Roles(UserRole.GUARD)
   findMine(@CurrentUser() user: JwtPayload) {
     return this.attendanceService.findMine(user.sub);
   }
@@ -23,25 +23,23 @@ export class AttendanceController {
   @Get('company')
   getCompanyAttendance(@Req() req: { user: JwtPayload }) {
     const user = req.user;
-
     if (user.role !== UserRole.ADMIN && !isCompanyRole(user.role)) {
       throw new ForbiddenException('Only company users can access company attendance');
     }
-
     return this.attendanceService.findForCompany(user);
   }
 
   @Post('check-in')
   @UseGuards(RolesGuard)
-  @Roles(UserRole.GUARD, UserRole.ADMIN)
+  @Roles(UserRole.GUARD)
   checkIn(@CurrentUser() user: JwtPayload, @Body() dto: RecordAttendanceDto) {
-    return this.attendanceService.checkIn(user.sub, dto.shiftId, dto.nfcTag, dto.notes);
+    return this.attendanceService.checkIn(user.sub, dto);
   }
 
   @Post('check-out')
   @UseGuards(RolesGuard)
-  @Roles(UserRole.GUARD, UserRole.ADMIN)
+  @Roles(UserRole.GUARD)
   checkOut(@CurrentUser() user: JwtPayload, @Body() dto: RecordAttendanceDto) {
-    return this.attendanceService.checkOut(user.sub, dto.shiftId, dto.notes);
+    return this.attendanceService.checkOut(user.sub, dto);
   }
 }
