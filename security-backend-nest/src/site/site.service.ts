@@ -125,6 +125,7 @@ export class SiteService {
 
     const site = await this.siteRepo
       .createQueryBuilder('site')
+      .leftJoinAndSelect('site.client', 'client')
       .addSelect('site.attendanceNfcTag')
       .where('site.id = :id', { id })
       .andWhere('site.companyId = :companyId', { companyId: company.id })
