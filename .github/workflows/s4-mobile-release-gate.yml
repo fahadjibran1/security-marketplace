@@ -34,9 +34,11 @@ jobs:
           cache: npm
           cache-dependency-path: security-mobile-app/package-lock.json
 
-      - name: Reconcile Expo location dependency
+      - name: Reconcile Expo SDK dependencies
         if: github.event_name == 'push'
-        run: npx expo install expo-location
+        run: |
+          npx expo install --fix
+          npx expo install expo-location
 
       - name: Install locked dependencies
         if: github.event_name == 'pull_request'
@@ -60,5 +62,5 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add security-mobile-app/package.json security-mobile-app/package-lock.json
-          git commit -m 'Sync mobile location dependency lockfile'
+          git commit -m 'Sync mobile Expo dependencies'
           git push
