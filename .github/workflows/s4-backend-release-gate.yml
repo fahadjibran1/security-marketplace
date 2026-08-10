@@ -95,14 +95,14 @@ jobs:
       - name: Run release smoke tests
         run: npm run test:release
 
-      - name: Run migrations on clean database
-        run: npm run migration:run
+      - name: Run compiled production migrations on clean database
+        run: npm run migration:run:prod
 
-      - name: Prove migrations are idempotent
-        run: npm run migration:run
+      - name: Prove compiled production migrations are idempotent
+        run: npm run migration:run:prod
 
-      - name: Show migration state
-        run: npm run migration:show
+      - name: Show compiled production migration state
+        run: npm run migration:show:prod
 
       - name: Capture entity-to-migration schema drift
         shell: bash
