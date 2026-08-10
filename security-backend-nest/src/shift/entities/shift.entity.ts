@@ -22,7 +22,7 @@ export class Shift {
   @ManyToOne(() => Assignment, (assignment) => assignment.shifts, { eager: true, nullable: true })
   assignment?: Assignment | null;
 
-  @ManyToOne(() => Company, (company) => company.shifts, { eager: true })
+  @ManyToOne(() => Company, (company) => company.shifts, { eager: true, nullable: false })
   company!: Company;
 
   @ManyToOne(() => GuardProfile, (guard) => guard.shifts, { eager: true, nullable: true })
