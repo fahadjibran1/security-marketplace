@@ -1,4 +1,4 @@
-import assert from 'node:assert/strict';
+import { equal, ok } from 'node:assert/strict';
 import { BadRequestException } from '@nestjs/common';
 import { AuthService } from '../src/auth/auth.service';
 import { PublicRegistrationRole, RegisterDto } from '../src/auth/dto/register.dto';
@@ -79,7 +79,7 @@ async function expectBadRequest(action: () => Promise<unknown>) {
     thrown = error;
   }
 
-  assert.ok(thrown instanceof BadRequestException, 'Expected BadRequestException');
+  ok(thrown instanceof BadRequestException, 'Expected BadRequestException');
 }
 
 async function testPrivilegedRoleCannotSelfRegister() {
@@ -93,7 +93,7 @@ async function testPrivilegedRoleCannotSelfRegister() {
     } as unknown as RegisterDto),
   );
 
-  assert.equal(calls.userCreates.length, 0, 'Privileged registration must not create a user');
+  equal(calls.userCreates.length, 0, 'Privileged registration must not create a user');
 }
 
 async function testInvalidGuardPayloadHasNoSideEffects() {
@@ -108,8 +108,8 @@ async function testInvalidGuardPayloadHasNoSideEffects() {
     }),
   );
 
-  assert.equal(calls.userCreates.length, 0, 'Invalid guard registration must not create a user');
-  assert.equal(calls.guardCreates.length, 0, 'Invalid guard registration must not create a profile');
+  equal(calls.userCreates.length, 0, 'Invalid guard registration must not create a user');
+  equal(calls.guardCreates.length, 0, 'Invalid guard registration must not create a profile');
 }
 
 async function testGuardRegistrationRemainsPending() {
@@ -124,14 +124,14 @@ async function testGuardRegistrationRemainsPending() {
     phone: '07000000000',
   });
 
-  assert.equal(calls.userCreates.length, 1);
-  assert.equal(calls.userCreates[0].role, UserRole.GUARD);
-  assert.equal(calls.userCreates[0].status, UserStatus.PENDING);
-  assert.equal(calls.guardCreates.length, 1);
-  assert.equal(calls.guardCreates[0].status, GuardApprovalStatus.PENDING);
-  assert.equal(calls.guardCreates[0].approvalStatus, GuardApprovalStatus.PENDING);
-  assert.equal(calls.guardCreates[0].isApproved, false);
-  assert.equal(result.user.status, UserStatus.PENDING);
+  equal(calls.userCreates.length, 1);
+  equal(calls.userCreates[0].role, UserRole.GUARD);
+  equal(calls.userCreates[0].status, UserStatus.PENDING);
+  equal(calls.guardCreates.length, 1);
+  equal(calls.guardCreates[0].status, GuardApprovalStatus.PENDING);
+  equal(calls.guardCreates[0].approvalStatus, GuardApprovalStatus.PENDING);
+  equal(calls.guardCreates[0].isApproved, false);
+  equal(result.user.status, UserStatus.PENDING);
 }
 
 async function testCompanyRegistrationMapsToCompanyAdmin() {
@@ -147,12 +147,12 @@ async function testCompanyRegistrationMapsToCompanyAdmin() {
     contactDetails: 'operations@example.test',
   });
 
-  assert.equal(calls.userCreates.length, 1);
-  assert.equal(calls.userCreates[0].role, UserRole.COMPANY_ADMIN);
-  assert.equal(calls.userCreates[0].status, UserStatus.ACTIVE);
-  assert.equal(calls.companyCreates.length, 1);
-  assert.equal(calls.companyCreates[0].status, CompanyStatus.ONBOARDING);
-  assert.equal(result.user.role, UserRole.COMPANY_ADMIN);
+  equal(calls.userCreates.length, 1);
+  equal(calls.userCreates[0].role, UserRole.COMPANY_ADMIN);
+  equal(calls.userCreates[0].status, UserStatus.ACTIVE);
+  equal(calls.companyCreates.length, 1);
+  equal(calls.companyCreates[0].status, CompanyStatus.ONBOARDING);
+  equal(result.user.role, UserRole.COMPANY_ADMIN);
 }
 
 async function main() {
