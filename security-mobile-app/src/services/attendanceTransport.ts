@@ -1,12 +1,20 @@
 import { getAttendanceLocationEvidence } from './attendanceLocation';
 
+type FetchInput = Parameters<typeof globalThis.fetch>[0];
+type FetchInit = Parameters<typeof globalThis.fetch>[1];
+
 let installed = false;
 let restoreFetch: (() => void) | null = null;
 
-function isAttendanceCheckIn(input: RequestInfo | URL, init?: RequestInit) {
+function getRequestUrl(input: FetchInput) {
+  if (typeof input === 'string') return input;
+  if (typeof URL !== 'undefined' && input instanceof URL) return input.toString();
+  return input.url;
+}
+
+function isAttendanceCheckIn(input: FetchInput, init?: FetchInit) {
   const method = (init?.method || 'GET').toUpperCase();
-  const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
-  return method === 'POST' && url.includes('/attendance/check-in');
+  return method === 'POST' && getRequestUrl(input).includes('/attendance/check-in');
 }
 
 async function responseRequiresGps(response: Response) {
@@ -20,7 +28,7 @@ async function responseRequiresGps(response: Response) {
   }
 }
 
-function parseJsonBody(body: BodyInit | null | undefined): Record<string, unknown> | null {
+function parseJsonBody(body: unknown): Record<string, unknown> | null {
   if (typeof body !== 'string') return null;
   try {
     const parsed = JSON.parse(body);
@@ -37,9 +45,9 @@ export function installAttendanceLocationTransport() {
     return () => undefined;
   }
 
-  const originalFetch = globalThis.fetch.bind(globalThis);
+  const originalFetch = globalThis.fetch.bind(globalThis) as typeof globalThis.fetch;
 
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  globalThis.fetch = (async (input: FetchInput, init?: FetchInit) => {
     const firstResponse = await originalFetch(input, init);
 
     if (!isAttendanceCheckIn(input, init) || !(await responseRequiresGps(firstResponse))) {
@@ -67,7 +75,7 @@ export function installAttendanceLocationTransport() {
 
   installed = true;
   restoreFetch = () => {
-    globalThis.fetch = originalFetch as typeof globalThis.fetch;
+    globalThis.fetch = originalFetch;
     installed = false;
     restoreFetch = null;
   };
