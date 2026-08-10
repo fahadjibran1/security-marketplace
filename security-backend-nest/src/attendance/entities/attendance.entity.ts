@@ -12,10 +12,10 @@ export class AttendanceEvent {
   @PrimaryGeneratedColumn()
   id!: number;
 
-  @ManyToOne(() => Shift, { eager: true, onDelete: 'CASCADE' })
+  @ManyToOne(() => Shift, { eager: true, nullable: false, onDelete: 'CASCADE' })
   shift!: Shift;
 
-  @ManyToOne(() => GuardProfile, { eager: true, onDelete: 'CASCADE' })
+  @ManyToOne(() => GuardProfile, { eager: true, nullable: false, onDelete: 'CASCADE' })
   guard!: GuardProfile;
 
   @Column({
