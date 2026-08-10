@@ -15,7 +15,7 @@ export class PayRuleConfig {
   @PrimaryGeneratedColumn()
   id!: number;
 
-  @OneToOne(() => Company, { eager: true, onDelete: 'CASCADE' })
+  @OneToOne(() => Company, { eager: true, nullable: false, onDelete: 'CASCADE' })
   @JoinColumn({ name: 'companyId' })
   company!: Company;
 
