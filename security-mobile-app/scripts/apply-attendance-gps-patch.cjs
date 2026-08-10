@@ -1,6 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
+// Deterministic, idempotent source reconciliation used by the mobile release gate.
 function patchFile(relativePath, patches) {
   const filePath = path.resolve(__dirname, '..', relativePath);
   let source = fs.readFileSync(filePath, 'utf8');
