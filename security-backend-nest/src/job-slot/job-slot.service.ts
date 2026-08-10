@@ -2,17 +2,38 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { JobSlot, JobSlotStatus } from './entities/job-slot.entity';
+import { CompanyService } from '../company/company.service';
+import { JwtPayload } from '../auth/types/jwt-payload.type';
+import { UserRole } from '../user/entities/user.entity';
 
 @Injectable()
 export class JobSlotService {
   constructor(
     @InjectRepository(JobSlot)
     private readonly jobSlotRepo: Repository<JobSlot>,
+    private readonly companyService: CompanyService,
   ) {}
 
   async findAll(): Promise<JobSlot[]> {
     return this.jobSlotRepo.find({
       relations: ['job'],
+    });
+  }
+
+  async findAllForUser(user: JwtPayload): Promise<JobSlot[]> {
+    if (user.role === UserRole.ADMIN) {
+      return this.findAll();
+    }
+
+    const company = await this.companyService.findByUserId(user.sub);
+    if (!company) {
+      throw new NotFoundException('Company not found');
+    }
+
+    return this.jobSlotRepo.find({
+      where: { job: { company: { id: company.id } } },
+      relations: ['job'],
+      order: { id: 'DESC' },
     });
   }
 
