@@ -21,10 +21,10 @@ export class ContractPricingRule {
   @PrimaryGeneratedColumn()
   id!: number;
 
-  @ManyToOne(() => Company, { eager: true, onDelete: 'CASCADE' })
+  @ManyToOne(() => Company, { eager: true, nullable: false, onDelete: 'CASCADE' })
   company!: Company;
 
-  @ManyToOne(() => Client, { eager: true, onDelete: 'CASCADE' })
+  @ManyToOne(() => Client, { eager: true, nullable: false, onDelete: 'CASCADE' })
   client!: Client;
 
   @ManyToOne(() => Site, { eager: true, nullable: true, onDelete: 'SET NULL' })
