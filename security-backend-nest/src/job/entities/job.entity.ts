@@ -22,7 +22,7 @@ export class Job {
   @PrimaryGeneratedColumn()
   id!: number;
 
-  @ManyToOne(() => Company, (company) => company.jobs, { eager: true })
+  @ManyToOne(() => Company, (company) => company.jobs, { eager: true, nullable: false })
   company!: Company;
 
   @ManyToOne(() => Site, (site) => site.jobs, { eager: true, nullable: true })
