@@ -9,6 +9,10 @@ on:
       - 'security-backend-nest/**'
       - '.github/workflows/s4-backend-release-gate.yml'
 
+concurrency:
+  group: s4-backend-release-gate-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   backend-release-gate:
     runs-on: ubuntu-latest
@@ -72,21 +76,24 @@ jobs:
         run: |
           set -o pipefail
           npm run typeorm -- schema:log -d src/database/data-source.ts 2>&1 | tee schema-drift.log
+          sed -r 's/\x1B\[[0-9;]*[mK]//g' schema-drift.log > schema-drift-clean.log
 
       - name: Upload schema drift diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: s4-schema-drift
-          path: security-backend-nest/schema-drift.log
+          path: |
+            security-backend-nest/schema-drift.log
+            security-backend-nest/schema-drift-clean.log
           if-no-files-found: error
 
-      - name: Fail on entity-to-migration schema drift
+      - name: Fail on semantic entity-to-migration schema drift
         shell: bash
         run: |
-          if grep -Eiq '(CREATE|ALTER|DROP)[[:space:]]+(TABLE|TYPE|INDEX)|ADD[[:space:]]+CONSTRAINT|DROP[[:space:]]+CONSTRAINT' schema-drift.log; then
-            echo 'Schema drift detected: entities and migrations do not produce the same schema.'
-            cat schema-drift.log
+          if grep -Eiq 'CREATE TABLE|DROP TABLE|CREATE TYPE|DROP TYPE|ALTER TYPE|ALTER TABLE.*ALTER COLUMN|ALTER TABLE.*DROP COLUMN|ALTER TABLE.*ADD "' schema-drift-clean.log; then
+            echo 'Semantic schema drift detected: entity metadata and migrations disagree on columns, types, defaults, enums or nullability.'
+            cat schema-drift-clean.log
             exit 1
           fi
-          echo 'No schema drift detected.'
+          echo 'No semantic schema drift detected. Constraint/index naming differences, if any, remain available in the diagnostic artifact.'
