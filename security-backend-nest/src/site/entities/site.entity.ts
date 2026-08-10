@@ -48,6 +48,24 @@ export class Site {
   @Column({ type: 'text', nullable: true })
   specialInstructions?: string | null;
 
+  @Column({ type: 'double precision', nullable: true })
+  latitude?: number | null;
+
+  @Column({ type: 'double precision', nullable: true })
+  longitude?: number | null;
+
+  @Column({ type: 'int', default: 150 })
+  geofenceRadiusMeters!: number;
+
+  @Column({ type: 'boolean', default: false })
+  requireGpsCheckIn!: boolean;
+
+  @Column({ type: 'varchar', length: 255, nullable: true, select: false })
+  attendanceNfcTag?: string | null;
+
+  @Column({ type: 'boolean', default: false })
+  requireNfcCheckIn!: boolean;
+
   @OneToMany(() => Job, (job) => job.site)
   jobs?: Job[];
 
