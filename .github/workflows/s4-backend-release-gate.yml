@@ -6,10 +6,12 @@ on:
       - s4-release-stabilization
     paths:
       - 'security-backend-nest/**'
+      - 'render.yaml'
       - '.github/workflows/s4-backend-release-gate.yml'
   pull_request:
     paths:
       - 'security-backend-nest/**'
+      - 'render.yaml'
       - '.github/workflows/s4-backend-release-gate.yml'
 
 permissions:
@@ -86,9 +88,14 @@ jobs:
           const audit = JSON.parse(fs.readFileSync('npm-audit-production.json', 'utf8'));
           const counts = audit.metadata?.vulnerabilities || {};
           console.log(JSON.stringify({ event: 'production_dependency_audit', ...counts }));
+          if ((counts.critical || 0) > 0) {
+            console.error(`Release blocked: ${counts.critical} Critical production dependency vulnerability/vulnerabilities remain.`);
+            process.exit(1);
+          }
           NODE
 
       - name: Upload dependency audits
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: s4-npm-audit
