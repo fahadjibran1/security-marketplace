@@ -39,16 +39,10 @@ jobs:
           cache-dependency-path: security-mobile-app/package-lock.json
 
       - name: Reconcile Expo SDK and location dependencies
-        if: github.event_name == 'push'
         run: npx expo install --fix expo-location
 
       - name: Apply Guard Mobile GPS wiring
-        if: github.event_name == 'push'
         run: node scripts/apply-attendance-gps-patch.cjs
-
-      - name: Install locked dependencies
-        if: github.event_name == 'pull_request'
-        run: npm ci
 
       - name: Type-check Guard Mobile
         run: npm run build:frontend
@@ -57,7 +51,6 @@ jobs:
         run: npx expo install --check
 
       - name: Commit deterministic mobile reconciliation
-        if: github.event_name == 'push'
         working-directory: .
         shell: bash
         run: |
