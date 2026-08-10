@@ -67,13 +67,26 @@ jobs:
       - name: Show migration state
         run: npm run migration:show
 
-      - name: Detect entity-to-migration schema drift
+      - name: Capture entity-to-migration schema drift
         shell: bash
         run: |
           set -o pipefail
-          npm run typeorm -- schema:log -d src/database/data-source.ts 2>&1 | tee /tmp/s4-schema.log
-          if grep -Eiq '(CREATE|ALTER|DROP)[[:space:]]+(TABLE|TYPE|INDEX)|ADD[[:space:]]+CONSTRAINT|DROP[[:space:]]+CONSTRAINT' /tmp/s4-schema.log; then
+          npm run typeorm -- schema:log -d src/database/data-source.ts 2>&1 | tee schema-drift.log
+
+      - name: Upload schema drift diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: s4-schema-drift
+          path: security-backend-nest/schema-drift.log
+          if-no-files-found: error
+
+      - name: Fail on entity-to-migration schema drift
+        shell: bash
+        run: |
+          if grep -Eiq '(CREATE|ALTER|DROP)[[:space:]]+(TABLE|TYPE|INDEX)|ADD[[:space:]]+CONSTRAINT|DROP[[:space:]]+CONSTRAINT' schema-drift.log; then
             echo 'Schema drift detected: entities and migrations do not produce the same schema.'
+            cat schema-drift.log
             exit 1
           fi
           echo 'No schema drift detected.'
