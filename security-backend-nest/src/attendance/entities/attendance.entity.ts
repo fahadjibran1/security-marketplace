@@ -27,6 +27,24 @@ export class AttendanceEvent {
   @Column({ type: 'varchar', nullable: true })
   nfcTag?: string | null;
 
+  @Column({ type: 'boolean', default: false })
+  nfcVerified!: boolean;
+
+  @Column({ type: 'double precision', nullable: true })
+  latitude?: number | null;
+
+  @Column({ type: 'double precision', nullable: true })
+  longitude?: number | null;
+
+  @Column({ type: 'double precision', nullable: true })
+  gpsAccuracyMeters?: number | null;
+
+  @Column({ type: 'double precision', nullable: true })
+  distanceFromSiteMeters?: number | null;
+
+  @Column({ type: 'boolean', default: false })
+  gpsVerified!: boolean;
+
   @Column({ type: 'text', nullable: true })
   notes?: string | null;
 
