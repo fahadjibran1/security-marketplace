@@ -1,10 +1,15 @@
 import { equal, ok } from 'node:assert/strict';
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ExecutionContext } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import { getMetadataArgsStorage } from 'typeorm';
 import { AuthService } from '../src/auth/auth.service';
 import { PublicRegistrationRole, RegisterDto } from '../src/auth/dto/register.dto';
+import { JwtPayload } from '../src/auth/types/jwt-payload.type';
 import { AttendanceEvent } from '../src/attendance/entities/attendance.entity';
 import { ClientPortalUser } from '../src/client-portal-user/entities/client-portal-user.entity';
+import { RolesGuard } from '../src/common/guards/roles.guard';
+import { CompanyController } from '../src/company/company.controller';
+import { CompanyService } from '../src/company/company.service';
 import { CompanyStatus } from '../src/company/entities/company.entity';
 import { GuardApprovalStatus } from '../src/guard-profile/entities/guard-profile.entity';
 import { Site } from '../src/site/entities/site.entity';
@@ -168,11 +173,83 @@ async function testCompanyRegistrationMapsToCompanyAdmin() {
   equal(result.user.role, UserRole.COMPANY_ADMIN);
 }
 
+// RB-006: build a minimal fake ExecutionContext carrying only what RolesGuard
+// reads (context.getHandler()/getClass() for @Roles metadata, and
+// request.user for the authenticated JWT payload) so the *real*
+// CompanyController route decorators and the *real* RolesGuard logic are
+// exercised, without needing a full Nest application bootstrap.
+function buildRoleContext(handler: Function, role: UserRole | undefined): ExecutionContext {
+  const user: JwtPayload | undefined = role
+    ? { sub: 1, email: 'user@example.test', role, status: 'active' }
+    : undefined;
+
+  return {
+    getHandler: () => handler,
+    getClass: () => CompanyController,
+    switchToHttp: () => ({
+      getRequest: () => ({ user }),
+    }),
+  } as unknown as ExecutionContext;
+}
+
+async function testCompanySideRolesCannotEnumerateOrFetchAnyCompany() {
+  const guard = new RolesGuard(new Reflector());
+  const tenantRoles = [UserRole.COMPANY, UserRole.COMPANY_ADMIN, UserRole.COMPANY_STAFF];
+
+  for (const role of tenantRoles) {
+    equal(
+      guard.canActivate(buildRoleContext(CompanyController.prototype.findAll, role)),
+      false,
+      `${role} must not be able to call GET /companies (tenant enumeration)`,
+    );
+    equal(
+      guard.canActivate(buildRoleContext(CompanyController.prototype.findOne, role)),
+      false,
+      `${role} must not be able to call GET /companies/:id (cross-tenant IDOR)`,
+    );
+  }
+}
+
+async function testPlatformAdminRetainsCompanyDirectoryAccess() {
+  const guard = new RolesGuard(new Reflector());
+
+  ok(
+    guard.canActivate(buildRoleContext(CompanyController.prototype.findAll, UserRole.ADMIN)),
+    'Platform admin must still be able to call GET /companies',
+  );
+  ok(
+    guard.canActivate(buildRoleContext(CompanyController.prototype.findOne, UserRole.ADMIN)),
+    'Platform admin must still be able to call GET /companies/:id',
+  );
+}
+
+async function testCompanyFindByUserIdNeverResolvesAnotherTenant() {
+  const companyA = { id: 101, user: { id: 1 }, name: 'Company A' };
+  const companyB = { id: 102, user: { id: 2 }, name: 'Company B' };
+
+  const companyRepo = {
+    findOne: async ({ where }: { where: { user: { id: number } } }) =>
+      [companyA, companyB].find((company) => company.user.id === where.user.id) ?? null,
+  };
+
+  const service = new CompanyService(companyRepo as any, {} as any);
+
+  const resolvedForUserA = await service.findByUserId(1);
+  const resolvedForUserB = await service.findByUserId(2);
+
+  equal(resolvedForUserA?.id, companyA.id, "Company A's user must resolve Company A via JWT-derived findMine()");
+  equal(resolvedForUserB?.id, companyB.id, "Company B's user must resolve Company B via JWT-derived findMine()");
+  ok(resolvedForUserA?.id !== resolvedForUserB?.id, "Company A's session must never resolve Company B's record");
+}
+
 async function main() {
   await testPrivilegedRoleCannotSelfRegister();
   await testInvalidGuardPayloadHasNoSideEffects();
   await testGuardRegistrationRemainsPending();
   await testCompanyRegistrationMapsToCompanyAdmin();
+  await testCompanySideRolesCannotEnumerateOrFetchAnyCompany();
+  await testPlatformAdminRetainsCompanyDirectoryAccess();
+  await testCompanyFindByUserIdNeverResolvesAnotherTenant();
   assertColumnExcluded(User, 'passwordHash', 'User.passwordHash');
   assertColumnExcluded(ClientPortalUser, 'passwordHash', 'ClientPortalUser.passwordHash');
   assertColumnExcluded(Site, 'attendanceNfcTag', 'Site.attendanceNfcTag');
@@ -181,8 +258,8 @@ async function main() {
   console.log(
     JSON.stringify({
       event: 'release_smoke_passed',
-      tests: 8,
-      scope: 'auth-registration-credential-and-attendance-secret-exposure',
+      tests: 11,
+      scope: 'auth-registration-credential-attendance-secret-exposure-and-RB006-tenant-isolation',
     }),
   );
 }

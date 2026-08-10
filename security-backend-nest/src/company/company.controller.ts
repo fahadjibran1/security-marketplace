@@ -9,13 +9,18 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { COMPANY_ADMIN_ROLES, COMPANY_VIEW_ROLES, UserRole } from '../user/entities/user.entity';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 
+// RB-006: findAll()/findOne(:id) are platform-admin-only — they return/target
+// any tenant's record with no ownership filter. Company-side roles (company,
+// company_admin, company_staff) must only ever resolve their own company via
+// findMine(), which derives the record from the authenticated JWT (user.sub),
+// never from a client-supplied id.
 @Controller('companies')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class CompanyController {
   constructor(private readonly companyService: CompanyService) {}
 
   @Get()
-  @Roles(UserRole.ADMIN, ...COMPANY_VIEW_ROLES)
+  @Roles(UserRole.ADMIN)
   findAll() {
     return this.companyService.findAll();
   }
@@ -27,7 +32,7 @@ export class CompanyController {
   }
 
   @Get(':id')
-  @Roles(UserRole.ADMIN, ...COMPANY_VIEW_ROLES)
+  @Roles(UserRole.ADMIN)
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.companyService.findOne(id);
   }
