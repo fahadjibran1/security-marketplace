@@ -1,5 +1,10 @@
 import { IsEmail, IsEnum, IsOptional, IsString, MinLength } from 'class-validator';
-import { UserRole } from '../../user/entities/user.entity';
+
+export enum PublicRegistrationRole {
+  COMPANY = 'company',
+  COMPANY_ADMIN = 'company_admin',
+  GUARD = 'guard',
+}
 
 export class RegisterDto {
   @IsEmail()
@@ -9,8 +14,8 @@ export class RegisterDto {
   @MinLength(6)
   password!: string;
 
-  @IsEnum(UserRole)
-  role!: UserRole;
+  @IsEnum(PublicRegistrationRole)
+  role!: PublicRegistrationRole;
 
   @IsOptional()
   @IsString()
