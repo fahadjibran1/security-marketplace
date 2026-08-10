@@ -33,15 +33,19 @@ Objective: first commercial pilot release
 - Global financial scheduler execution restricted to platform admins.
 - Site attendance GPS geofence and NFC verification added as configurable server-side controls.
 - NFC credentials hidden from API responses and stored as one-way fingerprints.
+- Attendance Book On / Book Off retries made response-loss safe by returning the already-committed event when lifecycle state proves the same action completed.
+- `requireGpsCheckIn` and `requireNfcCheckIn` no longer block Book Off; checkout can still record evidence when supplied.
 - Panic alerts forced to CRITICAL priority.
 - Missed-welfare monitoring added for in-progress shifts using site welfare interval and last welfare/check-in reference.
+- Guard Mobile release gate added with TypeScript build and Expo compatibility validation.
 
 ## Active P0 audit areas
 
-- Guard mobile client compatibility with GPS/NFC attendance payloads.
+- Guard Mobile foreground GPS capture and attendance payload integration.
+- Guard Mobile Expo dependency reconciliation and lockfile update on the release branch.
 - Welfare/check-call end-to-end mobile workflow and recovery behavior.
 - Patrol evidence / image upload end-to-end verification.
-- Offline/retry/idempotency behavior for guard operational actions.
+- Offline/retry/idempotency behavior for incidents, daily logs, safety alerts and evidence uploads.
 - Remaining tenant-isolation review across all API surfaces.
 - Runtime dependency vulnerability remediation and exploitability assessment.
 - Expanded behavioral/integration tests for tenant boundaries and finance state transitions.
@@ -49,6 +53,7 @@ Objective: first commercial pilot release
 
 ## P1 backlog
 
+- Add a database-level duplicate-event guard for concurrent attendance requests after pilot behavior is proven, without preventing an authorised future shift-reopen workflow.
 - Coverage calculation reconciliation between Job, JobSlot, Assignment and Shift semantics.
 - Constraint/index naming cleanup where TypeORM-generated names differ from migration names without semantic drift.
 - Company staff membership model and reliable tenant resolution for `COMPANY_STAFF`.
@@ -96,8 +101,10 @@ A release candidate must pass:
 5. Migration-state verification.
 6. Entity-to-migration schema diagnostics.
 7. Semantic schema-drift gate.
-8. No open Critical/High release defects after risk review.
-9. Pilot UAT and deployment/rollback validation.
+8. Guard Mobile TypeScript build.
+9. Expo SDK dependency compatibility check.
+10. No open Critical/High release defects after risk review.
+11. Pilot UAT and deployment/rollback validation.
 
 ## Deployment constraint for pilot
 
