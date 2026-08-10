@@ -1,10 +1,12 @@
 import { equal, ok } from 'node:assert/strict';
 import { BadRequestException } from '@nestjs/common';
+import { getMetadataArgsStorage } from 'typeorm';
 import { AuthService } from '../src/auth/auth.service';
 import { PublicRegistrationRole, RegisterDto } from '../src/auth/dto/register.dto';
+import { ClientPortalUser } from '../src/client-portal-user/entities/client-portal-user.entity';
 import { CompanyStatus } from '../src/company/entities/company.entity';
 import { GuardApprovalStatus } from '../src/guard-profile/entities/guard-profile.entity';
-import { UserRole, UserStatus } from '../src/user/entities/user.entity';
+import { User, UserRole, UserStatus } from '../src/user/entities/user.entity';
 
 type Calls = {
   userCreates: any[];
@@ -80,6 +82,15 @@ async function expectBadRequest(action: () => Promise<unknown>) {
   }
 
   ok(thrown instanceof BadRequestException, 'Expected BadRequestException');
+}
+
+function assertPasswordHashExcluded(target: Function, entityName: string) {
+  const column = getMetadataArgsStorage().columns.find(
+    (candidate) => candidate.target === target && candidate.propertyName === 'passwordHash',
+  );
+
+  ok(column, `${entityName}.passwordHash column metadata must exist`);
+  equal(column.options.select, false, `${entityName}.passwordHash must use select:false`);
 }
 
 async function testPrivilegedRoleCannotSelfRegister() {
@@ -160,12 +171,14 @@ async function main() {
   await testInvalidGuardPayloadHasNoSideEffects();
   await testGuardRegistrationRemainsPending();
   await testCompanyRegistrationMapsToCompanyAdmin();
+  assertPasswordHashExcluded(User, 'User');
+  assertPasswordHashExcluded(ClientPortalUser, 'ClientPortalUser');
 
   console.log(
     JSON.stringify({
       event: 'release_smoke_passed',
-      tests: 4,
-      scope: 'auth-registration',
+      tests: 6,
+      scope: 'auth-registration-and-credential-exposure',
     }),
   );
 }
