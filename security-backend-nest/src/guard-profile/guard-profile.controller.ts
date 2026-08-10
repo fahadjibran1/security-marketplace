@@ -16,8 +16,8 @@ export class GuardProfileController {
 
   @Get()
   @Roles(UserRole.ADMIN, ...COMPANY_VIEW_ROLES)
-  findAll() {
-    return this.guardService.findAll();
+  findAll(@CurrentUser() user: JwtPayload) {
+    return this.guardService.findAllForUser(user);
   }
 
   @Get('me')
