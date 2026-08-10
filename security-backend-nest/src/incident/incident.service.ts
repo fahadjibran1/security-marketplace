@@ -26,6 +26,10 @@ export class IncidentService {
     private readonly notificationService: NotificationService,
   ) {}
 
+  findAll(): Promise<Incident[]> {
+    return this.incidentRepo.find({ order: { createdAt: 'DESC' } });
+  }
+
   async createForGuard(userId: number, dto: CreateIncidentDto): Promise<Incident> {
     const guard = await this.guardProfileService.findByUserId(userId);
     if (!guard) throw new NotFoundException('Guard profile not found');
@@ -103,6 +107,16 @@ export class IncidentService {
     });
   }
 
+  async updateStatusAsAdmin(
+    userId: number,
+    incidentId: number,
+    status: IncidentStatus,
+  ): Promise<Incident> {
+    const incident = await this.incidentRepo.findOne({ where: { id: incidentId } });
+    if (!incident) throw new NotFoundException('Incident not found');
+    return this.applyStatusUpdate(userId, incident, status);
+  }
+
   async updateStatusForCompany(
     userId: number,
     incidentId: number,
@@ -117,6 +131,15 @@ export class IncidentService {
       throw new BadRequestException('This incident does not belong to the current company');
     }
 
+    return this.applyStatusUpdate(userId, incident, status);
+  }
+
+  private async applyStatusUpdate(
+    userId: number,
+    incident: Incident,
+    status: IncidentStatus,
+  ): Promise<Incident> {
+    const company = incident.company;
     const beforeData = {
       status: incident.status,
       reviewedAt: incident.reviewedAt,
