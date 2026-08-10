@@ -1,6 +1,7 @@
 import { BadRequestException, Inject, Injectable, NotFoundException, forwardRef } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { createHash } from 'crypto';
 import { Site } from './entities/site.entity';
 import { CreateSiteDto } from './dto/create-site.dto';
 import { UpdateSiteDto } from './dto/update-site.dto';
@@ -43,10 +44,7 @@ export class SiteService {
   async findOneForCompanyUser(userId: number, id: number): Promise<Site> {
     const company = await this.companyService.findByUserId(userId);
     if (!company) throw new NotFoundException('Company not found');
-
-    const site = await this.siteRepo.findOne({
-      where: { id, company: { id: company.id } },
-    });
+    const site = await this.siteRepo.findOne({ where: { id, company: { id: company.id } } });
     if (!site) throw new NotFoundException('Site not found');
     return site;
   }
@@ -54,18 +52,13 @@ export class SiteService {
   async findForCompanyUser(userId: number): Promise<Site[]> {
     const company = await this.companyService.findByUserId(userId);
     if (!company) throw new NotFoundException('Company not found');
-
-    return this.siteRepo.find({
-      where: { company: { id: company.id } },
-      order: { name: 'ASC' },
-    });
+    return this.siteRepo.find({ where: { company: { id: company.id } }, order: { name: 'ASC' } });
   }
 
   async createForCompanyUser(userId: number, dto: CreateSiteDto): Promise<Site> {
     const company = await this.companyService.findByUserId(userId);
     if (!company) throw new NotFoundException('Company not found');
     if (!dto.clientId) throw new BadRequestException('Site creation requires a clientId');
-
     this.validateVerificationSettings(dto);
     const client = await this.clientService.findOneForCompanyUser(userId, dto.clientId);
 
@@ -87,7 +80,7 @@ export class SiteService {
     site.longitude = dto.longitude ?? null;
     site.geofenceRadiusMeters = dto.geofenceRadiusMeters ?? 150;
     site.requireGpsCheckIn = dto.requireGpsCheckIn ?? false;
-    site.attendanceNfcTag = dto.attendanceNfcTag?.trim() || null;
+    site.attendanceNfcTag = dto.attendanceNfcTag?.trim() ? this.hashNfcTag(dto.attendanceNfcTag) : null;
     site.requireNfcCheckIn = dto.requireNfcCheckIn ?? false;
 
     const saved = await this.siteRepo.save(site);
@@ -184,7 +177,9 @@ export class SiteService {
     if (dto.operatingStartTime !== undefined) site.operatingStartTime = dto.operatingStartTime?.trim() || null;
     if (dto.operatingEndTime !== undefined) site.operatingEndTime = dto.operatingEndTime?.trim() || null;
     if (dto.specialInstructions !== undefined) site.specialInstructions = dto.specialInstructions?.trim() || null;
-    if (dto.attendanceNfcTag !== undefined) site.attendanceNfcTag = dto.attendanceNfcTag?.trim() || null;
+    if (dto.attendanceNfcTag !== undefined) {
+      site.attendanceNfcTag = dto.attendanceNfcTag?.trim() ? this.hashNfcTag(dto.attendanceNfcTag) : null;
+    }
 
     const saved = await this.siteRepo.save(site);
     await this.auditLogService.log({
@@ -230,5 +225,9 @@ export class SiteService {
     if (input.requireNfcCheckIn && !input.attendanceNfcTag?.trim()) {
       throw new BadRequestException('NFC check-in requires an attendance NFC tag');
     }
+  }
+
+  private hashNfcTag(value: string) {
+    return createHash('sha256').update(value.trim(), 'utf8').digest('hex');
   }
 }
