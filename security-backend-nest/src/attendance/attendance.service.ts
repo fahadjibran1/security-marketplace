@@ -47,12 +47,18 @@ export class AttendanceService {
   async checkIn(userId: number, dto: RecordAttendanceDto) {
     const { guard, shift } = await this.getGuardAndOwnedShift(userId, dto.shiftId);
     const normalizedStatus = this.shiftService.normalizeLifecycleStatus(shift.status);
-    if (normalizedStatus !== 'ready') throw new BadRequestException('Only ready shifts can be checked in');
-
     const latest = await this.latestForShift(shift.id);
+
+    // Retry-safe Book On: if the first request committed but its response was lost,
+    // return the existing check-in rather than creating a duplicate or failing the guard.
+    if (normalizedStatus === 'in_progress' && latest?.type === AttendanceEventType.CHECK_IN && latest.guard?.id === guard.id) {
+      return latest;
+    }
+
+    if (normalizedStatus !== 'ready') throw new BadRequestException('Only ready shifts can be checked in');
     if (latest?.type === AttendanceEventType.CHECK_IN) throw new BadRequestException('Shift is already checked in');
 
-    const evidence = await this.verifyAttendanceEvidence(shift.site?.id, dto, true);
+    const evidence = await this.verifyAttendanceEvidence(shift.site?.id, dto, { enforceGps: true, enforceNfc: true });
     const event = this.attendanceRepo.create({
       shift,
       guard,
@@ -84,12 +90,20 @@ export class AttendanceService {
     const { guard, shift } = await this.getGuardAndOwnedShift(userId, dto.shiftId);
     const normalizedStatus = this.shiftService.normalizeLifecycleStatus(shift.status);
     const latest = await this.latestForShift(shift.id);
+
+    // Retry-safe Book Off for the same network-timeout scenario as Book On.
+    if (normalizedStatus === 'completed' && latest?.type === AttendanceEventType.CHECK_OUT && latest.guard?.id === guard.id) {
+      return latest;
+    }
+
     if (normalizedStatus !== 'in_progress') throw new BadRequestException('Only in-progress shifts can be checked out');
     if (!latest || latest.type !== AttendanceEventType.CHECK_IN) {
       throw new BadRequestException('Shift must be checked in before checkout');
     }
 
-    const evidence = await this.verifyAttendanceEvidence(shift.site?.id, dto, false);
+    // Checkout records any supplied evidence, but site policy named requireGpsCheckIn /
+    // requireNfcCheckIn must not block a guard from ending a shift.
+    const evidence = await this.verifyAttendanceEvidence(shift.site?.id, dto, { enforceGps: false, enforceNfc: false });
     const event = this.attendanceRepo.create({
       shift,
       guard,
@@ -119,7 +133,11 @@ export class AttendanceService {
     return savedEvent;
   }
 
-  private async verifyAttendanceEvidence(siteId: number | undefined, dto: RecordAttendanceDto, enforceNfc: boolean) {
+  private async verifyAttendanceEvidence(
+    siteId: number | undefined,
+    dto: RecordAttendanceDto,
+    policy: { enforceGps: boolean; enforceNfc: boolean },
+  ) {
     if (!siteId) {
       return { gpsVerified: false, nfcVerified: false, distanceFromSiteMeters: null as number | null };
     }
@@ -134,7 +152,7 @@ export class AttendanceService {
       gpsVerified = distanceFromSiteMeters <= site.geofenceRadiusMeters + accuracyAllowance;
     }
 
-    if (site.requireGpsCheckIn && !gpsVerified) {
+    if (policy.enforceGps && site.requireGpsCheckIn && !gpsVerified) {
       if (dto.latitude === undefined || dto.longitude === undefined) {
         throw new ForbiddenException('GPS location is required for attendance at this site');
       }
@@ -145,7 +163,7 @@ export class AttendanceService {
     const expectedHash = site.attendanceNfcTag?.trim() || '';
     const suppliedHash = suppliedTag ? this.hashNfcTag(suppliedTag) : '';
     const nfcVerified = this.safeHashEquals(suppliedHash, expectedHash);
-    if (enforceNfc && site.requireNfcCheckIn && !nfcVerified) {
+    if (policy.enforceNfc && site.requireNfcCheckIn && !nfcVerified) {
       throw new ForbiddenException('A valid site NFC tag is required for check-in');
     }
 
