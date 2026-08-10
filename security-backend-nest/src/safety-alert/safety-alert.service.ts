@@ -46,13 +46,19 @@ export class SafetyAlertService {
       throw new BadRequestException('Safety alerts must be linked to an assigned shift');
     }
 
+    const type = dto.type ?? SafetyAlertType.OTHER;
+    const priority =
+      type === SafetyAlertType.PANIC
+        ? SafetyAlertPriority.CRITICAL
+        : dto.priority ?? SafetyAlertPriority.MEDIUM;
+
     const safetyAlert = this.safetyAlertRepo.create({
       company,
       guard,
       shift,
-      type: dto.type ?? SafetyAlertType.OTHER,
-      priority: dto.priority ?? SafetyAlertPriority.MEDIUM,
-      message: dto.message,
+      type,
+      priority,
+      message: dto.message.trim(),
       status: SafetyAlertStatus.OPEN,
     });
 
@@ -71,11 +77,12 @@ export class SafetyAlertService {
     });
 
     if (company.user?.id) {
+      const isPanic = saved.type === SafetyAlertType.PANIC;
       await this.notificationService.createForUser({
         userId: company.user.id,
         company,
         type: NotificationType.ALERT_RAISED,
-        title: 'Safety alert raised',
+        title: isPanic ? 'CRITICAL: Panic alert raised' : 'Safety alert raised',
         message: `${guard.user?.firstName ?? 'A guard'} raised a ${saved.type.replace('_', ' ')} alert.`,
       });
     }
