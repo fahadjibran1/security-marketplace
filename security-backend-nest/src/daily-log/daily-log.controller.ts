@@ -14,7 +14,7 @@ export class DailyLogController {
   constructor(private readonly dailyLogService: DailyLogService) {}
 
   @Get('mine')
-  @Roles(UserRole.GUARD, UserRole.ADMIN)
+  @Roles(UserRole.GUARD)
   findMine(@CurrentUser() user: JwtPayload) {
     return this.dailyLogService.findMine(user.sub);
   }
@@ -22,11 +22,15 @@ export class DailyLogController {
   @Get('company')
   @Roles(UserRole.ADMIN, ...COMPANY_VIEW_ROLES)
   findForCompany(@CurrentUser() user: JwtPayload) {
+    if (user.role === UserRole.ADMIN) {
+      return this.dailyLogService.findAll();
+    }
+
     return this.dailyLogService.findForCompany(user.sub);
   }
 
   @Post()
-  @Roles(UserRole.GUARD, UserRole.ADMIN)
+  @Roles(UserRole.GUARD)
   create(@CurrentUser() user: JwtPayload, @Body() dto: CreateDailyLogDto) {
     return this.dailyLogService.createForGuard(user.sub, dto);
   }
