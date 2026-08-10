@@ -3,9 +3,11 @@ import { BadRequestException } from '@nestjs/common';
 import { getMetadataArgsStorage } from 'typeorm';
 import { AuthService } from '../src/auth/auth.service';
 import { PublicRegistrationRole, RegisterDto } from '../src/auth/dto/register.dto';
+import { AttendanceEvent } from '../src/attendance/entities/attendance.entity';
 import { ClientPortalUser } from '../src/client-portal-user/entities/client-portal-user.entity';
 import { CompanyStatus } from '../src/company/entities/company.entity';
 import { GuardApprovalStatus } from '../src/guard-profile/entities/guard-profile.entity';
+import { Site } from '../src/site/entities/site.entity';
 import { User, UserRole, UserStatus } from '../src/user/entities/user.entity';
 
 type Calls = {
@@ -84,13 +86,13 @@ async function expectBadRequest(action: () => Promise<unknown>) {
   ok(thrown instanceof BadRequestException, 'Expected BadRequestException');
 }
 
-function assertPasswordHashExcluded(target: Function, entityName: string) {
+function assertColumnExcluded(target: Function, propertyName: string, label: string) {
   const column = getMetadataArgsStorage().columns.find(
-    (candidate) => candidate.target === target && candidate.propertyName === 'passwordHash',
+    (candidate) => candidate.target === target && candidate.propertyName === propertyName,
   );
 
-  ok(column, `${entityName}.passwordHash column metadata must exist`);
-  equal(column.options.select, false, `${entityName}.passwordHash must use select:false`);
+  ok(column, `${label} column metadata must exist`);
+  equal(column.options.select, false, `${label} must use select:false`);
 }
 
 async function testPrivilegedRoleCannotSelfRegister() {
@@ -171,14 +173,16 @@ async function main() {
   await testInvalidGuardPayloadHasNoSideEffects();
   await testGuardRegistrationRemainsPending();
   await testCompanyRegistrationMapsToCompanyAdmin();
-  assertPasswordHashExcluded(User, 'User');
-  assertPasswordHashExcluded(ClientPortalUser, 'ClientPortalUser');
+  assertColumnExcluded(User, 'passwordHash', 'User.passwordHash');
+  assertColumnExcluded(ClientPortalUser, 'passwordHash', 'ClientPortalUser.passwordHash');
+  assertColumnExcluded(Site, 'attendanceNfcTag', 'Site.attendanceNfcTag');
+  assertColumnExcluded(AttendanceEvent, 'nfcTag', 'AttendanceEvent.nfcTag');
 
   console.log(
     JSON.stringify({
       event: 'release_smoke_passed',
-      tests: 6,
-      scope: 'auth-registration-and-credential-exposure',
+      tests: 8,
+      scope: 'auth-registration-credential-and-attendance-secret-exposure',
     }),
   );
 }
