@@ -24,7 +24,7 @@ export class AttendanceEvent {
   })
   type!: AttendanceEventType;
 
-  @Column({ type: 'varchar', nullable: true })
+  @Column({ type: 'varchar', nullable: true, select: false })
   nfcTag?: string | null;
 
   @Column({ type: 'boolean', default: false })
