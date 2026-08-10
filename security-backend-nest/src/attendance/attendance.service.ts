@@ -1,6 +1,7 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { createHash, timingSafeEqual } from 'crypto';
 import { AttendanceEvent, AttendanceEventType } from './entities/attendance.entity';
 import { ShiftService } from '../shift/shift.service';
 import { GuardProfileService } from '../guard-profile/guard-profile.service';
@@ -29,22 +30,14 @@ export class AttendanceService {
   async findMine(userId: number): Promise<AttendanceEvent[]> {
     const guard = await this.guardProfileService.findByUserId(userId);
     if (!guard) throw new NotFoundException('Guard profile not found');
-
-    return this.attendanceRepo.find({
-      where: { guard: { id: guard.id } },
-      order: { occurredAt: 'DESC' },
-    });
+    return this.attendanceRepo.find({ where: { guard: { id: guard.id } }, order: { occurredAt: 'DESC' } });
   }
 
   async findForCompany(user: JwtPayload): Promise<AttendanceEvent[]> {
-    if (user.role === UserRole.ADMIN) {
-      return this.attendanceRepo.find({ order: { occurredAt: 'DESC' } });
-    }
-
+    if (user.role === UserRole.ADMIN) return this.attendanceRepo.find({ order: { occurredAt: 'DESC' } });
     if (!isCompanyRole(user.role)) throw new ForbiddenException('Company access is required');
     const company = await this.companyService.findByUserId(user.sub);
     if (!company) throw new NotFoundException('Company not found');
-
     return this.attendanceRepo.find({
       where: { shift: { company: { id: company.id } } },
       order: { occurredAt: 'DESC' },
@@ -54,22 +47,17 @@ export class AttendanceService {
   async checkIn(userId: number, dto: RecordAttendanceDto) {
     const { guard, shift } = await this.getGuardAndOwnedShift(userId, dto.shiftId);
     const normalizedStatus = this.shiftService.normalizeLifecycleStatus(shift.status);
-
-    if (normalizedStatus !== 'ready') {
-      throw new BadRequestException('Only ready shifts can be checked in');
-    }
+    if (normalizedStatus !== 'ready') throw new BadRequestException('Only ready shifts can be checked in');
 
     const latest = await this.latestForShift(shift.id);
-    if (latest?.type === AttendanceEventType.CHECK_IN) {
-      throw new BadRequestException('Shift is already checked in');
-    }
+    if (latest?.type === AttendanceEventType.CHECK_IN) throw new BadRequestException('Shift is already checked in');
 
     const evidence = await this.verifyAttendanceEvidence(shift.site?.id, dto, true);
     const event = this.attendanceRepo.create({
       shift,
       guard,
       type: AttendanceEventType.CHECK_IN,
-      nfcTag: dto.nfcTag?.trim() || null,
+      nfcTag: null,
       nfcVerified: evidence.nfcVerified,
       latitude: dto.latitude ?? null,
       longitude: dto.longitude ?? null,
@@ -89,7 +77,6 @@ export class AttendanceService {
       shift.assignment.checkedInAt = savedEvent.occurredAt;
       await this.assignmentService.save(shift.assignment);
     }
-
     return savedEvent;
   }
 
@@ -97,11 +84,7 @@ export class AttendanceService {
     const { guard, shift } = await this.getGuardAndOwnedShift(userId, dto.shiftId);
     const normalizedStatus = this.shiftService.normalizeLifecycleStatus(shift.status);
     const latest = await this.latestForShift(shift.id);
-
-    if (normalizedStatus !== 'in_progress') {
-      throw new BadRequestException('Only in-progress shifts can be checked out');
-    }
-
+    if (normalizedStatus !== 'in_progress') throw new BadRequestException('Only in-progress shifts can be checked out');
     if (!latest || latest.type !== AttendanceEventType.CHECK_IN) {
       throw new BadRequestException('Shift must be checked in before checkout');
     }
@@ -111,7 +94,7 @@ export class AttendanceService {
       shift,
       guard,
       type: AttendanceEventType.CHECK_OUT,
-      nfcTag: dto.nfcTag?.trim() || null,
+      nfcTag: null,
       nfcVerified: evidence.nfcVerified,
       latitude: dto.latitude ?? null,
       longitude: dto.longitude ?? null,
@@ -131,12 +114,8 @@ export class AttendanceService {
       await this.assignmentService.save(shift.assignment);
     }
 
-    const hoursWorked = Math.max(
-      0,
-      (savedEvent.occurredAt.getTime() - latest.occurredAt.getTime()) / (1000 * 60 * 60),
-    );
+    const hoursWorked = Math.max(0, (savedEvent.occurredAt.getTime() - latest.occurredAt.getTime()) / 3600000);
     await this.timesheetService.updateHoursForShift(shift.id, Number(hoursWorked.toFixed(2)));
-
     return savedEvent;
   }
 
@@ -150,12 +129,7 @@ export class AttendanceService {
     let distanceFromSiteMeters: number | null = null;
 
     if (dto.latitude !== undefined && dto.longitude !== undefined && site.latitude != null && site.longitude != null) {
-      distanceFromSiteMeters = this.distanceMeters(
-        site.latitude,
-        site.longitude,
-        dto.latitude,
-        dto.longitude,
-      );
+      distanceFromSiteMeters = this.distanceMeters(site.latitude, site.longitude, dto.latitude, dto.longitude);
       const accuracyAllowance = Math.min(Math.max(dto.gpsAccuracyMeters ?? 0, 0), 50);
       gpsVerified = distanceFromSiteMeters <= site.geofenceRadiusMeters + accuracyAllowance;
     }
@@ -168,8 +142,9 @@ export class AttendanceService {
     }
 
     const suppliedTag = dto.nfcTag?.trim() || '';
-    const expectedTag = site.attendanceNfcTag?.trim() || '';
-    const nfcVerified = Boolean(suppliedTag && expectedTag && suppliedTag === expectedTag);
+    const expectedHash = site.attendanceNfcTag?.trim() || '';
+    const suppliedHash = suppliedTag ? this.hashNfcTag(suppliedTag) : '';
+    const nfcVerified = this.safeHashEquals(suppliedHash, expectedHash);
     if (enforceNfc && site.requireNfcCheckIn && !nfcVerified) {
       throw new ForbiddenException('A valid site NFC tag is required for check-in');
     }
@@ -180,21 +155,23 @@ export class AttendanceService {
   private async getGuardAndOwnedShift(userId: number, shiftId: number) {
     const guard = await this.guardProfileService.findByUserId(userId);
     if (!guard) throw new NotFoundException('Guard profile not found');
-
     const shift = await this.shiftService.findOne(shiftId);
     const assignedGuardId = shift.guard?.id ?? shift.assignment?.guard?.id;
-    if (assignedGuardId !== guard.id) {
-      throw new ForbiddenException('This shift is not assigned to the current guard');
-    }
-
+    if (assignedGuardId !== guard.id) throw new ForbiddenException('This shift is not assigned to the current guard');
     return { guard, shift };
   }
 
   private latestForShift(shiftId: number) {
-    return this.attendanceRepo.findOne({
-      where: { shift: { id: shiftId } },
-      order: { occurredAt: 'DESC' },
-    });
+    return this.attendanceRepo.findOne({ where: { shift: { id: shiftId } }, order: { occurredAt: 'DESC' } });
+  }
+
+  private hashNfcTag(value: string) {
+    return createHash('sha256').update(value.trim(), 'utf8').digest('hex');
+  }
+
+  private safeHashEquals(left: string, right: string) {
+    if (!left || !right || left.length !== right.length) return false;
+    return timingSafeEqual(Buffer.from(left, 'hex'), Buffer.from(right, 'hex'));
   }
 
   private distanceMeters(lat1: number, lon1: number, lat2: number, lon2: number) {
