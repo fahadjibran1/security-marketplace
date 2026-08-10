@@ -10,7 +10,7 @@ on:
       - '.github/workflows/s4-backend-release-gate.yml'
 
 concurrency:
-  group: s4-backend-release-gate-${{ github.ref }}
+  group: s4-backend-release-gate-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
