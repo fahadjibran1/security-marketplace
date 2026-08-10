@@ -38,6 +38,9 @@ jobs:
           cache: npm
           cache-dependency-path: security-mobile-app/package-lock.json
 
+      - name: Install manifest dependencies and refresh lockfile
+        run: npm install
+
       - name: Reconcile Expo SDK and location dependencies
         run: npx expo install --fix expo-location
 
