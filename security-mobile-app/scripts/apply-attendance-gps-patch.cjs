@@ -1,7 +1,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-// Deterministic, idempotent source reconciliation used by the mobile release gate.
+// Keep shared mobile types aligned with the attendance verification API.
+// GPS collection itself is installed once at app startup via attendanceTransport.ts.
 function patchFile(relativePath, patches) {
   const filePath = path.resolve(__dirname, '..', relativePath);
   let source = fs.readFileSync(filePath, 'utf8');
@@ -35,22 +36,4 @@ patchFile('src/types/models.ts', [
   },
 ]);
 
-patchFile('src/screens/GuardDashboardScreen.tsx', [
-  {
-    label: 'attendance location import',
-    before: `import { clearStoredSession } from '../services/session';`,
-    after: `import { clearStoredSession } from '../services/session';\nimport { getAttendanceLocationEvidence } from '../services/attendanceLocation';`,
-  },
-  {
-    label: 'GPS-aware check-in',
-    before: `      setAttendanceBusyShiftId(shiftId);\n      await checkInShift({ shiftId });`,
-    after: `      setAttendanceBusyShiftId(shiftId);\n      const shift = shifts.find((candidate) => candidate.id === shiftId);\n      const gpsRequired = Boolean(shift?.site?.requireGpsCheckIn);\n      const locationEvidence = await getAttendanceLocationEvidence({\n        required: gpsRequired,\n        promptIfNeeded: gpsRequired,\n      });\n      await checkInShift({ shiftId, ...locationEvidence });`,
-  },
-  {
-    label: 'GPS-aware check-out',
-    before: `      setAttendanceBusyShiftId(shiftId);\n      await checkOutShift({ shiftId });`,
-    after: `      setAttendanceBusyShiftId(shiftId);\n      const locationEvidence = await getAttendanceLocationEvidence({\n        required: false,\n        promptIfNeeded: false,\n      });\n      await checkOutShift({ shiftId, ...locationEvidence });`,
-  },
-]);
-
-console.log('Guard Mobile attendance GPS source wiring is synchronized.');
+console.log('Guard Mobile attendance verification types are synchronized.');
