@@ -38,13 +38,13 @@ export class Timesheet {
   @PrimaryGeneratedColumn()
   id!: number;
 
-  @ManyToOne(() => Shift, (shift) => shift.timesheets, { eager: true })
+  @ManyToOne(() => Shift, (shift) => shift.timesheets, { eager: true, nullable: false })
   shift!: Shift;
 
-  @ManyToOne(() => GuardProfile, (guard) => guard.timesheets, { eager: true })
+  @ManyToOne(() => GuardProfile, (guard) => guard.timesheets, { eager: true, nullable: false })
   guard!: GuardProfile;
 
-  @ManyToOne(() => Company, (company) => company.timesheets, { eager: true })
+  @ManyToOne(() => Company, (company) => company.timesheets, { eager: true, nullable: false })
   company!: Company;
 
   @Column({ type: 'numeric', precision: 8, scale: 2, default: 0 })
