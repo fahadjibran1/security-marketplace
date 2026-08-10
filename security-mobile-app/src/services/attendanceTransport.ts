@@ -8,8 +8,11 @@ let restoreFetch: (() => void) | null = null;
 
 function getRequestUrl(input: FetchInput) {
   if (typeof input === 'string') return input;
-  if (typeof URL !== 'undefined' && input instanceof URL) return input.toString();
-  return input.url;
+  if (typeof input === 'object' && input !== null && 'url' in input) {
+    const requestUrl = (input as { url?: unknown }).url;
+    if (typeof requestUrl === 'string') return requestUrl;
+  }
+  return String(input);
 }
 
 function isAttendanceCheckIn(input: FetchInput, init?: FetchInit) {
