@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { DailyLog, DailyLogType } from './entities/daily-log.entity';
@@ -18,6 +18,10 @@ export class DailyLogService {
     private readonly companyService: CompanyService,
     private readonly auditLogService: AuditLogService,
   ) {}
+
+  findAll(): Promise<DailyLog[]> {
+    return this.dailyLogRepo.find({ order: { createdAt: 'DESC' } });
+  }
 
   async createForGuard(userId: number, dto: CreateDailyLogDto): Promise<DailyLog> {
     const guard = await this.guardProfileService.findByUserId(userId);
