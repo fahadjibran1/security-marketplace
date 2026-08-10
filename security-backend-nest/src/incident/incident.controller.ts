@@ -15,7 +15,7 @@ export class IncidentController {
   constructor(private readonly incidentService: IncidentService) {}
 
   @Get('mine')
-  @Roles(UserRole.GUARD, UserRole.ADMIN)
+  @Roles(UserRole.GUARD)
   findMine(@CurrentUser() user: JwtPayload) {
     return this.incidentService.findMine(user.sub);
   }
@@ -23,11 +23,14 @@ export class IncidentController {
   @Get('company')
   @Roles(UserRole.ADMIN, ...COMPANY_VIEW_ROLES)
   findForCompany(@CurrentUser() user: JwtPayload) {
+    if (user.role === UserRole.ADMIN) {
+      return this.incidentService.findAll();
+    }
     return this.incidentService.findForCompany(user.sub);
   }
 
   @Post()
-  @Roles(UserRole.GUARD, UserRole.ADMIN)
+  @Roles(UserRole.GUARD)
   create(@CurrentUser() user: JwtPayload, @Body() dto: CreateIncidentDto) {
     return this.incidentService.createForGuard(user.sub, dto);
   }
@@ -39,6 +42,9 @@ export class IncidentController {
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateIncidentStatusDto,
   ) {
+    if (user.role === UserRole.ADMIN) {
+      return this.incidentService.updateStatusAsAdmin(user.sub, id, dto.status);
+    }
     return this.incidentService.updateStatusForCompany(user.sub, id, dto.status);
   }
 }
