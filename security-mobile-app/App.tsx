@@ -6,6 +6,7 @@ import { ClientPortalScreen } from './src/screens/ClientPortalScreen';
 import { GuardDashboardScreen } from './src/screens/GuardDashboardScreen';
 import { AuthScreen } from './src/screens/AuthScreen';
 import { logout, restoreSession, setUnauthorizedHandler } from './src/services/api';
+import { installAttendanceLocationTransport } from './src/services/attendanceTransport';
 import { clearStoredSession, loadStoredSession, persistSession } from './src/services/session';
 import { AuthSession, isClientAppRole, isCompanyAppRole } from './src/types/models';
 import { colors } from './src/theme';
@@ -16,6 +17,8 @@ export default function App() {
   const [session, setSession] = useState<AuthSession | null>(null);
   const [booting, setBooting] = useState(true);
   const [authNotice, setAuthNotice] = useState<string | null>(null);
+
+  useEffect(() => installAttendanceLocationTransport(), []);
 
   useEffect(() => {
     async function bootstrapSession() {
