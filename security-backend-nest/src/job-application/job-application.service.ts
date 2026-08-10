@@ -183,8 +183,8 @@ export class JobApplicationService {
       shiftResult = await this.shiftService.create({
         assignmentId: assignment.id,
         siteId: dto.siteId,
-        start: dto.start,
-        end: dto.end,
+        start: dto.start!,
+        end: dto.end!,
       });
     }
 
