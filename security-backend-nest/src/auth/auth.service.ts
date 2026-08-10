@@ -2,7 +2,7 @@ import { BadRequestException, ForbiddenException, Injectable, UnauthorizedExcept
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { UserService } from '../user/user.service';
-import { RegisterDto } from './dto/register.dto';
+import { PublicRegistrationRole, RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { isCompanyRole, UserRole, UserStatus } from '../user/entities/user.entity';
 import { CompanyService } from '../company/company.service';
@@ -24,43 +24,52 @@ export class AuthService {
   ) {}
 
   async register(dto: RegisterDto) {
-    const normalizedRole = dto.role === UserRole.COMPANY ? UserRole.COMPANY_ADMIN : dto.role;
-    const user = await this.usersService.create({
-      email: dto.email,
-      password: dto.password,
-      role: normalizedRole,
-      status: UserStatus.ACTIVE,
-    });
+    const normalizedRole =
+      dto.role === PublicRegistrationRole.COMPANY ? UserRole.COMPANY_ADMIN : (dto.role as UserRole);
 
+    // Validate the complete self-service payload before creating any persistent records.
     if (isCompanyRole(normalizedRole)) {
       if (!dto.companyName || !dto.companyNumber || !dto.address || !dto.contactDetails) {
         throw new BadRequestException('Company fields are required for company role');
       }
+    } else if (normalizedRole === UserRole.GUARD) {
+      if (!dto.fullName || !dto.siaLicenseNumber || !dto.phone) {
+        throw new BadRequestException('Guard fields are required for guard role');
+      }
+    } else {
+      // Defence in depth: the DTO enum already blocks privileged roles at the API boundary.
+      throw new BadRequestException('Role is not available for public registration');
+    }
 
+    const userStatus = normalizedRole === UserRole.GUARD ? UserStatus.PENDING : UserStatus.ACTIVE;
+    const user = await this.usersService.create({
+      email: dto.email,
+      password: dto.password,
+      role: normalizedRole,
+      status: userStatus,
+    });
+
+    if (isCompanyRole(normalizedRole)) {
       await this.companyService.create({
         userId: user.id,
-        name: dto.companyName,
-        companyNumber: dto.companyNumber,
-        address: dto.address,
-        contactDetails: dto.contactDetails,
+        name: dto.companyName!,
+        companyNumber: dto.companyNumber!,
+        address: dto.address!,
+        contactDetails: dto.contactDetails!,
         status: CompanyStatus.ONBOARDING,
       });
     }
 
     if (normalizedRole === UserRole.GUARD) {
-      if (!dto.fullName || !dto.siaLicenseNumber || !dto.phone) {
-        throw new BadRequestException('Guard fields are required for guard role');
-      }
-
       await this.guardProfileService.create({
         userId: user.id,
-        fullName: dto.fullName,
-        siaLicenseNumber: dto.siaLicenseNumber,
-        phone: dto.phone,
+        fullName: dto.fullName!,
+        siaLicenseNumber: dto.siaLicenseNumber!,
+        phone: dto.phone!,
         locationSharingEnabled: false,
-        status: GuardApprovalStatus.APPROVED,
-        approvalStatus: GuardApprovalStatus.APPROVED,
-        isApproved: true,
+        status: GuardApprovalStatus.PENDING,
+        approvalStatus: GuardApprovalStatus.PENDING,
+        isApproved: false,
       });
     }
 
