@@ -20,7 +20,7 @@ export class GuardAvailabilityOverride {
   @PrimaryGeneratedColumn()
   id!: number;
 
-  @ManyToOne(() => GuardProfile, { eager: true, onDelete: 'CASCADE' })
+  @ManyToOne(() => GuardProfile, { eager: true, nullable: false, onDelete: 'CASCADE' })
   @JoinColumn({ name: 'guardId' })
   guard!: GuardProfile;
 
