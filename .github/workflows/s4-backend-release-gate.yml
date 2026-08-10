@@ -62,6 +62,9 @@ jobs:
       - name: Compile backend
         run: npm run build
 
+      - name: Run release smoke tests
+        run: npm run test:release
+
       - name: Run migrations on clean database
         run: npm run migration:run
 
