@@ -23,11 +23,6 @@ export class AttendanceController {
   @Get('company')
   getCompanyAttendance(@Req() req: { user: JwtPayload }) {
     const user = req.user;
-    console.log('[AttendanceController] GET /attendance/company', {
-      sub: user?.sub,
-      role: user?.role,
-      user,
-    });
 
     if (user.role !== UserRole.ADMIN && !isCompanyRole(user.role)) {
       throw new ForbiddenException('Only company users can access company attendance');
