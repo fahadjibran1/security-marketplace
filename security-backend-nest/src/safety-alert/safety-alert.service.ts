@@ -27,6 +27,10 @@ export class SafetyAlertService {
     private readonly notificationService: NotificationService,
   ) {}
 
+  findAll(): Promise<SafetyAlert[]> {
+    return this.safetyAlertRepo.find({ order: { createdAt: 'DESC' } });
+  }
+
   async createForGuard(userId: number, dto: CreateSafetyAlertDto): Promise<SafetyAlert> {
     const guard = await this.guardProfileService.findByUserId(userId);
     if (!guard) throw new NotFoundException('Guard profile not found');
@@ -109,6 +113,35 @@ export class SafetyAlertService {
       throw new BadRequestException('This alert does not belong to the current company');
     }
 
+    return this.acknowledge(alert, userId, company);
+  }
+
+  async acknowledgeAsAdmin(userId: number, alertId: number): Promise<SafetyAlert> {
+    const alert = await this.safetyAlertRepo.findOne({ where: { id: alertId } });
+    if (!alert) throw new NotFoundException('Safety alert not found');
+    return this.acknowledge(alert, userId, alert.company);
+  }
+
+  async closeForCompany(userId: number, alertId: number): Promise<SafetyAlert> {
+    const company = await this.companyService.findByUserId(userId);
+    if (!company) throw new NotFoundException('Company not found');
+
+    const alert = await this.safetyAlertRepo.findOne({ where: { id: alertId } });
+    if (!alert) throw new NotFoundException('Safety alert not found');
+    if (alert.company.id !== company.id) {
+      throw new BadRequestException('This alert does not belong to the current company');
+    }
+
+    return this.close(alert, userId, company);
+  }
+
+  async closeAsAdmin(userId: number, alertId: number): Promise<SafetyAlert> {
+    const alert = await this.safetyAlertRepo.findOne({ where: { id: alertId } });
+    if (!alert) throw new NotFoundException('Safety alert not found');
+    return this.close(alert, userId, alert.company);
+  }
+
+  private async acknowledge(alert: SafetyAlert, userId: number, company: SafetyAlert['company']) {
     alert.status = SafetyAlertStatus.ACKNOWLEDGED;
     alert.acknowledgedAt = new Date();
     alert.acknowledgedByUserId = userId;
@@ -128,16 +161,7 @@ export class SafetyAlertService {
     return saved;
   }
 
-  async closeForCompany(userId: number, alertId: number): Promise<SafetyAlert> {
-    const company = await this.companyService.findByUserId(userId);
-    if (!company) throw new NotFoundException('Company not found');
-
-    const alert = await this.safetyAlertRepo.findOne({ where: { id: alertId } });
-    if (!alert) throw new NotFoundException('Safety alert not found');
-    if (alert.company.id !== company.id) {
-      throw new BadRequestException('This alert does not belong to the current company');
-    }
-
+  private async close(alert: SafetyAlert, userId: number, company: SafetyAlert['company']) {
     if (!alert.acknowledgedAt) {
       alert.acknowledgedAt = new Date();
       alert.acknowledgedByUserId = userId;
