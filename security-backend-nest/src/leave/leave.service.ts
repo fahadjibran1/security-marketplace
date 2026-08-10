@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { LessThan, MoreThan, Repository } from 'typeorm';
 
@@ -35,16 +35,40 @@ export class LeaveService {
     const company = await this.companyService.findByUserId(userId);
     if (!company) throw new NotFoundException('Company not found');
     if (!dto.guardId) throw new BadRequestException('Guard is required for company leave records.');
-    return this.upsert({ companyId: company.id, guardId: dto.guardId, userId, dto, defaultStatus: GuardLeaveStatus.APPROVED });
+
+    const relation = await this.companyGuardRepo.findOne({
+      where: { company: { id: company.id }, guard: { id: dto.guardId } },
+    });
+    if (!relation) {
+      throw new ForbiddenException('Guard does not belong to the current company.');
+    }
+
+    return this.upsert({
+      companyId: company.id,
+      guardId: dto.guardId,
+      userId,
+      dto,
+      defaultStatus: GuardLeaveStatus.APPROVED,
+    });
   }
 
   async upsertForGuardUser(userId: number, dto: UpsertGuardLeaveDto) {
     const guard = await this.guardProfileService.findByUserId(userId);
     if (!guard) throw new NotFoundException('Guard profile not found');
-    const relation = await this.companyGuardRepo.findOne({ where: { guard: { id: guard.id } }, order: { createdAt: 'DESC' } });
+    const relation = await this.companyGuardRepo.findOne({
+      where: { guard: { id: guard.id } },
+      order: { createdAt: 'DESC' },
+    });
     const companyId = relation?.company?.id;
     if (!companyId) throw new BadRequestException('Leave requires an existing company relationship.');
-    return this.upsert({ companyId, guardId: guard.id, userId, dto, defaultStatus: GuardLeaveStatus.PENDING });
+
+    return this.upsert({
+      companyId,
+      guardId: guard.id,
+      userId,
+      dto: { ...dto, guardId: guard.id, status: GuardLeaveStatus.PENDING },
+      defaultStatus: GuardLeaveStatus.PENDING,
+    });
   }
 
   async hasApprovedLeaveOverlap(companyId: number, guardId: number, startAt: Date, endAt: Date) {
@@ -87,9 +111,20 @@ export class LeaveService {
     if (Number.isNaN(startAt.getTime()) || Number.isNaN(endAt.getTime()) || endAt <= startAt) {
       throw new BadRequestException('Leave start and end must be valid and ordered.');
     }
+
     const existing = input.dto.id
-      ? await this.leaveRepo.findOne({ where: { id: input.dto.id, company: { id: company.id }, guard: { id: guard.id } } })
+      ? await this.leaveRepo.findOne({
+          where: {
+            id: input.dto.id,
+            company: { id: company.id },
+            guard: { id: guard.id },
+          },
+        })
       : null;
+    if (input.dto.id && !existing) {
+      throw new ForbiddenException('Leave record is outside the permitted scope.');
+    }
+
     const beforeData = existing ? { ...existing } : null;
     const leave = existing ?? this.leaveRepo.create({ company, guard });
     leave.leaveType = input.dto.leaveType;
