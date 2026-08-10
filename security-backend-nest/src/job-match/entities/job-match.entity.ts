@@ -22,10 +22,10 @@ export class JobMatch {
   @PrimaryGeneratedColumn()
   id!: number;
 
-  @ManyToOne(() => JobSlot, (slot) => slot.matches, { eager: true })
+  @ManyToOne(() => JobSlot, (slot) => slot.matches, { eager: true, nullable: false })
   jobSlot!: JobSlot;
 
-  @ManyToOne(() => GuardProfile, (guard) => guard.jobMatches, { eager: true })
+  @ManyToOne(() => GuardProfile, (guard) => guard.jobMatches, { eager: true, nullable: false })
   guard!: GuardProfile;
 
   @Column({ type: 'numeric', precision: 5, scale: 2 })
