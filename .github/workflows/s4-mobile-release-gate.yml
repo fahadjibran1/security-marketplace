@@ -20,11 +20,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  mobile-typecheck:
+  mobile-release-gate:
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: security-mobile-app
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -38,14 +39,11 @@ jobs:
           cache: npm
           cache-dependency-path: security-mobile-app/package-lock.json
 
-      - name: Install manifest dependencies and refresh lockfile
-        run: npm install
+      - name: Reconcile lockfile from pinned manifest
+        run: npm install --package-lock-only --ignore-scripts
 
-      - name: Reconcile Expo SDK dependencies
-        run: npx expo install --fix expo-location expo-constants
-
-      - name: Apply Guard Mobile GPS wiring
-        run: node scripts/apply-attendance-gps-patch.cjs
+      - name: Install locked dependencies
+        run: npm ci
 
       - name: Type-check Guard Mobile
         run: npm run build:frontend
@@ -53,20 +51,20 @@ jobs:
       - name: Verify Expo dependency compatibility
         run: npx expo install --check
 
-      - name: Commit deterministic mobile reconciliation
+      - name: Verify Android production bundle
+        run: npx expo export --platform android --output-dir dist-android
+
+      - name: Commit deterministic lockfile reconciliation
+        if: github.event_name == 'push'
         working-directory: .
         shell: bash
         run: |
-          if git diff --quiet; then
-            echo 'Mobile source, manifest and lockfile are already synchronized.'
+          if git diff --quiet -- security-mobile-app/package-lock.json; then
+            echo 'Mobile lockfile already matches the pinned manifest.'
             exit 0
           fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add security-mobile-app/package.json \
-            security-mobile-app/package-lock.json \
-            security-mobile-app/app.json \
-            security-mobile-app/src/types/models.ts \
-            security-mobile-app/src/screens/GuardDashboardScreen.tsx
-          git commit -m 'Wire GPS evidence into Guard Mobile attendance'
+          git add security-mobile-app/package-lock.json
+          git commit -m 'Synchronize Guard Mobile lockfile'
           git push
