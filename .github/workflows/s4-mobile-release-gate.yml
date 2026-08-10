@@ -41,8 +41,8 @@ jobs:
       - name: Install manifest dependencies and refresh lockfile
         run: npm install
 
-      - name: Reconcile Expo SDK and location dependencies
-        run: npx expo install --fix expo-location
+      - name: Reconcile Expo SDK dependencies
+        run: npx expo install --fix expo-location expo-constants
 
       - name: Apply Guard Mobile GPS wiring
         run: node scripts/apply-attendance-gps-patch.cjs
