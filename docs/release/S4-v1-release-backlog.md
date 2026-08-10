@@ -38,14 +38,15 @@ Objective: first commercial pilot release
 - Panic alerts forced to CRITICAL priority.
 - Missed-welfare monitoring added for in-progress shifts using site welfare interval and last welfare/check-in reference.
 - Guard Mobile release gate added with TypeScript build and Expo compatibility validation.
+- Expo SDK 54 dependencies reconciled and `expo-location` declared for foreground attendance verification.
+- Native foreground location permission configuration added for Guard Mobile.
 
 ## Active P0 audit areas
 
-- Guard Mobile foreground GPS capture and attendance payload integration.
-- Guard Mobile Expo dependency reconciliation and lockfile update on the release branch.
+- Complete Guard Mobile foreground GPS source wiring and certify it through the mobile release gate.
+- End-to-end Book On test with a GPS-required site on a real/native build.
 - Welfare/check-call end-to-end mobile workflow and recovery behavior.
-- Patrol evidence / image upload end-to-end verification.
-- Offline/retry/idempotency behavior for incidents, daily logs, safety alerts and evidence uploads.
+- Offline/retry/idempotency behavior for incidents, daily logs, safety alerts and panic actions.
 - Remaining tenant-isolation review across all API surfaces.
 - Runtime dependency vulnerability remediation and exploitability assessment.
 - Expanded behavioral/integration tests for tenant boundaries and finance state transitions.
@@ -53,7 +54,9 @@ Objective: first commercial pilot release
 
 ## P1 backlog
 
-- Add a database-level duplicate-event guard for concurrent attendance requests after pilot behavior is proven, without preventing an authorised future shift-reopen workflow.
+- Durable offline mutation queue for guard operational records if pilot connectivity proves unreliable.
+- Generic idempotency keys for incident/daily-log/alert mutations beyond attendance-specific retry protection.
+- Database-level concurrent duplicate protection for attendance events after pilot behavior is proven, without blocking an authorised future shift-reopen workflow.
 - Coverage calculation reconciliation between Job, JobSlot, Assignment and Shift semantics.
 - Constraint/index naming cleanup where TypeORM-generated names differ from migration names without semantic drift.
 - Company staff membership model and reliable tenant resolution for `COMPANY_STAFF`.
@@ -63,10 +66,11 @@ Objective: first commercial pilot release
 
 ## v1.1 scope
 
-The following are not registered production backend modules in the current v1 release line and are deliberately deferred unless a signed pilot requirement makes one mandatory:
+The following are deliberately deferred unless a signed pilot requirement makes one mandatory:
 
 - Dedicated QR patrol routes/checkpoint engine.
 - Multi-checkpoint NFC patrol engine.
+- Patrol image / incident image upload and managed evidence storage. The current Attachment module registers metadata for an existing URL; it is not a secure upload/storage implementation.
 - Dedicated Visitor Book module.
 - Dedicated Vehicle Book module.
 - Dedicated Occurrence Book module beyond the current Daily Log operational record.
@@ -81,14 +85,23 @@ The v1 pilot operational baseline is:
 - Company guard pool and marketplace hiring.
 - Job/assignment/shift lifecycle.
 - Availability, leave and compliance eligibility.
-- GPS/NFC verified Book On where enabled per site.
+- GPS verified Book On where enabled per site.
+- Optional server-side NFC Book On verification only where the client interaction is explicitly available and tested; otherwise leave the site NFC requirement disabled.
 - Book Off and attendance evidence.
-- Incidents and attachments.
+- Incident reports without managed image upload.
 - Daily logs including welfare-check records.
 - Missed-welfare alerts.
 - Panic/safety alerts.
 - Timesheets, payroll batches, invoicing and finance reporting.
-- Client/company/platform administration appropriate to existing tenant model.
+- Client/company/platform administration appropriate to the existing tenant model.
+
+## Offline / retry policy for pilot
+
+- Attendance retries are server-idempotent for the common lost-response scenario.
+- Operational forms retain their entered content on a failed request and only clear after confirmed success.
+- The v1 pilot does not claim offline-first operation or durable background sync.
+- Pilot deployment therefore requires usable mobile data/Wi-Fi coverage and a documented control-room fallback for connectivity outages.
+- Full durable offline queuing is P1 unless pilot UAT demonstrates that connectivity makes it a release blocker.
 
 ## Current release gate
 
