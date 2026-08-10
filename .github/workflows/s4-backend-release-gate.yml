@@ -59,6 +59,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Capture dependency audit
+        shell: bash
+        run: npm audit --json > npm-audit.json || true
+
+      - name: Upload dependency audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: s4-npm-audit
+          path: security-backend-nest/npm-audit.json
+          if-no-files-found: error
+
       - name: Compile backend
         run: npm run build
 
