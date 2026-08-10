@@ -8,6 +8,7 @@
     "build": "nest build",
     "start:prod": "node dist/main.js",
     "lint": "eslint \"src/**/*.ts\"",
+    "test:release": "ts-node -r tsconfig-paths/register scripts/release-smoke.ts",
     "typeorm": "ts-node -r tsconfig-paths/register ./node_modules/typeorm/cli.js",
     "migration:run": "npm run typeorm -- migration:run --transaction each -d src/database/data-source.ts",
     "migration:revert": "npm run typeorm -- migration:revert --transaction each -d src/database/data-source.ts",
