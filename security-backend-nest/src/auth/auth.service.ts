@@ -24,8 +24,7 @@ export class AuthService {
   ) {}
 
   async register(dto: RegisterDto) {
-    const normalizedRole =
-      dto.role === PublicRegistrationRole.COMPANY ? UserRole.COMPANY_ADMIN : (dto.role as UserRole);
+    const normalizedRole = this.normalizePublicRegistrationRole(dto.role);
 
     // Validate the complete self-service payload before creating any persistent records.
     if (isCompanyRole(normalizedRole)) {
@@ -36,9 +35,6 @@ export class AuthService {
       if (!dto.fullName || !dto.siaLicenseNumber || !dto.phone) {
         throw new BadRequestException('Guard fields are required for guard role');
       }
-    } else {
-      // Defence in depth: the DTO enum already blocks privileged roles at the API boundary.
-      throw new BadRequestException('Role is not available for public registration');
     }
 
     const userStatus = normalizedRole === UserRole.GUARD ? UserStatus.PENDING : UserStatus.ACTIVE;
@@ -116,6 +112,18 @@ export class AuthService {
     });
 
     return this.signClientToken(clientUser.id, clientUser.email, clientUser.role, clientUser.client.id);
+  }
+
+  private normalizePublicRegistrationRole(role: PublicRegistrationRole): UserRole {
+    switch (role) {
+      case PublicRegistrationRole.COMPANY:
+      case PublicRegistrationRole.COMPANY_ADMIN:
+        return UserRole.COMPANY_ADMIN;
+      case PublicRegistrationRole.GUARD:
+        return UserRole.GUARD;
+      default:
+        throw new BadRequestException('Role is not available for public registration');
+    }
   }
 
   private async signToken(userId: number, email: string, role: UserRole, status: UserStatus) {
