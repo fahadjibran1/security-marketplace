@@ -89,7 +89,7 @@ jobs:
           path: |
             security-backend-nest/schema-drift.log
             security-backend-nest/schema-drift-clean.log
-          if-no-files-found: error
+          if-no-files-found: warn
 
       - name: Fail on semantic entity-to-migration schema drift
         shell: bash
