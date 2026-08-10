@@ -16,7 +16,11 @@ export class Client {
   @PrimaryGeneratedColumn()
   id!: number;
 
-  @ManyToOne(() => Company, (company) => company.clients, { eager: true, onDelete: 'CASCADE' })
+  @ManyToOne(() => Company, (company) => company.clients, {
+    eager: true,
+    nullable: false,
+    onDelete: 'CASCADE',
+  })
   company!: Company;
 
   @Column()
