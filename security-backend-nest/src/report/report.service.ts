@@ -198,11 +198,18 @@ export class ReportService {
     return timesheet.shift?.site?.client ?? timesheet.shift?.job?.site?.client ?? timesheet.shift?.assignment?.job?.site?.client ?? null;
   }
 
+  // RB-007B: reports must never read the guard's unverified hoursWorked claim.
   private getApprovedHours(timesheet: Timesheet) {
+    if (timesheet.approvedHoursSnapshot !== undefined && timesheet.approvedHoursSnapshot !== null && Number.isFinite(Number(timesheet.approvedHoursSnapshot))) {
+      return Number(timesheet.approvedHoursSnapshot);
+    }
+    if (timesheet.approvedMinutes !== undefined && timesheet.approvedMinutes !== null && Number.isFinite(Number(timesheet.approvedMinutes))) {
+      return Number(timesheet.approvedMinutes) / 60;
+    }
     if (timesheet.approvedHours !== undefined && timesheet.approvedHours !== null && Number.isFinite(Number(timesheet.approvedHours))) {
       return Number(timesheet.approvedHours);
     }
-    return Number(timesheet.hoursWorked) || 0;
+    return 0;
   }
 
   private getHourlyRate(timesheet: Timesheet) {

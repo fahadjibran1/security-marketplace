@@ -138,6 +138,21 @@ export class ContractPricingService {
     }
 
     const approvedHours = this.getApprovedHours(timesheet);
+    if (approvedHours === null) {
+      // Approved, but no attendance-verified duration exists yet (e.g. approved via
+      // an out-of-band path that never set approvedMinutes). Do not compute a
+      // financial figure from unverified data — surface as "not yet billable".
+      return {
+        matchedContractRuleId: null,
+        matchedContractRuleName: null,
+        effectiveBillingRate: null,
+        billableHours: 0,
+        revenueAmount: null,
+        costAmount: null,
+        marginAmount: null,
+        marginPercent: null,
+      };
+    }
     const costRate = this.getHourlyRate(timesheet);
     const matchedRule = this.findMatchingRule(timesheet, rules);
     const fallbackBillingRate = this.getFallbackBillingRate(timesheet);
@@ -355,11 +370,17 @@ export class ContractPricingService {
     return Math.round(billableHours * 100) / 100;
   }
 
-  private getApprovedHours(timesheet: Timesheet) {
-    if (timesheet.approvedHours !== undefined && timesheet.approvedHours !== null && Number.isFinite(Number(timesheet.approvedHours))) {
-      return Number(timesheet.approvedHours);
-    }
-    return Number(timesheet.hoursWorked) || 0;
+  // RB-007B: client billing must never read the guard's unverified hoursWorked claim.
+  // approvedMinutes (attendance-verified, manager-approved) is the source of truth;
+  // approvedHours is kept only as a derived/legacy fallback (still manager-approved
+  // data, never guard-supplied). Returns null when no approved duration exists yet —
+  // callers must treat that as "not billable", never as zero-cost/zero-revenue.
+  private getApprovedHours(timesheet: Timesheet): number | null {
+    const snapshot = this.toNumber(timesheet.approvedHoursSnapshot);
+    if (snapshot !== null) return snapshot;
+    const approvedMinutes = this.toNumber(timesheet.approvedMinutes);
+    if (approvedMinutes !== null) return approvedMinutes / 60;
+    return this.toNumber(timesheet.approvedHours);
   }
 
   private getHourlyRate(timesheet: Timesheet) {

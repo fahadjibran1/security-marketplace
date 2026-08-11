@@ -11,7 +11,9 @@ import { RolesGuard } from '../src/common/guards/roles.guard';
 import { CompanyController } from '../src/company/company.controller';
 import { CompanyService } from '../src/company/company.service';
 import { CompanyStatus } from '../src/company/entities/company.entity';
+import { ContractPricingService } from '../src/contract-pricing/contract-pricing.service';
 import { GuardApprovalStatus } from '../src/guard-profile/entities/guard-profile.entity';
+import { InvoiceBatchService } from '../src/invoice-batch/invoice-batch.service';
 import { PayRuleService } from '../src/pay-rule/pay-rule.service';
 import { PayrollBatchService } from '../src/payroll-batch/payroll-batch.service';
 import { Site } from '../src/site/entities/site.entity';
@@ -532,6 +534,163 @@ async function testExistingBehaviourPreserved() {
   equal(rejected.approvalStatus, TimesheetStatus.REJECTED);
 }
 
+// RB-007B: real ContractPricingService with a fake ruleRepo (no contract rules
+// configured — exercises the fallback job.billingRate/hourlyRate path).
+function buildContractPricingService() {
+  const ruleRepo = { find: async () => [] };
+  const clientRepo = {};
+  const siteRepo = {};
+  const timesheetRepo = {};
+  const companyService = {};
+  return new ContractPricingService(ruleRepo as any, clientRepo as any, siteRepo as any, timesheetRepo as any, companyService as any);
+}
+
+function buildBillableTimesheet(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 20,
+    company: { id: 501 },
+    approvalStatus: TimesheetStatus.APPROVED,
+    hoursWorked: 999,
+    approvedMinutes: 235,
+    approvedHours: null,
+    approvedHoursSnapshot: null,
+    hourlyRateSnapshot: null,
+    billingRateSnapshot: null,
+    billingStatus: 'uninvoiced',
+    invoiceBatch: null,
+    companyNote: null,
+    scheduledStartAt: null,
+    createdAt: new Date('2026-01-01T00:00:00Z'),
+    shift: {
+      job: { hourlyRate: 20, billingRate: 25 },
+      site: { client: { id: 601, name: 'Test Client' } },
+    },
+    ...overrides,
+  } as any;
+}
+
+// ✓ contract pricing uses approvedMinutes, ✓ hoursWorked ignored
+async function testContractPricingUsesApprovedMinutesNotHoursWorked() {
+  const service = buildContractPricingService();
+  const timesheet = buildBillableTimesheet({ hoursWorked: 999, approvedMinutes: 235 });
+
+  const result = service.deriveTimesheetFinancials(timesheet, []);
+
+  equal(result.costAmount, 78.33, 'costAmount must derive from approvedMinutes (3.92h * £20), not hoursWorked (999h)');
+  equal(result.revenueAmount, 98, 'revenueAmount must derive from approvedMinutes (3.92h * £25), not hoursWorked (999h)');
+
+  // Changing only hoursWorked (guard editing their claim) must not move the result at all.
+  const inflated = buildBillableTimesheet({ hoursWorked: 100000, approvedMinutes: 235 });
+  const resultAfterGuardEdit = service.deriveTimesheetFinancials(inflated, []);
+  equal(resultAfterGuardEdit.costAmount, result.costAmount, 'hoursWorked must have zero effect on billing costAmount');
+  equal(resultAfterGuardEdit.revenueAmount, result.revenueAmount, 'hoursWorked must have zero effect on billing revenueAmount');
+}
+
+// ✓ missing approvedMinutes rejected (contract-pricing side): no verified/approved
+// duration at all must yield "not billable", never a silent hoursWorked-derived figure.
+async function testContractPricingRejectsMissingApprovedDuration() {
+  const service = buildContractPricingService();
+  const timesheet = buildBillableTimesheet({ hoursWorked: 999, approvedMinutes: null, approvedHours: null, approvedHoursSnapshot: null });
+
+  const result = service.deriveTimesheetFinancials(timesheet, []);
+
+  equal(result.revenueAmount, null, 'No approved duration must yield a null revenueAmount, never a figure derived from hoursWorked');
+  equal(result.costAmount, null, 'No approved duration must yield a null costAmount, never a figure derived from hoursWorked');
+}
+
+// RB-007B: fake InvoiceBatchService dependencies, mirroring the payroll-batch harness style.
+function buildInvoiceBatchHarness(seedTimesheets: any[]) {
+  const timesheetStore = new Map<number, any>(seedTimesheets.map((t) => [t.id, t]));
+  let savedBatch: any = null;
+
+  const invoiceBatchRepo = {
+    create: (input: any) => ({ id: 900, timesheets: [], ...input }),
+    save: async (batch: any) => {
+      savedBatch = batch;
+      return batch;
+    },
+    findOne: async () => ({ ...savedBatch, timesheets: Array.from(timesheetStore.values()) }),
+    count: async () => 0,
+  };
+  const timesheetRepo = {
+    find: async ({ where }: any) => {
+      const ids = (Array.isArray(where) ? where : [where]).map((clause: any) => clause.id);
+      return Array.from(timesheetStore.values()).filter((t) => ids.includes(t.id));
+    },
+    save: async (entities: any[]) => {
+      entities.forEach((entity) => timesheetStore.set(entity.id, entity));
+      return entities;
+    },
+  };
+  const clientRepo = { findOne: async ({ where }: any) => ({ id: where.id, company: { id: where.company.id }, name: 'Test Client' }) };
+  const paymentRecordRepo = {};
+  const companyService = { findByUserId: async () => ({ id: 501 }) };
+  const contractPricingService = buildContractPricingService();
+  const auditLogService = { log: async () => undefined };
+
+  const service = new InvoiceBatchService(
+    invoiceBatchRepo as any,
+    timesheetRepo as any,
+    clientRepo as any,
+    paymentRecordRepo as any,
+    companyService as any,
+    contractPricingService as any,
+    auditLogService as any,
+  );
+
+  return { service, timesheetStore };
+}
+
+// ✓ invoice uses approvedMinutes, ✓ hoursWorked ignored, ✓ invoice totals unchanged after guard edits hoursWorked
+async function testInvoiceBatchUsesApprovedMinutesNotHoursWorked() {
+  const timesheet = buildBillableTimesheet({ id: 21, hoursWorked: 999, approvedMinutes: 235 });
+  const { service } = buildInvoiceBatchHarness([timesheet]);
+
+  const batch = await service.createForCompany(501, {
+    clientId: 601,
+    periodStart: '2026-01-01',
+    periodEnd: '2026-01-07',
+    timesheetIds: [21],
+  } as any);
+
+  equal(batch.totals.approvedHours, 3.92, 'Invoice batch approvedHours total must derive from approvedMinutes (3.92h), not hoursWorked (999h)');
+  equal(batch.totals.invoiceAmount, 98, 'Invoice amount must derive from approvedMinutes-based revenue, not hoursWorked');
+
+  // A guard editing hoursWorked on an already-invoiced timesheet must never move the total:
+  // simulate the edit directly on the stored record and recompute the summary.
+  timesheet.hoursWorked = 5000000;
+  const batchAfterGuardEdit = await service.findOneForCompany(501, batch.id);
+  equal(batchAfterGuardEdit.totals.invoiceAmount, 98, 'Invoice total must be unchanged after a guard edits hoursWorked');
+  equal(batchAfterGuardEdit.totals.approvedHours, 3.92, 'Invoice hours total must be unchanged after a guard edits hoursWorked');
+}
+
+// ✓ missing approvedMinutes rejected (invoice-batch side): creating an invoice batch
+// for a timesheet with no approved duration must fail safely, not silently bill $0
+// or fall back to hoursWorked.
+async function testInvoiceBatchRejectsTimesheetWithNoApprovedDuration() {
+  const timesheet = buildBillableTimesheet({
+    id: 22,
+    hoursWorked: 999,
+    approvedMinutes: null,
+    approvedHours: null,
+    approvedHoursSnapshot: null,
+  });
+  const { service, timesheetStore } = buildInvoiceBatchHarness([timesheet]);
+
+  await expectBadRequest(() =>
+    service.createForCompany(501, {
+      clientId: 601,
+      periodStart: '2026-01-01',
+      periodEnd: '2026-01-07',
+      timesheetIds: [22],
+    } as any),
+  );
+
+  const persisted = timesheetStore.get(22);
+  equal(persisted.invoiceBatch, null, 'Rejected invoice creation must not attach the timesheet to a batch');
+  equal(persisted.billingStatus, 'uninvoiced', 'Rejected invoice creation must not change billing status');
+}
+
 async function main() {
   await testPrivilegedRoleCannotSelfRegister();
   await testInvalidGuardPayloadHasNoSideEffects();
@@ -546,6 +705,10 @@ async function main() {
   await testPayRuleServiceUsesApprovedMinutesNotHoursWorked();
   await testPayrollBatchSnapshotUsesApprovedMinutesNotHoursWorked();
   await testExistingBehaviourPreserved();
+  await testContractPricingUsesApprovedMinutesNotHoursWorked();
+  await testContractPricingRejectsMissingApprovedDuration();
+  await testInvoiceBatchUsesApprovedMinutesNotHoursWorked();
+  await testInvoiceBatchRejectsTimesheetWithNoApprovedDuration();
   assertColumnExcluded(User, 'passwordHash', 'User.passwordHash');
   assertColumnExcluded(ClientPortalUser, 'passwordHash', 'ClientPortalUser.passwordHash');
   assertColumnExcluded(Site, 'attendanceNfcTag', 'Site.attendanceNfcTag');
@@ -554,9 +717,9 @@ async function main() {
   console.log(
     JSON.stringify({
       event: 'release_smoke_passed',
-      tests: 17,
+      tests: 21,
       scope:
-        'auth-registration-credential-attendance-secret-exposure-RB006-tenant-isolation-and-RB007-payroll-integrity',
+        'auth-registration-credential-attendance-secret-exposure-RB006-tenant-isolation-RB007-payroll-integrity-and-RB007B-client-billing-integrity',
     }),
   );
 }

@@ -273,11 +273,19 @@ export class ClientPortalService {
     return (timesheet.scheduledStartAt ?? timesheet.shift?.start ?? timesheet.createdAt)?.toString?.() ? new Date(timesheet.scheduledStartAt ?? timesheet.shift?.start ?? timesheet.createdAt).toISOString() : timesheet.createdAt.toISOString();
   }
 
+  // RB-007B: the client portal must never display hours derived from the guard's
+  // unverified hoursWorked claim.
   private getApprovedHours(timesheet: Timesheet) {
+    if (timesheet.approvedHoursSnapshot !== null && timesheet.approvedHoursSnapshot !== undefined && Number.isFinite(Number(timesheet.approvedHoursSnapshot))) {
+      return Number(timesheet.approvedHoursSnapshot);
+    }
+    if (timesheet.approvedMinutes !== null && timesheet.approvedMinutes !== undefined && Number.isFinite(Number(timesheet.approvedMinutes))) {
+      return Number(timesheet.approvedMinutes) / 60;
+    }
     if (timesheet.approvedHours !== null && timesheet.approvedHours !== undefined && Number.isFinite(Number(timesheet.approvedHours))) {
       return Number(timesheet.approvedHours);
     }
-    return Number(timesheet.hoursWorked) || 0;
+    return 0;
   }
 
   private getIncidentClientId(incident: Incident) {

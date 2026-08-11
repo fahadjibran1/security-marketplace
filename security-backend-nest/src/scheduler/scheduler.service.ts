@@ -336,8 +336,16 @@ export class AutomationSchedulerService implements OnModuleInit, OnModuleDestroy
     return { periodStart: start.toISOString(), periodEnd: end.toISOString() };
   }
 
+  // RB-007B: invoice suggestions must never be built from the guard's unverified
+  // hoursWorked claim.
   private getApprovedHours(timesheet: Timesheet) {
-    return Number(timesheet.approvedHoursSnapshot ?? timesheet.approvedHours ?? timesheet.hoursWorked ?? 0) || 0;
+    if (timesheet.approvedHoursSnapshot !== null && timesheet.approvedHoursSnapshot !== undefined && Number.isFinite(Number(timesheet.approvedHoursSnapshot))) {
+      return Number(timesheet.approvedHoursSnapshot);
+    }
+    if (timesheet.approvedMinutes !== null && timesheet.approvedMinutes !== undefined && Number.isFinite(Number(timesheet.approvedMinutes))) {
+      return Number(timesheet.approvedMinutes) / 60;
+    }
+    return Number(timesheet.approvedHours) || 0;
   }
 
   private getBillingRate(timesheet: Timesheet) {

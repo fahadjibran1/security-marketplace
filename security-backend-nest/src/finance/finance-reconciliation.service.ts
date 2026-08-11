@@ -272,11 +272,20 @@ export class FinanceReconciliationService {
     return this.toNumber(timesheet.payableAmountSnapshot) ?? this.toNumber(timesheet.payableAmount) ?? this.toNumber(timesheet.costAmount) ?? 0;
   }
 
+  // RB-007B: approved duration, never the guard's unverified hoursWorked claim.
+  private getApprovedHours(timesheet: Timesheet): number | null {
+    const snapshot = this.toNumber(timesheet.approvedHoursSnapshot);
+    if (snapshot !== null) return snapshot;
+    const approvedMinutes = this.toNumber(timesheet.approvedMinutes);
+    if (approvedMinutes !== null) return approvedMinutes / 60;
+    return this.toNumber(timesheet.approvedHours);
+  }
+
   private getTimesheetRevenue(timesheet: Timesheet) {
     const revenueAmount = this.toNumber(timesheet.revenueAmount);
     if (revenueAmount !== null) return revenueAmount;
 
-    const billableHours = this.toNumber(timesheet.billableHours) ?? this.toNumber(timesheet.approvedHoursSnapshot) ?? this.toNumber(timesheet.approvedHours) ?? this.toNumber(timesheet.hoursWorked) ?? 0;
+    const billableHours = this.toNumber(timesheet.billableHours) ?? this.getApprovedHours(timesheet) ?? 0;
     const rate =
       this.toNumber(timesheet.billingRateSnapshot) ??
       this.toNumber(timesheet.effectiveBillingRate) ??

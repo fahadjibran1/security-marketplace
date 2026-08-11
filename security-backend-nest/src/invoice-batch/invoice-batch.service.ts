@@ -84,7 +84,9 @@ export class InvoiceBatchService {
     const savedBatch = await this.invoiceBatchRepo.save(batch);
     await this.contractPricingService.applyFinancials(timesheets);
     timesheets.forEach((timesheet) => {
-      timesheet.approvedHoursSnapshot = timesheet.approvedHoursSnapshot ?? this.getApprovedHours(timesheet);
+      // Non-null: assertTimesheetInvoiceEligible() above already rejected any
+      // timesheet without an approved duration before this loop runs.
+      timesheet.approvedHoursSnapshot = timesheet.approvedHoursSnapshot ?? this.getApprovedHours(timesheet)!;
       timesheet.billingRateSnapshot = timesheet.billingRateSnapshot ?? this.getBillingRate(timesheet);
       timesheet.invoiceBatch = savedBatch;
       timesheet.billingStatus = TimesheetBillingStatus.INCLUDED;
@@ -522,6 +524,16 @@ export class InvoiceBatchService {
       throw new ForbiddenException('Only approved timesheets can be attached to an invoice batch.');
     }
 
+    // RB-007B: fail safely rather than silently invoicing (or under-invoicing) from
+    // unverified data. An approved timesheet should always carry an approved
+    // duration (see timesheet.service.ts applyApprovalDuration); if it somehow
+    // doesn't, refuse to invoice it instead of falling back to hoursWorked.
+    if (!this.hasApprovedDuration(timesheet)) {
+      throw new BadRequestException(
+        `Timesheet #${timesheet.id} has no approved attendance duration and cannot be invoiced.`,
+      );
+    }
+
     if (String(timesheet.billingStatus || '').trim().toLowerCase() === TimesheetBillingStatus.INVOICED) {
       throw new ForbiddenException('Invoiced timesheets cannot be attached to a new invoice batch.');
     }
@@ -575,19 +587,28 @@ export class InvoiceBatchService {
     return null;
   }
 
-  private getApprovedHours(timesheet: Timesheet) {
+  // RB-007B: invoice totals must never read the guard's unverified hoursWorked claim.
+  // approvedMinutes (attendance-verified, manager-approved) is the source of truth;
+  // approvedHours is kept only as a derived/legacy fallback. Returns null when no
+  // approved duration exists — callers must not treat that as zero, see
+  // assertTimesheetInvoiceEligible() which rejects such timesheets before they can
+  // be added to a batch in the first place.
+  private getApprovedHours(timesheet: Timesheet): number | null {
     if (timesheet.approvedHoursSnapshot !== undefined && timesheet.approvedHoursSnapshot !== null && Number.isFinite(Number(timesheet.approvedHoursSnapshot))) {
       return Number(timesheet.approvedHoursSnapshot);
+    }
+    if (timesheet.approvedMinutes !== undefined && timesheet.approvedMinutes !== null && Number.isFinite(Number(timesheet.approvedMinutes))) {
+      return Number(timesheet.approvedMinutes) / 60;
     }
     if (timesheet.approvedHours !== undefined && timesheet.approvedHours !== null && Number.isFinite(Number(timesheet.approvedHours))) {
       return Number(timesheet.approvedHours);
     }
 
-    if (String(timesheet.approvalStatus).trim().toLowerCase() === TimesheetStatus.APPROVED) {
-      return Number(timesheet.hoursWorked) || 0;
-    }
+    return null;
+  }
 
-    return 0;
+  private hasApprovedDuration(timesheet: Timesheet): boolean {
+    return this.getApprovedHours(timesheet) !== null;
   }
 
   private getBillableHours(timesheet: Timesheet) {
@@ -630,7 +651,7 @@ export class InvoiceBatchService {
           return sum + Number(timesheet.revenueAmount);
         }
         const rate = this.getBillingRate(timesheet);
-        return rate === null ? sum : sum + this.getBillableHours(timesheet) * rate;
+        return rate === null ? sum : sum + (this.getBillableHours(timesheet) ?? 0) * rate;
       }, 0),
     );
   }
@@ -668,7 +689,7 @@ export class InvoiceBatchService {
               return sum + Number(timesheet.revenueAmount);
             }
             const rate = this.getBillingRate(timesheet);
-            return rate === null ? sum : sum + this.getBillableHours(timesheet) * rate;
+            return rate === null ? sum : sum + (this.getBillableHours(timesheet) ?? 0) * rate;
           }, 0);
     const vatRate = Number(batch.vatRate ?? 20);
     const vatAmount =
@@ -699,7 +720,11 @@ export class InvoiceBatchService {
         return new Date(this.getTimesheetShiftDate(left)).getTime() - new Date(this.getTimesheetShiftDate(right)).getTime();
       })
       .map((timesheet) => {
-        const billableHours = this.getBillableHours(timesheet);
+        // Defensive only: every timesheet reaching this point already passed
+        // assertTimesheetInvoiceEligible() at batch creation, so an approved
+        // duration must exist. The ?? 0 never fires in practice; it exists so a
+        // display bug can't crash viewing an already-issued invoice.
+        const billableHours = this.getBillableHours(timesheet) ?? 0;
         const billingRate = this.getBillingRate(timesheet);
         const amount =
           timesheet.revenueAmount !== undefined && timesheet.revenueAmount !== null
@@ -712,7 +737,7 @@ export class InvoiceBatchService {
           site: this.getTimesheetSiteName(timesheet),
           guard: this.getTimesheetGuardName(timesheet),
           shiftDate: this.getTimesheetShiftDate(timesheet),
-          approvedHours: this.roundCurrency(this.getApprovedHours(timesheet)),
+          approvedHours: this.roundCurrency(this.getApprovedHours(timesheet) ?? 0),
           billableHours: this.roundCurrency(billableHours),
           billingRate: billingRate === null ? null : this.roundCurrency(billingRate),
           amount: this.roundCurrency(amount),
@@ -773,7 +798,8 @@ export class InvoiceBatchService {
     const timesheets = batch.timesheets || [];
     const totals = timesheets.reduce(
       (summary, timesheet) => {
-        const approvedHours = this.getApprovedHours(timesheet);
+        // Defensive only — see buildDocumentLineItems() above.
+        const approvedHours = this.getApprovedHours(timesheet) ?? 0;
         const rate = this.getBillingRate(timesheet);
         const revenueAmount = timesheet.revenueAmount !== undefined && timesheet.revenueAmount !== null ? Number(timesheet.revenueAmount) : null;
         summary.recordsCount += 1;
