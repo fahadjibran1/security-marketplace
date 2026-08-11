@@ -5,7 +5,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
-import { COMPANY_ADMIN_ROLES, COMPANY_VIEW_ROLES } from '../user/entities/user.entity';
+import { COMPANY_VIEW_ROLES, UserRole } from '../user/entities/user.entity';
 import { AutomationSchedulerService } from './scheduler.service';
 
 @Controller()
@@ -26,19 +26,19 @@ export class SchedulerController {
   }
 
   @Post('scheduler/run/payroll-suggestions')
-  @Roles(...COMPANY_ADMIN_ROLES)
+  @Roles(UserRole.ADMIN)
   runPayrollSuggestions() {
     return this.schedulerService.runPayrollSuggestions();
   }
 
   @Post('scheduler/run/invoice-suggestions')
-  @Roles(...COMPANY_ADMIN_ROLES)
+  @Roles(UserRole.ADMIN)
   runInvoiceSuggestions() {
     return this.schedulerService.runInvoiceSuggestions();
   }
 
   @Post('scheduler/run/reminders')
-  @Roles(...COMPANY_ADMIN_ROLES)
+  @Roles(UserRole.ADMIN)
   runReminders() {
     return this.schedulerService.runReminders();
   }

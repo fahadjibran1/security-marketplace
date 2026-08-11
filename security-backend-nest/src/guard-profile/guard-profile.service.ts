@@ -39,6 +39,28 @@ export class GuardProfileService {
     return this.guardRepo.find();
   }
 
+  async findAllForUser(user: JwtPayload): Promise<GuardProfile[]> {
+    if (user.role === UserRole.ADMIN) {
+      return this.findAll();
+    }
+
+    if (!isCompanyRole(user.role)) {
+      throw new NotFoundException('Guard profiles not found');
+    }
+
+    const company = await this.companyService.findByUserId(user.sub);
+    if (!company) {
+      throw new NotFoundException('Company not found');
+    }
+
+    const links = await this.companyGuardRepo.find({
+      where: { company: { id: company.id } },
+      order: { createdAt: 'DESC' },
+    });
+
+    return links.map((link) => link.guard);
+  }
+
   async findOne(id: number): Promise<GuardProfile> {
     const guard = await this.guardRepo.findOne({ where: { id } });
     if (!guard) throw new NotFoundException('Guard profile not found');
@@ -48,7 +70,22 @@ export class GuardProfileService {
   async findOneForUser(user: JwtPayload, id: number): Promise<GuardProfile> {
     const guard = await this.findOne(id);
 
-    if (user.role === UserRole.ADMIN || isCompanyRole(user.role)) {
+    if (user.role === UserRole.ADMIN) {
+      return guard;
+    }
+
+    if (isCompanyRole(user.role)) {
+      const company = await this.companyService.findByUserId(user.sub);
+      if (!company) {
+        throw new NotFoundException('Guard profile not found');
+      }
+
+      const link = await this.companyGuardRepo.findOne({
+        where: { company: { id: company.id }, guard: { id: guard.id } },
+      });
+      if (!link) {
+        throw new NotFoundException('Guard profile not found');
+      }
       return guard;
     }
 

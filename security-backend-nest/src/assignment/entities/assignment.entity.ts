@@ -33,10 +33,10 @@ export class Assignment {
   @ManyToOne(() => Job, (job) => job.assignments, { eager: true, nullable: true })
   job?: Job;
 
-  @ManyToOne(() => Company, (company) => company.assignments, { eager: true })
+  @ManyToOne(() => Company, (company) => company.assignments, { eager: true, nullable: false })
   company!: Company;
 
-  @ManyToOne(() => GuardProfile, (guard) => guard.assignments, { eager: true })
+  @ManyToOne(() => GuardProfile, (guard) => guard.assignments, { eager: true, nullable: false })
   guard!: GuardProfile;
 
   @ManyToOne(() => JobApplication, (application) => application.assignments, {

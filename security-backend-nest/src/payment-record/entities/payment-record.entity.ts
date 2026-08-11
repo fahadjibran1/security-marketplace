@@ -25,6 +25,7 @@ export class PaymentRecord {
 
   @ManyToOne(() => Company, (company) => company.paymentRecords, {
     eager: true,
+    nullable: false,
     onDelete: 'CASCADE',
   })
   @JoinColumn({ name: 'companyId' })
@@ -32,6 +33,7 @@ export class PaymentRecord {
 
   @ManyToOne(() => InvoiceBatch, (invoiceBatch) => invoiceBatch.paymentRecords, {
     eager: true,
+    nullable: false,
     onDelete: 'CASCADE',
   })
   @JoinColumn({ name: 'invoiceBatchId' })

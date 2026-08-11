@@ -3,11 +3,15 @@ services:
     name: security-marketplace-api
     runtime: node
     rootDir: security-backend-nest
+    branch: matching-engine
     plan: starter
-    autoDeploy: true
+    autoDeployTrigger: off
+    numInstances: 1
     buildCommand: npm ci --include=dev && npm run build
+    preDeployCommand: npm run migration:run:prod
     startCommand: npm run start:prod
-    healthCheckPath: /health
+    healthCheckPath: /health/ready
+    maxShutdownDelaySeconds: 30
     envVars:
       - key: NODE_ENV
         value: production

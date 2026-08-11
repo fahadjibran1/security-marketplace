@@ -22,7 +22,7 @@ export class PayrollBatch {
   @PrimaryGeneratedColumn()
   id!: number;
 
-  @ManyToOne(() => Company, (company) => company.payrollBatches, { eager: true })
+  @ManyToOne(() => Company, (company) => company.payrollBatches, { eager: true, nullable: false })
   company!: Company;
 
   @Column({ type: 'timestamp' })

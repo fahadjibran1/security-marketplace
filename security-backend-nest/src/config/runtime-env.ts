@@ -15,6 +15,23 @@ function parseBoolean(value: unknown, fallback: boolean) {
   return normalized === 'true';
 }
 
+function hasProductionDatabaseConfig(config: RawEnv) {
+  const connectionUrl =
+    toTrimmedString(config.DATABASE_POOLER_URL) || toTrimmedString(config.DATABASE_URL);
+
+  if (connectionUrl) {
+    return true;
+  }
+
+  return [
+    config.DATABASE_HOST,
+    config.DATABASE_PORT,
+    config.DATABASE_USER,
+    config.DATABASE_PASSWORD,
+    config.DATABASE_NAME,
+  ].every((value) => Boolean(toTrimmedString(value)));
+}
+
 export function validateRuntimeEnv(config: RawEnv) {
   const nodeEnv = toTrimmedString(config.NODE_ENV) || 'development';
   const corsOrigin = toTrimmedString(config.CORS_ORIGIN);
@@ -35,6 +52,12 @@ export function validateRuntimeEnv(config: RawEnv) {
 
     if (databaseSynchronize) {
       throw new Error('DATABASE_SYNCHRONIZE must be false in production.');
+    }
+
+    if (!hasProductionDatabaseConfig(config)) {
+      throw new Error(
+        'Production database configuration is required. Set DATABASE_POOLER_URL or DATABASE_URL, or provide all split DATABASE_* connection values.',
+      );
     }
   }
 
@@ -76,5 +99,5 @@ export function getTrustProxySetting(env: NodeJS.ProcessEnv) {
 }
 
 export function isSwaggerEnabled(env: NodeJS.ProcessEnv) {
-  return parseBoolean(env.ENABLE_SWAGGER, true);
+  return parseBoolean(env.ENABLE_SWAGGER, env.NODE_ENV !== 'production');
 }

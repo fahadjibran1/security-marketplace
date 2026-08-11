@@ -14,7 +14,7 @@ export class SafetyAlertController {
   constructor(private readonly safetyAlertService: SafetyAlertService) {}
 
   @Get('mine')
-  @Roles(UserRole.GUARD, UserRole.ADMIN)
+  @Roles(UserRole.GUARD)
   findMine(@CurrentUser() user: JwtPayload) {
     return this.safetyAlertService.findMine(user.sub);
   }
@@ -22,11 +22,15 @@ export class SafetyAlertController {
   @Get('company')
   @Roles(UserRole.ADMIN, ...COMPANY_VIEW_ROLES)
   findForCompany(@CurrentUser() user: JwtPayload) {
+    if (user.role === UserRole.ADMIN) {
+      return this.safetyAlertService.findAll();
+    }
+
     return this.safetyAlertService.findForCompany(user.sub);
   }
 
   @Post()
-  @Roles(UserRole.GUARD, UserRole.ADMIN)
+  @Roles(UserRole.GUARD)
   create(@CurrentUser() user: JwtPayload, @Body() dto: CreateSafetyAlertDto) {
     return this.safetyAlertService.createForGuard(user.sub, dto);
   }
@@ -34,12 +38,20 @@ export class SafetyAlertController {
   @Patch(':id/ack')
   @Roles(UserRole.ADMIN, ...COMPANY_ADMIN_ROLES)
   acknowledge(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
+    if (user.role === UserRole.ADMIN) {
+      return this.safetyAlertService.acknowledgeAsAdmin(user.sub, id);
+    }
+
     return this.safetyAlertService.acknowledgeForCompany(user.sub, id);
   }
 
   @Patch(':id/close')
   @Roles(UserRole.ADMIN, ...COMPANY_ADMIN_ROLES)
   close(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
+    if (user.role === UserRole.ADMIN) {
+      return this.safetyAlertService.closeAsAdmin(user.sub, id);
+    }
+
     return this.safetyAlertService.closeForCompany(user.sub, id);
   }
 }

@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { IsNull, LessThan, MoreThan, Not, Repository } from 'typeorm';
+import { In, IsNull, LessThan, MoreThan, Not, Repository } from 'typeorm';
 
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { CompanyService } from '../company/company.service';
@@ -45,8 +45,18 @@ export class AvailabilityService {
 
   async listRulesForCompanyUser(userId: number, guardId?: number) {
     const company = await this.getCompany(userId);
+    const guardIds = await this.getCompanyGuardIds(company.id);
+    if (!guardIds.length) return [];
+    if (guardId && !guardIds.includes(guardId)) {
+      throw new ForbiddenException('Guard does not belong to this company.');
+    }
+
+    const targetGuardIds = guardId ? [guardId] : guardIds;
     return this.ruleRepo.find({
-      where: guardId ? { company: { id: company.id }, guard: { id: guardId } } : { company: { id: company.id } },
+      where: [
+        ...targetGuardIds.map((id) => ({ company: { id: company.id }, guard: { id } })),
+        ...targetGuardIds.map((id) => ({ company: IsNull(), guard: { id } })),
+      ],
       order: { weekday: 'ASC', startTime: 'ASC' },
     });
   }
@@ -55,8 +65,16 @@ export class AvailabilityService {
     const company = await this.getCompany(userId);
     const guardIds = await this.getCompanyGuardIds(company.id);
     if (!guardIds.length) return [];
+    if (guardId && !guardIds.includes(guardId)) {
+      throw new ForbiddenException('Guard does not belong to this company.');
+    }
+
+    const targetGuardIds = guardId ? [guardId] : guardIds;
     return this.overrideRepo.find({
-      where: guardId ? { guard: { id: guardId } } : guardIds.map((id) => ({ guard: { id } })),
+      where: [
+        ...targetGuardIds.map((id) => ({ company: { id: company.id }, guard: { id } })),
+        ...targetGuardIds.map((id) => ({ company: IsNull(), guard: { id } })),
+      ],
       order: { date: 'DESC', startTime: 'ASC' },
     });
   }
@@ -64,13 +82,19 @@ export class AvailabilityService {
   async listRulesForGuardUser(userId: number) {
     const guard = await this.guardProfileService.findByUserId(userId);
     if (!guard) throw new NotFoundException('Guard profile not found');
-    return this.ruleRepo.find({ where: { guard: { id: guard.id } }, order: { weekday: 'ASC', startTime: 'ASC' } });
+    return this.ruleRepo.find({
+      where: { company: IsNull(), guard: { id: guard.id } },
+      order: { weekday: 'ASC', startTime: 'ASC' },
+    });
   }
 
   async listOverridesForGuardUser(userId: number) {
     const guard = await this.guardProfileService.findByUserId(userId);
     if (!guard) throw new NotFoundException('Guard profile not found');
-    return this.overrideRepo.find({ where: { guard: { id: guard.id } }, order: { date: 'DESC', startTime: 'ASC' } });
+    return this.overrideRepo.find({
+      where: { company: IsNull(), guard: { id: guard.id } },
+      order: { date: 'DESC', startTime: 'ASC' },
+    });
   }
 
   async upsertRuleForCompanyUser(userId: number, dto: UpsertAvailabilityRuleDto) {
@@ -105,20 +129,38 @@ export class AvailabilityService {
     endAt: Date;
     excludeShiftId?: number;
   }): Promise<GuardEligibilityResult> {
-    const relation = await this.companyGuardRepo.findOne({ where: { company: { id: input.companyId }, guard: { id: input.guardId } } });
+    const relation = await this.companyGuardRepo.findOne({
+      where: { company: { id: input.companyId }, guard: { id: input.guardId } },
+    });
     const reasons: string[] = [];
-    const hasApprovedLeave = await this.leaveService.hasApprovedLeaveOverlap(input.companyId, input.guardId, input.startAt, input.endAt);
+    const hasApprovedLeave = await this.leaveService.hasApprovedLeaveOverlap(
+      input.companyId,
+      input.guardId,
+      input.startAt,
+      input.endAt,
+    );
     if (hasApprovedLeave) reasons.push('Approved leave overlaps this shift.');
-    const hasShiftClash = await this.hasShiftClash(input.companyId, input.guardId, input.startAt, input.endAt, input.excludeShiftId);
+    const hasShiftClash = await this.hasShiftClash(
+      input.guardId,
+      input.startAt,
+      input.endAt,
+      input.excludeShiftId,
+    );
     if (hasShiftClash) reasons.push('Guard already has an overlapping shift.');
     const blockers = await this.complianceService.getBlockingRecords(input.companyId, input.guardId);
     const complianceValid = blockers.length === 0;
     if (!complianceValid) reasons.push(`Compliance invalid: ${blockers[0]}`);
-    const availabilityStatus = await this.getAvailabilityStatus(input.companyId, input.guardId, input.startAt, input.endAt);
+    const availabilityStatus = await this.getAvailabilityStatus(
+      input.companyId,
+      input.guardId,
+      input.startAt,
+      input.endAt,
+    );
     if (availabilityStatus === 'unavailable') reasons.push('Guard is marked unavailable for this time.');
     if (availabilityStatus === 'no_rule') reasons.push('No availability rule found for this time.');
 
-    const hardBlocked = hasApprovedLeave || hasShiftClash || !complianceValid;
+    const hardBlocked =
+      hasApprovedLeave || hasShiftClash || !complianceValid || availabilityStatus === 'unavailable';
     return {
       guardId: input.guardId,
       fullName: relation?.guard?.fullName,
@@ -132,11 +174,31 @@ export class AvailabilityService {
     };
   }
 
-  async assertGuardCanTakeShift(companyId: number, guardId: number, startAt: Date, endAt: Date, excludeShiftId?: number) {
-    const result = await this.evaluateGuardForShift({ companyId, guardId, startAt, endAt, excludeShiftId });
+  async assertGuardCanTakeShift(
+    companyId: number,
+    guardId: number,
+    startAt: Date,
+    endAt: Date,
+    excludeShiftId?: number,
+  ) {
+    const result = await this.evaluateGuardForShift({
+      companyId,
+      guardId,
+      startAt,
+      endAt,
+      excludeShiftId,
+    });
     if (result.hasShiftClash) throw new ForbiddenException('Guard has an overlapping shift assignment.');
     if (result.hasApprovedLeave) throw new ForbiddenException('Guard has approved leave during this shift.');
-    if (!result.complianceValid) throw new ForbiddenException(result.reasons.find((reason) => reason.includes('Compliance invalid')) || 'Guard compliance invalid.');
+    if (!result.complianceValid) {
+      throw new ForbiddenException(
+        result.reasons.find((reason) => reason.includes('Compliance invalid')) ||
+          'Guard compliance invalid.',
+      );
+    }
+    if (result.availabilityStatus === 'unavailable') {
+      throw new ForbiddenException('Guard is marked unavailable for this time.');
+    }
     return result;
   }
 
@@ -158,14 +220,31 @@ export class AvailabilityService {
     );
   }
 
-  private async upsertRule(input: { userId: number; companyId: number | null; guardId: number; dto: UpsertAvailabilityRuleDto }) {
+  private async upsertRule(input: {
+    userId: number;
+    companyId: number | null;
+    guardId: number;
+    dto: UpsertAvailabilityRuleDto;
+  }) {
     if (input.companyId) await this.ensureCompanyGuard(input.companyId, input.guardId);
     const guard = await this.guardProfileService.findOne(input.guardId);
     const company = input.companyId ? await this.companyService.findOne(input.companyId) : null;
-    const existing = input.dto.id ? await this.ruleRepo.findOne({ where: { id: input.dto.id, guard: { id: guard.id } } }) : null;
+    const existing = input.dto.id
+      ? await this.ruleRepo.findOne({
+          where: {
+            id: input.dto.id,
+            guard: { id: guard.id },
+            company: input.companyId ? { id: input.companyId } : IsNull(),
+          },
+        })
+      : null;
+    if (input.dto.id && !existing) {
+      throw new ForbiddenException('Availability rule is outside the permitted scope.');
+    }
     const beforeData = existing ? { ...existing } : null;
     const rule = existing ?? this.ruleRepo.create({ guard, company });
     Object.assign(rule, {
+      company,
       weekday: input.dto.weekday,
       startTime: input.dto.startTime,
       endTime: input.dto.endTime,
@@ -181,18 +260,42 @@ export class AvailabilityService {
       entityType: 'guard_availability_rule',
       entityId: saved.id,
       beforeData,
-      afterData: { guardId: guard.id, weekday: saved.weekday, startTime: saved.startTime, endTime: saved.endTime, isAvailable: saved.isAvailable },
+      afterData: {
+        guardId: guard.id,
+        weekday: saved.weekday,
+        startTime: saved.startTime,
+        endTime: saved.endTime,
+        isAvailable: saved.isAvailable,
+      },
     });
     return saved;
   }
 
-  private async upsertOverride(input: { userId: number; companyId: number | null; guardId: number; dto: UpsertAvailabilityOverrideDto }) {
+  private async upsertOverride(input: {
+    userId: number;
+    companyId: number | null;
+    guardId: number;
+    dto: UpsertAvailabilityOverrideDto;
+  }) {
+    if (input.companyId) await this.ensureCompanyGuard(input.companyId, input.guardId);
     const guard = await this.guardProfileService.findOne(input.guardId);
     const company = input.companyId ? await this.companyService.findOne(input.companyId) : null;
-    const existing = input.dto.id ? await this.overrideRepo.findOne({ where: { id: input.dto.id, guard: { id: guard.id } } }) : null;
+    const existing = input.dto.id
+      ? await this.overrideRepo.findOne({
+          where: {
+            id: input.dto.id,
+            guard: { id: guard.id },
+            company: input.companyId ? { id: input.companyId } : IsNull(),
+          },
+        })
+      : null;
+    if (input.dto.id && !existing) {
+      throw new ForbiddenException('Availability override is outside the permitted scope.');
+    }
     const beforeData = existing ? { ...existing } : null;
-    const row = existing ?? this.overrideRepo.create({ guard });
+    const row = existing ?? this.overrideRepo.create({ guard, company });
     Object.assign(row, {
+      company,
       date: input.dto.date,
       startTime: input.dto.startTime || null,
       endTime: input.dto.endTime || null,
@@ -207,17 +310,38 @@ export class AvailabilityService {
       entityType: 'guard_availability_override',
       entityId: saved.id,
       beforeData,
-      afterData: { guardId: guard.id, date: saved.date, status: saved.status, startTime: saved.startTime, endTime: saved.endTime },
+      afterData: {
+        guardId: guard.id,
+        date: saved.date,
+        status: saved.status,
+        startTime: saved.startTime,
+        endTime: saved.endTime,
+      },
     });
     return saved;
   }
 
-  private async getAvailabilityStatus(companyId: number, guardId: number, startAt: Date, endAt: Date): Promise<'available' | 'unavailable' | 'no_rule'> {
+  private async getAvailabilityStatus(
+    companyId: number,
+    guardId: number,
+    startAt: Date,
+    endAt: Date,
+  ): Promise<'available' | 'unavailable' | 'no_rule'> {
     const shiftDate = this.dateKey(startAt);
-    const overrides = await this.overrideRepo.find({ where: { guard: { id: guardId }, date: shiftDate } });
-    const matchingOverride = overrides.find((override) => this.windowMatches(override.startTime, override.endTime, startAt, endAt));
+    const overrides = await this.overrideRepo.find({
+      where: [
+        { company: { id: companyId }, guard: { id: guardId }, date: shiftDate },
+        { company: IsNull(), guard: { id: guardId }, date: shiftDate },
+      ],
+      order: { company: { id: 'DESC' }, id: 'DESC' },
+    });
+    const matchingOverride = overrides.find((override) =>
+      this.windowMatches(override.startTime, override.endTime, startAt, endAt),
+    );
     if (matchingOverride) {
-      return matchingOverride.status === GuardAvailabilityOverrideStatus.AVAILABLE ? 'available' : 'unavailable';
+      return matchingOverride.status === GuardAvailabilityOverrideStatus.AVAILABLE
+        ? 'available'
+        : 'unavailable';
     }
 
     const rules = await this.ruleRepo.find({
@@ -227,15 +351,24 @@ export class AvailabilityService {
       ],
       order: { company: { id: 'DESC' }, startTime: 'ASC' },
     });
-    const matchingRule = rules.find((rule) => this.ruleEffective(rule, startAt) && this.windowMatches(rule.startTime, rule.endTime, startAt, endAt));
+    const matchingRule = rules.find(
+      (rule) =>
+        this.ruleEffective(rule, startAt) &&
+        this.windowMatches(rule.startTime, rule.endTime, startAt, endAt),
+    );
     if (!matchingRule) return 'no_rule';
     return matchingRule.isAvailable ? 'available' : 'unavailable';
   }
 
-  private async hasShiftClash(companyId: number, guardId: number, startAt: Date, endAt: Date, excludeShiftId?: number) {
+  private async hasShiftClash(
+    guardId: number,
+    startAt: Date,
+    endAt: Date,
+    excludeShiftId?: number,
+  ) {
     const where: any = {
-      company: { id: companyId },
       guard: { id: guardId },
+      status: In(['scheduled', 'offered', 'ready', 'in_progress']),
       start: LessThan(endAt),
       end: MoreThan(startAt),
     };
@@ -244,12 +377,20 @@ export class AvailabilityService {
     return count > 0;
   }
 
-  private windowMatches(startTime: string | null | undefined, endTime: string | null | undefined, shiftStart: Date, shiftEnd: Date) {
+  private windowMatches(
+    startTime: string | null | undefined,
+    endTime: string | null | undefined,
+    shiftStart: Date,
+    shiftEnd: Date,
+  ) {
     if (!startTime || !endTime) return true;
     const startMinutes = this.minutes(startTime);
     const endMinutes = this.minutes(endTime);
     const shiftStartMinutes = shiftStart.getHours() * 60 + shiftStart.getMinutes();
-    const shiftEndMinutes = shiftEnd.getHours() * 60 + shiftEnd.getMinutes() + (this.dateKey(shiftEnd) !== this.dateKey(shiftStart) ? 1440 : 0);
+    const shiftEndMinutes =
+      shiftEnd.getHours() * 60 +
+      shiftEnd.getMinutes() +
+      (this.dateKey(shiftEnd) !== this.dateKey(shiftStart) ? 1440 : 0);
     const normalizedEnd = endMinutes <= startMinutes ? endMinutes + 1440 : endMinutes;
     return shiftStartMinutes >= startMinutes && shiftEndMinutes <= normalizedEnd;
   }
@@ -273,7 +414,9 @@ export class AvailabilityService {
   }
 
   private async ensureCompanyGuard(companyId: number, guardId: number) {
-    const relation = await this.companyGuardRepo.findOne({ where: { company: { id: companyId }, guard: { id: guardId } } });
+    const relation = await this.companyGuardRepo.findOne({
+      where: { company: { id: companyId }, guard: { id: guardId } },
+    });
     if (!relation) throw new ForbiddenException('Guard does not belong to this company.');
     return relation;
   }

@@ -12,10 +12,10 @@ export class AttendanceEvent {
   @PrimaryGeneratedColumn()
   id!: number;
 
-  @ManyToOne(() => Shift, { eager: true, onDelete: 'CASCADE' })
+  @ManyToOne(() => Shift, { eager: true, nullable: false, onDelete: 'CASCADE' })
   shift!: Shift;
 
-  @ManyToOne(() => GuardProfile, { eager: true, onDelete: 'CASCADE' })
+  @ManyToOne(() => GuardProfile, { eager: true, nullable: false, onDelete: 'CASCADE' })
   guard!: GuardProfile;
 
   @Column({
@@ -24,8 +24,26 @@ export class AttendanceEvent {
   })
   type!: AttendanceEventType;
 
-  @Column({ type: 'varchar', nullable: true })
+  @Column({ type: 'varchar', nullable: true, select: false })
   nfcTag?: string | null;
+
+  @Column({ type: 'boolean', default: false })
+  nfcVerified!: boolean;
+
+  @Column({ type: 'double precision', nullable: true })
+  latitude?: number | null;
+
+  @Column({ type: 'double precision', nullable: true })
+  longitude?: number | null;
+
+  @Column({ type: 'double precision', nullable: true })
+  gpsAccuracyMeters?: number | null;
+
+  @Column({ type: 'double precision', nullable: true })
+  distanceFromSiteMeters?: number | null;
+
+  @Column({ type: 'boolean', default: false })
+  gpsVerified!: boolean;
 
   @Column({ type: 'text', nullable: true })
   notes?: string | null;

@@ -6,6 +6,7 @@ import { ClientPortalScreen } from './src/screens/ClientPortalScreen';
 import { GuardDashboardScreen } from './src/screens/GuardDashboardScreen';
 import { AuthScreen } from './src/screens/AuthScreen';
 import { logout, restoreSession, setUnauthorizedHandler } from './src/services/api';
+import { installAttendanceLocationTransport } from './src/services/attendanceTransport';
 import { clearStoredSession, loadStoredSession, persistSession } from './src/services/session';
 import { AuthSession, isClientAppRole, isCompanyAppRole } from './src/types/models';
 import { colors } from './src/theme';
@@ -17,17 +18,13 @@ export default function App() {
   const [booting, setBooting] = useState(true);
   const [authNotice, setAuthNotice] = useState<string | null>(null);
 
+  useEffect(() => installAttendanceLocationTransport(), []);
+
   useEffect(() => {
     async function bootstrapSession() {
       try {
         const storedSession = await loadStoredSession();
         if (storedSession) {
-          console.log('[App] restoring stored session', {
-            userId: storedSession.user.id,
-            role: storedSession.user.role,
-            email: storedSession.user.email,
-            hasAccessToken: Boolean(storedSession.accessToken),
-          });
           restoreSession(storedSession);
           setSession(storedSession);
         }
@@ -53,12 +50,6 @@ export default function App() {
   }, []);
 
   async function handleLoggedIn(nextSession: AuthSession) {
-    console.log('[App] handleLoggedIn session received', {
-      userId: nextSession.user.id,
-      role: nextSession.user.role,
-      email: nextSession.user.email,
-      hasAccessToken: Boolean(nextSession.accessToken),
-    });
     restoreSession(nextSession);
     await persistSession(nextSession);
     setAuthNotice(null);

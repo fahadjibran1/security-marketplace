@@ -16,14 +16,14 @@ export class ClientPortalUser {
   @PrimaryGeneratedColumn()
   id!: number;
 
-  @ManyToOne(() => Client, { eager: true, onDelete: 'CASCADE' })
+  @ManyToOne(() => Client, { eager: true, nullable: false, onDelete: 'CASCADE' })
   @JoinColumn({ name: 'clientId' })
   client!: Client;
 
   @Column({ type: 'varchar', unique: true })
   email!: string;
 
-  @Column({ type: 'varchar' })
+  @Column({ type: 'varchar', select: false })
   passwordHash!: string;
 
   @Column({ type: 'varchar' })

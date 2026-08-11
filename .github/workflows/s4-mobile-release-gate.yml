@@ -1,0 +1,69 @@
+name: S4 Mobile Release Gate
+
+on:
+  push:
+    branches:
+      - s4-release-stabilization
+    paths:
+      - 'security-mobile-app/**'
+      - '.github/workflows/s4-mobile-release-gate.yml'
+  pull_request:
+    paths:
+      - 'security-mobile-app/**'
+      - '.github/workflows/s4-mobile-release-gate.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: s4-mobile-release-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  mobile-release-gate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: security-mobile-app
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+
+      - name: Use Node 20.19
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.19.x'
+          cache: npm
+          cache-dependency-path: security-mobile-app/package-lock.json
+
+      - name: Reconcile lockfile from pinned manifest
+        run: npm install --package-lock-only --ignore-scripts
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Type-check Guard Mobile
+        run: npm run build:frontend
+
+      - name: Verify Expo dependency compatibility
+        run: npx expo install --check
+
+      - name: Verify Android production bundle
+        run: npx expo export --platform android --output-dir dist-android
+
+      - name: Commit deterministic lockfile reconciliation
+        working-directory: .
+        shell: bash
+        run: |
+          if git diff --quiet -- security-mobile-app/package-lock.json; then
+            echo 'Mobile lockfile already matches the pinned manifest.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add security-mobile-app/package-lock.json
+          git commit -m 'Synchronize Guard Mobile lockfile'
+          git push

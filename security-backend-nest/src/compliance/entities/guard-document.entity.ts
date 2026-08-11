@@ -21,7 +21,11 @@ export class GuardDocument {
   @PrimaryGeneratedColumn()
   id!: number;
 
-  @ManyToOne(() => GuardProfile, (guard) => guard.documents, { eager: true, onDelete: 'CASCADE' })
+  @ManyToOne(() => GuardProfile, (guard) => guard.documents, {
+    eager: true,
+    nullable: false,
+    onDelete: 'CASCADE',
+  })
   @JoinColumn({ name: 'guardId' })
   guard!: GuardProfile;
 

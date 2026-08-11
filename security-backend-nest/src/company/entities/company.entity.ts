@@ -31,7 +31,7 @@ export class Company {
   @PrimaryGeneratedColumn()
   id!: number;
 
-  @OneToOne(() => User, { eager: true })
+  @OneToOne(() => User, { eager: true, nullable: false })
   @JoinColumn({ name: 'userId' })
   user!: User;
 

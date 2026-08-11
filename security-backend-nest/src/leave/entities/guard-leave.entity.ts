@@ -31,11 +31,11 @@ export class GuardLeave {
   @PrimaryGeneratedColumn()
   id!: number;
 
-  @ManyToOne(() => Company, { eager: true, onDelete: 'CASCADE' })
+  @ManyToOne(() => Company, { eager: true, nullable: false, onDelete: 'CASCADE' })
   @JoinColumn({ name: 'companyId' })
   company!: Company;
 
-  @ManyToOne(() => GuardProfile, { eager: true, onDelete: 'CASCADE' })
+  @ManyToOne(() => GuardProfile, { eager: true, nullable: false, onDelete: 'CASCADE' })
   @JoinColumn({ name: 'guardId' })
   guard!: GuardProfile;
 

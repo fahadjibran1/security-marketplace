@@ -8,6 +8,7 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 
+import { Company } from '../../company/entities/company.entity';
 import { GuardProfile } from '../../guard-profile/entities/guard-profile.entity';
 
 export enum GuardAvailabilityOverrideStatus {
@@ -20,7 +21,11 @@ export class GuardAvailabilityOverride {
   @PrimaryGeneratedColumn()
   id!: number;
 
-  @ManyToOne(() => GuardProfile, { eager: true, onDelete: 'CASCADE' })
+  @ManyToOne(() => Company, { eager: true, nullable: true, onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'companyId' })
+  company?: Company | null;
+
+  @ManyToOne(() => GuardProfile, { eager: true, nullable: false, onDelete: 'CASCADE' })
   @JoinColumn({ name: 'guardId' })
   guard!: GuardProfile;
 

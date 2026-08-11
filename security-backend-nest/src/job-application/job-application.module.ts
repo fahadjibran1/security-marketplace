@@ -12,6 +12,8 @@ import { NotificationModule } from '../notification/notification.module';
 import { SiteModule } from '../site/site.module';
 import { CompanyModule } from '../company/company.module';
 import { CompanyGuardModule } from '../company-guard/company-guard.module';
+import { AvailabilityModule } from '../availability/availability.module';
+import { ComplianceModule } from '../compliance/compliance.module';
 
 @Module({
   imports: [
@@ -25,6 +27,8 @@ import { CompanyGuardModule } from '../company-guard/company-guard.module';
     SiteModule,
     CompanyModule,
     CompanyGuardModule,
+    AvailabilityModule,
+    ComplianceModule,
   ],
   controllers: [JobApplicationController],
   providers: [JobApplicationService],

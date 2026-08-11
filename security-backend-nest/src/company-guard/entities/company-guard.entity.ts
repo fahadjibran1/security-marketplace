@@ -27,10 +27,10 @@ export class CompanyGuard {
   @PrimaryGeneratedColumn()
   id!: number;
 
-  @ManyToOne(() => Company, (company) => company.companyGuards, { eager: true })
+  @ManyToOne(() => Company, (company) => company.companyGuards, { eager: true, nullable: false })
   company!: Company;
 
-  @ManyToOne(() => GuardProfile, (guard) => guard.companyGuards, { eager: true })
+  @ManyToOne(() => GuardProfile, (guard) => guard.companyGuards, { eager: true, nullable: false })
   guard!: GuardProfile;
 
   @Column({ type: 'enum', enum: CompanyGuardStatus, default: CompanyGuardStatus.ACTIVE })

@@ -41,10 +41,10 @@ export class Incident {
   @PrimaryGeneratedColumn()
   id!: number;
 
-  @ManyToOne(() => Company, { eager: true, onDelete: 'CASCADE' })
+  @ManyToOne(() => Company, { eager: true, nullable: false, onDelete: 'CASCADE' })
   company!: Company;
 
-  @ManyToOne(() => GuardProfile, { eager: true, onDelete: 'CASCADE' })
+  @ManyToOne(() => GuardProfile, { eager: true, nullable: false, onDelete: 'CASCADE' })
   guard!: GuardProfile;
 
   @ManyToOne(() => Shift, { eager: true, nullable: true, onDelete: 'SET NULL' })

@@ -8,10 +8,15 @@
     "build": "nest build",
     "start:prod": "node dist/main.js",
     "lint": "eslint \"src/**/*.ts\"",
+    "test:release": "ts-node -r tsconfig-paths/register scripts/release-smoke.ts",
     "typeorm": "ts-node -r tsconfig-paths/register ./node_modules/typeorm/cli.js",
+    "typeorm:prod": "node ./node_modules/typeorm/cli.js",
     "migration:run": "npm run typeorm -- migration:run --transaction each -d src/database/data-source.ts",
     "migration:revert": "npm run typeorm -- migration:revert --transaction each -d src/database/data-source.ts",
-    "migration:show": "npm run typeorm -- migration:show -d src/database/data-source.ts"
+    "migration:show": "npm run typeorm -- migration:show -d src/database/data-source.ts",
+    "migration:run:prod": "npm run typeorm:prod -- migration:run --transaction each -d dist/database/data-source.js",
+    "migration:revert:prod": "npm run typeorm:prod -- migration:revert --transaction each -d dist/database/data-source.js",
+    "migration:show:prod": "npm run typeorm:prod -- migration:show -d dist/database/data-source.js"
   },
   "dependencies": {
     "@nestjs/common": "^10.4.2",
@@ -22,7 +27,7 @@
     "@nestjs/platform-express": "^10.4.2",
     "@nestjs/swagger": "^7.4.2",
     "@nestjs/typeorm": "^10.0.2",
-    "bcrypt": "^5.1.1",
+    "bcrypt": "^6.0.0",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.1",
     "passport": "^0.7.0",
@@ -31,7 +36,7 @@
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "swagger-ui-express": "^5.0.1",
-    "typeorm": "^0.3.20"
+    "typeorm": "^0.3.31"
   },
   "devDependencies": {
     "@nestjs/cli": "^10.4.5",

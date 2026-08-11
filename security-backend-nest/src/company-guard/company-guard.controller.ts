@@ -21,7 +21,7 @@ export class CompanyGuardController {
 
   @Post()
   @Roles(UserRole.ADMIN, ...COMPANY_ADMIN_ROLES)
-  create(@Body() dto: CreateCompanyGuardDto) {
-    return this.companyGuardService.create(dto);
+  create(@CurrentUser() user: JwtPayload, @Body() dto: CreateCompanyGuardDto) {
+    return this.companyGuardService.createForUser(user, dto);
   }
 }

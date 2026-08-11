@@ -44,7 +44,13 @@
       "favicon": "./assets/icon.png"
     },
     "plugins": [
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Allow S4 Security to use your location when you Book On so the app can verify you are at the assigned site."
+        }
+      ]
     ],
     "extra": {
       "apiBaseUrl": "https://security-marketplace-api.onrender.com",

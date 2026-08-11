@@ -5,8 +5,28 @@ import { DataSource } from 'typeorm';
 export class HealthController {
   constructor(private readonly dataSource: DataSource) {}
 
+  @Get('live')
+  live() {
+    return {
+      ok: true,
+      service: 's4-api',
+      status: 'live',
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  @Get('ready')
+  async ready() {
+    return this.databaseReadiness();
+  }
+
+  // Backwards-compatible readiness endpoint for existing deployment probes.
   @Get()
   async check() {
+    return this.databaseReadiness();
+  }
+
+  private async databaseReadiness() {
     const timestamp = new Date().toISOString();
 
     try {
@@ -14,7 +34,8 @@ export class HealthController {
     } catch {
       throw new ServiceUnavailableException({
         ok: false,
-        service: 'security-marketplace-api',
+        service: 's4-api',
+        status: 'not-ready',
         checks: {
           database: 'down',
         },
@@ -24,7 +45,8 @@ export class HealthController {
 
     return {
       ok: true,
-      service: 'security-marketplace-api',
+      service: 's4-api',
+      status: 'ready',
       checks: {
         database: 'up',
       },

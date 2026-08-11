@@ -56,7 +56,7 @@ export class User {
   @Column({ type: 'varchar', nullable: true })
   phone?: string | null;
 
-  @Column()
+  @Column({ select: false })
   passwordHash!: string;
 
   @Column({ type: 'enum', enum: UserRole })

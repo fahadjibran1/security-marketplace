@@ -8,10 +8,13 @@ import { ShiftModule } from '../shift/shift.module';
 import { CompanyModule } from '../company/company.module';
 import { AuditLogModule } from '../audit-log/audit-log.module';
 import { NotificationModule } from '../notification/notification.module';
+import { DailyLog } from '../daily-log/entities/daily-log.entity';
+import { AttendanceEvent } from '../attendance/entities/attendance.entity';
+import { Shift } from '../shift/entities/shift.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([SafetyAlert]),
+    TypeOrmModule.forFeature([SafetyAlert, DailyLog, AttendanceEvent, Shift]),
     GuardProfileModule,
     ShiftModule,
     CompanyModule,

@@ -1,9 +1,12 @@
-import { Controller, Get, Param, Patch, Req, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, ParseIntPipe, Patch, Req, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
 import { NotificationService } from './notification.service';
-import { UserRole } from '../user/entities/user.entity';
+import { COMPANY_VIEW_ROLES, UserRole } from '../user/entities/user.entity';
 
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(UserRole.ADMIN, ...COMPANY_VIEW_ROLES, UserRole.GUARD)
 @Controller('notifications')
 export class NotificationController {
   constructor(private readonly notificationService: NotificationService) {}
@@ -25,8 +28,8 @@ export class NotificationController {
   @Patch(':id/read')
   markRead(
     @Req() req: { user: { sub: number } },
-    @Param('id') id: string,
+    @Param('id', ParseIntPipe) id: number,
   ) {
-    return this.notificationService.markRead(req.user.sub, Number(id));
+    return this.notificationService.markRead(req.user.sub, id);
   }
 }

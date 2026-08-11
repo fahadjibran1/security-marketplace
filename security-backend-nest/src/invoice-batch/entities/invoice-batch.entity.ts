@@ -25,10 +25,10 @@ export class InvoiceBatch {
   @PrimaryGeneratedColumn()
   id!: number;
 
-  @ManyToOne(() => Company, (company) => company.invoiceBatches, { eager: true })
+  @ManyToOne(() => Company, (company) => company.invoiceBatches, { eager: true, nullable: false })
   company!: Company;
 
-  @ManyToOne(() => Client, (client) => client.invoiceBatches, { eager: true })
+  @ManyToOne(() => Client, (client) => client.invoiceBatches, { eager: true, nullable: false })
   client!: Client;
 
   @Column({ type: 'timestamp' })
