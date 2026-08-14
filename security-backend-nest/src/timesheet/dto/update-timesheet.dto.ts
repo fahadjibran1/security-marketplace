@@ -31,6 +31,10 @@ export class UpdateTimesheetDto {
   companyNote?: string | null;
 
   @IsOptional()
+  @IsString()
+  correctionReason?: string;
+
+  @IsOptional()
   @IsNumber()
   @Min(0)
   approvedHours?: number | null;
@@ -49,15 +53,6 @@ export class UpdateTimesheetDto {
   @IsNumber()
   @Min(0)
   roundedMinutes?: number;
-
-  @IsOptional()
-  @IsString()
-  reviewedAt?: string;
-
-  @IsOptional()
-  @IsNumber()
-  @Min(1)
-  reviewedByUserId?: number;
 
   @IsOptional()
   @IsString()

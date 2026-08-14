@@ -1,5 +1,5 @@
 import { equal, ok } from 'node:assert/strict';
-import { BadRequestException, ExecutionContext } from '@nestjs/common';
+import { BadRequestException, ExecutionContext, ForbiddenException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { getMetadataArgsStorage } from 'typeorm';
 import { AuthService } from '../src/auth/auth.service';
@@ -95,6 +95,17 @@ async function expectBadRequest(action: () => Promise<unknown>) {
   }
 
   ok(thrown instanceof BadRequestException, 'Expected BadRequestException');
+}
+
+async function expectForbidden(action: () => Promise<unknown>) {
+  let thrown: unknown;
+  try {
+    await action();
+  } catch (error) {
+    thrown = error;
+  }
+
+  ok(thrown instanceof ForbiddenException, 'Expected ForbiddenException');
 }
 
 function assertColumnExcluded(target: Function, propertyName: string, label: string) {
@@ -534,6 +545,146 @@ async function testExistingBehaviourPreserved() {
   equal(rejected.approvalStatus, TimesheetStatus.REJECTED);
 }
 
+async function assertAdminCannotForgeReviewer(service: TimesheetService, id: number) {
+  await expectBadRequest(() =>
+    service.updateAsAdmin(999, id, {
+      correctionReason: 'Correct administrative metadata',
+      reviewedByUserId: 123,
+      reviewedAt: '2026-01-02T00:00:00Z',
+    } as any),
+  );
+}
+
+// M1: attendance duration and evidence timestamps are system-derived even for platform admins.
+async function testAdminCannotChangeVerifiedAttendance() {
+  const timesheet = buildSubmittedTimesheet({ id: 30, verifiedMinutes: 235 });
+  const { service, store } = buildTimesheetHarness([timesheet]);
+
+  await expectBadRequest(() =>
+    service.updateAsAdmin(999, 30, {
+      correctionReason: 'Attempted evidence correction',
+      verifiedMinutes: 999,
+      actualCheckInAt: '2026-01-01T00:00:00Z',
+    } as any),
+  );
+  equal(store.get(30).verifiedMinutes, 235);
+  equal(store.get(30).actualCheckInAt, null);
+}
+
+// M1: reviewer/override identity and timestamps always come from server workflow code.
+async function testAdminCannotForgeReviewerIdentity() {
+  const timesheet = buildSubmittedTimesheet({ id: 31, reviewedByUserId: 501 });
+  const { service, store } = buildTimesheetHarness([timesheet]);
+
+  await assertAdminCannotForgeReviewer(service, 31);
+  equal(store.get(31).reviewedByUserId, 501);
+  await expectBadRequest(() =>
+    service.updateAsAdmin(999, 31, {
+      correctionReason: 'Attempted workflow bypass',
+      approvalStatus: TimesheetStatus.APPROVED,
+    } as any),
+  );
+  equal(store.get(31).approvalStatus, TimesheetStatus.SUBMITTED);
+}
+
+// M1: paid payroll duration is immutable; reversal functionality is deliberately absent in RC1.
+async function testAdminCannotChangePaidDuration() {
+  const timesheet = buildSubmittedTimesheet({
+    id: 32,
+    approvalStatus: TimesheetStatus.APPROVED,
+    verifiedMinutes: 235,
+    approvedMinutes: 235,
+    approvedHours: 3.92,
+    payrollStatus: 'paid',
+    payrollPaidAt: new Date('2026-01-03T00:00:00Z'),
+  });
+  const { service, store } = buildTimesheetHarness([timesheet]);
+
+  await expectForbidden(() =>
+    service.updateAsAdmin(999, 32, { approvedMinutes: 300, correctionReason: 'Late evidence' } as any),
+  );
+  equal(store.get(32).approvedMinutes, 235);
+}
+
+// M1: invoice-issued/invoiced duration is immutable for the same financial-finality reason.
+async function testAdminCannotChangeInvoicedDuration() {
+  const timesheet = buildSubmittedTimesheet({
+    id: 33,
+    approvalStatus: TimesheetStatus.APPROVED,
+    verifiedMinutes: 235,
+    approvedMinutes: 235,
+    approvedHours: 3.92,
+    billingStatus: 'invoiced',
+    invoiceIssuedAt: new Date('2026-01-03T00:00:00Z'),
+  });
+  const { service, store } = buildTimesheetHarness([timesheet]);
+
+  await expectForbidden(() =>
+    service.updateAsAdmin(999, 33, { approvedHours: 5, correctionReason: 'Late evidence' } as any),
+  );
+  equal(store.get(33).approvedMinutes, 235);
+}
+
+// M1: every permitted privileged correction has an explicit operational reason.
+async function testAdminCorrectionRequiresReason() {
+  const timesheet = buildSubmittedTimesheet({ id: 34, companyNote: null });
+  const { service, store } = buildTimesheetHarness([timesheet]);
+
+  await expectBadRequest(() => service.updateAsAdmin(999, 34, { companyNote: 'Corrected' } as any));
+  equal(store.get(34).companyNote, null);
+}
+
+// M1: a pre-financial approved-duration correction uses the RB-007 override machinery and audit trail.
+async function testValidAdminCorrectionIsControlledAndAudited() {
+  const timesheet = buildSubmittedTimesheet({
+    id: 35,
+    approvalStatus: TimesheetStatus.APPROVED,
+    verifiedMinutes: 235,
+    approvedMinutes: 235,
+    approvedHours: 3.92,
+  });
+  const { service, auditLogs } = buildTimesheetHarness([timesheet]);
+
+  const result = await service.updateAsAdmin(999, 35, {
+    approvedMinutes: 300,
+    correctionReason: 'Site supervisor confirmed late checkout',
+  } as any);
+
+  equal(result.approvedMinutes, 300);
+  equal(result.approvedHours, 5);
+  equal(result.overrideBy, 999, 'Override actor must be derived from authenticated admin');
+  ok(result.overrideAt instanceof Date, 'Override timestamp must be server-derived');
+  const correctionAudit = auditLogs.find((entry) => entry.action === 'timesheet.admin_corrected');
+  ok(correctionAudit, 'Admin correction must produce its dedicated audit event');
+  equal(correctionAudit.user.id, 999);
+  equal(correctionAudit.company.id, 501);
+  equal(correctionAudit.entityId, 35);
+  equal(correctionAudit.beforeData.approvedMinutes, 235);
+  equal(correctionAudit.afterData.approvedMinutes, 300);
+  equal(correctionAudit.afterData.reason, 'Site supervisor confirmed late checkout');
+  ok(auditLogs.some((entry) => entry.action === 'timesheet.approved_duration_overridden'));
+}
+
+// M1 mutation test: substitute the pre-fix generic assignment behavior and prove
+// the reviewer-forgery regression assertion fails against it.
+async function testNegativeControlCatchesLegacyAdminSetter() {
+  const timesheet = buildSubmittedTimesheet({ id: 36, reviewedByUserId: 501 });
+  const { service, store } = buildTimesheetHarness([timesheet]);
+  (service as any).updateAsAdmin = async (_userId: number, id: number, dto: any) => {
+    const entity = store.get(id);
+    Object.assign(entity, dto);
+    return entity;
+  };
+
+  let regressionCaught = false;
+  try {
+    await assertAdminCannotForgeReviewer(service, 36);
+  } catch {
+    regressionCaught = true;
+  }
+  ok(regressionCaught, 'Negative control must fail the reviewer-forgery regression assertion');
+}
+
 // RB-007B: real ContractPricingService with a fake ruleRepo (no contract rules
 // configured — exercises the fallback job.billingRate/hourlyRate path).
 function buildContractPricingService() {
@@ -705,6 +856,13 @@ async function main() {
   await testPayRuleServiceUsesApprovedMinutesNotHoursWorked();
   await testPayrollBatchSnapshotUsesApprovedMinutesNotHoursWorked();
   await testExistingBehaviourPreserved();
+  await testAdminCannotChangeVerifiedAttendance();
+  await testAdminCannotForgeReviewerIdentity();
+  await testAdminCannotChangePaidDuration();
+  await testAdminCannotChangeInvoicedDuration();
+  await testAdminCorrectionRequiresReason();
+  await testValidAdminCorrectionIsControlledAndAudited();
+  await testNegativeControlCatchesLegacyAdminSetter();
   await testContractPricingUsesApprovedMinutesNotHoursWorked();
   await testContractPricingRejectsMissingApprovedDuration();
   await testInvoiceBatchUsesApprovedMinutesNotHoursWorked();
@@ -717,9 +875,9 @@ async function main() {
   console.log(
     JSON.stringify({
       event: 'release_smoke_passed',
-      tests: 21,
+      tests: 28,
       scope:
-        'auth-registration-credential-attendance-secret-exposure-RB006-tenant-isolation-RB007-payroll-integrity-and-RB007B-client-billing-integrity',
+        'auth-registration-secret-exposure-RB006-tenant-isolation-RB007-payroll-RB007B-billing-and-M1-admin-timesheet-integrity',
     }),
   );
 }

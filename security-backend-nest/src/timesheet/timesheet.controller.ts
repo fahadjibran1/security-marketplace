@@ -36,7 +36,7 @@ export class TimesheetController {
     @Body() dto: UpdateTimesheetPayrollDto,
   ) {
     if (user.role === UserRole.ADMIN) {
-      return this.timesheetService.updatePayrollAsAdmin(dto);
+      return this.timesheetService.updatePayrollAsAdmin(user.sub, dto);
     }
 
     return this.timesheetService.updatePayrollForCompany(user.sub, dto);
@@ -56,7 +56,7 @@ export class TimesheetController {
     @Body() dto: UpdateTimesheetDto,
   ) {
     if (user.role === UserRole.ADMIN) {
-      return this.timesheetService.update(id, dto);
+      return this.timesheetService.updateAsAdmin(user.sub, id, dto);
     }
 
     if (user.role === UserRole.GUARD) {
@@ -67,20 +67,12 @@ export class TimesheetController {
   }
 
   @Patch(':id/submit')
-  @Roles(UserRole.GUARD, UserRole.ADMIN)
+  @Roles(UserRole.GUARD)
   submitMine(
     @CurrentUser() user: JwtPayload,
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateTimesheetDto,
   ) {
-    if (user.role === UserRole.ADMIN) {
-      return this.timesheetService.update(id, {
-        ...dto,
-        approvalStatus: 'submitted',
-        submittedAt: new Date().toISOString(),
-      });
-    }
-
     return this.timesheetService.submitMine(user.sub, id, dto);
   }
 }

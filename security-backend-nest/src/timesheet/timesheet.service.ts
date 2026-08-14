@@ -110,10 +110,48 @@ export class TimesheetService {
     return this.applyDerivedFinancials(saved);
   }
 
-  async update(id: number, dto: UpdateTimesheetDto): Promise<Timesheet> {
+  async updateAsAdmin(userId: number, id: number, dto: UpdateTimesheetDto): Promise<Timesheet> {
     const timesheet = await this.findOne(id);
-    this.applyTimesheetUpdates(timesheet, dto);
+    this.validateAdminCorrection(timesheet, dto);
+    const reason = dto.correctionReason!.trim();
+    const beforeData = this.adminCorrectionSnapshot(timesheet, reason);
+
+    this.applyAdminEditableUpdates(timesheet, dto);
+    let overrideApplied = false;
+    if (dto.approvedMinutes !== undefined || dto.approvedHours !== undefined) {
+      overrideApplied = this.applyApprovalDuration(
+        timesheet,
+        { ...dto, overrideReason: reason },
+        userId,
+      );
+    }
+
     const saved = await this.timesheetRepo.save(timesheet);
+    await this.auditLogService.log({
+      company: saved.company,
+      user: { id: userId },
+      action: 'timesheet.admin_corrected',
+      entityType: 'timesheet',
+      entityId: saved.id,
+      beforeData,
+      afterData: this.adminCorrectionSnapshot(saved, reason),
+    });
+    if (overrideApplied) {
+      await this.auditLogService.log({
+        company: saved.company,
+        user: { id: userId },
+        action: 'timesheet.approved_duration_overridden',
+        entityType: 'timesheet',
+        entityId: saved.id,
+        beforeData: { verifiedMinutes: saved.verifiedMinutes },
+        afterData: {
+          approvedMinutes: saved.approvedMinutes,
+          overrideReason: saved.overrideReason,
+          overrideBy: saved.overrideBy,
+          overrideAt: saved.overrideAt,
+        },
+      });
+    }
     return this.applyDerivedFinancials(saved);
   }
 
@@ -369,8 +407,8 @@ export class TimesheetService {
     return this.applyPayrollUpdate({ companyId: company.id, userId, dto });
   }
 
-  async updatePayrollAsAdmin(dto: UpdateTimesheetPayrollDto): Promise<Timesheet[]> {
-    return this.applyPayrollUpdate({ userId: 0, dto });
+  async updatePayrollAsAdmin(userId: number, dto: UpdateTimesheetPayrollDto): Promise<Timesheet[]> {
+    return this.applyPayrollUpdate({ userId, dto });
   }
 
   private applyTimesheetUpdates(timesheet: Timesheet, dto: UpdateTimesheetDto): void {
@@ -405,11 +443,93 @@ export class TimesheetService {
     if (dto.workedMinutes !== undefined) timesheet.workedMinutes = dto.workedMinutes;
     if (dto.breakMinutes !== undefined) timesheet.breakMinutes = dto.breakMinutes;
     if (dto.roundedMinutes !== undefined) timesheet.roundedMinutes = dto.roundedMinutes;
-    if (dto.reviewedAt !== undefined) {
-      timesheet.reviewedAt = dto.reviewedAt ? new Date(dto.reviewedAt) : null;
-    }
-    if (dto.reviewedByUserId !== undefined) timesheet.reviewedByUserId = dto.reviewedByUserId;
     if (dto.rejectionReason !== undefined) timesheet.rejectionReason = dto.rejectionReason;
+  }
+
+  private applyAdminEditableUpdates(timesheet: Timesheet, dto: UpdateTimesheetDto): void {
+    this.applyTimesheetUpdates(timesheet, {
+      hoursWorked: dto.hoursWorked,
+      guardNote: dto.guardNote,
+      companyNote: dto.companyNote,
+      workedMinutes: dto.workedMinutes,
+      breakMinutes: dto.breakMinutes,
+      roundedMinutes: dto.roundedMinutes,
+    });
+  }
+
+  private validateAdminCorrection(timesheet: Timesheet, dto: UpdateTimesheetDto): void {
+    const input = dto as Record<string, unknown>;
+    const reason = dto.correctionReason?.trim();
+    if (!reason) {
+      throw new BadRequestException('An admin correction reason is required.');
+    }
+
+    const serverControlledFields = [
+      'verifiedMinutes',
+      'actualCheckInAt',
+      'actualCheckOutAt',
+      'reviewedByUserId',
+      'reviewedAt',
+      'overrideBy',
+      'overrideAt',
+      'submittedAt',
+    ];
+    if (serverControlledFields.some((field) => Object.prototype.hasOwnProperty.call(input, field))) {
+      throw new BadRequestException('Admin correction cannot change system-derived attendance or review identity.');
+    }
+
+    if (dto.approvalStatus !== undefined || dto.rejectionReason !== undefined || dto.overrideReason !== undefined) {
+      throw new BadRequestException('Admin correction cannot bypass timesheet status workflows.');
+    }
+
+    const currentStatus = String(timesheet.approvalStatus).trim().toLowerCase();
+    if (currentStatus === TimesheetStatus.REJECTED) {
+      throw new ForbiddenException('Rejected timesheets are final and cannot be corrected.');
+    }
+
+    const durationRequested = dto.approvedMinutes !== undefined || dto.approvedHours !== undefined;
+    if (durationRequested && currentStatus !== TimesheetStatus.APPROVED) {
+      throw new ForbiddenException('Approved duration can only be corrected on an approved timesheet.');
+    }
+
+    const payrollFinal =
+      timesheet.payrollStatus === TimesheetPayrollStatus.PAID ||
+      !!timesheet.payrollPaidAt ||
+      !!timesheet.payrollBatch;
+    const invoiceFinal =
+      timesheet.billingStatus === TimesheetBillingStatus.INVOICED ||
+      !!timesheet.invoiceIssuedAt ||
+      !!timesheet.invoicePaidAt ||
+      !!timesheet.invoiceBatch;
+    if (payrollFinal || invoiceFinal) {
+      throw new ForbiddenException('Financially committed timesheets cannot be corrected.');
+    }
+  }
+
+  private adminCorrectionSnapshot(timesheet: Timesheet, reason: string): Record<string, unknown> {
+    return {
+      reason,
+      companyId: timesheet.company?.id ?? null,
+      approvalStatus: timesheet.approvalStatus,
+      hoursWorked: timesheet.hoursWorked,
+      workedMinutes: timesheet.workedMinutes,
+      breakMinutes: timesheet.breakMinutes,
+      roundedMinutes: timesheet.roundedMinutes,
+      verifiedMinutes: timesheet.verifiedMinutes,
+      approvedMinutes: timesheet.approvedMinutes,
+      approvedHours: timesheet.approvedHours,
+      reviewedByUserId: timesheet.reviewedByUserId,
+      reviewedAt: timesheet.reviewedAt,
+      overrideReason: timesheet.overrideReason,
+      overrideBy: timesheet.overrideBy,
+      overrideAt: timesheet.overrideAt,
+      payrollStatus: timesheet.payrollStatus,
+      payrollBatchId: timesheet.payrollBatch?.id ?? null,
+      billingStatus: timesheet.billingStatus,
+      invoiceBatchId: timesheet.invoiceBatch?.id ?? null,
+      companyNote: timesheet.companyNote,
+      guardNote: timesheet.guardNote,
+    };
   }
 
   private applyGuardEditableUpdates(timesheet: Timesheet, dto: UpdateTimesheetDto): void {
@@ -594,8 +714,8 @@ export class TimesheetService {
       dto.workedMinutes !== undefined,
       dto.breakMinutes !== undefined,
       dto.roundedMinutes !== undefined,
-      dto.reviewedAt !== undefined,
-      dto.reviewedByUserId !== undefined,
+      Object.prototype.hasOwnProperty.call(dto, 'reviewedAt'),
+      Object.prototype.hasOwnProperty.call(dto, 'reviewedByUserId'),
     ];
 
     if (disallowedCompanyFields.some(Boolean)) {
