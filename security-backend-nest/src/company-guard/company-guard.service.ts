@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import {
@@ -46,19 +46,10 @@ export class CompanyGuardService {
   }
 
   async createForUser(user: JwtPayload, dto: CreateCompanyGuardDto): Promise<CompanyGuard> {
-    if (user.role === UserRole.ADMIN) {
-      return this.create(dto);
+    if (user.role !== UserRole.ADMIN) {
+      throw new ForbiddenException('Direct guard-pool membership requires platform administration or an accepted application');
     }
-
-    const company = await this.companyService.findByUserId(user.sub);
-    if (!company) {
-      throw new NotFoundException('Company not found');
-    }
-
-    return this.createForCompany(company.id, {
-      ...dto,
-      companyId: company.id,
-    });
+    return this.create(dto);
   }
 
   private async createForCompany(companyId: number, dto: CreateCompanyGuardDto): Promise<CompanyGuard> {

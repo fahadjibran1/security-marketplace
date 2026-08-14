@@ -1,5 +1,5 @@
 import { equal, ok } from 'node:assert/strict';
-import { ForbiddenException } from '@nestjs/common';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 
 import { GuardComplianceService } from '../src/compliance/guard-compliance.service';
 import { GuardDocumentType } from '../src/compliance/entities/guard-document.entity';
@@ -24,7 +24,7 @@ function buildApprovalHarness() {
     save: async (value: any) => value,
   };
   const companyGuardRepo = {
-    findOne: async () => null,
+    findOne: async () => ({ id: 1, company, guard }),
     create: (value: any) => value,
     save: async (value: any) => value,
   };
@@ -53,7 +53,7 @@ function buildComplianceHarness(options: { crossTenant?: boolean; failSave?: boo
       document = value;
       return value;
     },
-    findOne: async () => document,
+    findOne: async () => (options.crossTenant ? null : document),
   };
   const company = { id: 71 };
   const companyGuardRepo = {
@@ -133,7 +133,7 @@ async function testCrossTenantFailureCreatesNoSuccessAudit() {
   } catch (caught) {
     error = caught;
   }
-  ok(error instanceof ForbiddenException);
+  ok(error instanceof ForbiddenException || error instanceof NotFoundException);
   equal(audits.length, 0);
 }
 

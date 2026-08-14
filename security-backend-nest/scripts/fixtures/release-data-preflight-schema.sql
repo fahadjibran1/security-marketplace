@@ -23,6 +23,7 @@ CREATE TABLE attendance_events (
 );
 CREATE TABLE company_guards (id integer PRIMARY KEY, "companyId" integer, "guardId" integer, status text);
 CREATE TABLE compliance_records (id integer PRIMARY KEY, "companyId" integer, "guardId" integer);
+CREATE TABLE guard_documents (id integer PRIMARY KEY, "guardId" integer, "companyId" integer, "uploadedByUserId" integer);
 
 INSERT INTO companies VALUES (1);
 INSERT INTO guard_profiles VALUES (10);
@@ -38,3 +39,4 @@ INSERT INTO attendance_events VALUES
   (91, 60, 10, 'check-out', '2026-01-01 17:00:00');
 INSERT INTO company_guards VALUES (100, 1, 10, 'ACTIVE');
 INSERT INTO compliance_records VALUES (110, 1, 10);
+INSERT INTO guard_documents VALUES (120, 10, 1, 1);

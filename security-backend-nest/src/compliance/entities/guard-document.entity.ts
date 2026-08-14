@@ -4,10 +4,12 @@ import {
   Entity,
   JoinColumn,
   ManyToOne,
+  Index,
   PrimaryGeneratedColumn,
 } from 'typeorm';
 
 import { GuardProfile } from '../../guard-profile/entities/guard-profile.entity';
+import { Company } from '../../company/entities/company.entity';
 
 export enum GuardDocumentType {
   SIA_LICENCE = 'sia_licence',
@@ -17,6 +19,7 @@ export enum GuardDocumentType {
 }
 
 @Entity('guard_documents')
+@Index('IDX_guard_documents_company_guard', ['company', 'guard'])
 export class GuardDocument {
   @PrimaryGeneratedColumn()
   id!: number;
@@ -28,6 +31,10 @@ export class GuardDocument {
   })
   @JoinColumn({ name: 'guardId' })
   guard!: GuardProfile;
+
+  @ManyToOne(() => Company, { eager: true, nullable: true, onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'companyId' })
+  company?: Company | null;
 
   @Column({
     type: 'enum',
@@ -43,6 +50,15 @@ export class GuardDocument {
 
   @Column({ type: 'boolean', default: false })
   verified!: boolean;
+
+  @Column({ type: 'int', nullable: true })
+  uploadedByUserId?: number | null;
+
+  @Column({ type: 'int', nullable: true })
+  verifiedByUserId?: number | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  verifiedAt?: Date | null;
 
   @CreateDateColumn()
   uploadedAt!: Date;

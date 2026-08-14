@@ -126,6 +126,10 @@ const checks: Check[] = [
     sql: `SELECT cr."id", cr."companyId", cr."guardId" FROM "compliance_records" cr LEFT JOIN "company_guards" cg ON cg."companyId" = cr."companyId" AND cg."guardId" = cr."guardId" AND cg."status" = 'ACTIVE' WHERE cg."id" IS NULL ORDER BY cr."id"`,
   },
   {
+    key: 'guardDocumentsWithoutProvenance',
+    sql: `SELECT gd."id", gd."guardId", gd."companyId", gd."uploadedByUserId" FROM "guard_documents" gd WHERE gd."companyId" IS NULL AND gd."uploadedByUserId" IS NULL ORDER BY gd."id"`,
+  },
+  {
     key: 'legacyApprovedTimesheetsWithoutVerifiedAttendance',
     review: true,
     // verifiedMinutes may not exist yet on the database being inspected.

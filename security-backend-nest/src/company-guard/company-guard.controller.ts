@@ -3,7 +3,7 @@ import { CompanyGuardService } from './company-guard.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
-import { COMPANY_ADMIN_ROLES, COMPANY_VIEW_ROLES, UserRole } from '../user/entities/user.entity';
+import { COMPANY_VIEW_ROLES, UserRole } from '../user/entities/user.entity';
 import { CreateCompanyGuardDto } from './dto/create-company-guard.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
@@ -20,7 +20,7 @@ export class CompanyGuardController {
   }
 
   @Post()
-  @Roles(UserRole.ADMIN, ...COMPANY_ADMIN_ROLES)
+  @Roles(UserRole.ADMIN)
   create(@CurrentUser() user: JwtPayload, @Body() dto: CreateCompanyGuardDto) {
     return this.companyGuardService.createForUser(user, dto);
   }

@@ -87,7 +87,9 @@ export class GuardComplianceService {
   async getGuardSummary(guardId: number, companyId?: number): Promise<GuardComplianceSummary> {
     const guard = await this.guardProfileService.findOne(guardId);
     const documents = await this.guardDocumentRepo.find({
-      where: { guard: { id: guard.id } },
+      where: companyId
+        ? { company: { id: companyId }, guard: { id: guard.id } }
+        : { guard: { id: guard.id } },
       order: { uploadedAt: 'DESC', id: 'DESC' },
     });
 
@@ -132,7 +134,7 @@ export class GuardComplianceService {
 
     const targetGuardIds = guardId ? [guardId] : guardIds;
     return this.guardDocumentRepo.find({
-      where: { guard: { id: In(targetGuardIds) } },
+      where: { company: { id: company.id }, guard: { id: In(targetGuardIds) } },
       order: { uploadedAt: 'DESC', id: 'DESC' },
     });
   }
@@ -169,16 +171,15 @@ export class GuardComplianceService {
     const company = await this.companyService.findByUserId(userId);
     if (!company) throw new NotFoundException('Company not found');
 
-    const document = await this.guardDocumentRepo.findOne({ where: { id: documentId } });
-    if (!document) throw new NotFoundException('Guard document not found');
-
-    const link = await this.companyGuardRepo.findOne({
-      where: { company: { id: company.id }, guard: { id: document.guard.id } },
+    const document = await this.guardDocumentRepo.findOne({
+      where: { id: documentId, company: { id: company.id } },
     });
-    if (!link) throw new ForbiddenException('Guard document is outside the current company scope');
+    if (!document) throw new NotFoundException('Guard document not found');
 
     const beforeVerification = { verified: document.verified };
     document.verified = verified;
+    document.verifiedByUserId = userId;
+    document.verifiedAt = new Date();
     const saved = await this.guardDocumentRepo.save(document);
     await this.auditLogService.log({
       company: { id: company.id },
@@ -272,6 +273,10 @@ export class GuardComplianceService {
       fileUrl,
       expiryDate: dto.expiryDate || null,
       verified: false,
+      company,
+      uploadedByUserId: actorUserId,
+      verifiedByUserId: null,
+      verifiedAt: null,
     });
 
     const saved = await this.guardDocumentRepo.save(document);

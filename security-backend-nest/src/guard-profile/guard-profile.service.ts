@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { GuardApprovalStatus, GuardProfile } from './entities/guard-profile.entity';
@@ -135,13 +135,10 @@ export class GuardProfileService {
         where: { company: { id: company.id }, guard: { id: guard.id } },
       });
 
-      const link =
-        existingLink ??
-        this.companyGuardRepo.create({
-          company,
-          guard,
-          relationshipType: CompanyGuardRelationshipType.APPROVED_CONTRACTOR,
-        });
+      if (!existingLink) {
+        throw new ForbiddenException('Guard approval requires an existing server-established company relationship');
+      }
+      const link = existingLink;
 
       link.status = CompanyGuardStatus.ACTIVE;
       if (!link.relationshipType) {

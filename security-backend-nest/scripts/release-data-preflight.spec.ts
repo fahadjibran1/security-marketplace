@@ -32,7 +32,11 @@ async function main() {
   assert.equal(legacy.status, 'PASS', 'legacy financial review alone must not block');
   assert.equal(legacy.reviewRequired.legacyApprovedTimesheetsWithoutVerifiedAttendance, 1);
 
-  console.log(JSON.stringify({ event: 'release_data_preflight_tests_passed', tests: 6 }));
+  const ambiguousDocument = await runPreflight(fixtureDb({ 'FROM "guard_documents" gd': [{ id: 6, guardId: 2, companyId: null, uploadedByUserId: null }] }));
+  assert.equal(ambiguousDocument.status, 'BLOCKED', 'legacy guard documents without reliable provenance must block');
+  assert.equal(ambiguousDocument.blockers.guardDocumentsWithoutProvenance, 1);
+
+  console.log(JSON.stringify({ event: 'release_data_preflight_tests_passed', tests: 7 }));
 }
 
 main().catch((error: unknown) => { console.error(error); process.exitCode = 1; });
