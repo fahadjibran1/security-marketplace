@@ -9,6 +9,7 @@
     "start:prod": "node dist/main.js",
     "lint": "eslint \"src/**/*.ts\"",
     "test:release": "ts-node -r tsconfig-paths/register scripts/release-smoke.ts && ts-node -r tsconfig-paths/register scripts/release-data-preflight.spec.ts",
+    "test:financial-concurrency": "ts-node -r tsconfig-paths/register scripts/financial-concurrency.spec.ts",
     "release:preflight-data": "ts-node -r tsconfig-paths/register scripts/release-data-preflight.ts",
     "typeorm": "ts-node -r tsconfig-paths/register ./node_modules/typeorm/cli.js",
     "typeorm:prod": "node ./node_modules/typeorm/cli.js",

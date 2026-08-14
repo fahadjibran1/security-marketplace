@@ -484,6 +484,12 @@ async function testPayrollBatchSnapshotUsesApprovedMinutesNotHoursWorked() {
   const auditLogService = { log: async () => undefined };
   const configRepo = { findOne: async () => null };
   const payRuleService = new PayRuleService(configRepo as any, companyService as any);
+  const dataSource = {
+    transaction: async (work: (manager: any) => Promise<any>) => work({
+      query: async () => [],
+      getRepository: (entity: any) => entity.name === 'Timesheet' ? timesheetRepo : payrollBatchRepo,
+    }),
+  };
 
   const service = new PayrollBatchService(
     payrollBatchRepo as any,
@@ -491,6 +497,7 @@ async function testPayrollBatchSnapshotUsesApprovedMinutesNotHoursWorked() {
     companyService as any,
     auditLogService as any,
     payRuleService as any,
+    dataSource as any,
   );
 
   const batch = await service.createForCompany(501, {
@@ -778,6 +785,16 @@ function buildInvoiceBatchHarness(seedTimesheets: any[]) {
   const companyService = { findByUserId: async () => ({ id: 501 }) };
   const contractPricingService = buildContractPricingService();
   const auditLogService = { log: async () => undefined };
+  const dataSource = {
+    transaction: async (work: (manager: any) => Promise<any>) => work({
+      query: async () => [],
+      getRepository: (entity: any) => entity.name === 'Timesheet'
+        ? timesheetRepo
+        : entity.name === 'Client'
+          ? clientRepo
+          : invoiceBatchRepo,
+    }),
+  };
 
   const service = new InvoiceBatchService(
     invoiceBatchRepo as any,
@@ -787,6 +804,7 @@ function buildInvoiceBatchHarness(seedTimesheets: any[]) {
     companyService as any,
     contractPricingService as any,
     auditLogService as any,
+    dataSource as any,
   );
 
   return { service, timesheetStore };

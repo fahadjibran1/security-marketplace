@@ -1,6 +1,6 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { DataSource, In, Repository } from 'typeorm';
 
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { CompanyService } from '../company/company.service';
@@ -17,6 +17,7 @@ export class PayrollBatchService {
     private readonly companyService: CompanyService,
     private readonly auditLogService: AuditLogService,
     private readonly payRuleService: PayRuleService,
+    private readonly dataSource: DataSource,
   ) {}
 
   async createForCompany(userId: number, dto: CreatePayrollBatchDto) {
@@ -38,42 +39,46 @@ export class PayrollBatchService {
       throw new BadRequestException('Select at least one approved timesheet to create a payroll batch.');
     }
 
-    const timesheets = await this.timesheetRepo.find({
-      where: uniqueIds.map((id) => ({ id, company: { id: company.id } })),
-    });
-
-    if (timesheets.length !== uniqueIds.length) {
-      throw new NotFoundException('One or more selected timesheets were not found for this company.');
-    }
-
-    timesheets.forEach((timesheet) => this.assertTimesheetBatchEligible(timesheet));
-
-    const batch = this.payrollBatchRepo.create({
-      company,
-      periodStart,
-      periodEnd,
-      status: PayrollBatchStatus.DRAFT,
-      notes: dto.notes?.trim() ? dto.notes.trim() : null,
-      createdByUserId: userId,
-      finalisedAt: null,
-      paidAt: null,
-    });
-
-    const savedBatch = await this.payrollBatchRepo.save(batch);
-    const now = new Date();
     const payRuleConfig = await this.payRuleService.getConfigForCompany(company.id);
-    timesheets.forEach((timesheet) => {
-      timesheet.approvedHoursSnapshot = timesheet.approvedHoursSnapshot ?? this.getApprovedHours(timesheet);
-      timesheet.hourlyRateSnapshot = timesheet.hourlyRateSnapshot ?? this.getTimesheetRate(timesheet);
-      const pay = this.payRuleService.calculatePay(timesheet, payRuleConfig);
-      timesheet.payableHoursSnapshot = timesheet.payableHoursSnapshot ?? pay.payableHours;
-      timesheet.payableAmountSnapshot = timesheet.payableAmountSnapshot ?? pay.payableAmount;
-      timesheet.payrollBatch = savedBatch;
-      timesheet.payrollStatus = TimesheetPayrollStatus.INCLUDED;
-      timesheet.payrollIncludedAt = timesheet.payrollIncludedAt ?? now;
-      timesheet.payrollPaidAt = null;
+    const { savedBatch, timesheets } = await this.dataSource.transaction(async (manager) => {
+      await this.lockTimesheets(manager, uniqueIds, company.id);
+      const transactionalTimesheetRepo = manager.getRepository(Timesheet);
+      const transactionalBatchRepo = manager.getRepository(PayrollBatch);
+      const lockedTimesheets = await transactionalTimesheetRepo.find({
+        where: uniqueIds.map((id) => ({ id, company: { id: company.id } })),
+      });
+
+      if (lockedTimesheets.length !== uniqueIds.length) {
+        throw new NotFoundException('One or more selected timesheets were not found for this company.');
+      }
+      lockedTimesheets.forEach((timesheet) => this.assertTimesheetBatchEligible(timesheet));
+
+      const batch = transactionalBatchRepo.create({
+        company,
+        periodStart,
+        periodEnd,
+        status: PayrollBatchStatus.DRAFT,
+        notes: dto.notes?.trim() ? dto.notes.trim() : null,
+        createdByUserId: userId,
+        finalisedAt: null,
+        paidAt: null,
+      });
+      const savedBatch = await transactionalBatchRepo.save(batch);
+      const now = new Date();
+      lockedTimesheets.forEach((timesheet) => {
+        timesheet.approvedHoursSnapshot = timesheet.approvedHoursSnapshot ?? this.getApprovedHours(timesheet);
+        timesheet.hourlyRateSnapshot = timesheet.hourlyRateSnapshot ?? this.getTimesheetRate(timesheet);
+        const pay = this.payRuleService.calculatePay(timesheet, payRuleConfig);
+        timesheet.payableHoursSnapshot = timesheet.payableHoursSnapshot ?? pay.payableHours;
+        timesheet.payableAmountSnapshot = timesheet.payableAmountSnapshot ?? pay.payableAmount;
+        timesheet.payrollBatch = savedBatch;
+        timesheet.payrollStatus = TimesheetPayrollStatus.INCLUDED;
+        timesheet.payrollIncludedAt = timesheet.payrollIncludedAt ?? now;
+        timesheet.payrollPaidAt = null;
+      });
+      await transactionalTimesheetRepo.save(lockedTimesheets);
+      return { savedBatch, timesheets: lockedTimesheets };
     });
-    await this.timesheetRepo.save(timesheets);
 
     await this.auditLogService.log({
       company,
@@ -268,20 +273,21 @@ export class PayrollBatchService {
       throw new ForbiddenException('Only approved timesheets can be attached to a payroll batch.');
     }
 
-    if (String(timesheet.payrollStatus).trim().toLowerCase() === TimesheetPayrollStatus.PAID) {
-      throw new ForbiddenException('Paid timesheets cannot be attached to a payroll batch.');
+    if (timesheet.approvedMinutes === null || timesheet.approvedMinutes === undefined || !Number.isFinite(Number(timesheet.approvedMinutes))) {
+      throw new BadRequestException(`Timesheet #${timesheet.id} has no approved attendance duration and cannot be paid.`);
     }
 
-    if (timesheet.payrollBatch) {
-      const batchStatus = String(timesheet.payrollBatch.status || '').trim().toLowerCase();
-      if (
-        batchStatus === PayrollBatchStatus.DRAFT ||
-        batchStatus === PayrollBatchStatus.FINALISED ||
-        batchStatus === PayrollBatchStatus.PAID
-      ) {
-        throw new ForbiddenException('A selected timesheet is already attached to an existing payroll batch.');
-      }
+    if (String(timesheet.payrollStatus).trim().toLowerCase() !== TimesheetPayrollStatus.UNPAID || timesheet.payrollBatch) {
+      throw new ConflictException('One or more timesheets became unavailable for payroll batching.');
     }
+  }
+
+  private async lockTimesheets(manager: { query: (sql: string, parameters?: unknown[]) => Promise<Array<{ id: number }>> }, ids: number[], companyId: number) {
+    // Stable ordering prevents overlapping selections from deadlocking each other.
+    await manager.query(
+      `SELECT "id" FROM "timesheets" WHERE "id" = ANY($1::int[]) AND "companyId" = $2 ORDER BY "id" FOR UPDATE`,
+      [ids, companyId],
+    );
   }
 
   private getTimesheetRate(timesheet: Timesheet) {

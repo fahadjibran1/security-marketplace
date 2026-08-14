@@ -1,6 +1,6 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Like, Repository } from 'typeorm';
+import { DataSource, Like, Repository } from 'typeorm';
 
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { Client } from '../client/entities/client.entity';
@@ -26,18 +26,12 @@ export class InvoiceBatchService {
     private readonly companyService: CompanyService,
     private readonly contractPricingService: ContractPricingService,
     private readonly auditLogService: AuditLogService,
+    private readonly dataSource: DataSource,
   ) {}
 
   async createForCompany(userId: number, dto: CreateInvoiceBatchDto) {
     const company = await this.companyService.findByUserId(userId);
     if (!company) throw new NotFoundException('Company not found');
-
-    const client = await this.clientRepo.findOne({
-      where: { id: dto.clientId, company: { id: company.id } },
-    });
-    if (!client) {
-      throw new NotFoundException('Client not found for this company.');
-    }
 
     const periodStart = new Date(dto.periodStart);
     const periodEnd = new Date(dto.periodEnd);
@@ -54,46 +48,53 @@ export class InvoiceBatchService {
       throw new BadRequestException('Select at least one approved timesheet to create an invoice batch.');
     }
 
-    const timesheets = await this.timesheetRepo.find({
-      where: uniqueIds.map((id) => ({ id, company: { id: company.id } })),
+    const { client, savedBatch, timesheets } = await this.dataSource.transaction(async (manager) => {
+      const transactionalClientRepo = manager.getRepository(Client);
+      const client = await transactionalClientRepo.findOne({
+        where: { id: dto.clientId, company: { id: company.id } },
+      });
+      if (!client) throw new NotFoundException('Client not found for this company.');
+
+      await this.lockTimesheets(manager, uniqueIds, company.id);
+      const transactionalTimesheetRepo = manager.getRepository(Timesheet);
+      const transactionalBatchRepo = manager.getRepository(InvoiceBatch);
+      const lockedTimesheets = await transactionalTimesheetRepo.find({
+        where: uniqueIds.map((id) => ({ id, company: { id: company.id } })),
+      });
+      if (lockedTimesheets.length !== uniqueIds.length) {
+        throw new NotFoundException('One or more selected timesheets were not found for this company.');
+      }
+      lockedTimesheets.forEach((timesheet) => this.assertTimesheetInvoiceEligible(timesheet, client.id));
+
+      const batch = transactionalBatchRepo.create({
+        company,
+        client,
+        periodStart,
+        periodEnd,
+        status: InvoiceBatchStatus.DRAFT,
+        invoiceReference: dto.invoiceReference?.trim() ? dto.invoiceReference.trim() : null,
+        notes: dto.notes?.trim() ? dto.notes.trim() : null,
+        paymentTermsDays: dto.paymentTermsDays ?? 30,
+        vatRate: dto.vatRate ?? 20,
+        currency: 'GBP',
+        createdByUserId: userId,
+        finalisedAt: null,
+        issuedAt: null,
+        paidAt: null,
+      });
+      const savedBatch = await transactionalBatchRepo.save(batch);
+      await this.contractPricingService.applyFinancials(lockedTimesheets);
+      lockedTimesheets.forEach((timesheet) => {
+        timesheet.approvedHoursSnapshot = timesheet.approvedHoursSnapshot ?? this.getApprovedHours(timesheet)!;
+        timesheet.billingRateSnapshot = timesheet.billingRateSnapshot ?? this.getBillingRate(timesheet);
+        timesheet.invoiceBatch = savedBatch;
+        timesheet.billingStatus = TimesheetBillingStatus.INCLUDED;
+        timesheet.invoiceIssuedAt = null;
+        timesheet.invoicePaidAt = null;
+      });
+      await transactionalTimesheetRepo.save(lockedTimesheets);
+      return { client, savedBatch, timesheets: lockedTimesheets };
     });
-
-    if (timesheets.length !== uniqueIds.length) {
-      throw new NotFoundException('One or more selected timesheets were not found for this company.');
-    }
-
-    timesheets.forEach((timesheet) => this.assertTimesheetInvoiceEligible(timesheet, client.id));
-
-    const batch = this.invoiceBatchRepo.create({
-      company,
-      client,
-      periodStart,
-      periodEnd,
-      status: InvoiceBatchStatus.DRAFT,
-      invoiceReference: dto.invoiceReference?.trim() ? dto.invoiceReference.trim() : null,
-      notes: dto.notes?.trim() ? dto.notes.trim() : null,
-      paymentTermsDays: dto.paymentTermsDays ?? 30,
-      vatRate: dto.vatRate ?? 20,
-      currency: 'GBP',
-      createdByUserId: userId,
-      finalisedAt: null,
-      issuedAt: null,
-      paidAt: null,
-    });
-
-    const savedBatch = await this.invoiceBatchRepo.save(batch);
-    await this.contractPricingService.applyFinancials(timesheets);
-    timesheets.forEach((timesheet) => {
-      // Non-null: assertTimesheetInvoiceEligible() above already rejected any
-      // timesheet without an approved duration before this loop runs.
-      timesheet.approvedHoursSnapshot = timesheet.approvedHoursSnapshot ?? this.getApprovedHours(timesheet)!;
-      timesheet.billingRateSnapshot = timesheet.billingRateSnapshot ?? this.getBillingRate(timesheet);
-      timesheet.invoiceBatch = savedBatch;
-      timesheet.billingStatus = TimesheetBillingStatus.INCLUDED;
-      timesheet.invoiceIssuedAt = null;
-      timesheet.invoicePaidAt = null;
-    });
-    await this.timesheetRepo.save(timesheets);
 
     await this.auditLogService.log({
       company,
@@ -534,12 +535,8 @@ export class InvoiceBatchService {
       );
     }
 
-    if (String(timesheet.billingStatus || '').trim().toLowerCase() === TimesheetBillingStatus.INVOICED) {
-      throw new ForbiddenException('Invoiced timesheets cannot be attached to a new invoice batch.');
-    }
-
-    if (timesheet.invoiceBatch) {
-      throw new ForbiddenException('A selected timesheet is already attached to an existing invoice batch.');
+    if (String(timesheet.billingStatus || '').trim().toLowerCase() !== TimesheetBillingStatus.UNINVOICED || timesheet.invoiceBatch) {
+      throw new ConflictException('One or more timesheets became unavailable for invoice batching.');
     }
 
     const timesheetClient = this.getTimesheetClient(timesheet);
@@ -550,6 +547,13 @@ export class InvoiceBatchService {
     if (timesheetClient.id !== clientId) {
       throw new ForbiddenException('All selected timesheets must belong to the selected client.');
     }
+  }
+
+  private async lockTimesheets(manager: { query: (sql: string, parameters?: unknown[]) => Promise<Array<{ id: number }>> }, ids: number[], companyId: number) {
+    await manager.query(
+      `SELECT "id" FROM "timesheets" WHERE "id" = ANY($1::int[]) AND "companyId" = $2 ORDER BY "id" FOR UPDATE`,
+      [ids, companyId],
+    );
   }
 
   private getTimesheetClient(timesheet: Timesheet) {
