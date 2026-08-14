@@ -10,6 +10,7 @@ import { ComplianceService } from './compliance.service';
 import { ComplianceRecord } from './entities/compliance-record.entity';
 import { GuardDocument } from './entities/guard-document.entity';
 import { GuardComplianceService } from './guard-compliance.service';
+import { AuditLogModule } from '../audit-log/audit-log.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { GuardComplianceService } from './guard-compliance.service';
     CompanyModule,
     GuardProfileModule,
     NotificationModule,
+    AuditLogModule,
   ],
   controllers: [ComplianceController],
   providers: [ComplianceService, GuardComplianceService],

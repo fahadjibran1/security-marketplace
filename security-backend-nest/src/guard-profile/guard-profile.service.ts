@@ -13,6 +13,7 @@ import {
   CompanyGuardStatus,
 } from '../company-guard/entities/company-guard.entity';
 import { CompanyService } from '../company/company.service';
+import { AuditLogService } from '../audit-log/audit-log.service';
 
 @Injectable()
 export class GuardProfileService {
@@ -22,6 +23,7 @@ export class GuardProfileService {
     private readonly companyGuardRepo: Repository<CompanyGuard>,
     private readonly userService: UserService,
     private readonly companyService: CompanyService,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   async create(dto: CreateGuardProfileDto): Promise<GuardProfile> {
@@ -111,6 +113,12 @@ export class GuardProfileService {
 
   async approveForUser(user: JwtPayload, guardId: number): Promise<GuardProfile> {
     const guard = await this.findOne(guardId);
+    const beforeApproval = {
+      status: guard.status,
+      approvalStatus: guard.approvalStatus,
+      isApproved: guard.isApproved,
+    };
+    let auditCompany: { id: number } | null = null;
 
     if (user.role !== UserRole.ADMIN) {
       if (!COMPANY_ADMIN_ROLES.includes(user.role as (typeof COMPANY_ADMIN_ROLES)[number])) {
@@ -121,6 +129,7 @@ export class GuardProfileService {
       if (!company) {
         throw new NotFoundException('Company not found');
       }
+      auditCompany = { id: company.id };
 
       const existingLink = await this.companyGuardRepo.findOne({
         where: { company: { id: company.id }, guard: { id: guard.id } },
@@ -146,6 +155,20 @@ export class GuardProfileService {
     guard.isApproved = true;
     const saved = await this.guardRepo.save(guard);
     await this.userService.updateStatus(saved.user.id, UserStatus.ACTIVE);
-    return this.findOne(saved.id);
+    const approved = await this.findOne(saved.id);
+    await this.auditLogService.log({
+      company: auditCompany,
+      user: { id: user.sub },
+      action: 'guard.approved',
+      entityType: 'guard_profile',
+      entityId: approved.id,
+      beforeData: beforeApproval,
+      afterData: {
+        status: approved.status,
+        approvalStatus: approved.approvalStatus,
+        isApproved: approved.isApproved,
+      },
+    });
+    return approved;
   }
 }

@@ -14,6 +14,7 @@ import {
 } from './entities/compliance-record.entity';
 import { CreateGuardDocumentDto } from './dto/create-guard-document.dto';
 import { GuardDocument, GuardDocumentType } from './entities/guard-document.entity';
+import { AuditLogService } from '../audit-log/audit-log.service';
 
 export type GuardComplianceStatus = 'valid' | 'expiring' | 'expired' | 'invalid';
 
@@ -56,6 +57,7 @@ export class GuardComplianceService {
     private readonly companyService: CompanyService,
     private readonly guardProfileService: GuardProfileService,
     private readonly notificationService: NotificationService,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   async listStatusesForCompanyUser(userId: number, status?: GuardComplianceStatus) {
@@ -147,7 +149,7 @@ export class GuardComplianceService {
   async uploadDocumentForGuardUser(userId: number, dto: CreateGuardDocumentDto) {
     const guard = await this.guardProfileService.findByUserId(userId);
     if (!guard) throw new NotFoundException('Guard profile not found');
-    return this.saveDocument(guard.id, dto);
+    return this.saveDocument(guard.id, dto, userId, null);
   }
 
   async uploadDocumentForCompanyUser(userId: number, dto: CreateGuardDocumentDto) {
@@ -160,7 +162,7 @@ export class GuardComplianceService {
     });
     if (!links.length) throw new ForbiddenException('Guard does not belong to the current company');
 
-    return this.saveDocument(dto.guardId, dto);
+    return this.saveDocument(dto.guardId, dto, userId, { id: company.id });
   }
 
   async verifyDocumentForCompanyUser(userId: number, documentId: number, verified: boolean) {
@@ -175,8 +177,23 @@ export class GuardComplianceService {
     });
     if (!link) throw new ForbiddenException('Guard document is outside the current company scope');
 
+    const beforeVerification = { verified: document.verified };
     document.verified = verified;
-    return this.guardDocumentRepo.save(document);
+    const saved = await this.guardDocumentRepo.save(document);
+    await this.auditLogService.log({
+      company: { id: company.id },
+      user: { id: userId },
+      action: 'guard_document.verified',
+      entityType: 'guard_document',
+      entityId: saved.id,
+      beforeData: beforeVerification,
+      afterData: {
+        verified: saved.verified,
+        guardId: saved.guard.id,
+        documentType: saved.type,
+      },
+    });
+    return saved;
   }
 
   async getBlockingReasons(companyId: number, guardId: number) {
@@ -239,7 +256,12 @@ export class GuardComplianceService {
     return { companiesChecked, guardsChecked: links.length, expiring, expired, invalid };
   }
 
-  private async saveDocument(guardId: number, dto: CreateGuardDocumentDto) {
+  private async saveDocument(
+    guardId: number,
+    dto: CreateGuardDocumentDto,
+    actorUserId: number,
+    company: { id: number } | null,
+  ) {
     const guard = await this.guardProfileService.findOne(guardId);
     const fileUrl = dto.fileUrl.trim();
     if (!fileUrl) throw new BadRequestException('fileUrl is required');
@@ -252,7 +274,21 @@ export class GuardComplianceService {
       verified: false,
     });
 
-    return this.guardDocumentRepo.save(document);
+    const saved = await this.guardDocumentRepo.save(document);
+    await this.auditLogService.log({
+      company,
+      user: { id: actorUserId },
+      action: 'guard_document.uploaded',
+      entityType: 'guard_document',
+      entityId: saved.id,
+      afterData: {
+        guardId: saved.guard.id,
+        documentType: saved.type,
+        expiryDate: saved.expiryDate,
+        verified: saved.verified,
+      },
+    });
+    return saved;
   }
 
   private assessGuard(

@@ -8,7 +8,7 @@
     "build": "nest build",
     "start:prod": "node dist/main.js",
     "lint": "eslint \"src/**/*.ts\"",
-    "test:release": "ts-node -r tsconfig-paths/register scripts/release-smoke.ts && ts-node -r tsconfig-paths/register scripts/release-data-preflight.spec.ts && npm run test:auth-rate-limit",
+    "test:release": "ts-node -r tsconfig-paths/register scripts/release-smoke.ts && ts-node -r tsconfig-paths/register scripts/compliance-audit.spec.ts && ts-node -r tsconfig-paths/register scripts/release-data-preflight.spec.ts && npm run test:auth-rate-limit",
     "test:auth-rate-limit": "ts-node -r tsconfig-paths/register scripts/auth-rate-limit.spec.ts",
     "test:financial-concurrency": "ts-node -r tsconfig-paths/register scripts/financial-concurrency.spec.ts",
     "release:preflight-data": "ts-node -r tsconfig-paths/register scripts/release-data-preflight.ts",
