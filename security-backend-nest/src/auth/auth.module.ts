@@ -10,9 +10,11 @@ import { CompanyModule } from '../company/company.module';
 import { GuardProfileModule } from '../guard-profile/guard-profile.module';
 import { ClientPortalUserModule } from '../client-portal-user/client-portal-user.module';
 import { AuditLogModule } from '../audit-log/audit-log.module';
+import { ThrottlerModule } from '@nestjs/throttler';
 
 @Module({
   imports: [
+    ThrottlerModule.forRoot([{ name: 'default', ttl: 60_000, limit: 6 }]),
     ConfigModule,
     UserModule,
     CompanyModule,

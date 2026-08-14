@@ -1,10 +1,11 @@
 import { equal, ok } from 'node:assert/strict';
-import { BadRequestException, ExecutionContext, ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ExecutionContext, ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { getMetadataArgsStorage } from 'typeorm';
 import { AuthService } from '../src/auth/auth.service';
 import { PublicRegistrationRole, RegisterDto } from '../src/auth/dto/register.dto';
 import { JwtPayload } from '../src/auth/types/jwt-payload.type';
+import { JwtStrategy } from '../src/auth/jwt.strategy';
 import { AttendanceEvent } from '../src/attendance/entities/attendance.entity';
 import { ClientPortalUser } from '../src/client-portal-user/entities/client-portal-user.entity';
 import { RolesGuard } from '../src/common/guards/roles.guard';
@@ -95,6 +96,53 @@ async function expectBadRequest(action: () => Promise<unknown>) {
   }
 
   ok(thrown instanceof BadRequestException, 'Expected BadRequestException');
+}
+
+function buildJwtStrategyHarness(user: any | null, clientUser: any | null = null) {
+  const config = { get: () => 'release-smoke-secret' };
+  const userService = {
+    findById: async () => user ?? Promise.reject(new Error('not found')),
+  };
+  const clientPortalUserService = {
+    findById: async () => clientUser ?? Promise.reject(new Error('not found')),
+  };
+  return new JwtStrategy(config as any, userService as any, clientPortalUserService as any);
+}
+
+async function expectUnauthorized(work: () => Promise<unknown>) {
+  try {
+    await work();
+  } catch (error) {
+    ok(error instanceof UnauthorizedException, 'Expected token validation to return 401');
+    return;
+  }
+  throw new Error('Expected token validation to reject');
+}
+
+async function testActiveJwtUsesCurrentDatabaseStatus() {
+  const strategy = buildJwtStrategyHarness({ id: 1, email: 'active@example.test', role: UserRole.COMPANY_ADMIN, status: UserStatus.ACTIVE });
+  const principal = await strategy.validate({ sub: 1, email: 'active@example.test', role: UserRole.COMPANY_ADMIN, status: UserStatus.SUSPENDED, principalType: 'user' } as JwtPayload);
+  equal(principal.status, UserStatus.ACTIVE, 'Database status, not the JWT status claim, must be authoritative');
+}
+
+async function testSuspendedJwtIsRejectedImmediately() {
+  const strategy = buildJwtStrategyHarness({ id: 1, email: 'user@example.test', role: UserRole.COMPANY_ADMIN, status: UserStatus.SUSPENDED });
+  await expectUnauthorized(() => strategy.validate({ sub: 1, email: 'user@example.test', role: UserRole.COMPANY_ADMIN, status: UserStatus.ACTIVE, principalType: 'user' } as JwtPayload));
+}
+
+async function testPendingJwtIsRejectedImmediately() {
+  const strategy = buildJwtStrategyHarness({ id: 1, email: 'guard@example.test', role: UserRole.GUARD, status: UserStatus.PENDING });
+  await expectUnauthorized(() => strategy.validate({ sub: 1, email: 'guard@example.test', role: UserRole.GUARD, status: UserStatus.ACTIVE, principalType: 'user' } as JwtPayload));
+}
+
+async function testDeletedJwtPrincipalIsRejected() {
+  const strategy = buildJwtStrategyHarness(null);
+  await expectUnauthorized(() => strategy.validate({ sub: 404, email: 'deleted@example.test', role: UserRole.COMPANY_ADMIN, status: UserStatus.ACTIVE, principalType: 'user' } as JwtPayload));
+}
+
+async function testInactiveClientPortalJwtIsRejected() {
+  const strategy = buildJwtStrategyHarness(null, { id: 9, email: 'client@example.test', role: UserRole.CLIENT_VIEWER, isActive: false, client: { id: 3 } });
+  await expectUnauthorized(() => strategy.validate({ sub: 9, email: 'client@example.test', role: UserRole.CLIENT_VIEWER, status: UserStatus.ACTIVE, principalType: 'client_portal', clientId: 3 } as JwtPayload));
 }
 
 async function expectForbidden(action: () => Promise<unknown>) {
@@ -861,6 +909,11 @@ async function testInvoiceBatchRejectsTimesheetWithNoApprovedDuration() {
 }
 
 async function main() {
+  await testActiveJwtUsesCurrentDatabaseStatus();
+  await testSuspendedJwtIsRejectedImmediately();
+  await testPendingJwtIsRejectedImmediately();
+  await testDeletedJwtPrincipalIsRejected();
+  await testInactiveClientPortalJwtIsRejected();
   await testPrivilegedRoleCannotSelfRegister();
   await testInvalidGuardPayloadHasNoSideEffects();
   await testGuardRegistrationRemainsPending();
@@ -893,7 +946,7 @@ async function main() {
   console.log(
     JSON.stringify({
       event: 'release_smoke_passed',
-      tests: 28,
+      tests: 33,
       scope:
         'auth-registration-secret-exposure-RB006-tenant-isolation-RB007-payroll-RB007B-billing-and-M1-admin-timesheet-integrity',
     }),

@@ -27,7 +27,8 @@ Only deploy a commit that has:
 - `DATABASE_SYNCHRONIZE=false`.
 - `DATABASE_SSL=true` where required by managed PostgreSQL.
 - `ENABLE_SWAGGER=false` unless temporarily enabled for an approved diagnostic purpose.
-- `TRUST_PROXY=true` behind Render proxy.
+- `TRUST_PROXY=1` behind the single Render edge-proxy hop. Do not use `true`, which trusts arbitrary forwarding chains.
+- Authentication throttling uses the API instance's in-memory store. Keep `numInstances: 1` for the pilot; multi-instance deployment requires a distributed/shared rate-limit store.
 
 Never place production secrets in GitHub, Blueprint files, screenshots or support tickets.
 

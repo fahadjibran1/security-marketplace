@@ -83,7 +83,7 @@ export function getCorsOrigins(env: NodeJS.ProcessEnv) {
 export function getTrustProxySetting(env: NodeJS.ProcessEnv) {
   const configured = env.TRUST_PROXY?.trim();
   if (!configured) {
-    return env.NODE_ENV === 'production';
+    return env.NODE_ENV === 'production' ? 1 : false;
   }
 
   if (configured === 'true') {

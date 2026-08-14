@@ -24,7 +24,8 @@ services:
       - key: DATABASE_SSL
         value: "true"
       - key: TRUST_PROXY
-        value: "true"
+        # One Render edge proxy hop. Do not trust arbitrary X-Forwarded-For chains.
+        value: "1"
       - key: CORS_ORIGIN
         sync: false
       - key: DATABASE_URL
