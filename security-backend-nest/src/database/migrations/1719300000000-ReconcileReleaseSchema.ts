@@ -4,6 +4,21 @@ export class ReconcileReleaseSchema1719300000000 implements MigrationInterface {
   name = 'ReconcileReleaseSchema1719300000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
+    // Fail before making any other schema change when the production preflight
+    // condition was missed. The release data preflight reports the affected IDs.
+    await queryRunner.query(`
+      DO $$
+      BEGIN
+        IF EXISTS (SELECT 1 FROM "clients" WHERE "companyId" IS NULL) THEN
+          RAISE EXCEPTION 'RC1 preflight failed: clients.companyId contains NULL values';
+        END IF;
+        IF EXISTS (SELECT 1 FROM "payroll_batches" WHERE "companyId" IS NULL) THEN
+          RAISE EXCEPTION 'RC1 preflight failed: payroll_batches.companyId contains NULL values';
+        END IF;
+      END
+      $$;
+    `);
+
     await queryRunner.query(`ALTER TYPE "users_role_enum" ADD VALUE IF NOT EXISTS 'client_admin'`);
     await queryRunner.query(`ALTER TYPE "users_role_enum" ADD VALUE IF NOT EXISTS 'client_viewer'`);
 
