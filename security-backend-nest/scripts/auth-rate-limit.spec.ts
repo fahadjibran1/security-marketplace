@@ -3,6 +3,7 @@ import { Test } from '@nestjs/testing';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { AuthController } from '../src/auth/auth.controller';
 import { AuthService } from '../src/auth/auth.service';
+import { AuthThrottlerGuard } from '../src/auth/auth-throttler.guard';
 
 @Controller('operational-test')
 class OperationalTestController {
@@ -36,7 +37,7 @@ async function main() {
   const moduleRef = await Test.createTestingModule({
     imports: [ThrottlerModule.forRoot([{ name: 'default', ttl: 60_000, limit: 6 }])],
     controllers: [AuthController, OperationalTestController],
-    providers: [{ provide: AuthService, useValue: authService }],
+    providers: [{ provide: AuthService, useValue: authService }, AuthThrottlerGuard],
   }).compile();
   const app: INestApplication = moduleRef.createNestApplication();
   app.getHttpAdapter().getInstance().set('trust proxy', 1);
@@ -51,7 +52,7 @@ async function main() {
     for (let attempt = 0; attempt < 6; attempt += 1) {
       const response = await request(baseUrl, '/auth/login', {
         method: 'POST',
-        headers: { 'x-forwarded-for': '198.51.100.10' },
+        headers: { 'x-forwarded-for': `198.51.100.10, 203.0.113.${attempt}` },
         body: JSON.stringify({ email: attempt === 0 ? 'known@example.test' : 'unknown@example.test', password: 'wrong-password' }),
       });
       if (response.status !== 401) throw new Error(`Expected failed login 401, received ${response.status}`);
@@ -61,7 +62,7 @@ async function main() {
 
     const limited = await request(baseUrl, '/auth/login', {
       method: 'POST',
-      headers: { 'x-forwarded-for': '198.51.100.10' },
+      headers: { 'x-forwarded-for': '198.51.100.10, 203.0.113.250' },
       body: JSON.stringify({ email: 'unknown@example.test', password: 'wrong-password' }),
     });
     if (limited.status !== 429) throw new Error(`Expected rate limit 429, received ${limited.status}`);
@@ -82,12 +83,36 @@ async function main() {
     });
     if (successful.status !== 201 || successfulLogins !== 1) throw new Error('Normal successful authentication failed');
 
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const response = await request(baseUrl, '/auth/client-login', {
+        method: 'POST', headers: { 'x-forwarded-for': '198.51.100.12' },
+        body: JSON.stringify({ email: 'client@example.test', password: 'wrong-password' }),
+      });
+      if (response.status !== 401) throw new Error(`Expected Client Portal login 401, received ${response.status}`);
+    }
+    const clientLimited = await request(baseUrl, '/auth/client-login', {
+      method: 'POST', headers: { 'x-forwarded-for': '198.51.100.12' },
+      body: JSON.stringify({ email: 'client@example.test', password: 'wrong-password' }),
+    });
+    if (clientLimited.status !== 429) throw new Error(`Expected Client Portal rate limit 429, received ${clientLimited.status}`);
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const response = await request(baseUrl, '/auth/register', {
+        method: 'POST', headers: { 'x-forwarded-for': '198.51.100.13' }, body: '{}',
+      });
+      if (response.status !== 201) throw new Error(`Expected registration request 201, received ${response.status}`);
+    }
+    const registrationLimited = await request(baseUrl, '/auth/register', {
+      method: 'POST', headers: { 'x-forwarded-for': '198.51.100.13' }, body: '{}',
+    });
+    if (registrationLimited.status !== 429) throw new Error(`Expected registration rate limit 429, received ${registrationLimited.status}`);
+
     for (let attempt = 0; attempt < 12; attempt += 1) {
       const operational = await request(baseUrl, '/operational-test', { headers: { 'x-forwarded-for': '198.51.100.10' } });
       if (operational.status !== 200) throw new Error('Auth policy unintentionally rate-limited an operational API');
     }
 
-    console.log(JSON.stringify({ event: 'auth_rate_limit_tests_passed', tests: 5 }));
+    console.log(JSON.stringify({ event: 'auth_rate_limit_tests_passed', tests: 8 }));
   } finally {
     Date.now = originalNow;
     await app.close();

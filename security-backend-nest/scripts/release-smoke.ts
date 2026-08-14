@@ -130,6 +130,11 @@ async function testSuspendedJwtIsRejectedImmediately() {
   await expectUnauthorized(() => strategy.validate({ sub: 1, email: 'user@example.test', role: UserRole.COMPANY_ADMIN, status: UserStatus.ACTIVE, principalType: 'user' } as JwtPayload));
 }
 
+async function testInactiveJwtIsRejectedImmediately() {
+  const strategy = buildJwtStrategyHarness({ id: 1, email: 'user@example.test', role: UserRole.COMPANY_ADMIN, status: UserStatus.INACTIVE });
+  await expectUnauthorized(() => strategy.validate({ sub: 1, email: 'user@example.test', role: UserRole.COMPANY_ADMIN, status: UserStatus.ACTIVE, principalType: 'user' } as JwtPayload));
+}
+
 async function testPendingJwtIsRejectedImmediately() {
   const strategy = buildJwtStrategyHarness({ id: 1, email: 'guard@example.test', role: UserRole.GUARD, status: UserStatus.PENDING });
   await expectUnauthorized(() => strategy.validate({ sub: 1, email: 'guard@example.test', role: UserRole.GUARD, status: UserStatus.ACTIVE, principalType: 'user' } as JwtPayload));
@@ -911,6 +916,7 @@ async function testInvoiceBatchRejectsTimesheetWithNoApprovedDuration() {
 async function main() {
   await testActiveJwtUsesCurrentDatabaseStatus();
   await testSuspendedJwtIsRejectedImmediately();
+  await testInactiveJwtIsRejectedImmediately();
   await testPendingJwtIsRejectedImmediately();
   await testDeletedJwtPrincipalIsRejected();
   await testInactiveClientPortalJwtIsRejected();
@@ -946,7 +952,7 @@ async function main() {
   console.log(
     JSON.stringify({
       event: 'release_smoke_passed',
-      tests: 33,
+      tests: 34,
       scope:
         'auth-registration-secret-exposure-RB006-tenant-isolation-RB007-payroll-RB007B-billing-and-M1-admin-timesheet-integrity',
     }),

@@ -11,6 +11,7 @@ import { GuardProfileModule } from '../guard-profile/guard-profile.module';
 import { ClientPortalUserModule } from '../client-portal-user/client-portal-user.module';
 import { AuditLogModule } from '../audit-log/audit-log.module';
 import { ThrottlerModule } from '@nestjs/throttler';
+import { AuthThrottlerGuard } from './auth-throttler.guard';
 
 @Module({
   imports: [
@@ -32,7 +33,7 @@ import { ThrottlerModule } from '@nestjs/throttler';
     })
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy],
+  providers: [AuthService, JwtStrategy, AuthThrottlerGuard],
   exports: [AuthService]
 })
 export class AuthModule {}

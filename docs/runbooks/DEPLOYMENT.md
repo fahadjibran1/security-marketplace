@@ -29,6 +29,7 @@ Only deploy a commit that has:
 - `ENABLE_SWAGGER=false` unless temporarily enabled for an approved diagnostic purpose.
 - `TRUST_PROXY=1` behind the single Render edge-proxy hop. Do not use `true`, which trusts arbitrary forwarding chains.
 - Authentication throttling uses the API instance's in-memory store. Keep `numInstances: 1` for the pilot; multi-instance deployment requires a distributed/shared rate-limit store.
+- The authentication limiter uses the first `X-Forwarded-For` address, which Render sets to the real client IP. Do not expose the API process directly without a trusted proxy that overwrites this first address.
 
 Never place production secrets in GitHub, Blueprint files, screenshots or support tickets.
 
