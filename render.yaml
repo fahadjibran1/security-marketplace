@@ -3,7 +3,7 @@ services:
     name: security-marketplace-api
     runtime: node
     rootDir: security-backend-nest
-    branch: matching-engine
+    branch: release/v1.0.0-rc1
     plan: starter
     autoDeployTrigger: off
     numInstances: 1
