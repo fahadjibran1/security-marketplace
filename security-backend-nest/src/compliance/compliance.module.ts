@@ -11,17 +11,19 @@ import { ComplianceRecord } from './entities/compliance-record.entity';
 import { GuardDocument } from './entities/guard-document.entity';
 import { GuardComplianceService } from './guard-compliance.service';
 import { AuditLogModule } from '../audit-log/audit-log.module';
+import { JobApplication } from '../job-application/entities/job-application.entity';
+import { PreHireComplianceAuthorizationService } from './pre-hire-compliance-authorization.service';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([ComplianceRecord, GuardDocument, CompanyGuard]),
+    TypeOrmModule.forFeature([ComplianceRecord, GuardDocument, CompanyGuard, JobApplication]),
     CompanyModule,
     GuardProfileModule,
     NotificationModule,
     AuditLogModule,
   ],
   controllers: [ComplianceController],
-  providers: [ComplianceService, GuardComplianceService],
+  providers: [ComplianceService, GuardComplianceService, PreHireComplianceAuthorizationService],
   exports: [ComplianceService, GuardComplianceService, TypeOrmModule],
 })
 export class ComplianceModule {}

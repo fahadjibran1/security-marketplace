@@ -15,6 +15,7 @@ import {
 import { CreateGuardDocumentDto } from './dto/create-guard-document.dto';
 import { GuardDocument, GuardDocumentType } from './entities/guard-document.entity';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { PreHireComplianceAuthorizationService } from './pre-hire-compliance-authorization.service';
 
 export type GuardComplianceStatus = 'valid' | 'expiring' | 'expired' | 'invalid';
 
@@ -58,6 +59,7 @@ export class GuardComplianceService {
     private readonly guardProfileService: GuardProfileService,
     private readonly notificationService: NotificationService,
     private readonly auditLogService: AuditLogService,
+    private readonly preHireAuthorization: PreHireComplianceAuthorizationService,
   ) {}
 
   async listStatusesForCompanyUser(userId: number, status?: GuardComplianceStatus) {
@@ -120,21 +122,10 @@ export class GuardComplianceService {
   async listDocumentsForCompanyUser(userId: number, guardId?: number) {
     const company = await this.companyService.findByUserId(userId);
     if (!company) throw new NotFoundException('Company not found');
-
-    const links = await this.companyGuardRepo.find({
-      where: { company: { id: company.id }, status: In([CompanyGuardStatus.ACTIVE, CompanyGuardStatus.BLOCKED]) },
-    });
-    const guardIds = links.map((link) => link.guard?.id).filter((id): id is number => Boolean(id));
-
-    if (guardId && !guardIds.includes(guardId)) {
-      throw new ForbiddenException('Guard does not belong to the current company');
-    }
-
-    if (!guardIds.length) return [];
-
-    const targetGuardIds = guardId ? [guardId] : guardIds;
     return this.guardDocumentRepo.find({
-      where: { company: { id: company.id }, guard: { id: In(targetGuardIds) } },
+      where: guardId
+        ? { company: { id: company.id }, guard: { id: guardId } }
+        : { company: { id: company.id } },
       order: { uploadedAt: 'DESC', id: 'DESC' },
     });
   }
@@ -162,9 +153,11 @@ export class GuardComplianceService {
     const links = await this.companyGuardRepo.find({
       where: { company: { id: company.id }, guard: { id: dto.guardId } },
     });
-    if (!links.length) throw new ForbiddenException('Guard does not belong to the current company');
+    const authorizedGuardId = links.length
+      ? dto.guardId
+      : (await this.preHireAuthorization.authorize(company.id, dto.guardId)).guard.id;
 
-    return this.saveDocument(dto.guardId, dto, userId, { id: company.id });
+    return this.saveDocument(authorizedGuardId, dto, userId, { id: company.id });
   }
 
   async verifyDocumentForCompanyUser(userId: number, documentId: number, verified: boolean) {

@@ -74,6 +74,7 @@ function buildComplianceHarness(options: { crossTenant?: boolean; failSave?: boo
     guardProfileService as any,
     {} as any,
     auditLogService as any,
+    {} as any,
   );
   return { service, audits, guard, company, setDocument: (value: any) => (document = value) };
 }

@@ -52,6 +52,7 @@ function buildComplianceHarness(legacyAuthorization = false) {
     { findOne: async () => guard, findByUserId: async () => guard } as any,
     {} as any,
     { log: async (entry: any) => (audits.push(entry), entry) } as any,
+    {} as any,
   );
   return { service, documents, audits };
 }
