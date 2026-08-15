@@ -35,6 +35,14 @@ Only deploy a commit that has:
 
 Never place production secrets in GitHub, Blueprint files, screenshots or support tickets.
 
+## HTTP security headers
+
+The Nest application applies Helmet centrally before route handling. Production responses, including health endpoints, use one-year HSTS (`max-age=31536000`) without `includeSubDomains` or `preload`, deny framing, disable MIME sniffing, use `Referrer-Policy: no-referrer`, and apply a minimal API CSP (`default-src 'none'; frame-ancestors 'none'`). Helmet also supplies the COOP, CORP, Origin-Agent-Cluster, DNS-prefetch, download and cross-domain policies; `X-Powered-By` is disabled. The restrictive camera/microphone/geolocation `Permissions-Policy` remains application-specific.
+
+HSTS assumes HTTPS termination at Render and `TRUST_PROXY=1` for the single trusted edge hop. The application does not add an HTTPS redirect. Helmet does not replace CORS: production origins remain explicitly controlled by `CORS_ORIGIN`, with credentials enabled and no wildcard. Non-production disables HSTS and CSP so localhost and Swagger remain usable; the remaining safe headers still apply.
+
+After deployment, inspect both normal authenticated API responses and health endpoints, for example `curl -sS -D - -o /dev/null https://<approved-api-host>/health/ready`. Require HSTS, `nosniff`, frame protection, referrer policy and the production CSP, and confirm that no `X-Powered-By` header appears. Repeat with an approved and an unapproved `Origin` header to verify CORS independently. This verifies application output only; record any additional Render edge headers separately.
+
 Production startup, migrations and RB-009 preflight fail closed before connecting if TLS is disabled or `DATABASE_CA_CERT` is absent/malformed. Obtain the CA from the database provider, compare its documented fingerprint through an independent trusted channel, and configure it in Render. To rotate it, add the provider's replacement CA during an approved window, run migrations/preflight and readiness checks, then remove the retired CA after provider confirmation. Verify the deployed service reaches `/health/ready` and that logs contain no certificate material. Local development and disposable test PostgreSQL remain non-TLS by default when `NODE_ENV` is not `production` and `DATABASE_SSL` is unset/false.
 
 ## Pre-deployment checklist

@@ -5,6 +5,7 @@ import { randomUUID } from 'crypto';
 import { NextFunction, Request, Response } from 'express';
 import { AppModule } from './app.module';
 import { getCorsOrigins, getTrustProxySetting, isSwaggerEnabled } from './config/runtime-env';
+import { configureHttpSecurity } from './config/http-security';
 
 const logger = new Logger('Bootstrap');
 
@@ -15,8 +16,8 @@ async function bootstrap() {
   const httpAdapter = app.getHttpAdapter().getInstance();
   const requestLogger = new Logger('HTTP');
 
-  httpAdapter.disable('x-powered-by');
   httpAdapter.set('trust proxy', getTrustProxySetting(process.env));
+  configureHttpSecurity(app, process.env);
 
   app.enableShutdownHooks();
 
@@ -33,11 +34,6 @@ async function bootstrap() {
     const startedAt = Date.now();
 
     response.setHeader('X-Request-Id', requestId);
-    response.setHeader('X-Content-Type-Options', 'nosniff');
-    response.setHeader('X-Frame-Options', 'DENY');
-    response.setHeader('Referrer-Policy', 'no-referrer');
-    response.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
-
     response.on('finish', () => {
       requestLogger.log(
         JSON.stringify({
