@@ -2,11 +2,12 @@
 
 Target: v1.0.0 pilot
 Platform baseline: Render web service + managed PostgreSQL
-Release branch after approval: `matching-engine`
+Release branch after approval: `release/v1.0.0-rc1`
+Approved RC1 SHA: `f1fd5620ec256586d1ba147fd2db5139eb85f531`
 
 ## Release policy
 
-Production deployment is manual for the pilot. `render.yaml` sets `autoDeployTrigger: off` and pins the service to `matching-engine`. Do not deploy `main`; it is not the certified S4 release line.
+Production deployment is manual for the pilot. `render.yaml` sets `autoDeployTrigger: off` and pins the service to `release/v1.0.0-rc1`. Do not deploy `main`, feature branches or UAT branches.
 
 Only deploy a commit that has:
 
@@ -41,8 +42,9 @@ Never place production secrets in GitHub, Blueprint files, screenshots or suppor
 4. Confirm migrations are additive/backward-compatible where possible.
 5. Confirm no irreversible destructive migration is being introduced without an approved recovery plan.
 6. Create/confirm a recoverable database checkpoint according to `BACKUP_RESTORE.md`.
-7. Confirm `/health/live` and `/health/ready` are healthy on the existing release.
-8. Confirm support/hypercare owner is available for the deployment window.
+7. Run `npm run release:preflight-data` against the deployment database and require `PASS`/exit 0.
+8. Confirm `/health/live` and `/health/ready` are healthy on the existing release.
+9. Confirm support/hypercare owner is available for the deployment window.
 
 ## Render deployment sequence
 
@@ -55,14 +57,15 @@ The Blueprint defines:
 
 Deployment procedure:
 
-1. Merge the approved release change into `matching-engine` only after release approval.
-2. In Render, verify the service branch is `matching-engine` and auto deploy is OFF.
+1. Confirm `release/v1.0.0-rc1` resolves to the approved release SHA recorded in the change ticket.
+2. In Render, verify the service branch is `release/v1.0.0-rc1` and auto deploy is OFF.
 3. Trigger a manual deploy for the exact approved commit.
 4. Watch build logs. Any dependency-install or compile failure is a failed deployment.
 5. Watch pre-deploy logs. Any migration failure is a failed deployment; do not bypass the migration command.
 6. Verify the new instance reaches `/health/live`.
 7. Verify `/health/ready` returns healthy only after database connectivity succeeds.
 8. Run the production smoke checks below.
+9. At the first failed health, migration or smoke criterion, stop and use the decision process in `ROLLBACK.md`; do not continue applying unrelated changes.
 
 ## Production smoke checks
 

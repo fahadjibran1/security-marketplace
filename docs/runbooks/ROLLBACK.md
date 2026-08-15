@@ -6,6 +6,8 @@ Application rollback and database rollback are different operations. Never blind
 
 Prefer forward-compatible migrations so the prior application version can temporarily run against the migrated schema. If a migration is destructive or incompatible with the previous release, the release requires an explicit recovery plan before deployment.
 
+For RC1, configuration commit `f1fd5620ec256586d1ba147fd2db5139eb85f531` contains the same application and database model as `083136ac52697fe5117909c48d74fed259975b42`. That application SHA is the oldest certified rollback boundary. `e6c1a8109e65f17bb1f1650dd2c57ce67f611fd4` was verified to start and read the RC1 schema, but it predates UAT2-HIRE-01 and must not be selected for pilot rollback because it restores the pre-hire compliance deadlock.
+
 ## Rollback triggers
 
 Initiate rollback for any of the following after deployment:
@@ -30,6 +32,8 @@ Use when database migrations are backward-compatible and data is intact.
 7. Confirm tenant access and core guard operations.
 8. Keep the incident open until the cause is understood and a new RC is certified.
 
+If no certified prior application remains compatible and free of closed Critical/High defects, declare application rollback unavailable and use a forward fix. Keep the current database intact, restrict writes if required, preserve evidence, certify the smallest corrective release, then deploy it through the normal release gate.
+
 ## Database-impacting rollback
 
 Use when the new release has changed or corrupted persistent data/schema such that application-only rollback is unsafe.
@@ -53,6 +57,8 @@ npm run migration:revert:prod
 ```
 
 Use it only when the specific migration's `down()` path has been reviewed and tested with representative data. Do not use a migration revert as a substitute for database recovery.
+
+Never migration-revert merely to match an older application image. Prefer the newer forward-compatible schema, and restore a separately validated backup only when application-only rollback cannot protect data integrity.
 
 ## Rollback evidence
 

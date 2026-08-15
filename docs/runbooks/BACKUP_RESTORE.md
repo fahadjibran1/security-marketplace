@@ -43,6 +43,8 @@ Do not commit dump files or connection strings to Git.
 
 Store backups encrypted and access-controlled. Define retention before pilot go-live; recommended initial operational policy is daily logical backup with at least 14 days external retention, subject to customer/data-protection requirements.
 
+Required scheduling to support the stated logical-backup RPO is at least one successful backup every 24 hours. Alert on the first failed run and escalate before two consecutive recovery points are missed. Keep at least 14 daily copies plus four weekly copies unless the approved data-retention policy requires longer or shorter retention.
+
 ## Point-in-time recovery procedure
 
 Prefer managed PITR for accidental destructive changes when it provides a more recent recovery point than a logical backup.
@@ -115,3 +117,15 @@ Recovery is complete only when:
 - critical operational data is present to the expected recovery point;
 - finance state is reviewed for interrupted batches/payments;
 - incident timeline and recovery point are documented.
+
+## RC1 certification evidence
+
+The local PostgreSQL 16 drill for SHA `f1fd5620ec256586d1ba147fd2db5139eb85f531` measured:
+
+- custom-format backup: 0.528 seconds, 141,869 bytes, `pg_restore --list` exit 0;
+- restore into a new database: 2.410 seconds, exit 0;
+- 32 application-table counts matched;
+- mandatory ownership, attendance, timesheet financial, compliance provenance and audit samples matched;
+- restored application health/readiness and authenticated reads passed.
+
+These local timings prove procedure correctness at the synthetic fixture size, not production-scale recovery time. Retain the conservative four-hour pilot RTO until a representative managed-environment drill supports a tighter objective.
