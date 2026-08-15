@@ -36,7 +36,11 @@ async function main() {
   assert.equal(ambiguousDocument.status, 'BLOCKED', 'legacy guard documents without reliable provenance must block');
   assert.equal(ambiguousDocument.blockers.guardDocumentsWithoutProvenance, 1);
 
-  console.log(JSON.stringify({ event: 'release_data_preflight_tests_passed', tests: 7 }));
+  const legacyUrl = await runPreflight(fixtureDb({ "to_jsonb(gd)->>'fileUrl'": [{ id: 7, guardId: 2, companyId: 1 }] }));
+  assert.equal(legacyUrl.status, 'BLOCKED', 'legacy external compliance URLs must block production release');
+  assert.equal(legacyUrl.blockers.guardDocumentsUsingLegacyExternalUrl, 1);
+
+  console.log(JSON.stringify({ event: 'release_data_preflight_tests_passed', tests: 8 }));
 }
 
 main().catch((error: unknown) => { console.error(error); process.exitCode = 1; });

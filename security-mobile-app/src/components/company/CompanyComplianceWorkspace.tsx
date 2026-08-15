@@ -110,7 +110,7 @@ function GuardDocumentsList({
           <View style={styles.flexGrow}>
             <Text style={styles.documentTitle}>{String(document.type).replace(/_/g, ' ')}</Text>
             <Text style={styles.helperText}>Expiry: {formatDate(document.expiryDate)} | Uploaded: {formatDate(document.uploadedAt)}</Text>
-            <Text style={styles.documentUrl}>{document.fileUrl}</Text>
+            <Text style={styles.documentUrl}>{document.originalFileName || 'Private evidence'}</Text>
           </View>
           <View style={styles.documentActions}>
             <View style={[styles.statusPill, document.verified ? styles.statusValid : styles.statusMissing]}>

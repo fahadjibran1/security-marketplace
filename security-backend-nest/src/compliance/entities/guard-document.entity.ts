@@ -20,6 +20,7 @@ export enum GuardDocumentType {
 
 @Entity('guard_documents')
 @Index('IDX_guard_documents_company_guard', ['company', 'guard'])
+@Index('IDX_guard_documents_storage_key', ['storageProvider', 'storageKey'], { unique: true, where: '"storageKey" IS NOT NULL' })
 export class GuardDocument {
   @PrimaryGeneratedColumn()
   id!: number;
@@ -42,8 +43,26 @@ export class GuardDocument {
   })
   type!: GuardDocumentType;
 
-  @Column({ type: 'varchar' })
-  fileUrl!: string;
+  @Column({ type: 'varchar', nullable: true, select: false })
+  fileUrl?: string | null;
+
+  @Column({ type: 'varchar', nullable: true, select: false })
+  storageProvider?: string | null;
+
+  @Column({ type: 'varchar', nullable: true, select: false })
+  storageKey?: string | null;
+
+  @Column({ type: 'varchar', nullable: true })
+  originalFileName?: string | null;
+
+  @Column({ type: 'varchar', nullable: true })
+  mimeType?: string | null;
+
+  @Column({ type: 'bigint', nullable: true })
+  sizeBytes?: string | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  uploadCompletedAt?: Date | null;
 
   @Column({ type: 'date', nullable: true })
   expiryDate?: string | null;

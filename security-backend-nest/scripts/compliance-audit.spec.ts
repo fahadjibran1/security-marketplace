@@ -8,6 +8,12 @@ import { GuardProfileService } from '../src/guard-profile/guard-profile.service'
 import { UserRole, UserStatus } from '../src/user/entities/user.entity';
 
 type AuditInput = Record<string, any>;
+const evidenceMetadata = { originalFileName: 'evidence.pdf', mimeType: 'application/pdf', sizeBytes: 1024 };
+const storage = {
+  provider: 's3-compatible',
+  createSignedUploadUrl: async ({ key }: any) => ({ url: `https://signed.test/${key}?signature=upload`, expiresAt: new Date(Date.now() + 180000).toISOString(), method: 'PUT' }),
+  createSignedDownloadUrl: async ({ key }: any) => ({ url: `https://signed.test/${key}?signature=download`, expiresAt: new Date(Date.now() + 180000).toISOString(), method: 'GET' }),
+};
 
 function buildApprovalHarness() {
   const audits: AuditInput[] = [];
@@ -75,6 +81,7 @@ function buildComplianceHarness(options: { crossTenant?: boolean; failSave?: boo
     {} as any,
     auditLogService as any,
     {} as any,
+    storage as any,
   );
   return { service, audits, guard, company, setDocument: (value: any) => (document = value) };
 }
@@ -115,7 +122,7 @@ async function testUploadCreatesAudit(type: GuardDocumentType) {
 
 async function testVerificationCreatesAudit(type: GuardDocumentType) {
   const { service, audits, guard, company, setDocument } = buildComplianceHarness();
-  setDocument({ id: 701, guard, type, fileUrl: 'https://private.example/token', expiryDate: null, verified: false });
+  setDocument({ id: 701, guard, type, fileUrl: 'https://private.example/token', expiryDate: null, verified: false, uploadCompletedAt: new Date() });
   await service.verifyDocumentForCompanyUser(81, 701, true);
   equal(audits.length, 1);
   equal(audits[0].action, 'guard_document.verified');

@@ -12,6 +12,12 @@ const guard = { id: 31, fullName: 'Pre-hire Guard', user: { id: 310 } };
 const companyA = { id: 41, user: { id: 410 } };
 const companyB = { id: 42, user: { id: 420 } };
 const openJobA = { id: 51, company: companyA, status: 'open', guardsRequired: 1, title: 'A Job' };
+const evidenceMetadata = { originalFileName: 'evidence.pdf', mimeType: 'application/pdf', sizeBytes: 1024 };
+const storage = {
+  provider: 's3-compatible',
+  createSignedUploadUrl: async ({ key }: any) => ({ url: `https://signed.test/${key}?signature=upload`, expiresAt: new Date(Date.now() + 180000).toISOString(), method: 'PUT' }),
+  createSignedDownloadUrl: async ({ key }: any) => ({ url: `https://signed.test/${key}?signature=download`, expiresAt: new Date(Date.now() + 180000).toISOString(), method: 'GET' }),
+};
 
 function application(status = 'under_review', company = companyA) {
   return { id: 61, guard, job: { ...openJobA, company }, status, assignments: [] };
@@ -59,6 +65,7 @@ function buildHarness(applications: any[] = [application()]) {
     {} as any,
     { log: async (entry: any) => (audits.push(entry), entry) } as any,
     authorization,
+    storage as any,
   );
   return { service, documents, audits, authorization };
 }

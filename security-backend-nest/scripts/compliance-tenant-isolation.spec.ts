@@ -10,6 +10,12 @@ import { UserRole, UserStatus } from '../src/user/entities/user.entity';
 const companyA = { id: 11 };
 const companyB = { id: 22 };
 const guard = { id: 33, user: { id: 330 }, status: 'pending', approvalStatus: 'pending', isApproved: false };
+const evidenceMetadata = { originalFileName: 'evidence.pdf', mimeType: 'application/pdf', sizeBytes: 1024 };
+const storage = {
+  provider: 's3-compatible',
+  createSignedUploadUrl: async ({ key }: any) => ({ url: `https://signed.test/${key}?signature=upload`, expiresAt: new Date(Date.now() + 180000).toISOString(), method: 'PUT' }),
+  createSignedDownloadUrl: async ({ key }: any) => ({ url: `https://signed.test/${key}?signature=download`, expiresAt: new Date(Date.now() + 180000).toISOString(), method: 'GET' }),
+};
 
 function companyForUser(userId: number) {
   return userId === 101 ? companyA : userId === 202 ? companyB : null;
@@ -53,6 +59,7 @@ function buildComplianceHarness(legacyAuthorization = false) {
     {} as any,
     { log: async (entry: any) => (audits.push(entry), entry) } as any,
     {} as any,
+    storage as any,
   );
   return { service, documents, audits };
 }

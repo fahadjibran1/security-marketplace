@@ -74,6 +74,24 @@ export class ComplianceController {
     return this.guardComplianceService.uploadDocumentForGuardUser(user.sub, dto);
   }
 
+  @Get('documents/:id/access')
+  @Roles(UserRole.ADMIN, ...COMPANY_VIEW_ROLES, UserRole.GUARD)
+  accessDocument(
+    @CurrentUser() user: JwtPayload,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.guardComplianceService.createDocumentAccess(user, id);
+  }
+
+  @Post('documents/:id/complete-upload')
+  @Roles(UserRole.ADMIN, ...COMPANY_ADMIN_ROLES, UserRole.GUARD)
+  completeDocumentUpload(
+    @CurrentUser() user: JwtPayload,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.guardComplianceService.completeDocumentUpload(user, id);
+  }
+
   @Patch('documents/:id/verify')
   @Roles(...COMPANY_ADMIN_ROLES)
   verifyDocument(

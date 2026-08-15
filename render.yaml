@@ -34,3 +34,15 @@ services:
         sync: false
       - key: JWT_SECRET
         generateValue: true
+      - key: EVIDENCE_STORAGE_ENDPOINT
+        sync: false
+      - key: EVIDENCE_STORAGE_REGION
+        sync: false
+      - key: EVIDENCE_STORAGE_BUCKET
+        sync: false
+      - key: EVIDENCE_STORAGE_ACCESS_KEY_ID
+        sync: false
+      - key: EVIDENCE_STORAGE_SECRET_ACCESS_KEY
+        sync: false
+      - key: EVIDENCE_SIGNED_URL_TTL_SECONDS
+        value: "180"

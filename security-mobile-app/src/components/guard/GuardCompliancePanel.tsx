@@ -8,6 +8,7 @@ import {
   listMyGuardDocuments,
   updateMyGuard,
   uploadMyGuardDocument,
+  completeGuardDocumentUpload,
 } from '../../services/api';
 import { GuardComplianceSummary, GuardDocument, GuardDocumentType, GuardProfile } from '../../types/models';
 import { FeatureCard } from '../FeatureCard';
@@ -29,7 +30,7 @@ type ProfileFormState = {
 
 type DocumentFormState = {
   type: GuardDocumentType;
-  fileUrl: string;
+  sourceUri: string;
   expiryDate: string;
 };
 
@@ -42,7 +43,7 @@ const EMPTY_PROFILE: ProfileFormState = {
 
 const EMPTY_DOCUMENT: DocumentFormState = {
   type: 'sia_licence',
-  fileUrl: '',
+  sourceUri: '',
   expiryDate: '',
 };
 
@@ -121,17 +122,30 @@ export function GuardCompliancePanel() {
   }, [loadData, profileForm]);
 
   const uploadDocument = React.useCallback(async () => {
-    if (!documentForm.fileUrl.trim()) {
-      setFeedback({ tone: 'error', message: 'Add a document URL before uploading.' });
+    if (!documentForm.sourceUri.trim()) {
+      setFeedback({ tone: 'error', message: 'Add a document source before uploading.' });
       return;
     }
     setUploadingDocument(true);
     try {
-      await uploadMyGuardDocument({
+      const source = await fetch(documentForm.sourceUri.trim());
+      if (!source.ok) throw new Error('Unable to read the selected evidence file.');
+      const content = await source.blob();
+      const originalFileName = decodeURIComponent(documentForm.sourceUri.split('/').pop()?.split('?')[0] || 'evidence');
+      const created = await uploadMyGuardDocument({
         type: documentForm.type,
-        fileUrl: documentForm.fileUrl.trim(),
+        originalFileName,
+        mimeType: content.type,
+        sizeBytes: content.size,
         expiryDate: documentForm.expiryDate.trim() || null,
       });
+      const uploaded = await fetch(created.upload.url, {
+        method: created.upload.method,
+        headers: created.upload.headers,
+        body: content,
+      });
+      if (!uploaded.ok) throw new Error('Private evidence upload failed.');
+      await completeGuardDocumentUpload(created.id);
       setDocumentForm(EMPTY_DOCUMENT);
       setFeedback({ tone: 'success', message: 'Document uploaded for company review.' });
       await loadData();
@@ -227,9 +241,9 @@ export function GuardCompliancePanel() {
         </View>
         <TextInput
           style={styles.input}
-          value={documentForm.fileUrl}
-          onChangeText={(value: string) => setDocumentForm((current) => ({ ...current, fileUrl: value }))}
-          placeholder="Document file URL"
+          value={documentForm.sourceUri}
+          onChangeText={(value: string) => setDocumentForm((current) => ({ ...current, sourceUri: value }))}
+          placeholder="Local file URI or HTTPS source (not stored)"
         />
         <TextInput
           style={styles.input}
@@ -251,7 +265,7 @@ export function GuardCompliancePanel() {
             <View style={styles.flexGrow}>
               <Text style={styles.documentTitle}>{formatDocumentType(document.type)}</Text>
               <Text style={styles.helperText}>Expiry: {formatDate(document.expiryDate)} | Uploaded: {formatDate(document.uploadedAt)}</Text>
-              <Text style={styles.documentUrl}>{document.fileUrl}</Text>
+              <Text style={styles.documentUrl}>{document.originalFileName || 'Private evidence'}</Text>
             </View>
             <View style={[styles.badge, document.verified ? styles.badgeValid : styles.badgeInvalid]}>
               <Text style={[styles.badgeText, document.verified ? styles.badgeValidText : styles.badgeInvalidText]}>

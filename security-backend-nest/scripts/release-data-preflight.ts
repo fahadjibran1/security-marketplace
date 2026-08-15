@@ -139,6 +139,14 @@ const checks: Check[] = [
     sql: `SELECT gd."id", gd."guardId", gd."companyId", gd."uploadedByUserId" FROM "guard_documents" gd WHERE gd."companyId" IS NULL AND gd."uploadedByUserId" IS NULL ORDER BY gd."id"`,
   },
   {
+    key: 'guardDocumentsUsingLegacyExternalUrl',
+    sql: `SELECT gd."id", gd."guardId", gd."companyId" FROM "guard_documents" gd WHERE NULLIF(to_jsonb(gd)->>'fileUrl', '') IS NOT NULL AND NULLIF(to_jsonb(gd)->>'storageKey', '') IS NULL ORDER BY gd."id"`,
+  },
+  {
+    key: 'guardDocumentsWithInvalidPrivateStorageMetadata',
+    sql: `SELECT gd."id", gd."guardId", gd."companyId" FROM "guard_documents" gd WHERE NULLIF(to_jsonb(gd)->>'storageKey', '') IS NOT NULL AND (NULLIF(to_jsonb(gd)->>'storageProvider', '') IS NULL OR NULLIF(to_jsonb(gd)->>'originalFileName', '') IS NULL OR NULLIF(to_jsonb(gd)->>'mimeType', '') IS NULL OR NULLIF(to_jsonb(gd)->>'sizeBytes', '')::bigint IS NULL OR NULLIF(to_jsonb(gd)->>'sizeBytes', '')::bigint <= 0) ORDER BY gd."id"`,
+  },
+  {
     key: 'legacyApprovedTimesheetsWithoutVerifiedAttendance',
     review: true,
     // verifiedMinutes may not exist yet on the database being inspected.

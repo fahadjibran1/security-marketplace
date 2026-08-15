@@ -33,6 +33,27 @@ function hasProductionDatabaseConfig(config: RawEnv) {
   ].every((value) => Boolean(toTrimmedString(value)));
 }
 
+function validateProductionEvidenceStorage(config: RawEnv) {
+  const required = [
+    'EVIDENCE_STORAGE_ENDPOINT',
+    'EVIDENCE_STORAGE_REGION',
+    'EVIDENCE_STORAGE_BUCKET',
+    'EVIDENCE_STORAGE_ACCESS_KEY_ID',
+    'EVIDENCE_STORAGE_SECRET_ACCESS_KEY',
+  ];
+  if (required.some((key) => !toTrimmedString(config[key]))) {
+    throw new Error('Private evidence storage configuration is required in production.');
+  }
+  const endpoint = new URL(toTrimmedString(config.EVIDENCE_STORAGE_ENDPOINT));
+  if (endpoint.protocol !== 'https:') {
+    throw new Error('EVIDENCE_STORAGE_ENDPOINT must use HTTPS in production.');
+  }
+  const ttl = Number(toTrimmedString(config.EVIDENCE_SIGNED_URL_TTL_SECONDS) || '180');
+  if (!Number.isInteger(ttl) || ttl < 60 || ttl > 300) {
+    throw new Error('EVIDENCE_SIGNED_URL_TTL_SECONDS must be between 60 and 300.');
+  }
+}
+
 export function validateRuntimeEnv(config: RawEnv) {
   const nodeEnv = toTrimmedString(config.NODE_ENV) || 'development';
   const corsOrigin = toTrimmedString(config.CORS_ORIGIN);
@@ -66,6 +87,7 @@ export function validateRuntimeEnv(config: RawEnv) {
       DATABASE_SSL: toTrimmedString(config.DATABASE_SSL),
       DATABASE_CA_CERT: toTrimmedString(config.DATABASE_CA_CERT),
     });
+    validateProductionEvidenceStorage(config);
   }
 
   return config;

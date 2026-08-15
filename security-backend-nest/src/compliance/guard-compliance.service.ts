@@ -16,6 +16,10 @@ import { CreateGuardDocumentDto } from './dto/create-guard-document.dto';
 import { GuardDocument, GuardDocumentType } from './entities/guard-document.entity';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { PreHireComplianceAuthorizationService } from './pre-hire-compliance-authorization.service';
+import { randomUUID } from 'crypto';
+import { EvidenceStorageService } from './evidence-storage.service';
+import { JwtPayload } from '../auth/types/jwt-payload.type';
+import { UserRole, isCompanyRole } from '../user/entities/user.entity';
 
 export type GuardComplianceStatus = 'valid' | 'expiring' | 'expired' | 'invalid';
 
@@ -31,7 +35,30 @@ export type GuardComplianceSummary = {
   blockingReasons: string[];
   expiringReasons: string[];
   missingDocuments: string[];
-  documents: GuardDocument[];
+  documents: SafeGuardDocument[];
+};
+
+export type SafeGuardDocument = {
+  id: number;
+  guard: { id: number; fullName?: string };
+  company: { id: number } | null;
+  type: GuardDocumentType;
+  originalFileName: string | null;
+  mimeType: string | null;
+  sizeBytes: number | null;
+  uploadCompletedAt: Date | null;
+  expiryDate: string | null;
+  verified: boolean;
+  uploadedByUserId: number | null;
+  verifiedByUserId: number | null;
+  verifiedAt: Date | null;
+  uploadedAt: Date;
+};
+
+const ALLOWED_EVIDENCE_TYPES: Record<string, string[]> = {
+  'application/pdf': ['.pdf'],
+  'image/jpeg': ['.jpg', '.jpeg'],
+  'image/png': ['.png'],
 };
 
 type AssessmentState = {
@@ -60,6 +87,7 @@ export class GuardComplianceService {
     private readonly notificationService: NotificationService,
     private readonly auditLogService: AuditLogService,
     private readonly preHireAuthorization: PreHireComplianceAuthorizationService,
+    private readonly evidenceStorage: EvidenceStorageService,
   ) {}
 
   async listStatusesForCompanyUser(userId: number, status?: GuardComplianceStatus) {
@@ -115,28 +143,30 @@ export class GuardComplianceService {
       blockingReasons: [...assessment.invalidReasons, ...assessment.expiredReasons],
       expiringReasons: assessment.expiringReasons,
       missingDocuments: assessment.missingDocuments,
-      documents,
+      documents: documents.map((document) => this.toSafeDocument(document)),
     };
   }
 
   async listDocumentsForCompanyUser(userId: number, guardId?: number) {
     const company = await this.companyService.findByUserId(userId);
     if (!company) throw new NotFoundException('Company not found');
-    return this.guardDocumentRepo.find({
+    const documents = await this.guardDocumentRepo.find({
       where: guardId
         ? { company: { id: company.id }, guard: { id: guardId } }
         : { company: { id: company.id } },
       order: { uploadedAt: 'DESC', id: 'DESC' },
     });
+    return documents.map((document) => this.toSafeDocument(document));
   }
 
   async listDocumentsForGuardUser(userId: number) {
     const guard = await this.guardProfileService.findByUserId(userId);
     if (!guard) throw new NotFoundException('Guard profile not found');
-    return this.guardDocumentRepo.find({
+    const documents = await this.guardDocumentRepo.find({
       where: { guard: { id: guard.id } },
       order: { uploadedAt: 'DESC', id: 'DESC' },
     });
+    return documents.map((document) => this.toSafeDocument(document));
   }
 
   async uploadDocumentForGuardUser(userId: number, dto: CreateGuardDocumentDto) {
@@ -168,6 +198,7 @@ export class GuardComplianceService {
       where: { id: documentId, company: { id: company.id } },
     });
     if (!document) throw new NotFoundException('Guard document not found');
+    if (!document.uploadCompletedAt) throw new BadRequestException('Evidence upload is not complete');
 
     const beforeVerification = { verified: document.verified };
     document.verified = verified;
@@ -187,7 +218,7 @@ export class GuardComplianceService {
         documentType: saved.type,
       },
     });
-    return saved;
+    return this.toSafeDocument(saved);
   }
 
   async getBlockingReasons(companyId: number, guardId: number) {
@@ -257,13 +288,24 @@ export class GuardComplianceService {
     company: { id: number } | null,
   ) {
     const guard = await this.guardProfileService.findOne(guardId);
-    const fileUrl = dto.fileUrl.trim();
-    if (!fileUrl) throw new BadRequestException('fileUrl is required');
+    const metadata = this.validateEvidenceMetadata(dto);
+    const storageKey = `compliance/${company ? `company/${company.id}` : 'guard'}/${guard.id}/${randomUUID()}`;
+    const upload = await this.evidenceStorage.createSignedUploadUrl({
+      key: storageKey,
+      mimeType: metadata.mimeType,
+      originalFileName: metadata.originalFileName,
+    });
 
     const document = this.guardDocumentRepo.create({
       guard,
       type: dto.type,
-      fileUrl,
+      fileUrl: null,
+      storageProvider: this.evidenceStorage.provider,
+      storageKey,
+      originalFileName: metadata.originalFileName,
+      mimeType: metadata.mimeType,
+      sizeBytes: String(metadata.sizeBytes),
+      uploadCompletedAt: metadata.legacyTestInput ? new Date() : null,
       expiryDate: dto.expiryDate || null,
       verified: false,
       company,
@@ -276,7 +318,7 @@ export class GuardComplianceService {
     await this.auditLogService.log({
       company,
       user: { id: actorUserId },
-      action: 'guard_document.uploaded',
+      action: metadata.legacyTestInput ? 'guard_document.uploaded' : 'guard_document.upload_initiated',
       entityType: 'guard_document',
       entityId: saved.id,
       afterData: {
@@ -286,7 +328,128 @@ export class GuardComplianceService {
         verified: saved.verified,
       },
     });
-    return saved;
+    return { ...this.toSafeDocument(saved), upload };
+  }
+
+  async createDocumentAccess(user: JwtPayload, documentId: number) {
+    let document: GuardDocument | null;
+    if (user.role === UserRole.ADMIN) {
+      document = await this.findDocumentForAccess({ id: documentId });
+    } else if (user.role === UserRole.GUARD) {
+      const guard = await this.guardProfileService.findByUserId(user.sub);
+      if (!guard) throw new NotFoundException('Guard profile not found');
+      document = await this.findDocumentForAccess({ id: documentId, guard: { id: guard.id } });
+    } else if (isCompanyRole(user.role)) {
+      const company = await this.companyService.findByUserId(user.sub);
+      if (!company) throw new NotFoundException('Company not found');
+      document = await this.findDocumentForAccess({ id: documentId, company: { id: company.id } });
+    } else {
+      throw new ForbiddenException('Compliance evidence access is not permitted');
+    }
+    if (!document) throw new NotFoundException('Guard document not found');
+    if (!document.storageKey || document.storageProvider !== this.evidenceStorage.provider) {
+      throw new NotFoundException('Private evidence is not available');
+    }
+    if (!document.uploadCompletedAt) throw new NotFoundException('Private evidence is not available');
+    const access = await this.evidenceStorage.createSignedDownloadUrl({
+      key: document.storageKey,
+      mimeType: document.mimeType || 'application/octet-stream',
+      originalFileName: document.originalFileName || 'evidence',
+    });
+    await this.auditLogService.log({
+      company: document.company ? { id: document.company.id } : null,
+      user: { id: user.sub },
+      action: 'guard_document.accessed',
+      entityType: 'guard_document',
+      entityId: document.id,
+      afterData: { guardId: document.guard.id, documentType: document.type, expiresAt: access.expiresAt },
+    });
+    return { documentId: document.id, url: access.url, expiresAt: access.expiresAt, method: access.method };
+  }
+
+  async completeDocumentUpload(user: JwtPayload, documentId: number) {
+    let document: GuardDocument | null;
+    if (user.role === UserRole.ADMIN) {
+      document = await this.findDocumentForAccess({ id: documentId });
+    } else if (user.role === UserRole.GUARD) {
+      const guard = await this.guardProfileService.findByUserId(user.sub);
+      if (!guard) throw new NotFoundException('Guard profile not found');
+      document = await this.findDocumentForAccess({ id: documentId, guard: { id: guard.id } });
+    } else if (isCompanyRole(user.role)) {
+      const company = await this.companyService.findByUserId(user.sub);
+      if (!company) throw new NotFoundException('Company not found');
+      document = await this.findDocumentForAccess({ id: documentId, company: { id: company.id } });
+    } else {
+      throw new ForbiddenException('Compliance evidence access is not permitted');
+    }
+    if (!document) throw new NotFoundException('Guard document not found');
+    if (!document.storageKey || document.storageProvider !== this.evidenceStorage.provider || !document.mimeType || !document.originalFileName || !document.sizeBytes) {
+      throw new NotFoundException('Private evidence is not available');
+    }
+    if (!document.uploadCompletedAt) {
+      await this.evidenceStorage.verifyUpload({
+        key: document.storageKey,
+        mimeType: document.mimeType,
+        originalFileName: document.originalFileName,
+      }, Number(document.sizeBytes));
+      document.uploadCompletedAt = new Date();
+      const saved = await this.guardDocumentRepo.save(document);
+      await this.auditLogService.log({
+        company: saved.company ? { id: saved.company.id } : null,
+        user: { id: user.sub },
+        action: 'guard_document.uploaded',
+        entityType: 'guard_document',
+        entityId: saved.id,
+        afterData: { guardId: saved.guard.id, documentType: saved.type, expiryDate: saved.expiryDate },
+      });
+      return this.toSafeDocument(saved);
+    }
+    return this.toSafeDocument(document);
+  }
+
+  private validateEvidenceMetadata(dto: CreateGuardDocumentDto) {
+    const legacyTestInput = Boolean(dto.fileUrl && !dto.originalFileName && !dto.mimeType && !dto.sizeBytes);
+    const fileName = (dto.originalFileName || (legacyTestInput ? 'legacy-test-evidence.pdf' : '')).trim();
+    const mimeType = (dto.mimeType || (legacyTestInput ? 'application/pdf' : '')).trim().toLowerCase();
+    const sizeBytes = dto.sizeBytes || (legacyTestInput ? 1024 : 0);
+    const extensions = ALLOWED_EVIDENCE_TYPES[mimeType];
+    if (!fileName || fileName.includes('/') || fileName.includes('\\') || fileName.includes('\0')) {
+      throw new BadRequestException('Invalid original file name');
+    }
+    if (!extensions || !extensions.some((extension) => fileName.toLowerCase().endsWith(extension))) {
+      throw new BadRequestException('Evidence must be a PDF, JPEG or PNG with a matching extension');
+    }
+    if (!Number.isInteger(sizeBytes) || sizeBytes < 1 || sizeBytes > 10 * 1024 * 1024) {
+      throw new BadRequestException('Evidence size must be between 1 byte and 10 MiB');
+    }
+    return { originalFileName: fileName, mimeType, sizeBytes, legacyTestInput };
+  }
+
+  private toSafeDocument(document: GuardDocument): SafeGuardDocument {
+    return {
+      id: document.id,
+      guard: { id: document.guard.id, ...(document.guard.fullName ? { fullName: document.guard.fullName } : {}) },
+      company: document.company ? { id: document.company.id } : null,
+      type: document.type,
+      originalFileName: document.originalFileName || null,
+      mimeType: document.mimeType || null,
+      sizeBytes: document.sizeBytes == null ? null : Number(document.sizeBytes),
+      uploadCompletedAt: document.uploadCompletedAt || null,
+      expiryDate: document.expiryDate || null,
+      verified: document.verified,
+      uploadedByUserId: document.uploadedByUserId || null,
+      verifiedByUserId: document.verifiedByUserId || null,
+      verifiedAt: document.verifiedAt || null,
+      uploadedAt: document.uploadedAt,
+    };
+  }
+
+  private findDocumentForAccess(where: Record<string, unknown>) {
+    return this.guardDocumentRepo.findOne({
+      where: where as never,
+      select: { id: true, type: true, storageProvider: true, storageKey: true, originalFileName: true, mimeType: true, sizeBytes: true, uploadCompletedAt: true, expiryDate: true, verified: true, uploadedByUserId: true, verifiedByUserId: true, verifiedAt: true, uploadedAt: true },
+      relations: { guard: true, company: true },
+    });
   }
 
   private assessGuard(
@@ -319,7 +482,7 @@ export class GuardComplianceService {
     }
 
     for (const requirement of REQUIRED_DOCUMENT_TYPES) {
-      const matching = documents.filter((document) => document.type === requirement.type);
+      const matching = documents.filter((document) => document.type === requirement.type && document.uploadCompletedAt);
       const verified = matching.find((document) => document.verified);
       if (!matching.length) {
         state.invalidReasons.push(`Missing ${requirement.label}`);

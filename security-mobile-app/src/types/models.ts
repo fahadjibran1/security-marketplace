@@ -177,7 +177,9 @@ export interface GuardDocument {
   id: number;
   guard?: GuardProfile;
   type: GuardDocumentType | string;
-  fileUrl: string;
+  originalFileName?: string | null;
+  mimeType?: string | null;
+  sizeBytes?: number | null;
   expiryDate?: string | null;
   verified: boolean;
   uploadedAt: string;
@@ -186,8 +188,21 @@ export interface GuardDocument {
 export interface GuardDocumentPayload {
   guardId?: number;
   type: GuardDocumentType | string;
-  fileUrl: string;
+  originalFileName: string;
+  mimeType: string;
+  sizeBytes: number;
   expiryDate?: string | null;
+}
+
+export interface GuardDocumentUpload extends GuardDocument {
+  upload: { url: string; expiresAt: string; method: 'PUT'; headers: Record<string, string> };
+}
+
+export interface GuardDocumentAccess {
+  documentId: number;
+  url: string;
+  expiresAt: string;
+  method: 'GET';
 }
 
 export interface GuardComplianceSummary {

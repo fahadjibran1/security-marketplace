@@ -11,6 +11,8 @@ import {
   GuardComplianceSummary,
   GuardDocument,
   GuardDocumentPayload,
+  GuardDocumentUpload,
+  GuardDocumentAccess,
   ComplianceRecord,
   ComplianceRecordPayload,
   CoverageShiftRow,
@@ -496,17 +498,25 @@ export function listMyGuardDocuments() {
 }
 
 export function uploadGuardDocument(payload: GuardDocumentPayload) {
-  return request<GuardDocument>('/compliance/documents', {
+  return request<GuardDocumentUpload>('/compliance/documents', {
     method: 'POST',
     body: JSON.stringify(payload),
   });
 }
 
 export function uploadMyGuardDocument(payload: GuardDocumentPayload) {
-  return request<GuardDocument>('/compliance/documents/mine', {
+  return request<GuardDocumentUpload>('/compliance/documents/mine', {
     method: 'POST',
     body: JSON.stringify(payload),
   });
+}
+
+export function accessGuardDocument(id: number) {
+  return request<GuardDocumentAccess>(`/compliance/documents/${id}/access`);
+}
+
+export function completeGuardDocumentUpload(id: number) {
+  return request<GuardDocument>(`/compliance/documents/${id}/complete-upload`, { method: 'POST' });
 }
 
 export function verifyGuardDocument(id: number, verified: boolean) {
