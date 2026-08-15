@@ -3,11 +3,13 @@ import { DataSourceOptions } from 'typeorm';
 import { PostgresConnectionOptions } from 'typeorm/driver/postgres/PostgresConnectionOptions';
 import * as path from 'path';
 import { appEntities } from './entities';
+import { buildDatabaseSslOptions } from './database-tls.config';
 
 type DatabaseEnv = {
   DATABASE_POOLER_URL?: string;
   DATABASE_URL?: string;
   DATABASE_SSL?: string;
+  DATABASE_CA_CERT?: string;
   NODE_ENV?: string;
   DATABASE_SYNCHRONIZE?: string;
   DATABASE_HOST?: string;
@@ -31,8 +33,8 @@ export function buildTypeOrmOptions(env: DatabaseEnv): DataSourceOptions {
     env.DATABASE_SYNCHRONIZE,
     nodeEnv === 'production' ? false : true
   );
-  const databaseSsl = parseBoolean(env.DATABASE_SSL, false);
   const connectionUrl = env.DATABASE_POOLER_URL || env.DATABASE_URL;
+  const ssl = buildDatabaseSslOptions(env);
 
   const shared: Pick<
     PostgresConnectionOptions,
@@ -55,7 +57,7 @@ export function buildTypeOrmOptions(env: DatabaseEnv): DataSourceOptions {
     return {
       ...shared,
       url: connectionUrl,
-      ssl: databaseSsl ? { rejectUnauthorized: false } : false,
+      ssl,
     };
   }
 
@@ -66,6 +68,7 @@ export function buildTypeOrmOptions(env: DatabaseEnv): DataSourceOptions {
     username: env.DATABASE_USER ?? 'postgres',
     password: env.DATABASE_PASSWORD ?? 'postgres',
     database: env.DATABASE_NAME ?? 'security_mvp',
+    ssl,
   };
 }
 

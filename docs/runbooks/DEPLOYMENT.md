@@ -26,13 +26,16 @@ Only deploy a commit that has:
 - Strong generated `JWT_SECRET`.
 - Explicit `CORS_ORIGIN` containing only approved portal origins.
 - `DATABASE_SYNCHRONIZE=false`.
-- `DATABASE_SSL=true` where required by managed PostgreSQL.
+- `DATABASE_SSL=true` (mandatory in production).
+- `DATABASE_CA_CERT` set as a Render secret to the trusted CA PEM supplied by the PostgreSQL provider. Literal `\\n` newlines are supported; never commit the certificate.
 - `ENABLE_SWAGGER=false` unless temporarily enabled for an approved diagnostic purpose.
 - `TRUST_PROXY=1` behind the single Render edge-proxy hop. Do not use `true`, which trusts arbitrary forwarding chains.
 - Authentication throttling uses the API instance's in-memory store. Keep `numInstances: 1` for the pilot; multi-instance deployment requires a distributed/shared rate-limit store.
 - The authentication limiter uses the first `X-Forwarded-For` address, which Render sets to the real client IP. Do not expose the API process directly without a trusted proxy that overwrites this first address.
 
 Never place production secrets in GitHub, Blueprint files, screenshots or support tickets.
+
+Production startup, migrations and RB-009 preflight fail closed before connecting if TLS is disabled or `DATABASE_CA_CERT` is absent/malformed. Obtain the CA from the database provider, compare its documented fingerprint through an independent trusted channel, and configure it in Render. To rotate it, add the provider's replacement CA during an approved window, run migrations/preflight and readiness checks, then remove the retired CA after provider confirmation. Verify the deployed service reaches `/health/ready` and that logs contain no certificate material. Local development and disposable test PostgreSQL remain non-TLS by default when `NODE_ENV` is not `production` and `DATABASE_SSL` is unset/false.
 
 ## Pre-deployment checklist
 

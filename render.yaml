@@ -30,5 +30,7 @@ services:
         sync: false
       - key: DATABASE_URL
         sync: false
+      - key: DATABASE_CA_CERT
+        sync: false
       - key: JWT_SECRET
         generateValue: true

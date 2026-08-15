@@ -1,4 +1,5 @@
 type RawEnv = Record<string, unknown>;
+import { buildDatabaseSslOptions } from '../database/database-tls.config';
 
 const DEFAULT_JWT_SECRET = 'super-secret-change-me';
 
@@ -59,6 +60,12 @@ export function validateRuntimeEnv(config: RawEnv) {
         'Production database configuration is required. Set DATABASE_POOLER_URL or DATABASE_URL, or provide all split DATABASE_* connection values.',
       );
     }
+
+    buildDatabaseSslOptions({
+      NODE_ENV: nodeEnv,
+      DATABASE_SSL: toTrimmedString(config.DATABASE_SSL),
+      DATABASE_CA_CERT: toTrimmedString(config.DATABASE_CA_CERT),
+    });
   }
 
   return config;

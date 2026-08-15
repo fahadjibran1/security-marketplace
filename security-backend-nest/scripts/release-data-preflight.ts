@@ -1,7 +1,8 @@
 import 'reflect-metadata';
+import { buildDatabaseSslOptions } from '../src/database/database-tls.config';
 
 const { Client } = require('pg') as {
-  Client: new (options: { connectionString: string }) => Queryable & {
+  Client: new (options: { connectionString: string; ssl: ReturnType<typeof buildDatabaseSslOptions> }) => Queryable & {
     connect(): Promise<void>;
     end(): Promise<void>;
   };
@@ -10,6 +11,14 @@ const { Client } = require('pg') as {
 export type Queryable = {
   query: (sql: string) => Promise<{ rows: Record<string, unknown>[] }>;
 };
+
+export function buildPreflightClientOptions(env: NodeJS.ProcessEnv) {
+  if (!env.DATABASE_URL) throw new Error('DATABASE_URL is required');
+  return {
+    connectionString: env.DATABASE_URL,
+    ssl: buildDatabaseSslOptions(env),
+  };
+}
 
 type Check = {
   key: string;
@@ -153,8 +162,7 @@ export async function runPreflight(db: Queryable): Promise<PreflightResult> {
 }
 
 async function main(): Promise<void> {
-  if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required');
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
+  const client = new Client(buildPreflightClientOptions(process.env));
   await client.connect();
   try {
     await client.query('BEGIN TRANSACTION READ ONLY');

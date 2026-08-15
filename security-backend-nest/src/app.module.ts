@@ -49,6 +49,7 @@ import { validateRuntimeEnv } from './config/runtime-env';
           DATABASE_POOLER_URL: config.get<string>('DATABASE_POOLER_URL'),
           DATABASE_URL: config.get<string>('DATABASE_URL'),
           DATABASE_SSL: config.get<string>('DATABASE_SSL'),
+          DATABASE_CA_CERT: config.get<string>('DATABASE_CA_CERT'),
           NODE_ENV: config.get<string>('NODE_ENV'),
           DATABASE_SYNCHRONIZE: config.get<string>('DATABASE_SYNCHRONIZE'),
           DATABASE_HOST: config.get<string>('DATABASE_HOST'),
