@@ -954,6 +954,10 @@ export function listCompanyAuditLogs() {
   return request<AuditLog[]>('/audit-logs/company');
 }
 
+export function listAuditLogs() {
+  return request<AuditLog[]>('/audit-logs');
+}
+
 export function createJob(payload: CreateJobPayload) {
   return request<Job>('/jobs', {
     method: 'POST',

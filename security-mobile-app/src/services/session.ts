@@ -1,24 +1,9 @@
 import * as SecureStore from 'expo-secure-store';
 import { AuthSession } from '../types/models';
+import { parseStoredSession, serializeStoredSession } from '../navigation/role-routing';
 
 const SESSION_KEY = 'security-app-session';
 const isWeb = typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
-
-function isValidSession(value: unknown): value is AuthSession {
-  if (!value || typeof value !== 'object') {
-    return false;
-  }
-
-  const candidate = value as Partial<AuthSession>;
-  return (
-    typeof candidate.accessToken === 'string' &&
-    !!candidate.accessToken &&
-    !!candidate.user &&
-    typeof candidate.user.id === 'number' &&
-    typeof candidate.user.email === 'string' &&
-    typeof candidate.user.role === 'string'
-  );
-}
 
 function readWebSession() {
   if (!isWeb) {
@@ -49,12 +34,11 @@ export async function loadStoredSession(): Promise<AuthSession | null> {
     const raw = isWeb ? readWebSession() : await SecureStore.getItemAsync(SESSION_KEY);
     if (!raw) return null;
 
-    const parsed = JSON.parse(raw) as unknown;
-    if (!isValidSession(parsed)) {
+    const session = parseStoredSession(raw);
+    if (!session) {
       throw new Error('Invalid stored session');
     }
-
-    return parsed;
+    return session;
   } catch {
     if (isWeb) {
       clearWebSession();
@@ -67,7 +51,7 @@ export async function loadStoredSession(): Promise<AuthSession | null> {
 }
 
 export async function persistSession(session: AuthSession) {
-  const raw = JSON.stringify(session);
+  const raw = serializeStoredSession(session);
 
   if (isWeb) {
     writeWebSession(raw);

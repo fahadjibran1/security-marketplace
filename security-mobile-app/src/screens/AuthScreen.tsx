@@ -12,7 +12,7 @@ interface AuthScreenProps {
 
 type AuthMode = 'login' | 'register';
 type RegistrationRole = 'company' | 'guard';
-type LoginRole = 'company' | 'guard' | 'client';
+type LoginRole = 'admin' | 'company' | 'guard' | 'client';
 
 type LabeledInputProps = {
   label: string;
@@ -185,14 +185,14 @@ export function AuthScreen({ onLoggedIn, noticeMessage, onDismissNotice }: AuthS
             <>
               <Text style={styles.helperText}>Choose the portal you want to sign in to.</Text>
               <View style={styles.roleRow}>
-                {(['company', 'guard', 'client'] as LoginRole[]).map((value) => (
+                {(['admin', 'company', 'guard', 'client'] as LoginRole[]).map((value) => (
                   <Pressable
                     key={value}
                     style={[styles.roleButton, loginRole === value && styles.roleButtonActive]}
                     onPress={() => setLoginRole(value)}
                   >
                     <Text style={[styles.roleButtonText, loginRole === value && styles.roleButtonTextActive]}>
-                      {value === 'company' ? 'Company' : value === 'guard' ? 'Guard' : 'Client'}
+                      {value === 'admin' ? 'Platform Admin' : value === 'company' ? 'Company' : value === 'guard' ? 'Guard' : 'Client'}
                     </Text>
                   </Pressable>
                 ))}
