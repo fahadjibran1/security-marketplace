@@ -143,6 +143,7 @@ async function main() {
   });
   await dataSource.initialize();
   try {
+    const [{ server_version: postgresVersion }] = await dataSource.query('SHOW server_version');
     const { company, client, timesheets } = await seed(dataSource);
 
     const payrollPair = makeServices(dataSource, company, true);
@@ -227,7 +228,7 @@ async function main() {
 
     console.log(JSON.stringify({
       event: 'financial_concurrency_tests_passed',
-      postgres: '16', tests: 8,
+      postgres: postgresVersion, tests: 8,
       negativeControl: 'old unlocked read allowed two batches for one selected timesheet',
     }));
   } finally {
