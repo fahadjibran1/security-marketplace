@@ -13,6 +13,14 @@ export const ADMIN_DASHBOARD_ENDPOINTS = [
   '/shifts',
   '/timesheets',
   '/audit-logs',
+  '/job-applications',
+  '/attendance/company',
+  '/incidents/company',
+  '/alerts/company',
+  '/daily-logs/company',
+  '/notifications/company',
+  '/health/live',
+  '/health/ready',
 ] as const;
 
 export function isAppRole(value: unknown): value is AppRole {

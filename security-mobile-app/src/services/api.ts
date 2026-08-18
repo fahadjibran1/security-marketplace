@@ -958,6 +958,14 @@ export function listAuditLogs() {
   return request<AuditLog[]>('/audit-logs');
 }
 
+export function getHealthLive() {
+  return request<Record<string, unknown>>('/health/live');
+}
+
+export function getHealthReady() {
+  return request<Record<string, unknown>>('/health/ready');
+}
+
 export function createJob(payload: CreateJobPayload) {
   return request<Job>('/jobs', {
     method: 'POST',

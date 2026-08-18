@@ -19,6 +19,7 @@
     "build:backend": "node --check backend/server.js && node --check backend/modules/auth.js && node --check backend/modules/http.js && node --check backend/data/store.js",
     "build:frontend": "tsc --noEmit",
     "test:role-routing": "node scripts/role-routing.spec.cjs",
+    "test:admin-portal": "node scripts/admin-portal.spec.cjs",
     "build:brand-assets": "node scripts/build-s4-assets.cjs"
   },
   "dependencies": {
