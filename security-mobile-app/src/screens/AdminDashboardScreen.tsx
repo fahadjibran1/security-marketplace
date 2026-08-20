@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import { ADMIN_NAV_ITEMS, type AdminSection, adminPortalError, matchesAdminSearch } from '../navigation/admin-portal';
+import { isGuardProfileComplete } from '../navigation/guard-lifecycle';
 import {
-  approveGuard, getHealthLive, getHealthReady, listAssignments, listAuditLogs, listCompanies,
+  getHealthLive, getHealthReady, listAssignments, listAuditLogs, listCompanies,
   listCompanyAttendance, listCompanyDailyLogs, listCompanyIncidents, listCompanyNotifications,
   listCompanySafetyAlerts, listGuards, listJobApplications, listJobs, listShifts, listSites, listTimesheets,
 } from '../services/api';
 import { colors } from '../theme';
 
-type DisplayRow = { id: string; title: string; detail: string; status?: string; actionId?: number };
+type DisplayRow = { id: string; title: string; detail: string; status?: string };
 type Loader = () => Promise<unknown[]>;
 const text = (value: unknown, fallback = 'Not recorded') => value === null || value === undefined || value === '' ? fallback : String(value);
 const date = (value: unknown) => value ? new Date(String(value)).toLocaleString() : 'Not recorded';
@@ -27,7 +28,7 @@ function displayRow(section: Exclude<AdminSection, 'overview'>, value: unknown, 
   const id = text(row.id, String(index + 1));
   switch (section) {
     case 'companies': return { id, title: text(row.name), detail: `Company no. ${text(row.companyNumber)} · ${text(row.address)}` };
-    case 'guards': return { id, title: text(row.fullName), detail: `SIA ${text(row.siaLicenceNumber ?? row.siaLicenseNumber)} · ${text(row.phone)}`, status: text(row.approvalStatus ?? row.status), actionId: Number(row.id) };
+    case 'guards': return { id, title: text(row.fullName), detail: `Account: ${text(row.user?.status, 'unknown')} · Profile: ${isGuardProfileComplete(row) ? 'Complete' : 'Incomplete'} · Vetting: company review required · Work eligibility: assessed per company`, status: `Account ${text(row.user?.status, 'unknown')}` };
     case 'sites': return { id, title: text(row.name), detail: `${text(row.address)} · ${text(row.company?.name, 'Company not linked')}`, status: text(row.status) };
     case 'jobs': return { id, title: text(row.title), detail: `${text(row.company?.name, `Company ${text(row.companyId)}`)} · ${text(row.guardsRequired, '0')} guards`, status: text(row.status) };
     case 'applications': return { id, title: text(row.guard?.fullName, `Guard ${text(row.guardId)}`), detail: `${text(row.job?.title, `Job ${text(row.jobId)}`)} · Applied ${date(row.appliedAt)}`, status: text(row.status) };
@@ -52,7 +53,6 @@ export function AdminDashboardScreen() {
   const [query, setQuery] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [approving, setApproving] = useState<number | null>(null);
   const [selected, setSelected] = useState<DisplayRow | null>(null);
 
   const load = useCallback(async () => {
@@ -73,12 +73,6 @@ export function AdminDashboardScreen() {
   useEffect(() => { setQuery(''); setSelected(null); load(); }, [load]);
   const current = ADMIN_NAV_ITEMS.find((item) => item.key === section)!;
   const visibleRows = useMemo(() => rows.filter((row) => matchesAdminSearch([row.id, row.title, row.detail, row.status], query)), [rows, query]);
-  const approve = async (guardId: number) => {
-    setApproving(guardId); setError(null);
-    try { await approveGuard(guardId); await load(); }
-    catch (nextError) { setError(adminPortalError((nextError as { status?: number })?.status)); }
-    finally { setApproving(null); }
-  };
 
   const navigation = <ScrollView horizontal={compact} style={compact ? styles.mobileNav : styles.sidebar} contentContainerStyle={compact ? styles.mobileNavContent : styles.sidebarContent}>
     {!compact ? <Text style={styles.brand}>S4 Platform Admin</Text> : null}
@@ -94,7 +88,7 @@ export function AdminDashboardScreen() {
     {section !== 'overview' && !loading && !error && visibleRows.length === 0 ? <View style={styles.empty}><Text style={styles.emptyTitle}>{query ? 'No matching records' : current.emptyLabel}</Text><Text style={styles.emptyText}>{query ? 'Clear or change the search term.' : 'This is expected for a freshly provisioned pilot database.'}</Text></View> : null}
     {section !== 'overview' && loading ? <Text style={styles.loading}>Loading {current.label.toLocaleLowerCase()}…</Text> : null}
     {selected ? <View style={styles.detailPanel}><Text style={styles.detailHeading}>{selected.title}</Text><Text style={styles.rowDetail}>{selected.detail}</Text>{selected.status ? <Text style={styles.status}>{selected.status}</Text> : null}<Pressable onPress={() => setSelected(null)}><Text style={styles.retry}>Close detail</Text></Pressable></View> : null}
-    {section !== 'overview' && !loading && !error ? <View style={styles.list}>{visibleRows.map((row) => <Pressable accessibilityRole="button" accessibilityLabel={`Open ${row.title} detail`} onPress={() => setSelected(row)} key={row.id} style={styles.row}><View style={styles.rowCopy}><Text style={styles.rowTitle}>{row.title}</Text><Text style={styles.rowDetail}>{row.detail}</Text></View>{row.status ? <Text style={styles.status}>{row.status}</Text> : null}{section === 'guards' && row.status?.toLocaleLowerCase() !== 'approved' && row.actionId ? <Pressable disabled={approving === row.actionId} onPress={() => approve(row.actionId!)} style={styles.approveButton}><Text style={styles.approveText}>{approving === row.actionId ? 'Approving…' : 'Approve'}</Text></Pressable> : null}</Pressable>)}</View> : null}
+    {section !== 'overview' && !loading && !error ? <View style={styles.list}>{visibleRows.map((row) => <Pressable accessibilityRole="button" accessibilityLabel={`Open ${row.title} detail`} onPress={() => setSelected(row)} key={row.id} style={styles.row}><View style={styles.rowCopy}><Text style={styles.rowTitle}>{row.title}</Text><Text style={styles.rowDetail}>{row.detail}</Text></View>{row.status ? <Text style={styles.status}>{row.status}</Text> : null}</Pressable>)}</View> : null}
   </ScrollView></View>;
 }
 

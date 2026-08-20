@@ -200,7 +200,7 @@ async function testInvalidGuardPayloadHasNoSideEffects() {
   equal(calls.guardCreates.length, 0, 'Invalid guard registration must not create a profile');
 }
 
-async function testGuardRegistrationRemainsPending() {
+async function testGuardRegistrationCreatesActiveAccount() {
   const { service, calls } = buildHarness();
 
   const result = await service.register({
@@ -214,12 +214,12 @@ async function testGuardRegistrationRemainsPending() {
 
   equal(calls.userCreates.length, 1);
   equal(calls.userCreates[0].role, UserRole.GUARD);
-  equal(calls.userCreates[0].status, UserStatus.PENDING);
+  equal(calls.userCreates[0].status, UserStatus.ACTIVE);
   equal(calls.guardCreates.length, 1);
   equal(calls.guardCreates[0].status, GuardApprovalStatus.PENDING);
   equal(calls.guardCreates[0].approvalStatus, GuardApprovalStatus.PENDING);
   equal(calls.guardCreates[0].isApproved, false);
-  equal(result.user.status, UserStatus.PENDING);
+  equal(result.user.status, UserStatus.ACTIVE);
 }
 
 async function testCompanyRegistrationMapsToCompanyAdmin() {
@@ -922,7 +922,7 @@ async function main() {
   await testInactiveClientPortalJwtIsRejected();
   await testPrivilegedRoleCannotSelfRegister();
   await testInvalidGuardPayloadHasNoSideEffects();
-  await testGuardRegistrationRemainsPending();
+  await testGuardRegistrationCreatesActiveAccount();
   await testCompanyRegistrationMapsToCompanyAdmin();
   await testCompanySideRolesCannotEnumerateOrFetchAnyCompany();
   await testPlatformAdminRetainsCompanyDirectoryAccess();

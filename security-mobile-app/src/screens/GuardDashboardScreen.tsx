@@ -436,7 +436,6 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
   const [siaLicence, setSiaLicence] = useState('');
-  const [availabilityStatus, setAvailabilityStatus] = useState('');
   const [locationSharing, setLocationSharing] = useState(false);
   const [signedOut, setSignedOut] = useState(false);
   const [shifts, setShifts] = useState<Shift[]>([]);
@@ -507,7 +506,6 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
       setFullName(myGuard.fullName || '');
       setPhone(myGuard.phone || '');
       setSiaLicence(myGuard.siaLicenseNumber || myGuard.siaLicenceNumber || '');
-      setAvailabilityStatus(myGuard.status || '');
       setLocationSharing(myGuard.locationSharingEnabled ?? false);
       setShifts(shiftRows.map((shift) => ({ ...shift, status: normalizeShiftLifecycleStatus(shift.status) })));
       setAttendance(attendanceRows);
@@ -531,7 +529,6 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
         phone,
         siaLicenseNumber: siaLicence,
         locationSharingEnabled: locationSharing,
-        status: availabilityStatus,
       });
       pushFeedback('success', 'Profile updated', 'Your profile changes have been saved.');
       showAlert('Profile updated', 'Your guard profile has been saved successfully.');
@@ -1510,15 +1507,6 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
                       onChangeText={setPhone}
                     />
                   </View>
-                </View>
-                <View style={styles.guardProfileSection}>
-                  <Text style={styles.guardSectionLabel}>Availability note</Text>
-                  <TextInput
-                    style={[styles.input, styles.guardProfileInput]}
-                    placeholder="Availability"
-                    value={availabilityStatus}
-                    onChangeText={setAvailabilityStatus}
-                  />
                 </View>
                 <View style={[styles.guardProfileSection, styles.guardProfileSwitchSection]}>
                   <Text style={styles.guardSectionLabel}>On shift</Text>

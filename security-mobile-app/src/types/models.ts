@@ -72,6 +72,7 @@ export interface GuardProfile {
   phone: string;
   locationSharingEnabled: boolean;
   status: string;
+  availability?: string;
   approvalStatus?: string;
   isApproved?: boolean;
   user?: AuthUser;
@@ -180,6 +181,7 @@ export interface GuardDocument {
   originalFileName?: string | null;
   mimeType?: string | null;
   sizeBytes?: number | null;
+  uploadCompletedAt?: string | null;
   expiryDate?: string | null;
   verified: boolean;
   uploadedAt: string;

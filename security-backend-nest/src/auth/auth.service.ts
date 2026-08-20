@@ -37,7 +37,9 @@ export class AuthService {
       }
     }
 
-    const userStatus = normalizedRole === UserRole.GUARD ? UserStatus.PENDING : UserStatus.ACTIVE;
+    // Account access is independent from profile/compliance vetting. Operational
+    // eligibility remains enforced by ComplianceService at hire/assignment/shift.
+    const userStatus = UserStatus.ACTIVE;
     const user = await this.usersService.create({
       email: dto.email,
       password: dto.password,

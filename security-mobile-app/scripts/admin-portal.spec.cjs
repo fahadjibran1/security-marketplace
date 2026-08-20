@@ -32,7 +32,7 @@ const screen = fs.readFileSync(path.join(__dirname, '..', 'src', 'screens', 'Adm
 assert.doesNotMatch(screen, /listMy|getMy|['"`]\/[^'"`]*mine/);
 assert.doesNotMatch(screen, /beforeData|afterData|fileUrl|passwordHash|accessToken/);
 assert.match(screen, /setSection\(item\.key\)/, 'navigation changes section without changing authenticated role');
-assert.match(screen, /approveGuard/, 'certified guard approval action remains available');
+assert.doesNotMatch(screen, /approveGuard|>Approve<|Approving/, 'account activation must not be presented as vetting');
 assert.match(screen, /useWindowDimensions/, 'responsive navigation shell is required');
 
 console.log(JSON.stringify({ event: 'admin_portal_tests_passed', tests: 35 }));

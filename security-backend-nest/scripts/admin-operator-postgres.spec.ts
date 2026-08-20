@@ -22,7 +22,7 @@ async function main() {
     await dataSource.runMigrations({ transaction: 'each' });
     equal(await dataSource.getRepository(User).count(), 0);
     const migrations = await dataSource.query('SELECT count(*)::int AS count FROM typeorm_migrations');
-    equal(migrations[0].count, 37);
+    equal(migrations[0].count, 38);
 
     const service = new AdminOperatorService(dataSource);
     const password = 'PG17-Strong!Pass9';

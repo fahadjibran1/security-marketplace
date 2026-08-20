@@ -13,6 +13,7 @@ import {
 import { GuardComplianceSummary, GuardDocument, GuardDocumentType, GuardProfile } from '../../types/models';
 import { FeatureCard } from '../FeatureCard';
 import { colors } from '../../theme';
+import { getGuardVettingLabel, getGuardWorkEligibilityLabel, isGuardProfileComplete } from '../../navigation/guard-lifecycle';
 
 const DOCUMENT_TYPES: Array<{ value: GuardDocumentType; label: string }> = [
   { value: 'sia_licence', label: 'SIA licence' },
@@ -157,9 +158,18 @@ export function GuardCompliancePanel() {
   }, [documentForm, loadData]);
 
   const badgePalette = getStatusPalette(summary?.complianceStatus);
+  const vettingLabel = getGuardVettingLabel(summary);
+  const workEligibility = getGuardWorkEligibilityLabel(summary);
+  const checklist = [
+    { label: 'Account access', value: 'Active', complete: true },
+    { label: 'Profile', value: isGuardProfileComplete(guard) ? 'Complete' : 'Incomplete', complete: isGuardProfileComplete(guard) },
+    { label: 'SIA evidence', value: documents.some((item) => item.type === 'sia_licence' && item.uploadCompletedAt) ? 'Uploaded' : 'Required', complete: documents.some((item) => item.type === 'sia_licence' && item.uploadCompletedAt) },
+    { label: 'Right-to-work evidence', value: documents.some((item) => item.type === 'right_to_work' && item.uploadCompletedAt) ? 'Uploaded' : 'Required', complete: documents.some((item) => item.type === 'right_to_work' && item.uploadCompletedAt) },
+    { label: 'Availability', value: guard?.availability || guard?.status || 'Not set', complete: Boolean(guard?.availability || guard?.status) },
+  ];
 
   return (
-    <FeatureCard title="Compliance & licence control" subtitle="Keep your legal work documents current so you can be assigned safely.">
+    <FeatureCard title="Access, profile & vetting" subtitle="You can use S4 while onboarding. Work eligibility stays locked until verified compliance requirements pass.">
       {feedback ? (
         <View style={[styles.feedbackCard, feedback.tone === 'error' ? styles.feedbackError : styles.feedbackSuccess]}>
           <Text style={styles.feedbackText}>{feedback.message}</Text>
@@ -168,15 +178,24 @@ export function GuardCompliancePanel() {
 
       <View style={styles.summaryRow}>
         <View style={styles.summaryBlock}>
-          <Text style={styles.summaryLabel}>Current status</Text>
+          <Text style={styles.summaryLabel}>Vetting</Text>
           <View style={[styles.badge, { backgroundColor: badgePalette.backgroundColor }]}>
-            <Text style={[styles.badgeText, { color: badgePalette.color }]}>{summary?.complianceStatus || 'unknown'}</Text>
+            <Text style={[styles.badgeText, { color: badgePalette.color }]}>{vettingLabel}</Text>
           </View>
         </View>
         <View style={styles.summaryBlock}>
-          <Text style={styles.summaryLabel}>Guard</Text>
-          <Text style={styles.summaryValue}>{guard?.fullName || 'Guard profile'}</Text>
+          <Text style={styles.summaryLabel}>Work eligibility</Text>
+          <Text style={styles.summaryValue}>{workEligibility}</Text>
         </View>
+      </View>
+
+      <Text style={styles.sectionTitle}>Onboarding checklist</Text>
+      <View style={styles.reasonList}>
+        {checklist.map((item) => (
+          <Text key={item.label} style={item.complete ? styles.completeText : styles.blockingText}>
+            {item.complete ? '✓' : '○'} {item.label}: {item.value}
+          </Text>
+        ))}
       </View>
 
       {(summary?.blockingReasons?.length || summary?.expiringReasons?.length) ? (
@@ -189,7 +208,7 @@ export function GuardCompliancePanel() {
           ))}
         </View>
       ) : (
-        <Text style={styles.helperText}>{loading ? 'Loading compliance status...' : 'No compliance blockers are currently recorded.'}</Text>
+        <Text style={styles.helperText}>{loading ? 'Loading vetting status...' : 'No compliance blockers are currently recorded.'}</Text>
       )}
 
       <Text style={styles.sectionTitle}>Licence profile</Text>
@@ -293,6 +312,7 @@ const styles = StyleSheet.create({
   reasonList: { gap: 6 },
   blockingText: { color: '#B91C1C', fontWeight: '700' },
   expiringText: { color: '#B45309', fontWeight: '700' },
+  completeText: { color: '#166534', fontWeight: '700' },
   helperText: { color: colors.textSecondary, lineHeight: 20 },
   sectionTitle: { color: colors.textPrimary, fontSize: 15, fontWeight: '800', marginTop: 12, marginBottom: 8 },
   formGrid: { gap: 8 },

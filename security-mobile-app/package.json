@@ -20,6 +20,7 @@
     "build:frontend": "tsc --noEmit",
     "test:role-routing": "node scripts/role-routing.spec.cjs",
     "test:admin-portal": "node scripts/admin-portal.spec.cjs",
+    "test:guard-lifecycle": "node scripts/guard-lifecycle.spec.cjs",
     "build:brand-assets": "node scripts/build-s4-assets.cjs"
   },
   "dependencies": {

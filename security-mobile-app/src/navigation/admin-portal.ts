@@ -15,7 +15,7 @@ export interface AdminNavItem {
 export const ADMIN_NAV_ITEMS: readonly AdminNavItem[] = [
   { key: 'overview', label: 'Dashboard', group: 'Overview', emptyLabel: 'No platform data is available yet.' },
   { key: 'companies', label: 'Companies', group: 'Directory', emptyLabel: 'No companies have been created yet.' },
-  { key: 'guards', label: 'Guards & approvals', group: 'Directory', emptyLabel: 'No guards have been created yet.' },
+  { key: 'guards', label: 'Guard access & status', group: 'Directory', emptyLabel: 'No guards have been created yet.' },
   { key: 'sites', label: 'Sites', group: 'Directory', emptyLabel: 'No sites have been created yet.' },
   { key: 'jobs', label: 'Jobs', group: 'Operations', emptyLabel: 'No jobs have been created yet.' },
   { key: 'applications', label: 'Applications', group: 'Operations', emptyLabel: 'No applications have been created yet.' },
