@@ -67,6 +67,7 @@ function buildHarness() {
   };
 
   const guardProfileService = {
+    findBySiaLicenseNumber: async () => null,
     create: async (input: any) => {
       calls.guardCreates.push(input);
       guardProfile = { id: 201, ...input };
@@ -82,6 +83,7 @@ function buildHarness() {
     guardProfileService as any,
     {} as any,
     {} as any,
+    { transaction: async (work: (manager: unknown) => Promise<unknown>) => work({}) } as any,
   );
 
   return { service, calls };
@@ -208,7 +210,7 @@ async function testGuardRegistrationCreatesActiveAccount() {
     password: 'secret123',
     role: PublicRegistrationRole.GUARD,
     fullName: 'Test Guard',
-    siaLicenseNumber: 'SIA123456',
+    siaLicenseNumber: '1234567890123456',
     phone: '07000000000',
   });
 

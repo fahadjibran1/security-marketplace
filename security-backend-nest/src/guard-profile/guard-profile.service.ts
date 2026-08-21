@@ -1,6 +1,6 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import { GuardApprovalStatus, GuardProfile } from './entities/guard-profile.entity';
 import { CreateGuardProfileDto } from './dto/create-guard-profile.dto';
 import { UpdateGuardProfileDto } from './dto/update-guard-profile.dto';
@@ -14,6 +14,7 @@ import {
 } from '../company-guard/entities/company-guard.entity';
 import { CompanyService } from '../company/company.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { User } from '../user/entities/user.entity';
 
 @Injectable()
 export class GuardProfileService {
@@ -26,15 +27,24 @@ export class GuardProfileService {
     private readonly auditLogService: AuditLogService,
   ) {}
 
-  async create(dto: CreateGuardProfileDto): Promise<GuardProfile> {
-    const user = await this.userService.findById(dto.userId);
-    const guard = this.guardRepo.create({
+  async create(dto: CreateGuardProfileDto, manager?: EntityManager): Promise<GuardProfile> {
+    const repo = manager?.getRepository(GuardProfile) ?? this.guardRepo;
+    const user = manager
+      ? await manager.getRepository(User).findOne({ where: { id: dto.userId } })
+      : await this.userService.findById(dto.userId);
+    if (!user) throw new NotFoundException('User not found');
+    const guard = repo.create({
       ...dto,
       user,
       locationSharingEnabled: dto.locationSharingEnabled ?? false,
       status: dto.status ?? 'pending'
     });
-    return this.guardRepo.save(guard);
+    return repo.save(guard);
+  }
+
+  findBySiaLicenseNumber(siaLicenseNumber: string, manager?: EntityManager): Promise<GuardProfile | null> {
+    const repo = manager?.getRepository(GuardProfile) ?? this.guardRepo;
+    return repo.findOne({ where: { siaLicenseNumber } });
   }
 
   findAll(): Promise<GuardProfile[]> {

@@ -25,6 +25,7 @@ function authHarness() {
     updateLastLogin: async () => undefined,
   };
   const guardService = {
+    findBySiaLicenseNumber: async () => null,
     create: async (dto: any) => { const guard = { id: 10, ...dto }; guards.push(guard); return guard; },
     findByUserId: async (id: number) => guards.find((guard) => guard.userId === id) ?? null,
   };
@@ -35,6 +36,7 @@ function authHarness() {
     guardService as any,
     {} as any,
     {} as any,
+    { transaction: async (work: (manager: unknown) => Promise<unknown>) => work({}) } as any,
   );
   return { service, users, guards };
 }
@@ -63,7 +65,7 @@ async function main() {
   const { service, users } = authHarness();
   const registration = await service.register({
     email: 'guard@example.test', password: 'secret123', role: PublicRegistrationRole.GUARD,
-    fullName: 'Lifecycle Guard', siaLicenseNumber: 'SIA-10', phone: '07000000000',
+    fullName: 'Lifecycle Guard', siaLicenseNumber: '1234567890123456', phone: '07000000000',
   });
   equal(users[0].status, UserStatus.ACTIVE);
   equal(registration.user.status, UserStatus.ACTIVE);

@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { UserService } from '../user/user.service';
@@ -11,6 +11,31 @@ import { CompanyStatus } from '../company/entities/company.entity';
 import { GuardApprovalStatus } from '../guard-profile/entities/guard-profile.entity';
 import { ClientPortalUserService } from '../client-portal-user/client-portal-user.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { DataSource, QueryFailedError } from 'typeorm';
+
+const DUPLICATE_SIA_MESSAGE = 'SIA licence number is already registered.';
+
+function uniqueViolation(error: unknown) {
+  if (!(error instanceof QueryFailedError)) return null;
+  const driver = (error as QueryFailedError & { driverError?: { code?: string; constraint?: string; detail?: string } }).driverError;
+  return driver?.code === '23505' ? driver : null;
+}
+
+export function isSiaUniqueViolation(error: unknown): boolean {
+  const violation = uniqueViolation(error);
+  if (!violation) return false;
+  return (
+    violation.constraint === 'UQ_ccb60d0042497e83f11cadf004d' ||
+    violation.constraint === 'guard_profiles_siaLicenseNumber_key' ||
+    /\(siaLicenseNumber\)=/i.test(violation.detail || '')
+  );
+}
+
+function isEmailUniqueViolation(error: unknown): boolean {
+  const violation = uniqueViolation(error);
+  if (!violation) return false;
+  return violation.constraint === 'users_email_key' || /\(email\)=/i.test(violation.detail || '');
+}
 
 @Injectable()
 export class AuthService {
@@ -21,6 +46,7 @@ export class AuthService {
     private readonly guardProfileService: GuardProfileService,
     private readonly clientPortalUserService: ClientPortalUserService,
     private readonly auditLogService: AuditLogService,
+    private readonly dataSource: DataSource,
   ) {}
 
   async register(dto: RegisterDto) {
@@ -37,38 +63,62 @@ export class AuthService {
       }
     }
 
+    const normalizedSiaLicenseNumber =
+      normalizedRole === UserRole.GUARD ? dto.siaLicenseNumber!.trim() : null;
+    if (normalizedSiaLicenseNumber && !/^\d{16}$/.test(normalizedSiaLicenseNumber)) {
+      throw new BadRequestException('SIA licence number must be exactly 16 numeric digits.');
+    }
+
     // Account access is independent from profile/compliance vetting. Operational
     // eligibility remains enforced by ComplianceService at hire/assignment/shift.
     const userStatus = UserStatus.ACTIVE;
-    const user = await this.usersService.create({
-      email: dto.email,
-      password: dto.password,
-      role: normalizedRole,
-      status: userStatus,
-    });
+    let user: Awaited<ReturnType<UserService['create']>>;
+    try {
+      user = await this.dataSource.transaction(async (manager) => {
+        if (
+          normalizedSiaLicenseNumber &&
+          await this.guardProfileService.findBySiaLicenseNumber(normalizedSiaLicenseNumber, manager)
+        ) {
+          throw new ConflictException(DUPLICATE_SIA_MESSAGE);
+        }
 
-    if (isCompanyRole(normalizedRole)) {
-      await this.companyService.create({
-        userId: user.id,
-        name: dto.companyName!,
-        companyNumber: dto.companyNumber!,
-        address: dto.address!,
-        contactDetails: dto.contactDetails!,
-        status: CompanyStatus.ONBOARDING,
-      });
-    }
+        const createdUser = await this.usersService.create({
+          email: dto.email,
+          password: dto.password,
+          role: normalizedRole,
+          status: userStatus,
+        }, manager);
 
-    if (normalizedRole === UserRole.GUARD) {
-      await this.guardProfileService.create({
-        userId: user.id,
-        fullName: dto.fullName!,
-        siaLicenseNumber: dto.siaLicenseNumber!,
-        phone: dto.phone!,
-        locationSharingEnabled: false,
-        status: GuardApprovalStatus.PENDING,
-        approvalStatus: GuardApprovalStatus.PENDING,
-        isApproved: false,
+        if (isCompanyRole(normalizedRole)) {
+          await this.companyService.create({
+            userId: createdUser.id,
+            name: dto.companyName!,
+            companyNumber: dto.companyNumber!,
+            address: dto.address!,
+            contactDetails: dto.contactDetails!,
+            status: CompanyStatus.ONBOARDING,
+          }, manager);
+        }
+
+        if (normalizedRole === UserRole.GUARD) {
+          await this.guardProfileService.create({
+            userId: createdUser.id,
+            fullName: dto.fullName!.trim(),
+            siaLicenseNumber: normalizedSiaLicenseNumber!,
+            phone: dto.phone!.trim(),
+            locationSharingEnabled: false,
+            status: GuardApprovalStatus.PENDING,
+            approvalStatus: GuardApprovalStatus.PENDING,
+            isApproved: false,
+          }, manager);
+        }
+
+        return createdUser;
       });
+    } catch (error) {
+      if (isSiaUniqueViolation(error)) throw new ConflictException(DUPLICATE_SIA_MESSAGE);
+      if (isEmailUniqueViolation(error)) throw new ConflictException('Email already exists');
+      throw error;
     }
 
     return this.signToken(user.id, user.email, user.role, user.status);

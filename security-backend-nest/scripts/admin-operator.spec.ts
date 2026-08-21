@@ -95,7 +95,7 @@ async function main() {
     const auth = new AuthService(
       { findByEmail: async () => store.users[0], updateLastLogin: async () => undefined } as any,
       { sign: () => 'redacted-test-token' } as any,
-      {} as any, {} as any, {} as any, {} as any,
+      {} as any, {} as any, {} as any, {} as any, {} as any,
     );
     const result = await auth.login({ email: store.users[0].email, password: strongPassword });
     equal(result.user.role, UserRole.ADMIN);

@@ -43,7 +43,7 @@ async function main() {
         updateLastLogin: (id: number) => users.update(id, { lastLoginAt: new Date() }).then(() => undefined),
       } as any,
       { sign: () => 'redacted-test-token' } as any,
-      {} as any, {} as any, {} as any, {} as any,
+      {} as any, {} as any, {} as any, {} as any, dataSource,
     );
     equal((await auth.login({ email: admin.email, password })).user.role, UserRole.ADMIN);
 
