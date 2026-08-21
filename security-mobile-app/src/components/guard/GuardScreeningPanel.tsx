@@ -1,75 +1,1386 @@
-import React from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import React from "react";
 import {
-  acceptMyScreeningConsent, addMyScreeningAddress, addMyScreeningHistory, addMyScreeningReference,
-  completeMyScreeningEvidence, createMyScreeningEvidence, getMyScreening, startMyScreening,
-  submitMyScreening, updateMyScreeningProfile, withdrawMyScreeningConsent,
-} from '../../services/api';
-import { GuardScreening, ScreeningStatus } from '../../types/models';
-import { colors } from '../../theme';
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
+import * as DocumentPicker from "expo-document-picker";
+import {
+  acceptMyScreeningConsent,
+  addMyScreeningAddress,
+  addMyScreeningHistory,
+  addMyScreeningReference,
+  completeMyScreeningEvidence,
+  createMyScreeningEvidence,
+  getMyScreening,
+  startMyScreening,
+  submitMyScreening,
+  updateMyScreeningProfile,
+  withdrawMyScreeningConsent,
+} from "../../services/api";
+import { GuardScreening, ScreeningStatus } from "../../types/models";
+import { colors } from "../../theme";
 
-type Step = 'personal'|'identity'|'addresses'|'history'|'references'|'checks'|'evidence'|'consent'|'review';
-const STEPS: Array<{key:Step; label:string}> = [
-  {key:'personal',label:'Personal Details'}, {key:'identity',label:'Identity'}, {key:'addresses',label:'Address History'},
-  {key:'history',label:'Activity History'}, {key:'references',label:'References'}, {key:'checks',label:'SIA & Right to Work'},
-  {key:'evidence',label:'Supporting Evidence'}, {key:'consent',label:'Consent & Declaration'}, {key:'review',label:'Review & Submit'},
+type Step =
+  | "personal"
+  | "identity"
+  | "addresses"
+  | "history"
+  | "references"
+  | "checks"
+  | "evidence"
+  | "consent"
+  | "review";
+const STEPS: Array<{ key: Step; label: string }> = [
+  { key: "personal", label: "Personal Details" },
+  { key: "identity", label: "Identity" },
+  { key: "addresses", label: "Address History" },
+  { key: "history", label: "Activity History" },
+  { key: "references", label: "References" },
+  { key: "checks", label: "SIA & Right to Work" },
+  { key: "evidence", label: "Supporting Evidence" },
+  { key: "consent", label: "Consent & Declaration" },
+  { key: "review", label: "Review & Submit" },
 ];
-const STATUS: Record<ScreeningStatus,string> = {NOT_STARTED:'Not started',IN_PROGRESS:'In progress',READY_FOR_REVIEW:'Ready for review',UNDER_REVIEW:'Under review',VETTED:'Vetted',REQUIRES_ATTENTION:'Requires attention',REJECTED:'Rejected',EXPIRED:'Expired'};
-const editable=(status?:ScreeningStatus)=>!status||['NOT_STARTED','IN_PROGRESS','REQUIRES_ATTENTION'].includes(status);
-const pretty=(value?:string)=>value?value.toLowerCase().replaceAll('_',' ').replace(/^./,x=>x.toUpperCase()):'Not supplied';
-const dateLabel=(value?:string|null)=>value?new Date(`${value}T00:00:00`).toLocaleDateString():'Present';
+const STATUS: Record<ScreeningStatus, string> = {
+  NOT_STARTED: "Not started",
+  IN_PROGRESS: "In progress",
+  READY_FOR_REVIEW: "Ready for review",
+  UNDER_REVIEW: "Under review",
+  VETTED: "Vetted",
+  REQUIRES_ATTENTION: "Requires attention",
+  REJECTED: "Rejected",
+  EXPIRED: "Expired",
+};
+const editable = (status?: ScreeningStatus) =>
+  !status ||
+  ["NOT_STARTED", "IN_PROGRESS", "REQUIRES_ATTENTION"].includes(status);
+const pretty = (value?: string) =>
+  value
+    ? value
+        .toLowerCase()
+        .replaceAll("_", " ")
+        .replace(/^./, (x) => x.toUpperCase())
+    : "Not supplied";
+export const formatScreeningDate = (value?: string | null) => {
+  if (!value) return "Present";
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return match ? `${match[3]}/${match[2]}/${match[1]}` : value;
+};
+export const screeningDateToIso = (value: string) => {
+  const match = value.trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!match) throw new Error("Enter dates as DD/MM/YYYY.");
+  const [, day, month, year] = match;
+  const iso = `${year}-${month}-${day}`,
+    parsed = new Date(`${iso}T00:00:00Z`);
+  if (
+    parsed.getUTCFullYear() !== Number(year) ||
+    parsed.getUTCMonth() + 1 !== Number(month) ||
+    parsed.getUTCDate() !== Number(day)
+  )
+    throw new Error("Enter a valid date as DD/MM/YYYY.");
+  return iso;
+};
+const dateLabel = formatScreeningDate;
+const HISTORY_TYPES = [
+  ["EMPLOYMENT", "Employment"],
+  ["SELF_EMPLOYMENT", "Self-employment"],
+  ["EDUCATION", "Education"],
+  ["UNEMPLOYMENT", "Unemployment"],
+  ["CAREER_BREAK", "Career break"],
+  ["OVERSEAS", "Overseas period"],
+  ["OTHER_EXPLAINED_PERIOD", "Other explained period"],
+] as const;
 
-export function GuardScreeningPanel({onContinue}:{onContinue?:()=>void}){
-  const [data,setData]=React.useState<GuardScreening|null>(null),[error,setError]=React.useState('');
-  React.useEffect(()=>{getMyScreening().then(setData).catch(e=>setError(e.message||'Unable to load screening.'));},[]);
-  const checks:Array<[string,boolean]>=[['Personal details',!!data?.legalFullName],['Identity',data?.identityVerification==='VERIFIED'],['Address history',!!data?.addresses?.length],[`${data?.screeningPeriodYears||5}-year activity history`,!!data?.requirements?.chronology.continuous],['References',!!data?.references?.length],['Right to Work',data?.rightToWorkVerification==='VERIFIED'],['Supporting evidence',!!data?.evidence?.some(x=>x.uploadCompleted)],['Consent & declaration',!!data?.consents?.some(x=>!x.withdrawnAt)]];
-  return <View style={s.card} accessibilityLabel="Your vetting and screening summary">
-    <Text style={s.eyebrow}>YOUR VETTING & SCREENING</Text><View style={s.summaryRow}><View><Text style={s.label}>Screening status</Text><Text style={s.title}>{STATUS[data?.status||'NOT_STARTED']}</Text></View><Text style={s.progress}>{data?.progress||0}%</Text></View>
-    <View style={s.track}><View style={[s.trackFill,{width:`${Math.max(0,Math.min(100,data?.progress||0))}%`}]} /></View><Text style={s.note}>Complete your screening to become eligible for operational security work.</Text>
-    <View style={s.checkGrid}>{checks.map(([label,done])=><Text key={label} style={done?s.done:s.pending}>{done?'✓':'○'} {label}</Text>)}</View>
-    <View style={s.accessBox}><Text style={s.accessGood}>Marketplace access: Available</Text><Text style={data?.status==='VETTED'?s.accessGood:s.accessWarn}>Work eligibility: {data?.status==='VETTED'?'Screening complete — compliance checks still apply':'Not yet eligible'}</Text></View>
-    <Text style={s.note}>You can browse and apply for jobs while completing your screening.</Text><Pressable accessibilityRole="button" style={s.button} onPress={onContinue}><Text style={s.buttonText}>{data?.id?'Continue screening':'Start screening'}</Text></Pressable>{error?<Text accessibilityRole="alert" style={s.error}>{error}</Text>:null}
-  </View>;
-}
-
-export function GuardScreeningJourney({onBack}:{onBack:()=>void}){
-  const [data,setData]=React.useState<GuardScreening|null>(null),[step,setStep]=React.useState<Step>('personal');
-  const [error,setError]=React.useState(''),[feedback,setFeedback]=React.useState(''),[busy,setBusy]=React.useState(false);
-  const [profile,setProfile]=React.useState({legalFullName:'',previousNames:'',dateOfBirth:'',nationality:'',currentAddress:'',siaLicenceType:''});
-  const [history,setHistory]=React.useState({type:'EMPLOYMENT',startDate:'',endDate:'',organisation:'',description:''});
-  const [address,setAddress]=React.useState({address:'',startDate:'',endDate:''});
-  const [reference,setReference]=React.useState({historyId:'',organisation:'',contactPerson:'',relationship:'',businessEmail:'',phone:''});
-  const [file,setFile]=React.useState({category:'identity',sourceUri:''});
-  const load=React.useCallback(async()=>{try{const next=await getMyScreening();setData(next);setProfile(p=>({...p,legalFullName:next.legalFullName||p.legalFullName,dateOfBirth:next.dateOfBirth||p.dateOfBirth,nationality:next.nationality||p.nationality,currentAddress:next.currentAddress||p.currentAddress,previousNames:next.previousNames||p.previousNames,siaLicenceType:next.siaLicenceType||p.siaLicenceType}));}catch(e){setError((e as Error).message||'Unable to load screening.');}},[]);
-  React.useEffect(()=>{load();},[load]);
-  const act=async(fn:()=>Promise<unknown>,message:string)=>{setBusy(true);setError('');setFeedback('');try{await fn();await load();setFeedback(message);}catch(e){setError((e as Error).message||'The action could not be completed.');}finally{setBusy(false);}};
-  const canEdit=editable(data?.status),activeIndex=STEPS.findIndex(x=>x.key===step);
-  if(!data?.id)return <View style={s.journey}><Pressable onPress={onBack}><Text style={s.back}>‹ Back to Profile</Text></Pressable><View style={s.hero}><Text style={s.eyebrow}>GUARD SCREENING</Text><Text style={s.heroTitle}>Complete screening at your own pace</Text><Text style={s.note}>Your account is active. You can browse and apply for jobs now. Operational hiring and assignment require completed screening and compliance checks.</Text><Action disabled={busy} label={busy?'Starting…':'Start screening'} onPress={()=>act(()=>startMyScreening(),'Your screening file is ready.')} /></View></View>;
-  return <View style={s.journey}><Pressable accessibilityRole="button" onPress={onBack}><Text style={s.back}>‹ Back to Profile</Text></Pressable>
-    <View style={s.hero}><Text style={s.eyebrow}>GUARD SCREENING</Text><View style={s.summaryRow}><View style={s.flex}><Text style={s.heroTitle}>{STATUS[data.status]}</Text><Text style={s.note}>Step {activeIndex+1} of {STEPS.length} · {data.progress}% complete</Text></View><Text style={s.progress}>{data.progress}%</Text></View><View style={s.track}><View style={[s.trackFill,{width:`${data.progress}%`}]} /></View><Text style={s.accessGood}>Marketplace access: Available</Text><Text style={data.status==='VETTED'?s.accessGood:s.accessWarn}>Work eligibility: {data.status==='VETTED'?'Screening complete — operational compliance still applies':'Not yet eligible'}</Text>{data.status==='VETTED'?<View style={s.vettedMeta}><Text style={s.meta}>Screening completed: {data.vettedAt?new Date(data.vettedAt).toLocaleDateString():'Recorded by reviewer'}</Text><Text style={s.meta}>SIA: {pretty(data.siaRegisterVerification)} · Right to Work: {pretty(data.rightToWorkVerification)}</Text>{data.retentionReviewAt?<Text style={s.meta}>Next review: {new Date(data.retentionReviewAt).toLocaleDateString()}</Text>:null}</View>:null}</View>
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.stepNav}>{STEPS.map((x,i)=><Pressable accessibilityRole="button" accessibilityState={{selected:x.key===step}} key={x.key} onPress={()=>setStep(x.key)} style={[s.step,x.key===step&&s.stepActive]}><Text style={[s.stepNumber,x.key===step&&s.stepTextActive]}>{i+1}</Text><Text style={[s.stepText,x.key===step&&s.stepTextActive]}>{x.label}</Text></Pressable>)}</ScrollView>
-    {feedback?<Text accessibilityRole="alert" style={s.success}>{feedback}</Text>:null}{error?<Text accessibilityRole="alert" style={s.errorBox}>{error}</Text>:null}
-    <View style={s.stage}><Text style={s.stageTitle}>{STEPS[activeIndex].label}</Text><Text style={s.note}>{stageHelp(step,data.screeningPeriodYears||5)}</Text>
-      {step==='personal'?<><Field label="Legal full name" value={profile.legalFullName} set={v=>setProfile({...profile,legalFullName:v})}/><Field label="Previous names (optional)" value={profile.previousNames} set={v=>setProfile({...profile,previousNames:v})}/><Field label="Date of birth (YYYY-MM-DD)" value={profile.dateOfBirth} set={v=>setProfile({...profile,dateOfBirth:v})}/><Field label="Nationality" value={profile.nationality} set={v=>setProfile({...profile,nationality:v})}/><Field label="Current address" value={profile.currentAddress} set={v=>setProfile({...profile,currentAddress:v})}/><Field label="SIA licence type (optional)" value={profile.siaLicenceType} set={v=>setProfile({...profile,siaLicenceType:v})}/><Action disabled={!canEdit||busy} label="Save personal details" onPress={()=>act(()=>updateMyScreeningProfile(profile),'Personal details saved.')} /></>:null}
-      {step==='identity'?<StatusCards items={[['Candidate details',data.legalFullName?'Supplied':'Not supplied'],['Identity evidence',evidenceState(data,'identity')],['Reviewer verification',pretty(data.identityVerification)]]}/>:null}
-      {step==='addresses'?<><View style={s.list}>{[...(data.addresses||[])].sort((a,b)=>Number(b.isCurrent)-Number(a.isCurrent)).map(a=><View key={a.id} style={s.item}><Text style={s.itemTitle}>{a.isCurrent?'Current address':'Previous address'}</Text><Text>{a.address}</Text><Text style={s.meta}>{dateLabel(a.startDate)} – {dateLabel(a.endDate)} · Verification: {pretty(a.verificationState)}</Text></View>)}</View><Field label="Address" value={address.address} set={v=>setAddress({...address,address:v})}/><Field label="Start date (YYYY-MM-DD)" value={address.startDate} set={v=>setAddress({...address,startDate:v})}/><Field label="End date (leave blank if current)" value={address.endDate} set={v=>setAddress({...address,endDate:v})}/><Action disabled={!canEdit||busy} label="Add address period" onPress={()=>act(()=>addMyScreeningAddress({...address,isCurrent:!address.endDate,endDate:address.endDate||undefined}),'Address history updated.')} /><Text style={s.safety}>Only an authorised reviewer can verify an address.</Text></>:null}
-      {step==='history'?<><View style={s.timeline}>{(data.history||[]).map(h=><View key={h.id} style={s.timelineItem}><View style={s.dot}/><View style={s.flex}><Text style={s.itemTitle}>{pretty(h.type)}</Text><Text>{h.organisation||'Explanation provided'}</Text><Text style={s.meta}>{dateLabel(h.startDate)} – {dateLabel(h.endDate)}</Text></View></View>)}</View>{data.requirements?.chronology.gaps.map(g=><View key={`${g.from}-${g.to}`} style={s.warning}><Text style={s.warningTitle}>UNEXPLAINED PERIOD</Text><Text>{dateLabel(g.from)} – {dateLabel(g.to)}</Text><Text style={s.meta}>Please add an activity covering this period.</Text></View>)}{data.requirements?.chronology.overlaps.map(o=><View key={`${o.from}-${o.to}`} style={s.info}><Text style={s.infoTitle}>OVERLAPPING PERIOD</Text><Text>{dateLabel(o.from)} – {dateLabel(o.to)}</Text><Text style={s.meta}>Review these entries. The server remains authoritative.</Text></View>)}<Field label="Type (employment, education, unemployment…)" value={history.type} set={v=>setHistory({...history,type:v.toUpperCase().replaceAll(' ','_')})}/><Field label="Organisation or explanation" value={history.organisation} set={v=>setHistory({...history,organisation:v})}/><Field label="Start date (YYYY-MM-DD)" value={history.startDate} set={v=>setHistory({...history,startDate:v})}/><Field label="End date (leave blank if present)" value={history.endDate} set={v=>setHistory({...history,endDate:v})}/><Field label="Details" value={history.description} set={v=>setHistory({...history,description:v})}/><Action disabled={!canEdit||busy} label="Add activity period" onPress={()=>act(()=>addMyScreeningHistory({...history,isCurrent:!history.endDate,endDate:history.endDate||undefined}),'Activity history updated.')} /></>:null}
-      {step==='references'?<><View style={s.list}>{(data.references||[]).map(r=><View key={r.id} style={s.item}><Text style={s.itemTitle}>{r.organisation}</Text><Text style={s.meta}>{referenceLabel(r.status)} · Source {r.sourceVerified?'authenticated':'not yet authenticated'}</Text></View>)}</View><Text style={s.meta}>Link the referee to an activity record: {(data.history||[]).map(h=>`${h.id} (${pretty(h.type)})`).join(', ')||'add activity history first'}.</Text><Field label="Activity record ID" value={reference.historyId} set={v=>setReference({...reference,historyId:v})}/><Field label="Organisation" value={reference.organisation} set={v=>setReference({...reference,organisation:v})}/><Field label="Referee name" value={reference.contactPerson} set={v=>setReference({...reference,contactPerson:v})}/><Field label="Relationship" value={reference.relationship} set={v=>setReference({...reference,relationship:v})}/><Field label="Business email" value={reference.businessEmail} set={v=>setReference({...reference,businessEmail:v})}/><Field label="Phone (optional)" value={reference.phone} set={v=>setReference({...reference,phone:v})}/><Action disabled={!canEdit||busy} label="Add referee" onPress={()=>act(()=>addMyScreeningReference({...reference,historyId:Number(reference.historyId)}),'Referee added.')} /><Text style={s.safety}>Reference verification is controlled by an authorised reviewer.</Text></>:null}
-      {step==='checks'?<StatusCards items={[['SIA evidence',evidenceState(data,'sia')],['SIA register verification',pretty(data.siaRegisterVerification)],['Right to Work evidence',evidenceState(data,'right_to_work')],['Right to Work verification',pretty(data.rightToWorkVerification)]]}/>:null}
-      {step==='evidence'?<><View style={s.list}>{(data.evidence||[]).map(e=><View key={e.id} style={s.item}><Text style={s.itemTitle}>{pretty(e.category)}</Text><Text style={s.meta}>{e.uploadCompleted?'Upload complete':'Upload pending'} · Verification: {pretty(e.verificationState)} · {Math.ceil(e.sizeBytes/1024)} KB</Text></View>)}</View><Field label="Evidence type" value={file.category} set={v=>setFile({...file,category:v.toLowerCase().replaceAll(' ','_')})}/><Field label="Selected file URI" value={file.sourceUri} set={v=>setFile({...file,sourceUri:v})}/><Action disabled={!canEdit||busy} label="Upload private evidence" onPress={()=>act(async()=>{const source=await fetch(file.sourceUri.trim());if(!source.ok)throw new Error('Unable to read the selected evidence.');const blob=await source.blob();const name=decodeURIComponent(file.sourceUri.split('/').pop()?.split('?')[0]||'evidence');const created=await createMyScreeningEvidence({category:file.category,originalFileName:name,mimeType:blob.type,sizeBytes:blob.size});const uploaded=await fetch(created.upload.url,{method:created.upload.method,headers:created.upload.headers,body:blob});if(!uploaded.ok)throw new Error('Private evidence upload failed.');await completeMyScreeningEvidence(created.id);},'Private evidence uploaded and verified by the storage service.')} /><Text style={s.safety}>Files remain private. Upload does not prove reviewer verification. Storage keys and permanent URLs are never displayed.</Text></>:null}
-      {step==='consent'?<><Text style={s.declaration}>By accepting, you consent to S4 processing the screening information you provide and contacting supplied referees. Submission sends your information to an authorised Platform Admin for review.</Text><Text style={s.meta}>Current consent: {data.consents?.some(x=>!x.withdrawnAt)?'Accepted':'Not accepted or withdrawn'} · Version: S4-PILOT-1</Text><Action disabled={!canEdit||busy} label="Accept consent & declaration" onPress={()=>act(()=>acceptMyScreeningConsent(),'Consent accepted and server timestamp recorded.')} /><Pressable disabled={busy} style={s.secondary} onPress={()=>act(()=>withdrawMyScreeningConsent(),'Consent withdrawn. Your screening may require attention.')}><Text style={s.secondaryText}>Withdraw consent</Text></Pressable></>:null}
-      {step==='review'?<><Review data={data}/>{data.requirements?.missing.map(x=><Text key={x} style={s.missing}>• {x}</Text>)}<Action disabled={!canEdit||busy||!!data.requirements?.missing.length} label="Submit for authorised review" onPress={()=>act(()=>submitMyScreening(),'Screening submitted for review.')} /><Text style={s.safety}>The frontend cannot set Vetted. Only the authoritative reviewer workflow can change the decision.</Text></>:null}
-      <View style={s.stageNav}><Pressable disabled={activeIndex===0} onPress={()=>setStep(STEPS[activeIndex-1].key)}><Text style={s.back}>Previous</Text></Pressable><Pressable disabled={activeIndex===STEPS.length-1} onPress={()=>setStep(STEPS[activeIndex+1].key)}><Text style={s.back}>Next</Text></Pressable></View>
+export function GuardScreeningPanel({
+  onContinue,
+}: {
+  onContinue?: () => void;
+}) {
+  const [data, setData] = React.useState<GuardScreening | null>(null),
+    [error, setError] = React.useState("");
+  React.useEffect(() => {
+    getMyScreening()
+      .then(setData)
+      .catch((e) => setError(e.message || "Unable to load screening."));
+  }, []);
+  const checks: Array<[string, boolean]> = [
+    ["Personal details", !!data?.legalFullName],
+    ["Identity", data?.identityVerification === "VERIFIED"],
+    ["Address history", !!data?.addresses?.length],
+    [
+      `${data?.screeningPeriodYears || 5}-year activity history`,
+      !!data?.requirements?.chronology.continuous,
+    ],
+    ["References", !!data?.references?.length],
+    ["Right to Work", data?.rightToWorkVerification === "VERIFIED"],
+    ["Supporting evidence", !!data?.evidence?.some((x) => x.uploadCompleted)],
+    ["Consent & declaration", !!data?.consents?.some((x) => !x.withdrawnAt)],
+  ];
+  return (
+    <View
+      style={s.card}
+      accessibilityLabel="Your vetting and screening summary"
+    >
+      <Text style={s.eyebrow}>YOUR VETTING & SCREENING</Text>
+      <View style={s.summaryRow}>
+        <View>
+          <Text style={s.label}>Screening status</Text>
+          <Text style={s.title}>{STATUS[data?.status || "NOT_STARTED"]}</Text>
+        </View>
+        <Text style={s.progress}>{data?.progress || 0}%</Text>
+      </View>
+      <View style={s.track}>
+        <View
+          style={[
+            s.trackFill,
+            { width: `${Math.max(0, Math.min(100, data?.progress || 0))}%` },
+          ]}
+        />
+      </View>
+      <Text style={s.note}>
+        Complete your screening to become eligible for operational security
+        work.
+      </Text>
+      <View style={s.checkGrid}>
+        {checks.map(([label, done]) => (
+          <Text key={label} style={done ? s.done : s.pending}>
+            {done ? "✓" : "○"} {label}
+          </Text>
+        ))}
+      </View>
+      <View style={s.accessBox}>
+        <Text style={s.accessGood}>Marketplace access: Available</Text>
+        <Text style={data?.status === "VETTED" ? s.accessGood : s.accessWarn}>
+          Work eligibility:{" "}
+          {data?.status === "VETTED"
+            ? "Screening complete — compliance checks still apply"
+            : "Not yet eligible"}
+        </Text>
+      </View>
+      <Text style={s.note}>
+        You can browse and apply for jobs while completing your screening.
+      </Text>
+      <Pressable
+        accessibilityRole="button"
+        style={s.button}
+        onPress={onContinue}
+      >
+        <Text style={s.buttonText}>
+          {data?.id ? "Continue screening" : "Start screening"}
+        </Text>
+      </Pressable>
+      {error ? (
+        <Text accessibilityRole="alert" style={s.error}>
+          {error}
+        </Text>
+      ) : null}
     </View>
-  </View>;
+  );
 }
 
-function Field({label,value,set}:{label:string;value:string;set:(v:string)=>void}){return <View style={s.field}><Text style={s.fieldLabel}>{label}</Text><TextInput accessibilityLabel={label} style={s.input} value={value} onChangeText={set}/></View>}
-function Action({label,onPress,disabled}:{label:string;onPress:()=>void;disabled:boolean}){return <Pressable accessibilityRole="button" accessibilityState={{disabled}} disabled={disabled} style={[s.button,disabled&&s.disabled]} onPress={onPress}><Text style={s.buttonText}>{label}</Text></Pressable>}
-function StatusCards({items}:{items:Array<[string,string]>}){return <View style={s.statusGrid}>{items.map(([a,b])=><View key={a} style={s.statusCard}><Text style={s.label}>{a}</Text><Text style={s.itemTitle}>{b}</Text></View>)}</View>}
-function evidenceState(data:GuardScreening,category:string){const item=data.evidence?.find(x=>x.category===category);return !item?'Not supplied':item.verificationState==='VERIFIED'?'Verified':item.uploadCompleted?'Evidence uploaded — verification pending':'Upload pending'}
-function referenceLabel(value:string){return ({NOT_REQUESTED:'Not requested',REQUESTED:'Requested',RECEIVED:'Received',UNDER_VERIFICATION:'Under verification',VERIFIED:'Verified',REJECTED:'Rejected / Requires attention'} as Record<string,string>)[value]||pretty(value)}
-function stageHelp(step:Step,years:number){return ({personal:'Provide the details used to identify your screening file.',identity:'Candidate-supplied information, uploaded evidence, and reviewer verification are shown separately.',addresses:'Add your current address and previous addresses as a clear chronology.',history:`Cover the configured ${years}-year screening period. The server detects authoritative gaps and overlaps.`,references:'Provide permitted referee details linked to an activity record. Only a reviewer can verify them.',checks:'SIA register and Right to Work checks are distinct reviewer-controlled decisions.',evidence:'Upload PDF, JPEG, or PNG evidence through the private signed-upload workflow.',consent:'Read and accept the current version before submitting. You can withdraw consent later.',review:'Review your progress and resolve every server-reported missing requirement before submission.'})[step]}
-function Review({data}:{data:GuardScreening}){const rows:Array<[string,string]>=[['Personal details',data.legalFullName?'Complete':'Incomplete'],['Identity',pretty(data.identityVerification)],['Address history',data.addresses?.length?'Complete':'Incomplete'],['Activity history',data.requirements?.chronology.continuous?'Complete':'Gap detected'],['References',data.references?.length?'In progress':'Not supplied'],['SIA',evidenceState(data,'sia')],['Right to Work',evidenceState(data,'right_to_work')],['Consent',data.consents?.some(x=>!x.withdrawnAt)?'Complete':'Incomplete']];return <View style={s.review}>{rows.map(([a,b])=><View key={a} style={s.reviewRow}><Text style={s.label}>{a}</Text><Text style={s.itemTitle}>{b}</Text></View>)}</View>}
+export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
+  const [data, setData] = React.useState<GuardScreening | null>(null),
+    [step, setStep] = React.useState<Step>("personal");
+  const [error, setError] = React.useState(""),
+    [feedback, setFeedback] = React.useState(""),
+    [busy, setBusy] = React.useState(false);
+  const [profile, setProfile] = React.useState({
+    legalFullName: "",
+    previousNames: "",
+    dateOfBirth: "",
+    nationality: "",
+    currentAddress: "",
+    siaLicenceType: "",
+  });
+  const [history, setHistory] = React.useState({
+    type: "EMPLOYMENT",
+    startDate: "",
+    endDate: "",
+    organisation: "",
+    description: "",
+  });
+  const [address, setAddress] = React.useState({
+    address: "",
+    startDate: "",
+    endDate: "",
+  });
+  const [reference, setReference] = React.useState({
+    historyId: "",
+    organisation: "",
+    contactPerson: "",
+    relationship: "",
+    businessEmail: "",
+    phone: "",
+  });
+  const load = React.useCallback(async () => {
+    try {
+      const next = await getMyScreening();
+      setData(next);
+      setProfile((p) => ({
+        ...p,
+        legalFullName: next.legalFullName || p.legalFullName,
+        dateOfBirth: next.dateOfBirth
+          ? formatScreeningDate(next.dateOfBirth)
+          : p.dateOfBirth,
+        nationality: next.nationality || p.nationality,
+        currentAddress: next.currentAddress || p.currentAddress,
+        previousNames: next.previousNames || p.previousNames,
+        siaLicenceType: next.siaLicenceType || p.siaLicenceType,
+      }));
+    } catch (e) {
+      setError((e as Error).message || "Unable to load screening.");
+    }
+  }, []);
+  React.useEffect(() => {
+    load();
+  }, [load]);
+  const act = async (fn: () => Promise<unknown>, message: string) => {
+    setBusy(true);
+    setError("");
+    setFeedback("");
+    try {
+      await fn();
+      await load();
+      setFeedback(message);
+    } catch (e) {
+      setError((e as Error).message || "The action could not be completed.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const uploadEvidence = async (
+    category: string,
+    asset: DocumentPicker.DocumentPickerAsset,
+  ) => {
+    const source = await fetch(asset.uri);
+    if (!source.ok) throw new Error("Unable to read the selected document.");
+    const blob = await source.blob();
+    const mimeType = asset.mimeType || blob.type;
+    if (!mimeType)
+      throw new Error("The selected document type could not be identified.");
+    const sizeBytes = asset.size || blob.size;
+    const created = await createMyScreeningEvidence({
+      category,
+      originalFileName: asset.name,
+      mimeType,
+      sizeBytes,
+    });
+    const uploaded = await fetch(created.upload.url, {
+      method: created.upload.method,
+      headers: created.upload.headers,
+      body: blob,
+    });
+    if (!uploaded.ok)
+      throw new Error("Private evidence upload failed. Please try again.");
+    await completeMyScreeningEvidence(created.id);
+  };
+  const canEdit = editable(data?.status),
+    activeIndex = STEPS.findIndex((x) => x.key === step);
+  if (!data?.id)
+    return (
+      <View style={s.journey}>
+        <Pressable onPress={onBack}>
+          <Text style={s.back}>‹ Back to Profile</Text>
+        </Pressable>
+        <View style={s.hero}>
+          <Text style={s.eyebrow}>GUARD SCREENING</Text>
+          <Text style={s.heroTitle}>Complete screening at your own pace</Text>
+          <Text style={s.note}>
+            Your account is active. You can browse and apply for jobs now.
+            Operational hiring and assignment require completed screening and
+            compliance checks.
+          </Text>
+          <Action
+            disabled={busy}
+            label={busy ? "Starting…" : "Start screening"}
+            onPress={() =>
+              act(() => startMyScreening(), "Your screening file is ready.")
+            }
+          />
+        </View>
+      </View>
+    );
+  return (
+    <View style={s.journey}>
+      <Pressable accessibilityRole="button" onPress={onBack}>
+        <Text style={s.back}>‹ Back to Profile</Text>
+      </Pressable>
+      <View style={s.hero}>
+        <Text style={s.eyebrow}>GUARD SCREENING</Text>
+        <View style={s.summaryRow}>
+          <View style={s.flex}>
+            <Text style={s.heroTitle}>{STATUS[data.status]}</Text>
+            <Text style={s.note}>
+              Step {activeIndex + 1} of {STEPS.length} · {data.progress}%
+              complete
+            </Text>
+          </View>
+          <Text style={s.progress}>{data.progress}%</Text>
+        </View>
+        <View style={s.track}>
+          <View style={[s.trackFill, { width: `${data.progress}%` }]} />
+        </View>
+        <Text style={s.accessGood}>Marketplace access: Available</Text>
+        <Text style={data.status === "VETTED" ? s.accessGood : s.accessWarn}>
+          Work eligibility:{" "}
+          {data.status === "VETTED"
+            ? "Screening complete — operational compliance still applies"
+            : "Not yet eligible"}
+        </Text>
+        {data.status === "VETTED" ? (
+          <View style={s.vettedMeta}>
+            <Text style={s.meta}>
+              Screening completed:{" "}
+              {data.vettedAt
+                ? formatScreeningDate(data.vettedAt)
+                : "Recorded by reviewer"}
+            </Text>
+            <Text style={s.meta}>
+              SIA: {pretty(data.siaRegisterVerification)} · Right to Work:{" "}
+              {pretty(data.rightToWorkVerification)}
+            </Text>
+            {data.retentionReviewAt ? (
+              <Text style={s.meta}>
+                Next review:{" "}
+                {formatScreeningDate(data.retentionReviewAt)}
+              </Text>
+            ) : null}
+          </View>
+        ) : null}
+      </View>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={s.stepNav}
+      >
+        {STEPS.map((x, i) => (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ selected: x.key === step }}
+            key={x.key}
+            onPress={() => setStep(x.key)}
+            style={[s.step, x.key === step && s.stepActive]}
+          >
+            <Text style={[s.stepNumber, x.key === step && s.stepTextActive]}>
+              {i + 1}
+            </Text>
+            <Text style={[s.stepText, x.key === step && s.stepTextActive]}>
+              {x.label}
+            </Text>
+          </Pressable>
+        ))}
+      </ScrollView>
+      {feedback ? (
+        <Text accessibilityRole="alert" style={s.success}>
+          {feedback}
+        </Text>
+      ) : null}
+      {error ? (
+        <Text accessibilityRole="alert" style={s.errorBox}>
+          {error}
+        </Text>
+      ) : null}
+      <View style={s.stage}>
+        <Text style={s.stageTitle}>{STEPS[activeIndex].label}</Text>
+        <Text style={s.note}>
+          {stageHelp(step, data.screeningPeriodYears || 5)}
+        </Text>
+        {step === "personal" ? (
+          <>
+            <Field
+              label="Legal full name"
+              value={profile.legalFullName}
+              set={(v) => setProfile({ ...profile, legalFullName: v })}
+            />
+            <Field
+              label="Previous names (optional)"
+              value={profile.previousNames}
+              set={(v) => setProfile({ ...profile, previousNames: v })}
+            />
+            <Field
+              label="Date of birth (DD/MM/YYYY)"
+              value={profile.dateOfBirth}
+              set={(v) => setProfile({ ...profile, dateOfBirth: v })}
+            />
+            <Field
+              label="Nationality"
+              value={profile.nationality}
+              set={(v) => setProfile({ ...profile, nationality: v })}
+            />
+            <Field
+              label="Current address"
+              value={profile.currentAddress}
+              set={(v) => setProfile({ ...profile, currentAddress: v })}
+            />
+            <Field
+              label="SIA licence type (optional)"
+              value={profile.siaLicenceType}
+              set={(v) => setProfile({ ...profile, siaLicenceType: v })}
+            />
+            <Action
+              disabled={!canEdit || busy}
+              label="Save personal details"
+              onPress={() =>
+                act(
+                  () =>
+                    updateMyScreeningProfile({
+                      ...profile,
+                      dateOfBirth: screeningDateToIso(profile.dateOfBirth),
+                    }),
+                  "Personal details saved.",
+                )
+              }
+            />
+          </>
+        ) : null}
+        {step === "identity" ? (
+          <>
+            <StatusCards
+              items={[
+                [
+                  "Candidate details",
+                  data.legalFullName ? "Candidate supplied" : "Not supplied",
+                ],
+                ["Identity evidence", evidenceState(data, "identity")],
+                [
+                  "Reviewer verification",
+                  verificationLabel(data.identityVerification),
+                ],
+              ]}
+            />
+            <EvidencePicker
+              label="Choose identity evidence"
+              category="identity"
+              disabled={!canEdit || busy}
+              onUpload={(asset) =>
+                act(
+                  () => uploadEvidence("identity", asset),
+                  "Identity evidence uploaded. It is awaiting reviewer verification.",
+                )
+              }
+            />
+          </>
+        ) : null}
+        {step === "addresses" ? (
+          <>
+            <Text style={s.guidance}>
+              Provide a continuous address history covering the last{" "}
+              {data.screeningPeriodYears || 5} years.
+            </Text>
+            <View style={s.list}>
+              {[...(data.addresses || [])]
+                .sort((a, b) => Number(b.isCurrent) - Number(a.isCurrent))
+                .map((a) => (
+                  <View key={a.id} style={s.item}>
+                    <Text style={s.itemTitle}>
+                      {a.isCurrent ? "Current address" : "Previous address"}
+                    </Text>
+                    <Text>{a.address}</Text>
+                    <Text style={s.meta}>
+                      {dateLabel(a.startDate)} – {dateLabel(a.endDate)} ·{" "}
+                      {verificationLabel(a.verificationState)}
+                    </Text>
+                  </View>
+                ))}
+            </View>
+            {data.requirements?.addressChronology?.gaps.map((g) => (
+              <Gap
+                key={`${g.from}-${g.to}`}
+                title="UNCOVERED ADDRESS PERIOD"
+                from={g.from}
+                to={g.to}
+                message="Add the address where you lived during this exact period before submitting."
+              />
+            ))}
+            {data.requirements?.addressChronology?.overlaps.map((o) => (
+              <Overlap
+                key={`${o.from}-${o.to}`}
+                from={o.from}
+                to={o.to}
+                message="Check whether these address periods should overlap."
+              />
+            ))}
+            <Field
+              label="Address"
+              value={address.address}
+              set={(v) => setAddress({ ...address, address: v })}
+            />
+            <Field
+              label="Start date (DD/MM/YYYY)"
+              value={address.startDate}
+              set={(v) => setAddress({ ...address, startDate: v })}
+            />
+            <Field
+              label="End date (DD/MM/YYYY, leave blank if current)"
+              value={address.endDate}
+              set={(v) => setAddress({ ...address, endDate: v })}
+            />
+            <Action
+              disabled={!canEdit || busy}
+              label="Add address period"
+              onPress={() =>
+                act(
+                  () =>
+                    addMyScreeningAddress({
+                      address: address.address,
+                      startDate: screeningDateToIso(address.startDate),
+                      isCurrent: !address.endDate,
+                      endDate: address.endDate
+                        ? screeningDateToIso(address.endDate)
+                        : undefined,
+                    }),
+                  "Address history updated.",
+                )
+              }
+            />
+            <EvidencePicker
+              label="Choose address evidence"
+              category="address"
+              disabled={!canEdit || busy}
+              onUpload={(asset) =>
+                act(
+                  () => uploadEvidence("address", asset),
+                  "Address evidence uploaded. It is awaiting reviewer verification.",
+                )
+              }
+            />
+            <Text style={s.safety}>
+              Only an authorised reviewer can verify an address. Incomplete
+              five-year coverage blocks submission.
+            </Text>
+          </>
+        ) : null}
+        {step === "history" ? (
+          <>
+            <Text style={s.guidance}>
+              Provide a continuous activity history covering the last{" "}
+              {data.screeningPeriodYears || 5} years, including explained
+              periods when you were not working.
+            </Text>
+            <View style={s.timeline}>
+              {(data.history || []).map((h) => (
+                <View key={h.id} style={s.timelineItem}>
+                  <View style={s.dot} />
+                  <View style={s.flex}>
+                    <Text style={s.itemTitle}>{pretty(h.type)}</Text>
+                    <Text>{h.organisation || "Explanation provided"}</Text>
+                    <Text style={s.meta}>
+                      {dateLabel(h.startDate)} – {dateLabel(h.endDate)}
+                    </Text>
+                  </View>
+                </View>
+              ))}
+            </View>
+            {data.requirements?.chronology.gaps.map((g) => (
+              <Gap
+                key={`${g.from}-${g.to}`}
+                title="UNEXPLAINED ACTIVITY PERIOD"
+                from={g.from}
+                to={g.to}
+                message="Add an activity or explained period covering these exact dates before submitting."
+              />
+            ))}
+            {data.requirements?.chronology.overlaps.map((o) => (
+              <Overlap
+                key={`${o.from}-${o.to}`}
+                from={o.from}
+                to={o.to}
+                message="Check these activity entries and correct the dates if the overlap is not intentional."
+              />
+            ))}
+            <Text style={s.fieldLabel}>Activity type</Text>
+            <View style={s.choiceGrid}>
+              {HISTORY_TYPES.map(([value, label]) => (
+                <Pressable
+                  accessibilityRole="radio"
+                  accessibilityState={{ checked: history.type === value }}
+                  key={value}
+                  onPress={() => setHistory({ ...history, type: value })}
+                  style={[s.choice, history.type === value && s.choiceActive]}
+                >
+                  <Text
+                    style={
+                      history.type === value ? s.choiceTextActive : s.choiceText
+                    }
+                  >
+                    {label}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+            <Field
+              label="Organisation or explanation"
+              value={history.organisation}
+              set={(v) => setHistory({ ...history, organisation: v })}
+            />
+            <Field
+              label="Start date (DD/MM/YYYY)"
+              value={history.startDate}
+              set={(v) => setHistory({ ...history, startDate: v })}
+            />
+            <Field
+              label="End date (DD/MM/YYYY, leave blank if present)"
+              value={history.endDate}
+              set={(v) => setHistory({ ...history, endDate: v })}
+            />
+            <Field
+              label="Details"
+              value={history.description}
+              set={(v) => setHistory({ ...history, description: v })}
+            />
+            <Action
+              disabled={!canEdit || busy}
+              label="Add activity period"
+              onPress={() =>
+                act(
+                  () =>
+                    addMyScreeningHistory({
+                      ...history,
+                      startDate: screeningDateToIso(history.startDate),
+                      isCurrent: !history.endDate,
+                      endDate: history.endDate
+                        ? screeningDateToIso(history.endDate)
+                        : undefined,
+                    }),
+                  "Activity history updated.",
+                )
+              }
+            />
+          </>
+        ) : null}
+        {step === "references" ? (
+          <>
+            <View style={s.list}>
+              {(data.references || []).map((r) => (
+                <View key={r.id} style={s.item}>
+                  <Text style={s.itemTitle}>{r.organisation}</Text>
+                  <Text style={s.meta}>
+                    {referenceLabel(r.status)} · Source{" "}
+                    {r.sourceVerified
+                      ? "authenticated"
+                      : "not yet authenticated"}
+                  </Text>
+                </View>
+              ))}
+            </View>
+            <Text style={s.fieldLabel}>Activity this referee can confirm</Text>
+            {data.history?.length ? (
+              <View style={s.choiceGrid}>
+                {data.history.map((h) => {
+                  const selected = reference.historyId === String(h.id);
+                  return (
+                    <Pressable
+                      accessibilityRole="radio"
+                      accessibilityState={{ checked: selected }}
+                      key={h.id}
+                      onPress={() =>
+                        setReference({ ...reference, historyId: String(h.id) })
+                      }
+                      style={[s.choice, selected && s.choiceActive]}
+                    >
+                      <Text
+                        style={selected ? s.choiceTextActive : s.choiceText}
+                      >
+                        {pretty(h.type)} ·{" "}
+                        {h.organisation || "Explained period"} ·{" "}
+                        {dateLabel(h.startDate)}–{dateLabel(h.endDate)}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            ) : (
+              <Text style={s.warningTitle}>
+                Add an activity period before adding a referee.
+              </Text>
+            )}
+            <Field
+              label="Organisation"
+              value={reference.organisation}
+              set={(v) => setReference({ ...reference, organisation: v })}
+            />
+            <Field
+              label="Referee name"
+              value={reference.contactPerson}
+              set={(v) => setReference({ ...reference, contactPerson: v })}
+            />
+            <Field
+              label="Relationship"
+              value={reference.relationship}
+              set={(v) => setReference({ ...reference, relationship: v })}
+            />
+            <Field
+              label="Business email"
+              value={reference.businessEmail}
+              set={(v) => setReference({ ...reference, businessEmail: v })}
+            />
+            <Field
+              label="Phone (optional)"
+              value={reference.phone}
+              set={(v) => setReference({ ...reference, phone: v })}
+            />
+            <Action
+              disabled={!canEdit || busy || !reference.historyId}
+              label="Add referee"
+              onPress={() =>
+                act(
+                  () =>
+                    addMyScreeningReference({
+                      ...reference,
+                      historyId: Number(reference.historyId),
+                    }),
+                  "Referee added.",
+                )
+              }
+            />
+            <EvidencePicker
+              label="Choose reference or supporting evidence"
+              category="reference"
+              disabled={!canEdit || busy}
+              onUpload={(asset) =>
+                act(
+                  () => uploadEvidence("reference", asset),
+                  "Reference evidence uploaded. It is awaiting reviewer verification.",
+                )
+              }
+            />
+            <Text style={s.safety}>
+              The selector contains only activity records returned for your
+              screening file. The backend ownership check remains authoritative.
+            </Text>
+          </>
+        ) : null}
+        {step === "checks" ? (
+          <>
+            <StatusCards
+              items={[
+                ["SIA evidence", evidenceState(data, "sia")],
+                [
+                  "SIA register verification",
+                  verificationLabel(data.siaRegisterVerification),
+                ],
+                [
+                  "Right to Work evidence",
+                  evidenceState(data, "right_to_work"),
+                ],
+                [
+                  "Right to Work verification",
+                  verificationLabel(data.rightToWorkVerification),
+                ],
+              ]}
+            />
+            <EvidencePicker
+              label="Choose SIA evidence"
+              category="sia"
+              disabled={!canEdit || busy}
+              onUpload={(asset) =>
+                act(
+                  () => uploadEvidence("sia", asset),
+                  "SIA evidence uploaded. It is awaiting register verification.",
+                )
+              }
+            />
+            <EvidencePicker
+              label="Choose Right-to-Work evidence"
+              category="right_to_work"
+              disabled={!canEdit || busy}
+              onUpload={(asset) =>
+                act(
+                  () => uploadEvidence("right_to_work", asset),
+                  "Right-to-Work evidence uploaded. It is awaiting reviewer verification.",
+                )
+              }
+            />
+          </>
+        ) : null}
+        {step === "evidence" ? (
+          <>
+            <View style={s.list}>
+              {(data.evidence || []).map((e) => (
+                <View key={e.id} style={s.item}>
+                  <Text style={s.itemTitle}>{pretty(e.category)}</Text>
+                  <Text style={s.meta}>
+                    {documentStatus(e)} · {Math.ceil(e.sizeBytes / 1024)} KB
+                  </Text>
+                </View>
+              ))}
+            </View>
+            <EvidencePicker
+              label="Choose additional supporting evidence"
+              category="other"
+              disabled={!canEdit || busy}
+              onUpload={(asset) =>
+                act(
+                  () => uploadEvidence("other", asset),
+                  "Supporting evidence uploaded. It is awaiting reviewer verification.",
+                )
+              }
+            />
+            <Text style={s.safety}>
+              Files remain private. Upload never means verified. Storage keys
+              and permanent URLs are never displayed.
+            </Text>
+          </>
+        ) : null}
+        {step === "consent" ? (
+          <>
+            <Text style={s.declaration}>
+              By accepting, you consent to S4 processing the screening
+              information you provide and contacting supplied referees.
+              Submission sends your information to an authorised Platform Admin
+              for review.
+            </Text>
+            <Text style={s.meta}>
+              Current consent:{" "}
+              {data.consents?.some((x) => !x.withdrawnAt)
+                ? "Accepted"
+                : "Not accepted or withdrawn"}{" "}
+              · Version: S4-PILOT-1
+            </Text>
+            <Action
+              disabled={!canEdit || busy}
+              label="Accept consent & declaration"
+              onPress={() =>
+                act(
+                  () => acceptMyScreeningConsent(),
+                  "Consent accepted and server timestamp recorded.",
+                )
+              }
+            />
+            <Pressable
+              disabled={busy}
+              style={s.secondary}
+              onPress={() =>
+                act(
+                  () => withdrawMyScreeningConsent(),
+                  "Consent withdrawn. Your screening may require attention.",
+                )
+              }
+            >
+              <Text style={s.secondaryText}>Withdraw consent</Text>
+            </Pressable>
+          </>
+        ) : null}
+        {step === "review" ? (
+          <>
+            <Review data={data} />
+            {data.requirements?.missing.map((x) => (
+              <Text key={x} style={s.missing}>
+                • {x}
+              </Text>
+            ))}
+            <Action
+              disabled={!canEdit || busy || !!data.requirements?.missing.length}
+              label="Submit for authorised review"
+              onPress={() =>
+                act(
+                  () => submitMyScreening(),
+                  "Screening submitted for review.",
+                )
+              }
+            />
+            <Text style={s.safety}>
+              The frontend cannot set Vetted. Only the authoritative reviewer
+              workflow can change the decision.
+            </Text>
+          </>
+        ) : null}
+        <View style={s.stageNav}>
+          <Pressable
+            disabled={activeIndex === 0}
+            onPress={() => setStep(STEPS[activeIndex - 1].key)}
+          >
+            <Text style={s.back}>Previous</Text>
+          </Pressable>
+          <Pressable
+            disabled={activeIndex === STEPS.length - 1}
+            onPress={() => setStep(STEPS[activeIndex + 1].key)}
+          >
+            <Text style={s.back}>Next</Text>
+          </Pressable>
+        </View>
+      </View>
+    </View>
+  );
+}
 
-const s=StyleSheet.create({journey:{gap:16},card:{backgroundColor:'#fff',borderWidth:1,borderColor:colors.border,borderRadius:16,padding:18,gap:12},hero:{backgroundColor:'#fff',borderWidth:1,borderColor:colors.border,borderRadius:18,padding:20,gap:12},eyebrow:{fontSize:12,fontWeight:'800',letterSpacing:1.2,color:colors.accentTeal},heroTitle:{fontSize:26,fontWeight:'800',color:colors.textPrimary},title:{fontSize:21,fontWeight:'800',color:colors.textPrimary},summaryRow:{flexDirection:'row',justifyContent:'space-between',alignItems:'center',gap:12},flex:{flex:1},label:{color:colors.textSecondary,fontWeight:'700'},progress:{fontSize:26,fontWeight:'900',color:colors.primaryNavy},track:{height:9,borderRadius:99,backgroundColor:'#E2E8F0',overflow:'hidden'},trackFill:{height:'100%',backgroundColor:colors.accentTeal},note:{color:colors.textSecondary,lineHeight:20},checkGrid:{flexDirection:'row',flexWrap:'wrap',gap:8},done:{minWidth:190,flexGrow:1,color:'#166534'},pending:{minWidth:190,flexGrow:1,color:colors.textSecondary},accessBox:{backgroundColor:'#F8FAFC',borderRadius:10,padding:12,gap:5},accessGood:{color:'#166534',fontWeight:'800'},accessWarn:{color:'#9A3412',fontWeight:'800'},vettedMeta:{borderTopWidth:1,borderTopColor:colors.border,paddingTop:8,gap:3},button:{backgroundColor:colors.primaryNavy,borderRadius:10,padding:13,alignItems:'center'},buttonText:{color:'#fff',fontWeight:'800'},disabled:{opacity:.45},back:{color:colors.primaryNavy,fontWeight:'800',paddingVertical:4},stepNav:{gap:8,paddingBottom:2},step:{width:150,borderWidth:1,borderColor:colors.border,borderRadius:12,padding:11,backgroundColor:'#fff'},stepActive:{backgroundColor:colors.primaryNavy,borderColor:colors.primaryNavy},stepNumber:{fontWeight:'900',color:colors.accentTeal},stepText:{fontWeight:'700',color:colors.textPrimary,marginTop:3},stepTextActive:{color:'#fff'},stage:{backgroundColor:'#fff',borderWidth:1,borderColor:colors.border,borderRadius:18,padding:20,gap:14},stageTitle:{fontSize:23,fontWeight:'800',color:colors.textPrimary},field:{gap:6},fieldLabel:{fontWeight:'700',color:colors.textPrimary},input:{borderWidth:1,borderColor:colors.fieldBorder,borderRadius:9,padding:11,color:colors.textPrimary,backgroundColor:'#fff'},list:{gap:9},item:{borderWidth:1,borderColor:colors.border,borderRadius:10,padding:12,gap:4},itemTitle:{fontWeight:'800',color:colors.textPrimary},meta:{color:colors.textSecondary,lineHeight:19},timeline:{borderLeftWidth:2,borderLeftColor:colors.accentTeal,marginLeft:7,gap:12},timelineItem:{flexDirection:'row',gap:10,marginLeft:-7},dot:{width:12,height:12,borderRadius:6,backgroundColor:colors.accentTeal,marginTop:4},warning:{borderWidth:1,borderColor:'#FDBA74',backgroundColor:'#FFF7ED',borderRadius:10,padding:12,gap:4},warningTitle:{color:'#9A3412',fontWeight:'900'},info:{borderWidth:1,borderColor:'#93C5FD',backgroundColor:'#EFF6FF',borderRadius:10,padding:12,gap:4},infoTitle:{color:'#1D4ED8',fontWeight:'900'},safety:{color:colors.textSecondary,fontStyle:'italic',lineHeight:20},declaration:{backgroundColor:'#F8FAFC',padding:14,borderRadius:10,color:colors.textPrimary,lineHeight:22},secondary:{borderWidth:1,borderColor:colors.primaryNavy,borderRadius:10,padding:12,alignItems:'center'},secondaryText:{color:colors.primaryNavy,fontWeight:'800'},statusGrid:{flexDirection:'row',flexWrap:'wrap',gap:10},statusCard:{minWidth:220,flex:1,borderWidth:1,borderColor:colors.border,borderRadius:10,padding:14,gap:5},review:{borderTopWidth:1,borderTopColor:colors.border},reviewRow:{flexDirection:'row',justifyContent:'space-between',gap:12,borderBottomWidth:1,borderBottomColor:colors.border,paddingVertical:11},missing:{color:'#9A3412',lineHeight:20},stageNav:{flexDirection:'row',justifyContent:'space-between',borderTopWidth:1,borderTopColor:colors.border,paddingTop:10},success:{color:'#166534',backgroundColor:'#F0FDF4',borderWidth:1,borderColor:'#86EFAC',padding:12,borderRadius:10},error:{color:'#991B1B'},errorBox:{color:'#991B1B',backgroundColor:'#FEF2F2',borderWidth:1,borderColor:'#FCA5A5',padding:12,borderRadius:10}});
+function Field({
+  label,
+  value,
+  set,
+}: {
+  label: string;
+  value: string;
+  set: (v: string) => void;
+}) {
+  return (
+    <View style={s.field}>
+      <Text style={s.fieldLabel}>{label}</Text>
+      <TextInput
+        accessibilityLabel={label}
+        style={s.input}
+        value={value}
+        onChangeText={set}
+      />
+    </View>
+  );
+}
+function EvidencePicker({
+  label,
+  category,
+  onUpload,
+  disabled,
+}: {
+  label: string;
+  category: string;
+  onUpload: (asset: DocumentPicker.DocumentPickerAsset) => void;
+  disabled: boolean;
+}) {
+  const [name, setName] = React.useState("");
+  const choose = async () => {
+    const result = await DocumentPicker.getDocumentAsync({
+      type: ["application/pdf", "image/jpeg", "image/png"],
+      copyToCacheDirectory: true,
+      multiple: false,
+    });
+    if (result.canceled) return;
+    setName(result.assets[0].name);
+    onUpload(result.assets[0]);
+  };
+  return (
+    <View style={s.picker}>
+      <Text style={s.fieldLabel}>{label}</Text>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={label}
+        disabled={disabled}
+        style={[s.secondary, disabled && s.disabled]}
+        onPress={choose}
+      >
+        <Text style={s.secondaryText}>Select PDF or image</Text>
+      </Pressable>
+      {name ? (
+        <Text style={s.meta}>Selected: {name}</Text>
+      ) : (
+        <Text style={s.meta}>No document selected.</Text>
+      )}
+      <Text style={s.meta}>Private upload category: {pretty(category)}</Text>
+    </View>
+  );
+}
+function Gap({
+  title,
+  from,
+  to,
+  message,
+}: {
+  key?: string;
+  title: string;
+  from: string;
+  to: string;
+  message: string;
+}) {
+  return (
+    <View style={s.warning}>
+      <Text style={s.warningTitle}>{title}</Text>
+      <Text>
+        {dateLabel(from)} – {dateLabel(to)}
+      </Text>
+      <Text style={s.meta}>{message}</Text>
+    </View>
+  );
+}
+function Overlap({
+  from,
+  to,
+  message,
+}: {
+  key?: string;
+  from: string;
+  to: string;
+  message: string;
+}) {
+  return (
+    <View style={s.info}>
+      <Text style={s.infoTitle}>OVERLAPPING PERIOD</Text>
+      <Text>
+        {dateLabel(from)} – {dateLabel(to)}
+      </Text>
+      <Text style={s.meta}>{message}</Text>
+    </View>
+  );
+}
+function Action({
+  label,
+  onPress,
+  disabled,
+}: {
+  label: string;
+  onPress: () => void;
+  disabled: boolean;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ disabled }}
+      disabled={disabled}
+      style={[s.button, disabled && s.disabled]}
+      onPress={onPress}
+    >
+      <Text style={s.buttonText}>{label}</Text>
+    </Pressable>
+  );
+}
+function StatusCards({ items }: { items: Array<[string, string]> }) {
+  return (
+    <View style={s.statusGrid}>
+      {items.map(([a, b]) => (
+        <View key={a} style={s.statusCard}>
+          <Text style={s.label}>{a}</Text>
+          <Text style={s.itemTitle}>{b}</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+function verificationLabel(value?: string) {
+  return (
+    (
+      {
+        UNVERIFIED: "Candidate supplied — verification not started",
+        PENDING: "Awaiting verification",
+        VERIFIED: "Verified",
+        REJECTED: "Requires attention",
+        EXPIRED: "Expired",
+      } as Record<string, string>
+    )[value || ""] || "Not supplied"
+  );
+}
+function documentStatus(item: {
+  uploadCompleted: boolean;
+  verificationState: string;
+}) {
+  if (!item.uploadCompleted) return "Candidate supplied · Upload pending";
+  return item.verificationState === "VERIFIED"
+    ? "Uploaded · Verified"
+    : item.verificationState === "REJECTED"
+      ? "Uploaded · Requires attention"
+      : item.verificationState === "EXPIRED"
+        ? "Uploaded · Expired"
+        : "Uploaded · Awaiting verification";
+}
+function evidenceState(data: GuardScreening, category: string) {
+  const item = data.evidence?.find((x) => x.category === category);
+  return item ? documentStatus(item) : "Not supplied";
+}
+function referenceLabel(value: string) {
+  return (
+    (
+      {
+        NOT_REQUESTED: "Not requested",
+        REQUESTED: "Requested",
+        RECEIVED: "Received",
+        UNDER_VERIFICATION: "Under verification",
+        VERIFIED: "Verified",
+        REJECTED: "Rejected / Requires attention",
+      } as Record<string, string>
+    )[value] || pretty(value)
+  );
+}
+function stageHelp(step: Step, years: number) {
+  return {
+    personal: "Provide the details used to identify your screening file.",
+    identity:
+      "Candidate-supplied information, uploaded evidence, and reviewer verification are shown separately.",
+    addresses:
+      "Add your current address and previous addresses as a clear chronology.",
+    history: `Cover the configured ${years}-year screening period. The server detects authoritative gaps and overlaps.`,
+    references:
+      "Provide permitted referee details linked to an activity record. Only a reviewer can verify them.",
+    checks:
+      "SIA register and Right to Work checks are distinct reviewer-controlled decisions.",
+    evidence:
+      "Upload PDF, JPEG, or PNG evidence through the private signed-upload workflow.",
+    consent:
+      "Read and accept the current version before submitting. You can withdraw consent later.",
+    review:
+      "Review your progress and resolve every server-reported missing requirement before submission.",
+  }[step];
+}
+function Review({ data }: { data: GuardScreening }) {
+  const rows: Array<[string, string]> = [
+    [
+      "Personal details",
+      data.legalFullName ? "Complete" : "Missing personal details",
+    ],
+    ["Identity evidence", evidenceState(data, "identity")],
+    ["Identity check", verificationLabel(data.identityVerification)],
+    [
+      "Address history",
+      data.requirements?.addressChronology?.continuous
+        ? "Complete for the required period"
+        : `${data.requirements?.addressChronology?.gaps.length || 0} uncovered period(s)`,
+    ],
+    [
+      "Activity history",
+      data.requirements?.chronology.continuous
+        ? "Complete for the required period"
+        : `${data.requirements?.chronology.gaps.length || 0} unexplained period(s)`,
+    ],
+    [
+      "References",
+      data.references?.length
+        ? "Candidate supplied — reviewer verification pending"
+        : "Missing reference",
+    ],
+    ["SIA evidence", evidenceState(data, "sia")],
+    ["SIA check", verificationLabel(data.siaRegisterVerification)],
+    ["Right to Work evidence", evidenceState(data, "right_to_work")],
+    ["Right to Work check", verificationLabel(data.rightToWorkVerification)],
+    [
+      "Consent",
+      data.consents?.some((x) => !x.withdrawnAt)
+        ? "Complete"
+        : "Missing consent",
+    ],
+  ];
+  return (
+    <View style={s.review}>
+      {rows.map(([a, b]) => (
+        <View key={a} style={s.reviewRow}>
+          <Text style={s.label}>{a}</Text>
+          <Text style={s.itemTitle}>{b}</Text>
+        </View>
+      ))}
+      {data.requirements?.addressChronology?.gaps.map((g) => (
+        <Text key={`address-${g.from}`} style={s.missing}>
+          Missing address dates: {dateLabel(g.from)} – {dateLabel(g.to)}
+        </Text>
+      ))}
+      {data.requirements?.chronology.gaps.map((g) => (
+        <Text key={`activity-${g.from}`} style={s.missing}>
+          Missing activity dates: {dateLabel(g.from)} – {dateLabel(g.to)}
+        </Text>
+      ))}
+    </View>
+  );
+}
+
+const s = StyleSheet.create({
+  journey: { gap: 16 },
+  card: {
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 16,
+    padding: 18,
+    gap: 12,
+  },
+  hero: {
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 18,
+    padding: 20,
+    gap: 12,
+  },
+  eyebrow: {
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 1.2,
+    color: colors.accentTeal,
+  },
+  heroTitle: { fontSize: 26, fontWeight: "800", color: colors.textPrimary },
+  title: { fontSize: 21, fontWeight: "800", color: colors.textPrimary },
+  summaryRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 12,
+  },
+  flex: { flex: 1 },
+  label: { color: colors.textSecondary, fontWeight: "700" },
+  progress: { fontSize: 26, fontWeight: "900", color: colors.primaryNavy },
+  track: {
+    height: 9,
+    borderRadius: 99,
+    backgroundColor: "#E2E8F0",
+    overflow: "hidden",
+  },
+  trackFill: { height: "100%", backgroundColor: colors.accentTeal },
+  note: { color: colors.textSecondary, lineHeight: 20 },
+  guidance: { color: colors.textPrimary, lineHeight: 21, fontWeight: "700", backgroundColor: "#F0FDFA", borderRadius: 10, padding: 12 },
+  picker: { gap: 7, borderWidth: 1, borderColor: colors.border, borderRadius: 10, padding: 12 },
+  choiceGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  choice: { borderWidth: 1, borderColor: colors.fieldBorder, borderRadius: 9, paddingHorizontal: 11, paddingVertical: 9, backgroundColor: "#fff" },
+  choiceActive: { backgroundColor: colors.primaryNavy, borderColor: colors.primaryNavy },
+  choiceText: { color: colors.textPrimary, fontWeight: "700" },
+  choiceTextActive: { color: "#fff", fontWeight: "800" },
+  checkGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  done: { minWidth: 190, flexGrow: 1, color: "#166534" },
+  pending: { minWidth: 190, flexGrow: 1, color: colors.textSecondary },
+  accessBox: {
+    backgroundColor: "#F8FAFC",
+    borderRadius: 10,
+    padding: 12,
+    gap: 5,
+  },
+  accessGood: { color: "#166534", fontWeight: "800" },
+  accessWarn: { color: "#9A3412", fontWeight: "800" },
+  vettedMeta: {
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    paddingTop: 8,
+    gap: 3,
+  },
+  button: {
+    backgroundColor: colors.primaryNavy,
+    borderRadius: 10,
+    padding: 13,
+    alignItems: "center",
+  },
+  buttonText: { color: "#fff", fontWeight: "800" },
+  disabled: { opacity: 0.45 },
+  back: { color: colors.primaryNavy, fontWeight: "800", paddingVertical: 4 },
+  stepNav: { gap: 8, paddingBottom: 2 },
+  step: {
+    width: 150,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 12,
+    padding: 11,
+    backgroundColor: "#fff",
+  },
+  stepActive: {
+    backgroundColor: colors.primaryNavy,
+    borderColor: colors.primaryNavy,
+  },
+  stepNumber: { fontWeight: "900", color: colors.accentTeal },
+  stepText: { fontWeight: "700", color: colors.textPrimary, marginTop: 3 },
+  stepTextActive: { color: "#fff" },
+  stage: {
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 18,
+    padding: 20,
+    gap: 14,
+  },
+  stageTitle: { fontSize: 23, fontWeight: "800", color: colors.textPrimary },
+  field: { gap: 6 },
+  fieldLabel: { fontWeight: "700", color: colors.textPrimary },
+  input: {
+    borderWidth: 1,
+    borderColor: colors.fieldBorder,
+    borderRadius: 9,
+    padding: 11,
+    color: colors.textPrimary,
+    backgroundColor: "#fff",
+  },
+  list: { gap: 9 },
+  item: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 10,
+    padding: 12,
+    gap: 4,
+  },
+  itemTitle: { fontWeight: "800", color: colors.textPrimary },
+  meta: { color: colors.textSecondary, lineHeight: 19 },
+  timeline: {
+    borderLeftWidth: 2,
+    borderLeftColor: colors.accentTeal,
+    marginLeft: 7,
+    gap: 12,
+  },
+  timelineItem: { flexDirection: "row", gap: 10, marginLeft: -7 },
+  dot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: colors.accentTeal,
+    marginTop: 4,
+  },
+  warning: {
+    borderWidth: 1,
+    borderColor: "#FDBA74",
+    backgroundColor: "#FFF7ED",
+    borderRadius: 10,
+    padding: 12,
+    gap: 4,
+  },
+  warningTitle: { color: "#9A3412", fontWeight: "900" },
+  info: {
+    borderWidth: 1,
+    borderColor: "#93C5FD",
+    backgroundColor: "#EFF6FF",
+    borderRadius: 10,
+    padding: 12,
+    gap: 4,
+  },
+  infoTitle: { color: "#1D4ED8", fontWeight: "900" },
+  safety: { color: colors.textSecondary, fontStyle: "italic", lineHeight: 20 },
+  declaration: {
+    backgroundColor: "#F8FAFC",
+    padding: 14,
+    borderRadius: 10,
+    color: colors.textPrimary,
+    lineHeight: 22,
+  },
+  secondary: {
+    borderWidth: 1,
+    borderColor: colors.primaryNavy,
+    borderRadius: 10,
+    padding: 12,
+    alignItems: "center",
+  },
+  secondaryText: { color: colors.primaryNavy, fontWeight: "800" },
+  statusGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  statusCard: {
+    minWidth: 220,
+    flex: 1,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 10,
+    padding: 14,
+    gap: 5,
+  },
+  review: { borderTopWidth: 1, borderTopColor: colors.border },
+  reviewRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    paddingVertical: 11,
+  },
+  missing: { color: "#9A3412", lineHeight: 20 },
+  stageNav: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    paddingTop: 10,
+  },
+  success: {
+    color: "#166534",
+    backgroundColor: "#F0FDF4",
+    borderWidth: 1,
+    borderColor: "#86EFAC",
+    padding: 12,
+    borderRadius: 10,
+  },
+  error: { color: "#991B1B" },
+  errorBox: {
+    color: "#991B1B",
+    backgroundColor: "#FEF2F2",
+    borderWidth: 1,
+    borderColor: "#FCA5A5",
+    padding: 12,
+    borderRadius: 10,
+  },
+});
