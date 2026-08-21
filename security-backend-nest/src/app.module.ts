@@ -39,6 +39,7 @@ import { FinanceModule } from './finance/finance.module';
 import { HealthController } from './health.controller';
 import { buildNestTypeOrmOptions } from './database/typeorm.config';
 import { validateRuntimeEnv } from './config/runtime-env';
+import { ScreeningModule } from './screening/screening.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, validate: validateRuntimeEnv }),
@@ -93,6 +94,7 @@ import { validateRuntimeEnv } from './config/runtime-env';
     SchedulerModule,
     PayRuleModule,
     ComplianceModule,
+    ScreeningModule,
     AvailabilityModule,
     LeaveModule,
     CoverageModule,

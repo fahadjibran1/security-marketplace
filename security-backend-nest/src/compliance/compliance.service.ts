@@ -14,6 +14,7 @@ import {
   ComplianceRecordStatus,
   ComplianceRecordType,
 } from './entities/compliance-record.entity';
+import { ScreeningService } from '../screening/screening.service';
 
 @Injectable()
 export class ComplianceService {
@@ -23,6 +24,7 @@ export class ComplianceService {
     private readonly guardProfileService: GuardProfileService,
     private readonly notificationService: NotificationService,
     private readonly guardComplianceService: GuardComplianceService,
+    private readonly screeningService: ScreeningService,
   ) {}
 
   async listForCompanyUser(userId: number) {
@@ -77,6 +79,9 @@ export class ComplianceService {
     const blockers = await this.guardComplianceService.getBlockingReasons(companyId, guardId);
     if (blockers.length) {
       throw new ForbiddenException(`Guard compliance invalid: ${blockers[0]}`);
+    }
+    if (!(await this.screeningService.isGuardVetted(guardId))) {
+      throw new ForbiddenException('Guard compliance invalid: Guard screening status is not VETTED');
     }
   }
 

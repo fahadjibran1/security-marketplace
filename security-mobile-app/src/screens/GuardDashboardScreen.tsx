@@ -3,6 +3,7 @@ import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { FeatureCard } from '../components/FeatureCard';
 import { GuardCompliancePanel } from '../components/guard/GuardCompliancePanel';
+import { GuardScreeningPanel } from '../components/guard/GuardScreeningPanel';
 import { JobsScreen } from './JobsScreen';
 import { GuardTimesheetsScreen } from './GuardTimesheetsScreen';
 import { GuardAvailabilityScreen } from './GuardAvailabilityScreen';
@@ -1541,6 +1542,7 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
             </FeatureCard>
             <View style={styles.guardProfileBelowStack}>
               <GuardCompliancePanel />
+              <GuardScreeningPanel />
               <GuardAvailabilityScreen />
             </View>
           </View>

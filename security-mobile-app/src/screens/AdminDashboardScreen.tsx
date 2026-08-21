@@ -6,10 +6,12 @@ import {
   getHealthLive, getHealthReady, listAssignments, listAuditLogs, listCompanies,
   listCompanyAttendance, listCompanyDailyLogs, listCompanyIncidents, listCompanyNotifications,
   listCompanySafetyAlerts, listGuards, listJobApplications, listJobs, listShifts, listSites, listTimesheets,
+  listScreenings,
+  completeScreeningReview, expireScreening, rejectScreening, requestScreeningInformation, startScreeningReview, verifyScreeningCheck,
 } from '../services/api';
 import { colors } from '../theme';
 
-type DisplayRow = { id: string; title: string; detail: string; status?: string };
+type DisplayRow = { id: string; title: string; detail: string; status?: string; raw?: Record<string, any> };
 type Loader = () => Promise<unknown[]>;
 const text = (value: unknown, fallback = 'Not recorded') => value === null || value === undefined || value === '' ? fallback : String(value);
 const date = (value: unknown) => value ? new Date(String(value)).toLocaleString() : 'Not recorded';
@@ -19,6 +21,7 @@ const loaders: Record<Exclude<AdminSection, 'overview'>, Loader> = {
   applications: listJobApplications, assignments: listAssignments, shifts: listShifts,
   attendance: listCompanyAttendance, timesheets: listTimesheets, incidents: listCompanyIncidents,
   alerts: listCompanySafetyAlerts, dailyLogs: listCompanyDailyLogs, audit: listAuditLogs,
+  screening: listScreenings,
   notifications: listCompanyNotifications,
   health: async () => [{ id: 'live', name: 'Liveness', ...(await getHealthLive()) }, { id: 'ready', name: 'Readiness', ...(await getHealthReady()) }],
 };
@@ -39,6 +42,7 @@ function displayRow(section: Exclude<AdminSection, 'overview'>, value: unknown, 
     case 'incidents': return { id, title: text(row.title), detail: `${text(row.severity)} severity · ${text(row.site?.name, row.locationText ?? 'Location not recorded')} · ${date(row.createdAt)}`, status: text(row.status) };
     case 'alerts': return { id, title: `${text(row.type)} · ${text(row.priority)} priority`, detail: `${text(row.guard?.fullName, 'Guard not recorded')} · ${date(row.createdAt)} · ${text(row.message)}`, status: text(row.status) };
     case 'dailyLogs': return { id, title: `${text(row.logType)} · ${text(row.guard?.fullName, 'Guard')}`, detail: `${date(row.createdAt)} · ${text(row.message)}` };
+    case 'screening': return { id, title: text(row.guard?.fullName, `Screening #${id}`), detail: `${text(row.progress, '0')}% complete · ${text(row.requirements?.missing?.length, '0')} outstanding requirements`, status: text(row.status), raw: row };
     case 'audit': return { id, title: text(row.action), detail: `${text(row.entityType)} #${text(row.entityId)} · ${text(row.user?.email, 'System actor')} · ${date(row.createdAt)}` };
     case 'notifications': return { id, title: text(row.title), detail: `${text(row.message)} · ${date(row.createdAt)}`, status: text(row.status) };
     case 'health': return { id, title: text(row.name), detail: `API response received · ${Object.keys(row).filter((key) => key !== 'id' && key !== 'name').map((key) => `${key}: ${text(row[key])}`).join(' · ')}`, status: 'available' };
@@ -54,6 +58,7 @@ export function AdminDashboardScreen() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<DisplayRow | null>(null);
+  const [reviewReason,setReviewReason]=useState('');
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
@@ -87,7 +92,15 @@ export function AdminDashboardScreen() {
     {section === 'overview' && !error ? <View style={styles.grid}>{overview.map((metric) => { const item = ADMIN_NAV_ITEMS.find((entry) => entry.key === metric.section)!; return <Pressable key={metric.section} onPress={() => setSection(metric.section)} style={styles.metricCard}><Text style={styles.cardLabel}>{item.label}</Text><Text style={styles.cardValue}>{loading ? '—' : metric.count}</Text><Text style={styles.link}>Open view →</Text></Pressable>; })}</View> : null}
     {section !== 'overview' && !loading && !error && visibleRows.length === 0 ? <View style={styles.empty}><Text style={styles.emptyTitle}>{query ? 'No matching records' : current.emptyLabel}</Text><Text style={styles.emptyText}>{query ? 'Clear or change the search term.' : 'This is expected for a freshly provisioned pilot database.'}</Text></View> : null}
     {section !== 'overview' && loading ? <Text style={styles.loading}>Loading {current.label.toLocaleLowerCase()}…</Text> : null}
-    {selected ? <View style={styles.detailPanel}><Text style={styles.detailHeading}>{selected.title}</Text><Text style={styles.rowDetail}>{selected.detail}</Text>{selected.status ? <Text style={styles.status}>{selected.status}</Text> : null}<Pressable onPress={() => setSelected(null)}><Text style={styles.retry}>Close detail</Text></Pressable></View> : null}
+    {selected ? <View style={styles.detailPanel}><Text style={styles.detailHeading}>{selected.title}</Text><Text style={styles.rowDetail}>{selected.detail}</Text>{selected.status ? <Text style={styles.status}>{selected.status}</Text> : null}
+      {section==='screening'?<><TextInput accessibilityLabel="Screening review reason" placeholder="Required review decision or information-request reason" value={reviewReason} onChangeText={setReviewReason} style={styles.search}/><View style={styles.grid}>
+        {selected.status==='READY_FOR_REVIEW'?<Pressable style={styles.approveButton} onPress={async()=>{await startScreeningReview(Number(selected.id));await load();setSelected(null);}}><Text style={styles.approveText}>Start review</Text></Pressable>:null}
+        {selected.status==='UNDER_REVIEW'?(['identity','address','sia','rtw'] as const).map(check=><Pressable key={check} style={styles.approveButton} onPress={async()=>{await verifyScreeningCheck(Number(selected.id),check);await load();}}><Text style={styles.approveText}>Verify {check.toUpperCase()}</Text></Pressable>):null}
+        {['READY_FOR_REVIEW','UNDER_REVIEW'].includes(selected.status||'')?<Pressable style={styles.approveButton} onPress={async()=>{await requestScreeningInformation(Number(selected.id),reviewReason);await load();setSelected(null);}}><Text style={styles.approveText}>Request information</Text></Pressable>:null}
+        {selected.status==='UNDER_REVIEW'?<Pressable style={styles.approveButton} onPress={async()=>{await completeScreeningReview(Number(selected.id),reviewReason);await load();setSelected(null);}}><Text style={styles.approveText}>Complete screening</Text></Pressable>:null}
+        {['READY_FOR_REVIEW','UNDER_REVIEW'].includes(selected.status||'')?<Pressable style={styles.approveButton} onPress={async()=>{await rejectScreening(Number(selected.id),reviewReason);await load();setSelected(null);}}><Text style={styles.approveText}>Reject</Text></Pressable>:null}
+        {selected.status==='VETTED'?<Pressable style={styles.approveButton} onPress={async()=>{await expireScreening(Number(selected.id),reviewReason);await load();setSelected(null);}}><Text style={styles.approveText}>Mark expired</Text></Pressable>:null}
+      </View></>:null}<Pressable onPress={() => setSelected(null)}><Text style={styles.retry}>Close detail</Text></Pressable></View> : null}
     {section !== 'overview' && !loading && !error ? <View style={styles.list}>{visibleRows.map((row) => <Pressable accessibilityRole="button" accessibilityLabel={`Open ${row.title} detail`} onPress={() => setSelected(row)} key={row.id} style={styles.row}><View style={styles.rowCopy}><Text style={styles.rowTitle}>{row.title}</Text><Text style={styles.rowDetail}>{row.detail}</Text></View>{row.status ? <Text style={styles.status}>{row.status}</Text> : null}</Pressable>)}</View> : null}
   </ScrollView></View>;
 }

@@ -35,6 +35,7 @@ import {
   CreateJobPayload,
   CreateShiftPayload,
   GuardProfile,
+  GuardScreening,
   HireApplicationPayload,
   Incident,
   IncidentAnalyticsReport,
@@ -1007,3 +1008,21 @@ export function reviewJobApplication(id: number, payload: ReviewJobApplicationPa
     body: JSON.stringify(payload),
   });
 }
+
+export function getMyScreening(){ return request<GuardScreening>('/screening/mine'); }
+export function startMyScreening(screeningPeriodYears=5){ return request<GuardScreening>('/screening/mine/start',{method:'POST',body:JSON.stringify({screeningPeriodYears})}); }
+export function updateMyScreeningProfile(payload:{legalFullName:string;previousNames?:string;dateOfBirth:string;nationality:string;currentAddress:string;siaLicenceType?:string}){return request<GuardScreening>('/screening/mine/profile',{method:'PUT',body:JSON.stringify(payload)});}
+export function addMyScreeningHistory(payload:{type:string;startDate:string;endDate?:string;isCurrent:boolean;organisation?:string;description:string}){return request('/screening/mine/history',{method:'POST',body:JSON.stringify(payload)});}
+export function addMyScreeningAddress(payload:{address:string;startDate:string;endDate?:string;isCurrent:boolean}){return request('/screening/mine/addresses',{method:'POST',body:JSON.stringify(payload)});}
+export function addMyScreeningReference(payload:{historyId:number;organisation:string;contactPerson:string;relationship:string;businessEmail:string;phone?:string}){return request('/screening/mine/references',{method:'POST',body:JSON.stringify(payload)});}
+export function createMyScreeningEvidence(payload:{category:string;originalFileName:string;mimeType:string;sizeBytes:number}){return request<{id:number;upload:{url:string;method:string;headers?:Record<string,string>}}>('/screening/mine/evidence',{method:'POST',body:JSON.stringify(payload)});}
+export function completeMyScreeningEvidence(id:number){return request(`/screening/evidence/${id}/complete-upload`,{method:'POST'});}
+export function acceptMyScreeningConsent(consentVersion='S4-PILOT-1'){return request('/screening/mine/consent',{method:'POST',body:JSON.stringify({consentVersion})});}
+export function submitMyScreening(){return request<GuardScreening>('/screening/mine/submit',{method:'POST'});}
+export function listScreenings(){return request<GuardScreening[]>('/screening');}
+export function startScreeningReview(id:number){return request<GuardScreening>(`/screening/${id}/start-review`,{method:'POST'});}
+export function verifyScreeningCheck(id:number,check:'identity'|'address'|'sia'|'rtw'){return request<GuardScreening>(`/screening/${id}/checks/${check}`,{method:'PATCH',body:JSON.stringify({state:'VERIFIED',method:'Authorised reviewer verification'})});}
+export function requestScreeningInformation(id:number,reason:string){return request<GuardScreening>(`/screening/${id}/request-information`,{method:'POST',body:JSON.stringify({reason})});}
+export function completeScreeningReview(id:number,reason:string){return request<GuardScreening>(`/screening/${id}/complete`,{method:'POST',body:JSON.stringify({reason})});}
+export function rejectScreening(id:number,reason:string){return request<GuardScreening>(`/screening/${id}/reject`,{method:'POST',body:JSON.stringify({reason})});}
+export function expireScreening(id:number,reason:string){return request<GuardScreening>(`/screening/${id}/expire`,{method:'POST',body:JSON.stringify({reason})});}

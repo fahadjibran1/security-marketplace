@@ -81,7 +81,7 @@ export class S3CompatibleEvidenceStorageService extends EvidenceStorageService {
   }
 
   private sign(method: 'GET' | 'PUT' | 'HEAD', object: EvidenceObject, signedHeaders: Record<string, string> = {}): SignedEvidenceAccess {
-    if (!/^compliance\/(?:company\/\d+|guard)\/\d+\/[0-9a-f-]{36}$/.test(object.key)) {
+    if (!/^(?:compliance\/(?:company\/\d+|guard)\/\d+|screening\/guard\/\d+)\/[0-9a-f-]{36}$/.test(object.key)) {
       throw new BadRequestException('Invalid evidence object key.');
     }
     const config = this.config();

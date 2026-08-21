@@ -1283,3 +1283,14 @@ export interface AuditLog {
   company?: CompanyProfile | null;
   user?: UserSummary | null;
 }
+
+export type ScreeningStatus = 'NOT_STARTED'|'IN_PROGRESS'|'READY_FOR_REVIEW'|'UNDER_REVIEW'|'VETTED'|'REQUIRES_ATTENTION'|'REJECTED'|'EXPIRED';
+export interface GuardScreening {
+  id?: number; status: ScreeningStatus; screeningPeriodYears?: number; progress: number;
+  legalFullName?: string; dateOfBirth?: string; nationality?: string; currentAddress?: string;
+  requirements?: { missing: string[]; chronology: { continuous:boolean; gaps:Array<{from:string;to:string}>; overlaps:Array<{from:string;to:string}> } };
+  history?: Array<{id:number;type:string;startDate:string;endDate?:string|null;isCurrent:boolean;organisation?:string}>;
+  addresses?: Array<{id:number;address:string;startDate:string;endDate?:string|null;isCurrent:boolean;verificationState:string}>;
+  references?: Array<{id:number;history:{id:number};organisation:string;status:string;sourceVerified:boolean}>;
+  evidence?: Array<{id:number;category:string;mimeType:string;sizeBytes:number;uploadCompleted:boolean;verificationState:string}>;
+}

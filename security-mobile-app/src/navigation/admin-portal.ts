@@ -3,7 +3,7 @@ import type { AppRole } from '../types/models';
 export type AdminSection =
   | 'overview' | 'companies' | 'guards' | 'sites' | 'jobs' | 'applications'
   | 'assignments' | 'shifts' | 'attendance' | 'timesheets' | 'incidents'
-  | 'alerts' | 'dailyLogs' | 'audit' | 'notifications' | 'health';
+  | 'alerts' | 'dailyLogs' | 'screening' | 'audit' | 'notifications' | 'health';
 
 export interface AdminNavItem {
   key: AdminSection;
@@ -26,6 +26,7 @@ export const ADMIN_NAV_ITEMS: readonly AdminNavItem[] = [
   { key: 'incidents', label: 'Incidents', group: 'Assurance', emptyLabel: 'No incidents have been reported yet.' },
   { key: 'alerts', label: 'Panic & safety alerts', group: 'Assurance', emptyLabel: 'No safety alerts have been raised yet.' },
   { key: 'dailyLogs', label: 'Daily logs', group: 'Assurance', emptyLabel: 'No daily logs have been recorded yet.' },
+  { key: 'screening', label: 'Screening review', group: 'Assurance', emptyLabel: 'No screening files have been started yet.' },
   { key: 'audit', label: 'Audit trail', group: 'Assurance', emptyLabel: 'No audit events have been recorded yet.' },
   { key: 'notifications', label: 'Admin notifications', group: 'Assurance', emptyLabel: 'No admin notifications have been received yet.' },
   { key: 'health', label: 'Service health', group: 'Assurance', emptyLabel: 'No health response was returned.' },

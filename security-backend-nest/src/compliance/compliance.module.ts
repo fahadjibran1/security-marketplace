@@ -14,6 +14,7 @@ import { AuditLogModule } from '../audit-log/audit-log.module';
 import { JobApplication } from '../job-application/entities/job-application.entity';
 import { PreHireComplianceAuthorizationService } from './pre-hire-compliance-authorization.service';
 import { EvidenceStorageService, S3CompatibleEvidenceStorageService } from './evidence-storage.service';
+import { ScreeningModule } from '../screening/screening.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { EvidenceStorageService, S3CompatibleEvidenceStorageService } from './ev
     GuardProfileModule,
     NotificationModule,
     AuditLogModule,
+    ScreeningModule,
   ],
   controllers: [ComplianceController],
   providers: [

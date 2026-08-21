@@ -29,6 +29,7 @@ import { PaymentRecord } from '../payment-record/entities/payment-record.entity'
 import { PayrollBatch } from '../payroll-batch/entities/payroll-batch.entity';
 import { PayRuleConfig } from '../pay-rule/entities/pay-rule-config.entity';
 import { User } from '../user/entities/user.entity';
+import { GuardScreening, ScreeningAddress, ScreeningConsent, ScreeningEvidence, ScreeningException, ScreeningHistory, ScreeningReference } from '../screening/entities/screening.entities';
 
 export const appEntities = [
   AttendanceEvent,
@@ -62,4 +63,11 @@ export const appEntities = [
   Site,
   Timesheet,
   User,
+  GuardScreening,
+  ScreeningHistory,
+  ScreeningAddress,
+  ScreeningReference,
+  ScreeningEvidence,
+  ScreeningConsent,
+  ScreeningException,
 ];
