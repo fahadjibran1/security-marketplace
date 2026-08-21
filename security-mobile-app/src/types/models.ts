@@ -1287,10 +1287,13 @@ export interface AuditLog {
 export type ScreeningStatus = 'NOT_STARTED'|'IN_PROGRESS'|'READY_FOR_REVIEW'|'UNDER_REVIEW'|'VETTED'|'REQUIRES_ATTENTION'|'REJECTED'|'EXPIRED';
 export interface GuardScreening {
   id?: number; status: ScreeningStatus; screeningPeriodYears?: number; progress: number;
-  legalFullName?: string; dateOfBirth?: string; nationality?: string; currentAddress?: string;
+  legalFullName?: string; previousNames?: string; dateOfBirth?: string; nationality?: string; currentAddress?: string; siaLicenceType?: string;
+  identityVerification?: string; siaRegisterVerification?: string; rightToWorkVerification?: string;
+  submittedAt?: string|null; reviewedAt?: string|null; vettedAt?: string|null; retentionReviewAt?: string|null;
   requirements?: { missing: string[]; chronology: { continuous:boolean; gaps:Array<{from:string;to:string}>; overlaps:Array<{from:string;to:string}> } };
   history?: Array<{id:number;type:string;startDate:string;endDate?:string|null;isCurrent:boolean;organisation?:string}>;
   addresses?: Array<{id:number;address:string;startDate:string;endDate?:string|null;isCurrent:boolean;verificationState:string}>;
-  references?: Array<{id:number;history:{id:number};organisation:string;status:string;sourceVerified:boolean}>;
+  references?: Array<{id:number;history?:{id:number};historyId?:number;organisation:string;contactPerson?:string;relationship?:string;businessEmail?:string;status:string;sourceVerified:boolean}>;
   evidence?: Array<{id:number;category:string;mimeType:string;sizeBytes:number;uploadCompleted:boolean;verificationState:string}>;
+  consents?: Array<{id:number;consentVersion:string;acceptedAt:string;withdrawnAt?:string|null}>;
 }

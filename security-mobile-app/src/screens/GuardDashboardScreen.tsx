@@ -3,7 +3,7 @@ import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { FeatureCard } from '../components/FeatureCard';
 import { GuardCompliancePanel } from '../components/guard/GuardCompliancePanel';
-import { GuardScreeningPanel } from '../components/guard/GuardScreeningPanel';
+import { GuardScreeningJourney, GuardScreeningPanel } from '../components/guard/GuardScreeningPanel';
 import { JobsScreen } from './JobsScreen';
 import { GuardTimesheetsScreen } from './GuardTimesheetsScreen';
 import { GuardAvailabilityScreen } from './GuardAvailabilityScreen';
@@ -39,7 +39,7 @@ interface GuardDashboardScreenProps {
   user: AuthUser;
 }
 
-type GuardTab = 'home' | 'offers' | 'jobs' | 'history' | 'profile';
+type GuardTab = 'home' | 'offers' | 'jobs' | 'history' | 'profile' | 'screening';
 type QuickActionModal = 'log' | 'checkCall' | 'incident' | 'welfare' | 'panic' | null;
 
 type LocalTimelineEvent = {
@@ -1032,7 +1032,9 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
                 ? 'Jobs'
                 : activeTab === 'history'
                   ? 'History'
-                  : 'Profile'}
+                  : activeTab === 'screening'
+                    ? 'Screening'
+                    : 'Profile'}
         </Text>
       </View>
 
@@ -1542,11 +1544,12 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
             </FeatureCard>
             <View style={styles.guardProfileBelowStack}>
               <GuardCompliancePanel />
-              <GuardScreeningPanel />
+              <GuardScreeningPanel onContinue={() => setActiveTab('screening')} />
               <GuardAvailabilityScreen />
             </View>
           </View>
         ) : null}
+        {activeTab === 'screening' ? <GuardScreeningJourney onBack={() => setActiveTab('profile')} /> : null}
       </ScrollView>
       </View>
 
