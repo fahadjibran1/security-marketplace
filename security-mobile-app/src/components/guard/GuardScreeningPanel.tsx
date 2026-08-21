@@ -23,6 +23,7 @@ import {
 } from "../../services/api";
 import { GuardScreening, ScreeningStatus } from "../../types/models";
 import { colors } from "../../theme";
+import { formatScreeningDate, screeningDateToIso } from "./screening-format";
 
 type Step =
   | "personal"
@@ -65,25 +66,6 @@ const pretty = (value?: string) =>
         .replaceAll("_", " ")
         .replace(/^./, (x) => x.toUpperCase())
     : "Not supplied";
-export const formatScreeningDate = (value?: string | null) => {
-  if (!value) return "Present";
-  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  return match ? `${match[3]}/${match[2]}/${match[1]}` : value;
-};
-export const screeningDateToIso = (value: string) => {
-  const match = value.trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-  if (!match) throw new Error("Enter dates as DD/MM/YYYY.");
-  const [, day, month, year] = match;
-  const iso = `${year}-${month}-${day}`,
-    parsed = new Date(`${iso}T00:00:00Z`);
-  if (
-    parsed.getUTCFullYear() !== Number(year) ||
-    parsed.getUTCMonth() + 1 !== Number(month) ||
-    parsed.getUTCDate() !== Number(day)
-  )
-    throw new Error("Enter a valid date as DD/MM/YYYY.");
-  return iso;
-};
 const dateLabel = formatScreeningDate;
 const HISTORY_TYPES = [
   ["EMPLOYMENT", "Employment"],
@@ -259,10 +241,13 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
     const source = await fetch(asset.uri);
     if (!source.ok) throw new Error("Unable to read the selected document.");
     const blob = await source.blob();
-    const mimeType = asset.mimeType || blob.type;
-    if (!mimeType)
-      throw new Error("The selected document type could not be identified.");
+    const mimeType = normalizeEvidenceMimeType(asset.mimeType || blob.type, asset.name);
+    if (!mimeType) throw new Error("Choose a PDF, JPEG/JPG or PNG document.");
     const sizeBytes = asset.size || blob.size;
+    if (!Number.isInteger(sizeBytes) || sizeBytes < 1)
+      throw new Error("The selected document is empty or its size is unavailable.");
+    if (sizeBytes > 10 * 1024 * 1024)
+      throw new Error("The selected document exceeds the 10 MB size limit.");
     const created = await createMyScreeningEvidence({
       category,
       originalFileName: asset.name,
@@ -280,6 +265,11 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
   };
   const canEdit = editable(data?.status),
     activeIndex = STEPS.findIndex((x) => x.key === step);
+  const navigateToStep = (next: Step) => {
+    setError("");
+    setFeedback("");
+    setStep(next);
+  };
   if (!data?.id)
     return (
       <View style={s.journey}>
@@ -362,7 +352,7 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
             accessibilityRole="button"
             accessibilityState={{ selected: x.key === step }}
             key={x.key}
-            onPress={() => setStep(x.key)}
+            onPress={() => navigateToStep(x.key)}
             style={[s.step, x.key === step && s.stepActive]}
           >
             <Text style={[s.stepNumber, x.key === step && s.stepTextActive]}>
@@ -467,10 +457,11 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
         ) : null}
         {step === "addresses" ? (
           <>
-            <Text style={s.guidance}>
-              Provide a continuous address history covering the last{" "}
-              {data.screeningPeriodYears || 5} years.
-            </Text>
+            <PeriodGuidance
+              text={`Please provide your complete address history for the last ${data.screeningPeriodYears || 5} years. There must be no unexplained gaps between addresses.`}
+              start={data.requirements?.addressChronology?.periodStart}
+              end={data.requirements?.addressChronology?.periodEnd}
+            />
             <View style={s.list}>
               {[...(data.addresses || [])]
                 .sort((a, b) => Number(b.isCurrent) - Number(a.isCurrent))
@@ -490,7 +481,7 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
             {data.requirements?.addressChronology?.gaps.map((g) => (
               <Gap
                 key={`${g.from}-${g.to}`}
-                title="UNCOVERED ADDRESS PERIOD"
+                title="ADDRESS HISTORY INCOMPLETE — MISSING PERIOD"
                 from={g.from}
                 to={g.to}
                 message="Add the address where you lived during this exact period before submitting."
@@ -556,11 +547,11 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
         ) : null}
         {step === "history" ? (
           <>
-            <Text style={s.guidance}>
-              Provide a continuous activity history covering the last{" "}
-              {data.screeningPeriodYears || 5} years, including explained
-              periods when you were not working.
-            </Text>
+            <PeriodGuidance
+              text={`Please account for your complete employment, education and activity history for the last ${data.screeningPeriodYears || 5} years. There must be no unexplained gaps.`}
+              start={data.requirements?.chronology.periodStart}
+              end={data.requirements?.chronology.periodEnd}
+            />
             <View style={s.timeline}>
               {(data.history || []).map((h) => (
                 <View key={h.id} style={s.timelineItem}>
@@ -578,7 +569,7 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
             {data.requirements?.chronology.gaps.map((g) => (
               <Gap
                 key={`${g.from}-${g.to}`}
-                title="UNEXPLAINED ACTIVITY PERIOD"
+                title="ACTIVITY HISTORY INCOMPLETE — MISSING PERIOD"
                 from={g.from}
                 to={g.to}
                 message="Add an activity or explained period covering these exact dates before submitting."
@@ -892,13 +883,13 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
         <View style={s.stageNav}>
           <Pressable
             disabled={activeIndex === 0}
-            onPress={() => setStep(STEPS[activeIndex - 1].key)}
+            onPress={() => navigateToStep(STEPS[activeIndex - 1].key)}
           >
             <Text style={s.back}>Previous</Text>
           </Pressable>
           <Pressable
             disabled={activeIndex === STEPS.length - 1}
-            onPress={() => setStep(STEPS[activeIndex + 1].key)}
+            onPress={() => navigateToStep(STEPS[activeIndex + 1].key)}
           >
             <Text style={s.back}>Next</Text>
           </Pressable>
@@ -929,6 +920,17 @@ function Field({
     </View>
   );
 }
+export function normalizeEvidenceMimeType(value: string | undefined, name: string) {
+  const normalized = (value || "").trim().toLowerCase();
+  if (normalized === "application/pdf") return normalized;
+  if (normalized === "image/jpeg" || normalized === "image/jpg") return "image/jpeg";
+  if (normalized === "image/png") return normalized;
+  const extension = name.toLowerCase().split(".").pop();
+  if (extension === "pdf") return "application/pdf";
+  if (extension === "jpg" || extension === "jpeg") return "image/jpeg";
+  if (extension === "png") return "image/png";
+  return null;
+}
 function EvidencePicker({
   label,
   category,
@@ -937,10 +939,11 @@ function EvidencePicker({
 }: {
   label: string;
   category: string;
-  onUpload: (asset: DocumentPicker.DocumentPickerAsset) => void;
+  onUpload: (asset: DocumentPicker.DocumentPickerAsset) => Promise<void>;
   disabled: boolean;
 }) {
-  const [name, setName] = React.useState("");
+  const [asset, setAsset] = React.useState<DocumentPicker.DocumentPickerAsset | null>(null);
+  const [uploading, setUploading] = React.useState(false);
   const choose = async () => {
     const result = await DocumentPicker.getDocumentAsync({
       type: ["application/pdf", "image/jpeg", "image/png"],
@@ -948,8 +951,17 @@ function EvidencePicker({
       multiple: false,
     });
     if (result.canceled) return;
-    setName(result.assets[0].name);
-    onUpload(result.assets[0]);
+    setAsset(result.assets[0]);
+  };
+  const upload = async () => {
+    if (!asset) return;
+    setUploading(true);
+    try {
+      await onUpload(asset);
+      setAsset(null);
+    } finally {
+      setUploading(false);
+    }
   };
   return (
     <View style={s.picker}>
@@ -957,20 +969,32 @@ function EvidencePicker({
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={label}
-        disabled={disabled}
+        disabled={disabled || uploading}
         style={[s.secondary, disabled && s.disabled]}
         onPress={choose}
       >
-        <Text style={s.secondaryText}>Select PDF or image</Text>
+        <Text style={s.secondaryText}>Choose document</Text>
       </Pressable>
-      {name ? (
-        <Text style={s.meta}>Selected: {name}</Text>
+      {asset ? (
+        <Text style={s.itemTitle}>{asset.name}</Text>
       ) : (
         <Text style={s.meta}>No document selected.</Text>
       )}
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Upload ${pretty(category)} document`}
+        disabled={disabled || uploading || !asset}
+        style={[s.button, (disabled || uploading || !asset) && s.disabled]}
+        onPress={upload}
+      >
+        <Text style={s.buttonText}>{uploading ? "Uploading…" : "Upload document"}</Text>
+      </Pressable>
       <Text style={s.meta}>Private upload category: {pretty(category)}</Text>
     </View>
   );
+}
+function PeriodGuidance({text,start,end}:{text:string;start?:string;end?:string}) {
+  return <View style={s.guidance}><Text style={s.guidanceText}>{text}</Text><Text style={s.requiredPeriod}>Required period: {start&&end?`${dateLabel(start)} – ${dateLabel(end)}`:"Loading authoritative screening period…"}</Text></View>;
 }
 function Gap({
   title,
@@ -1213,7 +1237,9 @@ const s = StyleSheet.create({
   },
   trackFill: { height: "100%", backgroundColor: colors.accentTeal },
   note: { color: colors.textSecondary, lineHeight: 20 },
-  guidance: { color: colors.textPrimary, lineHeight: 21, fontWeight: "700", backgroundColor: "#F0FDFA", borderRadius: 10, padding: 12 },
+  guidance: { backgroundColor: "#F0FDFA", borderRadius: 10, padding: 12, gap: 7 },
+  guidanceText: { color: colors.textPrimary, lineHeight: 21, fontWeight: "700" },
+  requiredPeriod: { color: colors.primaryNavy, fontWeight: "900" },
   picker: { gap: 7, borderWidth: 1, borderColor: colors.border, borderRadius: 10, padding: 12 },
   choiceGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   choice: { borderWidth: 1, borderColor: colors.fieldBorder, borderRadius: 9, paddingHorizontal: 11, paddingVertical: 9, backgroundColor: "#fff" },

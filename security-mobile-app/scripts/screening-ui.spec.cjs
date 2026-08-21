@@ -1,6 +1,7 @@
 const assert=require('assert'),fs=require('fs'),path=require('path');let passed=0;
 const read=p=>fs.readFileSync(path.join(__dirname,'..',p),'utf8');
-const panel=read('src/components/guard/GuardScreeningPanel.tsx'),guard=read('src/screens/GuardDashboardScreen.tsx'),jobs=read('src/screens/JobsScreen.tsx'),admin=read('src/screens/AdminDashboardScreen.tsx'),company=read('src/components/company/CompanyComplianceWorkspace.tsx'),api=read('src/services/api.ts'),models=read('src/types/models.ts'),service=read('../security-backend-nest/src/screening/screening.service.ts'),controller=read('../security-backend-nest/src/screening/screening.controller.ts'),eligibility=read('../security-backend-nest/src/compliance/compliance.service.ts');
+const panel=read('src/components/guard/GuardScreeningPanel.tsx'),formatSource=read('src/components/guard/screening-format.ts'),guard=read('src/screens/GuardDashboardScreen.tsx'),jobs=read('src/screens/JobsScreen.tsx'),admin=read('src/screens/AdminDashboardScreen.tsx'),company=read('src/components/company/CompanyComplianceWorkspace.tsx'),api=read('src/services/api.ts'),models=read('src/types/models.ts'),service=read('../security-backend-nest/src/screening/screening.service.ts'),controller=read('../security-backend-nest/src/screening/screening.controller.ts'),eligibility=read('../security-backend-nest/src/compliance/compliance.service.ts');
+const compiled=require('typescript').transpileModule(formatSource,{compilerOptions:{module:require('typescript').ModuleKind.CommonJS,target:require('typescript').ScriptTarget.ES2022}}).outputText,dateExports={};new Function('exports',compiled)(dateExports);
 function test(name,fn){fn();passed++;console.log(`PASS ${name}`)}
 test('ACTIVE unvetted Guard sees screening progress',()=>assert.match(panel,/Marketplace access: Available[\s\S]*Work eligibility:/));
 test('ACTIVE unvetted Guard still sees Jobs',()=>assert.match(guard,/\['jobs', 'Jobs'\]/));
@@ -35,10 +36,22 @@ test('explicit labels and controlled feedback are present',()=>{assert.match(pan
 test('responsive step navigation avoids a desktop-only form',()=>assert.match(panel,/ScrollView[\s\S]{0,100}horizontal/));
 test('API exposes no client VETTED mutation',()=>assert.doesNotMatch(api,/status\s*:\s*['"]VETTED|setVetted/));
 test('model includes server consent and verification state',()=>{assert.match(models,/consents\?/);assert.match(models,/identityVerification\?/)});
-test('candidate dates render and parse as DD/MM/YYYY',()=>{assert.match(panel,/formatScreeningDate/);assert.match(panel,/screeningDateToIso/);assert.match(panel,/DD\/MM\/YYYY/);assert.doesNotMatch(panel,/toLocaleDateString/)});
+test('API ISO renders DD/MM/YYYY',()=>assert.equal(dateExports.formatScreeningDate('1947-08-14'),'14/08/1947'));
+test('DD/MM/YYYY converts to API ISO',()=>assert.equal(dateExports.screeningDateToIso('01/01/2024'),'2024-01-01'));
+test('invalid calendar date is rejected',()=>assert.throws(()=>dateExports.screeningDateToIso('31/02/2025'),/valid date/));
+test('valid leap date is accepted',()=>assert.equal(dateExports.screeningDateToIso('29/02/2024'),'2024-02-29'));
+test('invalid non-leap date is rejected',()=>assert.throws(()=>dateExports.screeningDateToIso('29/02/2025'),/valid date/));
+test('no ISO candidate labels remain',()=>{assert.doesNotMatch(panel,/\(YYYY-MM-DD\)/);assert.doesNotMatch(panel,/toLocaleDateString/)});
 test('address five-year coverage is server authoritative',()=>{assert.match(panel,/addressChronology/);assert.match(service,/addressChronology=assessContinuousHistory/)});
 test('activity five-year coverage supports all certified period types',()=>{for(const value of ['EMPLOYMENT','SELF_EMPLOYMENT','EDUCATION','UNEMPLOYMENT','CAREER_BREAK','OVERSEAS','OTHER_EXPLAINED_PERIOD'])assert.match(panel,new RegExp(value))});
-test('exact address and activity gaps are actionable',()=>{assert.match(panel,/UNCOVERED ADDRESS PERIOD/);assert.match(panel,/UNEXPLAINED ACTIVITY PERIOD/);assert.match(panel,/dateLabel\(from\)/)});
+test('exact address and activity gaps are actionable',()=>{assert.match(panel,/ADDRESS HISTORY INCOMPLETE — MISSING PERIOD/);assert.match(panel,/ACTIVITY HISTORY INCOMPLETE — MISSING PERIOD/);assert.match(panel,/dateLabel\(from\)/)});
 test('reference linkage uses owned activity selector',()=>{assert.match(panel,/data\.history\.map/);assert.doesNotMatch(panel,/Activity record ID/);assert.match(service,/history\.screening\.id!==screening\.id/)});
 test('document picker drives private upload flow',()=>{assert.match(panel,/DocumentPicker\.getDocumentAsync/);assert.match(service,/createSignedUploadUrl/)});
+test('cancelled document picker is safe',()=>assert.match(panel,/if \(result\.canceled\) return/));
+test('picker accepts PDF JPEG and PNG',()=>{for(const mime of ['application/pdf','image/jpeg','image/png'])assert.match(panel,new RegExp(mime.replace('/','\\/')))});
+test('invalid MIME is rejected',()=>assert.match(panel,/Choose a PDF, JPEG\/JPG or PNG document/));
+test('oversized evidence is rejected before metadata creation',()=>assert.ok(panel.indexOf('10 MB size limit')<panel.lastIndexOf('createMyScreeningEvidence')));
+test('evidence selection and upload are separate actions',()=>{assert.match(panel,/Choose document/);assert.match(panel,/Upload document/);assert.doesNotMatch(panel,/Selected file URI/)});
+test('step navigation clears stale mutation errors',()=>{assert.match(panel,/navigateToStep/);assert.match(panel,/setError\(""\)/)});
+test('progress uses authoritative candidate criteria',()=>assert.match(service,/candidateCriteria/));
 console.log(JSON.stringify({event:'screening_ux_tests_passed',tests:passed}));
