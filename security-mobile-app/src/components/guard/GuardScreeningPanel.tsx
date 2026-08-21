@@ -1,6 +1,6 @@
 import React from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
-import { acceptMyScreeningConsent, addMyScreeningAddress, addMyScreeningHistory, addMyScreeningReference, completeMyScreeningEvidence, createMyScreeningEvidence, getMyScreening, startMyScreening, submitMyScreening, updateMyScreeningProfile } from '../../services/api';
+import { acceptMyScreeningConsent, addMyScreeningAddress, addMyScreeningHistory, addMyScreeningReference, completeMyScreeningEvidence, createMyScreeningEvidence, getMyScreening, startMyScreening, submitMyScreening, updateMyScreeningProfile, withdrawMyScreeningConsent } from '../../services/api';
 import { GuardScreening } from '../../types/models';
 import { colors } from '../../theme';
 
@@ -31,6 +31,7 @@ export function GuardScreeningPanel(){
    <Text style={s.heading}>Private supporting evidence</Text><TextInput placeholder="Category: identity, address, employment, reference, right_to_work or sia" value={file.category} onChangeText={(v:string)=>setFile({...file,category:v})} style={s.input}/><TextInput placeholder="Local file URI or HTTPS source (not stored)" value={file.sourceUri} onChangeText={(v:string)=>setFile({...file,sourceUri:v})} style={s.input}/>
    <Pressable style={s.button} onPress={()=>act(async()=>{const source=await fetch(file.sourceUri.trim());if(!source.ok)throw new Error('Unable to read selected evidence.');const blob=await source.blob();const name=decodeURIComponent(file.sourceUri.split('/').pop()?.split('?')[0]||'evidence');const created=await createMyScreeningEvidence({category:file.category,originalFileName:name,mimeType:blob.type,sizeBytes:blob.size});const uploaded=await fetch(created.upload.url,{method:created.upload.method,headers:created.upload.headers,body:blob});if(!uploaded.ok)throw new Error('Private evidence upload failed.');await completeMyScreeningEvidence(created.id);})}><Text style={s.buttonText}>Upload private evidence</Text></Pressable>
    <Pressable style={s.secondary} onPress={()=>act(()=>acceptMyScreeningConsent())}><Text style={s.secondaryText}>Accept screening and referee-contact consent</Text></Pressable>
+   <Pressable style={s.secondary} onPress={()=>act(()=>withdrawMyScreeningConsent())}><Text style={s.secondaryText}>Withdraw current screening consent</Text></Pressable>
    <Pressable style={s.button} onPress={()=>act(()=>submitMyScreening())}><Text style={s.buttonText}>Submit for final review</Text></Pressable>
   </>:null}
   {data?.requirements?.missing.map(x=><Text key={x} style={s.missing}>Required: {x}</Text>)}

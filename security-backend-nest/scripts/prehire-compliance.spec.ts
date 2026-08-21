@@ -168,7 +168,7 @@ async function testRejectedApplicationDoesNotAuthorize() {
 }
 
 async function testDirectMembershipStillDenied() {
-  const service = new CompanyGuardService({} as any, {} as any, {} as any);
+  const service = new CompanyGuardService({} as any, {} as any, {} as any, {} as any);
   await expectForbidden(() => service.createForUser(
     { sub: 101, email: 'a@test', role: UserRole.COMPANY_ADMIN, status: UserStatus.ACTIVE },
     { companyId: companyA.id, guardId: guard.id },

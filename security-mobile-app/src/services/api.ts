@@ -1018,6 +1018,7 @@ export function addMyScreeningReference(payload:{historyId:number;organisation:s
 export function createMyScreeningEvidence(payload:{category:string;originalFileName:string;mimeType:string;sizeBytes:number}){return request<{id:number;upload:{url:string;method:string;headers?:Record<string,string>}}>('/screening/mine/evidence',{method:'POST',body:JSON.stringify(payload)});}
 export function completeMyScreeningEvidence(id:number){return request(`/screening/evidence/${id}/complete-upload`,{method:'POST'});}
 export function acceptMyScreeningConsent(consentVersion='S4-PILOT-1'){return request('/screening/mine/consent',{method:'POST',body:JSON.stringify({consentVersion})});}
+export function withdrawMyScreeningConsent(){return request('/screening/mine/consent/withdraw',{method:'POST'});}
 export function submitMyScreening(){return request<GuardScreening>('/screening/mine/submit',{method:'POST'});}
 export function listScreenings(){return request<GuardScreening[]>('/screening');}
 export function startScreeningReview(id:number){return request<GuardScreening>(`/screening/${id}/start-review`,{method:'POST'});}

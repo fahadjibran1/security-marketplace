@@ -13,28 +13,28 @@ export class GuardScreening {
   @OneToOne(() => GuardProfile, { eager: true, nullable: false }) @JoinColumn({ name: 'guardId' }) guard!: GuardProfile;
   @Column({ type: 'enum', enum: ScreeningStatus, default: ScreeningStatus.NOT_STARTED }) status!: ScreeningStatus;
   @Column({ default: 5 }) screeningPeriodYears!: number;
-  @Column({ nullable: true }) legalFullName?: string | null;
+  @Column({ type: 'varchar', nullable: true }) legalFullName?: string | null;
   @Column({ type: 'text', nullable: true }) previousNames?: string | null;
   @Column({ type: 'date', nullable: true }) dateOfBirth?: string | null;
-  @Column({ nullable: true }) nationality?: string | null;
+  @Column({ type: 'varchar', nullable: true }) nationality?: string | null;
   @Column({ type: 'text', nullable: true }) currentAddress?: string | null;
   @Column({ type: 'enum', enum: VerificationState, default: VerificationState.UNVERIFIED }) identityVerification!: VerificationState;
-  @Column({ nullable: true }) identityVerificationMethod?: string | null;
-  @Column({ nullable: true }) identityVerifiedByUserId?: number | null;
+  @Column({ type: 'varchar', nullable: true }) identityVerificationMethod?: string | null;
+  @Column({ type: 'int', nullable: true }) identityVerifiedByUserId?: number | null;
   @Column({ type: 'timestamp', nullable: true }) identityVerifiedAt?: Date | null;
-  @Column({ nullable: true }) siaLicenceType?: string | null;
+  @Column({ type: 'varchar', nullable: true }) siaLicenceType?: string | null;
   @Column({ type: 'enum', enum: VerificationState, default: VerificationState.UNVERIFIED }) siaRegisterVerification!: VerificationState;
-  @Column({ nullable: true }) siaVerifiedByUserId?: number | null;
+  @Column({ type: 'int', nullable: true }) siaVerifiedByUserId?: number | null;
   @Column({ type: 'timestamp', nullable: true }) siaVerifiedAt?: Date | null;
-  @Column({ nullable: true }) rightToWorkCheckMethod?: string | null;
+  @Column({ type: 'varchar', nullable: true }) rightToWorkCheckMethod?: string | null;
   @Column({ type: 'date', nullable: true }) rightToWorkCheckDate?: string | null;
   @Column({ type: 'date', nullable: true }) rightToWorkFollowUpDate?: string | null;
   @Column({ type: 'enum', enum: VerificationState, default: VerificationState.UNVERIFIED }) rightToWorkVerification!: VerificationState;
-  @Column({ nullable: true }) rightToWorkVerifiedByUserId?: number | null;
+  @Column({ type: 'int', nullable: true }) rightToWorkVerifiedByUserId?: number | null;
   @Column({ type: 'timestamp', nullable: true }) rightToWorkVerifiedAt?: Date | null;
   @Column({ type: 'text', nullable: true, select: false }) reviewNotes?: string | null;
   @Column({ type: 'timestamp', nullable: true }) submittedAt?: Date | null;
-  @Column({ nullable: true }) reviewedByUserId?: number | null;
+  @Column({ type: 'int', nullable: true }) reviewedByUserId?: number | null;
   @Column({ type: 'timestamp', nullable: true }) reviewedAt?: Date | null;
   @Column({ type: 'timestamp', nullable: true }) vettedAt?: Date | null;
   @Column({ type: 'timestamp', nullable: true }) retentionReviewAt?: Date | null;
@@ -50,25 +50,25 @@ export class GuardScreening {
 @Entity('screening_history')
 export class ScreeningHistory {
   @PrimaryGeneratedColumn() id!: number;
-  @ManyToOne(() => GuardScreening, (screening) => screening.history, { eager: true, onDelete: 'CASCADE' }) @JoinColumn({ name: 'screeningId' }) screening!: GuardScreening;
+  @ManyToOne(() => GuardScreening, (screening) => screening.history, { onDelete: 'CASCADE' }) @JoinColumn({ name: 'screeningId' }) screening!: GuardScreening;
   @Column({ type: 'enum', enum: HistoryType }) type!: HistoryType;
   @Column({ type: 'date' }) startDate!: string; @Column({ type: 'date', nullable: true }) endDate?: string | null; @Column({ default: false }) isCurrent!: boolean;
-  @Column({ nullable: true }) organisation?: string | null; @Column({ type: 'text', nullable: true }) address?: string | null; @Column({ nullable: true }) contactDetails?: string | null; @Column({ type: 'text' }) description!: string;
+  @Column({ type:'varchar', nullable: true }) organisation?: string | null; @Column({ type: 'text', nullable: true }) address?: string | null; @Column({ type:'varchar', nullable: true }) contactDetails?: string | null; @Column({ type: 'text' }) description!: string;
   @Column({ type: 'enum', enum: VerificationState, default: VerificationState.UNVERIFIED }) verificationState!: VerificationState;
   @CreateDateColumn() createdAt!: Date; @UpdateDateColumn() updatedAt!: Date;
 }
 
 @Entity('screening_addresses')
-export class ScreeningAddress { @PrimaryGeneratedColumn() id!: number; @ManyToOne(() => GuardScreening, (s) => s.addresses, { eager: true, onDelete: 'CASCADE' }) @JoinColumn({ name: 'screeningId' }) screening!: GuardScreening; @Column({ type:'text' }) address!: string; @Column({ type:'date' }) startDate!: string; @Column({ type:'date', nullable:true }) endDate?: string|null; @Column({ default:false }) isCurrent!: boolean; @Column({ type:'enum', enum:VerificationState, default:VerificationState.UNVERIFIED }) verificationState!: VerificationState; @CreateDateColumn() createdAt!: Date; }
+export class ScreeningAddress { @PrimaryGeneratedColumn() id!: number; @ManyToOne(() => GuardScreening, (s) => s.addresses, { onDelete: 'CASCADE' }) @JoinColumn({ name: 'screeningId' }) screening!: GuardScreening; @Column({ type:'text' }) address!: string; @Column({ type:'date' }) startDate!: string; @Column({ type:'date', nullable:true }) endDate?: string|null; @Column({ default:false }) isCurrent!: boolean; @Column({ type:'enum', enum:VerificationState, default:VerificationState.UNVERIFIED }) verificationState!: VerificationState; @CreateDateColumn() createdAt!: Date; }
 
 @Entity('screening_references')
-export class ScreeningReference { @PrimaryGeneratedColumn() id!: number; @ManyToOne(() => GuardScreening, (s) => s.references, { eager:true, onDelete:'CASCADE' }) @JoinColumn({name:'screeningId'}) screening!: GuardScreening; @ManyToOne(() => ScreeningHistory, { eager:true, nullable:false, onDelete:'CASCADE' }) @JoinColumn({name:'historyId'}) history!: ScreeningHistory; @Column() organisation!: string; @Column() contactPerson!: string; @Column() relationship!: string; @Column() businessEmail!: string; @Column({nullable:true}) phone?:string|null; @Column({type:'text',nullable:true}) postalDetails?:string|null; @Column({type:'enum',enum:ReferenceStatus,default:ReferenceStatus.NOT_REQUESTED}) status!:ReferenceStatus; @Column({type:'timestamp',nullable:true}) requestedAt?:Date|null; @Column({type:'timestamp',nullable:true}) receivedAt?:Date|null; @Column({nullable:true}) verificationMethod?:string|null; @Column({default:false}) sourceVerified!:boolean; @Column({nullable:true}) verifiedByUserId?:number|null; @Column({type:'timestamp',nullable:true}) verifiedAt?:Date|null; @Column({type:'text',nullable:true,select:false}) outcomeNotes?:string|null; @CreateDateColumn() createdAt!:Date; @UpdateDateColumn() updatedAt!:Date; }
+export class ScreeningReference { @PrimaryGeneratedColumn() id!: number; @ManyToOne(() => GuardScreening, (s) => s.references, { onDelete:'CASCADE' }) @JoinColumn({name:'screeningId'}) screening!: GuardScreening; @ManyToOne(() => ScreeningHistory, { nullable:false, onDelete:'CASCADE' }) @JoinColumn({name:'historyId'}) history!: ScreeningHistory; @Column() organisation!: string; @Column() contactPerson!: string; @Column() relationship!: string; @Column() businessEmail!: string; @Column({type:'varchar',nullable:true}) phone?:string|null; @Column({type:'text',nullable:true}) postalDetails?:string|null; @Column({type:'enum',enum:ReferenceStatus,default:ReferenceStatus.NOT_REQUESTED}) status!:ReferenceStatus; @Column({type:'timestamp',nullable:true}) requestedAt?:Date|null; @Column({type:'timestamp',nullable:true}) receivedAt?:Date|null; @Column({type:'varchar',nullable:true}) verificationMethod?:string|null; @Column({default:false}) sourceVerified!:boolean; @Column({type:'int',nullable:true}) verifiedByUserId?:number|null; @Column({type:'timestamp',nullable:true}) verifiedAt?:Date|null; @Column({type:'text',nullable:true,select:false}) outcomeNotes?:string|null; @CreateDateColumn() createdAt!:Date; @UpdateDateColumn() updatedAt!:Date; }
 
 @Entity('screening_evidence')
-export class ScreeningEvidence { @PrimaryGeneratedColumn() id!:number; @ManyToOne(() => GuardScreening,(s)=>s.evidence,{eager:true,onDelete:'CASCADE'}) @JoinColumn({name:'screeningId'}) screening!:GuardScreening; @Column({type:'enum',enum:EvidenceCategory}) category!:EvidenceCategory; @Column() storageProvider!:string; @Column({unique:true}) storageKey!:string; @Column() originalFileName!:string; @Column() mimeType!:string; @Column({type:'bigint'}) sizeBytes!:string; @Column({type:'timestamp',nullable:true}) uploadCompletedAt?:Date|null; @Column({type:'enum',enum:VerificationState,default:VerificationState.UNVERIFIED}) verificationState!:VerificationState; @Column() uploadedByUserId!:number; @Column({nullable:true}) verifiedByUserId?:number|null; @Column({type:'timestamp',nullable:true}) verifiedAt?:Date|null; @CreateDateColumn() createdAt!:Date; }
+export class ScreeningEvidence { @PrimaryGeneratedColumn() id!:number; @ManyToOne(() => GuardScreening,(s)=>s.evidence,{onDelete:'CASCADE'}) @JoinColumn({name:'screeningId'}) screening!:GuardScreening; @Column({type:'enum',enum:EvidenceCategory}) category!:EvidenceCategory; @Column() storageProvider!:string; @Column({unique:true}) storageKey!:string; @Column() originalFileName!:string; @Column() mimeType!:string; @Column({type:'bigint'}) sizeBytes!:string; @Column({type:'timestamp',nullable:true}) uploadCompletedAt?:Date|null; @Column({type:'enum',enum:VerificationState,default:VerificationState.UNVERIFIED}) verificationState!:VerificationState; @Column() uploadedByUserId!:number; @Column({type:'int',nullable:true}) verifiedByUserId?:number|null; @Column({type:'timestamp',nullable:true}) verifiedAt?:Date|null; @CreateDateColumn() createdAt!:Date; }
 
 @Entity('screening_consents')
-export class ScreeningConsent { @PrimaryGeneratedColumn() id!:number; @ManyToOne(() => GuardScreening,(s)=>s.consents,{eager:true,onDelete:'CASCADE'}) @JoinColumn({name:'screeningId'}) screening!:GuardScreening; @Column() consentVersion!:string; @Column() candidateUserId!:number; @Column({type:'timestamp'}) acceptedAt!:Date; @Column({type:'timestamp',nullable:true}) withdrawnAt?:Date|null; @CreateDateColumn() createdAt!:Date; }
+export class ScreeningConsent { @PrimaryGeneratedColumn() id!:number; @ManyToOne(() => GuardScreening,(s)=>s.consents,{onDelete:'CASCADE'}) @JoinColumn({name:'screeningId'}) screening!:GuardScreening; @Column() consentVersion!:string; @Column() candidateUserId!:number; @Column({type:'timestamp'}) acceptedAt!:Date; @Column({type:'timestamp',nullable:true}) withdrawnAt?:Date|null; @CreateDateColumn() createdAt!:Date; }
 
 @Entity('screening_exceptions')
-export class ScreeningException { @PrimaryGeneratedColumn() id!:number; @ManyToOne(() => GuardScreening,(s)=>s.exceptions,{eager:true,onDelete:'CASCADE'}) @JoinColumn({name:'screeningId'}) screening!:GuardScreening; @Column() code!:string; @Column({type:'text'}) description!:string; @Column({default:false}) resolved!:boolean; @Column({nullable:true}) resolvedByUserId?:number|null; @Column({type:'timestamp',nullable:true}) resolvedAt?:Date|null; @CreateDateColumn() createdAt!:Date; }
+export class ScreeningException { @PrimaryGeneratedColumn() id!:number; @ManyToOne(() => GuardScreening,(s)=>s.exceptions,{onDelete:'CASCADE'}) @JoinColumn({name:'screeningId'}) screening!:GuardScreening; @Column() code!:string; @Column({type:'text'}) description!:string; @Column({default:false}) resolved!:boolean; @Column({type:'int',nullable:true}) resolvedByUserId?:number|null; @Column({type:'timestamp',nullable:true}) resolvedAt?:Date|null; @CreateDateColumn() createdAt!:Date; }

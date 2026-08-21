@@ -18,6 +18,7 @@ export class ScreeningController {
   @Post('mine/addresses') @Roles(UserRole.GUARD) address(@CurrentUser() u:JwtPayload,@Body() d:AddAddressDto){return this.service.addAddress(u.sub,d);}
   @Post('mine/references') @Roles(UserRole.GUARD) reference(@CurrentUser() u:JwtPayload,@Body() d:AddReferenceDto){return this.service.addReference(u.sub,d);}
   @Post('mine/consent') @Roles(UserRole.GUARD) consent(@CurrentUser() u:JwtPayload,@Body() d:ConsentDto){return this.service.consent(u.sub,d);}
+  @Post('mine/consent/withdraw') @Roles(UserRole.GUARD) withdrawConsent(@CurrentUser() u:JwtPayload){return this.service.withdrawConsent(u.sub);}
   @Post('mine/evidence') @Roles(UserRole.GUARD) evidence(@CurrentUser() u:JwtPayload,@Body() d:CreateEvidenceDto){return this.service.createEvidence(u.sub,d);}
   @Post('evidence/:id/complete-upload') @Roles(UserRole.GUARD,UserRole.ADMIN) completeEvidence(@CurrentUser() u:JwtPayload,@Param('id',ParseIntPipe) id:number){return this.service.completeEvidence(u,id);}
   @Get('evidence/:id/access') @Roles(UserRole.GUARD,UserRole.ADMIN) accessEvidence(@CurrentUser() u:JwtPayload,@Param('id',ParseIntPipe) id:number){return this.service.accessEvidence(u,id);}

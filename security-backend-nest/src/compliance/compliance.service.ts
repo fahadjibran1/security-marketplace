@@ -15,6 +15,7 @@ import {
   ComplianceRecordType,
 } from './entities/compliance-record.entity';
 import { ScreeningService } from '../screening/screening.service';
+import { UserStatus } from '../user/entities/user.entity';
 
 @Injectable()
 export class ComplianceService {
@@ -76,12 +77,16 @@ export class ComplianceService {
   }
 
   async assertGuardAssignable(companyId: number, guardId: number) {
+    const guard = await this.guardProfileService.findOne(guardId);
+    if (guard.user.status !== UserStatus.ACTIVE) {
+      throw new ForbiddenException('Guard account is not active.');
+    }
     const blockers = await this.guardComplianceService.getBlockingReasons(companyId, guardId);
     if (blockers.length) {
       throw new ForbiddenException(`Guard compliance invalid: ${blockers[0]}`);
     }
     if (!(await this.screeningService.isGuardVetted(guardId))) {
-      throw new ForbiddenException('Guard compliance invalid: Guard screening status is not VETTED');
+      throw new ForbiddenException('Guard screening is not complete.');
     }
   }
 

@@ -11,6 +11,7 @@ import { CompanyService } from '../company/company.service';
 import { GuardProfileService } from '../guard-profile/guard-profile.service';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { UserRole } from '../user/entities/user.entity';
+import { ComplianceService } from '../compliance/compliance.service';
 
 @Injectable()
 export class CompanyGuardService {
@@ -18,6 +19,7 @@ export class CompanyGuardService {
     @InjectRepository(CompanyGuard) private readonly companyGuardRepo: Repository<CompanyGuard>,
     private readonly companyService: CompanyService,
     private readonly guardService: GuardProfileService,
+    private readonly complianceService: ComplianceService,
   ) {}
 
   findAll(): Promise<CompanyGuard[]> {
@@ -55,6 +57,9 @@ export class CompanyGuardService {
   private async createForCompany(companyId: number, dto: CreateCompanyGuardDto): Promise<CompanyGuard> {
     const company = await this.companyService.findOne(companyId);
     const guard = await this.guardService.findOne(dto.guardId);
+    if ((dto.status ?? CompanyGuardStatus.ACTIVE) === CompanyGuardStatus.ACTIVE) {
+      await this.complianceService.assertGuardAssignable(company.id, guard.id);
+    }
 
     const exists = await this.companyGuardRepo.findOne({
       where: { company: { id: company.id }, guard: { id: guard.id } },
@@ -90,6 +95,7 @@ export class CompanyGuardService {
   }): Promise<CompanyGuard> {
     const company = await this.companyService.findOne(params.companyId);
     const guard = await this.guardService.findOne(params.guardId);
+    await this.complianceService.assertGuardAssignable(company.id, guard.id);
 
     const existing = await this.companyGuardRepo.findOne({
       where: { company: { id: company.id }, guard: { id: guard.id } },
