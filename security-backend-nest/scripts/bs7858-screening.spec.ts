@@ -17,6 +17,7 @@ async function main(){
  await test('invalid dates fail closed',()=>assert.throws(()=>assessContinuousHistory([{startDate:'bad',isCurrent:true}],5),BadRequestException));
  const svc=Object.create(ScreeningService.prototype) as any;
  await test('complete file passes candidate requirements',()=>assert.equal(svc.requirements(record()).missing.length,0));
+ await test('legacy profile currentAddress is not a separate screening requirement',()=>assert.equal(svc.requirements(record({currentAddress:undefined})).missing.length,0));
  await test('missing consent prevents submission',()=>assert.ok(svc.requirements(record({consents:[]})).missing.some((x:string)=>x.includes('consent'))));
  await test('missing history prevents submission',()=>assert.ok(svc.requirements(record({history:[]})).missing.some((x:string)=>x.includes('Activity history'))));
  await test('incomplete address coverage prevents submission',()=>assert.ok(svc.requirements(record({addresses:[{startDate:ago(2),isCurrent:true}] as any})).missing.some((x:string)=>x.includes('Address history'))));

@@ -7,7 +7,7 @@ export class UpdateScreeningProfileDto {
   @IsOptional() @IsString() @MaxLength(1000) previousNames?: string;
   @IsDateString() dateOfBirth!: string;
   @IsString() @IsNotEmpty() @MaxLength(100) nationality!: string;
-  @IsString() @IsNotEmpty() @MaxLength(2000) currentAddress!: string;
+  @IsOptional() @IsString() @IsNotEmpty() @MaxLength(2000) currentAddress?: string;
   @IsOptional() @IsString() @MaxLength(100) siaLicenceType?: string;
 }
 export class AddHistoryDto {

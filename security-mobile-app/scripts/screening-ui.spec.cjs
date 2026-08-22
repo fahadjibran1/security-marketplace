@@ -60,4 +60,13 @@ test('multiple address UX uses structured fields and readable cards',()=>{for(co
 test('current address control separates Present from end date',()=>{assert.match(panel,/I currently live at this address/);assert.match(panel,/address\.isCurrent/)});
 test('multiple activity UX uses backend enum choices',()=>{assert.match(panel,/\+ Add another activity/);assert.match(panel,/activityOrganisationLabel/);for(const value of ['EMPLOYMENT','SELF_EMPLOYMENT','EDUCATION','UNEMPLOYMENT','CAREER_BREAK','OVERSEAS','OTHER_EXPLAINED_PERIOD'])assert.match(panel,new RegExp(value))});
 test('activity cards retain human-readable dates',()=>assert.match(panel,/pretty\(h\.type\)[\s\S]*h\.organisation[\s\S]*dateLabel\(h\.startDate\)/));
+test('Personal Details has no editable current address',()=>{assert.doesNotMatch(panel,/label="Current address"/);assert.doesNotMatch(panel,/profile\.currentAddress/)});
+test('Address History is the only authoritative residential source',()=>{assert.match(service,/addressChronology=assessContinuousHistory\(s\.addresses/);assert.doesNotMatch(service,/nationality&&!!s\.currentAddress/)});
+test('new address flow always starts blank and non-current',()=>{assert.match(panel,/emptyAddressForm[^\n]*addressLine1: ""[^\n]*postcode: ""[^\n]*isCurrent: false/);assert.match(panel,/setAddress\(emptyAddressForm\(\)\); setShowAddressForm\(true\)/)});
+test('successful address save resets and closes create mode',()=>assert.match(panel,/Address history updated[^\n]*setAddress\(emptyAddressForm\(\)\); setShowAddressForm\(false\)/));
+test('aggregate refresh does not hydrate transient address state',()=>{const loadBody=panel.split('const load = React.useCallback')[1].split('React.useEffect')[0];assert.doesNotMatch(loadBody,/setAddress|setHistory/)});
+test('new activity flow always starts blank with no type',()=>{assert.match(panel,/emptyActivityForm[^\n]*type: ""[^\n]*organisation: ""[^\n]*description: ""/);assert.match(panel,/setHistory\(emptyActivityForm\(\)\); setShowHistoryForm\(true\)/)});
+test('successful activity save resets and closes create mode',()=>assert.match(panel,/Activity history updated[\s\S]{0,160}setHistory\(emptyActivityForm\(\)\); setShowHistoryForm\(false\)/));
+test('create forms support non-mutating cancel',()=>{assert.match(panel,/label="Cancel"/);assert.match(panel,/setShowAddressForm\(false\)/);assert.match(panel,/setShowHistoryForm\(false\)/)});
+test('progress does not double-count legacy currentAddress',()=>{const criteria=service.split('const candidateCriteria=')[1].split(';const progress')[0];assert.doesNotMatch(criteria,/currentAddress/);assert.match(criteria,/req\.addressChronology\.continuous/)});
 console.log(JSON.stringify({event:'screening_ux_tests_passed',tests:passed}));

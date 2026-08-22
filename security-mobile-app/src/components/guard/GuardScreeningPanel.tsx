@@ -86,6 +86,8 @@ const activityOrganisationLabel = (type: string) =>
     OVERSEAS: "Organisation / explanation",
     OTHER_EXPLAINED_PERIOD: "Organisation / explanation",
   })[type] || "Organisation / explanation";
+const emptyAddressForm = () => ({ addressLine1: "", addressLine2: "", townCity: "", postcode: "", startDate: "", endDate: "", isCurrent: false });
+const emptyActivityForm = () => ({ type: "", startDate: "", endDate: "", organisation: "", description: "" });
 
 export function GuardScreeningPanel({
   onContinue,
@@ -185,25 +187,10 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
     previousNames: "",
     dateOfBirth: "",
     nationality: "",
-    currentAddress: "",
     siaLicenceType: "",
   });
-  const [history, setHistory] = React.useState({
-    type: "",
-    startDate: "",
-    endDate: "",
-    organisation: "",
-    description: "",
-  });
-  const [address, setAddress] = React.useState({
-    addressLine1: "",
-    addressLine2: "",
-    townCity: "",
-    postcode: "",
-    startDate: "",
-    endDate: "",
-    isCurrent: true,
-  });
+  const [history, setHistory] = React.useState(emptyActivityForm());
+  const [address, setAddress] = React.useState(emptyAddressForm());
   const [showAddressForm, setShowAddressForm] = React.useState(false);
   const [showHistoryForm, setShowHistoryForm] = React.useState(false);
   const [reference, setReference] = React.useState({
@@ -225,7 +212,6 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
           ? formatScreeningDate(next.dateOfBirth)
           : p.dateOfBirth,
         nationality: next.nationality || p.nationality,
-        currentAddress: next.currentAddress || p.currentAddress,
         previousNames: next.previousNames || p.previousNames,
         siaLicenceType: next.siaLicenceType || p.siaLicenceType,
       }));
@@ -236,13 +222,14 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
   React.useEffect(() => {
     load();
   }, [load]);
-  const act = async (fn: () => Promise<unknown>, message: string) => {
+  const act = async (fn: () => Promise<unknown>, message: string, onSuccess?: () => void) => {
     setBusy(true);
     setError("");
     setFeedback("");
     try {
       await fn();
       await load();
+      onSuccess?.();
       setFeedback(message);
     } catch (e) {
       setError((e as Error).message || "The action could not be completed.");
@@ -418,11 +405,6 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
               set={(v) => setProfile({ ...profile, nationality: v })}
             />
             <Field
-              label="Current address"
-              value={profile.currentAddress}
-              set={(v) => setProfile({ ...profile, currentAddress: v })}
-            />
-            <Field
               label="SIA licence type (optional)"
               value={profile.siaLicenceType}
               set={(v) => setProfile({ ...profile, siaLicenceType: v })}
@@ -521,9 +503,9 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
             <Action
               disabled={!canEdit || busy}
               label="+ Add another address"
-              onPress={() => setShowAddressForm(true)}
+              onPress={() => { setAddress(emptyAddressForm()); setShowAddressForm(true); }}
             />
-            {showAddressForm || !(data.addresses || []).length ? <View style={s.entryForm}>
+            {showAddressForm ? <View style={s.entryForm}>
               <Field label="Address line 1 *" value={address.addressLine1} set={(v) => setAddress({ ...address, addressLine1: v })} />
               <Field label="Address line 2 (optional)" value={address.addressLine2} set={(v) => setAddress({ ...address, addressLine2: v })} />
               <Field label="Town / City *" value={address.townCity} set={(v) => setAddress({ ...address, townCity: v })} />
@@ -533,7 +515,8 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
               <Pressable accessibilityRole="checkbox" accessibilityState={{checked:address.isCurrent}} style={s.checkboxRow} onPress={() => setAddress({...address,isCurrent:!address.isCurrent,endDate:""})}>
                 <Text style={s.checkbox}>{address.isCurrent ? "☑" : "☐"}</Text><Text>I currently live at this address</Text>
               </Pressable>
-              <Action disabled={!canEdit || busy} label="Save address" onPress={() => act(() => addMyScreeningAddress({addressLine1:address.addressLine1,addressLine2:address.addressLine2||undefined,townCity:address.townCity,postcode:normalizeScreeningPostcode(address.postcode),startDate:screeningDateToIso(address.startDate),isCurrent:address.isCurrent,endDate:address.isCurrent?undefined:screeningDateToIso(address.endDate)}), "Address history updated.")} />
+              <Action disabled={!canEdit || busy} label="Save address" onPress={() => act(() => addMyScreeningAddress({addressLine1:address.addressLine1,addressLine2:address.addressLine2||undefined,townCity:address.townCity,postcode:normalizeScreeningPostcode(address.postcode),startDate:screeningDateToIso(address.startDate),isCurrent:address.isCurrent,endDate:address.isCurrent?undefined:screeningDateToIso(address.endDate)}), "Address history updated.", () => { setAddress(emptyAddressForm()); setShowAddressForm(false); })} />
+              <Action disabled={busy} label="Cancel" onPress={() => { setAddress(emptyAddressForm()); setShowAddressForm(false); }} />
             </View> : null}
             <EvidencePicker
               label="Choose address evidence"
@@ -590,8 +573,8 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
                 message="Check these activity entries and correct the dates if the overlap is not intentional."
               />
             ))}
-            <Action disabled={!canEdit || busy} label="+ Add another activity" onPress={() => setShowHistoryForm(true)} />
-            {showHistoryForm || !(data.history || []).length ? <View style={s.entryForm}>
+            <Action disabled={!canEdit || busy} label="+ Add another activity" onPress={() => { setHistory(emptyActivityForm()); setShowHistoryForm(true); }} />
+            {showHistoryForm ? <View style={s.entryForm}>
             <Text style={s.fieldLabel}>Activity type</Text>
             <View style={s.choiceGrid}>
               {HISTORY_TYPES.map(([value, label]) => (
@@ -648,9 +631,11 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
                         : undefined,
                     }),
                   "Activity history updated.",
+                  () => { setHistory(emptyActivityForm()); setShowHistoryForm(false); },
                 )
               }
             />
+            <Action disabled={busy} label="Cancel" onPress={() => { setHistory(emptyActivityForm()); setShowHistoryForm(false); }} />
             </> : <Text style={s.meta}>Choose the activity type to continue.</Text>}
             </View> : null}
           </>

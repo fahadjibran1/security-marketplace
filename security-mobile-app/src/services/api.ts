@@ -1011,7 +1011,7 @@ export function reviewJobApplication(id: number, payload: ReviewJobApplicationPa
 
 export function getMyScreening(){ return request<GuardScreening>('/screening/mine'); }
 export function startMyScreening(screeningPeriodYears=5){ return request<GuardScreening>('/screening/mine/start',{method:'POST',body:JSON.stringify({screeningPeriodYears})}); }
-export function updateMyScreeningProfile(payload:{legalFullName:string;previousNames?:string;dateOfBirth:string;nationality:string;currentAddress:string;siaLicenceType?:string}){return request<GuardScreening>('/screening/mine/profile',{method:'PUT',body:JSON.stringify(payload)});}
+export function updateMyScreeningProfile(payload:{legalFullName:string;previousNames?:string;dateOfBirth:string;nationality:string;currentAddress?:string;siaLicenceType?:string}){return request<GuardScreening>('/screening/mine/profile',{method:'PUT',body:JSON.stringify(payload)});}
 export function addMyScreeningHistory(payload:{type:string;startDate:string;endDate?:string;isCurrent:boolean;organisation?:string;description:string}){return request('/screening/mine/history',{method:'POST',body:JSON.stringify(payload)});}
 export function addMyScreeningAddress(payload:{address?:string;addressLine1?:string;addressLine2?:string;townCity?:string;postcode?:string;startDate:string;endDate?:string;isCurrent:boolean}){return request('/screening/mine/addresses',{method:'POST',body:JSON.stringify(payload)});}
 export function addMyScreeningReference(payload:{historyId:number;organisation:string;contactPerson:string;relationship:string;businessEmail:string;phone?:string}){return request('/screening/mine/references',{method:'POST',body:JSON.stringify(payload)});}
