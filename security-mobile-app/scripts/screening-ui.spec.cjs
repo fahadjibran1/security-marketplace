@@ -41,6 +41,8 @@ test('DD/MM/YYYY converts to API ISO',()=>assert.equal(dateExports.screeningDate
 test('invalid calendar date is rejected',()=>assert.throws(()=>dateExports.screeningDateToIso('31/02/2025'),/valid date/));
 test('valid leap date is accepted',()=>assert.equal(dateExports.screeningDateToIso('29/02/2024'),'2024-02-29'));
 test('invalid non-leap date is rejected',()=>assert.throws(()=>dateExports.screeningDateToIso('29/02/2025'),/valid date/));
+test('postcode is normalized for persistence',()=>assert.equal(dateExports.normalizeScreeningPostcode('  sw1a1aa '),'SW1A 1AA'));
+test('invalid postcode is rejected',()=>assert.throws(()=>dateExports.normalizeScreeningPostcode('ABC'),/valid UK postcode/));
 test('no ISO candidate labels remain',()=>{assert.doesNotMatch(panel,/\(YYYY-MM-DD\)/);assert.doesNotMatch(panel,/toLocaleDateString/)});
 test('address five-year coverage is server authoritative',()=>{assert.match(panel,/addressChronology/);assert.match(service,/addressChronology=assessContinuousHistory/)});
 test('activity five-year coverage supports all certified period types',()=>{for(const value of ['EMPLOYMENT','SELF_EMPLOYMENT','EDUCATION','UNEMPLOYMENT','CAREER_BREAK','OVERSEAS','OTHER_EXPLAINED_PERIOD'])assert.match(panel,new RegExp(value))});
@@ -54,4 +56,8 @@ test('oversized evidence is rejected before metadata creation',()=>assert.ok(pan
 test('evidence selection and upload are separate actions',()=>{assert.match(panel,/Choose document/);assert.match(panel,/Upload document/);assert.doesNotMatch(panel,/Selected file URI/)});
 test('step navigation clears stale mutation errors',()=>{assert.match(panel,/navigateToStep/);assert.match(panel,/setError\(""\)/)});
 test('progress uses authoritative candidate criteria',()=>assert.match(service,/candidateCriteria/));
+test('multiple address UX uses structured fields and readable cards',()=>{for(const label of ['Address line 1 *','Address line 2 (optional)','Town / City *','Postcode *','+ Add another address','Verification:'])assert.ok(panel.includes(label));assert.match(models,/addressLine1\?/)});
+test('current address control separates Present from end date',()=>{assert.match(panel,/I currently live at this address/);assert.match(panel,/address\.isCurrent/)});
+test('multiple activity UX uses backend enum choices',()=>{assert.match(panel,/\+ Add another activity/);assert.match(panel,/activityOrganisationLabel/);for(const value of ['EMPLOYMENT','SELF_EMPLOYMENT','EDUCATION','UNEMPLOYMENT','CAREER_BREAK','OVERSEAS','OTHER_EXPLAINED_PERIOD'])assert.match(panel,new RegExp(value))});
+test('activity cards retain human-readable dates',()=>assert.match(panel,/pretty\(h\.type\)[\s\S]*h\.organisation[\s\S]*dateLabel\(h\.startDate\)/));
 console.log(JSON.stringify({event:'screening_ux_tests_passed',tests:passed}));

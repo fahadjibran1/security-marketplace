@@ -1292,7 +1292,7 @@ export interface GuardScreening {
   submittedAt?: string|null; reviewedAt?: string|null; vettedAt?: string|null; retentionReviewAt?: string|null;
   requirements?: { missing: string[]; chronology: { continuous:boolean; gaps:Array<{from:string;to:string}>; overlaps:Array<{from:string;to:string}>; periodStart?:string; periodEnd?:string }; addressChronology?: { continuous:boolean; gaps:Array<{from:string;to:string}>; overlaps:Array<{from:string;to:string}>; periodStart?:string; periodEnd?:string } };
   history?: Array<{id:number;type:string;startDate:string;endDate?:string|null;isCurrent:boolean;organisation?:string}>;
-  addresses?: Array<{id:number;address:string;startDate:string;endDate?:string|null;isCurrent:boolean;verificationState:string}>;
+  addresses?: Array<{id:number;address:string;addressLine1?:string|null;addressLine2?:string|null;townCity?:string|null;postcode?:string|null;startDate:string;endDate?:string|null;isCurrent:boolean;verificationState:string}>;
   references?: Array<{id:number;history?:{id:number};historyId?:number;organisation:string;contactPerson?:string;relationship?:string;businessEmail?:string;status:string;sourceVerified:boolean}>;
   evidence?: Array<{id:number;category:string;mimeType:string;sizeBytes:number;uploadCompleted:boolean;verificationState:string}>;
   consents?: Array<{id:number;consentVersion:string;acceptedAt:string;withdrawnAt?:string|null}>;

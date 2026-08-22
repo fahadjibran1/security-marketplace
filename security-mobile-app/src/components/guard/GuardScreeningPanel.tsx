@@ -23,7 +23,7 @@ import {
 } from "../../services/api";
 import { GuardScreening, ScreeningStatus } from "../../types/models";
 import { colors } from "../../theme";
-import { formatScreeningDate, screeningDateToIso } from "./screening-format";
+import { formatScreeningDate, normalizeScreeningPostcode, screeningDateToIso } from "./screening-format";
 
 type Step =
   | "personal"
@@ -76,6 +76,16 @@ const HISTORY_TYPES = [
   ["OVERSEAS", "Overseas period"],
   ["OTHER_EXPLAINED_PERIOD", "Other explained period"],
 ] as const;
+const activityOrganisationLabel = (type: string) =>
+  ({
+    EMPLOYMENT: "Employer / organisation",
+    SELF_EMPLOYMENT: "Business / trading name",
+    EDUCATION: "School / college / university",
+    UNEMPLOYMENT: "Explanation",
+    CAREER_BREAK: "Explanation",
+    OVERSEAS: "Organisation / explanation",
+    OTHER_EXPLAINED_PERIOD: "Organisation / explanation",
+  })[type] || "Organisation / explanation";
 
 export function GuardScreeningPanel({
   onContinue,
@@ -179,17 +189,23 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
     siaLicenceType: "",
   });
   const [history, setHistory] = React.useState({
-    type: "EMPLOYMENT",
+    type: "",
     startDate: "",
     endDate: "",
     organisation: "",
     description: "",
   });
   const [address, setAddress] = React.useState({
-    address: "",
+    addressLine1: "",
+    addressLine2: "",
+    townCity: "",
+    postcode: "",
     startDate: "",
     endDate: "",
+    isCurrent: true,
   });
+  const [showAddressForm, setShowAddressForm] = React.useState(false);
+  const [showHistoryForm, setShowHistoryForm] = React.useState(false);
   const [reference, setReference] = React.useState({
     historyId: "",
     organisation: "",
@@ -470,11 +486,18 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
                     <Text style={s.itemTitle}>
                       {a.isCurrent ? "Current address" : "Previous address"}
                     </Text>
-                    <Text>{a.address}</Text>
+                    {a.addressLine1 ? (
+                      <>
+                        <Text>{a.addressLine1}</Text>
+                        {a.addressLine2 ? <Text>{a.addressLine2}</Text> : null}
+                        <Text>{a.townCity}</Text>
+                        <Text style={s.itemTitle}>{a.postcode}</Text>
+                      </>
+                    ) : <Text>{a.address}</Text>}
                     <Text style={s.meta}>
-                      {dateLabel(a.startDate)} – {dateLabel(a.endDate)} ·{" "}
-                      {verificationLabel(a.verificationState)}
+                      {dateLabel(a.startDate)} – {dateLabel(a.endDate)}
                     </Text>
+                    <Text style={s.meta}>Verification: {verificationLabel(a.verificationState)}</Text>
                   </View>
                 ))}
             </View>
@@ -495,39 +518,23 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
                 message="Check whether these address periods should overlap."
               />
             ))}
-            <Field
-              label="Address"
-              value={address.address}
-              set={(v) => setAddress({ ...address, address: v })}
-            />
-            <Field
-              label="Start date (DD/MM/YYYY)"
-              value={address.startDate}
-              set={(v) => setAddress({ ...address, startDate: v })}
-            />
-            <Field
-              label="End date (DD/MM/YYYY, leave blank if current)"
-              value={address.endDate}
-              set={(v) => setAddress({ ...address, endDate: v })}
-            />
             <Action
               disabled={!canEdit || busy}
-              label="Add address period"
-              onPress={() =>
-                act(
-                  () =>
-                    addMyScreeningAddress({
-                      address: address.address,
-                      startDate: screeningDateToIso(address.startDate),
-                      isCurrent: !address.endDate,
-                      endDate: address.endDate
-                        ? screeningDateToIso(address.endDate)
-                        : undefined,
-                    }),
-                  "Address history updated.",
-                )
-              }
+              label="+ Add another address"
+              onPress={() => setShowAddressForm(true)}
             />
+            {showAddressForm || !(data.addresses || []).length ? <View style={s.entryForm}>
+              <Field label="Address line 1 *" value={address.addressLine1} set={(v) => setAddress({ ...address, addressLine1: v })} />
+              <Field label="Address line 2 (optional)" value={address.addressLine2} set={(v) => setAddress({ ...address, addressLine2: v })} />
+              <Field label="Town / City *" value={address.townCity} set={(v) => setAddress({ ...address, townCity: v })} />
+              <Field label="Postcode *" value={address.postcode} set={(v) => setAddress({ ...address, postcode: v.toUpperCase() })} />
+              <Field label="Start date (DD/MM/YYYY) *" value={address.startDate} set={(v) => setAddress({ ...address, startDate: v })} />
+              {!address.isCurrent ? <Field label="End date (DD/MM/YYYY) *" value={address.endDate} set={(v) => setAddress({ ...address, endDate: v })} /> : null}
+              <Pressable accessibilityRole="checkbox" accessibilityState={{checked:address.isCurrent}} style={s.checkboxRow} onPress={() => setAddress({...address,isCurrent:!address.isCurrent,endDate:""})}>
+                <Text style={s.checkbox}>{address.isCurrent ? "☑" : "☐"}</Text><Text>I currently live at this address</Text>
+              </Pressable>
+              <Action disabled={!canEdit || busy} label="Save address" onPress={() => act(() => addMyScreeningAddress({addressLine1:address.addressLine1,addressLine2:address.addressLine2||undefined,townCity:address.townCity,postcode:normalizeScreeningPostcode(address.postcode),startDate:screeningDateToIso(address.startDate),isCurrent:address.isCurrent,endDate:address.isCurrent?undefined:screeningDateToIso(address.endDate)}), "Address history updated.")} />
+            </View> : null}
             <EvidencePicker
               label="Choose address evidence"
               category="address"
@@ -583,6 +590,8 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
                 message="Check these activity entries and correct the dates if the overlap is not intentional."
               />
             ))}
+            <Action disabled={!canEdit || busy} label="+ Add another activity" onPress={() => setShowHistoryForm(true)} />
+            {showHistoryForm || !(data.history || []).length ? <View style={s.entryForm}>
             <Text style={s.fieldLabel}>Activity type</Text>
             <View style={s.choiceGrid}>
               {HISTORY_TYPES.map(([value, label]) => (
@@ -603,8 +612,9 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
                 </Pressable>
               ))}
             </View>
+            {history.type ? <>
             <Field
-              label="Organisation or explanation"
+              label={activityOrganisationLabel(history.type)}
               value={history.organisation}
               set={(v) => setHistory({ ...history, organisation: v })}
             />
@@ -625,7 +635,7 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
             />
             <Action
               disabled={!canEdit || busy}
-              label="Add activity period"
+              label="Save activity"
               onPress={() =>
                 act(
                   () =>
@@ -641,6 +651,8 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
                 )
               }
             />
+            </> : <Text style={s.meta}>Choose the activity type to continue.</Text>}
+            </View> : null}
           </>
         ) : null}
         {step === "references" ? (
@@ -1241,6 +1253,9 @@ const s = StyleSheet.create({
   guidanceText: { color: colors.textPrimary, lineHeight: 21, fontWeight: "700" },
   requiredPeriod: { color: colors.primaryNavy, fontWeight: "900" },
   picker: { gap: 7, borderWidth: 1, borderColor: colors.border, borderRadius: 10, padding: 12 },
+  entryForm: { gap: 12, borderWidth: 1, borderColor: colors.border, borderRadius: 12, padding: 14, backgroundColor: "#F8FAFC" },
+  checkboxRow: { flexDirection: "row", alignItems: "center", gap: 9, paddingVertical: 5 },
+  checkbox: { fontSize: 21, color: colors.primaryNavy },
   choiceGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   choice: { borderWidth: 1, borderColor: colors.fieldBorder, borderRadius: 9, paddingHorizontal: 11, paddingVertical: 9, backgroundColor: "#fff" },
   choiceActive: { backgroundColor: colors.primaryNavy, borderColor: colors.primaryNavy },

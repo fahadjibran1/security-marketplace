@@ -1,7 +1,7 @@
 import 'reflect-metadata';
 import * as assert from 'assert';
 import { ComplianceService } from '../src/compliance/compliance.service';
-import { assessContinuousHistory } from '../src/screening/screening.service';
+import { assessContinuousHistory, normalizeUkPostcode } from '../src/screening/screening.service';
 import { ScreeningStatus } from '../src/screening/entities/screening.entities';
 import { UserStatus } from '../src/user/entities/user.entity';
 let passed=0; async function test(name:string,fn:()=>unknown|Promise<unknown>){await fn();passed++;console.log(`PASS ${name}`);}
@@ -22,6 +22,9 @@ async function main(){
  await test('multiple gaps are all returned',()=>assert.deepEqual(assessContinuousHistory([{startDate:'2021-04-01',endDate:'2023-12-31',isCurrent:false},{startDate:'2024-02-01',endDate:'2026-02-15',isCurrent:false}],5,now).gaps,[{from:'2021-03-01',to:'2021-03-31'},{from:'2024-01-01',to:'2024-01-31'},{from:'2026-02-16',to:'2026-03-01'}]));
  await test('current period covers through authoritative end',()=>assert.equal(assessContinuousHistory([{startDate:'2021-03-01',isCurrent:true}],5,now).continuous,true));
  await test('employment education and unemployment can cover full period',()=>assert.equal(assessContinuousHistory([{startDate:'2021-03-01',endDate:'2022-08-31',isCurrent:false},{startDate:'2022-09-01',endDate:'2024-06-30',isCurrent:false},{startDate:'2024-07-01',isCurrent:true}],5,now).continuous,true));
+ await test('UK postcode is trimmed uppercased and spaced',()=>assert.equal(normalizeUkPostcode('  bd1 1aa  '),'BD1 1AA'));
+ await test('legitimate compact UK postcode is accepted',()=>assert.equal(normalizeUkPostcode('SW1A1AA'),'SW1A 1AA'));
+ await test('invalid postcode is rejected',()=>assert.throws(()=>normalizeUkPostcode('not-a-postcode'),/valid UK postcode/));
  const fs=require('fs'),path=require('path');const source=fs.readFileSync(path.join(__dirname,'../src/screening/screening.service.ts'),'utf8');
  for(const action of ['screening.check_verified','screening.consent_accepted','screening.consent_withdrawn','screening.evidence_accessed']) await test(`${action} audited`,()=>assert.ok(source.includes(action)));
  await test('evidence access audit excludes URL',()=>assert.doesNotMatch(source,/screening\.evidence_accessed[^\n]*\burl\b/));

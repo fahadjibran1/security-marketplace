@@ -16,7 +16,7 @@ export class AddHistoryDto {
   @IsOptional() @IsString() @MaxLength(200) organisation?: string; @IsOptional() @IsString() @MaxLength(2000) address?: string;
   @IsOptional() @IsString() @MaxLength(300) contactDetails?: string; @IsString() @IsNotEmpty() @MaxLength(3000) description!: string;
 }
-export class AddAddressDto { @IsString() @IsNotEmpty() @MaxLength(2000) address!: string; @IsDateString() startDate!: string; @IsOptional() @IsDateString() endDate?: string; @IsBoolean() isCurrent!: boolean; }
+export class AddAddressDto { @IsOptional() @IsString() @IsNotEmpty() @MaxLength(2000) address?: string; @IsOptional() @IsString() @MaxLength(200) addressLine1?:string; @IsOptional() @IsString() @MaxLength(200) addressLine2?:string; @IsOptional() @IsString() @MaxLength(150) townCity?:string; @IsOptional() @IsString() @MaxLength(20) postcode?:string; @IsDateString() startDate!: string; @IsOptional() @IsDateString() endDate?: string; @IsBoolean() isCurrent!: boolean; }
 export class AddReferenceDto {
   @IsInt() historyId!: number; @IsString() @IsNotEmpty() organisation!: string; @IsString() @IsNotEmpty() contactPerson!: string;
   @IsString() @IsNotEmpty() relationship!: string; @IsEmail() businessEmail!: string; @IsOptional() @IsString() phone?: string; @IsOptional() @IsString() postalDetails?: string;
