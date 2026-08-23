@@ -304,6 +304,7 @@ export interface CoverageShiftRow {
   assignedGuardCount: number;
   coverageGap: number;
   coverageStatus: string;
+  coverageState?: 'uncovered' | 'waiting_response' | 'confirmed';
   guardId?: number | null;
   guardName?: string | null;
 }

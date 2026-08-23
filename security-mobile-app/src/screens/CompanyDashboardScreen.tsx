@@ -6,7 +6,7 @@ import { CompanyAnalyticsWorkspace } from '../components/company/CompanyAnalytic
 import { CompanyAvailabilityWorkspace } from '../components/company/CompanyAvailabilityWorkspace';
 import { CompanyComplianceWorkspace } from '../components/company/CompanyComplianceWorkspace';
 import { CompanyContractPricingWorkspace } from '../components/company/CompanyContractPricingWorkspace';
-import { CompanyCoverageWorkspace } from '../components/company/CompanyCoverageWorkspace';
+import { CompanyCoverageWorkspace, CoverageNavigationContext } from '../components/company/CompanyCoverageWorkspace';
 import { CompanyFinanceWorkspace } from '../components/company/CompanyFinanceWorkspace';
 import { CompanyFinanceControlWorkspace } from '../components/company/CompanyFinanceControlWorkspace';
 import { CompanyInvoiceWorkspace } from '../components/company/CompanyInvoiceWorkspace';
@@ -34,6 +34,7 @@ import {
   listCompanyNotifications,
   listCompanySafetyAlerts,
   listCompanyTimesheets,
+  listCoverageShifts,
   listGuards,
   listJobApplications,
   listJobs,
@@ -50,6 +51,7 @@ import {
   AuthUser,
   Client,
   CompanyGuard,
+  CoverageShiftRow,
   CreateClientPayload,
   CreateJobPayload,
   CreateShiftPayload,
@@ -198,7 +200,8 @@ type UrgentOperationalItem = {
     | 'rejected_offer'
     | 'safety'
     | 'upcoming_risk'
-    | 'missed_shift';
+    | 'missed_shift'
+    | 'uncovered_shift';
   issueType: string;
   message: string;
   occurredAt: string;
@@ -521,6 +524,8 @@ function getUrgentPrimaryActionLabel(item: UrgentOperationalItem) {
 
 function getUrgentNextActionText(item: UrgentOperationalItem) {
   switch (item.category) {
+    case 'uncovered_shift':
+      return 'Next action: manage coverage and find a confirmed guard.';
     case 'missed_shift':
       return 'Next action: arrange replacement cover.';
     case 'rejected_offer':
@@ -1101,6 +1106,8 @@ export function CompanyDashboardScreen(_props: CompanyDashboardScreenProps = {})
   const [alerts, setAlerts] = React.useState<SafetyAlert[]>([]);
   const [dailyLogs, setDailyLogs] = React.useState<DailyLog[]>([]);
   const [notifications, setNotifications] = React.useState<Notification[]>([]);
+  const [uncoveredShifts, setUncoveredShifts] = React.useState<CoverageShiftRow[]>([]);
+  const [coverageNavigationContext, setCoverageNavigationContext] = React.useState<CoverageNavigationContext | undefined>(undefined);
   const [selectedSiteId, setSelectedSiteId] = React.useState<number | null>(null);
   const [selectedShiftId, setSelectedShiftId] = React.useState<number | null>(null);
   const [clientForm, setClientForm] = React.useState<ClientFormState>(CLIENT_FORM_EMPTY);
@@ -1205,6 +1212,11 @@ export function CompanyDashboardScreen(_props: CompanyDashboardScreenProps = {})
               }));
               setShifts(latestShifts);
             },
+          },
+          {
+            label: 'uncovered coverage',
+            run: () => listCoverageShifts({ uncoveredOnly: true }),
+            apply: (value: CoverageShiftRow[]) => setUncoveredShifts(value),
           },
           {
             label: 'guards',
@@ -1603,6 +1615,20 @@ export function CompanyDashboardScreen(_props: CompanyDashboardScreenProps = {})
       isLikelyToMissCheckIn(shift, attendanceByShiftId.get(shift.id)),
     );
 
+    uncoveredShifts.forEach((shift) => {
+      items.push({
+        id: `uncovered-${shift.shiftId}`,
+        shiftId: shift.shiftId,
+        status: shift.coverageState || shift.coverageStatus,
+        siteName: shift.siteName || 'Unknown site',
+        guardName: shift.guardName || 'No confirmed guard',
+        category: 'uncovered_shift',
+        issueType: 'Uncovered shift',
+        message: `${formatDateLabel(shift.start)} · ${formatTimeLabel(shift.start)}-${formatTimeLabel(shift.end)} · ${formatStatusLabel(shift.coverageState || shift.coverageStatus)}`,
+        occurredAt: shift.start,
+      });
+    });
+
     activePanicAlerts.forEach((alert) => {
       items.push({
         id: `panic-${alert.id}`,
@@ -1736,6 +1762,7 @@ export function CompanyDashboardScreen(_props: CompanyDashboardScreenProps = {})
     outstandingAlerts,
     rejectedShiftOffers,
     shifts,
+    uncoveredShifts,
   ]);
   const recentOperationalActivity = React.useMemo(() => {
     const items: OperationalActivityItem[] = [];
@@ -2436,6 +2463,11 @@ export function CompanyDashboardScreen(_props: CompanyDashboardScreenProps = {})
     setLiveBoardHighlightTimeoutId(nextTimeoutId);
   };
 
+  const openCoverage = (context: CoverageNavigationContext = {}) => {
+    setCoverageNavigationContext(context);
+    setActiveSection('coverage');
+  };
+
   const handleCancelShiftOffer = async (shiftId: number) => {
     try {
       setOfferActionShiftId(shiftId);
@@ -2524,6 +2556,11 @@ export function CompanyDashboardScreen(_props: CompanyDashboardScreenProps = {})
   };
 
   const handleOpenUrgentDetail = (item: UrgentOperationalItem) => {
+    if (item.category === 'uncovered_shift') {
+      openCoverage({ uncoveredOnly: true, shiftId: item.shiftId });
+      return;
+    }
+
     if (item.category === 'rejected_offer' || item.category === 'missed_shift') {
       if (item.shiftId) {
         setSelectedShiftId(item.shiftId);
@@ -2933,6 +2970,7 @@ export function CompanyDashboardScreen(_props: CompanyDashboardScreenProps = {})
       value: number;
       icon: string;
       tone: KpiTone;
+      coverageContext?: CoverageNavigationContext;
     }> = [
       { label: 'Active Clients', value: activeClients.length, icon: '🏢', tone: activeClients.length > 0 ? 'good' : 'neutral' },
       { label: 'Active Sites', value: activeSites.length, icon: '📍', tone: activeSites.length > 0 ? 'good' : 'neutral' },
@@ -2942,6 +2980,14 @@ export function CompanyDashboardScreen(_props: CompanyDashboardScreenProps = {})
       { label: 'Pending Timesheets', value: pendingTimesheets.length, icon: '⏱️', tone: pendingTimesheets.length > 0 ? 'warning' : 'good' },
       { label: 'Open Incidents', value: openIncidents.length, icon: '🚨', tone: openIncidents.length > 0 ? 'attention' : 'good' },
       { label: 'Alerts', value: outstandingAlerts.length, icon: '🔔', tone: outstandingAlerts.length > 0 ? 'attention' : 'good' },
+      { label: 'Uncovered Shifts', value: uncoveredShifts.length, icon: '⚠️', tone: uncoveredShifts.length > 0 ? 'attention' : 'good', coverageContext: { uncoveredOnly: true } },
+      {
+        label: 'Sites With Coverage Gaps',
+        value: new Set(uncoveredShifts.map((shift) => shift.siteId).filter((siteId) => siteId != null)).size,
+        icon: '📍',
+        tone: uncoveredShifts.length > 0 ? 'warning' : 'good',
+        coverageContext: { uncoveredOnly: true },
+      },
     ];
     return kpis;
   }, [
@@ -2953,6 +2999,7 @@ export function CompanyDashboardScreen(_props: CompanyDashboardScreenProps = {})
     outstandingAlerts.length,
     pendingTimesheets.length,
     shiftsToday.length,
+    uncoveredShifts,
   ]);
 
   const actionRequiredRows = React.useMemo(() => {
@@ -3001,9 +3048,16 @@ export function CompanyDashboardScreen(_props: CompanyDashboardScreenProps = {})
       <DashboardSection title="KPIs" subtitle="At-a-glance operational health.">
         <View style={styles.kpiGrid}>
           {dashboardKpis.map((kpi) => (
-            <View key={kpi.label} style={styles.kpiCell}>
+            <Pressable
+              key={kpi.label}
+              disabled={!kpi.coverageContext}
+              accessibilityRole={kpi.coverageContext ? 'button' : undefined}
+              accessibilityLabel={kpi.coverageContext ? `${kpi.label}: open Coverage` : undefined}
+              onPress={() => kpi.coverageContext && openCoverage(kpi.coverageContext)}
+              style={styles.kpiCell}
+            >
               <KpiCard label={kpi.label} value={String(kpi.value)} icon={kpi.icon} tone={kpi.tone} />
-            </View>
+            </Pressable>
           ))}
         </View>
       </DashboardSection>
@@ -3578,7 +3632,9 @@ export function CompanyDashboardScreen(_props: CompanyDashboardScreenProps = {})
               IS_WEB ? styles.liveOpsListRowWeb : null,
             ]}
             onPress={() => {
-              if (item.shiftId) {
+              if (item.category === 'uncovered_shift') {
+                handleOpenUrgentDetail(item);
+              } else if (item.shiftId) {
                 handleOpenUrgentShift(item);
               }
             }}
@@ -3596,6 +3652,14 @@ export function CompanyDashboardScreen(_props: CompanyDashboardScreenProps = {})
                 <Text style={styles.liveOpsUrgentOccurred}>{formatDateTimeLabel(item.occurredAt)}</Text>
               </View>
               <View style={[styles.urgentItemActions, styles.liveOpsUrgentActionBar]}>
+              {item.category === 'uncovered_shift' ? (
+                <Pressable
+                  style={[styles.primaryButton, styles.liveOpsUrgentBtnPrimary]}
+                  onPress={() => handleOpenUrgentDetail(item)}
+                >
+                  <Text style={[styles.primaryButtonText, styles.liveOpsUrgentBtnPrimaryText]}>Manage coverage</Text>
+                </Pressable>
+              ) : null}
               {item.category === 'incident' && (item.status || '').toLowerCase() === 'open' ? (
                 <Pressable
                   style={[styles.secondaryButton, styles.liveOpsUrgentBtnSecondary]}
@@ -4746,7 +4810,7 @@ export function CompanyDashboardScreen(_props: CompanyDashboardScreenProps = {})
       case 'analytics':
         return <CompanyAnalyticsWorkspace />;
       case 'coverage':
-        return <CompanyCoverageWorkspace />;
+        return <CompanyCoverageWorkspace navigationContext={coverageNavigationContext} />;
       case 'guards':
         return renderGuardsSection();
       case 'availability':
@@ -4844,7 +4908,10 @@ export function CompanyDashboardScreen(_props: CompanyDashboardScreenProps = {})
           activeId={activeSection}
           navItems={NAV_ITEMS}
           groups={COMPANY_NAV_GROUPS}
-          onNavigate={setActiveSection}
+          onNavigate={(section) => {
+            if (section === 'coverage') setCoverageNavigationContext(undefined);
+            setActiveSection(section);
+          }}
         />
       </View>
 

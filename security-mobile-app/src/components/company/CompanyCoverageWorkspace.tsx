@@ -22,7 +22,17 @@ function statusTone(status: string) {
   return styles.bad;
 }
 
-export function CompanyCoverageWorkspace() {
+export type CoverageNavigationContext = {
+  uncoveredOnly?: boolean;
+  siteId?: number | null;
+  shiftId?: number | null;
+};
+
+type CompanyCoverageWorkspaceProps = {
+  navigationContext?: CoverageNavigationContext;
+};
+
+export function CompanyCoverageWorkspace({ navigationContext }: CompanyCoverageWorkspaceProps) {
   const [from, setFrom] = React.useState('');
   const [to, setTo] = React.useState('');
   const [shifts, setShifts] = React.useState<CoverageShiftRow[]>([]);
@@ -31,20 +41,38 @@ export function CompanyCoverageWorkspace() {
   const [eligibleGuards, setEligibleGuards] = React.useState<EligibleGuardRow[]>([]);
   const [feedback, setFeedback] = React.useState<{ tone: 'error' | 'success'; message: string } | null>(null);
   const [loading, setLoading] = React.useState(false);
+  const [uncoveredOnly, setUncoveredOnly] = React.useState(Boolean(navigationContext?.uncoveredOnly));
+
+  React.useEffect(() => {
+    setUncoveredOnly(Boolean(navigationContext?.uncoveredOnly));
+  }, [navigationContext]);
 
   const loadData = React.useCallback(async () => {
     setLoading(true);
     try {
-      const params = { from: from || undefined, to: to || undefined };
+      const params = {
+        from: from || undefined,
+        to: to || undefined,
+        siteId: navigationContext?.siteId ? String(navigationContext.siteId) : undefined,
+        shiftId: navigationContext?.shiftId ? String(navigationContext.shiftId) : undefined,
+        uncoveredOnly: uncoveredOnly || undefined,
+      };
       const [nextShifts, nextSites] = await Promise.all([listCoverageShifts(params), listCoverageSites(params)]);
       setShifts(nextShifts);
-      setSites(nextSites);
+      setSites(navigationContext?.siteId ? nextSites.filter((site) => site.siteId === navigationContext.siteId) : nextSites);
+      const contextShift = navigationContext?.shiftId
+        ? nextShifts.find((shift) => shift.shiftId === navigationContext.shiftId) ?? null
+        : null;
+      if (contextShift) {
+        setSelectedShift(contextShift);
+        setEligibleGuards(await listEligibleGuardsForShift(contextShift.shiftId));
+      }
     } catch (error) {
       setFeedback({ tone: 'error', message: formatApiErrorMessage(error, 'Unable to load coverage intelligence.') });
     } finally {
       setLoading(false);
     }
-  }, [from, to]);
+  }, [from, navigationContext, to, uncoveredOnly]);
 
   React.useEffect(() => {
     loadData();
@@ -75,7 +103,19 @@ export function CompanyCoverageWorkspace() {
         <View style={styles.formGrid}>
           <TextInput style={styles.input} value={from} onChangeText={setFrom} placeholder="From YYYY-MM-DD" />
           <TextInput style={styles.input} value={to} onChangeText={setTo} placeholder="To YYYY-MM-DD" />
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Show uncovered shifts only"
+            style={[styles.filterButton, uncoveredOnly ? styles.filterButtonActive : null]}
+            onPress={() => setUncoveredOnly((current) => !current)}
+          >
+            <Text style={[styles.secondaryButtonText, uncoveredOnly ? styles.filterButtonTextActive : null]}>
+              {uncoveredOnly ? 'Uncovered only: On' : 'Uncovered only: Off'}
+            </Text>
+          </Pressable>
         </View>
+        {navigationContext?.shiftId ? <Text style={styles.reasonText}>Showing context for Shift #{navigationContext.shiftId}.</Text> : null}
+        {navigationContext?.siteId ? <Text style={styles.reasonText}>Filtered to the selected coverage-gap site.</Text> : null}
       </View>
       <View style={styles.split}>
         <View style={styles.main}>
@@ -146,4 +186,7 @@ const styles = StyleSheet.create({
   warn: { backgroundColor: '#fef3c7' },
   bad: { backgroundColor: '#fee2e2' },
   info: { backgroundColor: '#dbeafe' },
+  filterButton: { borderColor: '#cbd5e1', borderWidth: 1, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 12 },
+  filterButtonActive: { backgroundColor: '#fff7ed', borderColor: '#f97316' },
+  filterButtonTextActive: { color: '#9a3412' },
 });

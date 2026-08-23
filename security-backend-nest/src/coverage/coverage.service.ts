@@ -8,6 +8,32 @@ import { Shift } from '../shift/entities/shift.entity';
 
 type CoverageStatus = 'fully_covered' | 'partially_covered' | 'unfilled' | 'overstaffed';
 
+export type CoverageQuery = {
+  from?: string;
+  to?: string;
+  siteId?: string;
+  clientId?: string;
+  shiftId?: string;
+  uncoveredOnly?: string;
+};
+
+const NON_OPERATIONAL_SHIFT_STATUSES = new Set(['cancelled', 'completed', 'missed']);
+const CONFIRMED_COVER_SHIFT_STATUSES = new Set(['ready', 'in_progress']);
+
+export function isOperationalCoverageShift(shift: Pick<Shift, 'status'>): boolean {
+  return !NON_OPERATIONAL_SHIFT_STATUSES.has((shift.status || '').trim().toLowerCase());
+}
+
+export function hasConfirmedShiftCover(shift: Pick<Shift, 'status' | 'guard'>): boolean {
+  return Boolean(
+    shift.guard && CONFIRMED_COVER_SHIFT_STATUSES.has((shift.status || '').trim().toLowerCase()),
+  );
+}
+
+export function isUncoveredOperationalShift(shift: Pick<Shift, 'status' | 'guard'>): boolean {
+  return isOperationalCoverageShift(shift) && !hasConfirmedShiftCover(shift);
+}
+
 @Injectable()
 export class CoverageService {
   constructor(
@@ -16,7 +42,7 @@ export class CoverageService {
     private readonly availabilityService: AvailabilityService,
   ) {}
 
-  async listShiftCoverage(userId: number, query: { from?: string; to?: string; siteId?: string; clientId?: string }) {
+  async listShiftCoverage(userId: number, query: CoverageQuery) {
     const company = await this.companyService.findByUserId(userId);
     if (!company) throw new NotFoundException('Company not found');
     const from = query.from ? new Date(`${query.from}T00:00:00`) : new Date();
@@ -26,12 +52,15 @@ export class CoverageService {
       order: { start: 'ASC' },
     });
     return shifts
+      .filter((shift) => isOperationalCoverageShift(shift))
       .filter((shift) => !query.siteId || String(shift.site?.id) === query.siteId)
       .filter((shift) => !query.clientId || String(shift.site?.client?.id) === query.clientId)
+      .filter((shift) => !query.shiftId || String(shift.id) === query.shiftId)
+      .filter((shift) => query.uncoveredOnly !== 'true' || isUncoveredOperationalShift(shift))
       .map((shift) => this.toCoverageRow(shift));
   }
 
-  async listSiteCoverage(userId: number, query: { from?: string; to?: string }) {
+  async listSiteCoverage(userId: number, query: CoverageQuery) {
     const rows = await this.listShiftCoverage(userId, query);
     const map = new Map<string, any>();
     rows.forEach((row) => {
@@ -68,7 +97,7 @@ export class CoverageService {
 
   private toCoverageRow(shift: Shift) {
     const requiredGuardCount = Number(shift.job?.guardsRequired ?? shift.site?.requiredGuardCount ?? 1) || 1;
-    const assignedGuardCount = shift.guard ? 1 : 0;
+    const assignedGuardCount = hasConfirmedShiftCover(shift) ? 1 : 0;
     const coverageGap = Math.max(requiredGuardCount - assignedGuardCount, 0);
     let coverageStatus: CoverageStatus = 'fully_covered';
     if (assignedGuardCount === 0) coverageStatus = 'unfilled';
@@ -88,6 +117,11 @@ export class CoverageService {
       coverageStatus,
       guardId: shift.guard?.id ?? null,
       guardName: shift.guard?.fullName ?? null,
+      coverageState: isUncoveredOperationalShift(shift)
+        ? shift.guard
+          ? 'waiting_response'
+          : 'uncovered'
+        : 'confirmed',
     };
   }
 }

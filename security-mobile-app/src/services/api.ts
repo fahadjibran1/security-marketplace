@@ -579,19 +579,19 @@ export function saveMyGuardLeave(payload: GuardLeavePayload) {
   });
 }
 
-export function listCoverageShifts(params: { from?: string; to?: string; siteId?: string; clientId?: string } = {}) {
+export function listCoverageShifts(params: { from?: string; to?: string; siteId?: string; clientId?: string; shiftId?: string; uncoveredOnly?: boolean } = {}) {
   const query = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {
-    if (value) query.set(key, value);
+    if (value !== undefined && value !== '') query.set(key, String(value));
   });
   const suffix = query.toString() ? `?${query.toString()}` : '';
   return request<CoverageShiftRow[]>(`/coverage/shifts${suffix}`);
 }
 
-export function listCoverageSites(params: { from?: string; to?: string } = {}) {
+export function listCoverageSites(params: { from?: string; to?: string; siteId?: string; shiftId?: string; uncoveredOnly?: boolean } = {}) {
   const query = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {
-    if (value) query.set(key, value);
+    if (value !== undefined && value !== '') query.set(key, String(value));
   });
   const suffix = query.toString() ? `?${query.toString()}` : '';
   return request<CoverageSiteRow[]>(`/coverage/sites${suffix}`);
