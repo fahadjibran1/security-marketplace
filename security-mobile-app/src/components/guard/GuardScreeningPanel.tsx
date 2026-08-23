@@ -1,5 +1,7 @@
 import React from "react";
 import {
+  Alert,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -15,13 +17,19 @@ import {
   addMyScreeningReference,
   completeMyScreeningEvidence,
   createMyScreeningEvidence,
+  deleteMyScreeningAddress,
+  deleteMyScreeningHistory,
+  getMyGuard,
   getMyScreening,
   startMyScreening,
   submitMyScreening,
+  updateMyGuard,
+  updateMyScreeningAddress,
+  updateMyScreeningHistory,
   updateMyScreeningProfile,
   withdrawMyScreeningConsent,
 } from "../../services/api";
-import { GuardScreening, ScreeningStatus } from "../../types/models";
+import { GuardProfile, GuardScreening, ScreeningStatus } from "../../types/models";
 import { colors } from "../../theme";
 import { formatScreeningDate, normalizeScreeningPostcode, screeningDateToIso } from "./screening-format";
 
@@ -88,6 +96,12 @@ const activityOrganisationLabel = (type: string) =>
   })[type] || "Organisation / explanation";
 const emptyAddressForm = () => ({ addressLine1: "", addressLine2: "", townCity: "", postcode: "", startDate: "", endDate: "", isCurrent: false });
 const emptyActivityForm = () => ({ type: "", startDate: "", endDate: "", organisation: "", description: "" });
+const confirmDelete = (label:string) => Platform.OS === 'web'
+  ? Promise.resolve(globalThis.confirm(`Delete this ${label}? The server will recalculate screening coverage.`))
+  : new Promise<boolean>((resolve) => Alert.alert(`Delete ${label}?`,'The server will recalculate screening coverage.',[
+      {text:'Cancel',style:'cancel',onPress:()=>resolve(false)},
+      {text:'Delete',style:'destructive',onPress:()=>resolve(true)},
+    ],{cancelable:true,onDismiss:()=>resolve(false)}));
 
 export function GuardScreeningPanel({
   onContinue,
@@ -179,6 +193,7 @@ export function GuardScreeningPanel({
 export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
   const [data, setData] = React.useState<GuardScreening | null>(null),
     [step, setStep] = React.useState<Step>("personal");
+  const [guard, setGuard] = React.useState<GuardProfile | null>(null);
   const [error, setError] = React.useState(""),
     [feedback, setFeedback] = React.useState(""),
     [busy, setBusy] = React.useState(false);
@@ -191,6 +206,9 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
   });
   const [history, setHistory] = React.useState(emptyActivityForm());
   const [address, setAddress] = React.useState(emptyAddressForm());
+  const [editingAddressId, setEditingAddressId] = React.useState<number | null>(null);
+  const [editingHistoryId, setEditingHistoryId] = React.useState<number | null>(null);
+  const [compliance, setCompliance] = React.useState({siaLicenseNumber:"",siaExpiryDate:"",rightToWorkStatus:"",rightToWorkExpiryDate:""});
   const [showAddressForm, setShowAddressForm] = React.useState(false);
   const [showHistoryForm, setShowHistoryForm] = React.useState(false);
   const [reference, setReference] = React.useState({
@@ -203,8 +221,10 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
   });
   const load = React.useCallback(async () => {
     try {
-      const next = await getMyScreening();
+      const [next,nextGuard] = await Promise.all([getMyScreening(),getMyGuard()]);
       setData(next);
+      setGuard(nextGuard);
+      setCompliance({siaLicenseNumber:nextGuard.siaLicenseNumber||nextGuard.siaLicenceNumber||"",siaExpiryDate:nextGuard.siaExpiryDate?dateLabel(nextGuard.siaExpiryDate):"",rightToWorkStatus:nextGuard.rightToWorkStatus||"",rightToWorkExpiryDate:nextGuard.rightToWorkExpiryDate?dateLabel(nextGuard.rightToWorkExpiryDate):""});
       setProfile((p) => ({
         ...p,
         legalFullName: next.legalFullName || p.legalFullName,
@@ -345,6 +365,20 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
           </View>
         ) : null}
       </View>
+      <View style={s.actionSummary} accessibilityLabel="What you still need to do">
+        <Text style={s.stageTitle}>What you still need to do</Text>
+        {(data.requirements?.remediation || []).filter((item) => item.status === "ACTION_REQUIRED").length ? (
+          (data.requirements?.remediation || []).filter((item) => item.status === "ACTION_REQUIRED").map((item) => (
+            <View key={item.key} style={s.remediationRow}>
+              <View style={s.flex}><Text style={s.actionRequired}>Action required · {item.label}</Text><Text style={s.note}>{item.message}</Text></View>
+              <Pressable accessibilityRole="button" style={s.fixButton} onPress={() => navigateToStep(item.step as Step)}><Text style={s.fixButtonText}>Fix this</Text></Pressable>
+            </View>
+          ))
+        ) : <Text style={s.accessGood}>No candidate corrections are currently required.</Text>}
+        {(data.requirements?.remediation || []).filter((item) => item.status === "AWAITING_VERIFICATION").map((item) => (
+          <View key={item.key} style={s.remediationRow}><View style={s.flex}><Text style={s.awaiting}>Awaiting verification · {item.label}</Text><Text style={s.note}>{item.message}</Text></View></View>
+        ))}
+      </View>
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -480,6 +514,10 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
                       {dateLabel(a.startDate)} – {dateLabel(a.endDate)}
                     </Text>
                     <Text style={s.meta}>Verification: {verificationLabel(a.verificationState)}</Text>
+                    {canEdit ? <View style={s.inlineActions}>
+                      <Pressable accessibilityRole="button" style={s.smallButton} onPress={() => { setEditingAddressId(a.id); setAddress({addressLine1:a.addressLine1||a.address||"",addressLine2:a.addressLine2||"",townCity:a.townCity||"",postcode:a.postcode||"",startDate:dateLabel(a.startDate),endDate:a.endDate?dateLabel(a.endDate):"",isCurrent:a.isCurrent}); setShowAddressForm(true); }}><Text style={s.smallButtonText}>Edit</Text></Pressable>
+                      <Pressable accessibilityRole="button" style={s.deleteButton} onPress={async () => {if(await confirmDelete('address'))await act(() => deleteMyScreeningAddress(a.id),"Address deleted. The authoritative coverage check has been refreshed.",() => { if(editingAddressId===a.id){setEditingAddressId(null);setShowAddressForm(false);setAddress(emptyAddressForm());} });}}><Text style={s.deleteButtonText}>Delete</Text></Pressable>
+                    </View> : null}
                   </View>
                 ))}
             </View>
@@ -503,7 +541,7 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
             <Action
               disabled={!canEdit || busy}
               label="+ Add another address"
-              onPress={() => { setAddress(emptyAddressForm()); setShowAddressForm(true); }}
+              onPress={() => { setEditingAddressId(null); setAddress(emptyAddressForm()); setShowAddressForm(true); }}
             />
             {showAddressForm ? <View style={s.entryForm}>
               <Field label="Address line 1 *" value={address.addressLine1} set={(v) => setAddress({ ...address, addressLine1: v })} />
@@ -515,8 +553,8 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
               <Pressable accessibilityRole="checkbox" accessibilityState={{checked:address.isCurrent}} style={s.checkboxRow} onPress={() => setAddress({...address,isCurrent:!address.isCurrent,endDate:""})}>
                 <Text style={s.checkbox}>{address.isCurrent ? "☑" : "☐"}</Text><Text>I currently live at this address</Text>
               </Pressable>
-              <Action disabled={!canEdit || busy} label="Save address" onPress={() => act(() => addMyScreeningAddress({addressLine1:address.addressLine1,addressLine2:address.addressLine2||undefined,townCity:address.townCity,postcode:normalizeScreeningPostcode(address.postcode),startDate:screeningDateToIso(address.startDate),isCurrent:address.isCurrent,endDate:address.isCurrent?undefined:screeningDateToIso(address.endDate)}), "Address history updated.", () => { setAddress(emptyAddressForm()); setShowAddressForm(false); })} />
-              <Action disabled={busy} label="Cancel" onPress={() => { setAddress(emptyAddressForm()); setShowAddressForm(false); }} />
+              <Action disabled={!canEdit || busy} label={editingAddressId?"Save address changes":"Save address"} onPress={() => {const payload={addressLine1:address.addressLine1,addressLine2:address.addressLine2||undefined,townCity:address.townCity,postcode:normalizeScreeningPostcode(address.postcode),startDate:screeningDateToIso(address.startDate),isCurrent:address.isCurrent,endDate:address.isCurrent?undefined:screeningDateToIso(address.endDate)};return act(() => editingAddressId?updateMyScreeningAddress(editingAddressId,payload):addMyScreeningAddress(payload), "Address history updated. The authoritative coverage check has been refreshed.", () => { setEditingAddressId(null); setAddress(emptyAddressForm()); setShowAddressForm(false); });}} />
+              <Action disabled={busy} label="Cancel" onPress={() => { setEditingAddressId(null); setAddress(emptyAddressForm()); setShowAddressForm(false); }} />
             </View> : null}
             <EvidencePicker
               label="Choose address evidence"
@@ -552,6 +590,10 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
                     <Text style={s.meta}>
                       {dateLabel(h.startDate)} – {dateLabel(h.endDate)}
                     </Text>
+                    {canEdit ? <View style={s.inlineActions}>
+                      <Pressable accessibilityRole="button" style={s.smallButton} onPress={() => {setEditingHistoryId(h.id);setHistory({type:h.type,startDate:dateLabel(h.startDate),endDate:h.endDate?dateLabel(h.endDate):"",organisation:h.organisation||"",description:h.description||""});setShowHistoryForm(true);}}><Text style={s.smallButtonText}>Edit</Text></Pressable>
+                      <Pressable accessibilityRole="button" style={s.deleteButton} onPress={async () => {if(await confirmDelete('activity'))await act(() => deleteMyScreeningHistory(h.id),"Activity deleted. Authoritative gaps and overlaps have been refreshed.",() => {if(editingHistoryId===h.id){setEditingHistoryId(null);setShowHistoryForm(false);setHistory(emptyActivityForm());}});}}><Text style={s.deleteButtonText}>Delete</Text></Pressable>
+                    </View> : null}
                   </View>
                 </View>
               ))}
@@ -562,7 +604,7 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
                 title="ACTIVITY HISTORY INCOMPLETE — MISSING PERIOD"
                 from={g.from}
                 to={g.to}
-                message="Add an activity or explained period covering these exact dates before submitting."
+                message="Add an activity or explained period covering these exact dates before submitting. Use Add activity below to cover this period."
               />
             ))}
             {data.requirements?.chronology.overlaps.map((o) => (
@@ -573,7 +615,7 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
                 message="Check these activity entries and correct the dates if the overlap is not intentional."
               />
             ))}
-            <Action disabled={!canEdit || busy} label="+ Add another activity" onPress={() => { setHistory(emptyActivityForm()); setShowHistoryForm(true); }} />
+            <Action disabled={!canEdit || busy} label="+ Add another activity" onPress={() => { setEditingHistoryId(null); setHistory(emptyActivityForm()); setShowHistoryForm(true); }} />
             {showHistoryForm ? <View style={s.entryForm}>
             <Text style={s.fieldLabel}>Activity type</Text>
             <View style={s.choiceGrid}>
@@ -618,24 +660,22 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
             />
             <Action
               disabled={!canEdit || busy}
-              label="Save activity"
-              onPress={() =>
-                act(
-                  () =>
-                    addMyScreeningHistory({
-                      ...history,
-                      startDate: screeningDateToIso(history.startDate),
-                      isCurrent: !history.endDate,
-                      endDate: history.endDate
-                        ? screeningDateToIso(history.endDate)
-                        : undefined,
-                    }),
-                  "Activity history updated.",
-                  () => { setHistory(emptyActivityForm()); setShowHistoryForm(false); },
-                )
-              }
+              label={editingHistoryId?"Save activity changes":"Save activity"}
+              onPress={() => {
+                const payload = {
+                  ...history,
+                  startDate: screeningDateToIso(history.startDate),
+                  isCurrent: !history.endDate,
+                  endDate: history.endDate ? screeningDateToIso(history.endDate) : undefined,
+                };
+                return act(
+                  () => editingHistoryId ? updateMyScreeningHistory(editingHistoryId,payload) : addMyScreeningHistory(payload),
+                  "Activity history updated. Authoritative gaps and overlaps have been refreshed.",
+                  () => { setEditingHistoryId(null); setHistory(emptyActivityForm()); setShowHistoryForm(false); },
+                );
+              }}
             />
-            <Action disabled={busy} label="Cancel" onPress={() => { setHistory(emptyActivityForm()); setShowHistoryForm(false); }} />
+            <Action disabled={busy} label="Cancel" onPress={() => { setEditingHistoryId(null); setHistory(emptyActivityForm()); setShowHistoryForm(false); }} />
             </> : <Text style={s.meta}>Choose the activity type to continue.</Text>}
             </View> : null}
           </>
@@ -744,12 +784,25 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
         ) : null}
         {step === "checks" ? (
           <>
+            <Text style={s.sectionHeading}>Candidate compliance information</Text>
+            <Text style={s.note}>This is the authoritative place to maintain your SIA and Right to Work information. Uploading evidence does not verify it.</Text>
+            <Field label="SIA licence number (16 digits)" value={compliance.siaLicenseNumber} set={(v) => setCompliance({...compliance,siaLicenseNumber:v})} />
+            <Field label="SIA licence expiry date (DD/MM/YYYY)" value={compliance.siaExpiryDate} set={(v) => setCompliance({...compliance,siaExpiryDate:v})} />
+            <Field label="Right to Work status / type" value={compliance.rightToWorkStatus} set={(v) => setCompliance({...compliance,rightToWorkStatus:v})} />
+            <Field label="Right to Work expiry date (DD/MM/YYYY, if applicable)" value={compliance.rightToWorkExpiryDate} set={(v) => setCompliance({...compliance,rightToWorkExpiryDate:v})} />
+            <Action disabled={!canEdit||busy} label="Save SIA & Right to Work information" onPress={() => act(() => updateMyGuard({siaLicenseNumber:compliance.siaLicenseNumber.trim()||undefined,siaExpiryDate:compliance.siaExpiryDate?screeningDateToIso(compliance.siaExpiryDate):null,rightToWorkStatus:compliance.rightToWorkStatus.trim()||null,rightToWorkExpiryDate:compliance.rightToWorkExpiryDate?screeningDateToIso(compliance.rightToWorkExpiryDate):null}),"Compliance information saved. Authoritative eligibility has been refreshed.")} />
             <StatusCards
               items={[
+                ["SIA licence number",guard?.siaLicenseNumber||guard?.siaLicenceNumber?"Provided":"Not provided"],
+                ["SIA licence expiry",guard?.siaExpiryDate?dateLabel(guard.siaExpiryDate):"Not provided"],
                 ["SIA evidence", evidenceState(data, "sia")],
                 [
                   "SIA register verification",
                   verificationLabel(data.siaRegisterVerification),
+                ],
+                [
+                  "Right to Work information",
+                  guard?.rightToWorkStatus||"Not provided",
                 ],
                 [
                   "Right to Work evidence",
@@ -855,7 +908,7 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
         ) : null}
         {step === "review" ? (
           <>
-            <Review data={data} />
+            <Review data={data} onFix={(target) => navigateToStep(target as Step)} />
             {data.requirements?.missing.map((x) => (
               <Text key={x} style={s.missing}>
                 • {x}
@@ -1132,49 +1185,15 @@ function stageHelp(step: Step, years: number) {
       "Review your progress and resolve every server-reported missing requirement before submission.",
   }[step];
 }
-function Review({ data }: { data: GuardScreening }) {
-  const rows: Array<[string, string]> = [
-    [
-      "Personal details",
-      data.legalFullName ? "Complete" : "Missing personal details",
-    ],
-    ["Identity evidence", evidenceState(data, "identity")],
-    ["Identity check", verificationLabel(data.identityVerification)],
-    [
-      "Address history",
-      data.requirements?.addressChronology?.continuous
-        ? "Complete for the required period"
-        : `${data.requirements?.addressChronology?.gaps.length || 0} uncovered period(s)`,
-    ],
-    [
-      "Activity history",
-      data.requirements?.chronology.continuous
-        ? "Complete for the required period"
-        : `${data.requirements?.chronology.gaps.length || 0} unexplained period(s)`,
-    ],
-    [
-      "References",
-      data.references?.length
-        ? "Candidate supplied — reviewer verification pending"
-        : "Missing reference",
-    ],
-    ["SIA evidence", evidenceState(data, "sia")],
-    ["SIA check", verificationLabel(data.siaRegisterVerification)],
-    ["Right to Work evidence", evidenceState(data, "right_to_work")],
-    ["Right to Work check", verificationLabel(data.rightToWorkVerification)],
-    [
-      "Consent",
-      data.consents?.some((x) => !x.withdrawnAt)
-        ? "Complete"
-        : "Missing consent",
-    ],
-  ];
+function Review({ data,onFix }: { data: GuardScreening;onFix:(step:string)=>void }) {
+  const rows=data.requirements?.remediation||[];
   return (
     <View style={s.review}>
-      {rows.map(([a, b]) => (
-        <View key={a} style={s.reviewRow}>
-          <Text style={s.label}>{a}</Text>
-          <Text style={s.itemTitle}>{b}</Text>
+      <View style={s.reviewHeader}><Text style={s.label}>Requirement</Text><Text style={s.label}>Status and candidate action</Text></View>
+      {rows.map((item) => (
+        <View key={item.key} style={s.reviewRow}>
+          <View style={s.flex}><Text style={s.label}>{item.label}</Text><Text style={s.itemTitle}>{item.status.replaceAll('_',' ')}</Text><Text style={s.note}>{item.message}</Text></View>
+          {item.status==='ACTION_REQUIRED'?<Pressable accessibilityRole="button" style={s.fixButton} onPress={()=>onFix(item.step)}><Text style={s.fixButtonText}>Fix this</Text></Pressable>:null}
         </View>
       ))}
       {data.requirements?.addressChronology?.gaps.map((g) => (
@@ -1376,6 +1395,7 @@ const s = StyleSheet.create({
     gap: 5,
   },
   review: { borderTopWidth: 1, borderTopColor: colors.border },
+  reviewHeader: { flexDirection:"row",justifyContent:"space-between",gap:12,paddingVertical:10 },
   reviewRow: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -1385,6 +1405,18 @@ const s = StyleSheet.create({
     paddingVertical: 11,
   },
   missing: { color: "#9A3412", lineHeight: 20 },
+  actionSummary:{backgroundColor:"#fff",borderWidth:1,borderColor:colors.border,borderRadius:16,padding:16,gap:10},
+  remediationRow:{flexDirection:"row",alignItems:"center",gap:12,borderTopWidth:1,borderTopColor:colors.border,paddingTop:10},
+  actionRequired:{color:"#9A3412",fontWeight:"900"},
+  awaiting:{color:"#1D4ED8",fontWeight:"900"},
+  fixButton:{backgroundColor:colors.primaryNavy,borderRadius:9,paddingHorizontal:12,paddingVertical:9},
+  fixButtonText:{color:"#fff",fontWeight:"800"},
+  inlineActions:{flexDirection:"row",gap:8,marginTop:8,flexWrap:"wrap"},
+  smallButton:{borderWidth:1,borderColor:colors.primaryNavy,borderRadius:8,paddingHorizontal:12,paddingVertical:7},
+  smallButtonText:{color:colors.primaryNavy,fontWeight:"800"},
+  deleteButton:{borderWidth:1,borderColor:"#DC2626",borderRadius:8,paddingHorizontal:12,paddingVertical:7},
+  deleteButtonText:{color:"#B91C1C",fontWeight:"800"},
+  sectionHeading:{fontSize:17,fontWeight:"900",color:colors.textPrimary},
   stageNav: {
     flexDirection: "row",
     justifyContent: "space-between",

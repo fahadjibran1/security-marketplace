@@ -1291,8 +1291,8 @@ export interface GuardScreening {
   legalFullName?: string; previousNames?: string; dateOfBirth?: string; nationality?: string; currentAddress?: string; siaLicenceType?: string;
   identityVerification?: string; siaRegisterVerification?: string; rightToWorkVerification?: string;
   submittedAt?: string|null; reviewedAt?: string|null; vettedAt?: string|null; retentionReviewAt?: string|null;
-  requirements?: { missing: string[]; chronology: { continuous:boolean; gaps:Array<{from:string;to:string}>; overlaps:Array<{from:string;to:string}>; periodStart?:string; periodEnd?:string }; addressChronology?: { continuous:boolean; gaps:Array<{from:string;to:string}>; overlaps:Array<{from:string;to:string}>; periodStart?:string; periodEnd?:string } };
-  history?: Array<{id:number;type:string;startDate:string;endDate?:string|null;isCurrent:boolean;organisation?:string}>;
+  requirements?: { missing: string[]; remediation?: Array<{key:string;label:string;status:'COMPLETE'|'ACTION_REQUIRED'|'AWAITING_VERIFICATION'|'VERIFIED';message:string;step:string}>; chronology: { continuous:boolean; gaps:Array<{from:string;to:string}>; overlaps:Array<{from:string;to:string}>; periodStart?:string; periodEnd?:string }; addressChronology?: { continuous:boolean; gaps:Array<{from:string;to:string}>; overlaps:Array<{from:string;to:string}>; periodStart?:string; periodEnd?:string } };
+  history?: Array<{id:number;type:string;startDate:string;endDate?:string|null;isCurrent:boolean;organisation?:string;description?:string;verificationState?:string}>;
   addresses?: Array<{id:number;address:string;addressLine1?:string|null;addressLine2?:string|null;townCity?:string|null;postcode?:string|null;startDate:string;endDate?:string|null;isCurrent:boolean;verificationState:string}>;
   references?: Array<{id:number;history?:{id:number};historyId?:number;organisation:string;contactPerson?:string;relationship?:string;businessEmail?:string;status:string;sourceVerified:boolean}>;
   evidence?: Array<{id:number;category:string;mimeType:string;sizeBytes:number;uploadCompleted:boolean;verificationState:string}>;

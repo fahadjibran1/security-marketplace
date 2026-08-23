@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Put, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Put, UseGuards } from '@nestjs/common';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -15,7 +15,11 @@ export class ScreeningController {
   @Get('mine') @Roles(UserRole.GUARD) mine(@CurrentUser() u:JwtPayload){return this.service.mine(u.sub);}
   @Put('mine/profile') @Roles(UserRole.GUARD) profile(@CurrentUser() u:JwtPayload,@Body() d:UpdateScreeningProfileDto){return this.service.updateProfile(u.sub,d);}
   @Post('mine/history') @Roles(UserRole.GUARD) history(@CurrentUser() u:JwtPayload,@Body() d:AddHistoryDto){return this.service.addHistory(u.sub,d);}
+  @Put('mine/history/:id') @Roles(UserRole.GUARD) updateHistory(@CurrentUser() u:JwtPayload,@Param('id',ParseIntPipe) id:number,@Body() d:AddHistoryDto){return this.service.updateHistory(u.sub,id,d);}
+  @Delete('mine/history/:id') @Roles(UserRole.GUARD) deleteHistory(@CurrentUser() u:JwtPayload,@Param('id',ParseIntPipe) id:number){return this.service.deleteHistory(u.sub,id);}
   @Post('mine/addresses') @Roles(UserRole.GUARD) address(@CurrentUser() u:JwtPayload,@Body() d:AddAddressDto){return this.service.addAddress(u.sub,d);}
+  @Put('mine/addresses/:id') @Roles(UserRole.GUARD) updateAddress(@CurrentUser() u:JwtPayload,@Param('id',ParseIntPipe) id:number,@Body() d:AddAddressDto){return this.service.updateAddress(u.sub,id,d);}
+  @Delete('mine/addresses/:id') @Roles(UserRole.GUARD) deleteAddress(@CurrentUser() u:JwtPayload,@Param('id',ParseIntPipe) id:number){return this.service.deleteAddress(u.sub,id);}
   @Post('mine/references') @Roles(UserRole.GUARD) reference(@CurrentUser() u:JwtPayload,@Body() d:AddReferenceDto){return this.service.addReference(u.sub,d);}
   @Post('mine/consent') @Roles(UserRole.GUARD) consent(@CurrentUser() u:JwtPayload,@Body() d:ConsentDto){return this.service.consent(u.sub,d);}
   @Post('mine/consent/withdraw') @Roles(UserRole.GUARD) withdrawConsent(@CurrentUser() u:JwtPayload){return this.service.withdrawConsent(u.sub);}

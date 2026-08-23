@@ -2372,13 +2372,24 @@ export function CompanyDashboardScreen(_props: CompanyDashboardScreenProps = {})
     }
   };
 
+  const guardOnboardingMessage = (message: string) => {
+    const compliancePrefix = 'Guard compliance invalid:';
+    if (message.includes('Guard screening is not complete.')) {
+      return 'Guard onboarding incomplete. Guard cannot yet be approved. The candidate must complete screening and authorised verification.';
+    }
+    return message.includes(compliancePrefix)
+      ? `Guard onboarding incomplete. Guard cannot yet be approved. Outstanding candidate requirement: ${message.split(compliancePrefix)[1].trim()}`
+      : message;
+  };
+
   const handleApproveGuard = async (guardId: number) => {
     try {
       setApprovingGuardId(guardId);
       await approveGuard(guardId);
       await loadData(true);
     } catch (approveError) {
-      setError(formatApiErrorMessage(approveError, 'Unable to link this guard right now.'));
+      const message = formatApiErrorMessage(approveError, 'Unable to link this guard right now.');
+      setError(guardOnboardingMessage(message));
     } finally {
       setApprovingGuardId(null);
     }
@@ -2397,14 +2408,14 @@ export function CompanyDashboardScreen(_props: CompanyDashboardScreenProps = {})
       }
     } catch (reviewError) {
       setError(
-        formatApiErrorMessage(
+        guardOnboardingMessage(formatApiErrorMessage(
           reviewError,
           status === 'accepted'
             ? 'Unable to accept this application right now.'
             : status === 'rejected'
               ? 'Unable to reject this application right now.'
               : 'Unable to update this application right now.',
-        ),
+        )),
       );
     } finally {
       setReviewingApplicationId(null);

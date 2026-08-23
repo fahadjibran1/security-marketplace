@@ -1543,7 +1543,7 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
               </View>
             </FeatureCard>
             <View style={styles.guardProfileBelowStack}>
-              <GuardCompliancePanel />
+              <GuardCompliancePanel onManageCompliance={() => setActiveTab('screening')} />
               <GuardScreeningPanel onContinue={() => setActiveTab('screening')} />
               <GuardAvailabilityScreen />
             </View>
