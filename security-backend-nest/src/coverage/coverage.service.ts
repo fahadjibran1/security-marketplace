@@ -19,6 +19,47 @@ export type CoverageQuery = {
 
 const NON_OPERATIONAL_SHIFT_STATUSES = new Set(['cancelled', 'completed', 'missed']);
 const CONFIRMED_COVER_SHIFT_STATUSES = new Set(['ready', 'in_progress']);
+const COVERAGE_TIME_ZONE = 'Europe/London';
+
+function ukDateParts(value: Date) {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: COVERAGE_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(value);
+  const part = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find((entry) => entry.type === type)?.value);
+  return { year: part('year'), month: part('month'), day: part('day') };
+}
+
+function timeZoneOffsetMs(value: Date) {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: COVERAGE_TIME_ZONE,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+  }).formatToParts(value);
+  const part = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find((entry) => entry.type === type)?.value);
+  return Date.UTC(part('year'), part('month') - 1, part('day'), part('hour'), part('minute'), part('second'))
+    - Math.floor(value.getTime() / 1000) * 1000;
+}
+
+function ukMidnight(year: number, month: number, day: number) {
+  const guess = Date.UTC(year, month - 1, day);
+  let result = new Date(guess - timeZoneOffsetMs(new Date(guess)));
+  result = new Date(guess - timeZoneOffsetMs(result));
+  return result;
+}
+
+export function coverageCalendarBoundary(date: string | undefined, end: boolean, now = new Date()) {
+  const parsed = date?.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const base = parsed
+    ? { year: Number(parsed[1]), month: Number(parsed[2]), day: Number(parsed[3]) }
+    : ukDateParts(now);
+  const dayOffset = end ? 1 : 0;
+  const normalized = new Date(Date.UTC(base.year, base.month - 1, base.day + dayOffset));
+  const boundary = ukMidnight(normalized.getUTCFullYear(), normalized.getUTCMonth() + 1, normalized.getUTCDate());
+  return end ? new Date(boundary.getTime() - 1) : boundary;
+}
 
 export function isOperationalCoverageShift(shift: Pick<Shift, 'status'>): boolean {
   return !NON_OPERATIONAL_SHIFT_STATUSES.has((shift.status || '').trim().toLowerCase());
@@ -45,8 +86,11 @@ export class CoverageService {
   async listShiftCoverage(userId: number, query: CoverageQuery) {
     const company = await this.companyService.findByUserId(userId);
     if (!company) throw new NotFoundException('Company not found');
-    const from = query.from ? new Date(`${query.from}T00:00:00`) : new Date();
-    const to = query.to ? new Date(`${query.to}T23:59:59`) : new Date(Date.now() + 14 * 86400000);
+    const now = new Date();
+    const from = coverageCalendarBoundary(query.from, false, now);
+    const to = query.to
+      ? coverageCalendarBoundary(query.to, true, now)
+      : coverageCalendarBoundary(undefined, true, new Date(now.getTime() + 14 * 86400000));
     const shifts = await this.shiftRepo.find({
       where: { company: { id: company.id }, start: Between(from, to) },
       order: { start: 'ASC' },

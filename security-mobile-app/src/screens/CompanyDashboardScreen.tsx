@@ -1088,6 +1088,7 @@ const COMPANY_NATIVE_MIN_WIDTH = 768;
 export function CompanyDashboardScreen(_props: CompanyDashboardScreenProps = {}) {
   const { width: layoutWidth } = useWindowDimensions();
   const companyMobileLayoutDisabled = !IS_WEB && layoutWidth < COMPANY_NATIVE_MIN_WIDTH;
+  const contentScrollRef = React.useRef<{ scrollTo: (options: { y: number; animated: boolean }) => void } | null>(null);
 
   const [activeSection, setActiveSection] = React.useState<CompanySection>('dashboard');
   const [loading, setLoading] = React.useState(true);
@@ -1147,6 +1148,8 @@ export function CompanyDashboardScreen(_props: CompanyDashboardScreenProps = {})
   const [savingCloseOutNotes, setSavingCloseOutNotes] = React.useState(false);
   const [showArchivedClients, setShowArchivedClients] = React.useState(false);
   const [liveBoardAnchorY, setLiveBoardAnchorY] = React.useState(0);
+  const [shiftDetailAnchorY, setShiftDetailAnchorY] = React.useState(0);
+  const [pendingShiftDetailFocusId, setPendingShiftDetailFocusId] = React.useState<number | null>(null);
   const [highlightedLiveShiftId, setHighlightedLiveShiftId] = React.useState<number | null>(null);
   const [liveBoardHighlightTimeoutId, setLiveBoardHighlightTimeoutId] = React.useState<ReturnType<typeof setTimeout> | null>(null);
   const [autoMarkingMissedShiftIds, setAutoMarkingMissedShiftIds] = React.useState<number[]>([]);
@@ -2463,6 +2466,28 @@ export function CompanyDashboardScreen(_props: CompanyDashboardScreenProps = {})
     setLiveBoardHighlightTimeoutId(nextTimeoutId);
   };
 
+  const focusShiftDetail = (shiftId: number) => {
+    setSelectedShiftId(shiftId);
+    setActiveSection('live-operations');
+    setHighlightedLiveShiftId(shiftId);
+    setPendingShiftDetailFocusId(shiftId);
+  };
+
+  React.useEffect(() => {
+    if (
+      activeSection !== 'live-operations' ||
+      pendingShiftDetailFocusId === null ||
+      selectedShiftId !== pendingShiftDetailFocusId ||
+      shiftDetailAnchorY <= 0
+    ) return;
+
+    const timeoutId = setTimeout(() => {
+      contentScrollRef.current?.scrollTo({ y: Math.max(shiftDetailAnchorY - 24, 0), animated: true });
+      setPendingShiftDetailFocusId(null);
+    }, 50);
+    return () => clearTimeout(timeoutId);
+  }, [activeSection, pendingShiftDetailFocusId, selectedShiftId, shiftDetailAnchorY]);
+
   const openCoverage = (context: CoverageNavigationContext = {}) => {
     setCoverageNavigationContext(context);
     setActiveSection('coverage');
@@ -2636,7 +2661,7 @@ export function CompanyDashboardScreen(_props: CompanyDashboardScreenProps = {})
       return;
     }
 
-    focusShiftInLiveBoard(shift.id);
+    focusShiftDetail(shift.id);
     setLiveOperationsFeedback({
       tone: 'success',
       message:
@@ -4153,9 +4178,10 @@ export function CompanyDashboardScreen(_props: CompanyDashboardScreenProps = {})
       </View>
       </DashboardSection>
 
-      <DashboardSection
-        title="Selected shift detail"
-        subtitle={
+      <View onLayout={(event: any) => setShiftDetailAnchorY(event.nativeEvent.layout.y)}>
+        <DashboardSection
+          title="Selected shift detail"
+          subtitle={
           selectedShift
             ? 'Row-level summary for the shift highlighted on the board above — follow-up, close-out, and records.'
             : 'Select a shift row on the live board to load attendance, logs, incidents, and safety context in this panel.'
@@ -4198,7 +4224,19 @@ export function CompanyDashboardScreen(_props: CompanyDashboardScreenProps = {})
             <Text style={styles.liveOpsSelectedSummaryLine}>Waiting for guard confirmation before live controls are used.</Text>
           ) : null}
           {normalizeShiftLifecycleStatus(selectedShift.status) === 'unfilled' ? (
-            <Text style={styles.liveOpsSelectedSummaryLine}>No confirmed guard is linked yet. This shift still needs cover.</Text>
+            <>
+              <Text style={styles.liveOpsSelectedSummaryLine}>No confirmed guard is linked yet. This shift still needs cover.</Text>
+              <View style={styles.rowActions}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Manage coverage for Shift #${selectedShift.id}`}
+                  style={styles.primaryButton}
+                  onPress={() => openCoverage({ uncoveredOnly: true, shiftId: selectedShift.id })}
+                >
+                  <Text style={styles.primaryButtonText}>Manage Coverage</Text>
+                </Pressable>
+              </View>
+            </>
           ) : null}
           {normalizeShiftLifecycleStatus(selectedShift.status) === 'in_progress' ? (
             <Text style={styles.liveOpsSelectedSummaryLine}>Guard is booked on and the shift is live in operations.</Text>
@@ -4355,7 +4393,8 @@ export function CompanyDashboardScreen(_props: CompanyDashboardScreenProps = {})
             description="Tap a row on the live shift board to attach its operational detail, attendance, and records to this panel."
           />
         )}
-      </DashboardSection>
+        </DashboardSection>
+      </View>
     </View>
   );
 
@@ -4917,6 +4956,7 @@ export function CompanyDashboardScreen(_props: CompanyDashboardScreenProps = {})
 
       <View style={styles.contentShell}>
         <ScrollView
+          ref={contentScrollRef}
           style={styles.content}
           contentContainerStyle={[styles.contentContainer, IS_WEB ? styles.contentContainerWeb : null]}
         >
