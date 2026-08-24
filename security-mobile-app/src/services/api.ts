@@ -1026,6 +1026,7 @@ export function acceptMyScreeningConsent(consentVersion='S4-PILOT-1'){return req
 export function withdrawMyScreeningConsent(){return request('/screening/mine/consent/withdraw',{method:'POST'});}
 export function submitMyScreening(){return request<GuardScreening>('/screening/mine/submit',{method:'POST'});}
 export function listScreenings(){return request<GuardScreening[]>('/screening');}
+export function getScreening(id:number){return request<GuardScreening>(`/screening/${id}`);}
 export function startScreeningReview(id:number){return request<GuardScreening>(`/screening/${id}/start-review`,{method:'POST'});}
 export function verifyScreeningCheck(id:number,check:'identity'|'address'|'sia'|'rtw'){return request<GuardScreening>(`/screening/${id}/checks/${check}`,{method:'PATCH',body:JSON.stringify({state:'VERIFIED',method:'Authorised reviewer verification'})});}
 export function requestScreeningInformation(id:number,reason:string){return request<GuardScreening>(`/screening/${id}/request-information`,{method:'POST',body:JSON.stringify({reason})});}
