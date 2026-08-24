@@ -287,11 +287,17 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
     await completeMyScreeningEvidence(created.id);
   };
   const canEdit = editable(data?.status),
+    canCorrectRecords = canEdit || data?.status === "READY_FOR_REVIEW",
     activeIndex = STEPS.findIndex((x) => x.key === step);
   const navigateToStep = (next: Step) => {
     setError("");
     setFeedback("");
     setStep(next);
+  };
+  const navigateToRemediation = (next: Step) => {
+    navigateToStep(next);
+    if(next==="addresses"){setEditingAddressId(null);setAddress(emptyAddressForm());setShowAddressForm(true);}
+    if(next==="history"){setEditingHistoryId(null);setHistory(emptyActivityForm());setShowHistoryForm(true);}
   };
   if (!data?.id)
     return (
@@ -371,7 +377,7 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
           (data.requirements?.remediation || []).filter((item) => item.status === "ACTION_REQUIRED").map((item) => (
             <View key={item.key} style={s.remediationRow}>
               <View style={s.flex}><Text style={s.actionRequired}>Action required · {item.label}</Text><Text style={s.note}>{item.message}</Text></View>
-              <Pressable accessibilityRole="button" style={s.fixButton} onPress={() => navigateToStep(item.step as Step)}><Text style={s.fixButtonText}>Fix this</Text></Pressable>
+              <Pressable accessibilityRole="button" style={s.fixButton} onPress={() => navigateToRemediation(item.step as Step)}><Text style={s.fixButtonText}>Fix this</Text></Pressable>
             </View>
           ))
         ) : <Text style={s.accessGood}>No candidate corrections are currently required.</Text>}
@@ -514,7 +520,7 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
                       {dateLabel(a.startDate)} – {dateLabel(a.endDate)}
                     </Text>
                     <Text style={s.meta}>Verification: {verificationLabel(a.verificationState)}</Text>
-                    {canEdit ? <View style={s.inlineActions}>
+                    {canCorrectRecords ? <View style={s.inlineActions}>
                       <Pressable accessibilityRole="button" style={s.smallButton} onPress={() => { setEditingAddressId(a.id); setAddress({addressLine1:a.addressLine1||a.address||"",addressLine2:a.addressLine2||"",townCity:a.townCity||"",postcode:a.postcode||"",startDate:dateLabel(a.startDate),endDate:a.endDate?dateLabel(a.endDate):"",isCurrent:a.isCurrent}); setShowAddressForm(true); }}><Text style={s.smallButtonText}>Edit</Text></Pressable>
                       <Pressable accessibilityRole="button" style={s.deleteButton} onPress={async () => {if(await confirmDelete('address'))await act(() => deleteMyScreeningAddress(a.id),"Address deleted. The authoritative coverage check has been refreshed.",() => { if(editingAddressId===a.id){setEditingAddressId(null);setShowAddressForm(false);setAddress(emptyAddressForm());} });}}><Text style={s.deleteButtonText}>Delete</Text></Pressable>
                     </View> : null}
@@ -539,11 +545,12 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
               />
             ))}
             <Action
-              disabled={!canEdit || busy}
+              disabled={!canCorrectRecords || busy}
               label="+ Add another address"
               onPress={() => { setEditingAddressId(null); setAddress(emptyAddressForm()); setShowAddressForm(true); }}
             />
             {showAddressForm ? <View style={s.entryForm}>
+              <Text style={s.formMode}>{editingAddressId ? "EDIT ADDRESS" : "ADD ADDRESS"}</Text>
               <Field label="Address line 1 *" value={address.addressLine1} set={(v) => setAddress({ ...address, addressLine1: v })} />
               <Field label="Address line 2 (optional)" value={address.addressLine2} set={(v) => setAddress({ ...address, addressLine2: v })} />
               <Field label="Town / City *" value={address.townCity} set={(v) => setAddress({ ...address, townCity: v })} />
@@ -553,7 +560,7 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
               <Pressable accessibilityRole="checkbox" accessibilityState={{checked:address.isCurrent}} style={s.checkboxRow} onPress={() => setAddress({...address,isCurrent:!address.isCurrent,endDate:""})}>
                 <Text style={s.checkbox}>{address.isCurrent ? "☑" : "☐"}</Text><Text>I currently live at this address</Text>
               </Pressable>
-              <Action disabled={!canEdit || busy} label={editingAddressId?"Save address changes":"Save address"} onPress={() => {const payload={addressLine1:address.addressLine1,addressLine2:address.addressLine2||undefined,townCity:address.townCity,postcode:normalizeScreeningPostcode(address.postcode),startDate:screeningDateToIso(address.startDate),isCurrent:address.isCurrent,endDate:address.isCurrent?undefined:screeningDateToIso(address.endDate)};return act(() => editingAddressId?updateMyScreeningAddress(editingAddressId,payload):addMyScreeningAddress(payload), "Address history updated. The authoritative coverage check has been refreshed.", () => { setEditingAddressId(null); setAddress(emptyAddressForm()); setShowAddressForm(false); });}} />
+              <Action disabled={!canCorrectRecords || busy} label={editingAddressId?"Save address changes":"Save address"} onPress={() => {const payload={addressLine1:address.addressLine1,addressLine2:address.addressLine2||undefined,townCity:address.townCity,postcode:normalizeScreeningPostcode(address.postcode),startDate:screeningDateToIso(address.startDate),isCurrent:address.isCurrent,endDate:address.isCurrent?undefined:screeningDateToIso(address.endDate)};return act(() => editingAddressId?updateMyScreeningAddress(editingAddressId,payload):addMyScreeningAddress(payload), "Address history updated. The authoritative coverage check has been refreshed.", () => { setEditingAddressId(null); setAddress(emptyAddressForm()); setShowAddressForm(false); });}} />
               <Action disabled={busy} label="Cancel" onPress={() => { setEditingAddressId(null); setAddress(emptyAddressForm()); setShowAddressForm(false); }} />
             </View> : null}
             <EvidencePicker
@@ -590,7 +597,7 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
                     <Text style={s.meta}>
                       {dateLabel(h.startDate)} – {dateLabel(h.endDate)}
                     </Text>
-                    {canEdit ? <View style={s.inlineActions}>
+                    {canCorrectRecords ? <View style={s.inlineActions}>
                       <Pressable accessibilityRole="button" style={s.smallButton} onPress={() => {setEditingHistoryId(h.id);setHistory({type:h.type,startDate:dateLabel(h.startDate),endDate:h.endDate?dateLabel(h.endDate):"",organisation:h.organisation||"",description:h.description||""});setShowHistoryForm(true);}}><Text style={s.smallButtonText}>Edit</Text></Pressable>
                       <Pressable accessibilityRole="button" style={s.deleteButton} onPress={async () => {if(await confirmDelete('activity'))await act(() => deleteMyScreeningHistory(h.id),"Activity deleted. Authoritative gaps and overlaps have been refreshed.",() => {if(editingHistoryId===h.id){setEditingHistoryId(null);setShowHistoryForm(false);setHistory(emptyActivityForm());}});}}><Text style={s.deleteButtonText}>Delete</Text></Pressable>
                     </View> : null}
@@ -615,8 +622,9 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
                 message="Check these activity entries and correct the dates if the overlap is not intentional."
               />
             ))}
-            <Action disabled={!canEdit || busy} label="+ Add another activity" onPress={() => { setEditingHistoryId(null); setHistory(emptyActivityForm()); setShowHistoryForm(true); }} />
+            <Action disabled={!canCorrectRecords || busy} label="+ Add another activity" onPress={() => { setEditingHistoryId(null); setHistory(emptyActivityForm()); setShowHistoryForm(true); }} />
             {showHistoryForm ? <View style={s.entryForm}>
+            <Text style={s.formMode}>{editingHistoryId ? "EDIT ACTIVITY" : "ADD ACTIVITY"}</Text>
             <Text style={s.fieldLabel}>Activity type</Text>
             <View style={s.choiceGrid}>
               {HISTORY_TYPES.map(([value, label]) => (
@@ -659,7 +667,7 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
               set={(v) => setHistory({ ...history, description: v })}
             />
             <Action
-              disabled={!canEdit || busy}
+              disabled={!canCorrectRecords || busy}
               label={editingHistoryId?"Save activity changes":"Save activity"}
               onPress={() => {
                 const payload = {
@@ -908,7 +916,7 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
         ) : null}
         {step === "review" ? (
           <>
-            <Review data={data} onFix={(target) => navigateToStep(target as Step)} />
+            <Review data={data} onFix={(target) => navigateToRemediation(target as Step)} />
             {data.requirements?.missing.map((x) => (
               <Text key={x} style={s.missing}>
                 • {x}
@@ -1417,6 +1425,7 @@ const s = StyleSheet.create({
   deleteButton:{borderWidth:1,borderColor:"#DC2626",borderRadius:8,paddingHorizontal:12,paddingVertical:7},
   deleteButtonText:{color:"#B91C1C",fontWeight:"800"},
   sectionHeading:{fontSize:17,fontWeight:"900",color:colors.textPrimary},
+  formMode:{fontSize:13,fontWeight:"900",letterSpacing:1,color:colors.accentTeal},
   stageNav: {
     flexDirection: "row",
     justifyContent: "space-between",

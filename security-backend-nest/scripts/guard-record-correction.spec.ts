@@ -1,0 +1,53 @@
+import 'reflect-metadata';
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
+import { ForbiddenException } from '@nestjs/common';
+import { ScreeningService } from '../src/screening/screening.service';
+import { HistoryType, ScreeningStatus, VerificationState } from '../src/screening/entities/screening.entities';
+
+type Test={name:string;run:()=>void|Promise<void>};const tests:Test[]=[];const test=(name:string,run:Test['run'])=>tests.push({name,run});
+const assert=(value:unknown,message:string)=>{if(!value)throw new Error(message);};
+const guard={id:7,user:{id:70},siaExpiryDate:'2030-01-01',rightToWorkStatus:'permanent'};
+const screening:any={id:1,guard,status:ScreeningStatus.READY_FOR_REVIEW,screeningPeriodYears:5,submittedAt:new Date('2026-08-24T10:00:00Z'),legalFullName:'Guard',dateOfBirth:'1990-01-01',nationality:'British',identityVerification:VerificationState.UNVERIFIED,siaRegisterVerification:VerificationState.UNVERIFIED,rightToWorkVerification:VerificationState.UNVERIFIED,history:[],addresses:[],references:[],evidence:[],consents:[],exceptions:[]};
+let nextId=100;const audits:any[]=[];
+const addressRepo:any={records:new Map<number,any>(),create:(v:any)=>v,save:async(v:any)=>{if(!v.id)v.id=nextId++;addressRepo.records.set(v.id,v);if(!screening.addresses.includes(v))screening.addresses.push(v);return v;},findOne:async({where}:any)=>addressRepo.records.get(where.id)||null,remove:async(v:any)=>{addressRepo.records.delete(v.id);screening.addresses=screening.addresses.filter((x:any)=>x.id!==v.id);return v;}};
+const historyRepo:any={records:new Map<number,any>(),create:(v:any)=>v,save:async(v:any)=>{if(!v.id)v.id=nextId++;historyRepo.records.set(v.id,v);if(!screening.history.includes(v))screening.history.push(v);return v;},findOne:async({where}:any)=>historyRepo.records.get(where.id)||null,remove:async(v:any)=>{historyRepo.records.delete(v.id);screening.history=screening.history.filter((x:any)=>x.id!==v.id);return v;}};
+const screeningRepo:any={findOne:async()=>screening,save:async(v:any)=>v,create:(v:any)=>v,find:async()=>[screening]};
+const service=new ScreeningService(screeningRepo,historyRepo,addressRepo,{find:async()=>[],findOne:async()=>null,save:async(v:any)=>v,create:(v:any)=>v} as any,{findOne:async()=>null,save:async(v:any)=>v,create:(v:any)=>v} as any,{find:async()=>[],save:async(v:any)=>v,create:(v:any)=>v} as any,{find:async()=>[]} as any,{findOne:async()=>null} as any,{findByUserId:async()=>guard} as any,{} as any,{log:async(v:any)=>audits.push(v)} as any,{} as any);
+const addressPayload={addressLine1:'101 Test Road',townCity:'Bradford',postcode:'BD9 1AA',startDate:'2021-08-24',isCurrent:true};
+const activityPayload={type:HistoryType.EMPLOYMENT,startDate:'2021-08-24',isCurrent:true,organisation:'Employer',description:'Security employment'};
+const foreignScreening={id:2};
+
+test('candidate can create own address',async()=>{screening.status=ScreeningStatus.READY_FOR_REVIEW;screening.submittedAt=new Date();const result:any=await service.addAddress(70,addressPayload as any);assert(result.id&&addressRepo.records.has(result.id),'address not created');});
+test('address correction reopens submitted file',()=>assert(screening.status===ScreeningStatus.IN_PROGRESS&&screening.submittedAt===null,'file not reopened'));
+test('candidate can update own address',async()=>{const record=[...addressRepo.records.values()][0];record.verificationState=VerificationState.VERIFIED;await service.updateAddress(70,record.id,{...addressPayload,townCity:'Leeds'} as any);assert(record.townCity==='Leeds','address not updated');});
+test('address edit resets verification',()=>assert([...addressRepo.records.values()][0].verificationState===VerificationState.UNVERIFIED,'address verification retained'));
+test('candidate can delete own address',async()=>{const record=[...addressRepo.records.values()][0];await service.deleteAddress(70,record.id);assert(!addressRepo.records.has(record.id),'address not deleted');});
+test('cross-screening address update rejected',async()=>{const foreign={id:201,screening:foreignScreening,verificationState:VerificationState.UNVERIFIED};addressRepo.records.set(201,foreign);let denied=false;try{await service.updateAddress(70,201,addressPayload as any);}catch(e){denied=e instanceof ForbiddenException;}assert(denied,'foreign update allowed');});
+test('cross-screening address delete rejected',async()=>{let denied=false;try{await service.deleteAddress(70,201);}catch(e){denied=e instanceof ForbiddenException;}assert(denied&&addressRepo.records.has(201),'foreign delete allowed');});
+test('address chronology recalculates after mutation',async()=>{screening.status=ScreeningStatus.IN_PROGRESS;const own:any=await service.addAddress(70,addressPayload as any);const view:any=await service.deleteAddress(70,own.id);assert(view.requirements.addressChronology.gaps.length===1,'address chronology stale');});
+test('address remediation recalculates after mutation',async()=>{const own:any=await service.addAddress(70,addressPayload as any);const view:any=await service.deleteAddress(70,own.id);assert(view.requirements.remediation.some((x:any)=>x.key==='address_history'&&x.status==='ACTION_REQUIRED'),'address remediation stale');});
+test('candidate can create own activity',async()=>{const result:any=await service.addHistory(70,activityPayload as any);assert(result.id&&historyRepo.records.has(result.id),'activity not created');});
+test('candidate can update own activity',async()=>{const record=[...historyRepo.records.values()][0];record.verificationState=VerificationState.VERIFIED;await service.updateHistory(70,record.id,{...activityPayload,organisation:'New Employer'} as any);assert(record.organisation==='New Employer','activity not updated');});
+test('activity edit resets verification',()=>assert([...historyRepo.records.values()][0].verificationState===VerificationState.UNVERIFIED,'activity verification retained'));
+test('candidate can delete own activity',async()=>{const record=[...historyRepo.records.values()][0];await service.deleteHistory(70,record.id);assert(!historyRepo.records.has(record.id),'activity not deleted');});
+test('cross-screening activity update rejected',async()=>{historyRepo.records.set(301,{id:301,screening:foreignScreening});let denied=false;try{await service.updateHistory(70,301,activityPayload as any);}catch(e){denied=e instanceof ForbiddenException;}assert(denied,'foreign activity update allowed');});
+test('cross-screening activity delete rejected',async()=>{let denied=false;try{await service.deleteHistory(70,301);}catch(e){denied=e instanceof ForbiddenException;}assert(denied&&historyRepo.records.has(301),'foreign activity delete allowed');});
+test('activity chronology recalculates after mutation',async()=>{const own:any=await service.addHistory(70,activityPayload as any);const view:any=await service.deleteHistory(70,own.id);assert(view.requirements.chronology.gaps.length===1,'activity chronology stale');});
+test('activity remediation recalculates after mutation',async()=>{const own:any=await service.addHistory(70,activityPayload as any);const view:any=await service.deleteHistory(70,own.id);assert(view.requirements.remediation.some((x:any)=>x.key==='activity_history'&&x.status==='ACTION_REQUIRED'),'activity remediation stale');});
+
+const controller=readFileSync(resolve(__dirname,'../src/screening/screening.controller.ts'),'utf8');const dto=readFileSync(resolve(__dirname,'../src/screening/dto/screening.dto.ts'),'utf8');const ui=readFileSync(resolve(__dirname,'../../security-mobile-app/src/components/guard/GuardScreeningPanel.tsx'),'utf8');const api=readFileSync(resolve(__dirname,'../../security-mobile-app/src/services/api.ts'),'utf8');
+test('reviewer fields cannot be candidate controlled',()=>assert(!dto.includes('verifiedByUserId')&&!dto.includes('reviewedByUserId'),'reviewer field exposed'));
+test('candidate cannot set VETTED',()=>assert(controller.includes("@Post(':id/complete') @Roles(UserRole.ADMIN)")&&!dto.includes('ScreeningStatus'),'VETTED exposed'));
+test('candidate cannot set work eligibility',()=>assert(!dto.toLowerCase().includes('workeligible'),'work eligibility exposed'));
+test('candidate cannot self-verify evidence',()=>assert(controller.includes("@Patch(':id/checks/:check') @Roles(UserRole.ADMIN)"),'verification route weakened'));
+test('frontend renders Edit and Delete actions',()=>assert(ui.includes('>Edit</Text>')&&ui.includes('>Delete</Text>'),'record actions hidden'));
+test('Add Address opens a blank form',()=>assert(ui.includes('setEditingAddressId(null); setAddress(emptyAddressForm()); setShowAddressForm(true)')&&ui.includes('"ADD ADDRESS"'),'add address broken'));
+test('Edit Address loads selected record',()=>assert(ui.includes('setEditingAddressId(a.id)')&&ui.includes('addressLine1:a.addressLine1'),'edit address broken'));
+test('Add Activity opens a blank form',()=>assert(ui.includes('setEditingHistoryId(null); setHistory(emptyActivityForm()); setShowHistoryForm(true)')&&ui.includes('"ADD ACTIVITY"'),'add activity broken'));
+test('Edit Activity loads selected record',()=>assert(ui.includes('setEditingHistoryId(h.id)')&&ui.includes('organisation:h.organisation'),'edit activity broken'));
+test('Cancel resets both forms',()=>assert(ui.includes('setEditingAddressId(null); setAddress(emptyAddressForm()); setShowAddressForm(false)')&&ui.includes('setEditingHistoryId(null); setHistory(emptyActivityForm()); setShowHistoryForm(false)'),'cancel leaves stale form'));
+test('successful mutation reloads authoritative aggregate',()=>assert(ui.includes('await load();')&&api.includes('updateMyScreeningAddress')&&api.includes('updateMyScreeningHistory'),'authoritative reload missing'));
+test('private evidence fields remain absent',()=>assert(!ui.includes('storageKey')&&!ui.includes('signedUrl'),'private evidence exposed'));
+
+async function main(){let passed=0;for(const entry of tests){await entry.run();console.log(`PASS ${++passed}/${tests.length} ${entry.name}`);}console.log(`SEC-018F guard record correction: ${passed}/${tests.length} PASS`);}main().catch(e=>{console.error(e);process.exit(1);});
