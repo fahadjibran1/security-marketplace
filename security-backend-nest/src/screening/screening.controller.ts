@@ -5,7 +5,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { COMPANY_VIEW_ROLES, UserRole } from '../user/entities/user.entity';
-import { AddAddressDto, AddHistoryDto, AddReferenceDto, ConsentDto, CreateEvidenceDto, ReviewActionDto, ReviewReferenceDto, StartScreeningDto, UpdateScreeningProfileDto, VerifyCheckDto } from './dto/screening.dto';
+import { AddAddressDto, AddHistoryDto, AddReferenceDto, ConsentDto, CreateEvidenceDto, ReviewActionDto, ReviewReferenceDto, StartScreeningDto, UpdateCandidateComplianceDto, UpdateScreeningProfileDto, VerifyCheckDto } from './dto/screening.dto';
 import { ScreeningService } from './screening.service';
 
 @Controller('screening') @UseGuards(JwtAuthGuard, RolesGuard)
@@ -14,6 +14,7 @@ export class ScreeningController {
   @Post('mine/start') @Roles(UserRole.GUARD) start(@CurrentUser() u:JwtPayload,@Body() d:StartScreeningDto){return this.service.start(u.sub,d);}
   @Get('mine') @Roles(UserRole.GUARD) mine(@CurrentUser() u:JwtPayload){return this.service.mine(u.sub);}
   @Put('mine/profile') @Roles(UserRole.GUARD) profile(@CurrentUser() u:JwtPayload,@Body() d:UpdateScreeningProfileDto){return this.service.updateProfile(u.sub,d);}
+  @Put('mine/compliance') @Roles(UserRole.GUARD) compliance(@CurrentUser() u:JwtPayload,@Body() d:UpdateCandidateComplianceDto){return this.service.updateCandidateCompliance(u.sub,d);}
   @Post('mine/history') @Roles(UserRole.GUARD) history(@CurrentUser() u:JwtPayload,@Body() d:AddHistoryDto){return this.service.addHistory(u.sub,d);}
   @Put('mine/history/:id') @Roles(UserRole.GUARD) updateHistory(@CurrentUser() u:JwtPayload,@Param('id',ParseIntPipe) id:number,@Body() d:AddHistoryDto){return this.service.updateHistory(u.sub,id,d);}
   @Delete('mine/history/:id') @Roles(UserRole.GUARD) deleteHistory(@CurrentUser() u:JwtPayload,@Param('id',ParseIntPipe) id:number){return this.service.deleteHistory(u.sub,id);}

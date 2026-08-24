@@ -11,15 +11,15 @@ export class UpdateGuardProfileDto {
 
   @IsOptional()
   @IsDateString()
-  siaExpiryDate?: string;
+  siaExpiryDate?: string | null;
 
   @IsOptional()
   @IsString()
-  rightToWorkStatus?: string;
+  rightToWorkStatus?: string | null;
 
   @IsOptional()
   @IsDateString()
-  rightToWorkExpiryDate?: string;
+  rightToWorkExpiryDate?: string | null;
 
   @IsOptional()
   @IsString()

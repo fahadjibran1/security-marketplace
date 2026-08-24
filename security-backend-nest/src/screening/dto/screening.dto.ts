@@ -1,4 +1,5 @@
-import { IsBoolean, IsDateString, IsEmail, IsEnum, IsInt, IsNotEmpty, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
+import { Transform } from 'class-transformer';
+import { IsBoolean, IsDateString, IsEmail, IsEnum, IsInt, IsNotEmpty, IsOptional, IsString, Matches, Max, MaxLength, Min } from 'class-validator';
 import { EvidenceCategory, HistoryType, ReferenceStatus, VerificationState } from '../entities/screening.entities';
 
 export class StartScreeningDto { @IsOptional() @IsInt() @Min(1) @Max(10) screeningPeriodYears?: number; }
@@ -17,6 +18,7 @@ export class AddHistoryDto {
   @IsOptional() @IsString() @MaxLength(300) contactDetails?: string; @IsString() @IsNotEmpty() @MaxLength(3000) description!: string;
 }
 export class AddAddressDto { @IsOptional() @IsString() @IsNotEmpty() @MaxLength(2000) address?: string; @IsOptional() @IsString() @MaxLength(200) addressLine1?:string; @IsOptional() @IsString() @MaxLength(200) addressLine2?:string; @IsOptional() @IsString() @MaxLength(150) townCity?:string; @IsOptional() @IsString() @MaxLength(20) postcode?:string; @IsDateString() startDate!: string; @IsOptional() @IsDateString() endDate?: string; @IsBoolean() isCurrent!: boolean; }
+export class UpdateCandidateComplianceDto { @IsOptional() @Transform(({value})=>typeof value==='string'?value.trim():value) @Matches(/^\d{16}$/,{message:'SIA licence number must be exactly 16 numeric digits.'}) siaLicenseNumber?:string; @IsOptional() @IsDateString() siaExpiryDate?:string|null; @IsOptional() @IsString() rightToWorkStatus?:string|null; @IsOptional() @IsDateString() rightToWorkExpiryDate?:string|null; }
 export class AddReferenceDto {
   @IsInt() historyId!: number; @IsString() @IsNotEmpty() organisation!: string; @IsString() @IsNotEmpty() contactPerson!: string;
   @IsString() @IsNotEmpty() relationship!: string; @IsEmail() businessEmail!: string; @IsOptional() @IsString() phone?: string; @IsOptional() @IsString() postalDetails?: string;

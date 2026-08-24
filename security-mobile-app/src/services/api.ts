@@ -1012,6 +1012,7 @@ export function reviewJobApplication(id: number, payload: ReviewJobApplicationPa
 export function getMyScreening(){ return request<GuardScreening>('/screening/mine'); }
 export function startMyScreening(screeningPeriodYears=5){ return request<GuardScreening>('/screening/mine/start',{method:'POST',body:JSON.stringify({screeningPeriodYears})}); }
 export function updateMyScreeningProfile(payload:{legalFullName:string;previousNames?:string;dateOfBirth:string;nationality:string;currentAddress?:string;siaLicenceType?:string}){return request<GuardScreening>('/screening/mine/profile',{method:'PUT',body:JSON.stringify(payload)});}
+export function updateMyScreeningCompliance(payload:{siaLicenseNumber?:string;siaExpiryDate?:string|null;rightToWorkStatus?:string|null;rightToWorkExpiryDate?:string|null}){return request<GuardScreening>('/screening/mine/compliance',{method:'PUT',body:JSON.stringify(payload)});}
 export function addMyScreeningHistory(payload:{type:string;startDate:string;endDate?:string;isCurrent:boolean;organisation?:string;description:string}){return request('/screening/mine/history',{method:'POST',body:JSON.stringify(payload)});}
 export function updateMyScreeningHistory(id:number,payload:{type:string;startDate:string;endDate?:string;isCurrent:boolean;organisation?:string;description:string}){return request<GuardScreening>(`/screening/mine/history/${id}`,{method:'PUT',body:JSON.stringify(payload)});}
 export function deleteMyScreeningHistory(id:number){return request<GuardScreening>(`/screening/mine/history/${id}`,{method:'DELETE'});}

@@ -23,7 +23,7 @@ import {
   getMyScreening,
   startMyScreening,
   submitMyScreening,
-  updateMyGuard,
+  updateMyScreeningCompliance,
   updateMyScreeningAddress,
   updateMyScreeningHistory,
   updateMyScreeningProfile,
@@ -289,6 +289,9 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
   const canEdit = editable(data?.status),
     canCorrectRecords = canEdit || data?.status === "READY_FOR_REVIEW",
     activeIndex = STEPS.findIndex((x) => x.key === step);
+  const actionRequired = (key:string) => data?.requirements?.remediation?.some((item)=>item.key===key&&item.status==="ACTION_REQUIRED")===true;
+  const canCorrectCompliance = canEdit || (data?.status === "READY_FOR_REVIEW" && (actionRequired("sia_expiry") || actionRequired("sia_check") || actionRequired("rtw_status") || actionRequired("rtw_check")));
+  const canUploadEvidence = (category:string) => canEdit || (data?.status === "READY_FOR_REVIEW" && actionRequired(`${category}_evidence`));
   const navigateToStep = (next: Step) => {
     setError("");
     setFeedback("");
@@ -483,7 +486,7 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
             <EvidencePicker
               label="Choose identity evidence"
               category="identity"
-              disabled={!canEdit || busy}
+              disabled={!canUploadEvidence("identity") || busy}
               onUpload={(asset) =>
                 act(
                   () => uploadEvidence("identity", asset),
@@ -566,7 +569,7 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
             <EvidencePicker
               label="Choose address evidence"
               category="address"
-              disabled={!canEdit || busy}
+              disabled={!canUploadEvidence("address") || busy}
               onUpload={(asset) =>
                 act(
                   () => uploadEvidence("address", asset),
@@ -798,7 +801,7 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
             <Field label="SIA licence expiry date (DD/MM/YYYY)" value={compliance.siaExpiryDate} set={(v) => setCompliance({...compliance,siaExpiryDate:v})} />
             <Field label="Right to Work status / type" value={compliance.rightToWorkStatus} set={(v) => setCompliance({...compliance,rightToWorkStatus:v})} />
             <Field label="Right to Work expiry date (DD/MM/YYYY, if applicable)" value={compliance.rightToWorkExpiryDate} set={(v) => setCompliance({...compliance,rightToWorkExpiryDate:v})} />
-            <Action disabled={!canEdit||busy} label="Save SIA & Right to Work information" onPress={() => act(() => updateMyGuard({siaLicenseNumber:compliance.siaLicenseNumber.trim()||undefined,siaExpiryDate:compliance.siaExpiryDate?screeningDateToIso(compliance.siaExpiryDate):null,rightToWorkStatus:compliance.rightToWorkStatus.trim()||null,rightToWorkExpiryDate:compliance.rightToWorkExpiryDate?screeningDateToIso(compliance.rightToWorkExpiryDate):null}),"Compliance information saved. Authoritative eligibility has been refreshed.")} />
+            <Action disabled={!canCorrectCompliance||busy} label="Save SIA & Right to Work information" onPress={() => act(() => updateMyScreeningCompliance({siaLicenseNumber:compliance.siaLicenseNumber.trim()||undefined,siaExpiryDate:compliance.siaExpiryDate?screeningDateToIso(compliance.siaExpiryDate):null,rightToWorkStatus:compliance.rightToWorkStatus.trim()||null,rightToWorkExpiryDate:compliance.rightToWorkExpiryDate?screeningDateToIso(compliance.rightToWorkExpiryDate):null}),"Compliance information saved. Authoritative remediation has been refreshed.")} />
             <StatusCards
               items={[
                 ["SIA licence number",guard?.siaLicenseNumber||guard?.siaLicenceNumber?"Provided":"Not provided"],
@@ -825,7 +828,7 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
             <EvidencePicker
               label="Choose SIA evidence"
               category="sia"
-              disabled={!canEdit || busy}
+              disabled={!canUploadEvidence("sia") || busy}
               onUpload={(asset) =>
                 act(
                   () => uploadEvidence("sia", asset),
@@ -836,7 +839,7 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
             <EvidencePicker
               label="Choose Right-to-Work evidence"
               category="right_to_work"
-              disabled={!canEdit || busy}
+              disabled={!canUploadEvidence("right_to_work") || busy}
               onUpload={(asset) =>
                 act(
                   () => uploadEvidence("right_to_work", asset),
