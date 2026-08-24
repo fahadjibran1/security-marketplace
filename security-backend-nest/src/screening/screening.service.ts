@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { randomUUID } from 'crypto';
 import { IsNull, Repository } from 'typeorm';
@@ -80,7 +80,36 @@ export class ScreeningService {
   async listAdmin(){const all=await this.screenings.find({order:{updatedAt:'DESC'}});return Promise.all(all.map(async s=>this.view(await this.full(s.id),true)));}
   adminGet(id:number){return this.full(id).then(s=>this.view(s,true));}
   async startReview(actor:number,id:number){const s=await this.full(id);if(s.status!==ScreeningStatus.READY_FOR_REVIEW)throw new BadRequestException('Screening file is not ready for review.');s.status=ScreeningStatus.UNDER_REVIEW;s.reviewedByUserId=actor;s.reviewedAt=new Date();await this.screenings.save(s);await this.event(actor,'screening.review_started',s,{status:ScreeningStatus.READY_FOR_REVIEW},{status:s.status});return this.view(await this.full(id),true);}
-  async verifyCheck(actor:number,id:number,check:'identity'|'address'|'sia'|'rtw',dto:VerifyCheckDto){const s=await this.full(id);if(s.status!==ScreeningStatus.UNDER_REVIEW)throw new BadRequestException('Screening file is not under review.');const evidence=await this.evidenceFor(dto.evidenceId);if(evidence.screening.id!==id)throw new ForbiddenException('Evidence is not part of this screening file.');const expectedCategory=check==='rtw'?'right_to_work':check;if(String(evidence.category)!==expectedCategory)throw new BadRequestException('Evidence does not match the verification category.');if(!evidence.uploadCompletedAt)throw new BadRequestException('Evidence upload is incomplete.');const now=new Date();evidence.verificationState=dto.state;evidence.verifiedByUserId=actor;evidence.verifiedAt=now;await this.evidence.save(evidence);if(check==='identity')Object.assign(s,{identityVerification:dto.state,identityVerificationMethod:dto.method,identityVerifiedByUserId:actor,identityVerifiedAt:now});if(check==='address'){const current=(s.addresses||[]).find(a=>a.isCurrent);if(!current)throw new BadRequestException('Current address is missing.');current.verificationState=dto.state;await this.addresses.save(current);}if(check==='sia')Object.assign(s,{siaRegisterVerification:dto.state,siaVerifiedByUserId:actor,siaVerifiedAt:now});if(check==='rtw')Object.assign(s,{rightToWorkVerification:dto.state,rightToWorkCheckMethod:dto.method,rightToWorkCheckDate:now.toISOString().slice(0,10),rightToWorkVerifiedByUserId:actor,rightToWorkVerifiedAt:now});await this.screenings.save(s);await this.event(actor,'screening.check_verified',s,undefined,{check,state:dto.state,method:dto.method,evidenceId:evidence.id,verifiedAt:now.toISOString()});return this.view(await this.full(id),true);}
+  async verifyCheck(actor:number,id:number,check:'identity'|'address'|'sia'|'rtw',dto:VerifyCheckDto){
+    const result=await this.screenings.manager.transaction(async manager=>{
+      const screeningRepo=manager.getRepository(GuardScreening),evidenceRepo=manager.getRepository(ScreeningEvidence),addressRepo=manager.getRepository(ScreeningAddress);
+      const s=await screeningRepo.findOne({where:{id},relations:['history','addresses','references','evidence','consents','exceptions']});
+      if(!s)throw new NotFoundException('Screening file not found.');
+      if(s.status!==ScreeningStatus.UNDER_REVIEW)throw new BadRequestException('Screening file is not under review.');
+      const evidence=await evidenceRepo.findOne({where:{id:dto.evidenceId},relations:['screening']});
+      if(!evidence)throw new NotFoundException('Screening evidence not found.');
+      if(evidence.screening.id!==id)throw new ForbiddenException('Evidence is not part of this screening file.');
+      const expectedCategory=check==='rtw'?'right_to_work':check;
+      if(String(evidence.category)!==expectedCategory)throw new BadRequestException('Evidence does not match the verification category.');
+      if(!evidence.uploadCompletedAt)throw new BadRequestException('Evidence upload is incomplete.');
+      const current=check==='address'?(s.addresses||[]).find(a=>a.isCurrent):undefined;
+      if(check==='address'&&!current)throw new BadRequestException('Current address is missing.');
+      const now=new Date();
+      Object.assign(evidence,{verificationState:dto.state,verifiedByUserId:actor,verifiedAt:now});
+      await evidenceRepo.save(evidence);
+      if(check==='identity')Object.assign(s,{identityVerification:dto.state,identityVerificationMethod:dto.method,identityVerifiedByUserId:actor,identityVerifiedAt:now});
+      if(current){current.verificationState=dto.state;await addressRepo.save(current);}
+      if(check==='sia')Object.assign(s,{siaRegisterVerification:dto.state,siaVerifiedByUserId:actor,siaVerifiedAt:now});
+      if(check==='rtw')Object.assign(s,{rightToWorkVerification:dto.state,rightToWorkCheckMethod:dto.method,rightToWorkCheckDate:now.toISOString().slice(0,10),rightToWorkVerifiedByUserId:actor,rightToWorkVerifiedAt:now});
+      await screeningRepo.save(s);
+      const persistedEvidence=await evidenceRepo.findOne({where:{id:evidence.id}});
+      const persistedCurrent=current?await addressRepo.findOne({where:{id:current.id}}):undefined;
+      if(!persistedEvidence||persistedEvidence.verificationState!==dto.state||persistedEvidence.verifiedByUserId!==actor||!persistedEvidence.verifiedAt||(current&&persistedCurrent?.verificationState!==dto.state))throw new InternalServerErrorException('Screening verification could not be persisted consistently.');
+      return {screening:s,evidenceId:evidence.id,verifiedAt:now};
+    });
+    await this.event(actor,'screening.check_verified',result.screening,undefined,{check,state:dto.state,method:dto.method,evidenceId:result.evidenceId,verifiedAt:result.verifiedAt.toISOString()});
+    return this.view(await this.full(id),true);
+  }
   async requestReference(actor:number,id:number){const ref=await this.references.findOne({where:{id},relations:['screening','history']});if(!ref)throw new NotFoundException('Reference not found.');if(ref.screening.status!==ScreeningStatus.UNDER_REVIEW)throw new BadRequestException('Screening file is not under review.');ref.status=ReferenceStatus.REQUESTED;ref.requestedAt=new Date();await this.references.save(ref);await this.event(actor,'screening.reference_requested',ref.screening,undefined,{referenceId:ref.id,status:ref.status});return this.safeReference(ref);}
   async reviewReference(actor:number,id:number,dto:ReviewReferenceDto){const ref=await this.references.findOne({where:{id},relations:['screening','history']});if(!ref)throw new NotFoundException('Reference not found.');if(ref.screening.status!==ScreeningStatus.UNDER_REVIEW)throw new BadRequestException('Screening file is not under review.');if(dto.status===ReferenceStatus.VERIFIED&&!dto.sourceVerified)throw new BadRequestException('Reference source must be verified.');Object.assign(ref,{status:dto.status,sourceVerified:dto.sourceVerified,verificationMethod:dto.verificationMethod,verifiedByUserId:actor,verifiedAt:new Date(),outcomeNotes:dto.notes||null});await this.references.save(ref);await this.event(actor,dto.status===ReferenceStatus.VERIFIED?'screening.reference_verified':'screening.reference_received',ref.screening,undefined,{referenceId:ref.id,status:ref.status,sourceVerified:ref.sourceVerified});return this.safeReference(ref);}
   async requestInfo(actor:number,id:number,dto:ReviewActionDto){const s=await this.full(id);if(![ScreeningStatus.UNDER_REVIEW,ScreeningStatus.READY_FOR_REVIEW].includes(s.status))throw new BadRequestException('Information cannot be requested in the current state.');const before=s.status;s.status=ScreeningStatus.REQUIRES_ATTENTION;s.reviewNotes=dto.reason;s.reviewedByUserId=actor;s.reviewedAt=new Date();await this.screenings.save(s);await this.event(actor,'screening.information_requested',s,{status:before},{status:s.status,reason:dto.reason});return this.view(await this.full(id),true);}

@@ -8,6 +8,8 @@ const evidenceRecords=new Map<number,any>();for(const [id,category] of [[21,'ide
 const foreign={...evidenceRecords.get(21),id:31,screening:{id:2,guard:{id:8,user:{id:80}}}};evidenceRecords.set(31,foreign);
 const audits:any[]=[];const signed:any[]=[];
 const screenings:any={findOne:async()=>screening,save:async(v:any)=>v,find:async()=>[screening]};const evidence:any={findOne:async({where}:any)=>evidenceRecords.get(where.id)||null,save:async(v:any)=>v};
+const addressRepo:any={findOne:async({where}:any)=>screening.addresses.find((entry:any)=>entry.id===where.id)||null,save:async(v:any)=>v};
+screenings.manager={transaction:async(work:any)=>work({getRepository:(entity:any)=>entity.name==='GuardScreening'?screenings:entity.name==='ScreeningEvidence'?evidence:addressRepo})};
 const service=new ScreeningService(screenings,{findOne:async()=>null} as any,{save:async(v:any)=>v} as any,{} as any,evidence,{} as any,{} as any,{} as any,{findByUserId:async()=>guard} as any,{} as any,{log:async(v:any)=>audits.push(v)} as any,{provider:'s3-compatible',createSignedDownloadUrl:async(o:any)=>{signed.push(o);return {url:'https://signed.invalid/private?expires=180',expiresAt:new Date(Date.now()+180000).toISOString(),method:'GET'};}} as any);
 test('ADMIN can inspect evidence belonging to selected screening',async()=>{const access:any=await service.adminAccessEvidence(1,1,21);assert(access.method==='GET'&&signed.length===1,'signed access missing');});
 test('cross-screening evidence access is forbidden',async()=>{let denied=false;try{await service.adminAccessEvidence(1,1,31);}catch(e){denied=e instanceof ForbiddenException;}assert(denied,'cross-screening access allowed');});
