@@ -69,8 +69,8 @@ export function AdminDashboardScreen() {
   const [imageViewer,setImageViewer]=useState<{url:string;label:string}|null>(null);
   const [referencesOpen,setReferencesOpen]=useState(false);
   const [referenceReviewId,setReferenceReviewId]=useState<number|null>(null);
-  const [referenceDecision,setReferenceDecision]=useState<'VERIFIED'|'REJECTED'|'SOURCE_VERIFICATION_REQUIRED'>('VERIFIED');
-  const [referenceMethod,setReferenceMethod]=useState('');
+  const [referenceDecision,setReferenceDecision]=useState<'VERIFIED'|'UNABLE_TO_VERIFY'|'REJECTED'|'SOURCE_VERIFICATION_REQUIRED'>('VERIFIED');
+  const [referenceMethod,setReferenceMethod]=useState('Telephone call');
   const [referenceNotes,setReferenceNotes]=useState('');
   const [referenceConfirm,setReferenceConfirm]=useState(false);
 
@@ -106,8 +106,8 @@ export function AdminDashboardScreen() {
   const screeningReferences=(selected?.raw?.references||[]) as Array<Record<string,any>>;
   const sourceVerifiedReferences=screeningReferences.filter(entry=>entry.status==='VERIFIED'&&entry.sourceVerified).length;
   const openReferences=()=>{setReferencesOpen(true);setReferenceReviewId(null);setReviewCategory(null);setReviewFeedback(null);setTimeout(()=>contentScroll.current?.scrollToEnd({animated:true}),0);};
-  const beginReferenceReview=(id:number)=>{setReferenceReviewId(id);setReferenceDecision('VERIFIED');setReferenceMethod('');setReferenceNotes('');setReferenceConfirm(false);setReviewFeedback(null);};
-  const submitReferenceDecision=async()=>{if(!selected||!referenceReviewId)return;if(!referenceMethod.trim()||!referenceNotes.trim()){setReviewFeedback({tone:'error',message:'Verification method and reviewer note are required.'});return;}if(!referenceConfirm){setReviewFeedback({tone:'error',message:'Confirm that you inspected the reference details and intend to record this decision.'});return;}const label=referenceDecision==='VERIFIED'?'verified':referenceDecision==='REJECTED'?'rejected':'marked as requiring clarification';const success=await runReviewAction(`reference-${referenceReviewId}`,()=>reviewScreeningReference(Number(selected.id),referenceReviewId,{status:referenceDecision,verificationMethod:referenceMethod.trim(),notes:referenceNotes.trim()}),`Reference ${label} successfully.`);if(success){setReferenceReviewId(null);setReferenceMethod('');setReferenceNotes('');setReferenceConfirm(false);}};
+  const beginReferenceReview=(id:number)=>{setReferenceReviewId(id);setReferenceDecision('VERIFIED');setReferenceMethod('Telephone call');setReferenceNotes('');setReferenceConfirm(false);setReviewFeedback(null);};
+  const submitReferenceDecision=async()=>{if(!selected||!referenceReviewId)return;if(!referenceMethod||!referenceNotes.trim()){setReviewFeedback({tone:'error',message:'Verification method and reviewer note are required.'});return;}if(!referenceConfirm){setReviewFeedback({tone:'error',message:'Confirm that you independently checked the source of this reference.'});return;}const label=referenceDecision==='VERIFIED'?'verified':referenceDecision==='UNABLE_TO_VERIFY'?'marked unable to verify':'marked as requiring clarification';const success=await runReviewAction(`reference-${referenceReviewId}`,()=>reviewScreeningReference(Number(selected.id),referenceReviewId,{status:referenceDecision,verificationMethod:referenceMethod,notes:referenceNotes.trim(),confirmed:true}),`Reference ${label} successfully.`);if(success){setReferenceReviewId(null);setReferenceMethod('Telephone call');setReferenceNotes('');setReferenceConfirm(false);}};
   const reasonCopy=reviewReasonAction?({complete:{label:'Completion decision note',help:'Record why this screening is being approved.',button:'Complete screening'},request:{label:'Information requested from candidate',help:'Explain exactly what the candidate must provide or correct.',button:'Send information request'},reject:{label:'Rejection reason',help:'Record why this screening is being rejected.',button:'Reject screening'},expire:{label:'Expiry reason',help:'Record why this screening approval is being expired.',button:'Mark expired'}} as const)[reviewReasonAction]:null;
 
   const navigation = <ScrollView horizontal={compact} style={compact ? styles.mobileNav : styles.sidebar} contentContainerStyle={compact ? styles.mobileNavContent : styles.sidebarContent}>

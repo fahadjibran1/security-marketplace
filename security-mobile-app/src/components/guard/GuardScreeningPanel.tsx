@@ -251,8 +251,10 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
       await load();
       onSuccess?.();
       setFeedback(message);
+      return true;
     } catch (e) {
       setError((e as Error).message || "The action could not be completed.");
+      return false;
     } finally {
       setBusy(false);
     }
@@ -291,7 +293,7 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
     activeIndex = STEPS.findIndex((x) => x.key === step);
   const actionRequired = (key:string) => data?.requirements?.remediation?.some((item)=>item.key===key&&item.status==="ACTION_REQUIRED")===true;
   const canCorrectCompliance = canEdit || (data?.status === "READY_FOR_REVIEW" && (actionRequired("sia_expiry") || actionRequired("sia_check") || actionRequired("rtw_status") || actionRequired("rtw_check")));
-  const canUploadEvidence = (category:string) => canEdit || (data?.status === "READY_FOR_REVIEW" && actionRequired(`${category}_evidence`));
+  const canUploadEvidence = (category:string) => canEdit || (data?.status === "READY_FOR_REVIEW" && (category==="reference" || actionRequired(`${category}_evidence`)));
   const navigateToStep = (next: Step) => {
     setError("");
     setFeedback("");
@@ -693,6 +695,7 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
         ) : null}
         {step === "references" ? (
           <>
+            <Text style={s.note}>Provide someone or an organisation that can confirm this period of your history. S4 or an authorised reviewer may contact them.</Text>
             <View style={s.list}>
               {(data.references || []).map((r) => (
                 <View key={r.id} style={s.item}>
@@ -772,18 +775,19 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
                       ...reference,
                       historyId: Number(reference.historyId),
                     }),
-                  "Referee added.",
+                  "Your referee details have been submitted. You do not need to wait on this page. An authorised reviewer will verify the reference.",
                 )
               }
             />
             <EvidencePicker
-              label="Choose reference or supporting evidence"
+              label="Choose optional reference supporting document"
+              uploadLabel="Upload supporting document"
               category="reference"
-              disabled={!canEdit || busy}
+              disabled={!canUploadEvidence("reference") || busy}
               onUpload={(asset) =>
                 act(
                   () => uploadEvidence("reference", asset),
-                  "Reference evidence uploaded. It is awaiting reviewer verification.",
+                  "Supporting document uploaded privately. It may assist the reviewer but does not verify the reference.",
                 )
               }
             />
@@ -994,17 +998,20 @@ export function normalizeEvidenceMimeType(value: string | undefined, name: strin
 }
 function EvidencePicker({
   label,
+  uploadLabel,
   category,
   onUpload,
   disabled,
 }: {
   label: string;
+  uploadLabel?:string;
   category: string;
-  onUpload: (asset: DocumentPicker.DocumentPickerAsset) => Promise<void>;
+  onUpload: (asset: DocumentPicker.DocumentPickerAsset) => Promise<boolean>;
   disabled: boolean;
 }) {
   const [asset, setAsset] = React.useState<DocumentPicker.DocumentPickerAsset | null>(null);
   const [uploading, setUploading] = React.useState(false);
+  const [uploadError,setUploadError]=React.useState("");
   const choose = async () => {
     const result = await DocumentPicker.getDocumentAsync({
       type: ["application/pdf", "image/jpeg", "image/png"],
@@ -1013,13 +1020,15 @@ function EvidencePicker({
     });
     if (result.canceled) return;
     setAsset(result.assets[0]);
+    setUploadError("");
   };
   const upload = async () => {
     if (!asset) return;
     setUploading(true);
+    setUploadError("");
     try {
-      await onUpload(asset);
-      setAsset(null);
+      const success=await onUpload(asset);
+      if(success)setAsset(null);else setUploadError("Upload failed. The selected document has been kept so you can try again.");
     } finally {
       setUploading(false);
     }
@@ -1043,13 +1052,14 @@ function EvidencePicker({
       )}
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`Upload ${pretty(category)} document`}
+        accessibilityLabel={uploadLabel||`Upload ${pretty(category)} document`}
         disabled={disabled || uploading || !asset}
         style={[s.button, (disabled || uploading || !asset) && s.disabled]}
         onPress={upload}
       >
-        <Text style={s.buttonText}>{uploading ? "Uploading…" : "Upload document"}</Text>
+        <Text style={s.buttonText}>{uploading ? "Uploading…" : uploadLabel||"Upload document"}</Text>
       </Pressable>
+      {uploadError?<Text style={s.error}>{uploadError}</Text>:null}
       <Text style={s.meta}>Private upload category: {pretty(category)}</Text>
     </View>
   );
