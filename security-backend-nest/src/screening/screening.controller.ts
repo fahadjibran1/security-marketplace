@@ -26,11 +26,12 @@ export class ScreeningController {
   @Post('mine/consent/withdraw') @Roles(UserRole.GUARD) withdrawConsent(@CurrentUser() u:JwtPayload){return this.service.withdrawConsent(u.sub);}
   @Post('mine/evidence') @Roles(UserRole.GUARD) evidence(@CurrentUser() u:JwtPayload,@Body() d:CreateEvidenceDto){return this.service.createEvidence(u.sub,d);}
   @Post('evidence/:id/complete-upload') @Roles(UserRole.GUARD,UserRole.ADMIN) completeEvidence(@CurrentUser() u:JwtPayload,@Param('id',ParseIntPipe) id:number){return this.service.completeEvidence(u,id);}
-  @Get('evidence/:id/access') @Roles(UserRole.GUARD,UserRole.ADMIN) accessEvidence(@CurrentUser() u:JwtPayload,@Param('id',ParseIntPipe) id:number){return this.service.accessEvidence(u,id);}
+  @Get('evidence/:id/access') @Roles(UserRole.GUARD) accessEvidence(@CurrentUser() u:JwtPayload,@Param('id',ParseIntPipe) id:number){return this.service.accessEvidence(u,id);}
   @Post('mine/submit') @Roles(UserRole.GUARD) submit(@CurrentUser() u:JwtPayload){return this.service.submit(u.sub);}
   @Get('company/guards/:guardId/outcome') @Roles(...COMPANY_VIEW_ROLES) outcome(@CurrentUser() u:JwtPayload,@Param('guardId',ParseIntPipe) id:number){return this.service.companyOutcome(u.sub,id);}
   @Get() @Roles(UserRole.ADMIN) list(){return this.service.listAdmin();}
   @Get(':id') @Roles(UserRole.ADMIN) get(@Param('id',ParseIntPipe) id:number){return this.service.adminGet(id);}
+  @Get(':id/evidence/:evidenceId/access') @Roles(UserRole.ADMIN) adminEvidence(@CurrentUser() u:JwtPayload,@Param('id',ParseIntPipe) id:number,@Param('evidenceId',ParseIntPipe) evidenceId:number){return this.service.adminAccessEvidence(u.sub,id,evidenceId);}
   @Post(':id/start-review') @Roles(UserRole.ADMIN) review(@CurrentUser() u:JwtPayload,@Param('id',ParseIntPipe) id:number){return this.service.startReview(u.sub,id);}
   @Patch(':id/checks/:check') @Roles(UserRole.ADMIN) check(@CurrentUser() u:JwtPayload,@Param('id',ParseIntPipe) id:number,@Param('check') check:string,@Body() d:VerifyCheckDto){if(!['identity','address','sia','rtw'].includes(check))throw new BadRequestException('Unsupported screening check.');return this.service.verifyCheck(u.sub,id,check as 'identity'|'address'|'sia'|'rtw',d);}
   @Post('references/:id/request') @Roles(UserRole.ADMIN) requestReference(@CurrentUser() u:JwtPayload,@Param('id',ParseIntPipe) id:number){return this.service.requestReference(u.sub,id);}

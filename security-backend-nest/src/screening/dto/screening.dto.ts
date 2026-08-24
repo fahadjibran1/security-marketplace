@@ -28,6 +28,6 @@ export class CreateEvidenceDto {
   @IsEnum(EvidenceCategory) category!: EvidenceCategory; @IsString() @IsNotEmpty() originalFileName!: string;
   @IsString() @IsNotEmpty() mimeType!: string; @IsInt() @Min(1) @Max(10485760) sizeBytes!: number;
 }
-export class VerifyCheckDto { @IsEnum(VerificationState) state!: VerificationState; @IsString() @IsNotEmpty() @MaxLength(200) method!: string; }
+export class VerifyCheckDto { @IsEnum(VerificationState) state!: VerificationState; @IsString() @IsNotEmpty() @MaxLength(200) method!: string; @IsInt() @Min(1) evidenceId!:number; }
 export class ReviewReferenceDto { @IsEnum(ReferenceStatus) status!: ReferenceStatus; @IsBoolean() sourceVerified!: boolean; @IsString() @IsNotEmpty() verificationMethod!: string; @IsOptional() @IsString() @MaxLength(3000) notes?: string; }
 export class ReviewActionDto { @IsString() @IsNotEmpty() @MaxLength(3000) reason!: string; }

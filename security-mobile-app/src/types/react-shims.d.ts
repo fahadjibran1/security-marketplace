@@ -23,6 +23,8 @@ declare module 'react-native' {
   export type ImageSourcePropType = number | { uri: string; headers?: Record<string, string> };
   export const Image: any;
   export const KeyboardAvoidingView: any;
+  export const Linking: { openURL: (url: string) => Promise<unknown> };
+  export const Modal: any;
   export const Pressable: any;
   export const Platform: { OS: string };
   export const SafeAreaView: any;
