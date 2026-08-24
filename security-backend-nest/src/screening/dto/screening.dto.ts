@@ -29,5 +29,5 @@ export class CreateEvidenceDto {
   @IsString() @IsNotEmpty() mimeType!: string; @IsInt() @Min(1) @Max(10485760) sizeBytes!: number;
 }
 export class VerifyCheckDto { @IsEnum(VerificationState) state!: VerificationState; @IsString() @IsNotEmpty() @MaxLength(200) method!: string; @IsInt() @Min(1) evidenceId!:number; }
-export class ReviewReferenceDto { @IsEnum(ReferenceStatus) status!: ReferenceStatus; @IsBoolean() sourceVerified!: boolean; @IsString() @IsNotEmpty() verificationMethod!: string; @IsOptional() @IsString() @MaxLength(3000) notes?: string; }
+export class ReviewReferenceDto { @IsEnum(ReferenceStatus) status!: ReferenceStatus; @Transform(({value})=>typeof value==='string'?value.trim():value) @IsString() @IsNotEmpty() @MaxLength(500) verificationMethod!: string; @Transform(({value})=>typeof value==='string'?value.trim():value) @IsString() @IsNotEmpty() @MaxLength(3000) notes!: string; }
 export class ReviewActionDto { @Transform(({value})=>typeof value==='string'?value.trim():value) @IsString() @IsNotEmpty() @MaxLength(3000) reason!: string; }

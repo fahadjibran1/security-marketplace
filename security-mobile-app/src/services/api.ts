@@ -1030,6 +1030,8 @@ export function getScreening(id:number){return request<GuardScreening>(`/screeni
 export function accessScreeningEvidence(screeningId:number,evidenceId:number){return request<{url:string;expiresAt:string;method:'GET'}>(`/screening/${screeningId}/evidence/${evidenceId}/access`);}
 export function startScreeningReview(id:number){return request<GuardScreening>(`/screening/${id}/start-review`,{method:'POST'});}
 export function verifyScreeningCheck(id:number,check:'identity'|'address'|'sia'|'rtw',evidenceId:number){return request<GuardScreening>(`/screening/${id}/checks/${check}`,{method:'PATCH',body:JSON.stringify({state:'VERIFIED',method:'Authorised reviewer evidence inspection',evidenceId})});}
+export function requestScreeningReference(screeningId:number,referenceId:number){return request(`/screening/${screeningId}/references/${referenceId}/request`,{method:'POST'});}
+export function reviewScreeningReference(screeningId:number,referenceId:number,payload:{status:'VERIFIED'|'REJECTED'|'SOURCE_VERIFICATION_REQUIRED';verificationMethod:string;notes:string}){return request<GuardScreening>(`/screening/${screeningId}/references/${referenceId}/review`,{method:'PATCH',body:JSON.stringify(payload)});}
 export function requestScreeningInformation(id:number,reason:string){return request<GuardScreening>(`/screening/${id}/request-information`,{method:'POST',body:JSON.stringify({reason})});}
 export function completeScreeningReview(id:number,reason:string){return request<GuardScreening>(`/screening/${id}/complete`,{method:'POST',body:JSON.stringify({reason})});}
 export function rejectScreening(id:number,reason:string){return request<GuardScreening>(`/screening/${id}/reject`,{method:'POST',body:JSON.stringify({reason})});}
