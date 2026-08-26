@@ -4,9 +4,12 @@ import { ComplianceService } from '../src/compliance/compliance.service';
 import { assessContinuousHistory, normalizeUkPostcode } from '../src/screening/screening.service';
 import { ScreeningStatus } from '../src/screening/entities/screening.entities';
 import { UserStatus } from '../src/user/entities/user.entity';
+import { GuardApprovalStatus } from '../src/guard-profile/entities/guard-profile.entity';
 let passed=0; async function test(name:string,fn:()=>unknown|Promise<unknown>){await fn();passed++;console.log(`PASS ${name}`);}
-const eligibility=(status:UserStatus|string,vetted:boolean,blockers:string[]=[])=>new ComplianceService({} as any,{} as any,{findOne:async()=>({user:{status}})} as any,{} as any,{getBlockingReasons:async()=>blockers} as any,{isGuardVetted:async()=>vetted} as any);
+const eligibility=(status:UserStatus|string,vetted:boolean,blockers:string[]=[],approved=true)=>new ComplianceService({} as any,{} as any,{findOne:async()=>({user:{status},approvalStatus:approved?GuardApprovalStatus.APPROVED:GuardApprovalStatus.PENDING,isApproved:approved})} as any,{} as any,{getBlockingReasons:async()=>blockers} as any,{isGuardVetted:async()=>vetted} as any);
 async function main(){
+ await test('ACTIVE compliant VETTED pending GuardProfile is not eligible',async()=>assert.rejects(()=>eligibility(UserStatus.ACTIVE,true,[],false).assertGuardAssignable(1,1),/Guard profile is not approved/));
+ await test('ACTIVE compliant VETTED approved GuardProfile is eligible',()=>eligibility(UserStatus.ACTIVE,true).assertGuardAssignable(1,1));
  const states=[undefined,ScreeningStatus.NOT_STARTED,ScreeningStatus.IN_PROGRESS,ScreeningStatus.READY_FOR_REVIEW,ScreeningStatus.UNDER_REVIEW,ScreeningStatus.REQUIRES_ATTENTION,ScreeningStatus.REJECTED,ScreeningStatus.EXPIRED];
  for(const state of states) await test(`ACTIVE compliant ${state||'NO_SCREENING'} is not eligible`,async()=>assert.rejects(()=>eligibility(UserStatus.ACTIVE,false).assertGuardAssignable(1,1),/Guard screening is not complete/));
  await test('ACTIVE compliant VETTED is eligible',()=>eligibility(UserStatus.ACTIVE,true).assertGuardAssignable(1,1));
@@ -35,6 +38,12 @@ async function main(){
  const jobs=fs.readFileSync(path.join(__dirname,'../src/job-application/job-application.service.ts'),'utf8');
  await test('application creation has no eligibility gate',()=>assert.doesNotMatch(jobs.split('async createForUser')[1].split('private async preflightHire')[0],/assertGuardAssignable/));
  await test('hire preflight precedes relationship',()=>assert.ok(jobs.indexOf('await this.preflightHire')<jobs.indexOf('await this.companyGuardService.ensureRelationship')));
+ const assignment=fs.readFileSync(path.join(__dirname,'../src/assignment/assignment.service.ts'),'utf8');
+ await test('hire assignment invokes shared eligibility gate',()=>assert.match(assignment,/createFromHire[\s\S]*assertGuardAssignable/));
+ const shift=fs.readFileSync(path.join(__dirname,'../src/shift/shift.service.ts'),'utf8');
+ await test('shift creation invokes shared eligibility gate',()=>assert.match(shift,/async create\([\s\S]*assertGuardAssignable/));
+ const availability=fs.readFileSync(path.join(__dirname,'../src/availability/availability.service.ts'),'utf8');
+ await test('matching invokes shared eligibility gate',()=>assert.match(availability,/evaluateGuardForShift[\s\S]*assertGuardAssignable/));
  console.log(JSON.stringify({event:'screening_remediation_tests_passed',tests:passed}));
 }
 main().catch(e=>{console.error(e);process.exit(1);});

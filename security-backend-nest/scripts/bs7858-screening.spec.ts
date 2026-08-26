@@ -5,6 +5,7 @@ import { assessContinuousHistory, ScreeningService } from '../src/screening/scre
 import { GuardScreening, ReferenceStatus, ScreeningStatus, VerificationState } from '../src/screening/entities/screening.entities';
 import { ComplianceService } from '../src/compliance/compliance.service';
 import { UserStatus } from '../src/user/entities/user.entity';
+import { GuardApprovalStatus } from '../src/guard-profile/entities/guard-profile.entity';
 let passed=0;
 function test(name:string,fn:()=>void|Promise<void>){return Promise.resolve().then(fn).then(()=>{passed++;console.log(`PASS ${name}`);});}
 function ago(years:number,days=0){const d=new Date();d.setUTCFullYear(d.getUTCFullYear()-years);d.setUTCDate(d.getUTCDate()+days);return d.toISOString().slice(0,10);}
@@ -32,7 +33,7 @@ async function main(){
  await test('SIA verification required for VETTED',()=>assert.ok(svc.requirements(record({siaRegisterVerification:VerificationState.UNVERIFIED}),true).missing.some((x:string)=>x.includes('SIA'))));
  await test('RTW verification required for VETTED',()=>assert.ok(svc.requirements(record({rightToWorkVerification:VerificationState.UNVERIFIED}),true).missing.some((x:string)=>x.includes('Right to Work'))));
  await test('unresolved exception blocks completion',()=>assert.ok(svc.requirements(record({exceptions:[{resolved:false}] as any}),true).missing.some((x:string)=>x.includes('exceptions'))));
- const compliance=(vetted:boolean,blockers:string[]=[])=>new ComplianceService({} as any,{} as any,{findOne:async()=>({user:{status:UserStatus.ACTIVE}})} as any,{} as any,{getBlockingReasons:async()=>blockers} as any,{isGuardVetted:async()=>vetted} as any);
+const compliance=(vetted:boolean,blockers:string[]=[])=>new ComplianceService({} as any,{} as any,{findOne:async()=>({user:{status:UserStatus.ACTIVE},approvalStatus:GuardApprovalStatus.APPROVED,isApproved:true})} as any,{} as any,{getBlockingReasons:async()=>blockers} as any,{isGuardVetted:async()=>vetted} as any);
  await test('VETTED plus operational compliance is assignable',()=>compliance(true).assertGuardAssignable(1,1));
  await test('non-VETTED guard is not assignable',async()=>{await assert.rejects(()=>compliance(false).assertGuardAssignable(1,1),ForbiddenException);});
  await test('expired compliance removes eligibility',async()=>{await assert.rejects(()=>compliance(true,['SIA expired']).assertGuardAssignable(1,1),ForbiddenException);});

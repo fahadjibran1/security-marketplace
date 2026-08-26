@@ -147,9 +147,14 @@ export class AvailabilityService {
       input.excludeShiftId,
     );
     if (hasShiftClash) reasons.push('Guard already has an overlapping shift.');
-    const blockers = await this.complianceService.getBlockingRecords(input.companyId, input.guardId);
-    const complianceValid = blockers.length === 0;
-    if (!complianceValid) reasons.push(`Compliance invalid: ${blockers[0]}`);
+    let complianceValid = true;
+    try {
+      await this.complianceService.assertGuardAssignable(input.companyId, input.guardId);
+    } catch (error) {
+      if (!(error instanceof ForbiddenException)) throw error;
+      complianceValid = false;
+      reasons.push(`Compliance invalid: ${error.message}`);
+    }
     const availabilityStatus = await this.getAvailabilityStatus(
       input.companyId,
       input.guardId,

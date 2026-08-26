@@ -16,6 +16,7 @@ import {
 } from './entities/compliance-record.entity';
 import { ScreeningService } from '../screening/screening.service';
 import { UserStatus } from '../user/entities/user.entity';
+import { GuardApprovalStatus } from '../guard-profile/entities/guard-profile.entity';
 
 @Injectable()
 export class ComplianceService {
@@ -80,6 +81,12 @@ export class ComplianceService {
     const guard = await this.guardProfileService.findOne(guardId);
     if (guard.user.status !== UserStatus.ACTIVE) {
       throw new ForbiddenException('Guard account is not active.');
+    }
+    if (
+      guard.approvalStatus !== GuardApprovalStatus.APPROVED ||
+      guard.isApproved !== true
+    ) {
+      throw new ForbiddenException('Guard profile is not approved.');
     }
     const blockers = await this.guardComplianceService.getBlockingReasons(companyId, guardId);
     if (blockers.length) {

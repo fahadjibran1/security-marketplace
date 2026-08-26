@@ -123,12 +123,12 @@ async function testCompanyCannotVerifyOtherCompanyEvidence() {
   equal(audits.filter((entry) => entry.action === 'guard_document.verified').length, 0);
 }
 
-function buildHireHarness() {
+function buildHireHarness(assignable = true) {
   const app = application();
-  const calls = { relationship: 0, assignment: 0, shift: 0 };
+  const calls = { applicationSave: 0, jobSave: 0, relationship: 0, assignment: 0, shift: 0 };
   const service = new JobApplicationService(
-    { findOne: async () => app, save: async (value: any) => value } as any,
-    { save: async (value: any) => value } as any,
+    { findOne: async () => app, save: async (value: any) => (calls.applicationSave += 1, value) } as any,
+    { save: async (value: any) => (calls.jobSave += 1, value) } as any,
     {} as any,
     {
       countActiveByJob: async () => calls.assignment,
@@ -141,9 +141,11 @@ function buildHireHarness() {
     { findOne: async () => ({ id: 91, company: companyA }) } as any,
     { ensureRelationship: async () => (calls.relationship += 1, { id: 1 }) } as any,
     { assertGuardCanTakeShift: async () => undefined } as any,
-    { assertGuardAssignable: async () => undefined } as any,
+    { assertGuardAssignable: async () => {
+      if (!assignable) throw new ForbiddenException('Guard profile is not approved.');
+    } } as any,
   );
-  return { service, calls };
+  return { service, calls, app };
 }
 
 async function testValidEvidenceAllowsHire() {
@@ -158,6 +160,22 @@ async function testHireCreatesRelationshipAssignmentAndShift() {
   equal(calls.relationship, 1);
   equal(calls.assignment, 1);
   equal(calls.shift, 1);
+}
+
+async function testUnapprovedHireLeavesNoPartialCommercialState() {
+  const { service, calls, app } = buildHireHarness(false);
+  await expectForbidden(() => service.hire(61, {
+    createShift: true,
+    siteId: 91,
+    start: '2026-09-01T09:00:00Z',
+    end: '2026-09-01T17:00:00Z',
+  }));
+  equal(app.status, 'under_review');
+  equal(calls.applicationSave, 0);
+  equal(calls.jobSave, 0);
+  equal(calls.relationship, 0);
+  equal(calls.assignment, 0);
+  equal(calls.shift, 0);
 }
 
 async function testRejectedApplicationDoesNotAuthorize() {
@@ -216,13 +234,14 @@ async function main() {
   await testCompanyCannotVerifyOtherCompanyEvidence();
   await testValidEvidenceAllowsHire();
   await testHireCreatesRelationshipAssignmentAndShift();
+  await testUnapprovedHireLeavesNoPartialCommercialState();
   await testRejectedApplicationDoesNotAuthorize();
   await testDirectMembershipStillDenied();
   await testMultiCompanyPreHireEvidenceIsIsolated();
   await testPreHireAuditUsesCompanyAndActor();
   await proveDeadlockNegativeControl();
   console.log(JSON.stringify({
-    event: 'prehire_compliance_tests_passed', tests: 13,
+    event: 'prehire_compliance_tests_passed', tests: 14,
     negativeControl: 'without under_review application authority, company upload remains forbidden and hire preflight deadlocks',
   }));
 }
