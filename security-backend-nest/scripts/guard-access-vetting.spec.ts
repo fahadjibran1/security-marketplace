@@ -10,6 +10,7 @@ import { UserRole, UserStatus } from '../src/user/entities/user.entity';
 import { GuardComplianceService } from '../src/compliance/guard-compliance.service';
 import { GuardDocumentType } from '../src/compliance/entities/guard-document.entity';
 import { ActivatePendingGuardAccounts1719900000000 } from '../src/database/migrations/1719900000000-ActivatePendingGuardAccounts';
+import { GuardApprovalStatus } from '../src/guard-profile/entities/guard-profile.entity';
 
 const future = '2035-12-31';
 
@@ -45,6 +46,7 @@ function complianceHarness(verified: boolean) {
   const guard = {
     id: 10, fullName: 'Lifecycle Guard', phone: '07000000000', siaLicenseNumber: 'SIA-10',
     siaExpiryDate: future, rightToWorkStatus: 'permanent', rightToWorkExpiryDate: null,
+    status: GuardApprovalStatus.APPROVED, approvalStatus: GuardApprovalStatus.APPROVED, isApproved: true,
   };
   const documents = [GuardDocumentType.SIA_LICENCE, GuardDocumentType.RIGHT_TO_WORK].map((type, index) => ({
     id: index + 1, guard, company: { id: 20 }, type, uploadCompletedAt: new Date(), expiryDate: future,

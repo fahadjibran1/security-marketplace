@@ -1,6 +1,6 @@
 import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import {
   CompanyGuard,
   CompanyGuardRelationshipType,
@@ -92,18 +92,19 @@ export class CompanyGuardService {
     companyId: number;
     guardId: number;
     relationshipType?: CompanyGuard['relationshipType'];
-  }): Promise<CompanyGuard> {
+  }, manager?: EntityManager): Promise<CompanyGuard> {
+    const relationRepo = manager?.getRepository(CompanyGuard) ?? this.companyGuardRepo;
     const company = await this.companyService.findOne(params.companyId);
     const guard = await this.guardService.findOne(params.guardId);
     await this.complianceService.assertGuardAssignable(company.id, guard.id);
 
-    const existing = await this.companyGuardRepo.findOne({
+    const existing = await relationRepo.findOne({
       where: { company: { id: company.id }, guard: { id: guard.id } },
     });
 
     const relation =
       existing ??
-      this.companyGuardRepo.create({
+      relationRepo.create({
         company,
         guard,
         relationshipType:
@@ -115,6 +116,6 @@ export class CompanyGuardService {
       params.relationshipType ??
       relation.relationshipType ??
       CompanyGuardRelationshipType.APPROVED_CONTRACTOR;
-    return this.companyGuardRepo.save(relation);
+    return relationRepo.save(relation);
   }
 }

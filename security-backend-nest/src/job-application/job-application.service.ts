@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { JobApplication } from './entities/job-application.entity';
 import { CreateJobApplicationDto } from './dto/create-job-application.dto';
 import { JobService } from '../job/job.service';
@@ -20,6 +20,7 @@ import { CompanyGuardRelationshipType } from '../company-guard/entities/company-
 import { ReviewJobApplicationDto } from './dto/review-job-application.dto';
 import { AvailabilityService } from '../availability/availability.service';
 import { ComplianceService } from '../compliance/compliance.service';
+import { Job } from '../job/entities/job.entity';
 
 @Injectable()
 export class JobApplicationService {
@@ -37,6 +38,7 @@ export class JobApplicationService {
     private readonly companyGuardService: CompanyGuardService,
     private readonly availabilityService: AvailabilityService,
     private readonly complianceService: ComplianceService,
+    private readonly dataSource: DataSource,
   ) {}
 
   findAll(): Promise<JobApplication[]> {
@@ -151,42 +153,67 @@ export class JobApplicationService {
   }
 
   async hire(applicationId: number, dto: HireApplicationDto) {
-    const application = await this.findOne(applicationId);
-    if (application.status === 'accepted') throw new ConflictException('Application already accepted');
-    if (application.status === 'rejected') throw new ConflictException('Rejected applications cannot be accepted');
+    const candidate = await this.findOne(applicationId);
+    if (candidate.status === 'accepted') throw new ConflictException('Application already accepted');
+    if (candidate.status === 'rejected') throw new ConflictException('Rejected applications cannot be accepted');
+    await this.preflightHire(candidate, dto);
 
-    const activeCount = await this.assignmentService.countActiveByJob(application.job.id);
-    if (activeCount >= application.job.guardsRequired) {
-      throw new ConflictException('Job guard capacity reached');
-    }
+    const { application, assignment, shiftResult } = await this.dataSource.transaction(async (manager) => {
+      const jobRepo = manager.getRepository(Job);
+      const lockedJob = await jobRepo
+        .createQueryBuilder('job')
+        .select('job.id')
+        .where('job.id = :jobId', { jobId: candidate.job.id })
+        .setLock('pessimistic_write')
+        .getOne();
+      if (!lockedJob) throw new NotFoundException('Job not found');
 
-    await this.preflightHire(application, dto);
+      const job = await jobRepo.findOne({ where: { id: lockedJob.id } });
+      if (!job) throw new NotFoundException('Job not found');
 
-    application.status = 'accepted';
-    application.hiredAt = new Date();
-    await this.appRepo.save(application);
-
-    await this.companyGuardService.ensureRelationship({
-      companyId: application.job.company.id,
-      guardId: application.guard.id,
-      relationshipType: CompanyGuardRelationshipType.APPROVED_CONTRACTOR,
-    });
-
-    const assignment =
-      application.assignments?.[0] ?? (await this.assignmentService.createFromHire(application));
-    const updatedActiveCount = await this.assignmentService.countActiveByJob(application.job.id);
-    application.job.status = updatedActiveCount >= application.job.guardsRequired ? 'filled' : 'open';
-    await this.jobsService.save(application.job);
-
-    let shiftResult: unknown = null;
-    if (dto.createShift) {
-      shiftResult = await this.shiftService.create({
-        assignmentId: assignment.id,
-        siteId: dto.siteId,
-        start: dto.start!,
-        end: dto.end!,
+      const application = await manager.getRepository(JobApplication).findOne({
+        where: { id: applicationId },
+        relations: { assignments: { shifts: true } },
       });
-    }
+      if (!application) throw new NotFoundException('Job application not found');
+      application.job = job;
+      this.normalizeApplication(application);
+      if (application.status === 'accepted') throw new ConflictException('Application already accepted');
+      if (application.status === 'rejected') throw new ConflictException('Rejected applications cannot be accepted');
+
+      const activeCount = await this.assignmentService.countActiveByJob(job.id, manager);
+      if (activeCount >= job.guardsRequired) {
+        throw new ConflictException('Job guard capacity reached');
+      }
+
+      application.status = 'accepted';
+      application.hiredAt = new Date();
+      await manager.getRepository(JobApplication).save(application);
+
+      await this.companyGuardService.ensureRelationship({
+        companyId: job.company.id,
+        guardId: application.guard.id,
+        relationshipType: CompanyGuardRelationshipType.APPROVED_CONTRACTOR,
+      }, manager);
+
+      const assignment =
+        application.assignments?.[0] ??
+        (await this.assignmentService.createFromHire(application, manager));
+      const updatedActiveCount = await this.assignmentService.countActiveByJob(job.id, manager);
+      job.status = updatedActiveCount >= job.guardsRequired ? 'filled' : 'open';
+      await this.jobsService.save(job, manager);
+
+      const shiftResult = dto.createShift
+        ? await this.shiftService.create({
+            assignmentId: assignment.id,
+            siteId: dto.siteId,
+            start: dto.start!,
+            end: dto.end!,
+          }, manager)
+        : null;
+
+      return { application, assignment, shiftResult };
+    });
 
     await this.auditLogService.log({
       company: application.job.company,

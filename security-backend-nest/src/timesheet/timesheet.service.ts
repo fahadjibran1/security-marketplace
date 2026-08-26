@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Brackets, In, Repository } from 'typeorm';
+import { Brackets, EntityManager, In, Repository } from 'typeorm';
 import { Timesheet, TimesheetBillingStatus, TimesheetPayrollStatus, TimesheetStatus } from './entities/timesheet.entity';
 import { Shift } from '../shift/entities/shift.entity';
 import { UpdateTimesheetDto } from './dto/update-timesheet.dto';
@@ -73,7 +73,8 @@ export class TimesheetService {
     return this.applyDerivedFinancials(timesheet);
   }
 
-  async createForShift(shift: Shift): Promise<Timesheet> {
+  async createForShift(shift: Shift, manager?: EntityManager): Promise<Timesheet> {
+    const timesheetRepo = manager?.getRepository(Timesheet) ?? this.timesheetRepo;
     const company = shift.company ?? shift.assignment?.company;
     const guard = shift.guard ?? shift.assignment?.guard;
 
@@ -81,7 +82,7 @@ export class TimesheetService {
       throw new NotFoundException('Shift is missing company or guard context for timesheet creation');
     }
 
-    const timesheet = this.timesheetRepo.create({
+    const timesheet = timesheetRepo.create({
       shift,
       company,
       guard,
@@ -106,7 +107,7 @@ export class TimesheetService {
       rejectionReason: null,
     });
 
-    const saved = await this.timesheetRepo.save(timesheet);
+    const saved = await timesheetRepo.save(timesheet);
     return this.applyDerivedFinancials(saved);
   }
 

@@ -1,9 +1,10 @@
 import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException, forwardRef } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import { Shift } from './entities/shift.entity';
 import { CreateShiftDto } from './dto/create-shift.dto';
 import { AssignmentService } from '../assignment/assignment.service';
+import { Assignment } from '../assignment/entities/assignment.entity';
 import { TimesheetService } from '../timesheet/timesheet.service';
 import { SiteService } from '../site/site.service';
 import { Company } from '../company/entities/company.entity';
@@ -20,6 +21,7 @@ import { ComplianceService } from '../compliance/compliance.service';
 import { Timesheet } from '../timesheet/entities/timesheet.entity';
 import { UpdateShiftDto } from './dto/update-shift.dto';
 import { RespondShiftDto } from './dto/respond-shift.dto';
+import { Site } from '../site/entities/site.entity';
 
 @Injectable()
 export class ShiftService {
@@ -144,7 +146,12 @@ export class ShiftService {
     return shift;
   }
 
-  async create(dto: CreateShiftDto) {
+  async create(dto: CreateShiftDto, manager?: EntityManager) {
+    const shiftRepo = manager?.getRepository(Shift) ?? this.shiftRepo;
+    const companyRepo = manager?.getRepository(Company) ?? this.companyRepo;
+    const guardRepo = manager?.getRepository(GuardProfile) ?? this.guardRepo;
+    const jobRepo = manager?.getRepository(Job) ?? this.jobRepo;
+    const jobApplicationRepo = manager?.getRepository(JobApplication) ?? this.jobApplicationRepo;
     const start = new Date(dto.start);
     const end = new Date(dto.end);
     if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
@@ -159,39 +166,48 @@ export class ShiftService {
     }
 
     const assignment = dto.assignmentId
-      ? await this.assignmentService.findOne(dto.assignmentId)
+      ? manager
+        ? await manager.getRepository(Assignment).findOne({ where: { id: dto.assignmentId } })
+        : await this.assignmentService.findOne(dto.assignmentId)
       : null;
 
+    if (dto.assignmentId && !assignment) {
+      throw new NotFoundException('Assignment not found');
+    }
+
     const jobApplication = dto.jobApplicationId
-      ? await this.jobApplicationRepo.findOne({
+      ? await jobApplicationRepo.findOne({
           where: { id: dto.jobApplicationId },
           relations: ['job', 'job.company', 'guard'],
         })
       : assignment?.application ?? null;
 
     const job = dto.jobId
-      ? await this.jobRepo.findOne({
+      ? await jobRepo.findOne({
           where: { id: dto.jobId },
           relations: ['company', 'site'],
         })
       : assignment?.job ?? jobApplication?.job ?? null;
 
     const company = dto.companyId
-      ? await this.companyRepo.findOne({
+      ? await companyRepo.findOne({
           where: { id: dto.companyId },
           relations: ['user'],
         })
       : assignment?.company ?? job?.company ?? null;
 
     const guard = dto.guardId
-      ? await this.guardRepo.findOne({
+      ? await guardRepo.findOne({
           where: { id: dto.guardId },
           relations: ['user'],
         })
       : assignment?.guard ?? jobApplication?.guard ?? null;
 
     const siteId = dto.siteId;
-    const site = await this.siteService.findOne(siteId);
+    const site = manager
+      ? await manager.getRepository(Site).findOne({ where: { id: siteId } })
+      : await this.siteService.findOne(siteId);
+    if (!site) throw new NotFoundException(`Site with id ${siteId} not found`);
     const normalizedStatus = this.normalizeLifecycleStatus(dto.status);
 
     if (!company) {
@@ -229,9 +245,9 @@ export class ShiftService {
     shift.closeOutNotes = dto.closeOutNotes?.trim() || null;
     shift.status = status;
 
-    const savedShift: Shift = await this.shiftRepo.save(shift);
+    const savedShift: Shift = await shiftRepo.save(shift);
     const timesheet = savedShift.guard
-      ? await this.timesheetService.createForShift(savedShift)
+      ? await this.timesheetService.createForShift(savedShift, manager)
       : null;
 
     return { shift: savedShift, timesheet };

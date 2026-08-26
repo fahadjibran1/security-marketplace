@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import { Job } from './entities/job.entity';
 import { CreateJobDto } from './dto/create-job.dto';
 import { CompanyService } from '../company/company.service';
@@ -152,7 +152,7 @@ export class JobService {
     return saved;
   }
 
-  save(job: Job): Promise<Job> {
-    return this.jobRepo.save(job);
+  save(job: Job, manager?: EntityManager): Promise<Job> {
+    return (manager?.getRepository(Job) ?? this.jobRepo).save(job);
   }
 }
