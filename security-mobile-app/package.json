@@ -23,6 +23,7 @@
     "test:guard-lifecycle": "node scripts/guard-lifecycle.spec.cjs",
     "test:screening-ui": "node scripts/screening-ui.spec.cjs",
     "test:screening-review": "node scripts/screening-review-refresh.spec.cjs",
+    "test:api-base-url": "node scripts/api-base-url.spec.cjs",
     "build:brand-assets": "node scripts/build-s4-assets.cjs"
   },
   "dependencies": {

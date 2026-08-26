@@ -1,4 +1,5 @@
 import Constants from 'expo-constants';
+import { resolveApiBaseUrl } from './api-base-url';
 import {
   Attachment,
   AuditLog,
@@ -81,19 +82,15 @@ import {
   CreateDailyLogPayload,
 } from '../types/models';
 
-const LIVE_API_BASE_URL = 'https://security-marketplace-api.onrender.com';
 const hasBrowserWindow =
   typeof window !== 'undefined' &&
   typeof window.location !== 'undefined' &&
   typeof window.location.hostname === 'string';
-const isWeb = hasBrowserWindow;
-const isLocalWebHost =
-  hasBrowserWindow && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
-const devFallbackApiBaseUrl = isLocalWebHost ? 'http://localhost:3000' : LIVE_API_BASE_URL;
-const API_BASE_URL =
-  process.env.EXPO_PUBLIC_API_URL ||
-  (Constants.expoConfig?.extra?.apiBaseUrl as string | undefined) ||
-  (__DEV__ ? devFallbackApiBaseUrl : LIVE_API_BASE_URL);
+const API_BASE_URL = resolveApiBaseUrl({
+  environmentUrl: process.env.EXPO_PUBLIC_API_URL,
+  configuredUrl: Constants.expoConfig?.extra?.apiBaseUrl as string | undefined,
+  webHostname: hasBrowserWindow ? window.location.hostname : undefined,
+});
 let accessToken: string | null = null;
 let unauthorizedHandler: ((message: string) => void | Promise<void>) | null = null;
 
