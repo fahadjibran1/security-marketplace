@@ -159,10 +159,16 @@ export class JobApplicationService {
     await this.preflightHire(candidate, dto);
 
     const { application, assignment, shiftResult } = await this.dataSource.transaction(async (manager) => {
-      const job = await manager.getRepository(Job).findOne({
-        where: { id: candidate.job.id },
-        lock: { mode: 'pessimistic_write' },
-      });
+      const jobRepo = manager.getRepository(Job);
+      const lockedJob = await jobRepo
+        .createQueryBuilder('job')
+        .select('job.id')
+        .where('job.id = :jobId', { jobId: candidate.job.id })
+        .setLock('pessimistic_write')
+        .getOne();
+      if (!lockedJob) throw new NotFoundException('Job not found');
+
+      const job = await jobRepo.findOne({ where: { id: lockedJob.id } });
       if (!job) throw new NotFoundException('Job not found');
 
       const application = await manager.getRepository(JobApplication).findOne({
