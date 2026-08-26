@@ -10,10 +10,10 @@ Use with `UAT_MASTER_PLAN.md`. Record actual results and evidence in the executi
 **Expected:** registration succeeds; company profile exists once; login returns company principal; no guard/admin privileges are granted.
 **Failure severity:** High.
 
-### UAT-AUTH-002 — Guard registration remains pending [P0]
-**Steps:** Register a new guard through the public flow; attempt authenticated P0 operations before approval.
-**Expected:** guard account/profile is pending; protected ACTIVE-only operations are blocked until approval.
-**Failure severity:** Critical if pending guard can operate as approved.
+### UAT-AUTH-002 — Guard authentication is separate from work eligibility [P0]
+**Steps:** Register a new guard through the public flow; confirm the User account and GuardProfile states independently; log in as the guard; while the GuardProfile remains pending/unapproved/unvetted and required compliance or screening is incomplete, attempt hire, assignment and other work-eligible operations; inspect the resulting commercial and assignment records.
+**Expected:** registration succeeds; the User account is ACTIVE and the guard can authenticate; the GuardProfile remains pending/unapproved/unvetted; authentication does not make the guard work-eligible; hire, assignment and other work-eligible operations are rejected until the required compliance, screening and approval conditions are satisfied; rejected attempts create no partial commercial, assignment or shift records.
+**Failure severity:** Critical if an incomplete, unapproved or unvetted guard becomes work-eligible or if a rejected operation leaves partial commercial or assignment records.
 
 ### UAT-AUTH-003 — Privileged self-registration rejected [P0]
 **Steps:** Call public registration requesting `admin`, `company_staff`, `client_admin` and `client_viewer` roles.
@@ -33,9 +33,9 @@ Use with `UAT_MASTER_PLAN.md`. Record actual results and evidence in the executi
 ## GUARD / COMPLIANCE
 
 ### UAT-GRD-001 — Guard approval [P0]
-**Preconditions:** pending Guard A.
+**Preconditions:** Guard A has an ACTIVE User account and a pending/unapproved/unvetted GuardProfile.
 **Steps:** Platform/company-authorized workflow approves Guard A.
-**Expected:** approval/status transition is recorded; guard can subsequently use ACTIVE guard endpoints.
+**Expected:** the GuardProfile approval/status transition is recorded; authenticated account access remains independent of approval; approval permits work-eligible Guard operations only when the required compliance, screening and other eligibility conditions are also satisfied.
 **Failure severity:** High.
 
 ### UAT-GRD-002 — Ineligible compliance blocks assignment [P0]
