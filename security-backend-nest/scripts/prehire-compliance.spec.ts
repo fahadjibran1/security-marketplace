@@ -144,6 +144,16 @@ function buildHireHarness(assignable = true) {
     { assertGuardAssignable: async () => {
       if (!assignable) throw new ForbiddenException('Guard profile is not approved.');
     } } as any,
+    {
+      transaction: async (work: (manager: any) => Promise<unknown>) => work({
+        getRepository: (entity: { name: string }) => entity.name === 'Job'
+          ? { findOne: async () => app.job }
+          : {
+              findOne: async () => app,
+              save: async (value: any) => (calls.applicationSave += 1, value),
+            },
+      }),
+    } as any,
   );
   return { service, calls, app };
 }

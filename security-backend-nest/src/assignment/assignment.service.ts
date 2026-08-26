@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { EntityManager, In, Repository } from 'typeorm';
 import { Assignment, AssignmentStatus } from './entities/assignment.entity';
 import { JobApplication } from '../job-application/entities/job-application.entity';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
@@ -79,8 +79,9 @@ export class AssignmentService {
     return assignment;
   }
 
-  async countActiveByJob(jobId: number): Promise<number> {
-    return this.assignmentRepo.count({
+  async countActiveByJob(jobId: number, manager?: EntityManager): Promise<number> {
+    const assignmentRepo = manager?.getRepository(Assignment) ?? this.assignmentRepo;
+    return assignmentRepo.count({
       where: {
         job: { id: jobId },
         status: In([
@@ -94,9 +95,10 @@ export class AssignmentService {
     });
   }
 
-  async createFromHire(application: JobApplication): Promise<Assignment> {
+  async createFromHire(application: JobApplication, manager?: EntityManager): Promise<Assignment> {
     await this.complianceService.assertGuardAssignable(application.job.company.id, application.guard.id);
-    const assignment = this.assignmentRepo.create({
+    const assignmentRepo = manager?.getRepository(Assignment) ?? this.assignmentRepo;
+    const assignment = assignmentRepo.create({
       job: application.job,
       company: application.job.company,
       guard: application.guard,
@@ -105,7 +107,7 @@ export class AssignmentService {
       assignedAt: new Date(),
     });
 
-    return this.assignmentRepo.save(assignment);
+    return assignmentRepo.save(assignment);
   }
 
   save(assignment: Assignment): Promise<Assignment> {
