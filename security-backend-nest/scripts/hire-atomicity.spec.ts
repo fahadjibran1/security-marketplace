@@ -45,6 +45,15 @@ function harness(failAt?: FailurePoint) {
         getRepository: (entity: { name: string }) => {
           if (entity.name === 'Job') {
             return {
+              createQueryBuilder: () => {
+                const builder: any = {
+                  select: () => builder,
+                  where: () => builder,
+                  setLock: () => builder,
+                  getOne: async () => ({ id: job.id }),
+                };
+                return builder;
+              },
               findOne: async () => ({ ...job, status: tx.jobStatus }),
               save: async (value: any) => (tx.jobStatus = value.status, value),
             };

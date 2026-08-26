@@ -147,7 +147,18 @@ function buildHireHarness(assignable = true) {
     {
       transaction: async (work: (manager: any) => Promise<unknown>) => work({
         getRepository: (entity: { name: string }) => entity.name === 'Job'
-          ? { findOne: async () => app.job }
+          ? {
+              createQueryBuilder: () => {
+                const builder: any = {
+                  select: () => builder,
+                  where: () => builder,
+                  setLock: () => builder,
+                  getOne: async () => ({ id: app.job.id }),
+                };
+                return builder;
+              },
+              findOne: async () => app.job,
+            }
           : {
               findOne: async () => app,
               save: async (value: any) => (calls.applicationSave += 1, value),
