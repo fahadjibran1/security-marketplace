@@ -1,8 +1,9 @@
-import * as React from 'react';
+﻿import * as React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { formatApiErrorMessage, getClientPortalInvoiceDocument } from '../../services/api';
 import { ClientPortalInvoiceSummary, InvoiceDocument } from '../../types/models';
+import { colors } from '../../theme';
 
 const MONEY = new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' });
 
@@ -105,16 +106,16 @@ export function ClientInvoicesWorkspace({ invoices }: { invoices: ClientPortalIn
 
 const styles = StyleSheet.create({
   stack: { gap: 18 },
-  panel: { backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 18, padding: 18, gap: 12 },
-  title: { color: '#0F172A', fontSize: 22, fontWeight: '800' },
-  helperText: { color: '#64748B' },
-  errorText: { color: '#B91C1C', fontWeight: '700' },
-  row: { flexDirection: 'row', gap: 12, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#F1F5F9', alignItems: 'center' },
+  panel: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.pendingSurface, borderRadius: 18, padding: 18, gap: 12 },
+  title: { color: colors.primaryNavy, fontSize: 22, fontWeight: '800' },
+  helperText: { color: colors.pending },
+  errorText: { color: colors.danger, fontWeight: '700' },
+  row: { flexDirection: 'row', gap: 12, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: colors.background, alignItems: 'center' },
   flexGrow: { flex: 1 },
-  rowTitle: { color: '#0F172A', fontWeight: '800' },
-  meta: { color: '#64748B', marginTop: 3 },
-  amount: { color: '#0F172A', fontWeight: '800' },
-  viewButton: { borderWidth: 1, borderColor: '#CBD5E1', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8 },
-  viewButtonText: { color: '#0F172A', fontWeight: '700' },
+  rowTitle: { color: colors.primaryNavy, fontWeight: '800' },
+  meta: { color: colors.pending, marginTop: 3 },
+  amount: { color: colors.primaryNavy, fontWeight: '800' },
+  viewButton: { borderWidth: 1, borderColor: colors.border, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8 },
+  viewButtonText: { color: colors.primaryNavy, fontWeight: '700' },
   documentHeader: { flexDirection: 'row', gap: 12, alignItems: 'center' },
 });
