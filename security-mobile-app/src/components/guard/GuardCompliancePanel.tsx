@@ -3,6 +3,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { formatApiErrorMessage, getMyGuard, getMyGuardComplianceStatus, listMyGuardDocuments } from '../../services/api';
 import { GuardComplianceSummary, GuardDocument, GuardProfile } from '../../types/models';
 import { FeatureCard } from '../FeatureCard';
+import { StatusBadge } from '../StatusBadge';
 import { colors, control, radii, spacing, typography } from '../../theme';
 import { getGuardVettingLabel, getGuardWorkEligibilityLabel } from '../../navigation/guard-lifecycle';
 
@@ -12,7 +13,7 @@ function formatDate(value?: string | null) {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString('en-GB');
 }
 
-function toneFor(value: string) {
+function heroTone(value: string) {
   const v = value.toLowerCase();
   if (v.includes('eligible') && !v.includes('not')) return { bg: colors.successSurface, text: colors.success };
   if (v.includes('verified') || v === 'active' || v.includes('approved')) return { bg: colors.successSurface, text: colors.success };
@@ -41,7 +42,7 @@ export function GuardCompliancePanel({ onManageCompliance }: { onManageComplianc
 
   const vetting = getGuardVettingLabel(summary);
   const eligibility = getGuardWorkEligibilityLabel(summary);
-  const eligibilityTone = toneFor(eligibility);
+  const eligibilityTone = heroTone(eligibility);
 
   return (
     <FeatureCard title="Work readiness" subtitle="See what is complete, what is under review and what may stop you being assigned to work.">
@@ -78,8 +79,7 @@ export function GuardCompliancePanel({ onManageCompliance }: { onManageComplianc
 }
 
 function Summary({ label, value, detail }: { label: string; value: string; detail?: string }) {
-  const tone = toneFor(value);
-  return <View style={styles.summary}><Text style={styles.label}>{label}</Text><View style={[styles.statusPill, { backgroundColor: tone.bg }]}><Text style={[styles.statusText, { color: tone.text }]}>{value}</Text></View>{detail ? <Text style={styles.detail}>{detail}</Text> : null}</View>;
+  return <View style={styles.summary}><Text style={styles.label}>{label}</Text><StatusBadge label={value} />{detail ? <Text style={styles.detail}>{detail}</Text> : null}</View>;
 }
 
 const styles = StyleSheet.create({
@@ -90,8 +90,6 @@ const styles = StyleSheet.create({
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   summary: { minWidth: 160, flexGrow: 1, flexBasis: '30%', padding: spacing.md, borderWidth: 1, borderColor: colors.border, borderRadius: radii.md, backgroundColor: colors.card, gap: spacing.sm },
   label: { color: colors.textSecondary, ...typography.caption, fontWeight: '700' },
-  statusPill: { alignSelf: 'flex-start', borderRadius: radii.pill, paddingHorizontal: spacing.sm, paddingVertical: spacing.xs },
-  statusText: { ...typography.caption, fontWeight: '700' },
   detail: { color: colors.textMuted, ...typography.caption },
   blockers: { padding: spacing.md, borderRadius: radii.md, backgroundColor: colors.warningSurface, gap: spacing.sm },
   blockerTitle: { color: colors.warning, ...typography.label },

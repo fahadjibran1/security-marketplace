@@ -5,7 +5,7 @@ type StateTone = 'empty' | 'error' | 'success' | 'info';
 
 type Props = {
   title: string;
-  message: string;
+  message?: string;
   tone?: StateTone;
   loading?: boolean;
   actionLabel?: string;
@@ -25,7 +25,7 @@ export function StatePanel({ title, message, tone = 'empty', loading, actionLabe
       {loading ? <ActivityIndicator color={colors.accentTealStrong} /> : null}
       <View style={styles.copy}>
         <Text style={styles.title}>{title}</Text>
-        <Text style={styles.message}>{message}</Text>
+        {message ? <Text style={styles.message}>{message}</Text> : null}
       </View>
       {actionLabel && onAction ? (
         <Pressable accessibilityRole="button" onPress={onAction} style={({ pressed }) => [styles.action, pressed && styles.pressed]}>
