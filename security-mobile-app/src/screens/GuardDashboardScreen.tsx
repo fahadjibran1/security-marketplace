@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { FeatureCard } from '../components/FeatureCard';
+import { StatePanel } from '../components/StatePanel';
 import { GuardCompliancePanel } from '../components/guard/GuardCompliancePanel';
 import { GuardScreeningJourney, GuardScreeningPanel } from '../components/guard/GuardScreeningPanel';
 import { JobsScreen } from './JobsScreen';
@@ -20,11 +21,9 @@ import {
   listMyIncidents,
   listMyShifts,
   listMyTimesheets,
-  logout,
   respondToShift,
   updateMyGuard,
 } from '../services/api';
-import { clearStoredSession } from '../services/session';
 import {
   AttendanceEvent,
   AuthUser,
@@ -37,6 +36,7 @@ import { colors } from '../theme';
 
 interface GuardDashboardScreenProps {
   user: AuthUser;
+  onLogout: () => void;
 }
 
 type GuardTab = 'home' | 'offers' | 'jobs' | 'history' | 'profile' | 'screening';
@@ -429,7 +429,7 @@ function getSecondaryActionsHelper(
   return 'Unlocks after you check in and the shift shows as live.';
 }
 
-export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
+export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenProps) {
   const insets = useSafeAreaInsets();
   const [activeTab, setActiveTab] = useState<GuardTab>('home');
   const [quickActionModal, setQuickActionModal] = useState<QuickActionModal>(null);
@@ -438,7 +438,6 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
   const [phone, setPhone] = useState('');
   const [siaLicence, setSiaLicence] = useState('');
   const [locationSharing, setLocationSharing] = useState(false);
-  const [signedOut, setSignedOut] = useState(false);
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [attendance, setAttendance] = useState<AttendanceEvent[]>([]);
   const [incidents, setIncidents] = useState<Incident[]>([]);
@@ -542,13 +541,8 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
     }
   }
 
-  async function handleLogout() {
-    logout();
-    await clearStoredSession();
-    setSignedOut(true);
-    if (typeof window !== 'undefined' && typeof window.location?.reload === 'function') {
-      window.location.reload();
-    }
+  function handleLogout() {
+    onLogout();
   }
 
   async function handleCheckIn(shiftId: number) {
@@ -1002,22 +996,8 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
   const historySummaryAttendance = historySummaryShift?.id ? attendanceByShiftId[historySummaryShift.id] : undefined;
   const historySummaryTimesheet = timesheets.find((timesheet) => timesheet.shiftId === historySummaryShift?.id) || null;
 
-  if (signedOut) {
-    return (
-      <View style={styles.signedOutScreen}>
-        <Text style={styles.headerTitle}>Signed out</Text>
-        <Text style={styles.helperText}>Your session has been cleared. Reopen the app or refresh to sign in again.</Text>
-      </View>
-    );
-  }
-
   if (loading && shifts.length === 0) {
-    return (
-      <View style={styles.signedOutScreen}>
-        <Text style={styles.headerTitle}>Loading...</Text>
-        <Text style={styles.helperText}>Preparing your mobile shift workspace.</Text>
-      </View>
-    );
+    return <StatePanel title="Loading your workspace" message="Preparing your shift, attendance and compliance data." tone="info" loading />;
   }
 
   return (
@@ -1813,7 +1793,6 @@ const styles = StyleSheet.create({
   contentArea: { flex: 1 },
   scrollView: { flex: 1 },
   content: { paddingHorizontal: 16, paddingBottom: 28, flexGrow: 1 },
-  signedOutScreen: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, backgroundColor: colors.background, gap: 8 },
   feedbackBanner: { marginHorizontal: 16, marginBottom: 10, borderRadius: 16, paddingHorizontal: 14, paddingVertical: 12, gap: 4 },
   feedbackSuccess: { backgroundColor: '#DCFCE7' },
   feedbackError: { backgroundColor: '#FEE2E2' },
