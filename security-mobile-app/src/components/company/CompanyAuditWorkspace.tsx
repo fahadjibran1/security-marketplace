@@ -1,8 +1,9 @@
-import * as React from 'react';
+﻿import * as React from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { formatApiErrorMessage, listCompanyAuditLogs } from '../../services/api';
 import { AuditLog } from '../../types/models';
+import { colors } from '../../theme';
 
 type WebSelectProps = {
   value: string;
@@ -179,58 +180,58 @@ export function CompanyAuditWorkspace() {
 const webSelectStyle = {
   borderRadius: 14,
   borderWidth: 1,
-  borderColor: '#d6dce5',
-  backgroundColor: '#ffffff',
+  borderColor: colors.border,
+  backgroundColor: colors.card,
   padding: '12px 14px',
   fontSize: 14,
-  color: '#132238',
+  color: colors.primaryNavyStrong,
   minHeight: 46,
 } as const;
 
 const styles = StyleSheet.create({
   workspace: { gap: 18 },
   headerCard: {
-    backgroundColor: '#ffffff',
+    backgroundColor: colors.card,
     borderRadius: 22,
     padding: 22,
     borderWidth: 1,
-    borderColor: '#dbe4ef',
+    borderColor: colors.surfaceSubtle,
     flexDirection: 'row',
     justifyContent: 'space-between',
     gap: 16,
     flexWrap: 'wrap',
   },
-  eyebrow: { color: '#0f766e', fontSize: 12, fontWeight: '800', letterSpacing: 1.5, textTransform: 'uppercase' },
-  title: { color: '#0f172a', fontSize: 30, fontWeight: '800' },
-  subtitle: { color: '#64748b', marginTop: 6, fontSize: 14, lineHeight: 21 },
-  primaryButton: { backgroundColor: '#0f172a', borderRadius: 14, paddingHorizontal: 16, paddingVertical: 12, alignSelf: 'center' },
-  primaryButtonText: { color: '#ffffff', fontWeight: '800' },
-  errorCard: { backgroundColor: '#fef2f2', borderColor: '#fecaca', borderWidth: 1, borderRadius: 16, padding: 14 },
-  errorText: { color: '#991b1b', fontWeight: '700' },
-  filterCard: { backgroundColor: '#ffffff', borderRadius: 22, padding: 18, borderColor: '#dbe4ef', borderWidth: 1 },
+  eyebrow: { color: colors.accentTealStrong, fontSize: 12, fontWeight: '800', letterSpacing: 1.5, textTransform: 'uppercase' },
+  title: { color: colors.primaryNavy, fontSize: 30, fontWeight: '800' },
+  subtitle: { color: colors.pending, marginTop: 6, fontSize: 14, lineHeight: 21 },
+  primaryButton: { backgroundColor: colors.primaryNavy, borderRadius: 14, paddingHorizontal: 16, paddingVertical: 12, alignSelf: 'center' },
+  primaryButtonText: { color: colors.card, fontWeight: '800' },
+  errorCard: { backgroundColor: colors.dangerSurface, borderColor: colors.dangerSurface, borderWidth: 1, borderRadius: 16, padding: 14 },
+  errorText: { color: colors.danger, fontWeight: '700' },
+  filterCard: { backgroundColor: colors.card, borderRadius: 22, padding: 18, borderColor: colors.surfaceSubtle, borderWidth: 1 },
   filterGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   input: {
     minWidth: 180,
     flex: 1,
-    backgroundColor: '#ffffff',
-    borderColor: '#d6dce5',
+    backgroundColor: colors.card,
+    borderColor: colors.border,
     borderWidth: 1,
     borderRadius: 14,
     paddingHorizontal: 14,
     paddingVertical: 12,
-    color: '#132238',
+    color: colors.primaryNavyStrong,
   },
-  panel: { backgroundColor: '#ffffff', borderRadius: 22, padding: 18, borderColor: '#dbe4ef', borderWidth: 1, gap: 12 },
-  panelTitle: { color: '#0f172a', fontSize: 18, fontWeight: '800' },
+  panel: { backgroundColor: colors.card, borderRadius: 22, padding: 18, borderColor: colors.surfaceSubtle, borderWidth: 1, gap: 12 },
+  panelTitle: { color: colors.primaryNavy, fontSize: 18, fontWeight: '800' },
   logList: { maxHeight: 720 },
-  logCard: { borderColor: '#e2e8f0', borderWidth: 1, borderRadius: 18, padding: 14, marginBottom: 10, gap: 8 },
+  logCard: { borderColor: colors.pendingSurface, borderWidth: 1, borderRadius: 18, padding: 14, marginBottom: 10, gap: 8 },
   logHeader: { flexDirection: 'row', justifyContent: 'space-between', gap: 10 },
-  logTitle: { color: '#0f172a', fontWeight: '800', fontSize: 16 },
-  logMeta: { color: '#64748b', fontSize: 12, marginTop: 3 },
-  badge: { color: '#0f766e', fontWeight: '800', fontSize: 12 },
-  helperText: { color: '#64748b', fontSize: 13, lineHeight: 19 },
+  logTitle: { color: colors.primaryNavy, fontWeight: '800', fontSize: 16 },
+  logMeta: { color: colors.pending, fontSize: 12, marginTop: 3 },
+  badge: { color: colors.accentTealStrong, fontWeight: '800', fontSize: 12 },
+  helperText: { color: colors.pending, fontSize: 13, lineHeight: 19 },
   diffGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  diffBox: { flex: 1, minWidth: 280, backgroundColor: '#f8fafc', borderRadius: 14, padding: 12, gap: 6 },
-  diffTitle: { color: '#0f172a', fontWeight: '800' },
-  codeBlock: { color: '#334155', fontFamily: 'monospace', fontSize: 12, lineHeight: 18 },
+  diffBox: { flex: 1, minWidth: 280, backgroundColor: colors.background, borderRadius: 14, padding: 12, gap: 6 },
+  diffTitle: { color: colors.primaryNavy, fontWeight: '800' },
+  codeBlock: { color: colors.primaryNavySoft, fontFamily: 'monospace', fontSize: 12, lineHeight: 18 },
 });

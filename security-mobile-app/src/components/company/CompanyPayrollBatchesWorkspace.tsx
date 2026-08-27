@@ -1,4 +1,4 @@
-import * as React from 'react';
+﻿import * as React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import {
@@ -9,6 +9,7 @@ import {
   payCompanyPayrollBatch,
 } from '../../services/api';
 import { PayrollBatch, Timesheet } from '../../types/models';
+import { colors } from '../../theme';
 
 type WorkspaceFeedback = {
   tone: 'success' | 'error' | 'info';
@@ -126,12 +127,12 @@ function getPayableAmount(timesheet: Timesheet) {
 function getStatusPalette(status: string) {
   switch (normalizeBatchStatus(status)) {
     case 'paid':
-      return { bg: '#DCFCE7', text: '#166534' };
+      return { bg: colors.successSurface, text: colors.success };
     case 'finalised':
-      return { bg: '#DBEAFE', text: '#1D4ED8' };
+      return { bg: colors.infoSurface, text: colors.info };
     case 'draft':
     default:
-      return { bg: '#FEF3C7', text: '#B45309' };
+      return { bg: colors.warningSurface, text: colors.warning };
   }
 }
 
@@ -483,41 +484,41 @@ const styles = StyleSheet.create({
   workspace: { gap: 18 },
   workspaceHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 16, flexWrap: 'wrap' },
   headerCopy: { gap: 4 },
-  title: { color: '#0f172a', fontSize: 28, fontWeight: '800' },
-  subtitle: { color: '#475569', fontSize: 14 },
+  title: { color: colors.primaryNavy, fontSize: 28, fontWeight: '800' },
+  subtitle: { color: colors.textSecondary, fontSize: 14 },
   headerActions: { flexDirection: 'row', gap: 10, alignItems: 'center', flexWrap: 'wrap' },
-  primaryButton: { backgroundColor: '#0f172a', borderRadius: 14, paddingHorizontal: 16, paddingVertical: 12 },
-  primaryButtonText: { color: '#f8fafc', fontWeight: '700' },
-  secondaryButton: { borderRadius: 14, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: '#e2e8f0' },
-  secondaryButtonText: { color: '#0f172a', fontWeight: '700' },
+  primaryButton: { backgroundColor: colors.primaryNavy, borderRadius: 14, paddingHorizontal: 16, paddingVertical: 12 },
+  primaryButtonText: { color: colors.background, fontWeight: '700' },
+  secondaryButton: { borderRadius: 14, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: colors.pendingSurface },
+  secondaryButtonText: { color: colors.primaryNavy, fontWeight: '700' },
   feedbackCard: { borderRadius: 18, paddingHorizontal: 16, paddingVertical: 14, gap: 4 },
-  feedbackSuccess: { backgroundColor: '#DCFCE7' },
-  feedbackError: { backgroundColor: '#FEE2E2' },
-  feedbackInfo: { backgroundColor: '#DBEAFE' },
-  feedbackTitle: { color: '#0f172a', fontWeight: '800', fontSize: 15 },
-  feedbackText: { color: '#334155', fontSize: 13, lineHeight: 18 },
+  feedbackSuccess: { backgroundColor: colors.successSurface },
+  feedbackError: { backgroundColor: colors.dangerSurface },
+  feedbackInfo: { backgroundColor: colors.infoSurface },
+  feedbackTitle: { color: colors.primaryNavy, fontWeight: '800', fontSize: 15 },
+  feedbackText: { color: colors.primaryNavySoft, fontSize: 13, lineHeight: 18 },
   layout: { flexDirection: 'row', gap: 18, flexWrap: 'wrap', alignItems: 'flex-start' },
-  listCard: { flex: 1.2, minWidth: 360, backgroundColor: '#FFFFFF', borderRadius: 22, padding: 18, gap: 12 },
-  detailCard: { flex: 1.8, minWidth: 520, backgroundColor: '#FFFFFF', borderRadius: 22, padding: 18, gap: 14, borderWidth: 1, borderColor: '#DBEAFE' },
-  batchRow: { borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 18, padding: 14, flexDirection: 'row', justifyContent: 'space-between', gap: 12, alignItems: 'center' },
-  batchRowActive: { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' },
+  listCard: { flex: 1.2, minWidth: 360, backgroundColor: colors.card, borderRadius: 22, padding: 18, gap: 12 },
+  detailCard: { flex: 1.8, minWidth: 520, backgroundColor: colors.card, borderRadius: 22, padding: 18, gap: 14, borderWidth: 1, borderColor: colors.infoSurface },
+  batchRow: { borderWidth: 1, borderColor: colors.pendingSurface, borderRadius: 18, padding: 14, flexDirection: 'row', justifyContent: 'space-between', gap: 12, alignItems: 'center' },
+  batchRowActive: { backgroundColor: colors.infoSurface, borderColor: colors.infoSurface },
   batchRowCopy: { flex: 1, gap: 4 },
-  batchTitle: { color: '#0f172a', fontSize: 16, fontWeight: '800' },
-  batchMeta: { color: '#475569', fontSize: 13, lineHeight: 18 },
+  batchTitle: { color: colors.primaryNavy, fontSize: 16, fontWeight: '800' },
+  batchMeta: { color: colors.textSecondary, fontSize: 13, lineHeight: 18 },
   statusBadge: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 },
   statusBadgeText: { fontWeight: '800', fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.4 },
-  detailTitle: { color: '#0f172a', fontSize: 22, fontWeight: '800' },
-  detailSubtitle: { color: '#64748b', fontSize: 13, lineHeight: 18 },
+  detailTitle: { color: colors.primaryNavy, fontSize: 22, fontWeight: '800' },
+  detailSubtitle: { color: colors.pending, fontSize: 13, lineHeight: 18 },
   summaryGrid: { flexDirection: 'row', gap: 12, flexWrap: 'wrap' },
-  summaryCard: { flexGrow: 1, minWidth: 140, backgroundColor: '#F8FAFC', borderRadius: 18, padding: 14, gap: 6 },
-  summaryLabel: { color: '#64748b', fontSize: 12, fontWeight: '700', textTransform: 'uppercase' },
-  summaryValueSmall: { color: '#0f172a', fontSize: 18, fontWeight: '800' },
-  detailSection: { gap: 8, borderTopWidth: 1, borderTopColor: '#E2E8F0', paddingTop: 14 },
-  sectionTitle: { color: '#0f172a', fontSize: 15, fontWeight: '800' },
-  detailLine: { color: '#334155', fontSize: 13, lineHeight: 18 },
+  summaryCard: { flexGrow: 1, minWidth: 140, backgroundColor: colors.background, borderRadius: 18, padding: 14, gap: 6 },
+  summaryLabel: { color: colors.pending, fontSize: 12, fontWeight: '700', textTransform: 'uppercase' },
+  summaryValueSmall: { color: colors.primaryNavy, fontSize: 18, fontWeight: '800' },
+  detailSection: { gap: 8, borderTopWidth: 1, borderTopColor: colors.pendingSurface, paddingTop: 14 },
+  sectionTitle: { color: colors.primaryNavy, fontSize: 15, fontWeight: '800' },
+  detailLine: { color: colors.primaryNavySoft, fontSize: 13, lineHeight: 18 },
   detailActions: { flexDirection: 'row', gap: 10, flexWrap: 'wrap' },
-  timesheetRow: { borderBottomWidth: 1, borderBottomColor: '#E2E8F0', paddingVertical: 10, gap: 4 },
-  rowPrimary: { color: '#0f172a', fontSize: 14, fontWeight: '700' },
-  rowSecondary: { color: '#475569', fontSize: 13, lineHeight: 18 },
-  emptyText: { color: '#64748b', fontSize: 14, lineHeight: 20 },
+  timesheetRow: { borderBottomWidth: 1, borderBottomColor: colors.pendingSurface, paddingVertical: 10, gap: 4 },
+  rowPrimary: { color: colors.primaryNavy, fontSize: 14, fontWeight: '700' },
+  rowSecondary: { color: colors.textSecondary, fontSize: 13, lineHeight: 18 },
+  emptyText: { color: colors.pending, fontSize: 14, lineHeight: 20 },
 });

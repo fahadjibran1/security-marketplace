@@ -1,8 +1,9 @@
-import * as React from 'react';
+﻿import * as React from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { formatApiErrorMessage, getCompanyMarginReport } from '../../services/api';
 import { MarginReport } from '../../types/models';
+import { colors } from '../../theme';
 
 const UK_LOCALE = 'en-GB';
 const MONEY_FORMATTER = new Intl.NumberFormat(UK_LOCALE, { style: 'currency', currency: 'GBP' });
@@ -20,11 +21,11 @@ function formatHours(value?: number | null) {
 }
 
 function getMarginTone(marginPercent?: number | null, margin?: number | null) {
-  if ((margin ?? 0) < 0) return { label: 'Negative', color: '#B91C1C', background: '#FEE2E2' };
+  if ((margin ?? 0) < 0) return { label: 'Negative', color: colors.danger, background: colors.dangerSurface };
   if (marginPercent !== null && marginPercent !== undefined && marginPercent < 20) {
-    return { label: 'Low margin', color: '#B45309', background: '#FEF3C7' };
+    return { label: 'Low margin', color: colors.warning, background: colors.warningSurface };
   }
-  return { label: 'Profitable', color: '#047857', background: '#D1FAE5' };
+  return { label: 'Profitable', color: colors.success, background: colors.successSurface };
 }
 
 export function CompanyMarginWorkspace() {
@@ -145,48 +146,48 @@ function MetricCard({ label, value, tone }: { label: string; value: string; tone
 const styles = StyleSheet.create({
   workspace: { gap: 18 },
   headerCard: {
-    backgroundColor: '#ffffff',
+    backgroundColor: colors.card,
     borderRadius: 22,
     padding: 22,
     borderWidth: 1,
-    borderColor: '#dbe4ef',
+    borderColor: colors.surfaceSubtle,
     flexDirection: 'row',
     justifyContent: 'space-between',
     gap: 16,
   },
-  eyebrow: { color: '#0f766e', fontSize: 12, fontWeight: '800', letterSpacing: 1.5, textTransform: 'uppercase' },
-  title: { color: '#0f172a', fontSize: 30, fontWeight: '800' },
-  subtitle: { color: '#64748b', marginTop: 6, fontSize: 14, lineHeight: 21 },
-  primaryButton: { backgroundColor: '#0f172a', borderRadius: 14, paddingHorizontal: 16, paddingVertical: 12, alignSelf: 'center' },
-  primaryButtonText: { color: '#ffffff', fontWeight: '800' },
-  errorCard: { backgroundColor: '#fef2f2', borderColor: '#fecaca', borderWidth: 1, borderRadius: 16, padding: 14 },
-  errorText: { color: '#991b1b', fontWeight: '700' },
-  filterCard: { backgroundColor: '#ffffff', borderRadius: 22, padding: 18, borderColor: '#dbe4ef', borderWidth: 1 },
+  eyebrow: { color: colors.accentTealStrong, fontSize: 12, fontWeight: '800', letterSpacing: 1.5, textTransform: 'uppercase' },
+  title: { color: colors.primaryNavy, fontSize: 30, fontWeight: '800' },
+  subtitle: { color: colors.pending, marginTop: 6, fontSize: 14, lineHeight: 21 },
+  primaryButton: { backgroundColor: colors.primaryNavy, borderRadius: 14, paddingHorizontal: 16, paddingVertical: 12, alignSelf: 'center' },
+  primaryButtonText: { color: colors.card, fontWeight: '800' },
+  errorCard: { backgroundColor: colors.dangerSurface, borderColor: colors.dangerSurface, borderWidth: 1, borderRadius: 16, padding: 14 },
+  errorText: { color: colors.danger, fontWeight: '700' },
+  filterCard: { backgroundColor: colors.card, borderRadius: 22, padding: 18, borderColor: colors.surfaceSubtle, borderWidth: 1 },
   filterGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   input: {
     minWidth: 180,
     flex: 1,
-    backgroundColor: '#ffffff',
-    borderColor: '#d6dce5',
+    backgroundColor: colors.card,
+    borderColor: colors.border,
     borderWidth: 1,
     borderRadius: 14,
     paddingHorizontal: 14,
     paddingVertical: 12,
-    color: '#132238',
+    color: colors.primaryNavyStrong,
   },
   summaryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
-  metricCard: { minWidth: 170, flex: 1, backgroundColor: '#ffffff', borderRadius: 18, padding: 16, borderColor: '#dbe4ef', borderWidth: 1 },
-  metricLabel: { color: '#64748b', fontSize: 12, fontWeight: '700', textTransform: 'uppercase' },
-  metricValue: { color: '#0f172a', fontSize: 24, fontWeight: '800', marginTop: 8 },
-  panel: { backgroundColor: '#ffffff', borderRadius: 22, padding: 18, borderColor: '#dbe4ef', borderWidth: 1, gap: 12 },
-  panelTitle: { color: '#0f172a', fontSize: 18, fontWeight: '800' },
-  tableHeader: { flexDirection: 'row', gap: 12, paddingVertical: 10, borderBottomColor: '#e2e8f0', borderBottomWidth: 1 },
-  tableRow: { flexDirection: 'row', gap: 12, paddingVertical: 12, borderBottomColor: '#f1f5f9', borderBottomWidth: 1, alignItems: 'center' },
-  headerCell: { flex: 1, color: '#64748b', fontSize: 12, fontWeight: '800', textTransform: 'uppercase' },
-  tableCell: { flex: 1, color: '#0f172a', fontWeight: '700' },
-  tableCellStrong: { color: '#0f172a', fontWeight: '800' },
+  metricCard: { minWidth: 170, flex: 1, backgroundColor: colors.card, borderRadius: 18, padding: 16, borderColor: colors.surfaceSubtle, borderWidth: 1 },
+  metricLabel: { color: colors.pending, fontSize: 12, fontWeight: '700', textTransform: 'uppercase' },
+  metricValue: { color: colors.primaryNavy, fontSize: 24, fontWeight: '800', marginTop: 8 },
+  panel: { backgroundColor: colors.card, borderRadius: 22, padding: 18, borderColor: colors.surfaceSubtle, borderWidth: 1, gap: 12 },
+  panelTitle: { color: colors.primaryNavy, fontSize: 18, fontWeight: '800' },
+  tableHeader: { flexDirection: 'row', gap: 12, paddingVertical: 10, borderBottomColor: colors.pendingSurface, borderBottomWidth: 1 },
+  tableRow: { flexDirection: 'row', gap: 12, paddingVertical: 12, borderBottomColor: colors.background, borderBottomWidth: 1, alignItems: 'center' },
+  headerCell: { flex: 1, color: colors.pending, fontSize: 12, fontWeight: '800', textTransform: 'uppercase' },
+  tableCell: { flex: 1, color: colors.primaryNavy, fontWeight: '700' },
+  tableCellStrong: { color: colors.primaryNavy, fontWeight: '800' },
   clientCol: { flex: 1.5 },
   marginBadge: { flex: 1, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 7, alignItems: 'center' },
   marginBadgeText: { fontSize: 12, fontWeight: '800' },
-  helperText: { color: '#64748b', fontSize: 13, lineHeight: 19 },
+  helperText: { color: colors.pending, fontSize: 13, lineHeight: 19 },
 });

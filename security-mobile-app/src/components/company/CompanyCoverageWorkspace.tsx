@@ -1,4 +1,4 @@
-import * as React from 'react';
+﻿import * as React from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import {
@@ -8,6 +8,7 @@ import {
   listEligibleGuardsForShift,
 } from '../../services/api';
 import { CoverageShiftRow, CoverageSiteRow, EligibleGuardRow } from '../../types/models';
+import { colors } from '../../theme';
 
 function formatDate(value?: string | null) {
   if (!value) return 'Not set';
@@ -159,34 +160,34 @@ export function CompanyCoverageWorkspace({ navigationContext }: CompanyCoverageW
 
 const styles = StyleSheet.create({
   workspace: { gap: 18 },
-  headerCard: { backgroundColor: '#ffffff', borderRadius: 22, padding: 22, borderWidth: 1, borderColor: '#dbe4ef', flexDirection: 'row', justifyContent: 'space-between', gap: 16 },
-  eyebrow: { color: '#0f766e', fontSize: 12, fontWeight: '800', letterSpacing: 1.5, textTransform: 'uppercase' },
-  title: { color: '#0f172a', fontSize: 30, fontWeight: '800' },
-  subtitle: { color: '#64748b', marginTop: 6, fontSize: 14, lineHeight: 21 },
+  headerCard: { backgroundColor: colors.card, borderRadius: 22, padding: 22, borderWidth: 1, borderColor: colors.surfaceSubtle, flexDirection: 'row', justifyContent: 'space-between', gap: 16 },
+  eyebrow: { color: colors.accentTealStrong, fontSize: 12, fontWeight: '800', letterSpacing: 1.5, textTransform: 'uppercase' },
+  title: { color: colors.primaryNavy, fontSize: 30, fontWeight: '800' },
+  subtitle: { color: colors.pending, marginTop: 6, fontSize: 14, lineHeight: 21 },
   split: { flexDirection: 'row', gap: 18, alignItems: 'flex-start' },
   main: { flex: 2, gap: 18 },
   side: { flex: 1, minWidth: 320 },
-  panel: { backgroundColor: '#ffffff', borderRadius: 22, padding: 18, borderColor: '#dbe4ef', borderWidth: 1, gap: 14 },
-  panelTitle: { color: '#0f172a', fontSize: 18, fontWeight: '800' },
+  panel: { backgroundColor: colors.card, borderRadius: 22, padding: 18, borderColor: colors.surfaceSubtle, borderWidth: 1, gap: 14 },
+  panelTitle: { color: colors.primaryNavy, fontSize: 18, fontWeight: '800' },
   formGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  input: { minWidth: 180, flex: 1, backgroundColor: '#ffffff', borderColor: '#d6dce5', borderWidth: 1, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 12, color: '#132238' },
-  secondaryButton: { backgroundColor: '#ffffff', borderColor: '#cbd5e1', borderWidth: 1, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 11, alignItems: 'center', alignSelf: 'flex-start' },
-  secondaryButtonText: { color: '#0f172a', fontWeight: '700' },
+  input: { minWidth: 180, flex: 1, backgroundColor: colors.card, borderColor: colors.border, borderWidth: 1, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 12, color: colors.primaryNavyStrong },
+  secondaryButton: { backgroundColor: colors.card, borderColor: colors.border, borderWidth: 1, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 11, alignItems: 'center', alignSelf: 'flex-start' },
+  secondaryButtonText: { color: colors.primaryNavy, fontWeight: '700' },
   feedbackCard: { borderRadius: 16, padding: 14, borderWidth: 1 },
-  feedbackSuccess: { backgroundColor: '#ecfdf5', borderColor: '#bbf7d0' },
-  feedbackError: { backgroundColor: '#fef2f2', borderColor: '#fecaca' },
-  feedbackText: { color: '#0f172a', fontWeight: '700' },
-  row: { borderColor: '#e2e8f0', borderWidth: 1, borderRadius: 16, padding: 12, gap: 5 },
-  rowTitle: { color: '#0f172a', fontWeight: '800' },
-  rowText: { color: '#475569', fontWeight: '600' },
-  reasonText: { color: '#b45309', fontSize: 12, fontWeight: '700' },
+  feedbackSuccess: { backgroundColor: colors.successSurface, borderColor: colors.successSurface },
+  feedbackError: { backgroundColor: colors.dangerSurface, borderColor: colors.dangerSurface },
+  feedbackText: { color: colors.primaryNavy, fontWeight: '700' },
+  row: { borderColor: colors.pendingSurface, borderWidth: 1, borderRadius: 16, padding: 12, gap: 5 },
+  rowTitle: { color: colors.primaryNavy, fontWeight: '800' },
+  rowText: { color: colors.textSecondary, fontWeight: '600' },
+  reasonText: { color: colors.warning, fontSize: 12, fontWeight: '700' },
   statusBadge: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, alignSelf: 'flex-start' },
-  statusText: { color: '#0f172a', fontSize: 12, fontWeight: '800' },
-  good: { backgroundColor: '#dcfce7' },
-  warn: { backgroundColor: '#fef3c7' },
-  bad: { backgroundColor: '#fee2e2' },
-  info: { backgroundColor: '#dbeafe' },
-  filterButton: { borderColor: '#cbd5e1', borderWidth: 1, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 12 },
-  filterButtonActive: { backgroundColor: '#fff7ed', borderColor: '#f97316' },
-  filterButtonTextActive: { color: '#9a3412' },
+  statusText: { color: colors.primaryNavy, fontSize: 12, fontWeight: '800' },
+  good: { backgroundColor: colors.successSurface },
+  warn: { backgroundColor: colors.warningSurface },
+  bad: { backgroundColor: colors.dangerSurface },
+  info: { backgroundColor: colors.infoSurface },
+  filterButton: { borderColor: colors.border, borderWidth: 1, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 12 },
+  filterButtonActive: { backgroundColor: colors.warningSurface, borderColor: colors.warning },
+  filterButtonTextActive: { color: colors.warning },
 });
