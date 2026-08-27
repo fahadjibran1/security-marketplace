@@ -2275,16 +2275,16 @@ const styles = StyleSheet.create({
   bottomNavItem: { flex: 1, alignItems: 'center', justifyContent: 'center', minHeight: 56, gap: 6 },
   bottomNavItemActive: { opacity: 1 },
   bottomNavIndicator: {
-    width: 28,
+    width: 32,
     height: 3,
     borderRadius: 999,
     backgroundColor: 'transparent',
   },
   bottomNavIndicatorActive: {
-    backgroundColor: colors.primaryNavy,
+    backgroundColor: colors.accentTeal,
   },
   bottomNavLabel: { color: colors.textSecondary, fontWeight: '700', fontSize: 13 },
-  bottomNavLabelActive: { color: colors.textPrimary },
+  bottomNavLabelActive: { color: colors.primaryNavy, fontWeight: '800' },
   modalBackdrop: {
     position: 'absolute',
     top: 0,
