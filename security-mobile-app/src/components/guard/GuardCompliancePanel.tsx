@@ -54,12 +54,12 @@ export function GuardCompliancePanel({ onManageCompliance }: { onManageComplianc
       </View>
 
       <View style={styles.grid}>
-        <Summary label="Account" value="Active" />
+        <Summary label="Account access" value="Active" />
+        <Summary label="Work eligibility" value={eligibility} />
         <Summary label="Vetting" value={vetting} />
         <Summary label="SIA licence" value={guard?.siaLicenseNumber || guard?.siaLicenceNumber || 'Not provided'} detail={`Expiry: ${formatDate(guard?.siaExpiryDate)}`} />
         <Summary label="SIA evidence" value={documentState('sia_licence')} />
-        <Summary label="Right to Work" value={guard?.rightToWorkStatus || 'Not provided'} detail={`Expiry: ${formatDate(guard?.rightToWorkExpiryDate)}`} />
-        <Summary label="RTW evidence" value={documentState('right_to_work')} />
+        <Summary label="Right-to-work evidence" value={documentState('right_to_work')} detail={guard?.rightToWorkStatus ? `Status: ${guard.rightToWorkStatus}` : undefined} />
       </View>
 
       {summary?.blockingReasons?.length ? (
