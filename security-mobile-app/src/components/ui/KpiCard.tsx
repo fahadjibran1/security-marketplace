@@ -149,7 +149,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 0.9,
     textTransform: 'uppercase',
-    color: colors.pending,
+    color: colors.textSecondary,
     lineHeight: 16,
   },
   iconPuck: {

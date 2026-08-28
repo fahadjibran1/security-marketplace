@@ -61,7 +61,7 @@ const styles = StyleSheet.create({
   brandBlock: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, flex: 1 },
   brandMark: { color: colors.accentTeal, fontSize: 22, fontWeight: '900', letterSpacing: 1 },
   surfaceName: { color: colors.textOnBrand, ...typography.label },
-  productLabel: { color: '#BFD0DE', ...typography.caption },
+  productLabel: { color: colors.border, ...typography.caption },
   logoutButton: { minHeight: control.minTouchTarget, justifyContent: 'center', borderRadius: radii.md, borderWidth: 1, borderColor: colors.primaryNavySoft, paddingHorizontal: spacing.md },
   logoutText: { color: colors.textOnBrand, ...typography.label },
   pressed: { opacity: 0.8 },

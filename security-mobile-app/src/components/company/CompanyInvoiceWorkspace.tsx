@@ -404,14 +404,14 @@ function makeGroup(entries: InvoiceEntry[], periodView: PeriodView) {
 }
 
 function getBillingPalette(status: TimesheetBillingStatus) {
-  if (status === 'invoiced') return { background: colors.successSurface, border: colors.accentTeal, text: colors.success };
+  if (status === 'invoiced') return { background: colors.successSurface, border: colors.successBorder, text: colors.success };
   if (status === 'included') return { background: colors.infoSurface, border: colors.info, text: colors.info };
   return { background: colors.warningSurface, border: colors.warning, text: colors.warning };
 }
 
 function getBatchPalette(status?: string | null) {
   const normalized = normalizeBatchStatus(status);
-  if (normalized === 'paid') return { background: colors.successSurface, border: colors.accentTeal, text: colors.success };
+  if (normalized === 'paid') return { background: colors.successSurface, border: colors.successBorder, text: colors.success };
   if (normalized === 'issued') return { background: colors.accentTealSoft, border: colors.accentTealStrong, text: colors.accentTealStrong };
   if (normalized === 'finalised') return { background: colors.infoSurface, border: colors.info, text: colors.info };
   return { background: colors.background, border: colors.border, text: colors.textSecondary };
@@ -1395,7 +1395,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   subtitle: {
-    color: colors.pending,
+    color: colors.textSecondary,
     marginTop: 6,
     fontSize: 14,
     lineHeight: 21,
@@ -1464,7 +1464,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   metricLabel: {
-    color: colors.pending,
+    color: colors.textSecondary,
     fontSize: 12,
     fontWeight: '700',
     textTransform: 'uppercase',
@@ -1495,7 +1495,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   helperText: {
-    color: colors.pending,
+    color: colors.textSecondary,
     fontSize: 13,
     lineHeight: 19,
   },
@@ -1597,7 +1597,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   groupMeta: {
-    color: colors.pending,
+    color: colors.textSecondary,
     fontSize: 13,
   },
   groupTotals: {
@@ -1647,7 +1647,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   rowMeta: {
-    color: colors.pending,
+    color: colors.textSecondary,
     fontSize: 12,
     marginTop: 3,
   },
@@ -1673,7 +1673,7 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   detailLabel: {
-    color: colors.pending,
+    color: colors.textSecondary,
     fontSize: 12,
     fontWeight: '700',
     textTransform: 'uppercase',
@@ -1702,7 +1702,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   batchMeta: {
-    color: colors.pending,
+    color: colors.textSecondary,
     fontSize: 12,
   },
   rowActions: {
@@ -1779,7 +1779,7 @@ const styles = StyleSheet.create({
     textAlign: 'right',
   },
   invoiceMuted: {
-    color: colors.pending,
+    color: colors.textSecondary,
     fontSize: 12,
     lineHeight: 18,
   },
@@ -1797,7 +1797,7 @@ const styles = StyleSheet.create({
     gap: 3,
   },
   invoiceMetaLabel: {
-    color: colors.pending,
+    color: colors.textSecondary,
     fontSize: 11,
     fontWeight: '900',
     textTransform: 'uppercase',
@@ -1825,7 +1825,7 @@ const styles = StyleSheet.create({
   },
   invoiceHeaderCell: {
     flex: 1,
-    color: colors.pending,
+    color: colors.textSecondary,
     fontSize: 11,
     fontWeight: '900',
     padding: 8,

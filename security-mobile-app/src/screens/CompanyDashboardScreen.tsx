@@ -5109,7 +5109,7 @@ const styles = StyleSheet.create({
     letterSpacing: 1.6,
     fontSize: 11,
     fontWeight: '800',
-    color: colors.pending,
+    color: colors.textSecondary,
   },
   headerTitle: {
     fontSize: 30,
@@ -5128,7 +5128,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 19,
     fontWeight: '500',
-    color: colors.pending,
+    color: colors.textSecondary,
     maxWidth: 720,
   },
   headerRefreshButton: {
@@ -5190,7 +5190,7 @@ const styles = StyleSheet.create({
   dashSectionSubtitle: {
     fontSize: 13,
     fontWeight: '500',
-    color: colors.pending,
+    color: colors.textSecondary,
     lineHeight: 20,
     letterSpacing: 0.08,
     maxWidth: 720,
@@ -5230,7 +5230,7 @@ const styles = StyleSheet.create({
   liveOpsToolbarSyncText: {
     fontSize: 12,
     fontWeight: '700',
-    color: colors.pending,
+    color: colors.textSecondary,
     letterSpacing: 0.05,
   },
   liveOpsToolbarSyncHover: {
@@ -5253,7 +5253,7 @@ const styles = StyleSheet.create({
     lineHeight: 21,
   },
   liveOpsUrgentMeta: {
-    color: colors.pending,
+    color: colors.textSecondary,
     fontSize: 12,
     lineHeight: 18,
     fontWeight: '600',
@@ -5330,7 +5330,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 17,
     fontWeight: '500',
-    color: colors.pending,
+    color: colors.textSecondary,
     maxWidth: 520,
   },
   liveOpsUrgentInset: {
@@ -5353,13 +5353,13 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 0.14,
     textTransform: 'uppercase',
-    color: colors.pending,
+    color: colors.textSecondary,
   },
   liveOpsSideRailHint: {
     fontSize: 12,
     lineHeight: 18,
     fontWeight: '500',
-    color: colors.pending,
+    color: colors.textSecondary,
     maxWidth: 420,
   },
   liveOpsFilterStack: {
@@ -5387,7 +5387,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 17,
     fontWeight: '500',
-    color: colors.pending,
+    color: colors.textSecondary,
     marginTop: -2,
   },
   liveOpsFilterGroupRow: {
@@ -5416,7 +5416,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 0.08,
     textTransform: 'uppercase',
-    color: colors.pending,
+    color: colors.textSecondary,
   },
   liveOpsFilterTextInput: {
     minHeight: 48,
@@ -5468,7 +5468,7 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   liveOpsRowMetaSide: {
-    color: colors.pending,
+    color: colors.textSecondary,
     fontSize: 12,
     lineHeight: 18,
     fontWeight: '500',
@@ -5511,7 +5511,7 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   liveOpsRowMeta: {
-    color: colors.pending,
+    color: colors.textSecondary,
     fontSize: 12,
     lineHeight: 18,
     fontWeight: '500',
@@ -5581,7 +5581,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 0.14,
     textTransform: 'uppercase',
-    color: colors.pending,
+    color: colors.textSecondary,
     marginBottom: 2,
   },
   liveOpsDetailTileLine: {
@@ -5637,7 +5637,7 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   kpiLabel: {
-    color: colors.pending,
+    color: colors.textSecondary,
     fontSize: 13,
     fontWeight: '600',
   },
@@ -5808,7 +5808,7 @@ const styles = StyleSheet.create({
   },
   tableHeaderText: {
     flex: 1,
-    color: colors.pending,
+    color: colors.textSecondary,
     fontWeight: '700',
     fontSize: 12,
     textTransform: 'uppercase',
@@ -5831,7 +5831,7 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   liveBoardHdrText: {
-    color: colors.pending,
+    color: colors.textSecondary,
     fontWeight: '800',
     fontSize: 11,
     letterSpacing: 0.12,
@@ -5942,7 +5942,7 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   liveBoardSiteRisk: {
-    color: colors.pending,
+    color: colors.textSecondary,
     fontSize: 12,
     lineHeight: 17,
     fontWeight: '500',
@@ -6035,7 +6035,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   recordMeta: {
-    color: colors.pending,
+    color: colors.textSecondary,
     fontSize: 13,
   },
   dashListRow: {
@@ -6062,7 +6062,7 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   dashListRowMeta: {
-    color: colors.pending,
+    color: colors.textSecondary,
     fontSize: 12,
     lineHeight: 18,
     fontWeight: '500',
@@ -6201,7 +6201,7 @@ const styles = StyleSheet.create({
     color: colors.danger,
   },
   actionRequiredDescription: {
-    color: colors.pending,
+    color: colors.textSecondary,
     fontSize: 12,
     lineHeight: 18,
     fontWeight: '500',
@@ -6249,7 +6249,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.2,
   },
   helperText: {
-    color: colors.pending,
+    color: colors.textSecondary,
     fontSize: 13,
   },
   urgentItemActions: {
@@ -6304,7 +6304,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   dayCardMeta: {
-    color: colors.pending,
+    color: colors.textSecondary,
     fontSize: 13,
   },
   plannerRow: {
@@ -6434,7 +6434,7 @@ const styles = StyleSheet.create({
   dashEmptyDesc: {
     fontSize: 13,
     lineHeight: 20,
-    color: colors.pending,
+    color: colors.textSecondary,
     fontWeight: '500',
     maxWidth: 520,
   },

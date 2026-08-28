@@ -190,7 +190,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   subtitle: {
-    color: colors.pending,
+    color: colors.textSecondary,
     marginTop: 6,
     fontSize: 14,
     lineHeight: 21,
@@ -209,7 +209,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   helperText: {
-    color: colors.pending,
+    color: colors.textSecondary,
     fontSize: 13,
     lineHeight: 19,
   },

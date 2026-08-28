@@ -14,6 +14,9 @@ const palettes: Record<StatusTone, { backgroundColor: string; color: string }> =
 
 export function inferStatusTone(value?: string | null): StatusTone {
   const status = (value || '').trim().toLowerCase().replace(/[_-]/g, ' ');
+  // Check explicit negatives before positive substring matches to prevent false positives
+  // e.g. 'unavailable' contains 'available', 'ineligible' contains 'eligible'
+  if (['unavailable', 'ineligible', 'unverified', 'unaccepted'].some((word) => status.includes(word))) return 'danger';
   if (['approved', 'active', 'complete', 'completed', 'eligible', 'verified', 'accepted', 'available', 'ready'].some((word) => status.includes(word)) && !status.includes('not ')) return 'success';
   if (['expired', 'rejected', 'failed', 'blocked', 'critical', 'missed', 'not eligible'].some((word) => status.includes(word))) return 'danger';
   if (['action required', 'returned', 'due', 'warning', 'expiring'].some((word) => status.includes(word))) return 'warning';

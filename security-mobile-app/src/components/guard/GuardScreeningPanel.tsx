@@ -1253,7 +1253,7 @@ const s = StyleSheet.create({
     fontSize: 12,
     fontWeight: "800",
     letterSpacing: 1.2,
-    color: colors.accentTeal,
+    color: colors.accentTealStrong,
   },
   heroTitle: { fontSize: 26, fontWeight: "800", color: colors.textPrimary },
   title: { fontSize: 21, fontWeight: "800", color: colors.textPrimary },
@@ -1325,7 +1325,7 @@ const s = StyleSheet.create({
     backgroundColor: colors.primaryNavy,
     borderColor: colors.primaryNavy,
   },
-  stepNumber: { fontWeight: "900", color: colors.accentTeal },
+  stepNumber: { fontWeight: "900", color: colors.accentTealStrong },
   stepText: { fontWeight: "700", color: colors.textPrimary, marginTop: 3 },
   stepTextActive: { color: colors.textOnBrand },
   stage: {
@@ -1438,7 +1438,7 @@ const s = StyleSheet.create({
   deleteButton:{borderWidth:1,borderColor:colors.danger,borderRadius:spacing.sm,paddingHorizontal:spacing.md,paddingVertical:7},
   deleteButtonText:{color:colors.danger,fontWeight:"800"},
   sectionHeading:{fontSize:17,fontWeight:"900",color:colors.textPrimary},
-  formMode:{fontSize:13,fontWeight:"900",letterSpacing:1,color:colors.accentTeal},
+  formMode:{fontSize:13,fontWeight:"900",letterSpacing:1,color:colors.accentTealStrong},
   stageNav: {
     flexDirection: "row",
     justifyContent: "space-between",

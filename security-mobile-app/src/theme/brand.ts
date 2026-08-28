@@ -38,14 +38,19 @@ export const colors = {
   // Semantic status colours — never use these as decorative brand accents.
   success: '#15803D',
   successSurface: '#DCFCE7',
+  successBorder: '#86EFAC',
   warning: '#A15C07',
   warningSurface: '#FEF3C7',
+  warningBorder: '#FCD34D',
   danger: '#B42318',
   dangerSurface: '#FEE4E2',
+  dangerBorder: '#FECACA',
   info: '#1D4ED8',
   infoSurface: '#DBEAFE',
+  infoBorder: '#BFDBFE',
   pending: '#64748B',
   pendingSurface: '#E2E8F0',
+  pendingBorder: '#CBD5E1',
 
   // Focus/interaction
   focusRing: '#0F817E',
