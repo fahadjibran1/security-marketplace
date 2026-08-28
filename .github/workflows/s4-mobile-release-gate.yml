@@ -4,10 +4,15 @@ on:
   push:
     branches:
       - s4-release-stabilization
+      - release/v1.0.0-rc1
+      - main
     paths:
       - 'security-mobile-app/**'
       - '.github/workflows/s4-mobile-release-gate.yml'
   pull_request:
+    branches:
+      - main
+      - release/v1.0.0-rc1
     paths:
       - 'security-mobile-app/**'
       - '.github/workflows/s4-mobile-release-gate.yml'

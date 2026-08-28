@@ -174,7 +174,7 @@ export function AuthScreen({ onLoggedIn, noticeMessage, onDismissNotice }: AuthS
               </> : null}
             </View>
 
-            <Pressable accessibilityRole="button" style={({ pressed }) => [styles.primaryButton, pressed && styles.primaryButtonPressed, submitting && styles.primaryButtonDisabled]} onPress={handleSubmit} disabled={submitting}>
+            <Pressable accessibilityRole="button" style={({ pressed }: { pressed: boolean }) => [styles.primaryButton, pressed && styles.primaryButtonPressed, submitting && styles.primaryButtonDisabled]} onPress={handleSubmit} disabled={submitting}>
               <Text style={styles.primaryButtonText}>{submitting ? (mode === 'login' ? 'Signing in…' : 'Creating account…') : (mode === 'login' ? 'Sign in securely' : 'Create account')}</Text>
             </Pressable>
           </View>

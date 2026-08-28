@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Fragment } from 'react/jsx-runtime';
 import { Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { FeatureCard } from '../components/FeatureCard';
 import { StatePanel } from '../components/StatePanel';
@@ -110,7 +111,7 @@ function TimesheetCard({ timesheet, attendanceSlice, onReload, onNotify, onTimes
     {missingCheckout ? <View style={styles.warningBox}><Text style={styles.noteTitle}>No checkout recorded</Text><Text style={styles.noteBody}>You can still submit. Add a note if the company needs context.</Text></View> : null}
     {editable && !canSubmit ? <View style={styles.dangerBox}><Text style={styles.noteTitle}>Hours required</Text><Text style={styles.noteBody}>Enter the hours you are claiming before submitting.</Text></View> : null}
 
-    {editable ? <View style={styles.actions}><Pressable onPress={submit} disabled={!canSubmit || submitting || !valid} style={({pressed}) => [styles.primary, pressed && styles.pressed, (!canSubmit || submitting || !valid) && styles.disabled]}><Text style={styles.primaryText}>{submitting ? 'Submitting…' : 'Submit timesheet'}</Text></Pressable><Pressable onPress={saveDraft} disabled={saving || !dirty || !valid} style={({pressed}) => [styles.secondary, pressed && styles.pressed, (saving || !dirty || !valid) && styles.disabled]}><Text style={styles.secondaryText}>{saving ? 'Saving…' : 'Save draft'}</Text></Pressable></View> : null}
+    {editable ? <View style={styles.actions}><Pressable onPress={submit} disabled={!canSubmit || submitting || !valid} style={({ pressed }: { pressed: boolean }) => [styles.primary, pressed && styles.pressed, (!canSubmit || submitting || !valid) && styles.disabled]}><Text style={styles.primaryText}>{submitting ? 'Submitting…' : 'Submit timesheet'}</Text></Pressable><Pressable onPress={saveDraft} disabled={saving || !dirty || !valid} style={({ pressed }: { pressed: boolean }) => [styles.secondary, pressed && styles.pressed, (saving || !dirty || !valid) && styles.disabled]}><Text style={styles.secondaryText}>{saving ? 'Saving…' : 'Save draft'}</Text></Pressable></View> : null}
     <Text style={styles.reference}>Reference #{timesheet.id}</Text>
   </View>;
 }
@@ -120,7 +121,7 @@ function Info({ label, value }: { label: string; value: string }) { return <View
 export function GuardTimesheetsScreen({ timesheets, attendance, onReload, onNotify, onTimesheetSubmitted }: GuardTimesheetsScreenProps) {
   const attendanceByShiftId = useMemo(() => { const map: Record<number, { checkInAt?: string; checkOutAt?: string }> = {}; attendance.forEach((event) => { const id = event.shift?.id; if (!id) return; const current = map[id] || {}; if (event.type === 'check-in') current.checkInAt = event.occurredAt; if (event.type === 'check-out') current.checkOutAt = event.occurredAt; map[id] = current; }); return map; }, [attendance]);
   const sorted = useMemo(() => [...timesheets].sort((a, b) => new Date(b.scheduledStartAt || b.shift?.start || b.createdAt).getTime() - new Date(a.scheduledStartAt || a.shift?.start || a.createdAt).getTime()), [timesheets]);
-  return <FeatureCard title="Timesheets" subtitle={sorted.length ? `${sorted.length} on your record` : 'Claims and payroll decisions will appear here.'}>{sorted.length === 0 ? <StatePanel title="No timesheets yet" message="Timesheets will appear after completed shifts when a payroll record is available." /> : <View style={styles.list}>{sorted.map((ts) => <TimesheetCard key={ts.id} timesheet={ts} attendanceSlice={attendanceByShiftId[ts.shiftId]} onReload={onReload} onNotify={onNotify} onTimesheetSubmitted={onTimesheetSubmitted} />)}</View>}</FeatureCard>;
+  return <FeatureCard title="Timesheets" subtitle={sorted.length ? `${sorted.length} on your record` : 'Claims and payroll decisions will appear here.'}>{sorted.length === 0 ? <StatePanel title="No timesheets yet" message="Timesheets will appear after completed shifts when a payroll record is available." /> : <View style={styles.list}>{sorted.map((ts) => <Fragment key={ts.id}><TimesheetCard timesheet={ts} attendanceSlice={attendanceByShiftId[ts.shiftId]} onReload={onReload} onNotify={onNotify} onTimesheetSubmitted={onTimesheetSubmitted} /></Fragment>)}</View>}</FeatureCard>;
 }
 
 const styles = StyleSheet.create({

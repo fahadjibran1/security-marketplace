@@ -12,7 +12,7 @@ export class AuditLogController {
 
   @Get()
   @Roles(UserRole.ADMIN)
-  findAll(@Req() req: { user: { role: UserRole } }) {
+  findAll() {
     return this.auditLogService.findAll();
   }
 

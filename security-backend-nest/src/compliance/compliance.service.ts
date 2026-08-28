@@ -6,13 +6,11 @@ import { Company } from '../company/entities/company.entity';
 import { CompanyService } from '../company/company.service';
 import { GuardProfileService } from '../guard-profile/guard-profile.service';
 import { NotificationService } from '../notification/notification.service';
-import { NotificationType } from '../notification/entities/notification.entity';
 import { UpsertComplianceRecordDto } from './dto/upsert-compliance-record.dto';
 import { GuardComplianceService } from './guard-compliance.service';
 import {
   ComplianceRecord,
   ComplianceRecordStatus,
-  ComplianceRecordType,
 } from './entities/compliance-record.entity';
 import { ScreeningService } from '../screening/screening.service';
 import { UserStatus } from '../user/entities/user.entity';

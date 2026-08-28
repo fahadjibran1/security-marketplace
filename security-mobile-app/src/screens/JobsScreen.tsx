@@ -75,7 +75,7 @@ export function JobsScreen({ user }: JobsScreenProps) {
             <View style={styles.cardHead}><View style={styles.flex}><Text style={styles.jobTitle}>{job.title}</Text><Text style={styles.site}>{site}</Text></View><StatusBadge label="Open" tone="success" /></View>
             {pay || team ? <View style={styles.metaRow}>{pay ? <Text style={styles.pay}>{pay}</Text> : null}{team ? <Text style={styles.meta}>{team}</Text> : null}</View> : null}
             <Text style={styles.description} numberOfLines={3}>{job.description?.trim() || 'Shift details will be provided by the company.'}</Text>
-            <Pressable accessibilityRole="button" onPress={() => handleApplyToJob(job.id)} disabled={applyingJobId === job.id} style={({ pressed }) => [styles.apply, pressed && styles.pressed, applyingJobId === job.id && styles.disabled]}>
+            <Pressable accessibilityRole="button" onPress={() => handleApplyToJob(job.id)} disabled={applyingJobId === job.id} style={({ pressed }: { pressed: boolean }) => [styles.apply, pressed && styles.pressed, applyingJobId === job.id && styles.disabled]}>
               <Text style={styles.applyText}>{applyingJobId === job.id ? 'Applying…' : 'Apply for this job'}</Text>
             </Pressable>
           </View>;

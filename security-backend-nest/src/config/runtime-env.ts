@@ -64,8 +64,8 @@ export function validateRuntimeEnv(config: RawEnv) {
   );
 
   if (nodeEnv === 'production') {
-    if (!jwtSecret || jwtSecret === DEFAULT_JWT_SECRET) {
-      throw new Error('JWT_SECRET must be set to a strong unique value in production.');
+    if (!jwtSecret || jwtSecret === DEFAULT_JWT_SECRET || jwtSecret.length < 32) {
+      throw new Error('JWT_SECRET must be set to a strong unique value in production (minimum 32 characters).');
     }
 
     if (!corsOrigin || corsOrigin === '*') {

@@ -70,7 +70,7 @@ export function GuardCompliancePanel({ onManageCompliance }: { onManageComplianc
         </View>
       ) : null}
 
-      <Pressable accessibilityRole="button" style={({ pressed }) => [styles.button, pressed && styles.buttonPressed]} onPress={onManageCompliance}>
+      <Pressable accessibilityRole="button" style={({ pressed }: { pressed: boolean }) => [styles.button, pressed && styles.buttonPressed]} onPress={onManageCompliance}>
         <Text style={styles.buttonText}>Review compliance details</Text>
       </Pressable>
       <Text style={styles.note}>Providing evidence does not verify it. Verification is completed only by an authorised reviewer.</Text>

@@ -14,7 +14,7 @@ export function RoleSelectionScreen({ onSelectRole }: RoleSelectionScreenProps) 
         <Text style={styles.title}>Choose your workspace</Text>
         <Text style={styles.subtitle}>Continue to the S4 experience that matches your role.</Text>
 
-        <Pressable style={({ pressed }) => [styles.option, styles.guardOption, pressed && styles.pressed]} onPress={() => onSelectRole('guard')}>
+        <Pressable style={({ pressed }: { pressed: boolean }) => [styles.option, styles.guardOption, pressed && styles.pressed]} onPress={() => onSelectRole('guard')}>
           <View style={styles.optionCopy}>
             <Text style={styles.guardTitle}>S4 Guard</Text>
             <Text style={styles.guardText}>Shifts, jobs, compliance and your work activity.</Text>
@@ -22,7 +22,7 @@ export function RoleSelectionScreen({ onSelectRole }: RoleSelectionScreenProps) 
           <Text style={styles.guardArrow}>→</Text>
         </Pressable>
 
-        <Pressable style={({ pressed }) => [styles.option, pressed && styles.pressed]} onPress={() => onSelectRole('company')}>
+        <Pressable style={({ pressed }: { pressed: boolean }) => [styles.option, pressed && styles.pressed]} onPress={() => onSelectRole('company')}>
           <View style={styles.optionCopy}>
             <Text style={styles.optionTitle}>S4 Company</Text>
             <Text style={styles.optionText}>Workforce, sites, operations and compliance.</Text>

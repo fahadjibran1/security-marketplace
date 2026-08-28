@@ -28,7 +28,7 @@ export function StatePanel({ title, message, tone = 'empty', loading, actionLabe
         {message ? <Text style={styles.message}>{message}</Text> : null}
       </View>
       {actionLabel && onAction ? (
-        <Pressable accessibilityRole="button" onPress={onAction} style={({ pressed }) => [styles.action, pressed && styles.pressed]}>
+        <Pressable accessibilityRole="button" onPress={onAction} style={({ pressed }: { pressed: boolean }) => [styles.action, pressed && styles.pressed]}>
           <Text style={styles.actionText}>{actionLabel}</Text>
         </Pressable>
       ) : null}

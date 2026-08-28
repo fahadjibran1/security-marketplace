@@ -19,7 +19,7 @@ export function FeatureCard({ title, subtitle, ctaLabel, onPress, children, styl
       </View>
       {children}
       {ctaLabel && onPress ? (
-        <Pressable accessibilityRole="button" onPress={onPress} style={({ pressed }) => [styles.button, pressed && styles.buttonPressed]}>
+        <Pressable accessibilityRole="button" onPress={onPress} style={({ pressed }: { pressed: boolean }) => [styles.button, pressed && styles.buttonPressed]}>
           <Text style={styles.buttonText}>{ctaLabel}</Text>
         </Pressable>
       ) : null}
