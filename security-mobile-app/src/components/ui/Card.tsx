@@ -1,5 +1,6 @@
-import * as React from 'react';
+﻿import * as React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { colors } from '../../theme';
 
 const IS_WEB = typeof document !== 'undefined';
 
@@ -17,10 +18,10 @@ type CardProps = React.PropsWithChildren<{
 }>;
 
 const TONE_STYLES: Record<CardTone, { borderColor: string; headerColor: string; wash: string }> = {
-  default: { borderColor: '#e8edf3', headerColor: '#111827', wash: '#ffffff' },
-  success: { borderColor: 'rgba(16, 185, 129, 0.35)', headerColor: '#064e3b', wash: '#ffffff' },
-  warning: { borderColor: 'rgba(249, 115, 22, 0.35)', headerColor: '#7c2d12', wash: '#ffffff' },
-  danger: { borderColor: 'rgba(239, 68, 68, 0.35)', headerColor: '#7f1d1d', wash: '#ffffff' },
+  default: { borderColor: colors.surfaceSubtle, headerColor: colors.primaryNavy, wash: colors.card },
+  success: { borderColor: 'rgba(16, 185, 129, 0.35)', headerColor: colors.success, wash: colors.card },
+  warning: { borderColor: 'rgba(249, 115, 22, 0.35)', headerColor: colors.warning, wash: colors.card },
+  danger: { borderColor: 'rgba(239, 68, 68, 0.35)', headerColor: colors.danger, wash: colors.card },
 };
 
 export function Card({ title, subtitle, tone = 'default', right, onPress, children, style, webSurfaceHover }: CardProps) {
@@ -96,7 +97,7 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     padding: 20,
     borderWidth: 1,
-    shadowColor: '#0f172a',
+    shadowColor: colors.primaryNavy,
     shadowOpacity: 0.045,
     shadowRadius: 16,
     shadowOffset: { width: 0, height: 8 },
@@ -140,7 +141,7 @@ const styles = StyleSheet.create({
   },
   subtitle: {
     fontSize: 12,
-    color: '#64748b',
+    color: colors.pending,
     lineHeight: 18,
     fontWeight: '500',
   },

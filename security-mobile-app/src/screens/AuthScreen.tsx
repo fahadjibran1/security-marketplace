@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+﻿import { useCallback, useRef, useState } from 'react';
 import { Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { clientLogin, formatApiErrorMessage, login, register } from '../services/api';
 import { AuthSession, AppRole } from '../types/models';
@@ -198,18 +198,18 @@ const styles = StyleSheet.create({
   productName: { color: colors.textOnBrand, ...typography.label },
   brandHeadline: { color: colors.textOnBrand, ...typography.title, marginTop: spacing.md },
   brandHeadlineDesktop: { fontSize: 32, lineHeight: 38 },
-  brandCopy: { color: '#D6E2EC', ...typography.body },
+  brandCopy: { color: colors.surfaceSubtle, ...typography.body },
   trustRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: spacing.md },
   trustDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.accentTeal },
-  trustText: { color: '#BFD0DE', ...typography.caption, fontWeight: '600' },
+  trustText: { color: colors.border, ...typography.caption, fontWeight: '600' },
   formCard: { flex: 1, width: '100%', maxWidth: 540, alignSelf: 'center', backgroundColor: colors.card, borderRadius: radii.xl, borderWidth: 1, borderColor: colors.border, padding: spacing.xl, gap: spacing.lg },
   formHeader: { gap: spacing.sm },
   eyebrow: { color: colors.accentTealStrong, ...typography.label, letterSpacing: 1.1 },
   title: { color: colors.textPrimary, ...typography.title },
   subtitle: { color: colors.textSecondary, ...typography.body },
-  noticeBanner: { backgroundColor: colors.infoSurface, borderRadius: radii.md, padding: spacing.md, borderWidth: 1, borderColor: '#BFDBFE' },
+  noticeBanner: { backgroundColor: colors.infoSurface, borderRadius: radii.md, padding: spacing.md, borderWidth: 1, borderColor: colors.infoSurface },
   noticeText: { color: colors.info, ...typography.label },
-  errorBanner: { backgroundColor: colors.dangerSurface, borderRadius: radii.md, padding: spacing.md, borderWidth: 1, borderColor: '#FECDCA' },
+  errorBanner: { backgroundColor: colors.dangerSurface, borderRadius: radii.md, padding: spacing.md, borderWidth: 1, borderColor: colors.dangerSurface },
   errorText: { color: colors.danger, ...typography.label },
   modeRow: { flexDirection: 'row', backgroundColor: colors.surfaceSubtle, borderRadius: radii.md, padding: spacing.xs, gap: spacing.xs },
   segment: { flex: 1, minHeight: control.minTouchTarget, alignItems: 'center', justifyContent: 'center', borderRadius: radii.sm, paddingHorizontal: spacing.md },
@@ -227,7 +227,7 @@ const styles = StyleSheet.create({
   fieldBlock: { gap: 6 },
   fieldLabel: { color: colors.textPrimary, ...typography.label },
   input: { minHeight: control.inputHeight, borderWidth: 1, borderColor: colors.fieldBorder, borderRadius: radii.md, backgroundColor: colors.card, paddingHorizontal: spacing.lg, color: colors.textPrimary, ...typography.body },
-  pendingNote: { backgroundColor: colors.warningSurface, borderRadius: radii.md, padding: spacing.md, gap: spacing.xs, borderWidth: 1, borderColor: '#FDE68A' },
+  pendingNote: { backgroundColor: colors.warningSurface, borderRadius: radii.md, padding: spacing.md, gap: spacing.xs, borderWidth: 1, borderColor: colors.warningSurface },
   pendingTitle: { color: colors.warning, ...typography.label },
   pendingText: { color: colors.textSecondary, ...typography.caption },
   primaryButton: { minHeight: control.buttonHeight, borderRadius: radii.md, backgroundColor: colors.accentTealStrong, alignItems: 'center', justifyContent: 'center', paddingHorizontal: spacing.lg },

@@ -1,5 +1,6 @@
-import * as React from 'react';
+﻿import * as React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { colors } from '../../theme';
 
 const IS_WEB = typeof document !== 'undefined';
 
@@ -18,22 +19,22 @@ type KpiCardProps = {
 const TONE: Record<KpiTone, { iconBg: string; value: string; border: string }> = {
   neutral: {
     iconBg: 'rgba(37, 99, 235, 0.08)',
-    value: '#0f172a',
-    border: '#e8edf3',
+    value: colors.primaryNavy,
+    border: colors.surfaceSubtle,
   },
   good: {
     iconBg: 'rgba(16, 185, 129, 0.12)',
-    value: '#064e3b',
+    value: colors.success,
     border: 'rgba(16, 185, 129, 0.22)',
   },
   warning: {
     iconBg: 'rgba(249, 115, 22, 0.12)',
-    value: '#7c2d12',
+    value: colors.warning,
     border: 'rgba(249, 115, 22, 0.22)',
   },
   attention: {
     iconBg: 'rgba(239, 68, 68, 0.12)',
-    value: '#7f1d1d',
+    value: colors.danger,
     border: 'rgba(239, 68, 68, 0.22)',
   },
 };
@@ -102,11 +103,11 @@ export function KpiCard({ label, value, icon, tone = 'neutral', onPress }: KpiCa
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: '#ffffff',
+    backgroundColor: colors.card,
     borderRadius: 18,
     padding: 0,
     borderWidth: 1,
-    shadowColor: '#0f172a',
+    shadowColor: colors.primaryNavy,
     shadowOpacity: 0.045,
     shadowRadius: 16,
     shadowOffset: { width: 0, height: 8 },
@@ -148,7 +149,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 0.9,
     textTransform: 'uppercase',
-    color: '#64748b',
+    color: colors.pending,
     lineHeight: 16,
   },
   iconPuck: {

@@ -1,4 +1,4 @@
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+﻿import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { AppRole } from '../types/models';
 import { brand, colors, control, radii, spacing, typography } from '../theme';
 
@@ -46,7 +46,7 @@ const styles = StyleSheet.create({
   optionTitle: { color: colors.textPrimary, ...typography.heading },
   optionText: { color: colors.textSecondary, ...typography.caption },
   guardTitle: { color: colors.textOnBrand, ...typography.heading },
-  guardText: { color: '#D6E2EC', ...typography.caption },
+  guardText: { color: colors.surfaceSubtle, ...typography.caption },
   arrow: { color: colors.accentTealStrong, fontSize: 24, minWidth: control.minTouchTarget, textAlign: 'center' },
   guardArrow: { color: colors.accentTeal, fontSize: 24, minWidth: control.minTouchTarget, textAlign: 'center' },
   pressed: { opacity: 0.84 },
