@@ -1,7 +1,6 @@
 import { PropsWithChildren } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-
-import { colors } from '../theme';
+import { colors, control, radii, spacing, typography } from '../theme';
 
 type FeatureCardProps = PropsWithChildren<{
   title: string;
@@ -12,20 +11,15 @@ type FeatureCardProps = PropsWithChildren<{
 }>;
 
 export function FeatureCard({ title, subtitle, ctaLabel, onPress, children, style }: FeatureCardProps) {
-  const pressHandlers = onPress
-    ? ({
-        onPress,
-        onClick: onPress,
-      } as const)
-    : {};
-
   return (
     <View style={[styles.card, style]}>
-      <Text style={styles.title}>{title}</Text>
-      <Text style={styles.subtitle}>{subtitle}</Text>
+      <View style={styles.header}>
+        <Text style={styles.title}>{title}</Text>
+        <Text style={styles.subtitle}>{subtitle}</Text>
+      </View>
       {children}
       {ctaLabel && onPress ? (
-        <Pressable {...pressHandlers} style={styles.button}>
+        <Pressable accessibilityRole="button" onPress={onPress} style={({ pressed }) => [styles.button, pressed && styles.buttonPressed]}>
           <Text style={styles.buttonText}>{ctaLabel}</Text>
         </Pressable>
       ) : null}
@@ -36,29 +30,30 @@ export function FeatureCard({ title, subtitle, ctaLabel, onPress, children, styl
 const styles = StyleSheet.create({
   card: {
     backgroundColor: colors.card,
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 12,
+    borderRadius: radii.lg,
+    padding: spacing.lg,
+    marginBottom: spacing.md,
     borderWidth: 1,
     borderColor: colors.border,
-    gap: 8,
+    gap: spacing.md,
     shadowColor: colors.primaryNavy,
-    shadowOpacity: 0.04,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 1,
+    shadowOpacity: 0.05,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 5 },
+    elevation: 2,
   },
-  title: { fontWeight: '700', fontSize: 16, color: colors.textPrimary, lineHeight: 22, flexShrink: 1 },
-  subtitle: { color: colors.textSecondary, lineHeight: 20, flexShrink: 1 },
+  header: { gap: spacing.xs },
+  title: { color: colors.textPrimary, ...typography.heading, flexShrink: 1 },
+  subtitle: { color: colors.textSecondary, ...typography.caption, flexShrink: 1 },
   button: {
+    minHeight: control.minTouchTarget,
     backgroundColor: colors.primaryNavy,
     alignSelf: 'flex-start',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
+    justifyContent: 'center',
+    borderRadius: radii.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
   },
-  buttonText: {
-    color: '#FFFFFF',
-    fontWeight: '600',
-  },
+  buttonPressed: { backgroundColor: colors.primaryNavySoft },
+  buttonText: { color: colors.textOnBrand, ...typography.label },
 });

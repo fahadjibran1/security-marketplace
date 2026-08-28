@@ -7,12 +7,13 @@
     "scheme": "securitymarketplace",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
-    "primaryColor": "#0B1B2B",
+    "primaryColor": "#0B1F33",
+    "backgroundColor": "#F4F7FA",
     "icon": "./assets/icon.png",
     "splash": {
       "image": "./assets/splash.png",
       "resizeMode": "contain",
-      "backgroundColor": "#000000"
+      "backgroundColor": "#0B1F33"
     },
     "assetBundlePatterns": [
       "**/*"
@@ -37,7 +38,7 @@
       "package": "com.securitymarketplace.mobile",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#000000"
+        "backgroundColor": "#0B1F33"
       }
     },
     "web": {

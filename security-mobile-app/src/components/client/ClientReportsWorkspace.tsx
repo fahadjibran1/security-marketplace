@@ -1,4 +1,4 @@
-import * as React from 'react';
+﻿import * as React from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import {
@@ -8,6 +8,7 @@ import {
   getClientPortalWelfareReport,
 } from '../../services/api';
 import { ClientPortalIncident, ClientPortalWelfareRow } from '../../types/models';
+import { colors } from '../../theme';
 
 function csvEscape(value: string | number | null | undefined) {
   const text = value === undefined || value === null ? '' : String(value);
@@ -116,14 +117,14 @@ export function ClientReportsWorkspace() {
 }
 
 const styles = StyleSheet.create({
-  panel: { backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 18, padding: 18, gap: 12 },
-  title: { color: '#0F172A', fontSize: 22, fontWeight: '800' },
+  panel: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.pendingSurface, borderRadius: 18, padding: 18, gap: 12 },
+  title: { color: colors.primaryNavy, fontSize: 22, fontWeight: '800' },
   filterRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  input: { minWidth: 180, flex: 1, borderWidth: 1, borderColor: '#CBD5E1', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, backgroundColor: '#FFF' },
-  primaryButton: { backgroundColor: '#0F172A', borderRadius: 12, paddingHorizontal: 16, paddingVertical: 10 },
-  primaryButtonText: { color: '#FFF', fontWeight: '800' },
+  input: { minWidth: 180, flex: 1, borderWidth: 1, borderColor: colors.border, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, backgroundColor: colors.card },
+  primaryButton: { backgroundColor: colors.primaryNavy, borderRadius: 12, paddingHorizontal: 16, paddingVertical: 10 },
+  primaryButtonText: { color: colors.card, fontWeight: '800' },
   reportRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
-  exportButton: { borderWidth: 1, borderColor: '#CBD5E1', borderRadius: 14, paddingHorizontal: 14, paddingVertical: 12, backgroundColor: '#F8FAFC' },
-  exportButtonText: { color: '#0F172A', fontWeight: '700' },
-  errorText: { color: '#B91C1C', fontWeight: '700' },
+  exportButton: { borderWidth: 1, borderColor: colors.border, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 12, backgroundColor: colors.background },
+  exportButtonText: { color: colors.primaryNavy, fontWeight: '700' },
+  errorText: { color: colors.danger, fontWeight: '700' },
 });

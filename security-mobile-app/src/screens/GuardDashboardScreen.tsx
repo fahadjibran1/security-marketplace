@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { FeatureCard } from '../components/FeatureCard';
+import { StatePanel } from '../components/StatePanel';
+import { StatusBadge, StatusTone } from '../components/StatusBadge';
 import { GuardCompliancePanel } from '../components/guard/GuardCompliancePanel';
 import { GuardScreeningJourney, GuardScreeningPanel } from '../components/guard/GuardScreeningPanel';
 import { JobsScreen } from './JobsScreen';
@@ -20,11 +22,9 @@ import {
   listMyIncidents,
   listMyShifts,
   listMyTimesheets,
-  logout,
   respondToShift,
   updateMyGuard,
 } from '../services/api';
-import { clearStoredSession } from '../services/session';
 import {
   AttendanceEvent,
   AuthUser,
@@ -37,6 +37,7 @@ import { colors } from '../theme';
 
 interface GuardDashboardScreenProps {
   user: AuthUser;
+  onLogout: () => void;
 }
 
 type GuardTab = 'home' | 'offers' | 'jobs' | 'history' | 'profile' | 'screening';
@@ -154,35 +155,17 @@ function showAlert(title: string, message: string) {
   Alert.alert(title, message);
 }
 
-function getShiftStatusPalette(status?: string | null) {
+function shiftStatusTone(status?: string | null): StatusTone {
   switch (normalizeShiftLifecycleStatus(status)) {
-    case 'offered':
-      return { bg: '#DBEAFE', text: colors.supportBlue };
-    case 'ready':
-      return { bg: '#FEF3C7', text: '#B45309' };
-    case 'in_progress':
-      return { bg: '#DCFCE7', text: '#15803D' };
-    case 'completed':
-      return { bg: colors.border, text: colors.textPrimary };
-    case 'missed':
-      return { bg: '#FEE2E2', text: '#991B1B' };
-    case 'rejected':
-      return { bg: '#FEE2E2', text: '#B91C1C' };
-    case 'cancelled':
-      return { bg: colors.border, text: colors.textSecondary };
-    default:
-      return { bg: colors.background, text: colors.textSecondary };
+    case 'offered': return 'info';
+    case 'ready': return 'warning';
+    case 'in_progress': return 'success';
+    case 'completed': return 'neutral';
+    case 'missed': return 'danger';
+    case 'rejected': return 'danger';
+    case 'cancelled': return 'neutral';
+    default: return 'neutral';
   }
-}
-
-function ShiftStatusBadge({ status }: { status?: string | null }) {
-  const normalized = normalizeShiftLifecycleStatus(status);
-  const palette = getShiftStatusPalette(status);
-  return (
-    <View style={[styles.statusBadge, { backgroundColor: palette.bg }]}>
-      <Text style={[styles.statusBadgeText, { color: palette.text }]}>{normalized.replace('_', ' ')}</Text>
-    </View>
-  );
 }
 
 function getPrimaryActionLabel(status?: string | null) {
@@ -429,7 +412,7 @@ function getSecondaryActionsHelper(
   return 'Unlocks after you check in and the shift shows as live.';
 }
 
-export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
+export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenProps) {
   const insets = useSafeAreaInsets();
   const [activeTab, setActiveTab] = useState<GuardTab>('home');
   const [quickActionModal, setQuickActionModal] = useState<QuickActionModal>(null);
@@ -438,7 +421,6 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
   const [phone, setPhone] = useState('');
   const [siaLicence, setSiaLicence] = useState('');
   const [locationSharing, setLocationSharing] = useState(false);
-  const [signedOut, setSignedOut] = useState(false);
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [attendance, setAttendance] = useState<AttendanceEvent[]>([]);
   const [incidents, setIncidents] = useState<Incident[]>([]);
@@ -542,13 +524,8 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
     }
   }
 
-  async function handleLogout() {
-    logout();
-    await clearStoredSession();
-    setSignedOut(true);
-    if (typeof window !== 'undefined' && typeof window.location?.reload === 'function') {
-      window.location.reload();
-    }
+  function handleLogout() {
+    onLogout();
   }
 
   async function handleCheckIn(shiftId: number) {
@@ -945,23 +922,25 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
         style={[styles.quickActionCard, styles.guardLiveActionsCard]}
       >
         <View style={styles.quickActionGrid}>
-          <Pressable style={styles.quickActionButton} onPress={() => setQuickActionModal('log')}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Add log" style={styles.quickActionButton} onPress={() => setQuickActionModal('log')}>
             <Text style={styles.quickActionIcon}>LOG</Text>
             <Text style={styles.quickActionText}>Add Log</Text>
           </Pressable>
-          <Pressable style={styles.quickActionButton} onPress={() => setQuickActionModal('checkCall')}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Record check call" style={styles.quickActionButton} onPress={() => setQuickActionModal('checkCall')}>
             <Text style={styles.quickActionIcon}>CALL</Text>
             <Text style={styles.quickActionText}>Check Call</Text>
           </Pressable>
-          <Pressable style={styles.quickActionButton} onPress={() => setQuickActionModal('incident')}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Report incident" style={styles.quickActionButton} onPress={() => setQuickActionModal('incident')}>
             <Text style={styles.quickActionIcon}>INC</Text>
             <Text style={styles.quickActionText}>Incident</Text>
           </Pressable>
-          <Pressable style={styles.quickActionButton} onPress={() => setQuickActionModal('welfare')}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Welfare check" style={styles.quickActionButton} onPress={() => setQuickActionModal('welfare')}>
             <Text style={styles.quickActionIcon}>CARE</Text>
             <Text style={styles.quickActionText}>Welfare</Text>
           </Pressable>
           <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Send panic alert"
             style={[styles.quickActionButton, styles.quickActionDanger]}
             onPress={() => setQuickActionModal('panic')}
           >
@@ -1002,22 +981,8 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
   const historySummaryAttendance = historySummaryShift?.id ? attendanceByShiftId[historySummaryShift.id] : undefined;
   const historySummaryTimesheet = timesheets.find((timesheet) => timesheet.shiftId === historySummaryShift?.id) || null;
 
-  if (signedOut) {
-    return (
-      <View style={styles.signedOutScreen}>
-        <Text style={styles.headerTitle}>Signed out</Text>
-        <Text style={styles.helperText}>Your session has been cleared. Reopen the app or refresh to sign in again.</Text>
-      </View>
-    );
-  }
-
   if (loading && shifts.length === 0) {
-    return (
-      <View style={styles.signedOutScreen}>
-        <Text style={styles.headerTitle}>Loading...</Text>
-        <Text style={styles.helperText}>Preparing your mobile shift workspace.</Text>
-      </View>
-    );
+    return <StatePanel title="Loading your workspace" message="Preparing your shift, attendance and compliance data." tone="info" loading />;
   }
 
   return (
@@ -1152,7 +1117,7 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
                               </View>
                             ) : null}
                           </View>
-                          <ShiftStatusBadge status={currentHomeShift.status} />
+                          <StatusBadge label={normalizeShiftLifecycleStatus(currentHomeShift.status)} tone={shiftStatusTone(currentHomeShift.status)} />
                         </View>
                       </View>
 
@@ -1351,14 +1316,7 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
               style={styles.guardOffersCard}
             >
               {shiftOffers.length === 0 ? (
-                <View style={styles.historyEmptyState}>
-                  <Text style={styles.historyEmptyTitle}>No open offers</Text>
-                  <Text style={styles.historyEmptyBody}>
-                    When a company sends you a post, it will appear in the list under this heading. Until then you do not
-                    need to do anything here — check Home for shifts you have already accepted, or History when you need
-                    a recap or timesheet.
-                  </Text>
-                </View>
+                <StatePanel title="No open offers" message="When a company sends you a post it will appear here. Check Home for accepted shifts, or History for recaps and timesheets." />
               ) : (
                 <View style={styles.offersListSection}>
                   {shiftOffers.map((shift, index) => {
@@ -1433,13 +1391,7 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
               style={styles.guardHistoryPastCard}
             >
               {historyShifts.length === 0 ? (
-                <View style={styles.historyEmptyState}>
-                  <Text style={styles.historyEmptyTitle}>Nothing in your history yet</Text>
-                  <Text style={styles.historyEmptyBody}>
-                    When shifts finish, they appear here so you can reopen a short summary. Payroll hours and company
-                    replies always live in Timesheets underneath — same data as before.
-                  </Text>
-                </View>
+                <StatePanel title="Nothing in your history yet" message="When shifts finish they appear here for a recap. Payroll hours and company replies are in Timesheets below." />
               ) : (
                 historyShifts.map((shift, index) => (
                   <Pressable
@@ -1454,7 +1406,7 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
                         {formatTimeLabel(shift.start)} – {formatTimeLabel(shift.end)}
                       </Text>
                     </View>
-                    <ShiftStatusBadge status={shift.status} />
+                    <StatusBadge label={normalizeShiftLifecycleStatus(shift.status)} tone={shiftStatusTone(shift.status)} />
                   </Pressable>
                 ))
               )}
@@ -1491,24 +1443,34 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
                 <View style={styles.guardProfileSection}>
                   <Text style={styles.guardSectionLabel}>Contact & identity</Text>
                   <View style={styles.guardProfileFields}>
-                    <TextInput
-                      style={[styles.input, styles.guardProfileInput]}
-                      placeholder="Name"
-                      value={fullName}
-                      onChangeText={setFullName}
-                    />
-                    <TextInput
-                      style={[styles.input, styles.guardProfileInput]}
-                      placeholder="SIA details"
-                      value={siaLicence}
-                      onChangeText={setSiaLicence}
-                    />
-                    <TextInput
-                      style={[styles.input, styles.guardProfileInput]}
-                      placeholder="Contact details"
-                      value={phone}
-                      onChangeText={setPhone}
-                    />
+                    <View style={styles.profileField}>
+                      <Text style={styles.profileFieldLabel}>Full name</Text>
+                      <TextInput
+                        style={[styles.input, styles.guardProfileInput]}
+                        placeholder="Your full legal name"
+                        value={fullName}
+                        onChangeText={setFullName}
+                      />
+                    </View>
+                    <View style={styles.profileField}>
+                      <Text style={styles.profileFieldLabel}>SIA licence number</Text>
+                      <TextInput
+                        style={[styles.input, styles.guardProfileInput]}
+                        placeholder="e.g. 1234-0001-23-456-0"
+                        value={siaLicence}
+                        onChangeText={setSiaLicence}
+                      />
+                    </View>
+                    <View style={styles.profileField}>
+                      <Text style={styles.profileFieldLabel}>Phone number</Text>
+                      <TextInput
+                        style={[styles.input, styles.guardProfileInput]}
+                        placeholder="Your contact number"
+                        value={phone}
+                        onChangeText={setPhone}
+                        keyboardType="phone-pad"
+                      />
+                    </View>
                   </View>
                 </View>
                 <View style={[styles.guardProfileSection, styles.guardProfileSwitchSection]}>
@@ -1563,6 +1525,9 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
         ] as Array<[GuardTab, string]>).map(([tab, label]) => (
           <Pressable
             key={tab}
+            accessibilityRole="tab"
+            accessibilityLabel={label}
+            accessibilityState={{ selected: activeTab === tab }}
             style={[styles.bottomNavItem, activeTab === tab && styles.bottomNavItemActive]}
             onPress={() => setActiveTab(tab)}
           >
@@ -1699,7 +1664,7 @@ export function GuardDashboardScreen({ user }: GuardDashboardScreenProps) {
                 <Text style={styles.summaryHeroTime}>
                   {formatTimeLabel(historySummaryShift.start)} – {formatTimeLabel(historySummaryShift.end)}
                 </Text>
-                <ShiftStatusBadge status={historySummaryShift.status} />
+                <StatusBadge label={normalizeShiftLifecycleStatus(historySummaryShift.status)} tone={shiftStatusTone(historySummaryShift.status)} />
               </View>
               <View style={styles.summaryGrid}>
                 <View style={styles.summaryBlock}>
@@ -1813,10 +1778,9 @@ const styles = StyleSheet.create({
   contentArea: { flex: 1 },
   scrollView: { flex: 1 },
   content: { paddingHorizontal: 16, paddingBottom: 28, flexGrow: 1 },
-  signedOutScreen: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, backgroundColor: colors.background, gap: 8 },
   feedbackBanner: { marginHorizontal: 16, marginBottom: 10, borderRadius: 16, paddingHorizontal: 14, paddingVertical: 12, gap: 4 },
-  feedbackSuccess: { backgroundColor: '#DCFCE7' },
-  feedbackError: { backgroundColor: '#FEE2E2' },
+  feedbackSuccess: { backgroundColor: colors.successSurface },
+  feedbackError: { backgroundColor: colors.dangerSurface },
   feedbackInfo: { backgroundColor: colors.background, borderWidth: 1, borderColor: colors.border },
   feedbackTitle: { fontWeight: '700', color: colors.textPrimary },
   feedbackMessage: { color: colors.textSecondary, lineHeight: 20 },
@@ -1859,7 +1823,7 @@ const styles = StyleSheet.create({
   },
   guardSectionLive: {
     borderLeftWidth: 3,
-    borderLeftColor: '#22C55E',
+    borderLeftColor: colors.accentTeal,
     paddingLeft: 13,
   },
   guardSectionLabel: {
@@ -1964,8 +1928,8 @@ const styles = StyleSheet.create({
   shiftDate: { color: colors.textSecondary, fontWeight: '600' },
   shiftTime: { color: colors.textPrimary, fontSize: 16, fontWeight: '700' },
   helperLine: { color: colors.textSecondary, lineHeight: 20 },
-  helperLineWarning: { color: '#B45309', fontWeight: '700' },
-  helperLineUrgent: { color: '#B91C1C', fontWeight: '800' },
+  helperLineWarning: { color: colors.warning, fontWeight: '700' },
+  helperLineUrgent: { color: colors.danger, fontWeight: '800' },
   helperText: { color: colors.textSecondary, lineHeight: 20 },
   liveBanner: {
     marginTop: 10,
@@ -1973,7 +1937,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#DCFCE7',
+    backgroundColor: colors.successSurface,
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 6,
@@ -1982,18 +1946,16 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 999,
-    backgroundColor: '#16A34A',
+    backgroundColor: colors.success,
   },
   liveBannerText: {
-    color: '#166534',
+    color: colors.success,
     fontSize: 12,
     fontWeight: '800',
     letterSpacing: 0.6,
   },
-  statusBadge: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, alignSelf: 'flex-start' },
-  statusBadgeText: { fontSize: 12, fontWeight: '700', textTransform: 'capitalize' },
   primaryActionButton: { backgroundColor: colors.primaryNavy, borderRadius: 18, minHeight: 56, paddingHorizontal: 16, paddingVertical: 16, alignItems: 'center', justifyContent: 'center' },
-  primaryActionText: { color: '#FFFFFF', fontSize: 16, fontWeight: '800' },
+  primaryActionText: { color: colors.textOnBrand, fontSize: 16, fontWeight: '800' },
   liveStatusBlock: {
     flexDirection: 'row',
     gap: 10,
@@ -2042,31 +2004,31 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 6 },
     elevation: 4,
   },
-  quickActionTitle: { fontSize: 16, fontWeight: '800', color: '#FFFFFF' },
+  quickActionTitle: { fontSize: 16, fontWeight: '800', color: colors.textOnBrand },
   quickActionSubtitle: { color: colors.border, lineHeight: 18 },
   quickActionGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   quickActionButton: {
     width: '48%',
     minHeight: 94,
     borderRadius: 18,
-    backgroundColor: '#1F2937',
+    backgroundColor: colors.primaryNavy,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
     paddingHorizontal: 12,
     borderWidth: 1,
-    borderColor: '#374151',
+    borderColor: colors.primaryNavySoft,
   },
-  quickActionDanger: { backgroundColor: '#991B1B', borderColor: '#B91C1C' },
+  quickActionDanger: { backgroundColor: colors.danger, borderColor: colors.danger },
   quickActionIcon: {
     fontSize: 12,
-    color: '#FFFFFF',
+    color: colors.textOnBrand,
     fontWeight: '800',
     letterSpacing: 1.1,
     textTransform: 'uppercase',
   },
-  quickActionText: { color: '#FFFFFF', fontWeight: '800', fontSize: 15 },
-  quickActionDangerText: { color: '#FFFFFF', fontWeight: '800', fontSize: 15 },
+  quickActionText: { color: colors.textOnBrand, fontWeight: '800', fontSize: 15 },
+  quickActionDangerText: { color: colors.textOnBrand, fontWeight: '800', fontSize: 15 },
   guardOffersRoot: { width: '100%', gap: 12, paddingBottom: 8 },
   offersListSection: { gap: 0, paddingTop: 2 },
   offersWorkflowFooter: {
@@ -2117,7 +2079,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 19,
     fontWeight: '600',
-    color: '#B45309',
+    color: colors.warning,
   },
   offerNextStepHint: { fontSize: 13, lineHeight: 20, color: colors.textSecondary, fontWeight: '500' },
   offerActionsColumn: { gap: 10, marginTop: 2 },
@@ -2134,7 +2096,7 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     elevation: 2,
   },
-  offerAcceptBtnText: { color: '#FFFFFF', fontWeight: '800', fontSize: 16, letterSpacing: 0.2 },
+  offerAcceptBtnText: { color: colors.textOnBrand, fontWeight: '800', fontSize: 16, letterSpacing: 0.2 },
   offerRejectBtn: {
     alignSelf: 'stretch',
     minHeight: 46,
@@ -2172,7 +2134,7 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 999,
-    backgroundColor: '#16A34A',
+    backgroundColor: colors.success,
     marginTop: 5,
   },
   activityTitle: { color: colors.textPrimary, fontWeight: '700' },
@@ -2211,6 +2173,8 @@ const styles = StyleSheet.create({
     minHeight: 48,
     borderRadius: 14,
   },
+  profileField: { gap: 4 },
+  profileFieldLabel: { color: colors.textSecondary, fontSize: 13, fontWeight: '700' },
   guardProfileSwitchSection: {
     paddingVertical: 12,
     paddingHorizontal: 12,
@@ -2226,9 +2190,6 @@ const styles = StyleSheet.create({
   guardProfileSaveCta: { marginTop: 0 },
   guardProfileLogoutBtn: { minHeight: 48 },
   guardProfileBelowStack: { gap: 12, width: '100%' },
-  historyEmptyState: { gap: 8, paddingVertical: 8 },
-  historyEmptyTitle: { fontSize: 16, fontWeight: '800', color: colors.textPrimary },
-  historyEmptyBody: { fontSize: 14, lineHeight: 22, color: colors.textSecondary },
   historyPastRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -2250,7 +2211,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     paddingVertical: 12,
     paddingHorizontal: 14,
-    backgroundColor: '#EFF6FF',
+    backgroundColor: colors.infoSurface,
     borderWidth: 1,
     borderColor: colors.border,
     gap: 6,
@@ -2280,7 +2241,7 @@ const styles = StyleSheet.create({
   listCard: { borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 12, gap: 8 },
   applicationStatusBadge: {
     borderRadius: 999,
-    backgroundColor: '#EFF6FF',
+    backgroundColor: colors.infoSurface,
     paddingHorizontal: 10,
     paddingVertical: 6,
     alignSelf: 'flex-start',
@@ -2314,16 +2275,16 @@ const styles = StyleSheet.create({
   bottomNavItem: { flex: 1, alignItems: 'center', justifyContent: 'center', minHeight: 56, gap: 6 },
   bottomNavItemActive: { opacity: 1 },
   bottomNavIndicator: {
-    width: 28,
+    width: 32,
     height: 3,
     borderRadius: 999,
     backgroundColor: 'transparent',
   },
   bottomNavIndicatorActive: {
-    backgroundColor: colors.primaryNavy,
+    backgroundColor: colors.accentTeal,
   },
   bottomNavLabel: { color: colors.textSecondary, fontWeight: '700', fontSize: 13 },
-  bottomNavLabelActive: { color: colors.textPrimary },
+  bottomNavLabelActive: { color: colors.primaryNavy, fontWeight: '800' },
   modalBackdrop: {
     position: 'absolute',
     top: 0,
@@ -2367,7 +2328,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   summaryDoneButtonText: {
-    color: '#FFFFFF',
+    color: colors.textOnBrand,
     fontWeight: '800',
     fontSize: 15,
   },
@@ -2384,8 +2345,8 @@ const styles = StyleSheet.create({
   },
   modalClose: { color: colors.supportBlue, fontWeight: '700' },
   modalInput: { minHeight: 120, textAlignVertical: 'top' },
-  panicConfirmButton: { backgroundColor: '#991B1B', borderRadius: 18, minHeight: 56, alignItems: 'center', justifyContent: 'center' },
-  panicConfirmButtonText: { color: '#FFFFFF', fontWeight: '800', fontSize: 16 },
+  panicConfirmButton: { backgroundColor: colors.danger, borderRadius: 18, minHeight: 56, alignItems: 'center', justifyContent: 'center' },
+  panicConfirmButtonText: { color: colors.textOnBrand, fontWeight: '800', fontSize: 16 },
   summaryBlock: { borderRadius: 14, backgroundColor: colors.card, padding: 12, gap: 6 },
   summaryLabel: { color: colors.textSecondary, fontSize: 12, fontWeight: '700', textTransform: 'uppercase' },
   summaryValue: { color: colors.textPrimary, fontWeight: '700', fontSize: 15, lineHeight: 22 },

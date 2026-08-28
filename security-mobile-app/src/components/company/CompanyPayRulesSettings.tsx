@@ -1,8 +1,9 @@
-import * as React from 'react';
+﻿import * as React from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { formatApiErrorMessage, getPayRuleConfig, savePayRuleConfig } from '../../services/api';
 import { PayRuleConfig, PayRuleConfigPayload } from '../../types/models';
+import { colors } from '../../theme';
 
 type FormState = {
   overtimeThresholdHours: string;
@@ -167,48 +168,48 @@ const styles = StyleSheet.create({
     gap: 18,
   },
   headerCard: {
-    backgroundColor: '#ffffff',
+    backgroundColor: colors.card,
     borderRadius: 22,
     padding: 22,
     borderWidth: 1,
-    borderColor: '#dbe4ef',
+    borderColor: colors.surfaceSubtle,
     flexDirection: 'row',
     justifyContent: 'space-between',
     gap: 16,
   },
   eyebrow: {
-    color: '#0f766e',
+    color: colors.accentTealStrong,
     fontSize: 12,
     fontWeight: '800',
     letterSpacing: 1.5,
     textTransform: 'uppercase',
   },
   title: {
-    color: '#0f172a',
+    color: colors.primaryNavy,
     fontSize: 30,
     fontWeight: '800',
   },
   subtitle: {
-    color: '#64748b',
+    color: colors.textSecondary,
     marginTop: 6,
     fontSize: 14,
     lineHeight: 21,
   },
   panel: {
-    backgroundColor: '#ffffff',
+    backgroundColor: colors.card,
     borderRadius: 22,
     padding: 18,
-    borderColor: '#dbe4ef',
+    borderColor: colors.surfaceSubtle,
     borderWidth: 1,
     gap: 14,
   },
   panelTitle: {
-    color: '#0f172a',
+    color: colors.primaryNavy,
     fontSize: 18,
     fontWeight: '800',
   },
   helperText: {
-    color: '#64748b',
+    color: colors.textSecondary,
     fontSize: 13,
     lineHeight: 19,
   },
@@ -223,22 +224,22 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   label: {
-    color: '#334155',
+    color: colors.primaryNavySoft,
     fontSize: 12,
     fontWeight: '800',
     textTransform: 'uppercase',
   },
   input: {
-    backgroundColor: '#ffffff',
-    borderColor: '#d6dce5',
+    backgroundColor: colors.card,
+    borderColor: colors.border,
     borderWidth: 1,
     borderRadius: 14,
     paddingHorizontal: 14,
     paddingVertical: 12,
-    color: '#132238',
+    color: colors.primaryNavyStrong,
   },
   primaryButton: {
-    backgroundColor: '#0f766e',
+    backgroundColor: colors.accentTealStrong,
     borderRadius: 14,
     paddingHorizontal: 16,
     paddingVertical: 12,
@@ -246,12 +247,12 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
   },
   primaryButtonText: {
-    color: '#ffffff',
+    color: colors.card,
     fontWeight: '800',
   },
   secondaryButton: {
-    backgroundColor: '#ffffff',
-    borderColor: '#cbd5e1',
+    backgroundColor: colors.card,
+    borderColor: colors.border,
     borderWidth: 1,
     borderRadius: 14,
     paddingHorizontal: 14,
@@ -260,7 +261,7 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
   },
   secondaryButtonText: {
-    color: '#0f172a',
+    color: colors.primaryNavy,
     fontWeight: '700',
   },
   disabledButton: {
@@ -272,15 +273,15 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   feedbackSuccess: {
-    backgroundColor: '#ecfdf5',
-    borderColor: '#bbf7d0',
+    backgroundColor: colors.successSurface,
+    borderColor: colors.successSurface,
   },
   feedbackError: {
-    backgroundColor: '#fef2f2',
-    borderColor: '#fecaca',
+    backgroundColor: colors.dangerSurface,
+    borderColor: colors.dangerSurface,
   },
   feedbackText: {
-    color: '#0f172a',
+    color: colors.primaryNavy,
     fontWeight: '700',
   },
 });

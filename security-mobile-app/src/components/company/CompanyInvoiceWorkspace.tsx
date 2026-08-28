@@ -1,4 +1,4 @@
-import * as React from 'react';
+﻿import * as React from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import {
@@ -14,6 +14,7 @@ import {
   recordCompanyInvoicePayment,
 } from '../../services/api';
 import { Client, InvoiceBatch, InvoiceBatchStatus, InvoiceDocument, InvoiceSuggestion, PaymentMethod, Timesheet, TimesheetBillingStatus } from '../../types/models';
+import { colors } from '../../theme';
 
 type PeriodView = 'week' | 'month';
 type BillingFilter = 'all' | TimesheetBillingStatus;
@@ -403,17 +404,17 @@ function makeGroup(entries: InvoiceEntry[], periodView: PeriodView) {
 }
 
 function getBillingPalette(status: TimesheetBillingStatus) {
-  if (status === 'invoiced') return { background: '#ECFDF5', border: '#34D399', text: '#047857' };
-  if (status === 'included') return { background: '#EFF6FF', border: '#60A5FA', text: '#1D4ED8' };
-  return { background: '#FFFBEB', border: '#FBBF24', text: '#B45309' };
+  if (status === 'invoiced') return { background: colors.successSurface, border: colors.successBorder, text: colors.success };
+  if (status === 'included') return { background: colors.infoSurface, border: colors.info, text: colors.info };
+  return { background: colors.warningSurface, border: colors.warning, text: colors.warning };
 }
 
 function getBatchPalette(status?: string | null) {
   const normalized = normalizeBatchStatus(status);
-  if (normalized === 'paid') return { background: '#ECFDF5', border: '#34D399', text: '#047857' };
-  if (normalized === 'issued') return { background: '#F0FDFA', border: '#2DD4BF', text: '#0F766E' };
-  if (normalized === 'finalised') return { background: '#EFF6FF', border: '#60A5FA', text: '#1D4ED8' };
-  return { background: '#F8FAFC', border: '#CBD5E1', text: '#475569' };
+  if (normalized === 'paid') return { background: colors.successSurface, border: colors.successBorder, text: colors.success };
+  if (normalized === 'issued') return { background: colors.accentTealSoft, border: colors.accentTealStrong, text: colors.accentTealStrong };
+  if (normalized === 'finalised') return { background: colors.infoSurface, border: colors.info, text: colors.info };
+  return { background: colors.background, border: colors.border, text: colors.textSecondary };
 }
 
 function WebSelect({
@@ -1359,11 +1360,11 @@ function Detail({ label, value }: { label: string; value: string }) {
 const webSelectStyle = {
   borderRadius: 14,
   borderWidth: 1,
-  borderColor: '#d6dce5',
-  backgroundColor: '#ffffff',
+  borderColor: colors.border,
+  backgroundColor: colors.card,
   padding: '12px 14px',
   fontSize: 14,
-  color: '#132238',
+  color: colors.primaryNavyStrong,
   minHeight: 46,
 } as const;
 
@@ -1372,29 +1373,29 @@ const styles = StyleSheet.create({
     gap: 18,
   },
   headerCard: {
-    backgroundColor: '#ffffff',
+    backgroundColor: colors.card,
     borderRadius: 22,
     padding: 22,
     borderWidth: 1,
-    borderColor: '#dbe4ef',
+    borderColor: colors.surfaceSubtle,
     flexDirection: 'row',
     justifyContent: 'space-between',
     gap: 16,
   },
   eyebrow: {
-    color: '#0f766e',
+    color: colors.accentTealStrong,
     fontSize: 12,
     fontWeight: '800',
     letterSpacing: 1.5,
     textTransform: 'uppercase',
   },
   title: {
-    color: '#0f172a',
+    color: colors.primaryNavy,
     fontSize: 30,
     fontWeight: '800',
   },
   subtitle: {
-    color: '#64748b',
+    color: colors.textSecondary,
     marginTop: 6,
     fontSize: 14,
     lineHeight: 21,
@@ -1405,19 +1406,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   primaryButton: {
-    backgroundColor: '#0f766e',
+    backgroundColor: colors.accentTealStrong,
     borderRadius: 14,
     paddingHorizontal: 16,
     paddingVertical: 12,
     alignItems: 'center',
   },
   primaryButtonText: {
-    color: '#ffffff',
+    color: colors.card,
     fontWeight: '800',
   },
   secondaryButton: {
-    backgroundColor: '#ffffff',
-    borderColor: '#cbd5e1',
+    backgroundColor: colors.card,
+    borderColor: colors.border,
     borderWidth: 1,
     borderRadius: 14,
     paddingHorizontal: 14,
@@ -1425,7 +1426,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   secondaryButtonText: {
-    color: '#0f172a',
+    color: colors.primaryNavy,
     fontWeight: '700',
   },
   disabledButton: {
@@ -1437,15 +1438,15 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   feedbackSuccess: {
-    backgroundColor: '#ecfdf5',
-    borderColor: '#bbf7d0',
+    backgroundColor: colors.successSurface,
+    borderColor: colors.successSurface,
   },
   feedbackError: {
-    backgroundColor: '#fef2f2',
-    borderColor: '#fecaca',
+    backgroundColor: colors.dangerSurface,
+    borderColor: colors.dangerSurface,
   },
   feedbackText: {
-    color: '#0f172a',
+    color: colors.primaryNavy,
     fontWeight: '700',
   },
   summaryGrid: {
@@ -1456,29 +1457,29 @@ const styles = StyleSheet.create({
   metricCard: {
     minWidth: 150,
     flex: 1,
-    backgroundColor: '#ffffff',
+    backgroundColor: colors.card,
     borderRadius: 18,
     padding: 16,
-    borderColor: '#dbe4ef',
+    borderColor: colors.surfaceSubtle,
     borderWidth: 1,
   },
   metricLabel: {
-    color: '#64748b',
+    color: colors.textSecondary,
     fontSize: 12,
     fontWeight: '700',
     textTransform: 'uppercase',
   },
   metricValue: {
-    color: '#0f172a',
+    color: colors.primaryNavy,
     fontSize: 22,
     fontWeight: '800',
     marginTop: 8,
   },
   panel: {
-    backgroundColor: '#ffffff',
+    backgroundColor: colors.card,
     borderRadius: 22,
     padding: 18,
-    borderColor: '#dbe4ef',
+    borderColor: colors.surfaceSubtle,
     borderWidth: 1,
     gap: 14,
   },
@@ -1489,17 +1490,17 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   panelTitle: {
-    color: '#0f172a',
+    color: colors.primaryNavy,
     fontSize: 18,
     fontWeight: '800',
   },
   helperText: {
-    color: '#64748b',
+    color: colors.textSecondary,
     fontSize: 13,
     lineHeight: 19,
   },
   suggestionRow: {
-    borderColor: '#e2e8f0',
+    borderColor: colors.pendingSurface,
     borderWidth: 1,
     borderRadius: 16,
     padding: 14,
@@ -1507,18 +1508,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 12,
-    backgroundColor: '#f8fafc',
+    backgroundColor: colors.background,
   },
   suggestionCopy: {
     flex: 1,
     gap: 4,
   },
   suggestionTitle: {
-    color: '#0f172a',
+    color: colors.primaryNavy,
     fontWeight: '800',
   },
   errorText: {
-    color: '#b91c1c',
+    color: colors.danger,
     fontSize: 13,
     fontWeight: '700',
   },
@@ -1530,13 +1531,13 @@ const styles = StyleSheet.create({
   input: {
     minWidth: 190,
     flex: 1,
-    backgroundColor: '#ffffff',
-    borderColor: '#d6dce5',
+    backgroundColor: colors.card,
+    borderColor: colors.border,
     borderWidth: 1,
     borderRadius: 14,
     paddingHorizontal: 14,
     paddingVertical: 12,
-    color: '#132238',
+    color: colors.primaryNavyStrong,
   },
   splitLayout: {
     flexDirection: 'row',
@@ -1553,37 +1554,37 @@ const styles = StyleSheet.create({
     gap: 18,
   },
   batchCreateBox: {
-    backgroundColor: '#f8fafc',
+    backgroundColor: colors.background,
     borderRadius: 18,
     padding: 14,
-    borderColor: '#e2e8f0',
+    borderColor: colors.pendingSurface,
     borderWidth: 1,
     gap: 10,
   },
   batchCreateTitle: {
-    color: '#0f172a',
+    color: colors.primaryNavy,
     fontWeight: '800',
   },
   emptyState: {
-    backgroundColor: '#f8fafc',
+    backgroundColor: colors.background,
     borderRadius: 18,
     padding: 18,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: colors.pendingSurface,
   },
   emptyTitle: {
-    color: '#0f172a',
+    color: colors.primaryNavy,
     fontWeight: '800',
     marginBottom: 4,
   },
   groupCard: {
-    borderColor: '#e2e8f0',
+    borderColor: colors.pendingSurface,
     borderWidth: 1,
     borderRadius: 18,
     overflow: 'hidden',
   },
   groupHeader: {
-    backgroundColor: '#f8fafc',
+    backgroundColor: colors.background,
     padding: 14,
     flexDirection: 'row',
     alignItems: 'center',
@@ -1591,12 +1592,12 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   groupTitle: {
-    color: '#0f172a',
+    color: colors.primaryNavy,
     fontSize: 16,
     fontWeight: '800',
   },
   groupMeta: {
-    color: '#64748b',
+    color: colors.textSecondary,
     fontSize: 13,
   },
   groupTotals: {
@@ -1605,7 +1606,7 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
   },
   groupTotalText: {
-    color: '#334155',
+    color: colors.primaryNavySoft,
     fontWeight: '700',
     fontSize: 13,
   },
@@ -1614,7 +1615,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
     padding: 12,
-    borderTopColor: '#e2e8f0',
+    borderTopColor: colors.pendingSurface,
     borderTopWidth: 1,
   },
   checkbox: {
@@ -1622,19 +1623,19 @@ const styles = StyleSheet.create({
     height: 24,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#94a3b8',
+    borderColor: colors.neutralSlate,
     alignItems: 'center',
     justifyContent: 'center',
   },
   checkboxSelected: {
-    backgroundColor: '#0f766e',
-    borderColor: '#0f766e',
+    backgroundColor: colors.accentTealStrong,
+    borderColor: colors.accentTealStrong,
   },
   checkboxDisabled: {
     opacity: 0.35,
   },
   checkboxText: {
-    color: '#ffffff',
+    color: colors.card,
     fontWeight: '800',
   },
   rowMain: {
@@ -1642,16 +1643,16 @@ const styles = StyleSheet.create({
     minWidth: 160,
   },
   rowTitle: {
-    color: '#0f172a',
+    color: colors.primaryNavy,
     fontWeight: '800',
   },
   rowMeta: {
-    color: '#64748b',
+    color: colors.textSecondary,
     fontSize: 12,
     marginTop: 3,
   },
   rowAmount: {
-    color: '#0f172a',
+    color: colors.primaryNavy,
     fontWeight: '700',
     minWidth: 86,
   },
@@ -1672,20 +1673,20 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   detailLabel: {
-    color: '#64748b',
+    color: colors.textSecondary,
     fontSize: 12,
     fontWeight: '700',
     textTransform: 'uppercase',
   },
   detailValue: {
-    color: '#0f172a',
+    color: colors.primaryNavy,
     fontWeight: '700',
   },
   batchList: {
     maxHeight: 280,
   },
   batchListItem: {
-    borderColor: '#e2e8f0',
+    borderColor: colors.pendingSurface,
     borderWidth: 1,
     borderRadius: 16,
     padding: 12,
@@ -1693,15 +1694,15 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   batchListItemActive: {
-    borderColor: '#0f766e',
-    backgroundColor: '#f0fdfa',
+    borderColor: colors.accentTealStrong,
+    backgroundColor: colors.accentTealSoft,
   },
   batchTitle: {
-    color: '#0f172a',
+    color: colors.primaryNavy,
     fontWeight: '800',
   },
   batchMeta: {
-    color: '#64748b',
+    color: colors.textSecondary,
     fontSize: 12,
   },
   rowActions: {
@@ -1710,45 +1711,45 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   paymentForm: {
-    borderColor: '#e2e8f0',
+    borderColor: colors.pendingSurface,
     borderWidth: 1,
     borderRadius: 16,
     padding: 14,
     gap: 10,
-    backgroundColor: '#f8fafc',
+    backgroundColor: colors.background,
   },
   notesInput: {
     minHeight: 76,
     textAlignVertical: 'top',
   },
   sectionSubheading: {
-    color: '#0f172a',
+    color: colors.primaryNavy,
     fontWeight: '800',
     marginTop: 8,
   },
   batchRow: {
-    borderTopColor: '#e2e8f0',
+    borderTopColor: colors.pendingSurface,
     borderTopWidth: 1,
     paddingTop: 10,
     gap: 3,
   },
   batchRowTitle: {
-    color: '#0f172a',
+    color: colors.primaryNavy,
     fontWeight: '800',
   },
   invoiceDocument: {
-    borderColor: '#cbd5e1',
+    borderColor: colors.border,
     borderWidth: 1,
     borderRadius: 18,
     padding: 16,
     gap: 14,
-    backgroundColor: '#ffffff',
+    backgroundColor: colors.card,
   },
   invoiceHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     gap: 16,
-    borderBottomColor: '#0f172a',
+    borderBottomColor: colors.primaryNavy,
     borderBottomWidth: 2,
     paddingBottom: 14,
   },
@@ -1760,25 +1761,25 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
   },
   invoiceEyebrow: {
-    color: '#0f766e',
+    color: colors.accentTealStrong,
     fontSize: 12,
     fontWeight: '900',
     letterSpacing: 1.2,
     textTransform: 'uppercase',
   },
   invoiceNumber: {
-    color: '#0f172a',
+    color: colors.primaryNavy,
     fontSize: 22,
     fontWeight: '900',
     marginTop: 4,
   },
   invoiceCompany: {
-    color: '#0f172a',
+    color: colors.primaryNavy,
     fontWeight: '900',
     textAlign: 'right',
   },
   invoiceMuted: {
-    color: '#64748b',
+    color: colors.textSecondary,
     fontSize: 12,
     lineHeight: 18,
   },
@@ -1790,41 +1791,41 @@ const styles = StyleSheet.create({
   invoiceMetaCard: {
     flex: 1,
     minWidth: 180,
-    backgroundColor: '#f8fafc',
+    backgroundColor: colors.background,
     borderRadius: 14,
     padding: 12,
     gap: 3,
   },
   invoiceMetaLabel: {
-    color: '#64748b',
+    color: colors.textSecondary,
     fontSize: 11,
     fontWeight: '900',
     textTransform: 'uppercase',
   },
   invoiceMetaValue: {
-    color: '#0f172a',
+    color: colors.primaryNavy,
     fontWeight: '800',
   },
   invoiceTable: {
-    borderColor: '#e2e8f0',
+    borderColor: colors.pendingSurface,
     borderWidth: 1,
     borderRadius: 14,
     overflow: 'hidden',
   },
   invoiceTableHeader: {
     flexDirection: 'row',
-    backgroundColor: '#f8fafc',
-    borderBottomColor: '#e2e8f0',
+    backgroundColor: colors.background,
+    borderBottomColor: colors.pendingSurface,
     borderBottomWidth: 1,
   },
   invoiceTableRow: {
     flexDirection: 'row',
-    borderBottomColor: '#f1f5f9',
+    borderBottomColor: colors.background,
     borderBottomWidth: 1,
   },
   invoiceHeaderCell: {
     flex: 1,
-    color: '#64748b',
+    color: colors.textSecondary,
     fontSize: 11,
     fontWeight: '900',
     padding: 8,
@@ -1832,7 +1833,7 @@ const styles = StyleSheet.create({
   },
   invoiceCell: {
     flex: 1,
-    color: '#0f172a',
+    color: colors.primaryNavy,
     fontSize: 12,
     padding: 8,
   },
@@ -1844,7 +1845,7 @@ const styles = StyleSheet.create({
     minWidth: 220,
   },
   invoiceNotes: {
-    backgroundColor: '#f8fafc',
+    backgroundColor: colors.background,
     borderRadius: 14,
     padding: 12,
     gap: 4,

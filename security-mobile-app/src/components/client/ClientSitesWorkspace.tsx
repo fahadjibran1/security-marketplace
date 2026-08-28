@@ -1,7 +1,8 @@
-import * as React from 'react';
+﻿import * as React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { ClientPortalSite } from '../../types/models';
+import { colors } from '../../theme';
 
 export function ClientSitesWorkspace({ sites }: { sites: ClientPortalSite[] }) {
   return (
@@ -28,12 +29,12 @@ export function ClientSitesWorkspace({ sites }: { sites: ClientPortalSite[] }) {
 }
 
 const styles = StyleSheet.create({
-  panel: { backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 18, padding: 18, gap: 12 },
-  title: { color: '#0F172A', fontSize: 22, fontWeight: '800' },
-  helperText: { color: '#64748B' },
-  row: { flexDirection: 'row', gap: 12, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#F1F5F9', alignItems: 'center' },
+  panel: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.pendingSurface, borderRadius: 18, padding: 18, gap: 12 },
+  title: { color: colors.primaryNavy, fontSize: 22, fontWeight: '800' },
+  helperText: { color: colors.textSecondary },
+  row: { flexDirection: 'row', gap: 12, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: colors.background, alignItems: 'center' },
   flexGrow: { flex: 1 },
-  siteName: { color: '#0F172A', fontWeight: '800', fontSize: 16 },
-  meta: { color: '#64748B', marginTop: 3 },
-  status: { color: '#0F172A', fontWeight: '700', textTransform: 'capitalize' },
+  siteName: { color: colors.primaryNavy, fontWeight: '800', fontSize: 16 },
+  meta: { color: colors.textSecondary, marginTop: 3 },
+  status: { color: colors.primaryNavy, fontWeight: '700', textTransform: 'capitalize' },
 });

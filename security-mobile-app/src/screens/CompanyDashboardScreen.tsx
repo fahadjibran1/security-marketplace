@@ -1,4 +1,4 @@
-import * as React from 'react';
+﻿import * as React from 'react';
 import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, useWindowDimensions, View } from 'react-native';
 
 import { CompanyAuditWorkspace } from '../components/company/CompanyAuditWorkspace';
@@ -443,37 +443,37 @@ function normalizeShiftLifecycleStatus(value?: string | null) {
 function getShiftStatusBadge(status: string) {
   switch (normalizeShiftLifecycleStatus(status)) {
     case 'missed':
-      return { label: 'Missed', color: '#C2410C', icon: '⚠️' };
+      return { label: 'Missed', color: colors.warning, icon: '⚠️' };
     case 'offered':
-      return { label: 'Offered', color: '#3B82F6', icon: '🔵' };
+      return { label: 'Offered', color: colors.info, icon: '🔵' };
     case 'ready':
-      return { label: 'Ready', color: '#F59E0B', icon: '🟡' };
+      return { label: 'Ready', color: colors.warning, icon: '🟡' };
     case 'in_progress':
-      return { label: 'Live', color: '#10B981', icon: '🟢' };
+      return { label: 'Live', color: colors.success, icon: '🟢' };
     case 'completed':
-      return { label: 'Completed', color: '#374151', icon: '⚫' };
+      return { label: 'Completed', color: colors.primaryNavySoft, icon: '⚫' };
     case 'rejected':
-      return { label: 'Rejected', color: '#EF4444', icon: '🔴' };
+      return { label: 'Rejected', color: colors.danger, icon: '🔴' };
     case 'cancelled':
-      return { label: 'Cancelled', color: '#9CA3AF', icon: '⚫' };
+      return { label: 'Cancelled', color: colors.neutralSlate, icon: '⚫' };
     case 'unfilled':
     default:
-      return { label: 'Unfilled', color: '#6B7280', icon: '⚪' };
+      return { label: 'Unfilled', color: colors.textSecondary, icon: '⚪' };
   }
 }
 
 function getLiveShiftRowTone(status: string) {
   switch (normalizeShiftLifecycleStatus(status)) {
     case 'in_progress':
-      return '#ECFDF5';
+      return colors.successSurface;
     case 'ready':
-      return '#FFFBEB';
+      return colors.warningSurface;
     case 'missed':
-      return '#FFF7ED';
+      return colors.warningSurface;
     case 'rejected':
-      return '#FEF2F2';
+      return colors.dangerSurface;
     default:
-      return '#ffffff';
+      return colors.card;
   }
 }
 
@@ -620,14 +620,14 @@ function getShiftRisk(
   }
 
   if (score >= 80) {
-    return { level: 'high' as const, color: '#EF4444', label: 'HIGH 🔴' };
+    return { level: 'high' as const, color: colors.danger, label: 'HIGH 🔴' };
   }
 
   if (score >= 40) {
-    return { level: 'medium' as const, color: '#F59E0B', label: 'MEDIUM 🟡' };
+    return { level: 'medium' as const, color: colors.warning, label: 'MEDIUM 🟡' };
   }
 
-  return { level: 'low' as const, color: '#10B981', label: 'LOW 🟢' };
+  return { level: 'low' as const, color: colors.success, label: 'LOW 🟢' };
 }
 
 function getShiftDelay(
@@ -744,7 +744,7 @@ function getLiveShiftBoardRowTone(
   riskLevel?: 'high' | 'medium' | 'low',
 ) {
   if (riskLevel === 'high') {
-    return '#FEF2F2';
+    return colors.dangerSurface;
   }
 
   return getLiveShiftRowTone(status);
@@ -3960,7 +3960,7 @@ export function CompanyDashboardScreen(_props: CompanyDashboardScreenProps = {})
                   styles.liveBoardTableRow,
                   styles.liveBoardRow,
                   { backgroundColor: getLiveShiftBoardRowTone(lifecycleStatus, risk.level) },
-                  likelyLate ? { borderLeftWidth: 4, borderLeftColor: '#F59E0B' } : null,
+                  likelyLate ? { borderLeftWidth: 4, borderLeftColor: colors.warning } : null,
                   selectedShiftId === shift.id && styles.liveBoardTableRowSelected,
                   highlightedLiveShiftId === shift.id && styles.liveBoardRowHighlighted,
                 ]}
@@ -3992,14 +3992,14 @@ export function CompanyDashboardScreen(_props: CompanyDashboardScreenProps = {})
                 <View style={[LIVE_BOARD_COL_STYLES[4], styles.liveBoardCellCol]}>
                   <Text style={[styles.liveBoardCellBody, { color: risk.color, fontWeight: '700' }]}>{risk.label}</Text>
                   {likelyLate ? (
-                    <Text style={{ color: '#F59E0B', fontWeight: '600', fontSize: 12 }}>Likely late</Text>
+                    <Text style={{ color: colors.warning, fontWeight: '600', fontSize: 12 }}>Likely late</Text>
                   ) : null}
                 </View>
                 <Text
                   style={[
                     LIVE_BOARD_COL_STYLES[5],
                     styles.liveBoardCellBody,
-                    delay !== null ? { color: '#EF4444', fontWeight: '600' } : null,
+                    delay !== null ? { color: colors.danger, fontWeight: '600' } : null,
                   ]}
                   numberOfLines={2}
                 >
@@ -5026,11 +5026,11 @@ export function CompanyDashboardScreen(_props: CompanyDashboardScreenProps = {})
 const webSelectStyle = {
   borderRadius: 14,
   borderWidth: 1,
-  borderColor: '#d6dce5',
-  backgroundColor: '#ffffff',
+  borderColor: colors.border,
+  backgroundColor: colors.card,
   padding: '14px 16px',
   fontSize: 14,
-  color: '#132238',
+  color: colors.primaryNavyStrong,
   minHeight: 48,
 } as const;
 
@@ -5038,13 +5038,13 @@ const styles = StyleSheet.create({
   screen: {
     flex: 1,
     flexDirection: 'row',
-    backgroundColor: '#eef3f8',
+    backgroundColor: colors.surfaceSubtle,
     overflow: 'hidden',
     minHeight: 0,
   },
   sidebarShell: {
     width: 310,
-    backgroundColor: '#0f1a2b',
+    backgroundColor: colors.primaryNavy,
     overflow: 'hidden',
     minHeight: 0,
   },
@@ -5109,12 +5109,12 @@ const styles = StyleSheet.create({
     letterSpacing: 1.6,
     fontSize: 11,
     fontWeight: '800',
-    color: '#64748b',
+    color: colors.textSecondary,
   },
   headerTitle: {
     fontSize: 30,
     fontWeight: '900',
-    color: '#0f172a',
+    color: colors.primaryNavy,
     letterSpacing: -0.4,
     lineHeight: 36,
   },
@@ -5128,17 +5128,17 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 19,
     fontWeight: '500',
-    color: '#64748b',
+    color: colors.textSecondary,
     maxWidth: 720,
   },
   headerRefreshButton: {
-    backgroundColor: '#ffffff',
+    backgroundColor: colors.card,
     borderWidth: 1,
-    borderColor: '#e8edf3',
+    borderColor: colors.surfaceSubtle,
     borderRadius: 14,
     paddingHorizontal: 18,
     paddingVertical: 11,
-    shadowColor: '#0f172a',
+    shadowColor: colors.primaryNavy,
     shadowOpacity: 0.045,
     shadowRadius: 16,
     shadowOffset: { width: 0, height: 8 },
@@ -5159,12 +5159,12 @@ const styles = StyleSheet.create({
     gap: 28,
   },
   dashSectionShell: {
-    backgroundColor: '#ffffff',
+    backgroundColor: colors.card,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: '#e8edf3',
+    borderColor: colors.surfaceSubtle,
     padding: 22,
-    shadowColor: '#0f172a',
+    shadowColor: colors.primaryNavy,
     shadowOpacity: 0.035,
     shadowRadius: 16,
     shadowOffset: { width: 0, height: 8 },
@@ -5184,13 +5184,13 @@ const styles = StyleSheet.create({
   dashSectionTitle: {
     fontSize: 17,
     fontWeight: '900',
-    color: '#0f172a',
+    color: colors.primaryNavy,
     letterSpacing: 0.25,
   },
   dashSectionSubtitle: {
     fontSize: 13,
     fontWeight: '500',
-    color: '#64748b',
+    color: colors.textSecondary,
     lineHeight: 20,
     letterSpacing: 0.08,
     maxWidth: 720,
@@ -5224,18 +5224,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: colors.pendingSurface,
     backgroundColor: 'rgba(255, 255, 255, 0.92)',
   },
   liveOpsToolbarSyncText: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#64748b',
+    color: colors.textSecondary,
     letterSpacing: 0.05,
   },
   liveOpsToolbarSyncHover: {
     borderColor: 'rgba(148, 163, 184, 0.55)',
-    backgroundColor: '#ffffff',
+    backgroundColor: colors.card,
   } as any,
   liveOpsToolbarSyncPressed: {
     opacity: 0.9,
@@ -5253,13 +5253,13 @@ const styles = StyleSheet.create({
     lineHeight: 21,
   },
   liveOpsUrgentMeta: {
-    color: '#64748b',
+    color: colors.textSecondary,
     fontSize: 12,
     lineHeight: 18,
     fontWeight: '600',
   },
   liveOpsUrgentMessage: {
-    color: '#475569',
+    color: colors.textSecondary,
     fontSize: 12,
     lineHeight: 18,
     fontWeight: '500',
@@ -5276,14 +5276,14 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     flexShrink: 1,
     minWidth: 140,
-    color: '#334155',
+    color: colors.primaryNavySoft,
     fontSize: 12,
     lineHeight: 18,
     fontWeight: '700',
   },
   liveOpsUrgentOccurred: {
     flexShrink: 0,
-    color: '#94a3b8',
+    color: colors.neutralSlate,
     fontSize: 11,
     lineHeight: 16,
     fontWeight: '700',
@@ -5305,7 +5305,7 @@ const styles = StyleSheet.create({
     paddingVertical: 9,
     paddingHorizontal: 14,
     borderRadius: 12,
-    backgroundColor: '#f1f5f9',
+    backgroundColor: colors.background,
   },
   liveOpsUrgentBtnPrimaryText: {
     fontSize: 13,
@@ -5323,21 +5323,21 @@ const styles = StyleSheet.create({
   liveOpsDetailEmptyTitle: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#0f172a',
+    color: colors.primaryNavy,
     letterSpacing: 0.02,
   },
   liveOpsDetailEmptyDesc: {
     fontSize: 12,
     lineHeight: 17,
     fontWeight: '500',
-    color: '#64748b',
+    color: colors.textSecondary,
     maxWidth: 520,
   },
   liveOpsUrgentInset: {
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#FECACA',
-    backgroundColor: '#FFF7F7',
+    borderColor: colors.dangerSurface,
+    backgroundColor: colors.dangerSurface,
     padding: 16,
     gap: 12,
   },
@@ -5353,13 +5353,13 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 0.14,
     textTransform: 'uppercase',
-    color: '#64748b',
+    color: colors.textSecondary,
   },
   liveOpsSideRailHint: {
     fontSize: 12,
     lineHeight: 18,
     fontWeight: '500',
-    color: '#64748b',
+    color: colors.textSecondary,
     maxWidth: 420,
   },
   liveOpsFilterStack: {
@@ -5368,8 +5368,8 @@ const styles = StyleSheet.create({
   liveOpsFilterGroup: {
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#e8edf3',
-    backgroundColor: '#f8fafc',
+    borderColor: colors.surfaceSubtle,
+    backgroundColor: colors.background,
     padding: 14,
     gap: 8,
   },
@@ -5381,13 +5381,13 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '800',
     letterSpacing: 0.1,
-    color: '#0f172a',
+    color: colors.primaryNavy,
   },
   liveOpsFilterGroupHint: {
     fontSize: 12,
     lineHeight: 17,
     fontWeight: '500',
-    color: '#64748b',
+    color: colors.textSecondary,
     marginTop: -2,
   },
   liveOpsFilterGroupRow: {
@@ -5416,27 +5416,27 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 0.08,
     textTransform: 'uppercase',
-    color: '#64748b',
+    color: colors.textSecondary,
   },
   liveOpsFilterTextInput: {
     minHeight: 48,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#e8edf3',
-    backgroundColor: '#ffffff',
+    borderColor: colors.surfaceSubtle,
+    backgroundColor: colors.card,
     paddingHorizontal: 16,
     paddingVertical: 14,
     fontSize: 14,
-    color: '#132238',
+    color: colors.primaryNavyStrong,
     width: '100%' as any,
   },
   liveOpsFilterWebSelectChrome: {
-    borderColor: '#e8edf3',
+    borderColor: colors.surfaceSubtle,
     width: '100%' as any,
     boxSizing: 'border-box' as any,
   } as any,
   liveOpsChromeInputBorder: {
-    borderColor: '#e8edf3',
+    borderColor: colors.surfaceSubtle,
   },
   liveOpsBoardWrap: {
     alignSelf: 'stretch',
@@ -5461,26 +5461,26 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
   } as any,
   liveOpsRowTitleSide: {
-    color: '#0f172a',
+    color: colors.primaryNavy,
     fontWeight: '800',
     fontSize: 14,
     letterSpacing: 0.06,
     lineHeight: 20,
   },
   liveOpsRowMetaSide: {
-    color: '#64748b',
+    color: colors.textSecondary,
     fontSize: 12,
     lineHeight: 18,
     fontWeight: '500',
   },
   liveOpsSideRowMessage: {
-    color: '#475569',
+    color: colors.textSecondary,
     fontSize: 12,
     lineHeight: 18,
     fontWeight: '500',
   },
   liveOpsSideRowTimestamp: {
-    color: '#94a3b8',
+    color: colors.neutralSlate,
     fontSize: 11,
     lineHeight: 16,
     fontWeight: '700',
@@ -5504,20 +5504,20 @@ const styles = StyleSheet.create({
     paddingBottom: 6,
   },
   liveOpsRowTitle: {
-    color: '#0f172a',
+    color: colors.primaryNavy,
     fontWeight: '800',
     fontSize: 14,
     letterSpacing: 0.05,
     lineHeight: 20,
   },
   liveOpsRowMeta: {
-    color: '#64748b',
+    color: colors.textSecondary,
     fontSize: 12,
     lineHeight: 18,
     fontWeight: '500',
   },
   liveOpsNextAction: {
-    color: '#0f172a',
+    color: colors.primaryNavy,
     fontSize: 12,
     fontWeight: '700',
     lineHeight: 18,
@@ -5543,13 +5543,13 @@ const styles = StyleSheet.create({
     borderBottomColor: 'rgba(226, 232, 240, 0.95)',
   },
   liveOpsSelectedSummaryLine: {
-    color: '#475569',
+    color: colors.textSecondary,
     fontSize: 13,
     lineHeight: 20,
     fontWeight: '500',
   },
   liveOpsSelectedInstructions: {
-    color: '#334155',
+    color: colors.primaryNavySoft,
     fontSize: 13,
     lineHeight: 20,
     fontWeight: '500',
@@ -5563,7 +5563,7 @@ const styles = StyleSheet.create({
   liveOpsDetailTitle: {
     fontSize: 17,
     fontWeight: '900',
-    color: '#0f172a',
+    color: colors.primaryNavy,
     letterSpacing: 0.25,
     lineHeight: 24,
   },
@@ -5581,17 +5581,17 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 0.14,
     textTransform: 'uppercase',
-    color: '#64748b',
+    color: colors.textSecondary,
     marginBottom: 2,
   },
   liveOpsDetailTileLine: {
-    color: '#334155',
+    color: colors.primaryNavySoft,
     fontSize: 13,
     lineHeight: 20,
     fontWeight: '500',
   },
   liveOpsDetailListLine: {
-    color: '#334155',
+    color: colors.primaryNavySoft,
     fontSize: 13,
     lineHeight: 20,
     fontWeight: '500',
@@ -5599,7 +5599,7 @@ const styles = StyleSheet.create({
     paddingLeft: 12,
     marginLeft: 2,
     borderLeftWidth: 2,
-    borderLeftColor: '#e2e8f0',
+    borderLeftColor: colors.pendingSurface,
   },
   dashLivePanelCard: {
     flex: 1,
@@ -5609,7 +5609,7 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 24,
     fontWeight: '800',
-    color: '#0f172a',
+    color: colors.primaryNavy,
   },
   kpiGrid: {
     flexDirection: 'row',
@@ -5632,17 +5632,17 @@ const styles = StyleSheet.create({
   kpiCard: {
     minWidth: 180,
     flexGrow: 1,
-    backgroundColor: '#ffffff',
+    backgroundColor: colors.card,
     borderRadius: 22,
     padding: 20,
   },
   kpiLabel: {
-    color: '#64748b',
+    color: colors.textSecondary,
     fontSize: 13,
     fontWeight: '600',
   },
   kpiValue: {
-    color: '#0f172a',
+    color: colors.primaryNavy,
     fontSize: 32,
     fontWeight: '800',
     marginTop: 10,
@@ -5655,13 +5655,13 @@ const styles = StyleSheet.create({
   panel: {
     flexGrow: 1,
     minWidth: 320,
-    backgroundColor: '#ffffff',
+    backgroundColor: colors.card,
     borderRadius: 22,
     padding: 20,
     gap: 12,
   },
   priorityPanel: {
-    shadowColor: '#0f172a',
+    shadowColor: colors.primaryNavy,
     shadowOpacity: 0.05,
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 4 },
@@ -5669,26 +5669,26 @@ const styles = StyleSheet.create({
   },
   urgentPanel: {
     borderWidth: 1,
-    borderColor: '#FECACA',
-    backgroundColor: '#FFF7F7',
+    borderColor: colors.dangerSurface,
+    backgroundColor: colors.dangerSurface,
   },
   selectedShiftPanel: {
     borderWidth: 1,
-    borderColor: '#DBEAFE',
+    borderColor: colors.infoSurface,
   },
   secondaryPanel: {
-    backgroundColor: '#f8fafc',
+    backgroundColor: colors.background,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: colors.pendingSurface,
   },
   panelTitle: {
-    color: '#0f172a',
+    color: colors.primaryNavy,
     fontSize: 20,
     fontWeight: '800',
   },
   secondaryPanelTitle: {
     fontSize: 18,
-    color: '#334155',
+    color: colors.primaryNavySoft,
   },
   panelTitleInline: {
     marginTop: 12,
@@ -5700,7 +5700,7 @@ const styles = StyleSheet.create({
   },
   tableCard: {
     flex: 2,
-    backgroundColor: '#ffffff',
+    backgroundColor: colors.card,
     borderRadius: 22,
     padding: 20,
     gap: 10,
@@ -5716,7 +5716,7 @@ const styles = StyleSheet.create({
   },
   formCard: {
     flex: 1,
-    backgroundColor: '#ffffff',
+    backgroundColor: colors.card,
     borderRadius: 22,
     padding: 20,
     gap: 12,
@@ -5741,11 +5741,11 @@ const styles = StyleSheet.create({
     minHeight: 48,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#d6dce5',
-    backgroundColor: '#ffffff',
+    borderColor: colors.border,
+    backgroundColor: colors.card,
     paddingHorizontal: 14,
     paddingVertical: 12,
-    color: '#132238',
+    color: colors.primaryNavyStrong,
     minWidth: 160,
   },
   textArea: {
@@ -5772,23 +5772,23 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   primaryButton: {
-    backgroundColor: '#0f172a',
+    backgroundColor: colors.primaryNavy,
     borderRadius: 14,
     paddingHorizontal: 16,
     paddingVertical: 12,
   },
   primaryButtonText: {
-    color: '#f8fafc',
+    color: colors.background,
     fontWeight: '700',
   },
   secondaryButton: {
     borderRadius: 14,
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: '#e2e8f0',
+    backgroundColor: colors.pendingSurface,
   },
   secondaryButtonText: {
-    color: '#0f172a',
+    color: colors.primaryNavy,
     fontWeight: '700',
   },
   ghostButton: {
@@ -5796,7 +5796,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   ghostButtonText: {
-    color: '#dc2626',
+    color: colors.danger,
     fontWeight: '700',
   },
   tableHeader: {
@@ -5804,11 +5804,11 @@ const styles = StyleSheet.create({
     gap: 12,
     paddingBottom: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#e2e8f0',
+    borderBottomColor: colors.pendingSurface,
   },
   tableHeaderText: {
     flex: 1,
-    color: '#64748b',
+    color: colors.textSecondary,
     fontWeight: '700',
     fontSize: 12,
     textTransform: 'uppercase',
@@ -5831,7 +5831,7 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   liveBoardHdrText: {
-    color: '#64748b',
+    color: colors.textSecondary,
     fontWeight: '800',
     fontSize: 11,
     letterSpacing: 0.12,
@@ -5925,30 +5925,30 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   liveBoardCellBody: {
-    color: '#334155',
+    color: colors.primaryNavySoft,
     fontSize: 13,
     lineHeight: 18,
   },
   liveBoardShiftId: {
-    color: '#0f172a',
+    color: colors.primaryNavy,
     fontWeight: '800',
     fontSize: 13,
     lineHeight: 18,
   },
   liveBoardSiteTitle: {
-    color: '#0f172a',
+    color: colors.primaryNavy,
     fontWeight: '700',
     fontSize: 13,
     lineHeight: 18,
   },
   liveBoardSiteRisk: {
-    color: '#64748b',
+    color: colors.textSecondary,
     fontSize: 12,
     lineHeight: 17,
     fontWeight: '500',
   },
   liveBoardTableRowSelected: {
-    backgroundColor: '#f1f5f9',
+    backgroundColor: colors.background,
     borderRadius: 12,
     paddingHorizontal: 6,
   },
@@ -5962,28 +5962,28 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 14,
     borderBottomWidth: 1,
-    borderBottomColor: '#e2e8f0',
+    borderBottomColor: colors.pendingSurface,
   },
   liveBoardRow: {
     cursor: 'pointer',
   },
   liveBoardRowHighlighted: {
     borderWidth: 2,
-    borderColor: '#2563EB',
+    borderColor: colors.info,
     borderRadius: 14,
   },
   tableRowSelected: {
-    backgroundColor: '#f8fafc',
+    backgroundColor: colors.background,
     borderRadius: 14,
     paddingHorizontal: 10,
   },
   tableCell: {
     flex: 1,
-    color: '#334155',
+    color: colors.primaryNavySoft,
   },
   tableCellStrong: {
     flex: 1,
-    color: '#0f172a',
+    color: colors.primaryNavy,
     fontWeight: '700',
   },
   rowActions: {
@@ -6016,7 +6016,7 @@ const styles = StyleSheet.create({
     gap: 4,
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#edf2f7',
+    borderBottomColor: colors.background,
   },
   recordRowHover: {
     backgroundColor: 'rgba(15, 23, 42, 0.03)',
@@ -6031,11 +6031,11 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(15, 23, 42, 0.05)',
   },
   recordTitle: {
-    color: '#0f172a',
+    color: colors.primaryNavy,
     fontWeight: '700',
   },
   recordMeta: {
-    color: '#64748b',
+    color: colors.textSecondary,
     fontSize: 13,
   },
   dashListRow: {
@@ -6055,14 +6055,14 @@ const styles = StyleSheet.create({
     paddingBottom: 6,
   },
   dashListRowTitle: {
-    color: '#0f172a',
+    color: colors.primaryNavy,
     fontWeight: '800',
     fontSize: 14,
     letterSpacing: 0.05,
     lineHeight: 20,
   },
   dashListRowMeta: {
-    color: '#64748b',
+    color: colors.textSecondary,
     fontSize: 12,
     lineHeight: 18,
     fontWeight: '500',
@@ -6086,7 +6086,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(16, 185, 129, 0.06)',
     borderWidth: 1,
     borderColor: 'rgba(16, 185, 129, 0.22)',
-    shadowColor: '#0f172a',
+    shadowColor: colors.primaryNavy,
     shadowOpacity: 0.045,
     shadowRadius: 16,
     shadowOffset: { width: 0, height: 8 },
@@ -6095,7 +6095,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(254, 243, 199, 0.35)',
     borderWidth: 1,
     borderColor: 'rgba(245, 158, 11, 0.35)',
-    shadowColor: '#0f172a',
+    shadowColor: colors.primaryNavy,
     shadowOpacity: 0.055,
     shadowRadius: 16,
     shadowOffset: { width: 0, height: 8 },
@@ -6129,8 +6129,8 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   actionRequiredRowCool: {
-    backgroundColor: '#ffffff',
-    borderColor: '#e2e8f0',
+    backgroundColor: colors.card,
+    borderColor: colors.pendingSurface,
   },
   actionRequiredRowAttention: {
     backgroundColor: 'rgba(254, 242, 242, 0.85)',
@@ -6141,7 +6141,7 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(249, 115, 22, 0.28)',
   },
   actionRequiredRowHover: {
-    shadowColor: '#0f172a',
+    shadowColor: colors.primaryNavy,
     shadowOpacity: 0.05,
     shadowRadius: 16,
     shadowOffset: { width: 0, height: 8 },
@@ -6157,16 +6157,16 @@ const styles = StyleSheet.create({
   actionRequiredAccent: {
     width: 4,
     alignSelf: 'stretch',
-    backgroundColor: '#e2e8f0',
+    backgroundColor: colors.pendingSurface,
   },
   actionRequiredAccentMuted: {
-    backgroundColor: '#e2e8f0',
+    backgroundColor: colors.pendingSurface,
   },
   actionRequiredAccentBarAttention: {
-    backgroundColor: '#ef4444',
+    backgroundColor: colors.danger,
   },
   actionRequiredAccentBarWarning: {
-    backgroundColor: '#f97316',
+    backgroundColor: colors.warning,
   },
   actionRequiredRowMain: {
     flex: 1,
@@ -6191,17 +6191,17 @@ const styles = StyleSheet.create({
     flexShrink: 0,
   },
   actionRequiredTitle: {
-    color: '#0f172a',
+    color: colors.primaryNavy,
     fontWeight: '900',
     fontSize: 15,
     letterSpacing: 0.1,
     lineHeight: 20,
   },
   actionRequiredTitleHot: {
-    color: '#7f1d1d',
+    color: colors.danger,
   },
   actionRequiredDescription: {
-    color: '#64748b',
+    color: colors.textSecondary,
     fontSize: 12,
     lineHeight: 18,
     fontWeight: '500',
@@ -6218,21 +6218,21 @@ const styles = StyleSheet.create({
     minWidth: 56,
   },
   actionRequiredCountBadgeCool: {
-    backgroundColor: '#f1f5f9',
-    borderColor: '#e2e8f0',
+    backgroundColor: colors.background,
+    borderColor: colors.pendingSurface,
   },
   actionRequiredCountBadgeHot: {
     backgroundColor: 'rgba(239, 68, 68, 0.1)',
     borderColor: 'rgba(239, 68, 68, 0.22)',
   },
   actionRequiredCount: {
-    color: '#0f172a',
+    color: colors.primaryNavy,
     fontWeight: '900',
     fontSize: 13,
     letterSpacing: 0.2,
   },
   actionRequiredCountHot: {
-    color: '#991b1b',
+    color: colors.danger,
   },
   actionRequiredCtaWrap: {
     paddingHorizontal: 12,
@@ -6243,13 +6243,13 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(37, 99, 235, 0.06)',
   },
   actionRequiredCta: {
-    color: '#1d4ed8',
+    color: colors.info,
     fontSize: 12,
     fontWeight: '900',
     letterSpacing: 0.2,
   },
   helperText: {
-    color: '#64748b',
+    color: colors.textSecondary,
     fontSize: 13,
   },
   urgentItemActions: {
@@ -6259,7 +6259,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   nextActionText: {
-    color: '#0f172a',
+    color: colors.primaryNavy,
     fontSize: 13,
     fontWeight: '700',
   },
@@ -6276,7 +6276,7 @@ const styles = StyleSheet.create({
     textTransform: 'capitalize',
   },
   subtleLabel: {
-    color: '#475569',
+    color: colors.textSecondary,
     fontWeight: '700',
     fontSize: 13,
   },
@@ -6288,7 +6288,7 @@ const styles = StyleSheet.create({
   dayCard: {
     width: '48%',
     minWidth: 320,
-    backgroundColor: '#ffffff',
+    backgroundColor: colors.card,
     borderRadius: 22,
     padding: 18,
     gap: 12,
@@ -6299,18 +6299,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   dayCardTitle: {
-    color: '#0f172a',
+    color: colors.primaryNavy,
     fontSize: 18,
     fontWeight: '800',
   },
   dayCardMeta: {
-    color: '#64748b',
+    color: colors.textSecondary,
     fontSize: 13,
   },
   plannerRow: {
     borderRadius: 18,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: colors.pendingSurface,
     padding: 14,
     gap: 10,
   },
@@ -6323,43 +6323,43 @@ const styles = StyleSheet.create({
   detailCard: {
     minWidth: 260,
     flexGrow: 1,
-    backgroundColor: '#f8fafc',
+    backgroundColor: colors.background,
     borderRadius: 18,
     borderWidth: 1,
-    borderColor: '#e8edf3',
+    borderColor: colors.surfaceSubtle,
     padding: 16,
     gap: 8,
   },
   detailTitle: {
-    color: '#0f172a',
+    color: colors.primaryNavy,
     fontWeight: '800',
     fontSize: 16,
   },
   closeOutCard: {
-    backgroundColor: '#f1f5f9',
+    backgroundColor: colors.background,
   },
   closeOutNotesSection: {
     gap: 8,
     marginTop: 8,
   },
   closeOutStatusGood: {
-    color: '#166534',
+    color: colors.success,
   },
   closeOutStatusAttention: {
-    color: '#b45309',
+    color: colors.warning,
   },
   errorCard: {
-    backgroundColor: '#fee2e2',
+    backgroundColor: colors.dangerSurface,
     borderRadius: 18,
     padding: 16,
     gap: 4,
   },
   errorTitle: {
-    color: '#991b1b',
+    color: colors.danger,
     fontWeight: '800',
   },
   errorText: {
-    color: '#7f1d1d',
+    color: colors.danger,
   },
   feedbackCard: {
     borderRadius: 18,
@@ -6367,28 +6367,28 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   feedbackCardSuccess: {
-    backgroundColor: '#dcfce7',
+    backgroundColor: colors.successSurface,
   },
   feedbackCardError: {
-    backgroundColor: '#fee2e2',
+    backgroundColor: colors.dangerSurface,
   },
   feedbackTitle: {
     fontWeight: '800',
   },
   feedbackTitleSuccess: {
-    color: '#166534',
+    color: colors.success,
   },
   feedbackTitleError: {
-    color: '#991b1b',
+    color: colors.danger,
   },
   feedbackText: {
     fontSize: 14,
   },
   feedbackTextSuccess: {
-    color: '#166534',
+    color: colors.success,
   },
   feedbackTextError: {
-    color: '#7f1d1d',
+    color: colors.danger,
   },
   companyMobileFallback: {
     flex: 1,
@@ -6412,10 +6412,10 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#eef3f8',
+    backgroundColor: colors.surfaceSubtle,
   },
   loadingText: {
-    color: '#0f172a',
+    color: colors.primaryNavy,
     fontSize: 16,
     fontWeight: '700',
   },
@@ -6428,13 +6428,13 @@ const styles = StyleSheet.create({
   dashEmptyTitle: {
     fontSize: 15,
     fontWeight: '800',
-    color: '#0f172a',
+    color: colors.primaryNavy,
     letterSpacing: 0.1,
   },
   dashEmptyDesc: {
     fontSize: 13,
     lineHeight: 20,
-    color: '#64748b',
+    color: colors.textSecondary,
     fontWeight: '500',
     maxWidth: 520,
   },
@@ -6458,7 +6458,7 @@ const styles = StyleSheet.create({
   dashEmptyCtaText: {
     fontSize: 13,
     fontWeight: '800',
-    color: '#1d4ed8',
+    color: colors.info,
   },
 });
 

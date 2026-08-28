@@ -1,7 +1,8 @@
-import * as React from 'react';
+﻿import * as React from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { Timesheet, TimesheetBillingStatus, TimesheetPayrollStatus } from '../../types/models';
+import { colors } from '../../theme';
 
 type GroupView = 'week' | 'month' | 'client' | 'site';
 type CommercialState =
@@ -465,15 +466,15 @@ function buildCsvRows(rows: FinanceRow[], groups: FinanceGroup[] = []) {
 function getStateTone(state: CommercialState) {
   switch (state) {
     case 'fully_settled':
-      return { background: '#dcfce7', color: '#166534' };
+      return { background: colors.successSurface, color: colors.success };
     case 'paid_not_invoiced':
     case 'invoiced_not_paid':
-      return { background: '#fef3c7', color: '#92400e' };
+      return { background: colors.warningSurface, color: colors.warning };
     case 'missing_data':
-      return { background: '#fee2e2', color: '#991b1b' };
+      return { background: colors.dangerSurface, color: colors.danger };
     case 'unpaid_uninvoiced':
     default:
-      return { background: '#e0f2fe', color: '#075985' };
+      return { background: colors.infoSurface, color: colors.info };
   }
 }
 
@@ -815,22 +816,22 @@ function Detail({ label, value }: { label: string; value: string }) {
 const webSelectStyle = {
   borderRadius: 14,
   borderWidth: 1,
-  borderColor: '#d6dce5',
-  backgroundColor: '#ffffff',
+  borderColor: colors.border,
+  backgroundColor: colors.card,
   padding: '12px 14px',
   fontSize: 14,
-  color: '#132238',
+  color: colors.primaryNavyStrong,
   minHeight: 46,
 } as const;
 
 const styles = StyleSheet.create({
   workspace: { gap: 18 },
   headerCard: {
-    backgroundColor: '#ffffff',
+    backgroundColor: colors.card,
     borderRadius: 22,
     padding: 22,
     borderWidth: 1,
-    borderColor: '#dbe4ef',
+    borderColor: colors.surfaceSubtle,
     flexDirection: 'row',
     justifyContent: 'space-between',
     flexWrap: 'wrap',
@@ -838,69 +839,69 @@ const styles = StyleSheet.create({
   },
   headerCopy: { flex: 1, minWidth: 320 },
   headerActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, alignItems: 'center' },
-  eyebrow: { color: '#0f766e', fontSize: 12, fontWeight: '800', letterSpacing: 1.5, textTransform: 'uppercase' },
-  title: { color: '#0f172a', fontSize: 30, fontWeight: '800' },
-  subtitle: { color: '#64748b', marginTop: 6, fontSize: 14, lineHeight: 21 },
-  primaryButton: { backgroundColor: '#0f172a', borderRadius: 14, paddingHorizontal: 16, paddingVertical: 12, alignItems: 'center' },
-  primaryButtonText: { color: '#ffffff', fontWeight: '800' },
-  secondaryButton: { backgroundColor: '#ffffff', borderColor: '#cbd5e1', borderWidth: 1, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 11, alignItems: 'center' },
-  secondaryButtonText: { color: '#0f172a', fontWeight: '700' },
+  eyebrow: { color: colors.accentTealStrong, fontSize: 12, fontWeight: '800', letterSpacing: 1.5, textTransform: 'uppercase' },
+  title: { color: colors.primaryNavy, fontSize: 30, fontWeight: '800' },
+  subtitle: { color: colors.textSecondary, marginTop: 6, fontSize: 14, lineHeight: 21 },
+  primaryButton: { backgroundColor: colors.primaryNavy, borderRadius: 14, paddingHorizontal: 16, paddingVertical: 12, alignItems: 'center' },
+  primaryButtonText: { color: colors.card, fontWeight: '800' },
+  secondaryButton: { backgroundColor: colors.card, borderColor: colors.border, borderWidth: 1, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 11, alignItems: 'center' },
+  secondaryButtonText: { color: colors.primaryNavy, fontWeight: '700' },
   buttonDisabled: { opacity: 0.5 },
   summaryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
-  metricCard: { minWidth: 165, flex: 1, backgroundColor: '#ffffff', borderRadius: 18, padding: 16, borderColor: '#dbe4ef', borderWidth: 1 },
-  metricWarning: { backgroundColor: '#fffbeb', borderColor: '#fde68a' },
-  metricDanger: { backgroundColor: '#fef2f2', borderColor: '#fecaca' },
-  metricLabel: { color: '#64748b', fontSize: 12, fontWeight: '700', textTransform: 'uppercase' },
-  metricValue: { color: '#0f172a', fontSize: 22, fontWeight: '800', marginTop: 8 },
-  filterCard: { backgroundColor: '#ffffff', borderRadius: 22, padding: 18, borderColor: '#dbe4ef', borderWidth: 1 },
+  metricCard: { minWidth: 165, flex: 1, backgroundColor: colors.card, borderRadius: 18, padding: 16, borderColor: colors.surfaceSubtle, borderWidth: 1 },
+  metricWarning: { backgroundColor: colors.warningSurface, borderColor: colors.warningBorder },
+  metricDanger: { backgroundColor: colors.dangerSurface, borderColor: colors.dangerBorder },
+  metricLabel: { color: colors.textSecondary, fontSize: 12, fontWeight: '700', textTransform: 'uppercase' },
+  metricValue: { color: colors.primaryNavy, fontSize: 22, fontWeight: '800', marginTop: 8 },
+  filterCard: { backgroundColor: colors.card, borderRadius: 22, padding: 18, borderColor: colors.surfaceSubtle, borderWidth: 1 },
   filterGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   input: {
     minWidth: 190,
     flex: 1,
-    backgroundColor: '#ffffff',
-    borderColor: '#d6dce5',
+    backgroundColor: colors.card,
+    borderColor: colors.border,
     borderWidth: 1,
     borderRadius: 14,
     paddingHorizontal: 14,
     paddingVertical: 12,
-    color: '#132238',
+    color: colors.primaryNavyStrong,
   },
   contentLayout: { flexDirection: 'row', gap: 18, alignItems: 'flex-start', flexWrap: 'wrap' },
   mainColumn: { flex: 2, minWidth: 620 },
   sideColumn: { flex: 1, minWidth: 360 },
-  panel: { backgroundColor: '#ffffff', borderRadius: 22, padding: 18, borderColor: '#dbe4ef', borderWidth: 1, gap: 14 },
+  panel: { backgroundColor: colors.card, borderRadius: 22, padding: 18, borderColor: colors.surfaceSubtle, borderWidth: 1, gap: 14 },
   panelHeader: { flexDirection: 'row', justifyContent: 'space-between', gap: 12, alignItems: 'center' },
-  panelTitle: { color: '#0f172a', fontSize: 18, fontWeight: '800' },
-  helperText: { color: '#64748b', fontSize: 13, lineHeight: 19 },
-  emptyState: { backgroundColor: '#f8fafc', borderRadius: 18, padding: 18, borderColor: '#e2e8f0', borderWidth: 1 },
-  emptyTitle: { color: '#0f172a', fontWeight: '800', fontSize: 16, marginBottom: 4 },
-  groupCard: { borderColor: '#e2e8f0', borderWidth: 1, borderRadius: 18, padding: 14, gap: 12 },
+  panelTitle: { color: colors.primaryNavy, fontSize: 18, fontWeight: '800' },
+  helperText: { color: colors.textSecondary, fontSize: 13, lineHeight: 19 },
+  emptyState: { backgroundColor: colors.background, borderRadius: 18, padding: 18, borderColor: colors.pendingSurface, borderWidth: 1 },
+  emptyTitle: { color: colors.primaryNavy, fontWeight: '800', fontSize: 16, marginBottom: 4 },
+  groupCard: { borderColor: colors.pendingSurface, borderWidth: 1, borderRadius: 18, padding: 14, gap: 12 },
   groupHeader: { flexDirection: 'row', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' },
   groupHeaderCopy: { flex: 1, minWidth: 320 },
-  groupTitle: { color: '#0f172a', fontWeight: '800', fontSize: 16 },
-  groupMeta: { color: '#64748b', fontSize: 12, marginTop: 4 },
+  groupTitle: { color: colors.primaryNavy, fontWeight: '800', fontSize: 16 },
+  groupMeta: { color: colors.textSecondary, fontSize: 12, marginTop: 4 },
   groupStats: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  groupStat: { color: '#334155', fontSize: 12, fontWeight: '700', backgroundColor: '#f8fafc', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 },
+  groupStat: { color: colors.primaryNavySoft, fontSize: 12, fontWeight: '700', backgroundColor: colors.background, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 },
   table: { minWidth: 1120 },
-  tableHeader: { flexDirection: 'row', gap: 10, paddingVertical: 10, borderBottomColor: '#e2e8f0', borderBottomWidth: 1 },
-  tableRow: { flexDirection: 'row', gap: 10, paddingVertical: 12, borderBottomColor: '#f1f5f9', borderBottomWidth: 1, alignItems: 'center' },
-  headerCell: { width: 105, color: '#64748b', fontSize: 12, fontWeight: '800', textTransform: 'uppercase' },
-  tableCell: { width: 105, color: '#0f172a', fontWeight: '700', fontSize: 12 },
+  tableHeader: { flexDirection: 'row', gap: 10, paddingVertical: 10, borderBottomColor: colors.pendingSurface, borderBottomWidth: 1 },
+  tableRow: { flexDirection: 'row', gap: 10, paddingVertical: 12, borderBottomColor: colors.background, borderBottomWidth: 1, alignItems: 'center' },
+  headerCell: { width: 105, color: colors.textSecondary, fontSize: 12, fontWeight: '800', textTransform: 'uppercase' },
+  tableCell: { width: 105, color: colors.primaryNavy, fontWeight: '700', fontSize: 12 },
   checkboxCol: { width: 44 },
-  checkbox: { width: 30, height: 30, borderRadius: 8, borderColor: '#94a3b8', borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
-  checkboxSelected: { backgroundColor: '#0f172a', borderColor: '#0f172a' },
-  checkboxText: { color: '#ffffff', fontWeight: '900' },
+  checkbox: { width: 30, height: 30, borderRadius: 8, borderColor: colors.neutralSlate, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+  checkboxSelected: { backgroundColor: colors.primaryNavy, borderColor: colors.primaryNavy },
+  checkboxText: { color: colors.card, fontWeight: '900' },
   identityCol: { width: 260 },
   stateCol: { width: 150 },
-  rowTitle: { color: '#0f172a', fontWeight: '800' },
-  rowMeta: { color: '#64748b', fontSize: 12, marginTop: 3 },
+  rowTitle: { color: colors.primaryNavy, fontWeight: '800' },
+  rowMeta: { color: colors.textSecondary, fontSize: 12, marginTop: 3 },
   stateBadge: { width: 150, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 7, alignItems: 'center' },
   stateBadgeText: { fontSize: 12, fontWeight: '800' },
   detailStack: { gap: 10 },
-  detailRow: { borderBottomColor: '#eef2f7', borderBottomWidth: 1, paddingBottom: 8 },
-  detailLabel: { color: '#64748b', fontSize: 12, fontWeight: '800', textTransform: 'uppercase' },
-  detailValue: { color: '#0f172a', fontSize: 14, fontWeight: '700', marginTop: 3 },
-  warningBox: { backgroundColor: '#f8fafc', borderColor: '#e2e8f0', borderWidth: 1, borderRadius: 16, padding: 12, gap: 6 },
-  warningTitle: { color: '#0f172a', fontWeight: '800' },
-  warningText: { color: '#334155', fontWeight: '700' },
+  detailRow: { borderBottomColor: colors.surfaceSubtle, borderBottomWidth: 1, paddingBottom: 8 },
+  detailLabel: { color: colors.textSecondary, fontSize: 12, fontWeight: '800', textTransform: 'uppercase' },
+  detailValue: { color: colors.primaryNavy, fontSize: 14, fontWeight: '700', marginTop: 3 },
+  warningBox: { backgroundColor: colors.background, borderColor: colors.pendingSurface, borderWidth: 1, borderRadius: 16, padding: 12, gap: 6 },
+  warningTitle: { color: colors.primaryNavy, fontWeight: '800' },
+  warningText: { color: colors.primaryNavySoft, fontWeight: '700' },
 });

@@ -1,26 +1,13 @@
 import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
-
 import { FeatureCard } from '../components/FeatureCard';
-import {
-  formatApiErrorMessage,
-  listMyAvailabilityOverrides,
-  listMyAvailabilityRules,
-  listMyGuardLeave,
-  saveAvailabilityOverride,
-  saveAvailabilityRule,
-  saveMyGuardLeave,
-} from '../services/api';
+import { StatePanel } from '../components/StatePanel';
+import { formatApiErrorMessage, listMyAvailabilityOverrides, listMyAvailabilityRules, listMyGuardLeave, saveAvailabilityOverride, saveAvailabilityRule, saveMyGuardLeave } from '../services/api';
 import { GuardAvailabilityOverride, GuardAvailabilityRule, GuardLeave } from '../types/models';
-import { colors } from '../theme';
+import { colors, control, radii, spacing, typography } from '../theme';
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-
-function formatDate(value?: string | null) {
-  if (!value) return 'Not set';
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString('en-GB');
-}
+function formatDate(value?: string | null) { if (!value) return 'Not set'; const date = new Date(value); return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString('en-GB'); }
 
 export function GuardAvailabilityScreen() {
   const [rules, setRules] = useState<GuardAvailabilityRule[]>([]);
@@ -32,278 +19,42 @@ export function GuardAvailabilityScreen() {
   const [feedback, setFeedback] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
   const [loading, setLoading] = useState(false);
 
-  async function loadData() {
-    setLoading(true);
-    try {
-      const [nextRules, nextOverrides, nextLeave] = await Promise.all([
-        listMyAvailabilityRules(),
-        listMyAvailabilityOverrides(),
-        listMyGuardLeave(),
-      ]);
-      setRules(nextRules);
-      setOverrides(nextOverrides);
-      setLeaveRows(nextLeave);
-    } catch (error) {
-      setFeedback({ tone: 'error', message: formatApiErrorMessage(error, 'Unable to load availability records.') });
-    } finally {
-      setLoading(false);
-    }
-  }
+  async function loadData() { setLoading(true); try { const [nextRules, nextOverrides, nextLeave] = await Promise.all([listMyAvailabilityRules(), listMyAvailabilityOverrides(), listMyGuardLeave()]); setRules(nextRules); setOverrides(nextOverrides); setLeaveRows(nextLeave); } catch (error) { setFeedback({ tone: 'error', message: formatApiErrorMessage(error, 'Unable to load availability records.') }); } finally { setLoading(false); } }
+  useEffect(() => { loadData(); }, []);
+  async function handleSaveRule() { try { await saveAvailabilityRule({ weekday: Number(ruleForm.weekday), startTime: ruleForm.startTime, endTime: ruleForm.endTime, isAvailable: ruleForm.isAvailable === 'true' }, true); setFeedback({ tone: 'success', message: 'Weekly availability saved.' }); await loadData(); } catch (error) { setFeedback({ tone: 'error', message: formatApiErrorMessage(error, 'Unable to save availability.') }); } }
+  async function handleSaveOverride() { try { await saveAvailabilityOverride({ date: overrideForm.date, startTime: overrideForm.startTime || null, endTime: overrideForm.endTime || null, status: overrideForm.status, note: overrideForm.note || null }, true); setOverrideForm({ date: '', startTime: '', endTime: '', status: 'unavailable', note: '' }); setFeedback({ tone: 'success', message: 'One-off availability saved.' }); await loadData(); } catch (error) { setFeedback({ tone: 'error', message: formatApiErrorMessage(error, 'Unable to save one-off availability.') }); } }
+  async function handleSaveLeave() { try { await saveMyGuardLeave({ leaveType: leaveForm.leaveType, startAt: leaveForm.startAt, endAt: leaveForm.endAt, reason: leaveForm.reason || null }); setLeaveForm({ leaveType: 'annual_leave', startAt: '', endAt: '', reason: '' }); setFeedback({ tone: 'success', message: 'Leave request saved for company review.' }); await loadData(); } catch (error) { setFeedback({ tone: 'error', message: formatApiErrorMessage(error, 'Unable to save leave request.') }); } }
 
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  async function handleSaveRule() {
-    try {
-      await saveAvailabilityRule(
-        {
-          weekday: Number(ruleForm.weekday),
-          startTime: ruleForm.startTime,
-          endTime: ruleForm.endTime,
-          isAvailable: ruleForm.isAvailable === 'true',
-        },
-        true,
-      );
-      setFeedback({ tone: 'success', message: 'Weekly availability saved.' });
-      await loadData();
-    } catch (error) {
-      setFeedback({ tone: 'error', message: formatApiErrorMessage(error, 'Unable to save availability.') });
-    }
-  }
-
-  async function handleSaveOverride() {
-    try {
-      await saveAvailabilityOverride(
-        {
-          date: overrideForm.date,
-          startTime: overrideForm.startTime || null,
-          endTime: overrideForm.endTime || null,
-          status: overrideForm.status,
-          note: overrideForm.note || null,
-        },
-        true,
-      );
-      setOverrideForm({ date: '', startTime: '', endTime: '', status: 'unavailable', note: '' });
-      setFeedback({ tone: 'success', message: 'One-off availability saved.' });
-      await loadData();
-    } catch (error) {
-      setFeedback({ tone: 'error', message: formatApiErrorMessage(error, 'Unable to save one-off availability.') });
-    }
-  }
-
-  async function handleSaveLeave() {
-    try {
-      await saveMyGuardLeave({
-        leaveType: leaveForm.leaveType,
-        startAt: leaveForm.startAt,
-        endAt: leaveForm.endAt,
-        reason: leaveForm.reason || null,
-      });
-      setLeaveForm({ leaveType: 'annual_leave', startAt: '', endAt: '', reason: '' });
-      setFeedback({ tone: 'success', message: 'Leave request saved for company review.' });
-      await loadData();
-    } catch (error) {
-      setFeedback({ tone: 'error', message: formatApiErrorMessage(error, 'Unable to save leave request.') });
-    }
-  }
-
-  return (
-    <FeatureCard title="Availability & leave" subtitle="Share when you can work and request time off.">
-      {feedback ? (
-        <View style={[styles.feedback, feedback.tone === 'error' ? styles.feedbackError : styles.feedbackSuccess]}>
-          <Text style={styles.feedbackText}>{feedback.message}</Text>
-        </View>
-      ) : null}
-      <Text style={styles.sectionTitle}>Weekly availability</Text>
-      <View style={styles.grid}>
-        <TextInput
-          style={styles.input}
-          placeholder="Weekday 0-6"
-          value={ruleForm.weekday}
-          onChangeText={(weekday: string) => setRuleForm((prev) => ({ ...prev, weekday }))}
-        />
-        <TextInput
-          style={styles.input}
-          placeholder="Start HH:mm"
-          value={ruleForm.startTime}
-          onChangeText={(startTime: string) => setRuleForm((prev) => ({ ...prev, startTime }))}
-        />
-        <TextInput
-          style={styles.input}
-          placeholder="End HH:mm"
-          value={ruleForm.endTime}
-          onChangeText={(endTime: string) => setRuleForm((prev) => ({ ...prev, endTime }))}
-        />
-        <TextInput
-          style={styles.input}
-          placeholder="true or false"
-          value={ruleForm.isAvailable}
-          onChangeText={(isAvailable: string) => setRuleForm((prev) => ({ ...prev, isAvailable }))}
-        />
-      </View>
-      <Pressable style={styles.primaryButton} onPress={handleSaveRule}>
-        <Text style={styles.primaryButtonText}>Save weekly availability</Text>
-      </Pressable>
-      <View style={styles.list}>
-        {rules.length === 0 ? (
-          <Text style={styles.metaText}>{loading ? 'Loading availability...' : 'No weekly availability rules yet.'}</Text>
-        ) : (
-          rules.map((rule) => (
-            <View key={rule.id} style={styles.simpleRow}>
-              <Text style={styles.rowTitle}>{WEEKDAYS[rule.weekday] || `Day ${rule.weekday}`}</Text>
-              <Text style={styles.metaText}>
-                {rule.startTime}-{rule.endTime} | {rule.isAvailable ? 'Available' : 'Unavailable'}
-              </Text>
-            </View>
-          ))
-        )}
-      </View>
-
-      <Text style={styles.sectionTitle}>One-off availability</Text>
-      <View style={styles.grid}>
-        <TextInput
-          style={styles.input}
-          placeholder="Date YYYY-MM-DD"
-          value={overrideForm.date}
-          onChangeText={(date: string) => setOverrideForm((prev) => ({ ...prev, date }))}
-        />
-        <TextInput
-          style={styles.input}
-          placeholder="Start HH:mm optional"
-          value={overrideForm.startTime}
-          onChangeText={(startTime: string) => setOverrideForm((prev) => ({ ...prev, startTime }))}
-        />
-        <TextInput
-          style={styles.input}
-          placeholder="End HH:mm optional"
-          value={overrideForm.endTime}
-          onChangeText={(endTime: string) => setOverrideForm((prev) => ({ ...prev, endTime }))}
-        />
-        <TextInput
-          style={styles.input}
-          placeholder="available/unavailable"
-          value={overrideForm.status}
-          onChangeText={(status: string) => setOverrideForm((prev) => ({ ...prev, status }))}
-        />
-      </View>
-      <TextInput
-        style={styles.input}
-        placeholder="Note optional"
-        value={overrideForm.note}
-        onChangeText={(note: string) => setOverrideForm((prev) => ({ ...prev, note }))}
-      />
-      <Pressable style={styles.secondaryButton} onPress={handleSaveOverride}>
-        <Text style={styles.secondaryButtonText}>Save one-off availability</Text>
-      </Pressable>
-      <View style={styles.list}>
-        {overrides.length === 0 ? (
-          <Text style={styles.metaText}>No one-off overrides yet.</Text>
-        ) : (
-          overrides.slice(0, 5).map((override) => (
-            <View key={override.id} style={styles.simpleRow}>
-              <Text style={styles.rowTitle}>{formatDate(override.date)}</Text>
-              <Text style={styles.metaText}>
-                {override.status} | {override.startTime || 'All day'}-{override.endTime || 'All day'}
-              </Text>
-            </View>
-          ))
-        )}
-      </View>
-
-      <Text style={styles.sectionTitle}>Leave request</Text>
-      <View style={styles.grid}>
-        <TextInput
-          style={styles.input}
-          placeholder="Type"
-          value={leaveForm.leaveType}
-          onChangeText={(leaveType: string) => setLeaveForm((prev) => ({ ...prev, leaveType }))}
-        />
-        <TextInput
-          style={styles.input}
-          placeholder="Start ISO/date"
-          value={leaveForm.startAt}
-          onChangeText={(startAt: string) => setLeaveForm((prev) => ({ ...prev, startAt }))}
-        />
-        <TextInput
-          style={styles.input}
-          placeholder="End ISO/date"
-          value={leaveForm.endAt}
-          onChangeText={(endAt: string) => setLeaveForm((prev) => ({ ...prev, endAt }))}
-        />
-      </View>
-      <TextInput
-        style={styles.input}
-        placeholder="Reason optional"
-        value={leaveForm.reason}
-        onChangeText={(reason: string) => setLeaveForm((prev) => ({ ...prev, reason }))}
-      />
-      <Pressable style={styles.secondaryButton} onPress={handleSaveLeave}>
-        <Text style={styles.secondaryButtonText}>Request leave</Text>
-      </Pressable>
-      <View style={styles.list}>
-        {leaveRows.length === 0 ? (
-          <Text style={styles.metaText}>No leave records yet.</Text>
-        ) : (
-          leaveRows.slice(0, 5).map((leave) => (
-            <View key={leave.id} style={styles.simpleRow}>
-              <Text style={styles.rowTitle}>{String(leave.leaveType).replace(/_/g, ' ')}</Text>
-              <Text style={styles.metaText}>
-                {formatDate(leave.startAt)} to {formatDate(leave.endAt)} | {leave.status}
-              </Text>
-            </View>
-          ))
-        )}
-      </View>
+  return <View style={styles.root}>
+    {feedback ? <View style={[styles.feedback, feedback.tone === 'error' ? styles.feedbackError : styles.feedbackSuccess]}><Text style={styles.feedbackText}>{feedback.message}</Text></View> : null}
+    <FeatureCard title="Weekly availability" subtitle="Set your normal working pattern. You can override individual dates below.">
+      <View style={styles.dayRow}>{WEEKDAYS.map((day, i) => <Pressable key={day} onPress={() => setRuleForm(p => ({...p, weekday:String(i)}))} style={[styles.dayChip, ruleForm.weekday === String(i) && styles.dayChipActive]}><Text style={[styles.dayChipText, ruleForm.weekday === String(i) && styles.dayChipTextActive]}>{day}</Text></Pressable>)}</View>
+      <View style={styles.grid}><Field label="Start time" value={ruleForm.startTime} placeholder="09:00" onChangeText={(startTime:string)=>setRuleForm(p=>({...p,startTime}))}/><Field label="End time" value={ruleForm.endTime} placeholder="17:00" onChangeText={(endTime:string)=>setRuleForm(p=>({...p,endTime}))}/></View>
+      <View style={styles.choiceRow}><Pressable onPress={()=>setRuleForm(p=>({...p,isAvailable:'true'}))} style={[styles.choice,ruleForm.isAvailable==='true'&&styles.choiceActive]}><Text style={[styles.choiceText,ruleForm.isAvailable==='true'&&styles.choiceTextActive]}>Available</Text></Pressable><Pressable onPress={()=>setRuleForm(p=>({...p,isAvailable:'false'}))} style={[styles.choice,ruleForm.isAvailable==='false'&&styles.choiceActive]}><Text style={[styles.choiceText,ruleForm.isAvailable==='false'&&styles.choiceTextActive]}>Unavailable</Text></Pressable></View>
+      <PrimaryButton label="Save weekly availability" onPress={handleSaveRule}/>
+      <View style={styles.list}>{loading?<StatePanel title="Loading availability" loading tone="info"/>:rules.length===0?<StatePanel title="No weekly availability saved" message="Set your normal working pattern above and save."/>:rules.map(rule=><View key={rule.id} style={styles.row}><View><Text style={styles.rowTitle}>{WEEKDAYS[rule.weekday]||`Day ${rule.weekday}`}</Text><Text style={styles.meta}>{rule.startTime}–{rule.endTime}</Text></View><Status value={rule.isAvailable?'Available':'Unavailable'}/></View>)}</View>
     </FeatureCard>
-  );
+
+    <FeatureCard title="One-off change" subtitle="Change your availability for a particular date without altering your normal week.">
+      <View style={styles.grid}><Field label="Date" value={overrideForm.date} placeholder="YYYY-MM-DD" onChangeText={(date:string)=>setOverrideForm(p=>({...p,date}))}/><Field label="Start (optional)" value={overrideForm.startTime} placeholder="HH:mm" onChangeText={(startTime:string)=>setOverrideForm(p=>({...p,startTime}))}/><Field label="End (optional)" value={overrideForm.endTime} placeholder="HH:mm" onChangeText={(endTime:string)=>setOverrideForm(p=>({...p,endTime}))}/></View>
+      <View style={styles.choiceRow}>{['available','unavailable'].map(status=><Pressable key={status} onPress={()=>setOverrideForm(p=>({...p,status}))} style={[styles.choice,overrideForm.status===status&&styles.choiceActive]}><Text style={[styles.choiceText,overrideForm.status===status&&styles.choiceTextActive]}>{status==='available'?'Available':'Unavailable'}</Text></Pressable>)}</View>
+      <Field label="Note (optional)" value={overrideForm.note} placeholder="Add context for your company" onChangeText={(note:string)=>setOverrideForm(p=>({...p,note}))}/>
+      <SecondaryButton label="Save one-off change" onPress={handleSaveOverride}/>
+      <View style={styles.list}>{overrides.length===0&&!loading?<StatePanel title="No one-off changes saved" message="Use the form above to add availability changes for specific dates."/>:overrides.slice(0,5).map(o=><View key={o.id} style={styles.row}><View><Text style={styles.rowTitle}>{formatDate(o.date)}</Text><Text style={styles.meta}>{o.startTime||'All day'}–{o.endTime||'All day'}</Text></View><Status value={o.status}/></View>)}</View>
+    </FeatureCard>
+
+    <FeatureCard title="Leave" subtitle="Request time away from work. Your company will review the request.">
+      <View style={styles.grid}><Field label="Leave type" value={leaveForm.leaveType} placeholder="annual_leave" onChangeText={(leaveType:string)=>setLeaveForm(p=>({...p,leaveType}))}/><Field label="Start" value={leaveForm.startAt} placeholder="Date / ISO" onChangeText={(startAt:string)=>setLeaveForm(p=>({...p,startAt}))}/><Field label="End" value={leaveForm.endAt} placeholder="Date / ISO" onChangeText={(endAt:string)=>setLeaveForm(p=>({...p,endAt}))}/></View>
+      <Field label="Reason (optional)" value={leaveForm.reason} placeholder="Add a short reason" onChangeText={(reason:string)=>setLeaveForm(p=>({...p,reason}))}/>
+      <SecondaryButton label="Request leave" onPress={handleSaveLeave}/>
+      <View style={styles.list}>{leaveRows.length===0&&!loading?<StatePanel title="No leave requests yet" message="Submit a request above and your company will review it."/>:leaveRows.slice(0,5).map(l=><View key={l.id} style={styles.row}><View style={styles.flex}><Text style={styles.rowTitle}>{String(l.leaveType).replace(/_/g,' ')}</Text><Text style={styles.meta}>{formatDate(l.startAt)} to {formatDate(l.endAt)}</Text></View><Status value={l.status}/></View>)}</View>
+    </FeatureCard>
+  </View>;
 }
 
-const styles = StyleSheet.create({
-  sectionTitle: { color: colors.textPrimary, fontSize: 15, fontWeight: '800', marginTop: 12, marginBottom: 8 },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  input: {
-    minWidth: 150,
-    flexGrow: 1,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    color: colors.textPrimary,
-    backgroundColor: colors.card,
-  },
-  primaryButton: {
-    alignSelf: 'flex-start',
-    marginTop: 10,
-    backgroundColor: colors.primaryNavy,
-    borderRadius: 999,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-  },
-  primaryButtonText: { color: '#FFFFFF', fontWeight: '800' },
-  secondaryButton: {
-    alignSelf: 'flex-start',
-    marginTop: 10,
-    borderWidth: 1,
-    borderColor: colors.primaryNavy,
-    borderRadius: 999,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-  },
-  secondaryButtonText: { color: colors.textPrimary, fontWeight: '800' },
-  list: { gap: 8, marginTop: 10 },
-  simpleRow: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 12,
-    padding: 10,
-    backgroundColor: colors.card,
-  },
-  rowTitle: { color: colors.textPrimary, fontWeight: '800' },
-  metaText: { color: colors.textSecondary, fontSize: 13, marginTop: 2 },
-  feedback: { borderRadius: 12, padding: 10, marginBottom: 10 },
-  feedbackError: { backgroundColor: '#FEE2E2' },
-  feedbackSuccess: { backgroundColor: '#DCFCE7' },
-  feedbackText: { color: colors.textPrimary, fontWeight: '700' },
-});
+function Field({label,...props}:{label:string;[key:string]:any}){return <View style={styles.field}><Text style={styles.label}>{label}</Text><TextInput {...props} placeholderTextColor={colors.fieldPlaceholder} style={styles.input}/></View>}
+function PrimaryButton({label,onPress}:{label:string;onPress:()=>void}){return <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress} style={({pressed}:any)=>[styles.primary,pressed&&styles.pressed]}><Text style={styles.primaryText}>{label}</Text></Pressable>}
+function SecondaryButton({label,onPress}:{label:string;onPress:()=>void}){return <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress} style={({pressed}:any)=>[styles.secondary,pressed&&styles.pressed]}><Text style={styles.secondaryText}>{label}</Text></Pressable>}
+function Status({value}:{value:string}){const positive=value.toLowerCase().includes('available')&&!value.toLowerCase().includes('unavailable')||value.toLowerCase().includes('approved');return <View style={[styles.status,positive?styles.statusGood:styles.statusNeutral]}><Text style={[styles.statusText,positive?styles.statusGoodText:styles.statusNeutralText]}>{value.replace(/_/g,' ')}</Text></View>}
+
+const styles=StyleSheet.create({root:{width:'100%',gap:spacing.md},grid:{flexDirection:'row',flexWrap:'wrap',gap:spacing.md},field:{minWidth:145,flexGrow:1,flexBasis:'30%',gap:6},label:{color:colors.textPrimary,...typography.label},input:{minHeight:control.inputHeight,borderWidth:1,borderColor:colors.fieldBorder,borderRadius:radii.md,paddingHorizontal:spacing.md,color:colors.textPrimary,backgroundColor:colors.card,...typography.body},dayRow:{flexDirection:'row',flexWrap:'wrap',gap:spacing.sm},dayChip:{minWidth:control.minTouchTarget,minHeight:control.minTouchTarget,alignItems:'center',justifyContent:'center',borderRadius:radii.pill,borderWidth:1,borderColor:colors.border,backgroundColor:colors.card,paddingHorizontal:spacing.sm},dayChipActive:{backgroundColor:colors.accentTealSoft,borderColor:colors.accentTealStrong},dayChipText:{color:colors.textSecondary,...typography.label},dayChipTextActive:{color:colors.accentTealStrong},choiceRow:{flexDirection:'row',flexWrap:'wrap',gap:spacing.sm},choice:{minHeight:control.minTouchTarget,justifyContent:'center',paddingHorizontal:spacing.lg,borderRadius:radii.pill,borderWidth:1,borderColor:colors.border},choiceActive:{backgroundColor:colors.accentTealSoft,borderColor:colors.accentTealStrong},choiceText:{color:colors.textSecondary,...typography.label},choiceTextActive:{color:colors.accentTealStrong},primary:{minHeight:control.buttonHeight,alignSelf:'flex-start',justifyContent:'center',backgroundColor:colors.accentTealStrong,borderRadius:radii.md,paddingHorizontal:spacing.lg},primaryText:{color:colors.textOnBrand,...typography.label},secondary:{minHeight:control.minTouchTarget,alignSelf:'flex-start',justifyContent:'center',borderWidth:1,borderColor:colors.primaryNavy,borderRadius:radii.md,paddingHorizontal:spacing.lg},secondaryText:{color:colors.primaryNavy,...typography.label},pressed:{opacity:.82},list:{gap:spacing.sm,marginTop:spacing.xs},row:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',gap:spacing.md,borderWidth:1,borderColor:colors.border,borderRadius:radii.md,padding:spacing.md,backgroundColor:colors.card},rowTitle:{color:colors.textPrimary,...typography.label,textTransform:'capitalize'},meta:{color:colors.textSecondary,...typography.caption,marginTop:2},status:{borderRadius:radii.pill,paddingHorizontal:spacing.sm,paddingVertical:spacing.xs},statusGood:{backgroundColor:colors.successSurface},statusNeutral:{backgroundColor:colors.pendingSurface},statusText:{...typography.caption,fontWeight:'700',textTransform:'capitalize'},statusGoodText:{color:colors.success},statusNeutralText:{color:colors.pending},feedback:{borderRadius:radii.md,padding:spacing.md},feedbackError:{backgroundColor:colors.dangerSurface},feedbackSuccess:{backgroundColor:colors.successSurface},feedbackText:{color:colors.textPrimary,...typography.label},flex:{flex:1}});

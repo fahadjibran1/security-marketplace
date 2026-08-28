@@ -1,8 +1,9 @@
-import * as React from 'react';
+﻿import * as React from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { formatApiErrorMessage, updateTimesheet } from '../../services/api';
 import { Timesheet } from '../../types/models';
+import { colors } from '../../theme';
 
 type WorkspaceFeedback = {
   tone: 'success' | 'error' | 'info';
@@ -165,16 +166,16 @@ function formatStatusLabel(value?: string | null) {
 function getStatusPalette(status: string) {
   switch (normalizeStatus(status)) {
     case 'approved':
-      return { bg: '#DCFCE7', text: '#166534' };
+      return { bg: colors.successSurface, text: colors.success };
     case 'submitted':
-      return { bg: '#DBEAFE', text: '#1D4ED8' };
+      return { bg: colors.infoSurface, text: colors.info };
     case 'returned':
-      return { bg: '#FEF3C7', text: '#B45309' };
+      return { bg: colors.warningSurface, text: colors.warning };
     case 'rejected':
-      return { bg: '#FEE2E2', text: '#B91C1C' };
+      return { bg: colors.dangerSurface, text: colors.danger };
     case 'draft':
     default:
-      return { bg: '#E5E7EB', text: '#374151' };
+      return { bg: colors.pendingSurface, text: colors.primaryNavySoft };
   }
 }
 
@@ -1196,60 +1197,60 @@ const styles = StyleSheet.create({
   workspace: { gap: 18 },
   workspaceHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 16, flexWrap: 'wrap' },
   headerCopy: { gap: 4 },
-  title: { color: '#0f172a', fontSize: 28, fontWeight: '800' },
-  subtitle: { color: '#475569', fontSize: 14 },
-  helperText: { color: '#1D4ED8', fontSize: 12, fontWeight: '700' },
+  title: { color: colors.primaryNavy, fontSize: 28, fontWeight: '800' },
+  subtitle: { color: colors.textSecondary, fontSize: 14 },
+  helperText: { color: colors.info, fontSize: 12, fontWeight: '700' },
   headerActions: { flexDirection: 'row', gap: 10, alignItems: 'center', flexWrap: 'wrap' },
-  primaryButton: { backgroundColor: '#0f172a', borderRadius: 14, paddingHorizontal: 16, paddingVertical: 12 },
-  primaryButtonText: { color: '#f8fafc', fontWeight: '700' },
-  secondaryButton: { borderRadius: 14, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: '#e2e8f0' },
-  secondaryButtonText: { color: '#0f172a', fontWeight: '700' },
-  warningButton: { borderRadius: 14, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: '#FEF3C7' },
-  warningButtonText: { color: '#B45309', fontWeight: '700' },
-  dangerButton: { borderRadius: 14, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: '#FEE2E2' },
-  dangerButtonText: { color: '#B91C1C', fontWeight: '700' },
-  segmentedControl: { flexDirection: 'row', borderWidth: 1, borderColor: '#CBD5E1', borderRadius: 14, overflow: 'hidden', backgroundColor: '#FFFFFF' },
-  segmentedOption: { paddingHorizontal: 14, paddingVertical: 10, backgroundColor: '#FFFFFF' },
-  segmentedOptionActive: { backgroundColor: '#0f172a' },
-  segmentedOptionText: { color: '#334155', fontWeight: '700' },
-  segmentedOptionTextActive: { color: '#F8FAFC' },
+  primaryButton: { backgroundColor: colors.primaryNavy, borderRadius: 14, paddingHorizontal: 16, paddingVertical: 12 },
+  primaryButtonText: { color: colors.background, fontWeight: '700' },
+  secondaryButton: { borderRadius: 14, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: colors.pendingSurface },
+  secondaryButtonText: { color: colors.primaryNavy, fontWeight: '700' },
+  warningButton: { borderRadius: 14, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: colors.warningSurface },
+  warningButtonText: { color: colors.warning, fontWeight: '700' },
+  dangerButton: { borderRadius: 14, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: colors.dangerSurface },
+  dangerButtonText: { color: colors.danger, fontWeight: '700' },
+  segmentedControl: { flexDirection: 'row', borderWidth: 1, borderColor: colors.border, borderRadius: 14, overflow: 'hidden', backgroundColor: colors.card },
+  segmentedOption: { paddingHorizontal: 14, paddingVertical: 10, backgroundColor: colors.card },
+  segmentedOptionActive: { backgroundColor: colors.primaryNavy },
+  segmentedOptionText: { color: colors.primaryNavySoft, fontWeight: '700' },
+  segmentedOptionTextActive: { color: colors.background },
   feedbackCard: { borderRadius: 18, paddingHorizontal: 16, paddingVertical: 14, gap: 4 },
-  feedbackSuccess: { backgroundColor: '#DCFCE7' },
-  feedbackError: { backgroundColor: '#FEE2E2' },
-  feedbackInfo: { backgroundColor: '#DBEAFE' },
-  feedbackTitle: { color: '#0f172a', fontWeight: '800', fontSize: 15 },
-  feedbackText: { color: '#334155', fontSize: 13, lineHeight: 18 },
-  filterCard: { backgroundColor: '#FFFFFF', borderRadius: 22, padding: 18, gap: 12 },
+  feedbackSuccess: { backgroundColor: colors.successSurface },
+  feedbackError: { backgroundColor: colors.dangerSurface },
+  feedbackInfo: { backgroundColor: colors.infoSurface },
+  feedbackTitle: { color: colors.primaryNavy, fontWeight: '800', fontSize: 15 },
+  feedbackText: { color: colors.primaryNavySoft, fontSize: 13, lineHeight: 18 },
+  filterCard: { backgroundColor: colors.card, borderRadius: 22, padding: 18, gap: 12 },
   filterRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
   filterField: { minWidth: 150, flexGrow: 1, gap: 6 },
   searchField: { minWidth: 220, flexGrow: 1.4 },
-  filterLabel: { color: '#64748b', fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.4 },
-  input: { minHeight: 48, borderRadius: 14, borderWidth: 1, borderColor: '#d6dce5', backgroundColor: '#ffffff', paddingHorizontal: 14, paddingVertical: 12, color: '#132238' },
-  webSelect: { borderRadius: 14, borderWidth: 1, borderColor: '#d6dce5', backgroundColor: '#ffffff', padding: '14px 16px', fontSize: 14, color: '#132238', minHeight: 48 },
+  filterLabel: { color: colors.textSecondary, fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.4 },
+  input: { minHeight: 48, borderRadius: 14, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, paddingHorizontal: 14, paddingVertical: 12, color: colors.primaryNavyStrong },
+  webSelect: { borderRadius: 14, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, padding: '14px 16px', fontSize: 14, color: colors.primaryNavyStrong, minHeight: 48 },
   summaryGrid: { flexDirection: 'row', gap: 14, flexWrap: 'wrap' },
-  summaryCard: { flexGrow: 1, minWidth: 180, backgroundColor: '#FFFFFF', borderRadius: 20, padding: 18, gap: 8 },
-  summaryLabel: { color: '#64748b', fontSize: 13, fontWeight: '700' },
-  summaryValue: { color: '#0f172a', fontSize: 28, fontWeight: '800' },
+  summaryCard: { flexGrow: 1, minWidth: 180, backgroundColor: colors.card, borderRadius: 20, padding: 18, gap: 8 },
+  summaryLabel: { color: colors.textSecondary, fontSize: 13, fontWeight: '700' },
+  summaryValue: { color: colors.primaryNavy, fontSize: 28, fontWeight: '800' },
   reviewLayout: { flexDirection: 'row', gap: 18, alignItems: 'flex-start', flexWrap: 'wrap' },
-  reviewListCard: { flex: 2.2, minWidth: 760, backgroundColor: '#FFFFFF', borderRadius: 22, padding: 18, gap: 14 },
-  detailCard: { flex: 1, minWidth: 340, backgroundColor: '#FFFFFF', borderRadius: 22, padding: 18, gap: 14, borderWidth: 1, borderColor: '#DBEAFE' },
-  detailTitle: { color: '#0f172a', fontSize: 20, fontWeight: '800' },
-  detailSubtitle: { color: '#64748b', fontSize: 13, lineHeight: 18 },
-  groupCard: { borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 18, overflow: 'hidden' },
-  groupHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 14, backgroundColor: '#F8FAFC' },
+  reviewListCard: { flex: 2.2, minWidth: 760, backgroundColor: colors.card, borderRadius: 22, padding: 18, gap: 14 },
+  detailCard: { flex: 1, minWidth: 340, backgroundColor: colors.card, borderRadius: 22, padding: 18, gap: 14, borderWidth: 1, borderColor: colors.infoSurface },
+  detailTitle: { color: colors.primaryNavy, fontSize: 20, fontWeight: '800' },
+  detailSubtitle: { color: colors.textSecondary, fontSize: 13, lineHeight: 18 },
+  groupCard: { borderWidth: 1, borderColor: colors.pendingSurface, borderRadius: 18, overflow: 'hidden' },
+  groupHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 14, backgroundColor: colors.background },
   groupHeaderCopy: { flex: 1, gap: 4 },
-  groupSite: { color: '#0f172a', fontSize: 18, fontWeight: '800' },
-  groupPeriod: { color: '#475569', fontSize: 13 },
+  groupSite: { color: colors.primaryNavy, fontSize: 18, fontWeight: '800' },
+  groupPeriod: { color: colors.textSecondary, fontSize: 13 },
   groupHeaderActions: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  inlineAction: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, backgroundColor: '#E2E8F0' },
-  inlineActionText: { color: '#0f172a', fontWeight: '700', fontSize: 12 },
-  groupToggle: { color: '#1D4ED8', fontWeight: '700', fontSize: 12 },
-  rowsHeader: { flexDirection: 'row', gap: 12, paddingHorizontal: 16, paddingVertical: 12, borderTopWidth: 1, borderTopColor: '#E2E8F0', borderBottomWidth: 1, borderBottomColor: '#E2E8F0', backgroundColor: '#FFFFFF' },
-  rowsHeaderText: { color: '#64748b', fontWeight: '700', fontSize: 12, textTransform: 'uppercase' },
-  timesheetRow: { flexDirection: 'row', gap: 12, alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#E2E8F0' },
-  timesheetRowSelected: { backgroundColor: '#EFF6FF' },
-  rowText: { color: '#334155', fontSize: 13 },
-  rowTextStrong: { color: '#0f172a', fontSize: 13, fontWeight: '700' },
+  inlineAction: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, backgroundColor: colors.pendingSurface },
+  inlineActionText: { color: colors.primaryNavy, fontWeight: '700', fontSize: 12 },
+  groupToggle: { color: colors.info, fontWeight: '700', fontSize: 12 },
+  rowsHeader: { flexDirection: 'row', gap: 12, paddingHorizontal: 16, paddingVertical: 12, borderTopWidth: 1, borderTopColor: colors.pendingSurface, borderBottomWidth: 1, borderBottomColor: colors.pendingSurface, backgroundColor: colors.card },
+  rowsHeaderText: { color: colors.textSecondary, fontWeight: '700', fontSize: 12, textTransform: 'uppercase' },
+  timesheetRow: { flexDirection: 'row', gap: 12, alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: colors.pendingSurface },
+  timesheetRowSelected: { backgroundColor: colors.infoSurface },
+  rowText: { color: colors.primaryNavySoft, fontSize: 13 },
+  rowTextStrong: { color: colors.primaryNavy, fontSize: 13, fontWeight: '700' },
   guardCol: { flex: 1.3 },
   dateCol: { flex: 0.9 },
   scheduleCol: { flex: 1.1 },
@@ -1260,26 +1261,26 @@ const styles = StyleSheet.create({
   statusBadge: { alignSelf: 'flex-start', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 },
   statusBadgeText: { fontWeight: '800', fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.4 },
   rowActions: { flexDirection: 'row', gap: 8, flexWrap: 'wrap', alignItems: 'center' },
-  secondaryChip: { borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: '#E2E8F0' },
-  secondaryChipText: { color: '#0f172a', fontWeight: '700', fontSize: 12 },
-  primaryChip: { borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: '#DBEAFE' },
-  primaryChipText: { color: '#1D4ED8', fontWeight: '700', fontSize: 12 },
-  warningChip: { borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: '#FEF3C7' },
-  warningChipText: { color: '#B45309', fontWeight: '700', fontSize: 12 },
-  groupFooter: { flexDirection: 'row', flexWrap: 'wrap', gap: 16, paddingHorizontal: 16, paddingVertical: 14, backgroundColor: '#F8FAFC' },
-  groupFooterText: { color: '#475569', fontSize: 13, fontWeight: '700' },
+  secondaryChip: { borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: colors.pendingSurface },
+  secondaryChipText: { color: colors.primaryNavy, fontWeight: '700', fontSize: 12 },
+  primaryChip: { borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: colors.infoSurface },
+  primaryChipText: { color: colors.info, fontWeight: '700', fontSize: 12 },
+  warningChip: { borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: colors.warningSurface },
+  warningChipText: { color: colors.warning, fontWeight: '700', fontSize: 12 },
+  groupFooter: { flexDirection: 'row', flexWrap: 'wrap', gap: 16, paddingHorizontal: 16, paddingVertical: 14, backgroundColor: colors.background },
+  groupFooterText: { color: colors.textSecondary, fontSize: 13, fontWeight: '700' },
   detailMetaGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
   detailMetaItem: { minWidth: 140, flexGrow: 1, gap: 4 },
-  detailMetaLabel: { color: '#64748b', fontSize: 12, fontWeight: '700', textTransform: 'uppercase' },
-  detailMetaValue: { color: '#0f172a', fontSize: 15, fontWeight: '700' },
+  detailMetaLabel: { color: colors.textSecondary, fontSize: 12, fontWeight: '700', textTransform: 'uppercase' },
+  detailMetaValue: { color: colors.primaryNavy, fontSize: 15, fontWeight: '700' },
   detailStatusBadge: { alignSelf: 'flex-start', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 },
   detailStatusBadgeText: { fontWeight: '800', fontSize: 11, textTransform: 'uppercase' },
-  detailSection: { gap: 8, borderTopWidth: 1, borderTopColor: '#E2E8F0', paddingTop: 14 },
-  detailSectionTitle: { color: '#0f172a', fontSize: 15, fontWeight: '800' },
-  detailLine: { color: '#334155', fontSize: 13, lineHeight: 18 },
-  detailParagraph: { color: '#334155', fontSize: 13, lineHeight: 20 },
-  validationText: { color: '#B45309', fontSize: 12, lineHeight: 18, fontWeight: '700' },
+  detailSection: { gap: 8, borderTopWidth: 1, borderTopColor: colors.pendingSurface, paddingTop: 14 },
+  detailSectionTitle: { color: colors.primaryNavy, fontSize: 15, fontWeight: '800' },
+  detailLine: { color: colors.primaryNavySoft, fontSize: 13, lineHeight: 18 },
+  detailParagraph: { color: colors.primaryNavySoft, fontSize: 13, lineHeight: 20 },
+  validationText: { color: colors.warning, fontSize: 12, lineHeight: 18, fontWeight: '700' },
   noteInput: { minHeight: 110, textAlignVertical: 'top' },
   detailActions: { gap: 10 },
-  emptyText: { color: '#64748b', fontSize: 14, lineHeight: 20 },
+  emptyText: { color: colors.textSecondary, fontSize: 14, lineHeight: 20 },
 });

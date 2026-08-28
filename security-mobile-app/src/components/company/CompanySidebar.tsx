@@ -1,5 +1,6 @@
-import * as React from 'react';
+﻿import * as React from 'react';
 import { Image, ImageSourcePropType, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { colors } from '../../theme';
 
 type NavItem<Id extends string> = {
   id: Id;
@@ -229,19 +230,19 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(226, 232, 240, 0.14)',
   },
   brandEyebrow: {
-    color: '#7dd3fc',
+    color: colors.info,
     fontSize: 12,
     letterSpacing: 2,
     textTransform: 'uppercase',
     fontWeight: '700',
   },
   brandTitle: {
-    color: '#f8fafc',
+    color: colors.background,
     fontSize: 22,
     fontWeight: '800',
   },
   brandCopy: {
-    color: '#cbd5e1',
+    color: colors.border,
     fontSize: 13,
     lineHeight: 18,
   },
@@ -313,7 +314,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(148, 163, 184, 0.16)',
   },
   navItemActive: {
-    backgroundColor: '#e0f2fe',
+    backgroundColor: colors.infoSurface,
     borderColor: 'rgba(14, 116, 144, 0.25)',
   },
   navLabelRow: {
@@ -324,25 +325,25 @@ const styles = StyleSheet.create({
   navIcon: {
     width: 18,
     textAlign: 'center',
-    color: '#e2e8f0',
+    color: colors.pendingSurface,
     fontSize: 14,
     fontWeight: '800',
   },
   navLabel: {
-    color: '#f8fafc',
+    color: colors.background,
     fontWeight: '800',
     fontSize: 15,
   },
   navLabelActive: {
-    color: '#0f172a',
+    color: colors.primaryNavy,
   },
   navCaption: {
-    color: '#cbd5e1',
+    color: colors.border,
     fontSize: 12,
     lineHeight: 16,
   },
   navCaptionActive: {
-    color: '#334155',
+    color: colors.primaryNavySoft,
   },
 });
 

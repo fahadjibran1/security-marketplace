@@ -1,4 +1,4 @@
-import * as React from 'react';
+﻿import * as React from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { ClientDashboardWorkspace } from '../components/client/ClientDashboardWorkspace';
@@ -23,6 +23,7 @@ import {
   ClientPortalServiceRecord,
   ClientPortalSite,
 } from '../types/models';
+import { colors } from '../theme';
 
 type ClientSection = 'dashboard' | 'sites' | 'service-records' | 'incidents' | 'reports' | 'invoices';
 
@@ -124,11 +125,11 @@ export function ClientPortalScreen({ user }: { user: AuthUser }) {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, padding: 20, gap: 16, backgroundColor: '#F8FAFC' },
+  screen: { flex: 1, padding: 20, gap: 16, backgroundColor: colors.background },
   topCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.card,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.pendingSurface,
     borderRadius: 24,
     padding: 22,
     flexDirection: 'row',
@@ -136,17 +137,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   flexGrow: { flex: 1 },
-  portalLabel: { color: '#0F766E', fontSize: 12, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 1.4 },
-  portalTitle: { color: '#0F172A', fontSize: 32, fontWeight: '800', marginTop: 8 },
-  portalSubtitle: { color: '#64748B', marginTop: 6, lineHeight: 20 },
-  refreshButton: { backgroundColor: '#0F172A', borderRadius: 14, paddingHorizontal: 16, paddingVertical: 12 },
-  refreshButtonText: { color: '#FFFFFF', fontWeight: '800' },
-  errorCard: { backgroundColor: '#FEF2F2', borderWidth: 1, borderColor: '#FECACA', borderRadius: 16, padding: 14 },
-  errorText: { color: '#B91C1C', fontWeight: '700' },
+  portalLabel: { color: colors.accentTealStrong, fontSize: 12, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 1.4 },
+  portalTitle: { color: colors.primaryNavy, fontSize: 32, fontWeight: '800', marginTop: 8 },
+  portalSubtitle: { color: colors.textSecondary, marginTop: 6, lineHeight: 20 },
+  refreshButton: { backgroundColor: colors.primaryNavy, borderRadius: 14, paddingHorizontal: 16, paddingVertical: 12 },
+  refreshButtonText: { color: colors.card, fontWeight: '800' },
+  errorCard: { backgroundColor: colors.dangerSurface, borderWidth: 1, borderColor: colors.dangerBorder, borderRadius: 16, padding: 14 },
+  errorText: { color: colors.danger, fontWeight: '700' },
   navRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  navButton: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 999, backgroundColor: '#E2E8F0' },
-  navButtonActive: { backgroundColor: '#0F172A' },
-  navButtonText: { color: '#0F172A', fontWeight: '700' },
-  navButtonTextActive: { color: '#FFFFFF' },
+  navButton: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 999, backgroundColor: colors.pendingSurface },
+  navButtonActive: { backgroundColor: colors.primaryNavy },
+  navButtonText: { color: colors.primaryNavy, fontWeight: '700' },
+  navButtonTextActive: { color: colors.card },
   content: { paddingBottom: 40 },
 });
