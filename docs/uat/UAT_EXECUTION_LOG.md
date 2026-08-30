@@ -23,8 +23,8 @@
 | Wave 5 — Timesheets / payroll / finance | 7 | 0 | 7 | 0 | 0 |
 | Wave 6 — Client portal | 1 | 0 | 1 | 0 | 0 |
 | Wave 7 — Platform admin / audit | 3 | 0 | 3 | 0 | 0 |
-| Wave 8 — Recovery & operations | 4 | 1 | 3 | 0 | 0 |
-| **Total** | **45** | **1** | **44** | **0** | **0** |
+| Wave 8 — Recovery & operations | 4 | 0 | 4 | 0 | 0 |
+| **Total** | **45** | **0** | **45** | **0** | **0** |
 
 _Note: Wave 8 includes UAT-REC-001, UAT-REC-002, BLK-003 (backup drill), BLK-004 (deployment/rollback exercise)._
 
@@ -986,16 +986,16 @@ _Note: Wave 8 includes UAT-REC-001, UAT-REC-002, BLK-003 (backup drill), BLK-004
 | **Scenario** | Book On successfully; app terminated/relaunched; session/dashboard restored |
 | **Priority** | P0 |
 | **Failure severity** | High |
-| **Environment** | |
-| **Device/Browser** | |
-| **Tester** | |
-| **Date** | |
+| **Environment** | render-pilot (`https://security-marketplace-api.onrender.com`) |
+| **Device/Browser** | Physical Android — EAS preview APK build `a17f2026-2402-45b9-8337-b67d83a0cb7c` (commit `abd9373`) |
+| **Tester** | Release owner |
+| **Date** | 2026-08-31 |
 | **Expected** | Server state reload shows shift in progress and existing attendance. App does not require duplicate Book On. |
-| **Actual result** | NOT OBTAINED — deferred. Expo client reported backend unreachable in the UAT session; session state could not be confirmed. |
-| **Status** | NOT RUN — DEFERRED |
-| **Evidence ref** | None — deferred |
+| **Actual result** | Shift 2 checked in via ATT-002 (attendance event id:7, check-in at 2026-08-30T21:56:10.835Z). App force-closed via Recents swipe. Relaunched from home screen. Observed: login screen did NOT appear (session persisted via SecureStore). Shift 2 displayed as In Progress on home screen. Check In / Book On button was NOT offered. No error displayed. App fully responsive. API post-test: Shift 2 status=`in_progress`, attendance events=1 (id:7 check-in only), no duplicate created. |
+| **Status** | PASS |
+| **Evidence ref** | API verification (PowerShell, 2026-08-31): Shift 2 `in_progress`, 1 attendance event (id:7), no duplicate. Physical observation by release owner. |
 | **Defect ID** | — |
-| **Notes** | DEFERRED 2026-08-28. Reason: Expo client connectivity could not be verified; session/dashboard state evidence would not be trustworthy. Must be re-run in a confirmed production-like mobile environment before go-live. |
+| **Notes** | Executed immediately after ATT-002 check-in, before shift end. Session correctly persisted across cold app restart. In-progress state correctly restored from server. No re-prompt for Book On. |
 
 ---
 
