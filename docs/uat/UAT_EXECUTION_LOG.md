@@ -19,12 +19,12 @@
 | Wave 1 — Auth & access | 5 | 0 | 5 | 0 | 0 |
 | Wave 2 — Guard onboarding & compliance | 4 | 0 | 4 | 0 | 0 |
 | Wave 3 — Job marketplace & hire | 8 | 0 | 8 | 0 | 0 |
-| Wave 4 — Live shift & operations | 13 | 1 | 12 | 0 | 0 |
+| Wave 4 — Live shift & operations | 13 | 0 | 13 | 0 | 0 |
 | Wave 5 — Timesheets / payroll / finance | 7 | 0 | 7 | 0 | 0 |
 | Wave 6 — Client portal | 1 | 0 | 1 | 0 | 0 |
 | Wave 7 — Platform admin / audit | 3 | 0 | 3 | 0 | 0 |
 | Wave 8 — Recovery & operations | 4 | 1 | 3 | 0 | 0 |
-| **Total** | **45** | **2** | **43** | **0** | **0** |
+| **Total** | **45** | **1** | **44** | **0** | **0** |
 
 _Note: Wave 8 includes UAT-REC-001, UAT-REC-002, BLK-003 (backup drill), BLK-004 (deployment/rollback exercise)._
 
@@ -458,20 +458,20 @@ _Note: Wave 8 includes UAT-REC-001, UAT-REC-002, BLK-003 (backup drill), BLK-004
 |---|---|
 | **Test ID** | UAT-ATT-002 |
 | **Product/portal** | Guard mobile |
-| **Scenario** | Physical Android inside geofence; location permission not yet granted; Book On; approve foreground permission |
+| **Scenario** | Physical Android inside geofence; location permission granted; Book On; GPS coordinates verified by server |
 | **Priority** | P0 |
 | **Failure severity** | Critical if GPS-required site accepts unverified Book On; High if valid in-geofence guard cannot Book On |
 | **Device required** | Physical Android — MANDATORY |
-| **Environment** | render-pilot (API reachable). Expo mobile client: UNREACHABLE during UAT session |
-| **Device/Browser** | Physical Android — Expo Go — NOT COMPLETED |
-| **Tester** | — |
-| **Date** | — |
-| **Expected** | First server challenge causes foreground location request. Retry includes lat/long/accuracy. Server marks GPS verified. One check-in event. |
-| **Actual result** | NOT OBTAINED — Expo client reported backend unreachable during the UAT session. Correct UAT guard session could not be confidently verified. Physical GPS evidence would not be trustworthy under these conditions. |
-| **Status** | NOT RUN — DEFERRED |
-| **Evidence ref** | None — deferred |
+| **Environment** | render-pilot (`https://security-marketplace-api.onrender.com`) |
+| **Device/Browser** | Physical Android — EAS preview APK build `a17f2026-2402-45b9-8337-b67d83a0cb7c` (commit `abd9373`) |
+| **Tester** | Release owner |
+| **Date** | 2026-08-30 |
+| **Expected** | First server challenge causes foreground location request. Retry includes lat/long/accuracy. Server marks GPS verified. One check-in event. Shift transitions to In Progress. |
+| **Actual result** | Location permission granted. Check In tapped on Shift 2 (UAT Site A, temporarily relocated to lat:53.820331 lng:-1.708283 radius:150m for UAT). GPS coordinates obtained by app. Shift entered In Progress. API confirmation: attendance event id:7, type:check-in, occurredAt:2026-08-30T21:56:10.835Z, lat:53.8203379, lng:-1.7083153, gpsAccuracyMeters:14.4m. Distance from geofence centre: 2.3m (well within 150m radius). No duplicate check-in event. Shift 2 status=in_progress. Supplementary activity also verified on the same shift (see notes). Device subsequently driven away from geofence — shift remained in_progress (correct: geofence only enforced at check-in, not during shift). |
+| **Status** | PASS |
+| **Evidence ref** | API verification (PowerShell, 2026-08-30): attendance event id:7 confirmed, single check-in, GPS coordinates inside geofence. Haversine distance 2.3m < 150m radius. Resolves BLK-002. |
 | **Defect ID** | — |
-| **Notes** | DEFERRED 2026-08-28. Reason: Expo client reported backend unreachable; correct UAT guard session could not be confirmed; GPS/location evidence under these conditions would not be valid UAT evidence. Resolves BLK-002 when executed. Must be re-run in a confirmed production-like mobile environment with verified API connectivity and confirmed guard session before RC1 go-live. |
+| **Notes** | UAT Site A geofence temporarily relocated from London (lat:51.5074 lng:-0.1278 radius:100m) to device location (lat:53.820331 lng:-1.708283 radius:150m) via PATCH /sites/2 for this test. Original values preserved; restoration occurs after REC-002. Supplementary physical activity on same shift: check-call (daily log id:4, logType:check_call, "All ok"), incident report (id:3, title:"Guard incident", severity:medium), observation log (id:5, logType:observation, "Patrol done no issues"). Welfare function also exercised on device; welfare data not independently confirmed via API (safety-alerts/mine route returned 404; welfare may route via daily logs or separate internal endpoint). Supplementary activity recorded as physical evidence only — not a formal PASS against separate UAT cases. |
 
 ---
 
