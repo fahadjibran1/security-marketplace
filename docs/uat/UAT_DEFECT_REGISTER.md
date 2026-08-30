@@ -38,24 +38,24 @@ _None._
 | **Defect ID** | DEF-002 |
 | **UAT Test ID** | UAT-ATT-003 |
 | **Severity** | **Medium** |
-| **Status** | **Fixed — pending physical verification on new APK** |
+| **Status** | **Closed — fixed and physically verified on new APK** |
 | **Date raised** | 2026-08-30 |
 | **Raised by** | Release owner (physical device observation) |
 | **Owner** | Release owner |
 | **Environment** | Production API `https://security-marketplace-api.onrender.com` |
-| **Device/Browser** | Physical Android device, EAS preview APK (build ID `31520add-9adc-49fe-9d6a-39882ba7bda2` — OLD; new build pending) |
+| **Device/Browser** | Physical Android device, EAS preview APK (fix build ID `a17f2026-2402-45b9-8337-b67d83a0cb7c`, commit `abd9373`) |
 | **Steps to reproduce** | 1. Go to Settings → Apps → S4 Security → Permissions → Location → Deny. 2. Return to S4 app. 3. Confirm Shift 2 (UAT Site A, `requireGpsCheckIn:true`) is visible and `Ready`. 4. Tap Check In / Book On. 5. If system permission dialog appears, tap "Don't allow". |
 | **Expected result** | App shows a clear location/GPS permission error. Example: "Location permission is required to Book On at this site. Allow location access while using S4 Security and try again." No attendance event created. |
 | **Actual result** | App shows: "Start shift failed — The live backend is unreachable. Check the internet access and then try again." The internet was fully available. No attendance event created (check-in correctly blocked). |
 | **Evidence** | (1) User-observed on physical Android device, 2026-08-30. (2) API verification (PowerShell, 2026-08-30): Shift 2 status=`ready`, attendance events=0. No check-in reached the server. (3) Production API health confirmed UP at time of test: `{"ok":true,"status":"ready","checks":{"database":"up"}}`. |
-| **Fix commit** | TBD — commit pending push (see below) |
+| **Fix commit** | `abd9373` — `fix(mobile): preserve transport interceptor errors instead of masking as NetworkError` |
 | **Fix file** | `security-mobile-app/src/services/api.ts` — `request()` catch block |
 | **Fix description** | Only wrap `TypeError` as `NetworkError`; re-throw all other errors (plain `Error` from transport interceptors) without modification |
 | **Tests added** | `security-mobile-app/scripts/api-error-handling.spec.cjs` — 17 assertions covering tests A–D |
 | **Test result** | 17/17 PASS. All 6 existing suites PASS. TypeScript: clean. |
-| **Verified by** | Pending — release owner to install new APK and physically re-run ATT-003 |
-| **Verification date** | Pending physical re-test |
-| **Notes** | Safety behaviour was correct throughout — the check-in was always blocked and no attendance event was created. The defect was in the error message only. New EAS APK required for physical verification. See root-cause investigation below. |
+| **Verified by** | Release owner (physical Android device) |
+| **Verification date** | 2026-08-30 |
+| **Notes** | Safety behaviour was correct throughout — the check-in was always blocked and no attendance event was created. The defect was in the error message only. Physically verified on EAS build `a17f2026` (commit `abd9373`): location permission denied now shows the correct GPS/location error, not "backend unreachable". |
 
 ---
 
@@ -380,5 +380,7 @@ When a UAT failure is observed, raise a new defect using this format:
 | Medium | 0 | 1 | 0 |
 | Low | 0 | 0 | 0 |
 | **Total** | **0** | **2** | **0** |
+
+_Release is not blocked — no open Critical or High defects._
 
 _Release is blocked while any Critical or High defect remains open._
