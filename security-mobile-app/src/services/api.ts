@@ -166,8 +166,14 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
       ...options,
     });
   } catch (error) {
+    // Only TypeError signals a genuine transport/network failure (React Native throws
+    // TypeError: "Network request failed" on connectivity loss). Re-throw other errors
+    // (e.g. semantic errors from fetch interceptors) so their message reaches the caller.
+    if (!(error instanceof TypeError)) {
+      throw error;
+    }
     throw new NetworkError(
-      error instanceof Error && error.message
+      error.message
         ? `Unable to reach the live API at ${API_BASE_URL}. ${error.message}`
         : `Unable to reach the live API at ${API_BASE_URL}.`,
     );
