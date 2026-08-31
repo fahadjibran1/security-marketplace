@@ -3,11 +3,13 @@
 Target: v1.0.0 pilot
 Platform baseline: Render web service + managed PostgreSQL
 Release branch after approval: `release/v1.0.0-rc1`
-Approved RC1 SHA: `f1fd5620ec256586d1ba147fd2db5139eb85f531`
+Approved RC1 SHA: `ccc23a425113322184e38f3477418347d227d763` (v1.0.0-rc1 tag)
 
 ## Release policy
 
-Production deployment is manual for the pilot. `render.yaml` sets `autoDeployTrigger: off` and pins the service to `release/v1.0.0-rc1`. Do not deploy `main`, feature branches or UAT branches.
+Production deployment is manual for the pilot. `autoDeployTrigger` must remain `off` on the production service (`security-marketplace-api`). Do not deploy `main`, feature branches or UAT branches.
+
+**Operational note (2026-08-31):** During the v1.0.0-rc1 controlled deployment the production Render service was found with `autoDeployTrigger: commit` (auto-deploy enabled), which did not match this policy. The setting was corrected to `off` via Render API PATCH before the main merge. Verify `autoDeployTrigger: off` on the Render dashboard before any future release window.
 
 Only deploy a commit that has:
 
