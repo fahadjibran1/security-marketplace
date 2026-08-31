@@ -120,6 +120,41 @@ Recovery is complete only when:
 
 ## RC1 certification evidence
 
+### Pre-release production backup — SHA b4d23b1 (final RC1 HEAD) — 2026-08-31
+
+Executed by: Claude (S4 AI Pair) under release-owner authority.
+Type: Pre-release production backup checkpoint (authorized 2026-08-31 before v1.0.0-rc1 tagging).
+Target: Production PostgreSQL database (pg_dump source only; no restore into production).
+Tools: pg_dump 18.3 / pg_restore 18.3 / Windows 11.
+Database host: aws-1-eu-west-1.pooler.supabase.com
+
+| Metric | Value |
+|---|---|
+| Backup UTC timestamp | 2026-08-31T10:09:48Z (archive internal header) |
+| Backup filename | s4_20260831T091534Z.dump |
+| Release HEAD SHA | b4d23b1da827113525c807692bc1c77f8adb9e80 |
+| pg_dump exit code | 0 (success) |
+| pg_dump elapsed | 12.172s |
+| Backup file size | 491,994 bytes |
+| Archive format | CUSTOM (gzip compressed) |
+| TOC entries | 1017 |
+| pg_restore --list exit | 0 (valid readable archive) |
+| TABLE DATA sections | 73 |
+| typeorm_migrations rows | 40 |
+| Latest migration applied | AddStructuredScreeningAddresses1720100000000 |
+| .drill.secret | Deleted immediately after use — confirmed absent |
+
+Core table row counts at backup time: users=12, companies=4, guard_profiles=5, clients=4,
+sites=11, jobs=13, job_applications=10, shifts=5, attendance_events=8, audit_logs=180,
+guard_screenings=4, typeorm_migrations=40.
+
+No restore into production performed. Archive readability confirmed via `pg_restore --list`.
+Production application data was not otherwise modified.
+
+Result: **PASS** — pre-release backup valid and verified. Ready for v1.0.0-rc1 tagging.
+
+---
+
 ### RC1 drill — SHA ff4ad00 (HEAD release/v1.0.0-rc1) — 2026-08-28
 
 Executed by: Claude (S4 AI Pair) under release-owner authority.
