@@ -37,7 +37,7 @@ export function GuardCompliancePanel({ onManageCompliance }: { onManageComplianc
   const documentState = (type: string) => {
     const matching = documents.filter((item) => item.type === type && item.uploadCompletedAt);
     if (!matching.length) return 'Not provided';
-    return matching.some((item) => item.verified) ? 'Verified' : 'Awaiting verification';
+    return matching.some((item) => item.verified) ? 'Verified' : 'Provided — awaiting verification';
   };
 
   const vetting = getGuardVettingLabel(summary);
@@ -45,7 +45,7 @@ export function GuardCompliancePanel({ onManageCompliance }: { onManageComplianc
   const eligibilityTone = heroTone(eligibility);
 
   return (
-    <FeatureCard title="Work readiness" subtitle="See what is complete, what is under review and what may stop you being assigned to work.">
+    <FeatureCard title="Compliance summary" subtitle="See what is complete, what is under review and what may stop you being assigned to work.">
       {error ? <View style={styles.errorBox}><Text accessibilityRole="alert" style={styles.error}>{error}</Text></View> : null}
 
       <View style={[styles.readinessHero, { backgroundColor: eligibilityTone.bg }]}>
@@ -71,7 +71,7 @@ export function GuardCompliancePanel({ onManageCompliance }: { onManageComplianc
       ) : null}
 
       <Pressable accessibilityRole="button" style={({ pressed }: { pressed: boolean }) => [styles.button, pressed && styles.buttonPressed]} onPress={onManageCompliance}>
-        <Text style={styles.buttonText}>Review compliance details</Text>
+        <Text style={styles.buttonText}>Manage compliance</Text>
       </Pressable>
       <Text style={styles.note}>Providing evidence does not verify it. Verification is completed only by an authorised reviewer.</Text>
     </FeatureCard>
