@@ -16,6 +16,15 @@
     "preview": {
       "distribution": "internal"
     },
+    "preview-staging": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://security-marketplace-api-staging.onrender.com"
+      }
+    },
     "production": {
       "autoIncrement": true
     }
