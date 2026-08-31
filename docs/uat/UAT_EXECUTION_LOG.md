@@ -1047,10 +1047,10 @@ _Note: Wave 8 includes UAT-REC-001, UAT-REC-002, BLK-003 (backup drill), BLK-004
 
 | ID | Item | Owner | Status | Sign-off document |
 |---|---|---|---|---|
-| BLK-008 | BS7858 licensed-standard/process review | Designated compliance officer | OPEN — awaiting qualified reviewer sign-off | [`docs/compliance/BLK-008-BS7858-screening-review.md`](../compliance/BLK-008-BS7858-screening-review.md) |
-| BLK-010 | Right-to-work legal/process review | Designated legal/HR owner | OPEN — awaiting designated legal/HR owner sign-off | [`docs/compliance/BLK-010-right-to-work-review.md`](../compliance/BLK-010-right-to-work-review.md) |
+| BLK-008 | BS7858 screening workflow — owner compliance acceptance | Product / Business Owner (Fahad Jibran) | **ACCEPTED WITH CONDITIONS** — owner gate satisfied for RC1 pilot (31 August 2026) | [`docs/compliance/BLK-008-BS7858-screening-review.md`](../compliance/BLK-008-BS7858-screening-review.md) |
+| BLK-010 | Right-to-work process — owner compliance acceptance | Product / Business Owner (Fahad Jibran) | **ACCEPTED WITH CONDITIONS** — owner gate satisfied for RC1 pilot (31 August 2026) | [`docs/compliance/BLK-010-right-to-work-review.md`](../compliance/BLK-010-right-to-work-review.md) |
 
-_These items require a qualified person's sign-off, not a software change. Sign-off documents have been prepared at the paths above. Each document describes exactly what S4 enforces, what scope limitations exist, and what the reviewer is being asked to approve. Neither item may be marked PASS until the responsible person completes the sign-off section of the relevant document with an APPROVED decision and returns the signed record._
+_Owner compliance acceptance records are complete. Electronic approvals recorded in the sign-off documents at the paths above. BLK-008 acceptance is subject to 10 conditions including a post-RC1 licensed-standard conformity review requirement. BLK-010 acceptance is subject to 13 conditions. Both documents confirm that S4 is a workflow management and record-keeping tool; operator responsibility for prescribed checks and statutory compliance is preserved._
 
 ---
 
@@ -1083,4 +1083,24 @@ _These items require a qualified person's sign-off, not a software change. Sign-
 5. Launch **S4 Security** and log in with the UAT guard account (`uat-guard-a@example.com`).
 6. Verify the app reaches the guard dashboard and shows shift id:2 before proceeding with UAT.
 
-**Cases pending execution on this build:** UAT-ATT-002, UAT-ATT-003, UAT-REC-001, UAT-REC-002 — all remain NOT RUN until physical device tests are completed.
+**Cases executed on this build:** UAT-REC-001 PASS (2026-08-30). UAT-ATT-002, UAT-ATT-003, and UAT-REC-002 were executed on the DEF-002 fix build below.
+
+---
+
+### DEF-002 fix build — `a17f2026` (commit `abd9373`)
+
+| Field | Value |
+|---|---|
+| **Build status** | SUCCESS |
+| **EAS build ID** | `a17f2026-2402-45b9-8337-b67d83a0cb7c` |
+| **EAS account / project** | `fahadjibran` / `security-marketplace` |
+| **Branch / SHA built** | `release/v1.0.0-rc1` — `abd9373` |
+| **Build profile** | `preview` (`distribution: internal` → APK) |
+| **Platform** | Android |
+| **App version** | `1.0.0` |
+| **Android package** | `com.securitymarketplace.mobile` |
+| **API URL baked in** | `https://security-marketplace-api.onrender.com` |
+| **Fix included** | DEF-002 — `api.ts` catch block re-throws plain `Error` instead of wrapping as `NetworkError` |
+| **Build date** | 2026-08-30 |
+
+**Cases executed on this build:** UAT-ATT-003 PASS (location permission denied → correct error shown), UAT-ATT-002 PASS (GPS check-in inside geofence, BLK-002 resolved), UAT-REC-002 PASS (force-close session recovery). All PASS on physical Android device.

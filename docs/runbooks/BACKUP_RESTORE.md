@@ -120,6 +120,37 @@ Recovery is complete only when:
 
 ## RC1 certification evidence
 
+### RC1 drill — SHA ff4ad00 (HEAD release/v1.0.0-rc1) — 2026-08-28
+
+Executed by: Claude (S4 AI Pair) under release-owner authority.
+Target: production database (pg_dump source) → Docker postgres:16-alpine disposable container (local, port 5433).
+Tools: pg_dump 18.3 / pg_restore 18.3 / Docker 29.7.2 / Windows 11.
+
+| Metric | Value |
+|---|---|
+| pg_dump duration | 8.523s |
+| Backup file size | 491,220 bytes |
+| pg_restore --list | exit=0 (valid custom-format archive) |
+| TABLE DATA sections | 73 |
+| pg_restore duration | 8.324s |
+| pg_restore exit code | 1 (non-fatal --clean warnings on empty DB — expected) |
+| Application tables in schema | 39 |
+| typeorm_migrations rows | 40 |
+| Latest migration applied | AddStructuredScreeningAddresses1720100000000 |
+| Orphan shifts (no company) | 0 |
+| Orphan guards (no user) | 0 |
+| Cleanup | Container stopped (auto-rm), dump file deleted |
+
+Core table row counts at backup time: users=12, companies=4, guard_profiles=5, clients=4, sites=11, jobs=13, job_applications=9, shifts=5, attendance_events=5, audit_logs=172, daily_logs=2, invoice_batches=1, payroll_batches=1, payment_records=2, safety_alerts=5, notifications=13, guard_screenings=4, timesheets=4.
+
+4 migrations applied since prior drill SHA `f1fd5620`: SEC-013 (private evidence access), SEC-015 (guard access/vetting separation), SEC-017 (BS7858 screening workflow), SEC-017C-D (structured screening addresses).
+
+Result: **PASS** — backup valid, restore successful, schema complete, referential integrity clean.
+
+---
+
+### Prior drill — SHA f1fd5620 (pre-RC1 baseline)
+
 The local PostgreSQL 16 drill for SHA `f1fd5620ec256586d1ba147fd2db5139eb85f531` measured:
 
 - custom-format backup: 0.528 seconds, 141,869 bytes, `pg_restore --list` exit 0;
