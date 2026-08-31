@@ -1,10 +1,10 @@
 # BLK-008 — Guard Screening Workflow: Compliance Review Record
 
-**Document purpose:** This document describes how S4 v1.0.0-rc1 implements guard screening workflow management and evidence collection. It asks a qualified compliance reviewer to assess whether the workflow is appropriately designed for use by organisations operating under a BS 7858-based screening obligation. This document is NOT a legal opinion, does NOT constitute certification of conformity with BS 7858 or any other standard, and does NOT guarantee that use of S4 satisfies any statutory or contractual screening requirement. The sign-off section records the reviewer's professional judgement.
+**Document purpose:** This document describes how S4 v1.0.0-rc1 implements guard screening workflow management and evidence collection. It asks the designated Product/Business Owner or organisation Compliance Owner to assess whether the workflow is appropriately designed for use by organisations operating under a BS 7858-based screening obligation. This document is NOT a legal opinion, does NOT constitute certification of conformity with BS 7858 or any other standard, and does NOT guarantee that use of S4 satisfies any statutory or contractual screening requirement. The owner acceptance section records the owner's internal acceptance decision. Independent professional advice may be obtained by the organisation where considered necessary.
 
-**Standard reference:** This document refers to BS 7858 (Security Screening of Individuals Employed in a Security Environment). The reviewer must use an authorised and current copy of the applicable edition of that standard when conducting their review. This document does not reproduce the text of BS 7858 and is not a substitute for reading the standard directly.
+**Standard reference:** This document refers to BS 7858 (Security Screening of Individuals Employed in a Security Environment). The owner or their nominated reviewer must consult an authorised and current copy of the applicable edition of that standard when conducting this review. This document does not reproduce the text of BS 7858 and is not a substitute for reading the standard directly.
 
-**Release gate:** BLK-008. Status remains OPEN until this document is signed by a qualified reviewer.
+**Release gate:** BLK-008. Status remains OPEN until this document is accepted by the designated Product/Business Owner or organisation Compliance Owner.
 
 **Branch / SHA under review:** `release/v1.0.0-rc1` — `38c14d4`
 
@@ -120,17 +120,17 @@ The following are **not** enforced or validated by the application code. These r
 
 ---
 
-## 3. What the reviewer is asked to approve
+## 3. What the owner is asked to accept
 
-The reviewer is asked to make a professional judgement on the following questions, based on their knowledge of BS 7858 (current edition), any applicable contractual requirements, and their organisation's obligations.
+The owner is asked to make a reasoned acceptance decision on the following questions, with reference to BS 7858 (current edition), any applicable contractual requirements, and the organisation's obligations. Independent professional advice may be obtained where the organisation considers it necessary.
 
 **3.1** Is the guard screening workflow described in Section 1 appropriately designed as a workflow management and evidence-collection system for use alongside a BS 7858-based screening process? Does it collect and record the categories of information that a screening process conducted under BS 7858 would require to be documented?
 
 **3.2** Are the scope limitations listed in Section 2 acknowledged? For each limitation that is material to the operator's obligations under BS 7858 or associated contractual requirements, will the operator put in place documented procedural controls to address it?
 
-**3.3** Is the reviewer satisfied that, given the above, S4 v1.0.0-rc1 may be used in a pilot deployment for the purpose of managing and recording screening information, subject to any conditions noted below?
+**3.3** Is the owner satisfied that, given the above, S4 v1.0.0-rc1 may be used in a pilot deployment for the purpose of managing and recording screening information, subject to any conditions noted below?
 
-The reviewer is NOT being asked to certify that S4 itself satisfies BS 7858 or any other standard, that use of S4 guarantees screening compliance, or that candidates processed through S4 have been screened to any particular standard. Conformity with BS 7858 remains the responsibility of the operator. S4 is a workflow management and record-keeping tool.
+The owner is NOT being asked to certify that S4 itself satisfies BS 7858 or any other standard, that use of S4 guarantees screening compliance, or that candidates processed through S4 have been screened to any particular standard. Conformity with BS 7858 — and all legally required screening obligations — remains the responsibility of the operator, not of the S4 application or its developers. S4 is a workflow management and record-keeping tool.
 
 ---
 
@@ -152,57 +152,54 @@ All 45 UAT cases have been executed and returned PASS as of `38c14d4`. No open d
 
 ---
 
-## 5. Sign-off record
+## 5. Owner Compliance Acceptance
 
 | Field | Value |
 |---|---|
-| **Reviewer full name** | |
-| **Reviewer title / role** | |
-| **Reviewer organisation** | |
-| **Qualification or authority** | (e.g. certified BS 7858 practitioner, designated compliance officer, named responsible person under a BS 7858-compliant vetting operation) |
-| **Professional registration / membership number** | (if applicable — e.g. BSIA member, NSI auditor reference, ACS scheme reference) |
-| **Review date** | |
-| **Edition of BS 7858 consulted** | (state the edition and year in force at time of review) |
-| **Branch / SHA reviewed** | `release/v1.0.0-rc1` — `38c14d4` |
-| **Sections of this document reviewed** | (confirm which sections of this document were read — at minimum, Sections 1, 2, and 3) |
+| **Owner full name** | |
+| **Role** | |
+| **Organisation** | |
+| **Basis of authority** | (e.g. Product/Business Owner, organisation Compliance Owner, named responsible person for screening processes) |
+| **Edition of BS 7858 consulted** | (state the edition and year consulted when completing this review) |
+| **Acceptance date** | |
+| **Branch / SHA reviewed** | `release/v1.0.0-rc1` — `2f59bc7` |
+| **Sections of this document reviewed** | (confirm which sections were read — at minimum, Sections 1, 2, and 3) |
 
 ### Decision
 
 Select one:
 
-- [ ] **APPROVED** — The screening workflow is appropriately designed for its stated purpose as a workflow management and evidence-collection system for use alongside a BS 7858-based screening process. The scope limitations in Section 2 are acknowledged. No conditions.
-- [ ] **APPROVED WITH CONDITIONS** — The screening workflow is appropriately designed for its stated purpose, subject to the conditions and procedural controls listed below.
-- [ ] **NOT APPROVED** — The screening workflow is not approved for pilot use. Reasons are listed below.
+- [ ] **ACCEPTED** — The screening workflow is appropriately designed for its stated purpose as a workflow management and evidence-collection system for use alongside a BS 7858-based screening process. The scope limitations in Section 2 are acknowledged. No conditions.
+- [ ] **ACCEPTED WITH CONDITIONS** — The screening workflow is appropriately designed for its stated purpose, subject to the conditions and procedural controls listed below.
+- [ ] **NOT ACCEPTED** — The screening workflow is not accepted for pilot use. Reasons are listed below.
 
 ### Conditions / Notes
 
-_(Required if APPROVED WITH CONDITIONS or NOT APPROVED. List any gaps, required procedural controls, training requirements, or remediation items. For each scope limitation in Section 2 that is material to the operator's obligation under BS 7858 or associated contractual requirements, note how it will be addressed procedurally.)_
+_(Required if ACCEPTED WITH CONDITIONS or NOT ACCEPTED. List any gaps, required procedural controls, training requirements, or remediation items. For each scope limitation in Section 2 that is material to the operator's obligation under BS 7858 or associated contractual requirements, note how it will be addressed procedurally.)_
 
 ```
 [Enter conditions and procedural controls here]
 ```
 
-### Signature / Confirmation
+### Signature / Recorded Approval
 
-By completing this record, the reviewer confirms that they have read Sections 1 through 3 of this document, that they have consulted an authorised and current copy of BS 7858, that their decision is their own professional judgement, that they have relevant qualification or authority within their organisation or field to make this determination, and that they understand that conformity with BS 7858 remains the responsibility of the operator — not of the S4 application or its developers.
+By completing this record, the owner confirms that they have read Sections 1 through 3 of this document, that they have consulted or ensured consultation of the applicable edition of BS 7858, that this is their internal acceptance decision as Product/Business Owner or organisation Compliance Owner, and that they understand that conformity with BS 7858 — and all legally required screening obligations — remains the responsibility of the operator, not of the S4 application or its developers. Independent professional advice may be obtained by the organisation where considered appropriate.
 
 ```
-Signature: ___________________________
+Signature / recorded approval: ___________________________
 
 Printed name: ___________________________
 
-Title / role: ___________________________
-
-Date: ___________________________
+Role: ___________________________
 
 Organisation: ___________________________
 
-Professional registration / membership (if applicable): ___________________________
+Date: ___________________________
 ```
 
 _This document should be retained as part of the release evidence record for S4 v1.0.0-rc1._
 
 ---
 
-**BLK-008 status:** OPEN — awaiting qualified reviewer sign-off.
-Do not mark this item PASS in the UAT log until a qualified person completes Section 5 with an APPROVED or APPROVED WITH CONDITIONS decision.
+**BLK-008 status:** OPEN — awaiting owner compliance acceptance.
+Do not mark this item PASS in the UAT log until the designated Product/Business Owner or organisation Compliance Owner completes Section 5 with an ACCEPTED or ACCEPTED WITH CONDITIONS decision.

@@ -1,10 +1,10 @@
 # BLK-010 — Right-to-Work Process: Legal/HR Review Record
 
-**Document purpose:** This document describes how S4 v1.0.0-rc1 implements right-to-work data collection, enforcement, and recording. It asks a designated legal or HR owner to review whether the workflow is appropriately designed for use alongside a UK employer right-to-work checking process. This document is NOT a legal opinion, does NOT constitute legal advice, and does NOT guarantee that use of S4 satisfies any statutory obligation under UK right-to-work law. The sign-off section records the reviewer's professional judgement.
+**Document purpose:** This document describes how S4 v1.0.0-rc1 implements right-to-work data collection, enforcement, and recording. It asks the designated Product/Business Owner or organisation Right-to-Work/Compliance Owner to review whether the workflow is appropriately designed for use alongside a UK employer right-to-work checking process. This document is NOT a legal opinion, does NOT constitute legal advice, and does NOT guarantee that use of S4 satisfies any statutory obligation under UK right-to-work law. The owner acceptance section records the owner's internal acceptance decision. Independent professional legal or HR advice may be obtained by the organisation where considered necessary.
 
-**Legislative context:** UK employers are required to conduct right-to-work checks under the Immigration, Asylum and Nationality Act 2006, as amended. The Home Office publishes guidance for employers — currently the "Employer's guide to right to work checks" — which is updated periodically and is the authoritative reference for employers conducting checks. The reviewer must consult the current edition of that guidance when conducting their review. This document does not reproduce Home Office guidance text and is not a substitute for reading that guidance directly.
+**Legislative context:** UK employers are required to conduct right-to-work checks under the Immigration, Asylum and Nationality Act 2006, as amended. The Home Office publishes guidance for employers — currently the "Employer's guide to right to work checks" — which is updated periodically and is the authoritative reference for employers conducting checks. The owner or their nominated reviewer must consult the current edition of that guidance when conducting this review. This document does not reproduce Home Office guidance text and is not a substitute for reading that guidance directly. Independent professional legal or HR advice may be obtained where the organisation considers it necessary.
 
-**Release gate:** BLK-010. Status remains OPEN until this document is signed by a designated legal or HR owner with authority to make this determination.
+**Release gate:** BLK-010. Status remains OPEN until this document is accepted by the designated Product/Business Owner or organisation Right-to-Work/Compliance Owner.
 
 **Branch / SHA under review:** `release/v1.0.0-rc1` — `38c14d4`
 
@@ -129,17 +129,17 @@ The table below distinguishes between the type of responsibility that applies to
 
 ---
 
-## 4. What the reviewer is asked to approve
+## 4. What the owner is asked to accept
 
-The reviewer is asked to make a professional judgement on the following, based on their knowledge of UK right-to-work law, the current Home Office Employer's guide to right to work checks, and their organisation's or clients' obligations.
+The owner is asked to make a reasoned acceptance decision on the following, with reference to UK right-to-work law, the current Home Office Employer's guide to right to work checks, and the organisation's obligations. Independent professional legal or HR advice may be obtained where the organisation considers it necessary.
 
 **4.1** Is the right-to-work data collection and blocking mechanism described in Section 2 appropriately designed to support the employer's right-to-work checking process? Does it collect and record the categories of information that a responsible employer would need to document in connection with a right-to-work check?
 
 **4.2** Are the scope limitations in Section 3 acknowledged, and will the operator put in place documented procedural controls to address each one that is material to their obligations?
 
-**4.3** Is the reviewer satisfied that, given the above, S4 v1.0.0-rc1 may be used in a pilot deployment as a supporting tool for the right-to-work checking process, subject to any conditions noted below?
+**4.3** Is the owner satisfied that, given the above, S4 v1.0.0-rc1 may be used in a pilot deployment as a supporting tool for the right-to-work checking process, subject to any conditions noted below?
 
-The reviewer is NOT being asked to certify that use of S4 satisfies UK right-to-work law, that S4 produces a statutory excuse, or that candidates processed through S4 have had their right to work lawfully established. Those obligations rest with the employer. The reviewer is being asked to confirm that the tool is fit for use as a record-keeping and workflow aid within a properly operated checking process.
+The owner is NOT being asked to certify that use of S4 satisfies UK right-to-work law, that S4 produces a statutory excuse, or that candidates processed through S4 have had their right to work lawfully established. Those obligations — including conducting legally required checks, assessing documents, and establishing any statutory excuse — rest with the employer, not with the S4 application or its developers. The owner is being asked to confirm that the tool is fit for use as a record-keeping and workflow aid within a properly operated checking process.
 
 ---
 
@@ -162,54 +162,54 @@ All 45 UAT cases have been executed and returned PASS as of `38c14d4`. No open d
 
 ---
 
-## 6. Sign-off record
+## 6. Owner Compliance Acceptance
 
 | Field | Value |
 |---|---|
-| **Reviewer full name** | |
-| **Reviewer title / role within organisation** | (e.g. HR Director, Legal Counsel, Head of Employment Law, Designated Right-to-Work Officer) |
-| **Basis of authority** | (state the basis on which the reviewer is authorised to make this determination — e.g. "Named responsible person under the organisation's right-to-work policy", "Qualified employment lawyer advising the operator", "HR Director with delegated authority for compliance sign-off") |
-| **Reviewer organisation** | |
-| **Home Office guidance edition consulted** | (state the version / date of the Home Office Employer's guide to right to work checks used when conducting this review) |
-| **Review date** | |
-| **Branch / SHA reviewed** | `release/v1.0.0-rc1` — `38c14d4` |
+| **Owner full name** | |
+| **Role** | |
+| **Organisation** | |
+| **Basis of authority** | (e.g. Product/Business Owner, organisation Right-to-Work/Compliance Owner, named responsible person for right-to-work processes) |
+| **Home Office guidance edition consulted** | (state the version / date of the Home Office Employer's guide to right to work checks consulted when completing this review) |
+| **Acceptance date** | |
+| **Branch / SHA reviewed** | `release/v1.0.0-rc1` — `2f59bc7` |
 | **Sections of this document reviewed** | (confirm which sections were read — at minimum, Sections 1, 2, 3, and 4) |
 
 ### Decision
 
 Select one:
 
-- [ ] **APPROVED** — The right-to-work workflow is appropriately designed to support a compliant checking process as a workflow management and record-keeping tool. The scope limitations in Section 3 are acknowledged. No conditions.
-- [ ] **APPROVED WITH CONDITIONS** — The workflow is appropriately designed for its stated purpose, subject to the conditions and procedural controls listed below.
-- [ ] **NOT APPROVED** — The workflow is not approved for pilot use. Reasons are listed below.
+- [ ] **ACCEPTED** — The right-to-work workflow is appropriately designed to support a compliant checking process as a workflow management and record-keeping tool. The scope limitations in Section 3 are acknowledged. No conditions.
+- [ ] **ACCEPTED WITH CONDITIONS** — The workflow is appropriately designed for its stated purpose, subject to the conditions and procedural controls listed below.
+- [ ] **NOT ACCEPTED** — The workflow is not accepted for pilot use. Reasons are listed below.
 
 ### Conditions / Procedural controls required
 
-_(Required if APPROVED WITH CONDITIONS or NOT APPROVED. List any required controls, training requirements, operational policies, or remediation items. For each scope limitation in Section 3 that is material to the operator's obligation, note how it will be addressed procedurally.)_
+_(Required if ACCEPTED WITH CONDITIONS or NOT ACCEPTED. List any required controls, training requirements, operational policies, or remediation items. For each scope limitation in Section 3 that is material to the operator's obligation, note how it will be addressed procedurally.)_
 
 ```
 [Enter conditions and procedural controls here]
 ```
 
-### Signature / Confirmation
+### Signature / Recorded Approval
 
-By completing this record, the reviewer confirms that they have read Sections 1 through 4 of this document, that they have consulted the current Home Office Employer's guide to right to work checks, that their decision is their own professional judgement, that they have legal or HR authority within their organisation (or are professionally qualified) to make this determination, and that they understand that responsibility for UK right-to-work compliance — including establishing any statutory excuse — rests with the employer, not with the S4 application or its developers.
+By completing this record, the owner confirms that they have read Sections 1 through 4 of this document, that they have consulted or ensured consultation of the current Home Office Employer's guide to right to work checks, that this is their internal acceptance decision as Product/Business Owner or organisation Right-to-Work/Compliance Owner, and that they understand that responsibility for UK right-to-work compliance — including conducting legally required checks, assessing documents, and establishing any statutory excuse — rests with the employer, not with the S4 application or its developers. Independent professional legal or HR advice may be obtained by the organisation where considered appropriate.
 
 ```
-Signature: ___________________________
+Signature / recorded approval: ___________________________
 
 Printed name: ___________________________
 
-Title / role: ___________________________
-
-Date: ___________________________
+Role: ___________________________
 
 Organisation: ___________________________
+
+Date: ___________________________
 ```
 
 _This document should be retained as part of the release evidence record for S4 v1.0.0-rc1 and as part of the employer's right-to-work compliance records for the duration required by the applicable Home Office guidance._
 
 ---
 
-**BLK-010 status:** OPEN — awaiting designated legal/HR owner sign-off.
-Do not mark this item PASS in the UAT log until a qualified person completes Section 6 with an APPROVED or APPROVED WITH CONDITIONS decision.
+**BLK-010 status:** OPEN — awaiting owner compliance acceptance.
+Do not mark this item PASS in the UAT log until the designated Product/Business Owner or organisation Right-to-Work/Compliance Owner completes Section 6 with an ACCEPTED or ACCEPTED WITH CONDITIONS decision.
