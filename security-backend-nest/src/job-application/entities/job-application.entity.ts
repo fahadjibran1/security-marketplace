@@ -8,13 +8,13 @@ export class JobApplication {
   @PrimaryGeneratedColumn()
   id!: number;
 
-  @ManyToOne(() => Job, (job) => job.applications, { eager: true })
+  @ManyToOne(() => Job, (job) => job.applications, { eager: true, nullable: false })
   job!: Job;
 
-  @ManyToOne(() => GuardProfile, (guard) => guard.applications, { eager: true })
+  @ManyToOne(() => GuardProfile, (guard) => guard.applications, { eager: true, nullable: false })
   guard!: GuardProfile;
 
-  @Column({ default: 'submitted' })
+  @Column({ default: 'applied' })
   status!: string;
 
   @CreateDateColumn()

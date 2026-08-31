@@ -3,8 +3,11 @@ import { TimesheetService } from './timesheet.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
-import { UserRole } from '../user/entities/user.entity';
+import { COMPANY_ADMIN_ROLES, COMPANY_VIEW_ROLES, UserRole } from '../user/entities/user.entity';
 import { UpdateTimesheetDto } from './dto/update-timesheet.dto';
+import { UpdateTimesheetPayrollDto } from './dto/update-timesheet-payroll.dto';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { JwtPayload } from '../auth/types/jwt-payload.type';
 
 @Controller('timesheets')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -12,14 +15,64 @@ export class TimesheetController {
   constructor(private readonly timesheetService: TimesheetService) {}
 
   @Get()
-  @Roles(UserRole.ADMIN, UserRole.COMPANY, UserRole.GUARD)
-  findAll() {
-    return this.timesheetService.findAll();
+  @Roles(UserRole.ADMIN, ...COMPANY_VIEW_ROLES, UserRole.GUARD)
+  findAll(@CurrentUser() user: JwtPayload) {
+    return this.timesheetService.findAllForUser(user);
+  }
+
+  @Get('company')
+  @Roles(UserRole.ADMIN, ...COMPANY_VIEW_ROLES)
+  findForCompany(@CurrentUser() user: JwtPayload) {
+    if (user.role === UserRole.ADMIN) {
+      return this.timesheetService.findAll();
+    }
+    return this.timesheetService.findForCompany(user.sub);
+  }
+
+  @Patch('company/payroll')
+  @Roles(UserRole.ADMIN, ...COMPANY_ADMIN_ROLES)
+  updatePayrollForCompany(
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: UpdateTimesheetPayrollDto,
+  ) {
+    if (user.role === UserRole.ADMIN) {
+      return this.timesheetService.updatePayrollAsAdmin(user.sub, dto);
+    }
+
+    return this.timesheetService.updatePayrollForCompany(user.sub, dto);
+  }
+
+  @Get('mine')
+  @Roles(UserRole.GUARD, UserRole.ADMIN)
+  findMine(@CurrentUser() user: JwtPayload) {
+    return this.timesheetService.findMine(user.sub);
   }
 
   @Patch(':id')
-  @Roles(UserRole.ADMIN, UserRole.COMPANY)
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateTimesheetDto) {
-    return this.timesheetService.update(id, dto);
+  @Roles(UserRole.ADMIN, ...COMPANY_ADMIN_ROLES, UserRole.GUARD)
+  update(
+    @CurrentUser() user: JwtPayload,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateTimesheetDto,
+  ) {
+    if (user.role === UserRole.ADMIN) {
+      return this.timesheetService.updateAsAdmin(user.sub, id, dto);
+    }
+
+    if (user.role === UserRole.GUARD) {
+      return this.timesheetService.updateMine(user.sub, id, dto);
+    }
+
+    return this.timesheetService.updateForCompany(user.sub, id, dto);
+  }
+
+  @Patch(':id/submit')
+  @Roles(UserRole.GUARD)
+  submitMine(
+    @CurrentUser() user: JwtPayload,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateTimesheetDto,
+  ) {
+    return this.timesheetService.submitMine(user.sub, id, dto);
   }
 }

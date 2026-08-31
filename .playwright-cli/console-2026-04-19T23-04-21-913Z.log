@@ -1,0 +1,2 @@
+[     837ms] [VERBOSE] [DOM] Password field is not contained in a form: (More info: https://goo.gl/9p2vKq) @ https://dashboard.observantsecurity.co.uk/:0
+[  180220ms] [ERROR] Failed to load resource: the server responded with a status of 403 () @ https://security-marketplace-api.onrender.com/auth/login:0

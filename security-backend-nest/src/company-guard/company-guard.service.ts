@@ -1,0 +1,121 @@
+import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { EntityManager, Repository } from 'typeorm';
+import {
+  CompanyGuard,
+  CompanyGuardRelationshipType,
+  CompanyGuardStatus,
+} from './entities/company-guard.entity';
+import { CreateCompanyGuardDto } from './dto/create-company-guard.dto';
+import { CompanyService } from '../company/company.service';
+import { GuardProfileService } from '../guard-profile/guard-profile.service';
+import { JwtPayload } from '../auth/types/jwt-payload.type';
+import { UserRole } from '../user/entities/user.entity';
+import { ComplianceService } from '../compliance/compliance.service';
+
+@Injectable()
+export class CompanyGuardService {
+  constructor(
+    @InjectRepository(CompanyGuard) private readonly companyGuardRepo: Repository<CompanyGuard>,
+    private readonly companyService: CompanyService,
+    private readonly guardService: GuardProfileService,
+    private readonly complianceService: ComplianceService,
+  ) {}
+
+  findAll(): Promise<CompanyGuard[]> {
+    return this.companyGuardRepo.find();
+  }
+
+  async findAllForUser(user: JwtPayload): Promise<CompanyGuard[]> {
+    if (user.role === UserRole.ADMIN) {
+      return this.findAll();
+    }
+
+    const company = await this.companyService.findByUserId(user.sub);
+    if (!company) {
+      throw new NotFoundException('Company not found');
+    }
+
+    return this.companyGuardRepo.find({
+      where: { company: { id: company.id } },
+      order: { createdAt: 'DESC' },
+    });
+  }
+
+  async create(dto: CreateCompanyGuardDto): Promise<CompanyGuard> {
+    const company = await this.companyService.findOne(dto.companyId);
+    return this.createForCompany(company.id, dto);
+  }
+
+  async createForUser(user: JwtPayload, dto: CreateCompanyGuardDto): Promise<CompanyGuard> {
+    if (user.role !== UserRole.ADMIN) {
+      throw new ForbiddenException('Direct guard-pool membership requires platform administration or an accepted application');
+    }
+    return this.create(dto);
+  }
+
+  private async createForCompany(companyId: number, dto: CreateCompanyGuardDto): Promise<CompanyGuard> {
+    const company = await this.companyService.findOne(companyId);
+    const guard = await this.guardService.findOne(dto.guardId);
+    if ((dto.status ?? CompanyGuardStatus.ACTIVE) === CompanyGuardStatus.ACTIVE) {
+      await this.complianceService.assertGuardAssignable(company.id, guard.id);
+    }
+
+    const exists = await this.companyGuardRepo.findOne({
+      where: { company: { id: company.id }, guard: { id: guard.id } },
+    });
+    if (exists) throw new ConflictException('Company-guard relationship already exists');
+
+    const row = this.companyGuardRepo.create({
+      company,
+      guard,
+      status: dto.status ?? CompanyGuardStatus.ACTIVE,
+      relationshipType: dto.relationshipType,
+    });
+
+    return this.companyGuardRepo.save(row);
+  }
+
+  async ensureActiveRelationship(companyId: number, guardId: number): Promise<CompanyGuard> {
+    const relation = await this.companyGuardRepo.findOne({
+      where: { company: { id: companyId }, guard: { id: guardId }, status: CompanyGuardStatus.ACTIVE },
+    });
+
+    if (!relation) {
+      throw new ConflictException('Guard is not active/approved for this company');
+    }
+
+    return relation;
+  }
+
+  async ensureRelationship(params: {
+    companyId: number;
+    guardId: number;
+    relationshipType?: CompanyGuard['relationshipType'];
+  }, manager?: EntityManager): Promise<CompanyGuard> {
+    const relationRepo = manager?.getRepository(CompanyGuard) ?? this.companyGuardRepo;
+    const company = await this.companyService.findOne(params.companyId);
+    const guard = await this.guardService.findOne(params.guardId);
+    await this.complianceService.assertGuardAssignable(company.id, guard.id);
+
+    const existing = await relationRepo.findOne({
+      where: { company: { id: company.id }, guard: { id: guard.id } },
+    });
+
+    const relation =
+      existing ??
+      relationRepo.create({
+        company,
+        guard,
+        relationshipType:
+          params.relationshipType ?? CompanyGuardRelationshipType.APPROVED_CONTRACTOR,
+      });
+
+    relation.status = CompanyGuardStatus.ACTIVE;
+    relation.relationshipType =
+      params.relationshipType ??
+      relation.relationshipType ??
+      CompanyGuardRelationshipType.APPROVED_CONTRACTOR;
+    return relationRepo.save(relation);
+  }
+}

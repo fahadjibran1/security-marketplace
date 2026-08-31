@@ -1,9 +1,17 @@
-import { Column, Entity, JoinColumn, OneToMany, OneToOne, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  Column,
+  Entity,
+  JoinColumn,
+  OneToMany,
+  OneToOne,
+  PrimaryGeneratedColumn,
+} from 'typeorm';
 import { User } from '../../user/entities/user.entity';
 import { Job } from '../../job/entities/job.entity';
 import { Assignment } from '../../assignment/entities/assignment.entity';
 import { Shift } from '../../shift/entities/shift.entity';
 import { Timesheet } from '../../timesheet/entities/timesheet.entity';
+import { CompanyGuard } from '../../company-guard/entities/company-guard.entity';
 
 @Entity('companies')
 export class Company {
@@ -13,6 +21,9 @@ export class Company {
   @OneToOne(() => User, { eager: true })
   @JoinColumn({ name: 'userId' })
   user!: User;
+
+  @OneToMany(() => CompanyGuard, (companyGuard) => companyGuard.company)
+  companyGuards!: CompanyGuard[];
 
   @Column()
   name!: string;
@@ -27,14 +38,14 @@ export class Company {
   contactDetails!: string;
 
   @OneToMany(() => Job, (job) => job.company)
-  jobs?: Job[];
+  jobs!: Job[];
 
   @OneToMany(() => Assignment, (assignment) => assignment.company)
-  assignments?: Assignment[];
+  assignments!: Assignment[];
 
   @OneToMany(() => Shift, (shift) => shift.company)
-  shifts?: Shift[];
+  shifts!: Shift[];
 
   @OneToMany(() => Timesheet, (timesheet) => timesheet.company)
-  timesheets?: Timesheet[];
+  timesheets!: Timesheet[];
 }

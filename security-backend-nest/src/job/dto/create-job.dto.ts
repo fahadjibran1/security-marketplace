@@ -1,8 +1,9 @@
 import { IsInt, IsNumber, IsOptional, IsString, Min } from 'class-validator';
 
 export class CreateJobDto {
+  @IsOptional()
   @IsInt()
-  companyId!: number;
+  companyId?: number;
 
   @IsString()
   title!: string;
@@ -20,6 +21,15 @@ export class CreateJobDto {
   hourlyRate!: number;
 
   @IsOptional()
+  @IsNumber()
+  @Min(0)
+  billingRate?: number | null;
+
+  @IsOptional()
   @IsString()
   status?: string;
+
+  @IsOptional()
+  @IsInt()
+  siteId?: number;
 }

@@ -7,6 +7,13 @@ import { JobModule } from '../job/job.module';
 import { GuardProfileModule } from '../guard-profile/guard-profile.module';
 import { AssignmentModule } from '../assignment/assignment.module';
 import { ShiftModule } from '../shift/shift.module';
+import { AuditLogModule } from '../audit-log/audit-log.module';
+import { NotificationModule } from '../notification/notification.module';
+import { SiteModule } from '../site/site.module';
+import { CompanyModule } from '../company/company.module';
+import { CompanyGuardModule } from '../company-guard/company-guard.module';
+import { AvailabilityModule } from '../availability/availability.module';
+import { ComplianceModule } from '../compliance/compliance.module';
 
 @Module({
   imports: [
@@ -14,7 +21,14 @@ import { ShiftModule } from '../shift/shift.module';
     JobModule,
     GuardProfileModule,
     forwardRef(() => AssignmentModule),
-    forwardRef(() => ShiftModule)
+    forwardRef(() => ShiftModule),
+    AuditLogModule,
+    NotificationModule,
+    SiteModule,
+    CompanyModule,
+    CompanyGuardModule,
+    AvailabilityModule,
+    ComplianceModule,
   ],
   controllers: [JobApplicationController],
   providers: [JobApplicationService],

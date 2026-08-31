@@ -1,0 +1,48 @@
+services:
+  - type: web
+    name: security-marketplace-api
+    runtime: node
+    rootDir: security-backend-nest
+    branch: release/v1.0.0-rc1
+    plan: starter
+    autoDeployTrigger: off
+    numInstances: 1
+    buildCommand: npm ci --include=dev && npm run build
+    preDeployCommand: npm run migration:run:prod
+    startCommand: npm run start:prod
+    healthCheckPath: /health/ready
+    maxShutdownDelaySeconds: 30
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: ENABLE_SWAGGER
+        value: "false"
+      - key: DATABASE_SYNCHRONIZE
+        value: "false"
+      - key: DATABASE_SSL
+        value: "true"
+      - key: TRUST_PROXY
+        # One Render edge proxy hop. Do not trust arbitrary X-Forwarded-For chains.
+        value: "1"
+      - key: CORS_ORIGIN
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_CA_CERT
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: EVIDENCE_STORAGE_ENDPOINT
+        sync: false
+      - key: EVIDENCE_STORAGE_REGION
+        sync: false
+      - key: EVIDENCE_STORAGE_BUCKET
+        sync: false
+      - key: EVIDENCE_STORAGE_ACCESS_KEY_ID
+        sync: false
+      - key: EVIDENCE_STORAGE_SECRET_ACCESS_KEY
+        sync: false
+      - key: EVIDENCE_SIGNED_URL_TTL_SECONDS
+        value: "180"

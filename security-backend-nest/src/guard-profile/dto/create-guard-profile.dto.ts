@@ -1,4 +1,5 @@
-import { IsBoolean, IsInt, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsDateString, IsEnum, IsInt, IsOptional, IsString } from 'class-validator';
+import { GuardApprovalStatus, GuardAvailability } from '../entities/guard-profile.entity';
 
 export class CreateGuardProfileDto {
   @IsInt()
@@ -10,6 +11,18 @@ export class CreateGuardProfileDto {
   @IsString()
   siaLicenseNumber!: string;
 
+  @IsOptional()
+  @IsDateString()
+  siaExpiryDate?: string;
+
+  @IsOptional()
+  @IsString()
+  rightToWorkStatus?: string;
+
+  @IsOptional()
+  @IsDateString()
+  rightToWorkExpiryDate?: string;
+
   @IsString()
   phone!: string;
 
@@ -20,4 +33,16 @@ export class CreateGuardProfileDto {
   @IsOptional()
   @IsString()
   status?: string;
+
+  @IsOptional()
+  @IsEnum(GuardAvailability)
+  availability?: GuardAvailability;
+
+  @IsOptional()
+  @IsEnum(GuardApprovalStatus)
+  approvalStatus?: GuardApprovalStatus;
+
+  @IsOptional()
+  @IsBoolean()
+  isApproved?: boolean;
 }

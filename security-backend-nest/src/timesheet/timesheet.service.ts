@@ -1,40 +1,822 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { Timesheet } from './entities/timesheet.entity';
+import { Brackets, EntityManager, In, Repository } from 'typeorm';
+import { Timesheet, TimesheetBillingStatus, TimesheetPayrollStatus, TimesheetStatus } from './entities/timesheet.entity';
 import { Shift } from '../shift/entities/shift.entity';
 import { UpdateTimesheetDto } from './dto/update-timesheet.dto';
+import { UpdateTimesheetPayrollDto } from './dto/update-timesheet-payroll.dto';
+import { CompanyService } from '../company/company.service';
+import { ContractPricingService } from '../contract-pricing/contract-pricing.service';
+import { GuardProfileService } from '../guard-profile/guard-profile.service';
+import { AuditLogService } from '../audit-log/audit-log.service';
+import {
+  NotificationService,
+} from '../notification/notification.service';
+import { NotificationType } from '../notification/entities/notification.entity';
+import { PayRuleService } from '../pay-rule/pay-rule.service';
+import { JwtPayload } from '../auth/types/jwt-payload.type';
+import { isCompanyRole, UserRole } from '../user/entities/user.entity';
 
 @Injectable()
 export class TimesheetService {
-  constructor(@InjectRepository(Timesheet) private readonly timesheetRepo: Repository<Timesheet>) {}
+  constructor(
+    @InjectRepository(Timesheet) private readonly timesheetRepo: Repository<Timesheet>,
+    private readonly companyService: CompanyService,
+    private readonly contractPricingService: ContractPricingService,
+    private readonly guardProfileService: GuardProfileService,
+    private readonly auditLogService: AuditLogService,
+    private readonly notificationService: NotificationService,
+    private readonly payRuleService: PayRuleService,
+  ) {}
 
-  findAll(): Promise<Timesheet[]> {
-    return this.timesheetRepo.find();
+  async findAll(): Promise<Timesheet[]> {
+    const timesheets = await this.timesheetRepo.find();
+    return this.applyDerivedFinancials(timesheets);
+  }
+
+  async findAllForUser(user: JwtPayload): Promise<Timesheet[]> {
+    if (user.role === UserRole.ADMIN) {
+      return this.findAll();
+    }
+
+    if (isCompanyRole(user.role)) {
+      return this.findForCompany(user.sub);
+    }
+
+    return this.findMine(user.sub);
+  }
+
+  async findForCompany(userId: number): Promise<Timesheet[]> {
+    const company = await this.companyService.findByUserId(userId);
+    if (!company) throw new NotFoundException('Company not found');
+
+    const timesheets = await this.timesheetRepo.find({
+      where: { company: { id: company.id } },
+      order: { createdAt: 'DESC' },
+    });
+    return this.applyDerivedFinancials(timesheets);
+  }
+
+  async findMine(userId: number): Promise<Timesheet[]> {
+    const guard = await this.guardProfileService.findByUserId(userId);
+    if (!guard) throw new NotFoundException('Guard profile not found');
+
+    const timesheets = await this.buildGuardTimesheetQuery(guard.id)
+      .orderBy('timesheet.createdAt', 'DESC')
+      .getMany();
+    return this.applyDerivedFinancials(timesheets);
   }
 
   async findOne(id: number): Promise<Timesheet> {
     const timesheet = await this.timesheetRepo.findOne({ where: { id } });
     if (!timesheet) throw new NotFoundException('Timesheet not found');
-    return timesheet;
+    return this.applyDerivedFinancials(timesheet);
   }
 
-  async createForShift(shift: Shift): Promise<Timesheet> {
-    const timesheet = this.timesheetRepo.create({
+  async createForShift(shift: Shift, manager?: EntityManager): Promise<Timesheet> {
+    const timesheetRepo = manager?.getRepository(Timesheet) ?? this.timesheetRepo;
+    const company = shift.company ?? shift.assignment?.company;
+    const guard = shift.guard ?? shift.assignment?.guard;
+
+    if (!company || !guard) {
+      throw new NotFoundException('Shift is missing company or guard context for timesheet creation');
+    }
+
+    const timesheet = timesheetRepo.create({
       shift,
-      company: shift.company,
-      guard: shift.guard,
+      company,
+      guard,
       hoursWorked: 0,
-      approvalStatus: 'pending'
+      approvalStatus: TimesheetStatus.DRAFT,
+      scheduledStartAt: shift.start ? new Date(shift.start) : null,
+      scheduledEndAt: shift.end ? new Date(shift.end) : null,
+      actualCheckInAt: shift.assignment?.checkedInAt ?? null,
+      actualCheckOutAt: shift.assignment?.checkedOutAt ?? null,
+      workedMinutes: 0,
+      breakMinutes: 0,
+      roundedMinutes: 0,
+      payrollStatus: TimesheetPayrollStatus.UNPAID,
+      payrollIncludedAt: null,
+      payrollPaidAt: null,
+      billingStatus: TimesheetBillingStatus.UNINVOICED,
+      invoiceIssuedAt: null,
+      invoicePaidAt: null,
+      submittedAt: null,
+      reviewedAt: null,
+      reviewedByUserId: null,
+      rejectionReason: null,
     });
 
-    return this.timesheetRepo.save(timesheet);
+    const saved = await timesheetRepo.save(timesheet);
+    return this.applyDerivedFinancials(saved);
   }
 
-  async update(id: number, dto: UpdateTimesheetDto): Promise<Timesheet> {
+  async updateAsAdmin(userId: number, id: number, dto: UpdateTimesheetDto): Promise<Timesheet> {
     const timesheet = await this.findOne(id);
-    if (dto.hoursWorked !== undefined) timesheet.hoursWorked = dto.hoursWorked;
+    this.validateAdminCorrection(timesheet, dto);
+    const reason = dto.correctionReason!.trim();
+    const beforeData = this.adminCorrectionSnapshot(timesheet, reason);
+
+    this.applyAdminEditableUpdates(timesheet, dto);
+    let overrideApplied = false;
+    if (dto.approvedMinutes !== undefined || dto.approvedHours !== undefined) {
+      overrideApplied = this.applyApprovalDuration(
+        timesheet,
+        { ...dto, overrideReason: reason },
+        userId,
+      );
+    }
+
+    const saved = await this.timesheetRepo.save(timesheet);
+    await this.auditLogService.log({
+      company: saved.company,
+      user: { id: userId },
+      action: 'timesheet.admin_corrected',
+      entityType: 'timesheet',
+      entityId: saved.id,
+      beforeData,
+      afterData: this.adminCorrectionSnapshot(saved, reason),
+    });
+    if (overrideApplied) {
+      await this.auditLogService.log({
+        company: saved.company,
+        user: { id: userId },
+        action: 'timesheet.approved_duration_overridden',
+        entityType: 'timesheet',
+        entityId: saved.id,
+        beforeData: { verifiedMinutes: saved.verifiedMinutes },
+        afterData: {
+          approvedMinutes: saved.approvedMinutes,
+          overrideReason: saved.overrideReason,
+          overrideBy: saved.overrideBy,
+          overrideAt: saved.overrideAt,
+        },
+      });
+    }
+    return this.applyDerivedFinancials(saved);
+  }
+
+  async updateMine(userId: number, id: number, dto: UpdateTimesheetDto): Promise<Timesheet> {
+    const timesheet = await this.getGuardOwnedEditableTimesheet(userId, id, 'edited');
+    this.applyGuardEditableUpdates(timesheet, dto);
+    const saved = await this.timesheetRepo.save(timesheet);
+    return this.applyDerivedFinancials(saved);
+  }
+
+  async updateForCompany(userId: number, id: number, dto: UpdateTimesheetDto): Promise<Timesheet> {
+    const company = await this.companyService.findByUserId(userId);
+    if (!company) throw new NotFoundException('Company not found');
+
+    const timesheet = await this.timesheetRepo.findOne({
+      where: { id, company: { id: company.id } },
+    });
+    if (!timesheet) throw new NotFoundException('Timesheet not found');
+
+    const beforeData = {
+      approvalStatus: timesheet.approvalStatus,
+      approvedHours: timesheet.approvedHours,
+      companyNote: timesheet.companyNote,
+      rejectionReason: timesheet.rejectionReason,
+      reviewedAt: timesheet.reviewedAt,
+      reviewedByUserId: timesheet.reviewedByUserId,
+    };
+
+    const currentStatus = String(timesheet.approvalStatus).trim().toLowerCase();
+    const approvedNoteOnlyUpdate =
+      currentStatus === TimesheetStatus.APPROVED &&
+      dto.companyNote !== undefined &&
+      dto.approvalStatus === undefined &&
+      dto.approvedHours === undefined &&
+      dto.approvedMinutes === undefined &&
+      dto.overrideReason === undefined &&
+      dto.rejectionReason === undefined;
+    if (approvedNoteOnlyUpdate) {
+      const trimmedCompanyNote = dto.companyNote?.trim();
+      timesheet.companyNote = trimmedCompanyNote ? trimmedCompanyNote : null;
+      const saved = await this.timesheetRepo.save(timesheet);
+      await this.auditLogService.log({
+        company,
+        user: { id: userId },
+        action: 'timesheet.company_note_updated',
+        entityType: 'timesheet',
+        entityId: saved.id,
+        beforeData,
+        afterData: {
+          approvalStatus: saved.approvalStatus,
+          approvedHours: saved.approvedHours,
+          companyNote: saved.companyNote,
+          rejectionReason: saved.rejectionReason,
+          reviewedAt: saved.reviewedAt,
+          reviewedByUserId: saved.reviewedByUserId,
+        },
+      });
+      return this.applyDerivedFinancials(saved);
+    }
+
+    this.validateCompanyReviewRequest(timesheet, dto);
+    this.applyTimesheetUpdates(timesheet, dto);
+
+    let overrideApplied = false;
+    if (dto.approvalStatus === TimesheetStatus.APPROVED) {
+      timesheet.reviewedAt = new Date();
+      timesheet.reviewedByUserId = userId;
+      overrideApplied = this.applyApprovalDuration(timesheet, dto, userId);
+      if (!timesheet.payrollStatus) {
+        timesheet.payrollStatus = TimesheetPayrollStatus.UNPAID;
+      }
+      if (!timesheet.billingStatus) {
+        timesheet.billingStatus = TimesheetBillingStatus.UNINVOICED;
+      }
+      timesheet.rejectionReason = null;
+    } else if (dto.approvalStatus === TimesheetStatus.REJECTED) {
+      timesheet.reviewedAt = new Date();
+      timesheet.reviewedByUserId = userId;
+      this.clearApprovalDuration(timesheet);
+      timesheet.payrollStatus = TimesheetPayrollStatus.UNPAID;
+      timesheet.payrollIncludedAt = null;
+      timesheet.payrollPaidAt = null;
+      timesheet.billingStatus = TimesheetBillingStatus.UNINVOICED;
+      timesheet.invoiceIssuedAt = null;
+      timesheet.invoicePaidAt = null;
+      timesheet.invoiceBatch = null;
+    } else if (dto.approvalStatus === TimesheetStatus.RETURNED) {
+      timesheet.reviewedAt = new Date();
+      timesheet.reviewedByUserId = userId;
+      this.clearApprovalDuration(timesheet);
+      timesheet.payrollStatus = TimesheetPayrollStatus.UNPAID;
+      timesheet.payrollIncludedAt = null;
+      timesheet.payrollPaidAt = null;
+      timesheet.billingStatus = TimesheetBillingStatus.UNINVOICED;
+      timesheet.invoiceIssuedAt = null;
+      timesheet.invoicePaidAt = null;
+      timesheet.invoiceBatch = null;
+    }
+    const saved = await this.timesheetRepo.save(timesheet);
+    await this.auditLogService.log({
+      company,
+      user: { id: userId },
+      action:
+        saved.approvalStatus === TimesheetStatus.APPROVED
+          ? 'timesheet.approved'
+          : saved.approvalStatus === TimesheetStatus.RETURNED
+            ? 'timesheet.returned'
+            : saved.approvalStatus === TimesheetStatus.REJECTED
+              ? 'timesheet.rejected'
+              : 'timesheet.reviewed',
+      entityType: 'timesheet',
+      entityId: saved.id,
+      beforeData,
+      afterData: {
+        approvalStatus: saved.approvalStatus,
+        approvedHours: saved.approvedHours,
+        verifiedMinutes: saved.verifiedMinutes,
+        approvedMinutes: saved.approvedMinutes,
+        overrideReason: saved.overrideReason,
+        overrideBy: saved.overrideBy,
+        overrideAt: saved.overrideAt,
+        companyNote: saved.companyNote,
+        rejectionReason: saved.rejectionReason,
+        reviewedAt: saved.reviewedAt,
+        reviewedByUserId: saved.reviewedByUserId,
+      },
+    });
+
+    if (overrideApplied) {
+      await this.auditLogService.log({
+        company,
+        user: { id: userId },
+        action: 'timesheet.approved_duration_overridden',
+        entityType: 'timesheet',
+        entityId: saved.id,
+        beforeData: { verifiedMinutes: saved.verifiedMinutes },
+        afterData: {
+          approvedMinutes: saved.approvedMinutes,
+          overrideReason: saved.overrideReason,
+          overrideBy: saved.overrideBy,
+          overrideAt: saved.overrideAt,
+        },
+      });
+    }
+
+    if (saved.guard?.user?.id) {
+      const isApproved = saved.approvalStatus === TimesheetStatus.APPROVED;
+      const isReturned = saved.approvalStatus === TimesheetStatus.RETURNED;
+      await this.notificationService.createForUser({
+        userId: saved.guard.user.id,
+        company,
+        type: isApproved
+          ? NotificationType.TIMESHEET_APPROVED
+          : NotificationType.TIMESHEET_REJECTED,
+        title: isApproved
+          ? 'Timesheet approved'
+          : isReturned
+            ? 'Timesheet returned'
+            : 'Timesheet rejected',
+        message: isApproved
+          ? `Your timesheet for shift #${saved.shift?.id ?? saved.id} has been approved.`
+          : isReturned
+            ? `Your timesheet for shift #${saved.shift?.id ?? saved.id} was returned for correction.`
+            : `Your timesheet for shift #${saved.shift?.id ?? saved.id} was rejected.`,
+      });
+    }
+
+    return this.applyDerivedFinancials(saved);
+  }
+
+  // RB-007: called only from attendance.service.ts checkOut(), once both the
+  // CHECK_IN and CHECK_OUT events have real server timestamps. verifiedMinutes
+  // is the attendance-verified duration and is never guard- or company-editable
+  // (it's not part of applyGuardEditableUpdates or the company review DTO path).
+  async updateHoursForShift(
+    shiftId: number,
+    input: { hoursWorked: number; verifiedMinutes: number },
+  ): Promise<Timesheet> {
+    const timesheet = await this.timesheetRepo.findOne({ where: { shift: { id: shiftId } } });
+    if (!timesheet) throw new NotFoundException('Timesheet not found');
+
+    const workedMinutes = Math.max(0, Math.round(input.hoursWorked * 60));
+    timesheet.hoursWorked = input.hoursWorked;
+    timesheet.workedMinutes = workedMinutes;
+    timesheet.roundedMinutes = workedMinutes;
+    timesheet.verifiedMinutes = Math.max(0, Math.round(input.verifiedMinutes));
+    timesheet.actualCheckInAt = timesheet.shift.assignment?.checkedInAt ?? timesheet.actualCheckInAt ?? null;
+    timesheet.actualCheckOutAt = timesheet.shift.assignment?.checkedOutAt ?? timesheet.actualCheckOutAt ?? null;
+    const saved = await this.timesheetRepo.save(timesheet);
+    return this.applyDerivedFinancials(saved);
+  }
+
+  async submitMine(userId: number, id: number, dto: UpdateTimesheetDto): Promise<Timesheet> {
+    const timesheet = await this.getGuardOwnedEditableTimesheet(userId, id, 'submitted');
+    const beforeData = {
+      approvalStatus: timesheet.approvalStatus,
+      hoursWorked: timesheet.hoursWorked,
+      guardNote: timesheet.guardNote,
+      submittedAt: timesheet.submittedAt,
+    };
+    this.applyGuardEditableUpdates(timesheet, dto);
+    timesheet.approvalStatus = TimesheetStatus.SUBMITTED;
+    timesheet.submittedAt = new Date();
+    this.clearApprovalDuration(timesheet);
+    timesheet.payrollStatus = TimesheetPayrollStatus.UNPAID;
+    timesheet.payrollIncludedAt = null;
+    timesheet.payrollPaidAt = null;
+    timesheet.billingStatus = TimesheetBillingStatus.UNINVOICED;
+    timesheet.invoiceIssuedAt = null;
+    timesheet.invoicePaidAt = null;
+    timesheet.invoiceBatch = null;
+    timesheet.reviewedAt = null;
+    timesheet.reviewedByUserId = null;
+    timesheet.rejectionReason = null;
+    const saved = await this.timesheetRepo.save(timesheet);
+    await this.auditLogService.log({
+      company: saved.company,
+      user: { id: userId },
+      action: 'timesheet.submitted',
+      entityType: 'timesheet',
+      entityId: saved.id,
+      beforeData,
+      afterData: {
+        approvalStatus: saved.approvalStatus,
+        submittedAt: saved.submittedAt,
+        actualCheckInAt: saved.actualCheckInAt,
+        actualCheckOutAt: saved.actualCheckOutAt,
+        guardNote: saved.guardNote,
+        approvedHours: saved.approvedHours,
+        companyNote: saved.companyNote,
+        workedMinutes: saved.workedMinutes,
+        roundedMinutes: saved.roundedMinutes,
+      },
+    });
+
+    if (saved.company?.user?.id) {
+      await this.notificationService.createForUser({
+        userId: saved.company.user.id,
+        company: saved.company,
+        type: NotificationType.TIMESHEET_SUBMITTED,
+        title: 'Timesheet submitted',
+        message: `${saved.guard?.user?.firstName ?? 'A guard'} submitted a timesheet for shift #${saved.shift?.id ?? saved.id}.`,
+      });
+    }
+
+    return this.applyDerivedFinancials(saved);
+  }
+
+  async updatePayrollForCompany(userId: number, dto: UpdateTimesheetPayrollDto): Promise<Timesheet[]> {
+    const company = await this.companyService.findByUserId(userId);
+    if (!company) throw new NotFoundException('Company not found');
+
+    return this.applyPayrollUpdate({ companyId: company.id, userId, dto });
+  }
+
+  async updatePayrollAsAdmin(userId: number, dto: UpdateTimesheetPayrollDto): Promise<Timesheet[]> {
+    return this.applyPayrollUpdate({ userId, dto });
+  }
+
+  private applyTimesheetUpdates(timesheet: Timesheet, dto: UpdateTimesheetDto): void {
+    if (dto.hoursWorked !== undefined) {
+      timesheet.hoursWorked = dto.hoursWorked;
+      if (dto.workedMinutes === undefined) {
+        timesheet.workedMinutes = Math.max(0, Math.round(dto.hoursWorked * 60));
+      }
+    }
     if (dto.approvalStatus !== undefined) timesheet.approvalStatus = dto.approvalStatus;
-    return this.timesheetRepo.save(timesheet);
+    if (dto.submittedAt !== undefined) {
+      timesheet.submittedAt = dto.submittedAt ? new Date(dto.submittedAt) : null;
+    }
+    if (dto.actualCheckInAt !== undefined) {
+      timesheet.actualCheckInAt = dto.actualCheckInAt ? new Date(dto.actualCheckInAt) : null;
+    }
+    if (dto.actualCheckOutAt !== undefined) {
+      timesheet.actualCheckOutAt = dto.actualCheckOutAt ? new Date(dto.actualCheckOutAt) : null;
+    }
+    if (dto.guardNote !== undefined) {
+      const trimmedGuardNote = dto.guardNote?.trim();
+      timesheet.guardNote = trimmedGuardNote ? trimmedGuardNote : null;
+    }
+    if (dto.companyNote !== undefined) {
+      const trimmedCompanyNote = dto.companyNote?.trim();
+      timesheet.companyNote = trimmedCompanyNote ? trimmedCompanyNote : null;
+    }
+    // RB-007: approvedHours/approvedMinutes are deliberately NOT set here. They are
+    // payroll-authoritative and can only change via applyApprovalDuration(), which
+    // enforces the verified-attendance-default + override-reason gate. A raw
+    // dto.approvedHours passthrough would let a reviewer bypass that gate entirely.
+    if (dto.workedMinutes !== undefined) timesheet.workedMinutes = dto.workedMinutes;
+    if (dto.breakMinutes !== undefined) timesheet.breakMinutes = dto.breakMinutes;
+    if (dto.roundedMinutes !== undefined) timesheet.roundedMinutes = dto.roundedMinutes;
+    if (dto.rejectionReason !== undefined) timesheet.rejectionReason = dto.rejectionReason;
+  }
+
+  private applyAdminEditableUpdates(timesheet: Timesheet, dto: UpdateTimesheetDto): void {
+    this.applyTimesheetUpdates(timesheet, {
+      hoursWorked: dto.hoursWorked,
+      guardNote: dto.guardNote,
+      companyNote: dto.companyNote,
+      workedMinutes: dto.workedMinutes,
+      breakMinutes: dto.breakMinutes,
+      roundedMinutes: dto.roundedMinutes,
+    });
+  }
+
+  private validateAdminCorrection(timesheet: Timesheet, dto: UpdateTimesheetDto): void {
+    const input = dto as Record<string, unknown>;
+    const reason = dto.correctionReason?.trim();
+    if (!reason) {
+      throw new BadRequestException('An admin correction reason is required.');
+    }
+
+    const serverControlledFields = [
+      'verifiedMinutes',
+      'actualCheckInAt',
+      'actualCheckOutAt',
+      'reviewedByUserId',
+      'reviewedAt',
+      'overrideBy',
+      'overrideAt',
+      'submittedAt',
+    ];
+    if (serverControlledFields.some((field) => Object.prototype.hasOwnProperty.call(input, field))) {
+      throw new BadRequestException('Admin correction cannot change system-derived attendance or review identity.');
+    }
+
+    if (dto.approvalStatus !== undefined || dto.rejectionReason !== undefined || dto.overrideReason !== undefined) {
+      throw new BadRequestException('Admin correction cannot bypass timesheet status workflows.');
+    }
+
+    const currentStatus = String(timesheet.approvalStatus).trim().toLowerCase();
+    if (currentStatus === TimesheetStatus.REJECTED) {
+      throw new ForbiddenException('Rejected timesheets are final and cannot be corrected.');
+    }
+
+    const durationRequested = dto.approvedMinutes !== undefined || dto.approvedHours !== undefined;
+    if (durationRequested && currentStatus !== TimesheetStatus.APPROVED) {
+      throw new ForbiddenException('Approved duration can only be corrected on an approved timesheet.');
+    }
+
+    const payrollFinal =
+      timesheet.payrollStatus === TimesheetPayrollStatus.PAID ||
+      !!timesheet.payrollPaidAt ||
+      !!timesheet.payrollBatch;
+    const invoiceFinal =
+      timesheet.billingStatus === TimesheetBillingStatus.INVOICED ||
+      !!timesheet.invoiceIssuedAt ||
+      !!timesheet.invoicePaidAt ||
+      !!timesheet.invoiceBatch;
+    if (payrollFinal || invoiceFinal) {
+      throw new ForbiddenException('Financially committed timesheets cannot be corrected.');
+    }
+  }
+
+  private adminCorrectionSnapshot(timesheet: Timesheet, reason: string): Record<string, unknown> {
+    return {
+      reason,
+      companyId: timesheet.company?.id ?? null,
+      approvalStatus: timesheet.approvalStatus,
+      hoursWorked: timesheet.hoursWorked,
+      workedMinutes: timesheet.workedMinutes,
+      breakMinutes: timesheet.breakMinutes,
+      roundedMinutes: timesheet.roundedMinutes,
+      verifiedMinutes: timesheet.verifiedMinutes,
+      approvedMinutes: timesheet.approvedMinutes,
+      approvedHours: timesheet.approvedHours,
+      reviewedByUserId: timesheet.reviewedByUserId,
+      reviewedAt: timesheet.reviewedAt,
+      overrideReason: timesheet.overrideReason,
+      overrideBy: timesheet.overrideBy,
+      overrideAt: timesheet.overrideAt,
+      payrollStatus: timesheet.payrollStatus,
+      payrollBatchId: timesheet.payrollBatch?.id ?? null,
+      billingStatus: timesheet.billingStatus,
+      invoiceBatchId: timesheet.invoiceBatch?.id ?? null,
+      companyNote: timesheet.companyNote,
+      guardNote: timesheet.guardNote,
+    };
+  }
+
+  private applyGuardEditableUpdates(timesheet: Timesheet, dto: UpdateTimesheetDto): void {
+    this.applyTimesheetUpdates(timesheet, {
+      hoursWorked: dto.hoursWorked,
+      actualCheckInAt: dto.actualCheckInAt,
+      actualCheckOutAt: dto.actualCheckOutAt,
+      guardNote: dto.guardNote,
+      workedMinutes: dto.workedMinutes,
+      breakMinutes: dto.breakMinutes,
+      roundedMinutes: dto.roundedMinutes,
+    });
+  }
+
+  // RB-007: sets the payroll-authoritative approvedMinutes on approval.
+  // Defaults to the attendance-verified duration (timesheet.verifiedMinutes).
+  // A reviewer may request a different duration (via dto.approvedMinutes, or
+  // legacy dto.approvedHours converted to minutes), but that is an override:
+  // it requires a non-empty overrideReason, and overrideBy/overrideAt are
+  // always server-derived (never accepted from the client). Returns true if
+  // an override was applied, so the caller can emit a dedicated audit entry.
+  private applyApprovalDuration(timesheet: Timesheet, dto: UpdateTimesheetDto, userId: number): boolean {
+    const verifiedMinutes =
+      timesheet.verifiedMinutes === undefined || timesheet.verifiedMinutes === null
+        ? null
+        : Math.round(Number(timesheet.verifiedMinutes));
+
+    const requestedMinutes = this.resolveRequestedApprovedMinutes(dto, verifiedMinutes);
+
+    if (requestedMinutes === null) {
+      throw new BadRequestException(
+        'No verified attendance duration is available for this shift. Provide approvedMinutes and an overrideReason to approve it.',
+      );
+    }
+
+    if (!Number.isFinite(requestedMinutes) || requestedMinutes < 0) {
+      throw new BadRequestException('Approved minutes must be 0 or more.');
+    }
+
+    const isOverride = verifiedMinutes === null || requestedMinutes !== verifiedMinutes;
+
+    if (isOverride) {
+      const overrideReason = dto.overrideReason?.trim();
+      if (!overrideReason) {
+        throw new BadRequestException(
+          'An override reason is required when approved duration differs from verified attendance duration.',
+        );
+      }
+      timesheet.overrideReason = overrideReason;
+      timesheet.overrideBy = userId;
+      timesheet.overrideAt = new Date();
+    } else {
+      timesheet.overrideReason = null;
+      timesheet.overrideBy = null;
+      timesheet.overrideAt = null;
+    }
+
+    timesheet.approvedMinutes = requestedMinutes;
+    timesheet.approvedHours = Math.round((requestedMinutes / 60) * 100) / 100;
+
+    return isOverride;
+  }
+
+  private resolveRequestedApprovedMinutes(dto: UpdateTimesheetDto, verifiedMinutes: number | null): number | null {
+    if (dto.approvedMinutes !== undefined && dto.approvedMinutes !== null) {
+      return Math.round(Number(dto.approvedMinutes));
+    }
+    if (dto.approvedHours !== undefined && dto.approvedHours !== null) {
+      return Math.round(Number(dto.approvedHours) * 60);
+    }
+    return verifiedMinutes;
+  }
+
+  private clearApprovalDuration(timesheet: Timesheet): void {
+    timesheet.approvedHours = null;
+    timesheet.approvedMinutes = null;
+    timesheet.overrideReason = null;
+    timesheet.overrideBy = null;
+    timesheet.overrideAt = null;
+  }
+
+  private async applyPayrollUpdate({
+    companyId,
+    userId,
+    dto,
+  }: {
+    companyId?: number;
+    userId: number;
+    dto: UpdateTimesheetPayrollDto;
+  }): Promise<Timesheet[]> {
+    const uniqueIds = Array.from(new Set((dto.ids || []).filter((value) => Number.isInteger(value) && value > 0)));
+    if (!uniqueIds.length) {
+      throw new BadRequestException('Select at least one approved timesheet for payroll updates.');
+    }
+
+    const requestedPayrollStatus = String(dto.payrollStatus || '').trim().toLowerCase();
+    if (
+      requestedPayrollStatus !== TimesheetPayrollStatus.UNPAID &&
+      requestedPayrollStatus !== TimesheetPayrollStatus.INCLUDED &&
+      requestedPayrollStatus !== TimesheetPayrollStatus.PAID
+    ) {
+      throw new BadRequestException('Payroll status must be unpaid, included, or paid.');
+    }
+
+    const timesheets = companyId
+      ? await this.timesheetRepo.find({
+          where: uniqueIds.map((id) => ({ id, company: { id: companyId } })),
+        })
+      : await this.timesheetRepo.find({
+          where: { id: In(uniqueIds) },
+        });
+
+    if (timesheets.length !== uniqueIds.length) {
+      throw new NotFoundException('One or more timesheets were not found for this company.');
+    }
+
+    timesheets.forEach((timesheet) => {
+      if (String(timesheet.approvalStatus).trim().toLowerCase() !== TimesheetStatus.APPROVED) {
+        throw new ForbiddenException('Only approved timesheets can be managed in payroll.');
+      }
+
+      if (timesheet.payrollBatch) {
+        throw new ForbiddenException('Timesheets attached to a payroll batch must be managed through that batch.');
+      }
+    });
+
+    const now = new Date();
+    const updatedTimesheets = timesheets.map((timesheet) => {
+      const beforeData = {
+        payrollStatus: timesheet.payrollStatus,
+        payrollIncludedAt: timesheet.payrollIncludedAt,
+        payrollPaidAt: timesheet.payrollPaidAt,
+      };
+
+      if (requestedPayrollStatus === TimesheetPayrollStatus.UNPAID) {
+        timesheet.payrollStatus = TimesheetPayrollStatus.UNPAID;
+        timesheet.payrollIncludedAt = null;
+        timesheet.payrollPaidAt = null;
+      } else if (requestedPayrollStatus === TimesheetPayrollStatus.INCLUDED) {
+        timesheet.payrollStatus = TimesheetPayrollStatus.INCLUDED;
+        timesheet.payrollIncludedAt = timesheet.payrollIncludedAt ?? now;
+        timesheet.payrollPaidAt = null;
+      } else {
+        timesheet.payrollStatus = TimesheetPayrollStatus.PAID;
+        timesheet.payrollIncludedAt = timesheet.payrollIncludedAt ?? now;
+        timesheet.payrollPaidAt = now;
+      }
+
+      return { beforeData, timesheet };
+    });
+
+    const saved = await this.timesheetRepo.save(updatedTimesheets.map((entry) => entry.timesheet));
+
+    await Promise.all(
+      saved.map((timesheet, index) =>
+        this.auditLogService.log({
+          company: timesheet.company,
+          user: userId ? { id: userId } : undefined,
+          action: 'timesheet.payroll_updated',
+          entityType: 'timesheet',
+          entityId: timesheet.id,
+          beforeData: updatedTimesheets[index].beforeData,
+          afterData: {
+            payrollStatus: timesheet.payrollStatus,
+            payrollIncludedAt: timesheet.payrollIncludedAt,
+            payrollPaidAt: timesheet.payrollPaidAt,
+          },
+        }),
+      ),
+    );
+
+    return this.applyDerivedFinancials(saved);
+  }
+
+  private validateCompanyReviewRequest(timesheet: Timesheet, dto: UpdateTimesheetDto): void {
+    const disallowedCompanyFields = [
+      dto.hoursWorked !== undefined,
+      dto.submittedAt !== undefined,
+      dto.actualCheckInAt !== undefined,
+      dto.actualCheckOutAt !== undefined,
+      dto.guardNote !== undefined,
+      dto.workedMinutes !== undefined,
+      dto.breakMinutes !== undefined,
+      dto.roundedMinutes !== undefined,
+      Object.prototype.hasOwnProperty.call(dto, 'reviewedAt'),
+      Object.prototype.hasOwnProperty.call(dto, 'reviewedByUserId'),
+    ];
+
+    if (disallowedCompanyFields.some(Boolean)) {
+      throw new BadRequestException('Company review cannot change claimed guard timesheet fields.');
+    }
+
+    const currentStatus = String(timesheet.approvalStatus).trim().toLowerCase();
+    if (currentStatus === TimesheetStatus.APPROVED) {
+      throw new ForbiddenException('Approved timesheets are final and cannot be edited.');
+    }
+
+    if (currentStatus === TimesheetStatus.REJECTED) {
+      throw new ForbiddenException('Rejected timesheets are final and cannot be edited.');
+    }
+
+    if (currentStatus === TimesheetStatus.DRAFT || currentStatus === TimesheetStatus.RETURNED) {
+      throw new ForbiddenException('Only submitted timesheets can be reviewed by the company.');
+    }
+
+    if (currentStatus !== TimesheetStatus.SUBMITTED) {
+      throw new ForbiddenException('Only submitted timesheets can be reviewed by the company.');
+    }
+
+    if (dto.approvalStatus === undefined) {
+      return;
+    }
+
+    const requestedStatus = String(dto.approvalStatus).trim().toLowerCase();
+    if (
+      requestedStatus !== TimesheetStatus.APPROVED &&
+      requestedStatus !== TimesheetStatus.REJECTED &&
+      requestedStatus !== TimesheetStatus.RETURNED
+    ) {
+      throw new BadRequestException('Company review can only approve, reject, or return a submitted timesheet.');
+    }
+
+    if (requestedStatus === TimesheetStatus.RETURNED) {
+      const returnReason = dto.rejectionReason?.trim();
+      if (!returnReason) {
+        throw new BadRequestException('A return reason is required when returning a timesheet for correction.');
+      }
+    }
+
+    if (requestedStatus === TimesheetStatus.REJECTED) {
+      const rejectionReason = dto.rejectionReason?.trim();
+      if (!rejectionReason) {
+        throw new BadRequestException('A rejection reason is required when rejecting a timesheet.');
+      }
+    }
+  }
+
+  private async getGuardOwnedEditableTimesheet(
+    userId: number,
+    timesheetId: number,
+    action: 'edited' | 'submitted',
+  ): Promise<Timesheet> {
+    const guard = await this.guardProfileService.findByUserId(userId);
+    if (!guard) {
+      throw new NotFoundException('Guard profile not found');
+    }
+
+    const timesheet = await this.buildGuardTimesheetQuery(guard.id)
+      .andWhere('timesheet.id = :timesheetId', { timesheetId })
+      .getOne();
+
+    if (!timesheet) {
+      throw new ForbiddenException('This timesheet does not belong to the current guard');
+    }
+
+    if (
+      timesheet.approvalStatus !== TimesheetStatus.DRAFT &&
+      timesheet.approvalStatus !== TimesheetStatus.RETURNED
+    ) {
+      throw new ForbiddenException(`Only draft or returned timesheets can be ${action} by the guard`);
+    }
+
+    return this.applyDerivedFinancials(timesheet);
+  }
+
+  private async applyDerivedFinancials<T extends Timesheet | Timesheet[]>(timesheetOrTimesheets: T): Promise<T> {
+    const withCommercials = await this.contractPricingService.applyFinancials(timesheetOrTimesheets);
+    return this.payRuleService.applyPayCalculations(withCommercials);
+  }
+
+  private buildGuardTimesheetQuery(guardId: number) {
+    return this.timesheetRepo
+      .createQueryBuilder('timesheet')
+      .leftJoinAndSelect('timesheet.shift', 'shift')
+      .leftJoinAndSelect('shift.assignment', 'assignment')
+      .leftJoinAndSelect('assignment.guard', 'assignmentGuard')
+      .leftJoinAndSelect('shift.guard', 'shiftGuard')
+      .leftJoinAndSelect('shift.site', 'site')
+      .leftJoinAndSelect('timesheet.guard', 'timesheetGuard')
+      .leftJoinAndSelect('timesheet.company', 'company')
+      .where(
+        new Brackets((qb) => {
+          qb.where('timesheetGuard.id = :guardId', { guardId })
+            .orWhere('shiftGuard.id = :guardId', { guardId })
+            .orWhere('assignmentGuard.id = :guardId', { guardId });
+        }),
+      );
   }
 }

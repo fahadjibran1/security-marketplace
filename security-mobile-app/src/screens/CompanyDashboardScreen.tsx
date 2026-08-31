@@ -1,91 +1,6569 @@
-import { useEffect, useState } from 'react';
-import { Alert, ScrollView, StyleSheet, Text } from 'react-native';
-import { FeatureCard } from '../components/FeatureCard';
-import { listCompanies, listGuards, listJobs, listShifts } from '../services/api';
-import { CompanyProfile, GuardProfile, Job, Shift } from '../types/models';
+﻿import * as React from 'react';
+import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, useWindowDimensions, View } from 'react-native';
 
-export function CompanyDashboardScreen() {
-  const [company, setCompany] = useState<CompanyProfile | null>(null);
-  const [jobs, setJobs] = useState<Job[]>([]);
-  const [guards, setGuards] = useState<GuardProfile[]>([]);
-  const [shifts, setShifts] = useState<Shift[]>([]);
+import { CompanyAuditWorkspace } from '../components/company/CompanyAuditWorkspace';
+import { CompanyAnalyticsWorkspace } from '../components/company/CompanyAnalyticsWorkspace';
+import { CompanyAvailabilityWorkspace } from '../components/company/CompanyAvailabilityWorkspace';
+import { CompanyComplianceWorkspace } from '../components/company/CompanyComplianceWorkspace';
+import { CompanyContractPricingWorkspace } from '../components/company/CompanyContractPricingWorkspace';
+import { CompanyCoverageWorkspace, CoverageNavigationContext } from '../components/company/CompanyCoverageWorkspace';
+import { CompanyFinanceWorkspace } from '../components/company/CompanyFinanceWorkspace';
+import { CompanyFinanceControlWorkspace } from '../components/company/CompanyFinanceControlWorkspace';
+import { CompanyInvoiceWorkspace } from '../components/company/CompanyInvoiceWorkspace';
+import { CompanyMarginWorkspace } from '../components/company/CompanyMarginWorkspace';
+import { CompanyPayRulesSettings } from '../components/company/CompanyPayRulesSettings';
+import { CompanyPayrollBatchesWorkspace } from '../components/company/CompanyPayrollBatchesWorkspace';
+import { CompanyPayrollWorkspace } from '../components/company/CompanyPayrollWorkspace';
+import { CompanyTimesheetsWorkspace } from '../components/company/CompanyTimesheetsWorkspace';
+import {
+  ApiError,
+  acknowledgeSafetyAlert,
+  approveGuard,
+  closeSafetyAlert,
+  createClient,
+  createJob,
+  createShift,
+  createSite,
+  deleteShift,
+  formatApiErrorMessage,
+  listCompanyAttendance,
+  listClients,
+  listCompanyDailyLogs,
+  listCompanyGuards,
+  listCompanyIncidents,
+  listCompanyNotifications,
+  listCompanySafetyAlerts,
+  listCompanyTimesheets,
+  listCoverageShifts,
+  listGuards,
+  listJobApplications,
+  listJobs,
+  listShifts,
+  listSites,
+  reviewJobApplication,
+  updateIncidentStatus,
+  updateClient,
+  updateShift,
+  updateSite,
+} from '../services/api';
+import {
+  AttendanceEvent,
+  AuthUser,
+  Client,
+  CompanyGuard,
+  CoverageShiftRow,
+  CreateClientPayload,
+  CreateJobPayload,
+  CreateShiftPayload,
+  CreateSitePayload,
+  DailyLog,
+  GuardProfile,
+  Incident,
+  Job,
+  JobApplication,
+  Notification,
+  SafetyAlert,
+  Shift,
+  Site,
+  Timesheet,
+  UpdateClientPayload,
+  UpdateShiftPayload,
+  UpdateSitePayload,
+} from '../types/models';
+import { CompanySidebar } from '../components/company/CompanySidebar';
+import { Card } from '../components/ui/Card';
+import { KpiCard, KpiTone } from '../components/ui/KpiCard';
+import { colors } from '../theme';
 
-  useEffect(() => {
-    async function loadData() {
-      try {
-        const [companiesData, jobsData, guardsData, shiftsData] = await Promise.all([
-          listCompanies(),
-          listJobs(),
-          listGuards(),
-          listShifts(),
-        ]);
-        setCompany(companiesData[0] || null);
-        setJobs(jobsData);
-        setGuards(guardsData);
-        setShifts(shiftsData);
-      } catch (error) {
-        Alert.alert('Load failed', error instanceof Error ? error.message : 'Unknown error');
-      }
+const IS_WEB = typeof document !== 'undefined';
+
+const WEB_POINTER_STYLE = IS_WEB ? ({ cursor: 'pointer' } as const) : null;
+
+type CompanySection =
+  | 'dashboard'
+  | 'clients'
+  | 'sites'
+  | 'rota-planner'
+  | 'shift-offers'
+  | 'live-operations'
+  | 'analytics'
+  | 'coverage'
+  | 'guards'
+  | 'availability'
+  | 'recruitment'
+  | 'timesheets'
+  | 'payroll'
+  | 'payroll-batches'
+  | 'invoices'
+  | 'finance'
+  | 'finance-control'
+  | 'margins'
+  | 'compliance'
+  | 'contract-pricing'
+  | 'pay-rules'
+  | 'audit'
+  | 'incidents'
+  | 'alerts';
+
+type ClientFormState = {
+  id?: number;
+  name: string;
+  contactName: string;
+  contactEmail: string;
+  contactPhone: string;
+  status: string;
+  notes: string;
+};
+
+type SiteFormState = {
+  id?: number;
+  clientId: string;
+  name: string;
+  address: string;
+  contactDetails: string;
+  status: string;
+  requiredGuardCount: string;
+  operatingDays: string;
+  operatingStartTime: string;
+  operatingEndTime: string;
+  checkCallIntervalMinutes: string;
+  specialInstructions: string;
+  initialShiftDate: string;
+  initialShiftStartTime: string;
+  initialShiftEndTime: string;
+};
+
+type JobFormState = {
+  title: string;
+  description: string;
+  guardsRequired: string;
+  hourlyRate: string;
+  billingRate: string;
+  siteId: string;
+};
+
+type PlannerRow = {
+  localId: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  guardsRequired: string;
+  assignedGuardId: string;
+  status: string;
+  instructions: string;
+  sourceShiftIds: number[];
+};
+
+type LiveFilters = {
+  clientId: string;
+  siteId: string;
+  guardId: string;
+  date: string;
+  status: string;
+};
+
+type NavItem = {
+  id: CompanySection;
+  label: string;
+  caption: string;
+};
+
+type SettledLoader = {
+  label: string;
+  run: () => Promise<any>;
+  apply: (value: any) => void;
+};
+
+type OperationalActivityItem = {
+  id: string;
+  shiftId?: number | null;
+  siteName: string;
+  guardName: string;
+  eventType: string;
+  message: string;
+  occurredAt: string;
+};
+
+type UrgentOperationalItem = {
+  id: string;
+  shiftId?: number | null;
+  incidentId?: number | null;
+  alertId?: number | null;
+  status?: string | null;
+  siteName: string;
+  guardName: string;
+  category:
+    | 'panic'
+    | 'incident'
+    | 'late_start'
+    | 'missed_check_call'
+    | 'rejected_offer'
+    | 'safety'
+    | 'upcoming_risk'
+    | 'missed_shift'
+    | 'uncovered_shift';
+  issueType: string;
+  message: string;
+  occurredAt: string;
+};
+
+type ManagementActionItem = {
+  id: string;
+  shiftId?: number | null;
+  siteName: string;
+  guardName: string;
+  itemType: string;
+  actionTaken: string;
+  occurredAt: string;
+};
+
+const NAV_ITEMS: NavItem[] = [
+  { id: 'dashboard', label: 'Dashboard', caption: 'Control-room overview and KPIs.' },
+  { id: 'clients', label: 'Clients', caption: 'Client accounts and contacts.' },
+  { id: 'sites', label: 'Sites', caption: 'Site setup, instructions, and coverage.' },
+  { id: 'rota-planner', label: 'Rota Planner', caption: 'Plan weekly cover and assignments.' },
+  { id: 'shift-offers', label: 'Shift Offers', caption: 'Track pending responses and re-cover needs.' },
+  { id: 'live-operations', label: 'Live Operations', caption: 'Monitor book-ons, logs, and incidents.' },
+  { id: 'analytics', label: 'Analytics', caption: 'Incident, welfare, and site-risk reporting.' },
+  { id: 'coverage', label: 'Coverage', caption: 'Coverage gaps and eligible guards.' },
+  { id: 'guards', label: 'Guards', caption: 'Available platform guards and linked team.' },
+  { id: 'availability', label: 'Availability', caption: 'Guard availability, overrides, and leave.' },
+  { id: 'recruitment', label: 'Recruitment', caption: 'Open jobs and incoming applications.' },
+  { id: 'timesheets', label: 'Timesheets', caption: 'Review worked hours and approvals.' },
+  { id: 'payroll', label: 'Payroll', caption: 'Approved hours and payment totals.' },
+  { id: 'payroll-batches', label: 'Payroll Batches', caption: 'Draft, finalised, and paid payroll runs.' },
+  { id: 'invoices', label: 'Invoices', caption: 'Client billing and invoice batches.' },
+  { id: 'finance', label: 'Finance', caption: 'Revenue, cost, receivables, and payment tracking.' },
+  { id: 'finance-control', label: 'Finance Control', caption: 'Commercial exposure and settlement visibility.' },
+  { id: 'margins', label: 'Margins', caption: 'Revenue, cost, and profit reporting.' },
+  { id: 'compliance', label: 'Compliance', caption: 'Licence expiry and right-to-work controls.' },
+  { id: 'contract-pricing', label: 'Contract Pricing', caption: 'Client and site commercial rules.' },
+  { id: 'pay-rules', label: 'Pay Rules', caption: 'Guard payable-hours calculation settings.' },
+  { id: 'audit', label: 'Audit Trail', caption: 'Trace financial actions and before/after data.' },
+  { id: 'incidents', label: 'Incidents', caption: 'Track reported site issues.' },
+  { id: 'alerts', label: 'Safety Alerts', caption: 'Watch welfare and check-call alerts.' },
+];
+
+const COMPANY_NAV_GROUPS: Array<{ id: string; title: string; itemIds: CompanySection[] }> = [
+  {
+    id: 'operations',
+    title: 'Operations',
+    itemIds: ['dashboard', 'live-operations', 'sites', 'clients', 'rota-planner', 'shift-offers', 'coverage', 'analytics'],
+  },
+  {
+    id: 'workforce',
+    title: 'Workforce',
+    itemIds: ['guards', 'availability', 'recruitment'],
+  },
+  {
+    id: 'timesheets-pay',
+    title: 'Timesheets & Pay',
+    itemIds: ['timesheets', 'payroll', 'payroll-batches', 'pay-rules'],
+  },
+  {
+    id: 'billing-finance',
+    title: 'Billing & Finance',
+    itemIds: ['invoices', 'finance', 'finance-control', 'margins', 'contract-pricing'],
+  },
+  {
+    id: 'risk-compliance',
+    title: 'Risk & Compliance',
+    itemIds: ['compliance', 'audit', 'incidents', 'alerts'],
+  },
+];
+
+const CLIENT_FORM_EMPTY: ClientFormState = {
+  name: '',
+  contactName: '',
+  contactEmail: '',
+  contactPhone: '',
+  status: 'active',
+  notes: '',
+};
+
+const SITE_FORM_EMPTY: SiteFormState = {
+  clientId: '',
+  name: '',
+  address: '',
+  contactDetails: '',
+  status: 'active',
+  requiredGuardCount: '1',
+  operatingDays: 'Mon-Fri',
+  operatingStartTime: '08:00',
+  operatingEndTime: '18:00',
+  checkCallIntervalMinutes: '60',
+  specialInstructions: '',
+  initialShiftDate: '',
+  initialShiftStartTime: '',
+  initialShiftEndTime: '',
+};
+
+const JOB_FORM_EMPTY: JobFormState = {
+  title: '',
+  description: '',
+  guardsRequired: '1',
+  hourlyRate: '12',
+  billingRate: '',
+  siteId: '',
+};
+
+const SHIFT_STATUS_OPTIONS = [
+  { label: 'Unfilled', value: 'unfilled' },
+  { label: 'Offered', value: 'offered' },
+  { label: 'Ready', value: 'ready' },
+  { label: 'Missed', value: 'missed' },
+  { label: 'Cancelled', value: 'cancelled' },
+  { label: 'Rejected', value: 'rejected' },
+  { label: 'In Progress', value: 'in_progress' },
+  { label: 'Completed', value: 'completed' },
+];
+
+const UK_LOCALE = 'en-GB';
+const MISSED_CHECK_IN_GRACE_MINUTES = 15;
+
+function toNumber(value?: string | number | null) {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : undefined;
+  }
+
+  if (!value) {
+    return undefined;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function formatDateTimeLabel(value?: string | null) {
+  if (!value) {
+    return 'Not recorded';
+  }
+
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? value
+    : date.toLocaleString(UK_LOCALE, {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      });
+}
+
+function getLiteralDateTimeParts(value?: string | null) {
+  if (!value) {
+    return null;
+  }
+
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s](\d{2}):(\d{2})(?::(\d{2}))?)?/);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    year: match[1],
+    month: match[2],
+    day: match[3],
+    hour: match[4] || null,
+    minute: match[5] || null,
+  };
+}
+
+function formatDateLabel(value?: string | null) {
+  if (!value) {
+    return 'Not set';
+  }
+
+  const literalParts = getLiteralDateTimeParts(value);
+  if (literalParts) {
+    return `${literalParts.day}/${literalParts.month}/${literalParts.year}`;
+  }
+
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? value
+    : date.toLocaleDateString(UK_LOCALE, {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+      });
+}
+
+function formatTimeLabel(value?: string | null) {
+  if (!value) {
+    return 'Not set';
+  }
+
+  if (/^\d{2}:\d{2}$/.test(value)) {
+    return value;
+  }
+
+  const literalParts = getLiteralDateTimeParts(value);
+  if (literalParts?.hour && literalParts?.minute) {
+    return `${literalParts.hour}:${literalParts.minute}`;
+  }
+
+  const date = new Date(value);
+  if (!Number.isNaN(date.getTime())) {
+    return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+  }
+
+  return value;
+}
+
+function formatStatusLabel(value?: string | null) {
+  if (!value) {
+    return 'Unknown';
+  }
+
+  return value
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (match) => match.toUpperCase());
+}
+
+function normalizeShiftLifecycleStatus(value?: string | null) {
+  const normalized = (value || '').trim().toLowerCase();
+
+  switch (normalized) {
+    case 'planned':
+    case 'unassigned':
+    case 'scheduled':
+      return 'unfilled';
+    case 'assigned':
+      return 'offered';
+    case 'accepted':
+      return 'ready';
+    default:
+      return normalized || 'unfilled';
+  }
+}
+
+function getShiftStatusBadge(status: string) {
+  switch (normalizeShiftLifecycleStatus(status)) {
+    case 'missed':
+      return { label: 'Missed', color: colors.warning, icon: '⚠️' };
+    case 'offered':
+      return { label: 'Offered', color: colors.info, icon: '🔵' };
+    case 'ready':
+      return { label: 'Ready', color: colors.warning, icon: '🟡' };
+    case 'in_progress':
+      return { label: 'Live', color: colors.success, icon: '🟢' };
+    case 'completed':
+      return { label: 'Completed', color: colors.primaryNavySoft, icon: '⚫' };
+    case 'rejected':
+      return { label: 'Rejected', color: colors.danger, icon: '🔴' };
+    case 'cancelled':
+      return { label: 'Cancelled', color: colors.neutralSlate, icon: '⚫' };
+    case 'unfilled':
+    default:
+      return { label: 'Unfilled', color: colors.textSecondary, icon: '⚪' };
+  }
+}
+
+function getLiveShiftRowTone(status: string) {
+  switch (normalizeShiftLifecycleStatus(status)) {
+    case 'in_progress':
+      return colors.successSurface;
+    case 'ready':
+      return colors.warningSurface;
+    case 'missed':
+      return colors.warningSurface;
+    case 'rejected':
+      return colors.dangerSurface;
+    default:
+      return colors.card;
+  }
+}
+
+function getShiftExceptionSummary(status?: string | null) {
+  switch (normalizeShiftLifecycleStatus(status || 'unfilled')) {
+    case 'missed':
+      return {
+        title: 'Missed check-in exception',
+        message: `No attendance check-in was recorded within ${MISSED_CHECK_IN_GRACE_MINUTES} minutes of shift start.`,
+        outcome: 'Needs re-cover now and may need attendance follow-up.',
+      };
+    case 'rejected':
+      return {
+        title: 'Offer rejected',
+        message: 'The assigned guard rejected this shift before it became live.',
+        outcome: 'Needs fresh cover, but not attendance escalation.',
+      };
+    case 'cancelled':
+      return {
+        title: 'Shift cancelled',
+        message: 'This shift was cancelled by the company.',
+        outcome: 'No re-cover action is needed unless the work is replanned.',
+      };
+    default:
+      return null;
+  }
+}
+
+function getUrgentPrimaryActionLabel(item: UrgentOperationalItem) {
+  switch (item.category) {
+    case 'rejected_offer':
+    case 'missed_shift':
+      return 'Open Re-cover';
+    case 'incident':
+      return 'View Incident';
+    case 'panic':
+      return item.status === 'acknowledged' ? 'Resolve Alert' : 'View Alert';
+    case 'missed_check_call':
+      return item.status === 'acknowledged' ? 'Close Follow-up' : 'View Safety Detail';
+    case 'safety':
+      return item.status === 'acknowledged' ? 'Close Alert' : 'View Safety Detail';
+    case 'late_start':
+    case 'upcoming_risk':
+    default:
+      return 'Open Shift';
+  }
+}
+
+function getUrgentNextActionText(item: UrgentOperationalItem) {
+  switch (item.category) {
+    case 'uncovered_shift':
+      return 'Next action: manage coverage and find a confirmed guard.';
+    case 'missed_shift':
+      return 'Next action: arrange replacement cover.';
+    case 'rejected_offer':
+      return 'Next action: re-offer the shift.';
+    case 'incident':
+      return (item.status || '').toLowerCase() === 'open'
+        ? 'Next action: acknowledge or review the incident.'
+        : 'Next action: resolve or review the incident.';
+    case 'panic':
+      return item.status === 'acknowledged'
+        ? 'Next action: close once the escalation is resolved.'
+        : 'Next action: open the alert or escalate immediately.';
+    case 'missed_check_call':
+      return item.status === 'acknowledged'
+        ? 'Next action: close once follow-up is complete.'
+        : 'Next action: review and mark followed up.';
+    case 'safety':
+      return item.status === 'acknowledged'
+        ? 'Next action: close once the issue is resolved.'
+        : 'Next action: review and acknowledge.';
+    case 'late_start':
+      return 'Next action: open the shift and confirm attendance.';
+    case 'upcoming_risk':
+      return 'Next action: open the shift and contact the guard if needed.';
+    default:
+      return 'Next action: review this item.';
+  }
+}
+
+function shouldShowOperationalActivityMessage(eventType: string) {
+  return ![
+    'Shift offered',
+    'Shift accepted',
+    'Shift missed',
+    'Shift rejected',
+    'Guard checked in',
+    'Guard checked out',
+    'Timesheet submitted',
+  ].includes(eventType);
+}
+
+function getShiftRisk(
+  shift: Shift,
+  attendance?: { checkInAt: string | null; checkOutAt: string | null } | null,
+  incidents: Incident[] = [],
+  alerts: SafetyAlert[] = [],
+) {
+  let score = 0;
+  const lifecycleStatus = normalizeShiftLifecycleStatus(shift.status);
+  const now = new Date();
+  const shiftStart = new Date(shift.start);
+  const hasStarted = !Number.isNaN(shiftStart.getTime()) && now.getTime() > shiftStart.getTime();
+
+  if (
+    alerts.some(
+      (alert) =>
+        (alert.type || '').toLowerCase() === 'panic' &&
+        !['closed', 'resolved'].includes((alert.status || '').toLowerCase()),
+    )
+  ) {
+    score += 100;
+  }
+
+  if (incidents.some((incident) => ['open', 'in_review'].includes((incident.status || '').toLowerCase()))) {
+    score += 50;
+  }
+
+  if (lifecycleStatus === 'ready' && hasStarted && !attendance?.checkInAt) {
+    score += 40;
+  }
+
+  if (isLikelyToMissCheckIn(shift, attendance)) {
+    score += 35;
+  }
+
+  if (
+    alerts.some(
+      (alert) =>
+        (alert.type || '').toLowerCase() === 'missed_checkcall' &&
+        !['closed', 'resolved'].includes((alert.status || '').toLowerCase()),
+    )
+  ) {
+    score += 30;
+  }
+
+  if (lifecycleStatus === 'rejected') {
+    score += 25;
+  }
+
+  if (lifecycleStatus === 'missed') {
+    score += 45;
+  }
+
+  if (score >= 80) {
+    return { level: 'high' as const, color: colors.danger, label: 'HIGH 🔴' };
+  }
+
+  if (score >= 40) {
+    return { level: 'medium' as const, color: colors.warning, label: 'MEDIUM 🟡' };
+  }
+
+  return { level: 'low' as const, color: colors.success, label: 'LOW 🟢' };
+}
+
+function getShiftDelay(
+  shift: Shift,
+  attendance?: { checkInAt: string | null; checkOutAt: string | null } | null,
+) {
+  if (normalizeShiftLifecycleStatus(shift.status) !== 'ready') {
+    return null;
+  }
+
+  const shiftStart = new Date(shift.start);
+  const now = new Date();
+
+  if (Number.isNaN(shiftStart.getTime()) || now.getTime() <= shiftStart.getTime() || attendance?.checkInAt) {
+    return null;
+  }
+
+  return Math.max(1, Math.floor((now.getTime() - shiftStart.getTime()) / 60000));
+}
+
+function isShiftPastMissedGracePeriod(
+  shift: Shift,
+  attendance?: { checkInAt: string | null; checkOutAt: string | null } | null,
+) {
+  if (normalizeShiftLifecycleStatus(shift.status) !== 'ready' || attendance?.checkInAt) {
+    return false;
+  }
+
+  const shiftStart = new Date(shift.start);
+  const now = new Date();
+
+  if (Number.isNaN(shiftStart.getTime())) {
+    return false;
+  }
+
+  return now.getTime() - shiftStart.getTime() >= MISSED_CHECK_IN_GRACE_MINUTES * 60000;
+}
+
+function isLikelyToMissCheckIn(
+  shift: Shift,
+  attendance?: { checkInAt: string | null; checkOutAt: string | null } | null,
+) {
+  if (normalizeShiftLifecycleStatus(shift.status) !== 'ready') {
+    return false;
+  }
+
+  const now = new Date();
+  const shiftStart = new Date(shift.start);
+
+  if (Number.isNaN(shiftStart.getTime()) || attendance?.checkInAt) {
+    return false;
+  }
+
+  const minutesToStart = (shiftStart.getTime() - now.getTime()) / 60000;
+  return minutesToStart <= 15 && minutesToStart > 0;
+}
+
+function getSiteRiskLevel(
+  siteId: number | undefined,
+  shifts: Shift[],
+  attendanceByShiftId: Map<number, { checkInAt: string | null; checkOutAt: string | null }>,
+  incidentsByShiftId: Map<number, Incident[]>,
+  alertsByShiftId: Map<number, SafetyAlert[]>,
+) {
+  if (!siteId) {
+    return 'LOW';
+  }
+
+  let rejectedCount = 0;
+  let highRiskCount = 0;
+  let lateCount = 0;
+
+  shifts.forEach((shift) => {
+    const currentSiteId = shift.site?.id ?? shift.siteId;
+    if (currentSiteId !== siteId) {
+      return;
     }
 
-    loadData();
-  }, []);
+    const attendance = attendanceByShiftId.get(shift.id);
+    const risk = getShiftRisk(
+      shift,
+      attendance,
+      incidentsByShiftId.get(shift.id) || [],
+      alertsByShiftId.get(shift.id) || [],
+    );
+
+    if (normalizeShiftLifecycleStatus(shift.status) === 'rejected') {
+      rejectedCount += 1;
+    }
+
+    if (risk.level === 'high') {
+      highRiskCount += 1;
+    }
+
+    if (getShiftDelay(shift, attendance) !== null) {
+      lateCount += 1;
+    }
+  });
+
+  const score = rejectedCount + highRiskCount + lateCount;
+  if (highRiskCount >= 2 || score >= 3) {
+    return 'HIGH';
+  }
+
+  if (score >= 1) {
+    return 'MEDIUM';
+  }
+
+  return 'LOW';
+}
+
+function getLiveShiftBoardRowTone(
+  status: string,
+  riskLevel?: 'high' | 'medium' | 'low',
+) {
+  if (riskLevel === 'high') {
+    return colors.dangerSurface;
+  }
+
+  return getLiveShiftRowTone(status);
+}
+
+function ShiftStatusBadge({ status }: { status?: string | null }) {
+  const badge = getShiftStatusBadge(status || 'unfilled');
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Text style={styles.title}>Company Dashboard</Text>
-      <Text style={styles.subtitle}>Manage projects, guards, and client billing.</Text>
-
-      <FeatureCard
-        title="Company Profile"
-        subtitle={
-          company
-            ? `${company.name}\nNo: ${company.companyNumber}\n${company.address}\n${company.contactDetails}`
-            : 'Loading company profile...'
-        }
-      />
-
-      <FeatureCard
-        title="Advertise Jobs"
-        subtitle={`Open jobs: ${jobs.filter((job) => job.status === 'open').length}`}
-        ctaLabel="Create Job"
-        onPress={() => Alert.alert('Job posted', 'Job publishing flow will open here.')}
-      />
-
-      <FeatureCard
-        title="Employ Guards on Projects"
-        subtitle={`Available guards: ${guards.length}`}
-        ctaLabel="Assign Guard"
-        onPress={() => Alert.alert('Assignment', 'Project assignment flow will open here.')}
-      />
-
-      <FeatureCard
-        title="Hours Management"
-        subtitle={`Scheduled shifts: ${shifts.length}`}
-        ctaLabel="Review Timesheets"
-        onPress={() => Alert.alert('Timesheets', 'Timesheet approval flow will open here.')}
-      />
-
-      <FeatureCard
-        title="Client Invoicing"
-        subtitle="Generate invoices from approved hours and send to clients."
-        ctaLabel="Create Invoice"
-        onPress={() => Alert.alert('Invoice', 'Invoice generation flow will open here.')}
-      />
-
-      <FeatureCard
-        title="Guard Profiles"
-        subtitle="Access guard profiles, SIA status, documents, and availability."
-        ctaLabel="Open Profiles"
-        onPress={() => Alert.alert('Guard profiles', 'Guard profile directory will open here.')}
-      />
-    </ScrollView>
+    <View style={[styles.statusBadge, { borderColor: badge.color, backgroundColor: `${badge.color}14` }]}>
+      <Text style={[styles.statusBadgeText, { color: badge.color }]}>{`${badge.icon} ${badge.label}`}</Text>
+    </View>
   );
 }
 
+function buildIsoDateTime(date: string, time: string) {
+  return `${date}T${time}:00`;
+}
+
+function parseDateInput(value: string) {
+  if (!isValidDateInput(value)) {
+    return null;
+  }
+
+  const [year, month, day] = value.split('-').map(Number);
+  return new Date(year, month - 1, day);
+}
+
+function formatDateInput(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function buildShiftDateTimes(date: string, startTime: string, endTime: string) {
+  const startAt = buildIsoDateTime(date, startTime);
+  const endDate =
+    endTime <= startTime
+      ? formatDateInput(addDays(parseDateInput(date) || new Date(`${date}T00:00:00`), 1))
+      : date;
+
+  return {
+    startAt,
+    endAt: buildIsoDateTime(endDate, endTime),
+  };
+}
+
+function isValidDateInput(value: string) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+function isValidTimeInput(value: string) {
+  return /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+}
+
+function validateSameDayShiftTiming(date: string, startTime: string, endTime: string) {
+  if (!date || !startTime || !endTime) {
+    return 'Date, start time, and end time are required.';
+  }
+
+  if (!isValidDateInput(date)) {
+    return 'Use a valid date in DD/MM/YYYY format.';
+  }
+
+  if (!isValidTimeInput(startTime) || !isValidTimeInput(endTime)) {
+    return 'Use valid 24-hour times for both start and end.';
+  }
+
+  return null;
+}
+
+function isoToDateInput(value?: string | null) {
+  if (!value) {
+    return '';
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return value;
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function isoToTimeInput(value?: string | null) {
+  if (!value) {
+    return '';
+  }
+
+  if (/^\d{2}:\d{2}$/.test(value)) {
+    return value;
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
+function addDays(date: Date, days: number) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function weekCommencingFor(raw?: string) {
+  const base = raw ? parseDateInput(raw) || new Date(`${raw}T00:00:00`) : new Date();
+  const day = base.getDay();
+  const mondayOffset = day === 0 ? -6 : 1 - day;
+  const monday = addDays(base, mondayOffset);
+  return formatDateInput(monday);
+}
+
+function buildWeekDays(weekCommencing: string) {
+  const start = parseDateInput(weekCommencing) || new Date(`${weekCommencing}T00:00:00`);
+  return Array.from({ length: 7 }, (_, index) => {
+    const date = addDays(start, index);
+    return {
+      date: formatDateInput(date),
+      label: date.toLocaleDateString([], { weekday: 'long' }),
+      shortLabel: date.toLocaleDateString([], { weekday: 'short', day: '2-digit', month: 'short' }),
+    };
+  });
+}
+
+function normalizePlannerStatus(status: string, assignedGuardId: string) {
+  const normalizedStatus = normalizeShiftLifecycleStatus(status);
+
+  if (normalizedStatus) {
+    return normalizedStatus;
+  }
+
+  return assignedGuardId ? 'offered' : 'unfilled';
+}
+
+function buildPlannerRow(date: string): PlannerRow {
+  return {
+    localId: `${date}-${Math.random().toString(36).slice(2, 8)}`,
+    date,
+    startTime: '08:00',
+    endTime: '18:00',
+    guardsRequired: '1',
+    assignedGuardId: '',
+    status: 'unfilled',
+    instructions: '',
+    sourceShiftIds: [],
+  };
+}
+
+function WebSelect({
+  value,
+  onChange,
+  options,
+  placeholder,
+  style,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  options: Array<{ label: string; value: string }>;
+  placeholder?: string;
+  /** Merged on top of shared select chrome (e.g. Live Operations filter bar). */
+  style?: any;
+}) {
+  const [isBrowserSelectReady, setIsBrowserSelectReady] = React.useState(false);
+
+  React.useEffect(() => {
+    setIsBrowserSelectReady(typeof document !== 'undefined');
+  }, []);
+
+  const mergedDomSelectStyle = React.useMemo(() => {
+    const flat = (StyleSheet as unknown as { flatten: (s: any) => Record<string, unknown> }).flatten(
+      [webSelectStyle as any, style].filter(Boolean),
+    );
+    return flat && typeof flat === 'object' ? flat : webSelectStyle;
+  }, [style]);
+
+  if (isBrowserSelectReady) {
+    const SelectTag: any = 'select';
+    const OptionTag: any = 'option';
+
+    return (
+      <SelectTag
+        value={value}
+        onChange={(event: any) => onChange(event.target.value)}
+        style={mergedDomSelectStyle}
+        aria-label={placeholder || 'Select an option'}
+      >
+        <OptionTag value="">{placeholder || 'Select an option'}</OptionTag>
+        {options.map((option) => (
+          <OptionTag key={option.value} value={option.value}>
+            {option.label}
+          </OptionTag>
+        ))}
+      </SelectTag>
+    );
+  }
+
+  return (
+    <TextInput
+      value={value}
+      onChangeText={(nextValue: string) => onChange(nextValue)}
+      placeholder={placeholder || (options[0] ? `${options[0].label}` : 'Enter value')}
+      style={[webSelectStyle, style] as any}
+      placeholderTextColor="#6b7280"
+    />
+  );
+}
+
+function NativeBrowserSelect({
+  value,
+  onChange,
+  options,
+  placeholder,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  options: Array<{ label: string; value: string }>;
+  placeholder?: string;
+}) {
+  const [isBrowserMounted, setIsBrowserMounted] = React.useState(false);
+
+  React.useEffect(() => {
+    setIsBrowserMounted(typeof document !== 'undefined');
+  }, []);
+
+  if (isBrowserMounted) {
+    const SelectTag: any = 'select';
+    const OptionTag: any = 'option';
+
+    return (
+      <SelectTag
+        value={value}
+        onChange={(event: any) => onChange(event.target.value)}
+        style={webSelectStyle}
+        aria-label={placeholder || 'Select an option'}
+      >
+        <OptionTag value="">{placeholder || 'Select an option'}</OptionTag>
+        {options.map((option) => (
+          <OptionTag key={option.value} value={option.value}>
+            {option.label}
+          </OptionTag>
+        ))}
+      </SelectTag>
+    );
+  }
+
+  return (
+    <TextInput
+      value={options.find((option) => option.value === value)?.label || ''}
+      editable={false}
+      placeholder={placeholder || 'Select an option'}
+      style={webSelectStyle}
+      placeholderTextColor="#6b7280"
+    />
+  );
+}
+
+function ControlledDateInput({
+  value,
+  onChange,
+  placeholder = 'DD/MM/YYYY',
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+}) {
+  if (typeof document === 'undefined') {
+    return (
+      <TextInput
+        value={value}
+        onChangeText={onChange}
+        placeholder={placeholder}
+        style={webSelectStyle}
+        placeholderTextColor="#6b7280"
+      />
+    );
+  }
+
+  const InputTag: any = 'input';
+
+  return (
+    <InputTag
+      type="date"
+      value={value}
+      onChange={(event: any) => onChange(event.target.value)}
+      style={webSelectStyle}
+    />
+  );
+}
+
+function ControlledTimeInput({
+  value,
+  onChange,
+  placeholder = 'HH:MM',
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+}) {
+  if (typeof document === 'undefined') {
+    return (
+      <TextInput
+        value={value}
+        onChangeText={onChange}
+        placeholder={placeholder}
+        style={webSelectStyle}
+        placeholderTextColor="#6b7280"
+      />
+    );
+  }
+
+  const InputTag: any = 'input';
+
+  return (
+    <InputTag
+      type="time"
+      value={value}
+      onChange={(event: any) => onChange(event.target.value)}
+      style={webSelectStyle}
+    />
+  );
+}
+
+type CompanyDashboardScreenProps = {
+  user?: AuthUser;
+};
+
+/** Native phones below this width show a pilot message instead of the desktop company workspace. */
+const COMPANY_NATIVE_MIN_WIDTH = 768;
+
+export function CompanyDashboardScreen(_props: CompanyDashboardScreenProps = {}) {
+  const { width: layoutWidth } = useWindowDimensions();
+  const companyMobileLayoutDisabled = !IS_WEB && layoutWidth < COMPANY_NATIVE_MIN_WIDTH;
+  const contentScrollRef = React.useRef<{ scrollTo: (options: { y: number; animated: boolean }) => void } | null>(null);
+
+  const [activeSection, setActiveSection] = React.useState<CompanySection>('dashboard');
+  const [loading, setLoading] = React.useState(true);
+  const [refreshing, setRefreshing] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const [clients, setClients] = React.useState<Client[]>([]);
+  const [sites, setSites] = React.useState<Site[]>([]);
+  const [shifts, setShifts] = React.useState<Shift[]>([]);
+  const [guards, setGuards] = React.useState<GuardProfile[]>([]);
+  const [companyGuards, setCompanyGuards] = React.useState<CompanyGuard[]>([]);
+  const [jobs, setJobs] = React.useState<Job[]>([]);
+  const [applications, setApplications] = React.useState<JobApplication[]>([]);
+  const [attendanceEvents, setAttendanceEvents] = React.useState<AttendanceEvent[]>([]);
+  const [timesheets, setTimesheets] = React.useState<Timesheet[]>([]);
+  const [incidents, setIncidents] = React.useState<Incident[]>([]);
+  const [alerts, setAlerts] = React.useState<SafetyAlert[]>([]);
+  const [dailyLogs, setDailyLogs] = React.useState<DailyLog[]>([]);
+  const [notifications, setNotifications] = React.useState<Notification[]>([]);
+  const [uncoveredShifts, setUncoveredShifts] = React.useState<CoverageShiftRow[]>([]);
+  const [coverageNavigationContext, setCoverageNavigationContext] = React.useState<CoverageNavigationContext | undefined>(undefined);
+  const [selectedSiteId, setSelectedSiteId] = React.useState<number | null>(null);
+  const [selectedShiftId, setSelectedShiftId] = React.useState<number | null>(null);
+  const [clientForm, setClientForm] = React.useState<ClientFormState>(CLIENT_FORM_EMPTY);
+  const [siteForm, setSiteForm] = React.useState<SiteFormState>(SITE_FORM_EMPTY);
+  const [jobForm, setJobForm] = React.useState<JobFormState>(JOB_FORM_EMPTY);
+  const [plannerClientId, setPlannerClientId] = React.useState('');
+  const [plannerSiteId, setPlannerSiteId] = React.useState('');
+  const [plannerWeekCommencing, setPlannerWeekCommencing] = React.useState(weekCommencingFor());
+  const [plannerRows, setPlannerRows] = React.useState<PlannerRow[]>([]);
+  const [plannerRemovedShiftIds, setPlannerRemovedShiftIds] = React.useState<number[]>([]);
+  const [liveFilters, setLiveFilters] = React.useState<LiveFilters>({
+    clientId: '',
+    siteId: '',
+    guardId: '',
+    date: '',
+    status: '',
+  });
+  const [savingClient, setSavingClient] = React.useState(false);
+  const [savingSite, setSavingSite] = React.useState(false);
+  const [savingRota, setSavingRota] = React.useState(false);
+  const [creatingJob, setCreatingJob] = React.useState(false);
+  const [approvingGuardId, setApprovingGuardId] = React.useState<number | null>(null);
+  const [reviewingApplicationId, setReviewingApplicationId] = React.useState<number | null>(null);
+  const [offerActionShiftId, setOfferActionShiftId] = React.useState<number | null>(null);
+  const [reassignGuardByShiftId, setReassignGuardByShiftId] = React.useState<Record<number, string>>({});
+  const [shiftOffersFeedback, setShiftOffersFeedback] = React.useState<{
+    tone: 'success' | 'error';
+    message: string;
+  } | null>(null);
+  const [liveOperationsFeedback, setLiveOperationsFeedback] = React.useState<{
+    tone: 'success' | 'error';
+    message: string;
+  } | null>(null);
+  const [urgentActionItemId, setUrgentActionItemId] = React.useState<string | null>(null);
+  const [managementActions, setManagementActions] = React.useState<ManagementActionItem[]>([]);
+  const [closeOutNotesDraft, setCloseOutNotesDraft] = React.useState('');
+  const [savingCloseOutNotes, setSavingCloseOutNotes] = React.useState(false);
+  const [showArchivedClients, setShowArchivedClients] = React.useState(false);
+  const [liveBoardAnchorY, setLiveBoardAnchorY] = React.useState(0);
+  const [shiftDetailAnchorY, setShiftDetailAnchorY] = React.useState(0);
+  const [pendingShiftDetailFocusId, setPendingShiftDetailFocusId] = React.useState<number | null>(null);
+  const [highlightedLiveShiftId, setHighlightedLiveShiftId] = React.useState<number | null>(null);
+  const [liveBoardHighlightTimeoutId, setLiveBoardHighlightTimeoutId] = React.useState<ReturnType<typeof setTimeout> | null>(null);
+  const [autoMarkingMissedShiftIds, setAutoMarkingMissedShiftIds] = React.useState<number[]>([]);
+
+  const runSettledLoaders = React.useMemo(
+    () => async (loaders: SettledLoader[]) => {
+      const results = await Promise.allSettled(loaders.map((loader) => loader.run()));
+      const failures: unknown[] = [];
+
+      results.forEach((result, index) => {
+        if (result.status === 'fulfilled') {
+        loaders[index].apply(result.value);
+      } else {
+        failures.push(result.reason);
+      }
+      });
+
+      return failures;
+    },
+    [],
+  );
+
+  const loadData = React.useMemo(
+    () =>
+    async (isRefresh = false) => {
+      if (companyMobileLayoutDisabled) {
+        setLoading(false);
+        setRefreshing(false);
+        return;
+      }
+      try {
+        setError(null);
+        if (isRefresh) {
+          setRefreshing(true);
+        } else {
+          setLoading(true);
+        }
+
+        let latestSites: Site[] = [];
+        let latestShifts: Shift[] = [];
+
+        const coreFailures = await runSettledLoaders([
+          {
+            label: 'clients',
+            run: listClients,
+            apply: (value: Client[]) => setClients(value),
+          },
+          {
+            label: 'sites',
+            run: listSites,
+            apply: (value: Site[]) => {
+              latestSites = value;
+              setSites(latestSites);
+            },
+          },
+          {
+            label: 'shifts',
+            run: listShifts,
+            apply: (value: Shift[]) => {
+              latestShifts = value.map((shift) => ({
+                ...shift,
+                status: normalizeShiftLifecycleStatus(shift.status),
+              }));
+              setShifts(latestShifts);
+            },
+          },
+          {
+            label: 'uncovered coverage',
+            run: () => listCoverageShifts({ uncoveredOnly: true }),
+            apply: (value: CoverageShiftRow[]) => setUncoveredShifts(value),
+          },
+          {
+            label: 'guards',
+            run: listGuards,
+            apply: (value: GuardProfile[]) => setGuards(value),
+          },
+          {
+            label: 'company guards',
+            run: listCompanyGuards,
+            apply: (value: CompanyGuard[]) => setCompanyGuards(value),
+          },
+        ]);
+
+        if (!selectedSiteId && latestSites[0]) {
+          setSelectedSiteId(latestSites[0].id);
+        }
+
+        if (!selectedShiftId && latestShifts[0]) {
+          setSelectedShiftId(latestShifts[0].id);
+        }
+
+        const sectionLoaders: Partial<Record<CompanySection, SettledLoader[]>> = {
+          'live-operations': [
+              { label: 'attendance', run: listCompanyAttendance, apply: (value: AttendanceEvent[]) => setAttendanceEvents(value) },
+              { label: 'timesheets', run: listCompanyTimesheets, apply: (value: Timesheet[]) => setTimesheets(value) },
+              { label: 'incidents', run: listCompanyIncidents, apply: (value: Incident[]) => setIncidents(value) },
+              { label: 'alerts', run: listCompanySafetyAlerts, apply: (value: SafetyAlert[]) => setAlerts(value) },
+              { label: 'daily logs', run: listCompanyDailyLogs, apply: (value: DailyLog[]) => setDailyLogs(value) },
+              { label: 'notifications', run: listCompanyNotifications, apply: (value: Notification[]) => setNotifications(value) },
+            ],
+          recruitment: [
+            { label: 'jobs', run: listJobs, apply: (value: Job[]) => setJobs(value) },
+            { label: 'applications', run: listJobApplications, apply: (value: JobApplication[]) => setApplications(value) },
+          ],
+          timesheets: [
+            { label: 'timesheets', run: listCompanyTimesheets, apply: (value: Timesheet[]) => setTimesheets(value) },
+          ],
+          incidents: [
+            { label: 'incidents', run: listCompanyIncidents, apply: (value: Incident[]) => setIncidents(value) },
+          ],
+          alerts: [
+            { label: 'alerts', run: listCompanySafetyAlerts, apply: (value: SafetyAlert[]) => setAlerts(value) },
+          ],
+        };
+
+        const sectionFailures = await runSettledLoaders(sectionLoaders[activeSection] || []);
+        const failures = [...coreFailures, ...sectionFailures];
+
+        if (failures.length > 0) {
+          setError(formatApiErrorMessage(failures[0], 'Some company workspace data could not be loaded.'));
+        }
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [activeSection, runSettledLoaders, selectedShiftId, selectedSiteId, companyMobileLayoutDisabled],
+  );
+
+  React.useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  React.useEffect(() => {
+    if (companyMobileLayoutDisabled) {
+      return;
+    }
+    if (activeSection !== 'live-operations') {
+      return;
+    }
+
+    const intervalId = setInterval(() => {
+      loadData(true);
+    }, 15000);
+
+    return () => clearInterval(intervalId);
+  }, [activeSection, loadData, companyMobileLayoutDisabled]);
+
+  React.useEffect(() => {
+    return () => {
+      if (liveBoardHighlightTimeoutId) {
+        clearTimeout(liveBoardHighlightTimeoutId);
+      }
+    };
+  }, [liveBoardHighlightTimeoutId]);
+
+  const activeCompanyGuards = React.useMemo(
+    () =>
+      companyGuards.filter((entry) => {
+        const relationActive = (entry.status || '').toUpperCase() === 'ACTIVE';
+        const guardStatus = (entry.guard?.status || '').toLowerCase();
+        const guardApproval = (entry.guard?.approvalStatus || '').toLowerCase();
+        const operationalStatus = !guardStatus || guardStatus === 'active' || guardStatus === 'approved';
+        const approvedStatus = !guardApproval || guardApproval === 'approved';
+        return relationActive && operationalStatus && approvedStatus;
+      }),
+    [companyGuards],
+  );
+
+  const linkedGuardIds = React.useMemo(
+    () => new Set(activeCompanyGuards.map((entry) => entry.guard?.id).filter((value): value is number => typeof value === 'number')),
+    [activeCompanyGuards],
+  );
+
+  const linkedGuards = React.useMemo(() => {
+    const unique = new Map<number, GuardProfile>();
+    activeCompanyGuards.forEach((entry) => {
+      if (entry.guard?.id) {
+        unique.set(entry.guard.id, entry.guard);
+      }
+    });
+    return Array.from(unique.values()).sort((left, right) => left.fullName.localeCompare(right.fullName));
+  }, [activeCompanyGuards]);
+
+  const availablePlatformGuards = React.useMemo(
+    () =>
+      guards.filter((guard) => {
+        const guardStatus = (guard.status || '').toLowerCase();
+        const guardApproval = (guard.approvalStatus || '').toLowerCase();
+        const operationalStatus = !guardStatus || guardStatus === 'active' || guardStatus === 'approved';
+        const approvedStatus = !guardApproval || guardApproval === 'approved';
+        return operationalStatus && approvedStatus && !linkedGuardIds.has(guard.id);
+      }),
+    [guards, linkedGuardIds],
+  );
+
+  const clientMap = React.useMemo(() => new Map(clients.map((client) => [client.id, client])), [clients]);
+  const siteMap = React.useMemo(() => new Map(sites.map((site) => [site.id, site])), [sites]);
+  const guardMap = React.useMemo(() => new Map(guards.map((guard) => [guard.id, guard])), [guards]);
+  const timesheetByShiftId = React.useMemo(
+    () => new Map(timesheets.map((timesheet) => [timesheet.shiftId, timesheet])),
+    [timesheets],
+  );
+  const attendanceByShiftId = React.useMemo(() => {
+    const map = new Map<number, { checkInAt: string | null; checkOutAt: string | null }>();
+
+    attendanceEvents.forEach((event) => {
+      const shiftId = event.shift?.id;
+      if (!shiftId) {
+        return;
+      }
+
+      const current = map.get(shiftId) || { checkInAt: null, checkOutAt: null };
+      if (event.type === 'check-in') {
+        if (!current.checkInAt || current.checkInAt.localeCompare(event.occurredAt) < 0) {
+          current.checkInAt = event.occurredAt;
+        }
+      }
+      if (event.type === 'check-out') {
+        if (!current.checkOutAt || current.checkOutAt.localeCompare(event.occurredAt) < 0) {
+          current.checkOutAt = event.occurredAt;
+        }
+      }
+
+      map.set(shiftId, current);
+    });
+
+    return map;
+  }, [attendanceEvents]);
+  const incidentsByShiftId = React.useMemo(() => {
+    const map = new Map<number, Incident[]>();
+    incidents.forEach((incident) => {
+      const shiftId = incident.shift?.id;
+      if (!shiftId) {
+        return;
+      }
+
+      const group = map.get(shiftId) || [];
+      group.push(incident);
+      map.set(shiftId, group);
+    });
+    return map;
+  }, [incidents]);
+  const alertsByShiftId = React.useMemo(() => {
+    const map = new Map<number, SafetyAlert[]>();
+    alerts.forEach((alert) => {
+      const shiftId = alert.shift?.id;
+      if (!shiftId) {
+        return;
+      }
+
+      const group = map.get(shiftId) || [];
+      group.push(alert);
+      map.set(shiftId, group);
+    });
+    return map;
+  }, [alerts]);
+  const logsByShiftId = React.useMemo(() => {
+    const map = new Map<number, DailyLog[]>();
+    dailyLogs.forEach((log) => {
+      const shiftId = log.shift?.id;
+      if (!shiftId) {
+        return;
+      }
+
+      const group = map.get(shiftId) || [];
+      group.push(log);
+      map.set(shiftId, group);
+    });
+    return map;
+  }, [dailyLogs]);
+  const lastCheckCallByShiftId = React.useMemo(() => {
+    const map = new Map<number, DailyLog>();
+    dailyLogs.forEach((log) => {
+      const shiftId = log.shift?.id;
+      if (!shiftId || !['check_call', 'welfare_check'].includes(log.logType)) {
+        return;
+      }
+
+      const current = map.get(shiftId);
+      if (!current || current.createdAt.localeCompare(log.createdAt) < 0) {
+        map.set(shiftId, log);
+      }
+    });
+    return map;
+  }, [dailyLogs]);
+
+  React.useEffect(() => {
+    if (companyMobileLayoutDisabled) {
+      return;
+    }
+    if (activeSection !== 'live-operations') {
+      return;
+    }
+
+    const overdueReadyShifts = shifts.filter((shift) =>
+      isShiftPastMissedGracePeriod(shift, attendanceByShiftId.get(shift.id)),
+    );
+
+    if (overdueReadyShifts.length === 0) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const runAutomation = async () => {
+      let automatedAny = false;
+
+      for (const shift of overdueReadyShifts) {
+        if (cancelled || autoMarkingMissedShiftIds.includes(shift.id)) {
+          continue;
+        }
+
+        setAutoMarkingMissedShiftIds((current) => [...current, shift.id]);
+
+        try {
+          await updateShift(shift.id, { status: 'missed' });
+          automatedAny = true;
+          recordManagementAction({
+            shiftId: shift.id,
+            siteName: shift.site?.name || shift.siteName || 'Unknown site',
+            guardName: shift.guard?.fullName || 'Unassigned',
+            itemType: 'Shift automation',
+            actionTaken: `Shift auto-marked missed after ${MISSED_CHECK_IN_GRACE_MINUTES} minutes without check-in`,
+          });
+          setLiveOperationsFeedback({
+            tone: 'success',
+            message: `Shift #${shift.id} was automatically marked as missed after ${MISSED_CHECK_IN_GRACE_MINUTES} minutes without check-in.`,
+          });
+        } catch (automationError) {
+          setAutoMarkingMissedShiftIds((current) => current.filter((id) => id !== shift.id));
+          if (!cancelled) {
+            setError(formatApiErrorMessage(automationError, 'Unable to mark this missed shift automatically.'));
+            setLiveOperationsFeedback({
+              tone: 'error',
+              message: formatApiErrorMessage(automationError, 'Unable to mark this missed shift automatically.'),
+            });
+          }
+        }
+      }
+
+      if (automatedAny && !cancelled) {
+        await loadData(true);
+      }
+    };
+
+    runAutomation();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSection, attendanceByShiftId, autoMarkingMissedShiftIds, companyMobileLayoutDisabled, loadData, shifts]);
+
+  const activeClients = React.useMemo(
+    () => clients.filter((client) => (client.status || 'active').toLowerCase() !== 'archived'),
+    [clients],
+  );
+
+  const activeSites = React.useMemo(
+    () => sites.filter((site) => (site.status || 'active').toLowerCase() !== 'archived'),
+    [sites],
+  );
+
+  const todayIso = formatDateInput(new Date());
+  const shiftsToday = React.useMemo(
+    () => shifts.filter((shift) => shift.start.slice(0, 10) === todayIso),
+    [shifts, todayIso],
+  );
+  const liveShifts = React.useMemo(
+    () => shifts.filter((shift) => ['ready', 'in_progress'].includes(normalizeShiftLifecycleStatus(shift.status))),
+    [shifts],
+  );
+  const pendingTimesheets = React.useMemo(
+    () => timesheets.filter((timesheet) => (timesheet.approvalStatus || '').toLowerCase() !== 'approved'),
+    [timesheets],
+  );
+  const overdueReviewTimesheets = React.useMemo(() => {
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    return timesheets.filter((timesheet) => {
+      if ((timesheet.approvalStatus || '').toLowerCase() !== 'submitted') return false;
+      const submittedAt = timesheet.submittedAt ? new Date(timesheet.submittedAt).getTime() : null;
+      return submittedAt !== null && !Number.isNaN(submittedAt) && submittedAt <= cutoff;
+    });
+  }, [timesheets]);
+  const pendingPayrollTimesheets = React.useMemo(
+    () =>
+      timesheets.filter(
+        (timesheet) =>
+          (timesheet.approvalStatus || '').toLowerCase() === 'approved' &&
+          (timesheet.payrollStatus || 'unpaid').toLowerCase() === 'unpaid' &&
+          !timesheet.payrollBatch,
+      ),
+    [timesheets],
+  );
+  const pendingInvoiceTimesheets = React.useMemo(
+    () =>
+      timesheets.filter(
+        (timesheet) =>
+          (timesheet.approvalStatus || '').toLowerCase() === 'approved' &&
+          (timesheet.billingStatus || 'uninvoiced').toLowerCase() === 'uninvoiced' &&
+          !timesheet.invoiceBatch,
+      ),
+    [timesheets],
+  );
+  const openIncidents = React.useMemo(
+    () => incidents.filter((incident) => ['open', 'in_review'].includes((incident.status || '').toLowerCase())),
+    [incidents],
+  );
+  const outstandingAlerts = React.useMemo(
+    () => alerts.filter((alert) => (alert.status || '').toLowerCase() !== 'closed'),
+    [alerts],
+  );
+  const missedCheckCalls = React.useMemo(
+    () => outstandingAlerts.filter((alert) => ['check_call', 'missed_checkcall'].includes((alert.type || '').toLowerCase())),
+    [outstandingAlerts],
+  );
+  const activePanicAlerts = React.useMemo(
+    () => outstandingAlerts.filter((alert) => (alert.type || '').toLowerCase() === 'panic'),
+    [outstandingAlerts],
+  );
+  const recentActivity = React.useMemo(
+    () =>
+      [...dailyLogs]
+        .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+        .slice(0, 6),
+    [dailyLogs],
+  );
+  const shiftOfferRows = React.useMemo(
+    () =>
+      shifts
+        .filter((shift) => ['offered', 'ready', 'rejected', 'missed'].includes(normalizeShiftLifecycleStatus(shift.status)))
+        .sort((left, right) => left.start.localeCompare(right.start)),
+    [shifts],
+  );
+  const pendingShiftOffers = React.useMemo(
+    () => shiftOfferRows.filter((shift) => normalizeShiftLifecycleStatus(shift.status) === 'offered'),
+    [shiftOfferRows],
+  );
+  const readyShiftOffers = React.useMemo(
+    () => shiftOfferRows.filter((shift) => normalizeShiftLifecycleStatus(shift.status) === 'ready'),
+    [shiftOfferRows],
+  );
+  const missedShiftOffers = React.useMemo(
+    () => shiftOfferRows.filter((shift) => normalizeShiftLifecycleStatus(shift.status) === 'missed'),
+    [shiftOfferRows],
+  );
+  const rejectedShiftOffers = React.useMemo(
+    () =>
+      shiftOfferRows.filter((shift) =>
+        normalizeShiftLifecycleStatus(shift.status) === 'rejected',
+      ),
+    [shiftOfferRows],
+  );
+  const urgentOperationalItems = React.useMemo(() => {
+    const now = new Date();
+    const items: UrgentOperationalItem[] = [];
+    const readyShiftsNotBookedOn = shifts.filter((shift) => {
+      const attendance = attendanceByShiftId.get(shift.id);
+      return (
+        normalizeShiftLifecycleStatus(shift.status) === 'ready' &&
+        !attendance?.checkInAt &&
+        new Date(shift.start).getTime() <= now.getTime()
+      );
+    });
+    const upcomingRiskShifts = shifts.filter((shift) =>
+      isLikelyToMissCheckIn(shift, attendanceByShiftId.get(shift.id)),
+    );
+
+    uncoveredShifts.forEach((shift) => {
+      items.push({
+        id: `uncovered-${shift.shiftId}`,
+        shiftId: shift.shiftId,
+        status: shift.coverageState || shift.coverageStatus,
+        siteName: shift.siteName || 'Unknown site',
+        guardName: shift.guardName || 'No confirmed guard',
+        category: 'uncovered_shift',
+        issueType: 'Uncovered shift',
+        message: `${formatDateLabel(shift.start)} · ${formatTimeLabel(shift.start)}-${formatTimeLabel(shift.end)} · ${formatStatusLabel(shift.coverageState || shift.coverageStatus)}`,
+        occurredAt: shift.start,
+      });
+    });
+
+    activePanicAlerts.forEach((alert) => {
+      items.push({
+        id: `panic-${alert.id}`,
+        alertId: alert.id,
+        shiftId: alert.shift?.id ?? null,
+        status: alert.status,
+        siteName: alert.shift?.site?.name || alert.shift?.siteName || 'Unknown site',
+        guardName: alert.guard?.fullName || 'Unknown guard',
+        category: 'panic',
+        issueType: 'Active panic alert',
+        message: alert.message || 'Emergency assistance requested from a live shift.',
+        occurredAt: alert.createdAt,
+      });
+    });
+
+    openIncidents.forEach((incident) => {
+      items.push({
+        id: `incident-${incident.id}`,
+        incidentId: incident.id,
+        shiftId: incident.shift?.id ?? null,
+        status: incident.status,
+        siteName: incident.site?.name || incident.shift?.site?.name || 'Unknown site',
+        guardName: incident.guard?.fullName || 'Unknown guard',
+        category: 'incident',
+        issueType: 'Incident unresolved',
+        message: incident.title,
+        occurredAt: incident.createdAt,
+      });
+    });
+
+    readyShiftsNotBookedOn.forEach((shift) => {
+      items.push({
+        id: `ready-overdue-${shift.id}`,
+        shiftId: shift.id,
+        status: shift.status,
+        siteName: shift.site?.name || shift.siteName || 'Unknown site',
+        guardName: shift.guard?.fullName || 'Unassigned',
+        category: 'late_start',
+        issueType: 'Guard not booked on',
+        message: 'Shift start time has passed but the guard has not booked on yet.',
+        occurredAt: shift.start,
+      });
+    });
+
+    upcomingRiskShifts.forEach((shift) => {
+      items.push({
+        id: `upcoming-risk-${shift.id}`,
+        shiftId: shift.id,
+        status: shift.status,
+        siteName: shift.site?.name || shift.siteName || 'Unknown site',
+        guardName: shift.guard?.fullName || 'Unassigned',
+        category: 'upcoming_risk',
+        issueType: 'Upcoming Risk',
+        message: 'Starting soon – no check-in ⚠️',
+        occurredAt: shift.start,
+      });
+    });
+
+    shifts
+      .filter((shift) => normalizeShiftLifecycleStatus(shift.status) === 'missed')
+      .forEach((shift) => {
+        items.push({
+          id: `missed-${shift.id}`,
+          shiftId: shift.id,
+          status: shift.status,
+        siteName: shift.site?.name || shift.siteName || 'Unknown site',
+        guardName: shift.guard?.fullName || 'Unassigned',
+        category: 'missed_shift',
+        issueType: 'Re-cover required',
+        message: `No check-in was recorded within ${MISSED_CHECK_IN_GRACE_MINUTES} minutes of shift start.`,
+        occurredAt: shift.start,
+      });
+      });
+
+    missedCheckCalls.forEach((alert) => {
+      items.push({
+        id: `checkcall-${alert.id}`,
+        alertId: alert.id,
+        shiftId: alert.shift?.id ?? null,
+        status: alert.status,
+        siteName: alert.shift?.site?.name || alert.shift?.siteName || 'Unknown site',
+        guardName: alert.guard?.fullName || 'Unknown guard',
+        category: 'missed_check_call',
+        issueType: 'Missed or overdue check call',
+        message: alert.message || 'A scheduled check call needs attention.',
+        occurredAt: alert.createdAt,
+      });
+    });
+
+    rejectedShiftOffers.forEach((shift) => {
+      items.push({
+        id: `rejected-${shift.id}`,
+        shiftId: shift.id,
+        status: shift.status,
+        siteName: shift.site?.name || shift.siteName || 'Unknown site',
+        guardName: shift.guard?.fullName || 'No guard',
+        category: 'rejected_offer',
+        issueType: 'Re-offer required',
+        message: 'The offered guard rejected this shift and replacement cover is still needed.',
+        occurredAt: shift.start,
+      });
+    });
+
+    outstandingAlerts
+      .filter((alert) => ['welfare', 'late_checkin', 'other'].includes((alert.type || '').toLowerCase()))
+      .forEach((alert) => {
+      items.push({
+        id: `attention-${alert.id}`,
+        alertId: alert.id,
+        shiftId: alert.shift?.id ?? null,
+        status: alert.status,
+        siteName: alert.shift?.site?.name || alert.shift?.siteName || 'Unknown site',
+        guardName: alert.guard?.fullName || 'Unknown guard',
+        category: 'safety',
+        issueType: 'Safety / welfare needs attention',
+        message: alert.message || 'A safety or welfare item needs review.',
+        occurredAt: alert.createdAt,
+        });
+      });
+
+    return items
+      .filter((item, index, current) => current.findIndex((candidate) => candidate.id === item.id) === index)
+      .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt))
+      .slice(0, 10);
+  }, [
+    activePanicAlerts,
+    attendanceByShiftId,
+    missedShiftOffers,
+    missedCheckCalls,
+    openIncidents,
+    outstandingAlerts,
+    rejectedShiftOffers,
+    shifts,
+    uncoveredShifts,
+  ]);
+  const recentOperationalActivity = React.useMemo(() => {
+    const items: OperationalActivityItem[] = [];
+
+    shiftOfferRows.forEach((shift) => {
+      const lifecycleStatus = normalizeShiftLifecycleStatus(shift.status);
+      items.push({
+        id: `shift-${shift.id}-${lifecycleStatus}`,
+        shiftId: shift.id,
+        siteName: shift.site?.name || shift.siteName || 'Unknown site',
+        guardName: shift.guard?.fullName || 'Unassigned',
+        eventType:
+          lifecycleStatus === 'offered'
+            ? 'Shift offered'
+            : lifecycleStatus === 'ready'
+              ? 'Shift accepted'
+              : lifecycleStatus === 'missed'
+                ? 'Shift missed'
+                : 'Shift rejected',
+        message:
+          lifecycleStatus === 'offered'
+            ? 'Waiting for guard response.'
+            : lifecycleStatus === 'ready'
+              ? 'Guard accepted and shift is ready to start.'
+              : lifecycleStatus === 'missed'
+                ? `No check-in was recorded within ${MISSED_CHECK_IN_GRACE_MINUTES} minutes of shift start.`
+                : 'Guard rejected and new cover is required.',
+        occurredAt: shift.start,
+      });
+    });
+
+    shifts
+      .filter((shift) => isLikelyToMissCheckIn(shift, attendanceByShiftId.get(shift.id)))
+      .forEach((shift) => {
+        items.push({
+          id: `likely-late-${shift.id}`,
+          shiftId: shift.id,
+          siteName: shift.site?.name || shift.siteName || 'Unknown site',
+          guardName: shift.guard?.fullName || 'Unassigned',
+          eventType: 'Likely late',
+          message: 'Starting soon with no recorded check-in yet.',
+          occurredAt: shift.start,
+        });
+      });
+
+    attendanceEvents.forEach((event) => {
+      const shiftId = event.shift?.id;
+      if (!shiftId) {
+        return;
+      }
+
+      if (event.type === 'check-in') {
+        items.push({
+          id: `attendance-in-${event.id}`,
+          shiftId,
+          siteName: event.shift?.site?.name || event.shift?.siteName || 'Unknown site',
+          guardName: event.guard?.fullName || 'Unknown guard',
+          eventType: 'Guard checked in',
+          message: 'Guard booked on and the shift is now live.',
+          occurredAt: event.occurredAt,
+        });
+      }
+
+      if (event.type === 'check-out') {
+        items.push({
+          id: `attendance-out-${event.id}`,
+          shiftId,
+          siteName: event.shift?.site?.name || event.shift?.siteName || 'Unknown site',
+          guardName: event.guard?.fullName || 'Unknown guard',
+          eventType: 'Guard checked out',
+          message: 'Guard booked off and the shift is completed.',
+          occurredAt: event.occurredAt,
+        });
+      }
+    });
+
+    timesheets.forEach((timesheet) => {
+      if (timesheet.submittedAt) {
+        items.push({
+          id: `timesheet-submitted-${timesheet.id}`,
+          shiftId: timesheet.shift?.id ?? timesheet.shiftId,
+          siteName: timesheet.shift?.site?.name || timesheet.shift?.siteName || 'Unknown site',
+          guardName: timesheet.guard?.fullName || 'Unknown guard',
+          eventType: 'Timesheet submitted',
+          message: 'Worked hours were submitted for company review.',
+          occurredAt: timesheet.submittedAt,
+        });
+      }
+    });
+
+    dailyLogs.forEach((log) => {
+      items.push({
+        id: `log-${log.id}`,
+        shiftId: log.shift?.id,
+        siteName: log.shift?.site?.name || log.shift?.siteName || 'Unknown site',
+        guardName: log.guard?.fullName || 'Unknown guard',
+        eventType:
+          log.logType === 'check_call'
+            ? 'Check call recorded'
+            : log.logType === 'welfare_check'
+              ? 'Welfare update recorded'
+              : 'Log entry added',
+        message: log.message,
+        occurredAt: log.createdAt,
+      });
+    });
+
+    incidents.forEach((incident) => {
+      items.push({
+        id: `incident-${incident.id}`,
+        shiftId: incident.shift?.id,
+        siteName: incident.site?.name || incident.shift?.site?.name || 'Unknown site',
+        guardName: incident.guard?.fullName || 'Unknown guard',
+        eventType: 'Incident raised',
+        message: incident.title,
+        occurredAt: incident.createdAt,
+      });
+    });
+
+    alerts.forEach((alert) => {
+      items.push({
+        id: `alert-${alert.id}`,
+        shiftId: alert.shift?.id,
+        siteName: alert.shift?.site?.name || alert.shift?.siteName || 'Unknown site',
+        guardName: alert.guard?.fullName || 'Unknown guard',
+        eventType:
+          (alert.type || '').toLowerCase() === 'panic'
+            ? 'Panic alert sent'
+            : (alert.type || '').toLowerCase() === 'welfare'
+              ? 'Welfare update recorded'
+              : 'Safety alert raised',
+        message: alert.message,
+        occurredAt: alert.createdAt,
+      });
+    });
+
+    notifications.forEach((notification) => {
+      items.push({
+        id: `notification-${notification.id}`,
+        shiftId: null,
+        siteName: 'Control room',
+        guardName: notification.user?.firstName || 'System',
+        eventType: notification.title,
+        message: notification.message,
+        occurredAt: notification.sentAt || notification.createdAt,
+      });
+    });
+
+    return items
+      .filter((item, index, current) => current.findIndex((candidate) => candidate.id === item.id) === index)
+      .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt))
+      .slice(0, 8);
+  }, [alerts, attendanceByShiftId, attendanceEvents, dailyLogs, incidents, notifications, shiftOfferRows, shifts, timesheets]);
+
+  const recentManagementActivity = React.useMemo(
+    () =>
+      [...managementActions]
+        .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt))
+        .slice(0, 6),
+    [managementActions],
+  );
+
+  const filteredClients = React.useMemo(
+    () =>
+      clients.filter((client) =>
+        showArchivedClients ? true : (client.status || 'active').toLowerCase() !== 'archived',
+      ),
+    [clients, showArchivedClients],
+  );
+
+  const selectedSite = React.useMemo(
+    () => sites.find((site) => site.id === selectedSiteId) ?? null,
+    [selectedSiteId, sites],
+  );
+
+  const selectedShift = React.useMemo(
+    () => shifts.find((shift) => shift.id === selectedShiftId) ?? null,
+    [selectedShiftId, shifts],
+  );
+  const selectedShiftCloseOutSummary = React.useMemo(() => {
+    if (!selectedShift) {
+      return null;
+    }
+
+    const timesheet = timesheetByShiftId.get(selectedShift.id);
+    const attendance = attendanceByShiftId.get(selectedShift.id);
+    const shiftLogs = logsByShiftId.get(selectedShift.id) || [];
+    const shiftIncidents = incidentsByShiftId.get(selectedShift.id) || [];
+    const shiftAlerts = alertsByShiftId.get(selectedShift.id) || [];
+    const completedCheckCalls = shiftLogs.filter((log) => log.logType === 'check_call').length;
+    const missedCheckCallsForShift = shiftAlerts.filter(
+      (alert) => (alert.type || '').toLowerCase() === 'missed_checkcall',
+    ).length;
+    const safetyEventsCount = shiftAlerts.filter(
+      (alert) => !['check_call', 'missed_checkcall'].includes((alert.type || '').toLowerCase()),
+    ).length;
+    const unresolvedIncidentsCount = shiftIncidents.filter((incident) =>
+      ['open', 'in_review'].includes((incident.status || '').toLowerCase()),
+    ).length;
+    const unresolvedAlertsCount = shiftAlerts.filter((alert) => (alert.status || '').toLowerCase() !== 'closed').length;
+    const unresolvedFollowUpCount = unresolvedIncidentsCount + unresolvedAlertsCount;
+
+    return {
+      scheduledStart: selectedShift.start,
+      scheduledEnd: selectedShift.end,
+      actualCheckInAt: attendance?.checkInAt || null,
+      actualCheckOutAt: attendance?.checkOutAt || null,
+      logsCount: shiftLogs.length,
+      incidentsCount: shiftIncidents.length,
+      safetyEventsCount,
+      completedCheckCalls,
+      missedCheckCalls: missedCheckCallsForShift,
+      timesheetStatus: timesheet?.approvalStatus || 'pending',
+      unresolvedFollowUpCount,
+      closedCleanly: unresolvedFollowUpCount === 0,
+    };
+  }, [selectedShift, timesheetByShiftId, attendanceByShiftId, logsByShiftId, incidentsByShiftId, alertsByShiftId]);
+
+  React.useEffect(() => {
+    setCloseOutNotesDraft(selectedShift?.closeOutNotes || '');
+  }, [selectedShift?.id, selectedShift?.closeOutNotes]);
+
+  const siteShiftCounts = React.useMemo(() => {
+    const counts = new Map<number, number>();
+    shifts.forEach((shift) => {
+      const siteId = shift.site?.id ?? shift.siteId;
+      if (!siteId) {
+        return;
+      }
+
+      counts.set(siteId, (counts.get(siteId) || 0) + 1);
+    });
+    return counts;
+  }, [shifts]);
+
+  const siteOptions = React.useMemo(
+    () =>
+      sites.map((site) => ({
+        label: `${site.name}${site.client ? ` · ${site.client.name}` : ''}`,
+        value: String(site.id),
+      })),
+    [sites],
+  );
+
+  const siteClientOptions = React.useMemo(
+    () => activeClients.map((client) => ({ label: client.name, value: String(client.id) })),
+    [activeClients],
+  );
+
+  const selectedSiteClient = React.useMemo(
+    () => clients.find((client) => String(client.id) === siteForm.clientId) ?? null,
+    [clients, siteForm.clientId],
+  );
+
+  const linkedGuardOptions = React.useMemo(
+    () =>
+      linkedGuards.map((guard) => ({
+        label: `${guard.fullName} · ${guard.phone}`,
+        value: String(guard.id),
+      })),
+    [linkedGuards],
+  );
+
+  const linkedGuardNameById = React.useMemo(() => {
+    const map = new Map<number, string>();
+    linkedGuards.forEach((guard) => {
+      map.set(guard.id, guard.fullName);
+    });
+    return map;
+  }, [linkedGuards]);
+
+  const plannerSiteOptions = React.useMemo(
+    () =>
+      sites
+        .filter((site) => !plannerClientId || String(site.client?.id ?? site.clientId ?? '') === plannerClientId)
+        .map((site) => ({ label: site.name, value: String(site.id) })),
+    [plannerClientId, sites],
+  );
+
+  const plannerWeekDays = React.useMemo(() => buildWeekDays(plannerWeekCommencing), [plannerWeekCommencing]);
+
+  const plannerRowsByDate = React.useMemo(() => {
+    const map = new Map<string, PlannerRow[]>();
+    plannerWeekDays.forEach((day) => map.set(day.date, []));
+    plannerRows.forEach((row) => {
+      const group = map.get(row.date) || [];
+      group.push(row);
+      map.set(row.date, group);
+    });
+    return map;
+  }, [plannerRows, plannerWeekDays]);
+
+  const plannerSite = React.useMemo(
+    () => sites.find((site) => String(site.id) === plannerSiteId) ?? null,
+    [plannerSiteId, sites],
+  );
+
+  React.useEffect(() => {
+    if (!plannerSiteId) {
+      setPlannerRows([]);
+      setPlannerRemovedShiftIds([]);
+      return;
+    }
+
+    const weekDates = new Set(plannerWeekDays.map((day) => day.date));
+    const matchingShifts = shifts.filter((shift) => {
+      const siteId = shift.site?.id ?? shift.siteId;
+      return String(siteId ?? '') === plannerSiteId && weekDates.has(shift.start.slice(0, 10));
+    });
+
+    const rows = matchingShifts.map((shift) => ({
+      localId: `shift-${shift.id}`,
+      date: shift.start.slice(0, 10),
+      startTime: isoToTimeInput(shift.start),
+      endTime: isoToTimeInput(shift.end),
+      guardsRequired: '1',
+      assignedGuardId: shift.guard?.id ? String(shift.guard.id) : '',
+      status: normalizeShiftLifecycleStatus(shift.status),
+      instructions: shift.instructions || '',
+      sourceShiftIds: [shift.id],
+    }));
+
+    setPlannerRows(rows);
+    setPlannerRemovedShiftIds([]);
+  }, [plannerSiteId, plannerWeekDays, shifts]);
+
+  const resetClientForm = () => setClientForm(CLIENT_FORM_EMPTY);
+  const resetSiteForm = () => setSiteForm(SITE_FORM_EMPTY);
+  const resetJobForm = () => setJobForm(JOB_FORM_EMPTY);
+
+  const handleEditClient = (client: Client) => {
+    setClientForm({
+      id: client.id,
+      name: client.name,
+      contactName: client.contactName || '',
+      contactEmail: client.contactEmail || '',
+      contactPhone: client.contactPhone || '',
+      status: client.status || 'active',
+      notes: client.contactDetails || '',
+    });
+    setActiveSection('clients');
+  };
+
+  const handleSaveClient = async () => {
+    try {
+      setSavingClient(true);
+      const payload: CreateClientPayload | UpdateClientPayload = {
+        name: clientForm.name.trim(),
+        contactName: clientForm.contactName.trim() || undefined,
+        contactEmail: clientForm.contactEmail.trim() || undefined,
+        contactPhone: clientForm.contactPhone.trim() || undefined,
+        contactDetails: clientForm.notes.trim() || undefined,
+        status: clientForm.status || 'active',
+      };
+
+      if (!payload.name) {
+        throw new Error('Client name is required.');
+      }
+
+      if (clientForm.id) {
+        await updateClient(clientForm.id, payload);
+      } else {
+        await createClient(payload as CreateClientPayload);
+      }
+
+      resetClientForm();
+      await loadData(true);
+    } catch (saveError) {
+      setError(formatApiErrorMessage(saveError, 'Unable to save this client right now.'));
+    } finally {
+      setSavingClient(false);
+    }
+  };
+
+  const handleArchiveClient = async (client: Client) => {
+    try {
+      await updateClient(client.id, { status: 'archived' });
+      await loadData(true);
+    } catch (archiveError) {
+      setError(formatApiErrorMessage(archiveError, 'Unable to archive this client right now.'));
+    }
+  };
+
+  const handleEditSite = (site: Site) => {
+    setSiteForm({
+      id: site.id,
+      clientId: String(site.client?.id ?? site.clientId ?? ''),
+      name: site.name,
+      address: site.address,
+      contactDetails: site.contactDetails || '',
+      status: site.status || 'active',
+      requiredGuardCount: String(site.requiredGuardCount || 1),
+      operatingDays: site.operatingDays || '',
+      operatingStartTime: site.operatingStartTime || '',
+      operatingEndTime: site.operatingEndTime || '',
+      checkCallIntervalMinutes: String(site.welfareCheckIntervalMinutes || 60),
+      specialInstructions: site.specialInstructions || '',
+      initialShiftDate: '',
+      initialShiftStartTime: '',
+      initialShiftEndTime: '',
+    });
+    setSelectedSiteId(site.id);
+    setActiveSection('sites');
+  };
+
+  const handleSaveSite = async () => {
+    try {
+      setSavingSite(true);
+      const selectedClientId = toNumber(siteForm.clientId);
+      const trimmedSiteName = siteForm.name.trim();
+      const trimmedAddress = siteForm.address.trim();
+      const hasStarterShiftValue = Boolean(
+        siteForm.initialShiftDate || siteForm.initialShiftStartTime || siteForm.initialShiftEndTime,
+      );
+
+      if (hasStarterShiftValue) {
+        const starterValidationError = validateSameDayShiftTiming(
+          siteForm.initialShiftDate,
+          siteForm.initialShiftStartTime,
+          siteForm.initialShiftEndTime,
+        );
+        if (starterValidationError) {
+          throw new Error(`Starter planned shift: ${starterValidationError}`);
+        }
+      }
+
+      const payload: CreateSitePayload | UpdateSitePayload = {
+        clientId: selectedClientId,
+        name: trimmedSiteName,
+        address: trimmedAddress,
+        contactDetails: siteForm.contactDetails.trim() || undefined,
+        status: siteForm.status,
+        requiredGuardCount: toNumber(siteForm.requiredGuardCount) || 1,
+        operatingDays: siteForm.operatingDays.trim() || undefined,
+        operatingStartTime: siteForm.operatingStartTime.trim() || undefined,
+        operatingEndTime: siteForm.operatingEndTime.trim() || undefined,
+        welfareCheckIntervalMinutes: toNumber(siteForm.checkCallIntervalMinutes) || 60,
+        specialInstructions: siteForm.specialInstructions.trim() || undefined,
+        initialShiftDate: hasStarterShiftValue ? siteForm.initialShiftDate : undefined,
+        initialShiftStartTime: hasStarterShiftValue ? siteForm.initialShiftStartTime : undefined,
+        initialShiftEndTime: hasStarterShiftValue ? siteForm.initialShiftEndTime : undefined,
+      };
+
+      console.log('[CompanyDashboardScreen] handleSaveSite payload', payload);
+
+      if (!payload.clientId || !payload.name || !payload.address) {
+        throw new Error('Client, site name, and address are required.');
+      }
+
+      if (siteForm.id) {
+        await updateSite(siteForm.id, payload);
+      } else {
+        await createSite(payload as CreateSitePayload);
+      }
+
+      resetSiteForm();
+      await loadData(true);
+    } catch (saveError) {
+      setError(formatApiErrorMessage(saveError, 'Unable to save this site right now.'));
+    } finally {
+      setSavingSite(false);
+    }
+  };
+
+  const handlePlanSite = (site: Site) => {
+    setPlannerClientId(String(site.client?.id ?? site.clientId ?? ''));
+    setPlannerSiteId(String(site.id));
+    setActiveSection('rota-planner');
+  };
+
+  const handleAddPlannerRow = (date: string) => {
+    setPlannerRows((current) => [...current, buildPlannerRow(date)]);
+  };
+
+  const handlePlannerRowChange = (localId: string, patch: Partial<PlannerRow>) => {
+    setPlannerRows((current) =>
+      current.map((row) => (row.localId === localId ? { ...row, ...patch } : row)),
+    );
+  };
+
+  const handleRemovePlannerRow = (localId: string) => {
+    setPlannerRows((current) => {
+      const row = current.find((entry) => entry.localId === localId);
+      if (row?.sourceShiftIds?.length) {
+        setPlannerRemovedShiftIds((existing) => [...existing, ...row.sourceShiftIds]);
+      }
+
+      return current.filter((entry) => entry.localId !== localId);
+    });
+  };
+
+  const copyPlannerToNextWeek = () => {
+    const nextRows = plannerRows.map((row) => ({
+      ...row,
+      localId: `${row.localId}-copy-${Math.random().toString(36).slice(2, 8)}`,
+      date: formatDateInput(addDays(parseDateInput(row.date) || new Date(`${row.date}T00:00:00`), 7)),
+      sourceShiftIds: [],
+    }));
+
+    setPlannerWeekCommencing(
+      weekCommencingFor(
+        formatDateInput(
+          addDays(parseDateInput(plannerWeekCommencing) || new Date(`${plannerWeekCommencing}T00:00:00`), 7),
+        ),
+      ),
+    );
+    setPlannerRows(nextRows);
+    setPlannerRemovedShiftIds([]);
+  };
+
+  const deletePlannerShiftIfPresent = async (shiftId: number) => {
+    try {
+      await deleteShift(shiftId);
+    } catch (shiftError) {
+      if (shiftError instanceof ApiError && shiftError.status === 404) {
+        return;
+      }
+
+      throw shiftError;
+    }
+  };
+
+  const handleSaveRota = async () => {
+    try {
+      if (!plannerSite || !plannerSiteId) {
+        throw new Error('Choose a site before saving the rota.');
+      }
+
+      setSavingRota(true);
+
+      for (const shiftId of Array.from(new Set(plannerRemovedShiftIds))) {
+        await deletePlannerShiftIfPresent(shiftId);
+      }
+
+      for (const row of plannerRows) {
+        const validationError = validateSameDayShiftTiming(row.date, row.startTime, row.endTime);
+        if (validationError) {
+          throw new Error(`${formatDateLabel(row.date)}: ${validationError}`);
+        }
+
+        const guardsRequired = Math.max(1, toNumber(row.guardsRequired) || 1);
+        const { startAt, endAt } = buildShiftDateTimes(row.date, row.startTime, row.endTime);
+        const plannedStatus = normalizePlannerStatus(row.status, row.assignedGuardId);
+        const existingIds = [...row.sourceShiftIds];
+
+        for (let index = 0; index < guardsRequired; index += 1) {
+          const assignedGuardId = index === 0 ? toNumber(row.assignedGuardId) ?? null : null;
+          const payload: CreateShiftPayload & UpdateShiftPayload = {
+            siteId: Number(plannerSiteId),
+            guardId: assignedGuardId,
+            start: startAt,
+            end: endAt,
+            status: assignedGuardId ? plannedStatus : plannedStatus === 'cancelled' ? 'cancelled' : 'unfilled',
+            checkCallIntervalMinutes: plannerSite.welfareCheckIntervalMinutes || 60,
+            instructions: row.instructions.trim() || undefined,
+          };
+
+          const existingId = existingIds.shift();
+          if (existingId) {
+            await updateShift(existingId, payload);
+          } else {
+            await createShift(payload);
+          }
+        }
+
+        for (const extraId of existingIds) {
+          await deletePlannerShiftIfPresent(extraId);
+        }
+      }
+
+      setPlannerRemovedShiftIds([]);
+      await loadData(true);
+      setActiveSection('live-operations');
+    } catch (saveError) {
+      setError(formatApiErrorMessage(saveError, 'Unable to save this rota right now.'));
+    } finally {
+      setSavingRota(false);
+    }
+  };
+
+  const handleCreateJob = async () => {
+    try {
+      setCreatingJob(true);
+      const payload: CreateJobPayload = {
+        title: jobForm.title.trim(),
+        description: jobForm.description.trim() || undefined,
+        guardsRequired: toNumber(jobForm.guardsRequired) || 1,
+        hourlyRate: toNumber(jobForm.hourlyRate) || 12,
+        billingRate: toNumber(jobForm.billingRate) ?? null,
+        siteId: toNumber(jobForm.siteId),
+      };
+
+      if (!payload.title || !payload.siteId) {
+        throw new Error('Job title and site are required.');
+      }
+
+      await createJob(payload);
+      resetJobForm();
+      await loadData(true);
+    } catch (jobError) {
+      setError(formatApiErrorMessage(jobError, 'Unable to create this recruitment job right now.'));
+    } finally {
+      setCreatingJob(false);
+    }
+  };
+
+  const guardOnboardingMessage = (message: string) => {
+    const compliancePrefix = 'Guard compliance invalid:';
+    if (message.includes('Guard screening is not complete.')) {
+      return 'Guard onboarding incomplete. Guard cannot yet be approved. The candidate must complete screening and authorised verification.';
+    }
+    return message.includes(compliancePrefix)
+      ? `Guard onboarding incomplete. Guard cannot yet be approved. Outstanding candidate requirement: ${message.split(compliancePrefix)[1].trim()}`
+      : message;
+  };
+
+  const handleApproveGuard = async (guardId: number) => {
+    try {
+      setApprovingGuardId(guardId);
+      await approveGuard(guardId);
+      await loadData(true);
+    } catch (approveError) {
+      const message = formatApiErrorMessage(approveError, 'Unable to link this guard right now.');
+      setError(guardOnboardingMessage(message));
+    } finally {
+      setApprovingGuardId(null);
+    }
+  };
+
+  const handleReviewApplication = async (
+    applicationId: number,
+    status: 'under_review' | 'accepted' | 'rejected',
+  ) => {
+    try {
+      setReviewingApplicationId(applicationId);
+      await reviewJobApplication(applicationId, { status });
+      await loadData(true);
+      if (status === 'accepted') {
+        setActiveSection('guards');
+      }
+    } catch (reviewError) {
+      setError(
+        guardOnboardingMessage(formatApiErrorMessage(
+          reviewError,
+          status === 'accepted'
+            ? 'Unable to accept this application right now.'
+            : status === 'rejected'
+              ? 'Unable to reject this application right now.'
+              : 'Unable to update this application right now.',
+        )),
+      );
+    } finally {
+      setReviewingApplicationId(null);
+    }
+  };
+
+  const recordManagementAction = (
+    item: Omit<ManagementActionItem, 'id' | 'occurredAt'>,
+  ) => {
+    setManagementActions((current) => {
+      const nowIso = new Date().toISOString();
+      const existingRecentMatch = current.find((entry) => {
+        const occurredMs = Date.parse(entry.occurredAt);
+        const isRecent = Number.isFinite(occurredMs) && Date.now() - occurredMs < 60_000;
+        return (
+          isRecent &&
+          entry.shiftId === item.shiftId &&
+          entry.itemType === item.itemType &&
+          entry.actionTaken === item.actionTaken
+        );
+      });
+
+      if (existingRecentMatch) {
+        return current;
+      }
+
+      return [
+        {
+          ...item,
+          id: `management-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          occurredAt: nowIso,
+        },
+        ...current,
+      ].slice(0, 12);
+    });
+  };
+
+  const focusShiftInLiveBoard = (shiftId: number) => {
+    setSelectedShiftId(shiftId);
+    setActiveSection('live-operations');
+    setHighlightedLiveShiftId(shiftId);
+
+    if (liveBoardHighlightTimeoutId) {
+      clearTimeout(liveBoardHighlightTimeoutId);
+    }
+
+    setTimeout(() => {
+      if (typeof window !== 'undefined' && typeof window.scrollTo === 'function') {
+        window.scrollTo({
+          top: Math.max(liveBoardAnchorY - 24, 0),
+          behavior: 'smooth',
+        });
+      }
+    }, 0);
+
+    const nextTimeoutId = setTimeout(() => {
+      setHighlightedLiveShiftId((current) => (current === shiftId ? null : current));
+    }, 2000);
+    setLiveBoardHighlightTimeoutId(nextTimeoutId);
+  };
+
+  const focusShiftDetail = (shiftId: number) => {
+    setSelectedShiftId(shiftId);
+    setActiveSection('live-operations');
+    setHighlightedLiveShiftId(shiftId);
+    setPendingShiftDetailFocusId(shiftId);
+  };
+
+  React.useEffect(() => {
+    if (
+      activeSection !== 'live-operations' ||
+      pendingShiftDetailFocusId === null ||
+      selectedShiftId !== pendingShiftDetailFocusId ||
+      shiftDetailAnchorY <= 0
+    ) return;
+
+    const timeoutId = setTimeout(() => {
+      contentScrollRef.current?.scrollTo({ y: Math.max(shiftDetailAnchorY - 24, 0), animated: true });
+      setPendingShiftDetailFocusId(null);
+    }, 50);
+    return () => clearTimeout(timeoutId);
+  }, [activeSection, pendingShiftDetailFocusId, selectedShiftId, shiftDetailAnchorY]);
+
+  const openCoverage = (context: CoverageNavigationContext = {}) => {
+    setCoverageNavigationContext(context);
+    setActiveSection('coverage');
+  };
+
+  const handleCancelShiftOffer = async (shiftId: number) => {
+    try {
+      setOfferActionShiftId(shiftId);
+      setShiftOffersFeedback(null);
+      const shift = shifts.find((entry) => entry.id === shiftId) ?? null;
+      await updateShift(shiftId, { status: 'cancelled' });
+      await loadData(true);
+      recordManagementAction({
+        shiftId,
+        siteName: shift?.site?.name || shift?.siteName || 'Unknown site',
+        guardName: shift?.guard?.fullName || 'Unassigned',
+        itemType: 'Shift offer',
+        actionTaken: 'Shift offer withdrawn',
+      });
+      setShiftOffersFeedback({
+        tone: 'success',
+        message: `Shift #${shiftId} was withdrawn successfully and is no longer pending a guard response.`,
+      });
+    } catch (shiftError) {
+      setError(formatApiErrorMessage(shiftError, 'Unable to cancel this shift offer right now.'));
+      setShiftOffersFeedback({
+        tone: 'error',
+        message: formatApiErrorMessage(shiftError, 'Unable to withdraw this shift offer right now.'),
+      });
+    } finally {
+      setOfferActionShiftId(null);
+    }
+  };
+
+  const handleReofferShift = async (shiftId: number) => {
+    const nextGuardId = toNumber(reassignGuardByShiftId[shiftId]);
+
+    if (!nextGuardId) {
+      setError('Choose a replacement guard before re-offering this shift.');
+      setShiftOffersFeedback({
+        tone: 'error',
+        message: 'Choose a replacement guard before re-offering this shift.',
+      });
+      return;
+    }
+
+    try {
+      setOfferActionShiftId(shiftId);
+      setShiftOffersFeedback(null);
+      const shift = shifts.find((entry) => entry.id === shiftId) ?? null;
+      const replacementGuardName = linkedGuardNameById.get(nextGuardId) || `Guard #${nextGuardId}`;
+      await updateShift(shiftId, { guardId: nextGuardId });
+      setReassignGuardByShiftId((current) => ({ ...current, [shiftId]: '' }));
+      await loadData(true);
+      recordManagementAction({
+        shiftId,
+        siteName: shift?.site?.name || shift?.siteName || 'Unknown site',
+        guardName: replacementGuardName,
+        itemType: 'Rejected shift',
+        actionTaken: `Shift re-offered to ${replacementGuardName}`,
+      });
+      setShiftOffersFeedback({
+        tone: 'success',
+        message: `Shift #${shiftId} was re-offered to ${replacementGuardName} and is now back in offered status.`,
+      });
+    } catch (shiftError) {
+      setError(formatApiErrorMessage(shiftError, 'Unable to re-offer this shift right now.'));
+      setShiftOffersFeedback({
+        tone: 'error',
+        message: formatApiErrorMessage(shiftError, 'Unable to re-offer this shift right now.'),
+      });
+    } finally {
+      setOfferActionShiftId(null);
+    }
+  };
+
+  const handleOpenUrgentShift = (item: UrgentOperationalItem) => {
+    if (!item.shiftId) {
+      setLiveOperationsFeedback({
+        tone: 'error',
+        message: `No linked shift is available for "${item.issueType}".`,
+      });
+      return;
+    }
+
+    focusShiftInLiveBoard(item.shiftId);
+    setLiveOperationsFeedback({
+      tone: 'success',
+      message: `Opening Shift #${item.shiftId} for ${item.issueType.toLowerCase()}.`,
+    });
+  };
+
+  const handleOpenUrgentDetail = (item: UrgentOperationalItem) => {
+    if (item.category === 'uncovered_shift') {
+      openCoverage({ uncoveredOnly: true, shiftId: item.shiftId });
+      return;
+    }
+
+    if (item.category === 'rejected_offer' || item.category === 'missed_shift') {
+      if (item.shiftId) {
+        setSelectedShiftId(item.shiftId);
+      }
+      setShiftOffersFeedback({
+        tone: 'success',
+        message: item.shiftId
+          ? `Shift #${item.shiftId} is ready for re-cover in Shift Offers.`
+          : 'Open Shift Offers to re-cover this shift.',
+      });
+      setActiveSection('shift-offers');
+      return;
+    }
+
+    if (!item.shiftId) {
+      setLiveOperationsFeedback({
+        tone: 'error',
+        message: `No linked shift is available for "${item.issueType}".`,
+      });
+      return;
+    }
+
+    focusShiftInLiveBoard(item.shiftId);
+
+    if (item.category === 'incident') {
+      setActiveSection('incidents');
+      setLiveOperationsFeedback({
+        tone: 'success',
+        message: `Opening incident review for Shift #${item.shiftId}.`,
+      });
+      return;
+    }
+
+    if (item.category === 'panic' || item.category === 'missed_check_call' || item.category === 'safety') {
+      setActiveSection('alerts');
+      setLiveOperationsFeedback({
+        tone: 'success',
+        message: `Opening safety review for Shift #${item.shiftId}.`,
+      });
+      return;
+    }
+
+    setActiveSection('live-operations');
+    setLiveOperationsFeedback({
+      tone: 'success',
+      message: `Opening Shift #${item.shiftId} in Live Operations.`,
+    });
+  };
+
+  const handleLiveBoardPrimaryAction = (shift: Shift) => {
+    const lifecycleStatus = normalizeShiftLifecycleStatus(shift.status);
+
+    if (lifecycleStatus === 'offered') {
+      setSelectedShiftId(shift.id);
+      setActiveSection('shift-offers');
+      setShiftOffersFeedback({
+        tone: 'success',
+        message: `Viewing offer details for Shift #${shift.id}.`,
+      });
+      return;
+    }
+
+    if (['rejected', 'missed'].includes(lifecycleStatus)) {
+      setSelectedShiftId(shift.id);
+      setActiveSection('shift-offers');
+      setShiftOffersFeedback({
+        tone: 'success',
+        message:
+          lifecycleStatus === 'missed'
+            ? `Shift #${shift.id} missed check-in and is ready for re-cover.`
+            : `Shift #${shift.id} is ready to be re-offered.`,
+      });
+      return;
+    }
+
+    focusShiftDetail(shift.id);
+    setLiveOperationsFeedback({
+      tone: 'success',
+      message:
+        lifecycleStatus === 'ready'
+          ? `Opening Shift #${shift.id}.`
+          : lifecycleStatus === 'in_progress'
+            ? `Monitoring live Shift #${shift.id}.`
+            : lifecycleStatus === 'missed'
+              ? `Reviewing missed Shift #${shift.id}.`
+            : `Reviewing Shift #${shift.id}.`,
+    });
+  };
+
+  const handleUrgentIncidentFollowUp = async (
+    item: UrgentOperationalItem,
+    nextStatus: 'in_review' | 'resolved',
+  ) => {
+    if (!item.incidentId) {
+      setLiveOperationsFeedback({
+        tone: 'error',
+        message: 'No incident is linked to this urgent item.',
+      });
+      return;
+    }
+
+    try {
+      setUrgentActionItemId(item.id);
+      if (item.shiftId) {
+        setSelectedShiftId(item.shiftId);
+      }
+      await updateIncidentStatus(item.incidentId, nextStatus);
+      await loadData(true);
+      recordManagementAction({
+        shiftId: item.shiftId,
+        siteName: item.siteName,
+        guardName: item.guardName,
+        itemType: 'Incident',
+        actionTaken:
+          nextStatus === 'in_review' ? 'Incident acknowledged' : 'Incident resolved',
+      });
+      setLiveOperationsFeedback({
+        tone: 'success',
+        message:
+          nextStatus === 'in_review'
+            ? `Incident #${item.incidentId} was acknowledged and moved to in review.`
+            : `Incident #${item.incidentId} was resolved successfully.`,
+      });
+    } catch (followUpError) {
+      setError(formatApiErrorMessage(followUpError, 'Unable to update this incident right now.'));
+      setLiveOperationsFeedback({
+        tone: 'error',
+        message: formatApiErrorMessage(followUpError, 'Unable to update this incident right now.'),
+      });
+    } finally {
+      setUrgentActionItemId(null);
+    }
+  };
+
+  const handleUrgentAlertFollowUp = async (
+    item: UrgentOperationalItem,
+    action: 'acknowledge' | 'close',
+  ) => {
+    if (!item.alertId) {
+      setLiveOperationsFeedback({
+        tone: 'error',
+        message: 'No safety alert is linked to this urgent item.',
+      });
+      return;
+    }
+
+    try {
+      setUrgentActionItemId(item.id);
+      if (item.shiftId) {
+        setSelectedShiftId(item.shiftId);
+      }
+      if (action === 'acknowledge') {
+        await acknowledgeSafetyAlert(item.alertId);
+      } else {
+        await closeSafetyAlert(item.alertId);
+      }
+      await loadData(true);
+      recordManagementAction({
+        shiftId: item.shiftId,
+        siteName: item.siteName,
+        guardName: item.guardName,
+        itemType:
+          item.category === 'panic'
+            ? 'Panic alert'
+            : item.category === 'missed_check_call'
+              ? 'Missed check call'
+              : 'Safety alert',
+        actionTaken:
+          action === 'acknowledge'
+            ? item.category === 'panic'
+              ? 'Panic alert escalated'
+              : item.category === 'missed_check_call'
+                ? 'Missed check call followed up'
+                : 'Safety alert acknowledged'
+            : item.category === 'panic'
+              ? 'Panic alert resolved'
+              : item.category === 'missed_check_call'
+                ? 'Missed check call closed'
+                : 'Safety alert closed',
+      });
+      setLiveOperationsFeedback({
+        tone: 'success',
+        message:
+          action === 'acknowledge'
+            ? `${
+                item.category === 'panic'
+                  ? 'Panic alert'
+                  : item.category === 'missed_check_call'
+                    ? 'Missed check call'
+                    : 'Safety alert'
+              } was marked for follow-up.`
+            : `${
+                item.category === 'panic'
+                  ? 'Panic alert'
+                  : item.category === 'missed_check_call'
+                    ? 'Missed check call'
+                    : 'Safety alert'
+              } was closed successfully.`,
+      });
+    } catch (followUpError) {
+      setError(formatApiErrorMessage(followUpError, 'Unable to update this safety item right now.'));
+      setLiveOperationsFeedback({
+        tone: 'error',
+        message: formatApiErrorMessage(followUpError, 'Unable to update this safety item right now.'),
+      });
+    } finally {
+      setUrgentActionItemId(null);
+    }
+  };
+
+  const handleSaveCloseOutNotes = async () => {
+    if (!selectedShift) {
+      setLiveOperationsFeedback({
+        tone: 'error',
+        message: 'Choose a shift before saving close-out notes.',
+      });
+      return;
+    }
+
+    try {
+      setSavingCloseOutNotes(true);
+      const nextNotes = closeOutNotesDraft.trim();
+      await updateShift(selectedShift.id, {
+        closeOutNotes: nextNotes || null,
+      });
+      await loadData(true);
+      setLiveOperationsFeedback({
+        tone: 'success',
+        message: nextNotes
+          ? `Close-out notes saved for Shift #${selectedShift.id}.`
+          : `Close-out notes cleared for Shift #${selectedShift.id}.`,
+      });
+    } catch (notesError) {
+      setError(formatApiErrorMessage(notesError, 'Unable to save close-out notes right now.'));
+      setLiveOperationsFeedback({
+        tone: 'error',
+        message: formatApiErrorMessage(notesError, 'Unable to save close-out notes right now.'),
+      });
+    } finally {
+      setSavingCloseOutNotes(false);
+    }
+  };
+
+  const liveOperationRows = React.useMemo(() => {
+    const priority = { high: 3, medium: 2, low: 1 };
+
+    return shifts
+      .filter((shift) => {
+        const clientId = String(shift.site?.client?.id ?? shift.site?.clientId ?? '');
+        const siteId = String(shift.site?.id ?? shift.siteId ?? '');
+        const guardId = String(shift.guard?.id ?? shift.guardId ?? '');
+        const date = shift.start.slice(0, 10);
+        const status = (shift.status || '').toLowerCase();
+
+        return (
+          (!liveFilters.clientId || clientId === liveFilters.clientId) &&
+          (!liveFilters.siteId || siteId === liveFilters.siteId) &&
+          (!liveFilters.guardId || guardId === liveFilters.guardId) &&
+          (!liveFilters.date || date === liveFilters.date) &&
+          (!liveFilters.status || status === liveFilters.status.toLowerCase())
+        );
+      })
+      .sort((left, right) => {
+        const riskA = getShiftRisk(
+          left,
+          attendanceByShiftId.get(left.id),
+          incidentsByShiftId.get(left.id) || [],
+          alertsByShiftId.get(left.id) || [],
+        );
+        const riskB = getShiftRisk(
+          right,
+          attendanceByShiftId.get(right.id),
+          incidentsByShiftId.get(right.id) || [],
+          alertsByShiftId.get(right.id) || [],
+        );
+
+        const priorityDelta = priority[riskB.level] - priority[riskA.level];
+        if (priorityDelta !== 0) {
+          return priorityDelta;
+        }
+
+        const delayA = getShiftDelay(left, attendanceByShiftId.get(left.id)) || 0;
+        const delayB = getShiftDelay(right, attendanceByShiftId.get(right.id)) || 0;
+        if (delayB !== delayA) {
+          return delayB - delayA;
+        }
+
+        return right.start.localeCompare(left.start);
+      });
+  }, [alertsByShiftId, attendanceByShiftId, incidentsByShiftId, liveFilters, shifts]);
+  const guardsNotBookedOn = React.useMemo(
+    () =>
+      liveOperationRows.filter((shift) => {
+        const attendance = attendanceByShiftId.get(shift.id);
+        return ['ready'].includes(normalizeShiftLifecycleStatus(shift.status)) && !attendance?.checkInAt;
+      }),
+    [liveOperationRows, attendanceByShiftId],
+  );
+
+  const liveOperationsKpis = React.useMemo(
+    () =>
+      [
+        {
+          label: 'Live Shifts',
+          value: String(liveShifts.length),
+          icon: '🟢',
+          tone: (liveShifts.length > 0 ? 'good' : 'neutral') as KpiTone,
+        },
+        {
+          label: 'Guards Not Booked On',
+          value: String(guardsNotBookedOn.length),
+          icon: '🚪',
+          tone: (guardsNotBookedOn.length > 0 ? 'warning' : 'good') as KpiTone,
+        },
+        {
+          label: 'Open Incidents',
+          value: String(openIncidents.length),
+          icon: '🚨',
+          tone: (openIncidents.length > 0 ? 'attention' : 'good') as KpiTone,
+        },
+        {
+          label: 'Missed Check Calls',
+          value: String(missedCheckCalls.length),
+          icon: '📞',
+          tone: (missedCheckCalls.length > 0 ? 'warning' : 'good') as KpiTone,
+        },
+        {
+          label: 'Active Panic Alerts',
+          value: String(activePanicAlerts.length),
+          icon: '🆘',
+          tone: (activePanicAlerts.length > 0 ? 'attention' : 'good') as KpiTone,
+        },
+        {
+          label: 'Pending Timesheets',
+          value: String(pendingTimesheets.length),
+          icon: '⏱️',
+          tone: (pendingTimesheets.length > 0 ? 'warning' : 'good') as KpiTone,
+        },
+      ] as const,
+    [
+      activePanicAlerts.length,
+      guardsNotBookedOn.length,
+      liveShifts.length,
+      missedCheckCalls.length,
+      openIncidents.length,
+      pendingTimesheets.length,
+    ],
+  );
+
+  const applicationShiftSummaryById = React.useMemo(() => {
+    const map = new Map<
+      number,
+      {
+        status: string;
+        siteName: string;
+        start: string;
+      } | null
+    >();
+
+    applications.forEach((application) => {
+      const assignmentShiftCandidates =
+        application.assignments?.flatMap((assignment) => assignment.shifts || []) || [];
+      const fallbackShiftCandidates = shifts.filter((shift) => {
+        const sameGuard = (shift.guard?.id ?? shift.guardId) === application.guardId;
+        const shiftCompanyId = shift.company?.id ?? shift.companyId ?? shift.assignment?.companyId;
+        const applicationCompanyId = application.job?.company?.id ?? application.job?.companyId;
+        return sameGuard && Boolean(applicationCompanyId) && shiftCompanyId === applicationCompanyId;
+      });
+
+      const latestShift =
+        [...assignmentShiftCandidates, ...fallbackShiftCandidates]
+          .sort((left, right) => right.start.localeCompare(left.start))[0] || null;
+
+      map.set(
+        application.id,
+        latestShift
+          ? {
+              status: latestShift.status,
+              siteName: latestShift.site?.name || latestShift.siteName || 'Site TBD',
+              start: latestShift.start,
+            }
+          : null,
+      );
+    });
+
+    return map;
+  }, [applications, shifts]);
+
+  const acceptedApplications = React.useMemo(
+    () => applications.filter((application) => application.status === 'accepted'),
+    [applications],
+  );
+
+  const renderTableHeader = (columns: string[]) => (
+    <View style={styles.tableHeader}>
+      {columns.map((column) => (
+        <Text key={column} style={styles.tableHeaderText}>
+          {column}
+        </Text>
+      ))}
+    </View>
+  );
+
+  const dashboardKpis = React.useMemo(() => {
+    const kpis: Array<{
+      label: string;
+      value: number;
+      icon: string;
+      tone: KpiTone;
+      coverageContext?: CoverageNavigationContext;
+    }> = [
+      { label: 'Active Clients', value: activeClients.length, icon: '🏢', tone: activeClients.length > 0 ? 'good' : 'neutral' },
+      { label: 'Active Sites', value: activeSites.length, icon: '📍', tone: activeSites.length > 0 ? 'good' : 'neutral' },
+      { label: 'Linked Guards', value: linkedGuards.length, icon: '🛡️', tone: linkedGuards.length > 0 ? 'good' : 'neutral' },
+      { label: 'Shifts Today', value: shiftsToday.length, icon: '🗓️', tone: 'neutral' },
+      { label: 'Live Shifts', value: liveShifts.length, icon: '🟢', tone: liveShifts.length > 0 ? 'good' : 'neutral' },
+      { label: 'Pending Timesheets', value: pendingTimesheets.length, icon: '⏱️', tone: pendingTimesheets.length > 0 ? 'warning' : 'good' },
+      { label: 'Open Incidents', value: openIncidents.length, icon: '🚨', tone: openIncidents.length > 0 ? 'attention' : 'good' },
+      { label: 'Alerts', value: outstandingAlerts.length, icon: '🔔', tone: outstandingAlerts.length > 0 ? 'attention' : 'good' },
+      { label: 'Uncovered Shifts', value: uncoveredShifts.length, icon: '⚠️', tone: uncoveredShifts.length > 0 ? 'attention' : 'good', coverageContext: { uncoveredOnly: true } },
+      {
+        label: 'Sites With Coverage Gaps',
+        value: new Set(uncoveredShifts.map((shift) => shift.siteId).filter((siteId) => siteId != null)).size,
+        icon: '📍',
+        tone: uncoveredShifts.length > 0 ? 'warning' : 'good',
+        coverageContext: { uncoveredOnly: true },
+      },
+    ];
+    return kpis;
+  }, [
+    activeClients.length,
+    activeSites.length,
+    linkedGuards.length,
+    liveShifts.length,
+    openIncidents.length,
+    outstandingAlerts.length,
+    pendingTimesheets.length,
+    shiftsToday.length,
+    uncoveredShifts,
+  ]);
+
+  const actionRequiredRows = React.useMemo(() => {
+    const payrollCount = pendingPayrollTimesheets.length;
+    const invoiceCount = pendingInvoiceTimesheets.length;
+    const overdueCount = overdueReviewTimesheets.length;
+
+    return [
+      {
+        key: 'payroll',
+        title: 'Payroll batches',
+        description: 'Approved unpaid rows ready for payroll suggestions.',
+        count: payrollCount,
+        countLabel: `${payrollCount} row(s)`,
+        target: 'payroll' as CompanySection,
+        tone: payrollCount > 0 ? ('attention' as const) : ('good' as const),
+      },
+      {
+        key: 'invoices',
+        title: 'Invoice batches',
+        description: 'Approved uninvoiced rows ready for invoice suggestions.',
+        count: invoiceCount,
+        countLabel: `${invoiceCount} row(s)`,
+        target: 'invoices' as CompanySection,
+        tone: invoiceCount > 0 ? ('attention' as const) : ('good' as const),
+      },
+      {
+        key: 'timesheets',
+        title: 'Overdue reviews',
+        description: 'Submitted timesheets older than 24 hours.',
+        count: overdueCount,
+        countLabel: `${overdueCount} row(s)`,
+        target: 'timesheets' as CompanySection,
+        tone: overdueCount > 0 ? ('warning' as const) : ('good' as const),
+      },
+    ];
+  }, [overdueReviewTimesheets.length, pendingInvoiceTimesheets.length, pendingPayrollTimesheets.length]);
+
+  const actionRequiredTotal = React.useMemo(
+    () => actionRequiredRows.reduce((sum, row) => sum + row.count, 0),
+    [actionRequiredRows],
+  );
+
+  const renderDashboardSection = () => (
+    <View style={styles.sectionStack}>
+      <DashboardSection title="KPIs" subtitle="At-a-glance operational health.">
+        <View style={styles.kpiGrid}>
+          {dashboardKpis.map((kpi) => (
+            <Pressable
+              key={kpi.label}
+              disabled={!kpi.coverageContext}
+              accessibilityRole={kpi.coverageContext ? 'button' : undefined}
+              accessibilityLabel={kpi.coverageContext ? `${kpi.label}: open Coverage` : undefined}
+              onPress={() => kpi.coverageContext && openCoverage(kpi.coverageContext)}
+              style={styles.kpiCell}
+            >
+              <KpiCard label={kpi.label} value={String(kpi.value)} icon={kpi.icon} tone={kpi.tone} />
+            </Pressable>
+          ))}
+        </View>
+      </DashboardSection>
+
+      <DashboardSection>
+        <View
+          style={[
+            styles.actionRequiredAnchor,
+            actionRequiredTotal === 0 ? styles.actionRequiredAnchorClear : styles.actionRequiredAnchorActive,
+          ]}
+        >
+          <Card
+            style={styles.actionRequiredCard}
+            webSurfaceHover
+            title="⚠️ Action Required"
+            subtitle={
+              actionRequiredTotal === 0
+                ? 'All clear — no finance or timesheet actions are currently pending.'
+                : 'These items need attention to keep payroll and billing on track.'
+            }
+            tone={actionRequiredTotal === 0 ? 'success' : 'warning'}
+          >
+            <View
+              style={[
+                styles.actionRequiredList,
+                actionRequiredTotal === 0 ? styles.actionRequiredListInnerClear : styles.actionRequiredListInnerActive,
+              ]}
+            >
+              {actionRequiredRows.map((row) => (
+                <Pressable
+                  key={row.key}
+                  onPress={() => setActiveSection(row.target)}
+                  style={({ hovered, pressed }: any) => [
+                    styles.actionRequiredRow,
+                    row.count > 0
+                      ? row.tone === 'attention'
+                        ? styles.actionRequiredRowAttention
+                        : styles.actionRequiredRowWarn
+                      : styles.actionRequiredRowCool,
+                    hovered ? styles.actionRequiredRowHover : null,
+                    hovered && IS_WEB ? styles.actionRequiredRowWebHover : null,
+                    pressed ? styles.actionRequiredRowPressed : null,
+                    WEB_POINTER_STYLE,
+                  ]}
+                >
+                  <View
+                    style={[
+                      styles.actionRequiredAccent,
+                      row.count === 0 && styles.actionRequiredAccentMuted,
+                      row.count > 0 && row.tone === 'attention' && styles.actionRequiredAccentBarAttention,
+                      row.count > 0 && row.tone === 'warning' && styles.actionRequiredAccentBarWarning,
+                    ]}
+                  />
+                  <View style={styles.actionRequiredRowMain}>
+                    <View style={styles.actionRequiredLeft}>
+                      <Text style={[styles.actionRequiredTitle, row.count > 0 && styles.actionRequiredTitleHot]}>
+                        {row.title}
+                      </Text>
+                      <Text style={styles.actionRequiredDescription}>{row.description}</Text>
+                    </View>
+                    <View style={styles.actionRequiredRight}>
+                      <View
+                        style={[
+                          styles.actionRequiredCountBadge,
+                          row.count > 0 ? styles.actionRequiredCountBadgeHot : styles.actionRequiredCountBadgeCool,
+                        ]}
+                      >
+                        <Text style={[styles.actionRequiredCount, row.count > 0 && styles.actionRequiredCountHot]}>
+                          {row.countLabel}
+                        </Text>
+                      </View>
+                      <View style={styles.actionRequiredCtaWrap}>
+                        <Text style={styles.actionRequiredCta}>Open</Text>
+                      </View>
+                    </View>
+                  </View>
+                </Pressable>
+              ))}
+            </View>
+          </Card>
+        </View>
+      </DashboardSection>
+
+      <DashboardSection title="Live Ops" subtitle="What’s happening right now across sites.">
+        <View style={styles.panelGrid}>
+          <View style={styles.panelCell}>
+            <Card
+              style={styles.dashLivePanelCard}
+              webSurfaceHover
+              title="Today's Live Shifts"
+              subtitle="Quick jump into the live board."
+            >
+              {liveShifts.slice(0, 6).length === 0 ? (
+                <DashboardPanelEmpty
+                  title="No live shifts right now"
+                  description="When guards are on duty, shifts appear here so you can jump straight into monitoring."
+                  actionLabel="Open Live Operations"
+                  onAction={() => setActiveSection('live-operations')}
+                />
+              ) : (
+                liveShifts.slice(0, 6).map((shift, index, arr) => (
+                  <Pressable
+                    key={shift.id}
+                    style={({ hovered, pressed }: any) => [
+                      styles.dashListRow,
+                      IS_WEB ? styles.dashListRowWeb : null,
+                      index === arr.length - 1 ? styles.dashListRowLast : null,
+                      hovered ? styles.dashListRowHovered : null,
+                      hovered && IS_WEB ? styles.dashListRowWebHover : null,
+                      pressed ? styles.dashListRowPressed : null,
+                      WEB_POINTER_STYLE,
+                    ]}
+                    onPress={() => {
+                      setSelectedShiftId(shift.id);
+                      setActiveSection('live-operations');
+                    }}
+                  >
+                    <Text style={styles.dashListRowTitle}>{shift.site?.name || shift.siteName}</Text>
+                    <Text style={styles.dashListRowMeta}>
+                      {formatDateLabel(shift.start)} · {formatTimeLabel(shift.start)}-{formatTimeLabel(shift.end)}
+                    </Text>
+                  </Pressable>
+                ))
+              )}
+            </Card>
+          </View>
+          <View style={styles.panelCell}>
+            <Card
+              style={styles.dashLivePanelCard}
+              webSurfaceHover
+              title="Urgent Alerts"
+              subtitle="Safety and welfare items needing follow-up."
+              tone={outstandingAlerts.length > 0 ? 'danger' : 'default'}
+            >
+              {outstandingAlerts.slice(0, 6).length === 0 ? (
+                <DashboardPanelEmpty
+                  title="No urgent alerts"
+                  description="Outstanding safety and welfare items will appear here when they need your attention."
+                />
+              ) : (
+                outstandingAlerts.slice(0, 6).map((alert, index, arr) => (
+                  <View
+                    key={alert.id}
+                    style={[styles.dashListRow, IS_WEB ? styles.dashListRowWeb : null, index === arr.length - 1 ? styles.dashListRowLast : null]}
+                  >
+                    <Text style={styles.dashListRowTitle}>{formatStatusLabel(alert.type)}</Text>
+                    <Text style={styles.dashListRowMeta}>
+                      {alert.shift?.site?.name || alert.shift?.siteName || 'Shift alert'} ·{' '}
+                      {formatDateTimeLabel(alert.createdAt)}
+                    </Text>
+                  </View>
+                ))
+              )}
+            </Card>
+          </View>
+          <View style={styles.panelCell}>
+            <Card
+              style={styles.dashLivePanelCard}
+              webSurfaceHover
+              title="Recent Incidents"
+              subtitle="Latest open incidents across sites."
+              tone={openIncidents.length > 0 ? 'warning' : 'default'}
+            >
+              {openIncidents.slice(0, 6).length === 0 ? (
+                <DashboardPanelEmpty
+                  title="No open incidents"
+                  description="Reported site issues in an open state are listed here so you can triage quickly."
+                  actionLabel="View all incidents"
+                  onAction={() => setActiveSection('incidents')}
+                />
+              ) : (
+                openIncidents.slice(0, 6).map((incident, index, arr) => (
+                  <View
+                    key={incident.id}
+                    style={[styles.dashListRow, IS_WEB ? styles.dashListRowWeb : null, index === arr.length - 1 ? styles.dashListRowLast : null]}
+                  >
+                    <Text style={styles.dashListRowTitle}>{incident.title}</Text>
+                    <Text style={styles.dashListRowMeta}>
+                      {incident.site?.name || incident.shift?.site?.name || 'Site'} ·{' '}
+                      {formatStatusLabel(incident.severity)}
+                    </Text>
+                  </View>
+                ))
+              )}
+            </Card>
+          </View>
+          <View style={styles.panelCell}>
+            <Card
+              style={styles.dashLivePanelCard}
+              webSurfaceHover
+              title="Recent Activity"
+              subtitle="Most recent shift logs and updates."
+            >
+              {recentActivity.length === 0 ? (
+                <DashboardPanelEmpty
+                  title="No recent activity"
+                  description="Operational updates and shift logs will appear here as work happens. Use Refresh Data above to reload."
+                />
+              ) : (
+                recentActivity.map((log, index, arr) => (
+                  <View
+                    key={log.id}
+                    style={[styles.dashListRow, IS_WEB ? styles.dashListRowWeb : null, index === arr.length - 1 ? styles.dashListRowLast : null]}
+                  >
+                    <Text style={styles.dashListRowTitle}>{log.message}</Text>
+                    <Text style={styles.dashListRowMeta}>
+                      {log.shift?.site?.name || log.shift?.siteName || 'Shift'} ·{' '}
+                      {formatDateTimeLabel(log.createdAt)}
+                    </Text>
+                  </View>
+                ))
+              )}
+            </Card>
+          </View>
+        </View>
+      </DashboardSection>
+    </View>
+  );
+
+  const renderClientsSection = () => (
+    <View style={styles.sectionStack}>
+      <View style={styles.toolbar}>
+        <Text style={styles.sectionTitle}>Client Accounts</Text>
+        <View style={styles.toolbarActions}>
+          <Text style={styles.helperText}>Show archived</Text>
+          <Switch value={showArchivedClients} onValueChange={setShowArchivedClients} />
+        </View>
+      </View>
+      <View style={styles.splitLayout}>
+        <View style={styles.tableCard}>
+          {renderTableHeader(['Client', 'Contact', 'Phone', 'Status', 'Sites', 'Actions'])}
+          {filteredClients.map((client) => (
+            <View key={client.id} style={styles.tableRow}>
+              <Text style={styles.tableCellStrong}>{client.name}</Text>
+              <Text style={styles.tableCell}>{client.contactName || '—'}</Text>
+              <Text style={styles.tableCell}>{client.contactPhone || '—'}</Text>
+              <Text style={styles.tableCell}>{formatStatusLabel(client.status)}</Text>
+              <Text style={styles.tableCell}>{sites.filter((site) => (site.client?.id ?? site.clientId) === client.id).length}</Text>
+              <View style={styles.rowActions}>
+                <Pressable style={styles.secondaryButton} onPress={() => handleEditClient(client)}>
+                  <Text style={styles.secondaryButtonText}>Edit</Text>
+                </Pressable>
+                <Pressable style={styles.secondaryButton} onPress={() => handleArchiveClient(client)}>
+                  <Text style={styles.secondaryButtonText}>Archive</Text>
+                </Pressable>
+              </View>
+            </View>
+          ))}
+        </View>
+        <View style={styles.formCard}>
+          <Text style={styles.panelTitle}>{clientForm.id ? 'Edit Client' : 'New Client'}</Text>
+          <TextInput style={styles.input} value={clientForm.name} onChangeText={(value: string) => setClientForm((current) => ({ ...current, name: value }))} placeholder="Client name" />
+          <TextInput style={styles.input} value={clientForm.contactName} onChangeText={(value: string) => setClientForm((current) => ({ ...current, contactName: value }))} placeholder="Contact person" />
+          <TextInput style={styles.input} value={clientForm.contactEmail} onChangeText={(value: string) => setClientForm((current) => ({ ...current, contactEmail: value }))} placeholder="Contact email" />
+          <TextInput style={styles.input} value={clientForm.contactPhone} onChangeText={(value: string) => setClientForm((current) => ({ ...current, contactPhone: value }))} placeholder="Contact phone" />
+          <WebSelect value={clientForm.status} onChange={(value: string) => setClientForm((current) => ({ ...current, status: value || 'active' }))} options={[{ label: 'Active', value: 'active' }, { label: 'Inactive', value: 'inactive' }, { label: 'Archived', value: 'archived' }]} />
+          <TextInput style={[styles.input, styles.textArea]} multiline value={clientForm.notes} onChangeText={(value: string) => setClientForm((current) => ({ ...current, notes: value }))} placeholder="Notes" />
+          <View style={styles.formActions}>
+            <Pressable style={styles.primaryButton} onPress={handleSaveClient} disabled={savingClient}>
+              <Text style={styles.primaryButtonText}>{savingClient ? 'Saving...' : clientForm.id ? 'Update Client' : 'Create Client'}</Text>
+            </Pressable>
+            <Pressable style={styles.secondaryButton} onPress={resetClientForm}>
+              <Text style={styles.secondaryButtonText}>Clear</Text>
+            </Pressable>
+          </View>
+        </View>
+      </View>
+    </View>
+  );
+
+  const renderSitesSection = () => {
+    const siteShifts = shifts.filter((shift) => (shift.site?.id ?? shift.siteId) === selectedSiteId);
+    return (
+      <View style={styles.sectionStack}>
+        <View style={styles.splitLayout}>
+          <View style={styles.tableCard}>
+            {renderTableHeader(['Site', 'Client', 'Address', 'Guards', 'Hours', 'Active Shifts', 'Actions'])}
+            {sites.map((site) => (
+              <Pressable key={site.id} style={[styles.tableRow, selectedSiteId === site.id && styles.tableRowSelected]} onPress={() => setSelectedSiteId(site.id)}>
+                <Text style={styles.tableCellStrong}>{site.name}</Text>
+                <Text style={styles.tableCell}>{site.client?.name || clientMap.get(site.clientId || 0)?.name || '—'}</Text>
+                <Text style={styles.tableCell}>{site.address}</Text>
+                <Text style={styles.tableCell}>{site.requiredGuardCount || 1}</Text>
+                <Text style={styles.tableCell}>{site.operatingStartTime || '—'}-{site.operatingEndTime || '—'}</Text>
+                <Text style={styles.tableCell}>{siteShiftCounts.get(site.id) || 0}</Text>
+                <View style={styles.rowActions}>
+                  <Pressable style={styles.secondaryButton} onPress={() => handleEditSite(site)}>
+                    <Text style={styles.secondaryButtonText}>Edit</Text>
+                  </Pressable>
+                  <Pressable style={styles.secondaryButton} onPress={() => handlePlanSite(site)}>
+                    <Text style={styles.secondaryButtonText}>Plan Cover</Text>
+                  </Pressable>
+                </View>
+              </Pressable>
+            ))}
+          </View>
+          <View style={styles.formCard}>
+            <Text style={styles.panelTitle}>{siteForm.id ? 'Edit Site' : 'New Site'}</Text>
+            <NativeBrowserSelect
+              value={siteForm.clientId}
+              onChange={(value: string) => setSiteForm((current) => ({ ...current, clientId: value }))}
+              options={siteClientOptions}
+              placeholder="Linked client"
+            />
+            <Text style={styles.helperText}>
+              Selected client id: {siteForm.clientId || 'none'}
+              {selectedSiteClient ? ` · ${selectedSiteClient.name}` : ''}
+            </Text>
+            <TextInput style={styles.input} value={siteForm.name} onChangeText={(value: string) => setSiteForm((current) => ({ ...current, name: value }))} placeholder="Site name" />
+            <TextInput style={styles.input} value={siteForm.address} onChangeText={(value: string) => setSiteForm((current) => ({ ...current, address: value }))} placeholder="Address" />
+            <TextInput style={styles.input} value={siteForm.contactDetails} onChangeText={(value: string) => setSiteForm((current) => ({ ...current, contactDetails: value }))} placeholder="Site contact details" />
+            <View style={styles.formRow}>
+              <TextInput style={[styles.input, styles.formCell]} value={siteForm.requiredGuardCount} onChangeText={(value: string) => setSiteForm((current) => ({ ...current, requiredGuardCount: value }))} placeholder="Guards required" />
+              <View style={styles.formCell}>
+                <Text style={styles.subtleLabel}>Check-call interval (minutes)</Text>
+                <TextInput
+                  style={styles.input}
+                  value={siteForm.checkCallIntervalMinutes}
+                  onChangeText={(value: string) => setSiteForm((current) => ({ ...current, checkCallIntervalMinutes: value }))}
+                  placeholder="60"
+                />
+              </View>
+            </View>
+            <TextInput style={styles.input} value={siteForm.operatingDays} onChangeText={(value: string) => setSiteForm((current) => ({ ...current, operatingDays: value }))} placeholder="Operating days" />
+            <View style={styles.formRow}>
+              <View style={styles.formCell}>
+                <Text style={styles.subtleLabel}>Start time (24h)</Text>
+                <ControlledTimeInput
+                  value={siteForm.operatingStartTime}
+                  onChange={(value: string) => setSiteForm((current) => ({ ...current, operatingStartTime: value }))}
+                />
+              </View>
+              <View style={styles.formCell}>
+                <Text style={styles.subtleLabel}>End time (24h)</Text>
+                <ControlledTimeInput
+                  value={siteForm.operatingEndTime}
+                  onChange={(value: string) => setSiteForm((current) => ({ ...current, operatingEndTime: value }))}
+                />
+              </View>
+            </View>
+            <Text style={styles.subtleLabel}>Shift instructions / notes</Text>
+            <TextInput style={[styles.input, styles.textArea]} multiline value={siteForm.specialInstructions} onChangeText={(value: string) => setSiteForm((current) => ({ ...current, specialInstructions: value }))} placeholder="Special instructions" />
+            <Text style={styles.subtleLabel}>Starter unfilled shift</Text>
+            <View style={styles.formRow}>
+              <View style={styles.formCell}>
+                <Text style={styles.subtleLabel}>Date (DD/MM/YYYY)</Text>
+                <ControlledDateInput
+                  value={siteForm.initialShiftDate}
+                  onChange={(value: string) => setSiteForm((current) => ({ ...current, initialShiftDate: value }))}
+                />
+                <Text style={styles.helperText}>{siteForm.initialShiftDate ? formatDateLabel(siteForm.initialShiftDate) : 'DD/MM/YYYY'}</Text>
+              </View>
+              <View style={styles.formCell}>
+                <Text style={styles.subtleLabel}>Start time (24h)</Text>
+                <ControlledTimeInput
+                  value={siteForm.initialShiftStartTime}
+                  onChange={(value: string) => setSiteForm((current) => ({ ...current, initialShiftStartTime: value }))}
+                />
+              </View>
+              <View style={styles.formCell}>
+                <Text style={styles.subtleLabel}>End time (24h)</Text>
+                <ControlledTimeInput
+                  value={siteForm.initialShiftEndTime}
+                  onChange={(value: string) => setSiteForm((current) => ({ ...current, initialShiftEndTime: value }))}
+                />
+              </View>
+            </View>
+            <View style={styles.formActions}>
+              <Pressable style={styles.primaryButton} onPress={handleSaveSite} disabled={savingSite}>
+                <Text style={styles.primaryButtonText}>{savingSite ? 'Saving...' : siteForm.id ? 'Update Site' : 'Create Site'}</Text>
+              </Pressable>
+              <Pressable style={styles.secondaryButton} onPress={resetSiteForm}>
+                <Text style={styles.secondaryButtonText}>Clear</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+
+        {selectedSite && (
+          <View style={styles.panel}>
+            <Text style={styles.panelTitle}>{selectedSite.name} Detail</Text>
+            <Text style={styles.recordMeta}>
+              {selectedSite.client?.name || clientMap.get(selectedSite.clientId || 0)?.name || 'No client'} · {selectedSite.address}
+            </Text>
+            <Text style={styles.recordMeta}>
+              Operating: {selectedSite.operatingDays || '—'} · {selectedSite.operatingStartTime || '—'}-{selectedSite.operatingEndTime || '—'}
+            </Text>
+            <Text style={styles.recordMeta}>Instructions: {selectedSite.specialInstructions || 'No special instructions recorded.'}</Text>
+            <Text style={[styles.panelTitle, styles.panelTitleInline]}>Related Shifts</Text>
+            {siteShifts.map((shift) => (
+              <Pressable key={shift.id} style={styles.recordRow} onPress={() => {
+                setSelectedShiftId(shift.id);
+                setActiveSection('live-operations');
+              }}>
+                <Text style={styles.recordTitle}>Shift #{shift.id}</Text>
+                <Text style={styles.recordMeta}>
+                  {formatDateLabel(shift.start)} · {formatTimeLabel(shift.start)}-{formatTimeLabel(shift.end)} · {formatStatusLabel(normalizeShiftLifecycleStatus(shift.status))}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        )}
+      </View>
+    );
+  };
+
+  const renderRotaPlannerSection = () => (
+    <View style={styles.sectionStack}>
+      <View style={styles.toolbar}>
+        <Text style={styles.sectionTitle}>Weekly Rota Planner</Text>
+        <View style={styles.toolbarActions}>
+          <Pressable style={styles.secondaryButton} onPress={copyPlannerToNextWeek}>
+            <Text style={styles.secondaryButtonText}>Copy To Next Week</Text>
+          </Pressable>
+          <Pressable style={styles.primaryButton} onPress={handleSaveRota} disabled={savingRota}>
+            <Text style={styles.primaryButtonText}>{savingRota ? 'Saving...' : 'Save Rota'}</Text>
+          </Pressable>
+        </View>
+      </View>
+
+      <View style={styles.filterBar}>
+        <NativeBrowserSelect
+          value={plannerClientId}
+          onChange={setPlannerClientId}
+          options={siteClientOptions}
+          placeholder="Client"
+        />
+        <WebSelect value={plannerSiteId} onChange={setPlannerSiteId} options={plannerSiteOptions} placeholder="Site" />
+        <View style={styles.inputGroup}>
+          <Text style={styles.subtleLabel}>Date (DD/MM/YYYY)</Text>
+          <ControlledDateInput value={plannerWeekCommencing} onChange={setPlannerWeekCommencing} />
+          <Text style={styles.helperText}>{plannerWeekCommencing ? formatDateLabel(plannerWeekCommencing) : 'DD/MM/YYYY'}</Text>
+        </View>
+      </View>
+
+      <View style={styles.weekGrid}>
+        {plannerWeekDays.map((day) => {
+          const rows = plannerRowsByDate.get(day.date) || [];
+          return (
+            <View key={day.date} style={styles.dayCard}>
+              <View style={styles.dayCardHeader}>
+                <View>
+                  <Text style={styles.dayCardTitle}>{day.label}</Text>
+                  <Text style={styles.dayCardMeta}>{day.shortLabel}</Text>
+                </View>
+                <Pressable style={styles.secondaryButton} onPress={() => handleAddPlannerRow(day.date)}>
+                  <Text style={styles.secondaryButtonText}>Add Shift</Text>
+                </Pressable>
+              </View>
+              {rows.length === 0 ? <Text style={styles.helperText}>No planned cover for this day yet.</Text> : null}
+              {rows.map((row) => (
+                <View key={row.localId} style={styles.plannerRow}>
+                  <View style={styles.formRow}>
+                    <View style={styles.formCell}>
+                      <Text style={styles.subtleLabel}>Date (DD/MM/YYYY)</Text>
+                      <ControlledDateInput
+                        value={row.date}
+                        onChange={(value: string) => handlePlannerRowChange(row.localId, { date: value })}
+                      />
+                      <Text style={styles.helperText}>{formatDateLabel(row.date)}</Text>
+                    </View>
+                    <View style={styles.formCell}>
+                      <Text style={styles.subtleLabel}>Start time (24h)</Text>
+                      <ControlledTimeInput
+                        value={row.startTime}
+                        onChange={(value: string) => handlePlannerRowChange(row.localId, { startTime: value })}
+                      />
+                    </View>
+                    <View style={styles.formCell}>
+                      <Text style={styles.subtleLabel}>End time (24h)</Text>
+                      <ControlledTimeInput
+                        value={row.endTime}
+                        onChange={(value: string) => handlePlannerRowChange(row.localId, { endTime: value })}
+                      />
+                    </View>
+                  </View>
+                  <View style={styles.formRow}>
+                    <TextInput style={[styles.input, styles.formCell]} value={row.guardsRequired} onChangeText={(value: string) => handlePlannerRowChange(row.localId, { guardsRequired: value })} placeholder="Guards" />
+                    <WebSelect value={row.assignedGuardId} onChange={(value: string) => handlePlannerRowChange(row.localId, { assignedGuardId: value })} options={linkedGuardOptions} placeholder="Assigned guard" />
+                  </View>
+                  <WebSelect
+                    value={row.status}
+                    onChange={(value: string) => handlePlannerRowChange(row.localId, { status: value })}
+                    options={SHIFT_STATUS_OPTIONS}
+                    placeholder="Status"
+                  />
+                  <Text style={styles.subtleLabel}>Shift instructions / notes</Text>
+                  <TextInput style={[styles.input, styles.textAreaSmall]} multiline value={row.instructions} onChangeText={(value: string) => handlePlannerRowChange(row.localId, { instructions: value })} placeholder="Instructions" />
+                  <Pressable style={styles.ghostButton} onPress={() => handleRemovePlannerRow(row.localId)}>
+                    <Text style={styles.ghostButtonText}>Remove</Text>
+                  </Pressable>
+                </View>
+              ))}
+            </View>
+          );
+        })}
+      </View>
+    </View>
+  );
+
+  const renderLiveOperationsSection = () => (
+    <View style={styles.sectionStack}>
+      <View style={[styles.dashSectionShell, IS_WEB ? styles.dashSectionShellWeb : null]}>
+        <View style={styles.liveOpsToolbarRow}>
+          <View style={styles.liveOpsToolbarTitleBlock}>
+            <Text style={styles.dashSectionTitle}>Live Operations</Text>
+          </View>
+          <Pressable
+            onPress={() => loadData(true)}
+            style={({ hovered, pressed }: any) => [
+              styles.liveOpsToolbarSync,
+              IS_WEB && hovered ? styles.liveOpsToolbarSyncHover : null,
+              pressed ? styles.liveOpsToolbarSyncPressed : null,
+              WEB_POINTER_STYLE,
+            ]}
+          >
+            <View style={styles.liveOpsToolbarRefreshInner}>
+              {refreshing ? <ActivityIndicator size="small" color="#64748b" /> : null}
+              <Text style={styles.liveOpsToolbarSyncText}>{refreshing ? 'Refreshing...' : 'Refresh'}</Text>
+            </View>
+          </Pressable>
+        </View>
+      </View>
+
+      <DashboardSection title="KPIs" subtitle="At-a-glance operational health.">
+        <View style={styles.kpiGrid}>
+          {liveOperationsKpis.map((kpi) => (
+            <View key={kpi.label} style={styles.kpiCell}>
+              <KpiCard label={kpi.label} value={kpi.value} icon={kpi.icon} tone={kpi.tone} />
+            </View>
+          ))}
+        </View>
+      </DashboardSection>
+
+      <DashboardSection
+        title="Urgent queue"
+        subtitle="Highest-priority items appear here first so control-room actions stay obvious."
+      >
+        <View style={styles.liveOpsUrgentInset}>
+        {liveOperationsFeedback ? (
+          <View
+            style={[
+              styles.feedbackCard,
+              liveOperationsFeedback.tone === 'error' ? styles.feedbackCardError : styles.feedbackCardSuccess,
+            ]}
+          >
+            <Text
+              style={[
+                styles.feedbackTitle,
+                liveOperationsFeedback.tone === 'error' ? styles.feedbackTitleError : styles.feedbackTitleSuccess,
+              ]}
+            >
+              {liveOperationsFeedback.tone === 'error' ? 'Action failed' : 'Action completed'}
+            </Text>
+            <Text
+              style={[
+                styles.feedbackText,
+                liveOperationsFeedback.tone === 'error' ? styles.feedbackTextError : styles.feedbackTextSuccess,
+              ]}
+            >
+              {liveOperationsFeedback.message}
+            </Text>
+          </View>
+        ) : null}
+        {urgentOperationalItems.map((item, index, arr) => (
+          <Pressable
+            key={item.id}
+            style={[
+              styles.liveOpsListRow,
+              styles.liveOpsUrgentRow,
+              index === arr.length - 1 ? styles.liveOpsListRowLast : null,
+              IS_WEB ? styles.liveOpsListRowWeb : null,
+            ]}
+            onPress={() => {
+              if (item.category === 'uncovered_shift') {
+                handleOpenUrgentDetail(item);
+              } else if (item.shiftId) {
+                handleOpenUrgentShift(item);
+              }
+            }}
+          >
+            <View style={styles.liveOpsUrgentRowBody}>
+              <Text style={[styles.liveOpsRowTitle, styles.liveOpsUrgentIssue]}>{item.issueType}</Text>
+              <Text style={styles.liveOpsUrgentMeta}>
+                Shift {item.shiftId ? `#${item.shiftId}` : 'N/A'} | {item.siteName} | {item.guardName}
+              </Text>
+              <Text style={styles.liveOpsUrgentMessage} numberOfLines={IS_WEB ? 3 : 4}>
+                {item.message}
+              </Text>
+              <View style={styles.liveOpsUrgentMetaFooter}>
+                <Text style={styles.liveOpsUrgentGuidance}>{getUrgentNextActionText(item)}</Text>
+                <Text style={styles.liveOpsUrgentOccurred}>{formatDateTimeLabel(item.occurredAt)}</Text>
+              </View>
+              <View style={[styles.urgentItemActions, styles.liveOpsUrgentActionBar]}>
+              {item.category === 'uncovered_shift' ? (
+                <Pressable
+                  style={[styles.primaryButton, styles.liveOpsUrgentBtnPrimary]}
+                  onPress={() => handleOpenUrgentDetail(item)}
+                >
+                  <Text style={[styles.primaryButtonText, styles.liveOpsUrgentBtnPrimaryText]}>Manage coverage</Text>
+                </Pressable>
+              ) : null}
+              {item.category === 'incident' && (item.status || '').toLowerCase() === 'open' ? (
+                <Pressable
+                  style={[styles.secondaryButton, styles.liveOpsUrgentBtnSecondary]}
+                  onPress={() => handleUrgentIncidentFollowUp(item, 'in_review')}
+                  disabled={urgentActionItemId === item.id}
+                >
+                  <Text style={[styles.secondaryButtonText, styles.liveOpsUrgentBtnSecondaryText]}>
+                    {urgentActionItemId === item.id ? 'Saving...' : 'Acknowledge'}
+                  </Text>
+                </Pressable>
+              ) : null}
+              {item.category === 'incident' ? (
+                <Pressable
+                  style={[styles.primaryButton, styles.liveOpsUrgentBtnPrimary]}
+                  onPress={() => handleOpenUrgentDetail(item)}
+                >
+                  <Text style={[styles.primaryButtonText, styles.liveOpsUrgentBtnPrimaryText]}>View Incident</Text>
+                </Pressable>
+              ) : null}
+              {item.category === 'panic' && item.status !== 'acknowledged' ? (
+                <Pressable
+                  style={[styles.secondaryButton, styles.liveOpsUrgentBtnSecondary]}
+                  onPress={() => handleUrgentAlertFollowUp(item, 'acknowledge')}
+                  disabled={urgentActionItemId === item.id}
+                >
+                  <Text style={[styles.secondaryButtonText, styles.liveOpsUrgentBtnSecondaryText]}>
+                    {urgentActionItemId === item.id ? 'Saving...' : 'Mark Escalated'}
+                  </Text>
+                </Pressable>
+              ) : null}
+              {item.category === 'panic' ? (
+                <Pressable
+                  style={[styles.primaryButton, styles.liveOpsUrgentBtnPrimary]}
+                  onPress={() =>
+                    item.status === 'acknowledged'
+                      ? handleUrgentAlertFollowUp(item, 'close')
+                      : handleOpenUrgentDetail(item)
+                  }
+                  disabled={urgentActionItemId === item.id && item.status === 'acknowledged'}
+                >
+                  <Text style={[styles.primaryButtonText, styles.liveOpsUrgentBtnPrimaryText]}>
+                    {item.status === 'acknowledged'
+                      ? urgentActionItemId === item.id
+                        ? 'Saving...'
+                        : 'Resolve Alert'
+                      : getUrgentPrimaryActionLabel(item)}
+                  </Text>
+                </Pressable>
+              ) : null}
+              {(item.category === 'missed_check_call' || item.category === 'safety') ? (
+                <>
+                  {item.status !== 'acknowledged' ? (
+                    <Pressable
+                      style={[styles.secondaryButton, styles.liveOpsUrgentBtnSecondary]}
+                      onPress={() => handleUrgentAlertFollowUp(item, 'acknowledge')}
+                      disabled={urgentActionItemId === item.id}
+                    >
+                      <Text style={[styles.secondaryButtonText, styles.liveOpsUrgentBtnSecondaryText]}>
+                        {urgentActionItemId === item.id
+                          ? 'Saving...'
+                          : item.category === 'missed_check_call'
+                            ? 'Mark Followed Up'
+                            : 'Acknowledge'}
+                      </Text>
+                    </Pressable>
+                  ) : null}
+                  <Pressable
+                    style={[styles.primaryButton, styles.liveOpsUrgentBtnPrimary]}
+                    onPress={() =>
+                      item.status === 'acknowledged'
+                        ? handleUrgentAlertFollowUp(item, 'close')
+                        : handleOpenUrgentDetail(item)
+                    }
+                    disabled={urgentActionItemId === item.id && item.status === 'acknowledged'}
+                  >
+                    <Text style={[styles.primaryButtonText, styles.liveOpsUrgentBtnPrimaryText]}>
+                      {item.status === 'acknowledged'
+                        ? urgentActionItemId === item.id
+                          ? 'Saving...'
+                          : getUrgentPrimaryActionLabel(item)
+                        : getUrgentPrimaryActionLabel(item)}
+                    </Text>
+                  </Pressable>
+                </>
+              ) : null}
+              {item.category === 'incident' && ['open', 'in_review'].includes((item.status || '').toLowerCase()) ? (
+                <Pressable
+                  style={[styles.primaryButton, styles.liveOpsUrgentBtnPrimary]}
+                  onPress={() => handleUrgentIncidentFollowUp(item, 'resolved')}
+                  disabled={urgentActionItemId === item.id}
+                >
+                  <Text style={[styles.primaryButtonText, styles.liveOpsUrgentBtnPrimaryText]}>
+                    {urgentActionItemId === item.id ? 'Saving...' : 'Resolve'}
+                  </Text>
+                </Pressable>
+              ) : null}
+              {['rejected_offer', 'missed_shift', 'late_start', 'upcoming_risk'].includes(item.category) ? (
+                <Pressable
+                  style={[styles.primaryButton, styles.liveOpsUrgentBtnPrimary]}
+                  onPress={() => handleOpenUrgentDetail(item)}
+                >
+                  <Text style={[styles.primaryButtonText, styles.liveOpsUrgentBtnPrimaryText]}>
+                    {getUrgentPrimaryActionLabel(item)}
+                  </Text>
+                </Pressable>
+              ) : null}
+            </View>
+            </View>
+          </Pressable>
+        ))}
+        {urgentOperationalItems.length === 0 ? (
+          <DashboardPanelEmpty
+            title="Urgent queue is clear"
+            description="No urgent operational items need attention right now. The board and feeds continue to update on refresh."
+          />
+        ) : null}
+        </View>
+      </DashboardSection>
+
+      <DashboardSection
+        title="Board filters"
+        subtitle="Refine which shifts appear on the live board in this workspace — client, site, guard, date, and status."
+      >
+        <View style={styles.liveOpsFilterStack}>
+          <View style={[styles.liveOpsFilterGroup, IS_WEB ? styles.liveOpsFilterGroupWeb : null]}>
+            <Text style={styles.liveOpsFilterGroupLabel}>Scope</Text>
+            <Text style={styles.liveOpsFilterGroupHint}>Client, site, and guard narrow the board together.</Text>
+            <View style={styles.liveOpsFilterGroupRow}>
+              <View style={[styles.liveOpsFilterField, styles.liveOpsFilterFieldGrow]}>
+                <Text style={styles.liveOpsFilterFieldLabel}>Client</Text>
+                <WebSelect
+                  value={liveFilters.clientId}
+                  onChange={(value: string) => setLiveFilters((current) => ({ ...current, clientId: value }))}
+                  options={siteClientOptions}
+                  placeholder="Client"
+                  style={styles.liveOpsFilterWebSelectChrome}
+                />
+              </View>
+              <View style={[styles.liveOpsFilterField, styles.liveOpsFilterFieldGrow]}>
+                <Text style={styles.liveOpsFilterFieldLabel}>Site</Text>
+                <WebSelect
+                  value={liveFilters.siteId}
+                  onChange={(value: string) => setLiveFilters((current) => ({ ...current, siteId: value }))}
+                  options={siteOptions}
+                  placeholder="Site"
+                  style={styles.liveOpsFilterWebSelectChrome}
+                />
+              </View>
+              <View style={[styles.liveOpsFilterField, styles.liveOpsFilterFieldGrow]}>
+                <Text style={styles.liveOpsFilterFieldLabel}>Guard</Text>
+                <WebSelect
+                  value={liveFilters.guardId}
+                  onChange={(value: string) => setLiveFilters((current) => ({ ...current, guardId: value }))}
+                  options={linkedGuardOptions}
+                  placeholder="Guard"
+                  style={styles.liveOpsFilterWebSelectChrome}
+                />
+              </View>
+            </View>
+          </View>
+
+          <View style={[styles.liveOpsFilterGroup, IS_WEB ? styles.liveOpsFilterGroupWeb : null]}>
+            <Text style={styles.liveOpsFilterGroupLabel}>Timing & status</Text>
+            <Text style={styles.liveOpsFilterGroupHint}>Shift date (YYYY-MM-DD) and lifecycle status.</Text>
+            <View style={styles.liveOpsFilterGroupRow}>
+              <View style={[styles.liveOpsFilterField, styles.liveOpsFilterDateSlot]}>
+                <Text style={styles.liveOpsFilterFieldLabel}>Shift date</Text>
+                <TextInput
+                  style={styles.liveOpsFilterTextInput}
+                  value={liveFilters.date}
+                  onChangeText={(value: string) => setLiveFilters((current) => ({ ...current, date: value }))}
+                  placeholder="YYYY-MM-DD"
+                  placeholderTextColor="#6b7280"
+                />
+              </View>
+              <View style={[styles.liveOpsFilterField, styles.liveOpsFilterFieldGrow]}>
+                <Text style={styles.liveOpsFilterFieldLabel}>Status</Text>
+                <WebSelect
+                  value={liveFilters.status}
+                  onChange={(value: string) => setLiveFilters((current) => ({ ...current, status: value }))}
+                  options={SHIFT_STATUS_OPTIONS}
+                  placeholder="Status"
+                  style={styles.liveOpsFilterWebSelectChrome}
+                />
+              </View>
+            </View>
+          </View>
+        </View>
+      </DashboardSection>
+
+      <DashboardSection
+        title="Live workspace"
+        subtitle="Live board with context feeds alongside it. Selected shift detail loads at the bottom when you highlight a board row."
+      >
+      <View style={styles.panelGrid}>
+        <View
+          style={[styles.liveOpsBoardWrap, styles.operationsBoardCard]}
+          onLayout={(event: any) => setLiveBoardAnchorY(event.nativeEvent.layout.y)}
+        >
+          <Card
+            style={styles.liveOpsBoardCard}
+            title="Live shift board"
+            subtitle="Scan live and exception shifts, then use the row action. Selecting a row updates the detail panel below."
+            webSurfaceHover
+          >
+          {liveOperationRows.length === 0 ? (
+            <DashboardPanelEmpty
+              title="No shifts match these filters"
+              description="Try broadening client, site, guard, date, or status filters, or refresh to pull the latest operational data."
+              actionLabel="Refresh data"
+              onAction={() => loadData(true)}
+            />
+          ) : (
+          <ScrollView
+            horizontal
+            nestedScrollEnabled
+            showsHorizontalScrollIndicator
+            style={styles.liveBoardScroll}
+            contentContainerStyle={[styles.liveBoardScrollContent, IS_WEB ? styles.liveBoardScrollContentWeb : null]}
+          >
+            <View>
+              <LiveShiftBoardTableHeader />
+          {liveOperationRows.map((shift) => {
+            const timesheet = timesheetByShiftId.get(shift.id);
+            const attendance = attendanceByShiftId.get(shift.id);
+            const shiftLogs = logsByShiftId.get(shift.id) || [];
+            const shiftIncidents = incidentsByShiftId.get(shift.id) || [];
+            const shiftAlerts = alertsByShiftId.get(shift.id) || [];
+            const lastCheckCall = lastCheckCallByShiftId.get(shift.id);
+            const panicOrWelfareCount = shiftAlerts.filter((alert) =>
+              ['panic', 'welfare', 'late_checkin'].includes((alert.type || '').toLowerCase()),
+            ).length;
+            const lifecycleStatus = normalizeShiftLifecycleStatus(shift.status);
+            const risk = getShiftRisk(shift, attendance, shiftIncidents, shiftAlerts);
+            const delay = getShiftDelay(shift, attendance);
+            const likelyLate = isLikelyToMissCheckIn(shift, attendance);
+            const siteRiskLabel = getSiteRiskLevel(
+              shift.site?.id ?? shift.siteId,
+              shifts,
+              attendanceByShiftId,
+              incidentsByShiftId,
+              alertsByShiftId,
+            );
+            const primaryActionLabel =
+              lifecycleStatus === 'offered'
+                ? 'View Offer'
+                : lifecycleStatus === 'ready'
+                  ? 'Open Shift'
+                  : lifecycleStatus === 'in_progress'
+                    ? 'Monitor'
+                    : lifecycleStatus === 'missed'
+                      ? 'Re-cover'
+                      : lifecycleStatus === 'rejected'
+                        ? 'Re-offer'
+                        : 'Review Shift';
+
+            return (
+              <Pressable
+                key={shift.id}
+                style={[
+                  styles.tableRow,
+                  styles.liveBoardTableRow,
+                  styles.liveBoardRow,
+                  { backgroundColor: getLiveShiftBoardRowTone(lifecycleStatus, risk.level) },
+                  likelyLate ? { borderLeftWidth: 4, borderLeftColor: colors.warning } : null,
+                  selectedShiftId === shift.id && styles.liveBoardTableRowSelected,
+                  highlightedLiveShiftId === shift.id && styles.liveBoardRowHighlighted,
+                ]}
+                onPress={() => setSelectedShiftId(shift.id)}
+              >
+                <Text style={[LIVE_BOARD_COL_STYLES[0], styles.liveBoardShiftId]}>#{shift.id}</Text>
+                <View style={[LIVE_BOARD_COL_STYLES[1], styles.liveBoardCellCol]}>
+                  <Text
+                    style={styles.liveBoardSiteTitle}
+                    numberOfLines={IS_WEB ? 2 : 4}
+                    ellipsizeMode="tail"
+                  >
+                    {shift.site?.name || shift.siteName || 'Unknown site'}
+                  </Text>
+                  <Text style={styles.liveBoardSiteRisk} numberOfLines={2}>
+                    {siteRiskLabel}
+                  </Text>
+                </View>
+                <Text
+                  style={[LIVE_BOARD_COL_STYLES[2], styles.liveBoardCellBody]}
+                  numberOfLines={IS_WEB ? 2 : 4}
+                  ellipsizeMode="tail"
+                >
+                  {shift.guard?.fullName || 'Unassigned'}
+                </Text>
+                <View style={LIVE_BOARD_COL_STYLES[3]}>
+                  <ShiftStatusBadge status={shift.status} />
+                </View>
+                <View style={[LIVE_BOARD_COL_STYLES[4], styles.liveBoardCellCol]}>
+                  <Text style={[styles.liveBoardCellBody, { color: risk.color, fontWeight: '700' }]}>{risk.label}</Text>
+                  {likelyLate ? (
+                    <Text style={{ color: colors.warning, fontWeight: '600', fontSize: 12 }}>Likely late</Text>
+                  ) : null}
+                </View>
+                <Text
+                  style={[
+                    LIVE_BOARD_COL_STYLES[5],
+                    styles.liveBoardCellBody,
+                    delay !== null ? { color: colors.danger, fontWeight: '600' } : null,
+                  ]}
+                  numberOfLines={2}
+                >
+                  {delay !== null ? `Late by ${delay} min` : '—'}
+                </Text>
+                <Text style={[LIVE_BOARD_COL_STYLES[6], styles.liveBoardCellBody]}>
+                  {attendance?.checkInAt ? formatTimeLabel(attendance.checkInAt) : 'Pending'}
+                </Text>
+                <Text style={[LIVE_BOARD_COL_STYLES[7], styles.liveBoardCellBody]}>
+                  {attendance?.checkOutAt ? formatTimeLabel(attendance.checkOutAt) : 'Pending'}
+                </Text>
+                <Text style={[LIVE_BOARD_COL_STYLES[8], styles.liveBoardCellBody]} numberOfLines={2}>
+                  {lastCheckCall ? formatTimeLabel(lastCheckCall.createdAt) : 'No check call'}
+                </Text>
+                <Text style={[LIVE_BOARD_COL_STYLES[9], styles.liveBoardCellBody]}>{String(shiftLogs.length)}</Text>
+                <Text style={[LIVE_BOARD_COL_STYLES[10], styles.liveBoardCellBody]}>{String(shiftIncidents.length)}</Text>
+                <Text style={[LIVE_BOARD_COL_STYLES[11], styles.liveBoardCellBody]}>{String(panicOrWelfareCount)}</Text>
+                <Text style={[LIVE_BOARD_COL_STYLES[12], styles.liveBoardCellBody]}>
+                  {formatStatusLabel(timesheet?.approvalStatus || 'pending')}
+                </Text>
+                <View style={LIVE_BOARD_COL_STYLES[13]}>
+                  <Pressable
+                    style={[styles.secondaryButton, styles.liveBoardActionButton]}
+                    onPress={() => handleLiveBoardPrimaryAction(shift)}
+                  >
+                    <Text style={styles.secondaryButtonText}>{primaryActionLabel}</Text>
+                  </Pressable>
+                </View>
+              </Pressable>
+            );
+          })}
+            </View>
+          </ScrollView>
+          )}
+          </Card>
+        </View>
+
+        <View style={[styles.operationsSideColumn, styles.liveOpsSideColumn]}>
+          {IS_WEB ? (
+            <View style={styles.liveOpsSideRailIntro}>
+              <Text style={styles.liveOpsSideRailEyebrow}>Context rail</Text>
+              <Text style={styles.liveOpsSideRailHint}>
+                Activity, management, incidents, and alerts beside the board — read together with the row list.
+              </Text>
+            </View>
+          ) : null}
+          <Card
+            style={styles.liveOpsSideCard}
+            title="Recent operational activity"
+            subtitle="Operational events tied to shifts on the board."
+            webSurfaceHover
+          >
+            {recentOperationalActivity.map((activity, index, arr) => (
+              <Pressable
+                key={activity.id}
+                style={[
+                  styles.liveOpsListRow,
+                  styles.liveOpsListRowSide,
+                  index === arr.length - 1 ? styles.liveOpsListRowLast : null,
+                  IS_WEB ? styles.liveOpsListRowWeb : null,
+                  IS_WEB ? styles.liveOpsListRowSideWeb : null,
+                ]}
+                onPress={() => {
+                  if (activity.shiftId) {
+                    setSelectedShiftId(activity.shiftId);
+                  }
+                }}
+              >
+                <Text style={styles.liveOpsRowTitleSide}>{activity.eventType}</Text>
+                <Text style={styles.liveOpsRowMetaSide}>
+                  Shift {activity.shiftId ? `#${activity.shiftId}` : 'N/A'} | {activity.siteName} | {activity.guardName}
+                </Text>
+                {shouldShowOperationalActivityMessage(activity.eventType) ? (
+                  <Text style={styles.liveOpsSideRowMessage}>{activity.message}</Text>
+                ) : null}
+                <Text style={styles.liveOpsSideRowTimestamp}>{formatDateTimeLabel(activity.occurredAt)}</Text>
+              </Pressable>
+            ))}
+            {recentOperationalActivity.length === 0 ? (
+              <DashboardPanelEmpty
+                title="No recent operational activity"
+                description="As guards book on, log activity, and sites generate signals, the latest events will appear in this feed."
+              />
+            ) : null}
+          </Card>
+
+          <Card
+            style={styles.liveOpsSideCard}
+            title="Recent management actions"
+            subtitle="Follow-up and closure actions taken from the control room."
+            webSurfaceHover
+          >
+            {recentManagementActivity.map((activity, index, arr) => (
+              <Pressable
+                key={activity.id}
+                style={[
+                  styles.liveOpsListRow,
+                  styles.liveOpsListRowSide,
+                  index === arr.length - 1 ? styles.liveOpsListRowLast : null,
+                  IS_WEB ? styles.liveOpsListRowWeb : null,
+                  IS_WEB ? styles.liveOpsListRowSideWeb : null,
+                ]}
+                onPress={() => {
+                  if (activity.shiftId) {
+                    setSelectedShiftId(activity.shiftId);
+                  }
+                }}
+              >
+                <Text style={styles.liveOpsRowTitleSide}>{activity.actionTaken}</Text>
+                <Text style={styles.liveOpsRowMetaSide}>
+                  {activity.itemType} | Shift {activity.shiftId ? `#${activity.shiftId}` : 'N/A'} | {activity.siteName} | {activity.guardName}
+                </Text>
+                <Text style={styles.liveOpsSideRowTimestamp}>{formatDateTimeLabel(activity.occurredAt)}</Text>
+              </Pressable>
+            ))}
+            {recentManagementActivity.length === 0 ? (
+              <DashboardPanelEmpty
+                title="No recent management actions"
+                description="Acknowledgements, escalations, and closures taken from this console will show here for audit context."
+              />
+            ) : null}
+          </Card>
+
+          <Card
+            style={styles.liveOpsSideCard}
+            title="Open incidents"
+            subtitle="Open company incidents (up to six shown)."
+            webSurfaceHover
+          >
+            {openIncidents.slice(0, 6).map((incident, index, arr) => (
+              <View
+                key={incident.id}
+                style={[
+                  styles.liveOpsListRow,
+                  styles.liveOpsListRowSide,
+                  index === arr.length - 1 ? styles.liveOpsListRowLast : null,
+                  IS_WEB ? styles.liveOpsListRowWeb : null,
+                  IS_WEB ? styles.liveOpsListRowSideWeb : null,
+                ]}
+              >
+                <Text style={styles.liveOpsRowTitleSide}>{incident.title}</Text>
+                <Text style={styles.liveOpsRowMetaSide}>
+                  {incident.site?.name || incident.shift?.site?.name || 'Unknown site'} | {formatStatusLabel(incident.status)}
+                </Text>
+              </View>
+            ))}
+            {openIncidents.length === 0 ? (
+              <DashboardPanelEmpty
+                title="No open incidents"
+                description="Open incidents across the company will surface here (up to six) when they need visibility next to the board."
+              />
+            ) : null}
+          </Card>
+
+          <Card
+            style={styles.liveOpsSideCard}
+            title="Safety / welfare / panic"
+            subtitle="Outstanding alerts (up to six shown)."
+            webSurfaceHover
+          >
+            {outstandingAlerts.slice(0, 6).map((alert, index, arr) => (
+              <View
+                key={alert.id}
+                style={[
+                  styles.liveOpsListRow,
+                  styles.liveOpsListRowSide,
+                  index === arr.length - 1 ? styles.liveOpsListRowLast : null,
+                  IS_WEB ? styles.liveOpsListRowWeb : null,
+                  IS_WEB ? styles.liveOpsListRowSideWeb : null,
+                ]}
+              >
+                <Text style={styles.liveOpsRowTitleSide}>{formatStatusLabel(alert.type)}</Text>
+                <Text style={styles.liveOpsRowMetaSide}>
+                  {alert.shift?.site?.name || alert.shift?.siteName || 'Unknown shift'} | {formatStatusLabel(alert.status)}
+                </Text>
+              </View>
+            ))}
+            {outstandingAlerts.length === 0 ? (
+              <DashboardPanelEmpty
+                title="No active safety alerts"
+                description="Outstanding welfare, panic, and related alerts will appear here (up to six) when they require attention."
+              />
+            ) : null}
+          </Card>
+
+        </View>
+      </View>
+      </DashboardSection>
+
+      <View onLayout={(event: any) => setShiftDetailAnchorY(event.nativeEvent.layout.y)}>
+        <DashboardSection
+          title="Selected shift detail"
+          subtitle={
+          selectedShift
+            ? 'Row-level summary for the shift highlighted on the board above — follow-up, close-out, and records.'
+            : 'Select a shift row on the live board to load attendance, logs, incidents, and safety context in this panel.'
+        }
+      >
+        {selectedShift ? (
+          <View style={[styles.liveOpsSelectedInset, IS_WEB ? styles.liveOpsSelectedInsetWeb : null]}>
+          {(() => {
+            const selectedAttendance = attendanceByShiftId.get(selectedShift.id);
+            const selectedTimesheet = timesheetByShiftId.get(selectedShift.id);
+            const selectedShiftException = getShiftExceptionSummary(selectedShift.status);
+            const selectedShiftBadge =
+              normalizeShiftLifecycleStatus(selectedShift.status) === 'missed'
+                ? { icon: '⚠️', label: 'Missed' }
+                : getShiftStatusBadge(selectedShift.status || 'unfilled');
+            return (
+              <>
+          <View style={styles.liveOpsSelectedHeader}>
+          <Text style={styles.liveOpsDetailTitle}>Shift #{selectedShift.id} Operations</Text>
+          <Text style={styles.liveOpsSelectedSummaryLine}>
+            {selectedShift.site?.client?.name || clientMap.get(selectedShift.site?.clientId || 0)?.name || 'No client'} | {selectedShift.site?.name || selectedShift.siteName}
+          </Text>
+          <Text style={styles.liveOpsSelectedSummaryLine}>
+            {selectedShift.guard?.fullName || 'No guard assigned'} | {formatDateLabel(selectedShift.start)} | {formatTimeLabel(selectedShift.start)}-{formatTimeLabel(selectedShift.end)}
+          </Text>
+          <Text style={styles.liveOpsSelectedSummaryLine}>
+            Status: {`${selectedShiftBadge.icon} ${selectedShiftBadge.label}`} | Check calls: {selectedShift.checkCallIntervalMinutes || 60} mins
+          </Text>
+          <View style={styles.liveOpsSelectedBadgeRow}>
+            <ShiftStatusBadge status={selectedShift.status} />
+          </View>
+          {selectedShiftException ? (
+            <>
+              <Text style={styles.liveOpsSelectedSummaryLine}>{selectedShiftException.title}</Text>
+              <Text style={styles.liveOpsSelectedSummaryLine}>{selectedShiftException.message}</Text>
+              <Text style={styles.liveOpsSelectedSummaryLine}>{selectedShiftException.outcome}</Text>
+            </>
+          ) : null}
+          {normalizeShiftLifecycleStatus(selectedShift.status) === 'offered' ? (
+            <Text style={styles.liveOpsSelectedSummaryLine}>Waiting for guard confirmation before live controls are used.</Text>
+          ) : null}
+          {normalizeShiftLifecycleStatus(selectedShift.status) === 'unfilled' ? (
+            <>
+              <Text style={styles.liveOpsSelectedSummaryLine}>No confirmed guard is linked yet. This shift still needs cover.</Text>
+              <View style={styles.rowActions}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Manage coverage for Shift #${selectedShift.id}`}
+                  style={styles.primaryButton}
+                  onPress={() => openCoverage({ uncoveredOnly: true, shiftId: selectedShift.id })}
+                >
+                  <Text style={styles.primaryButtonText}>Manage Coverage</Text>
+                </Pressable>
+              </View>
+            </>
+          ) : null}
+          {normalizeShiftLifecycleStatus(selectedShift.status) === 'in_progress' ? (
+            <Text style={styles.liveOpsSelectedSummaryLine}>Guard is booked on and the shift is live in operations.</Text>
+          ) : null}
+          {normalizeShiftLifecycleStatus(selectedShift.status) === 'completed' ? (
+            <Text style={styles.liveOpsSelectedSummaryLine}>Shift is completed. Operational records remain visible but no new live activity should be added.</Text>
+          ) : null}
+          {normalizeShiftLifecycleStatus(selectedShift.status) === 'ready' ? (
+            <Text style={styles.liveOpsSelectedSummaryLine}>Guard confirmed this shift. It is ready for book on.</Text>
+          ) : null}
+          <Text style={styles.liveOpsSelectedInstructions}>
+            Instructions: {selectedShift.instructions || 'No instructions recorded.'}
+          </Text>
+          </View>
+
+          <View style={[styles.detailGrid, styles.liveOpsDetailGrid]}>
+            {normalizeShiftLifecycleStatus(selectedShift.status) === 'completed' && selectedShiftCloseOutSummary ? (
+              <View style={[styles.detailCard, styles.liveOpsDetailCard, styles.closeOutCard]}>
+                <Text style={[styles.detailTitle, styles.liveOpsDetailSectionTitle]}>Completed Shift Close-Out</Text>
+                <Text
+                  style={[
+                    styles.recordTitle,
+                    selectedShiftCloseOutSummary.closedCleanly
+                      ? styles.closeOutStatusGood
+                      : styles.closeOutStatusAttention,
+                  ]}
+                >
+                  {selectedShiftCloseOutSummary.closedCleanly
+                    ? 'Closed cleanly'
+                    : `Needs follow-up (${selectedShiftCloseOutSummary.unresolvedFollowUpCount})`}
+                </Text>
+                <Text style={styles.liveOpsDetailTileLine}>
+                  Shift #{selectedShift.id} | {selectedShift.site?.name || selectedShift.siteName || 'Unknown site'} |{' '}
+                  {selectedShift.guard?.fullName || 'No guard assigned'}
+                </Text>
+                <Text style={styles.liveOpsDetailTileLine}>
+                  Scheduled: {formatDateTimeLabel(selectedShiftCloseOutSummary.scheduledStart)} to{' '}
+                  {formatDateTimeLabel(selectedShiftCloseOutSummary.scheduledEnd)}
+                </Text>
+                <Text style={styles.liveOpsDetailTileLine}>
+                  Actual: {formatDateTimeLabel(selectedShiftCloseOutSummary.actualCheckInAt)} to{' '}
+                  {formatDateTimeLabel(selectedShiftCloseOutSummary.actualCheckOutAt)}
+                </Text>
+                <Text style={styles.liveOpsDetailTileLine}>
+                  Logs: {selectedShiftCloseOutSummary.logsCount} | Incidents: {selectedShiftCloseOutSummary.incidentsCount}
+                </Text>
+                <Text style={styles.liveOpsDetailTileLine}>
+                  Safety / welfare / panic: {selectedShiftCloseOutSummary.safetyEventsCount}
+                </Text>
+                <Text style={styles.liveOpsDetailTileLine}>
+                  Check calls completed / missed: {selectedShiftCloseOutSummary.completedCheckCalls} /{' '}
+                  {selectedShiftCloseOutSummary.missedCheckCalls}
+                </Text>
+                <Text style={styles.liveOpsDetailTileLine}>
+                  Timesheet: {formatStatusLabel(selectedShiftCloseOutSummary.timesheetStatus)}
+                </Text>
+                {selectedShiftCloseOutSummary.unresolvedFollowUpCount > 0 ? (
+                  <Text style={styles.liveOpsDetailTileLine}>
+                    Unresolved follow-up items: {selectedShiftCloseOutSummary.unresolvedFollowUpCount}
+                  </Text>
+                ) : (
+                  <Text style={styles.liveOpsDetailTileLine}>No unresolved follow-up items remain for this shift.</Text>
+                )}
+                <View style={styles.closeOutNotesSection}>
+                  <Text style={styles.subtleLabel}>Close-out / handover notes</Text>
+                  <TextInput
+                    style={[styles.input, styles.textAreaSmall, styles.liveOpsChromeInputBorder]}
+                    multiline
+                    value={closeOutNotesDraft}
+                    onChangeText={setCloseOutNotesDraft}
+                    placeholder="Short operational handover note for management review or next-shift awareness"
+                  />
+                  <View style={styles.rowActions}>
+                    <Pressable
+                      style={styles.primaryButton}
+                      onPress={handleSaveCloseOutNotes}
+                      disabled={savingCloseOutNotes}
+                    >
+                      <Text style={styles.primaryButtonText}>
+                        {savingCloseOutNotes ? 'Saving...' : 'Save Close-Out Note'}
+                      </Text>
+                    </Pressable>
+                  </View>
+                  {selectedShift.closeOutNotes && !closeOutNotesDraft.trim() ? (
+                    <Text style={styles.helperText}>
+                      Existing note will be cleared if you save with an empty value.
+                    </Text>
+                  ) : null}
+                </View>
+              </View>
+            ) : null}
+            <View style={[styles.detailCard, styles.liveOpsDetailCard]}>
+              <Text style={[styles.detailTitle, styles.liveOpsDetailSectionTitle]}>Attendance & Timesheet</Text>
+              <Text style={styles.liveOpsDetailTileLine}>
+                Book on: {selectedAttendance?.checkInAt ? formatDateTimeLabel(selectedAttendance.checkInAt) : 'Pending'}
+              </Text>
+              <Text style={styles.liveOpsDetailTileLine}>
+                Book off: {selectedAttendance?.checkOutAt ? formatDateTimeLabel(selectedAttendance.checkOutAt) : 'Pending'}
+              </Text>
+              <Text style={styles.liveOpsDetailTileLine}>
+                Timesheet: {formatStatusLabel(selectedTimesheet?.approvalStatus || 'pending')}
+              </Text>
+            </View>
+            <View style={[styles.detailCard, styles.liveOpsDetailCard]}>
+              <Text style={[styles.detailTitle, styles.liveOpsDetailSectionTitle]}>Daily Logs</Text>
+              {(logsByShiftId.get(selectedShift.id) || []).map((log) => (
+                <Text key={log.id} style={styles.liveOpsDetailListLine}>
+                  - {log.message}
+                </Text>
+              ))}
+              {(logsByShiftId.get(selectedShift.id) || []).length === 0 ? (
+                <LiveOpsDetailEmpty
+                  title="No daily logs"
+                  description="Logs recorded for this shift will appear here when available."
+                />
+              ) : null}
+            </View>
+            <View style={[styles.detailCard, styles.liveOpsDetailCard]}>
+              <Text style={[styles.detailTitle, styles.liveOpsDetailSectionTitle]}>Incidents</Text>
+              {(incidentsByShiftId.get(selectedShift.id) || []).map((incident) => (
+                <Text key={incident.id} style={styles.liveOpsDetailListLine}>
+                  - {incident.title} ({formatStatusLabel(incident.status)})
+                </Text>
+              ))}
+              {(incidentsByShiftId.get(selectedShift.id) || []).length === 0 ? (
+                <LiveOpsDetailEmpty
+                  title="No incidents on this shift"
+                  description="Incidents linked to this shift will be listed here when they exist."
+                />
+              ) : null}
+            </View>
+            <View style={[styles.detailCard, styles.liveOpsDetailCard]}>
+              <Text style={[styles.detailTitle, styles.liveOpsDetailSectionTitle]}>Safety / Check Calls</Text>
+              {(alertsByShiftId.get(selectedShift.id) || []).map((alert) => (
+                <Text key={alert.id} style={styles.liveOpsDetailListLine}>
+                  - {formatStatusLabel(alert.type)} ({formatStatusLabel(alert.status)})
+                </Text>
+              ))}
+              {(alertsByShiftId.get(selectedShift.id) || []).length === 0 ? (
+                <LiveOpsDetailEmpty
+                  title="No safety or welfare events"
+                  description="Safety, welfare, and check-call items tied to this shift will show here when present."
+                />
+              ) : null}
+            </View>
+          </View>
+              </>
+            );
+          })()}
+          </View>
+        ) : (
+          <DashboardPanelEmpty
+            title="No shift selected"
+            description="Tap a row on the live shift board to attach its operational detail, attendance, and records to this panel."
+          />
+        )}
+        </DashboardSection>
+      </View>
+    </View>
+  );
+
+  const renderGuardsSection = () => (
+    <View style={styles.sectionStack}>
+      <View style={styles.splitLayout}>
+        <View style={styles.tableCard}>
+          <Text style={styles.panelTitle}>Available Platform Guards</Text>
+          {availablePlatformGuards.map((guard) => (
+            <View key={guard.id} style={styles.tableRow}>
+              <Text style={styles.tableCellStrong}>{guard.fullName}</Text>
+              <Text style={styles.tableCell}>{guard.siaLicenseNumber || guard.siaLicenceNumber || 'No SIA yet'}</Text>
+              <Text style={styles.tableCell}>{guard.phone}</Text>
+              <View style={styles.rowActions}>
+                <Pressable style={styles.primaryButton} onPress={() => handleApproveGuard(guard.id)} disabled={approvingGuardId === guard.id}>
+                  <Text style={styles.primaryButtonText}>{approvingGuardId === guard.id ? 'Linking...' : 'Link Guard'}</Text>
+                </Pressable>
+              </View>
+            </View>
+          ))}
+        </View>
+        <View style={styles.tableCard}>
+          <Text style={styles.panelTitle}>Linked Guards</Text>
+          {linkedGuards.map((guard) => (
+            <View key={guard.id} style={styles.tableRow}>
+              <Text style={styles.tableCellStrong}>{guard.fullName}</Text>
+              <Text style={styles.tableCell}>{guard.phone}</Text>
+              <Text style={styles.tableCell}>{shifts.filter((shift) => (shift.guard?.id ?? shift.guardId) === guard.id).length} shifts</Text>
+            </View>
+          ))}
+        </View>
+      </View>
+    </View>
+  );
+
+  const renderShiftOffersSection = () => (
+    <View style={styles.sectionStack}>
+      <View style={styles.toolbar}>
+        <Text style={styles.sectionTitle}>Shift Offers / Pending Responses</Text>
+        <Pressable style={styles.secondaryButton} onPress={() => loadData(true)}>
+          <Text style={styles.secondaryButtonText}>{refreshing ? 'Refreshing...' : 'Refresh'}</Text>
+        </Pressable>
+      </View>
+
+      {shiftOffersFeedback ? (
+        <View
+          style={[
+            styles.feedbackCard,
+            shiftOffersFeedback.tone === 'error' ? styles.feedbackCardError : styles.feedbackCardSuccess,
+          ]}
+        >
+          <Text
+            style={[
+              styles.feedbackTitle,
+              shiftOffersFeedback.tone === 'error' ? styles.feedbackTitleError : styles.feedbackTitleSuccess,
+            ]}
+          >
+            {shiftOffersFeedback.tone === 'error' ? 'Action failed' : 'Action completed'}
+          </Text>
+          <Text
+            style={[
+              styles.feedbackText,
+              shiftOffersFeedback.tone === 'error' ? styles.feedbackTextError : styles.feedbackTextSuccess,
+            ]}
+          >
+            {shiftOffersFeedback.message}
+          </Text>
+        </View>
+      ) : null}
+
+      <View style={styles.kpiGrid}>
+        {[
+          ['Waiting Response', String(pendingShiftOffers.length)],
+          ['Ready To Start', String(readyShiftOffers.length)],
+          ['Missed / Re-cover', String(missedShiftOffers.length)],
+          ['Rejected / Re-cover', String(rejectedShiftOffers.length)],
+        ].map(([label, value]) => (
+          <View key={label} style={styles.kpiCard}>
+            <Text style={styles.kpiLabel}>{label}</Text>
+            <Text style={styles.kpiValue}>{value}</Text>
+          </View>
+        ))}
+      </View>
+
+      <View style={styles.panelGrid}>
+        <View style={[styles.tableCard, styles.operationsBoardCard]}>
+          <Text style={styles.panelTitle}>Offer Response Board</Text>
+          <Text style={styles.helperText}>
+            Track guard responses after rota planning. Offered shifts are waiting, ready shifts are confirmed, missed shifts need exception follow-up and re-cover, and rejected shifts need fresh cover.
+          </Text>
+          {renderTableHeader(['Shift', 'Site', 'Guard', 'Date', 'Time', 'State', 'Response'])}
+          {shiftOfferRows.map((shift) => {
+            const lifecycleStatus = normalizeShiftLifecycleStatus(shift.status);
+            const responseText =
+              lifecycleStatus === 'offered'
+                ? 'Waiting for guard response'
+                : lifecycleStatus === 'ready'
+                  ? 'Accepted and ready to start'
+                  : lifecycleStatus === 'missed'
+                    ? 'Missed check-in, exception follow-up and re-cover required'
+                    : 'Rejected and needs reassignment';
+
+            const reassignmentOptions = linkedGuardOptions.filter(
+              (option) => option.value !== String(shift.guard?.id ?? shift.guardId ?? ''),
+            );
+
+            return (
+              <View
+                key={shift.id}
+                style={[styles.tableRow, selectedShiftId === shift.id && styles.tableRowSelected, styles.offerRow]}
+              >
+                <Pressable
+                  style={styles.offerRowSummary}
+                  onPress={() => {
+                    setSelectedShiftId(shift.id);
+                    setActiveSection('shift-offers');
+                  }}
+                >
+                  <Text style={styles.tableCellStrong}>#{shift.id}</Text>
+                  <Text style={styles.tableCell}>{shift.site?.name || shift.siteName || 'Unknown site'}</Text>
+                  <Text style={styles.tableCell}>{shift.guard?.fullName || 'Unassigned'}</Text>
+                  <Text style={styles.tableCell}>{formatDateLabel(shift.start)}</Text>
+                  <Text style={styles.tableCell}>
+                    {formatTimeLabel(shift.start)}-{formatTimeLabel(shift.end)}
+                  </Text>
+                  <View style={styles.tableCell}>
+                    <ShiftStatusBadge status={shift.status} />
+                  </View>
+                  <Text style={styles.tableCell}>{responseText}</Text>
+                </Pressable>
+                <View style={styles.offerRowActions}>
+                  {lifecycleStatus === 'offered' ? (
+                    <Pressable
+                      style={styles.secondaryButton}
+                      onPress={() => handleCancelShiftOffer(shift.id)}
+                      disabled={offerActionShiftId === shift.id}
+                    >
+                      <Text style={styles.secondaryButtonText}>
+                        {offerActionShiftId === shift.id ? 'Cancelling...' : 'Withdraw Offer'}
+                      </Text>
+                    </Pressable>
+                  ) : null}
+                  {lifecycleStatus === 'ready' ? (
+                    <Pressable
+                      style={styles.primaryButton}
+                      onPress={() => {
+                        setShiftOffersFeedback({
+                          tone: 'success',
+                          message: `Opening Shift #${shift.id} in Live Operations.`,
+                        });
+                        setSelectedShiftId(shift.id);
+                        setActiveSection('live-operations');
+                      }}
+                    >
+                      <Text style={styles.primaryButtonText}>Open In Live Ops</Text>
+                    </Pressable>
+                  ) : null}
+                  {['rejected', 'missed'].includes(lifecycleStatus) ? (
+                    <View style={styles.offerReassignBox}>
+                      <WebSelect
+                        value={reassignGuardByShiftId[shift.id] || ''}
+                        onChange={(value: string) =>
+                          setReassignGuardByShiftId((current) => ({ ...current, [shift.id]: value }))
+                        }
+                        options={reassignmentOptions}
+                        placeholder="Choose replacement guard"
+                      />
+                      <Pressable
+                        style={styles.primaryButton}
+                        onPress={() => handleReofferShift(shift.id)}
+                        disabled={offerActionShiftId === shift.id}
+                      >
+                        <Text style={styles.primaryButtonText}>
+                          {offerActionShiftId === shift.id ? 'Re-offering...' : 'Re-offer Shift'}
+                        </Text>
+                      </Pressable>
+                    </View>
+                  ) : null}
+                </View>
+              </View>
+            );
+          })}
+          {shiftOfferRows.length === 0 ? (
+            <Text style={styles.helperText}>No current shift offers are waiting for response.</Text>
+          ) : null}
+        </View>
+
+        <View style={styles.operationsSideColumn}>
+          <View style={styles.panel}>
+            <Text style={styles.panelTitle}>Waiting Response</Text>
+            {pendingShiftOffers.slice(0, 6).map((shift) => (
+              <View key={shift.id} style={styles.recordRow}>
+                <Text style={styles.recordTitle}>Shift #{shift.id} · {shift.site?.name || shift.siteName}</Text>
+                <Text style={styles.recordMeta}>
+                  {shift.guard?.fullName || 'Unassigned'} | {formatDateTimeLabel(shift.start)}
+                </Text>
+              </View>
+            ))}
+            {pendingShiftOffers.length === 0 ? <Text style={styles.helperText}>No outstanding guard responses.</Text> : null}
+          </View>
+
+          <View style={styles.panel}>
+            <Text style={styles.panelTitle}>Ready To Start</Text>
+            {readyShiftOffers.slice(0, 6).map((shift) => (
+              <View key={shift.id} style={styles.recordRow}>
+                <Text style={styles.recordTitle}>Shift #{shift.id} · {shift.site?.name || shift.siteName}</Text>
+                <Text style={styles.recordMeta}>
+                  {shift.guard?.fullName || 'Unassigned'} | Accepted and ready for book on
+                </Text>
+              </View>
+            ))}
+            {readyShiftOffers.length === 0 ? <Text style={styles.helperText}>No accepted offers are waiting to start.</Text> : null}
+          </View>
+
+          <View style={styles.panel}>
+            <Text style={styles.panelTitle}>Missed / Needs Re-cover</Text>
+            {missedShiftOffers.slice(0, 6).map((shift) => (
+              <View key={shift.id} style={styles.recordRow}>
+                <Text style={styles.recordTitle}>Shift #{shift.id} · {shift.site?.name || shift.siteName}</Text>
+                <Text style={styles.recordMeta}>
+                  {shift.guard?.fullName || 'No guard'} | Missed check-in, follow up if needed and find replacement cover
+                </Text>
+              </View>
+            ))}
+            {missedShiftOffers.length === 0 ? <Text style={styles.helperText}>No missed shifts need re-cover right now.</Text> : null}
+          </View>
+
+          <View style={styles.panel}>
+            <Text style={styles.panelTitle}>Rejected / Needs Re-cover</Text>
+            {rejectedShiftOffers.slice(0, 6).map((shift) => (
+              <View key={shift.id} style={styles.recordRow}>
+                <Text style={styles.recordTitle}>Shift #{shift.id} | {shift.site?.name || shift.siteName}</Text>
+                <Text style={styles.recordMeta}>
+                  {shift.guard?.fullName || 'No guard'} | Offer rejected, find replacement cover
+                </Text>
+              </View>
+            ))}
+            {rejectedShiftOffers.length === 0 ? <Text style={styles.helperText}>No rejected offers need re-cover right now.</Text> : null}
+          </View>
+        </View>
+      </View>
+
+      {selectedShift && ['offered', 'ready', 'rejected', 'missed'].includes(normalizeShiftLifecycleStatus(selectedShift.status)) ? (
+        <View style={styles.panel}>
+          <Text style={styles.panelTitle}>Selected Offer Detail</Text>
+          <Text style={styles.recordMeta}>
+            {selectedShift.site?.client?.name || clientMap.get(selectedShift.site?.clientId || 0)?.name || 'No client'} | {selectedShift.site?.name || selectedShift.siteName}
+          </Text>
+          <Text style={styles.recordMeta}>
+            {selectedShift.guard?.fullName || 'No guard assigned'} | {formatDateLabel(selectedShift.start)} | {formatTimeLabel(selectedShift.start)}-{formatTimeLabel(selectedShift.end)}
+          </Text>
+          <ShiftStatusBadge status={selectedShift.status} />
+          {normalizeShiftLifecycleStatus(selectedShift.status) === 'offered' ? (
+            <Text style={styles.recordMeta}>Waiting for this guard to accept or reject the offer.</Text>
+          ) : null}
+          {normalizeShiftLifecycleStatus(selectedShift.status) === 'ready' ? (
+            <Text style={styles.recordMeta}>Guard accepted this shift. It is ready to move into live operations.</Text>
+          ) : null}
+          {normalizeShiftLifecycleStatus(selectedShift.status) === 'rejected' ? (
+            <Text style={styles.recordMeta}>Offer was rejected before the shift went live. Fresh cover is still required.</Text>
+          ) : null}
+          {normalizeShiftLifecycleStatus(selectedShift.status) === 'missed' ? (
+            <Text style={styles.recordMeta}>Missed check-in exception: no attendance was recorded within the grace period. Re-cover is now required, and attendance follow-up may still be needed.</Text>
+          ) : null}
+          <Text style={styles.recordMeta}>Instructions: {selectedShift.instructions || 'No instructions recorded.'}</Text>
+          <View style={styles.rowActions}>
+            {normalizeShiftLifecycleStatus(selectedShift.status) === 'offered' ? (
+              <Pressable
+                style={styles.secondaryButton}
+                onPress={() => handleCancelShiftOffer(selectedShift.id)}
+                disabled={offerActionShiftId === selectedShift.id}
+              >
+                <Text style={styles.secondaryButtonText}>
+                  {offerActionShiftId === selectedShift.id ? 'Cancelling...' : 'Withdraw Offer'}
+                </Text>
+              </Pressable>
+            ) : null}
+            {normalizeShiftLifecycleStatus(selectedShift.status) === 'ready' ? (
+              <Pressable
+                style={styles.primaryButton}
+                onPress={() => {
+                  setShiftOffersFeedback({
+                    tone: 'success',
+                    message: `Opening Shift #${selectedShift.id} in Live Operations.`,
+                  });
+                  setActiveSection('live-operations');
+                }}
+              >
+                <Text style={styles.primaryButtonText}>Open In Live Operations</Text>
+              </Pressable>
+            ) : null}
+          </View>
+          {['rejected', 'missed'].includes(normalizeShiftLifecycleStatus(selectedShift.status)) ? (
+            <View style={styles.offerReassignBox}>
+              <WebSelect
+                value={reassignGuardByShiftId[selectedShift.id] || ''}
+                onChange={(value: string) =>
+                  setReassignGuardByShiftId((current) => ({ ...current, [selectedShift.id]: value }))
+                }
+                options={linkedGuardOptions.filter(
+                  (option) => option.value !== String(selectedShift.guard?.id ?? selectedShift.guardId ?? ''),
+                )}
+                placeholder="Choose replacement guard"
+              />
+              <Pressable
+                style={styles.primaryButton}
+                onPress={() => handleReofferShift(selectedShift.id)}
+                disabled={offerActionShiftId === selectedShift.id}
+              >
+                <Text style={styles.primaryButtonText}>
+                  {offerActionShiftId === selectedShift.id ? 'Re-offering...' : 'Re-offer Shift'}
+                </Text>
+              </Pressable>
+            </View>
+          ) : null}
+        </View>
+      ) : null}
+    </View>
+  );
+
+  const renderRecruitmentSection = () => (
+    <View style={styles.sectionStack}>
+      <View style={styles.splitLayout}>
+        <View style={styles.formCard}>
+          <Text style={styles.panelTitle}>Create Recruitment Job</Text>
+          <TextInput style={styles.input} value={jobForm.title} onChangeText={(value: string) => setJobForm((current) => ({ ...current, title: value }))} placeholder="Job title" />
+          <WebSelect value={jobForm.siteId} onChange={(value: string) => setJobForm((current) => ({ ...current, siteId: value }))} options={siteOptions} placeholder="Site" />
+          <TextInput style={[styles.input, styles.textArea]} multiline value={jobForm.description} onChangeText={(value: string) => setJobForm((current) => ({ ...current, description: value }))} placeholder="Description" />
+          <View style={styles.formRow}>
+            <TextInput style={[styles.input, styles.formCell]} value={jobForm.guardsRequired} onChangeText={(value: string) => setJobForm((current) => ({ ...current, guardsRequired: value }))} placeholder="Guards required" />
+            <TextInput style={[styles.input, styles.formCell]} value={jobForm.hourlyRate} onChangeText={(value: string) => setJobForm((current) => ({ ...current, hourlyRate: value }))} placeholder="Hourly rate" />
+            <TextInput style={[styles.input, styles.formCell]} value={jobForm.billingRate} onChangeText={(value: string) => setJobForm((current) => ({ ...current, billingRate: value }))} placeholder="Billing rate (optional)" />
+          </View>
+          <Pressable style={styles.primaryButton} onPress={handleCreateJob} disabled={creatingJob}>
+            <Text style={styles.primaryButtonText}>{creatingJob ? 'Saving...' : 'Create Job'}</Text>
+          </Pressable>
+        </View>
+        <View style={styles.tableCard}>
+          <Text style={styles.panelTitle}>Applications</Text>
+          <Text style={styles.helperText}>
+            Application review approves a guard for future work with this company. Shift offers are tracked separately once rota or shift assignment is made.
+          </Text>
+          {applications.map((application) => (
+            <View key={application.id} style={styles.tableRow}>
+              <Text style={styles.tableCellStrong}>{application.job?.title || `Job #${application.jobId}`}</Text>
+              <Text style={styles.tableCell}>{application.guard?.fullName || `Guard #${application.guardId}`}</Text>
+              <Text style={styles.tableCell}>{formatStatusLabel(application.status)}</Text>
+              <Text style={styles.tableCell}>
+                {applicationShiftSummaryById.get(application.id)
+                  ? `${formatStatusLabel(applicationShiftSummaryById.get(application.id)?.status || '')} · ${applicationShiftSummaryById.get(application.id)?.siteName}`
+                  : 'No shift offered'}
+              </Text>
+              <View style={styles.rowActions}>
+                {application.status === 'applied' ? (
+                  <Pressable
+                    style={styles.secondaryButton}
+                    onPress={() => handleReviewApplication(application.id, 'under_review')}
+                    disabled={reviewingApplicationId === application.id}
+                  >
+                    <Text style={styles.secondaryButtonText}>
+                      {reviewingApplicationId === application.id ? 'Updating...' : 'Under Review'}
+                    </Text>
+                  </Pressable>
+                ) : null}
+                {application.status !== 'accepted' && application.status !== 'rejected' ? (
+                  <>
+                    <Pressable
+                      style={styles.primaryButton}
+                      onPress={() => handleReviewApplication(application.id, 'accepted')}
+                      disabled={reviewingApplicationId === application.id}
+                    >
+                      <Text style={styles.primaryButtonText}>
+                        {reviewingApplicationId === application.id ? 'Updating...' : 'Accept Application'}
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      style={styles.secondaryButton}
+                      onPress={() => handleReviewApplication(application.id, 'rejected')}
+                      disabled={reviewingApplicationId === application.id}
+                    >
+                      <Text style={styles.secondaryButtonText}>
+                        {reviewingApplicationId === application.id ? 'Updating...' : 'Reject'}
+                      </Text>
+                    </Pressable>
+                  </>
+                ) : null}
+                {application.status === 'accepted' ? (
+                  <Text style={styles.helperText}>Approved for company assignment</Text>
+                ) : null}
+              </View>
+            </View>
+          ))}
+        </View>
+        <View style={styles.tableCard}>
+          <Text style={styles.panelTitle}>Approved Guards Ready For Shift Offers</Text>
+          <Text style={styles.helperText}>
+            These guards are recruitment-approved. Offer them specific shifts from Rota Planner or shift assignment without changing the application decision.
+          </Text>
+          {acceptedApplications.length === 0 ? (
+            <Text style={styles.helperText}>No approved applications yet.</Text>
+          ) : (
+            acceptedApplications.map((application) => {
+              const latestOffer = applicationShiftSummaryById.get(application.id);
+
+              return (
+                <View key={`approved-${application.id}`} style={styles.tableRow}>
+                  <Text style={styles.tableCellStrong}>{application.guard?.fullName || `Guard #${application.guardId}`}</Text>
+                  <Text style={styles.tableCell}>{application.job?.title || `Job #${application.jobId}`}</Text>
+                  <Text style={styles.tableCell}>Application Accepted</Text>
+                  <Text style={styles.tableCell}>
+                    {latestOffer
+                      ? `${formatStatusLabel(latestOffer.status)} · ${latestOffer.siteName}`
+                      : 'No shift offered yet'}
+                  </Text>
+                </View>
+              );
+            })
+          )}
+        </View>
+      </View>
+    </View>
+  );
+
+  const renderSimpleTableSection = (
+    title: string,
+    columns: string[],
+    rows: any,
+  ) => (
+    <View style={styles.sectionStack}>
+      <View style={styles.tableCard}>
+        <Text style={styles.sectionTitle}>{title}</Text>
+        {renderTableHeader(columns)}
+        {rows}
+      </View>
+    </View>
+  );
+
+  const renderContent = () => {
+    switch (activeSection) {
+      case 'dashboard':
+        return renderDashboardSection();
+      case 'clients':
+        return renderClientsSection();
+      case 'sites':
+        return renderSitesSection();
+      case 'rota-planner':
+        return renderRotaPlannerSection();
+      case 'shift-offers':
+        return renderShiftOffersSection();
+      case 'live-operations':
+        return renderLiveOperationsSection();
+      case 'analytics':
+        return <CompanyAnalyticsWorkspace />;
+      case 'coverage':
+        return <CompanyCoverageWorkspace navigationContext={coverageNavigationContext} />;
+      case 'guards':
+        return renderGuardsSection();
+      case 'availability':
+        return <CompanyAvailabilityWorkspace />;
+      case 'recruitment':
+        return renderRecruitmentSection();
+      case 'timesheets':
+        return <CompanyTimesheetsWorkspace timesheets={timesheets} refreshing={refreshing} onRefresh={() => loadData(true)} />;
+      case 'payroll':
+        return <CompanyPayrollWorkspace timesheets={timesheets} refreshing={refreshing} onRefresh={() => loadData(true)} />;
+      case 'payroll-batches':
+        return <CompanyPayrollBatchesWorkspace />;
+      case 'invoices':
+        return <CompanyInvoiceWorkspace timesheets={timesheets} refreshing={refreshing} onRefresh={() => loadData(true)} />;
+      case 'finance':
+        return <CompanyFinanceWorkspace timesheets={timesheets} refreshing={refreshing} onRefresh={() => loadData(true)} />;
+      case 'finance-control':
+        return <CompanyFinanceControlWorkspace timesheets={timesheets} refreshing={refreshing} onRefresh={() => loadData(true)} />;
+      case 'margins':
+        return <CompanyMarginWorkspace />;
+      case 'compliance':
+        return <CompanyComplianceWorkspace />;
+      case 'contract-pricing':
+        return <CompanyContractPricingWorkspace />;
+      case 'pay-rules':
+        return <CompanyPayRulesSettings />;
+      case 'audit':
+        return <CompanyAuditWorkspace />;
+      case 'incidents':
+        return renderSimpleTableSection(
+          'Incidents',
+          ['Incident', 'Shift', 'Site', 'Guard', 'Severity', 'Status', 'Time'],
+          incidents.map((incident) => (
+            <View key={incident.id} style={styles.tableRow}>
+              <Text style={styles.tableCellStrong}>#{incident.id}</Text>
+              <Text style={styles.tableCell}>{incident.shift?.id ? `#${incident.shift.id}` : '—'}</Text>
+              <Text style={styles.tableCell}>{incident.site?.name || incident.shift?.site?.name || '—'}</Text>
+              <Text style={styles.tableCell}>{incident.guard?.fullName || '—'}</Text>
+              <Text style={styles.tableCell}>{formatStatusLabel(incident.severity)}</Text>
+              <Text style={styles.tableCell}>{formatStatusLabel(incident.status)}</Text>
+              <Text style={styles.tableCell}>{formatDateTimeLabel(incident.createdAt)}</Text>
+            </View>
+          )),
+        );
+      case 'alerts':
+        return renderSimpleTableSection(
+          'Safety Alerts',
+          ['Type', 'Shift', 'Site', 'Guard', 'Status', 'Time'],
+          alerts.map((alert) => (
+            <View key={alert.id} style={styles.tableRow}>
+              <Text style={styles.tableCellStrong}>{formatStatusLabel(alert.type)}</Text>
+              <Text style={styles.tableCell}>{alert.shift?.id ? `#${alert.shift.id}` : '—'}</Text>
+              <Text style={styles.tableCell}>{alert.shift?.site?.name || alert.shift?.siteName || '—'}</Text>
+              <Text style={styles.tableCell}>{alert.guard?.fullName || '—'}</Text>
+              <Text style={styles.tableCell}>{formatStatusLabel(alert.status)}</Text>
+              <Text style={styles.tableCell}>{formatDateTimeLabel(alert.createdAt)}</Text>
+            </View>
+          )),
+        );
+      default:
+        return null;
+    }
+  };
+
+  if (companyMobileLayoutDisabled) {
+    return (
+      <View style={styles.companyMobileFallback}>
+        <Text style={styles.companyMobileFallbackTitle}>Company operations</Text>
+        <Text style={styles.companyMobileFallbackBody}>
+          The company dashboard is designed for tablet or desktop screens. For pilot testing, please open this app in a web browser on a larger display, or use a device at least {COMPANY_NATIVE_MIN_WIDTH}dp wide. Log out here if you need to switch accounts.
+        </Text>
+      </View>
+    );
+  }
+
+  if (loading) {
+    return (
+      <View style={styles.loadingShell}>
+        <Text style={styles.loadingText}>Loading company operations workspace...</Text>
+      </View>
+    );
+  }
+
+  const activeNavItem = NAV_ITEMS.find((item) => item.id === activeSection);
+  const headerContextCaption = activeNavItem?.caption;
+
+  return (
+    <View style={styles.screen}>
+      <View style={styles.sidebarShell}>
+        <CompanySidebar
+          title="Company Operations"
+          brandLogo={require('../../assets/icon.png')}
+          subtitle="S4 Security"
+          description="Clients, sites, rota planning, and live shift monitoring in one control room."
+          activeId={activeSection}
+          navItems={NAV_ITEMS}
+          groups={COMPANY_NAV_GROUPS}
+          onNavigate={(section) => {
+            if (section === 'coverage') setCoverageNavigationContext(undefined);
+            setActiveSection(section);
+          }}
+        />
+      </View>
+
+      <View style={styles.contentShell}>
+        <ScrollView
+          ref={contentScrollRef}
+          style={styles.content}
+          contentContainerStyle={[styles.contentContainer, IS_WEB ? styles.contentContainerWeb : null]}
+        >
+          <View style={[styles.header, IS_WEB ? styles.headerWeb : null]}>
+            <View style={styles.headerLeft}>
+              <View style={styles.headerBrandRow}>
+                <Image
+                  source={require('../../assets/icon.png')}
+                  style={styles.headerBrandLogo}
+                  resizeMode="contain"
+                  accessibilityLabel="S4 Security"
+                />
+                <Text style={styles.eyebrow}>Operations Console</Text>
+              </View>
+              <Text style={[styles.headerTitle, IS_WEB ? styles.headerTitleWeb : null]}>
+                {activeNavItem?.label || 'Company Dashboard'}
+              </Text>
+              {headerContextCaption ? (
+                <Text style={styles.headerContext} numberOfLines={2}>
+                  {headerContextCaption}
+                </Text>
+              ) : null}
+            </View>
+            <View style={styles.headerActions}>
+              <Pressable
+                onPress={() => loadData(true)}
+                style={({ hovered, pressed }: any) => [
+                  styles.secondaryButton,
+                  IS_WEB ? styles.headerRefreshButton : null,
+                  IS_WEB && hovered ? styles.headerRefreshButtonHover : null,
+                  IS_WEB && pressed ? styles.headerRefreshButtonPressed : null,
+                  WEB_POINTER_STYLE,
+                ]}
+              >
+                <Text style={[styles.secondaryButtonText, IS_WEB ? styles.headerRefreshButtonText : null]}>
+                  {refreshing ? 'Refreshing...' : 'Refresh Data'}
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+
+          {error ? (
+            <View style={styles.errorCard}>
+              <Text style={styles.errorTitle}>Action required</Text>
+              <Text style={styles.errorText}>{error}</Text>
+            </View>
+          ) : null}
+
+          {renderContent()}
+        </ScrollView>
+      </View>
+    </View>
+  );
+}
+
+const webSelectStyle = {
+  borderRadius: 14,
+  borderWidth: 1,
+  borderColor: colors.border,
+  backgroundColor: colors.card,
+  padding: '14px 16px',
+  fontSize: 14,
+  color: colors.primaryNavyStrong,
+  minHeight: 48,
+} as const;
+
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f3f4f6' },
-  content: { padding: 16, paddingBottom: 24 },
-  title: { fontSize: 24, fontWeight: '700', color: '#111827', marginBottom: 4 },
-  subtitle: { color: '#374151', marginBottom: 14 },
+  screen: {
+    flex: 1,
+    flexDirection: 'row',
+    backgroundColor: colors.surfaceSubtle,
+    overflow: 'hidden',
+    minHeight: 0,
+  },
+  sidebarShell: {
+    width: 310,
+    backgroundColor: colors.primaryNavy,
+    overflow: 'hidden',
+    minHeight: 0,
+  },
+  contentShell: {
+    flex: 1,
+    overflow: 'hidden',
+    minHeight: 0,
+  },
+  content: {
+    flex: 1,
+  },
+  contentContainer: {
+    paddingVertical: 28,
+    paddingHorizontal: 18,
+    gap: 26,
+  },
+  contentContainerWeb: {
+    paddingHorizontal: 32,
+    paddingTop: 30,
+    paddingBottom: 36,
+    gap: 30,
+    maxWidth: 1280,
+    width: '100%',
+    alignSelf: 'center',
+  } as any,
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 16,
+    paddingBottom: 18,
+    marginBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(148, 163, 184, 0.35)',
+  },
+  headerWeb: {
+    paddingBottom: 22,
+    marginBottom: 16,
+    borderBottomColor: 'rgba(226, 232, 240, 0.95)',
+  },
+  headerLeft: {
+    flex: 1,
+    minWidth: 0,
+    gap: 6,
+    paddingRight: 8,
+  },
+  headerBrandRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flexWrap: 'wrap',
+  },
+  headerBrandLogo: {
+    width: 36,
+    height: 36,
+  },
+  headerActions: {
+    flexShrink: 0,
+  },
+  eyebrow: {
+    textTransform: 'uppercase',
+    letterSpacing: 1.6,
+    fontSize: 11,
+    fontWeight: '800',
+    color: colors.textSecondary,
+  },
+  headerTitle: {
+    fontSize: 30,
+    fontWeight: '900',
+    color: colors.primaryNavy,
+    letterSpacing: -0.4,
+    lineHeight: 36,
+  },
+  headerTitleWeb: {
+    fontSize: 34,
+    lineHeight: 40,
+    letterSpacing: -0.6,
+  },
+  headerContext: {
+    marginTop: 2,
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: '500',
+    color: colors.textSecondary,
+    maxWidth: 720,
+  },
+  headerRefreshButton: {
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.surfaceSubtle,
+    borderRadius: 14,
+    paddingHorizontal: 18,
+    paddingVertical: 11,
+    shadowColor: colors.primaryNavy,
+    shadowOpacity: 0.045,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+  } as any,
+  headerRefreshButtonHover: {
+    borderColor: 'rgba(15, 23, 42, 0.14)',
+    shadowOpacity: 0.08,
+  } as any,
+  headerRefreshButtonPressed: {
+    opacity: 0.94,
+  } as any,
+  headerRefreshButtonText: {
+    fontWeight: '800',
+    fontSize: 13,
+    letterSpacing: 0.2,
+  },
+  sectionStack: {
+    gap: 28,
+  },
+  dashSectionShell: {
+    backgroundColor: colors.card,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: colors.surfaceSubtle,
+    padding: 22,
+    shadowColor: colors.primaryNavy,
+    shadowOpacity: 0.035,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+  },
+  dashSectionShellWeb: {
+    paddingVertical: 24,
+    paddingHorizontal: 26,
+    shadowOpacity: 0.045,
+  },
+  dashSectionHeader: {
+    gap: 8,
+    paddingBottom: 16,
+    marginBottom: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(226, 232, 240, 0.95)',
+  },
+  dashSectionTitle: {
+    fontSize: 17,
+    fontWeight: '900',
+    color: colors.primaryNavy,
+    letterSpacing: 0.25,
+  },
+  dashSectionSubtitle: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: colors.textSecondary,
+    lineHeight: 20,
+    letterSpacing: 0.08,
+    maxWidth: 720,
+  },
+  dashSectionBody: {
+    gap: 20,
+  },
+  dashSectionBodyFlush: {
+    marginTop: -2,
+  },
+  liveOpsToolbarRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 16,
+  },
+  liveOpsToolbarTitleBlock: {
+    flex: 1,
+    minWidth: 0,
+  },
+  liveOpsToolbarRefreshInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  liveOpsToolbarSync: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.pendingSurface,
+    backgroundColor: 'rgba(255, 255, 255, 0.92)',
+  },
+  liveOpsToolbarSyncText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.textSecondary,
+    letterSpacing: 0.05,
+  },
+  liveOpsToolbarSyncHover: {
+    borderColor: 'rgba(148, 163, 184, 0.55)',
+    backgroundColor: colors.card,
+  } as any,
+  liveOpsToolbarSyncPressed: {
+    opacity: 0.9,
+  } as any,
+  liveOpsUrgentRow: {
+    paddingVertical: 13,
+    borderBottomColor: 'rgba(254, 202, 202, 0.55)',
+  },
+  liveOpsUrgentRowBody: {
+    gap: 8,
+  },
+  liveOpsUrgentIssue: {
+    fontSize: 15,
+    letterSpacing: 0.06,
+    lineHeight: 21,
+  },
+  liveOpsUrgentMeta: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: '600',
+  },
+  liveOpsUrgentMessage: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: '500',
+  },
+  liveOpsUrgentMetaFooter: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: 10,
+    marginTop: 2,
+  },
+  liveOpsUrgentGuidance: {
+    flexGrow: 1,
+    flexShrink: 1,
+    minWidth: 140,
+    color: colors.primaryNavySoft,
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: '700',
+  },
+  liveOpsUrgentOccurred: {
+    flexShrink: 0,
+    color: colors.neutralSlate,
+    fontSize: 11,
+    lineHeight: 16,
+    fontWeight: '700',
+    letterSpacing: 0.05,
+  },
+  liveOpsUrgentActionBar: {
+    marginTop: 4,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(254, 202, 202, 0.75)',
+    alignItems: 'center',
+  },
+  liveOpsUrgentBtnPrimary: {
+    paddingVertical: 9,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+  },
+  liveOpsUrgentBtnSecondary: {
+    paddingVertical: 9,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    backgroundColor: colors.background,
+  },
+  liveOpsUrgentBtnPrimaryText: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  liveOpsUrgentBtnSecondaryText: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  liveOpsDetailEmpty: {
+    paddingVertical: 10,
+    paddingHorizontal: 2,
+    gap: 6,
+  },
+  liveOpsDetailEmptyTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.primaryNavy,
+    letterSpacing: 0.02,
+  },
+  liveOpsDetailEmptyDesc: {
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '500',
+    color: colors.textSecondary,
+    maxWidth: 520,
+  },
+  liveOpsUrgentInset: {
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.dangerSurface,
+    backgroundColor: colors.dangerSurface,
+    padding: 16,
+    gap: 12,
+  },
+  liveOpsSideRailIntro: {
+    gap: 6,
+    marginBottom: 4,
+    paddingBottom: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(226, 232, 240, 0.85)',
+  },
+  liveOpsSideRailEyebrow: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.14,
+    textTransform: 'uppercase',
+    color: colors.textSecondary,
+  },
+  liveOpsSideRailHint: {
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: '500',
+    color: colors.textSecondary,
+    maxWidth: 420,
+  },
+  liveOpsFilterStack: {
+    gap: 14,
+  },
+  liveOpsFilterGroup: {
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.surfaceSubtle,
+    backgroundColor: colors.background,
+    padding: 14,
+    gap: 8,
+  },
+  liveOpsFilterGroupWeb: {
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+  } as any,
+  liveOpsFilterGroupLabel: {
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.1,
+    color: colors.primaryNavy,
+  },
+  liveOpsFilterGroupHint: {
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '500',
+    color: colors.textSecondary,
+    marginTop: -2,
+  },
+  liveOpsFilterGroupRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+    alignItems: 'flex-end',
+  },
+  liveOpsFilterField: {
+    gap: 6,
+    minWidth: 0,
+  },
+  liveOpsFilterFieldGrow: {
+    flexGrow: 1,
+    flexBasis: 168,
+    minWidth: 148,
+  },
+  liveOpsFilterDateSlot: {
+    flexGrow: 1,
+    flexBasis: 200,
+    minWidth: 160,
+    maxWidth: 280,
+  },
+  liveOpsFilterFieldLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.08,
+    textTransform: 'uppercase',
+    color: colors.textSecondary,
+  },
+  liveOpsFilterTextInput: {
+    minHeight: 48,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.surfaceSubtle,
+    backgroundColor: colors.card,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    fontSize: 14,
+    color: colors.primaryNavyStrong,
+    width: '100%' as any,
+  },
+  liveOpsFilterWebSelectChrome: {
+    borderColor: colors.surfaceSubtle,
+    width: '100%' as any,
+    boxSizing: 'border-box' as any,
+  } as any,
+  liveOpsChromeInputBorder: {
+    borderColor: colors.surfaceSubtle,
+  },
+  liveOpsBoardWrap: {
+    alignSelf: 'stretch',
+  },
+  liveOpsBoardCard: {
+    alignSelf: 'stretch',
+  },
+  liveOpsSideCard: {
+    alignSelf: 'stretch',
+    width: '100%',
+  },
+  liveOpsSideColumn: {
+    gap: 16,
+  },
+  liveOpsListRowSide: {
+    gap: 7,
+    paddingVertical: 11,
+    borderBottomColor: 'rgba(226, 232, 240, 0.78)',
+  },
+  liveOpsListRowSideWeb: {
+    paddingVertical: 13,
+    paddingHorizontal: 10,
+  } as any,
+  liveOpsRowTitleSide: {
+    color: colors.primaryNavy,
+    fontWeight: '800',
+    fontSize: 14,
+    letterSpacing: 0.06,
+    lineHeight: 20,
+  },
+  liveOpsRowMetaSide: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: '500',
+  },
+  liveOpsSideRowMessage: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: '500',
+  },
+  liveOpsSideRowTimestamp: {
+    color: colors.neutralSlate,
+    fontSize: 11,
+    lineHeight: 16,
+    fontWeight: '700',
+    letterSpacing: 0.06,
+    marginTop: 2,
+  },
+  liveOpsListRow: {
+    gap: 6,
+    paddingVertical: 12,
+    paddingHorizontal: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(226, 232, 240, 0.88)',
+  },
+  liveOpsListRowWeb: {
+    paddingVertical: 14,
+    paddingHorizontal: 8,
+    borderBottomColor: 'rgba(226, 232, 240, 0.8)',
+  } as any,
+  liveOpsListRowLast: {
+    borderBottomWidth: 0,
+    paddingBottom: 6,
+  },
+  liveOpsRowTitle: {
+    color: colors.primaryNavy,
+    fontWeight: '800',
+    fontSize: 14,
+    letterSpacing: 0.05,
+    lineHeight: 20,
+  },
+  liveOpsRowMeta: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: '500',
+  },
+  liveOpsNextAction: {
+    color: colors.primaryNavy,
+    fontSize: 12,
+    fontWeight: '700',
+    lineHeight: 18,
+    letterSpacing: 0.02,
+  },
+  liveOpsSelectedInset: {
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(37, 99, 235, 0.22)',
+    backgroundColor: 'rgba(239, 246, 255, 0.55)',
+    padding: 18,
+    gap: 12,
+  },
+  liveOpsSelectedInsetWeb: {
+    padding: 22,
+    gap: 14,
+  } as any,
+  liveOpsSelectedHeader: {
+    gap: 8,
+    paddingBottom: 16,
+    marginBottom: 2,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(226, 232, 240, 0.95)',
+  },
+  liveOpsSelectedSummaryLine: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    lineHeight: 20,
+    fontWeight: '500',
+  },
+  liveOpsSelectedInstructions: {
+    color: colors.primaryNavySoft,
+    fontSize: 13,
+    lineHeight: 20,
+    fontWeight: '500',
+    marginTop: 4,
+  },
+  liveOpsSelectedBadgeRow: {
+    alignSelf: 'flex-start',
+    marginTop: 4,
+    marginBottom: 2,
+  },
+  liveOpsDetailTitle: {
+    fontSize: 17,
+    fontWeight: '900',
+    color: colors.primaryNavy,
+    letterSpacing: 0.25,
+    lineHeight: 24,
+  },
+  liveOpsDetailGrid: {
+    gap: 18,
+    marginTop: 8,
+  },
+  liveOpsDetailCard: {
+    padding: 18,
+    gap: 10,
+    borderRadius: 16,
+  },
+  liveOpsDetailSectionTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.14,
+    textTransform: 'uppercase',
+    color: colors.textSecondary,
+    marginBottom: 2,
+  },
+  liveOpsDetailTileLine: {
+    color: colors.primaryNavySoft,
+    fontSize: 13,
+    lineHeight: 20,
+    fontWeight: '500',
+  },
+  liveOpsDetailListLine: {
+    color: colors.primaryNavySoft,
+    fontSize: 13,
+    lineHeight: 20,
+    fontWeight: '500',
+    paddingVertical: 8,
+    paddingLeft: 12,
+    marginLeft: 2,
+    borderLeftWidth: 2,
+    borderLeftColor: colors.pendingSurface,
+  },
+  dashLivePanelCard: {
+    flex: 1,
+    alignSelf: 'stretch',
+    minHeight: 112,
+  },
+  sectionTitle: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: colors.primaryNavy,
+  },
+  kpiGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 18,
+  },
+  kpiCell: {
+    minWidth: 220,
+    flexGrow: 1,
+    flexBasis: 240,
+    maxWidth: 320,
+    alignSelf: 'stretch',
+  },
+  panelCell: {
+    minWidth: 320,
+    flexGrow: 1,
+    flexBasis: 380,
+    maxWidth: 620,
+  },
+  kpiCard: {
+    minWidth: 180,
+    flexGrow: 1,
+    backgroundColor: colors.card,
+    borderRadius: 22,
+    padding: 20,
+  },
+  kpiLabel: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  kpiValue: {
+    color: colors.primaryNavy,
+    fontSize: 32,
+    fontWeight: '800',
+    marginTop: 10,
+  },
+  panelGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 22,
+  },
+  panel: {
+    flexGrow: 1,
+    minWidth: 320,
+    backgroundColor: colors.card,
+    borderRadius: 22,
+    padding: 20,
+    gap: 12,
+  },
+  priorityPanel: {
+    shadowColor: colors.primaryNavy,
+    shadowOpacity: 0.05,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
+  },
+  urgentPanel: {
+    borderWidth: 1,
+    borderColor: colors.dangerSurface,
+    backgroundColor: colors.dangerSurface,
+  },
+  selectedShiftPanel: {
+    borderWidth: 1,
+    borderColor: colors.infoSurface,
+  },
+  secondaryPanel: {
+    backgroundColor: colors.background,
+    borderWidth: 1,
+    borderColor: colors.pendingSurface,
+  },
+  panelTitle: {
+    color: colors.primaryNavy,
+    fontSize: 20,
+    fontWeight: '800',
+  },
+  secondaryPanelTitle: {
+    fontSize: 18,
+    color: colors.primaryNavySoft,
+  },
+  panelTitleInline: {
+    marginTop: 12,
+  },
+  splitLayout: {
+    flexDirection: 'row',
+    gap: 20,
+    alignItems: 'flex-start',
+  },
+  tableCard: {
+    flex: 2,
+    backgroundColor: colors.card,
+    borderRadius: 22,
+    padding: 20,
+    gap: 10,
+  },
+  operationsBoardCard: {
+    flex: 2.2,
+    minWidth: 760,
+  },
+  operationsSideColumn: {
+    flex: 1,
+    minWidth: 320,
+    gap: 18,
+  },
+  formCard: {
+    flex: 1,
+    backgroundColor: colors.card,
+    borderRadius: 22,
+    padding: 20,
+    gap: 12,
+  },
+  toolbar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  toolbarActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  filterBar: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  input: {
+    flex: 1,
+    minHeight: 48,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    color: colors.primaryNavyStrong,
+    minWidth: 160,
+  },
+  textArea: {
+    minHeight: 100,
+    textAlignVertical: 'top',
+  },
+  textAreaSmall: {
+    minHeight: 72,
+    textAlignVertical: 'top',
+  },
+  formRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  formCell: {
+    flex: 1,
+  },
+  inputGroup: {
+    flex: 1,
+    gap: 6,
+  },
+  formActions: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  primaryButton: {
+    backgroundColor: colors.primaryNavy,
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  primaryButtonText: {
+    color: colors.background,
+    fontWeight: '700',
+  },
+  secondaryButton: {
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: colors.pendingSurface,
+  },
+  secondaryButtonText: {
+    color: colors.primaryNavy,
+    fontWeight: '700',
+  },
+  ghostButton: {
+    alignSelf: 'flex-end',
+    paddingVertical: 8,
+  },
+  ghostButtonText: {
+    color: colors.danger,
+    fontWeight: '700',
+  },
+  tableHeader: {
+    flexDirection: 'row',
+    gap: 12,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.pendingSurface,
+  },
+  tableHeaderText: {
+    flex: 1,
+    color: colors.textSecondary,
+    fontWeight: '700',
+    fontSize: 12,
+    textTransform: 'uppercase',
+  },
+  liveBoardScroll: {
+    marginHorizontal: -2,
+  } as any,
+  liveBoardScrollContent: {
+    minWidth: 860,
+    paddingBottom: 4,
+    paddingRight: 2,
+  },
+  liveBoardScrollContentWeb: {
+    minWidth: 1200,
+  } as any,
+  liveBoardTableHeader: {
+    alignItems: 'flex-end',
+    paddingBottom: 12,
+    borderBottomColor: 'rgba(226, 232, 240, 0.95)',
+    gap: 10,
+  },
+  liveBoardHdrText: {
+    color: colors.textSecondary,
+    fontWeight: '800',
+    fontSize: 11,
+    letterSpacing: 0.12,
+    textTransform: 'uppercase',
+    lineHeight: 14,
+  },
+  liveBoardColShift: {
+    flex: 4,
+    minWidth: 56,
+    maxWidth: 80,
+  },
+  liveBoardColSite: {
+    flex: 22,
+    minWidth: 148,
+    flexShrink: 1,
+  },
+  liveBoardColGuard: {
+    flex: 14,
+    minWidth: 108,
+    flexShrink: 1,
+  },
+  liveBoardColStatus: {
+    flex: 7,
+    minWidth: 84,
+    maxWidth: 112,
+    justifyContent: 'center',
+    alignItems: 'flex-start',
+    paddingTop: 2,
+  },
+  liveBoardColRisk: {
+    flex: 11,
+    minWidth: 96,
+    flexShrink: 1,
+  },
+  liveBoardColDelay: {
+    flex: 10,
+    minWidth: 88,
+    flexShrink: 0,
+  },
+  liveBoardColBookOn: {
+    flex: 7,
+    minWidth: 72,
+    flexShrink: 0,
+  },
+  liveBoardColBookOff: {
+    flex: 7,
+    minWidth: 72,
+    flexShrink: 0,
+  },
+  liveBoardColLastCheck: {
+    flex: 10,
+    minWidth: 100,
+    flexShrink: 0,
+  },
+  liveBoardColLogs: {
+    flex: 4,
+    minWidth: 44,
+    maxWidth: 56,
+    flexShrink: 0,
+  },
+  liveBoardColIncidents: {
+    flex: 4,
+    minWidth: 44,
+    maxWidth: 56,
+    flexShrink: 0,
+  },
+  liveBoardColPanic: {
+    flex: 7,
+    minWidth: 72,
+    flexShrink: 0,
+  },
+  liveBoardColTimesheet: {
+    flex: 9,
+    minWidth: 86,
+    flexShrink: 0,
+  },
+  liveBoardColAction: {
+    flex: 11,
+    minWidth: 116,
+    maxWidth: 200,
+    alignItems: 'flex-start',
+    paddingTop: 2,
+  },
+  liveBoardTableRow: {
+    alignItems: 'flex-start',
+    gap: 10,
+    paddingVertical: 12,
+  },
+  liveBoardCellCol: {
+    gap: 4,
+    minWidth: 0,
+  },
+  liveBoardCellBody: {
+    color: colors.primaryNavySoft,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  liveBoardShiftId: {
+    color: colors.primaryNavy,
+    fontWeight: '800',
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  liveBoardSiteTitle: {
+    color: colors.primaryNavy,
+    fontWeight: '700',
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  liveBoardSiteRisk: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '500',
+  },
+  liveBoardTableRowSelected: {
+    backgroundColor: colors.background,
+    borderRadius: 12,
+    paddingHorizontal: 6,
+  },
+  liveBoardActionButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  },
+  tableRow: {
+    flexDirection: 'row',
+    gap: 12,
+    alignItems: 'center',
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.pendingSurface,
+  },
+  liveBoardRow: {
+    cursor: 'pointer',
+  },
+  liveBoardRowHighlighted: {
+    borderWidth: 2,
+    borderColor: colors.info,
+    borderRadius: 14,
+  },
+  tableRowSelected: {
+    backgroundColor: colors.background,
+    borderRadius: 14,
+    paddingHorizontal: 10,
+  },
+  tableCell: {
+    flex: 1,
+    color: colors.primaryNavySoft,
+  },
+  tableCellStrong: {
+    flex: 1,
+    color: colors.primaryNavy,
+    fontWeight: '700',
+  },
+  rowActions: {
+    flexDirection: 'row',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  offerRow: {
+    flexDirection: 'column',
+    alignItems: 'stretch',
+    gap: 10,
+  },
+  offerRowSummary: {
+    flexDirection: 'row',
+    gap: 12,
+    alignItems: 'center',
+  },
+  offerRowActions: {
+    flexDirection: 'row',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  offerReassignBox: {
+    flexDirection: 'row',
+    gap: 8,
+    flexWrap: 'wrap',
+    alignItems: 'center',
+  },
+  recordRow: {
+    gap: 4,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.background,
+  },
+  recordRowHover: {
+    backgroundColor: 'rgba(15, 23, 42, 0.03)',
+    borderRadius: 12,
+    paddingHorizontal: 10,
+  },
+  recordRowWebHover: {
+    backgroundColor: 'rgba(15, 23, 42, 0.045)',
+    borderRadius: 12,
+  } as any,
+  recordRowPressed: {
+    backgroundColor: 'rgba(15, 23, 42, 0.05)',
+  },
+  recordTitle: {
+    color: colors.primaryNavy,
+    fontWeight: '700',
+  },
+  recordMeta: {
+    color: colors.textSecondary,
+    fontSize: 13,
+  },
+  dashListRow: {
+    gap: 6,
+    paddingVertical: 13,
+    paddingHorizontal: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(226, 232, 240, 0.88)',
+  },
+  dashListRowWeb: {
+    paddingVertical: 14,
+    paddingHorizontal: 12,
+    borderBottomColor: 'rgba(226, 232, 240, 0.8)',
+  } as any,
+  dashListRowLast: {
+    borderBottomWidth: 0,
+    paddingBottom: 6,
+  },
+  dashListRowTitle: {
+    color: colors.primaryNavy,
+    fontWeight: '800',
+    fontSize: 14,
+    letterSpacing: 0.05,
+    lineHeight: 20,
+  },
+  dashListRowMeta: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: '500',
+  },
+  dashListRowHovered: {
+    backgroundColor: 'rgba(15, 23, 42, 0.032)',
+    borderRadius: 12,
+  },
+  dashListRowWebHover: {
+    backgroundColor: 'rgba(15, 23, 42, 0.045)',
+  } as any,
+  dashListRowPressed: {
+    backgroundColor: 'rgba(15, 23, 42, 0.055)',
+    borderRadius: 12,
+  },
+  actionRequiredAnchor: {
+    borderRadius: 18,
+    padding: IS_WEB ? 6 : 6,
+  },
+  actionRequiredAnchorClear: {
+    backgroundColor: 'rgba(16, 185, 129, 0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.22)',
+    shadowColor: colors.primaryNavy,
+    shadowOpacity: 0.045,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+  },
+  actionRequiredAnchorActive: {
+    backgroundColor: 'rgba(254, 243, 199, 0.35)',
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.35)',
+    shadowColor: colors.primaryNavy,
+    shadowOpacity: 0.055,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+  },
+  actionRequiredCard: {
+    borderRadius: 18,
+  },
+  actionRequiredList: {
+    gap: 12,
+  },
+  actionRequiredListInnerClear: {
+    padding: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: 'rgba(16, 185, 129, 0.22)',
+    backgroundColor: 'rgba(255, 255, 255, 0.65)',
+  },
+  actionRequiredListInnerActive: {
+    padding: 12,
+    borderRadius: 16,
+    backgroundColor: 'rgba(248, 250, 252, 0.9)',
+    borderWidth: 1,
+    borderColor: 'rgba(226, 232, 240, 0.9)',
+  },
+  actionRequiredRow: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    borderRadius: 16,
+    borderWidth: 1,
+    overflow: 'hidden',
+  },
+  actionRequiredRowCool: {
+    backgroundColor: colors.card,
+    borderColor: colors.pendingSurface,
+  },
+  actionRequiredRowAttention: {
+    backgroundColor: 'rgba(254, 242, 242, 0.85)',
+    borderColor: 'rgba(239, 68, 68, 0.28)',
+  },
+  actionRequiredRowWarn: {
+    backgroundColor: 'rgba(255, 247, 237, 0.95)',
+    borderColor: 'rgba(249, 115, 22, 0.28)',
+  },
+  actionRequiredRowHover: {
+    shadowColor: colors.primaryNavy,
+    shadowOpacity: 0.05,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+    transform: [{ translateY: -1 }],
+  },
+  actionRequiredRowWebHover: {
+    borderColor: 'rgba(15, 23, 42, 0.14)',
+    shadowOpacity: 0.08,
+  } as any,
+  actionRequiredRowPressed: {
+    transform: [{ translateY: 0 }],
+  },
+  actionRequiredAccent: {
+    width: 4,
+    alignSelf: 'stretch',
+    backgroundColor: colors.pendingSurface,
+  },
+  actionRequiredAccentMuted: {
+    backgroundColor: colors.pendingSurface,
+  },
+  actionRequiredAccentBarAttention: {
+    backgroundColor: colors.danger,
+  },
+  actionRequiredAccentBarWarning: {
+    backgroundColor: colors.warning,
+  },
+  actionRequiredRowMain: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    minHeight: 70,
+  },
+  actionRequiredLeft: {
+    flex: 1,
+    gap: 5,
+    paddingRight: 8,
+    minWidth: 0,
+  },
+  actionRequiredRight: {
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+    gap: 6,
+    flexShrink: 0,
+  },
+  actionRequiredTitle: {
+    color: colors.primaryNavy,
+    fontWeight: '900',
+    fontSize: 15,
+    letterSpacing: 0.1,
+    lineHeight: 20,
+  },
+  actionRequiredTitleHot: {
+    color: colors.danger,
+  },
+  actionRequiredDescription: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: '500',
+    marginTop: 1,
+  },
+  actionRequiredCountBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 999,
+    paddingHorizontal: 11,
+    paddingVertical: 5,
+    borderWidth: 1,
+    minWidth: 56,
+  },
+  actionRequiredCountBadgeCool: {
+    backgroundColor: colors.background,
+    borderColor: colors.pendingSurface,
+  },
+  actionRequiredCountBadgeHot: {
+    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+    borderColor: 'rgba(239, 68, 68, 0.22)',
+  },
+  actionRequiredCount: {
+    color: colors.primaryNavy,
+    fontWeight: '900',
+    fontSize: 13,
+    letterSpacing: 0.2,
+  },
+  actionRequiredCountHot: {
+    color: colors.danger,
+  },
+  actionRequiredCtaWrap: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(37, 99, 235, 0.22)',
+    backgroundColor: 'rgba(37, 99, 235, 0.06)',
+  },
+  actionRequiredCta: {
+    color: colors.info,
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 0.2,
+  },
+  helperText: {
+    color: colors.textSecondary,
+    fontSize: 13,
+  },
+  urgentItemActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 8,
+  },
+  nextActionText: {
+    color: colors.primaryNavy,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  statusBadge: {
+    alignSelf: 'flex-start',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderWidth: 1,
+  },
+  statusBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'capitalize',
+  },
+  subtleLabel: {
+    color: colors.textSecondary,
+    fontWeight: '700',
+    fontSize: 13,
+  },
+  weekGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 16,
+  },
+  dayCard: {
+    width: '48%',
+    minWidth: 320,
+    backgroundColor: colors.card,
+    borderRadius: 22,
+    padding: 18,
+    gap: 12,
+  },
+  dayCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  dayCardTitle: {
+    color: colors.primaryNavy,
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  dayCardMeta: {
+    color: colors.textSecondary,
+    fontSize: 13,
+  },
+  plannerRow: {
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: colors.pendingSurface,
+    padding: 14,
+    gap: 10,
+  },
+  detailGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 16,
+    marginTop: 16,
+  },
+  detailCard: {
+    minWidth: 260,
+    flexGrow: 1,
+    backgroundColor: colors.background,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: colors.surfaceSubtle,
+    padding: 16,
+    gap: 8,
+  },
+  detailTitle: {
+    color: colors.primaryNavy,
+    fontWeight: '800',
+    fontSize: 16,
+  },
+  closeOutCard: {
+    backgroundColor: colors.background,
+  },
+  closeOutNotesSection: {
+    gap: 8,
+    marginTop: 8,
+  },
+  closeOutStatusGood: {
+    color: colors.success,
+  },
+  closeOutStatusAttention: {
+    color: colors.warning,
+  },
+  errorCard: {
+    backgroundColor: colors.dangerSurface,
+    borderRadius: 18,
+    padding: 16,
+    gap: 4,
+  },
+  errorTitle: {
+    color: colors.danger,
+    fontWeight: '800',
+  },
+  errorText: {
+    color: colors.danger,
+  },
+  feedbackCard: {
+    borderRadius: 18,
+    padding: 16,
+    gap: 4,
+  },
+  feedbackCardSuccess: {
+    backgroundColor: colors.successSurface,
+  },
+  feedbackCardError: {
+    backgroundColor: colors.dangerSurface,
+  },
+  feedbackTitle: {
+    fontWeight: '800',
+  },
+  feedbackTitleSuccess: {
+    color: colors.success,
+  },
+  feedbackTitleError: {
+    color: colors.danger,
+  },
+  feedbackText: {
+    fontSize: 14,
+  },
+  feedbackTextSuccess: {
+    color: colors.success,
+  },
+  feedbackTextError: {
+    color: colors.danger,
+  },
+  companyMobileFallback: {
+    flex: 1,
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+    paddingVertical: 32,
+    backgroundColor: colors.background,
+    gap: 16,
+  },
+  companyMobileFallbackTitle: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: colors.textPrimary,
+  },
+  companyMobileFallbackBody: {
+    fontSize: 16,
+    lineHeight: 24,
+    color: colors.textSecondary,
+  },
+  loadingShell: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: colors.surfaceSubtle,
+  },
+  loadingText: {
+    color: colors.primaryNavy,
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  dashEmptyWrap: {
+    paddingVertical: 18,
+    paddingHorizontal: 4,
+    gap: 8,
+    alignItems: 'flex-start',
+  },
+  dashEmptyTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: colors.primaryNavy,
+    letterSpacing: 0.1,
+  },
+  dashEmptyDesc: {
+    fontSize: 13,
+    lineHeight: 20,
+    color: colors.textSecondary,
+    fontWeight: '500',
+    maxWidth: 520,
+  },
+  dashEmptyCta: {
+    marginTop: 6,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 12,
+    backgroundColor: 'rgba(37, 99, 235, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(37, 99, 235, 0.22)',
+  },
+  dashEmptyCtaWebHover: {
+    backgroundColor: 'rgba(37, 99, 235, 0.11)',
+    borderColor: 'rgba(29, 78, 216, 0.35)',
+  } as any,
+  dashEmptyCtaWebPressed: {
+    opacity: 0.92,
+  } as any,
+  dashEmptyCtaText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: colors.info,
+  },
 });
+
+const LIVE_SHIFT_BOARD_COLUMN_LABELS = [
+  'Shift',
+  'Site',
+  'Guard',
+  'Status',
+  'Risk',
+  'Delay',
+  'Book On',
+  'Book Off',
+  'Last Check Call',
+  'Logs',
+  'Incidents',
+  'Panic / Welfare',
+  'Timesheet',
+  'Action',
+] as const;
+
+const LIVE_BOARD_COL_STYLES = [
+  styles.liveBoardColShift,
+  styles.liveBoardColSite,
+  styles.liveBoardColGuard,
+  styles.liveBoardColStatus,
+  styles.liveBoardColRisk,
+  styles.liveBoardColDelay,
+  styles.liveBoardColBookOn,
+  styles.liveBoardColBookOff,
+  styles.liveBoardColLastCheck,
+  styles.liveBoardColLogs,
+  styles.liveBoardColIncidents,
+  styles.liveBoardColPanic,
+  styles.liveBoardColTimesheet,
+  styles.liveBoardColAction,
+];
+
+function LiveShiftBoardTableHeader() {
+  return (
+    <View style={[styles.tableHeader, styles.liveBoardTableHeader]}>
+      {LIVE_SHIFT_BOARD_COLUMN_LABELS.map((label, index) => (
+        <Text key={label} style={[styles.liveBoardHdrText, LIVE_BOARD_COL_STYLES[index]]}>
+          {label}
+        </Text>
+      ))}
+    </View>
+  );
+}
+
+function LiveOpsDetailEmpty({ title, description }: { title: string; description: string }) {
+  return (
+    <View style={styles.liveOpsDetailEmpty}>
+      <Text style={styles.liveOpsDetailEmptyTitle}>{title}</Text>
+      <Text style={styles.liveOpsDetailEmptyDesc}>{description}</Text>
+    </View>
+  );
+}
+
+type DashboardSectionProps = React.PropsWithChildren<{
+  title?: string;
+  subtitle?: string;
+}>;
+
+function DashboardSection({ title, subtitle, children }: DashboardSectionProps) {
+  const showHeader = Boolean((title && title.trim()) || (subtitle && subtitle.trim()));
+
+  return (
+    <View style={[styles.dashSectionShell, IS_WEB ? styles.dashSectionShellWeb : null]}>
+      {showHeader ? (
+        <View style={styles.dashSectionHeader}>
+          {title ? <Text style={styles.dashSectionTitle}>{title}</Text> : null}
+          {subtitle ? <Text style={styles.dashSectionSubtitle}>{subtitle}</Text> : null}
+        </View>
+      ) : null}
+      <View style={[styles.dashSectionBody, !showHeader ? styles.dashSectionBodyFlush : null]}>{children}</View>
+    </View>
+  );
+}
+
+type DashboardPanelEmptyProps = {
+  title: string;
+  description: string;
+  actionLabel?: string;
+  onAction?: () => void;
+};
+
+function DashboardPanelEmpty({ title, description, actionLabel, onAction }: DashboardPanelEmptyProps) {
+  return (
+    <View style={styles.dashEmptyWrap}>
+      <Text style={styles.dashEmptyTitle}>{title}</Text>
+      <Text style={styles.dashEmptyDesc}>{description}</Text>
+      {actionLabel && onAction ? (
+        <Pressable
+          onPress={onAction}
+          style={({ hovered, pressed }: any) => [
+            styles.dashEmptyCta,
+            hovered && IS_WEB ? styles.dashEmptyCtaWebHover : null,
+            pressed && IS_WEB ? styles.dashEmptyCtaWebPressed : null,
+            WEB_POINTER_STYLE,
+          ]}
+        >
+          <Text style={styles.dashEmptyCtaText}>{actionLabel}</Text>
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
+

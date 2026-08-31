@@ -1,9 +1,18 @@
-import { Column, CreateDateColumn, Entity, ManyToOne, OneToMany, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  Column,
+  CreateDateColumn,
+  Entity,
+  ManyToOne,
+  OneToMany,
+  OneToOne,
+  PrimaryGeneratedColumn,
+} from 'typeorm';
 import { Job } from '../../job/entities/job.entity';
 import { Company } from '../../company/entities/company.entity';
 import { GuardProfile } from '../../guard-profile/entities/guard-profile.entity';
 import { JobApplication } from '../../job-application/entities/job-application.entity';
 import { Shift } from '../../shift/entities/shift.entity';
+import { JobSlot } from '../../job-slot/entities/job-slot.entity';
 
 @Entity('assignments')
 export class Assignment {
@@ -19,8 +28,13 @@ export class Assignment {
   @ManyToOne(() => GuardProfile, (guard) => guard.assignments, { eager: true })
   guard!: GuardProfile;
 
-  @ManyToOne(() => JobApplication, (application) => application.assignments, { eager: true })
+  @ManyToOne(() => JobApplication, (application) => application.assignments, {
+    eager: true,
+  })
   application!: JobApplication;
+
+  @OneToOne(() => JobSlot, (slot) => slot.assignment, { nullable: true })
+  jobSlot?: JobSlot | null;
 
   @Column({ default: 'active' })
   status!: string;
@@ -29,5 +43,5 @@ export class Assignment {
   hiredAt!: Date;
 
   @OneToMany(() => Shift, (shift) => shift.assignment)
-  shifts?: Shift[];
+  shifts!: Shift[];
 }

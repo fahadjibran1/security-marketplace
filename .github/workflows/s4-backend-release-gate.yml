@@ -1,0 +1,160 @@
+name: S4 Backend Release Gate
+
+on:
+  push:
+    branches:
+      - s4-release-stabilization
+      - release/v1.0.0-rc1
+      - main
+    paths:
+      - 'security-backend-nest/**'
+      - '.github/workflows/s4-backend-release-gate.yml'
+  pull_request:
+    branches:
+      - main
+      - release/v1.0.0-rc1
+    paths:
+      - 'security-backend-nest/**'
+      - '.github/workflows/s4-backend-release-gate.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: s4-backend-release-gate-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  backend-release-gate:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: s4
+          POSTGRES_PASSWORD: s4_test_password
+          POSTGRES_DB: s4_release_gate
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U s4 -d s4_release_gate"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    defaults:
+      run:
+        working-directory: security-backend-nest
+
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_release_gate
+      DATABASE_SSL: 'false'
+      DATABASE_SYNCHRONIZE: 'false'
+      JWT_SECRET: s4-release-gate-only-secret-not-for-production
+      CORS_ORIGIN: http://localhost:3001
+      ENABLE_SWAGGER: 'false'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+
+      - name: Use Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: security-backend-nest/package-lock.json
+
+      - name: Reconcile lockfile from pinned manifest
+        run: npm install --package-lock-only --ignore-scripts
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Capture complete dependency audit
+        shell: bash
+        run: npm audit --json > npm-audit.json || true
+
+      - name: Capture production dependency audit
+        shell: bash
+        run: npm audit --omit=dev --json > npm-audit-production.json || true
+
+      - name: Summarise production dependency risk
+        shell: bash
+        run: |
+          node - <<'NODE'
+          const fs = require('fs');
+          const audit = JSON.parse(fs.readFileSync('npm-audit-production.json', 'utf8'));
+          const counts = audit.metadata?.vulnerabilities || {};
+          console.log(JSON.stringify({ event: 'production_dependency_audit', ...counts }));
+          NODE
+
+      - name: Upload dependency audits
+        uses: actions/upload-artifact@v4
+        with:
+          name: s4-npm-audit
+          path: |
+            security-backend-nest/npm-audit.json
+            security-backend-nest/npm-audit-production.json
+          if-no-files-found: error
+
+      - name: Compile backend
+        run: npm run build
+
+      - name: Run release smoke tests
+        run: npm run test:release
+
+      - name: Run compiled production migrations on clean database
+        run: npm run migration:run:prod
+
+      - name: Prove compiled production migrations are idempotent
+        run: npm run migration:run:prod
+
+      - name: Show compiled production migration state
+        run: npm run migration:show:prod
+
+      - name: Capture entity-to-migration schema drift
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run typeorm -- schema:log -d src/database/data-source.ts 2>&1 | tee schema-drift.log
+          sed -r 's/\x1B\[[0-9;]*[mK]//g' schema-drift.log > schema-drift-clean.log
+
+      - name: Upload schema drift diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: s4-schema-drift
+          path: |
+            security-backend-nest/schema-drift.log
+            security-backend-nest/schema-drift-clean.log
+          if-no-files-found: warn
+
+      - name: Fail on semantic entity-to-migration schema drift
+        shell: bash
+        run: |
+          if grep -Eiq 'CREATE TABLE|DROP TABLE|CREATE TYPE|DROP TYPE|ALTER TYPE|ALTER TABLE.*ALTER COLUMN|ALTER TABLE.*DROP COLUMN|ALTER TABLE.*ADD "' schema-drift-clean.log; then
+            echo 'Semantic schema drift detected: entity metadata and migrations disagree on columns, types, defaults, enums or nullability.'
+            cat schema-drift-clean.log
+            exit 1
+          fi
+          echo 'No semantic schema drift detected. Constraint/index naming differences, if any, remain available in the diagnostic artifact.'
+
+      - name: Commit deterministic backend lockfile reconciliation
+        if: github.event_name == 'push'
+        working-directory: .
+        shell: bash
+        run: |
+          if git diff --quiet -- security-backend-nest/package-lock.json; then
+            echo 'Backend lockfile already matches the pinned manifest.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add security-backend-nest/package-lock.json
+          git commit -m 'Synchronize hardened backend lockfile'
+          git push

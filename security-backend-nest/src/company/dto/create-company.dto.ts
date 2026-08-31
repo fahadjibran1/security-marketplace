@@ -1,4 +1,6 @@
 import { IsInt, IsString } from 'class-validator';
+import { CompanyStatus } from '../entities/company.entity';
+import { IsEnum, IsOptional } from 'class-validator';
 
 export class CreateCompanyDto {
   @IsInt()
@@ -15,4 +17,8 @@ export class CreateCompanyDto {
 
   @IsString()
   contactDetails!: string;
+
+  @IsOptional()
+  @IsEnum(CompanyStatus)
+  status?: CompanyStatus;
 }

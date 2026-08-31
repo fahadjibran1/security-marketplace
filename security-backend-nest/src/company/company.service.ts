@@ -1,9 +1,11 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import { Company } from './entities/company.entity';
 import { CreateCompanyDto } from './dto/create-company.dto';
+import { UpdateCompanyDto } from './dto/update-company.dto';
 import { UserService } from '../user/user.service';
+import { User } from '../user/entities/user.entity';
 
 @Injectable()
 export class CompanyService {
@@ -12,10 +14,14 @@ export class CompanyService {
     private readonly userService: UserService
   ) {}
 
-  async create(dto: CreateCompanyDto): Promise<Company> {
-    const user = await this.userService.findById(dto.userId);
-    const company = this.companyRepo.create({ ...dto, user });
-    return this.companyRepo.save(company);
+  async create(dto: CreateCompanyDto, manager?: EntityManager): Promise<Company> {
+    const repo = manager?.getRepository(Company) ?? this.companyRepo;
+    const user = manager
+      ? await manager.getRepository(User).findOne({ where: { id: dto.userId } })
+      : await this.userService.findById(dto.userId);
+    if (!user) throw new NotFoundException('User not found');
+    const company = repo.create({ ...dto, user });
+    return repo.save(company);
   }
 
   findAll(): Promise<Company[]> {
@@ -26,5 +32,17 @@ export class CompanyService {
     const company = await this.companyRepo.findOne({ where: { id } });
     if (!company) throw new NotFoundException('Company not found');
     return company;
+  }
+
+  async findByUserId(userId: number): Promise<Company | null> {
+    return this.companyRepo.findOne({ where: { user: { id: userId } } });
+  }
+
+  async updateByUserId(userId: number, dto: UpdateCompanyDto): Promise<Company> {
+    const company = await this.findByUserId(userId);
+    if (!company) throw new NotFoundException('Company not found');
+
+    Object.assign(company, dto);
+    return this.companyRepo.save(company);
   }
 }

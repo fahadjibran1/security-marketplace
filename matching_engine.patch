@@ -4119,10 +4119,10 @@ index 0000000000000000000000000000000000000000..256648114a9983377debfde44bda4368
 +}
 diff --git a/security-backend/package.json b/security-backend/package.json
 new file mode 100644
-index 0000000000000000000000000000000000000000..86b152e4e4b6066390f8d894fb7fe081264e9b67
+index 0000000000000000000000000000000000000000..b5341b33e4339f3e601e6bbc5ce9dd203d540685
 --- /dev/null
 +++ b/security-backend/package.json
-@@ -0,0 +1,51 @@
+@@ -0,0 +1,53 @@
 +{
 +  "name": "security-backend",
 +  "version": "0.1.0",
@@ -4145,6 +4145,7 @@ index 0000000000000000000000000000000000000000..86b152e4e4b6066390f8d894fb7fe081
 +    "@nestjs/jwt": "^10.2.0",
 +    "@nestjs/passport": "^10.0.3",
 +    "@nestjs/platform-express": "^10.4.2",
++    "@nestjs/swagger": "^7.4.2",
 +    "@nestjs/typeorm": "^10.0.2",
 +    "bcrypt": "^5.1.1",
 +    "class-transformer": "^0.5.1",
@@ -4154,6 +4155,7 @@ index 0000000000000000000000000000000000000000..86b152e4e4b6066390f8d894fb7fe081
 +    "pg": "^8.13.1",
 +    "reflect-metadata": "^0.2.2",
 +    "rxjs": "^7.8.1",
++    "swagger-ui-express": "^5.0.1",
 +    "typeorm": "^0.3.20",
 +    "dotenv": "^16.4.5"
 +  },
@@ -4176,10 +4178,10 @@ index 0000000000000000000000000000000000000000..86b152e4e4b6066390f8d894fb7fe081
 +}
 diff --git a/security-backend/src/app.module.ts b/security-backend/src/app.module.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..67cad19dfd11115e429be8725f50a592ce99fd0f
+index 0000000000000000000000000000000000000000..4bcfdcd468fe66d67a3c2ae5405c7dfdab421347
 --- /dev/null
 +++ b/security-backend/src/app.module.ts
-@@ -0,0 +1,39 @@
+@@ -0,0 +1,41 @@
 +import { Module } from '@nestjs/common';
 +import { ConfigModule, ConfigService } from '@nestjs/config';
 +import { TypeOrmModule } from '@nestjs/typeorm';
@@ -4195,6 +4197,7 @@ index 0000000000000000000000000000000000000000..67cad19dfd11115e429be8725f50a592
 +import { JobSlotModule } from './job-slot/job-slot.module';
 +import { CompanyGuardModule } from './company-guard/company-guard.module';
 +import { JobMatchModule } from './job-match/job-match.module';
++import { MatchingModule } from './matching/matching.module';
 +import { buildDatabaseConfig } from './config/database.config';
 +
 +@Module({
@@ -4216,6 +4219,7 @@ index 0000000000000000000000000000000000000000..67cad19dfd11115e429be8725f50a592
 +    JobSlotModule,
 +    CompanyGuardModule,
 +    JobMatchModule,
++    MatchingModule,
 +  ],
 +})
 +export class AppModule {}
@@ -5567,10 +5571,10 @@ index 0000000000000000000000000000000000000000..1ad0b0210a04b68eae304d6b752bb0c9
 +}
 diff --git a/security-backend/src/job-application/job-application.module.ts b/security-backend/src/job-application/job-application.module.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..e2886027a131b35860c821a9d6f5d3a0d7b793a2
+index 0000000000000000000000000000000000000000..ad5e5defb625b68daa8ba9add557989749afef6b
 --- /dev/null
 +++ b/security-backend/src/job-application/job-application.module.ts
-@@ -0,0 +1,23 @@
+@@ -0,0 +1,27 @@
 +import { Module, forwardRef } from '@nestjs/common';
 +import { TypeOrmModule } from '@nestjs/typeorm';
 +import { JobApplication } from './entities/job-application.entity';
@@ -5580,12 +5584,16 @@ index 0000000000000000000000000000000000000000..e2886027a131b35860c821a9d6f5d3a0
 +import { GuardProfileModule } from '../guard-profile/guard-profile.module';
 +import { AssignmentModule } from '../assignment/assignment.module';
 +import { ShiftModule } from '../shift/shift.module';
++import { JobSlotModule } from '../job-slot/job-slot.module';
++import { MatchingModule } from '../matching/matching.module';
 +
 +@Module({
 +  imports: [
 +    TypeOrmModule.forFeature([JobApplication]),
 +    JobModule,
 +    GuardProfileModule,
++    JobSlotModule,
++    MatchingModule,
 +    forwardRef(() => AssignmentModule),
 +    forwardRef(() => ShiftModule)
 +  ],
@@ -5596,10 +5604,10 @@ index 0000000000000000000000000000000000000000..e2886027a131b35860c821a9d6f5d3a0
 +export class JobApplicationModule {}
 diff --git a/security-backend/src/job-application/job-application.service.ts b/security-backend/src/job-application/job-application.service.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..bae54a6850caabc68fe655b65fc3296b6a2229b5
+index 0000000000000000000000000000000000000000..aa3e4b274cbdf0628987e5fbf19316bbf35bfb33
 --- /dev/null
 +++ b/security-backend/src/job-application/job-application.service.ts
-@@ -0,0 +1,89 @@
+@@ -0,0 +1,100 @@
 +import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 +import { InjectRepository } from '@nestjs/typeorm';
 +import { Repository } from 'typeorm';
@@ -5611,6 +5619,8 @@ index 0000000000000000000000000000000000000000..bae54a6850caabc68fe655b65fc3296b
 +import { HireApplicationDto } from './dto/hire-application.dto';
 +import { ShiftService } from '../shift/shift.service';
 +import { JobSourceType } from '../job/entities/job.entity';
++import { JobSlotService } from '../job-slot/job-slot.service';
++import { MatchingService } from '../matching/matching.service';
 +
 +@Injectable()
 +export class JobApplicationService {
@@ -5620,7 +5630,9 @@ index 0000000000000000000000000000000000000000..bae54a6850caabc68fe655b65fc3296b
 +    private readonly jobsService: JobService,
 +    private readonly guardService: GuardProfileService,
 +    private readonly assignmentService: AssignmentService,
-+    private readonly shiftService: ShiftService
++    private readonly shiftService: ShiftService,
++    private readonly slotService: JobSlotService,
++    private readonly matchingService: MatchingService,
 +  ) {}
 +
 +  findAll(): Promise<JobApplication[]> {
@@ -5651,7 +5663,14 @@ index 0000000000000000000000000000000000000000..bae54a6850caabc68fe655b65fc3296b
 +    if (existing) throw new ConflictException('Application already exists for this guard/job');
 +
 +    const application = this.appRepo.create({ job, guard, status: 'submitted' });
-+    return this.appRepo.save(application);
++    const savedApplication = await this.appRepo.save(application);
++
++    const openSlot = await this.slotService.findOpenSlotForJob(job.id).catch(() => null);
++    if (openSlot) {
++      await this.matchingService.createMatchFromApplication(openSlot.id, guard.id);
++    }
++
++    return savedApplication;
 +  }
 +
 +  async hire(applicationId: number, dto: HireApplicationDto) {
@@ -5766,10 +5785,10 @@ index 0000000000000000000000000000000000000000..1f20a875f1ad104790415f61030bad1a
 +export class JobMatchModule {}
 diff --git a/security-backend/src/job-match/job-match.service.ts b/security-backend/src/job-match/job-match.service.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..746fd0b17fa4fae636583aa194bbbf1c8604f21b
+index 0000000000000000000000000000000000000000..8a8a58c1c8629b926b4a0d69e9ac2cbc354cc625
 --- /dev/null
 +++ b/security-backend/src/job-match/job-match.service.ts
-@@ -0,0 +1,103 @@
+@@ -0,0 +1,129 @@
 +import { Injectable, NotFoundException } from '@nestjs/common';
 +import { InjectRepository } from '@nestjs/typeorm';
 +import { In, Not, Repository } from 'typeorm';
@@ -5779,6 +5798,7 @@ index 0000000000000000000000000000000000000000..746fd0b17fa4fae636583aa194bbbf1c
 +import { CompanyGuard, CompanyGuardStatus } from '../company-guard/entities/company-guard.entity';
 +import { GuardProfile } from '../guard-profile/entities/guard-profile.entity';
 +import { Shift } from '../shift/entities/shift.entity';
++import { JobSlotStatus } from '../job-slot/entities/job-slot.entity';
 +
 +@Injectable()
 +export class JobMatchService {
@@ -5822,6 +5842,31 @@ index 0000000000000000000000000000000000000000..746fd0b17fa4fae636583aa194bbbf1c
 +    );
 +
 +    return this.matchRepo.save(matches);
++  }
++
++  async createMatchFromApplication(jobSlotId: number, guardId: number): Promise<JobMatch | null> {
++    const slot = await this.slotService.findById(jobSlotId);
++    if (!slot.job || slot.status !== JobSlotStatus.OPEN) return null;
++
++    const guard = await this.guardRepo.findOne({ where: { id: guardId } });
++    if (!guard) throw new NotFoundException('Guard not found');
++
++    const existing = await this.matchRepo.findOne({ where: { jobSlot: { id: slot.id }, guard: { id: guard.id } } });
++    if (existing) return existing;
++
++    const [availableGuard] = await this.excludeUnavailableByShift([guard], slot.job.startAt, slot.job.endAt);
++    if (!availableGuard) return null;
++
++    const match = this.matchRepo.create({
++      jobSlot: slot,
++      guard,
++      matchScore: this.scoreGuard(guard, 0),
++      matchReason: 'Created from guard application',
++      sourceType: JobMatchSourceType.MARKETPLACE_POOL,
++      status: JobMatchStatus.APPLIED,
++    });
++
++    return this.matchRepo.save(match);
 +  }
 +
 +  private async internalCandidates(companyId: number): Promise<GuardProfile[]> {
@@ -5949,24 +5994,27 @@ index 0000000000000000000000000000000000000000..98af53d33340830e991cfc960369aa2c
 +}
 diff --git a/security-backend/src/job-slot/job-slot.controller.ts b/security-backend/src/job-slot/job-slot.controller.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..e5370bee46c2d1aa4b483f01df72f1279d764678
+index 0000000000000000000000000000000000000000..7b56fbe0ddc4ce883b9417770d9a48f5ca52c64d
 --- /dev/null
 +++ b/security-backend/src/job-slot/job-slot.controller.ts
-@@ -0,0 +1,34 @@
+@@ -0,0 +1,39 @@
 +import { Controller, Get, Param, ParseIntPipe, Post, UseGuards } from '@nestjs/common';
++import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 +import { JobSlotService } from './job-slot.service';
 +import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 +import { RolesGuard } from '../common/guards/roles.guard';
 +import { Roles } from '../common/decorators/roles.decorator';
 +import { UserRole } from '../user/entities/user.entity';
-+import { JobMatchService } from '../job-match/job-match.service';
++import { MatchingService } from '../matching/matching.service';
 +
++@ApiTags('job-slots')
++@ApiBearerAuth()
 +@Controller('job-slots')
 +@UseGuards(JwtAuthGuard, RolesGuard)
 +export class JobSlotController {
 +  constructor(
 +    private readonly slotService: JobSlotService,
-+    private readonly jobMatchService: JobMatchService,
++    private readonly matchingService: MatchingService,
 +  ) {}
 +
 +  @Get()
@@ -5976,20 +6024,22 @@ index 0000000000000000000000000000000000000000..e5370bee46c2d1aa4b483f01df72f127
 +  }
 +
 +  @Get(':id/matches')
++  @ApiOperation({ summary: 'Get matches for a given job slot' })
 +  @Roles(UserRole.ADMIN, UserRole.COMPANY)
 +  findMatches(@Param('id', ParseIntPipe) id: number) {
-+    return this.jobMatchService.findBySlot(id);
++    return this.matchingService.findBySlot(id);
 +  }
 +
 +  @Post(':id/rematch')
++  @ApiOperation({ summary: 'Recompute matches for a given job slot' })
 +  @Roles(UserRole.ADMIN, UserRole.COMPANY)
 +  rematch(@Param('id', ParseIntPipe) id: number) {
-+    return this.jobMatchService.rematch(id);
++    return this.matchingService.rematch(id);
 +  }
 +}
 diff --git a/security-backend/src/job-slot/job-slot.module.ts b/security-backend/src/job-slot/job-slot.module.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..a6f208b9394e2d7d6a172c58bec0acaa73170165
+index 0000000000000000000000000000000000000000..4890570e05654b23b6b57eb3ba6fdf67e79c510b
 --- /dev/null
 +++ b/security-backend/src/job-slot/job-slot.module.ts
 @@ -0,0 +1,14 @@
@@ -5998,10 +6048,10 @@ index 0000000000000000000000000000000000000000..a6f208b9394e2d7d6a172c58bec0acaa
 +import { JobSlot } from './entities/job-slot.entity';
 +import { JobSlotService } from './job-slot.service';
 +import { JobSlotController } from './job-slot.controller';
-+import { JobMatchModule } from '../job-match/job-match.module';
++import { MatchingModule } from '../matching/matching.module';
 +
 +@Module({
-+  imports: [TypeOrmModule.forFeature([JobSlot]), forwardRef(() => JobMatchModule)],
++  imports: [TypeOrmModule.forFeature([JobSlot]), forwardRef(() => MatchingModule)],
 +  providers: [JobSlotService],
 +  controllers: [JobSlotController],
 +  exports: [JobSlotService, TypeOrmModule],
@@ -6088,10 +6138,10 @@ index 0000000000000000000000000000000000000000..49ab0b1708827a0114834def0ccbd2bb
 +}
 diff --git a/security-backend/src/job/dto/create-job.dto.ts b/security-backend/src/job/dto/create-job.dto.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..c827e3a7b0bf6dc6a6a1886e403e1e06b39af48a
+index 0000000000000000000000000000000000000000..05cdb0d04f119642f825a778bc5647302609fb91
 --- /dev/null
 +++ b/security-backend/src/job/dto/create-job.dto.ts
-@@ -0,0 +1,37 @@
+@@ -0,0 +1,42 @@
 +import { IsDateString, IsEnum, IsInt, IsNumber, IsOptional, IsString, Min } from 'class-validator';
 +import { JobSourceType } from '../entities/job.entity';
 +
@@ -6112,6 +6162,11 @@ index 0000000000000000000000000000000000000000..c827e3a7b0bf6dc6a6a1886e403e1e06
 +  @IsInt()
 +  @Min(1)
 +  guardsRequired!: number;
++
++  @IsOptional()
++  @IsInt()
++  @Min(1)
++  workersNeeded?: number;
 +
 +  @IsNumber()
 +  @Min(0)
@@ -6199,11 +6254,12 @@ index 0000000000000000000000000000000000000000..cd55e35e4c7730e4e4c7cfa654c84d16
 +}
 diff --git a/security-backend/src/job/job.controller.ts b/security-backend/src/job/job.controller.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..0a7d1f790e629f79ea080a72322da46ba2d97bd7
+index 0000000000000000000000000000000000000000..56304cf9090aa618784af67fbb998134e2977554
 --- /dev/null
 +++ b/security-backend/src/job/job.controller.ts
-@@ -0,0 +1,41 @@
+@@ -0,0 +1,45 @@
 +import { Body, Controller, Get, Param, ParseIntPipe, Post, UseGuards } from '@nestjs/common';
++import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 +import { JobService } from './job.service';
 +import { CreateJobDto } from './dto/create-job.dto';
 +import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -6212,6 +6268,8 @@ index 0000000000000000000000000000000000000000..0a7d1f790e629f79ea080a72322da46b
 +import { UserRole } from '../user/entities/user.entity';
 +import { JobSlotService } from '../job-slot/job-slot.service';
 +
++@ApiTags('jobs')
++@ApiBearerAuth()
 +@Controller('jobs')
 +@UseGuards(JwtAuthGuard, RolesGuard)
 +export class JobController {
@@ -6233,6 +6291,7 @@ index 0000000000000000000000000000000000000000..0a7d1f790e629f79ea080a72322da46b
 +  }
 +
 +  @Get(':id/slots')
++  @ApiOperation({ summary: 'Get all slots for a job' })
 +  @Roles(UserRole.ADMIN, UserRole.COMPANY, UserRole.GUARD)
 +  findSlots(@Param('id', ParseIntPipe) id: number) {
 +    return this.slotService.findByJobId(id);
@@ -6267,10 +6326,10 @@ index 0000000000000000000000000000000000000000..f366b9e5da485b5a2ac8a10bc4e6353b
 +export class JobModule {}
 diff --git a/security-backend/src/job/job.service.ts b/security-backend/src/job/job.service.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..b0e969aa7316b9154e51523d61c476af9e000bbe
+index 0000000000000000000000000000000000000000..f966bc236960ffe93d23f0aa2c1999026a202d53
 --- /dev/null
 +++ b/security-backend/src/job/job.service.ts
-@@ -0,0 +1,45 @@
+@@ -0,0 +1,46 @@
 +import { Injectable, NotFoundException } from '@nestjs/common';
 +import { InjectRepository } from '@nestjs/typeorm';
 +import { Repository } from 'typeorm';
@@ -6289,12 +6348,13 @@ index 0000000000000000000000000000000000000000..b0e969aa7316b9154e51523d61c476af
 +
 +  async create(dto: CreateJobDto): Promise<Job> {
 +    const company = await this.companyService.findOne(dto.companyId);
++    const requiredWorkers = dto.workersNeeded ?? dto.guardsRequired;
 +    const job = this.jobRepo.create({
 +      company,
 +      title: dto.title,
 +      description: dto.description,
 +      sourceType: dto.sourceType,
-+      guardsRequired: dto.guardsRequired,
++      guardsRequired: requiredWorkers,
 +      hourlyRate: dto.hourlyRate,
 +      status: dto.status ?? 'open',
 +      startAt: dto.startAt ? new Date(dto.startAt) : undefined,
@@ -6318,12 +6378,13 @@ index 0000000000000000000000000000000000000000..b0e969aa7316b9154e51523d61c476af
 +}
 diff --git a/security-backend/src/main.ts b/security-backend/src/main.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..d20aee0539499de02851f63b0e89f3b33e39b796
+index 0000000000000000000000000000000000000000..d94e0f25c5074d3a4d6aece28e537d08fd9c6456
 --- /dev/null
 +++ b/security-backend/src/main.ts
-@@ -0,0 +1,33 @@
+@@ -0,0 +1,43 @@
 +import { ValidationPipe } from '@nestjs/common';
 +import { NestFactory } from '@nestjs/core';
++import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 +import { AppModule } from './app.module';
 +import { FallbackModule } from './fallback/fallback.module';
 +
@@ -6331,6 +6392,15 @@ index 0000000000000000000000000000000000000000..d20aee0539499de02851f63b0e89f3b3
 +  const app = await NestFactory.create(moduleRef as never);
 +  app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
 +  app.enableCors();
++
++  const swaggerConfig = new DocumentBuilder()
++    .setTitle('Security Workforce API')
++    .setDescription('Security workforce platform APIs')
++    .setVersion('1.0')
++    .addBearerAuth()
++    .build();
++  const document = SwaggerModule.createDocument(app, swaggerConfig);
++  SwaggerModule.setup('docs', app, document);
 +
 +  const port = Number(process.env.PORT || 3000);
 +  await app.listen(port);
@@ -6355,6 +6425,48 @@ index 0000000000000000000000000000000000000000..d20aee0539499de02851f63b0e89f3b3
 +}
 +
 +bootstrap();
+diff --git a/security-backend/src/matching/matching.module.ts b/security-backend/src/matching/matching.module.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..16c980797b0e247423cdb653d12319b854d97a31
+--- /dev/null
++++ b/security-backend/src/matching/matching.module.ts
+@@ -0,0 +1,10 @@
++import { Module } from '@nestjs/common';
++import { MatchingService } from './matching.service';
++import { JobMatchModule } from '../job-match/job-match.module';
++
++@Module({
++  imports: [JobMatchModule],
++  providers: [MatchingService],
++  exports: [MatchingService],
++})
++export class MatchingModule {}
+diff --git a/security-backend/src/matching/matching.service.ts b/security-backend/src/matching/matching.service.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..cf9a0f8e0138b1779dec01b13e64d823f8cf649a
+--- /dev/null
++++ b/security-backend/src/matching/matching.service.ts
+@@ -0,0 +1,20 @@
++import { Injectable } from '@nestjs/common';
++import { JobMatch } from '../job-match/entities/job-match.entity';
++import { JobMatchService } from '../job-match/job-match.service';
++
++@Injectable()
++export class MatchingService {
++  constructor(private readonly jobMatchService: JobMatchService) {}
++
++  findBySlot(slotId: number): Promise<JobMatch[]> {
++    return this.jobMatchService.findBySlot(slotId);
++  }
++
++  rematch(slotId: number): Promise<JobMatch[]> {
++    return this.jobMatchService.rematch(slotId);
++  }
++
++  async createMatchFromApplication(jobSlotId: number, guardId: number): Promise<JobMatch | null> {
++    return this.jobMatchService.createMatchFromApplication(jobSlotId, guardId);
++  }
++}
 diff --git a/security-backend/src/migrations/1710000000000-AddUnifiedWorkforceModel.ts b/security-backend/src/migrations/1710000000000-AddUnifiedWorkforceModel.ts
 new file mode 100644
 index 0000000000000000000000000000000000000000..3724989573a8f8c106067a6fbc0aceb58e8056c4

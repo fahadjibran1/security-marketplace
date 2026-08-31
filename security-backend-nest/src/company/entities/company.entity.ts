@@ -1,16 +1,37 @@
-import { Column, Entity, JoinColumn, OneToMany, OneToOne, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  Column,
+  Entity,
+  JoinColumn,
+  OneToMany,
+  OneToOne,
+  PrimaryGeneratedColumn,
+} from 'typeorm';
+
 import { User } from '../../user/entities/user.entity';
 import { Job } from '../../job/entities/job.entity';
 import { Assignment } from '../../assignment/entities/assignment.entity';
 import { Shift } from '../../shift/entities/shift.entity';
 import { Timesheet } from '../../timesheet/entities/timesheet.entity';
+import { CompanyGuard } from '../../company-guard/entities/company-guard.entity';
+import { Site } from '../../site/entities/site.entity';
+import { Client } from '../../client/entities/client.entity';
+import { InvoiceBatch } from '../../invoice-batch/entities/invoice-batch.entity';
+import { PaymentRecord } from '../../payment-record/entities/payment-record.entity';
+import { PayrollBatch } from '../../payroll-batch/entities/payroll-batch.entity';
+
+export enum CompanyStatus {
+  ONBOARDING = 'onboarding',
+  ACTIVE = 'active',
+  INACTIVE = 'inactive',
+  SUSPENDED = 'suspended',
+}
 
 @Entity('companies')
 export class Company {
   @PrimaryGeneratedColumn()
   id!: number;
 
-  @OneToOne(() => User, { eager: true })
+  @OneToOne(() => User, { eager: true, nullable: false })
   @JoinColumn({ name: 'userId' })
   user!: User;
 
@@ -26,6 +47,25 @@ export class Company {
   @Column()
   contactDetails!: string;
 
+  @Column({ default: false })
+  autoCreatePayrollBatch!: boolean;
+
+  @Column({ default: false })
+  autoCreateInvoiceBatch!: boolean;
+
+  @Column({ default: false })
+  autoFinalisePayrollBatch!: boolean;
+
+  @Column({ default: false })
+  autoIssueInvoiceBatch!: boolean;
+
+  @Column({
+    type: 'enum',
+    enum: CompanyStatus,
+    default: CompanyStatus.ONBOARDING,
+  })
+  status!: CompanyStatus;
+
   @OneToMany(() => Job, (job) => job.company)
   jobs?: Job[];
 
@@ -37,4 +77,22 @@ export class Company {
 
   @OneToMany(() => Timesheet, (timesheet) => timesheet.company)
   timesheets?: Timesheet[];
+
+  @OneToMany(() => CompanyGuard, (companyGuard) => companyGuard.company)
+  companyGuards?: CompanyGuard[];
+
+  @OneToMany(() => Site, (site) => site.company)
+  sites?: Site[];
+
+  @OneToMany(() => Client, (client) => client.company)
+  clients?: Client[];
+
+  @OneToMany(() => PayrollBatch, (payrollBatch) => payrollBatch.company)
+  payrollBatches?: PayrollBatch[];
+
+  @OneToMany(() => InvoiceBatch, (invoiceBatch) => invoiceBatch.company)
+  invoiceBatches?: InvoiceBatch[];
+
+  @OneToMany(() => PaymentRecord, (paymentRecord) => paymentRecord.company)
+  paymentRecords?: PaymentRecord[];
 }

@@ -1,32 +1,52 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import * as bcrypt from 'bcrypt';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import { CreateUserDto } from './dto/create-user.dto';
-import { User } from './entities/user.entity';
+import { User, UserStatus } from './entities/user.entity';
 
 @Injectable()
 export class UserService {
   constructor(@InjectRepository(User) private readonly usersRepo: Repository<User>) {}
 
-  async create(dto: CreateUserDto): Promise<User> {
-    const existing = await this.usersRepo.findOne({ where: { email: dto.email } });
+  async create(dto: CreateUserDto, manager?: EntityManager): Promise<User> {
+    const repo = manager?.getRepository(User) ?? this.usersRepo;
+    const existing = await repo.findOne({ where: { email: dto.email } });
     if (existing) {
       throw new ConflictException('Email already exists');
     }
 
     const passwordHash = await bcrypt.hash(dto.password, 10);
-    const user = this.usersRepo.create({ email: dto.email, passwordHash, role: dto.role });
-    return this.usersRepo.save(user);
+    const user = repo.create({
+      email: dto.email,
+      passwordHash,
+      role: dto.role,
+      status: dto.status ?? UserStatus.PENDING,
+    });
+    return repo.save(user);
   }
 
   async findByEmail(email: string): Promise<User | null> {
-    return this.usersRepo.findOne({ where: { email } });
+    return this.usersRepo
+      .createQueryBuilder('user')
+      .addSelect('user.passwordHash')
+      .where('user.email = :email', { email })
+      .getOne();
   }
 
   async findById(id: number): Promise<User> {
     const user = await this.usersRepo.findOne({ where: { id } });
     if (!user) throw new NotFoundException('User not found');
     return user;
+  }
+
+  async updateLastLogin(id: number): Promise<void> {
+    await this.usersRepo.update(id, {
+      lastLoginAt: new Date(),
+    });
+  }
+
+  async updateStatus(id: number, status: UserStatus): Promise<void> {
+    await this.usersRepo.update(id, { status });
   }
 }

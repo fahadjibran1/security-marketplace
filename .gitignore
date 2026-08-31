@@ -4,3 +4,7 @@ security-backend/node_modules
 security-backend/.env
 dist
 security-backend/dist
+.drill.secret
+.blk004.secret
+*.dump
+.blk004-ca-escaped.txt

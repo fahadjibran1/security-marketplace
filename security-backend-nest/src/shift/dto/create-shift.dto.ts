@@ -1,11 +1,41 @@
-import { IsDateString, IsInt, IsOptional, IsString } from 'class-validator';
+import { IsDateString, IsInt, IsOptional, IsString, Min } from 'class-validator';
 
 export class CreateShiftDto {
+  @IsOptional()
   @IsInt()
-  assignmentId!: number;
+  assignmentId?: number;
 
+  @IsOptional()
+  @IsInt()
+  companyId?: number;
+
+  @IsOptional()
+  @IsInt()
+  guardId?: number;
+
+  @IsOptional()
+  @IsInt()
+  jobId?: number;
+
+  @IsOptional()
+  @IsInt()
+  jobApplicationId?: number;
+
+  @IsOptional()
+  @IsInt()
+  createdByUserId?: number;
+
+  @IsInt()
+  siteId?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(5)
+  checkCallIntervalMinutes?: number;
+
+  @IsOptional()
   @IsString()
-  siteName!: string;
+  siteName?: string;
 
   @IsDateString()
   start!: string;
@@ -16,4 +46,12 @@ export class CreateShiftDto {
   @IsOptional()
   @IsString()
   status?: string;
+
+  @IsOptional()
+  @IsString()
+  instructions?: string;
+
+  @IsOptional()
+  @IsString()
+  closeOutNotes?: string;
 }

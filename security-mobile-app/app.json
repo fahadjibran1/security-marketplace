@@ -1,19 +1,63 @@
 {
   "expo": {
-    "name": "Security Mobile",
-    "slug": "security-mobile-app",
+    "name": "S4 Security",
+    "description": "Staff. Sites. Shifts. Security.",
+    "slug": "security-marketplace",
     "version": "1.0.0",
+    "scheme": "securitymarketplace",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
+    "primaryColor": "#0B1F33",
+    "backgroundColor": "#F4F7FA",
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0B1F33"
+    },
     "assetBundlePatterns": [
       "**/*"
     ],
+    "updates": {
+      "enabled": false
+    },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.example.securitymobile"
+      "bundleIdentifier": "com.securitymarketplace.mobile",
+      "buildNumber": "1",
+      "config": {
+        "usesNonExemptEncryption": false
+      },
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
-      "package": "com.example.securitymobile"
+      "softwareKeyboardLayoutMode": "resize",
+      "versionCode": 1,
+      "package": "com.securitymarketplace.mobile",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0B1F33"
+      }
+    },
+    "web": {
+      "favicon": "./assets/icon.png"
+    },
+    "plugins": [
+      "expo-secure-store",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Allow S4 Security to use your location when you Book On so the app can verify you are at the assigned site."
+        }
+      ]
+    ],
+    "extra": {
+      "apiBaseUrl": "https://security-marketplace-api.onrender.com",
+      "eas": {
+        "projectId": "c786f15c-7d60-4122-9001-02cabbb7692b"
+      }
     }
   }
 }
