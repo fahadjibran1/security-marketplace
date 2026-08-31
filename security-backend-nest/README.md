@@ -68,3 +68,16 @@ Run:
 ```bash
 docker run --env-file .env -p 3000:3000 security-marketplace-api
 ```
+
+## CI retrigger note — v1.0.0-rc1
+
+This section exists solely to retrigger the backend release-gate workflow
+(`s4-backend-release-gate.yml`) against the current RC1 HEAD.
+
+The backend CI path filter (`security-backend-nest/**`) was not matched by the
+immediately preceding fix commit (`4e818f9`), which corrected three display
+strings in `security-mobile-app/src/components/guard/GuardCompliancePanel.tsx`.
+That fix resolved the `guard-onboarding-ux.spec.ts` failure (SEC-018E) that
+caused the last backend CI run to fail.
+
+This README addition has zero runtime or functional effect on the application.
