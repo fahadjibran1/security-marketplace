@@ -130,8 +130,8 @@ Database host: aws-1-eu-west-1.pooler.supabase.com
 
 | Metric | Value |
 |---|---|
-| Backup UTC timestamp | 2026-08-31T10:09:48Z (archive internal header) |
-| Backup filename | s4_20260831T091534Z.dump |
+| Backup UTC timestamp | 2026-08-31T09:09:48Z (pg_dump archive internal header: local clock 10:09:48 BST = UTC+1 → UTC) |
+| Backup filename | s4_20260831T091534Z.dump (filename stamp = 09:15:34 UTC, time of file rename ~6 min after backup creation) |
 | Release HEAD SHA | b4d23b1da827113525c807692bc1c77f8adb9e80 |
 | pg_dump exit code | 0 (success) |
 | pg_dump elapsed | 12.172s |
