@@ -166,50 +166,96 @@ All 45 UAT cases have been executed and returned PASS as of `38c14d4`. No open d
 
 | Field | Value |
 |---|---|
-| **Owner full name** | |
-| **Role** | |
-| **Organisation** | |
-| **Basis of authority** | (e.g. Product/Business Owner, organisation Right-to-Work/Compliance Owner, named responsible person for right-to-work processes) |
-| **Home Office guidance edition consulted** | (state the version / date of the Home Office Employer's guide to right to work checks consulted when completing this review) |
-| **Acceptance date** | |
-| **Branch / SHA reviewed** | `release/v1.0.0-rc1` — `2f59bc7` |
-| **Sections of this document reviewed** | (confirm which sections were read — at minimum, Sections 1, 2, 3, and 4) |
+| **Owner full name** | Fahad Jibran |
+| **Role** | Product / Business Owner |
+| **Organisation** | S4 Security Platform |
+| **Basis of authority** | Product/Business Owner making an internal RC1 product/process risk acceptance |
+| **Home Office guidance consulted** | Home Office Employer's guide to right to work checks dated 26 June 2025 (the published guide available as at 31 August 2026; GOV.UK also shows a draft update dated 16 July 2026, which is not confirmed as the operative final guide and is NOT relied upon as such by this acceptance). The operator must consult and apply the current Home Office Right-to-Work guidance and applicable code of practice in force at the time each check is conducted. |
+| **Acceptance date** | 31 August 2026 |
+| **Branch / SHA reviewed** | `release/v1.0.0-rc1` — `8512efd` |
+| **Sections of this document reviewed** | Sections 1, 2, 3, and 4 |
 
 ### Decision
 
-Select one:
-
 - [ ] **ACCEPTED** — The right-to-work workflow is appropriately designed to support a compliant checking process as a workflow management and record-keeping tool. The scope limitations in Section 3 are acknowledged. No conditions.
-- [ ] **ACCEPTED WITH CONDITIONS** — The workflow is appropriately designed for its stated purpose, subject to the conditions and procedural controls listed below.
+- [x] **ACCEPTED WITH CONDITIONS** — The workflow is appropriately designed for its stated purpose, subject to the conditions and procedural controls listed below.
 - [ ] **NOT ACCEPTED** — The workflow is not accepted for pilot use. Reasons are listed below.
 
-### Conditions / Procedural controls required
+### Overarching operator responsibility
 
-_(Required if ACCEPTED WITH CONDITIONS or NOT ACCEPTED. List any required controls, training requirements, operational policies, or remediation items. For each scope limitation in Section 3 that is material to the operator's obligation, note how it will be addressed procedurally.)_
+S4 may capture, store, workflow-manage, and technically restrict right-to-work information where implemented. It is not itself the prescribed right-to-work check. The employer/operator remains responsible for:
 
-```
-[Enter conditions and procedural controls here]
-```
+- selecting the legally appropriate checking method;
+- examining or obtaining the required evidence;
+- confirming identity and work restrictions;
+- completing online/share-code checks where applicable;
+- using the Employer Checking Service where applicable;
+- obtaining and retaining the evidence required to establish or maintain a statutory excuse;
+- performing follow-up checks when required;
+- making the final employment or eligibility decision.
+
+Any automated S4 flag or status must not be treated as a substitute for those responsibilities.
+
+### Conditions
+
+**Condition 1 — S4 is a workflow and evidence-management tool, not a prescribed RTW check**
+S4 is a workflow/evidence-management and technical-control system. It is not itself a prescribed right-to-work check under UK legislation.
+
+**Condition 2 — Employer/operator carries out the legally appropriate check**
+The employer/operator remains responsible for carrying out the legally appropriate check before employment or engagement begins where required by law.
+
+**Condition 3 — Verified/status fields do not establish a statutory excuse**
+S4's `verified` flag and status fields do not by themselves establish a statutory excuse. The `verified` flag records that a user confirmed a document; it does not authenticate the document, validate its genuineness, or confirm it is an acceptable document type under Home Office requirements.
+
+**Condition 4 — Prescribed checking procedures remain the operator's responsibility**
+Online/share-code checks, manual document checks, Document Verification Service/Identity Document Validation Technology processes, and Employer Checking Service processes must be performed using the appropriate current Home Office procedure where applicable, independently of what S4 technically records.
+
+**Condition 5 — Time-limited RTW: follow-up checks must be managed procedurally**
+Time-limited right-to-work cases must receive required follow-up checks. S4 stores `rightToWorkFollowUpDate` for information only — it does not generate automated reminders, block assignment, or trigger re-checks when this date is reached. The operator must control these procedurally through documented operational procedures.
+
+**Condition 6 — List A / List B treatment is the operator's responsibility**
+S4 does not classify RTW evidence as List A or List B under the Home Office scheme and does not apply different treatment between the two. The operator must apply the appropriate current Home Office evidence and checking procedure where this distinction is relevant.
+
+**Condition 7 — Retention and deletion must be managed according to current requirements**
+Evidence retention, deletion, and archival must be managed according to current Home Office requirements, applicable data-protection obligations, and any applicable legal hold requirements, where S4 does not automate these activities.
+
+**Condition 8 — Overseas history alone is not a right-to-work determination**
+Recording overseas activity history in S4 does not establish right to work and does not substitute for any checking procedure applicable to that individual's immigration or eligibility circumstances.
+
+**Condition 9 — Human decision-making and legal advice remain the employer's responsibility**
+Human and employer decision-making remains required at all stages. S4 must not be relied upon as providing legal advice or determining immigration status. The employer makes the final employment and eligibility decision.
+
+**Condition 10 — Current Home Office guidance must be applied at time of each check**
+Home Office right-to-work guidance and checking procedures change over time. The operator must consult and apply the current Home Office guidance and applicable code of practice in force at the time each check is conducted. This acceptance does not hard-code reliance on any specific edition.
+
+**Condition 11 — Limitations of this acceptance**
+This acceptance is an internal product/process risk acceptance by the Product/Business Owner. It is NOT independent legal advice, NOT Home Office approval, NOT certification of S4, and NOT a guarantee of statutory compliance. S4 must not be marketed as guaranteeing UK right-to-work compliance on the basis of this acceptance.
+
+**Condition 12 — RTW status vocabulary is internal workflow terminology only (B1)**
+The right-to-work status values used by S4 (including `permanent`, `indefinite`, `settled`, `british`, `citizen`, `no_expiry`, `invalid`, `expired`, and others) are internal workflow terminology only. They must not be interpreted as Home Office immigration classifications, legal determinations, or evidence that a prescribed right-to-work check has been completed. The employer/operator must determine the worker's actual right-to-work position from the prescribed check and underlying evidence in accordance with the current Home Office procedure. The operator must maintain a controlled vocabulary list and ensure staff are trained on valid status values to avoid misconfiguration.
+
+**Condition 13 — S4 role permissions do not establish legal competence or organisational authority (C2)**
+S4 technical role permissions determine who can perform workflow actions within the application but do not by themselves establish legal competence or organisational authority to conduct a right-to-work check. The employer/operator must ensure that only an appropriately authorised and trained/designated person records the organisation's right-to-work verification decision in S4, in accordance with the organisation's right-to-work procedure.
 
 ### Signature / Recorded Approval
 
-By completing this record, the owner confirms that they have read Sections 1 through 4 of this document, that they have consulted or ensured consultation of the current Home Office Employer's guide to right to work checks, that this is their internal acceptance decision as Product/Business Owner or organisation Right-to-Work/Compliance Owner, and that they understand that responsibility for UK right-to-work compliance — including conducting legally required checks, assessing documents, and establishing any statutory excuse — rests with the employer, not with the S4 application or its developers. Independent professional legal or HR advice may be obtained by the organisation where considered appropriate.
+By completing this record, the owner confirms that they have read Sections 1 through 4 of this document, that they have consulted or ensured consultation of the current Home Office Employer's guide to right to work checks to the extent described in the acceptance table above, that this is their internal acceptance decision as Product/Business Owner, and that they understand that responsibility for UK right-to-work compliance — including conducting legally required checks, assessing documents, and establishing any statutory excuse — rests with the employer, not with the S4 application or its developers. Independent professional legal or HR advice may be obtained by the organisation where considered appropriate.
 
 ```
-Signature / recorded approval: ___________________________
+Signature / recorded approval: Electronically approved by Fahad Jibran, Product / Business Owner, on 31 August 2026.
 
-Printed name: ___________________________
+Printed name: Fahad Jibran
 
-Role: ___________________________
+Role: Product / Business Owner
 
-Organisation: ___________________________
+Organisation: S4 Security Platform
 
-Date: ___________________________
+Date: 31 August 2026
 ```
 
 _This document should be retained as part of the release evidence record for S4 v1.0.0-rc1 and as part of the employer's right-to-work compliance records for the duration required by the applicable Home Office guidance._
 
 ---
 
-**BLK-010 status:** OPEN — awaiting owner compliance acceptance.
-Do not mark this item PASS in the UAT log until the designated Product/Business Owner or organisation Right-to-Work/Compliance Owner completes Section 6 with an ACCEPTED or ACCEPTED WITH CONDITIONS decision.
+**BLK-010 status:** ACCEPTED WITH CONDITIONS — owner gate satisfied for RC1 pilot (31 August 2026).
+Current Home Office guidance must be consulted at the time each check is conducted; this acceptance does not constitute certification or guarantee of statutory compliance.
