@@ -156,50 +156,82 @@ All 45 UAT cases have been executed and returned PASS as of `38c14d4`. No open d
 
 | Field | Value |
 |---|---|
-| **Owner full name** | |
-| **Role** | |
-| **Organisation** | |
-| **Basis of authority** | (e.g. Product/Business Owner, organisation Compliance Owner, named responsible person for screening processes) |
-| **Edition of BS 7858 consulted** | (state the edition and year consulted when completing this review) |
-| **Acceptance date** | |
-| **Branch / SHA reviewed** | `release/v1.0.0-rc1` — `2f59bc7` |
-| **Sections of this document reviewed** | (confirm which sections were read — at minimum, Sections 1, 2, and 3) |
+| **Owner full name** | Fahad Jibran |
+| **Role** | Product / Business Owner |
+| **Organisation** | S4 Security Platform |
+| **Basis of authority** | Product/Business Owner responsible for internal release risk acceptance for S4 v1.0.0-rc1 |
+| **Edition of BS 7858 consulted** | BS 7858:2019 — *Security Screening of Individuals Employed in a Security Environment — Code of Practice* (current release per BSI public information; no licensed copy held; no clause-by-clause conformity assessment performed by this review) |
+| **Acceptance date** | 31 August 2026 |
+| **Branch / SHA reviewed** | `release/v1.0.0-rc1` — `04a2493` |
+| **Sections of this document reviewed** | Sections 1, 2, 3, and 4 |
 
 ### Decision
 
-Select one:
-
 - [ ] **ACCEPTED** — The screening workflow is appropriately designed for its stated purpose as a workflow management and evidence-collection system for use alongside a BS 7858-based screening process. The scope limitations in Section 2 are acknowledged. No conditions.
-- [ ] **ACCEPTED WITH CONDITIONS** — The screening workflow is appropriately designed for its stated purpose, subject to the conditions and procedural controls listed below.
+- [x] **ACCEPTED WITH CONDITIONS** — The screening workflow is appropriately designed for its stated purpose, subject to the conditions and procedural controls listed below.
 - [ ] **NOT ACCEPTED** — The screening workflow is not accepted for pilot use. Reasons are listed below.
 
-### Conditions / Notes
+### Conditions
 
-_(Required if ACCEPTED WITH CONDITIONS or NOT ACCEPTED. List any gaps, required procedural controls, training requirements, or remediation items. For each scope limitation in Section 2 that is material to the operator's obligation under BS 7858 or associated contractual requirements, note how it will be addressed procedurally.)_
+**Condition 1 — General operator responsibility for controls not technically enforced by S4**
+Where S4 does not technically enforce a required screening activity, the operator remains responsible for completing and evidencing that activity through the organisation's documented screening procedure. This applies across all items where S4 records data or workflow state but does not independently validate compliance with the applicable standard.
 
-```
-[Enter conditions and procedural controls here]
-```
+**Condition 2 — Mandatory fields (B1)**
+The mandatory fields currently implemented are acceptable for the RC1 pilot. The operator remains responsible for obtaining any additional information or evidence required by the applicable screening procedure or BS 7858 that is not collected by S4.
+
+**Condition 3 — Screening period: configurable default not standard-verified (C1, G)**
+The pilot default of `screeningPeriodYears = 5` is a configurable technical default only. It has not been independently verified against BS 7858:2019 or any other edition by this review. The operator is responsible for determining the correct required screening period from the applicable current edition of BS 7858, applicable customer requirements, and organisational policy, and for configuring each screening file accordingly before use. The 5-year default must not be relied upon as verified against the standard.
+
+**Condition 4 — Acceptable document and evidence types (D1)**
+The operator must maintain a documented procedure or list of acceptable document and evidence types for each evidence category (identity, address, SIA, right-to-work). S4 accepts any PDF, JPEG, or PNG file and does not validate document type against any standard. Determination that submitted documents are acceptable is a human and procedural responsibility.
+
+**Condition 5 — Historical address verification (E4)**
+Where historical address verification is required by BS 7858 or the operator's screening procedure, and is not technically enforced by S4, the operator must complete and evidence it procedurally.
+
+**Condition 6 — Overseas history (F1)**
+Where a candidate has an overseas history period, the operator must determine and perform any appropriate additional screening checks or evidence requirements outside S4. S4's capture of `OVERSEAS` activity history type alone does not constitute completion of those checks.
+
+**Condition 7 — Repeat screening, re-checks, and retention (H1)**
+Repeat screening, re-check requirements, and retention review activities that S4 does not automate must be controlled through documented operational procedures. The operator is responsible for monitoring and acting on time-limited screening requirements.
+
+**Condition 8 — Audit records (J1)**
+S4 audit records support the screening process as a record-keeping control. They do not replace the underlying screening evidence or the human screening decision, and do not constitute conformity with BS 7858 in themselves.
+
+**Condition 9 — Independence of the screening function (I1)**
+S4 does not mandate an independent screening provider. The organisation remains responsible for determining whether independence of the screening function is required by the applicable edition of BS 7858, any accreditation scheme, customer contract, or organisational policy.
+
+**Condition 10 — Limitations of this acceptance**
+This acceptance is an internal product/process risk acceptance by the Product/Business Owner. It is NOT a clause-by-clause conformity assessment against BS 7858:2019 or any other edition. It is NOT BS 7858 certification. Controls recorded as "PENDING LICENSED STANDARD VERIFICATION" in the BS 7858 Alignment Register (`docs/security/BS7858_ALIGNMENT_REGISTER.md`) must remain identified as such. S4 must not be marketed or represented as guaranteeing BS 7858 compliance on the basis of this acceptance. A licensed-standard conformity review against a licensed copy of BS 7858:2019 remains a post-RC1 compliance action before any claim of full BS 7858 alignment or compliance is made.
+
+### Post-RC1 compliance action (required before any claim of full BS 7858 alignment/compliance)
+
+A licensed-standard conformity review against an authorised copy of BS 7858:2019 must be completed before S4 makes any claim of full BS 7858 alignment or compliance. The following items from the BS 7858 Alignment Register remain explicitly unverified against the licensed standard as of this acceptance:
+
+- Configurable screening period (pilot default five years)
+- Continuous employment/activity history acceptance rules
+- VETTED decision criteria (mandatory-check matrix)
+
+This post-RC1 action must be completed and recorded separately. BLK-008 owner gate is satisfied for the RC1 pilot scope only.
 
 ### Signature / Recorded Approval
 
-By completing this record, the owner confirms that they have read Sections 1 through 3 of this document, that they have consulted or ensured consultation of the applicable edition of BS 7858, that this is their internal acceptance decision as Product/Business Owner or organisation Compliance Owner, and that they understand that conformity with BS 7858 — and all legally required screening obligations — remains the responsibility of the operator, not of the S4 application or its developers. Independent professional advice may be obtained by the organisation where considered appropriate.
+By completing this record, the owner confirms that they have read Sections 1 through 4 of this document, that they have consulted or ensured consultation of the applicable edition of BS 7858 to the extent described in the acceptance table above, that this is their internal acceptance decision as Product/Business Owner, and that they understand that conformity with BS 7858 — and all legally required screening obligations — remains the responsibility of the operator, not of the S4 application or its developers. Independent professional advice may be obtained by the organisation where considered appropriate.
 
 ```
-Signature / recorded approval: ___________________________
+Signature / recorded approval: Electronically approved by Fahad Jibran, Product / Business Owner, on 31 August 2026.
 
-Printed name: ___________________________
+Printed name: Fahad Jibran
 
-Role: ___________________________
+Role: Product / Business Owner
 
-Organisation: ___________________________
+Organisation: S4 Security Platform
 
-Date: ___________________________
+Date: 31 August 2026
 ```
 
 _This document should be retained as part of the release evidence record for S4 v1.0.0-rc1._
 
 ---
 
-**BLK-008 status:** OPEN — awaiting owner compliance acceptance.
-Do not mark this item PASS in the UAT log until the designated Product/Business Owner or organisation Compliance Owner completes Section 5 with an ACCEPTED or ACCEPTED WITH CONDITIONS decision.
+**BLK-008 status:** ACCEPTED WITH CONDITIONS — owner gate satisfied for RC1 pilot (31 August 2026).
+Post-RC1 compliance action required: licensed-standard conformity review against BS 7858:2019 before any claim of full BS 7858 alignment or compliance is made.
