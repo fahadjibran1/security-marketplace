@@ -3,7 +3,6 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, Repository } from 'typeorm';
 import { GuardApprovalStatus, GuardProfile } from './entities/guard-profile.entity';
 import { CreateGuardProfileDto } from './dto/create-guard-profile.dto';
-import { UpdateGuardProfileDto } from './dto/update-guard-profile.dto';
 import { UserService } from '../user/user.service';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { COMPANY_ADMIN_ROLES, isCompanyRole, UserRole, UserStatus } from '../user/entities/user.entity';
@@ -113,7 +112,15 @@ export class GuardProfileService {
     return this.guardRepo.findOne({ where: { user: { id: userId } } });
   }
 
-  async updateByUserId(userId: number, dto: UpdateGuardProfileDto): Promise<GuardProfile> {
+  async updateByUserId(userId: number, dto: {
+    fullName?: string;
+    phone?: string;
+    locationSharingEnabled?: boolean;
+    siaLicenseNumber?: string;
+    siaExpiryDate?: string | null;
+    rightToWorkStatus?: string | null;
+    rightToWorkExpiryDate?: string | null;
+  }): Promise<GuardProfile> {
     const guard = await this.findByUserId(userId);
     if (!guard) throw new NotFoundException('Guard profile not found');
 

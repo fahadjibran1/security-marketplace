@@ -1128,13 +1128,8 @@ export interface UpdateCompanyPayload {
 
 export interface UpdateGuardPayload {
   fullName?: string;
-  siaLicenseNumber?: string;
-  siaExpiryDate?: string | null;
-  rightToWorkStatus?: string | null;
-  rightToWorkExpiryDate?: string | null;
   phone?: string;
   locationSharingEnabled?: boolean;
-  status?: string;
 }
 
 export interface AttendanceEvent {
