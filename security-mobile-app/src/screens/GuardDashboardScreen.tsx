@@ -510,7 +510,6 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
       await updateMyGuard({
         fullName,
         phone,
-        siaLicenseNumber: siaLicence,
         locationSharingEnabled: locationSharing,
       });
       pushFeedback('success', 'Profile updated', 'Your profile changes have been saved.');
@@ -1456,10 +1455,11 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
                       <Text style={styles.profileFieldLabel}>SIA licence number</Text>
                       <TextInput
                         style={[styles.input, styles.guardProfileInput]}
-                        placeholder="e.g. 1234-0001-23-456-0"
                         value={siaLicence}
-                        onChangeText={setSiaLicence}
+                        editable={false}
+                        selectTextOnFocus={false}
                       />
+                      <Text style={styles.profileFieldHint}>To update your SIA details, go to the Compliance tab.</Text>
                     </View>
                     <View style={styles.profileField}>
                       <Text style={styles.profileFieldLabel}>Phone number</Text>
@@ -2175,6 +2175,7 @@ const styles = StyleSheet.create({
   },
   profileField: { gap: 4 },
   profileFieldLabel: { color: colors.textSecondary, fontSize: 13, fontWeight: '700' },
+  profileFieldHint: { color: colors.textSecondary, fontSize: 12, fontStyle: 'italic', marginTop: 2 },
   guardProfileSwitchSection: {
     paddingVertical: 12,
     paddingHorizontal: 12,

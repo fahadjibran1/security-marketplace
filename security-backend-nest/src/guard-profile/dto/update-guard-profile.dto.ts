@@ -1,4 +1,4 @@
-import { IsBoolean, IsDateString, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsOptional, IsString } from 'class-validator';
 
 export class UpdateGuardProfileDto {
   @IsOptional()
@@ -7,29 +7,9 @@ export class UpdateGuardProfileDto {
 
   @IsOptional()
   @IsString()
-  siaLicenseNumber?: string;
-
-  @IsOptional()
-  @IsDateString()
-  siaExpiryDate?: string | null;
-
-  @IsOptional()
-  @IsString()
-  rightToWorkStatus?: string | null;
-
-  @IsOptional()
-  @IsDateString()
-  rightToWorkExpiryDate?: string | null;
-
-  @IsOptional()
-  @IsString()
   phone?: string;
 
   @IsOptional()
   @IsBoolean()
   locationSharingEnabled?: boolean;
-
-  @IsOptional()
-  @IsString()
-  status?: string;
 }
