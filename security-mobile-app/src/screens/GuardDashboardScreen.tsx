@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { FeatureCard } from '../components/FeatureCard';
@@ -447,6 +447,8 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
     message: string;
   } | null>(null);
   const [localTimelineEvents, setLocalTimelineEvents] = useState<LocalTimelineEvent[]>([]);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const screeningScrollRef = useRef<any>(null);
 
   function pushFeedback(tone: 'success' | 'error' | 'info', title: string, message: string) {
     setActionFeedback({ tone, title, message });
@@ -1028,7 +1030,7 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
       ) : null}
 
       <View style={styles.contentArea}>
-      <ScrollView style={styles.scrollView} contentContainerStyle={styles.content}>
+      <ScrollView ref={screeningScrollRef} style={styles.scrollView} contentContainerStyle={styles.content}>
         {activeTab === 'home' ? (
           <View style={styles.guardHomeRoot}>
             <FeatureCard
@@ -1511,7 +1513,7 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
             </View>
           </View>
         ) : null}
-        {activeTab === 'screening' ? <GuardScreeningJourney onBack={() => setActiveTab('profile')} /> : null}
+        {activeTab === 'screening' ? <GuardScreeningJourney onBack={() => setActiveTab('profile')} scrollViewRef={screeningScrollRef} /> : null}
       </ScrollView>
       </View>
 

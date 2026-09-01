@@ -190,10 +190,12 @@ export function GuardScreeningPanel({
   );
 }
 
-export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
+export function GuardScreeningJourney({ onBack, scrollViewRef }: { onBack: () => void; scrollViewRef?: { readonly current: { scrollTo(config: { y: number; animated: boolean }): void } | null } }) {
   const [data, setData] = React.useState<GuardScreening | null>(null),
     [step, setStep] = React.useState<Step>("personal");
   const [guard, setGuard] = React.useState<GuardProfile | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const stageRef = React.useRef<any>(null);
   const [error, setError] = React.useState(""),
     [feedback, setFeedback] = React.useState(""),
     [busy, setBusy] = React.useState(false);
@@ -303,6 +305,14 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
     navigateToStep(next);
     if(next==="addresses"){setEditingAddressId(null);setAddress(emptyAddressForm());setShowAddressForm(true);}
     if(next==="history"){setEditingHistoryId(null);setHistory(emptyActivityForm());setShowHistoryForm(true);}
+    if (scrollViewRef?.current && stageRef.current) {
+      const sv = scrollViewRef.current;
+      const stage = stageRef.current;
+      setTimeout(() => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        stage.measureLayout(sv as any, (_x: number, y: number) => sv.scrollTo({ y, animated: true }), () => {});
+      }, 50);
+    }
   };
   if (!data?.id)
     return (
@@ -422,7 +432,7 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
           {error}
         </Text>
       ) : null}
-      <View style={s.stage}>
+      <View ref={stageRef} style={s.stage}>
         <Text style={s.stageTitle}>{STEPS[activeIndex].label}</Text>
         <Text style={s.note}>
           {stageHelp(step, data.screeningPeriodYears || 5)}
