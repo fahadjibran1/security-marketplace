@@ -294,13 +294,12 @@ export function GuardScreeningJourney({ onBack, scrollViewRef }: { onBack: () =>
       return "Unable to reach the upload service. Check your connection and try again.";
     return message;
   };
-  const uploadAct = async (fn: () => Promise<unknown>, message: string): Promise<string | null> => {
+  const uploadAct = async (fn: () => Promise<unknown>): Promise<string | null> => {
     setFeedback("");
     setError("");
     try {
       await fn();
       await load();
-      setFeedback(message);
       return null;
     } catch (e) {
       return categorizeUploadError((e as Error).message || "The document could not be uploaded.");
@@ -515,11 +514,11 @@ export function GuardScreeningJourney({ onBack, scrollViewRef }: { onBack: () =>
             <EvidencePicker
               label="Choose identity evidence"
               category="identity"
+              successMessage="Identity evidence uploaded. It is awaiting reviewer verification."
               disabled={!canUploadEvidence("identity") || busy}
               onUpload={(asset) =>
                 uploadAct(
                   () => uploadEvidence("identity", asset),
-                  "Identity evidence uploaded. It is awaiting reviewer verification.",
                 )
               }
             />
@@ -598,11 +597,11 @@ export function GuardScreeningJourney({ onBack, scrollViewRef }: { onBack: () =>
             <EvidencePicker
               label="Choose address evidence"
               category="address"
+              successMessage="Address evidence uploaded. It is awaiting reviewer verification."
               disabled={!canUploadEvidence("address") || busy}
               onUpload={(asset) =>
                 uploadAct(
                   () => uploadEvidence("address", asset),
-                  "Address evidence uploaded. It is awaiting reviewer verification.",
                 )
               }
             />
@@ -849,11 +848,11 @@ export function GuardScreeningJourney({ onBack, scrollViewRef }: { onBack: () =>
               label="Choose optional reference supporting document"
               uploadLabel="Upload supporting document"
               category="reference"
+              successMessage="Supporting document uploaded privately. It may assist the reviewer but does not verify the reference."
               disabled={!canUploadEvidence("reference") || busy}
               onUpload={(asset) =>
                 uploadAct(
                   () => uploadEvidence("reference", asset),
-                  "Supporting document uploaded privately. It may assist the reviewer but does not verify the reference.",
                 )
               }
             />
@@ -898,22 +897,22 @@ export function GuardScreeningJourney({ onBack, scrollViewRef }: { onBack: () =>
             <EvidencePicker
               label="Choose SIA evidence"
               category="sia"
+              successMessage="SIA evidence uploaded. It is awaiting register verification."
               disabled={!canUploadEvidence("sia") || busy}
               onUpload={(asset) =>
                 uploadAct(
                   () => uploadEvidence("sia", asset),
-                  "SIA evidence uploaded. It is awaiting register verification.",
                 )
               }
             />
             <EvidencePicker
               label="Choose Right-to-Work evidence"
               category="right_to_work"
+              successMessage="Right-to-Work evidence uploaded. It is awaiting reviewer verification."
               disabled={!canUploadEvidence("right_to_work") || busy}
               onUpload={(asset) =>
                 uploadAct(
                   () => uploadEvidence("right_to_work", asset),
-                  "Right-to-Work evidence uploaded. It is awaiting reviewer verification.",
                 )
               }
             />
@@ -934,11 +933,11 @@ export function GuardScreeningJourney({ onBack, scrollViewRef }: { onBack: () =>
             <EvidencePicker
               label="Choose additional supporting evidence"
               category="other"
+              successMessage="Supporting evidence uploaded. It is awaiting reviewer verification."
               disabled={!canEdit || busy}
               onUpload={(asset) =>
                 uploadAct(
                   () => uploadEvidence("other", asset),
-                  "Supporting evidence uploaded. It is awaiting reviewer verification.",
                 )
               }
             />
@@ -1065,12 +1064,14 @@ export function normalizeEvidenceMimeType(value: string | undefined, name: strin
 function EvidencePicker({
   label,
   uploadLabel,
+  successMessage,
   category,
   onUpload,
   disabled,
 }: {
   label: string;
-  uploadLabel?:string;
+  uploadLabel?: string;
+  successMessage?: string;
   category: string;
   onUpload: (asset: DocumentPicker.DocumentPickerAsset) => Promise<string | null>;
   disabled: boolean;
@@ -1078,6 +1079,7 @@ function EvidencePicker({
   const [asset, setAsset] = React.useState<DocumentPicker.DocumentPickerAsset | null>(null);
   const [uploading, setUploading] = React.useState(false);
   const [uploadError,setUploadError]=React.useState("");
+  const [uploadSuccess,setUploadSuccess]=React.useState("");
   const choose = async () => {
     const result = await DocumentPicker.getDocumentAsync({
       type: ["application/pdf", "image/jpeg", "image/png"],
@@ -1087,15 +1089,18 @@ function EvidencePicker({
     if (result.canceled) return;
     setAsset(result.assets[0]);
     setUploadError("");
+    setUploadSuccess("");
   };
   const upload = async () => {
     if (!asset) return;
     setUploading(true);
     setUploadError("");
+    setUploadSuccess("");
     try {
       const uploadResult = await onUpload(asset);
       if (uploadResult === null) {
         setAsset(null);
+        setUploadSuccess(successMessage ?? "Document uploaded successfully.");
       } else {
         setUploadError(uploadResult);
       }
@@ -1129,6 +1134,7 @@ function EvidencePicker({
       >
         <Text style={s.buttonText}>{uploading ? "Uploading…" : uploadLabel||"Upload document"}</Text>
       </Pressable>
+      {uploadSuccess?<Text accessibilityRole="alert" style={s.pickerSuccess}>{uploadSuccess}</Text>:null}
       {uploadError?<Text style={s.error}>{uploadError}</Text>:null}
       <Text style={s.meta}>Private upload category: {pretty(category)}</Text>
     </View>
@@ -1525,6 +1531,7 @@ const s = StyleSheet.create({
     borderRadius: 10,
   },
   error: { color: colors.danger },
+  pickerSuccess: { color: colors.success, fontWeight: "700" },
   errorBox: {
     color: colors.danger,
     backgroundColor: colors.dangerSurface,

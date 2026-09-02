@@ -190,4 +190,37 @@ test('10 MB size limit remains enforced before metadata creation',()=>{
 test('empty or size-unavailable file is still rejected before API call',()=>{assert.match(panel,/selected document is empty or its size is unavailable/);});
 test('cancelled document picker remains safe',()=>{assert.match(panel,/if \(result\.canceled\) return/);});
 
+// UPLOAD LOCAL FEEDBACK — Success feedback must be local to EvidencePicker, not global
+test('uploadAct does not call setFeedback with a success message — upload success is local to picker',()=>{
+  const uploadActBody=panel.split('uploadAct = async')[1].split('const canEdit')[0];
+  assert.doesNotMatch(uploadActBody,/setFeedback\(message\)/,'uploadAct must not call setFeedback(message) — success feedback belongs inside EvidencePicker, not the global banner');
+});
+test('EvidencePicker has successMessage prop in its type signature',()=>{
+  const pickerFn=panel.split('function EvidencePicker')[1].split('function PeriodGuidance')[0];
+  assert.match(pickerFn,/successMessage\?:\s*string/,'EvidencePicker must declare successMessage optional string prop');
+});
+test('EvidencePicker owns uploadSuccess local state',()=>{
+  const pickerFn=panel.split('function EvidencePicker')[1].split('function PeriodGuidance')[0];
+  assert.match(pickerFn,/uploadSuccess[\s\S]{0,10}setUploadSuccess[\s\S]{0,10}=\s*React\.useState\(""\)/,'EvidencePicker must have uploadSuccess state initialised to empty string');
+});
+test('selecting a new document clears stale upload success',()=>{
+  const pickerFn=panel.split('function EvidencePicker')[1].split('function PeriodGuidance')[0];
+  const chooseBody=pickerFn.split('const choose')[1].split('const upload')[0];
+  assert.match(chooseBody,/setUploadSuccess\(""\)/,'choose() must clear uploadSuccess so stale success does not persist after new document selection');
+});
+test('upload success is set locally inside EvidencePicker when onUpload returns null',()=>{
+  const pickerFn=panel.split('function EvidencePicker')[1].split('function PeriodGuidance')[0];
+  assert.match(pickerFn,/uploadResult === null[\s\S]{0,200}setUploadSuccess\(/,'upload() must call setUploadSuccess after checking uploadResult === null');
+});
+test('EvidencePicker renders upload success with pickerSuccess style adjacent to upload control',()=>{
+  const pickerFn=panel.split('function EvidencePicker')[1].split('function PeriodGuidance')[0];
+  assert.match(pickerFn,/uploadSuccess\?<Text accessibilityRole="alert" style=\{s\.pickerSuccess\}>\{uploadSuccess\}<\/Text>:null/,'EvidencePicker must render uploadSuccess inline with pickerSuccess style and alert role');
+});
+test('each EvidencePicker instance carries its own successMessage — no shared state',()=>{
+  const successMessages=panel.match(/successMessage="[^"]+"/g)||[];
+  assert.ok(successMessages.length>=6,'expected at least 6 distinct successMessage prop values — one per EvidencePicker instance');
+  const unique=new Set(successMessages);
+  assert.ok(unique.size>=3,'successMessage values must differ across pickers — shared message would indicate a copy-paste without category specificity');
+});
+
 console.log(JSON.stringify({event:'post_phys007_uat_remediation_tests_passed',tests:passed}));
