@@ -89,6 +89,28 @@ test('backend AddReferenceDto has no status field',()=>{
   assert.doesNotMatch(dtoBlock,/status|verified/i);
 });
 
+// REFERENCE — Non-editable state explanation (root cause of REFEREE SAVE STILL FAILING)
+test('references step renders REFEREE DETAILS LOCKED when canEdit is false',()=>{
+  const rb=refBlock();
+  assert.match(rb,/REFEREE DETAILS LOCKED/);
+});
+test('locked explanation uses STATUS[data.status] for user-readable status name',()=>{
+  const rb=refBlock();
+  assert.match(rb,/STATUS\[data\.status\]/);
+});
+test('!canEdit gate in references block precedes referee form selector',()=>{
+  const rb=refBlock();
+  assert.ok(rb.indexOf('!canEdit')>=0,'!canEdit check must be in references block');
+  assert.ok(rb.indexOf('!canEdit')<rb.indexOf('Which activity period can this referee confirm'),'!canEdit gate must precede selector');
+});
+test('Add referee button disabled by busy only — canEdit guaranteed true in that branch',()=>{
+  const rb=refBlock();
+  const beforeAddReferee=rb.split('Add referee')[0];
+  const lastDisabledLine=beforeAddReferee.split('\n').slice(-5).join('\n');
+  assert.match(lastDisabledLine,/disabled=\{busy\}/);
+  assert.doesNotMatch(lastDisabledLine,/disabled=\{!canEdit/);
+});
+
 // REFERENCE — Independence from evidence upload
 test('Add referee button does not depend on evidence upload state',()=>{
   const rb=refBlock();
@@ -100,6 +122,12 @@ test('EvidencePicker for reference appears after Add referee in DOM order',()=>{
   const rb=refBlock();
   assert.ok(rb.indexOf('Add referee')>=0,'Add referee must exist');
   assert.ok(rb.indexOf('EvidencePicker')>rb.indexOf('Add referee'),'EvidencePicker must follow Add referee');
+});
+
+// DOCUMENT — uploadAct isolation from parent busy state (primary regression fix)
+test('uploadAct does not touch parent busy state — upload cannot grey referee save button',()=>{
+  const uploadActBody=panel.split('uploadAct = async')[1].split('const canEdit')[0];
+  assert.doesNotMatch(uploadActBody,/setBusy\(/,'uploadAct must not call setBusy — EvidencePicker has its own uploading state');
 });
 
 // DOCUMENT — uploadAct and categorizeUploadError

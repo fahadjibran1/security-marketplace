@@ -295,7 +295,6 @@ export function GuardScreeningJourney({ onBack, scrollViewRef }: { onBack: () =>
     return message;
   };
   const uploadAct = async (fn: () => Promise<unknown>, message: string): Promise<string | null> => {
-    setBusy(true);
     setFeedback("");
     setError("");
     try {
@@ -305,8 +304,6 @@ export function GuardScreeningJourney({ onBack, scrollViewRef }: { onBack: () =>
       return null;
     } catch (e) {
       return categorizeUploadError((e as Error).message || "The document could not be uploaded.");
-    } finally {
-      setBusy(false);
     }
   };
   const canEdit = editable(data?.status),
@@ -753,6 +750,11 @@ export function GuardScreeningJourney({ onBack, scrollViewRef }: { onBack: () =>
                   </Pressable>
                 </View>
               </>
+            ) : !canEdit ? (
+              <View style={s.info}>
+                <Text style={s.infoTitle}>REFEREE DETAILS LOCKED</Text>
+                <Text style={s.note}>Your screening is {STATUS[data.status]}. Referee contact details cannot be added or changed in this state.{"\n"}If corrections are required, an authorised reviewer will request them.</Text>
+              </View>
             ) : (
               <>
                 <Text style={s.fieldLabel}>Which activity period can this referee confirm? *</Text>
@@ -814,7 +816,7 @@ export function GuardScreeningJourney({ onBack, scrollViewRef }: { onBack: () =>
                   </View>
                 ) : null}
                 <Action
-                  disabled={!canEdit || busy}
+                  disabled={busy}
                   label="Add referee"
                   onPress={() => {
                     const errs: string[] = [];
