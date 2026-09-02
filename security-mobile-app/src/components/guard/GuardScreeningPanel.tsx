@@ -96,6 +96,7 @@ const activityOrganisationLabel = (type: string) =>
   })[type] || "Organisation / explanation";
 const emptyAddressForm = () => ({ addressLine1: "", addressLine2: "", townCity: "", postcode: "", startDate: "", endDate: "", isCurrent: false });
 const emptyActivityForm = () => ({ type: "", startDate: "", endDate: "", organisation: "", description: "" });
+const emptyReferenceForm = () => ({ historyId: "", organisation: "", contactPerson: "", relationship: "", businessEmail: "", phone: "" });
 const confirmDelete = (label:string) => Platform.OS === 'web'
   ? Promise.resolve(globalThis.confirm(`Delete this ${label}? The server will recalculate screening coverage.`))
   : new Promise<boolean>((resolve) => Alert.alert(`Delete ${label}?`,'The server will recalculate screening coverage.',[
@@ -190,10 +191,12 @@ export function GuardScreeningPanel({
   );
 }
 
-export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
+export function GuardScreeningJourney({ onBack, scrollViewRef }: { onBack: () => void; scrollViewRef?: { readonly current: { scrollTo(config: { y: number; animated: boolean }): void } | null } }) {
   const [data, setData] = React.useState<GuardScreening | null>(null),
     [step, setStep] = React.useState<Step>("personal");
   const [guard, setGuard] = React.useState<GuardProfile | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const stageRef = React.useRef<any>(null);
   const [error, setError] = React.useState(""),
     [feedback, setFeedback] = React.useState(""),
     [busy, setBusy] = React.useState(false);
@@ -211,14 +214,8 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
   const [compliance, setCompliance] = React.useState({siaLicenseNumber:"",siaExpiryDate:"",rightToWorkStatus:"",rightToWorkExpiryDate:""});
   const [showAddressForm, setShowAddressForm] = React.useState(false);
   const [showHistoryForm, setShowHistoryForm] = React.useState(false);
-  const [reference, setReference] = React.useState({
-    historyId: "",
-    organisation: "",
-    contactPerson: "",
-    relationship: "",
-    businessEmail: "",
-    phone: "",
-  });
+  const [reference, setReference] = React.useState(emptyReferenceForm());
+  const [refErrors, setRefErrors] = React.useState<string[]>([]);
   const load = React.useCallback(async () => {
     try {
       const [next,nextGuard] = await Promise.all([getMyScreening(),getMyGuard()]);
@@ -288,6 +285,26 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
       throw new Error("Private evidence upload failed. Please try again.");
     await completeMyScreeningEvidence(created.id);
   };
+  const categorizeUploadError = (message: string): string => {
+    if (/not configured|service unavailable/i.test(message))
+      return "Document storage is temporarily unavailable. Please try again later.";
+    if (/session|unauthorized|unauthenticated/i.test(message))
+      return "Your session has expired. Please sign in again and retry the upload.";
+    if (/network|fetch failed|connection/i.test(message))
+      return "Unable to reach the upload service. Check your connection and try again.";
+    return message;
+  };
+  const uploadAct = async (fn: () => Promise<unknown>): Promise<string | null> => {
+    setFeedback("");
+    setError("");
+    try {
+      await fn();
+      await load();
+      return null;
+    } catch (e) {
+      return categorizeUploadError((e as Error).message || "The document could not be uploaded.");
+    }
+  };
   const canEdit = editable(data?.status),
     canCorrectRecords = canEdit || data?.status === "READY_FOR_REVIEW",
     activeIndex = STEPS.findIndex((x) => x.key === step);
@@ -297,12 +314,21 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
   const navigateToStep = (next: Step) => {
     setError("");
     setFeedback("");
+    setRefErrors([]);
     setStep(next);
   };
   const navigateToRemediation = (next: Step) => {
     navigateToStep(next);
     if(next==="addresses"){setEditingAddressId(null);setAddress(emptyAddressForm());setShowAddressForm(true);}
     if(next==="history"){setEditingHistoryId(null);setHistory(emptyActivityForm());setShowHistoryForm(true);}
+    if (scrollViewRef?.current && stageRef.current) {
+      const sv = scrollViewRef.current;
+      const stage = stageRef.current;
+      setTimeout(() => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        stage.measureLayout(sv as any, (_x: number, y: number) => sv.scrollTo({ y, animated: true }), () => {});
+      }, 50);
+    }
   };
   if (!data?.id)
     return (
@@ -422,7 +448,7 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
           {error}
         </Text>
       ) : null}
-      <View style={s.stage}>
+      <View ref={stageRef} style={s.stage}>
         <Text style={s.stageTitle}>{STEPS[activeIndex].label}</Text>
         <Text style={s.note}>
           {stageHelp(step, data.screeningPeriodYears || 5)}
@@ -488,11 +514,11 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
             <EvidencePicker
               label="Choose identity evidence"
               category="identity"
+              successMessage="Identity evidence uploaded. It is awaiting reviewer verification."
               disabled={!canUploadEvidence("identity") || busy}
               onUpload={(asset) =>
-                act(
+                uploadAct(
                   () => uploadEvidence("identity", asset),
-                  "Identity evidence uploaded. It is awaiting reviewer verification.",
                 )
               }
             />
@@ -571,11 +597,11 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
             <EvidencePicker
               label="Choose address evidence"
               category="address"
+              successMessage="Address evidence uploaded. It is awaiting reviewer verification."
               disabled={!canUploadEvidence("address") || busy}
               onUpload={(asset) =>
-                act(
+                uploadAct(
                   () => uploadEvidence("address", asset),
-                  "Address evidence uploaded. It is awaiting reviewer verification.",
                 )
               }
             />
@@ -695,7 +721,7 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
         ) : null}
         {step === "references" ? (
           <>
-            <Text style={s.note}>Provide someone or an organisation that can confirm this period of your history. S4 or an authorised reviewer may contact them.</Text>
+            <Text style={s.note}>Provide someone or an organisation that can confirm a period of your activity history. S4 or an authorised reviewer may contact them. Adding contact details does not verify the reference.</Text>
             <View style={s.list}>
               {(data.references || []).map((r) => (
                 <View key={r.id} style={s.item}>
@@ -709,85 +735,124 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
                 </View>
               ))}
             </View>
-            <Text style={s.fieldLabel}>Activity this referee can confirm</Text>
-            {data.history?.length ? (
-              <View style={s.choiceGrid}>
-                {data.history.map((h) => {
-                  const selected = reference.historyId === String(h.id);
-                  return (
-                    <Pressable
-                      accessibilityRole="radio"
-                      accessibilityState={{ checked: selected }}
-                      key={h.id}
-                      onPress={() =>
-                        setReference({ ...reference, historyId: String(h.id) })
-                      }
-                      style={[s.choice, selected && s.choiceActive]}
-                    >
-                      <Text
-                        style={selected ? s.choiceTextActive : s.choiceText}
-                      >
-                        {pretty(h.type)} ·{" "}
-                        {h.organisation || "Explained period"} ·{" "}
-                        {dateLabel(h.startDate)}–{dateLabel(h.endDate)}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
+            {!data.history?.length ? (
+              <>
+                <View style={s.warning}>
+                  <Text style={s.warningTitle}>Add your activity history before adding a referee</Text>
+                  <Text style={s.note}>Each referee must be linked to an activity period in your history. Complete your activity history first, then return here to add referees.</Text>
+                  <Pressable
+                    accessibilityRole="button"
+                    style={s.smallButton}
+                    onPress={() => navigateToStep("history")}
+                  >
+                    <Text style={s.smallButtonText}>Go to Activity History</Text>
+                  </Pressable>
+                </View>
+              </>
+            ) : !canEdit ? (
+              <View style={s.info}>
+                <Text style={s.infoTitle}>REFEREE DETAILS LOCKED</Text>
+                <Text style={s.note}>Your screening is {STATUS[data.status]}. Referee contact details cannot be added or changed in this state.{"\n"}If corrections are required, an authorised reviewer will request them.</Text>
               </View>
             ) : (
-              <Text style={s.warningTitle}>
-                Add an activity period before adding a referee.
-              </Text>
+              <>
+                <Text style={s.fieldLabel}>Which activity period can this referee confirm? *</Text>
+                <View style={s.choiceGrid}>
+                  {data.history.map((h) => {
+                    const selected = reference.historyId === String(h.id);
+                    return (
+                      <Pressable
+                        accessibilityRole="radio"
+                        accessibilityState={{ checked: selected }}
+                        key={h.id}
+                        onPress={() =>
+                          setReference({ ...reference, historyId: String(h.id) })
+                        }
+                        style={[s.choice, selected && s.choiceActive]}
+                      >
+                        <Text
+                          style={selected ? s.choiceTextActive : s.choiceText}
+                        >
+                          {pretty(h.type)} ·{" "}
+                          {h.organisation || "Explained period"} ·{" "}
+                          {dateLabel(h.startDate)}–{dateLabel(h.endDate)}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+                <Field
+                  label="Organisation *"
+                  value={reference.organisation}
+                  set={(v) => setReference({ ...reference, organisation: v })}
+                />
+                <Field
+                  label="Referee name *"
+                  value={reference.contactPerson}
+                  set={(v) => setReference({ ...reference, contactPerson: v })}
+                />
+                <Field
+                  label="Relationship *"
+                  value={reference.relationship}
+                  set={(v) => setReference({ ...reference, relationship: v })}
+                />
+                <Field
+                  label="Business email *"
+                  value={reference.businessEmail}
+                  set={(v) => setReference({ ...reference, businessEmail: v })}
+                />
+                <Field
+                  label="Phone (optional)"
+                  value={reference.phone}
+                  set={(v) => setReference({ ...reference, phone: v })}
+                />
+                <Text style={s.meta}>* Required field</Text>
+                {refErrors.length > 0 ? (
+                  <View style={s.warning} accessibilityRole="alert">
+                    {refErrors.map((e, i) => (
+                      <Text key={i} style={s.warningTitle}>{e}</Text>
+                    ))}
+                  </View>
+                ) : null}
+                <Action
+                  disabled={busy}
+                  label="Add referee"
+                  onPress={() => {
+                    const errs: string[] = [];
+                    if (!reference.historyId) errs.push("Select the activity period this referee can confirm.");
+                    if (!reference.organisation.trim()) errs.push("Organisation is required.");
+                    if (!reference.contactPerson.trim()) errs.push("Referee name is required.");
+                    if (!reference.relationship.trim()) errs.push("Relationship is required.");
+                    const email = reference.businessEmail.trim();
+                    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errs.push("A valid business email is required.");
+                    if (errs.length) { setRefErrors(errs); return; }
+                    setRefErrors([]);
+                    act(
+                      () =>
+                        addMyScreeningReference({
+                          historyId: Number(reference.historyId),
+                          organisation: reference.organisation.trim(),
+                          contactPerson: reference.contactPerson.trim(),
+                          relationship: reference.relationship.trim(),
+                          businessEmail: reference.businessEmail.trim(),
+                          phone: reference.phone.trim() || undefined,
+                        }),
+                      "Your referee details have been submitted. An authorised reviewer will verify the reference.",
+                      () => { setReference(emptyReferenceForm()); setRefErrors([]); },
+                    );
+                  }}
+                />
+              </>
             )}
-            <Field
-              label="Organisation"
-              value={reference.organisation}
-              set={(v) => setReference({ ...reference, organisation: v })}
-            />
-            <Field
-              label="Referee name"
-              value={reference.contactPerson}
-              set={(v) => setReference({ ...reference, contactPerson: v })}
-            />
-            <Field
-              label="Relationship"
-              value={reference.relationship}
-              set={(v) => setReference({ ...reference, relationship: v })}
-            />
-            <Field
-              label="Business email"
-              value={reference.businessEmail}
-              set={(v) => setReference({ ...reference, businessEmail: v })}
-            />
-            <Field
-              label="Phone (optional)"
-              value={reference.phone}
-              set={(v) => setReference({ ...reference, phone: v })}
-            />
-            <Action
-              disabled={!canEdit || busy || !reference.historyId}
-              label="Add referee"
-              onPress={() =>
-                act(
-                  () =>
-                    addMyScreeningReference({
-                      ...reference,
-                      historyId: Number(reference.historyId),
-                    }),
-                  "Your referee details have been submitted. You do not need to wait on this page. An authorised reviewer will verify the reference.",
-                )
-              }
-            />
             <EvidencePicker
               label="Choose optional reference supporting document"
               uploadLabel="Upload supporting document"
               category="reference"
+              successMessage="Supporting document uploaded privately. It may assist the reviewer but does not verify the reference."
               disabled={!canUploadEvidence("reference") || busy}
               onUpload={(asset) =>
-                act(
+                uploadAct(
                   () => uploadEvidence("reference", asset),
-                  "Supporting document uploaded privately. It may assist the reviewer but does not verify the reference.",
                 )
               }
             />
@@ -832,22 +897,22 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
             <EvidencePicker
               label="Choose SIA evidence"
               category="sia"
+              successMessage="SIA evidence uploaded. It is awaiting register verification."
               disabled={!canUploadEvidence("sia") || busy}
               onUpload={(asset) =>
-                act(
+                uploadAct(
                   () => uploadEvidence("sia", asset),
-                  "SIA evidence uploaded. It is awaiting register verification.",
                 )
               }
             />
             <EvidencePicker
               label="Choose Right-to-Work evidence"
               category="right_to_work"
+              successMessage="Right-to-Work evidence uploaded. It is awaiting reviewer verification."
               disabled={!canUploadEvidence("right_to_work") || busy}
               onUpload={(asset) =>
-                act(
+                uploadAct(
                   () => uploadEvidence("right_to_work", asset),
-                  "Right-to-Work evidence uploaded. It is awaiting reviewer verification.",
                 )
               }
             />
@@ -868,11 +933,11 @@ export function GuardScreeningJourney({ onBack }: { onBack: () => void }) {
             <EvidencePicker
               label="Choose additional supporting evidence"
               category="other"
+              successMessage="Supporting evidence uploaded. It is awaiting reviewer verification."
               disabled={!canEdit || busy}
               onUpload={(asset) =>
-                act(
+                uploadAct(
                   () => uploadEvidence("other", asset),
-                  "Supporting evidence uploaded. It is awaiting reviewer verification.",
                 )
               }
             />
@@ -999,19 +1064,22 @@ export function normalizeEvidenceMimeType(value: string | undefined, name: strin
 function EvidencePicker({
   label,
   uploadLabel,
+  successMessage,
   category,
   onUpload,
   disabled,
 }: {
   label: string;
-  uploadLabel?:string;
+  uploadLabel?: string;
+  successMessage?: string;
   category: string;
-  onUpload: (asset: DocumentPicker.DocumentPickerAsset) => Promise<boolean>;
+  onUpload: (asset: DocumentPicker.DocumentPickerAsset) => Promise<string | null>;
   disabled: boolean;
 }) {
   const [asset, setAsset] = React.useState<DocumentPicker.DocumentPickerAsset | null>(null);
   const [uploading, setUploading] = React.useState(false);
   const [uploadError,setUploadError]=React.useState("");
+  const [uploadSuccess,setUploadSuccess]=React.useState("");
   const choose = async () => {
     const result = await DocumentPicker.getDocumentAsync({
       type: ["application/pdf", "image/jpeg", "image/png"],
@@ -1021,14 +1089,21 @@ function EvidencePicker({
     if (result.canceled) return;
     setAsset(result.assets[0]);
     setUploadError("");
+    setUploadSuccess("");
   };
   const upload = async () => {
     if (!asset) return;
     setUploading(true);
     setUploadError("");
+    setUploadSuccess("");
     try {
-      const success=await onUpload(asset);
-      if(success)setAsset(null);else setUploadError("Upload failed. The selected document has been kept so you can try again.");
+      const uploadResult = await onUpload(asset);
+      if (uploadResult === null) {
+        setAsset(null);
+        setUploadSuccess(successMessage ?? "Document uploaded successfully.");
+      } else {
+        setUploadError(uploadResult);
+      }
     } finally {
       setUploading(false);
     }
@@ -1059,6 +1134,7 @@ function EvidencePicker({
       >
         <Text style={s.buttonText}>{uploading ? "Uploading…" : uploadLabel||"Upload document"}</Text>
       </Pressable>
+      {uploadSuccess?<Text accessibilityRole="alert" style={s.pickerSuccess}>{uploadSuccess}</Text>:null}
       {uploadError?<Text style={s.error}>{uploadError}</Text>:null}
       <Text style={s.meta}>Private upload category: {pretty(category)}</Text>
     </View>
@@ -1455,6 +1531,7 @@ const s = StyleSheet.create({
     borderRadius: 10,
   },
   error: { color: colors.danger },
+  pickerSuccess: { color: colors.success, fontWeight: "700" },
   errorBox: {
     color: colors.danger,
     backgroundColor: colors.dangerSurface,

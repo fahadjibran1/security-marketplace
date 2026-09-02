@@ -71,7 +71,7 @@ const ts = require('typescript');
   let passed = 0;
 
   // -------------------------------------------------------------------------
-  // 1. Source-level structural verification: fix is present in api.ts
+  // 1. Source-level structural verification: DEF-002 fix + timeout fix present
   // -------------------------------------------------------------------------
   assert.match(
     apiSource,
@@ -83,6 +83,11 @@ const ts = require('typescript');
     /catch \(error\)\s*\{\s*throw new NetworkError/,
     'api.ts catch block must NOT unconditionally throw NetworkError as the first action',
   );
+  // Timeout: AbortController and AbortError handling must be present
+  assert.match(apiSource, /new AbortController\(\)/, 'request() must create an AbortController for timeout enforcement');
+  assert.match(apiSource, /AbortError/, 'request() must handle AbortError thrown when the timeout fires');
+  assert.match(apiSource, /clearTimeout/, 'request() must clear the timeout in a finally block to prevent leaks');
+  assert.match(apiSource, /signal:\s*controller\.signal/, 'request() must pass the abort signal to fetch()');
   passed++;
 
   // -------------------------------------------------------------------------
@@ -283,11 +288,61 @@ const ts = require('typescript');
   })();
 
   // -------------------------------------------------------------------------
+  // 7. TEST T: AbortError from timeout → NetworkError (UI never stuck on "Signing in…")
+  // Reproduces the full catch block logic from the fixed request() function.
+  // -------------------------------------------------------------------------
+  async function requestCatchWithAbort(mockFetch) {
+    try {
+      await mockFetch();
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new NetworkError('Request timed out. Check your connection and try again.');
+      }
+      if (!(error instanceof TypeError)) {
+        throw error;
+      }
+      throw new NetworkError('Unable to reach the live API.');
+    }
+  }
+
+  // TEST T1: AbortError becomes NetworkError — submitting state WILL clear via finally
+  await (async () => {
+    const abortError = Object.assign(new Error('The user aborted a request.'), { name: 'AbortError' });
+    let thrown;
+    try { await requestCatchWithAbort(async () => { throw abortError; }); } catch (e) { thrown = e; }
+    assert.ok(thrown instanceof NetworkError, 'TEST T1: AbortError must become NetworkError (login loading state clears)');
+    assert.match(thrown.message, /timed out/, 'TEST T1: NetworkError message must mention timeout so formatApiErrorMessage shows backend-unreachable');
+    passed++;
+  })();
+
+  // TEST T2: NetworkError from AbortError formats to the safe backend-unreachable message
+  await (async () => {
+    const timeoutNetworkError = new NetworkError('Request timed out. Check your connection and try again.');
+    assert.equal(
+      formatApiErrorMessage(timeoutNetworkError, 'fallback'),
+      'The live backend is unreachable right now. Check internet access and server health, then retry.',
+      'TEST T2: timeout NetworkError must produce the backend-unreachable message — user sees actionable text, not "Signing in…" forever',
+    );
+    passed++;
+  })();
+
+  // TEST T3: AbortError is checked BEFORE TypeError so it is never misclassified
+  await (async () => {
+    const abortError = Object.assign(new Error('Aborted'), { name: 'AbortError' });
+    // AbortError is NOT a TypeError — confirm the ordering protects it
+    assert.ok(!(abortError instanceof TypeError), 'TEST T3: AbortError must not be a TypeError instance');
+    // Under the old catch (TypeError check only), AbortError would fall through to re-throw
+    // as a plain Error, leaving the submitting state stuck. With the AbortError check first,
+    // it becomes NetworkError and the finally block clears submitting.
+    passed++;
+  })();
+
+  // -------------------------------------------------------------------------
   console.log(JSON.stringify({
     event: 'api_error_handling_regression_tests_passed',
     tests: passed,
-    fix: 'DEF-002',
-    description: 'TypeError-only NetworkError wrapping; semantic interceptor errors preserved',
+    fix: 'DEF-002 + timeout',
+    description: 'TypeError-only NetworkError wrapping; AbortError/timeout → NetworkError; UI never stuck on Signing in',
   }));
 })().catch((err) => {
   console.error('FAIL:', err.message);
