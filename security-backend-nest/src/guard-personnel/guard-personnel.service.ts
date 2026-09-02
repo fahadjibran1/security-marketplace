@@ -47,10 +47,12 @@ export class GuardPersonnelService {
   async updateIdentityForGuard(
     userId: number,
     dto: UpdateGuardIdentityDto,
+    meta: RequestMeta,
   ): Promise<GuardIdentityGuardResponseDto> {
     const guard = await this.findWithSensitiveByUserId(userId);
 
     const updates: Partial<Pick<GuardProfile, 'ninoEnc' | 'ninoHmac' | 'utrEnc'>> = {};
+    const changedFields: string[] = [];
 
     if (dto.ninoPlaintext !== undefined) {
       const normalised = dto.ninoPlaintext.replace(/\s/g, '').toUpperCase();
@@ -74,8 +76,12 @@ export class GuardPersonnelService {
         );
       }
 
-      updates.ninoEnc = this.encryptionService.encrypt(normalised);
-      updates.ninoHmac = newHmac;
+      // Only update if the NINO is actually changing (HMAC mismatch = different value)
+      if (guard.ninoHmac !== newHmac) {
+        updates.ninoEnc = this.encryptionService.encrypt(normalised);
+        updates.ninoHmac = newHmac;
+        changedFields.push('nino');
+      }
     }
 
     if (dto.utrPlaintext !== undefined) {
@@ -83,7 +89,12 @@ export class GuardPersonnelService {
       if (!isValidUtr(normalised)) {
         throw new BadRequestException('Unique Taxpayer Reference must be exactly 10 digits.');
       }
-      updates.utrEnc = this.encryptionService.encrypt(normalised);
+      // Decrypt existing UTR for equality comparison only — result is never logged or returned
+      const existingUtr = guard.utrEnc ? this.encryptionService.decrypt(guard.utrEnc) : null;
+      if (existingUtr !== normalised) {
+        updates.utrEnc = this.encryptionService.encrypt(normalised);
+        changedFields.push('utr');
+      }
     }
 
     if (Object.keys(updates).length > 0) {
@@ -93,6 +104,19 @@ export class GuardPersonnelService {
         .set(updates)
         .where('id = :id', { id: guard.id })
         .execute();
+    }
+
+    // Emit audit event for each identity mutation, listing only field names — no values
+    if (changedFields.length > 0) {
+      await this.auditLogService.log({
+        user: { id: userId },
+        action: 'guard_personnel.identity_update',
+        entityType: 'guard_profile',
+        entityId: guard.id,
+        afterData: { changedFields },
+        ipAddress: meta.ipAddress ?? null,
+        userAgent: meta.userAgent ?? null,
+      });
     }
 
     // Re-fetch with sensitive columns to return accurate masked values

@@ -284,8 +284,27 @@ test('EncryptionService throws on unsupported key version during decrypt', () =>
   assert.match(encSvc, /Unsupported key version/);
 });
 
-test('EncryptionService throws in production when keys are missing', () => {
-  assert.match(encSvc, /isProduction[\s\S]{0,200}throw new Error/s);
+test('EncryptionService throws when GUARD_DATA_ENCRYPTION_KEY is missing or malformed', () => {
+  assert.match(encSvc, /GUARD_DATA_ENCRYPTION_KEY is not configured/);
+});
+
+test('EncryptionService throws when GUARD_DATA_HMAC_KEY is missing or malformed', () => {
+  assert.match(encSvc, /GUARD_DATA_HMAC_KEY is not configured/);
+});
+
+test('EncryptionService has no DEV_ENC_FALLBACK or DEV_HMAC_FALLBACK fallback constants', () => {
+  assert.doesNotMatch(encSvc, /DEV_ENC_FALLBACK/);
+  assert.doesNotMatch(encSvc, /DEV_HMAC_FALLBACK/);
+});
+
+test('EncryptionService key validation does not bypass on non-production environments', () => {
+  // No isProduction conditional — keys are always required regardless of NODE_ENV
+  assert.doesNotMatch(encSvc, /isProduction/);
+});
+
+test('EncryptionService validates key format as 64-character hex string', () => {
+  assert.match(encSvc, /HEX_64_RE/);
+  assert.match(encSvc, /0-9a-fA-F/);
 });
 
 test('maskNino shows first 2 and last 1 character only', () => {
@@ -412,6 +431,105 @@ test('runtime-env enforces encryption key != hmac key', () => {
 
 test('app.module.ts imports GuardPersonnelModule', () => {
   assert.match(appModule, /GuardPersonnelModule/);
+});
+
+// ── HARDENING — FALLBACK KEY REMOVAL ─────────────────────────────────────────
+
+test('EncryptionService constructor rejects missing GUARD_DATA_ENCRYPTION_KEY unconditionally', () => {
+  // The throw must not be inside an isProduction guard — all environments require configured keys
+  const constructorBlock = encSvc.split('constructor()')[1].split('encrypt(')[0];
+  assert.match(constructorBlock, /GUARD_DATA_ENCRYPTION_KEY is not configured/);
+  assert.doesNotMatch(constructorBlock, /isProduction/);
+});
+
+test('EncryptionService constructor rejects missing GUARD_DATA_HMAC_KEY unconditionally', () => {
+  const constructorBlock = encSvc.split('constructor()')[1].split('encrypt(')[0];
+  assert.match(constructorBlock, /GUARD_DATA_HMAC_KEY is not configured/);
+});
+
+test('no hard-coded fallback key bytes exist in EncryptionService source', () => {
+  // Zero-key (64 zeros) and all-f key must not appear as literals
+  assert.doesNotMatch(encSvc, /0{64}/);
+  assert.doesNotMatch(encSvc, /f{64}/);
+});
+
+test('EncryptionService fails closed — no silent encryption path without configured keys', () => {
+  // Constructor must throw before assigning this.encKey or this.hmacKey when keys are absent
+  const constructorBlock = encSvc.split('constructor()')[1].split('encrypt(')[0];
+  // Both HEX_64_RE checks must precede the Buffer.from assignments
+  const hmacReIdx = constructorBlock.indexOf('HEX_64_RE.test(hmacHex)');
+  const encKeyAssignIdx = constructorBlock.indexOf('this.encKey');
+  assert.ok(hmacReIdx > -1, 'HEX_64_RE check for hmacHex must exist');
+  assert.ok(encKeyAssignIdx > hmacReIdx, 'key assignment must follow validation');
+});
+
+// ── HARDENING — MUTATION AUDIT ────────────────────────────────────────────────
+
+test('service emits guard_personnel.identity_update audit action on identity mutation', () => {
+  const updateFn = service.split('updateIdentityForGuard')[1].split('revealForGuard')[0];
+  assert.match(updateFn, /guard_personnel\.identity_update/);
+  assert.match(updateFn, /changedFields/);
+});
+
+test('service skips NINO update and audit when HMAC matches existing stored value', () => {
+  const updateFn = service.split('updateIdentityForGuard')[1].split('revealForGuard')[0];
+  assert.match(updateFn, /guard\.ninoHmac\s*!==\s*newHmac/);
+});
+
+test('service decrypts existing UTR for equality comparison only, never for logging', () => {
+  const updateFn = service.split('updateIdentityForGuard')[1].split('revealForGuard')[0];
+  assert.match(updateFn, /existingUtr.*decrypt|decrypt.*existingUtr/s);
+  assert.match(updateFn, /existingUtr\s*!==\s*normalised/);
+});
+
+test('service mutation audit afterData contains changedFields and no sensitive values', () => {
+  const updateFn = service.split('updateIdentityForGuard')[1].split('revealForGuard')[0];
+  const afterDataIdx = updateFn.indexOf('afterData:');
+  assert.ok(afterDataIdx > -1, 'afterData must be present in updateIdentityForGuard audit call');
+  const afterDataBlock = updateFn.slice(afterDataIdx, afterDataIdx + 80);
+  assert.match(afterDataBlock, /changedFields/);
+  assert.doesNotMatch(afterDataBlock, /ninoPlaintext|utrPlaintext|ninoEnc|utrEnc|ninoHmac|ninoMasked|utrMasked/);
+});
+
+test('service mutation audit fires only when changedFields is non-empty', () => {
+  const updateFn = service.split('updateIdentityForGuard')[1].split('revealForGuard')[0];
+  assert.match(updateFn, /changedFields\.length\s*>\s*0/);
+});
+
+test('service updateIdentityForGuard accepts meta parameter for audit IP and user-agent', () => {
+  const updateFn = service.split('updateIdentityForGuard')[1].split('revealForGuard')[0];
+  assert.match(updateFn, /meta\.ipAddress/);
+  assert.match(updateFn, /meta\.userAgent/);
+});
+
+test('controller PATCH me/identity passes request IP and user-agent for mutation audit', () => {
+  const patchFn = controller.split('updateMyIdentity')[1].split('@Post')[0];
+  assert.match(patchFn, /req\.ip/);
+  assert.match(patchFn, /user-agent/);
+});
+
+test('reveal audit is unchanged — still logs guard_personnel.identity_reveal with requestedBy self', () => {
+  const revealFn = service.split('revealForGuard')[1].split('revealForAdmin')[0];
+  assert.match(revealFn, /guard_personnel\.identity_reveal/);
+  assert.match(revealFn, /requestedBy.*self/);
+});
+
+test('guard isolation: no admin-scoped PATCH route exists for guard identity', () => {
+  assert.doesNotMatch(controller, /@Patch\s*\(\s*['"]admin/);
+});
+
+test('response DTOs do not expose ninoEnc, utrEnc, or ninoHmac fields', () => {
+  const guardDto = backend('guard-personnel/dto/guard-identity-guard-response.dto.ts');
+  const adminDto = backend('guard-personnel/dto/guard-identity-admin-response.dto.ts');
+  assert.doesNotMatch(guardDto, /ninoEnc|utrEnc|ninoHmac/);
+  assert.doesNotMatch(adminDto, /ninoEnc|utrEnc|ninoHmac/);
+});
+
+test('response DTOs expose masked values only — no plaintext identifier fields', () => {
+  const guardDto = backend('guard-personnel/dto/guard-identity-guard-response.dto.ts');
+  assert.match(guardDto, /ninoMasked/);
+  assert.match(guardDto, /utrMasked/);
+  assert.doesNotMatch(guardDto, /ninoPlaintext|utrPlaintext/);
 });
 
 console.log(JSON.stringify({ event: 'guard_personnel_p1a_tests_passed', tests: passed }));

@@ -45,8 +45,12 @@ export class GuardPersonnelController {
   updateMyIdentity(
     @CurrentUser() user: JwtPayload,
     @Body() dto: UpdateGuardIdentityDto,
+    @Req() req: Request,
   ) {
-    return this.service.updateIdentityForGuard(user.sub, dto);
+    return this.service.updateIdentityForGuard(user.sub, dto, {
+      ipAddress: req.ip ?? null,
+      userAgent: req.headers['user-agent'] ?? null,
+    });
   }
 
   @Post('me/reveal')

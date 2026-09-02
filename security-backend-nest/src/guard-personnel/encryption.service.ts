@@ -9,8 +9,9 @@ const TAG_BYTES = 16;
 // are still decryptable while new ones use the current key.
 const CURRENT_KEY_VERSION = 1;
 
-const DEV_ENC_FALLBACK = '0000000000000000000000000000000000000000000000000000000000000000';
-const DEV_HMAC_FALLBACK = 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff';
+// 64 hex characters = 32 bytes. Validated before Buffer.from() to prevent
+// silent truncation from non-hex characters in Node's hex decoder.
+const HEX_64_RE = /^[0-9a-fA-F]{64}$/;
 
 @Injectable()
 export class EncryptionService {
@@ -20,25 +21,20 @@ export class EncryptionService {
   constructor() {
     const encHex = (process.env.GUARD_DATA_ENCRYPTION_KEY ?? '').trim();
     const hmacHex = (process.env.GUARD_DATA_HMAC_KEY ?? '').trim();
-    const isProduction = process.env.NODE_ENV === 'production';
 
-    if (!encHex || encHex.length !== 64) {
-      if (isProduction) throw new Error('GUARD_DATA_ENCRYPTION_KEY must be a 64-char hex string in production');
-      this.encKey = Buffer.from(DEV_ENC_FALLBACK, 'hex');
-    } else {
-      this.encKey = Buffer.from(encHex, 'hex');
+    if (!HEX_64_RE.test(encHex)) {
+      throw new Error(
+        'GUARD_DATA_ENCRYPTION_KEY is not configured. Set it to a 64-character hex string (32 bytes) before using personnel encryption.',
+      );
+    }
+    if (!HEX_64_RE.test(hmacHex)) {
+      throw new Error(
+        'GUARD_DATA_HMAC_KEY is not configured. Set it to a 64-character hex string (32 bytes) before using personnel encryption.',
+      );
     }
 
-    if (!hmacHex || hmacHex.length !== 64) {
-      if (isProduction) throw new Error('GUARD_DATA_HMAC_KEY must be a 64-char hex string in production');
-      this.hmacKey = Buffer.from(DEV_HMAC_FALLBACK, 'hex');
-    } else {
-      this.hmacKey = Buffer.from(hmacHex, 'hex');
-    }
-
-    if (!isProduction && (encHex === DEV_ENC_FALLBACK || !encHex)) {
-      console.warn('[EncryptionService] Using development fallback keys — set GUARD_DATA_ENCRYPTION_KEY and GUARD_DATA_HMAC_KEY for any persistent environment');
-    }
+    this.encKey = Buffer.from(encHex, 'hex');
+    this.hmacKey = Buffer.from(hmacHex, 'hex');
   }
 
   encrypt(plaintext: string): string {
