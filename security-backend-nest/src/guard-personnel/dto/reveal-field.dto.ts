@@ -1,4 +1,7 @@
+import { IsIn } from 'class-validator';
+
 export class RevealFieldDto {
+  @IsIn(['nino', 'utr'])
   field!: 'nino' | 'utr';
 }
 
