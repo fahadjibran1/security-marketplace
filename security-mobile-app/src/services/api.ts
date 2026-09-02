@@ -159,13 +159,20 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     headers.set('Authorization', `Bearer ${accessToken}`);
   }
 
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+
   let response: Response;
   try {
     response = await fetch(`${API_BASE_URL}${path}`, {
       headers,
       ...options,
+      signal: controller.signal,
     });
   } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new NetworkError('Request timed out. Check your connection and try again.');
+    }
     // Only TypeError signals a genuine transport/network failure (React Native throws
     // TypeError: "Network request failed" on connectivity loss). Re-throw other errors
     // (e.g. semantic errors from fetch interceptors) so their message reaches the caller.
@@ -177,6 +184,8 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
         ? `Unable to reach the live API at ${API_BASE_URL}. ${error.message}`
         : `Unable to reach the live API at ${API_BASE_URL}.`,
     );
+  } finally {
+    clearTimeout(timeout);
   }
 
   const body = await parseResponseBody(response);
