@@ -54,6 +54,20 @@ function validateProductionEvidenceStorage(config: RawEnv) {
   }
 }
 
+function validateProductionPersonnelEncryption(config: RawEnv) {
+  const encKey = toTrimmedString(config.GUARD_DATA_ENCRYPTION_KEY);
+  const hmacKey = toTrimmedString(config.GUARD_DATA_HMAC_KEY);
+  if (!encKey || encKey.length !== 64) {
+    throw new Error('GUARD_DATA_ENCRYPTION_KEY must be a 64-character hex string (32 bytes) in production.');
+  }
+  if (!hmacKey || hmacKey.length !== 64) {
+    throw new Error('GUARD_DATA_HMAC_KEY must be a 64-character hex string (32 bytes) in production.');
+  }
+  if (encKey === hmacKey) {
+    throw new Error('GUARD_DATA_ENCRYPTION_KEY and GUARD_DATA_HMAC_KEY must be different keys.');
+  }
+}
+
 export function validateRuntimeEnv(config: RawEnv) {
   const nodeEnv = toTrimmedString(config.NODE_ENV) || 'development';
   const corsOrigin = toTrimmedString(config.CORS_ORIGIN);
@@ -88,6 +102,7 @@ export function validateRuntimeEnv(config: RawEnv) {
       DATABASE_CA_CERT: toTrimmedString(config.DATABASE_CA_CERT),
     });
     validateProductionEvidenceStorage(config);
+    validateProductionPersonnelEncryption(config);
   }
 
   return config;

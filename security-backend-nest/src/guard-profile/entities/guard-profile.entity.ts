@@ -82,6 +82,17 @@ export class GuardProfile {
   @Column({ type: 'text', nullable: true })
   notes?: string | null;
 
+  // P1A — sensitive identity fields. select: false prevents accidental inclusion
+  // in general queries. Must be explicitly selected via createQueryBuilder addSelect.
+  @Column({ type: 'text', nullable: true, select: false })
+  ninoEnc?: string | null;
+
+  @Column({ type: 'varchar', length: 64, nullable: true, select: false })
+  ninoHmac?: string | null;
+
+  @Column({ type: 'text', nullable: true, select: false })
+  utrEnc?: string | null;
+
   @OneToMany(() => JobApplication, (application) => application.guard)
   applications?: JobApplication[];
 

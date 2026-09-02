@@ -80,6 +80,8 @@ import {
   CreateSitePayload,
   CreateSafetyAlertPayload,
   CreateDailyLogPayload,
+  GuardPersonnelIdentity,
+  PersonnelRevealResponse,
 } from '../types/models';
 
 const hasBrowserWindow =
@@ -1047,4 +1049,23 @@ export function reviewScreeningReference(screeningId:number,referenceId:number,p
 export function requestScreeningInformation(id:number,reason:string){return request<GuardScreening>(`/screening/${id}/request-information`,{method:'POST',body:JSON.stringify({reason})});}
 export function completeScreeningReview(id:number,reason:string){return request<GuardScreening>(`/screening/${id}/complete`,{method:'POST',body:JSON.stringify({reason})});}
 export function rejectScreening(id:number,reason:string){return request<GuardScreening>(`/screening/${id}/reject`,{method:'POST',body:JSON.stringify({reason})});}
+
+// Guard Personnel P1A — Tax Identifiers
+export function getMyPersonnelIdentity() {
+  return request<GuardPersonnelIdentity>('/guard-personnel/me/identity');
+}
+
+export function updateMyPersonnelIdentity(payload: { ninoPlaintext?: string; utrPlaintext?: string }) {
+  return request<GuardPersonnelIdentity>('/guard-personnel/me/identity', {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function revealMyPersonnelField(field: 'nino' | 'utr') {
+  return request<PersonnelRevealResponse>('/guard-personnel/me/reveal', {
+    method: 'POST',
+    body: JSON.stringify({ field }),
+  });
+}
 export function expireScreening(id:number,reason:string){return request<GuardScreening>(`/screening/${id}/expire`,{method:'POST',body:JSON.stringify({reason})});}
