@@ -16,4 +16,4 @@ COPY package*.json ./
 RUN npm ci --omit=dev
 COPY --from=builder /app/dist ./dist
 EXPOSE 3000
-CMD ["sh", "-c", "node dist/admin-operator/admin-operator.cli.js bootstrap; npm run start:prod"]
+CMD ["npm", "run", "start:prod"]
