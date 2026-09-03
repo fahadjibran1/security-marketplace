@@ -241,7 +241,7 @@ export class DrivingTransportService {
     return this.drivingRepo
       .createQueryBuilder('d')
       .addSelect('d.licenceNumberEnc')
-      .where('d.guardId = :guardId', { guardId })
+      .where('d.guard = :guardId', { guardId })
       .getOne();
   }
 
