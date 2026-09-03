@@ -837,7 +837,7 @@ export function GuardScreeningJourney({ onBack, scrollViewRef }: { onBack: () =>
                           businessEmail: reference.businessEmail.trim(),
                           phone: reference.phone.trim() || undefined,
                         }),
-                      "Your referee details have been submitted. An authorised reviewer will verify the reference.",
+                      "Your referee details have been submitted. An authorised reviewer will verify the reference. You do not need to wait on this page.",
                       () => { setReference(emptyReferenceForm()); setRefErrors([]); },
                     );
                   }}
