@@ -81,4 +81,11 @@ export class EncryptionService {
     if (n.length < 4) return '••••••••••';
     return '••••••' + n.slice(-4);
   }
+
+  // ABCD1234EF → ••••••••EF  (last 4 characters visible — covers UK and foreign formats)
+  maskLicenceNumber(plaintext: string): string {
+    const n = plaintext.replace(/\s/g, '').toUpperCase();
+    if (n.length < 4) return '••••••••••';
+    return '•'.repeat(n.length - 4) + n.slice(-4);
+  }
 }

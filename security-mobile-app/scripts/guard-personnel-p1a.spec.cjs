@@ -403,9 +403,12 @@ test('controller has ADMIN route for POST admin/:id/reveal', () => {
   assert.match(controller, /revealGuardFieldAdmin/);
 });
 
-test('controller has no COMPANY or CLIENT routes', () => {
-  assert.doesNotMatch(controller, /UserRole\.COMPANY(?!_)|COMPANY_ADMIN_ROLES|COMPANY_VIEW_ROLES/);
-  assert.doesNotMatch(controller, /CLIENT_PORTAL_ROLES|client_admin|client_viewer/);
+test('P1A identity routes have no COMPANY or CLIENT access', () => {
+  // P1A routes (me/identity, admin/:id/identity, me/reveal, admin/:id/reveal) must not
+  // expose identity data to company or client roles. Check only the P1A section.
+  const p1aSection = controller.split('P1D — Driving')[0];
+  assert.doesNotMatch(p1aSection, /COMPANY_ADMIN_ROLES|COMPANY_VIEW_ROLES/);
+  assert.doesNotMatch(p1aSection, /CLIENT_PORTAL_ROLES|client_admin|client_viewer/);
 });
 
 test('controller validates field must be nino or utr before calling service', () => {

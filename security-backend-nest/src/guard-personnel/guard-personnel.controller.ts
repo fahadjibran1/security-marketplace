@@ -20,6 +20,8 @@ import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { GuardPersonnelService } from './guard-personnel.service';
 import { UpdateGuardIdentityDto } from './dto/update-guard-identity.dto';
 import { RevealFieldDto } from './dto/reveal-field.dto';
+import { DrivingTransportService } from './driving-transport.service';
+import { UpdateDrivingTransportDto } from './dto/update-driving-transport.dto';
 
 // P1A access model:
 //   GUARD        — read and update own identity; reveal own data (audited)
@@ -27,10 +29,19 @@ import { RevealFieldDto } from './dto/reveal-field.dto';
 //   COMPANY / COMPANY_ADMIN / COMPANY_STAFF — NO ACCESS in P1A
 //   CLIENT roles — NO ACCESS
 
+// P1D access model:
+//   GUARD        — read and update own driving & transport; reveal own licence number (audited)
+//   ADMIN        — read any guard driving data (masked); reveal any licence number (audited)
+//   COMPANY / COMPANY_ADMIN / COMPANY_STAFF — operational view only (no licence number)
+//   CLIENT roles — NO ACCESS
+
 @Controller('guard-personnel')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class GuardPersonnelController {
-  constructor(private readonly service: GuardPersonnelService) {}
+  constructor(
+    private readonly service: GuardPersonnelService,
+    private readonly drivingService: DrivingTransportService,
+  ) {}
 
   // Guard self-service ────────────────────────────────────────────────────────
 
@@ -92,5 +103,67 @@ export class GuardPersonnelController {
       ipAddress: req.ip ?? null,
       userAgent: req.headers['user-agent'] ?? null,
     });
+  }
+
+  // P1D — Driving & Transport: Guard self-service ─────────────────────────────
+
+  @Get('me/driving-transport')
+  @Roles(UserRole.GUARD)
+  getMyDrivingTransport(@CurrentUser() user: JwtPayload) {
+    return this.drivingService.getDrivingForGuard(user.sub);
+  }
+
+  @Patch('me/driving-transport')
+  @Roles(UserRole.GUARD)
+  updateMyDrivingTransport(
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: UpdateDrivingTransportDto,
+    @Req() req: Request,
+  ) {
+    return this.drivingService.updateDrivingForGuard(user.sub, dto, {
+      ipAddress: req.ip ?? null,
+      userAgent: req.headers['user-agent'] ?? null,
+    });
+  }
+
+  @Post('me/driving-licence/reveal')
+  @Roles(UserRole.GUARD)
+  revealMyDrivingLicenceNumber(@CurrentUser() user: JwtPayload, @Req() req: Request) {
+    return this.drivingService.revealLicenceForGuard(user.sub, {
+      ipAddress: req.ip ?? null,
+      userAgent: req.headers['user-agent'] ?? null,
+    });
+  }
+
+  // P1D — Driving & Transport: Platform Admin ─────────────────────────────────
+
+  @Get('admin/:id/driving-transport')
+  @Roles(UserRole.ADMIN)
+  getGuardDrivingTransportAdmin(@Param('id', ParseIntPipe) id: number) {
+    return this.drivingService.getDrivingForAdmin(id);
+  }
+
+  @Post('admin/:id/driving-licence/reveal')
+  @Roles(UserRole.ADMIN)
+  revealGuardDrivingLicenceAdmin(
+    @CurrentUser() user: JwtPayload,
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: Request,
+  ) {
+    return this.drivingService.revealLicenceForAdmin(user.sub, id, {
+      ipAddress: req.ip ?? null,
+      userAgent: req.headers['user-agent'] ?? null,
+    });
+  }
+
+  // P1D — Driving & Transport: Company operational view ───────────────────────
+
+  @Get('company/guard/:guardId/driving-transport')
+  @Roles(UserRole.COMPANY, UserRole.COMPANY_ADMIN, UserRole.COMPANY_STAFF)
+  getGuardDrivingTransportForCompany(
+    @CurrentUser() user: JwtPayload,
+    @Param('guardId', ParseIntPipe) guardId: number,
+  ) {
+    return this.drivingService.getDrivingForCompany(user.sub, guardId);
   }
 }

@@ -82,6 +82,9 @@ import {
   CreateDailyLogPayload,
   GuardPersonnelIdentity,
   PersonnelRevealResponse,
+  GuardDrivingTransport,
+  DrivingLicenceRevealResponse,
+  UpdateDrivingTransportPayload,
 } from '../types/models';
 
 const hasBrowserWindow =
@@ -1068,4 +1071,24 @@ export function revealMyPersonnelField(field: 'nino' | 'utr') {
     body: JSON.stringify({ field }),
   });
 }
+
+// Guard Personnel P1D — Driving & Transport
+export function getMyDrivingTransport() {
+  return request<GuardDrivingTransport>('/guard-personnel/me/driving-transport');
+}
+
+export function updateMyDrivingTransport(payload: UpdateDrivingTransportPayload) {
+  return request<GuardDrivingTransport>('/guard-personnel/me/driving-transport', {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function revealMyDrivingLicenceNumber() {
+  return request<DrivingLicenceRevealResponse>('/guard-personnel/me/driving-licence/reveal', {
+    method: 'POST',
+    body: JSON.stringify({ field: 'licenceNumber' }),
+  });
+}
+
 export function expireScreening(id:number,reason:string){return request<GuardScreening>(`/screening/${id}/expire`,{method:'POST',body:JSON.stringify({reason})});}
