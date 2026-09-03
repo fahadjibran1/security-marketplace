@@ -1135,6 +1135,7 @@ function EvidencePicker({
         <Text style={s.buttonText}>{uploading ? "Uploading…" : uploadLabel||"Upload document"}</Text>
       </Pressable>
       {uploadSuccess?<Text accessibilityRole="alert" style={s.pickerSuccess}>{uploadSuccess}</Text>:null}
+      {uploadError?<Text style={s.meta}>Upload failed. The selected document has been kept</Text>:null}
       {uploadError?<Text style={s.error}>{uploadError}</Text>:null}
       <Text style={s.meta}>Private upload category: {pretty(category)}</Text>
     </View>
