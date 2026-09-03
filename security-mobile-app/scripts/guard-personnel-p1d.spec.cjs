@@ -633,16 +633,132 @@ test('admin response DTO extends guard DTO and adds canReveal', () => {
   assert.match(adminDtoFile, /canReveal/);
 });
 
-test('company response DTO has no licenceNumber, licenceStatus, or licenceCategories fields', () => {
+test('company response DTO has no licence number fields (masked, set, or raw)', () => {
   assert.doesNotMatch(companyDtoFile, /licenceNumberSet|licenceNumberMasked|licenceNumberEnc/);
-  assert.doesNotMatch(companyDtoFile, /licenceStatus/);
-  assert.doesNotMatch(companyDtoFile, /licenceCategories/);
 });
 
 test('company response DTO has primaryTravelMethod, maxTravelDistanceMiles, hasVehicleAccess', () => {
   assert.match(companyDtoFile, /primaryTravelMethod/);
   assert.match(companyDtoFile, /maxTravelDistanceMiles/);
   assert.match(companyDtoFile, /hasVehicleAccess/);
+});
+
+// ── HARDENING — COMPANY DTO EXPANDED FIELDS ───────────────────────────────────
+
+test('company DTO now exposes licenceStatus', () => {
+  assert.match(companyDtoFile, /licenceStatus/);
+});
+
+test('company DTO now exposes licenceCategories', () => {
+  assert.match(companyDtoFile, /licenceCategories/);
+});
+
+test('company DTO now exposes licenceExpiryDate', () => {
+  assert.match(companyDtoFile, /licenceExpiryDate/);
+});
+
+test('company DTO now exposes ownsVehicle', () => {
+  assert.match(companyDtoFile, /ownsVehicle/);
+});
+
+test('company DTO has no canReveal field', () => {
+  assert.doesNotMatch(companyDtoFile, /canReveal/);
+});
+
+test('company DTO has no licenceNumberEnc field', () => {
+  assert.doesNotMatch(companyDtoFile, /licenceNumberEnc/);
+});
+
+test('company DTO comment indicates fields are self-declared with no verification implied', () => {
+  assert.match(companyDtoFile, /self-declared|no verification/);
+});
+
+test('company DTO comment notes licence number is intentionally excluded', () => {
+  assert.match(companyDtoFile, /intentionally excluded/);
+});
+
+test('company DTO is only accessible by companies with ACTIVE relationship', () => {
+  assert.match(companyDtoFile, /ACTIVE/);
+});
+
+// ── HARDENING — DESTRUCTIVE TRANSITION ───────────────────────────────────────
+
+test('update DTO has confirmRemoveLicenceDetails optional field', () => {
+  assert.match(updateDtoFile, /confirmRemoveLicenceDetails/);
+});
+
+test('update DTO decorates confirmRemoveLicenceDetails with @IsBoolean', () => {
+  const block = updateDtoFile.split('confirmRemoveLicenceDetails')[0].slice(-200);
+  assert.match(block, /@IsBoolean/);
+});
+
+test('update DTO decorates confirmRemoveLicenceDetails with @IsOptional', () => {
+  const block = updateDtoFile.split('confirmRemoveLicenceDetails')[0].slice(-200);
+  assert.match(block, /@IsOptional/);
+});
+
+test('UpdateDrivingTransportPayload in models.ts has confirmRemoveLicenceDetails', () => {
+  const iface = models.split('UpdateDrivingTransportPayload')[1].split('}')[0];
+  assert.match(iface, /confirmRemoveLicenceDetails/);
+});
+
+test('service checks hasLicenceDetails flag before allowing NONE transition', () => {
+  const updateFn = drivingService.split('updateDrivingForGuard')[1].split('revealLicenceForGuard')[0];
+  assert.match(updateFn, /hasLicenceDetails/);
+});
+
+test('service throws BadRequestException without confirmRemoveLicenceDetails when data exists', () => {
+  const updateFn = drivingService.split('updateDrivingForGuard')[1].split('revealLicenceForGuard')[0];
+  assert.match(updateFn, /hasLicenceDetails.*confirmRemoveLicenceDetails|confirmRemoveLicenceDetails[\s\S]{0,100}hasLicenceDetails/s);
+  assert.match(updateFn, /throw new BadRequestException/);
+});
+
+test('service error message prompts guard to confirm the action', () => {
+  const updateFn = drivingService.split('updateDrivingForGuard')[1].split('revealLicenceForGuard')[0];
+  assert.match(updateFn, /Please confirm this action/);
+});
+
+test('service clears licenceNumberEnc on confirmed NONE transition', () => {
+  const updateFn = drivingService.split('updateDrivingForGuard')[1].split('revealLicenceForGuard')[0];
+  assert.match(updateFn, /licenceNumberEnc\s*=\s*null/);
+});
+
+test('service clears licenceCategories on confirmed NONE transition', () => {
+  const updateFn = drivingService.split('updateDrivingForGuard')[1].split('revealLicenceForGuard')[0];
+  assert.match(updateFn, /licenceCategories\s*=\s*null/);
+});
+
+test('service clears licenceExpiryDate on confirmed NONE transition', () => {
+  const updateFn = drivingService.split('updateDrivingForGuard')[1].split('revealLicenceForGuard')[0];
+  assert.match(updateFn, /licenceExpiryDate\s*=\s*null/);
+});
+
+test('service audit changedFields lists licenceNumber when clearing on NONE', () => {
+  const updateFn = drivingService.split('updateDrivingForGuard')[1].split('revealLicenceForGuard')[0];
+  assert.match(updateFn, /changedFields\.push[\s\S]{0,200}licenceNumber/s);
+});
+
+test('service audit changedFields lists licenceCategories when clearing on NONE', () => {
+  const updateFn = drivingService.split('updateDrivingForGuard')[1].split('revealLicenceForGuard')[0];
+  assert.match(updateFn, /changedFields\.push[\s\S]{0,200}licenceCategories/s);
+});
+
+// ── HARDENING — MOBILE CONFIRMATION UX ───────────────────────────────────────
+
+test('dashboard has handleLicenceStatusSelect function', () => {
+  assert.match(dashboard, /function handleLicenceStatusSelect/);
+});
+
+test('handleLicenceStatusSelect shows Alert.alert when NONE has existing licence details', () => {
+  const fn = dashboard.split('handleLicenceStatusSelect')[1].split('function updateShiftStatusLocally')[0];
+  assert.match(fn, /Alert\.alert/);
+  assert.match(fn, /Remove driving licence/);
+  assert.match(fn, /hasLicenceDetails/);
+});
+
+test('handleLicenceStatusSelect sends confirmRemoveLicenceDetails: true on Remove licence press', () => {
+  const fn = dashboard.split('handleLicenceStatusSelect')[1].split('function updateShiftStatusLocally')[0];
+  assert.match(fn, /confirmRemoveLicenceDetails:\s*true/);
 });
 
 test('update DTO uses class-validator IsEnum for licenceStatus', () => {

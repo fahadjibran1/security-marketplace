@@ -701,6 +701,32 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
     }
   }
 
+  function handleLicenceStatusSelect(s: DrivingLicenceStatus) {
+    if (s === 'NONE') {
+      const hasLicenceDetails = !!(
+        driving?.licenceNumberSet ||
+        driving?.licenceCategories?.length ||
+        driving?.licenceExpiryDate
+      );
+      if (hasLicenceDetails) {
+        Alert.alert(
+          'Remove driving licence?',
+          'Changing this to No will remove your saved driving licence details, including the licence number, categories and expiry date.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Remove licence',
+              style: 'destructive',
+              onPress: () => handleUpdateDrivingField({ licenceStatus: 'NONE', confirmRemoveLicenceDetails: true }),
+            },
+          ],
+        );
+        return;
+      }
+    }
+    handleUpdateDrivingField({ licenceStatus: s });
+  }
+
   function updateShiftStatusLocally(shiftId: number, nextStatus: string) {
     setShifts((current) =>
       current.map((shift) =>
@@ -1940,7 +1966,7 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
                             drivingSaving && styles.buttonDisabled,
                           ]}
                           disabled={drivingSaving}
-                          onPress={() => handleUpdateDrivingField({ licenceStatus: s })}
+                          onPress={() => handleLicenceStatusSelect(s)}
                         >
                           <Text style={[
                             styles.guardSecondaryBtnText,

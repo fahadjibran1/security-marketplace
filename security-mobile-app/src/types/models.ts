@@ -126,6 +126,7 @@ export interface UpdateDrivingTransportPayload {
   hasVehicleAccess?: boolean | null;
   primaryTravelMethod?: PrimaryTravelMethod | null;
   maxTravelDistanceMiles?: number | null;
+  confirmRemoveLicenceDetails?: boolean;
 }
 
 export interface Site {

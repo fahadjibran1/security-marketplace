@@ -59,12 +59,31 @@ export class DrivingTransportService {
     const changedFields: string[] = [];
 
     if (dto.licenceStatus !== undefined && dto.licenceStatus !== profile.licenceStatus) {
-      profile.licenceStatus = dto.licenceStatus;
-      changedFields.push('licenceStatus');
-      // Clearing the licence number when status reverts to NONE avoids orphan encrypted data.
       if (dto.licenceStatus === DrivingLicenceStatus.NONE) {
-        profile.licenceNumberEnc = null;
-        changedFields.push('licenceNumber_cleared');
+        // Detect whether this transition would silently destroy existing licence data.
+        const hasLicenceDetails =
+          profile.licenceNumberEnc != null ||
+          profile.licenceCategories != null ||
+          profile.licenceExpiryDate != null;
+
+        if (hasLicenceDetails && !dto.confirmRemoveLicenceDetails) {
+          throw new BadRequestException(
+            'Removing your driving licence will also remove the saved licence details. Please confirm this action.',
+          );
+        }
+
+        profile.licenceStatus = DrivingLicenceStatus.NONE;
+        changedFields.push('licenceStatus');
+
+        if (hasLicenceDetails) {
+          profile.licenceNumberEnc = null;
+          profile.licenceCategories = null;
+          profile.licenceExpiryDate = null;
+          changedFields.push('licenceNumber', 'licenceCategories', 'licenceExpiryDate');
+        }
+      } else {
+        profile.licenceStatus = dto.licenceStatus;
+        changedFields.push('licenceStatus');
       }
     }
 
@@ -201,13 +220,7 @@ export class DrivingTransportService {
     const guard = await this.requireGuardById(guardId);
     const profile = await this.drivingRepo.findOne({ where: { guard: { id: guard.id } } });
 
-    return {
-      guardId: guard.id,
-      primaryTravelMethod: profile?.primaryTravelMethod ?? null,
-      maxTravelDistanceMiles: profile?.maxTravelDistanceMiles ?? null,
-      willingToDriveToWork: profile?.willingToDriveToWork ?? null,
-      hasVehicleAccess: profile?.hasVehicleAccess ?? null,
-    };
+    return this.toCompanyDto(guard.id, profile);
   }
 
   // ── Private helpers ─────────────────────────────────────────────────────────
@@ -275,6 +288,25 @@ export class DrivingTransportService {
       field: 'licenceNumber',
       maskedValue: plaintext ? this.encryptionService.maskLicenceNumber(plaintext) : null,
       revealedValue: plaintext,
+    };
+  }
+
+  private toCompanyDto(
+    guardId: number,
+    profile: GuardDrivingProfile | null,
+  ): DrivingTransportCompanyResponseDto {
+    // licenceNumberEnc is excluded — standard findOne does not load select:false columns.
+    // No licence number (masked or full) is ever returned in the company view.
+    return {
+      guardId,
+      licenceStatus: profile?.licenceStatus ?? DrivingLicenceStatus.NONE,
+      licenceCategories: profile?.licenceCategories ?? null,
+      licenceExpiryDate: profile?.licenceExpiryDate ?? null,
+      willingToDriveToWork: profile?.willingToDriveToWork ?? null,
+      ownsVehicle: profile?.ownsVehicle ?? null,
+      hasVehicleAccess: profile?.hasVehicleAccess ?? null,
+      primaryTravelMethod: profile?.primaryTravelMethod ?? null,
+      maxTravelDistanceMiles: profile?.maxTravelDistanceMiles ?? null,
     };
   }
 

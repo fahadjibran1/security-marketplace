@@ -2,6 +2,11 @@ import { IsArray, IsBoolean, IsEnum, IsInt, IsOptional, IsString, Max, Min } fro
 import { DrivingLicenceStatus, PrimaryTravelMethod } from '../entities/guard-driving-profile.entity';
 
 export class UpdateDrivingTransportDto {
+  // Must be supplied as true when changing licenceStatus to NONE and existing licence
+  // details are present. Guards against accidental data loss from a stray mobile tap.
+  @IsOptional()
+  @IsBoolean()
+  confirmRemoveLicenceDetails?: boolean;
   @IsOptional()
   @IsEnum(DrivingLicenceStatus)
   licenceStatus?: DrivingLicenceStatus;
