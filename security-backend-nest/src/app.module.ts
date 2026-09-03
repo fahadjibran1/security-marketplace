@@ -40,6 +40,7 @@ import { HealthController } from './health.controller';
 import { buildNestTypeOrmOptions } from './database/typeorm.config';
 import { validateRuntimeEnv } from './config/runtime-env';
 import { ScreeningModule } from './screening/screening.module';
+import { GuardPersonnelModule } from './guard-personnel/guard-personnel.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, validate: validateRuntimeEnv }),
@@ -99,6 +100,7 @@ import { ScreeningModule } from './screening/screening.module';
     LeaveModule,
     CoverageModule,
     FinanceModule,
+    GuardPersonnelModule,
   ],
   controllers: [HealthController],
 })

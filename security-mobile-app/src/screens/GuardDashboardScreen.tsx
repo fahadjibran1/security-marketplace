@@ -17,18 +17,22 @@ import {
   createSafetyAlert,
   formatApiErrorMessage,
   getMyGuard,
+  getMyPersonnelIdentity,
   listMyAttendance,
   listMyDailyLogs,
   listMyIncidents,
   listMyShifts,
   listMyTimesheets,
   respondToShift,
+  revealMyPersonnelField,
   updateMyGuard,
+  updateMyPersonnelIdentity,
 } from '../services/api';
 import {
   AttendanceEvent,
   AuthUser,
   DailyLog,
+  GuardPersonnelIdentity,
   Incident,
   Shift,
   Timesheet,
@@ -450,6 +454,23 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const screeningScrollRef = useRef<any>(null);
 
+  // P1A — Tax Identifiers
+  const [identity, setIdentity] = useState<GuardPersonnelIdentity | null>(null);
+  const [identityLoading, setIdentityLoading] = useState(false);
+  const [identityError, setIdentityError] = useState<string | null>(null);
+  const [editingNino, setEditingNino] = useState(false);
+  const [editingUtr, setEditingUtr] = useState(false);
+  const [ninoInput, setNinoInput] = useState('');
+  const [utrInput, setUtrInput] = useState('');
+  const [ninoInputError, setNinoInputError] = useState('');
+  const [utrInputError, setUtrInputError] = useState('');
+  const [identitySaving, setIdentitySaving] = useState(false);
+  const [revealedField, setRevealedField] = useState<'nino' | 'utr' | null>(null);
+  const [revealedValue, setRevealedValue] = useState<string | null>(null);
+  const [revealCountdown, setRevealCountdown] = useState(0);
+  const [revealing, setRevealing] = useState(false);
+  const revealTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   function pushFeedback(tone: 'success' | 'error' | 'info', title: string, message: string) {
     setActionFeedback({ tone, title, message });
   }
@@ -465,6 +486,111 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
       },
       ...current,
     ].slice(0, 20));
+  }
+
+  // UK NINO client-side validation (server is authoritative; this gives immediate UX feedback)
+  function isValidNinoFormat(raw: string): boolean {
+    const n = raw.replace(/\s/g, '').toUpperCase();
+    if (!/^[A-CEGHJ-PR-TW-Z][A-CEGHJ-NPR-TW-Z]\d{6}[A-D]$/.test(n)) return false;
+    return !['BG', 'GB', 'NK', 'KN', 'TN', 'NT', 'ZZ'].includes(n.slice(0, 2));
+  }
+
+  async function loadIdentity() {
+    try {
+      setIdentityLoading(true);
+      setIdentityError(null);
+      const data = await getMyPersonnelIdentity();
+      setIdentity(data);
+    } catch {
+      setIdentityError('Tax identifier details could not be loaded.');
+    } finally {
+      setIdentityLoading(false);
+    }
+  }
+
+  function clearReveal() {
+    if (revealTimerRef.current) {
+      clearInterval(revealTimerRef.current);
+      revealTimerRef.current = null;
+    }
+    setRevealedField(null);
+    setRevealedValue(null);
+    setRevealCountdown(0);
+  }
+
+  function startRevealCountdown() {
+    const REVEAL_SECONDS = 10;
+    setRevealCountdown(REVEAL_SECONDS);
+    if (revealTimerRef.current) clearInterval(revealTimerRef.current);
+    revealTimerRef.current = setInterval(() => {
+      setRevealCountdown((prev) => {
+        if (prev <= 1) {
+          clearInterval(revealTimerRef.current!);
+          revealTimerRef.current = null;
+          setRevealedField(null);
+          setRevealedValue(null);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  }
+
+  async function handleRevealField(field: 'nino' | 'utr') {
+    clearReveal();
+    try {
+      setRevealing(true);
+      const result = await revealMyPersonnelField(field);
+      if (result.revealedValue) {
+        setRevealedField(field);
+        setRevealedValue(result.revealedValue);
+        startRevealCountdown();
+      }
+    } catch {
+      pushFeedback('error', 'Reveal failed', 'Could not retrieve your identifier. Try again.');
+    } finally {
+      setRevealing(false);
+    }
+  }
+
+  async function handleSaveNino() {
+    const normalised = ninoInput.replace(/\s/g, '').toUpperCase();
+    if (!isValidNinoFormat(normalised)) {
+      setNinoInputError('Enter a valid National Insurance number — format: AB 12 34 56 C');
+      return;
+    }
+    try {
+      setIdentitySaving(true);
+      setNinoInputError('');
+      const updated = await updateMyPersonnelIdentity({ ninoPlaintext: normalised });
+      setIdentity(updated);
+      setEditingNino(false);
+      setNinoInput('');
+    } catch (e) {
+      setNinoInputError(formatApiErrorMessage(e, 'Could not save your National Insurance number.'));
+    } finally {
+      setIdentitySaving(false);
+    }
+  }
+
+  async function handleSaveUtr() {
+    const normalised = utrInput.replace(/\s/g, '');
+    if (!/^\d{10}$/.test(normalised)) {
+      setUtrInputError('Enter your 10-digit Unique Taxpayer Reference — numbers only');
+      return;
+    }
+    try {
+      setIdentitySaving(true);
+      setUtrInputError('');
+      const updated = await updateMyPersonnelIdentity({ utrPlaintext: normalised });
+      setIdentity(updated);
+      setEditingUtr(false);
+      setUtrInput('');
+    } catch (e) {
+      setUtrInputError(formatApiErrorMessage(e, 'Could not save your Unique Taxpayer Reference.'));
+    } finally {
+      setIdentitySaving(false);
+    }
   }
 
   function updateShiftStatusLocally(shiftId: number, nextStatus: string) {
@@ -487,6 +613,9 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
         listMyDailyLogs(),
         listMyTimesheets(),
       ]);
+      // Load identity separately — it is non-critical; a failure here must not
+      // block the dashboard from rendering.
+      loadIdentity();
 
       setFullName(myGuard.fullName || '');
       setPhone(myGuard.phone || '');
@@ -739,6 +868,11 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
   useEffect(() => {
     loadData();
   }, [user.guardId]);
+
+  // Clear reveal timer on unmount to prevent setState after unmount
+  useEffect(() => {
+    return () => { if (revealTimerRef.current) clearInterval(revealTimerRef.current); };
+  }, []);
 
   const attendanceByShiftId = useMemo(() => {
     const map: Record<number, { checkInAt?: string; checkOutAt?: string }> = {};
@@ -1505,6 +1639,168 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
                   </Pressable>
                 </View>
               </View>
+            </FeatureCard>
+            <FeatureCard
+              title="Tax identifiers"
+              subtitle="Stored securely and encrypted. Values are masked by default and only visible to you."
+              style={styles.guardProfileCard}
+            >
+              {identityLoading ? (
+                <Text style={styles.helperText}>Loading...</Text>
+              ) : identityError ? (
+                <Text style={[styles.helperText, { color: colors.danger }]}>{identityError}</Text>
+              ) : (
+                <View style={styles.guardProfileBody}>
+
+                  {/* NINO */}
+                  <View style={styles.guardProfileSection}>
+                    <Text style={styles.guardSectionLabel}>National Insurance Number</Text>
+                    {editingNino ? (
+                      <View>
+                        <TextInput
+                          style={[styles.input, styles.guardProfileInput]}
+                          placeholder="e.g. AB 12 34 56 C"
+                          value={ninoInput}
+                          onChangeText={(t: string) => { setNinoInput(t); setNinoInputError(''); }}
+                          autoCapitalize="characters"
+                          maxLength={11}
+                          autoFocus
+                        />
+                        {ninoInputError ? (
+                          <Text style={[styles.helperText, { color: colors.danger, marginTop: 4 }]}>{ninoInputError}</Text>
+                        ) : null}
+                        <Text style={[styles.profileFieldHint]}>Format: AB 12 34 56 C — kept private and encrypted.</Text>
+                        <View style={styles.guardSecondaryRow}>
+                          <Pressable
+                            style={[styles.guardSecondaryBtn, identitySaving && styles.buttonDisabled]}
+                            onPress={handleSaveNino}
+                            disabled={identitySaving}
+                          >
+                            <Text style={styles.guardSecondaryBtnText}>{identitySaving ? 'Saving...' : 'Save'}</Text>
+                          </Pressable>
+                          <Pressable
+                            style={styles.guardSecondaryBtn}
+                            onPress={() => { setEditingNino(false); setNinoInput(''); setNinoInputError(''); }}
+                          >
+                            <Text style={styles.guardSecondaryBtnText}>Cancel</Text>
+                          </Pressable>
+                        </View>
+                      </View>
+                    ) : (
+                      <View>
+                        <View style={styles.guardSecondaryRow}>
+                          <Text style={[styles.profileFieldHint, { flex: 1, fontSize: 15, fontWeight: '600', color: colors.textPrimary }]}>
+                            {revealedField === 'nino' && revealedValue
+                              ? revealedValue
+                              : identity?.ninoMasked ?? (identity?.ninoSet ? '••••••••••' : 'Not yet provided')}
+                          </Text>
+                          {revealedField === 'nino' ? (
+                            <Pressable style={styles.guardSecondaryBtn} onPress={clearReveal}>
+                              <Text style={styles.guardSecondaryBtnText}>Hide ({revealCountdown}s)</Text>
+                            </Pressable>
+                          ) : (
+                            <Pressable
+                              style={[styles.guardSecondaryBtn, (!identity?.ninoSet || revealing) && styles.buttonDisabled]}
+                              disabled={!identity?.ninoSet || revealing}
+                              onPress={() => handleRevealField('nino')}
+                            >
+                              <Text style={styles.guardSecondaryBtnText}>{revealing ? '...' : 'Show'}</Text>
+                            </Pressable>
+                          )}
+                          <Pressable
+                            style={[styles.guardSecondaryBtn, identitySaving && styles.buttonDisabled]}
+                            disabled={identitySaving}
+                            onPress={() => { clearReveal(); setEditingNino(true); setNinoInput(''); }}
+                          >
+                            <Text style={styles.guardSecondaryBtnText}>{identity?.ninoSet ? 'Edit' : 'Add'}</Text>
+                          </Pressable>
+                        </View>
+                        {revealedField === 'nino' ? (
+                          <Text style={[styles.profileFieldHint, { color: colors.warning }]}>
+                            Hiding automatically in {revealCountdown}s
+                          </Text>
+                        ) : null}
+                      </View>
+                    )}
+                  </View>
+
+                  {/* UTR */}
+                  <View style={styles.guardProfileSection}>
+                    <Text style={styles.guardSectionLabel}>Unique Taxpayer Reference (UTR)</Text>
+                    {editingUtr ? (
+                      <View>
+                        <TextInput
+                          style={[styles.input, styles.guardProfileInput]}
+                          placeholder="10 digits"
+                          value={utrInput}
+                          onChangeText={(t: string) => { setUtrInput(t); setUtrInputError(''); }}
+                          keyboardType="number-pad"
+                          maxLength={10}
+                          autoFocus
+                        />
+                        {utrInputError ? (
+                          <Text style={[styles.helperText, { color: colors.danger, marginTop: 4 }]}>{utrInputError}</Text>
+                        ) : null}
+                        <Text style={[styles.profileFieldHint]}>Your 10-digit UTR from HMRC — kept private and encrypted.</Text>
+                        <View style={styles.guardSecondaryRow}>
+                          <Pressable
+                            style={[styles.guardSecondaryBtn, identitySaving && styles.buttonDisabled]}
+                            onPress={handleSaveUtr}
+                            disabled={identitySaving}
+                          >
+                            <Text style={styles.guardSecondaryBtnText}>{identitySaving ? 'Saving...' : 'Save'}</Text>
+                          </Pressable>
+                          <Pressable
+                            style={styles.guardSecondaryBtn}
+                            onPress={() => { setEditingUtr(false); setUtrInput(''); setUtrInputError(''); }}
+                          >
+                            <Text style={styles.guardSecondaryBtnText}>Cancel</Text>
+                          </Pressable>
+                        </View>
+                      </View>
+                    ) : (
+                      <View>
+                        <View style={styles.guardSecondaryRow}>
+                          <Text style={[styles.profileFieldHint, { flex: 1, fontSize: 15, fontWeight: '600', color: colors.textPrimary }]}>
+                            {revealedField === 'utr' && revealedValue
+                              ? revealedValue
+                              : identity?.utrMasked ?? (identity?.utrSet ? '••••••••••' : 'Not yet provided')}
+                          </Text>
+                          {revealedField === 'utr' ? (
+                            <Pressable style={styles.guardSecondaryBtn} onPress={clearReveal}>
+                              <Text style={styles.guardSecondaryBtnText}>Hide ({revealCountdown}s)</Text>
+                            </Pressable>
+                          ) : (
+                            <Pressable
+                              style={[styles.guardSecondaryBtn, (!identity?.utrSet || revealing) && styles.buttonDisabled]}
+                              disabled={!identity?.utrSet || revealing}
+                              onPress={() => handleRevealField('utr')}
+                            >
+                              <Text style={styles.guardSecondaryBtnText}>{revealing ? '...' : 'Show'}</Text>
+                            </Pressable>
+                          )}
+                          <Pressable
+                            style={[styles.guardSecondaryBtn, identitySaving && styles.buttonDisabled]}
+                            disabled={identitySaving}
+                            onPress={() => { clearReveal(); setEditingUtr(true); setUtrInput(''); }}
+                          >
+                            <Text style={styles.guardSecondaryBtnText}>{identity?.utrSet ? 'Edit' : 'Add'}</Text>
+                          </Pressable>
+                        </View>
+                        {revealedField === 'utr' ? (
+                          <Text style={[styles.profileFieldHint, { color: colors.warning }]}>
+                            Hiding automatically in {revealCountdown}s
+                          </Text>
+                        ) : null}
+                      </View>
+                    )}
+                  </View>
+
+                  <Text style={styles.profileFieldHint}>
+                    Your NINO and UTR are encrypted at rest. Only you can view or update them from this app.
+                  </Text>
+                </View>
+              )}
             </FeatureCard>
             <View style={styles.guardProfileBelowStack}>
               <GuardCompliancePanel onManageCompliance={() => setActiveTab('screening')} />

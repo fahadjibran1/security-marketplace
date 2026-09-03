@@ -78,6 +78,20 @@ export interface GuardProfile {
   user?: AuthUser;
 }
 
+export interface GuardPersonnelIdentity {
+  guardId: number;
+  ninoSet: boolean;
+  ninoMasked: string | null;
+  utrSet: boolean;
+  utrMasked: string | null;
+}
+
+export interface PersonnelRevealResponse {
+  field: 'nino' | 'utr';
+  maskedValue: string | null;
+  revealedValue: string | null;
+}
+
 export interface Site {
   id: number;
   companyId?: number;
