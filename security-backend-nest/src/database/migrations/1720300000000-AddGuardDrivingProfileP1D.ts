@@ -43,7 +43,7 @@ export class AddGuardDrivingProfileP1D1720300000000 implements MigrationInterfac
 
     // Evidence hook — DRIVING_LICENCE document type added here; file upload is P1D.1.
     await queryRunner.query(`
-      ALTER TYPE "guard_document_type_enum" ADD VALUE IF NOT EXISTS 'driving_licence'
+      ALTER TYPE "public"."guard_documents_type_enum" ADD VALUE IF NOT EXISTS 'driving_licence'
     `);
   }
 
