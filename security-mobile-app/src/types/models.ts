@@ -92,6 +92,43 @@ export interface PersonnelRevealResponse {
   revealedValue: string | null;
 }
 
+// P1D — Driving & Transport
+export type DrivingLicenceStatus = 'NONE' | 'PROVISIONAL' | 'FULL' | 'OTHER_OR_FOREIGN';
+export type PrimaryTravelMethod = 'CAR' | 'MOTORCYCLE' | 'PUBLIC_TRANSPORT' | 'BICYCLE' | 'WALK' | 'OTHER';
+
+export interface GuardDrivingTransport {
+  guardId: number;
+  licenceStatus: DrivingLicenceStatus;
+  licenceNumberSet: boolean;
+  licenceNumberMasked: string | null;
+  licenceCategories: string[] | null;
+  licenceExpiryDate: string | null;
+  willingToDriveToWork: boolean | null;
+  ownsVehicle: boolean | null;
+  hasVehicleAccess: boolean | null;
+  primaryTravelMethod: PrimaryTravelMethod | null;
+  maxTravelDistanceMiles: number | null;
+}
+
+export interface DrivingLicenceRevealResponse {
+  field: 'licenceNumber';
+  maskedValue: string | null;
+  revealedValue: string | null;
+}
+
+export interface UpdateDrivingTransportPayload {
+  licenceStatus?: DrivingLicenceStatus;
+  licenceNumberPlaintext?: string;
+  licenceCategories?: string[] | null;
+  licenceExpiryDate?: string | null;
+  willingToDriveToWork?: boolean | null;
+  ownsVehicle?: boolean | null;
+  hasVehicleAccess?: boolean | null;
+  primaryTravelMethod?: PrimaryTravelMethod | null;
+  maxTravelDistanceMiles?: number | null;
+  confirmRemoveLicenceDetails?: boolean;
+}
+
 export interface Site {
   id: number;
   companyId?: number;

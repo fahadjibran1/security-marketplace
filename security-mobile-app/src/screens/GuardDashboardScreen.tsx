@@ -16,6 +16,7 @@ import {
   createIncident,
   createSafetyAlert,
   formatApiErrorMessage,
+  getMyDrivingTransport,
   getMyGuard,
   getMyPersonnelIdentity,
   listMyAttendance,
@@ -24,7 +25,9 @@ import {
   listMyShifts,
   listMyTimesheets,
   respondToShift,
+  revealMyDrivingLicenceNumber,
   revealMyPersonnelField,
+  updateMyDrivingTransport,
   updateMyGuard,
   updateMyPersonnelIdentity,
 } from '../services/api';
@@ -32,8 +35,11 @@ import {
   AttendanceEvent,
   AuthUser,
   DailyLog,
+  DrivingLicenceStatus,
+  GuardDrivingTransport,
   GuardPersonnelIdentity,
   Incident,
+  PrimaryTravelMethod,
   Shift,
   Timesheet,
 } from '../types/models';
@@ -471,6 +477,19 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
   const [revealing, setRevealing] = useState(false);
   const revealTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // P1D — Driving & Transport
+  const [driving, setDriving] = useState<GuardDrivingTransport | null>(null);
+  const [drivingLoading, setDrivingLoading] = useState(false);
+  const [drivingError, setDrivingError] = useState<string | null>(null);
+  const [editingLicenceNumber, setEditingLicenceNumber] = useState(false);
+  const [licenceNumberInput, setLicenceNumberInput] = useState('');
+  const [licenceNumberInputError, setLicenceNumberInputError] = useState('');
+  const [drivingSaving, setDrivingSaving] = useState(false);
+  const [revealedLicenceValue, setRevealedLicenceValue] = useState<string | null>(null);
+  const [licenceRevealCountdown, setLicenceRevealCountdown] = useState(0);
+  const [revealingLicence, setRevealingLicence] = useState(false);
+  const licenceRevealTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   function pushFeedback(tone: 'success' | 'error' | 'info', title: string, message: string) {
     setActionFeedback({ tone, title, message });
   }
@@ -593,6 +612,121 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
     }
   }
 
+  // P1D — Driving & Transport helpers
+
+  async function loadDriving() {
+    try {
+      setDrivingLoading(true);
+      setDrivingError(null);
+      const data = await getMyDrivingTransport();
+      setDriving(data);
+    } catch {
+      setDrivingError('Driving details could not be loaded.');
+    } finally {
+      setDrivingLoading(false);
+    }
+  }
+
+  function clearLicenceReveal() {
+    if (licenceRevealTimerRef.current) {
+      clearInterval(licenceRevealTimerRef.current);
+      licenceRevealTimerRef.current = null;
+    }
+    setRevealedLicenceValue(null);
+    setLicenceRevealCountdown(0);
+  }
+
+  function startLicenceRevealCountdown() {
+    const REVEAL_SECONDS = 10;
+    setLicenceRevealCountdown(REVEAL_SECONDS);
+    if (licenceRevealTimerRef.current) clearInterval(licenceRevealTimerRef.current);
+    licenceRevealTimerRef.current = setInterval(() => {
+      setLicenceRevealCountdown((prev) => {
+        if (prev <= 1) {
+          clearInterval(licenceRevealTimerRef.current!);
+          licenceRevealTimerRef.current = null;
+          setRevealedLicenceValue(null);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  }
+
+  async function handleRevealLicenceNumber() {
+    clearLicenceReveal();
+    try {
+      setRevealingLicence(true);
+      const result = await revealMyDrivingLicenceNumber();
+      if (result.revealedValue) {
+        setRevealedLicenceValue(result.revealedValue);
+        startLicenceRevealCountdown();
+      }
+    } catch {
+      pushFeedback('error', 'Reveal failed', 'Could not retrieve your licence number. Try again.');
+    } finally {
+      setRevealingLicence(false);
+    }
+  }
+
+  async function handleSaveLicenceNumber() {
+    const normalised = licenceNumberInput.trim().toUpperCase();
+    if (normalised.length < 2 || normalised.length > 50) {
+      setLicenceNumberInputError('Enter a valid driving licence number (2–50 characters).');
+      return;
+    }
+    try {
+      setDrivingSaving(true);
+      setLicenceNumberInputError('');
+      const updated = await updateMyDrivingTransport({ licenceNumberPlaintext: normalised });
+      setDriving(updated);
+      setEditingLicenceNumber(false);
+      setLicenceNumberInput('');
+    } catch (e) {
+      setLicenceNumberInputError(formatApiErrorMessage(e, 'Could not save your licence number.'));
+    } finally {
+      setDrivingSaving(false);
+    }
+  }
+
+  async function handleUpdateDrivingField(payload: Parameters<typeof updateMyDrivingTransport>[0]) {
+    try {
+      setDrivingSaving(true);
+      const updated = await updateMyDrivingTransport(payload);
+      setDriving(updated);
+    } catch (e) {
+      pushFeedback('error', 'Update failed', formatApiErrorMessage(e, 'Could not save driving details.'));
+    } finally {
+      setDrivingSaving(false);
+    }
+  }
+
+  function handleLicenceStatusSelect(s: DrivingLicenceStatus) {
+    if (s === 'NONE') {
+      const hasLicenceDetails = !!(
+        driving?.licenceNumberSet ||
+        driving?.licenceCategories?.length ||
+        driving?.licenceExpiryDate
+      );
+      if (hasLicenceDetails) {
+        Alert.alert(
+          'Remove driving licence?',
+          'Changing this to No will remove your saved driving licence details, including the licence number, categories and expiry date.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Remove licence',
+              style: 'destructive',
+              onPress: () => handleUpdateDrivingField({ licenceStatus: 'NONE', confirmRemoveLicenceDetails: true }),
+            },
+          ],
+        );
+        return;
+      }
+    }
+    handleUpdateDrivingField({ licenceStatus: s });
+  }
+
   function updateShiftStatusLocally(shiftId: number, nextStatus: string) {
     setShifts((current) =>
       current.map((shift) =>
@@ -613,9 +747,9 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
         listMyDailyLogs(),
         listMyTimesheets(),
       ]);
-      // Load identity separately — it is non-critical; a failure here must not
-      // block the dashboard from rendering.
+      // Load identity and driving separately — non-critical; failures must not block rendering.
       loadIdentity();
+      loadDriving();
 
       setFullName(myGuard.fullName || '');
       setPhone(myGuard.phone || '');
@@ -869,9 +1003,12 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
     loadData();
   }, [user.guardId]);
 
-  // Clear reveal timer on unmount to prevent setState after unmount
+  // Clear reveal timers on unmount to prevent setState after unmount
   useEffect(() => {
-    return () => { if (revealTimerRef.current) clearInterval(revealTimerRef.current); };
+    return () => {
+      if (revealTimerRef.current) clearInterval(revealTimerRef.current);
+      if (licenceRevealTimerRef.current) clearInterval(licenceRevealTimerRef.current);
+    };
   }, []);
 
   const attendanceByShiftId = useMemo(() => {
@@ -1802,6 +1939,211 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
                 </View>
               )}
             </FeatureCard>
+
+            {/* P1D — Driving & Transport */}
+            <FeatureCard
+              title="Driving & transport"
+              subtitle="Your licence and travel preferences. Licence number is encrypted and masked by default."
+              style={styles.guardProfileCard}
+            >
+              {drivingLoading ? (
+                <Text style={styles.helperText}>Loading...</Text>
+              ) : drivingError ? (
+                <Text style={[styles.helperText, { color: colors.danger }]}>{drivingError}</Text>
+              ) : (
+                <View style={styles.guardProfileBody}>
+
+                  {/* Licence status */}
+                  <View style={styles.guardProfileSection}>
+                    <Text style={styles.guardSectionLabel}>Driving Licence Status</Text>
+                    <View style={styles.guardSecondaryRow}>
+                      {(['NONE', 'PROVISIONAL', 'FULL', 'OTHER_OR_FOREIGN'] as DrivingLicenceStatus[]).map((s) => (
+                        <Pressable
+                          key={s}
+                          style={[
+                            styles.guardSecondaryBtn,
+                            driving?.licenceStatus === s && { backgroundColor: colors.accentTeal },
+                            drivingSaving && styles.buttonDisabled,
+                          ]}
+                          disabled={drivingSaving}
+                          onPress={() => handleLicenceStatusSelect(s)}
+                        >
+                          <Text style={[
+                            styles.guardSecondaryBtnText,
+                            driving?.licenceStatus === s && { color: colors.textOnBrand },
+                          ]}>
+                            {s === 'OTHER_OR_FOREIGN' ? 'Other/Foreign' : s.charAt(0) + s.slice(1).toLowerCase()}
+                          </Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                  </View>
+
+                  {/* Licence number — only shown when licence is not NONE */}
+                  {driving?.licenceStatus && driving.licenceStatus !== 'NONE' ? (
+                    <View style={styles.guardProfileSection}>
+                      <Text style={styles.guardSectionLabel}>Licence Number</Text>
+                      {editingLicenceNumber ? (
+                        <View>
+                          <TextInput
+                            style={[styles.input, styles.guardProfileInput]}
+                            placeholder="e.g. MORGA657054SM9IJ"
+                            value={licenceNumberInput}
+                            onChangeText={(t: string) => { setLicenceNumberInput(t); setLicenceNumberInputError(''); }}
+                            autoCapitalize="characters"
+                            maxLength={50}
+                            autoFocus
+                          />
+                          {licenceNumberInputError ? (
+                            <Text style={[styles.helperText, { color: colors.danger, marginTop: 4 }]}>{licenceNumberInputError}</Text>
+                          ) : null}
+                          <Text style={styles.profileFieldHint}>Kept private and encrypted. Format varies by country.</Text>
+                          <View style={styles.guardSecondaryRow}>
+                            <Pressable
+                              style={[styles.guardSecondaryBtn, drivingSaving && styles.buttonDisabled]}
+                              onPress={handleSaveLicenceNumber}
+                              disabled={drivingSaving}
+                            >
+                              <Text style={styles.guardSecondaryBtnText}>{drivingSaving ? 'Saving...' : 'Save'}</Text>
+                            </Pressable>
+                            <Pressable
+                              style={styles.guardSecondaryBtn}
+                              onPress={() => { setEditingLicenceNumber(false); setLicenceNumberInput(''); setLicenceNumberInputError(''); }}
+                            >
+                              <Text style={styles.guardSecondaryBtnText}>Cancel</Text>
+                            </Pressable>
+                          </View>
+                        </View>
+                      ) : (
+                        <View>
+                          <View style={styles.guardSecondaryRow}>
+                            <Text style={[styles.profileFieldHint, { flex: 1, fontSize: 15, fontWeight: '600', color: colors.textPrimary }]}>
+                              {revealedLicenceValue
+                                ? revealedLicenceValue
+                                : driving?.licenceNumberMasked ?? (driving?.licenceNumberSet ? '••••••••••' : 'Not yet provided')}
+                            </Text>
+                            {revealedLicenceValue ? (
+                              <Pressable style={styles.guardSecondaryBtn} onPress={clearLicenceReveal}>
+                                <Text style={styles.guardSecondaryBtnText}>Hide ({licenceRevealCountdown}s)</Text>
+                              </Pressable>
+                            ) : (
+                              <Pressable
+                                style={[styles.guardSecondaryBtn, (!driving?.licenceNumberSet || revealingLicence) && styles.buttonDisabled]}
+                                disabled={!driving?.licenceNumberSet || revealingLicence}
+                                onPress={handleRevealLicenceNumber}
+                              >
+                                <Text style={styles.guardSecondaryBtnText}>{revealingLicence ? '...' : 'Show'}</Text>
+                              </Pressable>
+                            )}
+                            <Pressable
+                              style={[styles.guardSecondaryBtn, drivingSaving && styles.buttonDisabled]}
+                              disabled={drivingSaving}
+                              onPress={() => { clearLicenceReveal(); setEditingLicenceNumber(true); setLicenceNumberInput(''); }}
+                            >
+                              <Text style={styles.guardSecondaryBtnText}>{driving?.licenceNumberSet ? 'Edit' : 'Add'}</Text>
+                            </Pressable>
+                          </View>
+                          {revealedLicenceValue ? (
+                            <Text style={[styles.profileFieldHint, { color: colors.warning }]}>
+                              Hiding automatically in {licenceRevealCountdown}s
+                            </Text>
+                          ) : null}
+                        </View>
+                      )}
+                    </View>
+                  ) : null}
+
+                  {/* Primary travel method */}
+                  <View style={styles.guardProfileSection}>
+                    <Text style={styles.guardSectionLabel}>Primary way to get to work</Text>
+                    <View style={styles.guardSecondaryRow}>
+                      {(['CAR', 'MOTORCYCLE', 'PUBLIC_TRANSPORT', 'BICYCLE', 'WALK', 'OTHER'] as PrimaryTravelMethod[]).map((m) => (
+                        <Pressable
+                          key={m}
+                          style={[
+                            styles.guardSecondaryBtn,
+                            driving?.primaryTravelMethod === m && { backgroundColor: colors.accentTeal },
+                            drivingSaving && styles.buttonDisabled,
+                          ]}
+                          disabled={drivingSaving}
+                          onPress={() => handleUpdateDrivingField({ primaryTravelMethod: m })}
+                        >
+                          <Text style={[
+                            styles.guardSecondaryBtnText,
+                            driving?.primaryTravelMethod === m && { color: colors.textOnBrand },
+                          ]}>
+                            {m === 'PUBLIC_TRANSPORT' ? 'Public transport' : m.charAt(0) + m.slice(1).toLowerCase()}
+                          </Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                  </View>
+
+                  {/* Max travel distance */}
+                  <View style={styles.guardProfileSection}>
+                    <Text style={styles.guardSectionLabel}>Max travel distance (miles)</Text>
+                    <Text style={[styles.profileFieldHint, { fontSize: 15, fontWeight: '600', color: colors.textPrimary }]}>
+                      {driving?.maxTravelDistanceMiles != null ? `${driving.maxTravelDistanceMiles} miles` : 'Not set'}
+                    </Text>
+                    <View style={styles.guardSecondaryRow}>
+                      {[10, 20, 30, 50, 75, 100].map((d) => (
+                        <Pressable
+                          key={d}
+                          style={[
+                            styles.guardSecondaryBtn,
+                            driving?.maxTravelDistanceMiles === d && { backgroundColor: colors.accentTeal },
+                            drivingSaving && styles.buttonDisabled,
+                          ]}
+                          disabled={drivingSaving}
+                          onPress={() => handleUpdateDrivingField({ maxTravelDistanceMiles: d })}
+                        >
+                          <Text style={[
+                            styles.guardSecondaryBtnText,
+                            driving?.maxTravelDistanceMiles === d && { color: colors.textOnBrand },
+                          ]}>
+                            {d}mi
+                          </Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                  </View>
+
+                  {/* Boolean toggles */}
+                  <View style={styles.guardProfileSection}>
+                    <Text style={styles.guardSectionLabel}>Travel preferences</Text>
+                    <View style={[styles.guardSecondaryRow, { marginBottom: 8, justifyContent: 'space-between' }]}>
+                      <Text style={styles.profileFieldHint}>Willing to drive to work</Text>
+                      <Switch
+                        value={!!driving?.willingToDriveToWork}
+                        onValueChange={(v: boolean) => handleUpdateDrivingField({ willingToDriveToWork: v })}
+                        disabled={drivingSaving}
+                      />
+                    </View>
+                    <View style={[styles.guardSecondaryRow, { marginBottom: 8, justifyContent: 'space-between' }]}>
+                      <Text style={styles.profileFieldHint}>Owns a vehicle</Text>
+                      <Switch
+                        value={!!driving?.ownsVehicle}
+                        onValueChange={(v: boolean) => handleUpdateDrivingField({ ownsVehicle: v })}
+                        disabled={drivingSaving}
+                      />
+                    </View>
+                    <View style={[styles.guardSecondaryRow, { marginBottom: 8, justifyContent: 'space-between' }]}>
+                      <Text style={styles.profileFieldHint}>Has access to a vehicle</Text>
+                      <Switch
+                        value={!!driving?.hasVehicleAccess}
+                        onValueChange={(v: boolean) => handleUpdateDrivingField({ hasVehicleAccess: v })}
+                        disabled={drivingSaving}
+                      />
+                    </View>
+                  </View>
+
+                  <Text style={styles.profileFieldHint}>
+                    Your licence number is encrypted at rest. Only you can view the full number from this app.
+                  </Text>
+                </View>
+              )}
+            </FeatureCard>
+
             <View style={styles.guardProfileBelowStack}>
               <GuardCompliancePanel onManageCompliance={() => setActiveTab('screening')} />
               <GuardScreeningPanel onContinue={() => setActiveTab('screening')} />

@@ -16,6 +16,8 @@ export enum GuardDocumentType {
   RIGHT_TO_WORK = 'right_to_work',
   ID_PROOF = 'id_proof',
   TRAINING = 'training',
+  // P1D evidence hook — file upload deferred to P1D.1
+  DRIVING_LICENCE = 'driving_licence',
 }
 
 @Entity('guard_documents')
