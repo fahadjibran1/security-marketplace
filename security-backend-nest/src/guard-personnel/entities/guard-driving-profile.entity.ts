@@ -34,7 +34,7 @@ export class GuardDrivingProfile {
   @JoinColumn({ name: 'guardId' })
   guard!: GuardProfile;
 
-  @Column({ type: 'enum', enum: DrivingLicenceStatus, default: DrivingLicenceStatus.NONE })
+  @Column({ type: 'enum', enum: DrivingLicenceStatus, enumName: 'driving_licence_status_enum', default: DrivingLicenceStatus.NONE })
   licenceStatus!: DrivingLicenceStatus;
 
   // AES-256-GCM envelope — never returned in any response; revealed only via explicit audit-logged endpoint.
@@ -56,7 +56,7 @@ export class GuardDrivingProfile {
   @Column({ type: 'boolean', nullable: true })
   hasVehicleAccess?: boolean | null;
 
-  @Column({ type: 'enum', enum: PrimaryTravelMethod, nullable: true })
+  @Column({ type: 'enum', enum: PrimaryTravelMethod, enumName: 'primary_travel_method_enum', nullable: true })
   primaryTravelMethod?: PrimaryTravelMethod | null;
 
   // Integer miles — kept as raw int for future Smart Matching distance queries.
