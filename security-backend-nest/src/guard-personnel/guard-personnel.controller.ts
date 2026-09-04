@@ -228,7 +228,7 @@ export class GuardPersonnelController {
   // P1E — Emergency Contact: Company operational view ─────────────────────────
 
   @Get('company/guard/:guardId/emergency-contact')
-  @Roles(UserRole.COMPANY, UserRole.COMPANY_ADMIN, UserRole.COMPANY_STAFF)
+  @Roles(UserRole.COMPANY, UserRole.COMPANY_ADMIN)
   getGuardEmergencyContactForCompany(
     @CurrentUser() user: JwtPayload,
     @Param('guardId', ParseIntPipe) guardId: number,

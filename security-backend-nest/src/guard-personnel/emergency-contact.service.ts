@@ -94,13 +94,11 @@ export class EmergencyContactService {
       if (plaintext.length < 1 || plaintext.length > 100) {
         throw new BadRequestException('Contact name must be between 1 and 100 characters.');
       }
-      const newEnc = this.encryptionService.encrypt(plaintext);
-      // Detect change by decrypting existing only when needed
       const existingPlaintext = record.contactNameEnc
         ? this.encryptionService.decrypt(record.contactNameEnc)
         : null;
       if (existingPlaintext !== plaintext) {
-        record.contactNameEnc = newEnc;
+        record.contactNameEnc = this.encryptionService.encrypt(plaintext);
         changedFields.push('contactName');
       }
     }
@@ -111,10 +109,20 @@ export class EmergencyContactService {
     }
 
     if (dto.customRelationship !== undefined) {
-      const val = dto.customRelationship?.trim() ?? null;
-      if (val !== (record.customRelationship ?? null)) {
-        record.customRelationship = val;
-        changedFields.push('customRelationship');
+      if (dto.customRelationship === null) {
+        if (record.customRelationshipEnc != null) {
+          record.customRelationshipEnc = null;
+          changedFields.push('customRelationship');
+        }
+      } else {
+        const val = dto.customRelationship.trim();
+        const existingPlaintext = record.customRelationshipEnc
+          ? this.encryptionService.decrypt(record.customRelationshipEnc)
+          : null;
+        if (existingPlaintext !== (val || null)) {
+          record.customRelationshipEnc = val ? this.encryptionService.encrypt(val) : null;
+          changedFields.push('customRelationship');
+        }
       }
     }
 
@@ -147,12 +155,12 @@ export class EmergencyContactService {
       }
     }
 
-    // Clear customRelationship when relationship is no longer OTHER
+    // Clear customRelationshipEnc when relationship is no longer OTHER.
     if (
       record.relationship !== EmergencyContactRelationship.OTHER &&
-      record.customRelationship != null
+      record.customRelationshipEnc != null
     ) {
-      record.customRelationship = null;
+      record.customRelationshipEnc = null;
     }
 
     const saved = await this.ecRepo.save(record);
@@ -216,7 +224,7 @@ export class EmergencyContactService {
     return this.toAdminDto(guardId, record);
   }
 
-  // ── Company operational view ────────────────────────────────────────────────
+  // ── Company operational view (COMPANY and COMPANY_ADMIN only) ───────────────
 
   async getEmergencyContactForCompany(
     companyUserId: number,
@@ -230,7 +238,7 @@ export class EmergencyContactService {
     const record = await this.findWithSensitive(guardId);
 
     // Audit: company accessing third-party PII for an active guard.
-    // No phone values in metadata — only IDs.
+    // No contact values in metadata — only IDs.
     await this.auditLogService.log({
       user: { id: companyUserId },
       action: 'guard_personnel.emergency_contact_view',
@@ -263,6 +271,7 @@ export class EmergencyContactService {
     return this.ecRepo
       .createQueryBuilder('ec')
       .addSelect('ec.contactNameEnc')
+      .addSelect('ec.customRelationshipEnc')
       .addSelect('ec.primaryPhoneEnc')
       .addSelect('ec.alternatePhoneEnc')
       .where('ec.guard = :guardId', { guardId })
@@ -308,7 +317,7 @@ export class EmergencyContactService {
       guardId,
       contactName: this.encryptionService.decrypt(record.contactNameEnc),
       relationship: record.relationship,
-      customRelationship: record.customRelationship ?? null,
+      customRelationship: this.decrypt(record.customRelationshipEnc),
       primaryPhone: this.encryptionService.decrypt(record.primaryPhoneEnc),
       alternatePhone: this.decrypt(record.alternatePhoneEnc),
       updatedAt: record.updatedAt.toISOString(),
@@ -323,7 +332,7 @@ export class EmergencyContactService {
       guardId,
       contactName: this.encryptionService.decrypt(record.contactNameEnc),
       relationship: record.relationship,
-      customRelationship: record.customRelationship ?? null,
+      customRelationship: this.decrypt(record.customRelationshipEnc),
       primaryPhone: this.encryptionService.decrypt(record.primaryPhoneEnc),
       alternatePhone: this.decrypt(record.alternatePhoneEnc),
       updatedAt: record.updatedAt.toISOString(),
@@ -338,7 +347,7 @@ export class EmergencyContactService {
       guardId,
       contactName: this.encryptionService.decrypt(record.contactNameEnc),
       relationship: record.relationship,
-      customRelationship: record.customRelationship ?? null,
+      customRelationship: this.decrypt(record.customRelationshipEnc),
       primaryPhone: this.encryptionService.decrypt(record.primaryPhoneEnc),
       alternatePhone: this.decrypt(record.alternatePhoneEnc),
     };

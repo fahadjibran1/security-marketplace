@@ -39,9 +39,9 @@ export class GuardEmergencyContact {
   })
   relationship!: EmergencyContactRelationship;
 
-  // Only meaningful when relationship = OTHER; plaintext — not sensitive in isolation.
-  @Column({ type: 'varchar', length: 100, nullable: true })
-  customRelationship?: string | null;
+  // Free-text description for OTHER; encrypted — may contain identifying text.
+  @Column({ type: 'text', nullable: true, select: false })
+  customRelationshipEnc?: string | null;
 
   // Phone numbers — encrypted at rest, never logged, never returned as ciphertext.
   @Column({ type: 'text', select: false })

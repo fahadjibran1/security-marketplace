@@ -298,10 +298,15 @@ test('relationship column uses enumName emergency_contact_relationship_enum', ()
   assert.match(entity, /enumName.*emergency_contact_relationship_enum/);
 });
 
-test('customRelationship column is nullable varchar 100', () => {
-  assert.match(entity, /customRelationship/);
+test('customRelationshipEnc column is nullable text with select:false', () => {
+  assert.match(entity, /customRelationshipEnc/);
   assert.match(entity, /nullable:\s*true/);
-  assert.match(entity, /length:\s*100/);
+  // Must not be varchar — is encrypted text
+  assert.doesNotMatch(entity, /length:\s*100[\s\S]{0,60}customRelationship/);
+  // select:false must appear before customRelationshipEnc
+  const idx = entity.indexOf('customRelationshipEnc');
+  const before = entity.slice(0, idx);
+  assert.match(before.slice(-120), /select:\s*false/);
 });
 
 test('entity has createdAt and updatedAt columns', () => {
@@ -326,6 +331,12 @@ test('migration creates guard_emergency_contacts table', () => {
 
 test('migration table has contactNameEnc text column', () => {
   assert.match(migration, /contactNameEnc.*text|"contactNameEnc"\s+text/s);
+});
+
+test('migration table has customRelationshipEnc text column (not plaintext varchar)', () => {
+  assert.match(migration, /customRelationshipEnc/);
+  // Must not have plaintext customRelationship varchar
+  assert.doesNotMatch(migration, /"customRelationship"\s+varchar/);
 });
 
 test('migration table has primaryPhoneEnc and alternatePhoneEnc', () => {
@@ -714,12 +725,13 @@ test('PHONE: DTO requires minimum length via PHONE_PATTERN (7 chars)', () => {
 
 // ── 24. COMPANY ROLES (spec §16 item 19) — explicit ──────────────────────────
 
-test('COMPANY: company route allows COMPANY, COMPANY_ADMIN, COMPANY_STAFF', () => {
+test('COMPANY ROLE: company route allows COMPANY and COMPANY_ADMIN only — not COMPANY_STAFF', () => {
   // @Roles appears after the @Get path in the controller
   const companyRoute = controller.split('company/guard/:guardId/emergency-contact')[1].split('getGuardEmergencyContactForCompany')[0];
   assert.match(companyRoute, /UserRole\.COMPANY/);
   assert.match(companyRoute, /COMPANY_ADMIN/);
-  assert.match(companyRoute, /COMPANY_STAFF/);
+  // COMPANY_STAFF must NOT be present — third-party PII least-privilege
+  assert.doesNotMatch(companyRoute, /COMPANY_STAFF/);
 });
 
 test('COMPANY: company route restricts access via @Roles decorator not open to public', () => {
@@ -787,6 +799,100 @@ test('admin response DTO does not expose enc fields', () => {
 test('company response DTO does not expose enc fields', () => {
   assert.doesNotMatch(companyDtoFile, /contactNameEnc/);
   assert.doesNotMatch(companyDtoFile, /primaryPhoneEnc/);
+});
+
+// ── 28. CUSTOM RELATIONSHIP ENCRYPTION (privacy hardening) ───────────────────
+
+test('CUSTREL: entity uses customRelationshipEnc — no plaintext customRelationship column', () => {
+  assert.match(entity, /customRelationshipEnc/);
+  // No plaintext varchar customRelationship column
+  assert.doesNotMatch(entity, /type:\s*['"]varchar['"][\s\S]{0,60}customRelationship[^E]/);
+  assert.doesNotMatch(entity, /@Column[\s\S]{0,60}customRelationship[^E]/s);
+});
+
+test('CUSTREL: service uses customRelationshipEnc in upsert', () => {
+  const fn = service.split('upsertEmergencyContactForGuard')[1].split('removeEmergencyContactForGuard')[0];
+  assert.match(fn, /customRelationshipEnc/);
+  assert.doesNotMatch(fn, /record\.customRelationship[^E]/);
+});
+
+test('CUSTREL: service encrypts customRelationship value before storing', () => {
+  const fn = service.split('upsertEmergencyContactForGuard')[1].split('removeEmergencyContactForGuard')[0];
+  assert.match(fn, /encryptionService\.encrypt/);
+  assert.match(fn, /customRelationshipEnc.*=.*encryptionService\.encrypt|encryptionService\.encrypt[\s\S]{0,60}customRelationshipEnc/s);
+});
+
+test('CUSTREL: service adds addSelect for customRelationshipEnc in findWithSensitive', () => {
+  assert.match(service, /addSelect.*customRelationshipEnc/);
+});
+
+test('CUSTREL: service clears customRelationshipEnc when relationship changes from OTHER', () => {
+  const fn = service.split('upsertEmergencyContactForGuard')[1].split('removeEmergencyContactForGuard')[0];
+  assert.match(fn, /customRelationshipEnc\s*=\s*null/);
+  assert.match(fn, /EmergencyContactRelationship\.OTHER/);
+});
+
+test('CUSTREL: service handles explicit null on customRelationship for removal', () => {
+  const fn = service.split('upsertEmergencyContactForGuard')[1].split('removeEmergencyContactForGuard')[0];
+  assert.match(fn, /dto\.customRelationship\s*===\s*null/);
+});
+
+test('CUSTREL: guard DTO decrypts customRelationship (not raw enc)', () => {
+  const fn = service.split('toGuardDto')[1].split('toAdminDto')[0];
+  assert.match(fn, /customRelationship.*decrypt|decrypt.*customRelationshipEnc/s);
+  assert.doesNotMatch(fn, /customRelationship:\s*record\.customRelationship[^E]/);
+});
+
+test('CUSTREL: admin DTO decrypts customRelationship', () => {
+  const fn = service.split('private toAdminDto')[1].split('private toCompanyDto')[0];
+  assert.match(fn, /customRelationship.*decrypt|decrypt.*customRelationshipEnc/s);
+});
+
+test('CUSTREL: company DTO decrypts customRelationship', () => {
+  const fn = service.split('private toCompanyDto')[1].split('private decrypt')[0];
+  assert.match(fn, /customRelationship.*decrypt|decrypt.*customRelationshipEnc/s);
+});
+
+test('CUSTREL: guard response DTO does not expose customRelationshipEnc', () => {
+  assert.doesNotMatch(guardDtoFile, /customRelationshipEnc/);
+});
+
+test('CUSTREL: admin response DTO does not expose customRelationshipEnc', () => {
+  assert.doesNotMatch(adminDtoFile, /customRelationshipEnc/);
+});
+
+test('CUSTREL: company response DTO does not expose customRelationshipEnc', () => {
+  assert.doesNotMatch(companyDtoFile, /customRelationshipEnc/);
+});
+
+test('CUSTREL: audit metadata does not contain customRelationship value', () => {
+  const upsertFn = service.split('upsertEmergencyContactForGuard')[1].split('removeEmergencyContactForGuard')[0];
+  // changedFields only has field name 'customRelationship', not the value
+  assert.doesNotMatch(upsertFn, /afterData.*customRelationship:\s*[^{\[]/s);
+});
+
+test('CUSTREL: migration does not create plaintext customRelationship varchar column', () => {
+  assert.doesNotMatch(migration, /"customRelationship"\s+varchar/);
+  assert.match(migration, /customRelationshipEnc.*text|"customRelationshipEnc"\s+text/s);
+});
+
+// ── 29. COMPANY ROLE LEAST PRIVILEGE (hardening) ──────────────────────────────
+
+test('COMPANY ROLE: COMPANY_STAFF denied from emergency contact — not in @Roles', () => {
+  const p1eCompanySection = controller.split('P1E — Emergency Contact: Company operational view')[1];
+  assert.doesNotMatch(p1eCompanySection, /COMPANY_STAFF/);
+});
+
+test('COMPANY ROLE: P1D company route still grants COMPANY_STAFF for driving (unchanged)', () => {
+  const p1dCompanySection = controller.split('P1D — Driving & Transport: Company operational view')[1].split('P1E')[0];
+  assert.match(p1dCompanySection, /COMPANY_STAFF/);
+});
+
+test('COMPANY ROLE: no CLIENT role anywhere in P1E routes', () => {
+  const p1eSection = controller.split('P1E — Emergency Contact')[1];
+  assert.doesNotMatch(p1eSection, /UserRole\.CLIENT[^_]/);
+  assert.doesNotMatch(p1eSection, /CLIENT_ADMIN/);
+  assert.doesNotMatch(p1eSection, /CLIENT_VIEWER/);
 });
 
 // ── Summary ───────────────────────────────────────────────────────────────────
