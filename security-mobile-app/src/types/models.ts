@@ -129,6 +129,34 @@ export interface UpdateDrivingTransportPayload {
   confirmRemoveLicenceDetails?: boolean;
 }
 
+// P1E — Emergency Contact
+export type EmergencyContactRelationship =
+  | 'SPOUSE_PARTNER'
+  | 'PARENT'
+  | 'SIBLING'
+  | 'CHILD'
+  | 'RELATIVE'
+  | 'FRIEND'
+  | 'OTHER';
+
+export interface GuardEmergencyContact {
+  guardId: number;
+  contactName: string;
+  relationship: EmergencyContactRelationship;
+  customRelationship: string | null;
+  primaryPhone: string;
+  alternatePhone: string | null;
+  updatedAt: string;
+}
+
+export interface UpdateEmergencyContactPayload {
+  contactName?: string;
+  relationship?: EmergencyContactRelationship;
+  customRelationship?: string | null;
+  primaryPhone?: string;
+  alternatePhone?: string | null;
+}
+
 export interface Site {
   id: number;
   companyId?: number;
