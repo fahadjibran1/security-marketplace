@@ -534,7 +534,200 @@ test('company response DTO has contactName, relationship, primaryPhone', () => {
   assert.match(companyDtoFile, /primaryPhone/);
 });
 
-// ── 14. REGRESSION — P1A not broken ──────────────────────────────────────────
+// ── 14. PRIVACY — contactName encrypted (spec §16 item 7) ────────────────────
+
+test('PRIV: contactName stored as contactNameEnc (encrypted column, not plaintext)', () => {
+  // Entity must not have a plaintext contactName column — only contactNameEnc
+  assert.match(entity, /contactNameEnc/);
+  assert.doesNotMatch(entity, /type:\s*['"]varchar['"][\s\S]{0,60}contactName[^E]|@Column[\s\S]{0,60}contactName[^E]/);
+});
+
+test('PRIV: contactNameEnc has select: false on entity', () => {
+  // Decorator for contactNameEnc must include select: false
+  const idx = entity.indexOf('contactNameEnc');
+  const before = entity.slice(0, idx);
+  assert.match(before.slice(-120), /select:\s*false/);
+});
+
+test('PRIV: no plaintext phone column exists — only *PhoneEnc', () => {
+  // Migration must not contain a plaintext phone column name
+  assert.doesNotMatch(migration, /"primaryPhone"\s+varchar|"primaryPhone"\s+text[^E]|"alternatePhone"\s+varchar/);
+  assert.match(migration, /primaryPhoneEnc/);
+  assert.match(migration, /alternatePhoneEnc/);
+});
+
+test('PRIV: guard DTO exposes contactName (decrypted), not contactNameEnc', () => {
+  assert.match(guardDtoFile, /contactName!:/);
+  assert.doesNotMatch(guardDtoFile, /contactNameEnc/);
+});
+
+// ── 18. PRIVACY — Audit metadata is clean (spec §16 item 8) ──────────────────
+
+test('PRIV: mutation audit uses changedFields array (field names only)', () => {
+  // afterData must log changedFields, not actual phone/name values
+  const upsertFn = service.split('upsertEmergencyContactForGuard')[1].split('removeEmergencyContactForGuard')[0];
+  assert.match(upsertFn, /changedFields/);
+  // Must not log contactName value, phone value, or ciphertext
+  assert.doesNotMatch(upsertFn, /afterData.*contactName:\s*[^{]|afterData.*phone:\s*[^{]/s);
+});
+
+test('PRIV: company view audit afterData contains only guardId and companyId — no contact values', () => {
+  const companyFn = service.split('getEmergencyContactForCompany')[1].split('findWithSensitive')[0];
+  assert.match(companyFn, /guardId/);
+  assert.match(companyFn, /companyId/);
+  // Must not log contactName, phone, or ciphertext values
+  assert.doesNotMatch(companyFn, /contactName:\s*[^{]|primaryPhone:\s*[^{]/);
+});
+
+test('PRIV: admin view audit afterData contains only guardId — no contact values', () => {
+  const adminFn = service.split('getEmergencyContactForAdmin')[1].split('getEmergencyContactForCompany')[0];
+  assert.match(adminFn, /guardId/);
+  assert.doesNotMatch(adminFn, /contactName:\s*[^{]|primaryPhone:\s*[^{]/);
+});
+
+test('PRIV: remove audit afterData contains only {removed:true} — no contact values', () => {
+  const removeFn = service.split('removeEmergencyContactForGuard')[1].split('getEmergencyContactForAdmin')[0];
+  assert.match(removeFn, /removed:\s*true/);
+  assert.doesNotMatch(removeFn, /contactName:\s*[^{]|primaryPhone:\s*[^{]/);
+});
+
+// ── 19. GUARD SELF-ISOLATION (spec §16 items 14-15) ──────────────────────────
+
+test('GUARD ISOLATION: me/emergency-contact routes take no guardId path param', () => {
+  // Guard self-service routes must derive the guard from JWT (user.sub), not a URL param
+  // Extract the P1E guard self-service section only (between Guard self-service and Platform Admin comments)
+  const p1eGuardSection = controller
+    .split('P1E — Emergency Contact: Guard self-service')[1]
+    .split('P1E — Emergency Contact: Platform Admin')[0];
+  assert.doesNotMatch(p1eGuardSection, /@Param.*guardId/);
+});
+
+test('GUARD ISOLATION: getEmergencyContactForGuard derives guard from userId — not caller-supplied guardId', () => {
+  const fn = service.split('getEmergencyContactForGuard')[1].split('upsertEmergencyContactForGuard')[0];
+  assert.match(fn, /requireGuardByUserId\(userId\)/);
+  assert.doesNotMatch(fn, /requireGuardById\(/);
+});
+
+test('GUARD ISOLATION: upsertEmergencyContactForGuard derives guard from userId', () => {
+  const fn = service.split('upsertEmergencyContactForGuard')[1].split('removeEmergencyContactForGuard')[0];
+  assert.match(fn, /requireGuardByUserId\(userId\)/);
+});
+
+// ── 20. GUARD PATCH OMISSION SEMANTICS (spec §16 item 12) ────────────────────
+
+test('PATCH OMISSION: service updates contactNameEnc only when dto.contactName !== undefined', () => {
+  const fn = service.split('upsertEmergencyContactForGuard')[1].split('removeEmergencyContactForGuard')[0];
+  assert.match(fn, /dto\.contactName !== undefined/);
+});
+
+test('PATCH OMISSION: service updates primaryPhoneEnc only when dto.primaryPhone !== undefined', () => {
+  const fn = service.split('upsertEmergencyContactForGuard')[1].split('removeEmergencyContactForGuard')[0];
+  assert.match(fn, /dto\.primaryPhone !== undefined/);
+});
+
+test('PATCH OMISSION: service handles alternatePhone removal via explicit null', () => {
+  const fn = service.split('upsertEmergencyContactForGuard')[1].split('removeEmergencyContactForGuard')[0];
+  assert.match(fn, /dto\.alternatePhone === null/);
+  assert.match(fn, /alternatePhoneEnc\s*=\s*null/);
+});
+
+// ── 21. MOBILE CONFIRMATION (spec §16 items 17-18) ───────────────────────────
+
+test('MOBILE: Cancel button has style cancel — no DELETE call on cancel', () => {
+  const handler = dashboard.split('handleRemoveEmergencyContact')[1].split('function updateShiftStatusLocally')[0];
+  assert.match(handler, /style:\s*['"]cancel['"]/);
+  // Cancel button must not call removeMyEmergencyContact
+  const cancelChunk = handler.split("style: 'cancel'")[0];
+  assert.doesNotMatch(cancelChunk, /removeMyEmergencyContact/);
+});
+
+test('MOBILE: Remove button has style destructive and calls removeMyEmergencyContact', () => {
+  const handler = dashboard.split('handleRemoveEmergencyContact')[1].split('function updateShiftStatusLocally')[0];
+  assert.match(handler, /style:\s*['"]destructive['"]/);
+  assert.match(handler, /removeMyEmergencyContact\(\)/);
+});
+
+test('MOBILE: confirmation title is Remove emergency contact?', () => {
+  const handler = dashboard.split('handleRemoveEmergencyContact')[1].split('function updateShiftStatusLocally')[0];
+  assert.match(handler, /Remove emergency contact\?/);
+});
+
+test('MOBILE: after successful Remove, emergencyContact state set to null', () => {
+  const handler = dashboard.split('handleRemoveEmergencyContact')[1].split('function updateShiftStatusLocally')[0];
+  assert.match(handler, /setEmergencyContact\(null\)/);
+});
+
+// ── 22. CLIENT ISOLATION (spec §16 items 29-30) ───────────────────────────────
+
+test('CLIENT: controller has no CLIENT or CLIENT_ADMIN or CLIENT_VIEWER role on any P1E route', () => {
+  // Extract only P1E section of controller
+  const p1eSection = controller.split('P1E — Emergency Contact')[1];
+  assert.doesNotMatch(p1eSection, /UserRole\.CLIENT/);
+  assert.doesNotMatch(p1eSection, /CLIENT_ADMIN/);
+  assert.doesNotMatch(p1eSection, /CLIENT_VIEWER/);
+});
+
+test('CLIENT: no emergency-contact endpoint exists with Client role anywhere in controller', () => {
+  // Full controller must not associate any CLIENT role with emergency-contact
+  const fullController = controller;
+  const ecRoutes = fullController.split('emergency-contact');
+  // Each segment that mentions emergency-contact must not also have CLIENT role nearby
+  ecRoutes.forEach((segment, i) => {
+    if (i === 0) return; // first segment is before any ec route
+    const surrounding = ecRoutes[i - 1].slice(-200) + segment.slice(0, 200);
+    assert.doesNotMatch(surrounding, /UserRole\.CLIENT[^_]|CLIENT_ADMIN|CLIENT_VIEWER/);
+  });
+});
+
+// ── 23. PHONE VALIDATION EXAMPLES (spec §16 items 31-33) ─────────────────────
+
+test('PHONE: PHONE_PATTERN source contains optional leading-plus and digit class', () => {
+  assert.match(updateDtoFile, /PHONE_PATTERN/);
+  // Comment documents optional leading + behaviour
+  assert.match(updateDtoFile, /optional leading/);
+  // Pattern contains digit character class
+  assert.match(updateDtoFile, /\\d/);
+});
+
+test('PHONE: PHONE_PATTERN shape allows leading +, digits, spaces, hyphens, parens, 7-20 chars', () => {
+  // Extract the PHONE_PATTERN literal from the DTO source file
+  const match = updateDtoFile.match(/PHONE_PATTERN\s*=\s*(\/[^/]+\/)/);
+  assert.ok(match, 'PHONE_PATTERN regex literal found in DTO file');
+  const patternStr = match[1];
+  // Reconstruct regex
+  const re = new RegExp(patternStr.slice(1, patternStr.lastIndexOf('/')));
+  // Valid examples
+  assert.ok(re.test('+44 7700 900001'), 'UK mobile with +44 passes');
+  assert.ok(re.test('07700 900001'), 'UK local without + passes');
+  assert.ok(re.test('+1-555-123-4567'), 'US international format passes');
+  assert.ok(re.test('+353 1 234 5678'), 'Irish format passes');
+  // Invalid examples
+  assert.ok(!re.test('abc'), 'Alphabetic string rejected');
+  assert.ok(!re.test('12345'), 'Too-short number rejected (under 7 chars)');
+  assert.ok(!re.test('+44' + '0'.repeat(20)), 'Overlong number rejected');
+  assert.ok(!re.test(''), 'Empty string rejected');
+});
+
+test('PHONE: DTO requires minimum length via PHONE_PATTERN (7 chars)', () => {
+  assert.match(updateDtoFile, /7,20/);
+});
+
+// ── 24. COMPANY ROLES (spec §16 item 19) — explicit ──────────────────────────
+
+test('COMPANY: company route allows COMPANY, COMPANY_ADMIN, COMPANY_STAFF', () => {
+  // @Roles appears after the @Get path in the controller
+  const companyRoute = controller.split('company/guard/:guardId/emergency-contact')[1].split('getGuardEmergencyContactForCompany')[0];
+  assert.match(companyRoute, /UserRole\.COMPANY/);
+  assert.match(companyRoute, /COMPANY_ADMIN/);
+  assert.match(companyRoute, /COMPANY_STAFF/);
+});
+
+test('COMPANY: company route restricts access via @Roles decorator not open to public', () => {
+  const companyRoute = controller.split('company/guard/:guardId/emergency-contact')[1].split('getGuardEmergencyContactForCompany')[0];
+  assert.match(companyRoute, /@Roles/);
+});
+
+// ── 25. REGRESSION — No encrypted values exposed in DTOs ─────────────────────
 
 test('REG: P1A — api.ts still exports getMyPersonnelIdentity', () => {
   assert.match(api, /export function getMyPersonnelIdentity/);
@@ -556,7 +749,7 @@ test('REG: P1A — controller still has me/identity route', () => {
   assert.match(controller, /me\/identity/);
 });
 
-// ── 15. REGRESSION — P1D not broken ──────────────────────────────────────────
+// ── 26. REGRESSION — P1D not broken ──────────────────────────────────────────
 
 test('REG: P1D — api.ts still exports getMyDrivingTransport', () => {
   assert.match(api, /export function getMyDrivingTransport/);
@@ -578,7 +771,7 @@ test('REG: P1D — controller still has me/driving-transport route', () => {
   assert.match(controller, /me\/driving-transport/);
 });
 
-// ── 16. REGRESSION — No encrypted values exposed in DTOs ─────────────────────
+// ── 27. REGRESSION — No encrypted values exposed in DTOs ─────────────────────
 
 test('guard response DTO does not expose contactNameEnc, primaryPhoneEnc, alternatePhoneEnc', () => {
   assert.doesNotMatch(guardDtoFile, /contactNameEnc/);

@@ -163,7 +163,7 @@ export class EmergencyContactService {
         action: 'guard_personnel.emergency_contact_update',
         entityType: 'guard_emergency_contact',
         entityId: saved.id,
-        afterData: { changedFields: isCreating ? ['contactName', 'relationship', 'primaryPhone'] : changedFields },
+        afterData: { changedFields },
         ipAddress: meta.ipAddress ?? null,
         userAgent: meta.userAgent ?? null,
       });
