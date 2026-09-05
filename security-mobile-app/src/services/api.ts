@@ -87,6 +87,7 @@ import {
   UpdateDrivingTransportPayload,
   GuardEmergencyContact,
   UpdateEmergencyContactPayload,
+  GuardEmploymentRecord,
 } from '../types/models';
 
 const hasBrowserWindow =
@@ -1107,6 +1108,11 @@ export function upsertMyEmergencyContact(payload: UpdateEmergencyContactPayload)
 
 export function removeMyEmergencyContact() {
   return request<void>('/guard-personnel/me/emergency-contact', { method: 'DELETE' });
+}
+
+// P1F — Employment & Engagement Record
+export function getMyEmployments() {
+  return request<GuardEmploymentRecord[]>('/guard-personnel/me/employments');
 }
 
 export function expireScreening(id:number,reason:string){return request<GuardScreening>(`/screening/${id}/expire`,{method:'POST',body:JSON.stringify({reason})});}
