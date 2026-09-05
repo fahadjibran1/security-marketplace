@@ -17,6 +17,7 @@ import {
   createSafetyAlert,
   formatApiErrorMessage,
   getMyDrivingTransport,
+  getMyEmergencyContact,
   getMyGuard,
   getMyPersonnelIdentity,
   listMyAttendance,
@@ -24,19 +25,23 @@ import {
   listMyIncidents,
   listMyShifts,
   listMyTimesheets,
+  removeMyEmergencyContact,
   respondToShift,
   revealMyDrivingLicenceNumber,
   revealMyPersonnelField,
   updateMyDrivingTransport,
   updateMyGuard,
   updateMyPersonnelIdentity,
+  upsertMyEmergencyContact,
 } from '../services/api';
 import {
   AttendanceEvent,
   AuthUser,
   DailyLog,
   DrivingLicenceStatus,
+  EmergencyContactRelationship,
   GuardDrivingTransport,
+  GuardEmergencyContact,
   GuardPersonnelIdentity,
   Incident,
   PrimaryTravelMethod,
@@ -490,6 +495,19 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
   const [revealingLicence, setRevealingLicence] = useState(false);
   const licenceRevealTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // P1E — Emergency Contact
+  const [emergencyContact, setEmergencyContact] = useState<GuardEmergencyContact | null>(null);
+  const [emergencyContactLoading, setEmergencyContactLoading] = useState(false);
+  const [emergencyContactError, setEmergencyContactError] = useState<string | null>(null);
+  const [emergencyContactSaving, setEmergencyContactSaving] = useState(false);
+  const [editingEmergencyContact, setEditingEmergencyContact] = useState(false);
+  const [ecNameInput, setEcNameInput] = useState('');
+  const [ecRelationshipInput, setEcRelationshipInput] = useState<EmergencyContactRelationship | ''>('');
+  const [ecCustomRelationshipInput, setEcCustomRelationshipInput] = useState('');
+  const [ecPrimaryPhoneInput, setEcPrimaryPhoneInput] = useState('');
+  const [ecAlternatePhoneInput, setEcAlternatePhoneInput] = useState('');
+  const [ecInputError, setEcInputError] = useState('');
+
   function pushFeedback(tone: 'success' | 'error' | 'info', title: string, message: string) {
     setActionFeedback({ tone, title, message });
   }
@@ -727,6 +745,82 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
     handleUpdateDrivingField({ licenceStatus: s });
   }
 
+  // P1E — Emergency Contact helpers
+
+  async function loadEmergencyContact() {
+    try {
+      setEmergencyContactLoading(true);
+      setEmergencyContactError(null);
+      const data = await getMyEmergencyContact();
+      setEmergencyContact(data);
+    } catch {
+      setEmergencyContactError('Emergency contact could not be loaded.');
+    } finally {
+      setEmergencyContactLoading(false);
+    }
+  }
+
+  function openEmergencyContactEditor() {
+    setEcNameInput(emergencyContact?.contactName ?? '');
+    setEcRelationshipInput(emergencyContact?.relationship ?? '');
+    setEcCustomRelationshipInput(emergencyContact?.customRelationship ?? '');
+    setEcPrimaryPhoneInput(emergencyContact?.primaryPhone ?? '');
+    setEcAlternatePhoneInput(emergencyContact?.alternatePhone ?? '');
+    setEcInputError('');
+    setEditingEmergencyContact(true);
+  }
+
+  async function handleSaveEmergencyContact() {
+    if (!ecNameInput.trim()) { setEcInputError('Contact name is required.'); return; }
+    if (!ecRelationshipInput) { setEcInputError('Relationship is required.'); return; }
+    if (!ecPrimaryPhoneInput.trim()) { setEcInputError('Primary phone number is required.'); return; }
+    try {
+      setEmergencyContactSaving(true);
+      setEcInputError('');
+      const updated = await upsertMyEmergencyContact({
+        contactName: ecNameInput.trim(),
+        relationship: ecRelationshipInput as EmergencyContactRelationship,
+        customRelationship: ecRelationshipInput === 'OTHER' ? (ecCustomRelationshipInput.trim() || null) : null,
+        primaryPhone: ecPrimaryPhoneInput.trim(),
+        alternatePhone: ecAlternatePhoneInput.trim() || null,
+      });
+      setEmergencyContact(updated);
+      setEditingEmergencyContact(false);
+      pushFeedback('success', 'Saved', 'Emergency contact updated.');
+    } catch (e: unknown) {
+      setEcInputError(formatApiErrorMessage(e, 'Could not save emergency contact.'));
+    } finally {
+      setEmergencyContactSaving(false);
+    }
+  }
+
+  function handleRemoveEmergencyContact() {
+    Alert.alert(
+      'Remove emergency contact?',
+      'This will remove the saved emergency contact details.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setEmergencyContactSaving(true);
+              await removeMyEmergencyContact();
+              setEmergencyContact(null);
+              setEditingEmergencyContact(false);
+              pushFeedback('success', 'Removed', 'Emergency contact removed.');
+            } catch (e: unknown) {
+              pushFeedback('error', 'Remove failed', formatApiErrorMessage(e, 'Could not remove emergency contact.'));
+            } finally {
+              setEmergencyContactSaving(false);
+            }
+          },
+        },
+      ],
+    );
+  }
+
   function updateShiftStatusLocally(shiftId: number, nextStatus: string) {
     setShifts((current) =>
       current.map((shift) =>
@@ -747,9 +841,10 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
         listMyDailyLogs(),
         listMyTimesheets(),
       ]);
-      // Load identity and driving separately — non-critical; failures must not block rendering.
+      // Load identity, driving, and emergency contact separately — non-critical; failures must not block rendering.
       loadIdentity();
       loadDriving();
+      loadEmergencyContact();
 
       setFullName(myGuard.fullName || '');
       setPhone(myGuard.phone || '');
@@ -2144,6 +2239,182 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
               )}
             </FeatureCard>
 
+            {/* P1E — Emergency Contact */}
+            <FeatureCard
+              title="Emergency contact"
+              subtitle="A person we should contact in an emergency. Phone numbers are encrypted at rest."
+              style={styles.guardProfileCard}
+            >
+              {emergencyContactLoading ? (
+                <Text style={styles.helperText}>Loading...</Text>
+              ) : emergencyContactError ? (
+                <Text style={[styles.helperText, { color: colors.danger }]}>{emergencyContactError}</Text>
+              ) : editingEmergencyContact ? (
+                <View style={styles.guardProfileBody}>
+                  <View style={styles.guardProfileSection}>
+                    <Text style={styles.guardSectionLabel}>Contact name</Text>
+                    <TextInput
+                      style={[styles.input, styles.guardProfileInput]}
+                      value={ecNameInput}
+                      onChangeText={setEcNameInput}
+                      placeholder="Full name"
+                      placeholderTextColor={colors.textSecondary}
+                      maxLength={100}
+                      editable={!emergencyContactSaving}
+                    />
+                  </View>
+
+                  <View style={styles.guardProfileSection}>
+                    <Text style={styles.guardSectionLabel}>Relationship</Text>
+                    <View style={styles.guardSecondaryRow}>
+                      {(['SPOUSE_PARTNER', 'PARENT', 'SIBLING', 'CHILD', 'RELATIVE', 'FRIEND', 'OTHER'] as EmergencyContactRelationship[]).map((r) => (
+                        <Pressable
+                          key={r}
+                          style={[
+                            styles.guardSecondaryBtn,
+                            ecRelationshipInput === r && { backgroundColor: colors.accentTeal },
+                            emergencyContactSaving && styles.buttonDisabled,
+                          ]}
+                          disabled={emergencyContactSaving}
+                          onPress={() => setEcRelationshipInput(r)}
+                        >
+                          <Text style={[
+                            styles.guardSecondaryBtnText,
+                            ecRelationshipInput === r && { color: colors.textOnBrand },
+                          ]}>
+                            {r === 'SPOUSE_PARTNER' ? 'Spouse/Partner' : r.charAt(0) + r.slice(1).toLowerCase()}
+                          </Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                    {ecRelationshipInput === 'OTHER' ? (
+                      <TextInput
+                        style={[styles.input, styles.guardProfileInput, { marginTop: 8 }]}
+                        value={ecCustomRelationshipInput}
+                        onChangeText={setEcCustomRelationshipInput}
+                        placeholder="Describe relationship (optional)"
+                        placeholderTextColor={colors.textSecondary}
+                        maxLength={100}
+                        editable={!emergencyContactSaving}
+                      />
+                    ) : null}
+                  </View>
+
+                  <View style={styles.guardProfileSection}>
+                    <Text style={styles.guardSectionLabel}>Primary phone number</Text>
+                    <TextInput
+                      style={[styles.input, styles.guardProfileInput]}
+                      value={ecPrimaryPhoneInput}
+                      onChangeText={setEcPrimaryPhoneInput}
+                      placeholder="+44 7700 000000"
+                      placeholderTextColor={colors.textSecondary}
+                      keyboardType="phone-pad"
+                      maxLength={20}
+                      editable={!emergencyContactSaving}
+                    />
+                  </View>
+
+                  <View style={styles.guardProfileSection}>
+                    <Text style={styles.guardSectionLabel}>Alternative phone number (optional)</Text>
+                    <TextInput
+                      style={[styles.input, styles.guardProfileInput]}
+                      value={ecAlternatePhoneInput}
+                      onChangeText={setEcAlternatePhoneInput}
+                      placeholder="+44 7700 000001"
+                      placeholderTextColor={colors.textSecondary}
+                      keyboardType="phone-pad"
+                      maxLength={20}
+                      editable={!emergencyContactSaving}
+                    />
+                  </View>
+
+                  {ecInputError ? (
+                    <Text style={[styles.helperText, { color: colors.danger }]}>{ecInputError}</Text>
+                  ) : null}
+
+                  <View style={styles.guardSecondaryRow}>
+                    <Pressable
+                      style={[styles.guardSecondaryBtn, emergencyContactSaving && styles.buttonDisabled]}
+                      onPress={() => setEditingEmergencyContact(false)}
+                      disabled={emergencyContactSaving}
+                    >
+                      <Text style={styles.guardSecondaryBtnText}>Cancel</Text>
+                    </Pressable>
+                    <Pressable
+                      style={[styles.guardSecondaryBtn, { backgroundColor: colors.accentTeal }, emergencyContactSaving && styles.buttonDisabled]}
+                      onPress={handleSaveEmergencyContact}
+                      disabled={emergencyContactSaving}
+                    >
+                      <Text style={[styles.guardSecondaryBtnText, { color: colors.textOnBrand }]}>
+                        {emergencyContactSaving ? 'Saving…' : 'Save'}
+                      </Text>
+                    </Pressable>
+                  </View>
+
+                  {emergencyContact ? (
+                    <Pressable
+                      style={[styles.guardSecondaryBtn, { alignSelf: 'flex-start' }, emergencyContactSaving && styles.buttonDisabled]}
+                      onPress={handleRemoveEmergencyContact}
+                      disabled={emergencyContactSaving}
+                    >
+                      <Text style={[styles.guardSecondaryBtnText, { color: colors.danger }]}>Remove emergency contact</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+              ) : emergencyContact ? (
+                <View style={styles.guardProfileBody}>
+                  <View style={styles.guardProfileSection}>
+                    <Text style={styles.guardSectionLabel}>Contact name</Text>
+                    <Text style={styles.profileFieldValue}>{emergencyContact.contactName}</Text>
+                  </View>
+                  <View style={styles.guardProfileSection}>
+                    <Text style={styles.guardSectionLabel}>Relationship</Text>
+                    <Text style={styles.profileFieldValue}>
+                      {emergencyContact.relationship === 'SPOUSE_PARTNER'
+                        ? 'Spouse / Partner'
+                        : emergencyContact.relationship === 'OTHER' && emergencyContact.customRelationship
+                        ? emergencyContact.customRelationship
+                        : emergencyContact.relationship.charAt(0) + emergencyContact.relationship.slice(1).toLowerCase()}
+                    </Text>
+                  </View>
+                  <View style={styles.guardProfileSection}>
+                    <Text style={styles.guardSectionLabel}>Primary phone number</Text>
+                    <Text style={styles.profileFieldValue}>{emergencyContact.primaryPhone}</Text>
+                  </View>
+                  {emergencyContact.alternatePhone ? (
+                    <View style={styles.guardProfileSection}>
+                      <Text style={styles.guardSectionLabel}>Alternative phone number</Text>
+                      <Text style={styles.profileFieldValue}>{emergencyContact.alternatePhone}</Text>
+                    </View>
+                  ) : null}
+                  <Pressable
+                    style={[styles.guardSecondaryBtn, { alignSelf: 'flex-start' }]}
+                    onPress={openEmergencyContactEditor}
+                    disabled={emergencyContactSaving}
+                  >
+                    <Text style={styles.guardSecondaryBtnText}>Edit</Text>
+                  </Pressable>
+                </View>
+              ) : (
+                <View style={styles.guardProfileBody}>
+                  <Text style={styles.profileFieldHint}>No emergency contact saved.</Text>
+                  <Pressable
+                    style={[styles.guardSecondaryBtn, { alignSelf: 'flex-start' }]}
+                    onPress={openEmergencyContactEditor}
+                    disabled={emergencyContactSaving}
+                  >
+                    <Text style={styles.guardSecondaryBtnText}>Add emergency contact</Text>
+                  </Pressable>
+                </View>
+              )}
+
+              {!editingEmergencyContact ? (
+                <Text style={styles.profileFieldHint}>
+                  Contact name and phone numbers are encrypted at rest and only accessible to you, authorised platform staff, and your employing security company.
+                </Text>
+              ) : null}
+            </FeatureCard>
+
             <View style={styles.guardProfileBelowStack}>
               <GuardCompliancePanel onManageCompliance={() => setActiveTab('screening')} />
               <GuardScreeningPanel onContinue={() => setActiveTab('screening')} />
@@ -2815,6 +3086,7 @@ const styles = StyleSheet.create({
   },
   profileField: { gap: 4 },
   profileFieldLabel: { color: colors.textSecondary, fontSize: 13, fontWeight: '700' },
+  profileFieldValue: { color: colors.textPrimary, fontSize: 15, marginTop: 2 },
   profileFieldHint: { color: colors.textSecondary, fontSize: 12, fontStyle: 'italic', marginTop: 2 },
   guardProfileSwitchSection: {
     paddingVertical: 12,

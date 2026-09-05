@@ -85,6 +85,8 @@ import {
   GuardDrivingTransport,
   DrivingLicenceRevealResponse,
   UpdateDrivingTransportPayload,
+  GuardEmergencyContact,
+  UpdateEmergencyContactPayload,
 } from '../types/models';
 
 const hasBrowserWindow =
@@ -1089,6 +1091,22 @@ export function revealMyDrivingLicenceNumber() {
     method: 'POST',
     body: JSON.stringify({ field: 'licenceNumber' }),
   });
+}
+
+// Guard Personnel P1E — Emergency Contact
+export function getMyEmergencyContact() {
+  return request<GuardEmergencyContact | null>('/guard-personnel/me/emergency-contact');
+}
+
+export function upsertMyEmergencyContact(payload: UpdateEmergencyContactPayload) {
+  return request<GuardEmergencyContact>('/guard-personnel/me/emergency-contact', {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function removeMyEmergencyContact() {
+  return request<void>('/guard-personnel/me/emergency-contact', { method: 'DELETE' });
 }
 
 export function expireScreening(id:number,reason:string){return request<GuardScreening>(`/screening/${id}/expire`,{method:'POST',body:JSON.stringify({reason})});}

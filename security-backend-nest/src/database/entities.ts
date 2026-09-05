@@ -13,6 +13,7 @@ import { GuardDocument } from '../compliance/entities/guard-document.entity';
 import { ContractPricingRule } from '../contract-pricing/entities/contract-pricing-rule.entity';
 import { DailyLog } from '../daily-log/entities/daily-log.entity';
 import { GuardDrivingProfile } from '../guard-personnel/entities/guard-driving-profile.entity';
+import { GuardEmergencyContact } from '../guard-personnel/entities/guard-emergency-contact.entity';
 import { GuardProfile } from '../guard-profile/entities/guard-profile.entity';
 import { Incident } from '../incident/entities/incident.entity';
 import { InvoiceBatch } from '../invoice-batch/entities/invoice-batch.entity';
@@ -48,6 +49,7 @@ export const appEntities = [
   ContractPricingRule,
   DailyLog,
   GuardDrivingProfile,
+  GuardEmergencyContact,
   GuardProfile,
   GuardLeave,
   Incident,

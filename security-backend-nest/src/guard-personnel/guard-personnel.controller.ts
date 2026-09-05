@@ -2,7 +2,10 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   ParseIntPipe,
   Patch,
@@ -22,6 +25,8 @@ import { UpdateGuardIdentityDto } from './dto/update-guard-identity.dto';
 import { RevealFieldDto } from './dto/reveal-field.dto';
 import { DrivingTransportService } from './driving-transport.service';
 import { UpdateDrivingTransportDto } from './dto/update-driving-transport.dto';
+import { EmergencyContactService } from './emergency-contact.service';
+import { UpdateEmergencyContactDto } from './dto/update-emergency-contact.dto';
 
 // P1A access model:
 //   GUARD        — read and update own identity; reveal own data (audited)
@@ -35,12 +40,20 @@ import { UpdateDrivingTransportDto } from './dto/update-driving-transport.dto';
 //   COMPANY / COMPANY_ADMIN / COMPANY_STAFF — operational view only (no licence number)
 //   CLIENT roles — NO ACCESS
 
+// P1E access model:
+//   GUARD        — read, upsert, and delete own emergency contact
+//   ADMIN        — read any guard emergency contact (audited — third-party PII)
+//   COMPANY / COMPANY_ADMIN — operational read only; active relationship enforced; audited
+//   COMPANY_STAFF — NO ACCESS (third-party PII; least-privilege until granular permission exists)
+//   CLIENT roles — NO ACCESS
+
 @Controller('guard-personnel')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class GuardPersonnelController {
   constructor(
     private readonly service: GuardPersonnelService,
     private readonly drivingService: DrivingTransportService,
+    private readonly emergencyContactService: EmergencyContactService,
   ) {}
 
   // Guard self-service ────────────────────────────────────────────────────────
@@ -165,5 +178,66 @@ export class GuardPersonnelController {
     @Param('guardId', ParseIntPipe) guardId: number,
   ) {
     return this.drivingService.getDrivingForCompany(user.sub, guardId);
+  }
+
+  // P1E — Emergency Contact: Guard self-service ────────────────────────────────
+
+  @Get('me/emergency-contact')
+  @Roles(UserRole.GUARD)
+  getMyEmergencyContact(@CurrentUser() user: JwtPayload) {
+    return this.emergencyContactService.getEmergencyContactForGuard(user.sub);
+  }
+
+  @Patch('me/emergency-contact')
+  @Roles(UserRole.GUARD)
+  upsertMyEmergencyContact(
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: UpdateEmergencyContactDto,
+    @Req() req: Request,
+  ) {
+    return this.emergencyContactService.upsertEmergencyContactForGuard(user.sub, dto, {
+      ipAddress: req.ip ?? null,
+      userAgent: req.headers['user-agent'] ?? null,
+    });
+  }
+
+  @Delete('me/emergency-contact')
+  @Roles(UserRole.GUARD)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  removeMyEmergencyContact(@CurrentUser() user: JwtPayload, @Req() req: Request) {
+    return this.emergencyContactService.removeEmergencyContactForGuard(user.sub, {
+      ipAddress: req.ip ?? null,
+      userAgent: req.headers['user-agent'] ?? null,
+    });
+  }
+
+  // P1E — Emergency Contact: Platform Admin ───────────────────────────────────
+
+  @Get('admin/:id/emergency-contact')
+  @Roles(UserRole.ADMIN)
+  getGuardEmergencyContactAdmin(
+    @CurrentUser() user: JwtPayload,
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: Request,
+  ) {
+    return this.emergencyContactService.getEmergencyContactForAdmin(user.sub, id, {
+      ipAddress: req.ip ?? null,
+      userAgent: req.headers['user-agent'] ?? null,
+    });
+  }
+
+  // P1E — Emergency Contact: Company operational view ─────────────────────────
+
+  @Get('company/guard/:guardId/emergency-contact')
+  @Roles(UserRole.COMPANY, UserRole.COMPANY_ADMIN)
+  getGuardEmergencyContactForCompany(
+    @CurrentUser() user: JwtPayload,
+    @Param('guardId', ParseIntPipe) guardId: number,
+    @Req() req: Request,
+  ) {
+    return this.emergencyContactService.getEmergencyContactForCompany(user.sub, guardId, {
+      ipAddress: req.ip ?? null,
+      userAgent: req.headers['user-agent'] ?? null,
+    });
   }
 }
