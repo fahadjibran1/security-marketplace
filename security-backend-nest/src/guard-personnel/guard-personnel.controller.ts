@@ -43,7 +43,8 @@ import { UpdateEmergencyContactDto } from './dto/update-emergency-contact.dto';
 // P1E access model:
 //   GUARD        — read, upsert, and delete own emergency contact
 //   ADMIN        — read any guard emergency contact (audited — third-party PII)
-//   COMPANY / COMPANY_ADMIN / COMPANY_STAFF — operational read only; active relationship enforced; audited
+//   COMPANY / COMPANY_ADMIN — operational read only; active relationship enforced; audited
+//   COMPANY_STAFF — NO ACCESS (third-party PII; least-privilege until granular permission exists)
 //   CLIENT roles — NO ACCESS
 
 @Controller('guard-personnel')
