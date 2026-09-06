@@ -2484,7 +2484,7 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
                 ))
               )}
               <Text style={styles.profileFieldHint}>
-                Employment details are set by your employing company. If you believe any information is incorrect, contact your company administrator. Correction request workflow coming soon.
+                Employment details are set by your employing company. If you believe any information is incorrect, contact your company administrator.
               </Text>
             </FeatureCard>
 

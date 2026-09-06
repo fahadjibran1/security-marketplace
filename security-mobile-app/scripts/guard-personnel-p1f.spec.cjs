@@ -697,10 +697,11 @@ test('dashboard employment UI is read-only (no edit mode state for employment)',
   assert.doesNotMatch(dashboard, /handleSaveEmployment/);
 });
 
-test('dashboard employment UI includes correction-deferred hint text', () => {
+test('dashboard employment UI includes contact-admin hint (no roadmap language)', () => {
   const idx = dashboard.indexOf('emp.companyName');
   const block = dashboard.slice(idx - 500, idx + 2000);
-  assert.match(block, /correction|Correction/);
+  assert.match(block, /contact your company administrator/i);
+  assert.doesNotMatch(block, /coming soon|P1F\.1|future workflow/i);
 });
 
 // ── P1F DOES NOT MODIFY PRIOR SLICES ─────────────────────────────────────────
@@ -756,6 +757,90 @@ test('service does not expose raw ciphertext in Guard or CompanyStaff DTO mapper
 
 test('migration does not include payRate salary bank fields', () => {
   assert.doesNotMatch(migration, /payRate|hourlyRate|salary(?!y)|bankAccount|taxCode/);
+});
+
+// ── HISTORICAL ACCESS & SENSITIVE READ HARDENING ──────────────────────────────
+
+test('service has requireOwnedRelationship helper (ownership without ACTIVE check)', () => {
+  const defIdx = service.indexOf('async requireOwnedRelationship(');
+  assert.ok(defIdx !== -1, 'requireOwnedRelationship method not found');
+  const fn = service.slice(defIdx, defIdx + 600);
+  assert.match(fn, /requireCompanyIdForUser/);
+  assert.doesNotMatch(fn, /CompanyGuardStatus\.ACTIVE/);
+});
+
+test('service getEmploymentForCompany uses requireOwnedRelationship (historical reads allowed)', () => {
+  const getIdx = service.indexOf('getEmploymentForCompany(');
+  const fn = service.slice(getIdx, getIdx + 800);
+  assert.match(fn, /requireOwnedRelationship\(/);
+  assert.doesNotMatch(fn, /requireOwnedActiveRelationship/);
+});
+
+test('service getEmploymentForCompany audits sensitive internalNote read', () => {
+  const getIdx = service.indexOf('getEmploymentForCompany(');
+  const fn = service.slice(getIdx, getIdx + 900);
+  assert.match(fn, /employment_view_sensitive/);
+});
+
+test('service getEmploymentForCompany audit metadata includes companyGuardId guardId companyId', () => {
+  const getIdx = service.indexOf('getEmploymentForCompany(');
+  const fn = service.slice(getIdx, getIdx + 900);
+  const auditIdx = fn.indexOf('auditLogService.log');
+  assert.ok(auditIdx !== -1, 'auditLogService.log not found in getEmploymentForCompany');
+  const auditBlock = fn.slice(auditIdx, auditIdx + 400);
+  assert.match(auditBlock, /companyGuardId/);
+  assert.match(auditBlock, /guardId/);
+  assert.match(auditBlock, /companyId/);
+});
+
+test('service getEmploymentForCompany audit does not log note content or ciphertext', () => {
+  const getIdx = service.indexOf('getEmploymentForCompany(');
+  const fn = service.slice(getIdx, getIdx + 900);
+  const auditIdx = fn.indexOf('auditLogService.log');
+  assert.ok(auditIdx !== -1);
+  const auditBlock = fn.slice(auditIdx, auditIdx + 400);
+  assert.doesNotMatch(auditBlock, /internalNote[^E]|noteText|note.*value/i);
+  assert.doesNotMatch(auditBlock, /internalNoteEnc/);
+});
+
+test('service upsertEmploymentForCompany uses requireOwnedRelationship (not active-only)', () => {
+  const upsertIdx = service.indexOf('upsertEmploymentForCompany(');
+  const fn = service.slice(upsertIdx, upsertIdx + 600);
+  assert.match(fn, /requireOwnedRelationship\(/);
+  assert.doesNotMatch(fn, /requireOwnedActiveRelationship/);
+});
+
+test('service upsert blocks first-create when relationship not ACTIVE', () => {
+  const upsertIdx = service.indexOf('upsertEmploymentForCompany(');
+  const fn = service.slice(upsertIdx, upsertIdx + 1800);
+  assert.match(fn, /isCreating.*CompanyGuardStatus\.ACTIVE|CompanyGuardStatus\.ACTIVE.*isCreating/s);
+});
+
+test('service upsert does not modify CompanyGuard status (cross-domain isolation)', () => {
+  const upsertIdx = service.indexOf('upsertEmploymentForCompany(');
+  const fn = service.slice(upsertIdx, upsertIdx + 3500);
+  assert.doesNotMatch(fn, /companyGuard\.status\s*=/);
+});
+
+test('service getEmploymentsForGuard returns records regardless of CompanyGuard status', () => {
+  const getIdx = service.indexOf('getEmploymentsForGuard(');
+  const fn = service.slice(getIdx, getIdx + 600);
+  assert.doesNotMatch(fn, /CompanyGuardStatus\.ACTIVE/);
+});
+
+test('service getEmploymentForCompanyStaff requires ACTIVE relationship (INACTIVE denied)', () => {
+  const staffIdx = service.indexOf('getEmploymentForCompanyStaff(');
+  const fn = service.slice(staffIdx, staffIdx + 400);
+  assert.match(fn, /requireOwnedActiveRelationship/);
+});
+
+test('service requireOwnedActiveRelationship retained for CompanyStaff use only', () => {
+  assert.match(service, /requireOwnedActiveRelationship/);
+  // It is now a separate helper — verify it still enforces ACTIVE
+  const defIdx = service.lastIndexOf('private async requireOwnedActiveRelationship');
+  assert.ok(defIdx !== -1);
+  const fn = service.slice(defIdx, defIdx + 600);
+  assert.match(fn, /CompanyGuardStatus\.ACTIVE/);
 });
 
 // ── SUMMARY ───────────────────────────────────────────────────────────────────

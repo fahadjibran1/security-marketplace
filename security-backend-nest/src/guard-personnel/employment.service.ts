@@ -58,10 +58,20 @@ export class EmploymentService {
   async getEmploymentForCompany(
     companyUserId: number,
     guardId: number,
+    meta: RequestMeta,
   ): Promise<EmploymentCompanyResponseDto | null> {
-    const { companyId, companyGuard } = await this.requireOwnedActiveRelationship(companyUserId, guardId);
+    const { companyId, companyGuard } = await this.requireOwnedRelationship(companyUserId, guardId);
     const record = await this.findWithSensitive(companyGuard.id);
     if (!record) return null;
+    await this.auditLogService.log({
+      user: { id: companyUserId },
+      action: 'guard_personnel.employment_view_sensitive',
+      entityType: 'company_guard_employment',
+      entityId: record.id,
+      afterData: { companyGuardId: companyGuard.id, guardId, companyId },
+      ipAddress: meta.ipAddress ?? null,
+      userAgent: meta.userAgent ?? null,
+    });
     return this.toCompanyDto(companyId, guardId, record);
   }
 
@@ -71,9 +81,15 @@ export class EmploymentService {
     dto: UpdateCompanyGuardEmploymentDto,
     meta: RequestMeta,
   ): Promise<EmploymentCompanyResponseDto> {
-    const { companyId, companyGuard } = await this.requireOwnedActiveRelationship(companyUserId, guardId);
+    const { companyId, companyGuard } = await this.requireOwnedRelationship(companyUserId, guardId);
     const existing = await this.findWithSensitive(companyGuard.id);
     const isCreating = !existing;
+
+    if (isCreating && companyGuard.status !== CompanyGuardStatus.ACTIVE) {
+      throw new ForbiddenException(
+        'Employment records can only be created while the guard relationship is active',
+      );
+    }
 
     if (isCreating) {
       const missing: string[] = [];
@@ -273,6 +289,27 @@ export class EmploymentService {
     return companyId;
   }
 
+  // Verifies tenant ownership (Company owns the CompanyGuard) without requiring ACTIVE status.
+  // Used for Company/CompanyAdmin GET and PATCH on employment records — employment is HR data
+  // that must remain accessible to the owning company after the guard leaves or is blocked.
+  private async requireOwnedRelationship(
+    companyUserId: number,
+    guardId: number,
+  ): Promise<{ companyId: number; companyGuard: CompanyGuard }> {
+    const companyId = await this.requireCompanyIdForUser(companyUserId);
+    const companyGuard = await this.companyGuardRepo.findOne({
+      where: {
+        company: { id: companyId },
+        guard: { id: guardId },
+      },
+    });
+    if (!companyGuard) {
+      throw new ForbiddenException('No relationship between this company and guard');
+    }
+    return { companyId, companyGuard };
+  }
+
+  // Verifies ACTIVE status — used for CompanyStaff access where historical records are denied.
   private async requireOwnedActiveRelationship(
     companyUserId: number,
     guardId: number,

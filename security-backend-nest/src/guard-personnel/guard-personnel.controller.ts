@@ -282,8 +282,12 @@ export class GuardPersonnelController {
   getGuardEmploymentForCompany(
     @CurrentUser() user: JwtPayload,
     @Param('guardId', ParseIntPipe) guardId: number,
+    @Req() req: Request,
   ) {
-    return this.employmentService.getEmploymentForCompany(user.sub, guardId);
+    return this.employmentService.getEmploymentForCompany(user.sub, guardId, {
+      ipAddress: req.ip ?? null,
+      userAgent: req.headers['user-agent'] ?? null,
+    });
   }
 
   @Patch('company/guard/:guardId/employment')
