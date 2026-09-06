@@ -12,15 +12,17 @@ import { GuardPersonnelService } from './guard-personnel.service';
 import { DrivingTransportService } from './driving-transport.service';
 import { EmergencyContactService } from './emergency-contact.service';
 import { EmploymentService } from './employment.service';
+import { BankDetailsService } from './bank-details.service';
+import { GuardBankDetails } from './entities/guard-bank-details.entity';
 import { GuardPersonnelController } from './guard-personnel.controller';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([GuardProfile, GuardDrivingProfile, GuardEmergencyContact, CompanyGuardEmployment, CompanyGuard, User]),
+    TypeOrmModule.forFeature([GuardProfile, GuardDrivingProfile, GuardEmergencyContact, CompanyGuardEmployment, CompanyGuard, User, GuardBankDetails]),
     AuditLogModule,
   ],
   controllers: [GuardPersonnelController],
-  providers: [EncryptionService, GuardPersonnelService, DrivingTransportService, EmergencyContactService, EmploymentService],
+  providers: [EncryptionService, GuardPersonnelService, DrivingTransportService, EmergencyContactService, EmploymentService, BankDetailsService],
   exports: [EncryptionService],
 })
 export class GuardPersonnelModule {}
