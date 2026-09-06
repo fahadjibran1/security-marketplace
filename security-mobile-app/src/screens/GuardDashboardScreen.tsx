@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { AppState } from 'react-native/Libraries/AppState/AppState';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { FeatureCard } from '../components/FeatureCard';
 import { StatePanel } from '../components/StatePanel';
@@ -906,41 +907,37 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
     }, 1000);
   }
 
-  async function handleRevealBankDetails() {
-    clearBankReveal();
-    try {
-      setBankRevealing(true);
-      const result = await revealMyBankDetails();
-      if (result.accountHolderName || result.sortCode || result.accountNumber) {
-        setBankReveal(result);
-        startBankRevealCountdown();
-      } else {
-        pushFeedback('info', 'No bank details', 'No bank details are stored yet.');
-      }
-    } catch {
-      pushFeedback('error', 'Reveal failed', 'Could not retrieve your bank details. Try again.');
-    } finally {
-      setBankRevealing(false);
-    }
+  function handleRevealBankDetails() {
+    Alert.alert(
+      'Show bank details',
+      'Your full account details will be displayed for 15 seconds. Continue?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Show',
+          onPress: async () => {
+            clearBankReveal();
+            try {
+              setBankRevealing(true);
+              const result = await revealMyBankDetails();
+              if (result.accountHolderName || result.sortCode || result.accountNumber) {
+                setBankReveal(result);
+                startBankRevealCountdown();
+              } else {
+                pushFeedback('info', 'No bank details', 'No bank details are stored yet.');
+              }
+            } catch {
+              pushFeedback('error', 'Reveal failed', 'Could not retrieve your bank details. Try again.');
+            } finally {
+              setBankRevealing(false);
+            }
+          },
+        },
+      ],
+    );
   }
 
-  async function handleSaveBankDetails() {
-    const isExisting = bankDetails?.bankSet;
-    const payload: UpdateBankDetailsPayload = {};
-
-    if (bankHolderInput.trim()) payload.accountHolderName = bankHolderInput.trim();
-    if (bankSortInput.trim()) payload.sortCode = bankSortInput.trim();
-    if (bankAccountInput.trim()) payload.accountNumber = bankAccountInput.trim();
-
-    if (!isExisting && (!payload.accountHolderName || !payload.sortCode || !payload.accountNumber)) {
-      setBankInputError('All three fields are required to add bank details.');
-      return;
-    }
-
-    if (isExisting && Object.keys(payload).length > 0) {
-      payload.confirmReplace = true;
-    }
-
+  async function executeBankDetailsSave(payload: UpdateBankDetailsPayload) {
     try {
       setBankSaving(true);
       setBankInputError('');
@@ -956,6 +953,43 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
     } finally {
       setBankSaving(false);
     }
+  }
+
+  function handleSaveBankDetails() {
+    const isExisting = bankDetails?.bankSet;
+    const payload: UpdateBankDetailsPayload = {};
+
+    if (bankHolderInput.trim()) payload.accountHolderName = bankHolderInput.trim();
+    if (bankSortInput.trim()) payload.sortCode = bankSortInput.trim();
+    if (bankAccountInput.trim()) payload.accountNumber = bankAccountInput.trim();
+
+    if (!isExisting && (!payload.accountHolderName || !payload.sortCode || !payload.accountNumber)) {
+      setBankInputError('All three fields are required to add bank details.');
+      return;
+    }
+
+    if (isExisting && Object.keys(payload).length > 0) {
+      // Replacing existing bank details requires explicit user confirmation.
+      Alert.alert(
+        'Replace bank details',
+        'This will permanently replace your stored bank account details. Are you sure?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Replace',
+            style: 'destructive',
+            onPress: () => {
+              payload.confirmReplace = true;
+              executeBankDetailsSave(payload);
+            },
+          },
+        ],
+      );
+      return;
+    }
+
+    // First-time creation: no confirmation required.
+    executeBankDetailsSave(payload);
   }
 
   function handleDeleteBankDetails() {
@@ -1268,6 +1302,17 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
       if (licenceRevealTimerRef.current) clearInterval(licenceRevealTimerRef.current);
       if (bankRevealTimerRef.current) clearInterval(bankRevealTimerRef.current);
     };
+  }, []);
+
+  // Clear bank reveal when app moves to background or becomes inactive.
+  useEffect(() => {
+    function handleAppStateChange(nextState: string) {
+      if (nextState === 'background' || nextState === 'inactive') {
+        clearBankReveal();
+      }
+    }
+    const sub = AppState.addEventListener('change', handleAppStateChange);
+    return () => sub.remove();
   }, []);
 
   const attendanceByShiftId = useMemo(() => {

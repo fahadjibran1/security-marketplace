@@ -396,45 +396,130 @@ test('models.ts has UpdateBankDetailsPayload with confirmReplace', () => {
   assert.match(models, /confirmReplace/);
 });
 
-// ── MOBILE UI ────────────────────────────────────────────────────────────────
+// ── MOBILE UI — STATIC ANALYSIS ──────────────────────────────────────────────
+// All tests in this section are STATIC ANALYSIS of source code.
+// They are not runtime integration tests.
 
-test('dashboard imports getMyBankDetails, revealMyBankDetails, deleteMyBankDetails, upsertMyBankDetails', () => {
+test('[STATIC ANALYSIS] dashboard imports getMyBankDetails, revealMyBankDetails, deleteMyBankDetails, upsertMyBankDetails', () => {
   assert.match(dashboard, /getMyBankDetails/);
   assert.match(dashboard, /revealMyBankDetails/);
   assert.match(dashboard, /deleteMyBankDetails/);
   assert.match(dashboard, /upsertMyBankDetails/);
 });
 
-test('dashboard has Bank Details feature card', () => {
+test('[STATIC ANALYSIS] dashboard has Bank Details feature card', () => {
   assert.match(dashboard, /Bank Details/);
   assert.match(dashboard, /FeatureCard/);
 });
 
-test('dashboard has reveal with auto-hide countdown (15s)', () => {
-  assert.match(dashboard, /bankRevealCountdown|REVEAL_SECONDS.*15|15.*REVEAL_SECONDS/);
-  assert.match(dashboard, /bankReveal/);
+// ── Reveal confirmation ───────────────────────────────────────────────────────
+
+test('[STATIC ANALYSIS] reveal requires explicit Alert confirmation before API call', () => {
+  // handleRevealBankDetails must show Alert.alert before calling revealMyBankDetails.
+  // Pattern: Alert.alert block wraps the actual API call.
+  const revealFnBlock = dashboard.match(/handleRevealBankDetails[\s\S]{0,600}/)?.[0] ?? '';
+  assert.match(revealFnBlock, /Alert\.alert/);
+  assert.match(revealFnBlock, /Show bank details|Show details|show.*bank/i);
 });
 
-test('dashboard clears bank reveal timer on unmount', () => {
+test('[STATIC ANALYSIS] reveal Cancel causes no API call (API call nested inside onPress of confirmation)', () => {
+  // revealMyBankDetails must be inside an Alert onPress callback, not at the top level of the handler.
+  // The handler wraps the API call in Alert.alert onPress — Cancel path never reaches the API.
+  const revealFnBlock = dashboard.match(/handleRevealBankDetails[\s\S]{0,700}/)?.[0] ?? '';
+  // API call must appear after Alert.alert, nested inside onPress
+  const alertIdx = revealFnBlock.indexOf('Alert.alert');
+  const apiIdx = revealFnBlock.indexOf('revealMyBankDetails()');
+  assert.ok(alertIdx !== -1, 'Alert.alert not found in reveal handler');
+  assert.ok(apiIdx !== -1, 'revealMyBankDetails() call not found in reveal handler');
+  assert.ok(apiIdx > alertIdx, 'API call must appear after Alert.alert (nested in onPress)');
+});
+
+test('[STATIC ANALYSIS] reveal Confirm calls revealMyBankDetails API', () => {
+  assert.match(dashboard, /revealMyBankDetails\(\)/);
+});
+
+// ── Replacement confirmation ──────────────────────────────────────────────────
+
+test('[STATIC ANALYSIS] replace existing bank details requires Alert confirmation (not silent)', () => {
+  // handleSaveBankDetails must NOT silently set confirmReplace:true and call API.
+  // It must call Alert.alert first when isExisting is true.
+  const saveFnBlock = dashboard.match(/handleSaveBankDetails[\s\S]{0,1000}/)?.[0] ?? '';
+  assert.match(saveFnBlock, /Alert\.alert/);
+  assert.match(saveFnBlock, /Replace bank details|replace.*bank|replace.*existing/i);
+});
+
+test('[STATIC ANALYSIS] replace Cancel path does not call upsertMyBankDetails', () => {
+  // In the replacement Alert, only the onPress (Confirm) button calls executeBankDetailsSave.
+  // The Cancel button has style: cancel and no onPress with the API call.
+  const saveFnBlock = dashboard.match(/handleSaveBankDetails[\s\S]{0,1200}/)?.[0] ?? '';
+  assert.match(saveFnBlock, /style:\s*'cancel'/);
+  // executeBankDetailsSave or confirmReplace:true assignment must be inside an onPress
+  assert.match(saveFnBlock, /onPress.*confirmReplace|confirmReplace[\s\S]{0,50}executeBankDetailsSave/);
+});
+
+test('[STATIC ANALYSIS] replace Confirm sends confirmReplace: true', () => {
+  assert.match(dashboard, /confirmReplace.*true|confirmReplace:\s*true/);
+});
+
+test('[STATIC ANALYSIS] first-time bank details creation does NOT require confirmation Alert', () => {
+  // executeBankDetailsSave is called directly (not inside Alert) for new records.
+  // The spec says no confirmation is required on first creation.
+  assert.match(dashboard, /executeBankDetailsSave/);
+  assert.match(dashboard, /First-time creation|no confirmation|isExisting/);
+});
+
+// ── Reveal lifecycle ──────────────────────────────────────────────────────────
+
+test('[STATIC ANALYSIS] 15-second auto-hide countdown clears bankReveal', () => {
+  assert.match(dashboard, /REVEAL_SECONDS.*15|15.*REVEAL_SECONDS/);
+  assert.match(dashboard, /setBankReveal\(null\)/);
+});
+
+test('[STATIC ANALYSIS] manual Hide now button calls clearBankReveal', () => {
+  assert.match(dashboard, /clearBankReveal/);
+  assert.match(dashboard, /Hide now/);
+});
+
+test('[STATIC ANALYSIS] AppState background clears bank reveal', () => {
+  assert.match(dashboard, /AppState/);
+  assert.match(dashboard, /background/);
+  assert.match(dashboard, /clearBankReveal/);
+});
+
+test('[STATIC ANALYSIS] AppState inactive clears bank reveal', () => {
+  assert.match(dashboard, /inactive/);
+  // AppState listener must handle both background and inactive
+  const appStateBlock = dashboard.match(/handleAppStateChange[\s\S]{0,200}/)?.[0] ?? '';
+  assert.match(appStateBlock, /inactive/);
+  assert.match(appStateBlock, /clearBankReveal/);
+});
+
+test('[STATIC ANALYSIS] AppState addEventListener subscription is removed on cleanup', () => {
+  assert.match(dashboard, /AppState\.addEventListener/);
+  assert.match(dashboard, /sub\.remove\(\)/);
+});
+
+test('[STATIC ANALYSIS] unmount cleanup clears bankRevealTimerRef', () => {
   assert.match(dashboard, /bankRevealTimerRef\.current.*clearInterval|clearInterval.*bankRevealTimerRef/);
 });
 
-test('dashboard has delete bank details with Alert confirmation', () => {
-  assert.match(dashboard, /Remove bank details|remove.*bank|bank.*remove/i);
-  assert.match(dashboard, /Alert\.alert/);
-});
+// ── Persistence / leakage ─────────────────────────────────────────────────────
 
-test('dashboard never stores revealed bank data in AsyncStorage or SecureStore', () => {
+test('[STATIC ANALYSIS] revealed bank data never written to AsyncStorage or SecureStore', () => {
   assert.doesNotMatch(dashboard, /AsyncStorage.*bankReveal|SecureStore.*bankReveal|bankReveal.*AsyncStorage|bankReveal.*SecureStore/);
 });
 
-test('dashboard bank reveal data held only in component state (setBankReveal)', () => {
-  assert.match(dashboard, /setBankReveal/);
+test('[STATIC ANALYSIS] revealed bank data never written to console.log', () => {
   assert.doesNotMatch(dashboard, /console\.log.*bankReveal|bankReveal.*console\.log/);
 });
 
-test('dashboard uses confirmReplace when updating existing bank details', () => {
-  assert.match(dashboard, /confirmReplace.*true|confirmReplace:\s*true/);
+test('[STATIC ANALYSIS] revealed bank data held only in component state (setBankReveal)', () => {
+  assert.match(dashboard, /setBankReveal/);
+});
+
+test('[STATIC ANALYSIS] dashboard has delete bank details with Alert confirmation', () => {
+  assert.match(dashboard, /Remove bank details|remove.*bank|bank.*remove/i);
+  assert.match(dashboard, /Alert\.alert/);
 });
 
 // ── SECURITY: no forbidden fields ────────────────────────────────────────────
