@@ -18,6 +18,7 @@ import {
   formatApiErrorMessage,
   getMyDrivingTransport,
   getMyEmergencyContact,
+  getMyEmployments,
   getMyGuard,
   getMyPersonnelIdentity,
   listMyAttendance,
@@ -42,6 +43,7 @@ import {
   EmergencyContactRelationship,
   GuardDrivingTransport,
   GuardEmergencyContact,
+  GuardEmploymentRecord,
   GuardPersonnelIdentity,
   Incident,
   PrimaryTravelMethod,
@@ -508,6 +510,11 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
   const [ecAlternatePhoneInput, setEcAlternatePhoneInput] = useState('');
   const [ecInputError, setEcInputError] = useState('');
 
+  // P1F — Employment & Engagement Record
+  const [employments, setEmployments] = useState<GuardEmploymentRecord[]>([]);
+  const [employmentsLoading, setEmploymentsLoading] = useState(false);
+  const [employmentsError, setEmploymentsError] = useState<string | null>(null);
+
   function pushFeedback(tone: 'success' | 'error' | 'info', title: string, message: string) {
     setActionFeedback({ tone, title, message });
   }
@@ -821,6 +828,21 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
     );
   }
 
+  // P1F — Employment helpers
+
+  async function loadEmployments() {
+    try {
+      setEmploymentsLoading(true);
+      setEmploymentsError(null);
+      const data = await getMyEmployments();
+      setEmployments(data);
+    } catch {
+      setEmploymentsError('Employment records could not be loaded.');
+    } finally {
+      setEmploymentsLoading(false);
+    }
+  }
+
   function updateShiftStatusLocally(shiftId: number, nextStatus: string) {
     setShifts((current) =>
       current.map((shift) =>
@@ -841,10 +863,11 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
         listMyDailyLogs(),
         listMyTimesheets(),
       ]);
-      // Load identity, driving, and emergency contact separately — non-critical; failures must not block rendering.
+      // Load identity, driving, emergency contact, and employments separately — non-critical; failures must not block rendering.
       loadIdentity();
       loadDriving();
       loadEmergencyContact();
+      loadEmployments();
 
       setFullName(myGuard.fullName || '');
       setPhone(myGuard.phone || '');
@@ -2413,6 +2436,56 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
                   Contact name and phone numbers are encrypted at rest and only accessible to you, authorised platform staff, and your employing security company.
                 </Text>
               ) : null}
+            </FeatureCard>
+
+            {/* P1F — Employment & Engagement Record */}
+            <FeatureCard
+              title="Employment"
+              subtitle="Your employment record with each security company"
+            >
+              {employmentsLoading ? (
+                <Text style={styles.helperText}>Loading…</Text>
+              ) : employmentsError ? (
+                <Text style={[styles.helperText, { color: colors.danger }]}>{employmentsError}</Text>
+              ) : employments.length === 0 ? (
+                <Text style={styles.helperText}>No employment records on file. Your employing company will add your employment details.</Text>
+              ) : (
+                employments.map((emp) => (
+                  <View key={emp.companyGuardId} style={styles.summaryBlock}>
+                    <Text style={styles.profileFieldLabel}>Company</Text>
+                    <Text style={styles.profileFieldValue}>{emp.companyName}</Text>
+                    <Text style={styles.profileFieldLabel}>Role</Text>
+                    <Text style={styles.profileFieldValue}>
+                      {emp.jobRole === 'OTHER' && emp.customRole
+                        ? emp.customRole
+                        : emp.jobRole.replace(/_/g, ' ')}
+                    </Text>
+                    <Text style={styles.profileFieldLabel}>Engagement</Text>
+                    <Text style={styles.profileFieldValue}>{emp.engagementType.replace(/_/g, ' ')}</Text>
+                    <Text style={styles.profileFieldLabel}>Working arrangement</Text>
+                    <Text style={styles.profileFieldValue}>{emp.workingArrangement.replace(/_/g, ' ')}</Text>
+                    <Text style={styles.profileFieldLabel}>Pay basis</Text>
+                    <Text style={styles.profileFieldValue}>{emp.payBasis}</Text>
+                    <Text style={styles.profileFieldLabel}>Start date</Text>
+                    <Text style={styles.profileFieldValue}>{emp.startDate}</Text>
+                    {emp.endDate ? (
+                      <>
+                        <Text style={styles.profileFieldLabel}>End date</Text>
+                        <Text style={styles.profileFieldValue}>{emp.endDate}</Text>
+                      </>
+                    ) : null}
+                    {emp.noticePeriodDays !== null ? (
+                      <>
+                        <Text style={styles.profileFieldLabel}>Notice period</Text>
+                        <Text style={styles.profileFieldValue}>{emp.noticePeriodDays} days</Text>
+                      </>
+                    ) : null}
+                  </View>
+                ))
+              )}
+              <Text style={styles.profileFieldHint}>
+                Employment details are set by your employing company. If you believe any information is incorrect, contact your company administrator.
+              </Text>
             </FeatureCard>
 
             <View style={styles.guardProfileBelowStack}>

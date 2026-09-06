@@ -157,6 +157,51 @@ export interface UpdateEmergencyContactPayload {
   alternatePhone?: string | null;
 }
 
+// P1F — Employment & Engagement Record
+export type GuardEngagementType =
+  | 'EMPLOYEE'
+  | 'SELF_EMPLOYED_CONTRACTOR'
+  | 'AGENCY_WORKER'
+  | 'SUBCONTRACTOR'
+  | 'CASUAL_WORKER'
+  | 'OTHER';
+
+export type GuardJobRole =
+  | 'SECURITY_OFFICER'
+  | 'DOOR_SUPERVISOR'
+  | 'CCTV_OPERATOR'
+  | 'SITE_SUPERVISOR'
+  | 'CONTROL_ROOM_OPERATOR'
+  | 'MOBILE_PATROL_OFFICER'
+  | 'OTHER';
+
+export type GuardWorkingArrangement =
+  | 'FULL_TIME'
+  | 'PART_TIME'
+  | 'ZERO_HOURS'
+  | 'CASUAL'
+  | 'TEMPORARY'
+  | 'FIXED_TERM'
+  | 'OTHER';
+
+export type GuardPayBasis = 'HOURLY' | 'DAILY' | 'SALARY' | 'OTHER';
+
+export interface GuardEmploymentRecord {
+  companyGuardId: number;
+  companyId: number;
+  companyName: string;
+  guardId: number;
+  engagementType: GuardEngagementType;
+  jobRole: GuardJobRole;
+  customRole: string | null;
+  workingArrangement: GuardWorkingArrangement;
+  startDate: string;
+  endDate: string | null;
+  payBasis: GuardPayBasis;
+  noticePeriodDays: number | null;
+  updatedAt: string;
+}
+
 export interface Site {
   id: number;
   companyId?: number;

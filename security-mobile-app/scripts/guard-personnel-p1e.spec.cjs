@@ -879,7 +879,8 @@ test('CUSTREL: migration does not create plaintext customRelationship varchar co
 // ── 29. COMPANY ROLE LEAST PRIVILEGE (hardening) ──────────────────────────────
 
 test('COMPANY ROLE: COMPANY_STAFF denied from emergency contact — not in @Roles', () => {
-  const p1eCompanySection = controller.split('P1E — Emergency Contact: Company operational view')[1];
+  // Scope to P1E section only — P1F may have its own COMPANY_STAFF route
+  const p1eCompanySection = controller.split('P1E — Emergency Contact: Company operational view')[1].split('P1F')[0];
   assert.doesNotMatch(p1eCompanySection, /COMPANY_STAFF/);
 });
 

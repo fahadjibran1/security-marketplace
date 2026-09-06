@@ -27,6 +27,8 @@ import { DrivingTransportService } from './driving-transport.service';
 import { UpdateDrivingTransportDto } from './dto/update-driving-transport.dto';
 import { EmergencyContactService } from './emergency-contact.service';
 import { UpdateEmergencyContactDto } from './dto/update-emergency-contact.dto';
+import { EmploymentService } from './employment.service';
+import { UpdateCompanyGuardEmploymentDto } from './dto/update-company-guard-employment.dto';
 
 // P1A access model:
 //   GUARD        — read and update own identity; reveal own data (audited)
@@ -47,6 +49,14 @@ import { UpdateEmergencyContactDto } from './dto/update-emergency-contact.dto';
 //   COMPANY_STAFF — NO ACCESS (third-party PII; least-privilege until granular permission exists)
 //   CLIENT roles — NO ACCESS
 
+// P1F access model:
+//   GUARD        — read own employment records (list; read-only; no internalNote)
+//   ADMIN        — read all employment records for any guard (audited; includes internalNote)
+//   COMPANY / COMPANY_ADMIN — create/read/update employment for their own guard relationship; includes internalNote
+//   COMPANY_STAFF — read-only basic summary for their own company's guard; no internalNote
+//   CLIENT roles — NO ACCESS
+//   Correction request workflow — deferred to P1F.1 (no existing infrastructure)
+
 @Controller('guard-personnel')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class GuardPersonnelController {
@@ -54,6 +64,7 @@ export class GuardPersonnelController {
     private readonly service: GuardPersonnelService,
     private readonly drivingService: DrivingTransportService,
     private readonly emergencyContactService: EmergencyContactService,
+    private readonly employmentService: EmploymentService,
   ) {}
 
   // Guard self-service ────────────────────────────────────────────────────────
@@ -239,5 +250,68 @@ export class GuardPersonnelController {
       ipAddress: req.ip ?? null,
       userAgent: req.headers['user-agent'] ?? null,
     });
+  }
+
+  // P1F — Employment: Guard self-service (read-only list across all companies) ─
+
+  @Get('me/employments')
+  @Roles(UserRole.GUARD)
+  getMyEmployments(@CurrentUser() user: JwtPayload) {
+    return this.employmentService.getEmploymentsForGuard(user.sub);
+  }
+
+  // P1F — Employment: Platform Admin ──────────────────────────────────────────
+
+  @Get('admin/:id/employments')
+  @Roles(UserRole.ADMIN)
+  getGuardEmploymentsAdmin(
+    @CurrentUser() user: JwtPayload,
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: Request,
+  ) {
+    return this.employmentService.getEmploymentsForAdmin(user.sub, id, {
+      ipAddress: req.ip ?? null,
+      userAgent: req.headers['user-agent'] ?? null,
+    });
+  }
+
+  // P1F — Employment: Company (create / update) ────────────────────────────────
+
+  @Get('company/guard/:guardId/employment')
+  @Roles(UserRole.COMPANY, UserRole.COMPANY_ADMIN)
+  getGuardEmploymentForCompany(
+    @CurrentUser() user: JwtPayload,
+    @Param('guardId', ParseIntPipe) guardId: number,
+    @Req() req: Request,
+  ) {
+    return this.employmentService.getEmploymentForCompany(user.sub, guardId, {
+      ipAddress: req.ip ?? null,
+      userAgent: req.headers['user-agent'] ?? null,
+    });
+  }
+
+  @Patch('company/guard/:guardId/employment')
+  @Roles(UserRole.COMPANY, UserRole.COMPANY_ADMIN)
+  upsertGuardEmploymentForCompany(
+    @CurrentUser() user: JwtPayload,
+    @Param('guardId', ParseIntPipe) guardId: number,
+    @Body() dto: UpdateCompanyGuardEmploymentDto,
+    @Req() req: Request,
+  ) {
+    return this.employmentService.upsertEmploymentForCompany(user.sub, guardId, dto, {
+      ipAddress: req.ip ?? null,
+      userAgent: req.headers['user-agent'] ?? null,
+    });
+  }
+
+  // P1F — Employment: Company Staff (read-only, no internalNote) ───────────────
+
+  @Get('company-staff/guard/:guardId/employment')
+  @Roles(UserRole.COMPANY_STAFF)
+  getGuardEmploymentForCompanyStaff(
+    @CurrentUser() user: JwtPayload,
+    @Param('guardId', ParseIntPipe) guardId: number,
+  ) {
+    return this.employmentService.getEmploymentForCompanyStaff(user.sub, guardId);
   }
 }
