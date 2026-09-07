@@ -20,6 +20,9 @@ declare module 'react/jsx-runtime' {
 declare module 'react-native' {
   export const ActivityIndicator: any;
   export const Alert: { alert: (...args: any[]) => void };
+  export const AppState: {
+    addEventListener(type: 'change', listener: (state: string) => void): { remove: () => void };
+  };
   export type ImageSourcePropType = number | { uri: string; headers?: Record<string, string> };
   export const Image: any;
   export const KeyboardAvoidingView: any;
