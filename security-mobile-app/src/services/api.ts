@@ -88,6 +88,10 @@ import {
   GuardEmergencyContact,
   UpdateEmergencyContactPayload,
   GuardEmploymentRecord,
+  GuardBankDetailsSummary,
+  GuardBankDetailsReveal,
+  CompanyGuardBankSummary,
+  UpdateBankDetailsPayload,
 } from '../types/models';
 
 const hasBrowserWindow =
@@ -1113,6 +1117,33 @@ export function removeMyEmergencyContact() {
 // P1F — Employment & Engagement Record
 export function getMyEmployments() {
   return request<GuardEmploymentRecord[]>('/guard-personnel/me/employments');
+}
+
+// P1G-A — Bank Details: Guard self-service
+export function getMyBankDetails() {
+  return request<GuardBankDetailsSummary>('/guard-personnel/me/bank-details');
+}
+
+export function upsertMyBankDetails(payload: UpdateBankDetailsPayload) {
+  return request<GuardBankDetailsSummary>('/guard-personnel/me/bank-details', {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function revealMyBankDetails() {
+  return request<GuardBankDetailsReveal>('/guard-personnel/me/bank-details/reveal', {
+    method: 'POST',
+  });
+}
+
+export function deleteMyBankDetails() {
+  return request<void>('/guard-personnel/me/bank-details', { method: 'DELETE' });
+}
+
+// P1G-A — Bank Details: Company masked access
+export function getCompanyGuardBankDetails(guardId: number) {
+  return request<CompanyGuardBankSummary>(`/guard-personnel/company/guard/${guardId}/bank-details`);
 }
 
 export function expireScreening(id:number,reason:string){return request<GuardScreening>(`/screening/${id}/expire`,{method:'POST',body:JSON.stringify({reason})});}

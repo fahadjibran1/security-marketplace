@@ -202,6 +202,38 @@ export interface GuardEmploymentRecord {
   updatedAt: string;
 }
 
+// P1G-A — Bank Details
+export interface GuardBankDetailsSummary {
+  guardId: number;
+  bankSet: boolean;
+  accountHolderNameMasked: string | null;
+  sortCodeMasked: string | null;
+  accountNumberMasked: string | null;
+  updatedAt: string | null;
+}
+
+export interface GuardBankDetailsReveal {
+  guardId: number;
+  accountHolderName: string | null;
+  sortCode: string | null;
+  accountNumber: string | null;
+}
+
+export interface CompanyGuardBankSummary {
+  guardId: number;
+  bankSet: boolean;
+  sortCodeMasked: string | null;
+  accountNumberMasked: string | null;
+  updatedAt: string | null;
+}
+
+export interface UpdateBankDetailsPayload {
+  accountHolderName?: string;
+  sortCode?: string;
+  accountNumber?: string;
+  confirmReplace?: boolean;
+}
+
 export interface Site {
   id: number;
   companyId?: number;

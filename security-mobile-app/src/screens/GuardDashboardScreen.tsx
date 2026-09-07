@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { Alert, AppState, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { FeatureCard } from '../components/FeatureCard';
 import { StatePanel } from '../components/StatePanel';
@@ -18,6 +18,7 @@ import {
   formatApiErrorMessage,
   getMyDrivingTransport,
   getMyEmergencyContact,
+  getMyBankDetails,
   getMyEmployments,
   getMyGuard,
   getMyPersonnelIdentity,
@@ -26,13 +27,16 @@ import {
   listMyIncidents,
   listMyShifts,
   listMyTimesheets,
+  deleteMyBankDetails,
   removeMyEmergencyContact,
   respondToShift,
+  revealMyBankDetails,
   revealMyDrivingLicenceNumber,
   revealMyPersonnelField,
   updateMyDrivingTransport,
   updateMyGuard,
   updateMyPersonnelIdentity,
+  upsertMyBankDetails,
   upsertMyEmergencyContact,
 } from '../services/api';
 import {
@@ -43,6 +47,9 @@ import {
   EmergencyContactRelationship,
   GuardDrivingTransport,
   GuardEmergencyContact,
+  GuardBankDetailsSummary,
+  GuardBankDetailsReveal,
+  UpdateBankDetailsPayload,
   GuardEmploymentRecord,
   GuardPersonnelIdentity,
   Incident,
@@ -515,6 +522,21 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
   const [employmentsLoading, setEmploymentsLoading] = useState(false);
   const [employmentsError, setEmploymentsError] = useState<string | null>(null);
 
+  // P1G-A — Bank Details
+  const [bankDetails, setBankDetails] = useState<GuardBankDetailsSummary | null>(null);
+  const [bankLoading, setBankLoading] = useState(false);
+  const [bankError, setBankError] = useState<string | null>(null);
+  const [bankReveal, setBankReveal] = useState<GuardBankDetailsReveal | null>(null);
+  const [bankRevealCountdown, setBankRevealCountdown] = useState(0);
+  const [bankRevealing, setBankRevealing] = useState(false);
+  const bankRevealTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [editingBankDetails, setEditingBankDetails] = useState(false);
+  const [bankHolderInput, setBankHolderInput] = useState('');
+  const [bankSortInput, setBankSortInput] = useState('');
+  const [bankAccountInput, setBankAccountInput] = useState('');
+  const [bankInputError, setBankInputError] = useState('');
+  const [bankSaving, setBankSaving] = useState(false);
+
   function pushFeedback(tone: 'success' | 'error' | 'info', title: string, message: string) {
     setActionFeedback({ tone, title, message });
   }
@@ -843,6 +865,156 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
     }
   }
 
+  // P1G-A — Bank Details helpers
+
+  async function loadBankDetails() {
+    try {
+      setBankLoading(true);
+      setBankError(null);
+      const data = await getMyBankDetails();
+      setBankDetails(data);
+    } catch {
+      setBankError('Bank details could not be loaded.');
+    } finally {
+      setBankLoading(false);
+    }
+  }
+
+  function clearBankReveal() {
+    if (bankRevealTimerRef.current) {
+      clearInterval(bankRevealTimerRef.current);
+      bankRevealTimerRef.current = null;
+    }
+    setBankReveal(null);
+    setBankRevealCountdown(0);
+  }
+
+  function startBankRevealCountdown() {
+    const REVEAL_SECONDS = 15;
+    setBankRevealCountdown(REVEAL_SECONDS);
+    if (bankRevealTimerRef.current) clearInterval(bankRevealTimerRef.current);
+    bankRevealTimerRef.current = setInterval(() => {
+      setBankRevealCountdown((prev) => {
+        if (prev <= 1) {
+          clearInterval(bankRevealTimerRef.current!);
+          bankRevealTimerRef.current = null;
+          setBankReveal(null);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  }
+
+  function handleRevealBankDetails() {
+    Alert.alert(
+      'Show bank details',
+      'Your full account details will be displayed for 15 seconds. Continue?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Show',
+          onPress: async () => {
+            clearBankReveal();
+            try {
+              setBankRevealing(true);
+              const result = await revealMyBankDetails();
+              if (result.accountHolderName || result.sortCode || result.accountNumber) {
+                setBankReveal(result);
+                startBankRevealCountdown();
+              } else {
+                pushFeedback('info', 'No bank details', 'No bank details are stored yet.');
+              }
+            } catch {
+              pushFeedback('error', 'Reveal failed', 'Could not retrieve your bank details. Try again.');
+            } finally {
+              setBankRevealing(false);
+            }
+          },
+        },
+      ],
+    );
+  }
+
+  async function executeBankDetailsSave(payload: UpdateBankDetailsPayload) {
+    try {
+      setBankSaving(true);
+      setBankInputError('');
+      const updated = await upsertMyBankDetails(payload);
+      setBankDetails(updated);
+      setEditingBankDetails(false);
+      setBankHolderInput('');
+      setBankSortInput('');
+      setBankAccountInput('');
+      pushFeedback('success', 'Bank details saved', 'Your bank details have been updated.');
+    } catch (e) {
+      setBankInputError(formatApiErrorMessage(e, 'Could not save bank details. Check the format and try again.'));
+    } finally {
+      setBankSaving(false);
+    }
+  }
+
+  function handleSaveBankDetails() {
+    const isExisting = bankDetails?.bankSet;
+    const payload: UpdateBankDetailsPayload = {};
+
+    if (bankHolderInput.trim()) payload.accountHolderName = bankHolderInput.trim();
+    if (bankSortInput.trim()) payload.sortCode = bankSortInput.trim();
+    if (bankAccountInput.trim()) payload.accountNumber = bankAccountInput.trim();
+
+    if (!isExisting && (!payload.accountHolderName || !payload.sortCode || !payload.accountNumber)) {
+      setBankInputError('All three fields are required to add bank details.');
+      return;
+    }
+
+    if (isExisting && Object.keys(payload).length > 0) {
+      // Replacing existing bank details requires explicit user confirmation.
+      Alert.alert(
+        'Replace bank details',
+        'This will permanently replace your stored bank account details. Are you sure?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Replace',
+            style: 'destructive',
+            onPress: () => {
+              payload.confirmReplace = true;
+              executeBankDetailsSave(payload);
+            },
+          },
+        ],
+      );
+      return;
+    }
+
+    // First-time creation: no confirmation required.
+    executeBankDetailsSave(payload);
+  }
+
+  function handleDeleteBankDetails() {
+    Alert.alert(
+      'Remove bank details',
+      'This will permanently remove your stored bank details. Are you sure?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteMyBankDetails();
+              setBankDetails(null);
+              clearBankReveal();
+              pushFeedback('success', 'Bank details removed', 'Your bank details have been deleted.');
+            } catch {
+              pushFeedback('error', 'Remove failed', 'Could not remove bank details. Try again.');
+            }
+          },
+        },
+      ],
+    );
+  }
+
   function updateShiftStatusLocally(shiftId: number, nextStatus: string) {
     setShifts((current) =>
       current.map((shift) =>
@@ -863,11 +1035,12 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
         listMyDailyLogs(),
         listMyTimesheets(),
       ]);
-      // Load identity, driving, emergency contact, and employments separately — non-critical; failures must not block rendering.
+      // Load identity, driving, emergency contact, employments, and bank details separately — non-critical; failures must not block rendering.
       loadIdentity();
       loadDriving();
       loadEmergencyContact();
       loadEmployments();
+      loadBankDetails();
 
       setFullName(myGuard.fullName || '');
       setPhone(myGuard.phone || '');
@@ -1126,7 +1299,19 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
     return () => {
       if (revealTimerRef.current) clearInterval(revealTimerRef.current);
       if (licenceRevealTimerRef.current) clearInterval(licenceRevealTimerRef.current);
+      if (bankRevealTimerRef.current) clearInterval(bankRevealTimerRef.current);
     };
+  }, []);
+
+  // Clear bank reveal when app moves to background or becomes inactive.
+  useEffect(() => {
+    function handleAppStateChange(nextState: string) {
+      if (nextState === 'background' || nextState === 'inactive') {
+        clearBankReveal();
+      }
+    }
+    const sub = AppState.addEventListener('change', handleAppStateChange);
+    return () => sub.remove();
   }, []);
 
   const attendanceByShiftId = useMemo(() => {
@@ -2485,6 +2670,170 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
               )}
               <Text style={styles.profileFieldHint}>
                 Employment details are set by your employing company. If you believe any information is incorrect, contact your company administrator.
+              </Text>
+            </FeatureCard>
+
+            {/* P1G-A — Bank Details */}
+            <FeatureCard
+              title="Bank Details"
+              subtitle="Your bank account for payroll payments"
+            >
+              {bankLoading ? (
+                <Text style={styles.helperText}>Loading…</Text>
+              ) : bankError ? (
+                <Text style={[styles.helperText, { color: colors.danger }]}>{bankError}</Text>
+              ) : !bankDetails?.bankSet ? (
+                <View>
+                  <Text style={styles.helperText}>No bank details on file.</Text>
+                  {!editingBankDetails ? (
+                    <Pressable style={[styles.guardSecondaryBtn, { marginTop: 8 }]} onPress={() => setEditingBankDetails(true)}>
+                      <Text style={styles.guardSecondaryBtnText}>Add bank details</Text>
+                    </Pressable>
+                  ) : (
+                    <View style={{ marginTop: 8 }}>
+                      <Text style={styles.profileFieldLabel}>Account holder name</Text>
+                      <TextInput
+                        style={[styles.input, styles.guardProfileInput]}
+                        value={bankHolderInput}
+                        onChangeText={setBankHolderInput}
+                        placeholder="e.g. John A Smith"
+                        autoCapitalize="words"
+                        maxLength={100}
+                      />
+                      <Text style={styles.profileFieldLabel}>Sort code</Text>
+                      <TextInput
+                        style={[styles.input, styles.guardProfileInput]}
+                        value={bankSortInput}
+                        onChangeText={setBankSortInput}
+                        placeholder="e.g. 12-34-56"
+                        keyboardType="numeric"
+                        maxLength={8}
+                      />
+                      <Text style={styles.profileFieldLabel}>Account number</Text>
+                      <TextInput
+                        style={[styles.input, styles.guardProfileInput]}
+                        value={bankAccountInput}
+                        onChangeText={setBankAccountInput}
+                        placeholder="e.g. 12345678"
+                        keyboardType="numeric"
+                        maxLength={8}
+                      />
+                      {bankInputError ? <Text style={[styles.helperText, { color: colors.danger }]}>{bankInputError}</Text> : null}
+                      <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+                        <Pressable
+                          style={[styles.guardSecondaryBtn, { flex: 1 }, bankSaving && styles.buttonDisabled]}
+                          onPress={() => { setEditingBankDetails(false); setBankHolderInput(''); setBankSortInput(''); setBankAccountInput(''); setBankInputError(''); }}
+                          disabled={bankSaving}
+                        >
+                          <Text style={styles.guardSecondaryBtnText}>Cancel</Text>
+                        </Pressable>
+                        <Pressable
+                          style={[styles.guardSecondaryBtn, { flex: 1, backgroundColor: colors.accentTeal }, bankSaving && styles.buttonDisabled]}
+                          onPress={handleSaveBankDetails}
+                          disabled={bankSaving}
+                        >
+                          <Text style={styles.guardSecondaryBtnText}>{bankSaving ? 'Saving…' : 'Save'}</Text>
+                        </Pressable>
+                      </View>
+                    </View>
+                  )}
+                </View>
+              ) : (
+                <View>
+                  {bankReveal ? (
+                    <View style={styles.summaryBlock}>
+                      <Text style={styles.profileFieldLabel}>Account holder</Text>
+                      <Text style={styles.profileFieldValue}>{bankReveal.accountHolderName ?? '—'}</Text>
+                      <Text style={styles.profileFieldLabel}>Sort code</Text>
+                      <Text style={styles.profileFieldValue}>{bankReveal.sortCode ?? '—'}</Text>
+                      <Text style={styles.profileFieldLabel}>Account number</Text>
+                      <Text style={styles.profileFieldValue}>{bankReveal.accountNumber ?? '—'}</Text>
+                      <Text style={[styles.helperText, { marginTop: 4 }]}>Hiding in {bankRevealCountdown}s</Text>
+                      <Pressable style={[styles.guardSecondaryBtn, { marginTop: 8 }]} onPress={clearBankReveal}>
+                        <Text style={styles.guardSecondaryBtnText}>Hide now</Text>
+                      </Pressable>
+                    </View>
+                  ) : (
+                    <View style={styles.summaryBlock}>
+                      <Text style={styles.profileFieldLabel}>Account holder</Text>
+                      <Text style={styles.profileFieldValue}>{bankDetails.accountHolderNameMasked ?? '••••••'}</Text>
+                      <Text style={styles.profileFieldLabel}>Sort code</Text>
+                      <Text style={styles.profileFieldValue}>{bankDetails.sortCodeMasked ?? '——'}</Text>
+                      <Text style={styles.profileFieldLabel}>Account number</Text>
+                      <Text style={styles.profileFieldValue}>{bankDetails.accountNumberMasked ?? '——'}</Text>
+                    </View>
+                  )}
+
+                  {!editingBankDetails ? (
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
+                      {!bankReveal ? (
+                        <Pressable
+                          style={[styles.guardSecondaryBtn, bankRevealing && styles.buttonDisabled]}
+                          onPress={handleRevealBankDetails}
+                          disabled={bankRevealing}
+                        >
+                          <Text style={styles.guardSecondaryBtnText}>{bankRevealing ? 'Loading…' : 'Show details'}</Text>
+                        </Pressable>
+                      ) : null}
+                      <Pressable style={styles.guardSecondaryBtn} onPress={() => { setEditingBankDetails(true); clearBankReveal(); }}>
+                        <Text style={styles.guardSecondaryBtnText}>Update</Text>
+                      </Pressable>
+                      <Pressable style={[styles.guardSecondaryBtn, { borderColor: colors.danger }]} onPress={handleDeleteBankDetails}>
+                        <Text style={[styles.guardSecondaryBtnText, { color: colors.danger }]}>Remove</Text>
+                      </Pressable>
+                    </View>
+                  ) : (
+                    <View style={{ marginTop: 8 }}>
+                      <Text style={styles.profileFieldLabel}>Account holder name</Text>
+                      <TextInput
+                        style={[styles.input, styles.guardProfileInput]}
+                        value={bankHolderInput}
+                        onChangeText={setBankHolderInput}
+                        placeholder="Leave blank to keep existing"
+                        autoCapitalize="words"
+                        maxLength={100}
+                      />
+                      <Text style={styles.profileFieldLabel}>Sort code</Text>
+                      <TextInput
+                        style={[styles.input, styles.guardProfileInput]}
+                        value={bankSortInput}
+                        onChangeText={setBankSortInput}
+                        placeholder="Leave blank to keep existing"
+                        keyboardType="numeric"
+                        maxLength={8}
+                      />
+                      <Text style={styles.profileFieldLabel}>Account number</Text>
+                      <TextInput
+                        style={[styles.input, styles.guardProfileInput]}
+                        value={bankAccountInput}
+                        onChangeText={setBankAccountInput}
+                        placeholder="Leave blank to keep existing"
+                        keyboardType="numeric"
+                        maxLength={8}
+                      />
+                      {bankInputError ? <Text style={[styles.helperText, { color: colors.danger }]}>{bankInputError}</Text> : null}
+                      <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+                        <Pressable
+                          style={[styles.guardSecondaryBtn, { flex: 1 }, bankSaving && styles.buttonDisabled]}
+                          onPress={() => { setEditingBankDetails(false); setBankHolderInput(''); setBankSortInput(''); setBankAccountInput(''); setBankInputError(''); }}
+                          disabled={bankSaving}
+                        >
+                          <Text style={styles.guardSecondaryBtnText}>Cancel</Text>
+                        </Pressable>
+                        <Pressable
+                          style={[styles.guardSecondaryBtn, { flex: 1, backgroundColor: colors.accentTeal }, bankSaving && styles.buttonDisabled]}
+                          onPress={handleSaveBankDetails}
+                          disabled={bankSaving}
+                        >
+                          <Text style={styles.guardSecondaryBtnText}>{bankSaving ? 'Saving…' : 'Save'}</Text>
+                        </Pressable>
+                      </View>
+                    </View>
+                  )}
+                </View>
+              )}
+              <Text style={styles.profileFieldHint}>
+                Bank details are encrypted at rest. Only you can view the full details. Employers see sort code and account number only — never your account holder name.
               </Text>
             </FeatureCard>
 

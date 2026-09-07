@@ -29,6 +29,8 @@ import { EmergencyContactService } from './emergency-contact.service';
 import { UpdateEmergencyContactDto } from './dto/update-emergency-contact.dto';
 import { EmploymentService } from './employment.service';
 import { UpdateCompanyGuardEmploymentDto } from './dto/update-company-guard-employment.dto';
+import { BankDetailsService } from './bank-details.service';
+import { UpdateGuardBankDetailsDto } from './dto/update-guard-bank-details.dto';
 
 // P1A access model:
 //   GUARD        — read and update own identity; reveal own data (audited)
@@ -57,6 +59,13 @@ import { UpdateCompanyGuardEmploymentDto } from './dto/update-company-guard-empl
 //   CLIENT roles — NO ACCESS
 //   Correction request workflow — deferred to P1F.1 (no existing infrastructure)
 
+// P1G-A access model:
+//   GUARD        — full CRUD on own bank details; reveal own plaintext (audited)
+//   ADMIN        — masked GET only; no reveal in this slice
+//   COMPANY / COMPANY_ADMIN — masked GET (sort code + account number only; no holder name); ACTIVE relationship enforced
+//   COMPANY_STAFF — ZERO ACCESS
+//   CLIENT roles — ZERO ACCESS
+
 @Controller('guard-personnel')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class GuardPersonnelController {
@@ -65,6 +74,7 @@ export class GuardPersonnelController {
     private readonly drivingService: DrivingTransportService,
     private readonly emergencyContactService: EmergencyContactService,
     private readonly employmentService: EmploymentService,
+    private readonly bankDetailsService: BankDetailsService,
   ) {}
 
   // Guard self-service ────────────────────────────────────────────────────────
@@ -313,5 +323,64 @@ export class GuardPersonnelController {
     @Param('guardId', ParseIntPipe) guardId: number,
   ) {
     return this.employmentService.getEmploymentForCompanyStaff(user.sub, guardId);
+  }
+
+  // P1G-A — Bank Details: Guard self-service ──────────────────────────────────
+
+  @Get('me/bank-details')
+  @Roles(UserRole.GUARD)
+  getMyBankDetails(@CurrentUser() user: JwtPayload) {
+    return this.bankDetailsService.getBankDetailsForGuard(user.sub);
+  }
+
+  @Patch('me/bank-details')
+  @Roles(UserRole.GUARD)
+  upsertMyBankDetails(
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: UpdateGuardBankDetailsDto,
+    @Req() req: Request,
+  ) {
+    return this.bankDetailsService.upsertBankDetailsForGuard(user.sub, dto, {
+      ipAddress: req.ip ?? null,
+      userAgent: req.headers['user-agent'] ?? null,
+    });
+  }
+
+  @Post('me/bank-details/reveal')
+  @Roles(UserRole.GUARD)
+  revealMyBankDetails(@CurrentUser() user: JwtPayload, @Req() req: Request) {
+    return this.bankDetailsService.revealBankDetailsForGuard(user.sub, {
+      ipAddress: req.ip ?? null,
+      userAgent: req.headers['user-agent'] ?? null,
+    });
+  }
+
+  @Delete('me/bank-details')
+  @Roles(UserRole.GUARD)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  removeMyBankDetails(@CurrentUser() user: JwtPayload, @Req() req: Request) {
+    return this.bankDetailsService.deleteBankDetailsForGuard(user.sub, {
+      ipAddress: req.ip ?? null,
+      userAgent: req.headers['user-agent'] ?? null,
+    });
+  }
+
+  // P1G-A — Bank Details: Platform Admin (masked only; no reveal in this slice) ─
+
+  @Get('admin/:id/bank-details')
+  @Roles(UserRole.ADMIN)
+  getGuardBankDetailsAdmin(@Param('id', ParseIntPipe) id: number) {
+    return this.bankDetailsService.getBankDetailsForAdmin(id);
+  }
+
+  // P1G-A — Bank Details: Company (masked; ACTIVE relationship; no holder name) ─
+
+  @Get('company/guard/:guardId/bank-details')
+  @Roles(UserRole.COMPANY, UserRole.COMPANY_ADMIN)
+  getGuardBankDetailsForCompany(
+    @CurrentUser() user: JwtPayload,
+    @Param('guardId', ParseIntPipe) guardId: number,
+  ) {
+    return this.bankDetailsService.getBankDetailsForCompany(user.sub, guardId);
   }
 }
