@@ -30,6 +30,10 @@ import {
   listClients,
   listCompanyDailyLogs,
   listCompanyGuards,
+  getCompanyGuardPayrollAdmin,
+  createCompanyGuardPayrollAdmin,
+  updateCompanyGuardPayrollAdmin,
+  getCompanyGuardEmployment,
   listCompanyIncidents,
   listCompanyNotifications,
   listCompanySafetyAlerts,
@@ -69,6 +73,10 @@ import {
   UpdateClientPayload,
   UpdateShiftPayload,
   UpdateSitePayload,
+  CompanyGuardPayrollRecord,
+  UpsertPayrollAdminPayload,
+  GuardEngagementType,
+  CompanyGuardEmploymentSummary,
 } from '../types/models';
 import { CompanySidebar } from '../components/company/CompanySidebar';
 import { Card } from '../components/ui/Card';
@@ -1153,6 +1161,24 @@ export function CompanyDashboardScreen(_props: CompanyDashboardScreenProps = {})
   const [highlightedLiveShiftId, setHighlightedLiveShiftId] = React.useState<number | null>(null);
   const [liveBoardHighlightTimeoutId, setLiveBoardHighlightTimeoutId] = React.useState<ReturnType<typeof setTimeout> | null>(null);
   const [autoMarkingMissedShiftIds, setAutoMarkingMissedShiftIds] = React.useState<number[]>([]);
+
+  // P1G-B — Guard Payroll / Payment Administration
+  const [selectedPayrollGuardId, setSelectedPayrollGuardId] = React.useState<number | null>(null);
+  const [selectedPayrollGuardName, setSelectedPayrollGuardName] = React.useState<string>('');
+  const [guardPayrollRecord, setGuardPayrollRecord] = React.useState<CompanyGuardPayrollRecord | null>(null);
+  const [guardPayrollEngagementType, setGuardPayrollEngagementType] = React.useState<GuardEngagementType | 'NONE' | null>(null);
+  const [guardPayrollLoading, setGuardPayrollLoading] = React.useState(false);
+  const [guardPayrollError, setGuardPayrollError] = React.useState<string | null>(null);
+  const [editingPayrollAdmin, setEditingPayrollAdmin] = React.useState(false);
+  const [payrollRefInput, setPayrollRefInput] = React.useState('');
+  const [payrollFreqInput, setPayrollFreqInput] = React.useState('');
+  const [payrollMethodInput, setPayrollMethodInput] = React.useState('');
+  const [payrollStatusInput, setPayrollStatusInput] = React.useState('ACTIVE');
+  const [payrollStartDateInput, setPayrollStartDateInput] = React.useState('');
+  const [payrollEndDateInput, setPayrollEndDateInput] = React.useState('');
+  const [payrollNoteInput, setPayrollNoteInput] = React.useState('');
+  const [savingPayrollAdmin, setSavingPayrollAdmin] = React.useState(false);
+  const [payrollAdminFeedback, setPayrollAdminFeedback] = React.useState<{ tone: 'success' | 'error'; message: string } | null>(null);
 
   const runSettledLoaders = React.useMemo(
     () => async (loaders: SettledLoader[]) => {
@@ -4409,6 +4435,227 @@ export function CompanyDashboardScreen(_props: CompanyDashboardScreenProps = {})
     </View>
   );
 
+  // P1G-B — Engagement-aware label helper (Company UX)
+  function getPayrollLabels(engagementType: GuardEngagementType | 'NONE' | null) {
+    if (engagementType === 'EMPLOYEE') {
+      return { heading: 'Payroll Administration', reference: 'Payroll Reference', frequency: 'Pay Frequency', method: 'Payment Method', status: 'Payroll Status', startDate: 'Payroll Start Date', endDate: 'Payroll End Date', note: 'Payroll Note (Internal)' };
+    }
+    if (engagementType === 'NONE') {
+      return { heading: 'Pay Administration', reference: 'Contractor Reference', frequency: 'Payment Frequency', method: 'Payment Method', status: 'Payment Status', startDate: 'Arrangement Start Date', endDate: 'Arrangement End Date', note: 'Payment Note (Internal)' };
+    }
+    return { heading: 'Payment Administration', reference: 'Contractor Reference', frequency: 'Payment Frequency', method: 'Payment Method', status: 'Payment Status', startDate: 'Arrangement Start Date', endDate: 'Arrangement End Date', note: 'Payment Note (Internal)' };
+  }
+
+  async function handleSelectPayrollGuard(guardId: number, guardName: string) {
+    setSelectedPayrollGuardId(guardId);
+    setSelectedPayrollGuardName(guardName);
+    setGuardPayrollRecord(null);
+    setGuardPayrollEngagementType(null);
+    setGuardPayrollError(null);
+    setEditingPayrollAdmin(false);
+    setPayrollAdminFeedback(null);
+    setGuardPayrollLoading(true);
+    try {
+      const [payrollRecord, employment] = await Promise.all([
+        getCompanyGuardPayrollAdmin(guardId),
+        getCompanyGuardEmployment(guardId).catch(() => null),
+      ]);
+      setGuardPayrollRecord(payrollRecord);
+      setGuardPayrollEngagementType(employment ? (employment as CompanyGuardEmploymentSummary).engagementType : 'NONE');
+      if (payrollRecord) {
+        setPayrollRefInput(payrollRecord.payrollReference ?? '');
+        setPayrollFreqInput(payrollRecord.payFrequency ?? '');
+        setPayrollMethodInput(payrollRecord.payrollPaymentMethod ?? '');
+        setPayrollStatusInput(payrollRecord.payrollStatus);
+        setPayrollStartDateInput(payrollRecord.payrollStartDate ?? '');
+        setPayrollEndDateInput(payrollRecord.payrollEndDate ?? '');
+        setPayrollNoteInput(payrollRecord.payrollNote ?? '');
+      } else {
+        setPayrollRefInput('');
+        setPayrollFreqInput('');
+        setPayrollMethodInput('');
+        setPayrollStatusInput('ACTIVE');
+        setPayrollStartDateInput('');
+        setPayrollEndDateInput('');
+        setPayrollNoteInput('');
+      }
+    } catch {
+      setGuardPayrollError('Could not load payroll administration record.');
+    } finally {
+      setGuardPayrollLoading(false);
+    }
+  }
+
+  async function handleSavePayrollAdmin() {
+    if (!selectedPayrollGuardId) return;
+    setSavingPayrollAdmin(true);
+    setPayrollAdminFeedback(null);
+    try {
+      const payload: UpsertPayrollAdminPayload = {
+        payrollReference: payrollRefInput.trim() || null,
+        payFrequency: (payrollFreqInput as UpsertPayrollAdminPayload['payFrequency']) || null,
+        payrollPaymentMethod: (payrollMethodInput as UpsertPayrollAdminPayload['payrollPaymentMethod']) || null,
+        payrollStatus: payrollStatusInput as UpsertPayrollAdminPayload['payrollStatus'],
+        payrollStartDate: payrollStartDateInput.trim() || null,
+        payrollEndDate: payrollEndDateInput.trim() || null,
+        payrollNote: payrollNoteInput.trim() || null,
+      };
+      const updated = guardPayrollRecord
+        ? await updateCompanyGuardPayrollAdmin(selectedPayrollGuardId, payload)
+        : await createCompanyGuardPayrollAdmin(selectedPayrollGuardId, payload);
+      setGuardPayrollRecord(updated);
+      setEditingPayrollAdmin(false);
+      setPayrollAdminFeedback({ tone: 'success', message: 'Record saved successfully.' });
+    } catch (e: unknown) {
+      setPayrollAdminFeedback({ tone: 'error', message: formatApiErrorMessage(e, 'Could not save record.') });
+    } finally {
+      setSavingPayrollAdmin(false);
+    }
+  }
+
+  const renderPayrollAdminPanel = () => {
+    const labels = getPayrollLabels(guardPayrollEngagementType);
+    const PAY_FREQUENCY_OPTIONS = [
+      { value: '', label: '— Select —' },
+      { value: 'WEEKLY', label: 'Weekly' },
+      { value: 'FORTNIGHTLY', label: 'Fortnightly' },
+      { value: 'FOUR_WEEKLY', label: 'Four Weekly' },
+      { value: 'MONTHLY', label: 'Monthly' },
+      { value: 'IRREGULAR', label: 'Irregular' },
+    ];
+    const PAYMENT_METHOD_OPTIONS = [
+      { value: '', label: '— Select —' },
+      { value: 'BACS', label: 'BACS' },
+      { value: 'CHAPS', label: 'CHAPS' },
+      { value: 'CASH', label: 'Cash' },
+      { value: 'OTHER', label: 'Other' },
+    ];
+    const STATUS_OPTIONS = [
+      { value: 'ACTIVE', label: 'Active' },
+      { value: 'ON_HOLD', label: 'On Hold' },
+      { value: 'EXCLUDED', label: 'Excluded' },
+    ];
+
+    return (
+      <View style={[styles.tableCard, { marginTop: 16 }]}>
+        <Text style={styles.panelTitle}>{labels.heading}</Text>
+        {selectedPayrollGuardId === null ? (
+          <Text style={styles.tableCell}>Select a linked guard above to manage their {labels.heading.toLowerCase()}.</Text>
+        ) : guardPayrollLoading ? (
+          <Text style={styles.tableCell}>Loading…</Text>
+        ) : guardPayrollError ? (
+          <Text style={[styles.tableCell, { color: colors.danger }]}>{guardPayrollError}</Text>
+        ) : (
+          <View>
+            <Text style={styles.tableCell}>Guard: <Text style={styles.tableCellStrong}>{selectedPayrollGuardName}</Text></Text>
+
+            {payrollAdminFeedback ? (
+              <View style={[styles.feedbackCard, payrollAdminFeedback.tone === 'error' ? styles.feedbackCardError : styles.feedbackCardSuccess]}>
+                <Text style={[styles.feedbackText, payrollAdminFeedback.tone === 'error' ? styles.feedbackTextError : styles.feedbackTextSuccess]}>{payrollAdminFeedback.message}</Text>
+              </View>
+            ) : null}
+
+            {!editingPayrollAdmin ? (
+              <View>
+                {guardPayrollRecord ? (
+                  <View>
+                    <View style={styles.tableRow}>
+                      <Text style={styles.tableCell}>{labels.reference}</Text>
+                      <Text style={styles.tableCellStrong}>{guardPayrollRecord.payrollReference ?? '—'}</Text>
+                    </View>
+                    <View style={styles.tableRow}>
+                      <Text style={styles.tableCell}>{labels.frequency}</Text>
+                      <Text style={styles.tableCellStrong}>{guardPayrollRecord.payFrequency ? guardPayrollRecord.payFrequency.replace(/_/g, ' ') : '—'}</Text>
+                    </View>
+                    <View style={styles.tableRow}>
+                      <Text style={styles.tableCell}>{labels.method}</Text>
+                      <Text style={styles.tableCellStrong}>{guardPayrollRecord.payrollPaymentMethod ?? '—'}</Text>
+                    </View>
+                    <View style={styles.tableRow}>
+                      <Text style={styles.tableCell}>{labels.status}</Text>
+                      <Text style={styles.tableCellStrong}>{guardPayrollRecord.payrollStatus.replace(/_/g, ' ')}</Text>
+                    </View>
+                    <View style={styles.tableRow}>
+                      <Text style={styles.tableCell}>{labels.startDate}</Text>
+                      <Text style={styles.tableCellStrong}>{guardPayrollRecord.payrollStartDate ?? '—'}</Text>
+                    </View>
+                    <View style={styles.tableRow}>
+                      <Text style={styles.tableCell}>{labels.endDate}</Text>
+                      <Text style={styles.tableCellStrong}>{guardPayrollRecord.payrollEndDate ?? '—'}</Text>
+                    </View>
+                    {guardPayrollRecord.payrollNote ? (
+                      <View style={styles.tableRow}>
+                        <Text style={styles.tableCell}>{labels.note}</Text>
+                        <Text style={styles.tableCellStrong}>{guardPayrollRecord.payrollNote}</Text>
+                      </View>
+                    ) : null}
+                  </View>
+                ) : (
+                  <Text style={styles.tableCell}>No {labels.heading.toLowerCase()} record on file.</Text>
+                )}
+                <View style={styles.rowActions}>
+                  <Pressable style={styles.primaryButton} onPress={() => setEditingPayrollAdmin(true)}>
+                    <Text style={styles.primaryButtonText}>{guardPayrollRecord ? `Edit ${labels.heading}` : `Set Up ${labels.heading}`}</Text>
+                  </Pressable>
+                </View>
+              </View>
+            ) : (
+              <View>
+                <Text style={styles.tableCell}>{labels.reference}</Text>
+                <TextInput style={styles.input} value={payrollRefInput} onChangeText={setPayrollRefInput} placeholder="e.g. EMP-001" maxLength={50} />
+
+                <Text style={styles.tableCell}>{labels.frequency}</Text>
+                <View style={styles.rowActions}>
+                  {PAY_FREQUENCY_OPTIONS.map((opt) => (
+                    <Pressable key={opt.value} style={[styles.secondaryButton, payrollFreqInput === opt.value && { backgroundColor: colors.accentTeal }]} onPress={() => setPayrollFreqInput(opt.value)}>
+                      <Text style={styles.secondaryButtonText}>{opt.label}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+
+                <Text style={styles.tableCell}>{labels.method}</Text>
+                <View style={styles.rowActions}>
+                  {PAYMENT_METHOD_OPTIONS.map((opt) => (
+                    <Pressable key={opt.value} style={[styles.secondaryButton, payrollMethodInput === opt.value && { backgroundColor: colors.accentTeal }]} onPress={() => setPayrollMethodInput(opt.value)}>
+                      <Text style={styles.secondaryButtonText}>{opt.label}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+
+                <Text style={styles.tableCell}>{labels.status}</Text>
+                <View style={styles.rowActions}>
+                  {STATUS_OPTIONS.map((opt) => (
+                    <Pressable key={opt.value} style={[styles.secondaryButton, payrollStatusInput === opt.value && { backgroundColor: colors.accentTeal }]} onPress={() => setPayrollStatusInput(opt.value)}>
+                      <Text style={styles.secondaryButtonText}>{opt.label}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+
+                <Text style={styles.tableCell}>{labels.startDate} (YYYY-MM-DD)</Text>
+                <TextInput style={styles.input} value={payrollStartDateInput} onChangeText={setPayrollStartDateInput} placeholder="e.g. 2024-01-01" maxLength={10} />
+
+                <Text style={styles.tableCell}>{labels.endDate} (YYYY-MM-DD, leave blank if ongoing)</Text>
+                <TextInput style={styles.input} value={payrollEndDateInput} onChangeText={setPayrollEndDateInput} placeholder="e.g. 2024-12-31" maxLength={10} />
+
+                <Text style={styles.tableCell}>{labels.note}</Text>
+                <TextInput style={[styles.input, { minHeight: 60 }]} value={payrollNoteInput} onChangeText={setPayrollNoteInput} placeholder="Internal note (not visible to guard)" multiline maxLength={2000} />
+
+                <View style={styles.rowActions}>
+                  <Pressable style={styles.secondaryButton} onPress={() => setEditingPayrollAdmin(false)} disabled={savingPayrollAdmin}>
+                    <Text style={styles.secondaryButtonText}>Cancel</Text>
+                  </Pressable>
+                  <Pressable style={[styles.primaryButton, savingPayrollAdmin && { opacity: 0.5 }]} onPress={handleSavePayrollAdmin} disabled={savingPayrollAdmin}>
+                    <Text style={styles.primaryButtonText}>{savingPayrollAdmin ? 'Saving…' : 'Save'}</Text>
+                  </Pressable>
+                </View>
+              </View>
+            )}
+          </View>
+        )}
+      </View>
+    );
+  };
+
   const renderGuardsSection = () => (
     <View style={styles.sectionStack}>
       <View style={styles.splitLayout}>
@@ -4434,10 +4681,16 @@ export function CompanyDashboardScreen(_props: CompanyDashboardScreenProps = {})
               <Text style={styles.tableCellStrong}>{guard.fullName}</Text>
               <Text style={styles.tableCell}>{guard.phone}</Text>
               <Text style={styles.tableCell}>{shifts.filter((shift) => (shift.guard?.id ?? shift.guardId) === guard.id).length} shifts</Text>
+              <View style={styles.rowActions}>
+                <Pressable style={styles.secondaryButton} onPress={() => handleSelectPayrollGuard(guard.id, guard.fullName)}>
+                  <Text style={styles.secondaryButtonText}>Pay Admin</Text>
+                </Pressable>
+              </View>
             </View>
           ))}
         </View>
       </View>
+      {renderPayrollAdminPanel()}
     </View>
   );
 

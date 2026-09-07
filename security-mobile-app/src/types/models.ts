@@ -234,6 +234,57 @@ export interface UpdateBankDetailsPayload {
   confirmReplace?: boolean;
 }
 
+// P1G-B — Payroll / Payment Administration
+export type GuardPayFrequency = 'WEEKLY' | 'FORTNIGHTLY' | 'FOUR_WEEKLY' | 'MONTHLY' | 'IRREGULAR';
+export type GuardPayrollPaymentMethod = 'BACS' | 'CHAPS' | 'CASH' | 'OTHER';
+export type GuardPayrollStatus = 'ACTIVE' | 'ON_HOLD' | 'EXCLUDED';
+
+// Guard read-only view (payFrequency, payrollStatus, dates only).
+export interface GuardPayrollAdminSummary {
+  companyGuardId: number;
+  guardId: number;
+  companyId: number;
+  companyName: string;
+  payFrequency: GuardPayFrequency | null;
+  payrollStatus: GuardPayrollStatus;
+  payrollStartDate: string | null;
+  payrollEndDate: string | null;
+  updatedAt: string;
+}
+
+// Company full view (includes payrollNote).
+export interface CompanyGuardPayrollRecord {
+  companyGuardId: number;
+  guardId: number;
+  companyId: number;
+  payrollReference: string | null;
+  payFrequency: GuardPayFrequency | null;
+  payrollPaymentMethod: GuardPayrollPaymentMethod | null;
+  payrollStatus: GuardPayrollStatus;
+  payrollStartDate: string | null;
+  payrollEndDate: string | null;
+  payrollNote: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UpsertPayrollAdminPayload {
+  payrollReference?: string | null;
+  payFrequency?: GuardPayFrequency | null;
+  payrollPaymentMethod?: GuardPayrollPaymentMethod | null;
+  payrollStatus?: GuardPayrollStatus;
+  payrollStartDate?: string | null;
+  payrollEndDate?: string | null;
+  payrollNote?: string | null;
+}
+
+// Company's view of a guard's P1F employment (minimal — for engagement-aware label selection).
+export interface CompanyGuardEmploymentSummary {
+  companyGuardId: number;
+  guardId: number;
+  engagementType: GuardEngagementType;
+}
+
 export interface Site {
   id: number;
   companyId?: number;

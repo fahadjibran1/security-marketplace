@@ -92,6 +92,10 @@ import {
   GuardBankDetailsReveal,
   CompanyGuardBankSummary,
   UpdateBankDetailsPayload,
+  GuardPayrollAdminSummary,
+  CompanyGuardPayrollRecord,
+  UpsertPayrollAdminPayload,
+  CompanyGuardEmploymentSummary,
 } from '../types/models';
 
 const hasBrowserWindow =
@@ -1144,6 +1148,35 @@ export function deleteMyBankDetails() {
 // P1G-A — Bank Details: Company masked access
 export function getCompanyGuardBankDetails(guardId: number) {
   return request<CompanyGuardBankSummary>(`/guard-personnel/company/guard/${guardId}/bank-details`);
+}
+
+// P1G-B — Payroll / Payment Administration: Guard read-only (own records)
+export function getMyPayrollAdmin() {
+  return request<GuardPayrollAdminSummary[]>('/guard-personnel/me/payroll-admin');
+}
+
+// P1G-B — Payroll / Payment Administration: Company
+export function getCompanyGuardPayrollAdmin(guardId: number) {
+  return request<CompanyGuardPayrollRecord | null>(`/guard-personnel/company/guard/${guardId}/payroll-admin`);
+}
+
+export function createCompanyGuardPayrollAdmin(guardId: number, payload: UpsertPayrollAdminPayload) {
+  return request<CompanyGuardPayrollRecord>(`/guard-personnel/company/guard/${guardId}/payroll-admin`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateCompanyGuardPayrollAdmin(guardId: number, payload: UpsertPayrollAdminPayload) {
+  return request<CompanyGuardPayrollRecord>(`/guard-personnel/company/guard/${guardId}/payroll-admin`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+// P1F — Employment & Engagement: Company (used for engagement-aware label selection in P1G-B UX)
+export function getCompanyGuardEmployment(guardId: number) {
+  return request<CompanyGuardEmploymentSummary | null>(`/guard-personnel/company/guard/${guardId}/employment`);
 }
 
 export function expireScreening(id:number,reason:string){return request<GuardScreening>(`/screening/${id}/expire`,{method:'POST',body:JSON.stringify({reason})});}

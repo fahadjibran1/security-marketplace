@@ -14,15 +14,17 @@ import { EmergencyContactService } from './emergency-contact.service';
 import { EmploymentService } from './employment.service';
 import { BankDetailsService } from './bank-details.service';
 import { GuardBankDetails } from './entities/guard-bank-details.entity';
+import { PayrollAdminService } from './payroll-admin.service';
+import { CompanyGuardPayroll } from './entities/company-guard-payroll.entity';
 import { GuardPersonnelController } from './guard-personnel.controller';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([GuardProfile, GuardDrivingProfile, GuardEmergencyContact, CompanyGuardEmployment, CompanyGuard, User, GuardBankDetails]),
+    TypeOrmModule.forFeature([GuardProfile, GuardDrivingProfile, GuardEmergencyContact, CompanyGuardEmployment, CompanyGuard, User, GuardBankDetails, CompanyGuardPayroll]),
     AuditLogModule,
   ],
   controllers: [GuardPersonnelController],
-  providers: [EncryptionService, GuardPersonnelService, DrivingTransportService, EmergencyContactService, EmploymentService, BankDetailsService],
+  providers: [EncryptionService, GuardPersonnelService, DrivingTransportService, EmergencyContactService, EmploymentService, BankDetailsService, PayrollAdminService],
   exports: [EncryptionService],
 })
 export class GuardPersonnelModule {}
