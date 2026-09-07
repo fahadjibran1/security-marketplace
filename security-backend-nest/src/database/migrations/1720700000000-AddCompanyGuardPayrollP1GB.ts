@@ -58,7 +58,7 @@ export class AddCompanyGuardPayrollP1GB1720700000000 implements MigrationInterfa
 
     await queryRunner.query(`
       CREATE UNIQUE INDEX "UQ_payroll_records_company_ref"
-        ON "company_guard_payroll_records" ("companyId", "payrollReference")
+        ON "company_guard_payroll_records" ("companyId", LOWER("payrollReference"))
         WHERE "payrollReference" IS NOT NULL
     `);
   }

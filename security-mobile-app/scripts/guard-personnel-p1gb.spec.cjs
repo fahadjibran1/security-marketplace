@@ -414,10 +414,10 @@ test('entity has companyId column for company-scoped uniqueness index', () => {
   assert.match(entity, /companyId/);
 });
 
-test('migration creates partial unique index on (companyId, payrollReference) WHERE payrollReference IS NOT NULL', () => {
+test('migration creates partial unique index on (companyId, LOWER(payrollReference)) WHERE payrollReference IS NOT NULL', () => {
   assert.match(migration, /CREATE UNIQUE INDEX/);
   assert.match(migration, /UQ_payroll_records_company_ref/);
-  assert.match(migration, /companyId.*payrollReference|payrollReference.*companyId/);
+  assert.match(migration, /companyId.*LOWER.*payrollReference|LOWER.*payrollReference.*companyId/);
   assert.match(migration, /WHERE.*payrollReference.*IS NOT NULL/);
 });
 
@@ -694,6 +694,110 @@ test('P1F migration still present (regression)', () => {
 
 test('P1E migration still present (regression)', () => {
   assert.doesNotThrow(() => backend('database/migrations/1720400000000-AddGuardEmergencyContactP1E.ts'));
+});
+
+// ── COMPANY ID INTEGRITY ──────────────────────────────────────────────────────
+
+test('[SEC] CreatePayrollAdminDto does NOT contain companyId — cannot be supplied by client', () => {
+  const body = createDto.match(/class CreatePayrollAdminDto \{[\s\S]+?\}/)?.[0] ?? '';
+  assert.ok(body.length > 0, 'CreatePayrollAdminDto class body not found');
+  assert.doesNotMatch(body, /companyId/);
+});
+
+test('[SEC] CreatePayrollAdminDto does NOT contain companyGuardId — cannot be supplied by client', () => {
+  const body = createDto.match(/class CreatePayrollAdminDto \{[\s\S]+?\}/)?.[0] ?? '';
+  assert.doesNotMatch(body, /companyGuardId/);
+});
+
+test('[SEC] UpdatePayrollAdminDto does NOT contain companyId — immutable after create', () => {
+  const body = updateDto.match(/class UpdatePayrollAdminDto \{[\s\S]+?\}/)?.[0] ?? '';
+  assert.ok(body.length > 0, 'UpdatePayrollAdminDto class body not found');
+  assert.doesNotMatch(body, /companyId/);
+});
+
+test('[SEC] UpdatePayrollAdminDto does NOT contain companyGuardId — immutable after create', () => {
+  const body = updateDto.match(/class UpdatePayrollAdminDto \{[\s\S]+?\}/)?.[0] ?? '';
+  assert.doesNotMatch(body, /companyGuardId/);
+});
+
+test('[SEC] service derives companyId from authenticated user company profile — not from DTO', () => {
+  assert.match(service, /requireCompanyIdForUser/);
+  assert.match(service, /companyProfile/);
+});
+
+test('[SEC] createForCompany sets companyId from server-side lookup, not spread from dto', () => {
+  const createBlock = service.match(/createForCompany[\s\S]{0,1200}/)?.[0] ?? '';
+  // Verifies companyId: companyId (from requireOwnedActiveRelationship), not dto.companyId
+  assert.match(createBlock, /companyId,/);
+  assert.doesNotMatch(createBlock, /dto\.companyId/);
+});
+
+test('[SEC] updateForCompany cannot change companyId — not read from dto in update', () => {
+  const updateBlock = service.match(/updateForCompany[\s\S]{0,1500}/)?.[0] ?? '';
+  assert.doesNotMatch(updateBlock, /dto\.companyId/);
+});
+
+test('[SEC] updateForCompany cannot change companyGuardId — not read from dto in update', () => {
+  const updateBlock = service.match(/updateForCompany[\s\S]{0,1500}/)?.[0] ?? '';
+  assert.doesNotMatch(updateBlock, /dto\.companyGuardId/);
+});
+
+test('[SEC] no mass-assignment path — createForCompany does not spread dto into entity', () => {
+  const createBlock = service.match(/createForCompany[\s\S]{0,1200}/)?.[0] ?? '';
+  assert.doesNotMatch(createBlock, /\.\.\.(dto|create)/);
+});
+
+// ── PAYROLL REFERENCE NORMALIZATION ──────────────────────────────────────────
+
+test('[NORM] service has normalizeRef helper for payrollReference normalization', () => {
+  assert.match(service, /normalizeRef/);
+});
+
+test('[NORM] normalizeRef trims whitespace and uppercases', () => {
+  assert.match(service, /\.trim\(\).*\.toUpperCase\(\)|\.toUpperCase\(\).*\.trim\(\)/);
+});
+
+test('[NORM] normalizeRef converts blank-after-trim to null', () => {
+  // Match the function definition (not call sites)
+  const block = service.match(/private normalizeRef[\s\S]{0,300}/)?.[0] ?? '';
+  assert.ok(block.length > 0, 'normalizeRef function body not found');
+  assert.match(block, /trimmed\.length.*===.*0.*null|length.*0.*return null/);
+});
+
+test('[NORM] createForCompany applies normalizeRef to payrollReference', () => {
+  const block = service.match(/createForCompany[\s\S]{0,1200}/)?.[0] ?? '';
+  assert.match(block, /normalizeRef.*payrollReference|payrollReference.*normalizeRef/);
+});
+
+test('[NORM] updateForCompany applies normalizeRef to payrollReference', () => {
+  const block = service.match(/updateForCompany[\s\S]{0,1800}/)?.[0] ?? '';
+  assert.match(block, /normalizeRef.*payrollReference|payrollReference.*normalizeRef/);
+});
+
+test('[NORM] migration unique index uses LOWER() for race-safe case-insensitive uniqueness', () => {
+  assert.match(migration, /LOWER.*payrollReference/);
+  assert.match(migration, /UQ_payroll_records_company_ref/);
+});
+
+// ── DATE RANGE VALIDATION ─────────────────────────────────────────────────────
+
+test('[VAL] service has validateDateRange helper', () => {
+  assert.match(service, /validateDateRange/);
+});
+
+test('[VAL] validateDateRange throws BadRequestException when startDate is after endDate', () => {
+  assert.match(service, /BadRequestException/);
+  assert.match(service, /payrollStartDate must not be after payrollEndDate/);
+});
+
+test('[VAL] createForCompany calls validateDateRange before saving', () => {
+  const block = service.match(/createForCompany[\s\S]{0,1200}/)?.[0] ?? '';
+  assert.match(block, /validateDateRange/);
+});
+
+test('[VAL] updateForCompany calls validateDateRange using effective post-update dates', () => {
+  const block = service.match(/updateForCompany[\s\S]{0,3000}/)?.[0] ?? '';
+  assert.match(block, /validateDateRange/);
 });
 
 // ── SUMMARY ──────────────────────────────────────────────────────────────────

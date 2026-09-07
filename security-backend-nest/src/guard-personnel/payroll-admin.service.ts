@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -53,17 +54,21 @@ export class PayrollAdminService {
       throw new ConflictException('A payroll administration record already exists for this guard. Use PATCH to update it.');
     }
 
+    const startDate = dto.payrollStartDate ?? null;
+    const endDate   = dto.payrollEndDate   ?? null;
+    this.validateDateRange(startDate, endDate);
+
     const record = this.payrollRepo.create({
       companyGuardId: companyGuard.id,
       companyGuard,
       companyId,
-      payrollReference:    dto.payrollReference    !== undefined ? (dto.payrollReference ?? null)    : null,
-      payFrequency:        dto.payFrequency        !== undefined ? (dto.payFrequency ?? null)         : null,
+      payrollReference:     this.normalizeRef(dto.payrollReference),
+      payFrequency:         dto.payFrequency         !== undefined ? (dto.payFrequency         ?? null) : null,
       payrollPaymentMethod: dto.payrollPaymentMethod !== undefined ? (dto.payrollPaymentMethod ?? null) : null,
-      payrollStatus:       dto.payrollStatus ?? GuardPayrollStatus.ACTIVE,
-      payrollStartDate:    dto.payrollStartDate    !== undefined ? (dto.payrollStartDate ?? null)    : null,
-      payrollEndDate:      dto.payrollEndDate      !== undefined ? (dto.payrollEndDate ?? null)      : null,
-      payrollNoteEnc:      dto.payrollNote         !== undefined && dto.payrollNote !== null
+      payrollStatus:        dto.payrollStatus ?? GuardPayrollStatus.ACTIVE,
+      payrollStartDate:     startDate,
+      payrollEndDate:       endDate,
+      payrollNoteEnc:       dto.payrollNote !== undefined && dto.payrollNote !== null
         ? this.encryptionService.encrypt(dto.payrollNote.trim())
         : null,
     });
@@ -126,7 +131,7 @@ export class PayrollAdminService {
     const changedFields: string[] = [];
 
     if (dto.payrollReference !== undefined) {
-      const incoming = dto.payrollReference ?? null;
+      const incoming = this.normalizeRef(dto.payrollReference);
       if (incoming !== record.payrollReference) {
         record.payrollReference = incoming;
         changedFields.push('payrollReference');
@@ -170,6 +175,9 @@ export class PayrollAdminService {
         changedFields.push('payrollEndDate');
       }
     }
+
+    // Validate date range using the post-update effective values.
+    this.validateDateRange(record.payrollStartDate, record.payrollEndDate);
 
     if (dto.payrollNote !== undefined) {
       const incomingPlain = dto.payrollNote !== null ? dto.payrollNote.trim() : null;
@@ -322,6 +330,20 @@ export class PayrollAdminService {
         throw new ConflictException('Payroll reference already in use for this company');
       }
       throw err;
+    }
+  }
+
+  // Trim whitespace, blank-after-trim → null, normalize to uppercase for case-insensitive uniqueness.
+  private normalizeRef(ref: string | null | undefined): string | null {
+    if (ref === null || ref === undefined) return null;
+    const trimmed = ref.trim().toUpperCase();
+    return trimmed.length === 0 ? null : trimmed;
+  }
+
+  // Validate that startDate does not come after endDate when both are present.
+  private validateDateRange(startDate: string | null | undefined, endDate: string | null | undefined): void {
+    if (startDate && endDate && startDate > endDate) {
+      throw new BadRequestException('payrollStartDate must not be after payrollEndDate');
     }
   }
 
