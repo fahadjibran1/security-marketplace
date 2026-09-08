@@ -13,6 +13,7 @@ import { Site } from '../site/entities/site.entity';
 import { Timesheet } from '../timesheet/entities/timesheet.entity';
 import { ClientPortalController } from './client-portal.controller';
 import { ClientPortalService } from './client-portal.service';
+import { ClientWeeklyApprovalModule } from '../client-weekly-approval/client-weekly-approval.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { ClientPortalService } from './client-portal.service';
     ClientPortalUserModule,
     InvoiceBatchModule,
     AuditLogModule,
+    ClientWeeklyApprovalModule,
   ],
   controllers: [ClientPortalController],
   providers: [ClientPortalService],

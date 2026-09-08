@@ -375,7 +375,10 @@ export class ContractPricingService {
   // approvedHours is kept only as a derived/legacy fallback (still manager-approved
   // data, never guard-supplied). Returns null when no approved duration exists yet —
   // callers must treat that as "not billable", never as zero-cost/zero-revenue.
+  // P1H: client-approved billing figure takes priority when set.
   private getApprovedHours(timesheet: Timesheet): number | null {
+    const billed = this.toNumber((timesheet as any).clientBilledHoursSnapshot);
+    if (billed !== null) return billed;
     const snapshot = this.toNumber(timesheet.approvedHoursSnapshot);
     if (snapshot !== null) return snapshot;
     const approvedMinutes = this.toNumber(timesheet.approvedMinutes);

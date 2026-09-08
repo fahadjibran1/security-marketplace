@@ -1484,6 +1484,69 @@ export interface AuditLog {
   user?: UserSummary | null;
 }
 
+// P1H — Weekly Client Timesheet Approval
+export type ClientWeeklyApprovalStatus = 'pending_approval' | 'client_approved' | 'disputed' | 'resolved' | 'locked';
+export type ClientShiftDisputeStatus = 'open' | 'resolved' | 'withdrawn';
+
+export interface ClientWeeklyApprovalSummary {
+  id: number;
+  siteId: number;
+  siteName: string;
+  weekCommencing: string;
+  weekEnding: string;
+  status: ClientWeeklyApprovalStatus;
+  totalApprovedHours: number | null;
+  clientSubmissionNote: string | null;
+  submittedAt: string | null;
+  clientRespondedAt: string | null;
+  currentVersion: number;
+}
+
+export interface ClientWeeklyApprovalLine {
+  id: number;
+  timesheetId: number;
+  guardName: string | null;
+  shiftDate: string;
+  scheduledStart: string | null;
+  scheduledEnd: string | null;
+  actualCheckIn: string | null;
+  actualCheckOut: string | null;
+  verifiedMinutes: number | null;
+  verifiedHours: number | null;
+  approvedHoursAtSubmission: number;
+  hasOverride: boolean;
+}
+
+export interface ClientShiftDisputeSummary {
+  id: number;
+  timesheetId: number;
+  disputeReason: string;
+  status: ClientShiftDisputeStatus;
+  resolutionMessage: string | null;
+  disputedAt: string;
+  resolvedAt: string | null;
+}
+
+export interface ClientWeeklyApprovalDetail extends ClientWeeklyApprovalSummary {
+  lines: ClientWeeklyApprovalLine[];
+  disputes: ClientShiftDisputeSummary[];
+  weekTotalApprovedHours: number;
+}
+
+export interface CreateWeeklyApprovalPayload {
+  clientId: number;
+  siteId: number;
+  weekCommencing: string;
+  timesheetIds: number[];
+  companyInternalNote?: string;
+  clientSubmissionNote?: string;
+}
+
+export interface ClientDisputeItem {
+  timesheetId: number;
+  disputeReason: string;
+}
+
 export type ScreeningStatus = 'NOT_STARTED'|'IN_PROGRESS'|'READY_FOR_REVIEW'|'UNDER_REVIEW'|'VETTED'|'REQUIRES_ATTENTION'|'REJECTED'|'EXPIRED';
 export interface GuardScreening {
   id?: number; status: ScreeningStatus; screeningPeriodYears?: number; progress: number;

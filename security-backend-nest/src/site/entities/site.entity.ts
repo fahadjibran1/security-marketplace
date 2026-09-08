@@ -66,6 +66,9 @@ export class Site {
   @Column({ type: 'boolean', default: false })
   requireNfcCheckIn!: boolean;
 
+  @Column({ type: 'varchar', length: 64, default: 'Europe/London' })
+  timezone!: string;
+
   @OneToMany(() => Job, (job) => job.site)
   jobs?: Job[];
 

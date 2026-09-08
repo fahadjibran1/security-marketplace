@@ -81,6 +81,9 @@ export class Timesheet {
   @Column({ type: 'numeric', precision: 8, scale: 2, nullable: true })
   approvedHoursSnapshot?: number | null;
 
+  @Column({ type: 'numeric', precision: 8, scale: 2, nullable: true })
+  clientBilledHoursSnapshot?: number | null;
+
   @Column({ type: 'numeric', precision: 10, scale: 2, nullable: true })
   hourlyRateSnapshot?: number | null;
 

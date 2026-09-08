@@ -96,6 +96,10 @@ import {
   CompanyGuardPayrollRecord,
   UpsertPayrollAdminPayload,
   CompanyGuardEmploymentSummary,
+  ClientWeeklyApprovalSummary,
+  ClientWeeklyApprovalDetail,
+  CreateWeeklyApprovalPayload,
+  ClientDisputeItem,
 } from '../types/models';
 
 const hasBrowserWindow =
@@ -1180,3 +1184,57 @@ export function getCompanyGuardEmployment(guardId: number) {
 }
 
 export function expireScreening(id:number,reason:string){return request<GuardScreening>(`/screening/${id}/expire`,{method:'POST',body:JSON.stringify({reason})});}
+
+// P1H — Company weekly approvals
+export function getCompanyWeeklyApprovals(params?: Record<string, string | number>) {
+  const qs = params ? '?' + new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)])).toString() : '';
+  return request<ClientWeeklyApprovalSummary[]>(`/timesheets/weekly-approvals${qs}`);
+}
+
+export function getCompanyWeeklyApprovalDetail(id: number) {
+  return request<ClientWeeklyApprovalDetail>(`/timesheets/weekly-approvals/${id}`);
+}
+
+export function submitWeeklyApproval(payload: CreateWeeklyApprovalPayload) {
+  return request<ClientWeeklyApprovalDetail>('/timesheets/weekly-approvals', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function resolveDispute(requestId: number, disputeId: number, resolutionMessage: string) {
+  return request<{ id: number; status: string }>(`/timesheets/weekly-approvals/${requestId}/disputes/${disputeId}/resolve`, {
+    method: 'PATCH',
+    body: JSON.stringify({ resolutionMessage }),
+  });
+}
+
+export function resubmitWeeklyApproval(requestId: number, payload: Partial<CreateWeeklyApprovalPayload>) {
+  return request<ClientWeeklyApprovalDetail>(`/timesheets/weekly-approvals/${requestId}/resubmit`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+// P1H — Client weekly approvals
+export function getClientWeeklyApprovals(params?: Record<string, string | number>) {
+  const qs = params ? '?' + new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)])).toString() : '';
+  return request<ClientWeeklyApprovalSummary[]>(`/client-portal/weekly-approvals${qs}`);
+}
+
+export function getClientWeeklyApprovalDetail(id: number) {
+  return request<ClientWeeklyApprovalDetail>(`/client-portal/weekly-approvals/${id}`);
+}
+
+export function approveWeek(id: number) {
+  return request<{ id: number; status: string }>(`/client-portal/weekly-approvals/${id}/approve`, {
+    method: 'POST',
+  });
+}
+
+export function disputeWeek(id: number, disputes: ClientDisputeItem[]) {
+  return request<{ id: number; status: string; disputesCreated: number }>(`/client-portal/weekly-approvals/${id}/dispute`, {
+    method: 'POST',
+    body: JSON.stringify({ disputes }),
+  });
+}

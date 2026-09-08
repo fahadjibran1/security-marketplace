@@ -10,10 +10,12 @@ import { Timesheet } from '../timesheet/entities/timesheet.entity';
 import { InvoiceBatchController } from './invoice-batch.controller';
 import { InvoiceBatch } from './entities/invoice-batch.entity';
 import { InvoiceBatchService } from './invoice-batch.service';
+import { ClientWeeklyApprovalLine } from '../client-weekly-approval/entities/client-weekly-approval-line.entity';
+import { ClientWeeklyApprovalRequest } from '../client-weekly-approval/entities/client-weekly-approval-request.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([InvoiceBatch, Timesheet, Client, PaymentRecord]),
+    TypeOrmModule.forFeature([InvoiceBatch, Timesheet, Client, PaymentRecord, ClientWeeklyApprovalLine, ClientWeeklyApprovalRequest]),
     CompanyModule,
     ContractPricingModule,
     AuditLogModule,
