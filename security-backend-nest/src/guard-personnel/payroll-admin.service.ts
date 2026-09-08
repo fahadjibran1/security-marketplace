@@ -62,10 +62,9 @@ export class PayrollAdminService {
       companyGuardId: companyGuard.id,
       companyGuard,
       companyId,
-      payrollReference:     this.normalizeRef(dto.payrollReference),
-      payFrequency:         dto.payFrequency         !== undefined ? (dto.payFrequency         ?? null) : null,
-      payrollPaymentMethod: dto.payrollPaymentMethod !== undefined ? (dto.payrollPaymentMethod ?? null) : null,
-      payrollStatus:        dto.payrollStatus ?? GuardPayrollStatus.ACTIVE,
+      payrollReference: this.normalizeRef(dto.payrollReference),
+      payFrequency:     dto.payFrequency !== undefined ? (dto.payFrequency ?? null) : null,
+      payrollStatus:    dto.payrollStatus ?? GuardPayrollStatus.ACTIVE,
       payrollStartDate:     startDate,
       payrollEndDate:       endDate,
       payrollNoteEnc:       dto.payrollNote !== undefined && dto.payrollNote !== null
@@ -86,7 +85,6 @@ export class PayrollAdminService {
         companyId,
         payrollReference: record.payrollReference ?? null,
         payFrequency: record.payFrequency ?? null,
-        payrollPaymentMethod: record.payrollPaymentMethod ?? null,
         payrollStatus: record.payrollStatus,
         payrollStartDate: record.payrollStartDate ?? null,
         payrollEndDate: record.payrollEndDate ?? null,
@@ -143,14 +141,6 @@ export class PayrollAdminService {
       if (incoming !== record.payFrequency) {
         record.payFrequency = incoming;
         changedFields.push('payFrequency');
-      }
-    }
-
-    if (dto.payrollPaymentMethod !== undefined) {
-      const incoming = dto.payrollPaymentMethod ?? null;
-      if (incoming !== record.payrollPaymentMethod) {
-        record.payrollPaymentMethod = incoming;
-        changedFields.push('payrollPaymentMethod');
       }
     }
 
@@ -358,18 +348,17 @@ export class PayrollAdminService {
     companyId: number,
   ): PayrollAdminCompanyResponseDto {
     return {
-      companyGuardId:      record.companyGuardId,
+      companyGuardId:   record.companyGuardId,
       guardId,
       companyId,
-      payrollReference:    record.payrollReference    ?? null,
-      payFrequency:        record.payFrequency        ?? null,
-      payrollPaymentMethod: record.payrollPaymentMethod ?? null,
-      payrollStatus:       record.payrollStatus,
-      payrollStartDate:    record.payrollStartDate    ?? null,
-      payrollEndDate:      record.payrollEndDate      ?? null,
-      payrollNote:         this.decryptNote(record.payrollNoteEnc),
-      createdAt:           record.createdAt.toISOString(),
-      updatedAt:           record.updatedAt.toISOString(),
+      payrollReference: record.payrollReference ?? null,
+      payFrequency:     record.payFrequency     ?? null,
+      payrollStatus:    record.payrollStatus,
+      payrollStartDate: record.payrollStartDate ?? null,
+      payrollEndDate:   record.payrollEndDate   ?? null,
+      payrollNote:      this.decryptNote(record.payrollNoteEnc),
+      createdAt:        record.createdAt.toISOString(),
+      updatedAt:        record.updatedAt.toISOString(),
     };
   }
 
@@ -389,18 +378,17 @@ export class PayrollAdminService {
 
   private toAdminDto(record: CompanyGuardPayroll, guardId: number): PayrollAdminAdminResponseDto {
     return {
-      companyGuardId:      record.companyGuardId,
+      companyGuardId:   record.companyGuardId,
       guardId,
-      companyId:           record.companyId,
-      companyName:         record.companyGuard.company.name,
-      payrollReference:    record.payrollReference    ?? null,
-      payFrequency:        record.payFrequency        ?? null,
-      payrollPaymentMethod: record.payrollPaymentMethod ?? null,
-      payrollStatus:       record.payrollStatus,
-      payrollStartDate:    record.payrollStartDate    ?? null,
-      payrollEndDate:      record.payrollEndDate      ?? null,
-      createdAt:           record.createdAt.toISOString(),
-      updatedAt:           record.updatedAt.toISOString(),
+      companyId:        record.companyId,
+      companyName:      record.companyGuard.company.name,
+      payrollReference: record.payrollReference ?? null,
+      payFrequency:     record.payFrequency     ?? null,
+      payrollStatus:    record.payrollStatus,
+      payrollStartDate: record.payrollStartDate ?? null,
+      payrollEndDate:   record.payrollEndDate   ?? null,
+      createdAt:        record.createdAt.toISOString(),
+      updatedAt:        record.updatedAt.toISOString(),
     };
   }
 }

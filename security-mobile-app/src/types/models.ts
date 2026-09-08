@@ -234,9 +234,8 @@ export interface UpdateBankDetailsPayload {
   confirmReplace?: boolean;
 }
 
-// P1G-B — Payroll / Payment Administration
+// P1G-B — Pay Administration (operational workforce evidence only; not a payroll execution system)
 export type GuardPayFrequency = 'WEEKLY' | 'FORTNIGHTLY' | 'FOUR_WEEKLY' | 'MONTHLY' | 'IRREGULAR';
-export type GuardPayrollPaymentMethod = 'BACS' | 'CHAPS' | 'CASH' | 'OTHER';
 export type GuardPayrollStatus = 'ACTIVE' | 'ON_HOLD' | 'EXCLUDED';
 
 // Guard read-only view (payFrequency, payrollStatus, dates only).
@@ -259,7 +258,6 @@ export interface CompanyGuardPayrollRecord {
   companyId: number;
   payrollReference: string | null;
   payFrequency: GuardPayFrequency | null;
-  payrollPaymentMethod: GuardPayrollPaymentMethod | null;
   payrollStatus: GuardPayrollStatus;
   payrollStartDate: string | null;
   payrollEndDate: string | null;
@@ -271,7 +269,6 @@ export interface CompanyGuardPayrollRecord {
 export interface UpsertPayrollAdminPayload {
   payrollReference?: string | null;
   payFrequency?: GuardPayFrequency | null;
-  payrollPaymentMethod?: GuardPayrollPaymentMethod | null;
   payrollStatus?: GuardPayrollStatus;
   payrollStartDate?: string | null;
   payrollEndDate?: string | null;

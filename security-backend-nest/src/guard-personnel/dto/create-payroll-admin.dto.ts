@@ -1,5 +1,5 @@
 import { IsDateString, IsEnum, IsOptional, IsString, MaxLength } from 'class-validator';
-import { GuardPayFrequency, GuardPayrollPaymentMethod, GuardPayrollStatus } from '../entities/company-guard-payroll.entity';
+import { GuardPayFrequency, GuardPayrollStatus } from '../entities/company-guard-payroll.entity';
 
 export class CreatePayrollAdminDto {
   @IsOptional()
@@ -10,10 +10,6 @@ export class CreatePayrollAdminDto {
   @IsOptional()
   @IsEnum(GuardPayFrequency)
   payFrequency?: GuardPayFrequency | null;
-
-  @IsOptional()
-  @IsEnum(GuardPayrollPaymentMethod)
-  payrollPaymentMethod?: GuardPayrollPaymentMethod | null;
 
   @IsOptional()
   @IsEnum(GuardPayrollStatus)

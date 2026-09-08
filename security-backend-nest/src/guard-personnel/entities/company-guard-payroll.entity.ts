@@ -19,13 +19,6 @@ export enum GuardPayFrequency {
   IRREGULAR   = 'IRREGULAR',
 }
 
-export enum GuardPayrollPaymentMethod {
-  BACS  = 'BACS',
-  CHAPS = 'CHAPS',
-  CASH  = 'CASH',
-  OTHER = 'OTHER',
-}
-
 export enum GuardPayrollStatus {
   ACTIVE   = 'ACTIVE',
   ON_HOLD  = 'ON_HOLD',
@@ -62,14 +55,6 @@ export class CompanyGuardPayroll {
     nullable: true,
   })
   payFrequency?: GuardPayFrequency | null;
-
-  @Column({
-    type: 'enum',
-    enum: GuardPayrollPaymentMethod,
-    enumName: 'guard_payroll_payment_method_enum',
-    nullable: true,
-  })
-  payrollPaymentMethod?: GuardPayrollPaymentMethod | null;
 
   @Column({
     type: 'enum',

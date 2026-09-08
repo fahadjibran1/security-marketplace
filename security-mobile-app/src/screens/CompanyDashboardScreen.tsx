@@ -1172,7 +1172,6 @@ export function CompanyDashboardScreen(_props: CompanyDashboardScreenProps = {})
   const [editingPayrollAdmin, setEditingPayrollAdmin] = React.useState(false);
   const [payrollRefInput, setPayrollRefInput] = React.useState('');
   const [payrollFreqInput, setPayrollFreqInput] = React.useState('');
-  const [payrollMethodInput, setPayrollMethodInput] = React.useState('');
   const [payrollStatusInput, setPayrollStatusInput] = React.useState('ACTIVE');
   const [payrollStartDateInput, setPayrollStartDateInput] = React.useState('');
   const [payrollEndDateInput, setPayrollEndDateInput] = React.useState('');
@@ -4436,14 +4435,18 @@ export function CompanyDashboardScreen(_props: CompanyDashboardScreenProps = {})
   );
 
   // P1G-B — Engagement-aware label helper (Company UX)
-  function getPayrollLabels(engagementType: GuardEngagementType | 'NONE' | null) {
-    if (engagementType === 'EMPLOYEE') {
-      return { heading: 'Payroll Administration', reference: 'Payroll Reference', frequency: 'Pay Frequency', method: 'Payment Method', status: 'Payroll Status', startDate: 'Payroll Start Date', endDate: 'Payroll End Date', note: 'Payroll Note (Internal)' };
-    }
-    if (engagementType === 'NONE') {
-      return { heading: 'Pay Administration', reference: 'Contractor Reference', frequency: 'Payment Frequency', method: 'Payment Method', status: 'Payment Status', startDate: 'Arrangement Start Date', endDate: 'Arrangement End Date', note: 'Payment Note (Internal)' };
-    }
-    return { heading: 'Payment Administration', reference: 'Contractor Reference', frequency: 'Payment Frequency', method: 'Payment Method', status: 'Payment Status', startDate: 'Arrangement Start Date', endDate: 'Arrangement End Date', note: 'Payment Note (Internal)' };
+  // S4 is a workforce evidence platform. "Pay Administration" is the neutral heading for all engagement types.
+  function getPayrollLabels(_engagementType: GuardEngagementType | 'NONE' | null) {
+    return {
+      heading:   'Pay Administration',
+      subtitle:  'Operational pay information and external payroll reference.',
+      reference: 'Pay Reference',
+      frequency: 'Pay Frequency (informational)',
+      status:    'Export Status',
+      startDate: 'Arrangement Start Date',
+      endDate:   'Arrangement End Date',
+      note:      'Internal Note',
+    };
   }
 
   async function handleSelectPayrollGuard(guardId: number, guardName: string) {
@@ -4465,7 +4468,6 @@ export function CompanyDashboardScreen(_props: CompanyDashboardScreenProps = {})
       if (payrollRecord) {
         setPayrollRefInput(payrollRecord.payrollReference ?? '');
         setPayrollFreqInput(payrollRecord.payFrequency ?? '');
-        setPayrollMethodInput(payrollRecord.payrollPaymentMethod ?? '');
         setPayrollStatusInput(payrollRecord.payrollStatus);
         setPayrollStartDateInput(payrollRecord.payrollStartDate ?? '');
         setPayrollEndDateInput(payrollRecord.payrollEndDate ?? '');
@@ -4473,14 +4475,13 @@ export function CompanyDashboardScreen(_props: CompanyDashboardScreenProps = {})
       } else {
         setPayrollRefInput('');
         setPayrollFreqInput('');
-        setPayrollMethodInput('');
         setPayrollStatusInput('ACTIVE');
         setPayrollStartDateInput('');
         setPayrollEndDateInput('');
         setPayrollNoteInput('');
       }
     } catch {
-      setGuardPayrollError('Could not load payroll administration record.');
+      setGuardPayrollError('Could not load pay administration record.');
     } finally {
       setGuardPayrollLoading(false);
     }
@@ -4494,7 +4495,6 @@ export function CompanyDashboardScreen(_props: CompanyDashboardScreenProps = {})
       const payload: UpsertPayrollAdminPayload = {
         payrollReference: payrollRefInput.trim() || null,
         payFrequency: (payrollFreqInput as UpsertPayrollAdminPayload['payFrequency']) || null,
-        payrollPaymentMethod: (payrollMethodInput as UpsertPayrollAdminPayload['payrollPaymentMethod']) || null,
         payrollStatus: payrollStatusInput as UpsertPayrollAdminPayload['payrollStatus'],
         payrollStartDate: payrollStartDateInput.trim() || null,
         payrollEndDate: payrollEndDateInput.trim() || null,
@@ -4523,13 +4523,6 @@ export function CompanyDashboardScreen(_props: CompanyDashboardScreenProps = {})
       { value: 'MONTHLY', label: 'Monthly' },
       { value: 'IRREGULAR', label: 'Irregular' },
     ];
-    const PAYMENT_METHOD_OPTIONS = [
-      { value: '', label: '— Select —' },
-      { value: 'BACS', label: 'BACS' },
-      { value: 'CHAPS', label: 'CHAPS' },
-      { value: 'CASH', label: 'Cash' },
-      { value: 'OTHER', label: 'Other' },
-    ];
     const STATUS_OPTIONS = [
       { value: 'ACTIVE', label: 'Active' },
       { value: 'ON_HOLD', label: 'On Hold' },
@@ -4539,6 +4532,7 @@ export function CompanyDashboardScreen(_props: CompanyDashboardScreenProps = {})
     return (
       <View style={[styles.tableCard, { marginTop: 16 }]}>
         <Text style={styles.panelTitle}>{labels.heading}</Text>
+        <Text style={styles.tableCell}>{labels.subtitle}</Text>
         {selectedPayrollGuardId === null ? (
           <Text style={styles.tableCell}>Select a linked guard above to manage their {labels.heading.toLowerCase()}.</Text>
         ) : guardPayrollLoading ? (
@@ -4566,10 +4560,6 @@ export function CompanyDashboardScreen(_props: CompanyDashboardScreenProps = {})
                     <View style={styles.tableRow}>
                       <Text style={styles.tableCell}>{labels.frequency}</Text>
                       <Text style={styles.tableCellStrong}>{guardPayrollRecord.payFrequency ? guardPayrollRecord.payFrequency.replace(/_/g, ' ') : '—'}</Text>
-                    </View>
-                    <View style={styles.tableRow}>
-                      <Text style={styles.tableCell}>{labels.method}</Text>
-                      <Text style={styles.tableCellStrong}>{guardPayrollRecord.payrollPaymentMethod ?? '—'}</Text>
                     </View>
                     <View style={styles.tableRow}>
                       <Text style={styles.tableCell}>{labels.status}</Text>
@@ -4608,15 +4598,6 @@ export function CompanyDashboardScreen(_props: CompanyDashboardScreenProps = {})
                 <View style={styles.rowActions}>
                   {PAY_FREQUENCY_OPTIONS.map((opt) => (
                     <Pressable key={opt.value} style={[styles.secondaryButton, payrollFreqInput === opt.value && { backgroundColor: colors.accentTeal }]} onPress={() => setPayrollFreqInput(opt.value)}>
-                      <Text style={styles.secondaryButtonText}>{opt.label}</Text>
-                    </Pressable>
-                  ))}
-                </View>
-
-                <Text style={styles.tableCell}>{labels.method}</Text>
-                <View style={styles.rowActions}>
-                  {PAYMENT_METHOD_OPTIONS.map((opt) => (
-                    <Pressable key={opt.value} style={[styles.secondaryButton, payrollMethodInput === opt.value && { backgroundColor: colors.accentTeal }]} onPress={() => setPayrollMethodInput(opt.value)}>
                       <Text style={styles.secondaryButtonText}>{opt.label}</Text>
                     </Pressable>
                   ))}

@@ -1,7 +1,7 @@
 import { GuardPayFrequency, GuardPayrollStatus } from '../entities/company-guard-payroll.entity';
 
 // Restricted view: Guard sees frequency, status, and dates only.
-// payrollReference, payrollPaymentMethod, and payrollNote are excluded.
+// payrollReference and payrollNote are company-only and excluded.
 export class PayrollAdminGuardResponseDto {
   companyGuardId!: number;
   guardId!: number;
