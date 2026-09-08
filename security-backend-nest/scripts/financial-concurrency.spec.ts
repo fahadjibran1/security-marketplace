@@ -17,6 +17,8 @@ import { InvoiceBatch } from '../src/invoice-batch/entities/invoice-batch.entity
 import { PaymentRecord } from '../src/payment-record/entities/payment-record.entity';
 import { PayrollBatchService } from '../src/payroll-batch/payroll-batch.service';
 import { InvoiceBatchService } from '../src/invoice-batch/invoice-batch.service';
+import { ClientWeeklyApprovalLine } from '../src/client-weekly-approval/entities/client-weekly-approval-line.entity';
+import { ClientWeeklyApprovalRequest } from '../src/client-weekly-approval/entities/client-weekly-approval-request.entity';
 
 function pairedBarrierCompanyService(company: Company) {
   let calls = 0;
@@ -62,6 +64,8 @@ function makeServices(dataSource: DataSource, company: Company, concurrent = fal
       dataSource.getRepository(Timesheet),
       dataSource.getRepository(Client),
       dataSource.getRepository(PaymentRecord),
+      dataSource.getRepository(ClientWeeklyApprovalLine),
+      dataSource.getRepository(ClientWeeklyApprovalRequest),
       companyService as any,
       contractPricingService as any,
       auditLogService as any,
