@@ -31,6 +31,9 @@ import { EmploymentService } from './employment.service';
 import { UpdateCompanyGuardEmploymentDto } from './dto/update-company-guard-employment.dto';
 import { BankDetailsService } from './bank-details.service';
 import { UpdateGuardBankDetailsDto } from './dto/update-guard-bank-details.dto';
+import { PayrollAdminService } from './payroll-admin.service';
+import { CreatePayrollAdminDto } from './dto/create-payroll-admin.dto';
+import { UpdatePayrollAdminDto } from './dto/update-payroll-admin.dto';
 
 // P1A access model:
 //   GUARD        — read and update own identity; reveal own data (audited)
@@ -66,6 +69,13 @@ import { UpdateGuardBankDetailsDto } from './dto/update-guard-bank-details.dto';
 //   COMPANY_STAFF — ZERO ACCESS
 //   CLIENT roles — ZERO ACCESS
 
+// P1G-B access model:
+//   GUARD        — read-only list of own payroll records (payFrequency, status, dates only; across all companies)
+//   COMPANY / COMPANY_ADMIN — create/read/update (no delete); ACTIVE required for writes; historical read permitted
+//   ADMIN        — read-only list for any guard (no payrollNote)
+//   COMPANY_STAFF — ZERO ACCESS
+//   CLIENT roles — ZERO ACCESS
+
 @Controller('guard-personnel')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class GuardPersonnelController {
@@ -75,6 +85,7 @@ export class GuardPersonnelController {
     private readonly emergencyContactService: EmergencyContactService,
     private readonly employmentService: EmploymentService,
     private readonly bankDetailsService: BankDetailsService,
+    private readonly payrollAdminService: PayrollAdminService,
   ) {}
 
   // Guard self-service ────────────────────────────────────────────────────────
@@ -382,5 +393,60 @@ export class GuardPersonnelController {
     @Param('guardId', ParseIntPipe) guardId: number,
   ) {
     return this.bankDetailsService.getBankDetailsForCompany(user.sub, guardId);
+  }
+
+  // P1G-B — Payroll / Payment Administration: Guard read-only (own records) ───
+
+  @Get('me/payroll-admin')
+  @Roles(UserRole.GUARD)
+  getMyPayrollAdmin(@CurrentUser() user: JwtPayload) {
+    return this.payrollAdminService.getForGuard(user.sub);
+  }
+
+  // P1G-B — Payroll / Payment Administration: Company create/read/update ───────
+
+  @Post('company/guard/:guardId/payroll-admin')
+  @Roles(UserRole.COMPANY, UserRole.COMPANY_ADMIN)
+  createGuardPayrollAdmin(
+    @CurrentUser() user: JwtPayload,
+    @Param('guardId', ParseIntPipe) guardId: number,
+    @Body() dto: CreatePayrollAdminDto,
+    @Req() req: Request,
+  ) {
+    return this.payrollAdminService.createForCompany(user.sub, guardId, dto, {
+      ipAddress: req.ip ?? null,
+      userAgent: req.headers['user-agent'] ?? null,
+    });
+  }
+
+  @Get('company/guard/:guardId/payroll-admin')
+  @Roles(UserRole.COMPANY, UserRole.COMPANY_ADMIN)
+  getGuardPayrollAdminForCompany(
+    @CurrentUser() user: JwtPayload,
+    @Param('guardId', ParseIntPipe) guardId: number,
+  ) {
+    return this.payrollAdminService.getForCompany(user.sub, guardId);
+  }
+
+  @Patch('company/guard/:guardId/payroll-admin')
+  @Roles(UserRole.COMPANY, UserRole.COMPANY_ADMIN)
+  updateGuardPayrollAdminForCompany(
+    @CurrentUser() user: JwtPayload,
+    @Param('guardId', ParseIntPipe) guardId: number,
+    @Body() dto: UpdatePayrollAdminDto,
+    @Req() req: Request,
+  ) {
+    return this.payrollAdminService.updateForCompany(user.sub, guardId, dto, {
+      ipAddress: req.ip ?? null,
+      userAgent: req.headers['user-agent'] ?? null,
+    });
+  }
+
+  // P1G-B — Payroll / Payment Administration: Platform Admin ──────────────────
+
+  @Get('admin/:id/payroll-admin')
+  @Roles(UserRole.ADMIN)
+  getGuardPayrollAdminForAdmin(@Param('id', ParseIntPipe) id: number) {
+    return this.payrollAdminService.getForAdmin(id);
   }
 }

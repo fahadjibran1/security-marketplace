@@ -21,6 +21,7 @@ import {
   getMyBankDetails,
   getMyEmployments,
   getMyGuard,
+  getMyPayrollAdmin,
   getMyPersonnelIdentity,
   listMyAttendance,
   listMyDailyLogs,
@@ -49,6 +50,7 @@ import {
   GuardEmergencyContact,
   GuardBankDetailsSummary,
   GuardBankDetailsReveal,
+  GuardPayrollAdminSummary,
   UpdateBankDetailsPayload,
   GuardEmploymentRecord,
   GuardPersonnelIdentity,
@@ -522,6 +524,11 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
   const [employmentsLoading, setEmploymentsLoading] = useState(false);
   const [employmentsError, setEmploymentsError] = useState<string | null>(null);
 
+  // P1G-B — Payroll / Payment Administration (read-only for guard)
+  const [payrollAdminRecords, setPayrollAdminRecords] = useState<GuardPayrollAdminSummary[]>([]);
+  const [payrollAdminLoading, setPayrollAdminLoading] = useState(false);
+  const [payrollAdminError, setPayrollAdminError] = useState<string | null>(null);
+
   // P1G-A — Bank Details
   const [bankDetails, setBankDetails] = useState<GuardBankDetailsSummary | null>(null);
   const [bankLoading, setBankLoading] = useState(false);
@@ -865,6 +872,26 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
     }
   }
 
+  // P1G-B — Payroll / Payment Administration helpers
+
+  async function loadPayrollAdmin() {
+    try {
+      setPayrollAdminLoading(true);
+      setPayrollAdminError(null);
+      const data = await getMyPayrollAdmin();
+      setPayrollAdminRecords(data);
+    } catch {
+      setPayrollAdminError('Pay administration details could not be loaded.');
+    } finally {
+      setPayrollAdminLoading(false);
+    }
+  }
+
+  function formatPayFrequencyLabel(freq: GuardPayrollAdminSummary['payFrequency']): string {
+    if (!freq) return '—';
+    return freq.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+  }
+
   // P1G-A — Bank Details helpers
 
   async function loadBankDetails() {
@@ -1035,12 +1062,13 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
         listMyDailyLogs(),
         listMyTimesheets(),
       ]);
-      // Load identity, driving, emergency contact, employments, and bank details separately — non-critical; failures must not block rendering.
+      // Load identity, driving, emergency contact, employments, bank details, and payroll admin separately — non-critical; failures must not block rendering.
       loadIdentity();
       loadDriving();
       loadEmergencyContact();
       loadEmployments();
       loadBankDetails();
+      loadPayrollAdmin();
 
       setFullName(myGuard.fullName || '');
       setPhone(myGuard.phone || '');
@@ -2834,6 +2862,46 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
               )}
               <Text style={styles.profileFieldHint}>
                 Bank details are encrypted at rest. Only you can view the full details. Employers see sort code and account number only — never your account holder name.
+              </Text>
+            </FeatureCard>
+
+            {/* P1G-B — Payroll / Payment Administration (read-only) */}
+            <FeatureCard
+              title="Pay Administration"
+              subtitle="Your payment arrangement with each security company"
+            >
+              {payrollAdminLoading ? (
+                <Text style={styles.helperText}>Loading…</Text>
+              ) : payrollAdminError ? (
+                <Text style={[styles.helperText, { color: colors.danger }]}>{payrollAdminError}</Text>
+              ) : payrollAdminRecords.length === 0 ? (
+                <Text style={styles.helperText}>No payment administration record on file. Your employing company will add your payment details.</Text>
+              ) : (
+                payrollAdminRecords.map((rec) => (
+                  <View key={rec.companyGuardId} style={styles.summaryBlock}>
+                    <Text style={styles.profileFieldLabel}>Company</Text>
+                    <Text style={styles.profileFieldValue}>{rec.companyName}</Text>
+                    <Text style={styles.profileFieldLabel}>Pay frequency</Text>
+                    <Text style={styles.profileFieldValue}>{formatPayFrequencyLabel(rec.payFrequency)}</Text>
+                    <Text style={styles.profileFieldLabel}>Payment status</Text>
+                    <Text style={styles.profileFieldValue}>{rec.payrollStatus.replace(/_/g, ' ')}</Text>
+                    {rec.payrollStartDate ? (
+                      <>
+                        <Text style={styles.profileFieldLabel}>Arrangement start</Text>
+                        <Text style={styles.profileFieldValue}>{rec.payrollStartDate}</Text>
+                      </>
+                    ) : null}
+                    {rec.payrollEndDate ? (
+                      <>
+                        <Text style={styles.profileFieldLabel}>Arrangement end</Text>
+                        <Text style={styles.profileFieldValue}>{rec.payrollEndDate}</Text>
+                      </>
+                    ) : null}
+                  </View>
+                ))
+              )}
+              <Text style={styles.profileFieldHint}>
+                Payment details are set by your employing company. Contact your company administrator if you have any questions.
               </Text>
             </FeatureCard>
 

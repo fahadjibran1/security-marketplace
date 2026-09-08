@@ -8,3 +8,4 @@ security-backend/dist
 .blk004.secret
 *.dump
 .blk004-ca-escaped.txt
+.p1f-staging-rotated-creds

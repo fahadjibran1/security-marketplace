@@ -152,8 +152,8 @@ test('entity has engagementType jobRole customRole workingArrangement startDate 
 });
 
 test('entity startDate is type date', () => {
-  // Decorator comes before the field in TypeScript — search the whole entity
-  assert.match(entity, /type.*'date'.*\n.*startDate|startDate.*date/);
+  // Decorator precedes field. Use \r?\n to handle both LF and CRLF line endings.
+  assert.match(entity, /type.*'date'.*\r?\n.*startDate|startDate.*date/);
   assert.match(entity, /startDate/);
 });
 
