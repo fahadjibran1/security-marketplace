@@ -71,9 +71,10 @@ export class ClientPortalController {
   listWeeklyApprovals(
     @CurrentUser() user: JwtPayload,
     @Query('status') status?: string,
-    @Query('siteId', new ParseIntPipe({ optional: true })) siteId?: number,
+    @Query('siteId') siteIdStr?: string,
     @Query('weekCommencing') weekCommencing?: string,
   ) {
+    const siteId = siteIdStr ? parseInt(siteIdStr, 10) : undefined;
     return this.clientPortalWeeklyApprovalService.listForClient(user.clientId!, user.sub, { status, siteId, weekCommencing });
   }
 
