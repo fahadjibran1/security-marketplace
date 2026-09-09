@@ -26,10 +26,12 @@ export class ClientWeeklyApprovalController {
   list(
     @CurrentUser() user: JwtPayload,
     @Query('status') status?: string,
-    @Query('clientId', new ParseIntPipe({ optional: true })) clientId?: number,
-    @Query('siteId', new ParseIntPipe({ optional: true })) siteId?: number,
+    @Query('clientId') clientIdStr?: string,
+    @Query('siteId') siteIdStr?: string,
     @Query('weekCommencing') weekCommencing?: string,
   ) {
+    const clientId = clientIdStr ? parseInt(clientIdStr, 10) : undefined;
+    const siteId = siteIdStr ? parseInt(siteIdStr, 10) : undefined;
     return this.service.listForCompany(user.sub, { status, clientId, siteId, weekCommencing });
   }
 

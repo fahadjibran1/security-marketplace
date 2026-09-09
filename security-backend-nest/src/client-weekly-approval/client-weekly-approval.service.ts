@@ -39,7 +39,7 @@ export class ClientWeeklyApprovalService {
     const company = await this.requireCompany(userId);
     const weekEnding = computeWeekEnding(dto.weekCommencing);
 
-    return this.dataSource.transaction(async (manager) => {
+    const savedId = await this.dataSource.transaction(async (manager) => {
       const clientRepo = manager.getRepository(Client);
       const siteRepo = manager.getRepository(Site);
       const timesheetRepo = manager.getRepository(Timesheet);
@@ -142,8 +142,10 @@ export class ClientWeeklyApprovalService {
         afterData: { version: 1, weekCommencing: dto.weekCommencing, clientId: client.id, siteId: site.id, timesheetIds: uniqueIds, totalApprovedHours: savedRequest.totalApprovedHours },
       });
 
-      return this.findOneForCompany(userId, savedRequest.id);
+      return savedRequest.id;
     });
+
+    return this.findOneForCompany(userId, savedId);
   }
 
   async listForCompany(userId: number, query: { status?: string; clientId?: number; siteId?: number; weekCommencing?: string }) {
@@ -218,7 +220,7 @@ export class ClientWeeklyApprovalService {
   async resubmit(userId: number, requestId: number, dto: ResubmitApprovalDto): Promise<ClientWeeklyApprovalRequest> {
     const company = await this.requireCompany(userId);
 
-    return this.dataSource.transaction(async (manager) => {
+    await this.dataSource.transaction(async (manager) => {
       const requestRepo = manager.getRepository(ClientWeeklyApprovalRequest);
       const lineRepo = manager.getRepository(ClientWeeklyApprovalLine);
       const timesheetRepo = manager.getRepository(Timesheet);
@@ -316,9 +318,9 @@ export class ClientWeeklyApprovalService {
         beforeData: { version: newVersion - 1, status: ClientWeeklyApprovalStatus.RESOLVED },
         afterData: { version: newVersion, status: ClientWeeklyApprovalStatus.PENDING_APPROVAL, timesheetIds: uniqueIds, totalApprovedHours: request.totalApprovedHours },
       });
-
-      return this.findOneForCompany(userId, requestId);
     });
+
+    return this.findOneForCompany(userId, requestId);
   }
 
   private assertTimesheetEligible(ts: Timesheet, site: Site, client: Client, weekCommencing: string): Timesheet {
