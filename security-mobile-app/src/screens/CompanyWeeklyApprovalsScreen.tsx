@@ -1,7 +1,6 @@
 import * as React from 'react';
 import {
   ActivityIndicator,
-  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -12,23 +11,18 @@ import {
 import {
   getCompanyWeeklyApprovals,
   getCompanyApprovalDetail,
-  getEligibleTimesheets,
-  submitWeeklyApproval,
   resubmitWeeklyApproval,
   resolveDispute,
-  listSites,
   formatApiErrorMessage,
 } from '../services/api';
 import {
   ClientWeeklyApprovalSummary,
   ClientWeeklyApprovalStatus,
   CompanyApprovalDetail,
-  EligibleTimesheetRow,
-  Site,
 } from '../types/models';
 import { colors } from '../theme';
 
-type ScreenMode = 'list' | 'detail' | 'new-submission';
+type ScreenMode = 'list' | 'detail';
 
 function statusLabel(status: ClientWeeklyApprovalStatus): string {
   switch (status) {
@@ -61,16 +55,6 @@ function formatTime(val: string | Date | null | undefined): string {
   }
 }
 
-function approvedHours(ts: EligibleTimesheetRow): number {
-  if (ts.approvedHours != null) return Number(ts.approvedHours);
-  if (ts.approvedMinutes != null) return Number(ts.approvedMinutes) / 60;
-  return 0;
-}
-
-function guardName(ts: EligibleTimesheetRow): string {
-  return ts.guard?.fullName ?? ts.shift?.guard?.fullName ?? 'Guard';
-}
-
 interface Props {
   onSelect?: (id: number) => void;
 }
@@ -94,21 +78,6 @@ export function CompanyWeeklyApprovalsScreen({ onSelect }: Props) {
   // Dispute resolution state
   const [resolveId, setResolveId] = React.useState<number | null>(null);
   const [resolutionMsg, setResolutionMsg] = React.useState('');
-
-  // New submission state
-  const [sites, setSites] = React.useState<Site[]>([]);
-  const [sitesLoading, setSitesLoading] = React.useState(false);
-  const [subSiteId, setSubSiteId] = React.useState<number | null>(null);
-  const [subWeek, setSubWeek] = React.useState('');
-  const [eligibleShifts, setEligibleShifts] = React.useState<EligibleTimesheetRow[]>([]);
-  const [eligibleLoading, setEligibleLoading] = React.useState(false);
-  const [eligibleError, setEligibleError] = React.useState<string | null>(null);
-  const [selectedIds, setSelectedIds] = React.useState<Set<number>>(new Set());
-  const [companyNote, setCompanyNote] = React.useState('');
-  const [clientNote, setClientNote] = React.useState('');
-  const [showConfirm, setShowConfirm] = React.useState(false);
-  const [submitLoading, setSubmitLoading] = React.useState(false);
-  const [submitError, setSubmitError] = React.useState<string | null>(null);
 
   const loadList = React.useCallback(async () => {
     setListLoading(true);
@@ -167,89 +136,13 @@ export function CompanyWeeklyApprovalsScreen({ onSelect }: Props) {
     setActionLoading(true);
     setActionError(null);
     try {
-      await resubmitWeeklyApproval(selectedId, { timesheetIds: ids, companyInternalNote: companyNote || undefined });
+      await resubmitWeeklyApproval(selectedId, { timesheetIds: ids });
       await openDetail(selectedId);
       await loadList();
     } catch (err) {
       setActionError(formatApiErrorMessage(err, 'Failed to resubmit.'));
     } finally {
       setActionLoading(false);
-    }
-  };
-
-  const openNewSubmission = async () => {
-    setMode('new-submission');
-    setSubSiteId(null);
-    setSubWeek('');
-    setEligibleShifts([]);
-    setSelectedIds(new Set());
-    setCompanyNote('');
-    setClientNote('');
-    setSubmitError(null);
-    setSitesLoading(true);
-    try {
-      const data = await listSites();
-      setSites(data);
-    } catch {
-      setSites([]);
-    } finally {
-      setSitesLoading(false);
-    }
-  };
-
-  const loadEligible = async () => {
-    if (!subSiteId || !subWeek.trim()) return;
-    setEligibleLoading(true);
-    setEligibleError(null);
-    setEligibleShifts([]);
-    setSelectedIds(new Set());
-    try {
-      const rows = await getEligibleTimesheets(subSiteId, subWeek.trim());
-      setEligibleShifts(rows);
-      setSelectedIds(new Set(rows.map((r) => r.id)));
-    } catch (err) {
-      setEligibleError(formatApiErrorMessage(err, 'Failed to load eligible shifts.'));
-    } finally {
-      setEligibleLoading(false);
-    }
-  };
-
-  const toggleId = (id: number) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  const selectedTotal = eligibleShifts
-    .filter((r) => selectedIds.has(r.id))
-    .reduce((sum, r) => sum + approvedHours(r), 0);
-
-  const handleSubmit = async () => {
-    if (!subSiteId || !subWeek.trim() || selectedIds.size === 0) return;
-    const site = sites.find((s) => s.id === subSiteId);
-    if (!site?.clientId) { setSubmitError('Site has no client assigned.'); return; }
-    setSubmitLoading(true);
-    setSubmitError(null);
-    try {
-      await submitWeeklyApproval({
-        clientId: site.clientId,
-        siteId: subSiteId,
-        weekCommencing: subWeek.trim(),
-        timesheetIds: Array.from(selectedIds),
-        companyInternalNote: companyNote.trim() || undefined,
-        clientSubmissionNote: clientNote.trim() || undefined,
-      });
-      setShowConfirm(false);
-      setMode('list');
-      await loadList();
-    } catch (err) {
-      setSubmitError(formatApiErrorMessage(err, 'Submission failed.'));
-      setShowConfirm(false);
-    } finally {
-      setSubmitLoading(false);
     }
   };
 
@@ -312,7 +205,7 @@ export function CompanyWeeklyApprovalsScreen({ onSelect }: Props) {
                   )}
                 </View>
 
-                {/* Layer D: Company Approval (live timesheet values) */}
+                {/* Layer D: Company Approval */}
                 <View style={styles.evidenceLayer}>
                   <Text style={styles.layerTitle}>COMPANY APPROVAL</Text>
                   {line.timesheet?.companyApprovedStartAt && (
@@ -418,161 +311,7 @@ export function CompanyWeeklyApprovalsScreen({ onSelect }: Props) {
     );
   }
 
-  // ── NEW SUBMISSION VIEW ──────────────────────────────────────────────────
-  if (mode === 'new-submission') {
-    const selectedSite = sites.find((s) => s.id === subSiteId);
-    return (
-      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-        <Pressable style={styles.backButton} onPress={() => setMode('list')}>
-          <Text style={styles.backButtonText}>← Back to list</Text>
-        </Pressable>
-        <Text style={styles.pageTitle}>New Weekly Submission</Text>
-
-        {/* Site selector */}
-        <Text style={styles.sectionTitle}>Select Site</Text>
-        {sitesLoading ? (
-          <ActivityIndicator size="small" color={colors.primaryNavy} />
-        ) : (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
-            <View style={styles.sitePicker}>
-              {sites.filter((s) => s.clientId).map((s) => (
-                <Pressable
-                  key={s.id}
-                  style={[styles.siteChip, subSiteId === s.id && styles.siteChipActive]}
-                  onPress={() => { setSubSiteId(s.id); setEligibleShifts([]); setSelectedIds(new Set()); }}
-                >
-                  <Text style={[styles.siteChipText, subSiteId === s.id && styles.siteChipTextActive]}>{s.name}</Text>
-                </Pressable>
-              ))}
-            </View>
-          </ScrollView>
-        )}
-        {selectedSite && <Text style={styles.clientLabel}>Client: {selectedSite.clientName ?? `#${selectedSite.clientId}`}</Text>}
-
-        {/* Week picker */}
-        <Text style={styles.sectionTitle}>Week Commencing (YYYY-MM-DD)</Text>
-        <TextInput
-          style={styles.textInput}
-          placeholder="e.g. 2026-09-07"
-          value={subWeek}
-          onChangeText={(v: string) => { setSubWeek(v); setEligibleShifts([]); setSelectedIds(new Set()); }}
-          autoCapitalize="none"
-        />
-
-        <Pressable
-          style={[styles.actionButton, styles.primaryButton, (!subSiteId || !subWeek.trim()) && styles.disabledButton]}
-          onPress={loadEligible}
-          disabled={!subSiteId || !subWeek.trim()}
-        >
-          <Text style={styles.actionButtonText}>Load Eligible Shifts</Text>
-        </Pressable>
-
-        {eligibleLoading && <ActivityIndicator size="large" color={colors.primaryNavy} style={{ marginTop: 16 }} />}
-        {eligibleError && <Text style={styles.errorText}>{eligibleError}</Text>}
-
-        {/* Eligible shifts with checkboxes */}
-        {eligibleShifts.length > 0 && (
-          <>
-            <Text style={styles.sectionTitle}>Eligible Shifts ({eligibleShifts.length})</Text>
-            {eligibleShifts.map((ts) => {
-              const checked = selectedIds.has(ts.id);
-              const hrs = approvedHours(ts);
-              return (
-                <Pressable key={ts.id} style={[styles.lineCard, checked && styles.lineCardSelected]} onPress={() => toggleId(ts.id)}>
-                  <View style={styles.checkRow}>
-                    <View style={[styles.checkbox, checked && styles.checkboxChecked]}>
-                      {checked && <Text style={styles.checkmark}>✓</Text>}
-                    </View>
-                    <Text style={styles.guardName}>{guardName(ts)}</Text>
-                  </View>
-                  <Text style={styles.shiftDate}>
-                    {ts.scheduledStartAt ? new Date(ts.scheduledStartAt).toLocaleDateString() : 'Unknown date'}
-                  </Text>
-                  <View style={styles.evidenceLayer}>
-                    <Text style={styles.layerTitle}>SCHEDULED</Text>
-                    <Text style={styles.layerRow}>On: {formatTime(ts.scheduledStartAt)} — Off: {formatTime(ts.scheduledEndAt)}</Text>
-                  </View>
-                  <View style={styles.evidenceLayer}>
-                    <Text style={styles.layerTitle}>ATTENDANCE</Text>
-                    {ts.actualCheckInAt && <Text style={styles.layerRow}>Check In: {formatTime(ts.actualCheckInAt)}</Text>}
-                    {ts.actualCheckOutAt && <Text style={styles.layerRow}>Check Out: {formatTime(ts.actualCheckOutAt)}</Text>}
-                  </View>
-                  <View style={styles.evidenceLayer}>
-                    <Text style={styles.layerTitle}>GUARD CLAIM</Text>
-                    <Text style={styles.layerRow}>Claimed: {Number(ts.hoursWorked).toFixed(2)} hrs</Text>
-                  </View>
-                  <View style={styles.evidenceLayer}>
-                    <Text style={styles.layerTitle}>COMPANY APPROVAL</Text>
-                    {ts.companyApprovedStartAt && <Text style={styles.layerRow}>Approved On: {formatTime(ts.companyApprovedStartAt)}</Text>}
-                    {ts.companyApprovedEndAt && <Text style={styles.layerRow}>Approved Off: {formatTime(ts.companyApprovedEndAt)}</Text>}
-                    <Text style={styles.layerRow}>Approved: {hrs.toFixed(2)} hrs</Text>
-                    {ts.overrideReason && <Text style={styles.layerRow}>Reason: {ts.overrideReason}</Text>}
-                  </View>
-                </Pressable>
-              );
-            })}
-
-            {/* Summary */}
-            <View style={styles.summaryCard}>
-              <Text style={styles.summaryTitle}>Summary</Text>
-              <Text style={styles.summaryRow}>{selectedIds.size} shifts selected</Text>
-              <Text style={styles.summaryRow}>Total approved hours: {selectedTotal.toFixed(2)} hrs</Text>
-            </View>
-
-            {/* Notes */}
-            <Text style={styles.sectionTitle}>Internal Note (company only)</Text>
-            <TextInput style={styles.textInput} placeholder="Optional" value={companyNote} onChangeText={setCompanyNote} multiline />
-            <Text style={styles.sectionTitle}>Client Note</Text>
-            <TextInput style={styles.textInput} placeholder="Optional — visible to client" value={clientNote} onChangeText={setClientNote} multiline />
-
-            {submitError && <Text style={styles.errorText}>{submitError}</Text>}
-
-            <Pressable
-              style={[styles.actionButton, styles.primaryButton, (selectedIds.size === 0 || submitLoading) && styles.disabledButton]}
-              onPress={() => setShowConfirm(true)}
-              disabled={selectedIds.size === 0 || submitLoading}
-            >
-              <Text style={styles.actionButtonText}>Review & Submit</Text>
-            </Pressable>
-          </>
-        )}
-
-        {eligibleShifts.length === 0 && !eligibleLoading && subSiteId && subWeek && !eligibleError && (
-          <View style={styles.emptyContainer}>
-            <Text style={styles.emptyText}>No eligible approved shifts found for this site and week.</Text>
-          </View>
-        )}
-
-        {/* Confirmation modal */}
-        <Modal visible={showConfirm} transparent animationType="fade">
-          <View style={styles.modalOverlay}>
-            <View style={styles.modalCard}>
-              <Text style={styles.modalTitle}>Confirm Submission</Text>
-              <Text style={styles.modalBody}>
-                Submit {selectedIds.size} shift{selectedIds.size !== 1 ? 's' : ''} ({selectedTotal.toFixed(2)} hrs) to client for approval?
-              </Text>
-              {selectedSite && <Text style={styles.modalBody}>Site: {selectedSite.name}</Text>}
-              <Text style={styles.modalBody}>Week: {subWeek}</Text>
-              <View style={styles.row}>
-                <Pressable
-                  style={[styles.actionButton, styles.primaryButton, submitLoading && styles.disabledButton]}
-                  onPress={handleSubmit}
-                  disabled={submitLoading}
-                >
-                  <Text style={styles.actionButtonText}>{submitLoading ? 'Submitting...' : 'Confirm Submit'}</Text>
-                </Pressable>
-                <Pressable style={[styles.actionButton, styles.cancelButton]} onPress={() => setShowConfirm(false)}>
-                  <Text style={styles.actionButtonText}>Cancel</Text>
-                </Pressable>
-              </View>
-            </View>
-          </View>
-        </Modal>
-      </ScrollView>
-    );
-  }
-
-  // ── LIST VIEW ────────────────────────────────────────────────────────────
+  // ── LIST VIEW (tracking only) ─────────────────────────────────────────────
   if (listLoading) {
     return (
       <View style={styles.centered}>
@@ -596,14 +335,11 @@ export function CompanyWeeklyApprovalsScreen({ onSelect }: Props) {
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <View style={styles.listHeader}>
         <Text style={styles.pageTitle}>Client Timesheets</Text>
-        <Pressable style={styles.newButton} onPress={openNewSubmission}>
-          <Text style={styles.newButtonText}>+ New Submission</Text>
-        </Pressable>
       </View>
 
       {approvals.length === 0 ? (
         <View style={styles.emptyContainer}>
-          <Text style={styles.emptyText}>No weekly approval requests yet.</Text>
+          <Text style={styles.emptyText}>No weekly submissions yet. Use Company Timesheets to send a week to a client.</Text>
         </View>
       ) : (
         approvals.map((item) => (
@@ -640,8 +376,6 @@ const styles = StyleSheet.create({
 
   listHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
   pageTitle: { fontSize: 20, fontWeight: '700', color: colors.primaryNavy },
-  newButton: { backgroundColor: colors.primaryNavy, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8 },
-  newButtonText: { color: '#ffffff', fontWeight: '700', fontSize: 14 },
 
   card: {
     backgroundColor: colors.card,
@@ -675,7 +409,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border ?? '#e2e8f0',
   },
-  lineCardSelected: { borderColor: colors.primaryNavy, borderWidth: 2 },
   guardName: { fontSize: 15, fontWeight: '700', color: colors.primaryNavy, marginBottom: 6 },
 
   evidenceLayer: {
@@ -714,42 +447,6 @@ const styles = StyleSheet.create({
 
   resolveForm: { backgroundColor: '#f0fdf4', borderRadius: 10, padding: 14, marginTop: 12 },
 
-  // Site picker
-  sitePicker: { flexDirection: 'row', gap: 8 },
-  siteChip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, backgroundColor: '#f1f5f9', borderWidth: 1, borderColor: '#e2e8f0' },
-  siteChipActive: { backgroundColor: colors.primaryNavy, borderColor: colors.primaryNavy },
-  siteChipText: { fontSize: 14, color: colors.primaryNavy, fontWeight: '600' },
-  siteChipTextActive: { color: '#ffffff' },
-  clientLabel: { fontSize: 13, color: colors.textSecondary ?? '#6b7280', marginBottom: 4 },
-
-  // Checkbox
-  checkRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 6 },
-  checkbox: {
-    width: 22,
-    height: 22,
-    borderRadius: 5,
-    borderWidth: 2,
-    borderColor: colors.primaryNavy,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#fff',
-  },
-  checkboxChecked: { backgroundColor: colors.primaryNavy },
-  checkmark: { color: '#ffffff', fontSize: 13, fontWeight: '700' },
-
-  // Summary
-  summaryCard: {
-    backgroundColor: colors.card,
-    borderRadius: 10,
-    padding: 14,
-    marginTop: 16,
-    borderWidth: 1,
-    borderColor: colors.primaryNavy,
-  },
-  summaryTitle: { fontSize: 14, fontWeight: '700', color: colors.primaryNavy, marginBottom: 6 },
-  summaryRow: { fontSize: 14, color: colors.primaryNavy },
-
-  // Actions
   row: { flexDirection: 'row', gap: 10, marginTop: 12 },
   actionButton: { flex: 1, paddingVertical: 12, borderRadius: 8, alignItems: 'center' },
   primaryButton: { backgroundColor: colors.primaryNavy },
@@ -769,14 +466,8 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
 
-  // Modal
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', padding: 24 },
-  modalCard: { backgroundColor: '#fff', borderRadius: 16, padding: 24, width: '100%', maxWidth: 480 },
-  modalTitle: { fontSize: 18, fontWeight: '700', color: colors.primaryNavy, marginBottom: 12 },
-  modalBody: { fontSize: 14, color: '#374151', marginBottom: 6 },
-
   emptyContainer: { alignItems: 'center', paddingVertical: 40 },
-  emptyText: { fontSize: 15, color: '#6b7280' },
+  emptyText: { fontSize: 15, color: '#6b7280', textAlign: 'center' },
   errorText: { fontSize: 14, color: '#dc2626', textAlign: 'center', marginVertical: 8 },
   retryButton: { backgroundColor: colors.primaryNavy, paddingHorizontal: 20, paddingVertical: 10, borderRadius: 8, marginTop: 8 },
   retryButtonText: { color: '#ffffff', fontWeight: '600' },

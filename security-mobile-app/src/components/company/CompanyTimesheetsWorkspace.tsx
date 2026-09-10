@@ -1,8 +1,8 @@
 ﻿import * as React from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { formatApiErrorMessage, updateTimesheet } from '../../services/api';
-import { Timesheet } from '../../types/models';
+import { formatApiErrorMessage, getEligibleTimesheets, submitWeeklyApproval, updateTimesheet } from '../../services/api';
+import { EligibleTimesheetRow, Timesheet } from '../../types/models';
 import { colors } from '../../theme';
 
 type WorkspaceFeedback = {
@@ -45,18 +45,24 @@ type EnrichedTimesheet = {
 
 type GroupedTimesheets = {
   key: string;
+  numericSiteId: number | null;
+  clientId: number | null;
+  clientName: string | null;
   siteName: string;
   periodKey: string;
   periodLabel: string;
   rows: EnrichedTimesheet[];
   totals: {
     count: number;
+    guardCount: number;
     claimedHours: number;
     approvedHours: number;
     claimedAmount: number;
     approvedAmount: number;
     pendingCount: number;
     approvedCount: number;
+    rejectedCount: number;
+    reviewedCount: number;
     missingRateCount: number;
   };
 };
@@ -445,6 +451,25 @@ export function CompanyTimesheetsWorkspace({
   const [busyAction, setBusyAction] = React.useState<string | null>(null);
   const [collapsedGroupKeys, setCollapsedGroupKeys] = React.useState<Record<string, boolean>>({});
 
+  // Send-to-client flow state
+  const [sendGroup, setSendGroup] = React.useState<{
+    siteId: number;
+    siteName: string;
+    weekCommencing: string;
+    clientId: number;
+    clientName: string;
+    unreviewedCount: number;
+    totalCount: number;
+  } | null>(null);
+  const [sendEligible, setSendEligible] = React.useState<EligibleTimesheetRow[]>([]);
+  const [sendLoading, setSendLoading] = React.useState(false);
+  const [sendError, setSendError] = React.useState<string | null>(null);
+  const [sendSelectedIds, setSendSelectedIds] = React.useState<Set<number>>(new Set());
+  const [sendExclusionReasons, setSendExclusionReasons] = React.useState<Record<number, string>>({});
+  const [sendClientNote, setSendClientNote] = React.useState('');
+  const [sendSubmitLoading, setSendSubmitLoading] = React.useState(false);
+  const [sendSubmitError, setSendSubmitError] = React.useState<string | null>(null);
+
   const enrichedTimesheets = React.useMemo<EnrichedTimesheet[]>(() => {
     return timesheets
       .map((timesheet) => {
@@ -538,18 +563,24 @@ export function CompanyTimesheetsWorkspace({
         groups.get(groupKey) ||
         {
           key: groupKey,
+          numericSiteId: Number(entry.timesheet.shift?.site?.id) || null,
+          clientId: (entry.timesheet.shift?.site?.clientId ?? null) as number | null,
+          clientName: (entry.timesheet.shift?.site?.clientName ?? null) as string | null,
           siteName: entry.siteName,
           periodKey,
           periodLabel,
           rows: [],
           totals: {
             count: 0,
+            guardCount: 0,
             claimedHours: 0,
             approvedHours: 0,
             claimedAmount: 0,
             approvedAmount: 0,
             pendingCount: 0,
             approvedCount: 0,
+            rejectedCount: 0,
+            reviewedCount: 0,
             missingRateCount: 0,
           },
         };
@@ -560,14 +591,20 @@ export function CompanyTimesheetsWorkspace({
       if (entry.claimedAmount !== null) {
         existing.totals.claimedAmount += entry.claimedAmount;
       }
-      if (normalizeStatus(entry.displayStatus) === 'approved') {
+      const rowStatus = normalizeStatus(entry.displayStatus);
+      if (rowStatus === 'approved') {
         existing.totals.approvedHours += toHours(entry.timesheet.approvedHours ?? entry.timesheet.hoursWorked);
         if (entry.approvedAmount !== null) {
           existing.totals.approvedAmount += entry.approvedAmount;
         }
         existing.totals.approvedCount += 1;
+        existing.totals.reviewedCount += 1;
       }
-      if (normalizeStatus(entry.displayStatus) === 'submitted') {
+      if (rowStatus === 'rejected') {
+        existing.totals.rejectedCount += 1;
+        existing.totals.reviewedCount += 1;
+      }
+      if (rowStatus === 'submitted') {
         existing.totals.pendingCount += 1;
       }
       if (entry.hourlyRate === null) {
@@ -583,6 +620,7 @@ export function CompanyTimesheetsWorkspace({
         rows: group.rows.sort((left, right) => right.shiftDate.getTime() - left.shiftDate.getTime()),
         totals: {
           ...group.totals,
+          guardCount: new Set(group.rows.map((r) => r.guardId)).size,
           claimedHours: roundHours(group.totals.claimedHours),
           approvedHours: roundHours(group.totals.approvedHours),
           claimedAmount: roundCurrency(group.totals.claimedAmount),
@@ -646,6 +684,90 @@ export function CompanyTimesheetsWorkspace({
   const setGroupCollapsed = React.useCallback((groupKey: string) => {
     setCollapsedGroupKeys((current) => ({ ...current, [groupKey]: !current[groupKey] }));
   }, []);
+
+  // Load eligible rows whenever a send-modal group is chosen
+  React.useEffect(() => {
+    if (!sendGroup) {
+      setSendEligible([]);
+      setSendSelectedIds(new Set());
+      setSendExclusionReasons({});
+      setSendClientNote('');
+      setSendSubmitError(null);
+      return;
+    }
+    setSendLoading(true);
+    setSendError(null);
+    setSendEligible([]);
+    setSendSelectedIds(new Set());
+    setSendExclusionReasons({});
+    getEligibleTimesheets(sendGroup.siteId, sendGroup.weekCommencing)
+      .then((rows) => {
+        setSendEligible(rows);
+        setSendSelectedIds(new Set(rows.map((r) => r.id)));
+      })
+      .catch((err) => setSendError(formatApiErrorMessage(err, 'Failed to load eligible shifts.')))
+      .finally(() => setSendLoading(false));
+  }, [sendGroup]);
+
+  const openSendModal = React.useCallback((group: GroupedTimesheets) => {
+    if (!group.numericSiteId || !group.clientId) return;
+    setSendGroup({
+      siteId: group.numericSiteId,
+      siteName: group.siteName,
+      weekCommencing: group.periodKey,
+      clientId: group.clientId,
+      clientName: group.clientName ?? `Client #${group.clientId}`,
+      unreviewedCount: group.totals.count - group.totals.reviewedCount,
+      totalCount: group.totals.count,
+    });
+  }, []);
+
+  const toggleSendId = React.useCallback((id: number) => {
+    setSendSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+        setSendExclusionReasons((prevReasons) => {
+          const updated = { ...prevReasons };
+          delete updated[id];
+          return updated;
+        });
+      }
+      return next;
+    });
+  }, []);
+
+  const handleSendToClient = React.useCallback(async () => {
+    if (!sendGroup || sendSelectedIds.size === 0) return;
+    const excluded = sendEligible.filter((r) => !sendSelectedIds.has(r.id));
+    if (excluded.some((r) => !sendExclusionReasons[r.id]?.trim())) {
+      setSendSubmitError('All excluded shifts require a reason before submitting.');
+      return;
+    }
+    setSendSubmitLoading(true);
+    setSendSubmitError(null);
+    try {
+      await submitWeeklyApproval({
+        clientId: sendGroup.clientId,
+        siteId: sendGroup.siteId,
+        weekCommencing: sendGroup.weekCommencing,
+        timesheetIds: Array.from(sendSelectedIds),
+        clientSubmissionNote: sendClientNote.trim() || undefined,
+      });
+      setSendGroup(null);
+      setFeedback({
+        tone: 'success',
+        title: 'Sent to client',
+        message: `${sendSelectedIds.size} shift${sendSelectedIds.size !== 1 ? 's' : ''} submitted to ${sendGroup.clientName} for approval.`,
+      });
+    } catch (err) {
+      setSendSubmitError(formatApiErrorMessage(err, 'Submission failed.'));
+    } finally {
+      setSendSubmitLoading(false);
+    }
+  }, [sendClientNote, sendEligible, sendExclusionReasons, sendGroup, sendSelectedIds]);
 
   const buildExportRows = React.useCallback((groups: GroupedTimesheets[]) => {
     return [
@@ -1002,10 +1124,27 @@ export function CompanyTimesheetsWorkspace({
                   <View style={styles.groupHeaderCopy}>
                     <Text style={styles.groupSite}>{group.siteName}</Text>
                     <Text style={styles.groupPeriod}>
-                      {group.periodLabel} | {group.totals.count} timesheets | {group.totals.claimedHours.toFixed(2)} claimed h | {group.totals.approvedHours.toFixed(2)} approved h
+                      {group.periodLabel} · {group.totals.guardCount} guard{group.totals.guardCount !== 1 ? 's' : ''} · {group.totals.count} shift{group.totals.count !== 1 ? 's' : ''} · {group.totals.reviewedCount}/{group.totals.count} reviewed · {group.totals.approvedHours.toFixed(2)} approved h
                     </Text>
+                    {periodView === 'week' && group.totals.count > group.totals.reviewedCount && (
+                      <Text style={styles.unreviewedWarning}>
+                        {group.totals.reviewedCount} of {group.totals.count} shifts reviewed — {group.totals.count - group.totals.reviewedCount} still require{group.totals.count - group.totals.reviewedCount === 1 ? 's' : ''} a decision.
+                      </Text>
+                    )}
                   </View>
                   <View style={styles.groupHeaderActions}>
+                    {periodView === 'week' && (
+                      <Pressable
+                        style={[
+                          styles.sendToClientButton,
+                          (!group.numericSiteId || !group.clientId || group.totals.approvedCount === 0) && styles.sendToClientButtonDisabled,
+                        ]}
+                        onPress={() => { openSendModal(group); }}
+                        disabled={!group.numericSiteId || !group.clientId || group.totals.approvedCount === 0}
+                      >
+                        <Text style={styles.sendToClientText}>Send Weekly Timesheet to Client</Text>
+                      </Pressable>
+                    )}
                     <Pressable style={styles.inlineAction} onPress={() => handleExportGroup(group)}>
                       <Text style={styles.inlineActionText}>Export review group</Text>
                     </Pressable>
@@ -1083,6 +1222,144 @@ export function CompanyTimesheetsWorkspace({
             );
           })}
         </View>
+
+        {/* ── SEND-TO-CLIENT MODAL ─────────────────────────────────────────── */}
+        <Modal
+          visible={!!sendGroup}
+          transparent
+          animationType="fade"
+          onRequestClose={() => { if (!sendSubmitLoading) setSendGroup(null); }}
+        >
+          <View style={styles.sendOverlay}>
+            <View style={styles.sendCard}>
+              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ gap: 14 }}>
+                <Text style={styles.sendTitle}>Send Weekly Timesheet to Client</Text>
+                {sendGroup && (
+                  <>
+                    <Text style={styles.sendMeta}>{sendGroup.siteName}</Text>
+                    <Text style={styles.sendMeta}>Week: {sendGroup.weekCommencing}</Text>
+                    <Text style={styles.sendMeta}>Client: {sendGroup.clientName}</Text>
+                    {sendGroup.unreviewedCount > 0 && (
+                      <View style={styles.sendWarningBanner}>
+                        <Text style={styles.sendWarningText}>
+                          {sendGroup.totalCount - sendGroup.unreviewedCount} of {sendGroup.totalCount} shifts reviewed — {sendGroup.unreviewedCount} still require{sendGroup.unreviewedCount === 1 ? 's' : ''} a decision.
+                        </Text>
+                      </View>
+                    )}
+                  </>
+                )}
+
+                {sendLoading && <ActivityIndicator size="large" color={colors.primaryNavy} />}
+                {sendError ? (
+                  <Text style={styles.sendErrorText}>{sendError}</Text>
+                ) : sendEligible.length === 0 && !sendLoading ? (
+                  <Text style={styles.sendEmptyText}>No eligible approved, uninvoiced shifts found for this site and week.</Text>
+                ) : null}
+
+                {sendEligible.map((row) => {
+                  const isSelected = sendSelectedIds.has(row.id);
+                  const guardLabel = row.guard?.fullName ?? row.shift?.guard?.fullName ?? 'Guard';
+                  const shiftDateLabel = row.scheduledStartAt
+                    ? new Date(row.scheduledStartAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
+                    : row.shift?.start
+                    ? new Date(row.shift.start).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
+                    : '—';
+                  const scheduledOn = row.scheduledStartAt
+                    ? new Date(row.scheduledStartAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                    : '—';
+                  const scheduledOff = row.scheduledEndAt
+                    ? new Date(row.scheduledEndAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                    : '—';
+                  const checkIn = row.actualCheckInAt
+                    ? new Date(row.actualCheckInAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                    : '—';
+                  const checkOut = row.actualCheckOutAt
+                    ? new Date(row.actualCheckOutAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                    : '—';
+                  const approvedOn = row.companyApprovedStartAt
+                    ? new Date(row.companyApprovedStartAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                    : '—';
+                  const approvedOff = row.companyApprovedEndAt
+                    ? new Date(row.companyApprovedEndAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                    : '—';
+                  const approvedHrs = row.approvedHours != null
+                    ? Number(row.approvedHours).toFixed(2)
+                    : row.approvedMinutes != null
+                    ? (Number(row.approvedMinutes) / 60).toFixed(2)
+                    : Number(row.hoursWorked).toFixed(2);
+
+                  return (
+                    <View key={row.id} style={[styles.sendRow, !isSelected && styles.sendRowExcluded]}>
+                      <Pressable style={styles.sendCheckRow} onPress={() => toggleSendId(row.id)}>
+                        <View style={[styles.sendCheckbox, isSelected && styles.sendCheckboxChecked]}>
+                          {isSelected && <Text style={styles.sendCheckmark}>✓</Text>}
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.sendGuardName}>{guardLabel}</Text>
+                          <Text style={styles.sendShiftMeta}>{shiftDateLabel} · Scheduled: {scheduledOn}–{scheduledOff} · Check-in: {checkIn} / {checkOut}</Text>
+                          <Text style={styles.sendShiftMeta}>Guard claimed: {Number(row.hoursWorked).toFixed(2)} h · Co. approved: {approvedHrs} h ({approvedOn}–{approvedOff})</Text>
+                          {!isSelected && <Text style={styles.sendExcludedLabel}>Excluded</Text>}
+                        </View>
+                      </Pressable>
+                      {!isSelected && (
+                        <TextInput
+                          style={styles.sendExclusionInput}
+                          placeholder="Reason for exclusion (required)"
+                          value={sendExclusionReasons[row.id] ?? ''}
+                          onChangeText={(v: string) => setSendExclusionReasons((prev) => ({ ...prev, [row.id]: v }))}
+                        />
+                      )}
+                    </View>
+                  );
+                })}
+
+                {sendEligible.length > 0 && (
+                  <>
+                    <View style={styles.sendSummary}>
+                      <Text style={styles.sendSummaryText}>
+                        Submit {sendSelectedIds.size} shift{sendSelectedIds.size !== 1 ? 's' : ''} / {
+                          sendEligible
+                            .filter((r) => sendSelectedIds.has(r.id))
+                            .reduce((sum, r) => sum + (r.approvedHours != null ? Number(r.approvedHours) : r.approvedMinutes != null ? Number(r.approvedMinutes) / 60 : Number(r.hoursWorked)), 0)
+                            .toFixed(2)
+                        } approved hrs to {sendGroup?.clientName} for approval?
+                      </Text>
+                    </View>
+                    <TextInput
+                      style={styles.sendNoteInput}
+                      placeholder="Client submission note (optional)"
+                      value={sendClientNote}
+                      onChangeText={setSendClientNote}
+                      multiline
+                    />
+                  </>
+                )}
+
+                {sendSubmitError ? <Text style={styles.sendErrorText}>{sendSubmitError}</Text> : null}
+
+                <View style={styles.sendActions}>
+                  <Pressable
+                    style={[
+                      styles.sendSubmitButton,
+                      (sendSelectedIds.size === 0 || sendSubmitLoading || sendLoading) && styles.sendButtonDisabled,
+                    ]}
+                    onPress={handleSendToClient}
+                    disabled={sendSelectedIds.size === 0 || sendSubmitLoading || sendLoading}
+                  >
+                    <Text style={styles.sendSubmitText}>{sendSubmitLoading ? 'Submitting...' : 'Confirm — Send to Client'}</Text>
+                  </Pressable>
+                  <Pressable
+                    style={styles.sendCancelButton}
+                    onPress={() => setSendGroup(null)}
+                    disabled={sendSubmitLoading}
+                  >
+                    <Text style={styles.sendCancelText}>Cancel</Text>
+                  </Pressable>
+                </View>
+              </ScrollView>
+            </View>
+          </View>
+        </Modal>
 
         <View style={styles.detailCard}>
           <Text style={styles.detailTitle}>Timesheet review</Text>
@@ -1283,4 +1560,39 @@ const styles = StyleSheet.create({
   noteInput: { minHeight: 110, textAlignVertical: 'top' },
   detailActions: { gap: 10 },
   emptyText: { color: colors.textSecondary, fontSize: 14, lineHeight: 20 },
+
+  // Send-to-client action on group header
+  unreviewedWarning: { color: colors.warning, fontSize: 12, fontWeight: '700', marginTop: 4 },
+  sendToClientButton: { borderRadius: 12, paddingHorizontal: 14, paddingVertical: 8, backgroundColor: colors.accentTeal ?? '#0d9488' },
+  sendToClientButtonDisabled: { opacity: 0.35 },
+  sendToClientText: { color: '#ffffff', fontWeight: '700', fontSize: 12 },
+
+  // Send-to-client modal
+  sendOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center', padding: 16 },
+  sendCard: { backgroundColor: '#fff', borderRadius: 20, padding: 24, width: '100%', maxWidth: 680, maxHeight: '90%' },
+  sendTitle: { fontSize: 18, fontWeight: '800', color: colors.primaryNavy },
+  sendMeta: { fontSize: 14, color: colors.primaryNavySoft },
+  sendWarningBanner: { backgroundColor: colors.warningSurface, borderRadius: 10, padding: 12 },
+  sendWarningText: { color: colors.warning, fontWeight: '700', fontSize: 13 },
+  sendRow: { borderWidth: 1, borderColor: colors.border, borderRadius: 12, padding: 12, gap: 8 },
+  sendRowExcluded: { borderColor: colors.danger, backgroundColor: colors.dangerSurface },
+  sendCheckRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
+  sendCheckbox: { width: 22, height: 22, borderRadius: 5, borderWidth: 2, borderColor: colors.primaryNavy, alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff', marginTop: 2 },
+  sendCheckboxChecked: { backgroundColor: colors.primaryNavy },
+  sendCheckmark: { color: '#fff', fontSize: 13, fontWeight: '700' },
+  sendGuardName: { fontSize: 14, fontWeight: '700', color: colors.primaryNavy },
+  sendShiftMeta: { fontSize: 12, color: colors.textSecondary, lineHeight: 18 },
+  sendExcludedLabel: { fontSize: 11, color: colors.danger, fontWeight: '800', textTransform: 'uppercase', marginTop: 2 },
+  sendExclusionInput: { borderWidth: 1, borderColor: colors.danger, borderRadius: 8, padding: 8, fontSize: 13, backgroundColor: '#fff', color: colors.primaryNavyStrong },
+  sendSummary: { backgroundColor: colors.infoSurface, borderRadius: 12, padding: 14 },
+  sendSummaryText: { fontSize: 14, fontWeight: '700', color: colors.primaryNavy },
+  sendNoteInput: { borderWidth: 1, borderColor: colors.border, borderRadius: 10, padding: 10, minHeight: 64, textAlignVertical: 'top', fontSize: 13, backgroundColor: '#fff', color: colors.primaryNavyStrong },
+  sendErrorText: { fontSize: 13, color: colors.danger, fontWeight: '700' },
+  sendEmptyText: { fontSize: 13, color: colors.textSecondary, fontStyle: 'italic' },
+  sendActions: { flexDirection: 'row', gap: 10 },
+  sendSubmitButton: { flex: 1, backgroundColor: colors.accentTeal ?? '#0d9488', borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
+  sendButtonDisabled: { opacity: 0.4 },
+  sendSubmitText: { color: '#fff', fontWeight: '800', fontSize: 14 },
+  sendCancelButton: { flex: 1, backgroundColor: colors.pendingSurface, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
+  sendCancelText: { color: colors.primaryNavy, fontWeight: '700', fontSize: 14 },
 });

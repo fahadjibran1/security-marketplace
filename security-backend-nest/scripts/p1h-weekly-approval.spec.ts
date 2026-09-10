@@ -623,11 +623,11 @@ test('T74 multi-guard: mobile api.ts has getEligibleTimesheets function', () => 
   assert(api.includes('weekly-approvals/eligible'), 'getEligibleTimesheets must call /timesheets/weekly-approvals/eligible');
 });
 
-// T75: CompanyWeeklyApprovalsScreen has checkbox/selection state for multi-guard submission
-test('T75 multi-guard: CompanyWeeklyApprovalsScreen has multi-select state for submission', () => {
-  const screen = mobile('screens/CompanyWeeklyApprovalsScreen.tsx');
-  assert(screen.includes('selectedIds'), 'CompanyWeeklyApprovalsScreen missing selectedIds state for multi-selection');
-  assert(screen.includes('toggleId') || screen.includes('selectedIds.has'), 'Missing checkbox toggle logic');
+// T75: Submission multi-select state lives in CompanyTimesheetsWorkspace send-to-client flow
+test('T75 multi-guard: send-to-client flow has multi-select state for submission', () => {
+  const workspace = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  assert(workspace.includes('sendSelectedIds'), 'CompanyTimesheetsWorkspace missing sendSelectedIds state for multi-selection');
+  assert(workspace.includes('toggleSendId') || workspace.includes('sendSelectedIds.has'), 'Missing toggle logic for send-to-client selection');
 });
 
 // T76: CompanyWeeklyApprovalsScreen uses submitWeeklyApproval
@@ -637,11 +637,11 @@ test('T76 multi-guard: CompanyWeeklyApprovalsScreen calls submitWeeklyApproval',
   assert(screen.includes('timesheetIds'), 'submitWeeklyApproval call missing timesheetIds');
 });
 
-// T77: CompanyWeeklyApprovalsScreen shows confirmation before submit
-test('T77 multi-guard: CompanyWeeklyApprovalsScreen shows confirmation dialog before submit', () => {
-  const screen = mobile('screens/CompanyWeeklyApprovalsScreen.tsx');
-  assert(screen.includes('showConfirm') || screen.includes('Confirm'), 'CompanyWeeklyApprovalsScreen missing confirmation step');
-  assert(screen.includes('Modal') || screen.includes('confirm'), 'No modal/confirmation dialog for submission');
+// T77: Send-to-client flow shows confirmation text before submit
+test('T77 multi-guard: send-to-client flow shows confirmation step before submit', () => {
+  const workspace = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  assert(workspace.includes('Confirm — Send to Client') || workspace.includes('for approval?'), 'Send-to-client flow missing confirmation step');
+  assert(workspace.includes('Modal'), 'Send-to-client flow missing Modal component for confirmation');
 });
 
 // T78: CompanyWeeklyApprovalsScreen detail view has ATTENDANCE evidence layer
@@ -811,6 +811,109 @@ test('T97 time-approval: mobile ClientWeeklyApprovalLine has companyApprovedStar
 });
 
 // ═══════════════════════════════════════════════════════
+// M. SITE/WEEK WORKFLOW — COMPANY TIMESHEETS SUBMISSION
+// ═══════════════════════════════════════════════════════
+
+// T98: CompanyTimesheetsWorkspace contains the "Send Weekly Timesheet to Client" action
+test('T98 site-week: CompanyTimesheetsWorkspace has Send Weekly Timesheet to Client action', () => {
+  const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  assert(src.includes('Send Weekly Timesheet to Client'), 'CompanyTimesheetsWorkspace missing "Send Weekly Timesheet to Client" action text');
+});
+
+// T99: No manual weekCommencing TextInput in the send-to-client flow
+test('T99 site-week: send-to-client flow requires no manual week-commencing entry', () => {
+  const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  // The send modal must NOT contain a TextInput for weekCommencing (it is derived from group.periodKey)
+  assert(!src.includes("placeholder=\"e.g. 2026"), 'CompanyTimesheetsWorkspace still has a manual week-commencing text input');
+  assert(src.includes('weekCommencing: group.periodKey'), 'weekCommencing must be derived from group.periodKey, not typed manually');
+});
+
+// T100: GroupedTimesheets type carries numeric siteId for derivation
+test('T100 site-week: GroupedTimesheets type includes numericSiteId for site+week grouping', () => {
+  const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  assert(src.includes('numericSiteId: number | null'), 'GroupedTimesheets missing numericSiteId field');
+  assert(src.includes('clientId: number | null'), 'GroupedTimesheets missing clientId field');
+  assert(src.includes('clientName: string | null'), 'GroupedTimesheets missing clientName field');
+});
+
+// T101: GroupedTimesheets tracks distinct guardCount for multi-guard display
+test('T101 site-week: GroupedTimesheets tracks guardCount for multi-guard group display', () => {
+  const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  assert(src.includes('guardCount'), 'GroupedTimesheets missing guardCount field');
+  assert(src.includes('new Set(group.rows.map((r) => r.guardId)).size'), 'guardCount not computed from distinct guardIds');
+});
+
+// T102: Eligible rows auto-selected when modal opens
+test('T102 site-week: eligible approved rows are auto-selected when send modal opens', () => {
+  const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  assert(src.includes('new Set(rows.map((r) => r.id))'), 'Send modal does not auto-select all eligible rows by default');
+  assert(src.includes('setSendSelectedIds(new Set(rows.map'), 'setSendSelectedIds not called with all rows on eligible load');
+});
+
+// T103: Unreviewed rows warning is displayed on group card
+test('T103 site-week: unreviewed shifts warning shown on group header', () => {
+  const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  assert(src.includes('unreviewedWarning'), 'Group header missing unreviewedWarning style');
+  assert(src.includes('still require'), 'Group header missing "still require a decision" warning text');
+  assert(src.includes('reviewedCount'), 'reviewedCount not used in warning computation');
+});
+
+// T104: Excluded row requires reason before final submit
+test('T104 site-week: excluded rows require a reason before submission', () => {
+  const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  assert(src.includes('All excluded shifts require a reason'), 'Missing exclusion-reason validation message');
+  assert(src.includes('sendExclusionReasons'), 'sendExclusionReasons state missing');
+  assert(src.includes('Reason for exclusion (required)'), 'Missing exclusion reason TextInput placeholder');
+});
+
+// T105: Final request derives clientId and siteId from group, not from user input
+test('T105 site-week: final submitWeeklyApproval call derives clientId/siteId from group, not user input', () => {
+  const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  assert(src.includes('clientId: sendGroup.clientId'), 'submitWeeklyApproval does not use sendGroup.clientId');
+  assert(src.includes('siteId: sendGroup.siteId'), 'submitWeeklyApproval does not use sendGroup.siteId');
+  assert(src.includes('weekCommencing: sendGroup.weekCommencing'), 'submitWeeklyApproval does not use sendGroup.weekCommencing');
+  assert(src.includes('timesheetIds: Array.from(sendSelectedIds)'), 'submitWeeklyApproval does not use sendSelectedIds');
+});
+
+// T106: CompanyWeeklyApprovalsScreen no longer has "+ New Submission" creation path
+test('T106 site-week: CompanyWeeklyApprovalsScreen has no "+ New Submission" button', () => {
+  const src = mobile('screens/CompanyWeeklyApprovalsScreen.tsx');
+  assert(!src.includes('+ New Submission'), 'CompanyWeeklyApprovalsScreen still has "+ New Submission" button');
+  assert(!src.includes("'new-submission'"), 'CompanyWeeklyApprovalsScreen still has new-submission mode');
+});
+
+// T107: CompanyWeeklyApprovalsScreen still displays all tracking statuses
+test('T107 site-week: CompanyWeeklyApprovalsScreen tracks Awaiting/Returned/Approved/Finalised statuses', () => {
+  const src = mobile('screens/CompanyWeeklyApprovalsScreen.tsx');
+  assert(src.includes('Awaiting Client Approval'), 'CompanyWeeklyApprovalsScreen missing Awaiting Client Approval status');
+  assert(src.includes('Returned for Correction'), 'CompanyWeeklyApprovalsScreen missing Returned for Correction status');
+  assert(src.includes('Client Approved'), 'CompanyWeeklyApprovalsScreen missing Client Approved status');
+  assert(src.includes('Finalised'), 'CompanyWeeklyApprovalsScreen missing Finalised status');
+  assert(src.includes('Resubmit to Client'), 'CompanyWeeklyApprovalsScreen missing resubmit action');
+});
+
+// T108: CompanyTimesheetsWorkspace calls getEligibleTimesheets with derived siteId + weekCommencing
+test('T108 site-week: getEligibleTimesheets called with group-derived siteId and weekCommencing', () => {
+  const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  assert(src.includes('getEligibleTimesheets(sendGroup.siteId, sendGroup.weekCommencing)'), 'getEligibleTimesheets not called with sendGroup.siteId and sendGroup.weekCommencing');
+});
+
+// T109: CompanyTimesheetsWorkspace calls submitWeeklyApproval (existing endpoint)
+test('T109 site-week: submitWeeklyApproval (existing P1H endpoint) called from send flow', () => {
+  const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  assert(src.includes('submitWeeklyApproval'), 'submitWeeklyApproval missing from CompanyTimesheetsWorkspace send flow');
+});
+
+// T110: Multiple guards can appear in the same site+week group
+test('T110 site-week: multiple guards appear in same site+week group via distinct guardId tracking', () => {
+  const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  // guardCount derived from Set of guardIds proves multi-guard grouping
+  assert(src.includes('new Set(group.rows.map((r) => r.guardId)).size'), 'guardCount does not derive from distinct guard IDs within group');
+  // guardCount displayed on group card
+  assert(src.includes('guard{group.totals.guardCount !== 1'), 'guardCount not displayed on group card header');
+});
+
+// ═══════════════════════════════════════════════════════
 // Runner
 // ═══════════════════════════════════════════════════════
 
@@ -826,7 +929,7 @@ async function main() {
       console.error(`FAIL  ${t.name} — ${(e as Error).message}`);
     }
   }
-  console.log(`\n══ P1H WEEKLY CLIENT APPROVAL: ${passed} PASS / ${failed} FAIL ══`);
+  console.log(`\n══ P1H SITE/WEEK WORKFLOW: ${passed} PASS / ${failed} FAIL ══`);
   if (failed > 0) { console.error('FOCUSED SPEC: FAIL'); process.exit(1); }
   else console.log('FOCUSED SPEC: PASS');
 }
