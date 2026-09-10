@@ -914,6 +914,168 @@ test('T110 site-week: multiple guards appear in same site+week group via distinc
 });
 
 // ═══════════════════════════════════════════════════════
+// N. UX CONSOLIDATION — 4-LEVEL HIERARCHY
+// ═══════════════════════════════════════════════════════
+
+// T111: Overview renders Site+Week cards with "Review Site" — not individual shifts expanded
+test('T111 ux-consolidation: overview renders Site+Week cards with Review Site button, not expanded shifts', () => {
+  const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  assert(src.includes("'overview'"), 'WorkspaceLevel overview missing');
+  assert(src.includes('Review Site'), 'Overview missing "Review Site" button on site+week card');
+  assert(src.includes("level === 'detail'"), 'Shift rendering must be gated on detail level');
+});
+
+// T112: Multiple sites remain separate groups (keyed by siteName + periodKey)
+test('T112 ux-consolidation: multiple sites remain separate groups', () => {
+  const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  assert(
+    src.includes('`${entry.siteName}__${periodKey}`') || src.includes("entry.siteName + '__' + periodKey") || src.includes('siteName}__${periodKey}'),
+    'Groups not keyed by siteName + periodKey',
+  );
+});
+
+// T113: Guards grouped inside site/week detail via GuardGroup type
+test('T113 ux-consolidation: guards grouped inside site/week detail', () => {
+  const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  assert(src.includes('GuardGroup'), 'GuardGroup type missing');
+  assert(src.includes('guardGroups'), 'guardGroups computed value missing');
+});
+
+// T114: Individual shifts only rendered in detail view; collapsedGuardKeys controls guard expand
+test('T114 ux-consolidation: individual shifts gated on detail level; guard groups collapsible', () => {
+  const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  assert(src.includes("level === 'detail'"), 'Shift rendering not gated on detail level');
+  assert(src.includes('collapsedGuardKeys'), 'collapsedGuardKeys missing — guard groups must be collapsible');
+});
+
+// T115: reviewedCount incremented only for approved and rejected (not draft/submitted/returned)
+test('T115 ux-consolidation: reviewedCount tracks approved and rejected shifts only', () => {
+  const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  const approvedBlock = src.match(/rowStatus === 'approved'[\s\S]{0,300}reviewedCount/)?.[0] ?? '';
+  const rejectedBlock = src.match(/rowStatus === 'rejected'[\s\S]{0,300}reviewedCount/)?.[0] ?? '';
+  assert(approvedBlock, 'reviewedCount not incremented for approved status');
+  assert(rejectedBlock, 'reviewedCount not incremented for rejected status');
+  // draft and returned must NOT increment reviewedCount
+  const draftBlock = src.match(/rowStatus === 'draft'[\s\S]{0,100}reviewedCount/)?.[0];
+  assert(!draftBlock, 'draft must NOT increment reviewedCount');
+});
+
+// T116: getGroupWorkflowStatus returns needs-review for unreviewed groups
+test('T116 ux-consolidation: getGroupWorkflowStatus returns needs-review for unreviewed groups', () => {
+  const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  assert(src.includes('getGroupWorkflowStatus'), 'getGroupWorkflowStatus function missing');
+  assert(src.includes("'needs-review'"), 'needs-review status value missing');
+});
+
+// T117: getGroupWorkflowStatus returns ready-for-client; label visible in UI
+test('T117 ux-consolidation: getGroupWorkflowStatus returns ready-for-client; label in UI', () => {
+  const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  assert(src.includes("'ready-for-client'"), 'ready-for-client status value missing');
+  assert(src.includes('Ready for Client'), 'Ready for Client label missing from UI');
+});
+
+// T118: Send button blocked when count > reviewedCount (any unreviewed shift)
+test('T118 ux-consolidation: unreviewed shifts block Send button', () => {
+  const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  assert(
+    src.includes('group.totals.count === group.totals.reviewedCount') ||
+    src.includes('activeGroup.totals.count === activeGroup.totals.reviewedCount') ||
+    src.includes('allReviewed') ||
+    src.includes('detailAllReviewed'),
+    'Send button not gated on all-reviewed condition',
+  );
+});
+
+// T119: Draft shifts not in reviewedCount → send blocked
+test('T119 ux-consolidation: draft shifts block Send (not counted as reviewed)', () => {
+  const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  // draft must not appear as incrementing reviewedCount
+  const draftInReviewed = src.match(/rowStatus === 'draft'[\s\S]{0,120}reviewedCount \+= 1/)?.[0];
+  assert(!draftInReviewed, 'draft must NOT increment reviewedCount — it blocks send');
+  // The send gate uses count === reviewedCount
+  assert(src.includes('reviewedCount') && src.includes('totals.count'), 'Send gate missing count/reviewedCount comparison');
+});
+
+// T120: Submitted shifts (pendingCount) not in reviewedCount → send blocked
+test('T120 ux-consolidation: submitted shifts block Send (pendingCount tracked separately)', () => {
+  const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  assert(src.includes('pendingCount'), 'pendingCount tracking missing');
+  const submittedInReviewed = src.match(/rowStatus === 'submitted'[\s\S]{0,120}reviewedCount \+= 1/)?.[0];
+  assert(!submittedInReviewed, 'submitted must NOT increment reviewedCount — it blocks send');
+});
+
+// T121: Returned shifts (returnedCount) not in reviewedCount → send blocked
+test('T121 ux-consolidation: returned shifts block Send (returnedCount tracked separately)', () => {
+  const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  assert(src.includes('returnedCount'), 'returnedCount missing from GroupedTimesheets totals');
+  const returnedInReviewed = src.match(/rowStatus === 'returned'[\s\S]{0,120}reviewedCount \+= 1/)?.[0];
+  assert(!returnedInReviewed, 'returned must NOT increment reviewedCount — it blocks send');
+});
+
+// T122: All-reviewed group with approved rows enables Send
+test('T122 ux-consolidation: all-reviewed group with approved rows enables Send', () => {
+  const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  assert(src.includes('approvedCount > 0') || src.includes('approvedCount'), 'approvedCount not checked in Send enable condition');
+  // allReviewed or detailAllReviewed must be in send condition
+  assert(
+    src.includes('detailAllReviewed') || src.includes('allReviewed') || src.includes('totals.count === '),
+    'All-reviewed gate missing from Send enable logic',
+  );
+});
+
+// T123: Financial amounts (£, Rate) absent from Timesheets operational UI output
+test('T123 ux-consolidation: financial amounts absent from Timesheets operational UI', () => {
+  const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  // formatRate must not be called in UI render (only in CSV export)
+  // The detailSection titled "Rate & amounts" must be gone
+  assert(!src.includes('Rate & amounts'), '"Rate & amounts" section must be removed from Timesheets UI');
+  assert(!src.includes('Hourly rate:'), 'Hourly rate must not appear in Timesheets UI detail panel');
+  assert(!src.includes('Claimed amount:'), 'Claimed amount must not appear in Timesheets UI detail panel');
+  // formatRate still exists as function (needed for CSV)
+  assert(src.includes('function formatRate'), 'formatRate function must be preserved (used by CSV export)');
+});
+
+// T124: Financial calculation functions preserved (not removed — used by CSV export + payroll)
+test('T124 ux-consolidation: financial calc functions (getTimesheetRate, getAmountForHours) still present', () => {
+  const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  assert(src.includes('getTimesheetRate'), 'getTimesheetRate must be preserved (financial logic)');
+  assert(src.includes('getAmountForHours'), 'getAmountForHours must be preserved (financial logic)');
+  assert(src.includes('formatCurrency'), 'formatCurrency must be preserved (CSV export)');
+});
+
+// T125: weekLabel present in group cards (e.g. "7–13 Sep 2026" format)
+test('T125 ux-consolidation: weekLabel shown on site/week cards', () => {
+  const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  assert(src.includes('weekLabel'), 'weekLabel missing from group/card display');
+  assert(src.includes('getWeekRangeLabel'), 'getWeekRangeLabel helper missing');
+});
+
+// T126: Week selector navigation (weekOffset) present
+test('T126 ux-consolidation: week selector navigation via weekOffset', () => {
+  const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  assert(src.includes('weekOffset'), 'weekOffset state missing — week navigation not implemented');
+  assert(src.includes('activeWeekStart'), 'activeWeekStart computed value missing');
+  assert(src.includes('Prev') && src.includes('Next'), 'Prev/Next week navigation buttons missing');
+});
+
+// T127: WorkflowStatus filter with business-friendly labels
+test('T127 ux-consolidation: WorkflowStatus filter with business-friendly labels', () => {
+  const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  assert(src.includes('workflowStatusFilter'), 'workflowStatusFilter state missing');
+  assert(src.includes('Needs Review'), 'Needs Review filter label missing');
+  assert(src.includes('Returned for Correction'), 'Returned for Correction filter label missing');
+});
+
+// T128: Client Timesheets remains tracking-only (no new-submission path added back)
+test('T128 ux-consolidation: Client Timesheets remains tracking-only', () => {
+  const src = mobile('screens/CompanyWeeklyApprovalsScreen.tsx');
+  assert(!src.includes('+ New Submission'), 'CompanyWeeklyApprovalsScreen must not have + New Submission');
+  assert(!src.includes("'new-submission'"), 'CompanyWeeklyApprovalsScreen must not have new-submission mode');
+  assert(src.includes('Awaiting Client Approval'), 'Client Timesheets must still show Awaiting Client Approval status');
+  assert(src.includes('Finalised'), 'Client Timesheets must still show Finalised status');
+});
+
+// ═══════════════════════════════════════════════════════
 // Runner
 // ═══════════════════════════════════════════════════════
 
@@ -929,7 +1091,7 @@ async function main() {
       console.error(`FAIL  ${t.name} — ${(e as Error).message}`);
     }
   }
-  console.log(`\n══ P1H SITE/WEEK WORKFLOW: ${passed} PASS / ${failed} FAIL ══`);
+  console.log(`\n══ P1H UX CONSOLIDATION: ${passed} PASS / ${failed} FAIL ══`);
   if (failed > 0) { console.error('FOCUSED SPEC: FAIL'); process.exit(1); }
   else console.log('FOCUSED SPEC: PASS');
 }
