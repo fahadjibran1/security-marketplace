@@ -650,6 +650,8 @@ export interface Timesheet {
   reviewedByUserId?: number | null;
   rejectionReason?: string | null;
   updatedAt?: string;
+  companyApprovedStartAt?: string | null;
+  companyApprovedEndAt?: string | null;
   shift?: Shift;
   guard?: GuardProfile;
   company?: CompanyProfile;
@@ -1515,6 +1517,8 @@ export interface ClientWeeklyApprovalLine {
   verifiedHours: number | null;
   approvedHoursAtSubmission: number;
   hasOverride: boolean;
+  companyApprovedStart?: string | null;
+  companyApprovedEnd?: string | null;
 }
 
 export interface ClientShiftDisputeSummary {
@@ -1531,6 +1535,53 @@ export interface ClientWeeklyApprovalDetail extends ClientWeeklyApprovalSummary 
   lines: ClientWeeklyApprovalLine[];
   disputes: ClientShiftDisputeSummary[];
   weekTotalApprovedHours: number;
+}
+
+export interface CompanyApprovalLine {
+  id: number;
+  guardName: string | null;
+  shiftDate: string;
+  scheduledStart: string | null;
+  scheduledEnd: string | null;
+  actualCheckIn: string | null;
+  actualCheckOut: string | null;
+  verifiedMinutes: number | null;
+  verifiedHours?: number | null;
+  approvedHoursAtSubmission: number;
+  hasOverride: boolean;
+  companyApprovedStartAtSubmission?: string | null;
+  companyApprovedEndAtSubmission?: string | null;
+  timesheet?: {
+    hoursWorked?: number;
+    overrideReason?: string | null;
+    scheduledStartAt?: string | null;
+    scheduledEndAt?: string | null;
+    companyApprovedStartAt?: string | null;
+    companyApprovedEndAt?: string | null;
+  };
+}
+
+export interface CompanyApprovalDetail extends ClientWeeklyApprovalSummary {
+  lines: CompanyApprovalLine[];
+  disputes: ClientShiftDisputeSummary[];
+  weekTotalApprovedHours: number;
+}
+
+export interface EligibleTimesheetRow {
+  id: number;
+  hoursWorked: number;
+  approvedHours?: number | null;
+  approvedMinutes?: number | null;
+  scheduledStartAt?: string | null;
+  scheduledEndAt?: string | null;
+  actualCheckInAt?: string | null;
+  actualCheckOutAt?: string | null;
+  overrideReason?: string | null;
+  approvalStatus: string;
+  companyApprovedStartAt?: string | null;
+  companyApprovedEndAt?: string | null;
+  guard?: { id: number; fullName?: string } | null;
+  shift?: { start?: string; end?: string; site?: { id: number; name?: string }; guard?: { fullName?: string } } | null;
 }
 
 export interface CreateWeeklyApprovalPayload {

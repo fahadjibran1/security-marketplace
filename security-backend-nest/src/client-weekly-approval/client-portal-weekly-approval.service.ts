@@ -164,6 +164,8 @@ export class ClientPortalWeeklyApprovalService {
       verifiedHours: line.verifiedMinutes != null ? Math.round(line.verifiedMinutes / 60 * 100) / 100 : null,
       approvedHoursAtSubmission: line.approvedHoursAtSubmission,
       hasOverride: line.hasOverride,
+      companyApprovedStart: line.companyApprovedStartAtSubmission ?? null,
+      companyApprovedEnd: line.companyApprovedEndAtSubmission ?? null,
       // NEVER: hourlyRate, payableAmount, overrideReason, payroll fields, bank details, margin
     }));
 

@@ -179,6 +179,12 @@ export class Timesheet {
   @Column({ type: 'timestamp', nullable: true })
   overrideAt?: Date | null;
 
+  @Column({ type: 'timestamp', nullable: true })
+  companyApprovedStartAt?: Date | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  companyApprovedEndAt?: Date | null;
+
   @CreateDateColumn()
   createdAt!: Date;
 

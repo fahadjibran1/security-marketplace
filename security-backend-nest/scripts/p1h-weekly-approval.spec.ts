@@ -558,6 +558,259 @@ test('T65 migrations: all three P1H migration files exist', () => {
 });
 
 // ═══════════════════════════════════════════════════════
+// K. UAT CORRECTION — NAVIGATION & UX
+// ═══════════════════════════════════════════════════════
+
+// T66: CompanyDashboardScreen COMPANY_NAV_GROUPS includes 'weekly-approvals' in timesheets-pay group
+test('T66 nav: weekly-approvals in COMPANY_NAV_GROUPS timesheets-pay group', () => {
+  const screen = mobile('screens/CompanyDashboardScreen.tsx');
+  const groupBlock = screen.match(/id:\s*['"]timesheets-pay['"][^}]*itemIds:\s*\[[^\]]+\]/s)?.[0] ?? '';
+  assert(groupBlock.includes('weekly-approvals'), "COMPANY_NAV_GROUPS timesheets-pay does not include 'weekly-approvals'");
+});
+
+// T67: CompanyDashboardScreen NAV_ITEMS includes a 'weekly-approvals' entry
+test('T67 nav: weekly-approvals entry in CompanyDashboardScreen NAV_ITEMS', () => {
+  const screen = mobile('screens/CompanyDashboardScreen.tsx');
+  assert(screen.includes("id: 'weekly-approvals'"), "NAV_ITEMS does not include id: 'weekly-approvals'");
+});
+
+// T68: CompanyDashboardScreen imports and renders CompanyWeeklyApprovalsScreen
+test('T68 nav: CompanyDashboardScreen imports and renders CompanyWeeklyApprovalsScreen', () => {
+  const screen = mobile('screens/CompanyDashboardScreen.tsx');
+  assert(screen.includes('CompanyWeeklyApprovalsScreen'), 'CompanyDashboardScreen does not reference CompanyWeeklyApprovalsScreen');
+  assert(screen.includes("case 'weekly-approvals'"), "renderContent() missing case 'weekly-approvals'");
+});
+
+// T69: ClientPortalScreen ClientSection type includes 'timesheets'
+test('T69 nav: ClientPortalScreen ClientSection type includes timesheets', () => {
+  const screen = mobile('screens/ClientPortalScreen.tsx');
+  assert(screen.includes("'timesheets'"), "ClientPortalScreen ClientSection does not include 'timesheets'");
+});
+
+// T70: ClientPortalScreen imports ClientWeeklyApprovalsScreen
+test('T70 nav: ClientPortalScreen imports ClientWeeklyApprovalsScreen', () => {
+  const screen = mobile('screens/ClientPortalScreen.tsx');
+  assert(screen.includes('ClientWeeklyApprovalsScreen'), 'ClientPortalScreen does not import ClientWeeklyApprovalsScreen');
+});
+
+// T71: ClientPortalScreen passes userRole to ClientWeeklyApprovalsScreen
+test('T71 nav: ClientPortalScreen passes userRole to ClientWeeklyApprovalsScreen', () => {
+  const screen = mobile('screens/ClientPortalScreen.tsx');
+  assert(screen.includes('userRole={user.role}'), 'ClientPortalScreen does not pass userRole to ClientWeeklyApprovalsScreen');
+});
+
+// T72: Backend controller has GET eligible route before GET :id
+test('T72 multi-guard: backend controller has GET eligible endpoint', () => {
+  const ctrl = backend('client-weekly-approval/client-weekly-approval.controller.ts');
+  const eligibleIdx = ctrl.indexOf("Get('eligible')");
+  const paramIdx = ctrl.indexOf("Get(':id')");
+  assert(eligibleIdx !== -1, "Controller missing @Get('eligible') endpoint");
+  assert(paramIdx !== -1, "Controller missing @Get(':id') endpoint");
+  assert(eligibleIdx < paramIdx, "@Get('eligible') must be declared before @Get(':id')");
+});
+
+// T73: Backend service has getEligibleTimesheets method
+test('T73 multi-guard: backend service has getEligibleTimesheets method', () => {
+  const svc = backend('client-weekly-approval/client-weekly-approval.service.ts');
+  assert(svc.includes('getEligibleTimesheets'), 'ClientWeeklyApprovalService missing getEligibleTimesheets method');
+  assert(svc.includes('computeWeekCommencing'), 'getEligibleTimesheets must use computeWeekCommencing for week filtering');
+});
+
+// T74: Mobile API has getEligibleTimesheets function
+test('T74 multi-guard: mobile api.ts has getEligibleTimesheets function', () => {
+  const api = mobile('services/api.ts');
+  assert(api.includes('getEligibleTimesheets'), 'mobile api.ts missing getEligibleTimesheets function');
+  assert(api.includes('weekly-approvals/eligible'), 'getEligibleTimesheets must call /timesheets/weekly-approvals/eligible');
+});
+
+// T75: CompanyWeeklyApprovalsScreen has checkbox/selection state for multi-guard submission
+test('T75 multi-guard: CompanyWeeklyApprovalsScreen has multi-select state for submission', () => {
+  const screen = mobile('screens/CompanyWeeklyApprovalsScreen.tsx');
+  assert(screen.includes('selectedIds'), 'CompanyWeeklyApprovalsScreen missing selectedIds state for multi-selection');
+  assert(screen.includes('toggleId') || screen.includes('selectedIds.has'), 'Missing checkbox toggle logic');
+});
+
+// T76: CompanyWeeklyApprovalsScreen uses submitWeeklyApproval
+test('T76 multi-guard: CompanyWeeklyApprovalsScreen calls submitWeeklyApproval', () => {
+  const screen = mobile('screens/CompanyWeeklyApprovalsScreen.tsx');
+  assert(screen.includes('submitWeeklyApproval'), 'CompanyWeeklyApprovalsScreen does not call submitWeeklyApproval');
+  assert(screen.includes('timesheetIds'), 'submitWeeklyApproval call missing timesheetIds');
+});
+
+// T77: CompanyWeeklyApprovalsScreen shows confirmation before submit
+test('T77 multi-guard: CompanyWeeklyApprovalsScreen shows confirmation dialog before submit', () => {
+  const screen = mobile('screens/CompanyWeeklyApprovalsScreen.tsx');
+  assert(screen.includes('showConfirm') || screen.includes('Confirm'), 'CompanyWeeklyApprovalsScreen missing confirmation step');
+  assert(screen.includes('Modal') || screen.includes('confirm'), 'No modal/confirmation dialog for submission');
+});
+
+// T78: CompanyWeeklyApprovalsScreen detail view has ATTENDANCE evidence layer
+test('T78 three layers: CompanyWeeklyApprovalsScreen shows ATTENDANCE evidence layer', () => {
+  const screen = mobile('screens/CompanyWeeklyApprovalsScreen.tsx');
+  assert(screen.includes('ATTENDANCE'), 'CompanyWeeklyApprovalsScreen missing ATTENDANCE evidence layer label');
+  assert(screen.includes('actualCheckIn') || screen.includes('Check In'), 'Missing check-in data in attendance layer');
+});
+
+// T79: CompanyWeeklyApprovalsScreen detail view has GUARD CLAIM evidence layer
+test('T79 three layers: CompanyWeeklyApprovalsScreen shows GUARD CLAIM evidence layer', () => {
+  const screen = mobile('screens/CompanyWeeklyApprovalsScreen.tsx');
+  assert(screen.includes('GUARD CLAIM') || screen.includes('Claimed'), 'CompanyWeeklyApprovalsScreen missing GUARD CLAIM evidence layer');
+  assert(screen.includes('hoursWorked') || screen.includes('Claimed Hours'), 'Missing guard claimed hours in GUARD CLAIM layer');
+});
+
+// T80: CompanyWeeklyApprovalsScreen detail view has COMPANY APPROVAL evidence layer
+test('T80 three layers: CompanyWeeklyApprovalsScreen shows COMPANY APPROVAL evidence layer', () => {
+  const screen = mobile('screens/CompanyWeeklyApprovalsScreen.tsx');
+  assert(screen.includes('COMPANY APPROVAL'), 'CompanyWeeklyApprovalsScreen missing COMPANY APPROVAL evidence layer label');
+  assert(screen.includes('approvedHoursAtSubmission'), 'Missing approvedHoursAtSubmission in COMPANY APPROVAL layer');
+});
+
+// T81: CompanyWeeklyApprovalsScreen shows 'Adjusted' badge when hasOverride
+test('T81 three layers: CompanyWeeklyApprovalsScreen shows Adjusted badge for overridden timesheets', () => {
+  const screen = mobile('screens/CompanyWeeklyApprovalsScreen.tsx');
+  assert(screen.includes('hasOverride'), 'CompanyWeeklyApprovalsScreen does not reference hasOverride');
+  assert(screen.includes('Adjusted'), "Missing 'Adjusted' label for hasOverride timesheets");
+});
+
+// T82: CompanyWeeklyApprovalsScreen uses business-friendly 'Awaiting Client Approval' not raw enum
+test('T82 status label: CompanyWeeklyApprovalsScreen uses Awaiting Client Approval label', () => {
+  const screen = mobile('screens/CompanyWeeklyApprovalsScreen.tsx');
+  assert(screen.includes('Awaiting Client Approval'), "CompanyWeeklyApprovalsScreen missing 'Awaiting Client Approval' status label");
+  assert(!screen.includes("return 'pending_approval'"), "Raw status enum value leaked into company screen labels");
+});
+
+// T83: ClientWeeklyApprovalsScreen uses 'Returned for Correction' not raw 'DISPUTED'
+test('T83 status label: ClientWeeklyApprovalsScreen uses Returned for Correction label', () => {
+  const screen = mobile('screens/ClientWeeklyApprovalsScreen.tsx');
+  assert(screen.includes('Returned for Correction'), "ClientWeeklyApprovalsScreen missing 'Returned for Correction' label for disputed status");
+  assert(!screen.includes("return 'disputed'"), "Raw disputed enum leaked into client screen labels");
+});
+
+// T84: ClientWeeklyApprovalsScreen enforce CLIENT_VIEWER cannot trigger approve/dispute actions
+test('T84 RBAC: ClientWeeklyApprovalsScreen enforces CLIENT_VIEWER read-only (no approve for viewers)', () => {
+  const screen = mobile('screens/ClientWeeklyApprovalsScreen.tsx');
+  assert(screen.includes('isAdmin'), 'ClientWeeklyApprovalsScreen missing isAdmin guard for actions');
+  assert(screen.includes('isAdmin &&'), 'Approve/dispute actions not gated by isAdmin check');
+});
+
+// T85: Data boundary — CompanyApprovalLine has overrideReason; ClientWeeklyApprovalLine does not
+test('T85 data boundary: CompanyApprovalLine has overrideReason; ClientWeeklyApprovalLine does not', () => {
+  const models = mobile('types/models.ts');
+  const companyLine = models.match(/export interface CompanyApprovalLine \{[^}]+\}/s)?.[0] ?? '';
+  assert(companyLine, 'CompanyApprovalLine interface not found in mobile models');
+  assert(companyLine.includes('overrideReason') || models.includes('overrideReason'), 'CompanyApprovalLine does not include overrideReason (via timesheet nested type)');
+  const clientLine = models.match(/export interface ClientWeeklyApprovalLine \{[^}]+\}/s)?.[0] ?? '';
+  assert(clientLine, 'ClientWeeklyApprovalLine interface not found in mobile models');
+  assert(!clientLine.includes('overrideReason'), 'overrideReason must NOT appear in ClientWeeklyApprovalLine');
+});
+
+// ═══════════════════════════════════════════════════════
+// L. COMPANY TIME APPROVAL CORRECTION
+// ═══════════════════════════════════════════════════════
+
+// T86: Timesheet entity has companyApprovedStartAt column (nullable timestamp)
+test('T86 time-approval: Timesheet entity has companyApprovedStartAt nullable timestamp column', () => {
+  const entity = backend('timesheet/entities/timesheet.entity.ts');
+  assert(entity.includes('companyApprovedStartAt'), 'Timesheet entity missing companyApprovedStartAt field');
+  const startBlock = entity.match(/companyApprovedStartAt[^;]+;/)?.[0] ?? '';
+  assert(startBlock.includes('timestamp') || entity.includes("type: 'timestamp'"), 'companyApprovedStartAt must be timestamp type');
+  assert(entity.includes('nullable: true'), 'companyApprovedStartAt must be nullable');
+});
+
+// T87: Timesheet entity has companyApprovedEndAt column (nullable timestamp)
+test('T87 time-approval: Timesheet entity has companyApprovedEndAt nullable timestamp column', () => {
+  const entity = backend('timesheet/entities/timesheet.entity.ts');
+  assert(entity.includes('companyApprovedEndAt'), 'Timesheet entity missing companyApprovedEndAt field');
+});
+
+// T88: UpdateTimesheetDto accepts companyApprovedStartAt and companyApprovedEndAt
+test('T88 time-approval: UpdateTimesheetDto has companyApprovedStartAt and companyApprovedEndAt fields', () => {
+  const dto = backend('timesheet/dto/update-timesheet.dto.ts');
+  assert(dto.includes('companyApprovedStartAt'), 'UpdateTimesheetDto missing companyApprovedStartAt');
+  assert(dto.includes('companyApprovedEndAt'), 'UpdateTimesheetDto missing companyApprovedEndAt');
+});
+
+// T89: Migration 1720800000003 exists and adds all four columns
+test('T89 time-approval: migration 1720800000003 exists and adds approved time columns to both tables', () => {
+  const migration = backend('database/migrations/1720800000003-AddCompanyApprovedTimes.ts');
+  assert(migration.includes('AddCompanyApprovedTimes'), 'Migration name incorrect or missing');
+  assert(migration.includes('companyApprovedStartAt'), 'Migration missing companyApprovedStartAt for timesheets');
+  assert(migration.includes('companyApprovedEndAt'), 'Migration missing companyApprovedEndAt for timesheets');
+  assert(migration.includes('companyApprovedStartAtSubmission'), 'Migration missing companyApprovedStartAtSubmission for approval lines');
+  assert(migration.includes('companyApprovedEndAtSubmission'), 'Migration missing companyApprovedEndAtSubmission for approval lines');
+  assert(migration.includes('client_weekly_approval_lines'), 'Migration must target client_weekly_approval_lines table');
+  assert(migration.includes('timesheets'), 'Migration must target timesheets table');
+});
+
+// T90: Timesheet service derives approvedMinutes from time interval when bounds provided
+test('T90 time-approval: timesheet service computes approvedMinutes from time interval when companyApprovedStartAt/EndAt provided', () => {
+  const svc = backend('timesheet/timesheet.service.ts');
+  assert(svc.includes('companyApprovedStartAt') && svc.includes('companyApprovedEndAt'), 'Service does not reference approved time bounds');
+  assert(svc.includes('getTime()'), 'Service does not call getTime() for timestamp arithmetic');
+  assert(svc.includes('endMs - startMs') || svc.includes('endMs-startMs'), 'Service does not compute interval from approved times');
+  assert(svc.includes('60000'), 'Service does not convert ms to minutes');
+});
+
+// T91: Timesheet service still requires overrideReason when approved interval differs from verifiedMinutes
+test('T91 time-approval: timesheet service requires overrideReason when approved duration differs from verifiedMinutes', () => {
+  const svc = backend('timesheet/timesheet.service.ts');
+  assert(svc.includes('overrideReason'), 'Service missing overrideReason check');
+  assert(svc.includes('An override reason is required'), 'Override reason error message missing from service');
+  assert(svc.includes('isOverride'), 'isOverride check removed from service');
+});
+
+// T92: Timesheet service rejects impossible interval (endMs <= startMs)
+test('T92 time-approval: timesheet service rejects end <= start timestamp', () => {
+  const svc = backend('timesheet/timesheet.service.ts');
+  assert(svc.includes('endMs <= startMs'), 'Service does not check endMs <= startMs for impossible interval');
+  assert(svc.includes('Approved end time must be after approved start time'), 'Missing impossible interval rejection message');
+});
+
+// T93: Overnight shift math is correct with full timestamps (pure computation)
+test('T93 time-approval: overnight shift duration computes correctly via getTime() arithmetic', () => {
+  const startMs = new Date('2026-09-01T22:00:00Z').getTime();
+  const endMs = new Date('2026-09-02T06:00:00Z').getTime();
+  const minutes = Math.round((endMs - startMs) / 60000);
+  assert(minutes === 480, `Expected 480 minutes for 22:00–06:00 overnight, got ${minutes}`);
+  assert(endMs > startMs, 'Overnight endMs must be greater than startMs when using full timestamps');
+});
+
+// T94: createSubmission snapshots companyApprovedStartAtSubmission and companyApprovedEndAtSubmission
+test('T94 time-approval: createSubmission line snapshots companyApprovedStartAtSubmission and companyApprovedEndAtSubmission', () => {
+  const svc = backend('client-weekly-approval/client-weekly-approval.service.ts');
+  assert(svc.includes('companyApprovedStartAtSubmission'), 'createSubmission does not snapshot companyApprovedStartAtSubmission');
+  assert(svc.includes('companyApprovedEndAtSubmission'), 'createSubmission does not snapshot companyApprovedEndAtSubmission');
+  assert(svc.includes('ts.companyApprovedStartAt'), 'createSubmission does not read companyApprovedStartAt from timesheet');
+  assert(svc.includes('ts.companyApprovedEndAt'), 'createSubmission does not read companyApprovedEndAt from timesheet');
+});
+
+// T95: resubmit also takes fresh snapshots of approved times (new version lines)
+test('T95 time-approval: resubmit creates fresh companyApprovedStartAtSubmission snapshots for new version lines', () => {
+  const svc = backend('client-weekly-approval/client-weekly-approval.service.ts');
+  const resubmitBlock = svc.slice(svc.indexOf('async resubmit'));
+  assert(resubmitBlock.includes('companyApprovedStartAtSubmission'), 'resubmit does not snapshot companyApprovedStartAtSubmission');
+  assert(resubmitBlock.includes('companyApprovedEndAtSubmission'), 'resubmit does not snapshot companyApprovedEndAtSubmission');
+});
+
+// T96: Client portal service exposes companyApprovedStart/End in line DTO but NOT overrideReason
+test('T96 time-approval: client portal service includes companyApprovedStart/End but NOT overrideReason in client line DTO', () => {
+  const svc = backend('client-weekly-approval/client-portal-weekly-approval.service.ts');
+  assert(svc.includes('companyApprovedStart'), 'Client portal service missing companyApprovedStart in line DTO');
+  assert(svc.includes('companyApprovedEnd'), 'Client portal service missing companyApprovedEnd in line DTO');
+  assert(!svc.includes('overrideReason:'), 'overrideReason must NOT be exposed in client portal service line DTO');
+});
+
+// T97: Mobile ClientWeeklyApprovalLine includes companyApprovedStart/End snapshot fields
+test('T97 time-approval: mobile ClientWeeklyApprovalLine has companyApprovedStart and companyApprovedEnd fields', () => {
+  const models = mobile('types/models.ts');
+  const lineInterface = models.match(/export interface ClientWeeklyApprovalLine \{[^}]+\}/s)?.[0] ?? '';
+  assert(lineInterface, 'ClientWeeklyApprovalLine not found in mobile models');
+  assert(lineInterface.includes('companyApprovedStart'), 'ClientWeeklyApprovalLine missing companyApprovedStart');
+  assert(lineInterface.includes('companyApprovedEnd'), 'ClientWeeklyApprovalLine missing companyApprovedEnd');
+  assert(!lineInterface.includes('overrideReason'), 'overrideReason must NOT appear in ClientWeeklyApprovalLine (T59 guard)');
+});
+
+// ═══════════════════════════════════════════════════════
 // Runner
 // ═══════════════════════════════════════════════════════
 

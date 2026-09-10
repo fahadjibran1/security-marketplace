@@ -43,6 +43,12 @@ export class ClientWeeklyApprovalLine {
   @Column({ type: 'boolean', default: false })
   hasOverride!: boolean;
 
+  @Column({ type: 'timestamptz', nullable: true })
+  companyApprovedStartAtSubmission?: Date | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  companyApprovedEndAtSubmission?: Date | null;
+
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt!: Date;
 }

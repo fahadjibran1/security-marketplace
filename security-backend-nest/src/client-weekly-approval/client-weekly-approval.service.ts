@@ -128,6 +128,8 @@ export class ClientWeeklyApprovalService {
           actualCheckOut: ts.actualCheckOutAt ?? null,
           verifiedMinutes: ts.verifiedMinutes ?? null,
           hasOverride: !!(ts.overrideBy),
+          companyApprovedStartAtSubmission: ts.companyApprovedStartAt ?? null,
+          companyApprovedEndAtSubmission: ts.companyApprovedEndAt ?? null,
         });
       });
       await lineRepo.save(lines);
@@ -294,6 +296,8 @@ export class ClientWeeklyApprovalService {
           actualCheckOut: ts.actualCheckOutAt ?? null,
           verifiedMinutes: ts.verifiedMinutes ?? null,
           hasOverride: !!(ts.overrideBy),
+          companyApprovedStartAtSubmission: ts.companyApprovedStartAt ?? null,
+          companyApprovedEndAtSubmission: ts.companyApprovedEndAt ?? null,
         });
       });
       await lineRepo.save(newLines);
@@ -321,6 +325,29 @@ export class ClientWeeklyApprovalService {
     });
 
     return this.findOneForCompany(userId, requestId);
+  }
+
+  async getEligibleTimesheets(userId: number, siteId: number, weekCommencing: string): Promise<Timesheet[]> {
+    const company = await this.requireCompany(userId);
+    const siteRepo = this.dataSource.getRepository(Site);
+    const timesheetRepo = this.dataSource.getRepository(Timesheet);
+
+    const site = await siteRepo.findOne({ where: { id: siteId, company: { id: company.id } } });
+    if (!site) throw new NotFoundException('Site not found.');
+
+    const approved = await timesheetRepo.find({
+      where: { company: { id: company.id }, approvalStatus: TimesheetStatus.APPROVED },
+    });
+
+    const tz = site.timezone || 'Europe/London';
+    return approved.filter((ts) => {
+      if (ts.shift?.site?.id !== siteId) return false;
+      const billingOk = !ts.billingStatus || String(ts.billingStatus).toLowerCase() === TimesheetBillingStatus.UNINVOICED;
+      if (!billingOk) return false;
+      const start = ts.scheduledStartAt ?? ts.shift?.start;
+      if (!start) return false;
+      return computeWeekCommencing(new Date(start), tz) === weekCommencing;
+    });
   }
 
   private assertTimesheetEligible(ts: Timesheet, site: Site, client: Client, weekCommencing: string): Timesheet {
