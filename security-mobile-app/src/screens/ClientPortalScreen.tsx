@@ -2,6 +2,7 @@
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { ClientDashboardWorkspace } from '../components/client/ClientDashboardWorkspace';
+import { ClientWeeklyApprovalsScreen } from './ClientWeeklyApprovalsScreen';
 import { ClientIncidentsWorkspace } from '../components/client/ClientIncidentsWorkspace';
 import { ClientInvoicesWorkspace } from '../components/client/ClientInvoicesWorkspace';
 import { ClientReportsWorkspace } from '../components/client/ClientReportsWorkspace';
@@ -25,7 +26,7 @@ import {
 } from '../types/models';
 import { colors } from '../theme';
 
-type ClientSection = 'dashboard' | 'sites' | 'service-records' | 'incidents' | 'reports' | 'invoices';
+type ClientSection = 'dashboard' | 'sites' | 'service-records' | 'incidents' | 'reports' | 'invoices' | 'timesheets';
 
 const NAV_ITEMS: Array<{ id: ClientSection; label: string }> = [
   { id: 'dashboard', label: 'Dashboard' },
@@ -34,6 +35,7 @@ const NAV_ITEMS: Array<{ id: ClientSection; label: string }> = [
   { id: 'incidents', label: 'Incidents' },
   { id: 'reports', label: 'Reports' },
   { id: 'invoices', label: 'Invoices' },
+  { id: 'timesheets', label: 'Timesheets' },
 ];
 
 export function ClientPortalScreen({ user }: { user: AuthUser }) {
@@ -83,6 +85,8 @@ export function ClientPortalScreen({ user }: { user: AuthUser }) {
         return <ClientReportsWorkspace />;
       case 'invoices':
         return <ClientInvoicesWorkspace invoices={invoices} />;
+      case 'timesheets':
+        return <ClientWeeklyApprovalsScreen userRole={user.role} />;
       default:
         return null;
     }

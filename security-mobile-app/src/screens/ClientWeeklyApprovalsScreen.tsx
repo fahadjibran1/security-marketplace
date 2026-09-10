@@ -26,9 +26,9 @@ function statusLabel(status: ClientWeeklyApprovalStatus): string {
   switch (status) {
     case 'pending_approval': return 'Awaiting Approval';
     case 'client_approved': return 'Approved';
-    case 'disputed': return 'Returned to Company';
-    case 'resolved': return 'Resolution Pending';
-    case 'locked': return 'Finalized';
+    case 'disputed': return 'Returned for Correction';
+    case 'resolved': return 'Ready to Resubmit';
+    case 'locked': return 'Finalised';
     default: return status;
   }
 }

@@ -100,6 +100,8 @@ import {
   ClientWeeklyApprovalDetail,
   CreateWeeklyApprovalPayload,
   ClientDisputeItem,
+  CompanyApprovalDetail,
+  EligibleTimesheetRow,
 } from '../types/models';
 
 const hasBrowserWindow =
@@ -1200,6 +1202,15 @@ export function submitWeeklyApproval(payload: CreateWeeklyApprovalPayload) {
     method: 'POST',
     body: JSON.stringify(payload),
   });
+}
+
+export function getCompanyApprovalDetail(id: number) {
+  return request<CompanyApprovalDetail>(`/timesheets/weekly-approvals/${id}`);
+}
+
+export function getEligibleTimesheets(siteId: number, weekCommencing: string) {
+  const qs = new URLSearchParams({ siteId: String(siteId), weekCommencing }).toString();
+  return request<EligibleTimesheetRow[]>(`/timesheets/weekly-approvals/eligible?${qs}`);
 }
 
 export function resolveDispute(requestId: number, disputeId: number, resolutionMessage: string) {

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Post, Patch, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Param, ParseIntPipe, Post, Patch, Query, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -33,6 +33,21 @@ export class ClientWeeklyApprovalController {
     const clientId = clientIdStr ? parseInt(clientIdStr, 10) : undefined;
     const siteId = siteIdStr ? parseInt(siteIdStr, 10) : undefined;
     return this.service.listForCompany(user.sub, { status, clientId, siteId, weekCommencing });
+  }
+
+  @Get('eligible')
+  @Roles(...COMPANY_VIEW_ROLES)
+  getEligible(
+    @CurrentUser() user: JwtPayload,
+    @Query('siteId') siteIdStr?: string,
+    @Query('weekCommencing') weekCommencing?: string,
+  ) {
+    if (!siteIdStr || !weekCommencing) {
+      throw new BadRequestException('siteId and weekCommencing are required.');
+    }
+    const siteId = parseInt(siteIdStr, 10);
+    if (isNaN(siteId)) throw new BadRequestException('siteId must be a number.');
+    return this.service.getEligibleTimesheets(user.sub, siteId, weekCommencing);
   }
 
   @Get(':id')

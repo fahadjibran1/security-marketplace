@@ -79,6 +79,7 @@ import {
   CompanyGuardEmploymentSummary,
 } from '../types/models';
 import { CompanySidebar } from '../components/company/CompanySidebar';
+import { CompanyWeeklyApprovalsScreen } from './CompanyWeeklyApprovalsScreen';
 import { Card } from '../components/ui/Card';
 import { KpiCard, KpiTone } from '../components/ui/KpiCard';
 import { colors } from '../theme';
@@ -111,7 +112,8 @@ type CompanySection =
   | 'pay-rules'
   | 'audit'
   | 'incidents'
-  | 'alerts';
+  | 'alerts'
+  | 'weekly-approvals';
 
 type ClientFormState = {
   id?: number;
@@ -238,6 +240,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'availability', label: 'Availability', caption: 'Guard availability, overrides, and leave.' },
   { id: 'recruitment', label: 'Recruitment', caption: 'Open jobs and incoming applications.' },
   { id: 'timesheets', label: 'Timesheets', caption: 'Review worked hours and approvals.' },
+  { id: 'weekly-approvals', label: 'Client Timesheets', caption: 'Submit and track weekly approval requests for clients.' },
   { id: 'payroll', label: 'Payroll', caption: 'Approved hours and payment totals.' },
   { id: 'payroll-batches', label: 'Payroll Batches', caption: 'Draft, finalised, and paid payroll runs.' },
   { id: 'invoices', label: 'Invoices', caption: 'Client billing and invoice batches.' },
@@ -266,7 +269,7 @@ const COMPANY_NAV_GROUPS: Array<{ id: string; title: string; itemIds: CompanySec
   {
     id: 'timesheets-pay',
     title: 'Timesheets & Pay',
-    itemIds: ['timesheets', 'payroll', 'payroll-batches', 'pay-rules'],
+    itemIds: ['timesheets', 'weekly-approvals', 'payroll', 'payroll-batches', 'pay-rules'],
   },
   {
     id: 'billing-finance',
@@ -5101,6 +5104,8 @@ export function CompanyDashboardScreen(_props: CompanyDashboardScreenProps = {})
         return <CompanyAvailabilityWorkspace />;
       case 'recruitment':
         return renderRecruitmentSection();
+      case 'weekly-approvals':
+        return <CompanyWeeklyApprovalsScreen />;
       case 'timesheets':
         return <CompanyTimesheetsWorkspace timesheets={timesheets} refreshing={refreshing} onRefresh={() => loadData(true)} />;
       case 'payroll':
