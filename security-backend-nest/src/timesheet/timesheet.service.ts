@@ -215,6 +215,37 @@ export class TimesheetService {
       return this.applyDerivedFinancials(saved);
     }
 
+    // Approved timesheets allow updating companyApprovedStartAt/EndAt before weekly client submission.
+    // This is a separate operation from internal approval — the company sets client-facing approved times.
+    const approvedTimeUpdate =
+      currentStatus === TimesheetStatus.APPROVED &&
+      (dto.companyApprovedStartAt !== undefined || dto.companyApprovedEndAt !== undefined) &&
+      dto.approvalStatus === undefined &&
+      dto.rejectionReason === undefined;
+    if (approvedTimeUpdate) {
+      if (dto.companyApprovedStartAt === null && dto.companyApprovedEndAt === null) {
+        this.clearApprovalDuration(timesheet);
+      } else {
+        this.applyApprovalDuration(timesheet, dto, userId);
+      }
+      const saved = await this.timesheetRepo.save(timesheet);
+      await this.auditLogService.log({
+        company,
+        user: { id: userId },
+        action: 'timesheet.company_approved_times_updated',
+        entityType: 'timesheet',
+        entityId: saved.id,
+        beforeData,
+        afterData: {
+          companyApprovedStartAt: saved.companyApprovedStartAt,
+          companyApprovedEndAt: saved.companyApprovedEndAt,
+          approvedMinutes: saved.approvedMinutes,
+          overrideReason: saved.overrideReason,
+        },
+      });
+      return this.applyDerivedFinancials(saved);
+    }
+
     this.validateCompanyReviewRequest(timesheet, dto);
     this.applyTimesheetUpdates(timesheet, dto);
 
