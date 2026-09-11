@@ -1194,6 +1194,54 @@ test('T143 workflow-state-ux: business-friendly status labels for all states', (
 });
 
 // ═══════════════════════════════════════════════════════
+// P1H SITE WORKFLOW BADGE CORRECTION  T144–T149
+// ═══════════════════════════════════════════════════════
+
+// T144: DRAFT shifts → badge Awaiting Guard (NOT Returned for Correction)
+test('T144 badge-fix: draft shifts derive Awaiting Guard badge not Returned for Correction', () => {
+  const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  assert(src.includes("if (totals.awaitingGuardCount > 0) return 'awaiting-guard'"), 'awaitingGuardCount > 0 must return awaiting-guard, not returned');
+  assert(src.includes("Awaiting Guard"), 'WorkflowBadge must render Awaiting Guard label');
+  assert(!src.includes("if (totals.awaitingGuardCount > 0) return 'returned'"), 'awaitingGuardCount must NOT return returned');
+});
+
+// T145: SUBMITTED shifts → badge Awaiting Company Review
+test('T145 badge-fix: submitted shifts derive Awaiting Company Review badge', () => {
+  const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  assert(src.includes("if (totals.awaitingCompanyCount > 0) return 'needs-review'"), 'awaitingCompanyCount > 0 must return needs-review');
+  assert(src.includes("Awaiting Company Review"), 'WorkflowBadge must render Awaiting Company Review for needs-review status');
+});
+
+// T146: all reviewed, no Client submission → Ready for Client
+test('T146 badge-fix: all reviewed no client submission gives Ready for Client', () => {
+  const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  assert(src.includes("if (totals.approvedCount > 0) return 'ready-for-client'"), 'approvedCount > 0 must return ready-for-client when no client submission');
+  assert(src.includes("Ready for Client"), 'Ready for Client badge label missing');
+});
+
+// T147: actual Client disputed submission → Returned for Correction (not guard states)
+test('T147 badge-fix: Client disputed submission gives Returned for Correction; guard states do not', () => {
+  const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  assert(/cs === 'disputed'[\s\S]{0,50}return 'returned'/.test(src), "Returned for Correction must derive from cs === 'disputed' only");
+  assert(!src.includes("if (totals.awaitingGuardCount > 0) return 'returned'"), 'Guard awaitingGuardCount must NOT trigger Returned for Correction');
+  assert(src.includes('clientSubmissionStatus'), 'clientSubmissionStatus parameter must be present in getGroupWorkflowStatus');
+});
+
+// T148: Client pending_approval submission → Awaiting Client Approval
+test('T148 badge-fix: pending_approval Client submission gives Awaiting Client Approval', () => {
+  const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  assert(/cs === 'pending_approval'[\s\S]{0,100}return 'awaiting-client'/.test(src), "pending_approval must return awaiting-client");
+  assert(src.includes('Awaiting Client Approval'), 'Awaiting Client Approval badge label missing');
+});
+
+// T149: Client client_approved submission → Client Approved
+test('T149 badge-fix: client_approved Client submission gives Client Approved badge', () => {
+  const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  assert(/cs === 'client_approved'[\s\S]{0,50}return 'client-approved'/.test(src), "client_approved must return client-approved");
+  assert(src.includes('Client Approved'), 'Client Approved badge label missing');
+});
+
+// ═══════════════════════════════════════════════════════
 // Runner
 // ═══════════════════════════════════════════════════════
 

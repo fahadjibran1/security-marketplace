@@ -6,7 +6,7 @@ import { EligibleTimesheetRow, Timesheet } from '../../types/models';
 import { colors } from '../../theme';
 
 type WorkspaceLevel = 'overview' | 'detail';
-type WorkflowStatus = 'all' | 'needs-review' | 'ready-for-client' | 'returned';
+type WorkflowStatus = 'all' | 'awaiting-guard' | 'needs-review' | 'ready-for-client' | 'awaiting-client' | 'returned' | 'client-approved' | 'finalised';
 
 type WorkspaceFeedback = {
   tone: 'success' | 'error' | 'info';
@@ -53,6 +53,7 @@ type GroupedTimesheets = {
   periodKey: string;
   periodLabel: string;
   weekLabel: string;
+  clientSubmissionStatus: string | null;
   rows: EnrichedTimesheet[];
   totals: {
     count: number;
@@ -286,12 +287,19 @@ function getPeriodKey(value: Date) {
   return toIsoDateInput(getWeekStart(value));
 }
 
-function getGroupWorkflowStatus(totals: GroupedTimesheets['totals']): WorkflowStatus {
-  // company must act on submitted shifts
+function getGroupWorkflowStatus(totals: GroupedTimesheets['totals'], clientSubmissionStatus?: string | null): WorkflowStatus {
+  const cs = (clientSubmissionStatus || '').toLowerCase();
+  // Post-submission Client states (week already packaged and sent)
+  if (cs === 'locked') return 'finalised';
+  if (cs === 'client_approved') return 'client-approved';
+  if (cs === 'pending_approval' || cs === 'resolved') return 'awaiting-client';
+  if (cs === 'disputed') return 'returned';
+  // Pre-submission Guard / Company states
+  // 1. Guard must act (draft or returned timesheets awaiting guard)
+  if (totals.awaitingGuardCount > 0) return 'awaiting-guard';
+  // 2. Company must act (submitted timesheets awaiting company review)
   if (totals.awaitingCompanyCount > 0) return 'needs-review';
-  // guard must act on draft/returned shifts
-  if (totals.awaitingGuardCount > 0) return 'returned';
-  // all company-reviewed: approved + rejected
+  // 3. All company-reviewed, not yet sent to client
   if (totals.approvedCount > 0) return 'ready-for-client';
   return 'needs-review';
 }
@@ -351,9 +359,13 @@ function KpiCard({ label, value, accent }: { label: string; value: string | numb
 }
 
 function WorkflowBadge({ status }: { status: WorkflowStatus }) {
-  if (status === 'needs-review') return <View style={styles.badgeNeedsReview}><Text style={styles.badgeText}>Needs Review</Text></View>;
+  if (status === 'awaiting-guard') return <View style={styles.badgeAwaitingGuard}><Text style={styles.badgeText}>Awaiting Guard</Text></View>;
+  if (status === 'needs-review') return <View style={styles.badgeNeedsReview}><Text style={styles.badgeText}>Awaiting Company Review</Text></View>;
   if (status === 'ready-for-client') return <View style={styles.badgeReady}><Text style={styles.badgeText}>Ready for Client</Text></View>;
+  if (status === 'awaiting-client') return <View style={styles.badgeAwaitingClient}><Text style={styles.badgeText}>Awaiting Client Approval</Text></View>;
   if (status === 'returned') return <View style={styles.badgeReturned}><Text style={styles.badgeText}>Returned for Correction</Text></View>;
+  if (status === 'client-approved') return <View style={styles.badgeClientApproved}><Text style={styles.badgeText}>Client Approved</Text></View>;
+  if (status === 'finalised') return <View style={styles.badgeFinalised}><Text style={styles.badgeText}>Finalised</Text></View>;
   return null;
 }
 
@@ -478,6 +490,7 @@ export function CompanyTimesheetsWorkspace({
         periodKey,
         periodLabel: `Week of ${formatDateLabel(weekStart.toISOString())}`,
         weekLabel: getWeekRangeLabel(weekStart),
+        clientSubmissionStatus: null,
         rows: [],
         totals: {
           count: 0, guardCount: 0, claimedHours: 0, approvedHours: 0,
@@ -564,7 +577,7 @@ export function CompanyTimesheetsWorkspace({
   // ── WORKFLOW-FILTERED GROUPS (overview) ──────────────────────────────────
   const filteredGroups = React.useMemo(() => {
     if (workflowStatusFilter === 'all') return groupedTimesheets;
-    return groupedTimesheets.filter((g) => getGroupWorkflowStatus(g.totals) === workflowStatusFilter);
+    return groupedTimesheets.filter((g) => getGroupWorkflowStatus(g.totals, g.clientSubmissionStatus) === workflowStatusFilter);
   }, [groupedTimesheets, workflowStatusFilter]);
 
   // ── KPI SUMMARY ──────────────────────────────────────────────────────────
@@ -573,7 +586,7 @@ export function CompanyTimesheetsWorkspace({
     const totalTimesheets = groupedTimesheets.reduce((s, g) => s + g.totals.count, 0);
     const awaitingGuards = groupedTimesheets.filter((g) => g.totals.awaitingGuardCount > 0).length;
     const awaitingCompanyReview = groupedTimesheets.filter((g) => g.totals.awaitingCompanyCount > 0).length;
-    const readyForClient = groupedTimesheets.filter((g) => getGroupWorkflowStatus(g.totals) === 'ready-for-client').length;
+    const readyForClient = groupedTimesheets.filter((g) => getGroupWorkflowStatus(g.totals, g.clientSubmissionStatus) === 'ready-for-client').length;
     const awaitingClient = 0; // requires cross-referencing weekly approval submissions
     return { activeSites, totalTimesheets, awaitingGuards, awaitingCompanyReview, readyForClient, awaitingClient };
   }, [groupedTimesheets]);
@@ -957,9 +970,12 @@ export function CompanyTimesheetsWorkspace({
                 onChange={(v) => setWorkflowStatusFilter(v as WorkflowStatus)}
                 options={[
                   { label: 'All', value: 'all' },
+                  { label: 'Awaiting Guard', value: 'awaiting-guard' },
                   { label: 'Needs Review', value: 'needs-review' },
                   { label: 'Ready for Client', value: 'ready-for-client' },
+                  { label: 'Awaiting Client Approval', value: 'awaiting-client' },
                   { label: 'Returned for Correction', value: 'returned' },
+                  { label: 'Client Approved', value: 'client-approved' },
                 ]}
                 placeholder="All"
               />
@@ -984,7 +1000,7 @@ export function CompanyTimesheetsWorkspace({
             </View>
           ) : null}
           {filteredGroups.map((group) => {
-            const wfStatus = getGroupWorkflowStatus(group.totals);
+            const wfStatus = getGroupWorkflowStatus(group.totals, group.clientSubmissionStatus);
             const allReviewed = group.totals.awaitingGuardCount === 0 && group.totals.awaitingCompanyCount === 0;
             const sendReady = allReviewed && group.totals.approvedCount > 0 && !!group.numericSiteId && !!group.clientId;
             return (
@@ -1342,9 +1358,13 @@ const styles = StyleSheet.create({
   sendToClientButtonDisabled: { opacity: 0.35 },
   sendToClientText: { color: '#ffffff', fontWeight: '700', fontSize: 12 },
 
+  badgeAwaitingGuard: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, backgroundColor: colors.pendingSurface },
   badgeNeedsReview: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, backgroundColor: colors.warningSurface },
   badgeReady: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, backgroundColor: colors.successSurface },
+  badgeAwaitingClient: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, backgroundColor: colors.infoSurface },
   badgeReturned: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, backgroundColor: colors.dangerSurface },
+  badgeClientApproved: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, backgroundColor: colors.successSurface },
+  badgeFinalised: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, backgroundColor: colors.pendingSurface },
   badgeText: { fontSize: 11, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.4, color: colors.primaryNavy },
 
   emptyCard: { backgroundColor: colors.card, borderRadius: 20, padding: 24 },
