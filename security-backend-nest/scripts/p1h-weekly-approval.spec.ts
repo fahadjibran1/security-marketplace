@@ -1076,6 +1076,124 @@ test('T128 ux-consolidation: Client Timesheets remains tracking-only', () => {
 });
 
 // ═══════════════════════════════════════════════════════
+// P1H WORKFLOW STATE UX FIX  T129–T143
+// ═══════════════════════════════════════════════════════
+
+// T129: Draft timesheets show no editable Company review controls
+test('T129 workflow-state-ux: draft has no Company review controls', () => {
+  const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  assert(src.includes('isSubmittedForReview'), 'isSubmittedForReview gate missing — Company review controls not gated by status');
+  // Approve / Return for correction / Reject must only be inside the isSubmittedForReview block
+  const submittedGateIdx = src.indexOf('isSubmittedForReview ?');
+  const approveIdx = src.indexOf("'Approving...' : 'Approve'");
+  assert(submittedGateIdx > 0 && approveIdx > submittedGateIdx, 'Approve button must be inside isSubmittedForReview block');
+});
+
+// T130: Draft detail panel shows "Awaiting Guard Submission" state message
+test('T130 workflow-state-ux: draft panel shows Awaiting Guard Submission message', () => {
+  const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  assert(src.includes('Awaiting Guard Submission. The Guard must submit'), 'Workflow state message for draft missing in detail panel');
+  assert(src.includes('getWorkflowStateMessage'), 'getWorkflowStateMessage helper missing');
+});
+
+// T131: Submitted timesheet shows Company review controls
+test('T131 workflow-state-ux: submitted shows Company review controls', () => {
+  const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  assert(src.includes('isSubmittedForReview'), 'isSubmittedForReview gate missing');
+  assert(src.includes("normalizeStatus(activeSelected?.approvalStatus) === 'submitted'"), 'isSubmittedForReview must check submitted status');
+});
+
+// T132: Approved timesheet detail shows view-only "Company review complete — Approved" message
+test('T132 workflow-state-ux: approved panel shows Company review complete — Approved', () => {
+  const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  assert(src.includes('Company review complete — Approved'), 'Missing approved view-only message in getWorkflowStateMessage');
+});
+
+// T133: Rejected timesheet detail shows view-only "Company review complete — Rejected" message
+test('T133 workflow-state-ux: rejected panel shows Company review complete — Rejected', () => {
+  const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  assert(src.includes('Company review complete — Rejected'), 'Missing rejected view-only message in getWorkflowStateMessage');
+});
+
+// T134: Returned timesheet detail shows "Returned to Guard. Awaiting Guard Resubmission."
+test('T134 workflow-state-ux: returned panel shows Returned to Guard message', () => {
+  const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  assert(src.includes('Returned to Guard. Awaiting Guard Resubmission'), 'Missing returned view-only message in getWorkflowStateMessage');
+});
+
+// T135: awaitingGuardCount incremented for draft AND returned
+test('T135 workflow-state-ux: awaitingGuardCount tracks draft + returned', () => {
+  const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  const draftBlock = /rowStatus === 'draft'[\s\S]{0,300}awaitingGuardCount/.test(src);
+  const returnedBlock = /rowStatus === 'returned'[\s\S]{0,300}awaitingGuardCount/.test(src);
+  assert(draftBlock, 'awaitingGuardCount not incremented for draft status');
+  assert(returnedBlock, 'awaitingGuardCount not incremented for returned status');
+});
+
+// T136: awaitingCompanyCount incremented for submitted only
+test('T136 workflow-state-ux: awaitingCompanyCount tracks submitted only', () => {
+  const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  const submittedBlock = /rowStatus === 'submitted'[\s\S]{0,300}awaitingCompanyCount/.test(src);
+  assert(submittedBlock, 'awaitingCompanyCount not incremented for submitted status');
+  assert(!src.includes("rowStatus === 'approved'\n") || !/rowStatus === 'approved'[\s\S]{0,150}awaitingCompanyCount/.test(src), 'awaitingCompanyCount must not be incremented for approved');
+});
+
+// T137: Draft blocks Send (awaitingGuardCount > 0 in gate)
+test('T137 workflow-state-ux: draft blocks Send via awaitingGuardCount', () => {
+  const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  assert(src.includes('awaitingGuardCount === 0'), 'awaitingGuardCount === 0 not present in send gate');
+});
+
+// T138: Submitted blocks Send (awaitingCompanyCount > 0 in gate)
+test('T138 workflow-state-ux: submitted blocks Send via awaitingCompanyCount', () => {
+  const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  assert(src.includes('awaitingCompanyCount === 0'), 'awaitingCompanyCount === 0 not present in send gate');
+});
+
+// T139: Returned blocks Send (counted in awaitingGuardCount)
+test('T139 workflow-state-ux: returned blocks Send because it increments awaitingGuardCount', () => {
+  const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  const returnedTrackedInGuard = /rowStatus === 'returned'[\s\S]{0,300}awaitingGuardCount/.test(src);
+  assert(returnedTrackedInGuard, 'returned status must increment awaitingGuardCount (to block Send)');
+  assert(src.includes('awaitingGuardCount === 0'), 'awaitingGuardCount === 0 send gate missing');
+});
+
+// T140: Rejected counts as reviewed but is excluded from client submission eligible rows
+test('T140 workflow-state-ux: rejected counted as reviewed; client submission uses eligible rows only', () => {
+  const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  const rejectedIncrementsReviewed = /rowStatus === 'rejected'[\s\S]{0,200}reviewedCount/.test(src);
+  assert(rejectedIncrementsReviewed, 'rejected status must increment reviewedCount');
+  assert(src.includes('timesheetIds: Array.from(sendSelectedIds)'), 'Client submission must use sendSelectedIds (eligible rows only)');
+});
+
+// T141: All reviewed + approvedCount > 0 enables Send (new gate semantics)
+test('T141 workflow-state-ux: all reviewed + approvedCount > 0 enables Send', () => {
+  const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  assert(src.includes('awaitingGuardCount === 0'), 'awaitingGuardCount === 0 missing from send gate');
+  assert(src.includes('awaitingCompanyCount === 0'), 'awaitingCompanyCount === 0 missing from send gate');
+  assert(src.includes('approvedCount > 0'), 'approvedCount > 0 check missing from send gate');
+});
+
+// T142: KPIs include Awaiting Guards and Awaiting Company Review
+test('T142 workflow-state-ux: KPIs distinguish Guard action vs Company action', () => {
+  const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  assert(src.includes('Awaiting Guards'), 'KPI label "Awaiting Guards" missing');
+  assert(src.includes('Awaiting Company Review'), 'KPI label "Awaiting Company Review" missing');
+  assert(src.includes('awaitingGuards'), 'awaitingGuards KPI computed value missing');
+  assert(src.includes('awaitingCompanyReview'), 'awaitingCompanyReview KPI computed value missing');
+});
+
+// T143: Business-friendly status labels for all five states
+test('T143 workflow-state-ux: business-friendly status labels for all states', () => {
+  const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
+  assert(src.includes("case 'draft': return 'Awaiting Guard Submission'"), 'formatStatusLabel: draft label missing');
+  assert(src.includes("case 'submitted': return 'Awaiting Company Review'"), 'formatStatusLabel: submitted label missing');
+  assert(src.includes("case 'approved': return 'Reviewed — Approved'"), 'formatStatusLabel: approved label missing');
+  assert(src.includes("case 'rejected': return 'Reviewed — Rejected'"), 'formatStatusLabel: rejected label missing');
+  assert(src.includes("case 'returned': return 'Returned to Guard — Awaiting Resubmission'"), 'formatStatusLabel: returned label missing');
+});
+
+// ═══════════════════════════════════════════════════════
 // Runner
 // ═══════════════════════════════════════════════════════
 

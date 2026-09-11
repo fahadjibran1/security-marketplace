@@ -66,6 +66,8 @@ type GroupedTimesheets = {
     rejectedCount: number;
     reviewedCount: number;
     returnedCount: number;
+    awaitingGuardCount: number;
+    awaitingCompanyCount: number;
     missingRateCount: number;
   };
 };
@@ -147,14 +149,24 @@ function getDisplayStatus(timesheet: Timesheet) {
 
 function formatStatusLabel(value?: string | null) {
   switch (normalizeStatus(value)) {
-    case 'draft': return 'Draft';
-    case 'submitted': return 'Submitted';
-    case 'approved': return 'Approved';
-    case 'rejected': return 'Rejected';
-    case 'returned': return 'Returned';
+    case 'draft': return 'Awaiting Guard Submission';
+    case 'submitted': return 'Awaiting Company Review';
+    case 'approved': return 'Reviewed — Approved';
+    case 'rejected': return 'Reviewed — Rejected';
+    case 'returned': return 'Returned to Guard — Awaiting Resubmission';
     default: return value
       ? value.replace(/_/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase())
       : 'Unknown';
+  }
+}
+
+function getWorkflowStateMessage(value?: string | null): string {
+  switch (normalizeStatus(value)) {
+    case 'draft': return 'Awaiting Guard Submission. The Guard must submit this timesheet before Company review.';
+    case 'approved': return 'Company review complete — Approved.';
+    case 'rejected': return 'Company review complete — Rejected.';
+    case 'returned': return 'Returned to Guard. Awaiting Guard Resubmission.';
+    default: return '';
   }
 }
 
@@ -275,13 +287,10 @@ function getPeriodKey(value: Date) {
 }
 
 function getGroupWorkflowStatus(totals: GroupedTimesheets['totals']): WorkflowStatus {
-  // submitted shifts need company review
-  if (totals.pendingCount > 0) return 'needs-review';
-  // draft shifts need company review (count minus reviewed minus pending minus returned = draft)
-  const draftCount = totals.count - totals.reviewedCount - totals.pendingCount - totals.returnedCount;
-  if (draftCount > 0) return 'needs-review';
-  // returned to guard — guard must resubmit
-  if (totals.returnedCount > 0) return 'returned';
+  // company must act on submitted shifts
+  if (totals.awaitingCompanyCount > 0) return 'needs-review';
+  // guard must act on draft/returned shifts
+  if (totals.awaitingGuardCount > 0) return 'returned';
   // all company-reviewed: approved + rejected
   if (totals.approvedCount > 0) return 'ready-for-client';
   return 'needs-review';
@@ -474,7 +483,9 @@ export function CompanyTimesheetsWorkspace({
           count: 0, guardCount: 0, claimedHours: 0, approvedHours: 0,
           claimedAmount: 0, approvedAmount: 0,
           pendingCount: 0, approvedCount: 0, rejectedCount: 0,
-          reviewedCount: 0, returnedCount: 0, missingRateCount: 0,
+          reviewedCount: 0, returnedCount: 0,
+          awaitingGuardCount: 0, awaitingCompanyCount: 0,
+          missingRateCount: 0,
         },
       };
 
@@ -494,8 +505,9 @@ export function CompanyTimesheetsWorkspace({
         existing.totals.rejectedCount += 1;
         existing.totals.reviewedCount += 1;
       }
-      if (rowStatus === 'submitted') existing.totals.pendingCount += 1;
-      if (rowStatus === 'returned') existing.totals.returnedCount += 1;
+      if (rowStatus === 'submitted') { existing.totals.pendingCount += 1; existing.totals.awaitingCompanyCount += 1; }
+      if (rowStatus === 'returned') { existing.totals.returnedCount += 1; existing.totals.awaitingGuardCount += 1; }
+      if (rowStatus === 'draft') existing.totals.awaitingGuardCount += 1;
       if (entry.hourlyRate === null) existing.totals.missingRateCount += 1;
 
       groups.set(groupKey, existing);
@@ -559,11 +571,11 @@ export function CompanyTimesheetsWorkspace({
   const kpis = React.useMemo(() => {
     const activeSites = new Set(groupedTimesheets.map((g) => g.siteName)).size;
     const totalTimesheets = groupedTimesheets.reduce((s, g) => s + g.totals.count, 0);
-    const needReview = groupedTimesheets.filter((g) => getGroupWorkflowStatus(g.totals) === 'needs-review').length;
+    const awaitingGuards = groupedTimesheets.filter((g) => g.totals.awaitingGuardCount > 0).length;
+    const awaitingCompanyReview = groupedTimesheets.filter((g) => g.totals.awaitingCompanyCount > 0).length;
     const readyForClient = groupedTimesheets.filter((g) => getGroupWorkflowStatus(g.totals) === 'ready-for-client').length;
-    const returned = groupedTimesheets.filter((g) => getGroupWorkflowStatus(g.totals) === 'returned').length;
     const awaitingClient = 0; // requires cross-referencing weekly approval submissions
-    return { activeSites, totalTimesheets, needReview, readyForClient, returned, awaitingClient };
+    return { activeSites, totalTimesheets, awaitingGuards, awaitingCompanyReview, readyForClient, awaitingClient };
   }, [groupedTimesheets]);
 
   // ── SELECTED TIMESHEET ───────────────────────────────────────────────────
@@ -769,6 +781,7 @@ export function CompanyTimesheetsWorkspace({
   }, [companyNote, runCompanyAction, selectedTimesheet?.timesheet.id]);
 
   const activeSelected = selectedTimesheet?.timesheet;
+  const isSubmittedForReview = normalizeStatus(activeSelected?.approvalStatus) === 'submitted';
   const selectedClaimedHours = activeSelected ? toHours(activeSelected.hoursWorked) : 0;
   const selectedApprovedHours = activeSelected && getApprovedHoursValue(activeSelected) !== null ? Number(getApprovedHoursValue(activeSelected)) : null;
   const parsedSelectedApprovedHours = parseHoursInput(approvedHoursInput);
@@ -958,9 +971,9 @@ export function CompanyTimesheetsWorkspace({
         <View style={styles.kpiRow}>
           <KpiCard label="Active Sites" value={kpis.activeSites} />
           <KpiCard label="Timesheets" value={kpis.totalTimesheets} />
-          <KpiCard label="Need Review" value={kpis.needReview} accent={kpis.needReview > 0} />
+          <KpiCard label="Awaiting Guards" value={kpis.awaitingGuards} accent={kpis.awaitingGuards > 0} />
+          <KpiCard label="Awaiting Company Review" value={kpis.awaitingCompanyReview} accent={kpis.awaitingCompanyReview > 0} />
           <KpiCard label="Ready for Client" value={kpis.readyForClient} />
-          <KpiCard label="Returned" value={kpis.returned} />
         </View>
 
         {/* Site + Week cards */}
@@ -972,7 +985,7 @@ export function CompanyTimesheetsWorkspace({
           ) : null}
           {filteredGroups.map((group) => {
             const wfStatus = getGroupWorkflowStatus(group.totals);
-            const allReviewed = group.totals.count === group.totals.reviewedCount;
+            const allReviewed = group.totals.awaitingGuardCount === 0 && group.totals.awaitingCompanyCount === 0;
             const sendReady = allReviewed && group.totals.approvedCount > 0 && !!group.numericSiteId && !!group.clientId;
             return (
               <View key={group.key} style={styles.siteWeekCard}>
@@ -983,9 +996,11 @@ export function CompanyTimesheetsWorkspace({
                     <Text style={styles.siteWeekMeta}>
                       {group.totals.guardCount} guard{group.totals.guardCount !== 1 ? 's' : ''} · {group.totals.count} shift{group.totals.count !== 1 ? 's' : ''} · {group.totals.reviewedCount}/{group.totals.count} reviewed · {group.totals.approvedHours.toFixed(2)} approved h
                     </Text>
-                    {!allReviewed && (
+                    {(group.totals.awaitingGuardCount > 0 || group.totals.awaitingCompanyCount > 0) && (
                       <Text style={styles.unreviewedWarning}>
-                        {group.totals.reviewedCount} of {group.totals.count} shifts reviewed — {group.totals.count - group.totals.reviewedCount} still require{group.totals.count - group.totals.reviewedCount === 1 ? 's' : ''} a decision.
+                        {group.totals.awaitingGuardCount > 0 ? `${group.totals.awaitingGuardCount} awaiting Guard submission` : ''}
+                        {group.totals.awaitingGuardCount > 0 && group.totals.awaitingCompanyCount > 0 ? ' · ' : ''}
+                        {group.totals.awaitingCompanyCount > 0 ? `${group.totals.awaitingCompanyCount} awaiting Company review` : ''}
                       </Text>
                     )}
                   </View>
@@ -1025,7 +1040,7 @@ export function CompanyTimesheetsWorkspace({
     );
   }
 
-  const detailAllReviewed = activeGroup.totals.count === activeGroup.totals.reviewedCount;
+  const detailAllReviewed = activeGroup.totals.awaitingGuardCount === 0 && activeGroup.totals.awaitingCompanyCount === 0;
   const detailSendReady = detailAllReviewed && activeGroup.totals.approvedCount > 0 && !!activeGroup.numericSiteId && !!activeGroup.clientId;
 
   return (
@@ -1204,47 +1219,57 @@ export function CompanyTimesheetsWorkspace({
                 <Text style={styles.detailParagraph}>{activeSelected.guardNote?.trim() ? activeSelected.guardNote : 'No guard note provided.'}</Text>
               </View>
 
-              <View style={styles.detailSection}>
-                <Text style={styles.detailSectionTitle}>Company note</Text>
-                <TextInput
-                  value={companyNote}
-                  onChangeText={setCompanyNote}
-                  style={[styles.input, styles.noteInput]}
-                  multiline
-                  textAlignVertical="top"
-                  placeholder="Add payroll / client approval context, or note why this should be returned."
-                  placeholderTextColor="#64748b"
-                />
-              </View>
+              {isSubmittedForReview ? (
+                <>
+                  <View style={styles.detailSection}>
+                    <Text style={styles.detailSectionTitle}>Company note</Text>
+                    <TextInput
+                      value={companyNote}
+                      onChangeText={setCompanyNote}
+                      style={[styles.input, styles.noteInput]}
+                      multiline
+                      textAlignVertical="top"
+                      placeholder="Add payroll / client approval context, or note why this should be returned."
+                      placeholderTextColor="#64748b"
+                    />
+                  </View>
 
-              <View style={styles.detailSection}>
-                <Text style={styles.detailSectionTitle}>Approved hours</Text>
-                <Text style={styles.detailLine}>Claimed hours remain read-only so the original submission stays intact.</Text>
-                <TextInput
-                  value={approvedHoursInput}
-                  onChangeText={setApprovedHoursInput}
-                  style={styles.input}
-                  keyboardType="decimal-pad"
-                  placeholder={formatHoursInput(activeSelected.hoursWorked)}
-                  placeholderTextColor="#64748b"
-                />
-                {adjustedHoursRequireNote && <Text style={styles.validationText}>Add a company note when approved hours differ from claimed hours.</Text>}
-              </View>
+                  <View style={styles.detailSection}>
+                    <Text style={styles.detailSectionTitle}>Approved hours</Text>
+                    <Text style={styles.detailLine}>Claimed hours remain read-only so the original submission stays intact.</Text>
+                    <TextInput
+                      value={approvedHoursInput}
+                      onChangeText={setApprovedHoursInput}
+                      style={styles.input}
+                      keyboardType="decimal-pad"
+                      placeholder={formatHoursInput(activeSelected.hoursWorked)}
+                      placeholderTextColor="#64748b"
+                    />
+                    {adjustedHoursRequireNote && <Text style={styles.validationText}>Add a company note when approved hours differ from claimed hours.</Text>}
+                  </View>
 
-              <View style={styles.detailActions}>
-                <Pressable style={styles.secondaryButton} onPress={handleSaveCompanyNote} disabled={busyAction === `note-${activeSelected.id}` || Boolean(busyAction)}>
-                  <Text style={styles.secondaryButtonText}>{busyAction === `note-${activeSelected.id}` ? 'Saving...' : 'Save review details'}</Text>
-                </Pressable>
-                <Pressable style={styles.primaryButton} onPress={() => handleApprove(selectedTimesheet!)} disabled={busyAction === `approve-${activeSelected.id}` || Boolean(busyAction)}>
-                  <Text style={styles.primaryButtonText}>{busyAction === `approve-${activeSelected.id}` ? 'Approving...' : 'Approve'}</Text>
-                </Pressable>
-                <Pressable style={styles.warningButton} onPress={() => handleReturn(selectedTimesheet!)} disabled={busyAction === `return-${activeSelected.id}` || Boolean(busyAction)}>
-                  <Text style={styles.warningButtonText}>{busyAction === `return-${activeSelected.id}` ? 'Returning...' : 'Return for correction'}</Text>
-                </Pressable>
-                <Pressable style={styles.dangerButton} onPress={() => handleReject(selectedTimesheet!)} disabled={busyAction === `reject-${activeSelected.id}` || Boolean(busyAction)}>
-                  <Text style={styles.dangerButtonText}>{busyAction === `reject-${activeSelected.id}` ? 'Rejecting...' : 'Reject'}</Text>
-                </Pressable>
-              </View>
+                  <View style={styles.detailActions}>
+                    <Pressable style={styles.secondaryButton} onPress={handleSaveCompanyNote} disabled={busyAction === `note-${activeSelected.id}` || Boolean(busyAction)}>
+                      <Text style={styles.secondaryButtonText}>{busyAction === `note-${activeSelected.id}` ? 'Saving...' : 'Save review details'}</Text>
+                    </Pressable>
+                    <Pressable style={styles.primaryButton} onPress={() => handleApprove(selectedTimesheet!)} disabled={busyAction === `approve-${activeSelected.id}` || Boolean(busyAction)}>
+                      <Text style={styles.primaryButtonText}>{busyAction === `approve-${activeSelected.id}` ? 'Approving...' : 'Approve'}</Text>
+                    </Pressable>
+                    <Pressable style={styles.warningButton} onPress={() => handleReturn(selectedTimesheet!)} disabled={busyAction === `return-${activeSelected.id}` || Boolean(busyAction)}>
+                      <Text style={styles.warningButtonText}>{busyAction === `return-${activeSelected.id}` ? 'Returning...' : 'Return for correction'}</Text>
+                    </Pressable>
+                    <Pressable style={styles.dangerButton} onPress={() => handleReject(selectedTimesheet!)} disabled={busyAction === `reject-${activeSelected.id}` || Boolean(busyAction)}>
+                      <Text style={styles.dangerButtonText}>{busyAction === `reject-${activeSelected.id}` ? 'Rejecting...' : 'Reject'}</Text>
+                    </Pressable>
+                  </View>
+                </>
+              ) : (
+                <View style={styles.workflowStatePanel}>
+                  <Text style={styles.workflowStatePanelText}>
+                    {getWorkflowStateMessage(activeSelected.approvalStatus)}
+                  </Text>
+                </View>
+              )}
             </>
           ) : (
             <Text style={styles.emptyText}>Select a shift row to review guard hours and record an approval decision.</Text>
@@ -1412,4 +1437,7 @@ const styles = StyleSheet.create({
   sendSubmitText: { color: '#fff', fontWeight: '800', fontSize: 14 },
   sendCancelButton: { flex: 1, backgroundColor: colors.pendingSurface, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
   sendCancelText: { color: colors.primaryNavy, fontWeight: '700', fontSize: 14 },
+
+  workflowStatePanel: { backgroundColor: colors.pendingSurface, borderRadius: 14, padding: 16, marginTop: 8 },
+  workflowStatePanelText: { color: colors.primaryNavy, fontSize: 14, fontWeight: '600', lineHeight: 20 },
 });
