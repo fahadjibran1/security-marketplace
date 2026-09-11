@@ -33,7 +33,7 @@ export class ClientWeeklyApprovalRequest {
   @Column({ type: 'date' })
   weekEnding!: string;
 
-  @Column({ type: 'enum', enum: ClientWeeklyApprovalStatus, default: ClientWeeklyApprovalStatus.PENDING_APPROVAL })
+  @Column({ type: 'enum', enum: ClientWeeklyApprovalStatus, enumName: 'client_weekly_approval_status_enum', default: ClientWeeklyApprovalStatus.PENDING_APPROVAL })
   status!: ClientWeeklyApprovalStatus;
 
   @Column({ type: 'int', default: 1 })

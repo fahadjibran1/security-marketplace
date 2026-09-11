@@ -35,7 +35,7 @@ export class ClientShiftDispute {
   @Column({ type: 'timestamptz', default: () => 'now()' })
   disputedAt!: Date;
 
-  @Column({ type: 'enum', enum: ClientShiftDisputeStatus, default: ClientShiftDisputeStatus.OPEN })
+  @Column({ type: 'enum', enum: ClientShiftDisputeStatus, enumName: 'client_shift_dispute_status_enum', default: ClientShiftDisputeStatus.OPEN })
   status!: ClientShiftDisputeStatus;
 
   @Column({ type: 'text', nullable: true })
