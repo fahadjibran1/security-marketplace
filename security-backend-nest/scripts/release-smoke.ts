@@ -1,4 +1,6 @@
 import { equal, ok } from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { BadRequestException, ExecutionContext, ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { getMetadataArgsStorage } from 'typeorm';
@@ -935,6 +937,15 @@ async function testInvoiceBatchRejectsTimesheetWithNoApprovedDuration() {
   equal(persisted.billingStatus, 'uninvoiced', 'Rejected invoice creation must not change billing status');
 }
 
+function assertChainIncludesFinancialConcurrency() {
+  const pkg = JSON.parse(readFileSync(resolve(__dirname, '..', 'package.json'), 'utf8')) as Record<string, Record<string, string>>;
+  const releaseChain: string = pkg.scripts['test:release'] ?? '';
+  ok(
+    releaseChain.includes('financial-concurrency.spec.ts'),
+    'I2. test:release includes financial concurrency regression harness',
+  );
+}
+
 async function main() {
   await testActiveJwtUsesCurrentDatabaseStatus();
   await testSuspendedJwtIsRejectedImmediately();
@@ -970,13 +981,14 @@ async function main() {
   assertColumnExcluded(ClientPortalUser, 'passwordHash', 'ClientPortalUser.passwordHash');
   assertColumnExcluded(Site, 'attendanceNfcTag', 'Site.attendanceNfcTag');
   assertColumnExcluded(AttendanceEvent, 'nfcTag', 'AttendanceEvent.nfcTag');
+  assertChainIncludesFinancialConcurrency();
 
   console.log(
     JSON.stringify({
       event: 'release_smoke_passed',
-      tests: 34,
+      tests: 35,
       scope:
-        'auth-registration-secret-exposure-RB006-tenant-isolation-RB007-payroll-RB007B-billing-and-M1-admin-timesheet-integrity',
+        'auth-registration-secret-exposure-RB006-tenant-isolation-RB007-payroll-RB007B-billing-and-M1-admin-timesheet-integrity-financial-concurrency-chain-inclusion',
     }),
   );
 }
