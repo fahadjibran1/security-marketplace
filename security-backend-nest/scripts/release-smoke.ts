@@ -1,4 +1,6 @@
 import { equal, ok } from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { BadRequestException, ExecutionContext, ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { getMetadataArgsStorage } from 'typeorm';
@@ -837,12 +839,30 @@ function buildInvoiceBatchHarness(seedTimesheets: any[]) {
   };
   const clientRepo = { findOne: async ({ where }: any) => ({ id: where.id, company: { id: where.company.id }, name: 'Test Client' }) };
   const paymentRecordRepo = {};
+  // P1H: mock repos for ClientWeeklyApprovalLine and ClientWeeklyApprovalRequest
+  const approvalLineRepo = {};
+  const approvalRequestRepo = {};
   const companyService = { findByUserId: async () => ({ id: 501 }) };
   const contractPricingService = buildContractPricingService();
   const auditLogService = { log: async () => undefined };
   const dataSource = {
     transaction: async (work: (manager: any) => Promise<any>) => work({
-      query: async () => [],
+      // P1H: return client-approved lines for all seeded timesheet IDs so the
+      // assertClientApprovedLinesExist gate passes in the harness, and return
+      // empty arrays for the post-invoice lock-check queries.
+      query: async (sql: string, params?: any[]) => {
+        if (sql.includes('client_weekly_approval_lines') && sql.includes('approvedHoursAtSubmission')) {
+          // assertClientApprovedLinesExist — return a row per requested timesheet ID
+          const ids: number[] = params?.[0] ?? [];
+          return ids.map((id) => ({
+            timesheetId: id,
+            approvedHoursAtSubmission: '3.92',
+            requestStatus: 'client_approved',
+          }));
+        }
+        // lockApprovedRequestsIfFullyIncluded queries — return empty to skip locking
+        return [];
+      },
       getRepository: (entity: any) => entity.name === 'Timesheet'
         ? timesheetRepo
         : entity.name === 'Client'
@@ -856,6 +876,8 @@ function buildInvoiceBatchHarness(seedTimesheets: any[]) {
     timesheetRepo as any,
     clientRepo as any,
     paymentRecordRepo as any,
+    approvalLineRepo as any,
+    approvalRequestRepo as any,
     companyService as any,
     contractPricingService as any,
     auditLogService as any,
@@ -915,6 +937,15 @@ async function testInvoiceBatchRejectsTimesheetWithNoApprovedDuration() {
   equal(persisted.billingStatus, 'uninvoiced', 'Rejected invoice creation must not change billing status');
 }
 
+function assertChainIncludesFinancialConcurrency() {
+  const pkg = JSON.parse(readFileSync(resolve(__dirname, '..', 'package.json'), 'utf8')) as Record<string, Record<string, string>>;
+  const releaseChain: string = pkg.scripts['test:release'] ?? '';
+  ok(
+    releaseChain.includes('financial-concurrency.spec.ts'),
+    'I2. test:release includes financial concurrency regression harness',
+  );
+}
+
 async function main() {
   await testActiveJwtUsesCurrentDatabaseStatus();
   await testSuspendedJwtIsRejectedImmediately();
@@ -950,13 +981,14 @@ async function main() {
   assertColumnExcluded(ClientPortalUser, 'passwordHash', 'ClientPortalUser.passwordHash');
   assertColumnExcluded(Site, 'attendanceNfcTag', 'Site.attendanceNfcTag');
   assertColumnExcluded(AttendanceEvent, 'nfcTag', 'AttendanceEvent.nfcTag');
+  assertChainIncludesFinancialConcurrency();
 
   console.log(
     JSON.stringify({
       event: 'release_smoke_passed',
-      tests: 34,
+      tests: 35,
       scope:
-        'auth-registration-secret-exposure-RB006-tenant-isolation-RB007-payroll-RB007B-billing-and-M1-admin-timesheet-integrity',
+        'auth-registration-secret-exposure-RB006-tenant-isolation-RB007-payroll-RB007B-billing-and-M1-admin-timesheet-integrity-financial-concurrency-chain-inclusion',
     }),
   );
 }

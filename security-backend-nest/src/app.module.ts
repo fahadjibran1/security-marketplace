@@ -41,6 +41,7 @@ import { buildNestTypeOrmOptions } from './database/typeorm.config';
 import { validateRuntimeEnv } from './config/runtime-env';
 import { ScreeningModule } from './screening/screening.module';
 import { GuardPersonnelModule } from './guard-personnel/guard-personnel.module';
+import { ClientWeeklyApprovalModule } from './client-weekly-approval/client-weekly-approval.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, validate: validateRuntimeEnv }),
@@ -101,6 +102,7 @@ import { GuardPersonnelModule } from './guard-personnel/guard-personnel.module';
     CoverageModule,
     FinanceModule,
     GuardPersonnelModule,
+    ClientWeeklyApprovalModule,
   ],
   controllers: [HealthController],
 })

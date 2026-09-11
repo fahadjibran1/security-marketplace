@@ -650,6 +650,8 @@ export interface Timesheet {
   reviewedByUserId?: number | null;
   rejectionReason?: string | null;
   updatedAt?: string;
+  companyApprovedStartAt?: string | null;
+  companyApprovedEndAt?: string | null;
   shift?: Shift;
   guard?: GuardProfile;
   company?: CompanyProfile;
@@ -1482,6 +1484,118 @@ export interface AuditLog {
   createdAt: string;
   company?: CompanyProfile | null;
   user?: UserSummary | null;
+}
+
+// P1H — Weekly Client Timesheet Approval
+export type ClientWeeklyApprovalStatus = 'pending_approval' | 'client_approved' | 'disputed' | 'resolved' | 'locked';
+export type ClientShiftDisputeStatus = 'open' | 'resolved' | 'withdrawn';
+
+export interface ClientWeeklyApprovalSummary {
+  id: number;
+  siteId: number;
+  siteName: string;
+  weekCommencing: string;
+  weekEnding: string;
+  status: ClientWeeklyApprovalStatus;
+  totalApprovedHours: number | null;
+  clientSubmissionNote: string | null;
+  submittedAt: string | null;
+  clientRespondedAt: string | null;
+  currentVersion: number;
+}
+
+export interface ClientWeeklyApprovalLine {
+  id: number;
+  timesheetId: number;
+  guardName: string | null;
+  shiftDate: string;
+  scheduledStart: string | null;
+  scheduledEnd: string | null;
+  actualCheckIn: string | null;
+  actualCheckOut: string | null;
+  verifiedMinutes: number | null;
+  verifiedHours: number | null;
+  approvedHoursAtSubmission: number;
+  hasOverride: boolean;
+  companyApprovedStart?: string | null;
+  companyApprovedEnd?: string | null;
+}
+
+export interface ClientShiftDisputeSummary {
+  id: number;
+  timesheetId: number;
+  disputeReason: string;
+  status: ClientShiftDisputeStatus;
+  resolutionMessage: string | null;
+  disputedAt: string;
+  resolvedAt: string | null;
+}
+
+export interface ClientWeeklyApprovalDetail extends ClientWeeklyApprovalSummary {
+  lines: ClientWeeklyApprovalLine[];
+  disputes: ClientShiftDisputeSummary[];
+  weekTotalApprovedHours: number;
+}
+
+export interface CompanyApprovalLine {
+  id: number;
+  guardName: string | null;
+  shiftDate: string;
+  scheduledStart: string | null;
+  scheduledEnd: string | null;
+  actualCheckIn: string | null;
+  actualCheckOut: string | null;
+  verifiedMinutes: number | null;
+  verifiedHours?: number | null;
+  approvedHoursAtSubmission: number;
+  hasOverride: boolean;
+  companyApprovedStartAtSubmission?: string | null;
+  companyApprovedEndAtSubmission?: string | null;
+  timesheet?: {
+    hoursWorked?: number;
+    overrideReason?: string | null;
+    scheduledStartAt?: string | null;
+    scheduledEndAt?: string | null;
+    companyApprovedStartAt?: string | null;
+    companyApprovedEndAt?: string | null;
+  };
+}
+
+export interface CompanyApprovalDetail extends ClientWeeklyApprovalSummary {
+  lines: CompanyApprovalLine[];
+  disputes: ClientShiftDisputeSummary[];
+  weekTotalApprovedHours: number;
+}
+
+export interface EligibleTimesheetRow {
+  id: number;
+  hoursWorked: number;
+  approvedHours?: number | null;
+  approvedMinutes?: number | null;
+  scheduledStartAt?: string | null;
+  scheduledEndAt?: string | null;
+  actualCheckInAt?: string | null;
+  actualCheckOutAt?: string | null;
+  overrideReason?: string | null;
+  approvalStatus: string;
+  companyApprovedStartAt?: string | null;
+  companyApprovedEndAt?: string | null;
+  guard?: { id: number; fullName?: string } | null;
+  shift?: { start?: string; end?: string; site?: { id: number; name?: string }; guard?: { fullName?: string } } | null;
+}
+
+export interface CreateWeeklyApprovalPayload {
+  clientId: number;
+  siteId: number;
+  weekCommencing: string;
+  timesheetIds: number[];
+  companyInternalNote?: string;
+  clientSubmissionNote?: string;
+}
+
+export interface ClientDisputeItem {
+  timesheetId: number;
+  disputeReason: string;
 }
 
 export type ScreeningStatus = 'NOT_STARTED'|'IN_PROGRESS'|'READY_FOR_REVIEW'|'UNDER_REVIEW'|'VETTED'|'REQUIRES_ATTENTION'|'REJECTED'|'EXPIRED';

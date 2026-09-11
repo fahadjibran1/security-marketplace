@@ -189,7 +189,9 @@ export class TimesheetService {
       dto.approvedHours === undefined &&
       dto.approvedMinutes === undefined &&
       dto.overrideReason === undefined &&
-      dto.rejectionReason === undefined;
+      dto.rejectionReason === undefined &&
+      dto.companyApprovedStartAt === undefined &&
+      dto.companyApprovedEndAt === undefined;
     if (approvedNoteOnlyUpdate) {
       const trimmedCompanyNote = dto.companyNote?.trim();
       timesheet.companyNote = trimmedCompanyNote ? trimmedCompanyNote : null;
@@ -208,6 +210,37 @@ export class TimesheetService {
           rejectionReason: saved.rejectionReason,
           reviewedAt: saved.reviewedAt,
           reviewedByUserId: saved.reviewedByUserId,
+        },
+      });
+      return this.applyDerivedFinancials(saved);
+    }
+
+    // Approved timesheets allow updating companyApprovedStartAt/EndAt before weekly client submission.
+    // This is a separate operation from internal approval — the company sets client-facing approved times.
+    const approvedTimeUpdate =
+      currentStatus === TimesheetStatus.APPROVED &&
+      (dto.companyApprovedStartAt !== undefined || dto.companyApprovedEndAt !== undefined) &&
+      dto.approvalStatus === undefined &&
+      dto.rejectionReason === undefined;
+    if (approvedTimeUpdate) {
+      if (dto.companyApprovedStartAt === null && dto.companyApprovedEndAt === null) {
+        this.clearApprovalDuration(timesheet);
+      } else {
+        this.applyApprovalDuration(timesheet, dto, userId);
+      }
+      const saved = await this.timesheetRepo.save(timesheet);
+      await this.auditLogService.log({
+        company,
+        user: { id: userId },
+        action: 'timesheet.company_approved_times_updated',
+        entityType: 'timesheet',
+        entityId: saved.id,
+        beforeData,
+        afterData: {
+          companyApprovedStartAt: saved.companyApprovedStartAt,
+          companyApprovedEndAt: saved.companyApprovedEndAt,
+          approvedMinutes: saved.approvedMinutes,
+          overrideReason: saved.overrideReason,
         },
       });
       return this.applyDerivedFinancials(saved);
@@ -558,7 +591,23 @@ export class TimesheetService {
         ? null
         : Math.round(Number(timesheet.verifiedMinutes));
 
-    const requestedMinutes = this.resolveRequestedApprovedMinutes(dto, verifiedMinutes);
+    let requestedMinutes: number | null;
+
+    if (dto.companyApprovedStartAt && dto.companyApprovedEndAt) {
+      const startMs = new Date(dto.companyApprovedStartAt).getTime();
+      const endMs = new Date(dto.companyApprovedEndAt).getTime();
+      if (isNaN(startMs) || isNaN(endMs)) {
+        throw new BadRequestException('Invalid companyApprovedStartAt or companyApprovedEndAt timestamp.');
+      }
+      if (endMs <= startMs) {
+        throw new BadRequestException('Approved end time must be after approved start time.');
+      }
+      requestedMinutes = Math.round((endMs - startMs) / 60000);
+      timesheet.companyApprovedStartAt = new Date(dto.companyApprovedStartAt);
+      timesheet.companyApprovedEndAt = new Date(dto.companyApprovedEndAt);
+    } else {
+      requestedMinutes = this.resolveRequestedApprovedMinutes(dto, verifiedMinutes);
+    }
 
     if (requestedMinutes === null) {
       throw new BadRequestException(
@@ -610,6 +659,8 @@ export class TimesheetService {
     timesheet.overrideReason = null;
     timesheet.overrideBy = null;
     timesheet.overrideAt = null;
+    timesheet.companyApprovedStartAt = null;
+    timesheet.companyApprovedEndAt = null;
   }
 
   private async applyPayrollUpdate({

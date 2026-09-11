@@ -15,6 +15,8 @@ import {
 import { CreateInvoiceBatchDto } from './dto/create-invoice-batch.dto';
 import { CreatePaymentRecordDto } from './dto/create-payment-record.dto';
 import { InvoiceBatch, InvoiceBatchStatus } from './entities/invoice-batch.entity';
+import { ClientWeeklyApprovalLine } from '../client-weekly-approval/entities/client-weekly-approval-line.entity';
+import { ClientWeeklyApprovalRequest, ClientWeeklyApprovalStatus } from '../client-weekly-approval/entities/client-weekly-approval-request.entity';
 
 @Injectable()
 export class InvoiceBatchService {
@@ -23,6 +25,8 @@ export class InvoiceBatchService {
     @InjectRepository(Timesheet) private readonly timesheetRepo: Repository<Timesheet>,
     @InjectRepository(Client) private readonly clientRepo: Repository<Client>,
     @InjectRepository(PaymentRecord) private readonly paymentRecordRepo: Repository<PaymentRecord>,
+    @InjectRepository(ClientWeeklyApprovalLine) private readonly approvalLineRepo: Repository<ClientWeeklyApprovalLine>,
+    @InjectRepository(ClientWeeklyApprovalRequest) private readonly approvalRequestRepo: Repository<ClientWeeklyApprovalRequest>,
     private readonly companyService: CompanyService,
     private readonly contractPricingService: ContractPricingService,
     private readonly auditLogService: AuditLogService,
@@ -66,6 +70,17 @@ export class InvoiceBatchService {
       }
       lockedTimesheets.forEach((timesheet) => this.assertTimesheetInvoiceEligible(timesheet, client.id));
 
+      // P1H gate: every timesheet must have a CLIENT_APPROVED (or LOCKED) active approval line
+      const approvalLineMap = await this.assertClientApprovedLinesExist(manager, uniqueIds);
+
+      // Set clientBilledHoursSnapshot in memory so ContractPricingService uses client-approved hours
+      lockedTimesheets.forEach((timesheet) => {
+        const line = approvalLineMap.get(timesheet.id);
+        if (line) {
+          (timesheet as any).clientBilledHoursSnapshot = Number(line.approvedHoursAtSubmission);
+        }
+      });
+
       const batch = transactionalBatchRepo.create({
         company,
         client,
@@ -85,7 +100,11 @@ export class InvoiceBatchService {
       const savedBatch = await transactionalBatchRepo.save(batch);
       await this.contractPricingService.applyFinancials(lockedTimesheets);
       lockedTimesheets.forEach((timesheet) => {
-        timesheet.approvedHoursSnapshot = timesheet.approvedHoursSnapshot ?? this.getApprovedHours(timesheet)!;
+        // approvedHoursSnapshot stores the payroll-authoritative duration (not client-billed)
+        timesheet.approvedHoursSnapshot = timesheet.approvedHoursSnapshot
+          ?? (timesheet.approvedMinutes != null ? Number(timesheet.approvedMinutes) / 60
+             : timesheet.approvedHours != null ? Number(timesheet.approvedHours)
+             : null);
         timesheet.billingRateSnapshot = timesheet.billingRateSnapshot ?? this.getBillingRate(timesheet);
         timesheet.invoiceBatch = savedBatch;
         timesheet.billingStatus = TimesheetBillingStatus.INCLUDED;
@@ -93,6 +112,10 @@ export class InvoiceBatchService {
         timesheet.invoicePaidAt = null;
       });
       await transactionalTimesheetRepo.save(lockedTimesheets);
+
+      // P1H: lock the weekly approval request once all its active lines are invoiced
+      await this.lockApprovedRequestsIfFullyIncluded(manager, approvalLineMap, company, userId);
+
       return { client, savedBatch, timesheets: lockedTimesheets };
     });
 
@@ -554,6 +577,81 @@ export class InvoiceBatchService {
       `SELECT "id" FROM "timesheets" WHERE "id" = ANY($1::int[]) AND "companyId" = $2 ORDER BY "id" FOR UPDATE`,
       [ids, companyId],
     );
+  }
+
+  /**
+   * P1H: Assert that every timesheet has an active (non-superseded) approval line
+   * belonging to a CLIENT_APPROVED or LOCKED request. Returns a map of timesheetId
+   * to line for clientBilledHoursSnapshot population.
+   */
+  private async assertClientApprovedLinesExist(
+    manager: { query: (sql: string, parameters?: unknown[]) => Promise<Array<{ timesheetId: number; approvedHoursAtSubmission: string; requestStatus: string }>> },
+    timesheetIds: number[],
+  ): Promise<Map<number, { approvedHoursAtSubmission: string }>> {
+    const rows = await manager.query(
+      `SELECT l."timesheetId", l."approvedHoursAtSubmission", r."status" AS "requestStatus"
+       FROM "client_weekly_approval_lines" l
+       JOIN "client_weekly_approval_requests" r ON r.id = l."weeklyApprovalRequestId"
+       WHERE l."timesheetId" = ANY($1::int[]) AND l."superseded" = FALSE`,
+      [timesheetIds],
+    );
+
+    const lineMap = new Map<number, { approvedHoursAtSubmission: string }>();
+    for (const row of rows) {
+      if (row.requestStatus === ClientWeeklyApprovalStatus.CLIENT_APPROVED || row.requestStatus === ClientWeeklyApprovalStatus.LOCKED) {
+        lineMap.set(row.timesheetId, { approvedHoursAtSubmission: row.approvedHoursAtSubmission });
+      }
+    }
+
+    const missing = timesheetIds.filter((id) => !lineMap.has(id));
+    if (missing.length > 0) {
+      throw new ForbiddenException(
+        `Timesheets [${missing.join(', ')}] have not been client-approved. Obtain client approval before invoicing.`,
+      );
+    }
+
+    return lineMap;
+  }
+
+  /**
+   * P1H: After timesheets are included in a batch, check if the associated
+   * approval request(s) should be LOCKED (all active lines now in a batch).
+   */
+  private async lockApprovedRequestsIfFullyIncluded(
+    manager: { query: (sql: string, parameters?: unknown[]) => Promise<Array<Record<string, unknown>>> },
+    approvalLineMap: Map<number, { approvedHoursAtSubmission: string }>,
+    _company: { id: number },
+    _userId: number,
+  ): Promise<void> {
+    if (approvalLineMap.size === 0) return;
+
+    // Get unique request IDs from these lines
+    const rows = await manager.query(
+      `SELECT DISTINCT l."weeklyApprovalRequestId" AS id
+       FROM "client_weekly_approval_lines" l
+       WHERE l."timesheetId" = ANY($1::int[]) AND l."superseded" = FALSE`,
+      [Array.from(approvalLineMap.keys())],
+    );
+    const requestIds: number[] = rows.map((r) => r.id as number);
+
+    for (const requestId of requestIds) {
+      // Check if any active line in this request is still uninvoiced
+      const uninvoicedCount = await manager.query(
+        `SELECT count(*)::int AS cnt
+         FROM "client_weekly_approval_lines" l
+         JOIN "timesheets" t ON t.id = l."timesheetId"
+         WHERE l."weeklyApprovalRequestId" = $1 AND l."superseded" = FALSE
+           AND t."billingStatus" != 'included' AND t."billingStatus" != 'invoiced'`,
+        [requestId],
+      );
+      const cnt = uninvoicedCount[0] ? Number(uninvoicedCount[0].cnt) : 1;
+      if (cnt === 0) {
+        await manager.query(
+          `UPDATE "client_weekly_approval_requests" SET "status" = $1, "updatedAt" = now() WHERE id = $2`,
+          [ClientWeeklyApprovalStatus.LOCKED, requestId],
+        );
+      }
+    }
   }
 
   private getTimesheetClient(timesheet: Timesheet) {

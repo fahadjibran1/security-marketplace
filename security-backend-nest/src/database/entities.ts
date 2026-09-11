@@ -35,6 +35,9 @@ import { PayrollBatch } from '../payroll-batch/entities/payroll-batch.entity';
 import { PayRuleConfig } from '../pay-rule/entities/pay-rule-config.entity';
 import { User } from '../user/entities/user.entity';
 import { GuardScreening, ScreeningAddress, ScreeningConsent, ScreeningEvidence, ScreeningException, ScreeningHistory, ScreeningReference } from '../screening/entities/screening.entities';
+import { ClientWeeklyApprovalRequest } from '../client-weekly-approval/entities/client-weekly-approval-request.entity';
+import { ClientWeeklyApprovalLine } from '../client-weekly-approval/entities/client-weekly-approval-line.entity';
+import { ClientShiftDispute } from '../client-weekly-approval/entities/client-shift-dispute.entity';
 
 export const appEntities = [
   AttendanceEvent,
@@ -80,4 +83,7 @@ export const appEntities = [
   ScreeningEvidence,
   ScreeningConsent,
   ScreeningException,
+  ClientWeeklyApprovalRequest,
+  ClientWeeklyApprovalLine,
+  ClientShiftDispute,
 ];

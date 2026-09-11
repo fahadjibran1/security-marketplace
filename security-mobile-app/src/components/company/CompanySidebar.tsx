@@ -177,6 +177,8 @@ function getNavIcon(id: string) {
       return '🕒';
     case 'recruitment':
       return '🧲';
+    case 'weekly-approvals':
+      return '📋';
     case 'timesheets':
       return '⏱️';
     case 'payroll':

@@ -17,6 +17,8 @@ import { InvoiceBatch } from '../src/invoice-batch/entities/invoice-batch.entity
 import { PaymentRecord } from '../src/payment-record/entities/payment-record.entity';
 import { PayrollBatchService } from '../src/payroll-batch/payroll-batch.service';
 import { InvoiceBatchService } from '../src/invoice-batch/invoice-batch.service';
+import { ClientWeeklyApprovalLine } from '../src/client-weekly-approval/entities/client-weekly-approval-line.entity';
+import { ClientWeeklyApprovalRequest, ClientWeeklyApprovalStatus } from '../src/client-weekly-approval/entities/client-weekly-approval-request.entity';
 
 function pairedBarrierCompanyService(company: Company) {
   let calls = 0;
@@ -62,6 +64,8 @@ function makeServices(dataSource: DataSource, company: Company, concurrent = fal
       dataSource.getRepository(Timesheet),
       dataSource.getRepository(Client),
       dataSource.getRepository(PaymentRecord),
+      dataSource.getRepository(ClientWeeklyApprovalLine),
+      dataSource.getRepository(ClientWeeklyApprovalRequest),
       companyService as any,
       contractPricingService as any,
       auditLogService as any,
@@ -117,6 +121,32 @@ async function seed(dataSource: DataSource) {
       billingStatus: TimesheetBillingStatus.UNINVOICED,
     })));
   }
+
+  // P1H: seed CLIENT_APPROVED approval records for invoice-targeted timesheets.
+  // assertClientApprovedLinesExist (added in P1H) gates invoice creation on
+  // every timesheet having an active line belonging to a CLIENT_APPROVED or
+  // LOCKED request. The M2 seed predates P1H and never created these records,
+  // so both concurrent invoice operations threw ForbiddenException before the
+  // FOR UPDATE lock could separate them. Indices 1,5,6,7,9 are used by invoice tests.
+  const approvalRequestRepo = dataSource.getRepository(ClientWeeklyApprovalRequest);
+  const approvalLineRepo = dataSource.getRepository(ClientWeeklyApprovalLine);
+  const approvalRequest = await approvalRequestRepo.save(approvalRequestRepo.create({
+    company, client, site,
+    weekCommencing: '2026-01-01', weekEnding: '2026-01-31',
+    status: ClientWeeklyApprovalStatus.CLIENT_APPROVED,
+    currentVersion: 1,
+  }));
+  for (const idx of [1, 5, 6, 7, 9]) {
+    await approvalLineRepo.save(approvalLineRepo.create({
+      weeklyApprovalRequest: approvalRequest,
+      timesheet: timesheets[idx],
+      approvedHoursAtSubmission: 8,
+      shiftDate: `2026-01-${String(idx + 1).padStart(2, '0')}`,
+      superseded: false,
+      submissionVersion: 1,
+    }));
+  }
+
   return { company, client, timesheets };
 }
 

@@ -70,4 +70,12 @@ export class UpdateTimesheetDto {
   @IsOptional()
   @IsString()
   overrideReason?: string | null;
+
+  @IsOptional()
+  @IsString()
+  companyApprovedStartAt?: string | null;
+
+  @IsOptional()
+  @IsString()
+  companyApprovedEndAt?: string | null;
 }

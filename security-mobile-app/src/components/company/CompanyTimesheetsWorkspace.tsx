@@ -1,17 +1,18 @@
-﻿import * as React from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import * as React from 'react';
+import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { formatApiErrorMessage, updateTimesheet } from '../../services/api';
-import { Timesheet } from '../../types/models';
+import { formatApiErrorMessage, getEligibleTimesheets, submitWeeklyApproval, updateTimesheet } from '../../services/api';
+import { EligibleTimesheetRow, Timesheet } from '../../types/models';
 import { colors } from '../../theme';
+
+type WorkspaceLevel = 'overview' | 'detail';
+type WorkflowStatus = 'all' | 'awaiting-guard' | 'needs-review' | 'ready-for-client' | 'awaiting-client' | 'returned' | 'client-approved' | 'finalised';
 
 type WorkspaceFeedback = {
   tone: 'success' | 'error' | 'info';
   title: string;
   message: string;
 } | null;
-
-type PeriodView = 'week' | 'month';
 
 type CompanyTimesheetsWorkspaceProps = {
   timesheets: Timesheet[];
@@ -45,19 +46,43 @@ type EnrichedTimesheet = {
 
 type GroupedTimesheets = {
   key: string;
+  numericSiteId: number | null;
+  clientId: number | null;
+  clientName: string | null;
   siteName: string;
   periodKey: string;
   periodLabel: string;
+  weekLabel: string;
+  clientSubmissionStatus: string | null;
   rows: EnrichedTimesheet[];
   totals: {
     count: number;
+    guardCount: number;
     claimedHours: number;
     approvedHours: number;
     claimedAmount: number;
     approvedAmount: number;
     pendingCount: number;
     approvedCount: number;
+    rejectedCount: number;
+    reviewedCount: number;
+    returnedCount: number;
+    awaitingGuardCount: number;
+    awaitingCompanyCount: number;
     missingRateCount: number;
+  };
+};
+
+type GuardGroup = {
+  guardId: string;
+  guardName: string;
+  rows: EnrichedTimesheet[];
+  totals: {
+    count: number;
+    claimedHours: number;
+    approvedHours: number;
+    reviewedCount: number;
+    approvedCount: number;
   };
 };
 
@@ -66,10 +91,8 @@ const GBP_CURRENCY = 'GBP';
 
 function getLiteralDateTimeParts(value?: string | null) {
   if (!value) return null;
-
   const match = value.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s](\d{2}):(\d{2})(?::(\d{2}))?)?/);
   if (!match) return null;
-
   return {
     year: match[1],
     month: match[2],
@@ -81,7 +104,6 @@ function getLiteralDateTimeParts(value?: string | null) {
 
 function parseDateValue(value?: string | null) {
   if (!value) return null;
-
   const literalParts = getLiteralDateTimeParts(value);
   if (literalParts) {
     const date = new Date(
@@ -93,7 +115,6 @@ function parseDateValue(value?: string | null) {
     );
     return Number.isNaN(date.getTime()) ? null : date;
   }
-
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? null : date;
 }
@@ -101,34 +122,17 @@ function parseDateValue(value?: string | null) {
 function formatDateLabel(value?: string | null) {
   const date = parseDateValue(value);
   if (!date) return 'Not set';
-  return date.toLocaleDateString(UK_LOCALE, {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-  });
+  return date.toLocaleDateString(UK_LOCALE, { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
 function formatTimeLabel(value?: string | null) {
-  if (!value) {
-    return 'Not set';
-  }
-
-  if (/^\d{2}:\d{2}$/.test(value)) {
-    return value;
-  }
-
+  if (!value) return 'Not set';
+  if (/^\d{2}:\d{2}$/.test(value)) return value;
   const literalParts = getLiteralDateTimeParts(value);
-  if (literalParts?.hour && literalParts?.minute) {
-    return `${literalParts.hour}:${literalParts.minute}`;
-  }
-
+  if (literalParts?.hour && literalParts?.minute) return `${literalParts.hour}:${literalParts.minute}`;
   const date = parseDateValue(value);
   if (!date) return value;
-  return date.toLocaleTimeString(UK_LOCALE, {
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  });
+  return date.toLocaleTimeString(UK_LOCALE, { hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
 function formatDateTimeLabel(value?: string | null) {
@@ -146,36 +150,35 @@ function getDisplayStatus(timesheet: Timesheet) {
 
 function formatStatusLabel(value?: string | null) {
   switch (normalizeStatus(value)) {
-    case 'draft':
-      return 'Draft';
-    case 'submitted':
-      return 'Submitted';
-    case 'approved':
-      return 'Approved';
-    case 'rejected':
-      return 'Rejected';
-    case 'returned':
-      return 'Returned';
-    default:
-      return value
-        ? value.replace(/_/g, ' ').replace(/\b\w/g, (match) => match.toUpperCase())
-        : 'Unknown';
+    case 'draft': return 'Awaiting Guard Submission';
+    case 'submitted': return 'Awaiting Company Review';
+    case 'approved': return 'Reviewed — Approved';
+    case 'rejected': return 'Reviewed — Rejected';
+    case 'returned': return 'Returned to Guard — Awaiting Resubmission';
+    default: return value
+      ? value.replace(/_/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase())
+      : 'Unknown';
+  }
+}
+
+function getWorkflowStateMessage(value?: string | null): string {
+  switch (normalizeStatus(value)) {
+    case 'draft': return 'Awaiting Guard Submission. The Guard must submit this timesheet before Company review.';
+    case 'approved': return 'Company review complete — Approved.';
+    case 'rejected': return 'Company review complete — Rejected.';
+    case 'returned': return 'Returned to Guard. Awaiting Guard Resubmission.';
+    default: return '';
   }
 }
 
 function getStatusPalette(status: string) {
   switch (normalizeStatus(status)) {
-    case 'approved':
-      return { bg: colors.successSurface, text: colors.success };
-    case 'submitted':
-      return { bg: colors.infoSurface, text: colors.info };
-    case 'returned':
-      return { bg: colors.warningSurface, text: colors.warning };
-    case 'rejected':
-      return { bg: colors.dangerSurface, text: colors.danger };
+    case 'approved': return { bg: colors.successSurface, text: colors.success };
+    case 'submitted': return { bg: colors.infoSurface, text: colors.info };
+    case 'returned': return { bg: colors.warningSurface, text: colors.warning };
+    case 'rejected': return { bg: colors.dangerSurface, text: colors.danger };
     case 'draft':
-    default:
-      return { bg: colors.pendingSurface, text: colors.primaryNavySoft };
+    default: return { bg: colors.pendingSurface, text: colors.primaryNavySoft };
   }
 }
 
@@ -192,23 +195,12 @@ function roundCurrency(value: number) {
 }
 
 function formatCurrency(value?: number | null) {
-  if (value === undefined || value === null || !Number.isFinite(Number(value))) {
-    return 'Rate unavailable';
-  }
-
-  return Number(value).toLocaleString(UK_LOCALE, {
-    style: 'currency',
-    currency: GBP_CURRENCY,
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
+  if (value === undefined || value === null || !Number.isFinite(Number(value))) return 'Rate unavailable';
+  return Number(value).toLocaleString(UK_LOCALE, { style: 'currency', currency: GBP_CURRENCY, minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 function formatRate(value?: number | null) {
-  if (value === undefined || value === null || !Number.isFinite(Number(value))) {
-    return 'Rate unavailable';
-  }
-
+  if (value === undefined || value === null || !Number.isFinite(Number(value))) return 'Rate unavailable';
   return `${formatCurrency(value)} / h`;
 }
 
@@ -217,12 +209,10 @@ function getTimesheetRate(timesheet: Timesheet) {
   if (directJobRate !== undefined && directJobRate !== null && Number.isFinite(Number(directJobRate))) {
     return roundCurrency(Number(directJobRate));
   }
-
   const assignmentJobRate = timesheet.shift?.assignment?.job?.hourlyRate;
   if (assignmentJobRate !== undefined && assignmentJobRate !== null && Number.isFinite(Number(assignmentJobRate))) {
     return roundCurrency(Number(assignmentJobRate));
   }
-
   return null;
 }
 
@@ -230,27 +220,17 @@ function getApprovedHoursValue(timesheet: Timesheet) {
   if (timesheet.approvedHours !== undefined && timesheet.approvedHours !== null && Number.isFinite(Number(timesheet.approvedHours))) {
     return Number(timesheet.approvedHours);
   }
-
-  if (normalizeStatus(timesheet.approvalStatus) === 'approved') {
-    return toHours(timesheet.hoursWorked);
-  }
-
+  if (normalizeStatus(timesheet.approvalStatus) === 'approved') return toHours(timesheet.hoursWorked);
   return null;
 }
 
 function getAmountForHours(hours: number | null, rate: number | null) {
-  if (hours === null || rate === null) {
-    return null;
-  }
-
+  if (hours === null || rate === null) return null;
   return roundCurrency(hours * rate);
 }
 
 function formatHoursInput(value?: number | null) {
-  if (value === undefined || value === null || Number.isNaN(Number(value))) {
-    return '';
-  }
-
+  if (value === undefined || value === null || Number.isNaN(Number(value))) return '';
   const normalized = roundHours(Number(value));
   return Number.isInteger(normalized) ? String(normalized) : normalized.toFixed(2);
 }
@@ -292,35 +272,41 @@ function getDayEnd(value: Date) {
   return end;
 }
 
-function getPeriodLabel(value: Date, periodView: PeriodView) {
-  if (periodView === 'month') {
-    return `Month of ${value.toLocaleDateString(UK_LOCALE, {
-      month: 'long',
-      year: 'numeric',
-    })}`;
-  }
-
-  const weekStart = getWeekStart(value);
-  const weekEnd = getWeekEnd(value);
-  return `Week of ${formatDateLabel(weekStart.toISOString())} - ${formatDateLabel(weekEnd.toISOString())}`;
+function getWeekRangeLabel(start: Date): string {
+  const end = getWeekEnd(start);
+  const sDay = start.getDate();
+  const eDay = end.getDate();
+  const eMon = end.toLocaleDateString(UK_LOCALE, { month: 'short' });
+  const yr = end.getFullYear();
+  if (start.getMonth() === end.getMonth()) return `${sDay}–${eDay} ${eMon} ${yr}`;
+  const sMon = start.toLocaleDateString(UK_LOCALE, { month: 'short' });
+  return `${sDay} ${sMon} – ${eDay} ${eMon} ${yr}`;
 }
 
-function getPeriodKey(value: Date, periodView: PeriodView) {
-  if (periodView === 'month') {
-    return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}`;
-  }
+function getPeriodKey(value: Date) {
   return toIsoDateInput(getWeekStart(value));
 }
 
+function getGroupWorkflowStatus(totals: GroupedTimesheets['totals'], clientSubmissionStatus?: string | null): WorkflowStatus {
+  const cs = (clientSubmissionStatus || '').toLowerCase();
+  // Post-submission Client states (week already packaged and sent)
+  if (cs === 'locked') return 'finalised';
+  if (cs === 'client_approved') return 'client-approved';
+  if (cs === 'pending_approval' || cs === 'resolved') return 'awaiting-client';
+  if (cs === 'disputed') return 'returned';
+  // Pre-submission Guard / Company states
+  // 1. Guard must act (draft or returned timesheets awaiting guard)
+  if (totals.awaitingGuardCount > 0) return 'awaiting-guard';
+  // 2. Company must act (submitted timesheets awaiting company review)
+  if (totals.awaitingCompanyCount > 0) return 'needs-review';
+  // 3. All company-reviewed, not yet sent to client
+  if (totals.approvedCount > 0) return 'ready-for-client';
+  return 'needs-review';
+}
+
 function downloadCsv(filename: string, rows: string[][]) {
-  const csv = rows
-    .map((row) => row.map((cell) => `"${String(cell ?? '').replace(/"/g, '""')}"`).join(','))
-    .join('\n');
-
-  if (typeof window === 'undefined' || typeof document === 'undefined') {
-    return false;
-  }
-
+  const csv = rows.map((row) => row.map((cell) => `"${String(cell ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
+  if (typeof window === 'undefined' || typeof document === 'undefined') return false;
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
   const url = window.URL.createObjectURL(blob);
   const link = document.createElement('a');
@@ -334,96 +320,53 @@ function downloadCsv(filename: string, rows: string[][]) {
 }
 
 function sanitizeFilenamePart(value: string) {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 80) || 'export';
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'export';
 }
 
 function getDownloadTimestamp(value = new Date()) {
-  const year = value.getFullYear();
-  const month = String(value.getMonth() + 1).padStart(2, '0');
-  const day = String(value.getDate()).padStart(2, '0');
-  const hours = String(value.getHours()).padStart(2, '0');
-  const minutes = String(value.getMinutes()).padStart(2, '0');
-  const seconds = String(value.getSeconds()).padStart(2, '0');
-  return `${year}${month}${day}-${hours}${minutes}${seconds}`;
+  const y = value.getFullYear();
+  const mo = String(value.getMonth() + 1).padStart(2, '0');
+  const d = String(value.getDate()).padStart(2, '0');
+  const h = String(value.getHours()).padStart(2, '0');
+  const mi = String(value.getMinutes()).padStart(2, '0');
+  const s = String(value.getSeconds()).padStart(2, '0');
+  return `${y}${mo}${d}-${h}${mi}${s}`;
 }
 
 function WebSelect({ value, onChange, options, placeholder }: WebSelectProps) {
   const [isBrowserReady, setIsBrowserReady] = React.useState(false);
-
-  React.useEffect(() => {
-    setIsBrowserReady(typeof document !== 'undefined');
-  }, []);
-
+  React.useEffect(() => { setIsBrowserReady(typeof document !== 'undefined'); }, []);
   if (isBrowserReady) {
     const SelectTag: any = 'select';
     const OptionTag: any = 'option';
-
     return (
-      <SelectTag
-        value={value}
-        onChange={(event: any) => onChange(event.target.value)}
-        style={styles.webSelect}
-        aria-label={placeholder || 'Select an option'}
-      >
-        <OptionTag value="">{placeholder || 'Select an option'}</OptionTag>
-        {options.map((option) => (
-          <OptionTag key={option.value} value={option.value}>
-            {option.label}
-          </OptionTag>
-        ))}
+      <SelectTag value={value} onChange={(e: any) => onChange(e.target.value)} style={styles.webSelect} aria-label={placeholder || 'Select'}>
+        <OptionTag value="">{placeholder || 'Select'}</OptionTag>
+        {options.map((o) => <OptionTag key={o.value} value={o.value}>{o.label}</OptionTag>)}
       </SelectTag>
     );
   }
-
-  return (
-    <TextInput
-      value={value}
-      onChangeText={onChange}
-      style={styles.input}
-      placeholder={placeholder || 'Select an option'}
-      placeholderTextColor="#64748b"
-    />
-  );
+  return <TextInput value={value} onChangeText={onChange} style={styles.input} placeholder={placeholder} placeholderTextColor="#64748b" />;
 }
 
-function PeriodToggle({
-  value,
-  onChange,
-}: {
-  value: PeriodView;
-  onChange: (value: PeriodView) => void;
-}) {
+function KpiCard({ label, value, accent }: { label: string; value: string | number; accent?: boolean }) {
   return (
-    <View style={styles.segmentedControl}>
-      {(['week', 'month'] as PeriodView[]).map((option) => {
-        const active = value === option;
-        return (
-          <Pressable
-            key={option}
-            style={[styles.segmentedOption, active && styles.segmentedOptionActive]}
-            onPress={() => onChange(option)}
-          >
-            <Text style={[styles.segmentedOptionText, active && styles.segmentedOptionTextActive]}>
-              {option === 'week' ? 'Week' : 'Month'}
-            </Text>
-          </Pressable>
-        );
-      })}
+    <View style={[styles.kpiCard, accent && styles.kpiCardAccent]}>
+      <Text style={styles.kpiValue}>{String(value)}</Text>
+      <Text style={styles.kpiLabel}>{label}</Text>
     </View>
   );
 }
 
-function SummaryCard({ label, value }: { label: string; value: string }) {
-  return (
-    <View style={styles.summaryCard}>
-      <Text style={styles.summaryLabel}>{label}</Text>
-      <Text style={styles.summaryValue}>{value}</Text>
-    </View>
-  );
+function WorkflowBadge({ status }: { status: WorkflowStatus }) {
+  if (status === 'awaiting-guard') return <View style={styles.badgeAwaitingGuard}><Text style={styles.badgeText}>Awaiting Guard</Text></View>;
+  if (status === 'needs-review') return <View style={styles.badgeNeedsReview}><Text style={styles.badgeText}>Awaiting Company Review</Text></View>;
+  if (status === 'ready-for-client') return <View style={styles.badgeReady}><Text style={styles.badgeText}>Ready for Client</Text></View>;
+  if (status === 'awaiting-client') return <View style={styles.badgeAwaitingClient}><Text style={styles.badgeText}>Awaiting Client Approval</Text></View>;
+  if (status === 'returned') return <View style={styles.badgeReturned}><Text style={styles.badgeText}>Returned for Correction</Text></View>;
+  if (status === 'client-approved') return <View style={styles.badgeClientApproved}><Text style={styles.badgeText}>Client Approved</Text></View>;
+  if (status === 'finalised') return <View style={styles.badgeFinalised}><Text style={styles.badgeText}>Finalised</Text></View>;
+  return null;
 }
 
 export function CompanyTimesheetsWorkspace({
@@ -431,20 +374,55 @@ export function CompanyTimesheetsWorkspace({
   refreshing,
   onRefresh,
 }: CompanyTimesheetsWorkspaceProps) {
+  // Navigation
+  const [level, setLevel] = React.useState<WorkspaceLevel>('overview');
+  const [activeGroupKey, setActiveGroupKey] = React.useState<string | null>(null);
+
+  // Filters
   const [siteFilter, setSiteFilter] = React.useState('');
-  const [statusFilter, setStatusFilter] = React.useState('submitted');
-  const [guardFilter, setGuardFilter] = React.useState('');
-  const [startDate, setStartDate] = React.useState('');
-  const [endDate, setEndDate] = React.useState('');
-  const [searchTerm, setSearchTerm] = React.useState('');
-  const [periodView, setPeriodView] = React.useState<PeriodView>('week');
-  const [feedback, setFeedback] = React.useState<WorkspaceFeedback>(null);
+  const [workflowStatusFilter, setWorkflowStatusFilter] = React.useState<WorkflowStatus>('all');
+  const [weekOffset, setWeekOffset] = React.useState(0);
+
+  // Review state
   const [selectedTimesheetId, setSelectedTimesheetId] = React.useState<number | null>(null);
   const [companyNote, setCompanyNote] = React.useState('');
   const [approvedHoursInput, setApprovedHoursInput] = React.useState('');
   const [busyAction, setBusyAction] = React.useState<string | null>(null);
-  const [collapsedGroupKeys, setCollapsedGroupKeys] = React.useState<Record<string, boolean>>({});
+  const [feedback, setFeedback] = React.useState<WorkspaceFeedback>(null);
 
+  // Guard-level collapse in detail view
+  const [collapsedGuardKeys, setCollapsedGuardKeys] = React.useState<Record<string, boolean>>({});
+
+  // Send-to-client flow
+  const [sendGroup, setSendGroup] = React.useState<{
+    siteId: number;
+    siteName: string;
+    weekCommencing: string;
+    clientId: number;
+    clientName: string;
+    unreviewedCount: number;
+    totalCount: number;
+  } | null>(null);
+  const [sendEligible, setSendEligible] = React.useState<EligibleTimesheetRow[]>([]);
+  const [sendLoading, setSendLoading] = React.useState(false);
+  const [sendError, setSendError] = React.useState<string | null>(null);
+  const [sendSelectedIds, setSendSelectedIds] = React.useState<Set<number>>(new Set());
+  const [sendExclusionReasons, setSendExclusionReasons] = React.useState<Record<number, string>>({});
+  const [sendClientNote, setSendClientNote] = React.useState('');
+  const [sendSubmitLoading, setSendSubmitLoading] = React.useState(false);
+  const [sendSubmitError, setSendSubmitError] = React.useState<string | null>(null);
+
+  // ── DERIVED: active week ─────────────────────────────────────────────────
+  const baseWeekStart = React.useMemo(() => getWeekStart(new Date()), []);
+  const activeWeekStart = React.useMemo(() => {
+    const d = new Date(baseWeekStart);
+    d.setDate(d.getDate() + weekOffset * 7);
+    return d;
+  }, [baseWeekStart, weekOffset]);
+
+  const weekNavLabel = React.useMemo(() => getWeekRangeLabel(activeWeekStart), [activeWeekStart]);
+
+  // ── ENRICHED TIMESHEETS ──────────────────────────────────────────────────
   const enrichedTimesheets = React.useMemo<EnrichedTimesheet[]>(() => {
     return timesheets
       .map((timesheet) => {
@@ -452,15 +430,13 @@ export function CompanyTimesheetsWorkspace({
         const siteName = timesheet.shift?.site?.name || timesheet.shift?.siteName || `Site ${siteId}`;
         const guardId = String(timesheet.guard?.id ?? timesheet.guardId ?? 'unknown');
         const guardName = timesheet.guard?.fullName || `Guard #${guardId}`;
-        const shiftDate =
-          parseDateValue(timesheet.scheduledStartAt || timesheet.shift?.start || timesheet.createdAt) || new Date();
+        const shiftDate = parseDateValue(timesheet.scheduledStartAt || timesheet.shift?.start || timesheet.createdAt) || new Date();
         const scheduledStart = timesheet.scheduledStartAt || timesheet.shift?.start || null;
         const scheduledEnd = timesheet.scheduledEndAt || timesheet.shift?.end || null;
         const displayStatus = getDisplayStatus(timesheet);
         const hourlyRate = getTimesheetRate(timesheet);
         const claimedAmount = getAmountForHours(toHours(timesheet.hoursWorked), hourlyRate);
         const approvedAmount = getAmountForHours(getApprovedHoursValue(timesheet), hourlyRate);
-
         return {
           timesheet,
           siteId,
@@ -468,16 +444,7 @@ export function CompanyTimesheetsWorkspace({
           guardId,
           guardName,
           displayStatus,
-          searchText: [
-            siteName,
-            guardName,
-            timesheet.id,
-            timesheet.shiftId,
-            timesheet.guardNote || '',
-            timesheet.companyNote || '',
-          ]
-            .join(' ')
-            .toLowerCase(),
+          searchText: [siteName, guardName, timesheet.id, timesheet.shiftId, timesheet.guardNote || '', timesheet.companyNote || ''].join(' ').toLowerCase(),
           shiftDate,
           shiftDateLabel: formatDateLabel(scheduledStart || timesheet.createdAt),
           scheduledLabel: `${formatTimeLabel(scheduledStart)} - ${formatTimeLabel(scheduledEnd)}`,
@@ -487,92 +454,74 @@ export function CompanyTimesheetsWorkspace({
           approvedAmount,
         };
       })
-      .sort((left, right) => right.shiftDate.getTime() - left.shiftDate.getTime());
+      .sort((a, b) => b.shiftDate.getTime() - a.shiftDate.getTime());
   }, [timesheets]);
 
   const siteOptions = React.useMemo(
-    () =>
-      Array.from(new Map(enrichedTimesheets.map((entry) => [entry.siteId, entry.siteName])).entries())
-        .map(([value, label]) => ({ value, label }))
-        .sort((left, right) => left.label.localeCompare(right.label)),
+    () => Array.from(new Map(enrichedTimesheets.map((e) => [e.siteId, e.siteName])).entries())
+      .map(([value, label]) => ({ value, label }))
+      .sort((a, b) => a.label.localeCompare(b.label)),
     [enrichedTimesheets],
   );
 
-  const guardOptions = React.useMemo(
-    () =>
-      Array.from(new Map(enrichedTimesheets.map((entry) => [entry.guardId, entry.guardName])).entries())
-        .map(([value, label]) => ({ value, label }))
-        .sort((left, right) => left.label.localeCompare(right.label)),
-    [enrichedTimesheets],
-  );
-
+  // ── FILTERED TIMESHEETS (week + site) ────────────────────────────────────
   const filteredTimesheets = React.useMemo(() => {
+    const weekEnd = getWeekEnd(activeWeekStart);
     return enrichedTimesheets.filter((entry) => {
+      if (entry.shiftDate < activeWeekStart || entry.shiftDate > weekEnd) return false;
       if (siteFilter && entry.siteId !== siteFilter) return false;
-      if (guardFilter && entry.guardId !== guardFilter) return false;
-      if (statusFilter !== 'all' && statusFilter && normalizeStatus(entry.displayStatus) !== normalizeStatus(statusFilter)) return false;
-
-      if (startDate) {
-        const minDate = parseDateValue(startDate);
-        if (minDate && entry.shiftDate < minDate) return false;
-      }
-
-      if (endDate) {
-        const maxDate = parseDateValue(endDate);
-        if (maxDate && entry.shiftDate > getDayEnd(maxDate)) return false;
-      }
-
-      if (searchTerm.trim() && !entry.searchText.includes(searchTerm.trim().toLowerCase())) return false;
       return true;
     });
-  }, [enrichedTimesheets, endDate, guardFilter, searchTerm, siteFilter, startDate, statusFilter]);
+  }, [enrichedTimesheets, activeWeekStart, siteFilter]);
 
+  // ── GROUPED BY SITE + WEEK ───────────────────────────────────────────────
   const groupedTimesheets = React.useMemo<GroupedTimesheets[]>(() => {
     const groups = new Map<string, GroupedTimesheets>();
-
     filteredTimesheets.forEach((entry) => {
-      const periodKey = getPeriodKey(entry.shiftDate, periodView);
-      const periodLabel = getPeriodLabel(entry.shiftDate, periodView);
+      const periodKey = getPeriodKey(entry.shiftDate);
+      const weekStart = getWeekStart(entry.shiftDate);
       const groupKey = `${entry.siteName}__${periodKey}`;
-      const existing =
-        groups.get(groupKey) ||
-        {
-          key: groupKey,
-          siteName: entry.siteName,
-          periodKey,
-          periodLabel,
-          rows: [],
-          totals: {
-            count: 0,
-            claimedHours: 0,
-            approvedHours: 0,
-            claimedAmount: 0,
-            approvedAmount: 0,
-            pendingCount: 0,
-            approvedCount: 0,
-            missingRateCount: 0,
-          },
-        };
+      const existing = groups.get(groupKey) ?? {
+        key: groupKey,
+        numericSiteId: Number(entry.timesheet.shift?.site?.id) || null,
+        clientId: (entry.timesheet.shift?.site?.clientId ?? null) as number | null,
+        clientName: (entry.timesheet.shift?.site?.clientName ?? null) as string | null,
+        siteName: entry.siteName,
+        periodKey,
+        periodLabel: `Week of ${formatDateLabel(weekStart.toISOString())}`,
+        weekLabel: getWeekRangeLabel(weekStart),
+        clientSubmissionStatus: null,
+        rows: [],
+        totals: {
+          count: 0, guardCount: 0, claimedHours: 0, approvedHours: 0,
+          claimedAmount: 0, approvedAmount: 0,
+          pendingCount: 0, approvedCount: 0, rejectedCount: 0,
+          reviewedCount: 0, returnedCount: 0,
+          awaitingGuardCount: 0, awaitingCompanyCount: 0,
+          missingRateCount: 0,
+        },
+      };
 
       existing.rows.push(entry);
       existing.totals.count += 1;
       existing.totals.claimedHours += toHours(entry.timesheet.hoursWorked);
-      if (entry.claimedAmount !== null) {
-        existing.totals.claimedAmount += entry.claimedAmount;
-      }
-      if (normalizeStatus(entry.displayStatus) === 'approved') {
+      if (entry.claimedAmount !== null) existing.totals.claimedAmount += entry.claimedAmount;
+
+      const rowStatus = normalizeStatus(entry.displayStatus);
+      if (rowStatus === 'approved') {
         existing.totals.approvedHours += toHours(entry.timesheet.approvedHours ?? entry.timesheet.hoursWorked);
-        if (entry.approvedAmount !== null) {
-          existing.totals.approvedAmount += entry.approvedAmount;
-        }
+        if (entry.approvedAmount !== null) existing.totals.approvedAmount += entry.approvedAmount;
         existing.totals.approvedCount += 1;
+        existing.totals.reviewedCount += 1;
       }
-      if (normalizeStatus(entry.displayStatus) === 'submitted') {
-        existing.totals.pendingCount += 1;
+      if (rowStatus === 'rejected') {
+        existing.totals.rejectedCount += 1;
+        existing.totals.reviewedCount += 1;
       }
-      if (entry.hourlyRate === null) {
-        existing.totals.missingRateCount += 1;
-      }
+      if (rowStatus === 'submitted') { existing.totals.pendingCount += 1; existing.totals.awaitingCompanyCount += 1; }
+      if (rowStatus === 'returned') { existing.totals.returnedCount += 1; existing.totals.awaitingGuardCount += 1; }
+      if (rowStatus === 'draft') existing.totals.awaitingGuardCount += 1;
+      if (entry.hourlyRate === null) existing.totals.missingRateCount += 1;
 
       groups.set(groupKey, existing);
     });
@@ -580,163 +529,204 @@ export function CompanyTimesheetsWorkspace({
     return Array.from(groups.values())
       .map((group) => ({
         ...group,
-        rows: group.rows.sort((left, right) => right.shiftDate.getTime() - left.shiftDate.getTime()),
+        rows: group.rows.sort((a, b) => b.shiftDate.getTime() - a.shiftDate.getTime()),
         totals: {
           ...group.totals,
+          guardCount: new Set(group.rows.map((r) => r.guardId)).size,
           claimedHours: roundHours(group.totals.claimedHours),
           approvedHours: roundHours(group.totals.approvedHours),
           claimedAmount: roundCurrency(group.totals.claimedAmount),
           approvedAmount: roundCurrency(group.totals.approvedAmount),
         },
       }))
-      .sort((left, right) => {
-        if (left.siteName !== right.siteName) return left.siteName.localeCompare(right.siteName);
-        return right.rows[0].shiftDate.getTime() - left.rows[0].shiftDate.getTime();
-      });
-  }, [filteredTimesheets, periodView]);
-
-  const summary = React.useMemo(() => {
-    const submitted = filteredTimesheets.filter((entry) => normalizeStatus(entry.displayStatus) === 'submitted').length;
-    const approved = filteredTimesheets.filter((entry) => normalizeStatus(entry.displayStatus) === 'approved').length;
-    const returnedOrRejected = filteredTimesheets.filter((entry) => {
-      const status = normalizeStatus(entry.displayStatus);
-      return status === 'returned' || status === 'rejected';
-    }).length;
-    const totalHours = roundHours(filteredTimesheets.reduce((sum, entry) => sum + toHours(entry.timesheet.hoursWorked), 0));
-
-    return { submitted, approved, returnedOrRejected, totalHours };
+      .sort((a, b) => a.siteName !== b.siteName ? a.siteName.localeCompare(b.siteName) : b.rows[0].shiftDate.getTime() - a.rows[0].shiftDate.getTime());
   }, [filteredTimesheets]);
 
+  // ── ACTIVE GROUP (detail view) ───────────────────────────────────────────
+  const activeGroup = React.useMemo(
+    () => groupedTimesheets.find((g) => g.key === activeGroupKey) ?? null,
+    [groupedTimesheets, activeGroupKey],
+  );
+
+  // ── GUARD GROUPS (within active site/week) ───────────────────────────────
+  const guardGroups = React.useMemo<GuardGroup[]>(() => {
+    if (!activeGroup) return [];
+    const map = new Map<string, GuardGroup>();
+    for (const entry of activeGroup.rows) {
+      const existing = map.get(entry.guardId) ?? {
+        guardId: entry.guardId,
+        guardName: entry.guardName,
+        rows: [],
+        totals: { count: 0, claimedHours: 0, approvedHours: 0, reviewedCount: 0, approvedCount: 0 },
+      };
+      existing.rows.push(entry);
+      existing.totals.count += 1;
+      existing.totals.claimedHours += toHours(entry.timesheet.hoursWorked);
+      const st = normalizeStatus(entry.displayStatus);
+      if (st === 'approved') {
+        existing.totals.approvedHours += toHours(entry.timesheet.approvedHours ?? entry.timesheet.hoursWorked);
+        existing.totals.approvedCount += 1;
+        existing.totals.reviewedCount += 1;
+      }
+      if (st === 'rejected') existing.totals.reviewedCount += 1;
+      map.set(entry.guardId, existing);
+    }
+    return Array.from(map.values()).sort((a, b) => a.guardName.localeCompare(b.guardName));
+  }, [activeGroup]);
+
+  // ── WORKFLOW-FILTERED GROUPS (overview) ──────────────────────────────────
+  const filteredGroups = React.useMemo(() => {
+    if (workflowStatusFilter === 'all') return groupedTimesheets;
+    return groupedTimesheets.filter((g) => getGroupWorkflowStatus(g.totals, g.clientSubmissionStatus) === workflowStatusFilter);
+  }, [groupedTimesheets, workflowStatusFilter]);
+
+  // ── KPI SUMMARY ──────────────────────────────────────────────────────────
+  const kpis = React.useMemo(() => {
+    const activeSites = new Set(groupedTimesheets.map((g) => g.siteName)).size;
+    const totalTimesheets = groupedTimesheets.reduce((s, g) => s + g.totals.count, 0);
+    const awaitingGuards = groupedTimesheets.filter((g) => g.totals.awaitingGuardCount > 0).length;
+    const awaitingCompanyReview = groupedTimesheets.filter((g) => g.totals.awaitingCompanyCount > 0).length;
+    const readyForClient = groupedTimesheets.filter((g) => getGroupWorkflowStatus(g.totals, g.clientSubmissionStatus) === 'ready-for-client').length;
+    const awaitingClient = 0; // requires cross-referencing weekly approval submissions
+    return { activeSites, totalTimesheets, awaitingGuards, awaitingCompanyReview, readyForClient, awaitingClient };
+  }, [groupedTimesheets]);
+
+  // ── SELECTED TIMESHEET ───────────────────────────────────────────────────
   const selectedTimesheet = React.useMemo(
-    () => filteredTimesheets.find((entry) => entry.timesheet.id === selectedTimesheetId) || null,
-    [filteredTimesheets, selectedTimesheetId],
+    () => (activeGroup?.rows ?? []).find((e) => e.timesheet.id === selectedTimesheetId) ?? null,
+    [activeGroup, selectedTimesheetId],
   );
 
   React.useEffect(() => {
-    if (!filteredTimesheets.length) {
-      setSelectedTimesheetId(null);
-      return;
-    }
-
-    if (!selectedTimesheetId || !filteredTimesheets.some((entry) => entry.timesheet.id === selectedTimesheetId)) {
-      setSelectedTimesheetId(filteredTimesheets[0].timesheet.id);
-    }
-  }, [filteredTimesheets, selectedTimesheetId]);
+    setSelectedTimesheetId(null);
+    setCollapsedGuardKeys({});
+  }, [activeGroupKey]);
 
   React.useEffect(() => {
     setCompanyNote(selectedTimesheet?.timesheet.companyNote || '');
   }, [selectedTimesheet?.timesheet.id, selectedTimesheet?.timesheet.companyNote, selectedTimesheet?.timesheet.updatedAt]);
 
   React.useEffect(() => {
-    if (!selectedTimesheet) {
-      setApprovedHoursInput('');
+    if (!selectedTimesheet) { setApprovedHoursInput(''); return; }
+    const cur = selectedTimesheet.timesheet.approvedHours ?? selectedTimesheet.timesheet.hoursWorked;
+    setApprovedHoursInput(formatHoursInput(cur));
+  }, [selectedTimesheet?.timesheet.id, selectedTimesheet?.timesheet.approvedHours, selectedTimesheet?.timesheet.hoursWorked, selectedTimesheet?.timesheet.updatedAt]);
+
+  // ── SEND MODAL LOAD ──────────────────────────────────────────────────────
+  React.useEffect(() => {
+    if (!sendGroup) {
+      setSendEligible([]);
+      setSendSelectedIds(new Set());
+      setSendExclusionReasons({});
+      setSendClientNote('');
+      setSendSubmitError(null);
       return;
     }
+    setSendLoading(true);
+    setSendError(null);
+    setSendEligible([]);
+    setSendSelectedIds(new Set());
+    setSendExclusionReasons({});
+    getEligibleTimesheets(sendGroup.siteId, sendGroup.weekCommencing)
+      .then((rows) => {
+        setSendEligible(rows);
+        setSendSelectedIds(new Set(rows.map((r) => r.id)));
+      })
+      .catch((err) => setSendError(formatApiErrorMessage(err, 'Failed to load eligible shifts.')))
+      .finally(() => setSendLoading(false));
+  }, [sendGroup]);
 
-    const currentApprovedHours =
-      selectedTimesheet.timesheet.approvedHours ?? selectedTimesheet.timesheet.hoursWorked;
-    setApprovedHoursInput(formatHoursInput(currentApprovedHours));
-  }, [
-    selectedTimesheet?.timesheet.id,
-    selectedTimesheet?.timesheet.approvedHours,
-    selectedTimesheet?.timesheet.hoursWorked,
-    selectedTimesheet?.timesheet.updatedAt,
-  ]);
-
-  const setGroupCollapsed = React.useCallback((groupKey: string) => {
-    setCollapsedGroupKeys((current) => ({ ...current, [groupKey]: !current[groupKey] }));
+  const openSendModal = React.useCallback((group: GroupedTimesheets) => {
+    if (!group.numericSiteId || !group.clientId) return;
+    setSendGroup({
+      siteId: group.numericSiteId,
+      siteName: group.siteName,
+      weekCommencing: group.periodKey,
+      clientId: group.clientId,
+      clientName: group.clientName ?? `Client #${group.clientId}`,
+      unreviewedCount: group.totals.count - group.totals.reviewedCount,
+      totalCount: group.totals.count,
+    });
   }, []);
 
+  const toggleSendId = React.useCallback((id: number) => {
+    setSendSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+        setSendExclusionReasons((prevR) => { const u = { ...prevR }; delete u[id]; return u; });
+      }
+      return next;
+    });
+  }, []);
+
+  const handleSendToClient = React.useCallback(async () => {
+    if (!sendGroup || sendSelectedIds.size === 0) return;
+    const excluded = sendEligible.filter((r) => !sendSelectedIds.has(r.id));
+    if (excluded.some((r) => !sendExclusionReasons[r.id]?.trim())) {
+      setSendSubmitError('All excluded shifts require a reason before submitting.');
+      return;
+    }
+    setSendSubmitLoading(true);
+    setSendSubmitError(null);
+    try {
+      await submitWeeklyApproval({
+        clientId: sendGroup.clientId,
+        siteId: sendGroup.siteId,
+        weekCommencing: sendGroup.weekCommencing,
+        timesheetIds: Array.from(sendSelectedIds),
+        clientSubmissionNote: sendClientNote.trim() || undefined,
+      });
+      setSendGroup(null);
+      setFeedback({ tone: 'success', title: 'Sent to client', message: `${sendSelectedIds.size} shift${sendSelectedIds.size !== 1 ? 's' : ''} submitted to ${sendGroup.clientName} for approval.` });
+    } catch (err) {
+      setSendSubmitError(formatApiErrorMessage(err, 'Submission failed.'));
+    } finally {
+      setSendSubmitLoading(false);
+    }
+  }, [sendClientNote, sendEligible, sendExclusionReasons, sendGroup, sendSelectedIds]);
+
+  // ── CSV EXPORT (financial data preserved here, not in UI) ────────────────
   const buildExportRows = React.useCallback((groups: GroupedTimesheets[]) => {
     return [
-      [
-        'Site',
-        'Period',
-        'Guard',
-        'Shift Date',
-        'Scheduled',
-        'Attendance',
-        'Hourly Rate',
-        'Claimed Hours',
-        'Approved Hours',
-        'Claimed Amount',
-        'Approved Amount',
-        'Status',
-        'Company Note',
-      ],
-      ...groups.flatMap((group) =>
-        [
-          ...group.rows.map((entry) => {
-            const approvedHoursValue = getApprovedHoursValue(entry.timesheet);
-
-            return [
-              group.siteName,
-              group.periodLabel,
-              entry.guardName,
-              entry.shiftDateLabel,
-              entry.scheduledLabel,
-              entry.attendanceLabel,
-              entry.hourlyRate !== null ? formatCurrency(entry.hourlyRate) : 'Rate unavailable',
-              toHours(entry.timesheet.hoursWorked).toFixed(2),
-              approvedHoursValue !== null ? approvedHoursValue.toFixed(2) : '',
-              entry.claimedAmount !== null ? formatCurrency(entry.claimedAmount) : 'Rate unavailable',
-              entry.approvedAmount !== null ? formatCurrency(entry.approvedAmount) : '',
-              formatStatusLabel(entry.displayStatus),
-              entry.timesheet.companyNote || '',
-            ];
-          }),
-          [
-            group.siteName,
-            group.periodLabel,
-            'SUMMARY',
-            '',
-            '',
-            '',
-            group.totals.missingRateCount > 0 ? `${group.totals.missingRateCount} rate unavailable` : '',
-            group.totals.claimedHours.toFixed(2),
-            group.totals.approvedHours.toFixed(2),
-            formatCurrency(group.totals.claimedAmount),
-            formatCurrency(group.totals.approvedAmount),
-            `Pending ${group.totals.pendingCount} | Approved ${group.totals.approvedCount}`,
-            `Timesheets ${group.totals.count}`,
-          ],
+      ['Site', 'Week', 'Guard', 'Shift Date', 'Scheduled', 'Attendance', 'Hourly Rate', 'Claimed Hours', 'Approved Hours', 'Claimed Amount', 'Approved Amount', 'Status', 'Company Note'],
+      ...groups.flatMap((group) => [
+        ...group.rows.map((entry) => {
+          const approvedHoursValue = getApprovedHoursValue(entry.timesheet);
+          return [
+            group.siteName, group.weekLabel, entry.guardName, entry.shiftDateLabel, entry.scheduledLabel, entry.attendanceLabel,
+            entry.hourlyRate !== null ? formatCurrency(entry.hourlyRate) : 'Rate unavailable',
+            toHours(entry.timesheet.hoursWorked).toFixed(2),
+            approvedHoursValue !== null ? approvedHoursValue.toFixed(2) : '',
+            entry.claimedAmount !== null ? formatCurrency(entry.claimedAmount) : 'Rate unavailable',
+            entry.approvedAmount !== null ? formatCurrency(entry.approvedAmount) : '',
+            formatStatusLabel(entry.displayStatus),
+            entry.timesheet.companyNote || '',
+          ];
+        }),
+        [group.siteName, group.weekLabel, 'SUMMARY', '', '', '',
+          group.totals.missingRateCount > 0 ? `${group.totals.missingRateCount} rate unavailable` : '',
+          group.totals.claimedHours.toFixed(2), group.totals.approvedHours.toFixed(2),
+          formatCurrency(group.totals.claimedAmount), formatCurrency(group.totals.approvedAmount),
+          `Pending ${group.totals.pendingCount} | Approved ${group.totals.approvedCount}`, `Timesheets ${group.totals.count}`,
         ],
-      ),
+      ]),
     ];
   }, []);
 
-  const handleExportFiltered = React.useCallback(() => {
-    const rows = buildExportRows(groupedTimesheets);
-    const didDownload = downloadCsv(
-      `timesheets-filtered-${sanitizeFilenamePart(periodView)}-${getDownloadTimestamp()}.csv`,
-      rows,
-    );
-    setFeedback(
-      didDownload
-        ? { tone: 'success', title: 'Export ready', message: `Exported ${filteredTimesheets.length} filtered timesheets.` }
-        : { tone: 'info', title: 'Export unavailable', message: 'CSV export is only available in the browser workspace.' },
-    );
-  }, [buildExportRows, filteredTimesheets.length, groupedTimesheets, periodView]);
-
   const handleExportGroup = React.useCallback((group: GroupedTimesheets) => {
     const rows = buildExportRows([group]);
-    const safeSiteName = sanitizeFilenamePart(group.siteName);
-    const safePeriodKey = sanitizeFilenamePart(group.periodKey);
-    const didDownload = downloadCsv(
-      `timesheets-group-${safeSiteName}-${safePeriodKey}-${getDownloadTimestamp()}.csv`,
-      rows,
-    );
+    const didDownload = downloadCsv(`timesheets-${sanitizeFilenamePart(group.siteName)}-${sanitizeFilenamePart(group.periodKey)}-${getDownloadTimestamp()}.csv`, rows);
     setFeedback(
       didDownload
-        ? { tone: 'success', title: 'Group export ready', message: `Exported ${group.totals.count} timesheets for ${group.siteName} (${group.periodLabel}).` }
+        ? { tone: 'success', title: 'Export ready', message: `Exported ${group.totals.count} timesheets for ${group.siteName}.` }
         : { tone: 'info', title: 'Export unavailable', message: 'CSV export is only available in the browser workspace.' },
     );
   }, [buildExportRows]);
 
-  const handleExport = React.useCallback(() => {
-    handleExportFiltered();
-  }, [handleExportFiltered]);
-
+  // ── COMPANY REVIEW ACTIONS ───────────────────────────────────────────────
   const runCompanyAction = React.useCallback(
     async (actionKey: string, timesheetId: number, payload: Parameters<typeof updateTimesheet>[1], successTitle: string, successMessage: string) => {
       try {
@@ -745,11 +735,7 @@ export function CompanyTimesheetsWorkspace({
         await onRefresh();
         setFeedback({ tone: 'success', title: successTitle, message: successMessage });
       } catch (error) {
-        setFeedback({
-          tone: 'error',
-          title: 'Review action failed',
-          message: formatApiErrorMessage(error, 'Unable to update this timesheet.'),
-        });
+        setFeedback({ tone: 'error', title: 'Review action failed', message: formatApiErrorMessage(error, 'Unable to update this timesheet.') });
       } finally {
         setBusyAction(null);
       }
@@ -759,49 +745,23 @@ export function CompanyTimesheetsWorkspace({
 
   const buildApprovalPayload = React.useCallback(
     (mode: 'save' | 'approve') => {
-      if (!selectedTimesheet) {
-        return null;
-      }
-
+      if (!selectedTimesheet) return null;
       const claimedHours = toHours(selectedTimesheet.timesheet.hoursWorked);
       const trimmedCompanyNote = companyNote.trim();
       const parsedApprovedHours = parseHoursInput(approvedHoursInput);
       const hasApprovedHoursValue = approvedHoursInput.trim().length > 0;
-      const finalApprovedHours =
-        mode === 'approve'
-          ? hasApprovedHoursValue
-            ? parsedApprovedHours
-            : claimedHours
-          : hasApprovedHoursValue
-            ? parsedApprovedHours
-            : undefined;
-
+      const finalApprovedHours = mode === 'approve'
+        ? hasApprovedHoursValue ? parsedApprovedHours : claimedHours
+        : hasApprovedHoursValue ? parsedApprovedHours : undefined;
       if (finalApprovedHours != null && (!Number.isFinite(finalApprovedHours) || finalApprovedHours < 0)) {
-        setFeedback({
-          tone: 'error',
-          title: 'Invalid approved hours',
-          message: 'Approved hours must be 0 or more.',
-        });
+        setFeedback({ tone: 'error', title: 'Invalid approved hours', message: 'Approved hours must be 0 or more.' });
         return null;
       }
-
-      if (
-        finalApprovedHours != null &&
-        Math.abs(finalApprovedHours - claimedHours) > 0.009 &&
-        !trimmedCompanyNote
-      ) {
-        setFeedback({
-          tone: 'error',
-          title: 'Company note required',
-          message: 'Add a company note when approved hours differ from claimed hours.',
-        });
+      if (finalApprovedHours != null && Math.abs(finalApprovedHours - claimedHours) > 0.009 && !trimmedCompanyNote) {
+        setFeedback({ tone: 'error', title: 'Company note required', message: 'Add a company note when approved hours differ from claimed hours.' });
         return null;
       }
-
-      return {
-        companyNote: trimmedCompanyNote || null,
-        approvedHours: finalApprovedHours,
-      };
+      return { companyNote: trimmedCompanyNote || null, approvedHours: finalApprovedHours };
     },
     [approvedHoursInput, companyNote, selectedTimesheet],
   );
@@ -810,283 +770,418 @@ export function CompanyTimesheetsWorkspace({
     if (!selectedTimesheet) return;
     const payload = buildApprovalPayload('save');
     if (!payload) return;
-    await runCompanyAction(
-      `note-${selectedTimesheet.timesheet.id}`,
-      selectedTimesheet.timesheet.id,
-      payload,
-      'Review details saved',
-      'The company note and approved hours were saved for this timesheet.',
-    );
+    await runCompanyAction(`note-${selectedTimesheet.timesheet.id}`, selectedTimesheet.timesheet.id, payload, 'Review details saved', 'The company note and approved hours were saved for this timesheet.');
   }, [buildApprovalPayload, runCompanyAction, selectedTimesheet]);
 
-  const handleApprove = React.useCallback(
-    async (entry: EnrichedTimesheet) => {
-      const payload =
-        entry.timesheet.id === selectedTimesheet?.timesheet.id
-          ? buildApprovalPayload('approve')
-          : {
-              approvedHours: entry.timesheet.approvedHours ?? entry.timesheet.hoursWorked,
-              companyNote: entry.timesheet.companyNote ?? null,
-            };
-      if (!payload) return;
+  const handleApprove = React.useCallback(async (entry: EnrichedTimesheet) => {
+    const payload = entry.timesheet.id === selectedTimesheet?.timesheet.id
+      ? buildApprovalPayload('approve')
+      : { approvedHours: entry.timesheet.approvedHours ?? entry.timesheet.hoursWorked, companyNote: entry.timesheet.companyNote ?? null };
+    if (!payload) return;
+    await runCompanyAction(`approve-${entry.timesheet.id}`, entry.timesheet.id, { ...payload, approvalStatus: 'approved', rejectionReason: null }, 'Timesheet approved', 'The claimed hours were approved for payroll and client sign-off.');
+  }, [buildApprovalPayload, runCompanyAction, selectedTimesheet?.timesheet.id]);
 
-      await runCompanyAction(
-        `approve-${entry.timesheet.id}`,
-        entry.timesheet.id,
-        { ...payload, approvalStatus: 'approved', rejectionReason: null },
-        'Timesheet approved',
-        normalizeStatus(statusFilter) === 'submitted'
-          ? 'Timesheet approved. It has moved to Payroll.'
-          : 'The claimed hours were approved for payroll and client sign-off.',
-      );
-    },
-    [buildApprovalPayload, runCompanyAction, selectedTimesheet?.timesheet.id, statusFilter],
-  );
+  const handleReturn = React.useCallback(async (entry: EnrichedTimesheet) => {
+    const noteSource = entry.timesheet.id === selectedTimesheet?.timesheet.id ? companyNote.trim() : '';
+    const note = noteSource || entry.timesheet.rejectionReason?.trim() || 'Returned for correction by company reviewer.';
+    await runCompanyAction(`return-${entry.timesheet.id}`, entry.timesheet.id, { approvalStatus: 'returned', rejectionReason: note }, 'Returned for correction', 'The timesheet was returned to the guard for correction.');
+  }, [companyNote, runCompanyAction, selectedTimesheet?.timesheet.id]);
 
-  const handleReturn = React.useCallback(
-    async (entry: EnrichedTimesheet) => {
-      const noteSource =
-        entry.timesheet.id === selectedTimesheet?.timesheet.id ? companyNote.trim() : '';
-      const note = noteSource || entry.timesheet.rejectionReason?.trim() || 'Returned for correction by company reviewer.';
-      await runCompanyAction(
-        `return-${entry.timesheet.id}`,
-        entry.timesheet.id,
-        { approvalStatus: 'returned', rejectionReason: note },
-        'Returned for correction',
-        'The timesheet was returned to the guard for correction.',
-      );
-    },
-    [companyNote, runCompanyAction, selectedTimesheet?.timesheet.id],
-  );
-
-  const handleReject = React.useCallback(
-    async (entry: EnrichedTimesheet) => {
-      const noteSource =
-        entry.timesheet.id === selectedTimesheet?.timesheet.id ? companyNote.trim() : '';
-      const note = noteSource || entry.timesheet.rejectionReason?.trim() || 'Rejected by company reviewer.';
-      await runCompanyAction(
-        `reject-${entry.timesheet.id}`,
-        entry.timesheet.id,
-        { approvalStatus: 'rejected', rejectionReason: note },
-        'Timesheet rejected',
-        'The timesheet was rejected and marked for follow-up.',
-      );
-    },
-    [companyNote, runCompanyAction, selectedTimesheet?.timesheet.id],
-  );
+  const handleReject = React.useCallback(async (entry: EnrichedTimesheet) => {
+    const noteSource = entry.timesheet.id === selectedTimesheet?.timesheet.id ? companyNote.trim() : '';
+    const note = noteSource || entry.timesheet.rejectionReason?.trim() || 'Rejected by company reviewer.';
+    await runCompanyAction(`reject-${entry.timesheet.id}`, entry.timesheet.id, { approvalStatus: 'rejected', rejectionReason: note }, 'Timesheet rejected', 'The timesheet was rejected and marked for follow-up.');
+  }, [companyNote, runCompanyAction, selectedTimesheet?.timesheet.id]);
 
   const activeSelected = selectedTimesheet?.timesheet;
+  const isSubmittedForReview = normalizeStatus(activeSelected?.approvalStatus) === 'submitted';
   const selectedClaimedHours = activeSelected ? toHours(activeSelected.hoursWorked) : 0;
-  const selectedApprovedHours =
-    activeSelected && getApprovedHoursValue(activeSelected) !== null
-      ? Number(getApprovedHoursValue(activeSelected))
-      : null;
-  const selectedHourlyRate = selectedTimesheet?.hourlyRate ?? null;
-  const selectedClaimedAmount = selectedTimesheet?.claimedAmount ?? null;
-  const selectedApprovedAmount = selectedTimesheet?.approvedAmount ?? null;
+  const selectedApprovedHours = activeSelected && getApprovedHoursValue(activeSelected) !== null ? Number(getApprovedHoursValue(activeSelected)) : null;
   const parsedSelectedApprovedHours = parseHoursInput(approvedHoursInput);
-  const hasSelectedApprovedHoursValue = approvedHoursInput.trim().length > 0;
-  const adjustedHoursRequireNote =
-    hasSelectedApprovedHoursValue &&
-    parsedSelectedApprovedHours !== null &&
-    Number.isFinite(parsedSelectedApprovedHours) &&
-    Math.abs(parsedSelectedApprovedHours - selectedClaimedHours) > 0.009 &&
-    !companyNote.trim();
+  const adjustedHoursRequireNote = approvedHoursInput.trim().length > 0 && parsedSelectedApprovedHours !== null && Number.isFinite(parsedSelectedApprovedHours) && Math.abs(parsedSelectedApprovedHours - selectedClaimedHours) > 0.009 && !companyNote.trim();
 
-  return (
-    <View style={styles.workspace}>
-      <View style={styles.workspaceHeader}>
-        <View style={styles.headerCopy}>
-          <Text style={styles.title}>Timesheets Review</Text>
-          <Text style={styles.subtitle}>Operational review queue for submitted guard hours.</Text>
-          <Text style={styles.helperText}>Approved records move to Payroll.</Text>
-        </View>
-        <View style={styles.headerActions}>
-          <PeriodToggle value={periodView} onChange={setPeriodView} />
-          <Pressable style={styles.secondaryButton} onPress={() => onRefresh()} disabled={refreshing}>
-            <Text style={styles.secondaryButtonText}>{refreshing ? 'Refreshing...' : 'Refresh'}</Text>
-          </Pressable>
-          <Pressable style={styles.primaryButton} onPress={handleExport}>
-            <Text style={styles.primaryButtonText}>Export review view</Text>
-          </Pressable>
-        </View>
-      </View>
-
-      {feedback ? (
-        <View
-          style={[
-            styles.feedbackCard,
-            feedback.tone === 'success' && styles.feedbackSuccess,
-            feedback.tone === 'error' && styles.feedbackError,
-            feedback.tone === 'info' && styles.feedbackInfo,
-          ]}
-        >
-          <Text style={styles.feedbackTitle}>{feedback.title}</Text>
-          <Text style={styles.feedbackText}>{feedback.message}</Text>
-        </View>
-      ) : null}
-
-      <View style={styles.filterCard}>
-        <View style={styles.filterRow}>
-          <View style={styles.filterField}>
-            <Text style={styles.filterLabel}>Site</Text>
-            <WebSelect value={siteFilter} onChange={setSiteFilter} options={siteOptions} placeholder="All sites" />
-          </View>
-          <View style={styles.filterField}>
-            <Text style={styles.filterLabel}>Status</Text>
-            <WebSelect
-              value={statusFilter}
-              onChange={setStatusFilter}
-              options={[
-                { label: 'Submitted', value: 'submitted' },
-                { label: 'Approved', value: 'approved' },
-                { label: 'Returned', value: 'returned' },
-                { label: 'Rejected', value: 'rejected' },
-                { label: 'Draft', value: 'draft' },
-                { label: 'All statuses', value: 'all' },
-              ]}
-              placeholder="Status"
-            />
-          </View>
-          <View style={styles.filterField}>
-            <Text style={styles.filterLabel}>Guard</Text>
-            <WebSelect value={guardFilter} onChange={setGuardFilter} options={guardOptions} placeholder="All guards" />
-          </View>
-          <View style={styles.filterField}>
-            <Text style={styles.filterLabel}>From</Text>
-            <TextInput value={startDate} onChangeText={setStartDate} style={styles.input} placeholder="YYYY-MM-DD" placeholderTextColor="#64748b" />
-          </View>
-          <View style={styles.filterField}>
-            <Text style={styles.filterLabel}>To</Text>
-            <TextInput value={endDate} onChangeText={setEndDate} style={styles.input} placeholder="YYYY-MM-DD" placeholderTextColor="#64748b" />
-          </View>
-          <View style={[styles.filterField, styles.searchField]}>
-            <Text style={styles.filterLabel}>Search</Text>
-            <TextInput
-              value={searchTerm}
-              onChangeText={setSearchTerm}
-              style={styles.input}
-              placeholder="Guard, site, note, shift"
-              placeholderTextColor="#64748b"
-            />
-          </View>
-          <View style={styles.filterField}>
-            <Text style={styles.filterLabel}>View type</Text>
-            <PeriodToggle value={periodView} onChange={setPeriodView} />
-          </View>
-        </View>
-      </View>
-
-      <View style={styles.summaryGrid}>
-        <SummaryCard label="Submitted" value={String(summary.submitted)} />
-        <SummaryCard label="Approved" value={String(summary.approved)} />
-        <SummaryCard label="Returned / Rejected" value={String(summary.returnedOrRejected)} />
-        <SummaryCard label="Total Hours" value={`${summary.totalHours.toFixed(2)} h`} />
-      </View>
-
-      <View style={styles.reviewLayout}>
-        <View style={styles.reviewListCard}>
-          {groupedTimesheets.length === 0 ? (
-            <Text style={styles.emptyText}>
-              {normalizeStatus(statusFilter) === 'submitted'
-                ? 'Review queue is clear. Approved records move to Payroll.'
-                : 'No timesheets match the current filters.'}
-            </Text>
-          ) : null}
-          {groupedTimesheets.map((group) => {
-            const isCollapsed = Boolean(collapsedGroupKeys[group.key]);
-
-            return (
-              <View key={group.key} style={styles.groupCard}>
-                <Pressable style={styles.groupHeader} onPress={() => setGroupCollapsed(group.key)}>
-                  <View style={styles.groupHeaderCopy}>
-                    <Text style={styles.groupSite}>{group.siteName}</Text>
-                    <Text style={styles.groupPeriod}>
-                      {group.periodLabel} | {group.totals.count} timesheets | {group.totals.claimedHours.toFixed(2)} claimed h | {group.totals.approvedHours.toFixed(2)} approved h
+  // ── SEND-TO-CLIENT MODAL (shared between overview card and detail) ────────
+  const sendModal = (
+    <Modal
+      visible={!!sendGroup}
+      transparent
+      animationType="fade"
+      onRequestClose={() => { if (!sendSubmitLoading) setSendGroup(null); }}
+    >
+      <View style={styles.sendOverlay}>
+        <View style={styles.sendCard}>
+          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ gap: 14 }}>
+            <Text style={styles.sendTitle}>Send Weekly Timesheet to Client</Text>
+            {sendGroup && (
+              <>
+                <Text style={styles.sendMeta}>{sendGroup.siteName}</Text>
+                <Text style={styles.sendMeta}>Week: {sendGroup.weekCommencing}</Text>
+                <Text style={styles.sendMeta}>Client: {sendGroup.clientName}</Text>
+                {sendGroup.unreviewedCount > 0 && (
+                  <View style={styles.sendWarningBanner}>
+                    <Text style={styles.sendWarningText}>
+                      {sendGroup.totalCount - sendGroup.unreviewedCount} of {sendGroup.totalCount} shifts reviewed — {sendGroup.unreviewedCount} still require{sendGroup.unreviewedCount === 1 ? 's' : ''} a decision.
                     </Text>
                   </View>
-                  <View style={styles.groupHeaderActions}>
-                    <Pressable style={styles.inlineAction} onPress={() => handleExportGroup(group)}>
-                      <Text style={styles.inlineActionText}>Export review group</Text>
-                    </Pressable>
-                    <Text style={styles.groupToggle}>{isCollapsed ? 'Expand' : 'Collapse'}</Text>
+                )}
+              </>
+            )}
+
+            {sendLoading && <ActivityIndicator size="large" color={colors.primaryNavy} />}
+            {sendError ? (
+              <Text style={styles.sendErrorText}>{sendError}</Text>
+            ) : sendEligible.length === 0 && !sendLoading ? (
+              <Text style={styles.sendEmptyText}>No eligible approved, uninvoiced shifts found for this site and week.</Text>
+            ) : null}
+
+            {sendEligible.map((row) => {
+              const isSelected = sendSelectedIds.has(row.id);
+              const guardLabel = row.guard?.fullName ?? row.shift?.guard?.fullName ?? 'Guard';
+              const shiftDateLabel = row.scheduledStartAt
+                ? new Date(row.scheduledStartAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
+                : row.shift?.start ? new Date(row.shift.start).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : '—';
+              const scheduledOn = row.scheduledStartAt ? new Date(row.scheduledStartAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
+              const scheduledOff = row.scheduledEndAt ? new Date(row.scheduledEndAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
+              const checkIn = row.actualCheckInAt ? new Date(row.actualCheckInAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
+              const checkOut = row.actualCheckOutAt ? new Date(row.actualCheckOutAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
+              const approvedOn = row.companyApprovedStartAt ? new Date(row.companyApprovedStartAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
+              const approvedOff = row.companyApprovedEndAt ? new Date(row.companyApprovedEndAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
+              const approvedHrs = row.approvedHours != null ? Number(row.approvedHours).toFixed(2) : row.approvedMinutes != null ? (Number(row.approvedMinutes) / 60).toFixed(2) : Number(row.hoursWorked).toFixed(2);
+              return (
+                <View key={row.id} style={[styles.sendRow, !isSelected && styles.sendRowExcluded]}>
+                  <Pressable style={styles.sendCheckRow} onPress={() => toggleSendId(row.id)}>
+                    <View style={[styles.sendCheckbox, isSelected && styles.sendCheckboxChecked]}>
+                      {isSelected && <Text style={styles.sendCheckmark}>✓</Text>}
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.sendGuardName}>{guardLabel}</Text>
+                      <Text style={styles.sendShiftMeta}>{shiftDateLabel} · Scheduled: {scheduledOn}–{scheduledOff} · Check-in: {checkIn} / {checkOut}</Text>
+                      <Text style={styles.sendShiftMeta}>Guard claimed: {Number(row.hoursWorked).toFixed(2)} h · Co. approved: {approvedHrs} h ({approvedOn}–{approvedOff})</Text>
+                      {!isSelected && <Text style={styles.sendExcludedLabel}>Excluded</Text>}
+                    </View>
+                  </Pressable>
+                  {!isSelected && (
+                    <TextInput
+                      style={styles.sendExclusionInput}
+                      placeholder="Reason for exclusion (required)"
+                      value={sendExclusionReasons[row.id] ?? ''}
+                      onChangeText={(v: string) => setSendExclusionReasons((prev) => ({ ...prev, [row.id]: v }))}
+                    />
+                  )}
+                </View>
+              );
+            })}
+
+            {sendEligible.length > 0 && (
+              <>
+                <View style={styles.sendSummary}>
+                  <Text style={styles.sendSummaryText}>
+                    Submit {sendSelectedIds.size} shift{sendSelectedIds.size !== 1 ? 's' : ''} / {
+                      sendEligible.filter((r) => sendSelectedIds.has(r.id))
+                        .reduce((sum, r) => sum + (r.approvedHours != null ? Number(r.approvedHours) : r.approvedMinutes != null ? Number(r.approvedMinutes) / 60 : Number(r.hoursWorked)), 0)
+                        .toFixed(2)
+                    } approved hrs to {sendGroup?.clientName} for approval?
+                  </Text>
+                </View>
+                <TextInput
+                  style={styles.sendNoteInput}
+                  placeholder="Client submission note (optional)"
+                  value={sendClientNote}
+                  onChangeText={setSendClientNote}
+                  multiline
+                />
+              </>
+            )}
+
+            {sendSubmitError ? <Text style={styles.sendErrorText}>{sendSubmitError}</Text> : null}
+
+            <View style={styles.sendActions}>
+              <Pressable
+                style={[styles.sendSubmitButton, (sendSelectedIds.size === 0 || sendSubmitLoading || sendLoading) && styles.sendButtonDisabled]}
+                onPress={handleSendToClient}
+                disabled={sendSelectedIds.size === 0 || sendSubmitLoading || sendLoading}
+              >
+                <Text style={styles.sendSubmitText}>{sendSubmitLoading ? 'Submitting...' : 'Confirm — Send to Client'}</Text>
+              </Pressable>
+              <Pressable style={styles.sendCancelButton} onPress={() => setSendGroup(null)} disabled={sendSubmitLoading}>
+                <Text style={styles.sendCancelText}>Cancel</Text>
+              </Pressable>
+            </View>
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+
+  // ── FEEDBACK BANNER ──────────────────────────────────────────────────────
+  const feedbackBanner = feedback ? (
+    <View style={[styles.feedbackCard, feedback.tone === 'success' && styles.feedbackSuccess, feedback.tone === 'error' && styles.feedbackError, feedback.tone === 'info' && styles.feedbackInfo]}>
+      <Text style={styles.feedbackTitle}>{feedback.title}</Text>
+      <Text style={styles.feedbackText}>{feedback.message}</Text>
+    </View>
+  ) : null;
+
+  // ════════════════════════════════════════════════════════════════════════
+  // OVERVIEW RENDER
+  // ════════════════════════════════════════════════════════════════════════
+  if (level === 'overview') {
+    return (
+      <View style={styles.workspace}>
+        {/* Header */}
+        <View style={styles.workspaceHeader}>
+          <View style={styles.headerCopy}>
+            <Text style={styles.title}>Company Timesheets</Text>
+            <Text style={styles.subtitle}>Review guard hours by site and week. Approved records move to Payroll.</Text>
+          </View>
+          <View style={styles.headerActions}>
+            <Pressable style={styles.secondaryButton} onPress={() => onRefresh()} disabled={refreshing}>
+              <Text style={styles.secondaryButtonText}>{refreshing ? 'Refreshing...' : 'Refresh'}</Text>
+            </Pressable>
+          </View>
+        </View>
+
+        {feedbackBanner}
+
+        {/* Week navigator + filters */}
+        <View style={styles.filterCard}>
+          <View style={styles.weekNavRow}>
+            <Pressable style={styles.weekNavBtn} onPress={() => setWeekOffset((o) => o - 1)}>
+              <Text style={styles.weekNavBtnText}>← Prev</Text>
+            </Pressable>
+            <Text style={styles.weekNavLabel}>{weekNavLabel}</Text>
+            <Pressable style={[styles.weekNavBtn, weekOffset >= 0 && styles.weekNavBtnDisabled]} onPress={() => setWeekOffset((o) => o + 1)} disabled={weekOffset >= 0}>
+              <Text style={styles.weekNavBtnText}>Next →</Text>
+            </Pressable>
+            {weekOffset !== 0 && (
+              <Pressable style={styles.weekNavCurrentBtn} onPress={() => setWeekOffset(0)}>
+                <Text style={styles.weekNavCurrentBtnText}>Current Week</Text>
+              </Pressable>
+            )}
+          </View>
+          <View style={styles.filterRow}>
+            <View style={styles.filterField}>
+              <Text style={styles.filterLabel}>Site</Text>
+              <WebSelect value={siteFilter} onChange={setSiteFilter} options={siteOptions} placeholder="All sites" />
+            </View>
+            <View style={styles.filterField}>
+              <Text style={styles.filterLabel}>Workflow Status</Text>
+              <WebSelect
+                value={workflowStatusFilter}
+                onChange={(v) => setWorkflowStatusFilter(v as WorkflowStatus)}
+                options={[
+                  { label: 'All', value: 'all' },
+                  { label: 'Awaiting Guard', value: 'awaiting-guard' },
+                  { label: 'Needs Review', value: 'needs-review' },
+                  { label: 'Ready for Client', value: 'ready-for-client' },
+                  { label: 'Awaiting Client Approval', value: 'awaiting-client' },
+                  { label: 'Returned for Correction', value: 'returned' },
+                  { label: 'Client Approved', value: 'client-approved' },
+                ]}
+                placeholder="All"
+              />
+            </View>
+          </View>
+        </View>
+
+        {/* KPI summary */}
+        <View style={styles.kpiRow}>
+          <KpiCard label="Active Sites" value={kpis.activeSites} />
+          <KpiCard label="Timesheets" value={kpis.totalTimesheets} />
+          <KpiCard label="Awaiting Guards" value={kpis.awaitingGuards} accent={kpis.awaitingGuards > 0} />
+          <KpiCard label="Awaiting Company Review" value={kpis.awaitingCompanyReview} accent={kpis.awaitingCompanyReview > 0} />
+          <KpiCard label="Ready for Client" value={kpis.readyForClient} />
+        </View>
+
+        {/* Site + Week cards */}
+        <View style={styles.groupList}>
+          {filteredGroups.length === 0 ? (
+            <View style={styles.emptyCard}>
+              <Text style={styles.emptyText}>No timesheets found for this week.{siteFilter || workflowStatusFilter !== 'all' ? ' Try adjusting the filters.' : ''}</Text>
+            </View>
+          ) : null}
+          {filteredGroups.map((group) => {
+            const wfStatus = getGroupWorkflowStatus(group.totals, group.clientSubmissionStatus);
+            const allReviewed = group.totals.awaitingGuardCount === 0 && group.totals.awaitingCompanyCount === 0;
+            const sendReady = allReviewed && group.totals.approvedCount > 0 && !!group.numericSiteId && !!group.clientId;
+            return (
+              <View key={group.key} style={styles.siteWeekCard}>
+                <View style={styles.siteWeekCardHeader}>
+                  <View style={styles.siteWeekCardInfo}>
+                    <Text style={styles.siteWeekSiteName}>{group.siteName}</Text>
+                    <Text style={styles.siteWeekPeriod}>{group.weekLabel}</Text>
+                    <Text style={styles.siteWeekMeta}>
+                      {group.totals.guardCount} guard{group.totals.guardCount !== 1 ? 's' : ''} · {group.totals.count} shift{group.totals.count !== 1 ? 's' : ''} · {group.totals.reviewedCount}/{group.totals.count} reviewed · {group.totals.approvedHours.toFixed(2)} approved h
+                    </Text>
+                    {(group.totals.awaitingGuardCount > 0 || group.totals.awaitingCompanyCount > 0) && (
+                      <Text style={styles.unreviewedWarning}>
+                        {group.totals.awaitingGuardCount > 0 ? `${group.totals.awaitingGuardCount} awaiting Guard submission` : ''}
+                        {group.totals.awaitingGuardCount > 0 && group.totals.awaitingCompanyCount > 0 ? ' · ' : ''}
+                        {group.totals.awaitingCompanyCount > 0 ? `${group.totals.awaitingCompanyCount} awaiting Company review` : ''}
+                      </Text>
+                    )}
                   </View>
-                </Pressable>
-
-                {!isCollapsed ? (
-                  <>
-                    <View style={styles.rowsHeader}>
-                      <Text style={[styles.rowsHeaderText, styles.guardCol]}>Guard</Text>
-                      <Text style={[styles.rowsHeaderText, styles.dateCol]}>Shift Date</Text>
-                      <Text style={[styles.rowsHeaderText, styles.scheduleCol]}>Scheduled</Text>
-                      <Text style={[styles.rowsHeaderText, styles.attendanceCol]}>Attendance</Text>
-                      <Text style={[styles.rowsHeaderText, styles.hoursCol]}>Claimed Hours</Text>
-                      <Text style={[styles.rowsHeaderText, styles.statusCol]}>Status</Text>
-                      <Text style={[styles.rowsHeaderText, styles.actionsCol]}>Actions</Text>
-                    </View>
-
-                    {group.rows.map((entry) => {
-                      const statusPalette = getStatusPalette(entry.displayStatus);
-                      const isSelected = entry.timesheet.id === selectedTimesheetId;
-                      const isSubmitted = normalizeStatus(entry.displayStatus) === 'submitted';
-                      const approveBusy = busyAction === `approve-${entry.timesheet.id}`;
-                      const returnBusy = busyAction === `return-${entry.timesheet.id}`;
-
-                      return (
-                        <Pressable
-                          key={entry.timesheet.id}
-                          style={[styles.timesheetRow, isSelected && styles.timesheetRowSelected]}
-                          onPress={() => setSelectedTimesheetId(entry.timesheet.id)}
-                        >
-                          <Text style={[styles.rowTextStrong, styles.guardCol]}>{entry.guardName}</Text>
-                          <Text style={[styles.rowText, styles.dateCol]}>{entry.shiftDateLabel}</Text>
-                          <Text style={[styles.rowText, styles.scheduleCol]}>{entry.scheduledLabel}</Text>
-                          <Text style={[styles.rowText, styles.attendanceCol]}>{entry.attendanceLabel}</Text>
-                          <Text style={[styles.rowText, styles.hoursCol]}>{toHours(entry.timesheet.hoursWorked).toFixed(2)}</Text>
-                          <View style={[styles.statusBadge, styles.statusCol, { backgroundColor: statusPalette.bg }]}>
-                            <Text style={[styles.statusBadgeText, { color: statusPalette.text }]}>{formatStatusLabel(entry.displayStatus)}</Text>
-                          </View>
-                          <View style={[styles.rowActions, styles.actionsCol]}>
-                            <Pressable style={styles.secondaryChip} onPress={() => setSelectedTimesheetId(entry.timesheet.id)}>
-                              <Text style={styles.secondaryChipText}>View</Text>
-                            </Pressable>
-                            {isSubmitted ? (
-                              <>
-                                <Pressable style={styles.primaryChip} onPress={() => handleApprove(entry)} disabled={approveBusy || Boolean(busyAction)}>
-                                  <Text style={styles.primaryChipText}>{approveBusy ? 'Approving...' : 'Approve'}</Text>
-                                </Pressable>
-                                <Pressable style={styles.warningChip} onPress={() => handleReturn(entry)} disabled={returnBusy || Boolean(busyAction)}>
-                                  <Text style={styles.warningChipText}>{returnBusy ? 'Returning...' : 'Return'}</Text>
-                                </Pressable>
-                              </>
-                            ) : null}
-                          </View>
-                        </Pressable>
-                      );
-                    })}
-
-                    <View style={styles.groupFooter}>
-                      <Text style={styles.groupFooterText}>Timesheets: {group.totals.count}</Text>
-                      <Text style={styles.groupFooterText}>Claimed: {group.totals.claimedHours.toFixed(2)} h</Text>
-                      <Text style={styles.groupFooterText}>Approved: {group.totals.approvedHours.toFixed(2)} h</Text>
-                      <Text style={styles.groupFooterText}>Claimed amount: {formatCurrency(group.totals.claimedAmount)}</Text>
-                      <Text style={styles.groupFooterText}>Approved amount: {formatCurrency(group.totals.approvedAmount)}</Text>
-                      <Text style={styles.groupFooterText}>Pending: {group.totals.pendingCount}</Text>
-                      <Text style={styles.groupFooterText}>Approved count: {group.totals.approvedCount}</Text>
-                      {group.totals.missingRateCount > 0 ? (
-                        <Text style={styles.groupFooterText}>Rate unavailable: {group.totals.missingRateCount}</Text>
-                      ) : null}
-                    </View>
-                  </>
-                ) : null}
+                  <View style={styles.siteWeekCardActions}>
+                    <WorkflowBadge status={wfStatus} />
+                    <Pressable style={styles.reviewSiteButton} onPress={() => { setActiveGroupKey(group.key); setLevel('detail'); setFeedback(null); }}>
+                      <Text style={styles.reviewSiteButtonText}>Review Site</Text>
+                    </Pressable>
+                    {sendReady && (
+                      <Pressable style={styles.sendToClientButton} onPress={() => openSendModal(group)}>
+                        <Text style={styles.sendToClientText}>Send Weekly Timesheet to Client</Text>
+                      </Pressable>
+                    )}
+                  </View>
+                </View>
               </View>
             );
           })}
         </View>
 
+        {sendModal}
+      </View>
+    );
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  // DETAIL RENDER (level === 'detail')
+  // ════════════════════════════════════════════════════════════════════════
+  if (!activeGroup) {
+    return (
+      <View style={styles.workspace}>
+        <Pressable style={styles.backButton} onPress={() => setLevel('overview')}>
+          <Text style={styles.backButtonText}>← Back to overview</Text>
+        </Pressable>
+        <Text style={styles.emptyText}>Site not found. Please go back and try again.</Text>
+      </View>
+    );
+  }
+
+  const detailAllReviewed = activeGroup.totals.awaitingGuardCount === 0 && activeGroup.totals.awaitingCompanyCount === 0;
+  const detailSendReady = detailAllReviewed && activeGroup.totals.approvedCount > 0 && !!activeGroup.numericSiteId && !!activeGroup.clientId;
+
+  return (
+    <View style={styles.workspace}>
+      {/* Back + title */}
+      <Pressable style={styles.backButton} onPress={() => setLevel('overview')}>
+        <Text style={styles.backButtonText}>← Back to overview</Text>
+      </Pressable>
+
+      <View style={styles.detailPageHeader}>
+        <View style={styles.detailPageHeaderCopy}>
+          <Text style={styles.detailPageTitle}>{activeGroup.siteName}</Text>
+          <Text style={styles.detailPageWeek}>{activeGroup.weekLabel}</Text>
+          <Text style={styles.detailPageMeta}>
+            {activeGroup.totals.guardCount} guard{activeGroup.totals.guardCount !== 1 ? 's' : ''} · {activeGroup.totals.count} shift{activeGroup.totals.count !== 1 ? 's' : ''} · {activeGroup.totals.reviewedCount}/{activeGroup.totals.count} reviewed · {activeGroup.totals.approvedHours.toFixed(2)} approved h
+          </Text>
+          {!detailAllReviewed && (
+            <Text style={styles.unreviewedWarning}>
+              {activeGroup.totals.reviewedCount} of {activeGroup.totals.count} shifts reviewed — {activeGroup.totals.count - activeGroup.totals.reviewedCount} still require{activeGroup.totals.count - activeGroup.totals.reviewedCount === 1 ? 's' : ''} a decision before sending to client.
+            </Text>
+          )}
+        </View>
+        <View style={styles.detailPageActions}>
+          <Pressable
+            style={[styles.sendToClientButton, !detailSendReady && styles.sendToClientButtonDisabled]}
+            onPress={() => { if (detailSendReady) openSendModal(activeGroup); }}
+            disabled={!detailSendReady}
+          >
+            <Text style={styles.sendToClientText}>Send Weekly Timesheet to Client</Text>
+          </Pressable>
+          <Pressable style={styles.secondaryButton} onPress={() => handleExportGroup(activeGroup)}>
+            <Text style={styles.secondaryButtonText}>Export CSV</Text>
+          </Pressable>
+        </View>
+      </View>
+
+      {feedbackBanner}
+
+      {/* Guard groups + review panel layout */}
+      <View style={styles.reviewLayout}>
+        {/* Guard groups list */}
+        <View style={styles.guardListCard}>
+          {guardGroups.length === 0 ? (
+            <Text style={styles.emptyText}>No timesheets in this group.</Text>
+          ) : null}
+
+          {guardGroups.map((gg) => {
+            const isGuardCollapsed = Boolean(collapsedGuardKeys[gg.guardId]);
+            return (
+              <View key={gg.guardId} style={styles.guardGroupCard}>
+                <Pressable
+                  style={styles.guardGroupHeader}
+                  onPress={() => setCollapsedGuardKeys((prev) => ({ ...prev, [gg.guardId]: !prev[gg.guardId] }))}
+                >
+                  <View style={styles.guardGroupHeaderCopy}>
+                    <Text style={styles.guardGroupName}>{gg.guardName}</Text>
+                    <Text style={styles.guardGroupMeta}>
+                      {gg.totals.count} shift{gg.totals.count !== 1 ? 's' : ''} · {gg.totals.claimedHours.toFixed(2)} claimed h · {gg.totals.approvedHours.toFixed(2)} approved h · {gg.totals.reviewedCount}/{gg.totals.count} reviewed
+                    </Text>
+                  </View>
+                  <Text style={styles.guardGroupToggle}>{isGuardCollapsed ? 'Expand' : 'Collapse'}</Text>
+                </Pressable>
+
+                {!isGuardCollapsed && (
+                  <>
+                    <View style={styles.shiftRowsHeader}>
+                      <Text style={[styles.shiftHeaderText, styles.shiftDateCol]}>Date</Text>
+                      <Text style={[styles.shiftHeaderText, styles.shiftScheduledCol]}>Scheduled</Text>
+                      <Text style={[styles.shiftHeaderText, styles.shiftAttendanceCol]}>Attendance</Text>
+                      <Text style={[styles.shiftHeaderText, styles.shiftClaimCol]}>Guard Claim</Text>
+                      <Text style={[styles.shiftHeaderText, styles.shiftApprovedCol]}>Co. Approved</Text>
+                      <Text style={[styles.shiftHeaderText, styles.shiftStatusCol]}>Status</Text>
+                      <Text style={[styles.shiftHeaderText, styles.shiftActionCol]}>Review</Text>
+                    </View>
+
+                    {gg.rows.map((entry) => {
+                      const statusPalette = getStatusPalette(entry.displayStatus);
+                      const isSelected = entry.timesheet.id === selectedTimesheetId;
+                      const isSubmitted = normalizeStatus(entry.displayStatus) === 'submitted';
+                      const approveBusy = busyAction === `approve-${entry.timesheet.id}`;
+                      const returnBusy = busyAction === `return-${entry.timesheet.id}`;
+                      const approvedHrs = getApprovedHoursValue(entry.timesheet);
+                      return (
+                        <Pressable
+                          key={entry.timesheet.id}
+                          style={[styles.shiftRow, isSelected && styles.shiftRowSelected]}
+                          onPress={() => setSelectedTimesheetId(entry.timesheet.id)}
+                        >
+                          <Text style={[styles.shiftCell, styles.shiftDateCol]}>{entry.shiftDateLabel}</Text>
+                          <Text style={[styles.shiftCell, styles.shiftScheduledCol]}>{entry.scheduledLabel}</Text>
+                          <Text style={[styles.shiftCell, styles.shiftAttendanceCol]}>{entry.attendanceLabel}</Text>
+                          <Text style={[styles.shiftCell, styles.shiftClaimCol]}>{toHours(entry.timesheet.hoursWorked).toFixed(2)} h</Text>
+                          <Text style={[styles.shiftCell, styles.shiftApprovedCol]}>{approvedHrs !== null ? `${approvedHrs.toFixed(2)} h` : '—'}</Text>
+                          <View style={[styles.shiftStatusBadge, styles.shiftStatusCol, { backgroundColor: statusPalette.bg }]}>
+                            <Text style={[styles.shiftStatusText, { color: statusPalette.text }]}>{formatStatusLabel(entry.displayStatus)}</Text>
+                          </View>
+                          <View style={[styles.shiftActionCol, styles.shiftRowActions]}>
+                            <Pressable style={styles.reviewChip} onPress={() => setSelectedTimesheetId(entry.timesheet.id)}>
+                              <Text style={styles.reviewChipText}>Review</Text>
+                            </Pressable>
+                            {isSubmitted && (
+                              <>
+                                <Pressable style={styles.approveChip} onPress={() => handleApprove(entry)} disabled={approveBusy || Boolean(busyAction)}>
+                                  <Text style={styles.approveChipText}>{approveBusy ? '…' : 'Approve'}</Text>
+                                </Pressable>
+                                <Pressable style={styles.returnChip} onPress={() => handleReturn(entry)} disabled={returnBusy || Boolean(busyAction)}>
+                                  <Text style={styles.returnChipText}>{returnBusy ? '…' : 'Return'}</Text>
+                                </Pressable>
+                              </>
+                            )}
+                          </View>
+                        </Pressable>
+                      );
+                    })}
+                  </>
+                )}
+              </View>
+            );
+          })}
+        </View>
+
+        {/* Review detail panel */}
         <View style={styles.detailCard}>
-          <Text style={styles.detailTitle}>Timesheet review</Text>
-          <Text style={styles.detailSubtitle}>Open a row to review guard hours, notes, and action outcomes.</Text>
+          <Text style={styles.detailTitle}>Timesheet Review</Text>
+          <Text style={styles.detailSubtitle}>Select a shift row to review guard hours and record a decision.</Text>
 
           {activeSelected ? (
             <>
@@ -1094,10 +1189,6 @@ export function CompanyTimesheetsWorkspace({
                 <View style={styles.detailMetaItem}>
                   <Text style={styles.detailMetaLabel}>Guard</Text>
                   <Text style={styles.detailMetaValue}>{selectedTimesheet?.guardName}</Text>
-                </View>
-                <View style={styles.detailMetaItem}>
-                  <Text style={styles.detailMetaLabel}>Site</Text>
-                  <Text style={styles.detailMetaValue}>{selectedTimesheet?.siteName}</Text>
                 </View>
                 <View style={styles.detailMetaItem}>
                   <Text style={styles.detailMetaLabel}>Shift date</Text>
@@ -1114,25 +1205,29 @@ export function CompanyTimesheetsWorkspace({
               </View>
 
               <View style={styles.detailSection}>
-                <Text style={styles.detailSectionTitle}>Attendance & hours</Text>
-                <Text style={styles.detailLine}>
-                  Scheduled: {formatDateTimeLabel(activeSelected.scheduledStartAt || activeSelected.shift?.start)} - {formatTimeLabel(activeSelected.scheduledEndAt || activeSelected.shift?.end)}
-                </Text>
+                <Text style={styles.detailSectionTitle}>SCHEDULED</Text>
+                <Text style={styles.detailLine}>Book On: {formatTimeLabel(activeSelected.scheduledStartAt || activeSelected.shift?.start)}</Text>
+                <Text style={styles.detailLine}>Book Off: {formatTimeLabel(activeSelected.scheduledEndAt || activeSelected.shift?.end)}</Text>
+              </View>
+
+              <View style={styles.detailSection}>
+                <Text style={styles.detailSectionTitle}>ATTENDANCE</Text>
                 <Text style={styles.detailLine}>Check-in: {formatDateTimeLabel(activeSelected.actualCheckInAt)}</Text>
                 <Text style={styles.detailLine}>Check-out: {formatDateTimeLabel(activeSelected.actualCheckOutAt)}</Text>
-                <Text style={styles.detailLine}>Recorded minutes: {activeSelected.workedMinutes ?? 0}</Text>
-                <Text style={styles.detailLine}>Claimed hours: {selectedClaimedHours.toFixed(2)}</Text>
-                <Text style={styles.detailLine}>Approved hours: {selectedApprovedHours !== null ? selectedApprovedHours.toFixed(2) : 'Not approved yet'}</Text>
+                <Text style={styles.detailLine}>Recorded: {activeSelected.workedMinutes ?? 0} min</Text>
+              </View>
+
+              <View style={styles.detailSection}>
+                <Text style={styles.detailSectionTitle}>GUARD CLAIM</Text>
+                <Text style={styles.detailLine}>Claimed hours: {selectedClaimedHours.toFixed(2)} h</Text>
                 <Text style={styles.detailLine}>Submitted: {activeSelected.submittedAt ? formatDateTimeLabel(activeSelected.submittedAt) : 'Not submitted'}</Text>
               </View>
 
               <View style={styles.detailSection}>
-                <Text style={styles.detailSectionTitle}>Rate & amounts</Text>
-                <Text style={styles.detailLine}>Hourly rate: {formatRate(selectedHourlyRate)}</Text>
-                <Text style={styles.detailLine}>Claimed amount: {formatCurrency(selectedClaimedAmount)}</Text>
-                <Text style={styles.detailLine}>
-                  Approved amount: {selectedApprovedAmount !== null ? formatCurrency(selectedApprovedAmount) : 'Not approved yet'}
-                </Text>
+                <Text style={styles.detailSectionTitle}>COMPANY APPROVAL</Text>
+                <Text style={styles.detailLine}>Approved hours: {selectedApprovedHours !== null ? `${selectedApprovedHours.toFixed(2)} h` : 'Not approved yet'}</Text>
+                {activeSelected.companyApprovedStartAt && <Text style={styles.detailLine}>Approved On: {formatTimeLabel(activeSelected.companyApprovedStartAt)}</Text>}
+                {activeSelected.companyApprovedEndAt && <Text style={styles.detailLine}>Approved Off: {formatTimeLabel(activeSelected.companyApprovedEndAt)}</Text>}
               </View>
 
               <View style={styles.detailSection}>
@@ -1140,55 +1235,65 @@ export function CompanyTimesheetsWorkspace({
                 <Text style={styles.detailParagraph}>{activeSelected.guardNote?.trim() ? activeSelected.guardNote : 'No guard note provided.'}</Text>
               </View>
 
-              <View style={styles.detailSection}>
-                <Text style={styles.detailSectionTitle}>Company note</Text>
-                <TextInput
-                  value={companyNote}
-                  onChangeText={setCompanyNote}
-                  style={[styles.input, styles.noteInput]}
-                  multiline
-                  textAlignVertical="top"
-                  placeholder="Add payroll / client approval context, or note why this should be returned."
-                  placeholderTextColor="#64748b"
-                />
-              </View>
+              {isSubmittedForReview ? (
+                <>
+                  <View style={styles.detailSection}>
+                    <Text style={styles.detailSectionTitle}>Company note</Text>
+                    <TextInput
+                      value={companyNote}
+                      onChangeText={setCompanyNote}
+                      style={[styles.input, styles.noteInput]}
+                      multiline
+                      textAlignVertical="top"
+                      placeholder="Add payroll / client approval context, or note why this should be returned."
+                      placeholderTextColor="#64748b"
+                    />
+                  </View>
 
-              <View style={styles.detailSection}>
-                <Text style={styles.detailSectionTitle}>Approved hours</Text>
-                <Text style={styles.detailLine}>Claimed hours remain read-only so the original submission stays intact.</Text>
-                <TextInput
-                  value={approvedHoursInput}
-                  onChangeText={setApprovedHoursInput}
-                  style={styles.input}
-                  keyboardType="decimal-pad"
-                  placeholder={formatHoursInput(activeSelected.hoursWorked)}
-                  placeholderTextColor="#64748b"
-                />
-                {adjustedHoursRequireNote ? (
-                  <Text style={styles.validationText}>Add a company note when approved hours differ from claimed hours.</Text>
-                ) : null}
-              </View>
+                  <View style={styles.detailSection}>
+                    <Text style={styles.detailSectionTitle}>Approved hours</Text>
+                    <Text style={styles.detailLine}>Claimed hours remain read-only so the original submission stays intact.</Text>
+                    <TextInput
+                      value={approvedHoursInput}
+                      onChangeText={setApprovedHoursInput}
+                      style={styles.input}
+                      keyboardType="decimal-pad"
+                      placeholder={formatHoursInput(activeSelected.hoursWorked)}
+                      placeholderTextColor="#64748b"
+                    />
+                    {adjustedHoursRequireNote && <Text style={styles.validationText}>Add a company note when approved hours differ from claimed hours.</Text>}
+                  </View>
 
-              <View style={styles.detailActions}>
-                <Pressable style={styles.secondaryButton} onPress={handleSaveCompanyNote} disabled={busyAction === `note-${activeSelected.id}` || Boolean(busyAction)}>
-                  <Text style={styles.secondaryButtonText}>{busyAction === `note-${activeSelected.id}` ? 'Saving...' : 'Save review details'}</Text>
-                </Pressable>
-                <Pressable style={styles.primaryButton} onPress={() => handleApprove(selectedTimesheet)} disabled={busyAction === `approve-${activeSelected.id}` || Boolean(busyAction)}>
-                  <Text style={styles.primaryButtonText}>{busyAction === `approve-${activeSelected.id}` ? 'Approving...' : 'Approve'}</Text>
-                </Pressable>
-                <Pressable style={styles.warningButton} onPress={() => handleReturn(selectedTimesheet)} disabled={busyAction === `return-${activeSelected.id}` || Boolean(busyAction)}>
-                  <Text style={styles.warningButtonText}>{busyAction === `return-${activeSelected.id}` ? 'Returning...' : 'Return for correction'}</Text>
-                </Pressable>
-                <Pressable style={styles.dangerButton} onPress={() => handleReject(selectedTimesheet)} disabled={busyAction === `reject-${activeSelected.id}` || Boolean(busyAction)}>
-                  <Text style={styles.dangerButtonText}>{busyAction === `reject-${activeSelected.id}` ? 'Rejecting...' : 'Reject'}</Text>
-                </Pressable>
-              </View>
+                  <View style={styles.detailActions}>
+                    <Pressable style={styles.secondaryButton} onPress={handleSaveCompanyNote} disabled={busyAction === `note-${activeSelected.id}` || Boolean(busyAction)}>
+                      <Text style={styles.secondaryButtonText}>{busyAction === `note-${activeSelected.id}` ? 'Saving...' : 'Save review details'}</Text>
+                    </Pressable>
+                    <Pressable style={styles.primaryButton} onPress={() => handleApprove(selectedTimesheet!)} disabled={busyAction === `approve-${activeSelected.id}` || Boolean(busyAction)}>
+                      <Text style={styles.primaryButtonText}>{busyAction === `approve-${activeSelected.id}` ? 'Approving...' : 'Approve'}</Text>
+                    </Pressable>
+                    <Pressable style={styles.warningButton} onPress={() => handleReturn(selectedTimesheet!)} disabled={busyAction === `return-${activeSelected.id}` || Boolean(busyAction)}>
+                      <Text style={styles.warningButtonText}>{busyAction === `return-${activeSelected.id}` ? 'Returning...' : 'Return for correction'}</Text>
+                    </Pressable>
+                    <Pressable style={styles.dangerButton} onPress={() => handleReject(selectedTimesheet!)} disabled={busyAction === `reject-${activeSelected.id}` || Boolean(busyAction)}>
+                      <Text style={styles.dangerButtonText}>{busyAction === `reject-${activeSelected.id}` ? 'Rejecting...' : 'Reject'}</Text>
+                    </Pressable>
+                  </View>
+                </>
+              ) : (
+                <View style={styles.workflowStatePanel}>
+                  <Text style={styles.workflowStatePanelText}>
+                    {getWorkflowStateMessage(activeSelected.approvalStatus)}
+                  </Text>
+                </View>
+              )}
             </>
           ) : (
-            <Text style={styles.emptyText}>Select a timesheet row to review guard hours and record an approval decision.</Text>
+            <Text style={styles.emptyText}>Select a shift row to review guard hours and record an approval decision.</Text>
           )}
         </View>
       </View>
+
+      {sendModal}
     </View>
   );
 }
@@ -1199,8 +1304,8 @@ const styles = StyleSheet.create({
   headerCopy: { gap: 4 },
   title: { color: colors.primaryNavy, fontSize: 28, fontWeight: '800' },
   subtitle: { color: colors.textSecondary, fontSize: 14 },
-  helperText: { color: colors.info, fontSize: 12, fontWeight: '700' },
   headerActions: { flexDirection: 'row', gap: 10, alignItems: 'center', flexWrap: 'wrap' },
+
   primaryButton: { backgroundColor: colors.primaryNavy, borderRadius: 14, paddingHorizontal: 16, paddingVertical: 12 },
   primaryButtonText: { color: colors.background, fontWeight: '700' },
   secondaryButton: { borderRadius: 14, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: colors.pendingSurface },
@@ -1209,78 +1314,150 @@ const styles = StyleSheet.create({
   warningButtonText: { color: colors.warning, fontWeight: '700' },
   dangerButton: { borderRadius: 14, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: colors.dangerSurface },
   dangerButtonText: { color: colors.danger, fontWeight: '700' },
-  segmentedControl: { flexDirection: 'row', borderWidth: 1, borderColor: colors.border, borderRadius: 14, overflow: 'hidden', backgroundColor: colors.card },
-  segmentedOption: { paddingHorizontal: 14, paddingVertical: 10, backgroundColor: colors.card },
-  segmentedOptionActive: { backgroundColor: colors.primaryNavy },
-  segmentedOptionText: { color: colors.primaryNavySoft, fontWeight: '700' },
-  segmentedOptionTextActive: { color: colors.background },
+
   feedbackCard: { borderRadius: 18, paddingHorizontal: 16, paddingVertical: 14, gap: 4 },
   feedbackSuccess: { backgroundColor: colors.successSurface },
   feedbackError: { backgroundColor: colors.dangerSurface },
   feedbackInfo: { backgroundColor: colors.infoSurface },
   feedbackTitle: { color: colors.primaryNavy, fontWeight: '800', fontSize: 15 },
   feedbackText: { color: colors.primaryNavySoft, fontSize: 13, lineHeight: 18 },
+
   filterCard: { backgroundColor: colors.card, borderRadius: 22, padding: 18, gap: 12 },
+  weekNavRow: { flexDirection: 'row', alignItems: 'center', gap: 12, flexWrap: 'wrap' },
+  weekNavBtn: { borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, backgroundColor: colors.pendingSurface },
+  weekNavBtnDisabled: { opacity: 0.35 },
+  weekNavBtnText: { color: colors.primaryNavy, fontWeight: '700', fontSize: 13 },
+  weekNavLabel: { flex: 1, color: colors.primaryNavy, fontSize: 16, fontWeight: '800', textAlign: 'center' },
+  weekNavCurrentBtn: { borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, backgroundColor: colors.infoSurface },
+  weekNavCurrentBtnText: { color: colors.info, fontWeight: '700', fontSize: 13 },
   filterRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
   filterField: { minWidth: 150, flexGrow: 1, gap: 6 },
-  searchField: { minWidth: 220, flexGrow: 1.4 },
   filterLabel: { color: colors.textSecondary, fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.4 },
   input: { minHeight: 48, borderRadius: 14, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, paddingHorizontal: 14, paddingVertical: 12, color: colors.primaryNavyStrong },
   webSelect: { borderRadius: 14, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, padding: '14px 16px', fontSize: 14, color: colors.primaryNavyStrong, minHeight: 48 },
-  summaryGrid: { flexDirection: 'row', gap: 14, flexWrap: 'wrap' },
-  summaryCard: { flexGrow: 1, minWidth: 180, backgroundColor: colors.card, borderRadius: 20, padding: 18, gap: 8 },
-  summaryLabel: { color: colors.textSecondary, fontSize: 13, fontWeight: '700' },
-  summaryValue: { color: colors.primaryNavy, fontSize: 28, fontWeight: '800' },
+
+  kpiRow: { flexDirection: 'row', gap: 12, flexWrap: 'wrap' },
+  kpiCard: { flexGrow: 1, minWidth: 120, backgroundColor: colors.card, borderRadius: 18, padding: 16, gap: 4 },
+  kpiCardAccent: { backgroundColor: colors.warningSurface },
+  kpiValue: { color: colors.primaryNavy, fontSize: 28, fontWeight: '800' },
+  kpiLabel: { color: colors.textSecondary, fontSize: 12, fontWeight: '700' },
+
+  groupList: { gap: 12 },
+  siteWeekCard: { backgroundColor: colors.card, borderRadius: 20, padding: 18, borderWidth: 1, borderColor: colors.pendingSurface },
+  siteWeekCardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' },
+  siteWeekCardInfo: { flex: 1, gap: 4 },
+  siteWeekSiteName: { color: colors.primaryNavy, fontSize: 18, fontWeight: '800' },
+  siteWeekPeriod: { color: colors.textSecondary, fontSize: 13 },
+  siteWeekMeta: { color: colors.textSecondary, fontSize: 13 },
+  siteWeekCardActions: { flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap' },
+  reviewSiteButton: { backgroundColor: colors.primaryNavy, borderRadius: 12, paddingHorizontal: 16, paddingVertical: 10 },
+  reviewSiteButtonText: { color: '#ffffff', fontWeight: '700', fontSize: 13 },
+
+  unreviewedWarning: { color: colors.warning, fontSize: 12, fontWeight: '700', marginTop: 4 },
+  sendToClientButton: { borderRadius: 12, paddingHorizontal: 14, paddingVertical: 8, backgroundColor: colors.accentTeal ?? '#0d9488' },
+  sendToClientButtonDisabled: { opacity: 0.35 },
+  sendToClientText: { color: '#ffffff', fontWeight: '700', fontSize: 12 },
+
+  badgeAwaitingGuard: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, backgroundColor: colors.pendingSurface },
+  badgeNeedsReview: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, backgroundColor: colors.warningSurface },
+  badgeReady: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, backgroundColor: colors.successSurface },
+  badgeAwaitingClient: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, backgroundColor: colors.infoSurface },
+  badgeReturned: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, backgroundColor: colors.dangerSurface },
+  badgeClientApproved: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, backgroundColor: colors.successSurface },
+  badgeFinalised: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, backgroundColor: colors.pendingSurface },
+  badgeText: { fontSize: 11, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.4, color: colors.primaryNavy },
+
+  emptyCard: { backgroundColor: colors.card, borderRadius: 20, padding: 24 },
+  emptyText: { color: colors.textSecondary, fontSize: 14, lineHeight: 20 },
+
+  // Detail view
+  backButton: { alignSelf: 'flex-start', paddingVertical: 10 },
+  backButtonText: { color: colors.info, fontWeight: '700', fontSize: 14 },
+  detailPageHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' },
+  detailPageHeaderCopy: { flex: 1, gap: 4 },
+  detailPageTitle: { color: colors.primaryNavy, fontSize: 24, fontWeight: '800' },
+  detailPageWeek: { color: colors.textSecondary, fontSize: 15, fontWeight: '700' },
+  detailPageMeta: { color: colors.textSecondary, fontSize: 13 },
+  detailPageActions: { flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap' },
+
   reviewLayout: { flexDirection: 'row', gap: 18, alignItems: 'flex-start', flexWrap: 'wrap' },
-  reviewListCard: { flex: 2.2, minWidth: 760, backgroundColor: colors.card, borderRadius: 22, padding: 18, gap: 14 },
-  detailCard: { flex: 1, minWidth: 340, backgroundColor: colors.card, borderRadius: 22, padding: 18, gap: 14, borderWidth: 1, borderColor: colors.infoSurface },
-  detailTitle: { color: colors.primaryNavy, fontSize: 20, fontWeight: '800' },
+  guardListCard: { flex: 2, minWidth: 520, gap: 12 },
+
+  guardGroupCard: { borderWidth: 1, borderColor: colors.pendingSurface, borderRadius: 18, overflow: 'hidden', backgroundColor: colors.card },
+  guardGroupHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 14, backgroundColor: colors.background },
+  guardGroupHeaderCopy: { flex: 1, gap: 3 },
+  guardGroupName: { color: colors.primaryNavy, fontSize: 16, fontWeight: '800' },
+  guardGroupMeta: { color: colors.textSecondary, fontSize: 13 },
+  guardGroupToggle: { color: colors.info, fontWeight: '700', fontSize: 12 },
+
+  shiftRowsHeader: { flexDirection: 'row', gap: 8, paddingHorizontal: 14, paddingVertical: 10, borderTopWidth: 1, borderTopColor: colors.pendingSurface, backgroundColor: colors.card },
+  shiftHeaderText: { color: colors.textSecondary, fontWeight: '700', fontSize: 11, textTransform: 'uppercase' },
+  shiftRow: { flexDirection: 'row', gap: 8, alignItems: 'center', paddingHorizontal: 14, paddingVertical: 12, borderTopWidth: 1, borderTopColor: colors.pendingSurface },
+  shiftRowSelected: { backgroundColor: colors.infoSurface },
+  shiftRowActions: { flexDirection: 'row', gap: 6, flexWrap: 'wrap', alignItems: 'center' },
+  shiftCell: { color: colors.primaryNavySoft, fontSize: 12 },
+  shiftDateCol: { flex: 0.9 },
+  shiftScheduledCol: { flex: 1 },
+  shiftAttendanceCol: { flex: 1 },
+  shiftClaimCol: { flex: 0.7 },
+  shiftApprovedCol: { flex: 0.7 },
+  shiftStatusCol: { flex: 0.8 },
+  shiftActionCol: { flex: 1.2 },
+  shiftStatusBadge: { alignSelf: 'flex-start', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 4 },
+  shiftStatusText: { fontWeight: '800', fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.4 },
+  reviewChip: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, backgroundColor: colors.pendingSurface },
+  reviewChipText: { color: colors.primaryNavy, fontWeight: '700', fontSize: 11 },
+  approveChip: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, backgroundColor: colors.successSurface },
+  approveChipText: { color: colors.success, fontWeight: '700', fontSize: 11 },
+  returnChip: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, backgroundColor: colors.warningSurface },
+  returnChipText: { color: colors.warning, fontWeight: '700', fontSize: 11 },
+
+  detailCard: { flex: 1, minWidth: 320, backgroundColor: colors.card, borderRadius: 22, padding: 18, gap: 14, borderWidth: 1, borderColor: colors.infoSurface },
+  detailTitle: { color: colors.primaryNavy, fontSize: 18, fontWeight: '800' },
   detailSubtitle: { color: colors.textSecondary, fontSize: 13, lineHeight: 18 },
-  groupCard: { borderWidth: 1, borderColor: colors.pendingSurface, borderRadius: 18, overflow: 'hidden' },
-  groupHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 14, backgroundColor: colors.background },
-  groupHeaderCopy: { flex: 1, gap: 4 },
-  groupSite: { color: colors.primaryNavy, fontSize: 18, fontWeight: '800' },
-  groupPeriod: { color: colors.textSecondary, fontSize: 13 },
-  groupHeaderActions: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  inlineAction: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, backgroundColor: colors.pendingSurface },
-  inlineActionText: { color: colors.primaryNavy, fontWeight: '700', fontSize: 12 },
-  groupToggle: { color: colors.info, fontWeight: '700', fontSize: 12 },
-  rowsHeader: { flexDirection: 'row', gap: 12, paddingHorizontal: 16, paddingVertical: 12, borderTopWidth: 1, borderTopColor: colors.pendingSurface, borderBottomWidth: 1, borderBottomColor: colors.pendingSurface, backgroundColor: colors.card },
-  rowsHeaderText: { color: colors.textSecondary, fontWeight: '700', fontSize: 12, textTransform: 'uppercase' },
-  timesheetRow: { flexDirection: 'row', gap: 12, alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: colors.pendingSurface },
-  timesheetRowSelected: { backgroundColor: colors.infoSurface },
-  rowText: { color: colors.primaryNavySoft, fontSize: 13 },
-  rowTextStrong: { color: colors.primaryNavy, fontSize: 13, fontWeight: '700' },
-  guardCol: { flex: 1.3 },
-  dateCol: { flex: 0.9 },
-  scheduleCol: { flex: 1.1 },
-  attendanceCol: { flex: 1.1 },
-  hoursCol: { flex: 0.8 },
-  statusCol: { flex: 0.9 },
-  actionsCol: { flex: 1.4 },
-  statusBadge: { alignSelf: 'flex-start', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 },
-  statusBadgeText: { fontWeight: '800', fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.4 },
-  rowActions: { flexDirection: 'row', gap: 8, flexWrap: 'wrap', alignItems: 'center' },
-  secondaryChip: { borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: colors.pendingSurface },
-  secondaryChipText: { color: colors.primaryNavy, fontWeight: '700', fontSize: 12 },
-  primaryChip: { borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: colors.infoSurface },
-  primaryChipText: { color: colors.info, fontWeight: '700', fontSize: 12 },
-  warningChip: { borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: colors.warningSurface },
-  warningChipText: { color: colors.warning, fontWeight: '700', fontSize: 12 },
-  groupFooter: { flexDirection: 'row', flexWrap: 'wrap', gap: 16, paddingHorizontal: 16, paddingVertical: 14, backgroundColor: colors.background },
-  groupFooterText: { color: colors.textSecondary, fontSize: 13, fontWeight: '700' },
   detailMetaGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
-  detailMetaItem: { minWidth: 140, flexGrow: 1, gap: 4 },
-  detailMetaLabel: { color: colors.textSecondary, fontSize: 12, fontWeight: '700', textTransform: 'uppercase' },
-  detailMetaValue: { color: colors.primaryNavy, fontSize: 15, fontWeight: '700' },
+  detailMetaItem: { minWidth: 120, flexGrow: 1, gap: 4 },
+  detailMetaLabel: { color: colors.textSecondary, fontSize: 11, fontWeight: '700', textTransform: 'uppercase' },
+  detailMetaValue: { color: colors.primaryNavy, fontSize: 14, fontWeight: '700' },
   detailStatusBadge: { alignSelf: 'flex-start', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 },
   detailStatusBadgeText: { fontWeight: '800', fontSize: 11, textTransform: 'uppercase' },
-  detailSection: { gap: 8, borderTopWidth: 1, borderTopColor: colors.pendingSurface, paddingTop: 14 },
-  detailSectionTitle: { color: colors.primaryNavy, fontSize: 15, fontWeight: '800' },
+  detailSection: { gap: 6, borderTopWidth: 1, borderTopColor: colors.pendingSurface, paddingTop: 12 },
+  detailSectionTitle: { color: colors.primaryNavy, fontSize: 12, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.6 },
   detailLine: { color: colors.primaryNavySoft, fontSize: 13, lineHeight: 18 },
   detailParagraph: { color: colors.primaryNavySoft, fontSize: 13, lineHeight: 20 },
   validationText: { color: colors.warning, fontSize: 12, lineHeight: 18, fontWeight: '700' },
-  noteInput: { minHeight: 110, textAlignVertical: 'top' },
-  detailActions: { gap: 10 },
-  emptyText: { color: colors.textSecondary, fontSize: 14, lineHeight: 20 },
+  noteInput: { minHeight: 90, textAlignVertical: 'top' },
+  detailActions: { gap: 8 },
+
+  // Send-to-client modal
+  sendOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center', padding: 16 },
+  sendCard: { backgroundColor: '#fff', borderRadius: 20, padding: 24, width: '100%', maxWidth: 680, maxHeight: '90%' },
+  sendTitle: { fontSize: 18, fontWeight: '800', color: colors.primaryNavy },
+  sendMeta: { fontSize: 14, color: colors.primaryNavySoft },
+  sendWarningBanner: { backgroundColor: colors.warningSurface, borderRadius: 10, padding: 12 },
+  sendWarningText: { color: colors.warning, fontWeight: '700', fontSize: 13 },
+  sendRow: { borderWidth: 1, borderColor: colors.border, borderRadius: 12, padding: 12, gap: 8 },
+  sendRowExcluded: { borderColor: colors.danger, backgroundColor: colors.dangerSurface },
+  sendCheckRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
+  sendCheckbox: { width: 22, height: 22, borderRadius: 5, borderWidth: 2, borderColor: colors.primaryNavy, alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff', marginTop: 2 },
+  sendCheckboxChecked: { backgroundColor: colors.primaryNavy },
+  sendCheckmark: { color: '#fff', fontSize: 13, fontWeight: '700' },
+  sendGuardName: { fontSize: 14, fontWeight: '700', color: colors.primaryNavy },
+  sendShiftMeta: { fontSize: 12, color: colors.textSecondary, lineHeight: 18 },
+  sendExcludedLabel: { fontSize: 11, color: colors.danger, fontWeight: '800', textTransform: 'uppercase', marginTop: 2 },
+  sendExclusionInput: { borderWidth: 1, borderColor: colors.danger, borderRadius: 8, padding: 8, fontSize: 13, backgroundColor: '#fff', color: colors.primaryNavyStrong },
+  sendSummary: { backgroundColor: colors.infoSurface, borderRadius: 12, padding: 14 },
+  sendSummaryText: { fontSize: 14, fontWeight: '700', color: colors.primaryNavy },
+  sendNoteInput: { borderWidth: 1, borderColor: colors.border, borderRadius: 10, padding: 10, minHeight: 64, textAlignVertical: 'top', fontSize: 13, backgroundColor: '#fff', color: colors.primaryNavyStrong },
+  sendErrorText: { fontSize: 13, color: colors.danger, fontWeight: '700' },
+  sendEmptyText: { fontSize: 13, color: colors.textSecondary, fontStyle: 'italic' },
+  sendActions: { flexDirection: 'row', gap: 10 },
+  sendSubmitButton: { flex: 1, backgroundColor: colors.accentTeal ?? '#0d9488', borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
+  sendButtonDisabled: { opacity: 0.4 },
+  sendSubmitText: { color: '#fff', fontWeight: '800', fontSize: 14 },
+  sendCancelButton: { flex: 1, backgroundColor: colors.pendingSurface, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
+  sendCancelText: { color: colors.primaryNavy, fontWeight: '700', fontSize: 14 },
+
+  workflowStatePanel: { backgroundColor: colors.pendingSurface, borderRadius: 14, padding: 16, marginTop: 8 },
+  workflowStatePanelText: { color: colors.primaryNavy, fontSize: 14, fontWeight: '600', lineHeight: 20 },
 });
