@@ -658,10 +658,12 @@ test('T79 three layers: CompanyWeeklyApprovalsScreen shows GUARD CLAIM evidence 
   assert(screen.includes('hoursWorked') || screen.includes('Claimed Hours'), 'Missing guard claimed hours in GUARD CLAIM layer');
 });
 
-// T80: CompanyWeeklyApprovalsScreen detail view has COMPANY APPROVAL evidence layer
+// T80: CompanyWeeklyApprovalsScreen detail view has COMPANY GUARD-PAY APPROVAL evidence layer
+// (P1H-C renamed this label from "COMPANY APPROVAL" to "COMPANY GUARD-PAY APPROVAL" to
+//  clearly distinguish Layer 4 payroll approval from Layer 5 client billing correction)
 test('T80 three layers: CompanyWeeklyApprovalsScreen shows COMPANY APPROVAL evidence layer', () => {
   const screen = mobile('screens/CompanyWeeklyApprovalsScreen.tsx');
-  assert(screen.includes('COMPANY APPROVAL'), 'CompanyWeeklyApprovalsScreen missing COMPANY APPROVAL evidence layer label');
+  assert(screen.includes('COMPANY GUARD-PAY APPROVAL'), 'CompanyWeeklyApprovalsScreen missing COMPANY GUARD-PAY APPROVAL evidence layer label');
   assert(screen.includes('approvedHoursAtSubmission'), 'Missing approvedHoursAtSubmission in COMPANY APPROVAL layer');
 });
 
