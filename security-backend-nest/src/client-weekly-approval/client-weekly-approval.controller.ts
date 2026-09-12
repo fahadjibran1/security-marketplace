@@ -9,6 +9,7 @@ import { ClientWeeklyApprovalService } from './client-weekly-approval.service';
 import { CreateWeeklyApprovalDto } from './dto/create-weekly-approval.dto';
 import { ResubmitApprovalDto } from './dto/resubmit-approval.dto';
 import { ResolveDisputeDto } from './dto/resolve-dispute.dto';
+import { ReviseApprovedTimeDto } from './dto/revise-approved-time.dto';
 
 @Controller('timesheets/weekly-approvals')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -75,5 +76,15 @@ export class ClientWeeklyApprovalController {
     @Body() dto: ResubmitApprovalDto,
   ) {
     return this.service.resubmit(user.sub, id, dto);
+  }
+
+  @Patch(':id/revise-approved-time')
+  @Roles(...COMPANY_ADMIN_ROLES)
+  reviseApprovedTime(
+    @CurrentUser() user: JwtPayload,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ReviseApprovedTimeDto,
+  ) {
+    return this.service.reviseApprovedTime(user.sub, id, dto);
   }
 }
