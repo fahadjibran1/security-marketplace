@@ -1227,6 +1227,16 @@ export function resubmitWeeklyApproval(requestId: number, payload: Partial<Creat
   });
 }
 
+export function reviseApprovedTime(
+  requestId: number,
+  payload: { timesheetId: number; newBillingStartAt: string; newBillingEndAt: string; clientCorrectionReason: string },
+) {
+  return request<{ message: string }>(`/timesheets/weekly-approvals/${requestId}/revise-approved-time`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
 // P1H — Client weekly approvals
 export function getClientWeeklyApprovals(params?: Record<string, string | number>) {
   const qs = params ? '?' + new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)])).toString() : '';

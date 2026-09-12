@@ -1539,6 +1539,7 @@ export interface ClientWeeklyApprovalDetail extends ClientWeeklyApprovalSummary 
 
 export interface CompanyApprovalLine {
   id: number;
+  timesheetId?: number;
   guardName: string | null;
   shiftDate: string;
   scheduledStart: string | null;
@@ -1551,6 +1552,11 @@ export interface CompanyApprovalLine {
   hasOverride: boolean;
   companyApprovedStartAtSubmission?: string | null;
   companyApprovedEndAtSubmission?: string | null;
+  // Layer 5: pending billing correction fields (set by P1H-C, cleared at resubmit)
+  clientBillingApprovedMinutes?: number | null;
+  clientBillingApprovedStartAt?: string | null;
+  clientBillingApprovedEndAt?: string | null;
+  clientBillingCorrectionReason?: string | null;
   timesheet?: {
     hoursWorked?: number;
     overrideReason?: string | null;
@@ -1558,6 +1564,11 @@ export interface CompanyApprovalLine {
     scheduledEndAt?: string | null;
     companyApprovedStartAt?: string | null;
     companyApprovedEndAt?: string | null;
+    approvedMinutes?: number | null;
+    clientBillingApprovedMinutes?: number | null;
+    clientBillingApprovedStartAt?: string | null;
+    clientBillingApprovedEndAt?: string | null;
+    clientBillingCorrectionReason?: string | null;
   };
 }
 
