@@ -212,6 +212,32 @@ export function CompanyWeeklyApprovalsScreen({ onSelect }: Props) {
                 <Text style={styles.guardName}>{line.guardName ?? 'Guard'}</Text>
                 <Text style={styles.shiftDate}>Date: {line.shiftDate}</Text>
 
+                {/* Billing summary card — shown on disputed requests so the hierarchy is immediately visible */}
+                {detail.status === 'disputed' && (
+                  <View style={styles.billingSummaryCard}>
+                    <Text style={styles.billingSummaryTitle}>Billing Summary</Text>
+                    {line.timesheet?.hoursWorked != null && (
+                      <Text style={styles.billingSummaryRow}>Guard Claim: {Number(line.timesheet.hoursWorked).toFixed(2)} hrs</Text>
+                    )}
+                    {line.timesheet?.approvedMinutes != null && (
+                      <Text style={[styles.billingSummaryRow, { fontWeight: '700' }]}>
+                        Guard Pay Approved: {(line.timesheet.approvedMinutes / 60).toFixed(2)} hrs
+                      </Text>
+                    )}
+                    <Text style={styles.billingSummaryRow}>
+                      Client Submitted (V{detail.currentVersion}): {Number(line.approvedHoursAtSubmission).toFixed(2)} hrs
+                    </Text>
+                    {detail.clientSubmissionNote ? (
+                      <Text style={styles.billingSummaryComment}>Client Comment: "{detail.clientSubmissionNote}"</Text>
+                    ) : null}
+                    {line.timesheet?.clientBillingApprovedMinutes != null && (
+                      <Text style={[styles.billingSummaryRow, styles.billingCorrectionHighlight]}>
+                        Pending Client Billing Correction: {((line.timesheet.clientBillingApprovedMinutes ?? 0) / 60).toFixed(2)} hrs
+                      </Text>
+                    )}
+                  </View>
+                )}
+
                 {/* Layer A: Scheduled */}
                 <View style={styles.evidenceLayer}>
                   <Text style={styles.layerTitle}>SCHEDULED</Text>
@@ -625,6 +651,12 @@ const styles = StyleSheet.create({
   errorText: { fontSize: 14, color: '#dc2626', textAlign: 'center', marginVertical: 8 },
   retryButton: { backgroundColor: colors.primaryNavy, paddingHorizontal: 20, paddingVertical: 10, borderRadius: 8, marginTop: 8 },
   retryButtonText: { color: '#ffffff', fontWeight: '600' },
+
+  billingSummaryCard: { backgroundColor: '#f0fdf4', borderRadius: 12, padding: 12, marginBottom: 10, borderLeftWidth: 3, borderLeftColor: '#0d9488' },
+  billingSummaryTitle: { color: '#065f46', fontWeight: '800', fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 6 },
+  billingSummaryRow: { fontSize: 13, color: '#374151', lineHeight: 20 },
+  billingSummaryComment: { fontSize: 12, color: '#6b7280', fontStyle: 'italic', marginTop: 4 },
+  billingCorrectionHighlight: { color: '#0d9488', fontWeight: '700', marginTop: 2 },
 
   billingCorrectionLayer: { borderWidth: 1, borderColor: '#0d9488', backgroundColor: '#f0fdfa' },
   adjustBillingButton: {

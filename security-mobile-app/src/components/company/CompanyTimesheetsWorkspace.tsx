@@ -1,8 +1,8 @@
 import * as React from 'react';
 import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { formatApiErrorMessage, getEligibleTimesheets, submitWeeklyApproval, updateTimesheet } from '../../services/api';
-import { EligibleTimesheetRow, Timesheet } from '../../types/models';
+import { formatApiErrorMessage, getCompanyWeeklyApprovals, getEligibleTimesheets, submitWeeklyApproval, updateTimesheet } from '../../services/api';
+import { ClientWeeklyApprovalSummary, EligibleTimesheetRow, Timesheet } from '../../types/models';
 import { colors } from '../../theme';
 
 type WorkspaceLevel = 'overview' | 'detail';
@@ -18,6 +18,7 @@ type CompanyTimesheetsWorkspaceProps = {
   timesheets: Timesheet[];
   refreshing: boolean;
   onRefresh: () => Promise<void>;
+  onNavigateToClientTimesheets?: (requestId?: number) => void;
 };
 
 type WebSelectProps = {
@@ -54,6 +55,7 @@ type GroupedTimesheets = {
   periodLabel: string;
   weekLabel: string;
   clientSubmissionStatus: string | null;
+  clientRequestId: number | null;
   rows: EnrichedTimesheet[];
   totals: {
     count: number;
@@ -161,13 +163,25 @@ function formatStatusLabel(value?: string | null) {
   }
 }
 
-function getWorkflowStateMessage(value?: string | null): string {
+function getWorkflowStatePanel(value?: string | null): { title: string; body: string } {
   switch (normalizeStatus(value)) {
-    case 'draft': return 'Awaiting Guard Submission. The Guard must submit this timesheet before Company review.';
-    case 'approved': return 'Company review complete — Approved.';
-    case 'rejected': return 'Company review complete — Rejected.';
-    case 'returned': return 'Returned to Guard. Awaiting Guard Resubmission.';
-    default: return '';
+    case 'draft':
+      return { title: 'Awaiting Guard Submission', body: 'The Guard must submit this timesheet before Company review.' };
+    case 'returned':
+      return { title: 'Awaiting Guard Resubmission', body: 'This timesheet was returned to the Guard for correction. Awaiting their resubmission.' };
+    default:
+      return { title: '', body: '' };
+  }
+}
+
+function clientSubmissionStatusLabel(status: string | null): string {
+  switch ((status || '').toLowerCase()) {
+    case 'pending_approval': return 'Awaiting Client Approval';
+    case 'resolved': return 'Awaiting Client Approval';
+    case 'disputed': return 'Returned for Correction';
+    case 'client_approved': return 'Client Approved';
+    case 'locked': return 'Finalised';
+    default: return status || 'Submitted';
   }
 }
 
@@ -373,6 +387,7 @@ export function CompanyTimesheetsWorkspace({
   timesheets,
   refreshing,
   onRefresh,
+  onNavigateToClientTimesheets,
 }: CompanyTimesheetsWorkspaceProps) {
   // Navigation
   const [level, setLevel] = React.useState<WorkspaceLevel>('overview');
@@ -411,6 +426,9 @@ export function CompanyTimesheetsWorkspace({
   const [sendClientNote, setSendClientNote] = React.useState('');
   const [sendSubmitLoading, setSendSubmitLoading] = React.useState(false);
   const [sendSubmitError, setSendSubmitError] = React.useState<string | null>(null);
+
+  // Weekly approvals — for duplicate-request detection and "Open Client Timesheet"
+  const [weeklyApprovals, setWeeklyApprovals] = React.useState<ClientWeeklyApprovalSummary[]>([]);
 
   // ── DERIVED: active week ─────────────────────────────────────────────────
   const baseWeekStart = React.useMemo(() => getWeekStart(new Date()), []);
@@ -474,6 +492,16 @@ export function CompanyTimesheetsWorkspace({
     });
   }, [enrichedTimesheets, activeWeekStart, siteFilter]);
 
+  // ── WEEKLY APPROVAL LOOKUP (siteId + weekCommencing → status + requestId) ──
+  const weeklyApprovalLookup = React.useMemo(() => {
+    const map = new Map<string, { status: string; requestId: number }>();
+    weeklyApprovals.forEach((wa) => {
+      const key = `${wa.siteId}__${wa.weekCommencing}`;
+      if (!map.has(key)) map.set(key, { status: wa.status, requestId: wa.id });
+    });
+    return map;
+  }, [weeklyApprovals]);
+
   // ── GROUPED BY SITE + WEEK ───────────────────────────────────────────────
   const groupedTimesheets = React.useMemo<GroupedTimesheets[]>(() => {
     const groups = new Map<string, GroupedTimesheets>();
@@ -491,6 +519,7 @@ export function CompanyTimesheetsWorkspace({
         periodLabel: `Week of ${formatDateLabel(weekStart.toISOString())}`,
         weekLabel: getWeekRangeLabel(weekStart),
         clientSubmissionStatus: null,
+        clientRequestId: null,
         rows: [],
         totals: {
           count: 0, guardCount: 0, claimedHours: 0, approvedHours: 0,
@@ -527,20 +556,26 @@ export function CompanyTimesheetsWorkspace({
     });
 
     return Array.from(groups.values())
-      .map((group) => ({
-        ...group,
-        rows: group.rows.sort((a, b) => b.shiftDate.getTime() - a.shiftDate.getTime()),
-        totals: {
-          ...group.totals,
-          guardCount: new Set(group.rows.map((r) => r.guardId)).size,
-          claimedHours: roundHours(group.totals.claimedHours),
-          approvedHours: roundHours(group.totals.approvedHours),
-          claimedAmount: roundCurrency(group.totals.claimedAmount),
-          approvedAmount: roundCurrency(group.totals.approvedAmount),
-        },
-      }))
+      .map((group) => {
+        const approvalKey = `${group.numericSiteId}__${group.periodKey}`;
+        const approval = weeklyApprovalLookup.get(approvalKey) ?? null;
+        return {
+          ...group,
+          clientSubmissionStatus: approval ? approval.status : null,
+          clientRequestId: approval ? approval.requestId : null,
+          rows: group.rows.sort((a, b) => b.shiftDate.getTime() - a.shiftDate.getTime()),
+          totals: {
+            ...group.totals,
+            guardCount: new Set(group.rows.map((r) => r.guardId)).size,
+            claimedHours: roundHours(group.totals.claimedHours),
+            approvedHours: roundHours(group.totals.approvedHours),
+            claimedAmount: roundCurrency(group.totals.claimedAmount),
+            approvedAmount: roundCurrency(group.totals.approvedAmount),
+          },
+        };
+      })
       .sort((a, b) => a.siteName !== b.siteName ? a.siteName.localeCompare(b.siteName) : b.rows[0].shiftDate.getTime() - a.rows[0].shiftDate.getTime());
-  }, [filteredTimesheets]);
+  }, [filteredTimesheets, weeklyApprovalLookup]);
 
   // ── ACTIVE GROUP (detail view) ───────────────────────────────────────────
   const activeGroup = React.useMemo(
@@ -601,6 +636,10 @@ export function CompanyTimesheetsWorkspace({
     setSelectedTimesheetId(null);
     setCollapsedGuardKeys({});
   }, [activeGroupKey]);
+
+  React.useEffect(() => {
+    getCompanyWeeklyApprovals().then(setWeeklyApprovals).catch(() => {});
+  }, []);
 
   React.useEffect(() => {
     setCompanyNote(selectedTimesheet?.timesheet.companyNote || '');
@@ -681,6 +720,7 @@ export function CompanyTimesheetsWorkspace({
       });
       setSendGroup(null);
       setFeedback({ tone: 'success', title: 'Sent to client', message: `${sendSelectedIds.size} shift${sendSelectedIds.size !== 1 ? 's' : ''} submitted to ${sendGroup.clientName} for approval.` });
+      getCompanyWeeklyApprovals().then(setWeeklyApprovals).catch(() => {});
     } catch (err) {
       setSendSubmitError(formatApiErrorMessage(err, 'Submission failed.'));
     } finally {
@@ -1010,13 +1050,13 @@ export function CompanyTimesheetsWorkspace({
                     <Text style={styles.siteWeekSiteName}>{group.siteName}</Text>
                     <Text style={styles.siteWeekPeriod}>{group.weekLabel}</Text>
                     <Text style={styles.siteWeekMeta}>
-                      {group.totals.guardCount} guard{group.totals.guardCount !== 1 ? 's' : ''} · {group.totals.count} shift{group.totals.count !== 1 ? 's' : ''} · {group.totals.reviewedCount}/{group.totals.count} reviewed · {group.totals.approvedHours.toFixed(2)} approved h
+                      {group.totals.guardCount} guard{group.totals.guardCount !== 1 ? 's' : ''} · {group.totals.count} shift{group.totals.count !== 1 ? 's' : ''} · {group.totals.reviewedCount}/{group.totals.count} reviewed · {group.totals.approvedHours.toFixed(2)} Guard Pay approved h
                     </Text>
                     {(group.totals.awaitingGuardCount > 0 || group.totals.awaitingCompanyCount > 0) && (
                       <Text style={styles.unreviewedWarning}>
-                        {group.totals.awaitingGuardCount > 0 ? `${group.totals.awaitingGuardCount} awaiting Guard submission` : ''}
+                        {group.totals.awaitingGuardCount > 0 ? `Awaiting Guard — ${group.totals.awaitingGuardCount} timesheet${group.totals.awaitingGuardCount !== 1 ? 's' : ''}` : ''}
                         {group.totals.awaitingGuardCount > 0 && group.totals.awaitingCompanyCount > 0 ? ' · ' : ''}
-                        {group.totals.awaitingCompanyCount > 0 ? `${group.totals.awaitingCompanyCount} awaiting Company review` : ''}
+                        {group.totals.awaitingCompanyCount > 0 ? `${group.totals.awaitingCompanyCount} Awaiting Company Review` : ''}
                       </Text>
                     )}
                   </View>
@@ -1025,11 +1065,26 @@ export function CompanyTimesheetsWorkspace({
                     <Pressable style={styles.reviewSiteButton} onPress={() => { setActiveGroupKey(group.key); setLevel('detail'); setFeedback(null); }}>
                       <Text style={styles.reviewSiteButtonText}>Review Site</Text>
                     </Pressable>
-                    {sendReady && (
-                      <Pressable style={styles.sendToClientButton} onPress={() => openSendModal(group)}>
+                    {group.clientSubmissionStatus ? (
+                      <Pressable
+                        style={styles.openClientTimesheetButton}
+                        onPress={() => onNavigateToClientTimesheets?.(group.clientRequestId ?? undefined)}
+                      >
+                        <Text style={styles.openClientTimesheetText}>Open Client Timesheet</Text>
+                        <Text style={styles.clientTimesheetStatusText}>{clientSubmissionStatusLabel(group.clientSubmissionStatus)}</Text>
+                      </Pressable>
+                    ) : sendReady ? (
+                      <>
+                        <View style={styles.badgeReady}><Text style={styles.badgeText}>Ready for Client</Text></View>
+                        <Pressable style={styles.sendToClientButton} onPress={() => openSendModal(group)}>
+                          <Text style={styles.sendToClientText}>Send Weekly Timesheet to Client</Text>
+                        </Pressable>
+                      </>
+                    ) : group.totals.awaitingGuardCount > 0 ? (
+                      <Pressable style={[styles.sendToClientButton, styles.sendToClientButtonDisabled]} disabled>
                         <Text style={styles.sendToClientText}>Send Weekly Timesheet to Client</Text>
                       </Pressable>
-                    )}
+                    ) : null}
                   </View>
                 </View>
               </View>
@@ -1071,7 +1126,7 @@ export function CompanyTimesheetsWorkspace({
           <Text style={styles.detailPageTitle}>{activeGroup.siteName}</Text>
           <Text style={styles.detailPageWeek}>{activeGroup.weekLabel}</Text>
           <Text style={styles.detailPageMeta}>
-            {activeGroup.totals.guardCount} guard{activeGroup.totals.guardCount !== 1 ? 's' : ''} · {activeGroup.totals.count} shift{activeGroup.totals.count !== 1 ? 's' : ''} · {activeGroup.totals.reviewedCount}/{activeGroup.totals.count} reviewed · {activeGroup.totals.approvedHours.toFixed(2)} approved h
+            {activeGroup.totals.guardCount} guard{activeGroup.totals.guardCount !== 1 ? 's' : ''} · {activeGroup.totals.count} shift{activeGroup.totals.count !== 1 ? 's' : ''} · {activeGroup.totals.reviewedCount}/{activeGroup.totals.count} reviewed · {activeGroup.totals.approvedHours.toFixed(2)} Guard Pay approved h
           </Text>
           {!detailAllReviewed && (
             <Text style={styles.unreviewedWarning}>
@@ -1080,13 +1135,23 @@ export function CompanyTimesheetsWorkspace({
           )}
         </View>
         <View style={styles.detailPageActions}>
-          <Pressable
-            style={[styles.sendToClientButton, !detailSendReady && styles.sendToClientButtonDisabled]}
-            onPress={() => { if (detailSendReady) openSendModal(activeGroup); }}
-            disabled={!detailSendReady}
-          >
-            <Text style={styles.sendToClientText}>Send Weekly Timesheet to Client</Text>
-          </Pressable>
+          {activeGroup.clientSubmissionStatus ? (
+            <Pressable
+              style={styles.openClientTimesheetButton}
+              onPress={() => onNavigateToClientTimesheets?.(activeGroup.clientRequestId ?? undefined)}
+            >
+              <Text style={styles.openClientTimesheetText}>Open Client Timesheet</Text>
+              <Text style={styles.clientTimesheetStatusText}>{clientSubmissionStatusLabel(activeGroup.clientSubmissionStatus)}</Text>
+            </Pressable>
+          ) : (
+            <Pressable
+              style={[styles.sendToClientButton, !detailSendReady && styles.sendToClientButtonDisabled]}
+              onPress={() => { if (detailSendReady) openSendModal(activeGroup); }}
+              disabled={!detailSendReady}
+            >
+              <Text style={styles.sendToClientText}>Send Weekly Timesheet to Client</Text>
+            </Pressable>
+          )}
           <Pressable style={styles.secondaryButton} onPress={() => handleExportGroup(activeGroup)}>
             <Text style={styles.secondaryButtonText}>Export CSV</Text>
           </Pressable>
@@ -1127,7 +1192,7 @@ export function CompanyTimesheetsWorkspace({
                       <Text style={[styles.shiftHeaderText, styles.shiftScheduledCol]}>Scheduled</Text>
                       <Text style={[styles.shiftHeaderText, styles.shiftAttendanceCol]}>Attendance</Text>
                       <Text style={[styles.shiftHeaderText, styles.shiftClaimCol]}>Guard Claim</Text>
-                      <Text style={[styles.shiftHeaderText, styles.shiftApprovedCol]}>Co. Approved</Text>
+                      <Text style={[styles.shiftHeaderText, styles.shiftApprovedCol]}>Guard Pay Approved</Text>
                       <Text style={[styles.shiftHeaderText, styles.shiftStatusCol]}>Status</Text>
                       <Text style={[styles.shiftHeaderText, styles.shiftActionCol]}>Review</Text>
                     </View>
@@ -1224,8 +1289,8 @@ export function CompanyTimesheetsWorkspace({
               </View>
 
               <View style={styles.detailSection}>
-                <Text style={styles.detailSectionTitle}>COMPANY APPROVAL</Text>
-                <Text style={styles.detailLine}>Approved hours: {selectedApprovedHours !== null ? `${selectedApprovedHours.toFixed(2)} h` : 'Not approved yet'}</Text>
+                <Text style={styles.detailSectionTitle}>COMPANY GUARD-PAY APPROVAL</Text>
+                <Text style={styles.detailLine}>Guard Pay Hours: {selectedApprovedHours !== null ? `${selectedApprovedHours.toFixed(2)} h` : 'Not approved yet'}</Text>
                 {activeSelected.companyApprovedStartAt && <Text style={styles.detailLine}>Approved On: {formatTimeLabel(activeSelected.companyApprovedStartAt)}</Text>}
                 {activeSelected.companyApprovedEndAt && <Text style={styles.detailLine}>Approved Off: {formatTimeLabel(activeSelected.companyApprovedEndAt)}</Text>}
               </View>
@@ -1251,7 +1316,7 @@ export function CompanyTimesheetsWorkspace({
                   </View>
 
                   <View style={styles.detailSection}>
-                    <Text style={styles.detailSectionTitle}>Approved hours</Text>
+                    <Text style={styles.detailSectionTitle}>Guard Pay Hours</Text>
                     <Text style={styles.detailLine}>Claimed hours remain read-only so the original submission stays intact.</Text>
                     <TextInput
                       value={approvedHoursInput}
@@ -1280,10 +1345,48 @@ export function CompanyTimesheetsWorkspace({
                   </View>
                 </>
               ) : (
-                <View style={styles.workflowStatePanel}>
-                  <Text style={styles.workflowStatePanelText}>
-                    {getWorkflowStateMessage(activeSelected.approvalStatus)}
-                  </Text>
+                <View style={[
+                  styles.workflowStatePanel,
+                  normalizeStatus(activeSelected.approvalStatus) === 'approved' && { backgroundColor: colors.successSurface },
+                  normalizeStatus(activeSelected.approvalStatus) === 'rejected' && { backgroundColor: colors.dangerSurface },
+                  normalizeStatus(activeSelected.approvalStatus) === 'returned' && { backgroundColor: colors.warningSurface },
+                ]}>
+                  {(normalizeStatus(activeSelected.approvalStatus) === 'draft') && (
+                    <>
+                      <Text style={styles.workflowStatePanelTitle}>Awaiting Guard Submission</Text>
+                      <Text style={styles.workflowStatePanelText}>The Guard must submit this timesheet before Company review.</Text>
+                    </>
+                  )}
+                  {(normalizeStatus(activeSelected.approvalStatus) === 'returned') && (
+                    <>
+                      <Text style={styles.workflowStatePanelTitle}>Awaiting Guard Resubmission</Text>
+                      <Text style={styles.workflowStatePanelText}>This timesheet was returned to the Guard for correction. Awaiting their resubmission.</Text>
+                    </>
+                  )}
+                  {(normalizeStatus(activeSelected.approvalStatus) === 'approved') && (
+                    <>
+                      <Text style={[styles.workflowStatePanelTitle, { color: colors.success }]}>
+                        Guard Pay Approved: {selectedApprovedHours !== null ? `${selectedApprovedHours.toFixed(2)} h` : '—'}
+                      </Text>
+                      {activeGroup.clientSubmissionStatus ? (
+                        <Text style={styles.workflowStatePanelText}>
+                          {'Included in Client Timesheet — '}{clientSubmissionStatusLabel(activeGroup.clientSubmissionStatus)}.
+                        </Text>
+                      ) : (
+                        <Text style={styles.workflowStatePanelText}>
+                          Not yet included in a Client Timesheet. Send this week to the client to include it.
+                        </Text>
+                      )}
+                    </>
+                  )}
+                  {(normalizeStatus(activeSelected.approvalStatus) === 'rejected') && (
+                    <>
+                      <Text style={[styles.workflowStatePanelTitle, { color: colors.danger }]}>Company Review Complete — Rejected</Text>
+                      <Text style={styles.workflowStatePanelText}>
+                        This shift has been rejected and will not be included in the Client weekly timesheet.
+                      </Text>
+                    </>
+                  )}
                 </View>
               )}
             </>
@@ -1458,6 +1561,11 @@ const styles = StyleSheet.create({
   sendCancelButton: { flex: 1, backgroundColor: colors.pendingSurface, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
   sendCancelText: { color: colors.primaryNavy, fontWeight: '700', fontSize: 14 },
 
-  workflowStatePanel: { backgroundColor: colors.pendingSurface, borderRadius: 14, padding: 16, marginTop: 8 },
-  workflowStatePanelText: { color: colors.primaryNavy, fontSize: 14, fontWeight: '600', lineHeight: 20 },
+  workflowStatePanel: { backgroundColor: colors.pendingSurface, borderRadius: 14, padding: 16, marginTop: 8, gap: 6 },
+  workflowStatePanelTitle: { color: colors.primaryNavy, fontSize: 14, fontWeight: '800' },
+  workflowStatePanelText: { color: colors.primaryNavy, fontSize: 13, lineHeight: 18 },
+
+  openClientTimesheetButton: { borderRadius: 12, paddingHorizontal: 14, paddingVertical: 8, backgroundColor: colors.infoSurface, gap: 2 },
+  openClientTimesheetText: { color: colors.info, fontWeight: '800', fontSize: 12 },
+  clientTimesheetStatusText: { color: colors.info, fontSize: 11, fontWeight: '600' },
 });
