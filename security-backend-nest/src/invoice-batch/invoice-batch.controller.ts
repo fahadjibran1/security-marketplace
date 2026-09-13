@@ -18,43 +18,43 @@ export class InvoiceBatchController {
   @Post()
   @Roles(...COMPANY_ADMIN_ROLES)
   create(@CurrentUser() user: JwtPayload, @Body() dto: CreateInvoiceBatchDto) {
-    return this.invoiceBatchService.createForCompany(user.sub, dto);
+    return this.invoiceBatchService.createForCompany(user.sub, user.role, dto);
   }
 
   @Get('company')
   @Roles(...COMPANY_VIEW_ROLES)
   findForCompany(@CurrentUser() user: JwtPayload) {
-    return this.invoiceBatchService.listForCompany(user.sub);
+    return this.invoiceBatchService.listForCompany(user.sub, user.role);
   }
 
   @Get(':id/document')
   @Roles(...COMPANY_VIEW_ROLES)
   getDocument(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
-    return this.invoiceBatchService.getDocumentForCompany(user.sub, id);
+    return this.invoiceBatchService.getDocumentForCompany(user.sub, user.role, id);
   }
 
   @Get(':id')
   @Roles(...COMPANY_VIEW_ROLES)
   findOne(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
-    return this.invoiceBatchService.findOneForCompany(user.sub, id);
+    return this.invoiceBatchService.findOneForCompany(user.sub, user.role, id);
   }
 
   @Patch(':id/finalise')
   @Roles(...COMPANY_ADMIN_ROLES)
   finalise(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
-    return this.invoiceBatchService.finaliseForCompany(user.sub, id);
+    return this.invoiceBatchService.finaliseForCompany(user.sub, user.role, id);
   }
 
   @Patch(':id/issue')
   @Roles(...COMPANY_ADMIN_ROLES)
   issue(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
-    return this.invoiceBatchService.issueForCompany(user.sub, id);
+    return this.invoiceBatchService.issueForCompany(user.sub, user.role, id);
   }
 
   @Patch(':id/pay')
   @Roles(...COMPANY_ADMIN_ROLES)
   pay(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
-    return this.invoiceBatchService.payForCompany(user.sub, id);
+    return this.invoiceBatchService.payForCompany(user.sub, user.role, id);
   }
 
   @Post(':id/payments')
@@ -64,6 +64,6 @@ export class InvoiceBatchController {
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: CreatePaymentRecordDto,
   ) {
-    return this.invoiceBatchService.createPaymentRecordForCompany(user.sub, id, dto);
+    return this.invoiceBatchService.createPaymentRecordForCompany(user.sub, user.role, id, dto);
   }
 }

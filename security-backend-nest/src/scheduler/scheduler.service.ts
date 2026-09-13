@@ -4,6 +4,7 @@ import { IsNull, LessThan, Repository } from 'typeorm';
 
 import { Company } from '../company/entities/company.entity';
 import { ComplianceService } from '../compliance/compliance.service';
+import { UserRole } from '../user/entities/user.entity';
 import { InvoiceBatch, InvoiceBatchStatus } from '../invoice-batch/entities/invoice-batch.entity';
 import { InvoiceBatchService } from '../invoice-batch/invoice-batch.service';
 import { Notification, NotificationStatus, NotificationType } from '../notification/entities/notification.entity';
@@ -90,7 +91,7 @@ export class AutomationSchedulerService implements OnModuleInit, OnModuleDestroy
 
       if (company.autoCreatePayrollBatch) {
         for (const suggestion of suggestions) {
-          await this.payrollBatchService.createForCompany(company.user.id, {
+          await this.payrollBatchService.createForCompany(company.user.id, UserRole.COMPANY, {
             periodStart: suggestion.periodStart,
             periodEnd: suggestion.periodEnd,
             notes: 'Auto-created draft from scheduler suggestion.',
@@ -120,7 +121,7 @@ export class AutomationSchedulerService implements OnModuleInit, OnModuleDestroy
       if (company.autoCreateInvoiceBatch) {
         for (const suggestion of suggestions) {
           if (!suggestion.clientId) continue;
-          await this.invoiceBatchService.createForCompany(company.user.id, {
+          await this.invoiceBatchService.createForCompany(company.user.id, UserRole.COMPANY, {
             clientId: suggestion.clientId,
             periodStart: suggestion.periodStart,
             periodEnd: suggestion.periodEnd,

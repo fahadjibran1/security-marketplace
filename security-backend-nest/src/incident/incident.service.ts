@@ -9,10 +9,12 @@ import {
 import { CreateIncidentDto } from './dto/create-incident.dto';
 import { GuardProfileService } from '../guard-profile/guard-profile.service';
 import { ShiftService } from '../shift/shift.service';
-import { CompanyService } from '../company/company.service';
+import { CompanyMembershipService } from '../company-membership/company-membership.service';
+import { CompanyPermission } from '../company-membership/company-membership-types';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { NotificationService } from '../notification/notification.service';
 import { NotificationType } from '../notification/entities/notification.entity';
+import { UserRole } from '../user/entities/user.entity';
 
 @Injectable()
 export class IncidentService {
@@ -21,7 +23,7 @@ export class IncidentService {
     private readonly incidentRepo: Repository<Incident>,
     private readonly guardProfileService: GuardProfileService,
     private readonly shiftService: ShiftService,
-    private readonly companyService: CompanyService,
+    private readonly membershipService: CompanyMembershipService,
     private readonly auditLogService: AuditLogService,
     private readonly notificationService: NotificationService,
   ) {}
@@ -97,10 +99,10 @@ export class IncidentService {
     });
   }
 
-  async findForCompany(userId: number): Promise<Incident[]> {
-    const company = await this.companyService.findByUserId(userId);
-    if (!company) throw new NotFoundException('Company not found');
-
+  async findForCompany(userId: number, userRole: UserRole): Promise<Incident[]> {
+    const { company } = await this.membershipService.resolveCompanyContext(
+      userId, userRole, CompanyPermission.INCIDENTS_VIEW,
+    );
     return this.incidentRepo.find({
       where: { company: { id: company.id } },
       order: { createdAt: 'DESC' },
@@ -119,11 +121,13 @@ export class IncidentService {
 
   async updateStatusForCompany(
     userId: number,
+    userRole: UserRole,
     incidentId: number,
     status: IncidentStatus,
   ): Promise<Incident> {
-    const company = await this.companyService.findByUserId(userId);
-    if (!company) throw new NotFoundException('Company not found');
+    const { company } = await this.membershipService.resolveCompanyContext(
+      userId, userRole, CompanyPermission.INCIDENTS_MANAGE,
+    );
 
     const incident = await this.incidentRepo.findOne({ where: { id: incidentId } });
     if (!incident) throw new NotFoundException('Incident not found');

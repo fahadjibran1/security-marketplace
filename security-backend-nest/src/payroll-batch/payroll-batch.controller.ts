@@ -17,30 +17,30 @@ export class PayrollBatchController {
   @Post()
   @Roles(...COMPANY_ADMIN_ROLES)
   create(@CurrentUser() user: JwtPayload, @Body() dto: CreatePayrollBatchDto) {
-    return this.payrollBatchService.createForCompany(user.sub, dto);
+    return this.payrollBatchService.createForCompany(user.sub, user.role, dto);
   }
 
   @Get('company')
   @Roles(...COMPANY_VIEW_ROLES)
   findForCompany(@CurrentUser() user: JwtPayload) {
-    return this.payrollBatchService.listForCompany(user.sub);
+    return this.payrollBatchService.listForCompany(user.sub, user.role);
   }
 
   @Get(':id')
   @Roles(...COMPANY_VIEW_ROLES)
   findOne(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
-    return this.payrollBatchService.findOneForCompany(user.sub, id);
+    return this.payrollBatchService.findOneForCompany(user.sub, user.role, id);
   }
 
   @Patch(':id/finalise')
   @Roles(...COMPANY_ADMIN_ROLES)
   finalise(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
-    return this.payrollBatchService.finaliseForCompany(user.sub, id);
+    return this.payrollBatchService.finaliseForCompany(user.sub, user.role, id);
   }
 
   @Patch(':id/pay')
   @Roles(...COMPANY_ADMIN_ROLES)
   pay(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
-    return this.payrollBatchService.payForCompany(user.sub, id);
+    return this.payrollBatchService.payForCompany(user.sub, user.role, id);
   }
 }

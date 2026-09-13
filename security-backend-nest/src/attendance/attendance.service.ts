@@ -8,9 +8,10 @@ import { GuardProfileService } from '../guard-profile/guard-profile.service';
 import { TimesheetService } from '../timesheet/timesheet.service';
 import { AssignmentStatus } from '../assignment/entities/assignment.entity';
 import { AssignmentService } from '../assignment/assignment.service';
-import { CompanyService } from '../company/company.service';
+import { CompanyMembershipService } from '../company-membership/company-membership.service';
+import { CompanyPermission } from '../company-membership/company-membership-types';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
-import { isCompanyRole, UserRole } from '../user/entities/user.entity';
+import { UserRole } from '../user/entities/user.entity';
 import { RecordAttendanceDto } from './dto/record-attendance.dto';
 import { SiteService } from '../site/site.service';
 
@@ -23,7 +24,7 @@ export class AttendanceService {
     private readonly guardProfileService: GuardProfileService,
     private readonly timesheetService: TimesheetService,
     private readonly assignmentService: AssignmentService,
-    private readonly companyService: CompanyService,
+    private readonly membershipService: CompanyMembershipService,
     private readonly siteService: SiteService,
   ) {}
 
@@ -35,9 +36,7 @@ export class AttendanceService {
 
   async findForCompany(user: JwtPayload): Promise<AttendanceEvent[]> {
     if (user.role === UserRole.ADMIN) return this.attendanceRepo.find({ order: { occurredAt: 'DESC' } });
-    if (!isCompanyRole(user.role)) throw new ForbiddenException('Company access is required');
-    const company = await this.companyService.findByUserId(user.sub);
-    if (!company) throw new NotFoundException('Company not found');
+    const { company } = await this.membershipService.resolveCompanyContext(user.sub, user.role, CompanyPermission.ATTENDANCE_VIEW);
     return this.attendanceRepo.find({
       where: { shift: { company: { id: company.id } } },
       order: { occurredAt: 'DESC' },

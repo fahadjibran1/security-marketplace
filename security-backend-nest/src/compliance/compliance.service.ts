@@ -3,8 +3,9 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
 import { Company } from '../company/entities/company.entity';
-import { CompanyService } from '../company/company.service';
 import { GuardProfileService } from '../guard-profile/guard-profile.service';
+import { CompanyMembershipService } from '../company-membership/company-membership.service';
+import { CompanyPermission } from '../company-membership/company-membership-types';
 import { NotificationService } from '../notification/notification.service';
 import { UpsertComplianceRecordDto } from './dto/upsert-compliance-record.dto';
 import { GuardComplianceService } from './guard-compliance.service';
@@ -13,22 +14,22 @@ import {
   ComplianceRecordStatus,
 } from './entities/compliance-record.entity';
 import { ScreeningService } from '../screening/screening.service';
-import { UserStatus } from '../user/entities/user.entity';
+import { UserRole, UserStatus } from '../user/entities/user.entity';
 import { GuardApprovalStatus } from '../guard-profile/entities/guard-profile.entity';
 
 @Injectable()
 export class ComplianceService {
   constructor(
     @InjectRepository(ComplianceRecord) private readonly complianceRepo: Repository<ComplianceRecord>,
-    private readonly companyService: CompanyService,
+    private readonly membershipService: CompanyMembershipService,
     private readonly guardProfileService: GuardProfileService,
     private readonly notificationService: NotificationService,
     private readonly guardComplianceService: GuardComplianceService,
     private readonly screeningService: ScreeningService,
   ) {}
 
-  async listForCompanyUser(userId: number) {
-    const company = await this.getCompanyForUser(userId);
+  async listForCompanyUser(userId: number, userRole: UserRole) {
+    const company = await this.getCompanyForUser(userId, userRole);
     return this.listForCompany(company.id);
   }
 
@@ -51,8 +52,8 @@ export class ComplianceService {
     return this.refreshStatuses(records);
   }
 
-  async upsertForCompanyUser(userId: number, dto: UpsertComplianceRecordDto) {
-    const company = await this.getCompanyForUser(userId);
+  async upsertForCompanyUser(userId: number, userRole: UserRole, dto: UpsertComplianceRecordDto) {
+    const company = await this.getCompanyForUser(userId, userRole, CompanyPermission.COMPLIANCE_MANAGE);
     const guard = await this.guardProfileService.findOne(dto.guardId);
     const existing = await this.complianceRepo.findOne({
       where: { company: { id: company.id }, guard: { id: guard.id }, type: dto.type },
@@ -131,9 +132,8 @@ export class ComplianceService {
     return records;
   }
 
-  private async getCompanyForUser(userId: number): Promise<Company> {
-    const company = await this.companyService.findByUserId(userId);
-    if (!company) throw new NotFoundException('Company not found');
+  private async getCompanyForUser(userId: number, userRole: UserRole, permission: CompanyPermission = CompanyPermission.COMPLIANCE_VIEW): Promise<Company> {
+    const { company } = await this.membershipService.resolveCompanyContext(userId, userRole, permission);
     return company;
   }
 

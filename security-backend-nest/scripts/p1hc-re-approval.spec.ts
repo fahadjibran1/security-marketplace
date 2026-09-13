@@ -22,6 +22,7 @@ import { ClientShiftDisputeStatus } from '../src/client-weekly-approval/entities
 import { TimesheetStatus, TimesheetBillingStatus } from '../src/timesheet/entities/timesheet.entity';
 import { ClientWeeklyApprovalService } from '../src/client-weekly-approval/client-weekly-approval.service';
 import { ReviseApprovedTimeDto } from '../src/client-weekly-approval/dto/revise-approved-time.dto';
+import { UserRole } from '../src/user/entities/user.entity';
 
 type Test = { name: string; run: () => void | Promise<void> };
 const tests: Test[] = [];
@@ -657,12 +658,12 @@ function buildP1HCServiceHarness() {
     transaction: async (work: (m: any) => Promise<any>) => work(manager),
   };
 
-  const companyService = { findByUserId: async (id: number) => id === 501 ? { id: 501 } : null };
+  const membershipService = { resolveCompanyContext: async (id: number) => { if (id !== 501) throw new NotFoundException('Company not found'); return { company: { id: 501 }, membershipRole: 'admin' }; } };
   const auditLogService = { log: async (entry: any) => { auditLogs.push(entry); } };
 
   const service = new ClientWeeklyApprovalService(
     {} as any, {} as any, {} as any,
-    companyService as any,
+    membershipService as any,
     auditLogService as any,
     dataSource as any,
   );
@@ -679,7 +680,7 @@ function buildP1HCServiceHarness() {
 test('UNIT-1 unit: reviseApprovedTime succeeds with valid inputs', async () => {
   const h = buildP1HCServiceHarness();
   h.setDispute(h.makeDispute());
-  const result = await h.service.reviseApprovedTime(501, 100, {
+  const result = await h.service.reviseApprovedTime(501, UserRole.COMPANY_ADMIN, 100, {
     timesheetId: 1,
     newBillingStartAt: '2026-01-12T08:00:00Z',
     newBillingEndAt: '2026-01-12T15:00:00Z',
@@ -691,7 +692,7 @@ test('UNIT-1 unit: reviseApprovedTime succeeds with valid inputs', async () => {
 test('UNIT-2 unit: reviseApprovedTime emits correct audit event', async () => {
   const h = buildP1HCServiceHarness();
   h.setDispute(h.makeDispute({ id: 200 }));
-  await h.service.reviseApprovedTime(501, 100, {
+  await h.service.reviseApprovedTime(501, UserRole.COMPANY_ADMIN, 100, {
     timesheetId: 1,
     newBillingStartAt: '2026-01-12T08:00:00Z',
     newBillingEndAt: '2026-01-12T15:00:00Z',
@@ -710,7 +711,7 @@ test('UNIT-3 unit: reviseApprovedTime rejects non-DISPUTED request', async () =>
   h.setDispute(h.makeDispute());
   let threw: any = null;
   try {
-    await h.service.reviseApprovedTime(501, 100, {
+    await h.service.reviseApprovedTime(501, UserRole.COMPANY_ADMIN, 100, {
       timesheetId: 1, newBillingStartAt: '2026-01-12T08:00:00Z', newBillingEndAt: '2026-01-12T15:00:00Z',
       clientCorrectionReason: 'reason',
     });
@@ -723,7 +724,7 @@ test('UNIT-4 unit: reviseApprovedTime rejects when no open dispute for timesheet
   h.setDispute(null);
   let threw: any = null;
   try {
-    await h.service.reviseApprovedTime(501, 100, {
+    await h.service.reviseApprovedTime(501, UserRole.COMPANY_ADMIN, 100, {
       timesheetId: 1, newBillingStartAt: '2026-01-12T08:00:00Z', newBillingEndAt: '2026-01-12T15:00:00Z',
       clientCorrectionReason: 'reason',
     });
@@ -737,7 +738,7 @@ test('UNIT-5 unit: reviseApprovedTime rejects end <= start', async () => {
   h.setDispute(h.makeDispute());
   let threw: any = null;
   try {
-    await h.service.reviseApprovedTime(501, 100, {
+    await h.service.reviseApprovedTime(501, UserRole.COMPANY_ADMIN, 100, {
       timesheetId: 1,
       newBillingStartAt: '2026-01-12T15:00:00Z',
       newBillingEndAt: '2026-01-12T08:00:00Z',
@@ -753,7 +754,7 @@ test('UNIT-6 unit: reviseApprovedTime rejects blank correction reason', async ()
   h.setDispute(h.makeDispute());
   let threw: any = null;
   try {
-    await h.service.reviseApprovedTime(501, 100, {
+    await h.service.reviseApprovedTime(501, UserRole.COMPANY_ADMIN, 100, {
       timesheetId: 1,
       newBillingStartAt: '2026-01-12T08:00:00Z',
       newBillingEndAt: '2026-01-12T15:00:00Z',
@@ -769,7 +770,7 @@ test('UNIT-7 unit: reviseApprovedTime rejects invoiced timesheet', async () => {
   h.setTimesheet(h.makeTimesheet({ billingStatus: TimesheetBillingStatus.INCLUDED, invoiceBatch: { id: 99 } }));
   let threw: any = null;
   try {
-    await h.service.reviseApprovedTime(501, 100, {
+    await h.service.reviseApprovedTime(501, UserRole.COMPANY_ADMIN, 100, {
       timesheetId: 1, newBillingStartAt: '2026-01-12T08:00:00Z', newBillingEndAt: '2026-01-12T15:00:00Z',
       clientCorrectionReason: 'reason',
     });
@@ -785,7 +786,7 @@ test('UNIT-8 unit: reviseApprovedTime succeeds even if timesheet has a payroll b
   h.setTimesheet(h.makeTimesheet({ payrollBatch: { id: 77 }, payrollStatus: 'included' }));
   let threw = false;
   try {
-    await h.service.reviseApprovedTime(501, 100, {
+    await h.service.reviseApprovedTime(501, UserRole.COMPANY_ADMIN, 100, {
       timesheetId: 1, newBillingStartAt: '2026-01-12T08:00:00Z', newBillingEndAt: '2026-01-12T15:00:00Z',
       clientCorrectionReason: 'Client confirmed 7h; guard payroll already processed at 7.5h',
     });
@@ -798,7 +799,7 @@ test('UNIT-9 unit: reviseApprovedTime rejects when company not found', async () 
   h.setDispute(h.makeDispute());
   let threw: any = null;
   try {
-    await h.service.reviseApprovedTime(999, 100, {
+    await h.service.reviseApprovedTime(999, UserRole.COMPANY_ADMIN, 100, {
       timesheetId: 1, newBillingStartAt: '2026-01-12T08:00:00Z', newBillingEndAt: '2026-01-12T15:00:00Z',
       clientCorrectionReason: 'reason',
     });
@@ -809,7 +810,7 @@ test('UNIT-9 unit: reviseApprovedTime rejects when company not found', async () 
 test('UNIT-10 unit: computed billing minutes correct for 7h window', async () => {
   const h = buildP1HCServiceHarness();
   h.setDispute(h.makeDispute());
-  await h.service.reviseApprovedTime(501, 100, {
+  await h.service.reviseApprovedTime(501, UserRole.COMPANY_ADMIN, 100, {
     timesheetId: 1,
     newBillingStartAt: '2026-01-12T08:00:00Z',
     newBillingEndAt: '2026-01-12T15:00:00Z',

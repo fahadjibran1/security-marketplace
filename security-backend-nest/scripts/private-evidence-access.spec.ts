@@ -46,7 +46,7 @@ function buildHarness() {
     repo as any,
     { find: async () => [] } as any,
     { find: async () => [{ id: 1, guard, company: companyA }] } as any,
-    { findByUserId: async (id: number) => id === 101 ? companyA : id === 202 ? companyB : null } as any,
+    { resolveCompanyContext: async (id: number) => { const company = id === 101 ? companyA : id === 202 ? companyB : null; if (!company) throw new Error('Not found'); return { company, membershipRole: 'admin' }; } } as any,
     { findOne: async () => guard, findByUserId: async (id: number) => id === 330 ? guard : null } as any,
     {} as any,
     { log: async (entry: any) => (audits.push(entry), entry) } as any,
@@ -65,7 +65,7 @@ async function expectDenied(work: () => Promise<unknown>) {
 
 async function main() {
   const { service, documents, audits, signed } = buildHarness();
-  const a = await service.uploadDocumentForCompanyUser(101, { guardId: guard.id, type: GuardDocumentType.SIA_LICENCE, ...metadata });
+  const a = await service.uploadDocumentForCompanyUser(101, UserRole.COMPANY_ADMIN, { guardId: guard.id, type: GuardDocumentType.SIA_LICENCE, ...metadata });
   ok(a.upload.url.includes('/compliance/company/11/33/'));
   ok(new Date(a.upload.expiresAt).getTime() - Date.now() <= 180000);
   ok(!JSON.stringify(a).includes('storageKey') && !JSON.stringify(a).includes('fileUrl'));
@@ -78,7 +78,7 @@ async function main() {
   ok(accessA.url.includes(signed[0].key));
   await expectDenied(() => service.createDocumentAccess(user(202, UserRole.COMPANY_ADMIN), a.id));
 
-  const b = await service.uploadDocumentForCompanyUser(202, { guardId: guard.id, type: GuardDocumentType.RIGHT_TO_WORK, ...metadata });
+  const b = await service.uploadDocumentForCompanyUser(202, UserRole.COMPANY_ADMIN, { guardId: guard.id, type: GuardDocumentType.RIGHT_TO_WORK, ...metadata });
   await service.completeDocumentUpload(user(202, UserRole.COMPANY_ADMIN), b.id);
   await service.createDocumentAccess(user(202, UserRole.COMPANY_ADMIN), b.id);
   await expectDenied(() => service.createDocumentAccess(user(101, UserRole.COMPANY_ADMIN), b.id));
@@ -89,7 +89,7 @@ async function main() {
   const guessed = await expectDenied(() => service.createDocumentAccess(user(101, UserRole.COMPANY_ADMIN), 99999));
   ok(!JSON.stringify(guessed).includes('storageKey') && !JSON.stringify(guessed).includes('objects.example'));
 
-  const list = await service.listDocumentsForCompanyUser(101, guard.id);
+  const list = await service.listDocumentsForCompanyUser(101, UserRole.COMPANY_ADMIN, guard.id);
   ok(!JSON.stringify(list).includes('fileUrl') && !JSON.stringify(list).includes('storageKey') && !JSON.stringify(list).includes('signature='));
   const accessAudit = audits.find((entry) => entry.action === 'guard_document.accessed');
   ok(accessAudit && !JSON.stringify(accessAudit).includes('signature=') && !JSON.stringify(accessAudit).includes('storageKey'));

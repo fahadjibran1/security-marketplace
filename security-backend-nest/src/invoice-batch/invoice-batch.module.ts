@@ -3,7 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { AuditLogModule } from '../audit-log/audit-log.module';
 import { Client } from '../client/entities/client.entity';
-import { CompanyModule } from '../company/company.module';
+import { CompanyMembershipModule } from '../company-membership/company-membership.module';
 import { ContractPricingModule } from '../contract-pricing/contract-pricing.module';
 import { PaymentRecord } from '../payment-record/entities/payment-record.entity';
 import { Timesheet } from '../timesheet/entities/timesheet.entity';
@@ -16,7 +16,7 @@ import { ClientWeeklyApprovalRequest } from '../client-weekly-approval/entities/
 @Module({
   imports: [
     TypeOrmModule.forFeature([InvoiceBatch, Timesheet, Client, PaymentRecord, ClientWeeklyApprovalLine, ClientWeeklyApprovalRequest]),
-    CompanyModule,
+    CompanyMembershipModule,
     ContractPricingModule,
     AuditLogModule,
   ],

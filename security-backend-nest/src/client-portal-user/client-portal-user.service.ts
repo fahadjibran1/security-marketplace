@@ -33,16 +33,16 @@ export class ClientPortalUserService {
     return user;
   }
 
-  async listForClient(companyUserId: number, clientId: number) {
-    await this.clientService.findOneForCompanyUser(companyUserId, clientId);
+  async listForClient(companyUserId: number, userRole: UserRole, clientId: number) {
+    await this.clientService.findOneForCompanyUser(companyUserId, userRole, clientId);
     return this.clientPortalUserRepo.find({
       where: { client: { id: clientId } },
       order: { createdAt: 'DESC' },
     });
   }
 
-  async upsertForCompanyUser(companyUserId: number, dto: UpsertClientPortalUserDto) {
-    const client = await this.clientService.findOneForCompanyUser(companyUserId, dto.clientId);
+  async upsertForCompanyUser(companyUserId: number, userRole: UserRole, dto: UpsertClientPortalUserDto) {
+    const client = await this.clientService.findOneForCompanyUser(companyUserId, userRole, dto.clientId);
     const email = dto.email.trim().toLowerCase();
     const existingByEmail = await this.clientPortalUserRepo.findOne({ where: { email } });
 

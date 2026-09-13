@@ -12,9 +12,10 @@ import { GuardProfile } from '../guard-profile/entities/guard-profile.entity';
 import { Job } from '../job/entities/job.entity';
 import { JobApplication } from '../job-application/entities/job-application.entity';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
-import { CompanyService } from '../company/company.service';
 import { GuardProfileService } from '../guard-profile/guard-profile.service';
 import { isCompanyRole, UserRole } from '../user/entities/user.entity';
+import { CompanyMembershipService } from '../company-membership/company-membership.service';
+import { CompanyPermission } from '../company-membership/company-membership-types';
 import { CompanyGuardService } from '../company-guard/company-guard.service';
 import { AvailabilityService } from '../availability/availability.service';
 import { ComplianceService } from '../compliance/compliance.service';
@@ -53,7 +54,7 @@ export class ShiftService {
     private readonly timesheetService: TimesheetService,
     @Inject(forwardRef(() => SiteService))
     private readonly siteService: SiteService,
-    private readonly companyService: CompanyService,
+    private readonly membershipService: CompanyMembershipService,
     private readonly guardProfileService: GuardProfileService,
     private readonly companyGuardService: CompanyGuardService,
     private readonly availabilityService: AvailabilityService,
@@ -73,10 +74,9 @@ export class ShiftService {
     }
 
     if (isCompanyRole(user.role)) {
-      const company = await this.companyService.findByUserId(user.sub);
-      if (!company) {
-        throw new NotFoundException('Company not found');
-      }
+      const { company } = await this.membershipService.resolveCompanyContext(
+        user.sub, user.role, CompanyPermission.SHIFTS_VIEW,
+      );
 
       return this.shiftRepo.find({
         where: { company: { id: company.id } },
@@ -131,8 +131,10 @@ export class ShiftService {
     }
 
     if (isCompanyRole(user.role)) {
-      const company = await this.companyService.findByUserId(user.sub);
-      if (!company || shift.company.id !== company.id) {
+      const { company } = await this.membershipService.resolveCompanyContext(
+        user.sub, user.role, CompanyPermission.SHIFTS_VIEW,
+      );
+      if (shift.company.id !== company.id) {
         throw new NotFoundException(`Shift with id ${id} not found`);
       }
       return shift;
@@ -258,10 +260,9 @@ export class ShiftService {
       return this.create(dto);
     }
 
-    const company = await this.companyService.findByUserId(user.sub);
-    if (!company) {
-      throw new NotFoundException('Company not found');
-    }
+    const { company } = await this.membershipService.resolveCompanyContext(
+      user.sub, user.role, CompanyPermission.SHIFTS_MANAGE,
+    );
 
     const assignment = dto.assignmentId
       ? await this.assignmentService.findOne(dto.assignmentId)
@@ -426,11 +427,9 @@ export class ShiftService {
   async updateForUser(user: JwtPayload, id: number, dto: UpdateShiftDto): Promise<Shift> {
     const shift = await this.findOneForUser(user, id);
     const actorCompany =
-      user.role === UserRole.ADMIN ? shift.company : await this.companyService.findByUserId(user.sub);
-
-    if (!actorCompany) {
-      throw new NotFoundException('Company not found');
-    }
+      user.role === UserRole.ADMIN
+        ? shift.company
+        : (await this.membershipService.resolveCompanyContext(user.sub, user.role, CompanyPermission.SHIFTS_MANAGE)).company;
 
     const nextStart = dto.start ? new Date(dto.start) : shift.start;
     const nextEnd = dto.end ? new Date(dto.end) : shift.end;

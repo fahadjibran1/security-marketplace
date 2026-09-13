@@ -4,7 +4,8 @@ import { DataSource, Like, Repository } from 'typeorm';
 
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { Client } from '../client/entities/client.entity';
-import { CompanyService } from '../company/company.service';
+import { CompanyMembershipService } from '../company-membership/company-membership.service';
+import { CompanyPermission } from '../company-membership/company-membership-types';
 import { ContractPricingService } from '../contract-pricing/contract-pricing.service';
 import { PaymentRecord } from '../payment-record/entities/payment-record.entity';
 import {
@@ -12,6 +13,7 @@ import {
   TimesheetBillingStatus,
   TimesheetStatus,
 } from '../timesheet/entities/timesheet.entity';
+import { UserRole } from '../user/entities/user.entity';
 import { CreateInvoiceBatchDto } from './dto/create-invoice-batch.dto';
 import { CreatePaymentRecordDto } from './dto/create-payment-record.dto';
 import { InvoiceBatch, InvoiceBatchStatus } from './entities/invoice-batch.entity';
@@ -27,15 +29,16 @@ export class InvoiceBatchService {
     @InjectRepository(PaymentRecord) private readonly paymentRecordRepo: Repository<PaymentRecord>,
     @InjectRepository(ClientWeeklyApprovalLine) private readonly approvalLineRepo: Repository<ClientWeeklyApprovalLine>,
     @InjectRepository(ClientWeeklyApprovalRequest) private readonly approvalRequestRepo: Repository<ClientWeeklyApprovalRequest>,
-    private readonly companyService: CompanyService,
+    private readonly membershipService: CompanyMembershipService,
     private readonly contractPricingService: ContractPricingService,
     private readonly auditLogService: AuditLogService,
     private readonly dataSource: DataSource,
   ) {}
 
-  async createForCompany(userId: number, dto: CreateInvoiceBatchDto) {
-    const company = await this.companyService.findByUserId(userId);
-    if (!company) throw new NotFoundException('Company not found');
+  async createForCompany(userId: number, userRole: UserRole, dto: CreateInvoiceBatchDto) {
+    const { company } = await this.membershipService.resolveCompanyContext(
+      userId, userRole, CompanyPermission.BILLING_MANAGE,
+    );
 
     const periodStart = new Date(dto.periodStart);
     const periodEnd = new Date(dto.periodEnd);
@@ -150,12 +153,13 @@ export class InvoiceBatchService {
       },
     })));
 
-    return this.findOneForCompany(userId, savedBatch.id);
+    return this.findOneForCompany(userId, userRole, savedBatch.id);
   }
 
-  async listForCompany(userId: number) {
-    const company = await this.companyService.findByUserId(userId);
-    if (!company) throw new NotFoundException('Company not found');
+  async listForCompany(userId: number, userRole: UserRole) {
+    const { company } = await this.membershipService.resolveCompanyContext(
+      userId, userRole, CompanyPermission.BILLING_VIEW,
+    );
 
     const batches = await this.invoiceBatchRepo.find({
       where: { company: { id: company.id } },
@@ -167,9 +171,10 @@ export class InvoiceBatchService {
     return batches.map((batch) => this.toBatchSummary(batch, false));
   }
 
-  async findOneForCompany(userId: number, id: number) {
-    const company = await this.companyService.findByUserId(userId);
-    if (!company) throw new NotFoundException('Company not found');
+  async findOneForCompany(userId: number, userRole: UserRole, id: number) {
+    const { company } = await this.membershipService.resolveCompanyContext(
+      userId, userRole, CompanyPermission.BILLING_VIEW,
+    );
 
     const batch = await this.invoiceBatchRepo.findOne({
       where: { id, company: { id: company.id } },
@@ -184,9 +189,10 @@ export class InvoiceBatchService {
     return this.toBatchSummary(batch, true);
   }
 
-  async finaliseForCompany(userId: number, id: number) {
-    const company = await this.companyService.findByUserId(userId);
-    if (!company) throw new NotFoundException('Company not found');
+  async finaliseForCompany(userId: number, userRole: UserRole, id: number) {
+    const { company } = await this.membershipService.resolveCompanyContext(
+      userId, userRole, CompanyPermission.BILLING_MANAGE,
+    );
 
     const batch = await this.invoiceBatchRepo.findOne({
       where: { id, company: { id: company.id } },
@@ -233,12 +239,13 @@ export class InvoiceBatchService {
       },
     });
 
-    return this.findOneForCompany(userId, batch.id);
+    return this.findOneForCompany(userId, userRole, batch.id);
   }
 
-  async issueForCompany(userId: number, id: number) {
-    const company = await this.companyService.findByUserId(userId);
-    if (!company) throw new NotFoundException('Company not found');
+  async issueForCompany(userId: number, userRole: UserRole, id: number) {
+    const { company } = await this.membershipService.resolveCompanyContext(
+      userId, userRole, CompanyPermission.BILLING_MANAGE,
+    );
 
     const batch = await this.invoiceBatchRepo.findOne({
       where: { id, company: { id: company.id } },
@@ -293,12 +300,13 @@ export class InvoiceBatchService {
       },
     });
 
-    return this.findOneForCompany(userId, batch.id);
+    return this.findOneForCompany(userId, userRole, batch.id);
   }
 
-  async getDocumentForCompany(userId: number, id: number) {
-    const company = await this.companyService.findByUserId(userId);
-    if (!company) throw new NotFoundException('Company not found');
+  async getDocumentForCompany(userId: number, userRole: UserRole, id: number) {
+    const { company } = await this.membershipService.resolveCompanyContext(
+      userId, userRole, CompanyPermission.BILLING_VIEW,
+    );
 
     const batch = await this.invoiceBatchRepo.findOne({
       where: { id, company: { id: company.id } },
@@ -409,9 +417,10 @@ export class InvoiceBatchService {
     };
   }
 
-  async payForCompany(userId: number, id: number) {
-    const company = await this.companyService.findByUserId(userId);
-    if (!company) throw new NotFoundException('Company not found');
+  async payForCompany(userId: number, userRole: UserRole, id: number) {
+    const { company } = await this.membershipService.resolveCompanyContext(
+      userId, userRole, CompanyPermission.BILLING_MANAGE,
+    );
 
     const batch = await this.invoiceBatchRepo.findOne({
       where: { id, company: { id: company.id } },
@@ -472,12 +481,13 @@ export class InvoiceBatchService {
       afterData: { billingStatus: timesheet.billingStatus, invoicePaidAt: timesheet.invoicePaidAt, invoiceBatchId: batch.id },
     })));
 
-    return this.findOneForCompany(userId, batch.id);
+    return this.findOneForCompany(userId, userRole, batch.id);
   }
 
-  async createPaymentRecordForCompany(userId: number, id: number, dto: CreatePaymentRecordDto) {
-    const company = await this.companyService.findByUserId(userId);
-    if (!company) throw new NotFoundException('Company not found');
+  async createPaymentRecordForCompany(userId: number, userRole: UserRole, id: number, dto: CreatePaymentRecordDto) {
+    const { company } = await this.membershipService.resolveCompanyContext(
+      userId, userRole, CompanyPermission.BILLING_MANAGE,
+    );
 
     const batch = await this.invoiceBatchRepo.findOne({
       where: { id, company: { id: company.id } },
@@ -540,7 +550,7 @@ export class InvoiceBatchService {
       },
     });
 
-    return this.findOneForCompany(userId, batch.id);
+    return this.findOneForCompany(userId, userRole, batch.id);
   }
 
   private assertTimesheetInvoiceEligible(timesheet: Timesheet, clientId: number) {

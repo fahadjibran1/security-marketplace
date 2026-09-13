@@ -37,7 +37,7 @@ export class SiteController {
   @Post()
   @Roles(...COMPANY_ADMIN_ROLES)
   create(@CurrentUser() user: JwtPayload, @Body() dto: CreateSiteDto) {
-    return this.siteService.createForCompanyUser(user.sub, dto);
+    return this.siteService.createForCompanyUser(user.sub, user.role, dto);
   }
 
   @Patch(':id')
@@ -47,6 +47,6 @@ export class SiteController {
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateSiteDto,
   ) {
-    return this.siteService.updateForCompanyUser(user.sub, id, dto);
+    return this.siteService.updateForCompanyUser(user.sub, user.role, id, dto);
   }
 }

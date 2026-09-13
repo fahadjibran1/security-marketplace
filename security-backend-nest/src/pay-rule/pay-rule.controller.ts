@@ -17,18 +17,18 @@ export class PayRuleController {
   @Get()
   @Roles(...COMPANY_VIEW_ROLES)
   findForCompany(@CurrentUser() user: JwtPayload) {
-    return this.payRuleService.findForCompanyUser(user.sub);
+    return this.payRuleService.findForCompanyUser(user.sub, user.role);
   }
 
   @Post()
   @Roles(...COMPANY_ADMIN_ROLES)
   create(@CurrentUser() user: JwtPayload, @Body() dto: UpsertPayRuleConfigDto) {
-    return this.payRuleService.upsertForCompanyUser(user.sub, dto);
+    return this.payRuleService.upsertForCompanyUser(user.sub, user.role, dto);
   }
 
   @Put()
   @Roles(...COMPANY_ADMIN_ROLES)
   update(@CurrentUser() user: JwtPayload, @Body() dto: UpsertPayRuleConfigDto) {
-    return this.payRuleService.upsertForCompanyUser(user.sub, dto);
+    return this.payRuleService.upsertForCompanyUser(user.sub, user.role, dto);
   }
 }

@@ -18,13 +18,13 @@ export class AvailabilityController {
   @Get('rules')
   @Roles(...COMPANY_VIEW_ROLES)
   listRules(@CurrentUser() user: JwtPayload, @Query('guardId') guardId?: string) {
-    return this.availabilityService.listRulesForCompanyUser(user.sub, guardId ? Number(guardId) : undefined);
+    return this.availabilityService.listRulesForCompanyUser(user.sub, user.role, guardId ? Number(guardId) : undefined);
   }
 
   @Get('overrides')
   @Roles(...COMPANY_VIEW_ROLES)
   listOverrides(@CurrentUser() user: JwtPayload, @Query('guardId') guardId?: string) {
-    return this.availabilityService.listOverridesForCompanyUser(user.sub, guardId ? Number(guardId) : undefined);
+    return this.availabilityService.listOverridesForCompanyUser(user.sub, user.role, guardId ? Number(guardId) : undefined);
   }
 
   @Get('mine/rules')
@@ -42,25 +42,25 @@ export class AvailabilityController {
   @Post('rules')
   @Roles(...COMPANY_ADMIN_ROLES)
   createRule(@CurrentUser() user: JwtPayload, @Body() dto: UpsertAvailabilityRuleDto) {
-    return this.availabilityService.upsertRuleForCompanyUser(user.sub, dto);
+    return this.availabilityService.upsertRuleForCompanyUser(user.sub, user.role, dto);
   }
 
   @Put('rules')
   @Roles(...COMPANY_ADMIN_ROLES)
   updateRule(@CurrentUser() user: JwtPayload, @Body() dto: UpsertAvailabilityRuleDto) {
-    return this.availabilityService.upsertRuleForCompanyUser(user.sub, dto);
+    return this.availabilityService.upsertRuleForCompanyUser(user.sub, user.role, dto);
   }
 
   @Post('overrides')
   @Roles(...COMPANY_ADMIN_ROLES)
   createOverride(@CurrentUser() user: JwtPayload, @Body() dto: UpsertAvailabilityOverrideDto) {
-    return this.availabilityService.upsertOverrideForCompanyUser(user.sub, dto);
+    return this.availabilityService.upsertOverrideForCompanyUser(user.sub, user.role, dto);
   }
 
   @Put('overrides')
   @Roles(...COMPANY_ADMIN_ROLES)
   updateOverride(@CurrentUser() user: JwtPayload, @Body() dto: UpsertAvailabilityOverrideDto) {
-    return this.availabilityService.upsertOverrideForCompanyUser(user.sub, dto);
+    return this.availabilityService.upsertOverrideForCompanyUser(user.sub, user.role, dto);
   }
 
   @Post('mine/rules')

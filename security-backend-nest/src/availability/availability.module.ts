@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { AuditLogModule } from '../audit-log/audit-log.module';
 import { CompanyModule } from '../company/company.module';
+import { CompanyMembershipModule } from '../company-membership/company-membership.module';
 import { CompanyGuard } from '../company-guard/entities/company-guard.entity';
 import { ComplianceModule } from '../compliance/compliance.module';
 import { GuardProfileModule } from '../guard-profile/guard-profile.module';
@@ -17,6 +18,7 @@ import { GuardAvailabilityRule } from './entities/guard-availability-rule.entity
   imports: [
     TypeOrmModule.forFeature([GuardAvailabilityRule, GuardAvailabilityOverride, Shift, CompanyGuard]),
     CompanyModule,
+    CompanyMembershipModule,
     GuardProfileModule,
     LeaveModule,
     ComplianceModule,

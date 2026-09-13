@@ -22,13 +22,13 @@ export class ReportController {
   @Get('margin')
   @Roles(...COMPANY_VIEW_ROLES)
   getMarginReport(@CurrentUser() user: JwtPayload, @Query() query: MarginReportQueryDto) {
-    return this.reportService.getCompanyMarginReport(user.sub, query);
+    return this.reportService.getCompanyMarginReport(user.sub, user.role, query);
   }
 
   @Get('financial-consistency')
   @Roles(...COMPANY_VIEW_ROLES)
   getFinancialConsistency(@CurrentUser() user: JwtPayload) {
-    return this.reportService.getFinancialConsistency(user.sub);
+    return this.reportService.getFinancialConsistency(user.sub, user.role);
   }
 
   @Get('incidents')

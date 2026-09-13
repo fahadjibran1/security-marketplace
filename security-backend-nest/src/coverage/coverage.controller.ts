@@ -16,18 +16,18 @@ export class CoverageController {
   @Get('shifts')
   @Roles(...COMPANY_VIEW_ROLES)
   shifts(@CurrentUser() user: JwtPayload, @Query() query: CoverageQuery) {
-    return this.coverageService.listShiftCoverage(user.sub, query);
+    return this.coverageService.listShiftCoverage(user.sub, user.role, query);
   }
 
   @Get('sites')
   @Roles(...COMPANY_VIEW_ROLES)
   sites(@CurrentUser() user: JwtPayload, @Query() query: CoverageQuery) {
-    return this.coverageService.listSiteCoverage(user.sub, query);
+    return this.coverageService.listSiteCoverage(user.sub, user.role, query);
   }
 
   @Get('shifts/:id/eligible-guards')
   @Roles(...COMPANY_VIEW_ROLES)
   eligibleGuards(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
-    return this.coverageService.eligibleGuardsForShift(user.sub, id);
+    return this.coverageService.eligibleGuardsForShift(user.sub, user.role, id);
   }
 }

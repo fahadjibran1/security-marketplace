@@ -402,6 +402,275 @@ test('ADOPTION-TIMESHEET-4 findAllForUser calls findForCompany with userRole', (
 });
 
 // ═══════════════════════════════════════════════════════════════════════
+// E2. PHASE 2 ADOPTION — REPOSITORY-WIDE PERMISSION ENFORCEMENT
+// ═══════════════════════════════════════════════════════════════════════
+
+// ── Attendance controller: no more isCompanyRole bypass ─────────────────
+test('P2-ATTEND-1 AttendanceController.getCompanyAttendance uses @Roles decorator (not manual isCompanyRole check)', () => {
+  const src = backend('attendance/attendance.controller.ts');
+  assert(!src.includes('isCompanyRole'), 'Manual isCompanyRole check must be removed from AttendanceController');
+  assert(!src.includes('ForbiddenException'), 'Manual ForbiddenException throw must be removed from AttendanceController');
+  assert(src.includes('@Roles'), 'Must use @Roles decorator for getCompanyAttendance');
+  assert(src.includes('@UseGuards(RolesGuard)'), 'Must use @UseGuards(RolesGuard) on getCompanyAttendance route');
+});
+
+test('P2-ATTEND-2 AttendanceService.findForCompany uses resolveCompanyContext', () => {
+  const src = backend('attendance/attendance.service.ts');
+  assert(src.includes('membershipService.resolveCompanyContext'), 'findForCompany must use resolveCompanyContext');
+  assert(!src.includes("companyService.findByUserId"), 'findByUserId must be removed from AttendanceService');
+});
+
+// ── Company controller: resolveCompanyContext replaces legacy findByUserId ─
+test('P2-COMPANY-1 CompanyController.findMine uses resolveCompanyContext', () => {
+  const src = backend('company/company.controller.ts');
+  assert(src.includes('membershipService.resolveCompanyContext'), 'CompanyController must use resolveCompanyContext');
+  assert(!src.includes('findByUserId'), 'CompanyController must not call findByUserId directly');
+});
+
+test('P2-COMPANY-2 CompanyController injects CompanyMembershipService', () => {
+  const src = backend('company/company.controller.ts');
+  assert(src.includes('CompanyMembershipService'), 'CompanyController must inject CompanyMembershipService');
+});
+
+test('P2-COMPANY-3 CompanyModule imports CompanyMembershipModule with forwardRef', () => {
+  const src = backend('company/company.module.ts');
+  assert(src.includes('forwardRef'), 'CompanyModule must use forwardRef for CompanyMembershipModule');
+  assert(src.includes('CompanyMembershipModule'), 'CompanyModule must import CompanyMembershipModule');
+});
+
+test('P2-COMPANY-4 CompanyMembershipModule uses forwardRef for CompanyModule', () => {
+  const src = backend('company-membership/company-membership.module.ts');
+  assert(src.includes('forwardRef'), 'CompanyMembershipModule must use forwardRef for CompanyModule');
+});
+
+// ── Client service ──────────────────────────────────────────────────────
+test('P2-CLIENT-1 ClientService uses resolveCompanyContext for all company methods', () => {
+  const src = backend('client/client.service.ts');
+  const calls = (src.match(/membershipService\.resolveCompanyContext/g) || []).length;
+  assert(calls >= 3, `ClientService must have at least 3 resolveCompanyContext calls, found ${calls}`);
+  assert(!src.includes('companyService.findByUserId'), 'ClientService must not call findByUserId');
+});
+
+test('P2-CLIENT-2 ClientService view methods use CLIENTS_VIEW permission', () => {
+  const src = backend('client/client.service.ts');
+  assert(src.includes('CompanyPermission.CLIENTS_VIEW'), 'findAll/findOne must use CLIENTS_VIEW');
+});
+
+test('P2-CLIENT-3 ClientService create method uses CLIENTS_MANAGE permission', () => {
+  const src = backend('client/client.service.ts');
+  assert(src.includes('CompanyPermission.CLIENTS_MANAGE'), 'create must use CLIENTS_MANAGE');
+});
+
+// ── Shift service ───────────────────────────────────────────────────────
+test('P2-SHIFT-1 ShiftService uses resolveCompanyContext for all company branches', () => {
+  const src = backend('shift/shift.service.ts');
+  const calls = (src.match(/membershipService\.resolveCompanyContext/g) || []).length;
+  assert(calls >= 4, `ShiftService must have at least 4 resolveCompanyContext calls, found ${calls}`);
+  assert(!src.includes('companyService.findByUserId'), 'ShiftService must not call findByUserId');
+});
+
+test('P2-SHIFT-2 ShiftModule imports CompanyMembershipModule', () => {
+  const src = backend('shift/shift.module.ts');
+  assert(src.includes('CompanyMembershipModule'), 'ShiftModule must import CompanyMembershipModule');
+});
+
+// ── Job service ─────────────────────────────────────────────────────────
+test('P2-JOB-1 JobService uses resolveCompanyContext for company branches', () => {
+  const src = backend('job/job.service.ts');
+  const calls = (src.match(/membershipService\.resolveCompanyContext/g) || []).length;
+  assert(calls >= 3, `JobService must have at least 3 resolveCompanyContext calls, found ${calls}`);
+  assert(!src.includes('companyService.findByUserId'), 'JobService must not call findByUserId');
+});
+
+// ── Assignment service ──────────────────────────────────────────────────
+test('P2-ASSIGN-1 AssignmentService uses resolveCompanyContext for company branches', () => {
+  const src = backend('assignment/assignment.service.ts');
+  assert(src.includes('membershipService.resolveCompanyContext'), 'AssignmentService must use resolveCompanyContext');
+  assert(!src.includes('companyService.findByUserId'), 'AssignmentService must not call findByUserId');
+});
+
+// ── Coverage service ────────────────────────────────────────────────────
+test('P2-COVERAGE-1 CoverageService uses resolveCompanyContext', () => {
+  const src = backend('coverage/coverage.service.ts');
+  const calls = (src.match(/membershipService\.resolveCompanyContext/g) || []).length;
+  assert(calls >= 2, `CoverageService must have at least 2 resolveCompanyContext calls, found ${calls}`);
+  assert(!src.includes('companyService.findByUserId'), 'CoverageService must not call findByUserId');
+});
+
+// ── Incident service ────────────────────────────────────────────────────
+test('P2-INCIDENT-1 IncidentService.findForCompany uses INCIDENTS_VIEW', () => {
+  const src = backend('incident/incident.service.ts');
+  assert(src.includes('CompanyPermission.INCIDENTS_VIEW'), 'findForCompany must use INCIDENTS_VIEW');
+  assert(!src.includes('companyService.findByUserId'), 'IncidentService must not call findByUserId');
+});
+
+test('P2-INCIDENT-2 IncidentService.updateStatusForCompany uses INCIDENTS_MANAGE', () => {
+  const src = backend('incident/incident.service.ts');
+  assert(src.includes('CompanyPermission.INCIDENTS_MANAGE'), 'updateStatusForCompany must use INCIDENTS_MANAGE');
+});
+
+// ── Audit-log service ───────────────────────────────────────────────────
+test('P2-AUDIT-1 AuditLogService.findForCompany uses COMPLIANCE_VIEW', () => {
+  const src = backend('audit-log/audit-log.service.ts');
+  assert(src.includes('CompanyPermission.COMPLIANCE_VIEW'), 'findForCompany must use COMPLIANCE_VIEW');
+  assert(!src.includes('companyService.findByUserId'), 'AuditLogService must not call findByUserId');
+});
+
+// ── Payroll service ─────────────────────────────────────────────────────
+test('P2-PAYROLL-1 PayrollBatchService uses resolveCompanyContext for all company methods', () => {
+  const src = backend('payroll-batch/payroll-batch.service.ts');
+  const calls = (src.match(/membershipService\.resolveCompanyContext/g) || []).length;
+  assert(calls >= 4, `PayrollBatchService must have at least 4 resolveCompanyContext calls, found ${calls}`);
+  assert(!src.includes('companyService.findByUserId'), 'PayrollBatchService must not call findByUserId');
+});
+
+test('P2-PAYROLL-2 PayrollBatchService view methods use PAYROLL_VIEW', () => {
+  const src = backend('payroll-batch/payroll-batch.service.ts');
+  assert(src.includes('CompanyPermission.PAYROLL_VIEW'), 'list/findOne must use PAYROLL_VIEW');
+});
+
+test('P2-PAYROLL-3 PayrollBatchService write methods use PAYROLL_MANAGE', () => {
+  const src = backend('payroll-batch/payroll-batch.service.ts');
+  assert(src.includes('CompanyPermission.PAYROLL_MANAGE'), 'create/finalise/pay must use PAYROLL_MANAGE');
+});
+
+// ── Invoice/billing service ─────────────────────────────────────────────
+test('P2-BILLING-1 InvoiceBatchService uses resolveCompanyContext for company methods', () => {
+  const src = backend('invoice-batch/invoice-batch.service.ts');
+  const calls = (src.match(/membershipService\.resolveCompanyContext/g) || []).length;
+  assert(calls >= 4, `InvoiceBatchService must have at least 4 resolveCompanyContext calls, found ${calls}`);
+  assert(!src.includes('companyService.findByUserId'), 'InvoiceBatchService must not call findByUserId');
+});
+
+// ── Report / Finance service ────────────────────────────────────────────
+test('P2-REPORT-1 ReportService uses resolveCompanyContext with REPORTS_FINANCIAL', () => {
+  const src = backend('report/report.service.ts');
+  assert(src.includes('CompanyPermission.REPORTS_FINANCIAL'), 'ReportService must use REPORTS_FINANCIAL');
+  assert(!src.includes('companyService.findByUserId'), 'ReportService must not call findByUserId');
+});
+
+test('P2-FINANCE-1 FinanceReconciliationService uses resolveCompanyContext with REPORTS_FINANCIAL', () => {
+  const src = backend('finance/finance-reconciliation.service.ts');
+  assert(src.includes('CompanyPermission.REPORTS_FINANCIAL'), 'FinanceReconciliationService must use REPORTS_FINANCIAL');
+  assert(!src.includes('companyService.findByUserId'), 'FinanceReconciliationService must not call findByUserId');
+});
+
+// ── Client Weekly Approval service ──────────────────────────────────────
+test('P2-CWA-1 ClientWeeklyApprovalService uses resolveCompanyContext (requireCompany migrated)', () => {
+  const src = backend('client-weekly-approval/client-weekly-approval.service.ts');
+  assert(src.includes('membershipService.resolveCompanyContext'), 'requireCompany helper must use resolveCompanyContext');
+  assert(!src.includes('companyService.findByUserId'), 'CWA service must not call findByUserId');
+});
+
+test('P2-CWA-2 ClientWeeklyApprovalService uses CLIENT_BILLING_VIEW for read methods', () => {
+  const src = backend('client-weekly-approval/client-weekly-approval.service.ts');
+  assert(src.includes('CompanyPermission.CLIENT_BILLING_VIEW'), 'read methods must use CLIENT_BILLING_VIEW');
+});
+
+test('P2-CWA-3 ClientWeeklyApprovalService uses CLIENT_BILLING_CORRECT for revise-approved-time', () => {
+  const src = backend('client-weekly-approval/client-weekly-approval.service.ts');
+  assert(src.includes('CompanyPermission.CLIENT_BILLING_CORRECT'), 'reviseApprovedTime must use CLIENT_BILLING_CORRECT');
+});
+
+// ── Compliance service ──────────────────────────────────────────────────
+test('P2-COMPLIANCE-1 GuardComplianceService uses resolveCompanyContext for company methods', () => {
+  const src = backend('compliance/guard-compliance.service.ts');
+  const calls = (src.match(/membershipService\.resolveCompanyContext/g) || []).length;
+  assert(calls >= 3, `GuardComplianceService must have at least 3 resolveCompanyContext calls, found ${calls}`);
+  assert(!src.includes('companyService.findByUserId'), 'GuardComplianceService must not call findByUserId');
+});
+
+// ── Pay-rule service ────────────────────────────────────────────────────
+test('P2-PAYRULE-1 PayRuleService uses resolveCompanyContext for company methods', () => {
+  const src = backend('pay-rule/pay-rule.service.ts');
+  assert(src.includes('membershipService.resolveCompanyContext'), 'PayRuleService must use resolveCompanyContext');
+  assert(!src.includes('companyService.findByUserId'), 'PayRuleService must not call findByUserId');
+});
+
+// ── Sensitive data boundaries ───────────────────────────────────────────
+test('P2-BANK-BOUNDARY-1 FINANCE role has PERSONNEL_BANK_VIEW — can see masked bank details', () => {
+  assert(hasPermission(CompanyMembershipRole.FINANCE, CompanyPermission.PERSONNEL_BANK_VIEW),
+    'FINANCE must have PERSONNEL_BANK_VIEW');
+});
+
+test('P2-BANK-BOUNDARY-2 OPERATIONS role cannot see bank details', () => {
+  assert(!hasPermission(CompanyMembershipRole.OPERATIONS, CompanyPermission.PERSONNEL_BANK_VIEW),
+    'OPERATIONS must NOT have PERSONNEL_BANK_VIEW');
+});
+
+test('P2-BANK-BOUNDARY-3 HR_COMPLIANCE cannot see bank details (payroll independence)', () => {
+  assert(!hasPermission(CompanyMembershipRole.HR_COMPLIANCE, CompanyPermission.PERSONNEL_BANK_VIEW),
+    'HR_COMPLIANCE must NOT have PERSONNEL_BANK_VIEW — payroll is a separate data domain');
+});
+
+test('P2-PAYROLL-BOUNDARY-1 OPERATIONS role has no payroll permissions', () => {
+  assert(!hasPermission(CompanyMembershipRole.OPERATIONS, CompanyPermission.PAYROLL_VIEW),
+    'OPERATIONS must NOT have PAYROLL_VIEW');
+  assert(!hasPermission(CompanyMembershipRole.OPERATIONS, CompanyPermission.PAYROLL_MANAGE),
+    'OPERATIONS must NOT have PAYROLL_MANAGE');
+});
+
+test('P2-BILLING-BOUNDARY-1 OPERATIONS role has no billing permissions', () => {
+  assert(!hasPermission(CompanyMembershipRole.OPERATIONS, CompanyPermission.BILLING_VIEW),
+    'OPERATIONS must NOT have BILLING_VIEW');
+  assert(!hasPermission(CompanyMembershipRole.OPERATIONS, CompanyPermission.BILLING_MANAGE),
+    'OPERATIONS must NOT have BILLING_MANAGE');
+});
+
+test('P2-BILLING-BOUNDARY-2 VIEWER role is read-only (no manage permissions)', () => {
+  const managePermissions = [
+    CompanyPermission.SHIFTS_MANAGE, CompanyPermission.SITES_MANAGE,
+    CompanyPermission.CLIENTS_MANAGE, CompanyPermission.COMPLIANCE_MANAGE,
+    CompanyPermission.PAYROLL_MANAGE, CompanyPermission.BILLING_MANAGE,
+    CompanyPermission.INCIDENTS_MANAGE, CompanyPermission.PERSONNEL_HR_MANAGE,
+    CompanyPermission.CLIENT_BILLING_SUBMIT, CompanyPermission.CLIENT_BILLING_CORRECT,
+  ];
+  managePermissions.forEach((p) => {
+    assert(!hasPermission(CompanyMembershipRole.VIEWER, p), `VIEWER must NOT have ${p}`);
+  });
+});
+
+test('P2-OWNER-BOUNDARY-1 OWNER has all 31 permissions', () => {
+  const allPermissions = Object.values(CompanyPermission);
+  allPermissions.forEach((p) => {
+    assert(hasPermission(CompanyMembershipRole.OWNER, p), `OWNER must have ${p}`);
+  });
+});
+
+// ── Coverage audit: no residual findByUserId in company-facing services ─
+test('P2-COVERAGE-AUDIT-1 no residual companyService.findByUserId in company-facing services', () => {
+  const companyFacingServices = [
+    'attendance/attendance.service.ts',
+    'audit-log/audit-log.service.ts',
+    'client/client.service.ts',
+    'client-weekly-approval/client-weekly-approval.service.ts',
+    'company-guard/company-guard.service.ts',
+    'compliance/compliance.service.ts',
+    'compliance/guard-compliance.service.ts',
+    'contract-pricing/contract-pricing.service.ts',
+    'coverage/coverage.service.ts',
+    'finance/finance-reconciliation.service.ts',
+    'incident/incident.service.ts',
+    'invoice-batch/invoice-batch.service.ts',
+    'job/job.service.ts',
+    'pay-rule/pay-rule.service.ts',
+    'payroll-batch/payroll-batch.service.ts',
+    'report/report.service.ts',
+    'shift/shift.service.ts',
+    'assignment/assignment.service.ts',
+  ];
+  const violations: string[] = [];
+  companyFacingServices.forEach((servicePath) => {
+    const src = backend(servicePath);
+    if (src.includes('companyService.findByUserId')) {
+      violations.push(servicePath);
+    }
+  });
+  assert(violations.length === 0,
+    `Residual companyService.findByUserId found in: ${violations.join(', ')}`);
+});
+
+// ═══════════════════════════════════════════════════════════════════════
 // F.  ENUM CONSISTENCY
 // ═══════════════════════════════════════════════════════════════════════
 

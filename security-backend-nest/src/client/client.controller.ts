@@ -17,19 +17,19 @@ export class ClientController {
   @Get()
   @Roles(...COMPANY_VIEW_ROLES)
   findAll(@CurrentUser() user: JwtPayload) {
-    return this.clientService.findAllForCompanyUser(user.sub);
+    return this.clientService.findAllForCompanyUser(user.sub, user.role);
   }
 
   @Get(':id')
   @Roles(...COMPANY_VIEW_ROLES)
   findOne(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
-    return this.clientService.findOneForCompanyUser(user.sub, id);
+    return this.clientService.findOneForCompanyUser(user.sub, user.role, id);
   }
 
   @Post()
   @Roles(...COMPANY_ADMIN_ROLES)
   create(@CurrentUser() user: JwtPayload, @Body() dto: CreateClientDto) {
-    return this.clientService.createForCompanyUser(user.sub, dto);
+    return this.clientService.createForCompanyUser(user.sub, user.role, dto);
   }
 
   @Patch(':id')
@@ -39,6 +39,6 @@ export class ClientController {
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateClientDto,
   ) {
-    return this.clientService.updateForCompanyUser(user.sub, id, dto);
+    return this.clientService.updateForCompanyUser(user.sub, user.role, id, dto);
   }
 }

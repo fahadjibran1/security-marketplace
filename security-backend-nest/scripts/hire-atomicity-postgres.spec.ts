@@ -114,7 +114,7 @@ function services(dataSource: DataSource, failAt?: FailurePoint) {
   };
 
   const companyGuardService = new CompanyGuardService(
-    dataSource.getRepository(CompanyGuard), companyService as any, guardService as any, compliance as any,
+    dataSource.getRepository(CompanyGuard), companyService as any, {} as any, guardService as any, compliance as any,
   );
   const originalRelationship = companyGuardService.ensureRelationship.bind(companyGuardService);
   companyGuardService.ensureRelationship = async (params: any, manager?: EntityManager) => {
@@ -160,7 +160,7 @@ function services(dataSource: DataSource, failAt?: FailurePoint) {
     return originalShift(dto, manager);
   };
 
-  const jobService = new JobService(dataSource.getRepository(Job), {} as any, siteService as any, {} as any);
+  const jobService = new JobService(dataSource.getRepository(Job), {} as any, {} as any, siteService as any, {} as any);
   const originalJobSave = jobService.save.bind(jobService);
   jobService.save = async (job: Job, manager?: EntityManager) => {
     equal(manager, activeManager, 'Job write escaped the transaction manager');

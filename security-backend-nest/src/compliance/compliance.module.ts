@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { CompanyGuard } from '../company-guard/entities/company-guard.entity';
 import { CompanyModule } from '../company/company.module';
+import { CompanyMembershipModule } from '../company-membership/company-membership.module';
 import { GuardProfileModule } from '../guard-profile/guard-profile.module';
 import { NotificationModule } from '../notification/notification.module';
 import { ComplianceController } from './compliance.controller';
@@ -20,6 +21,7 @@ import { ScreeningModule } from '../screening/screening.module';
   imports: [
     TypeOrmModule.forFeature([ComplianceRecord, GuardDocument, CompanyGuard, JobApplication]),
     CompanyModule,
+    CompanyMembershipModule,
     GuardProfileModule,
     NotificationModule,
     AuditLogModule,

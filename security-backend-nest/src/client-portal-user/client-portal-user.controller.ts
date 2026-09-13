@@ -17,12 +17,12 @@ export class ClientPortalUserController {
   @Get('client/:clientId')
   @Roles(...COMPANY_ADMIN_ROLES)
   listForClient(@CurrentUser() user: JwtPayload, @Param('clientId', ParseIntPipe) clientId: number) {
-    return this.clientPortalUserService.listForClient(user.sub, clientId);
+    return this.clientPortalUserService.listForClient(user.sub, user.role, clientId);
   }
 
   @Put()
   @Roles(...COMPANY_ADMIN_ROLES)
   upsert(@CurrentUser() user: JwtPayload, @Body() dto: UpsertClientPortalUserDto) {
-    return this.clientPortalUserService.upsertForCompanyUser(user.sub, dto);
+    return this.clientPortalUserService.upsertForCompanyUser(user.sub, user.role, dto);
   }
 }

@@ -4,6 +4,9 @@ import { In, IsNull, LessThan, MoreThan, Not, Repository } from 'typeorm';
 
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { CompanyService } from '../company/company.service';
+import { UserRole } from '../user/entities/user.entity';
+import { CompanyMembershipService } from '../company-membership/company-membership.service';
+import { CompanyPermission } from '../company-membership/company-membership-types';
 import { CompanyGuard, CompanyGuardStatus } from '../company-guard/entities/company-guard.entity';
 import { ComplianceService } from '../compliance/compliance.service';
 import { GuardProfileService } from '../guard-profile/guard-profile.service';
@@ -37,14 +40,15 @@ export class AvailabilityService {
     @InjectRepository(Shift) private readonly shiftRepo: Repository<Shift>,
     @InjectRepository(CompanyGuard) private readonly companyGuardRepo: Repository<CompanyGuard>,
     private readonly companyService: CompanyService,
+    private readonly membershipService: CompanyMembershipService,
     private readonly guardProfileService: GuardProfileService,
     private readonly leaveService: LeaveService,
     private readonly complianceService: ComplianceService,
     private readonly auditLogService: AuditLogService,
   ) {}
 
-  async listRulesForCompanyUser(userId: number, guardId?: number) {
-    const company = await this.getCompany(userId);
+  async listRulesForCompanyUser(userId: number, userRole: UserRole, guardId?: number) {
+    const company = await this.getCompany(userId, userRole, CompanyPermission.SHIFTS_VIEW);
     const guardIds = await this.getCompanyGuardIds(company.id);
     if (!guardIds.length) return [];
     if (guardId && !guardIds.includes(guardId)) {
@@ -61,8 +65,8 @@ export class AvailabilityService {
     });
   }
 
-  async listOverridesForCompanyUser(userId: number, guardId?: number) {
-    const company = await this.getCompany(userId);
+  async listOverridesForCompanyUser(userId: number, userRole: UserRole, guardId?: number) {
+    const company = await this.getCompany(userId, userRole, CompanyPermission.SHIFTS_VIEW);
     const guardIds = await this.getCompanyGuardIds(company.id);
     if (!guardIds.length) return [];
     if (guardId && !guardIds.includes(guardId)) {
@@ -97,8 +101,8 @@ export class AvailabilityService {
     });
   }
 
-  async upsertRuleForCompanyUser(userId: number, dto: UpsertAvailabilityRuleDto) {
-    const company = await this.getCompany(userId);
+  async upsertRuleForCompanyUser(userId: number, userRole: UserRole, dto: UpsertAvailabilityRuleDto) {
+    const company = await this.getCompany(userId, userRole, CompanyPermission.SHIFTS_MANAGE);
     if (!dto.guardId) throw new BadRequestException('Guard is required.');
     return this.upsertRule({ userId, companyId: company.id, guardId: dto.guardId, dto });
   }
@@ -109,8 +113,8 @@ export class AvailabilityService {
     return this.upsertRule({ userId, companyId: null, guardId: guard.id, dto });
   }
 
-  async upsertOverrideForCompanyUser(userId: number, dto: UpsertAvailabilityOverrideDto) {
-    const company = await this.getCompany(userId);
+  async upsertOverrideForCompanyUser(userId: number, userRole: UserRole, dto: UpsertAvailabilityOverrideDto) {
+    const company = await this.getCompany(userId, userRole, CompanyPermission.SHIFTS_MANAGE);
     if (!dto.guardId) throw new BadRequestException('Guard is required.');
     await this.ensureCompanyGuard(company.id, dto.guardId);
     return this.upsertOverride({ userId, companyId: company.id, guardId: dto.guardId, dto });
@@ -407,9 +411,8 @@ export class AvailabilityService {
     return true;
   }
 
-  private async getCompany(userId: number) {
-    const company = await this.companyService.findByUserId(userId);
-    if (!company) throw new NotFoundException('Company not found');
+  private async getCompany(userId: number, userRole: UserRole, permission: CompanyPermission = CompanyPermission.SHIFTS_VIEW) {
+    const { company } = await this.membershipService.resolveCompanyContext(userId, userRole, permission);
     return company;
   }
 

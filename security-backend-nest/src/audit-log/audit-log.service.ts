@@ -1,8 +1,10 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { AuditLog } from './entities/audit-log.entity';
-import { CompanyService } from '../company/company.service';
+import { CompanyMembershipService } from '../company-membership/company-membership.service';
+import { CompanyPermission } from '../company-membership/company-membership-types';
+import { UserRole } from '../user/entities/user.entity';
 
 type AuditLogInput = {
   company?: { id: number } | null;
@@ -21,7 +23,7 @@ export class AuditLogService {
   constructor(
     @InjectRepository(AuditLog)
     private readonly auditLogRepo: Repository<AuditLog>,
-    private readonly companyService: CompanyService,
+    private readonly membershipService: CompanyMembershipService,
   ) {}
 
   log(input: AuditLogInput): Promise<AuditLog> {
@@ -44,10 +46,10 @@ export class AuditLogService {
     return this.auditLogRepo.find({ order: { createdAt: 'DESC' } });
   }
 
-  async findForCompany(userId: number): Promise<AuditLog[]> {
-    const company = await this.companyService.findByUserId(userId);
-    if (!company) throw new NotFoundException('Company not found');
-
+  async findForCompany(userId: number, userRole: UserRole): Promise<AuditLog[]> {
+    const { company } = await this.membershipService.resolveCompanyContext(
+      userId, userRole, CompanyPermission.COMPLIANCE_VIEW,
+    );
     return this.auditLogRepo.find({
       where: { company: { id: company.id } },
       order: { createdAt: 'DESC' },

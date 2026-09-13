@@ -3,8 +3,10 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 
 import { AuditLogService } from '../audit-log/audit-log.service';
-import { CompanyService } from '../company/company.service';
+import { CompanyMembershipService } from '../company-membership/company-membership.service';
+import { CompanyPermission } from '../company-membership/company-membership-types';
 import { PayRuleService } from '../pay-rule/pay-rule.service';
+import { UserRole } from '../user/entities/user.entity';
 import { CreatePayrollBatchDto } from './dto/create-payroll-batch.dto';
 import { PayrollBatch, PayrollBatchStatus } from './entities/payroll-batch.entity';
 import { Timesheet, TimesheetPayrollStatus, TimesheetStatus } from '../timesheet/entities/timesheet.entity';
@@ -14,15 +16,16 @@ export class PayrollBatchService {
   constructor(
     @InjectRepository(PayrollBatch) private readonly payrollBatchRepo: Repository<PayrollBatch>,
     @InjectRepository(Timesheet) private readonly timesheetRepo: Repository<Timesheet>,
-    private readonly companyService: CompanyService,
+    private readonly membershipService: CompanyMembershipService,
     private readonly auditLogService: AuditLogService,
     private readonly payRuleService: PayRuleService,
     private readonly dataSource: DataSource,
   ) {}
 
-  async createForCompany(userId: number, dto: CreatePayrollBatchDto) {
-    const company = await this.companyService.findByUserId(userId);
-    if (!company) throw new NotFoundException('Company not found');
+  async createForCompany(userId: number, userRole: UserRole, dto: CreatePayrollBatchDto) {
+    const { company } = await this.membershipService.resolveCompanyContext(
+      userId, userRole, CompanyPermission.PAYROLL_MANAGE,
+    );
 
     const periodStart = new Date(dto.periodStart);
     const periodEnd = new Date(dto.periodEnd);
@@ -112,12 +115,13 @@ export class PayrollBatchService {
       },
     })));
 
-    return this.findOneForCompany(userId, savedBatch.id);
+    return this.findOneForCompany(userId, userRole, savedBatch.id);
   }
 
-  async listForCompany(userId: number) {
-    const company = await this.companyService.findByUserId(userId);
-    if (!company) throw new NotFoundException('Company not found');
+  async listForCompany(userId: number, userRole: UserRole) {
+    const { company } = await this.membershipService.resolveCompanyContext(
+      userId, userRole, CompanyPermission.PAYROLL_VIEW,
+    );
 
     const batches = await this.payrollBatchRepo.find({
       where: { company: { id: company.id } },
@@ -130,9 +134,10 @@ export class PayrollBatchService {
     return Promise.all(batches.map((batch) => this.toBatchSummary(batch, false)));
   }
 
-  async findOneForCompany(userId: number, id: number) {
-    const company = await this.companyService.findByUserId(userId);
-    if (!company) throw new NotFoundException('Company not found');
+  async findOneForCompany(userId: number, userRole: UserRole, id: number) {
+    const { company } = await this.membershipService.resolveCompanyContext(
+      userId, userRole, CompanyPermission.PAYROLL_VIEW,
+    );
 
     const batch = await this.payrollBatchRepo.findOne({
       where: { id, company: { id: company.id } },
@@ -148,9 +153,10 @@ export class PayrollBatchService {
     return this.toBatchSummary(batch, true);
   }
 
-  async finaliseForCompany(userId: number, id: number) {
-    const company = await this.companyService.findByUserId(userId);
-    if (!company) throw new NotFoundException('Company not found');
+  async finaliseForCompany(userId: number, userRole: UserRole, id: number) {
+    const { company } = await this.membershipService.resolveCompanyContext(
+      userId, userRole, CompanyPermission.PAYROLL_MANAGE,
+    );
 
     const batch = await this.payrollBatchRepo.findOne({
       where: { id, company: { id: company.id } },
@@ -202,12 +208,13 @@ export class PayrollBatchService {
       },
     });
 
-    return this.findOneForCompany(userId, batch.id);
+    return this.findOneForCompany(userId, userRole, batch.id);
   }
 
-  async payForCompany(userId: number, id: number) {
-    const company = await this.companyService.findByUserId(userId);
-    if (!company) throw new NotFoundException('Company not found');
+  async payForCompany(userId: number, userRole: UserRole, id: number) {
+    const { company } = await this.membershipService.resolveCompanyContext(
+      userId, userRole, CompanyPermission.PAYROLL_MANAGE,
+    );
 
     const batch = await this.payrollBatchRepo.findOne({
       where: { id, company: { id: company.id } },
@@ -265,7 +272,7 @@ export class PayrollBatchService {
       afterData: { payrollStatus: timesheet.payrollStatus, payrollPaidAt: timesheet.payrollPaidAt, payrollBatchId: batch.id },
     })));
 
-    return this.findOneForCompany(userId, batch.id);
+    return this.findOneForCompany(userId, userRole, batch.id);
   }
 
   private assertTimesheetBatchEligible(timesheet: Timesheet) {

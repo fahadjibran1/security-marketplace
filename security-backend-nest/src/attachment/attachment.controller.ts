@@ -2,6 +2,8 @@ import { Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { AttachmentService } from './attachment.service';
 import { CreateAttachmentDto } from './dto/create-attachment.dto';
 import { COMPANY_ADMIN_ROLES, COMPANY_VIEW_ROLES, UserRole } from '../user/entities/user.entity';
@@ -19,8 +21,8 @@ export class AttachmentController {
 
   @Get('company')
   @Roles(UserRole.ADMIN, ...COMPANY_VIEW_ROLES)
-  findForCompany(@Req() req: { user: { sub: number } }) {
-    return this.attachmentService.findForCompany(req.user.sub);
+  findForCompany(@CurrentUser() user: JwtPayload) {
+    return this.attachmentService.findForCompany(user.sub, user.role);
   }
 
   @Post()

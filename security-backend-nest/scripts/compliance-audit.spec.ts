@@ -66,7 +66,7 @@ function buildComplianceHarness(options: { crossTenant?: boolean; failSave?: boo
     find: async () => [{ id: 1, company, guard }],
     findOne: async () => (options.crossTenant ? null : { id: 1, company, guard }),
   };
-  const companyService = { findByUserId: async () => company };
+  const membershipService = { resolveCompanyContext: async () => ({ company, membershipRole: 'admin' }) };
   const guardProfileService = {
     findOne: async () => guard,
     findByUserId: async () => guard,
@@ -76,7 +76,7 @@ function buildComplianceHarness(options: { crossTenant?: boolean; failSave?: boo
     guardDocumentRepo as any,
     {} as any,
     companyGuardRepo as any,
-    companyService as any,
+    membershipService as any,
     guardProfileService as any,
     {} as any,
     auditLogService as any,
@@ -87,7 +87,7 @@ function buildComplianceHarness(options: { crossTenant?: boolean; failSave?: boo
 }
 
 async function upload(service: GuardComplianceService, type: GuardDocumentType) {
-  return service.uploadDocumentForCompanyUser(81, {
+  return service.uploadDocumentForCompanyUser(81, UserRole.COMPANY_ADMIN, {
     guardId: 61,
     type,
     fileUrl: 'https://private.example/document-token',
@@ -123,7 +123,7 @@ async function testUploadCreatesAudit(type: GuardDocumentType) {
 async function testVerificationCreatesAudit(type: GuardDocumentType) {
   const { service, audits, guard, company, setDocument } = buildComplianceHarness();
   setDocument({ id: 701, guard, type, fileUrl: 'https://private.example/token', expiryDate: null, verified: false, uploadCompletedAt: new Date() });
-  await service.verifyDocumentForCompanyUser(81, 701, true);
+  await service.verifyDocumentForCompanyUser(81, UserRole.COMPANY_ADMIN, 701, true);
   equal(audits.length, 1);
   equal(audits[0].action, 'guard_document.verified');
   equal(audits[0].user.id, 81);
@@ -137,7 +137,7 @@ async function testCrossTenantFailureCreatesNoSuccessAudit() {
   setDocument({ id: 701, guard, type: GuardDocumentType.SIA_LICENCE, verified: false });
   let error: unknown;
   try {
-    await service.verifyDocumentForCompanyUser(81, 701, true);
+    await service.verifyDocumentForCompanyUser(81, UserRole.COMPANY_ADMIN, 701, true);
   } catch (caught) {
     error = caught;
   }

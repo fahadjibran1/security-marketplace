@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { CompanyMembership } from './entities/company-membership.entity';
 import { CompanyInvitation } from './entities/company-invitation.entity';
@@ -8,7 +8,7 @@ import { CompanyModule } from '../company/company.module';
 @Module({
   imports: [
     TypeOrmModule.forFeature([CompanyMembership, CompanyInvitation]),
-    CompanyModule,
+    forwardRef(() => CompanyModule),
   ],
   providers: [CompanyMembershipService],
   exports: [CompanyMembershipService],

@@ -2,7 +2,6 @@ import { BadRequestException, ForbiddenException, Injectable, NotFoundException 
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 
-import { CompanyService } from '../company/company.service';
 import { CompanyGuard, CompanyGuardStatus } from '../company-guard/entities/company-guard.entity';
 import { GuardProfileService } from '../guard-profile/guard-profile.service';
 import { NotificationService } from '../notification/notification.service';
@@ -20,6 +19,8 @@ import { randomUUID } from 'crypto';
 import { EvidenceStorageService } from './evidence-storage.service';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { UserRole, isCompanyRole } from '../user/entities/user.entity';
+import { CompanyMembershipService } from '../company-membership/company-membership.service';
+import { CompanyPermission } from '../company-membership/company-membership-types';
 
 export type GuardComplianceStatus = 'valid' | 'expiring' | 'expired' | 'invalid';
 
@@ -82,7 +83,7 @@ export class GuardComplianceService {
     private readonly complianceRepo: Repository<ComplianceRecord>,
     @InjectRepository(CompanyGuard)
     private readonly companyGuardRepo: Repository<CompanyGuard>,
-    private readonly companyService: CompanyService,
+    private readonly membershipService: CompanyMembershipService,
     private readonly guardProfileService: GuardProfileService,
     private readonly notificationService: NotificationService,
     private readonly auditLogService: AuditLogService,
@@ -90,9 +91,8 @@ export class GuardComplianceService {
     private readonly evidenceStorage: EvidenceStorageService,
   ) {}
 
-  async listStatusesForCompanyUser(userId: number, status?: GuardComplianceStatus) {
-    const company = await this.companyService.findByUserId(userId);
-    if (!company) throw new NotFoundException('Company not found');
+  async listStatusesForCompanyUser(userId: number, userRole: UserRole, status?: GuardComplianceStatus) {
+    const { company } = await this.membershipService.resolveCompanyContext(userId, userRole, CompanyPermission.COMPLIANCE_VIEW);
 
     const links = await this.companyGuardRepo.find({
       where: { company: { id: company.id }, status: In([CompanyGuardStatus.ACTIVE, CompanyGuardStatus.BLOCKED]) },
@@ -147,9 +147,8 @@ export class GuardComplianceService {
     };
   }
 
-  async listDocumentsForCompanyUser(userId: number, guardId?: number) {
-    const company = await this.companyService.findByUserId(userId);
-    if (!company) throw new NotFoundException('Company not found');
+  async listDocumentsForCompanyUser(userId: number, userRole: UserRole, guardId?: number) {
+    const { company } = await this.membershipService.resolveCompanyContext(userId, userRole, CompanyPermission.COMPLIANCE_VIEW);
     const documents = await this.guardDocumentRepo.find({
       where: guardId
         ? { company: { id: company.id }, guard: { id: guardId } }
@@ -175,9 +174,8 @@ export class GuardComplianceService {
     return this.saveDocument(guard.id, dto, userId, null);
   }
 
-  async uploadDocumentForCompanyUser(userId: number, dto: CreateGuardDocumentDto) {
-    const company = await this.companyService.findByUserId(userId);
-    if (!company) throw new NotFoundException('Company not found');
+  async uploadDocumentForCompanyUser(userId: number, userRole: UserRole, dto: CreateGuardDocumentDto) {
+    const { company } = await this.membershipService.resolveCompanyContext(userId, userRole, CompanyPermission.COMPLIANCE_MANAGE);
     if (!dto.guardId) throw new BadRequestException('guardId is required');
 
     const links = await this.companyGuardRepo.find({
@@ -190,9 +188,8 @@ export class GuardComplianceService {
     return this.saveDocument(authorizedGuardId, dto, userId, { id: company.id });
   }
 
-  async verifyDocumentForCompanyUser(userId: number, documentId: number, verified: boolean) {
-    const company = await this.companyService.findByUserId(userId);
-    if (!company) throw new NotFoundException('Company not found');
+  async verifyDocumentForCompanyUser(userId: number, userRole: UserRole, documentId: number, verified: boolean) {
+    const { company } = await this.membershipService.resolveCompanyContext(userId, userRole, CompanyPermission.COMPLIANCE_MANAGE);
 
     const document = await this.guardDocumentRepo.findOne({
       where: { id: documentId, company: { id: company.id } },
@@ -340,8 +337,7 @@ export class GuardComplianceService {
       if (!guard) throw new NotFoundException('Guard profile not found');
       document = await this.findDocumentForAccess({ id: documentId, guard: { id: guard.id } });
     } else if (isCompanyRole(user.role)) {
-      const company = await this.companyService.findByUserId(user.sub);
-      if (!company) throw new NotFoundException('Company not found');
+      const { company } = await this.membershipService.resolveCompanyContext(user.sub, user.role, CompanyPermission.COMPLIANCE_VIEW);
       document = await this.findDocumentForAccess({ id: documentId, company: { id: company.id } });
     } else {
       throw new ForbiddenException('Compliance evidence access is not permitted');
@@ -376,8 +372,7 @@ export class GuardComplianceService {
       if (!guard) throw new NotFoundException('Guard profile not found');
       document = await this.findDocumentForAccess({ id: documentId, guard: { id: guard.id } });
     } else if (isCompanyRole(user.role)) {
-      const company = await this.companyService.findByUserId(user.sub);
-      if (!company) throw new NotFoundException('Company not found');
+      const { company } = await this.membershipService.resolveCompanyContext(user.sub, user.role, CompanyPermission.COMPLIANCE_MANAGE);
       document = await this.findDocumentForAccess({ id: documentId, company: { id: company.id } });
     } else {
       throw new ForbiddenException('Compliance evidence access is not permitted');

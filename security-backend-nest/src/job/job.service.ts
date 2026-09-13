@@ -4,6 +4,8 @@ import { EntityManager, Repository } from 'typeorm';
 import { Job } from './entities/job.entity';
 import { CreateJobDto } from './dto/create-job.dto';
 import { CompanyService } from '../company/company.service';
+import { CompanyMembershipService } from '../company-membership/company-membership.service';
+import { CompanyPermission } from '../company-membership/company-membership-types';
 import { SiteService } from '../site/site.service';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { isCompanyRole, UserRole } from '../user/entities/user.entity';
@@ -14,6 +16,7 @@ export class JobService {
   constructor(
     @InjectRepository(Job) private readonly jobRepo: Repository<Job>,
     private readonly companyService: CompanyService,
+    private readonly membershipService: CompanyMembershipService,
     private readonly siteService: SiteService,
     private readonly auditLogService: AuditLogService,
   ) {}
@@ -63,10 +66,7 @@ export class JobService {
     }
 
     if (isCompanyRole(user.role)) {
-      const company = await this.companyService.findByUserId(user.sub);
-      if (!company) {
-        throw new NotFoundException('Company not found');
-      }
+      const { company } = await this.membershipService.resolveCompanyContext(user.sub, user.role, CompanyPermission.SHIFTS_VIEW);
 
       return this.jobRepo.find({
         where: { company: { id: company.id } },
@@ -94,8 +94,8 @@ export class JobService {
     }
 
     if (isCompanyRole(user.role)) {
-      const company = await this.companyService.findByUserId(user.sub);
-      if (!company || job.company.id !== company.id) {
+      const { company } = await this.membershipService.resolveCompanyContext(user.sub, user.role, CompanyPermission.SHIFTS_VIEW);
+      if (job.company.id !== company.id) {
         throw new NotFoundException('Job not found');
       }
       return job;
@@ -113,10 +113,7 @@ export class JobService {
       return this.create(dto);
     }
 
-    const company = await this.companyService.findByUserId(user.sub);
-    if (!company) {
-      throw new NotFoundException('Company not found');
-    }
+    const { company } = await this.membershipService.resolveCompanyContext(user.sub, user.role, CompanyPermission.SHIFTS_MANAGE);
 
     const site = dto.siteId ? await this.siteService.findOne(dto.siteId) : null;
     if (site && site.company.id !== company.id) {

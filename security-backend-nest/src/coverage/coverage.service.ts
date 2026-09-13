@@ -3,7 +3,9 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Between, Repository } from 'typeorm';
 
 import { AvailabilityService } from '../availability/availability.service';
-import { CompanyService } from '../company/company.service';
+import { CompanyMembershipService } from '../company-membership/company-membership.service';
+import { CompanyPermission } from '../company-membership/company-membership-types';
+import { UserRole } from '../user/entities/user.entity';
 import { Shift } from '../shift/entities/shift.entity';
 
 type CoverageStatus = 'fully_covered' | 'partially_covered' | 'unfilled' | 'overstaffed';
@@ -79,13 +81,12 @@ export function isUncoveredOperationalShift(shift: Pick<Shift, 'status' | 'guard
 export class CoverageService {
   constructor(
     @InjectRepository(Shift) private readonly shiftRepo: Repository<Shift>,
-    private readonly companyService: CompanyService,
+    private readonly membershipService: CompanyMembershipService,
     private readonly availabilityService: AvailabilityService,
   ) {}
 
-  async listShiftCoverage(userId: number, query: CoverageQuery) {
-    const company = await this.companyService.findByUserId(userId);
-    if (!company) throw new NotFoundException('Company not found');
+  async listShiftCoverage(userId: number, userRole: UserRole, query: CoverageQuery) {
+    const { company } = await this.membershipService.resolveCompanyContext(userId, userRole, CompanyPermission.SITES_VIEW);
     const now = new Date();
     const from = coverageCalendarBoundary(query.from, false, now);
     const to = query.to
@@ -104,8 +105,8 @@ export class CoverageService {
       .map((shift) => this.toCoverageRow(shift));
   }
 
-  async listSiteCoverage(userId: number, query: CoverageQuery) {
-    const rows = await this.listShiftCoverage(userId, query);
+  async listSiteCoverage(userId: number, userRole: UserRole, query: CoverageQuery) {
+    const rows = await this.listShiftCoverage(userId, userRole, query);
     const map = new Map<string, any>();
     rows.forEach((row) => {
       const key = String(row.siteId || 'unknown');
@@ -131,9 +132,8 @@ export class CoverageService {
     return Array.from(map.values());
   }
 
-  async eligibleGuardsForShift(userId: number, shiftId: number) {
-    const company = await this.companyService.findByUserId(userId);
-    if (!company) throw new NotFoundException('Company not found');
+  async eligibleGuardsForShift(userId: number, userRole: UserRole, shiftId: number) {
+    const { company } = await this.membershipService.resolveCompanyContext(userId, userRole, CompanyPermission.SHIFTS_VIEW);
     const shift = await this.shiftRepo.findOne({ where: { id: shiftId, company: { id: company.id } } });
     if (!shift) throw new NotFoundException('Shift not found');
     return this.availabilityService.eligibleGuardsForShift(shift);

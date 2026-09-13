@@ -26,7 +26,7 @@ export class IncidentController {
     if (user.role === UserRole.ADMIN) {
       return this.incidentService.findAll();
     }
-    return this.incidentService.findForCompany(user.sub);
+    return this.incidentService.findForCompany(user.sub, user.role);
   }
 
   @Post()
@@ -45,6 +45,6 @@ export class IncidentController {
     if (user.role === UserRole.ADMIN) {
       return this.incidentService.updateStatusAsAdmin(user.sub, id, dto.status);
     }
-    return this.incidentService.updateStatusForCompany(user.sub, id, dto.status);
+    return this.incidentService.updateStatusForCompany(user.sub, user.role, id, dto.status);
   }
 }

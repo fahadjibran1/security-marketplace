@@ -5,8 +5,10 @@ import { DailyLog, DailyLogType } from './entities/daily-log.entity';
 import { CreateDailyLogDto } from './dto/create-daily-log.dto';
 import { GuardProfileService } from '../guard-profile/guard-profile.service';
 import { ShiftService } from '../shift/shift.service';
-import { CompanyService } from '../company/company.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { UserRole } from '../user/entities/user.entity';
+import { CompanyMembershipService } from '../company-membership/company-membership.service';
+import { CompanyPermission } from '../company-membership/company-membership-types';
 
 @Injectable()
 export class DailyLogService {
@@ -15,7 +17,7 @@ export class DailyLogService {
     private readonly dailyLogRepo: Repository<DailyLog>,
     private readonly guardProfileService: GuardProfileService,
     private readonly shiftService: ShiftService,
-    private readonly companyService: CompanyService,
+    private readonly membershipService: CompanyMembershipService,
     private readonly auditLogService: AuditLogService,
   ) {}
 
@@ -63,9 +65,8 @@ export class DailyLogService {
     });
   }
 
-  async findForCompany(userId: number): Promise<DailyLog[]> {
-    const company = await this.companyService.findByUserId(userId);
-    if (!company) throw new NotFoundException('Company not found');
+  async findForCompany(userId: number, userRole: UserRole): Promise<DailyLog[]> {
+    const { company } = await this.membershipService.resolveCompanyContext(userId, userRole, CompanyPermission.COMPLIANCE_VIEW);
 
     return this.dailyLogRepo.find({
       where: { company: { id: company.id } },

@@ -7,12 +7,14 @@ import { ClientWeeklyApprovalService } from './client-weekly-approval.service';
 import { ClientPortalWeeklyApprovalService } from './client-portal-weekly-approval.service';
 import { ClientWeeklyApprovalController } from './client-weekly-approval.controller';
 import { CompanyModule } from '../company/company.module';
+import { CompanyMembershipModule } from '../company-membership/company-membership.module';
 import { AuditLogModule } from '../audit-log/audit-log.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([ClientWeeklyApprovalRequest, ClientWeeklyApprovalLine, ClientShiftDispute]),
     CompanyModule,
+    CompanyMembershipModule,
     AuditLogModule,
   ],
   controllers: [ClientWeeklyApprovalController],

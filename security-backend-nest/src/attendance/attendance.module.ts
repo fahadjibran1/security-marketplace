@@ -7,7 +7,7 @@ import { ShiftModule } from '../shift/shift.module';
 import { GuardProfileModule } from '../guard-profile/guard-profile.module';
 import { TimesheetModule } from '../timesheet/timesheet.module';
 import { AssignmentModule } from '../assignment/assignment.module';
-import { CompanyModule } from '../company/company.module';
+import { CompanyMembershipModule } from '../company-membership/company-membership.module';
 import { SiteModule } from '../site/site.module';
 
 @Module({
@@ -17,7 +17,7 @@ import { SiteModule } from '../site/site.module';
     GuardProfileModule,
     TimesheetModule,
     AssignmentModule,
-    CompanyModule,
+    CompanyMembershipModule,
     SiteModule,
   ],
   controllers: [AttendanceController],
