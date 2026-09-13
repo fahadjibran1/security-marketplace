@@ -1492,8 +1492,9 @@ export type ClientShiftDisputeStatus = 'open' | 'resolved' | 'withdrawn';
 
 export interface ClientWeeklyApprovalSummary {
   id: number;
-  siteId: number;
-  siteName: string;
+  site: { id: number; name: string; timezone?: string };
+  client: { id: number; name?: string };
+  company: { id: number; name?: string };
   weekCommencing: string;
   weekEnding: string;
   status: ClientWeeklyApprovalStatus;
@@ -1523,7 +1524,8 @@ export interface ClientWeeklyApprovalLine {
 
 export interface ClientShiftDisputeSummary {
   id: number;
-  timesheetId: number;
+  timesheetId: number;     // returned by client portal (flat, from toClientDetailDto)
+  line?: { id: number };   // returned by company endpoint (eager entity relation)
   disputeReason: string;
   status: ClientShiftDisputeStatus;
   resolutionMessage: string | null;
@@ -1539,6 +1541,7 @@ export interface ClientWeeklyApprovalDetail extends ClientWeeklyApprovalSummary 
 
 export interface CompanyApprovalLine {
   id: number;
+  timesheetId?: number;
   guardName: string | null;
   shiftDate: string;
   scheduledStart: string | null;
@@ -1551,13 +1554,24 @@ export interface CompanyApprovalLine {
   hasOverride: boolean;
   companyApprovedStartAtSubmission?: string | null;
   companyApprovedEndAtSubmission?: string | null;
+  // Layer 5: pending billing correction fields (set by P1H-C, cleared at resubmit)
+  clientBillingApprovedMinutes?: number | null;
+  clientBillingApprovedStartAt?: string | null;
+  clientBillingApprovedEndAt?: string | null;
+  clientBillingCorrectionReason?: string | null;
   timesheet?: {
+    id?: number;
     hoursWorked?: number;
     overrideReason?: string | null;
     scheduledStartAt?: string | null;
     scheduledEndAt?: string | null;
     companyApprovedStartAt?: string | null;
     companyApprovedEndAt?: string | null;
+    approvedMinutes?: number | null;
+    clientBillingApprovedMinutes?: number | null;
+    clientBillingApprovedStartAt?: string | null;
+    clientBillingApprovedEndAt?: string | null;
+    clientBillingCorrectionReason?: string | null;
   };
 }
 

@@ -185,6 +185,22 @@ export class Timesheet {
   @Column({ type: 'timestamp', nullable: true })
   companyApprovedEndAt?: Date | null;
 
+  // P1H-C Layer 5: company's billing-intended correction, set only via the
+  // controlled re-approval endpoint while a request is DISPUTED. Independent of
+  // the payroll-authoritative approvedMinutes/approvedHours (Layer 4).
+  // Cleared to NULL by resubmit() once captured into the new version snapshot.
+  @Column({ type: 'timestamp', nullable: true })
+  clientBillingApprovedStartAt?: Date | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  clientBillingApprovedEndAt?: Date | null;
+
+  @Column({ type: 'int', nullable: true })
+  clientBillingApprovedMinutes?: number | null;
+
+  @Column({ type: 'text', nullable: true })
+  clientBillingCorrectionReason?: string | null;
+
   @CreateDateColumn()
   createdAt!: Date;
 

@@ -13,6 +13,7 @@ import {
   getCompanyApprovalDetail,
   resubmitWeeklyApproval,
   resolveDispute,
+  reviseApprovedTime,
   formatApiErrorMessage,
 } from '../services/api';
 import {
@@ -55,6 +56,30 @@ function formatTime(val: string | Date | null | undefined): string {
   }
 }
 
+function isoToHhmm(iso: string | null | undefined, tz = 'Europe/London'): string {
+  if (!iso) return '';
+  try {
+    return new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: tz });
+  } catch { return ''; }
+}
+
+function hhmmToIso(shiftDate: string, hhmm: string, refIso: string, tz = 'Europe/London'): string {
+  if (!shiftDate || !hhmm || !refIso) return '';
+  try {
+    const ref = new Date(refIso);
+    const localTime = ref.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: tz });
+    const [refLH, refLM] = localTime.split(':').map(Number);
+    const offsetMins = (refLH * 60 + refLM) - (ref.getUTCHours() * 60 + ref.getUTCMinutes());
+    const [h, m] = hhmm.split(':').map(Number);
+    if (isNaN(h) || isNaN(m)) return '';
+    const utcMins = (h * 60 + m) - offsetMins;
+    const utcH = ((Math.floor(utcMins / 60)) % 24 + 24) % 24;
+    const utcM = ((utcMins % 60) + 60) % 60;
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${shiftDate}T${pad(utcH)}:${pad(utcM)}:00.000Z`;
+  } catch { return ''; }
+}
+
 interface Props {
   onSelect?: (id: number) => void;
 }
@@ -79,6 +104,15 @@ export function CompanyWeeklyApprovalsScreen({ onSelect }: Props) {
   const [resolveId, setResolveId] = React.useState<number | null>(null);
   const [resolutionMsg, setResolutionMsg] = React.useState('');
 
+  // P1H-C: Client billing correction state
+  const [billingCorrectTimesheetId, setBillingCorrectTimesheetId] = React.useState<number | null>(null);
+  const [billingStartInput, setBillingStartInput] = React.useState('');
+  const [billingEndInput, setBillingEndInput] = React.useState('');
+  const [billingCorrectionReason, setBillingCorrectionReason] = React.useState('');
+  const [billingShiftDate, setBillingShiftDate] = React.useState('');
+  const [billingRefStartIso, setBillingRefStartIso] = React.useState('');
+  const [billingTz, setBillingTz] = React.useState('Europe/London');
+
   const loadList = React.useCallback(async () => {
     setListLoading(true);
     setListError(null);
@@ -101,6 +135,13 @@ export function CompanyWeeklyApprovalsScreen({ onSelect }: Props) {
     setDetailError(null);
     setResolveId(null);
     setResolutionMsg('');
+    setBillingCorrectTimesheetId(null);
+    setBillingStartInput('');
+    setBillingEndInput('');
+    setBillingCorrectionReason('');
+    setBillingShiftDate('');
+    setBillingRefStartIso('');
+    setBillingTz('Europe/London');
     setActionError(null);
     try {
       const data = await getCompanyApprovalDetail(id);
@@ -129,10 +170,45 @@ export function CompanyWeeklyApprovalsScreen({ onSelect }: Props) {
     }
   };
 
+  const handleBillingCorrection = async () => {
+    if (!selectedId || billingCorrectTimesheetId == null) return;
+    const reason = billingCorrectionReason.trim();
+    if (!billingStartInput.trim() || !billingEndInput.trim() || !reason) return;
+    const startIso = hhmmToIso(billingShiftDate, billingStartInput.trim(), billingRefStartIso, billingTz);
+    const endIso = hhmmToIso(billingShiftDate, billingEndInput.trim(), billingRefStartIso, billingTz);
+    if (!startIso || !endIso) return;
+    setActionLoading(true);
+    setActionError(null);
+    try {
+      await reviseApprovedTime(selectedId, {
+        timesheetId: billingCorrectTimesheetId,
+        newBillingStartAt: startIso,
+        newBillingEndAt: endIso,
+        clientCorrectionReason: reason,
+      });
+      setBillingCorrectTimesheetId(null);
+      setBillingStartInput('');
+      setBillingEndInput('');
+      setBillingCorrectionReason('');
+      setBillingShiftDate('');
+      setBillingRefStartIso('');
+      setBillingTz('Europe/London');
+      await openDetail(selectedId);
+    } catch (err) {
+      setActionError(formatApiErrorMessage(err, 'Failed to apply billing correction.'));
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   const handleResubmit = async () => {
     if (!selectedId || !detail) return;
-    const ids = detail.lines.map((l) => (l as any).timesheetId).filter(Boolean) as number[];
-    if (!ids.length) return;
+    // FIX: company endpoint returns nested line.timesheet.id — line.timesheetId is never in the response
+    const ids = detail.lines.map((l) => l.timesheet?.id).filter(Boolean) as number[];
+    if (!ids.length) {
+      setActionError('No timesheets found for resubmission. Please refresh and try again.');
+      return;
+    }
     setActionLoading(true);
     setActionError(null);
     try {
@@ -160,7 +236,7 @@ export function CompanyWeeklyApprovalsScreen({ onSelect }: Props) {
           <Text style={styles.errorText}>{detailError}</Text>
         ) : detail ? (
           <>
-            <Text style={styles.pageTitle}>{detail.siteName}</Text>
+            <Text style={styles.pageTitle}>{detail.site?.name}</Text>
             <Text style={styles.weekRange}>{detail.weekCommencing} — {detail.weekEnding}</Text>
             <View style={[styles.badge, { backgroundColor: statusColor(detail.status), alignSelf: 'flex-start', marginBottom: 12 }]}>
               <Text style={styles.badgeText}>{statusLabel(detail.status)}</Text>
@@ -173,6 +249,32 @@ export function CompanyWeeklyApprovalsScreen({ onSelect }: Props) {
               <View key={line.id} style={styles.lineCard}>
                 <Text style={styles.guardName}>{line.guardName ?? 'Guard'}</Text>
                 <Text style={styles.shiftDate}>Date: {line.shiftDate}</Text>
+
+                {/* Billing summary card — shown on disputed requests so the hierarchy is immediately visible */}
+                {detail.status === 'disputed' && (
+                  <View style={styles.billingSummaryCard}>
+                    <Text style={styles.billingSummaryTitle}>Billing Summary</Text>
+                    {line.timesheet?.hoursWorked != null && (
+                      <Text style={styles.billingSummaryRow}>Guard Claim: {Number(line.timesheet.hoursWorked).toFixed(2)} hrs</Text>
+                    )}
+                    {line.timesheet?.approvedMinutes != null && (
+                      <Text style={[styles.billingSummaryRow, { fontWeight: '700' }]}>
+                        Guard Pay Approved: {(line.timesheet.approvedMinutes / 60).toFixed(2)} hrs
+                      </Text>
+                    )}
+                    <Text style={styles.billingSummaryRow}>
+                      Client Submitted (V{detail.currentVersion}): {Number(line.approvedHoursAtSubmission).toFixed(2)} hrs
+                    </Text>
+                    {detail.clientSubmissionNote ? (
+                      <Text style={styles.billingSummaryComment}>Client Comment: "{detail.clientSubmissionNote}"</Text>
+                    ) : null}
+                    {line.timesheet?.clientBillingApprovedMinutes != null && (
+                      <Text style={[styles.billingSummaryRow, styles.billingCorrectionHighlight]}>
+                        Pending Client Billing Correction: {((line.timesheet.clientBillingApprovedMinutes ?? 0) / 60).toFixed(2)} hrs
+                      </Text>
+                    )}
+                  </View>
+                )}
 
                 {/* Layer A: Scheduled */}
                 <View style={styles.evidenceLayer}>
@@ -205,14 +307,19 @@ export function CompanyWeeklyApprovalsScreen({ onSelect }: Props) {
                   )}
                 </View>
 
-                {/* Layer D: Company Approval */}
+                {/* Layer D: Company Guard-pay Approval (payroll-authoritative — not changed by P1H-C) */}
                 <View style={styles.evidenceLayer}>
-                  <Text style={styles.layerTitle}>COMPANY APPROVAL</Text>
+                  <Text style={styles.layerTitle}>COMPANY GUARD-PAY APPROVAL</Text>
                   {line.timesheet?.companyApprovedStartAt && (
                     <Text style={styles.layerRow}>Approved On: {formatTime(line.timesheet.companyApprovedStartAt)}</Text>
                   )}
                   {line.timesheet?.companyApprovedEndAt && (
                     <Text style={styles.layerRow}>Approved Off: {formatTime(line.timesheet.companyApprovedEndAt)}</Text>
+                  )}
+                  {line.timesheet?.approvedMinutes != null && (
+                    <Text style={[styles.layerRow, { fontWeight: '600' }]}>
+                      Guard Pay: {(line.timesheet.approvedMinutes / 60).toFixed(2)} hrs
+                    </Text>
                   )}
                   {line.hasOverride && (
                     <View style={styles.adjustedBadge}>
@@ -226,7 +333,71 @@ export function CompanyWeeklyApprovalsScreen({ onSelect }: Props) {
                   ) : null}
                 </View>
 
-                {/* Layer E: Client-Submitted Snapshot */}
+                {/* Layer E: Company Client-billing Correction (P1H-C — billing only, independent of payroll) */}
+                {detail.status === 'disputed' && (() => {
+                  const ts = line.timesheet;
+                  const hasPendingCorrection = ts?.clientBillingApprovedMinutes != null;
+                  // FIX: company endpoint returns nested timesheet.id — line.timesheetId is never in the response
+                  const timesheetId = line.timesheet?.id ?? null;
+                  // FIX: company endpoint returns dispute.line.id (eager) — dispute.timesheetId is not in the response
+                  const disputeForLine = detail.disputes.find(
+                    (d) => d.line?.id === line.id && d.status === 'open',
+                  );
+                  const hasOpenDispute = !!disputeForLine;
+                  return (
+                    <View style={[styles.evidenceLayer, hasPendingCorrection ? styles.billingCorrectionLayer : null]}>
+                      <Text style={styles.layerTitle}>CLIENT BILLING CORRECTION</Text>
+                      {hasPendingCorrection ? (
+                        <>
+                          <Text style={[styles.layerRow, { color: '#0d9488', fontWeight: '700' }]}>
+                            Pending Billing: {((ts!.clientBillingApprovedMinutes ?? 0) / 60).toFixed(2)} hrs
+                          </Text>
+                          {ts?.clientBillingApprovedStartAt && (
+                            <Text style={styles.layerRow}>Billing On: {formatTime(ts.clientBillingApprovedStartAt)}</Text>
+                          )}
+                          {ts?.clientBillingApprovedEndAt && (
+                            <Text style={styles.layerRow}>Billing Off: {formatTime(ts.clientBillingApprovedEndAt)}</Text>
+                          )}
+                          {ts?.clientBillingCorrectionReason && (
+                            <Text style={styles.layerRow}>Reason: {ts.clientBillingCorrectionReason}</Text>
+                          )}
+                          <Text style={[styles.layerRow, { fontSize: 11, color: '#6b7280', marginTop: 4 }]}>
+                            Guard pay ({ts?.approvedMinutes != null ? ((ts.approvedMinutes) / 60).toFixed(2) : '—'} hrs) is unchanged.
+                          </Text>
+                        </>
+                      ) : (
+                        <Text style={[styles.layerRow, { fontStyle: 'italic', color: '#9ca3af' }]}>
+                          No billing correction applied.
+                        </Text>
+                      )}
+                      {hasOpenDispute && timesheetId != null && billingCorrectTimesheetId !== timesheetId && (
+                        <Pressable
+                          style={[styles.adjustBillingButton, { marginTop: 8 }]}
+                          onPress={() => {
+                            setBillingCorrectTimesheetId(timesheetId);
+                            setBillingShiftDate(line.shiftDate);
+                            const tz = detail.site?.timezone ?? 'Europe/London';
+                            setBillingTz(tz);
+                            // Pre-fill from V1 snapshot (Layer F), not from unrelated attendance/scheduled values
+                            const snapStart = ts?.clientBillingApprovedStartAt ?? line.companyApprovedStartAtSubmission ?? ts?.companyApprovedStartAt ?? '';
+                            const snapEnd = ts?.clientBillingApprovedEndAt ?? line.companyApprovedEndAtSubmission ?? ts?.companyApprovedEndAt ?? '';
+                            const refIso = typeof snapStart === 'string' ? snapStart : '';
+                            setBillingRefStartIso(refIso);
+                            setBillingStartInput(isoToHhmm(typeof snapStart === 'string' ? snapStart : null, tz));
+                            setBillingEndInput(isoToHhmm(typeof snapEnd === 'string' ? snapEnd : null, tz));
+                            setBillingCorrectionReason('');
+                          }}
+                        >
+                          <Text style={styles.adjustBillingButtonText}>
+                            {hasPendingCorrection ? 'Revise Billing Hours' : 'Adjust Billing Hours'}
+                          </Text>
+                        </Pressable>
+                      )}
+                    </View>
+                  );
+                })()}
+
+                {/* Layer F: Client-Submitted Snapshot (immutable per version) */}
                 <View style={styles.evidenceLayer}>
                   <Text style={styles.layerTitle}>CLIENT-SUBMITTED SNAPSHOT</Text>
                   {line.companyApprovedStartAtSubmission && (
@@ -246,7 +417,7 @@ export function CompanyWeeklyApprovalsScreen({ onSelect }: Props) {
                 <Text style={styles.sectionTitle}>Disputes</Text>
                 {detail.disputes.map((d) => (
                   <View key={d.id} style={styles.disputeCard}>
-                    <Text style={styles.disputeRow}>Shift #{d.timesheetId} — {d.disputeReason}</Text>
+                    <Text style={styles.disputeRow}>Dispute #{d.id} — {d.disputeReason}</Text>
                     <Text style={styles.disputeRow}>Status: {d.status}</Text>
                     {d.resolutionMessage && (
                       <Text style={styles.disputeRow}>Resolution: {d.resolutionMessage}</Text>
@@ -262,6 +433,63 @@ export function CompanyWeeklyApprovalsScreen({ onSelect }: Props) {
                   </View>
                 ))}
               </>
+            )}
+
+            {/* ── P1H-C BILLING CORRECTION FORM ─── */}
+            {billingCorrectTimesheetId != null && (
+              <View style={styles.billingCorrectionForm}>
+                <Text style={styles.sectionTitle}>Adjust Client Billing Hours</Text>
+                <Text style={[styles.layerRow, { marginBottom: 8, color: '#374151' }]}>
+                  This adjustment affects CLIENT BILLING ONLY. Guard pay remains unchanged.
+                </Text>
+                <Text style={styles.formLabel}>Billing Start (HH:MM local time, e.g. 09:00)</Text>
+                <TextInput
+                  style={styles.textInput}
+                  placeholder="e.g. 09:00"
+                  value={billingStartInput}
+                  onChangeText={setBillingStartInput}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType="numbers-and-punctuation"
+                />
+                <Text style={styles.formLabel}>Billing End (HH:MM local time, e.g. 16:00)</Text>
+                <TextInput
+                  style={styles.textInput}
+                  placeholder="e.g. 16:00"
+                  value={billingEndInput}
+                  onChangeText={setBillingEndInput}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType="numbers-and-punctuation"
+                />
+                <Text style={styles.formLabel}>Correction Reason (required)</Text>
+                <TextInput
+                  style={styles.textInput}
+                  placeholder="Why is the client billing time being corrected?"
+                  value={billingCorrectionReason}
+                  onChangeText={setBillingCorrectionReason}
+                  multiline
+                />
+                <View style={styles.row}>
+                  <Pressable
+                    style={[
+                      styles.actionButton,
+                      styles.billingCorrectionButton,
+                      (!billingStartInput.trim() || !billingEndInput.trim() || !billingCorrectionReason.trim() || actionLoading) && styles.disabledButton,
+                    ]}
+                    onPress={handleBillingCorrection}
+                    disabled={!billingStartInput.trim() || !billingEndInput.trim() || !billingCorrectionReason.trim() || actionLoading}
+                  >
+                    <Text style={styles.actionButtonText}>{actionLoading ? 'Saving...' : 'Save Billing Correction'}</Text>
+                  </Pressable>
+                  <Pressable
+                    style={[styles.actionButton, styles.cancelButton]}
+                    onPress={() => { setBillingCorrectTimesheetId(null); setBillingStartInput(''); setBillingEndInput(''); setBillingCorrectionReason(''); }}
+                  >
+                    <Text style={styles.actionButtonText}>Cancel</Text>
+                  </Pressable>
+                </View>
+              </View>
             )}
 
             {/* ── RESOLVE FORM ─── */}
@@ -349,7 +577,7 @@ export function CompanyWeeklyApprovalsScreen({ onSelect }: Props) {
             onPress={() => { onSelect?.(item.id); openDetail(item.id); }}
           >
             <View style={styles.cardHeader}>
-              <Text style={styles.siteName}>{item.siteName}</Text>
+              <Text style={styles.siteName}>{item.site?.name}</Text>
               <View style={[styles.badge, { backgroundColor: statusColor(item.status) }]}>
                 <Text style={styles.badgeText}>{statusLabel(item.status)}</Text>
               </View>
@@ -471,4 +699,23 @@ const styles = StyleSheet.create({
   errorText: { fontSize: 14, color: '#dc2626', textAlign: 'center', marginVertical: 8 },
   retryButton: { backgroundColor: colors.primaryNavy, paddingHorizontal: 20, paddingVertical: 10, borderRadius: 8, marginTop: 8 },
   retryButtonText: { color: '#ffffff', fontWeight: '600' },
+
+  billingSummaryCard: { backgroundColor: '#f0fdf4', borderRadius: 12, padding: 12, marginBottom: 10, borderLeftWidth: 3, borderLeftColor: '#0d9488' },
+  billingSummaryTitle: { color: '#065f46', fontWeight: '800', fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 6 },
+  billingSummaryRow: { fontSize: 13, color: '#374151', lineHeight: 20 },
+  billingSummaryComment: { fontSize: 12, color: '#6b7280', fontStyle: 'italic', marginTop: 4 },
+  billingCorrectionHighlight: { color: '#0d9488', fontWeight: '700', marginTop: 2 },
+
+  billingCorrectionLayer: { borderWidth: 1, borderColor: '#0d9488', backgroundColor: '#f0fdfa' },
+  adjustBillingButton: {
+    backgroundColor: '#0d9488',
+    borderRadius: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    alignSelf: 'flex-start',
+  },
+  adjustBillingButtonText: { color: '#ffffff', fontSize: 13, fontWeight: '600' },
+  billingCorrectionForm: { backgroundColor: '#f0fdfa', borderRadius: 10, padding: 14, marginTop: 12, borderWidth: 1, borderColor: '#0d9488' },
+  billingCorrectionButton: { backgroundColor: '#0d9488' },
+  formLabel: { fontSize: 12, fontWeight: '600', color: '#374151', marginBottom: 4, marginTop: 8 },
 });

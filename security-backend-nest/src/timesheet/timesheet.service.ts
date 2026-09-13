@@ -223,6 +223,19 @@ export class TimesheetService {
       dto.approvalStatus === undefined &&
       dto.rejectionReason === undefined;
     if (approvedTimeUpdate) {
+      // P1H-C freeze: once a Client submission exists (active non-superseded line),
+      // Layer 4 payroll fields cannot be changed via the generic PATCH. Use the
+      // controlled Client billing correction endpoint (/revise-approved-time) instead.
+      const activeRows = await this.timesheetRepo.manager.query(
+        `SELECT COUNT(*)::int AS count FROM "client_weekly_approval_lines" WHERE "timesheetId" = $1 AND "superseded" = FALSE`,
+        [timesheet.id],
+      );
+      if (Number(activeRows[0]?.count ?? 0) > 0) {
+        throw new ForbiddenException(
+          'Approved time cannot be changed after Client submission. If the request is disputed, use the controlled Client billing correction workflow.',
+        );
+      }
+
       if (dto.companyApprovedStartAt === null && dto.companyApprovedEndAt === null) {
         this.clearApprovalDuration(timesheet);
       } else {

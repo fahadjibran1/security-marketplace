@@ -19,6 +19,7 @@ import { AuditLogService } from '../audit-log/audit-log.service';
 import { CreateWeeklyApprovalDto } from './dto/create-weekly-approval.dto';
 import { ResubmitApprovalDto } from './dto/resubmit-approval.dto';
 import { ResolveDisputeDto } from './dto/resolve-dispute.dto';
+import { ReviseApprovedTimeDto } from './dto/revise-approved-time.dto';
 import { computeWeekCommencing, computeWeekEnding } from './week-commencing.util';
 
 @Injectable()
@@ -276,19 +277,34 @@ export class ClientWeeklyApprovalService {
         [requestId],
       );
 
+      // Use Layer 5 billing hours when set, otherwise fall back to Layer 4 payroll hours.
       const totalApprovedHours = validatedTimesheets.reduce((sum, ts) => {
-        return sum + (ts.approvedHours != null ? Number(ts.approvedHours) : Number(ts.approvedMinutes) / 60);
+        const minutes = ts.clientBillingApprovedMinutes != null
+          ? ts.clientBillingApprovedMinutes
+          : (ts.approvedMinutes ?? (ts.approvedHours != null ? Number(ts.approvedHours) * 60 : 0));
+        return sum + (minutes / 60);
       }, 0);
 
-      // Create new version lines
+      // Create new version lines — prefer Layer 5 (P1H-C billing correction) when set,
+      // otherwise fall back to Layer 4 (payroll-authoritative approved hours).
       const newLines = validatedTimesheets.map((ts) => {
-        const approvedHours = ts.approvedHours != null ? Number(ts.approvedHours) : Number(ts.approvedMinutes) / 60;
+        const hasBillingCorrection = ts.clientBillingApprovedMinutes != null;
+        const billingMinutes = hasBillingCorrection
+          ? ts.clientBillingApprovedMinutes!
+          : (ts.approvedMinutes ?? 0);
+        const billingHours = Math.round((billingMinutes / 60) * 100) / 100;
+        const billingStart = hasBillingCorrection
+          ? (ts.clientBillingApprovedStartAt ?? ts.companyApprovedStartAt ?? null)
+          : (ts.companyApprovedStartAt ?? null);
+        const billingEnd = hasBillingCorrection
+          ? (ts.clientBillingApprovedEndAt ?? ts.companyApprovedEndAt ?? null)
+          : (ts.companyApprovedEndAt ?? null);
         return lineRepo.create({
           weeklyApprovalRequest: request,
           timesheet: ts,
           submissionVersion: newVersion,
           superseded: false,
-          approvedHoursAtSubmission: Math.round(approvedHours * 100) / 100,
+          approvedHoursAtSubmission: billingHours,
           shiftDate: this.getShiftDate(ts),
           scheduledStart: ts.scheduledStartAt ?? ts.shift?.start ?? null,
           scheduledEnd: ts.scheduledEndAt ?? ts.shift?.end ?? null,
@@ -296,11 +312,43 @@ export class ClientWeeklyApprovalService {
           actualCheckOut: ts.actualCheckOutAt ?? null,
           verifiedMinutes: ts.verifiedMinutes ?? null,
           hasOverride: !!(ts.overrideBy),
-          companyApprovedStartAtSubmission: ts.companyApprovedStartAt ?? null,
-          companyApprovedEndAtSubmission: ts.companyApprovedEndAt ?? null,
+          companyApprovedStartAtSubmission: billingStart,
+          companyApprovedEndAtSubmission: billingEnd,
         });
       });
       await lineRepo.save(newLines);
+
+      // Clear Layer 5 pending billing corrections — they are now captured in the
+      // new version snapshot (Layer 6) and must not persist as "pending".
+      const correctedTimesheetIds = validatedTimesheets
+        .filter((ts) => ts.clientBillingApprovedMinutes != null)
+        .map((ts) => ts.id);
+      if (correctedTimesheetIds.length > 0) {
+        await manager.query(
+          `UPDATE "timesheets"
+           SET "clientBillingApprovedStartAt" = NULL,
+               "clientBillingApprovedEndAt" = NULL,
+               "clientBillingApprovedMinutes" = NULL,
+               "clientBillingCorrectionReason" = NULL
+           WHERE id = ANY($1::int[])`,
+          [correctedTimesheetIds],
+        );
+        await this.auditLogService.log({
+          company,
+          user: { id: userId },
+          action: 'timesheet.client_billing_correction_cleared',
+          entityType: 'client_weekly_approval_request',
+          entityId: requestId,
+          beforeData: { correctedTimesheetIds },
+          afterData: {
+            capturedInVersion: newVersion,
+            capturedApprovedHoursAtSubmission: correctedTimesheetIds.map((id) => {
+              const ts = validatedTimesheets.find((t) => t.id === id)!;
+              return { timesheetId: id, billingHours: Math.round(((ts.clientBillingApprovedMinutes ?? 0) / 60) * 100) / 100 };
+            }),
+          },
+        });
+      }
 
       request.currentVersion = newVersion;
       request.status = ClientWeeklyApprovalStatus.PENDING_APPROVAL;
@@ -325,6 +373,109 @@ export class ClientWeeklyApprovalService {
     });
 
     return this.findOneForCompany(userId, requestId);
+  }
+
+  async reviseApprovedTime(userId: number, requestId: number, dto: ReviseApprovedTimeDto): Promise<{ message: string }> {
+    const company = await this.requireCompany(userId);
+
+    const reason = dto.clientCorrectionReason.trim();
+    if (!reason) throw new BadRequestException('Correction reason is required.');
+
+    const startAt = new Date(dto.newBillingStartAt);
+    const endAt = new Date(dto.newBillingEndAt);
+    if (isNaN(startAt.getTime()) || isNaN(endAt.getTime())) {
+      throw new BadRequestException('Invalid billing start or end date.');
+    }
+    if (endAt <= startAt) {
+      throw new BadRequestException('Billing end must be after billing start.');
+    }
+
+    await this.dataSource.transaction(async (manager) => {
+      const requestRepo = manager.getRepository(ClientWeeklyApprovalRequest);
+      const disputeRepo = manager.getRepository(ClientShiftDispute);
+      const timesheetRepo = manager.getRepository(Timesheet);
+
+      const request = await requestRepo.findOne({ where: { id: requestId, company: { id: company.id } } });
+      if (!request) throw new NotFoundException('Weekly approval request not found.');
+      if (request.status !== ClientWeeklyApprovalStatus.DISPUTED) {
+        throw new BadRequestException('Client billing corrections can only be applied to DISPUTED requests.');
+      }
+
+      // Verify an OPEN dispute exists for this timesheet on the current version
+      const openDispute = await disputeRepo.findOne({
+        where: {
+          weeklyApprovalRequest: { id: requestId },
+          timesheet: { id: dto.timesheetId },
+          submissionVersion: request.currentVersion,
+          status: ClientShiftDisputeStatus.OPEN,
+        },
+      });
+      if (!openDispute) {
+        throw new BadRequestException(
+          `No open dispute found for timesheet #${dto.timesheetId} on version ${request.currentVersion} of this request.`,
+        );
+      }
+
+      // Row-lock the timesheet to prevent concurrent modifications
+      await manager.query(
+        `SELECT id FROM "timesheets" WHERE id = $1 AND "companyId" = $2 FOR UPDATE`,
+        [dto.timesheetId, company.id],
+      );
+
+      const timesheet = await timesheetRepo.findOne({
+        where: { id: dto.timesheetId, company: { id: company.id } },
+      });
+      if (!timesheet) throw new NotFoundException(`Timesheet #${dto.timesheetId} not found.`);
+      if (String(timesheet.approvalStatus) !== TimesheetStatus.APPROVED) {
+        throw new BadRequestException(`Timesheet #${dto.timesheetId} is not in APPROVED status.`);
+      }
+      if (String(timesheet.billingStatus) !== TimesheetBillingStatus.UNINVOICED || timesheet.invoiceBatch) {
+        throw new BadRequestException(`Timesheet #${dto.timesheetId} is already invoiced.`);
+      }
+
+      const newMinutes = Math.round((endAt.getTime() - startAt.getTime()) / 60000);
+
+      const before = {
+        clientBillingApprovedStartAt: timesheet.clientBillingApprovedStartAt ?? null,
+        clientBillingApprovedEndAt: timesheet.clientBillingApprovedEndAt ?? null,
+        clientBillingApprovedMinutes: timesheet.clientBillingApprovedMinutes ?? null,
+        clientBillingCorrectionReason: timesheet.clientBillingCorrectionReason ?? null,
+      };
+
+      // Write Layer 5 (billing correction) fields ONLY.
+      // Layer 4 payroll fields (approvedMinutes, approvedHours, companyApprovedStartAt/EndAt,
+      // overrideReason/By/At) are intentionally not touched.
+      await manager.query(
+        `UPDATE "timesheets"
+         SET "clientBillingApprovedStartAt" = $1,
+             "clientBillingApprovedEndAt" = $2,
+             "clientBillingApprovedMinutes" = $3,
+             "clientBillingCorrectionReason" = $4,
+             "updatedAt" = NOW()
+         WHERE id = $5`,
+        [startAt, endAt, newMinutes, reason, dto.timesheetId],
+      );
+
+      await this.auditLogService.log({
+        company,
+        user: { id: userId },
+        action: 'timesheet.client_billing_correction_applied',
+        entityType: 'timesheet',
+        entityId: dto.timesheetId,
+        beforeData: before,
+        afterData: {
+          clientBillingApprovedStartAt: startAt,
+          clientBillingApprovedEndAt: endAt,
+          clientBillingApprovedMinutes: newMinutes,
+          clientBillingCorrectionReason: reason,
+          relatedDisputeId: openDispute.id,
+          relatedRequestId: requestId,
+          requestVersion: request.currentVersion,
+        },
+      });
+    });
+
+    return { message: 'Client billing correction applied.' };
   }
 
   async getEligibleTimesheets(userId: number, siteId: number, weekCommencing: string): Promise<Timesheet[]> {

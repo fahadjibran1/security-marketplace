@@ -658,10 +658,12 @@ test('T79 three layers: CompanyWeeklyApprovalsScreen shows GUARD CLAIM evidence 
   assert(screen.includes('hoursWorked') || screen.includes('Claimed Hours'), 'Missing guard claimed hours in GUARD CLAIM layer');
 });
 
-// T80: CompanyWeeklyApprovalsScreen detail view has COMPANY APPROVAL evidence layer
+// T80: CompanyWeeklyApprovalsScreen detail view has COMPANY GUARD-PAY APPROVAL evidence layer
+// (P1H-C renamed this label from "COMPANY APPROVAL" to "COMPANY GUARD-PAY APPROVAL" to
+//  clearly distinguish Layer 4 payroll approval from Layer 5 client billing correction)
 test('T80 three layers: CompanyWeeklyApprovalsScreen shows COMPANY APPROVAL evidence layer', () => {
   const screen = mobile('screens/CompanyWeeklyApprovalsScreen.tsx');
-  assert(screen.includes('COMPANY APPROVAL'), 'CompanyWeeklyApprovalsScreen missing COMPANY APPROVAL evidence layer label');
+  assert(screen.includes('COMPANY GUARD-PAY APPROVAL'), 'CompanyWeeklyApprovalsScreen missing COMPANY GUARD-PAY APPROVAL evidence layer label');
   assert(screen.includes('approvedHoursAtSubmission'), 'Missing approvedHoursAtSubmission in COMPANY APPROVAL layer');
 });
 
@@ -1089,11 +1091,12 @@ test('T129 workflow-state-ux: draft has no Company review controls', () => {
   assert(submittedGateIdx > 0 && approveIdx > submittedGateIdx, 'Approve button must be inside isSubmittedForReview block');
 });
 
-// T130: Draft detail panel shows "Awaiting Guard Submission" state message
+// T130: Draft detail panel shows "Awaiting Guard Submission" state message (P1H-C UX: separate title + body)
 test('T130 workflow-state-ux: draft panel shows Awaiting Guard Submission message', () => {
   const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
-  assert(src.includes('Awaiting Guard Submission. The Guard must submit'), 'Workflow state message for draft missing in detail panel');
-  assert(src.includes('getWorkflowStateMessage'), 'getWorkflowStateMessage helper missing');
+  assert(src.includes('Awaiting Guard Submission'), 'Workflow state heading for draft missing in detail panel');
+  assert(src.includes('The Guard must submit this timesheet before Company review.'), 'Draft body text missing');
+  assert(src.includes('getWorkflowStatePanel'), 'getWorkflowStatePanel helper missing');
 });
 
 // T131: Submitted timesheet shows Company review controls
@@ -1103,22 +1106,25 @@ test('T131 workflow-state-ux: submitted shows Company review controls', () => {
   assert(src.includes("normalizeStatus(activeSelected?.approvalStatus) === 'submitted'"), 'isSubmittedForReview must check submitted status');
 });
 
-// T132: Approved timesheet detail shows view-only "Company review complete — Approved" message
-test('T132 workflow-state-ux: approved panel shows Company review complete — Approved', () => {
+// T132: Approved timesheet detail shows view-only "Guard Pay Approved" panel (P1H-C UX: shows hours + inclusion status)
+test('T132 workflow-state-ux: approved panel shows Guard Pay Approved with hours', () => {
   const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
-  assert(src.includes('Company review complete — Approved'), 'Missing approved view-only message in getWorkflowStateMessage');
+  assert(src.includes('Guard Pay Approved:'), 'Missing Guard Pay Approved label in approved panel');
+  assert(src.includes('Not yet included in a Client Timesheet'), 'Missing inclusion status in approved panel');
 });
 
-// T133: Rejected timesheet detail shows view-only "Company review complete — Rejected" message
-test('T133 workflow-state-ux: rejected panel shows Company review complete — Rejected', () => {
+// T133: Rejected timesheet detail shows "Company Review Complete — Rejected" with exclusion explanation
+test('T133 workflow-state-ux: rejected panel shows Company Review Complete — Rejected', () => {
   const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
-  assert(src.includes('Company review complete — Rejected'), 'Missing rejected view-only message in getWorkflowStateMessage');
+  assert(src.includes('Company Review Complete — Rejected'), 'Missing rejected view-only heading');
+  assert(src.includes('will not be included in the Client weekly timesheet'), 'Missing exclusion explanation');
 });
 
-// T134: Returned timesheet detail shows "Returned to Guard. Awaiting Guard Resubmission."
-test('T134 workflow-state-ux: returned panel shows Returned to Guard message', () => {
+// T134: Returned timesheet detail shows "Awaiting Guard Resubmission" heading + body (P1H-C UX: structured panel)
+test('T134 workflow-state-ux: returned panel shows Awaiting Guard Resubmission heading', () => {
   const src = mobile('components/company/CompanyTimesheetsWorkspace.tsx');
-  assert(src.includes('Returned to Guard. Awaiting Guard Resubmission'), 'Missing returned view-only message in getWorkflowStateMessage');
+  assert(src.includes('Awaiting Guard Resubmission'), 'Missing "Awaiting Guard Resubmission" heading');
+  assert(src.includes('returned to the Guard for correction. Awaiting their resubmission.'), 'Missing returned body text');
 });
 
 // T135: awaitingGuardCount incremented for draft AND returned

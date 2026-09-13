@@ -5107,7 +5107,7 @@ export function CompanyDashboardScreen(_props: CompanyDashboardScreenProps = {})
       case 'weekly-approvals':
         return <CompanyWeeklyApprovalsScreen />;
       case 'timesheets':
-        return <CompanyTimesheetsWorkspace timesheets={timesheets} refreshing={refreshing} onRefresh={() => loadData(true)} />;
+        return <CompanyTimesheetsWorkspace timesheets={timesheets} refreshing={refreshing} onRefresh={() => loadData(true)} onNavigateToClientTimesheets={() => setActiveSection('weekly-approvals')} />;
       case 'payroll':
         return <CompanyPayrollWorkspace timesheets={timesheets} refreshing={refreshing} onRefresh={() => loadData(true)} />;
       case 'payroll-batches':
