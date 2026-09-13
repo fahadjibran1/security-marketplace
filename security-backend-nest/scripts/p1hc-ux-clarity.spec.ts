@@ -28,6 +28,10 @@ const MODELS = path.resolve(
   __dirname,
   '../../security-mobile-app/src/types/models.ts',
 );
+const COMPANY_APPROVALS = path.resolve(
+  __dirname,
+  '../../security-mobile-app/src/screens/CompanyWeeklyApprovalsScreen.tsx',
+);
 
 function assert(condition: boolean, message: string) {
   if (!condition) throw new Error(`FAIL: ${message}`);
@@ -52,6 +56,7 @@ const weeklyScreen = readFileSync(WEEKLY_SCREEN, 'utf-8');
 const clientWeeklyScreen = readFileSync(CLIENT_WEEKLY_SCREEN, 'utf-8');
 const dashboard = readFileSync(DASHBOARD, 'utf-8');
 const models = readFileSync(MODELS, 'utf-8');
+const companyApprovals = readFileSync(COMPANY_APPROVALS, 'utf-8');
 
 // ── SHIFT REVIEW PANEL: DRAFT state ────────────────────────────────────────
 gate('UX-1  Draft panel: "Awaiting Guard Submission" heading present', () => {
@@ -233,12 +238,134 @@ gate('UX-MATCH-9  ClientWeeklyApprovalsScreen displays site?.name (not siteName)
   );
 });
 
+// ── ADJUST BILLING REGRESSION: type contract ────────────────────────────────
+const companyApprovalLineMatch = models.match(/export interface CompanyApprovalLine \{[\s\S]*?\n\}/);
+const companyApprovalLineBlock = companyApprovalLineMatch ? companyApprovalLineMatch[0] : '';
+const disputeSummaryMatch = models.match(/export interface ClientShiftDisputeSummary \{[\s\S]*?\n\}/);
+const disputeSummaryBlock = disputeSummaryMatch ? disputeSummaryMatch[0] : '';
+
+gate('UX-ADJUST-1  CompanyApprovalLine.timesheet includes id field (needed for revise-approved-time)', () => {
+  assert(companyApprovalLineBlock !== '', 'CompanyApprovalLine interface not found in models.ts');
+  assert(
+    companyApprovalLineBlock.includes('id?: number'),
+    'CompanyApprovalLine.timesheet.id not declared — timesheetId for API call cannot be resolved',
+  );
+});
+
+gate('UX-ADJUST-2  ClientShiftDisputeSummary includes optional line field (company endpoint returns nested line.id)', () => {
+  assert(disputeSummaryBlock !== '', 'ClientShiftDisputeSummary interface not found in models.ts');
+  assert(
+    disputeSummaryBlock.includes('line?: { id: number }'),
+    'ClientShiftDisputeSummary missing line?.id — dispute-to-line matching cannot work',
+  );
+});
+
+// ── ADJUST BILLING REGRESSION: button visibility gates ──────────────────────
+gate('UX-ADJUST-3  Adjust Billing button: timesheetId from line.timesheet.id (not line.timesheetId)', () => {
+  assert(
+    companyApprovals.includes('const timesheetId = line.timesheet?.id ?? null'),
+    'timesheetId still reads from non-existent line.timesheetId — button will always be hidden',
+  );
+  assert(
+    !companyApprovals.includes('(line as any).timesheetId ?? null'),
+    'stale (line as any).timesheetId access still present — produces null at runtime',
+  );
+});
+
+gate('UX-ADJUST-4  Adjust Billing button: dispute matched by d.line.id === line.id (not d.timesheetId)', () => {
+  assert(
+    companyApprovals.includes("d.line?.id === line.id && d.status === 'open'"),
+    'dispute matching still uses d.timesheetId — timesheetId is undefined in company endpoint response',
+  );
+  assert(
+    !companyApprovals.includes("d.timesheetId === timesheetId && d.status === 'open'"),
+    'stale d.timesheetId matching still present — will never find an open dispute',
+  );
+});
+
+gate('UX-ADJUST-5  Adjust Billing button: shown only when DISPUTED + open dispute + timesheetId not null', () => {
+  assert(
+    companyApprovals.includes("detail.status === 'disputed'") &&
+      companyApprovals.includes('hasOpenDispute && timesheetId != null'),
+    'gate condition for Adjust Billing button not found',
+  );
+});
+
+gate('UX-ADJUST-6  Adjust Billing button: hidden when request not disputed (PENDING/RESOLVED/LOCKED)', () => {
+  // Outer IIFE is wrapped in {detail.status === 'disputed' && (() => {...})()}
+  // so the entire Layer E (including the button) is absent for non-disputed states
+  assert(
+    companyApprovals.includes("detail.status === 'disputed' && (() =>"),
+    "Layer E not gated on detail.status === 'disputed' — button would appear for non-disputed states",
+  );
+});
+
+// ── ADJUST BILLING REGRESSION: form pre-fill from V1 snapshot ───────────────
+gate('UX-ADJUST-7  Form pre-fill: uses isoToHhmm helper (not raw ISO strings)', () => {
+  assert(
+    companyApprovals.includes('function isoToHhmm('),
+    'isoToHhmm helper function not found — form pre-fill cannot display HH:MM local times',
+  );
+  assert(
+    companyApprovals.includes('setBillingStartInput(isoToHhmm('),
+    'billingStartInput not set via isoToHhmm — will show raw ISO instead of HH:MM',
+  );
+});
+
+gate('UX-ADJUST-8  Form pre-fill: uses V1 snapshot (companyApprovedStartAtSubmission) not Layer D fields', () => {
+  assert(
+    companyApprovals.includes('line.companyApprovedStartAtSubmission') &&
+      companyApprovals.includes('line.companyApprovedEndAtSubmission'),
+    'V1 snapshot fields (companyApproved*AtSubmission) not used in pre-fill — would show Layer D times',
+  );
+});
+
+gate('UX-ADJUST-9  Form submit: uses hhmmToIso to convert HH:MM back to ISO for API', () => {
+  assert(
+    companyApprovals.includes('function hhmmToIso('),
+    'hhmmToIso helper function not found — form cannot convert local time to UTC ISO for API call',
+  );
+  assert(
+    companyApprovals.includes('hhmmToIso(billingShiftDate, billingStartInput.trim()'),
+    'handleBillingCorrection does not call hhmmToIso for startIso',
+  );
+});
+
+gate('UX-ADJUST-10 Form submit: uses correct timesheetId (from line.timesheet.id) for revise-approved-time', () => {
+  assert(
+    companyApprovals.includes('timesheetId: billingCorrectTimesheetId'),
+    'reviseApprovedTime not called with billingCorrectTimesheetId',
+  );
+  // billingCorrectTimesheetId is set from line.timesheet?.id (proven by UX-ADJUST-3)
+  assert(
+    companyApprovals.includes('setBillingCorrectTimesheetId(timesheetId)'),
+    'billingCorrectTimesheetId not set from the corrected timesheetId',
+  );
+});
+
+// ── ADJUST BILLING REGRESSION: payroll and snapshot independence ──────────────
+gate('UX-ADJUST-11 Guard pay (approvedMinutes) is rendered separately from billing correction — immutability', () => {
+  assert(
+    companyApprovals.includes('approvedMinutes / 60') &&
+      companyApprovals.includes('Guard pay (') &&
+      companyApprovals.includes('is unchanged'),
+    'Guard pay independence message not found in billing correction section',
+  );
+});
+
+gate('UX-ADJUST-12 V1 snapshot (approvedHoursAtSubmission) displayed independently of billing correction', () => {
+  assert(
+    companyApprovals.includes('approvedHoursAtSubmission'),
+    'approvedHoursAtSubmission not referenced — V1 snapshot row missing from billing summary',
+  );
+});
+
 // ── FINAL REPORT ────────────────────────────────────────────────────────────
 console.log('');
 console.log(`══ P1H-C WORKFLOW CLARITY UX: ${passCount} PASS / ${failCount} FAIL ══`);
 if (failCount === 0) {
   console.log('FOCUSED SPEC: PASS');
-  console.log(JSON.stringify({ event: 'p1hc_ux_clarity_spec_passed', tests: passCount, scope: 'shift-review-panel-terminology-actions-navigation-request-match' }));
+  console.log(JSON.stringify({ event: 'p1hc_ux_clarity_spec_passed', tests: passCount, scope: 'shift-review-panel-terminology-actions-navigation-request-match-adjust-billing' }));
 } else {
   console.error('FOCUSED SPEC: FAIL');
   process.exit(1);

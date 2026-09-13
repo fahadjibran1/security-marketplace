@@ -56,6 +56,30 @@ function formatTime(val: string | Date | null | undefined): string {
   }
 }
 
+function isoToHhmm(iso: string | null | undefined, tz = 'Europe/London'): string {
+  if (!iso) return '';
+  try {
+    return new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: tz });
+  } catch { return ''; }
+}
+
+function hhmmToIso(shiftDate: string, hhmm: string, refIso: string, tz = 'Europe/London'): string {
+  if (!shiftDate || !hhmm || !refIso) return '';
+  try {
+    const ref = new Date(refIso);
+    const localTime = ref.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: tz });
+    const [refLH, refLM] = localTime.split(':').map(Number);
+    const offsetMins = (refLH * 60 + refLM) - (ref.getUTCHours() * 60 + ref.getUTCMinutes());
+    const [h, m] = hhmm.split(':').map(Number);
+    if (isNaN(h) || isNaN(m)) return '';
+    const utcMins = (h * 60 + m) - offsetMins;
+    const utcH = ((Math.floor(utcMins / 60)) % 24 + 24) % 24;
+    const utcM = ((utcMins % 60) + 60) % 60;
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${shiftDate}T${pad(utcH)}:${pad(utcM)}:00.000Z`;
+  } catch { return ''; }
+}
+
 interface Props {
   onSelect?: (id: number) => void;
 }
@@ -85,6 +109,9 @@ export function CompanyWeeklyApprovalsScreen({ onSelect }: Props) {
   const [billingStartInput, setBillingStartInput] = React.useState('');
   const [billingEndInput, setBillingEndInput] = React.useState('');
   const [billingCorrectionReason, setBillingCorrectionReason] = React.useState('');
+  const [billingShiftDate, setBillingShiftDate] = React.useState('');
+  const [billingRefStartIso, setBillingRefStartIso] = React.useState('');
+  const [billingTz, setBillingTz] = React.useState('Europe/London');
 
   const loadList = React.useCallback(async () => {
     setListLoading(true);
@@ -112,6 +139,9 @@ export function CompanyWeeklyApprovalsScreen({ onSelect }: Props) {
     setBillingStartInput('');
     setBillingEndInput('');
     setBillingCorrectionReason('');
+    setBillingShiftDate('');
+    setBillingRefStartIso('');
+    setBillingTz('Europe/London');
     setActionError(null);
     try {
       const data = await getCompanyApprovalDetail(id);
@@ -142,10 +172,11 @@ export function CompanyWeeklyApprovalsScreen({ onSelect }: Props) {
 
   const handleBillingCorrection = async () => {
     if (!selectedId || billingCorrectTimesheetId == null) return;
-    const startIso = billingStartInput.trim();
-    const endIso = billingEndInput.trim();
     const reason = billingCorrectionReason.trim();
-    if (!startIso || !endIso || !reason) return;
+    if (!billingStartInput.trim() || !billingEndInput.trim() || !reason) return;
+    const startIso = hhmmToIso(billingShiftDate, billingStartInput.trim(), billingRefStartIso, billingTz);
+    const endIso = hhmmToIso(billingShiftDate, billingEndInput.trim(), billingRefStartIso, billingTz);
+    if (!startIso || !endIso) return;
     setActionLoading(true);
     setActionError(null);
     try {
@@ -159,6 +190,9 @@ export function CompanyWeeklyApprovalsScreen({ onSelect }: Props) {
       setBillingStartInput('');
       setBillingEndInput('');
       setBillingCorrectionReason('');
+      setBillingShiftDate('');
+      setBillingRefStartIso('');
+      setBillingTz('Europe/London');
       await openDetail(selectedId);
     } catch (err) {
       setActionError(formatApiErrorMessage(err, 'Failed to apply billing correction.'));
@@ -299,9 +333,11 @@ export function CompanyWeeklyApprovalsScreen({ onSelect }: Props) {
                 {detail.status === 'disputed' && (() => {
                   const ts = line.timesheet;
                   const hasPendingCorrection = ts?.clientBillingApprovedMinutes != null;
-                  const timesheetId = (line as any).timesheetId ?? null;
+                  // FIX: company endpoint returns nested timesheet.id — line.timesheetId is never in the response
+                  const timesheetId = line.timesheet?.id ?? null;
+                  // FIX: company endpoint returns dispute.line.id (eager) — dispute.timesheetId is not in the response
                   const disputeForLine = detail.disputes.find(
-                    (d) => d.timesheetId === timesheetId && d.status === 'open',
+                    (d) => d.line?.id === line.id && d.status === 'open',
                   );
                   const hasOpenDispute = !!disputeForLine;
                   return (
@@ -335,10 +371,16 @@ export function CompanyWeeklyApprovalsScreen({ onSelect }: Props) {
                           style={[styles.adjustBillingButton, { marginTop: 8 }]}
                           onPress={() => {
                             setBillingCorrectTimesheetId(timesheetId);
-                            const prefilledStart = ts?.clientBillingApprovedStartAt ?? ts?.companyApprovedStartAt ?? '';
-                            const prefilledEnd = ts?.clientBillingApprovedEndAt ?? ts?.companyApprovedEndAt ?? '';
-                            setBillingStartInput(prefilledStart ?? '');
-                            setBillingEndInput(prefilledEnd ?? '');
+                            setBillingShiftDate(line.shiftDate);
+                            const tz = detail.site?.timezone ?? 'Europe/London';
+                            setBillingTz(tz);
+                            // Pre-fill from V1 snapshot (Layer F), not from unrelated attendance/scheduled values
+                            const snapStart = ts?.clientBillingApprovedStartAt ?? line.companyApprovedStartAtSubmission ?? ts?.companyApprovedStartAt ?? '';
+                            const snapEnd = ts?.clientBillingApprovedEndAt ?? line.companyApprovedEndAtSubmission ?? ts?.companyApprovedEndAt ?? '';
+                            const refIso = typeof snapStart === 'string' ? snapStart : '';
+                            setBillingRefStartIso(refIso);
+                            setBillingStartInput(isoToHhmm(typeof snapStart === 'string' ? snapStart : null, tz));
+                            setBillingEndInput(isoToHhmm(typeof snapEnd === 'string' ? snapEnd : null, tz));
                             setBillingCorrectionReason('');
                           }}
                         >
@@ -371,7 +413,7 @@ export function CompanyWeeklyApprovalsScreen({ onSelect }: Props) {
                 <Text style={styles.sectionTitle}>Disputes</Text>
                 {detail.disputes.map((d) => (
                   <View key={d.id} style={styles.disputeCard}>
-                    <Text style={styles.disputeRow}>Shift #{d.timesheetId} — {d.disputeReason}</Text>
+                    <Text style={styles.disputeRow}>Dispute #{d.id} — {d.disputeReason}</Text>
                     <Text style={styles.disputeRow}>Status: {d.status}</Text>
                     {d.resolutionMessage && (
                       <Text style={styles.disputeRow}>Resolution: {d.resolutionMessage}</Text>
@@ -396,23 +438,25 @@ export function CompanyWeeklyApprovalsScreen({ onSelect }: Props) {
                 <Text style={[styles.layerRow, { marginBottom: 8, color: '#374151' }]}>
                   This adjustment affects CLIENT BILLING ONLY. Guard pay remains unchanged.
                 </Text>
-                <Text style={styles.formLabel}>Billing Start (ISO 8601, e.g. 2026-01-12T08:00:00Z)</Text>
+                <Text style={styles.formLabel}>Billing Start (HH:MM local time, e.g. 09:00)</Text>
                 <TextInput
                   style={styles.textInput}
-                  placeholder="e.g. 2026-01-12T08:00:00Z"
+                  placeholder="e.g. 09:00"
                   value={billingStartInput}
                   onChangeText={setBillingStartInput}
                   autoCapitalize="none"
                   autoCorrect={false}
+                  keyboardType="numbers-and-punctuation"
                 />
-                <Text style={styles.formLabel}>Billing End (ISO 8601)</Text>
+                <Text style={styles.formLabel}>Billing End (HH:MM local time, e.g. 16:00)</Text>
                 <TextInput
                   style={styles.textInput}
-                  placeholder="e.g. 2026-01-12T15:00:00Z"
+                  placeholder="e.g. 16:00"
                   value={billingEndInput}
                   onChangeText={setBillingEndInput}
                   autoCapitalize="none"
                   autoCorrect={false}
+                  keyboardType="numbers-and-punctuation"
                 />
                 <Text style={styles.formLabel}>Correction Reason (required)</Text>
                 <TextInput

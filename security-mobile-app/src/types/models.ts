@@ -1524,7 +1524,8 @@ export interface ClientWeeklyApprovalLine {
 
 export interface ClientShiftDisputeSummary {
   id: number;
-  timesheetId: number;
+  timesheetId: number;     // returned by client portal (flat, from toClientDetailDto)
+  line?: { id: number };   // returned by company endpoint (eager entity relation)
   disputeReason: string;
   status: ClientShiftDisputeStatus;
   resolutionMessage: string | null;
@@ -1559,6 +1560,7 @@ export interface CompanyApprovalLine {
   clientBillingApprovedEndAt?: string | null;
   clientBillingCorrectionReason?: string | null;
   timesheet?: {
+    id?: number;
     hoursWorked?: number;
     overrideReason?: string | null;
     scheduledStartAt?: string | null;
