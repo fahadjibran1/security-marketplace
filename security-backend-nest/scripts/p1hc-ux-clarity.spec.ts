@@ -360,12 +360,72 @@ gate('UX-ADJUST-12 V1 snapshot (approvedHoursAtSubmission) displayed independent
   );
 });
 
+// ── RESUBMIT REGRESSION: correct timesheetId extraction ─────────────────────
+gate('UX-RESUB-1  handleResubmit extracts timesheet ID from line.timesheet.id (not line.timesheetId)', () => {
+  assert(
+    companyApprovals.includes('detail.lines.map((l) => l.timesheet?.id).filter(Boolean)'),
+    'handleResubmit still reads (l as any).timesheetId — produces empty array, no API call made',
+  );
+  assert(
+    !companyApprovals.includes('(l as any).timesheetId'),
+    'stale (l as any).timesheetId access still present in handleResubmit',
+  );
+});
+
+gate('UX-RESUB-2  handleResubmit shows visible error when no timesheet IDs found (no silent no-op)', () => {
+  assert(
+    companyApprovals.includes("setActionError('No timesheets found for resubmission."),
+    'empty-ids guard silently returns without setting actionError — button appears to do nothing',
+  );
+});
+
+gate('UX-RESUB-3  Resubmit button gated on detail.status === resolved only', () => {
+  assert(
+    companyApprovals.includes("detail.status === 'resolved' && ("),
+    "resubmit button not gated on detail.status === 'resolved'",
+  );
+});
+
+gate('UX-RESUB-4  Resubmit button disabled during in-flight request (double-submit protection)', () => {
+  assert(
+    companyApprovals.includes('disabled={actionLoading}') &&
+      companyApprovals.includes("actionLoading ? 'Resubmitting...' : 'Resubmit to Client'"),
+    'resubmit button not disabled during actionLoading — double-submit possible',
+  );
+});
+
+gate('UX-RESUB-5  Resubmit action calls resubmitWeeklyApproval with timesheetIds payload', () => {
+  assert(
+    companyApprovals.includes('await resubmitWeeklyApproval(selectedId, { timesheetIds: ids })'),
+    'resubmitWeeklyApproval not called with timesheetIds — V2 would never be created',
+  );
+});
+
+gate('UX-RESUB-6  Resubmit success reloads detail and list (V2 visible after save)', () => {
+  assert(
+    companyApprovals.includes('await openDetail(selectedId)') &&
+      companyApprovals.includes('await loadList()'),
+    'detail/list not reloaded after successful resubmit — UI would not reflect V2',
+  );
+});
+
+gate('UX-RESUB-7  Resubmit failure sets visible actionError (no silent failure)', () => {
+  assert(
+    companyApprovals.includes("formatApiErrorMessage(err, 'Failed to resubmit.')"),
+    'resubmit catch block does not set actionError — failure is silent',
+  );
+  assert(
+    companyApprovals.includes("actionError && <Text"),
+    'actionError not rendered in JSX — error message would be invisible even if set',
+  );
+});
+
 // ── FINAL REPORT ────────────────────────────────────────────────────────────
 console.log('');
 console.log(`══ P1H-C WORKFLOW CLARITY UX: ${passCount} PASS / ${failCount} FAIL ══`);
 if (failCount === 0) {
   console.log('FOCUSED SPEC: PASS');
-  console.log(JSON.stringify({ event: 'p1hc_ux_clarity_spec_passed', tests: passCount, scope: 'shift-review-panel-terminology-actions-navigation-request-match-adjust-billing' }));
+  console.log(JSON.stringify({ event: 'p1hc_ux_clarity_spec_passed', tests: passCount, scope: 'shift-review-panel-terminology-actions-navigation-request-match-adjust-billing-resubmit' }));
 } else {
   console.error('FOCUSED SPEC: FAIL');
   process.exit(1);

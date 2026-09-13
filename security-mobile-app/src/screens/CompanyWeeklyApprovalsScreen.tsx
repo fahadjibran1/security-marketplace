@@ -203,8 +203,12 @@ export function CompanyWeeklyApprovalsScreen({ onSelect }: Props) {
 
   const handleResubmit = async () => {
     if (!selectedId || !detail) return;
-    const ids = detail.lines.map((l) => (l as any).timesheetId).filter(Boolean) as number[];
-    if (!ids.length) return;
+    // FIX: company endpoint returns nested line.timesheet.id — line.timesheetId is never in the response
+    const ids = detail.lines.map((l) => l.timesheet?.id).filter(Boolean) as number[];
+    if (!ids.length) {
+      setActionError('No timesheets found for resubmission. Please refresh and try again.');
+      return;
+    }
     setActionLoading(true);
     setActionError(null);
     try {
