@@ -42,6 +42,7 @@ import { validateRuntimeEnv } from './config/runtime-env';
 import { ScreeningModule } from './screening/screening.module';
 import { GuardPersonnelModule } from './guard-personnel/guard-personnel.module';
 import { ClientWeeklyApprovalModule } from './client-weekly-approval/client-weekly-approval.module';
+import { CompanyMembershipModule } from './company-membership/company-membership.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, validate: validateRuntimeEnv }),
@@ -103,6 +104,7 @@ import { ClientWeeklyApprovalModule } from './client-weekly-approval/client-week
     FinanceModule,
     GuardPersonnelModule,
     ClientWeeklyApprovalModule,
+    CompanyMembershipModule,
   ],
   controllers: [HealthController],
 })

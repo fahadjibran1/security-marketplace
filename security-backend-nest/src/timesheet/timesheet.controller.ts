@@ -26,7 +26,7 @@ export class TimesheetController {
     if (user.role === UserRole.ADMIN) {
       return this.timesheetService.findAll();
     }
-    return this.timesheetService.findForCompany(user.sub);
+    return this.timesheetService.findForCompany(user.sub, user.role);
   }
 
   @Patch('company/payroll')

@@ -16,12 +16,14 @@ import { NotificationType } from '../notification/entities/notification.entity';
 import { PayRuleService } from '../pay-rule/pay-rule.service';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { isCompanyRole, UserRole } from '../user/entities/user.entity';
+import { CompanyMembershipService } from '../company-membership/company-membership.service';
 
 @Injectable()
 export class TimesheetService {
   constructor(
     @InjectRepository(Timesheet) private readonly timesheetRepo: Repository<Timesheet>,
     private readonly companyService: CompanyService,
+    private readonly membershipService: CompanyMembershipService,
     private readonly contractPricingService: ContractPricingService,
     private readonly guardProfileService: GuardProfileService,
     private readonly auditLogService: AuditLogService,
@@ -40,15 +42,14 @@ export class TimesheetService {
     }
 
     if (isCompanyRole(user.role)) {
-      return this.findForCompany(user.sub);
+      return this.findForCompany(user.sub, user.role);
     }
 
     return this.findMine(user.sub);
   }
 
-  async findForCompany(userId: number): Promise<Timesheet[]> {
-    const company = await this.companyService.findByUserId(userId);
-    if (!company) throw new NotFoundException('Company not found');
+  async findForCompany(userId: number, userRole: UserRole): Promise<Timesheet[]> {
+    const { company } = await this.membershipService.resolveCompanyContext(userId, userRole);
 
     const timesheets = await this.timesheetRepo.find({
       where: { company: { id: company.id } },

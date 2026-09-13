@@ -9,11 +9,13 @@ import { GuardProfileModule } from '../guard-profile/guard-profile.module';
 import { AuditLogModule } from '../audit-log/audit-log.module';
 import { NotificationModule } from '../notification/notification.module';
 import { PayRuleModule } from '../pay-rule/pay-rule.module';
+import { CompanyMembershipModule } from '../company-membership/company-membership.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Timesheet]),
     CompanyModule,
+    CompanyMembershipModule,
     ContractPricingModule,
     GuardProfileModule,
     AuditLogModule,

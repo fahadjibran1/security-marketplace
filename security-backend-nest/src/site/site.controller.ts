@@ -21,7 +21,7 @@ export class SiteController {
       return this.siteService.findAll();
     }
 
-    return this.siteService.findForCompanyUser(user.sub);
+    return this.siteService.findForCompanyUser(user.sub, user.role);
   }
 
   @Get(':id')
@@ -31,7 +31,7 @@ export class SiteController {
       return this.siteService.findOne(id);
     }
 
-    return this.siteService.findOneForCompanyUser(user.sub, id);
+    return this.siteService.findOneForCompanyUser(user.sub, user.role, id);
   }
 
   @Post()

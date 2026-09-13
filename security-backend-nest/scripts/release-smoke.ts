@@ -349,9 +349,11 @@ function buildTimesheetHarness(seedTimesheets: any[]) {
   const notificationService = { createForUser: async (input: any) => { notifications.push(input); } };
   const auditLogService = { log: async (input: any) => { auditLogs.push(input); return input; } };
 
+  const membershipService = { resolveCompanyContext: async () => ({ company: { id: 501 }, membershipRole: 'owner' }) };
   const service = new TimesheetService(
     timesheetRepo as any,
     companyService as any,
+    membershipService as any,
     contractPricingService as any,
     guardProfileService as any,
     auditLogService as any,

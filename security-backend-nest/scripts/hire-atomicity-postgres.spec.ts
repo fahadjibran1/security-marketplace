@@ -138,8 +138,8 @@ function services(dataSource: DataSource, failAt?: FailurePoint) {
   const identityFinancials = { applyFinancials: async (value: any) => value };
   const identityPay = { applyPayCalculations: async (value: any) => value };
   const timesheetService = new TimesheetService(
-    dataSource.getRepository(Timesheet), {} as any, identityFinancials as any, guardService as any,
-    {} as any, {} as any, identityPay as any,
+    dataSource.getRepository(Timesheet), {} as any, {} as any, identityFinancials as any,
+    guardService as any, {} as any, {} as any, identityPay as any,
   );
   const originalTimesheet = timesheetService.createForShift.bind(timesheetService);
   timesheetService.createForShift = async (shift: Shift, manager?: EntityManager) => {

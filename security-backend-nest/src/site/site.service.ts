@@ -9,12 +9,15 @@ import { CompanyService } from '../company/company.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { ClientService } from '../client/client.service';
 import { ShiftService } from '../shift/shift.service';
+import { CompanyMembershipService } from '../company-membership/company-membership.service';
+import { UserRole } from '../user/entities/user.entity';
 
 @Injectable()
 export class SiteService {
   constructor(
     @InjectRepository(Site) private readonly siteRepo: Repository<Site>,
     private readonly companyService: CompanyService,
+    private readonly membershipService: CompanyMembershipService,
     private readonly auditLogService: AuditLogService,
     private readonly clientService: ClientService,
     @Inject(forwardRef(() => ShiftService))
@@ -41,17 +44,15 @@ export class SiteService {
     return site;
   }
 
-  async findOneForCompanyUser(userId: number, id: number): Promise<Site> {
-    const company = await this.companyService.findByUserId(userId);
-    if (!company) throw new NotFoundException('Company not found');
+  async findOneForCompanyUser(userId: number, userRole: UserRole, id: number): Promise<Site> {
+    const { company } = await this.membershipService.resolveCompanyContext(userId, userRole);
     const site = await this.siteRepo.findOne({ where: { id, company: { id: company.id } } });
     if (!site) throw new NotFoundException('Site not found');
     return site;
   }
 
-  async findForCompanyUser(userId: number): Promise<Site[]> {
-    const company = await this.companyService.findByUserId(userId);
-    if (!company) throw new NotFoundException('Company not found');
+  async findForCompanyUser(userId: number, userRole: UserRole): Promise<Site[]> {
+    const { company } = await this.membershipService.resolveCompanyContext(userId, userRole);
     return this.siteRepo.find({ where: { company: { id: company.id } }, order: { name: 'ASC' } });
   }
 
