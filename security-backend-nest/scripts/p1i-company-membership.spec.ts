@@ -270,6 +270,21 @@ test('PERMISSION-14 ROLE_PERMISSIONS covers all 7 roles', () => {
   }
 });
 
+test('PERM-BANK-1 FINANCE has personnel_bank.view — required for masked bank-payment processing', () => {
+  assert(hasPermission(CompanyMembershipRole.FINANCE, CompanyPermission.PERSONNEL_BANK_VIEW),
+    'FINANCE must have personnel_bank.view — payment processing requires masked bank account access');
+});
+
+test('PERM-BANK-2 OPERATIONS does not have personnel_bank.view', () => {
+  assert(!hasPermission(CompanyMembershipRole.OPERATIONS, CompanyPermission.PERSONNEL_BANK_VIEW),
+    'OPERATIONS must NOT have personnel_bank.view — bank data is a Finance function only');
+});
+
+test('PERM-BANK-3 HR_COMPLIANCE does not have personnel_bank.view', () => {
+  assert(!hasPermission(CompanyMembershipRole.HR_COMPLIANCE, CompanyPermission.PERSONNEL_BANK_VIEW),
+    'HR_COMPLIANCE must NOT have personnel_bank.view — bank details are Finance, not HR');
+});
+
 // ═══════════════════════════════════════════════════════════════════════
 // D.  CANONICAL COMPANY CONTEXT — SOURCE INSPECTION
 // ═══════════════════════════════════════════════════════════════════════
@@ -314,6 +329,27 @@ test('RESOLVE-6 resolveCompanyContext never trusts frontend companyId', () => {
   const src = backend('company-membership/company-membership.service.ts');
   // The function signature must not accept a companyId parameter
   assert(!src.includes('companyId: number'), 'resolveCompanyContext must NOT accept a companyId parameter');
+});
+
+test('RESOLVE-7 resolveCompanyContext queries ACTIVE membership first — deterministic multi-row safety', () => {
+  const src = backend('company-membership/company-membership.service.ts');
+  // Critical: with REVOKED A + ACTIVE B for the same user, findOne without status filter is non-deterministic.
+  // The resolver MUST filter by ACTIVE in the first query to deterministically find the live context.
+  assert(src.includes('status: CompanyMembershipStatus.ACTIVE'), 'First query must filter by ACTIVE status explicitly');
+  // Separate SUSPENDED and REVOKED checks must also exist — three distinct status queries
+  assert(src.includes('status: CompanyMembershipStatus.SUSPENDED'), 'Separate SUSPENDED check required');
+  assert(src.includes('status: CompanyMembershipStatus.REVOKED'), 'Separate REVOKED check required');
+  // canAcceptInvitation must exist — formalises the acceptance pre-condition for Phase 2
+  assert(src.includes('canAcceptInvitation'), 'canAcceptInvitation must be present for Phase 2 acceptance guard');
+});
+
+test('BACKFILL-OWNER-UNIQUE Company uses @OneToOne on user — structural guarantee one user owns at most one company', () => {
+  const src = backend('company/entities/company.entity.ts');
+  // @OneToOne generates a UNIQUE constraint on the userId FK column in the companies table.
+  // This guarantees the backfill SELECT FROM companies cannot produce two rows with the same userId,
+  // so the partial unique index uq_one_active_membership_per_user cannot be violated by the backfill.
+  assert(src.includes('@OneToOne(() => User'), 'Company uses @OneToOne on user — guarantees one company per user');
+  assert(!src.includes('@ManyToOne(() => User'), 'Company must NOT use @ManyToOne on user — would allow multiple companies per user');
 });
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -667,6 +703,117 @@ async function runDatabaseTests() {
     const crossTenantSite = await siteRepo.findOne({ where: { id: siteB.id, company: { id: companyA.id } } });
     assert(crossTenantSite === null, 'TENANT-SITE: company B site not returned when scoped to company A');
     console.log('PASS  TENANT-SITE site isolation enforced by companyId scoping');
+
+    // ── BACKFILL-OWNER-UNIQUE: companies.userId has UNIQUE constraint ──────────────────
+    // @OneToOne generates a unique constraint — verify it exists at DB level
+    const companyUserUnique = await ds.query(`
+      SELECT tc.constraint_name
+      FROM information_schema.table_constraints tc
+      JOIN information_schema.constraint_column_usage ccu
+        ON tc.constraint_name = ccu.constraint_name AND tc.table_schema = ccu.table_schema
+      WHERE tc.table_name = 'companies'
+        AND tc.constraint_type = 'UNIQUE'
+        AND ccu.column_name = 'userId'
+    `) as Array<{ constraint_name: string }>;
+    assert(companyUserUnique.length > 0,
+      'BACKFILL-OWNER-UNIQUE: companies.userId must have a UNIQUE constraint — one user can own at most one company');
+    console.log('PASS  BACKFILL-OWNER-UNIQUE companies.userId is UNIQUE — backfill cannot produce two ACTIVE OWNER rows per user');
+
+    // ── Instantiate CompanyMembershipService for LIFECYCLE + RESOLVE-HISTORY tests ─────
+    const { CompanyMembershipService } = await import('../src/company-membership/company-membership.service');
+    const mockCompanyService = { findByUserId: async () => null };
+    const membershipSvc = new CompanyMembershipService(membershipRepo as any, mockCompanyService as any);
+
+    // Create users dedicated to lifecycle / history resolution tests
+    const resolveUser1 = await userRepo.save(userRepo.create({
+      email: 'resolve1@p1i.test', passwordHash: 'x', role: UserRole.COMPANY_STAFF,
+      status: UserStatus.ACTIVE, isEmailVerified: true,
+    }));
+    const resolveUser2 = await userRepo.save(userRepo.create({
+      email: 'resolve2@p1i.test', passwordHash: 'x', role: UserRole.COMPANY_STAFF,
+      status: UserStatus.ACTIVE, isEmailVerified: true,
+    }));
+    const resolveUser3 = await userRepo.save(userRepo.create({
+      email: 'resolve3@p1i.test', passwordHash: 'x', role: UserRole.COMPANY_STAFF,
+      status: UserStatus.ACTIVE, isEmailVerified: true,
+    }));
+
+    // ── LIFECYCLE-A: ACTIVE membership → canAcceptInvitation rejects ──────────────────
+    // ownerA already has ACTIVE OWNER membership in companyA (from backfill)
+    const lifecycleA = await membershipSvc.canAcceptInvitation(ownerA.id);
+    assert(!lifecycleA.allowed, 'LIFECYCLE-A: canAcceptInvitation must reject when ACTIVE membership exists');
+    assert(lifecycleA.reason !== undefined, 'LIFECYCLE-A: rejection must include a reason');
+    console.log('PASS  LIFECYCLE-A ACTIVE membership → canAcceptInvitation rejects');
+
+    // ── LIFECYCLE-B: SUSPENDED membership (no ACTIVE) → canAcceptInvitation rejects ───
+    await membershipRepo.save(membershipRepo.create({
+      userId: resolveUser2.id,
+      companyId: companyA.id,
+      membershipRole: CompanyMembershipRole.OPERATIONS,
+      status: CompanyMembershipStatus.SUSPENDED,
+      acceptedAt: new Date(),
+    }));
+    const lifecycleB = await membershipSvc.canAcceptInvitation(resolveUser2.id);
+    assert(!lifecycleB.allowed, 'LIFECYCLE-B: canAcceptInvitation must reject when SUSPENDED membership exists');
+    assert(lifecycleB.reason?.includes('suspended'), 'LIFECYCLE-B: rejection reason must mention suspended');
+    console.log('PASS  LIFECYCLE-B SUSPENDED membership → canAcceptInvitation rejects (user still bound to old company)');
+
+    // ── LIFECYCLE-C: REVOKED membership (no ACTIVE) → canAcceptInvitation allows ──────
+    await membershipRepo.save(membershipRepo.create({
+      userId: resolveUser3.id,
+      companyId: companyA.id,
+      membershipRole: CompanyMembershipRole.VIEWER,
+      status: CompanyMembershipStatus.REVOKED,
+      acceptedAt: new Date(),
+    }));
+    const lifecycleC = await membershipSvc.canAcceptInvitation(resolveUser3.id);
+    assert(lifecycleC.allowed, 'LIFECYCLE-C: canAcceptInvitation must allow when only REVOKED membership exists');
+    console.log('PASS  LIFECYCLE-C REVOKED membership releases user — canAcceptInvitation allows new company invitation');
+
+    // ── RESOLVE-HISTORY-1: REVOKED A + ACTIVE B → resolveCompanyContext returns B ─────
+    // resolveUser1: REVOKED companyA, then ACTIVE companyB (partial index allows: different companyIds)
+    await membershipRepo.save(membershipRepo.create({
+      userId: resolveUser1.id,
+      companyId: companyA.id,
+      membershipRole: CompanyMembershipRole.VIEWER,
+      status: CompanyMembershipStatus.REVOKED,
+      acceptedAt: new Date(),
+    }));
+    await membershipRepo.save(membershipRepo.create({
+      userId: resolveUser1.id,
+      companyId: companyB.id,
+      membershipRole: CompanyMembershipRole.OPERATIONS,
+      status: CompanyMembershipStatus.ACTIVE,
+      acceptedAt: new Date(),
+    }));
+    const resolveHistory1 = await membershipSvc.resolveCompanyContext(resolveUser1.id, UserRole.COMPANY_STAFF);
+    assert(resolveHistory1.company.id === companyB.id,
+      `RESOLVE-HISTORY-1: Expected companyB (id=${companyB.id}), got company id=${resolveHistory1.company.id}`);
+    assert(resolveHistory1.membershipRole === CompanyMembershipRole.OPERATIONS,
+      'RESOLVE-HISTORY-1: membershipRole must be OPERATIONS (from the ACTIVE companyB row)');
+    console.log('PASS  RESOLVE-HISTORY-1 REVOKED A + ACTIVE B → resolveCompanyContext deterministically returns ACTIVE company B');
+
+    // ── RESOLVE-HISTORY-2: SUSPENDED A, no ACTIVE → ForbiddenException ───────────────
+    // resolveUser2 has SUSPENDED companyA (from LIFECYCLE-B), no ACTIVE row
+    try {
+      await membershipSvc.resolveCompanyContext(resolveUser2.id, UserRole.COMPANY_STAFF);
+      assert(false, 'RESOLVE-HISTORY-2: should have thrown ForbiddenException for SUSPENDED membership');
+    } catch (err: unknown) {
+      const msg = String((err as Error).message ?? err);
+      assert(msg.includes('suspended'), `RESOLVE-HISTORY-2: expected "suspended" in error message, got: "${msg}"`);
+      console.log('PASS  RESOLVE-HISTORY-2 SUSPENDED membership with no ACTIVE → resolveCompanyContext throws 403 suspended');
+    }
+
+    // ── RESOLVE-HISTORY-3: REVOKED-only COMPANY_STAFF → fail-closed ──────────────────
+    // resolveUser3 has REVOKED companyA (from LIFECYCLE-C), no ACTIVE, no SUSPENDED
+    try {
+      await membershipSvc.resolveCompanyContext(resolveUser3.id, UserRole.COMPANY_STAFF);
+      assert(false, 'RESOLVE-HISTORY-3: should have thrown for REVOKED-only COMPANY_STAFF user');
+    } catch (err: unknown) {
+      const msg = String((err as Error).message ?? err);
+      assert(msg.includes('revoked'), `RESOLVE-HISTORY-3: expected "revoked" in error message, got: "${msg}"`);
+      console.log('PASS  RESOLVE-HISTORY-3 REVOKED-only COMPANY_STAFF → resolveCompanyContext fails closed (403 revoked)');
+    }
 
     console.log('\n══ DB TESTS: ALL PASS ══');
   } finally {
