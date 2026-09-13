@@ -142,7 +142,7 @@ export function ClientWeeklyApprovalsScreen({ userRole }: Props) {
           <ActivityIndicator size="large" color="#1e3a5f" style={{ marginTop: 40 }} />
         ) : detail ? (
           <>
-            <Text style={styles.title}>{detail.siteName}</Text>
+            <Text style={styles.title}>{detail.site?.name}</Text>
             <Text style={styles.weekRange}>{detail.weekCommencing} — {detail.weekEnding}</Text>
             <View style={[styles.badge, { backgroundColor: statusColor(detail.status), alignSelf: 'flex-start', marginBottom: 8 }]}>
               <Text style={styles.badgeText}>{statusLabel(detail.status)}</Text>
@@ -252,7 +252,7 @@ export function ClientWeeklyApprovalsScreen({ userRole }: Props) {
         approvals.map((item) => (
           <Pressable key={item.id} style={styles.card} onPress={() => setSelectedId(item.id)}>
             <View style={styles.cardHeader}>
-              <Text style={styles.siteName}>{item.siteName}</Text>
+              <Text style={styles.siteName}>{item.site?.name}</Text>
               <View style={[styles.badge, { backgroundColor: statusColor(item.status) }]}>
                 <Text style={styles.badgeText}>{statusLabel(item.status)}</Text>
               </View>

@@ -496,7 +496,7 @@ export function CompanyTimesheetsWorkspace({
   const weeklyApprovalLookup = React.useMemo(() => {
     const map = new Map<string, { status: string; requestId: number }>();
     weeklyApprovals.forEach((wa) => {
-      const key = `${wa.siteId}__${wa.weekCommencing}`;
+      const key = `${wa.site.id}__${wa.weekCommencing}`;
       if (!map.has(key)) map.set(key, { status: wa.status, requestId: wa.id });
     });
     return map;

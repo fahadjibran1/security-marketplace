@@ -1492,8 +1492,9 @@ export type ClientShiftDisputeStatus = 'open' | 'resolved' | 'withdrawn';
 
 export interface ClientWeeklyApprovalSummary {
   id: number;
-  siteId: number;
-  siteName: string;
+  site: { id: number; name: string; timezone?: string };
+  client: { id: number; name?: string };
+  company: { id: number; name?: string };
   weekCommencing: string;
   weekEnding: string;
   status: ClientWeeklyApprovalStatus;

@@ -1,5 +1,5 @@
 /**
- * P1H-C WORKFLOW CLARITY UX — 14 focused assertions
+ * P1H-C WORKFLOW CLARITY UX — 14 focused assertions + 8 request-match regression assertions
  *
  * Verifies that the Company Timesheets workspace and Client Timesheet screen
  * contain the correct per-state messaging, terminology, and navigation controls
@@ -16,9 +16,17 @@ const WEEKLY_SCREEN = path.resolve(
   __dirname,
   '../../security-mobile-app/src/screens/CompanyWeeklyApprovalsScreen.tsx',
 );
+const CLIENT_WEEKLY_SCREEN = path.resolve(
+  __dirname,
+  '../../security-mobile-app/src/screens/ClientWeeklyApprovalsScreen.tsx',
+);
 const DASHBOARD = path.resolve(
   __dirname,
   '../../security-mobile-app/src/screens/CompanyDashboardScreen.tsx',
+);
+const MODELS = path.resolve(
+  __dirname,
+  '../../security-mobile-app/src/types/models.ts',
 );
 
 function assert(condition: boolean, message: string) {
@@ -41,7 +49,9 @@ function gate(label: string, fn: () => void) {
 
 const workspace = readFileSync(WORKSPACE, 'utf-8');
 const weeklyScreen = readFileSync(WEEKLY_SCREEN, 'utf-8');
+const clientWeeklyScreen = readFileSync(CLIENT_WEEKLY_SCREEN, 'utf-8');
 const dashboard = readFileSync(DASHBOARD, 'utf-8');
+const models = readFileSync(MODELS, 'utf-8');
 
 // ── SHIFT REVIEW PANEL: DRAFT state ────────────────────────────────────────
 gate('UX-1  Draft panel: "Awaiting Guard Submission" heading present', () => {
@@ -133,12 +143,102 @@ gate('UX-BONUS  Disputed line: billing summary card with Guard Claim / Guard Pay
   assert(weeklyScreen.includes('Pending Client Billing Correction:'), '"Pending Client Billing Correction" row not found');
 });
 
+// ── REQUEST MATCH REGRESSION: type contract ─────────────────────────────────
+// Extract just the ClientWeeklyApprovalSummary interface block for precise assertions
+const summaryMatch = models.match(/export interface ClientWeeklyApprovalSummary \{[\s\S]*?\n\}/);
+const summaryBlock = summaryMatch ? summaryMatch[0] : '';
+
+gate('UX-MATCH-1  ClientWeeklyApprovalSummary type uses nested site.id (not flat siteId)', () => {
+  assert(summaryBlock !== '', 'ClientWeeklyApprovalSummary interface not found in models.ts');
+  assert(
+    summaryBlock.includes('site: { id: number;'),
+    'interface still declares flat siteId instead of nested site object',
+  );
+  assert(
+    !summaryBlock.includes('siteId: number'),
+    'interface still has stale flat siteId field — produces undefined at runtime',
+  );
+});
+
+gate('UX-MATCH-2  ClientWeeklyApprovalSummary type uses nested site.name (not flat siteName)', () => {
+  assert(summaryBlock !== '', 'ClientWeeklyApprovalSummary interface not found in models.ts');
+  assert(
+    !summaryBlock.includes('siteName: string'),
+    'interface still has stale flat siteName field — produces undefined at runtime',
+  );
+});
+
+// ── REQUEST MATCH REGRESSION: workspace lookup key ──────────────────────────
+gate('UX-MATCH-3  weeklyApprovalLookup key uses wa.site.id (not wa.siteId)', () => {
+  assert(
+    workspace.includes('wa.site.id'),
+    'lookup key still uses wa.siteId — produces undefined__weekCommencing and never matches',
+  );
+  assert(
+    !workspace.includes('wa.siteId'),
+    'wa.siteId still referenced in lookup — would be undefined at runtime',
+  );
+});
+
+// ── REQUEST MATCH REGRESSION: clientSubmissionStatusLabel mappings ───────────
+gate('UX-MATCH-4  DISPUTED status → "Returned for Correction" label', () => {
+  assert(
+    workspace.includes("case 'disputed': return 'Returned for Correction'"),
+    'disputed status not mapped to "Returned for Correction"',
+  );
+});
+
+gate('UX-MATCH-5  PENDING_APPROVAL / RESOLVED status → "Awaiting Client Approval" label', () => {
+  assert(
+    workspace.includes("case 'pending_approval': return 'Awaiting Client Approval'") &&
+      workspace.includes("case 'resolved': return 'Awaiting Client Approval'"),
+    'pending_approval or resolved not mapped to "Awaiting Client Approval"',
+  );
+});
+
+gate('UX-MATCH-6  CLIENT_APPROVED status → "Client Approved" label', () => {
+  assert(
+    workspace.includes("case 'client_approved': return 'Client Approved'"),
+    'client_approved not mapped to "Client Approved"',
+  );
+});
+
+gate('UX-MATCH-7  LOCKED status → "Finalised" label', () => {
+  assert(
+    workspace.includes("case 'locked': return 'Finalised'"),
+    'locked not mapped to "Finalised"',
+  );
+});
+
+// ── REQUEST MATCH REGRESSION: site name display ──────────────────────────────
+gate('UX-MATCH-8  CompanyWeeklyApprovalsScreen displays site?.name (not siteName)', () => {
+  assert(
+    weeklyScreen.includes('item.site?.name') && weeklyScreen.includes('detail.site?.name'),
+    'CompanyWeeklyApprovalsScreen still uses stale siteName property',
+  );
+  assert(
+    !weeklyScreen.includes('item.siteName') && !weeklyScreen.includes('detail.siteName'),
+    'stale .siteName reference still present in CompanyWeeklyApprovalsScreen',
+  );
+});
+
+gate('UX-MATCH-9  ClientWeeklyApprovalsScreen displays site?.name (not siteName)', () => {
+  assert(
+    clientWeeklyScreen.includes('item.site?.name') && clientWeeklyScreen.includes('detail.site?.name'),
+    'ClientWeeklyApprovalsScreen still uses stale siteName property',
+  );
+  assert(
+    !clientWeeklyScreen.includes('item.siteName') && !clientWeeklyScreen.includes('detail.siteName'),
+    'stale .siteName reference still present in ClientWeeklyApprovalsScreen',
+  );
+});
+
 // ── FINAL REPORT ────────────────────────────────────────────────────────────
 console.log('');
 console.log(`══ P1H-C WORKFLOW CLARITY UX: ${passCount} PASS / ${failCount} FAIL ══`);
 if (failCount === 0) {
   console.log('FOCUSED SPEC: PASS');
-  console.log(JSON.stringify({ event: 'p1hc_ux_clarity_spec_passed', tests: passCount, scope: 'shift-review-panel-terminology-actions-navigation' }));
+  console.log(JSON.stringify({ event: 'p1hc_ux_clarity_spec_passed', tests: passCount, scope: 'shift-review-panel-terminology-actions-navigation-request-match' }));
 } else {
   console.error('FOCUSED SPEC: FAIL');
   process.exit(1);

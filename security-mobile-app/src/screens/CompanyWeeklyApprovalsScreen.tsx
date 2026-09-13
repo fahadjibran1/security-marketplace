@@ -198,7 +198,7 @@ export function CompanyWeeklyApprovalsScreen({ onSelect }: Props) {
           <Text style={styles.errorText}>{detailError}</Text>
         ) : detail ? (
           <>
-            <Text style={styles.pageTitle}>{detail.siteName}</Text>
+            <Text style={styles.pageTitle}>{detail.site?.name}</Text>
             <Text style={styles.weekRange}>{detail.weekCommencing} — {detail.weekEnding}</Text>
             <View style={[styles.badge, { backgroundColor: statusColor(detail.status), alignSelf: 'flex-start', marginBottom: 12 }]}>
               <Text style={styles.badgeText}>{statusLabel(detail.status)}</Text>
@@ -529,7 +529,7 @@ export function CompanyWeeklyApprovalsScreen({ onSelect }: Props) {
             onPress={() => { onSelect?.(item.id); openDetail(item.id); }}
           >
             <View style={styles.cardHeader}>
-              <Text style={styles.siteName}>{item.siteName}</Text>
+              <Text style={styles.siteName}>{item.site?.name}</Text>
               <View style={[styles.badge, { backgroundColor: statusColor(item.status) }]}>
                 <Text style={styles.badgeText}>{statusLabel(item.status)}</Text>
               </View>
