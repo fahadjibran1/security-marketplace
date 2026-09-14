@@ -3,9 +3,11 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
 import { Client } from '../client/entities/client.entity';
-import { CompanyService } from '../company/company.service';
+import { CompanyMembershipService } from '../company-membership/company-membership.service';
+import { CompanyPermission } from '../company-membership/company-membership-types';
 import { Site } from '../site/entities/site.entity';
 import { Timesheet, TimesheetStatus } from '../timesheet/entities/timesheet.entity';
+import { UserRole } from '../user/entities/user.entity';
 import { ContractPricingQueryDto } from './dto/contract-pricing-query.dto';
 import { CreateContractPricingRuleDto } from './dto/create-contract-pricing-rule.dto';
 import { UpdateContractPricingRuleDto } from './dto/update-contract-pricing-rule.dto';
@@ -29,11 +31,11 @@ export class ContractPricingService {
     @InjectRepository(Client) private readonly clientRepo: Repository<Client>,
     @InjectRepository(Site) private readonly siteRepo: Repository<Site>,
     @InjectRepository(Timesheet) private readonly timesheetRepo: Repository<Timesheet>,
-    private readonly companyService: CompanyService,
+    private readonly membershipService: CompanyMembershipService,
   ) {}
 
-  async listForCompany(userId: number, query: ContractPricingQueryDto = {}) {
-    const company = await this.getCompanyForUser(userId);
+  async listForCompany(userId: number, userRole: UserRole, query: ContractPricingQueryDto = {}) {
+    const company = await this.getCompanyForUser(userId, userRole, CompanyPermission.BILLING_VIEW);
     const rules = await this.ruleRepo.find({
       where: { company: { id: company.id } },
       order: { priority: 'ASC', id: 'DESC' },
@@ -47,15 +49,15 @@ export class ContractPricingService {
     });
   }
 
-  async findOneForCompany(userId: number, id: number) {
-    const company = await this.getCompanyForUser(userId);
+  async findOneForCompany(userId: number, userRole: UserRole, id: number) {
+    const company = await this.getCompanyForUser(userId, userRole, CompanyPermission.BILLING_VIEW);
     const rule = await this.ruleRepo.findOne({ where: { id, company: { id: company.id } } });
     if (!rule) throw new NotFoundException('Contract pricing rule not found');
     return rule;
   }
 
-  async createForCompany(userId: number, dto: CreateContractPricingRuleDto) {
-    const company = await this.getCompanyForUser(userId);
+  async createForCompany(userId: number, userRole: UserRole, dto: CreateContractPricingRuleDto) {
+    const company = await this.getCompanyForUser(userId, userRole, CompanyPermission.BILLING_MANAGE);
     const client = await this.getClientForCompany(company.id, dto.clientId);
     const site = dto.siteId ? await this.getSiteForCompany(company.id, dto.siteId, client.id) : null;
     const normalized = this.normalizeRuleDto(dto);
@@ -70,8 +72,8 @@ export class ContractPricingService {
     return this.ruleRepo.save(rule);
   }
 
-  async updateForCompany(userId: number, id: number, dto: UpdateContractPricingRuleDto) {
-    const rule = await this.findOneForCompany(userId, id);
+  async updateForCompany(userId: number, userRole: UserRole, id: number, dto: UpdateContractPricingRuleDto) {
+    const rule = await this.findOneForCompany(userId, userRole, id);
     const companyId = rule.company.id;
     const nextClient = dto.clientId ? await this.getClientForCompany(companyId, dto.clientId) : rule.client;
     const nextSite =
@@ -90,14 +92,14 @@ export class ContractPricingService {
     return this.ruleRepo.save(rule);
   }
 
-  async deactivateForCompany(userId: number, id: number) {
-    const rule = await this.findOneForCompany(userId, id);
+  async deactivateForCompany(userId: number, userRole: UserRole, id: number) {
+    const rule = await this.findOneForCompany(userId, userRole, id);
     rule.status = ContractPricingRuleStatus.INACTIVE;
     return this.ruleRepo.save(rule);
   }
 
-  async previewForCompany(userId: number, timesheetId: number) {
-    const company = await this.getCompanyForUser(userId);
+  async previewForCompany(userId: number, userRole: UserRole, timesheetId: number) {
+    const company = await this.getCompanyForUser(userId, userRole, CompanyPermission.BILLING_VIEW);
     const timesheet = await this.timesheetRepo.findOne({ where: { id: timesheetId, company: { id: company.id } } });
     if (!timesheet) throw new NotFoundException('Timesheet not found for this company.');
     const rules = await this.getActiveRulesForCompany(company.id);
@@ -225,9 +227,8 @@ export class ContractPricingService {
     });
   }
 
-  private async getCompanyForUser(userId: number) {
-    const company = await this.companyService.findByUserId(userId);
-    if (!company) throw new NotFoundException('Company not found');
+  private async getCompanyForUser(userId: number, userRole: UserRole, permission: CompanyPermission) {
+    const { company } = await this.membershipService.resolveCompanyContext(userId, userRole, permission);
     return company;
   }
 

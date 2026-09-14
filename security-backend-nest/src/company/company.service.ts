@@ -45,4 +45,10 @@ export class CompanyService {
     Object.assign(company, dto);
     return this.companyRepo.save(company);
   }
+
+  async updateById(id: number, dto: UpdateCompanyDto): Promise<Company> {
+    const company = await this.findOne(id);
+    Object.assign(company, dto);
+    return this.companyRepo.save(company);
+  }
 }

@@ -1,9 +1,11 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
-import { CompanyService } from '../company/company.service';
+import { CompanyMembershipService } from '../company-membership/company-membership.service';
+import { CompanyPermission } from '../company-membership/company-membership-types';
 import { Timesheet } from '../timesheet/entities/timesheet.entity';
+import { UserRole } from '../user/entities/user.entity';
 import { UpsertPayRuleConfigDto } from './dto/upsert-pay-rule-config.dto';
 import { PayRuleConfig } from './entities/pay-rule-config.entity';
 
@@ -39,18 +41,20 @@ export type PayCalculationResult = {
 export class PayRuleService {
   constructor(
     @InjectRepository(PayRuleConfig) private readonly configRepo: Repository<PayRuleConfig>,
-    private readonly companyService: CompanyService,
+    private readonly membershipService: CompanyMembershipService,
   ) {}
 
-  async findForCompanyUser(userId: number) {
-    const company = await this.companyService.findByUserId(userId);
-    if (!company) throw new NotFoundException('Company not found');
+  async findForCompanyUser(userId: number, userRole: UserRole) {
+    const { company } = await this.membershipService.resolveCompanyContext(
+      userId, userRole, CompanyPermission.PAYROLL_VIEW,
+    );
     return this.configRepo.findOne({ where: { company: { id: company.id } } });
   }
 
-  async upsertForCompanyUser(userId: number, dto: UpsertPayRuleConfigDto) {
-    const company = await this.companyService.findByUserId(userId);
-    if (!company) throw new NotFoundException('Company not found');
+  async upsertForCompanyUser(userId: number, userRole: UserRole, dto: UpsertPayRuleConfigDto) {
+    const { company } = await this.membershipService.resolveCompanyContext(
+      userId, userRole, CompanyPermission.PAYROLL_MANAGE,
+    );
     const existing = await this.configRepo.findOne({ where: { company: { id: company.id } } });
     const normalized = this.normalizeDto(dto);
     const config = existing

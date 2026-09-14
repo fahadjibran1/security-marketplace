@@ -14,8 +14,10 @@ import { Timesheet, TimesheetBillingStatus, TimesheetStatus } from '../timesheet
 import { Company } from '../company/entities/company.entity';
 import { Client } from '../client/entities/client.entity';
 import { Site } from '../site/entities/site.entity';
-import { CompanyService } from '../company/company.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { UserRole } from '../user/entities/user.entity';
+import { CompanyMembershipService } from '../company-membership/company-membership.service';
+import { CompanyPermission } from '../company-membership/company-membership-types';
 import { CreateWeeklyApprovalDto } from './dto/create-weekly-approval.dto';
 import { ResubmitApprovalDto } from './dto/resubmit-approval.dto';
 import { ResolveDisputeDto } from './dto/resolve-dispute.dto';
@@ -31,13 +33,13 @@ export class ClientWeeklyApprovalService {
     private readonly lineRepo: Repository<ClientWeeklyApprovalLine>,
     @InjectRepository(ClientShiftDispute)
     private readonly disputeRepo: Repository<ClientShiftDispute>,
-    private readonly companyService: CompanyService,
+    private readonly membershipService: CompanyMembershipService,
     private readonly auditLogService: AuditLogService,
     private readonly dataSource: DataSource,
   ) {}
 
-  async createSubmission(userId: number, dto: CreateWeeklyApprovalDto): Promise<ClientWeeklyApprovalRequest> {
-    const company = await this.requireCompany(userId);
+  async createSubmission(userId: number, userRole: UserRole, dto: CreateWeeklyApprovalDto): Promise<ClientWeeklyApprovalRequest> {
+    const company = await this.requireCompany(userId, userRole, CompanyPermission.CLIENT_BILLING_SUBMIT);
     const weekEnding = computeWeekEnding(dto.weekCommencing);
 
     const savedId = await this.dataSource.transaction(async (manager) => {
@@ -148,11 +150,11 @@ export class ClientWeeklyApprovalService {
       return savedRequest.id;
     });
 
-    return this.findOneForCompany(userId, savedId);
+    return this.findOneForCompany(userId, userRole, savedId);
   }
 
-  async listForCompany(userId: number, query: { status?: string; clientId?: number; siteId?: number; weekCommencing?: string }) {
-    const company = await this.requireCompany(userId);
+  async listForCompany(userId: number, userRole: UserRole, query: { status?: string; clientId?: number; siteId?: number; weekCommencing?: string }) {
+    const company = await this.requireCompany(userId, userRole, CompanyPermission.CLIENT_BILLING_VIEW);
     const where: Record<string, unknown> = { company: { id: company.id } };
     if (query.status) where.status = query.status;
     if (query.clientId) where.client = { id: query.clientId };
@@ -161,8 +163,8 @@ export class ClientWeeklyApprovalService {
     return this.requestRepo.find({ where, order: { weekCommencing: 'DESC', createdAt: 'DESC' } });
   }
 
-  async findOneForCompany(userId: number, id: number): Promise<ClientWeeklyApprovalRequest> {
-    const company = await this.requireCompany(userId);
+  async findOneForCompany(userId: number, userRole: UserRole, id: number): Promise<ClientWeeklyApprovalRequest> {
+    const company = await this.requireCompany(userId, userRole, CompanyPermission.CLIENT_BILLING_VIEW);
     const request = await this.requestRepo.findOne({ where: { id, company: { id: company.id } } });
     if (!request) throw new NotFoundException('Weekly approval request not found.');
     request.lines = await this.lineRepo.find({
@@ -175,8 +177,8 @@ export class ClientWeeklyApprovalService {
     return request;
   }
 
-  async resolveDispute(userId: number, requestId: number, disputeId: number, dto: ResolveDisputeDto): Promise<ClientShiftDispute> {
-    const company = await this.requireCompany(userId);
+  async resolveDispute(userId: number, userRole: UserRole, requestId: number, disputeId: number, dto: ResolveDisputeDto): Promise<ClientShiftDispute> {
+    const company = await this.requireCompany(userId, userRole, CompanyPermission.CLIENT_BILLING_VIEW);
     const request = await this.requestRepo.findOne({ where: { id: requestId, company: { id: company.id } } });
     if (!request) throw new NotFoundException('Weekly approval request not found.');
     if (request.status !== ClientWeeklyApprovalStatus.DISPUTED) {
@@ -220,8 +222,8 @@ export class ClientWeeklyApprovalService {
     return dispute;
   }
 
-  async resubmit(userId: number, requestId: number, dto: ResubmitApprovalDto): Promise<ClientWeeklyApprovalRequest> {
-    const company = await this.requireCompany(userId);
+  async resubmit(userId: number, userRole: UserRole, requestId: number, dto: ResubmitApprovalDto): Promise<ClientWeeklyApprovalRequest> {
+    const company = await this.requireCompany(userId, userRole, CompanyPermission.CLIENT_BILLING_SUBMIT);
 
     await this.dataSource.transaction(async (manager) => {
       const requestRepo = manager.getRepository(ClientWeeklyApprovalRequest);
@@ -372,11 +374,11 @@ export class ClientWeeklyApprovalService {
       });
     });
 
-    return this.findOneForCompany(userId, requestId);
+    return this.findOneForCompany(userId, userRole, requestId);
   }
 
-  async reviseApprovedTime(userId: number, requestId: number, dto: ReviseApprovedTimeDto): Promise<{ message: string }> {
-    const company = await this.requireCompany(userId);
+  async reviseApprovedTime(userId: number, userRole: UserRole, requestId: number, dto: ReviseApprovedTimeDto): Promise<{ message: string }> {
+    const company = await this.requireCompany(userId, userRole, CompanyPermission.CLIENT_BILLING_CORRECT);
 
     const reason = dto.clientCorrectionReason.trim();
     if (!reason) throw new BadRequestException('Correction reason is required.');
@@ -478,8 +480,8 @@ export class ClientWeeklyApprovalService {
     return { message: 'Client billing correction applied.' };
   }
 
-  async getEligibleTimesheets(userId: number, siteId: number, weekCommencing: string): Promise<Timesheet[]> {
-    const company = await this.requireCompany(userId);
+  async getEligibleTimesheets(userId: number, userRole: UserRole, siteId: number, weekCommencing: string): Promise<Timesheet[]> {
+    const company = await this.requireCompany(userId, userRole, CompanyPermission.CLIENT_BILLING_VIEW);
     const siteRepo = this.dataSource.getRepository(Site);
     const timesheetRepo = this.dataSource.getRepository(Timesheet);
 
@@ -538,9 +540,8 @@ export class ClientWeeklyApprovalService {
     return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
   }
 
-  private async requireCompany(userId: number): Promise<Company> {
-    const company = await this.companyService.findByUserId(userId);
-    if (!company) throw new NotFoundException('Company not found.');
+  private async requireCompany(userId: number, userRole: UserRole, permission: CompanyPermission): Promise<Company> {
+    const { company } = await this.membershipService.resolveCompanyContext(userId, userRole, permission);
     return company;
   }
 }

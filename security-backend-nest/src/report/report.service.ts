@@ -1,10 +1,12 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
-import { CompanyService } from '../company/company.service';
+import { CompanyMembershipService } from '../company-membership/company-membership.service';
+import { CompanyPermission } from '../company-membership/company-membership-types';
 import { ContractPricingService } from '../contract-pricing/contract-pricing.service';
 import { Timesheet, TimesheetStatus } from '../timesheet/entities/timesheet.entity';
+import { UserRole } from '../user/entities/user.entity';
 import { MarginReportQueryDto } from './dto/margin-report-query.dto';
 
 type MarginSummary = {
@@ -32,13 +34,14 @@ type MarginSummary = {
 export class ReportService {
   constructor(
     @InjectRepository(Timesheet) private readonly timesheetRepo: Repository<Timesheet>,
-    private readonly companyService: CompanyService,
+    private readonly membershipService: CompanyMembershipService,
     private readonly contractPricingService: ContractPricingService,
   ) {}
 
-  async getCompanyMarginReport(userId: number, query: MarginReportQueryDto): Promise<MarginSummary> {
-    const company = await this.companyService.findByUserId(userId);
-    if (!company) throw new NotFoundException('Company not found');
+  async getCompanyMarginReport(userId: number, userRole: UserRole, query: MarginReportQueryDto): Promise<MarginSummary> {
+    const { company } = await this.membershipService.resolveCompanyContext(
+      userId, userRole, CompanyPermission.REPORTS_FINANCIAL,
+    );
 
     const startDate = this.parseOptionalDate(query.startDate, false);
     const endDate = this.parseOptionalDate(query.endDate, true);
@@ -140,9 +143,10 @@ export class ReportService {
     };
   }
 
-  async getFinancialConsistency(userId: number) {
-    const company = await this.companyService.findByUserId(userId);
-    if (!company) throw new NotFoundException('Company not found');
+  async getFinancialConsistency(userId: number, userRole: UserRole) {
+    const { company } = await this.membershipService.resolveCompanyContext(
+      userId, userRole, CompanyPermission.REPORTS_FINANCIAL,
+    );
 
     const timesheets = await this.contractPricingService.applyFinancials(await this.timesheetRepo.find({
       where: { company: { id: company.id } },

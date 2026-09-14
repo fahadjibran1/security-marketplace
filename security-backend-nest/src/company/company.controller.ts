@@ -1,5 +1,6 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Inject, Param, ParseIntPipe, Patch, Post, UseGuards, forwardRef } from '@nestjs/common';
 import { CompanyService } from './company.service';
+import { CompanyMembershipService } from '../company-membership/company-membership.service';
 import { CreateCompanyDto } from './dto/create-company.dto';
 import { UpdateCompanyDto } from './dto/update-company.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -8,6 +9,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { COMPANY_ADMIN_ROLES, COMPANY_VIEW_ROLES, UserRole } from '../user/entities/user.entity';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
+import { CompanyPermission } from '../company-membership/company-membership-types';
 
 // RB-006: findAll()/findOne(:id) are platform-admin-only — they return/target
 // any tenant's record with no ownership filter. Company-side roles (company,
@@ -17,7 +19,11 @@ import { JwtPayload } from '../auth/types/jwt-payload.type';
 @Controller('companies')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class CompanyController {
-  constructor(private readonly companyService: CompanyService) {}
+  constructor(
+    private readonly companyService: CompanyService,
+    @Inject(forwardRef(() => CompanyMembershipService))
+    private readonly membershipService: CompanyMembershipService,
+  ) {}
 
   @Get()
   @Roles(UserRole.ADMIN)
@@ -26,9 +32,11 @@ export class CompanyController {
   }
 
   @Get('me')
-  @Roles(...COMPANY_VIEW_ROLES)
-  findMine(@CurrentUser() user: JwtPayload) {
-    return this.companyService.findByUserId(user.sub);
+  @Roles(UserRole.ADMIN, ...COMPANY_VIEW_ROLES)
+  async findMine(@CurrentUser() user: JwtPayload) {
+    if (user.role === UserRole.ADMIN) return this.companyService.findAll();
+    const { company } = await this.membershipService.resolveCompanyContext(user.sub, user.role);
+    return company;
   }
 
   @Get(':id')
@@ -45,7 +53,10 @@ export class CompanyController {
 
   @Patch('me')
   @Roles(...COMPANY_ADMIN_ROLES)
-  updateMine(@CurrentUser() user: JwtPayload, @Body() dto: UpdateCompanyDto) {
-    return this.companyService.updateByUserId(user.sub, dto);
+  async updateMine(@CurrentUser() user: JwtPayload, @Body() dto: UpdateCompanyDto) {
+    const { company } = await this.membershipService.resolveCompanyContext(
+      user.sub, user.role, CompanyPermission.COMPANY_MANAGE,
+    );
+    return this.companyService.updateById(company.id, dto);
   }
 }

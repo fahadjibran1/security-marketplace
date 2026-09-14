@@ -1,9 +1,11 @@
-import { Controller, Get, Req, UseGuards } from '@nestjs/common';
+import { Controller, Get, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { AuditLogService } from './audit-log.service';
 import { COMPANY_VIEW_ROLES, UserRole } from '../user/entities/user.entity';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { JwtPayload } from '../auth/types/jwt-payload.type';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('audit-logs')
@@ -18,7 +20,7 @@ export class AuditLogController {
 
   @Get('company')
   @Roles(...COMPANY_VIEW_ROLES)
-  findForCompany(@Req() req: { user: { sub: number } }) {
-    return this.auditLogService.findForCompany(req.user.sub);
+  findForCompany(@CurrentUser() user: JwtPayload) {
+    return this.auditLogService.findForCompany(user.sub, user.role);
   }
 }

@@ -60,7 +60,7 @@ function buildHarness(applications: any[] = [application()]) {
     documentRepo as any,
     { find: async () => [] } as any,
     { find: async () => [] } as any,
-    { findByUserId: async (userId: number) => userId === 101 ? companyA : companyB } as any,
+    { resolveCompanyContext: async (userId: number) => ({ company: userId === 101 ? companyA : companyB, membershipRole: 'admin' }) } as any,
     { findOne: async () => guard, findByUserId: async () => guard } as any,
     {} as any,
     { log: async (entry: any) => (audits.push(entry), entry) } as any,
@@ -72,21 +72,21 @@ function buildHarness(applications: any[] = [application()]) {
 
 async function testRandomCompanyCannotUpload() {
   const { service } = buildHarness([application('under_review', companyA)]);
-  await expectForbidden(() => service.uploadDocumentForCompanyUser(202, {
+  await expectForbidden(() => service.uploadDocumentForCompanyUser(202, UserRole.COMPANY_ADMIN, {
     guardId: guard.id, type: GuardDocumentType.SIA_LICENCE, fileUrl: 'https://private/b',
   }));
 }
 
 async function testGuardExistenceAloneDoesNotAuthorize() {
   const { service } = buildHarness([]);
-  await expectForbidden(() => service.uploadDocumentForCompanyUser(101, {
+  await expectForbidden(() => service.uploadDocumentForCompanyUser(101, UserRole.COMPANY_ADMIN, {
     guardId: guard.id, type: GuardDocumentType.SIA_LICENCE, fileUrl: 'https://private/a',
   }));
 }
 
 async function testUnderReviewApplicationAuthorizesUpload() {
   const { service } = buildHarness();
-  const document = await service.uploadDocumentForCompanyUser(101, {
+  const document = await service.uploadDocumentForCompanyUser(101, UserRole.COMPANY_ADMIN, {
     guardId: guard.id, type: GuardDocumentType.SIA_LICENCE, fileUrl: 'https://private/a',
   });
   equal(document.id, 1);
@@ -94,7 +94,7 @@ async function testUnderReviewApplicationAuthorizesUpload() {
 
 async function testUploadUsesPersistedGuardAndServerOwnership() {
   const { service } = buildHarness();
-  const document = await service.uploadDocumentForCompanyUser(101, {
+  const document = await service.uploadDocumentForCompanyUser(101, UserRole.COMPANY_ADMIN, {
     guardId: guard.id, type: GuardDocumentType.RIGHT_TO_WORK, fileUrl: 'https://private/a',
   });
   equal(document.guard.id, guard.id);
@@ -105,20 +105,20 @@ async function testUploadUsesPersistedGuardAndServerOwnership() {
 async function testApplicationDoesNotExposeGuardOwnedEvidence() {
   const { service, documents } = buildHarness();
   documents.push({ id: 7, guard, company: null, fileUrl: 'https://private/guard' });
-  equal((await service.listDocumentsForCompanyUser(101, guard.id)).length, 0);
+  equal((await service.listDocumentsForCompanyUser(101, UserRole.COMPANY_ADMIN, guard.id)).length, 0);
 }
 
 async function testApplicationDoesNotExposeOtherCompanyEvidence() {
   const { service, documents } = buildHarness();
   documents.push({ id: 8, guard, company: companyB, fileUrl: 'https://private/b' });
-  equal((await service.listDocumentsForCompanyUser(101, guard.id)).length, 0);
+  equal((await service.listDocumentsForCompanyUser(101, UserRole.COMPANY_ADMIN, guard.id)).length, 0);
 }
 
 async function testCompanyCannotVerifyOtherCompanyEvidence() {
   const { service, documents, audits } = buildHarness();
   documents.push({ id: 8, guard, company: companyB, verified: false });
   let rejected = false;
-  try { await service.verifyDocumentForCompanyUser(101, 8, true); } catch { rejected = true; }
+  try { await service.verifyDocumentForCompanyUser(101, UserRole.COMPANY_ADMIN, 8, true); } catch { rejected = true; }
   ok(rejected);
   equal(audits.filter((entry) => entry.action === 'guard_document.verified').length, 0);
 }
@@ -201,13 +201,13 @@ async function testUnapprovedHireLeavesNoPartialCommercialState() {
 
 async function testRejectedApplicationDoesNotAuthorize() {
   const { service } = buildHarness([application('rejected')]);
-  await expectForbidden(() => service.uploadDocumentForCompanyUser(101, {
+  await expectForbidden(() => service.uploadDocumentForCompanyUser(101, UserRole.COMPANY_ADMIN, {
     guardId: guard.id, type: GuardDocumentType.SIA_LICENCE, fileUrl: 'https://private/a',
   }));
 }
 
 async function testDirectMembershipStillDenied() {
-  const service = new CompanyGuardService({} as any, {} as any, {} as any, {} as any);
+  const service = new CompanyGuardService({} as any, {} as any, {} as any, {} as any, {} as any);
   await expectForbidden(() => service.createForUser(
     { sub: 101, email: 'a@test', role: UserRole.COMPANY_ADMIN, status: UserStatus.ACTIVE },
     { companyId: companyA.id, guardId: guard.id },
@@ -216,10 +216,10 @@ async function testDirectMembershipStillDenied() {
 
 async function testMultiCompanyPreHireEvidenceIsIsolated() {
   const { service } = buildHarness([application('under_review', companyA), application('under_review', companyB)]);
-  await service.uploadDocumentForCompanyUser(101, { guardId: guard.id, type: GuardDocumentType.SIA_LICENCE, fileUrl: 'https://private/a' });
-  await service.uploadDocumentForCompanyUser(202, { guardId: guard.id, type: GuardDocumentType.SIA_LICENCE, fileUrl: 'https://private/b' });
-  const a = await service.listDocumentsForCompanyUser(101, guard.id);
-  const b = await service.listDocumentsForCompanyUser(202, guard.id);
+  await service.uploadDocumentForCompanyUser(101, UserRole.COMPANY_ADMIN, { guardId: guard.id, type: GuardDocumentType.SIA_LICENCE, fileUrl: 'https://private/a' });
+  await service.uploadDocumentForCompanyUser(202, UserRole.COMPANY_ADMIN, { guardId: guard.id, type: GuardDocumentType.SIA_LICENCE, fileUrl: 'https://private/b' });
+  const a = await service.listDocumentsForCompanyUser(101, UserRole.COMPANY_ADMIN, guard.id);
+  const b = await service.listDocumentsForCompanyUser(202, UserRole.COMPANY_ADMIN, guard.id);
   equal(a.length, 1);
   equal(b.length, 1);
   ok(!JSON.stringify(a).includes('https://private/b'));
@@ -228,10 +228,10 @@ async function testMultiCompanyPreHireEvidenceIsIsolated() {
 
 async function testPreHireAuditUsesCompanyAndActor() {
   const { service, audits } = buildHarness();
-  const document = await service.uploadDocumentForCompanyUser(101, {
+  const document = await service.uploadDocumentForCompanyUser(101, UserRole.COMPANY_ADMIN, {
     guardId: guard.id, type: GuardDocumentType.SIA_LICENCE, fileUrl: 'https://private/a',
   });
-  await service.verifyDocumentForCompanyUser(101, document.id, true);
+  await service.verifyDocumentForCompanyUser(101, UserRole.COMPANY_ADMIN, document.id, true);
   equal(audits[0].action, 'guard_document.uploaded');
   equal(audits[0].company.id, companyA.id);
   equal(audits[0].user.id, 101);
@@ -240,7 +240,7 @@ async function testPreHireAuditUsesCompanyAndActor() {
 
 async function proveDeadlockNegativeControl() {
   const { service } = buildHarness([]);
-  await expectForbidden(() => service.uploadDocumentForCompanyUser(101, {
+  await expectForbidden(() => service.uploadDocumentForCompanyUser(101, UserRole.COMPANY_ADMIN, {
     guardId: guard.id, type: GuardDocumentType.SIA_LICENCE, fileUrl: 'https://private/a',
   }));
 }

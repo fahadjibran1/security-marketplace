@@ -38,6 +38,8 @@ import { GuardScreening, ScreeningAddress, ScreeningConsent, ScreeningEvidence, 
 import { ClientWeeklyApprovalRequest } from '../client-weekly-approval/entities/client-weekly-approval-request.entity';
 import { ClientWeeklyApprovalLine } from '../client-weekly-approval/entities/client-weekly-approval-line.entity';
 import { ClientShiftDispute } from '../client-weekly-approval/entities/client-shift-dispute.entity';
+import { CompanyMembership } from '../company-membership/entities/company-membership.entity';
+import { CompanyInvitation } from '../company-membership/entities/company-invitation.entity';
 
 export const appEntities = [
   AttendanceEvent,
@@ -86,4 +88,6 @@ export const appEntities = [
   ClientWeeklyApprovalRequest,
   ClientWeeklyApprovalLine,
   ClientShiftDispute,
+  CompanyMembership,
+  CompanyInvitation,
 ];

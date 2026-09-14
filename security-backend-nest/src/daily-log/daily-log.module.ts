@@ -6,6 +6,7 @@ import { DailyLogService } from './daily-log.service';
 import { GuardProfileModule } from '../guard-profile/guard-profile.module';
 import { ShiftModule } from '../shift/shift.module';
 import { CompanyModule } from '../company/company.module';
+import { CompanyMembershipModule } from '../company-membership/company-membership.module';
 import { AuditLogModule } from '../audit-log/audit-log.module';
 
 @Module({
@@ -14,6 +15,7 @@ import { AuditLogModule } from '../audit-log/audit-log.module';
     GuardProfileModule,
     ShiftModule,
     CompanyModule,
+    CompanyMembershipModule,
     AuditLogModule,
   ],
   controllers: [DailyLogController],

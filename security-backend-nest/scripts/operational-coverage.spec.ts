@@ -40,7 +40,7 @@ function serviceFor(rows: any[], companyId = 1) {
       },
       findOne: async () => null,
     } as any,
-    { findByUserId: async () => ({ id: companyId }) } as any,
+    { resolveCompanyContext: async () => ({ company: { id: companyId } }) } as any,
     {} as any,
   );
   return { service, receivedWhere: () => receivedWhere };
@@ -48,23 +48,23 @@ function serviceFor(rows: any[], companyId = 1) {
 
 test('zero uncovered shifts', async () => {
   const { service } = serviceFor([shift(1, 'ready', 10, { id: 5 })]);
-  assert((await service.listShiftCoverage(7, { uncoveredOnly: 'true' })).length === 0, 'expected zero');
+  assert((await service.listShiftCoverage(7, 'company' as any, { uncoveredOnly: 'true' })).length === 0, 'expected zero');
 });
 test('one uncovered shift', async () => {
   const { service } = serviceFor([shift(1)]);
-  assert((await service.listShiftCoverage(7, { uncoveredOnly: 'true' })).length === 1, 'expected one');
+  assert((await service.listShiftCoverage(7, 'company' as any, { uncoveredOnly: 'true' })).length === 1, 'expected one');
 });
 test('multiple uncovered shifts', async () => {
   const { service } = serviceFor([shift(1), shift(2)]);
-  assert((await service.listShiftCoverage(7, { uncoveredOnly: 'true' })).length === 2, 'expected two');
+  assert((await service.listShiftCoverage(7, 'company' as any, { uncoveredOnly: 'true' })).length === 2, 'expected two');
 });
 test('same-site gaps aggregate to one site', async () => {
   const { service } = serviceFor([shift(1), shift(2)]);
-  assert((await service.listSiteCoverage(7, { uncoveredOnly: 'true' })).length === 1, 'expected one site');
+  assert((await service.listSiteCoverage(7, 'company' as any, { uncoveredOnly: 'true' })).length === 1, 'expected one site');
 });
 test('distinct-site gaps aggregate separately', async () => {
   const { service } = serviceFor([shift(1, 'unfilled', 10), shift(2, 'unfilled', 20)]);
-  assert((await service.listSiteCoverage(7, { uncoveredOnly: 'true' })).length === 2, 'expected two sites');
+  assert((await service.listSiteCoverage(7, 'company' as any, { uncoveredOnly: 'true' })).length === 2, 'expected two sites');
 });
 test('confirmed assigned shift is covered', () => assert(hasConfirmedShiftCover(shift(1, 'ready', 10, { id: 5 }) as any), 'expected cover'));
 test('cancelled shift is non-operational', () => assert(!isOperationalCoverageShift(shift(1, 'cancelled') as any), 'cancelled leaked'));
@@ -74,7 +74,7 @@ test('completed and missed shifts are non-operational', () => {
 });
 test('company isolation is applied in repository query', async () => {
   const { service, receivedWhere } = serviceFor([shift(1, 'unfilled', 10, null, 1), shift(2, 'unfilled', 20, null, 2)]);
-  const rows = await service.listShiftCoverage(7, { uncoveredOnly: 'true' });
+  const rows = await service.listShiftCoverage(7, 'company' as any, { uncoveredOnly: 'true' });
   assert(rows.length === 1 && receivedWhere().company.id === 1, 'tenant scope missing');
 });
 test('dashboard consumes authoritative uncovered API count', () => {

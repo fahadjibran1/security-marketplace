@@ -11,6 +11,7 @@ import { GuardProfile } from '../guard-profile/entities/guard-profile.entity';
 import { Job } from '../job/entities/job.entity';
 import { JobApplication } from '../job-application/entities/job-application.entity';
 import { CompanyModule } from '../company/company.module';
+import { CompanyMembershipModule } from '../company-membership/company-membership.module';
 import { GuardProfileModule } from '../guard-profile/guard-profile.module';
 import { CompanyGuardModule } from '../company-guard/company-guard.module';
 import { Timesheet } from '../timesheet/entities/timesheet.entity';
@@ -24,6 +25,7 @@ import { AvailabilityModule } from '../availability/availability.module';
     TimesheetModule,
     forwardRef(() => SiteModule),
     CompanyModule,
+    CompanyMembershipModule,
     GuardProfileModule,
     CompanyGuardModule,
     ComplianceModule,

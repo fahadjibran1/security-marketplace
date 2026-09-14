@@ -23,7 +23,7 @@ export class ComplianceController {
   @Get()
   @Roles(...COMPANY_VIEW_ROLES)
   list(@CurrentUser() user: JwtPayload) {
-    return this.complianceService.listForCompanyUser(user.sub);
+    return this.complianceService.listForCompanyUser(user.sub, user.role);
   }
 
   @Get('mine')
@@ -38,7 +38,7 @@ export class ComplianceController {
     @CurrentUser() user: JwtPayload,
     @Query('status') status?: GuardComplianceStatus,
   ) {
-    return this.guardComplianceService.listStatusesForCompanyUser(user.sub, status);
+    return this.guardComplianceService.listStatusesForCompanyUser(user.sub, user.role, status);
   }
 
   @Get('mine/status')
@@ -52,6 +52,7 @@ export class ComplianceController {
   listDocuments(@CurrentUser() user: JwtPayload, @Query('guardId') guardId?: string) {
     return this.guardComplianceService.listDocumentsForCompanyUser(
       user.sub,
+      user.role,
       guardId ? Number(guardId) : undefined,
     );
   }
@@ -65,7 +66,7 @@ export class ComplianceController {
   @Post('documents')
   @Roles(...COMPANY_ADMIN_ROLES)
   uploadForCompany(@CurrentUser() user: JwtPayload, @Body() dto: CreateGuardDocumentDto) {
-    return this.guardComplianceService.uploadDocumentForCompanyUser(user.sub, dto);
+    return this.guardComplianceService.uploadDocumentForCompanyUser(user.sub, user.role, dto);
   }
 
   @Post('documents/mine')
@@ -99,18 +100,18 @@ export class ComplianceController {
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: VerifyGuardDocumentDto,
   ) {
-    return this.guardComplianceService.verifyDocumentForCompanyUser(user.sub, id, dto.verified);
+    return this.guardComplianceService.verifyDocumentForCompanyUser(user.sub, user.role, id, dto.verified);
   }
 
   @Post()
   @Roles(...COMPANY_ADMIN_ROLES)
   create(@CurrentUser() user: JwtPayload, @Body() dto: UpsertComplianceRecordDto) {
-    return this.complianceService.upsertForCompanyUser(user.sub, dto);
+    return this.complianceService.upsertForCompanyUser(user.sub, user.role, dto);
   }
 
   @Put()
   @Roles(...COMPANY_ADMIN_ROLES)
   update(@CurrentUser() user: JwtPayload, @Body() dto: UpsertComplianceRecordDto) {
-    return this.complianceService.upsertForCompanyUser(user.sub, dto);
+    return this.complianceService.upsertForCompanyUser(user.sub, user.role, dto);
   }
 }

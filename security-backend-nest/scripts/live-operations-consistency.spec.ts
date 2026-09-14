@@ -29,7 +29,7 @@ function serviceFor(rows: any[], companyId = 1) {
       return rows.filter((row) => row.company.id === repositoryCompanyId && row.start >= from && row.start <= to);
     },
     findOne: async () => null,
-  } as any, { findByUserId: async () => ({ id: companyId }) } as any, {} as any);
+  } as any, { resolveCompanyContext: async () => ({ company: { id: companyId } }) } as any, {} as any);
   return { service, repositoryCompanyId: () => repositoryCompanyId };
 }
 
@@ -43,7 +43,7 @@ test('shift that started earlier today remains in default coverage', async () =>
   const today = coverageCalendarBoundary(undefined, false);
   const current = makeShift(1, new Date(today.getTime() + 5 * 60 * 60 * 1000));
   const { service } = serviceFor([current]);
-  assert((await service.listShiftCoverage(7, { uncoveredOnly: 'true' })).some((row) => row.shiftId === 1), 'current shift excluded');
+  assert((await service.listShiftCoverage(7, 'company' as any, { uncoveredOnly: 'true' })).some((row) => row.shiftId === 1), 'current shift excluded');
 });
 test('current unfilled shift is uncovered', () => {
   assert(isUncoveredOperationalShift(makeShift(1, new Date()) as any), 'unfilled shift not uncovered');
@@ -59,13 +59,13 @@ test('completed and cancelled historical/current shifts are excluded', async () 
   const today = coverageCalendarBoundary(undefined, false);
   const rows = [makeShift(1, new Date(today.getTime() + 1000), 'completed'), makeShift(2, new Date(today.getTime() + 2000), 'cancelled')];
   const { service } = serviceFor(rows);
-  assert((await service.listShiftCoverage(7, {})).length === 0, 'non-operational shift leaked');
+  assert((await service.listShiftCoverage(7, 'company' as any, {})).length === 0, 'non-operational shift leaked');
 });
 test('future unfilled and tomorrow shifts remain in upcoming window', async () => {
   const today = coverageCalendarBoundary(undefined, false);
   const rows = [makeShift(1, new Date(today.getTime() + 60 * 60 * 1000)), makeShift(2, new Date(today.getTime() + 25 * 60 * 60 * 1000))];
   const { service } = serviceFor(rows);
-  assert((await service.listShiftCoverage(7, { uncoveredOnly: 'true' })).length === 2, 'upcoming coverage window regressed');
+  assert((await service.listShiftCoverage(7, 'company' as any, { uncoveredOnly: 'true' })).length === 2, 'upcoming coverage window regressed');
 });
 test('explicit from and to retain UK calendar-day bounds', () => {
   assert(coverageCalendarBoundary('2026-08-23', false).toISOString() === '2026-08-22T23:00:00.000Z', 'explicit from incorrect');
@@ -74,7 +74,7 @@ test('explicit from and to retain UK calendar-day bounds', () => {
 test('tenant isolation remains repository-enforced', async () => {
   const today = coverageCalendarBoundary(undefined, false);
   const { service, repositoryCompanyId } = serviceFor([makeShift(1, today, 'unfilled', null, 1), makeShift(2, today, 'unfilled', null, 2)]);
-  const rows = await service.listShiftCoverage(7, { uncoveredOnly: 'true' });
+  const rows = await service.listShiftCoverage(7, 'company' as any, { uncoveredOnly: 'true' });
   assert(repositoryCompanyId() === 1 && rows.length === 1 && rows[0].shiftId === 1, 'tenant scope failed');
 });
 test('Dashboard and Live Operations still consume authoritative Coverage rows', () => {

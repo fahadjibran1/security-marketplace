@@ -19,7 +19,7 @@ export class ClientWeeklyApprovalController {
   @Post()
   @Roles(...COMPANY_ADMIN_ROLES)
   create(@CurrentUser() user: JwtPayload, @Body() dto: CreateWeeklyApprovalDto) {
-    return this.service.createSubmission(user.sub, dto);
+    return this.service.createSubmission(user.sub, user.role, dto);
   }
 
   @Get()
@@ -33,7 +33,7 @@ export class ClientWeeklyApprovalController {
   ) {
     const clientId = clientIdStr ? parseInt(clientIdStr, 10) : undefined;
     const siteId = siteIdStr ? parseInt(siteIdStr, 10) : undefined;
-    return this.service.listForCompany(user.sub, { status, clientId, siteId, weekCommencing });
+    return this.service.listForCompany(user.sub, user.role, { status, clientId, siteId, weekCommencing });
   }
 
   @Get('eligible')
@@ -48,13 +48,13 @@ export class ClientWeeklyApprovalController {
     }
     const siteId = parseInt(siteIdStr, 10);
     if (isNaN(siteId)) throw new BadRequestException('siteId must be a number.');
-    return this.service.getEligibleTimesheets(user.sub, siteId, weekCommencing);
+    return this.service.getEligibleTimesheets(user.sub, user.role, siteId, weekCommencing);
   }
 
   @Get(':id')
   @Roles(...COMPANY_VIEW_ROLES)
   findOne(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
-    return this.service.findOneForCompany(user.sub, id);
+    return this.service.findOneForCompany(user.sub, user.role, id);
   }
 
   @Patch(':id/disputes/:disputeId/resolve')
@@ -65,7 +65,7 @@ export class ClientWeeklyApprovalController {
     @Param('disputeId', ParseIntPipe) disputeId: number,
     @Body() dto: ResolveDisputeDto,
   ) {
-    return this.service.resolveDispute(user.sub, id, disputeId, dto);
+    return this.service.resolveDispute(user.sub, user.role, id, disputeId, dto);
   }
 
   @Post(':id/resubmit')
@@ -75,7 +75,7 @@ export class ClientWeeklyApprovalController {
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: ResubmitApprovalDto,
   ) {
-    return this.service.resubmit(user.sub, id, dto);
+    return this.service.resubmit(user.sub, user.role, id, dto);
   }
 
   @Patch(':id/revise-approved-time')
@@ -85,6 +85,6 @@ export class ClientWeeklyApprovalController {
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: ReviseApprovedTimeDto,
   ) {
-    return this.service.reviseApprovedTime(user.sub, id, dto);
+    return this.service.reviseApprovedTime(user.sub, user.role, id, dto);
   }
 }

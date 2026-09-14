@@ -3,12 +3,12 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { Assignment } from './entities/assignment.entity';
 import { AssignmentController } from './assignment.controller';
 import { AssignmentService } from './assignment.service';
-import { CompanyModule } from '../company/company.module';
+import { CompanyMembershipModule } from '../company-membership/company-membership.module';
 import { GuardProfileModule } from '../guard-profile/guard-profile.module';
 import { ComplianceModule } from '../compliance/compliance.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Assignment]), CompanyModule, GuardProfileModule, ComplianceModule],
+  imports: [TypeOrmModule.forFeature([Assignment]), CompanyMembershipModule, GuardProfileModule, ComplianceModule],
   controllers: [AssignmentController],
   providers: [AssignmentService],
   exports: [AssignmentService, TypeOrmModule]

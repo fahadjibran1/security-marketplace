@@ -19,25 +19,25 @@ export class ContractPricingController {
   @Get()
   @Roles(...COMPANY_VIEW_ROLES)
   list(@CurrentUser() user: JwtPayload, @Query() query: ContractPricingQueryDto) {
-    return this.contractPricingService.listForCompany(user.sub, query);
+    return this.contractPricingService.listForCompany(user.sub, user.role, query);
   }
 
   @Get('preview')
   @Roles(...COMPANY_VIEW_ROLES)
   preview(@CurrentUser() user: JwtPayload, @Query('timesheetId', ParseIntPipe) timesheetId: number) {
-    return this.contractPricingService.previewForCompany(user.sub, timesheetId);
+    return this.contractPricingService.previewForCompany(user.sub, user.role, timesheetId);
   }
 
   @Get(':id')
   @Roles(...COMPANY_VIEW_ROLES)
   findOne(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
-    return this.contractPricingService.findOneForCompany(user.sub, id);
+    return this.contractPricingService.findOneForCompany(user.sub, user.role, id);
   }
 
   @Post()
   @Roles(...COMPANY_ADMIN_ROLES)
   create(@CurrentUser() user: JwtPayload, @Body() dto: CreateContractPricingRuleDto) {
-    return this.contractPricingService.createForCompany(user.sub, dto);
+    return this.contractPricingService.createForCompany(user.sub, user.role, dto);
   }
 
   @Patch(':id')
@@ -47,12 +47,12 @@ export class ContractPricingController {
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateContractPricingRuleDto,
   ) {
-    return this.contractPricingService.updateForCompany(user.sub, id, dto);
+    return this.contractPricingService.updateForCompany(user.sub, user.role, id, dto);
   }
 
   @Patch(':id/deactivate')
   @Roles(...COMPANY_ADMIN_ROLES)
   deactivate(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
-    return this.contractPricingService.deactivateForCompany(user.sub, id);
+    return this.contractPricingService.deactivateForCompany(user.sub, user.role, id);
   }
 }

@@ -1,12 +1,14 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
-import { CompanyService } from '../company/company.service';
+import { CompanyMembershipService } from '../company-membership/company-membership.service';
+import { CompanyPermission } from '../company-membership/company-membership-types';
 import { ContractPricingService } from '../contract-pricing/contract-pricing.service';
 import { InvoiceBatch } from '../invoice-batch/entities/invoice-batch.entity';
 import { PayRuleService } from '../pay-rule/pay-rule.service';
 import { Timesheet, TimesheetPayrollStatus, TimesheetStatus } from '../timesheet/entities/timesheet.entity';
+import { UserRole } from '../user/entities/user.entity';
 import { FinanceQueryDto } from './dto/finance-query.dto';
 
 type ReconciliationRow = {
@@ -43,13 +45,13 @@ export class FinanceReconciliationService {
   constructor(
     @InjectRepository(InvoiceBatch) private readonly invoiceBatchRepo: Repository<InvoiceBatch>,
     @InjectRepository(Timesheet) private readonly timesheetRepo: Repository<Timesheet>,
-    private readonly companyService: CompanyService,
+    private readonly membershipService: CompanyMembershipService,
     private readonly contractPricingService: ContractPricingService,
     private readonly payRuleService: PayRuleService,
   ) {}
 
-  async getSummary(userId: number, query: FinanceQueryDto) {
-    const scope = await this.buildScopedDataset(userId, query);
+  async getSummary(userId: number, userRole: UserRole, query: FinanceQueryDto) {
+    const scope = await this.buildScopedDataset(userId, userRole, query);
     return {
       filters: this.serializeFilters(query),
       revenueSummary: {
@@ -74,8 +76,8 @@ export class FinanceReconciliationService {
     };
   }
 
-  async getReceivables(userId: number, query: FinanceQueryDto) {
-    const scope = await this.buildScopedDataset(userId, query);
+  async getReceivables(userId: number, userRole: UserRole, query: FinanceQueryDto) {
+    const scope = await this.buildScopedDataset(userId, userRole, query);
     const buckets = scope.reconciliationRows.reduce(
       (summary, row) => {
         summary[row.ageBucket] += row.outstanding;
@@ -101,17 +103,18 @@ export class FinanceReconciliationService {
     };
   }
 
-  async getReconciliation(userId: number, query: FinanceQueryDto) {
-    const scope = await this.buildScopedDataset(userId, query);
+  async getReconciliation(userId: number, userRole: UserRole, query: FinanceQueryDto) {
+    const scope = await this.buildScopedDataset(userId, userRole, query);
     return {
       filters: this.serializeFilters(query),
       rows: scope.reconciliationRows,
     };
   }
 
-  private async buildScopedDataset(userId: number, query: FinanceQueryDto) {
-    const company = await this.companyService.findByUserId(userId);
-    if (!company) throw new NotFoundException('Company not found');
+  private async buildScopedDataset(userId: number, userRole: UserRole, query: FinanceQueryDto) {
+    const { company } = await this.membershipService.resolveCompanyContext(
+      userId, userRole, CompanyPermission.REPORTS_FINANCIAL,
+    );
 
     const timesheets = await this.timesheetRepo.find({
       where: { company: { id: company.id } },

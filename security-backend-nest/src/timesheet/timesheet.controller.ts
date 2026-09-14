@@ -26,11 +26,11 @@ export class TimesheetController {
     if (user.role === UserRole.ADMIN) {
       return this.timesheetService.findAll();
     }
-    return this.timesheetService.findForCompany(user.sub);
+    return this.timesheetService.findForCompany(user.sub, user.role);
   }
 
   @Patch('company/payroll')
-  @Roles(UserRole.ADMIN, ...COMPANY_ADMIN_ROLES)
+  @Roles(UserRole.ADMIN, ...COMPANY_VIEW_ROLES)
   updatePayrollForCompany(
     @CurrentUser() user: JwtPayload,
     @Body() dto: UpdateTimesheetPayrollDto,
@@ -39,7 +39,7 @@ export class TimesheetController {
       return this.timesheetService.updatePayrollAsAdmin(user.sub, dto);
     }
 
-    return this.timesheetService.updatePayrollForCompany(user.sub, dto);
+    return this.timesheetService.updatePayrollForCompany(user.sub, user.role, dto);
   }
 
   @Get('mine')
@@ -49,7 +49,7 @@ export class TimesheetController {
   }
 
   @Patch(':id')
-  @Roles(UserRole.ADMIN, ...COMPANY_ADMIN_ROLES, UserRole.GUARD)
+  @Roles(UserRole.ADMIN, ...COMPANY_VIEW_ROLES, UserRole.GUARD)
   update(
     @CurrentUser() user: JwtPayload,
     @Param('id', ParseIntPipe) id: number,
@@ -63,7 +63,7 @@ export class TimesheetController {
       return this.timesheetService.updateMine(user.sub, id, dto);
     }
 
-    return this.timesheetService.updateForCompany(user.sub, id, dto);
+    return this.timesheetService.updateForCompany(user.sub, user.role, id, dto);
   }
 
   @Patch(':id/submit')

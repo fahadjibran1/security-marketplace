@@ -9,12 +9,15 @@ import { CompanyService } from '../company/company.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { ClientService } from '../client/client.service';
 import { ShiftService } from '../shift/shift.service';
+import { CompanyMembershipService } from '../company-membership/company-membership.service';
+import { UserRole } from '../user/entities/user.entity';
 
 @Injectable()
 export class SiteService {
   constructor(
     @InjectRepository(Site) private readonly siteRepo: Repository<Site>,
     private readonly companyService: CompanyService,
+    private readonly membershipService: CompanyMembershipService,
     private readonly auditLogService: AuditLogService,
     private readonly clientService: ClientService,
     @Inject(forwardRef(() => ShiftService))
@@ -41,26 +44,24 @@ export class SiteService {
     return site;
   }
 
-  async findOneForCompanyUser(userId: number, id: number): Promise<Site> {
-    const company = await this.companyService.findByUserId(userId);
-    if (!company) throw new NotFoundException('Company not found');
+  async findOneForCompanyUser(userId: number, userRole: UserRole, id: number): Promise<Site> {
+    const { company } = await this.membershipService.resolveCompanyContext(userId, userRole);
     const site = await this.siteRepo.findOne({ where: { id, company: { id: company.id } } });
     if (!site) throw new NotFoundException('Site not found');
     return site;
   }
 
-  async findForCompanyUser(userId: number): Promise<Site[]> {
-    const company = await this.companyService.findByUserId(userId);
-    if (!company) throw new NotFoundException('Company not found');
+  async findForCompanyUser(userId: number, userRole: UserRole): Promise<Site[]> {
+    const { company } = await this.membershipService.resolveCompanyContext(userId, userRole);
     return this.siteRepo.find({ where: { company: { id: company.id } }, order: { name: 'ASC' } });
   }
 
-  async createForCompanyUser(userId: number, dto: CreateSiteDto): Promise<Site> {
+  async createForCompanyUser(userId: number, userRole: UserRole, dto: CreateSiteDto): Promise<Site> {
     const company = await this.companyService.findByUserId(userId);
     if (!company) throw new NotFoundException('Company not found');
     if (!dto.clientId) throw new BadRequestException('Site creation requires a clientId');
     this.validateVerificationSettings(dto);
-    const client = await this.clientService.findOneForCompanyUser(userId, dto.clientId);
+    const client = await this.clientService.findOneForCompanyUser(userId, userRole, dto.clientId);
 
     const site = new Site();
     site.company = company;
@@ -119,7 +120,7 @@ export class SiteService {
     return saved;
   }
 
-  async updateForCompanyUser(userId: number, id: number, dto: UpdateSiteDto): Promise<Site> {
+  async updateForCompanyUser(userId: number, userRole: UserRole, id: number, dto: UpdateSiteDto): Promise<Site> {
     const company = await this.companyService.findByUserId(userId);
     if (!company) throw new NotFoundException('Company not found');
 
@@ -165,7 +166,7 @@ export class SiteService {
       dto.clientId === undefined
         ? site.client ?? null
         : dto.clientId
-          ? await this.clientService.findOneForCompanyUser(userId, dto.clientId)
+          ? await this.clientService.findOneForCompanyUser(userId, userRole, dto.clientId)
           : null;
 
     Object.assign(site, dto);

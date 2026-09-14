@@ -20,26 +20,26 @@ import { InvoiceBatchService } from '../src/invoice-batch/invoice-batch.service'
 import { ClientWeeklyApprovalLine } from '../src/client-weekly-approval/entities/client-weekly-approval-line.entity';
 import { ClientWeeklyApprovalRequest, ClientWeeklyApprovalStatus } from '../src/client-weekly-approval/entities/client-weekly-approval-request.entity';
 
-function pairedBarrierCompanyService(company: Company) {
+function pairedBarrierMembershipService(company: Company) {
   let calls = 0;
   let release!: () => void;
   const barrier = new Promise<void>((resolve) => { release = resolve; });
   return {
-    async findByUserId() {
+    async resolveCompanyContext() {
       calls += 1;
       if (calls === 2) release();
       await barrier;
-      return company;
+      return { company, membershipRole: 'admin' };
     },
   };
 }
 
-function immediateCompanyService(company: Company) {
-  return { findByUserId: async () => company };
+function immediateMembershipService(company: Company) {
+  return { resolveCompanyContext: async () => ({ company, membershipRole: 'admin' }) };
 }
 
 function makeServices(dataSource: DataSource, company: Company, concurrent = false) {
-  const companyService = concurrent ? pairedBarrierCompanyService(company) : immediateCompanyService(company);
+  const companyService = concurrent ? pairedBarrierMembershipService(company) : immediateMembershipService(company);
   const auditLogService = { log: async (input: unknown) => input };
   const payRuleService = {
     getConfigForCompany: async () => null,
@@ -178,8 +178,8 @@ async function main() {
 
     const payrollPair = makeServices(dataSource, company, true);
     const payrollRace = await Promise.allSettled([
-      payrollPair.payroll.createForCompany(company.user.id, batchDto([timesheets[0].id])),
-      payrollPair.payroll.createForCompany(company.user.id, batchDto([timesheets[0].id])),
+      payrollPair.payroll.createForCompany(company.user.id, UserRole.COMPANY, batchDto([timesheets[0].id])),
+      payrollPair.payroll.createForCompany(company.user.id, UserRole.COMPANY, batchDto([timesheets[0].id])),
     ]);
     assertOneSuccessOneConflict(payrollRace);
     assert.equal(await dataSource.getRepository(PayrollBatch).count(), 1);
@@ -187,8 +187,8 @@ async function main() {
 
     const invoicePair = makeServices(dataSource, company, true);
     const invoiceRace = await Promise.allSettled([
-      invoicePair.invoice.createForCompany(company.user.id, invoiceDto(client.id, [timesheets[1].id])),
-      invoicePair.invoice.createForCompany(company.user.id, invoiceDto(client.id, [timesheets[1].id])),
+      invoicePair.invoice.createForCompany(company.user.id, UserRole.COMPANY, invoiceDto(client.id, [timesheets[1].id])),
+      invoicePair.invoice.createForCompany(company.user.id, UserRole.COMPANY, invoiceDto(client.id, [timesheets[1].id])),
     ]);
     assertOneSuccessOneConflict(invoiceRace);
     assert.equal(await dataSource.getRepository(InvoiceBatch).count(), 1);
@@ -196,36 +196,36 @@ async function main() {
 
     const payrollOverlap = makeServices(dataSource, company, true);
     const payrollOverlapResults = await Promise.allSettled([
-      payrollOverlap.payroll.createForCompany(company.user.id, batchDto([timesheets[2].id, timesheets[3].id])),
-      payrollOverlap.payroll.createForCompany(company.user.id, batchDto([timesheets[3].id, timesheets[4].id])),
+      payrollOverlap.payroll.createForCompany(company.user.id, UserRole.COMPANY, batchDto([timesheets[2].id, timesheets[3].id])),
+      payrollOverlap.payroll.createForCompany(company.user.id, UserRole.COMPANY, batchDto([timesheets[3].id, timesheets[4].id])),
     ]);
     assertOneSuccessOneConflict(payrollOverlapResults);
     assert.ok((await dataSource.getRepository(Timesheet).findOneByOrFail({ id: timesheets[3].id })).payrollBatch);
 
     const invoiceOverlap = makeServices(dataSource, company, true);
     const invoiceOverlapResults = await Promise.allSettled([
-      invoiceOverlap.invoice.createForCompany(company.user.id, invoiceDto(client.id, [timesheets[5].id, timesheets[6].id])),
-      invoiceOverlap.invoice.createForCompany(company.user.id, invoiceDto(client.id, [timesheets[6].id, timesheets[7].id])),
+      invoiceOverlap.invoice.createForCompany(company.user.id, UserRole.COMPANY, invoiceDto(client.id, [timesheets[5].id, timesheets[6].id])),
+      invoiceOverlap.invoice.createForCompany(company.user.id, UserRole.COMPANY, invoiceDto(client.id, [timesheets[6].id, timesheets[7].id])),
     ]);
     assertOneSuccessOneConflict(invoiceOverlapResults);
     assert.ok((await dataSource.getRepository(Timesheet).findOneByOrFail({ id: timesheets[6].id })).invoiceBatch);
 
     const retryServices = makeServices(dataSource, company);
-    await retryServices.payroll.createForCompany(company.user.id, batchDto([timesheets[8].id]));
+    await retryServices.payroll.createForCompany(company.user.id, UserRole.COMPANY, batchDto([timesheets[8].id]));
     await assert.rejects(
-      retryServices.payroll.createForCompany(company.user.id, batchDto([timesheets[8].id])),
+      retryServices.payroll.createForCompany(company.user.id, UserRole.COMPANY, batchDto([timesheets[8].id])),
       ConflictException,
     );
-    await retryServices.invoice.createForCompany(company.user.id, invoiceDto(client.id, [timesheets[9].id]));
+    await retryServices.invoice.createForCompany(company.user.id, UserRole.COMPANY, invoiceDto(client.id, [timesheets[9].id]));
     await assert.rejects(
-      retryServices.invoice.createForCompany(company.user.id, invoiceDto(client.id, [timesheets[9].id])),
+      retryServices.invoice.createForCompany(company.user.id, UserRole.COMPANY, invoiceDto(client.id, [timesheets[9].id])),
       ConflictException,
     );
 
     await dataSource.query(`CREATE FUNCTION m2_fail_claim() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW."id" = ${timesheets[10].id} AND NEW."payrollBatchId" IS NOT NULL THEN RAISE EXCEPTION 'M2 injected failure'; END IF; RETURN NEW; END $$`);
     await dataSource.query(`CREATE TRIGGER m2_fail_claim BEFORE UPDATE ON "timesheets" FOR EACH ROW EXECUTE FUNCTION m2_fail_claim()`);
     const countBeforeFailure = await dataSource.getRepository(PayrollBatch).count();
-    await assert.rejects(retryServices.payroll.createForCompany(company.user.id, batchDto([timesheets[10].id])));
+    await assert.rejects(retryServices.payroll.createForCompany(company.user.id, UserRole.COMPANY, batchDto([timesheets[10].id])));
     assert.equal(await dataSource.getRepository(PayrollBatch).count(), countBeforeFailure, 'failed transaction must roll back its batch');
     const rolledBack = await dataSource.getRepository(Timesheet).findOneByOrFail({ id: timesheets[10].id });
     assert.equal(rolledBack.payrollBatch, null);

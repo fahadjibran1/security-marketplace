@@ -349,9 +349,11 @@ function buildTimesheetHarness(seedTimesheets: any[]) {
   const notificationService = { createForUser: async (input: any) => { notifications.push(input); } };
   const auditLogService = { log: async (input: any) => { auditLogs.push(input); return input; } };
 
+  const membershipService = { resolveCompanyContext: async () => ({ company: { id: 501 }, membershipRole: 'owner' }) };
   const service = new TimesheetService(
     timesheetRepo as any,
     companyService as any,
+    membershipService as any,
     contractPricingService as any,
     guardProfileService as any,
     auditLogService as any,
@@ -414,7 +416,7 @@ async function testNormalAttendanceApprovalDefaultsToVerifiedMinutes() {
   const timesheet = buildSubmittedTimesheet({ id: 1, hoursWorked: 8, verifiedMinutes: 235 });
   const { service, auditLogs } = buildTimesheetHarness([timesheet]);
 
-  const result = await service.updateForCompany(501, 1, { approvalStatus: TimesheetStatus.APPROVED } as any);
+  const result = await service.updateForCompany(501, UserRole.COMPANY, 1, { approvalStatus: TimesheetStatus.APPROVED } as any);
 
   equal(result.approvedMinutes, 235, 'approvedMinutes must default to verifiedMinutes, not hoursWorked (480)');
   equal(result.approvedHours, 3.92, 'approvedHours must be derived from verifiedMinutes (235/60)');
@@ -432,7 +434,7 @@ async function testManagerOverrideRequiresReasonAndRecordsAudit() {
   const timesheet = buildSubmittedTimesheet({ id: 2, hoursWorked: 8, verifiedMinutes: 235 });
   const { service, auditLogs } = buildTimesheetHarness([timesheet]);
 
-  const result = await service.updateForCompany(501, 2, {
+  const result = await service.updateForCompany(501, UserRole.COMPANY, 2, {
     approvalStatus: TimesheetStatus.APPROVED,
     approvedMinutes: 300,
     overrideReason: 'Guard stayed late per site supervisor confirmation',
@@ -456,7 +458,7 @@ async function testApprovalWithoutOverrideReasonIsRejected() {
   const { service, store } = buildTimesheetHarness([timesheet]);
 
   await expectBadRequest(() =>
-    service.updateForCompany(501, 3, { approvalStatus: TimesheetStatus.APPROVED, approvedMinutes: 300 } as any),
+    service.updateForCompany(501, UserRole.COMPANY, 3, { approvalStatus: TimesheetStatus.APPROVED, approvedMinutes: 300 } as any),
   );
 
   const persisted = store.get(3);
@@ -467,7 +469,7 @@ async function testApprovalWithoutOverrideReasonIsRejected() {
   const noAttendance = buildSubmittedTimesheet({ id: 4, hoursWorked: 8, verifiedMinutes: null });
   const harness2 = buildTimesheetHarness([noAttendance]);
   await expectBadRequest(() =>
-    harness2.service.updateForCompany(501, 4, { approvalStatus: TimesheetStatus.APPROVED } as any),
+    harness2.service.updateForCompany(501, UserRole.COMPANY, 4, { approvalStatus: TimesheetStatus.APPROVED } as any),
   );
 }
 
@@ -537,10 +539,10 @@ async function testPayrollBatchSnapshotUsesApprovedMinutesNotHoursWorked() {
     findOne: async () => ({ ...savedBatch, timesheets: Array.from(timesheetStore.values()) }),
   };
 
-  const companyService = { findByUserId: async () => ({ id: 501 }) };
+  const membershipService = { resolveCompanyContext: async () => ({ company: { id: 501 }, membershipRole: 'admin' }) };
   const auditLogService = { log: async () => undefined };
   const configRepo = { findOne: async () => null };
-  const payRuleService = new PayRuleService(configRepo as any, companyService as any);
+  const payRuleService = new PayRuleService(configRepo as any, membershipService as any);
   const dataSource = {
     transaction: async (work: (manager: any) => Promise<any>) => work({
       query: async () => [],
@@ -551,13 +553,13 @@ async function testPayrollBatchSnapshotUsesApprovedMinutesNotHoursWorked() {
   const service = new PayrollBatchService(
     payrollBatchRepo as any,
     timesheetRepo as any,
-    companyService as any,
+    membershipService as any,
     auditLogService as any,
     payRuleService as any,
     dataSource as any,
   );
 
-  const batch = await service.createForCompany(501, {
+  const batch = await service.createForCompany(501, UserRole.COMPANY, {
     periodStart: '2026-01-01',
     periodEnd: '2026-01-07',
     timesheetIds: [10],
@@ -598,10 +600,10 @@ async function testExistingBehaviourPreserved() {
   });
   const harness2 = buildTimesheetHarness([approvedTimesheet]);
   await expectBadRequest(() =>
-    harness2.service.updateForCompany(501, 6, { approvalStatus: TimesheetStatus.REJECTED } as any),
+    harness2.service.updateForCompany(501, UserRole.COMPANY, 6, { approvalStatus: TimesheetStatus.REJECTED } as any),
   );
 
-  const rejected = await harness2.service.updateForCompany(501, 6, {
+  const rejected = await harness2.service.updateForCompany(501, UserRole.COMPANY, 6, {
     approvalStatus: TimesheetStatus.REJECTED,
     rejectionReason: 'Duplicate submission',
   } as any);
@@ -842,7 +844,7 @@ function buildInvoiceBatchHarness(seedTimesheets: any[]) {
   // P1H: mock repos for ClientWeeklyApprovalLine and ClientWeeklyApprovalRequest
   const approvalLineRepo = {};
   const approvalRequestRepo = {};
-  const companyService = { findByUserId: async () => ({ id: 501 }) };
+  const companyService = { resolveCompanyContext: async () => ({ company: { id: 501 }, membershipRole: 'admin' }) };
   const contractPricingService = buildContractPricingService();
   const auditLogService = { log: async () => undefined };
   const dataSource = {
@@ -892,7 +894,7 @@ async function testInvoiceBatchUsesApprovedMinutesNotHoursWorked() {
   const timesheet = buildBillableTimesheet({ id: 21, hoursWorked: 999, approvedMinutes: 235 });
   const { service } = buildInvoiceBatchHarness([timesheet]);
 
-  const batch = await service.createForCompany(501, {
+  const batch = await service.createForCompany(501, UserRole.COMPANY, {
     clientId: 601,
     periodStart: '2026-01-01',
     periodEnd: '2026-01-07',
@@ -905,7 +907,7 @@ async function testInvoiceBatchUsesApprovedMinutesNotHoursWorked() {
   // A guard editing hoursWorked on an already-invoiced timesheet must never move the total:
   // simulate the edit directly on the stored record and recompute the summary.
   timesheet.hoursWorked = 5000000;
-  const batchAfterGuardEdit = await service.findOneForCompany(501, batch.id);
+  const batchAfterGuardEdit = await service.findOneForCompany(501, UserRole.COMPANY, batch.id);
   equal(batchAfterGuardEdit.totals.invoiceAmount, 98, 'Invoice total must be unchanged after a guard edits hoursWorked');
   equal(batchAfterGuardEdit.totals.approvedHours, 3.92, 'Invoice hours total must be unchanged after a guard edits hoursWorked');
 }
@@ -924,7 +926,7 @@ async function testInvoiceBatchRejectsTimesheetWithNoApprovedDuration() {
   const { service, timesheetStore } = buildInvoiceBatchHarness([timesheet]);
 
   await expectBadRequest(() =>
-    service.createForCompany(501, {
+    service.createForCompany(501, UserRole.COMPANY, {
       clientId: 601,
       periodStart: '2026-01-01',
       periodEnd: '2026-01-07',

@@ -26,7 +26,7 @@ export class DailyLogController {
       return this.dailyLogService.findAll();
     }
 
-    return this.dailyLogService.findForCompany(user.sub);
+    return this.dailyLogService.findForCompany(user.sub, user.role);
   }
 
   @Post()

@@ -8,6 +8,8 @@ import {
 } from './entities/company-guard.entity';
 import { CreateCompanyGuardDto } from './dto/create-company-guard.dto';
 import { CompanyService } from '../company/company.service';
+import { CompanyMembershipService } from '../company-membership/company-membership.service';
+import { CompanyPermission } from '../company-membership/company-membership-types';
 import { GuardProfileService } from '../guard-profile/guard-profile.service';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { UserRole } from '../user/entities/user.entity';
@@ -18,6 +20,7 @@ export class CompanyGuardService {
   constructor(
     @InjectRepository(CompanyGuard) private readonly companyGuardRepo: Repository<CompanyGuard>,
     private readonly companyService: CompanyService,
+    private readonly membershipService: CompanyMembershipService,
     private readonly guardService: GuardProfileService,
     private readonly complianceService: ComplianceService,
   ) {}
@@ -31,10 +34,7 @@ export class CompanyGuardService {
       return this.findAll();
     }
 
-    const company = await this.companyService.findByUserId(user.sub);
-    if (!company) {
-      throw new NotFoundException('Company not found');
-    }
+    const { company } = await this.membershipService.resolveCompanyContext(user.sub, user.role, CompanyPermission.GUARDS_VIEW);
 
     return this.companyGuardRepo.find({
       where: { company: { id: company.id } },

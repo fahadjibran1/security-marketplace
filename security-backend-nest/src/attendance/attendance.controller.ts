@@ -1,9 +1,9 @@
-import { Body, Controller, ForbiddenException, Get, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
 import { AttendanceService } from './attendance.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
-import { isCompanyRole, UserRole } from '../user/entities/user.entity';
+import { COMPANY_VIEW_ROLES, UserRole } from '../user/entities/user.entity';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { RecordAttendanceDto } from './dto/record-attendance.dto';
@@ -21,11 +21,9 @@ export class AttendanceController {
   }
 
   @Get('company')
-  getCompanyAttendance(@Req() req: { user: JwtPayload }) {
-    const user = req.user;
-    if (user.role !== UserRole.ADMIN && !isCompanyRole(user.role)) {
-      throw new ForbiddenException('Only company users can access company attendance');
-    }
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN, ...COMPANY_VIEW_ROLES)
+  getCompanyAttendance(@CurrentUser() user: JwtPayload) {
     return this.attendanceService.findForCompany(user);
   }
 

@@ -17,18 +17,18 @@ export class FinanceController {
   @Get('summary')
   @Roles(...COMPANY_VIEW_ROLES)
   getSummary(@CurrentUser() user: JwtPayload, @Query() query: FinanceQueryDto) {
-    return this.financeReconciliationService.getSummary(user.sub, query);
+    return this.financeReconciliationService.getSummary(user.sub, user.role, query);
   }
 
   @Get('receivables')
   @Roles(...COMPANY_VIEW_ROLES)
   getReceivables(@CurrentUser() user: JwtPayload, @Query() query: FinanceQueryDto) {
-    return this.financeReconciliationService.getReceivables(user.sub, query);
+    return this.financeReconciliationService.getReceivables(user.sub, user.role, query);
   }
 
   @Get('reconciliation')
   @Roles(...COMPANY_VIEW_ROLES)
   getReconciliation(@CurrentUser() user: JwtPayload, @Query() query: FinanceQueryDto) {
-    return this.financeReconciliationService.getReconciliation(user.sub, query);
+    return this.financeReconciliationService.getReconciliation(user.sub, user.role, query);
   }
 }

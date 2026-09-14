@@ -21,7 +21,7 @@ export class SiteController {
       return this.siteService.findAll();
     }
 
-    return this.siteService.findForCompanyUser(user.sub);
+    return this.siteService.findForCompanyUser(user.sub, user.role);
   }
 
   @Get(':id')
@@ -31,13 +31,13 @@ export class SiteController {
       return this.siteService.findOne(id);
     }
 
-    return this.siteService.findOneForCompanyUser(user.sub, id);
+    return this.siteService.findOneForCompanyUser(user.sub, user.role, id);
   }
 
   @Post()
   @Roles(...COMPANY_ADMIN_ROLES)
   create(@CurrentUser() user: JwtPayload, @Body() dto: CreateSiteDto) {
-    return this.siteService.createForCompanyUser(user.sub, dto);
+    return this.siteService.createForCompanyUser(user.sub, user.role, dto);
   }
 
   @Patch(':id')
@@ -47,6 +47,6 @@ export class SiteController {
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateSiteDto,
   ) {
-    return this.siteService.updateForCompanyUser(user.sub, id, dto);
+    return this.siteService.updateForCompanyUser(user.sub, user.role, id, dto);
   }
 }

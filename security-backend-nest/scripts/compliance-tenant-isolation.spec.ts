@@ -54,7 +54,7 @@ function buildComplianceHarness(legacyAuthorization = false) {
     documentRepo as any,
     { find: async () => [] } as any,
     companyGuardRepo as any,
-    { findByUserId: async (id: number) => companyForUser(id) } as any,
+    { resolveCompanyContext: async (userId: number) => { const company = companyForUser(userId); if (!company) throw new Error('Not found'); return { company, membershipRole: 'admin' }; } } as any,
     { findOne: async () => guard, findByUserId: async () => guard } as any,
     {} as any,
     { log: async (entry: any) => (audits.push(entry), entry) } as any,
@@ -77,7 +77,7 @@ async function expectNotFound(work: () => Promise<unknown>) {
 }
 
 async function testGuessedGuardCannotCreateMembership() {
-  const service = new CompanyGuardService({} as any, {} as any, {} as any, {} as any);
+  const service = new CompanyGuardService({} as any, {} as any, {} as any, {} as any, {} as any);
   await expectForbidden(() => service.createForUser(
     { sub: 202, email: 'b@test', role: UserRole.COMPANY_ADMIN, status: UserStatus.ACTIVE },
     { companyId: companyA.id, guardId: guard.id },
@@ -99,7 +99,7 @@ async function testCompanyApprovalRequiresServerRelationship() {
 }
 
 async function uploadFor(service: GuardComplianceService, userId: number, type: GuardDocumentType, url: string) {
-  return service.uploadDocumentForCompanyUser(userId, { guardId: guard.id, type, fileUrl: url, expiryDate: '2027-12-31' });
+  return service.uploadDocumentForCompanyUser(userId, UserRole.COMPANY_ADMIN, { guardId: guard.id, type, fileUrl: url, expiryDate: '2027-12-31' });
 }
 
 async function testCompanyUploadHasExplicitOwnership() {
@@ -112,22 +112,22 @@ async function testCompanyUploadHasExplicitOwnership() {
 async function testCompanyBCannotReadCompanyADocument() {
   const { service } = buildComplianceHarness();
   await uploadFor(service, 101, GuardDocumentType.SIA_LICENCE, 'https://private/a-sia');
-  const visible = await service.listDocumentsForCompanyUser(202, guard.id);
+  const visible = await service.listDocumentsForCompanyUser(202, UserRole.COMPANY_ADMIN, guard.id);
   equal(visible.length, 0);
 }
 
 async function testCompanyBCannotVerifyCompanyADocument() {
   const { service, audits } = buildComplianceHarness();
   const document = await uploadFor(service, 101, GuardDocumentType.SIA_LICENCE, 'https://private/a-sia');
-  await expectNotFound(() => service.verifyDocumentForCompanyUser(202, document.id, true));
+  await expectNotFound(() => service.verifyDocumentForCompanyUser(202, UserRole.COMPANY_ADMIN, document.id, true));
   equal(audits.filter((entry) => entry.action === 'guard_document.verified').length, 0);
 }
 
 async function testCompanyAReadsAndVerifiesOwnDocument() {
   const { service } = buildComplianceHarness();
   const document = await uploadFor(service, 101, GuardDocumentType.SIA_LICENCE, 'https://private/a-sia');
-  equal((await service.listDocumentsForCompanyUser(101, guard.id)).length, 1);
-  const verified = await service.verifyDocumentForCompanyUser(101, document.id, true);
+  equal((await service.listDocumentsForCompanyUser(101, UserRole.COMPANY_ADMIN, guard.id)).length, 1);
+  const verified = await service.verifyDocumentForCompanyUser(101, UserRole.COMPANY_ADMIN, document.id, true);
   equal(verified.verified, true);
   equal(verified.verifiedByUserId, 101);
   ok(verified.verifiedAt instanceof Date);
@@ -143,7 +143,7 @@ async function testGuardCanReadOwnDocuments() {
 async function testSuccessfulAuditUsesOwningCompanyAndActor() {
   const { service, audits } = buildComplianceHarness();
   const document = await uploadFor(service, 101, GuardDocumentType.SIA_LICENCE, 'https://private/a-sia');
-  await service.verifyDocumentForCompanyUser(101, document.id, true);
+  await service.verifyDocumentForCompanyUser(101, UserRole.COMPANY_ADMIN, document.id, true);
   const audit = audits.find((entry) => entry.action === 'guard_document.verified');
   equal(audit.company.id, companyA.id);
   equal(audit.user.id, 101);
@@ -153,7 +153,7 @@ async function testSuccessfulAuditUsesOwningCompanyAndActor() {
 async function testCrossTenantResponseCannotContainSensitiveUrl() {
   const { service } = buildComplianceHarness();
   await uploadFor(service, 101, GuardDocumentType.SIA_LICENCE, 'https://private/a-sia');
-  const response = JSON.stringify(await service.listDocumentsForCompanyUser(202, guard.id));
+  const response = JSON.stringify(await service.listDocumentsForCompanyUser(202, UserRole.COMPANY_ADMIN, guard.id));
   ok(!response.includes('https://private/a-sia'));
 }
 
@@ -161,8 +161,8 @@ async function testMultiCompanyEvidenceRemainsIsolated() {
   const { service } = buildComplianceHarness();
   await uploadFor(service, 101, GuardDocumentType.SIA_LICENCE, 'https://private/a-sia');
   await uploadFor(service, 202, GuardDocumentType.SIA_LICENCE, 'https://private/b-sia');
-  const a = await service.listDocumentsForCompanyUser(101, guard.id);
-  const b = await service.listDocumentsForCompanyUser(202, guard.id);
+  const a = await service.listDocumentsForCompanyUser(101, UserRole.COMPANY_ADMIN, guard.id);
+  const b = await service.listDocumentsForCompanyUser(202, UserRole.COMPANY_ADMIN, guard.id);
   equal(a.length, 1);
   equal(b.length, 1);
   equal(a[0].company!.id, companyA.id);
@@ -172,7 +172,7 @@ async function testMultiCompanyEvidenceRemainsIsolated() {
 async function proveNegativeControl() {
   const { service } = buildComplianceHarness(true);
   const document = await uploadFor(service, 101, GuardDocumentType.SIA_LICENCE, 'https://private/a-sia');
-  const wronglyVerified = await service.verifyDocumentForCompanyUser(202, document.id, true);
+  const wronglyVerified = await service.verifyDocumentForCompanyUser(202, UserRole.COMPANY_ADMIN, document.id, true);
   equal(wronglyVerified.verified, true, 'legacy authorization simulation must reproduce cross-tenant mutation');
 }
 

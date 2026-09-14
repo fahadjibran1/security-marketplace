@@ -4,7 +4,8 @@ import { EntityManager, In, Repository } from 'typeorm';
 import { Assignment, AssignmentStatus } from './entities/assignment.entity';
 import { JobApplication } from '../job-application/entities/job-application.entity';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
-import { CompanyService } from '../company/company.service';
+import { CompanyMembershipService } from '../company-membership/company-membership.service';
+import { CompanyPermission } from '../company-membership/company-membership-types';
 import { ComplianceService } from '../compliance/compliance.service';
 import { GuardProfileService } from '../guard-profile/guard-profile.service';
 import { isCompanyRole, UserRole } from '../user/entities/user.entity';
@@ -13,7 +14,7 @@ import { isCompanyRole, UserRole } from '../user/entities/user.entity';
 export class AssignmentService {
   constructor(
     @InjectRepository(Assignment) private readonly assignmentRepo: Repository<Assignment>,
-    private readonly companyService: CompanyService,
+    private readonly membershipService: CompanyMembershipService,
     private readonly guardProfileService: GuardProfileService,
     private readonly complianceService: ComplianceService,
   ) {}
@@ -28,10 +29,7 @@ export class AssignmentService {
     }
 
     if (isCompanyRole(user.role)) {
-      const company = await this.companyService.findByUserId(user.sub);
-      if (!company) {
-        throw new NotFoundException('Company not found');
-      }
+      const { company } = await this.membershipService.resolveCompanyContext(user.sub, user.role, CompanyPermission.SHIFTS_VIEW);
 
       return this.assignmentRepo.find({
         where: { company: { id: company.id } },
@@ -64,8 +62,8 @@ export class AssignmentService {
     }
 
     if (isCompanyRole(user.role)) {
-      const company = await this.companyService.findByUserId(user.sub);
-      if (!company || assignment.company.id !== company.id) {
+      const { company } = await this.membershipService.resolveCompanyContext(user.sub, user.role, CompanyPermission.SHIFTS_VIEW);
+      if (assignment.company.id !== company.id) {
         throw new NotFoundException('Assignment not found');
       }
       return assignment;

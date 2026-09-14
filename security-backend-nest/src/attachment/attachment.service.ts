@@ -4,8 +4,9 @@ import { Repository } from 'typeorm';
 import { Attachment, AttachmentEntityType } from './entities/attachment.entity';
 import { CreateAttachmentDto } from './dto/create-attachment.dto';
 import { UserService } from '../user/user.service';
-import { CompanyService } from '../company/company.service';
 import { COMPANY_VIEW_ROLES, UserRole } from '../user/entities/user.entity';
+import { CompanyMembershipService } from '../company-membership/company-membership.service';
+import { CompanyPermission } from '../company-membership/company-membership-types';
 import { Incident } from '../incident/entities/incident.entity';
 import { SafetyAlert } from '../safety-alert/entities/safety-alert.entity';
 import { DailyLog } from '../daily-log/entities/daily-log.entity';
@@ -28,7 +29,7 @@ export class AttachmentService {
     @InjectRepository(Shift)
     private readonly shiftRepo: Repository<Shift>,
     private readonly userService: UserService,
-    private readonly companyService: CompanyService,
+    private readonly membershipService: CompanyMembershipService,
   ) {}
 
   async createForUser(userId: number, dto: CreateAttachmentDto): Promise<Attachment> {
@@ -44,8 +45,8 @@ export class AttachmentService {
 
     if (user.role !== UserRole.ADMIN) {
       if ((COMPANY_VIEW_ROLES as readonly UserRole[]).includes(user.role)) {
-        const company = await this.companyService.findByUserId(userId);
-        if (!company || !targetCompany || targetCompany.id !== company.id) {
+        const { company } = await this.membershipService.resolveCompanyContext(userId, user.role, CompanyPermission.COMPLIANCE_VIEW);
+        if (!targetCompany || targetCompany.id !== company.id) {
           throw new ForbiddenException('Attachment target does not belong to the current company');
         }
       } else if (user.role === UserRole.GUARD) {
@@ -78,19 +79,12 @@ export class AttachmentService {
     });
   }
 
-  async findForCompany(userId: number): Promise<Attachment[]> {
-    const user = await this.userService.findById(userId);
-
-    if (user.role === UserRole.ADMIN) {
+  async findForCompany(userId: number, userRole: UserRole): Promise<Attachment[]> {
+    if (userRole === UserRole.ADMIN) {
       return this.attachmentRepo.find({ order: { createdAt: 'DESC' } });
     }
 
-    if (!(COMPANY_VIEW_ROLES as readonly UserRole[]).includes(user.role)) {
-      throw new ForbiddenException('Company attachment access is not available for this user');
-    }
-
-    const company = await this.companyService.findByUserId(userId);
-    if (!company) throw new NotFoundException('Company not found');
+    const { company } = await this.membershipService.resolveCompanyContext(userId, userRole, CompanyPermission.COMPLIANCE_VIEW);
 
     return this.attachmentRepo.find({
       where: { company: { id: company.id } },
