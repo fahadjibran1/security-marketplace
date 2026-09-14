@@ -245,9 +245,8 @@ const mockContractPricingService = {
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
-  const url = process.env.PILOT_JOURNEY_DATABASE_URL
-    || process.env.P1I_DATABASE_URL
-    || 'postgresql://postgres:postgres@127.0.0.1:54322/p1i_membership_test';
+  const url = process.env.PILOT_JOURNEY_DATABASE_URL || process.env.P1I_DATABASE_URL;
+  if (!url) throw new Error('PILOT_JOURNEY_DATABASE_URL or P1I_DATABASE_URL env var is required');
 
   const ds = new DataSource({
     type: 'postgres',
