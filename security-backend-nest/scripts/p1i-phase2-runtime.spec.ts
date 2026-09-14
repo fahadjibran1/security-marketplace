@@ -680,6 +680,92 @@ async function main(): Promise<void> {
     await allow('RT-MATRIX-15: OWNER → COMPANY_MANAGE → allowed', () =>
       membershipService.resolveCompanyContext(ownerStaff.id, CS, CompanyPermission.COMPANY_MANAGE));
 
+    // ── Section 12: TIMESHEETS_REVIEW gate ────────────────────────────────────
+    console.log('\n── RT-TSREVIEW: TIMESHEETS_REVIEW permission gate ───────────────────────');
+
+    // OWNER → ALLOW
+    await allow('RT-TSREVIEW-1: OWNER → TIMESHEETS_REVIEW → allowed', () =>
+      membershipService.resolveCompanyContext(ownerStaff.id, CS, CompanyPermission.TIMESHEETS_REVIEW));
+
+    // ADMIN → ALLOW (inline user with ADMIN membership)
+    const tsAdminUser = await ds.getRepository(User).save(ds.getRepository(User).create({
+      email: 'ts-admin@p2rt.test', passwordHash: 'test', role: UserRole.COMPANY_STAFF,
+      status: UserStatus.ACTIVE, isEmailVerified: true,
+    }));
+    await ds.getRepository(CompanyMembership).save(ds.getRepository(CompanyMembership).create({
+      userId: tsAdminUser.id, companyId: companyA.id,
+      membershipRole: CompanyMembershipRole.ADMIN,
+      status: CompanyMembershipStatus.ACTIVE, acceptedAt: new Date(),
+    }));
+    await allow('RT-TSREVIEW-2: ADMIN → TIMESHEETS_REVIEW → allowed', () =>
+      membershipService.resolveCompanyContext(tsAdminUser.id, CS, CompanyPermission.TIMESHEETS_REVIEW));
+
+    // OPERATIONS → ALLOW (has TIMESHEETS_REVIEW per matrix)
+    await allow('RT-TSREVIEW-3: OPERATIONS → TIMESHEETS_REVIEW → allowed', () =>
+      membershipService.resolveCompanyContext(opsUser.id, CS, CompanyPermission.TIMESHEETS_REVIEW));
+
+    // CONTROL_ROOM → DENY (no TIMESHEETS_REVIEW)
+    await deny('RT-TSREVIEW-4: CONTROL_ROOM → TIMESHEETS_REVIEW → 403', () =>
+      membershipService.resolveCompanyContext(crUser.id, CS, CompanyPermission.TIMESHEETS_REVIEW));
+
+    // HR_COMPLIANCE → DENY
+    await deny('RT-TSREVIEW-5: HR_COMPLIANCE → TIMESHEETS_REVIEW → 403', () =>
+      membershipService.resolveCompanyContext(hrUser.id, CS, CompanyPermission.TIMESHEETS_REVIEW));
+
+    // FINANCE → DENY
+    await deny('RT-TSREVIEW-6: FINANCE → TIMESHEETS_REVIEW → 403', () =>
+      membershipService.resolveCompanyContext(finUser.id, CS, CompanyPermission.TIMESHEETS_REVIEW));
+
+    // VIEWER → DENY
+    await deny('RT-TSREVIEW-7: VIEWER → TIMESHEETS_REVIEW → 403', () =>
+      membershipService.resolveCompanyContext(viewUser.id, CS, CompanyPermission.TIMESHEETS_REVIEW));
+
+    // SUSPENDED membership → DENY
+    const tsSuspendUser = await ds.getRepository(User).save(ds.getRepository(User).create({
+      email: 'ts-suspend@p2rt.test', passwordHash: 'test', role: UserRole.COMPANY_STAFF,
+      status: UserStatus.ACTIVE, isEmailVerified: true,
+    }));
+    const tsSuspendMembership = await ds.getRepository(CompanyMembership).save(
+      ds.getRepository(CompanyMembership).create({
+        userId: tsSuspendUser.id, companyId: companyA.id,
+        membershipRole: CompanyMembershipRole.OPERATIONS,
+        status: CompanyMembershipStatus.SUSPENDED, acceptedAt: new Date(),
+      }),
+    );
+    await deny('RT-TSREVIEW-8: SUSPENDED OPERATIONS → TIMESHEETS_REVIEW → 403', () =>
+      membershipService.resolveCompanyContext(tsSuspendUser.id, CS, CompanyPermission.TIMESHEETS_REVIEW));
+
+    // REVOKED membership → DENY
+    await ds.getRepository(CompanyMembership).update(tsSuspendMembership.id, {
+      status: CompanyMembershipStatus.REVOKED,
+    });
+    await deny('RT-TSREVIEW-9: REVOKED OPERATIONS → TIMESHEETS_REVIEW → 403', () =>
+      membershipService.resolveCompanyContext(tsSuspendUser.id, CS, CompanyPermission.TIMESHEETS_REVIEW));
+
+    // Cross-company isolation: Company B OPERATIONS cannot access Company A (TIMESHEETS_REVIEW)
+    // companyBStaff has OPERATIONS in Company B, so resolveCompanyContext resolves to Company B;
+    // it does not grant access to Company A — tenant isolation is implicit in context resolution.
+    // Prove fail-closed: wrap the resolve and verify the resolved companyId ≠ companyA.id.
+    await (async () => {
+      try {
+        const ctx = await membershipService.resolveCompanyContext(companyBStaff.id, CS, CompanyPermission.TIMESHEETS_REVIEW);
+        check(
+          'RT-TSREVIEW-10: Company B OPERATIONS resolves to Company B, NOT Company A',
+          ctx.company.id !== companyA.id,
+          ctx.company.id === companyA.id ? 'cross-company leak: resolved to Company A' : undefined,
+        );
+      } catch (err: any) {
+        if (err instanceof ForbiddenException) {
+          pass++;
+          console.log('PASS  RT-TSREVIEW-10: Company B OPERATIONS → TIMESHEETS_REVIEW → 403 (no membership in A)');
+        } else {
+          fail++;
+          failures.push(`FAIL  RT-TSREVIEW-10: unexpected error: ${err?.message}`);
+          console.log(`FAIL  RT-TSREVIEW-10: unexpected error: ${err?.message}`);
+        }
+      }
+    })();
+
     // ── Final summary ─────────────────────────────────────────────────────────
     console.log(`\n══ P1I PHASE 2 RUNTIME: ${pass} PASS / ${fail} FAIL ══`);
     if (failures.length > 0) {

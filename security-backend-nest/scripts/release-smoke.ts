@@ -416,7 +416,7 @@ async function testNormalAttendanceApprovalDefaultsToVerifiedMinutes() {
   const timesheet = buildSubmittedTimesheet({ id: 1, hoursWorked: 8, verifiedMinutes: 235 });
   const { service, auditLogs } = buildTimesheetHarness([timesheet]);
 
-  const result = await service.updateForCompany(501, 1, { approvalStatus: TimesheetStatus.APPROVED } as any);
+  const result = await service.updateForCompany(501, UserRole.COMPANY, 1, { approvalStatus: TimesheetStatus.APPROVED } as any);
 
   equal(result.approvedMinutes, 235, 'approvedMinutes must default to verifiedMinutes, not hoursWorked (480)');
   equal(result.approvedHours, 3.92, 'approvedHours must be derived from verifiedMinutes (235/60)');
@@ -434,7 +434,7 @@ async function testManagerOverrideRequiresReasonAndRecordsAudit() {
   const timesheet = buildSubmittedTimesheet({ id: 2, hoursWorked: 8, verifiedMinutes: 235 });
   const { service, auditLogs } = buildTimesheetHarness([timesheet]);
 
-  const result = await service.updateForCompany(501, 2, {
+  const result = await service.updateForCompany(501, UserRole.COMPANY, 2, {
     approvalStatus: TimesheetStatus.APPROVED,
     approvedMinutes: 300,
     overrideReason: 'Guard stayed late per site supervisor confirmation',
@@ -458,7 +458,7 @@ async function testApprovalWithoutOverrideReasonIsRejected() {
   const { service, store } = buildTimesheetHarness([timesheet]);
 
   await expectBadRequest(() =>
-    service.updateForCompany(501, 3, { approvalStatus: TimesheetStatus.APPROVED, approvedMinutes: 300 } as any),
+    service.updateForCompany(501, UserRole.COMPANY, 3, { approvalStatus: TimesheetStatus.APPROVED, approvedMinutes: 300 } as any),
   );
 
   const persisted = store.get(3);
@@ -469,7 +469,7 @@ async function testApprovalWithoutOverrideReasonIsRejected() {
   const noAttendance = buildSubmittedTimesheet({ id: 4, hoursWorked: 8, verifiedMinutes: null });
   const harness2 = buildTimesheetHarness([noAttendance]);
   await expectBadRequest(() =>
-    harness2.service.updateForCompany(501, 4, { approvalStatus: TimesheetStatus.APPROVED } as any),
+    harness2.service.updateForCompany(501, UserRole.COMPANY, 4, { approvalStatus: TimesheetStatus.APPROVED } as any),
   );
 }
 
@@ -600,10 +600,10 @@ async function testExistingBehaviourPreserved() {
   });
   const harness2 = buildTimesheetHarness([approvedTimesheet]);
   await expectBadRequest(() =>
-    harness2.service.updateForCompany(501, 6, { approvalStatus: TimesheetStatus.REJECTED } as any),
+    harness2.service.updateForCompany(501, UserRole.COMPANY, 6, { approvalStatus: TimesheetStatus.REJECTED } as any),
   );
 
-  const rejected = await harness2.service.updateForCompany(501, 6, {
+  const rejected = await harness2.service.updateForCompany(501, UserRole.COMPANY, 6, {
     approvalStatus: TimesheetStatus.REJECTED,
     rejectionReason: 'Duplicate submission',
   } as any);

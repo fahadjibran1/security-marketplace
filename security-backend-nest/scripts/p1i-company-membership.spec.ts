@@ -658,6 +658,7 @@ test('P2-COVERAGE-AUDIT-1 no residual companyService.findByUserId in company-fac
     'report/report.service.ts',
     'shift/shift.service.ts',
     'assignment/assignment.service.ts',
+    'timesheet/timesheet.service.ts',
   ];
   const violations: string[] = [];
   companyFacingServices.forEach((servicePath) => {
