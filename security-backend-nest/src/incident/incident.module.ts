@@ -8,6 +8,7 @@ import { ShiftModule } from '../shift/shift.module';
 import { CompanyModule } from '../company/company.module';
 import { AuditLogModule } from '../audit-log/audit-log.module';
 import { NotificationModule } from '../notification/notification.module';
+import { CompanyMembershipModule } from '../company-membership/company-membership.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { NotificationModule } from '../notification/notification.module';
     CompanyModule,
     AuditLogModule,
     NotificationModule,
+    CompanyMembershipModule,
   ],
   controllers: [IncidentController],
   providers: [IncidentService],
