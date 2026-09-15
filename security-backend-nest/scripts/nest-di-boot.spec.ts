@@ -41,6 +41,11 @@ import { User } from '../src/user/entities/user.entity';
 import { IncidentModule } from '../src/incident/incident.module';
 import { IncidentService } from '../src/incident/incident.service';
 
+import { ReportModule } from '../src/report/report.module';
+import { IncidentAnalyticsService } from '../src/report/incident-analytics.service';
+import { CompanyModule } from '../src/company/company.module';
+import { CompanyService } from '../src/company/company.service';
+
 // ── lightweight custom runner (matches project convention) ──────────────────
 type Spec = { name: string; run: () => void | Promise<void> };
 const specs: Spec[] = [];
@@ -108,6 +113,25 @@ test('DI-BOOT-2: IncidentModule imports CompanyMembershipModule and wires Incide
   const injectsService = paramTypes.some((p) => p === CompanyMembershipService);
   assert(injectsService,
     'IncidentService constructor must declare CompanyMembershipService as a parameter');
+});
+
+// ── DI-BOOT-3: ReportModule module-metadata check ──────────────────────────
+//
+// IncidentAnalyticsService injects CompanyService.  Before the fix, ReportModule
+// did not import CompanyModule, which caused the second production startup failure.
+test('DI-BOOT-3: ReportModule imports CompanyModule and wires IncidentAnalyticsService', () => {
+  // (a) Check @Module imports metadata
+  const moduleImports: unknown[] = Reflect.getMetadata('imports', ReportModule) ?? [];
+  const hasCompanyModule = moduleImports.some((m) => m === CompanyModule);
+  assert(hasCompanyModule,
+    'ReportModule @Module({ imports }) must include CompanyModule — ' +
+    'without it NestJS cannot inject CompanyService into IncidentAnalyticsService');
+
+  // (b) Check IncidentAnalyticsService constructor paramtypes
+  const paramTypes: unknown[] = Reflect.getMetadata('design:paramtypes', IncidentAnalyticsService) ?? [];
+  const injectsService = paramTypes.some((p) => p === CompanyService);
+  assert(injectsService,
+    'IncidentAnalyticsService constructor must declare CompanyService as a parameter');
 });
 
 // ── runner ──────────────────────────────────────────────────────────────────
