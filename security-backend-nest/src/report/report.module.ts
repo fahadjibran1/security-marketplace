@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { AttendanceEvent } from '../attendance/entities/attendance.entity';
+import { CompanyModule } from '../company/company.module';
 import { CompanyMembershipModule } from '../company-membership/company-membership.module';
 import { ContractPricingModule } from '../contract-pricing/contract-pricing.module';
 import { DailyLog } from '../daily-log/entities/daily-log.entity';
@@ -17,6 +18,7 @@ import { ReportService } from './report.service';
 @Module({
   imports: [
     TypeOrmModule.forFeature([Timesheet, Incident, SafetyAlert, Shift, AttendanceEvent, DailyLog]),
+    CompanyModule,
     CompanyMembershipModule,
     ContractPricingModule,
     NotificationModule,
