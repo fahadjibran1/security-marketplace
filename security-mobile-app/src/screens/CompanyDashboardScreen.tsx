@@ -38,6 +38,7 @@ import {
   listCompanyNotifications,
   listCompanySafetyAlerts,
   listCompanyTimesheets,
+  listComplianceRecords,
   listCoverageShifts,
   listGuards,
   listJobApplications,
@@ -54,6 +55,7 @@ import {
   AttendanceEvent,
   AuthUser,
   Client,
+  ComplianceRecord,
   CompanyGuard,
   CoverageShiftRow,
   CreateClientPayload,
@@ -230,7 +232,7 @@ type ManagementActionItem = {
 };
 
 const NAV_ITEMS: NavItem[] = [
-  { id: 'dashboard', label: 'Dashboard', caption: 'Control-room overview and KPIs.' },
+  { id: 'dashboard', label: 'Dashboard', caption: 'Your live operational position and items requiring attention.' },
   { id: 'clients', label: 'Clients', caption: 'Client accounts and contacts.' },
   { id: 'sites', label: 'Sites', caption: 'Site setup, instructions, and coverage.' },
   { id: 'rota-planner', label: 'Rota Planner', caption: 'Plan weekly cover and assignments.' },
@@ -641,6 +643,23 @@ function getShiftRisk(
   }
 
   return { level: 'low' as const, color: colors.success, label: 'LOW 🟢' };
+}
+
+function getAttentionSeverity(category: UrgentOperationalItem['category']): 'red' | 'amber' | 'blue' {
+  switch (category) {
+    case 'panic':
+    case 'incident':
+    case 'missed_shift':
+      return 'red';
+    case 'late_start':
+    case 'missed_check_call':
+    case 'uncovered_shift':
+    case 'rejected_offer':
+    case 'safety':
+      return 'amber';
+    default:
+      return 'blue';
+  }
 }
 
 function getShiftDelay(
@@ -1139,6 +1158,7 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
   const [dailyLogs, setDailyLogs] = React.useState<DailyLog[]>([]);
   const [notifications, setNotifications] = React.useState<Notification[]>([]);
   const [uncoveredShifts, setUncoveredShifts] = React.useState<CoverageShiftRow[]>([]);
+  const [complianceRecords, setComplianceRecords] = React.useState<ComplianceRecord[]>([]);
   const [coverageNavigationContext, setCoverageNavigationContext] = React.useState<CoverageNavigationContext | undefined>(undefined);
   const [selectedSiteId, setSelectedSiteId] = React.useState<number | null>(null);
   const [selectedShiftId, setSelectedShiftId] = React.useState<number | null>(null);
@@ -1290,6 +1310,15 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
         }
 
         const sectionLoaders: Partial<Record<CompanySection, SettledLoader[]>> = {
+          dashboard: [
+            { label: 'attendance', run: listCompanyAttendance, apply: (value: AttendanceEvent[]) => setAttendanceEvents(value) },
+            { label: 'timesheets', run: listCompanyTimesheets, apply: (value: Timesheet[]) => setTimesheets(value) },
+            { label: 'incidents', run: listCompanyIncidents, apply: (value: Incident[]) => setIncidents(value) },
+            { label: 'alerts', run: listCompanySafetyAlerts, apply: (value: SafetyAlert[]) => setAlerts(value) },
+            { label: 'daily logs', run: listCompanyDailyLogs, apply: (value: DailyLog[]) => setDailyLogs(value) },
+            { label: 'notifications', run: listCompanyNotifications, apply: (value: Notification[]) => setNotifications(value) },
+            { label: 'compliance', run: listComplianceRecords, apply: (value: ComplianceRecord[]) => setComplianceRecords(value) },
+          ],
           'live-operations': [
               { label: 'attendance', run: listCompanyAttendance, apply: (value: AttendanceEvent[]) => setAttendanceEvents(value) },
               { label: 'timesheets', run: listCompanyTimesheets, apply: (value: Timesheet[]) => setTimesheets(value) },
@@ -3127,122 +3156,169 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
     [actionRequiredRows],
   );
 
-  const renderDashboardSection = () => (
-    <View style={styles.sectionStack}>
-      <DashboardSection title="KPIs" subtitle="At-a-glance operational health.">
-        <View style={styles.kpiGrid}>
-          {dashboardKpis.map((kpi) => (
-            <Pressable
-              key={kpi.label}
-              disabled={!kpi.coverageContext}
-              accessibilityRole={kpi.coverageContext ? 'button' : undefined}
-              accessibilityLabel={kpi.coverageContext ? `${kpi.label}: open Coverage` : undefined}
-              onPress={() => kpi.coverageContext && openCoverage(kpi.coverageContext)}
-              style={styles.kpiCell}
-            >
-              <KpiCard label={kpi.label} value={String(kpi.value)} icon={kpi.icon} tone={kpi.tone} />
-            </Pressable>
-          ))}
-        </View>
-      </DashboardSection>
+  const dashComplianceCounts = React.useMemo(() => ({
+    valid:    complianceRecords.filter((r) => (r.status || '').toLowerCase() === 'valid').length,
+    expiring: complianceRecords.filter((r) => (r.status || '').toLowerCase() === 'expiring').length,
+    expired:  complianceRecords.filter((r) => (r.status || '').toLowerCase() === 'expired').length,
+  }), [complianceRecords]);
 
-      <DashboardSection>
-        <View
-          style={[
-            styles.actionRequiredAnchor,
-            actionRequiredTotal === 0 ? styles.actionRequiredAnchorClear : styles.actionRequiredAnchorActive,
-          ]}
-        >
-          <Card
-            style={styles.actionRequiredCard}
-            webSurfaceHover
-            title="⚠️ Action Required"
-            subtitle={
-              actionRequiredTotal === 0
-                ? 'All clear — no finance or timesheet actions are currently pending.'
-                : 'These items need attention to keep payroll and billing on track.'
-            }
-            tone={actionRequiredTotal === 0 ? 'success' : 'warning'}
-          >
-            <View
-              style={[
-                styles.actionRequiredList,
-                actionRequiredTotal === 0 ? styles.actionRequiredListInnerClear : styles.actionRequiredListInnerActive,
-              ]}
-            >
-              {actionRequiredRows.map((row) => (
-                <Pressable
-                  key={row.key}
-                  onPress={() => setActiveSection(row.target)}
-                  style={({ hovered, pressed }: any) => [
-                    styles.actionRequiredRow,
-                    row.count > 0
-                      ? row.tone === 'attention'
-                        ? styles.actionRequiredRowAttention
-                        : styles.actionRequiredRowWarn
-                      : styles.actionRequiredRowCool,
-                    hovered ? styles.actionRequiredRowHover : null,
-                    hovered && IS_WEB ? styles.actionRequiredRowWebHover : null,
-                    pressed ? styles.actionRequiredRowPressed : null,
-                    WEB_POINTER_STYLE,
-                  ]}
-                >
-                  <View
-                    style={[
-                      styles.actionRequiredAccent,
-                      row.count === 0 && styles.actionRequiredAccentMuted,
-                      row.count > 0 && row.tone === 'attention' && styles.actionRequiredAccentBarAttention,
-                      row.count > 0 && row.tone === 'warning' && styles.actionRequiredAccentBarWarning,
+  const upcomingShifts = React.useMemo(() => {
+    const nowIso = new Date().toISOString();
+    return shifts
+      .filter((s) => s.start > nowIso && !['completed', 'cancelled'].includes(normalizeShiftLifecycleStatus(s.status)))
+      .sort((a, b) => a.start.localeCompare(b.start))
+      .slice(0, 6);
+  }, [shifts]);
+
+  const renderDashboardSection = () => {
+    const coverageGapCount = uncoveredShifts.length;
+    const coverageGapSites = new Set(uncoveredShifts.map((s) => s.siteId).filter(Boolean)).size;
+
+    return (
+      <View style={styles.sectionStack}>
+
+        {/* ── ROW 1: OPERATIONAL KPI STRIP ── */}
+        <View style={styles.dashKpiStrip}>
+          <View style={styles.dashKpiStripCell}>
+            <KpiCard
+              label="Active Sites"
+              value={String(activeSites.length)}
+              icon="📍"
+              tone={activeSites.length > 0 ? 'good' : 'neutral'}
+              onPress={() => setActiveSection('sites')}
+            />
+          </View>
+          <View style={styles.dashKpiStripCell}>
+            <KpiCard
+              label="Live Shifts"
+              value={String(liveShifts.length)}
+              icon="🟢"
+              tone={liveShifts.length > 0 ? 'good' : 'neutral'}
+              onPress={() => setActiveSection('live-operations')}
+            />
+          </View>
+          <View style={styles.dashKpiStripCell}>
+            <KpiCard
+              label="Coverage Gaps"
+              value={String(coverageGapCount)}
+              icon="⚠️"
+              tone={coverageGapCount > 0 ? 'attention' : 'good'}
+              onPress={() => openCoverage({ uncoveredOnly: true })}
+            />
+          </View>
+          <View style={styles.dashKpiStripCell}>
+            <KpiCard
+              label="Open Incidents"
+              value={String(openIncidents.length)}
+              icon="🚨"
+              tone={openIncidents.length > 0 ? 'attention' : 'good'}
+              onPress={() => setActiveSection('incidents')}
+            />
+          </View>
+          <View style={styles.dashKpiStripCell}>
+            <KpiCard
+              label="Alerts"
+              value={String(outstandingAlerts.length)}
+              icon="🔔"
+              tone={outstandingAlerts.length > 0 ? 'attention' : 'good'}
+              onPress={() => setActiveSection('live-operations')}
+            />
+          </View>
+        </View>
+
+        {/* ── ROW 2: ATTENTION REQUIRED ── */}
+        <DashboardSection>
+          <View style={styles.dashAttentionPanel}>
+            <View style={styles.dashAttentionHeader}>
+              <Text style={styles.dashAttentionTitle}>
+                {urgentOperationalItems.length > 0 ? '⚡ Attention Required' : '✓ All Clear'}
+              </Text>
+              <Text style={styles.dashAttentionSubtitle}>
+                {urgentOperationalItems.length > 0
+                  ? `${urgentOperationalItems.length} operational item${urgentOperationalItems.length !== 1 ? 's' : ''} requiring action — tap to navigate.`
+                  : 'No operational conditions require immediate attention right now.'}
+              </Text>
+            </View>
+            {urgentOperationalItems.length === 0 ? (
+              <View style={styles.dashAttentionEmpty}>
+                <Text style={styles.dashAttentionEmptyText}>Operational position is clear.</Text>
+              </View>
+            ) : (
+              urgentOperationalItems.map((item, index, arr) => {
+                const severity = getAttentionSeverity(item.category);
+                return (
+                  <Pressable
+                    key={item.id}
+                    onPress={() => handleOpenUrgentDetail(item)}
+                    accessibilityRole="button"
+                    accessibilityLabel={item.issueType}
+                    style={({ hovered, pressed }: any) => [
+                      styles.dashAttentionItem,
+                      index === arr.length - 1 ? styles.dashAttentionItemLast : null,
+                      hovered ? styles.dashAttentionItemHover : null,
+                      pressed ? styles.dashAttentionItemPressed : null,
+                      IS_WEB ? (WEB_POINTER_STYLE as any) : null,
                     ]}
-                  />
-                  <View style={styles.actionRequiredRowMain}>
-                    <View style={styles.actionRequiredLeft}>
-                      <Text style={[styles.actionRequiredTitle, row.count > 0 && styles.actionRequiredTitleHot]}>
-                        {row.title}
+                  >
+                    <View
+                      style={[
+                        styles.dashAttentionBar,
+                        severity === 'red' ? styles.dashAttentionBarRed
+                          : severity === 'amber' ? styles.dashAttentionBarAmber
+                          : styles.dashAttentionBarBlue,
+                      ]}
+                    />
+                    <View style={styles.dashAttentionItemBody}>
+                      <Text style={styles.dashAttentionItemLabel} numberOfLines={1}>{item.issueType}</Text>
+                      <Text style={styles.dashAttentionItemMeta} numberOfLines={1}>
+                        {item.siteName}{item.guardName && item.guardName !== 'Unknown guard' ? ` · ${item.guardName}` : ''}
                       </Text>
-                      <Text style={styles.actionRequiredDescription}>{row.description}</Text>
                     </View>
-                    <View style={styles.actionRequiredRight}>
-                      <View
+                    <View
+                      style={[
+                        styles.dashAttentionSeverityBadge,
+                        severity === 'red' ? styles.dashAttentionSeverityRed
+                          : severity === 'amber' ? styles.dashAttentionSeverityAmber
+                          : styles.dashAttentionSeverityBlue,
+                      ]}
+                    >
+                      <Text
                         style={[
-                          styles.actionRequiredCountBadge,
-                          row.count > 0 ? styles.actionRequiredCountBadgeHot : styles.actionRequiredCountBadgeCool,
+                          styles.dashAttentionSeverityText,
+                          severity === 'red' ? styles.dashAttentionSeverityTextRed
+                            : severity === 'amber' ? styles.dashAttentionSeverityTextAmber
+                            : styles.dashAttentionSeverityTextBlue,
                         ]}
                       >
-                        <Text style={[styles.actionRequiredCount, row.count > 0 && styles.actionRequiredCountHot]}>
-                          {row.countLabel}
-                        </Text>
-                      </View>
-                      <View style={styles.actionRequiredCtaWrap}>
-                        <Text style={styles.actionRequiredCta}>Open</Text>
-                      </View>
+                        {severity.toUpperCase()}
+                      </Text>
                     </View>
-                  </View>
-                </Pressable>
-              ))}
-            </View>
-          </Card>
-        </View>
-      </DashboardSection>
+                    <Text style={styles.dashAttentionCta}>{'→'}</Text>
+                  </Pressable>
+                );
+              })
+            )}
+          </View>
+        </DashboardSection>
 
-      <DashboardSection title="Live Ops" subtitle="What’s happening right now across sites.">
-        <View style={styles.panelGrid}>
-          <View style={styles.panelCell}>
+        {/* ── ROW 3: LIVE OPERATIONS (2/3) + TODAY'S COVERAGE (1/3) ── */}
+        <View style={styles.dashRow3}>
+          <View style={styles.dashRow3Main}>
             <Card
               style={styles.dashLivePanelCard}
               webSurfaceHover
-              title="Today's Live Shifts"
-              subtitle="Quick jump into the live board."
+              title="Live Operations"
+              subtitle="Guards on duty right now. Tap a row to open the monitoring board."
             >
-              {liveShifts.slice(0, 6).length === 0 ? (
+              {liveShifts.length === 0 ? (
                 <DashboardPanelEmpty
                   title="No live shifts right now"
-                  description="When guards are on duty, shifts appear here so you can jump straight into monitoring."
+                  description="When guards are on duty they appear here for rapid monitoring access."
                   actionLabel="Open Live Operations"
                   onAction={() => setActiveSection('live-operations')}
                 />
               ) : (
-                liveShifts.slice(0, 6).map((shift, index, arr) => (
+                liveShifts.slice(0, 8).map((shift, index, arr) => (
                   <Pressable
                     key={shift.id}
                     style={({ hovered, pressed }: any) => [
@@ -3252,114 +3328,213 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
                       hovered ? styles.dashListRowHovered : null,
                       hovered && IS_WEB ? styles.dashListRowWebHover : null,
                       pressed ? styles.dashListRowPressed : null,
-                      WEB_POINTER_STYLE,
+                      IS_WEB ? (WEB_POINTER_STYLE as any) : null,
                     ]}
                     onPress={() => {
                       setSelectedShiftId(shift.id);
                       setActiveSection('live-operations');
                     }}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${shift.site?.name || shift.siteName} — open in Live Operations`}
                   >
-                    <Text style={styles.dashListRowTitle}>{shift.site?.name || shift.siteName}</Text>
+                    <View style={styles.dashLiveRowInner}>
+                      <View style={styles.dashLiveRowLeft}>
+                        <Text style={styles.dashListRowTitle} numberOfLines={1}>{shift.site?.name || shift.siteName}</Text>
+                        <Text style={styles.dashListRowMeta}>
+                          {formatTimeLabel(shift.start)}–{formatTimeLabel(shift.end)}
+                        </Text>
+                      </View>
+                      <Text style={styles.dashLiveRowStatus} numberOfLines={1}>
+                        {formatStatusLabel(normalizeShiftLifecycleStatus(shift.status))}
+                      </Text>
+                    </View>
+                  </Pressable>
+                ))
+              )}
+            </Card>
+          </View>
+
+          <View style={styles.dashRow3Side}>
+            <Card
+              style={styles.dashLivePanelCard}
+              webSurfaceHover
+              title="Today's Coverage"
+              subtitle="Shift coverage position right now."
+              tone={coverageGapCount > 0 ? 'warning' : 'default'}
+            >
+              <View style={styles.dashCoverageStats}>
+                <View style={styles.dashCoverageStat}>
+                  <Text style={styles.dashCoverageStatValue}>{liveShifts.length}</Text>
+                  <Text style={styles.dashCoverageStatLabel}>Live now</Text>
+                </View>
+                <View style={styles.dashCoverageDivider} />
+                <View style={styles.dashCoverageStat}>
+                  <Text style={[styles.dashCoverageStatValue, coverageGapCount > 0 ? styles.dashCoverageStatValueWarn : null]}>
+                    {coverageGapCount}
+                  </Text>
+                  <Text style={styles.dashCoverageStatLabel}>Uncovered</Text>
+                </View>
+                <View style={styles.dashCoverageDivider} />
+                <View style={styles.dashCoverageStat}>
+                  <Text style={[styles.dashCoverageStatValue, coverageGapSites > 0 ? styles.dashCoverageStatValueWarn : null]}>
+                    {coverageGapSites}
+                  </Text>
+                  <Text style={styles.dashCoverageStatLabel}>Gap sites</Text>
+                </View>
+              </View>
+              {coverageGapCount > 0 ? (
+                <Pressable
+                  onPress={() => openCoverage({ uncoveredOnly: true })}
+                  accessibilityRole="button"
+                  style={({ hovered, pressed }: any) => [
+                    styles.dashCoverageAction,
+                    hovered ? styles.dashCoverageActionHover : null,
+                    pressed ? styles.dashCoverageActionPressed : null,
+                    IS_WEB ? (WEB_POINTER_STYLE as any) : null,
+                  ]}
+                >
+                  <Text style={styles.dashCoverageActionText}>Review coverage gaps →</Text>
+                </Pressable>
+              ) : (
+                <DashboardPanelEmpty
+                  title="Coverage looks good"
+                  description="No uncovered shifts detected at this time."
+                />
+              )}
+            </Card>
+          </View>
+        </View>
+
+        {/* ── ROW 4: RECENT ACTIVITY + COMPLIANCE OVERVIEW + UPCOMING SHIFTS ── */}
+        <View style={styles.dashRow4}>
+          <View style={styles.dashRow4Cell}>
+            <Card
+              style={styles.dashLivePanelCard}
+              webSurfaceHover
+              title="Recent Activity"
+              subtitle="Latest operational events and shift updates."
+            >
+              {recentOperationalActivity.length === 0 ? (
+                <DashboardPanelEmpty
+                  title="No recent activity"
+                  description="Shift events and operational updates appear here as they occur."
+                />
+              ) : (
+                recentOperationalActivity.slice(0, 6).map((activity, index, arr) => (
+                  <View
+                    key={activity.id}
+                    style={[
+                      styles.dashListRow,
+                      IS_WEB ? styles.dashListRowWeb : null,
+                      index === arr.length - 1 ? styles.dashListRowLast : null,
+                    ]}
+                  >
+                    <Text style={styles.dashListRowTitle} numberOfLines={1}>{activity.eventType}</Text>
+                    <Text style={styles.dashListRowMeta} numberOfLines={1}>
+                      {activity.siteName} · {formatDateTimeLabel(activity.occurredAt)}
+                    </Text>
+                  </View>
+                ))
+              )}
+            </Card>
+          </View>
+
+          <View style={styles.dashRow4Cell}>
+            <Card
+              style={styles.dashLivePanelCard}
+              webSurfaceHover
+              title="Compliance Overview"
+              subtitle="Guard document and certification status."
+              tone={dashComplianceCounts.expired > 0 ? 'danger' : dashComplianceCounts.expiring > 0 ? 'warning' : 'default'}
+            >
+              {complianceRecords.length === 0 ? (
+                <DashboardPanelEmpty
+                  title="No compliance records"
+                  description="Guard certifications and documents appear here once guards are linked to your company."
+                  actionLabel="View compliance"
+                  onAction={() => setActiveSection('compliance')}
+                />
+              ) : (
+                <>
+                  <View style={styles.dashComplianceStats}>
+                    <View style={[styles.dashComplianceStat, styles.dashComplianceStatValid]}>
+                      <Text style={styles.dashComplianceStatValue}>{dashComplianceCounts.valid}</Text>
+                      <Text style={styles.dashComplianceStatLabel}>Valid</Text>
+                    </View>
+                    <View style={[styles.dashComplianceStat, styles.dashComplianceStatExpiring]}>
+                      <Text style={[styles.dashComplianceStatValue, dashComplianceCounts.expiring > 0 ? styles.dashComplianceStatValueWarning : null]}>
+                        {dashComplianceCounts.expiring}
+                      </Text>
+                      <Text style={styles.dashComplianceStatLabel}>Expiring</Text>
+                    </View>
+                    <View style={styles.dashComplianceStat}>
+                      <Text style={[styles.dashComplianceStatValue, dashComplianceCounts.expired > 0 ? styles.dashComplianceStatValueDanger : null]}>
+                        {dashComplianceCounts.expired}
+                      </Text>
+                      <Text style={styles.dashComplianceStatLabel}>Expired</Text>
+                    </View>
+                  </View>
+                  <Pressable
+                    onPress={() => setActiveSection('compliance')}
+                    accessibilityRole="button"
+                    style={({ hovered, pressed }: any) => [
+                      styles.dashCoverageAction,
+                      hovered ? styles.dashCoverageActionHover : null,
+                      pressed ? styles.dashCoverageActionPressed : null,
+                      IS_WEB ? (WEB_POINTER_STYLE as any) : null,
+                    ]}
+                  >
+                    <Text style={styles.dashCoverageActionText}>View all compliance →</Text>
+                  </Pressable>
+                </>
+              )}
+            </Card>
+          </View>
+
+          <View style={styles.dashRow4Cell}>
+            <Card
+              style={styles.dashLivePanelCard}
+              webSurfaceHover
+              title="Upcoming Shifts"
+              subtitle="Next scheduled shifts starting soon."
+            >
+              {upcomingShifts.length === 0 ? (
+                <DashboardPanelEmpty
+                  title="No upcoming shifts"
+                  description="Future scheduled shifts appear here when planning is in place."
+                  actionLabel="View shift schedule"
+                  onAction={() => setActiveSection('rota-planner')}
+                />
+              ) : (
+                upcomingShifts.map((shift, index, arr) => (
+                  <Pressable
+                    key={shift.id}
+                    style={({ hovered, pressed }: any) => [
+                      styles.dashListRow,
+                      IS_WEB ? styles.dashListRowWeb : null,
+                      index === arr.length - 1 ? styles.dashListRowLast : null,
+                      hovered ? styles.dashListRowHovered : null,
+                      hovered && IS_WEB ? styles.dashListRowWebHover : null,
+                      pressed ? styles.dashListRowPressed : null,
+                      IS_WEB ? (WEB_POINTER_STYLE as any) : null,
+                    ]}
+                    onPress={() => setActiveSection('rota-planner')}
+                    accessibilityRole="button"
+                  >
+                    <Text style={styles.dashListRowTitle} numberOfLines={1}>{shift.site?.name || shift.siteName}</Text>
                     <Text style={styles.dashListRowMeta}>
-                      {formatDateLabel(shift.start)} · {formatTimeLabel(shift.start)}-{formatTimeLabel(shift.end)}
+                      {formatDateLabel(shift.start)} · {formatTimeLabel(shift.start)}–{formatTimeLabel(shift.end)}
                     </Text>
                   </Pressable>
                 ))
               )}
             </Card>
           </View>
-          <View style={styles.panelCell}>
-            <Card
-              style={styles.dashLivePanelCard}
-              webSurfaceHover
-              title="Urgent Alerts"
-              subtitle="Safety and welfare items needing follow-up."
-              tone={outstandingAlerts.length > 0 ? 'danger' : 'default'}
-            >
-              {outstandingAlerts.slice(0, 6).length === 0 ? (
-                <DashboardPanelEmpty
-                  title="No urgent alerts"
-                  description="Outstanding safety and welfare items will appear here when they need your attention."
-                />
-              ) : (
-                outstandingAlerts.slice(0, 6).map((alert, index, arr) => (
-                  <View
-                    key={alert.id}
-                    style={[styles.dashListRow, IS_WEB ? styles.dashListRowWeb : null, index === arr.length - 1 ? styles.dashListRowLast : null]}
-                  >
-                    <Text style={styles.dashListRowTitle}>{formatStatusLabel(alert.type)}</Text>
-                    <Text style={styles.dashListRowMeta}>
-                      {alert.shift?.site?.name || alert.shift?.siteName || 'Shift alert'} ·{' '}
-                      {formatDateTimeLabel(alert.createdAt)}
-                    </Text>
-                  </View>
-                ))
-              )}
-            </Card>
-          </View>
-          <View style={styles.panelCell}>
-            <Card
-              style={styles.dashLivePanelCard}
-              webSurfaceHover
-              title="Recent Incidents"
-              subtitle="Latest open incidents across sites."
-              tone={openIncidents.length > 0 ? 'warning' : 'default'}
-            >
-              {openIncidents.slice(0, 6).length === 0 ? (
-                <DashboardPanelEmpty
-                  title="No open incidents"
-                  description="Reported site issues in an open state are listed here so you can triage quickly."
-                  actionLabel="View all incidents"
-                  onAction={() => setActiveSection('incidents')}
-                />
-              ) : (
-                openIncidents.slice(0, 6).map((incident, index, arr) => (
-                  <View
-                    key={incident.id}
-                    style={[styles.dashListRow, IS_WEB ? styles.dashListRowWeb : null, index === arr.length - 1 ? styles.dashListRowLast : null]}
-                  >
-                    <Text style={styles.dashListRowTitle}>{incident.title}</Text>
-                    <Text style={styles.dashListRowMeta}>
-                      {incident.site?.name || incident.shift?.site?.name || 'Site'} ·{' '}
-                      {formatStatusLabel(incident.severity)}
-                    </Text>
-                  </View>
-                ))
-              )}
-            </Card>
-          </View>
-          <View style={styles.panelCell}>
-            <Card
-              style={styles.dashLivePanelCard}
-              webSurfaceHover
-              title="Recent Activity"
-              subtitle="Most recent shift logs and updates."
-            >
-              {recentActivity.length === 0 ? (
-                <DashboardPanelEmpty
-                  title="No recent activity"
-                  description="Operational updates and shift logs will appear here as work happens. Use Refresh Data above to reload."
-                />
-              ) : (
-                recentActivity.map((log, index, arr) => (
-                  <View
-                    key={log.id}
-                    style={[styles.dashListRow, IS_WEB ? styles.dashListRowWeb : null, index === arr.length - 1 ? styles.dashListRowLast : null]}
-                  >
-                    <Text style={styles.dashListRowTitle}>{log.message}</Text>
-                    <Text style={styles.dashListRowMeta}>
-                      {log.shift?.site?.name || log.shift?.siteName || 'Shift'} ·{' '}
-                      {formatDateTimeLabel(log.createdAt)}
-                    </Text>
-                  </View>
-                ))
-              )}
-            </Card>
-          </View>
         </View>
-      </DashboardSection>
-    </View>
-  );
+
+      </View>
+    );
+  };
 
   const renderClientsSection = () => (
     <View style={styles.sectionStack}>
@@ -6759,6 +6934,272 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: colors.info,
   },
+  dashKpiStrip: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  dashKpiStripCell: {
+    flexGrow: 1,
+    flexBasis: 160,
+    minWidth: 140,
+    maxWidth: 260,
+    alignSelf: 'stretch',
+  },
+  dashAttentionPanel: {
+    backgroundColor: colors.card,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
+    overflow: 'hidden',
+  },
+  dashAttentionHeader: {
+    paddingHorizontal: 20,
+    paddingTop: 18,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    gap: 4,
+  },
+  dashAttentionTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: colors.primaryNavy,
+    letterSpacing: -0.2,
+  },
+  dashAttentionSubtitle: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: colors.textSecondary,
+    lineHeight: 19,
+  },
+  dashAttentionEmpty: {
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+  },
+  dashAttentionEmptyText: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    fontWeight: '500',
+  },
+  dashAttentionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(226, 232, 240, 0.88)',
+    paddingRight: 16,
+  },
+  dashAttentionItemLast: {
+    borderBottomWidth: 0,
+  },
+  dashAttentionItemHover: {
+    backgroundColor: 'rgba(15, 23, 42, 0.028)',
+  },
+  dashAttentionItemPressed: {
+    backgroundColor: 'rgba(15, 23, 42, 0.05)',
+  },
+  dashAttentionBar: {
+    width: 4,
+    alignSelf: 'stretch',
+    minHeight: 52,
+  },
+  dashAttentionBarRed: {
+    backgroundColor: colors.danger,
+  },
+  dashAttentionBarAmber: {
+    backgroundColor: colors.warning,
+  },
+  dashAttentionBarBlue: {
+    backgroundColor: colors.info,
+  },
+  dashAttentionItemBody: {
+    flex: 1,
+    gap: 3,
+    paddingVertical: 13,
+  },
+  dashAttentionItemLabel: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.primaryNavy,
+    lineHeight: 20,
+  },
+  dashAttentionItemMeta: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: colors.textSecondary,
+    lineHeight: 17,
+  },
+  dashAttentionSeverityBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    borderWidth: 1,
+    flexShrink: 0,
+  },
+  dashAttentionSeverityRed: {
+    borderColor: colors.dangerBorder,
+    backgroundColor: colors.dangerSurface,
+  },
+  dashAttentionSeverityAmber: {
+    borderColor: colors.warningBorder,
+    backgroundColor: colors.warningSurface,
+  },
+  dashAttentionSeverityBlue: {
+    borderColor: 'rgba(29, 78, 216, 0.3)',
+    backgroundColor: colors.infoSurface,
+  },
+  dashAttentionSeverityText: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.9,
+    textTransform: 'uppercase',
+  } as any,
+  dashAttentionSeverityTextRed: {
+    color: colors.danger,
+  },
+  dashAttentionSeverityTextAmber: {
+    color: colors.warning,
+  },
+  dashAttentionSeverityTextBlue: {
+    color: colors.info,
+  },
+  dashAttentionCta: {
+    fontSize: 16,
+    color: colors.textSecondary,
+    flexShrink: 0,
+  },
+  dashRow3: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 22,
+  },
+  dashRow3Main: {
+    flexGrow: 2,
+    flexBasis: 440,
+    minWidth: 280,
+  },
+  dashRow3Side: {
+    flexGrow: 1,
+    flexBasis: 200,
+    minWidth: 200,
+  },
+  dashLiveRowInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  dashLiveRowLeft: {
+    flex: 1,
+    gap: 3,
+  },
+  dashLiveRowStatus: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    color: colors.textSecondary,
+    textTransform: 'uppercase',
+    flexShrink: 0,
+  } as any,
+  dashCoverageStats: {
+    flexDirection: 'row',
+    marginBottom: 16,
+  },
+  dashCoverageStat: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 16,
+    gap: 4,
+  },
+  dashCoverageStatValue: {
+    fontSize: 32,
+    fontWeight: '800',
+    color: colors.primaryNavy,
+    letterSpacing: -0.5,
+  },
+  dashCoverageStatValueWarn: {
+    color: colors.warning,
+  },
+  dashCoverageStatLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: colors.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.7,
+  } as any,
+  dashCoverageDivider: {
+    width: 1,
+    backgroundColor: colors.border,
+    marginVertical: 12,
+  },
+  dashCoverageAction: {
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    backgroundColor: 'rgba(11, 31, 51, 0.04)',
+    borderWidth: 1,
+    borderColor: 'rgba(11, 31, 51, 0.1)',
+    marginTop: 4,
+    alignItems: 'center',
+  },
+  dashCoverageActionHover: {
+    backgroundColor: 'rgba(11, 31, 51, 0.07)',
+  },
+  dashCoverageActionPressed: {
+    opacity: 0.85,
+  },
+  dashCoverageActionText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.primaryNavy,
+  },
+  dashRow4: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 22,
+  },
+  dashRow4Cell: {
+    flexGrow: 1,
+    flexBasis: 260,
+    minWidth: 220,
+  },
+  dashComplianceStats: {
+    flexDirection: 'row',
+    marginBottom: 14,
+  },
+  dashComplianceStat: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 14,
+    gap: 4,
+  },
+  dashComplianceStatValid: {
+    borderRightWidth: 1,
+    borderRightColor: colors.border,
+  },
+  dashComplianceStatExpiring: {
+    borderRightWidth: 1,
+    borderRightColor: colors.border,
+  },
+  dashComplianceStatValue: {
+    fontSize: 28,
+    fontWeight: '800',
+    color: colors.primaryNavy,
+    letterSpacing: -0.3,
+  },
+  dashComplianceStatValueWarning: {
+    color: colors.warning,
+  },
+  dashComplianceStatValueDanger: {
+    color: colors.danger,
+  },
+  dashComplianceStatLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: colors.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.7,
+  } as any,
 });
 
 const LIVE_SHIFT_BOARD_COLUMN_LABELS = [
