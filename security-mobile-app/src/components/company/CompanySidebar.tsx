@@ -1,6 +1,6 @@
 ﻿import * as React from 'react';
 import { Image, ImageSourcePropType, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { colors } from '../../theme';
+import { brand, colors } from '../../theme';
 
 type NavItem<Id extends string> = {
   id: Id;
@@ -89,7 +89,7 @@ export function CompanySidebar<Id extends string>({
     <View style={styles.shell}>
       <View style={styles.header}>
         {brandLogo ? (
-          <Image source={brandLogo} style={styles.brandLogoImage} resizeMode="contain" accessibilityLabel="S4 Security" />
+          <Image source={brandLogo} style={styles.brandLogoImage} resizeMode="contain" accessibilityLabel={brand.appName} />
         ) : null}
         {subtitle ? <Text style={styles.brandEyebrow}>{subtitle}</Text> : null}
         <Text style={styles.brandTitle}>{title}</Text>

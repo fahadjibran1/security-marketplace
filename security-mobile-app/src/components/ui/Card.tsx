@@ -1,6 +1,6 @@
-﻿import * as React from 'react';
+import * as React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { colors } from '../../theme';
+import { colors, radii, spacing, typography } from '../../theme';
 
 const IS_WEB = typeof document !== 'undefined';
 
@@ -13,15 +13,14 @@ type CardProps = React.PropsWithChildren<{
   right?: any;
   onPress?: () => void;
   style?: any;
-  /** Subtle hover lift on web for non-pressable cards (e.g. dashboard panels). */
   webSurfaceHover?: boolean;
 }>;
 
 const TONE_STYLES: Record<CardTone, { borderColor: string; headerColor: string; wash: string }> = {
-  default: { borderColor: colors.surfaceSubtle, headerColor: colors.primaryNavy, wash: colors.card },
-  success: { borderColor: 'rgba(16, 185, 129, 0.35)', headerColor: colors.success, wash: colors.card },
-  warning: { borderColor: 'rgba(249, 115, 22, 0.35)', headerColor: colors.warning, wash: colors.card },
-  danger: { borderColor: 'rgba(239, 68, 68, 0.35)', headerColor: colors.danger, wash: colors.card },
+  default: { borderColor: colors.border,                      headerColor: colors.primaryNavy,  wash: colors.card },
+  success: { borderColor: colors.successBorder,               headerColor: colors.success,       wash: colors.card },
+  warning: { borderColor: colors.warningBorder,               headerColor: colors.warning,       wash: colors.card },
+  danger:  { borderColor: colors.dangerBorder,                headerColor: colors.danger,        wash: colors.card },
 };
 
 export function Card({ title, subtitle, tone = 'default', right, onPress, children, style, webSurfaceHover }: CardProps) {
@@ -32,8 +31,8 @@ export function Card({ title, subtitle, tone = 'default', right, onPress, childr
     title || subtitle || right ? (
       <View style={styles.header}>
         <View style={styles.headerText}>
-          {title ? <Text style={[styles.title, { color: toneStyle.headerColor }]}>{title}</Text> : null}
-          {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
+          {title    ? <Text style={[styles.title, { color: toneStyle.headerColor }]}>{title}</Text>       : null}
+          {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text>                                      : null}
         </View>
         {right ? <View style={styles.headerRight}>{right}</View> : null}
       </View>
@@ -53,8 +52,8 @@ export function Card({ title, subtitle, tone = 'default', right, onPress, childr
         {...({ onPress, onClick: onPress } as const)}
         style={({ hovered, pressed }: any) => [
           ...baseStyle,
-          hovered ? styles.cardHover : null,
-          pressed ? styles.cardPressed : null,
+          hovered  && !pressed ? styles.cardHover   : null,
+          pressed              ? styles.cardPressed  : null,
           IS_WEB && webSurfaceHover && hovered && !pressed ? styles.cardSurfaceHoverWeb : null,
           IS_WEB ? (styles.cardCursorPointer as any) : null,
         ]}
@@ -94,50 +93,39 @@ export function Card({ title, subtitle, tone = 'default', right, onPress, childr
 
 const styles = StyleSheet.create({
   card: {
-    borderRadius: 18,
-    padding: 20,
+    borderRadius: radii.card,
+    padding: spacing.xl,
     borderWidth: 1,
     shadowColor: colors.primaryNavy,
-    shadowOpacity: 0.045,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.04,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 3 },
   },
   cardHover: {
-    shadowOpacity: 0.075,
+    shadowOpacity: 0.07,
     transform: [{ translateY: -1 }],
   },
   cardPressed: {
     transform: [{ translateY: 0 }],
   },
   cardSurfaceHoverWeb: {
-    shadowOpacity: 0.09,
-    borderColor: 'rgba(15, 23, 42, 0.12)',
+    shadowOpacity: 0.08,
+    borderColor: colors.fieldBorder,
     transform: [{ translateY: -1 }],
   } as any,
-  cardCursorPointer: {
-    cursor: 'pointer',
-  } as any,
-  cardCursorDefault: {
-    cursor: 'default',
-  } as any,
+  cardCursorPointer: { cursor: 'pointer'  } as any,
+  cardCursorDefault: { cursor: 'default'  } as any,
   header: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     justifyContent: 'space-between',
-    gap: 12,
+    gap: spacing.md,
   },
-  headerText: {
-    flex: 1,
-    gap: 2,
-  },
-  headerRight: {
-    alignItems: 'flex-end',
-    justifyContent: 'center',
-  },
+  headerText: { flex: 1, gap: 2 },
+  headerRight: { alignItems: 'flex-end', justifyContent: 'center' },
   title: {
-    fontSize: 14,
-    fontWeight: '800',
-    letterSpacing: 0.12,
+    ...typography.panelHeading,
+    letterSpacing: 0.1,
   },
   subtitle: {
     fontSize: 12,
@@ -146,7 +134,7 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   body: {
-    marginTop: 14,
-    gap: 12,
+    marginTop: spacing.md,
+    gap: spacing.md,
   },
 });

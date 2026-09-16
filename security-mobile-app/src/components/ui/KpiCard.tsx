@@ -1,6 +1,6 @@
-﻿import * as React from 'react';
+import * as React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { colors } from '../../theme';
+import { colors, radii, typography } from '../../theme';
 
 const IS_WEB = typeof document !== 'undefined';
 
@@ -19,23 +19,23 @@ type KpiCardProps = {
 const TONE: Record<KpiTone, { iconBg: string; value: string; border: string }> = {
   neutral: {
     iconBg: 'rgba(37, 99, 235, 0.08)',
-    value: colors.primaryNavy,
-    border: colors.surfaceSubtle,
+    value:  colors.primaryNavy,
+    border: colors.border,
   },
   good: {
-    iconBg: 'rgba(16, 185, 129, 0.12)',
-    value: colors.success,
-    border: 'rgba(16, 185, 129, 0.22)',
+    iconBg: 'rgba(21, 128, 61, 0.1)',
+    value:  colors.success,
+    border: colors.successBorder,
   },
   warning: {
-    iconBg: 'rgba(249, 115, 22, 0.12)',
-    value: colors.warning,
-    border: 'rgba(249, 115, 22, 0.22)',
+    iconBg: 'rgba(161, 92, 7, 0.1)',
+    value:  colors.warning,
+    border: colors.warningBorder,
   },
   attention: {
-    iconBg: 'rgba(239, 68, 68, 0.12)',
-    value: colors.danger,
-    border: 'rgba(239, 68, 68, 0.22)',
+    iconBg: 'rgba(180, 35, 24, 0.1)',
+    value:  colors.danger,
+    border: colors.dangerBorder,
   },
 };
 
@@ -76,8 +76,8 @@ export function KpiCard({ label, value, icon, tone = 'neutral', onPress }: KpiCa
         {...({ onPress, onClick: onPress } as const)}
         style={({ hovered, pressed }: any) => [
           ...cardChrome(Boolean(hovered && !pressed)),
-          hovered && !pressed ? styles.cardHover : null,
-          pressed ? styles.cardPressed : null,
+          hovered && !pressed ? styles.cardHover   : null,
+          pressed             ? styles.cardPressed : null,
           WEB_POINTER as any,
         ]}
       >
@@ -104,44 +104,35 @@ export function KpiCard({ label, value, icon, tone = 'neutral', onPress }: KpiCa
 const styles = StyleSheet.create({
   card: {
     backgroundColor: colors.card,
-    borderRadius: 18,
-    padding: 0,
+    borderRadius: radii.card,
     borderWidth: 1,
     shadowColor: colors.primaryNavy,
-    shadowOpacity: 0.045,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 8 },
-    minHeight: 118,
+    shadowOpacity: 0.04,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 3 },
+    minHeight: 110,
     flex: 1,
   },
   kpiCardWebHover: {
-    shadowOpacity: 0.08,
-    borderColor: 'rgba(15, 23, 42, 0.14)',
+    shadowOpacity: 0.07,
     transform: [{ translateY: -1 }],
   } as any,
-  kpiCardWebCursor: {
-    cursor: 'default',
-  } as any,
-  cardHover: {
-    shadowOpacity: 0.08,
-    transform: [{ translateY: -1 }],
-  },
-  cardPressed: {
-    transform: [{ translateY: 0 }],
-  },
+  kpiCardWebCursor: { cursor: 'default' } as any,
+  cardHover:   { shadowOpacity: 0.07, transform: [{ translateY: -1 }] },
+  cardPressed: { transform: [{ translateY: 0 }] },
   cardInner: {
     flex: 1,
     paddingHorizontal: 20,
-    paddingTop: 18,
-    paddingBottom: 18,
+    paddingTop: 16,
+    paddingBottom: 16,
     justifyContent: 'space-between',
-    gap: 12,
+    gap: 10,
   },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     justifyContent: 'space-between',
-    gap: 12,
+    gap: 10,
   },
   label: {
     flex: 1,
@@ -153,22 +144,17 @@ const styles = StyleSheet.create({
     lineHeight: 16,
   },
   iconPuck: {
-    width: 32,
-    height: 32,
-    borderRadius: 12,
+    width: 30,
+    height: 30,
+    borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
     flexShrink: 0,
   },
-  iconText: {
-    fontSize: 15,
-    lineHeight: 18,
-  },
+  iconText: { fontSize: 14, lineHeight: 18 },
   value: {
-    fontSize: 36,
-    fontWeight: '900',
-    letterSpacing: -1,
-    lineHeight: 40,
+    ...typography.kpi,
+    letterSpacing: -0.5,
   },
   valueWeb: {
     fontVariantNumeric: 'tabular-nums',

@@ -82,7 +82,7 @@ import { CompanySidebar } from '../components/company/CompanySidebar';
 import { CompanyWeeklyApprovalsScreen } from './CompanyWeeklyApprovalsScreen';
 import { Card } from '../components/ui/Card';
 import { KpiCard, KpiTone } from '../components/ui/KpiCard';
-import { colors } from '../theme';
+import { brand, colors } from '../theme';
 
 const IS_WEB = typeof document !== 'undefined';
 
@@ -5192,7 +5192,7 @@ export function CompanyDashboardScreen(_props: CompanyDashboardScreenProps = {})
         <CompanySidebar
           title="Company Operations"
           brandLogo={require('../../assets/icon.png')}
-          subtitle="S4 Security"
+          subtitle={brand.appName}
           description="Clients, sites, rota planning, and live shift monitoring in one control room."
           activeId={activeSection}
           navItems={NAV_ITEMS}
@@ -5217,7 +5217,7 @@ export function CompanyDashboardScreen(_props: CompanyDashboardScreenProps = {})
                   source={require('../../assets/icon.png')}
                   style={styles.headerBrandLogo}
                   resizeMode="contain"
-                  accessibilityLabel="S4 Security"
+                  accessibilityLabel={brand.appName}
                 />
                 <Text style={styles.eyebrow}>Operations Console</Text>
               </View>
