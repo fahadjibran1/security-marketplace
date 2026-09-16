@@ -1,5 +1,5 @@
 ﻿import * as React from 'react';
-import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, useWindowDimensions, View } from 'react-native';
+import { ActivityIndicator, Image, Modal, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, useWindowDimensions, View } from 'react-native';
 
 import { CompanyAuditWorkspace } from '../components/company/CompanyAuditWorkspace';
 import { CompanyAnalyticsWorkspace } from '../components/company/CompanyAnalyticsWorkspace';
@@ -79,10 +79,12 @@ import {
   CompanyGuardEmploymentSummary,
 } from '../types/models';
 import { CompanySidebar } from '../components/company/CompanySidebar';
+import { CompanyTopBar } from '../components/company/CompanyTopBar';
 import { CompanyWeeklyApprovalsScreen } from './CompanyWeeklyApprovalsScreen';
 import { Card } from '../components/ui/Card';
 import { KpiCard, KpiTone } from '../components/ui/KpiCard';
-import { brand, colors } from '../theme';
+import { PageHeader } from '../components/ui/PageHeader';
+import { brand, colors, spacing } from '../theme';
 
 const IS_WEB = typeof document !== 'undefined';
 
@@ -257,29 +259,29 @@ const NAV_ITEMS: NavItem[] = [
 
 const COMPANY_NAV_GROUPS: Array<{ id: string; title: string; itemIds: CompanySection[] }> = [
   {
+    id: 'primary',
+    title: 'Primary',
+    itemIds: ['dashboard', 'live-operations'],
+  },
+  {
     id: 'operations',
     title: 'Operations',
-    itemIds: ['dashboard', 'live-operations', 'sites', 'clients', 'rota-planner', 'shift-offers', 'coverage', 'analytics'],
+    itemIds: ['sites', 'clients', 'rota-planner', 'shift-offers', 'guards'],
   },
   {
     id: 'workforce',
     title: 'Workforce',
-    itemIds: ['guards', 'availability', 'recruitment'],
+    itemIds: ['compliance', 'availability', 'timesheets', 'weekly-approvals'],
   },
   {
-    id: 'timesheets-pay',
-    title: 'Timesheets & Pay',
-    itemIds: ['timesheets', 'weekly-approvals', 'payroll', 'payroll-batches', 'pay-rules'],
+    id: 'commercial',
+    title: 'Commercial',
+    itemIds: ['payroll', 'payroll-batches', 'invoices', 'finance', 'finance-control', 'margins', 'contract-pricing', 'pay-rules'],
   },
   {
-    id: 'billing-finance',
-    title: 'Billing & Finance',
-    itemIds: ['invoices', 'finance', 'finance-control', 'margins', 'contract-pricing'],
-  },
-  {
-    id: 'risk-compliance',
-    title: 'Risk & Compliance',
-    itemIds: ['compliance', 'audit', 'incidents', 'alerts'],
+    id: 'management',
+    title: 'Management',
+    itemIds: ['coverage', 'analytics', 'incidents', 'alerts', 'audit', 'recruitment'],
   },
 ];
 
@@ -1091,14 +1093,32 @@ function ControlledTimeInput({
 
 type CompanyDashboardScreenProps = {
   user?: AuthUser;
+  onLogout?: () => void;
 };
 
 /** Native phones below this width show a pilot message instead of the desktop company workspace. */
 const COMPANY_NATIVE_MIN_WIDTH = 768;
 
-export function CompanyDashboardScreen(_props: CompanyDashboardScreenProps = {}) {
+export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScreenProps = {}) {
   const { width: layoutWidth } = useWindowDimensions();
   const companyMobileLayoutDisabled = !IS_WEB && layoutWidth < COMPANY_NATIVE_MIN_WIDTH;
+
+  // ── Responsive breakpoints ────────────────────────────────────────────────
+  const isTablet   = layoutWidth >= 768  && layoutWidth < 1024;
+  const isMobileW  = layoutWidth < 768;
+  const isOverlayNav = isTablet || isMobileW;
+
+  // ── Shell state ───────────────────────────────────────────────────────────
+  // Laptop (1024–1279) defaults to collapsed; desktop (≥1280) defaults expanded.
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = React.useState(
+    layoutWidth >= 1024 && layoutWidth < 1280,
+  );
+  const [isMobileNavOpen, setIsMobileNavOpen] = React.useState(false);
+
+  // Close overlay nav when viewport grows past tablet breakpoint.
+  React.useEffect(() => {
+    if (!isOverlayNav) setIsMobileNavOpen(false);
+  }, [isOverlayNav]);
   const contentScrollRef = React.useRef<{ scrollTo: (options: { y: number; animated: boolean }) => void } | null>(null);
 
   const [activeSection, setActiveSection] = React.useState<CompanySection>('dashboard');
@@ -5169,8 +5189,13 @@ export function CompanyDashboardScreen(_props: CompanyDashboardScreenProps = {})
       <View style={styles.companyMobileFallback}>
         <Text style={styles.companyMobileFallbackTitle}>Company operations</Text>
         <Text style={styles.companyMobileFallbackBody}>
-          The company dashboard is designed for tablet or desktop screens. For pilot testing, please open this app in a web browser on a larger display, or use a device at least {COMPANY_NATIVE_MIN_WIDTH}dp wide. Log out here if you need to switch accounts.
+          The company dashboard is designed for tablet or desktop screens. For pilot testing, please open this app in a web browser on a larger display, or use a device at least {COMPANY_NATIVE_MIN_WIDTH}dp wide.
         </Text>
+        {onLogout ? (
+          <Pressable onPress={onLogout} accessibilityRole="button" style={{ marginTop: 20 }}>
+            <Text style={styles.companyMobileFallbackLogout}>Log out</Text>
+          </Pressable>
+        ) : null}
       </View>
     );
   }
@@ -5184,69 +5209,83 @@ export function CompanyDashboardScreen(_props: CompanyDashboardScreenProps = {})
   }
 
   const activeNavItem = NAV_ITEMS.find((item) => item.id === activeSection);
-  const headerContextCaption = activeNavItem?.caption;
+
+  const handleNavigate = (section: CompanySection) => {
+    if (section === 'coverage') setCoverageNavigationContext(undefined);
+    setActiveSection(section);
+  };
 
   return (
     <View style={styles.screen}>
-      <View style={styles.sidebarShell}>
-        <CompanySidebar
-          title="Company Operations"
-          brandLogo={require('../../assets/icon.png')}
-          subtitle={brand.appName}
-          description="Clients, sites, rota planning, and live shift monitoring in one control room."
-          activeId={activeSection}
-          navItems={NAV_ITEMS}
-          groups={COMPANY_NAV_GROUPS}
-          onNavigate={(section) => {
-            if (section === 'coverage') setCoverageNavigationContext(undefined);
-            setActiveSection(section);
-          }}
-        />
-      </View>
+      {/* ── Overlay nav (tablet / mobile web) ─────────────────────────────── */}
+      {isOverlayNav && isMobileNavOpen ? (
+        <Modal
+          visible
+          transparent
+          animationType="fade"
+          onRequestClose={() => setIsMobileNavOpen(false)}
+          statusBarTranslucent
+        >
+          <View style={styles.navOverlay}>
+            <Pressable
+              style={styles.navBackdrop}
+              onPress={() => setIsMobileNavOpen(false)}
+              accessibilityLabel="Close navigation"
+              accessibilityRole="button"
+            />
+            <View style={styles.navPanel}>
+              <CompanySidebar
+                activeId={activeSection}
+                navItems={NAV_ITEMS}
+                groups={COMPANY_NAV_GROUPS}
+                onNavigate={(section) => {
+                  handleNavigate(section);
+                  setIsMobileNavOpen(false);
+                }}
+              />
+            </View>
+          </View>
+        </Modal>
+      ) : null}
 
+      {/* ── Permanent sidebar (desktop / laptop) ──────────────────────────── */}
+      {!isOverlayNav ? (
+        <View style={[styles.sidebarShell, isSidebarCollapsed && styles.sidebarShellCollapsed]}>
+          <CompanySidebar
+            activeId={activeSection}
+            navItems={NAV_ITEMS}
+            groups={COMPANY_NAV_GROUPS}
+            collapsed={isSidebarCollapsed}
+            onToggleCollapse={() => setIsSidebarCollapsed((c) => !c)}
+            onNavigate={handleNavigate}
+          />
+        </View>
+      ) : null}
+
+      {/* ── Content shell ─────────────────────────────────────────────────── */}
       <View style={styles.contentShell}>
+        <CompanyTopBar
+          pageTitle={activeNavItem?.label ?? 'Dashboard'}
+          userEmail={user?.email ?? ''}
+          onMenuAction={
+            isOverlayNav
+              ? () => setIsMobileNavOpen((o) => !o)
+              : () => setIsSidebarCollapsed((c) => !c)
+          }
+          refreshing={refreshing}
+          onRefresh={() => loadData(true)}
+          onLogout={() => onLogout?.()}
+        />
+
         <ScrollView
           ref={contentScrollRef}
           style={styles.content}
-          contentContainerStyle={[styles.contentContainer, IS_WEB ? styles.contentContainerWeb : null]}
+          contentContainerStyle={styles.contentContainer}
         >
-          <View style={[styles.header, IS_WEB ? styles.headerWeb : null]}>
-            <View style={styles.headerLeft}>
-              <View style={styles.headerBrandRow}>
-                <Image
-                  source={require('../../assets/icon.png')}
-                  style={styles.headerBrandLogo}
-                  resizeMode="contain"
-                  accessibilityLabel={brand.appName}
-                />
-                <Text style={styles.eyebrow}>Operations Console</Text>
-              </View>
-              <Text style={[styles.headerTitle, IS_WEB ? styles.headerTitleWeb : null]}>
-                {activeNavItem?.label || 'Company Dashboard'}
-              </Text>
-              {headerContextCaption ? (
-                <Text style={styles.headerContext} numberOfLines={2}>
-                  {headerContextCaption}
-                </Text>
-              ) : null}
-            </View>
-            <View style={styles.headerActions}>
-              <Pressable
-                onPress={() => loadData(true)}
-                style={({ hovered, pressed }: any) => [
-                  styles.secondaryButton,
-                  IS_WEB ? styles.headerRefreshButton : null,
-                  IS_WEB && hovered ? styles.headerRefreshButtonHover : null,
-                  IS_WEB && pressed ? styles.headerRefreshButtonPressed : null,
-                  WEB_POINTER_STYLE,
-                ]}
-              >
-                <Text style={[styles.secondaryButtonText, IS_WEB ? styles.headerRefreshButtonText : null]}>
-                  {refreshing ? 'Refreshing...' : 'Refresh Data'}
-                </Text>
-              </Pressable>
-            </View>
-          </View>
+          <PageHeader
+            title={activeNavItem?.label ?? 'Dashboard'}
+            description={activeNavItem?.caption}
+          />
 
           {error ? (
             <View style={styles.errorCard}>
@@ -5281,14 +5320,21 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     minHeight: 0,
   },
+  // ── Permanent sidebar ─────────────────────────────────────────────────────
   sidebarShell: {
-    width: 310,
+    width: 228,
     backgroundColor: colors.primaryNavy,
     overflow: 'hidden',
     minHeight: 0,
+    flexShrink: 0,
   },
+  sidebarShellCollapsed: {
+    width: 64,
+  },
+  // ── Content column ────────────────────────────────────────────────────────
   contentShell: {
     flex: 1,
+    flexDirection: 'column',
     overflow: 'hidden',
     minHeight: 0,
   },
@@ -5296,19 +5342,33 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   contentContainer: {
-    paddingVertical: 28,
-    paddingHorizontal: 18,
-    gap: 26,
+    paddingHorizontal: spacing.xl,
+    paddingTop: spacing.xl,
+    paddingBottom: spacing.xxxl,
+    gap: spacing.xl,
   },
-  contentContainerWeb: {
-    paddingHorizontal: 32,
-    paddingTop: 30,
-    paddingBottom: 36,
-    gap: 30,
-    maxWidth: 1280,
-    width: '100%',
-    alignSelf: 'center',
-  } as any,
+  // ── Overlay nav (tablet / mobile) ─────────────────────────────────────────
+  navOverlay: {
+    flex: 1,
+    flexDirection: 'row',
+    backgroundColor: 'rgba(11, 31, 51, 0.55)',
+  },
+  navBackdrop: {
+    flex: 1,
+  },
+  navPanel: {
+    width: 280,
+    backgroundColor: colors.primaryNavy,
+    overflow: 'hidden',
+  },
+  // ── Mobile fallback (native < 768dp) ──────────────────────────────────────
+  companyMobileFallbackLogout: {
+    color: colors.accentTeal,
+    fontSize: 14,
+    fontWeight: '700',
+    textDecorationLine: 'underline',
+  },
+  // ── Header styles preserved for internal section components ──────────────
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
