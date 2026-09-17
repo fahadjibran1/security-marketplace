@@ -184,6 +184,20 @@ function fmtStatus(value?: string | null): string {
   return value.replace(/_/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase());
 }
 
+function fmtActivityType(eventType: string): string {
+  switch (eventType) {
+    case 'check_call':         return 'Check call';
+    case 'incident_reported':  return 'Incident reported';
+    case 'booked_on':          return 'Guard booked on';
+    case 'booked_off':         return 'Guard booked off';
+    case 'welfare_check':      return 'Welfare check';
+    case 'panic_triggered':    return 'Panic alarm';
+    case 'shift_started':      return 'Shift started';
+    case 'shift_ended':        return 'Shift ended';
+    default:                   return fmtStatus(eventType);
+  }
+}
+
 function fmtDate(value?: string | null): string {
   if (!value) return 'Not set';
   const match = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -809,7 +823,9 @@ function LiveOpsAttentionRail({
   );
 }
 
-// ─── LiveOpsActivityFeed ──────────────────────────────────────────────────────
+// ─── LiveOpsSnapshotStrip ─────────────────────────────────────────────────────
+
+const NEXT60_MAX = 4;
 
 function LiveOpsActivityFeed({
   uncoveredShiftCount,
@@ -822,56 +838,124 @@ function LiveOpsActivityFeed({
   liveOperationEnrichedRows: LiveBoardRow[];
   onOpenCoverage: (context?: { uncoveredOnly?: boolean; shiftId?: number }) => void;
 }) {
-  const startingSoon = React.useMemo(() => {
+  const totalShifts = liveOperationEnrichedRows.length;
+  const uncoveredRows = liveOperationEnrichedRows.filter((r) => r.lifecycleStatus === 'unfilled').length;
+  const coveredRows = totalShifts - uncoveredRows;
+
+  const next60 = React.useMemo(() => {
     const now = Date.now();
-    return liveOperationEnrichedRows.filter((r) => {
-      if (!['ready', 'offered'].includes(r.lifecycleStatus)) return false;
-      const start = r.shift.start != null ? new Date(r.shift.start).getTime() : null;
-      return start !== null && !isNaN(start) && start > now && start - now < 30 * 60 * 1000;
-    }).length;
+    const horizon = now + 60 * 60_000;
+    const items: Array<{ kind: 'starting' | 'ending'; at: number; shift: Shift }> = [];
+
+    for (const row of liveOperationEnrichedRows) {
+      if (['cancelled', 'completed'].includes(row.lifecycleStatus)) continue;
+      const startMs = row.shift.start ? new Date(row.shift.start).getTime() : null;
+      const endMs   = row.shift.end   ? new Date(row.shift.end).getTime()   : null;
+
+      if (!['in_progress', 'completed', 'cancelled', 'missed'].includes(row.lifecycleStatus)) {
+        if (startMs !== null && !isNaN(startMs) && startMs >= now && startMs <= horizon) {
+          items.push({ kind: 'starting', at: startMs, shift: row.shift });
+        }
+      }
+      if (row.lifecycleStatus === 'in_progress') {
+        if (endMs !== null && !isNaN(endMs) && endMs >= now && endMs <= horizon) {
+          items.push({ kind: 'ending', at: endMs, shift: row.shift });
+        }
+      }
+    }
+    items.sort((a, b) => a.at - b.at);
+    return items;
   }, [liveOperationEnrichedRows]);
+
+  const recentSlice = recentOperationalActivity.slice(0, 5);
 
   return (
     <View style={styles.lowerStrip}>
-      {/* Coverage snapshot */}
-      <View style={styles.lowerPanel}>
+
+      {/* ── Coverage ─────────────────────────────────────────────────────── */}
+      <View style={[styles.lowerPanel, styles.lowerPanelCoverage]}>
         <Text style={styles.lowerPanelTitle}>Coverage</Text>
-        {uncoveredShiftCount > 0 ? (
+        {totalShifts > 0 ? (
+          <Text style={styles.lowerCoverLine}>
+            <Text style={styles.lowerCoverNum}>{coveredRows}</Text>
+            <Text style={styles.lowerCoverOf}> / {totalShifts}</Text>
+            <Text style={styles.lowerCoverLabel}> covered</Text>
+          </Text>
+        ) : null}
+        {uncoveredRows > 0 ? (
           <>
             <Text style={styles.lowerPanelStat}>
-              <Text style={styles.lowerPanelStatValue}>{uncoveredShiftCount}</Text>
-              {' '}shift{uncoveredShiftCount !== 1 ? 's' : ''} unfilled
+              <Text style={styles.lowerPanelStatValue}>{uncoveredRows}</Text>
+              {' '}require cover
             </Text>
             <Pressable
               style={[styles.lowerPanelCta, IS_WEB ? (WEB_PTR as any) : null]}
               onPress={() => onOpenCoverage({ uncoveredOnly: true })}
             >
-              <Text style={styles.lowerPanelCtaText}>Manage →</Text>
+              <Text style={styles.lowerPanelCtaText}>Manage coverage →</Text>
             </Pressable>
           </>
         ) : (
-          <Text style={styles.lowerPanelGood}>All covered</Text>
+          totalShifts > 0 ? <Text style={styles.lowerPanelGood}>All covered</Text> : null
         )}
-        {startingSoon > 0 ? (
-          <Text style={styles.lowerPanelHint}>{startingSoon} starting in 30 min</Text>
-        ) : null}
       </View>
-      {/* Operational activity feed */}
+
+      {/* ── Recent Activity ───────────────────────────────────────────────── */}
       <View style={[styles.lowerPanel, styles.lowerPanelActivity]}>
         <Text style={styles.lowerPanelTitle}>Recent Activity</Text>
-        {recentOperationalActivity.length === 0 ? (
-          <Text style={styles.lowerPanelGood}>No recent events</Text>
+        {recentSlice.length === 0 ? (
+          <Text style={styles.lowerPanelCalm}>No recent events</Text>
         ) : (
-          recentOperationalActivity.slice(0, 5).map((a) => (
-            <View key={a.id} style={styles.activityItem}>
+          recentSlice.map((a, idx) => (
+            <View
+              key={a.id}
+              style={[styles.activityItem, idx < recentSlice.length - 1 ? styles.activityItemDivider : null]}
+            >
               <Text style={styles.activityItemTime}>{fmtTime(a.occurredAt)}</Text>
-              <Text style={styles.activityItemText} numberOfLines={1}>
-                {fmtStatus(a.eventType)} · {a.siteName}
-              </Text>
+              <View style={styles.activityItemBody}>
+                <Text style={styles.activityItemEvent} numberOfLines={1}>{fmtActivityType(a.eventType)}</Text>
+                <Text style={styles.activityItemSite} numberOfLines={1}>{a.siteName}</Text>
+              </View>
             </View>
           ))
         )}
       </View>
+
+      {/* ── Next 60 Min ───────────────────────────────────────────────────── */}
+      <View style={[styles.lowerPanel, styles.lowerPanelNext60]}>
+        <Text style={styles.lowerPanelTitle}>Next 60 Min</Text>
+        {next60.length === 0 ? (
+          <Text style={styles.lowerPanelCalm}>No shift changes in the next 60 min.</Text>
+        ) : (
+          <>
+            {next60.slice(0, NEXT60_MAX).map((item, idx) => (
+              <View
+                key={`${item.kind}-${item.shift.id}`}
+                style={[styles.next60Item, idx < Math.min(next60.length, NEXT60_MAX) - 1 ? styles.next60ItemDivider : null]}
+              >
+                <View style={styles.next60Head}>
+                  <View style={[styles.next60KindChip, item.kind === 'starting' ? styles.next60KindStart : styles.next60KindEnd]}>
+                    <Text style={[styles.next60KindText, item.kind === 'starting' ? styles.next60KindTextStart : styles.next60KindTextEnd]}>
+                      {item.kind === 'starting' ? 'Starting' : 'Ending'}
+                    </Text>
+                  </View>
+                  <Text style={styles.next60Time}>{fmtTime(new Date(item.at).toISOString())}</Text>
+                </View>
+                <Text style={styles.next60Site} numberOfLines={1}>
+                  {item.shift.site?.name || item.shift.siteName || 'Unknown'}
+                </Text>
+                <Text style={styles.next60Guard} numberOfLines={1}>
+                  {item.shift.guard?.fullName || 'Unassigned'}
+                </Text>
+              </View>
+            ))}
+            {next60.length > NEXT60_MAX ? (
+              <Text style={styles.next60More}>+ {next60.length - NEXT60_MAX} more</Text>
+            ) : null}
+          </>
+        )}
+      </View>
+
     </View>
   );
 }
@@ -1663,9 +1747,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: spacing.sm,
     flexShrink: 0,
+    ...(IS_WEB ? { flexWrap: 'wrap' as any } : {}),
   },
   lowerPanel: {
-    flex: 1,
     borderRadius: radii.card,
     borderWidth: 1,
     borderColor: colors.border,
@@ -1674,8 +1758,17 @@ const styles = StyleSheet.create({
     gap: 4,
     minHeight: 72,
   },
+  lowerPanelCoverage: {
+    flex: IS_WEB ? 5 : 1,
+    ...(IS_WEB ? { minWidth: 160 } : {}),
+  },
   lowerPanelActivity: {
-    flex: 3,
+    flex: IS_WEB ? 9 : 1,
+    ...(IS_WEB ? { minWidth: 220 } : {}),
+  },
+  lowerPanelNext60: {
+    flex: IS_WEB ? 6 : 1,
+    ...(IS_WEB ? { minWidth: 180 } : {}),
   },
   lowerPanelTitle: {
     fontSize: 11,
@@ -1685,12 +1778,30 @@ const styles = StyleSheet.create({
     letterSpacing: 0.7,
     marginBottom: 4,
   },
+  lowerCoverLine: {
+    fontSize: 12,
+    color: colors.textPrimary,
+  },
+  lowerCoverNum: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: colors.accentTeal,
+  },
+  lowerCoverOf: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: colors.textSecondary,
+  },
+  lowerCoverLabel: {
+    fontSize: 12,
+    color: colors.textSecondary,
+  },
   lowerPanelStat: {
     fontSize: 12,
     color: colors.textPrimary,
   },
   lowerPanelStatValue: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '700',
     color: colors.warning,
   },
@@ -1708,15 +1819,22 @@ const styles = StyleSheet.create({
     color: colors.success,
     fontWeight: '500',
   },
-  lowerPanelHint: {
-    fontSize: 10,
-    color: colors.textMuted,
-    marginTop: 2,
+  lowerPanelCalm: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    fontStyle: 'italic',
   },
   activityItem: {
     flexDirection: 'row',
     gap: spacing.xs,
     alignItems: 'flex-start',
+    paddingVertical: 3,
+  },
+  activityItemDivider: {
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    paddingBottom: 4,
+    marginBottom: 1,
   },
   activityItemTime: {
     fontSize: 10,
@@ -1724,12 +1842,89 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     width: 36,
     flexShrink: 0,
+    paddingTop: 1,
   },
-  activityItemText: {
+  activityItemBody: {
+    flex: 1,
+    gap: 1,
+  },
+  activityItemEvent: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: colors.textPrimary,
+    lineHeight: 16,
+  },
+  activityItemSite: {
     fontSize: 11,
     color: colors.textSecondary,
-    flex: 1,
-    lineHeight: 16,
+    lineHeight: 15,
+  },
+
+  // ── Next 60 Min ───────────────────────────────────────────────────────────
+  next60Item: {
+    paddingVertical: 4,
+    gap: 1,
+  },
+  next60ItemDivider: {
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    paddingBottom: 5,
+    marginBottom: 2,
+  },
+  next60Head: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 1,
+  },
+  next60KindChip: {
+    borderRadius: 3,
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderWidth: 1,
+  },
+  next60KindStart: {
+    borderColor: colors.accentTeal,
+    backgroundColor: `${colors.accentTeal}14`,
+  },
+  next60KindEnd: {
+    borderColor: colors.textMuted,
+    backgroundColor: colors.surfaceSubtle,
+  },
+  next60KindText: {
+    fontSize: 9,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+    textTransform: 'uppercase',
+  },
+  next60KindTextStart: {
+    color: colors.accentTeal,
+  },
+  next60KindTextEnd: {
+    color: colors.textSecondary,
+  },
+  next60Time: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.textPrimary,
+    letterSpacing: -0.2,
+  },
+  next60Site: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: colors.textPrimary,
+    lineHeight: 15,
+  },
+  next60Guard: {
+    fontSize: 10,
+    color: colors.textSecondary,
+    lineHeight: 14,
+  },
+  next60More: {
+    fontSize: 10,
+    fontWeight: '500',
+    color: colors.textMuted,
+    marginTop: 3,
   },
 
   // ── Shift detail panel ────────────────────────────────────────────────────
