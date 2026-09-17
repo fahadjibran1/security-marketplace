@@ -339,7 +339,7 @@ type TileTone = 'neutral' | 'warning' | 'attention' | 'aqua';
 function StatusTile({ count, label, tone }: { count: number; label: string; tone: TileTone }) {
   const t = SEV_COLORS[tone];
   return (
-    <View style={[styles.statusTile, { borderColor: t.border, backgroundColor: t.bg }]}>
+    <View style={[styles.statusTile, { backgroundColor: t.bg }]}>
       <Text style={[styles.statusTileValue, { color: t.value }]}>{count}</Text>
       <Text style={styles.statusTileLabel}>{label}</Text>
     </View>
@@ -351,14 +351,14 @@ function StatusTile({ count, label, tone }: { count: number; label: string; tone
 const BOARD_COL_HDR = ['Site', 'Guard', 'Time', 'On / Off', 'Status', 'Risk', 'Alerts', 'Action'] as const;
 
 const COL: any[] = [
-  { flex: 18, minWidth: 128 },
-  { flex: 12, minWidth: 100 },
-  { flex: 9,  minWidth: 80 },
-  { flex: 11, minWidth: 82 },
-  { flex: 8,  minWidth: 76 },
-  { flex: 9,  minWidth: 72 },
-  { flex: 5,  minWidth: 44 },
-  { flex: 10, minWidth: 96, flexShrink: 0 },
+  { flex: 18, minWidth: 128 },           // Site
+  { flex: 14, minWidth: 116 },           // Guard  — wider to avoid truncating longer names
+  { flex: 7,  minWidth: 72 },            // Time   — narrowed to recover space
+  { flex: 11, minWidth: 82 },            // On / Off
+  { flex: 8,  minWidth: 76 },            // Status
+  { flex: 9,  minWidth: 72 },            // Risk
+  { flex: 5,  minWidth: 44 },            // Alerts
+  { flex: 10, minWidth: 96, flexShrink: 0 }, // Action
 ];
 
 function BoardTableHeader() {
@@ -372,6 +372,14 @@ function BoardTableHeader() {
 }
 
 // ─── BoardRow ─────────────────────────────────────────────────────────────────
+
+// Maps rowTone (a computed bg hex) to a left-accent colour and a very subtle
+// bg tint, keeping healthy rows neutral and drawing the eye only to problems.
+function getRowAccent(rowTone: string): { leftColor: string | null; bgTint: string } {
+  if (rowTone === colors.dangerSurface)  return { leftColor: colors.danger,  bgTint: 'rgba(180,35,24,0.04)'  };
+  if (rowTone === colors.warningSurface) return { leftColor: colors.warning, bgTint: 'rgba(161,92,7,0.04)' };
+  return { leftColor: null, bgTint: colors.card };
+}
 
 function BoardRow({
   row,
@@ -388,13 +396,15 @@ function BoardRow({
 }) {
   const { shift, attendance, lifecycleStatus, risk, delay, likelyLate, siteRiskLabel, primaryActionLabel, rowTone, shiftIncidents, shiftAlerts, panicOrWelfareCount } = row;
   const badge = getStatusBadge(shift.status || 'unfilled');
+  const accent = getRowAccent(rowTone);
 
   return (
     <Pressable
       style={[
         styles.boardRow,
-        { backgroundColor: rowTone },
-        likelyLate ? styles.boardRowLikelyLate : null,
+        accent.leftColor
+          ? { backgroundColor: accent.bgTint, borderLeftWidth: 3, borderLeftColor: accent.leftColor }
+          : { backgroundColor: accent.bgTint },
         selected ? styles.boardRowSelected : null,
         highlighted ? styles.boardRowHighlighted : null,
         IS_WEB ? (WEB_PTR as any) : null,
@@ -654,13 +664,17 @@ export function CompanyLiveOperationsWorkspace({
         </View>
       ) : null}
 
-      {/* ── Status strip ────────────────────────────────────────────────── */}
+      {/* ── Status strip — single cohesive bar ──────────────────────────── */}
       <View style={styles.statusStrip}>
-        <StatusTile count={liveShiftsCount}           label="Live shifts"   tone={liveShiftsCount > 0 ? 'aqua' : 'neutral'} />
-        <StatusTile count={guardsNotBookedOnCount}    label="Not booked"    tone={guardsNotBookedOnCount > 0 ? 'warning' : 'neutral'} />
-        <StatusTile count={activePanicAlertsCount}    label="Panic"         tone={activePanicAlertsCount > 0 ? 'attention' : 'neutral'} />
-        <StatusTile count={openIncidentsCount}        label="Open incidents" tone={openIncidentsCount > 0 ? 'attention' : 'neutral'} />
-        <StatusTile count={missedCheckCallsCount}     label="Missed checks"  tone={missedCheckCallsCount > 0 ? 'warning' : 'neutral'} />
+        <StatusTile count={liveShiftsCount}        label="Live shifts"   tone={liveShiftsCount > 0 ? 'aqua' : 'neutral'} />
+        <View style={styles.statusStripDivider} />
+        <StatusTile count={guardsNotBookedOnCount} label="Not booked"    tone={guardsNotBookedOnCount > 0 ? 'warning' : 'neutral'} />
+        <View style={styles.statusStripDivider} />
+        <StatusTile count={activePanicAlertsCount} label="Panic"         tone={activePanicAlertsCount > 0 ? 'attention' : 'neutral'} />
+        <View style={styles.statusStripDivider} />
+        <StatusTile count={openIncidentsCount}     label="Incidents"     tone={openIncidentsCount > 0 ? 'attention' : 'neutral'} />
+        <View style={styles.statusStripDivider} />
+        <StatusTile count={missedCheckCallsCount}  label="Missed checks" tone={missedCheckCallsCount > 0 ? 'warning' : 'neutral'} />
       </View>
 
       {/* ── Filter bar ──────────────────────────────────────────────────── */}
@@ -997,22 +1011,29 @@ const styles = StyleSheet.create({
   feedbackTextSuccess: { color: colors.success },
   feedbackTextError: { color: colors.danger },
 
-  // Status strip
+  // Status strip — single cohesive operational bar
   statusStrip: {
     flexDirection: 'row',
-    gap: spacing.sm,
-    height: 72,
+    height: 56,
     flexShrink: 0,
+    borderRadius: radii.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+    overflow: 'hidden',
+    backgroundColor: colors.card,
+  },
+  statusStripDivider: {
+    width: 1,
+    backgroundColor: colors.border,
+    alignSelf: 'stretch',
   },
   statusTile: {
     flex: 1,
-    borderRadius: radii.card,
-    borderWidth: 1,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     justifyContent: 'center',
     alignItems: 'center',
-    gap: 3,
+    gap: 2,
   },
   statusTileValue: {
     fontSize: 22,
@@ -1113,7 +1134,7 @@ const styles = StyleSheet.create({
   },
   boardRow: {
     flexDirection: 'row',
-    minHeight: 42,
+    minHeight: 44,
     alignItems: 'center',
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
@@ -1289,7 +1310,7 @@ const styles = StyleSheet.create({
   },
   attentionItem: {
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+    paddingVertical: 9,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
   },
@@ -1408,7 +1429,7 @@ const styles = StyleSheet.create({
     minHeight: 88,
   },
   lowerPanelRight: {
-    flex: 1,
+    flex: 2,
   },
   lowerPanelTitle: {
     fontSize: 11,
@@ -1457,19 +1478,13 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   detailPanelEmpty: {
-    borderRadius: radii.card,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.card,
-    padding: spacing.lg,
-    alignItems: 'center',
+    height: 36,
+    paddingHorizontal: spacing.md,
     justifyContent: 'center',
-    minHeight: 60,
   },
   detailPanelEmptyText: {
-    fontSize: 13,
-    color: colors.textSecondary,
-    textAlign: 'center',
+    fontSize: 12,
+    color: colors.textMuted,
   },
 
   // Detail header
