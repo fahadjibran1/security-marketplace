@@ -349,11 +349,19 @@ const wSelectStyle = {
   flex: 1,
 } as const;
 
+// ─── MetricFocus ──────────────────────────────────────────────────────────────
+
+type MetricFocus = 'all' | 'live' | 'not-booked' | 'panic' | 'incidents' | 'missed-checks';
+
 // ─── LiveOpsStatusBar ─────────────────────────────────────────────────────────
 
 type StatusDotTone = 'aqua' | 'warning' | 'danger' | null;
 
-function StatusMetric({ value, label, tone }: { value: number; label: string; tone: StatusDotTone }) {
+function StatusMetric({
+  value, label, tone, active, onPress,
+}: {
+  value: number; label: string; tone: StatusDotTone; active: boolean; onPress: () => void;
+}) {
   const dotColor =
     tone === 'aqua'    ? colors.accentAqua :
     tone === 'warning' ? colors.warning :
@@ -364,14 +372,22 @@ function StatusMetric({ value, label, tone }: { value: number; label: string; to
     tone === 'warning' ? colors.warning :
     tone === 'danger'  ? colors.danger :
     colors.textPrimary;
+  const activeBg =
+    active && tone === 'aqua'    ? `${colors.accentAqua}18` :
+    active && tone === 'warning' ? `${colors.warning}18` :
+    active && tone === 'danger'  ? `${colors.danger}18` :
+    undefined;
   return (
-    <View style={styles.statusMetric}>
+    <Pressable
+      style={[styles.statusMetric, activeBg ? { backgroundColor: activeBg } : null, IS_WEB ? (WEB_PTR as any) : null]}
+      onPress={onPress}
+    >
       <View style={styles.statusMetricRow}>
         <View style={[styles.statusDot, { backgroundColor: dotColor }]} />
         <Text style={[styles.statusMetricValue, { color: valueColor }]}>{value}</Text>
       </View>
       <Text style={styles.statusMetricLabel}>{label}</Text>
-    </View>
+    </Pressable>
   );
 }
 
@@ -381,24 +397,47 @@ function LiveOpsStatusBar({
   activePanicAlertsCount,
   openIncidentsCount,
   missedCheckCallsCount,
+  metricFocus,
+  onMetricPress,
 }: {
   liveShiftsCount: number;
   guardsNotBookedOnCount: number;
   activePanicAlertsCount: number;
   openIncidentsCount: number;
   missedCheckCallsCount: number;
+  metricFocus: MetricFocus;
+  onMetricPress: (f: MetricFocus) => void;
 }) {
   return (
     <View style={styles.statusBar}>
-      <StatusMetric value={liveShiftsCount}        label="Live shifts"    tone={liveShiftsCount > 0        ? 'aqua'    : null} />
+      <StatusMetric value={liveShiftsCount}        label="Live shifts"    tone={liveShiftsCount > 0        ? 'aqua'    : null} active={metricFocus === 'live'}          onPress={() => onMetricPress('live')} />
       <View style={styles.statusBarSep} />
-      <StatusMetric value={guardsNotBookedOnCount} label="Not booked on"  tone={guardsNotBookedOnCount > 0 ? 'warning' : null} />
+      <StatusMetric value={guardsNotBookedOnCount} label="Not booked on"  tone={guardsNotBookedOnCount > 0 ? 'warning' : null} active={metricFocus === 'not-booked'}    onPress={() => onMetricPress('not-booked')} />
       <View style={styles.statusBarSep} />
-      <StatusMetric value={activePanicAlertsCount} label="Panic alerts"   tone={activePanicAlertsCount > 0 ? 'danger'  : null} />
+      <StatusMetric value={activePanicAlertsCount} label="Panic alerts"   tone={activePanicAlertsCount > 0 ? 'danger'  : null} active={metricFocus === 'panic'}         onPress={() => onMetricPress('panic')} />
       <View style={styles.statusBarSep} />
-      <StatusMetric value={openIncidentsCount}     label="Open incidents" tone={openIncidentsCount > 0     ? 'danger'  : null} />
+      <StatusMetric value={openIncidentsCount}     label="Open incidents" tone={openIncidentsCount > 0     ? 'danger'  : null} active={metricFocus === 'incidents'}     onPress={() => onMetricPress('incidents')} />
       <View style={styles.statusBarSep} />
-      <StatusMetric value={missedCheckCallsCount}  label="Missed checks"  tone={missedCheckCallsCount > 0  ? 'warning' : null} />
+      <StatusMetric value={missedCheckCallsCount}  label="Missed checks"  tone={missedCheckCallsCount > 0  ? 'warning' : null} active={metricFocus === 'missed-checks'} onPress={() => onMetricPress('missed-checks')} />
+    </View>
+  );
+}
+
+// ─── MetricFocusHint ──────────────────────────────────────────────────────────
+
+const METRIC_FOCUS_LABELS: Record<MetricFocus, string> = {
+  'all': '', 'live': 'Live shifts', 'not-booked': 'Not booked on',
+  'panic': 'Panic alerts', 'incidents': 'Open incidents', 'missed-checks': 'Missed checks',
+};
+
+function MetricFocusHint({ metricFocus, onClear }: { metricFocus: MetricFocus; onClear: () => void }) {
+  if (metricFocus === 'all') return null;
+  return (
+    <View style={styles.metricFocusHint}>
+      <Text style={styles.metricFocusHintText}>Showing: {METRIC_FOCUS_LABELS[metricFocus]}</Text>
+      <Pressable style={[styles.metricFocusHintClear, IS_WEB ? (WEB_PTR as any) : null]} onPress={onClear}>
+        <Text style={styles.metricFocusHintClearText}>Clear ×</Text>
+      </Pressable>
     </View>
   );
 }
@@ -546,41 +585,65 @@ function LiveOpsOperationsBoard({
   rows,
   selectedShiftId,
   highlightedLiveShiftId,
+  metricFocus,
   onSelectRow,
   onAction,
+  onClearMetricFocus,
 }: {
   rows: LiveBoardRow[];
   selectedShiftId: number | null;
   highlightedLiveShiftId: number | null;
+  metricFocus: MetricFocus;
   onSelectRow: (id: number) => void;
   onAction: (shift: Shift) => void;
+  onClearMetricFocus: () => void;
 }) {
   return (
     <View style={styles.boardColumn}>
-      <View style={styles.boardPanelHeader}>
+      <View style={[styles.boardPanelHeader, styles.boardPanelHeaderBg]}>
         <Text style={styles.panelTitle}>Current Operations</Text>
         <Text style={styles.panelCount}>{rows.length} shift{rows.length !== 1 ? 's' : ''}</Text>
       </View>
       {rows.length === 0 ? (
         <View style={styles.boardEmpty}>
-          <Text style={styles.boardEmptyTitle}>No shifts match these filters</Text>
-          <Text style={styles.boardEmptyDesc}>Broaden filters or refresh to see live data.</Text>
+          <Text style={styles.boardEmptyTitle}>
+            {metricFocus !== 'all' ? 'No operations match this view' : 'No shifts match these filters'}
+          </Text>
+          {metricFocus !== 'all' ? (
+            <Pressable style={[styles.boardEmptyClearBtn, IS_WEB ? (WEB_PTR as any) : null]} onPress={onClearMetricFocus}>
+              <Text style={styles.boardEmptyClearText}>Clear metric filter</Text>
+            </Pressable>
+          ) : (
+            <Text style={styles.boardEmptyDesc}>Broaden filters or refresh to see live data.</Text>
+          )}
         </View>
       ) : (
-        <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator={false} style={styles.boardHScroll}>
+        <ScrollView
+          horizontal
+          nestedScrollEnabled
+          showsHorizontalScrollIndicator={false}
+          style={styles.boardHScroll}
+          contentContainerStyle={styles.boardHScrollContent}
+        >
           <View style={styles.boardTable}>
             <BoardTableHeader />
-            {rows.map((row) => (
-              <Fragment key={row.shift.id}>
-                <BoardRow
-                  row={row}
-                  selected={selectedShiftId === row.shift.id}
-                  highlighted={highlightedLiveShiftId === row.shift.id}
-                  onPress={() => onSelectRow(row.shift.id)}
-                  onAction={onAction}
-                />
-              </Fragment>
-            ))}
+            <ScrollView
+              nestedScrollEnabled
+              showsVerticalScrollIndicator={IS_WEB}
+              style={IS_WEB ? [styles.boardBodyScroll, { scrollbarWidth: 'thin' } as any] : styles.boardBodyScroll}
+            >
+              {rows.map((row) => (
+                <Fragment key={row.shift.id}>
+                  <BoardRow
+                    row={row}
+                    selected={selectedShiftId === row.shift.id}
+                    highlighted={highlightedLiveShiftId === row.shift.id}
+                    onPress={() => onSelectRow(row.shift.id)}
+                    onAction={onAction}
+                  />
+                </Fragment>
+              ))}
+            </ScrollView>
           </View>
         </ScrollView>
       )}
@@ -688,27 +751,27 @@ function AttentionItem({
 // ─── LiveOpsAttentionRail ─────────────────────────────────────────────────────
 
 function LiveOpsAttentionRail({
-  urgentOperationalItems,
+  items,
+  metricFocus,
   urgentActionItemId,
   onOpenUrgentDetail,
   onOpenUrgentShift,
   onUrgentIncidentFollowUp,
   onUrgentAlertFollowUp,
 }: {
-  urgentOperationalItems: UrgentOperationalItem[];
+  items: UrgentOperationalItem[];
+  metricFocus: MetricFocus;
   urgentActionItemId: string | null;
   onOpenUrgentDetail: (item: UrgentOperationalItem) => void;
   onOpenUrgentShift: (item: UrgentOperationalItem) => void;
   onUrgentIncidentFollowUp: (item: UrgentOperationalItem, status: 'in_review' | 'resolved') => Promise<void>;
   onUrgentAlertFollowUp: (item: UrgentOperationalItem, action: 'acknowledge' | 'close') => Promise<void>;
 }) {
-  const [expanded, setExpanded] = React.useState(false);
-  const visible = expanded ? urgentOperationalItems : urgentOperationalItems.slice(0, 4);
-  const total = urgentOperationalItems.length;
+  const total = items.length;
 
   return (
     <View style={styles.attentionColumn}>
-      <View style={styles.attentionPanelHeader}>
+      <View style={[styles.attentionPanelHeader, styles.attentionPanelHeaderBg]}>
         <Text style={styles.panelTitle}>Attention Now</Text>
         {total > 0 ? (
           <View style={styles.attentionCountBadge}>
@@ -716,38 +779,30 @@ function LiveOpsAttentionRail({
           </View>
         ) : null}
       </View>
-      <ScrollView style={styles.attentionScroll} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={styles.attentionScroll}
+        showsVerticalScrollIndicator={IS_WEB}
+        nestedScrollEnabled
+      >
         {total === 0 ? (
           <View style={styles.attentionEmpty}>
-            <Text style={styles.attentionEmptyTitle}>Queue clear</Text>
-            <Text style={styles.attentionEmptyDesc}>No urgent operational items right now.</Text>
+            <Text style={styles.attentionEmptyTitle}>{metricFocus !== 'all' ? 'No items match' : 'Queue clear'}</Text>
+            <Text style={styles.attentionEmptyDesc}>{metricFocus !== 'all' ? 'No items match this view.' : 'No urgent operational items right now.'}</Text>
           </View>
         ) : (
-          <>
-            {visible.map((item, idx) => (
-              <Fragment key={item.id}>
-                <AttentionItem
-                  item={item}
-                  isLast={idx === visible.length - 1 && (!expanded || idx === total - 1)}
-                  urgentActionItemId={urgentActionItemId}
-                  onOpenUrgentDetail={onOpenUrgentDetail}
-                  onOpenUrgentShift={onOpenUrgentShift}
-                  onUrgentIncidentFollowUp={onUrgentIncidentFollowUp}
-                  onUrgentAlertFollowUp={onUrgentAlertFollowUp}
-                />
-              </Fragment>
-            ))}
-            {total > 4 ? (
-              <Pressable
-                style={[styles.attentionViewAll, IS_WEB ? (WEB_PTR as any) : null]}
-                onPress={() => setExpanded((x) => !x)}
-              >
-                <Text style={styles.attentionViewAllText}>
-                  {expanded ? '↑ Show fewer' : `View all ${total} →`}
-                </Text>
-              </Pressable>
-            ) : null}
-          </>
+          items.map((item, idx) => (
+            <Fragment key={item.id}>
+              <AttentionItem
+                item={item}
+                isLast={idx === total - 1}
+                urgentActionItemId={urgentActionItemId}
+                onOpenUrgentDetail={onOpenUrgentDetail}
+                onOpenUrgentShift={onOpenUrgentShift}
+                onUrgentIncidentFollowUp={onUrgentIncidentFollowUp}
+                onUrgentAlertFollowUp={onUrgentAlertFollowUp}
+              />
+            </Fragment>
+          ))
         )}
       </ScrollView>
     </View>
@@ -869,6 +924,30 @@ export function CompanyLiveOperationsWorkspace({
   onBoardLayout,
   onDetailLayout,
 }: CompanyLiveOperationsWorkspaceProps) {
+  const [metricFocus, setMetricFocus] = React.useState<MetricFocus>('all');
+  const handleMetricPress = React.useCallback(
+    (focus: MetricFocus) => setMetricFocus((prev) => (prev === focus ? 'all' : focus)),
+    [],
+  );
+
+  const focusedBoardRows = React.useMemo(() => {
+    if (metricFocus === 'live')       return liveOperationEnrichedRows.filter((r) => r.lifecycleStatus === 'in_progress');
+    if (metricFocus === 'not-booked') return liveOperationEnrichedRows.filter((r) => r.lifecycleStatus === 'in_progress' && !r.attendance?.checkInAt);
+    return liveOperationEnrichedRows;
+  }, [liveOperationEnrichedRows, metricFocus]);
+
+  const focusedAttentionItems = React.useMemo(() => {
+    if (metricFocus === 'panic')         return urgentOperationalItems.filter((i) => i.category === 'panic');
+    if (metricFocus === 'incidents')     return urgentOperationalItems.filter((i) => i.category === 'incident');
+    if (metricFocus === 'missed-checks') return urgentOperationalItems.filter((i) => i.category === 'missed_check_call');
+    return urgentOperationalItems;
+  }, [urgentOperationalItems, metricFocus]);
+
+  const effectiveSelectedShiftContext = React.useMemo(() => {
+    if (!selectedShiftContext) return null;
+    return focusedBoardRows.some((r) => r.shift.id === selectedShiftContext.shift.id) ? selectedShiftContext : null;
+  }, [selectedShiftContext, focusedBoardRows]);
+
   return (
     <View style={styles.root}>
 
@@ -894,6 +973,8 @@ export function CompanyLiveOperationsWorkspace({
         activePanicAlertsCount={activePanicAlertsCount}
         openIncidentsCount={openIncidentsCount}
         missedCheckCallsCount={missedCheckCallsCount}
+        metricFocus={metricFocus}
+        onMetricPress={handleMetricPress}
       />
 
       {/* ── Filter toolbar ───────────────────────────────────────────────── */}
@@ -905,17 +986,23 @@ export function CompanyLiveOperationsWorkspace({
         linkedGuardOptions={linkedGuardOptions}
       />
 
+      {/* ── Metric focus hint ────────────────────────────────────────────── */}
+      <MetricFocusHint metricFocus={metricFocus} onClear={() => setMetricFocus('all')} />
+
       {/* ── Command workspace ────────────────────────────────────────────── */}
       <View style={styles.workspaceRow} onLayout={(e: any) => onBoardLayout(e.nativeEvent.layout.y)}>
         <LiveOpsOperationsBoard
-          rows={liveOperationEnrichedRows}
+          rows={focusedBoardRows}
           selectedShiftId={selectedShiftId}
           highlightedLiveShiftId={highlightedLiveShiftId}
+          metricFocus={metricFocus}
           onSelectRow={setSelectedShiftId}
           onAction={onLiveBoardPrimaryAction}
+          onClearMetricFocus={() => setMetricFocus('all')}
         />
         <LiveOpsAttentionRail
-          urgentOperationalItems={urgentOperationalItems}
+          items={focusedAttentionItems}
+          metricFocus={metricFocus}
           urgentActionItemId={urgentActionItemId}
           onOpenUrgentDetail={onOpenUrgentDetail}
           onOpenUrgentShift={onOpenUrgentShift}
@@ -933,13 +1020,13 @@ export function CompanyLiveOperationsWorkspace({
       />
 
       {/* ── Selected shift detail ────────────────────────────────────────── */}
-      {selectedShiftContext ? (
+      {effectiveSelectedShiftContext ? (
         <View
           style={styles.detailPanel}
           onLayout={(e: any) => onDetailLayout(e.nativeEvent.layout.y)}
         >
           <DetailPanelContent
-            ctx={selectedShiftContext}
+            ctx={effectiveSelectedShiftContext}
             closeOutSummary={selectedShiftCloseOutSummary}
             closeOutNotesDraft={closeOutNotesDraft}
             setCloseOutNotesDraft={setCloseOutNotesDraft}
@@ -1171,6 +1258,32 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
 
+  // ── Metric focus hint ─────────────────────────────────────────────────────
+  metricFocusHint: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    height: 24,
+    gap: spacing.sm,
+    flexShrink: 0,
+  },
+  metricFocusHintText: {
+    fontSize: 11,
+    color: colors.textSecondary,
+    fontWeight: '500',
+  },
+  metricFocusHintClear: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  metricFocusHintClearText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: colors.accentTeal,
+  },
+
   // ── Filter toolbar ────────────────────────────────────────────────────────
   filterBar: {
     flexDirection: 'row',
@@ -1219,6 +1332,9 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border,
     flexShrink: 0,
   },
+  boardPanelHeaderBg: {
+    backgroundColor: colors.surfaceSubtle,
+  },
   panelTitle: {
     fontSize: 15,
     fontWeight: '600',
@@ -1233,17 +1349,26 @@ const styles = StyleSheet.create({
   boardHScroll: {
     flex: 1,
   },
+  boardHScrollContent: {
+    flexGrow: 1,
+  },
   boardTable: {
+    flexGrow: 1,
     flexShrink: 0,
+    flexDirection: 'column',
+  },
+  boardBodyScroll: {
+    flex: 1,
   },
   boardHdrRow: {
     flexDirection: 'row',
     height: 32,
     alignItems: 'center',
-    backgroundColor: colors.surfaceSubtle,
+    backgroundColor: colors.background,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
     paddingHorizontal: spacing.sm,
+    flexShrink: 0,
   },
   boardHdrCell: {
     fontSize: 10,
@@ -1399,6 +1524,19 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     textAlign: 'center',
   },
+  boardEmptyClearBtn: {
+    marginTop: spacing.xs,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: colors.accentTeal,
+  },
+  boardEmptyClearText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.accentTeal,
+  },
 
   // ── Attention rail (28-32%) ───────────────────────────────────────────────
   attentionColumn: {
@@ -1418,6 +1556,9 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
     flexShrink: 0,
+  },
+  attentionPanelHeaderBg: {
+    backgroundColor: colors.surfaceSubtle,
   },
   attentionCountBadge: {
     backgroundColor: colors.danger,
@@ -1517,17 +1658,6 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     textAlign: 'center',
   },
-  attentionViewAll: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    alignItems: 'center',
-  },
-  attentionViewAllText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.accentTeal,
-  },
-
   // ── Supporting snapshot strip ─────────────────────────────────────────────
   lowerStrip: {
     flexDirection: 'row',
