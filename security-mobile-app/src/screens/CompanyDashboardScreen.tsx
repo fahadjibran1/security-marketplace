@@ -1,7 +1,8 @@
 ﻿import * as React from 'react';
-import { ActivityIndicator, Image, Modal, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, useWindowDimensions, View } from 'react-native';
+import { ActivityIndicator, Image, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 
 import { CompanyAuditWorkspace } from '../components/company/CompanyAuditWorkspace';
+import { CompanyClientsWorkspace, type ClientFormState, CLIENT_FORM_EMPTY } from '../components/company/CompanyClientsWorkspace';
 import { CompanyLiveOperationsWorkspace } from '../components/company/CompanyLiveOperationsWorkspace';
 import type { LiveBoardRow, CloseOutSummary, SelectedShiftContext } from '../components/company/CompanyLiveOperationsWorkspace';
 import { CompanyAnalyticsWorkspace } from '../components/company/CompanyAnalyticsWorkspace';
@@ -120,16 +121,6 @@ type CompanySection =
   | 'incidents'
   | 'alerts'
   | 'weekly-approvals';
-
-type ClientFormState = {
-  id?: number;
-  name: string;
-  contactName: string;
-  contactEmail: string;
-  contactPhone: string;
-  status: string;
-  notes: string;
-};
 
 type SiteFormState = {
   id?: number;
@@ -288,15 +279,6 @@ const COMPANY_NAV_GROUPS: Array<{ id: string; title: string; itemIds: CompanySec
     itemIds: ['coverage', 'analytics', 'incidents', 'alerts', 'audit', 'recruitment'],
   },
 ];
-
-const CLIENT_FORM_EMPTY: ClientFormState = {
-  name: '',
-  contactName: '',
-  contactEmail: '',
-  contactPhone: '',
-  status: 'active',
-  notes: '',
-};
 
 const SITE_FORM_EMPTY: SiteFormState = {
   clientId: '',
@@ -1214,7 +1196,6 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
   const [managementActions, setManagementActions] = React.useState<ManagementActionItem[]>([]);
   const [closeOutNotesDraft, setCloseOutNotesDraft] = React.useState('');
   const [savingCloseOutNotes, setSavingCloseOutNotes] = React.useState(false);
-  const [showArchivedClients, setShowArchivedClients] = React.useState(false);
   const [liveBoardAnchorY, setLiveBoardAnchorY] = React.useState(0);
   const [shiftDetailAnchorY, setShiftDetailAnchorY] = React.useState(0);
   const [pendingShiftDetailFocusId, setPendingShiftDetailFocusId] = React.useState<number | null>(null);
@@ -2022,14 +2003,6 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
     [managementActions],
   );
 
-  const filteredClients = React.useMemo(
-    () =>
-      clients.filter((client) =>
-        showArchivedClients ? true : (client.status || 'active').toLowerCase() !== 'archived',
-      ),
-    [clients, showArchivedClients],
-  );
-
   const selectedSite = React.useMemo(
     () => sites.find((site) => site.id === selectedSiteId) ?? null,
     [selectedSiteId, sites],
@@ -2190,20 +2163,8 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
   const resetSiteForm = () => setSiteForm(SITE_FORM_EMPTY);
   const resetJobForm = () => setJobForm(JOB_FORM_EMPTY);
 
-  const handleEditClient = (client: Client) => {
-    setClientForm({
-      id: client.id,
-      name: client.name,
-      contactName: client.contactName || '',
-      contactEmail: client.contactEmail || '',
-      contactPhone: client.contactPhone || '',
-      status: client.status || 'active',
-      notes: client.contactDetails || '',
-    });
-    setActiveSection('clients');
-  };
-
   const handleSaveClient = async () => {
+    let saveErrorMsg: string | null = null;
     try {
       setSavingClient(true);
       const payload: CreateClientPayload | UpdateClientPayload = {
@@ -2228,10 +2189,11 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
       resetClientForm();
       await loadData(true);
     } catch (saveError) {
-      setError(formatApiErrorMessage(saveError, 'Unable to save this client right now.'));
+      saveErrorMsg = formatApiErrorMessage(saveError, 'Unable to save this client right now.');
     } finally {
       setSavingClient(false);
     }
+    if (saveErrorMsg) throw new Error(saveErrorMsg);
   };
 
   const handleArchiveClient = async (client: Client) => {
@@ -3630,54 +3592,15 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
   };
 
   const renderClientsSection = () => (
-    <View style={styles.sectionStack}>
-      <View style={styles.toolbar}>
-        <Text style={styles.sectionTitle}>Client Accounts</Text>
-        <View style={styles.toolbarActions}>
-          <Text style={styles.helperText}>Show archived</Text>
-          <Switch value={showArchivedClients} onValueChange={setShowArchivedClients} />
-        </View>
-      </View>
-      <View style={styles.splitLayout}>
-        <View style={styles.tableCard}>
-          {renderTableHeader(['Client', 'Contact', 'Phone', 'Status', 'Sites', 'Actions'])}
-          {filteredClients.map((client) => (
-            <View key={client.id} style={styles.tableRow}>
-              <Text style={styles.tableCellStrong}>{client.name}</Text>
-              <Text style={styles.tableCell}>{client.contactName || '—'}</Text>
-              <Text style={styles.tableCell}>{client.contactPhone || '—'}</Text>
-              <Text style={styles.tableCell}>{formatStatusLabel(client.status)}</Text>
-              <Text style={styles.tableCell}>{sites.filter((site) => (site.client?.id ?? site.clientId) === client.id).length}</Text>
-              <View style={styles.rowActions}>
-                <Pressable style={styles.secondaryButton} onPress={() => handleEditClient(client)}>
-                  <Text style={styles.secondaryButtonText}>Edit</Text>
-                </Pressable>
-                <Pressable style={styles.secondaryButton} onPress={() => handleArchiveClient(client)}>
-                  <Text style={styles.secondaryButtonText}>Archive</Text>
-                </Pressable>
-              </View>
-            </View>
-          ))}
-        </View>
-        <View style={styles.formCard}>
-          <Text style={styles.panelTitle}>{clientForm.id ? 'Edit Client' : 'New Client'}</Text>
-          <TextInput style={styles.input} value={clientForm.name} onChangeText={(value: string) => setClientForm((current) => ({ ...current, name: value }))} placeholder="Client name" />
-          <TextInput style={styles.input} value={clientForm.contactName} onChangeText={(value: string) => setClientForm((current) => ({ ...current, contactName: value }))} placeholder="Contact person" />
-          <TextInput style={styles.input} value={clientForm.contactEmail} onChangeText={(value: string) => setClientForm((current) => ({ ...current, contactEmail: value }))} placeholder="Contact email" />
-          <TextInput style={styles.input} value={clientForm.contactPhone} onChangeText={(value: string) => setClientForm((current) => ({ ...current, contactPhone: value }))} placeholder="Contact phone" />
-          <WebSelect value={clientForm.status} onChange={(value: string) => setClientForm((current) => ({ ...current, status: value || 'active' }))} options={[{ label: 'Active', value: 'active' }, { label: 'Inactive', value: 'inactive' }, { label: 'Archived', value: 'archived' }]} />
-          <TextInput style={[styles.input, styles.textArea]} multiline value={clientForm.notes} onChangeText={(value: string) => setClientForm((current) => ({ ...current, notes: value }))} placeholder="Notes" />
-          <View style={styles.formActions}>
-            <Pressable style={styles.primaryButton} onPress={handleSaveClient} disabled={savingClient}>
-              <Text style={styles.primaryButtonText}>{savingClient ? 'Saving...' : clientForm.id ? 'Update Client' : 'Create Client'}</Text>
-            </Pressable>
-            <Pressable style={styles.secondaryButton} onPress={resetClientForm}>
-              <Text style={styles.secondaryButtonText}>Clear</Text>
-            </Pressable>
-          </View>
-        </View>
-      </View>
-    </View>
+    <CompanyClientsWorkspace
+      clients={clients}
+      sites={sites}
+      clientForm={clientForm}
+      setClientForm={setClientForm}
+      savingClient={savingClient}
+      onSaveClient={handleSaveClient}
+      onArchiveClient={handleArchiveClient}
+    />
   );
 
   const renderSitesSection = () => {
