@@ -401,6 +401,7 @@ function StatusMetric({
         <Text style={[styles.statusMetricValue, { color: valueColor }]}>{value}</Text>
       </View>
       <Text style={styles.statusMetricLabel}>{label}</Text>
+      {active && <View style={styles.statusMetricActiveLine} />}
     </Pressable>
   );
 }
@@ -1024,8 +1025,16 @@ export function CompanyLiveOperationsWorkspace({
     if (metricFocus === 'panic')         return urgentOperationalItems.filter((i) => i.category === 'panic');
     if (metricFocus === 'incidents')     return urgentOperationalItems.filter((i) => i.category === 'incident');
     if (metricFocus === 'missed-checks') return urgentOperationalItems.filter((i) => i.category === 'missed_check_call');
+    if (metricFocus === 'not-booked') {
+      const notBookedShiftIds = new Set(
+        liveOperationEnrichedRows
+          .filter((r) => r.lifecycleStatus === 'in_progress' && !r.attendance?.checkInAt)
+          .map((r) => r.shift.id),
+      );
+      return urgentOperationalItems.filter((i) => i.shiftId != null && notBookedShiftIds.has(i.shiftId));
+    }
     return urgentOperationalItems;
-  }, [urgentOperationalItems, metricFocus]);
+  }, [urgentOperationalItems, liveOperationEnrichedRows, metricFocus]);
 
   const effectiveSelectedShiftContext = React.useMemo(() => {
     if (!selectedShiftContext) return null;
@@ -1119,11 +1128,7 @@ export function CompanyLiveOperationsWorkspace({
             onOpenCoverage={onOpenCoverage}
           />
         </View>
-      ) : (
-        <View style={styles.detailPanelEmpty} onLayout={(e: any) => onDetailLayout(e.nativeEvent.layout.y)}>
-          <Text style={styles.detailPanelEmptyText}>Select a row to see shift detail, attendance, and records.</Text>
-        </View>
-      )}
+      ) : null}
 
     </View>
   );
@@ -1340,6 +1345,14 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     color: colors.textSecondary,
     textAlign: 'center',
+  },
+  statusMetricActiveLine: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 3,
+    backgroundColor: colors.accentAqua,
   },
 
   // ── Metric focus hint ─────────────────────────────────────────────────────
