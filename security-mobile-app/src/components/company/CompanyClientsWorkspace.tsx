@@ -338,6 +338,13 @@ export function CompanyClientsWorkspace({
       </View>
 
       {/* ── Table ────────────────────────────────────────────────────────── */}
+      {/* Horizontal scroll wrapper: at ≥1280px the table fills available width;
+          below that, controlled horizontal scroll kicks in rather than page overflow. */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={IS_WEB}
+        contentContainerStyle={styles.tableHScrollContent}
+      >
       <View style={styles.tableContainer}>
 
         {/* Fixed column header — never scrolls */}
@@ -445,6 +452,7 @@ export function CompanyClientsWorkspace({
           )}
         </ScrollView>
       </View>
+      </ScrollView>
 
       {/* ── Quick View Drawer ─────────────────────────────────────────────── */}
       <Drawer
@@ -810,8 +818,15 @@ const styles = StyleSheet.create({
   },
 
   // ── Table ─────────────────────────────────────────────────────────────────
+  // Horizontal scroll content container: fills available width on wide viewports;
+  // enforces a minimum so narrow viewports scroll horizontally rather than collapsing.
+  tableHScrollContent: {
+    flexGrow: 1,
+    minWidth: 800,
+  },
   tableContainer: {
     backgroundColor: colors.card,
+    flex: 1,
   },
 
   // Vertically-scrollable row body. maxHeight caps at ~9 rows (52px each)

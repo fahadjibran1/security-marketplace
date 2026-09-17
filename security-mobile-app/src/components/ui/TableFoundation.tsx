@@ -50,7 +50,7 @@ type TableHeaderCellProps = {
 
 export function TableHeaderCell({ label, flex = 1, align = 'left', width, style }: TableHeaderCellProps) {
   return (
-    <View style={[styles.headerCell, flex ? { flex } : null, width ? { width, flex: 0 } : null, style]}>
+    <View style={[styles.headerCell, width ? null : (flex ? { flex } : null), width ? { flexBasis: width, flexShrink: 0, flexGrow: 0 } : null, style]}>
       {label ? (
         <Text style={[styles.headerCellText, align !== 'left' ? { textAlign: align } : null]} numberOfLines={1}>
           {label}
@@ -105,8 +105,8 @@ export function TableCell({ children, flex = 1, width, align = 'left', style }: 
     <View
       style={[
         styles.cell,
-        flex  ? { flex  } : null,
-        width ? { width, flex: 0 } : null,
+        width ? null : (flex ? { flex } : null),
+        width ? { flexBasis: width, flexShrink: 0, flexGrow: 0 } : null,
         align === 'right'  ? styles.cellRight  : null,
         align === 'center' ? styles.cellCenter : null,
         style,
@@ -180,7 +180,7 @@ type ActionCellProps = React.PropsWithChildren<{
 /** Fixed-width right-aligned cell for row action controls. */
 export function ActionCell({ children, width = 52, style }: ActionCellProps) {
   return (
-    <View style={[styles.cell, styles.actionCell, { width, flex: 0 }, style]}>
+    <View style={[styles.cell, styles.actionCell, { flexBasis: width, flexShrink: 0, flexGrow: 0 }, style]}>
       {children}
     </View>
   );
