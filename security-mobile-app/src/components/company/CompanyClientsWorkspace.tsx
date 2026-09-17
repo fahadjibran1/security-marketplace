@@ -135,31 +135,23 @@ function FormSelect({
   );
 }
 
-// ─── Column width computation ─────────────────────────────────────────────────
-// All six columns get explicit pixel widths computed from the measured container
-// width. This eliminates flex ambiguity and guarantees header/row alignment.
+// ─── Column layout constants ──────────────────────────────────────────────────
+// CLIENT and CONTACT use flex so they naturally fill available space — no
+// onLayout measurement required. Fixed-width columns are protected from wrap.
+// Both TableHeader cells and TableRow cells use the SAME values, so header/body
+// alignment is guaranteed regardless of container width.
 
-const TABLE_ROW_PAD = spacing.md * 2;  // 24px — TableFoundation row paddingHorizontal × 2
-const TABLE_MIN_WIDTH = 730;           // Minimum before horizontal scroll activates
+const COL_STATUS_W  = 108; // "Inactive" badge + cell padding
+const COL_SITES_W   = 72;  // centered digit(s)
+const COL_UPDATED_W = 120; // "20 Sep 2025"
+const COL_ACTION_W  = 52;  // pencil icon button
 
-type ColWidths = {
-  CLIENT: number; CONTACT: number; STATUS: number;
-  SITES: number;  UPDATED: number;  ACTION: number;
-};
-
-function computeColWidths(containerWidth: number): ColWidths {
-  const avail = Math.max(containerWidth, TABLE_MIN_WIDTH) - TABLE_ROW_PAD;
-  // Semantic fixed columns — hard minima prevent header wrap at ≥1280px
-  const STATUS  = Math.max(Math.round(avail * 0.11), 108);
-  const SITES   = Math.max(Math.round(avail * 0.08), 74);
-  const UPDATED = Math.max(Math.round(avail * 0.13), 118);
-  const ACTION  = 64;
-  // Flexible columns share the remainder
-  const rest    = avail - STATUS - SITES - UPDATED - ACTION;
-  const CLIENT  = Math.max(Math.round(rest * 0.55), 190);
-  const CONTACT = Math.max(rest - CLIENT, 148);
-  return { CLIENT, CONTACT, STATUS, SITES, UPDATED, ACTION };
-}
+// Body scroll height: ~9 rows at 52 px each fit at 1366×768.
+// calc() value accounts for topbar (56) + pageHeader (~76) + gap/padding (72)
+// + actionStrip (~34) + toolbar (~52) + column header (~32) = ~322px.
+const TABLE_BODY_MAX_HEIGHT: number | string = IS_WEB
+  ? ('calc(100vh - 322px)' as any)
+  : 468;
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
@@ -179,20 +171,6 @@ export function CompanyClientsWorkspace({
   const [formError, setFormError]             = React.useState<string | null>(null);
   const [archivingClient, setArchivingClient]         = React.useState<Client | null>(null);
   const [archivingInProgress, setArchivingInProgress] = React.useState(false);
-  const [tableContainerWidth, setTableContainerWidth] = React.useState(900);
-
-  const handleTableLayout = React.useCallback((e: any) => {
-    const w = e.nativeEvent.layout.width;
-    if (w > 0) setTableContainerWidth(w);
-  }, []);
-
-  const colWidths = React.useMemo(
-    () => computeColWidths(tableContainerWidth),
-    [tableContainerWidth],
-  );
-  const tableInnerWidth =
-    colWidths.CLIENT + colWidths.CONTACT + colWidths.STATUS +
-    colWidths.SITES  + colWidths.UPDATED + colWidths.ACTION + TABLE_ROW_PAD;
 
   // ─── Derived state ────────────────────────────────────────────────────────
 
@@ -360,110 +338,111 @@ export function CompanyClientsWorkspace({
       </View>
 
       {/* ── Table ────────────────────────────────────────────────────────── */}
-      <View style={styles.tableContainer} onLayout={handleTableLayout}>
+      <View style={styles.tableContainer}>
+
+        {/* Fixed column header — never scrolls */}
+        <TableHeader>
+          <TableHeaderCell label="Client"  flex={3.5} style={styles.colClient} />
+          <TableHeaderCell label="Contact" flex={2}   style={styles.colContact} />
+          <TableHeaderCell label="Status"  width={COL_STATUS_W} />
+          <TableHeaderCell label="Sites"   width={COL_SITES_W}  align="center" />
+          <TableHeaderCell label="Updated" width={COL_UPDATED_W} />
+          <TableHeaderCell label=""        width={COL_ACTION_W} />
+        </TableHeader>
+
+        {/* Vertically-scrollable row body */}
         <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={IS_WEB ? ({ scrollbarWidth: 'thin' } as any) : null}
+          style={[
+            styles.tableBodyScroll,
+            IS_WEB ? ({ scrollbarWidth: 'thin', scrollbarColor: `${colors.border} transparent` } as any) : null,
+          ]}
+          showsVerticalScrollIndicator={IS_WEB}
+          nestedScrollEnabled
         >
-          <View style={{ width: tableInnerWidth, flexDirection: 'column' }}>
+          {/* Empty — no clients */}
+          {filteredClients.length === 0 && clients.length === 0 ? (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyTitle}>No clients yet</Text>
+              <Text style={styles.emptyCaption}>
+                Add your first client to start managing contracts and sites.
+              </Text>
+              <Button label="+ Add Client" onPress={handleOpenAdd} variant="primary" size="sm" />
+            </View>
+          ) : filteredClients.length === 0 ? (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyTitle}>No clients match</Text>
+              <Text style={styles.emptyCaption}>
+                {statusFilter === 'all'
+                  ? "Try adjusting your search, or switch to Archived to find hidden records."
+                  : 'Try adjusting your search or selecting a different status filter.'}
+              </Text>
+              <Button
+                label="Clear filters"
+                onPress={() => { setSearchQuery(''); setStatusFilter('all'); }}
+                variant="secondary"
+                size="sm"
+              />
+            </View>
+          ) : (
+            filteredClients.map((client) => (
+              <Fragment key={client.id}>
+                <TableRow onPress={() => setQuickViewClient(client)}>
 
-            {/* Header */}
-            <TableHeader>
-              <TableHeaderCell label="Client"  width={colWidths.CLIENT} />
-              <TableHeaderCell label="Contact" width={colWidths.CONTACT} />
-              <TableHeaderCell label="Status"  width={colWidths.STATUS} />
-              <TableHeaderCell label="Sites"   width={colWidths.SITES}  align="center" />
-              <TableHeaderCell label="Updated" width={colWidths.UPDATED} />
-              <TableHeaderCell label=""        width={colWidths.ACTION} />
-            </TableHeader>
+                  {/* CLIENT */}
+                  <TableCell flex={3.5} style={styles.colClient}>
+                    <Text style={styles.clientName} numberOfLines={1}>{client.name}</Text>
+                    {client.contactName ? (
+                      <Text style={styles.clientSubtitle} numberOfLines={1}>{client.contactName}</Text>
+                    ) : null}
+                  </TableCell>
 
-            {/* Empty — no clients */}
-            {filteredClients.length === 0 && clients.length === 0 ? (
-              <View style={styles.emptyState}>
-                <Text style={styles.emptyTitle}>No clients yet</Text>
-                <Text style={styles.emptyCaption}>
-                  Add your first client to start managing contracts and sites.
-                </Text>
-                <Button label="+ Add Client" onPress={handleOpenAdd} variant="primary" size="sm" />
-              </View>
-            ) : filteredClients.length === 0 ? (
-              <View style={styles.emptyState}>
-                <Text style={styles.emptyTitle}>No clients match</Text>
-                <Text style={styles.emptyCaption}>
-                  {statusFilter === 'all'
-                    ? "Try adjusting your search, or switch to Archived to find hidden records."
-                    : 'Try adjusting your search or selecting a different status filter.'}
-                </Text>
-                <Button
-                  label="Clear filters"
-                  onPress={() => { setSearchQuery(''); setStatusFilter('all'); }}
-                  variant="secondary"
-                  size="sm"
-                />
-              </View>
-            ) : (
-              /* Data rows */
-              filteredClients.map((client) => (
-                <Fragment key={client.id}>
-                  <TableRow onPress={() => setQuickViewClient(client)}>
+                  {/* CONTACT */}
+                  <TableCell flex={2} style={styles.colContact}>
+                    {client.contactEmail ? (
+                      <Text style={styles.contactEmail} numberOfLines={1}>{client.contactEmail}</Text>
+                    ) : null}
+                    {client.contactPhone ? (
+                      <Text style={styles.contactPhone} numberOfLines={1}>{client.contactPhone}</Text>
+                    ) : null}
+                    {!client.contactEmail && !client.contactPhone ? (
+                      <Text style={styles.contactPhone}>—</Text>
+                    ) : null}
+                  </TableCell>
 
-                    {/* CLIENT — manual render matching PrimaryCell styles */}
-                    <TableCell width={colWidths.CLIENT}>
-                      <Text style={styles.clientName} numberOfLines={1}>{client.name}</Text>
-                      {client.contactName ? (
-                        <Text style={styles.clientSubtitle} numberOfLines={1}>{client.contactName}</Text>
-                      ) : null}
-                    </TableCell>
+                  {/* STATUS */}
+                  <TableCell width={COL_STATUS_W}>
+                    <ClientStatusBadge status={client.status} />
+                  </TableCell>
 
-                    {/* CONTACT */}
-                    <TableCell width={colWidths.CONTACT}>
-                      {client.contactEmail ? (
-                        <Text style={styles.contactEmail} numberOfLines={1}>{client.contactEmail}</Text>
-                      ) : null}
-                      {client.contactPhone ? (
-                        <Text style={styles.contactPhone} numberOfLines={1}>{client.contactPhone}</Text>
-                      ) : null}
-                      {!client.contactEmail && !client.contactPhone ? (
-                        <Text style={styles.contactPhone}>—</Text>
-                      ) : null}
-                    </TableCell>
+                  {/* SITES */}
+                  <TableCell width={COL_SITES_W} align="center">
+                    <Text style={styles.siteCount}>
+                      {siteCountByClientId.get(client.id) ?? 0}
+                    </Text>
+                  </TableCell>
 
-                    {/* STATUS */}
-                    <TableCell width={colWidths.STATUS}>
-                      <ClientStatusBadge status={client.status} />
-                    </TableCell>
+                  {/* UPDATED */}
+                  <TableCell width={COL_UPDATED_W}>
+                    <Text style={styles.updatedText} numberOfLines={1}>
+                      {fmtDate(client.updatedAt)}
+                    </Text>
+                  </TableCell>
 
-                    {/* SITES */}
-                    <TableCell width={colWidths.SITES} align="center">
-                      <Text style={styles.siteCount}>
-                        {siteCountByClientId.get(client.id) ?? 0}
-                      </Text>
-                    </TableCell>
+                  {/* ACTION */}
+                  <ActionCell width={COL_ACTION_W}>
+                    <IconButton
+                      icon="✎"
+                      accessibilityLabel={`Edit ${client.name}`}
+                      onPress={() => handleOpenEdit(client)}
+                      variant="ghost"
+                      size="sm"
+                    />
+                  </ActionCell>
 
-                    {/* UPDATED */}
-                    <TableCell width={colWidths.UPDATED}>
-                      <Text style={styles.updatedText} numberOfLines={1}>
-                        {fmtDate(client.updatedAt)}
-                      </Text>
-                    </TableCell>
-
-                    {/* ACTION */}
-                    <ActionCell width={colWidths.ACTION}>
-                      <IconButton
-                        icon="✎"
-                        accessibilityLabel={`Edit ${client.name}`}
-                        onPress={() => handleOpenEdit(client)}
-                        variant="ghost"
-                        size="sm"
-                      />
-                    </ActionCell>
-
-                  </TableRow>
-                </Fragment>
-              ))
-            )}
-          </View>
+                </TableRow>
+              </Fragment>
+            ))
+          )}
         </ScrollView>
       </View>
 
@@ -734,8 +713,6 @@ const formSelectStyle = {
 
 const styles = StyleSheet.create({
   root: {
-    flex: 1,
-    minHeight: 0,
     flexDirection: 'column',
     backgroundColor: colors.background,
   },
@@ -834,10 +811,20 @@ const styles = StyleSheet.create({
 
   // ── Table ─────────────────────────────────────────────────────────────────
   tableContainer: {
-    flex: 1,
-    minHeight: 0,
     backgroundColor: colors.card,
   },
+
+  // Vertically-scrollable row body. maxHeight caps at ~9 rows (52px each)
+  // before internal scroll activates. Empty states are shorter and won't show
+  // an unnecessary scrollbar because maxHeight is a ceiling, not a floor.
+  tableBodyScroll: {
+    maxHeight: TABLE_BODY_MAX_HEIGHT as any,
+  },
+
+  // Flex-column minimum widths prevent CLIENT/CONTACT from collapsing at narrow
+  // viewports. At ≥1280px the flex layout allocates far more than these minima.
+  colClient:  { minWidth: 190 },
+  colContact: { minWidth: 148 },
 
   // Table cell content
   clientName: {
