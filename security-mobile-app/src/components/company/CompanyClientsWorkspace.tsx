@@ -1,13 +1,23 @@
 import * as React from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Fragment } from 'react/jsx-runtime';
+import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { Client, Site } from '../../types/models';
 import { colors, control, radii, spacing, typography } from '../../theme';
 import { Drawer } from '../ui/Drawer';
 import { Button } from '../ui/Button';
+import { IconButton } from '../ui/IconButton';
 import { FormField, FieldInput, FieldTextarea } from '../ui/FormField';
+import { ConfirmationDialog } from '../ui/ConfirmationDialog';
+import {
+  TableHeader,
+  TableHeaderCell,
+  TableRow,
+  TableCell,
+  PrimaryCell,
+  ActionCell,
+} from '../ui/TableFoundation';
 
 const IS_WEB = typeof document !== 'undefined';
-const WEB_PTR = IS_WEB ? ({ cursor: 'pointer' } as const) : null;
 
 // ─── Exported types ───────────────────────────────────────────────────────────
 
@@ -79,7 +89,7 @@ function fmtDate(iso?: string | null): string {
 
 // ─── StatusBadge ─────────────────────────────────────────────────────────────
 
-function StatusBadge({ status }: { status?: string | null }) {
+function ClientStatusBadge({ status }: { status?: string | null }) {
   const b = getStatusBadge(status);
   return (
     <View style={[styles.badge, { backgroundColor: b.bg, borderColor: b.color }]}>
@@ -88,7 +98,7 @@ function StatusBadge({ status }: { status?: string | null }) {
   );
 }
 
-// ─── FormSelect (web-native <select> for form status field) ──────────────────
+// ─── FormSelect (web-native <select> for status field) ───────────────────────
 
 function FormSelect({
   value,
@@ -130,6 +140,15 @@ function FormSelect({
   );
 }
 
+// ─── Minimum table width ──────────────────────────────────────────────────────
+// Sum of fixed-width columns + minimum flex-column widths + row outer padding.
+// When the container is narrower, the horizontal ScrollView activates.
+
+const FIXED_COL_TOTAL = 100 + 64 + 120 + 72; // status + sites + updated + actions = 356
+const MIN_FLEX_TOTAL  = 180 + 150;             // min client + min contact = 330
+const ROW_OUTER_PAD   = spacing.md * 2;        // TableFoundation row paddingHorizontal × 2
+const TABLE_MIN_WIDTH = FIXED_COL_TOTAL + MIN_FLEX_TOTAL + ROW_OUTER_PAD; // 710
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export function CompanyClientsWorkspace({
@@ -141,19 +160,28 @@ export function CompanyClientsWorkspace({
   onSaveClient,
   onArchiveClient,
 }: Props) {
-  const [searchQuery, setSearchQuery] = React.useState('');
+  const [searchQuery, setSearchQuery]   = React.useState('');
   const [statusFilter, setStatusFilter] = React.useState<StatusFilter>('all');
-  const [showArchived, setShowArchived] = React.useState(false);
   const [quickViewClient, setQuickViewClient] = React.useState<Client | null>(null);
-  const [formDrawerOpen, setFormDrawerOpen] = React.useState(false);
-  const [formError, setFormError] = React.useState<string | null>(null);
+  const [formDrawerOpen, setFormDrawerOpen]   = React.useState(false);
+  const [formError, setFormError]             = React.useState<string | null>(null);
+  const [archivingClient, setArchivingClient]         = React.useState<Client | null>(null);
+  const [archivingInProgress, setArchivingInProgress] = React.useState(false);
+  const [tableContainerWidth, setTableContainerWidth] = React.useState(900);
+
+  const handleTableLayout = React.useCallback((e: any) => {
+    const w = e.nativeEvent.layout.width;
+    if (w > 0) setTableContainerWidth(w);
+  }, []);
+
+  const tableInnerWidth = Math.max(tableContainerWidth, TABLE_MIN_WIDTH);
 
   // ─── derived ─────────────────────────────────────────────────────────────
 
   const siteCountByClientId = React.useMemo(() => {
     const map = new Map<number, number>();
     for (const site of sites) {
-      const cid = site.client?.id ?? (site as any).clientId;
+      const cid = site.client?.id ?? site.clientId;
       if (cid != null) map.set(cid, (map.get(cid) ?? 0) + 1);
     }
     return map;
@@ -163,17 +191,19 @@ export function CompanyClientsWorkspace({
     const q = searchQuery.trim().toLowerCase();
     return clients.filter((client) => {
       const status = (client.status || 'active').toLowerCase();
-      if (!showArchived && status === 'archived') return false;
+      // 'all' shows active + inactive only (not archived)
+      if (statusFilter === 'all' && status === 'archived') return false;
+      // specific filter must match exactly
       if (statusFilter !== 'all' && status !== statusFilter) return false;
       if (!q) return true;
       return (
         client.name.toLowerCase().includes(q) ||
-        (client.contactName || '').toLowerCase().includes(q) ||
+        (client.contactName  || '').toLowerCase().includes(q) ||
         (client.contactEmail || '').toLowerCase().includes(q) ||
         (client.contactPhone || '').toLowerCase().includes(q)
       );
     });
-  }, [clients, searchQuery, statusFilter, showArchived]);
+  }, [clients, searchQuery, statusFilter]);
 
   const stats = React.useMemo(() => {
     const active = clients.filter((c) => (c.status || 'active').toLowerCase() === 'active').length;
@@ -183,7 +213,7 @@ export function CompanyClientsWorkspace({
   const clientSites = React.useMemo(
     () =>
       quickViewClient
-        ? sites.filter((s) => (s.client?.id ?? (s as any).clientId) === quickViewClient.id)
+        ? sites.filter((s) => (s.client?.id ?? s.clientId) === quickViewClient.id)
         : [],
     [quickViewClient, sites],
   );
@@ -200,15 +230,15 @@ export function CompanyClientsWorkspace({
     setClientForm({
       id: client.id,
       name: client.name,
-      contactName: client.contactName || '',
+      contactName: client.contactName   || '',
       contactEmail: client.contactEmail || '',
       contactPhone: client.contactPhone || '',
       status: client.status || 'active',
       notes: client.contactDetails || '',
     });
     setFormError(null);
-    setFormDrawerOpen(true);
     setQuickViewClient(null);
+    setFormDrawerOpen(true);
   };
 
   const handleCloseForm = () => {
@@ -227,47 +257,31 @@ export function CompanyClientsWorkspace({
     }
   };
 
-  const handleArchive = (client: Client) => {
-    Alert.alert(
-      'Archive client',
-      `Archive "${client.name}"? The client will be hidden from active lists but can be restored.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Archive',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await onArchiveClient(client);
-              if (quickViewClient?.id === client.id) setQuickViewClient(null);
-            } catch {
-              // parent surfaces error via global banner
-            }
-          },
-        },
-      ],
-    );
-  };
+  const handleArchiveRequest = (client: Client) => setArchivingClient(client);
 
-  const handleToggleArchived = () => {
-    if (showArchived) {
-      setShowArchived(false);
-      if (statusFilter === 'archived') setStatusFilter('all');
-    } else {
-      setShowArchived(true);
+  const handleConfirmArchive = async () => {
+    if (!archivingClient) return;
+    setArchivingInProgress(true);
+    try {
+      await onArchiveClient(archivingClient);
+      if (quickViewClient?.id === archivingClient.id) setQuickViewClient(null);
+      setArchivingClient(null);
+    } catch {
+      // parent surfaces error via global banner
+    } finally {
+      setArchivingInProgress(false);
     }
-  };
-
-  const handleFilterChip = (filter: StatusFilter) => {
-    setStatusFilter(filter);
-    if (filter === 'archived') setShowArchived(true);
   };
 
   // ─── render ───────────────────────────────────────────────────────────────
 
+  const qvClient = quickViewClient;
+  const canArchiveQV = qvClient && (qvClient.status || 'active').toLowerCase() !== 'archived';
+
   return (
     <View style={styles.root}>
-      {/* Page header */}
+
+      {/* ── Page header ──────────────────────────────────────────────────── */}
       <View style={styles.pageHeader}>
         <View style={styles.pageTitleBlock}>
           <Text style={styles.pageTitle}>Client Accounts</Text>
@@ -278,109 +292,82 @@ export function CompanyClientsWorkspace({
         <Button label="+ Add Client" onPress={handleOpenAdd} variant="primary" size="md" />
       </View>
 
-      {/* Stats bar */}
-      <View style={styles.statsBar}>
-        <View style={styles.statItem}>
-          <Text style={styles.statValue}>{stats.total}</Text>
-          <Text style={styles.statLabel}>Total clients</Text>
-        </View>
-        <View style={styles.statDivider} />
-        <View style={styles.statItem}>
-          <Text style={[styles.statValue, { color: colors.success }]}>{stats.active}</Text>
-          <Text style={styles.statLabel}>Active</Text>
-        </View>
-        <View style={styles.statDivider} />
-        <View style={styles.statItem}>
-          <Text style={styles.statValue}>{stats.totalSites}</Text>
-          <Text style={styles.statLabel}>Total sites</Text>
-        </View>
+      {/* ── Compact stats strip ───────────────────────────────────────────── */}
+      <View style={styles.statsStrip}>
+        <Text style={styles.statsText}>
+          {stats.total} {stats.total === 1 ? 'client' : 'clients'}
+          <Text style={styles.statsDot}> · </Text>
+          <Text style={[styles.statsText, { color: colors.success }]}>{stats.active} active</Text>
+          <Text style={styles.statsDot}> · </Text>
+          {stats.totalSites} {stats.totalSites === 1 ? 'site' : 'sites'}
+        </Text>
       </View>
 
-      {/* Toolbar */}
+      {/* ── Toolbar ──────────────────────────────────────────────────────── */}
       <View style={styles.toolbar}>
+        {/* Search */}
         <View style={styles.searchBox}>
-          <Text style={styles.searchIcon} accessible={false}>
-            ⌕
-          </Text>
+          <Text style={styles.searchIcon} accessible={false}>⌕</Text>
           <TextInput
             style={styles.searchInput}
             value={searchQuery}
             onChangeText={setSearchQuery}
-            placeholder="Search by name, contact, email or phone…"
+            placeholder="Search clients…"
             placeholderTextColor={colors.fieldPlaceholder}
             accessibilityLabel="Search clients"
           />
           {searchQuery.length > 0 ? (
-            <Pressable
-              onPress={() => setSearchQuery('')}
-              style={IS_WEB ? (WEB_PTR as any) : null}
+            <IconButton
+              icon="✕"
               accessibilityLabel="Clear search"
-            >
-              <Text style={styles.searchClear}>✕</Text>
-            </Pressable>
+              onPress={() => setSearchQuery('')}
+              variant="ghost"
+              size="sm"
+            />
           ) : null}
         </View>
 
+        {/* Status filter chips */}
         <View style={styles.filterChips}>
-          {(['all', 'active', 'inactive', 'archived'] as StatusFilter[]).map((filter) => (
-            <Pressable
-              key={filter}
-              onPress={() => handleFilterChip(filter)}
-              style={({ pressed }: any) => [
-                styles.filterChip,
-                statusFilter === filter && styles.filterChipActive,
-                pressed && styles.filterChipPressed,
-                IS_WEB ? (WEB_PTR as any) : null,
-              ]}
-              accessibilityRole="radio"
-              accessibilityState={{ checked: statusFilter === filter }}
+          {(['all', 'active', 'inactive', 'archived'] as StatusFilter[]).map((f) => (
+            <View
+              key={f}
+              style={[styles.filterChip, statusFilter === f && styles.filterChipActive]}
             >
               <Text
+                // @ts-ignore
+                onPress={() => setStatusFilter(f)}
                 style={[
                   styles.filterChipText,
-                  statusFilter === filter && styles.filterChipTextActive,
+                  statusFilter === f && styles.filterChipTextActive,
+                  IS_WEB ? ({ cursor: 'pointer', userSelect: 'none' } as any) : null,
                 ]}
               >
-                {filter === 'all' ? 'All' : fmtStatus(filter)}
+                {f === 'all' ? 'All active' : fmtStatus(f)}
               </Text>
-            </Pressable>
+            </View>
           ))}
         </View>
-
-        <Pressable
-          onPress={handleToggleArchived}
-          style={({ pressed }: any) => [
-            styles.archivedToggle,
-            showArchived && styles.archivedToggleOn,
-            pressed && styles.archivedTogglePressed,
-            IS_WEB ? (WEB_PTR as any) : null,
-          ]}
-        >
-          <Text
-            style={[styles.archivedToggleText, showArchived && styles.archivedToggleTextOn]}
-          >
-            {showArchived ? 'Hide archived' : 'Show archived'}
-          </Text>
-        </Pressable>
       </View>
 
-      {/* Table */}
-      <View style={styles.tableContainer}>
+      {/* ── Table ────────────────────────────────────────────────────────── */}
+      <View style={styles.tableContainer} onLayout={handleTableLayout}>
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
           style={IS_WEB ? ({ scrollbarWidth: 'thin' } as any) : null}
         >
-          <View style={styles.tableInner}>
+          <View style={{ width: tableInnerWidth, flexDirection: 'column' }}>
+
             {/* Header */}
-            <View style={styles.tableHeadRow}>
-              <Text style={[styles.headCell, styles.colClient]}>CLIENT</Text>
-              <Text style={[styles.headCell, styles.colContact]}>CONTACT</Text>
-              <Text style={[styles.headCell, styles.colStatus]}>STATUS</Text>
-              <Text style={[styles.headCell, styles.colSites]}>SITES</Text>
-              <Text style={[styles.headCell, styles.colUpdated]}>UPDATED</Text>
-              <Text style={[styles.headCell, styles.colActions]}>ACTIONS</Text>
-            </View>
+            <TableHeader>
+              <TableHeaderCell label="Client"  flex={3.5} />
+              <TableHeaderCell label="Contact" flex={2} />
+              <TableHeaderCell label="Status"  width={100} />
+              <TableHeaderCell label="Sites"   width={64}  align="center" />
+              <TableHeaderCell label="Updated" width={120} />
+              <TableHeaderCell label=""        width={72}  />
+            </TableHeader>
 
             {/* Empty — no clients at all */}
             {filteredClients.length === 0 && clients.length === 0 ? (
@@ -389,129 +376,84 @@ export function CompanyClientsWorkspace({
                 <Text style={styles.emptyCaption}>
                   Add your first client to start managing contracts and sites.
                 </Text>
-                <Button
-                  label="+ Add Client"
-                  onPress={handleOpenAdd}
-                  variant="primary"
-                  size="sm"
-                />
+                <Button label="+ Add Client" onPress={handleOpenAdd} variant="primary" size="sm" />
               </View>
             ) : filteredClients.length === 0 ? (
-              /* Empty — filter/search has no matches */
+              /* Empty — filter / search has no matches */
               <View style={styles.emptyState}>
                 <Text style={styles.emptyTitle}>No clients match</Text>
                 <Text style={styles.emptyCaption}>
-                  Try adjusting your search or filter.
+                  {statusFilter === 'all'
+                    ? 'Try adjusting your search, or switch to a specific status filter (including Archived) to find what you\'re looking for.'
+                    : 'Try adjusting your search or selecting a different status filter.'}
                 </Text>
                 <Button
                   label="Clear filters"
-                  onPress={() => {
-                    setSearchQuery('');
-                    setStatusFilter('all');
-                  }}
+                  onPress={() => { setSearchQuery(''); setStatusFilter('all'); }}
                   variant="secondary"
                   size="sm"
                 />
               </View>
             ) : (
               /* Data rows */
-              filteredClients.map((client, index) => (
-                <Pressable
-                  key={client.id}
-                  onPress={() => setQuickViewClient(client)}
-                  style={({ pressed }: any) => [
-                    styles.tableRow,
-                    index % 2 === 1 && styles.tableRowAlt,
-                    pressed && styles.tableRowPressed,
-                    IS_WEB ? (WEB_PTR as any) : null,
-                  ]}
-                  accessibilityRole="button"
-                  accessibilityLabel={`View ${client.name}`}
-                >
-                  {/* CLIENT */}
-                  <View style={[styles.dataCell, styles.colClient]}>
-                    <Text style={styles.clientName} numberOfLines={1}>
-                      {client.name}
-                    </Text>
-                    {client.contactName ? (
-                      <Text style={styles.clientSub} numberOfLines={1}>
-                        {client.contactName}
-                      </Text>
-                    ) : null}
-                  </View>
+              filteredClients.map((client) => (
+                <Fragment key={client.id}>
+                  <TableRow onPress={() => setQuickViewClient(client)}>
+                    {/* CLIENT */}
+                    <PrimaryCell
+                      label={client.name}
+                      subtitle={client.contactName ?? undefined}
+                      flex={3.5}
+                    />
 
-                  {/* CONTACT */}
-                  <View style={[styles.dataCell, styles.colContact]}>
-                    {client.contactEmail ? (
-                      <Text style={styles.contactLine} numberOfLines={1}>
-                        {client.contactEmail}
-                      </Text>
-                    ) : null}
-                    {client.contactPhone ? (
-                      <Text style={styles.contactSub} numberOfLines={1}>
-                        {client.contactPhone}
-                      </Text>
-                    ) : null}
-                    {!client.contactEmail && !client.contactPhone ? (
-                      <Text style={styles.contactSub}>—</Text>
-                    ) : null}
-                  </View>
-
-                  {/* STATUS */}
-                  <View style={[styles.dataCell, styles.colStatus]}>
-                    <StatusBadge status={client.status} />
-                  </View>
-
-                  {/* SITES */}
-                  <View style={[styles.dataCell, styles.colSites]}>
-                    <Text style={styles.siteCount}>
-                      {siteCountByClientId.get(client.id) ?? 0}
-                    </Text>
-                  </View>
-
-                  {/* UPDATED */}
-                  <View style={[styles.dataCell, styles.colUpdated]}>
-                    <Text style={styles.updatedDate}>{fmtDate(client.updatedAt)}</Text>
-                  </View>
-
-                  {/* ACTIONS */}
-                  <View style={[styles.dataCell, styles.colActions, styles.actionsCell]}>
-                    <Pressable
-                      onPress={(e: any) => {
-                        e?.stopPropagation?.();
-                        handleOpenEdit(client);
-                      }}
-                      style={({ pressed }: any) => [
-                        styles.actionBtn,
-                        pressed && styles.actionBtnPressed,
-                        IS_WEB ? (WEB_PTR as any) : null,
-                      ]}
-                      accessibilityLabel={`Edit ${client.name}`}
-                    >
-                      <Text style={styles.actionBtnText}>Edit</Text>
-                    </Pressable>
-
-                    {(client.status || 'active').toLowerCase() !== 'archived' ? (
-                      <Pressable
-                        onPress={(e: any) => {
-                          e?.stopPropagation?.();
-                          handleArchive(client);
-                        }}
-                        style={({ pressed }: any) => [
-                          styles.actionBtn,
-                          styles.actionBtnDanger,
-                          pressed && styles.actionBtnDangerPressed,
-                          IS_WEB ? (WEB_PTR as any) : null,
-                        ]}
-                        accessibilityLabel={`Archive ${client.name}`}
-                      >
-                        <Text style={[styles.actionBtnText, styles.actionBtnDangerText]}>
-                          Archive
+                    {/* CONTACT */}
+                    <TableCell flex={2}>
+                      {client.contactEmail ? (
+                        <Text style={styles.contactEmail} numberOfLines={1}>
+                          {client.contactEmail}
                         </Text>
-                      </Pressable>
-                    ) : null}
-                  </View>
-                </Pressable>
+                      ) : null}
+                      {client.contactPhone ? (
+                        <Text style={styles.contactPhone} numberOfLines={1}>
+                          {client.contactPhone}
+                        </Text>
+                      ) : null}
+                      {!client.contactEmail && !client.contactPhone ? (
+                        <Text style={styles.contactPhone}>—</Text>
+                      ) : null}
+                    </TableCell>
+
+                    {/* STATUS */}
+                    <TableCell width={100}>
+                      <ClientStatusBadge status={client.status} />
+                    </TableCell>
+
+                    {/* SITES */}
+                    <TableCell width={64} align="center">
+                      <Text style={styles.siteCount}>
+                        {siteCountByClientId.get(client.id) ?? 0}
+                      </Text>
+                    </TableCell>
+
+                    {/* UPDATED */}
+                    <TableCell width={120}>
+                      <Text style={styles.updatedText} numberOfLines={1}>
+                        {fmtDate(client.updatedAt)}
+                      </Text>
+                    </TableCell>
+
+                    {/* ACTION */}
+                    <ActionCell width={72}>
+                      <IconButton
+                        icon="✎"
+                        accessibilityLabel={`Edit ${client.name}`}
+                        onPress={() => handleOpenEdit(client)}
+                        variant="ghost"
+                        size="sm"
+                      />
+                    </ActionCell>
+                  </TableRow>
+                </Fragment>
               ))
             )}
           </View>
@@ -520,68 +462,78 @@ export function CompanyClientsWorkspace({
 
       {/* ── Quick View Drawer ─────────────────────────────────────────────── */}
       <Drawer
-        visible={quickViewClient !== null}
+        visible={qvClient !== null}
         onClose={() => setQuickViewClient(null)}
-        title={quickViewClient?.name ?? ''}
+        title={qvClient?.name ?? ''}
         subtitle="Client overview"
         footer={
-          <View style={styles.drawerFooterRow}>
-            <Button
-              label="Edit Client"
-              onPress={() => quickViewClient && handleOpenEdit(quickViewClient)}
-              variant="primary"
-              size="md"
-            />
-            <Button
-              label="Close"
-              onPress={() => setQuickViewClient(null)}
-              variant="secondary"
-              size="md"
-            />
-          </View>
+          qvClient ? (
+            <View style={styles.qvFooter}>
+              <View style={styles.qvFooterPrimary}>
+                <Button
+                  label="Edit Client"
+                  onPress={() => handleOpenEdit(qvClient)}
+                  variant="primary"
+                  size="sm"
+                />
+                <Button
+                  label="Close"
+                  onPress={() => setQuickViewClient(null)}
+                  variant="secondary"
+                  size="sm"
+                />
+              </View>
+              {canArchiveQV ? (
+                <Button
+                  label="Archive"
+                  onPress={() => handleArchiveRequest(qvClient)}
+                  variant="danger"
+                  size="sm"
+                />
+              ) : null}
+            </View>
+          ) : undefined
         }
       >
-        {quickViewClient ? (
+        {qvClient ? (
           <View style={styles.qvBody}>
             {/* Details */}
             <View style={styles.qvSection}>
               <View style={styles.qvRow}>
                 <Text style={styles.qvLabel}>Status</Text>
-                <StatusBadge status={quickViewClient.status} />
+                <ClientStatusBadge status={qvClient.status} />
               </View>
-              {quickViewClient.contactName ? (
+              {qvClient.contactName ? (
                 <View style={styles.qvRow}>
                   <Text style={styles.qvLabel}>Contact</Text>
-                  <Text style={styles.qvValue}>{quickViewClient.contactName}</Text>
+                  <Text style={styles.qvValue}>{qvClient.contactName}</Text>
                 </View>
               ) : null}
-              {quickViewClient.contactEmail ? (
+              {qvClient.contactEmail ? (
                 <View style={styles.qvRow}>
                   <Text style={styles.qvLabel}>Email</Text>
-                  <Text style={styles.qvValue}>{quickViewClient.contactEmail}</Text>
+                  <Text style={styles.qvValue}>{qvClient.contactEmail}</Text>
                 </View>
               ) : null}
-              {quickViewClient.contactPhone ? (
+              {qvClient.contactPhone ? (
                 <View style={styles.qvRow}>
                   <Text style={styles.qvLabel}>Phone</Text>
-                  <Text style={styles.qvValue}>{quickViewClient.contactPhone}</Text>
+                  <Text style={styles.qvValue}>{qvClient.contactPhone}</Text>
                 </View>
               ) : null}
-              {quickViewClient.contactDetails ? (
+              {qvClient.contactDetails ? (
                 <View style={[styles.qvRow, styles.qvRowTop]}>
                   <Text style={styles.qvLabel}>Notes</Text>
-                  <Text style={[styles.qvValue, styles.qvNotes]}>
-                    {quickViewClient.contactDetails}
-                  </Text>
+                  <Text style={[styles.qvValue, styles.qvNotes]}>{qvClient.contactDetails}</Text>
                 </View>
               ) : null}
               <View style={styles.qvRow}>
                 <Text style={styles.qvLabel}>Created</Text>
-                <Text style={styles.qvValue}>{fmtDate(quickViewClient.createdAt)}</Text>
+                <Text style={styles.qvValue}>{fmtDate(qvClient.createdAt)}</Text>
               </View>
               <View style={styles.qvRow}>
                 <Text style={styles.qvLabel}>Updated</Text>
-                <Text style={styles.qvValue}>{fmtDate(quickViewClient.updatedAt)}</Text>
+                <Text style={styles.qvValue}>{fmtDate(qvClient.updatedAt)}</Text>
               </View>
             </View>
 
@@ -589,9 +541,7 @@ export function CompanyClientsWorkspace({
 
             {/* Sites */}
             <View style={styles.qvSection}>
-              <Text style={styles.qvSectionTitle}>
-                Sites ({clientSites.length})
-              </Text>
+              <Text style={styles.qvSectionTitle}>Sites ({clientSites.length})</Text>
               {clientSites.length === 0 ? (
                 <Text style={styles.qvEmptyCaption}>No sites linked to this client.</Text>
               ) : (
@@ -599,11 +549,9 @@ export function CompanyClientsWorkspace({
                   <View key={site.id} style={styles.siteItem}>
                     <View style={styles.siteItemLeft}>
                       <Text style={styles.siteName}>{site.name}</Text>
-                      <Text style={styles.siteAddress} numberOfLines={1}>
-                        {site.address}
-                      </Text>
+                      <Text style={styles.siteAddress} numberOfLines={1}>{site.address}</Text>
                     </View>
-                    <StatusBadge status={site.status} />
+                    <ClientStatusBadge status={site.status} />
                   </View>
                 ))
               )}
@@ -612,14 +560,14 @@ export function CompanyClientsWorkspace({
         ) : null}
       </Drawer>
 
-      {/* ── Form Drawer ───────────────────────────────────────────────────── */}
+      {/* ── Form Drawer ────────────────────────────────────────────────────── */}
       <Drawer
         visible={formDrawerOpen}
         onClose={handleCloseForm}
         title={clientForm.id ? 'Edit Client' : 'Add Client'}
         subtitle={clientForm.id ? 'Update client details' : 'Create a new client account'}
         footer={
-          <View style={styles.drawerFooterRow}>
+          <View style={styles.formFooter}>
             <Button
               label={clientForm.id ? 'Save Changes' : 'Create Client'}
               onPress={handleSave}
@@ -688,7 +636,7 @@ export function CompanyClientsWorkspace({
               value={clientForm.status || 'active'}
               onChange={(v) => setClientForm((cur) => ({ ...cur, status: v || 'active' }))}
               options={[
-                { label: 'Active', value: 'active' },
+                { label: 'Active',   value: 'active'   },
                 { label: 'Inactive', value: 'inactive' },
                 { label: 'Archived', value: 'archived' },
               ]}
@@ -705,18 +653,28 @@ export function CompanyClientsWorkspace({
           </FormField>
         </View>
       </Drawer>
+
+      {/* ── Archive ConfirmationDialog ─────────────────────────────────────── */}
+      <ConfirmationDialog
+        visible={archivingClient !== null}
+        onClose={() => setArchivingClient(null)}
+        onConfirm={handleConfirmArchive}
+        title={archivingClient ? `Archive ${archivingClient.name}?` : 'Archive client?'}
+        message={
+          archivingClient
+            ? `${archivingClient.name} will be set to Archived and hidden from the default client view. The record is not deleted and can be retrieved using the Archived filter.`
+            : ''
+        }
+        confirmLabel="Archive Client"
+        cancelLabel="Cancel"
+        variant="danger"
+        loading={archivingInProgress}
+      />
     </View>
   );
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
-
-const COL_CLIENT = 220;
-const COL_CONTACT = 220;
-const COL_STATUS = 110;
-const COL_SITES = 72;
-const COL_UPDATED = 130;
-const COL_ACTIONS = 160;
 
 const formSelectStyle = {
   height: control.inputHeight,
@@ -766,35 +724,20 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
   } as any,
 
-  // ── Stats bar ─────────────────────────────────────────────────────────────
-  statsBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  // ── Compact stats strip ───────────────────────────────────────────────────
+  statsStrip: {
     paddingHorizontal: spacing.xl,
-    paddingVertical: spacing.md,
-    backgroundColor: colors.surfaceSubtle,
+    paddingVertical: spacing.sm,
+    backgroundColor: colors.card,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
-    gap: spacing.lg,
   },
-  statItem: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    gap: spacing.xs,
-  },
-  statValue: {
-    ...typography.title,
-    color: colors.primaryNavy,
-    fontWeight: '700',
-  } as any,
-  statLabel: {
+  statsText: {
     ...typography.caption,
     color: colors.textSecondary,
   } as any,
-  statDivider: {
-    width: 1,
-    height: 20,
-    backgroundColor: colors.border,
+  statsDot: {
+    color: colors.border,
   },
 
   // ── Toolbar ───────────────────────────────────────────────────────────────
@@ -803,7 +746,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flexWrap: 'wrap',
     paddingHorizontal: spacing.xl,
-    paddingVertical: spacing.md,
+    paddingVertical: spacing.sm,
     backgroundColor: colors.card,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
@@ -811,40 +754,38 @@ const styles = StyleSheet.create({
   },
   searchBox: {
     flex: 1,
-    minWidth: 200,
+    minWidth: 180,
     flexDirection: 'row',
     alignItems: 'center',
-    height: 38,
+    height: 36,
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: radii.sm,
     backgroundColor: colors.background,
-    paddingHorizontal: spacing.md,
+    paddingLeft: spacing.md,
+    paddingRight: spacing.xs,
     gap: spacing.xs,
   },
   searchIcon: {
     fontSize: 16,
     color: colors.textSecondary,
+    lineHeight: 20,
   },
   searchInput: {
     flex: 1,
-    ...typography.body,
+    fontSize: 13,
+    lineHeight: 18,
     color: colors.textPrimary,
-    height: 38,
+    height: 36,
     ...(IS_WEB ? { outlineStyle: 'none' } : null),
   } as any,
-  searchClear: {
-    fontSize: 12,
-    color: colors.textSecondary,
-    paddingHorizontal: spacing.xs,
-  },
   filterChips: {
     flexDirection: 'row',
-    gap: spacing.xs,
+    gap: 4,
   },
   filterChip: {
-    height: 32,
-    paddingHorizontal: spacing.md,
+    height: 28,
+    paddingHorizontal: spacing.sm,
     borderRadius: radii.pill,
     borderWidth: 1,
     borderColor: colors.border,
@@ -856,43 +797,15 @@ const styles = StyleSheet.create({
     borderColor: colors.accentTeal,
     backgroundColor: colors.accentTealSoft,
   },
-  filterChipPressed: {
-    opacity: 0.75,
-  },
   filterChipText: {
-    ...typography.caption,
+    fontSize: 12,
+    lineHeight: 16,
     fontWeight: '500',
     color: colors.textSecondary,
-  } as any,
+  },
   filterChipTextActive: {
     color: colors.accentTealStrong,
     fontWeight: '700',
-  },
-  archivedToggle: {
-    height: 32,
-    paddingHorizontal: spacing.md,
-    borderRadius: radii.pill,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.background,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  archivedToggleOn: {
-    borderColor: colors.warning,
-    backgroundColor: colors.warningSurface,
-  },
-  archivedTogglePressed: {
-    opacity: 0.75,
-  },
-  archivedToggleText: {
-    ...typography.caption,
-    fontWeight: '500',
-    color: colors.textSecondary,
-  } as any,
-  archivedToggleTextOn: {
-    color: colors.warning,
-    fontWeight: '600',
   },
 
   // ── Table ─────────────────────────────────────────────────────────────────
@@ -901,136 +814,46 @@ const styles = StyleSheet.create({
     minHeight: 0,
     backgroundColor: colors.card,
   },
-  tableInner: {
-    flexDirection: 'column',
-    minWidth: COL_CLIENT + COL_CONTACT + COL_STATUS + COL_SITES + COL_UPDATED + COL_ACTIONS,
+
+  // Table cell content
+  contactEmail: {
+    fontSize: 13,
+    lineHeight: 18,
+    color: colors.textPrimary,
   },
-  tableHeadRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    height: 40,
-    backgroundColor: colors.primaryNavy,
-    paddingHorizontal: spacing.lg,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.primaryNavyStrong,
-  },
-  headCell: {
-    ...typography.caption,
-    color: colors.textOnBrand,
-    fontWeight: '700',
-    letterSpacing: 0.6,
+  contactPhone: {
     fontSize: 11,
-  } as any,
-  tableRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    minHeight: 56,
-    paddingHorizontal: spacing.lg,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    backgroundColor: colors.card,
-  },
-  tableRowAlt: {
-    backgroundColor: colors.background,
-  },
-  tableRowPressed: {
-    backgroundColor: colors.surfaceSubtle,
-  },
-  dataCell: {
-    paddingVertical: spacing.sm,
-    paddingRight: spacing.md,
-    justifyContent: 'center',
-  },
-  actionsCell: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    paddingRight: 0,
-  },
-
-  // Column widths
-  colClient: { width: COL_CLIENT },
-  colContact: { width: COL_CONTACT },
-  colStatus: { width: COL_STATUS },
-  colSites: { width: COL_SITES },
-  colUpdated: { width: COL_UPDATED },
-  colActions: { width: COL_ACTIONS },
-
-  // Cell content
-  clientName: {
-    ...typography.label,
-    color: colors.textPrimary,
-    fontWeight: '600',
-  } as any,
-  clientSub: {
-    ...typography.caption,
+    lineHeight: 16,
     color: colors.textSecondary,
-    marginTop: 2,
-  } as any,
-  contactLine: {
-    ...typography.caption,
-    color: colors.textPrimary,
-  } as any,
-  contactSub: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginTop: 2,
-  } as any,
+    marginTop: 1,
+  },
   siteCount: {
-    ...typography.label,
-    color: colors.textPrimary,
+    fontSize: 13,
+    lineHeight: 18,
     fontWeight: '600',
-  } as any,
-  updatedDate: {
-    ...typography.caption,
+    color: colors.textPrimary,
+    textAlign: 'center',
+  },
+  updatedText: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '400',
     color: colors.textSecondary,
-  } as any,
-
-  // Action buttons
-  actionBtn: {
-    height: 30,
-    paddingHorizontal: spacing.sm,
-    borderRadius: radii.sm,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.card,
-    alignItems: 'center',
-    justifyContent: 'center',
-    minWidth: 52,
-  },
-  actionBtnPressed: {
-    backgroundColor: colors.surfaceSubtle,
-  },
-  actionBtnText: {
-    ...typography.caption,
-    fontWeight: '600',
-    color: colors.textPrimary,
-  } as any,
-  actionBtnDanger: {
-    borderColor: colors.dangerBorder,
-    backgroundColor: colors.dangerSurface,
-  },
-  actionBtnDangerPressed: {
-    backgroundColor: colors.dangerBorder,
-  },
-  actionBtnDangerText: {
-    color: colors.danger,
   },
 
   // Status badge
   badge: {
     alignSelf: 'flex-start',
-    flexDirection: 'row',
-    alignItems: 'center',
     borderRadius: radii.pill,
     borderWidth: 1,
     paddingHorizontal: spacing.sm,
-    paddingVertical: 3,
+    paddingVertical: 2,
   },
   badgeText: {
     fontSize: 11,
     fontWeight: '600',
     letterSpacing: 0.2,
+    lineHeight: 16,
   },
 
   // Empty states
@@ -1040,25 +863,33 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.section,
     paddingHorizontal: spacing.xl,
     gap: spacing.md,
-    minWidth: COL_CLIENT + COL_CONTACT + COL_STATUS + COL_SITES + COL_UPDATED + COL_ACTIONS,
+    backgroundColor: colors.card,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
   },
   emptyTitle: {
-    ...typography.heading,
+    ...typography.panelHeading,
     color: colors.textPrimary,
     textAlign: 'center',
   } as any,
   emptyCaption: {
-    ...typography.body,
+    ...typography.caption,
     color: colors.textSecondary,
     textAlign: 'center',
     maxWidth: 360,
   } as any,
 
   // ── Quick View Drawer ─────────────────────────────────────────────────────
-  drawerFooterRow: {
+  qvFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flex: 1,
+    gap: spacing.sm,
+  },
+  qvFooterPrimary: {
     flexDirection: 'row',
     gap: spacing.sm,
-    flex: 1,
   },
   qvBody: {
     flex: 1,
@@ -1069,9 +900,8 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   qvSectionTitle: {
-    ...typography.label,
+    ...typography.panelHeading,
     color: colors.textPrimary,
-    fontWeight: '700',
     marginBottom: spacing.xs,
   } as any,
   qvRow: {
@@ -1084,19 +914,22 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
   },
   qvLabel: {
-    ...typography.caption,
-    color: colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 16,
     fontWeight: '600',
-    width: 72,
+    color: colors.textSecondary,
+    width: 68,
     flexShrink: 0,
-  } as any,
+  },
   qvValue: {
     ...typography.body,
     color: colors.textPrimary,
     flex: 1,
+    fontSize: 14,
   } as any,
   qvNotes: {
     color: colors.textSecondary,
+    fontSize: 13,
   },
   qvSeparator: {
     height: 1,
@@ -1104,10 +937,11 @@ const styles = StyleSheet.create({
     marginHorizontal: spacing.xl,
   },
   qvEmptyCaption: {
-    ...typography.caption,
+    fontSize: 13,
+    lineHeight: 18,
     color: colors.textSecondary,
     fontStyle: 'italic',
-  } as any,
+  },
   siteItem: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1124,16 +958,23 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   siteName: {
-    ...typography.label,
-    color: colors.textPrimary,
+    fontSize: 13,
+    lineHeight: 18,
     fontWeight: '600',
-  } as any,
+    color: colors.textPrimary,
+  },
   siteAddress: {
-    ...typography.caption,
+    fontSize: 11,
+    lineHeight: 16,
     color: colors.textSecondary,
-  } as any,
+  },
 
   // ── Form Drawer ───────────────────────────────────────────────────────────
+  formFooter: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    flex: 1,
+  },
   formBody: {
     paddingHorizontal: spacing.xl,
     paddingVertical: spacing.lg,
@@ -1148,10 +989,11 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
   },
   formErrorText: {
-    ...typography.caption,
-    color: colors.danger,
+    fontSize: 13,
+    lineHeight: 18,
     fontWeight: '600',
-  } as any,
+    color: colors.danger,
+  },
 
   // Native select fallback
   nativeSelectFallback: {
@@ -1164,7 +1006,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   nativeSelectText: {
-    ...typography.body,
+    fontSize: 14,
+    lineHeight: 20,
     color: colors.textPrimary,
-  } as any,
+  },
 });
