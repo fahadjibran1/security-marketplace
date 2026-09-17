@@ -226,7 +226,7 @@ type ManagementActionItem = {
 
 const NAV_ITEMS: NavItem[] = [
   { id: 'dashboard', label: 'Dashboard', caption: 'Your live operational position and items requiring attention.' },
-  { id: 'clients', label: 'Clients', caption: 'Client accounts and contacts.' },
+  { id: 'clients', label: 'Clients', caption: 'Manage client relationships, contacts and operational sites.' },
   { id: 'sites', label: 'Sites', caption: 'Site setup, instructions, and coverage.' },
   { id: 'rota-planner', label: 'Rota Planner', caption: 'Plan weekly cover and assignments.' },
   { id: 'shift-offers', label: 'Shift Offers', caption: 'Track pending responses and re-cover needs.' },

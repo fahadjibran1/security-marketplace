@@ -13,7 +13,6 @@ import {
   TableHeaderCell,
   TableRow,
   TableCell,
-  PrimaryCell,
   ActionCell,
 } from '../ui/TableFoundation';
 
@@ -87,7 +86,7 @@ function fmtDate(iso?: string | null): string {
   }
 }
 
-// ─── StatusBadge ─────────────────────────────────────────────────────────────
+// ─── ClientStatusBadge ───────────────────────────────────────────────────────
 
 function ClientStatusBadge({ status }: { status?: string | null }) {
   const b = getStatusBadge(status);
@@ -98,7 +97,7 @@ function ClientStatusBadge({ status }: { status?: string | null }) {
   );
 }
 
-// ─── FormSelect (web-native <select> for status field) ───────────────────────
+// ─── FormSelect (web-native <select>) ────────────────────────────────────────
 
 function FormSelect({
   value,
@@ -110,9 +109,7 @@ function FormSelect({
   options: Array<{ label: string; value: string }>;
 }) {
   const [mounted, setMounted] = React.useState(false);
-  React.useEffect(() => {
-    setMounted(IS_WEB);
-  }, []);
+  React.useEffect(() => { setMounted(IS_WEB); }, []);
 
   if (mounted) {
     const SelectTag: any = 'select';
@@ -125,9 +122,7 @@ function FormSelect({
         aria-label="Status"
       >
         {options.map((opt) => (
-          <OptionTag key={opt.value} value={opt.value}>
-            {opt.label}
-          </OptionTag>
+          <OptionTag key={opt.value} value={opt.value}>{opt.label}</OptionTag>
         ))}
       </SelectTag>
     );
@@ -140,14 +135,31 @@ function FormSelect({
   );
 }
 
-// ─── Minimum table width ──────────────────────────────────────────────────────
-// Sum of fixed-width columns + minimum flex-column widths + row outer padding.
-// When the container is narrower, the horizontal ScrollView activates.
+// ─── Column width computation ─────────────────────────────────────────────────
+// All six columns get explicit pixel widths computed from the measured container
+// width. This eliminates flex ambiguity and guarantees header/row alignment.
 
-const FIXED_COL_TOTAL = 100 + 64 + 120 + 72; // status + sites + updated + actions = 356
-const MIN_FLEX_TOTAL  = 180 + 150;             // min client + min contact = 330
-const ROW_OUTER_PAD   = spacing.md * 2;        // TableFoundation row paddingHorizontal × 2
-const TABLE_MIN_WIDTH = FIXED_COL_TOTAL + MIN_FLEX_TOTAL + ROW_OUTER_PAD; // 710
+const TABLE_ROW_PAD = spacing.md * 2;  // 24px — TableFoundation row paddingHorizontal × 2
+const TABLE_MIN_WIDTH = 730;           // Minimum before horizontal scroll activates
+
+type ColWidths = {
+  CLIENT: number; CONTACT: number; STATUS: number;
+  SITES: number;  UPDATED: number;  ACTION: number;
+};
+
+function computeColWidths(containerWidth: number): ColWidths {
+  const avail = Math.max(containerWidth, TABLE_MIN_WIDTH) - TABLE_ROW_PAD;
+  // Semantic fixed columns — hard minima prevent header wrap at ≥1280px
+  const STATUS  = Math.max(Math.round(avail * 0.11), 108);
+  const SITES   = Math.max(Math.round(avail * 0.08), 74);
+  const UPDATED = Math.max(Math.round(avail * 0.13), 118);
+  const ACTION  = 64;
+  // Flexible columns share the remainder
+  const rest    = avail - STATUS - SITES - UPDATED - ACTION;
+  const CLIENT  = Math.max(Math.round(rest * 0.55), 190);
+  const CONTACT = Math.max(rest - CLIENT, 148);
+  return { CLIENT, CONTACT, STATUS, SITES, UPDATED, ACTION };
+}
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
@@ -174,9 +186,15 @@ export function CompanyClientsWorkspace({
     if (w > 0) setTableContainerWidth(w);
   }, []);
 
-  const tableInnerWidth = Math.max(tableContainerWidth, TABLE_MIN_WIDTH);
+  const colWidths = React.useMemo(
+    () => computeColWidths(tableContainerWidth),
+    [tableContainerWidth],
+  );
+  const tableInnerWidth =
+    colWidths.CLIENT + colWidths.CONTACT + colWidths.STATUS +
+    colWidths.SITES  + colWidths.UPDATED + colWidths.ACTION + TABLE_ROW_PAD;
 
-  // ─── derived ─────────────────────────────────────────────────────────────
+  // ─── Derived state ────────────────────────────────────────────────────────
 
   const siteCountByClientId = React.useMemo(() => {
     const map = new Map<number, number>();
@@ -191,9 +209,7 @@ export function CompanyClientsWorkspace({
     const q = searchQuery.trim().toLowerCase();
     return clients.filter((client) => {
       const status = (client.status || 'active').toLowerCase();
-      // 'all' shows active + inactive only (not archived)
       if (statusFilter === 'all' && status === 'archived') return false;
-      // specific filter must match exactly
       if (statusFilter !== 'all' && status !== statusFilter) return false;
       if (!q) return true;
       return (
@@ -218,7 +234,7 @@ export function CompanyClientsWorkspace({
     [quickViewClient, sites],
   );
 
-  // ─── handlers ────────────────────────────────────────────────────────────
+  // ─── Handlers ────────────────────────────────────────────────────────────
 
   const handleOpenAdd = () => {
     setClientForm(CLIENT_FORM_EMPTY);
@@ -273,7 +289,7 @@ export function CompanyClientsWorkspace({
     }
   };
 
-  // ─── render ───────────────────────────────────────────────────────────────
+  // ─── Render ───────────────────────────────────────────────────────────────
 
   const qvClient = quickViewClient;
   const canArchiveQV = qvClient && (qvClient.status || 'active').toLowerCase() !== 'archived';
@@ -281,31 +297,25 @@ export function CompanyClientsWorkspace({
   return (
     <View style={styles.root}>
 
-      {/* ── Page header ──────────────────────────────────────────────────── */}
-      <View style={styles.pageHeader}>
-        <View style={styles.pageTitleBlock}>
-          <Text style={styles.pageTitle}>Client Accounts</Text>
-          <Text style={styles.pageCaption}>
-            Manage client relationships, contact details, and site associations.
-          </Text>
-        </View>
-        <Button label="+ Add Client" onPress={handleOpenAdd} variant="primary" size="md" />
-      </View>
-
-      {/* ── Compact stats strip ───────────────────────────────────────────── */}
-      <View style={styles.statsStrip}>
+      {/* ── Action strip (stats + add button) ────────────────────────────── */}
+      <View style={styles.actionStrip}>
         <Text style={styles.statsText}>
-          {stats.total} {stats.total === 1 ? 'client' : 'clients'}
+          <Text style={styles.statsNum}>{stats.total}</Text>
+          {' '}{stats.total === 1 ? 'client' : 'clients'}
           <Text style={styles.statsDot}> · </Text>
-          <Text style={[styles.statsText, { color: colors.success }]}>{stats.active} active</Text>
+          <Text style={[styles.statsText, { color: colors.success }]}>
+            <Text style={[styles.statsNum, { color: colors.success }]}>{stats.active}</Text>
+            {' active'}
+          </Text>
           <Text style={styles.statsDot}> · </Text>
-          {stats.totalSites} {stats.totalSites === 1 ? 'site' : 'sites'}
+          <Text style={styles.statsNum}>{stats.totalSites}</Text>
+          {' '}{stats.totalSites === 1 ? 'site' : 'sites'}
         </Text>
+        <Button label="+ Add Client" onPress={handleOpenAdd} variant="primary" size="sm" />
       </View>
 
       {/* ── Toolbar ──────────────────────────────────────────────────────── */}
       <View style={styles.toolbar}>
-        {/* Search */}
         <View style={styles.searchBox}>
           <Text style={styles.searchIcon} accessible={false}>⌕</Text>
           <TextInput
@@ -327,7 +337,6 @@ export function CompanyClientsWorkspace({
           ) : null}
         </View>
 
-        {/* Status filter chips */}
         <View style={styles.filterChips}>
           {(['all', 'active', 'inactive', 'archived'] as StatusFilter[]).map((f) => (
             <View
@@ -361,15 +370,15 @@ export function CompanyClientsWorkspace({
 
             {/* Header */}
             <TableHeader>
-              <TableHeaderCell label="Client"  flex={3.5} />
-              <TableHeaderCell label="Contact" flex={2} />
-              <TableHeaderCell label="Status"  width={100} />
-              <TableHeaderCell label="Sites"   width={64}  align="center" />
-              <TableHeaderCell label="Updated" width={120} />
-              <TableHeaderCell label=""        width={72}  />
+              <TableHeaderCell label="Client"  width={colWidths.CLIENT} />
+              <TableHeaderCell label="Contact" width={colWidths.CONTACT} />
+              <TableHeaderCell label="Status"  width={colWidths.STATUS} />
+              <TableHeaderCell label="Sites"   width={colWidths.SITES}  align="center" />
+              <TableHeaderCell label="Updated" width={colWidths.UPDATED} />
+              <TableHeaderCell label=""        width={colWidths.ACTION} />
             </TableHeader>
 
-            {/* Empty — no clients at all */}
+            {/* Empty — no clients */}
             {filteredClients.length === 0 && clients.length === 0 ? (
               <View style={styles.emptyState}>
                 <Text style={styles.emptyTitle}>No clients yet</Text>
@@ -379,12 +388,11 @@ export function CompanyClientsWorkspace({
                 <Button label="+ Add Client" onPress={handleOpenAdd} variant="primary" size="sm" />
               </View>
             ) : filteredClients.length === 0 ? (
-              /* Empty — filter / search has no matches */
               <View style={styles.emptyState}>
                 <Text style={styles.emptyTitle}>No clients match</Text>
                 <Text style={styles.emptyCaption}>
                   {statusFilter === 'all'
-                    ? 'Try adjusting your search, or switch to a specific status filter (including Archived) to find what you\'re looking for.'
+                    ? "Try adjusting your search, or switch to Archived to find hidden records."
                     : 'Try adjusting your search or selecting a different status filter.'}
                 </Text>
                 <Button
@@ -399,24 +407,22 @@ export function CompanyClientsWorkspace({
               filteredClients.map((client) => (
                 <Fragment key={client.id}>
                   <TableRow onPress={() => setQuickViewClient(client)}>
-                    {/* CLIENT */}
-                    <PrimaryCell
-                      label={client.name}
-                      subtitle={client.contactName ?? undefined}
-                      flex={3.5}
-                    />
+
+                    {/* CLIENT — manual render matching PrimaryCell styles */}
+                    <TableCell width={colWidths.CLIENT}>
+                      <Text style={styles.clientName} numberOfLines={1}>{client.name}</Text>
+                      {client.contactName ? (
+                        <Text style={styles.clientSubtitle} numberOfLines={1}>{client.contactName}</Text>
+                      ) : null}
+                    </TableCell>
 
                     {/* CONTACT */}
-                    <TableCell flex={2}>
+                    <TableCell width={colWidths.CONTACT}>
                       {client.contactEmail ? (
-                        <Text style={styles.contactEmail} numberOfLines={1}>
-                          {client.contactEmail}
-                        </Text>
+                        <Text style={styles.contactEmail} numberOfLines={1}>{client.contactEmail}</Text>
                       ) : null}
                       {client.contactPhone ? (
-                        <Text style={styles.contactPhone} numberOfLines={1}>
-                          {client.contactPhone}
-                        </Text>
+                        <Text style={styles.contactPhone} numberOfLines={1}>{client.contactPhone}</Text>
                       ) : null}
                       {!client.contactEmail && !client.contactPhone ? (
                         <Text style={styles.contactPhone}>—</Text>
@@ -424,26 +430,26 @@ export function CompanyClientsWorkspace({
                     </TableCell>
 
                     {/* STATUS */}
-                    <TableCell width={100}>
+                    <TableCell width={colWidths.STATUS}>
                       <ClientStatusBadge status={client.status} />
                     </TableCell>
 
                     {/* SITES */}
-                    <TableCell width={64} align="center">
+                    <TableCell width={colWidths.SITES} align="center">
                       <Text style={styles.siteCount}>
                         {siteCountByClientId.get(client.id) ?? 0}
                       </Text>
                     </TableCell>
 
                     {/* UPDATED */}
-                    <TableCell width={120}>
+                    <TableCell width={colWidths.UPDATED}>
                       <Text style={styles.updatedText} numberOfLines={1}>
                         {fmtDate(client.updatedAt)}
                       </Text>
                     </TableCell>
 
                     {/* ACTION */}
-                    <ActionCell width={72}>
+                    <ActionCell width={colWidths.ACTION}>
                       <IconButton
                         icon="✎"
                         accessibilityLabel={`Edit ${client.name}`}
@@ -452,6 +458,7 @@ export function CompanyClientsWorkspace({
                         size="sm"
                       />
                     </ActionCell>
+
                   </TableRow>
                 </Fragment>
               ))
@@ -497,7 +504,8 @@ export function CompanyClientsWorkspace({
       >
         {qvClient ? (
           <View style={styles.qvBody}>
-            {/* Details */}
+
+            {/* Detail rows */}
             <View style={styles.qvSection}>
               <View style={styles.qvRow}>
                 <Text style={styles.qvLabel}>Status</Text>
@@ -541,15 +549,22 @@ export function CompanyClientsWorkspace({
 
             {/* Sites */}
             <View style={styles.qvSection}>
-              <Text style={styles.qvSectionTitle}>Sites ({clientSites.length})</Text>
+              <Text style={styles.qvSectionTitle}>
+                Sites ({clientSites.length})
+              </Text>
               {clientSites.length === 0 ? (
                 <Text style={styles.qvEmptyCaption}>No sites linked to this client.</Text>
               ) : (
-                clientSites.map((site) => (
-                  <View key={site.id} style={styles.siteItem}>
-                    <View style={styles.siteItemLeft}>
+                clientSites.map((site, idx) => (
+                  <View
+                    key={site.id}
+                    style={[styles.siteRow, idx === 0 && styles.siteRowFirst]}
+                  >
+                    <View style={styles.siteRowLeft}>
                       <Text style={styles.siteName}>{site.name}</Text>
-                      <Text style={styles.siteAddress} numberOfLines={1}>{site.address}</Text>
+                      {site.address ? (
+                        <Text style={styles.siteAddress} numberOfLines={1}>{site.address}</Text>
+                      ) : null}
                     </View>
                     <ClientStatusBadge status={site.status} />
                   </View>
@@ -560,7 +575,7 @@ export function CompanyClientsWorkspace({
         ) : null}
       </Drawer>
 
-      {/* ── Form Drawer ────────────────────────────────────────────────────── */}
+      {/* ── Form Drawer ───────────────────────────────────────────────────── */}
       <Drawer
         visible={formDrawerOpen}
         onClose={handleCloseForm}
@@ -592,69 +607,90 @@ export function CompanyClientsWorkspace({
             </View>
           ) : null}
 
-          <FormField label="Client name" required>
-            <FieldInput
-              value={clientForm.name}
-              onChangeText={(v: string) => setClientForm((cur) => ({ ...cur, name: v }))}
-              placeholder="e.g. Acme Security Ltd"
-              hasError={!!formError && !clientForm.name.trim()}
-              autoCapitalize="words"
-            />
-          </FormField>
+          {/* Section: Client Details */}
+          <View style={styles.formSection}>
+            <Text style={styles.formSectionLabel}>Client Details</Text>
 
-          <FormField label="Contact person">
-            <FieldInput
-              value={clientForm.contactName}
-              onChangeText={(v: string) => setClientForm((cur) => ({ ...cur, contactName: v }))}
-              placeholder="e.g. Jane Smith"
-              autoCapitalize="words"
-            />
-          </FormField>
+            <FormField label="Client name" required>
+              <FieldInput
+                value={clientForm.name}
+                onChangeText={(v: string) => setClientForm((cur) => ({ ...cur, name: v }))}
+                placeholder="e.g. Acme Security Ltd"
+                hasError={!!formError && !clientForm.name.trim()}
+                autoCapitalize="words"
+                style={COMPACT_INPUT}
+              />
+            </FormField>
 
-          <FormField label="Contact email">
-            <FieldInput
-              value={clientForm.contactEmail}
-              onChangeText={(v: string) => setClientForm((cur) => ({ ...cur, contactEmail: v }))}
-              placeholder="e.g. jane@acme.com"
-              keyboardType="email-address"
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-          </FormField>
+            <FormField label="Status">
+              <FormSelect
+                value={clientForm.status || 'active'}
+                onChange={(v) => setClientForm((cur) => ({ ...cur, status: v || 'active' }))}
+                options={[
+                  { label: 'Active',   value: 'active'   },
+                  { label: 'Inactive', value: 'inactive' },
+                  { label: 'Archived', value: 'archived' },
+                ]}
+              />
+            </FormField>
+          </View>
 
-          <FormField label="Contact phone">
-            <FieldInput
-              value={clientForm.contactPhone}
-              onChangeText={(v: string) => setClientForm((cur) => ({ ...cur, contactPhone: v }))}
-              placeholder="e.g. +44 7700 900000"
-              keyboardType="phone-pad"
-            />
-          </FormField>
+          <View style={styles.formDivider} />
 
-          <FormField label="Status">
-            <FormSelect
-              value={clientForm.status || 'active'}
-              onChange={(v) => setClientForm((cur) => ({ ...cur, status: v || 'active' }))}
-              options={[
-                { label: 'Active',   value: 'active'   },
-                { label: 'Inactive', value: 'inactive' },
-                { label: 'Archived', value: 'archived' },
-              ]}
-            />
-          </FormField>
+          {/* Section: Primary Contact */}
+          <View style={styles.formSection}>
+            <Text style={styles.formSectionLabel}>Primary Contact</Text>
 
-          <FormField label="Notes">
+            <FormField label="Contact person">
+              <FieldInput
+                value={clientForm.contactName}
+                onChangeText={(v: string) => setClientForm((cur) => ({ ...cur, contactName: v }))}
+                placeholder="e.g. Jane Smith"
+                autoCapitalize="words"
+                style={COMPACT_INPUT}
+              />
+            </FormField>
+
+            <FormField label="Email">
+              <FieldInput
+                value={clientForm.contactEmail}
+                onChangeText={(v: string) => setClientForm((cur) => ({ ...cur, contactEmail: v }))}
+                placeholder="e.g. jane@acme.com"
+                keyboardType="email-address"
+                autoCapitalize="none"
+                autoCorrect={false}
+                style={COMPACT_INPUT}
+              />
+            </FormField>
+
+            <FormField label="Phone">
+              <FieldInput
+                value={clientForm.contactPhone}
+                onChangeText={(v: string) => setClientForm((cur) => ({ ...cur, contactPhone: v }))}
+                placeholder="e.g. +44 7700 900000"
+                keyboardType="phone-pad"
+                style={COMPACT_INPUT}
+              />
+            </FormField>
+          </View>
+
+          <View style={styles.formDivider} />
+
+          {/* Section: Notes */}
+          <View style={styles.formSection}>
+            <Text style={styles.formSectionLabel}>Notes</Text>
+
             <FieldTextarea
               value={clientForm.notes}
               onChangeText={(v: string) => setClientForm((cur) => ({ ...cur, notes: v }))}
-              placeholder="Additional notes about this client…"
+              placeholder="Additional context about this client…"
               minLines={3}
             />
-          </FormField>
+          </View>
         </View>
       </Drawer>
 
-      {/* ── Archive ConfirmationDialog ─────────────────────────────────────── */}
+      {/* ── Archive confirmation ───────────────────────────────────────────── */}
       <ConfirmationDialog
         visible={archivingClient !== null}
         onClose={() => setArchivingClient(null)}
@@ -674,10 +710,14 @@ export function CompanyClientsWorkspace({
   );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
+// ─── Compact input height override (passed as style prop to FieldInput) ───────
+
+const COMPACT_INPUT = { height: 42, minHeight: 42 } as const;
+
+// ─── FormSelect style (web <select> element) ──────────────────────────────────
 
 const formSelectStyle = {
-  height: control.inputHeight,
+  height: 42,
   borderWidth: 1.5,
   borderColor: colors.fieldBorder,
   borderRadius: radii.sm,
@@ -690,6 +730,8 @@ const formSelectStyle = {
   outlineStyle: 'none',
 } as const;
 
+// ─── Styles ───────────────────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
   root: {
     flex: 1,
@@ -698,44 +740,26 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
   },
 
-  // ── Page header ───────────────────────────────────────────────────────────
-  pageHeader: {
+  // ── Action strip (stats + add button) ─────────────────────────────────────
+  actionStrip: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: spacing.xl,
-    paddingTop: spacing.xl,
-    paddingBottom: spacing.lg,
-    backgroundColor: colors.card,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    gap: spacing.lg,
-  },
-  pageTitleBlock: {
-    flex: 1,
-    gap: spacing.xs,
-  },
-  pageTitle: {
-    ...typography.sectionTitle,
-    color: colors.primaryNavy,
-  } as any,
-  pageCaption: {
-    ...typography.caption,
-    color: colors.textSecondary,
-  } as any,
-
-  // ── Compact stats strip ───────────────────────────────────────────────────
-  statsStrip: {
     paddingHorizontal: spacing.xl,
     paddingVertical: spacing.sm,
     backgroundColor: colors.card,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
+    gap: spacing.lg,
   },
   statsText: {
     ...typography.caption,
     color: colors.textSecondary,
   } as any,
+  statsNum: {
+    fontWeight: '600',
+    color: colors.textPrimary,
+  },
   statsDot: {
     color: colors.border,
   },
@@ -816,6 +840,18 @@ const styles = StyleSheet.create({
   },
 
   // Table cell content
+  clientName: {
+    fontSize: 13,
+    fontWeight: '600',
+    lineHeight: 18,
+    color: colors.textPrimary,
+  },
+  clientSubtitle: {
+    fontSize: 11,
+    lineHeight: 16,
+    color: colors.textSecondary,
+    marginTop: 1,
+  },
   contactEmail: {
     fontSize: 13,
     lineHeight: 18,
@@ -896,19 +932,19 @@ const styles = StyleSheet.create({
   },
   qvSection: {
     paddingHorizontal: spacing.xl,
-    paddingVertical: spacing.lg,
-    gap: spacing.sm,
+    paddingVertical: spacing.md,
+    gap: 6,
   },
   qvSectionTitle: {
     ...typography.panelHeading,
     color: colors.textPrimary,
-    marginBottom: spacing.xs,
+    marginBottom: 4,
   } as any,
   qvRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.md,
-    minHeight: 32,
+    minHeight: 28,
   },
   qvRowTop: {
     alignItems: 'flex-start',
@@ -918,15 +954,15 @@ const styles = StyleSheet.create({
     lineHeight: 16,
     fontWeight: '600',
     color: colors.textSecondary,
-    width: 68,
+    width: 64,
     flexShrink: 0,
   },
   qvValue: {
-    ...typography.body,
+    fontSize: 13,
+    lineHeight: 18,
     color: colors.textPrimary,
     flex: 1,
-    fontSize: 14,
-  } as any,
+  },
   qvNotes: {
     color: colors.textSecondary,
     fontSize: 13,
@@ -942,18 +978,21 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     fontStyle: 'italic',
   },
-  siteItem: {
+
+  // Site list — divider-based, no card styling
+  siteRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.md,
-    borderRadius: radii.sm,
-    backgroundColor: colors.background,
-    borderWidth: 1,
-    borderColor: colors.border,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
     gap: spacing.md,
   },
-  siteItemLeft: {
+  siteRowFirst: {
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  siteRowLeft: {
     flex: 1,
     gap: 2,
   },
@@ -977,8 +1016,25 @@ const styles = StyleSheet.create({
   },
   formBody: {
     paddingHorizontal: spacing.xl,
-    paddingVertical: spacing.lg,
-    gap: spacing.lg,
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.xl,
+    gap: 20,
+  },
+  formSection: {
+    gap: 12,
+  },
+  formSectionLabel: {
+    fontSize: 11,
+    lineHeight: 16,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    color: colors.textMuted,
+  },
+  formDivider: {
+    height: 1,
+    backgroundColor: colors.border,
+    marginVertical: 2,
   },
   formErrorBanner: {
     backgroundColor: colors.dangerSurface,
@@ -995,9 +1051,9 @@ const styles = StyleSheet.create({
     color: colors.danger,
   },
 
-  // Native select fallback
+  // Native select fallback (mobile)
   nativeSelectFallback: {
-    height: control.inputHeight,
+    height: 42,
     borderWidth: 1.5,
     borderColor: colors.fieldBorder,
     borderRadius: radii.sm,

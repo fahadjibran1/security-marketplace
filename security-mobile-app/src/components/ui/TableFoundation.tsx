@@ -52,7 +52,7 @@ export function TableHeaderCell({ label, flex = 1, align = 'left', width, style 
   return (
     <View style={[styles.headerCell, flex ? { flex } : null, width ? { width, flex: 0 } : null, style]}>
       {label ? (
-        <Text style={[styles.headerCellText, align !== 'left' ? { textAlign: align } : null]}>
+        <Text style={[styles.headerCellText, align !== 'left' ? { textAlign: align } : null]} numberOfLines={1}>
           {label}
         </Text>
       ) : null}
