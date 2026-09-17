@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import Feather from '@expo/vector-icons/Feather';
 import { brand, colors, radii, spacing } from '../../theme';
 
 const IS_WEB = typeof document !== 'undefined';
@@ -129,9 +130,11 @@ export function CompanySidebar<Id extends string>({
                       ]}
                     >
                       {isActive ? <View style={styles.collapsedActiveBar} /> : null}
-                      <Text accessible={false} style={[styles.collapsedIcon, isActive && styles.collapsedIconActive]}>
-                        {getNavIcon(String(item.id))}
-                      </Text>
+                      <Feather
+                        name={getNavFeatherIconName(String(item.id)) as any}
+                        size={16}
+                        color={isActive ? colors.accentTeal : 'rgba(226, 232, 240, 0.5)'}
+                      />
                     </Pressable>
                   );
                 })}
@@ -152,7 +155,7 @@ export function CompanySidebar<Id extends string>({
               IS_WEB ? (styles.cursorPointer as any) : null,
             ]}
           >
-            <Text accessible={false} style={styles.toggleIcon}>›</Text>
+            <Feather name="chevron-right" size={16} color="rgba(226, 232, 240, 0.45)" />
           </Pressable>
         ) : null}
       </View>
@@ -194,9 +197,11 @@ export function CompanySidebar<Id extends string>({
                 accessibilityState={{ expanded: isExpanded }}
               >
                 <Text style={styles.groupTitle}>{group.title.toUpperCase()}</Text>
-                <Text accessible={false} style={styles.groupChevron}>
-                  {isExpanded ? '▾' : '▸'}
-                </Text>
+                <Feather
+                  name={isExpanded ? 'chevron-down' : 'chevron-right'}
+                  size={12}
+                  color="rgba(226, 232, 240, 0.4)"
+                />
               </Pressable>
 
               {isExpanded ? (
@@ -223,9 +228,11 @@ export function CompanySidebar<Id extends string>({
                         >
                           {isActive ? <View style={styles.activeBar} /> : null}
                           <View style={styles.navLabelRow}>
-                            <Text accessible={false} style={[styles.navIcon, isActive && styles.navIconActive]}>
-                              {getNavIcon(String(item.id))}
-                            </Text>
+                            <Feather
+                              name={getNavFeatherIconName(String(item.id)) as any}
+                              size={16}
+                              color={isActive ? colors.accentTeal : 'rgba(226, 232, 240, 0.5)'}
+                            />
                             <Text style={[styles.navLabel, isActive && styles.navLabelActive]} numberOfLines={1}>
                               {item.label}
                             </Text>
@@ -259,7 +266,7 @@ export function CompanySidebar<Id extends string>({
             IS_WEB ? (styles.cursorPointer as any) : null,
           ]}
         >
-          <Text accessible={false} style={styles.toggleIcon}>‹</Text>
+          <Feather name="chevron-left" size={16} color="rgba(226, 232, 240, 0.45)" />
           <Text style={styles.toggleLabel}>Collapse</Text>
         </Pressable>
       ) : null}
@@ -269,35 +276,36 @@ export function CompanySidebar<Id extends string>({
 
 // ── Icon map ─────────────────────────────────────────────────────────────────
 
-function getNavIcon(id: string): string {
-  switch (id) {
-    case 'dashboard':        return '⊞';
-    case 'live-operations':  return '◉';
-    case 'sites':            return '⬡';
-    case 'clients':          return '▣';
-    case 'rota-planner':     return '▦';
-    case 'shift-offers':     return '↗';
-    case 'coverage':         return '◎';
-    case 'analytics':        return '▲';
-    case 'guards':           return '◈';
-    case 'availability':     return '◷';
-    case 'recruitment':      return '⊕';
-    case 'weekly-approvals': return '☑';
-    case 'timesheets':       return '⊟';
-    case 'payroll':          return '◻';
-    case 'payroll-batches':  return '≡';
-    case 'pay-rules':        return '⊞';
-    case 'invoices':         return '⊏';
-    case 'finance':          return '◆';
-    case 'finance-control':  return '◇';
-    case 'margins':          return '△';
-    case 'contract-pricing': return '◉';
-    case 'compliance':       return '✦';
-    case 'audit':            return '⊛';
-    case 'incidents':        return '▽';
-    case 'alerts':           return '◬';
-    default:                 return '·';
-  }
+const NAV_FEATHER_ICONS: Record<string, string> = {
+  'dashboard':        'grid',
+  'live-operations':  'activity',
+  'sites':            'map-pin',
+  'clients':          'briefcase',
+  'rota-planner':     'calendar',
+  'shift-offers':     'send',
+  'coverage':         'layers',
+  'analytics':        'bar-chart-2',
+  'guards':           'users',
+  'availability':     'clock',
+  'recruitment':      'user-plus',
+  'weekly-approvals': 'check-square',
+  'timesheets':       'file-text',
+  'payroll':          'dollar-sign',
+  'payroll-batches':  'package',
+  'pay-rules':        'sliders',
+  'invoices':         'file',
+  'finance':          'trending-up',
+  'finance-control':  'settings',
+  'margins':          'percent',
+  'contract-pricing': 'tag',
+  'compliance':       'shield',
+  'audit':            'list',
+  'incidents':        'alert-triangle',
+  'alerts':           'bell',
+};
+
+function getNavFeatherIconName(id: string): string {
+  return NAV_FEATHER_ICONS[id] ?? 'circle';
 }
 
 // ── Styles ───────────────────────────────────────────────────────────────────
@@ -452,7 +460,7 @@ const styles = StyleSheet.create({
   },
   navLabelActive: {
     color: colors.accentTeal,
-    fontWeight: '700',
+    fontWeight: '600',
   },
 
   // ── Collapsed brand ───────────────────────────────────────────────────────

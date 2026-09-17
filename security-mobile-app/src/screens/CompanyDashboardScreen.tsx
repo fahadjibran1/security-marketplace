@@ -86,7 +86,7 @@ import { CompanyWeeklyApprovalsScreen } from './CompanyWeeklyApprovalsScreen';
 import { Card } from '../components/ui/Card';
 import { KpiCard, KpiTone } from '../components/ui/KpiCard';
 import { PageHeader } from '../components/ui/PageHeader';
-import { brand, colors, spacing } from '../theme';
+import { brand, colors, radii, spacing } from '../theme';
 
 const IS_WEB = typeof document !== 'undefined';
 
@@ -659,6 +659,21 @@ function getAttentionSeverity(category: UrgentOperationalItem['category']): 'red
       return 'amber';
     default:
       return 'blue';
+  }
+}
+
+function getAttentionBadgeLabel(category: UrgentOperationalItem['category']): string {
+  switch (category) {
+    case 'panic':             return 'Critical';
+    case 'incident':          return 'Incident';
+    case 'missed_shift':      return 'Missed shift';
+    case 'late_start':        return 'Late start';
+    case 'uncovered_shift':   return 'Coverage gap';
+    case 'missed_check_call': return 'Missed check';
+    case 'rejected_offer':    return 'Offer rejected';
+    case 'safety':            return 'Safety';
+    case 'upcoming_risk':     return 'Upcoming risk';
+    default:                  return String(category).replace(/_/g, ' ');
   }
 }
 
@@ -3227,24 +3242,24 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
         </View>
 
         {/* ── ROW 2: ATTENTION REQUIRED ── */}
-        <DashboardSection>
-          <View style={styles.dashAttentionPanel}>
-            <View style={styles.dashAttentionHeader}>
-              <Text style={styles.dashAttentionTitle}>
-                {urgentOperationalItems.length > 0 ? '⚡ Attention Required' : '✓ All Clear'}
-              </Text>
-              <Text style={styles.dashAttentionSubtitle}>
-                {urgentOperationalItems.length > 0
-                  ? `${urgentOperationalItems.length} operational item${urgentOperationalItems.length !== 1 ? 's' : ''} requiring action — tap to navigate.`
-                  : 'No operational conditions require immediate attention right now.'}
-              </Text>
+        <View style={styles.dashAttentionPanel}>
+          <View style={styles.dashAttentionHeader}>
+            <Text style={styles.dashAttentionTitle}>
+              {urgentOperationalItems.length > 0 ? 'Attention Required' : 'All Clear'}
+            </Text>
+            <Text style={styles.dashAttentionSubtitle}>
+              {urgentOperationalItems.length > 0
+                ? `${urgentOperationalItems.length} item${urgentOperationalItems.length !== 1 ? 's' : ''} requiring action.`
+                : 'No operational conditions require immediate attention right now.'}
+            </Text>
+          </View>
+          {urgentOperationalItems.length === 0 ? (
+            <View style={styles.dashAttentionEmpty}>
+              <Text style={styles.dashAttentionEmptyText}>Operational position is clear.</Text>
             </View>
-            {urgentOperationalItems.length === 0 ? (
-              <View style={styles.dashAttentionEmpty}>
-                <Text style={styles.dashAttentionEmptyText}>Operational position is clear.</Text>
-              </View>
-            ) : (
-              urgentOperationalItems.map((item, index, arr) => {
+          ) : (
+            <>
+              {urgentOperationalItems.slice(0, 5).map((item, index, arr) => {
                 const severity = getAttentionSeverity(item.category);
                 return (
                   <Pressable
@@ -3254,7 +3269,7 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
                     accessibilityLabel={item.issueType}
                     style={({ hovered, pressed }: any) => [
                       styles.dashAttentionItem,
-                      index === arr.length - 1 ? styles.dashAttentionItemLast : null,
+                      index === arr.length - 1 && urgentOperationalItems.length <= 5 ? styles.dashAttentionItemLast : null,
                       hovered ? styles.dashAttentionItemHover : null,
                       pressed ? styles.dashAttentionItemPressed : null,
                       IS_WEB ? (WEB_POINTER_STYLE as any) : null,
@@ -3290,16 +3305,32 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
                             : styles.dashAttentionSeverityTextBlue,
                         ]}
                       >
-                        {severity.toUpperCase()}
+                        {getAttentionBadgeLabel(item.category)}
                       </Text>
                     </View>
                     <Text style={styles.dashAttentionCta}>{'→'}</Text>
                   </Pressable>
                 );
-              })
-            )}
-          </View>
-        </DashboardSection>
+              })}
+              {urgentOperationalItems.length > 5 ? (
+                <Pressable
+                  onPress={() => setActiveSection('live-operations')}
+                  accessibilityRole="button"
+                  style={({ hovered, pressed }: any) => [
+                    styles.dashAttentionViewAll,
+                    hovered ? styles.dashAttentionItemHover : null,
+                    pressed ? styles.dashAttentionItemPressed : null,
+                    IS_WEB ? (WEB_POINTER_STYLE as any) : null,
+                  ]}
+                >
+                  <Text style={styles.dashAttentionViewAllText}>
+                    {`View all ${urgentOperationalItems.length} attention items  →`}
+                  </Text>
+                </Pressable>
+              ) : null}
+            </>
+          )}
+        </View>
 
         {/* ── ROW 3: LIVE OPERATIONS (2/3) + TODAY'S COVERAGE (1/3) ── */}
         <View style={styles.dashRow3}>
@@ -5634,7 +5665,7 @@ const styles = StyleSheet.create({
   },
   dashSectionShell: {
     backgroundColor: colors.card,
-    borderRadius: 20,
+    borderRadius: radii.card,
     borderWidth: 1,
     borderColor: colors.surfaceSubtle,
     padding: 22,
@@ -5656,10 +5687,10 @@ const styles = StyleSheet.create({
     borderBottomColor: 'rgba(226, 232, 240, 0.95)',
   },
   dashSectionTitle: {
-    fontSize: 17,
-    fontWeight: '900',
+    fontSize: 16,
+    fontWeight: '600',
     color: colors.primaryNavy,
-    letterSpacing: 0.25,
+    letterSpacing: 0.1,
   },
   dashSectionSubtitle: {
     fontSize: 13,
@@ -6948,7 +6979,7 @@ const styles = StyleSheet.create({
   },
   dashAttentionPanel: {
     backgroundColor: colors.card,
-    borderRadius: 16,
+    borderRadius: radii.card,
     borderWidth: 1,
     borderColor: colors.border,
     overflow: 'hidden',
@@ -6962,10 +6993,10 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   dashAttentionTitle: {
-    fontSize: 16,
-    fontWeight: '800',
+    fontSize: 15,
+    fontWeight: '600',
     color: colors.primaryNavy,
-    letterSpacing: -0.2,
+    letterSpacing: -0.1,
   },
   dashAttentionSubtitle: {
     fontSize: 13,
@@ -7068,6 +7099,18 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: colors.textSecondary,
     flexShrink: 0,
+  },
+  dashAttentionViewAll: {
+    paddingHorizontal: 20,
+    paddingVertical: 11,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(226, 232, 240, 0.88)',
+  },
+  dashAttentionViewAllText: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: colors.accentTeal,
+    letterSpacing: 0.1,
   },
   dashRow3: {
     flexDirection: 'row',

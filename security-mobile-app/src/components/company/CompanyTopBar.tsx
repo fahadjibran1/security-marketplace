@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { brand, colors, radii, spacing } from '../../theme';
+import { colors, radii, spacing } from '../../theme';
 
 const IS_WEB = typeof document !== 'undefined';
 
@@ -47,8 +47,6 @@ export function CompanyTopBar({
         </Pressable>
 
         <View style={styles.breadcrumb}>
-          <Text style={styles.brandMark}>{brand.shortBrand}</Text>
-          <Text accessible={false} style={styles.slash}>  /  </Text>
           <Text style={styles.pageTitle} numberOfLines={1}>{pageTitle}</Text>
         </View>
       </View>
@@ -138,18 +136,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flex: 1,
     minWidth: 0,
-  },
-  brandMark: {
-    color: colors.accentTeal,
-    fontSize: 15,
-    fontWeight: '900',
-    letterSpacing: 0.5,
-    flexShrink: 0,
-  },
-  slash: {
-    color: 'rgba(148, 163, 184, 0.45)',
-    fontSize: 13,
-    flexShrink: 0,
   },
   pageTitle: {
     color: colors.textOnBrand,

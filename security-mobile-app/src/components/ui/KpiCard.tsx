@@ -25,12 +25,12 @@ const TONE: Record<KpiTone, { iconBg: string; value: string; border: string }> =
   good: {
     iconBg: 'rgba(21, 128, 61, 0.1)',
     value:  colors.success,
-    border: colors.successBorder,
+    border: colors.border,
   },
   warning: {
     iconBg: 'rgba(161, 92, 7, 0.1)',
     value:  colors.warning,
-    border: colors.warningBorder,
+    border: colors.border,
   },
   attention: {
     iconBg: 'rgba(180, 35, 24, 0.1)',
@@ -137,8 +137,8 @@ const styles = StyleSheet.create({
   label: {
     flex: 1,
     fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 0.9,
+    fontWeight: '500',
+    letterSpacing: 0.8,
     textTransform: 'uppercase',
     color: colors.textSecondary,
     lineHeight: 16,
