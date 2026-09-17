@@ -2,6 +2,8 @@
 import { ActivityIndicator, Image, Modal, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, useWindowDimensions, View } from 'react-native';
 
 import { CompanyAuditWorkspace } from '../components/company/CompanyAuditWorkspace';
+import { CompanyLiveOperationsWorkspace } from '../components/company/CompanyLiveOperationsWorkspace';
+import type { LiveBoardRow, CloseOutSummary, SelectedShiftContext } from '../components/company/CompanyLiveOperationsWorkspace';
 import { CompanyAnalyticsWorkspace } from '../components/company/CompanyAnalyticsWorkspace';
 import { CompanyAvailabilityWorkspace } from '../components/company/CompanyAvailabilityWorkspace';
 import { CompanyComplianceWorkspace } from '../components/company/CompanyComplianceWorkspace';
@@ -2988,6 +2990,66 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
     [liveOperationRows, attendanceByShiftId],
   );
 
+  const liveOperationEnrichedRows: LiveBoardRow[] = React.useMemo(
+    () =>
+      liveOperationRows.map((shift) => {
+        const timesheet = timesheetByShiftId.get(shift.id);
+        const attendance = attendanceByShiftId.get(shift.id);
+        const shiftLogs = logsByShiftId.get(shift.id) || [];
+        const shiftIncidents = incidentsByShiftId.get(shift.id) || [];
+        const shiftAlerts = alertsByShiftId.get(shift.id) || [];
+        const lastCheckCall = lastCheckCallByShiftId.get(shift.id);
+        const panicOrWelfareCount = shiftAlerts.filter((a) =>
+          ['panic', 'welfare', 'late_checkin'].includes((a.type || '').toLowerCase()),
+        ).length;
+        const lifecycleStatus = normalizeShiftLifecycleStatus(shift.status);
+        const risk = getShiftRisk(shift, attendance, shiftIncidents, shiftAlerts);
+        const delay = getShiftDelay(shift, attendance);
+        const likelyLate = isLikelyToMissCheckIn(shift, attendance);
+        const siteRiskLabel = getSiteRiskLevel(
+          shift.site?.id ?? shift.siteId,
+          shifts,
+          attendanceByShiftId,
+          incidentsByShiftId,
+          alertsByShiftId,
+        );
+        const primaryActionLabel =
+          lifecycleStatus === 'offered' ? 'View Offer' :
+          lifecycleStatus === 'ready' ? 'Open Shift' :
+          lifecycleStatus === 'in_progress' ? 'Monitor' :
+          lifecycleStatus === 'missed' ? 'Re-cover' :
+          lifecycleStatus === 'rejected' ? 'Re-offer' : 'Review Shift';
+        const rowTone = getLiveShiftBoardRowTone(lifecycleStatus, risk.level);
+        return {
+          shift, timesheet, attendance, shiftLogs, shiftIncidents, shiftAlerts, lastCheckCall,
+          panicOrWelfareCount, lifecycleStatus, risk, delay, likelyLate, siteRiskLabel, primaryActionLabel, rowTone,
+        };
+      }),
+    [
+      liveOperationRows, timesheetByShiftId, attendanceByShiftId, logsByShiftId,
+      incidentsByShiftId, alertsByShiftId, lastCheckCallByShiftId, shifts,
+    ],
+  );
+
+  const selectedShiftContext: SelectedShiftContext | null = React.useMemo(() => {
+    if (!selectedShift) return null;
+    const attendance = attendanceByShiftId.get(selectedShift.id);
+    const timesheet = timesheetByShiftId.get(selectedShift.id);
+    const logs = logsByShiftId.get(selectedShift.id) || [];
+    const incidents = incidentsByShiftId.get(selectedShift.id) || [];
+    const alerts = alertsByShiftId.get(selectedShift.id) || [];
+    const lifecycleStatus = normalizeShiftLifecycleStatus(selectedShift.status);
+    const badge = lifecycleStatus === 'missed'
+      ? { icon: '⚠️', label: 'Missed', color: colors.warning }
+      : getShiftStatusBadge(selectedShift.status || 'unfilled');
+    const exception = getShiftExceptionSummary(selectedShift.status);
+    const clientName =
+      selectedShift.site?.client?.name ||
+      clientMap.get(selectedShift.site?.clientId || 0)?.name ||
+      'No client';
+    return { shift: selectedShift, attendance, timesheet, logs, incidents, alerts, lifecycleStatus, badge, exception, clientName };
+  }, [selectedShift, attendanceByShiftId, timesheetByShiftId, logsByShiftId, incidentsByShiftId, alertsByShiftId, clientMap]);
+
   const liveOperationsKpis = React.useMemo(
     () =>
       [
@@ -3850,816 +3912,43 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
 
   const renderLiveOperationsSection = () => (
     <View style={styles.sectionStack}>
-      <View style={[styles.dashSectionShell, IS_WEB ? styles.dashSectionShellWeb : null]}>
-        <View style={styles.liveOpsToolbarRow}>
-          <View style={styles.liveOpsToolbarTitleBlock}>
-            <Text style={styles.dashSectionTitle}>Live Operations</Text>
-          </View>
-          <Pressable
-            onPress={() => loadData(true)}
-            style={({ hovered, pressed }: any) => [
-              styles.liveOpsToolbarSync,
-              IS_WEB && hovered ? styles.liveOpsToolbarSyncHover : null,
-              pressed ? styles.liveOpsToolbarSyncPressed : null,
-              WEB_POINTER_STYLE,
-            ]}
-          >
-            <View style={styles.liveOpsToolbarRefreshInner}>
-              {refreshing ? <ActivityIndicator size="small" color="#64748b" /> : null}
-              <Text style={styles.liveOpsToolbarSyncText}>{refreshing ? 'Refreshing...' : 'Refresh'}</Text>
-            </View>
-          </Pressable>
-        </View>
-      </View>
+      <CompanyLiveOperationsWorkspace
+        liveShiftsCount={liveShifts.length}
+        guardsNotBookedOnCount={guardsNotBookedOn.length}
+        activePanicAlertsCount={activePanicAlerts.length}
+        openIncidentsCount={openIncidents.length}
+        missedCheckCallsCount={missedCheckCalls.length}
+        urgentOperationalItems={urgentOperationalItems}
+        urgentActionItemId={urgentActionItemId}
+        liveOperationsFeedback={liveOperationsFeedback}
+        liveOperationEnrichedRows={liveOperationEnrichedRows}
+        selectedShiftId={selectedShiftId}
+        setSelectedShiftId={setSelectedShiftId}
+        highlightedLiveShiftId={highlightedLiveShiftId}
+        liveFilters={liveFilters}
+        setLiveFilters={setLiveFilters}
+        siteClientOptions={siteClientOptions}
+        siteOptions={siteOptions}
+        linkedGuardOptions={linkedGuardOptions}
+        uncoveredShiftCount={uncoveredShifts.length}
+        recentOperationalActivity={recentOperationalActivity}
+        selectedShiftContext={selectedShiftContext}
+        selectedShiftCloseOutSummary={selectedShiftCloseOutSummary as CloseOutSummary | null}
+        closeOutNotesDraft={closeOutNotesDraft}
+        setCloseOutNotesDraft={setCloseOutNotesDraft}
+        savingCloseOutNotes={savingCloseOutNotes}
+        refreshing={refreshing}
+        onLiveBoardPrimaryAction={handleLiveBoardPrimaryAction}
+        onOpenUrgentDetail={handleOpenUrgentDetail}
+        onOpenUrgentShift={handleOpenUrgentShift}
+        onUrgentIncidentFollowUp={handleUrgentIncidentFollowUp}
+        onUrgentAlertFollowUp={handleUrgentAlertFollowUp}
+        onSaveCloseOutNotes={handleSaveCloseOutNotes}
+        onOpenCoverage={openCoverage}
+        onBoardLayout={setLiveBoardAnchorY}
+        onDetailLayout={setShiftDetailAnchorY}
+      />
 
-      <DashboardSection title="KPIs" subtitle="At-a-glance operational health.">
-        <View style={styles.kpiGrid}>
-          {liveOperationsKpis.map((kpi) => (
-            <View key={kpi.label} style={styles.kpiCell}>
-              <KpiCard label={kpi.label} value={kpi.value} icon={kpi.icon} tone={kpi.tone} />
-            </View>
-          ))}
-        </View>
-      </DashboardSection>
-
-      <DashboardSection
-        title="Urgent queue"
-        subtitle="Highest-priority items appear here first so control-room actions stay obvious."
-      >
-        <View style={styles.liveOpsUrgentInset}>
-        {liveOperationsFeedback ? (
-          <View
-            style={[
-              styles.feedbackCard,
-              liveOperationsFeedback.tone === 'error' ? styles.feedbackCardError : styles.feedbackCardSuccess,
-            ]}
-          >
-            <Text
-              style={[
-                styles.feedbackTitle,
-                liveOperationsFeedback.tone === 'error' ? styles.feedbackTitleError : styles.feedbackTitleSuccess,
-              ]}
-            >
-              {liveOperationsFeedback.tone === 'error' ? 'Action failed' : 'Action completed'}
-            </Text>
-            <Text
-              style={[
-                styles.feedbackText,
-                liveOperationsFeedback.tone === 'error' ? styles.feedbackTextError : styles.feedbackTextSuccess,
-              ]}
-            >
-              {liveOperationsFeedback.message}
-            </Text>
-          </View>
-        ) : null}
-        {urgentOperationalItems.map((item, index, arr) => (
-          <Pressable
-            key={item.id}
-            style={[
-              styles.liveOpsListRow,
-              styles.liveOpsUrgentRow,
-              index === arr.length - 1 ? styles.liveOpsListRowLast : null,
-              IS_WEB ? styles.liveOpsListRowWeb : null,
-            ]}
-            onPress={() => {
-              if (item.category === 'uncovered_shift') {
-                handleOpenUrgentDetail(item);
-              } else if (item.shiftId) {
-                handleOpenUrgentShift(item);
-              }
-            }}
-          >
-            <View style={styles.liveOpsUrgentRowBody}>
-              <Text style={[styles.liveOpsRowTitle, styles.liveOpsUrgentIssue]}>{item.issueType}</Text>
-              <Text style={styles.liveOpsUrgentMeta}>
-                Shift {item.shiftId ? `#${item.shiftId}` : 'N/A'} | {item.siteName} | {item.guardName}
-              </Text>
-              <Text style={styles.liveOpsUrgentMessage} numberOfLines={IS_WEB ? 3 : 4}>
-                {item.message}
-              </Text>
-              <View style={styles.liveOpsUrgentMetaFooter}>
-                <Text style={styles.liveOpsUrgentGuidance}>{getUrgentNextActionText(item)}</Text>
-                <Text style={styles.liveOpsUrgentOccurred}>{formatDateTimeLabel(item.occurredAt)}</Text>
-              </View>
-              <View style={[styles.urgentItemActions, styles.liveOpsUrgentActionBar]}>
-              {item.category === 'uncovered_shift' ? (
-                <Pressable
-                  style={[styles.primaryButton, styles.liveOpsUrgentBtnPrimary]}
-                  onPress={() => handleOpenUrgentDetail(item)}
-                >
-                  <Text style={[styles.primaryButtonText, styles.liveOpsUrgentBtnPrimaryText]}>Manage coverage</Text>
-                </Pressable>
-              ) : null}
-              {item.category === 'incident' && (item.status || '').toLowerCase() === 'open' ? (
-                <Pressable
-                  style={[styles.secondaryButton, styles.liveOpsUrgentBtnSecondary]}
-                  onPress={() => handleUrgentIncidentFollowUp(item, 'in_review')}
-                  disabled={urgentActionItemId === item.id}
-                >
-                  <Text style={[styles.secondaryButtonText, styles.liveOpsUrgentBtnSecondaryText]}>
-                    {urgentActionItemId === item.id ? 'Saving...' : 'Acknowledge'}
-                  </Text>
-                </Pressable>
-              ) : null}
-              {item.category === 'incident' ? (
-                <Pressable
-                  style={[styles.primaryButton, styles.liveOpsUrgentBtnPrimary]}
-                  onPress={() => handleOpenUrgentDetail(item)}
-                >
-                  <Text style={[styles.primaryButtonText, styles.liveOpsUrgentBtnPrimaryText]}>View Incident</Text>
-                </Pressable>
-              ) : null}
-              {item.category === 'panic' && item.status !== 'acknowledged' ? (
-                <Pressable
-                  style={[styles.secondaryButton, styles.liveOpsUrgentBtnSecondary]}
-                  onPress={() => handleUrgentAlertFollowUp(item, 'acknowledge')}
-                  disabled={urgentActionItemId === item.id}
-                >
-                  <Text style={[styles.secondaryButtonText, styles.liveOpsUrgentBtnSecondaryText]}>
-                    {urgentActionItemId === item.id ? 'Saving...' : 'Mark Escalated'}
-                  </Text>
-                </Pressable>
-              ) : null}
-              {item.category === 'panic' ? (
-                <Pressable
-                  style={[styles.primaryButton, styles.liveOpsUrgentBtnPrimary]}
-                  onPress={() =>
-                    item.status === 'acknowledged'
-                      ? handleUrgentAlertFollowUp(item, 'close')
-                      : handleOpenUrgentDetail(item)
-                  }
-                  disabled={urgentActionItemId === item.id && item.status === 'acknowledged'}
-                >
-                  <Text style={[styles.primaryButtonText, styles.liveOpsUrgentBtnPrimaryText]}>
-                    {item.status === 'acknowledged'
-                      ? urgentActionItemId === item.id
-                        ? 'Saving...'
-                        : 'Resolve Alert'
-                      : getUrgentPrimaryActionLabel(item)}
-                  </Text>
-                </Pressable>
-              ) : null}
-              {(item.category === 'missed_check_call' || item.category === 'safety') ? (
-                <>
-                  {item.status !== 'acknowledged' ? (
-                    <Pressable
-                      style={[styles.secondaryButton, styles.liveOpsUrgentBtnSecondary]}
-                      onPress={() => handleUrgentAlertFollowUp(item, 'acknowledge')}
-                      disabled={urgentActionItemId === item.id}
-                    >
-                      <Text style={[styles.secondaryButtonText, styles.liveOpsUrgentBtnSecondaryText]}>
-                        {urgentActionItemId === item.id
-                          ? 'Saving...'
-                          : item.category === 'missed_check_call'
-                            ? 'Mark Followed Up'
-                            : 'Acknowledge'}
-                      </Text>
-                    </Pressable>
-                  ) : null}
-                  <Pressable
-                    style={[styles.primaryButton, styles.liveOpsUrgentBtnPrimary]}
-                    onPress={() =>
-                      item.status === 'acknowledged'
-                        ? handleUrgentAlertFollowUp(item, 'close')
-                        : handleOpenUrgentDetail(item)
-                    }
-                    disabled={urgentActionItemId === item.id && item.status === 'acknowledged'}
-                  >
-                    <Text style={[styles.primaryButtonText, styles.liveOpsUrgentBtnPrimaryText]}>
-                      {item.status === 'acknowledged'
-                        ? urgentActionItemId === item.id
-                          ? 'Saving...'
-                          : getUrgentPrimaryActionLabel(item)
-                        : getUrgentPrimaryActionLabel(item)}
-                    </Text>
-                  </Pressable>
-                </>
-              ) : null}
-              {item.category === 'incident' && ['open', 'in_review'].includes((item.status || '').toLowerCase()) ? (
-                <Pressable
-                  style={[styles.primaryButton, styles.liveOpsUrgentBtnPrimary]}
-                  onPress={() => handleUrgentIncidentFollowUp(item, 'resolved')}
-                  disabled={urgentActionItemId === item.id}
-                >
-                  <Text style={[styles.primaryButtonText, styles.liveOpsUrgentBtnPrimaryText]}>
-                    {urgentActionItemId === item.id ? 'Saving...' : 'Resolve'}
-                  </Text>
-                </Pressable>
-              ) : null}
-              {['rejected_offer', 'missed_shift', 'late_start', 'upcoming_risk'].includes(item.category) ? (
-                <Pressable
-                  style={[styles.primaryButton, styles.liveOpsUrgentBtnPrimary]}
-                  onPress={() => handleOpenUrgentDetail(item)}
-                >
-                  <Text style={[styles.primaryButtonText, styles.liveOpsUrgentBtnPrimaryText]}>
-                    {getUrgentPrimaryActionLabel(item)}
-                  </Text>
-                </Pressable>
-              ) : null}
-            </View>
-            </View>
-          </Pressable>
-        ))}
-        {urgentOperationalItems.length === 0 ? (
-          <DashboardPanelEmpty
-            title="Urgent queue is clear"
-            description="No urgent operational items need attention right now. The board and feeds continue to update on refresh."
-          />
-        ) : null}
-        </View>
-      </DashboardSection>
-
-      <DashboardSection
-        title="Board filters"
-        subtitle="Refine which shifts appear on the live board in this workspace — client, site, guard, date, and status."
-      >
-        <View style={styles.liveOpsFilterStack}>
-          <View style={[styles.liveOpsFilterGroup, IS_WEB ? styles.liveOpsFilterGroupWeb : null]}>
-            <Text style={styles.liveOpsFilterGroupLabel}>Scope</Text>
-            <Text style={styles.liveOpsFilterGroupHint}>Client, site, and guard narrow the board together.</Text>
-            <View style={styles.liveOpsFilterGroupRow}>
-              <View style={[styles.liveOpsFilterField, styles.liveOpsFilterFieldGrow]}>
-                <Text style={styles.liveOpsFilterFieldLabel}>Client</Text>
-                <WebSelect
-                  value={liveFilters.clientId}
-                  onChange={(value: string) => setLiveFilters((current) => ({ ...current, clientId: value }))}
-                  options={siteClientOptions}
-                  placeholder="Client"
-                  style={styles.liveOpsFilterWebSelectChrome}
-                />
-              </View>
-              <View style={[styles.liveOpsFilterField, styles.liveOpsFilterFieldGrow]}>
-                <Text style={styles.liveOpsFilterFieldLabel}>Site</Text>
-                <WebSelect
-                  value={liveFilters.siteId}
-                  onChange={(value: string) => setLiveFilters((current) => ({ ...current, siteId: value }))}
-                  options={siteOptions}
-                  placeholder="Site"
-                  style={styles.liveOpsFilterWebSelectChrome}
-                />
-              </View>
-              <View style={[styles.liveOpsFilterField, styles.liveOpsFilterFieldGrow]}>
-                <Text style={styles.liveOpsFilterFieldLabel}>Guard</Text>
-                <WebSelect
-                  value={liveFilters.guardId}
-                  onChange={(value: string) => setLiveFilters((current) => ({ ...current, guardId: value }))}
-                  options={linkedGuardOptions}
-                  placeholder="Guard"
-                  style={styles.liveOpsFilterWebSelectChrome}
-                />
-              </View>
-            </View>
-          </View>
-
-          <View style={[styles.liveOpsFilterGroup, IS_WEB ? styles.liveOpsFilterGroupWeb : null]}>
-            <Text style={styles.liveOpsFilterGroupLabel}>Timing & status</Text>
-            <Text style={styles.liveOpsFilterGroupHint}>Shift date (YYYY-MM-DD) and lifecycle status.</Text>
-            <View style={styles.liveOpsFilterGroupRow}>
-              <View style={[styles.liveOpsFilterField, styles.liveOpsFilterDateSlot]}>
-                <Text style={styles.liveOpsFilterFieldLabel}>Shift date</Text>
-                <TextInput
-                  style={styles.liveOpsFilterTextInput}
-                  value={liveFilters.date}
-                  onChangeText={(value: string) => setLiveFilters((current) => ({ ...current, date: value }))}
-                  placeholder="YYYY-MM-DD"
-                  placeholderTextColor="#6b7280"
-                />
-              </View>
-              <View style={[styles.liveOpsFilterField, styles.liveOpsFilterFieldGrow]}>
-                <Text style={styles.liveOpsFilterFieldLabel}>Status</Text>
-                <WebSelect
-                  value={liveFilters.status}
-                  onChange={(value: string) => setLiveFilters((current) => ({ ...current, status: value }))}
-                  options={SHIFT_STATUS_OPTIONS}
-                  placeholder="Status"
-                  style={styles.liveOpsFilterWebSelectChrome}
-                />
-              </View>
-            </View>
-          </View>
-        </View>
-      </DashboardSection>
-
-      <DashboardSection
-        title="Live workspace"
-        subtitle="Live board with context feeds alongside it. Selected shift detail loads at the bottom when you highlight a board row."
-      >
-      <View style={styles.panelGrid}>
-        <View
-          style={[styles.liveOpsBoardWrap, styles.operationsBoardCard]}
-          onLayout={(event: any) => setLiveBoardAnchorY(event.nativeEvent.layout.y)}
-        >
-          <Card
-            style={styles.liveOpsBoardCard}
-            title="Live shift board"
-            subtitle="Scan live and exception shifts, then use the row action. Selecting a row updates the detail panel below."
-            webSurfaceHover
-          >
-          {liveOperationRows.length === 0 ? (
-            <DashboardPanelEmpty
-              title="No shifts match these filters"
-              description="Try broadening client, site, guard, date, or status filters, or refresh to pull the latest operational data."
-              actionLabel="Refresh data"
-              onAction={() => loadData(true)}
-            />
-          ) : (
-          <ScrollView
-            horizontal
-            nestedScrollEnabled
-            showsHorizontalScrollIndicator
-            style={styles.liveBoardScroll}
-            contentContainerStyle={[styles.liveBoardScrollContent, IS_WEB ? styles.liveBoardScrollContentWeb : null]}
-          >
-            <View>
-              <LiveShiftBoardTableHeader />
-          {liveOperationRows.map((shift) => {
-            const timesheet = timesheetByShiftId.get(shift.id);
-            const attendance = attendanceByShiftId.get(shift.id);
-            const shiftLogs = logsByShiftId.get(shift.id) || [];
-            const shiftIncidents = incidentsByShiftId.get(shift.id) || [];
-            const shiftAlerts = alertsByShiftId.get(shift.id) || [];
-            const lastCheckCall = lastCheckCallByShiftId.get(shift.id);
-            const panicOrWelfareCount = shiftAlerts.filter((alert) =>
-              ['panic', 'welfare', 'late_checkin'].includes((alert.type || '').toLowerCase()),
-            ).length;
-            const lifecycleStatus = normalizeShiftLifecycleStatus(shift.status);
-            const risk = getShiftRisk(shift, attendance, shiftIncidents, shiftAlerts);
-            const delay = getShiftDelay(shift, attendance);
-            const likelyLate = isLikelyToMissCheckIn(shift, attendance);
-            const siteRiskLabel = getSiteRiskLevel(
-              shift.site?.id ?? shift.siteId,
-              shifts,
-              attendanceByShiftId,
-              incidentsByShiftId,
-              alertsByShiftId,
-            );
-            const primaryActionLabel =
-              lifecycleStatus === 'offered'
-                ? 'View Offer'
-                : lifecycleStatus === 'ready'
-                  ? 'Open Shift'
-                  : lifecycleStatus === 'in_progress'
-                    ? 'Monitor'
-                    : lifecycleStatus === 'missed'
-                      ? 'Re-cover'
-                      : lifecycleStatus === 'rejected'
-                        ? 'Re-offer'
-                        : 'Review Shift';
-
-            return (
-              <Pressable
-                key={shift.id}
-                style={[
-                  styles.tableRow,
-                  styles.liveBoardTableRow,
-                  styles.liveBoardRow,
-                  { backgroundColor: getLiveShiftBoardRowTone(lifecycleStatus, risk.level) },
-                  likelyLate ? { borderLeftWidth: 4, borderLeftColor: colors.warning } : null,
-                  selectedShiftId === shift.id && styles.liveBoardTableRowSelected,
-                  highlightedLiveShiftId === shift.id && styles.liveBoardRowHighlighted,
-                ]}
-                onPress={() => setSelectedShiftId(shift.id)}
-              >
-                <Text style={[LIVE_BOARD_COL_STYLES[0], styles.liveBoardShiftId]}>#{shift.id}</Text>
-                <View style={[LIVE_BOARD_COL_STYLES[1], styles.liveBoardCellCol]}>
-                  <Text
-                    style={styles.liveBoardSiteTitle}
-                    numberOfLines={IS_WEB ? 2 : 4}
-                    ellipsizeMode="tail"
-                  >
-                    {shift.site?.name || shift.siteName || 'Unknown site'}
-                  </Text>
-                  <Text style={styles.liveBoardSiteRisk} numberOfLines={2}>
-                    {siteRiskLabel}
-                  </Text>
-                </View>
-                <Text
-                  style={[LIVE_BOARD_COL_STYLES[2], styles.liveBoardCellBody]}
-                  numberOfLines={IS_WEB ? 2 : 4}
-                  ellipsizeMode="tail"
-                >
-                  {shift.guard?.fullName || 'Unassigned'}
-                </Text>
-                <View style={LIVE_BOARD_COL_STYLES[3]}>
-                  <ShiftStatusBadge status={shift.status} />
-                </View>
-                <View style={[LIVE_BOARD_COL_STYLES[4], styles.liveBoardCellCol]}>
-                  <Text style={[styles.liveBoardCellBody, { color: risk.color, fontWeight: '700' }]}>{risk.label}</Text>
-                  {likelyLate ? (
-                    <Text style={{ color: colors.warning, fontWeight: '600', fontSize: 12 }}>Likely late</Text>
-                  ) : null}
-                </View>
-                <Text
-                  style={[
-                    LIVE_BOARD_COL_STYLES[5],
-                    styles.liveBoardCellBody,
-                    delay !== null ? { color: colors.danger, fontWeight: '600' } : null,
-                  ]}
-                  numberOfLines={2}
-                >
-                  {delay !== null ? `Late by ${delay} min` : '—'}
-                </Text>
-                <Text style={[LIVE_BOARD_COL_STYLES[6], styles.liveBoardCellBody]}>
-                  {attendance?.checkInAt ? formatTimeLabel(attendance.checkInAt) : 'Pending'}
-                </Text>
-                <Text style={[LIVE_BOARD_COL_STYLES[7], styles.liveBoardCellBody]}>
-                  {attendance?.checkOutAt ? formatTimeLabel(attendance.checkOutAt) : 'Pending'}
-                </Text>
-                <Text style={[LIVE_BOARD_COL_STYLES[8], styles.liveBoardCellBody]} numberOfLines={2}>
-                  {lastCheckCall ? formatTimeLabel(lastCheckCall.createdAt) : 'No check call'}
-                </Text>
-                <Text style={[LIVE_BOARD_COL_STYLES[9], styles.liveBoardCellBody]}>{String(shiftLogs.length)}</Text>
-                <Text style={[LIVE_BOARD_COL_STYLES[10], styles.liveBoardCellBody]}>{String(shiftIncidents.length)}</Text>
-                <Text style={[LIVE_BOARD_COL_STYLES[11], styles.liveBoardCellBody]}>{String(panicOrWelfareCount)}</Text>
-                <Text style={[LIVE_BOARD_COL_STYLES[12], styles.liveBoardCellBody]}>
-                  {formatStatusLabel(timesheet?.approvalStatus || 'pending')}
-                </Text>
-                <View style={LIVE_BOARD_COL_STYLES[13]}>
-                  <Pressable
-                    style={[styles.secondaryButton, styles.liveBoardActionButton]}
-                    onPress={() => handleLiveBoardPrimaryAction(shift)}
-                  >
-                    <Text style={styles.secondaryButtonText}>{primaryActionLabel}</Text>
-                  </Pressable>
-                </View>
-              </Pressable>
-            );
-          })}
-            </View>
-          </ScrollView>
-          )}
-          </Card>
-        </View>
-
-        <View style={[styles.operationsSideColumn, styles.liveOpsSideColumn]}>
-          {IS_WEB ? (
-            <View style={styles.liveOpsSideRailIntro}>
-              <Text style={styles.liveOpsSideRailEyebrow}>Context rail</Text>
-              <Text style={styles.liveOpsSideRailHint}>
-                Activity, management, incidents, and alerts beside the board — read together with the row list.
-              </Text>
-            </View>
-          ) : null}
-          <Card
-            style={styles.liveOpsSideCard}
-            title="Recent operational activity"
-            subtitle="Operational events tied to shifts on the board."
-            webSurfaceHover
-          >
-            {recentOperationalActivity.map((activity, index, arr) => (
-              <Pressable
-                key={activity.id}
-                style={[
-                  styles.liveOpsListRow,
-                  styles.liveOpsListRowSide,
-                  index === arr.length - 1 ? styles.liveOpsListRowLast : null,
-                  IS_WEB ? styles.liveOpsListRowWeb : null,
-                  IS_WEB ? styles.liveOpsListRowSideWeb : null,
-                ]}
-                onPress={() => {
-                  if (activity.shiftId) {
-                    setSelectedShiftId(activity.shiftId);
-                  }
-                }}
-              >
-                <Text style={styles.liveOpsRowTitleSide}>{activity.eventType}</Text>
-                <Text style={styles.liveOpsRowMetaSide}>
-                  Shift {activity.shiftId ? `#${activity.shiftId}` : 'N/A'} | {activity.siteName} | {activity.guardName}
-                </Text>
-                {shouldShowOperationalActivityMessage(activity.eventType) ? (
-                  <Text style={styles.liveOpsSideRowMessage}>{activity.message}</Text>
-                ) : null}
-                <Text style={styles.liveOpsSideRowTimestamp}>{formatDateTimeLabel(activity.occurredAt)}</Text>
-              </Pressable>
-            ))}
-            {recentOperationalActivity.length === 0 ? (
-              <DashboardPanelEmpty
-                title="No recent operational activity"
-                description="As guards book on, log activity, and sites generate signals, the latest events will appear in this feed."
-              />
-            ) : null}
-          </Card>
-
-          <Card
-            style={styles.liveOpsSideCard}
-            title="Recent management actions"
-            subtitle="Follow-up and closure actions taken from the control room."
-            webSurfaceHover
-          >
-            {recentManagementActivity.map((activity, index, arr) => (
-              <Pressable
-                key={activity.id}
-                style={[
-                  styles.liveOpsListRow,
-                  styles.liveOpsListRowSide,
-                  index === arr.length - 1 ? styles.liveOpsListRowLast : null,
-                  IS_WEB ? styles.liveOpsListRowWeb : null,
-                  IS_WEB ? styles.liveOpsListRowSideWeb : null,
-                ]}
-                onPress={() => {
-                  if (activity.shiftId) {
-                    setSelectedShiftId(activity.shiftId);
-                  }
-                }}
-              >
-                <Text style={styles.liveOpsRowTitleSide}>{activity.actionTaken}</Text>
-                <Text style={styles.liveOpsRowMetaSide}>
-                  {activity.itemType} | Shift {activity.shiftId ? `#${activity.shiftId}` : 'N/A'} | {activity.siteName} | {activity.guardName}
-                </Text>
-                <Text style={styles.liveOpsSideRowTimestamp}>{formatDateTimeLabel(activity.occurredAt)}</Text>
-              </Pressable>
-            ))}
-            {recentManagementActivity.length === 0 ? (
-              <DashboardPanelEmpty
-                title="No recent management actions"
-                description="Acknowledgements, escalations, and closures taken from this console will show here for audit context."
-              />
-            ) : null}
-          </Card>
-
-          <Card
-            style={styles.liveOpsSideCard}
-            title="Open incidents"
-            subtitle="Open company incidents (up to six shown)."
-            webSurfaceHover
-          >
-            {openIncidents.slice(0, 6).map((incident, index, arr) => (
-              <View
-                key={incident.id}
-                style={[
-                  styles.liveOpsListRow,
-                  styles.liveOpsListRowSide,
-                  index === arr.length - 1 ? styles.liveOpsListRowLast : null,
-                  IS_WEB ? styles.liveOpsListRowWeb : null,
-                  IS_WEB ? styles.liveOpsListRowSideWeb : null,
-                ]}
-              >
-                <Text style={styles.liveOpsRowTitleSide}>{incident.title}</Text>
-                <Text style={styles.liveOpsRowMetaSide}>
-                  {incident.site?.name || incident.shift?.site?.name || 'Unknown site'} | {formatStatusLabel(incident.status)}
-                </Text>
-              </View>
-            ))}
-            {openIncidents.length === 0 ? (
-              <DashboardPanelEmpty
-                title="No open incidents"
-                description="Open incidents across the company will surface here (up to six) when they need visibility next to the board."
-              />
-            ) : null}
-          </Card>
-
-          <Card
-            style={styles.liveOpsSideCard}
-            title="Safety / welfare / panic"
-            subtitle="Outstanding alerts (up to six shown)."
-            webSurfaceHover
-          >
-            {outstandingAlerts.slice(0, 6).map((alert, index, arr) => (
-              <View
-                key={alert.id}
-                style={[
-                  styles.liveOpsListRow,
-                  styles.liveOpsListRowSide,
-                  index === arr.length - 1 ? styles.liveOpsListRowLast : null,
-                  IS_WEB ? styles.liveOpsListRowWeb : null,
-                  IS_WEB ? styles.liveOpsListRowSideWeb : null,
-                ]}
-              >
-                <Text style={styles.liveOpsRowTitleSide}>{formatStatusLabel(alert.type)}</Text>
-                <Text style={styles.liveOpsRowMetaSide}>
-                  {alert.shift?.site?.name || alert.shift?.siteName || 'Unknown shift'} | {formatStatusLabel(alert.status)}
-                </Text>
-              </View>
-            ))}
-            {outstandingAlerts.length === 0 ? (
-              <DashboardPanelEmpty
-                title="No active safety alerts"
-                description="Outstanding welfare, panic, and related alerts will appear here (up to six) when they require attention."
-              />
-            ) : null}
-          </Card>
-
-        </View>
-      </View>
-      </DashboardSection>
-
-      <View onLayout={(event: any) => setShiftDetailAnchorY(event.nativeEvent.layout.y)}>
-        <DashboardSection
-          title="Selected shift detail"
-          subtitle={
-          selectedShift
-            ? 'Row-level summary for the shift highlighted on the board above — follow-up, close-out, and records.'
-            : 'Select a shift row on the live board to load attendance, logs, incidents, and safety context in this panel.'
-        }
-      >
-        {selectedShift ? (
-          <View style={[styles.liveOpsSelectedInset, IS_WEB ? styles.liveOpsSelectedInsetWeb : null]}>
-          {(() => {
-            const selectedAttendance = attendanceByShiftId.get(selectedShift.id);
-            const selectedTimesheet = timesheetByShiftId.get(selectedShift.id);
-            const selectedShiftException = getShiftExceptionSummary(selectedShift.status);
-            const selectedShiftBadge =
-              normalizeShiftLifecycleStatus(selectedShift.status) === 'missed'
-                ? { icon: '⚠️', label: 'Missed' }
-                : getShiftStatusBadge(selectedShift.status || 'unfilled');
-            return (
-              <>
-          <View style={styles.liveOpsSelectedHeader}>
-          <Text style={styles.liveOpsDetailTitle}>Shift #{selectedShift.id} Operations</Text>
-          <Text style={styles.liveOpsSelectedSummaryLine}>
-            {selectedShift.site?.client?.name || clientMap.get(selectedShift.site?.clientId || 0)?.name || 'No client'} | {selectedShift.site?.name || selectedShift.siteName}
-          </Text>
-          <Text style={styles.liveOpsSelectedSummaryLine}>
-            {selectedShift.guard?.fullName || 'No guard assigned'} | {formatDateLabel(selectedShift.start)} | {formatTimeLabel(selectedShift.start)}-{formatTimeLabel(selectedShift.end)}
-          </Text>
-          <Text style={styles.liveOpsSelectedSummaryLine}>
-            Status: {`${selectedShiftBadge.icon} ${selectedShiftBadge.label}`} | Check calls: {selectedShift.checkCallIntervalMinutes || 60} mins
-          </Text>
-          <View style={styles.liveOpsSelectedBadgeRow}>
-            <ShiftStatusBadge status={selectedShift.status} />
-          </View>
-          {selectedShiftException ? (
-            <>
-              <Text style={styles.liveOpsSelectedSummaryLine}>{selectedShiftException.title}</Text>
-              <Text style={styles.liveOpsSelectedSummaryLine}>{selectedShiftException.message}</Text>
-              <Text style={styles.liveOpsSelectedSummaryLine}>{selectedShiftException.outcome}</Text>
-            </>
-          ) : null}
-          {normalizeShiftLifecycleStatus(selectedShift.status) === 'offered' ? (
-            <Text style={styles.liveOpsSelectedSummaryLine}>Waiting for guard confirmation before live controls are used.</Text>
-          ) : null}
-          {normalizeShiftLifecycleStatus(selectedShift.status) === 'unfilled' ? (
-            <>
-              <Text style={styles.liveOpsSelectedSummaryLine}>No confirmed guard is linked yet. This shift still needs cover.</Text>
-              <View style={styles.rowActions}>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={`Manage coverage for Shift #${selectedShift.id}`}
-                  style={styles.primaryButton}
-                  onPress={() => openCoverage({ uncoveredOnly: true, shiftId: selectedShift.id })}
-                >
-                  <Text style={styles.primaryButtonText}>Manage Coverage</Text>
-                </Pressable>
-              </View>
-            </>
-          ) : null}
-          {normalizeShiftLifecycleStatus(selectedShift.status) === 'in_progress' ? (
-            <Text style={styles.liveOpsSelectedSummaryLine}>Guard is booked on and the shift is live in operations.</Text>
-          ) : null}
-          {normalizeShiftLifecycleStatus(selectedShift.status) === 'completed' ? (
-            <Text style={styles.liveOpsSelectedSummaryLine}>Shift is completed. Operational records remain visible but no new live activity should be added.</Text>
-          ) : null}
-          {normalizeShiftLifecycleStatus(selectedShift.status) === 'ready' ? (
-            <Text style={styles.liveOpsSelectedSummaryLine}>Guard confirmed this shift. It is ready for book on.</Text>
-          ) : null}
-          <Text style={styles.liveOpsSelectedInstructions}>
-            Instructions: {selectedShift.instructions || 'No instructions recorded.'}
-          </Text>
-          </View>
-
-          <View style={[styles.detailGrid, styles.liveOpsDetailGrid]}>
-            {normalizeShiftLifecycleStatus(selectedShift.status) === 'completed' && selectedShiftCloseOutSummary ? (
-              <View style={[styles.detailCard, styles.liveOpsDetailCard, styles.closeOutCard]}>
-                <Text style={[styles.detailTitle, styles.liveOpsDetailSectionTitle]}>Completed Shift Close-Out</Text>
-                <Text
-                  style={[
-                    styles.recordTitle,
-                    selectedShiftCloseOutSummary.closedCleanly
-                      ? styles.closeOutStatusGood
-                      : styles.closeOutStatusAttention,
-                  ]}
-                >
-                  {selectedShiftCloseOutSummary.closedCleanly
-                    ? 'Closed cleanly'
-                    : `Needs follow-up (${selectedShiftCloseOutSummary.unresolvedFollowUpCount})`}
-                </Text>
-                <Text style={styles.liveOpsDetailTileLine}>
-                  Shift #{selectedShift.id} | {selectedShift.site?.name || selectedShift.siteName || 'Unknown site'} |{' '}
-                  {selectedShift.guard?.fullName || 'No guard assigned'}
-                </Text>
-                <Text style={styles.liveOpsDetailTileLine}>
-                  Scheduled: {formatDateTimeLabel(selectedShiftCloseOutSummary.scheduledStart)} to{' '}
-                  {formatDateTimeLabel(selectedShiftCloseOutSummary.scheduledEnd)}
-                </Text>
-                <Text style={styles.liveOpsDetailTileLine}>
-                  Actual: {formatDateTimeLabel(selectedShiftCloseOutSummary.actualCheckInAt)} to{' '}
-                  {formatDateTimeLabel(selectedShiftCloseOutSummary.actualCheckOutAt)}
-                </Text>
-                <Text style={styles.liveOpsDetailTileLine}>
-                  Logs: {selectedShiftCloseOutSummary.logsCount} | Incidents: {selectedShiftCloseOutSummary.incidentsCount}
-                </Text>
-                <Text style={styles.liveOpsDetailTileLine}>
-                  Safety / welfare / panic: {selectedShiftCloseOutSummary.safetyEventsCount}
-                </Text>
-                <Text style={styles.liveOpsDetailTileLine}>
-                  Check calls completed / missed: {selectedShiftCloseOutSummary.completedCheckCalls} /{' '}
-                  {selectedShiftCloseOutSummary.missedCheckCalls}
-                </Text>
-                <Text style={styles.liveOpsDetailTileLine}>
-                  Timesheet: {formatStatusLabel(selectedShiftCloseOutSummary.timesheetStatus)}
-                </Text>
-                {selectedShiftCloseOutSummary.unresolvedFollowUpCount > 0 ? (
-                  <Text style={styles.liveOpsDetailTileLine}>
-                    Unresolved follow-up items: {selectedShiftCloseOutSummary.unresolvedFollowUpCount}
-                  </Text>
-                ) : (
-                  <Text style={styles.liveOpsDetailTileLine}>No unresolved follow-up items remain for this shift.</Text>
-                )}
-                <View style={styles.closeOutNotesSection}>
-                  <Text style={styles.subtleLabel}>Close-out / handover notes</Text>
-                  <TextInput
-                    style={[styles.input, styles.textAreaSmall, styles.liveOpsChromeInputBorder]}
-                    multiline
-                    value={closeOutNotesDraft}
-                    onChangeText={setCloseOutNotesDraft}
-                    placeholder="Short operational handover note for management review or next-shift awareness"
-                  />
-                  <View style={styles.rowActions}>
-                    <Pressable
-                      style={styles.primaryButton}
-                      onPress={handleSaveCloseOutNotes}
-                      disabled={savingCloseOutNotes}
-                    >
-                      <Text style={styles.primaryButtonText}>
-                        {savingCloseOutNotes ? 'Saving...' : 'Save Close-Out Note'}
-                      </Text>
-                    </Pressable>
-                  </View>
-                  {selectedShift.closeOutNotes && !closeOutNotesDraft.trim() ? (
-                    <Text style={styles.helperText}>
-                      Existing note will be cleared if you save with an empty value.
-                    </Text>
-                  ) : null}
-                </View>
-              </View>
-            ) : null}
-            <View style={[styles.detailCard, styles.liveOpsDetailCard]}>
-              <Text style={[styles.detailTitle, styles.liveOpsDetailSectionTitle]}>Attendance & Timesheet</Text>
-              <Text style={styles.liveOpsDetailTileLine}>
-                Book on: {selectedAttendance?.checkInAt ? formatDateTimeLabel(selectedAttendance.checkInAt) : 'Pending'}
-              </Text>
-              <Text style={styles.liveOpsDetailTileLine}>
-                Book off: {selectedAttendance?.checkOutAt ? formatDateTimeLabel(selectedAttendance.checkOutAt) : 'Pending'}
-              </Text>
-              <Text style={styles.liveOpsDetailTileLine}>
-                Timesheet: {formatStatusLabel(selectedTimesheet?.approvalStatus || 'pending')}
-              </Text>
-            </View>
-            <View style={[styles.detailCard, styles.liveOpsDetailCard]}>
-              <Text style={[styles.detailTitle, styles.liveOpsDetailSectionTitle]}>Daily Logs</Text>
-              {(logsByShiftId.get(selectedShift.id) || []).map((log) => (
-                <Text key={log.id} style={styles.liveOpsDetailListLine}>
-                  - {log.message}
-                </Text>
-              ))}
-              {(logsByShiftId.get(selectedShift.id) || []).length === 0 ? (
-                <LiveOpsDetailEmpty
-                  title="No daily logs"
-                  description="Logs recorded for this shift will appear here when available."
-                />
-              ) : null}
-            </View>
-            <View style={[styles.detailCard, styles.liveOpsDetailCard]}>
-              <Text style={[styles.detailTitle, styles.liveOpsDetailSectionTitle]}>Incidents</Text>
-              {(incidentsByShiftId.get(selectedShift.id) || []).map((incident) => (
-                <Text key={incident.id} style={styles.liveOpsDetailListLine}>
-                  - {incident.title} ({formatStatusLabel(incident.status)})
-                </Text>
-              ))}
-              {(incidentsByShiftId.get(selectedShift.id) || []).length === 0 ? (
-                <LiveOpsDetailEmpty
-                  title="No incidents on this shift"
-                  description="Incidents linked to this shift will be listed here when they exist."
-                />
-              ) : null}
-            </View>
-            <View style={[styles.detailCard, styles.liveOpsDetailCard]}>
-              <Text style={[styles.detailTitle, styles.liveOpsDetailSectionTitle]}>Safety / Check Calls</Text>
-              {(alertsByShiftId.get(selectedShift.id) || []).map((alert) => (
-                <Text key={alert.id} style={styles.liveOpsDetailListLine}>
-                  - {formatStatusLabel(alert.type)} ({formatStatusLabel(alert.status)})
-                </Text>
-              ))}
-              {(alertsByShiftId.get(selectedShift.id) || []).length === 0 ? (
-                <LiveOpsDetailEmpty
-                  title="No safety or welfare events"
-                  description="Safety, welfare, and check-call items tied to this shift will show here when present."
-                />
-              ) : null}
-            </View>
-          </View>
-              </>
-            );
-          })()}
-          </View>
-        ) : (
-          <DashboardPanelEmpty
-            title="No shift selected"
-            description="Tap a row on the live shift board to attach its operational detail, attendance, and records to this panel."
-          />
-        )}
-        </DashboardSection>
-      </View>
     </View>
   );
 

@@ -22,6 +22,7 @@ export const colors = {
   accentTeal: '#16A6A1',
   accentTealStrong: '#0F817E',
   accentTealSoft: '#DDF7F5',
+  accentAqua: '#00CFC8',
   supportBlue: '#2563EB',
 
   // Surfaces and text
@@ -85,8 +86,8 @@ export const spacing = {
  */
 export const radii = {
   sm: 8,
-  card: 10,
-  drawer: 12,
+  card: 8,
+  drawer: 10,
   md: 12,
   lg: 16,
   xl: 20,
@@ -100,11 +101,11 @@ export const radii = {
  */
 export const typography = {
   // Semantic scale (new components should use these)
-  pageTitle:    { fontSize: 28, lineHeight: 34, fontWeight: '700' as const },
+  pageTitle:    { fontSize: 26, lineHeight: 32, fontWeight: '700' as const },
   sectionTitle: { fontSize: 18, lineHeight: 24, fontWeight: '600' as const },
   panelHeading: { fontSize: 15, lineHeight: 20, fontWeight: '600' as const },
   tableRow:     { fontSize: 13, lineHeight: 18, fontWeight: '400' as const },
-  kpi:          { fontSize: 28, lineHeight: 32, fontWeight: '700' as const },
+  kpi:          { fontSize: 26, lineHeight: 30, fontWeight: '700' as const },
 
   // Legacy names — preserved for backward compatibility
   display:      { fontSize: 32, lineHeight: 38, fontWeight: '700' as const },
