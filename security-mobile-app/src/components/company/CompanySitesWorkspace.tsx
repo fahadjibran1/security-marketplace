@@ -267,7 +267,7 @@ function ControlledDateInput({ value, onChange }: { value: string; onChange: (v:
       type="date"
       value={value}
       onChange={(e: any) => onChange(e.target.value)}
-      style={{ ...formSelectStyle, paddingRight: spacing.xxl }}
+      style={{ ...formSelectStyle, paddingRight: spacing.xxl, boxSizing: 'border-box' }}
     />
   );
 }
@@ -292,7 +292,7 @@ function ControlledTimeInput({ value, onChange }: { value: string; onChange: (v:
       type="time"
       value={value}
       onChange={(e: any) => onChange(e.target.value)}
-      style={{ ...formSelectStyle, paddingRight: spacing.xxl }}
+      style={{ ...formSelectStyle, paddingRight: spacing.xxl, boxSizing: 'border-box' }}
     />
   );
 }
@@ -749,14 +749,14 @@ export function CompanySitesWorkspace({
               label={siteForm.id ? 'Save Changes' : 'Create Site'}
               onPress={handleSave}
               variant="primary"
-              size="md"
+              size="sm"
               loading={savingSite}
             />
             <Button
               label="Cancel"
               onPress={handleCloseForm}
               variant="secondary"
-              size="md"
+              size="sm"
               disabled={savingSite}
             />
           </View>
@@ -1403,6 +1403,7 @@ const styles = StyleSheet.create({
   },
   formCell: {
     flex: 1,
+    minWidth: 0,
   },
 
   // ── Toggle row (GPS requirement) ─────────────────────────────────────────

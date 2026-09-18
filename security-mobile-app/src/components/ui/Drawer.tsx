@@ -68,6 +68,7 @@ export function Drawer({ visible, onClose, title, subtitle, children, footer, wi
               accessibilityLabel="Close"
               style={({ pressed }: any) => [
                 styles.closeBtn,
+                compact ? styles.closeBtnCompact : null,
                 pressed ? styles.closeBtnPressed : null,
                 IS_WEB ? (styles.closeBtnCursor as any) : null,
               ]}
@@ -179,11 +180,15 @@ const styles = StyleSheet.create({
 
   // ── Compact density overrides ──────────────────────────────────────────────
   headerCompact: {
-    paddingTop: spacing.lg,
-    paddingBottom: spacing.md,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.xs,
   },
   footerCompact: {
-    paddingVertical: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  closeBtnCompact: {
+    width: 32,
+    height: 32,
   },
   bodyContentCompact: {
     flexGrow: 1,
