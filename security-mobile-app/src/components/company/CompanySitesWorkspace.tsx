@@ -256,7 +256,7 @@ function ControlledDateInput({ value, onChange }: { value: string; onChange: (v:
         value={value}
         onChangeText={onChange}
         placeholder="YYYY-MM-DD"
-        style={[formSelectStyle as any, { height: 42 }]}
+        style={formSelectStyle as any}
         placeholderTextColor={colors.fieldPlaceholder}
       />
     );
@@ -267,7 +267,7 @@ function ControlledDateInput({ value, onChange }: { value: string; onChange: (v:
       type="date"
       value={value}
       onChange={(e: any) => onChange(e.target.value)}
-      style={{ ...formSelectStyle, height: 42 }}
+      style={{ ...formSelectStyle, paddingRight: spacing.xxl }}
     />
   );
 }
@@ -281,7 +281,7 @@ function ControlledTimeInput({ value, onChange }: { value: string; onChange: (v:
         value={value}
         onChangeText={onChange}
         placeholder="HH:MM"
-        style={[formSelectStyle as any, { height: 42 }]}
+        style={formSelectStyle as any}
         placeholderTextColor={colors.fieldPlaceholder}
       />
     );
@@ -292,7 +292,7 @@ function ControlledTimeInput({ value, onChange }: { value: string; onChange: (v:
       type="time"
       value={value}
       onChange={(e: any) => onChange(e.target.value)}
-      style={{ ...formSelectStyle, height: 42 }}
+      style={{ ...formSelectStyle, paddingRight: spacing.xxl }}
     />
   );
 }
@@ -606,7 +606,8 @@ export function CompanySitesWorkspace({
         onClose={() => setQuickViewSite(null)}
         title={qv?.name ?? ''}
         subtitle={qv?.client?.name ?? qv?.clientName ?? 'Site overview'}
-        width={520}
+        compact
+        width={500}
         footer={
           qv ? (
             <View style={styles.qvFooter}>
@@ -740,7 +741,8 @@ export function CompanySitesWorkspace({
         onClose={handleCloseForm}
         title={siteForm.id ? 'Edit Site' : 'Add Site'}
         subtitle={siteForm.id ? 'Update site configuration' : 'Create a new operational site'}
-        width={520}
+        compact
+        width={500}
         footer={
           <View style={styles.formFooter}>
             <Button
@@ -938,15 +940,18 @@ export function CompanySitesWorkspace({
 
           {/* INSTRUCTIONS */}
           <View style={styles.formSection}>
-            <Text style={styles.formSectionLabel}>Instructions</Text>
-            <Text style={styles.formSectionCaption}>
-              Shown to Guards assigned to this site.
-            </Text>
+            <View style={styles.formSectionHead}>
+              <Text style={styles.formSectionLabel}>Instructions</Text>
+              <Text style={styles.formSectionCaption}>
+                Shown to Guards assigned to this site.
+              </Text>
+            </View>
             <FieldTextarea
               value={siteForm.specialInstructions}
               onChangeText={(v: string) => setSiteForm((c) => ({ ...c, specialInstructions: v }))}
               placeholder="Special instructions for Guards assigned to this site…"
               minLines={3}
+              style={{ minHeight: 86 }}
             />
           </View>
 
@@ -954,15 +959,18 @@ export function CompanySitesWorkspace({
 
           {/* CONTACT */}
           <View style={styles.formSection}>
-            <Text style={styles.formSectionLabel}>Contact</Text>
-            <Text style={styles.formSectionCaption}>
-              On-site contact information for assigned Guards.
-            </Text>
+            <View style={styles.formSectionHead}>
+              <Text style={styles.formSectionLabel}>Contact</Text>
+              <Text style={styles.formSectionCaption}>
+                On-site contact information for assigned Guards.
+              </Text>
+            </View>
             <FieldTextarea
               value={siteForm.contactDetails}
               onChangeText={(v: string) => setSiteForm((c) => ({ ...c, contactDetails: v }))}
               placeholder="Contact details for this site…"
               minLines={2}
+              style={{ minHeight: 86 }}
             />
           </View>
 
@@ -971,10 +979,12 @@ export function CompanySitesWorkspace({
             <>
               <View style={styles.formDivider} />
               <View style={styles.formSection}>
-                <Text style={styles.formSectionLabel}>Optional Starter Shift</Text>
-                <Text style={styles.formSectionCaption}>
-                  Create an initial unfilled shift for this site.
-                </Text>
+                <View style={styles.formSectionHead}>
+                  <Text style={styles.formSectionLabel}>Optional Starter Shift</Text>
+                  <Text style={styles.formSectionCaption}>
+                    Create an initial unfilled shift for this site.
+                  </Text>
+                </View>
 
                 {!showStarterShift ? (
                   <Pressable
@@ -987,7 +997,7 @@ export function CompanySitesWorkspace({
                 ) : (
                   <>
                     <View style={styles.formRow}>
-                      <View style={styles.formCell}>
+                      <View style={[styles.formCell, { flex: 1.5 }]}>
                         <FormField label="Date">
                           <ControlledDateInput
                             value={siteForm.initialShiftDate}
@@ -1068,7 +1078,8 @@ const formSelectStyle = {
   borderRadius: radii.sm,
   paddingLeft: spacing.md,
   paddingRight: spacing.md,
-  fontSize: 14,
+  fontSize: 16,
+  lineHeight: 24,
   color: colors.textPrimary,
   backgroundColor: colors.card,
   width: '100%',
@@ -1347,10 +1358,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.xl,
     paddingTop: spacing.lg,
     paddingBottom: spacing.xl,
-    gap: 20,
+    gap: 16,
   },
   formSection: {
-    gap: 12,
+    gap: 10,
   },
   formSectionLabel: {
     fontSize: 11,
@@ -1364,6 +1375,9 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.textSecondary,
   } as any,
+  formSectionHead: {
+    gap: 4,
+  },
   formDivider: {
     height: 1,
     backgroundColor: colors.border,

@@ -16,6 +16,8 @@ type DrawerProps = React.PropsWithChildren<{
    * Defaults to 480. Use 520 for wider forms (e.g. Site setup).
    */
   width?: number;
+  /** Compact density — tighter header/footer for commercial management drawers. */
+  compact?: boolean;
 }>;
 
 /**
@@ -27,7 +29,7 @@ type DrawerProps = React.PropsWithChildren<{
  * Do NOT convert existing page forms to Drawer in Phase 1C.
  * This component is wired up to real business flows in Phase 1D+.
  */
-export function Drawer({ visible, onClose, title, subtitle, children, footer, width = 480 }: DrawerProps) {
+export function Drawer({ visible, onClose, title, subtitle, children, footer, width = 480, compact }: DrawerProps) {
   return (
     <Modal
       visible={visible}
@@ -55,7 +57,7 @@ export function Drawer({ visible, onClose, title, subtitle, children, footer, wi
           ]}
         >
           {/* Header */}
-          <View style={styles.header}>
+          <View style={[styles.header, compact ? styles.headerCompact : null]}>
             <View style={styles.headerCopy}>
               <Text style={styles.title}>{title}</Text>
               {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
@@ -77,7 +79,7 @@ export function Drawer({ visible, onClose, title, subtitle, children, footer, wi
           {/* Scrollable body */}
           <ScrollView
             style={styles.body}
-            contentContainerStyle={styles.bodyContent}
+            contentContainerStyle={compact ? styles.bodyContentCompact : styles.bodyContent}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator
           >
@@ -85,7 +87,7 @@ export function Drawer({ visible, onClose, title, subtitle, children, footer, wi
           </ScrollView>
 
           {/* Footer */}
-          {footer ? <View style={styles.footer}>{footer}</View> : null}
+          {footer ? <View style={[styles.footer, compact ? styles.footerCompact : null]}>{footer}</View> : null}
         </KeyboardAvoidingView>
       </View>
     </Modal>
@@ -173,5 +175,17 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.lg,
     borderTopWidth: 1,
     borderTopColor: colors.border,
+  },
+
+  // ── Compact density overrides ──────────────────────────────────────────────
+  headerCompact: {
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.md,
+  },
+  footerCompact: {
+    paddingVertical: spacing.md,
+  },
+  bodyContentCompact: {
+    flexGrow: 1,
   },
 });

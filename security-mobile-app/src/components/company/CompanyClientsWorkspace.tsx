@@ -460,6 +460,7 @@ export function CompanyClientsWorkspace({
         onClose={() => setQuickViewClient(null)}
         title={qvClient?.name ?? ''}
         subtitle="Client overview"
+        compact
         footer={
           qvClient ? (
             <View style={styles.qvFooter}>
@@ -568,6 +569,7 @@ export function CompanyClientsWorkspace({
         onClose={handleCloseForm}
         title={clientForm.id ? 'Edit Client' : 'Add Client'}
         subtitle={clientForm.id ? 'Update client details' : 'Create a new client account'}
+        compact
         footer={
           <View style={styles.formFooter}>
             <Button
