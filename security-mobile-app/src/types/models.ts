@@ -299,6 +299,12 @@ export interface Site {
   specialInstructions?: string | null;
   company?: CompanyProfile;
   client?: Client | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  geofenceRadiusMeters?: number | null;
+  requireGpsCheckIn?: boolean | null;
+  requireNfcCheckIn?: boolean | null;
+  timezone?: string | null;
 }
 
 // Job = company requirement
@@ -1294,6 +1300,11 @@ export interface CreateSitePayload {
   operatingEndTime?: string;
   welfareCheckIntervalMinutes?: number;
   specialInstructions?: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  geofenceRadiusMeters?: number;
+  requireGpsCheckIn?: boolean;
+  timezone?: string;
   initialShiftDate?: string;
   initialShiftStartTime?: string;
   initialShiftEndTime?: string;

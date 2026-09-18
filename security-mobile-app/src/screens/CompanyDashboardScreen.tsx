@@ -3,6 +3,7 @@ import { ActivityIndicator, Image, Modal, Pressable, ScrollView, StyleSheet, Tex
 
 import { CompanyAuditWorkspace } from '../components/company/CompanyAuditWorkspace';
 import { CompanyClientsWorkspace, type ClientFormState, CLIENT_FORM_EMPTY } from '../components/company/CompanyClientsWorkspace';
+import { CompanySitesWorkspace, type SiteFormState, SITE_FORM_EMPTY } from '../components/company/CompanySitesWorkspace';
 import { CompanyLiveOperationsWorkspace } from '../components/company/CompanyLiveOperationsWorkspace';
 import type { LiveBoardRow, CloseOutSummary, SelectedShiftContext } from '../components/company/CompanyLiveOperationsWorkspace';
 import { CompanyAnalyticsWorkspace } from '../components/company/CompanyAnalyticsWorkspace';
@@ -121,24 +122,6 @@ type CompanySection =
   | 'incidents'
   | 'alerts'
   | 'weekly-approvals';
-
-type SiteFormState = {
-  id?: number;
-  clientId: string;
-  name: string;
-  address: string;
-  contactDetails: string;
-  status: string;
-  requiredGuardCount: string;
-  operatingDays: string;
-  operatingStartTime: string;
-  operatingEndTime: string;
-  checkCallIntervalMinutes: string;
-  specialInstructions: string;
-  initialShiftDate: string;
-  initialShiftStartTime: string;
-  initialShiftEndTime: string;
-};
 
 type JobFormState = {
   title: string;
@@ -279,23 +262,6 @@ const COMPANY_NAV_GROUPS: Array<{ id: string; title: string; itemIds: CompanySec
     itemIds: ['coverage', 'analytics', 'incidents', 'alerts', 'audit', 'recruitment'],
   },
 ];
-
-const SITE_FORM_EMPTY: SiteFormState = {
-  clientId: '',
-  name: '',
-  address: '',
-  contactDetails: '',
-  status: 'active',
-  requiredGuardCount: '1',
-  operatingDays: 'Mon-Fri',
-  operatingStartTime: '08:00',
-  operatingEndTime: '18:00',
-  checkCallIntervalMinutes: '60',
-  specialInstructions: '',
-  initialShiftDate: '',
-  initialShiftStartTime: '',
-  initialShiftEndTime: '',
-};
 
 const JOB_FORM_EMPTY: JobFormState = {
   title: '',
@@ -2003,11 +1969,6 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
     [managementActions],
   );
 
-  const selectedSite = React.useMemo(
-    () => sites.find((site) => site.id === selectedSiteId) ?? null,
-    [selectedSiteId, sites],
-  );
-
   const selectedShift = React.useMemo(
     () => shifts.find((shift) => shift.id === selectedShiftId) ?? null,
     [selectedShiftId, shifts],
@@ -2055,19 +2016,6 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
     setCloseOutNotesDraft(selectedShift?.closeOutNotes || '');
   }, [selectedShift?.id, selectedShift?.closeOutNotes]);
 
-  const siteShiftCounts = React.useMemo(() => {
-    const counts = new Map<number, number>();
-    shifts.forEach((shift) => {
-      const siteId = shift.site?.id ?? shift.siteId;
-      if (!siteId) {
-        return;
-      }
-
-      counts.set(siteId, (counts.get(siteId) || 0) + 1);
-    });
-    return counts;
-  }, [shifts]);
-
   const siteOptions = React.useMemo(
     () =>
       sites.map((site) => ({
@@ -2080,11 +2028,6 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
   const siteClientOptions = React.useMemo(
     () => activeClients.map((client) => ({ label: client.name, value: String(client.id) })),
     [activeClients],
-  );
-
-  const selectedSiteClient = React.useMemo(
-    () => clients.find((client) => String(client.id) === siteForm.clientId) ?? null,
-    [clients, siteForm.clientId],
   );
 
   const linkedGuardOptions = React.useMemo(
@@ -2205,28 +2148,6 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
     }
   };
 
-  const handleEditSite = (site: Site) => {
-    setSiteForm({
-      id: site.id,
-      clientId: String(site.client?.id ?? site.clientId ?? ''),
-      name: site.name,
-      address: site.address,
-      contactDetails: site.contactDetails || '',
-      status: site.status || 'active',
-      requiredGuardCount: String(site.requiredGuardCount || 1),
-      operatingDays: site.operatingDays || '',
-      operatingStartTime: site.operatingStartTime || '',
-      operatingEndTime: site.operatingEndTime || '',
-      checkCallIntervalMinutes: String(site.welfareCheckIntervalMinutes || 60),
-      specialInstructions: site.specialInstructions || '',
-      initialShiftDate: '',
-      initialShiftStartTime: '',
-      initialShiftEndTime: '',
-    });
-    setSelectedSiteId(site.id);
-    setActiveSection('sites');
-  };
-
   const handleSaveSite = async () => {
     try {
       setSavingSite(true);
@@ -2248,6 +2169,10 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
         }
       }
 
+      const latStr    = siteForm.latitude.trim();
+      const lonStr    = siteForm.longitude.trim();
+      const radiusStr = siteForm.geofenceRadiusMeters.trim();
+
       const payload: CreateSitePayload | UpdateSitePayload = {
         clientId: selectedClientId,
         name: trimmedSiteName,
@@ -2260,12 +2185,15 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
         operatingEndTime: siteForm.operatingEndTime.trim() || undefined,
         welfareCheckIntervalMinutes: toNumber(siteForm.checkCallIntervalMinutes) || 60,
         specialInstructions: siteForm.specialInstructions.trim() || undefined,
+        latitude: latStr !== '' ? Number(latStr) : null,
+        longitude: lonStr !== '' ? Number(lonStr) : null,
+        geofenceRadiusMeters: radiusStr !== '' ? toNumber(radiusStr) : undefined,
+        requireGpsCheckIn: siteForm.requireGpsCheckIn,
+        timezone: siteForm.timezone.trim() || 'Europe/London',
         initialShiftDate: hasStarterShiftValue ? siteForm.initialShiftDate : undefined,
         initialShiftStartTime: hasStarterShiftValue ? siteForm.initialShiftStartTime : undefined,
         initialShiftEndTime: hasStarterShiftValue ? siteForm.initialShiftEndTime : undefined,
       };
-
-      console.log('[CompanyDashboardScreen] handleSaveSite payload', payload);
 
       if (!payload.clientId || !payload.name || !payload.address) {
         throw new Error('Client, site name, and address are required.');
@@ -2280,9 +2208,18 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
       resetSiteForm();
       await loadData(true);
     } catch (saveError) {
-      setError(formatApiErrorMessage(saveError, 'Unable to save this site right now.'));
+      throw new Error(formatApiErrorMessage(saveError, 'Unable to save this site right now.'));
     } finally {
       setSavingSite(false);
+    }
+  };
+
+  const handleArchiveSite = async (site: Site) => {
+    try {
+      await updateSite(site.id, { status: 'archived' });
+      await loadData(true);
+    } catch (archiveError) {
+      setError(formatApiErrorMessage(archiveError, 'Unable to archive this site right now.'));
     }
   };
 
@@ -3603,141 +3540,18 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
     />
   );
 
-  const renderSitesSection = () => {
-    const siteShifts = shifts.filter((shift) => (shift.site?.id ?? shift.siteId) === selectedSiteId);
-    return (
-      <View style={styles.sectionStack}>
-        <View style={styles.splitLayout}>
-          <View style={styles.tableCard}>
-            {renderTableHeader(['Site', 'Client', 'Address', 'Guards', 'Hours', 'Active Shifts', 'Actions'])}
-            {sites.map((site) => (
-              <Pressable key={site.id} style={[styles.tableRow, selectedSiteId === site.id && styles.tableRowSelected]} onPress={() => setSelectedSiteId(site.id)}>
-                <Text style={styles.tableCellStrong}>{site.name}</Text>
-                <Text style={styles.tableCell}>{site.client?.name || clientMap.get(site.clientId || 0)?.name || '—'}</Text>
-                <Text style={styles.tableCell}>{site.address}</Text>
-                <Text style={styles.tableCell}>{site.requiredGuardCount || 1}</Text>
-                <Text style={styles.tableCell}>{site.operatingStartTime || '—'}-{site.operatingEndTime || '—'}</Text>
-                <Text style={styles.tableCell}>{siteShiftCounts.get(site.id) || 0}</Text>
-                <View style={styles.rowActions}>
-                  <Pressable style={styles.secondaryButton} onPress={() => handleEditSite(site)}>
-                    <Text style={styles.secondaryButtonText}>Edit</Text>
-                  </Pressable>
-                  <Pressable style={styles.secondaryButton} onPress={() => handlePlanSite(site)}>
-                    <Text style={styles.secondaryButtonText}>Plan Cover</Text>
-                  </Pressable>
-                </View>
-              </Pressable>
-            ))}
-          </View>
-          <View style={styles.formCard}>
-            <Text style={styles.panelTitle}>{siteForm.id ? 'Edit Site' : 'New Site'}</Text>
-            <NativeBrowserSelect
-              value={siteForm.clientId}
-              onChange={(value: string) => setSiteForm((current) => ({ ...current, clientId: value }))}
-              options={siteClientOptions}
-              placeholder="Linked client"
-            />
-            <Text style={styles.helperText}>
-              Selected client id: {siteForm.clientId || 'none'}
-              {selectedSiteClient ? ` · ${selectedSiteClient.name}` : ''}
-            </Text>
-            <TextInput style={styles.input} value={siteForm.name} onChangeText={(value: string) => setSiteForm((current) => ({ ...current, name: value }))} placeholder="Site name" />
-            <TextInput style={styles.input} value={siteForm.address} onChangeText={(value: string) => setSiteForm((current) => ({ ...current, address: value }))} placeholder="Address" />
-            <TextInput style={styles.input} value={siteForm.contactDetails} onChangeText={(value: string) => setSiteForm((current) => ({ ...current, contactDetails: value }))} placeholder="Site contact details" />
-            <View style={styles.formRow}>
-              <TextInput style={[styles.input, styles.formCell]} value={siteForm.requiredGuardCount} onChangeText={(value: string) => setSiteForm((current) => ({ ...current, requiredGuardCount: value }))} placeholder="Guards required" />
-              <View style={styles.formCell}>
-                <Text style={styles.subtleLabel}>Check-call interval (minutes)</Text>
-                <TextInput
-                  style={styles.input}
-                  value={siteForm.checkCallIntervalMinutes}
-                  onChangeText={(value: string) => setSiteForm((current) => ({ ...current, checkCallIntervalMinutes: value }))}
-                  placeholder="60"
-                />
-              </View>
-            </View>
-            <TextInput style={styles.input} value={siteForm.operatingDays} onChangeText={(value: string) => setSiteForm((current) => ({ ...current, operatingDays: value }))} placeholder="Operating days" />
-            <View style={styles.formRow}>
-              <View style={styles.formCell}>
-                <Text style={styles.subtleLabel}>Start time (24h)</Text>
-                <ControlledTimeInput
-                  value={siteForm.operatingStartTime}
-                  onChange={(value: string) => setSiteForm((current) => ({ ...current, operatingStartTime: value }))}
-                />
-              </View>
-              <View style={styles.formCell}>
-                <Text style={styles.subtleLabel}>End time (24h)</Text>
-                <ControlledTimeInput
-                  value={siteForm.operatingEndTime}
-                  onChange={(value: string) => setSiteForm((current) => ({ ...current, operatingEndTime: value }))}
-                />
-              </View>
-            </View>
-            <Text style={styles.subtleLabel}>Shift instructions / notes</Text>
-            <TextInput style={[styles.input, styles.textArea]} multiline value={siteForm.specialInstructions} onChangeText={(value: string) => setSiteForm((current) => ({ ...current, specialInstructions: value }))} placeholder="Special instructions" />
-            <Text style={styles.subtleLabel}>Starter unfilled shift</Text>
-            <View style={styles.formRow}>
-              <View style={styles.formCell}>
-                <Text style={styles.subtleLabel}>Date (DD/MM/YYYY)</Text>
-                <ControlledDateInput
-                  value={siteForm.initialShiftDate}
-                  onChange={(value: string) => setSiteForm((current) => ({ ...current, initialShiftDate: value }))}
-                />
-                <Text style={styles.helperText}>{siteForm.initialShiftDate ? formatDateLabel(siteForm.initialShiftDate) : 'DD/MM/YYYY'}</Text>
-              </View>
-              <View style={styles.formCell}>
-                <Text style={styles.subtleLabel}>Start time (24h)</Text>
-                <ControlledTimeInput
-                  value={siteForm.initialShiftStartTime}
-                  onChange={(value: string) => setSiteForm((current) => ({ ...current, initialShiftStartTime: value }))}
-                />
-              </View>
-              <View style={styles.formCell}>
-                <Text style={styles.subtleLabel}>End time (24h)</Text>
-                <ControlledTimeInput
-                  value={siteForm.initialShiftEndTime}
-                  onChange={(value: string) => setSiteForm((current) => ({ ...current, initialShiftEndTime: value }))}
-                />
-              </View>
-            </View>
-            <View style={styles.formActions}>
-              <Pressable style={styles.primaryButton} onPress={handleSaveSite} disabled={savingSite}>
-                <Text style={styles.primaryButtonText}>{savingSite ? 'Saving...' : siteForm.id ? 'Update Site' : 'Create Site'}</Text>
-              </Pressable>
-              <Pressable style={styles.secondaryButton} onPress={resetSiteForm}>
-                <Text style={styles.secondaryButtonText}>Clear</Text>
-              </Pressable>
-            </View>
-          </View>
-        </View>
-
-        {selectedSite && (
-          <View style={styles.panel}>
-            <Text style={styles.panelTitle}>{selectedSite.name} Detail</Text>
-            <Text style={styles.recordMeta}>
-              {selectedSite.client?.name || clientMap.get(selectedSite.clientId || 0)?.name || 'No client'} · {selectedSite.address}
-            </Text>
-            <Text style={styles.recordMeta}>
-              Operating: {selectedSite.operatingDays || '—'} · {selectedSite.operatingStartTime || '—'}-{selectedSite.operatingEndTime || '—'}
-            </Text>
-            <Text style={styles.recordMeta}>Instructions: {selectedSite.specialInstructions || 'No special instructions recorded.'}</Text>
-            <Text style={[styles.panelTitle, styles.panelTitleInline]}>Related Shifts</Text>
-            {siteShifts.map((shift) => (
-              <Pressable key={shift.id} style={styles.recordRow} onPress={() => {
-                setSelectedShiftId(shift.id);
-                setActiveSection('live-operations');
-              }}>
-                <Text style={styles.recordTitle}>Shift #{shift.id}</Text>
-                <Text style={styles.recordMeta}>
-                  {formatDateLabel(shift.start)} · {formatTimeLabel(shift.start)}-{formatTimeLabel(shift.end)} · {formatStatusLabel(normalizeShiftLifecycleStatus(shift.status))}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
-        )}
-      </View>
-    );
-  };
+  const renderSitesSection = () => (
+    <CompanySitesWorkspace
+      sites={sites}
+      clients={clients}
+      siteForm={siteForm}
+      setSiteForm={setSiteForm}
+      savingSite={savingSite}
+      onSaveSite={handleSaveSite}
+      onArchiveSite={handleArchiveSite}
+      onPlanCover={handlePlanSite}
+    />
+  );
 
   const renderRotaPlannerSection = () => (
     <View style={styles.sectionStack}>
