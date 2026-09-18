@@ -3,6 +3,7 @@ import { ActivityIndicator, Image, Modal, Pressable, ScrollView, StyleSheet, Tex
 
 import { CompanyAuditWorkspace } from '../components/company/CompanyAuditWorkspace';
 import { CompanyClientsWorkspace, type ClientFormState, CLIENT_FORM_EMPTY } from '../components/company/CompanyClientsWorkspace';
+import { CompanyRotaPlannerWorkspace, type PlannerRow } from '../components/company/CompanyRotaPlannerWorkspace';
 import { CompanySitesWorkspace, type SiteFormState, SITE_FORM_EMPTY } from '../components/company/CompanySitesWorkspace';
 import { CompanyLiveOperationsWorkspace } from '../components/company/CompanyLiveOperationsWorkspace';
 import type { LiveBoardRow, CloseOutSummary, SelectedShiftContext } from '../components/company/CompanyLiveOperationsWorkspace';
@@ -130,18 +131,6 @@ type JobFormState = {
   hourlyRate: string;
   billingRate: string;
   siteId: string;
-};
-
-type PlannerRow = {
-  localId: string;
-  date: string;
-  startTime: string;
-  endTime: string;
-  guardsRequired: string;
-  assignedGuardId: string;
-  status: string;
-  instructions: string;
-  sourceShiftIds: number[];
 };
 
 type LiveFilters = {
@@ -2047,6 +2036,11 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
     return map;
   }, [linkedGuards]);
 
+  const guardNameById = React.useMemo(
+    () => new Map(Array.from(linkedGuardNameById.entries()).map(([id, name]) => [String(id), name])),
+    [linkedGuardNameById],
+  );
+
   const plannerSiteOptions = React.useMemo(
     () =>
       sites
@@ -2227,6 +2221,26 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
     setPlannerClientId(String(site.client?.id ?? site.clientId ?? ''));
     setPlannerSiteId(String(site.id));
     setActiveSection('rota-planner');
+  };
+
+  const handlePlannerPrevWeek = () => {
+    setPlannerWeekCommencing(
+      weekCommencingFor(
+        formatDateInput(addDays(parseDateInput(plannerWeekCommencing) || new Date(`${plannerWeekCommencing}T00:00:00`), -7)),
+      ),
+    );
+  };
+
+  const handlePlannerNextWeek = () => {
+    setPlannerWeekCommencing(
+      weekCommencingFor(
+        formatDateInput(addDays(parseDateInput(plannerWeekCommencing) || new Date(`${plannerWeekCommencing}T00:00:00`), 7)),
+      ),
+    );
+  };
+
+  const handlePlannerTodayWeek = () => {
+    setPlannerWeekCommencing(weekCommencingFor());
   };
 
   const handleAddPlannerRow = (date: string) => {
@@ -3554,97 +3568,28 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
   );
 
   const renderRotaPlannerSection = () => (
-    <View style={styles.sectionStack}>
-      <View style={styles.toolbar}>
-        <Text style={styles.sectionTitle}>Weekly Rota Planner</Text>
-        <View style={styles.toolbarActions}>
-          <Pressable style={styles.secondaryButton} onPress={copyPlannerToNextWeek}>
-            <Text style={styles.secondaryButtonText}>Copy To Next Week</Text>
-          </Pressable>
-          <Pressable style={styles.primaryButton} onPress={handleSaveRota} disabled={savingRota}>
-            <Text style={styles.primaryButtonText}>{savingRota ? 'Saving...' : 'Save Rota'}</Text>
-          </Pressable>
-        </View>
-      </View>
-
-      <View style={styles.filterBar}>
-        <NativeBrowserSelect
-          value={plannerClientId}
-          onChange={setPlannerClientId}
-          options={siteClientOptions}
-          placeholder="Client"
-        />
-        <WebSelect value={plannerSiteId} onChange={setPlannerSiteId} options={plannerSiteOptions} placeholder="Site" />
-        <View style={styles.inputGroup}>
-          <Text style={styles.subtleLabel}>Date (DD/MM/YYYY)</Text>
-          <ControlledDateInput value={plannerWeekCommencing} onChange={setPlannerWeekCommencing} />
-          <Text style={styles.helperText}>{plannerWeekCommencing ? formatDateLabel(plannerWeekCommencing) : 'DD/MM/YYYY'}</Text>
-        </View>
-      </View>
-
-      <View style={styles.weekGrid}>
-        {plannerWeekDays.map((day) => {
-          const rows = plannerRowsByDate.get(day.date) || [];
-          return (
-            <View key={day.date} style={styles.dayCard}>
-              <View style={styles.dayCardHeader}>
-                <View>
-                  <Text style={styles.dayCardTitle}>{day.label}</Text>
-                  <Text style={styles.dayCardMeta}>{day.shortLabel}</Text>
-                </View>
-                <Pressable style={styles.secondaryButton} onPress={() => handleAddPlannerRow(day.date)}>
-                  <Text style={styles.secondaryButtonText}>Add Shift</Text>
-                </Pressable>
-              </View>
-              {rows.length === 0 ? <Text style={styles.helperText}>No planned cover for this day yet.</Text> : null}
-              {rows.map((row) => (
-                <View key={row.localId} style={styles.plannerRow}>
-                  <View style={styles.formRow}>
-                    <View style={styles.formCell}>
-                      <Text style={styles.subtleLabel}>Date (DD/MM/YYYY)</Text>
-                      <ControlledDateInput
-                        value={row.date}
-                        onChange={(value: string) => handlePlannerRowChange(row.localId, { date: value })}
-                      />
-                      <Text style={styles.helperText}>{formatDateLabel(row.date)}</Text>
-                    </View>
-                    <View style={styles.formCell}>
-                      <Text style={styles.subtleLabel}>Start time (24h)</Text>
-                      <ControlledTimeInput
-                        value={row.startTime}
-                        onChange={(value: string) => handlePlannerRowChange(row.localId, { startTime: value })}
-                      />
-                    </View>
-                    <View style={styles.formCell}>
-                      <Text style={styles.subtleLabel}>End time (24h)</Text>
-                      <ControlledTimeInput
-                        value={row.endTime}
-                        onChange={(value: string) => handlePlannerRowChange(row.localId, { endTime: value })}
-                      />
-                    </View>
-                  </View>
-                  <View style={styles.formRow}>
-                    <TextInput style={[styles.input, styles.formCell]} value={row.guardsRequired} onChangeText={(value: string) => handlePlannerRowChange(row.localId, { guardsRequired: value })} placeholder="Guards" />
-                    <WebSelect value={row.assignedGuardId} onChange={(value: string) => handlePlannerRowChange(row.localId, { assignedGuardId: value })} options={linkedGuardOptions} placeholder="Assigned guard" />
-                  </View>
-                  <WebSelect
-                    value={row.status}
-                    onChange={(value: string) => handlePlannerRowChange(row.localId, { status: value })}
-                    options={SHIFT_STATUS_OPTIONS}
-                    placeholder="Status"
-                  />
-                  <Text style={styles.subtleLabel}>Shift instructions / notes</Text>
-                  <TextInput style={[styles.input, styles.textAreaSmall]} multiline value={row.instructions} onChangeText={(value: string) => handlePlannerRowChange(row.localId, { instructions: value })} placeholder="Instructions" />
-                  <Pressable style={styles.ghostButton} onPress={() => handleRemovePlannerRow(row.localId)}>
-                    <Text style={styles.ghostButtonText}>Remove</Text>
-                  </Pressable>
-                </View>
-              ))}
-            </View>
-          );
-        })}
-      </View>
-    </View>
+    <CompanyRotaPlannerWorkspace
+      plannerClientId={plannerClientId}
+      plannerSiteId={plannerSiteId}
+      plannerRows={plannerRows}
+      plannerRowsByDate={plannerRowsByDate}
+      plannerWeekDays={plannerWeekDays}
+      savingRota={savingRota}
+      siteClientOptions={siteClientOptions}
+      plannerSiteOptions={plannerSiteOptions}
+      linkedGuardOptions={linkedGuardOptions}
+      guardNameById={guardNameById}
+      setPlannerClientId={setPlannerClientId}
+      setPlannerSiteId={setPlannerSiteId}
+      onAddRow={handleAddPlannerRow}
+      onRowChange={handlePlannerRowChange}
+      onRemoveRow={handleRemovePlannerRow}
+      onCopyToNextWeek={copyPlannerToNextWeek}
+      onSaveRota={handleSaveRota}
+      onPrevWeek={handlePlannerPrevWeek}
+      onNextWeek={handlePlannerNextWeek}
+      onTodayWeek={handlePlannerTodayWeek}
+    />
   );
 
   const renderLiveOperationsSection = () => (
