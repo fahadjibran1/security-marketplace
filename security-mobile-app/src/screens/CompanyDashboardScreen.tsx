@@ -2243,8 +2243,8 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
     setPlannerWeekCommencing(weekCommencingFor());
   };
 
-  const handleAddPlannerRow = (date: string) => {
-    setPlannerRows((current) => [...current, buildPlannerRow(date)]);
+  const handleAddPlannerRow = (row: PlannerRow) => {
+    setPlannerRows((current) => [...current, row]);
   };
 
   const handlePlannerRowChange = (localId: string, patch: Partial<PlannerRow>) => {
@@ -3571,6 +3571,7 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
     <CompanyRotaPlannerWorkspace
       plannerClientId={plannerClientId}
       plannerSiteId={plannerSiteId}
+      plannerSiteName={plannerSite?.name ?? ''}
       plannerRows={plannerRows}
       plannerRowsByDate={plannerRowsByDate}
       plannerWeekDays={plannerWeekDays}
