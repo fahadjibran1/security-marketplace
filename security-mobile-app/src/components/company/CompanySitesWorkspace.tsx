@@ -300,7 +300,7 @@ function ControlledTimeInput({ value, onChange }: { value: string; onChange: (v:
 // ─── Column constants ─────────────────────────────────────────────────────────
 
 const COL_STATUS_W  = 100;
-const COL_GUARDS_W  = 64;
+const COL_GUARDS_W  = 84;
 const COL_VERIF_W   = 120;
 const COL_HOURS_W   = 108;
 const COL_ACTION_W  = 52;
@@ -326,6 +326,7 @@ export function CompanySitesWorkspace({
   const [formError,          setFormError]          = React.useState<string | null>(null);
   const [archivingSite,      setArchivingSite]      = React.useState<Site | null>(null);
   const [archivingProgress,  setArchivingProgress]  = React.useState(false);
+  const [showStarterShift,   setShowStarterShift]   = React.useState(false);
 
   // ─── Derived ─────────────────────────────────────────────────────────────
 
@@ -368,6 +369,7 @@ export function CompanySitesWorkspace({
   const handleOpenAdd = () => {
     setSiteForm(SITE_FORM_EMPTY);
     setFormError(null);
+    setShowStarterShift(false);
     setFormDrawerOpen(true);
   };
 
@@ -543,7 +545,11 @@ export function CompanySitesWorkspace({
                 const clientName = site.client?.name || site.clientName || '—';
                 return (
                   <Fragment key={site.id}>
-                    <TableRow onPress={() => setQuickViewSite(site)}>
+                    <TableRow
+                      onPress={() => setQuickViewSite(site)}
+                      selected={quickViewSite?.id === site.id}
+                      style={quickViewSite?.id === site.id ? styles.rowAccent : undefined}
+                    >
                       <TableCell flex={2} style={styles.colSite}>
                         <Text style={styles.siteName} numberOfLines={1}>{site.name}</Text>
                         <Text style={styles.siteAddress} numberOfLines={1}>{site.address}</Text>
@@ -933,6 +939,9 @@ export function CompanySitesWorkspace({
           {/* INSTRUCTIONS */}
           <View style={styles.formSection}>
             <Text style={styles.formSectionLabel}>Instructions</Text>
+            <Text style={styles.formSectionCaption}>
+              Shown to Guards assigned to this site.
+            </Text>
             <FieldTextarea
               value={siteForm.specialInstructions}
               onChangeText={(v: string) => setSiteForm((c) => ({ ...c, specialInstructions: v }))}
@@ -946,6 +955,9 @@ export function CompanySitesWorkspace({
           {/* CONTACT */}
           <View style={styles.formSection}>
             <Text style={styles.formSectionLabel}>Contact</Text>
+            <Text style={styles.formSectionCaption}>
+              On-site contact information for assigned Guards.
+            </Text>
             <FieldTextarea
               value={siteForm.contactDetails}
               onChangeText={(v: string) => setSiteForm((c) => ({ ...c, contactDetails: v }))}
@@ -964,32 +976,59 @@ export function CompanySitesWorkspace({
                   Create an initial unfilled shift for this site.
                 </Text>
 
-                <View style={styles.formRow}>
-                  <View style={styles.formCell}>
-                    <FormField label="Date">
-                      <ControlledDateInput
-                        value={siteForm.initialShiftDate}
-                        onChange={(v) => setSiteForm((c) => ({ ...c, initialShiftDate: v }))}
-                      />
-                    </FormField>
-                  </View>
-                  <View style={styles.formCell}>
-                    <FormField label="Start">
-                      <ControlledTimeInput
-                        value={siteForm.initialShiftStartTime}
-                        onChange={(v) => setSiteForm((c) => ({ ...c, initialShiftStartTime: v }))}
-                      />
-                    </FormField>
-                  </View>
-                  <View style={styles.formCell}>
-                    <FormField label="End">
-                      <ControlledTimeInput
-                        value={siteForm.initialShiftEndTime}
-                        onChange={(v) => setSiteForm((c) => ({ ...c, initialShiftEndTime: v }))}
-                      />
-                    </FormField>
-                  </View>
-                </View>
+                {!showStarterShift ? (
+                  <Pressable
+                    onPress={() => setShowStarterShift(true)}
+                    style={[styles.addStarterShiftBtn, IS_WEB ? ({ cursor: 'pointer' } as any) : null]}
+                    accessibilityRole="button"
+                  >
+                    <Text style={styles.addStarterShiftText}>+ Add starter shift</Text>
+                  </Pressable>
+                ) : (
+                  <>
+                    <View style={styles.formRow}>
+                      <View style={styles.formCell}>
+                        <FormField label="Date">
+                          <ControlledDateInput
+                            value={siteForm.initialShiftDate}
+                            onChange={(v) => setSiteForm((c) => ({ ...c, initialShiftDate: v }))}
+                          />
+                        </FormField>
+                      </View>
+                      <View style={styles.formCell}>
+                        <FormField label="Start">
+                          <ControlledTimeInput
+                            value={siteForm.initialShiftStartTime}
+                            onChange={(v) => setSiteForm((c) => ({ ...c, initialShiftStartTime: v }))}
+                          />
+                        </FormField>
+                      </View>
+                      <View style={styles.formCell}>
+                        <FormField label="End">
+                          <ControlledTimeInput
+                            value={siteForm.initialShiftEndTime}
+                            onChange={(v) => setSiteForm((c) => ({ ...c, initialShiftEndTime: v }))}
+                          />
+                        </FormField>
+                      </View>
+                    </View>
+                    <Pressable
+                      onPress={() => {
+                        setSiteForm((c) => ({
+                          ...c,
+                          initialShiftDate: '',
+                          initialShiftStartTime: '',
+                          initialShiftEndTime: '',
+                        }));
+                        setShowStarterShift(false);
+                      }}
+                      style={[styles.removeStarterShiftBtn, IS_WEB ? ({ cursor: 'pointer' } as any) : null]}
+                      accessibilityRole="button"
+                    >
+                      <Text style={styles.removeStarterShiftText}>Remove starter shift</Text>
+                    </Pressable>
+                  </>
+                )}
               </View>
             </>
           ) : null}
@@ -1395,6 +1434,34 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.textSecondary,
   } as any,
+
+  // ── Row selection accent ─────────────────────────────────────────────────
+  rowAccent: {
+    borderLeftWidth: 3,
+    borderLeftColor: colors.accentTeal,
+  },
+
+  // ── Starter shift disclosure ─────────────────────────────────────────────
+  addStarterShiftBtn: {
+    paddingVertical: spacing.xs,
+    alignSelf: 'flex-start',
+  },
+  addStarterShiftText: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '600',
+    color: colors.accentTealStrong,
+  },
+  removeStarterShiftBtn: {
+    paddingVertical: spacing.xs,
+    alignSelf: 'flex-start',
+  },
+  removeStarterShiftText: {
+    fontSize: 12,
+    lineHeight: 16,
+    color: colors.textSecondary,
+    textDecorationLine: 'underline',
+  },
 
   // Native select fallback (mobile)
   nativeSelectFallback: {
