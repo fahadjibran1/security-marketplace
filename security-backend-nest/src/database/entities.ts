@@ -40,6 +40,7 @@ import { ClientWeeklyApprovalLine } from '../client-weekly-approval/entities/cli
 import { ClientShiftDispute } from '../client-weekly-approval/entities/client-shift-dispute.entity';
 import { CompanyMembership } from '../company-membership/entities/company-membership.entity';
 import { CompanyInvitation } from '../company-membership/entities/company-invitation.entity';
+import { RotaSlot } from '../rota-slot/entities/rota-slot.entity';
 
 export const appEntities = [
   AttendanceEvent,
@@ -90,4 +91,5 @@ export const appEntities = [
   ClientShiftDispute,
   CompanyMembership,
   CompanyInvitation,
+  RotaSlot,
 ];

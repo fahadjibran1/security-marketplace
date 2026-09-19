@@ -1,6 +1,7 @@
 import {
   Column,
   Entity,
+  JoinColumn,
   ManyToOne,
   OneToMany,
   PrimaryGeneratedColumn,
@@ -12,6 +13,7 @@ import { GuardProfile } from '../../guard-profile/entities/guard-profile.entity'
 import { JobApplication } from '../../job-application/entities/job-application.entity';
 import { Job } from '../../job/entities/job.entity';
 import { Site } from '../../site/entities/site.entity';
+import { RotaSlot } from '../../rota-slot/entities/rota-slot.entity';
 import { Timesheet } from '../../timesheet/entities/timesheet.entity';
 
 @Entity('shifts')
@@ -66,4 +68,15 @@ export class Shift {
 
   @OneToMany(() => Timesheet, (timesheet) => timesheet.shift)
   timesheets?: Timesheet[];
+
+  @Column({ name: 'rotaSlotId', type: 'int', nullable: true })
+  rotaSlotId?: number | null;
+
+  @ManyToOne(() => RotaSlot, (slot) => slot.shifts, {
+    nullable: true,
+    eager: false,
+    onDelete: 'SET NULL',
+  })
+  @JoinColumn({ name: 'rotaSlotId' })
+  rotaSlot?: RotaSlot | null;
 }
