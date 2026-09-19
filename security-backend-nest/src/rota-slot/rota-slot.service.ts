@@ -6,7 +6,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, In, Not, Repository } from 'typeorm';
+import { Between, DataSource, In, LessThan, MoreThan, Not, Repository } from 'typeorm';
 
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { AuditLogService } from '../audit-log/audit-log.service';
@@ -23,6 +23,8 @@ import {
   AssignPositionInput,
   ChangeRequirementResult,
   CreateSlotInput,
+  ListSlotsQuery,
+  SlotWithShifts,
 } from './rota-slot.types';
 
 // Guard positions whose presence means execution is live or historical
@@ -574,5 +576,105 @@ export class RotaSlotService {
     });
 
     return slot;
+  }
+
+  // ── Read methods ─────────────────────────────────────────────────────────────
+
+  async listSlots(user: JwtPayload, query: ListSlotsQuery): Promise<SlotWithShifts[]> {
+    const { company } = await this.membershipService.resolveCompanyContext(
+      user.sub, user.role, CompanyPermission.SHIFTS_VIEW,
+    );
+
+    const now = new Date();
+    const from = query.from
+      ? new Date(query.from)
+      : new Date(now.getTime() - 7 * 86400000);
+    const to = query.to
+      ? new Date(query.to + (query.to.length === 10 ? 'T23:59:59Z' : ''))
+      : new Date(now.getTime() + 14 * 86400000);
+
+    const whereClause: any = {
+      companyId: company.id,
+      startAt: LessThan(to),
+      endAt: MoreThan(from),
+    };
+
+    if (query.siteId) whereClause.siteId = query.siteId;
+    if (query.status) whereClause.status = query.status;
+
+    const slots = await this.slotRepo.find({
+      where: whereClause,
+      relations: ['site'],
+      order: { startAt: 'ASC' },
+    });
+
+    // Filter by clientId (via site relation)
+    const filtered = query.clientId
+      ? slots.filter((s) => s.site?.client?.id === query.clientId)
+      : slots;
+
+    if (filtered.length === 0) return [];
+
+    const slotIds = filtered.map((s) => s.id);
+    const allShifts = await this.shiftRepo.find({ where: { rotaSlotId: In(slotIds) } });
+
+    const shiftsBySlotId = new Map<number, Shift[]>();
+    for (const shift of allShifts) {
+      if (shift.rotaSlotId == null) continue;
+      const arr = shiftsBySlotId.get(shift.rotaSlotId) ?? [];
+      arr.push(shift);
+      shiftsBySlotId.set(shift.rotaSlotId, arr);
+    }
+
+    return filtered.map((slot) => ({
+      slot,
+      shifts: shiftsBySlotId.get(slot.id) ?? [],
+    }));
+  }
+
+  async getSlotDetail(user: JwtPayload, slotId: number): Promise<SlotWithShifts> {
+    const { company } = await this.membershipService.resolveCompanyContext(
+      user.sub, user.role, CompanyPermission.SHIFTS_VIEW,
+    );
+
+    const slot = await this.slotRepo.findOne({
+      where: { id: slotId, companyId: company.id },
+      relations: ['site'],
+    });
+    if (!slot) throw new NotFoundException('Rota slot not found');
+
+    const shifts = await this.shiftRepo.find({ where: { rotaSlotId: slotId } });
+    return { slot, shifts };
+  }
+
+  async updateMetadata(
+    user: JwtPayload,
+    slotId: number,
+    input: { title?: string | null; instructions?: string | null },
+  ): Promise<RotaSlot> {
+    const { company } = await this.membershipService.resolveCompanyContext(
+      user.sub, user.role, CompanyPermission.SHIFTS_MANAGE,
+    );
+
+    const slot = await this.getSlotForCompany(slotId, company.id);
+    if (slot.status === 'cancelled') {
+      throw new UnprocessableEntityException('Cancelled slots cannot be modified');
+    }
+
+    if (input.title !== undefined) slot.title = input.title?.trim() || null;
+    if (input.instructions !== undefined) slot.instructions = input.instructions?.trim() || null;
+
+    const saved = await this.slotRepo.save(slot);
+
+    await this.auditLogService.log({
+      company: { id: company.id },
+      user: { id: user.sub },
+      action: 'rota_slot.metadata_updated',
+      entityType: 'rota_slot',
+      entityId: slotId,
+      afterData: { title: slot.title, instructions: slot.instructions },
+    });
+
+    return saved;
   }
 }

@@ -9,6 +9,9 @@ import { GuardProfile } from '../guard-profile/entities/guard-profile.entity';
 import { Shift } from '../shift/entities/shift.entity';
 import { Site } from '../site/entities/site.entity';
 import { RotaSlot } from './entities/rota-slot.entity';
+import { RotaController } from './rota.controller';
+import { RotaWeekService } from './rota-week.service';
+import { RotaSlotController } from './rota-slot.controller';
 import { RotaSlotService } from './rota-slot.service';
 
 @Module({
@@ -19,7 +22,8 @@ import { RotaSlotService } from './rota-slot.service';
     AvailabilityModule,
     AuditLogModule,
   ],
-  providers: [RotaSlotService],
-  exports: [RotaSlotService],
+  controllers: [RotaSlotController, RotaController],
+  providers: [RotaSlotService, RotaWeekService],
+  exports: [RotaSlotService, RotaWeekService],
 })
 export class RotaSlotModule {}
