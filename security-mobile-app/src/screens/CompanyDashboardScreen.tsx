@@ -52,6 +52,16 @@ import {
   listSites,
   getRotaWeek,
   getRotaSlot,
+  createRotaSlot,
+  updateRotaSlotMetadata,
+  changeRotaSlotRequirement,
+  changeRotaSlotTime,
+  changeRotaSlotCheckCall,
+  assignRotaSlotPosition,
+  assignMultipleRotaSlotPositions,
+  cancelRotaSlotPosition,
+  cancelRotaSlot,
+  listEligibleGuardsForShift,
   reviewJobApplication,
   updateIncidentStatus,
   updateClient,
@@ -86,8 +96,12 @@ import {
   UpsertPayrollAdminPayload,
   GuardEngagementType,
   CompanyGuardEmploymentSummary,
+  EligibleGuardRow,
   RotaWeekResponse,
   RotaSlotDetail,
+  RotaCreatePayload,
+  RotaSlotChanges,
+  RotaAssignMultipleResult,
 } from '../types/models';
 import { CompanySidebar } from '../components/company/CompanySidebar';
 import { CompanyTopBar } from '../components/company/CompanyTopBar';
@@ -1150,8 +1164,6 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
   const [loadingRota, setLoadingRota] = React.useState(false);
   const [rotaError, setRotaError] = React.useState<string | null>(null);
   const [rotaLoadKey, setRotaLoadKey] = React.useState(0);
-  const [selectedSlotDetail, setSelectedSlotDetail] = React.useState<RotaSlotDetail | null>(null);
-  const [loadingSlotDetail, setLoadingSlotDetail] = React.useState(false);
   const [liveFilters, setLiveFilters] = React.useState<LiveFilters>({
     clientId: '',
     siteId: '',
@@ -2352,24 +2364,78 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
     return () => { cancelled = true; };
   }, [activeSection, plannerWeekCommencing, plannerClientId, plannerSiteId, rotaLoadKey]);
 
-  // R4C1 — Open a specific slot's detail in the drawer
-  const handleOpenSlot = React.useCallback(async (slotId: number) => {
-    setSelectedSlotDetail(null);
-    setLoadingSlotDetail(true);
-    try {
-      const detail = await getRotaSlot(slotId);
-      setSelectedSlotDetail(detail);
-    } catch {
-      // Silently close on error; the detail drawer stays open showing loading failed
-    } finally {
-      setLoadingSlotDetail(false);
-    }
+  // R4C2 — Rota write callbacks (passed into CompanyRotaPlannerWorkspace)
+
+  const handleRotaLoadSlot = React.useCallback((slotId: number): Promise<RotaSlotDetail> => {
+    return getRotaSlot(slotId);
   }, []);
 
-  const handleCloseSlotDrawer = React.useCallback(() => {
-    setSelectedSlotDetail(null);
-    setLoadingSlotDetail(false);
+  const handleRotaCreateSlot = React.useCallback((data: RotaCreatePayload): Promise<RotaSlotDetail> => {
+    return createRotaSlot(data);
   }, []);
+
+  const handleRotaSaveEdits = React.useCallback(
+    async (slotId: number, changes: RotaSlotChanges): Promise<RotaSlotDetail> => {
+      const { startAt, endAt, requiredGuardCount, checkCallIntervalMinutes, title, instructions } = changes;
+      let needsRefetch = false;
+      let latest: RotaSlotDetail | null = null;
+
+      if (startAt !== undefined && endAt !== undefined) {
+        latest = await changeRotaSlotTime(slotId, startAt, endAt);
+      }
+      if (requiredGuardCount !== undefined) {
+        await changeRotaSlotRequirement(slotId, requiredGuardCount);
+        needsRefetch = true;
+      }
+      if (checkCallIntervalMinutes !== undefined) {
+        latest = await changeRotaSlotCheckCall(slotId, checkCallIntervalMinutes);
+      }
+      if (title !== undefined || instructions !== undefined) {
+        latest = await updateRotaSlotMetadata(slotId, {
+          ...(title !== undefined ? { title } : {}),
+          ...(instructions !== undefined ? { instructions } : {}),
+        });
+      }
+      if (needsRefetch || !latest) {
+        return getRotaSlot(slotId);
+      }
+      return latest;
+    },
+    [],
+  );
+
+  const handleRotaAssignPosition = React.useCallback(
+    (slotId: number, shiftId: number, guardId: number): Promise<RotaSlotDetail> =>
+      assignRotaSlotPosition(slotId, shiftId, guardId),
+    [],
+  );
+
+  const handleRotaAssignMultiple = React.useCallback(
+    async (
+      slotId: number,
+      assignments: Array<{ shiftId: number; guardId: number }>,
+    ): Promise<{ result: RotaAssignMultipleResult; detail: RotaSlotDetail }> => {
+      const result = await assignMultipleRotaSlotPositions(slotId, assignments);
+      const detail = await getRotaSlot(slotId);
+      return { result, detail };
+    },
+    [],
+  );
+
+  const handleRotaCancelPosition = React.useCallback(
+    (slotId: number, shiftId: number): Promise<RotaSlotDetail> =>
+      cancelRotaSlotPosition(slotId, shiftId),
+    [],
+  );
+
+  const handleRotaCancelSlot = React.useCallback(async (slotId: number): Promise<void> => {
+    await cancelRotaSlot(slotId);
+  }, []);
+
+  const handleRotaGetEligibleGuards = React.useCallback(
+    (shiftId: number): Promise<EligibleGuardRow[]> => listEligibleGuardsForShift(shiftId),
+    [],
+  );
 
   const handleAddPlannerRow = (row: PlannerRow) => {
     setPlannerRows((current) => [...current, row]);
@@ -3714,10 +3780,15 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
       loadingRota={loadingRota}
       rotaError={rotaError}
       onRetryLoadRota={() => setRotaLoadKey((k) => k + 1)}
-      selectedSlotDetail={selectedSlotDetail}
-      loadingSlotDetail={loadingSlotDetail}
-      onOpenSlot={handleOpenSlot}
-      onCloseSlotDrawer={handleCloseSlotDrawer}
+      onRefreshWeek={() => setRotaLoadKey((k) => k + 1)}
+      onLoadSlot={handleRotaLoadSlot}
+      onCreateSlot={handleRotaCreateSlot}
+      onSaveSlotEdits={handleRotaSaveEdits}
+      onAssignPosition={handleRotaAssignPosition}
+      onAssignMultiple={handleRotaAssignMultiple}
+      onCancelPosition={handleRotaCancelPosition}
+      onCancelSlot={handleRotaCancelSlot}
+      onGetEligibleGuards={handleRotaGetEligibleGuards}
       legacyShiftsByDate={legacyShiftsByDate}
     />
   );

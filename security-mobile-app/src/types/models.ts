@@ -1745,3 +1745,35 @@ export interface RotaWeekResponse {
   snapshot: RotaWeekSnapshot;
   sites: RotaSiteWeekRow[];
 }
+
+// ── RotaSlot write model (R4C2 frontend payloads) ─────────────────────────────
+
+export interface RotaCreatePayload {
+  siteId: number;
+  startAt: string;
+  endAt: string;
+  requiredGuardCount?: number;
+  checkCallIntervalMinutes?: number;
+  title?: string;
+  instructions?: string;
+}
+
+export interface RotaUpdateMetadataPayload {
+  title?: string | null;
+  instructions?: string | null;
+}
+
+/** Diff bag sent by the workspace when saving slot edits. Parent calls appropriate ops. */
+export interface RotaSlotChanges {
+  startAt?: string;
+  endAt?: string;
+  requiredGuardCount?: number;
+  checkCallIntervalMinutes?: number;
+  title?: string | null;
+  instructions?: string | null;
+}
+
+export interface RotaAssignMultipleResult {
+  assigned: Array<{ shiftId: number; guardId: number }>;
+  failed: Array<{ shiftId: number; guardId: number; reason: string }>;
+}

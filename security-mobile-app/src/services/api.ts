@@ -105,6 +105,9 @@ import {
   RotaWeekResponse,
   RotaSlotDetail,
   RotaSlotSummary,
+  RotaCreatePayload,
+  RotaUpdateMetadataPayload,
+  RotaAssignMultipleResult,
 } from '../types/models';
 
 const hasBrowserWindow =
@@ -1298,4 +1301,70 @@ export function listRotaSlots(params: {
   if (params.status) qs.set('status', params.status);
   const suffix = qs.toString() ? `?${qs}` : '';
   return request<RotaSlotSummary[]>(`/rota-slots${suffix}`);
+}
+
+// ── RotaSlot write API (R4C2) ─────────────────────────────────────────────────
+
+export function createRotaSlot(data: RotaCreatePayload) {
+  return request<RotaSlotDetail>('/rota-slots', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export function updateRotaSlotMetadata(id: number, data: RotaUpdateMetadataPayload) {
+  return request<RotaSlotDetail>(`/rota-slots/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+}
+
+export function changeRotaSlotRequirement(id: number, requiredGuardCount: number) {
+  return request<{ slot: RotaSlotSummary; addedShiftIds: number[]; cancelledShiftIds: number[] }>(
+    `/rota-slots/${id}/requirement`,
+    { method: 'PATCH', body: JSON.stringify({ requiredGuardCount }) },
+  );
+}
+
+export function changeRotaSlotTime(id: number, startAt: string, endAt: string) {
+  return request<RotaSlotDetail>(`/rota-slots/${id}/time`, {
+    method: 'PATCH',
+    body: JSON.stringify({ startAt, endAt }),
+  });
+}
+
+export function changeRotaSlotCheckCall(id: number, checkCallIntervalMinutes: number) {
+  return request<RotaSlotDetail>(`/rota-slots/${id}/check-call`, {
+    method: 'PATCH',
+    body: JSON.stringify({ checkCallIntervalMinutes }),
+  });
+}
+
+export function assignRotaSlotPosition(id: number, shiftId: number, guardId: number) {
+  return request<RotaSlotDetail>(`/rota-slots/${id}/assign`, {
+    method: 'POST',
+    body: JSON.stringify({ shiftId, guardId }),
+  });
+}
+
+export function assignMultipleRotaSlotPositions(
+  id: number,
+  assignments: Array<{ shiftId: number; guardId: number }>,
+) {
+  return request<RotaAssignMultipleResult>(`/rota-slots/${id}/assign-multiple`, {
+    method: 'POST',
+    body: JSON.stringify({ assignments }),
+  });
+}
+
+export function cancelRotaSlotPosition(id: number, shiftId: number) {
+  return request<RotaSlotDetail>(`/rota-slots/${id}/positions/${shiftId}`, {
+    method: 'DELETE',
+  });
+}
+
+export function cancelRotaSlot(id: number) {
+  return request<RotaSlotDetail>(`/rota-slots/${id}/cancel`, {
+    method: 'POST',
+  });
 }

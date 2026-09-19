@@ -1,17 +1,21 @@
 import * as React from 'react';
 import { Fragment } from 'react/jsx-runtime';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { colors, radii, spacing, typography } from '../../theme';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { colors, control, radii, spacing, typography } from '../../theme';
 import { Button } from '../ui/Button';
+import { ConfirmationDialog } from '../ui/ConfirmationDialog';
 import { Drawer } from '../ui/Drawer';
+import { FormField, FieldInput, FieldTextarea } from '../ui/FormField';
 import type {
+  EligibleGuardRow,
   RotaCoveragePhase,
   RotaCoverageState,
-  RotaPositionCounts,
-  RotaSlotPositionSummary,
   RotaSlotDetail,
   RotaSlotCell,
   RotaWeekSnapshot,
+  RotaCreatePayload,
+  RotaSlotChanges,
+  RotaAssignMultipleResult,
 } from '../../types/models';
 
 const IS_WEB = typeof document !== 'undefined';
@@ -47,8 +51,9 @@ export type LegacyShiftRow = {
 
 function formatUtcTime(iso: string): string {
   try {
-    const d = new Date(iso);
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' });
+    return new Date(iso).toLocaleTimeString([], {
+      hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC',
+    });
   } catch {
     return iso.slice(11, 16);
   }
@@ -56,10 +61,44 @@ function formatUtcTime(iso: string): string {
 
 function formatUtcDate(iso: string): string {
   try {
-    const d = new Date(iso);
-    return d.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' });
+    return new Date(iso).toLocaleDateString([], {
+      weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC',
+    });
   } catch {
     return iso.slice(0, 10);
+  }
+}
+
+/** Build a naive ISO datetime (no Z) from a local date string + HH:MM time. */
+function buildNaiveIso(date: string, time: string): string {
+  return `${date}T${time}:00`;
+}
+
+function isValidDate(s: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) && !isNaN(new Date(s).getTime());
+}
+
+function isValidTime(s: string): boolean {
+  return /^\d{2}:\d{2}$/.test(s);
+}
+
+/** Convert ISO timestamp to HH:MM for the time input (UTC display). */
+function isoToTimeDisplay(iso: string): string {
+  try {
+    return new Date(iso).toLocaleTimeString([], {
+      hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC',
+    });
+  } catch {
+    return '';
+  }
+}
+
+/** Convert ISO timestamp to YYYY-MM-DD for the date input (UTC date). */
+function isoToDateDisplay(iso: string): string {
+  try {
+    return new Date(iso).toISOString().slice(0, 10);
+  } catch {
+    return '';
   }
 }
 
@@ -90,19 +129,96 @@ function slotStateTokens(state: RotaCoverageState): {
 
 function positionStatusTokens(status: string): { fg: string; label: string } {
   switch (status) {
-    case 'unfilled':    return { fg: colors.danger,   label: 'Open position' };
-    case 'offered':     return { fg: colors.info,     label: 'Offered'       };
-    case 'ready':       return { fg: colors.success,  label: 'Ready'         };
-    case 'in_progress': return { fg: colors.success,  label: 'On shift'      };
-    case 'completed':   return { fg: colors.pending,  label: 'Completed'     };
-    case 'missed':      return { fg: colors.warning,  label: 'Missed'        };
-    case 'rejected':    return { fg: colors.warning,  label: 'Rejected'      };
-    case 'cancelled':   return { fg: colors.textMuted, label: 'Cancelled'    };
-    default:            return { fg: colors.textMuted, label: status || '—'  };
+    case 'unfilled':    return { fg: colors.danger,    label: 'Open'        };
+    case 'offered':     return { fg: colors.info,      label: 'Awaiting'    };
+    case 'ready':       return { fg: colors.success,   label: 'Confirmed'   };
+    case 'in_progress': return { fg: colors.success,   label: 'On shift'    };
+    case 'completed':   return { fg: colors.pending,   label: 'Completed'   };
+    case 'missed':      return { fg: colors.warning,   label: 'Missed'      };
+    case 'rejected':    return { fg: colors.warning,   label: 'Rejected'    };
+    case 'cancelled':   return { fg: colors.textMuted, label: 'Cancelled'   };
+    default:            return { fg: colors.textMuted, label: status || '—' };
   }
 }
 
-// ── Filter select (web-native) ────────────────────────────────────────────────
+function canCancelPosition(status: string): boolean {
+  return ['unfilled', 'offered', 'ready', 'rejected'].includes(status);
+}
+
+function isPositionOpen(status: string): boolean {
+  return status === 'unfilled';
+}
+
+// ── Web-native input components ───────────────────────────────────────────────
+
+function NativeDateInput({ value, onChange, hasError }: {
+  value: string; onChange: (v: string) => void; hasError?: boolean;
+}) {
+  if (IS_WEB) {
+    const InputTag: any = 'input';
+    return (
+      <InputTag
+        type="date"
+        value={value}
+        onChange={(e: any) => onChange(e.target.value)}
+        style={[nativeInputStyle, hasError && nativeInputErrorStyle]}
+      />
+    );
+  }
+  return (
+    <TextInput
+      value={value}
+      onChangeText={onChange}
+      placeholder="YYYY-MM-DD"
+      placeholderTextColor={colors.fieldPlaceholder}
+      style={[nativeInputStyle, hasError && nativeInputErrorStyle]}
+    />
+  );
+}
+
+function NativeTimeInput({ value, onChange, hasError }: {
+  value: string; onChange: (v: string) => void; hasError?: boolean;
+}) {
+  if (IS_WEB) {
+    const InputTag: any = 'input';
+    return (
+      <InputTag
+        type="time"
+        value={value}
+        onChange={(e: any) => onChange(e.target.value)}
+        style={[nativeInputStyle, hasError && nativeInputErrorStyle]}
+      />
+    );
+  }
+  return (
+    <TextInput
+      value={value}
+      onChangeText={onChange}
+      placeholder="HH:MM"
+      placeholderTextColor={colors.fieldPlaceholder}
+      style={[nativeInputStyle, hasError && nativeInputErrorStyle]}
+    />
+  );
+}
+
+const nativeInputStyle: any = {
+  height: control.inputHeight,
+  borderWidth: 1.5,
+  borderColor: colors.fieldBorder,
+  borderRadius: radii.sm,
+  paddingHorizontal: spacing.md,
+  fontSize: 14,
+  color: colors.textPrimary,
+  backgroundColor: colors.card,
+  outlineStyle: 'none',
+};
+
+const nativeInputErrorStyle: any = {
+  borderColor: colors.danger,
+  backgroundColor: colors.dangerSurface,
+};
+
+// ── Filter select ─────────────────────────────────────────────────────────────
 
 function FilterSelect({
   value, onChange, options, placeholder,
@@ -153,6 +269,7 @@ const filterSelectStyle: any = {
 // ── Props ─────────────────────────────────────────────────────────────────────
 
 type CompanyRotaPlannerWorkspaceProps = {
+  // Filters
   plannerClientId: string;
   plannerSiteId: string;
   setPlannerClientId: (v: string) => void;
@@ -160,6 +277,7 @@ type CompanyRotaPlannerWorkspaceProps = {
   siteClientOptions: Array<{ label: string; value: string }>;
   plannerSiteOptions: Array<{ label: string; value: string }>;
 
+  // Week navigation
   weekCommencing: string;
   weekEnding: string;
   plannerWeekDays: PlannerWeekDay[];
@@ -167,25 +285,35 @@ type CompanyRotaPlannerWorkspaceProps = {
   onNextWeek: () => void;
   onTodayWeek: () => void;
 
+  // Week data
   slotsByDayName: Map<string, FlatSlotCell[]>;
   weekSnapshot: RotaWeekSnapshot | null;
   loadingRota: boolean;
   rotaError: string | null;
   onRetryLoadRota: () => void;
+  onRefreshWeek: () => void;
 
-  selectedSlotDetail: RotaSlotDetail | null;
-  loadingSlotDetail: boolean;
-  onOpenSlot: (slotId: number) => void;
-  onCloseSlotDrawer: () => void;
-
+  // Legacy shifts
   legacyShiftsByDate: Map<string, LegacyShiftRow[]>;
+
+  // Write callbacks (return updated detail; throw on error with user-friendly message)
+  onLoadSlot: (slotId: number) => Promise<RotaSlotDetail>;
+  onCreateSlot: (data: RotaCreatePayload) => Promise<RotaSlotDetail>;
+  onSaveSlotEdits: (slotId: number, changes: RotaSlotChanges) => Promise<RotaSlotDetail>;
+  onAssignPosition: (slotId: number, shiftId: number, guardId: number) => Promise<RotaSlotDetail>;
+  onAssignMultiple: (slotId: number, assignments: Array<{ shiftId: number; guardId: number }>) => Promise<{ result: RotaAssignMultipleResult; detail: RotaSlotDetail }>;
+  onCancelPosition: (slotId: number, shiftId: number) => Promise<RotaSlotDetail>;
+  onCancelSlot: (slotId: number) => Promise<void>;
+  onGetEligibleGuards: (shiftId: number) => Promise<EligibleGuardRow[]>;
 };
 
-// ── Component ─────────────────────────────────────────────────────────────────
+// ── Day name constants ─────────────────────────────────────────────────────────
 
 const DAY_NAMES = [
   'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday',
 ] as const;
+
+// ── Main component ────────────────────────────────────────────────────────────
 
 export function CompanyRotaPlannerWorkspace({
   plannerClientId,
@@ -205,26 +333,371 @@ export function CompanyRotaPlannerWorkspace({
   loadingRota,
   rotaError,
   onRetryLoadRota,
-  selectedSlotDetail,
-  loadingSlotDetail,
-  onOpenSlot,
-  onCloseSlotDrawer,
+  onRefreshWeek,
   legacyShiftsByDate,
+  onLoadSlot,
+  onCreateSlot,
+  onSaveSlotEdits,
+  onAssignPosition,
+  onAssignMultiple,
+  onCancelPosition,
+  onCancelSlot,
+  onGetEligibleGuards,
 }: CompanyRotaPlannerWorkspaceProps) {
 
-  // ── Week label ───────────────────────────────────────────────────────────────
+  // ── Slot detail state ──────────────────────────────────────────────────────
+  const [slotDetail, setSlotDetail]       = React.useState<RotaSlotDetail | null>(null);
+  const [loadingSlot, setLoadingSlot]     = React.useState(false);
+  const [slotDrawerOpen, setSlotDrawerOpen] = React.useState(false);
+
+  // ── Create drawer state ────────────────────────────────────────────────────
+  const [createOpen, setCreateOpen]       = React.useState(false);
+  const [createDefaultDate, setCreateDefaultDate] = React.useState('');
+  const [createSiteId, setCreateSiteId]   = React.useState('');
+  const [createDate, setCreateDate]       = React.useState('');
+  const [createStart, setCreateStart]     = React.useState('');
+  const [createEnd, setCreateEnd]         = React.useState('');
+  const [createGuards, setCreateGuards]   = React.useState('1');
+  const [createCheckCall, setCreateCheckCall] = React.useState('');
+  const [createTitle, setCreateTitle]     = React.useState('');
+  const [createInstructions, setCreateInstructions] = React.useState('');
+  const [createErrors, setCreateErrors]   = React.useState<Record<string, string>>({});
+  const [creating, setCreating]           = React.useState(false);
+  const [createError, setCreateError]     = React.useState<string | null>(null);
+
+  // ── Slot edit state ────────────────────────────────────────────────────────
+  const [editMode, setEditMode]           = React.useState(false);
+  const [editDate, setEditDate]           = React.useState('');
+  const [editStart, setEditStart]         = React.useState('');
+  const [editEnd, setEditEnd]             = React.useState('');
+  const [editGuards, setEditGuards]       = React.useState('');
+  const [editCheckCall, setEditCheckCall] = React.useState('');
+  const [editTitle, setEditTitle]         = React.useState('');
+  const [editInstructions, setEditInstructions] = React.useState('');
+  const [editSaving, setEditSaving]       = React.useState(false);
+  const [editError, setEditError]         = React.useState<string | null>(null);
+
+  // ── Assignment state ───────────────────────────────────────────────────────
+  const [assignShiftId, setAssignShiftId] = React.useState<number | null>(null);
+  const [eligibleGuards, setEligibleGuards] = React.useState<EligibleGuardRow[]>([]);
+  const [loadingEligible, setLoadingEligible] = React.useState(false);
+  const [guardSearch, setGuardSearch]     = React.useState('');
+  const [selectedGuardId, setSelectedGuardId] = React.useState<number | null>(null);
+  const [assigning, setAssigning]         = React.useState(false);
+  const [assignError, setAssignError]     = React.useState<string | null>(null);
+
+  // ── Bulk assign state ──────────────────────────────────────────────────────
+  const [bulkOpen, setBulkOpen]           = React.useState(false);
+  const [bulkMap, setBulkMap]             = React.useState<Map<number, number>>(new Map()); // shiftId → guardId
+  const [bulkGuardSearch, setBulkGuardSearch] = React.useState<Record<number, string>>({});
+  const [bulkGuards, setBulkGuards]       = React.useState<Map<number, EligibleGuardRow[]>>(new Map());
+  const [bulkLoadingShiftId, setBulkLoadingShiftId] = React.useState<number | null>(null);
+  const [bulkSaving, setBulkSaving]       = React.useState(false);
+  const [bulkResult, setBulkResult]       = React.useState<RotaAssignMultipleResult | null>(null);
+
+  // ── Cancel position state ──────────────────────────────────────────────────
+  const [cancelPositionShiftId, setCancelPositionShiftId] = React.useState<number | null>(null);
+  const [cancellingPosition, setCancellingPosition] = React.useState(false);
+
+  // ── Cancel slot state ──────────────────────────────────────────────────────
+  const [cancelSlotConfirm, setCancelSlotConfirm] = React.useState(false);
+  const [cancellingSlot, setCancellingSlot]       = React.useState(false);
+  const [cancelSlotError, setCancelSlotError]     = React.useState<string | null>(null);
+
+  // ── Computed ───────────────────────────────────────────────────────────────
+  const snap = weekSnapshot;
+
   const weekLabel = plannerWeekDays.length >= 7
     ? `${plannerWeekDays[0].shortLabel} – ${plannerWeekDays[6].shortLabel}`
     : `${weekCommencing} – ${weekEnding}`;
 
-  // ── Summary stats from snapshot ──────────────────────────────────────────────
-  const snap = weekSnapshot;
+  // Editing is allowed only for future slots that are not cancelled
+  const canEdit = slotDetail
+    && slotDetail.coveragePhase === 'future'
+    && slotDetail.status !== 'cancelled';
 
-  // ── Render ───────────────────────────────────────────────────────────────────
+  const canCancelSlot = slotDetail
+    && slotDetail.status !== 'cancelled'
+    && slotDetail.coveragePhase !== 'past';
+
+  // ── Handlers ──────────────────────────────────────────────────────────────
+
+  const openSlot = React.useCallback(async (slotId: number) => {
+    setSlotDetail(null);
+    setLoadingSlot(true);
+    setSlotDrawerOpen(true);
+    setEditMode(false);
+    setAssignShiftId(null);
+    setBulkOpen(false);
+    setBulkResult(null);
+    try {
+      const d = await onLoadSlot(slotId);
+      setSlotDetail(d);
+    } catch {
+      setSlotDrawerOpen(false);
+    } finally {
+      setLoadingSlot(false);
+    }
+  }, [onLoadSlot]);
+
+  const closeSlot = React.useCallback(() => {
+    setSlotDrawerOpen(false);
+    setSlotDetail(null);
+    setEditMode(false);
+    setAssignShiftId(null);
+    setBulkOpen(false);
+    setBulkResult(null);
+    setEditError(null);
+  }, []);
+
+  const enterEditMode = React.useCallback(() => {
+    if (!slotDetail) return;
+    setEditDate(isoToDateDisplay(slotDetail.startAt));
+    setEditStart(isoToTimeDisplay(slotDetail.startAt));
+    setEditEnd(isoToTimeDisplay(slotDetail.endAt));
+    setEditGuards(String(slotDetail.counts.required));
+    setEditCheckCall(String(slotDetail.checkCallIntervalMinutes));
+    setEditTitle(slotDetail.title ?? '');
+    setEditInstructions(slotDetail.instructions ?? '');
+    setEditError(null);
+    setEditMode(true);
+  }, [slotDetail]);
+
+  const handleSaveEdits = React.useCallback(async () => {
+    if (!slotDetail) return;
+    const changes: RotaSlotChanges = {};
+    const origDate  = isoToDateDisplay(slotDetail.startAt);
+    const origStart = isoToTimeDisplay(slotDetail.startAt);
+    const origEnd   = isoToTimeDisplay(slotDetail.endAt);
+
+    if (editDate !== origDate || editStart !== origStart || editEnd !== origEnd) {
+      if (!isValidDate(editDate) || !isValidTime(editStart) || !isValidTime(editEnd)) {
+        setEditError('Date and times must be valid.');
+        return;
+      }
+      changes.startAt = buildNaiveIso(editDate, editStart);
+      changes.endAt   = buildNaiveIso(editDate, editEnd);
+    }
+
+    const newCount = parseInt(editGuards, 10);
+    if (!isNaN(newCount) && newCount !== slotDetail.counts.required) {
+      if (newCount < 1) { setEditError('Guards required must be at least 1.'); return; }
+      changes.requiredGuardCount = newCount;
+    }
+
+    const newCheck = parseInt(editCheckCall, 10);
+    if (!isNaN(newCheck) && newCheck !== slotDetail.checkCallIntervalMinutes) {
+      if (newCheck < 5) { setEditError('Check-call interval must be at least 5 minutes.'); return; }
+      changes.checkCallIntervalMinutes = newCheck;
+    }
+
+    const newTitle        = editTitle.trim() || null;
+    const newInstructions = editInstructions.trim() || null;
+    if (newTitle !== slotDetail.title) changes.title = newTitle;
+    if (newInstructions !== slotDetail.instructions) changes.instructions = newInstructions;
+
+    if (Object.keys(changes).length === 0) { setEditMode(false); return; }
+
+    setEditSaving(true);
+    setEditError(null);
+    try {
+      const updated = await onSaveSlotEdits(slotDetail.id, changes);
+      setSlotDetail(updated);
+      setEditMode(false);
+      onRefreshWeek();
+    } catch (err: any) {
+      setEditError(err?.message ?? 'Unable to save changes.');
+    } finally {
+      setEditSaving(false);
+    }
+  }, [slotDetail, editDate, editStart, editEnd, editGuards, editCheckCall, editTitle, editInstructions, onSaveSlotEdits, onRefreshWeek]);
+
+  // ── Create slot ────────────────────────────────────────────────────────────
+
+  const openCreate = React.useCallback((defaultDate?: string) => {
+    setCreateDate(defaultDate ?? weekCommencing);
+    setCreateDefaultDate(defaultDate ?? '');
+    setCreateSiteId(plannerSiteId);
+    setCreateStart('');
+    setCreateEnd('');
+    setCreateGuards('1');
+    setCreateCheckCall('');
+    setCreateTitle('');
+    setCreateInstructions('');
+    setCreateErrors({});
+    setCreateError(null);
+    setCreateOpen(true);
+  }, [plannerSiteId, weekCommencing]);
+
+  const handleCreate = React.useCallback(async () => {
+    const errs: Record<string, string> = {};
+    if (!createSiteId) errs.site = 'Site is required.';
+    if (!isValidDate(createDate)) errs.date = 'Valid date required (YYYY-MM-DD).';
+    if (!isValidTime(createStart)) errs.start = 'Valid start time required (HH:MM).';
+    if (!isValidTime(createEnd))   errs.end   = 'Valid end time required (HH:MM).';
+    const guardsNum = parseInt(createGuards, 10);
+    if (isNaN(guardsNum) || guardsNum < 1) errs.guards = 'At least 1 guard required.';
+    const checkNum = createCheckCall ? parseInt(createCheckCall, 10) : undefined;
+    if (createCheckCall && (isNaN(checkNum!) || checkNum! < 5)) {
+      errs.checkCall = 'Check-call interval must be at least 5 minutes.';
+    }
+    if (Object.keys(errs).length > 0) { setCreateErrors(errs); return; }
+
+    setCreating(true);
+    setCreateError(null);
+    try {
+      const payload: RotaCreatePayload = {
+        siteId: parseInt(createSiteId, 10),
+        startAt: buildNaiveIso(createDate, createStart),
+        endAt: buildNaiveIso(createDate, createEnd),
+        requiredGuardCount: guardsNum,
+        ...(checkNum !== undefined ? { checkCallIntervalMinutes: checkNum } : {}),
+        ...(createTitle.trim() ? { title: createTitle.trim() } : {}),
+        ...(createInstructions.trim() ? { instructions: createInstructions.trim() } : {}),
+      };
+      const detail = await onCreateSlot(payload);
+      setCreateOpen(false);
+      onRefreshWeek();
+      // Open the newly created slot
+      setSlotDetail(detail);
+      setSlotDrawerOpen(true);
+      setEditMode(false);
+    } catch (err: any) {
+      setCreateError(err?.message ?? 'Unable to create shift.');
+    } finally {
+      setCreating(false);
+    }
+  }, [createSiteId, createDate, createStart, createEnd, createGuards, createCheckCall, createTitle, createInstructions, onCreateSlot, onRefreshWeek]);
+
+  // ── Single assign ──────────────────────────────────────────────────────────
+
+  const openAssign = React.useCallback(async (shiftId: number) => {
+    setAssignShiftId(shiftId);
+    setSelectedGuardId(null);
+    setGuardSearch('');
+    setAssignError(null);
+    setEligibleGuards([]);
+    setLoadingEligible(true);
+    try {
+      const guards = await onGetEligibleGuards(shiftId);
+      setEligibleGuards(guards);
+    } catch {
+      setEligibleGuards([]);
+    } finally {
+      setLoadingEligible(false);
+    }
+  }, [onGetEligibleGuards]);
+
+  const handleAssign = React.useCallback(async () => {
+    if (!slotDetail || !assignShiftId || !selectedGuardId) return;
+    setAssigning(true);
+    setAssignError(null);
+    try {
+      const updated = await onAssignPosition(slotDetail.id, assignShiftId, selectedGuardId);
+      setSlotDetail(updated);
+      setAssignShiftId(null);
+      setSelectedGuardId(null);
+      onRefreshWeek();
+    } catch (err: any) {
+      const msg: string = err?.message ?? '';
+      setAssignError(
+        msg.includes('already been filled') || msg.includes('no longer available')
+          ? 'This position has already been filled or is no longer available.'
+          : msg || 'Unable to assign guard.',
+      );
+    } finally {
+      setAssigning(false);
+    }
+  }, [slotDetail, assignShiftId, selectedGuardId, onAssignPosition, onRefreshWeek]);
+
+  // ── Bulk assign ────────────────────────────────────────────────────────────
+
+  const openBulk = React.useCallback(async () => {
+    if (!slotDetail) return;
+    const openPositions = slotDetail.positions.filter((p) => isPositionOpen(p.status));
+    setBulkMap(new Map());
+    setBulkGuardSearch({});
+    setBulkGuards(new Map());
+    setBulkResult(null);
+    setBulkOpen(true);
+    // Pre-load eligible guards for first open position if just one
+    if (openPositions.length > 0) {
+      const shiftId = openPositions[0].shiftId;
+      setBulkLoadingShiftId(shiftId);
+      try {
+        const guards = await onGetEligibleGuards(shiftId);
+        setBulkGuards(new Map([[shiftId, guards]]));
+      } catch { /* swallow */ }
+      setBulkLoadingShiftId(null);
+    }
+  }, [slotDetail, onGetEligibleGuards]);
+
+  const loadBulkGuardsFor = React.useCallback(async (shiftId: number) => {
+    if (bulkGuards.has(shiftId)) return;
+    setBulkLoadingShiftId(shiftId);
+    try {
+      const guards = await onGetEligibleGuards(shiftId);
+      setBulkGuards((prev) => new Map([...prev, [shiftId, guards]]));
+    } catch { /* swallow */ }
+    setBulkLoadingShiftId(null);
+  }, [bulkGuards, onGetEligibleGuards]);
+
+  const handleBulkAssign = React.useCallback(async () => {
+    if (!slotDetail || bulkMap.size === 0) return;
+    const assignments = Array.from(bulkMap.entries()).map(([shiftId, guardId]) => ({ shiftId, guardId }));
+    setBulkSaving(true);
+    try {
+      const { result, detail } = await onAssignMultiple(slotDetail.id, assignments);
+      setSlotDetail(detail);
+      setBulkResult(result);
+      setBulkMap(new Map());
+      onRefreshWeek();
+    } catch (err: any) {
+      // Show error inline
+    } finally {
+      setBulkSaving(false);
+    }
+  }, [slotDetail, bulkMap, onAssignMultiple, onRefreshWeek]);
+
+  // ── Cancel position ────────────────────────────────────────────────────────
+
+  const handleCancelPosition = React.useCallback(async () => {
+    if (!slotDetail || !cancelPositionShiftId) return;
+    setCancellingPosition(true);
+    try {
+      const updated = await onCancelPosition(slotDetail.id, cancelPositionShiftId);
+      setSlotDetail(updated);
+      onRefreshWeek();
+    } catch { /* swallow — idempotent */ }
+    finally {
+      setCancellingPosition(false);
+      setCancelPositionShiftId(null);
+    }
+  }, [slotDetail, cancelPositionShiftId, onCancelPosition, onRefreshWeek]);
+
+  // ── Cancel slot ────────────────────────────────────────────────────────────
+
+  const handleCancelSlot = React.useCallback(async () => {
+    if (!slotDetail) return;
+    setCancellingSlot(true);
+    setCancelSlotError(null);
+    try {
+      await onCancelSlot(slotDetail.id);
+      closeSlot();
+      onRefreshWeek();
+    } catch (err: any) {
+      setCancelSlotError(err?.message ?? 'Unable to cancel this shift.');
+    } finally {
+      setCancellingSlot(false);
+      setCancelSlotConfirm(false);
+    }
+  }, [slotDetail, onCancelSlot, closeSlot, onRefreshWeek]);
+
+  // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <View style={styles.workspace}>
 
-      {/* ── Toolbar ─────────────────────────────────────────────────────────── */}
+      {/* ── Toolbar ──────────────────────────────────────────────────────── */}
       <View style={styles.toolbar}>
         <View style={styles.filterGroup}>
           <View style={styles.filterCell}>
@@ -265,14 +738,16 @@ export function CompanyRotaPlannerWorkspace({
           </Pressable>
           <Button label="Today" variant="secondary" size="sm" onPress={onTodayWeek} />
         </View>
+
+        <Button label="+ Add Shift" variant="primary" size="sm" onPress={() => openCreate()} />
       </View>
 
-      {/* ── Summary strip ───────────────────────────────────────────────────── */}
+      {/* ── Summary strip ─────────────────────────────────────────────────── */}
       {snap && (
         <View style={styles.summaryStrip}>
-          <SummaryStat value={snap.totalSlots}      label="Periods" />
+          <SummaryStat value={snap.totalSlots}      label="Shifts" />
           <View style={styles.summaryDivider} />
-          <SummaryStat value={snap.totalPositions}  label="Positions" />
+          <SummaryStat value={snap.totalPositions}  label="Guard positions" />
           <View style={styles.summaryDivider} />
           <SummaryStat
             value={snap.openPositions}
@@ -300,7 +775,7 @@ export function CompanyRotaPlannerWorkspace({
         </View>
       )}
 
-      {/* ── Loading state ────────────────────────────────────────────────────── */}
+      {/* ── Loading ───────────────────────────────────────────────────────── */}
       {loadingRota && (
         <View style={styles.centeredFeedback}>
           <ActivityIndicator color={colors.accentTeal} />
@@ -308,7 +783,7 @@ export function CompanyRotaPlannerWorkspace({
         </View>
       )}
 
-      {/* ── Error state ──────────────────────────────────────────────────────── */}
+      {/* ── Error ─────────────────────────────────────────────────────────── */}
       {!loadingRota && rotaError && (
         <View style={styles.errorBox}>
           <Text style={styles.errorText}>{rotaError}</Text>
@@ -316,7 +791,7 @@ export function CompanyRotaPlannerWorkspace({
         </View>
       )}
 
-      {/* ── Day sections ─────────────────────────────────────────────────────── */}
+      {/* ── Day sections ──────────────────────────────────────────────────── */}
       {!loadingRota && !rotaError && (
         <View style={styles.daySections}>
           {plannerWeekDays.map((day, dayIdx) => {
@@ -337,7 +812,7 @@ export function CompanyRotaPlannerWorkspace({
                   <View style={styles.dayHeaderMeta}>
                     {totalRows > 0 && (
                       <Text style={styles.daySlotCount}>
-                        {slots.length} period{slots.length !== 1 ? 's' : ''}
+                        {slots.length} shift{slots.length !== 1 ? 's' : ''}
                         {legacyRows.length > 0 && ` · ${legacyRows.length} legacy`}
                       </Text>
                     )}
@@ -346,13 +821,21 @@ export function CompanyRotaPlannerWorkspace({
                         <Text style={styles.openChipText}>{dayOpenCount} open</Text>
                       </View>
                     )}
+                    <Pressable
+                      onPress={() => openCreate(day.date)}
+                      style={({ pressed }: any) => [styles.addDayBtn, pressed && styles.addDayBtnPressed]}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Add shift on ${day.label}`}
+                    >
+                      <Text style={styles.addDayBtnText}>+</Text>
+                    </Pressable>
                   </View>
                 </View>
 
-                {/* RotaSlot rows */}
+                {/* Slot rows */}
                 {slots.length === 0 && legacyRows.length === 0 ? (
                   <View style={styles.emptyDayRow}>
-                    <Text style={styles.emptyDayText}>No rota periods planned.</Text>
+                    <Text style={styles.emptyDayText}>No shifts planned.</Text>
                   </View>
                 ) : (
                   <>
@@ -361,7 +844,7 @@ export function CompanyRotaPlannerWorkspace({
                         <RotaSlotRow
                           cell={cell}
                           isLast={idx === slots.length - 1 && legacyRows.length === 0}
-                          onPress={() => onOpenSlot(cell.slotId)}
+                          onPress={() => openSlot(cell.slotId)}
                         />
                       </Fragment>
                     ))}
@@ -381,29 +864,135 @@ export function CompanyRotaPlannerWorkspace({
         </View>
       )}
 
-      {/* ── Read-only slot detail drawer ─────────────────────────────────────── */}
+      {/* ── Create Slot drawer ─────────────────────────────────────────────── */}
       <Drawer
-        visible={selectedSlotDetail !== null || loadingSlotDetail}
-        onClose={onCloseSlotDrawer}
-        title={selectedSlotDetail?.siteName ?? 'Loading…'}
-        subtitle={
-          selectedSlotDetail
-            ? `${formatUtcDate(selectedSlotDetail.startAt)} · ${formatUtcTime(selectedSlotDetail.startAt)}–${formatUtcTime(selectedSlotDetail.endAt)}`
-            : ''
-        }
+        visible={createOpen}
+        onClose={() => !creating && setCreateOpen(false)}
+        title="Add Shift"
         compact
         width={480}
         footer={
           <View style={styles.drawerFooterRow}>
-            <Button label="Close" variant="secondary" size="sm" onPress={onCloseSlotDrawer} />
+            <Button label="Cancel" variant="secondary" size="sm" onPress={() => setCreateOpen(false)} disabled={creating} />
+            <Button label="Create Shift" variant="primary" size="sm" onPress={handleCreate} loading={creating} />
+          </View>
+        }
+      >
+        <CreateSlotBody
+          siteOptions={plannerSiteOptions}
+          siteId={createSiteId} onSiteId={setCreateSiteId}
+          date={createDate} onDate={setCreateDate}
+          start={createStart} onStart={setCreateStart}
+          end={createEnd} onEnd={setCreateEnd}
+          guards={createGuards} onGuards={setCreateGuards}
+          checkCall={createCheckCall} onCheckCall={setCreateCheckCall}
+          title={createTitle} onTitle={setCreateTitle}
+          instructions={createInstructions} onInstructions={setCreateInstructions}
+          errors={createErrors}
+          submitError={createError}
+        />
+      </Drawer>
+
+      {/* ── Slot detail drawer ─────────────────────────────────────────────── */}
+      <Drawer
+        visible={slotDrawerOpen}
+        onClose={closeSlot}
+        title={slotDetail?.siteName ?? 'Loading…'}
+        subtitle={
+          slotDetail
+            ? `${formatUtcDate(slotDetail.startAt)} · ${formatUtcTime(slotDetail.startAt)}–${formatUtcTime(slotDetail.endAt)}`
+            : ''
+        }
+        compact
+        width={520}
+        footer={
+          <View style={styles.drawerFooterRow}>
+            {editMode ? (
+              <>
+                <Button label="Cancel" variant="secondary" size="sm" onPress={() => setEditMode(false)} disabled={editSaving} />
+                <Button label="Save Changes" variant="primary" size="sm" onPress={handleSaveEdits} loading={editSaving} />
+              </>
+            ) : (
+              <>
+                {canCancelSlot && (
+                  <Button label="Cancel Shift" variant="danger" size="sm" onPress={() => setCancelSlotConfirm(true)} />
+                )}
+                <View style={styles.drawerFooterSpacer} />
+                {canEdit && !editMode && (
+                  <Button label="Edit" variant="secondary" size="sm" onPress={enterEditMode} />
+                )}
+                <Button label="Close" variant="secondary" size="sm" onPress={closeSlot} />
+              </>
+            )}
           </View>
         }
       >
         <SlotDetailBody
-          detail={selectedSlotDetail}
-          loading={loadingSlotDetail}
+          detail={slotDetail}
+          loading={loadingSlot}
+          editMode={editMode}
+          canEdit={!!canEdit}
+          editDate={editDate} onEditDate={setEditDate}
+          editStart={editStart} onEditStart={setEditStart}
+          editEnd={editEnd} onEditEnd={setEditEnd}
+          editGuards={editGuards} onEditGuards={setEditGuards}
+          editCheckCall={editCheckCall} onEditCheckCall={setEditCheckCall}
+          editTitle={editTitle} onEditTitle={setEditTitle}
+          editInstructions={editInstructions} onEditInstructions={setEditInstructions}
+          editError={editError}
+          cancelSlotError={cancelSlotError}
+          assignShiftId={assignShiftId}
+          onOpenAssign={openAssign}
+          onCloseAssign={() => { setAssignShiftId(null); setAssignError(null); }}
+          eligibleGuards={eligibleGuards}
+          loadingEligible={loadingEligible}
+          guardSearch={guardSearch}
+          onGuardSearch={setGuardSearch}
+          selectedGuardId={selectedGuardId}
+          onSelectGuard={setSelectedGuardId}
+          onConfirmAssign={handleAssign}
+          assigning={assigning}
+          assignError={assignError}
+          bulkOpen={bulkOpen}
+          onOpenBulk={openBulk}
+          onCloseBulk={() => { setBulkOpen(false); setBulkResult(null); }}
+          bulkMap={bulkMap}
+          onBulkMapChange={setBulkMap}
+          bulkGuards={bulkGuards}
+          bulkGuardSearch={bulkGuardSearch}
+          onBulkGuardSearch={setBulkGuardSearch}
+          bulkLoadingShiftId={bulkLoadingShiftId}
+          onLoadBulkGuards={loadBulkGuardsFor}
+          onBulkAssign={handleBulkAssign}
+          bulkSaving={bulkSaving}
+          bulkResult={bulkResult}
+          onRequestCancelPosition={setCancelPositionShiftId}
         />
       </Drawer>
+
+      {/* ── Cancel position dialog ─────────────────────────────────────────── */}
+      <ConfirmationDialog
+        visible={cancelPositionShiftId !== null}
+        onClose={() => setCancelPositionShiftId(null)}
+        onConfirm={handleCancelPosition}
+        title="Cancel Position"
+        message="This guard position will be cancelled. The record is preserved. You can re-open a position by increasing the requirement."
+        confirmLabel="Cancel Position"
+        variant="danger"
+        loading={cancellingPosition}
+      />
+
+      {/* ── Cancel slot dialog ─────────────────────────────────────────────── */}
+      <ConfirmationDialog
+        visible={cancelSlotConfirm}
+        onClose={() => setCancelSlotConfirm(false)}
+        onConfirm={handleCancelSlot}
+        title="Cancel Shift"
+        message="The shift requirement will be cancelled. Historical records are preserved. This cannot be undone for committed guard positions."
+        confirmLabel="Cancel Shift"
+        variant="danger"
+        loading={cancellingSlot}
+      />
     </View>
   );
 }
@@ -411,18 +1000,14 @@ export function CompanyRotaPlannerWorkspace({
 // ── RotaSlot row ──────────────────────────────────────────────────────────────
 
 function RotaSlotRow({
-  cell,
-  isLast,
-  onPress,
+  cell, isLast, onPress,
 }: {
   cell: FlatSlotCell;
   isLast: boolean;
   onPress: () => void;
 }) {
-  const tok = slotStateTokens(cell.coverageState);
-  const startStr = formatUtcTime(cell.startAt);
-  const endStr   = formatUtcTime(cell.endAt);
-  const timeStr  = `${startStr}–${endStr}`;
+  const tok     = slotStateTokens(cell.coverageState);
+  const timeStr = `${formatUtcTime(cell.startAt)}–${formatUtcTime(cell.endAt)}`;
   const coverStr = `${cell.counts.assigned} / ${cell.counts.required}`;
 
   return (
@@ -436,37 +1021,24 @@ function RotaSlotRow({
       accessibilityRole="button"
       accessibilityLabel={`${timeStr} ${cell.siteName} ${cell.counts.assigned} of ${cell.counts.required} ${tok.label}`}
     >
-      {/* Problem accent bar */}
       <View style={[styles.accentBar, { backgroundColor: tok.problem ? tok.fg : 'transparent' }]} />
-
       <View style={styles.rowContent}>
-        {/* Time + night indicator */}
         <View style={styles.colTimeWrap}>
           <Text style={styles.colTime} numberOfLines={1}>{timeStr}</Text>
           {cell.isNightShift && <Text style={styles.nightDot}>●</Text>}
         </View>
-
-        {/* Site */}
-        <Text style={styles.colSite} numberOfLines={1}>
-          {cell.siteName || '—'}
-        </Text>
-
-        {/* Cover fraction + open indicator */}
+        <Text style={styles.colSite} numberOfLines={1}>{cell.siteName || '—'}</Text>
         <View style={styles.colCoverWrap}>
           <Text style={styles.colCover}>{coverStr}</Text>
           {cell.counts.open > 0 && (
             <Text style={styles.colCoverOpen}>{cell.counts.open} open</Text>
           )}
         </View>
-
-        {/* State badge */}
         <View style={[styles.stateBadge, { backgroundColor: tok.bg }]}>
           <Text style={[styles.stateBadgeText, { color: tok.fg }]} numberOfLines={1}>
             {tok.label}
           </Text>
         </View>
-
-        {/* Chevron */}
         <Text style={styles.chevron}>›</Text>
       </View>
     </Pressable>
@@ -479,13 +1051,11 @@ function LegacyRow({ row, isLast }: { row: LegacyShiftRow; isLast: boolean }) {
   return (
     <View style={[styles.slotRow, !isLast && styles.slotRowDivider, styles.legacyRow]}>
       <View style={styles.accentBar} />
-      <View style={[styles.rowContent, styles.rowContentLegacy]}>
+      <View style={styles.rowContent}>
         <Text style={styles.colTime} numberOfLines={1}>
           {row.startTime}–{row.endTime}
         </Text>
-        <Text style={styles.colSite} numberOfLines={1}>
-          {row.siteName || '—'}
-        </Text>
+        <Text style={styles.colSite} numberOfLines={1}>{row.siteName || '—'}</Text>
         <Text style={styles.colGuardLegacy} numberOfLines={1}>
           {row.guardName ?? 'Unassigned'}
         </Text>
@@ -497,127 +1067,680 @@ function LegacyRow({ row, isLast }: { row: LegacyShiftRow; isLast: boolean }) {
   );
 }
 
+// ── Create slot drawer body ───────────────────────────────────────────────────
+
+function CreateSlotBody({
+  siteOptions, siteId, onSiteId,
+  date, onDate, start, onStart, end, onEnd,
+  guards, onGuards, checkCall, onCheckCall,
+  title, onTitle, instructions, onInstructions,
+  errors, submitError,
+}: {
+  siteOptions: Array<{ label: string; value: string }>;
+  siteId: string; onSiteId: (v: string) => void;
+  date: string; onDate: (v: string) => void;
+  start: string; onStart: (v: string) => void;
+  end: string; onEnd: (v: string) => void;
+  guards: string; onGuards: (v: string) => void;
+  checkCall: string; onCheckCall: (v: string) => void;
+  title: string; onTitle: (v: string) => void;
+  instructions: string; onInstructions: (v: string) => void;
+  errors: Record<string, string>;
+  submitError: string | null;
+}) {
+  return (
+    <ScrollView style={db.scroll} showsVerticalScrollIndicator={false}>
+      <View style={db.body}>
+
+        {submitError && (
+          <View style={db.submitError}>
+            <Text style={db.submitErrorText}>{submitError}</Text>
+          </View>
+        )}
+
+        <SectionLabel label="Shift Details" />
+
+        <FormField label="Site" required error={errors.site}>
+          <FilterSelect
+            value={siteId}
+            onChange={onSiteId}
+            options={siteOptions}
+            placeholder="Select site…"
+          />
+        </FormField>
+
+        <FormField label="Title" error={errors.title}>
+          <FieldInput
+            value={title}
+            onChangeText={onTitle}
+            placeholder="Optional label"
+            hasError={!!errors.title}
+          />
+        </FormField>
+
+        <SectionLabel label="Schedule" spaced />
+
+        <FormField label="Date" required error={errors.date}>
+          <NativeDateInput value={date} onChange={onDate} hasError={!!errors.date} />
+        </FormField>
+
+        <View style={db.timeRow}>
+          <View style={db.timeCell}>
+            <FormField label="Start" required error={errors.start}>
+              <NativeTimeInput value={start} onChange={onStart} hasError={!!errors.start} />
+            </FormField>
+          </View>
+          <View style={db.timeCell}>
+            <FormField label="End" required error={errors.end}>
+              <NativeTimeInput value={end} onChange={onEnd} hasError={!!errors.end} />
+            </FormField>
+          </View>
+        </View>
+
+        <SectionLabel label="Cover" spaced />
+
+        <FormField label="Guards required" required error={errors.guards}
+          helperText="Enter the total number of guards needed, e.g. 15 for a large event.">
+          <FieldInput
+            value={guards}
+            onChangeText={onGuards}
+            keyboardType="numeric"
+            placeholder="1"
+            hasError={!!errors.guards}
+          />
+        </FormField>
+
+        <SectionLabel label="Check Calls" spaced />
+
+        <FormField label="Interval (minutes)" error={errors.checkCall}
+          helperText="Leave blank to use the site default.">
+          <FieldInput
+            value={checkCall}
+            onChangeText={onCheckCall}
+            keyboardType="numeric"
+            placeholder="Site default"
+            hasError={!!errors.checkCall}
+          />
+        </FormField>
+
+        <SectionLabel label="Notes" spaced />
+
+        <FormField label="Instructions" error={errors.instructions}>
+          <FieldTextarea
+            value={instructions}
+            onChangeText={onInstructions}
+            placeholder="Guard instructions…"
+            minLines={3}
+            hasError={!!errors.instructions}
+          />
+        </FormField>
+
+      </View>
+    </ScrollView>
+  );
+}
+
 // ── Slot detail body ──────────────────────────────────────────────────────────
 
 function SlotDetailBody({
-  detail,
-  loading,
+  detail, loading, editMode, canEdit,
+  editDate, onEditDate, editStart, onEditStart, editEnd, onEditEnd,
+  editGuards, onEditGuards, editCheckCall, onEditCheckCall,
+  editTitle, onEditTitle, editInstructions, onEditInstructions,
+  editError, cancelSlotError,
+  assignShiftId, onOpenAssign, onCloseAssign,
+  eligibleGuards, loadingEligible, guardSearch, onGuardSearch,
+  selectedGuardId, onSelectGuard, onConfirmAssign, assigning, assignError,
+  bulkOpen, onOpenBulk, onCloseBulk,
+  bulkMap, onBulkMapChange, bulkGuards, bulkGuardSearch, onBulkGuardSearch,
+  bulkLoadingShiftId, onLoadBulkGuards, onBulkAssign, bulkSaving, bulkResult,
+  onRequestCancelPosition,
 }: {
   detail: RotaSlotDetail | null;
   loading: boolean;
+  editMode: boolean;
+  canEdit: boolean;
+  editDate: string; onEditDate: (v: string) => void;
+  editStart: string; onEditStart: (v: string) => void;
+  editEnd: string; onEditEnd: (v: string) => void;
+  editGuards: string; onEditGuards: (v: string) => void;
+  editCheckCall: string; onEditCheckCall: (v: string) => void;
+  editTitle: string; onEditTitle: (v: string) => void;
+  editInstructions: string; onEditInstructions: (v: string) => void;
+  editError: string | null;
+  cancelSlotError: string | null;
+  assignShiftId: number | null;
+  onOpenAssign: (shiftId: number) => void;
+  onCloseAssign: () => void;
+  eligibleGuards: EligibleGuardRow[];
+  loadingEligible: boolean;
+  guardSearch: string;
+  onGuardSearch: (v: string) => void;
+  selectedGuardId: number | null;
+  onSelectGuard: (id: number | null) => void;
+  onConfirmAssign: () => void;
+  assigning: boolean;
+  assignError: string | null;
+  bulkOpen: boolean;
+  onOpenBulk: () => void;
+  onCloseBulk: () => void;
+  bulkMap: Map<number, number>;
+  onBulkMapChange: (m: Map<number, number>) => void;
+  bulkGuards: Map<number, EligibleGuardRow[]>;
+  bulkGuardSearch: Record<number, string>;
+  onBulkGuardSearch: (v: Record<number, string>) => void;
+  bulkLoadingShiftId: number | null;
+  onLoadBulkGuards: (shiftId: number) => void;
+  onBulkAssign: () => void;
+  bulkSaving: boolean;
+  bulkResult: RotaAssignMultipleResult | null;
+  onRequestCancelPosition: (shiftId: number) => void;
 }) {
   if (loading) {
     return (
-      <View style={drawerBodyStyles.centeredLoading}>
+      <View style={db.centeredLoading}>
         <ActivityIndicator color={colors.accentTeal} />
-        <Text style={drawerBodyStyles.loadingText}>Loading slot detail…</Text>
+        <Text style={db.loadingText}>Loading…</Text>
       </View>
     );
   }
 
   if (!detail) return null;
 
-  const startStr = formatUtcTime(detail.startAt);
-  const endStr   = formatUtcTime(detail.endAt);
-  const dateStr  = formatUtcDate(detail.startAt);
+  const isLivePast = detail.coveragePhase !== 'future';
+  const isCancelled = detail.status === 'cancelled';
+  const openPositions = detail.positions.filter((p) => isPositionOpen(p.status));
 
   return (
-    <ScrollView style={drawerBodyStyles.scroll} showsVerticalScrollIndicator={false}>
-      <View style={drawerBodyStyles.body}>
+    <ScrollView style={db.scroll} showsVerticalScrollIndicator={false}>
+      <View style={db.body}>
+
+        {/* Phase / status hint */}
+        {isCancelled && (
+          <View style={db.hintBox}>
+            <Text style={db.hintText}>This shift has been cancelled. All records are preserved.</Text>
+          </View>
+        )}
+        {!isCancelled && isLivePast && (
+          <View style={[db.hintBox, db.hintBoxInfo]}>
+            <Text style={db.hintText}>
+              {detail.coveragePhase === 'live'
+                ? 'Shift is underway. Time and requirement changes are locked.'
+                : 'Shift has ended. All operational fields are read-only.'}
+            </Text>
+          </View>
+        )}
+        {cancelSlotError && (
+          <View style={db.submitError}><Text style={db.submitErrorText}>{cancelSlotError}</Text></View>
+        )}
+
+        {/* Cover summary */}
+        <CoverSummary counts={detail.counts} phase={detail.coveragePhase} />
 
         {/* Schedule */}
-        <Text style={drawerBodyStyles.sectionLabel}>Schedule</Text>
-        <CoverRow label="Date"  value={dateStr} />
-        <CoverRow label="Start" value={startStr} />
-        <CoverRow label="End"   value={endStr} />
-        {detail.title && <CoverRow label="Title" value={detail.title} />}
+        <SectionLabel label="Schedule" spaced />
 
-        {/* Cover */}
-        <Text style={[drawerBodyStyles.sectionLabel, drawerBodyStyles.sectionLabelSpaced]}>Cover</Text>
-        <CoverRow label="Required"  value={String(detail.counts.required)} />
-        <CoverRow label="Assigned"  value={String(detail.counts.assigned)} />
-        <CoverRow label="Confirmed" value={String(detail.counts.confirmed)} />
-        {detail.counts.offered > 0 && (
-          <CoverRow label="Awaiting"  value={String(detail.counts.offered)} />
-        )}
-        {detail.counts.open > 0 && (
-          <CoverRow label="Open"      value={String(detail.counts.open)}    emphasis="danger" />
-        )}
-        {detail.counts.problem > 0 && (
-          <CoverRow label="Problems"  value={String(detail.counts.problem)} emphasis="warning" />
-        )}
-        {detail.counts.onShift > 0 && (
-          <CoverRow label="On shift"  value={String(detail.counts.onShift)} emphasis="success" />
-        )}
-
-        {/* Positions */}
-        <Text style={[drawerBodyStyles.sectionLabel, drawerBodyStyles.sectionLabelSpaced]}>
-          Positions ({detail.positions.length})
-        </Text>
-        {detail.positions.map((pos) => (
-          <Fragment key={pos.shiftId}>
-            <PositionRow position={pos} />
-          </Fragment>
-        ))}
-        {detail.positions.length === 0 && (
-          <Text style={drawerBodyStyles.noPositions}>No positions.</Text>
-        )}
-
-        {/* Instructions */}
-        {detail.instructions && (
+        {editMode ? (
           <>
-            <Text style={[drawerBodyStyles.sectionLabel, drawerBodyStyles.sectionLabelSpaced]}>Instructions</Text>
-            <Text style={drawerBodyStyles.instructions}>{detail.instructions}</Text>
+            {editError && (
+              <View style={db.submitError}><Text style={db.submitErrorText}>{editError}</Text></View>
+            )}
+            <FormField label="Date" required>
+              <NativeDateInput value={editDate} onChange={onEditDate} />
+            </FormField>
+            <View style={db.timeRow}>
+              <View style={db.timeCell}>
+                <FormField label="Start" required>
+                  <NativeTimeInput value={editStart} onChange={onEditStart} />
+                </FormField>
+              </View>
+              <View style={db.timeCell}>
+                <FormField label="End" required>
+                  <NativeTimeInput value={editEnd} onChange={onEditEnd} />
+                </FormField>
+              </View>
+            </View>
+          </>
+        ) : (
+          <>
+            <DetailRow label="Date"  value={formatUtcDate(detail.startAt)} />
+            <DetailRow label="Start" value={formatUtcTime(detail.startAt)} />
+            <DetailRow label="End"   value={formatUtcTime(detail.endAt)} />
+            {detail.title && <DetailRow label="Title" value={detail.title} />}
           </>
         )}
+
+        {/* Requirement */}
+        <SectionLabel label="Guard requirement" spaced />
+        {editMode && !isLivePast ? (
+          <FormField label="Guards required" required>
+            <FieldInput
+              value={editGuards}
+              onChangeText={onEditGuards}
+              keyboardType="numeric"
+            />
+          </FormField>
+        ) : (
+          <DetailRow label="Required" value={String(detail.counts.required)} />
+        )}
+
+        {/* Check calls */}
+        <SectionLabel label="Check calls" spaced />
+        {editMode ? (
+          <FormField label="Interval (minutes)" required>
+            <FieldInput
+              value={editCheckCall}
+              onChangeText={onEditCheckCall}
+              keyboardType="numeric"
+            />
+          </FormField>
+        ) : (
+          <DetailRow label="Interval" value={`${detail.checkCallIntervalMinutes} min`} />
+        )}
+
+        {/* Metadata */}
+        {editMode ? (
+          <>
+            <SectionLabel label="Details" spaced />
+            <FormField label="Title">
+              <FieldInput value={editTitle} onChangeText={onEditTitle} placeholder="Optional label" />
+            </FormField>
+            <FormField label="Instructions">
+              <FieldTextarea value={editInstructions} onChangeText={onEditInstructions} placeholder="Guard instructions…" minLines={3} />
+            </FormField>
+          </>
+        ) : detail.instructions ? (
+          <>
+            <SectionLabel label="Instructions" spaced />
+            <Text style={db.instructionsText}>{detail.instructions}</Text>
+          </>
+        ) : null}
+
+        {/* Guard positions section */}
+        {!editMode && (
+          <>
+            <View style={db.positionsSectionHeader}>
+              <Text style={[db.sectionLabel, db.sectionLabelPositions]}>
+                Guard positions ({detail.positions.length})
+              </Text>
+              {openPositions.length > 1 && !bulkOpen && (
+                <Pressable
+                  onPress={onOpenBulk}
+                  style={({ pressed }: any) => [db.bulkAssignBtn, pressed && db.bulkAssignBtnPressed]}
+                >
+                  <Text style={db.bulkAssignBtnText}>Assign guards ({openPositions.length} open)</Text>
+                </Pressable>
+              )}
+              {bulkOpen && (
+                <Pressable onPress={onCloseBulk}>
+                  <Text style={db.bulkAssignBtnText}>Done</Text>
+                </Pressable>
+              )}
+            </View>
+
+            {/* Bulk result banner */}
+            {bulkResult && (
+              <View style={[db.hintBox, bulkResult.failed.length > 0 ? db.hintBoxWarn : db.hintBoxInfo]}>
+                <Text style={db.hintText}>
+                  {bulkResult.assigned.length} guard{bulkResult.assigned.length !== 1 ? 's' : ''} assigned
+                  {bulkResult.failed.length > 0 && `, ${bulkResult.failed.length} could not be assigned`}
+                </Text>
+                {bulkResult.failed.map((f, i) => (
+                  <Fragment key={i}>
+                    <Text style={db.hintSubText}>Position #{f.shiftId}: {f.reason}</Text>
+                  </Fragment>
+                ))}
+              </View>
+            )}
+
+            {/* Bulk assign panel */}
+            {bulkOpen && !bulkResult && (
+              <BulkAssignPanel
+                openPositions={openPositions}
+                bulkMap={bulkMap}
+                onBulkMapChange={onBulkMapChange}
+                bulkGuards={bulkGuards}
+                bulkGuardSearch={bulkGuardSearch}
+                onBulkGuardSearch={onBulkGuardSearch}
+                bulkLoadingShiftId={bulkLoadingShiftId}
+                onLoadBulkGuards={onLoadBulkGuards}
+                onBulkAssign={onBulkAssign}
+                bulkSaving={bulkSaving}
+              />
+            )}
+
+            {/* Position list */}
+            {!bulkOpen && detail.positions.map((pos) => (
+              <Fragment key={pos.shiftId}>
+                <PositionRow
+                  position={pos}
+                  isAssigning={assignShiftId === pos.shiftId}
+                  onOpenAssign={() => onOpenAssign(pos.shiftId)}
+                  onCloseAssign={onCloseAssign}
+                  eligibleGuards={eligibleGuards}
+                  loadingEligible={loadingEligible}
+                  guardSearch={guardSearch}
+                  onGuardSearch={onGuardSearch}
+                  selectedGuardId={selectedGuardId}
+                  onSelectGuard={onSelectGuard}
+                  onConfirmAssign={onConfirmAssign}
+                  assigning={assigning}
+                  assignError={assignError}
+                  canAssign={!isCancelled && isPositionOpen(pos.status)}
+                  canCancel={!isCancelled && canCancelPosition(pos.status)}
+                  onRequestCancel={() => onRequestCancelPosition(pos.shiftId)}
+                />
+              </Fragment>
+            ))}
+            {detail.positions.length === 0 && (
+              <Text style={db.noPositions}>No positions.</Text>
+            )}
+          </>
+        )}
+
       </View>
     </ScrollView>
   );
 }
 
-function CoverRow({
-  label,
-  value,
-  emphasis,
+// ── Position row ──────────────────────────────────────────────────────────────
+
+function PositionRow({
+  position, isAssigning,
+  onOpenAssign, onCloseAssign,
+  eligibleGuards, loadingEligible, guardSearch, onGuardSearch,
+  selectedGuardId, onSelectGuard, onConfirmAssign, assigning, assignError,
+  canAssign, canCancel, onRequestCancel,
 }: {
-  label: string;
-  value: string;
-  emphasis?: 'danger' | 'warning' | 'success';
+  position: { shiftId: number; guardId: number | null; guardName: string | null; status: string };
+  isAssigning: boolean;
+  onOpenAssign: () => void;
+  onCloseAssign: () => void;
+  eligibleGuards: EligibleGuardRow[];
+  loadingEligible: boolean;
+  guardSearch: string;
+  onGuardSearch: (v: string) => void;
+  selectedGuardId: number | null;
+  onSelectGuard: (id: number | null) => void;
+  onConfirmAssign: () => void;
+  assigning: boolean;
+  assignError: string | null;
+  canAssign: boolean;
+  canCancel: boolean;
+  onRequestCancel: () => void;
 }) {
-  const valueColor =
-    emphasis === 'danger'  ? colors.danger  :
-    emphasis === 'warning' ? colors.warning :
-    emphasis === 'success' ? colors.success :
-    colors.textPrimary;
-
-  return (
-    <View style={drawerBodyStyles.coverRow}>
-      <Text style={drawerBodyStyles.coverLabel}>{label}</Text>
-      <Text style={[drawerBodyStyles.coverValue, { color: valueColor }]}>{value}</Text>
-    </View>
-  );
-}
-
-function PositionRow({ position }: { position: RotaSlotPositionSummary }) {
   const tok = positionStatusTokens(position.status);
+
+  const filteredGuards = React.useMemo(() => {
+    const q = guardSearch.toLowerCase();
+    return eligibleGuards.filter((g) =>
+      !q || (g.fullName ?? '').toLowerCase().includes(q),
+    );
+  }, [eligibleGuards, guardSearch]);
+
   return (
-    <View style={drawerBodyStyles.positionRow}>
-      <Text style={drawerBodyStyles.positionName} numberOfLines={1}>
-        {position.guardName ?? 'Open position'}
-      </Text>
-      <Text style={[drawerBodyStyles.positionStatus, { color: tok.fg }]}>
-        {tok.label}
-      </Text>
+    <View style={db.positionBlock}>
+      <View style={db.positionRow}>
+        <Text style={db.positionName} numberOfLines={1}>
+          {position.guardName ?? 'Open position'}
+        </Text>
+        <Text style={[db.positionStatus, { color: tok.fg }]}>{tok.label}</Text>
+        <View style={db.positionActions}>
+          {canAssign && !isAssigning && (
+            <Pressable
+              onPress={onOpenAssign}
+              style={({ pressed }: any) => [db.actionBtn, pressed && db.actionBtnPressed]}
+            >
+              <Text style={[db.actionBtnText, { color: colors.accentTeal }]}>Assign</Text>
+            </Pressable>
+          )}
+          {canCancel && !isAssigning && (
+            <Pressable
+              onPress={onRequestCancel}
+              style={({ pressed }: any) => [db.actionBtn, pressed && db.actionBtnPressed]}
+            >
+              <Text style={[db.actionBtnText, { color: colors.danger }]}>Cancel</Text>
+            </Pressable>
+          )}
+          {isAssigning && (
+            <Pressable
+              onPress={onCloseAssign}
+              style={({ pressed }: any) => [db.actionBtn, pressed && db.actionBtnPressed]}
+            >
+              <Text style={[db.actionBtnText, { color: colors.textMuted }]}>✕</Text>
+            </Pressable>
+          )}
+        </View>
+      </View>
+
+      {/* Assign panel */}
+      {isAssigning && (
+        <View style={db.assignPanel}>
+          {assignError && (
+            <View style={db.assignError}>
+              <Text style={db.assignErrorText}>{assignError}</Text>
+            </View>
+          )}
+          <FieldInput
+            value={guardSearch}
+            onChangeText={onGuardSearch}
+            placeholder="Search guards…"
+            autoFocus
+          />
+          {loadingEligible ? (
+            <ActivityIndicator color={colors.accentTeal} style={db.assignSpinner} />
+          ) : (
+            <ScrollView style={db.guardList} nestedScrollEnabled>
+              {filteredGuards.length === 0 && (
+                <Text style={db.noGuardsText}>
+                  {guardSearch ? 'No guards match.' : 'No eligible guards available.'}
+                </Text>
+              )}
+              {filteredGuards.map((g) => (
+                <Pressable
+                  key={g.guardId}
+                  onPress={() => onSelectGuard(selectedGuardId === g.guardId ? null : g.guardId)}
+                  style={({ pressed }: any) => [
+                    db.guardItem,
+                    selectedGuardId === g.guardId && db.guardItemSelected,
+                    pressed && db.guardItemPressed,
+                  ]}
+                >
+                  <View style={db.guardItemMain}>
+                    <Text style={db.guardItemName} numberOfLines={1}>{g.fullName ?? `Guard #${g.guardId}`}</Text>
+                    {!g.isEligible && (
+                      <Text style={db.guardItemIneligible}>Ineligible</Text>
+                    )}
+                    {g.isEligible && g.availabilityStatus === 'available' && (
+                      <Text style={db.guardItemAvail}>Available</Text>
+                    )}
+                    {g.isEligible && g.availabilityStatus !== 'available' && (
+                      <Text style={db.guardItemUnavail}>{g.availabilityStatus}</Text>
+                    )}
+                  </View>
+                  {g.reasons.length > 0 && (
+                    <Text style={db.guardItemReason} numberOfLines={2}>{g.reasons.join(' · ')}</Text>
+                  )}
+                </Pressable>
+              ))}
+            </ScrollView>
+          )}
+          <View style={db.assignFooter}>
+            <Button
+              label="Assign"
+              variant="primary"
+              size="sm"
+              onPress={onConfirmAssign}
+              disabled={!selectedGuardId || assigning}
+              loading={assigning}
+            />
+          </View>
+        </View>
+      )}
     </View>
   );
 }
 
-// ── Summary stat atom ─────────────────────────────────────────────────────────
+// ── Bulk assign panel ─────────────────────────────────────────────────────────
+
+function BulkAssignPanel({
+  openPositions, bulkMap, onBulkMapChange,
+  bulkGuards, bulkGuardSearch, onBulkGuardSearch,
+  bulkLoadingShiftId, onLoadBulkGuards, onBulkAssign, bulkSaving,
+}: {
+  openPositions: Array<{ shiftId: number; guardId: number | null; guardName: string | null; status: string }>;
+  bulkMap: Map<number, number>;
+  onBulkMapChange: (m: Map<number, number>) => void;
+  bulkGuards: Map<number, EligibleGuardRow[]>;
+  bulkGuardSearch: Record<number, string>;
+  onBulkGuardSearch: (v: Record<number, string>) => void;
+  bulkLoadingShiftId: number | null;
+  onLoadBulkGuards: (shiftId: number) => void;
+  onBulkAssign: () => void;
+  bulkSaving: boolean;
+}) {
+  const alreadySelectedGuardIds = new Set(Array.from(bulkMap.values()));
+
+  return (
+    <View style={db.bulkPanel}>
+      {openPositions.map((pos, idx) => {
+        const search = bulkGuardSearch[pos.shiftId] ?? '';
+        const guards = (bulkGuards.get(pos.shiftId) ?? []).filter((g) => {
+          if (!search) return true;
+          return (g.fullName ?? '').toLowerCase().includes(search.toLowerCase());
+        });
+        const selected = bulkMap.get(pos.shiftId) ?? null;
+        const loading = bulkLoadingShiftId === pos.shiftId;
+        const isLast = idx === openPositions.length - 1;
+
+        return (
+          <View key={pos.shiftId} style={[db.bulkPositionBlock, !isLast && db.bulkPositionDivider]}>
+            <Text style={db.bulkPositionLabel}>Open position #{idx + 1}</Text>
+
+            <FieldInput
+              value={search}
+              onChangeText={(v: string) => {
+                onBulkGuardSearch({ ...bulkGuardSearch, [pos.shiftId]: v });
+                onLoadBulkGuards(pos.shiftId);
+              }}
+              placeholder="Search guards…"
+            />
+
+            {loading ? (
+              <ActivityIndicator color={colors.accentTeal} style={db.assignSpinner} />
+            ) : (
+              <ScrollView style={db.bulkGuardList} nestedScrollEnabled>
+                {guards.slice(0, 12).map((g) => {
+                  const isChosen = selected === g.guardId;
+                  const usedElsewhere = !isChosen && alreadySelectedGuardIds.has(g.guardId);
+                  return (
+                    <Pressable
+                      key={g.guardId}
+                      onPress={() => {
+                        const next = new Map(bulkMap);
+                        if (isChosen) next.delete(pos.shiftId);
+                        else next.set(pos.shiftId, g.guardId);
+                        onBulkMapChange(next);
+                      }}
+                      disabled={usedElsewhere}
+                      style={({ pressed }: any) => [
+                        db.guardItem,
+                        isChosen && db.guardItemSelected,
+                        usedElsewhere && db.guardItemDimmed,
+                        pressed && !usedElsewhere && db.guardItemPressed,
+                      ]}
+                    >
+                      <Text style={db.guardItemName} numberOfLines={1}>
+                        {g.fullName ?? `Guard #${g.guardId}`}
+                        {usedElsewhere ? '  (assigned elsewhere)' : ''}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+                {guards.length === 0 && (
+                  <Text style={db.noGuardsText}>No eligible guards.</Text>
+                )}
+              </ScrollView>
+            )}
+          </View>
+        );
+      })}
+
+      <View style={db.bulkFooter}>
+        <Text style={db.bulkCount}>{bulkMap.size} of {openPositions.length} selected</Text>
+        <Button
+          label={bulkSaving ? 'Assigning…' : 'Assign Selected'}
+          variant="primary"
+          size="sm"
+          onPress={onBulkAssign}
+          disabled={bulkMap.size === 0 || bulkSaving}
+          loading={bulkSaving}
+        />
+      </View>
+    </View>
+  );
+}
+
+// ── Cover summary ─────────────────────────────────────────────────────────────
+
+function CoverSummary({
+  counts, phase,
+}: {
+  counts: RotaSlotDetail['counts'];
+  phase: RotaCoveragePhase;
+}) {
+  const { required, assigned, confirmed, offered, open, problem, onShift, completed } = counts;
+
+  const primaryNum = phase === 'live'  ? onShift  :
+                     phase === 'past'  ? completed : confirmed;
+  const primaryLabel = phase === 'live' ? 'on shift' :
+                       phase === 'past' ? 'completed' : 'confirmed';
+
+  const primaryColor = phase === 'past' ? colors.pending : colors.success;
+
+  return (
+    <View style={db.coverSummary}>
+      <Text style={[db.coverSummaryMain, { color: primaryColor }]}>
+        {primaryNum} / {required}
+        <Text style={db.coverSummaryLabel}> {primaryLabel}</Text>
+      </Text>
+      <View style={db.coverSummaryRow}>
+        {open > 0 && (
+          <Text style={[db.coverChip, db.coverChipOpen]}>{open} open</Text>
+        )}
+        {offered > 0 && (
+          <Text style={[db.coverChip, db.coverChipAwaiting]}>{offered} awaiting</Text>
+        )}
+        {problem > 0 && (
+          <Text style={[db.coverChip, db.coverChipProblem]}>{problem} problem{problem !== 1 ? 's' : ''}</Text>
+        )}
+        {assigned > 0 && assigned !== confirmed && phase === 'future' && (
+          <Text style={[db.coverChip]}>{assigned} assigned</Text>
+        )}
+      </View>
+    </View>
+  );
+}
+
+// ── Small shared atoms ────────────────────────────────────────────────────────
+
+function SectionLabel({ label, spaced }: { label: string; spaced?: boolean }) {
+  return (
+    <Text style={[db.sectionLabel, spaced && db.sectionLabelSpaced]}>{label}</Text>
+  );
+}
+
+function DetailRow({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={db.detailRow}>
+      <Text style={db.detailLabel}>{label}</Text>
+      <Text style={db.detailValue}>{value}</Text>
+    </View>
+  );
+}
 
 function SummaryStat({
-  value,
-  label,
-  highlight,
+  value, label, highlight,
 }: {
   value: number;
   label: string;
@@ -638,398 +1761,285 @@ function SummaryStat({
   );
 }
 
+// ── Summary stat styles ───────────────────────────────────────────────────────
+
 const summaryStyles = StyleSheet.create({
-  stat: {
-    flex: 1,
-    alignItems: 'center',
-    paddingVertical: spacing.sm,
-  },
-  value: {
-    fontSize: 22,
-    fontWeight: '700',
-    lineHeight: 28,
-    color: colors.textPrimary,
-  },
-  label: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginTop: 2,
-  },
+  stat:  { flex: 1, alignItems: 'center', paddingVertical: spacing.sm },
+  value: { fontSize: 22, fontWeight: '700', lineHeight: 28, color: colors.textPrimary },
+  label: { ...typography.caption, color: colors.textSecondary, marginTop: 2 } as any,
 });
 
 // ── Drawer body styles ────────────────────────────────────────────────────────
 
-const drawerBodyStyles = StyleSheet.create({
-  scroll: {
-    flex: 1,
-  },
+const db = StyleSheet.create({
+  scroll: { flex: 1 },
   body: {
     paddingHorizontal: spacing.xl,
-    paddingTop: spacing.lg,
+    paddingTop: spacing.md,
     paddingBottom: spacing.xl,
-    gap: spacing.xs,
+    gap: spacing.sm,
   },
   centeredLoading: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.sm,
-    paddingVertical: spacing.xl,
+    flex: 1, alignItems: 'center', justifyContent: 'center',
+    gap: spacing.sm, paddingVertical: spacing.xl,
   },
-  loadingText: {
-    ...typography.caption,
-    color: colors.textSecondary,
-  },
+  loadingText: { ...typography.caption, color: colors.textSecondary } as any,
+
   sectionLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: colors.textSecondary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginTop: spacing.xs,
+    fontSize: 11, fontWeight: '700', color: colors.textSecondary,
+    textTransform: 'uppercase', letterSpacing: 0.5,
   } as any,
-  sectionLabelSpaced: {
+  sectionLabelSpaced: { marginTop: spacing.md },
+  sectionLabelPositions: { marginTop: spacing.md },
+
+  submitError: {
+    backgroundColor: colors.dangerSurface,
+    borderRadius: radii.sm,
+    borderWidth: 1, borderColor: colors.danger,
+    padding: spacing.md,
+    marginBottom: spacing.xs,
+  },
+  submitErrorText: { fontSize: 13, color: colors.danger, lineHeight: 18 },
+
+  hintBox: {
+    backgroundColor: colors.pendingSurface,
+    borderRadius: radii.sm,
+    padding: spacing.md,
+    marginBottom: spacing.xs,
+    gap: 2,
+  },
+  hintBoxInfo: { backgroundColor: colors.infoSurface },
+  hintBoxWarn: { backgroundColor: colors.warningSurface },
+  hintText: { fontSize: 13, color: colors.textSecondary, lineHeight: 18 },
+  hintSubText: { fontSize: 12, color: colors.textMuted, lineHeight: 16 },
+
+  timeRow: { flexDirection: 'row', gap: spacing.sm },
+  timeCell: { flex: 1 },
+
+  detailRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingVertical: 4, borderBottomWidth: 1, borderBottomColor: colors.border,
+  },
+  detailLabel: { fontSize: 13, color: colors.textSecondary, fontWeight: '500' },
+  detailValue: { fontSize: 13, fontWeight: '600', color: colors.textPrimary },
+
+  instructionsText: { fontSize: 13, color: colors.textSecondary, lineHeight: 20 },
+
+  // Cover summary
+  coverSummary: {
+    backgroundColor: colors.surfaceSubtle,
+    borderRadius: radii.card,
+    padding: spacing.md,
+    marginBottom: spacing.xs,
+    gap: spacing.xs,
+  },
+  coverSummaryMain: {
+    fontSize: 20, fontWeight: '700', color: colors.success, lineHeight: 28,
+  },
+  coverSummaryLabel: {
+    fontSize: 14, fontWeight: '500', color: colors.textSecondary,
+  },
+  coverSummaryRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
+  coverChip: {
+    fontSize: 12, fontWeight: '600',
+    paddingHorizontal: spacing.sm, paddingVertical: 2,
+    borderRadius: radii.pill,
+    backgroundColor: colors.pendingSurface, color: colors.pending,
+  },
+  coverChipOpen:     { backgroundColor: colors.dangerSurface,   color: colors.danger   },
+  coverChipAwaiting: { backgroundColor: colors.infoSurface,     color: colors.info     },
+  coverChipProblem:  { backgroundColor: colors.warningSurface,  color: colors.warning  },
+
+  // Positions section header
+  positionsSectionHeader: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     marginTop: spacing.md,
   },
-  coverRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 4,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+  bulkAssignBtn: {
+    paddingHorizontal: spacing.sm, paddingVertical: 4,
+    borderRadius: radii.pill,
+    backgroundColor: colors.accentTealSoft,
   },
-  coverLabel: {
-    fontSize: 13,
-    color: colors.textSecondary,
-    fontWeight: '500',
-  },
-  coverValue: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: colors.textPrimary,
-  },
+  bulkAssignBtnPressed: { opacity: 0.7 },
+  bulkAssignBtnText: { fontSize: 12, fontWeight: '700', color: colors.accentTeal },
+
+  // Position row
+  positionBlock: { borderBottomWidth: 1, borderBottomColor: colors.border },
   positionRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 5,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    flexDirection: 'row', alignItems: 'center',
+    paddingVertical: 6,
   },
-  positionName: {
-    flex: 1,
-    fontSize: 13,
-    color: colors.textPrimary,
-    fontWeight: '500',
+  positionName: { flex: 1, fontSize: 13, color: colors.textPrimary, fontWeight: '500' },
+  positionStatus: { fontSize: 12, fontWeight: '700', marginLeft: spacing.sm, flexShrink: 0 },
+  positionActions: { flexDirection: 'row', gap: spacing.xs, marginLeft: spacing.sm, flexShrink: 0 },
+  actionBtn: { paddingHorizontal: spacing.xs, paddingVertical: 2 },
+  actionBtnPressed: { opacity: 0.6 },
+  actionBtnText: { fontSize: 12, fontWeight: '700' },
+  noPositions: { ...typography.caption, color: colors.textMuted, fontStyle: 'italic' } as any,
+
+  // Assign panel
+  assignPanel: {
+    backgroundColor: colors.surfaceSubtle,
+    borderRadius: radii.card,
+    padding: spacing.md,
+    marginBottom: spacing.sm,
+    gap: spacing.sm,
   },
-  positionStatus: {
-    fontSize: 12,
-    fontWeight: '700',
-    marginLeft: spacing.sm,
-    flexShrink: 0,
+  assignError: {
+    backgroundColor: colors.dangerSurface,
+    borderRadius: radii.sm,
+    padding: spacing.sm,
   },
-  noPositions: {
-    ...typography.caption,
-    color: colors.textMuted,
-    fontStyle: 'italic',
-  } as any,
-  instructions: {
-    fontSize: 13,
-    color: colors.textSecondary,
-    lineHeight: 20,
+  assignErrorText: { fontSize: 12, color: colors.danger },
+  assignSpinner: { marginVertical: spacing.md },
+  guardList: { maxHeight: 200 },
+  guardItem: {
+    paddingVertical: 6, paddingHorizontal: spacing.sm,
+    borderRadius: radii.sm,
+    borderWidth: 1, borderColor: colors.border,
+    marginBottom: 3,
+    backgroundColor: colors.card,
   },
+  guardItemSelected: {
+    borderColor: colors.accentTeal, backgroundColor: colors.accentTealSoft,
+  },
+  guardItemPressed: { backgroundColor: colors.surfaceSubtle },
+  guardItemDimmed: { opacity: 0.4 },
+  guardItemMain: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  guardItemName: { flex: 1, fontSize: 13, color: colors.textPrimary, fontWeight: '500' },
+  guardItemAvail: { fontSize: 11, color: colors.success, fontWeight: '600', marginLeft: spacing.xs },
+  guardItemUnavail: { fontSize: 11, color: colors.warning, fontWeight: '600', marginLeft: spacing.xs },
+  guardItemIneligible: { fontSize: 11, color: colors.danger, fontWeight: '600', marginLeft: spacing.xs },
+  guardItemReason: { fontSize: 11, color: colors.textMuted, marginTop: 2 },
+  assignFooter: { alignItems: 'flex-end' },
+  noGuardsText: { fontSize: 12, color: colors.textMuted, fontStyle: 'italic', paddingVertical: spacing.sm } as any,
+
+  // Bulk assign panel
+  bulkPanel: {
+    backgroundColor: colors.surfaceSubtle,
+    borderRadius: radii.card,
+    padding: spacing.md,
+    gap: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  bulkPositionBlock: { gap: spacing.sm },
+  bulkPositionDivider: { borderBottomWidth: 1, borderBottomColor: colors.border, paddingBottom: spacing.md },
+  bulkPositionLabel: { fontSize: 12, fontWeight: '700', color: colors.textSecondary },
+  bulkGuardList: { maxHeight: 120 },
+  bulkFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  bulkCount: { fontSize: 12, color: colors.textSecondary },
 });
 
-// ── Main styles ───────────────────────────────────────────────────────────────
+// ── Main workspace styles ─────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-  workspace: {
-    gap: spacing.md,
-  },
+  workspace: { gap: spacing.md },
 
-  // Toolbar
   toolbar: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-    gap: spacing.md,
+    flexDirection: 'row', flexWrap: 'wrap',
+    alignItems: 'center', gap: spacing.md,
   },
-  filterGroup: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-    flexShrink: 1,
-  },
-  filterCell: {
-    minWidth: 148,
-    maxWidth: 220,
-    flex: 1,
-  },
+  filterGroup: { flexDirection: 'row', gap: spacing.sm, flexShrink: 1 },
+  filterCell: { minWidth: 148, maxWidth: 220, flex: 1 },
   weekNav: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    flex: 1,
-    justifyContent: 'center',
-    minWidth: 280,
+    flexDirection: 'row', alignItems: 'center',
+    gap: spacing.sm, flex: 1, justifyContent: 'center', minWidth: 280,
   },
   navBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: radii.sm,
-    borderWidth: 1.5,
-    borderColor: colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.card,
-    flexShrink: 0,
+    width: 32, height: 32,
+    borderRadius: radii.sm, borderWidth: 1.5, borderColor: colors.border,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: colors.card, flexShrink: 0,
   },
-  navBtnPressed: {
-    backgroundColor: colors.surfaceSubtle,
-  },
-  navBtnText: {
-    fontSize: 22,
-    lineHeight: 26,
-    color: colors.textPrimary,
-    fontWeight: '600',
-  },
-  weekLabel: {
-    ...typography.label,
-    color: colors.textPrimary,
-    flex: 1,
-    textAlign: 'center',
-  },
+  navBtnPressed: { backgroundColor: colors.surfaceSubtle },
+  navBtnText: { fontSize: 22, lineHeight: 26, color: colors.textPrimary, fontWeight: '600' },
+  weekLabel: { ...typography.label, color: colors.textPrimary, flex: 1, textAlign: 'center' } as any,
 
-  // Summary strip
   summaryStrip: {
-    flexDirection: 'row',
-    backgroundColor: colors.card,
-    borderRadius: radii.card,
-    borderWidth: 1,
-    borderColor: colors.border,
-    overflow: 'hidden',
+    flexDirection: 'row', backgroundColor: colors.card,
+    borderRadius: radii.card, borderWidth: 1, borderColor: colors.border, overflow: 'hidden',
   } as any,
-  summaryDivider: {
-    width: 1,
-    backgroundColor: colors.border,
-    marginVertical: spacing.sm,
-  },
+  summaryDivider: { width: 1, backgroundColor: colors.border, marginVertical: spacing.sm },
 
-  // Loading / error feedback
   centeredFeedback: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: spacing.xl,
-    gap: spacing.sm,
+    alignItems: 'center', justifyContent: 'center',
+    paddingVertical: spacing.xl, gap: spacing.sm,
   },
-  feedbackText: {
-    ...typography.caption,
-    color: colors.textSecondary,
-  },
+  feedbackText: { ...typography.caption, color: colors.textSecondary } as any,
   errorBox: {
-    backgroundColor: colors.dangerSurface,
-    borderRadius: radii.card,
-    borderWidth: 1,
-    borderColor: colors.danger,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    gap: spacing.sm,
-    alignItems: 'flex-start',
+    backgroundColor: colors.dangerSurface, borderRadius: radii.card,
+    borderWidth: 1, borderColor: colors.danger,
+    paddingHorizontal: spacing.lg, paddingVertical: spacing.md,
+    gap: spacing.sm, alignItems: 'flex-start',
   },
-  errorText: {
-    fontSize: 14,
-    color: colors.danger,
-    lineHeight: 20,
-  },
+  errorText: { fontSize: 14, color: colors.danger, lineHeight: 20 },
 
-  // Day sections
-  daySections: {
-    gap: spacing.sm,
-  },
+  daySections: { gap: spacing.sm },
   daySection: {
-    backgroundColor: colors.card,
-    borderRadius: radii.card,
-    borderWidth: 1,
-    borderColor: colors.border,
-    overflow: 'hidden',
+    backgroundColor: colors.card, borderRadius: radii.card,
+    borderWidth: 1, borderColor: colors.border, overflow: 'hidden',
   } as any,
   dayHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    gap: spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: spacing.lg, paddingVertical: spacing.sm,
+    gap: spacing.sm, borderBottomWidth: 1, borderBottomColor: colors.border,
     backgroundColor: colors.surfaceSubtle,
   },
-  dayHeaderTitle: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    gap: spacing.sm,
-    flex: 1,
-  },
-  dayName: {
-    ...typography.panelHeading,
-    color: colors.textPrimary,
-  },
-  dayShortLabel: {
-    ...typography.caption,
-    color: colors.textSecondary,
-  },
-  dayHeaderMeta: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    flexShrink: 0,
-  },
-  daySlotCount: {
-    ...typography.caption,
-    color: colors.textMuted,
-  },
+  dayHeaderTitle: { flexDirection: 'row', alignItems: 'baseline', gap: spacing.sm, flex: 1 },
+  dayName: { ...typography.panelHeading, color: colors.textPrimary } as any,
+  dayShortLabel: { ...typography.caption, color: colors.textSecondary } as any,
+  dayHeaderMeta: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, flexShrink: 0 },
+  daySlotCount: { ...typography.caption, color: colors.textMuted } as any,
   openChip: {
-    backgroundColor: colors.dangerSurface,
-    borderRadius: radii.pill,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 2,
+    backgroundColor: colors.dangerSurface, borderRadius: radii.pill,
+    paddingHorizontal: spacing.sm, paddingVertical: 2,
   },
-  openChipText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: colors.danger,
+  openChipText: { fontSize: 11, fontWeight: '700', color: colors.danger },
+  addDayBtn: {
+    width: 22, height: 22, borderRadius: 11,
+    backgroundColor: colors.accentTealSoft,
+    alignItems: 'center', justifyContent: 'center',
   },
-  emptyDayRow: {
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-  },
-  emptyDayText: {
-    ...typography.caption,
-    color: colors.textMuted,
-    fontStyle: 'italic',
-  } as any,
+  addDayBtnPressed: { opacity: 0.7 },
+  addDayBtnText: { fontSize: 14, fontWeight: '700', color: colors.accentTeal, lineHeight: 20 },
+  emptyDayRow: { paddingHorizontal: spacing.lg, paddingVertical: spacing.md },
+  emptyDayText: { ...typography.caption, color: colors.textMuted, fontStyle: 'italic' } as any,
 
-  // Slot row
-  slotRow: {
-    flexDirection: 'row',
-    alignItems: 'stretch',
-    minHeight: 48,
-  },
-  slotRowDivider: {
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  slotRowHovered: {
-    backgroundColor: colors.surfaceSubtle,
-  },
-  legacyRow: {
-    backgroundColor: colors.surfaceSubtle,
-    opacity: 0.85,
-  },
-  accentBar: {
-    width: 3,
-    alignSelf: 'stretch',
-    flexShrink: 0,
-  },
+  slotRow: { flexDirection: 'row', alignItems: 'stretch', minHeight: 48 },
+  slotRowDivider: { borderBottomWidth: 1, borderBottomColor: colors.border },
+  slotRowHovered: { backgroundColor: colors.surfaceSubtle },
+  legacyRow: { backgroundColor: colors.surfaceSubtle, opacity: 0.85 },
+  accentBar: { width: 3, alignSelf: 'stretch', flexShrink: 0 },
   rowContent: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: spacing.md,
-    gap: spacing.sm,
-    minHeight: 48,
+    flex: 1, flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: spacing.md, gap: spacing.sm, minHeight: 48,
   },
-  rowContentLegacy: {
-    opacity: 1,
-  },
-  colTimeWrap: {
-    width: 114,
-    flexShrink: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  colTime: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: colors.textPrimary,
-    fontVariant: ['tabular-nums'],
-  } as any,
-  nightDot: {
-    fontSize: 7,
-    color: colors.info,
-    lineHeight: 14,
-  },
-  colSite: {
-    flex: 2,
-    fontSize: 13,
-    color: colors.textPrimary,
-    minWidth: 0,
-  },
-  colCoverWrap: {
-    width: 80,
-    flexShrink: 0,
-    alignItems: 'flex-end',
-    gap: 1,
-  },
-  colCover: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: colors.textPrimary,
-    fontVariant: ['tabular-nums'],
-  } as any,
-  colCoverOpen: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: colors.danger,
-  },
-  colGuardLegacy: {
-    flex: 2,
-    fontSize: 13,
-    color: colors.textSecondary,
-    minWidth: 0,
-    fontStyle: 'italic',
-  } as any,
+  colTimeWrap: { width: 114, flexShrink: 0, flexDirection: 'row', alignItems: 'center', gap: 4 },
+  colTime: { fontSize: 13, fontWeight: '600', color: colors.textPrimary, fontVariant: ['tabular-nums'] } as any,
+  nightDot: { fontSize: 7, color: colors.info, lineHeight: 14 },
+  colSite: { flex: 2, fontSize: 13, color: colors.textPrimary, minWidth: 0 },
+  colCoverWrap: { width: 80, flexShrink: 0, alignItems: 'flex-end', gap: 1 },
+  colCover: { fontSize: 13, fontWeight: '700', color: colors.textPrimary, fontVariant: ['tabular-nums'] } as any,
+  colCoverOpen: { fontSize: 11, fontWeight: '600', color: colors.danger },
+  colGuardLegacy: { flex: 2, fontSize: 13, color: colors.textSecondary, minWidth: 0, fontStyle: 'italic' } as any,
   legacyPill: {
-    backgroundColor: colors.pendingSurface,
-    borderRadius: radii.pill,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 2,
-    flexShrink: 0,
+    backgroundColor: colors.pendingSurface, borderRadius: radii.pill,
+    paddingHorizontal: spacing.sm, paddingVertical: 2, flexShrink: 0,
   },
   legacyPillText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: colors.pending,
-    textTransform: 'uppercase',
-    letterSpacing: 0.3,
+    fontSize: 10, fontWeight: '700', color: colors.pending,
+    textTransform: 'uppercase', letterSpacing: 0.3,
   } as any,
   stateBadge: {
-    width: 108,
-    flexShrink: 0,
-    borderRadius: radii.pill,
-    paddingVertical: 3,
-    alignItems: 'center',
-    paddingHorizontal: spacing.xs,
+    width: 108, flexShrink: 0, borderRadius: radii.pill,
+    paddingVertical: 3, alignItems: 'center', paddingHorizontal: spacing.xs,
   },
-  stateBadgeText: {
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 0.2,
-  } as any,
+  stateBadgeText: { fontSize: 11, fontWeight: '700', letterSpacing: 0.2 } as any,
   chevron: {
-    width: 20,
-    flexShrink: 0,
-    textAlign: 'center',
-    fontSize: 16,
-    color: colors.neutralSlate,
-    fontWeight: '600',
+    width: 20, flexShrink: 0, textAlign: 'center',
+    fontSize: 16, color: colors.neutralSlate, fontWeight: '600',
   } as any,
 
-  // Drawer footer
-  drawerFooterRow: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-  },
+  drawerFooterRow: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: spacing.sm },
+  drawerFooterSpacer: { flex: 1 },
 });
