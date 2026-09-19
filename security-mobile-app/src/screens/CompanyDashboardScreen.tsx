@@ -3775,6 +3775,7 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
       onPrevWeek={handlePlannerPrevWeek}
       onNextWeek={handlePlannerNextWeek}
       onTodayWeek={handlePlannerTodayWeek}
+      sites={rotaWeekData?.sites ?? []}
       slotsByDayName={slotsByDayName}
       weekSnapshot={rotaWeekData?.snapshot ?? null}
       loadingRota={loadingRota}

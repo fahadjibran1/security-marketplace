@@ -10,8 +10,10 @@ import type {
   EligibleGuardRow,
   RotaCoveragePhase,
   RotaCoverageState,
+  RotaDayCells,
   RotaSlotDetail,
   RotaSlotCell,
+  RotaSiteWeekRow,
   RotaWeekSnapshot,
   RotaCreatePayload,
   RotaSlotChanges,
@@ -289,6 +291,7 @@ type CompanyRotaPlannerWorkspaceProps = {
   onTodayWeek: () => void;
 
   // Week data
+  sites: RotaSiteWeekRow[];
   slotsByDayName: Map<string, FlatSlotCell[]>;
   weekSnapshot: RotaWeekSnapshot | null;
   loadingRota: boolean;
@@ -331,6 +334,7 @@ export function CompanyRotaPlannerWorkspace({
   onPrevWeek,
   onNextWeek,
   onTodayWeek,
+  sites,
   slotsByDayName,
   weekSnapshot,
   loadingRota,
@@ -406,6 +410,9 @@ export function CompanyRotaPlannerWorkspace({
   const [cancelSlotConfirm, setCancelSlotConfirm] = React.useState(false);
   const [cancellingSlot, setCancellingSlot]       = React.useState(false);
   const [cancelSlotError, setCancelSlotError]     = React.useState<string | null>(null);
+
+  // ── View mode ─────────────────────────────────────────────────────────────
+  const [viewMode, setViewMode] = React.useState<'site-week' | 'day-list'>('site-week');
 
   // ── Computed ───────────────────────────────────────────────────────────────
   const snap = weekSnapshot;
@@ -517,10 +524,15 @@ export function CompanyRotaPlannerWorkspace({
 
   // ── Create slot ────────────────────────────────────────────────────────────
 
-  const openCreate = React.useCallback((defaultDate?: string) => {
+  const hasLegacyThisWeek = React.useMemo(
+    () => Array.from(legacyShiftsByDate.values()).some((rows) => rows.length > 0),
+    [legacyShiftsByDate],
+  );
+
+  const openCreate = React.useCallback((defaultDate?: string, defaultSiteId?: string) => {
     setCreateDate(defaultDate ?? weekCommencing);
     setCreateDefaultDate(defaultDate ?? '');
-    setCreateSiteId(plannerSiteId);
+    setCreateSiteId(defaultSiteId ?? plannerSiteId);
     setCreateStart('');
     setCreateEnd('');
     setCreateGuards('1');
@@ -721,6 +733,26 @@ export function CompanyRotaPlannerWorkspace({
           </View>
         </View>
 
+        {/* View switcher */}
+        <View style={styles.viewSwitcher}>
+          <Pressable
+            style={({ pressed }: any) => [styles.viewSwitcherBtn, viewMode === 'site-week' && styles.viewSwitcherBtnActive, pressed && styles.viewSwitcherBtnPressed]}
+            onPress={() => setViewMode('site-week')}
+            accessibilityRole="button"
+            accessibilityLabel="Site Week view"
+          >
+            <Text style={[styles.viewSwitcherText, viewMode === 'site-week' && styles.viewSwitcherTextActive]}>Site Week</Text>
+          </Pressable>
+          <Pressable
+            style={({ pressed }: any) => [styles.viewSwitcherBtn, viewMode === 'day-list' && styles.viewSwitcherBtnActive, pressed && styles.viewSwitcherBtnPressed]}
+            onPress={() => setViewMode('day-list')}
+            accessibilityRole="button"
+            accessibilityLabel="Day List view"
+          >
+            <Text style={[styles.viewSwitcherText, viewMode === 'day-list' && styles.viewSwitcherTextActive]}>Day List</Text>
+          </Pressable>
+        </View>
+
         <View style={styles.weekNav}>
           <Pressable
             onPress={onPrevWeek}
@@ -794,8 +826,19 @@ export function CompanyRotaPlannerWorkspace({
         </View>
       )}
 
+      {/* ── Site Week matrix ──────────────────────────────────────────────── */}
+      {!loadingRota && !rotaError && viewMode === 'site-week' && (
+        <SiteWeekMatrix
+          sites={sites}
+          plannerWeekDays={plannerWeekDays}
+          hasLegacy={hasLegacyThisWeek}
+          onOpenSlot={openSlot}
+          onOpenCreate={(sid, date) => openCreate(date, sid)}
+        />
+      )}
+
       {/* ── Day sections ──────────────────────────────────────────────────── */}
-      {!loadingRota && !rotaError && (
+      {!loadingRota && !rotaError && viewMode === 'day-list' && (
         <View style={styles.daySections}>
           {plannerWeekDays.map((day, dayIdx) => {
             const dayName = DAY_NAMES[dayIdx];
@@ -1952,6 +1995,378 @@ const db = StyleSheet.create({
   bulkCount: { fontSize: 12, color: colors.textSecondary },
 });
 
+// ── Site Week matrix ──────────────────────────────────────────────────────────
+
+const SITE_COL_W = 180;
+const DAY_COL_W  = 132;
+
+/** Compact slot card rendered inside a matrix cell. */
+function SlotMiniCard({
+  cell, onPress,
+}: {
+  cell: RotaSlotCell;
+  onPress: () => void;
+}) {
+  const tok = slotStateTokens(cell.coverageState);
+  const timeStr = `${formatUtcTime(cell.startAt)}–${formatUtcTime(cell.endAt)}`;
+
+  const coverNum  = cell.coveragePhase === 'live' ? cell.counts.onShift
+                  : cell.coveragePhase === 'past' ? cell.counts.completed
+                  : cell.counts.confirmed;
+  const isHealthy = coverNum === cell.counts.required
+                 && cell.counts.open === 0
+                 && cell.counts.offered === 0
+                 && !tok.problem;
+
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed, hovered }: any) => [
+        mxStyles.slotCard,
+        { borderLeftColor: tok.problem ? tok.fg : colors.accentTealSoft },
+        (pressed || hovered) && mxStyles.slotCardHovered,
+      ]}
+      accessibilityRole="button"
+      accessibilityLabel={`${timeStr} ${coverNum} of ${cell.counts.required}`}
+    >
+      <Text style={mxStyles.slotCardTime}>{timeStr}</Text>
+      {cell.title ? <Text style={mxStyles.slotCardTitle} numberOfLines={1}>{cell.title}</Text> : null}
+
+      {cell.coveragePhase === 'past' ? (
+        <Text style={[mxStyles.slotCardState, { color: tok.fg || colors.textMuted }]}>
+          {tok.label || 'Completed'}
+        </Text>
+      ) : isHealthy ? (
+        <Text style={mxStyles.slotCardHealthy}>
+          {coverNum}/{cell.counts.required} ✓
+        </Text>
+      ) : (
+        <>
+          <Text style={mxStyles.slotCardCover}>
+            {coverNum}/{cell.counts.required}
+            {cell.coveragePhase === 'live' ? ' on shift' : ' covered'}
+          </Text>
+          {cell.counts.open > 0 && (
+            <Text style={mxStyles.slotCardOpen}>{cell.counts.open} Open</Text>
+          )}
+          {cell.counts.offered > 0 && cell.coveragePhase === 'future' && (
+            <Text style={mxStyles.slotCardAwaiting}>{cell.counts.offered} Awaiting</Text>
+          )}
+          {tok.label === 'Attention' && cell.counts.open === 0 && cell.counts.offered === 0 && (
+            <Text style={mxStyles.slotCardAttention}>Attention</Text>
+          )}
+          {tok.label === 'Cancelled' && (
+            <Text style={mxStyles.slotCardState}>Cancelled</Text>
+          )}
+        </>
+      )}
+    </Pressable>
+  );
+}
+
+/** One cell of the Site Week matrix — empty or contains slot cards. */
+function MatrixDayCell({
+  slots, siteId, date, onOpenSlot, onOpenCreate, isLastCol,
+}: {
+  slots: RotaSlotCell[];
+  siteId: number;
+  date: string;
+  onOpenSlot: (slotId: number) => void;
+  onOpenCreate: (siteId: string, date: string) => void;
+  isLastCol: boolean;
+}) {
+  const hasSlots = slots.length > 0;
+
+  return (
+    <View style={[mxStyles.cell, isLastCol && mxStyles.cellLast]}>
+      {hasSlots ? (
+        <>
+          {slots.map((slot) => (
+            <Fragment key={slot.slotId}>
+              <SlotMiniCard
+                cell={slot}
+                onPress={() => onOpenSlot(slot.slotId)}
+              />
+            </Fragment>
+          ))}
+          <Pressable
+            style={({ pressed, hovered }: any) => [mxStyles.cellAddMore, (pressed || hovered) && mxStyles.cellAddMoreHovered]}
+            onPress={() => onOpenCreate(String(siteId), date)}
+            accessibilityRole="button"
+            accessibilityLabel="Add another shift"
+          >
+            <Text style={mxStyles.cellAddMoreText}>+ Add</Text>
+          </Pressable>
+        </>
+      ) : (
+        <Pressable
+          style={({ pressed, hovered }: any) => [mxStyles.cellEmptyBtn, (pressed || hovered) && mxStyles.cellEmptyBtnHovered]}
+          onPress={() => onOpenCreate(String(siteId), date)}
+          accessibilityRole="button"
+          accessibilityLabel="Add shift"
+        >
+          <Text style={mxStyles.cellEmptyDash}>—</Text>
+          <Text style={mxStyles.cellEmptyAdd}>+ Add</Text>
+        </Pressable>
+      )}
+    </View>
+  );
+}
+
+/** The full Site × Week planning matrix. */
+function SiteWeekMatrix({
+  sites, plannerWeekDays, hasLegacy, onOpenSlot, onOpenCreate,
+}: {
+  sites: RotaSiteWeekRow[];
+  plannerWeekDays: PlannerWeekDay[];
+  hasLegacy: boolean;
+  onOpenSlot: (slotId: number) => void;
+  onOpenCreate: (siteId: string, date: string) => void;
+}) {
+  if (sites.length === 0) {
+    return (
+      <View style={mxStyles.emptyMatrix}>
+        <Text style={mxStyles.emptyMatrixText}>No active sites found for this filter.</Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={mxStyles.matrixOuter}>
+      {hasLegacy && (
+        <View style={mxStyles.legacyBanner}>
+          <Text style={mxStyles.legacyBannerText}>
+            Legacy rota records exist for this week. Switch to Day List to inspect them.
+          </Text>
+        </View>
+      )}
+
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={IS_WEB}
+        contentContainerStyle={{ minWidth: SITE_COL_W + DAY_COL_W * 7 }}
+        style={mxStyles.matrixScrollH}
+      >
+        <View style={mxStyles.matrixGrid}>
+          {/* ── Column headers ──────────────────────────────────────────── */}
+          <View style={mxStyles.headerRow}>
+            <View style={[mxStyles.headerSiteCol, IS_WEB && (mxStyles.stickyLeft as any)]}>
+              <Text style={mxStyles.headerSiteText}>Site</Text>
+            </View>
+            {plannerWeekDays.map((day, idx) => (
+              <View key={day.date} style={[mxStyles.headerDayCol, idx === 6 && mxStyles.headerDayColLast]}>
+                <Text style={mxStyles.headerDayName}>{day.label.slice(0, 3).toUpperCase()}</Text>
+                <Text style={mxStyles.headerDayDate}>{day.shortLabel}</Text>
+              </View>
+            ))}
+          </View>
+
+          {/* ── Site rows ───────────────────────────────────────────────── */}
+          {sites.map((site, siteIdx) => (
+            <View key={site.siteId} style={[mxStyles.dataRow, siteIdx < sites.length - 1 && mxStyles.dataRowDivider]}>
+              {/* Site name cell */}
+              <View style={[mxStyles.siteCell, IS_WEB && (mxStyles.stickySiteCell as any)]}>
+                <Text style={mxStyles.siteName} numberOfLines={2}>{site.siteName}</Text>
+                {site.clientName ? (
+                  <Text style={mxStyles.siteClient} numberOfLines={1}>{site.clientName}</Text>
+                ) : null}
+              </View>
+
+              {/* Day cells */}
+              {plannerWeekDays.map((day, dayIdx) => {
+                const dayName = DAY_NAMES[dayIdx];
+                const dayCells = (site.days as any)[dayName] as RotaDayCells | undefined;
+                const slots = dayCells?.slots ?? [];
+                return (
+                  <Fragment key={day.date}>
+                    <MatrixDayCell
+                      slots={slots}
+                      siteId={site.siteId}
+                      date={day.date}
+                      onOpenSlot={onOpenSlot}
+                      onOpenCreate={onOpenCreate}
+                      isLastCol={dayIdx === 6}
+                    />
+                  </Fragment>
+                );
+              })}
+            </View>
+          ))}
+        </View>
+      </ScrollView>
+    </View>
+  );
+}
+
+const mxStyles = StyleSheet.create({
+  // Outer container
+  matrixOuter: { gap: spacing.sm },
+  emptyMatrix: { paddingVertical: spacing.xl, alignItems: 'center' },
+  emptyMatrixText: { fontSize: 13, color: colors.textMuted, fontStyle: 'italic' } as any,
+
+  // Legacy banner
+  legacyBanner: {
+    backgroundColor: colors.pendingSurface,
+    borderRadius: radii.sm,
+    borderWidth: 1,
+    borderColor: colors.pending,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  legacyBannerText: { fontSize: 13, color: colors.pending },
+
+  // Matrix scroll
+  matrixScrollH: {},
+  matrixGrid: {
+    backgroundColor: colors.card,
+    borderRadius: radii.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+    overflow: 'hidden',
+  } as any,
+
+  // Column header row
+  headerRow: {
+    flexDirection: 'row',
+    backgroundColor: colors.surfaceSubtle,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  headerSiteCol: {
+    width: SITE_COL_W,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRightWidth: 1,
+    borderRightColor: colors.border,
+    justifyContent: 'center',
+    backgroundColor: colors.surfaceSubtle,
+  },
+  // Web-only sticky: applied via spread with IS_WEB check
+  stickyLeft: {
+    position: 'sticky',
+    left: 0,
+    zIndex: 3,
+  } as any,
+  stickySiteCell: {
+    position: 'sticky',
+    left: 0,
+    zIndex: 2,
+    backgroundColor: colors.card,
+  } as any,
+  headerSiteText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: colors.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+  } as any,
+  headerDayCol: {
+    width: DAY_COL_W,
+    paddingHorizontal: spacing.xs,
+    paddingVertical: spacing.sm,
+    borderRightWidth: 1,
+    borderRightColor: colors.border,
+    alignItems: 'center',
+  },
+  headerDayColLast: { borderRightWidth: 0 },
+  headerDayName: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.textSecondary,
+    letterSpacing: 0.4,
+  } as any,
+  headerDayDate: { fontSize: 11, color: colors.textMuted },
+
+  // Data rows
+  dataRow: { flexDirection: 'row' },
+  dataRowDivider: { borderBottomWidth: 1, borderBottomColor: colors.border },
+
+  // Site name cell
+  siteCell: {
+    width: SITE_COL_W,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRightWidth: 1,
+    borderRightColor: colors.border,
+    justifyContent: 'center',
+    backgroundColor: colors.card,
+  },
+  siteName: { fontSize: 13, fontWeight: '600', color: colors.textPrimary, lineHeight: 18 },
+  siteClient: { fontSize: 11, color: colors.textMuted, marginTop: 1 },
+
+  // Day cell
+  cell: {
+    width: DAY_COL_W,
+    minHeight: 64,
+    borderRightWidth: 1,
+    borderRightColor: colors.border,
+    padding: spacing.xs,
+    gap: 4,
+  },
+  cellLast: { borderRightWidth: 0 },
+
+  // Empty cell
+  cellEmptyBtn: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 56,
+    gap: 2,
+    borderRadius: radii.sm,
+  },
+  cellEmptyBtnHovered: { backgroundColor: colors.surfaceSubtle },
+  cellEmptyDash: { fontSize: 14, color: colors.border },
+  cellEmptyAdd: { fontSize: 11, color: colors.textMuted },
+
+  // Add-more (when cell already has slots)
+  cellAddMore: {
+    alignItems: 'center',
+    paddingVertical: 3,
+    borderRadius: radii.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginTop: 2,
+  },
+  cellAddMoreHovered: { backgroundColor: colors.surfaceSubtle },
+  cellAddMoreText: { fontSize: 10, color: colors.textMuted },
+
+  // Slot mini card
+  slotCard: {
+    borderRadius: radii.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderLeftWidth: 3,
+    paddingHorizontal: spacing.xs,
+    paddingVertical: 4,
+    gap: 1,
+    backgroundColor: colors.card,
+  },
+  slotCardHovered: { backgroundColor: colors.surfaceSubtle },
+  slotCardTime: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: colors.textPrimary,
+    fontVariant: ['tabular-nums'],
+  } as any,
+  slotCardTitle: { fontSize: 10, color: colors.textMuted, fontStyle: 'italic' } as any,
+  slotCardHealthy: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.success,
+    fontVariant: ['tabular-nums'],
+  } as any,
+  slotCardCover: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.textPrimary,
+    fontVariant: ['tabular-nums'],
+  } as any,
+  slotCardOpen:      { fontSize: 11, fontWeight: '600', color: colors.danger },
+  slotCardAwaiting:  { fontSize: 11, fontWeight: '600', color: colors.info },
+  slotCardAttention: { fontSize: 11, fontWeight: '600', color: colors.warning },
+  slotCardState:     { fontSize: 11, color: colors.textMuted },
+});
+
 // ── Main workspace styles ─────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
@@ -1963,6 +2378,32 @@ const styles = StyleSheet.create({
   },
   filterGroup: { flexDirection: 'row', gap: spacing.sm, flexShrink: 1 },
   filterCell: { minWidth: 148, maxWidth: 220, flex: 1 },
+
+  // View switcher (segmented control)
+  viewSwitcher: {
+    flexDirection: 'row',
+    backgroundColor: colors.surfaceSubtle,
+    borderRadius: radii.pill,
+    padding: 2,
+    borderWidth: 1,
+    borderColor: colors.border,
+    flexShrink: 0,
+  },
+  viewSwitcherBtn: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 5,
+    borderRadius: radii.pill,
+  },
+  viewSwitcherBtnActive: {
+    backgroundColor: colors.card,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 2,
+  },
+  viewSwitcherBtnPressed: { opacity: 0.75 },
+  viewSwitcherText: { fontSize: 13, fontWeight: '500', color: colors.textSecondary },
+  viewSwitcherTextActive: { color: colors.textPrimary, fontWeight: '600' } as any,
   weekNav: {
     flexDirection: 'row', alignItems: 'center',
     gap: spacing.sm, flex: 1, justifyContent: 'center', minWidth: 280,
