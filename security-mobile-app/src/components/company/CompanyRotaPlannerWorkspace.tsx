@@ -1,25 +1,22 @@
 import * as React from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Fragment } from 'react/jsx-runtime';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { colors, radii, spacing, typography } from '../../theme';
 import { Button } from '../ui/Button';
-import { ConfirmationDialog } from '../ui/ConfirmationDialog';
 import { Drawer } from '../ui/Drawer';
+import type {
+  RotaCoveragePhase,
+  RotaCoverageState,
+  RotaPositionCounts,
+  RotaSlotPositionSummary,
+  RotaSlotDetail,
+  RotaSlotCell,
+  RotaWeekSnapshot,
+} from '../../types/models';
 
 const IS_WEB = typeof document !== 'undefined';
 
-// ── Type exports ──────────────────────────────────────────────────────────────
-
-export type PlannerRow = {
-  localId: string;
-  date: string;
-  startTime: string;
-  endTime: string;
-  guardsRequired: string;
-  assignedGuardId: string;
-  status: string;
-  instructions: string;
-  sourceShiftIds: number[];
-};
+// ── Exported types ────────────────────────────────────────────────────────────
 
 export type PlannerWeekDay = {
   date: string;
@@ -27,53 +24,87 @@ export type PlannerWeekDay = {
   shortLabel: string;
 };
 
-// ── Static data ───────────────────────────────────────────────────────────────
+/** A RotaSlotCell enriched with the site context from its parent SiteWeekRow. */
+export type FlatSlotCell = RotaSlotCell & {
+  siteId: number;
+  siteName: string;
+  clientId: number | null;
+  clientName: string | null;
+};
 
-const SHIFT_STATUS_OPTIONS = [
-  { label: 'Unfilled',    value: 'unfilled' },
-  { label: 'Offered',     value: 'offered' },
-  { label: 'Ready',       value: 'ready' },
-  { label: 'Missed',      value: 'missed' },
-  { label: 'Cancelled',   value: 'cancelled' },
-  { label: 'Rejected',    value: 'rejected' },
-  { label: 'In Progress', value: 'in_progress' },
-  { label: 'Completed',   value: 'completed' },
-];
+/** A legacy Shift (rotaSlotId=null) surfaced for backward-compatible display only. */
+export type LegacyShiftRow = {
+  id: number;
+  date: string;
+  startTime: string;
+  endTime: string;
+  siteName: string;
+  guardName: string | null;
+  status: string;
+};
 
-// ── Status tokens ─────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
-function statusTokens(status: string): { bg: string; fg: string; label: string; problem: boolean } {
-  switch (status) {
-    case 'unfilled':    return { bg: colors.dangerSurface,  fg: colors.danger,   label: 'Unfilled',   problem: true };
-    case 'offered':     return { bg: colors.infoSurface,    fg: colors.info,     label: 'Offered',    problem: false };
-    case 'ready':       return { bg: colors.successSurface, fg: colors.success,  label: 'Ready',      problem: false };
-    case 'in_progress': return { bg: colors.successSurface, fg: colors.success,  label: 'On Shift',   problem: false };
-    case 'completed':   return { bg: colors.pendingSurface, fg: colors.pending,  label: 'Done',       problem: false };
-    case 'missed':      return { bg: colors.warningSurface, fg: colors.warning,  label: 'Missed',     problem: true };
-    case 'cancelled':   return { bg: colors.pendingSurface, fg: colors.pending,  label: 'Cancelled',  problem: false };
-    case 'rejected':    return { bg: colors.warningSurface, fg: colors.warning,  label: 'Rejected',   problem: true };
-    default:            return { bg: colors.pendingSurface, fg: colors.pending,  label: status || '—', problem: false };
+function formatUtcTime(iso: string): string {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' });
+  } catch {
+    return iso.slice(11, 16);
   }
 }
 
-// ── Drawer form controls ──────────────────────────────────────────────────────
+function formatUtcDate(iso: string): string {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' });
+  } catch {
+    return iso.slice(0, 10);
+  }
+}
 
-const CTRL: any = {
-  height: 42,
-  borderWidth: 1.5,
-  borderColor: colors.fieldBorder,
-  borderRadius: radii.sm,
-  paddingLeft: spacing.md,
-  paddingRight: spacing.md,
-  fontSize: 16,
-  color: colors.textPrimary,
-  backgroundColor: colors.card,
-  outlineStyle: 'none',
-};
+// ── Coverage state tokens ─────────────────────────────────────────────────────
 
-const CTRL_WEB: any = { ...CTRL, width: '100%', boxSizing: 'border-box' };
+function slotStateTokens(state: RotaCoverageState): {
+  bg: string; fg: string; label: string; problem: boolean;
+} {
+  switch (state) {
+    case 'fully_planned':       return { bg: colors.successSurface,  fg: colors.success,  label: 'Fully planned',      problem: false };
+    case 'offered_pending':     return { bg: colors.infoSurface,     fg: colors.info,     label: 'Awaiting acceptance', problem: false };
+    case 'under_planned':       return { bg: colors.warningSurface,  fg: colors.warning,  label: 'Cover required',     problem: true  };
+    case 'fully_open':          return { bg: colors.dangerSurface,   fg: colors.danger,   label: 'Open',               problem: true  };
+    case 'has_problems':        return { bg: colors.warningSurface,  fg: colors.warning,  label: 'Attention',          problem: true  };
+    case 'live_fully_staffed':  return { bg: colors.successSurface,  fg: colors.success,  label: 'Fully staffed',      problem: false };
+    case 'live_partial':        return { bg: colors.warningSurface,  fg: colors.warning,  label: 'Short staffed',      problem: true  };
+    case 'live_none_on_site':   return { bg: colors.dangerSurface,   fg: colors.danger,   label: 'None on site',       problem: true  };
+    case 'live_has_problems':   return { bg: colors.warningSurface,  fg: colors.warning,  label: 'Attention',          problem: true  };
+    case 'outcome_completed':   return { bg: colors.pendingSurface,  fg: colors.pending,  label: 'Completed',          problem: false };
+    case 'outcome_shortfall':   return { bg: colors.warningSurface,  fg: colors.warning,  label: 'Completed short',    problem: true  };
+    case 'outcome_failed':      return { bg: colors.dangerSurface,   fg: colors.danger,   label: 'Failed',             problem: true  };
+    case 'outcome_has_problems':return { bg: colors.warningSurface,  fg: colors.warning,  label: 'Attention',          problem: true  };
+    case 'outcome_cancelled':   return { bg: colors.pendingSurface,  fg: colors.pending,  label: 'Cancelled',          problem: false };
+    case 'cancelled':           return { bg: colors.pendingSurface,  fg: colors.pending,  label: 'Cancelled',          problem: false };
+    default:                    return { bg: colors.pendingSurface,  fg: colors.pending,  label: state || '—',         problem: false };
+  }
+}
 
-function DrawerSelect({
+function positionStatusTokens(status: string): { fg: string; label: string } {
+  switch (status) {
+    case 'unfilled':    return { fg: colors.danger,   label: 'Open position' };
+    case 'offered':     return { fg: colors.info,     label: 'Offered'       };
+    case 'ready':       return { fg: colors.success,  label: 'Ready'         };
+    case 'in_progress': return { fg: colors.success,  label: 'On shift'      };
+    case 'completed':   return { fg: colors.pending,  label: 'Completed'     };
+    case 'missed':      return { fg: colors.warning,  label: 'Missed'        };
+    case 'rejected':    return { fg: colors.warning,  label: 'Rejected'      };
+    case 'cancelled':   return { fg: colors.textMuted, label: 'Cancelled'    };
+    default:            return { fg: colors.textMuted, label: status || '—'  };
+  }
+}
+
+// ── Filter select (web-native) ────────────────────────────────────────────────
+
+function FilterSelect({
   value, onChange, options, placeholder,
 }: {
   value: string;
@@ -88,8 +119,12 @@ function DrawerSelect({
     const SelectTag: any = 'select';
     const OptionTag: any = 'option';
     return (
-      <SelectTag value={value} onChange={(e: any) => onChange(e.target.value)}
-        style={CTRL_WEB} aria-label={placeholder ?? 'Select'}>
+      <SelectTag
+        value={value}
+        onChange={(e: any) => onChange(e.target.value)}
+        style={filterSelectStyle}
+        aria-label={placeholder ?? 'Select'}
+      >
         <OptionTag value="">{placeholder ?? 'Select'}</OptionTag>
         {options.map((opt) => (
           <OptionTag key={opt.value} value={opt.value}>{opt.label}</OptionTag>
@@ -97,167 +132,93 @@ function DrawerSelect({
       </SelectTag>
     );
   }
-  return (
-    <TextInput value={value} onChangeText={onChange} placeholder={placeholder}
-      style={CTRL} placeholderTextColor={colors.fieldPlaceholder} />
-  );
+  return null;
 }
 
-function DrawerTimeInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  if (IS_WEB) {
-    const InputTag: any = 'input';
-    return <InputTag type="time" value={value} onChange={(e: any) => onChange(e.target.value)} style={CTRL_WEB} />;
-  }
-  return <TextInput value={value} onChangeText={onChange} placeholder="HH:MM" style={CTRL} placeholderTextColor={colors.fieldPlaceholder} />;
-}
-
-function DrawerDateInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  if (IS_WEB) {
-    const InputTag: any = 'input';
-    return <InputTag type="date" value={value} onChange={(e: any) => onChange(e.target.value)} style={CTRL_WEB} />;
-  }
-  return <TextInput value={value} onChangeText={onChange} placeholder="YYYY-MM-DD" style={CTRL} placeholderTextColor={colors.fieldPlaceholder} />;
-}
-
-// ── Drawer state type ─────────────────────────────────────────────────────────
-
-type DrawerState =
-  | { kind: 'edit';   row: PlannerRow }
-  | { kind: 'create'; date: string }
-  | null;
-
-function buildDraftDefaults(date: string): Partial<PlannerRow> {
-  return { date, startTime: '08:00', endTime: '18:00', guardsRequired: '1', assignedGuardId: '', status: 'unfilled', instructions: '' };
-}
-
-function buildNewRow(draft: Partial<PlannerRow>): PlannerRow {
-  const date = draft.date ?? '';
-  return {
-    localId: `${date}-${Math.random().toString(36).slice(2, 8)}`,
-    date,
-    startTime: draft.startTime ?? '08:00',
-    endTime:   draft.endTime   ?? '18:00',
-    guardsRequired:  draft.guardsRequired  ?? '1',
-    assignedGuardId: draft.assignedGuardId ?? '',
-    status:       draft.status       ?? 'unfilled',
-    instructions: draft.instructions ?? '',
-    sourceShiftIds: [],
-  };
-}
+const filterSelectStyle: any = {
+  height: 38,
+  borderWidth: 1.5,
+  borderColor: colors.fieldBorder,
+  borderRadius: radii.sm,
+  paddingLeft: spacing.md,
+  paddingRight: spacing.md,
+  fontSize: 14,
+  color: colors.textPrimary,
+  backgroundColor: colors.card,
+  outlineStyle: 'none',
+  width: '100%',
+  boxSizing: 'border-box',
+};
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
 type CompanyRotaPlannerWorkspaceProps = {
   plannerClientId: string;
   plannerSiteId: string;
-  plannerSiteName: string;
-  plannerRows: PlannerRow[];
-  plannerRowsByDate: Map<string, PlannerRow[]>;
-  plannerWeekDays: PlannerWeekDay[];
-  savingRota: boolean;
-  siteClientOptions: Array<{ label: string; value: string }>;
-  plannerSiteOptions: Array<{ label: string; value: string }>;
-  linkedGuardOptions: Array<{ label: string; value: string }>;
-  guardNameById: Map<string, string>;
   setPlannerClientId: (v: string) => void;
   setPlannerSiteId: (v: string) => void;
-  onAddRow: (row: PlannerRow) => void;
-  onRowChange: (localId: string, patch: Partial<PlannerRow>) => void;
-  onRemoveRow: (localId: string) => void;
-  onCopyToNextWeek: () => void;
-  onSaveRota: () => void;
+  siteClientOptions: Array<{ label: string; value: string }>;
+  plannerSiteOptions: Array<{ label: string; value: string }>;
+
+  weekCommencing: string;
+  weekEnding: string;
+  plannerWeekDays: PlannerWeekDay[];
   onPrevWeek: () => void;
   onNextWeek: () => void;
   onTodayWeek: () => void;
+
+  slotsByDayName: Map<string, FlatSlotCell[]>;
+  weekSnapshot: RotaWeekSnapshot | null;
+  loadingRota: boolean;
+  rotaError: string | null;
+  onRetryLoadRota: () => void;
+
+  selectedSlotDetail: RotaSlotDetail | null;
+  loadingSlotDetail: boolean;
+  onOpenSlot: (slotId: number) => void;
+  onCloseSlotDrawer: () => void;
+
+  legacyShiftsByDate: Map<string, LegacyShiftRow[]>;
 };
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
+const DAY_NAMES = [
+  'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday',
+] as const;
+
 export function CompanyRotaPlannerWorkspace({
   plannerClientId,
   plannerSiteId,
-  plannerSiteName,
-  plannerRows,
-  plannerRowsByDate,
-  plannerWeekDays,
-  savingRota,
-  siteClientOptions,
-  plannerSiteOptions,
-  linkedGuardOptions,
-  guardNameById,
   setPlannerClientId,
   setPlannerSiteId,
-  onAddRow,
-  onRowChange,
-  onRemoveRow,
-  onCopyToNextWeek,
-  onSaveRota,
+  siteClientOptions,
+  plannerSiteOptions,
+  weekCommencing,
+  weekEnding,
+  plannerWeekDays,
   onPrevWeek,
   onNextWeek,
   onTodayWeek,
+  slotsByDayName,
+  weekSnapshot,
+  loadingRota,
+  rotaError,
+  onRetryLoadRota,
+  selectedSlotDetail,
+  loadingSlotDetail,
+  onOpenSlot,
+  onCloseSlotDrawer,
+  legacyShiftsByDate,
 }: CompanyRotaPlannerWorkspaceProps) {
 
-  // ── Local state ─────────────────────────────────────────────────────────────
-  const [drawerState, setDrawerState] = React.useState<DrawerState>(null);
-  const [draft, setDraft]             = React.useState<Partial<PlannerRow>>({});
-  const [removeTarget, setRemoveTarget] = React.useState<string | null>(null);
-
-  // ── Drawer helpers ───────────────────────────────────────────────────────────
-  const openEdit = (row: PlannerRow) => {
-    setDraft({ ...row });
-    setDrawerState({ kind: 'edit', row });
-  };
-
-  const openCreate = (date: string) => {
-    setDraft(buildDraftDefaults(date));
-    setDrawerState({ kind: 'create', date });
-  };
-
-  const closeDrawer = () => {
-    setDrawerState(null);
-    setDraft({});
-  };
-
-  const patchDraft = (patch: Partial<PlannerRow>) =>
-    setDraft((prev) => ({ ...prev, ...patch }));
-
-  const handleDrawerSave = () => {
-    if (!drawerState) return;
-    if (drawerState.kind === 'edit') {
-      onRowChange(drawerState.row.localId, draft);
-    } else {
-      onAddRow(buildNewRow(draft));
-    }
-    closeDrawer();
-  };
-
-  const handleConfirmRemove = () => {
-    if (removeTarget) {
-      onRemoveRow(removeTarget);
-      setRemoveTarget(null);
-      setDrawerState(null);
-    }
-  };
-
-  // ── Derived ─────────────────────────────────────────────────────────────────
+  // ── Week label ───────────────────────────────────────────────────────────────
   const weekLabel = plannerWeekDays.length >= 7
     ? `${plannerWeekDays[0].shortLabel} – ${plannerWeekDays[6].shortLabel}`
-    : '';
+    : `${weekCommencing} – ${weekEnding}`;
 
-  const totalShifts  = plannerRows.length;
-  const coveredCount = plannerRows.filter((r) => ['ready', 'in_progress', 'completed'].includes(r.status)).length;
-  const openCount    = plannerRows.filter((r) => !r.status || r.status === 'unfilled').length;
-  const offeredCount = plannerRows.filter((r) => r.status === 'offered').length;
-  const problemCount = plannerRows.filter((r) => ['missed', 'rejected'].includes(r.status)).length;
-
-  // ── Drawer header subtitle ───────────────────────────────────────────────────
-  const drawerSubtitle = React.useMemo(() => {
-    if (!drawerState) return '';
-    const date = drawerState.kind === 'edit' ? drawerState.row.date : drawerState.date;
-    const dayEntry = plannerWeekDays.find((d) => d.date === date);
-    const dayLabel = dayEntry ? dayEntry.shortLabel : date;
-    return plannerSiteName ? `${plannerSiteName} · ${dayLabel}` : dayLabel;
-  }, [drawerState, plannerWeekDays, plannerSiteName]);
+  // ── Summary stats from snapshot ──────────────────────────────────────────────
+  const snap = weekSnapshot;
 
   // ── Render ───────────────────────────────────────────────────────────────────
   return (
@@ -267,264 +228,386 @@ export function CompanyRotaPlannerWorkspace({
       <View style={styles.toolbar}>
         <View style={styles.filterGroup}>
           <View style={styles.filterCell}>
-            <DrawerSelect value={plannerClientId} onChange={setPlannerClientId}
-              options={siteClientOptions} placeholder="All clients" />
+            <FilterSelect
+              value={plannerClientId}
+              onChange={setPlannerClientId}
+              options={siteClientOptions}
+              placeholder="All clients"
+            />
           </View>
           <View style={styles.filterCell}>
-            <DrawerSelect value={plannerSiteId} onChange={setPlannerSiteId}
-              options={plannerSiteOptions} placeholder="Select site" />
+            <FilterSelect
+              value={plannerSiteId}
+              onChange={setPlannerSiteId}
+              options={plannerSiteOptions}
+              placeholder="All sites"
+            />
           </View>
         </View>
 
         <View style={styles.weekNav}>
-          <Pressable onPress={onPrevWeek}
+          <Pressable
+            onPress={onPrevWeek}
             style={({ pressed }: any) => [styles.navBtn, pressed && styles.navBtnPressed]}
-            accessibilityLabel="Previous week" accessibilityRole="button">
+            accessibilityLabel="Previous week"
+            accessibilityRole="button"
+          >
             <Text style={styles.navBtnText}>‹</Text>
           </Pressable>
           <Text style={styles.weekLabel} numberOfLines={1}>{weekLabel}</Text>
-          <Pressable onPress={onNextWeek}
+          <Pressable
+            onPress={onNextWeek}
             style={({ pressed }: any) => [styles.navBtn, pressed && styles.navBtnPressed]}
-            accessibilityLabel="Next week" accessibilityRole="button">
+            accessibilityLabel="Next week"
+            accessibilityRole="button"
+          >
             <Text style={styles.navBtnText}>›</Text>
           </Pressable>
           <Button label="Today" variant="secondary" size="sm" onPress={onTodayWeek} />
         </View>
+      </View>
 
-        <View style={styles.actionGroup}>
-          <Button label="Copy to Next Week" variant="secondary" size="sm" onPress={onCopyToNextWeek} />
-          <Button label={savingRota ? 'Saving…' : 'Save Rota'} variant="primary" size="sm"
-            loading={savingRota} onPress={onSaveRota} />
+      {/* ── Summary strip ───────────────────────────────────────────────────── */}
+      {snap && (
+        <View style={styles.summaryStrip}>
+          <SummaryStat value={snap.totalSlots}      label="Periods" />
+          <View style={styles.summaryDivider} />
+          <SummaryStat value={snap.totalPositions}  label="Positions" />
+          <View style={styles.summaryDivider} />
+          <SummaryStat
+            value={snap.openPositions}
+            label="Open"
+            highlight={snap.openPositions > 0 ? 'danger' : undefined}
+          />
+          <View style={styles.summaryDivider} />
+          <SummaryStat
+            value={snap.offeredPending}
+            label="Awaiting"
+            highlight={snap.offeredPending > 0 ? 'info' : undefined}
+          />
+          <View style={styles.summaryDivider} />
+          <SummaryStat
+            value={snap.onShiftNow}
+            label="On shift"
+            highlight={snap.onShiftNow > 0 ? 'success' : undefined}
+          />
+          <View style={styles.summaryDivider} />
+          <SummaryStat
+            value={snap.problems}
+            label="Problems"
+            highlight={snap.problems > 0 ? 'warning' : undefined}
+          />
         </View>
-      </View>
+      )}
 
-      {/* ── Week summary strip ───────────────────────────────────────────────── */}
-      <View style={styles.summaryStrip}>
-        <SummaryStat value={totalShifts} label="Shifts" />
-        <View style={styles.summaryDivider} />
-        <SummaryStat value={coveredCount} label="Covered" />
-        <View style={styles.summaryDivider} />
-        <SummaryStat value={openCount} label="Open" highlight={openCount > 0 ? 'danger' : undefined} />
-        <View style={styles.summaryDivider} />
-        <SummaryStat value={offeredCount} label="Offered" highlight={offeredCount > 0 ? 'info' : undefined} />
-        <View style={styles.summaryDivider} />
-        <SummaryStat value={problemCount} label="Problems" highlight={problemCount > 0 ? 'warning' : undefined} />
-      </View>
+      {/* ── Loading state ────────────────────────────────────────────────────── */}
+      {loadingRota && (
+        <View style={styles.centeredFeedback}>
+          <ActivityIndicator color={colors.accentTeal} />
+          <Text style={styles.feedbackText}>Loading rota…</Text>
+        </View>
+      )}
+
+      {/* ── Error state ──────────────────────────────────────────────────────── */}
+      {!loadingRota && rotaError && (
+        <View style={styles.errorBox}>
+          <Text style={styles.errorText}>{rotaError}</Text>
+          <Button label="Retry" variant="secondary" size="sm" onPress={onRetryLoadRota} />
+        </View>
+      )}
 
       {/* ── Day sections ─────────────────────────────────────────────────────── */}
-      <View style={styles.daySections}>
-        {plannerWeekDays.map((day) => {
-          const rows = plannerRowsByDate.get(day.date) ?? [];
-          const dayOpenCount = rows.filter((r) => !r.status || r.status === 'unfilled').length;
+      {!loadingRota && !rotaError && (
+        <View style={styles.daySections}>
+          {plannerWeekDays.map((day, dayIdx) => {
+            const dayName = DAY_NAMES[dayIdx];
+            const slots = slotsByDayName.get(dayName) ?? [];
+            const legacyRows = legacyShiftsByDate.get(day.date) ?? [];
+            const totalRows = slots.length + legacyRows.length;
+            const dayOpenCount = slots.reduce((acc, s) => acc + s.counts.open, 0);
 
-          return (
-            <View key={day.date} style={styles.daySection}>
-              {/* Day header */}
-              <View style={styles.dayHeader}>
-                <View style={styles.dayHeaderTitle}>
-                  <Text style={styles.dayName}>{day.label}</Text>
-                  <Text style={styles.dayShortLabel}>{day.shortLabel}</Text>
-                </View>
-                <View style={styles.dayHeaderMeta}>
-                  {rows.length > 0 ? (
-                    <Text style={styles.dayShiftCount}>
-                      {rows.length} shift{rows.length !== 1 ? 's' : ''}
-                    </Text>
-                  ) : null}
-                  {dayOpenCount > 0 ? (
-                    <View style={styles.openChip}>
-                      <Text style={styles.openChipText}>{dayOpenCount} open</Text>
-                    </View>
-                  ) : null}
-                </View>
-                <Button label="+ Add Shift" variant="secondary" size="sm"
-                  onPress={() => openCreate(day.date)} />
-              </View>
-
-              {/* Shift rows */}
-              {rows.length === 0 ? (
-                <View style={styles.emptyDayRow}>
-                  <Text style={styles.emptyDayText}>No cover planned.</Text>
-                </View>
-              ) : (
-                rows.map((row, index) => {
-                  const tok = statusTokens(row.status);
-                  const guardName = row.assignedGuardId
-                    ? (guardNameById.get(row.assignedGuardId) ?? null)
-                    : null;
-                  const guardsNum = parseInt(row.guardsRequired, 10) || 1;
-                  const isLast = index === rows.length - 1;
-
-                  return (
-                    <Pressable
-                      key={row.localId}
-                      onPress={() => openEdit(row)}
-                      style={({ pressed, hovered }: any) => [
-                        styles.shiftRow,
-                        !isLast && styles.shiftRowDivider,
-                        (pressed || hovered) && styles.shiftRowHovered,
-                      ]}
-                      accessibilityRole="button"
-                      accessibilityLabel={`${row.startTime}–${row.endTime} ${guardName ?? 'Unassigned'} ${tok.label}`}
-                    >
-                      {/* Problem accent bar */}
-                      <View style={[
-                        styles.accentBar,
-                        tok.problem ? { backgroundColor: tok.fg } : { backgroundColor: 'transparent' },
-                      ]} />
-
-                      <View style={styles.rowContent}>
-                        {/* Time */}
-                        <Text style={styles.colTime} numberOfLines={1}>
-                          {row.startTime || '––'}–{row.endTime || '––'}
-                        </Text>
-
-                        {/* Site */}
-                        <Text style={styles.colSite} numberOfLines={1}>
-                          {plannerSiteName || '—'}
-                        </Text>
-
-                        {/* Guard / cover */}
-                        <Text
-                          style={[styles.colGuard, !guardName && styles.colGuardEmpty]}
-                          numberOfLines={1}
-                        >
-                          {guardName ?? 'Unassigned'}
-                        </Text>
-
-                        {/* Required count */}
-                        <Text style={styles.colRequired}>{guardsNum}</Text>
-
-                        {/* Status badge */}
-                        <View style={[styles.statusBadge, { backgroundColor: tok.bg }]}>
-                          <Text style={[styles.statusBadgeText, { color: tok.fg }]}>{tok.label}</Text>
-                        </View>
-
-                        {/* Chevron */}
-                        <Text style={styles.chevron}>›</Text>
+            return (
+              <View key={day.date} style={styles.daySection}>
+                {/* Day header */}
+                <View style={styles.dayHeader}>
+                  <View style={styles.dayHeaderTitle}>
+                    <Text style={styles.dayName}>{day.label}</Text>
+                    <Text style={styles.dayShortLabel}>{day.shortLabel}</Text>
+                  </View>
+                  <View style={styles.dayHeaderMeta}>
+                    {totalRows > 0 && (
+                      <Text style={styles.daySlotCount}>
+                        {slots.length} period{slots.length !== 1 ? 's' : ''}
+                        {legacyRows.length > 0 && ` · ${legacyRows.length} legacy`}
+                      </Text>
+                    )}
+                    {dayOpenCount > 0 && (
+                      <View style={styles.openChip}>
+                        <Text style={styles.openChipText}>{dayOpenCount} open</Text>
                       </View>
-                    </Pressable>
-                  );
-                })
-              )}
-            </View>
-          );
-        })}
-      </View>
+                    )}
+                  </View>
+                </View>
 
-      {/* ── Shift drawer ─────────────────────────────────────────────────────── */}
+                {/* RotaSlot rows */}
+                {slots.length === 0 && legacyRows.length === 0 ? (
+                  <View style={styles.emptyDayRow}>
+                    <Text style={styles.emptyDayText}>No rota periods planned.</Text>
+                  </View>
+                ) : (
+                  <>
+                    {slots.map((cell, idx) => (
+                      <Fragment key={`slot-${cell.slotId}`}>
+                        <RotaSlotRow
+                          cell={cell}
+                          isLast={idx === slots.length - 1 && legacyRows.length === 0}
+                          onPress={() => onOpenSlot(cell.slotId)}
+                        />
+                      </Fragment>
+                    ))}
+                    {legacyRows.map((legacy, idx) => (
+                      <Fragment key={`legacy-${legacy.id}`}>
+                        <LegacyRow
+                          row={legacy}
+                          isLast={idx === legacyRows.length - 1}
+                        />
+                      </Fragment>
+                    ))}
+                  </>
+                )}
+              </View>
+            );
+          })}
+        </View>
+      )}
+
+      {/* ── Read-only slot detail drawer ─────────────────────────────────────── */}
       <Drawer
-        visible={drawerState !== null}
-        onClose={closeDrawer}
-        title={drawerState?.kind === 'create' ? 'Add Shift' : 'Edit Shift'}
-        subtitle={drawerSubtitle}
+        visible={selectedSlotDetail !== null || loadingSlotDetail}
+        onClose={onCloseSlotDrawer}
+        title={selectedSlotDetail?.siteName ?? 'Loading…'}
+        subtitle={
+          selectedSlotDetail
+            ? `${formatUtcDate(selectedSlotDetail.startAt)} · ${formatUtcTime(selectedSlotDetail.startAt)}–${formatUtcTime(selectedSlotDetail.endAt)}`
+            : ''
+        }
         compact
         width={480}
         footer={
           <View style={styles.drawerFooterRow}>
-            {drawerState?.kind === 'edit' ? (
-              <Button
-                label="Remove Shift"
-                variant="danger"
-                size="sm"
-                onPress={() => drawerState && setRemoveTarget(drawerState.row.localId)}
-              />
-            ) : <View />}
-            <View style={styles.drawerFooterActions}>
-              <Button label="Cancel" variant="secondary" size="sm" onPress={closeDrawer} />
-              <Button
-                label={drawerState?.kind === 'create' ? 'Add Shift' : 'Save Changes'}
-                variant="primary"
-                size="sm"
-                onPress={handleDrawerSave}
-              />
-            </View>
+            <Button label="Close" variant="secondary" size="sm" onPress={onCloseSlotDrawer} />
           </View>
         }
       >
-        <View style={styles.drawerBody}>
-          {/* Schedule section */}
-          <Text style={styles.drawerSectionLabel}>Schedule</Text>
-          <View style={styles.formField}>
-            <Text style={styles.formLabel}>Date</Text>
-            <DrawerDateInput value={draft.date ?? ''} onChange={(v) => patchDraft({ date: v })} />
-          </View>
-          <View style={styles.formRow}>
-            <View style={[styles.formCell, styles.formCellHalf]}>
-              <Text style={styles.formLabel}>Start time</Text>
-              <DrawerTimeInput value={draft.startTime ?? ''} onChange={(v) => patchDraft({ startTime: v })} />
-            </View>
-            <View style={[styles.formCell, styles.formCellHalf]}>
-              <Text style={styles.formLabel}>End time</Text>
-              <DrawerTimeInput value={draft.endTime ?? ''} onChange={(v) => patchDraft({ endTime: v })} />
-            </View>
-          </View>
-
-          {/* Cover section */}
-          <Text style={[styles.drawerSectionLabel, styles.sectionLabelSpaced]}>Cover</Text>
-          <View style={styles.formRow}>
-            <View style={[styles.formCell, { flex: 1 }]}>
-              <Text style={styles.formLabel}>Guards required</Text>
-              <TextInput
-                value={draft.guardsRequired ?? '1'}
-                onChangeText={(v: string) => patchDraft({ guardsRequired: v })}
-                keyboardType="numeric"
-                style={styles.formInput}
-                placeholderTextColor={colors.fieldPlaceholder}
-                textAlign="center"
-              />
-            </View>
-            <View style={[styles.formCell, { flex: 3 }]}>
-              <Text style={styles.formLabel}>Assigned guard</Text>
-              <DrawerSelect
-                value={draft.assignedGuardId ?? ''}
-                onChange={(v) => patchDraft({ assignedGuardId: v })}
-                options={linkedGuardOptions}
-                placeholder="Unassigned"
-              />
-            </View>
-          </View>
-
-          {/* Status section */}
-          <Text style={[styles.drawerSectionLabel, styles.sectionLabelSpaced]}>Status</Text>
-          <View style={styles.formField}>
-            <Text style={styles.formLabel}>Shift status</Text>
-            <DrawerSelect
-              value={draft.status ?? 'unfilled'}
-              onChange={(v) => patchDraft({ status: v })}
-              options={SHIFT_STATUS_OPTIONS}
-              placeholder="Status"
-            />
-          </View>
-
-          {/* Notes section */}
-          <Text style={[styles.drawerSectionLabel, styles.sectionLabelSpaced]}>Notes</Text>
-          <View style={styles.formField}>
-            <Text style={styles.formLabel}>Instructions</Text>
-            <TextInput
-              multiline
-              value={draft.instructions ?? ''}
-              onChangeText={(v: string) => patchDraft({ instructions: v })}
-              placeholder="Instructions shown to the assigned guard…"
-              style={styles.notesInput}
-              placeholderTextColor={colors.fieldPlaceholder}
-              textAlignVertical="top"
-            />
-          </View>
-        </View>
+        <SlotDetailBody
+          detail={selectedSlotDetail}
+          loading={loadingSlotDetail}
+        />
       </Drawer>
+    </View>
+  );
+}
 
-      {/* ── Remove confirmation ──────────────────────────────────────────────── */}
-      <ConfirmationDialog
-        visible={removeTarget !== null}
-        onClose={() => setRemoveTarget(null)}
-        onConfirm={handleConfirmRemove}
-        title="Remove shift?"
-        message="This shift will be removed from the rota. Any existing booking will be cancelled when you save."
-        confirmLabel="Remove"
-        cancelLabel="Keep"
-        variant="danger"
-      />
+// ── RotaSlot row ──────────────────────────────────────────────────────────────
+
+function RotaSlotRow({
+  cell,
+  isLast,
+  onPress,
+}: {
+  cell: FlatSlotCell;
+  isLast: boolean;
+  onPress: () => void;
+}) {
+  const tok = slotStateTokens(cell.coverageState);
+  const startStr = formatUtcTime(cell.startAt);
+  const endStr   = formatUtcTime(cell.endAt);
+  const timeStr  = `${startStr}–${endStr}`;
+  const coverStr = `${cell.counts.assigned} / ${cell.counts.required}`;
+
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed, hovered }: any) => [
+        styles.slotRow,
+        !isLast && styles.slotRowDivider,
+        (pressed || hovered) && styles.slotRowHovered,
+      ]}
+      accessibilityRole="button"
+      accessibilityLabel={`${timeStr} ${cell.siteName} ${cell.counts.assigned} of ${cell.counts.required} ${tok.label}`}
+    >
+      {/* Problem accent bar */}
+      <View style={[styles.accentBar, { backgroundColor: tok.problem ? tok.fg : 'transparent' }]} />
+
+      <View style={styles.rowContent}>
+        {/* Time + night indicator */}
+        <View style={styles.colTimeWrap}>
+          <Text style={styles.colTime} numberOfLines={1}>{timeStr}</Text>
+          {cell.isNightShift && <Text style={styles.nightDot}>●</Text>}
+        </View>
+
+        {/* Site */}
+        <Text style={styles.colSite} numberOfLines={1}>
+          {cell.siteName || '—'}
+        </Text>
+
+        {/* Cover fraction + open indicator */}
+        <View style={styles.colCoverWrap}>
+          <Text style={styles.colCover}>{coverStr}</Text>
+          {cell.counts.open > 0 && (
+            <Text style={styles.colCoverOpen}>{cell.counts.open} open</Text>
+          )}
+        </View>
+
+        {/* State badge */}
+        <View style={[styles.stateBadge, { backgroundColor: tok.bg }]}>
+          <Text style={[styles.stateBadgeText, { color: tok.fg }]} numberOfLines={1}>
+            {tok.label}
+          </Text>
+        </View>
+
+        {/* Chevron */}
+        <Text style={styles.chevron}>›</Text>
+      </View>
+    </Pressable>
+  );
+}
+
+// ── Legacy row ────────────────────────────────────────────────────────────────
+
+function LegacyRow({ row, isLast }: { row: LegacyShiftRow; isLast: boolean }) {
+  return (
+    <View style={[styles.slotRow, !isLast && styles.slotRowDivider, styles.legacyRow]}>
+      <View style={styles.accentBar} />
+      <View style={[styles.rowContent, styles.rowContentLegacy]}>
+        <Text style={styles.colTime} numberOfLines={1}>
+          {row.startTime}–{row.endTime}
+        </Text>
+        <Text style={styles.colSite} numberOfLines={1}>
+          {row.siteName || '—'}
+        </Text>
+        <Text style={styles.colGuardLegacy} numberOfLines={1}>
+          {row.guardName ?? 'Unassigned'}
+        </Text>
+        <View style={styles.legacyPill}>
+          <Text style={styles.legacyPillText}>Legacy</Text>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+// ── Slot detail body ──────────────────────────────────────────────────────────
+
+function SlotDetailBody({
+  detail,
+  loading,
+}: {
+  detail: RotaSlotDetail | null;
+  loading: boolean;
+}) {
+  if (loading) {
+    return (
+      <View style={drawerBodyStyles.centeredLoading}>
+        <ActivityIndicator color={colors.accentTeal} />
+        <Text style={drawerBodyStyles.loadingText}>Loading slot detail…</Text>
+      </View>
+    );
+  }
+
+  if (!detail) return null;
+
+  const startStr = formatUtcTime(detail.startAt);
+  const endStr   = formatUtcTime(detail.endAt);
+  const dateStr  = formatUtcDate(detail.startAt);
+
+  return (
+    <ScrollView style={drawerBodyStyles.scroll} showsVerticalScrollIndicator={false}>
+      <View style={drawerBodyStyles.body}>
+
+        {/* Schedule */}
+        <Text style={drawerBodyStyles.sectionLabel}>Schedule</Text>
+        <CoverRow label="Date"  value={dateStr} />
+        <CoverRow label="Start" value={startStr} />
+        <CoverRow label="End"   value={endStr} />
+        {detail.title && <CoverRow label="Title" value={detail.title} />}
+
+        {/* Cover */}
+        <Text style={[drawerBodyStyles.sectionLabel, drawerBodyStyles.sectionLabelSpaced]}>Cover</Text>
+        <CoverRow label="Required"  value={String(detail.counts.required)} />
+        <CoverRow label="Assigned"  value={String(detail.counts.assigned)} />
+        <CoverRow label="Confirmed" value={String(detail.counts.confirmed)} />
+        {detail.counts.offered > 0 && (
+          <CoverRow label="Awaiting"  value={String(detail.counts.offered)} />
+        )}
+        {detail.counts.open > 0 && (
+          <CoverRow label="Open"      value={String(detail.counts.open)}    emphasis="danger" />
+        )}
+        {detail.counts.problem > 0 && (
+          <CoverRow label="Problems"  value={String(detail.counts.problem)} emphasis="warning" />
+        )}
+        {detail.counts.onShift > 0 && (
+          <CoverRow label="On shift"  value={String(detail.counts.onShift)} emphasis="success" />
+        )}
+
+        {/* Positions */}
+        <Text style={[drawerBodyStyles.sectionLabel, drawerBodyStyles.sectionLabelSpaced]}>
+          Positions ({detail.positions.length})
+        </Text>
+        {detail.positions.map((pos) => (
+          <Fragment key={pos.shiftId}>
+            <PositionRow position={pos} />
+          </Fragment>
+        ))}
+        {detail.positions.length === 0 && (
+          <Text style={drawerBodyStyles.noPositions}>No positions.</Text>
+        )}
+
+        {/* Instructions */}
+        {detail.instructions && (
+          <>
+            <Text style={[drawerBodyStyles.sectionLabel, drawerBodyStyles.sectionLabelSpaced]}>Instructions</Text>
+            <Text style={drawerBodyStyles.instructions}>{detail.instructions}</Text>
+          </>
+        )}
+      </View>
+    </ScrollView>
+  );
+}
+
+function CoverRow({
+  label,
+  value,
+  emphasis,
+}: {
+  label: string;
+  value: string;
+  emphasis?: 'danger' | 'warning' | 'success';
+}) {
+  const valueColor =
+    emphasis === 'danger'  ? colors.danger  :
+    emphasis === 'warning' ? colors.warning :
+    emphasis === 'success' ? colors.success :
+    colors.textPrimary;
+
+  return (
+    <View style={drawerBodyStyles.coverRow}>
+      <Text style={drawerBodyStyles.coverLabel}>{label}</Text>
+      <Text style={[drawerBodyStyles.coverValue, { color: valueColor }]}>{value}</Text>
+    </View>
+  );
+}
+
+function PositionRow({ position }: { position: RotaSlotPositionSummary }) {
+  const tok = positionStatusTokens(position.status);
+  return (
+    <View style={drawerBodyStyles.positionRow}>
+      <Text style={drawerBodyStyles.positionName} numberOfLines={1}>
+        {position.guardName ?? 'Open position'}
+      </Text>
+      <Text style={[drawerBodyStyles.positionStatus, { color: tok.fg }]}>
+        {tok.label}
+      </Text>
     </View>
   );
 }
@@ -538,15 +621,14 @@ function SummaryStat({
 }: {
   value: number;
   label: string;
-  highlight?: 'danger' | 'info' | 'warning';
+  highlight?: 'danger' | 'info' | 'warning' | 'success';
 }) {
-  const numColor = highlight === 'danger'
-    ? colors.danger
-    : highlight === 'warning'
-    ? colors.warning
-    : highlight === 'info'
-    ? colors.info
-    : colors.textPrimary;
+  const numColor =
+    highlight === 'danger'  ? colors.danger  :
+    highlight === 'warning' ? colors.warning :
+    highlight === 'info'    ? colors.info    :
+    highlight === 'success' ? colors.success :
+    colors.textPrimary;
 
   return (
     <View style={summaryStyles.stat}>
@@ -575,14 +657,98 @@ const summaryStyles = StyleSheet.create({
   },
 });
 
-// ── Styles ────────────────────────────────────────────────────────────────────
+// ── Drawer body styles ────────────────────────────────────────────────────────
+
+const drawerBodyStyles = StyleSheet.create({
+  scroll: {
+    flex: 1,
+  },
+  body: {
+    paddingHorizontal: spacing.xl,
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.xl,
+    gap: spacing.xs,
+  },
+  centeredLoading: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+    paddingVertical: spacing.xl,
+  },
+  loadingText: {
+    ...typography.caption,
+    color: colors.textSecondary,
+  },
+  sectionLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginTop: spacing.xs,
+  } as any,
+  sectionLabelSpaced: {
+    marginTop: spacing.md,
+  },
+  coverRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  coverLabel: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    fontWeight: '500',
+  },
+  coverValue: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.textPrimary,
+  },
+  positionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 5,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  positionName: {
+    flex: 1,
+    fontSize: 13,
+    color: colors.textPrimary,
+    fontWeight: '500',
+  },
+  positionStatus: {
+    fontSize: 12,
+    fontWeight: '700',
+    marginLeft: spacing.sm,
+    flexShrink: 0,
+  },
+  noPositions: {
+    ...typography.caption,
+    color: colors.textMuted,
+    fontStyle: 'italic',
+  } as any,
+  instructions: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    lineHeight: 20,
+  },
+});
+
+// ── Main styles ───────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
   workspace: {
     gap: spacing.md,
   },
 
-  // Toolbar (unchanged)
+  // Toolbar
   toolbar: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -633,11 +799,6 @@ const styles = StyleSheet.create({
     flex: 1,
     textAlign: 'center',
   },
-  actionGroup: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-    flexShrink: 0,
-  },
 
   // Summary strip
   summaryStrip: {
@@ -654,6 +815,33 @@ const styles = StyleSheet.create({
     marginVertical: spacing.sm,
   },
 
+  // Loading / error feedback
+  centeredFeedback: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: spacing.xl,
+    gap: spacing.sm,
+  },
+  feedbackText: {
+    ...typography.caption,
+    color: colors.textSecondary,
+  },
+  errorBox: {
+    backgroundColor: colors.dangerSurface,
+    borderRadius: radii.card,
+    borderWidth: 1,
+    borderColor: colors.danger,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    gap: spacing.sm,
+    alignItems: 'flex-start',
+  },
+  errorText: {
+    fontSize: 14,
+    color: colors.danger,
+    lineHeight: 20,
+  },
+
   // Day sections
   daySections: {
     gap: spacing.sm,
@@ -665,8 +853,6 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     overflow: 'hidden',
   } as any,
-
-  // Day header
   dayHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -697,7 +883,7 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
     flexShrink: 0,
   },
-  dayShiftCount: {
+  daySlotCount: {
     ...typography.caption,
     color: colors.textMuted,
   },
@@ -712,8 +898,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: colors.danger,
   },
-
-  // Empty day
   emptyDayRow: {
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,
@@ -724,18 +908,22 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
   } as any,
 
-  // Shift row
-  shiftRow: {
+  // Slot row
+  slotRow: {
     flexDirection: 'row',
     alignItems: 'stretch',
     minHeight: 48,
   },
-  shiftRowDivider: {
+  slotRowDivider: {
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
   },
-  shiftRowHovered: {
+  slotRowHovered: {
     backgroundColor: colors.surfaceSubtle,
+  },
+  legacyRow: {
+    backgroundColor: colors.surfaceSubtle,
+    opacity: 0.85,
   },
   accentBar: {
     width: 3,
@@ -750,46 +938,80 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     minHeight: 48,
   },
-  colTime: {
+  rowContentLegacy: {
+    opacity: 1,
+  },
+  colTimeWrap: {
     width: 114,
     flexShrink: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  colTime: {
     fontSize: 13,
     fontWeight: '600',
     color: colors.textPrimary,
     fontVariant: ['tabular-nums'],
   } as any,
+  nightDot: {
+    fontSize: 7,
+    color: colors.info,
+    lineHeight: 14,
+  },
   colSite: {
     flex: 2,
     fontSize: 13,
     color: colors.textPrimary,
     minWidth: 0,
   },
-  colGuard: {
+  colCoverWrap: {
+    width: 80,
+    flexShrink: 0,
+    alignItems: 'flex-end',
+    gap: 1,
+  },
+  colCover: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.textPrimary,
+    fontVariant: ['tabular-nums'],
+  } as any,
+  colCoverOpen: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: colors.danger,
+  },
+  colGuardLegacy: {
     flex: 2,
     fontSize: 13,
     color: colors.textSecondary,
     minWidth: 0,
-  },
-  colGuardEmpty: {
-    color: colors.textMuted,
     fontStyle: 'italic',
   } as any,
-  colRequired: {
-    width: 28,
+  legacyPill: {
+    backgroundColor: colors.pendingSurface,
+    borderRadius: radii.pill,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
     flexShrink: 0,
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.textMuted,
-    textAlign: 'center',
+  },
+  legacyPillText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: colors.pending,
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
   } as any,
-  statusBadge: {
-    width: 86,
+  stateBadge: {
+    width: 108,
     flexShrink: 0,
     borderRadius: radii.pill,
     paddingVertical: 3,
     alignItems: 'center',
+    paddingHorizontal: spacing.xs,
   },
-  statusBadgeText: {
+  stateBadgeText: {
     fontSize: 11,
     fontWeight: '700',
     letterSpacing: 0.2,
@@ -808,70 +1030,6 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-end',
   },
-  drawerFooterActions: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-  },
-
-  // Drawer form body
-  drawerBody: {
-    paddingHorizontal: spacing.xl,
-    paddingVertical: spacing.lg,
-    gap: spacing.sm,
-  },
-  drawerSectionLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: colors.textSecondary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginTop: spacing.xs,
-  } as any,
-  sectionLabelSpaced: {
-    marginTop: spacing.md,
-  },
-  formField: {
-    gap: spacing.xs,
-  },
-  formRow: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-  },
-  formCell: {
-    gap: spacing.xs,
-    minWidth: 0,
-  },
-  formCellHalf: {
-    flex: 1,
-  },
-  formLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: colors.textSecondary,
-  },
-  formInput: {
-    height: 42,
-    borderWidth: 1.5,
-    borderColor: colors.fieldBorder,
-    borderRadius: radii.sm,
-    paddingHorizontal: spacing.md,
-    fontSize: 16,
-    color: colors.textPrimary,
-    backgroundColor: colors.card,
-  },
-  notesInput: {
-    borderWidth: 1.5,
-    borderColor: colors.fieldBorder,
-    borderRadius: radii.sm,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    fontSize: 14,
-    lineHeight: 20,
-    color: colors.textPrimary,
-    backgroundColor: colors.card,
-    minHeight: 86,
-    textAlignVertical: 'top',
-  } as any,
 });

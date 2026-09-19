@@ -3,7 +3,7 @@ import { ActivityIndicator, Image, Modal, Pressable, ScrollView, StyleSheet, Tex
 
 import { CompanyAuditWorkspace } from '../components/company/CompanyAuditWorkspace';
 import { CompanyClientsWorkspace, type ClientFormState, CLIENT_FORM_EMPTY } from '../components/company/CompanyClientsWorkspace';
-import { CompanyRotaPlannerWorkspace, type PlannerRow } from '../components/company/CompanyRotaPlannerWorkspace';
+import { CompanyRotaPlannerWorkspace, type PlannerWeekDay, type FlatSlotCell, type LegacyShiftRow } from '../components/company/CompanyRotaPlannerWorkspace';
 import { CompanySitesWorkspace, type SiteFormState, SITE_FORM_EMPTY } from '../components/company/CompanySitesWorkspace';
 import { CompanyLiveOperationsWorkspace } from '../components/company/CompanyLiveOperationsWorkspace';
 import type { LiveBoardRow, CloseOutSummary, SelectedShiftContext } from '../components/company/CompanyLiveOperationsWorkspace';
@@ -50,6 +50,8 @@ import {
   listJobs,
   listShifts,
   listSites,
+  getRotaWeek,
+  getRotaSlot,
   reviewJobApplication,
   updateIncidentStatus,
   updateClient,
@@ -84,6 +86,8 @@ import {
   UpsertPayrollAdminPayload,
   GuardEngagementType,
   CompanyGuardEmploymentSummary,
+  RotaWeekResponse,
+  RotaSlotDetail,
 } from '../types/models';
 import { CompanySidebar } from '../components/company/CompanySidebar';
 import { CompanyTopBar } from '../components/company/CompanyTopBar';
@@ -96,6 +100,23 @@ import { brand, colors, radii, spacing } from '../theme';
 const IS_WEB = typeof document !== 'undefined';
 
 const WEB_POINTER_STYLE = IS_WEB ? ({ cursor: 'pointer' } as const) : null;
+
+// Legacy planner row type (raw-Shift era — kept for handleSaveRota compatibility only)
+type PlannerRow = {
+  localId: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  guardsRequired: string;
+  assignedGuardId: string;
+  status: string;
+  instructions: string;
+  sourceShiftIds: number[];
+};
+
+const ROTA_DAY_NAMES = [
+  'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday',
+] as const;
 
 type CompanySection =
   | 'dashboard'
@@ -1124,6 +1145,13 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
   const [plannerWeekCommencing, setPlannerWeekCommencing] = React.useState(weekCommencingFor());
   const [plannerRows, setPlannerRows] = React.useState<PlannerRow[]>([]);
   const [plannerRemovedShiftIds, setPlannerRemovedShiftIds] = React.useState<number[]>([]);
+  // R4C1 — RotaSlot read state
+  const [rotaWeekData, setRotaWeekData] = React.useState<RotaWeekResponse | null>(null);
+  const [loadingRota, setLoadingRota] = React.useState(false);
+  const [rotaError, setRotaError] = React.useState<string | null>(null);
+  const [rotaLoadKey, setRotaLoadKey] = React.useState(0);
+  const [selectedSlotDetail, setSelectedSlotDetail] = React.useState<RotaSlotDetail | null>(null);
+  const [loadingSlotDetail, setLoadingSlotDetail] = React.useState(false);
   const [liveFilters, setLiveFilters] = React.useState<LiveFilters>({
     clientId: '',
     siteId: '',
@@ -2096,6 +2124,64 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
     setPlannerRemovedShiftIds([]);
   }, [plannerSiteId, plannerWeekDays, shifts]);
 
+  // R4C1 — Flatten week response into day-keyed FlatSlotCell map
+  const slotsByDayName = React.useMemo((): Map<string, FlatSlotCell[]> => {
+    const map = new Map<string, FlatSlotCell[]>();
+    ROTA_DAY_NAMES.forEach((day) => map.set(day, []));
+    if (!rotaWeekData) return map;
+    for (const siteRow of rotaWeekData.sites) {
+      for (const dayName of ROTA_DAY_NAMES) {
+        const dayCells = (siteRow.days as any)[dayName];
+        if (!dayCells) continue;
+        const daySlots = map.get(dayName)!;
+        for (const cell of dayCells.slots) {
+          daySlots.push({
+            ...cell,
+            siteId: siteRow.siteId,
+            siteName: siteRow.siteName,
+            clientId: siteRow.clientId,
+            clientName: siteRow.clientName,
+          });
+        }
+      }
+    }
+    for (const [, slots] of map) {
+      slots.sort((a, b) => a.startAt.localeCompare(b.startAt));
+    }
+    return map;
+  }, [rotaWeekData]);
+
+  // R4C1 — Legacy shift compat: shifts with no rotaSlotId that fall in the current planner week
+  const legacyShiftsByDate = React.useMemo((): Map<string, LegacyShiftRow[]> => {
+    const weekDates = new Set(plannerWeekDays.map((d) => d.date));
+    const map = new Map<string, LegacyShiftRow[]>();
+    plannerWeekDays.forEach((d) => map.set(d.date, []));
+    shifts
+      .filter((shift) => weekDates.has(shift.start.slice(0, 10)) && !shift.rotaSlotId)
+      .forEach((shift) => {
+        const date = shift.start.slice(0, 10);
+        const rows = map.get(date) ?? [];
+        rows.push({
+          id: shift.id,
+          date,
+          startTime: isoToTimeInput(shift.start),
+          endTime: isoToTimeInput(shift.end),
+          siteName: shift.site?.name ?? shift.siteName ?? '—',
+          guardName: shift.guard?.fullName ?? null,
+          status: shift.status ?? 'unfilled',
+        });
+        map.set(date, rows);
+      });
+    return map;
+  }, [shifts, plannerWeekDays]);
+
+  // R4C1 — Week ending derived from backend or computed from commencing + 6 days
+  const plannerWeekEnding = rotaWeekData?.weekEnding ?? (() => {
+    const start = parseDateInput(plannerWeekCommencing) ?? new Date(`${plannerWeekCommencing}T00:00:00`);
+    const end = addDays(start, 6);
+    return formatDateInput(end);
+  })();
+
   const resetClientForm = () => setClientForm(CLIENT_FORM_EMPTY);
   const resetSiteForm = () => setSiteForm(SITE_FORM_EMPTY);
   const resetJobForm = () => setJobForm(JOB_FORM_EMPTY);
@@ -2242,6 +2328,48 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
   const handlePlannerTodayWeek = () => {
     setPlannerWeekCommencing(weekCommencingFor());
   };
+
+  // R4C1 — Load rota week data from backend
+  React.useEffect(() => {
+    if (activeSection !== 'rota-planner') return;
+    let cancelled = false;
+    setLoadingRota(true);
+    setRotaError(null);
+    const clientIdParam = plannerClientId ? Number(plannerClientId) : undefined;
+    const siteIdsParam = plannerSiteId || undefined;
+    getRotaWeek({
+      weekCommencing: plannerWeekCommencing,
+      clientId: clientIdParam,
+      siteIds: siteIdsParam,
+    })
+      .then((data) => { if (!cancelled) { setRotaWeekData(data); setLoadingRota(false); } })
+      .catch((err) => {
+        if (!cancelled) {
+          setRotaError(formatApiErrorMessage(err, 'Unable to load rota data.'));
+          setLoadingRota(false);
+        }
+      });
+    return () => { cancelled = true; };
+  }, [activeSection, plannerWeekCommencing, plannerClientId, plannerSiteId, rotaLoadKey]);
+
+  // R4C1 — Open a specific slot's detail in the drawer
+  const handleOpenSlot = React.useCallback(async (slotId: number) => {
+    setSelectedSlotDetail(null);
+    setLoadingSlotDetail(true);
+    try {
+      const detail = await getRotaSlot(slotId);
+      setSelectedSlotDetail(detail);
+    } catch {
+      // Silently close on error; the detail drawer stays open showing loading failed
+    } finally {
+      setLoadingSlotDetail(false);
+    }
+  }, []);
+
+  const handleCloseSlotDrawer = React.useCallback(() => {
+    setSelectedSlotDetail(null);
+    setLoadingSlotDetail(false);
+  }, []);
 
   const handleAddPlannerRow = (row: PlannerRow) => {
     setPlannerRows((current) => [...current, row]);
@@ -3571,25 +3699,26 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
     <CompanyRotaPlannerWorkspace
       plannerClientId={plannerClientId}
       plannerSiteId={plannerSiteId}
-      plannerSiteName={plannerSite?.name ?? ''}
-      plannerRows={plannerRows}
-      plannerRowsByDate={plannerRowsByDate}
-      plannerWeekDays={plannerWeekDays}
-      savingRota={savingRota}
-      siteClientOptions={siteClientOptions}
-      plannerSiteOptions={plannerSiteOptions}
-      linkedGuardOptions={linkedGuardOptions}
-      guardNameById={guardNameById}
       setPlannerClientId={setPlannerClientId}
       setPlannerSiteId={setPlannerSiteId}
-      onAddRow={handleAddPlannerRow}
-      onRowChange={handlePlannerRowChange}
-      onRemoveRow={handleRemovePlannerRow}
-      onCopyToNextWeek={copyPlannerToNextWeek}
-      onSaveRota={handleSaveRota}
+      siteClientOptions={siteClientOptions}
+      plannerSiteOptions={plannerSiteOptions}
+      weekCommencing={plannerWeekCommencing}
+      weekEnding={plannerWeekEnding}
+      plannerWeekDays={plannerWeekDays}
       onPrevWeek={handlePlannerPrevWeek}
       onNextWeek={handlePlannerNextWeek}
       onTodayWeek={handlePlannerTodayWeek}
+      slotsByDayName={slotsByDayName}
+      weekSnapshot={rotaWeekData?.snapshot ?? null}
+      loadingRota={loadingRota}
+      rotaError={rotaError}
+      onRetryLoadRota={() => setRotaLoadKey((k) => k + 1)}
+      selectedSlotDetail={selectedSlotDetail}
+      loadingSlotDetail={loadingSlotDetail}
+      onOpenSlot={handleOpenSlot}
+      onCloseSlotDrawer={handleCloseSlotDrawer}
+      legacyShiftsByDate={legacyShiftsByDate}
     />
   );
 

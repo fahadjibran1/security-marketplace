@@ -557,6 +557,7 @@ export interface Shift {
   assignmentId?: number;
   companyId?: number;
   guardId?: number;
+  rotaSlotId?: number | null;
   assignment?: Assignment;
   job?: Job | null;
   company?: CompanyProfile;
@@ -1636,4 +1637,111 @@ export interface GuardScreening {
   references?: Array<{id:number;history?:{id:number;type?:string;organisation?:string;startDate?:string;endDate?:string|null;isCurrent?:boolean};historyId?:number;organisation:string;contactPerson?:string;relationship?:string;businessEmail?:string;phone?:string|null;postalDetails?:string|null;status:string;sourceVerified:boolean;requestedAt?:string|null;receivedAt?:string|null;verificationMethod?:string|null;verifiedAt?:string|null}>;
   evidence?: Array<{id:number;category:string;mimeType:string;sizeBytes:number;uploadCompleted:boolean;verificationState:string}>;
   consents?: Array<{id:number;consentVersion:string;acceptedAt:string;withdrawnAt?:string|null}>;
+}
+
+// ── RotaSlot read model (R4B3 response contract) ──────────────────────────────
+
+export type RotaCoveragePhase = 'future' | 'live' | 'past';
+
+export type RotaCoverageState =
+  | 'fully_planned' | 'offered_pending' | 'under_planned' | 'fully_open' | 'has_problems'
+  | 'live_fully_staffed' | 'live_partial' | 'live_none_on_site' | 'live_has_problems'
+  | 'outcome_completed' | 'outcome_shortfall' | 'outcome_failed' | 'outcome_has_problems' | 'outcome_cancelled'
+  | 'cancelled';
+
+export interface RotaPositionCounts {
+  required: number;
+  assigned: number;
+  confirmed: number;
+  offered: number;
+  open: number;
+  problem: number;
+  onShift: number;
+  completed: number;
+}
+
+export interface RotaSlotPositionSummary {
+  shiftId: number;
+  guardId: number | null;
+  guardName: string | null;
+  status: string;
+}
+
+export interface RotaSlotSummary {
+  id: number;
+  siteId: number;
+  siteName: string;
+  clientId: number | null;
+  clientName: string | null;
+  jobId: number | null;
+  title: string | null;
+  startAt: string;
+  endAt: string;
+  requiredGuardCount: number;
+  checkCallIntervalMinutes: number;
+  instructions: string | null;
+  status: string;
+  coveragePhase: RotaCoveragePhase;
+  coverageState: RotaCoverageState;
+  counts: RotaPositionCounts;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RotaSlotDetail extends RotaSlotSummary {
+  positions: RotaSlotPositionSummary[];
+}
+
+export interface RotaSlotCell {
+  slotId: number;
+  title: string | null;
+  startAt: string;
+  endAt: string;
+  isNightShift: boolean;
+  coveragePhase: RotaCoveragePhase;
+  coverageState: RotaCoverageState;
+  counts: RotaPositionCounts;
+  positions: RotaSlotPositionSummary[];
+}
+
+export interface RotaDayCells {
+  slots: RotaSlotCell[];
+}
+
+export interface RotaSiteWeekRow {
+  siteId: number;
+  siteName: string;
+  clientId: number | null;
+  clientName: string | null;
+  days: {
+    monday: RotaDayCells;
+    tuesday: RotaDayCells;
+    wednesday: RotaDayCells;
+    thursday: RotaDayCells;
+    friday: RotaDayCells;
+    saturday: RotaDayCells;
+    sunday: RotaDayCells;
+  };
+}
+
+export interface RotaWeekSnapshot {
+  totalSlots: number;
+  totalPositions: number;
+  futureConfirmed: number;
+  offeredPending: number;
+  openPositions: number;
+  onShiftNow: number;
+  completedPositions: number;
+  missedPositions: number;
+  problems: number;
+  sitesFullyCovered: number;
+  sitesNeedAttention: number;
+  nightSlots: number;
+}
+
+export interface RotaWeekResponse {
+  weekCommencing: string;
+  weekEnding: string;
+  snapshot: RotaWeekSnapshot;
+  sites: RotaSiteWeekRow[];
 }

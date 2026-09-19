@@ -102,6 +102,9 @@ import {
   ClientDisputeItem,
   CompanyApprovalDetail,
   EligibleTimesheetRow,
+  RotaWeekResponse,
+  RotaSlotDetail,
+  RotaSlotSummary,
 } from '../types/models';
 
 const hasBrowserWindow =
@@ -1258,4 +1261,41 @@ export function disputeWeek(id: number, disputes: ClientDisputeItem[]) {
     method: 'POST',
     body: JSON.stringify({ disputes }),
   });
+}
+
+// ── RotaSlot read API (R4B3) ──────────────────────────────────────────────────
+
+export function getRotaWeek(params: {
+  weekCommencing: string;
+  clientId?: number;
+  siteIds?: string;
+  status?: string;
+}) {
+  const qs = new URLSearchParams();
+  qs.set('weekCommencing', params.weekCommencing);
+  if (params.clientId) qs.set('clientId', String(params.clientId));
+  if (params.siteIds) qs.set('siteIds', params.siteIds);
+  if (params.status) qs.set('status', params.status);
+  return request<RotaWeekResponse>(`/rota/week?${qs}`);
+}
+
+export function getRotaSlot(id: number) {
+  return request<RotaSlotDetail>(`/rota-slots/${id}`);
+}
+
+export function listRotaSlots(params: {
+  from?: string;
+  to?: string;
+  siteId?: number;
+  clientId?: number;
+  status?: string;
+} = {}) {
+  const qs = new URLSearchParams();
+  if (params.from) qs.set('from', params.from);
+  if (params.to) qs.set('to', params.to);
+  if (params.siteId) qs.set('siteId', String(params.siteId));
+  if (params.clientId) qs.set('clientId', String(params.clientId));
+  if (params.status) qs.set('status', params.status);
+  const suffix = qs.toString() ? `?${qs}` : '';
+  return request<RotaSlotSummary[]>(`/rota-slots${suffix}`);
 }
