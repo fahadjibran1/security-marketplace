@@ -108,22 +108,25 @@ function slotStateTokens(state: RotaCoverageState): {
   bg: string; fg: string; label: string; problem: boolean;
 } {
   switch (state) {
-    case 'fully_planned':       return { bg: colors.successSurface,  fg: colors.success,  label: 'Fully planned',      problem: false };
-    case 'offered_pending':     return { bg: colors.infoSurface,     fg: colors.info,     label: 'Awaiting acceptance', problem: false };
-    case 'under_planned':       return { bg: colors.warningSurface,  fg: colors.warning,  label: 'Cover required',     problem: true  };
-    case 'fully_open':          return { bg: colors.dangerSurface,   fg: colors.danger,   label: 'Open',               problem: true  };
-    case 'has_problems':        return { bg: colors.warningSurface,  fg: colors.warning,  label: 'Attention',          problem: true  };
-    case 'live_fully_staffed':  return { bg: colors.successSurface,  fg: colors.success,  label: 'Fully staffed',      problem: false };
-    case 'live_partial':        return { bg: colors.warningSurface,  fg: colors.warning,  label: 'Short staffed',      problem: true  };
-    case 'live_none_on_site':   return { bg: colors.dangerSurface,   fg: colors.danger,   label: 'None on site',       problem: true  };
-    case 'live_has_problems':   return { bg: colors.warningSurface,  fg: colors.warning,  label: 'Attention',          problem: true  };
-    case 'outcome_completed':   return { bg: colors.pendingSurface,  fg: colors.pending,  label: 'Completed',          problem: false };
-    case 'outcome_shortfall':   return { bg: colors.warningSurface,  fg: colors.warning,  label: 'Completed short',    problem: true  };
-    case 'outcome_failed':      return { bg: colors.dangerSurface,   fg: colors.danger,   label: 'Failed',             problem: true  };
-    case 'outcome_has_problems':return { bg: colors.warningSurface,  fg: colors.warning,  label: 'Attention',          problem: true  };
-    case 'outcome_cancelled':   return { bg: colors.pendingSurface,  fg: colors.pending,  label: 'Cancelled',          problem: false };
-    case 'cancelled':           return { bg: colors.pendingSurface,  fg: colors.pending,  label: 'Cancelled',          problem: false };
-    default:                    return { bg: colors.pendingSurface,  fg: colors.pending,  label: state || '—',         problem: false };
+    // Future
+    case 'fully_planned':       return { bg: colors.successSurface,  fg: colors.success,  label: 'Covered',   problem: false };
+    case 'offered_pending':     return { bg: colors.infoSurface,     fg: colors.info,     label: '',          problem: false }; // "N Awaiting" chip communicates
+    case 'under_planned':       return { bg: 'transparent',          fg: colors.danger,   label: '',          problem: true  }; // "N Open" chip communicates
+    case 'fully_open':          return { bg: 'transparent',          fg: colors.danger,   label: '',          problem: true  }; // "N Open" chip communicates
+    case 'has_problems':        return { bg: colors.warningSurface,  fg: colors.warning,  label: 'Attention', problem: true  };
+    // Live
+    case 'live_fully_staffed':  return { bg: colors.successSurface,  fg: colors.success,  label: 'On shift',  problem: false };
+    case 'live_partial':        return { bg: colors.warningSurface,  fg: colors.warning,  label: 'On shift',  problem: true  }; // fraction shows partial
+    case 'live_none_on_site':   return { bg: colors.dangerSurface,   fg: colors.danger,   label: 'Attention', problem: true  };
+    case 'live_has_problems':   return { bg: colors.warningSurface,  fg: colors.warning,  label: 'Attention', problem: true  };
+    // Past
+    case 'outcome_completed':   return { bg: colors.pendingSurface,  fg: colors.pending,  label: 'Completed', problem: false };
+    case 'outcome_shortfall':   return { bg: colors.warningSurface,  fg: colors.warning,  label: 'Attention', problem: true  };
+    case 'outcome_failed':      return { bg: colors.dangerSurface,   fg: colors.danger,   label: 'Attention', problem: true  };
+    case 'outcome_has_problems':return { bg: colors.warningSurface,  fg: colors.warning,  label: 'Attention', problem: true  };
+    case 'outcome_cancelled':   return { bg: colors.pendingSurface,  fg: colors.pending,  label: 'Cancelled', problem: false };
+    case 'cancelled':           return { bg: colors.pendingSurface,  fg: colors.pending,  label: 'Cancelled', problem: false };
+    default:                    return { bg: colors.pendingSurface,  fg: colors.pending,  label: '',          problem: false };
   }
 }
 
@@ -769,7 +772,7 @@ export function CompanyRotaPlannerWorkspace({
           <View style={styles.summaryDivider} />
           <SummaryStat
             value={snap.problems}
-            label="Problems"
+            label="Attention"
             highlight={snap.problems > 0 ? 'warning' : undefined}
           />
         </View>
@@ -818,7 +821,7 @@ export function CompanyRotaPlannerWorkspace({
                     )}
                     {dayOpenCount > 0 && (
                       <View style={styles.openChip}>
-                        <Text style={styles.openChipText}>{dayOpenCount} open</Text>
+                        <Text style={styles.openChipText}>{dayOpenCount} Open</Text>
                       </View>
                     )}
                     <Pressable
@@ -1008,7 +1011,15 @@ function RotaSlotRow({
 }) {
   const tok     = slotStateTokens(cell.coverageState);
   const timeStr = `${formatUtcTime(cell.startAt)}–${formatUtcTime(cell.endAt)}`;
-  const coverStr = `${cell.counts.assigned} / ${cell.counts.required}`;
+
+  // Awaiting is not covered — use phase-appropriate numerator
+  const coverNum   = cell.coveragePhase === 'live' ? cell.counts.onShift
+                   : cell.coveragePhase === 'past' ? cell.counts.completed
+                   : cell.counts.confirmed;
+  const coverVerb  = cell.coveragePhase === 'live' ? 'on shift'
+                   : cell.coveragePhase === 'past' ? 'completed'
+                   : 'covered';
+  const coverStr   = `${coverNum} / ${cell.counts.required} ${coverVerb}`;
 
   return (
     <Pressable
@@ -1019,7 +1030,7 @@ function RotaSlotRow({
         (pressed || hovered) && styles.slotRowHovered,
       ]}
       accessibilityRole="button"
-      accessibilityLabel={`${timeStr} ${cell.siteName} ${cell.counts.assigned} of ${cell.counts.required} ${tok.label}`}
+      accessibilityLabel={`${timeStr} ${cell.siteName} ${coverNum} of ${cell.counts.required} ${coverVerb}${tok.label ? ` ${tok.label}` : ''}`}
     >
       <View style={[styles.accentBar, { backgroundColor: tok.problem ? tok.fg : 'transparent' }]} />
       <View style={styles.rowContent}>
@@ -1031,14 +1042,19 @@ function RotaSlotRow({
         <View style={styles.colCoverWrap}>
           <Text style={styles.colCover}>{coverStr}</Text>
           {cell.counts.open > 0 && (
-            <Text style={styles.colCoverOpen}>{cell.counts.open} open</Text>
+            <Text style={styles.colCoverOpen}>{cell.counts.open} Open</Text>
+          )}
+          {cell.counts.offered > 0 && cell.coveragePhase === 'future' && (
+            <Text style={styles.colCoverAwaiting}>{cell.counts.offered} Awaiting</Text>
           )}
         </View>
-        <View style={[styles.stateBadge, { backgroundColor: tok.bg }]}>
-          <Text style={[styles.stateBadgeText, { color: tok.fg }]} numberOfLines={1}>
-            {tok.label}
-          </Text>
-        </View>
+        {tok.label !== '' && (
+          <View style={[styles.stateBadge, { backgroundColor: tok.bg }]}>
+            <Text style={[styles.stateBadgeText, { color: tok.fg }]} numberOfLines={1}>
+              {tok.label}
+            </Text>
+          </View>
+        )}
         <Text style={styles.chevron}>›</Text>
       </View>
     </Pressable>
@@ -1689,14 +1705,16 @@ function CoverSummary({
   counts: RotaSlotDetail['counts'];
   phase: RotaCoveragePhase;
 }) {
-  const { required, assigned, confirmed, offered, open, problem, onShift, completed } = counts;
+  const { required, confirmed, offered, open, problem, onShift, completed } = counts;
 
-  const primaryNum = phase === 'live'  ? onShift  :
-                     phase === 'past'  ? completed : confirmed;
-  const primaryLabel = phase === 'live' ? 'on shift' :
-                       phase === 'past' ? 'completed' : 'confirmed';
-
+  const primaryNum   = phase === 'live' ? onShift  :
+                       phase === 'past' ? completed : confirmed;
+  const primaryLabel = phase === 'live' ? 'on shift'  :
+                       phase === 'past' ? 'completed' : 'covered'; // confirmed ≠ covered unless we name it right
   const primaryColor = phase === 'past' ? colors.pending : colors.success;
+
+  // For live: guards confirmed/scheduled but not yet booked on
+  const preShift = phase === 'live' ? Math.max(0, confirmed - onShift) : 0;
 
   return (
     <View style={db.coverSummary}>
@@ -1705,17 +1723,20 @@ function CoverSummary({
         <Text style={db.coverSummaryLabel}> {primaryLabel}</Text>
       </Text>
       <View style={db.coverSummaryRow}>
-        {open > 0 && (
-          <Text style={[db.coverChip, db.coverChipOpen]}>{open} open</Text>
+        {phase === 'future' && open > 0 && (
+          <Text style={[db.coverChip, db.coverChipOpen]}>{open} Open</Text>
         )}
-        {offered > 0 && (
-          <Text style={[db.coverChip, db.coverChipAwaiting]}>{offered} awaiting</Text>
+        {phase === 'future' && offered > 0 && (
+          <Text style={[db.coverChip, db.coverChipAwaiting]}>{offered} Awaiting</Text>
+        )}
+        {phase === 'live' && open > 0 && (
+          <Text style={[db.coverChip, db.coverChipOpen]}>{open} Open</Text>
+        )}
+        {phase === 'live' && preShift > 0 && (
+          <Text style={[db.coverChip, db.coverChipConfirmed]}>{preShift} confirmed</Text>
         )}
         {problem > 0 && (
-          <Text style={[db.coverChip, db.coverChipProblem]}>{problem} problem{problem !== 1 ? 's' : ''}</Text>
-        )}
-        {assigned > 0 && assigned !== confirmed && phase === 'future' && (
-          <Text style={[db.coverChip]}>{assigned} assigned</Text>
+          <Text style={[db.coverChip, db.coverChipProblem]}>{problem} Attention</Text>
         )}
       </View>
     </View>
@@ -1846,9 +1867,10 @@ const db = StyleSheet.create({
     borderRadius: radii.pill,
     backgroundColor: colors.pendingSurface, color: colors.pending,
   },
-  coverChipOpen:     { backgroundColor: colors.dangerSurface,   color: colors.danger   },
-  coverChipAwaiting: { backgroundColor: colors.infoSurface,     color: colors.info     },
-  coverChipProblem:  { backgroundColor: colors.warningSurface,  color: colors.warning  },
+  coverChipOpen:      { backgroundColor: colors.dangerSurface,   color: colors.danger   },
+  coverChipAwaiting:  { backgroundColor: colors.infoSurface,     color: colors.info     },
+  coverChipProblem:   { backgroundColor: colors.warningSurface,  color: colors.warning  },
+  coverChipConfirmed: { backgroundColor: colors.successSurface,  color: colors.success  },
 
   // Positions section header
   positionsSectionHeader: {
@@ -2018,9 +2040,10 @@ const styles = StyleSheet.create({
   colTime: { fontSize: 13, fontWeight: '600', color: colors.textPrimary, fontVariant: ['tabular-nums'] } as any,
   nightDot: { fontSize: 7, color: colors.info, lineHeight: 14 },
   colSite: { flex: 2, fontSize: 13, color: colors.textPrimary, minWidth: 0 },
-  colCoverWrap: { width: 80, flexShrink: 0, alignItems: 'flex-end', gap: 1 },
+  colCoverWrap: { width: 110, flexShrink: 0, alignItems: 'flex-end', gap: 1 },
   colCover: { fontSize: 13, fontWeight: '700', color: colors.textPrimary, fontVariant: ['tabular-nums'] } as any,
   colCoverOpen: { fontSize: 11, fontWeight: '600', color: colors.danger },
+  colCoverAwaiting: { fontSize: 11, fontWeight: '600', color: colors.info },
   colGuardLegacy: { flex: 2, fontSize: 13, color: colors.textSecondary, minWidth: 0, fontStyle: 'italic' } as any,
   legacyPill: {
     backgroundColor: colors.pendingSurface, borderRadius: radii.pill,
