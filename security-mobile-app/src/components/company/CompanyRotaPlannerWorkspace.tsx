@@ -524,8 +524,8 @@ export function CompanyRotaPlannerWorkspace({
 
   // ── Create slot ────────────────────────────────────────────────────────────
 
-  const hasLegacyThisWeek = React.useMemo(
-    () => Array.from(legacyShiftsByDate.values()).some((rows) => rows.length > 0),
+  const legacyCount = React.useMemo(
+    () => Array.from(legacyShiftsByDate.values()).reduce((sum, rows) => sum + rows.length, 0),
     [legacyShiftsByDate],
   );
 
@@ -831,7 +831,8 @@ export function CompanyRotaPlannerWorkspace({
         <SiteWeekMatrix
           sites={sites}
           plannerWeekDays={plannerWeekDays}
-          hasLegacy={hasLegacyThisWeek}
+          legacyCount={legacyCount}
+          onSwitchToDayList={() => setViewMode('day-list')}
           onOpenSlot={openSlot}
           onOpenCreate={(sid, date) => openCreate(date, sid)}
         />
@@ -1997,8 +1998,8 @@ const db = StyleSheet.create({
 
 // ── Site Week matrix ──────────────────────────────────────────────────────────
 
-const SITE_COL_W = 180;
-const DAY_COL_W  = 132;
+const SITE_COL_W = 210;
+const DAY_COL_W  = 155;
 
 /** Compact slot card rendered inside a matrix cell. */
 function SlotMiniCard({
@@ -2009,6 +2010,24 @@ function SlotMiniCard({
 }) {
   const tok = slotStateTokens(cell.coverageState);
   const timeStr = `${formatUtcTime(cell.startAt)}–${formatUtcTime(cell.endAt)}`;
+
+  // Named positions: confirmed (ready / in_progress / completed)
+  const confirmedPos = cell.positions.filter(
+    (p) => ['ready', 'in_progress', 'completed'].includes(p.status) && p.guardName != null,
+  );
+  // Named positions: offered / awaiting
+  const awaitingPos = cell.positions.filter(
+    (p) => p.status === 'offered' && p.guardName != null,
+  );
+
+  const MAX_NAMES = 3;
+  const shownConfirmed = confirmedPos.slice(0, MAX_NAMES);
+  const moreConfirmed  = confirmedPos.length - shownConfirmed.length;
+
+  // Show the single awaiting guard's name only when there is space below confirmed names
+  const showSingleAwaitingName =
+    awaitingPos.length === 1 && shownConfirmed.length < MAX_NAMES;
+  const awaitingCountToShow = showSingleAwaitingName ? 0 : awaitingPos.length;
 
   const coverNum  = cell.coveragePhase === 'live' ? cell.counts.onShift
                   : cell.coveragePhase === 'past' ? cell.counts.completed
@@ -2024,37 +2043,65 @@ function SlotMiniCard({
       style={({ pressed, hovered }: any) => [
         mxStyles.slotCard,
         { borderLeftColor: tok.problem ? tok.fg : colors.accentTealSoft },
+        cell.coveragePhase === 'past' && mxStyles.slotCardPast,
         (pressed || hovered) && mxStyles.slotCardHovered,
       ]}
       accessibilityRole="button"
       accessibilityLabel={`${timeStr} ${coverNum} of ${cell.counts.required}`}
     >
+      {/* 1. TIME */}
       <Text style={mxStyles.slotCardTime}>{timeStr}</Text>
+      {/* 2. TITLE (optional) */}
       {cell.title ? <Text style={mxStyles.slotCardTitle} numberOfLines={1}>{cell.title}</Text> : null}
 
       {cell.coveragePhase === 'past' ? (
+        // Past: quiet state label — names are archived detail, keep it minimal
         <Text style={[mxStyles.slotCardState, { color: tok.fg || colors.textMuted }]}>
           {tok.label || 'Completed'}
         </Text>
-      ) : isHealthy ? (
-        <Text style={mxStyles.slotCardHealthy}>
-          {coverNum}/{cell.counts.required} ✓
-        </Text>
       ) : (
         <>
-          <Text style={mxStyles.slotCardCover}>
-            {coverNum}/{cell.counts.required}
-            {cell.coveragePhase === 'live' ? ' on shift' : ' covered'}
-          </Text>
+          {/* 3. GUARD NAMES — confirmed first, up to MAX_NAMES */}
+          {shownConfirmed.map((p) => (
+            <Fragment key={p.shiftId}>
+              <Text style={mxStyles.slotCardGuard}>{p.guardName}</Text>
+            </Fragment>
+          ))}
+          {/* Overflow: "+ N Guards" */}
+          {moreConfirmed > 0 && (
+            <Text style={mxStyles.slotCardGuardMore}>
+              + {moreConfirmed} Guard{moreConfirmed !== 1 ? 's' : ''}
+            </Text>
+          )}
+          {/* Single awaiting guard with name */}
+          {showSingleAwaitingName && awaitingPos[0].guardName != null && (
+            <Text style={mxStyles.slotCardGuardAwaiting}>
+              {awaitingPos[0].guardName} · Awaiting
+            </Text>
+          )}
+          {/* 4. AWAITING count — multiple awaiting or no space for name */}
+          {awaitingCountToShow > 0 && (
+            <Text style={mxStyles.slotCardAwaiting}>{awaitingCountToShow} Awaiting</Text>
+          )}
+          {/* OPEN exception */}
           {cell.counts.open > 0 && (
             <Text style={mxStyles.slotCardOpen}>{cell.counts.open} Open</Text>
           )}
-          {cell.counts.offered > 0 && cell.coveragePhase === 'future' && (
-            <Text style={mxStyles.slotCardAwaiting}>{cell.counts.offered} Awaiting</Text>
+          {/* 5. HEALTH INDICATOR — calm ✓ when all positions filled */}
+          {isHealthy && (
+            <Text style={mxStyles.slotCardHealthy}>
+              {cell.counts.required === 1 ? '✓' : `${coverNum}/${cell.counts.required} ✓`}
+            </Text>
           )}
+          {/* Live non-healthy: on-shift fraction */}
+          {!isHealthy && cell.coveragePhase === 'live' && (
+            <Text style={mxStyles.slotCardCover}>{coverNum}/{cell.counts.required} on shift</Text>
+          )}
+          {/* Attention when no open/awaiting already explains it */}
           {tok.label === 'Attention' && cell.counts.open === 0 && cell.counts.offered === 0 && (
             <Text style={mxStyles.slotCardAttention}>Attention</Text>
           )}
+          {/* Cancelled */}
           {tok.label === 'Cancelled' && (
             <Text style={mxStyles.slotCardState}>Cancelled</Text>
           )}
@@ -2095,7 +2142,7 @@ function MatrixDayCell({
             accessibilityRole="button"
             accessibilityLabel="Add another shift"
           >
-            <Text style={mxStyles.cellAddMoreText}>+ Add</Text>
+            <Text style={mxStyles.cellAddMoreText}>+</Text>
           </Pressable>
         </>
       ) : (
@@ -2106,7 +2153,7 @@ function MatrixDayCell({
           accessibilityLabel="Add shift"
         >
           <Text style={mxStyles.cellEmptyDash}>—</Text>
-          <Text style={mxStyles.cellEmptyAdd}>+ Add</Text>
+          <Text style={mxStyles.cellEmptyAdd}>+ Add Shift</Text>
         </Pressable>
       )}
     </View>
@@ -2115,11 +2162,12 @@ function MatrixDayCell({
 
 /** The full Site × Week planning matrix. */
 function SiteWeekMatrix({
-  sites, plannerWeekDays, hasLegacy, onOpenSlot, onOpenCreate,
+  sites, plannerWeekDays, legacyCount, onSwitchToDayList, onOpenSlot, onOpenCreate,
 }: {
   sites: RotaSiteWeekRow[];
   plannerWeekDays: PlannerWeekDay[];
-  hasLegacy: boolean;
+  legacyCount: number;
+  onSwitchToDayList: () => void;
   onOpenSlot: (slotId: number) => void;
   onOpenCreate: (siteId: string, date: string) => void;
 }) {
@@ -2133,12 +2181,13 @@ function SiteWeekMatrix({
 
   return (
     <View style={mxStyles.matrixOuter}>
-      {hasLegacy && (
-        <View style={mxStyles.legacyBanner}>
-          <Text style={mxStyles.legacyBannerText}>
-            Legacy rota records exist for this week. Switch to Day List to inspect them.
+      {legacyCount > 0 && (
+        <Pressable onPress={onSwitchToDayList} style={mxStyles.legacyNotice} accessibilityRole="button">
+          <Text style={mxStyles.legacyNoticeText}>
+            {'ⓘ '}{legacyCount} legacy shift{legacyCount !== 1 ? 's' : ''}{' · '}
+            <Text style={mxStyles.legacyNoticeLink}>View in Day List</Text>
           </Text>
-        </View>
+        </Pressable>
       )}
 
       <ScrollView
@@ -2204,16 +2253,14 @@ const mxStyles = StyleSheet.create({
   emptyMatrix: { paddingVertical: spacing.xl, alignItems: 'center' },
   emptyMatrixText: { fontSize: 13, color: colors.textMuted, fontStyle: 'italic' } as any,
 
-  // Legacy banner
-  legacyBanner: {
-    backgroundColor: colors.pendingSurface,
-    borderRadius: radii.sm,
-    borderWidth: 1,
-    borderColor: colors.pending,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+  // Compact legacy notice (inline, clickable)
+  legacyNotice: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 5,
+    alignSelf: 'flex-start',
   },
-  legacyBannerText: { fontSize: 13, color: colors.pending },
+  legacyNoticeText: { fontSize: 12, color: colors.textMuted },
+  legacyNoticeLink: { fontSize: 12, color: colors.accentTeal, textDecorationLine: 'underline' } as any,
 
   // Matrix scroll
   matrixScrollH: {},
@@ -2316,19 +2363,19 @@ const mxStyles = StyleSheet.create({
   },
   cellEmptyBtnHovered: { backgroundColor: colors.surfaceSubtle },
   cellEmptyDash: { fontSize: 14, color: colors.border },
-  cellEmptyAdd: { fontSize: 11, color: colors.textMuted },
+  // "+ Add Shift" is always present but very quiet — hover background provides the cue
+  cellEmptyAdd: { fontSize: 10, color: colors.border, letterSpacing: 0.2 } as any,
 
-  // Add-more (when cell already has slots)
+  // Add-more (when cell already has slots) — small right-aligned "+" corner control
   cellAddMore: {
-    alignItems: 'center',
-    paddingVertical: 3,
+    alignSelf: 'flex-end',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
     borderRadius: radii.sm,
-    borderWidth: 1,
-    borderColor: colors.border,
     marginTop: 2,
   },
   cellAddMoreHovered: { backgroundColor: colors.surfaceSubtle },
-  cellAddMoreText: { fontSize: 10, color: colors.textMuted },
+  cellAddMoreText: { fontSize: 13, fontWeight: '600', color: colors.textMuted, lineHeight: 18 },
 
   // Slot mini card
   slotCard: {
@@ -2342,6 +2389,8 @@ const mxStyles = StyleSheet.create({
     backgroundColor: colors.card,
   },
   slotCardHovered: { backgroundColor: colors.surfaceSubtle },
+  // Past slots appear quieter than future/live planning work
+  slotCardPast: { opacity: 0.75 },
   slotCardTime: {
     fontSize: 11,
     fontWeight: '600',
@@ -2349,6 +2398,14 @@ const mxStyles = StyleSheet.create({
     fontVariant: ['tabular-nums'],
   } as any,
   slotCardTitle: { fontSize: 10, color: colors.textMuted, fontStyle: 'italic' } as any,
+
+  // Guard name rows
+  slotCardGuard:         { fontSize: 11, color: colors.textPrimary, lineHeight: 16 },
+  // "+ N Guards" overflow line
+  slotCardGuardMore:     { fontSize: 10, color: colors.textSecondary, fontStyle: 'italic' } as any,
+  // Single awaiting guard: "Name · Awaiting" — visually distinct from confirmed
+  slotCardGuardAwaiting: { fontSize: 11, color: colors.info, fontStyle: 'italic' } as any,
+
   slotCardHealthy: {
     fontSize: 11,
     fontWeight: '700',
