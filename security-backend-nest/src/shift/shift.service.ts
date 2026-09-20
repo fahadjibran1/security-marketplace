@@ -1,6 +1,6 @@
-import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException, forwardRef } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException, forwardRef } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, Repository } from 'typeorm';
+import { DataSource, EntityManager, Repository } from 'typeorm';
 import { Shift } from './entities/shift.entity';
 import { CreateShiftDto } from './dto/create-shift.dto';
 import { AssignmentService } from '../assignment/assignment.service';
@@ -19,6 +19,7 @@ import { CompanyPermission } from '../company-membership/company-membership-type
 import { CompanyGuardService } from '../company-guard/company-guard.service';
 import { AvailabilityService } from '../availability/availability.service';
 import { ComplianceService } from '../compliance/compliance.service';
+import { AuditLogService } from '../audit-log/audit-log.service';
 import { Timesheet } from '../timesheet/entities/timesheet.entity';
 import { UpdateShiftDto } from './dto/update-shift.dto';
 import { RespondShiftDto } from './dto/respond-shift.dto';
@@ -59,6 +60,8 @@ export class ShiftService {
     private readonly companyGuardService: CompanyGuardService,
     private readonly availabilityService: AvailabilityService,
     private readonly complianceService: ComplianceService,
+    private readonly dataSource: DataSource,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   async findAll(): Promise<Shift[]> {
@@ -390,24 +393,73 @@ export class ShiftService {
   }
 
   async respondForGuard(user: JwtPayload, id: number, dto: RespondShiftDto): Promise<Shift> {
-    const shift = await this.findOneForUser(user, id);
     const guard = await this.guardProfileService.findByUserId(user.sub);
     if (!guard) {
       throw new NotFoundException('Guard profile not found');
     }
 
-    if (!shift.guard || shift.guard.id !== guard.id) {
-      throw new ForbiddenException('This shift is not assigned to the current guard');
+    // Pre-check: shift must exist and belong to this guard
+    const preCheck = await this.shiftRepo.findOne({
+      where: { id },
+      relations: ['company', 'guard'],
+    });
+    if (!preCheck || !preCheck.guard || preCheck.guard.id !== guard.id) {
+      throw new NotFoundException(`Shift with id ${id} not found`);
     }
-
-    if (shift.status !== 'offered') {
+    if (preCheck.status !== 'offered') {
       throw new BadRequestException('Only offered shifts can be accepted or rejected');
     }
 
-    shift.status = dto.response === 'accepted' ? 'ready' : 'rejected';
-    const savedShift = await this.shiftRepo.save(shift);
+    // On acceptance, re-verify current eligibility
+    if (dto.response === 'accepted') {
+      await this.companyGuardService.ensureActiveRelationship(preCheck.company.id, guard.id);
+      await this.availabilityService.assertGuardCanTakeShift(
+        preCheck.company.id, guard.id, preCheck.start, preCheck.end, id,
+      );
+      await this.complianceService.assertGuardAssignable(preCheck.company.id, guard.id);
+    }
 
-    return this.findOne(savedShift.id);
+    // Atomic conditional UPDATE — only succeeds if status is still 'offered'
+    // and this guard is still assigned, preventing race conditions
+    const nextStatus = dto.response === 'accepted' ? 'ready' : 'rejected';
+    const rows: { id: number }[] = await this.dataSource.query(
+      `UPDATE "shifts"
+         SET "status" = $1
+       WHERE "id" = $2
+         AND "guardId" = $3
+         AND "status" = 'offered'
+       RETURNING "id"`,
+      [nextStatus, id, guard.id],
+    );
+
+    if (rows.length === 0) {
+      const current = await this.shiftRepo.findOne({ where: { id }, relations: ['guard'] });
+      if (!current || current.guard?.id !== guard.id) {
+        throw new NotFoundException(`Shift with id ${id} not found`);
+      }
+      const currentNormalized = this.normalizeLifecycleStatus(current.status);
+      throw new ConflictException(
+        currentNormalized === nextStatus
+          ? `Shift is already ${nextStatus}`
+          : 'Shift offer is no longer available — the position may have been changed or cancelled',
+      );
+    }
+
+    await this.auditLogService.log({
+      company: { id: preCheck.company.id },
+      user: { id: user.sub },
+      action: dto.response === 'accepted' ? 'shift.offer_accepted' : 'shift.offer_rejected',
+      entityType: 'shift',
+      entityId: id,
+      afterData: {
+        status: nextStatus,
+        guardId: guard.id,
+        ...(preCheck.rotaSlotId != null ? { rotaSlotId: preCheck.rotaSlotId } : {}),
+        ...(dto.reason ? { reason: dto.reason } : {}),
+      },
+    });
+
+    return this.findOne(id);
   }
 
   assertGuardCanOperateShift(shift: Shift, guardId: number, action: string): void {

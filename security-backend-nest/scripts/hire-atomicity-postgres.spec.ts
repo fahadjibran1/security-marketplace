@@ -153,6 +153,7 @@ function services(dataSource: DataSource, failAt?: FailurePoint) {
     dataSource.getRepository(Job), dataSource.getRepository(JobApplication), dataSource.getRepository(Timesheet),
     assignmentService, timesheetService, siteService as any, {} as any, guardService as any,
     companyGuardService, availability as any, compliance as any,
+    dataSource, { log: async () => undefined } as any,
   );
   const originalShift = shiftService.create.bind(shiftService);
   shiftService.create = async (dto: any, manager?: EntityManager) => {

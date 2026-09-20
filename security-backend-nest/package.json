@@ -38,6 +38,7 @@
     "test:pilot-journey": "ts-node -r tsconfig-paths/register scripts/pilot-journey.spec.ts",
     "test:admin-operator-postgres": "ts-node -r tsconfig-paths/register scripts/admin-operator-postgres.spec.ts",
     "test:rota-slot": "ts-node -r tsconfig-paths/register scripts/rota-slot-service.spec.ts",
+    "test:shift-offers": "ts-node -r tsconfig-paths/register scripts/shift-offer-lifecycle.spec.ts",
     "release:preflight-data": "ts-node -r tsconfig-paths/register scripts/release-data-preflight.ts",
     "admin:bootstrap": "node dist/admin-operator/admin-operator.cli.js bootstrap",
     "admin:recover": "node dist/admin-operator/admin-operator.cli.js recover",

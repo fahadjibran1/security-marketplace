@@ -1,5 +1,6 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { AuditLogModule } from '../audit-log/audit-log.module';
 import { Shift } from './entities/shift.entity';
 import { ShiftController } from './shift.controller';
 import { ShiftService } from './shift.service';
@@ -30,6 +31,7 @@ import { AvailabilityModule } from '../availability/availability.module';
     CompanyGuardModule,
     ComplianceModule,
     AvailabilityModule,
+    AuditLogModule,
   ],
   controllers: [ShiftController],
   providers: [ShiftService],
