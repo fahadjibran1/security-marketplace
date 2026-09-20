@@ -526,6 +526,87 @@ export class RotaSlotService {
     return saved;
   }
 
+  async replacePosition(
+    user: JwtPayload,
+    slotId: number,
+    rejectedShiftId: number,
+  ): Promise<Shift> {
+    const { company } = await this.membershipService.resolveCompanyContext(
+      user.sub, user.role, CompanyPermission.SHIFTS_MANAGE,
+    );
+
+    const replacement = await this.dataSource.transaction(async (manager) => {
+      const slotRepo = manager.getRepository(RotaSlot);
+      const shiftRepo = manager.getRepository(Shift);
+
+      const slot = await slotRepo
+        .createQueryBuilder('slot')
+        .setLock('pessimistic_write')
+        .where('slot.id = :id AND slot.companyId = :companyId', {
+          id: slotId, companyId: company.id,
+        })
+        .getOne();
+
+      if (!slot) throw new NotFoundException('Rota slot not found');
+      if (slot.status === 'cancelled') {
+        throw new UnprocessableEntityException('Cannot create replacement for a cancelled slot');
+      }
+
+      const targetShift = await shiftRepo.findOne({
+        where: { id: rejectedShiftId, rotaSlotId: slotId },
+      });
+      if (!targetShift || targetShift.company.id !== company.id) {
+        throw new NotFoundException('Position not found in this slot');
+      }
+      if (targetShift.status !== 'rejected') {
+        throw new UnprocessableEntityException(
+          `Only rejected positions can be replaced — this position has status '${targetShift.status}'`,
+        );
+      }
+
+      // Count forward-going positions (unfilled/offered/ready/in_progress) to determine
+      // whether replacement capacity already exists. Slot lock ensures serializability.
+      const activeShifts = await shiftRepo.find({ where: { rotaSlotId: slotId } });
+      const forward = activeShifts.filter(
+        (s) => !['cancelled', 'rejected', 'missed'].includes(s.status),
+      ).length;
+
+      if (forward >= slot.requiredGuardCount) {
+        throw new ConflictException(
+          'Replacement capacity already exists for this slot — no additional position created',
+        );
+      }
+
+      const site = await manager.getRepository(Site).findOne({ where: { id: slot.siteId } });
+      if (!site) throw new NotFoundException('Site not found');
+
+      return shiftRepo.save(
+        shiftRepo.create({
+          company: { id: slot.companyId } as any,
+          site,
+          siteName: site.name,
+          start: slot.startAt,
+          end: slot.endAt,
+          checkCallIntervalMinutes: slot.checkCallIntervalMinutes,
+          instructions: slot.instructions,
+          status: 'unfilled',
+          rotaSlotId: slotId,
+        }),
+      );
+    });
+
+    await this.auditLogService.log({
+      company: { id: company.id },
+      user: { id: user.sub },
+      action: 'rota_slot.position_replaced',
+      entityType: 'shift',
+      entityId: rejectedShiftId,
+      afterData: { replacementShiftId: replacement.id, slotId },
+    });
+
+    return this.shiftRepo.findOneOrFail({ where: { id: replacement.id } });
+  }
+
   async cancelSlot(user: JwtPayload, slotId: number): Promise<RotaSlot> {
     const { company } = await this.membershipService.resolveCompanyContext(
       user.sub, user.role, CompanyPermission.SHIFTS_MANAGE,

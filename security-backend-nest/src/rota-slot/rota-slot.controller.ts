@@ -169,6 +169,18 @@ export class RotaSlotController {
     return result;
   }
 
+  @Post(':id/positions/:shiftId/replace')
+  @Roles(...COMPANY_ADMIN_ROLES)
+  async replacePosition(
+    @CurrentUser() user: JwtPayload,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('shiftId', ParseIntPipe) shiftId: number,
+  ) {
+    await this.rotaSlotService.replacePosition(user, id, shiftId);
+    const { slot, shifts } = await this.rotaSlotService.getSlotDetail(user, id);
+    return toSlotDetail(slot, shifts);
+  }
+
   @Delete(':id/positions/:shiftId')
   @Roles(...COMPANY_ADMIN_ROLES)
   async cancelPosition(

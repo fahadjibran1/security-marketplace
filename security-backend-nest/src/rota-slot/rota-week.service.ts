@@ -218,11 +218,20 @@ export class RotaWeekService {
       const phase = toCoveragePhase(slot, now);
       const counts = computeCounts(slot, shifts);
 
+      const state = toCoverageState(slot, shifts, phase);
+      // A slot has an active operational problem only when its coverage state is
+      // degraded — historical rejected/missed records on a slot that already has
+      // replacement cover must not permanently mark it as problematic.
+      const hasActiveProblem = [
+        'has_problems', 'live_has_problems',
+        'outcome_shortfall', 'outcome_failed', 'outcome_has_problems',
+      ].includes(state);
+
       totalPositions += counts.required;
       onShiftNow += counts.onShift;
       completedPositions += counts.completed;
       missedPositions += shifts.filter((s) => s.status === 'missed').length;
-      problems += counts.problem;
+      problems += hasActiveProblem ? counts.problem : 0;
 
       if (phase === 'future') {
         futureConfirmed += counts.confirmed;
@@ -234,7 +243,7 @@ export class RotaWeekService {
 
       if (isNightShift(slot.startAt, slot.endAt)) nightSlots++;
 
-      if (counts.open > 0 || counts.problem > 0) {
+      if (counts.open > 0 || hasActiveProblem) {
         sitesWithProblems.add(slot.siteId);
       }
     }

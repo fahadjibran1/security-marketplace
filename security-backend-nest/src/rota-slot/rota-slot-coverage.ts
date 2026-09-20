@@ -74,13 +74,22 @@ export function toCoverageState(
     const unfilled = nonCancelled.filter((s) => s.status === 'unfilled').length;
     const rejected = nonCancelled.filter((s) => s.status === 'rejected').length;
 
-    if (rejected > 0) return 'has_problems';
-    if (unfilled === 0 && rejected === 0) {
-      return ready === nonCancelled.length ? 'fully_planned' : 'offered_pending';
+    // Forward-going positions: only unfilled/offered/ready can still lead to coverage.
+    // Historical rejected records do not count — a replacement child shift must be
+    // created to restore the forward count to `required`.
+    const forward = ready + offered + unfilled;
+
+    if (forward < required) {
+      return rejected > 0 ? 'has_problems' : 'under_planned';
     }
+
+    // forward >= required: active positions can cover the requirement.
+    if (unfilled === 0) {
+      return ready >= required ? 'fully_planned' : 'offered_pending';
+    }
+
     if (ready + offered > 0) return 'under_planned';
-    if (unfilled >= required) return 'fully_open';
-    return 'under_planned';
+    return 'fully_open';
   }
 
   if (phase === 'live') {

@@ -20,11 +20,23 @@
  *   AUDIT-STALE       Failed stale response does NOT create a success audit event
  *   DIRECT-CREATE     POST /shifts with clashing guard blocked
  *   DIRECT-UPDATE     PATCH reassign to clashing guard blocked
+ *   REPLACE-REJECTED  required 3 remains 3; replacement created
+ *   REPLACE-HISTORY   original rejected Shift remains rejected with original Guard
+ *   REPLACE-ASSIGN    replacement unfilled → offered via existing assignPosition
+ *   REPLACE-ACCEPT    replacement ready; coverageState=fully_planned; required=3 unchanged
+ *   REPLACE-CONCURRENCY two concurrent replaces → exactly one replacement, one 409
+ *   REPLACE-WRONG-STATUS ready/in_progress/completed/missed/unfilled cannot be replaced
+ *   REPLACE-TENANT    Company B cannot replace Company A position
+ *   COVERAGE-BEFORE   2 ready + 1 rejected → has_problems; required 3
+ *   COVERAGE-AWAITING 2 ready + rejected history + offered replacement → offered_pending
+ *   COVERAGE-COMPLETE 2 ready + rejected history + ready replacement → fully_planned
+ *   REQ-INCREASE-HISTORY historical rejection does not corrupt 3→4 increase
+ *   REQ-DECREASE-HISTORY historical rejection does not incorrectly block valid decrease
  */
 
 import 'reflect-metadata';
 
-import { ConflictException, BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { ConflictException, BadRequestException, ForbiddenException, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { equal, ok, rejects, deepEqual } from 'node:assert/strict';
 import { DataSource, In, LessThan, MoreThan, Repository } from 'typeorm';
 
@@ -837,6 +849,456 @@ async function testRotaAssignmentRegression(ds: DataSource) {
   console.log(`PASS ROTA-ASSIGNMENT-REGRESSION: concurrent assignment → guard=${final.guard!.id}, ${successes.length === 1 ? 'one winner + one 409' : 'both resolved to committed state'}`);
 }
 
+// ── Replacement lifecycle tests ───────────────────────────────────────────────
+
+async function testReplaceRejected(ds: DataSource) {
+  const { company, site } = await createCompanyWithSite(ds, 'rep-rej');
+  const rotaSvc = makeRotaSlotService(ds, company);
+  const user = makeCompanyUser();
+
+  const slot = await rotaSvc.createSlot(user, {
+    siteId: site.id,
+    startAt: '2027-08-01T08:00:00',
+    endAt: '2027-08-01T16:00:00',
+    requiredGuardCount: 3,
+  });
+  const shifts = await ds.getRepository(Shift).find({ where: { rotaSlotId: slot.id }, order: { id: 'ASC' } });
+
+  const { guard: g1 } = await createGuardWithRelationship(ds, company, 'rep-rej-g1');
+  const { guard: g2 } = await createGuardWithRelationship(ds, company, 'rep-rej-g2');
+
+  await rotaSvc.assignPosition(user, slot.id, { shiftId: shifts[0].id, guardId: g1.id });
+  await rotaSvc.assignPosition(user, slot.id, { shiftId: shifts[1].id, guardId: g2.id });
+  await ds.getRepository(Shift).update({ id: shifts[0].id }, { status: 'ready' });
+  await ds.getRepository(Shift).update({ id: shifts[1].id }, { status: 'rejected' });
+
+  const before = await rotaSvc.getSlotDetail(user, slot.id);
+  equal(before.slot.requiredGuardCount, 3, 'REPLACE-REJECTED: required=3 before replacement');
+
+  const replacement = await rotaSvc.replacePosition(user, slot.id, shifts[1].id);
+
+  const after = await rotaSvc.getSlotDetail(user, slot.id);
+  equal(after.slot.requiredGuardCount, 3, 'REPLACE-REJECTED: required remains 3 after replacement');
+  equal(replacement.status, 'unfilled', 'REPLACE-REJECTED: replacement is unfilled');
+  equal(replacement.rotaSlotId, slot.id, 'REPLACE-REJECTED: replacement belongs to same slot');
+
+  const allShifts = await ds.getRepository(Shift).find({ where: { rotaSlotId: slot.id } });
+  const nonCancelled = allShifts.filter((s) => s.status !== 'cancelled');
+  equal(nonCancelled.length, 4, 'REPLACE-REJECTED: 4 non-cancelled shifts (2 original + 1 unfilled + 1 replacement)');
+
+  console.log('PASS REPLACE-REJECTED: required=3 unchanged; replacement position created');
+}
+
+async function testReplaceHistory(ds: DataSource) {
+  const { company, site } = await createCompanyWithSite(ds, 'rep-hist');
+  const rotaSvc = makeRotaSlotService(ds, company);
+  const user = makeCompanyUser();
+
+  const slot = await rotaSvc.createSlot(user, {
+    siteId: site.id,
+    startAt: '2027-08-02T08:00:00',
+    endAt: '2027-08-02T16:00:00',
+    requiredGuardCount: 2,
+  });
+  const shifts = await ds.getRepository(Shift).find({ where: { rotaSlotId: slot.id }, order: { id: 'ASC' } });
+
+  const { guard: g1 } = await createGuardWithRelationship(ds, company, 'rep-hist-g1');
+  await rotaSvc.assignPosition(user, slot.id, { shiftId: shifts[0].id, guardId: g1.id });
+  await ds.getRepository(Shift).update({ id: shifts[0].id }, { status: 'rejected' });
+
+  await rotaSvc.replacePosition(user, slot.id, shifts[0].id);
+
+  const original = await ds.getRepository(Shift).findOneOrFail({ where: { id: shifts[0].id }, relations: ['guard'] });
+  equal(original.status, 'rejected', 'REPLACE-HISTORY: original shift remains rejected');
+  ok(original.guard != null, 'REPLACE-HISTORY: original guard relationship preserved');
+  equal(original.guard!.id, g1.id, 'REPLACE-HISTORY: original guard ID unchanged');
+
+  console.log('PASS REPLACE-HISTORY: original rejected shift preserved with guard');
+}
+
+async function testReplaceAssign(ds: DataSource) {
+  const { company, site } = await createCompanyWithSite(ds, 'rep-assign');
+  const rotaSvc = makeRotaSlotService(ds, company);
+  const user = makeCompanyUser();
+
+  const slot = await rotaSvc.createSlot(user, {
+    siteId: site.id,
+    startAt: '2027-08-03T08:00:00',
+    endAt: '2027-08-03T16:00:00',
+    requiredGuardCount: 2,
+  });
+  const shifts = await ds.getRepository(Shift).find({ where: { rotaSlotId: slot.id }, order: { id: 'ASC' } });
+
+  const { guard: gRej } = await createGuardWithRelationship(ds, company, 'rep-asgn-g1');
+  await rotaSvc.assignPosition(user, slot.id, { shiftId: shifts[0].id, guardId: gRej.id });
+  await ds.getRepository(Shift).update({ id: shifts[0].id }, { status: 'rejected' });
+
+  const replacement = await rotaSvc.replacePosition(user, slot.id, shifts[0].id);
+  equal(replacement.status, 'unfilled', 'REPLACE-ASSIGN: replacement starts unfilled');
+
+  const { guard: gNew } = await createGuardWithRelationship(ds, company, 'rep-asgn-g2');
+  const assigned = await rotaSvc.assignPosition(user, slot.id, { shiftId: replacement.id, guardId: gNew.id });
+  equal(assigned.status, 'offered', 'REPLACE-ASSIGN: assignPosition transitions replacement to offered');
+
+  console.log('PASS REPLACE-ASSIGN: replacement unfilled → offered via existing assignPosition');
+}
+
+async function testReplaceAccept(ds: DataSource) {
+  const { company, site } = await createCompanyWithSite(ds, 'rep-accept');
+  const rotaSvc = makeRotaSlotService(ds, company);
+  const companyUser = makeCompanyUser();
+
+  const slot = await rotaSvc.createSlot(companyUser, {
+    siteId: site.id,
+    startAt: '2027-08-04T08:00:00',
+    endAt: '2027-08-04T16:00:00',
+    requiredGuardCount: 3,
+  });
+  const shifts = await ds.getRepository(Shift).find({ where: { rotaSlotId: slot.id }, order: { id: 'ASC' } });
+
+  // Assign all 3 positions: two become ready, one rejects
+  const { guard: g1 } = await createGuardWithRelationship(ds, company, 'rep-acc-g1');
+  const { guard: g2 } = await createGuardWithRelationship(ds, company, 'rep-acc-g2');
+  const { guard: g3 } = await createGuardWithRelationship(ds, company, 'rep-acc-g3orig');
+  await rotaSvc.assignPosition(companyUser, slot.id, { shiftId: shifts[0].id, guardId: g1.id });
+  await rotaSvc.assignPosition(companyUser, slot.id, { shiftId: shifts[1].id, guardId: g2.id });
+  await rotaSvc.assignPosition(companyUser, slot.id, { shiftId: shifts[2].id, guardId: g3.id });
+  await ds.getRepository(Shift).update({ id: shifts[0].id }, { status: 'ready' });
+  await ds.getRepository(Shift).update({ id: shifts[1].id }, { status: 'ready' });
+  await ds.getRepository(Shift).update({ id: shifts[2].id }, { status: 'rejected' });
+
+  const replacement = await rotaSvc.replacePosition(companyUser, slot.id, shifts[2].id);
+
+  const { guard: gNew, guardUser: guNew } = await createGuardWithRelationship(ds, company, 'rep-acc-g4');
+  await rotaSvc.assignPosition(companyUser, slot.id, { shiftId: replacement.id, guardId: gNew.id });
+
+  // Guard accepts via ShiftService
+  const svc = makeShiftService(ds, { company, site, userToGuard: new Map([[guNew.id, gNew]]) });
+  await svc.respondForGuard(makeGuardUser(guNew.id), replacement.id, { response: 'accepted' });
+
+  const { slot: finalSlot, shifts: finalShifts } = await rotaSvc.getSlotDetail(companyUser, slot.id);
+  const detail = toSlotDetail(finalSlot, finalShifts);
+  equal(detail.counts.required, 3, 'REPLACE-ACCEPT: required=3');
+  equal(detail.counts.confirmed, 3, 'REPLACE-ACCEPT: confirmed=3 (2 original ready + 1 replacement ready)');
+  equal(detail.coverageState, 'fully_planned', 'REPLACE-ACCEPT: coverageState=fully_planned');
+
+  console.log(`PASS REPLACE-ACCEPT: required=3, confirmed=3, coverageState=${detail.coverageState}`);
+}
+
+async function testReplaceConcurrency(ds: DataSource) {
+  const { company, site } = await createCompanyWithSite(ds, 'rep-conc');
+  const rotaSvc = makeRotaSlotService(ds, company);
+  const user = makeCompanyUser();
+
+  const slot = await rotaSvc.createSlot(user, {
+    siteId: site.id,
+    startAt: '2027-08-05T08:00:00',
+    endAt: '2027-08-05T16:00:00',
+    requiredGuardCount: 2,
+  });
+  const shifts = await ds.getRepository(Shift).find({ where: { rotaSlotId: slot.id }, order: { id: 'ASC' } });
+
+  const { guard: g1 } = await createGuardWithRelationship(ds, company, 'rep-conc-g1');
+  await rotaSvc.assignPosition(user, slot.id, { shiftId: shifts[0].id, guardId: g1.id });
+  await ds.getRepository(Shift).update({ id: shifts[0].id }, { status: 'rejected' });
+
+  // Two concurrent replace requests for the same rejected position
+  const [r1, r2] = await Promise.allSettled([
+    rotaSvc.replacePosition(user, slot.id, shifts[0].id),
+    rotaSvc.replacePosition(user, slot.id, shifts[0].id),
+  ]);
+
+  const successes = [r1, r2].filter((r) => r.status === 'fulfilled');
+  const failures = [r1, r2].filter((r) => r.status === 'rejected');
+  equal(successes.length, 1, 'REPLACE-CONCURRENCY: exactly one replacement created');
+  equal(failures.length, 1, 'REPLACE-CONCURRENCY: exactly one conflict');
+
+  const failReason = (failures[0] as PromiseRejectedResult).reason;
+  ok(
+    failReason instanceof ConflictException || failReason?.status === 409,
+    `REPLACE-CONCURRENCY: conflict error expected (409), got ${failReason?.constructor?.name}: ${failReason?.message}`,
+  );
+
+  // forward count = non-cancelled/rejected/missed shifts; must equal required (no duplicate replacement)
+  const allShiftsAfter = await ds.getRepository(Shift).find({ where: { rotaSlotId: slot.id } });
+  const forwardAfter = allShiftsAfter.filter(
+    (s) => !['cancelled', 'rejected', 'missed'].includes(s.status),
+  ).length;
+  equal(forwardAfter, slot.requiredGuardCount, 'REPLACE-CONCURRENCY: forward positions = required (exactly one replacement)');
+
+  console.log('PASS REPLACE-CONCURRENCY: concurrent replacement → exactly one created, one 409');
+}
+
+async function testReplaceWrongStatus(ds: DataSource) {
+  const { company, site } = await createCompanyWithSite(ds, 'rep-ws');
+  const rotaSvc = makeRotaSlotService(ds, company);
+  const user = makeCompanyUser();
+
+  const slot = await rotaSvc.createSlot(user, {
+    siteId: site.id,
+    startAt: '2027-08-06T08:00:00',
+    endAt: '2027-08-06T16:00:00',
+    requiredGuardCount: 5,
+  });
+  const shifts = await ds.getRepository(Shift).find({ where: { rotaSlotId: slot.id }, order: { id: 'ASC' } });
+
+  const guards: GuardProfile[] = [];
+  for (let i = 0; i < 4; i++) {
+    const { guard } = await createGuardWithRelationship(ds, company, `rep-ws-g${i}`);
+    guards.push(guard);
+    await rotaSvc.assignPosition(user, slot.id, { shiftId: shifts[i].id, guardId: guard.id });
+  }
+
+  // Set up specific statuses to test
+  await ds.getRepository(Shift).update({ id: shifts[0].id }, { status: 'ready' });
+  await ds.getRepository(Shift).update({ id: shifts[1].id }, { status: 'in_progress' });
+  await ds.getRepository(Shift).update({ id: shifts[2].id }, { status: 'completed' });
+  await ds.getRepository(Shift).update({ id: shifts[3].id }, { status: 'missed' });
+  // shifts[4] remains unfilled
+
+  const blockedStatuses: Array<{ shiftId: number; label: string }> = [
+    { shiftId: shifts[0].id, label: 'ready' },
+    { shiftId: shifts[1].id, label: 'in_progress' },
+    { shiftId: shifts[2].id, label: 'completed' },
+    { shiftId: shifts[3].id, label: 'missed' },
+    { shiftId: shifts[4].id, label: 'unfilled' },
+  ];
+
+  for (const { shiftId, label } of blockedStatuses) {
+    await rejects(
+      () => rotaSvc.replacePosition(user, slot.id, shiftId),
+      (err: any) => {
+        ok(
+          err instanceof UnprocessableEntityException || err instanceof ConflictException || err?.status === 422 || err?.status === 409,
+          `REPLACE-WRONG-STATUS (${label}): expected 422/409, got ${err?.constructor?.name}: ${err?.message}`,
+        );
+        return true;
+      },
+    );
+  }
+
+  console.log('PASS REPLACE-WRONG-STATUS: cannot replace ready/in_progress/completed/missed/unfilled');
+}
+
+async function testReplaceTenant(ds: DataSource) {
+  const { company: companyA, site: siteA } = await createCompanyWithSite(ds, 'rep-ten-a');
+  const { company: companyB } = await createCompanyWithSite(ds, 'rep-ten-b');
+  const rotaSvcA = makeRotaSlotService(ds, companyA);
+  const rotaSvcB = makeRotaSlotService(ds, companyB);
+  const userA = makeCompanyUser();
+
+  const slot = await rotaSvcA.createSlot(userA, {
+    siteId: siteA.id,
+    startAt: '2027-08-07T08:00:00',
+    endAt: '2027-08-07T16:00:00',
+    requiredGuardCount: 2,
+  });
+  const shifts = await ds.getRepository(Shift).find({ where: { rotaSlotId: slot.id }, order: { id: 'ASC' } });
+  await ds.getRepository(Shift).update({ id: shifts[0].id }, { status: 'rejected' });
+
+  // Company B tries to replace Company A's position
+  await rejects(
+    () => rotaSvcB.replacePosition(userA, slot.id, shifts[0].id),
+    (err: any) => {
+      ok(
+        err instanceof NotFoundException || err?.status === 404,
+        `REPLACE-TENANT: expected NotFoundException, got ${err?.constructor?.name}: ${err?.message}`,
+      );
+      return true;
+    },
+  );
+
+  const shift = await ds.getRepository(Shift).findOneOrFail({ where: { id: shifts[0].id } });
+  equal(shift.status, 'rejected', 'REPLACE-TENANT: Company A shift unchanged');
+
+  console.log('PASS REPLACE-TENANT: Company B cannot replace Company A position');
+}
+
+async function testCoverageBefore(ds: DataSource) {
+  const { company, site } = await createCompanyWithSite(ds, 'cov-before');
+  const rotaSvc = makeRotaSlotService(ds, company);
+  const user = makeCompanyUser();
+
+  const slot = await rotaSvc.createSlot(user, {
+    siteId: site.id,
+    startAt: '2027-08-10T08:00:00',
+    endAt: '2027-08-10T16:00:00',
+    requiredGuardCount: 3,
+  });
+  const shifts = await ds.getRepository(Shift).find({ where: { rotaSlotId: slot.id }, order: { id: 'ASC' } });
+
+  const { guard: g1 } = await createGuardWithRelationship(ds, company, 'cov-bef-g1');
+  const { guard: g2 } = await createGuardWithRelationship(ds, company, 'cov-bef-g2');
+  await rotaSvc.assignPosition(user, slot.id, { shiftId: shifts[0].id, guardId: g1.id });
+  await rotaSvc.assignPosition(user, slot.id, { shiftId: shifts[1].id, guardId: g2.id });
+  await ds.getRepository(Shift).update({ id: shifts[0].id }, { status: 'ready' });
+  await ds.getRepository(Shift).update({ id: shifts[1].id }, { status: 'ready' });
+  await ds.getRepository(Shift).update({ id: shifts[2].id }, { status: 'rejected' });
+
+  const { slot: s, shifts: sh } = await rotaSvc.getSlotDetail(user, slot.id);
+  const detail = toSlotDetail(s, sh);
+
+  equal(detail.counts.required, 3, 'COVERAGE-BEFORE: required=3');
+  equal(detail.counts.confirmed, 2, 'COVERAGE-BEFORE: confirmed=2');
+  equal(detail.counts.problem, 1, 'COVERAGE-BEFORE: problem=1');
+  equal(detail.coverageState, 'has_problems', 'COVERAGE-BEFORE: coverageState=has_problems');
+
+  console.log(`PASS COVERAGE-BEFORE: required=3, confirmed=2, problem=1, state=${detail.coverageState}`);
+}
+
+async function testCoverageAwaiting(ds: DataSource) {
+  const { company, site } = await createCompanyWithSite(ds, 'cov-await');
+  const rotaSvc = makeRotaSlotService(ds, company);
+  const user = makeCompanyUser();
+
+  const slot = await rotaSvc.createSlot(user, {
+    siteId: site.id,
+    startAt: '2027-08-11T08:00:00',
+    endAt: '2027-08-11T16:00:00',
+    requiredGuardCount: 3,
+  });
+  const shifts = await ds.getRepository(Shift).find({ where: { rotaSlotId: slot.id }, order: { id: 'ASC' } });
+
+  const { guard: g1 } = await createGuardWithRelationship(ds, company, 'cov-awt-g1');
+  const { guard: g2 } = await createGuardWithRelationship(ds, company, 'cov-awt-g2');
+  await rotaSvc.assignPosition(user, slot.id, { shiftId: shifts[0].id, guardId: g1.id });
+  await rotaSvc.assignPosition(user, slot.id, { shiftId: shifts[1].id, guardId: g2.id });
+  await ds.getRepository(Shift).update({ id: shifts[0].id }, { status: 'ready' });
+  await ds.getRepository(Shift).update({ id: shifts[1].id }, { status: 'ready' });
+  await ds.getRepository(Shift).update({ id: shifts[2].id }, { status: 'rejected' });
+
+  const replacement = await rotaSvc.replacePosition(user, slot.id, shifts[2].id);
+  const { guard: gNew } = await createGuardWithRelationship(ds, company, 'cov-awt-g3');
+  await rotaSvc.assignPosition(user, slot.id, { shiftId: replacement.id, guardId: gNew.id });
+  // Replacement is now in 'offered' state
+
+  const { slot: s, shifts: sh } = await rotaSvc.getSlotDetail(user, slot.id);
+  const detail = toSlotDetail(s, sh);
+
+  equal(detail.counts.required, 3, 'COVERAGE-AWAITING: required=3');
+  equal(detail.counts.confirmed, 2, 'COVERAGE-AWAITING: confirmed=2 (2 ready)');
+  equal(detail.counts.offered, 1, 'COVERAGE-AWAITING: offered=1 (replacement awaiting)');
+  equal(detail.coverageState, 'offered_pending', 'COVERAGE-AWAITING: coverageState=offered_pending');
+
+  console.log(`PASS COVERAGE-AWAITING: required=3, confirmed=2, offered=1, state=${detail.coverageState}`);
+}
+
+async function testCoverageComplete(ds: DataSource) {
+  const { company, site } = await createCompanyWithSite(ds, 'cov-complete');
+  const rotaSvc = makeRotaSlotService(ds, company);
+  const user = makeCompanyUser();
+
+  const slot = await rotaSvc.createSlot(user, {
+    siteId: site.id,
+    startAt: '2027-08-12T08:00:00',
+    endAt: '2027-08-12T16:00:00',
+    requiredGuardCount: 3,
+  });
+  const shifts = await ds.getRepository(Shift).find({ where: { rotaSlotId: slot.id }, order: { id: 'ASC' } });
+
+  const { guard: g1 } = await createGuardWithRelationship(ds, company, 'cov-cmp-g1');
+  const { guard: g2 } = await createGuardWithRelationship(ds, company, 'cov-cmp-g2');
+  await rotaSvc.assignPosition(user, slot.id, { shiftId: shifts[0].id, guardId: g1.id });
+  await rotaSvc.assignPosition(user, slot.id, { shiftId: shifts[1].id, guardId: g2.id });
+  await ds.getRepository(Shift).update({ id: shifts[0].id }, { status: 'ready' });
+  await ds.getRepository(Shift).update({ id: shifts[1].id }, { status: 'ready' });
+  await ds.getRepository(Shift).update({ id: shifts[2].id }, { status: 'rejected' });
+
+  const replacement = await rotaSvc.replacePosition(user, slot.id, shifts[2].id);
+  const { guard: gNew, guardUser: guNew } = await createGuardWithRelationship(ds, company, 'cov-cmp-g3');
+  await rotaSvc.assignPosition(user, slot.id, { shiftId: replacement.id, guardId: gNew.id });
+
+  // Guard accepts
+  const svc = makeShiftService(ds, { company, site, userToGuard: new Map([[guNew.id, gNew]]) });
+  await svc.respondForGuard(makeGuardUser(guNew.id), replacement.id, { response: 'accepted' });
+
+  const { slot: s, shifts: sh } = await rotaSvc.getSlotDetail(user, slot.id);
+  const detail = toSlotDetail(s, sh);
+
+  equal(detail.counts.required, 3, 'COVERAGE-COMPLETE: required=3');
+  equal(detail.counts.confirmed, 3, 'COVERAGE-COMPLETE: confirmed=3');
+  equal(detail.counts.offered, 0, 'COVERAGE-COMPLETE: offered=0');
+  equal(detail.coverageState, 'fully_planned', 'COVERAGE-COMPLETE: coverageState=fully_planned');
+
+  console.log(`PASS COVERAGE-COMPLETE: required=3, confirmed=3, state=${detail.coverageState}`);
+}
+
+async function testReqIncreaseHistory(ds: DataSource) {
+  const { company, site } = await createCompanyWithSite(ds, 'req-inc-hist');
+  const rotaSvc = makeRotaSlotService(ds, company);
+  const user = makeCompanyUser();
+
+  const slot = await rotaSvc.createSlot(user, {
+    siteId: site.id,
+    startAt: '2027-08-13T08:00:00',
+    endAt: '2027-08-13T16:00:00',
+    requiredGuardCount: 3,
+  });
+  const shifts = await ds.getRepository(Shift).find({ where: { rotaSlotId: slot.id }, order: { id: 'ASC' } });
+
+  const { guard: g1 } = await createGuardWithRelationship(ds, company, 'req-inc-g1');
+  const { guard: g2 } = await createGuardWithRelationship(ds, company, 'req-inc-g2');
+  await rotaSvc.assignPosition(user, slot.id, { shiftId: shifts[0].id, guardId: g1.id });
+  await rotaSvc.assignPosition(user, slot.id, { shiftId: shifts[1].id, guardId: g2.id });
+  await ds.getRepository(Shift).update({ id: shifts[0].id }, { status: 'ready' });
+  await ds.getRepository(Shift).update({ id: shifts[1].id }, { status: 'rejected' });
+
+  // Add replacement so we have: A:ready, B:rejected, C:unfilled (original), D:unfilled (replacement)
+  await rotaSvc.replacePosition(user, slot.id, shifts[1].id);
+
+  // Now increase requirement from 3 to 4
+  const result = await rotaSvc.changeRequirement(user, slot.id, 4);
+  equal(result.slot.requiredGuardCount, 4, 'REQ-INCREASE-HISTORY: required increased to 4');
+  equal(result.addedShiftIds.length, 1, 'REQ-INCREASE-HISTORY: one new position added');
+
+  const allShifts = await ds.getRepository(Shift).find({ where: { rotaSlotId: slot.id } });
+  const unfilled = allShifts.filter((s) => s.status === 'unfilled');
+  ok(unfilled.length >= 2, 'REQ-INCREASE-HISTORY: at least 2 unfilled positions after increase');
+
+  console.log(`PASS REQ-INCREASE-HISTORY: required=4, addedShiftIds=${result.addedShiftIds.length}`);
+}
+
+async function testReqDecreaseHistory(ds: DataSource) {
+  const { company, site } = await createCompanyWithSite(ds, 'req-dec-hist');
+  const rotaSvc = makeRotaSlotService(ds, company);
+  const user = makeCompanyUser();
+
+  const slot = await rotaSvc.createSlot(user, {
+    siteId: site.id,
+    startAt: '2027-08-14T08:00:00',
+    endAt: '2027-08-14T16:00:00',
+    requiredGuardCount: 3,
+  });
+  const shifts = await ds.getRepository(Shift).find({ where: { rotaSlotId: slot.id }, order: { id: 'ASC' } });
+
+  const { guard: g1 } = await createGuardWithRelationship(ds, company, 'req-dec-g1');
+  await rotaSvc.assignPosition(user, slot.id, { shiftId: shifts[0].id, guardId: g1.id });
+  await ds.getRepository(Shift).update({ id: shifts[0].id }, { status: 'ready' });
+  await ds.getRepository(Shift).update({ id: shifts[1].id }, { status: 'rejected' });
+  // shifts[2] remains unfilled
+
+  // Floor = 1 (only shifts[0]:ready is committed; rejected not in COMMITTED_STATUSES)
+  // Decrease to 2: should succeed (removes one candidate — unfilled before rejected)
+  const result = await rotaSvc.changeRequirement(user, slot.id, 2);
+  equal(result.slot.requiredGuardCount, 2, 'REQ-DECREASE-HISTORY: required decreased to 2');
+  ok(result.cancelledShiftIds.length > 0, 'REQ-DECREASE-HISTORY: a position was cancelled');
+
+  // Attempt to decrease below committed floor (floor=1: only ready guard committed)
+  // Decrease to 0 must fail (< 1)
+  await rejects(
+    () => rotaSvc.changeRequirement(user, slot.id, 0),
+    (err: any) => {
+      ok(
+        err instanceof BadRequestException || err?.status === 400,
+        `REQ-DECREASE-HISTORY: expected 400, got ${err?.constructor?.name}: ${err?.message}`,
+      );
+      return true;
+    },
+  );
+
+  console.log(`PASS REQ-DECREASE-HISTORY: historical rejection did not block valid decrease to 2`);
+}
+
 // ── Main runner ───────────────────────────────────────────────────────────────
 
 async function main() {
@@ -867,6 +1329,19 @@ async function main() {
     await testDirectCreateClash(ds);
     await testDirectUpdateClash(ds);
     await testRotaAssignmentRegression(ds);
+
+    await testReplaceRejected(ds);
+    await testReplaceHistory(ds);
+    await testReplaceAssign(ds);
+    await testReplaceAccept(ds);
+    await testReplaceConcurrency(ds);
+    await testReplaceWrongStatus(ds);
+    await testReplaceTenant(ds);
+    await testCoverageBefore(ds);
+    await testCoverageAwaiting(ds);
+    await testCoverageComplete(ds);
+    await testReqIncreaseHistory(ds);
+    await testReqDecreaseHistory(ds);
 
     console.log('\n✓ All shift-offer-lifecycle tests PASSED');
   } finally {
