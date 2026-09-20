@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { Fragment } from 'react/jsx-runtime';
-import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { Shift } from '../../types/models';
 import { colors, control, radii, spacing, typography } from '../../theme';
 import { Button } from '../ui/Button';
@@ -98,6 +98,15 @@ function startUrgency(start?: string | null): string | null {
   }
 }
 
+function isShiftInFuture(end?: string | null): boolean {
+  if (!end) return false;
+  try {
+    return new Date(end).getTime() > Date.now();
+  } catch {
+    return false;
+  }
+}
+
 function weekCommencingFor(isoDate?: string | null): string {
   try {
     const d = isoDate ? new Date(isoDate) : new Date();
@@ -161,14 +170,25 @@ const TABLE_BODY_MAX_HEIGHT: number | string = IS_WEB
 
 // ─── SummaryStat ─────────────────────────────────────────────────────────────
 
+const HIGHLIGHT_SURFACE: Partial<Record<'danger' | 'info' | 'warning' | 'success', string>> = {
+  info:    colors.infoSurface,
+  success: colors.successSurface,
+  danger:  colors.dangerSurface,
+  warning: colors.warningSurface,
+};
+
 function SummaryStat({
   value,
   label,
   highlight,
+  isActive,
+  onPress,
 }: {
   value: number;
   label: string;
   highlight?: 'danger' | 'info' | 'warning' | 'success';
+  isActive?: boolean;
+  onPress?: () => void;
 }) {
   const numColor =
     highlight === 'danger'  ? colors.danger  :
@@ -176,11 +196,22 @@ function SummaryStat({
     highlight === 'info'    ? colors.info    :
     highlight === 'success' ? colors.success :
     colors.textPrimary;
+  const activeBg = highlight ? (HIGHLIGHT_SURFACE[highlight] ?? undefined) : undefined;
+
   return (
-    <View style={styles.summaryStat}>
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`Filter by ${label}`}
+      style={({ pressed }: { pressed: boolean }) => [
+        styles.summaryStat,
+        isActive && activeBg ? { backgroundColor: activeBg } : null,
+        pressed ? styles.summaryStatPressed : null,
+      ]}
+    >
       <Text style={[styles.summaryValue, { color: numColor }]}>{value}</Text>
-      <Text style={styles.summaryLabel}>{label}</Text>
-    </View>
+      <Text style={[styles.summaryLabel, isActive ? { color: numColor } : null]}>{label}</Text>
+    </Pressable>
   );
 }
 
@@ -215,15 +246,6 @@ function DrawerRow({ label, value }: { label: string; value?: string | null }) {
     <View style={styles.drawerRow}>
       <Text style={styles.drawerRowLabel}>{label}</Text>
       <Text style={styles.drawerRowValue}>{value}</Text>
-    </View>
-  );
-}
-
-function DrawerSection({ title, children }: React.PropsWithChildren<{ title: string }>) {
-  return (
-    <View style={styles.drawerSection}>
-      <Text style={styles.drawerSectionTitle}>{title}</Text>
-      {children}
     </View>
   );
 }
@@ -341,45 +363,33 @@ export function CompanyShiftOffersWorkspace({
   const renderDrawer = () => {
     const shift = drawerOffer;
     if (!shift) return null;
-    const ns       = normalizeOfferStatus(shift.status);
-    const badge    = getStatusBadgeProps(ns);
-    const siteName = getSiteName(shift);
-    const hasSiteId = Boolean(getSiteId(shift));
+    const ns         = normalizeOfferStatus(shift.status);
+    const badge      = getStatusBadgeProps(ns);
+    const siteName   = getSiteName(shift);
+    const hasSiteId  = Boolean(getSiteId(shift));
     const hasRotaSlot = shift.rotaSlotId != null;
-    const canViewInRota = hasSiteId;
     const showWithdraw = ns === 'awaiting';
+
+    // "Plan Cover" — rejected always (if site known); missed only while shift is future/live
+    const canPlanCover = hasSiteId && (ns === 'rejected' || (ns === 'missed' && isShiftInFuture(shift.end)));
+    const canViewInRota = hasSiteId && (ns === 'awaiting' || ns === 'accepted');
+
+    const shiftWindow = `${fmtDate(shift.start)} · ${fmtShiftWindow(shift.start, shift.end)}`;
 
     const drawerFooter = (
       <View style={styles.drawerFooter}>
-        <Button
-          label="Close"
-          variant="secondary"
-          size="md"
-          onPress={() => setDrawerOffer(null)}
-        />
+        <Button label="Close" variant="secondary" size="md" onPress={() => setDrawerOffer(null)} />
         {canViewInRota ? (
-          <Button
-            label={ns === 'rejected' || ns === 'missed' ? 'View in Rota / Plan Cover' : 'View in Rota'}
-            variant="secondary"
-            size="md"
-            onPress={() => handleNavigateToRota(shift)}
-          />
+          <Button label="View in Rota" variant="secondary" size="md" onPress={() => handleNavigateToRota(shift)} />
+        ) : null}
+        {canPlanCover ? (
+          <Button label="Plan Cover" variant="secondary" size="md" onPress={() => handleNavigateToRota(shift)} />
         ) : null}
         {ns === 'accepted' ? (
-          <Button
-            label="Open in Live Operations"
-            variant="secondary"
-            size="md"
-            onPress={() => handleNavigateToLiveOps(shift)}
-          />
+          <Button label="Open in Live Operations" variant="secondary" size="md" onPress={() => handleNavigateToLiveOps(shift)} />
         ) : null}
         {showWithdraw ? (
-          <Button
-            label="Withdraw Offer"
-            variant="danger"
-            size="md"
-            onPress={() => handleRequestWithdraw(shift)}
-          />
+          <Button label="Withdraw Offer" variant="danger" size="md" onPress={() => handleRequestWithdraw(shift)} />
         ) : null}
       </View>
     );
@@ -394,65 +404,48 @@ export function CompanyShiftOffersWorkspace({
         width={460}
         footer={drawerFooter}
       >
-        <DrawerSection title="Offer">
-          <View style={styles.drawerBadgeRow}>
-            <StatusBadge label={badge.label} tone={badge.tone} size="small" />
-          </View>
-          <DrawerRow label="Guard" value={getGuardName(shift)} />
-        </DrawerSection>
+        {/* Status badge */}
+        <View style={styles.drawerBadgeRow}>
+          <StatusBadge label={badge.label} tone={badge.tone} size="small" />
+        </View>
 
-        <DrawerSection title="Shift">
-          <DrawerRow label="Site" value={siteName} />
-          <DrawerRow label="Date" value={fmtDate(shift.start)} />
-          <DrawerRow label="Start" value={fmtTime(shift.start)} />
-          <DrawerRow
-            label="End"
-            value={isOvernightShift(shift.start, shift.end) ? `${fmtTime(shift.end)} (+1 day)` : fmtTime(shift.end)}
-          />
-        </DrawerSection>
+        {/* Key / value rows */}
+        <DrawerRow label="Guard" value={getGuardName(shift)} />
+        <DrawerRow label="Shift" value={shiftWindow} />
 
-        {shift.instructions ? (
-          <DrawerSection title="Instructions">
+        {/* Rota context — awaiting and accepted only */}
+        {(ns === 'awaiting' || ns === 'accepted') ? (
+          <DrawerRow label="Rota" value={hasRotaSlot ? 'Linked' : 'Legacy shift'} />
+        ) : null}
+
+        {/* Instructions — awaiting and accepted only, if present */}
+        {(ns === 'awaiting' || ns === 'accepted') && shift.instructions ? (
+          <View style={styles.drawerInstructionsBlock}>
+            <Text style={styles.drawerSectionTitle}>Instructions</Text>
             <Text style={styles.drawerInstructions}>{shift.instructions}</Text>
-          </DrawerSection>
+          </View>
         ) : null}
 
-        {hasRotaSlot ? (
-          <DrawerSection title="Rota Context">
-            <Text style={styles.drawerMeta}>
-              This shift is linked to a Rota slot. Use "View in Rota" to see coverage and planning context.
-            </Text>
-          </DrawerSection>
-        ) : (
-          <DrawerSection title="Rota Context">
-            <Text style={styles.drawerMeta}>
-              {(ns === 'rejected' || ns === 'missed')
-                ? 'Legacy shift — not linked to a Rota slot. Cover needs to be planned for this position.'
-                : 'Legacy shift — not linked to a Rota slot.'}
-            </Text>
-          </DrawerSection>
-        )}
-
-        {ns === 'awaiting' ? (
-          <DrawerSection title="Status">
-            <Text style={styles.drawerMeta}>Waiting for the guard to accept or decline this offer.</Text>
-          </DrawerSection>
-        ) : null}
-
+        {/* Action required — rejected */}
         {ns === 'rejected' ? (
-          <DrawerSection title="Action Required">
-            <Text style={[styles.drawerMeta, styles.drawerMetaDanger]}>
-              This offer was declined. Cover needs to be planned for this position.
+          <View style={styles.drawerActionRequired}>
+            <Text style={styles.drawerActionTitle}>Action Required</Text>
+            <Text style={[styles.drawerActionBody, styles.drawerMetaDanger]}>
+              This offer was declined.{'\n'}This position requires cover.
             </Text>
-          </DrawerSection>
+          </View>
         ) : null}
 
+        {/* Action required — missed */}
         {ns === 'missed' ? (
-          <DrawerSection title="Action Required">
-            <Text style={[styles.drawerMeta, styles.drawerMetaWarning]}>
-              Guard did not check in within the required window. Follow up and plan re-cover.
+          <View style={[styles.drawerActionRequired, styles.drawerActionRequiredWarning]}>
+            <Text style={styles.drawerActionTitle}>Action Required</Text>
+            <Text style={[styles.drawerActionBody, styles.drawerMetaWarning]}>
+              {isShiftInFuture(shift.end)
+                ? 'Guard did not check in.\nThis position requires cover.'
+                : 'Guard did not check in.\nReview attendance records.'}
             </Text>
-          </DrawerSection>
+          </View>
         ) : null}
       </Drawer>
     );
@@ -479,13 +472,31 @@ export function CompanyShiftOffersWorkspace({
         </View>
       ) : null}
 
-      {/* Summary strip */}
+      {/* Summary strip — clickable, synced with filter */}
       <View style={styles.summaryStrip}>
-        <SummaryStat value={awaitingCount} label="Awaiting"  highlight={awaitingCount > 0 ? 'info'    : undefined} />
+        <SummaryStat
+          value={awaitingCount}
+          label="Awaiting"
+          highlight={awaitingCount > 0 ? 'info' : undefined}
+          isActive={filter === 'awaiting'}
+          onPress={() => setFilter('awaiting')}
+        />
         <View style={styles.summaryDivider} />
-        <SummaryStat value={acceptedCount} label="Accepted"  highlight={acceptedCount > 0 ? 'success' : undefined} />
+        <SummaryStat
+          value={acceptedCount}
+          label="Accepted"
+          highlight={acceptedCount > 0 ? 'success' : undefined}
+          isActive={filter === 'accepted'}
+          onPress={() => setFilter('accepted')}
+        />
         <View style={styles.summaryDivider} />
-        <SummaryStat value={rejectedCount} label="Rejected"  highlight={rejectedCount > 0 ? 'danger'  : undefined} />
+        <SummaryStat
+          value={rejectedCount}
+          label="Rejected"
+          highlight={rejectedCount > 0 ? 'danger' : undefined}
+          isActive={filter === 'rejected'}
+          onPress={() => setFilter('rejected')}
+        />
       </View>
 
       {/* Toolbar: search + filters + refresh */}
@@ -656,6 +667,11 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.xs,
+    borderRadius: radii.card,
+  },
+  summaryStatPressed: {
+    opacity: 0.75,
   },
   summaryValue: {
     fontSize: 22,
@@ -769,31 +785,23 @@ const styles = StyleSheet.create({
   },
 
   // ── Drawer ─────────────────────────────────────────────────────────────────
-  drawerSection: {
-    paddingVertical: spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.surfaceSubtle,
-  },
-  drawerSectionTitle: {
-    ...typography.caption,
-    color: colors.textMuted,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
-    marginBottom: 5,
-  },
   drawerBadgeRow: {
-    marginBottom: 5,
+    marginBottom: spacing.sm,
   },
   drawerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    paddingVertical: 3,
+    paddingVertical: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.surfaceSubtle,
   },
   drawerRowLabel: {
     ...typography.caption,
-    color: colors.textSecondary,
+    color: colors.textMuted,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
     flex: 1,
   },
   drawerRowValue: {
@@ -802,6 +810,20 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     flex: 2,
     textAlign: 'right',
+  },
+  drawerInstructionsBlock: {
+    paddingTop: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.surfaceSubtle,
+    paddingBottom: spacing.sm,
+  },
+  drawerSectionTitle: {
+    ...typography.caption,
+    color: colors.textMuted,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 4,
   },
   drawerInstructions: {
     ...typography.caption,
@@ -818,6 +840,31 @@ const styles = StyleSheet.create({
   },
   drawerMetaWarning: {
     color: colors.warning,
+  },
+  drawerActionRequired: {
+    marginTop: spacing.sm,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    backgroundColor: colors.dangerSurface,
+    borderRadius: radii.card,
+    borderLeftWidth: 3,
+    borderLeftColor: colors.danger,
+  },
+  drawerActionRequiredWarning: {
+    backgroundColor: colors.warningSurface,
+    borderLeftColor: colors.warning,
+  },
+  drawerActionTitle: {
+    ...typography.caption,
+    color: colors.textMuted,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  drawerActionBody: {
+    ...typography.caption,
+    lineHeight: 19,
   },
   drawerFooter: {
     flexDirection: 'row',
