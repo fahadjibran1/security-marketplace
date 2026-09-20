@@ -77,7 +77,7 @@ async function expectNotFound(work: () => Promise<unknown>) {
 }
 
 async function testGuessedGuardCannotCreateMembership() {
-  const service = new CompanyGuardService({} as any, {} as any, {} as any, {} as any, {} as any);
+  const service = new CompanyGuardService({} as any, {} as any, {} as any, {} as any, {} as any, {} as any);
   await expectForbidden(() => service.createForUser(
     { sub: 202, email: 'b@test', role: UserRole.COMPANY_ADMIN, status: UserStatus.ACTIVE },
     { companyId: companyA.id, guardId: guard.id },
@@ -89,7 +89,8 @@ async function testCompanyApprovalRequiresServerRelationship() {
     { findOne: async () => guard } as any,
     { findOne: async () => null } as any,
     {} as any,
-    { findByUserId: async () => companyA } as any,
+    {} as any,
+    { resolveCompanyContext: async () => ({ company: companyA, membershipRole: 'admin' }) } as any,
     {} as any,
   );
   await expectForbidden(() => service.approveForUser(

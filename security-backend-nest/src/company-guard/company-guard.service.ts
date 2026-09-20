@@ -7,10 +7,12 @@ import {
   CompanyGuardStatus,
 } from './entities/company-guard.entity';
 import { CreateCompanyGuardDto } from './dto/create-company-guard.dto';
+import { UpdateCompanyGuardDto } from './dto/update-company-guard.dto';
 import { CompanyService } from '../company/company.service';
 import { CompanyMembershipService } from '../company-membership/company-membership.service';
 import { CompanyPermission } from '../company-membership/company-membership-types';
 import { GuardProfileService } from '../guard-profile/guard-profile.service';
+import { AuditLogService } from '../audit-log/audit-log.service';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { UserRole } from '../user/entities/user.entity';
 import { ComplianceService } from '../compliance/compliance.service';
@@ -23,6 +25,7 @@ export class CompanyGuardService {
     private readonly membershipService: CompanyMembershipService,
     private readonly guardService: GuardProfileService,
     private readonly complianceService: ComplianceService,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   findAll(): Promise<CompanyGuard[]> {
@@ -54,6 +57,97 @@ export class CompanyGuardService {
     return this.create(dto);
   }
 
+  /**
+   * Company-authorised link: creates or confirms an ACTIVE CompanyGuard for the
+   * authenticated company. Does not run compliance/eligibility checks — those
+   * happen at shift-assignment time. Idempotent if relationship already ACTIVE.
+   */
+  async linkForCompanyUser(user: JwtPayload, guardId: number): Promise<CompanyGuard> {
+    const { company } = await this.membershipService.resolveCompanyContext(
+      user.sub, user.role, CompanyPermission.GUARDS_MANAGE,
+    );
+
+    const guard = await this.guardService.findOne(guardId);
+
+    const existing = await this.companyGuardRepo.findOne({
+      where: { company: { id: company.id }, guard: { id: guard.id } },
+    });
+
+    if (existing) {
+      if (existing.status === CompanyGuardStatus.ACTIVE) {
+        return existing;
+      }
+      // Re-activate previously INACTIVE/BLOCKED relationship
+      const before = { status: existing.status };
+      existing.status = CompanyGuardStatus.ACTIVE;
+      const saved = await this.companyGuardRepo.save(existing);
+      await this.auditLogService.log({
+        company: { id: company.id },
+        user: { id: user.sub },
+        action: 'company_guard.linked',
+        entityType: 'company_guard',
+        entityId: saved.id,
+        beforeData: before,
+        afterData: { status: CompanyGuardStatus.ACTIVE, guardId: guard.id, companyId: company.id },
+      });
+      return saved;
+    }
+
+    const row = this.companyGuardRepo.create({
+      company,
+      guard,
+      status: CompanyGuardStatus.ACTIVE,
+      relationshipType: CompanyGuardRelationshipType.APPROVED_CONTRACTOR,
+    });
+    const saved = await this.companyGuardRepo.save(row);
+    await this.auditLogService.log({
+      company: { id: company.id },
+      user: { id: user.sub },
+      action: 'company_guard.linked',
+      entityType: 'company_guard',
+      entityId: saved.id,
+      beforeData: null,
+      afterData: { status: CompanyGuardStatus.ACTIVE, guardId: guard.id, companyId: company.id },
+    });
+    return saved;
+  }
+
+  /**
+   * Company-authorised status update: ACTIVE ↔ INACTIVE / BLOCKED.
+   * Tenant-scoped — company resolved from membership, never trusted from client.
+   */
+  async updateStatusForCompanyUser(
+    user: JwtPayload,
+    companyGuardId: number,
+    dto: UpdateCompanyGuardDto,
+  ): Promise<CompanyGuard> {
+    const { company } = await this.membershipService.resolveCompanyContext(
+      user.sub, user.role, CompanyPermission.GUARDS_MANAGE,
+    );
+
+    const relation = await this.companyGuardRepo.findOne({
+      where: { id: companyGuardId, company: { id: company.id } },
+    });
+
+    if (!relation) {
+      throw new NotFoundException('Company guard relationship not found.');
+    }
+
+    const before = { status: relation.status };
+    relation.status = dto.status;
+    const saved = await this.companyGuardRepo.save(relation);
+    await this.auditLogService.log({
+      company: { id: company.id },
+      user: { id: user.sub },
+      action: 'company_guard.status_changed',
+      entityType: 'company_guard',
+      entityId: saved.id,
+      beforeData: before,
+      afterData: { status: dto.status, guardId: relation.guard.id, companyId: company.id },
+    });
+    return saved;
+  }
+
   private async createForCompany(companyId: number, dto: CreateCompanyGuardDto): Promise<CompanyGuard> {
     const company = await this.companyService.findOne(companyId);
     const guard = await this.guardService.findOne(dto.guardId);
@@ -82,7 +176,7 @@ export class CompanyGuardService {
     });
 
     if (!relation) {
-      throw new ConflictException('Guard is not active/approved for this company');
+      throw new ForbiddenException('Guard is not active/approved for this company');
     }
 
     return relation;

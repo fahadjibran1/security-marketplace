@@ -36,12 +36,14 @@ function buildApprovalHarness() {
   };
   const userService = { updateStatus: async () => undefined };
   const companyService = { findByUserId: async () => company };
+  const membershipService = { resolveCompanyContext: async () => ({ company, membershipRole: 'admin' }) };
   const auditLogService = { log: async (value: AuditInput) => (audits.push(value), value) };
   const service = new GuardProfileService(
     guardRepo as any,
     companyGuardRepo as any,
     userService as any,
     companyService as any,
+    membershipService as any,
     auditLogService as any,
   );
   return { service, audits, guard, company };

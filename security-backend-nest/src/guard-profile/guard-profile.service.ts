@@ -12,6 +12,8 @@ import {
   CompanyGuardStatus,
 } from '../company-guard/entities/company-guard.entity';
 import { CompanyService } from '../company/company.service';
+import { CompanyMembershipService } from '../company-membership/company-membership.service';
+import { CompanyPermission } from '../company-membership/company-membership-types';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { User } from '../user/entities/user.entity';
 
@@ -23,6 +25,7 @@ export class GuardProfileService {
     private readonly companyGuardRepo: Repository<CompanyGuard>,
     private readonly userService: UserService,
     private readonly companyService: CompanyService,
+    private readonly membershipService: CompanyMembershipService,
     private readonly auditLogService: AuditLogService,
   ) {}
 
@@ -59,10 +62,9 @@ export class GuardProfileService {
       throw new NotFoundException('Guard profiles not found');
     }
 
-    const company = await this.companyService.findByUserId(user.sub);
-    if (!company) {
-      throw new NotFoundException('Company not found');
-    }
+    const { company } = await this.membershipService.resolveCompanyContext(
+      user.sub, user.role, CompanyPermission.GUARDS_VIEW,
+    );
 
     const links = await this.companyGuardRepo.find({
       where: { company: { id: company.id } },
@@ -86,10 +88,9 @@ export class GuardProfileService {
     }
 
     if (isCompanyRole(user.role)) {
-      const company = await this.companyService.findByUserId(user.sub);
-      if (!company) {
-        throw new NotFoundException('Guard profile not found');
-      }
+      const { company } = await this.membershipService.resolveCompanyContext(
+        user.sub, user.role, CompanyPermission.GUARDS_VIEW,
+      );
 
       const link = await this.companyGuardRepo.findOne({
         where: { company: { id: company.id }, guard: { id: guard.id } },
@@ -138,14 +139,13 @@ export class GuardProfileService {
     let auditCompany: { id: number } | null = null;
 
     if (user.role !== UserRole.ADMIN) {
-      if (!COMPANY_ADMIN_ROLES.includes(user.role as (typeof COMPANY_ADMIN_ROLES)[number])) {
+      if (!isCompanyRole(user.role)) {
         throw new NotFoundException('Guard profile not found');
       }
 
-      const company = await this.companyService.findByUserId(user.sub);
-      if (!company) {
-        throw new NotFoundException('Company not found');
-      }
+      const { company } = await this.membershipService.resolveCompanyContext(
+        user.sub, user.role, CompanyPermission.GUARDS_MANAGE,
+      );
       auditCompany = { id: company.id };
 
       const existingLink = await this.companyGuardRepo.findOne({

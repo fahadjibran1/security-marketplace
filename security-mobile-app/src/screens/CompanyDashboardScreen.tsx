@@ -25,6 +25,7 @@ import {
   ApiError,
   acknowledgeSafetyAlert,
   approveGuard,
+  linkGuard,
   closeSafetyAlert,
   createClient,
   createJob,
@@ -2582,7 +2583,7 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
   const handleApproveGuard = async (guardId: number) => {
     try {
       setApprovingGuardId(guardId);
-      await approveGuard(guardId);
+      await linkGuard(guardId);
       await loadData(true);
     } catch (approveError) {
       const message = formatApiErrorMessage(approveError, 'Unable to link this guard right now.');

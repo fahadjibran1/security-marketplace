@@ -114,7 +114,7 @@ function services(dataSource: DataSource, failAt?: FailurePoint) {
   };
 
   const companyGuardService = new CompanyGuardService(
-    dataSource.getRepository(CompanyGuard), companyService as any, {} as any, guardService as any, compliance as any,
+    dataSource.getRepository(CompanyGuard), companyService as any, {} as any, guardService as any, compliance as any, { log: async () => undefined } as any,
   );
   const originalRelationship = companyGuardService.ensureRelationship.bind(companyGuardService);
   companyGuardService.ensureRelationship = async (params: any, manager?: EntityManager) => {

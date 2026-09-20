@@ -143,6 +143,7 @@ test('updateByUserId mutates only submitted allowed fields; restricted fields ar
     {} as any,
     {} as any,
     {} as any,
+    {} as any,
   );
 
   const dto = new UpdateGuardProfileDto();
@@ -161,7 +162,7 @@ test('updateByUserId mutates only submitted allowed fields; restricted fields ar
 
 test('updateByUserId throws NotFoundException for non-existent guard', async () => {
   const mockGuardRepo: any = { findOne: async () => null };
-  const service = new GuardProfileService(mockGuardRepo, {} as any, {} as any, {} as any, {} as any);
+  const service = new GuardProfileService(mockGuardRepo, {} as any, {} as any, {} as any, {} as any, {} as any);
   let threw = false;
   try {
     await service.updateByUserId(999, new UpdateGuardProfileDto());

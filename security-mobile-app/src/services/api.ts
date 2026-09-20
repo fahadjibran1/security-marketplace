@@ -409,6 +409,13 @@ export function approveGuard(id: number) {
   });
 }
 
+export function linkGuard(guardId: number) {
+  return request<CompanyGuard>('/company-guards', {
+    method: 'POST',
+    body: JSON.stringify({ guardId }),
+  });
+}
+
 export function listJobs() {
   return request<Job[]>('/jobs');
 }

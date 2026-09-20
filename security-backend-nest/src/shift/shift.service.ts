@@ -297,11 +297,8 @@ export class ShiftService {
       );
     }
 
-    if (contextGuard && !assignment && !jobApplication) {
-      await this.companyGuardService.ensureActiveRelationship(company.id, contextGuard.id);
-    }
-
     if (contextGuard) {
+      await this.companyGuardService.ensureActiveRelationship(company.id, contextGuard.id);
       await this.complianceService.assertGuardAssignable(company.id, contextGuard.id);
       await this.availabilityService.assertGuardCanTakeShift(company.id, contextGuard.id, new Date(dto.start), new Date(dto.end));
     }
