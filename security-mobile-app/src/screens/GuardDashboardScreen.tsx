@@ -6,10 +6,12 @@ import { StatePanel } from '../components/StatePanel';
 import { StatusBadge, StatusTone } from '../components/StatusBadge';
 import { GuardCompliancePanel } from '../components/guard/GuardCompliancePanel';
 import { GuardScreeningJourney, GuardScreeningPanel } from '../components/guard/GuardScreeningPanel';
+import { GuardShiftOffersWorkspace } from '../components/guard/GuardShiftOffersWorkspace';
 import { JobsScreen } from './JobsScreen';
 import { GuardTimesheetsScreen } from './GuardTimesheetsScreen';
 import { GuardAvailabilityScreen } from './GuardAvailabilityScreen';
 import {
+  ApiError,
   checkInShift,
   checkOutShift,
   createDailyLog,
@@ -454,8 +456,10 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
   const [timesheets, setTimesheets] = useState<Timesheet[]>([]);
   const [selectedShiftId, setSelectedShiftId] = useState<number | null>(null);
   const [historySummaryShiftId, setHistorySummaryShiftId] = useState<number | null>(null);
+  const [pendingOfferIdForDetail, setPendingOfferIdForDetail] = useState<number | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
   const [attendanceBusyShiftId, setAttendanceBusyShiftId] = useState<number | null>(null);
   const [submittingDailyLogType, setSubmittingDailyLogType] = useState<DailyLog['logType'] | null>(null);
@@ -475,6 +479,7 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
   const [localTimelineEvents, setLocalTimelineEvents] = useState<LocalTimelineEvent[]>([]);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const screeningScrollRef = useRef<any>(null);
+  const lastLoadTimeRef = useRef<number>(0);
 
   // P1A — Tax Identifiers
   const [identity, setIdentity] = useState<GuardPersonnelIdentity | null>(null);
@@ -1050,10 +1055,15 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
     );
   }
 
-  async function loadData() {
+  async function loadData(isPullRefresh = false) {
     try {
-      setLoading(true);
+      if (isPullRefresh) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
       setLoadError(null);
+      lastLoadTimeRef.current = Date.now();
       const [myGuard, shiftRows, attendanceRows, incidentRows, dailyLogRows, timesheetRows] = await Promise.all([
         getMyGuard(),
         listMyShifts(),
@@ -1082,10 +1092,14 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
     } catch (error) {
       const message = formatApiErrorMessage(error, 'Failed to load guard dashboard.');
       setLoadError(message);
-      pushFeedback('error', 'Load failed', message);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
+  }
+
+  async function handlePullRefresh() {
+    await loadData(true);
   }
 
   async function handleSaveProfile() {
@@ -1155,31 +1169,32 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
       updateShiftStatusLocally(shiftId, response === 'accepted' ? 'ready' : 'rejected');
       pushTimelineEvent(
         shiftId,
-        response === 'accepted' ? 'Shift accepted' : 'Shift rejected',
-        response === 'accepted' ? 'Shift is ready to start.' : 'Company will need to re-cover this shift.',
+        response === 'accepted' ? 'Shift accepted' : 'Shift declined',
+        response === 'accepted' ? 'Shift is ready to start.' : 'Company can now arrange replacement cover.',
       );
       await loadData();
       setActiveTab(response === 'accepted' ? 'home' : 'offers');
       pushFeedback(
         'success',
-        response === 'accepted' ? 'Offer accepted' : 'Offer rejected',
-        response === 'accepted' ? 'This shift is now ready for you to start.' : 'The company can now re-cover this shift.',
+        response === 'accepted' ? 'Shift accepted' : 'Shift declined',
+        response === 'accepted' ? 'Your shift is ready.' : 'The company can now arrange replacement cover.',
       );
     } catch (error) {
-      const message = formatApiErrorMessage(error, 'Unable to update this shift response.');
+      // HTTP 400 "Only offered shifts" or 409 conflict = offer was withdrawn/changed before the guard responded
       const isStaleOffer =
-        message.toLowerCase().includes('only offered shifts can be accepted or rejected') ||
-        message.toLowerCase().includes('only offered shifts');
+        (error instanceof ApiError && (error.status === 409 || error.status === 400)) ||
+        formatApiErrorMessage(error, '').toLowerCase().includes('only offered shifts');
 
       await loadData();
 
       if (isStaleOffer) {
-        const staleMessage = 'This shift is no longer available. It may have been cancelled or reassigned.';
-        pushFeedback('info', 'Offer updated', staleMessage);
-        showAlert('Offer updated', staleMessage);
+        const staleMessage = 'Offer no longer available. This shift was changed or withdrawn before you responded.';
+        pushFeedback('info', 'Offer no longer available', staleMessage);
+        showAlert('Offer no longer available', staleMessage);
       } else {
-        pushFeedback('error', response === 'accepted' ? 'Accept failed' : 'Reject failed', message);
-        showAlert(response === 'accepted' ? 'Accept failed' : 'Reject failed', message);
+        const message = formatApiErrorMessage(error, 'Unable to update this shift response.');
+        pushFeedback('error', response === 'accepted' ? 'Accept failed' : 'Decline failed', message);
+        showAlert(response === 'accepted' ? 'Accept failed' : 'Decline failed', message);
       }
     } finally {
       setRespondingShiftId(null);
@@ -1322,6 +1337,39 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
     loadData();
   }, [user.guardId]);
 
+  // Auto-dismiss success/info feedback after 4 seconds; errors persist until replaced
+  useEffect(() => {
+    if (!actionFeedback || actionFeedback.tone === 'error') return;
+    const t = setTimeout(() => setActionFeedback(null), 4000);
+    return () => clearTimeout(t);
+  }, [actionFeedback]);
+
+  // Refresh when app returns to foreground — respects 30s minimum interval to avoid storms
+  useEffect(() => {
+    function handleAppStateChange(nextState: string) {
+      if (nextState === 'background' || nextState === 'inactive') {
+        clearBankReveal();
+        return;
+      }
+      if (nextState === 'active') {
+        clearBankReveal();
+        if (Date.now() - lastLoadTimeRef.current > 30_000) {
+          loadData();
+        }
+      }
+    }
+    const sub = AppState.addEventListener('change', handleAppStateChange);
+    return () => sub.remove();
+  }, []);
+
+  // One controlled refresh when the Offers tab is opened — respects the same 30s minimum
+  useEffect(() => {
+    if (activeTab !== 'offers') return;
+    if (Date.now() - lastLoadTimeRef.current > 30_000) {
+      loadData();
+    }
+  }, [activeTab]);
+
   // Clear reveal timers on unmount to prevent setState after unmount
   useEffect(() => {
     return () => {
@@ -1331,16 +1379,6 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
     };
   }, []);
 
-  // Clear bank reveal when app moves to background or becomes inactive.
-  useEffect(() => {
-    function handleAppStateChange(nextState: string) {
-      if (nextState === 'background' || nextState === 'inactive') {
-        clearBankReveal();
-      }
-    }
-    const sub = AppState.addEventListener('change', handleAppStateChange);
-    return () => sub.remove();
-  }, []);
 
   const attendanceByShiftId = useMemo(() => {
     const map: Record<number, { checkInAt?: string; checkOutAt?: string }> = {};
@@ -1384,13 +1422,13 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
   }, [sortedShifts]);
 
   useEffect(() => {
-    if (activeTab !== 'home' || !currentHomeShift) {
-      return;
-    }
-    const status = normalizeShiftLifecycleStatus(currentHomeShift.status);
-    if (status !== 'in_progress' && status !== 'ready') {
-      return;
-    }
+    const hasOffersOpen = activeTab === 'offers' && shiftOffers.length > 0;
+    const hasActiveHomeShift =
+      activeTab === 'home' &&
+      !!currentHomeShift &&
+      ['in_progress', 'ready'].includes(normalizeShiftLifecycleStatus(currentHomeShift.status));
+
+    if (!hasOffersOpen && !hasActiveHomeShift) return;
 
     setLiveNow(Date.now());
     const intervalId = setInterval(() => {
@@ -1398,7 +1436,9 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
     }, 60000);
 
     return () => clearInterval(intervalId);
-  }, [activeTab, currentHomeShift?.id, currentHomeShift?.status]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, currentHomeShift?.id, currentHomeShift?.status,
+      sortedShifts.some(s => normalizeShiftLifecycleStatus(s.status) === 'offered')]);
 
   useEffect(() => {
     if (!selectedShiftId && currentHomeShift?.id) {
@@ -1559,7 +1599,8 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
     if (!currentHomeShift) return;
     const status = normalizeShiftLifecycleStatus(currentHomeShift.status);
     if (status === 'offered') {
-      setSelectedShiftId(currentHomeShift.id);
+      // Pass the specific offer ID to the workspace so it opens that offer's detail
+      setPendingOfferIdForDetail(currentHomeShift.id);
       setActiveTab('offers');
       return;
     }
@@ -1626,8 +1667,20 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
 
       {loadError ? (
         <View style={[styles.feedbackBanner, styles.feedbackError]}>
-          <Text style={styles.feedbackTitle}>Action required</Text>
-          <Text style={styles.feedbackMessage}>{loadError}</Text>
+          <View style={styles.feedbackRow}>
+            <View style={styles.feedbackTextGroup}>
+              <Text style={styles.feedbackTitle}>Could not load data</Text>
+              <Text style={styles.feedbackMessage}>{loadError}</Text>
+            </View>
+            <Pressable
+              style={styles.feedbackRetryBtn}
+              onPress={() => loadData()}
+              accessibilityRole="button"
+              accessibilityLabel="Retry loading data"
+            >
+              <Text style={styles.feedbackRetryText}>Retry</Text>
+            </Pressable>
+          </View>
         </View>
       ) : null}
 
@@ -1900,84 +1953,36 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
           </FeatureCard>
         ) : null}
 
-        {activeTab === 'offers' ? (
-          <View style={styles.guardOffersRoot}>
-            <View style={styles.historyHandoff}>
-              <Text style={styles.historyHandoffLabel}>How this tab fits in</Text>
-              <Text style={styles.historyHandoffText}>
-                Invitations land here before they are on your roster. Home is for the shift you are booked on next;
-                History is for finished work and timesheets. Decide offers here so control always knows yes or no.
-              </Text>
-            </View>
-            <FeatureCard
-              title="Shift offers"
-              subtitle={
-                shiftOffers.length === 0
-                  ? 'Nothing on this list needs a tap — your roster is unchanged until a new invite arrives.'
-                  : `${shiftOffers.length} open invitation${shiftOffers.length === 1 ? '' : 's'} — read each site and time, then accept or reject.`
-              }
-              style={styles.guardOffersCard}
+        {activeTab === 'home' && shiftOffers.length > 0 ? (
+          <View style={styles.homeOffersStrip}>
+            <Text style={styles.homeOffersStripText}>
+              {shiftOffers.length === 1
+                ? '1 shift offer waiting for your response'
+                : `${shiftOffers.length} shift offers waiting for your response`}
+            </Text>
+            <Pressable
+              style={styles.homeOffersStripBtn}
+              onPress={() => setActiveTab('offers')}
+              accessibilityRole="button"
+              accessibilityLabel="Review shift offers"
             >
-              {shiftOffers.length === 0 ? (
-                <StatePanel title="No open offers" message="When a company sends you a post it will appear here. Check Home for accepted shifts, or History for recaps and timesheets." />
-              ) : (
-                <View style={styles.offersListSection}>
-                  {shiftOffers.map((shift, index) => {
-                    const offerBusy = respondingShiftId === shift.id;
-                    const urgency = getOfferShiftUrgencyLine(shift.start, offerUrgencyClock);
-                    return (
-                      <View
-                        key={shift.id}
-                        style={[styles.offerCardShell, index === 0 ? styles.offerCardShellFirst : null]}
-                      >
-                        <View style={styles.offerCardHeader}>
-                          <Text style={styles.offerSite}>{shift.siteName}</Text>
-                          <Text style={styles.offerDate}>{formatDateLabel(shift.start)}</Text>
-                          <Text style={styles.offerTime}>
-                            {formatTimeLabel(shift.start)} – {formatTimeLabel(shift.end)}
-                          </Text>
-                          {urgency ? <Text style={styles.offerUrgency}>{urgency}</Text> : null}
-                        </View>
-                        <Text style={styles.offerNextStepHint}>
-                          Accept if you will cover this shift. Reject if you cannot — the company can offer it elsewhere.
-                        </Text>
-                        <View style={styles.offerActionsColumn}>
-                          <Pressable
-                            style={[styles.offerAcceptBtn, offerBusy && styles.buttonDisabled]}
-                            onPress={() => handleRespondToShift(shift.id, 'accepted')}
-                            disabled={offerBusy}
-                          >
-                            <Text style={styles.offerAcceptBtnText}>
-                              {offerBusy && offerRespondAction === 'accepted' ? 'Accepting…' : 'Accept shift'}
-                            </Text>
-                          </Pressable>
-                          <Pressable
-                            style={[styles.offerRejectBtn, offerBusy && styles.buttonDisabled]}
-                            onPress={() => handleRespondToShift(shift.id, 'rejected')}
-                            disabled={offerBusy}
-                          >
-                            <Text style={styles.offerRejectBtnText}>
-                              {offerBusy && offerRespondAction === 'rejected' ? 'Rejecting…' : 'Reject offer'}
-                            </Text>
-                          </Pressable>
-                        </View>
-                      </View>
-                    );
-                  })}
-                </View>
-              )}
-            </FeatureCard>
-            <View style={styles.offersWorkflowFooter}>
-              <Text style={styles.offersWorkflowFooterLabel}>
-                {shiftOffers.length ? 'After you accept' : 'Where to go next'}
-              </Text>
-              <Text style={styles.offersWorkflowFooterText}>
-                {shiftOffers.length
-                  ? 'The shift moves to Home under Current Shift — check in from there when you are on site. Rejecting keeps you off the roster for that post.'
-                  : 'Home shows your next booked or live shift. History holds finished shifts and the Timesheets list for pay — same tabs as before.'}
-              </Text>
-            </View>
+              <Text style={styles.homeOffersStripBtnText}>Review Offers</Text>
+            </Pressable>
           </View>
+        ) : null}
+
+        {activeTab === 'offers' ? (
+          <GuardShiftOffersWorkspace
+            offers={shiftOffers}
+            respondingShiftId={respondingShiftId}
+            offerRespondAction={offerRespondAction}
+            onRespond={handleRespondToShift}
+            onRefresh={handlePullRefresh}
+            refreshing={refreshing}
+            liveNow={liveNow}
+            initialSelectedOfferId={pendingOfferIdForDetail}
+            onInitialSelectedHandled={() => setPendingOfferIdForDetail(null)}
+          />
         ) : null}
 
         {activeTab === 'jobs' ? <JobsScreen user={user} /> : null}
@@ -2927,13 +2932,20 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
           <Pressable
             key={tab}
             accessibilityRole="tab"
-            accessibilityLabel={label}
+            accessibilityLabel={tab === 'offers' && shiftOffers.length > 0 ? `Offers, ${shiftOffers.length} pending` : label}
             accessibilityState={{ selected: activeTab === tab }}
             style={[styles.bottomNavItem, activeTab === tab && styles.bottomNavItemActive]}
             onPress={() => setActiveTab(tab)}
           >
             <View style={[styles.bottomNavIndicator, activeTab === tab && styles.bottomNavIndicatorActive]} />
-            <Text style={[styles.bottomNavLabel, activeTab === tab && styles.bottomNavLabelActive]}>{label}</Text>
+            <View style={styles.bottomNavLabelRow}>
+              <Text style={[styles.bottomNavLabel, activeTab === tab && styles.bottomNavLabelActive]}>{label}</Text>
+              {tab === 'offers' && shiftOffers.length > 0 ? (
+                <View style={styles.navBadge}>
+                  <Text style={styles.navBadgeText}>{shiftOffers.length}</Text>
+                </View>
+              ) : null}
+            </View>
           </Pressable>
         ))}
       </View>
@@ -3755,4 +3767,64 @@ const styles = StyleSheet.create({
   summaryValue: { color: colors.textPrimary, fontWeight: '700', fontSize: 15, lineHeight: 22 },
   timelineItem: { borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 10, gap: 4 },
   buttonDisabled: { opacity: 0.7 },
+
+  // Feedback banner layout
+  feedbackRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  feedbackTextGroup: { flex: 1, gap: 2 },
+  feedbackRetryBtn: {
+    minHeight: 36,
+    borderRadius: 10,
+    backgroundColor: colors.dangerSurface,
+    borderWidth: 1,
+    borderColor: colors.dangerBorder,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  feedbackRetryText: { color: colors.danger, fontWeight: '700', fontSize: 13 },
+
+  // Home offers indicator strip
+  homeOffersStrip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    borderRadius: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    backgroundColor: colors.warningSurface,
+    borderWidth: 1,
+    borderColor: colors.warningBorder,
+  },
+  homeOffersStripText: {
+    flex: 1,
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: '600',
+    color: colors.warning,
+  },
+  homeOffersStripBtn: {
+    minHeight: 36,
+    borderRadius: 10,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.warningBorder,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  homeOffersStripBtnText: { color: colors.warning, fontWeight: '700', fontSize: 13 },
+
+  // Bottom nav badge
+  bottomNavLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  navBadge: {
+    minWidth: 18,
+    height: 18,
+    borderRadius: 999,
+    backgroundColor: colors.accentTeal,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 4,
+  },
+  navBadgeText: { color: colors.textOnBrand, fontSize: 10, fontWeight: '800', lineHeight: 14 },
 });

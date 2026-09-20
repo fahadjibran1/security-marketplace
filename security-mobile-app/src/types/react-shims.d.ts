@@ -29,6 +29,7 @@ declare module 'react-native' {
   export const Linking: { openURL: (url: string) => Promise<unknown> };
   export const Modal: any;
   export const Pressable: any;
+  export const RefreshControl: any;
   export const Platform: { OS: string };
   export const SafeAreaView: any;
   export const ScrollView: any;
