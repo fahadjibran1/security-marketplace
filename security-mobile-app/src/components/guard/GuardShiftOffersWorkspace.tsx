@@ -164,79 +164,61 @@ export function GuardShiftOffersWorkspace({
           />
         }
       >
-        {/* Context strip */}
-        <View style={styles.contextStrip}>
-          <Text style={styles.contextLabel}>How this works</Text>
-          <Text style={styles.contextBody}>
-            Invitations land here before they are on your roster. Decide offers here so control always knows your answer.
-          </Text>
-        </View>
+        <View style={styles.contentWrapper}>
+          {/* Offer list */}
+          <View style={styles.listSection}>
+            {offers.length > 0 ? (
+              <Text style={styles.listHeading}>
+                {`${offers.length} shift offer${offers.length === 1 ? '' : 's'}`}
+              </Text>
+            ) : null}
 
-        {/* Offer list */}
-        <View style={styles.listSection}>
-          <Text style={styles.listHeading}>
-            {offers.length === 0
-              ? 'No shift offers'
-              : `${offers.length} open invitation${offers.length === 1 ? '' : 's'}`}
-          </Text>
-
-          {offers.length === 0 ? (
-            <StatePanel
-              title="No shift offers"
-              message="You don't have any shifts waiting for a response. Accepted shifts appear on Home."
-              actionLabel="Refresh"
-              onAction={onRefresh}
-            />
-          ) : (
-            offers.map((offer, index) => {
-              const urgency = getUrgencyLine(offer.start, liveNow);
-              const urgent = isUrgent(offer.start, liveNow);
-              return (
-                <View
-                  key={offer.id}
-                  style={[styles.offerCard, index === 0 && styles.offerCardFirst]}
-                  accessible
-                  accessibilityRole="button"
-                  accessibilityLabel={`Shift offer at ${offer.siteName}`}
-                  accessibilityHint="Tap Review offer to see full details and accept or decline"
-                >
-                  <View style={styles.offerInfo}>
-                    <Text style={styles.offerSite} numberOfLines={2}>
-                      {offer.siteName}
-                    </Text>
-                    <Text style={styles.offerDate}>{fmtDate(offer.start)}</Text>
-                    <Text style={styles.offerTime}>{fmtTimePair(offer.start, offer.end)}</Text>
-                    {urgency ? (
-                      <Text style={[styles.offerUrgency, urgent && styles.offerUrgencyAlert]}>
-                        {urgency}
-                      </Text>
-                    ) : null}
-                  </View>
-                  <Pressable
-                    style={styles.reviewBtn}
-                    onPress={() => openDetail(offer.id)}
+            {offers.length === 0 ? (
+              <StatePanel
+                title="No shift offers"
+                message="You don't have any shifts waiting for a response. Accepted shifts appear on Home."
+                actionLabel="Refresh"
+                onAction={onRefresh}
+              />
+            ) : (
+              offers.map((offer, index) => {
+                const urgency = getUrgencyLine(offer.start, liveNow);
+                const urgent = isUrgent(offer.start, liveNow);
+                return (
+                  <View
+                    key={offer.id}
+                    style={[styles.offerCard, index === 0 && styles.offerCardFirst]}
+                    accessible
                     accessibilityRole="button"
-                    accessibilityLabel={`Review offer for ${offer.siteName}`}
-                    accessibilityHint="Opens full offer detail with Accept and Decline"
+                    accessibilityLabel={`Shift offer at ${offer.siteName}`}
+                    accessibilityHint="Tap Review offer to see full details and accept or decline"
                   >
-                    <Text style={styles.reviewBtnText}>Review offer</Text>
-                  </Pressable>
-                </View>
-              );
-            })
-          )}
-        </View>
-
-        {/* After-accept guidance */}
-        <View style={styles.footer}>
-          <Text style={styles.footerLabel}>
-            {offers.length > 0 ? 'After you accept' : 'Where to go next'}
-          </Text>
-          <Text style={styles.footerBody}>
-            {offers.length > 0
-              ? 'The shift moves to Home — check in from there when you are on site. Declining removes the post from this list so the company can re-cover.'
-              : 'Home shows your next booked or live shift. History holds finished shifts and timesheets.'}
-          </Text>
+                    <View style={styles.offerInfo}>
+                      <Text style={styles.offerSite} numberOfLines={2}>
+                        {offer.siteName}
+                      </Text>
+                      <Text style={styles.offerDate}>{fmtDate(offer.start)}</Text>
+                      <Text style={styles.offerTime}>{fmtTimePair(offer.start, offer.end)}</Text>
+                      {urgency ? (
+                        <Text style={[styles.offerUrgency, urgent && styles.offerUrgencyAlert]}>
+                          {urgency}
+                        </Text>
+                      ) : null}
+                    </View>
+                    <Pressable
+                      style={styles.reviewBtn}
+                      onPress={() => openDetail(offer.id)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Review offer for ${offer.siteName}`}
+                      accessibilityHint="Opens full offer detail with Accept and Decline"
+                    >
+                      <Text style={styles.reviewBtnText}>Review offer</Text>
+                    </Pressable>
+                  </View>
+                );
+              })
+            )}
+          </View>
         </View>
       </ScrollView>
 
@@ -393,30 +375,13 @@ const styles = StyleSheet.create({
     paddingTop: spacing.md,
     paddingBottom: spacing.xxl,
     gap: spacing.md,
+    alignItems: 'center',
   },
 
-  // Context strip
-  contextStrip: {
-    borderRadius: radii.lg,
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.md,
-    backgroundColor: colors.infoSurface,
-    borderWidth: 1,
-    borderColor: colors.infoBorder,
-    gap: spacing.xs,
-  },
-  contextLabel: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: colors.info,
-    letterSpacing: 0.6,
-    textTransform: 'uppercase',
-  },
-  contextBody: {
-    fontSize: 13,
-    lineHeight: 20,
-    color: colors.textPrimary,
-    fontWeight: '500',
+  // Desktop max-width wrapper — centres content on wide viewports; full-width on mobile
+  contentWrapper: {
+    width: '100%',
+    maxWidth: 840,
   },
 
   // List section
@@ -495,31 +460,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: colors.accentTeal,
     letterSpacing: 0.1,
-  },
-
-  // Footer
-  footer: {
-    borderRadius: radii.lg,
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.md,
-    backgroundColor: colors.background,
-    borderWidth: 1,
-    borderColor: colors.border,
-    gap: spacing.xs,
-    marginTop: spacing.xs,
-  },
-  footerLabel: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: colors.textSecondary,
-    letterSpacing: 0.6,
-    textTransform: 'uppercase',
-  },
-  footerBody: {
-    fontSize: 13,
-    lineHeight: 20,
-    color: colors.textSecondary,
-    fontWeight: '500',
   },
 
   // Bottom sheet backdrop
