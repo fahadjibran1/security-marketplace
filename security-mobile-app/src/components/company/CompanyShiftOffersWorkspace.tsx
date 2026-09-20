@@ -159,40 +159,30 @@ const TABLE_BODY_MAX_HEIGHT: number | string = IS_WEB
   ? ('calc(100vh - 358px)' as any)
   : 440;
 
-// ─── SummaryPill ─────────────────────────────────────────────────────────────
+// ─── SummaryStat ─────────────────────────────────────────────────────────────
 
-function SummaryPill({
-  label,
+function SummaryStat({
   value,
-  tone,
+  label,
+  highlight,
 }: {
-  label: string;
   value: number;
-  tone: StatusTone | null;
+  label: string;
+  highlight?: 'danger' | 'info' | 'warning' | 'success';
 }) {
-  const { bg, fg } = tone
-    ? { bg: TONE_BG[tone], fg: TONE_FG[tone] }
-    : { bg: colors.surfaceSubtle, fg: colors.textSecondary };
+  const numColor =
+    highlight === 'danger'  ? colors.danger  :
+    highlight === 'warning' ? colors.warning :
+    highlight === 'info'    ? colors.info    :
+    highlight === 'success' ? colors.success :
+    colors.textPrimary;
   return (
-    <View style={[styles.summaryPill, { backgroundColor: bg }]}>
-      <Text style={[styles.summaryValue, { color: fg }]}>{value}</Text>
-      <Text style={[styles.summaryLabel, { color: fg }]}>{label}</Text>
+    <View style={styles.summaryStat}>
+      <Text style={[styles.summaryValue, { color: numColor }]}>{value}</Text>
+      <Text style={styles.summaryLabel}>{label}</Text>
     </View>
   );
 }
-
-const TONE_BG: Partial<Record<StatusTone, string>> = {
-  info:    colors.infoSurface,
-  success: colors.successSurface,
-  danger:  colors.dangerSurface,
-  warning: colors.warningSurface,
-};
-const TONE_FG: Partial<Record<StatusTone, string>> = {
-  info:    colors.info,
-  success: colors.success,
-  danger:  colors.danger,
-  warning: colors.warning,
-};
 
 // ─── FilterChip ──────────────────────────────────────────────────────────────
 
@@ -280,10 +270,9 @@ export function CompanyShiftOffersWorkspace({
     [shifts],
   );
 
-  const awaitingCount    = React.useMemo(() => offerRows.filter((s) => normalizeOfferStatus(s.status) === 'awaiting').length,  [offerRows]);
-  const acceptedCount    = React.useMemo(() => offerRows.filter((s) => normalizeOfferStatus(s.status) === 'accepted').length,  [offerRows]);
-  const rejectedCount    = React.useMemo(() => offerRows.filter((s) => normalizeOfferStatus(s.status) === 'rejected').length,  [offerRows]);
-  const needsCoverCount  = React.useMemo(() => offerRows.filter((s) => { const ns = normalizeOfferStatus(s.status); return ns === 'rejected' || ns === 'missed'; }).length, [offerRows]);
+  const awaitingCount = React.useMemo(() => offerRows.filter((s) => normalizeOfferStatus(s.status) === 'awaiting').length, [offerRows]);
+  const acceptedCount = React.useMemo(() => offerRows.filter((s) => normalizeOfferStatus(s.status) === 'accepted').length, [offerRows]);
+  const rejectedCount = React.useMemo(() => offerRows.filter((s) => normalizeOfferStatus(s.status) === 'rejected').length, [offerRows]);
 
   const filteredRows = React.useMemo(() => {
     let rows = offerRows;
@@ -437,7 +426,9 @@ export function CompanyShiftOffersWorkspace({
         ) : (
           <DrawerSection title="Rota Context">
             <Text style={styles.drawerMeta}>
-              Legacy offer — not linked to a Rota slot. Navigate to the Rota Planner for this site to plan cover.
+              {(ns === 'rejected' || ns === 'missed')
+                ? 'Legacy shift — not linked to a Rota slot. Cover needs to be planned for this position.'
+                : 'Legacy shift — not linked to a Rota slot.'}
             </Text>
           </DrawerSection>
         )}
@@ -490,10 +481,11 @@ export function CompanyShiftOffersWorkspace({
 
       {/* Summary strip */}
       <View style={styles.summaryStrip}>
-        <SummaryPill label="Awaiting"    value={awaitingCount}   tone={awaitingCount   > 0 ? 'info'    : null} />
-        <SummaryPill label="Accepted"    value={acceptedCount}   tone={acceptedCount   > 0 ? 'success' : null} />
-        <SummaryPill label="Rejected"    value={rejectedCount}   tone={rejectedCount   > 0 ? 'danger'  : null} />
-        <SummaryPill label="Needs Cover" value={needsCoverCount} tone={needsCoverCount > 0 ? 'warning' : null} />
+        <SummaryStat value={awaitingCount} label="Awaiting"  highlight={awaitingCount > 0 ? 'info'    : undefined} />
+        <View style={styles.summaryDivider} />
+        <SummaryStat value={acceptedCount} label="Accepted"  highlight={acceptedCount > 0 ? 'success' : undefined} />
+        <View style={styles.summaryDivider} />
+        <SummaryStat value={rejectedCount} label="Rejected"  highlight={rejectedCount > 0 ? 'danger'  : undefined} />
       </View>
 
       {/* Toolbar: search + filters + refresh */}
@@ -649,28 +641,33 @@ const styles = StyleSheet.create({
   // ── Summary strip ──────────────────────────────────────────────────────────
   summaryStrip: {
     flexDirection: 'row',
-    gap: spacing.sm,
-    flexWrap: IS_WEB ? ('nowrap' as any) : 'wrap',
-  },
-  summaryPill: {
-    flex: 1,
-    minWidth: 96,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.md,
+    backgroundColor: colors.card,
     borderRadius: radii.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+    overflow: 'hidden',
+  } as any,
+  summaryDivider: {
+    width: 1,
+    backgroundColor: colors.border,
+    marginVertical: spacing.sm,
+  },
+  summaryStat: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
   },
   summaryValue: {
-    ...typography.panelHeading,
-    fontSize: 20,
-    lineHeight: 24,
+    fontSize: 22,
+    fontWeight: '700',
+    lineHeight: 28,
+    color: colors.textPrimary,
   },
   summaryLabel: {
     ...typography.caption,
-    fontWeight: '500',
-  },
+    color: colors.textSecondary,
+    marginTop: 2,
+  } as any,
 
   // ── Toolbar ────────────────────────────────────────────────────────────────
   toolbar: {
@@ -773,7 +770,7 @@ const styles = StyleSheet.create({
 
   // ── Drawer ─────────────────────────────────────────────────────────────────
   drawerSection: {
-    paddingVertical: spacing.md,
+    paddingVertical: spacing.sm,
     borderBottomWidth: 1,
     borderBottomColor: colors.surfaceSubtle,
   },
@@ -783,16 +780,16 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     textTransform: 'uppercase',
     letterSpacing: 0.6,
-    marginBottom: spacing.sm,
+    marginBottom: 5,
   },
   drawerBadgeRow: {
-    marginBottom: spacing.sm,
+    marginBottom: 5,
   },
   drawerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    paddingVertical: 4,
+    paddingVertical: 3,
   },
   drawerRowLabel: {
     ...typography.caption,
