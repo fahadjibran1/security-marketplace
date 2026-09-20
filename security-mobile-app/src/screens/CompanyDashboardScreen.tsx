@@ -2,6 +2,7 @@
 import { ActivityIndicator, Image, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 
 import { CompanyAuditWorkspace } from '../components/company/CompanyAuditWorkspace';
+import { CompanyGuardsWorkspace } from '../components/company/CompanyGuardsWorkspace';
 import { CompanyClientsWorkspace, type ClientFormState, CLIENT_FORM_EMPTY } from '../components/company/CompanyClientsWorkspace';
 import { CompanyRotaPlannerWorkspace, type PlannerWeekDay, type FlatSlotCell, type LegacyShiftRow } from '../components/company/CompanyRotaPlannerWorkspace';
 import { CompanySitesWorkspace, type SiteFormState, SITE_FORM_EMPTY } from '../components/company/CompanySitesWorkspace';
@@ -65,6 +66,7 @@ import {
   cancelRotaSlot,
   listEligibleGuardsForShift,
   reviewJobApplication,
+  updateCompanyGuard,
   updateIncidentStatus,
   updateClient,
   updateShift,
@@ -1330,6 +1332,9 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
           alerts: [
             { label: 'alerts', run: listCompanySafetyAlerts, apply: (value: SafetyAlert[]) => setAlerts(value) },
           ],
+          guards: [
+            { label: 'compliance', run: listComplianceRecords, apply: (value: ComplianceRecord[]) => setComplianceRecords(value) },
+          ],
         };
 
         const sectionFailures = await runSettledLoaders(sectionLoaders[activeSection] || []);
@@ -2591,6 +2596,11 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
     } finally {
       setApprovingGuardId(null);
     }
+  };
+
+  const handleUpdateGuardStatus = async (companyGuardId: number, status: 'ACTIVE' | 'INACTIVE' | 'BLOCKED') => {
+    await updateCompanyGuard(companyGuardId, status);
+    await loadData(true);
   };
 
   const handleReviewApplication = async (
@@ -4184,7 +4194,27 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
       case 'coverage':
         return <CompanyCoverageWorkspace navigationContext={coverageNavigationContext} />;
       case 'guards':
-        return renderGuardsSection();
+        return (
+          <>
+            <CompanyGuardsWorkspace
+              companyGuards={companyGuards}
+              availablePlatformGuards={availablePlatformGuards}
+              shifts={shifts}
+              complianceRecords={complianceRecords}
+              loading={loading && !refreshing}
+              refreshing={refreshing}
+              onRefresh={() => loadData(true)}
+              approvingGuardId={approvingGuardId}
+              onLinkGuard={handleApproveGuard}
+              onUpdateGuardStatus={handleUpdateGuardStatus}
+              onOpenPayAdmin={(guardId, guardName) => handleSelectPayrollGuard(guardId, guardName)}
+              onNavigateToCompliance={() => setActiveSection('compliance')}
+              onNavigateToAvailability={() => setActiveSection('availability')}
+              onNavigateToShiftOffers={() => setActiveSection('shift-offers')}
+            />
+            {renderPayrollAdminPanel()}
+          </>
+        );
       case 'availability':
         return <CompanyAvailabilityWorkspace />;
       case 'recruitment':

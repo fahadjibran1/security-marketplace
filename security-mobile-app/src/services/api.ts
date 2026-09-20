@@ -416,6 +416,13 @@ export function linkGuard(guardId: number) {
   });
 }
 
+export function updateCompanyGuard(companyGuardId: number, status: 'ACTIVE' | 'INACTIVE' | 'BLOCKED') {
+  return request<CompanyGuard>(`/company-guards/${companyGuardId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status }),
+  });
+}
+
 export function listJobs() {
   return request<Job[]>('/jobs');
 }
