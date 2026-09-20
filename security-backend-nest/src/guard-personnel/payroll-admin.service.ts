@@ -9,8 +9,10 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { QueryFailedError, Repository } from 'typeorm';
 import { GuardProfile } from '../guard-profile/entities/guard-profile.entity';
 import { CompanyGuard, CompanyGuardStatus } from '../company-guard/entities/company-guard.entity';
-import { User } from '../user/entities/user.entity';
+import { UserRole } from '../user/entities/user.entity';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { CompanyMembershipService } from '../company-membership/company-membership.service';
+import { CompanyPermission } from '../company-membership/company-membership-types';
 import { EncryptionService } from './encryption.service';
 import {
   CompanyGuardPayroll,
@@ -33,8 +35,7 @@ export class PayrollAdminService {
     private readonly payrollRepo: Repository<CompanyGuardPayroll>,
     @InjectRepository(CompanyGuard)
     private readonly companyGuardRepo: Repository<CompanyGuard>,
-    @InjectRepository(User)
-    private readonly userRepo: Repository<User>,
+    private readonly membershipService: CompanyMembershipService,
     private readonly encryptionService: EncryptionService,
     private readonly auditLogService: AuditLogService,
   ) {}
@@ -43,11 +44,12 @@ export class PayrollAdminService {
 
   async createForCompany(
     companyUserId: number,
+    userRole: UserRole,
     guardId: number,
     dto: CreatePayrollAdminDto,
     meta: RequestMeta,
   ): Promise<PayrollAdminCompanyResponseDto> {
-    const { companyId, companyGuard } = await this.requireOwnedActiveRelationship(companyUserId, guardId);
+    const { companyId, companyGuard } = await this.requireOwnedActiveRelationship(companyUserId, userRole, guardId);
 
     const existing = await this.payrollRepo.findOne({ where: { companyGuardId: companyGuard.id } });
     if (existing) {
@@ -101,9 +103,10 @@ export class PayrollAdminService {
 
   async getForCompany(
     companyUserId: number,
+    userRole: UserRole,
     guardId: number,
   ): Promise<PayrollAdminCompanyResponseDto | null> {
-    const { companyId, companyGuard } = await this.requireOwnedRelationship(companyUserId, guardId);
+    const { companyId, companyGuard } = await this.requireOwnedRelationship(companyUserId, userRole, guardId);
     const record = await this.findWithNote(companyGuard.id);
     if (!record) return null;
     return this.toCompanyDto(record, guardId, companyId);
@@ -113,11 +116,12 @@ export class PayrollAdminService {
 
   async updateForCompany(
     companyUserId: number,
+    userRole: UserRole,
     guardId: number,
     dto: UpdatePayrollAdminDto,
     meta: RequestMeta,
   ): Promise<PayrollAdminCompanyResponseDto> {
-    const { companyId, companyGuard } = await this.requireOwnedActiveRelationship(companyUserId, guardId);
+    const { companyId, companyGuard } = await this.requireOwnedActiveRelationship(companyUserId, userRole, guardId);
 
     const record = await this.findWithNote(companyGuard.id);
     if (!record) {
@@ -255,43 +259,41 @@ export class PayrollAdminService {
     return guard;
   }
 
-  private async requireCompanyIdForUser(userId: number): Promise<number> {
-    const user = await this.userRepo.findOne({
-      where: { id: userId },
-      relations: ['companyProfile'],
-    });
-    const companyId = user?.companyProfile?.id;
-    if (!companyId) throw new ForbiddenException('No company profile associated with this account');
-    return companyId;
-  }
-
   // Read access — any relationship status (historical access for company).
+  // PAYROLL_MANAGE enforced via resolveCompanyContext; IDOR prevented by companyId tenant scope.
   private async requireOwnedRelationship(
     companyUserId: number,
+    userRole: UserRole,
     guardId: number,
   ): Promise<{ companyId: number; companyGuard: CompanyGuard }> {
-    const companyId = await this.requireCompanyIdForUser(companyUserId);
+    const { company } = await this.membershipService.resolveCompanyContext(
+      companyUserId, userRole, CompanyPermission.PAYROLL_MANAGE,
+    );
     const companyGuard = await this.companyGuardRepo.findOne({
       where: {
-        company: { id: companyId },
+        company: { id: company.id },
         guard: { id: guardId },
       },
     });
     if (!companyGuard) {
       throw new ForbiddenException('No relationship between this company and guard');
     }
-    return { companyId, companyGuard };
+    return { companyId: company.id, companyGuard };
   }
 
   // Write access — ACTIVE relationship required.
+  // PAYROLL_MANAGE enforced via resolveCompanyContext; IDOR prevented by companyId tenant scope.
   private async requireOwnedActiveRelationship(
     companyUserId: number,
+    userRole: UserRole,
     guardId: number,
   ): Promise<{ companyId: number; companyGuard: CompanyGuard }> {
-    const companyId = await this.requireCompanyIdForUser(companyUserId);
+    const { company } = await this.membershipService.resolveCompanyContext(
+      companyUserId, userRole, CompanyPermission.PAYROLL_MANAGE,
+    );
     const companyGuard = await this.companyGuardRepo.findOne({
       where: {
-        company: { id: companyId },
+        company: { id: company.id },
         guard: { id: guardId },
         status: CompanyGuardStatus.ACTIVE,
       },
@@ -299,7 +301,7 @@ export class PayrollAdminService {
     if (!companyGuard) {
       throw new ForbiddenException('No active relationship between this company and guard');
     }
-    return { companyId, companyGuard };
+    return { companyId: company.id, companyGuard };
   }
 
   // Loads payrollNoteEnc via explicit addSelect (select: false column).

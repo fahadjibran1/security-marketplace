@@ -406,37 +406,37 @@ export class GuardPersonnelController {
   // P1G-B — Payroll / Payment Administration: Company create/read/update ───────
 
   @Post('company/guard/:guardId/payroll-admin')
-  @Roles(UserRole.COMPANY, UserRole.COMPANY_ADMIN)
+  @Roles(UserRole.COMPANY, UserRole.COMPANY_ADMIN, UserRole.COMPANY_STAFF)
   createGuardPayrollAdmin(
     @CurrentUser() user: JwtPayload,
     @Param('guardId', ParseIntPipe) guardId: number,
     @Body() dto: CreatePayrollAdminDto,
     @Req() req: Request,
   ) {
-    return this.payrollAdminService.createForCompany(user.sub, guardId, dto, {
+    return this.payrollAdminService.createForCompany(user.sub, user.role as UserRole, guardId, dto, {
       ipAddress: req.ip ?? null,
       userAgent: req.headers['user-agent'] ?? null,
     });
   }
 
   @Get('company/guard/:guardId/payroll-admin')
-  @Roles(UserRole.COMPANY, UserRole.COMPANY_ADMIN)
+  @Roles(UserRole.COMPANY, UserRole.COMPANY_ADMIN, UserRole.COMPANY_STAFF)
   getGuardPayrollAdminForCompany(
     @CurrentUser() user: JwtPayload,
     @Param('guardId', ParseIntPipe) guardId: number,
   ) {
-    return this.payrollAdminService.getForCompany(user.sub, guardId);
+    return this.payrollAdminService.getForCompany(user.sub, user.role as UserRole, guardId);
   }
 
   @Patch('company/guard/:guardId/payroll-admin')
-  @Roles(UserRole.COMPANY, UserRole.COMPANY_ADMIN)
+  @Roles(UserRole.COMPANY, UserRole.COMPANY_ADMIN, UserRole.COMPANY_STAFF)
   updateGuardPayrollAdminForCompany(
     @CurrentUser() user: JwtPayload,
     @Param('guardId', ParseIntPipe) guardId: number,
     @Body() dto: UpdatePayrollAdminDto,
     @Req() req: Request,
   ) {
-    return this.payrollAdminService.updateForCompany(user.sub, guardId, dto, {
+    return this.payrollAdminService.updateForCompany(user.sub, user.role as UserRole, guardId, dto, {
       ipAddress: req.ip ?? null,
       userAgent: req.headers['user-agent'] ?? null,
     });

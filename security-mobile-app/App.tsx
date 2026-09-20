@@ -7,7 +7,7 @@ import { GuardDashboardScreen } from './src/screens/GuardDashboardScreen';
 import { AdminDashboardScreen } from './src/screens/AdminDashboardScreen';
 import { AuthScreen } from './src/screens/AuthScreen';
 import { StatePanel } from './src/components/StatePanel';
-import { logout, restoreSession, setUnauthorizedHandler } from './src/services/api';
+import { fetchCurrentUser, logout, restoreSession, setUnauthorizedHandler } from './src/services/api';
 import { installAttendanceLocationTransport } from './src/services/attendanceTransport';
 import { clearStoredSession, loadStoredSession, persistSession } from './src/services/session';
 import { AuthSession } from './src/types/models';
@@ -24,7 +24,20 @@ export default function App() {
   useEffect(() => installAttendanceLocationTransport(), []);
   useEffect(() => {
     async function bootstrapSession() {
-      try { const storedSession = await loadStoredSession(); if (storedSession) { restoreSession(storedSession); setSession(storedSession); } }
+      try {
+        const storedSession = await loadStoredSession();
+        if (storedSession) {
+          restoreSession(storedSession);
+          setSession(storedSession);
+          // Refresh effective permissions from the live server; update in-memory
+          // and persisted session so next boot also has fresh permissions.
+          fetchCurrentUser().then(freshUser => {
+            const refreshed = { ...storedSession, user: freshUser };
+            setSession(refreshed);
+            persistSession(refreshed);
+          }).catch(() => { /* offline or token expired — keep cached session */ });
+        }
+      }
       finally { setBooting(false); }
     }
     bootstrapSession();

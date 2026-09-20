@@ -245,6 +245,61 @@ assert(
   'FRONTEND-3: canPayAdmin checks payroll.manage permission string',
 );
 
+// ─── 15. Bootstrap session refresh — App.tsx production wiring ───────────────
+
+const appSrc = fs.readFileSync(
+  path.join(REPO, '..', 'security-mobile-app', 'App.tsx'),
+  'utf8',
+);
+
+assert(
+  appSrc.includes('fetchCurrentUser'),
+  'BOOTSTRAP-1: App.tsx calls fetchCurrentUser for permission refresh on session restore',
+);
+
+assert(
+  appSrc.includes('restoreSession') && appSrc.includes('setSession'),
+  'BOOTSTRAP-2: App.tsx restores cached session before async refresh (no UI block)',
+);
+
+assert(
+  appSrc.includes('persistSession'),
+  'BOOTSTRAP-3: App.tsx persists refreshed session so next boot has fresh permissions',
+);
+
+assert(
+  appSrc.includes('.catch('),
+  'BOOTSTRAP-4: fetchCurrentUser failure is caught — cached session preserved offline',
+);
+
+// No preview wiring in production App.tsx
+assert(
+  !appSrc.includes('GuardsPreviewScreen'),
+  'BOOTSTRAP-5: App.tsx contains no GuardsPreviewScreen import (preview removed)',
+);
+
+assert(
+  !appSrc.includes('GUARDS_PREVIEW'),
+  'BOOTSTRAP-6: App.tsx contains no EXPO_PUBLIC_GUARDS_PREVIEW gate (preview removed)',
+);
+
+// ─── 16. api.ts exports fetchCurrentUser ──────────────────────────────────────
+
+const apiSrc = fs.readFileSync(
+  path.join(REPO, '..', 'security-mobile-app', 'src', 'services', 'api.ts'),
+  'utf8',
+);
+
+assert(
+  apiSrc.includes('fetchCurrentUser'),
+  'API-1: api.ts exports fetchCurrentUser function',
+);
+
+assert(
+  apiSrc.includes('/auth/me'),
+  'API-2: fetchCurrentUser calls GET /auth/me endpoint',
+);
+
 // ─── Summary ──────────────────────────────────────────────────────────────────
 
 console.log('');

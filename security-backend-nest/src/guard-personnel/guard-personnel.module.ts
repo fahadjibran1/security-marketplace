@@ -7,6 +7,7 @@ import { CompanyGuardEmployment } from './entities/company-guard-employment.enti
 import { CompanyGuard } from '../company-guard/entities/company-guard.entity';
 import { User } from '../user/entities/user.entity';
 import { AuditLogModule } from '../audit-log/audit-log.module';
+import { CompanyMembershipModule } from '../company-membership/company-membership.module';
 import { EncryptionService } from './encryption.service';
 import { GuardPersonnelService } from './guard-personnel.service';
 import { DrivingTransportService } from './driving-transport.service';
@@ -22,6 +23,7 @@ import { GuardPersonnelController } from './guard-personnel.controller';
   imports: [
     TypeOrmModule.forFeature([GuardProfile, GuardDrivingProfile, GuardEmergencyContact, CompanyGuardEmployment, CompanyGuard, User, GuardBankDetails, CompanyGuardPayroll]),
     AuditLogModule,
+    CompanyMembershipModule,
   ],
   controllers: [GuardPersonnelController],
   providers: [EncryptionService, GuardPersonnelService, DrivingTransportService, EmergencyContactService, EmploymentService, BankDetailsService, PayrollAdminService],
