@@ -190,10 +190,16 @@ function shiftStatusTone(status?: string | null): StatusTone {
     case 'in_progress': return 'success';
     case 'completed': return 'neutral';
     case 'missed': return 'danger';
-    case 'rejected': return 'danger';
+    case 'rejected': return 'neutral';
     case 'cancelled': return 'neutral';
     default: return 'neutral';
   }
+}
+
+/** Guard-facing label for history status badges — maps internal "rejected" to "Declined". */
+function guardHistoryShiftStatusLabel(status?: string | null): string {
+  if (normalizeShiftLifecycleStatus(status) === 'rejected') return 'Declined';
+  return normalizeShiftLifecycleStatus(status);
 }
 
 function getPrimaryActionLabel(status?: string | null) {
@@ -456,6 +462,7 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
   const [timesheets, setTimesheets] = useState<Timesheet[]>([]);
   const [selectedShiftId, setSelectedShiftId] = useState<number | null>(null);
   const [historySummaryShiftId, setHistorySummaryShiftId] = useState<number | null>(null);
+  const [historyFilter, setHistoryFilter] = useState<'all' | 'worked' | 'declined'>('all');
   const [pendingOfferIdForDetail, setPendingOfferIdForDetail] = useState<number | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1469,6 +1476,17 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
       ['completed', 'missed', 'cancelled', 'rejected'].includes(normalizeShiftLifecycleStatus(shift.status)),
     )
     .sort((a, b) => new Date(b.end).getTime() - new Date(a.end).getTime());
+  const filteredHistoryShifts =
+    historyFilter === 'declined'
+      ? historyShifts.filter((s) => normalizeShiftLifecycleStatus(s.status) === 'rejected')
+      : historyFilter === 'worked'
+      ? historyShifts.filter((s) =>
+          ['completed', 'missed', 'cancelled'].includes(normalizeShiftLifecycleStatus(s.status)),
+        )
+      : historyShifts;
+  const historyDeclinedCount = historyShifts.filter(
+    (s) => normalizeShiftLifecycleStatus(s.status) === 'rejected',
+  ).length;
   const selectedShiftTimeline = [
     ...localTimelineEvents.filter((event) => event.shiftId === selectedShift?.id),
     ...selectedShiftLogs.map((entry) => ({
@@ -1989,19 +2007,49 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
 
         {activeTab === 'history' ? (
           <View style={styles.guardHistoryRoot}>
+            {/* History filter tabs */}
+            <View style={styles.historyFilterRow}>
+              {(
+                [
+                  ['all',      'All'],
+                  ['worked',   'Worked'],
+                  ['declined', 'Declined'],
+                ] as Array<['all' | 'worked' | 'declined', string]>
+              ).map(([filter, label]) => (
+                <Pressable
+                  key={filter}
+                  style={[styles.historyFilterTab, historyFilter === filter && styles.historyFilterTabActive]}
+                  onPress={() => setHistoryFilter(filter)}
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: historyFilter === filter }}
+                >
+                  <Text style={[styles.historyFilterTabText, historyFilter === filter && styles.historyFilterTabTextActive]}>
+                    {label}
+                    {filter === 'declined' && historyDeclinedCount > 0 ? ` (${historyDeclinedCount})` : ''}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+
             <FeatureCard
               title="Past shifts"
               subtitle={
-                historyShifts.length === 0
-                  ? 'Finished work and quick recaps — timesheets for pay are in the next section.'
-                  : `Tap a row for a recap (${historyShifts.length} on file). Hours and company status stay in Timesheets below.`
+                filteredHistoryShifts.length === 0
+                  ? historyFilter === 'declined'
+                    ? 'Shifts you have declined will appear here.'
+                    : 'Finished work and quick recaps — timesheets for pay are in the next section.'
+                  : `Tap a row for a recap (${filteredHistoryShifts.length} on file). Hours and company status stay in Timesheets below.`
               }
               style={styles.guardHistoryPastCard}
             >
-              {historyShifts.length === 0 ? (
-                <StatePanel title="Nothing in your history yet" message="When shifts finish they appear here for a recap. Payroll hours and company replies are in Timesheets below." />
+              {filteredHistoryShifts.length === 0 ? (
+                historyFilter === 'declined' ? (
+                  <StatePanel title="No declined shifts" message="When you decline a shift offer it will appear here for your records." />
+                ) : (
+                  <StatePanel title="Nothing in your history yet" message="When shifts finish they appear here for a recap. Payroll hours and company replies are in Timesheets below." />
+                )
               ) : (
-                historyShifts.map((shift, index) => (
+                filteredHistoryShifts.map((shift, index) => (
                   <Pressable
                     key={shift.id}
                     style={[styles.historyPastRow, index === 0 ? styles.historyPastRowFirst : null]}
@@ -2014,7 +2062,7 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
                         {formatTimeLabel(shift.start)} – {formatTimeLabel(shift.end)}
                       </Text>
                     </View>
-                    <StatusBadge label={normalizeShiftLifecycleStatus(shift.status)} tone={shiftStatusTone(shift.status)} />
+                    <StatusBadge label={guardHistoryShiftStatusLabel(shift.status)} tone={shiftStatusTone(shift.status)} />
                   </Pressable>
                 ))
               )}
@@ -3077,23 +3125,32 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
                 <Text style={styles.summaryHeroTime}>
                   {formatTimeLabel(historySummaryShift.start)} – {formatTimeLabel(historySummaryShift.end)}
                 </Text>
-                <StatusBadge label={normalizeShiftLifecycleStatus(historySummaryShift.status)} tone={shiftStatusTone(historySummaryShift.status)} />
+                <StatusBadge label={guardHistoryShiftStatusLabel(historySummaryShift.status)} tone={shiftStatusTone(historySummaryShift.status)} />
               </View>
               <View style={styles.summaryGrid}>
-                <View style={styles.summaryBlock}>
-                  <Text style={styles.summaryLabel}>Booked on</Text>
-                  <Text style={styles.summaryValue}>{formatSummaryAttendanceLine(historySummaryAttendance?.checkInAt)}</Text>
-                </View>
-                <View style={styles.summaryBlock}>
-                  <Text style={styles.summaryLabel}>Booked off</Text>
-                  <Text style={styles.summaryValue}>{formatSummaryAttendanceLine(historySummaryAttendance?.checkOutAt)}</Text>
-                </View>
-                <View style={styles.summaryBlock}>
-                  <Text style={styles.summaryLabel}>Incidents</Text>
-                  <Text style={styles.summaryValue}>
-                    {incidents.filter((incident) => incident.shift?.id === historySummaryShift.id).length}
-                  </Text>
-                </View>
+                {normalizeShiftLifecycleStatus(historySummaryShift.status) !== 'rejected' ? (
+                  <>
+                    <View style={styles.summaryBlock}>
+                      <Text style={styles.summaryLabel}>Booked on</Text>
+                      <Text style={styles.summaryValue}>{formatSummaryAttendanceLine(historySummaryAttendance?.checkInAt)}</Text>
+                    </View>
+                    <View style={styles.summaryBlock}>
+                      <Text style={styles.summaryLabel}>Booked off</Text>
+                      <Text style={styles.summaryValue}>{formatSummaryAttendanceLine(historySummaryAttendance?.checkOutAt)}</Text>
+                    </View>
+                    <View style={styles.summaryBlock}>
+                      <Text style={styles.summaryLabel}>Incidents</Text>
+                      <Text style={styles.summaryValue}>
+                        {incidents.filter((incident) => incident.shift?.id === historySummaryShift.id).length}
+                      </Text>
+                    </View>
+                  </>
+                ) : (
+                  <View style={styles.summaryBlock}>
+                    <Text style={styles.summaryLabel}>Status</Text>
+                    <Text style={styles.summaryValue}>Offer declined — no attendance recorded.</Text>
+                  </View>
+                )}
                 {historySummaryTimesheet ? (
                   <View style={[styles.summaryBlock, styles.summaryTimesheetBlock]}>
                     <Text style={styles.summaryLabel}>Timesheet (payroll)</Text>
@@ -3553,6 +3610,33 @@ const styles = StyleSheet.create({
   activityTitle: { color: colors.textPrimary, fontWeight: '700' },
   activityTime: { color: colors.textSecondary, fontSize: 12, fontWeight: '700' },
   guardHistoryRoot: { width: '100%', gap: 12, paddingBottom: 8 },
+  historyFilterRow: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 4,
+  },
+  historyFilterTab: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+  },
+  historyFilterTabActive: {
+    backgroundColor: colors.primaryNavy,
+    borderColor: colors.primaryNavy,
+  },
+  historyFilterTabText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.textSecondary,
+  },
+  historyFilterTabTextActive: {
+    color: colors.textOnBrand,
+  },
   guardHistoryPastCard: {
     borderRadius: 22,
     borderWidth: 1,
