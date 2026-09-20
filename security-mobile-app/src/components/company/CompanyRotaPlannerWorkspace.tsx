@@ -76,6 +76,17 @@ function buildNaiveIso(date: string, time: string): string {
   return `${date}T${time}:00`;
 }
 
+/** Build endAt naive ISO, advancing the date by 1 day when end ≤ start (overnight shift). */
+function buildNaiveIsoEnd(date: string, startTime: string, endTime: string): string {
+  if (endTime <= startTime) {
+    const [y, m, d] = date.split('-').map(Number);
+    const next = new Date(y, m - 1, d + 1);
+    const nd = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}-${String(next.getDate()).padStart(2, '0')}`;
+    return `${nd}T${endTime}:00`;
+  }
+  return `${date}T${endTime}:00`;
+}
+
 function isValidDate(s: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(s) && !isNaN(new Date(s).getTime());
 }
@@ -486,7 +497,7 @@ export function CompanyRotaPlannerWorkspace({
         return;
       }
       changes.startAt = buildNaiveIso(editDate, editStart);
-      changes.endAt   = buildNaiveIso(editDate, editEnd);
+      changes.endAt   = buildNaiveIsoEnd(editDate, editStart, editEnd);
     }
 
     const newCount = parseInt(editGuards, 10);
@@ -564,7 +575,7 @@ export function CompanyRotaPlannerWorkspace({
       const payload: RotaCreatePayload = {
         siteId: parseInt(createSiteId, 10),
         startAt: buildNaiveIso(createDate, createStart),
-        endAt: buildNaiveIso(createDate, createEnd),
+        endAt: buildNaiveIsoEnd(createDate, createStart, createEnd),
         requiredGuardCount: guardsNum,
         ...(checkNum !== undefined ? { checkCallIntervalMinutes: checkNum } : {}),
         ...(createTitle.trim() ? { title: createTitle.trim() } : {}),
@@ -2152,8 +2163,11 @@ function MatrixDayCell({
           accessibilityRole="button"
           accessibilityLabel="Add shift"
         >
-          <Text style={mxStyles.cellEmptyDash}>—</Text>
-          <Text style={mxStyles.cellEmptyAdd}>+ Add Shift</Text>
+          {({ hovered, pressed }: any) => (
+            hovered || pressed
+              ? <Text style={mxStyles.cellEmptyAdd}>+ Add Shift</Text>
+              : <Text style={mxStyles.cellEmptyDash}>—</Text>
+          )}
         </Pressable>
       )}
     </View>
@@ -2363,8 +2377,7 @@ const mxStyles = StyleSheet.create({
   },
   cellEmptyBtnHovered: { backgroundColor: colors.surfaceSubtle },
   cellEmptyDash: { fontSize: 14, color: colors.border },
-  // "+ Add Shift" is always present but very quiet — hover background provides the cue
-  cellEmptyAdd: { fontSize: 10, color: colors.border, letterSpacing: 0.2 } as any,
+  cellEmptyAdd: { fontSize: 10, color: colors.textSecondary, letterSpacing: 0.2 } as any,
 
   // Add-more (when cell already has slots) — small right-aligned "+" corner control
   cellAddMore: {
