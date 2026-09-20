@@ -45,6 +45,7 @@ export type CompanyGuardsWorkspaceProps = {
   refreshing: boolean;
   onRefresh: () => void;
   approvingGuardId: number | null;
+  canManageGuards: boolean;
   onLinkGuard: (guardId: number) => Promise<void>;
   onUpdateGuardStatus: (companyGuardId: number, status: 'ACTIVE' | 'INACTIVE' | 'BLOCKED') => Promise<void>;
   onOpenPayAdmin: (guardId: number, guardName: string) => void;
@@ -212,6 +213,7 @@ export function CompanyGuardsWorkspace({
   complianceRecords,
   loading,
   approvingGuardId,
+  canManageGuards,
   onLinkGuard,
   onUpdateGuardStatus,
   onOpenPayAdmin,
@@ -444,13 +446,15 @@ export function CompanyGuardsWorkspace({
               clearButtonMode="while-editing"
             />
           </View>
-          <Pressable
-            style={styles.linkButton}
-            onPress={handleOpenLinkDrawer}
-            accessibilityRole="button"
-          >
-            <Text style={styles.linkButtonText}>+ Link Guard</Text>
-          </Pressable>
+          {canManageGuards ? (
+            <Pressable
+              style={styles.linkButton}
+              onPress={handleOpenLinkDrawer}
+              accessibilityRole="button"
+            >
+              <Text style={styles.linkButtonText}>+ Link Guard</Text>
+            </Pressable>
+          ) : null}
         </View>
         <View style={styles.filterTabs}>
           {FILTER_TABS.map(tab => (
@@ -488,8 +492,8 @@ export function CompanyGuardsWorkspace({
                     ? 'No guards linked to your workforce.'
                     : 'No guards match your search or filter.'
                 }
-                actionLabel={companyGuards.length === 0 ? 'Link Guard' : undefined}
-                onAction={companyGuards.length === 0 ? handleOpenLinkDrawer : undefined}
+                actionLabel={canManageGuards && companyGuards.length === 0 ? 'Link Guard' : undefined}
+                onAction={canManageGuards && companyGuards.length === 0 ? handleOpenLinkDrawer : undefined}
               />
             ) : (
               filteredGuards.map(cg => {
@@ -601,26 +605,28 @@ export function CompanyGuardsWorkspace({
 
             <DrawerSection title="Actions">
               <View style={styles.actionButtons}>
-                {qvStatus === 'ACTIVE' ? (
-                  <>
+                {canManageGuards ? (
+                  qvStatus === 'ACTIVE' ? (
+                    <>
+                      <Button
+                        label="Block Guard"
+                        variant="danger"
+                        onPress={() => requestStatusChange('block', quickView)}
+                      />
+                      <Button
+                        label="Set Inactive"
+                        variant="secondary"
+                        onPress={() => requestStatusChange('inactive', quickView)}
+                      />
+                    </>
+                  ) : (
                     <Button
-                      label="Block Guard"
-                      variant="danger"
-                      onPress={() => requestStatusChange('block', quickView)}
+                      label="Reactivate"
+                      variant="primary"
+                      onPress={() => requestStatusChange('reactivate', quickView)}
                     />
-                    <Button
-                      label="Set Inactive"
-                      variant="secondary"
-                      onPress={() => requestStatusChange('inactive', quickView)}
-                    />
-                  </>
-                ) : (
-                  <Button
-                    label="Reactivate"
-                    variant="primary"
-                    onPress={() => requestStatusChange('reactivate', quickView)}
-                  />
-                )}
+                  )
+                ) : null}
                 <Button
                   label="Pay Admin"
                   variant="secondary"
@@ -655,7 +661,7 @@ export function CompanyGuardsWorkspace({
 
       {/* ── Link Guard Drawer ──────────────────────────────────────────────── */}
       <Drawer
-        visible={linkOpen}
+        visible={canManageGuards && linkOpen}
         onClose={() => setLinkOpen(false)}
         title="Link Guard"
         subtitle="Add an existing guard to your workforce."

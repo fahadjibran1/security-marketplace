@@ -4205,6 +4205,7 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
               refreshing={refreshing}
               onRefresh={() => loadData(true)}
               approvingGuardId={approvingGuardId}
+              canManageGuards={user?.role === 'company_admin' || user?.role === 'company'}
               onLinkGuard={handleApproveGuard}
               onUpdateGuardStatus={handleUpdateGuardStatus}
               onOpenPayAdmin={(guardId, guardName) => handleSelectPayrollGuard(guardId, guardName)}
