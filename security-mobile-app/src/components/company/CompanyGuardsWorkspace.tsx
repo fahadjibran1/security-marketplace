@@ -106,6 +106,14 @@ function getComplianceSummary(guardId: number | undefined, records: ComplianceRe
   return { label: 'Valid', tone: 'success' };
 }
 
+function fmtTime(iso: string): string {
+  try {
+    return new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  } catch {
+    return '';
+  }
+}
+
 type WorkStatus = 'on-shift' | 'upcoming' | 'off-duty';
 
 function getWorkStatus(guardId: number | undefined, shifts: Shift[]): WorkStatus {
@@ -159,6 +167,29 @@ function getGuardShiftCounts(guardId: number | undefined, shifts: Shift[]) {
     futureReadyCount: guardShifts.filter(s => s.status === 'ready' && new Date(s.start) > now).length,
     outstandingOfferCount: guardShifts.filter(s => s.status === 'offered').length,
     inProgressCount: guardShifts.filter(s => s.status === 'in_progress').length,
+  };
+}
+
+type WorkSectionData = {
+  currentShift: Shift | null;
+  nextShift: Shift | null;
+  futureReadyCount: number;
+  outstandingOfferCount: number;
+};
+
+function getWorkSectionData(guardId: number | undefined, shifts: Shift[]): WorkSectionData {
+  if (!guardId) return { currentShift: null, nextShift: null, futureReadyCount: 0, outstandingOfferCount: 0 };
+  const now = new Date();
+  const guardShifts = shifts.filter(s => (s.guard?.id ?? (s as any).guardId) === guardId);
+  const currentShift = guardShifts.find(s => s.status === 'in_progress') ?? null;
+  const futureReady = guardShifts
+    .filter(s => s.status === 'ready' && new Date(s.start) > now)
+    .sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
+  return {
+    currentShift,
+    nextShift: futureReady[0] ?? null,
+    futureReadyCount: futureReady.length,
+    outstandingOfferCount: guardShifts.filter(s => s.status === 'offered').length,
   };
 }
 
@@ -314,10 +345,15 @@ export function CompanyGuardsWorkspace({
     ].filter(Boolean);
 
     if (type === 'block') {
-      const shiftNote = warnings.length > 0
-        ? `\n\nThis guard currently has:\n${warnings.map(w => `• ${w}`).join('\n')}\n\nThese records will not be cancelled automatically. Review future shifts separately.`
-        : '';
       const liveNote = inProgressCount > 0 ? '\n\nThe current shift will continue. Blocking does not book the guard off.' : '';
+      // inProgressCount is already communicated in liveNote; exclude it from the bullet list
+      const blockWarnings = [
+        futureReadyCount > 0 ? `${futureReadyCount} accepted future shift${futureReadyCount !== 1 ? 's' : ''}` : '',
+        outstandingOfferCount > 0 ? `${outstandingOfferCount} outstanding offer${outstandingOfferCount !== 1 ? 's' : ''}` : '',
+      ].filter(Boolean);
+      const shiftNote = blockWarnings.length > 0
+        ? `\n\nThis guard currently has:\n${blockWarnings.map(w => `• ${w}`).join('\n')}\n\nThese records will not be cancelled automatically. Review future shifts separately.`
+        : '';
       return {
         title: `Block ${guardName}?`,
         message: `They will not be able to accept new offers or receive new assignments from your company. Existing accepted or active shifts will not be cancelled automatically.${liveNote}${shiftNote}`,
@@ -349,6 +385,7 @@ export function CompanyGuardsWorkspace({
   const qvWorkStatus = getWorkStatus(qvGuard?.id, shifts);
   const qvCompliance = getComplianceSummary(qvGuard?.id, complianceRecords);
   const qvStatus = (quickView?.status || '').toUpperCase();
+  const qvWork = getWorkSectionData(qvGuard?.id, shifts);
 
   const confirmCopy = pendingAction ? getConfirmationCopy(pendingAction) : null;
 
@@ -538,6 +575,30 @@ export function CompanyGuardsWorkspace({
               ) : null}
             </DrawerSection>
 
+            <DrawerSection title="Work">
+              {qvWork.currentShift ? (
+                <DrawerRow
+                  label="Current shift"
+                  value={`${qvWork.currentShift.siteName} · ${fmtTime(qvWork.currentShift.start)} – ${fmtTime(qvWork.currentShift.end)}`}
+                />
+              ) : null}
+              {qvWork.nextShift ? (
+                <DrawerRow
+                  label="Next shift"
+                  value={`${qvWork.nextShift.siteName} · ${fmtDate(qvWork.nextShift.start)}, ${fmtTime(qvWork.nextShift.start)}`}
+                />
+              ) : null}
+              {qvWork.futureReadyCount > 0 ? (
+                <DrawerRow label="Future shifts" value={String(qvWork.futureReadyCount)} />
+              ) : null}
+              {qvWork.outstandingOfferCount > 0 ? (
+                <DrawerRow label="Outstanding offers" value={String(qvWork.outstandingOfferCount)} />
+              ) : null}
+              {!qvWork.currentShift && !qvWork.nextShift && qvWork.futureReadyCount === 0 && qvWork.outstandingOfferCount === 0 ? (
+                <Text style={styles.drawerHint}>No current or upcoming work.</Text>
+              ) : null}
+            </DrawerSection>
+
             <DrawerSection title="Actions">
               <View style={styles.actionButtons}>
                 {qvStatus === 'ACTIVE' ? (
@@ -597,7 +658,7 @@ export function CompanyGuardsWorkspace({
         visible={linkOpen}
         onClose={() => setLinkOpen(false)}
         title="Link Guard"
-        subtitle="Add an existing approved guard to your workforce."
+        subtitle="Add an existing guard to your workforce."
         compact
       >
         <View style={styles.linkDrawerBody}>
@@ -629,8 +690,8 @@ export function CompanyGuardsWorkspace({
                   </Text>
                 </View>
                 <Button
-                  label={approvingGuardId === guard.id ? 'Linking…' : 'Link Guard'}
-                  variant="primary"
+                  label={approvingGuardId === guard.id ? 'Linking…' : 'Link'}
+                  variant="secondary"
                   onPress={() => handleLinkGuard(guard.id)}
                   disabled={approvingGuardId !== null}
                 />
