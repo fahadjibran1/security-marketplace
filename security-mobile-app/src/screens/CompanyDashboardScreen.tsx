@@ -4205,7 +4205,16 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
               refreshing={refreshing}
               onRefresh={() => loadData(true)}
               approvingGuardId={approvingGuardId}
-              canManageGuards={user?.role === 'company_admin' || user?.role === 'company'}
+              canManageGuards={
+                user?.companyPermissions
+                  ? user.companyPermissions.includes('guards.manage')
+                  : (user?.role === 'company_admin' || user?.role === 'company')
+              }
+              canPayAdmin={
+                user?.companyPermissions
+                  ? user.companyPermissions.includes('payroll.manage')
+                  : (user?.role === 'company_admin' || user?.role === 'company')
+              }
               onLinkGuard={handleApproveGuard}
               onUpdateGuardStatus={handleUpdateGuardStatus}
               onOpenPayAdmin={(guardId, guardName) => handleSelectPayrollGuard(guardId, guardName)}

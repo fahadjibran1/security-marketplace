@@ -8,6 +8,7 @@ import {
   AvailabilityOverridePayload,
   AvailabilityRulePayload,
   AuthSession,
+  AuthUser,
   CompanyGuard,
   GuardComplianceSummary,
   GuardDocument,
@@ -327,6 +328,15 @@ export async function register(payload: RegisterPayload) {
 
 export function restoreSession(session: AuthSession) {
   accessToken = session.accessToken;
+}
+
+/**
+ * Fetch the current user's profile with fresh effective company permissions
+ * from GET /auth/me. Call after restoreSession() on app bootstrap so stale
+ * cached permissions are replaced with the live server state.
+ */
+export function fetchCurrentUser(): Promise<AuthUser> {
+  return request<AuthUser>('/auth/me');
 }
 
 export function logout() {

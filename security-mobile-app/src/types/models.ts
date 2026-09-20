@@ -31,6 +31,13 @@ export interface AuthUser {
   companyId?: number;
   guardId?: number;
   clientId?: number;
+  /**
+   * Effective Company permissions returned by the backend session.
+   * Values are CompanyPermission enum strings (e.g. 'guards.manage').
+   * Absent for non-Company users and for cached sessions pre-2D2.4.
+   * Use role-based fallback when this field is undefined.
+   */
+  companyPermissions?: string[];
 }
 
 export interface AuthSession {

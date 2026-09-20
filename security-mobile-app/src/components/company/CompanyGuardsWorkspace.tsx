@@ -46,6 +46,7 @@ export type CompanyGuardsWorkspaceProps = {
   onRefresh: () => void;
   approvingGuardId: number | null;
   canManageGuards: boolean;
+  canPayAdmin: boolean;
   onLinkGuard: (guardId: number) => Promise<void>;
   onUpdateGuardStatus: (companyGuardId: number, status: 'ACTIVE' | 'INACTIVE' | 'BLOCKED') => Promise<void>;
   onOpenPayAdmin: (guardId: number, guardName: string) => void;
@@ -214,6 +215,7 @@ export function CompanyGuardsWorkspace({
   loading,
   approvingGuardId,
   canManageGuards,
+  canPayAdmin,
   onLinkGuard,
   onUpdateGuardStatus,
   onOpenPayAdmin,
@@ -627,14 +629,16 @@ export function CompanyGuardsWorkspace({
                     />
                   )
                 ) : null}
-                <Button
-                  label="Pay Admin"
-                  variant="secondary"
-                  onPress={() => {
-                    onOpenPayAdmin(qvGuard.id, qvGuard.fullName);
-                    setQuickView(null);
-                  }}
-                />
+                {canPayAdmin ? (
+                  <Button
+                    label="Pay Admin"
+                    variant="secondary"
+                    onPress={() => {
+                      onOpenPayAdmin(qvGuard.id, qvGuard.fullName);
+                      setQuickView(null);
+                    }}
+                  />
+                ) : null}
               </View>
               <View style={[styles.actionButtons, styles.actionButtonsSecondary]}>
                 <Button label="View Compliance" variant="tertiary" onPress={onNavigateToCompliance} />

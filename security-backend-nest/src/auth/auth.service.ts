@@ -1,6 +1,8 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { InjectRepository } from '@nestjs/typeorm';
 import * as bcrypt from 'bcrypt';
+import { Repository } from 'typeorm';
 import { UserService } from '../user/user.service';
 import { PublicRegistrationRole, RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
@@ -12,6 +14,13 @@ import { GuardApprovalStatus } from '../guard-profile/entities/guard-profile.ent
 import { ClientPortalUserService } from '../client-portal-user/client-portal-user.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { DataSource, QueryFailedError } from 'typeorm';
+import { CompanyMembership } from '../company-membership/entities/company-membership.entity';
+import {
+  CompanyMembershipRole,
+  CompanyMembershipStatus,
+  CompanyPermission,
+  ROLE_PERMISSIONS,
+} from '../company-membership/company-membership-types';
 
 const DUPLICATE_SIA_MESSAGE = 'SIA licence number is already registered.';
 
@@ -47,6 +56,8 @@ export class AuthService {
     private readonly clientPortalUserService: ClientPortalUserService,
     private readonly auditLogService: AuditLogService,
     private readonly dataSource: DataSource,
+    @InjectRepository(CompanyMembership)
+    private readonly membershipRepo: Repository<CompanyMembership>,
   ) {}
 
   async register(dto: RegisterDto) {
@@ -166,6 +177,64 @@ export class AuthService {
     return this.signClientToken(clientUser.id, clientUser.email, clientUser.role, clientUser.client.id);
   }
 
+  /**
+   * Compute the effective Company permissions for a user, using the live
+   * company_memberships row. Called at login time and by /auth/me so the
+   * client always receives up-to-date permissions.
+   *
+   * Resolution mirrors CompanyMembershipService.resolveCompanyContext:
+   *  - ACTIVE membership found → use its membershipRole's permission set
+   *  - No membership row, legacy COMPANY/COMPANY_ADMIN role → OWNER permissions
+   *  - All other cases → empty (no company permissions)
+   *
+   * Never throws — returns [] on any unexpected error (fail-safe for auth flow).
+   */
+  async computeCompanyPermissions(userId: number, userRole: UserRole): Promise<string[]> {
+    if (!isCompanyRole(userRole)) return [];
+
+    try {
+      const membership = await this.membershipRepo.findOne({
+        where: { userId, status: CompanyMembershipStatus.ACTIVE },
+      });
+
+      if (membership) {
+        return Array.from(ROLE_PERMISSIONS[membership.membershipRole] ?? []) as string[];
+      }
+
+      // Legacy fallback: pre-P1I owner accounts with no membership row
+      if (userRole === UserRole.COMPANY || userRole === UserRole.COMPANY_ADMIN) {
+        return Array.from(ROLE_PERMISSIONS[CompanyMembershipRole.OWNER]) as string[];
+      }
+    } catch {
+      // Fail-safe: never break authentication due to a permissions lookup error
+    }
+
+    return [];
+  }
+
+  /**
+   * Build the user-facing session object for the authenticated user.
+   * Used by /auth/me to return a fresh session user without re-issuing a JWT.
+   */
+  async getCurrentUser(userId: number, userRole: UserRole) {
+    const companyProfile = isCompanyRole(userRole)
+      ? await this.companyService.findByUserId(userId)
+      : null;
+    const guardProfile = userRole === UserRole.GUARD
+      ? await this.guardProfileService.findByUserId(userId)
+      : null;
+    const companyPermissions = await this.computeCompanyPermissions(userId, userRole);
+
+    return {
+      id: userId,
+      email: (await this.usersService.findById(userId))?.email ?? '',
+      role: userRole,
+      companyId: companyProfile?.id,
+      guardId: guardProfile?.id,
+      ...(companyPermissions.length > 0 ? { companyPermissions } : {}),
+    };
+  }
+
   private normalizePublicRegistrationRole(role: PublicRegistrationRole): UserRole {
     switch (role) {
       case PublicRegistrationRole.COMPANY:
@@ -183,6 +252,7 @@ export class AuthService {
       isCompanyRole(role) ? await this.companyService.findByUserId(userId) : null;
     const guardProfile =
       role === UserRole.GUARD ? await this.guardProfileService.findByUserId(userId) : null;
+    const companyPermissions = await this.computeCompanyPermissions(userId, role);
 
     const payload = { sub: userId, email, role, status, principalType: 'user' as const };
     return {
@@ -194,6 +264,7 @@ export class AuthService {
         status,
         companyId: companyProfile?.id,
         guardId: guardProfile?.id,
+        ...(companyPermissions.length > 0 ? { companyPermissions } : {}),
       }
     };
   }
