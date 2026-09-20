@@ -86,6 +86,7 @@ function buildHarness() {
     {} as any,
     {} as any,
     { transaction: async (work: (manager: unknown) => Promise<unknown>) => work({}) } as any,
+    { find: async () => [], findOne: async () => null } as any,
   );
 
   return { service, calls };

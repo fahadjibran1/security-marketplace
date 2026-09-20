@@ -406,11 +406,18 @@ export interface GuardDocument {
 
 export interface GuardDocumentPayload {
   guardId?: number;
+  /** Guard self-upload only: the Company the evidence is submitted to (required by the backend). */
+  companyId?: number;
   type: GuardDocumentType | string;
   originalFileName: string;
   mimeType: string;
   sizeBytes: number;
   expiryDate?: string | null;
+}
+
+export interface GuardDocumentUploadCompany {
+  companyId: number;
+  name: string;
 }
 
 export interface GuardDocumentUpload extends GuardDocument {

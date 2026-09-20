@@ -6,11 +6,13 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { COMPANY_VIEW_ROLES, UserRole } from '../user/entities/user.entity';
 import { AddAddressDto, AddHistoryDto, AddReferenceDto, ConsentDto, CreateEvidenceDto, ReviewActionDto, ReviewReferenceDto, StartScreeningDto, UpdateCandidateComplianceDto, UpdateScreeningProfileDto, VerifyCheckDto } from './dto/screening.dto';
+import { CompanyMembershipService } from '../company-membership/company-membership.service';
+import { CompanyPermission } from '../company-membership/company-membership-types';
 import { ScreeningService } from './screening.service';
 
 @Controller('screening') @UseGuards(JwtAuthGuard, RolesGuard)
 export class ScreeningController {
-  constructor(private readonly service: ScreeningService) {}
+  constructor(private readonly service: ScreeningService, private readonly membership: CompanyMembershipService) {}
   @Post('mine/start') @Roles(UserRole.GUARD) start(@CurrentUser() u:JwtPayload,@Body() d:StartScreeningDto){return this.service.start(u.sub,d);}
   @Get('mine') @Roles(UserRole.GUARD) mine(@CurrentUser() u:JwtPayload){return this.service.mine(u.sub);}
   @Put('mine/profile') @Roles(UserRole.GUARD) profile(@CurrentUser() u:JwtPayload,@Body() d:UpdateScreeningProfileDto){return this.service.updateProfile(u.sub,d);}
@@ -28,7 +30,7 @@ export class ScreeningController {
   @Post('evidence/:id/complete-upload') @Roles(UserRole.GUARD,UserRole.ADMIN) completeEvidence(@CurrentUser() u:JwtPayload,@Param('id',ParseIntPipe) id:number){return this.service.completeEvidence(u,id);}
   @Get('evidence/:id/access') @Roles(UserRole.GUARD) accessEvidence(@CurrentUser() u:JwtPayload,@Param('id',ParseIntPipe) id:number){return this.service.accessEvidence(u,id);}
   @Post('mine/submit') @Roles(UserRole.GUARD) submit(@CurrentUser() u:JwtPayload){return this.service.submit(u.sub);}
-  @Get('company/guards/:guardId/outcome') @Roles(...COMPANY_VIEW_ROLES) outcome(@CurrentUser() u:JwtPayload,@Param('guardId',ParseIntPipe) id:number){return this.service.companyOutcome(u.sub,id);}
+  @Get('company/guards/:guardId/outcome') @Roles(...COMPANY_VIEW_ROLES) async outcome(@CurrentUser() u:JwtPayload,@Param('guardId',ParseIntPipe) id:number){const {company}=await this.membership.resolveCompanyContext(u.sub,u.role,CompanyPermission.SCREENING_VIEW);return this.service.companyOutcome(company.id,id);}
   @Get() @Roles(UserRole.ADMIN) list(){return this.service.listAdmin();}
   @Get(':id') @Roles(UserRole.ADMIN) get(@Param('id',ParseIntPipe) id:number){return this.service.adminGet(id);}
   @Get(':id/evidence/:evidenceId/access') @Roles(UserRole.ADMIN) adminEvidence(@CurrentUser() u:JwtPayload,@Param('id',ParseIntPipe) id:number,@Param('evidenceId',ParseIntPipe) evidenceId:number){return this.service.adminAccessEvidence(u.sub,id,evidenceId);}

@@ -1,7 +1,8 @@
-﻿import * as React from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import * as React from 'react';
+import { Linking, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import {
+  accessGuardDocument,
   formatApiErrorMessage,
   listCompanyGuardComplianceStatuses,
   listCompanyGuards,
@@ -18,6 +19,18 @@ import {
   GuardDocument,
 } from '../../types/models';
 import { colors } from '../../theme';
+import { ConfirmationDialog } from '../ui/ConfirmationDialog';
+import {
+  buildVerificationDialog,
+  createRequestGate,
+  documentBelongsToGuard,
+  documentsForGuard,
+  documentTypeLabel,
+  DocumentsState,
+  findActiveSummary,
+  getDocumentPresentation,
+  resolveActiveGuardId,
+} from './compliance-selection';
 
 type FormState = {
   guardId: string;
@@ -93,12 +106,18 @@ function WebSelect({
 
 function GuardDocumentsList({
   documents,
+  canManageCompliance,
   onVerify,
+  onView,
   verifyingId,
+  viewingId,
 }: {
   documents: GuardDocument[];
-  onVerify: (documentId: number, verified: boolean) => Promise<void>;
+  canManageCompliance: boolean;
+  onVerify: (document: GuardDocument, verified: boolean) => void;
+  onView: (document: GuardDocument) => void;
   verifyingId: number | null;
+  viewingId: number | null;
 }) {
   if (!documents.length) {
     return <Text style={styles.helperText}>No guard documents uploaded yet.</Text>;
@@ -106,37 +125,106 @@ function GuardDocumentsList({
 
   return (
     <View style={styles.documentList}>
-      {documents.map((document) => (
-        <View key={document.id} style={styles.documentRow}>
-          <View style={styles.flexGrow}>
-            <Text style={styles.documentTitle}>{String(document.type).replace(/_/g, ' ')}</Text>
-            <Text style={styles.helperText}>Expiry: {formatDate(document.expiryDate)} | Uploaded: {formatDate(document.uploadedAt)}</Text>
-            <Text style={styles.documentUrl}>{document.originalFileName || 'Private evidence'}</Text>
-          </View>
-          <View style={styles.documentActions}>
-            <View style={[styles.statusPill, document.verified ? styles.statusValid : styles.statusMissing]}>
-              <Text style={styles.statusText}>{document.verified ? 'Verified' : 'Pending'}</Text>
+      {documents.map((document) => {
+        const view = getDocumentPresentation(document, canManageCompliance);
+        return (
+          <View key={document.id} style={styles.documentRow}>
+            <View style={styles.flexGrow}>
+              <Text style={styles.documentTitle}>{documentTypeLabel(String(document.type))}</Text>
+              <Text style={styles.helperText}>Expiry: {formatDate(document.expiryDate)} | Uploaded: {formatDate(document.uploadedAt)}</Text>
+              <Text style={styles.documentUrl}>{document.originalFileName || 'Private evidence'}</Text>
+              {!view.uploadComplete ? (
+                <Text style={styles.helperText}>The upload was not completed, so this evidence cannot be viewed or verified.</Text>
+              ) : null}
+              {view.evidenceRestricted ? (
+                <Text style={styles.helperText}>Evidence files are restricted to compliance managers.</Text>
+              ) : null}
             </View>
-            <Pressable
-              style={styles.secondaryButton}
-              onPress={() => onVerify(document.id, !document.verified)}
-              disabled={verifyingId === document.id}
-            >
-              <Text style={styles.secondaryButtonText}>
-                {verifyingId === document.id ? 'Saving...' : document.verified ? 'Mark unverified' : 'Verify'}
-              </Text>
-            </Pressable>
+            <View style={styles.documentActions}>
+              <View style={[styles.statusPill, document.verified && view.uploadComplete ? styles.statusValid : styles.statusMissing]}>
+                <Text style={styles.statusText}>{view.statusLabel}</Text>
+              </View>
+              {view.expired ? (
+                <View style={[styles.statusPill, styles.statusExpired]}>
+                  <Text style={styles.statusText}>Expired</Text>
+                </View>
+              ) : null}
+              {view.canView ? (
+                <Pressable
+                  style={styles.secondaryButton}
+                  onPress={() => onView(document)}
+                  disabled={viewingId === document.id}
+                  accessibilityRole="button"
+                  accessibilityLabel={`View ${documentTypeLabel(String(document.type))} document`}
+                >
+                  <Text style={styles.secondaryButtonText}>{viewingId === document.id ? 'Opening...' : 'View document'}</Text>
+                </Pressable>
+              ) : null}
+              {view.canToggleVerification ? (
+                <Pressable
+                  style={styles.secondaryButton}
+                  onPress={() => onVerify(document, !document.verified)}
+                  disabled={verifyingId === document.id}
+                >
+                  <Text style={styles.secondaryButtonText}>
+                    {verifyingId === document.id ? 'Saving...' : document.verified ? 'Mark unverified' : 'Verify'}
+                  </Text>
+                </Pressable>
+              ) : null}
+            </View>
           </View>
-        </View>
-      ))}
+        );
+      })}
     </View>
   );
 }
 
-export function CompanyComplianceWorkspace() {
+type PendingVerification = {
+  document: GuardDocument;
+  verified: boolean;
+  guardId: number;
+  guardName: string;
+};
+
+/**
+ * Open a signed, short-lived evidence URL. On web the tab is opened synchronously (inside the click) and
+ * navigated once the URL arrives, so pop-up blockers do not swallow it and the evidence page gets no
+ * `window.opener`. Returns a handle used to finish or abandon the navigation.
+ */
+function beginOpenEvidence(): { ok: boolean; finish: (url: string) => void; abandon: () => void } {
+  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+    const tab = window.open('', '_blank');
+    if (!tab) return { ok: false, finish: () => undefined, abandon: () => undefined };
+    try {
+      tab.opener = null;
+    } catch {
+      // Best effort: the tab is same-origin about:blank until navigated.
+    }
+    return {
+      ok: true,
+      finish: (url: string) => {
+        tab.location.href = url;
+      },
+      abandon: () => tab.close(),
+    };
+  }
+  return {
+    ok: true,
+    finish: (url: string) => {
+      Linking.openURL(url).catch(() => undefined);
+    },
+    abandon: () => undefined,
+  };
+}
+
+export function CompanyComplianceWorkspace({ canManageCompliance = false }: { canManageCompliance?: boolean } = {}) {
   const [companyGuards, setCompanyGuards] = React.useState<CompanyGuard[]>([]);
   const [summaries, setSummaries] = React.useState<GuardComplianceSummary[]>([]);
-  const [documents, setDocuments] = React.useState<GuardDocument[]>([]);
+  const [documentsState, setDocumentsState] = React.useState<DocumentsState<GuardDocument>>({ guardId: null, items: [] });
+  const [documentsLoading, setDocumentsLoading] = React.useState(false);
+  const [documentsError, setDocumentsError] = React.useState<string | null>(null);
+  // The Guard the manager last picked. The Guard the document panel is bound to is DERIVED from this and the
+  // currently visible summaries (see activeGuardId) so the panel and its actions can never diverge.
   const [selectedGuardId, setSelectedGuardId] = React.useState('');
   const [statusFilter, setStatusFilter] = React.useState<'all' | GuardComplianceStatus>('all');
   const [form, setForm] = React.useState<FormState>(EMPTY_FORM);
@@ -144,6 +232,18 @@ export function CompanyComplianceWorkspace() {
   const [loading, setLoading] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
   const [verifyingId, setVerifyingId] = React.useState<number | null>(null);
+  const [viewingId, setViewingId] = React.useState<number | null>(null);
+  const [pendingVerification, setPendingVerification] = React.useState<PendingVerification | null>(null);
+  const documentGate = React.useRef(createRequestGate());
+
+  const activeGuardId = React.useMemo(
+    () => resolveActiveGuardId(summaries, selectedGuardId),
+    [summaries, selectedGuardId],
+  );
+  const selectedSummary = React.useMemo(
+    () => findActiveSummary(summaries, activeGuardId),
+    [summaries, activeGuardId],
+  );
 
   const loadData = React.useCallback(async () => {
     setLoading(true);
@@ -154,37 +254,68 @@ export function CompanyComplianceWorkspace() {
       ]);
       setCompanyGuards(nextGuards);
       setSummaries(nextSummaries);
-
-      const effectiveGuardId = selectedGuardId || (nextSummaries[0]?.guardId ? String(nextSummaries[0].guardId) : '');
-      if (effectiveGuardId && effectiveGuardId !== selectedGuardId) {
-        setSelectedGuardId(effectiveGuardId);
-      }
-      if (effectiveGuardId) {
-        setDocuments(await listGuardDocuments(Number(effectiveGuardId)));
-      } else {
-        setDocuments([]);
-      }
     } catch (error) {
       setFeedback({ tone: 'error', message: formatApiErrorMessage(error, 'Unable to load compliance records.') });
     } finally {
       setLoading(false);
     }
-  }, [selectedGuardId, statusFilter]);
+  }, [statusFilter]);
 
   React.useEffect(() => {
     loadData();
   }, [loadData]);
 
-  React.useEffect(() => {
-    if (!selectedGuardId) return;
-    listGuardDocuments(Number(selectedGuardId))
-      .then(setDocuments)
-      .catch((error) => {
-        setFeedback({ tone: 'error', message: formatApiErrorMessage(error, 'Unable to load guard documents.') });
-      });
-  }, [selectedGuardId]);
+  // Documents are fetched for the ACTIVE Guard only. Each request takes a token; a late response for a
+  // previously active Guard is dropped, so it can never overwrite the panel of the Guard now selected.
+  const loadDocuments = React.useCallback(async (guardIdValue: string) => {
+    if (!guardIdValue) {
+      documentGate.current.invalidate();
+      setDocumentsState({ guardId: null, items: [] });
+      setDocumentsError(null);
+      setDocumentsLoading(false);
+      return;
+    }
+    const guardId = Number(guardIdValue);
+    const token = documentGate.current.next();
+    setDocumentsLoading(true);
+    setDocumentsError(null);
+    try {
+      const items = await listGuardDocuments(guardId);
+      if (!documentGate.current.isCurrent(token)) return;
+      setDocumentsState({ guardId, items });
+    } catch (error) {
+      if (!documentGate.current.isCurrent(token)) return;
+      setDocumentsState({ guardId, items: [] });
+      setDocumentsError(formatApiErrorMessage(error, 'Unable to load guard documents.'));
+    } finally {
+      if (documentGate.current.isCurrent(token)) setDocumentsLoading(false);
+    }
+  }, []);
 
-  const guardOptions = React.useMemo(
+  React.useEffect(() => {
+    loadDocuments(activeGuardId);
+  }, [activeGuardId, loadDocuments]);
+
+  // A confirmation belongs to the Guard it was opened for; drop it if the panel moves to another Guard.
+  React.useEffect(() => {
+    setPendingVerification((current) => (current && String(current.guardId) !== activeGuardId ? null : current));
+  }, [activeGuardId]);
+
+  const visibleDocuments = React.useMemo(
+    () => documentsForGuard(documentsState, activeGuardId),
+    [documentsState, activeGuardId],
+  );
+
+  // Selector for the document panel lists only Guards that are visible under the current filter.
+  const viewerGuardOptions = React.useMemo(
+    () => [
+      { value: '', label: 'Choose guard' },
+      ...summaries.map((summary) => ({ value: String(summary.guardId), label: summary.fullName })),
+    ],
+    [summaries],
+  );
+
+  const formGuardOptions = React.useMemo(
     () => [
       { value: '', label: 'Choose guard' },
       ...companyGuards
@@ -194,15 +325,10 @@ export function CompanyComplianceWorkspace() {
     [companyGuards],
   );
 
-  const selectedSummary = React.useMemo(
-    () => summaries.find((item) => String(item.guardId) === selectedGuardId) || summaries[0] || null,
-    [selectedGuardId, summaries],
-  );
-
   const updateForm = (patch: Partial<FormState>) => setForm((current) => ({ ...current, ...patch }));
 
   const saveRecord = React.useCallback(async () => {
-    const guardId = Number(form.guardId || selectedGuardId);
+    const guardId = Number(form.guardId || activeGuardId);
     if (!guardId || !form.documentName.trim() || !form.expiryDate.trim()) {
       setFeedback({ tone: 'error', message: 'Choose a guard, document name, and expiry date before saving.' });
       return;
@@ -226,23 +352,70 @@ export function CompanyComplianceWorkspace() {
     } finally {
       setSaving(false);
     }
-  }, [form, loadData, selectedGuardId]);
+  }, [form, loadData, activeGuardId]);
 
-  const toggleVerify = React.useCallback(async (documentId: number, verified: boolean) => {
-    setVerifyingId(documentId);
+  const viewDocument = React.useCallback(async (document: GuardDocument) => {
+    if (!selectedSummary || !documentBelongsToGuard(document, selectedSummary.guardId)) {
+      setFeedback({ tone: 'error', message: 'This document does not belong to the selected guard. Reselect the guard and try again.' });
+      return;
+    }
+    const target = beginOpenEvidence();
+    if (!target.ok) {
+      setFeedback({ tone: 'error', message: 'Your browser blocked the new tab. Allow pop-ups for this site, then choose View document again.' });
+      return;
+    }
+    setViewingId(document.id);
     try {
-      await verifyGuardDocument(documentId, verified);
-      setFeedback({ tone: 'success', message: `Document ${verified ? 'verified' : 'marked unverified'}.` });
-      if (selectedGuardId) {
-        setDocuments(await listGuardDocuments(Number(selectedGuardId)));
-      }
-      await loadData();
+      // Short-lived signed URL; the permanent storage location is never exposed to the browser.
+      const access = await accessGuardDocument(document.id);
+      target.finish(access.url);
+      setFeedback({ tone: 'success', message: 'Document opened in a new tab. The secure link expires after a few minutes — choose View document again if it stops working.' });
     } catch (error) {
+      target.abandon();
+      setFeedback({ tone: 'error', message: formatApiErrorMessage(error, 'Unable to open this document. It may be unavailable or you may not have permission to view it.') });
+    } finally {
+      setViewingId(null);
+    }
+  }, [selectedSummary]);
+
+  const requestVerification = React.useCallback((document: GuardDocument, verified: boolean) => {
+    if (!selectedSummary || !documentBelongsToGuard(document, selectedSummary.guardId)) {
+      setFeedback({ tone: 'error', message: 'This document does not belong to the selected guard. Reselect the guard and try again.' });
+      return;
+    }
+    setPendingVerification({ document, verified, guardId: selectedSummary.guardId, guardName: selectedSummary.fullName });
+  }, [selectedSummary]);
+
+  const confirmVerification = React.useCallback(async () => {
+    const pending = pendingVerification;
+    if (!pending) return;
+    // The action must still target the Guard it was opened for.
+    if (String(pending.guardId) !== activeGuardId) {
+      setPendingVerification(null);
+      setFeedback({ tone: 'error', message: 'The selected guard changed. Nothing was updated — review the document again.' });
+      return;
+    }
+    setVerifyingId(pending.document.id);
+    try {
+      await verifyGuardDocument(pending.document.id, pending.verified);
+      setPendingVerification(null);
+      setFeedback({ tone: 'success', message: `Document ${pending.verified ? 'verified' : 'marked unverified'}.` });
+      await Promise.all([loadDocuments(String(pending.guardId)), loadData()]);
+    } catch (error) {
+      setPendingVerification(null);
       setFeedback({ tone: 'error', message: formatApiErrorMessage(error, 'Unable to update document verification.') });
     } finally {
       setVerifyingId(null);
     }
-  }, [loadData, selectedGuardId]);
+  }, [activeGuardId, loadData, loadDocuments, pendingVerification]);
+
+  const verificationDialog = pendingVerification
+    ? buildVerificationDialog({
+        guardName: pendingVerification.guardName,
+        document: pendingVerification.document,
+        verified: pendingVerification.verified,
+      })
+    : null;
 
   return (
     <View style={styles.workspace}>
@@ -267,24 +440,26 @@ export function CompanyComplianceWorkspace() {
         <Text style={styles.panelTitle}>Filters</Text>
         <View style={styles.formGrid}>
           <WebSelect value={statusFilter} onChange={(value: string) => setStatusFilter(value as 'all' | GuardComplianceStatus)} options={FILTERS} />
-          <WebSelect value={selectedGuardId} onChange={setSelectedGuardId} options={guardOptions} />
+          <WebSelect value={activeGuardId} onChange={setSelectedGuardId} options={viewerGuardOptions} />
         </View>
       </View>
 
-      <View style={styles.panel}>
-        <Text style={styles.panelTitle}>Add / Update Compliance Record</Text>
-        <View style={styles.formGrid}>
-          <WebSelect value={form.guardId || selectedGuardId} onChange={(value: string) => updateForm({ guardId: value })} options={guardOptions} />
-          <WebSelect value={form.type} onChange={(value: string) => updateForm({ type: value as ComplianceRecordType })} options={TYPES.map((type) => ({ value: type, label: typeLabel(type) }))} />
-          <TextInput style={styles.input} value={form.documentName} onChangeText={(value: string) => updateForm({ documentName: value })} placeholder="Document name" />
-          <TextInput style={styles.input} value={form.documentNumber} onChangeText={(value: string) => updateForm({ documentNumber: value })} placeholder="Document number optional" />
-          <TextInput style={styles.input} value={form.issueDate} onChangeText={(value: string) => updateForm({ issueDate: value })} placeholder="Issue date YYYY-MM-DD" />
-          <TextInput style={styles.input} value={form.expiryDate} onChangeText={(value: string) => updateForm({ expiryDate: value })} placeholder="Expiry date YYYY-MM-DD" />
+      {canManageCompliance ? (
+        <View style={styles.panel}>
+          <Text style={styles.panelTitle}>Add / Update Compliance Record</Text>
+          <View style={styles.formGrid}>
+            <WebSelect value={form.guardId || activeGuardId} onChange={(value: string) => updateForm({ guardId: value })} options={formGuardOptions} />
+            <WebSelect value={form.type} onChange={(value: string) => updateForm({ type: value as ComplianceRecordType })} options={TYPES.map((type) => ({ value: type, label: typeLabel(type) }))} />
+            <TextInput style={styles.input} value={form.documentName} onChangeText={(value: string) => updateForm({ documentName: value })} placeholder="Document name" />
+            <TextInput style={styles.input} value={form.documentNumber} onChangeText={(value: string) => updateForm({ documentNumber: value })} placeholder="Document number optional" />
+            <TextInput style={styles.input} value={form.issueDate} onChangeText={(value: string) => updateForm({ issueDate: value })} placeholder="Issue date YYYY-MM-DD" />
+            <TextInput style={styles.input} value={form.expiryDate} onChangeText={(value: string) => updateForm({ expiryDate: value })} placeholder="Expiry date YYYY-MM-DD" />
+          </View>
+          <Pressable style={[styles.primaryButton, saving && styles.disabledButton]} onPress={saveRecord} disabled={saving}>
+            <Text style={styles.primaryButtonText}>{saving ? 'Saving...' : 'Save Compliance Record'}</Text>
+          </Pressable>
         </View>
-        <Pressable style={[styles.primaryButton, saving && styles.disabledButton]} onPress={saveRecord} disabled={saving}>
-          <Text style={styles.primaryButtonText}>{saving ? 'Saving...' : 'Save Compliance Record'}</Text>
-        </Pressable>
-      </View>
+      ) : null}
 
       <View style={styles.panel}>
         <Text style={styles.panelTitle}>Guard Compliance List</Text>
@@ -292,7 +467,7 @@ export function CompanyComplianceWorkspace() {
         {summaries.map((summary) => (
           <Pressable
             key={summary.guardId}
-            style={[styles.guardRow, selectedGuardId === String(summary.guardId) && styles.guardRowActive]}
+            style={[styles.guardRow, activeGuardId === String(summary.guardId) && styles.guardRowActive]}
             onPress={() => setSelectedGuardId(String(summary.guardId))}
           >
             <View style={styles.guardCopy}>
@@ -324,12 +499,34 @@ export function CompanyComplianceWorkspace() {
             {selectedSummary.missingDocuments.length ? (
               <Text style={styles.blockingText}>Missing: {selectedSummary.missingDocuments.join(', ')}</Text>
             ) : null}
-            <GuardDocumentsList documents={documents} onVerify={toggleVerify} verifyingId={verifyingId} />
+            {documentsLoading ? <Text style={styles.helperText}>Loading documents...</Text> : null}
+            {documentsError ? <Text style={styles.blockingText}>{documentsError}</Text> : null}
+            {!documentsLoading && !documentsError ? (
+              <GuardDocumentsList
+                documents={visibleDocuments}
+                canManageCompliance={canManageCompliance}
+                onVerify={requestVerification}
+                onView={viewDocument}
+                verifyingId={verifyingId}
+                viewingId={viewingId}
+              />
+            ) : null}
           </>
         ) : (
           <Text style={styles.helperText}>Choose a guard to review documents and verification status.</Text>
         )}
       </View>
+
+      <ConfirmationDialog
+        visible={Boolean(pendingVerification && verificationDialog)}
+        onClose={() => setPendingVerification(null)}
+        onConfirm={confirmVerification}
+        title={verificationDialog?.title ?? ''}
+        message={verificationDialog?.message ?? ''}
+        confirmLabel={verificationDialog?.confirmLabel}
+        variant={verificationDialog?.variant}
+        loading={verifyingId !== null}
+      />
     </View>
   );
 }

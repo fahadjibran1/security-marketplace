@@ -7,6 +7,13 @@ export class CreateGuardDocumentDto {
   @IsInt()
   guardId?: number;
 
+  // Guard self-upload only: the Company this evidence is submitted to. Ignored for Company uploads
+  // (the Company always comes from the authenticated membership).
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  companyId?: number;
+
   @IsEnum(GuardDocumentType)
   type!: GuardDocumentType;
 

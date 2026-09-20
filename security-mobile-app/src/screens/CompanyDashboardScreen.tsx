@@ -4246,7 +4246,15 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
       case 'margins':
         return <CompanyMarginWorkspace />;
       case 'compliance':
-        return <CompanyComplianceWorkspace />;
+        return (
+          <CompanyComplianceWorkspace
+            canManageCompliance={
+              user?.companyPermissions
+                ? user.companyPermissions.includes('compliance.manage')
+                : (user?.role === 'company_admin' || user?.role === 'company')
+            }
+          />
+        );
       case 'contract-pricing':
         return <CompanyContractPricingWorkspace />;
       case 'pay-rules':

@@ -171,7 +171,46 @@ export class GuardComplianceService {
   async uploadDocumentForGuardUser(userId: number, dto: CreateGuardDocumentDto) {
     const guard = await this.guardProfileService.findByUserId(userId);
     if (!guard) throw new NotFoundException('Guard profile not found');
-    return this.saveDocument(guard.id, dto, userId, null);
+    const company = await this.resolveGuardUploadCompany(guard.id, dto.companyId);
+    return this.saveDocument(guard.id, dto, userId, company);
+  }
+
+  /**
+   * Companies a Guard may submit compliance evidence to (ACTIVE company relationships only).
+   * Evidence is company-scoped: each Company verifies its own copy independently.
+   */
+  async listUploadCompaniesForGuardUser(userId: number) {
+    const guard = await this.guardProfileService.findByUserId(userId);
+    if (!guard) throw new NotFoundException('Guard profile not found');
+    const links = await this.companyGuardRepo.find({
+      where: { guard: { id: guard.id }, status: CompanyGuardStatus.ACTIVE },
+      order: { id: 'ASC' },
+    });
+    return links.filter((link) => link.company).map((link) => ({ companyId: link.company.id, name: link.company.name }));
+  }
+
+  /**
+   * A Guard may work for several Companies and each Company verifies evidence independently, so a
+   * Guard upload must name the Company it is for. The Company is never guessed. The target must be an
+   * ACTIVE company relationship or an eligible pre-hire application (same authority as Company uploads).
+   */
+  private async resolveGuardUploadCompany(guardId: number, requestedCompanyId?: number): Promise<{ id: number }> {
+    if (!requestedCompanyId) {
+      throw new BadRequestException('companyId is required: choose the company this evidence is for');
+    }
+    const links = await this.companyGuardRepo.find({
+      where: { guard: { id: guardId }, company: { id: requestedCompanyId }, status: CompanyGuardStatus.ACTIVE },
+    });
+    if (links.some((link) => link.company?.id === requestedCompanyId)) return { id: requestedCompanyId };
+    try {
+      await this.preHireAuthorization.authorize(requestedCompanyId, guardId);
+    } catch (error) {
+      if (error instanceof ForbiddenException) {
+        throw new ForbiddenException('You cannot submit evidence to that company');
+      }
+      throw error;
+    }
+    return { id: requestedCompanyId };
   }
 
   async uploadDocumentForCompanyUser(userId: number, userRole: UserRole, dto: CreateGuardDocumentDto) {
@@ -337,7 +376,9 @@ export class GuardComplianceService {
       if (!guard) throw new NotFoundException('Guard profile not found');
       document = await this.findDocumentForAccess({ id: documentId, guard: { id: guard.id } });
     } else if (isCompanyRole(user.role)) {
-      const { company } = await this.membershipService.resolveCompanyContext(user.sub, user.role, CompanyPermission.COMPLIANCE_VIEW);
+      // compliance.view exposes compliance STATUS only. Retrieving the underlying identity / SIA / RTW
+      // evidence file requires compliance.manage (see VIEWER_PERMISSIONS and p1i PERMISSION-12).
+      const { company } = await this.membershipService.resolveCompanyContext(user.sub, user.role, CompanyPermission.COMPLIANCE_MANAGE);
       document = await this.findDocumentForAccess({ id: documentId, company: { id: company.id } });
     } else {
       throw new ForbiddenException('Compliance evidence access is not permitted');

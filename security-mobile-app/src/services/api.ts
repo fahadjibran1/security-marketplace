@@ -15,6 +15,7 @@ import {
   GuardDocumentPayload,
   GuardDocumentUpload,
   GuardDocumentAccess,
+  GuardDocumentUploadCompany,
   ComplianceRecord,
   ComplianceRecordPayload,
   CoverageShiftRow,
@@ -574,6 +575,11 @@ export function uploadMyGuardDocument(payload: GuardDocumentPayload) {
     method: 'POST',
     body: JSON.stringify(payload),
   });
+}
+
+/** Companies the signed-in Guard may submit compliance evidence to (each Company verifies independently). */
+export function listMyDocumentUploadCompanies() {
+  return request<GuardDocumentUploadCompany[]>('/compliance/documents/mine/companies');
 }
 
 export function accessGuardDocument(id: number) {

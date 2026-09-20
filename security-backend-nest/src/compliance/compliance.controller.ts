@@ -69,6 +69,12 @@ export class ComplianceController {
     return this.guardComplianceService.uploadDocumentForCompanyUser(user.sub, user.role, dto);
   }
 
+  @Get('documents/mine/companies')
+  @Roles(UserRole.GUARD)
+  listMyUploadCompanies(@CurrentUser() user: JwtPayload) {
+    return this.guardComplianceService.listUploadCompaniesForGuardUser(user.sub);
+  }
+
   @Post('documents/mine')
   @Roles(UserRole.GUARD)
   uploadMine(@CurrentUser() user: JwtPayload, @Body() dto: CreateGuardDocumentDto) {

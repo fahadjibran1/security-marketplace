@@ -49,6 +49,7 @@ function harness(seed: { email?: string; sia?: string } = {}, failure: Failure =
     { create: async () => undefined, findByUserId: async () => null } as any,
     guardService as any,
     {} as any, {} as any, dataSource as any,
+    { find: async () => [], findOne: async () => null } as any,
   );
   return { service, users: () => users, guards: () => guards, sessions: () => sessions };
 }
