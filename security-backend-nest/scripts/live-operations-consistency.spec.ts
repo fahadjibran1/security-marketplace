@@ -83,15 +83,20 @@ test('Dashboard and Live Operations still consume authoritative Coverage rows', 
   assert(source.includes("category: 'uncovered_shift'") && source.includes("label: 'Uncovered Shifts'"), 'surfaces not wired');
 });
 test('Review Shift selects, highlights and focuses the detail panel', () => {
+  // Focus/scroll logic lives in the Dashboard; the selected-row highlight is rendered by the Live Operations workspace.
   const source = readFileSync(resolve(__dirname, '../../security-mobile-app/src/screens/CompanyDashboardScreen.tsx'), 'utf8');
+  const workspace = readFileSync(resolve(__dirname, '../../security-mobile-app/src/components/company/CompanyLiveOperationsWorkspace.tsx'), 'utf8');
   assert(source.includes('focusShiftDetail(shift.id)'), 'Review Shift does not focus detail');
   assert(source.includes('setPendingShiftDetailFocusId(shiftId)') && source.includes('contentScrollRef.current?.scrollTo'), 'detail scrolling missing');
-  assert(source.includes('selectedShiftId === shift.id && styles.liveBoardTableRowSelected'), 'selection is not persistent');
+  assert(workspace.includes('selected={selectedShiftId === row.shift.id}') && workspace.includes('selected    ? styles.boardRowSelected'), 'selection is not persistent');
 });
 test('unfilled detail exposes safe Coverage route and operational context', () => {
-  const source = readFileSync(resolve(__dirname, '../../security-mobile-app/src/screens/CompanyDashboardScreen.tsx'), 'utf8');
-  assert(source.includes('Manage Coverage') && source.includes('openCoverage({ uncoveredOnly: true, shiftId: selectedShift.id })'), 'coverage action missing');
-  ['Shift #{selectedShift.id} Operations', "selectedShift.site?.name", 'formatDateLabel(selectedShift.start)', "selectedShift.guard?.fullName || 'No guard assigned'", 'ShiftStatusBadge'].forEach((value) => assert(source.includes(value), `missing detail: ${value}`));
+  // The detail panel moved into the Live Operations workspace; the Dashboard still supplies the openCoverage handler.
+  const dashboard = readFileSync(resolve(__dirname, '../../security-mobile-app/src/screens/CompanyDashboardScreen.tsx'), 'utf8');
+  const workspace = readFileSync(resolve(__dirname, '../../security-mobile-app/src/components/company/CompanyLiveOperationsWorkspace.tsx'), 'utf8');
+  assert(workspace.includes('Manage Coverage') && workspace.includes('onOpenCoverage({ uncoveredOnly: true, shiftId: shift.id })'), 'coverage action missing');
+  assert(dashboard.includes('onOpenCoverage={openCoverage}'), 'workspace is not handed the Coverage navigation handler');
+  ['Shift #{shift.id}', 'shift.site?.name', 'fmtDate(shift.start)', "shift.guard?.fullName || 'No guard assigned'", 'badge.label'].forEach((value) => assert(workspace.includes(value), `missing detail: ${value}`));
 });
 
 async function main() {

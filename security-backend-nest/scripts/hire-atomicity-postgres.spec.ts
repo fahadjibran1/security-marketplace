@@ -238,7 +238,9 @@ async function main() {
   try {
     await dataSource.runMigrations({ transaction: 'each' });
     const migrationRows = await dataSource.query('SELECT count(*)::int AS count FROM typeorm_migrations');
-    equal(migrationRows[0].count, 40);
+    // Every registered migration is applied — derived, so adding a migration never makes this spec stale.
+    equal(migrationRows[0].count, dataSource.migrations.length);
+    ok(dataSource.migrations.length > 0);
 
     for (const point of ['application', 'relationship', 'assignment', 'job', 'shift', 'timesheet'] as FailurePoint[]) {
       const fixture = await resetAndSeed(dataSource, point);
@@ -266,7 +268,7 @@ async function main() {
     ok(test.evidence().lockSeen, 'success: PostgreSQL FOR UPDATE was not executed');
     equal(test.evidence().managerCount, 1, 'success: more than one transaction manager participated');
     console.log('PASS success:all records committed together');
-    console.log(JSON.stringify({ event: 'hire_atomicity_postgres_verified', tests: 7, migrations: 40 }));
+    console.log(JSON.stringify({ event: 'hire_atomicity_postgres_verified', tests: 7, migrations: dataSource.migrations.length }));
   } finally {
     await dataSource.destroy();
   }

@@ -561,11 +561,14 @@ test('T65 migrations: all three P1H migration files exist', () => {
 // K. UAT CORRECTION — NAVIGATION & UX
 // ═══════════════════════════════════════════════════════
 
-// T66: CompanyDashboardScreen COMPANY_NAV_GROUPS includes 'weekly-approvals' in timesheets-pay group
-test('T66 nav: weekly-approvals in COMPANY_NAV_GROUPS timesheets-pay group', () => {
+// T66: CompanyDashboardScreen COMPANY_NAV_GROUPS exposes 'weekly-approvals' in some navigation group.
+// The IA redesign moved it from the retired 'timesheets-pay' group into 'workforce'; what matters is that the entry
+// is reachable from the sidebar groups, so assert membership of any group rather than one group's name.
+test('T66 nav: weekly-approvals is reachable from a COMPANY_NAV_GROUPS group', () => {
   const screen = mobile('screens/CompanyDashboardScreen.tsx');
-  const groupBlock = screen.match(/id:\s*['"]timesheets-pay['"][^}]*itemIds:\s*\[[^\]]+\]/s)?.[0] ?? '';
-  assert(groupBlock.includes('weekly-approvals'), "COMPANY_NAV_GROUPS timesheets-pay does not include 'weekly-approvals'");
+  const groups = screen.match(/COMPANY_NAV_GROUPS[^=]*=\s*\[[\s\S]*?\n\];/)?.[0] ?? '';
+  assert(groups.length > 0, 'COMPANY_NAV_GROUPS declaration not found');
+  assert(/itemIds:\s*\[[^\]]*'weekly-approvals'[^\]]*\]/.test(groups), "no COMPANY_NAV_GROUPS group lists 'weekly-approvals'");
 });
 
 // T67: CompanyDashboardScreen NAV_ITEMS includes a 'weekly-approvals' entry

@@ -82,8 +82,11 @@ test('dashboard consumes authoritative uncovered API count', () => {
   assert(source.includes("listCoverageShifts({ uncoveredOnly: true })") && source.includes("label: 'Uncovered Shifts'"), 'dashboard wiring missing');
 });
 test('Live Operations adds uncovered rows to urgent queue', () => {
-  const source = readFileSync(resolve(__dirname, '../../security-mobile-app/src/screens/CompanyDashboardScreen.tsx'), 'utf8');
-  assert(source.includes("category: 'uncovered_shift'") && source.includes('Manage coverage'), 'urgent queue wiring missing');
+  // The Dashboard builds the urgent queue; the Live Operations workspace (Phase 1F) renders the "Manage coverage" action.
+  const dashboard = readFileSync(resolve(__dirname, '../../security-mobile-app/src/screens/CompanyDashboardScreen.tsx'), 'utf8');
+  const workspace = readFileSync(resolve(__dirname, '../../security-mobile-app/src/components/company/CompanyLiveOperationsWorkspace.tsx'), 'utf8');
+  assert(dashboard.includes("category: 'uncovered_shift'"), 'uncovered rows are not added to the urgent queue');
+  assert(workspace.includes("item.category === 'uncovered_shift'") && workspace.includes("label: 'Manage coverage'"), 'urgent queue action missing');
 });
 test('dashboard deep link opens uncovered Coverage', () => {
   const source = readFileSync(resolve(__dirname, '../../security-mobile-app/src/screens/CompanyDashboardScreen.tsx'), 'utf8');

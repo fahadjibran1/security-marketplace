@@ -22,7 +22,9 @@ async function main() {
     await dataSource.runMigrations({ transaction: 'each' });
     equal(await dataSource.getRepository(User).count(), 0);
     const migrations = await dataSource.query('SELECT count(*)::int AS count FROM typeorm_migrations');
-    equal(migrations[0].count, 38);
+    // Every registered migration is applied — derived, so adding a migration never makes this spec stale.
+    equal(migrations[0].count, dataSource.migrations.length);
+    ok(dataSource.migrations.length > 0);
 
     const service = new AdminOperatorService(dataSource);
     const password = 'PG17-Strong!Pass9';
