@@ -249,6 +249,8 @@ export type DocumentSummary = {
   verified: number;
   pending: number;
   missing: number;
+  /** Verified required documents whose expiry date has passed. */
+  expiredCount: number;
   expired: boolean;
   headline: string;
   detail?: string;
@@ -262,7 +264,7 @@ export function summarizeDocuments(summary: GuardComplianceSummary | null, now: 
   let verified = 0;
   let pending = 0;
   let missing = 0;
-  let expired = false;
+  let expiredCount = 0;
   for (const type of REQUIRED_DOCUMENT_TYPES) {
     const complete = documents.filter((document) => document.type === type && document.uploadCompletedAt);
     if (!complete.length) { missing += 1; continue; }
@@ -270,16 +272,16 @@ export function summarizeDocuments(summary: GuardComplianceSummary | null, now: 
     if (!accepted) { pending += 1; continue; }
     verified += 1;
     const days = daysUntil(accepted.expiryDate, now);
-    if (days !== null && days < 0) expired = true;
+    if (days !== null && days < 0) expiredCount += 1;
   }
   const required = REQUIRED_DOCUMENT_TYPES.length;
   const detailParts = [
     pending ? `${pending} pending` : '',
     missing ? `${missing} missing` : '',
-    expired ? 'Expired' : '',
+    expiredCount ? `${expiredCount} expired` : '',
   ].filter(Boolean);
-  const tone: Tone = missing || expired ? 'danger' : pending ? 'warning' : 'success';
-  return { required, verified, pending, missing, expired, headline: `${verified}/${required} verified`, detail: detailParts.join(' · ') || undefined, tone };
+  const tone: Tone = missing || expiredCount ? 'danger' : pending ? 'warning' : 'success';
+  return { required, verified, pending, missing, expiredCount, expired: expiredCount > 0, headline: `${verified}/${required} verified`, detail: detailParts.join(' · ') || undefined, tone };
 }
 
 // ─── Screening (status only) ─────────────────────────────────────────────────

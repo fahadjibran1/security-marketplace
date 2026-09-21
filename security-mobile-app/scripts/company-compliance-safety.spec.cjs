@@ -247,7 +247,13 @@ const FIXTURE = [
     const incompleteOnly = s([doc(1, 'sia_licence', { uploadCompletedAt: null }), verifiedDocs(1)[1]]);
     assert.equal(incompleteOnly.missing, 1, 'an incomplete upload does not count as evidence (backend rule)');
     const expired = s([verifiedDocs(1, { expiryDate: iso(-4) })[0], verifiedDocs(1)[1]]);
-    assert.deepEqual([expired.headline, expired.detail, expired.tone], ['2/2 verified', 'Expired', 'danger']);
+    assert.deepEqual([expired.headline, expired.detail, expired.tone], ['2/2 verified', '1 expired', 'danger']);
+    assert.equal(expired.expiredCount, 1);
+    const bothExpired = s([verifiedDocs(1, { expiryDate: iso(-4) })[0], { ...verifiedDocs(1)[1], expiryDate: iso(-1) }]);
+    assert.deepEqual([bothExpired.headline, bothExpired.detail], ['2/2 verified', '2 expired']);
+    const mixed = s([doc(1, 'sia_licence'), { ...verifiedDocs(1)[1], expiryDate: iso(-1) }]);
+    assert.deepEqual([mixed.headline, mixed.detail], ['1/2 verified', '1 pending · 1 expired'], 'quantities combine; nothing is reduced to a bare "Expired"');
+    assert.doesNotMatch(read('src/components/company/compliance-model.ts'), /'Expired's*:s*''/, 'no bare Expired detail string');
     assert.equal(s([]).headline, '0/2 verified');
     assert.equal(model.summarizeDocuments(null), null);
     // The computed missing count agrees with the backend's own missingDocuments list on the fixtures.
@@ -464,6 +470,9 @@ const FIXTURE = [
     assert.doesNotMatch(uiSource, /eligible|ready to work/i);
     assert.doesNotMatch(`${uiSource}\n${read('src/components/company/compliance-model.ts').replace(/\/\/.*$/gm, '')}`, /bs ?7858|\bdbs\b|criminal|fully compliant/i);
     assert.deepEqual(Object.values(model.STATUS_LABELS), ['Valid', 'Expiring', 'Expired', 'Invalid', 'Unknown']);
+    // Page subtitle (shared nav caption).
+    assert.match(dashboard, /id: 'compliance', label: 'Compliance', caption: 'Monitor guard compliance, documents and screening status.'/);
+    assert.doesNotMatch(dashboard, /Licence expiry and right-to-work controls/);
   });
 
   await test('Guard upload API surface for the later Guard UI is company-scoped', () => {

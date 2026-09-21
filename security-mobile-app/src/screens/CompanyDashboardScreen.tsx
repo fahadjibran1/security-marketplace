@@ -256,7 +256,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'finance', label: 'Finance', caption: 'Revenue, cost, receivables, and payment tracking.' },
   { id: 'finance-control', label: 'Finance Control', caption: 'Commercial exposure and settlement visibility.' },
   { id: 'margins', label: 'Margins', caption: 'Revenue, cost, and profit reporting.' },
-  { id: 'compliance', label: 'Compliance', caption: 'Licence expiry and right-to-work controls.' },
+  { id: 'compliance', label: 'Compliance', caption: 'Monitor guard compliance, documents and screening status.' },
   { id: 'contract-pricing', label: 'Contract Pricing', caption: 'Client and site commercial rules.' },
   { id: 'pay-rules', label: 'Pay Rules', caption: 'Guard payable-hours calculation settings.' },
   { id: 'audit', label: 'Audit Trail', caption: 'Trace financial actions and before/after data.' },
