@@ -1,12 +1,12 @@
 /**
- * Migration 40→53 Rehearsal Spec
+ * Migration 40→55 Rehearsal Spec
  *
- * Proves that migrations 41-53 (P1A through P1I) apply cleanly to a production-shaped
+ * Proves that migrations 41-55 (P1A through P1I, then Rota) apply cleanly to a production-shaped
  * database (at migration 40 state), preserving all pre-existing rows and producing the
  * correct post-migration schema.
  *
  * Phase 1: Apply migrations 1-40 to a fresh DB, seed realistic production-shaped data.
- * Phase 2: Apply migrations 41-53 on the same DB (no schema drop).
+ * Phase 2: Apply migrations 41-55 on the same DB (no schema drop).
  * Phase 3: Verify data preservation, owner backfill, schema additions, second-run idempotency.
  *
  * Run: MIGRATION_REHEARSAL_DATABASE_URL=<pg-url> npx ts-node -r tsconfig-paths/register scripts/migration-rehearsal.spec.ts
@@ -72,6 +72,8 @@ import { CreateClientWeeklyApprovalTables1720800000002 } from '../src/database/m
 import { AddCompanyApprovedTimes1720800000003 } from '../src/database/migrations/1720800000003-AddCompanyApprovedTimes';
 import { AddClientBillingApprovalFields1720800000004 } from '../src/database/migrations/1720800000004-AddClientBillingApprovalFields';
 import { AddCompanyMembershipAndInvitations1720800000005 } from '../src/database/migrations/1720800000005-AddCompanyMembershipAndInvitations';
+import { AddRotaSlotTable1720900000000 } from '../src/database/migrations/1720900000000-AddRotaSlotTable';
+import { AddRotaSlotIdToShifts1720900000001 } from '../src/database/migrations/1720900000001-AddRotaSlotIdToShifts';
 
 // ─── Test harness ─────────────────────────────────────────────────────────────
 
@@ -151,6 +153,8 @@ const migrations53 = [
   AddCompanyApprovedTimes1720800000003,
   AddClientBillingApprovalFields1720800000004,
   AddCompanyMembershipAndInvitations1720800000005,
+  AddRotaSlotTable1720900000000,
+  AddRotaSlotIdToShifts1720900000001,
 ];
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
@@ -165,7 +169,7 @@ async function main(): Promise<void> {
     );
   }
 
-  console.log('\n══ MIGRATION 40→53 REHEARSAL ════════════════════════════════════════════\n');
+  console.log('\n══ MIGRATION 40→55 REHEARSAL ════════════════════════════════════════════\n');
 
   // ── Phase 1: Build migration-40 state ────────────────────────────────────────
   console.log('── Phase 1: Apply migrations 1-40 ──────────────────────────────────────');
@@ -320,7 +324,7 @@ async function main(): Promise<void> {
 
   await ds1.destroy();
 
-  // ── Phase 2: Apply migrations 41-53 ──────────────────────────────────────────
+  // ── Phase 2: Apply migrations 41-55 ──────────────────────────────────────────
   console.log('\n── Phase 2: Apply migrations 41-53 ─────────────────────────────────────');
 
   const ds2 = new DataSource({
@@ -338,9 +342,9 @@ async function main(): Promise<void> {
 
   const applied2 = await ds2.runMigrations({ transaction: 'each' });
   check(
-    'PHASE2-MIGRATIONS-COUNT: 13 new migrations applied (41-53)',
-    applied2.length === 13,
-    `applied ${applied2.length}/13`,
+    'PHASE2-MIGRATIONS-COUNT: 15 new migrations applied (41-55)',
+    applied2.length === 15,
+    `applied ${applied2.length}/15`,
   );
 
   // ── Phase 3: Verification ─────────────────────────────────────────────────────
@@ -351,8 +355,8 @@ async function main(): Promise<void> {
     `SELECT COUNT(*)::int AS count FROM typeorm_migrations`,
   );
   check(
-    'VERIFY-MIGRATIONS-TOTAL: 53/53 migrations recorded',
-    totalMig === 53,
+    'VERIFY-MIGRATIONS-TOTAL: 55/55 migrations recorded',
+    totalMig === 55,
     `found ${totalMig}`,
   );
 
@@ -480,6 +484,24 @@ async function main(): Promise<void> {
     `table not found`,
   );
 
+  // Migrations 54-55: Rota tables/columns are additive; existing Shifts stay valid with no Rota slot.
+  const rotaTableRows = await ds2.query(`
+    SELECT table_name FROM information_schema.tables
+    WHERE table_name = 'rota_slots' AND table_schema = 'public'
+  `);
+  check('VERIFY-MIGRATION54-TABLE: rota_slots table created', rotaTableRows.length === 1, 'table not found');
+  const rotaColRows = await ds2.query(`
+    SELECT is_nullable FROM information_schema.columns
+    WHERE table_name = 'shifts' AND column_name = 'rotaSlotId' AND table_schema = 'public'
+  `);
+  check(
+    'VERIFY-MIGRATION55-COLUMN: shifts.rotaSlotId added and nullable (legacy Shifts unaffected)',
+    rotaColRows.length === 1 && rotaColRows[0].is_nullable === 'YES',
+    JSON.stringify(rotaColRows),
+  );
+  const [{ count: legacyWithSlot }] = await ds2.query(`SELECT COUNT(*)::int AS count FROM shifts WHERE "rotaSlotId" IS NOT NULL`);
+  check('VERIFY-MIGRATION55-LEGACY: existing Shifts have no Rota slot', legacyWithSlot === 0, `found ${legacyWithSlot}`);
+
   // ── Owner backfill verification ───────────────────────────────────────────────
   console.log('\n── Owner backfill verification ──────────────────────────────────────────');
 
@@ -567,8 +589,8 @@ async function main(): Promise<void> {
     `SELECT COUNT(*)::int AS count FROM typeorm_migrations`,
   );
   check(
-    'IDEMPOTENCY-2: typeorm_migrations still shows 53 rows after second run',
-    finalCount === 53,
+    'IDEMPOTENCY-2: typeorm_migrations still shows 55 rows after second run',
+    finalCount === 55,
     `found ${finalCount}`,
   );
 
