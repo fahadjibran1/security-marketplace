@@ -392,6 +392,49 @@ export class TimesheetService {
     return this.applyDerivedFinancials(saved);
   }
 
+  /**
+   * Book Off: a worked Shift has exactly one Timesheet, and it carries the attendance-authoritative actual
+   * check-in / check-out. Runs inside the caller's Book Off transaction (`manager`).
+   *
+   *  - The Shift row is locked first, so concurrent Book Offs and the create-if-missing paths serialise and can never
+   *    both create a Timesheet.
+   *  - A Timesheet that already exists (any creation path — Shift create/assign, an earlier Book Off) is reused.
+   *    Rota-created Shifts never had one, which is why Book Off used to fail with "Timesheet not found".
+   *  - Hours are stamped only the first time (`actualCheckOutAt` unset). A retried Book Off therefore heals a Shift
+   *    that was completed without a Timesheet, but never re-writes hours a Guard has since edited or submitted.
+   */
+  async recordAttendanceActuals(
+    manager: EntityManager,
+    shiftId: number,
+    actuals: { checkInAt: Date; checkOutAt: Date },
+  ): Promise<Timesheet> {
+    const locked: Array<{ id: number }> = await manager.query('SELECT "id" FROM "shifts" WHERE "id" = $1 FOR UPDATE', [
+      shiftId,
+    ]);
+    if (locked.length === 0) throw new NotFoundException('Shift not found');
+
+    const timesheetRepo = manager.getRepository(Timesheet);
+    let timesheet = await timesheetRepo.findOne({ where: { shift: { id: shiftId } }, order: { id: 'ASC' } });
+    if (!timesheet) {
+      const shift = await manager.getRepository(Shift).findOne({ where: { id: shiftId } });
+      if (!shift) throw new NotFoundException('Shift not found');
+      timesheet = await this.createForShift(shift, manager);
+    }
+    if (timesheet.actualCheckOutAt) return timesheet;
+
+    const verifiedMinutes = Math.max(0, Math.round((actuals.checkOutAt.getTime() - actuals.checkInAt.getTime()) / 60000));
+    const hoursWorked = Number((verifiedMinutes / 60).toFixed(2));
+    const workedMinutes = Math.max(0, Math.round(hoursWorked * 60));
+    timesheet.hoursWorked = hoursWorked;
+    timesheet.workedMinutes = workedMinutes;
+    timesheet.roundedMinutes = workedMinutes;
+    timesheet.verifiedMinutes = verifiedMinutes;
+    timesheet.actualCheckInAt = actuals.checkInAt;
+    timesheet.actualCheckOutAt = actuals.checkOutAt;
+    const saved = await timesheetRepo.save(timesheet);
+    return this.applyDerivedFinancials(saved);
+  }
+
   async submitMine(userId: number, id: number, dto: UpdateTimesheetDto): Promise<Timesheet> {
     const timesheet = await this.getGuardOwnedEditableTimesheet(userId, id, 'submitted');
     const beforeData = {

@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { MoreThan, Repository } from 'typeorm';
+import { In, MoreThan, Repository } from 'typeorm';
 import {
   SafetyAlert,
   SafetyAlertPriority,
@@ -17,6 +17,10 @@ import { NotificationType } from '../notification/entities/notification.entity';
 import { DailyLog, DailyLogType } from '../daily-log/entities/daily-log.entity';
 import { AttendanceEvent, AttendanceEventType } from '../attendance/entities/attendance.entity';
 import { Shift } from '../shift/entities/shift.entity';
+
+// A Guard's scheduled "check call" (what the Guard app records) and a supervisor "welfare check" both prove the
+// Guard was reachable, so either resets the missed-check timer.
+const WELFARE_CHECK_LOG_TYPES = [DailyLogType.CHECK_CALL, DailyLogType.WELFARE_CHECK];
 
 @Injectable()
 export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
@@ -133,7 +137,7 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
 
       const [latestWelfare, latestCheckIn] = await Promise.all([
         this.dailyLogRepo.findOne({
-          where: { shift: { id: shift.id }, logType: DailyLogType.WELFARE_CHECK },
+          where: { shift: { id: shift.id }, logType: In(WELFARE_CHECK_LOG_TYPES) },
           order: { createdAt: 'DESC' },
         }),
         this.attendanceRepo.findOne({

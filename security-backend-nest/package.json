@@ -37,6 +37,7 @@
     "test:auth-rate-limit": "ts-node -r tsconfig-paths/register scripts/auth-rate-limit.spec.ts",
     "test:p1i": "ts-node -r tsconfig-paths/register scripts/p1i-company-membership.spec.ts",
     "test:financial-concurrency": "ts-node -r tsconfig-paths/register scripts/financial-concurrency.spec.ts",
+    "test:pilot-core": "ts-node -r tsconfig-paths/register scripts/pilot-core.spec.ts",
     "test:pilot-journey": "ts-node -r tsconfig-paths/register scripts/pilot-journey.spec.ts",
     "test:admin-operator-postgres": "ts-node -r tsconfig-paths/register scripts/admin-operator-postgres.spec.ts",
     "test:rota-slot": "ts-node -r tsconfig-paths/register scripts/rota-slot-service.spec.ts",

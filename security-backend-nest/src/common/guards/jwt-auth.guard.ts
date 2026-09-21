@@ -1,4 +1,4 @@
-import { ExecutionContext, ForbiddenException, Injectable } from '@nestjs/common';
+import { ExecutionContext, ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { AuthGuard } from '@nestjs/passport';
 import { ALLOWED_STATUSES_KEY } from '../decorators/allowed-statuses.decorator';
@@ -21,8 +21,10 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       throw err;
     }
 
+    // No usable credential (missing / malformed / expired / forged token) is 401 so clients can drop the session and
+    // re-authenticate. 403 is reserved for an authenticated principal that is not allowed to do this.
     if (!user) {
-      throw new ForbiddenException('Authentication required');
+      throw new UnauthorizedException('Authentication required');
     }
 
     const allowedStatuses =

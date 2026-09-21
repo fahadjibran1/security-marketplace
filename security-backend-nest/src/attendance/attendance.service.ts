@@ -1,12 +1,13 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { createHash, timingSafeEqual } from 'crypto';
 import { AttendanceEvent, AttendanceEventType } from './entities/attendance.entity';
 import { ShiftService } from '../shift/shift.service';
 import { GuardProfileService } from '../guard-profile/guard-profile.service';
 import { TimesheetService } from '../timesheet/timesheet.service';
-import { AssignmentStatus } from '../assignment/entities/assignment.entity';
+import { Assignment, AssignmentStatus } from '../assignment/entities/assignment.entity';
+import { Shift } from '../shift/entities/shift.entity';
 import { AssignmentService } from '../assignment/assignment.service';
 import { CompanyMembershipService } from '../company-membership/company-membership.service';
 import { CompanyPermission } from '../company-membership/company-membership-types';
@@ -26,6 +27,7 @@ export class AttendanceService {
     private readonly assignmentService: AssignmentService,
     private readonly membershipService: CompanyMembershipService,
     private readonly siteService: SiteService,
+    private readonly dataSource: DataSource,
   ) {}
 
   async findMine(userId: number): Promise<AttendanceEvent[]> {
@@ -87,57 +89,80 @@ export class AttendanceService {
 
   async checkOut(userId: number, dto: RecordAttendanceDto) {
     const { guard, shift } = await this.getGuardAndOwnedShift(userId, dto.shiftId);
-    const normalizedStatus = this.shiftService.normalizeLifecycleStatus(shift.status);
-    const latest = await this.latestForShift(shift.id);
 
-    // Retry-safe Book Off for the same network-timeout scenario as Book On.
-    if (normalizedStatus === 'completed' && latest?.type === AttendanceEventType.CHECK_OUT && latest.guard?.id === guard.id) {
-      return latest;
-    }
+    // Book Off is ONE transaction: the check-out event, the Shift → completed transition, the Assignment stamp and the
+    // Timesheet (created if the Shift never had one, then stamped with the attendance-verified actuals) commit together
+    // or not at all. Locking the Shift row first serialises concurrent / retried requests: the second one waits, then
+    // sees a completed Shift and takes the idempotent branch below instead of writing a second check-out.
+    return this.dataSource.transaction(async (manager) => {
+      const [locked] = (await manager.query('SELECT "status" FROM "shifts" WHERE "id" = $1 FOR UPDATE', [shift.id])) as Array<{
+        status: string;
+      }>;
+      if (!locked) throw new NotFoundException('Shift not found');
+      const normalizedStatus = this.shiftService.normalizeLifecycleStatus(locked.status);
+      const attendanceRepo = manager.getRepository(AttendanceEvent);
+      const latest = await attendanceRepo.findOne({ where: { shift: { id: shift.id } }, order: { occurredAt: 'DESC', id: 'DESC' } });
 
-    if (normalizedStatus !== 'in_progress') throw new BadRequestException('Only in-progress shifts can be checked out');
-    if (!latest || latest.type !== AttendanceEventType.CHECK_IN) {
-      throw new BadRequestException('Shift must be checked in before checkout');
-    }
+      // Retry-safe Book Off for the network-timeout scenario (first request committed, response lost): return the
+      // existing check-out, and make sure the Timesheet exists (heals a Shift completed before the Timesheet fix).
+      if (normalizedStatus === 'completed' && latest?.type === AttendanceEventType.CHECK_OUT && latest.guard?.id === guard.id) {
+        const checkIn = await attendanceRepo.findOne({
+          where: { shift: { id: shift.id }, type: AttendanceEventType.CHECK_IN },
+          order: { occurredAt: 'DESC', id: 'DESC' },
+        });
+        if (checkIn) {
+          await this.timesheetService.recordAttendanceActuals(manager, shift.id, {
+            checkInAt: checkIn.occurredAt,
+            checkOutAt: latest.occurredAt,
+          });
+        }
+        return latest;
+      }
 
-    // Checkout records any supplied evidence, but site policy named requireGpsCheckIn /
-    // requireNfcCheckIn must not block a guard from ending a shift.
-    const evidence = await this.verifyAttendanceEvidence(shift.site?.id, dto, { enforceGps: false, enforceNfc: false });
-    const event = this.attendanceRepo.create({
-      shift,
-      guard,
-      type: AttendanceEventType.CHECK_OUT,
-      nfcTag: null,
-      nfcVerified: evidence.nfcVerified,
-      latitude: dto.latitude ?? null,
-      longitude: dto.longitude ?? null,
-      gpsAccuracyMeters: dto.gpsAccuracyMeters ?? null,
-      distanceFromSiteMeters: evidence.distanceFromSiteMeters,
-      gpsVerified: evidence.gpsVerified,
-      notes: dto.notes?.trim() || null,
+      if (normalizedStatus !== 'in_progress') throw new BadRequestException('Only in-progress shifts can be checked out');
+      if (!latest || latest.type !== AttendanceEventType.CHECK_IN) {
+        throw new BadRequestException('Shift must be checked in before checkout');
+      }
+
+      // Checkout records any supplied evidence, but site policy named requireGpsCheckIn /
+      // requireNfcCheckIn must not block a guard from ending a shift.
+      const evidence = await this.verifyAttendanceEvidence(shift.site?.id, dto, { enforceGps: false, enforceNfc: false });
+      const savedEvent = await attendanceRepo.save(
+        attendanceRepo.create({
+          shift,
+          guard,
+          type: AttendanceEventType.CHECK_OUT,
+          nfcTag: null,
+          nfcVerified: evidence.nfcVerified,
+          latitude: dto.latitude ?? null,
+          longitude: dto.longitude ?? null,
+          gpsAccuracyMeters: dto.gpsAccuracyMeters ?? null,
+          distanceFromSiteMeters: evidence.distanceFromSiteMeters,
+          gpsVerified: evidence.gpsVerified,
+          notes: dto.notes?.trim() || null,
+        }),
+      );
+      await manager.getRepository(Shift).update({ id: shift.id }, { status: 'completed' });
+
+      if (shift.assignment) {
+        await manager
+          .getRepository(Assignment)
+          .update(
+            { id: shift.assignment.id },
+            { status: AssignmentStatus.CHECKED_OUT, checkedOutAt: savedEvent.occurredAt },
+          );
+      }
+
+      // RB-007: verifiedMinutes is the attendance-verified duration — the elapsed time between the two
+      // server-timestamped attendance events. This becomes the payroll default; hoursWorked/workedMinutes remain the
+      // guard-facing claimed values. The Timesheet also stores those two events as its authoritative actual
+      // check-in / check-out (Rota Shifts have no Assignment to copy them from).
+      await this.timesheetService.recordAttendanceActuals(manager, shift.id, {
+        checkInAt: latest.occurredAt,
+        checkOutAt: savedEvent.occurredAt,
+      });
+      return savedEvent;
     });
-
-    const savedEvent = await this.attendanceRepo.save(event);
-    shift.status = 'completed';
-    await this.shiftService.save(shift);
-
-    if (shift.assignment) {
-      shift.assignment.status = AssignmentStatus.CHECKED_OUT;
-      shift.assignment.checkedOutAt = savedEvent.occurredAt;
-      await this.assignmentService.save(shift.assignment);
-    }
-
-    // RB-007: verifiedMinutes is the attendance-verified duration — the elapsed time
-    // between the two server-timestamped attendance events. This becomes the payroll
-    // default; hoursWorked/workedMinutes remain the guard-facing claimed values.
-    const verifiedMs = Math.max(0, savedEvent.occurredAt.getTime() - latest.occurredAt.getTime());
-    const verifiedMinutes = Math.round(verifiedMs / 60000);
-    const hoursWorked = verifiedMinutes / 60;
-    await this.timesheetService.updateHoursForShift(shift.id, {
-      hoursWorked: Number(hoursWorked.toFixed(2)),
-      verifiedMinutes,
-    });
-    return savedEvent;
   }
 
   private async verifyAttendanceEvidence(
