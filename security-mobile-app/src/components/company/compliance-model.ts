@@ -145,6 +145,16 @@ export function findRowByGuardId(rows: ComplianceRow[], guardId: number | null):
   return rows.find((row) => row.guardId === guardId) ?? null;
 }
 
+/**
+ * Applying a targeted navigation (Guards → View Compliance). The table filter and search are reset so the Guard is
+ * visible; the Guard is opened ONLY if it exists in the current rows. If it does not (not returned, relationship
+ * changed, no permission…) nothing is opened — never another Guard as a fallback.
+ */
+export function planGuardTarget(rows: ComplianceRow[], guardId: number): { found: boolean; selectedGuardId: number | null; filter: ComplianceFilter; search: string } {
+  const row = findRowByGuardId(rows, guardId);
+  return { found: row !== null, selectedGuardId: row ? row.guardId : null, filter: 'all', search: '' };
+}
+
 export const STATUS_LABELS: Record<ComplianceStatusKey, string> = {
   valid: 'Valid',
   expiring: 'Expiring',

@@ -13,6 +13,17 @@ import { CompanyAnalyticsWorkspace } from '../components/company/CompanyAnalytic
 import { CompanyAvailabilityWorkspace } from '../components/company/CompanyAvailabilityWorkspace';
 import { CompanyComplianceWorkspace } from '../components/company/CompanyComplianceWorkspace';
 import { resolveCompliancePermissions } from '../components/company/compliance-model';
+import {
+  canOpenGuardWorkspace,
+  clearGuardTarget,
+  consumeGuardTarget,
+  GuardNavSection,
+  GuardNavTarget,
+  openGuardTarget,
+  reconcileGuardTarget,
+  resolveGuardNavPermissions,
+  targetForSection,
+} from '../components/company/guard-navigation';
 import { CompanyContractPricingWorkspace } from '../components/company/CompanyContractPricingWorkspace';
 import { CompanyCoverageWorkspace, CoverageNavigationContext } from '../components/company/CompanyCoverageWorkspace';
 import { CompanyFinanceWorkspace } from '../components/company/CompanyFinanceWorkspace';
@@ -1141,6 +1152,28 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
     [user?.companyPermissions, user?.role],
   );
   const canViewCompliance = compliancePermissions.canView;
+  const guardNavPermissions = React.useMemo(
+    () => resolveGuardNavPermissions(user?.companyPermissions, user?.role),
+    [user?.companyPermissions, user?.role],
+  );
+  // Selected-Guard navigation (Guards → View Compliance / View Availability): ONE one-shot target owned here. The
+  // destination workspace consumes it after its own data loads; the sidebar and leaving the section always clear it.
+  const [guardTarget, setGuardTarget] = React.useState<GuardNavTarget | null>(null);
+  const guardTargetSeq = React.useRef(0);
+  const openGuardWorkspace = React.useCallback((section: GuardNavSection, guardId: number) => {
+    if (!canOpenGuardWorkspace(section, guardNavPermissions)) return; // same gate that hides the Guards buttons — no bypass
+    guardTargetSeq.current += 1;
+    setGuardTarget(openGuardTarget(section, guardId, guardTargetSeq.current));
+    setActiveSection(section);
+  }, [guardNavPermissions]);
+  const handleGuardTargetConsumed = React.useCallback((requestId: number) => {
+    setGuardTarget((current) => consumeGuardTarget(current, requestId));
+  }, []);
+  // A target belongs to its own section only; leaving that section (any route) drops it so it can never go stale.
+  // (Declared with the other hooks, above the component's early returns.)
+  React.useEffect(() => {
+    setGuardTarget((current) => reconcileGuardTarget(current, activeSection));
+  }, [activeSection]);
   const navGroups = React.useMemo(
     () => COMPANY_NAV_GROUPS.map((group) => ({ ...group, itemIds: group.itemIds.filter((id) => id !== 'compliance' || canViewCompliance) })),
     [canViewCompliance],
@@ -4236,15 +4269,22 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
               onLinkGuard={handleApproveGuard}
               onUpdateGuardStatus={handleUpdateGuardStatus}
               onOpenPayAdmin={(guardId, guardName) => handleSelectPayrollGuard(guardId, guardName)}
-              onNavigateToCompliance={() => setActiveSection('compliance')}
-              onNavigateToAvailability={() => setActiveSection('availability')}
+              canViewCompliance={guardNavPermissions.canViewCompliance}
+              canViewAvailability={guardNavPermissions.canViewAvailability}
+              onNavigateToCompliance={(guardId) => openGuardWorkspace('compliance', guardId)}
+              onNavigateToAvailability={(guardId) => openGuardWorkspace('availability', guardId)}
               onNavigateToShiftOffers={() => setActiveSection('shift-offers')}
             />
             {renderPayrollAdminPanel()}
           </>
         );
       case 'availability':
-        return <CompanyAvailabilityWorkspace />;
+        return (
+          <CompanyAvailabilityWorkspace
+            target={targetForSection(guardTarget, 'availability')}
+            onTargetConsumed={handleGuardTargetConsumed}
+          />
+        );
       case 'recruitment':
         return renderRecruitmentSection();
       case 'weekly-approvals':
@@ -4270,6 +4310,8 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
             canManageCompliance={compliancePermissions.canManage}
             canViewScreening={compliancePermissions.canViewScreening}
             currentUserId={user?.id ?? null}
+            target={targetForSection(guardTarget, 'compliance')}
+            onTargetConsumed={handleGuardTargetConsumed}
           />
         );
       case 'contract-pricing':
@@ -4342,6 +4384,7 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
 
   const handleNavigate = (section: CompanySection) => {
     if (section === 'coverage') setCoverageNavigationContext(undefined);
+    setGuardTarget(clearGuardTarget()); // direct sidebar navigation never carries a Guard
     setActiveSection(section);
   };
 

@@ -24,6 +24,7 @@
     "test:screening-ui": "node scripts/screening-ui.spec.cjs",
     "test:screening-review": "node scripts/screening-review-refresh.spec.cjs",
     "test:company-compliance": "node scripts/company-compliance-safety.spec.cjs",
+    "test:guard-navigation": "node scripts/guard-navigation.spec.cjs",
     "test:api-base-url": "node scripts/api-base-url.spec.cjs",
     "build:brand-assets": "node scripts/build-s4-assets.cjs"
   },

@@ -35,6 +35,7 @@ import {
   findRowByGuardId,
   indexScreeningOutcomes,
   maskSiaNumber,
+  planGuardTarget,
   recordsForGuard,
   rightToWorkIndicator,
   ScreeningOutcome,
@@ -46,6 +47,7 @@ import {
   summarizeDocuments,
 } from './compliance-model';
 import { buildVerificationDialog, createRequestGate, documentBelongsToGuard } from './compliance-selection';
+import type { GuardNavTarget } from './guard-navigation';
 
 const IS_WEB = typeof document !== 'undefined';
 
@@ -65,6 +67,12 @@ export type CompanyComplianceWorkspaceProps = {
   /** screening.view — Company screening STATUS only. */
   canViewScreening?: boolean;
   currentUserId?: number | null;
+  /**
+   * One-shot Guard target from the Guards workspace. Applied once this workspace's own data has loaded (or it is
+   * known the user cannot view Compliance), then reported back through onTargetConsumed.
+   */
+  target?: GuardNavTarget | null;
+  onTargetConsumed?: (requestId: number) => void;
   /** Defaults to the live API. The visual-QA preview injects fixtures. */
   dataSource?: ComplianceDataSource;
 };
@@ -115,6 +123,8 @@ export function CompanyComplianceWorkspace({
   canManageCompliance = false,
   canViewScreening = false,
   currentUserId = null,
+  target = null,
+  onTargetConsumed,
   dataSource = liveComplianceDataSource,
 }: CompanyComplianceWorkspaceProps = {}) {
   const ds = dataSource;
@@ -206,6 +216,28 @@ export function CompanyComplianceWorkspace({
   }, [selectedGuardId]);
 
   const closeDrawer = () => setSelectedGuardId(null);
+
+  // Targeted navigation (Guards → View Compliance). One-shot: waits for this workspace's OWN data (never consumed
+  // while loading or after a failed load), resets filter + search so the Guard is visible, opens the Guard only if it
+  // is in the loaded rows (strict lookup, no fallback), then reports the request consumed. Normal use resumes.
+  const handledTargetRequest = React.useRef<number | null>(null);
+  React.useEffect(() => {
+    if (!target || handledTargetRequest.current === target.requestId) return;
+    if (!canViewCompliance) {
+      // Authoritative: this user cannot view Compliance, so there is nothing to open. No bypass.
+      handledTargetRequest.current = target.requestId;
+      onTargetConsumed?.(target.requestId);
+      return;
+    }
+    if (phase !== 'ready') return;
+    handledTargetRequest.current = target.requestId;
+    const plan = planGuardTarget(rows, target.guardId);
+    setFilter(plan.filter);
+    setSearch(plan.search);
+    setSelectedGuardId(plan.selectedGuardId);
+    if (!plan.found) showNotice({ tone: 'warning', message: 'That guard is not in the compliance list, so no guard was opened.' });
+    onTargetConsumed?.(target.requestId);
+  }, [target, phase, rows, canViewCompliance, onTargetConsumed, showNotice]);
 
   // ── Document actions (all bound to the active Guard) ────────────────────────
   const viewDocument = React.useCallback(async (document: GuardDocument) => {

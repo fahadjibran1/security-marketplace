@@ -13,6 +13,7 @@ import {
 } from '../../services/api';
 import { CompanyGuard, GuardAvailabilityOverride, GuardAvailabilityRule, GuardLeave } from '../../types/models';
 import { colors } from '../../theme';
+import { GuardNavTarget, planAvailabilityTarget } from './guard-navigation';
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -37,8 +38,16 @@ function formatDate(value?: string | null) {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString('en-GB');
 }
 
-export function CompanyAvailabilityWorkspace() {
+export function CompanyAvailabilityWorkspace({
+  target = null,
+  onTargetConsumed,
+}: {
+  /** One-shot Guard target from the Guards workspace; preselects the existing Guard selector. */
+  target?: GuardNavTarget | null;
+  onTargetConsumed?: (requestId: number) => void;
+} = {}) {
   const [guards, setGuards] = React.useState<CompanyGuard[]>([]);
+  const [guardsLoaded, setGuardsLoaded] = React.useState(false);
   const [rules, setRules] = React.useState<GuardAvailabilityRule[]>([]);
   const [overrides, setOverrides] = React.useState<GuardAvailabilityOverride[]>([]);
   const [leaveRows, setLeaveRows] = React.useState<GuardLeave[]>([]);
@@ -60,6 +69,7 @@ export function CompanyAvailabilityWorkspace() {
         listGuardLeave(),
       ]);
       setGuards(nextGuards);
+      setGuardsLoaded(true);
       setRules(nextRules);
       setOverrides(nextOverrides);
       setLeaveRows(guardId ? nextLeave.filter((row) => row.guard?.id === guardId) : nextLeave);
@@ -73,6 +83,17 @@ export function CompanyAvailabilityWorkspace() {
   React.useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // Targeted navigation (Guards → View Availability). One-shot: waits until this workspace's Guard list has loaded,
+  // preselects the target through the EXISTING Guard selector only if the Guard is in that list (otherwise everyone is
+  // shown — never an unrelated Guard), then reports the request consumed. Normal use resumes.
+  const handledTargetRequest = React.useRef<number | null>(null);
+  React.useEffect(() => {
+    if (!target || !guardsLoaded || handledTargetRequest.current === target.requestId) return;
+    handledTargetRequest.current = target.requestId;
+    setGuardFilter(planAvailabilityTarget(guards, target.guardId).guardFilter);
+    onTargetConsumed?.(target.requestId);
+  }, [target, guardsLoaded, guards, onTargetConsumed]);
 
   const guardOptions = React.useMemo(() => [
     { value: '', label: 'All guards' },

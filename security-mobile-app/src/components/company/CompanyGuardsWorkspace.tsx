@@ -50,8 +50,12 @@ export type CompanyGuardsWorkspaceProps = {
   onLinkGuard: (guardId: number) => Promise<void>;
   onUpdateGuardStatus: (companyGuardId: number, status: 'ACTIVE' | 'INACTIVE' | 'BLOCKED') => Promise<void>;
   onOpenPayAdmin: (guardId: number, guardName: string) => void;
-  onNavigateToCompliance: () => void;
-  onNavigateToAvailability: () => void;
+  /** Opens Compliance focused on this Guard. Only offered when `canViewCompliance`. */
+  onNavigateToCompliance: (guardId: number) => void;
+  /** Opens Availability focused on this Guard. Only offered when `canViewAvailability`. */
+  onNavigateToAvailability: (guardId: number) => void;
+  canViewCompliance: boolean;
+  canViewAvailability: boolean;
   onNavigateToShiftOffers: () => void;
 };
 
@@ -221,6 +225,8 @@ export function CompanyGuardsWorkspace({
   onOpenPayAdmin,
   onNavigateToCompliance,
   onNavigateToAvailability,
+  canViewCompliance,
+  canViewAvailability,
   onNavigateToShiftOffers,
 }: CompanyGuardsWorkspaceProps) {
   const [filter, setFilter] = React.useState<FilterKey>('active');
@@ -574,7 +580,7 @@ export function CompanyGuardsWorkspace({
               {qvGuard.rightToWorkStatus ? (
                 <DrawerRow label="Right to Work" value={qvGuard.rightToWorkStatus} />
               ) : null}
-              {qvCompliance.label === 'Unknown' ? (
+              {qvCompliance.label === 'Unknown' && canViewCompliance ? (
                 <Text style={styles.drawerHint}>
                   Full compliance data not yet loaded. Use View Compliance for detail.
                 </Text>
@@ -640,10 +646,16 @@ export function CompanyGuardsWorkspace({
                   />
                 ) : null}
               </View>
-              <View style={[styles.actionButtons, styles.actionButtonsSecondary]}>
-                <Button label="View Compliance" variant="tertiary" onPress={onNavigateToCompliance} />
-                <Button label="View Availability" variant="tertiary" onPress={onNavigateToAvailability} />
-              </View>
+              {canViewCompliance || canViewAvailability ? (
+                <View style={[styles.actionButtons, styles.actionButtonsSecondary]}>
+                  {canViewCompliance ? (
+                    <Button label="View Compliance" variant="tertiary" onPress={() => { setQuickView(null); onNavigateToCompliance(qvGuard.id); }} />
+                  ) : null}
+                  {canViewAvailability ? (
+                    <Button label="View Availability" variant="tertiary" onPress={() => { setQuickView(null); onNavigateToAvailability(qvGuard.id); }} />
+                  ) : null}
+                </View>
+              ) : null}
               {qvStatus === 'BLOCKED' ? (
                 <View style={styles.drawerWarning}>
                   <Text style={styles.drawerWarningText}>
