@@ -5,7 +5,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
-import { COMPANY_ADMIN_ROLES, COMPANY_VIEW_ROLES, UserRole } from '../user/entities/user.entity';
+import { COMPANY_VIEW_ROLES, UserRole } from '../user/entities/user.entity';
 import { ComplianceService } from './compliance.service';
 import { CreateGuardDocumentDto } from './dto/create-guard-document.dto';
 import { UpsertComplianceRecordDto } from './dto/upsert-compliance-record.dto';
@@ -63,8 +63,10 @@ export class ComplianceController {
     return this.guardComplianceService.listDocumentsForGuardUser(user.sub);
   }
 
+  // Entry gate only: company_staff (e.g. HR_COMPLIANCE) may reach this route. The authoritative
+  // check is CompanyPermission.COMPLIANCE_MANAGE, enforced in the service via resolveCompanyContext.
   @Post('documents')
-  @Roles(...COMPANY_ADMIN_ROLES)
+  @Roles(...COMPANY_VIEW_ROLES)
   uploadForCompany(@CurrentUser() user: JwtPayload, @Body() dto: CreateGuardDocumentDto) {
     return this.guardComplianceService.uploadDocumentForCompanyUser(user.sub, user.role, dto);
   }
@@ -90,8 +92,9 @@ export class ComplianceController {
     return this.guardComplianceService.createDocumentAccess(user, id);
   }
 
+  // Entry gate only; the authoritative check is COMPLIANCE_MANAGE, enforced in the service.
   @Post('documents/:id/complete-upload')
-  @Roles(UserRole.ADMIN, ...COMPANY_ADMIN_ROLES, UserRole.GUARD)
+  @Roles(UserRole.ADMIN, ...COMPANY_VIEW_ROLES, UserRole.GUARD)
   completeDocumentUpload(
     @CurrentUser() user: JwtPayload,
     @Param('id', ParseIntPipe) id: number,
@@ -99,8 +102,9 @@ export class ComplianceController {
     return this.guardComplianceService.completeDocumentUpload(user, id);
   }
 
+  // Entry gate only; the authoritative check is COMPLIANCE_MANAGE, enforced in the service.
   @Patch('documents/:id/verify')
-  @Roles(...COMPANY_ADMIN_ROLES)
+  @Roles(...COMPANY_VIEW_ROLES)
   verifyDocument(
     @CurrentUser() user: JwtPayload,
     @Param('id', ParseIntPipe) id: number,
@@ -109,14 +113,16 @@ export class ComplianceController {
     return this.guardComplianceService.verifyDocumentForCompanyUser(user.sub, user.role, id, dto.verified);
   }
 
+  // Entry gate only; the authoritative check is COMPLIANCE_MANAGE, enforced in the service.
   @Post()
-  @Roles(...COMPANY_ADMIN_ROLES)
+  @Roles(...COMPANY_VIEW_ROLES)
   create(@CurrentUser() user: JwtPayload, @Body() dto: UpsertComplianceRecordDto) {
     return this.complianceService.upsertForCompanyUser(user.sub, user.role, dto);
   }
 
+  // Entry gate only; the authoritative check is COMPLIANCE_MANAGE, enforced in the service.
   @Put()
-  @Roles(...COMPANY_ADMIN_ROLES)
+  @Roles(...COMPANY_VIEW_ROLES)
   update(@CurrentUser() user: JwtPayload, @Body() dto: UpsertComplianceRecordDto) {
     return this.complianceService.upsertForCompanyUser(user.sub, user.role, dto);
   }

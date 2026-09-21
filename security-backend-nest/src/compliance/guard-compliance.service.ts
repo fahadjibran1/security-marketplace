@@ -217,14 +217,22 @@ export class GuardComplianceService {
     const { company } = await this.membershipService.resolveCompanyContext(userId, userRole, CompanyPermission.COMPLIANCE_MANAGE);
     if (!dto.guardId) throw new BadRequestException('guardId is required');
 
-    const links = await this.companyGuardRepo.find({
-      where: { company: { id: company.id }, guard: { id: dto.guardId } },
-    });
-    const authorizedGuardId = links.length
-      ? dto.guardId
-      : (await this.preHireAuthorization.authorize(company.id, dto.guardId)).guard.id;
-
+    const authorizedGuardId = await this.authorizeGuardForCompanyMutation(company.id, dto.guardId);
     return this.saveDocument(authorizedGuardId, dto, userId, { id: company.id });
+  }
+
+  /**
+   * A Company may write compliance data for a Guard only when that Guard is related to the Company: an
+   * existing CompanyGuard relationship, or an eligible pre-hire application (under_review, open job).
+   * The Company must come from resolveCompanyContext — never from the request body. An unrelated or
+   * non-existent Guard yields the same 403, so Guard ids cannot be enumerated.
+   */
+  async authorizeGuardForCompanyMutation(companyId: number, guardId: number): Promise<number> {
+    const links = await this.companyGuardRepo.find({
+      where: { company: { id: companyId }, guard: { id: guardId } },
+    });
+    if (links.length) return guardId;
+    return (await this.preHireAuthorization.authorize(companyId, guardId)).guard.id;
   }
 
   async verifyDocumentForCompanyUser(userId: number, userRole: UserRole, documentId: number, verified: boolean) {

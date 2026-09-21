@@ -54,7 +54,11 @@ export class ComplianceService {
 
   async upsertForCompanyUser(userId: number, userRole: UserRole, dto: UpsertComplianceRecordDto) {
     const company = await this.getCompanyForUser(userId, userRole, CompanyPermission.COMPLIANCE_MANAGE);
-    const guard = await this.guardProfileService.findOne(dto.guardId);
+    // Ownership first: the Guard must be related to the authenticated Company (CompanyGuard link or an
+    // eligible pre-hire application). Authorising before the lookup keeps unrelated and non-existent
+    // Guards indistinguishable (403 either way).
+    const authorizedGuardId = await this.guardComplianceService.authorizeGuardForCompanyMutation(company.id, dto.guardId);
+    const guard = await this.guardProfileService.findOne(authorizedGuardId);
     const existing = await this.complianceRepo.findOne({
       where: { company: { id: company.id }, guard: { id: guard.id }, type: dto.type },
     });
