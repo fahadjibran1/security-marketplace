@@ -5,6 +5,7 @@ on:
     branches:
       - s4-release-stabilization
       - release/v1.0.0-rc1
+      - release/s4-pilot-rc1
       - main
     paths:
       - 'security-backend-nest/**'
@@ -13,6 +14,7 @@ on:
     branches:
       - main
       - release/v1.0.0-rc1
+      - release/s4-pilot-rc1
     paths:
       - 'security-backend-nest/**'
       - '.github/workflows/s4-backend-release-gate.yml'

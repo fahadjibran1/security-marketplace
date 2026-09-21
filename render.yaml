@@ -3,7 +3,7 @@ services:
     name: security-marketplace-api
     runtime: node
     rootDir: security-backend-nest
-    branch: release/v1.0.0-rc1
+    branch: release/s4-pilot-rc1
     plan: starter
     autoDeployTrigger: off
     numInstances: 1
@@ -21,6 +21,9 @@ services:
         value: "false"
       - key: DATABASE_SYNCHRONIZE
         value: "false"
+      - key: TZ
+        # Server clock is UTC; DB timestamp columns are timezone-less and are read/written in the server zone.
+        value: UTC
       - key: DATABASE_SSL
         value: "true"
       - key: TRUST_PROXY
@@ -34,6 +37,12 @@ services:
         sync: false
       - key: JWT_SECRET
         generateValue: true
+      # Guard personnel encryption. Production startup fails closed unless both are 64-character hex values
+      # (32 bytes) and different from each other. Enter them once in the Render dashboard; never commit values.
+      - key: GUARD_DATA_ENCRYPTION_KEY
+        sync: false
+      - key: GUARD_DATA_HMAC_KEY
+        sync: false
       - key: EVIDENCE_STORAGE_ENDPOINT
         sync: false
       - key: EVIDENCE_STORAGE_REGION

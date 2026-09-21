@@ -2,7 +2,7 @@
 
 Target: v1.0.0 pilot
 Platform baseline: Render web service + managed PostgreSQL
-Release branch after approval: `release/v1.0.0-rc1`
+Release branch after approval: `release/s4-pilot-rc1` (pilot release candidate, cut from the certified product commit; `release/v1.0.0-rc1` is the historical RC1 baseline and is not redeployed)
 Approved RC1 SHA: `ccc23a425113322184e38f3477418347d227d763` (v1.0.0-rc1 tag)
 
 ## Release policy
@@ -28,6 +28,8 @@ Only deploy a commit that has:
 - Strong generated `JWT_SECRET`.
 - Explicit `CORS_ORIGIN` containing only approved portal origins.
 - `DATABASE_SYNCHRONIZE=false`.
+- `GUARD_DATA_ENCRYPTION_KEY` and `GUARD_DATA_HMAC_KEY` entered as Render secrets: two different 64-character hex strings (32 bytes each), e.g. `openssl rand -hex 32` run twice. The API refuses to start in production without them. Keep them out of GitHub and back them up in the secret store: losing the encryption key makes stored personnel data unreadable.
+- `TZ=UTC` (set in the Blueprint). The server clock must be UTC because database timestamp columns carry no zone.
 - `DATABASE_SSL=true` (mandatory in production).
 - `DATABASE_CA_CERT` set as a Render secret to the trusted CA PEM supplied by the PostgreSQL provider. Literal `\\n` newlines are supported; never commit the certificate.
 - `ENABLE_SWAGGER=false` unless temporarily enabled for an approved diagnostic purpose.
@@ -80,8 +82,8 @@ The Blueprint defines:
 
 Deployment procedure:
 
-1. Confirm `release/v1.0.0-rc1` resolves to the approved release SHA recorded in the change ticket.
-2. In Render, verify the service branch is `release/v1.0.0-rc1` and auto deploy is OFF.
+1. Confirm `release/s4-pilot-rc1` resolves to the approved release SHA recorded in the change ticket.
+2. In Render, verify the service branch is `release/s4-pilot-rc1` and auto deploy is OFF.
 3. Trigger a manual deploy for the exact approved commit.
 4. Watch build logs. Any dependency-install or compile failure is a failed deployment.
 5. Watch pre-deploy logs. Any migration failure is a failed deployment; do not bypass the migration command.
