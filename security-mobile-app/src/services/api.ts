@@ -16,6 +16,7 @@ import {
   GuardDocumentUpload,
   GuardDocumentAccess,
   GuardDocumentUploadCompany,
+  CompanyScreeningOutcome,
   ComplianceRecord,
   ComplianceRecordPayload,
   CoverageShiftRow,
@@ -575,6 +576,11 @@ export function uploadMyGuardDocument(payload: GuardDocumentPayload) {
     method: 'POST',
     body: JSON.stringify(payload),
   });
+}
+
+/** Company screening STATUS for every Guard the Company can see — one batch request (screening.view). */
+export function listCompanyScreeningOutcomes() {
+  return request<CompanyScreeningOutcome[]>('/screening/company/outcomes');
 }
 
 /** Companies the signed-in Guard may submit compliance evidence to (each Company verifies independently). */

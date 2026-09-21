@@ -30,6 +30,7 @@ export class ScreeningController {
   @Post('evidence/:id/complete-upload') @Roles(UserRole.GUARD,UserRole.ADMIN) completeEvidence(@CurrentUser() u:JwtPayload,@Param('id',ParseIntPipe) id:number){return this.service.completeEvidence(u,id);}
   @Get('evidence/:id/access') @Roles(UserRole.GUARD) accessEvidence(@CurrentUser() u:JwtPayload,@Param('id',ParseIntPipe) id:number){return this.service.accessEvidence(u,id);}
   @Post('mine/submit') @Roles(UserRole.GUARD) submit(@CurrentUser() u:JwtPayload){return this.service.submit(u.sub);}
+  @Get('company/outcomes') @Roles(...COMPANY_VIEW_ROLES) async outcomes(@CurrentUser() u:JwtPayload){const {company}=await this.membership.resolveCompanyContext(u.sub,u.role,CompanyPermission.SCREENING_VIEW);return this.service.companyOutcomes(company.id);}
   @Get('company/guards/:guardId/outcome') @Roles(...COMPANY_VIEW_ROLES) async outcome(@CurrentUser() u:JwtPayload,@Param('guardId',ParseIntPipe) id:number){const {company}=await this.membership.resolveCompanyContext(u.sub,u.role,CompanyPermission.SCREENING_VIEW);return this.service.companyOutcome(company.id,id);}
   @Get() @Roles(UserRole.ADMIN) list(){return this.service.listAdmin();}
   @Get(':id') @Roles(UserRole.ADMIN) get(@Param('id',ParseIntPipe) id:number){return this.service.adminGet(id);}

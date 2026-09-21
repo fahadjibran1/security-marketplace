@@ -321,6 +321,68 @@ async function main() {
     deepEqual(notStarted, { guardId: guard.id, status: ScreeningStatus.NOT_STARTED, vetted: false });
   });
 
+  // ---- Batch outcomes (2D3.2): one request for the whole workspace, no N+1 -----------------------
+  const batchCalls: number[] = [];
+  const batchController = new ScreeningController(
+    { companyOutcomes: async (companyId: number) => (batchCalls.push(companyId), [{ guardId: 1, status: ScreeningStatus.VETTED, vetted: true }]) } as any,
+    membership as any,
+  );
+
+  await test('SCREENING-BATCH-PERMISSION: screening.view enforced; company from membership; denied roles never reach the service', async () => {
+    batchCalls.length = 0;
+    for (const id of [101, 102, 103, 104]) deepEqual(await batchController.outcomes(user(id, UserRole.COMPANY_STAFF)), [{ guardId: 1, status: ScreeningStatus.VETTED, vetted: true }]);
+    deepEqual(batchCalls, [companyA.id, companyA.id, companyA.id, companyA.id]);
+    batchCalls.length = 0;
+    for (const id of [105, 106, 107]) await expectDenied(() => batchController.outcomes(user(id, UserRole.COMPANY_STAFF)));
+    await expectDenied(() => batchController.outcomes(user(999, UserRole.COMPANY_STAFF)), 'notfound');
+    equal(batchCalls.length, 0);
+  });
+
+  await test('SCREENING-BATCH-PROJECTION: minimal, tenant scoped, NOT_STARTED default, exactly two queries for any number of Guards', async () => {
+    const guardsOfA = [10, 11, 12, 13];
+    let linkQueries = 0;
+    let screeningQueries = 0;
+    let linkWhere: any;
+    let screeningWhere: any;
+    const fake: any = {
+      companyGuards: {
+        find: async ({ where }: any) => {
+          linkQueries += 1; linkWhere = where;
+          return where.company.id === companyA.id ? guardsOfA.map((id) => ({ id, guard: { id } })) : [{ id: 99, guard: { id: 50 } }];
+        },
+      },
+      screenings: {
+        find: async ({ where, select }: any) => {
+          screeningQueries += 1; screeningWhere = where;
+          ok(select && !('reviewNotes' in select) && !('dateOfBirth' in select), 'only id/status/guard.id are selected');
+          return [
+            { id: 1, status: ScreeningStatus.VETTED, guard: { id: 10 }, reviewNotes: 'never leak', dateOfBirth: '1990-01-01' },
+            { id: 2, status: ScreeningStatus.REQUIRES_ATTENTION, guard: { id: 11 } },
+            { id: 3, status: ScreeningStatus.IN_PROGRESS, guard: { id: 12 } },
+          ];
+        },
+      },
+    };
+    const outcomes = await ScreeningService.prototype.companyOutcomes.call(fake, companyA.id);
+    deepEqual(outcomes, [
+      { guardId: 10, status: ScreeningStatus.VETTED, vetted: true },
+      { guardId: 11, status: ScreeningStatus.REQUIRES_ATTENTION, vetted: false },
+      { guardId: 12, status: ScreeningStatus.IN_PROGRESS, vetted: false },
+      { guardId: 13, status: ScreeningStatus.NOT_STARTED, vetted: false },
+    ]);
+    equal(linkQueries, 1);
+    equal(screeningQueries, 1, 'no per-Guard query');
+    equal(linkWhere.company.id, companyA.id, 'scoped to the resolved company');
+    ok(!JSON.stringify(outcomes).includes('never leak') && !JSON.stringify(outcomes).includes('1990'));
+    for (const outcome of outcomes) deepEqual(Object.keys(outcome).sort(), ['guardId', 'status', 'vetted']);
+    ok(screeningWhere.guard.id, 'screening lookup constrained to the Company\'s Guard ids');
+    // Another company sees only its own Guards; a company with no Guards short-circuits with no screening query.
+    const other = await ScreeningService.prototype.companyOutcomes.call(fake, companyB.id);
+    deepEqual(other.map((row: any) => row.guardId), [50]);
+    const empty: any = { companyGuards: { find: async () => [] }, screenings: { find: async () => { throw new Error('must not query'); } } };
+    deepEqual(await ScreeningService.prototype.companyOutcomes.call(empty, companyA.id), []);
+  });
+
   // ---- Negative control: the pre-2D3.1 rule (compliance.view) really would have leaked evidence ---
   await test('NEGATIVE-CONTROL: under the old compliance.view rule a viewer WOULD have received evidence', async () => {
     const legacyMembership = { resolveCompanyContext: async (userId: number, role: UserRole) => membership.resolveCompanyContext(userId, role, CompanyPermission.COMPLIANCE_VIEW) };

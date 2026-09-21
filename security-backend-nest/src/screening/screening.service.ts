@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { randomUUID } from 'crypto';
-import { IsNull, Repository } from 'typeorm';
+import { In, IsNull, Repository } from 'typeorm';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { CompanyGuard, CompanyGuardStatus } from '../company-guard/entities/company-guard.entity';
 import { CompanyService } from '../company/company.service';
@@ -120,6 +120,13 @@ export class ScreeningService {
   async isGuardVetted(guardId:number){const s=await this.screenings.findOne({where:{guard:{id:guardId}}});return s?.status===ScreeningStatus.VETTED;}
   /** Company-safe projection. `companyId` MUST come from CompanyMembershipService.resolveCompanyContext (SCREENING_VIEW) — never from the client. */
   async companyOutcome(companyId:number,guardId:number){const link=await this.companyGuards.findOne({where:{company:{id:companyId},guard:{id:guardId},status:CompanyGuardStatus.ACTIVE}});if(!link)throw new ForbiddenException('Guard is not linked to this company.');const s=await this.screenings.findOne({where:{guard:{id:guardId}}});return {guardId,status:s?.status??ScreeningStatus.NOT_STARTED,vetted:s?.status===ScreeningStatus.VETTED};}
+  /**
+   * Batch Company projection for the Compliance workspace: status only, one entry per Guard the Company can see
+   * (ACTIVE or BLOCKED relationship — the same population as compliance statuses). Two queries regardless of
+   * Guard count. Guards with no screening file report NOT_STARTED. No readiness evidence or personal data.
+   * companyId MUST come from CompanyMembershipService.resolveCompanyContext (SCREENING_VIEW).
+   */
+  async companyOutcomes(companyId:number){const links=await this.companyGuards.find({where:{company:{id:companyId},status:In([CompanyGuardStatus.ACTIVE,CompanyGuardStatus.BLOCKED])}});const guardIds=[...new Set(links.map(l=>l.guard?.id).filter((id):id is number=>typeof id==='number'))];if(!guardIds.length)return [];const rows=await this.screenings.find({where:{guard:{id:In(guardIds)}},relations:{guard:true},loadEagerRelations:false,select:{id:true,status:true,guard:{id:true}}});const byGuard=new Map<number,ScreeningStatus>(rows.map(r=>[r.guard.id,r.status]));return guardIds.map(guardId=>{const status=byGuard.get(guardId)??ScreeningStatus.NOT_STARTED;return {guardId,status,vetted:status===ScreeningStatus.VETTED};});}
   private requirements(s:GuardScreening,review=false){
     const chronology=assessContinuousHistory(s.history||[],s.screeningPeriodYears);
     const addressChronology=assessContinuousHistory(s.addresses||[],s.screeningPeriodYears);

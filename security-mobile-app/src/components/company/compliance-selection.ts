@@ -1,42 +1,13 @@
 // Pure helpers for CompanyComplianceWorkspace (no React / React Native imports so they can be unit-tested).
 //
-// INVARIANT (2D3.1): every document panel and document action is bound to ONE explicit Guard identity.
-// The Guard shown in the panel, the Guard whose documents were fetched and the Guard a Verify/Unverify
-// action applies to must all be the same Guard. The panel must never show one Guard over another
-// Guard's evidence.
-
-export type SelectableSummary = { guardId: number };
+// INVARIANT (2D3.1, kept in 2D3.2): every document panel and document action is bound to ONE explicit Guard
+// identity. In the redesigned workspace the drawer looks its Guard up strictly by id (findRowByGuardId) and shows
+// only that Guard's own summary documents; View/Verify re-check that the document belongs to that Guard.
 
 /**
- * The Guard the document panel is bound to. `requestedGuardId` is what the manager last picked.
- * If that Guard is not in the currently visible (filtered) summaries, fall back to the first visible
- * Guard; with nothing visible there is no active Guard ('') and the panel is cleared.
- */
-export function resolveActiveGuardId(summaries: SelectableSummary[], requestedGuardId: string): string {
-  if (requestedGuardId && summaries.some((summary) => String(summary.guardId) === requestedGuardId)) {
-    return requestedGuardId;
-  }
-  return summaries.length ? String(summaries[0].guardId) : '';
-}
-
-/** Strict lookup — deliberately NO fallback to another Guard. */
-export function findActiveSummary<T extends SelectableSummary>(summaries: T[], activeGuardId: string): T | null {
-  if (!activeGuardId) return null;
-  return summaries.find((summary) => String(summary.guardId) === activeGuardId) ?? null;
-}
-
-export type DocumentsState<T> = { guardId: number | null; items: T[] };
-
-/** Documents are only ever shown for the Guard they were fetched for. */
-export function documentsForGuard<T>(state: DocumentsState<T>, activeGuardId: string): T[] {
-  if (!activeGuardId || state.guardId === null || String(state.guardId) !== activeGuardId) return [];
-  return state.items;
-}
-
-/**
- * Stale-response guard for asynchronous document loading. `next()` starts a request and returns its
- * token; a response may only be applied while `isCurrent(token)` is still true, so a late response for
- * Guard A can never overwrite the panel after Guard B was selected.
+ * Stale-response guard for asynchronous workspace loading. `next()` starts a request and returns its
+ * token; a response may only be applied while `isCurrent(token)` is still true, so a late (older) response
+ * can never overwrite newer data, e.g. a slow refresh finishing after a verify-triggered refresh.
  */
 export function createRequestGate() {
   let latest = 0;

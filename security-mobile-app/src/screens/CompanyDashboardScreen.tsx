@@ -12,6 +12,7 @@ import { CompanyShiftOffersWorkspace, type ShiftOffersFeedback } from '../compon
 import { CompanyAnalyticsWorkspace } from '../components/company/CompanyAnalyticsWorkspace';
 import { CompanyAvailabilityWorkspace } from '../components/company/CompanyAvailabilityWorkspace';
 import { CompanyComplianceWorkspace } from '../components/company/CompanyComplianceWorkspace';
+import { resolveCompliancePermissions } from '../components/company/compliance-model';
 import { CompanyContractPricingWorkspace } from '../components/company/CompanyContractPricingWorkspace';
 import { CompanyCoverageWorkspace, CoverageNavigationContext } from '../components/company/CompanyCoverageWorkspace';
 import { CompanyFinanceWorkspace } from '../components/company/CompanyFinanceWorkspace';
@@ -1134,6 +1135,16 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
   const contentScrollRef = React.useRef<{ scrollTo: (options: { y: number; animated: boolean }) => void } | null>(null);
 
   const [activeSection, setActiveSection] = React.useState<CompanySection>('dashboard');
+  // Effective Company permissions from the backend session (legacy owner fallback only when the session has none).
+  const compliancePermissions = React.useMemo(
+    () => resolveCompliancePermissions(user?.companyPermissions, user?.role),
+    [user?.companyPermissions, user?.role],
+  );
+  const canViewCompliance = compliancePermissions.canView;
+  const navGroups = React.useMemo(
+    () => COMPANY_NAV_GROUPS.map((group) => ({ ...group, itemIds: group.itemIds.filter((id) => id !== 'compliance' || canViewCompliance) })),
+    [canViewCompliance],
+  );
   const [loading, setLoading] = React.useState(true);
   const [refreshing, setRefreshing] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -1337,7 +1348,9 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
           ],
         };
 
-        const sectionFailures = await runSettledLoaders(sectionLoaders[activeSection] || []);
+        const sectionFailures = await runSettledLoaders(
+          (sectionLoaders[activeSection] || []).filter((loader) => loader.label !== 'compliance' || canViewCompliance),
+        );
         const failures = [...coreFailures, ...sectionFailures];
 
         if (failures.length > 0) {
@@ -1348,7 +1361,7 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
         setRefreshing(false);
       }
     },
-    [activeSection, runSettledLoaders, selectedShiftId, selectedSiteId, companyMobileLayoutDisabled],
+    [activeSection, runSettledLoaders, selectedShiftId, selectedSiteId, companyMobileLayoutDisabled, canViewCompliance],
   );
 
   React.useEffect(() => {
@@ -3609,7 +3622,12 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
               subtitle="Guard document and certification status."
               tone={dashComplianceCounts.expired > 0 ? 'danger' : dashComplianceCounts.expiring > 0 ? 'warning' : 'default'}
             >
-              {complianceRecords.length === 0 ? (
+              {!canViewCompliance ? (
+                <DashboardPanelEmpty
+                  title="Compliance not available"
+                  description="Your role does not include access to guard compliance."
+                />
+              ) : complianceRecords.length === 0 ? (
                 <DashboardPanelEmpty
                   title="No compliance records"
                   description="Guard certifications and documents appear here once guards are linked to your company."
@@ -4248,11 +4266,10 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
       case 'compliance':
         return (
           <CompanyComplianceWorkspace
-            canManageCompliance={
-              user?.companyPermissions
-                ? user.companyPermissions.includes('compliance.manage')
-                : (user?.role === 'company_admin' || user?.role === 'company')
-            }
+            canViewCompliance={compliancePermissions.canView}
+            canManageCompliance={compliancePermissions.canManage}
+            canViewScreening={compliancePermissions.canViewScreening}
+            currentUserId={user?.id ?? null}
           />
         );
       case 'contract-pricing':
@@ -4350,7 +4367,7 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
               <CompanySidebar
                 activeId={activeSection}
                 navItems={NAV_ITEMS}
-                groups={COMPANY_NAV_GROUPS}
+                groups={navGroups}
                 onNavigate={(section) => {
                   handleNavigate(section);
                   setIsMobileNavOpen(false);
@@ -4367,7 +4384,7 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
           <CompanySidebar
             activeId={activeSection}
             navItems={NAV_ITEMS}
-            groups={COMPANY_NAV_GROUPS}
+            groups={navGroups}
             collapsed={isSidebarCollapsed}
             onToggleCollapse={() => setIsSidebarCollapsed((c) => !c)}
             onNavigate={handleNavigate}

@@ -402,6 +402,9 @@ export interface GuardDocument {
   expiryDate?: string | null;
   verified: boolean;
   uploadedAt: string;
+  uploadedByUserId?: number | null;
+  verifiedByUserId?: number | null;
+  verifiedAt?: string | null;
 }
 
 export interface GuardDocumentPayload {
@@ -413,6 +416,13 @@ export interface GuardDocumentPayload {
   mimeType: string;
   sizeBytes: number;
   expiryDate?: string | null;
+}
+
+/** Company screening STATUS only — no readiness or personal detail. */
+export interface CompanyScreeningOutcome {
+  guardId: number;
+  status: string;
+  vetted: boolean;
 }
 
 export interface GuardDocumentUploadCompany {
