@@ -40,6 +40,18 @@ const synthetic = (label: string) =>
   Buffer.from(`%PDF-1.4\n% SYNTHETIC EVIDENCE-STORAGE CERTIFICATION OBJECT ${label} ${runId} - not real evidence\n%%EOF\n`);
 const created: Array<{ key: string; mimeType: string }> = [];
 
+/**
+ * The security property is that the object is not served — not which status code a provider picks for a refusal.
+ * AWS S3 and MinIO answer 401/403; Cloudflare R2 answers 400 InvalidArgument when the Authorization header is
+ * absent. Assert the refusal and that the response body carries none of the object's content.
+ */
+async function expectNoAccess(label: string, target: string | URL) {
+  const res = await fetch(target);
+  const text = await res.text();
+  ok(!res.ok, `${label}: expected a refusal, got ${res.status} ${res.statusText}`);
+  ok(!text.includes(runId), `${label}: the response leaked object content`);
+}
+
 async function put(key: string, body: Buffer, mimeType = 'application/pdf') {
   const upload = await storage.createSignedUploadUrl({ key, mimeType, originalFileName: 'synthetic.pdf' });
   const res = await fetch(upload.url, { method: 'PUT', headers: { 'Content-Type': mimeType }, body: new Uint8Array(body) });
@@ -88,22 +100,23 @@ async function main() {
   const url = new URL(download.url);
   const tampered = new URL(download.url);
   tampered.searchParams.set('X-Amz-Signature', '0'.repeat(64));
-  ok([401, 403].includes((await fetch(tampered)).status), 'tampered signature must be refused');
-  ok([401, 403].includes((await fetch(`${url.origin}${url.pathname}`)).status), 'the permanent unsigned URL must not be readable');
-  console.log('PASS STORE-4 tampered signature and unsigned permanent URL are refused (private bucket)');
+  await expectNoAccess('tampered signature', tampered);
+  await expectNoAccess('unsigned permanent URL', `${url.origin}${url.pathname}`);
+  await expectNoAccess('anonymous bucket listing', `${url.origin}/${process.env.EVIDENCE_STORAGE_BUCKET}`);
+  console.log('PASS STORE-4 tampered signature, unsigned permanent URL and anonymous listing are all refused (private bucket)');
 
   // STORE-5 — a signature for object A is not valid for object B
   const objectB = keyFor();
   await put(objectB, synthetic('B'));
   const cross = new URL(download.url);
   cross.pathname = cross.pathname.replace(objectA, objectB);
-  ok([401, 403].includes((await fetch(cross)).status), 'a signed URL must be exact-object');
+  await expectNoAccess('cross-object signature', cross);
   console.log('PASS STORE-5 signed URLs are exact-object');
 
   // STORE-6 (optional, slow)
   if (process.env.EVIDENCE_STORAGE_TEST_WAIT_EXPIRY === 'true') {
     await new Promise((resolve) => setTimeout(resolve, (expires + 5) * 1000));
-    ok([401, 403].includes((await fetch(download.url)).status), 'an expired signed URL must be refused');
+    await expectNoAccess('expired signed URL', download.url);
     console.log('PASS STORE-6 signed URL expires');
   }
 

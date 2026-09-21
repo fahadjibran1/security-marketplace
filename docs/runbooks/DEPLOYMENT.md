@@ -59,6 +59,76 @@ After deployment, verify that normal compliance lists contain no `fileUrl`, `sto
 
 Production startup, migrations and RB-009 preflight fail closed before connecting if TLS is disabled or `DATABASE_CA_CERT` is absent/malformed. Obtain the CA from the database provider, compare its documented fingerprint through an independent trusted channel, and configure it in Render. To rotate it, add the provider's replacement CA during an approved window, run migrations/preflight and readiness checks, then remove the retired CA after provider confirmation. Verify the deployed service reaches `/health/ready` and that logs contain no certificate material. Local development and disposable test PostgreSQL remain non-TLS by default when `NODE_ENV` is not `production` and `DATABASE_SSL` is unset/false.
 
+### Provisioning the pilot evidence bucket
+
+The application signs **AWS SigV4 presigned URLs** and is the only storage architecture; do not introduce a second
+one. A provider is compatible when it offers:
+
+| Requirement | Value |
+|---|---|
+| Protocol | S3 API, SigV4, **path-style** URLs (`https://<host>/<bucket>/<key>`) |
+| Scope service name | `s3` |
+| Endpoint | **HTTPS** — production refuses plain HTTP |
+| Operations used | `PUT` (signed `content-type`), `GET`, `HEAD`. Never `LIST` |
+| Bucket access | **private**, no public read, no anonymous access, no public bucket URL |
+
+Cloudflare R2, Backblaze B2, Supabase Storage (S3 protocol), Wasabi, DigitalOcean Spaces and self-hosted MinIO all
+satisfy this. Plain AWS S3 works but is the weakest choice because AWS has deprecated path-style addressing.
+
+Provisioning steps, using Cloudflare R2 as the reference provider:
+
+1. Create a bucket (for the pilot: `s4-evidence-pilot`) in an EU location for UK/EU personal data. Leave public
+   access **disabled**; do not attach a custom domain and do not enable the provider's public development URL.
+2. Create an API token scoped to **that bucket only**, with object read and write. Do not issue account-wide
+   storage administration. Record the Access Key ID, the Secret Access Key (usually shown once) and the S3 API
+   endpoint.
+3. Set the bucket CORS policy to the approved dashboard origins only — the same values as `CORS_ORIGIN`. The
+   browser performs the signed upload directly, so `PUT` is required; `GET` covers in-page viewing:
+
+   ```json
+   [
+     {
+       "AllowedOrigins": ["https://dashboard.<approved-domain>"],
+       "AllowedMethods": ["PUT", "GET"],
+       "AllowedHeaders": ["content-type"],
+       "ExposeHeaders": ["ETag"],
+       "MaxAgeSeconds": 300
+     }
+   ]
+   ```
+
+   A wildcard origin is not acceptable. Until CORS is configured the API certification below still passes, because
+   all signing is server-side, but the dashboard cannot upload evidence.
+4. Store the credentials outside the repository, in a file readable only by the deploying operator (for example
+   `%USERPROFILE%\.s4-pilot-secrets\evidence-storage.env`), and enter them into Render as secrets. Never commit
+   them and never paste them into chat, tickets or screenshots.
+
+### Certifying a bucket before it holds evidence
+
+Run the repository's own certification against the **real hosted bucket** — never against a local MinIO stand-in as
+a substitute for the hosted check:
+
+```bash
+cd security-backend-nest
+EVIDENCE_STORAGE_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com \
+EVIDENCE_STORAGE_REGION=auto \
+EVIDENCE_STORAGE_BUCKET=s4-evidence-pilot \
+EVIDENCE_STORAGE_ACCESS_KEY_ID=<id> \
+EVIDENCE_STORAGE_SECRET_ACCESS_KEY=<secret> \
+EVIDENCE_STORAGE_TEST_WAIT_EXPIRY=true \
+npm run test:evidence-storage
+```
+
+`EVIDENCE_STORAGE_REGION` must be the provider's signing region — **R2 uses `auto`**; a wrong region produces
+`SignatureDoesNotMatch`. The spec writes only synthetic PDFs under `compliance/guard/999999/<uuid>`, never real
+identity evidence, and deletes them afterwards; without delete permission it prints the leftover keys instead of
+failing. It certifies signed PUT, HEAD-based completion, signed GET returning the exact bytes, refusal of tampered
+signatures, unsigned permanent URLs, anonymous listing and cross-object URLs, and signed-URL expiry.
+
+Refusal status codes differ by provider — AWS and MinIO answer 401/403, R2 answers 400 `InvalidArgument` for a
+missing `Authorization` header — so the spec asserts that the request fails **and** that no object content is
+returned, rather than a particular status code.
+
 ## Pre-deployment checklist
 
 1. Confirm PR/release SHA and record it in the change ticket.
@@ -117,6 +187,54 @@ A web/backend deploy does not by itself certify a new native app. Guard Mobile m
 - physical-device GPS Book On UAT for GPS-required sites.
 
 Do not enable `requireGpsCheckIn` on a pilot site until that physical-device case has passed on the app build being distributed.
+
+### Android release signing key
+
+Android identifies an app by **package name + signing key**. Every update must be signed with the same key as the
+installed build. If the keystore or its password is lost there is no recovery: devices already carrying the pilot
+app cannot be updated (users must uninstall and reinstall, losing local app data), and a Play listing published
+under that key without Play App Signing can never be updated.
+
+The pilot key is held outside the repository by the release owner, in an ACL-protected directory (for example
+`%USERPROFILE%\.s4-pilot-secrets\`). Its properties:
+
+| Item | Value |
+|---|---|
+| Format | PKCS12 |
+| Alias | `s4-pilot-release` |
+| Key | RSA 4096, SHA384withRSA |
+| Validity | 30 years from creation |
+| Certificate DN | `CN=S4 Security, OU=S4 Pilot, O=Vesoft Services Limited, C=GB` |
+| SHA-256 fingerprint | `0D:58:94:49:33:5F:91:54:E0:4A:6B:97:3E:B1:86:E8:8F:D6:17:58:1A:98:43:FB:62:AC:C2:E8:EC:76:31:1B` |
+
+PKCS12 does not support a key password that differs from the store password: `keytool` silently protects the key
+with the store password and Gradle then fails with `Get Key failed: Given final block not properly padded`. Keep
+the two passwords identical.
+
+Rules:
+
+- Never commit the keystore or its password file, and never place either under `src/`.
+- Never paste the password into chat, CI logs, screenshots or tickets.
+- Back the key up before any APK leaves the build machine: at least one copy in a company password manager and one
+  offline encrypted copy, with the alias and password stored as separate fields, and the fingerprint above recorded
+  in the change ticket. Verify a restored copy with
+  `keytool -list -v -keystore <file> -storetype PKCS12` and confirm the fingerprint matches.
+- The key cannot be rotated for an already-distributed app. If the app is later published to Google Play, enrol in
+  **Play App Signing** and keep this key as the upload key, so Google can reset it if it is ever lost.
+- Increment `versionCode` in `app.json` for every distributed build; local Gradle builds do not auto-increment
+  and Android refuses to install a build whose `versionCode` does not exceed the installed one.
+
+### Building the pilot APK
+
+`security-mobile-app/scripts/build-pilot-apk.ps1` produces the release-signed APK. It builds from `git archive`
+of the current commit, so untracked working-copy files can never enter the bundle; it requires an HTTPS API URL; it
+clears the Metro cache so a previously inlined API URL is not reused; and it loads the signing values from the
+operator's local properties file into `ORG_GRADLE_PROJECT_*` environment variables for that build process only.
+The injected Gradle `signingConfig` references the property **names**, so no credential reaches a Gradle file,
+version control or the build log. The generated `android/` directory is gitignored.
+
+Build the client APK only **after** the pilot backend is deployed, so the final HTTPS API URL is embedded, and
+verify the result with `apksigner verify --print-certs` against the fingerprint above.
 
 ## Deployment success criteria
 
