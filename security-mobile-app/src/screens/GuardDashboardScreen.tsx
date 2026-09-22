@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, AppState, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { FeatureCard } from '../components/FeatureCard';
@@ -488,6 +488,19 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
   const screeningScrollRef = useRef<any>(null);
   const lastLoadTimeRef = useRef<number>(0);
 
+  // Every tab shares one ScrollView, so without an explicit reset a tab opens at the previous
+  // tab's scroll offset — which reads as "the tab did nothing". Screening is a sub-view of
+  // Profile rather than a sixth tab, so it keeps Profile lit in the bar.
+  const navActiveTab: GuardTab = activeTab === 'screening' ? 'profile' : activeTab;
+  const selectTab = useCallback((tab: GuardTab) => {
+    setActiveTab(tab);
+    try {
+      screeningScrollRef.current?.scrollTo({ y: 0, animated: false });
+    } catch {
+      /* scrolling is a convenience; never let it break navigation */
+    }
+  }, []);
+
   // P1A — Tax Identifiers
   const [identity, setIdentity] = useState<GuardPersonnelIdentity | null>(null);
   const [identityLoading, setIdentityLoading] = useState(false);
@@ -573,6 +586,15 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
     ].slice(0, 20));
   }
 
+  // Presentation only — never used for validation. Strips whatever the Guard typed or pasted
+  // back to letters and digits, then regroups it as AB 12 34 56 C so they never have to place
+  // spaces themselves. The authoritative rule below is unchanged.
+  function formatNinoInput(raw: string): string {
+    const compact = raw.replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 9);
+    const groups = [compact.slice(0, 2), compact.slice(2, 4), compact.slice(4, 6), compact.slice(6, 8), compact.slice(8, 9)];
+    return groups.filter(Boolean).join(' ');
+  }
+
   // UK NINO client-side validation (server is authoritative; this gives immediate UX feedback)
   function isValidNinoFormat(raw: string): boolean {
     const n = raw.replace(/\s/g, '').toUpperCase();
@@ -642,7 +664,7 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
     const normalised = ninoInput.replace(/\s/g, '').toUpperCase();
     if (!isValidNinoFormat(normalised)) {
       setNinoInputError(
-        'Check your National Insurance number. It is two letters, six digits and a final letter, which must be A, B, C or D — for example AB 12 34 56 C.',
+        'Enter your National Insurance number exactly as shown on your HMRC letter, payslip or P60. It has 2 letters, 6 numbers and ends in A, B, C or D.',
       );
       return;
     }
@@ -2182,19 +2204,22 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
                       <View>
                         <TextInput
                           style={[styles.input, styles.guardProfileInput]}
-                          placeholder="e.g. AB 12 34 56 C"
+                          placeholder="e.g. QQ 12 34 56 C"
                           value={ninoInput}
-                          onChangeText={(t: string) => { setNinoInput(t); setNinoInputError(''); }}
+                          // Spacing is presentation only. The Guard can type or paste it compact,
+                          // spaced or in lowercase; this groups it as they go and the value is
+                          // normalised again before it is sent.
+                          onChangeText={(t: string) => { setNinoInput(formatNinoInput(t)); setNinoInputError(''); }}
                           autoCapitalize="characters"
-                          // "AB 12 34 56 C" is 13 characters. Anything shorter makes the format
-                          // the UI asks for impossible to type.
+                          autoCorrect={false}
+                          // "QQ 12 34 56 C" is 13 characters once grouped.
                           maxLength={13}
                           autoFocus
                         />
                         {ninoInputError ? (
                           <Text style={[styles.helperText, { color: colors.danger, marginTop: 4 }]}>{ninoInputError}</Text>
                         ) : null}
-                        <Text style={[styles.profileFieldHint]}>Format: AB 12 34 56 C — kept private and encrypted.</Text>
+                        <Text style={[styles.profileFieldHint]}>Kept private and encrypted. You can type it with or without spaces.</Text>
                         <View style={styles.guardSecondaryRow}>
                           <Pressable
                             style={[styles.guardSecondaryBtn, identitySaving && styles.buttonDisabled]}
@@ -2963,13 +2988,13 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
             </FeatureCard>
 
             <View style={styles.guardProfileBelowStack}>
-              <GuardCompliancePanel onManageCompliance={() => setActiveTab('screening')} />
-              <GuardScreeningPanel onContinue={() => setActiveTab('screening')} />
+              <GuardCompliancePanel onManageCompliance={() => selectTab('screening')} />
+              <GuardScreeningPanel onContinue={() => selectTab('screening')} />
               <GuardAvailabilityScreen />
             </View>
           </View>
         ) : null}
-        {activeTab === 'screening' ? <GuardScreeningJourney onBack={() => setActiveTab('profile')} scrollViewRef={screeningScrollRef} /> : null}
+        {activeTab === 'screening' ? <GuardScreeningJourney onBack={() => selectTab('profile')} scrollViewRef={screeningScrollRef} /> : null}
       </ScrollView>
       </View>
 
@@ -2985,13 +3010,13 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
             key={tab}
             accessibilityRole="tab"
             accessibilityLabel={tab === 'offers' && shiftOffers.length > 0 ? `Offers, ${shiftOffers.length} pending` : label}
-            accessibilityState={{ selected: activeTab === tab }}
-            style={[styles.bottomNavItem, activeTab === tab && styles.bottomNavItemActive]}
-            onPress={() => setActiveTab(tab)}
+            accessibilityState={{ selected: navActiveTab === tab }}
+            style={[styles.bottomNavItem, navActiveTab === tab && styles.bottomNavItemActive]}
+            onPress={() => selectTab(tab)}
           >
-            <View style={[styles.bottomNavIndicator, activeTab === tab && styles.bottomNavIndicatorActive]} />
+            <View style={[styles.bottomNavIndicator, navActiveTab === tab && styles.bottomNavIndicatorActive]} />
             <View style={styles.bottomNavLabelRow}>
-              <Text style={[styles.bottomNavLabel, activeTab === tab && styles.bottomNavLabelActive]}>{label}</Text>
+              <Text style={[styles.bottomNavLabel, navActiveTab === tab && styles.bottomNavLabelActive]}>{label}</Text>
               {tab === 'offers' && shiftOffers.length > 0 ? (
                 <View style={styles.navBadge}>
                   <Text style={styles.navBadgeText}>{shiftOffers.length}</Text>

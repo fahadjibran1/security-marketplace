@@ -350,6 +350,15 @@ export function GuardScreeningJourney({ onBack, scrollViewRef }: { onBack: () =>
   };
   const requirementStatus = (key: string): SectionStatus | null =>
     ((data?.requirements?.remediation || []).find((item) => item.key === key)?.status as SectionStatus) || null;
+  const requirementMessage = (key: string): string =>
+    (data?.requirements?.remediation || []).find((item) => item.key === key)?.message || "";
+  // The backend requires exactly one completed upload per evidence category; reviewer verification
+  // is a separate step that does not block submission. Once something is uploaded the section is
+  // informational, so the upload control stops being the primary action.
+  const evidenceSettled = (category: string) => {
+    const status = requirementStatus(`${category}_evidence`);
+    return status === "AWAITING_VERIFICATION" || status === "VERIFIED";
+  };
   const canCorrectCompliance = canEdit || (data?.status === "READY_FOR_REVIEW" && (actionRequired("sia_expiry") || actionRequired("sia_check") || actionRequired("rtw_status") || actionRequired("rtw_check")));
   const canUploadEvidence = (category:string) => canEdit || (data?.status === "READY_FOR_REVIEW" && (category==="reference" || actionRequired(`${category}_evidence`)));
   const navigateToStep = (next: Step) => {
@@ -574,8 +583,22 @@ export function GuardScreeningJourney({ onBack, scrollViewRef }: { onBack: () =>
                 ],
               ]}
             />
+            <SectionState
+              status={requirementStatus("identity_evidence")}
+              complete="Identity evidence verified"
+              awaiting="Identity evidence uploaded — awaiting verification"
+              action="Identity evidence required"
+              detail={
+                evidenceSettled("identity")
+                  ? "One identity document is all that is required. A reviewer will check it."
+                  : requirementMessage("identity_evidence") ||
+                    "Upload one identity document, for example a passport or driving licence."
+              }
+            />
             <EvidencePicker
               label="Choose identity evidence"
+              uploadLabel={evidenceSettled("identity") ? "Add another identity document" : undefined}
+              variant={evidenceSettled("identity") ? "secondary" : "primary"}
               category="identity"
               successMessage="Identity evidence uploaded. It is awaiting reviewer verification."
               disabled={!canUploadEvidence("identity") || busy}
@@ -650,7 +673,8 @@ export function GuardScreeningJourney({ onBack, scrollViewRef }: { onBack: () =>
             ))}
             <Action
               disabled={!canCorrectRecords || busy}
-              label="+ Add another address"
+              variant={requirementStatus("address_history") === "COMPLETE" ? "secondary" : "primary"}
+              label={requirementStatus("address_history") === "COMPLETE" ? "Add another address" : "+ Add another address"}
               onPress={() => { setEditingAddressId(null); setAddress(emptyAddressForm()); setShowAddressForm(true); }}
             />
             {showAddressForm ? <View style={s.entryForm}>
@@ -735,7 +759,7 @@ export function GuardScreeningJourney({ onBack, scrollViewRef }: { onBack: () =>
                 message="Check these activity entries and correct the dates if the overlap is not intentional."
               />
             ))}
-            <Action disabled={!canCorrectRecords || busy} label="+ Add another activity" onPress={() => { setEditingHistoryId(null); setHistory(emptyActivityForm()); setShowHistoryForm(true); }} />
+            <Action disabled={!canCorrectRecords || busy} variant={requirementStatus("activity_history") === "COMPLETE" ? "secondary" : "primary"} label={requirementStatus("activity_history") === "COMPLETE" ? "Add activity" : "+ Add another activity"} onPress={() => { setEditingHistoryId(null); setHistory(emptyActivityForm()); setShowHistoryForm(true); }} />
             {showHistoryForm ? <View style={s.entryForm}>
             <Text style={s.formMode}>{editingHistoryId ? "EDIT ACTIVITY" : "ADD ACTIVITY"}</Text>
             <Text style={s.fieldLabel}>Activity type</Text>
@@ -978,8 +1002,29 @@ export function GuardScreeningJourney({ onBack, scrollViewRef }: { onBack: () =>
                 ],
               ]}
             />
+            <Text style={s.sectionHeading}>SIA licence</Text>
+            <SectionState
+              status={requirementStatus("sia_expiry")}
+              complete="SIA licence expiry date supplied"
+              awaiting="SIA licence expiry date supplied"
+              action="SIA licence expiry date required"
+              detail={requirementMessage("sia_expiry")}
+            />
+            <SectionState
+              status={requirementStatus("sia_evidence")}
+              complete="SIA evidence verified"
+              awaiting="SIA evidence uploaded — awaiting verification"
+              action="SIA evidence required"
+              detail={
+                evidenceSettled("sia")
+                  ? "One SIA document is all that is required. A reviewer will check the register."
+                  : requirementMessage("sia_evidence") || "Upload a copy of your SIA licence."
+              }
+            />
             <EvidencePicker
               label="Choose SIA evidence"
+              uploadLabel={evidenceSettled("sia") ? "Add another SIA document" : undefined}
+              variant={evidenceSettled("sia") ? "secondary" : "primary"}
               category="sia"
               successMessage="SIA evidence uploaded. It is awaiting register verification."
               disabled={!canUploadEvidence("sia") || busy}
@@ -989,8 +1034,30 @@ export function GuardScreeningJourney({ onBack, scrollViewRef }: { onBack: () =>
                 )
               }
             />
+            <Text style={s.sectionHeading}>Right to Work</Text>
+            <SectionState
+              status={requirementStatus("rtw_status")}
+              complete="Right to Work information supplied"
+              awaiting="Right to Work information supplied"
+              action="Right to Work information required"
+              detail={requirementMessage("rtw_status")}
+            />
+            <SectionState
+              status={requirementStatus("right_to_work_evidence")}
+              complete="Right to Work evidence verified"
+              awaiting="Right to Work evidence uploaded — awaiting verification"
+              action="Right to Work evidence required"
+              detail={
+                evidenceSettled("right_to_work")
+                  ? "One Right to Work document is all that is required. A reviewer will check it."
+                  : requirementMessage("right_to_work_evidence") ||
+                    "Upload one document showing your right to work in the UK."
+              }
+            />
             <EvidencePicker
               label="Choose Right-to-Work evidence"
+              uploadLabel={evidenceSettled("right_to_work") ? "Add another Right to Work document" : undefined}
+              variant={evidenceSettled("right_to_work") ? "secondary" : "primary"}
               category="right_to_work"
               successMessage="Right-to-Work evidence uploaded. It is awaiting reviewer verification."
               disabled={!canUploadEvidence("right_to_work") || busy}
@@ -1014,8 +1081,18 @@ export function GuardScreeningJourney({ onBack, scrollViewRef }: { onBack: () =>
                 </View>
               ))}
             </View>
+            <View style={s.awaitingBanner}>
+              <Text style={s.awaitingTitle}>Optional supporting evidence</Text>
+              <Text style={s.note}>
+                Nothing here is required to submit your screening. The documents listed above are
+                the ones your screening asked for. Add anything extra only if you have been asked
+                for it.
+              </Text>
+            </View>
             <EvidencePicker
               label="Choose additional supporting evidence"
+              uploadLabel="Add optional document"
+              variant="secondary"
               category="other"
               successMessage="Supporting evidence uploaded. It is awaiting reviewer verification."
               disabled={!canEdit || busy}
@@ -1167,6 +1244,7 @@ function EvidencePicker({
   category,
   onUpload,
   disabled,
+  variant = "primary",
 }: {
   label: string;
   uploadLabel?: string;
@@ -1174,6 +1252,8 @@ function EvidencePicker({
   category: string;
   onUpload: (asset: DocumentPicker.DocumentPickerAsset) => Promise<string | null>;
   disabled: boolean;
+  /** "secondary" once the requirement is satisfied, so it stops competing as the next step. */
+  variant?: "primary" | "secondary";
 }) {
   const [asset, setAsset] = React.useState<DocumentPicker.DocumentPickerAsset | null>(null);
   const [uploading, setUploading] = React.useState(false);
@@ -1233,10 +1313,12 @@ function EvidencePicker({
         accessibilityRole="button"
         accessibilityLabel={uploadLabel||label}
         disabled={disabled || uploading}
-        style={[s.button, (disabled || uploading) && s.disabled]}
+        style={[variant === "secondary" ? s.secondary : s.button, (disabled || uploading) && s.disabled]}
         onPress={choose}
       >
-        <Text style={s.buttonText}>{uploading ? "Uploading…" : uploadLabel||"Choose document"}</Text>
+        <Text style={variant === "secondary" ? s.secondaryText : s.buttonText}>
+          {uploading ? "Uploading…" : uploadLabel||"Choose document"}
+        </Text>
       </Pressable>
       {asset ? (
         <Text style={s.itemTitle}>{asset.name}</Text>
@@ -1258,6 +1340,48 @@ function EvidencePicker({
       {uploadError?<Text style={s.meta}>The selected document has been kept so you can retry.</Text>:null}
       {uploadError?<Text accessibilityRole="alert" style={s.error}>{uploadError}</Text>:null}
       <Text style={s.meta}>Private upload category: {pretty(category)}</Text>
+    </View>
+  );
+}
+/**
+ * One presentation for every section state, so a satisfied requirement always reads as
+ * information rather than as another job to do. COMPLETE/VERIFIED are green, AWAITING_VERIFICATION
+ * is a neutral "with the reviewer" note, ACTION_REQUIRED stays the amber prompt.
+ */
+function SectionState({
+  status,
+  complete,
+  awaiting,
+  action,
+  detail,
+}: {
+  status: "ACTION_REQUIRED" | "AWAITING_VERIFICATION" | "COMPLETE" | "VERIFIED" | null;
+  complete: string;
+  awaiting: string;
+  action?: string;
+  detail?: string;
+}) {
+  if (!status) return null;
+  if (status === "COMPLETE" || status === "VERIFIED")
+    return (
+      <View style={s.completeBanner}>
+        <Text style={s.completeTitle}>✓ {status === "VERIFIED" ? `${complete} — verified` : complete}</Text>
+        {detail ? <Text style={s.note}>{detail}</Text> : null}
+      </View>
+    );
+  if (status === "AWAITING_VERIFICATION")
+    return (
+      <View style={s.awaitingBanner}>
+        <Text style={s.awaitingTitle}>✓ {awaiting}</Text>
+        <Text style={s.note}>
+          {detail || "A reviewer will check this. You do not need to do anything else here."}
+        </Text>
+      </View>
+    );
+  return (
+    <View style={s.actionBanner}>
+      <Text style={s.actionTitle}>! {action || "Action required"}</Text>
+      {detail ? <Text style={s.note}>{detail}</Text> : null}
     </View>
   );
 }
@@ -1310,11 +1434,26 @@ function Action({
   label,
   onPress,
   disabled,
+  variant = "primary",
 }: {
   label: string;
   onPress: () => void;
   disabled: boolean;
+  /** "secondary" for actions that are optional once the requirement is already satisfied. */
+  variant?: "primary" | "secondary";
 }) {
+  if (variant === "secondary")
+    return (
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ disabled }}
+        disabled={disabled}
+        style={[s.secondary, disabled && s.disabled]}
+        onPress={onPress}
+      >
+        <Text style={s.secondaryText}>{label}</Text>
+      </Pressable>
+    );
   return (
     <Pressable
       accessibilityRole="button"
@@ -1408,12 +1547,30 @@ function Review({ data,onFix }: { data: GuardScreening;onFix:(step:string)=>void
   return (
     <View style={s.review}>
       <View style={s.reviewHeader}><Text style={s.label}>Requirement</Text><Text style={s.label}>Status and candidate action</Text></View>
-      {rows.map((item) => (
-        <View key={item.key} style={s.reviewRow}>
-          <View style={s.flex}><Text style={s.label}>{item.label}</Text><Text style={s.itemTitle}>{item.status.replaceAll('_',' ')}</Text><Text style={s.note}>{item.message}</Text></View>
-          {item.status==='ACTION_REQUIRED'?<Pressable accessibilityRole="button" style={s.fixButton} onPress={()=>onFix(item.step)}><Text style={s.fixButtonText}>Fix this</Text></Pressable>:null}
-        </View>
-      ))}
+      {rows.map((item) => {
+        // Plain-language status, ordered so the Guard reads the outcome before the detail.
+        const mark =
+          item.status === 'VERIFIED' ? '✓' :
+          item.status === 'COMPLETE' ? '✓' :
+          item.status === 'AWAITING_VERIFICATION' ? '⏳' : '!';
+        const plain =
+          item.status === 'VERIFIED' ? 'Verified' :
+          item.status === 'COMPLETE' ? 'Complete' :
+          item.status === 'AWAITING_VERIFICATION' ? 'Awaiting verification' : 'Action required';
+        const tone =
+          item.status === 'ACTION_REQUIRED' ? s.actionRequired :
+          item.status === 'AWAITING_VERIFICATION' ? s.awaiting : s.accessGood;
+        return (
+          <View key={item.key} style={s.reviewRow}>
+            <View style={s.flex}>
+              <Text style={s.label}>{item.label}</Text>
+              <Text style={tone}>{mark} {plain}</Text>
+              {item.status === 'ACTION_REQUIRED' ? <Text style={s.note}>{item.message}</Text> : null}
+            </View>
+            {item.status==='ACTION_REQUIRED'?<Pressable accessibilityRole="button" style={s.fixButton} onPress={()=>onFix(item.step)}><Text style={s.fixButtonText}>Fix this</Text></Pressable>:null}
+          </View>
+        );
+      })}
       {data.requirements?.addressChronology?.gaps.map((g) => (
         <Text key={`address-${g.from}`} style={s.missing}>
           Missing address dates: {dateLabel(g.from)} – {dateLabel(g.to)}
@@ -1538,6 +1695,28 @@ const s = StyleSheet.create({
     gap: 3,
   },
   completeTitle: { fontWeight: "900", color: colors.success },
+  awaitingBanner: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceSubtle,
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 10,
+    marginBottom: 4,
+    gap: 3,
+  },
+  awaitingTitle: { fontWeight: "900", color: colors.textPrimary },
+  actionBanner: {
+    borderWidth: 1,
+    borderColor: colors.warningBorder,
+    backgroundColor: colors.warningSurface,
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 10,
+    marginBottom: 4,
+    gap: 3,
+  },
+  actionTitle: { fontWeight: "900", color: colors.warning },
   stepDone: { borderColor: colors.successBorder, backgroundColor: colors.successSurface },
   stepNumberDone: { color: colors.success },
   stepPending: { fontSize: 11, fontWeight: "700", color: colors.textMuted, marginTop: 2 },

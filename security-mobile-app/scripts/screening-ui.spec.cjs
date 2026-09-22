@@ -82,7 +82,7 @@ test('NINO-SPACED',()=>assert.equal(ninoFn('AB 12 34 56 C'),true));
 test('NINO-LOWERCASE',()=>{assert.equal(ninoFn('ab123456c'),true);assert.equal(ninoFn('ab 12 34 56 c'),true)});
 test('NINO-INVALID-SUFFIX',()=>{assert.equal(ninoFn('AB123456X'),false);assert.equal(ninoFn('AB 12 34 56 X'),false)});
 test('NINO-FIELD-FITS-DOCUMENTED-FORMAT',()=>{const m=guard.match(/maxLength=\{(\d+)\}[\s\S]{0,80}autoFocus/);assert.ok(m,'NINO maxLength not found');assert.ok(Number(m[1])>='AB 12 34 56 C'.length,'maxLength truncates the documented format')});
-test('NINO-COPY-EXPLAINS-SUFFIX',()=>{const copy=guard.split('setNinoInputError(')[1].split(');')[0];assert.match(copy,/must be A, B, C or D/);assert.doesNotMatch(copy,/\[A-|\d\{|regex/i,'user copy must not expose the implementation regex')});
+test('NINO-COPY-EXPLAINS-SUFFIX',()=>{const copy=guard.split('setNinoInputError(')[1].split(');')[0];assert.match(copy,/A, B, C or D/);assert.doesNotMatch(copy,/\[A-|\d\{|regex/i,'user copy must not expose the implementation regex')});
 test('NINO-BACKEND-VALIDATION-UNCHANGED',()=>assert.match(read('../security-backend-nest/src/guard-personnel/guard-personnel.service.ts'),/\[A-D\]\$/));
 
 test('ADDRESS-REMEDIATION-NO-CRASH',()=>{const body=panel.split('const navigateToRemediation')[1].split('};')[0];assert.match(body,/try \{/);assert.match(body,/catch \{\}/);assert.doesNotMatch(body,/stage\.measureLayout\(sv as any/)});
@@ -108,5 +108,39 @@ test('NATIVE-UPLOAD',()=>{const up=panel.split('const uploadEvidence = async')[1
 test('NATIVE-UPLOAD-BACKEND-UNCHANGED',()=>{const store=read('../security-backend-nest/src/compliance/evidence-storage.service.ts');assert.match(store,/'content-type': object\.mimeType/,'content-type must remain a signed header');assert.match(store,/size !== expectedSizeBytes \|\| mimeType !== object\.mimeType/,'server-side verification must not be weakened')});
 test('NATIVE-UPLOAD-NO-SECRET-LEAK',()=>{const picker=panel.split('function EvidencePicker')[1];assert.doesNotMatch(picker,/upload\.url|storageKey|X-Amz/)});
 
+
+
+// ── Owner UAT round 2: tabs, section action hierarchy, NINO input ─────────────────────────────
+const ninoFmt=new Function(toJs(guard.match(/function formatNinoInput[\s\S]*?\n  \}/)[0])+';return formatNinoInput;')();
+
+test('TAB-ACTIVE-DURING-SCREENING',()=>{assert.match(guard,/const navActiveTab: GuardTab = activeTab === 'screening' \? 'profile' : activeTab;/);assert.match(guard,/accessibilityState=\{\{ selected: navActiveTab === tab \}\}/);assert.doesNotMatch(guard,/accessibilityState=\{\{ selected: activeTab === tab \}\}/)});
+test('TAB-SCROLL-RESET',()=>{const fn=guard.split('const selectTab = useCallback')[1].split('}, \[\]);')[0];assert.match(fn,/setActiveTab\(tab\)/);assert.match(fn,/scrollTo\(\{ y: 0, animated: false \}\)/);assert.match(fn,/catch/,'scroll reset must never break navigation')});
+test('TAB-ALL-FIVE-USE-SELECT',()=>{const nav=guard.split('styles.bottomNav,')[1].split('</View>')[0];assert.match(nav,/onPress=\{\(\) => selectTab\(tab\)\}/);assert.doesNotMatch(nav,/onPress=\{\(\) => setActiveTab\(tab\)\}/)});
+test('TAB-SCREENING-ENTRY-RESETS',()=>{assert.match(guard,/onContinue=\{\(\) => selectTab\('screening'\)\}/);assert.match(guard,/onBack=\{\(\) => selectTab\('profile'\)\}/);assert.match(guard,/onManageCompliance=\{\(\) => selectTab\('screening'\)\}/)});
+
+test('EVIDENCE-ONE-DOCUMENT-RULE',()=>{const svc=read('../security-backend-nest/src/screening/screening.service.ts');assert.match(svc,/if\(!records\.length\)missing\.push/,'exactly one completed upload clears the requirement');assert.match(svc,/const uploadedEvidence=\(category:string\)=>\(s\.evidence\|\|\[\]\)\.filter\(e=>String\(e\.category\)===category&&!!e\.uploadCompletedAt\)/)});
+test('EVIDENCE-VERIFICATION-DOES-NOT-BLOCK-SUBMIT',()=>{const svc=read('../security-backend-nest/src/screening/screening.service.ts');const req=svc.split('private requirements(')[1].split('private view(')[0];for(const key of ['identity_check','sia_check','rtw_check','sia_expiry','rtw_status']){const seg=req.split("add('"+key+"'")[1].split(';')[0];assert.doesNotMatch(seg||'',/missing\.push/,key+' must not block submit')}});
+
+test('IDENTITY-SETTLED-DEMOTES-CTA',()=>{const idStep=panel.split('{step === "identity" ?')[1].split('{step === "addresses" ?')[0];assert.match(idStep,/SectionState/);assert.match(idStep,/variant=\{evidenceSettled\("identity"\) \? "secondary" : "primary"\}/);assert.match(idStep,/Add another identity document/);assert.match(idStep,/One identity document is all that is required/)});
+test('SIA-SETTLED-DEMOTES-CTA',()=>{const st=panel.split('{step === "checks" ?')[1].split('{step === "evidence" ?')[0];assert.match(st,/variant=\{evidenceSettled\("sia"\) \? "secondary" : "primary"\}/);assert.match(st,/requirementStatus\("sia_expiry"\)/)});
+test('RTW-SETTLED-DEMOTES-CTA',()=>{const st=panel.split('{step === "checks" ?')[1].split('{step === "evidence" ?')[0];assert.match(st,/variant=\{evidenceSettled\("right_to_work"\) \? "secondary" : "primary"\}/);assert.match(st,/requirementStatus\("rtw_status"\)/)});
+test('ADDRESS-ADD-IS-SECONDARY-WHEN-COMPLETE',()=>assert.match(panel,/variant=\{requirementStatus\("address_history"\) === "COMPLETE" \? "secondary" : "primary"\}/));
+test('ACTIVITY-ADD-IS-SECONDARY-WHEN-COMPLETE',()=>assert.match(panel,/variant=\{requirementStatus\("activity_history"\) === "COMPLETE" \? "secondary" : "primary"\}/));
+test('SUPPORTING-EVIDENCE-IS-OPTIONAL',()=>{const ev=panel.split('{step === "evidence" ?')[1].split('{step === "consent" ?')[0];assert.match(ev,/Optional supporting evidence/);assert.match(ev,/Nothing here is required to submit/);assert.match(ev,/variant="secondary"/)});
+test('REVIEW-PLAIN-LANGUAGE-STATUS',()=>{const rv=panel.split('function Review(')[1];for(const word of ['Verified','Complete','Awaiting verification','Action required'])assert.ok(rv.includes(word),'missing '+word);assert.match(rv,/'⏳'/);assert.doesNotMatch(rv,/item\.status\.replaceAll/,'raw enum must not be shown to the Guard')});
+test('SECTION-STATE-IS-BACKEND-DRIVEN',()=>{const comp=panel.split('function SectionState(')[1].split('function PeriodGuidance')[0];assert.match(comp,/ACTION_REQUIRED/);assert.match(comp,/AWAITING_VERIFICATION/);assert.match(comp,/VERIFIED/);assert.doesNotMatch(panel,/localCompleted|completedSteps|setCompleted/)});
+
+test('NINO-FORMAT-COMPACT-PASTE',()=>assert.equal(ninoFmt('QQ123456C'),'QQ 12 34 56 C'));
+test('NINO-FORMAT-LOWERCASE',()=>assert.equal(ninoFmt('qq123456c'),'QQ 12 34 56 C'));
+test('NINO-FORMAT-ALREADY-SPACED',()=>assert.equal(ninoFmt('QQ 12 34 56 C'),'QQ 12 34 56 C'));
+test('NINO-FORMAT-PARTIAL',()=>{assert.equal(ninoFmt('Q'),'Q');assert.equal(ninoFmt('QQ12'),'QQ 12')});
+test('NINO-FORMAT-STRIPS-JUNK',()=>assert.equal(ninoFmt('qq-12/34.56 c'),'QQ 12 34 56 C'));
+test('NINO-EXAMPLE-IS-NEUTRAL',()=>{assert.match(guard,/QQ 12 34 56 C/);const ph=guard.split('placeholder="e.g. ')[1].split('"')[0];assert.equal(ph,'QQ 12 34 56 C')});
+test('NINO-COPY-IS-PLAIN-ENGLISH',()=>{const copy=guard.split('setNinoInputError(')[1].split(');')[0];assert.match(copy,/HMRC letter, payslip or P60/);assert.match(copy,/2 letters, 6 numbers/);assert.match(copy,/A, B, C or D/)});
+test('NINO-PREFIX-VARIETY',()=>{for(const n of ['AB123456A','JR501234D','SW123456B','EH123456C','ZY123456A','KL123456D'])assert.equal(ninoFn(n),true,n+' should be valid')});
+test('NINO-EXAMPLE-PREFIX-IS-UNISSUABLE',()=>{assert.equal(ninoFn('QQ123456C'),false,'QQ is deliberately never issued by HMRC, which is why it is safe as an example');for(const letter of ['D','F','I','Q','U','V'])assert.equal(ninoFn(letter+'A123456C'),false,letter+' must never be accepted as a first letter')});
+test('NINO-PREFIX-RESTRICTIONS-KEPT',()=>{for(const n of ['BG123456A','GB123456A','NK123456A','KN123456A','TN123456A','NT123456A','ZZ123456A'])assert.equal(ninoFn(n),false,n+' prefix must stay rejected')});
+test('NINO-SUFFIX-ONLY-ABCD',()=>{for(const ok of ['AB123456A','AB123456B','AB123456C','AB123456D'])assert.equal(ninoFn(ok),true,ok);for(const bad of ['AB123456E','AB123456X','AB123456Z','AB1234561'])assert.equal(ninoFn(bad),false,bad)});
+test('NINO-FORMATTER-NEVER-VALIDATES',()=>{const fn=guard.split('function formatNinoInput')[1].split('\n  }')[0];assert.doesNotMatch(fn,/A-CEGHJ|BG|test\(/,'formatter must not duplicate the authoritative rule')});
 
 console.log(JSON.stringify({event:'screening_ux_tests_passed',tests:passed}));
