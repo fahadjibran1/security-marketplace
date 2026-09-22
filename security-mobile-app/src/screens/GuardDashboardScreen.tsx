@@ -641,7 +641,9 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
   async function handleSaveNino() {
     const normalised = ninoInput.replace(/\s/g, '').toUpperCase();
     if (!isValidNinoFormat(normalised)) {
-      setNinoInputError('Enter a valid National Insurance number — format: AB 12 34 56 C');
+      setNinoInputError(
+        'Check your National Insurance number. It is two letters, six digits and a final letter, which must be A, B, C or D — for example AB 12 34 56 C.',
+      );
       return;
     }
     try {
@@ -2184,7 +2186,9 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
                           value={ninoInput}
                           onChangeText={(t: string) => { setNinoInput(t); setNinoInputError(''); }}
                           autoCapitalize="characters"
-                          maxLength={11}
+                          // "AB 12 34 56 C" is 13 characters. Anything shorter makes the format
+                          // the UI asks for impossible to type.
+                          maxLength={13}
                           autoFocus
                         />
                         {ninoInputError ? (

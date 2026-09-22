@@ -53,7 +53,7 @@ test('cancelled document picker is safe',()=>assert.match(panel,/if \(result\.ca
 test('picker accepts PDF JPEG and PNG',()=>{for(const mime of ['application/pdf','image/jpeg','image/png'])assert.match(panel,new RegExp(mime.replace('/','\\/')))});
 test('invalid MIME is rejected',()=>assert.match(panel,/Choose a PDF, JPEG\/JPG or PNG document/));
 test('oversized evidence is rejected before metadata creation',()=>assert.ok(panel.indexOf('10 MB size limit')<panel.lastIndexOf('createMyScreeningEvidence')));
-test('evidence selection and upload are separate actions',()=>{assert.match(panel,/Choose document/);assert.match(panel,/Upload document/);assert.doesNotMatch(panel,/Selected file URI/)});
+test('evidence selection uploads immediately and never leaks the URI',()=>{assert.match(panel,/Choose document/);assert.match(panel,/Choosing a document uploads it straight away/);assert.doesNotMatch(panel,/Selected file URI/)});
 test('step navigation clears stale mutation errors',()=>{assert.match(panel,/navigateToStep/);assert.match(panel,/setError\(""\)/)});
 test('progress uses authoritative candidate criteria',()=>assert.match(service,/candidateCriteria/));
 test('multiple address UX uses structured fields and readable cards',()=>{for(const label of ['Address line 1 *','Address line 2 (optional)','Town / City *','Postcode *','+ Add another address','Verification:'])assert.ok(panel.includes(label));assert.match(models,/addressLine1\?/)});
@@ -69,4 +69,44 @@ test('new activity flow always starts blank with no type',()=>{assert.match(pane
 test('successful activity save resets and closes create mode',()=>assert.match(panel,/Activity history updated[\s\S]{0,160}setHistory\(emptyActivityForm\(\)\); setShowHistoryForm\(false\)/));
 test('create forms support non-mutating cancel',()=>{assert.match(panel,/label="Cancel"/);assert.match(panel,/setShowAddressForm\(false\)/);assert.match(panel,/setShowHistoryForm\(false\)/)});
 test('progress does not double-count legacy currentAddress',()=>{const criteria=service.split('const candidateCriteria=')[1].split(';const progress')[0];assert.doesNotMatch(criteria,/currentAddress/);assert.match(criteria,/req\.addressChronology\.continuous/)});
+
+// ── Android owner UAT fix pack ────────────────────────────────────────────────────────────────
+const ts=require('typescript');
+const toJs=src=>ts.transpileModule(src,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
+const ninoFn=new Function(toJs(guard.match(/function isValidNinoFormat[\s\S]*?\n  \}/)[0])+';return isValidNinoFormat;')();
+const sectionStatusFn=new Function('data',toJs(panel.match(/const sectionStatus = \(stepKey: string\)[\s\S]*?\n  \};/)[0])+';return sectionStatus;');
+const withRemediation=(rows,step='addresses')=>sectionStatusFn({requirements:{remediation:rows}})(step);
+
+test('NINO-COMPACT',()=>assert.equal(ninoFn('AB123456C'),true));
+test('NINO-SPACED',()=>assert.equal(ninoFn('AB 12 34 56 C'),true));
+test('NINO-LOWERCASE',()=>{assert.equal(ninoFn('ab123456c'),true);assert.equal(ninoFn('ab 12 34 56 c'),true)});
+test('NINO-INVALID-SUFFIX',()=>{assert.equal(ninoFn('AB123456X'),false);assert.equal(ninoFn('AB 12 34 56 X'),false)});
+test('NINO-FIELD-FITS-DOCUMENTED-FORMAT',()=>{const m=guard.match(/maxLength=\{(\d+)\}[\s\S]{0,80}autoFocus/);assert.ok(m,'NINO maxLength not found');assert.ok(Number(m[1])>='AB 12 34 56 C'.length,'maxLength truncates the documented format')});
+test('NINO-COPY-EXPLAINS-SUFFIX',()=>{const copy=guard.split('setNinoInputError(')[1].split(');')[0];assert.match(copy,/must be A, B, C or D/);assert.doesNotMatch(copy,/\[A-|\d\{|regex/i,'user copy must not expose the implementation regex')});
+test('NINO-BACKEND-VALIDATION-UNCHANGED',()=>assert.match(read('../security-backend-nest/src/guard-personnel/guard-personnel.service.ts'),/\[A-D\]\$/));
+
+test('ADDRESS-REMEDIATION-NO-CRASH',()=>{const body=panel.split('const navigateToRemediation')[1].split('};')[0];assert.match(body,/try \{/);assert.match(body,/catch \{\}/);assert.doesNotMatch(body,/stage\.measureLayout\(sv as any/)});
+test('ADDRESS-VALIDATION-NO-CRASH',()=>{const save=panel.split('label={editingAddressId?"Save address changes":"Save address"}')[1].split('/>')[0];assert.ok(save.includes('act('),'address save must go through act()');assert.ok(save.indexOf('act(')<save.indexOf('normalizeScreeningPostcode'),'postcode parsing must run inside act()');assert.ok(save.indexOf('act(')<save.indexOf('screeningDateToIso'),'date parsing must run inside act()')});
+test('ACTIVITY-VALIDATION-NO-CRASH',()=>{const save=panel.split('label={editingHistoryId?"Save activity changes":"Save activity"}')[1].split('\n            />')[0];assert.ok(save.indexOf('act(')<save.indexOf('screeningDateToIso'),'date parsing must run inside act()')});
+test('VALIDATION-ERRORS-STILL-THROW',()=>{assert.throws(()=>dateExports.screeningDateToIso(''),/DD\/MM\/YYYY/);assert.throws(()=>dateExports.normalizeScreeningPostcode(''),/valid UK postcode/)});
+
+test('CONSENT-INCOMPLETE-ACCEPT',()=>{const consent=panel.split('{step === "consent" ?')[1].split('{step === "review" ?')[0];const notAccepted=consent.split('return (')[2];assert.match(notAccepted,/Accept consent & declaration/)});
+test('CONSENT-COMPLETE-NO-REACCEPT',()=>{const consent=panel.split('{step === "consent" ?')[1].split('{step === "review" ?')[0];const accepted=consent.split('if (current)')[1].split('return (')[1];assert.doesNotMatch(accepted,/Accept consent & declaration/);assert.match(accepted,/Accepted/);assert.match(accepted,/Withdraw consent/)});
+test('CONSENT-METADATA-SHOWN',()=>assert.match(panel,/acceptedAt[\s\S]{0,140}consentVersion/));
+
+test('ADDRESS-COMPLETE',()=>{assert.match(panel,/requirementStatus\("address_history"\) === "COMPLETE"/);assert.match(panel,/Address history complete/);assert.match(panel,/do not need to add your current address again/)});
+test('ACTIVITY-COMPLETE',()=>{assert.match(panel,/requirementStatus\("activity_history"\) === "COMPLETE"/);assert.match(panel,/Activity history complete/)});
+test('STEP-COMPLETE',()=>{assert.equal(withRemediation([{step:'addresses',status:'COMPLETE'}]),'COMPLETE');assert.equal(withRemediation([{step:'identity',status:'VERIFIED'}],'identity'),'VERIFIED');assert.match(panel,/done \? "✓" : i \+ 1/)});
+test('STEP-AWAITING',()=>{assert.equal(withRemediation([{step:'addresses',status:'COMPLETE'},{step:'addresses',status:'AWAITING_VERIFICATION'}]),'AWAITING_VERIFICATION');assert.match(panel,/Awaiting check/)});
+test('STEP-ACTION-REQUIRED',()=>{assert.equal(withRemediation([{step:'addresses',status:'AWAITING_VERIFICATION'},{step:'addresses',status:'ACTION_REQUIRED'}]),'ACTION_REQUIRED');assert.equal(withRemediation([]),null)});
+test('STEP-STATUS-IS-BACKEND-DERIVED',()=>{assert.match(panel,/requirements\?\.remediation \|\| \[\]/);assert.doesNotMatch(panel,/localCompleted|completedSteps|setCompleted/)});
+
+test('PICKER-CANCEL',()=>{const choose=panel.split('const choose = async ()')[1].split('const upload = async ()')[0];assert.match(choose,/if \(result\.canceled\) return;/);const cancelIdx=choose.indexOf('result.canceled');assert.ok(choose.slice(cancelIdx,cancelIdx+60).indexOf('setUploadError')===-1,'cancel must be a quiet return')});
+test('PICKER-ERROR',()=>{const choose=panel.split('const choose = async ()')[1].split('const upload = async ()')[0];assert.match(choose,/try \{[\s\S]*getDocumentAsync[\s\S]*\} catch \{/);assert.match(choose,/document picker could not be opened/)});
+
+test('NATIVE-UPLOAD',()=>{const up=panel.split('const uploadEvidence = async')[1].split('const categorizeUploadError')[0];assert.match(up,/new Blob\(\[raw\], \{ type: mimeType \}\)/,'blob must carry the signed content type');assert.ok(up.indexOf('new Blob')<up.indexOf('createMyScreeningEvidence')||up.includes('body,'),'signed type must be applied to the uploaded body');assert.match(up,/const sizeBytes = raw\.size/,'declared size must be the real byte count');assert.match(up,/Unable to read the selected file/);assert.match(up,/Network unavailable/);assert.match(up,/Upload failed/);assert.match(up,/Upload verification failed/)});
+test('NATIVE-UPLOAD-BACKEND-UNCHANGED',()=>{const store=read('../security-backend-nest/src/compliance/evidence-storage.service.ts');assert.match(store,/'content-type': object\.mimeType/,'content-type must remain a signed header');assert.match(store,/size !== expectedSizeBytes \|\| mimeType !== object\.mimeType/,'server-side verification must not be weakened')});
+test('NATIVE-UPLOAD-NO-SECRET-LEAK',()=>{const picker=panel.split('function EvidencePicker')[1];assert.doesNotMatch(picker,/upload\.url|storageKey|X-Amz/)});
+
+
 console.log(JSON.stringify({event:'screening_ux_tests_passed',tests:passed}));

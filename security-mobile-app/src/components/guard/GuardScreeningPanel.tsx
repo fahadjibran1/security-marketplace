@@ -116,18 +116,21 @@ export function GuardScreeningPanel({
       .then(setData)
       .catch((e) => setError(e.message || "Unable to load screening."));
   }, []);
+  // Completion comes from the server's own per-section statuses so this summary can never
+  // disagree with the journey. A section counts as done once it is COMPLETE or VERIFIED.
+  const done = (stepKey: string) => {
+    const items = (data?.requirements?.remediation || []).filter((item) => item.step === stepKey);
+    return items.length > 0 && items.every((item) => item.status === "COMPLETE" || item.status === "VERIFIED");
+  };
   const checks: Array<[string, boolean]> = [
-    ["Personal details", !!data?.legalFullName],
-    ["Identity", data?.identityVerification === "VERIFIED"],
-    ["Address history", !!data?.addresses?.length],
-    [
-      `${data?.screeningPeriodYears || 5}-year activity history`,
-      !!data?.requirements?.chronology.continuous,
-    ],
-    ["References", !!data?.references?.length],
-    ["Right to Work", data?.rightToWorkVerification === "VERIFIED"],
+    ["Personal details", done("personal")],
+    ["Identity", done("identity")],
+    ["Address history", done("addresses")],
+    [`${data?.screeningPeriodYears || 5}-year activity history`, done("history")],
+    ["References", done("references")],
+    ["SIA & Right to Work", done("checks")],
     ["Supporting evidence", !!data?.evidence?.some((x) => x.uploadCompleted)],
-    ["Consent & declaration", !!data?.consents?.some((x) => !x.withdrawnAt)],
+    ["Consent & declaration", done("consent")],
   ];
   return (
     <View
@@ -260,30 +263,51 @@ export function GuardScreeningJourney({ onBack, scrollViewRef }: { onBack: () =>
     category: string,
     asset: DocumentPicker.DocumentPickerAsset,
   ) => {
-    const source = await fetch(asset.uri);
-    if (!source.ok) throw new Error("Unable to read the selected document.");
-    const blob = await source.blob();
-    const mimeType = normalizeEvidenceMimeType(asset.mimeType || blob.type, asset.name);
+    let raw: Blob;
+    try {
+      const source = await fetch(asset.uri);
+      if (!source.ok) throw new Error("read failed");
+      raw = await source.blob();
+    } catch {
+      throw new Error("Unable to read the selected file. Choose the document again.");
+    }
+    const mimeType = normalizeEvidenceMimeType(asset.mimeType || raw.type, asset.name);
     if (!mimeType) throw new Error("Choose a PDF, JPEG/JPG or PNG document.");
-    const sizeBytes = asset.size || blob.size;
+    const sizeBytes = raw.size || asset.size || 0;
     if (!Number.isInteger(sizeBytes) || sizeBytes < 1)
       throw new Error("The selected document is empty or its size is unavailable.");
     if (sizeBytes > 10 * 1024 * 1024)
       throw new Error("The selected document exceeds the 10 MB size limit.");
+    // The signed URL commits us to an exact Content-Type. On Android the native networking layer
+    // ignores the Content-Type header when the body is a Blob and sends the Blob's own type
+    // instead, which breaks the SigV4 signature. Re-wrap the bytes so the Blob carries exactly the
+    // type we asked the server to sign. On web this is a no-op.
+    const body = raw.type === mimeType ? raw : new Blob([raw], { type: mimeType });
     const created = await createMyScreeningEvidence({
       category,
       originalFileName: asset.name,
       mimeType,
       sizeBytes,
     });
-    const uploaded = await fetch(created.upload.url, {
-      method: created.upload.method,
-      headers: created.upload.headers,
-      body: blob,
-    });
+    let uploaded: Response;
+    try {
+      uploaded = await fetch(created.upload.url, {
+        method: created.upload.method,
+        headers: created.upload.headers,
+        body,
+      });
+    } catch {
+      throw new Error("Network unavailable. Check your connection and try the upload again.");
+    }
     if (!uploaded.ok)
-      throw new Error("Private evidence upload failed. Please try again.");
-    await completeMyScreeningEvidence(created.id);
+      throw new Error("Upload failed. Please try again.");
+    try {
+      await completeMyScreeningEvidence(created.id);
+    } catch (e) {
+      throw new Error(
+        `Upload verification failed. ${(e as Error).message || "Please choose the document again."}`,
+      );
+    }
   };
   const categorizeUploadError = (message: string): string => {
     if (/not configured|service unavailable/i.test(message))
@@ -309,6 +333,23 @@ export function GuardScreeningJourney({ onBack, scrollViewRef }: { onBack: () =>
     canCorrectRecords = canEdit || data?.status === "READY_FOR_REVIEW",
     activeIndex = STEPS.findIndex((x) => x.key === step);
   const actionRequired = (key:string) => data?.requirements?.remediation?.some((item)=>item.key===key&&item.status==="ACTION_REQUIRED")===true;
+  // Single source of truth for "is this section done": the authoritative per-section statuses the
+  // server already returns. No second completion model is kept on the client.
+  type SectionStatus = "ACTION_REQUIRED" | "AWAITING_VERIFICATION" | "COMPLETE" | "VERIFIED";
+  const sectionStatus = (stepKey: string): SectionStatus | null => {
+    const items = (data?.requirements?.remediation || []).filter((item) => item.step === stepKey);
+    if (!items.length) return null;
+    if (items.some((item) => item.status === "ACTION_REQUIRED")) return "ACTION_REQUIRED";
+    if (items.some((item) => item.status === "AWAITING_VERIFICATION")) return "AWAITING_VERIFICATION";
+    if (items.every((item) => item.status === "VERIFIED")) return "VERIFIED";
+    return "COMPLETE";
+  };
+  const sectionDone = (stepKey: string) => {
+    const status = sectionStatus(stepKey);
+    return status === "COMPLETE" || status === "VERIFIED";
+  };
+  const requirementStatus = (key: string): SectionStatus | null =>
+    ((data?.requirements?.remediation || []).find((item) => item.key === key)?.status as SectionStatus) || null;
   const canCorrectCompliance = canEdit || (data?.status === "READY_FOR_REVIEW" && (actionRequired("sia_expiry") || actionRequired("sia_check") || actionRequired("rtw_status") || actionRequired("rtw_check")));
   const canUploadEvidence = (category:string) => canEdit || (data?.status === "READY_FOR_REVIEW" && (category==="reference" || actionRequired(`${category}_evidence`)));
   const navigateToStep = (next: Step) => {
@@ -325,8 +366,15 @@ export function GuardScreeningJourney({ onBack, scrollViewRef }: { onBack: () =>
       const sv = scrollViewRef.current;
       const stage = stageRef.current;
       setTimeout(() => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        stage.measureLayout(sv as any, (_x: number, y: number) => sv.scrollTo({ y, animated: true }), () => {});
+        // Measuring is a convenience only. A ScrollView ref is not a host node on native, so
+        // never let a failed measurement escape this timer — an uncaught throw here terminates
+        // the app in a release build. Fail silently and leave the scroll position alone.
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const target: any = typeof (sv as any).getInnerViewNode === "function" ? (sv as any).getInnerViewNode() : sv;
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (stage as any).measureLayout(target, (_x: number, y: number) => { try { sv.scrollTo({ y, animated: true }); } catch {} }, () => {});
+        } catch {}
       }, 50);
     }
   };
@@ -421,22 +469,37 @@ export function GuardScreeningJourney({ onBack, scrollViewRef }: { onBack: () =>
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={s.stepNav}
       >
-        {STEPS.map((x, i) => (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityState={{ selected: x.key === step }}
-            key={x.key}
-            onPress={() => navigateToStep(x.key)}
-            style={[s.step, x.key === step && s.stepActive]}
-          >
-            <Text style={[s.stepNumber, x.key === step && s.stepTextActive]}>
-              {i + 1}
-            </Text>
-            <Text style={[s.stepText, x.key === step && s.stepTextActive]}>
-              {x.label}
-            </Text>
-          </Pressable>
-        ))}
+        {STEPS.map((x, i) => {
+          const status = sectionStatus(x.key);
+          const done = status === "COMPLETE" || status === "VERIFIED";
+          const awaiting = status === "AWAITING_VERIFICATION";
+          return (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ selected: x.key === step }}
+              accessibilityLabel={`${x.label}${done ? " — completed" : awaiting ? " — awaiting verification" : status === "ACTION_REQUIRED" ? " — action required" : ""}`}
+              key={x.key}
+              onPress={() => navigateToStep(x.key)}
+              style={[s.step, x.key === step && s.stepActive, done && x.key !== step && s.stepDone]}
+            >
+              <Text
+                style={[
+                  s.stepNumber,
+                  x.key === step && s.stepTextActive,
+                  done && x.key !== step && s.stepNumberDone,
+                ]}
+              >
+                {done ? "✓" : i + 1}
+              </Text>
+              <Text style={[s.stepText, x.key === step && s.stepTextActive]}>
+                {x.label}
+              </Text>
+              {awaiting && x.key !== step ? (
+                <Text style={s.stepPending}>Awaiting check</Text>
+              ) : null}
+            </Pressable>
+          );
+        })}
       </ScrollView>
       {feedback ? (
         <Text accessibilityRole="alert" style={s.success}>
@@ -531,6 +594,16 @@ export function GuardScreeningJourney({ onBack, scrollViewRef }: { onBack: () =>
               start={data.requirements?.addressChronology?.periodStart}
               end={data.requirements?.addressChronology?.periodEnd}
             />
+            {requirementStatus("address_history") === "COMPLETE" ? (
+              <View style={s.completeBanner}>
+                <Text style={s.completeTitle}>✓ Address history complete</Text>
+                <Text style={s.note}>
+                  Your current address and the required {data.screeningPeriodYears || 5}-year period
+                  are covered. You do not need to add your current address again — edit an entry
+                  below only if something has changed.
+                </Text>
+              </View>
+            ) : null}
             <View style={s.list}>
               {[...(data.addresses || [])]
                 .sort((a, b) => Number(b.isCurrent) - Number(a.isCurrent))
@@ -591,7 +664,7 @@ export function GuardScreeningJourney({ onBack, scrollViewRef }: { onBack: () =>
               <Pressable accessibilityRole="checkbox" accessibilityState={{checked:address.isCurrent}} style={s.checkboxRow} onPress={() => setAddress({...address,isCurrent:!address.isCurrent,endDate:""})}>
                 <Text style={s.checkbox}>{address.isCurrent ? "☑" : "☐"}</Text><Text>I currently live at this address</Text>
               </Pressable>
-              <Action disabled={!canCorrectRecords || busy} label={editingAddressId?"Save address changes":"Save address"} onPress={() => {const payload={addressLine1:address.addressLine1,addressLine2:address.addressLine2||undefined,townCity:address.townCity,postcode:normalizeScreeningPostcode(address.postcode),startDate:screeningDateToIso(address.startDate),isCurrent:address.isCurrent,endDate:address.isCurrent?undefined:screeningDateToIso(address.endDate)};return act(() => editingAddressId?updateMyScreeningAddress(editingAddressId,payload):addMyScreeningAddress(payload), "Address history updated. The authoritative coverage check has been refreshed.", () => { setEditingAddressId(null); setAddress(emptyAddressForm()); setShowAddressForm(false); });}} />
+              <Action disabled={!canCorrectRecords || busy} label={editingAddressId?"Save address changes":"Save address"} onPress={() => act(() => {const payload={addressLine1:address.addressLine1,addressLine2:address.addressLine2||undefined,townCity:address.townCity,postcode:normalizeScreeningPostcode(address.postcode),startDate:screeningDateToIso(address.startDate),isCurrent:address.isCurrent,endDate:address.isCurrent?undefined:screeningDateToIso(address.endDate)};return editingAddressId?updateMyScreeningAddress(editingAddressId,payload):addMyScreeningAddress(payload);}, "Address history updated. The authoritative coverage check has been refreshed.", () => { setEditingAddressId(null); setAddress(emptyAddressForm()); setShowAddressForm(false); })} />
               <Action disabled={busy} label="Cancel" onPress={() => { setEditingAddressId(null); setAddress(emptyAddressForm()); setShowAddressForm(false); }} />
             </View> : null}
             <EvidencePicker
@@ -618,6 +691,15 @@ export function GuardScreeningJourney({ onBack, scrollViewRef }: { onBack: () =>
               start={data.requirements?.chronology.periodStart}
               end={data.requirements?.chronology.periodEnd}
             />
+            {requirementStatus("activity_history") === "COMPLETE" ? (
+              <View style={s.completeBanner}>
+                <Text style={s.completeTitle}>✓ Activity history complete</Text>
+                <Text style={s.note}>
+                  The required {data.screeningPeriodYears || 5}-year period is covered with no
+                  unexplained gaps. Add or edit an entry below only if something has changed.
+                </Text>
+              </View>
+            ) : null}
             <View style={s.timeline}>
               {(data.history || []).map((h) => (
                 <View key={h.id} style={s.timelineItem}>
@@ -700,19 +782,21 @@ export function GuardScreeningJourney({ onBack, scrollViewRef }: { onBack: () =>
             <Action
               disabled={!canCorrectRecords || busy}
               label={editingHistoryId?"Save activity changes":"Save activity"}
-              onPress={() => {
-                const payload = {
-                  ...history,
-                  startDate: screeningDateToIso(history.startDate),
-                  isCurrent: !history.endDate,
-                  endDate: history.endDate ? screeningDateToIso(history.endDate) : undefined,
-                };
-                return act(
-                  () => editingHistoryId ? updateMyScreeningHistory(editingHistoryId,payload) : addMyScreeningHistory(payload),
+              onPress={() =>
+                act(
+                  () => {
+                    const payload = {
+                      ...history,
+                      startDate: screeningDateToIso(history.startDate),
+                      isCurrent: !history.endDate,
+                      endDate: history.endDate ? screeningDateToIso(history.endDate) : undefined,
+                    };
+                    return editingHistoryId ? updateMyScreeningHistory(editingHistoryId,payload) : addMyScreeningHistory(payload);
+                  },
                   "Activity history updated. Authoritative gaps and overlaps have been refreshed.",
                   () => { setEditingHistoryId(null); setHistory(emptyActivityForm()); setShowHistoryForm(false); },
-                );
-              }}
+                )
+              }
             />
             <Action disabled={busy} label="Cancel" onPress={() => { setEditingHistoryId(null); setHistory(emptyActivityForm()); setShowHistoryForm(false); }} />
             </> : <Text style={s.meta}>Choose the activity type to continue.</Text>}
@@ -955,35 +1039,50 @@ export function GuardScreeningJourney({ onBack, scrollViewRef }: { onBack: () =>
               Submission sends your information to an authorised Platform Admin
               for review.
             </Text>
-            <Text style={s.meta}>
-              Current consent:{" "}
-              {data.consents?.some((x) => !x.withdrawnAt)
-                ? "Accepted"
-                : "Not accepted or withdrawn"}{" "}
-              · Version: S4-PILOT-1
-            </Text>
-            <Action
-              disabled={!canEdit || busy}
-              label="Accept consent & declaration"
-              onPress={() =>
-                act(
-                  () => acceptMyScreeningConsent(),
-                  "Consent accepted and server timestamp recorded.",
-                )
-              }
-            />
-            <Pressable
-              disabled={busy}
-              style={s.secondary}
-              onPress={() =>
-                act(
-                  () => withdrawMyScreeningConsent(),
-                  "Consent withdrawn. Your screening may require attention.",
-                )
-              }
-            >
-              <Text style={s.secondaryText}>Withdraw consent</Text>
-            </Pressable>
+            {(() => {
+              const current = (data.consents || []).filter((x) => !x.withdrawnAt).slice(-1)[0];
+              if (current)
+                return (
+                  <>
+                    <View style={s.completeBanner}>
+                      <Text style={s.completeTitle}>✓ Accepted</Text>
+                      <Text style={s.note}>
+                        You accepted this declaration
+                        {current.acceptedAt ? ` on ${dateLabel(String(current.acceptedAt).slice(0, 10))}` : ""}
+                        {current.consentVersion ? ` · Version ${current.consentVersion}` : ""}.
+                        You do not need to accept it again.
+                      </Text>
+                    </View>
+                    <Pressable
+                      disabled={busy}
+                      style={s.secondary}
+                      onPress={() =>
+                        act(
+                          () => withdrawMyScreeningConsent(),
+                          "Consent withdrawn. Your screening may require attention.",
+                        )
+                      }
+                    >
+                      <Text style={s.secondaryText}>Withdraw consent</Text>
+                    </Pressable>
+                  </>
+                );
+              return (
+                <>
+                  <Text style={s.meta}>Current consent: Not accepted or withdrawn</Text>
+                  <Action
+                    disabled={!canEdit || busy}
+                    label="Accept consent & declaration"
+                    onPress={() =>
+                      act(
+                        () => acceptMyScreeningConsent(),
+                        "Consent accepted and server timestamp recorded.",
+                      )
+                    }
+                  />
+                </>
+              );
+            })()}
           </>
         ) : null}
         {step === "review" ? (
@@ -1080,63 +1179,84 @@ function EvidencePicker({
   const [uploading, setUploading] = React.useState(false);
   const [uploadError,setUploadError]=React.useState("");
   const [uploadSuccess,setUploadSuccess]=React.useState("");
-  const choose = async () => {
-    const result = await DocumentPicker.getDocumentAsync({
-      type: ["application/pdf", "image/jpeg", "image/png"],
-      copyToCacheDirectory: true,
-      multiple: false,
-    });
-    if (result.canceled) return;
-    setAsset(result.assets[0]);
-    setUploadError("");
-    setUploadSuccess("");
-  };
-  const upload = async () => {
-    if (!asset) return;
+  const send = async (chosen: DocumentPicker.DocumentPickerAsset) => {
     setUploading(true);
     setUploadError("");
     setUploadSuccess("");
     try {
-      const uploadResult = await onUpload(asset);
+      const uploadResult = await onUpload(chosen);
       if (uploadResult === null) {
         setAsset(null);
         setUploadSuccess(successMessage ?? "Document uploaded successfully.");
       } else {
+        setAsset(chosen);
         setUploadError(uploadResult);
       }
     } finally {
       setUploading(false);
     }
   };
+  const choose = async () => {
+    let result: DocumentPicker.DocumentPickerResult;
+    try {
+      result = await DocumentPicker.getDocumentAsync({
+        type: ["application/pdf", "image/jpeg", "image/png"],
+        copyToCacheDirectory: true,
+        multiple: false,
+      });
+    } catch {
+      // The picker is a separate activity and can fail outright on some devices.
+      setUploadError("The document picker could not be opened. Please try again.");
+      return;
+    }
+    if (result.canceled) return;
+    const chosen = result.assets?.[0];
+    if (!chosen) {
+      setUploadError("No document was returned by the picker. Please try again.");
+      return;
+    }
+    setUploadError("");
+    setUploadSuccess("");
+    // Upload straight away. Choosing a document sends the app to the background, and anything held
+    // only in this component's state is gone by the time the picker returns, so a separate
+    // "Upload" tap can never be reached on Android.
+    await send(chosen);
+  };
+  const upload = async () => {
+    if (!asset) return;
+    await send(asset);
+  };
   return (
     <View style={s.picker}>
       <Text style={s.fieldLabel}>{label}</Text>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={label}
+        accessibilityLabel={uploadLabel||label}
         disabled={disabled || uploading}
-        style={[s.secondary, disabled && s.disabled]}
+        style={[s.button, (disabled || uploading) && s.disabled]}
         onPress={choose}
       >
-        <Text style={s.secondaryText}>Choose document</Text>
+        <Text style={s.buttonText}>{uploading ? "Uploading…" : uploadLabel||"Choose document"}</Text>
       </Pressable>
       {asset ? (
         <Text style={s.itemTitle}>{asset.name}</Text>
       ) : (
-        <Text style={s.meta}>No document selected.</Text>
+        <Text style={s.meta}>Choosing a document uploads it straight away.</Text>
       )}
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={uploadLabel||`Upload ${pretty(category)} document`}
-        disabled={disabled || uploading || !asset}
-        style={[s.button, (disabled || uploading || !asset) && s.disabled]}
-        onPress={upload}
-      >
-        <Text style={s.buttonText}>{uploading ? "Uploading…" : uploadLabel||"Upload document"}</Text>
-      </Pressable>
+      {asset && !uploading ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Retry upload of ${pretty(category)} document`}
+          disabled={disabled}
+          style={[s.secondary, disabled && s.disabled]}
+          onPress={upload}
+        >
+          <Text style={s.secondaryText}>Retry upload</Text>
+        </Pressable>
+      ) : null}
       {uploadSuccess?<Text accessibilityRole="alert" style={s.pickerSuccess}>{uploadSuccess}</Text>:null}
-      {uploadError?<Text style={s.meta}>Upload failed. The selected document has been kept</Text>:null}
-      {uploadError?<Text style={s.error}>{uploadError}</Text>:null}
+      {uploadError?<Text style={s.meta}>The selected document has been kept so you can retry.</Text>:null}
+      {uploadError?<Text accessibilityRole="alert" style={s.error}>{uploadError}</Text>:null}
       <Text style={s.meta}>Private upload category: {pretty(category)}</Text>
     </View>
   );
@@ -1405,6 +1525,22 @@ const s = StyleSheet.create({
   stepNumber: { fontWeight: "900", color: colors.accentTealStrong },
   stepText: { fontWeight: "700", color: colors.textPrimary, marginTop: 3 },
   stepTextActive: { color: colors.textOnBrand },
+  // Completed steps are marked with a green tick on a quiet tinted card — green is the
+  // operational success colour; teal stays reserved for brand/primary actions.
+  completeBanner: {
+    borderWidth: 1,
+    borderColor: colors.successBorder,
+    backgroundColor: colors.successSurface,
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 10,
+    marginBottom: 4,
+    gap: 3,
+  },
+  completeTitle: { fontWeight: "900", color: colors.success },
+  stepDone: { borderColor: colors.successBorder, backgroundColor: colors.successSurface },
+  stepNumberDone: { color: colors.success },
+  stepPending: { fontSize: 11, fontWeight: "700", color: colors.textMuted, marginTop: 2 },
   stage: {
     backgroundColor: colors.card,
     borderWidth: 1,
