@@ -3,7 +3,7 @@
     "name": "S4 Security",
     "description": "Staff. Sites. Shifts. Security.",
     "slug": "security-marketplace",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "scheme": "securitymarketplace",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
@@ -34,7 +34,7 @@
     },
     "android": {
       "softwareKeyboardLayoutMode": "resize",
-      "versionCode": 3,
+      "versionCode": 4,
       "package": "com.securitymarketplace.mobile",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",

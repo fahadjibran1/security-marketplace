@@ -135,12 +135,59 @@ test('NINO-FORMAT-LOWERCASE',()=>assert.equal(ninoFmt('qq123456c'),'QQ 12 34 56 
 test('NINO-FORMAT-ALREADY-SPACED',()=>assert.equal(ninoFmt('QQ 12 34 56 C'),'QQ 12 34 56 C'));
 test('NINO-FORMAT-PARTIAL',()=>{assert.equal(ninoFmt('Q'),'Q');assert.equal(ninoFmt('QQ12'),'QQ 12')});
 test('NINO-FORMAT-STRIPS-JUNK',()=>assert.equal(ninoFmt('qq-12/34.56 c'),'QQ 12 34 56 C'));
-test('NINO-EXAMPLE-IS-NEUTRAL',()=>{assert.match(guard,/QQ 12 34 56 C/);const ph=guard.split('placeholder="e.g. ')[1].split('"')[0];assert.equal(ph,'QQ 12 34 56 C')});
+test('NINO-EXAMPLE-IS-NEUTRAL-AND-VALID',()=>{const ninoBlock=guard.split('National Insurance Number')[1].split('maxLength={13}')[0];const ph=ninoBlock.split('placeholder="')[1].split('"')[0];assert.equal(ph,'Example: AB 12 34 56 C');assert.doesNotMatch(ph,/QQ/,'the example must not use an unissuable prefix');assert.equal(ninoFn(ph.replace('Example: ','')),true,'a Guard who types the example verbatim must be accepted')});
 test('NINO-COPY-IS-PLAIN-ENGLISH',()=>{const copy=guard.split('setNinoInputError(')[1].split(');')[0];assert.match(copy,/HMRC letter, payslip or P60/);assert.match(copy,/2 letters, 6 numbers/);assert.match(copy,/A, B, C or D/)});
 test('NINO-PREFIX-VARIETY',()=>{for(const n of ['AB123456A','JR501234D','SW123456B','EH123456C','ZY123456A','KL123456D'])assert.equal(ninoFn(n),true,n+' should be valid')});
 test('NINO-EXAMPLE-PREFIX-IS-UNISSUABLE',()=>{assert.equal(ninoFn('QQ123456C'),false,'QQ is deliberately never issued by HMRC, which is why it is safe as an example');for(const letter of ['D','F','I','Q','U','V'])assert.equal(ninoFn(letter+'A123456C'),false,letter+' must never be accepted as a first letter')});
 test('NINO-PREFIX-RESTRICTIONS-KEPT',()=>{for(const n of ['BG123456A','GB123456A','NK123456A','KN123456A','TN123456A','NT123456A','ZZ123456A'])assert.equal(ninoFn(n),false,n+' prefix must stay rejected')});
 test('NINO-SUFFIX-ONLY-ABCD',()=>{for(const ok of ['AB123456A','AB123456B','AB123456C','AB123456D'])assert.equal(ninoFn(ok),true,ok);for(const bad of ['AB123456E','AB123456X','AB123456Z','AB1234561'])assert.equal(ninoFn(bad),false,bad)});
 test('NINO-FORMATTER-NEVER-VALIDATES',()=>{const fn=guard.split('function formatNinoInput')[1].split('\n  }')[0];assert.doesNotMatch(fn,/A-CEGHJ|BG|test\(/,'formatter must not duplicate the authoritative rule')});
+
+
+// ── Round 3: screening continuity across Android background / foreground ─────────────────────
+// The journey keeps step and unsaved form input in component state, so ANY unmount of the
+// dashboard subtree silently discards them. These lock the mount down.
+test('CONTINUITY-LOADING-GATE-IS-FIRST-LOAD-ONLY',()=>{
+  const gate=guard.split('if (loading &&')[1].split('}')[0];
+  assert.match(gate,/!hasLoadedOnceRef\.current/,'refreshes must not replace the mounted tree');
+  assert.match(guard,/hasLoadedOnceRef\.current = true;/,'the flag must be set once a load settles');
+  const fin=guard.split('async function loadData')[1].split('async function handlePullRefresh')[0].split('} finally {')[1];
+  assert.ok(fin.indexOf('hasLoadedOnceRef.current = true')<fin.indexOf('setLoading(false)'),'flag must be set before loading clears, or the gate can still fire for one render');
+});
+test('CONTINUITY-SINGLE-EARLY-RETURN',()=>{
+  const panels=guard.match(/return <StatePanel/g)||[];
+  assert.ok(guard.indexOf('hasLoadedOnceRef.current && shifts.length === 0')<guard.indexOf('return <StatePanel'),'the only full-screen return must sit behind the first-load guard');
+  assert.equal(panels.length,1,'a second full-screen early return would reintroduce the remount');
+});
+test('CONTINUITY-PICKER-RETURN-KEEPS-SECTION',()=>{
+  assert.equal((panel.match(/setStep\(/g)||[]).length,1,'step may only change through navigateToStep');
+  const nav=panel.split('const navigateToStep')[1].split('};')[0];
+  assert.match(nav,/setStep\(next\)/);
+  const choose=panel.split('const choose = async ()')[1].split('const upload = async ()')[0];
+  assert.doesNotMatch(choose,/setStep|navigateToStep/,'choosing a document must never move the Guard off the section');
+});
+test('CONTINUITY-UPLOAD-REFRESHES-IMMEDIATELY',()=>{
+  const fn=panel.split('const uploadAct = async')[1].split('};')[0];
+  assert.ok(fn.indexOf('await fn()')<fn.indexOf('await load()'),'refresh must follow the upload');
+  assert.match(fn,/await load\(\)/,'state must come back from getMyScreening(), not be assumed');
+  const load=panel.split('const load = React.useCallback')[1].split('React.useEffect')[0];
+  assert.match(load,/getMyScreening\(\)/);
+});
+test('CONTINUITY-BACKGROUND-KEEPS-STEP',()=>{
+  const h=guard.split('function handleAppStateChange')[1].split('\n    }')[0];
+  assert.match(h,/loadData\(\)/,'foreground still refreshes');
+  assert.doesNotMatch(h,/setActiveTab|setStep/,'a foreground refresh must not renavigate');
+});
+test('CONTINUITY-BACKGROUND-KEEPS-UNSAVED-FORMS',()=>{
+  const load=panel.split('const load = React.useCallback')[1].split('React.useEffect')[0];
+  assert.doesNotMatch(load,/setAddress|setHistory|setStep/,'a refresh must not overwrite what the Guard is typing');
+  for(const setter of ['setAddress(emptyAddressForm())','setHistory(emptyActivityForm())'])
+    assert.ok(panel.includes(setter),'forms are still cleared explicitly on save/cancel');
+});
+test('CONTINUITY-PERSISTED-STATE-RELOADS-ON-REMOUNT',()=>{
+  const eff=panel.split('React.useEffect(() => {')[1].split('}',2).join('}');
+  assert.match(panel,/React\.useEffect\(\(\) => \{[\s\S]{0,80}load\(\)/,'a fresh mount must reload from the backend');
+  assert.doesNotMatch(panel,/AsyncStorage|SecureStore|localStorage/,'no invented persistence for unsaved sensitive form data');
+});
 
 console.log(JSON.stringify({event:'screening_ux_tests_passed',tests:passed}));

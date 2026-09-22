@@ -487,6 +487,8 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const screeningScrollRef = useRef<any>(null);
   const lastLoadTimeRef = useRef<number>(0);
+  // True once the first load has settled, so later refreshes never replace the mounted tree.
+  const hasLoadedOnceRef = useRef(false);
 
   // Every tab shares one ScrollView, so without an explicit reset a tab opens at the previous
   // tab's scroll offset — which reads as "the tab did nothing". Screening is a sub-view of
@@ -1124,6 +1126,7 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
       const message = formatApiErrorMessage(error, 'Failed to load guard dashboard.');
       setLoadError(message);
     } finally {
+      hasLoadedOnceRef.current = true;
       setLoading(false);
       setRefreshing(false);
     }
@@ -1667,7 +1670,12 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
   const historySummaryAttendance = historySummaryShift?.id ? attendanceByShiftId[historySummaryShift.id] : undefined;
   const historySummaryTimesheet = timesheets.find((timesheet) => timesheet.shiftId === historySummaryShift?.id) || null;
 
-  if (loading && shifts.length === 0) {
+  // Only the very first load may replace the whole screen. Every later refresh — notably the one
+  // AppState fires when Android brings the app back from the document picker — must re-render in
+  // place. Swapping the tree out unmounts the screening journey and silently discards the step the
+  // Guard was on and anything they had typed. A Guard still completing screening has no shifts, so
+  // `shifts.length === 0` stays true for them and this gate would otherwise fire on every refresh.
+  if (loading && !hasLoadedOnceRef.current && shifts.length === 0) {
     return <StatePanel title="Loading your workspace" message="Preparing your shift, attendance and compliance data." tone="info" loading />;
   }
 
@@ -2204,7 +2212,7 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
                       <View>
                         <TextInput
                           style={[styles.input, styles.guardProfileInput]}
-                          placeholder="e.g. QQ 12 34 56 C"
+                          placeholder="Example: AB 12 34 56 C"
                           value={ninoInput}
                           // Spacing is presentation only. The Guard can type or paste it compact,
                           // spaced or in lowercase; this groups it as they go and the value is
@@ -2212,7 +2220,7 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
                           onChangeText={(t: string) => { setNinoInput(formatNinoInput(t)); setNinoInputError(''); }}
                           autoCapitalize="characters"
                           autoCorrect={false}
-                          // "QQ 12 34 56 C" is 13 characters once grouped.
+                          // A grouped NINO is 13 characters: "AB 12 34 56 C".
                           maxLength={13}
                           autoFocus
                         />
