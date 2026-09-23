@@ -1673,7 +1673,9 @@ export interface GuardScreening {
   history?: Array<{id:number;type:string;startDate:string;endDate?:string|null;isCurrent:boolean;organisation?:string;description?:string;verificationState?:string}>;
   addresses?: Array<{id:number;address:string;addressLine1?:string|null;addressLine2?:string|null;townCity?:string|null;postcode?:string|null;startDate:string;endDate?:string|null;isCurrent:boolean;verificationState:string}>;
   references?: Array<{id:number;history?:{id:number;type?:string;organisation?:string;startDate?:string;endDate?:string|null;isCurrent?:boolean};historyId?:number;organisation:string;contactPerson?:string;relationship?:string;businessEmail?:string;phone?:string|null;postalDetails?:string|null;status:string;sourceVerified:boolean;requestedAt?:string|null;receivedAt?:string|null;verificationMethod?:string|null;verifiedAt?:string|null}>;
-  evidence?: Array<{id:number;category:string;mimeType:string;sizeBytes:number;uploadCompleted:boolean;verificationState:string}>;
+  // originalFileName/uploadedAt/verifiedAt are returned to authorised reviewers only; storage
+  // keys and signed URLs are never part of either projection.
+  evidence?: Array<{id:number;category:string;mimeType:string;sizeBytes:number;uploadCompleted:boolean;verificationState:string;originalFileName?:string;uploadedAt?:string;verifiedAt?:string|null;verifiedByUserId?:number|null}>;
   consents?: Array<{id:number;consentVersion:string;acceptedAt:string;withdrawnAt?:string|null}>;
 }
 

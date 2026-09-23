@@ -1,4 +1,4 @@
-import React from "react";
+import React, { PropsWithChildren } from "react";
 import {
   Alert,
   Platform,
@@ -75,15 +75,23 @@ const pretty = (value?: string) =>
         .replace(/^./, (x) => x.toUpperCase())
     : "Not supplied";
 const dateLabel = formatScreeningDate;
+/**
+ * Candidate-facing wording for the backend HistoryType enum. The enum values are the contract and
+ * are never changed here — only how they read to a Guard, who is accounting for their life rather
+ * than filling in an employment record. Screening requires continuous *explainable activity*, not
+ * continuous employment.
+ */
 const HISTORY_TYPES = [
-  ["EMPLOYMENT", "Employment"],
-  ["SELF_EMPLOYMENT", "Self-employment"],
-  ["EDUCATION", "Education"],
-  ["UNEMPLOYMENT", "Unemployment"],
-  ["CAREER_BREAK", "Career break"],
-  ["OVERSEAS", "Overseas period"],
+  ["EMPLOYMENT", "Employed"],
+  ["SELF_EMPLOYMENT", "Self-employed"],
+  ["EDUCATION", "Education / training"],
+  ["UNEMPLOYMENT", "Unemployed / looking for work"],
+  ["CAREER_BREAK", "Career break / caring responsibilities"],
+  ["OVERSEAS", "Overseas"],
   ["OTHER_EXPLAINED_PERIOD", "Other explained period"],
 ] as const;
+const historyTypeLabel = (type?: string | null) =>
+  HISTORY_TYPES.find(([value]) => value === type)?.[1] || pretty(type || "");
 const activityOrganisationLabel = (type: string) =>
   ({
     EMPLOYMENT: "Employer / organisation",
@@ -94,8 +102,15 @@ const activityOrganisationLabel = (type: string) =>
     OVERSEAS: "Organisation / explanation",
     OTHER_EXPLAINED_PERIOD: "Organisation / explanation",
   })[type] || "Organisation / explanation";
+const profileFromScreening = (d?: GuardScreening | null) => ({
+  legalFullName: d?.legalFullName || "",
+  previousNames: d?.previousNames || "",
+  dateOfBirth: d?.dateOfBirth ? formatScreeningDate(d.dateOfBirth) : "",
+  nationality: d?.nationality || "",
+  siaLicenceType: d?.siaLicenceType || "",
+});
 const emptyAddressForm = () => ({ addressLine1: "", addressLine2: "", townCity: "", postcode: "", startDate: "", endDate: "", isCurrent: false });
-const emptyActivityForm = () => ({ type: "", startDate: "", endDate: "", organisation: "", description: "" });
+const emptyActivityForm = () => ({ type: "", startDate: "", endDate: "", organisation: "", description: "", isCurrent: false });
 const emptyReferenceForm = () => ({ historyId: "", organisation: "", contactPerson: "", relationship: "", businessEmail: "", phone: "" });
 const confirmDelete = (label:string) => Platform.OS === 'web'
   ? Promise.resolve(globalThis.confirm(`Delete this ${label}? The server will recalculate screening coverage.`))
@@ -215,6 +230,12 @@ export function GuardScreeningJourney({ onBack, scrollViewRef }: { onBack: () =>
   const [editingAddressId, setEditingAddressId] = React.useState<number | null>(null);
   const [editingHistoryId, setEditingHistoryId] = React.useState<number | null>(null);
   const [compliance, setCompliance] = React.useState({siaLicenseNumber:"",siaExpiryDate:"",rightToWorkStatus:"",rightToWorkExpiryDate:""});
+  const [editingPersonal, setEditingPersonal] = React.useState(false);
+  const [replacingIdentity, setReplacingIdentity] = React.useState(false);
+  const [editingAddresses, setEditingAddresses] = React.useState(false);
+  const [editingActivity, setEditingActivity] = React.useState(false);
+  const [editingReferences, setEditingReferences] = React.useState(false);
+  const [editingChecks, setEditingChecks] = React.useState(false);
   const [showAddressForm, setShowAddressForm] = React.useState(false);
   const [showHistoryForm, setShowHistoryForm] = React.useState(false);
   const [reference, setReference] = React.useState(emptyReferenceForm());
@@ -355,6 +376,18 @@ export function GuardScreeningJourney({ onBack, scrollViewRef }: { onBack: () =>
   // The backend requires exactly one completed upload per evidence category; reviewer verification
   // is a separate step that does not block submission. Once something is uploaded the section is
   // informational, so the upload control stops being the primary action.
+  /** Most recent completed upload in a category — what the summary describes. */
+  const latestEvidence = (category: string) =>
+    [...(data?.evidence || [])].filter((e) => e.category === category && e.uploadCompleted).slice(-1)[0];
+  const evidenceSummaryRows = (category: string): Array<[string, string | null | undefined]> => {
+    const e = latestEvidence(category);
+    if (!e) return [];
+    return [
+      ["Document", e.originalFileName || pretty(e.mimeType)],
+      ["Size", e.sizeBytes ? `${Math.ceil(e.sizeBytes / 1024)} KB` : null],
+      ["Reviewer", verificationLabel(e.verificationState)],
+    ];
+  };
   const evidenceSettled = (category: string) => {
     const status = requirementStatus(`${category}_evidence`);
     return status === "AWAITING_VERIFICATION" || status === "VERIFIED";
@@ -526,7 +559,19 @@ export function GuardScreeningJourney({ onBack, scrollViewRef }: { onBack: () =>
           {stageHelp(step, data.screeningPeriodYears || 5)}
         </Text>
         {step === "personal" ? (
-          <>
+          <SectionSummary
+            status={requirementStatus("personal")}
+            title="Personal details"
+            rows={[
+              ["Name", data.legalFullName],
+              ["Date of birth", data.dateOfBirth ? dateLabel(data.dateOfBirth) : null],
+              ["Nationality", data.nationality],
+              ["SIA licence type", data.siaLicenceType],
+            ]}
+            editLabel="Edit details"
+            editing={editingPersonal}
+            onEdit={() => setEditingPersonal(true)}
+          >
             <Field
               label="Legal full name"
               value={profile.legalFullName}
@@ -563,13 +608,31 @@ export function GuardScreeningJourney({ onBack, scrollViewRef }: { onBack: () =>
                       dateOfBirth: screeningDateToIso(profile.dateOfBirth),
                     }),
                   "Personal details saved.",
+                  () => setEditingPersonal(false),
                 )
               }
             />
-          </>
+            {requirementStatus("personal") === "COMPLETE" ? (
+              <Action
+                disabled={busy}
+                variant="secondary"
+                label="Cancel"
+                // Cancel is presentation only — nothing persisted has been touched.
+                onPress={() => { setProfile(profileFromScreening(data)); setEditingPersonal(false); }}
+              />
+            ) : null}
+          </SectionSummary>
         ) : null}
         {step === "identity" ? (
-          <>
+          <SectionSummary
+            status={requirementStatus("identity_evidence")}
+            title="Identity evidence"
+            rows={evidenceSummaryRows("identity")}
+            note="One identity document is all that is required."
+            editLabel="Replace document"
+            editing={replacingIdentity}
+            onEdit={() => setReplacingIdentity(true)}
+          >
             <StatusCards
               items={[
                 [
@@ -604,14 +667,45 @@ export function GuardScreeningJourney({ onBack, scrollViewRef }: { onBack: () =>
               disabled={!canUploadEvidence("identity") || busy}
               onUpload={(asset) =>
                 uploadAct(
-                  () => uploadEvidence("identity", asset),
+                  () => uploadEvidence("identity", asset).then(() => setReplacingIdentity(false)),
                 )
               }
             />
-          </>
+          </SectionSummary>
         ) : null}
         {step === "addresses" ? (
-          <>
+          <SectionSummary
+            status={requirementStatus("address_history")}
+            title="Address history"
+            rows={[]}
+            note={`Your current address and the required ${data.screeningPeriodYears || 5}-year period are covered.`}
+            editLabel="Edit history"
+            editing={editingAddresses}
+            onEdit={() => setEditingAddresses(true)}
+            summaryBody={
+              <View style={s.list}>
+                {[...(data.addresses || [])]
+                  .sort((a, b) => Number(b.isCurrent) - Number(a.isCurrent))
+                  .map((a) => (
+                    <View key={a.id} style={s.item}>
+                      <Text style={s.itemTitle}>{a.isCurrent ? "Current address" : "Previous address"}</Text>
+                      <Text>{[a.addressLine1 || a.address, a.townCity, a.postcode].filter(Boolean).join(", ")}</Text>
+                      <Text style={s.meta}>{dateLabel(a.startDate)} – {a.isCurrent ? "Present" : dateLabel(a.endDate)}</Text>
+                    </View>
+                  ))}
+                {/* Evidence sits with the chronology it proves, not in a separate block. */}
+                {evidenceSummaryRows("address").length ? (
+                  <View style={s.item}>
+                    <Text style={s.itemTitle}>Address evidence</Text>
+                    <Text style={s.meta}>
+                      {latestEvidence("address")?.originalFileName || "Document uploaded"} ·{" "}
+                      {verificationLabel(latestEvidence("address")?.verificationState)}
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
+            }
+          >
             <PeriodGuidance
               text={`Please provide your complete address history for the last ${data.screeningPeriodYears || 5} years. There must be no unexplained gaps between addresses.`}
               start={data.requirements?.addressChronology?.periodStart}
@@ -706,10 +800,34 @@ export function GuardScreeningJourney({ onBack, scrollViewRef }: { onBack: () =>
               Only an authorised reviewer can verify an address. Incomplete
               five-year coverage blocks submission.
             </Text>
-          </>
+            {editingAddresses ? (
+              <Action disabled={busy} variant="secondary" label="Done editing" onPress={() => setEditingAddresses(false)} />
+            ) : null}
+          </SectionSummary>
         ) : null}
         {step === "history" ? (
-          <>
+          <SectionSummary
+            status={requirementStatus("activity_history")}
+            title="Activity history"
+            rows={[]}
+            note={`The required ${data.screeningPeriodYears || 5}-year period is covered with no unexplained gaps.`}
+            editLabel="Edit history"
+            editing={editingActivity}
+            onEdit={() => setEditingActivity(true)}
+            summaryBody={
+              <View style={s.list}>
+                {[...(data.history || [])]
+                  .sort((a, b) => a.startDate.localeCompare(b.startDate))
+                  .map((h) => (
+                    <View key={h.id} style={s.item}>
+                      <Text style={s.itemTitle}>{historyTypeLabel(h.type)}</Text>
+                      {h.organisation ? <Text>{h.organisation}</Text> : null}
+                      <Text style={s.meta}>{dateLabel(h.startDate)} – {h.isCurrent ? "Present" : dateLabel(h.endDate)}</Text>
+                    </View>
+                  ))}
+              </View>
+            }
+          >
             <PeriodGuidance
               text={`Please account for your complete employment, education and activity history for the last ${data.screeningPeriodYears || 5} years. There must be no unexplained gaps.`}
               start={data.requirements?.chronology.periodStart}
@@ -735,7 +853,7 @@ export function GuardScreeningJourney({ onBack, scrollViewRef }: { onBack: () =>
                       {dateLabel(h.startDate)} – {dateLabel(h.endDate)}
                     </Text>
                     {canCorrectRecords ? <View style={s.inlineActions}>
-                      <Pressable accessibilityRole="button" style={s.smallButton} onPress={() => {setEditingHistoryId(h.id);setHistory({type:h.type,startDate:dateLabel(h.startDate),endDate:h.endDate?dateLabel(h.endDate):"",organisation:h.organisation||"",description:h.description||""});setShowHistoryForm(true);}}><Text style={s.smallButtonText}>Edit</Text></Pressable>
+                      <Pressable accessibilityRole="button" style={s.smallButton} onPress={() => {setEditingHistoryId(h.id);setHistory({type:h.type,startDate:dateLabel(h.startDate),endDate:h.endDate?dateLabel(h.endDate):"",organisation:h.organisation||"",description:h.description||"",isCurrent:!!h.isCurrent});setShowHistoryForm(true);}}><Text style={s.smallButtonText}>Edit</Text></Pressable>
                       <Pressable accessibilityRole="button" style={s.deleteButton} onPress={async () => {if(await confirmDelete('activity'))await act(() => deleteMyScreeningHistory(h.id),"Activity deleted. Authoritative gaps and overlaps have been refreshed.",() => {if(editingHistoryId===h.id){setEditingHistoryId(null);setShowHistoryForm(false);setHistory(emptyActivityForm());}});}}><Text style={s.deleteButtonText}>Delete</Text></Pressable>
                     </View> : null}
                   </View>
@@ -793,11 +911,29 @@ export function GuardScreeningJourney({ onBack, scrollViewRef }: { onBack: () =>
               value={history.startDate}
               set={(v) => setHistory({ ...history, startDate: v })}
             />
-            <Field
-              label="End date (DD/MM/YYYY, leave blank if present)"
-              value={history.endDate}
-              set={(v) => setHistory({ ...history, endDate: v })}
-            />
+            {/*
+              An explicit ongoing control, matching "I currently live at this address". Without it
+              the only way to say "still happening" was to leave the end date blank, so a Guard who
+              sensibly typed today's date had a record that went stale overnight and reopened a
+              one-day gap every morning. Ticking this stores the open-ended representation the
+              backend already has (isCurrent + null endDate) — no fabricated future dates.
+            */}
+            <Pressable
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: history.isCurrent }}
+              style={s.checkboxRow}
+              onPress={() => setHistory({ ...history, isCurrent: !history.isCurrent, endDate: "" })}
+            >
+              <Text style={s.checkbox}>{history.isCurrent ? "☑" : "☐"}</Text>
+              <Text>I am still doing this</Text>
+            </Pressable>
+            {!history.isCurrent ? (
+              <Field
+                label="End date (DD/MM/YYYY)"
+                value={history.endDate}
+                set={(v) => setHistory({ ...history, endDate: v })}
+              />
+            ) : null}
             <Field
               label="Details"
               value={history.description}
@@ -812,8 +948,8 @@ export function GuardScreeningJourney({ onBack, scrollViewRef }: { onBack: () =>
                     const payload = {
                       ...history,
                       startDate: screeningDateToIso(history.startDate),
-                      isCurrent: !history.endDate,
-                      endDate: history.endDate ? screeningDateToIso(history.endDate) : undefined,
+                      isCurrent: history.isCurrent,
+                      endDate: history.isCurrent ? undefined : screeningDateToIso(history.endDate),
                     };
                     return editingHistoryId ? updateMyScreeningHistory(editingHistoryId,payload) : addMyScreeningHistory(payload);
                   },
@@ -825,10 +961,36 @@ export function GuardScreeningJourney({ onBack, scrollViewRef }: { onBack: () =>
             <Action disabled={busy} label="Cancel" onPress={() => { setEditingHistoryId(null); setHistory(emptyActivityForm()); setShowHistoryForm(false); }} />
             </> : <Text style={s.meta}>Choose the activity type to continue.</Text>}
             </View> : null}
-          </>
+            {editingActivity ? (
+              <Action disabled={busy} variant="secondary" label="Done editing" onPress={() => setEditingActivity(false)} />
+            ) : null}
+          </SectionSummary>
         ) : null}
         {step === "references" ? (
-          <>
+          <SectionSummary
+            status={requirementStatus("reference")}
+            title="References"
+            rows={[]}
+            note="At least one reference is required. It does not have to cover every activity period."
+            editLabel="Edit references"
+            editing={editingReferences}
+            onEdit={() => setEditingReferences(true)}
+            summaryBody={
+              <View style={s.list}>
+                {(data.references || []).map((r) => (
+                  <View key={r.id} style={s.item}>
+                    <Text style={s.itemTitle}>{r.contactPerson || "Referee"}</Text>
+                    <Text>{r.organisation}{r.relationship ? ` · ${r.relationship}` : ""}</Text>
+                    <Text style={s.meta}>
+                      Covers: {historyTypeLabel(r.history?.type)}
+                      {r.history?.startDate ? ` · ${dateLabel(r.history.startDate)} – ${r.history?.isCurrent ? "Present" : dateLabel(r.history?.endDate)}` : ""}
+                    </Text>
+                    <Text style={s.meta}>Status: {pretty(r.status)}</Text>
+                  </View>
+                ))}
+              </View>
+            }
+          >
             <Text style={s.note}>Provide someone or an organisation that can confirm a period of your activity history. S4 or an authorised reviewer may contact them. Adding contact details does not verify the reference.</Text>
             <View style={s.list}>
               {(data.references || []).map((r) => (
@@ -968,10 +1130,29 @@ export function GuardScreeningJourney({ onBack, scrollViewRef }: { onBack: () =>
               The selector contains only activity records returned for your
               screening file. The backend ownership check remains authoritative.
             </Text>
-          </>
+            {editingReferences ? (
+              <Action disabled={busy} variant="secondary" label="Done editing" onPress={() => setEditingReferences(false)} />
+            ) : null}
+          </SectionSummary>
         ) : null}
         {step === "checks" ? (
-          <>
+          <SectionSummary
+            status={sectionStatus("checks")}
+            title="SIA & Right to Work"
+            rows={[
+              ["SIA licence", guard?.siaLicenseNumber || guard?.siaLicenceNumber],
+              ["SIA expiry", guard?.siaExpiryDate ? dateLabel(guard.siaExpiryDate) : null],
+              ["SIA document", latestEvidence("sia")?.originalFileName || (evidenceSettled("sia") ? "Uploaded" : null)],
+              ["SIA check", verificationLabel(data.siaRegisterVerification)],
+              ["Right to Work", guard?.rightToWorkStatus],
+              ["Right to Work expiry", guard?.rightToWorkExpiryDate ? dateLabel(guard.rightToWorkExpiryDate) : null],
+              ["Right to Work document", latestEvidence("right_to_work")?.originalFileName || (evidenceSettled("right_to_work") ? "Uploaded" : null)],
+              ["Right to Work check", verificationLabel(data.rightToWorkVerification)],
+            ]}
+            editLabel="Edit details"
+            editing={editingChecks}
+            onEdit={() => setEditingChecks(true)}
+          >
             <Text style={s.sectionHeading}>Candidate compliance information</Text>
             <Text style={s.note}>This is the authoritative place to maintain your SIA and Right to Work information. Uploading evidence does not verify it.</Text>
             <Field label="SIA licence number (16 digits)" value={compliance.siaLicenseNumber} set={(v) => setCompliance({...compliance,siaLicenseNumber:v})} />
@@ -1067,10 +1248,16 @@ export function GuardScreeningJourney({ onBack, scrollViewRef }: { onBack: () =>
                 )
               }
             />
-          </>
+            {editingChecks ? (
+              <Action disabled={busy} variant="secondary" label="Done editing" onPress={() => setEditingChecks(false)} />
+            ) : null}
+          </SectionSummary>
         ) : null}
         {step === "evidence" ? (
           <>
+            {!(data.evidence || []).length ? (
+              <Text style={s.note}>No additional evidence has been requested.</Text>
+            ) : null}
             <View style={s.list}>
               {(data.evidence || []).map((e) => (
                 <View key={e.id} style={s.item}>
@@ -1343,6 +1530,70 @@ function EvidencePicker({
     </View>
   );
 }
+/**
+ * The completed-state contract for every screening section.
+ *
+ * A satisfied requirement must stop looking like an unfinished form: the summary IS the section,
+ * and the form only appears when the Guard explicitly asks to edit (or when the backend says
+ * something is genuinely missing). `status` comes from requirements.remediation — there is no
+ * second completion model on the client.
+ */
+function SectionSummary({
+  status,
+  title,
+  rows,
+  note,
+  editLabel = "Edit",
+  onEdit,
+  editing,
+  children,
+  extraAction,
+  summaryBody,
+}: {
+  status: "ACTION_REQUIRED" | "AWAITING_VERIFICATION" | "COMPLETE" | "VERIFIED" | null;
+  title: string;
+  /** Compact read-only facts. Falsy values are dropped so empty rows never render. */
+  rows: Array<[string, string | null | undefined]>;
+  note?: string;
+  editLabel?: string;
+  onEdit?: () => void;
+  /** When true the caller's form (children) is shown instead of the summary. */
+  editing?: boolean;
+  children?: PropsWithChildren<unknown>["children"];
+  extraAction?: PropsWithChildren<unknown>["children"];
+  /** For sections whose summary is a timeline/list rather than label-value rows. */
+  summaryBody?: PropsWithChildren<unknown>["children"];
+}) {
+  const settled = status === "COMPLETE" || status === "VERIFIED" || status === "AWAITING_VERIFICATION";
+  // Not satisfied, or the Guard chose to edit: the form is the section.
+  if (!settled || editing) return <>{children}</>;
+
+  const headline =
+    status === "VERIFIED" ? `✓ ${title} — verified`
+      : status === "COMPLETE" ? `✓ ${title}`
+        : `✓ ${title} — awaiting verification`;
+
+  return (
+    <View style={status === "AWAITING_VERIFICATION" ? s.awaitingBanner : s.completeBanner}>
+      <Text style={status === "AWAITING_VERIFICATION" ? s.awaitingTitle : s.completeTitle}>{headline}</Text>
+      {summaryBody}
+      {rows.filter(([, value]) => !!value).map(([label, value]) => (
+        <Text key={label} style={s.summaryLine}>
+          <Text style={s.summaryLabel}>{label}: </Text>
+          {value}
+        </Text>
+      ))}
+      {note ? <Text style={s.note}>{note}</Text> : null}
+      {onEdit ? (
+        <Pressable accessibilityRole="button" style={s.secondary} onPress={onEdit}>
+          <Text style={s.secondaryText}>{editLabel}</Text>
+        </Pressable>
+      ) : null}
+      {extraAction}
+    </View>
+  );
+}
+
 /**
  * One presentation for every section state, so a satisfied requirement always reads as
  * information rather than as another job to do. COMPLETE/VERIFIED are green, AWAITING_VERIFICATION
@@ -1695,6 +1946,8 @@ const s = StyleSheet.create({
     gap: 3,
   },
   completeTitle: { fontWeight: "900", color: colors.success },
+  summaryLine: { color: colors.textPrimary, marginTop: 2 },
+  summaryLabel: { fontWeight: "700", color: colors.textMuted },
   awaitingBanner: {
     borderWidth: 1,
     borderColor: colors.border,

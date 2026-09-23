@@ -190,4 +190,99 @@ test('CONTINUITY-PERSISTED-STATE-RELOADS-ON-REMOUNT',()=>{
   assert.doesNotMatch(panel,/AsyncStorage|SecureStore|localStorage/,'no invented persistence for unsaved sensitive form data');
 });
 
+
+// ── Round 3: completed-state summaries, ongoing activity, admin reviewer workspace ────────────
+const admin2=read('src/screens/AdminDashboardScreen.tsx');
+const summaryFor=(step)=>panel.split('{step === "'+step+'" ?')[1].split('<SectionSummary')[1];
+
+test('GUARD-SECTION-SUMMARY-COMPONENT',()=>{
+  const comp=panel.split('function SectionSummary(')[1].split('function SectionState(')[0];
+  // The contract: when satisfied and not editing, the form is NOT rendered at all.
+  assert.match(comp,/if \(!settled \|\| editing\) return <>\{children\}<\/>;/,'the form must be replaced, not decorated');
+  assert.match(comp,/status === "COMPLETE" \|\| status === "VERIFIED" \|\| status === "AWAITING_VERIFICATION"/);
+  assert.doesNotMatch(panel,/localCompleted|completedSteps|setCompleted/,'no second completion model');
+});
+test('GUARD-EDIT-DISCLOSURE',()=>{
+  for(const st of ['editingPersonal','replacingIdentity','editingAddresses','editingActivity','editingReferences','editingChecks'])
+    assert.ok(panel.includes(st),'missing disclosure state '+st);
+  assert.match(panel,/editing=\{editingPersonal\}/);
+  assert.match(panel,/onEdit=\{\(\) => setEditingPersonal\(true\)\}/);
+});
+test('GUARD-PERSONAL-COMPLETE-SUMMARY',()=>{const b=summaryFor('personal');assert.match(b,/title="Personal details"/);for(const f of ['Name','Date of birth','Nationality','SIA licence type'])assert.ok(b.includes(f),'missing '+f);assert.match(b,/editLabel="Edit details"/)});
+test('GUARD-IDENTITY-AWAITING-SUMMARY',()=>{const b=summaryFor('identity');assert.match(b,/title="Identity evidence"/);assert.match(b,/evidenceSummaryRows\("identity"\)/);assert.match(b,/editLabel="Replace document"/)});
+test('GUARD-ADDRESS-COMPLETE-SUMMARY',()=>{const b=summaryFor('addresses');assert.match(b,/title="Address history"/);assert.match(b,/Current address/);assert.match(b,/Previous address/);assert.match(b,/editLabel="Edit history"/);assert.match(b,/Address evidence/,'evidence must sit with the chronology it proves')});
+test('GUARD-ACTIVITY-COMPLETE-SUMMARY',()=>{const b=summaryFor('history');assert.match(b,/title="Activity history"/);assert.match(b,/historyTypeLabel\(h\.type\)/);assert.match(b,/h\.isCurrent \? "Present"/)});
+test('GUARD-REFERENCE-COMPLETE-SUMMARY',()=>{const b=summaryFor('references');assert.match(b,/title="References"/);assert.match(b,/Covers:/);assert.match(b,/does not have to cover every activity period/,'must not imply one reference per period')});
+test('GUARD-SIA-AWAITING-SUMMARY',()=>{const b=summaryFor('checks');assert.match(b,/SIA licence/);assert.match(b,/SIA expiry/);assert.match(b,/SIA check/)});
+test('GUARD-RTW-AWAITING-SUMMARY',()=>{const b=summaryFor('checks');assert.match(b,/Right to Work"/);assert.match(b,/Right to Work check/);assert.doesNotMatch(b,/share.?code/i,'no invented share-code requirement')});
+test('GUARD-OPTIONAL-EVIDENCE',()=>{const ev=panel.split('{step === "evidence" ?')[1].split('{step === "consent" ?')[0];assert.match(ev,/Optional supporting evidence/);assert.match(ev,/No additional evidence has been requested/)});
+test('GUARD-DECLARATION-COMPLETE',()=>{const c=panel.split('{step === "consent" ?')[1].split('{step === "review" ?')[0];const accepted=c.split('if (current)')[1].split('return (')[1];assert.doesNotMatch(accepted,/Accept consent & declaration/);assert.match(accepted,/Withdraw consent/)});
+
+test('GUARD-ONGOING-ACTIVITY',()=>{
+  assert.match(panel,/I am still doing this/,'activity needs an explicit ongoing control');
+  assert.match(panel,/isCurrent: history\.isCurrent,/,'the flag must be stored, not inferred from a blank end date');
+  assert.doesNotMatch(panel,/isCurrent: !history\.endDate/,'the old inference must be gone');
+  assert.match(panel,/endDate: history\.isCurrent \? undefined : screeningDateToIso\(history\.endDate\)/);
+  assert.doesNotMatch(panel,/9999-/,'no fabricated future dates');
+});
+test('GUARD-ONGOING-SURVIVES-NEXT-DAY',()=>{
+  // The real defect: an entry ending "today" reopens a one-day gap tomorrow. isCurrent clips to
+  // today on every evaluation, so an ongoing record can never go stale.
+  const svc=read('../security-backend-nest/src/screening/screening.service.ts');
+  assert.match(svc,/const to = entry\.isCurrent \? end :/,'isCurrent must always clip to today');
+  const body=svc.split('export function assessContinuousHistory')[1];
+  const end=body.indexOf('\n}');
+  // The extracted source is TypeScript, so transpile it before evaluating the real function.
+  const js=toJs('function assessContinuousHistory'+body.slice(0,end)+'\n}');
+  const run=new Function('BadRequestException',js+'; return assessContinuousHistory;')(class extends Error{});
+  const today=new Date('2026-09-23T00:00:00Z');
+  const ongoing=run([{startDate:'2015-01-01',endDate:null,isCurrent:true}],5,today);
+  assert.equal(ongoing.continuous,true,'an ongoing activity must stay continuous as days pass');
+  const stale=run([{startDate:'2015-01-01',endDate:'2026-09-22',isCurrent:false}],5,today);
+  assert.equal(stale.continuous,false,'the original fixed-end entry is genuinely short by one day');
+  assert.deepEqual(stale.gaps,[{from:'2026-09-23',to:'2026-09-23'}],'reproduces the reported one-day gap exactly');
+});
+test('GUARD-NONEMPLOYMENT-ACTIVITY',()=>{
+  for(const [value,label] of [['EMPLOYMENT','Employed'],['SELF_EMPLOYMENT','Self-employed'],['UNEMPLOYMENT','Unemployed / looking for work'],['EDUCATION','Education / training'],['CAREER_BREAK','Career break / caring responsibilities'],['OVERSEAS','Overseas'],['OTHER_EXPLAINED_PERIOD','Other explained period']]){
+    assert.ok(panel.includes('["'+value+'", "'+label+'"]'),'missing candidate label for '+value);
+  }
+  const ents=read('../security-backend-nest/src/screening/entities/screening.entities.ts');
+  assert.match(ents,/enum HistoryType \{ EMPLOYMENT='EMPLOYMENT'/,'backend enum must be unchanged');
+});
+
+test('ADMIN-REVIEW-SUMMARY',()=>{assert.match(admin2,/verificationSummary\?\.checks\.map/,'the ledger must come from the backend summary');assert.match(admin2,/checks complete/)});
+test('ADMIN-PLAIN-BLOCKERS',()=>{assert.match(admin2,/blocker\.detail/,'blockers must render the sentence');assert.doesNotMatch(admin2,/\{blocker\.key\}</,'raw internal keys must never be displayed')});
+test('ADMIN-EVIDENCE-FILENAME',()=>{assert.match(admin2,/entry\.originalFileName/);assert.match(admin2,/Uploaded \{date\(entry\.uploadedAt\)\}/)});
+test('ADMIN-EVIDENCE-VIEW',()=>assert.match(admin2,/View document/));
+test('ADMIN-EVIDENCE-VERIFY',()=>assert.match(admin2,/verifyScreeningCheck\(Number\(selected\.id\),reviewCategory,inspectedEvidenceId\)/));
+test('ADMIN-EVIDENCE-REJECT',()=>{
+  assert.match(admin2,/verifyScreeningCheck\(Number\(selected\.id\),reviewCategory,inspectedEvidenceId,'REJECTED'\)/,'reviewer must be able to reject');
+  assert.match(admin2,/Reject evidence/);
+  const api2=read('src/services/api.ts');
+  assert.match(api2,/state:'VERIFIED'\|'REJECTED'='VERIFIED'/,'state must be a parameter, not hardcoded');
+});
+test('ADMIN-REJECT-RETURNS-ACTION-REQUIRED',()=>{
+  // Rejecting required evidence must put the requirement back to ACTION_REQUIRED for the Guard.
+  const svc=read('../security-backend-nest/src/screening/screening.service.ts');
+  assert.match(svc,/!records\.length\|\|rejected\?'ACTION_REQUIRED'/,'a rejected latest record must reopen the requirement');
+  assert.match(svc,/rejected=!verified&&latest\?\.verificationState===VerificationState\.REJECTED/);
+  assert.match(admin2,/must supply replacement evidence/,'the reviewer message must say replacement is needed');
+});
+test('ADMIN-COMPLETE-GATED',()=>{
+  assert.match(admin2,/disabled=\{!!reviewAction\|\|!reviewReadiness\?\.ready\}/,'Complete must be disabled until the backend says ready');
+  const svc=read('../security-backend-nest/src/screening/screening.service.ts');
+  assert.match(svc,/if\(!readiness\.ready\)throw new BadRequestException/,'the backend must remain the gate');
+});
+test('ADMIN-COMPLETE-VETTED',()=>{
+  const svc=read('../security-backend-nest/src/screening/screening.service.ts');
+  assert.match(svc,/s\.status=ScreeningStatus\.VETTED;/);
+  assert.match(admin2,/Complete screening/);
+});
+test('ADMIN-EVIDENCE-METADATA-REVIEWER-ONLY',()=>{
+  const svc=read('../security-backend-nest/src/screening/screening.service.ts');
+  const proj=svc.split('const safeEvidence=')[1].split(';')[0];
+  assert.match(proj,/\.\.\.\(reviewer\?\{originalFileName/,'filename is reviewer-only');
+  assert.doesNotMatch(proj,/storageKey|signedUrl/,'never expose storage keys or signed URLs');
+});
+
 console.log(JSON.stringify({event:'screening_ux_tests_passed',tests:passed}));
