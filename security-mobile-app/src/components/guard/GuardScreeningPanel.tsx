@@ -847,7 +847,7 @@ export function GuardScreeningJourney({ onBack, scrollViewRef }: { onBack: () =>
                 <View key={h.id} style={s.timelineItem}>
                   <View style={s.dot} />
                   <View style={s.flex}>
-                    <Text style={s.itemTitle}>{pretty(h.type)}</Text>
+                    <Text style={s.itemTitle}>{historyTypeLabel(h.type)}</Text>
                     <Text>{h.organisation || "Explanation provided"}</Text>
                     <Text style={s.meta}>
                       {dateLabel(h.startDate)} – {dateLabel(h.endDate)}
@@ -1043,7 +1043,7 @@ export function GuardScreeningJourney({ onBack, scrollViewRef }: { onBack: () =>
                         <Text
                           style={selected ? s.choiceTextActive : s.choiceText}
                         >
-                          {pretty(h.type)} ·{" "}
+                          {historyTypeLabel(h.type)} ·{" "}
                           {h.organisation || "Explained period"} ·{" "}
                           {dateLabel(h.startDate)}–{dateLabel(h.endDate)}
                         </Text>

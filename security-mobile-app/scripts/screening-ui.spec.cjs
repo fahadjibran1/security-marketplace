@@ -59,7 +59,7 @@ test('progress uses authoritative candidate criteria',()=>assert.match(service,/
 test('multiple address UX uses structured fields and readable cards',()=>{for(const label of ['Address line 1 *','Address line 2 (optional)','Town / City *','Postcode *','+ Add another address','Verification:'])assert.ok(panel.includes(label));assert.match(models,/addressLine1\?/)});
 test('current address control separates Present from end date',()=>{assert.match(panel,/I currently live at this address/);assert.match(panel,/address\.isCurrent/)});
 test('multiple activity UX uses backend enum choices',()=>{assert.match(panel,/\+ Add another activity/);assert.match(panel,/activityOrganisationLabel/);for(const value of ['EMPLOYMENT','SELF_EMPLOYMENT','EDUCATION','UNEMPLOYMENT','CAREER_BREAK','OVERSEAS','OTHER_EXPLAINED_PERIOD'])assert.match(panel,new RegExp(value))});
-test('activity cards retain human-readable dates',()=>assert.match(panel,/pretty\(h\.type\)[\s\S]*h\.organisation[\s\S]*dateLabel\(h\.startDate\)/));
+test('activity cards retain human-readable dates',()=>assert.match(panel,/historyTypeLabel\(h\.type\)[\s\S]*h\.organisation[\s\S]*dateLabel\(h\.startDate\)/));
 test('Personal Details has no editable current address',()=>{assert.doesNotMatch(panel,/label="Current address"/);assert.doesNotMatch(panel,/profile\.currentAddress/)});
 test('Address History is the only authoritative residential source',()=>{assert.match(service,/addressChronology=assessContinuousHistory\(s\.addresses/);assert.doesNotMatch(service,/nationality&&!!s\.currentAddress/)});
 test('new address flow always starts blank and non-current',()=>{assert.match(panel,/emptyAddressForm[^\n]*addressLine1: ""[^\n]*postcode: ""[^\n]*isCurrent: false/);assert.match(panel,/setAddress\(emptyAddressForm\(\)\); setShowAddressForm\(true\)/)});
@@ -248,6 +248,13 @@ test('GUARD-NONEMPLOYMENT-ACTIVITY',()=>{
   }
   const ents=read('../security-backend-nest/src/screening/entities/screening.entities.ts');
   assert.match(ents,/enum HistoryType \{ EMPLOYMENT='EMPLOYMENT'/,'backend enum must be unchanged');
+});
+test('GUARD-ACTIVITY-LABEL-EVERYWHERE',()=>{
+  // The summary is not the only place a Guard reads an activity type: the edit timeline and the
+  // reference "which period does this cover" picker are candidate-facing too. Prettifying the raw
+  // enum there leaks "Employment" next to the summary's "Employed".
+  assert.doesNotMatch(panel,/pretty\(h\.type\)/,'every candidate-facing activity type goes through historyTypeLabel');
+  assert.equal((panel.match(/historyTypeLabel\(/g)||[]).length,4,'summary + edit timeline + reference picker + reference summary');
 });
 
 test('ADMIN-REVIEW-SUMMARY',()=>{assert.match(admin2,/verificationSummary\?\.checks\.map/,'the ledger must come from the backend summary');assert.match(admin2,/checks complete/)});
