@@ -275,6 +275,27 @@ async function test(id, fn) { await fn(); passed += 1; console.log(`PASS  ${id}`
     assert.match(main, /forbidNonWhitelisted: true/, 'the constraint this design works around must still hold');
   });
 
+  // This exact gap shipped a live bug: the service took an isMobileClient flag but the controller
+  // never passed it, so mobile login silently returned no session. tsc could not catch it because
+  // the parameter has a default, and every other test asserted the service in isolation.
+  await test('CONTROLLER-WIRES-MOBILE-HEADER', () => {
+    const dir = path.join(__dirname, '..', '..', 'security-backend-nest', 'src', 'auth');
+    const controller = fs.readFileSync(path.join(dir, 'auth.controller.ts'), 'utf8');
+    // Start at the handler signature, not at @Post: the @Throttle decorator above it contains
+    // braces that would truncate the slice before the signature is reached.
+    const handler = controller.split("@Post('login')")[1].split('  login(')[1].split('\n  }')[0];
+    assert.match(handler, /@Headers\(MOBILE_CLIENT_HEADER\)/, 'the login handler must read the client header');
+    assert.match(
+      handler,
+      /this\.authService\.login\(dto, client === 'mobile'\)/,
+      'the header must be passed to the service, not dropped',
+    );
+    const constants = fs.readFileSync(path.join(dir, 'auth.constants.ts'), 'utf8');
+    assert.match(constants, /MOBILE_CLIENT_HEADER = 'x-s4-client'/);
+    const api = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'api.ts'), 'utf8');
+    assert.match(api, /'x-s4-client': 'mobile'/, 'the client must send exactly the header the controller reads');
+  });
+
   await test('REFRESH-ENDPOINT-EXCLUDED-FROM-INTERCEPTOR', () => {
     const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'api.ts'), 'utf8');
     const guard = src.split('const isAuthEndpoint =')[1].split(';')[0];

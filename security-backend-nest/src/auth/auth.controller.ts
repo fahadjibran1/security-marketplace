@@ -25,8 +25,10 @@ export class AuthController {
   @Post('login')
   @UseGuards(AuthThrottlerGuard)
   @Throttle({ default: { limit: 6, ttl: 60_000 } })
-  login(@Body() dto: LoginDto) {
-    return this.authService.login(dto);
+  login(@Body() dto: LoginDto, @Headers(MOBILE_CLIENT_HEADER) client?: string) {
+    // Only the mobile app is handed a renewable session. The marker is a header so an older
+    // deployment, which validates bodies with forbidNonWhitelisted, still accepts this login.
+    return this.authService.login(dto, client === 'mobile');
   }
 
   /**
