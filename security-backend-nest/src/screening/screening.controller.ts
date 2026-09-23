@@ -1,11 +1,11 @@
-import { BadRequestException, Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Put, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Put, Query, UseGuards } from '@nestjs/common';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { COMPANY_VIEW_ROLES, UserRole } from '../user/entities/user.entity';
-import { AddAddressDto, AddHistoryDto, AddReferenceDto, ConsentDto, CreateEvidenceDto, ReviewActionDto, ReviewReferenceDto, StartScreeningDto, UpdateCandidateComplianceDto, UpdateScreeningProfileDto, VerifyCheckDto } from './dto/screening.dto';
+import { AddAddressDto, AddHistoryDto, AddReferenceDto, ConsentDto, CreateEvidenceDto, ReviewActionDto, ReviewReferenceDto, ScreeningQueueQueryDto, StartScreeningDto, UpdateCandidateComplianceDto, UpdateScreeningProfileDto, VerifyCheckDto } from './dto/screening.dto';
 import { CompanyMembershipService } from '../company-membership/company-membership.service';
 import { CompanyPermission } from '../company-membership/company-membership-types';
 import { ScreeningService } from './screening.service';
@@ -33,6 +33,8 @@ export class ScreeningController {
   @Get('company/outcomes') @Roles(...COMPANY_VIEW_ROLES) async outcomes(@CurrentUser() u:JwtPayload){const {company}=await this.membership.resolveCompanyContext(u.sub,u.role,CompanyPermission.SCREENING_VIEW);return this.service.companyOutcomes(company.id);}
   @Get('company/guards/:guardId/outcome') @Roles(...COMPANY_VIEW_ROLES) async outcome(@CurrentUser() u:JwtPayload,@Param('guardId',ParseIntPipe) id:number){const {company}=await this.membership.resolveCompanyContext(u.sub,u.role,CompanyPermission.SCREENING_VIEW);return this.service.companyOutcome(company.id,id);}
   @Get() @Roles(UserRole.ADMIN) list(){return this.service.listAdmin();}
+  // Declared before ':id' so Nest does not route "queue" into the numeric parameter.
+  @Get('queue') @Roles(UserRole.ADMIN) queue(@Query() q:ScreeningQueueQueryDto){return this.service.queue(q);}
   @Get(':id') @Roles(UserRole.ADMIN) get(@Param('id',ParseIntPipe) id:number){return this.service.adminGet(id);}
   @Get(':id/evidence/:evidenceId/access') @Roles(UserRole.ADMIN) adminEvidence(@CurrentUser() u:JwtPayload,@Param('id',ParseIntPipe) id:number,@Param('evidenceId',ParseIntPipe) evidenceId:number){return this.service.adminAccessEvidence(u.sub,id,evidenceId);}
   @Post(':id/start-review') @Roles(UserRole.ADMIN) review(@CurrentUser() u:JwtPayload,@Param('id',ParseIntPipe) id:number){return this.service.startReview(u.sub,id);}

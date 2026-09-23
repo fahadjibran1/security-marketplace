@@ -292,4 +292,104 @@ test('ADMIN-EVIDENCE-METADATA-REVIEWER-ONLY',()=>{
   assert.doesNotMatch(proj,/storageKey|signedUrl/,'never expose storage keys or signed URLs');
 });
 
+
+// ── High-volume reviewer queue ────────────────────────────────────────────────────────────────
+const svc2=read('../security-backend-nest/src/screening/screening.service.ts');
+const ctl2=read('../security-backend-nest/src/screening/screening.controller.ts');
+
+test('QUEUE-DEFAULT-NEEDS-REVIEW',()=>{
+  assert.match(admin2,/useState<ScreeningQueueFilter>\('needs_review'\)/,'the reviewer lands on work they can progress');
+  // needs_review is a composite of the three progressable buckets, decided on the server.
+  assert.match(svc2,/const NEEDS_REVIEW=\['AWAITING_REVIEW','UNDER_REVIEW','READY_TO_COMPLETE'\]/);
+  assert.match(svc2,/const filter=query\.filter\?\?'needs_review'/);
+});
+test('QUEUE-COMPACT-ROWS',()=>{
+  const row=admin2.split('queue?.rows.length?')[1].split('</View>:null}')[0];
+  assert.match(row,/row\.guardName/);assert.match(row,/row\.guardEmail/);assert.match(row,/Submitted \{shortDate\(row\.submittedAt\)\}/);
+  assert.match(row,/Candidate \{row\.progress\}% · Verification \{row\.verificationCompleted\}\/\{row\.verificationTotal\}/);
+  assert.match(row,/QUEUE_BUCKET_LABEL\[row\.bucket\]/);
+  for(const heavy of ['evidence','addresses','history','requirements','reviewReadiness'])
+    assert.ok(!row.includes(`row.${heavy}`),`a queue row must not render ${heavy}`);
+});
+test('QUEUE-NO-DETAIL-PANEL',()=>{
+  // The queue and the focused review are mutually exclusive: opening a Guard hides the queue.
+  assert.match(admin2,/section === 'screening' && !selected \? <>/,'queue renders only when nothing is open');
+  assert.match(admin2,/section !== 'overview' && section !== 'screening' && !loading && !error \? <View style=\{styles\.list\}>/,'the generic full-row list must not run for screening');
+  assert.doesNotMatch(admin2,/loaders\[section\]\(\)[\s\S]{0,80}screening/,'screening must not go through the generic loader');
+});
+test('QUEUE-FILTERS',()=>{
+  for(const key of ['needs_review','awaiting_review','under_review','needs_guard_action','ready_to_complete','vetted','not_submitted','all'])
+    assert.ok(admin2.includes(`'${key}'`),'missing queue filter '+key);
+  assert.match(admin2,/onPress=\{\(\)=>\{setQueueFilter\(option\.key\);setSelected\(null\);\}\}/);
+  assert.match(ctl2,/@Get\('queue'\)[\s\S]{0,120}@Query\(\) q:ScreeningQueueQueryDto/,'queue is a validated admin endpoint');
+});
+test('QUEUE-SEARCH',()=>{
+  assert.match(admin2,/placeholder=\{section === 'screening' \? 'Search Guards…'/);
+  assert.match(admin2,/setTimeout\(\(\)=>setQueueTerm\(query\.trim\(\)\),300\)/,'search is debounced');
+  assert.match(svc2,/`\$\{row\.guardName\?\?''\} \$\{row\.guardEmail\?\?''\}`\.toLowerCase\(\)\.includes\(term\)/,'search covers name and email server-side');
+});
+test('QUEUE-START-REVIEW',()=>assert.equal(admin2.match(/AWAITING_REVIEW: 'Start review'/)?.length,1));
+test('QUEUE-CONTINUE',()=>assert.match(admin2,/UNDER_REVIEW: 'Continue review'/));
+test('QUEUE-GUARD-ACTION',()=>assert.match(admin2,/NEEDS_GUARD_ACTION: 'View'/,'a Guard-blocked row offers no reviewer verification from the queue'));
+test('QUEUE-READY-COMPLETE',()=>assert.match(admin2,/READY_TO_COMPLETE: 'Complete review'/));
+
+test('DETAIL-YOUR-ACTIONS-FIRST',()=>{
+  const body=admin2.split("<Text style={styles.detailHeading}>YOUR ACTIONS</Text>")[1];
+  assert.ok(body,'YOUR ACTIONS section must exist');
+  assert.ok(body.indexOf('WAITING FOR GUARD')<body.indexOf('Completed checks ('),'order is your actions, then guard, then completed');
+  // Only checks whose candidate input has arrived are the reviewer's to action.
+  assert.match(admin2,/const yourActions=\(verificationSummary\?\.checks\|\|\[\]\)\.filter\(check=>!check\.complete&&REVIEWER_GATE\[check\.key\]&&remediationStatus\(REVIEWER_GATE\[check\.key\]\)==='AWAITING_VERIFICATION'\)/);
+});
+test('DETAIL-WAITING-FOR-GUARD',()=>{
+  assert.match(admin2,/const waitingForGuard=remediation\.filter\(entry=>entry\.status==='ACTION_REQUIRED'\)/);
+  const block=admin2.split('WAITING FOR GUARD</Text>')[1].split('collapseToggle')[0];
+  assert.match(block,/Waiting for Guard/,'the row must say who it is waiting on');
+  assert.match(block,/Request information/);
+  assert.doesNotMatch(block,/setReviewCategory|Verify/,'never offer Verify for something the Guard has not supplied');
+});
+test('DETAIL-COMPLETED-COLLAPSED',()=>{
+  assert.match(admin2,/useState\(false\)/);
+  assert.match(admin2,/const \[completedOpen,setCompletedOpen\]=useState\(false\)/,'completed checks start collapsed');
+  assert.match(admin2,/Completed checks \(\{completedChecks\.length\}\)/);
+  assert.match(admin2,/\{completedOpen\?<><View style=\{styles\.screeningReviewGrid\}>/,'the bulky application content sits behind the collapse');
+});
+test('DETAIL-BACK-TO-QUEUE',()=>{
+  assert.match(admin2,/← Back to Screening Review/);
+  assert.match(admin2,/const backToQueue=useCallback\(\(\)=>\{setSelected\(null\)/);
+});
+test('POST-ACTION-NO-FULL-LIST-REFETCH',()=>{
+  // The regression that made review unusable at scale: every action re-downloaded every
+  // application. refreshSelectedScreening must touch the open Guard and the compact queue only.
+  const refresh=admin2.split('const refreshSelectedScreening=')[1].split('\n')[0];
+  assert.doesNotMatch(refresh,/listScreenings/,'a review action must never re-download every screening');
+  assert.match(refresh,/getScreening\(id\)/);
+  assert.match(refresh,/loadQueue\(\)/);
+  assert.equal(admin2.match(/listScreenings\(\)/g),null,'listScreenings is no longer called anywhere in the admin screen');
+});
+test('POST-VETTED-RETURN-QUEUE',()=>{
+  const done=admin2.split('if(success){')[1].split('};')[0];
+  assert.match(done,/setSelected\(null\)/,'completing returns the reviewer to the queue');
+  assert.match(done,/loadQueue\(\)/,'the queue refreshes so the row leaves Needs review');
+});
+test('NO-BULK-VETTING',()=>{
+  for(const banned of [/Verify all/i,/Approve all/i,/bulk/i,/mark multiple/i,/select all/i])
+    assert.doesNotMatch(admin2,banned,'every Guard must remain individually reviewed');
+  assert.doesNotMatch(svc2,/verifyMany|completeMany|bulk/i);
+});
+test('QUEUE-NO-FULL-APPLICATION-CLIENT',()=>{
+  // The queue endpoint itself must stay compact; the client cannot be the only guard of that.
+  const rowProjection=svc2.split('private queueRow(')[1].split('async queue(')[0];
+  for(const heavy of ['safeEvidence','addresses:','history:','requirements:','reviewNotes'])
+    assert.ok(!rowProjection.includes(heavy),`queue row must not carry ${heavy}`);
+  assert.match(rowProjection,/guardName:s\.guard\?\.fullName/);
+  assert.match(rowProjection,/guardEmail:s\.guard\?\.user\?\.email/);
+});
+test('QUEUE-NO-NPLUS1-SOURCE',()=>{
+  const loader=svc2.split('private async loadQueueAggregate()')[1].split('private queueRow(')[0];
+  assert.match(loader,/loadRelationIds/,'children load by set, not per screening');
+  assert.match(loader,/In\(ids\)/);
+  assert.doesNotMatch(loader,/this\.full\(/,'the queue must never materialise a full application');
+  assert.doesNotMatch(loader,/map\(async/,'no per-screening await fan-out');
+});
+
 console.log(JSON.stringify({event:'screening_ux_tests_passed',tests:passed}));

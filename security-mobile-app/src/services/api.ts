@@ -40,6 +40,8 @@ import {
   CreateShiftPayload,
   GuardProfile,
   GuardScreening,
+  ScreeningQueueFilter,
+  ScreeningQueueResponse,
   HireApplicationPayload,
   Incident,
   IncidentAnalyticsReport,
@@ -1206,6 +1208,12 @@ export function acceptMyScreeningConsent(consentVersion='S4-PILOT-1'){return req
 export function withdrawMyScreeningConsent(){return request('/screening/mine/consent/withdraw',{method:'POST'});}
 export function submitMyScreening(){return request<GuardScreening>('/screening/mine/submit',{method:'POST'});}
 export function listScreenings(){return request<GuardScreening[]>('/screening');}
+export function listScreeningQueue(params:{filter?:ScreeningQueueFilter;q?:string;limit?:number;offset?:number}={}){
+  const search=new URLSearchParams();
+  for(const [key,value] of Object.entries(params))if(value!==undefined&&value!=='')search.set(key,String(value));
+  const suffix=search.toString();
+  return request<ScreeningQueueResponse>(`/screening/queue${suffix?`?${suffix}`:''}`);
+}
 export function getScreening(id:number){return request<GuardScreening>(`/screening/${id}`);}
 export function accessScreeningEvidence(screeningId:number,evidenceId:number){return request<{url:string;expiresAt:string;method:'GET'}>(`/screening/${screeningId}/evidence/${evidenceId}/access`);}
 export function startScreeningReview(id:number){return request<GuardScreening>(`/screening/${id}/start-review`,{method:'POST'});}

@@ -13,6 +13,9 @@ test('Start Review refreshes same guard to authoritative state',()=>assert(has(s
 test('Complete Screening refreshes final state',()=>assert(has(screen,"runReviewAction('complete'")&&has(screen,"'Screening completed successfully.'"),'complete refresh missing'));
 test('Request Information refreshes state',()=>assert(has(screen,"runReviewAction('request'")&&has(screen,"'Information request recorded successfully.'"),'request refresh missing'));
 test('Reject and Expire refresh state',()=>assert(has(screen,"runReviewAction('reject'")&&has(screen,"runReviewAction('expire'"),'terminal refresh missing'));
-test('selected object is replaced with authoritative detail',()=>assert(has(screen,'const [items,detail]=await Promise.all([listScreenings(),getScreening(id)])')&&has(screen,'row.id===detailRow.id?detailRow:row'),'stale selected data retained'));
+// The selected Guard is still replaced by authoritative server state after every action, but the
+// reviewer queue made re-downloading every screening to do it untenable: refresh the open Guard,
+// then the compact queue.
+test('selected object is replaced with authoritative detail',()=>assert(has(screen,'const detail=await getScreening(id);const detailRow=displayRow(\'screening\',detail,0);setSelected(detailRow)')&&!has(screen,'listScreenings()'),'stale selected data retained'));
 test('reviewer authority remains ADMIN-only',()=>assert(has(controller,"@Patch(':id/checks/:check') @Roles(UserRole.ADMIN)")&&!has(api,'state:\'VETTED\''),'reviewer boundary weakened'));
 let passed=0;for(const entry of tests){entry.check();console.log(`PASS ${++passed}/${tests.length} ${entry.name}`);}console.log(`SEC-018G admin screening review refresh: ${passed}/${tests.length} PASS`);

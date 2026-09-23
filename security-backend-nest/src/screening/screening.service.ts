@@ -10,7 +10,7 @@ import { GuardProfileService } from '../guard-profile/guard-profile.service';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { isSiaUniqueViolation } from '../auth/auth.service';
 import { UserRole } from '../user/entities/user.entity';
-import { AddAddressDto, AddHistoryDto, AddReferenceDto, ConsentDto, CreateEvidenceDto, ReviewActionDto, ReviewReferenceDto, StartScreeningDto, UpdateCandidateComplianceDto, UpdateScreeningProfileDto, VerifyCheckDto } from './dto/screening.dto';
+import { AddAddressDto, AddHistoryDto, AddReferenceDto, ConsentDto, CreateEvidenceDto, ReviewActionDto, ReviewReferenceDto, ScreeningQueueQueryDto, StartScreeningDto, UpdateCandidateComplianceDto, UpdateScreeningProfileDto, VerifyCheckDto } from './dto/screening.dto';
 import { EvidenceCategory, GuardScreening, ReferenceStatus, ScreeningAddress, ScreeningConsent, ScreeningEvidence, ScreeningException, ScreeningHistory, ScreeningReference, ScreeningStatus, VerificationState } from './entities/screening.entities';
 
 type Interval = { startDate: string; endDate?: string | null; isCurrent: boolean };
@@ -78,6 +78,91 @@ export class ScreeningService {
   async adminAccessEvidence(actor:number,screeningId:number,evidenceId:number){const record=await this.evidenceFor(evidenceId);if(record.screening.id!==screeningId)throw new ForbiddenException('Evidence is not part of this screening file.');if(!record.uploadCompletedAt)throw new BadRequestException('Evidence upload is incomplete.');const access=await this.storage.createSignedDownloadUrl({key:record.storageKey,mimeType:record.mimeType,originalFileName:record.originalFileName});await this.event(actor,'screening.evidence_accessed',record.screening,undefined,{evidenceId:record.id,category:record.category,expiresAt:access.expiresAt});return access;}
   async submit(userId:number){const {screening}=await this.byGuardUser(userId);if(!screening)throw new BadRequestException('Start screening first.');this.editable(screening);const result=this.requirements(await this.full(screening.id));if(result.missing.length)throw new BadRequestException(`Screening file is incomplete: ${result.missing[0]}`);const before=screening.status;screening.status=ScreeningStatus.READY_FOR_REVIEW;screening.submittedAt=new Date();await this.screenings.save(screening);await this.event(userId,'screening.submitted',screening,{status:before},{status:screening.status});return this.view(await this.full(screening.id));}
   async listAdmin(){const all=await this.screenings.find({order:{updatedAt:'DESC'}});return Promise.all(all.map(async s=>this.view(await this.full(s.id),true)));}
+
+  // ── Reviewer queue ─────────────────────────────────────────────────────────────────────────
+  // The landing page must stay usable at hundreds of Guards, so this never materialises a full
+  // screening application. Every child collection is fetched once for the whole set (seven
+  // statements in total, whatever N is) and the existing requirements/readiness logic is reused
+  // in memory, so a queue row can never disagree with the detail page it links to.
+  private async loadQueueAggregate(){
+    const screenings=await this.screenings.find({order:{updatedAt:'DESC'}});
+    const ids=screenings.map(s=>s.id);
+    if(!ids.length)return screenings;
+    const byScreening=<T extends {screening:unknown}>(rows:T[])=>{const map=new Map<number,T[]>();for(const row of rows){const key=Number(row.screening);const list=map.get(key);if(list)list.push(row);else map.set(key,[row]);}return map;};
+    // loadRelationIds keeps the parent as a plain id, so no screening (and no eager guard/user) is
+    // re-fetched per child row.
+    const load=<T extends {screening:unknown}>(repo:Repository<any>)=>repo.find({where:{screening:{id:In(ids)}},loadRelationIds:{relations:['screening']}}) as Promise<T[]>;
+    const [history,addresses,references,evidence,consents,exceptions]=await Promise.all([
+      load<ScreeningHistory&{screening:unknown}>(this.history),
+      load<ScreeningAddress&{screening:unknown}>(this.addresses),
+      this.references.find({where:{screening:{id:In(ids)}},relations:['history'],loadRelationIds:{relations:['screening']}}) as unknown as Promise<Array<ScreeningReference&{screening:unknown}>>,
+      load<ScreeningEvidence&{screening:unknown}>(this.evidence),
+      load<ScreeningConsent&{screening:unknown}>(this.consents),
+      load<ScreeningException&{screening:unknown}>(this.exceptions),
+    ]);
+    const maps={history:byScreening(history),addresses:byScreening(addresses),references:byScreening(references),evidence:byScreening(evidence),consents:byScreening(consents),exceptions:byScreening(exceptions)};
+    for(const s of screenings){
+      s.history=(maps.history.get(s.id)||[]) as ScreeningHistory[];
+      s.addresses=(maps.addresses.get(s.id)||[]) as ScreeningAddress[];
+      s.references=(maps.references.get(s.id)||[]) as ScreeningReference[];
+      s.evidence=(maps.evidence.get(s.id)||[]) as ScreeningEvidence[];
+      s.consents=(maps.consents.get(s.id)||[]) as ScreeningConsent[];
+      s.exceptions=(maps.exceptions.get(s.id)||[]) as ScreeningException[];
+    }
+    return screenings;
+  }
+
+  private queueRow(s:GuardScreening){
+    const req=this.requirements(s);
+    const readiness=this.reviewReadiness(s);
+    const statusOf=(key:string)=>req.remediation.find(x=>x.key===key)?.status;
+    // A check is the reviewer's to action only once the Guard has supplied what it needs; while the
+    // candidate input is outstanding it belongs to the Guard, not to the review queue.
+    const awaiting=(key:string)=>statusOf(key)==='AWAITING_VERIFICATION';
+    const reviewerGate:Record<string,string>={identity:'identity_evidence',address:'address_evidence',sia:'sia_evidence',rtw:'right_to_work_evidence',reference:'reference'};
+    const reviewerActions=readiness.verificationSummary.checks.filter(c=>!c.complete&&reviewerGate[c.key]&&awaiting(reviewerGate[c.key])).length;
+    const guardActions=req.remediation.filter(x=>x.status==='ACTION_REQUIRED').length;
+    const bucket=(():'AWAITING_REVIEW'|'UNDER_REVIEW'|'NEEDS_GUARD_ACTION'|'READY_TO_COMPLETE'|'VETTED'|'NOT_SUBMITTED'|'CLOSED'=>{
+      if(s.status===ScreeningStatus.NOT_STARTED||s.status===ScreeningStatus.IN_PROGRESS)return 'NOT_SUBMITTED';
+      if(s.status===ScreeningStatus.VETTED)return 'VETTED';
+      if(s.status===ScreeningStatus.REJECTED||s.status===ScreeningStatus.EXPIRED)return 'CLOSED';
+      if(s.status===ScreeningStatus.REQUIRES_ATTENTION)return 'NEEDS_GUARD_ACTION';
+      if(s.status===ScreeningStatus.UNDER_REVIEW){if(readiness.ready)return 'READY_TO_COMPLETE';return guardActions>0?'NEEDS_GUARD_ACTION':'UNDER_REVIEW';}
+      return 'AWAITING_REVIEW';
+    })();
+    // Deliberately compact: no evidence, addresses, history, documents or candidate PII beyond the
+    // name and email a reviewer needs to identify the row.
+    return {id:s.id,guardId:s.guard?.id??null,guardName:s.guard?.fullName??null,guardEmail:s.guard?.user?.email??null,
+      status:s.status,submittedAt:s.submittedAt?new Date(s.submittedAt).toISOString():null,updatedAt:new Date(s.updatedAt).toISOString(),
+      progress:this.candidateProgress(s,req),verificationCompleted:readiness.verificationSummary.completed,verificationTotal:readiness.verificationSummary.total,
+      reviewerActions,guardActions,bucket,ready:readiness.ready};
+  }
+
+  async queue(query:ScreeningQueueQueryDto={}){
+    const screenings=await this.loadQueueAggregate();
+    const all=screenings.map(s=>this.queueRow(s));
+    const counts={awaitingReview:0,underReview:0,needsGuardAction:0,readyToComplete:0,vetted:0,notSubmitted:0,closed:0,needsReview:0,all:all.length};
+    const NEEDS_REVIEW=['AWAITING_REVIEW','UNDER_REVIEW','READY_TO_COMPLETE'];
+    for(const row of all){
+      if(row.bucket==='AWAITING_REVIEW')counts.awaitingReview++;else if(row.bucket==='UNDER_REVIEW')counts.underReview++;
+      else if(row.bucket==='NEEDS_GUARD_ACTION')counts.needsGuardAction++;else if(row.bucket==='READY_TO_COMPLETE')counts.readyToComplete++;
+      else if(row.bucket==='VETTED')counts.vetted++;else if(row.bucket==='NOT_SUBMITTED')counts.notSubmitted++;else counts.closed++;
+      if(NEEDS_REVIEW.includes(row.bucket))counts.needsReview++;
+    }
+    const filter=query.filter??'needs_review';
+    const wanted:Record<string,string[]|null>={needs_review:NEEDS_REVIEW,awaiting_review:['AWAITING_REVIEW'],under_review:['UNDER_REVIEW'],needs_guard_action:['NEEDS_GUARD_ACTION'],ready_to_complete:['READY_TO_COMPLETE'],vetted:['VETTED'],not_submitted:['NOT_SUBMITTED'],all:null};
+    const buckets=wanted[filter];
+    const term=query.q?.trim().toLowerCase();
+    let rows=all.filter(row=>(!buckets||buckets.includes(row.bucket))&&(!term||`${row.guardName??''} ${row.guardEmail??''}`.toLowerCase().includes(term)));
+    // Work first: whatever the reviewer can finish, then what is waiting on them, then the longest
+    // wait inside each band.
+    const rank:Record<string,number>={READY_TO_COMPLETE:0,AWAITING_REVIEW:1,UNDER_REVIEW:2,NEEDS_GUARD_ACTION:3,VETTED:4,CLOSED:5,NOT_SUBMITTED:6};
+    const waitingSince=(row:{submittedAt:string|null;updatedAt:string})=>row.submittedAt??row.updatedAt;
+    rows=[...rows].sort((a,b)=>rank[a.bucket]-rank[b.bucket]||waitingSince(a).localeCompare(waitingSince(b))||a.id-b.id);
+    const total=rows.length;
+    const limit=query.limit??50;const offset=query.offset??0;
+    return {rows:rows.slice(offset,offset+limit),counts,total,limit,offset,filter};
+  }
   adminGet(id:number){return this.full(id).then(s=>this.view(s,true));}
   async startReview(actor:number,id:number){const s=await this.full(id);if(s.status!==ScreeningStatus.READY_FOR_REVIEW)throw new BadRequestException('Screening file is not ready for review.');s.status=ScreeningStatus.UNDER_REVIEW;s.reviewedByUserId=actor;s.reviewedAt=new Date();await this.screenings.save(s);await this.event(actor,'screening.review_started',s,{status:ScreeningStatus.READY_FOR_REVIEW},{status:s.status});return this.view(await this.full(id),true);}
   async verifyCheck(actor:number,id:number,check:'identity'|'address'|'sia'|'rtw',dto:VerifyCheckDto){
@@ -165,7 +250,10 @@ export class ScreeningService {
     return {missing,chronology,addressChronology,remediation};
   }
   private reviewReadiness(s:GuardScreening){const missing=[...new Set(this.requirements(s,true).missing)];const actionFor=(detail:string)=>detail.includes('source-verified reference')?'references':detail.includes('Identity')?'identity':detail.includes('address')||detail.includes('Address')?'address':detail.includes('SIA')?'sia':detail.includes('Right to Work')?'rtw':undefined;const blockers=missing.map((detail,index)=>({key:detail.includes('source-verified reference')?'reference_verification':`review_blocker_${index+1}`,label:detail.replace(/[.:].*$/,'').replace(/ (is|are|has).*$/,''),detail,action:actionFor(detail)}));const checks=[{key:'identity',label:'Identity',complete:s.identityVerification===VerificationState.VERIFIED},{key:'address',label:'Address',complete:(s.addresses||[]).some(a=>a.isCurrent&&a.verificationState===VerificationState.VERIFIED)},{key:'sia',label:'SIA',complete:s.siaRegisterVerification===VerificationState.VERIFIED},{key:'rtw',label:'Right to Work',complete:s.rightToWorkVerification===VerificationState.VERIFIED},{key:'reference',label:'Reference',complete:(s.references||[]).some(r=>r.status===ReferenceStatus.VERIFIED&&r.sourceVerified)},{key:'consent',label:'Consent',complete:(s.consents||[]).some(c=>!c.withdrawnAt)}];return {ready:blockers.length===0,blockers,verificationSummary:{completed:checks.filter(c=>c.complete).length,total:checks.length,checks},addressVerificationScope:'CURRENT_ADDRESS_ONLY' as const};}
-  private view(s:GuardScreening,reviewer=false){const req=this.requirements(s);const uploaded=new Set<string>((s.evidence||[]).filter(e=>e.uploadCompletedAt).map(e=>String(e.category)));const candidateCriteria=[!!s.legalFullName&&!!s.dateOfBirth&&!!s.nationality,(s.addresses||[]).some(a=>a.isCurrent)&&!!req.addressChronology.continuous,!!req.chronology.continuous,(s.references||[]).length>0,(s.consents||[]).some(c=>!c.withdrawnAt),uploaded.has('identity'),uploaded.has('address'),uploaded.has('sia'),uploaded.has('right_to_work')];const progress=Math.round(candidateCriteria.filter(Boolean).length/candidateCriteria.length*100);// A reviewer additionally sees the filename and the upload/verification timestamps so they can
+  // Candidate completion, shared by the detail projection and the reviewer queue so the two can
+  // never disagree about how complete a Guard's own submission is.
+  private candidateProgress(s:GuardScreening,req:ReturnType<ScreeningService['requirements']>){const uploaded=new Set<string>((s.evidence||[]).filter(e=>e.uploadCompletedAt).map(e=>String(e.category)));const candidateCriteria=[!!s.legalFullName&&!!s.dateOfBirth&&!!s.nationality,(s.addresses||[]).some(a=>a.isCurrent)&&!!req.addressChronology.continuous,!!req.chronology.continuous,(s.references||[]).length>0,(s.consents||[]).some(c=>!c.withdrawnAt),uploaded.has('identity'),uploaded.has('address'),uploaded.has('sia'),uploaded.has('right_to_work')];return Math.round(candidateCriteria.filter(Boolean).length/candidateCriteria.length*100);}
+  private view(s:GuardScreening,reviewer=false){const req=this.requirements(s);const progress=this.candidateProgress(s,req);// A reviewer additionally sees the filename and the upload/verification timestamps so they can
 // tell what a document is and when it arrived. Storage keys and signed URLs are never included
 // in either projection — retrieval stays behind the short-lived signed access endpoint.
 const safeEvidence=(s.evidence||[]).map(e=>({id:e.id,category:e.category,mimeType:e.mimeType,sizeBytes:Number(e.sizeBytes),uploadCompleted:!!e.uploadCompletedAt,verificationState:e.verificationState,...(reviewer?{originalFileName:e.originalFileName,uploadedAt:(e.uploadCompletedAt??e.createdAt)?.toISOString(),verifiedAt:e.verifiedAt?e.verifiedAt.toISOString():null,verifiedByUserId:e.verifiedByUserId??null}:{})}));return {...s,references:(s.references||[]).map(r=>this.safeReference(r)),evidence:safeEvidence,reviewNotes:reviewer?s.reviewNotes:undefined,reviewReadiness:reviewer?this.reviewReadiness(s):undefined,requirements:req,progress};}

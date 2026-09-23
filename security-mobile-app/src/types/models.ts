@@ -1663,6 +1663,18 @@ export interface ClientDisputeItem {
 }
 
 export type ScreeningStatus = 'NOT_STARTED'|'IN_PROGRESS'|'READY_FOR_REVIEW'|'UNDER_REVIEW'|'VETTED'|'REQUIRES_ATTENTION'|'REJECTED'|'EXPIRED';
+/** Compact reviewer-queue row. Deliberately carries no application content — see ScreeningService.queueRow. */
+export type ScreeningQueueBucket = 'AWAITING_REVIEW'|'UNDER_REVIEW'|'NEEDS_GUARD_ACTION'|'READY_TO_COMPLETE'|'VETTED'|'NOT_SUBMITTED'|'CLOSED';
+export type ScreeningQueueFilter = 'needs_review'|'awaiting_review'|'under_review'|'needs_guard_action'|'ready_to_complete'|'vetted'|'not_submitted'|'all';
+export interface ScreeningQueueRow {
+  id: number; guardId: number|null; guardName: string|null; guardEmail: string|null;
+  status: ScreeningStatus; submittedAt: string|null; updatedAt: string;
+  progress: number; verificationCompleted: number; verificationTotal: number;
+  reviewerActions: number; guardActions: number; bucket: ScreeningQueueBucket; ready: boolean;
+}
+export interface ScreeningQueueCounts { awaitingReview:number; underReview:number; needsGuardAction:number; readyToComplete:number; vetted:number; notSubmitted:number; closed:number; needsReview:number; all:number }
+export interface ScreeningQueueResponse { rows: ScreeningQueueRow[]; counts: ScreeningQueueCounts; total: number; limit: number; offset: number; filter: ScreeningQueueFilter }
+
 export interface GuardScreening {
   id?: number; status: ScreeningStatus; screeningPeriodYears?: number; progress: number;
   legalFullName?: string; previousNames?: string; dateOfBirth?: string; nationality?: string; currentAddress?: string; siaLicenceType?: string;
