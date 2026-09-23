@@ -123,6 +123,13 @@ const API_BASE_URL = resolveApiBaseUrl({
   webHostname: hasBrowserWindow ? window.location.hostname : undefined,
 });
 let accessToken: string | null = null;
+/** Renewable session token. Mirrored into SecureStore by the persister below; never on web. */
+let refreshToken: string | null = null;
+/** Shared by all concurrent 401s so only one /auth/refresh is ever in flight. */
+let inFlightRefresh: Promise<boolean> | null = null;
+let refreshPersist:
+  | ((session: { user: AuthUser; refreshToken: string }) => Promise<void>)
+  | null = null;
 let unauthorizedHandler: ((message: string) => void | Promise<void>) | null = null;
 
 export class ApiError extends Error {
@@ -180,12 +187,17 @@ function normalizeSession(session: AuthSession | { accessToken: string; user: Au
   };
 }
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
+async function request<T>(path: string, options?: RequestInit, retried = false): Promise<T> {
   const headers = new Headers(options?.headers);
   if (!headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
 
+  // Captured before the call: clearing the in-memory token on a failed renewal must not stop the
+  // next 401 from reaching the handler. `couldRenew` covers the cold-start case, where there is
+  // no access token at all yet — the stored refresh token is what mints the first one.
+  const sentWithToken = !!accessToken;
+  const couldRenew = !!refreshToken;
   if (accessToken) {
     headers.set('Authorization', `Bearer ${accessToken}`);
   }
@@ -196,8 +208,10 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   let response: Response;
   try {
     response = await fetch(`${API_BASE_URL}${path}`, {
-      headers,
       ...options,
+      // headers last: it already folds in options.headers via the constructor, and spreading
+      // options after it would drop the Authorization header we just set.
+      headers,
       signal: controller.signal,
     });
   } catch (error) {
@@ -222,14 +236,26 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const body = await parseResponseBody(response);
 
   if (!response.ok) {
-    if (
-      response.status === 401 &&
-      accessToken &&
-      !path.startsWith('/auth/login') &&
-      !path.startsWith('/auth/register') &&
-      unauthorizedHandler
-    ) {
-      await unauthorizedHandler('Your session expired. Please sign in again.');
+    const isAuthEndpoint =
+      path.startsWith('/auth/login') ||
+      path.startsWith('/auth/register') ||
+      path.startsWith('/auth/refresh');
+
+    if (response.status === 401 && (sentWithToken || couldRenew) && !isAuthEndpoint) {
+      // The access token has almost certainly just expired. Try to renew once — all concurrent
+      // 401s share the same attempt — and replay this request exactly once. `retried` makes a
+      // refresh loop impossible: a second 401 falls straight through to the handler below.
+      if (!retried && (await refreshAccessToken())) {
+        return request<T>(path, options, true);
+      }
+
+      // Renewal is genuinely not possible: expired, revoked, reused, or no refresh token at all
+      // (a pre-v1.0.4 session). Clear local auth state and hand over to Login.
+      accessToken = null;
+      refreshToken = null;
+      if (unauthorizedHandler) {
+        await unauthorizedHandler('Your session expired. Please sign in again.');
+      }
     }
 
     throw new ApiError(response.status, response.statusText, body);
@@ -298,12 +324,17 @@ export function formatApiErrorMessage(error: unknown, fallbackMessage: string) {
 export async function login(email: string, password: string) {
   const session = await request<AuthSession>('/auth/login', {
     method: 'POST',
+    // A header, not a body field: the backend validates bodies with forbidNonWhitelisted, so an
+    // unknown property would make an older deployment reject the login with 400. A header lets a
+    // new app run against an old backend — it just gets today's response and no refresh token.
+    headers: { 'x-s4-client': 'mobile' },
     body: JSON.stringify({ email, password }),
   });
 
   const normalizedSession = normalizeSession(session);
   accessToken = normalizedSession.accessToken;
-  return normalizedSession;
+  refreshToken = session.refreshToken ?? null;
+  return { ...normalizedSession, refreshToken: refreshToken ?? undefined };
 }
 
 export async function clientLogin(email: string, password: string) {
@@ -328,8 +359,61 @@ export async function register(payload: RegisterPayload) {
   return normalizedSession;
 }
 
-export function restoreSession(session: AuthSession) {
-  accessToken = session.accessToken;
+export function restoreSession(session: { accessToken?: string; refreshToken?: string }) {
+  accessToken = session.accessToken ?? null;
+  refreshToken = session.refreshToken ?? null;
+}
+
+/**
+ * Exchange the stored refresh token for a fresh access token, rotating the refresh token.
+ *
+ * Single-flight: every caller that hits a 401 at the same moment awaits the same promise, so a
+ * burst of concurrent requests produces exactly one /auth/refresh call. Without this, each
+ * request would rotate the token independently and all but one would then be presenting a
+ * rotated token — which the server correctly treats as theft and revokes the whole family.
+ */
+async function refreshAccessToken(): Promise<boolean> {
+  if (!refreshToken) return false;
+  if (inFlightRefresh) return inFlightRefresh;
+
+  const presented = refreshToken;
+  inFlightRefresh = (async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ refreshToken: presented }),
+      });
+      if (!response.ok) return false;
+
+      const body = (await response.json()) as AuthSession;
+      if (!body?.accessToken || !body?.refreshToken) return false;
+
+      accessToken = body.accessToken;
+      refreshToken = body.refreshToken;
+      // Persist the rotated token immediately: the presented one is already dead server-side, so
+      // losing the successor here would strand the device.
+      await refreshPersist?.({ user: body.user, refreshToken: body.refreshToken });
+      return true;
+    } catch {
+      // Offline or unreachable — not an auth failure. Keep the token so a later attempt can work.
+      return false;
+    } finally {
+      inFlightRefresh = null;
+    }
+  })();
+
+  return inFlightRefresh;
+}
+
+export function setRefreshPersister(
+  persist: ((session: { user: AuthUser; refreshToken: string }) => Promise<void>) | null,
+) {
+  refreshPersist = persist;
+}
+
+export function getRefreshToken() {
+  return refreshToken;
 }
 
 /**
@@ -341,8 +425,28 @@ export function fetchCurrentUser(): Promise<AuthUser> {
   return request<AuthUser>('/auth/me');
 }
 
-export function logout() {
-  accessToken = null;
+/**
+ * Revoke the renewable session server-side, then drop local auth state.
+ *
+ * The local clear happens in `finally` so a logout with no signal still signs the Guard out of
+ * this device — the session then simply expires on its own schedule server-side.
+ */
+export async function logout() {
+  const presented = refreshToken;
+  try {
+    if (presented && accessToken) {
+      await request('/auth/logout', {
+        method: 'POST',
+        body: JSON.stringify({ refreshToken: presented }),
+      });
+    }
+  } catch {
+    // Offline, or the session was already dead. Either way the local clear below is what matters.
+  } finally {
+    accessToken = null;
+    refreshToken = null;
+    inFlightRefresh = null;
+  }
 }
 
 export function listCompanies() {

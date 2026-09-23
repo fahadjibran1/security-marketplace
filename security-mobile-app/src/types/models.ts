@@ -43,6 +43,20 @@ export interface AuthUser {
 export interface AuthSession {
   accessToken: string;
   user: AuthUser;
+  /** Present only for mobile logins; the server withholds it from web clients. */
+  refreshToken?: string;
+  refreshExpiresAt?: string;
+}
+
+/**
+ * What is actually written to SecureStore. The access token is never persisted — only the
+ * renewable refresh token is, and legacyAccessToken exists solely to carry a pre-v1.0.4 blob
+ * through one upgrade.
+ */
+export interface StoredSession {
+  user: AuthUser;
+  refreshToken?: string;
+  legacyAccessToken?: string;
 }
 
 export interface CompanyProfile {

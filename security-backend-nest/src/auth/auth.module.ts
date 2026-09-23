@@ -14,6 +14,8 @@ import { AuditLogModule } from '../audit-log/audit-log.module';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { AuthThrottlerGuard } from './auth-throttler.guard';
 import { CompanyMembership } from '../company-membership/entities/company-membership.entity';
+import { AuthSession } from './entities/auth-session.entity';
+import { AuthSessionService } from './auth-session.service';
 
 @Module({
   imports: [
@@ -25,7 +27,7 @@ import { CompanyMembership } from '../company-membership/entities/company-member
     ClientPortalUserModule,
     AuditLogModule,
     PassportModule,
-    TypeOrmModule.forFeature([CompanyMembership]),
+    TypeOrmModule.forFeature([CompanyMembership, AuthSession]),
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -36,7 +38,7 @@ import { CompanyMembership } from '../company-membership/entities/company-member
     })
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, AuthThrottlerGuard],
-  exports: [AuthService]
+  providers: [AuthService, AuthSessionService, JwtStrategy, AuthThrottlerGuard],
+  exports: [AuthService, AuthSessionService]
 })
 export class AuthModule {}

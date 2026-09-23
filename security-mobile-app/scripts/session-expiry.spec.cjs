@@ -52,7 +52,7 @@ const ts = require('typescript');
     setTimeout,
     clearTimeout,
     Headers: class Headers {
-      constructor() { this._h = {}; }
+      constructor(init) { this._h = {}; if (init) for (const k of Object.keys(init)) this._h[k.toLowerCase()] = init[k]; }
       has(k) { return k.toLowerCase() in this._h; }
       set(k, v) { this._h[k.toLowerCase()] = v; }
       get(k) { return this._h[k.toLowerCase()]; }
@@ -75,6 +75,7 @@ const ts = require('typescript');
 
   // Any protected call behaves the same (not just /auth/me).
   notices.length = 0;
+  api.restoreSession(session); // a failed renewal clears memory, so sign back in for this case
   respond(401, { statusCode: 401, message: 'Authentication required' });
   await assert.rejects(api.listCompanies(), (e) => e.status === 401);
   assert.equal(notices.length, 1);
@@ -106,12 +107,12 @@ const ts = require('typescript');
   const app = fs.readFileSync(path.join(__dirname, '..', 'App.tsx'), 'utf8');
   const handler = app.match(/setUnauthorizedHandler\(async \(message: string\) => \{([^}]*)\}\);/);
   assert.ok(handler, 'App.tsx registers the unauthorized handler');
-  for (const step of ['logout()', 'await clearStoredSession()', 'setSession(null)', 'setAuthNotice(message)']) {
+  for (const step of ['await clearStoredSession()', 'setSession(null)', 'setAuthNotice(message)']) {
     assert.ok(handler[1].includes(step), `unauthorized handler must run ${step}`);
   }
-  assert.match(app, /return \(\) => setUnauthorizedHandler\(null\)/);
+  assert.match(app, /setUnauthorizedHandler\(null\); setRefreshPersister\(null\)/, 'both auth hooks must be torn down together');
   // Boot: the stored token is restored BEFORE /auth/me is refreshed, so an expired stored token is also handled.
-  assert.ok(app.indexOf('restoreSession(storedSession)') < app.indexOf('fetchCurrentUser()'));
+  assert.ok(app.indexOf('restoreSession({') < app.indexOf('fetchCurrentUser()'));
   passed++;
 
   console.log(JSON.stringify({ event: 'session_expiry_tests_passed', tests: passed }));

@@ -45,7 +45,7 @@ async function main() {
         updateLastLogin: (id: number) => users.update(id, { lastLoginAt: new Date() }).then(() => undefined),
       } as any,
       { sign: () => 'redacted-test-token' } as any,
-      {} as any, {} as any, {} as any, {} as any, dataSource, {} as any,
+      {} as any, {} as any, {} as any, {} as any, { create: async () => { throw new Error('auth session not expected in this test'); } } as any, dataSource, {} as any,
     );
     equal((await auth.login({ email: admin.email, password })).user.role, UserRole.ADMIN);
 

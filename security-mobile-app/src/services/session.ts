@@ -1,5 +1,5 @@
 import * as SecureStore from 'expo-secure-store';
-import { AuthSession } from '../types/models';
+import { StoredSession } from '../types/models';
 import { parseStoredSession, serializeStoredSession } from '../navigation/role-routing';
 
 const SESSION_KEY = 'security-app-session';
@@ -29,7 +29,7 @@ function clearWebSession() {
   window.localStorage.removeItem(SESSION_KEY);
 }
 
-export async function loadStoredSession(): Promise<AuthSession | null> {
+export async function loadStoredSession(): Promise<StoredSession | null> {
   try {
     const raw = isWeb ? readWebSession() : await SecureStore.getItemAsync(SESSION_KEY);
     if (!raw) return null;
@@ -50,7 +50,7 @@ export async function loadStoredSession(): Promise<AuthSession | null> {
   }
 }
 
-export async function persistSession(session: AuthSession) {
+export async function persistSession(session: StoredSession) {
   const raw = serializeStoredSession(session);
 
   if (isWeb) {

@@ -27,7 +27,8 @@
     "test:guard-navigation": "node scripts/guard-navigation.spec.cjs",
     "test:session-expiry": "node scripts/session-expiry.spec.cjs",
     "test:api-base-url": "node scripts/api-base-url.spec.cjs",
-    "build:brand-assets": "node scripts/build-s4-assets.cjs"
+    "build:brand-assets": "node scripts/build-s4-assets.cjs",
+    "test:auth-refresh": "node scripts/auth-refresh.spec.cjs"
   },
   "dependencies": {
     "@expo/metro-runtime": "~6.1.2",

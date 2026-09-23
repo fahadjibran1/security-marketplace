@@ -37,6 +37,7 @@ function authHarness() {
     guardService as any,
     {} as any,
     {} as any,
+    { create: async () => { throw new Error('auth session not expected in this test'); } } as any,
     { transaction: async (work: (manager: unknown) => Promise<unknown>) => work({}) } as any,
     { find: async () => [], findOne: async () => null } as any,
   );

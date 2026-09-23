@@ -13,6 +13,7 @@ import { CompanyStatus } from '../company/entities/company.entity';
 import { GuardApprovalStatus } from '../guard-profile/entities/guard-profile.entity';
 import { ClientPortalUserService } from '../client-portal-user/client-portal-user.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { AuthSessionService } from './auth-session.service';
 import { DataSource, QueryFailedError } from 'typeorm';
 import { CompanyMembership } from '../company-membership/entities/company-membership.entity';
 import {
@@ -55,6 +56,7 @@ export class AuthService {
     private readonly guardProfileService: GuardProfileService,
     private readonly clientPortalUserService: ClientPortalUserService,
     private readonly auditLogService: AuditLogService,
+    private readonly authSessionService: AuthSessionService,
     private readonly dataSource: DataSource,
     @InjectRepository(CompanyMembership)
     private readonly membershipRepo: Repository<CompanyMembership>,
@@ -135,7 +137,7 @@ export class AuthService {
     return this.signToken(user.id, user.email, user.role, user.status);
   }
 
-  async login(dto: LoginDto) {
+  async login(dto: LoginDto, isMobileClient = false) {
     const user = await this.usersService.findByEmail(dto.email);
     if (!user) throw new UnauthorizedException('Invalid credentials');
 
@@ -147,7 +149,45 @@ export class AuthService {
     }
 
     await this.usersService.updateLastLogin(user.id);
-    return this.signToken(user.id, user.email, user.role, user.status);
+    const signed = await this.signToken(user.id, user.email, user.role, user.status);
+
+    // Only the mobile app gets a renewable session. Web keeps today's response exactly.
+    if (!isMobileClient) return signed;
+
+    const session = await this.authSessionService.create(user.id);
+    return {
+      ...signed,
+      refreshToken: session.refreshToken,
+      refreshExpiresAt: session.expiresAt.toISOString(),
+    };
+  }
+
+  /**
+   * Exchange a renewable session for a fresh access token. The presented token is rotated, so the
+   * caller must persist the returned one — the old token is dead the moment this returns.
+   */
+  async refresh(refreshToken: string) {
+    const { userId, issued } = await this.authSessionService.rotate(refreshToken);
+
+    const user = await this.usersService.findById(userId);
+    if (!user) throw new UnauthorizedException('Session is no longer valid');
+    if (user.status !== UserStatus.ACTIVE) {
+      // A suspended account must not be able to keep renewing its way back in.
+      await this.authSessionService.revokeAllForUser(userId, 'reuse_detected');
+      throw new UnauthorizedException('Session is no longer valid');
+    }
+
+    const signed = await this.signToken(user.id, user.email, user.role, user.status);
+    return {
+      ...signed,
+      refreshToken: issued.refreshToken,
+      refreshExpiresAt: issued.expiresAt.toISOString(),
+    };
+  }
+
+  async logout(userId: number, refreshToken?: string) {
+    if (refreshToken) await this.authSessionService.revoke(refreshToken, userId);
+    return { loggedOut: true };
   }
 
   async clientLogin(dto: LoginDto) {

@@ -1,3 +1,4 @@
+import { AuthSession } from '../auth/entities/auth-session.entity';
 import { AttendanceEvent } from '../attendance/entities/attendance.entity';
 import { Assignment } from '../assignment/entities/assignment.entity';
 import { Attachment } from '../attachment/entities/attachment.entity';
@@ -43,6 +44,7 @@ import { CompanyInvitation } from '../company-membership/entities/company-invita
 import { RotaSlot } from '../rota-slot/entities/rota-slot.entity';
 
 export const appEntities = [
+  AuthSession,
   AttendanceEvent,
   Assignment,
   Attachment,

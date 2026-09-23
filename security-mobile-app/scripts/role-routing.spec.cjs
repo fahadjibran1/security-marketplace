@@ -25,7 +25,17 @@ assert.equal(getAppSurface(undefined), 'denied');
 const authenticatedAdmin = { accessToken: 'server-issued-token', user: { id: 1, email: 'admin@example.test', role: 'admin' } };
 const selectedLoginPortal = 'guard';
 assert.equal(getAppSurface(authenticatedAdmin.user.role), 'admin', `server role must override selected ${selectedLoginPortal} login portal`);
-assert.equal(parseStoredSession(serializeStoredSession(authenticatedAdmin)).user.role, 'admin');
+// v3 round trip: the renewable token is persisted, the access token deliberately is not.
+const renewableAdmin = { user: authenticatedAdmin.user, refreshToken: 'renewable-session-token' };
+assert.equal(parseStoredSession(serializeStoredSession(renewableAdmin)).user.role, 'admin');
+assert.equal(parseStoredSession(serializeStoredSession(renewableAdmin)).refreshToken, 'renewable-session-token');
+assert.equal(JSON.parse(serializeStoredSession({ ...renewableAdmin, accessToken: 'must-not-persist' })).session.accessToken, undefined, 'access token must never reach storage');
+assert.equal(parseStoredSession(JSON.stringify({ version: 3, session: { user: authenticatedAdmin.user } })), null, 'a v3 session without a refresh token is unusable');
+// v2 upgrade path: a pre-v1.0.4 blob still signs the owner in, carrying its old access token.
+const legacy = parseStoredSession(JSON.stringify({ version: 2, session: authenticatedAdmin }));
+assert.equal(legacy.user.role, 'admin');
+assert.equal(legacy.legacyAccessToken, 'server-issued-token');
+assert.equal(legacy.refreshToken, undefined);
 assert.equal(parseStoredSession(JSON.stringify(authenticatedAdmin)), null, 'pre-RC1 unversioned session must be discarded');
 assert.equal(parseStoredSession(JSON.stringify({ version: 2, session: { ...authenticatedAdmin, user: { ...authenticatedAdmin.user, role: 'invalid' } } })), null);
 assert.ok(ADMIN_DASHBOARD_ENDPOINTS.every((endpoint) => !endpoint.includes('/mine')));

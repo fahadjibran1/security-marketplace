@@ -7,7 +7,7 @@ import { GuardDashboardScreen } from './src/screens/GuardDashboardScreen';
 import { AdminDashboardScreen } from './src/screens/AdminDashboardScreen';
 import { AuthScreen } from './src/screens/AuthScreen';
 import { StatePanel } from './src/components/StatePanel';
-import { fetchCurrentUser, logout, restoreSession, setUnauthorizedHandler } from './src/services/api';
+import { fetchCurrentUser, getRefreshToken, logout, restoreSession, setRefreshPersister, setUnauthorizedHandler } from './src/services/api';
 import { installAttendanceLocationTransport } from './src/services/attendanceTransport';
 import { clearStoredSession, loadStoredSession, persistSession } from './src/services/session';
 import { AuthSession } from './src/types/models';
@@ -27,15 +27,22 @@ export default function App() {
       try {
         const storedSession = await loadStoredSession();
         if (storedSession) {
-          restoreSession(storedSession);
-          setSession(storedSession);
+          // No access token is ever persisted. A v3 session carries the renewable refresh token
+          // and the very first authenticated call mints an access token through the 401 path;
+          // a pre-v1.0.4 session carries only its old access token and no way to renew.
+          restoreSession({
+            accessToken: storedSession.legacyAccessToken,
+            refreshToken: storedSession.refreshToken,
+          });
+          setSession({ accessToken: storedSession.legacyAccessToken ?? '', user: storedSession.user });
           // Refresh effective permissions from the live server; update in-memory
-          // and persisted session so next boot also has fresh permissions.
+          // and persisted session so next boot also has fresh permissions. For a v3 session this
+          // call is also what silently establishes the access token for this launch.
           fetchCurrentUser().then(freshUser => {
-            const refreshed = { ...storedSession, user: freshUser };
-            setSession(refreshed);
-            persistSession(refreshed);
-          }).catch(() => { /* offline or token expired — keep cached session */ });
+            setSession({ accessToken: '', user: freshUser });
+            const rotated = getRefreshToken();
+            if (rotated) persistSession({ user: freshUser, refreshToken: rotated });
+          }).catch(() => { /* offline — keep the cached user; the 401 path handles a dead session */ });
         }
       }
       finally { setBooting(false); }
@@ -43,15 +50,18 @@ export default function App() {
     bootstrapSession();
   }, []);
   useEffect(() => {
-    setUnauthorizedHandler(async (message: string) => { logout(); await clearStoredSession(); setSession(null); setAuthNotice(message); });
-    return () => setUnauthorizedHandler(null);
+    setUnauthorizedHandler(async (message: string) => { await clearStoredSession(); setSession(null); setAuthNotice(message); });
+    // Every silent rotation must reach SecureStore immediately: the token it replaces is already
+    // dead server-side, so a missed write would strand the device on the next cold start.
+    setRefreshPersister(async ({ user, refreshToken }) => { await persistSession({ user, refreshToken }); });
+    return () => { setUnauthorizedHandler(null); setRefreshPersister(null); };
   }, []);
 
   async function handleLoggedIn(nextSession: AuthSession) {
-    if (getAppSurface(nextSession.user.role) === 'denied') { logout(); await clearStoredSession(); setSession(null); setAuthNotice('This account role is not supported. Contact an administrator.'); return; }
-    restoreSession(nextSession); await persistSession(nextSession); setAuthNotice(null); setSession(nextSession);
+    if (getAppSurface(nextSession.user.role) === 'denied') { await logout(); await clearStoredSession(); setSession(null); setAuthNotice('This account role is not supported. Contact an administrator.'); return; }
+    restoreSession(nextSession); if (nextSession.refreshToken) await persistSession({ user: nextSession.user, refreshToken: nextSession.refreshToken }); setAuthNotice(null); setSession(nextSession);
   }
-  async function handleLogout() { logout(); await clearStoredSession(); setAuthNotice(null); setSession(null); }
+  async function handleLogout() { await logout(); await clearStoredSession(); setAuthNotice(null); setSession(null); }
 
   const surface = session ? getAppSurface(session.user.role) : null;
   const surfaceLabel = surface === 'admin' ? 'Platform Admin' : surface === 'company' ? 'Company' : surface === 'client' ? 'Client' : surface === 'guard' ? 'Guard' : 'Access Denied';
