@@ -58,6 +58,7 @@ jobs:
       CORS_ORIGIN: http://localhost:3001
       ENABLE_SWAGGER: 'false'
       FINANCIAL_CONCURRENCY_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_concurrency
+      AUTH_SESSION_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_auth_sessions
 
     steps:
       - name: Checkout repository
@@ -110,6 +111,9 @@ jobs:
 
       - name: Create financial-concurrency isolation database
         run: PGPASSWORD=s4_test_password psql -h localhost -U s4 -d s4_release_gate -c "CREATE DATABASE s4_concurrency;"
+
+      - name: Create auth-session isolation database
+        run: PGPASSWORD=s4_test_password psql -h localhost -U s4 -d s4_release_gate -c "CREATE DATABASE s4_auth_sessions;"
 
       - name: Run release smoke tests
         run: npm run test:release
