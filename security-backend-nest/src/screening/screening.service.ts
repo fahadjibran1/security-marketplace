@@ -147,31 +147,43 @@ export class ScreeningService {
     // The reviewer's whole job, as six named checks in a fixed order. Each one is owned by exactly
     // one party, so the screen never has to work that out for itself.
     const CHECK_LABEL:Record<string,string>={identity:'Identity',address:'Address',sia:'SIA',rtw:'Right to Work',reference:'Reference',consent:'Declaration'};
+    // Every reviewer mutation — verifyCheck, reviewReference, complete — requires UNDER_REVIEW, so
+    // a check can only be presented as the reviewer's to action when the backend would accept it.
+    const reviewerActionable=s.status===ScreeningStatus.UNDER_REVIEW;
     const checklist=readiness.verificationSummary.checks.map(c=>{
       const gate=REVIEWER_GATE[c.key]?entry(REVIEWER_GATE[c.key]):undefined;
       const owner:'reviewer'|'guard'|'none'=c.complete?'none':gate?.status==='AWAITING_VERIFICATION'?'reviewer':'guard';
-      return {key:c.key,label:CHECK_LABEL[c.key]??c.label,complete:c.complete,owner,
+      return {key:c.key,label:CHECK_LABEL[c.key]??c.label,complete:c.complete,owner,actionable:owner==='reviewer'&&reviewerActionable,
         message:c.complete?(c.key==='consent'?'Current':'Verified'):gate?.message??'Awaiting candidate information.'};
     });
     const reviewerActions=checklist.filter(c=>c.owner==='reviewer').map(({key,label,message})=>({key,label,message}));
-    const guardActions=req.remediation.filter(x=>x.status==='ACTION_REQUIRED').map(x=>({key:x.key,label:x.label,message:x.message}));
+    // A free-text information request is a real obligation on the Guard that the remediation model
+    // cannot express. It has to be counted, or the file reads as "Guard actions: 0" while the
+    // reviewer is in fact waiting on the candidate and the backend refuses every decision.
+    const informationRequestOutstanding=s.status===ScreeningStatus.REQUIRES_ATTENTION;
+    const guardActions=[
+      ...req.remediation.filter(x=>x.status==='ACTION_REQUIRED').map(x=>({key:x.key,label:x.label,message:x.message})),
+      ...(informationRequestOutstanding?[{key:'information_request',label:'Information request',
+        message:'An information request was sent to this Guard and has not been answered. Resume the review to withdraw it, or wait for the Guard to respond.'}]:[]),
+    ];
     const bucket=(():'AWAITING_REVIEW'|'UNDER_REVIEW'|'NEEDS_GUARD_ACTION'|'READY_TO_COMPLETE'|'VETTED'|'NOT_SUBMITTED'|'CLOSED'=>{
       if(s.status===ScreeningStatus.NOT_STARTED||s.status===ScreeningStatus.IN_PROGRESS)return 'NOT_SUBMITTED';
       if(s.status===ScreeningStatus.VETTED)return 'VETTED';
       if(s.status===ScreeningStatus.REJECTED||s.status===ScreeningStatus.EXPIRED)return 'CLOSED';
-      // Submitted and in the reviewer's world from here.
+      // Anything outstanding from the Guard holds the file, including an unanswered information
+      // request: the reviewer may have one check they could touch, but they cannot finish.
       if(guardActions.length)return 'NEEDS_GUARD_ACTION';
       // Completion is only reachable from UNDER_REVIEW, so never advertise it from another status.
-      if(readiness.ready&&s.status===ScreeningStatus.UNDER_REVIEW)return 'READY_TO_COMPLETE';
+      if(reviewerActionable&&readiness.ready)return 'READY_TO_COMPLETE';
       if(s.status===ScreeningStatus.READY_FOR_REVIEW)return 'AWAITING_REVIEW';
       return 'UNDER_REVIEW';
     })();
     // An unanswered information request is still worth showing even when the remediation model has
     // nothing outstanding, because the reviewer may have asked for something it cannot express.
-    return {req,readiness,checklist,reviewerActions,guardActions,bucket,ready:readiness.ready,
+    return {req,readiness,checklist,reviewerActions,guardActions,bucket,ready:readiness.ready,reviewerActionable,
       checksRemaining:checklist.filter(c=>!c.complete).length,
       referenceDiscrepancy:(s.references||[]).some(r=>r.status===ReferenceStatus.DISCREPANCY),
-      informationRequestOutstanding:s.status===ScreeningStatus.REQUIRES_ATTENTION};
+      informationRequestOutstanding};
   }
 
   private queueRow(s:GuardScreening){
@@ -210,7 +222,21 @@ export class ScreeningService {
     return {rows:rows.slice(offset,offset+limit),counts,total,limit,offset,filter};
   }
   adminGet(id:number){return this.fullForReviewer(id).then(s=>this.view(s,true));}
-  async startReview(actor:number,id:number){const s=await this.full(id);if(s.status!==ScreeningStatus.READY_FOR_REVIEW)throw new BadRequestException('Screening file is not ready for review.');s.status=ScreeningStatus.UNDER_REVIEW;s.reviewedByUserId=actor;s.reviewedAt=new Date();await this.screenings.save(s);await this.event(actor,'screening.review_started',s,{status:ScreeningStatus.READY_FOR_REVIEW},{status:s.status});return this.view(await this.full(id),true);}
+  // Also the way out of REQUIRES_ATTENTION. Requesting information is the only reviewer action that
+  // parks a file on the candidate, and until now nothing but a Guard resubmission could clear it —
+  // so a request raised against an already complete file left the screening unreviewable. Resuming
+  // withdraws the outstanding request explicitly and audits it; it never happens implicitly.
+  async startReview(actor:number,id:number){
+    const s=await this.full(id);
+    const resuming=s.status===ScreeningStatus.REQUIRES_ATTENTION;
+    if(s.status!==ScreeningStatus.READY_FOR_REVIEW&&!resuming)throw new BadRequestException('Screening file is not ready for review.');
+    const before=s.status;
+    s.status=ScreeningStatus.UNDER_REVIEW;s.reviewedByUserId=actor;s.reviewedAt=new Date();
+    if(resuming)s.reviewNotes=null;
+    await this.screenings.save(s);
+    await this.event(actor,resuming?'screening.review_resumed':'screening.review_started',s,{status:before},{status:s.status,...(resuming?{informationRequestWithdrawn:true}:{})});
+    return this.view(await this.fullForReviewer(id),true);
+  }
   async verifyCheck(actor:number,id:number,check:'identity'|'address'|'sia'|'rtw',dto:VerifyCheckDto){
     const result=await this.screenings.manager.transaction(async manager=>{
       const screeningRepo=manager.getRepository(GuardScreening),evidenceRepo=manager.getRepository(ScreeningEvidence),addressRepo=manager.getRepository(ScreeningAddress);

@@ -1683,10 +1683,10 @@ export interface GuardScreening {
   reviewReadiness?: {ready:boolean;blockers:Array<{key:string;label:string;detail:string;action?:'references'|'identity'|'address'|'sia'|'rtw'}>;verificationSummary:{completed:number;total:number;checks:Array<{key:string;label:string;complete:boolean}>};addressVerificationScope:'CURRENT_ADDRESS_ONLY'};
   /** The same classification the queue row was built from, so the two views cannot disagree. */
   reviewClassification?: {
-    checklist:Array<{key:string;label:string;complete:boolean;owner:'reviewer'|'guard'|'none';message:string}>;
+    checklist:Array<{key:string;label:string;complete:boolean;owner:'reviewer'|'guard'|'none';actionable:boolean;message:string}>;
     reviewerActions:Array<{key:string;label:string;message:string}>;
     guardActions:Array<{key:string;label:string;message:string}>;
-    bucket:ScreeningQueueBucket; ready:boolean; checksRemaining:number;
+    bucket:ScreeningQueueBucket; ready:boolean; reviewerActionable:boolean; checksRemaining:number;
     referenceDiscrepancy:boolean; informationRequestOutstanding:boolean;
   };
   reviewNotes?: string|null;

@@ -81,6 +81,9 @@ async function main() {
     } as never;
     const service = new ScreeningService(screenings, history, addresses, references, evidence, consents, exceptions, dataSource.getRepository('CompanyGuard') as never, stub, stub, stub, stub);
 
+    // The authorised reviewer used by every reviewer-side assertion below.
+    const reviewer = await users.save(users.create({ email: 'queue.reviewer@example.invalid', passwordHash: 'x', role: UserRole.ADMIN, status: UserStatus.ACTIVE, isEmailVerified: true }));
+
     let seq = 0;
     /**
      * Builds one realistic screening: a five-year activity record, a current address, a reference,
@@ -194,18 +197,43 @@ async function main() {
     });
 
     // ── The owner's production case ──────────────────────────────────────────────────────────
-    // A reviewer requested information on a file the Guard had already completed. Nothing is
-    // outstanding from the Guard, so the row must not claim the Guard is holding it up.
-    await test('QUEUE-REQUIRES-ATTENTION-NO-GUARD-WORK', async () => {
+    // A reviewer requested information on a file the Guard had already completed. The remediation
+    // model shows nothing outstanding, but the request itself is a real obligation on the Guard and
+    // the backend refuses every reviewer decision until it is answered or withdrawn — so the row
+    // must say so rather than claim five actionable reviewer tasks.
+    await test('INFORMATION-REQUEST-NOT-ZERO-GUARD-ACTIONS', async () => {
       const screening = await seed('info_requested', 'Owner Uat Case');
-      const r = await service.queue({ filter: 'all', q: 'Owner Uat Case' });
-      const row = r.rows[0];
+      const row = (await service.queue({ filter: 'all', q: 'Owner Uat Case' })).rows[0];
       assert.equal(row.progress, 100, 'candidate side is complete');
       assert.equal(`${row.verificationCompleted}/${row.verificationTotal}`, '1/6');
-      assert.equal(row.reviewerActions, 5, 'identity, address, SIA, RTW and reference are the reviewer\'s');
-      assert.equal(row.guardActions, 0, 'the Guard has nothing outstanding');
-      assert.equal(row.bucket, 'UNDER_REVIEW', 'bucket must follow actionable state, not a historical status flag');
-      assert.ok((await service.queue({})).rows.some((x) => x.id === screening.id), 'and it belongs in the default reviewer workload');
+      assert.equal(row.guardActions, 1, 'the outstanding information request is a Guard action');
+      assert.notEqual(row.guardActions, 0, 'it must never read as zero while the Guard owes a response');
+      assert.equal(row.bucket, 'NEEDS_GUARD_ACTION', 'and the reviewer cannot progress it meanwhile');
+
+      const detail = await service.adminGet(screening.id);
+      assert.equal(detail.reviewClassification!.reviewerActionable, false, 'the backend would refuse a decision');
+      assert.ok(detail.reviewClassification!.guardActions.some((g: { key: string }) => g.key === 'information_request'));
+      assert.ok(detail.reviewClassification!.checklist.every((c: { actionable: boolean }) => !c.actionable), 'so no check is offered as actionable');
+      await assert.rejects(() => service.verifyCheck(reviewer.id, screening.id, 'identity', { state: VerificationState.VERIFIED, method: 'x', evidenceId: 1 } as never), /not under review/i);
+      await screenings.delete(screening.id);
+    });
+
+    await test('INFORMATION-REQUEST-RESUME-CLOSES-IT', async () => {
+      // The only way out used to be a Guard resubmission, which a Guard with nothing to correct
+      // could not meaningfully perform. Resuming withdraws the request explicitly and audits it.
+      const screening = await seed('info_requested', 'Resume Case');
+      await service.requestInfo(reviewer.id, screening.id, { reason: 'send us copy of licence' } as never).catch(() => undefined);
+      await service.startReview(reviewer.id, screening.id);
+      const after = await service.adminGet(screening.id);
+      assert.equal(after.status, ScreeningStatus.UNDER_REVIEW);
+      assert.equal(after.reviewNotes, null, 'the withdrawn request is cleared');
+      assert.equal(after.reviewClassification!.informationRequestOutstanding, false);
+      assert.equal(after.reviewClassification!.reviewerActionable, true, 'and the reviewer can act again');
+      assert.equal(after.reviewClassification!.guardActions.length, 0);
+      assert.ok(audits.some((a) => a.action === 'screening.review_resumed'), 'never silently: the withdrawal is audited');
+      const row = (await service.queue({ filter: 'all', q: 'Resume Case' })).rows[0];
+      assert.equal(row.bucket, 'UNDER_REVIEW');
+      assert.equal(row.reviewerActions, 5);
       await screenings.delete(screening.id);
     });
 
@@ -261,7 +289,6 @@ async function main() {
     // Payload is reported per served page, since the endpoint caps a page at `limit`; the whole-set
     // figure is what an uncapped queue of that size would cost on the wire.
     // ── Final vetting officer workflow ───────────────────────────────────────────────────────
-    const reviewer = await users.save(users.create({ email: 'queue.reviewer@example.invalid', passwordHash: 'x', role: UserRole.ADMIN, status: UserStatus.ACTIVE, isEmailVerified: true }));
     const refOf = async (screeningId: number) => (await references.findOneOrFail({ where: { screening: { id: screeningId } }, relations: ['history'] }));
     const decide = async (screeningId: number, body: Record<string, unknown>) => {
       const reference = await refOf(screeningId);

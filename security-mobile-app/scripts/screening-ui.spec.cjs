@@ -344,7 +344,7 @@ test('DETAIL-YOUR-ACTIONS-FIRST',()=>{
   assert.match(svc2,/const owner:'reviewer'\|'guard'\|'none'=c\.complete\?'none':gate\?\.status==='AWAITING_VERIFICATION'\?'reviewer':'guard'/);
 });
 test('DETAIL-WAITING-FOR-GUARD',()=>{
-  assert.match(svc2,/const guardActions=req\.remediation\.filter\(x=>x\.status==='ACTION_REQUIRED'\)/);
+  assert.match(svc2,/req\.remediation\.filter\(x=>x\.status==='ACTION_REQUIRED'\)\.map/,'outstanding candidate requirements are Guard actions');
   // A Guard-owned row says so and offers no reviewer control at all.
   assert.match(admin2,/entry\.owner==='guard'\?`Waiting for Guard — \$\{entry\.message\}`/);
   assert.match(admin2,/\{!entry\.complete&&entry\.owner==='reviewer'\?<Pressable/,'Review is offered only for reviewer-owned checks');
@@ -405,8 +405,8 @@ test('QUEUE-BUCKET-FROM-ACTIONABLE-STATE',()=>{
   const c=svc2.split('private classify(')[1].split('private queueRow(')[0];
   assert.doesNotMatch(c,/if\(s\.status===ScreeningStatus\.REQUIRES_ATTENTION\)return 'NEEDS_GUARD_ACTION'/,'a historical status flag must not decide ownership');
   assert.match(c,/if\(guardActions\.length\)return 'NEEDS_GUARD_ACTION'/,'ownership follows outstanding Guard work');
-  assert.match(c,/if\(readiness\.ready&&s\.status===ScreeningStatus\.UNDER_REVIEW\)return 'READY_TO_COMPLETE'/,'never advertise completion from a status it cannot be reached from');
-  assert.match(c,/informationRequestOutstanding:s\.status===ScreeningStatus\.REQUIRES_ATTENTION/,'the unanswered request is surfaced, not silently dropped');
+  assert.match(c,/if\(reviewerActionable&&readiness\.ready\)return 'READY_TO_COMPLETE'/,'never advertise completion from a status it cannot be reached from');
+  assert.match(c,/const informationRequestOutstanding=s\.status===ScreeningStatus\.REQUIRES_ATTENTION/,'the unanswered request is surfaced, not silently dropped');
 });
 test('DETAIL-TOP-SUMMARY-NO-DUPLICATION',()=>{
   const head=admin2.split('SCREENING REVIEW</Text>')[1].split('<Text style={styles.detailHeading}>REVIEW CHECKLIST</Text>')[0];
@@ -488,6 +488,62 @@ test('REVIEW-CONFIRMED-DATES-SENT',()=>{
   assert.match(admin2,/Record the start date the reference confirmed\./,'the client refuses to send an incomplete confirmation');
   const api2=read('src/services/api.ts');
   assert.match(api2,/'VERIFIED'\|'DISCREPANCY'\|'UNABLE_TO_VERIFY'\|'REJECTED'\|'SOURCE_VERIFICATION_REQUIRED'/);
+});
+// ── Owner UAT: the focused Reference task reached only the summary ────────────────────────────
+// openReferences() cleared referenceReviewId, and the one button that set it was gated on
+// selected.status==='UNDER_REVIEW', so the decision form was unreachable on a REQUIRES_ATTENTION
+// file. The form existed and was fully wired; nothing could open it.
+test('REFERENCE-FOCUSED-HAS-REVIEW-FORM',()=>{
+  assert.match(admin2,/setReferenceReviewId\(outstanding\.length===1\?Number\(outstanding\[0\]\.id\):null\)/,'a single outstanding reference opens straight into its decision form');
+  assert.doesNotMatch(admin2,/selected\.status==='UNDER_REVIEW'\?<View style=\{styles\.grid\}>/,'the old status gate on the reference button is gone');
+  assert.match(admin2,/\{reviewerActionable\?<View style=\{styles\.grid\}>/,'it now follows the backend rule instead');
+});
+test('REFERENCE-FOCUSED-HAS-METHOD',()=>{
+  const panel=admin2.split('Controlled reference decision')[1].split('Record reference decision')[0];
+  assert.match(panel,/Reference verification method/);
+  assert.match(panel,/value=\{referenceMethod\}/);
+});
+test('REFERENCE-FOCUSED-HAS-CONFIRMED-DATES',()=>{
+  const panel=admin2.split('Controlled reference decision')[1].split('Record reference decision')[0];
+  assert.match(panel,/Confirmed start date/);assert.match(panel,/Confirmed end date/);assert.match(panel,/Still current/);
+  assert.match(panel,/referenceDecision==='VERIFIED'\|\|referenceDecision==='DISCREPANCY'\?/,'dates are asked for exactly when the backend requires them');
+});
+test('REFERENCE-FOCUSED-HAS-OUTCOME',()=>{
+  const panel=admin2.split('Controlled reference decision')[1].split('Record reference decision')[0];
+  for(const status of ['VERIFIED','DISCREPANCY','SOURCE_VERIFICATION_REQUIRED','UNABLE_TO_VERIFY','REJECTED'])
+    assert.ok(panel.includes(`'${status}'`),'missing outcome '+status);
+});
+test('REFERENCE-FOCUSED-HAS-NOTES',()=>{
+  const panel=admin2.split('Controlled reference decision')[1].split('Record reference decision')[0];
+  assert.match(panel,/Reference reviewer note/);
+  assert.match(panel,/value=\{referenceNotes\}/);
+});
+test('REFERENCE-FOCUSED-CAN-CONFIRM',()=>{
+  assert.match(admin2,/Record reference decision/);
+  assert.match(admin2,/onPress=\{submitReferenceDecision\}/);
+  assert.match(admin2,/reviewScreeningReference\(Number\(selected\.id\),referenceReviewId,\{status:referenceDecision/,'it calls the already deployed endpoint');
+});
+test('REFERENCE-FOCUSED-MULTIPLE-REFERENCES',()=>{
+  // With more than one outstanding reference nothing is auto-selected; each renders its own task.
+  assert.match(admin2,/const outstanding=\(\(selected\?\.raw\?\.references\|\|\[\]\) as Array<Record<string,any>>\)\.filter\(entry=>!\(entry\.status==='VERIFIED'&&entry\.sourceVerified\)\)/);
+  assert.match(admin2,/screeningReferences\.map\(reference=>/,'every reference still renders as its own reviewable row');
+  assert.match(admin2,/referenceReviewId===Number\(reference\.id\)/,'the form belongs to the chosen reference');
+});
+test('INFORMATION-REQUEST-OUTSTANDING-OWNED',()=>{
+  // A free-text request the remediation model cannot express is still a real Guard obligation.
+  assert.match(svc2,/const informationRequestOutstanding=s\.status===ScreeningStatus\.REQUIRES_ATTENTION/);
+  assert.match(svc2,/\.\.\.\(informationRequestOutstanding\?\[\{key:'information_request',label:'Information request'/,'it is counted as a Guard action');
+  assert.match(admin2,/Withdraw request & resume review/,'and the reviewer is given an explicit way to close it');
+  assert.match(svc2,/if\(resuming\)s\.reviewNotes=null;/,'resuming clears the request');
+  assert.match(svc2,/resuming\?'screening\.review_resumed':'screening\.review_started'/,'and audits it distinctly — never silently');
+});
+test('REVIEWER-ACTIONS-MATCH-BACKEND-GATE',()=>{
+  // Every reviewer mutation requires UNDER_REVIEW, so the screen must not offer controls the API
+  // would refuse.
+  assert.match(svc2,/const reviewerActionable=s\.status===ScreeningStatus\.UNDER_REVIEW/);
+  assert.match(svc2,/actionable:owner==='reviewer'&&reviewerActionable/);
+  assert.match(admin2,/disabled=\{!!reviewAction\|\|!entry\.actionable\}/);
+  assert.doesNotMatch(admin2,/selected\.status!=='UNDER_REVIEW'/,'the screen no longer derives the gate itself');
 });
 test('QUEUE-NO-NPLUS1-SOURCE',()=>{
   const loader=svc2.split('private async loadQueueAggregate()')[1].split('private queueRow(')[0];
