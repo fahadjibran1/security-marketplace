@@ -28,7 +28,7 @@ const adminUi=readFileSync(resolve(__dirname,'../../security-mobile-app/src/scre
 // Entry to verification is now the YOUR ACTIONS list, which offers a category only when the Guard
 // has actually supplied it. Either way the reviewer must open the category panel and inspect the
 // evidence first — there is still no one-click verify on the main page.
-test('main review page no longer performs blind verification',()=>assert(adminUi.includes("setReviewCategory(check.key as 'identity'|'address'|'sia'|'rtw')")&&!adminUi.includes('onPress={()=>runReviewAction(`verify-${check}`'),'blind verify retained'));
+test('main review page no longer performs blind verification',()=>assert(adminUi.includes("setReviewCategory(key as 'identity'|'address'|'sia'|'rtw')")&&!adminUi.includes('onPress={()=>runReviewAction(`verify-${check}`'),'blind verify retained'));
 test('identity review displays submitted details and matching evidence',()=>assert(adminUi.includes('Submitted identity details')&&adminUi.includes("reviewCategory==='identity'"),'identity review incomplete'));
 test('address review displays current address and evidence',()=>assert(adminUi.includes('Address being verified')&&adminUi.includes('currentReviewAddress'),'address review incomplete'));
 test('SIA review displays licence expiry evidence and official check',()=>assert(adminUi.includes('Submitted SIA information')&&adminUi.includes('siaLicenseNumber')&&adminUi.includes('https://www.gov.uk/check-a-private-security-licence'),'SIA review incomplete'));

@@ -60,6 +60,7 @@ jobs:
       FINANCIAL_CONCURRENCY_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_concurrency
       AUTH_SESSION_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_auth_sessions
       SCREENING_QUEUE_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_screening_queue
+      MIGRATION_REHEARSAL_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_migration_rehearsal
 
     steps:
       - name: Checkout repository
@@ -118,6 +119,9 @@ jobs:
 
       - name: Create screening-queue isolation database
         run: PGPASSWORD=s4_test_password psql -h localhost -U s4 -d s4_release_gate -c "CREATE DATABASE s4_screening_queue;"
+
+      - name: Create migration-rehearsal isolation database
+        run: PGPASSWORD=s4_test_password psql -h localhost -U s4 -d s4_release_gate -c "CREATE DATABASE s4_migration_rehearsal;"
 
       - name: Run release smoke tests
         run: npm run test:release

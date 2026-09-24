@@ -41,5 +41,14 @@ export class CreateEvidenceDto {
   @IsString() @IsNotEmpty() mimeType!: string; @IsInt() @Min(1) @Max(10485760) sizeBytes!: number;
 }
 export class VerifyCheckDto { @IsEnum(VerificationState) state!: VerificationState; @IsString() @IsNotEmpty() @MaxLength(200) method!: string; @IsInt() @Min(1) evidenceId!:number; }
-export class ReviewReferenceDto { @IsEnum(ReferenceStatus) status!: ReferenceStatus; @Transform(({value})=>typeof value==='string'?value.trim():value) @IsString() @IsNotEmpty() @IsIn(['Telephone call','Business email response','Official employer contact/details','Written reference','Other approved method']) verificationMethod!: string; @Transform(({value})=>typeof value==='string'?value.trim():value) @IsString() @IsNotEmpty() @MaxLength(3000) notes!: string; @Equals(true,{message:'Independent source verification must be explicitly confirmed.'}) confirmed!:boolean; }
+export class ReviewReferenceDto {
+  @IsEnum(ReferenceStatus) status!: ReferenceStatus;
+  @Transform(({value})=>typeof value==='string'?value.trim():value) @IsString() @IsNotEmpty() @IsIn(['Telephone call','Business email response','Official employer contact/details','Written reference','Other approved method']) verificationMethod!: string;
+  @Transform(({value})=>typeof value==='string'?value.trim():value) @IsString() @IsNotEmpty() @MaxLength(3000) notes!: string;
+  @Equals(true,{message:'Independent source verification must be explicitly confirmed.'}) confirmed!:boolean;
+  // What the referee actually confirmed, which may differ from what the candidate claimed.
+  @IsOptional() @IsDateString() confirmedStartDate?: string;
+  @IsOptional() @IsDateString() confirmedEndDate?: string;
+  @IsOptional() @IsBoolean() confirmedIsCurrent?: boolean;
+}
 export class ReviewActionDto { @Transform(({value})=>typeof value==='string'?value.trim():value) @IsString() @IsNotEmpty() @MaxLength(3000) reason!: string; }

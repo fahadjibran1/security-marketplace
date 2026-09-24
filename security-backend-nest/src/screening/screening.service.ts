@@ -53,6 +53,27 @@ export class ScreeningService {
 
   private async byGuardUser(userId: number) { const guard = await this.guards.findByUserId(userId); if (!guard) throw new NotFoundException('Guard profile not found.'); return { guard, screening: await this.screenings.findOne({ where: { guard: { id: guard.id } }, relations: ['history','addresses','references','references.history','evidence','consents','exceptions'] }) }; }
   private async full(id: number) { const value = await this.screenings.findOne({ where: { id }, relations: ['history','addresses','references','references.history','evidence','consents','exceptions'] }); if (!value) throw new NotFoundException('Screening file not found.'); return value; }
+  /**
+   * Reviewer-only load. reviewNotes and outcomeNotes are `select: false`, so they never appear in
+   * the ordinary projections a Guard, a company or the queue receive. An authorised Platform Admin
+   * reviewing one file needs to read back what was asked and what was decided, so they are added
+   * here explicitly — for a single screening, on an admin-only path, and nowhere else.
+   */
+  private async fullForReviewer(id: number) {
+    const value = await this.full(id);
+    // One extra read of this screening, naming exactly the two `select: false` columns wanted and
+    // nothing else. Going through the screening (rather than the reference repository) keeps the
+    // whole enrichment to a single aggregate load.
+    const notes = await this.screenings.findOne({
+      where: { id },
+      relations: ['references'],
+      select: { id: true, reviewNotes: true, references: { id: true, outcomeNotes: true } },
+    });
+    value.reviewNotes = notes?.reviewNotes ?? null;
+    const byId = new Map((notes?.references ?? []).map(r => [Number(r.id), r.outcomeNotes ?? null]));
+    for (const reference of value.references ?? []) reference.outcomeNotes = byId.get(reference.id) ?? null;
+    return value;
+  }
   private editable(s: GuardScreening) { if (![ScreeningStatus.NOT_STARTED, ScreeningStatus.IN_PROGRESS, ScreeningStatus.REQUIRES_ATTENTION].includes(s.status)) throw new BadRequestException('Screening file is not editable in its current state.'); }
   private editableRecordCorrection(s:GuardScreening){if(![ScreeningStatus.NOT_STARTED,ScreeningStatus.IN_PROGRESS,ScreeningStatus.READY_FOR_REVIEW,ScreeningStatus.REQUIRES_ATTENTION].includes(s.status))throw new BadRequestException('Screening records are not editable in the current state.');}
   private async event(actor: number, action: string, s: GuardScreening, before?: Record<string,unknown>, after?: Record<string,unknown>) { await this.audit.log({ user:{id:actor}, action, entityType:'GuardScreening', entityId:s.id, beforeData:before, afterData:after }); }
@@ -123,9 +144,16 @@ export class ScreeningService {
     const entry=(key:string)=>req.remediation.find(x=>x.key===key);
     // A check is the reviewer's to action only once the Guard has supplied what it needs.
     const REVIEWER_GATE:Record<string,string>={identity:'identity_evidence',address:'address_evidence',sia:'sia_evidence',rtw:'right_to_work_evidence',reference:'reference'};
-    const reviewerActions=readiness.verificationSummary.checks
-      .filter(c=>!c.complete&&REVIEWER_GATE[c.key]&&entry(REVIEWER_GATE[c.key])?.status==='AWAITING_VERIFICATION')
-      .map(c=>({key:c.key,label:c.label,message:entry(REVIEWER_GATE[c.key])?.message??'Awaiting your verification.'}));
+    // The reviewer's whole job, as six named checks in a fixed order. Each one is owned by exactly
+    // one party, so the screen never has to work that out for itself.
+    const CHECK_LABEL:Record<string,string>={identity:'Identity',address:'Address',sia:'SIA',rtw:'Right to Work',reference:'Reference',consent:'Declaration'};
+    const checklist=readiness.verificationSummary.checks.map(c=>{
+      const gate=REVIEWER_GATE[c.key]?entry(REVIEWER_GATE[c.key]):undefined;
+      const owner:'reviewer'|'guard'|'none'=c.complete?'none':gate?.status==='AWAITING_VERIFICATION'?'reviewer':'guard';
+      return {key:c.key,label:CHECK_LABEL[c.key]??c.label,complete:c.complete,owner,
+        message:c.complete?(c.key==='consent'?'Current':'Verified'):gate?.message??'Awaiting candidate information.'};
+    });
+    const reviewerActions=checklist.filter(c=>c.owner==='reviewer').map(({key,label,message})=>({key,label,message}));
     const guardActions=req.remediation.filter(x=>x.status==='ACTION_REQUIRED').map(x=>({key:x.key,label:x.label,message:x.message}));
     const bucket=(():'AWAITING_REVIEW'|'UNDER_REVIEW'|'NEEDS_GUARD_ACTION'|'READY_TO_COMPLETE'|'VETTED'|'NOT_SUBMITTED'|'CLOSED'=>{
       if(s.status===ScreeningStatus.NOT_STARTED||s.status===ScreeningStatus.IN_PROGRESS)return 'NOT_SUBMITTED';
@@ -140,7 +168,9 @@ export class ScreeningService {
     })();
     // An unanswered information request is still worth showing even when the remediation model has
     // nothing outstanding, because the reviewer may have asked for something it cannot express.
-    return {req,readiness,reviewerActions,guardActions,bucket,ready:readiness.ready,
+    return {req,readiness,checklist,reviewerActions,guardActions,bucket,ready:readiness.ready,
+      checksRemaining:checklist.filter(c=>!c.complete).length,
+      referenceDiscrepancy:(s.references||[]).some(r=>r.status===ReferenceStatus.DISCREPANCY),
       informationRequestOutstanding:s.status===ScreeningStatus.REQUIRES_ATTENTION};
   }
 
@@ -179,7 +209,7 @@ export class ScreeningService {
     const limit=query.limit??50;const offset=query.offset??0;
     return {rows:rows.slice(offset,offset+limit),counts,total,limit,offset,filter};
   }
-  adminGet(id:number){return this.full(id).then(s=>this.view(s,true));}
+  adminGet(id:number){return this.fullForReviewer(id).then(s=>this.view(s,true));}
   async startReview(actor:number,id:number){const s=await this.full(id);if(s.status!==ScreeningStatus.READY_FOR_REVIEW)throw new BadRequestException('Screening file is not ready for review.');s.status=ScreeningStatus.UNDER_REVIEW;s.reviewedByUserId=actor;s.reviewedAt=new Date();await this.screenings.save(s);await this.event(actor,'screening.review_started',s,{status:ScreeningStatus.READY_FOR_REVIEW},{status:s.status});return this.view(await this.full(id),true);}
   async verifyCheck(actor:number,id:number,check:'identity'|'address'|'sia'|'rtw',dto:VerifyCheckDto){
     const result=await this.screenings.manager.transaction(async manager=>{
@@ -213,7 +243,41 @@ export class ScreeningService {
   }
   private async reviewReferenceFor(screeningId:number,referenceId:number){const ref=await this.references.findOne({where:{id:referenceId},relations:['screening','history']});if(!ref)throw new NotFoundException('Reference not found.');if(ref.screening.id!==screeningId)throw new ForbiddenException('Reference is not part of this screening file.');if(ref.screening.status!==ScreeningStatus.UNDER_REVIEW)throw new BadRequestException('Screening file is not under review.');return ref;}
   async requestReference(actor:number,screeningId:number,referenceId:number){const ref=await this.reviewReferenceFor(screeningId,referenceId);ref.status=ReferenceStatus.REQUESTED;ref.sourceVerified=false;ref.requestedAt=new Date();ref.verifiedByUserId=null;ref.verifiedAt=null;await this.references.save(ref);await this.event(actor,'screening.reference_requested',ref.screening,undefined,{referenceId:ref.id,screeningId,status:ref.status,requestedAt:ref.requestedAt.toISOString()});return this.safeReference(ref);}
-  async reviewReference(actor:number,screeningId:number,referenceId:number,dto:ReviewReferenceDto){const ref=await this.reviewReferenceFor(screeningId,referenceId);if(dto.confirmed!==true)throw new BadRequestException('Independent source verification must be explicitly confirmed.');if(![ReferenceStatus.VERIFIED,ReferenceStatus.UNABLE_TO_VERIFY,ReferenceStatus.REJECTED,ReferenceStatus.SOURCE_VERIFICATION_REQUIRED].includes(dto.status))throw new BadRequestException('Unsupported reference review decision.');const now=new Date(),before={status:ref.status,sourceVerified:ref.sourceVerified};const sourceVerified=dto.status===ReferenceStatus.VERIFIED;Object.assign(ref,{status:dto.status,sourceVerified,verificationMethod:dto.verificationMethod,verifiedByUserId:actor,verifiedAt:now,outcomeNotes:dto.notes});await this.references.save(ref);const action=sourceVerified?'screening.reference_verified':dto.status===ReferenceStatus.UNABLE_TO_VERIFY?'screening.reference_unable_to_verify':dto.status===ReferenceStatus.REJECTED?'screening.reference_rejected':'screening.reference_clarification_requested';await this.event(actor,action,ref.screening,before,{referenceId:ref.id,screeningId,status:ref.status,sourceVerified,verificationMethod:ref.verificationMethod,reviewedByUserId:actor,verifiedAt:now.toISOString()});return this.view(await this.full(screeningId),true);}
+  async reviewReference(actor:number,screeningId:number,referenceId:number,dto:ReviewReferenceDto){
+    const ref=await this.reviewReferenceFor(screeningId,referenceId);
+    if(dto.confirmed!==true)throw new BadRequestException('Independent source verification must be explicitly confirmed.');
+    if(![ReferenceStatus.VERIFIED,ReferenceStatus.DISCREPANCY,ReferenceStatus.UNABLE_TO_VERIFY,ReferenceStatus.REJECTED,ReferenceStatus.SOURCE_VERIFICATION_REQUIRED].includes(dto.status))throw new BadRequestException('Unsupported reference review decision.');
+    // Only a clean confirmation counts as source verification. A discrepancy records what the
+    // referee said and deliberately leaves the file unverified.
+    const sourceVerified=dto.status===ReferenceStatus.VERIFIED;
+    const confirmsDates=dto.status===ReferenceStatus.VERIFIED||dto.status===ReferenceStatus.DISCREPANCY;
+    if(confirmsDates){
+      if(!dto.confirmedStartDate)throw new BadRequestException('Record the start date the reference confirmed.');
+      if(!dto.confirmedEndDate&&dto.confirmedIsCurrent!==true)throw new BadRequestException('Record the end date the reference confirmed, or mark the engagement as still current.');
+      if(dto.confirmedEndDate&&dto.confirmedIsCurrent===true)throw new BadRequestException('A still-current engagement cannot also have a confirmed end date.');
+      if(dto.confirmedEndDate&&dto.confirmedEndDate<dto.confirmedStartDate)throw new BadRequestException('Confirmed end date cannot precede the confirmed start date.');
+    }
+    if(dto.status===ReferenceStatus.DISCREPANCY){
+      const claimedStart=ref.history?.startDate??null,claimedEnd=ref.history?.endDate??null,claimedCurrent=!!ref.history?.isCurrent;
+      const sameStart=claimedStart===dto.confirmedStartDate;
+      const sameEnd=claimedCurrent?dto.confirmedIsCurrent===true:claimedEnd===(dto.confirmedEndDate??null);
+      if(sameStart&&sameEnd)throw new BadRequestException('Recorded dates match the candidate claim; verify the reference instead of recording a discrepancy.');
+    }
+    const now=new Date(),before={status:ref.status,sourceVerified:ref.sourceVerified};
+    Object.assign(ref,{status:dto.status,sourceVerified,verificationMethod:dto.verificationMethod,verifiedByUserId:actor,verifiedAt:now,outcomeNotes:dto.notes,
+      confirmedStartDate:confirmsDates?dto.confirmedStartDate:null,
+      confirmedEndDate:confirmsDates&&!dto.confirmedIsCurrent?dto.confirmedEndDate??null:null,
+      confirmedIsCurrent:confirmsDates?dto.confirmedIsCurrent===true:null});
+    // receivedAt means "a response from the reference source reached us", which is exactly what a
+    // reviewer records here whatever the channel — a phone call is as much a response as an email.
+    // It is not set when a request is merely sent, nor when the source never responded at all.
+    if(dto.status!==ReferenceStatus.UNABLE_TO_VERIFY&&!ref.receivedAt)ref.receivedAt=now;
+    await this.references.save(ref);
+    const action=sourceVerified?'screening.reference_verified':dto.status===ReferenceStatus.DISCREPANCY?'screening.reference_discrepancy_recorded':dto.status===ReferenceStatus.UNABLE_TO_VERIFY?'screening.reference_unable_to_verify':dto.status===ReferenceStatus.REJECTED?'screening.reference_rejected':'screening.reference_clarification_requested';
+    await this.event(actor,action,ref.screening,before,{referenceId:ref.id,screeningId,status:ref.status,sourceVerified,verificationMethod:ref.verificationMethod,reviewedByUserId:actor,verifiedAt:now.toISOString(),
+      confirmedStartDate:ref.confirmedStartDate??null,confirmedEndDate:ref.confirmedEndDate??null,confirmedIsCurrent:ref.confirmedIsCurrent??null});
+    return this.view(await this.fullForReviewer(screeningId),true);
+  }
   async requestInfo(actor:number,id:number,dto:ReviewActionDto){const s=await this.full(id);if(![ScreeningStatus.UNDER_REVIEW,ScreeningStatus.READY_FOR_REVIEW].includes(s.status))throw new BadRequestException('Information cannot be requested in the current state.');const before=s.status;s.status=ScreeningStatus.REQUIRES_ATTENTION;s.reviewNotes=dto.reason;s.reviewedByUserId=actor;s.reviewedAt=new Date();await this.screenings.save(s);await this.event(actor,'screening.information_requested',s,{status:before},{status:s.status,reason:dto.reason});return this.view(await this.full(id),true);}
   async complete(actor:number,id:number,dto:ReviewActionDto){const s=await this.full(id);if(s.status!==ScreeningStatus.UNDER_REVIEW)throw new BadRequestException('Screening file is not under review.');const readiness=this.reviewReadiness(s);if(!readiness.ready)throw new BadRequestException({message:`Screening cannot be completed: ${readiness.blockers[0].detail}`,reviewReadiness:readiness});s.status=ScreeningStatus.VETTED;s.reviewNotes=dto.reason;s.reviewedByUserId=actor;s.reviewedAt=new Date();s.vettedAt=new Date();s.retentionReviewAt=new Date(Date.now()+365*86400000);await this.screenings.save(s);await this.event(actor,'screening.vetted',s,{status:ScreeningStatus.UNDER_REVIEW},{status:s.status,vettedAt:s.vettedAt.toISOString()});return this.view(await this.full(id),true);}
   async reject(actor:number,id:number,dto:ReviewActionDto){const s=await this.full(id);if(![ScreeningStatus.UNDER_REVIEW,ScreeningStatus.READY_FOR_REVIEW].includes(s.status))throw new BadRequestException('Screening cannot be rejected in the current state.');const before=s.status;s.status=ScreeningStatus.REJECTED;s.reviewNotes=dto.reason;s.reviewedByUserId=actor;s.reviewedAt=new Date();await this.screenings.save(s);await this.event(actor,'screening.rejected',s,{status:before},{status:s.status,reason:dto.reason});return this.view(await this.full(id),true);}
@@ -247,7 +311,10 @@ export class ScreeningService {
     const hasReference=(s.references||[]).length>0;
     if(!hasReference)missing.push('At least one linked reference is required.');
     const verifiedReference=(s.references||[]).some(r=>r.status===ReferenceStatus.VERIFIED&&r.sourceVerified);
-    add('reference','Reference',!hasReference?'ACTION_REQUIRED':verifiedReference?'VERIFIED':'AWAITING_VERIFICATION',!hasReference?'Add a reference linked to an activity record.':verifiedReference?'A source-verified reference is recorded.':'Reference supplied — awaiting authorised verification.','references');
+    // A recorded discrepancy stays the reviewer's to resolve: it is neither verified nor something
+    // the Guard can clear by itself, and it must never read as merely "awaiting verification".
+    const discrepancyReference=(s.references||[]).some(r=>r.status===ReferenceStatus.DISCREPANCY);
+    add('reference','Reference',!hasReference?'ACTION_REQUIRED':verifiedReference?'VERIFIED':'AWAITING_VERIFICATION',!hasReference?'Add a reference linked to an activity record.':verifiedReference?'A source-verified reference is recorded.':discrepancyReference?'The reference confirmed different dates from the candidate claim. Resolve the discrepancy before this screening can be completed.':'Reference supplied — awaiting authorised verification.','references');
     const hasConsent=(s.consents||[]).some(c=>!c.withdrawnAt);
     if(!hasConsent)missing.push('Current screening consent is required.');
     add('consent','Consent & declaration',hasConsent?'COMPLETE':'ACTION_REQUIRED',hasConsent?'Current consent recorded.':'Review and accept the screening declaration.','consent');
@@ -272,9 +339,12 @@ export class ScreeningService {
   private view(s:GuardScreening,reviewer=false){const req=this.requirements(s);const progress=this.candidateProgress(s,req);// A reviewer additionally sees the filename and the upload/verification timestamps so they can
 // tell what a document is and when it arrived. Storage keys and signed URLs are never included
 // in either projection — retrieval stays behind the short-lived signed access endpoint.
-const safeEvidence=(s.evidence||[]).map(e=>({id:e.id,category:e.category,mimeType:e.mimeType,sizeBytes:Number(e.sizeBytes),uploadCompleted:!!e.uploadCompletedAt,verificationState:e.verificationState,...(reviewer?{originalFileName:e.originalFileName,uploadedAt:(e.uploadCompletedAt??e.createdAt)?.toISOString(),verifiedAt:e.verifiedAt?e.verifiedAt.toISOString():null,verifiedByUserId:e.verifiedByUserId??null}:{})}));return {...s,references:(s.references||[]).map(r=>this.safeReference(r)),evidence:safeEvidence,reviewNotes:reviewer?s.reviewNotes:undefined,reviewReadiness:reviewer?this.reviewReadiness(s):undefined,
+const safeEvidence=(s.evidence||[]).map(e=>({id:e.id,category:e.category,mimeType:e.mimeType,sizeBytes:Number(e.sizeBytes),uploadCompleted:!!e.uploadCompletedAt,verificationState:e.verificationState,...(reviewer?{originalFileName:e.originalFileName,uploadedAt:(e.uploadCompletedAt??e.createdAt)?.toISOString(),verifiedAt:e.verifiedAt?e.verifiedAt.toISOString():null,verifiedByUserId:e.verifiedByUserId??null}:{})}));return {...s,references:(s.references||[]).map(r=>this.safeReference(r,reviewer)),evidence:safeEvidence,reviewNotes:reviewer?s.reviewNotes:undefined,reviewReadiness:reviewer?this.reviewReadiness(s):undefined,
     // The opened review reads the same classification the queue row was built from.
     reviewClassification:reviewer?(()=>{const {req:_req,readiness:_readiness,...rest}=this.classify(s);return rest;})():undefined,
     requirements:req,progress};}
-  private safeReference(ref:ScreeningReference){return {id:ref.id,historyId:ref.history?.id,history:ref.history?{id:ref.history.id,type:ref.history.type,organisation:ref.history.organisation,startDate:ref.history.startDate,endDate:ref.history.endDate,isCurrent:ref.history.isCurrent}:undefined,organisation:ref.organisation,contactPerson:ref.contactPerson,relationship:ref.relationship,businessEmail:ref.businessEmail,phone:ref.phone,postalDetails:ref.postalDetails,status:ref.status,requestedAt:ref.requestedAt,receivedAt:ref.receivedAt,verificationMethod:ref.verificationMethod,sourceVerified:ref.sourceVerified,verifiedAt:ref.verifiedAt};}
+  // The reviewer additionally sees what the referee confirmed and the decision note. Neither
+  // reaches a Guard or company projection.
+  private safeReference(ref:ScreeningReference,reviewer=false){return {id:ref.id,historyId:ref.history?.id,history:ref.history?{id:ref.history.id,type:ref.history.type,organisation:ref.history.organisation,startDate:ref.history.startDate,endDate:ref.history.endDate,isCurrent:ref.history.isCurrent}:undefined,organisation:ref.organisation,contactPerson:ref.contactPerson,relationship:ref.relationship,businessEmail:ref.businessEmail,phone:ref.phone,postalDetails:ref.postalDetails,status:ref.status,requestedAt:ref.requestedAt,receivedAt:ref.receivedAt,verificationMethod:ref.verificationMethod,sourceVerified:ref.sourceVerified,verifiedAt:ref.verifiedAt,
+    ...(reviewer?{confirmedStartDate:ref.confirmedStartDate??null,confirmedEndDate:ref.confirmedEndDate??null,confirmedIsCurrent:ref.confirmedIsCurrent??null,verifiedByUserId:ref.verifiedByUserId??null,outcomeNotes:ref.outcomeNotes??null}:{})};}
 }

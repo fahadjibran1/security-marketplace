@@ -73,7 +73,12 @@ async function main() {
     const consents = dataSource.getRepository(ScreeningConsent);
     const exceptions = dataSource.getRepository(ScreeningException);
 
-    const stub = {} as never;
+    // The reviewer paths write audit entries; everything else on these collaborators is unused here.
+    const audits: Array<{ action: string }> = [];
+    const stub = {
+      log: async (entry: { action: string }) => { audits.push(entry); },
+      findByUserId: async (userId: number) => guards.findOne({ where: { user: { id: userId } } }),
+    } as never;
     const service = new ScreeningService(screenings, history, addresses, references, evidence, consents, exceptions, dataSource.getRepository('CompanyGuard') as never, stub, stub, stub, stub);
 
     let seq = 0;
@@ -255,6 +260,184 @@ async function main() {
 
     // Payload is reported per served page, since the endpoint caps a page at `limit`; the whole-set
     // figure is what an uncapped queue of that size would cost on the wire.
+    // ── Final vetting officer workflow ───────────────────────────────────────────────────────
+    const reviewer = await users.save(users.create({ email: 'queue.reviewer@example.invalid', passwordHash: 'x', role: UserRole.ADMIN, status: UserStatus.ACTIVE, isEmailVerified: true }));
+    const refOf = async (screeningId: number) => (await references.findOneOrFail({ where: { screening: { id: screeningId } }, relations: ['history'] }));
+    const decide = async (screeningId: number, body: Record<string, unknown>) => {
+      const reference = await refOf(screeningId);
+      return service.reviewReference(reviewer.id, screeningId, reference.id, { verificationMethod: 'Telephone call', notes: 'Spoke to the line manager.', confirmed: true, ...body } as never);
+    };
+    const notesOf = async (id: number) => (await references.createQueryBuilder('r').select('r.outcomeNotes', 'n').where('r.id = :id', { id }).getRawOne<{ n: string | null }>())?.n;
+
+    await test('REFERENCE-CONFIRMED-DATES', async () => {
+      const s = await seed('under_review');
+      await decide(s.id, { status: ReferenceStatus.VERIFIED, confirmedStartDate: iso(yearsAgo(6)), confirmedEndDate: '2026-01-31' });
+      const r = await refOf(s.id);
+      assert.equal(r.status, ReferenceStatus.VERIFIED);
+      assert.equal(r.sourceVerified, true);
+      assert.equal(String(r.confirmedStartDate), iso(yearsAgo(6)));
+      assert.equal(String(r.confirmedEndDate), '2026-01-31');
+      assert.equal(r.confirmedIsCurrent, false);
+      assert.ok(r.verifiedAt && r.verifiedByUserId === reviewer.id, 'reviewer and date recorded');
+      await screenings.delete(s.id);
+    });
+
+    await test('REFERENCE-CONFIRMED-CURRENT', async () => {
+      const s = await seed('under_review');
+      await decide(s.id, { status: ReferenceStatus.VERIFIED, confirmedStartDate: iso(yearsAgo(6)), confirmedIsCurrent: true });
+      const r = await refOf(s.id);
+      assert.equal(r.confirmedIsCurrent, true);
+      assert.equal(r.confirmedEndDate, null, 'a still-current engagement stores no end date');
+      await assert.rejects(() => decide(s.id, { status: ReferenceStatus.VERIFIED, confirmedStartDate: iso(yearsAgo(6)), confirmedEndDate: '2026-01-31', confirmedIsCurrent: true }), /cannot also have a confirmed end date/);
+      await screenings.delete(s.id);
+    });
+
+    await test('REFERENCE-DISCREPANCY', async () => {
+      const s = await seed('under_review');
+      // The candidate claimed an ongoing engagement; the referee says it ended.
+      await decide(s.id, { status: ReferenceStatus.DISCREPANCY, confirmedStartDate: iso(yearsAgo(6)), confirmedEndDate: '2024-06-30' });
+      const r = await refOf(s.id);
+      assert.equal(r.status, ReferenceStatus.DISCREPANCY);
+      assert.equal(r.sourceVerified, false, 'a discrepancy is never silently verified');
+      assert.equal(String(r.confirmedEndDate), '2024-06-30', 'what the referee said is recorded');
+      assert.ok(r.verifiedAt && r.verificationMethod, 'reviewer, date and method still recorded');
+      // Recording a "discrepancy" that matches the claim is a mistake, not a decision.
+      await assert.rejects(() => decide(s.id, { status: ReferenceStatus.DISCREPANCY, confirmedStartDate: iso(yearsAgo(6)), confirmedIsCurrent: true }), /match the candidate claim/);
+      await screenings.delete(s.id);
+    });
+
+    await test('REFERENCE-DISCREPANCY-BLOCKS-COMPLETE', async () => {
+      // Named so it can be found by search: by now the queue holds hundreds of rows and a default
+      // page would not contain it.
+      const s = await seed('ready', 'Discrepancy Block Case');
+      const rowFor = async () => (await service.queue({ filter: 'all', q: 'Discrepancy Block Case' })).rows.find((x) => x.id === s.id)!;
+      assert.equal((await rowFor()).bucket, 'READY_TO_COMPLETE', 'precondition: this file was completable');
+      await decide(s.id, { status: ReferenceStatus.DISCREPANCY, confirmedStartDate: iso(yearsAgo(6)), confirmedEndDate: '2024-06-30' });
+      const row = await rowFor();
+      assert.equal(row.ready, false, 'a discrepancy must block completion');
+      assert.notEqual(row.bucket, 'READY_TO_COMPLETE');
+      await assert.rejects(() => service.complete(reviewer.id, s.id, { reason: 'Attempting to complete over a discrepancy.' } as never), /source-verified reference is required/);
+      const detail = await service.adminGet(s.id);
+      assert.equal(detail.reviewClassification?.referenceDiscrepancy, true, 'the discrepancy is surfaced to the reviewer');
+      assert.match(detail.requirements.remediation.find((x: { key: string }) => x.key === 'reference')!.message, /different dates/, 'and named in plain language');
+      await screenings.delete(s.id);
+    });
+
+    await test('REFERENCE-UNABLE', async () => {
+      const s = await seed('under_review');
+      await decide(s.id, { status: ReferenceStatus.UNABLE_TO_VERIFY });
+      const r = await refOf(s.id);
+      assert.equal(r.status, ReferenceStatus.UNABLE_TO_VERIFY);
+      assert.equal(r.sourceVerified, false);
+      assert.equal(r.confirmedStartDate, null, 'no dates are confirmed when the source never responded');
+      assert.equal(r.receivedAt, null, 'and no response was received');
+      await screenings.delete(s.id);
+    });
+
+    await test('REFERENCE-NOTES-READBACK', async () => {
+      const s = await seed('under_review');
+      await decide(s.id, { status: ReferenceStatus.VERIFIED, confirmedStartDate: iso(yearsAgo(6)), confirmedIsCurrent: true, notes: 'Confirmed by the line manager on a recorded call.' });
+      assert.equal(await notesOf((await refOf(s.id)).id), 'Confirmed by the line manager on a recorded call.', 'stored');
+      const detail = await service.adminGet(s.id);
+      assert.equal(detail.references[0].outcomeNotes, 'Confirmed by the line manager on a recorded call.', 'and readable by an authorised reviewer');
+      assert.ok((await refOf(s.id)).receivedAt, 'a response reached us, whatever the channel');
+      await screenings.delete(s.id);
+    });
+
+    await test('REVIEW-NOTES-READBACK', async () => {
+      const s = await seed('awaiting');
+      await service.startReview(reviewer.id, s.id);
+      await service.requestInfo(reviewer.id, s.id, { reason: 'Please re-upload a clearer passport image.' } as never);
+      const detail = await service.adminGet(s.id);
+      assert.equal(detail.reviewNotes, 'Please re-upload a clearer passport image.', 'the reviewer can read back what was asked');
+      assert.equal(detail.reviewClassification?.informationRequestOutstanding, true);
+      await screenings.delete(s.id);
+    });
+
+    await test('NOTES-NOT-IN-QUEUE', async () => {
+      const s = await seed('awaiting');
+      await service.startReview(reviewer.id, s.id);
+      await service.requestInfo(reviewer.id, s.id, { reason: 'SECRET-REVIEW-NOTE' } as never);
+      await decide(s.id, { status: ReferenceStatus.SOURCE_VERIFICATION_REQUIRED, notes: 'SECRET-OUTCOME-NOTE' }).catch(() => undefined);
+      const text = JSON.stringify(await service.queue({ filter: 'all', limit: 200 })) + JSON.stringify(await service.queue({ filter: 'all', q: 'Queue Guard' }));
+      assert.ok(!text.includes('SECRET-REVIEW-NOTE'), 'reviewNotes must never reach the queue');
+      assert.ok(!text.includes('SECRET-OUTCOME-NOTE'), 'outcomeNotes must never reach the queue');
+      assert.ok(!text.includes('reviewNotes') && !text.includes('outcomeNotes'), 'not even the field names');
+      await screenings.delete(s.id);
+    });
+
+    await test('NOTES-NOT-IN-GUARD', async () => {
+      const s = await seed('awaiting');
+      await service.startReview(reviewer.id, s.id);
+      await service.requestInfo(reviewer.id, s.id, { reason: 'GUARD-MUST-NOT-SEE' } as never);
+      const guardUserId = (await screenings.findOneOrFail({ where: { id: s.id } })).guard.user.id;
+      const mine = JSON.stringify(await service.mine(guardUserId));
+      assert.ok(!mine.includes('GUARD-MUST-NOT-SEE'), 'the Guard projection must not carry reviewer notes');
+      assert.ok(!mine.includes('outcomeNotes'), 'nor reference outcome notes');
+      await screenings.delete(s.id);
+    });
+
+    await test('NOTES-NOT-IN-COMPANY', async () => {
+      const s = await seed('vetted');
+      const outcome = JSON.stringify(await service.companyOutcome(-1, s.guard.id).catch(() => ({})));
+      assert.ok(!outcome.includes('reviewNotes') && !outcome.includes('outcomeNotes'), 'the company projection exposes neither');
+      const detail = await service.adminGet(s.id);
+      assert.deepEqual(Object.keys(await service.companyOutcome(-1, s.guard.id).catch(() => ({}))).sort(), [], 'no company link, so nothing at all');
+      assert.ok(detail, 'reviewer path still works');
+      await screenings.delete(s.id);
+    });
+
+    await test('REVIEW-CHECKLIST-SIX', async () => {
+      const s = await seed('under_review');
+      const detail = await service.adminGet(s.id);
+      const list = detail.reviewClassification!.checklist;
+      assert.deepEqual(list.map((c: { key: string }) => c.key), ['identity', 'address', 'sia', 'rtw', 'reference', 'consent'], 'six checks, fixed order');
+      assert.deepEqual(list.map((c: { label: string }) => c.label), ['Identity', 'Address', 'SIA', 'Right to Work', 'Reference', 'Declaration']);
+      for (const entry of list) assert.ok(['reviewer', 'guard', 'none'].includes(entry.owner), 'every check is owned by exactly one party');
+      assert.equal(list.find((c: { key: string }) => c.key === 'consent')!.complete, true, 'declaration is candidate-satisfied');
+      assert.equal(detail.reviewClassification!.checksRemaining, 5);
+      await screenings.delete(s.id);
+    });
+
+    await test('REVIEW-COUNT-DECREMENTS', async () => {
+      const s = await seed('under_review', 'Count Decrement Case');
+      assert.equal((await service.adminGet(s.id)).reviewClassification!.checksRemaining, 5);
+      const identity = (await evidence.findOneOrFail({ where: { screening: { id: s.id }, category: EvidenceCategory.IDENTITY } }));
+      await service.verifyCheck(reviewer.id, s.id, 'identity', { state: VerificationState.VERIFIED, method: 'Document inspection', evidenceId: identity.id } as never);
+      const after = await service.adminGet(s.id);
+      assert.equal(after.reviewClassification!.checksRemaining, 4, 'the checklist moves immediately after a successful action');
+      assert.equal(after.reviewClassification!.checklist.find((c: { key: string }) => c.key === 'identity')!.complete, true);
+      assert.equal((await service.queue({ filter: 'all', q: 'Count Decrement Case' })).rows.find((x) => x.id === s.id)!.verificationCompleted, 2, 'and so does the queue row');
+      await screenings.delete(s.id);
+    });
+
+    await test('FINAL-READY', async () => {
+      const s = await seed('ready');
+      const detail = await service.adminGet(s.id);
+      assert.equal(detail.reviewClassification!.ready, true);
+      assert.equal(detail.reviewClassification!.checksRemaining, 0);
+      assert.ok(detail.reviewClassification!.checklist.every((c: { complete: boolean }) => c.complete), 'all six complete');
+      await screenings.delete(s.id);
+    });
+
+    await test('FINAL-VETTED', async () => {
+      const s = await seed('ready');
+      const completed = await service.complete(reviewer.id, s.id, { reason: 'All configured pilot controls verified.' } as never);
+      assert.equal(completed.status, ScreeningStatus.VETTED);
+      assert.ok(completed.vettedAt, 'vettedAt recorded');
+      await screenings.delete(s.id);
+    });
+
+    await test('POST-VETTED-QUEUE', async () => {
+      const s = await seed('ready', 'Post Vetted Case');
+      await service.complete(reviewer.id, s.id, { reason: 'All configured pilot controls verified.' } as never);
+      const row = (await service.queue({ filter: 'all', q: 'Post Vetted Case' })).rows.find((x) => x.id === s.id)!;
+      assert.equal(row.bucket, 'VETTED');
+      assert.ok(!(await service.queue({ q: 'Post Vetted Case' })).rows.some((x) => x.id === s.id), 'and it leaves the default workload');
+      assert.ok((await service.queue({ filter: 'vetted', q: 'Post Vetted Case' })).rows.some((x) => x.id === s.id), 'but is findable under Vetted');
+      await screenings.delete(s.id);
+    });
+
     const payload = (rows: unknown[]) => Buffer.byteLength(JSON.stringify(rows));
     const bytesPerRow = Math.round(payload(at500.out.rows) / at500.out.rows.length);
     console.log(JSON.stringify({
@@ -271,3 +454,4 @@ async function main() {
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });
+

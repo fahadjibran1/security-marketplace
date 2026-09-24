@@ -1682,7 +1682,14 @@ export interface GuardScreening {
   submittedAt?: string|null; reviewedAt?: string|null; vettedAt?: string|null; retentionReviewAt?: string|null;
   reviewReadiness?: {ready:boolean;blockers:Array<{key:string;label:string;detail:string;action?:'references'|'identity'|'address'|'sia'|'rtw'}>;verificationSummary:{completed:number;total:number;checks:Array<{key:string;label:string;complete:boolean}>};addressVerificationScope:'CURRENT_ADDRESS_ONLY'};
   /** The same classification the queue row was built from, so the two views cannot disagree. */
-  reviewClassification?: {reviewerActions:Array<{key:string;label:string;message:string}>;guardActions:Array<{key:string;label:string;message:string}>;bucket:ScreeningQueueBucket;ready:boolean;informationRequestOutstanding:boolean};
+  reviewClassification?: {
+    checklist:Array<{key:string;label:string;complete:boolean;owner:'reviewer'|'guard'|'none';message:string}>;
+    reviewerActions:Array<{key:string;label:string;message:string}>;
+    guardActions:Array<{key:string;label:string;message:string}>;
+    bucket:ScreeningQueueBucket; ready:boolean; checksRemaining:number;
+    referenceDiscrepancy:boolean; informationRequestOutstanding:boolean;
+  };
+  reviewNotes?: string|null;
   requirements?: { missing: string[]; remediation?: Array<{key:string;label:string;status:'COMPLETE'|'ACTION_REQUIRED'|'AWAITING_VERIFICATION'|'VERIFIED';message:string;step:string}>; chronology: { continuous:boolean; gaps:Array<{from:string;to:string}>; overlaps:Array<{from:string;to:string}>; periodStart?:string; periodEnd?:string }; addressChronology?: { continuous:boolean; gaps:Array<{from:string;to:string}>; overlaps:Array<{from:string;to:string}>; periodStart?:string; periodEnd?:string } };
   history?: Array<{id:number;type:string;startDate:string;endDate?:string|null;isCurrent:boolean;organisation?:string;description?:string;verificationState?:string}>;
   addresses?: Array<{id:number;address:string;addressLine1?:string|null;addressLine2?:string|null;townCity?:string|null;postcode?:string|null;startDate:string;endDate?:string|null;isCurrent:boolean;verificationState:string}>;

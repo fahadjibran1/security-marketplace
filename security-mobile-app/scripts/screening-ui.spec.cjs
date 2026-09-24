@@ -333,26 +333,26 @@ test('QUEUE-CONTINUE',()=>assert.match(admin2,/UNDER_REVIEW: 'Continue review'/)
 test('QUEUE-GUARD-ACTION',()=>assert.match(admin2,/NEEDS_GUARD_ACTION: 'View'/,'a Guard-blocked row offers no reviewer verification from the queue'));
 test('QUEUE-READY-COMPLETE',()=>assert.match(admin2,/READY_TO_COMPLETE: 'Complete review'/));
 
+// The separate YOUR ACTIONS / WAITING FOR GUARD sections became one six-row checklist that states
+// ownership per check. The intent each test protected is preserved against the final layout.
 test('DETAIL-YOUR-ACTIONS-FIRST',()=>{
-  const body=admin2.split("<Text style={styles.detailHeading}>YOUR ACTIONS</Text>")[1];
-  assert.ok(body,'YOUR ACTIONS section must exist');
-  assert.ok(body.indexOf('WAITING FOR GUARD')<body.indexOf('Completed checks ('),'order is your actions, then guard, then completed');
-  // Only checks whose candidate input has arrived are the reviewer's to action. That rule now
-  // lives in the service so the queue row and this view cannot disagree — see
-  // DETAIL-SHARED-CLASSIFICATION and QUEUE-BUCKET-FROM-ACTIONABLE-STATE.
-  assert.match(svc2,/\.filter\(c=>!c\.complete&&REVIEWER_GATE\[c\.key\]&&entry\(REVIEWER_GATE\[c\.key\]\)\?\.status==='AWAITING_VERIFICATION'\)/);
+  const body=admin2.split("<Text style={styles.detailHeading}>REVIEW CHECKLIST</Text>")[1];
+  assert.ok(body,'the checklist must be the first thing under the summary');
+  assert.ok(body.indexOf('View full application')>-1,'and the application dump comes after it');
+  // Only checks whose candidate input has arrived are the reviewer's to action. That rule lives in
+  // the service so the queue row and this view cannot disagree.
+  assert.match(svc2,/const owner:'reviewer'\|'guard'\|'none'=c\.complete\?'none':gate\?\.status==='AWAITING_VERIFICATION'\?'reviewer':'guard'/);
 });
 test('DETAIL-WAITING-FOR-GUARD',()=>{
   assert.match(svc2,/const guardActions=req\.remediation\.filter\(x=>x\.status==='ACTION_REQUIRED'\)/);
-  const block=admin2.split('WAITING FOR GUARD</Text>')[1].split('collapseToggle')[0];
-  assert.match(block,/Waiting for Guard/,'the row must say who it is waiting on');
-  assert.match(block,/Request information/);
-  assert.doesNotMatch(block,/setReviewCategory|Verify/,'never offer Verify for something the Guard has not supplied');
+  // A Guard-owned row says so and offers no reviewer control at all.
+  assert.match(admin2,/entry\.owner==='guard'\?`Waiting for Guard — \$\{entry\.message\}`/);
+  assert.match(admin2,/\{!entry\.complete&&entry\.owner==='reviewer'\?<Pressable/,'Review is offered only for reviewer-owned checks');
+  assert.match(admin2,/Request information/);
 });
 test('DETAIL-COMPLETED-COLLAPSED',()=>{
-  assert.match(admin2,/useState\(false\)/);
-  assert.match(admin2,/const \[completedOpen,setCompletedOpen\]=useState\(false\)/,'completed checks start collapsed');
-  assert.match(admin2,/Completed checks \(\{completedChecks\.length\}\)/);
+  assert.match(admin2,/const \[completedOpen,setCompletedOpen\]=useState\(false\)/,'the application starts collapsed');
+  assert.match(admin2,/View full application \(\{completedChecks\.length\}/);
   assert.match(admin2,/\{completedOpen&&!focusedReview\?<>[\s\S]{0,400}<View style=\{styles\.screeningReviewGrid\}>/,'the bulky application content sits behind the collapse');
 });
 test('DETAIL-BACK-TO-QUEUE',()=>{
@@ -409,25 +409,85 @@ test('QUEUE-BUCKET-FROM-ACTIONABLE-STATE',()=>{
   assert.match(c,/informationRequestOutstanding:s\.status===ScreeningStatus\.REQUIRES_ATTENTION/,'the unanswered request is surfaced, not silently dropped');
 });
 test('DETAIL-TOP-SUMMARY-NO-DUPLICATION',()=>{
-  const head=admin2.split('SCREENING REVIEW</Text>')[1].split('<Text style={styles.detailHeading}>YOUR ACTIONS</Text>')[0];
-  assert.match(head,/Candidate information: /);
-  assert.match(head,/Verification: /);
+  const head=admin2.split('SCREENING REVIEW</Text>')[1].split('<Text style={styles.detailHeading}>REVIEW CHECKLIST</Text>')[0];
+  assert.match(head,/Candidate application: /);
+  assert.match(head,/check\$\{checksRemaining===1\?'':'s'\} remaining/);
   assert.match(head,/Reviewer actions remaining: \{yourActions\.length\}/);
   assert.match(head,/Guard actions remaining: \{waitingForGuard\.length\}/);
-  assert.doesNotMatch(head,/requires review/,'the per-check breakdown belongs to YOUR ACTIONS alone');
-  assert.doesNotMatch(head,/verificationSummary\?\.checks\.map/,'no second per-check list above the actions');
+  assert.doesNotMatch(head,/requires review/,'the per-check breakdown belongs to the checklist alone');
+  assert.doesNotMatch(head,/verificationSummary\?\.checks\.map/,'no second per-check list above the checklist');
   // ...and no third copy of the per-check buttons in the footer action grid.
   assert.doesNotMatch(admin2,/Review \{check==='rtw'\?'RTW':check\.toUpperCase\(\)\}/);
 });
 test('DETAIL-FOCUSED-REVIEW',()=>{
   assert.match(admin2,/const focusedReview=!!reviewCategory\|\|referencesOpen/);
-  assert.match(admin2,/\{!focusedReview\?<><Text style=\{styles\.detailHeading\}>YOUR ACTIONS<\/Text>/,'choosing an action hides the unrelated lists');
-  assert.match(admin2,/\{completedOpen&&!focusedReview\?/,'completed checks stay out of the way during a focused review');
+  assert.match(admin2,/\{!focusedReview\?<><Text style=\{styles\.detailHeading\}>REVIEW CHECKLIST<\/Text>/,'choosing an action hides the checklist');
+  assert.match(admin2,/\{completedOpen&&!focusedReview\?/,'the full application stays out of the way during a focused review');
 });
-test('DETAIL-WAITING-FOR-GUARD-EMPTY-IS-SMALL',()=>{
-  assert.match(admin2,/No Guard action required\./);
-  const block=admin2.split('WAITING FOR GUARD</Text>')[0];
-  assert.doesNotMatch(block,/Nothing is outstanding from the Guard/,'the old full-height empty state is gone');
+test('REVIEW-CHECKLIST-SIX',()=>{
+  // Six named checks from the backend, one next action each — not a remediation dump.
+  assert.match(admin2,/<Text style=\{styles\.detailHeading\}>REVIEW CHECKLIST<\/Text>/);
+  assert.match(admin2,/const checklist=classification\?\.checklist\|\|\[\]/,'the checklist comes from the shared classification');
+  assert.match(svc2,/const CHECK_LABEL:Record<string,string>=\{identity:'Identity',address:'Address',sia:'SIA',rtw:'Right to Work',reference:'Reference',consent:'Declaration'\}/);
+  assert.doesNotMatch(admin2,/REVIEWER_GATE/,'the screen must not re-derive ownership');
+  assert.match(admin2,/\{checksRemaining===0\?'No checks remaining':`\$\{checksRemaining\} check\$\{checksRemaining===1\?'':'s'\} remaining`\}/);
+});
+test('REVIEW-NO-FULL-APPLICATION-DEFAULT',()=>{
+  assert.match(admin2,/const \[completedOpen,setCompletedOpen\]=useState\(false\)/,'the application starts collapsed');
+  // Everything bulky sits behind the disclosure, not under the checklist.
+  const checklistBlock=admin2.split('REVIEW CHECKLIST</Text>')[1].split('collapseToggle')[0];
+  for(const heavy of ['Activity chronology','Addresses</Text>','screeningReviewGrid','requirements?.missing'])
+    assert.ok(!checklistBlock.includes(heavy),`the checklist must not render ${heavy}`);
+});
+test('REVIEW-VIEW-FULL-APPLICATION',()=>{
+  assert.match(admin2,/View full application \(\{completedChecks\.length\} of \{checklist\.length\} checks complete\)/);
+  const full=admin2.split('completedOpen&&!focusedReview?')[1];
+  for(const kept of ['Activity chronology','Addresses','References & evidence','verificationSummary?.checks.map'])
+    assert.ok(full.includes(kept),`audit detail must remain available: ${kept}`);
+});
+for(const [id,category,needle] of [
+  ['REVIEW-FOCUSED-IDENTITY','identity','Submitted identity details'],
+  ['REVIEW-FOCUSED-ADDRESS','address','Address being verified'],
+  ['REVIEW-FOCUSED-SIA','sia','Submitted SIA information'],
+  ['REVIEW-FOCUSED-RTW','rtw','Submitted Right to Work information'],
+]){
+  test(id,()=>{
+    assert.match(admin2,new RegExp(`reviewCategory==='${category}'\\?<View style=\\{styles\\.submittedDetails\\}>`),'the focused task shows its own candidate data');
+    assert.ok(admin2.includes(needle));
+    // Opening a task hides the checklist rather than adding another panel below it.
+    assert.match(admin2,/\{!focusedReview\?<><Text style=\{styles\.detailHeading\}>REVIEW CHECKLIST<\/Text>/);
+  });
+}
+test('REVIEW-FOCUSED-REFERENCE',()=>{
+  const panel=admin2.split('Controlled reference decision')[1].split('Record reference decision')[0];
+  assert.match(panel,/Candidate claims: /,'the claim the reference is being checked against');
+  assert.match(panel,/Reference confirmed<\/Text>/,'and what the referee actually confirmed');
+  assert.match(panel,/Confirmed start date/);assert.match(panel,/Still current/);assert.match(panel,/Confirmed end date/);
+  for(const outcome of ["'Confirmed'","'Discrepancy'","'Unable to verify'","'Reject'","'Request clarification'"])
+    assert.ok(panel.includes(outcome),'missing reference outcome '+outcome);
+  for(const status of ['VERIFIED','DISCREPANCY','SOURCE_VERIFICATION_REQUIRED','UNABLE_TO_VERIFY','REJECTED'])
+    assert.ok(panel.includes(`'${status}'`),'missing reference status '+status);
+  assert.match(panel,/Reference verification method/);
+});
+test('REVIEW-CONSENT-READONLY',()=>{
+  // The declaration is a candidate act: it shows state and offers the reviewer no action.
+  assert.match(admin2,/if\(key==='consent'\)return;/,'consent opens no reviewer task');
+  assert.match(admin2,/entry\.complete\?`✓ \$\{entry\.message\}`/,'a satisfied check reads as done');
+});
+test('REVIEW-DISCREPANCY-SURFACED',()=>{
+  // The panel contains a nested ternary, so slice a window rather than splitting on ':null}'.
+  const block=admin2.split('Reference discrepancy')[1].slice(0,1200);
+  assert.match(block,/Candidate claimed: /);
+  assert.match(block,/Reference confirmed: /);
+  assert.match(block,/cannot be completed until the discrepancy is resolved/);
+  assert.match(admin2,/classification\?\.referenceDiscrepancy/);
+});
+test('REVIEW-CONFIRMED-DATES-SENT',()=>{
+  assert.match(admin2,/confirmedStartDate:confirmedStart\.trim\(\)/);
+  assert.match(admin2,/confirmedCurrent\?\{confirmedIsCurrent:true\}:\{confirmedEndDate:confirmedEnd\.trim\(\)\}/);
+  assert.match(admin2,/Record the start date the reference confirmed\./,'the client refuses to send an incomplete confirmation');
+  const api2=read('src/services/api.ts');
+  assert.match(api2,/'VERIFIED'\|'DISCREPANCY'\|'UNABLE_TO_VERIFY'\|'REJECTED'\|'SOURCE_VERIFICATION_REQUIRED'/);
 });
 test('QUEUE-NO-NPLUS1-SOURCE',()=>{
   const loader=svc2.split('private async loadQueueAggregate()')[1].split('private queueRow(')[0];
