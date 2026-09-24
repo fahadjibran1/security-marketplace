@@ -112,30 +112,46 @@ export class ScreeningService {
     return screenings;
   }
 
-  private queueRow(s:GuardScreening){
+  // ── One authoritative classification ───────────────────────────────────────────────────────
+  // The queue row and the opened review must never disagree about who is holding a file up, so
+  // both read this. Ownership follows the current remediation state, not a historical status flag:
+  // a reviewer can request information on a file that is already complete, which leaves the record
+  // at REQUIRES_ATTENTION with nothing the Guard can actually do.
+  private classify(s:GuardScreening){
     const req=this.requirements(s);
     const readiness=this.reviewReadiness(s);
-    const statusOf=(key:string)=>req.remediation.find(x=>x.key===key)?.status;
-    // A check is the reviewer's to action only once the Guard has supplied what it needs; while the
-    // candidate input is outstanding it belongs to the Guard, not to the review queue.
-    const awaiting=(key:string)=>statusOf(key)==='AWAITING_VERIFICATION';
-    const reviewerGate:Record<string,string>={identity:'identity_evidence',address:'address_evidence',sia:'sia_evidence',rtw:'right_to_work_evidence',reference:'reference'};
-    const reviewerActions=readiness.verificationSummary.checks.filter(c=>!c.complete&&reviewerGate[c.key]&&awaiting(reviewerGate[c.key])).length;
-    const guardActions=req.remediation.filter(x=>x.status==='ACTION_REQUIRED').length;
+    const entry=(key:string)=>req.remediation.find(x=>x.key===key);
+    // A check is the reviewer's to action only once the Guard has supplied what it needs.
+    const REVIEWER_GATE:Record<string,string>={identity:'identity_evidence',address:'address_evidence',sia:'sia_evidence',rtw:'right_to_work_evidence',reference:'reference'};
+    const reviewerActions=readiness.verificationSummary.checks
+      .filter(c=>!c.complete&&REVIEWER_GATE[c.key]&&entry(REVIEWER_GATE[c.key])?.status==='AWAITING_VERIFICATION')
+      .map(c=>({key:c.key,label:c.label,message:entry(REVIEWER_GATE[c.key])?.message??'Awaiting your verification.'}));
+    const guardActions=req.remediation.filter(x=>x.status==='ACTION_REQUIRED').map(x=>({key:x.key,label:x.label,message:x.message}));
     const bucket=(():'AWAITING_REVIEW'|'UNDER_REVIEW'|'NEEDS_GUARD_ACTION'|'READY_TO_COMPLETE'|'VETTED'|'NOT_SUBMITTED'|'CLOSED'=>{
       if(s.status===ScreeningStatus.NOT_STARTED||s.status===ScreeningStatus.IN_PROGRESS)return 'NOT_SUBMITTED';
       if(s.status===ScreeningStatus.VETTED)return 'VETTED';
       if(s.status===ScreeningStatus.REJECTED||s.status===ScreeningStatus.EXPIRED)return 'CLOSED';
-      if(s.status===ScreeningStatus.REQUIRES_ATTENTION)return 'NEEDS_GUARD_ACTION';
-      if(s.status===ScreeningStatus.UNDER_REVIEW){if(readiness.ready)return 'READY_TO_COMPLETE';return guardActions>0?'NEEDS_GUARD_ACTION':'UNDER_REVIEW';}
-      return 'AWAITING_REVIEW';
+      // Submitted and in the reviewer's world from here.
+      if(guardActions.length)return 'NEEDS_GUARD_ACTION';
+      // Completion is only reachable from UNDER_REVIEW, so never advertise it from another status.
+      if(readiness.ready&&s.status===ScreeningStatus.UNDER_REVIEW)return 'READY_TO_COMPLETE';
+      if(s.status===ScreeningStatus.READY_FOR_REVIEW)return 'AWAITING_REVIEW';
+      return 'UNDER_REVIEW';
     })();
+    // An unanswered information request is still worth showing even when the remediation model has
+    // nothing outstanding, because the reviewer may have asked for something it cannot express.
+    return {req,readiness,reviewerActions,guardActions,bucket,ready:readiness.ready,
+      informationRequestOutstanding:s.status===ScreeningStatus.REQUIRES_ATTENTION};
+  }
+
+  private queueRow(s:GuardScreening){
+    const c=this.classify(s);
     // Deliberately compact: no evidence, addresses, history, documents or candidate PII beyond the
     // name and email a reviewer needs to identify the row.
     return {id:s.id,guardId:s.guard?.id??null,guardName:s.guard?.fullName??null,guardEmail:s.guard?.user?.email??null,
       status:s.status,submittedAt:s.submittedAt?new Date(s.submittedAt).toISOString():null,updatedAt:new Date(s.updatedAt).toISOString(),
-      progress:this.candidateProgress(s,req),verificationCompleted:readiness.verificationSummary.completed,verificationTotal:readiness.verificationSummary.total,
-      reviewerActions,guardActions,bucket,ready:readiness.ready};
+      progress:this.candidateProgress(s,c.req),verificationCompleted:c.readiness.verificationSummary.completed,verificationTotal:c.readiness.verificationSummary.total,
+      reviewerActions:c.reviewerActions.length,guardActions:c.guardActions.length,bucket:c.bucket,ready:c.ready};
   }
 
   async queue(query:ScreeningQueueQueryDto={}){
@@ -256,6 +272,9 @@ export class ScreeningService {
   private view(s:GuardScreening,reviewer=false){const req=this.requirements(s);const progress=this.candidateProgress(s,req);// A reviewer additionally sees the filename and the upload/verification timestamps so they can
 // tell what a document is and when it arrived. Storage keys and signed URLs are never included
 // in either projection — retrieval stays behind the short-lived signed access endpoint.
-const safeEvidence=(s.evidence||[]).map(e=>({id:e.id,category:e.category,mimeType:e.mimeType,sizeBytes:Number(e.sizeBytes),uploadCompleted:!!e.uploadCompletedAt,verificationState:e.verificationState,...(reviewer?{originalFileName:e.originalFileName,uploadedAt:(e.uploadCompletedAt??e.createdAt)?.toISOString(),verifiedAt:e.verifiedAt?e.verifiedAt.toISOString():null,verifiedByUserId:e.verifiedByUserId??null}:{})}));return {...s,references:(s.references||[]).map(r=>this.safeReference(r)),evidence:safeEvidence,reviewNotes:reviewer?s.reviewNotes:undefined,reviewReadiness:reviewer?this.reviewReadiness(s):undefined,requirements:req,progress};}
+const safeEvidence=(s.evidence||[]).map(e=>({id:e.id,category:e.category,mimeType:e.mimeType,sizeBytes:Number(e.sizeBytes),uploadCompleted:!!e.uploadCompletedAt,verificationState:e.verificationState,...(reviewer?{originalFileName:e.originalFileName,uploadedAt:(e.uploadCompletedAt??e.createdAt)?.toISOString(),verifiedAt:e.verifiedAt?e.verifiedAt.toISOString():null,verifiedByUserId:e.verifiedByUserId??null}:{})}));return {...s,references:(s.references||[]).map(r=>this.safeReference(r)),evidence:safeEvidence,reviewNotes:reviewer?s.reviewNotes:undefined,reviewReadiness:reviewer?this.reviewReadiness(s):undefined,
+    // The opened review reads the same classification the queue row was built from.
+    reviewClassification:reviewer?(()=>{const {req:_req,readiness:_readiness,...rest}=this.classify(s);return rest;})():undefined,
+    requirements:req,progress};}
   private safeReference(ref:ScreeningReference){return {id:ref.id,historyId:ref.history?.id,history:ref.history?{id:ref.history.id,type:ref.history.type,organisation:ref.history.organisation,startDate:ref.history.startDate,endDate:ref.history.endDate,isCurrent:ref.history.isCurrent}:undefined,organisation:ref.organisation,contactPerson:ref.contactPerson,relationship:ref.relationship,businessEmail:ref.businessEmail,phone:ref.phone,postalDetails:ref.postalDetails,status:ref.status,requestedAt:ref.requestedAt,receivedAt:ref.receivedAt,verificationMethod:ref.verificationMethod,sourceVerified:ref.sourceVerified,verifiedAt:ref.verifiedAt};}
 }

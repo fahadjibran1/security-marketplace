@@ -337,11 +337,13 @@ test('DETAIL-YOUR-ACTIONS-FIRST',()=>{
   const body=admin2.split("<Text style={styles.detailHeading}>YOUR ACTIONS</Text>")[1];
   assert.ok(body,'YOUR ACTIONS section must exist');
   assert.ok(body.indexOf('WAITING FOR GUARD')<body.indexOf('Completed checks ('),'order is your actions, then guard, then completed');
-  // Only checks whose candidate input has arrived are the reviewer's to action.
-  assert.match(admin2,/const yourActions=\(verificationSummary\?\.checks\|\|\[\]\)\.filter\(check=>!check\.complete&&REVIEWER_GATE\[check\.key\]&&remediationStatus\(REVIEWER_GATE\[check\.key\]\)==='AWAITING_VERIFICATION'\)/);
+  // Only checks whose candidate input has arrived are the reviewer's to action. That rule now
+  // lives in the service so the queue row and this view cannot disagree — see
+  // DETAIL-SHARED-CLASSIFICATION and QUEUE-BUCKET-FROM-ACTIONABLE-STATE.
+  assert.match(svc2,/\.filter\(c=>!c\.complete&&REVIEWER_GATE\[c\.key\]&&entry\(REVIEWER_GATE\[c\.key\]\)\?\.status==='AWAITING_VERIFICATION'\)/);
 });
 test('DETAIL-WAITING-FOR-GUARD',()=>{
-  assert.match(admin2,/const waitingForGuard=remediation\.filter\(entry=>entry\.status==='ACTION_REQUIRED'\)/);
+  assert.match(svc2,/const guardActions=req\.remediation\.filter\(x=>x\.status==='ACTION_REQUIRED'\)/);
   const block=admin2.split('WAITING FOR GUARD</Text>')[1].split('collapseToggle')[0];
   assert.match(block,/Waiting for Guard/,'the row must say who it is waiting on');
   assert.match(block,/Request information/);
@@ -351,7 +353,7 @@ test('DETAIL-COMPLETED-COLLAPSED',()=>{
   assert.match(admin2,/useState\(false\)/);
   assert.match(admin2,/const \[completedOpen,setCompletedOpen\]=useState\(false\)/,'completed checks start collapsed');
   assert.match(admin2,/Completed checks \(\{completedChecks\.length\}\)/);
-  assert.match(admin2,/\{completedOpen\?<><View style=\{styles\.screeningReviewGrid\}>/,'the bulky application content sits behind the collapse');
+  assert.match(admin2,/\{completedOpen&&!focusedReview\?<>[\s\S]{0,400}<View style=\{styles\.screeningReviewGrid\}>/,'the bulky application content sits behind the collapse');
 });
 test('DETAIL-BACK-TO-QUEUE',()=>{
   assert.match(admin2,/← Back to Screening Review/);
@@ -383,6 +385,49 @@ test('QUEUE-NO-FULL-APPLICATION-CLIENT',()=>{
     assert.ok(!rowProjection.includes(heavy),`queue row must not carry ${heavy}`);
   assert.match(rowProjection,/guardName:s\.guard\?\.fullName/);
   assert.match(rowProjection,/guardEmail:s\.guard\?\.user\?\.email/);
+});
+test('QUEUE-ROW-SEPARATES-OWNERSHIP',()=>{
+  // "5 actions outstanding" read as though the Guard was holding the file up when all five were
+  // the reviewer's. The two sides are now named separately.
+  assert.match(admin2,/Reviewer actions: \{row\.reviewerActions\} · Guard actions: \{row\.guardActions\}/);
+  assert.doesNotMatch(admin2,/actions? outstanding/,'the ambiguous combined count must be gone');
+});
+test('DETAIL-SHARED-CLASSIFICATION',()=>{
+  // One authoritative source: the opened review reads exactly what the queue row was built from.
+  assert.match(admin2,/const classification=selected\?\.raw\?\.reviewClassification/);
+  assert.match(admin2,/const yourActions=classification\?\.reviewerActions\|\|\[\]/);
+  assert.match(admin2,/const waitingForGuard=classification\?\.guardActions\|\|\[\]/);
+  assert.doesNotMatch(admin2,/REVIEWER_GATE/,'the client must not re-derive ownership');
+  assert.match(svc2,/reviewClassification:reviewer\?/,'the detail projection carries the classification');
+  assert.match(svc2,/private queueRow\(s:GuardScreening\)\{\s*const c=this\.classify\(s\);/,'the queue row is built from it too');
+});
+test('QUEUE-BUCKET-FROM-ACTIONABLE-STATE',()=>{
+  const c=svc2.split('private classify(')[1].split('private queueRow(')[0];
+  assert.doesNotMatch(c,/if\(s\.status===ScreeningStatus\.REQUIRES_ATTENTION\)return 'NEEDS_GUARD_ACTION'/,'a historical status flag must not decide ownership');
+  assert.match(c,/if\(guardActions\.length\)return 'NEEDS_GUARD_ACTION'/,'ownership follows outstanding Guard work');
+  assert.match(c,/if\(readiness\.ready&&s\.status===ScreeningStatus\.UNDER_REVIEW\)return 'READY_TO_COMPLETE'/,'never advertise completion from a status it cannot be reached from');
+  assert.match(c,/informationRequestOutstanding:s\.status===ScreeningStatus\.REQUIRES_ATTENTION/,'the unanswered request is surfaced, not silently dropped');
+});
+test('DETAIL-TOP-SUMMARY-NO-DUPLICATION',()=>{
+  const head=admin2.split('SCREENING REVIEW</Text>')[1].split('<Text style={styles.detailHeading}>YOUR ACTIONS</Text>')[0];
+  assert.match(head,/Candidate information: /);
+  assert.match(head,/Verification: /);
+  assert.match(head,/Reviewer actions remaining: \{yourActions\.length\}/);
+  assert.match(head,/Guard actions remaining: \{waitingForGuard\.length\}/);
+  assert.doesNotMatch(head,/requires review/,'the per-check breakdown belongs to YOUR ACTIONS alone');
+  assert.doesNotMatch(head,/verificationSummary\?\.checks\.map/,'no second per-check list above the actions');
+  // ...and no third copy of the per-check buttons in the footer action grid.
+  assert.doesNotMatch(admin2,/Review \{check==='rtw'\?'RTW':check\.toUpperCase\(\)\}/);
+});
+test('DETAIL-FOCUSED-REVIEW',()=>{
+  assert.match(admin2,/const focusedReview=!!reviewCategory\|\|referencesOpen/);
+  assert.match(admin2,/\{!focusedReview\?<><Text style=\{styles\.detailHeading\}>YOUR ACTIONS<\/Text>/,'choosing an action hides the unrelated lists');
+  assert.match(admin2,/\{completedOpen&&!focusedReview\?/,'completed checks stay out of the way during a focused review');
+});
+test('DETAIL-WAITING-FOR-GUARD-EMPTY-IS-SMALL',()=>{
+  assert.match(admin2,/No Guard action required\./);
+  const block=admin2.split('WAITING FOR GUARD</Text>')[0];
+  assert.doesNotMatch(block,/Nothing is outstanding from the Guard/,'the old full-height empty state is gone');
 });
 test('QUEUE-NO-NPLUS1-SOURCE',()=>{
   const loader=svc2.split('private async loadQueueAggregate()')[1].split('private queueRow(')[0];

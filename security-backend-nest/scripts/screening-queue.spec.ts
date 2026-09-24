@@ -81,7 +81,7 @@ async function main() {
      * Builds one realistic screening: a five-year activity record, a current address, a reference,
      * a consent and the four required evidence documents, at the requested lifecycle stage.
      */
-    const seed = async (stage: 'not_submitted' | 'awaiting' | 'under_review' | 'guard_action' | 'ready' | 'vetted', name?: string) => {
+    const seed = async (stage: 'not_submitted' | 'awaiting' | 'under_review' | 'guard_action' | 'ready' | 'vetted' | 'info_requested', name?: string) => {
       seq += 1;
       const user = await users.save(users.create({ email: `queue.${seq}@example.invalid`, passwordHash: 'x', role: UserRole.GUARD, status: UserStatus.ACTIVE, isEmailVerified: true }));
       const guard = await guards.save(guards.create({
@@ -89,7 +89,7 @@ async function main() {
         siaExpiryDate: stage === 'guard_action' ? null : '2030-01-01', rightToWorkStatus: stage === 'guard_action' ? null : 'British citizen',
       }));
       const verified = stage === 'ready' || stage === 'vetted';
-      const status = { not_submitted: ScreeningStatus.IN_PROGRESS, awaiting: ScreeningStatus.READY_FOR_REVIEW, under_review: ScreeningStatus.UNDER_REVIEW, guard_action: ScreeningStatus.UNDER_REVIEW, ready: ScreeningStatus.UNDER_REVIEW, vetted: ScreeningStatus.VETTED }[stage];
+      const status = { not_submitted: ScreeningStatus.IN_PROGRESS, awaiting: ScreeningStatus.READY_FOR_REVIEW, under_review: ScreeningStatus.UNDER_REVIEW, guard_action: ScreeningStatus.UNDER_REVIEW, ready: ScreeningStatus.UNDER_REVIEW, vetted: ScreeningStatus.VETTED, info_requested: ScreeningStatus.REQUIRES_ATTENTION }[stage];
       const screening = await screenings.save(screenings.create({
         guard, status, screeningPeriodYears: 5, legalFullName: guard.fullName, dateOfBirth: '1990-04-12', nationality: 'British',
         submittedAt: stage === 'not_submitted' ? null : new Date(Date.now() - seq * 60000),
@@ -186,6 +186,22 @@ async function main() {
         assert.ok(!text.includes(leak), `queue must not expose ${leak}`);
       }
       assert.ok(text.includes('guardEmail'), 'name and email are the identifying fields a reviewer needs');
+    });
+
+    // ── The owner's production case ──────────────────────────────────────────────────────────
+    // A reviewer requested information on a file the Guard had already completed. Nothing is
+    // outstanding from the Guard, so the row must not claim the Guard is holding it up.
+    await test('QUEUE-REQUIRES-ATTENTION-NO-GUARD-WORK', async () => {
+      const screening = await seed('info_requested', 'Owner Uat Case');
+      const r = await service.queue({ filter: 'all', q: 'Owner Uat Case' });
+      const row = r.rows[0];
+      assert.equal(row.progress, 100, 'candidate side is complete');
+      assert.equal(`${row.verificationCompleted}/${row.verificationTotal}`, '1/6');
+      assert.equal(row.reviewerActions, 5, 'identity, address, SIA, RTW and reference are the reviewer\'s');
+      assert.equal(row.guardActions, 0, 'the Guard has nothing outstanding');
+      assert.equal(row.bucket, 'UNDER_REVIEW', 'bucket must follow actionable state, not a historical status flag');
+      assert.ok((await service.queue({})).rows.some((x) => x.id === screening.id), 'and it belongs in the default reviewer workload');
+      await screenings.delete(screening.id);
     });
 
     await test('QUEUE-COUNTS-INDEPENDENT', async () => {

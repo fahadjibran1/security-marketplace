@@ -3,7 +3,9 @@ const read=(file)=>fs.readFileSync(path.join(__dirname,'..',file),'utf8');
 const screen=read('src/screens/AdminDashboardScreen.tsx');const api=read('src/services/api.ts');const controller=read('../security-backend-nest/src/screening/screening.controller.ts');
 const tests=[];const test=(name,check)=>tests.push({name,check});const has=(source,value)=>source.includes(value);const assert=(value,message)=>{if(!value)throw new Error(message);};
 test('Verify Identity refreshes authoritative selected state',()=>assert(has(screen,"runReviewAction(`verify-${reviewCategory}`")&&has(screen,"getScreening(id)"),'identity refresh path missing'));
-test('Verify Address is represented in open detail',()=>assert(has(screen,"['Address',selected.raw?.addresses?.find")&&has(screen,"'identity','address','sia','rtw'"),'address state missing'));
+// The four verifiable categories are now reached from YOUR ACTIONS, which lists only the checks
+// that actually need one, instead of a permanently rendered row of four buttons.
+test('Verify Address is represented in open detail',()=>assert(has(screen,"['Address',selected.raw?.addresses?.find")&&has(screen,"check.key as 'identity'|'address'|'sia'|'rtw'"),'address state missing'));
 test('Verify SIA refreshes open screening',()=>assert(has(screen,"verifyScreeningCheck(Number(selected.id),reviewCategory,inspectedEvidenceId)")&&has(screen,"setSelected(detailRow)"),'SIA refresh missing'));
 test('Verify RTW refreshes open screening',()=>assert(has(screen,"reviewCategory==='rtw'?'Right to Work'")&&has(screen,"setSelected(detailRow)"),'RTW refresh missing'));
 test('successful verification keeps detail open',()=>assert(!has(screen,'await verifyScreeningCheck(Number(selected.id),check);await load();'),'legacy stale verification flow retained'));
