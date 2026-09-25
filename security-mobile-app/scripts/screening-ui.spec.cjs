@@ -483,9 +483,11 @@ test('REVIEW-DISCREPANCY-SURFACED',()=>{
   assert.match(admin2,/classification\?\.referenceDiscrepancy/);
 });
 test('REVIEW-CONFIRMED-DATES-SENT',()=>{
-  assert.match(admin2,/confirmedStartDate:confirmedStart\.trim\(\)/);
-  assert.match(admin2,/confirmedCurrent\?\{confirmedIsCurrent:true\}:\{confirmedEndDate:confirmedEnd\.trim\(\)\}/);
-  assert.match(admin2,/Record the start date the reference confirmed\./,'the client refuses to send an incomplete confirmation');
+  // Transport is the canonical ISO value produced by the shared converter, never the typed text —
+  // sending the raw field is what produced the "must be a valid ISO 8601 date string" rejection.
+  assert.match(admin2,/confirmedStartDate:startIso/);
+  assert.match(admin2,/confirmedCurrent\?\{confirmedIsCurrent:true\}:\{confirmedEndDate:endIso\}/);
+  assert.match(admin2,/Enter the start date the reference confirmed/,'the client refuses to send an incomplete confirmation');
   const api2=read('src/services/api.ts');
   assert.match(api2,/'VERIFIED'\|'DISCREPANCY'\|'UNABLE_TO_VERIFY'\|'REJECTED'\|'SOURCE_VERIFICATION_REQUIRED'/);
 });
@@ -609,6 +611,68 @@ for(const [id,needle] of [['REJECT-NO-AUTO-ADVANCE','reject-'],['DISCREPANCY-NO-
     assert.ok(admin2.includes(needle),'outcome still available: '+needle);
   });
 }
+// ── Owner UAT: the reference date contract ────────────────────────────────────────────────────
+// The admin form sent whatever the reviewer typed straight to @IsDateString(), so a UK date was
+// rejected with "must be a valid ISO 8601 date string". The Guard journey already had a shared
+// converter; the reviewer form simply never used it.
+const refPanel=()=>admin2.split('Controlled reference decision')[1].split('Record reference decision')[0];
+test('REFERENCE-DATE-UI-TO-ISO',()=>{
+  assert.match(admin2,/import \{ formatScreeningDate, screeningDateToIso \} from '\.\.\/components\/guard\/screening-format'/,'the reviewer form uses the same converter as the Guard journey');
+  assert.match(admin2,/startIso=screeningDateToIso\(confirmedStart\)/);
+  assert.match(admin2,/endIso=screeningDateToIso\(confirmedEnd\)/);
+  assert.match(admin2,/confirmedStartDate:startIso/,'the canonical value is transmitted, not the typed text');
+  assert.doesNotMatch(admin2,/confirmedStartDate:confirmedStart\.trim\(\)/,'the raw field value must never be sent');
+  assert.doesNotMatch(admin2,/confirmedEndDate:confirmedEnd\.trim\(\)/);
+  // The shared helper is the single definition of the conversion, not an ad-hoc replace().
+  const fmt=read('src/components/guard/screening-format.ts');
+  assert.match(fmt,/export function screeningDateToIso/);
+  assert.match(fmt,/\$\{year\}-\$\{month\}-\$\{day\}/,'canonical transport is YYYY-MM-DD');
+});
+test('REFERENCE-DATE-START-REQUIRED',()=>{
+  assert.match(admin2,/if\(!confirmedStart\.trim\(\)\)\{setConfirmedError\(\{field:'start',message:'Enter the start date the reference confirmed, as DD\/MM\/YYYY\.'\}\);return;\}/);
+  assert.match(admin2,/const confirmsDates=referenceDecision==='VERIFIED'\|\|referenceDecision==='DISCREPANCY'/,'required for exactly the outcomes the backend requires them for');
+});
+test('REFERENCE-DATE-CURRENT-NO-END',()=>{
+  assert.match(admin2,/confirmedCurrent\?\{confirmedIsCurrent:true\}:\{confirmedEndDate:endIso\}/,'still-current sends the flag and no end date');
+  assert.match(refPanel(),/\{!confirmedCurrent\?<><TextInput accessibilityLabel="Confirmed end date"/,'the end field is hidden when still current');
+  assert.match(admin2,/setConfirmedCurrent\(value=>!value\);setConfirmedEnd\(''\)/,'and any typed end date is discarded');
+});
+test('REFERENCE-DATE-NONCURRENT-END-REQUIRED',()=>{
+  assert.match(admin2,/if\(!confirmedEnd\.trim\(\)\)\{setConfirmedError\(\{field:'end',message:'Enter the end date the reference confirmed, or tick “Still current”\.'\}\);return;\}/);
+});
+test('REFERENCE-DATE-END-NOT-BEFORE-START',()=>{
+  assert.match(admin2,/if\(endIso<startIso\)\{setConfirmedError\(\{field:'end',message:'The confirmed end date cannot be before the confirmed start date\.'\}\);return;\}/);
+});
+test('REFERENCE-DATE-NO-TODAY-DEFAULT',()=>{
+  // Nothing seeds these fields with a date; copying the candidate claim is an explicit action.
+  assert.match(admin2,/const \[confirmedStart,setConfirmedStart\]=useState\(''\)/);
+  assert.match(admin2,/const \[confirmedEnd,setConfirmedEnd\]=useState\(''\)/);
+  assert.match(admin2,/const \[confirmedCurrent,setConfirmedCurrent\]=useState\(false\)/);
+  assert.doesNotMatch(admin2,/setConfirmedStart\((?:new Date|Date\.now|today)/i,'never defaulted to today');
+  assert.match(refPanel(),/Copy candidate claim into these fields/,'copying the claim is deliberate and labelled');
+  assert.match(refPanel(),/Candidate claims: /,'and the claim stays visible to compare against');
+});
+test('REFERENCE-DATE-PLAIN-ERROR',()=>{
+  assert.match(refPanel(),/\{confirmedError\?\.field==='start'\?<Text style=\{styles\.error\}>\{confirmedError\.message\}<\/Text>:null\}/,'the error sits next to the start field');
+  assert.match(refPanel(),/\{confirmedError\?\.field==='end'\?<Text style=\{styles\.error\}>\{confirmedError\.message\}<\/Text>:null\}/,'and next to the end field');
+  assert.doesNotMatch(admin2,/ISO 8601/,'the reviewer is never shown transport-format jargon');
+  assert.match(refPanel(),/Dates are DD\/MM\/YYYY/);
+});
+test('REFERENCE-DATE-FAILED-SUBMIT-NO-MUTATION',()=>{
+  // Every validation path returns before runReviewAction, so a known-bad request is never sent.
+  const submit=admin2.split('const submitReferenceDecision=')[1].split('runReviewAction(`reference-')[0];
+  assert.equal((submit.match(/return;/g)||[]).length,8,'each failure returns without calling the API');
+  assert.ok(!submit.includes('reviewScreeningReference'),'no request is issued before validation completes');
+});
+test('REFERENCE-FINAL-SUCCESS-READY',()=>{
+  // Reference is the last check: success must show readiness and offer vetting, never do it.
+  assert.match(admin2,/if\(referenceDecision==='VERIFIED'\)setCompletedCheck\(\{key:'reference',label:'Reference'\}\)/);
+  const panel=admin2.split('{completedCheck?<View style={styles.readinessReady}>')[1].split('</View>:null}')[0];
+  assert.match(panel,/reviewReadiness\?\.ready&&selected\.status==='UNDER_REVIEW'\?/);
+  assert.match(panel,/✓ All required checks complete/);
+  assert.match(panel,/Mark Guard Vetted/);
+  assert.doesNotMatch(panel,/completeScreeningReview\(/,'vetting is offered, never performed automatically');
+});
 test('QUEUE-NO-NPLUS1-SOURCE',()=>{
   const loader=svc2.split('private async loadQueueAggregate()')[1].split('private queueRow(')[0];
   assert.match(loader,/loadRelationIds/,'children load by set, not per screening');
