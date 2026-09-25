@@ -21,6 +21,16 @@ export class CompanyGuardController {
   }
 
   /**
+   * The signed-in Guard's own workforce memberships. Guard identity is taken from the token; no
+   * guardId is accepted on this route, so it cannot be pointed at another Guard.
+   */
+  @Get('me')
+  @Roles(UserRole.GUARD)
+  findMine(@CurrentUser() user: JwtPayload) {
+    return this.companyGuardService.listForGuardUser(user);
+  }
+
+  /**
    * Platform ADMIN: direct create with trusted companyId from DTO.
    * Company GUARDS_MANAGE users: link an existing guard into their own company,
    *   companyId from DTO is ignored (resolved from membership).

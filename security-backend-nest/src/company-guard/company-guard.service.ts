@@ -43,6 +43,37 @@ export class CompanyGuardService {
     });
   }
 
+  /**
+   * The signed-in Guard's own workforce memberships, for the "My Companies" view.
+   *
+   * Guard identity comes from the authenticated user and nothing else — no guardId is accepted, so
+   * one Guard cannot read another's relationships. ACTIVE only: an INACTIVE or BLOCKED relationship
+   * is the Company's internal state and is not something the Guard is shown.
+   *
+   * Projected deliberately narrowly. A Guard learns the Company's name, the terms they agreed to and
+   * when they agreed — never the Company's own record, its other guards, or its internal status.
+   */
+  async listForGuardUser(user: JwtPayload) {
+    const guard = await this.guardService.findByUserId(user.sub);
+    if (!guard) throw new NotFoundException('Guard profile not found');
+
+    const relations = await this.companyGuardRepo.find({
+      where: { guard: { id: guard.id }, status: CompanyGuardStatus.ACTIVE },
+      order: { createdAt: 'DESC' },
+    });
+
+    return relations
+      .filter((relation) => relation.company)
+      .map((relation) => ({
+        companyId: relation.company.id,
+        companyName: relation.company.name,
+        relationshipType: relation.relationshipType,
+        // Null for relationships established by hire or direct link rather than by invitation.
+        acceptedAt: relation.acceptedAt ?? null,
+        since: relation.acceptedAt ?? relation.createdAt,
+      }));
+  }
+
   async create(dto: CreateCompanyGuardDto): Promise<CompanyGuard> {
     const company = await this.companyService.findOne(dto.companyId);
     return this.createForCompany(company.id, dto);

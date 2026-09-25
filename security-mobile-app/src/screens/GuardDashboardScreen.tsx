@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { FeatureCard } from '../components/FeatureCard';
 import { StatePanel } from '../components/StatePanel';
 import { StatusBadge, StatusTone } from '../components/StatusBadge';
+import { GuardCompaniesPanel } from '../components/guard/GuardCompaniesPanel';
 import { GuardCompliancePanel } from '../components/guard/GuardCompliancePanel';
 import { GuardScreeningJourney, GuardScreeningPanel } from '../components/guard/GuardScreeningPanel';
 import { GuardShiftOffersWorkspace } from '../components/guard/GuardShiftOffersWorkspace';
@@ -12,6 +13,7 @@ import { GuardTimesheetsScreen } from './GuardTimesheetsScreen';
 import { GuardAvailabilityScreen } from './GuardAvailabilityScreen';
 import {
   ApiError,
+  acceptGuardInvitation,
   checkInShift,
   checkOutShift,
   createDailyLog,
@@ -41,10 +43,14 @@ import {
   updateMyPersonnelIdentity,
   upsertMyBankDetails,
   upsertMyEmergencyContact,
+  listMyCompanies,
+  previewGuardInvitation,
+  declineGuardInvitation,
 } from '../services/api';
 import {
   AttendanceEvent,
   AuthUser,
+  GuardCompanyMembership,
   DailyLog,
   DrivingLicenceStatus,
   EmergencyContactRelationship,
@@ -68,7 +74,7 @@ interface GuardDashboardScreenProps {
   onLogout: () => void;
 }
 
-type GuardTab = 'home' | 'offers' | 'jobs' | 'history' | 'profile' | 'screening';
+type GuardTab = 'home' | 'offers' | 'jobs' | 'history' | 'profile' | 'screening' | 'companies';
 type QuickActionModal = 'log' | 'checkCall' | 'incident' | 'welfare' | 'panic' | null;
 
 type LocalTimelineEvent = {
@@ -449,6 +455,23 @@ function getSecondaryActionsHelper(
 export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenProps) {
   const insets = useSafeAreaInsets();
   const [activeTab, setActiveTab] = useState<GuardTab>('home');
+  const [myCompanies, setMyCompanies] = useState<GuardCompanyMembership[]>([]);
+  const [myCompaniesLoading, setMyCompaniesLoading] = useState(false);
+
+  const refreshMyCompanies = useCallback(async () => {
+    setMyCompaniesLoading(true);
+    try {
+      setMyCompanies(await listMyCompanies());
+    } catch {
+      /* the list keeps its previous contents; join/decline report their own outcome */
+    } finally {
+      setMyCompaniesLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshMyCompanies();
+  }, [refreshMyCompanies]);
   const [quickActionModal, setQuickActionModal] = useState<QuickActionModal>(null);
   const [liveNow, setLiveNow] = useState<number>(Date.now());
   const [fullName, setFullName] = useState('');
@@ -493,7 +516,8 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
   // Every tab shares one ScrollView, so without an explicit reset a tab opens at the previous
   // tab's scroll offset — which reads as "the tab did nothing". Screening is a sub-view of
   // Profile rather than a sixth tab, so it keeps Profile lit in the bar.
-  const navActiveTab: GuardTab = activeTab === 'screening' ? 'profile' : activeTab;
+  const navActiveTab: GuardTab =
+    activeTab === 'screening' || activeTab === 'companies' ? 'profile' : activeTab;
   const selectTab = useCallback((tab: GuardTab) => {
     setActiveTab(tab);
     try {
@@ -1693,7 +1717,9 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
                   ? 'History'
                   : activeTab === 'screening'
                     ? 'Screening'
-                    : 'Profile'}
+                    : activeTab === 'companies'
+                      ? 'My Companies'
+                      : 'Profile'}
         </Text>
       </View>
 
@@ -2996,6 +3022,10 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
             </FeatureCard>
 
             <View style={styles.guardProfileBelowStack}>
+              <GuardCompaniesEntry
+                count={myCompanies.length}
+                onOpen={() => selectTab('companies')}
+              />
               <GuardCompliancePanel onManageCompliance={() => selectTab('screening')} />
               <GuardScreeningPanel onContinue={() => selectTab('screening')} />
               <GuardAvailabilityScreen />
@@ -3003,6 +3033,21 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
           </View>
         ) : null}
         {activeTab === 'screening' ? <GuardScreeningJourney onBack={() => selectTab('profile')} scrollViewRef={screeningScrollRef} /> : null}
+        {activeTab === 'companies' ? (
+          <View style={styles.companiesView}>
+            <Pressable onPress={() => selectTab('profile')} accessibilityRole="button" style={styles.companiesBack}>
+              <Text style={styles.companiesBackText}>‹ Back to Profile</Text>
+            </Pressable>
+            <GuardCompaniesPanel
+              companies={myCompanies}
+              loading={myCompaniesLoading}
+              onRefresh={refreshMyCompanies}
+              onPreview={previewGuardInvitation}
+              onAccept={acceptGuardInvitation}
+              onDecline={declineGuardInvitation}
+            />
+          </View>
+        ) : null}
       </ScrollView>
       </View>
 
@@ -3277,7 +3322,42 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
   );
 }
 
+/** Small entry point on Profile, mirroring how Screening is reached. */
+function GuardCompaniesEntry({ count, onOpen }: { count: number; onOpen: () => void }) {
+  return (
+    <Pressable onPress={onOpen} accessibilityRole="button" style={styles.companiesEntry}>
+      <View style={styles.companiesEntryText}>
+        <Text style={styles.companiesEntryTitle}>My Companies</Text>
+        <Text style={styles.companiesEntrySubtitle}>
+          {count > 0
+            ? `You are part of ${count} workforce${count === 1 ? '' : 's'}.`
+            : 'Join a company with an invitation code.'}
+        </Text>
+      </View>
+      <Text style={styles.companiesEntryChevron}>›</Text>
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
+  companiesView: { gap: 16, paddingBottom: 24 },
+  companiesBack: { paddingVertical: 8 },
+  companiesBackText: { color: '#5B6B7A', fontSize: 15, fontWeight: '600' },
+  companiesEntry: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    padding: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E3E8EE',
+    backgroundColor: '#FFFFFF',
+  },
+  companiesEntryText: { flexShrink: 1, gap: 2 },
+  companiesEntryTitle: { fontSize: 16, fontWeight: '700', color: '#1B2A38' },
+  companiesEntrySubtitle: { fontSize: 13, color: '#748392' },
+  companiesEntryChevron: { fontSize: 22, color: '#748392' },
   container: { flex: 1, backgroundColor: colors.background },
   header: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 12 },
   headerTitle: { fontSize: 24, fontWeight: '800', color: colors.textPrimary, letterSpacing: -0.3 },

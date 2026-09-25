@@ -711,6 +711,102 @@ async function main() {
       );
     });
 
+    // ══ GUARD-SCOPED "MY COMPANIES" (Phase C endpoint) ═══════════════════════
+
+    const { CompanyGuardService } = await import('../src/company-guard/company-guard.service');
+    const companyGuardService = new CompanyGuardService(
+      links,
+      { findOne: async (id: number) => companies.findOneOrFail({ where: { id } }) } as never,
+      membership,
+      guardProfileService,
+      { log: async () => undefined } as never,
+    );
+
+    await test('B-MINE-RETURNS-ONLY-THE-CALLERS-OWN-ACTIVE-RELATIONSHIPS', async () => {
+      const { guard, user } = await makeGuard('mineowner');
+      const { guard: other, user: otherUser } = await makeGuard('mineother');
+
+      // The caller joins ABC by invitation and XYZ by a direct link.
+      const invite = await service.createForCompanyUser(abcOwner, {
+        relationshipType: CompanyGuardRelationshipType.EMPLOYEE,
+      });
+      await service.acceptForGuardUser(jwt(user.id, UserRole.GUARD), { code: invite.code });
+      await links.save(links.create({
+        company: xyz, guard, status: CompanyGuardStatus.ACTIVE,
+        relationshipType: CompanyGuardRelationshipType.PREFERRED,
+      }));
+      // A relationship the caller must not be shown, and someone else's relationship entirely.
+      await links.save(links.create({
+        company: abc, guard: other, status: CompanyGuardStatus.ACTIVE,
+        relationshipType: CompanyGuardRelationshipType.EMPLOYEE,
+      }));
+
+      const mine = await companyGuardService.listForGuardUser(jwt(user.id, UserRole.GUARD));
+      assert.equal(mine.length, 2, 'exactly the caller\'s own two memberships');
+      const names = mine.map((row) => row.companyName).sort();
+      assert.deepEqual(names, ['ABC Security Ltd', 'XYZ Security Ltd']);
+
+      const fromInvitation = mine.find((row) => row.companyId === abc.id)!;
+      assert.equal(fromInvitation.relationshipType, CompanyGuardRelationshipType.EMPLOYEE);
+      assert.ok(fromInvitation.acceptedAt, 'a consented relationship carries its acceptance date');
+      const fromDirectLink = mine.find((row) => row.companyId === xyz.id)!;
+      assert.equal(fromDirectLink.acceptedAt, null, 'a direct link has no guard consent date');
+      assert.ok(fromDirectLink.since, 'but still reports when the relationship began');
+
+      // The other guard sees only their own.
+      const theirs = await companyGuardService.listForGuardUser(jwt(otherUser.id, UserRole.GUARD));
+      assert.equal(theirs.length, 1);
+      assert.equal(theirs[0].companyId, abc.id);
+    });
+
+    await test('B-MINE-HIDES-INACTIVE-AND-BLOCKED-RELATIONSHIPS', async () => {
+      const { guard, user } = await makeGuard('minehidden');
+      await links.save(links.create({
+        company: abc, guard, status: CompanyGuardStatus.INACTIVE,
+        relationshipType: CompanyGuardRelationshipType.EMPLOYEE,
+      }));
+      await links.save(links.create({
+        company: xyz, guard, status: CompanyGuardStatus.BLOCKED,
+        relationshipType: CompanyGuardRelationshipType.EMPLOYEE,
+      }));
+      const mine = await companyGuardService.listForGuardUser(jwt(user.id, UserRole.GUARD));
+      assert.deepEqual(mine, [], 'a company\'s internal status is not the guard\'s business');
+    });
+
+    await test('B-MINE-EXPOSES-NO-COMPANY-INTERNALS', async () => {
+      const { user } = await makeGuard('mineshape');
+      const invite = await service.createForCompanyUser(abcOwner, {});
+      await service.acceptForGuardUser(jwt(user.id, UserRole.GUARD), { code: invite.code });
+      const [row] = await companyGuardService.listForGuardUser(jwt(user.id, UserRole.GUARD));
+      assert.deepEqual(
+        Object.keys(row).sort(),
+        ['acceptedAt', 'companyId', 'companyName', 'relationshipType', 'since'],
+        'the projection is exactly the fields the guard needs',
+      );
+    });
+
+    await expectRejection(
+      'B-MINE-REQUIRES-A-GUARD-PROFILE',
+      // A company user has no guard profile, so there is no identity the route could resolve.
+      () => companyGuardService.listForGuardUser(abcOwner),
+      NotFoundException,
+      /Guard profile not found/,
+    );
+
+    await test('B-MINE-TAKES-NO-GUARD-ID-FROM-THE-REQUEST', async () => {
+      const { readFileSync } = await import('node:fs');
+      const { join } = await import('node:path');
+      const controller = readFileSync(join(__dirname, '..', 'src', 'company-guard/company-guard.controller.ts'), 'utf8');
+      const route = controller.split("@Get('me')")[1].split('@Post()')[0];
+      assert.match(route, /@Roles\(UserRole\.GUARD\)/, 'guard-only');
+      assert.doesNotMatch(route, /@Param|@Query|@Body/, 'no request input is accepted at all');
+      assert.match(route, /listForGuardUser\(user\)/, 'identity comes from the authenticated user');
+      const svc = readFileSync(join(__dirname, '..', 'src', 'company-guard/company-guard.service.ts'), 'utf8');
+      const body = svc.split('async listForGuardUser(')[1].split('async create(')[0];
+      assert.match(body, /findByUserId\(user\.sub\)/, 'the guard is resolved from the token subject');
+      assert.match(body, /CompanyGuardStatus\.ACTIVE/, 'ACTIVE relationships only');
+    });
+
     console.log(JSON.stringify({ event: 'company_guard_invitation_passed', tests: passed }));
   } finally {
     await ds.destroy();

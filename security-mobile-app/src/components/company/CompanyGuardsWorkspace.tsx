@@ -2,7 +2,13 @@ import * as React from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Fragment } from 'react/jsx-runtime';
 
-import type { CompanyGuard, ComplianceRecord, GuardProfile, Shift } from '../../types/models';
+import type {
+  CompanyGuard,
+  ComplianceRecord,
+  CompanyScreeningOutcome,
+  GuardProfile,
+  Shift,
+} from '../../types/models';
 import { colors, radii, spacing, typography } from '../../theme';
 import { Button } from '../ui/Button';
 import { Drawer } from '../ui/Drawer';
@@ -20,6 +26,11 @@ import {
   TableHeaderCell,
   TableRow,
 } from '../ui/TableFoundation';
+import {
+  COMPANY_MANAGED_DETAIL,
+  COMPANY_MANAGED_LABEL,
+  s4ScreeningPresentation,
+} from './workforceStatus';
 
 const IS_WEB = typeof document !== 'undefined';
 
@@ -41,10 +52,12 @@ export type CompanyGuardsWorkspaceProps = {
   availablePlatformGuards: GuardProfile[];
   shifts: Shift[];
   complianceRecords: ComplianceRecord[];
+  /** Status-only screening projection, one entry per guard the company can see. */
+  screeningOutcomes: CompanyScreeningOutcome[];
   loading: boolean;
   refreshing: boolean;
   onRefresh: () => void;
-  approvingGuardId: number | null;
+  linkingGuardId: number | null;
   canManageGuards: boolean;
   canPayAdmin: boolean;
   onLinkGuard: (guardId: number) => Promise<void>;
@@ -216,8 +229,9 @@ export function CompanyGuardsWorkspace({
   availablePlatformGuards,
   shifts,
   complianceRecords,
+  screeningOutcomes,
   loading,
-  approvingGuardId,
+  linkingGuardId,
   canManageGuards,
   canPayAdmin,
   onLinkGuard,
@@ -231,6 +245,11 @@ export function CompanyGuardsWorkspace({
 }: CompanyGuardsWorkspaceProps) {
   const [filter, setFilter] = React.useState<FilterKey>('active');
   const [search, setSearch] = React.useState('');
+  const screeningByGuardId = React.useMemo(
+    () => new Map(screeningOutcomes.map((outcome) => [outcome.guardId, outcome.status])),
+    [screeningOutcomes],
+  );
+
   const [quickView, setQuickView] = React.useState<CompanyGuard | null>(null);
   const [linkOpen, setLinkOpen] = React.useState(false);
   const [linkSearch, setLinkSearch] = React.useState('');
@@ -489,6 +508,7 @@ export function CompanyGuardsWorkspace({
               <TableHeaderCell label="Relationship" flex={1} />
               <TableHeaderCell label="Compliance" flex={1} />
               <TableHeaderCell label="Work Status" flex={1} />
+              <TableHeaderCell label="S4 Screening" flex={1.2} />
               <TableHeaderCell label="SIA" flex={1} />
               <TableHeaderCell label="" width={48} />
             </TableHeader>
@@ -509,6 +529,10 @@ export function CompanyGuardsWorkspace({
                 if (!guard) return null;
                 const ws = getWorkStatus(guard.id, shifts);
                 const compliance = getComplianceSummary(guard.id, complianceRecords);
+                const screeningStatus = screeningByGuardId.get(guard.id);
+                const screening = s4ScreeningPresentation(screeningStatus);
+                const companyManaged =
+                  (cg.status || '').toUpperCase() === 'ACTIVE' && screening.label !== 'S4 Screened';
                 const siaLabel = siaExpiryLabel(guard.siaExpiryDate);
                 const siaTone = siaExpiryTone(guard.siaExpiryDate);
                 return (
@@ -521,6 +545,12 @@ export function CompanyGuardsWorkspace({
                     <StatusCell label={relationshipLabel(cg.status)} tone={relationshipTone(cg.status)} flex={1} />
                     <StatusCell label={compliance.label} tone={compliance.tone} flex={1} />
                     <StatusCell label={workStatusLabel(ws)} tone={workStatusTone(ws)} flex={1} />
+                    <TableCell flex={1.2}>
+                      <StatusBadge label={screening.label} tone={screening.tone} size="small" />
+                      {companyManaged ? (
+                        <Text style={styles.companyManagedTag}>{COMPANY_MANAGED_LABEL}</Text>
+                      ) : null}
+                    </TableCell>
                     <TableCell flex={1}>
                       {siaLabel !== '—' ? (
                         <StatusBadge label={siaLabel} tone={siaTone} size="small" />
@@ -695,7 +725,7 @@ export function CompanyGuardsWorkspace({
             <View style={styles.linkEmptyState}>
               <Text style={styles.linkEmptyText}>
                 {trulyAvailableGuards.length === 0
-                  ? 'All approved platform guards are already in your workforce.'
+                  ? 'Every guard visible to you is already in your workforce.'
                   : 'No guards match your search.'}
               </Text>
             </View>
@@ -712,10 +742,10 @@ export function CompanyGuardsWorkspace({
                   </Text>
                 </View>
                 <Button
-                  label={approvingGuardId === guard.id ? 'Linking…' : 'Link'}
+                  label={linkingGuardId === guard.id ? 'Adding…' : 'Add to workforce'}
                   variant="secondary"
                   onPress={() => handleLinkGuard(guard.id)}
-                  disabled={approvingGuardId !== null}
+                  disabled={linkingGuardId !== null}
                 />
               </View>
             ))
@@ -917,6 +947,11 @@ const styles = StyleSheet.create({
   },
   tableInner: {
     minWidth: 680,
+  },
+  companyManagedTag: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginTop: 2,
   },
   chevron: {
     fontSize: 18,

@@ -113,7 +113,7 @@ test('NATIVE-UPLOAD-NO-SECRET-LEAK',()=>{const picker=panel.split('function Evid
 // ── Owner UAT round 2: tabs, section action hierarchy, NINO input ─────────────────────────────
 const ninoFmt=new Function(toJs(guard.match(/function formatNinoInput[\s\S]*?\n  \}/)[0])+';return formatNinoInput;')();
 
-test('TAB-ACTIVE-DURING-SCREENING',()=>{assert.match(guard,/const navActiveTab: GuardTab = activeTab === 'screening' \? 'profile' : activeTab;/);assert.match(guard,/accessibilityState=\{\{ selected: navActiveTab === tab \}\}/);assert.doesNotMatch(guard,/accessibilityState=\{\{ selected: activeTab === tab \}\}/)});
+test('TAB-ACTIVE-DURING-SCREENING',()=>{assert.match(guard,/const navActiveTab: GuardTab =[\s\S]{0,160}activeTab === 'screening'[\s\S]{0,120}'profile'/);assert.match(guard,/accessibilityState=\{\{ selected: navActiveTab === tab \}\}/);assert.doesNotMatch(guard,/accessibilityState=\{\{ selected: activeTab === tab \}\}/)});
 test('TAB-SCROLL-RESET',()=>{const fn=guard.split('const selectTab = useCallback')[1].split('}, \[\]);')[0];assert.match(fn,/setActiveTab\(tab\)/);assert.match(fn,/scrollTo\(\{ y: 0, animated: false \}\)/);assert.match(fn,/catch/,'scroll reset must never break navigation')});
 test('TAB-ALL-FIVE-USE-SELECT',()=>{const nav=guard.split('styles.bottomNav,')[1].split('</View>')[0];assert.match(nav,/onPress=\{\(\) => selectTab\(tab\)\}/);assert.doesNotMatch(nav,/onPress=\{\(\) => setActiveTab\(tab\)\}/)});
 test('TAB-SCREENING-ENTRY-RESETS',()=>{assert.match(guard,/onContinue=\{\(\) => selectTab\('screening'\)\}/);assert.match(guard,/onBack=\{\(\) => selectTab\('profile'\)\}/);assert.match(guard,/onManageCompliance=\{\(\) => selectTab\('screening'\)\}/)});

@@ -3,6 +3,7 @@ import { ActivityIndicator, Image, Modal, Pressable, ScrollView, StyleSheet, Tex
 
 import { CompanyAuditWorkspace } from '../components/company/CompanyAuditWorkspace';
 import { CompanyGuardsWorkspace } from '../components/company/CompanyGuardsWorkspace';
+import { CompanyGuardInvitationsPanel } from '../components/company/CompanyGuardInvitationsPanel';
 import { CompanyClientsWorkspace, type ClientFormState, CLIENT_FORM_EMPTY } from '../components/company/CompanyClientsWorkspace';
 import { CompanyRotaPlannerWorkspace, type PlannerWeekDay, type FlatSlotCell, type LegacyShiftRow } from '../components/company/CompanyRotaPlannerWorkspace';
 import { CompanySitesWorkspace, type SiteFormState, SITE_FORM_EMPTY } from '../components/company/CompanySitesWorkspace';
@@ -50,6 +51,10 @@ import {
   listClients,
   listCompanyDailyLogs,
   listCompanyGuards,
+  listGuardInvitations,
+  createGuardInvitation,
+  revokeGuardInvitation,
+  listCompanyScreeningOutcomes,
   getCompanyGuardPayrollAdmin,
   createCompanyGuardPayrollAdmin,
   updateCompanyGuardPayrollAdmin,
@@ -90,6 +95,9 @@ import {
   Client,
   ComplianceRecord,
   CompanyGuard,
+  CompanyGuardInvitation,
+  CompanyScreeningOutcome,
+  CreateCompanyGuardInvitationPayload,
   CoverageShiftRow,
   CreateClientPayload,
   CreateJobPayload,
@@ -1186,6 +1194,9 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
   const [shifts, setShifts] = React.useState<Shift[]>([]);
   const [guards, setGuards] = React.useState<GuardProfile[]>([]);
   const [companyGuards, setCompanyGuards] = React.useState<CompanyGuard[]>([]);
+  const [guardInvitations, setGuardInvitations] = React.useState<CompanyGuardInvitation[]>([]);
+  const [invitationsLoading, setInvitationsLoading] = React.useState(false);
+  const [screeningOutcomes, setScreeningOutcomes] = React.useState<CompanyScreeningOutcome[]>([]);
   const [jobs, setJobs] = React.useState<Job[]>([]);
   const [applications, setApplications] = React.useState<JobApplication[]>([]);
   const [attendanceEvents, setAttendanceEvents] = React.useState<AttendanceEvent[]>([]);
@@ -1335,6 +1346,16 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
             run: listCompanyGuards,
             apply: (value: CompanyGuard[]) => setCompanyGuards(value),
           },
+          {
+            label: 'workforce invitations',
+            run: listGuardInvitations,
+            apply: (value: CompanyGuardInvitation[]) => setGuardInvitations(value),
+          },
+          {
+            label: 'screening outcomes',
+            run: listCompanyScreeningOutcomes,
+            apply: (value: CompanyScreeningOutcome[]) => setScreeningOutcomes(value),
+          },
         ]);
 
         if (!selectedSiteId && latestSites[0]) {
@@ -1424,16 +1445,12 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
     };
   }, [liveBoardHighlightTimeoutId]);
 
+  // Membership in this company's workforce is decided by the relationship and nothing else.
+  // The platform-global approval flags this used to consult were removed from the company payload in
+  // Phase A: they described an S4 judgement, not a company one, and reading them here excluded guards
+  // the company itself had taken on.
   const activeCompanyGuards = React.useMemo(
-    () =>
-      companyGuards.filter((entry) => {
-        const relationActive = (entry.status || '').toUpperCase() === 'ACTIVE';
-        const guardStatus = (entry.guard?.status || '').toLowerCase();
-        const guardApproval = (entry.guard?.approvalStatus || '').toLowerCase();
-        const operationalStatus = !guardStatus || guardStatus === 'active' || guardStatus === 'approved';
-        const approvedStatus = !guardApproval || guardApproval === 'approved';
-        return relationActive && operationalStatus && approvedStatus;
-      }),
+    () => companyGuards.filter((entry) => (entry.status || '').toUpperCase() === 'ACTIVE'),
     [companyGuards],
   );
 
@@ -1452,15 +1469,10 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
     return Array.from(unique.values()).sort((left, right) => left.fullName.localeCompare(right.fullName));
   }, [activeCompanyGuards]);
 
+  // Guards visible to this company that are not already in its workforce. No approval filtering:
+  // whether S4 has screened someone is shown as a separate, honest label rather than used to hide them.
   const availablePlatformGuards = React.useMemo(
-    () =>
-      guards.filter((guard) => {
-        const guardStatus = (guard.status || '').toLowerCase();
-        const guardApproval = (guard.approvalStatus || '').toLowerCase();
-        const operationalStatus = !guardStatus || guardStatus === 'active' || guardStatus === 'approved';
-        const approvedStatus = !guardApproval || guardApproval === 'approved';
-        return operationalStatus && approvedStatus && !linkedGuardIds.has(guard.id);
-      }),
+    () => guards.filter((guard) => !linkedGuardIds.has(guard.id)),
     [guards, linkedGuardIds],
   );
 
@@ -2631,7 +2643,33 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
       : message;
   };
 
-  const handleApproveGuard = async (guardId: number) => {
+  const refreshGuardInvitations = React.useCallback(async () => {
+    setInvitationsLoading(true);
+    try {
+      setGuardInvitations(await listGuardInvitations());
+    } catch {
+      /* the list simply stays as it was; the action that triggered this reports its own error */
+    } finally {
+      setInvitationsLoading(false);
+    }
+  }, []);
+
+  const handleCreateGuardInvitation = React.useCallback(
+    (payload: CreateCompanyGuardInvitationPayload) => createGuardInvitation(payload),
+    [],
+  );
+
+  const handleRevokeGuardInvitation = React.useCallback(
+    async (invitationId: number) => {
+      await revokeGuardInvitation(invitationId);
+      await refreshGuardInvitations();
+    },
+    [refreshGuardInvitations],
+  );
+
+  // Adds an existing guard to this company's workforce directly. The consent-based invitation
+  // flow is the normal route; this remains for guards already related to the company.
+  const handleAddGuardToWorkforce = async (guardId: number) => {
     try {
       setApprovingGuardId(guardId);
       await linkGuard(guardId);
@@ -4063,8 +4101,8 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
               <Text style={styles.tableCell}>{guard.siaLicenseNumber || guard.siaLicenceNumber || 'No SIA yet'}</Text>
               <Text style={styles.tableCell}>{guard.phone}</Text>
               <View style={styles.rowActions}>
-                <Pressable style={styles.primaryButton} onPress={() => handleApproveGuard(guard.id)} disabled={approvingGuardId === guard.id}>
-                  <Text style={styles.primaryButtonText}>{approvingGuardId === guard.id ? 'Linking...' : 'Link Guard'}</Text>
+                <Pressable style={styles.primaryButton} onPress={() => handleAddGuardToWorkforce(guard.id)} disabled={approvingGuardId === guard.id}>
+                  <Text style={styles.primaryButtonText}>{approvingGuardId === guard.id ? 'Adding...' : 'Add to workforce'}</Text>
                 </Pressable>
               </View>
             </View>
@@ -4255,7 +4293,7 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
               loading={loading && !refreshing}
               refreshing={refreshing}
               onRefresh={() => loadData(true)}
-              approvingGuardId={approvingGuardId}
+              linkingGuardId={approvingGuardId}
               canManageGuards={
                 user?.companyPermissions
                   ? user.companyPermissions.includes('guards.manage')
@@ -4266,14 +4304,27 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
                   ? user.companyPermissions.includes('payroll.manage')
                   : (user?.role === 'company_admin' || user?.role === 'company')
               }
-              onLinkGuard={handleApproveGuard}
+              onLinkGuard={handleAddGuardToWorkforce}
               onUpdateGuardStatus={handleUpdateGuardStatus}
               onOpenPayAdmin={(guardId, guardName) => handleSelectPayrollGuard(guardId, guardName)}
               canViewCompliance={guardNavPermissions.canViewCompliance}
               canViewAvailability={guardNavPermissions.canViewAvailability}
               onNavigateToCompliance={(guardId) => openGuardWorkspace('compliance', guardId)}
               onNavigateToAvailability={(guardId) => openGuardWorkspace('availability', guardId)}
+              screeningOutcomes={screeningOutcomes}
               onNavigateToShiftOffers={() => setActiveSection('shift-offers')}
+            />
+            <CompanyGuardInvitationsPanel
+              invitations={guardInvitations}
+              loading={invitationsLoading}
+              canManageGuards={
+                user?.companyPermissions
+                  ? user.companyPermissions.includes('guards.manage')
+                  : (user?.role === 'company_admin' || user?.role === 'company')
+              }
+              onCreate={handleCreateGuardInvitation}
+              onRevoke={handleRevokeGuardInvitation}
+              onRefresh={refreshGuardInvitations}
             />
             {renderPayrollAdminPanel()}
           </>

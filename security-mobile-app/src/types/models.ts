@@ -1838,3 +1838,64 @@ export interface RotaAssignMultipleResult {
   assigned: Array<{ shiftId: number; guardId: number }>;
   failed: Array<{ shiftId: number; guardId: number; reason: string }>;
 }
+
+// ─── Phase C: company workforce invitations ───────────────────────────────────
+
+export type CompanyGuardRelationshipType = 'EMPLOYEE' | 'PREFERRED' | 'APPROVED_CONTRACTOR';
+
+/** Derived by the backend from the invitation's terminal timestamps — not a stored enum. */
+export type CompanyGuardInvitationState =
+  | 'PENDING'
+  | 'ACCEPTED'
+  | 'DECLINED'
+  | 'REVOKED'
+  | 'EXPIRED';
+
+/** Safe company-facing projection. Deliberately carries no token material. */
+export interface CompanyGuardInvitation {
+  id: number;
+  relationshipType: CompanyGuardRelationshipType;
+  targetSiaLicenceNumber: string | null;
+  state: CompanyGuardInvitationState;
+  createdAt: string;
+  expiresAt: string;
+  invitedByUserId: number;
+  resolvedAt: string | null;
+}
+
+/** The plaintext code is present only here, in the creation response, and is never retrievable again. */
+export interface CompanyGuardInvitationCreated {
+  invitation: CompanyGuardInvitation;
+  code: string;
+  responsibilityStatement: string;
+}
+
+export interface CreateCompanyGuardInvitationPayload {
+  relationshipType?: CompanyGuardRelationshipType;
+  targetSiaLicenceNumber?: string;
+}
+
+/** What a guard is shown before consenting — company name and terms, nothing internal. */
+export interface GuardInvitationPreview {
+  companyName: string;
+  relationshipType: CompanyGuardRelationshipType;
+  expiresAt: string;
+  alreadyInWorkforce: boolean;
+}
+
+export interface GuardInvitationAccepted {
+  companyGuardId: number;
+  status: 'ACTIVE';
+  relationshipType: CompanyGuardRelationshipType;
+  acceptedAt: string | null;
+  alreadyInWorkforce: boolean;
+}
+
+/** One row of the signed-in guard's own "My Companies" list. */
+export interface GuardCompanyMembership {
+  companyId: number;
+  companyName: string;
+  relationshipType: CompanyGuardRelationshipType;
+  acceptedAt: string | null;
+  since: string;
+}

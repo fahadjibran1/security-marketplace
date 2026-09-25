@@ -10,6 +10,12 @@ import {
   AuthSession,
   AuthUser,
   CompanyGuard,
+  CompanyGuardInvitation,
+  CompanyGuardInvitationCreated,
+  CreateCompanyGuardInvitationPayload,
+  GuardCompanyMembership,
+  GuardInvitationAccepted,
+  GuardInvitationPreview,
   GuardComplianceSummary,
   GuardDocument,
   GuardDocumentPayload,
@@ -538,6 +544,57 @@ export function updateCompanyGuard(companyGuardId: number, status: 'ACTIVE' | 'I
   return request<CompanyGuard>(`/company-guards/${companyGuardId}`, {
     method: 'PATCH',
     body: JSON.stringify({ status }),
+  });
+}
+
+// ─── Company workforce invitations ────────────────────────────────────────────
+
+/**
+ * Issues a one-time invitation code. The plaintext code is in this response and nowhere else — the
+ * server keeps only a digest, so it cannot be fetched again once the caller discards it.
+ */
+export function createGuardInvitation(payload: CreateCompanyGuardInvitationPayload) {
+  return request<CompanyGuardInvitationCreated>('/company-guards/invitations', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function listGuardInvitations() {
+  return request<CompanyGuardInvitation[]>('/company-guards/invitations');
+}
+
+export function revokeGuardInvitation(invitationId: number) {
+  return request<CompanyGuardInvitation>(`/company-guards/invitations/${invitationId}/revoke`, {
+    method: 'POST',
+  });
+}
+
+// ─── Guard side: my companies and joining one ─────────────────────────────────
+
+/** The signed-in guard's own workforce memberships. Identity comes from the token, never a parameter. */
+export function listMyCompanies() {
+  return request<GuardCompanyMembership[]>('/company-guards/me');
+}
+
+export function previewGuardInvitation(code: string) {
+  return request<GuardInvitationPreview>('/guards/me/invitations/preview', {
+    method: 'POST',
+    body: JSON.stringify({ code }),
+  });
+}
+
+export function acceptGuardInvitation(code: string) {
+  return request<GuardInvitationAccepted>('/guards/me/invitations/accept', {
+    method: 'POST',
+    body: JSON.stringify({ code }),
+  });
+}
+
+export function declineGuardInvitation(code: string) {
+  return request<{ declined: boolean; declinedAt: string | null }>('/guards/me/invitations/decline', {
+    method: 'POST',
+    body: JSON.stringify({ code }),
   });
 }
 
