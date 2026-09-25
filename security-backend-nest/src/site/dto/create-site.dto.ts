@@ -1,4 +1,24 @@
-import { IsBoolean, IsInt, IsNumber, IsOptional, IsString, Max, Min } from 'class-validator';
+import { IsBoolean, IsInt, IsNumber, IsOptional, IsString, Max, MaxLength, Min, registerDecorator, ValidationOptions } from 'class-validator';
+
+/**
+ * A site's timezone reaches Intl.DateTimeFormat when the billing week is computed
+ * (client-weekly-approval). An unusable zone would throw there — long after the site was created —
+ * so it is rejected at the point of entry instead.
+ */
+export function IsIanaTimeZone(options?: ValidationOptions) {
+  return function (object: object, propertyName: string) {
+    registerDecorator({
+      name: 'isIanaTimeZone', target: object.constructor, propertyName, options,
+      validator: {
+        validate(value: unknown) {
+          if (typeof value !== 'string' || !value.trim()) return false;
+          try { new Intl.DateTimeFormat('en-GB', { timeZone: value.trim() }); return true; } catch { return false; }
+        },
+        defaultMessage: () => 'timezone must be a valid IANA timezone, for example Europe/London',
+      },
+    });
+  };
+}
 
 export class CreateSiteDto {
   @IsString()
@@ -78,6 +98,13 @@ export class CreateSiteDto {
   @IsOptional()
   @IsBoolean()
   requireNfcCheckIn?: boolean;
+
+  /** Per site, not per company: one company can operate sites in different zones. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  @IsIanaTimeZone()
+  timezone?: string;
 
   @IsOptional()
   @IsString()

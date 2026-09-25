@@ -83,6 +83,9 @@ export class SiteService {
     site.requireGpsCheckIn = dto.requireGpsCheckIn ?? false;
     site.attendanceNfcTag = dto.attendanceNfcTag?.trim() ? this.hashNfcTag(dto.attendanceNfcTag) : null;
     site.requireNfcCheckIn = dto.requireNfcCheckIn ?? false;
+    // Assigned explicitly: this method builds the entity field by field, so without this the
+    // submitted timezone would be dropped and the column would silently fall back to its default.
+    site.timezone = dto.timezone?.trim() || 'Europe/London';
 
     const saved = await this.siteRepo.save(site);
     if (dto.initialShiftDate?.trim() && dto.initialShiftStartTime?.trim()) {
@@ -160,6 +163,7 @@ export class SiteService {
       geofenceRadiusMeters: site.geofenceRadiusMeters,
       requireGpsCheckIn: site.requireGpsCheckIn,
       requireNfcCheckIn: site.requireNfcCheckIn,
+      timezone: site.timezone,
     };
 
     const client =
@@ -182,6 +186,8 @@ export class SiteService {
     if (dto.attendanceNfcTag !== undefined) {
       site.attendanceNfcTag = dto.attendanceNfcTag?.trim() ? this.hashNfcTag(dto.attendanceNfcTag) : null;
     }
+    // Object.assign above already copies it; trim it and never let a blank clear the column.
+    if (dto.timezone !== undefined) site.timezone = dto.timezone?.trim() || site.timezone || 'Europe/London';
 
     const saved = await this.siteRepo.save(site);
     await this.auditLogService.log({
@@ -209,6 +215,7 @@ export class SiteService {
         geofenceRadiusMeters: saved.geofenceRadiusMeters,
         requireGpsCheckIn: saved.requireGpsCheckIn,
         requireNfcCheckIn: saved.requireNfcCheckIn,
+        timezone: saved.timezone,
       },
     });
     return saved;
