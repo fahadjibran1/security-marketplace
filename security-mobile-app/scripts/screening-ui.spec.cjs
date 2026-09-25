@@ -673,6 +673,24 @@ test('REFERENCE-FINAL-SUCCESS-READY',()=>{
   assert.match(panel,/Mark Guard Vetted/);
   assert.doesNotMatch(panel,/completeScreeningReview\(/,'vetting is offered, never performed automatically');
 });
+test('REFERENCE-VERIFIED-MISMATCH-CLIENT-WARNING',()=>{
+  // Warned before sending, offered as a choice, never applied automatically — and the backend
+  // enforces the same rule regardless of what the client does.
+  assert.match(admin2,/const confirmedDiffersFromClaim=\(\(\)=>\{/);
+  const warn=admin2.split('These dates differ from the candidate claim')[1].slice(0,900);
+  assert.match(warn,/differ from the candidate&apos;s activity history\. Record this as a Discrepancy or correct the confirmed dates\./);
+  assert.match(warn,/Change outcome to Discrepancy/);
+  assert.match(warn,/onPress=\{\(\)=>\{setReferenceDecision\('DISCREPANCY'\)/,'the reviewer chooses it');
+  assert.match(admin2,/referenceDecision==='VERIFIED'&&confirmedDiffersFromClaim\?/,'shown only for a VERIFIED outcome that disagrees');
+  // The rule itself lives in the service and is asserted there.
+  assert.match(svc2,/export function periodsAgree/);
+  assert.match(svc2,/if\(dto\.status===ReferenceStatus\.VERIFIED&&!agree\)throw new BadRequestException/);
+  assert.match(svc2,/if\(dto\.status===ReferenceStatus\.DISCREPANCY&&agree\)throw new BadRequestException/);
+  // Canonical calendar dates, never display strings, and no tolerance window.
+  assert.match(svc2,/export function screeningDateOnly/);
+  assert.match(svc2,/value\.getFullYear\(\)/,'a local-midnight Date must not be shifted by toISOString');
+  assert.doesNotMatch(svc2.split('export function periodsAgree')[1].split('\n}')[0],/tolerance|\+ 1|- 1/,'no date tolerance');
+});
 test('QUEUE-NO-NPLUS1-SOURCE',()=>{
   const loader=svc2.split('private async loadQueueAggregate()')[1].split('private queueRow(')[0];
   assert.match(loader,/loadRelationIds/,'children load by set, not per screening');

@@ -14,6 +14,31 @@ import { AddAddressDto, AddHistoryDto, AddReferenceDto, ConsentDto, CreateEviden
 import { EvidenceCategory, GuardScreening, ReferenceStatus, ScreeningAddress, ScreeningConsent, ScreeningEvidence, ScreeningException, ScreeningHistory, ScreeningReference, ScreeningStatus, VerificationState } from './entities/screening.entities';
 
 type Interval = { startDate: string; endDate?: string | null; isCurrent: boolean };
+type ClaimedPeriod = { start: string | null; end: string | null; current: boolean };
+
+/**
+ * Reduce a stored or submitted date to a canonical YYYY-MM-DD calendar day.
+ *
+ * A `date` column can arrive as a string or, through some drivers, as a Date at LOCAL midnight.
+ * Formatting such a Date through toISOString() shifts it a day backwards anywhere east of UTC, so
+ * the local parts are read directly instead.
+ */
+export function screeningDateOnly(value: unknown): string | null {
+  if (value === null || value === undefined || value === '') return null;
+  if (value instanceof Date) {
+    return `${value.getFullYear()}-${`${value.getMonth() + 1}`.padStart(2, '0')}-${`${value.getDate()}`.padStart(2, '0')}`;
+  }
+  const match = String(value).match(/^\d{4}-\d{2}-\d{2}/);
+  return match ? match[0] : null;
+}
+const periodOf = (start: unknown, end: unknown, current: unknown): ClaimedPeriod =>
+  ({ start: screeningDateOnly(start), end: screeningDateOnly(end), current: current === true });
+/** Two periods agree only when the start, the end and the still-current flag all agree exactly. */
+export function periodsAgree(claimed: ClaimedPeriod, confirmed: ClaimedPeriod) {
+  if (claimed.start !== confirmed.start) return false;
+  if (claimed.current !== confirmed.current) return false;
+  return claimed.current ? true : claimed.end === confirmed.end;
+}
 const UK_POSTCODE = /^(GIR 0AA|[A-Z]{1,2}\d[A-Z\d]? \d[A-Z]{2})$/;
 export function normalizeUkPostcode(value:string){const compact=value.trim().toUpperCase().replace(/\s+/g,'');if(compact==='GIR0AA')return 'GIR 0AA';if(compact.length<5||compact.length>7)throw new BadRequestException('Enter a valid UK postcode.');const normalized=`${compact.slice(0,-3)} ${compact.slice(-3)}`;if(!UK_POSTCODE.test(normalized))throw new BadRequestException('Enter a valid UK postcode.');return normalized;}
 export function assessContinuousHistory(entries: Interval[], years: number, now = new Date()) {
@@ -283,11 +308,16 @@ export class ScreeningService {
       if(dto.confirmedEndDate&&dto.confirmedIsCurrent===true)throw new BadRequestException('A still-current engagement cannot also have a confirmed end date.');
       if(dto.confirmedEndDate&&dto.confirmedEndDate<dto.confirmedStartDate)throw new BadRequestException('Confirmed end date cannot precede the confirmed start date.');
     }
-    if(dto.status===ReferenceStatus.DISCREPANCY){
-      const claimedStart=ref.history?.startDate??null,claimedEnd=ref.history?.endDate??null,claimedCurrent=!!ref.history?.isCurrent;
-      const sameStart=claimedStart===dto.confirmedStartDate;
-      const sameEnd=claimedCurrent?dto.confirmedIsCurrent===true:claimedEnd===(dto.confirmedEndDate??null);
-      if(sameStart&&sameEnd)throw new BadRequestException('Recorded dates match the candidate claim; verify the reference instead of recording a discrepancy.');
+    // One comparison, applied both ways: VERIFIED means the referee agreed with the candidate's
+    // claimed period, DISCREPANCY means they did not. Compared as canonical calendar dates, never
+    // as display strings, and with no tolerance — a different date is information to record, not
+    // rounding error.
+    if(confirmsDates){
+      const claimed=periodOf(ref.history?.startDate,ref.history?.endDate,ref.history?.isCurrent);
+      const confirmed=periodOf(dto.confirmedStartDate,dto.confirmedEndDate,dto.confirmedIsCurrent);
+      const agree=periodsAgree(claimed,confirmed);
+      if(dto.status===ReferenceStatus.VERIFIED&&!agree)throw new BadRequestException("The dates confirmed by the referee differ from the candidate's activity history. Record this as a Discrepancy or correct the confirmed dates.");
+      if(dto.status===ReferenceStatus.DISCREPANCY&&agree)throw new BadRequestException('Recorded dates match the candidate claim; verify the reference instead of recording a discrepancy.');
     }
     const now=new Date(),before={status:ref.status,sourceVerified:ref.sourceVerified};
     Object.assign(ref,{status:dto.status,sourceVerified,verificationMethod:dto.verificationMethod,verifiedByUserId:actor,verifiedAt:now,outcomeNotes:dto.notes,

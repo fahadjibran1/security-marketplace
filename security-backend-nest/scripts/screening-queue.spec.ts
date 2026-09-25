@@ -298,6 +298,9 @@ async function main() {
 
     await test('REFERENCE-CONFIRMED-DATES', async () => {
       const s = await seed('under_review');
+      // VERIFIED requires agreement with the claim, so make the claim the ended period being confirmed.
+      const entry = await history.findOneOrFail({ where: { screening: { id: s.id } } });
+      entry.endDate = '2026-01-31'; entry.isCurrent = false; await history.save(entry);
       await decide(s.id, { status: ReferenceStatus.VERIFIED, confirmedStartDate: iso(yearsAgo(6)), confirmedEndDate: '2026-01-31' });
       const r = await refOf(s.id);
       assert.equal(r.status, ReferenceStatus.VERIFIED);
@@ -347,6 +350,83 @@ async function main() {
       const detail = await service.adminGet(s.id);
       assert.equal(detail.reviewClassification?.referenceDiscrepancy, true, 'the discrepancy is surfaced to the reviewer');
       assert.match(detail.requirements.remediation.find((x: { key: string }) => x.key === 'reference')!.message, /different dates/, 'and named in plain language');
+      await screenings.delete(s.id);
+    });
+
+    // ── VERIFIED means the referee agreed with the claimed period ────────────────────────────
+    // Owner UAT vetted a Guard on a reference confirming 2025-01-10 to 2026-06-10 against a claim
+    // of 2015-01-01 to Present. Only DISCREPANCY should have been reachable.
+    const claimStart = iso(yearsAgo(6));
+    await test('REFERENCE-VERIFIED-MATCH-CURRENT', async () => {
+      const s = await seed('under_review');
+      await decide(s.id, { status: ReferenceStatus.VERIFIED, confirmedStartDate: claimStart, confirmedIsCurrent: true });
+      const r = await refOf(s.id);
+      assert.equal(r.status, ReferenceStatus.VERIFIED);
+      assert.equal(r.sourceVerified, true, 'an agreeing current period verifies');
+      await screenings.delete(s.id);
+    });
+
+    await test('REFERENCE-VERIFIED-MATCH-ENDED', async () => {
+      const s = await seed('under_review');
+      // Make the claim an ended period, then confirm exactly the same dates.
+      const entry = await history.findOneOrFail({ where: { screening: { id: s.id } } });
+      entry.endDate = '2020-12-31'; entry.isCurrent = false; await history.save(entry);
+      await decide(s.id, { status: ReferenceStatus.VERIFIED, confirmedStartDate: claimStart, confirmedEndDate: '2020-12-31' });
+      const r = await refOf(s.id);
+      assert.equal(r.sourceVerified, true, 'an agreeing ended period verifies');
+      await screenings.delete(s.id);
+    });
+
+    const mismatchRefused = async (id: string, body: Record<string, unknown>, prepare?: (screeningId: number) => Promise<void>) => {
+      await test(id, async () => {
+        const s = await seed('under_review');
+        if (prepare) await prepare(s.id);
+        await assert.rejects(() => decide(s.id, { status: ReferenceStatus.VERIFIED, ...body }), /differ from the candidate's activity history/);
+        const r = await refOf(s.id);
+        assert.equal(r.sourceVerified, false, 'a refused decision must not source-verify');
+        assert.notEqual(r.status, ReferenceStatus.VERIFIED);
+        await screenings.delete(s.id);
+      });
+    };
+    // Claim is "claimStart -> Present".
+    await mismatchRefused('REFERENCE-VERIFIED-DIFFERENT-START-REFUSED', { confirmedStartDate: '2025-01-10', confirmedIsCurrent: true });
+    await mismatchRefused('REFERENCE-VERIFIED-CURRENT-VS-ENDED-REFUSED', { confirmedStartDate: claimStart, confirmedEndDate: '2026-06-10' });
+    await mismatchRefused('REFERENCE-VERIFIED-ENDED-VS-CURRENT-REFUSED', { confirmedStartDate: claimStart, confirmedIsCurrent: true },
+      async (screeningId) => { const e = await history.findOneOrFail({ where: { screening: { id: screeningId } } }); e.endDate = '2020-12-31'; e.isCurrent = false; await history.save(e); });
+    await mismatchRefused('REFERENCE-VERIFIED-DIFFERENT-END-REFUSED', { confirmedStartDate: claimStart, confirmedEndDate: '2021-01-31' },
+      async (screeningId) => { const e = await history.findOneOrFail({ where: { screening: { id: screeningId } } }); e.endDate = '2020-12-31'; e.isCurrent = false; await history.save(e); });
+
+    await test('REFERENCE-DISCREPANCY-DIFFERENT-DATES-ALLOWED', async () => {
+      const s = await seed('under_review');
+      await decide(s.id, { status: ReferenceStatus.DISCREPANCY, confirmedStartDate: '2025-01-10', confirmedEndDate: '2026-06-10' });
+      const r = await refOf(s.id);
+      assert.equal(r.status, ReferenceStatus.DISCREPANCY);
+      assert.equal(r.sourceVerified, false);
+      assert.equal(String(r.confirmedStartDate), '2025-01-10', 'what the referee actually said is kept');
+      await screenings.delete(s.id);
+    });
+
+    await test('REFERENCE-VERIFIED-MISMATCH-NO-MUTATION', async () => {
+      const s = await seed('under_review');
+      const before = await refOf(s.id);
+      const claimBefore = await history.findOneOrFail({ where: { screening: { id: s.id } } });
+      await assert.rejects(() => decide(s.id, { status: ReferenceStatus.VERIFIED, confirmedStartDate: '2025-01-10', confirmedIsCurrent: true }));
+      const after = await refOf(s.id);
+      for (const field of ['status', 'sourceVerified', 'confirmedStartDate', 'confirmedEndDate', 'confirmedIsCurrent', 'verificationMethod', 'verifiedAt', 'verifiedByUserId', 'receivedAt'] as const) {
+        assert.deepEqual(after[field] ?? null, before[field] ?? null, `${field} changed on a refused decision`);
+      }
+      const claimAfter = await history.findOneOrFail({ where: { screening: { id: s.id } } });
+      assert.equal(String(claimAfter.startDate), String(claimBefore.startDate), 'the candidate claim is never overwritten');
+      assert.equal(claimAfter.isCurrent, claimBefore.isCurrent);
+      await screenings.delete(s.id);
+    });
+
+    await test('REFERENCE-VERIFIED-MISMATCH-NOT-SOURCE-VERIFIED', async () => {
+      const s = await seed('under_review');
+      await assert.rejects(() => decide(s.id, { status: ReferenceStatus.VERIFIED, confirmedStartDate: '2025-01-10', confirmedIsCurrent: true }));
+      const readiness = (await service.adminGet(s.id)).reviewReadiness!;
+      assert.equal(readiness.ready, false, 'a refused verification leaves the file incomplete');
+      assert.ok(readiness.blockers.some((b: { key: string }) => b.key === 'reference_verification'), 'the reference blocker remains');
       await screenings.delete(s.id);
     });
 

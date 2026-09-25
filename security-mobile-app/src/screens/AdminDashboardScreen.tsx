@@ -186,6 +186,21 @@ export function AdminDashboardScreen() {
   // The next task comes from the refreshed backend checklist, in its order — never a hard-coded
   // chain. Anything complete, Guard-owned or not yet actionable is skipped.
   const nextCheck=checklist.find(entry=>!entry.complete&&entry.owner==='reviewer'&&entry.actionable&&entry.key!==completedCheck?.key);
+  // Mirrors the backend rule: VERIFIED means the referee agreed with the claimed period. Shown as a
+  // warning before sending; the backend stays authoritative and the outcome is never auto-changed.
+  const referenceUnderReview=screeningReferences.find(entry=>Number(entry.id)===referenceReviewId);
+  const claimedPeriod=referenceUnderReview?.history;
+  const dateOnly=(value?:string|null)=>value?String(value).slice(0,10):null;
+  const confirmedDiffersFromClaim=(()=>{
+    if(!claimedPeriod||!confirmedStart.trim())return false;
+    let start:string;
+    try{start=screeningDateToIso(confirmedStart);}catch{return false;}
+    if(dateOnly(claimedPeriod.startDate)!==start)return true;
+    if(!!claimedPeriod.isCurrent!==confirmedCurrent)return true;
+    if(confirmedCurrent)return false;
+    if(!confirmedEnd.trim())return false;
+    try{return dateOnly(claimedPeriod.endDate)!==screeningDateToIso(confirmedEnd);}catch{return false;}
+  })();
   const leaveFocusedTask=()=>{setCompletedCheck(null);setReviewCategory(null);setReferencesOpen(false);setReferenceReviewId(null);setInspectedEvidenceId(null);setVerificationConfirm(false);setReviewFeedback(null);};
   const sourceVerifiedReferences=screeningReferences.filter(entry=>entry.status==='VERIFIED'&&entry.sourceVerified).length;
   // Opening the reference task must land on the decision form, not just the summary. With a single
@@ -327,6 +342,12 @@ export function AdminDashboardScreen() {
   <Pressable accessibilityRole="checkbox" accessibilityState={{checked:confirmedCurrent}} onPress={()=>{setConfirmedCurrent(value=>!value);setConfirmedEnd('');setConfirmedError(null);}}><Text style={styles.retry}>{confirmedCurrent?'☑ Still current':'☐ Still current'}</Text></Pressable>
   {!confirmedCurrent?<><TextInput accessibilityLabel="Confirmed end date" placeholder="Confirmed end date (DD/MM/YYYY)" value={confirmedEnd} onChangeText={(value:string)=>{setConfirmedEnd(value);setConfirmedError(null);}} style={styles.search}/>
   {confirmedError?.field==='end'?<Text style={styles.error}>{confirmedError.message}</Text>:null}</>:null}
+  {/* Offered, never applied automatically: the reviewer chooses the outcome deliberately. */}
+  {referenceDecision==='VERIFIED'&&confirmedDiffersFromClaim?<View style={styles.waitingRow}>
+    <Text style={styles.screeningWarningTitle}>These dates differ from the candidate claim</Text>
+    <Text style={styles.rowDetail}>The dates confirmed by the referee differ from the candidate&apos;s activity history. Record this as a Discrepancy or correct the confirmed dates.</Text>
+    <Pressable accessibilityRole="button" onPress={()=>{setReferenceDecision('DISCREPANCY');setReferenceConfirm(false);}}><Text style={styles.retry}>Change outcome to Discrepancy</Text></Pressable>
+  </View>:null}
 </>:null}<TextInput accessibilityLabel="Reference reviewer note" placeholder="Reviewer note or clarification required" value={referenceNotes} onChangeText={setReferenceNotes} multiline style={styles.search}/><Pressable onPress={()=>setReferenceConfirm(value=>!value)}><Text style={styles.retry}>{referenceConfirm?'✓ Decision confirmed':'Confirm that reference details were inspected'}</Text></Pressable><Pressable disabled={!!reviewAction} style={[styles.approveButton,reviewAction&&styles.disabledButton]} onPress={submitReferenceDecision}><Text style={styles.approveText}>{reviewAction===`reference-${reference.id}`?'Saving decision…':'Record reference decision'}</Text></Pressable></View>:null}</View>)}{!screeningReferences.length?<View style={styles.screeningWarning}><Text style={styles.screeningWarningTitle}>No references submitted</Text><Text style={styles.rowDetail}>The candidate must provide a reference before source verification can occur.</Text></View>:null}</View>:null}
       {reviewCategory&&!completedCheck?<View style={styles.evidenceReviewPanel}><View style={styles.reviewPanelHeading}><View><Text style={styles.detailHeading}>REVIEW {reviewCategory==='rtw'?'RIGHT TO WORK':reviewCategory.toUpperCase()}</Text><Text style={styles.rowDetail}>Inspect the candidate information and at least one matching evidence item before confirming verification.</Text></View><Pressable onPress={()=>{setReviewCategory(null);setInspectedEvidenceId(null);setVerificationConfirm(false);}}><Text style={styles.retry}>Cancel</Text></Pressable></View>
         {reviewCategory==='identity'?<View style={styles.submittedDetails}><Text style={styles.rowTitle}>Submitted identity details</Text><Text style={styles.rowDetail}>Name: {text(selected.raw?.legalFullName)} · Date of birth: {text(selected.raw?.dateOfBirth)} · Nationality: {text(selected.raw?.nationality)} · Previous names: {text(selected.raw?.previousNames,'None supplied')}</Text></View>:null}
