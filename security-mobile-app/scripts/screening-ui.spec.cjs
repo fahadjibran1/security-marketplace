@@ -545,6 +545,70 @@ test('REVIEWER-ACTIONS-MATCH-BACKEND-GATE',()=>{
   assert.match(admin2,/disabled=\{!!reviewAction\|\|!entry\.actionable\}/);
   assert.doesNotMatch(admin2,/selected\.status!=='UNDER_REVIEW'/,'the screen no longer derives the gate itself');
 });
+// ── Owner UAT: guided progression between checks ──────────────────────────────────────────────
+// A successful decision left the reviewer sitting in the finished task, having to back out, find
+// the next outstanding check and open it — five mini journeys instead of one vetting session.
+test('REVIEW-SUCCESS-STAYS-ON-GUARD',()=>{
+  assert.match(admin2,/const \[completedCheck,setCompletedCheck\]=useState<\{key:string;label:string\}\|null>\(null\)/);
+  const panel=admin2.split('{completedCheck?<View style={styles.readinessReady}>')[1].split('</View>:null}')[0];
+  assert.match(panel,/✓ \{completedCheck\.label\} verified/,'the specific check is named, not generic success copy');
+  assert.doesNotMatch(panel,/setSelected\(null\)/,'success must never bounce the reviewer back to the queue');
+});
+test('REVIEW-SUCCESS-REFRESHES-AUTHORITATIVE',()=>{
+  // The success state and the next action are read from the refreshed screening, not assumed.
+  const refresh=admin2.split('const refreshSelectedScreening=')[1].split('\n')[0];
+  assert.match(refresh,/getScreening\(id\)/);
+  assert.match(admin2,/const nextCheck=checklist\.find\(/,'next task comes from the refreshed checklist');
+  assert.doesNotMatch(admin2,/setCompletedCheck\(\{key:reviewCategory,label\}\)[\s\S]{0,40}optimistic/i);
+});
+test('REVIEW-SUCCESS-DECREMENTS',()=>{
+  const panel=admin2.split('{completedCheck?<View style={styles.readinessReady}>')[1].split('</View>:null}')[0];
+  assert.match(panel,/\$\{checksRemaining\} check\$\{checksRemaining===1\?'':'s'\} remaining/,'the counter shown is the refreshed one');
+});
+test('REVIEW-NEXT-DYNAMIC',()=>{
+  assert.match(admin2,/const nextCheck=checklist\.find\(entry=>!entry\.complete&&entry\.owner==='reviewer'&&entry\.actionable&&entry\.key!==completedCheck\?\.key\)/);
+  assert.match(admin2,/Review next: \{nextCheck\.label\}/);
+  // Order comes from the backend checklist, never a hard-coded chain in the screen.
+  assert.doesNotMatch(admin2,/identity['"]?\s*[:=]>\s*['"]address/i);
+  assert.doesNotMatch(admin2,/\['identity','address','sia','rtw','reference'\]/,'no hard-coded progression');
+});
+test('REVIEW-NEXT-SKIPS-COMPLETE',()=>assert.match(admin2,/checklist\.find\(entry=>!entry\.complete/,'completed checks are skipped'));
+test('REVIEW-NEXT-SKIPS-GUARD-ACTION',()=>{
+  assert.match(admin2,/entry\.owner==='reviewer'&&entry\.actionable/,'Guard-owned and non-actionable checks are skipped');
+  // Declaration is never reviewer-owned once current, and never opens a task.
+  assert.match(admin2,/if\(key==='consent'\)return;/);
+});
+test('REVIEW-BACK-TO-CHECKLIST',()=>{
+  assert.match(admin2,/const leaveFocusedTask=\(\)=>\{setCompletedCheck\(null\);setReviewCategory\(null\);setReferencesOpen\(false\)/);
+  assert.doesNotMatch(admin2.split('const leaveFocusedTask=')[1].split('\n')[0],/setSelected\(null\)|loadQueue/,'it returns to the checklist, not the queue');
+  assert.match(admin2,/onPress=\{leaveFocusedTask\}><Text style=\{styles\.collapseToggle\}>Back to checklist/);
+});
+// The chain is derived, so these four assert the backend ordering the derivation walks.
+for(const [id,from,to] of [['REVIEW-NEXT-IDENTITY-ADDRESS','identity','address'],['REVIEW-NEXT-ADDRESS-SIA','address','sia'],['REVIEW-NEXT-SIA-RTW','sia','rtw'],['REVIEW-NEXT-RTW-REFERENCE','rtw','reference']]){
+  test(id,()=>{
+    const order=svc2.split('const CHECK_LABEL:Record<string,string>=')[1].split('};')[0];
+    const keys=[...order.matchAll(/(\w+):'/g)].map(m=>m[1]);
+    assert.ok(keys.indexOf(from)>-1&&keys.indexOf(to)===keys.indexOf(from)+1,`${to} follows ${from} in the authoritative checklist order`);
+  });
+}
+test('REFERENCE-SUCCESS-FINAL-READY',()=>{
+  assert.match(admin2,/if\(referenceDecision==='VERIFIED'\)setCompletedCheck\(\{key:'reference',label:'Reference'\}\)/);
+});
+test('FINAL-SHOWS-MARK-VETTED',()=>{
+  const panel=admin2.split('{completedCheck?<View style={styles.readinessReady}>')[1].split('</View>:null}')[0];
+  assert.match(panel,/reviewReadiness\?\.ready&&selected\.status==='UNDER_REVIEW'\?/,'readiness stays backend-authoritative');
+  assert.match(panel,/✓ All required checks complete/);
+  assert.match(panel,/Mark Guard Vetted/);
+});
+for(const [id,needle] of [['REJECT-NO-AUTO-ADVANCE','reject-'],['DISCREPANCY-NO-AUTO-ADVANCE','DISCREPANCY'],['UNABLE-NO-AUTO-ADVANCE','UNABLE_TO_VERIFY']]){
+  test(id,()=>{
+    // Only a clean completion advances. Negative outcomes leave the reviewer in the task.
+    assert.match(admin2,/if\(referenceDecision==='VERIFIED'\)setCompletedCheck/,'reference advances only on VERIFIED');
+    const rejectHandler=admin2.split('`reject-${reviewCategory}`')[1].split('}}')[0];
+    assert.doesNotMatch(rejectHandler,/setCompletedCheck/,'rejecting evidence must not auto-advance');
+    assert.ok(admin2.includes(needle),'outcome still available: '+needle);
+  });
+}
 test('QUEUE-NO-NPLUS1-SOURCE',()=>{
   const loader=svc2.split('private async loadQueueAggregate()')[1].split('private queueRow(')[0];
   assert.match(loader,/loadRelationIds/,'children load by set, not per screening');
