@@ -43,6 +43,19 @@ export class CompanyGuard {
   })
   relationshipType!: CompanyGuardRelationshipType;
 
+  /**
+   * When the Guard consented to this relationship, and the invitation they consented through.
+   *
+   * Both NULL for a relationship established any other way — a hire, or a direct company link — which
+   * covers every row that predates workforce invitations. A NULL acceptedAt therefore means "not
+   * established by guard consent", not "not consented".
+   */
+  @Column({ type: 'timestamp', nullable: true })
+  acceptedAt!: Date | null;
+
+  @Column({ type: 'int', nullable: true })
+  invitationId!: number | null;
+
   @CreateDateColumn()
   createdAt!: Date;
 }

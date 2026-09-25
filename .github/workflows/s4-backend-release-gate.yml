@@ -62,6 +62,8 @@ jobs:
       SCREENING_QUEUE_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_screening_queue
       MIGRATION_REHEARSAL_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_migration_rehearsal
       COMPANY_MANAGED_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_company_managed
+      PHASEB_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_guard_invitations
+      PHASEB_MIGRATION_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_guard_invitation_migration
 
     steps:
       - name: Checkout repository
@@ -126,6 +128,12 @@ jobs:
 
       - name: Create company-managed assignability isolation database
         run: PGPASSWORD=s4_test_password psql -h localhost -U s4 -d s4_release_gate -c "CREATE DATABASE s4_company_managed;"
+
+      - name: Create guard-invitation isolation database
+        run: PGPASSWORD=s4_test_password psql -h localhost -U s4 -d s4_release_gate -c "CREATE DATABASE s4_guard_invitations;"
+
+      - name: Create guard-invitation migration rehearsal database
+        run: PGPASSWORD=s4_test_password psql -h localhost -U s4 -d s4_release_gate -c "CREATE DATABASE s4_guard_invitation_migration;"
 
       - name: Run release smoke tests
         run: npm run test:release

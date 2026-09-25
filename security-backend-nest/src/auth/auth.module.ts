@@ -39,6 +39,9 @@ import { AuthSessionService } from './auth-session.service';
   ],
   controllers: [AuthController],
   providers: [AuthService, AuthSessionService, JwtStrategy, AuthThrottlerGuard],
-  exports: [AuthService, AuthSessionService]
+  // ThrottlerModule and the proxy-aware guard are exported so other modules can rate-limit their own
+  // bearer-secret endpoints against the same configuration instead of registering a second throttler
+  // with separate storage.
+  exports: [AuthService, AuthSessionService, ThrottlerModule, AuthThrottlerGuard]
 })
 export class AuthModule {}

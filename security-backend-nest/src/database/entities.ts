@@ -9,6 +9,7 @@ import { Client } from '../client/entities/client.entity';
 import { ClientPortalUser } from '../client-portal-user/entities/client-portal-user.entity';
 import { Company } from '../company/entities/company.entity';
 import { CompanyGuard } from '../company-guard/entities/company-guard.entity';
+import { CompanyGuardInvitation } from '../company-guard/entities/company-guard-invitation.entity';
 import { ComplianceRecord } from '../compliance/entities/compliance-record.entity';
 import { GuardDocument } from '../compliance/entities/guard-document.entity';
 import { ContractPricingRule } from '../contract-pricing/entities/contract-pricing-rule.entity';
@@ -55,6 +56,7 @@ export const appEntities = [
   ClientPortalUser,
   Company,
   CompanyGuard,
+  CompanyGuardInvitation,
   ComplianceRecord,
   GuardDocument,
   ContractPricingRule,

@@ -1,9 +1,13 @@
 /**
- * Migration rehearsal for 56 → 57 (AddReferenceConfirmedDates).
+ * Migration rehearsal for AddReferenceConfirmedDates.
  *
- * Runs the real compiled migrations against a disposable PostgreSQL 17, seeds a reference row at
- * migration 56, then applies 57 and proves: existing rows survive untouched, the new columns are
- * nullable, the enum gained DISCREPANCY, a second run is a no-op, and synchronize stays false.
+ * Runs the repository's own migrations against a disposable PostgreSQL 17, rolls back to the point
+ * immediately before this migration, seeds a reference row as it existed then, re-applies, and proves:
+ * existing rows survive untouched, the new columns are nullable, the enum gained DISCREPANCY, a second
+ * run is a no-op, and synchronize stays false.
+ *
+ * Positions are found by name rather than by a repository-wide migration count, so adding a later
+ * migration does not break this rehearsal and does not require editing it.
  */
 import 'reflect-metadata';
 import { strict as assert } from 'node:assert';
@@ -26,13 +30,39 @@ async function main() {
 
   // Apply everything up to and including 56 by running all, then rolling the last one back — the
   // cleanest way to reach "production today" using only the repository's own migrations.
+  // Not pinned to a repository-wide migration count: migrations added after this one must not break a
+  // rehearsal of this one, and a hard-coded total needs editing on every future migration.
+  const TARGET = /AddReferenceConfirmedDates/;
   const applied = await all.runMigrations({ transaction: 'each' });
   console.log(`applied ${applied.length} migrations`);
-  await test('REHEARSAL-COUNT-57', async () => { assert.equal(applied.length, 57, `expected 57 migrations, applied ${applied.length}`); });
+  await test('REHEARSAL-TARGET-PRESENT', async () => {
+    assert.ok(applied.length > 0, `expected migrations to apply, applied ${applied.length}`);
+    assert.ok(
+      applied.some((m) => TARGET.test(m.name)),
+      `the migration under rehearsal was not applied: ${applied.map((m) => m.name).join(', ')}`,
+    );
+  });
 
-  await all.undoLastMigration({ transaction: 'each' });
-  const at56 = Number((await all.query('SELECT count(*)::int n FROM typeorm_migrations'))[0].n);
-  await test('REHEARSAL-BACK-TO-56', async () => { assert.equal(at56, 56, `expected to be back at 56, found ${at56}`); });
+  const appliedNames = async (): Promise<string[]> =>
+    (await all.query('SELECT name FROM typeorm_migrations ORDER BY id ASC')).map((r: { name: string }) => r.name);
+
+  // Roll back to the point immediately before the target, however many migrations follow it.
+  const totalApplied = applied.length;
+  let undone = 0;
+  while ((await appliedNames()).some((name) => TARGET.test(name))) {
+    await all.undoLastMigration({ transaction: 'each' });
+    undone += 1;
+    assert.ok(undone <= totalApplied, 'ran out of migrations to undo while looking for the target');
+  }
+  await test('REHEARSAL-ROLLED-BACK-TO-JUST-BEFORE-TARGET', async () => {
+    const names = await appliedNames();
+    assert.ok(!names.some((name) => TARGET.test(name)), 'the target migration must not be applied');
+    assert.equal(
+      names.length,
+      totalApplied - undone,
+      `expected ${totalApplied - undone} migrations applied, found ${names.length}`,
+    );
+  });
 
   // Seed a reference exactly as production holds one today, at migration 56.
   await all.query(`INSERT INTO users (email,"passwordHash",role,status,"isEmailVerified") VALUES ('rehearsal.guard@example.invalid','x','guard','active',true)`);
@@ -47,9 +77,12 @@ async function main() {
      VALUES ($1,$2,'Acme Security Ltd','Jane Referee','Line manager','jane@example.invalid','VERIFIED',true,'Telephone call','Pre-existing note')`, [screeningId, historyId]);
   const before = (await all.query(`SELECT * FROM screening_references WHERE "screeningId"=$1`, [screeningId]))[0];
 
-  // Now apply 57 on top of real pre-existing data.
+  // Now re-apply the target migration on top of real pre-existing data.
   const second = await all.runMigrations({ transaction: 'each' });
-  await test('REHEARSAL-APPLIES-ONE', async () => { assert.equal(second.length, 1, `expected exactly migration 57, applied ${second.length}`); assert.match(second[0].name, /AddReferenceConfirmedDates/); });
+  await test('REHEARSAL-REAPPLIES-TARGET-FIRST', async () => {
+    assert.equal(second.length, undone, `expected ${undone} migrations to re-apply, applied ${second.length}`);
+    assert.match(second[0].name, TARGET, 'the target must be the first migration re-applied');
+  });
 
   const after = (await all.query(`SELECT * FROM screening_references WHERE "screeningId"=$1`, [screeningId]))[0];
   await test('REHEARSAL-EXISTING-ROW-PRESERVED', async () => {
@@ -81,10 +114,16 @@ async function main() {
     const third = await all.runMigrations({ transaction: 'each' });
     assert.equal(third.length, 0, 'a second run must apply nothing');
     const n = Number((await all.query('SELECT count(*)::int n FROM typeorm_migrations'))[0].n);
-    assert.equal(n, 57, `expected 57 recorded migrations, found ${n}`);
+    assert.equal(n, totalApplied, `expected ${totalApplied} recorded migrations, found ${n}`);
   });
 
-  console.log(JSON.stringify({ event: 'migration_rehearsal_passed', tests: passed, from: 56, to: 57 }));
+  console.log(JSON.stringify({
+    event: 'migration_rehearsal_passed',
+    tests: passed,
+    target: 'AddReferenceConfirmedDates1720900000003',
+    rolledBack: undone,
+    totalMigrations: totalApplied,
+  }));
   await all.destroy();
 }
 
