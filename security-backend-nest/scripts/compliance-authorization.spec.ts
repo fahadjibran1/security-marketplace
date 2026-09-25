@@ -119,7 +119,7 @@ function buildHarness() {
     documentRepo as any, complianceRepo as any, companyGuardRepo as any, membership as any, guardProfileService as any,
     {} as any, { log: async (entry: any) => (audits.push(entry), entry) } as any, preHire as any, storage as any,
   );
-  const compliance = new ComplianceService(complianceRepo as any, membership as any, guardProfileService as any, {} as any, guardCompliance, {} as any);
+  const compliance = new ComplianceService(complianceRepo as any, membership as any, guardProfileService as any, {} as any, guardCompliance);
   return { compliance, guardCompliance, documents, records, audits, links };
 }
 
@@ -351,7 +351,7 @@ async function main() {
       { create: (value: any) => ({ id: 1, ...value }), save: async (value: any) => (records.push(value), value), findOne: async () => null } as any,
       membership as any,
       { findOne: async (id: number) => guards[id] } as any,
-      {} as any, legacyGuardCompliance, {} as any,
+      {} as any, legacyGuardCompliance,
     );
     await legacy.upsertForCompanyUser(101, UserRole.COMPANY_ADMIN, recordDto(2));
     equal(records.length, 1, 'legacy behaviour reproduced: cross-tenant write accepted');

@@ -93,8 +93,12 @@ export class AssignmentService {
     });
   }
 
+  /**
+   * Records the engagement created by a hire. No deployment gate here: an Assignment is the
+   * commitment to engage, and the Company may still be assembling its compliance file for the Guard.
+   * Attaching the Guard to an actual shift is what runs assertGuardAssignable.
+   */
   async createFromHire(application: JobApplication, manager?: EntityManager): Promise<Assignment> {
-    await this.complianceService.assertGuardAssignable(application.job.company.id, application.guard.id);
     const assignmentRepo = manager?.getRepository(Assignment) ?? this.assignmentRepo;
     const assignment = assignmentRepo.create({
       job: application.job,

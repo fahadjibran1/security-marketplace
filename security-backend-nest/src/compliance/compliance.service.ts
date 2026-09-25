@@ -13,9 +13,7 @@ import {
   ComplianceRecord,
   ComplianceRecordStatus,
 } from './entities/compliance-record.entity';
-import { ScreeningService } from '../screening/screening.service';
 import { UserRole, UserStatus } from '../user/entities/user.entity';
-import { GuardApprovalStatus } from '../guard-profile/entities/guard-profile.entity';
 
 @Injectable()
 export class ComplianceService {
@@ -25,7 +23,6 @@ export class ComplianceService {
     private readonly guardProfileService: GuardProfileService,
     private readonly notificationService: NotificationService,
     private readonly guardComplianceService: GuardComplianceService,
-    private readonly screeningService: ScreeningService,
   ) {}
 
   async listForCompanyUser(userId: number, userRole: UserRole) {
@@ -80,23 +77,33 @@ export class ComplianceService {
     return this.complianceRepo.save(record);
   }
 
+  /**
+   * Deployment gate. A Guard may be attached to a Company's shift only when their account is usable
+   * and that Company's own compliance file for them is clean.
+   *
+   * S4 screening is deliberately NOT consulted here. A security company that recruited, vetted and
+   * employs its own Guards may deploy them on S4 without buying the S4 screening service; screening
+   * is an optional trust layer surfaced through ScreeningService.companyOutcome(s), never a condition
+   * of deployment. Do not reintroduce isGuardVetted into this method.
+   *
+   * The legacy guard_profiles.approvalStatus / .isApproved / .status columns are likewise NOT
+   * consulted. They are written by a platform-admin action but stored per-Guard rather than per
+   * relationship, so reading them here let one Company's decision unlock a Guard for every other
+   * Company. They are retained only as history (see GuardProfile) and MUST NOT be used for
+   * authorisation or for any company-scoped deployment decision.
+   *
+   * Callers are responsible for asserting the ACTIVE CompanyGuard relationship before calling this —
+   * see CompanyGuardService.ensureActiveRelationship. That assertion is what scopes a Guard to one
+   * Company, and it is load-bearing now that no platform-wide flag is consulted.
+   */
   async assertGuardAssignable(companyId: number, guardId: number) {
     const guard = await this.guardProfileService.findOne(guardId);
     if (guard.user.status !== UserStatus.ACTIVE) {
       throw new ForbiddenException('Guard account is not active.');
     }
-    if (
-      guard.approvalStatus !== GuardApprovalStatus.APPROVED ||
-      guard.isApproved !== true
-    ) {
-      throw new ForbiddenException('Guard profile is not approved.');
-    }
     const blockers = await this.guardComplianceService.getBlockingReasons(companyId, guardId);
     if (blockers.length) {
       throw new ForbiddenException(`Guard compliance invalid: ${blockers[0]}`);
-    }
-    if (!(await this.screeningService.isGuardVetted(guardId))) {
-      throw new ForbiddenException('Guard screening is not complete.');
     }
   }
 

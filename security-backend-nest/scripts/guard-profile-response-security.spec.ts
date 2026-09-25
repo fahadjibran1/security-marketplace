@@ -376,9 +376,17 @@ test('toCompanyDto: result.user does not contain role', () => {
   assert(!('role' in (result.user as any)), 'user.role leaked in toCompanyDto');
 });
 
-test('toCompanyDto: result contains approvalStatus', () => {
-  const result = toCompanyDto(buildMockEntity({ approvalStatus: GuardApprovalStatus.PENDING }));
-  assert('approvalStatus' in result && result.approvalStatus === GuardApprovalStatus.PENDING, 'approvalStatus missing from toCompanyDto');
+// Phase A: a company must not be shown platform-global approval. It says nothing about whether S4
+// has looked at this guard, and 'approved' would be read as an S4 endorsement. Screening state is
+// served separately and honestly by GET /screening/company/outcomes.
+test('toCompanyDto: result does not contain legacy approvalStatus', () => {
+  const result = toCompanyDto(buildMockEntity({ approvalStatus: GuardApprovalStatus.APPROVED }));
+  assert(!('approvalStatus' in result), 'legacy platform approval leaked to a company');
+});
+
+test('GuardProfileCompanyResponseDto source: no approvalStatus field', () => {
+  const source = backend('guard-profile/dto/guard-profile-company-response.dto.ts');
+  assert(!source.match(/^\s+approvalStatus[?!]:/m), 'approvalStatus present in company response DTO');
 });
 
 test('toAdminDto: result contains notes', () => {

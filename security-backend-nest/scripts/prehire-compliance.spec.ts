@@ -134,16 +134,18 @@ function buildHireHarness(assignable = true) {
       countActiveByJob: async () => calls.assignment,
       createFromHire: async () => (calls.assignment += 1, { id: 71, guard, company: companyA }),
     } as any,
-    { create: async () => (calls.shift += 1, { shift: { id: 81 } }) } as any,
+    { create: async () => {
+      // The deployment gate lives at the shift now, so the shift stub is where an incomplete
+      // company compliance file refuses. Hiring itself no longer consults it.
+      if (!assignable) throw new ForbiddenException('Guard compliance invalid: Missing SIA licence document');
+      calls.shift += 1;
+      return { shift: { id: 81 } };
+    } } as any,
     { log: async () => undefined } as any,
     { createForUser: async () => undefined } as any,
-    {} as any,
     { findOne: async () => ({ id: 91, company: companyA }) } as any,
     { ensureRelationship: async () => (calls.relationship += 1, { id: 1 }) } as any,
     { assertGuardCanTakeShift: async () => undefined } as any,
-    { assertGuardAssignable: async () => {
-      if (!assignable) throw new ForbiddenException('Guard profile is not approved.');
-    } } as any,
     {
       transaction: async (work: (manager: any) => Promise<unknown>) => work({
         getRepository: (entity: { name: string }) => entity.name === 'Job'
@@ -165,6 +167,7 @@ function buildHireHarness(assignable = true) {
             },
       }),
     } as any,
+    { resolveCompanyContext: async () => ({ company: companyA, membershipRole: 'owner' }) } as any,
   );
   return { service, calls, app };
 }
@@ -183,19 +186,33 @@ async function testHireCreatesRelationshipAssignmentAndShift() {
   equal(calls.shift, 1);
 }
 
+// HIRE-WITH-SHIFT-STILL-GATED: hiring is ungated, but a hire that also deploys still has to clear
+// the deployment gate, and an incomplete company compliance file must stop it at the shift.
+//
+// This harness proves the refusal and that nothing was deployed. It deliberately does not assert
+// on post-throw in-memory state: the gate now sits inside the hire transaction, and this harness's
+// transaction stub has no rollback, so that state would describe the fake rather than the system.
+// Committed-state rollback is proven against a real transaction by hire-atomicity.spec.ts and
+// hire-atomicity-postgres.spec.ts, both of which exercise a failure at the shift stage.
 async function testUnapprovedHireLeavesNoPartialCommercialState() {
-  const { service, calls, app } = buildHireHarness(false);
+  const { service, calls } = buildHireHarness(false);
   await expectForbidden(() => service.hire(61, {
     createShift: true,
     siteId: 91,
     start: '2026-09-01T09:00:00Z',
     end: '2026-09-01T17:00:00Z',
   }));
-  equal(app.status, 'under_review');
-  equal(calls.applicationSave, 0);
-  equal(calls.jobSave, 0);
-  equal(calls.relationship, 0);
-  equal(calls.assignment, 0);
+  equal(calls.shift, 0);
+}
+
+// HIRE-UNGATED: a company may take someone onto its books before its compliance file for them is
+// complete. Only deployment waits on the file.
+async function testHireWithoutShiftIgnoresTheDeploymentFile() {
+  const { service, calls } = buildHireHarness(false);
+  const result = await service.hire(61, {});
+  equal(result.application.status, 'accepted');
+  equal(calls.relationship, 1);
+  equal(calls.assignment, 1);
   equal(calls.shift, 0);
 }
 
@@ -207,7 +224,7 @@ async function testRejectedApplicationDoesNotAuthorize() {
 }
 
 async function testDirectMembershipStillDenied() {
-  const service = new CompanyGuardService({} as any, {} as any, {} as any, {} as any, {} as any, {} as any);
+  const service = new CompanyGuardService({} as any, {} as any, {} as any, {} as any, {} as any);
   await expectForbidden(() => service.createForUser(
     { sub: 101, email: 'a@test', role: UserRole.COMPANY_ADMIN, status: UserStatus.ACTIVE },
     { companyId: companyA.id, guardId: guard.id },
@@ -256,6 +273,7 @@ async function main() {
   await testValidEvidenceAllowsHire();
   await testHireCreatesRelationshipAssignmentAndShift();
   await testUnapprovedHireLeavesNoPartialCommercialState();
+  await testHireWithoutShiftIgnoresTheDeploymentFile();
   await testRejectedApplicationDoesNotAuthorize();
   await testDirectMembershipStillDenied();
   await testMultiCompanyPreHireEvidenceIsIsolated();

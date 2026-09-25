@@ -90,9 +90,15 @@ async function main() {
   equal((await verified.getGuardSummary(10, 20)).assignable, true);
   equal((await verified.getBlockingReasons(20, 10)).length, 0);
 
-  for (const file of ['job-application/job-application.service.ts', 'assignment/assignment.service.ts', 'shift/shift.service.ts']) {
+  // Deployment is gated where deployment happens. Hiring and recording an engagement are not
+  // deployment, so they carry no compliance gate; the shift path carries both the compliance gate
+  // and the ACTIVE-relationship gate that scopes a guard to one company.
+  const shiftSource = readFileSync(join(__dirname, '..', 'src', 'shift/shift.service.ts'), 'utf8');
+  match(shiftSource, /assertGuardAssignable/, 'shift service must retain the server-side compliance gate');
+  match(shiftSource, /ensureActiveRelationship/, 'shift service must assert the ACTIVE company relationship');
+  for (const file of ['job-application/job-application.service.ts', 'assignment/assignment.service.ts']) {
     const source = readFileSync(join(__dirname, '..', 'src', file), 'utf8');
-    match(source, /assertGuardAssignable/, `${file} must retain the server-side compliance gate`);
+    ok(!/this\.complianceService\.assertGuardAssignable/.test(source), `${file} must not gate hiring on the deployment compliance file`);
   }
 
   const queries: string[] = [];

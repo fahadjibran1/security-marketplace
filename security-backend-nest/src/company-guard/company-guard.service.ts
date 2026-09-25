@@ -15,7 +15,6 @@ import { GuardProfileService } from '../guard-profile/guard-profile.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { UserRole } from '../user/entities/user.entity';
-import { ComplianceService } from '../compliance/compliance.service';
 
 @Injectable()
 export class CompanyGuardService {
@@ -24,7 +23,6 @@ export class CompanyGuardService {
     private readonly companyService: CompanyService,
     private readonly membershipService: CompanyMembershipService,
     private readonly guardService: GuardProfileService,
-    private readonly complianceService: ComplianceService,
     private readonly auditLogService: AuditLogService,
   ) {}
 
@@ -148,12 +146,12 @@ export class CompanyGuardService {
     return saved;
   }
 
+  // Linking is a workforce-membership decision, not a deployment. It runs no deployment gate, so the
+  // admin path and linkForCompanyUser now behave alike; ComplianceService.assertGuardAssignable is
+  // applied when the Guard is attached to a shift.
   private async createForCompany(companyId: number, dto: CreateCompanyGuardDto): Promise<CompanyGuard> {
     const company = await this.companyService.findOne(companyId);
     const guard = await this.guardService.findOne(dto.guardId);
-    if ((dto.status ?? CompanyGuardStatus.ACTIVE) === CompanyGuardStatus.ACTIVE) {
-      await this.complianceService.assertGuardAssignable(company.id, guard.id);
-    }
 
     const exists = await this.companyGuardRepo.findOne({
       where: { company: { id: company.id }, guard: { id: guard.id } },
@@ -170,8 +168,17 @@ export class CompanyGuardService {
     return this.companyGuardRepo.save(row);
   }
 
-  async ensureActiveRelationship(companyId: number, guardId: number): Promise<CompanyGuard> {
-    const relation = await this.companyGuardRepo.findOne({
+  /**
+   * The tenancy gate for deployment: this Guard is in THIS Company's workforce. Since neither
+   * platform approval nor S4 screening gates assignment any more, this assertion is what stops a
+   * Company rostering an arbitrary Guard, so every path that attaches a Guard to a shift must call it.
+   *
+   * Accepts an EntityManager so it can see a relationship created earlier in the same transaction —
+   * a hire that also creates a shift establishes the link and deploys in one unit of work.
+   */
+  async ensureActiveRelationship(companyId: number, guardId: number, manager?: EntityManager): Promise<CompanyGuard> {
+    const relationRepo = manager?.getRepository(CompanyGuard) ?? this.companyGuardRepo;
+    const relation = await relationRepo.findOne({
       where: { company: { id: companyId }, guard: { id: guardId }, status: CompanyGuardStatus.ACTIVE },
     });
 
@@ -190,7 +197,6 @@ export class CompanyGuardService {
     const relationRepo = manager?.getRepository(CompanyGuard) ?? this.companyGuardRepo;
     const company = await this.companyService.findOne(params.companyId);
     const guard = await this.guardService.findOne(params.guardId);
-    await this.complianceService.assertGuardAssignable(company.id, guard.id);
 
     const existing = await relationRepo.findOne({
       where: { company: { id: company.id }, guard: { id: guard.id } },

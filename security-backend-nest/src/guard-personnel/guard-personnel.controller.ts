@@ -18,7 +18,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
-import { UserRole } from '../user/entities/user.entity';
+import { COMPANY_VIEW_ROLES, UserRole } from '../user/entities/user.entity';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { GuardPersonnelService } from './guard-personnel.service';
 import { UpdateGuardIdentityDto } from './dto/update-guard-identity.dto';
@@ -386,13 +386,15 @@ export class GuardPersonnelController {
 
   // P1G-A — Bank Details: Company (masked; ACTIVE relationship; no holder name) ─
 
+  // COMPANY_VIEW_ROLES opens the route to company staff; personnel_bank.view in the membership
+  // matrix decides who actually gets an answer (finance and owner only).
   @Get('company/guard/:guardId/bank-details')
-  @Roles(UserRole.COMPANY, UserRole.COMPANY_ADMIN)
+  @Roles(...COMPANY_VIEW_ROLES)
   getGuardBankDetailsForCompany(
     @CurrentUser() user: JwtPayload,
     @Param('guardId', ParseIntPipe) guardId: number,
   ) {
-    return this.bankDetailsService.getBankDetailsForCompany(user.sub, guardId);
+    return this.bankDetailsService.getBankDetailsForCompany(user.sub, user.role, guardId);
   }
 
   // P1G-B — Payroll / Payment Administration: Guard read-only (own records) ───

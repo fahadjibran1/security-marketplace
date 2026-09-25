@@ -27,7 +27,6 @@ export function toCompanyDto(entity: GuardProfile): GuardProfileCompanyResponseD
     id: entity.id,
     fullName: entity.fullName,
     phone: entity.phone,
-    approvalStatus: entity.approvalStatus,
     availability: entity.availability,
     siaLicenseNumber: entity.siaLicenseNumber,
     siaExpiryDate: entity.siaExpiryDate ?? null,

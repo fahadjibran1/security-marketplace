@@ -5,12 +5,8 @@ import { GuardApprovalStatus, GuardProfile } from './entities/guard-profile.enti
 import { CreateGuardProfileDto } from './dto/create-guard-profile.dto';
 import { UserService } from '../user/user.service';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
-import { COMPANY_ADMIN_ROLES, isCompanyRole, UserRole, UserStatus } from '../user/entities/user.entity';
-import {
-  CompanyGuard,
-  CompanyGuardRelationshipType,
-  CompanyGuardStatus,
-} from '../company-guard/entities/company-guard.entity';
+import { isCompanyRole, UserRole, UserStatus } from '../user/entities/user.entity';
+import { CompanyGuard } from '../company-guard/entities/company-guard.entity';
 import { CompanyService } from '../company/company.service';
 import { CompanyMembershipService } from '../company-membership/company-membership.service';
 import { CompanyPermission } from '../company-membership/company-membership-types';
@@ -129,40 +125,28 @@ export class GuardProfileService {
     return this.guardRepo.save(guard);
   }
 
+  /**
+   * Platform-global Guard approval. Restricted to Platform Admin.
+   *
+   * The Company branch that used to live here was removed: it let a Company write
+   * status / approvalStatus / isApproved on the shared GuardProfile, and additionally activated the
+   * CompanyGuard link and the Guard's user account as side effects. Because those three columns are
+   * per-Guard rather than per-relationship, one Company's click changed what every other Company saw
+   * and could do. Company workforce membership belongs on the CompanyGuard relationship.
+   *
+   * These columns no longer gate deployment either — see ComplianceService.assertGuardAssignable.
+   */
   async approveForUser(user: JwtPayload, guardId: number): Promise<GuardProfile> {
+    if (user.role !== UserRole.ADMIN) {
+      throw new ForbiddenException('Guard approval is a platform administration action.');
+    }
+
     const guard = await this.findOne(guardId);
     const beforeApproval = {
       status: guard.status,
       approvalStatus: guard.approvalStatus,
       isApproved: guard.isApproved,
     };
-    let auditCompany: { id: number } | null = null;
-
-    if (user.role !== UserRole.ADMIN) {
-      if (!isCompanyRole(user.role)) {
-        throw new NotFoundException('Guard profile not found');
-      }
-
-      const { company } = await this.membershipService.resolveCompanyContext(
-        user.sub, user.role, CompanyPermission.GUARDS_MANAGE,
-      );
-      auditCompany = { id: company.id };
-
-      const existingLink = await this.companyGuardRepo.findOne({
-        where: { company: { id: company.id }, guard: { id: guard.id } },
-      });
-
-      if (!existingLink) {
-        throw new ForbiddenException('Guard approval requires an existing server-established company relationship');
-      }
-      const link = existingLink;
-
-      link.status = CompanyGuardStatus.ACTIVE;
-      if (!link.relationshipType) {
-        link.relationshipType = CompanyGuardRelationshipType.APPROVED_CONTRACTOR;
-      }
-      await this.companyGuardRepo.save(link);
-    }
 
     guard.status = GuardApprovalStatus.APPROVED;
     guard.approvalStatus = GuardApprovalStatus.APPROVED;
@@ -171,7 +155,7 @@ export class GuardProfileService {
     await this.userService.updateStatus(saved.user.id, UserStatus.ACTIVE);
     const approved = await this.findOne(saved.id);
     await this.auditLogService.log({
-      company: auditCompany,
+      company: null,
       user: { id: user.sub },
       action: 'guard.approved',
       entityType: 'guard_profile',

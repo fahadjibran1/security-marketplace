@@ -1,4 +1,4 @@
-import { equal, ok } from 'node:assert/strict';
+import { equal, ok, rejects } from 'node:assert/strict';
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
 
 import { GuardComplianceService } from '../src/compliance/guard-compliance.service';
@@ -97,18 +97,33 @@ async function upload(service: GuardComplianceService, type: GuardDocumentType) 
   });
 }
 
+// Guard approval is platform-global state, so it is a Platform Admin act and is attributed to no
+// company. A company user attempting it is refused outright: its effect would follow the guard into
+// every other company.
 async function testGuardApprovalCreatesAttributableAuditRow() {
-  const { service, audits, company } = buildApprovalHarness();
+  const { service, audits } = buildApprovalHarness();
   await service.approveForUser(
-    { sub: 81, email: 'admin@example.test', role: UserRole.COMPANY_ADMIN, status: UserStatus.ACTIVE },
+    { sub: 81, email: 'platform@example.test', role: UserRole.ADMIN, status: UserStatus.ACTIVE },
     41,
   );
   equal(audits.length, 1);
   equal(audits[0].action, 'guard.approved');
   equal(audits[0].user.id, 81);
-  equal(audits[0].company.id, company.id);
+  equal(audits[0].company, null);
   equal(audits[0].beforeData.approvalStatus, GuardApprovalStatus.PENDING);
   equal(audits[0].afterData.approvalStatus, GuardApprovalStatus.APPROVED);
+}
+
+async function testCompanyCannotApproveGuardPlatformWide() {
+  const { service, audits } = buildApprovalHarness();
+  await rejects(
+    () => service.approveForUser(
+      { sub: 81, email: 'admin@example.test', role: UserRole.COMPANY_ADMIN, status: UserStatus.ACTIVE },
+      41,
+    ),
+    ForbiddenException,
+  );
+  equal(audits.length, 0, 'a refused approval must leave no audit row');
 }
 
 async function testUploadCreatesAudit(type: GuardDocumentType) {
@@ -168,6 +183,7 @@ async function testAuditPayloadExcludesSecretsAndDocumentLocation() {
 
 async function main() {
   await testGuardApprovalCreatesAttributableAuditRow();
+  await testCompanyCannotApproveGuardPlatformWide();
   await testUploadCreatesAudit(GuardDocumentType.SIA_LICENCE);
   await testVerificationCreatesAudit(GuardDocumentType.SIA_LICENCE);
   await testUploadCreatesAudit(GuardDocumentType.RIGHT_TO_WORK);
@@ -175,7 +191,7 @@ async function main() {
   await testCrossTenantFailureCreatesNoSuccessAudit();
   await testFailedPersistenceCreatesNoSuccessAudit();
   await testAuditPayloadExcludesSecretsAndDocumentLocation();
-  console.log(JSON.stringify({ event: 'compliance_audit_release_tests_passed', tests: 8 }));
+  console.log(JSON.stringify({ event: 'compliance_audit_release_tests_passed', tests: 9 }));
 }
 
 main().catch((error: unknown) => {

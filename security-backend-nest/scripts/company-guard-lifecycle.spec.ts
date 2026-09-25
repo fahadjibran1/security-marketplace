@@ -133,7 +133,6 @@ function makeCompanyGuardService(
     companySvc,
     membershipStub(company) as any,
     guardSvc,
-    complianceSvc,
     audit as any,
   );
 }
@@ -693,7 +692,6 @@ async function testAuditLink(ds: DataSource) {
         return g;
       },
     } as any,
-    { assertGuardAssignable: async () => undefined } as any,
     auditCapture.stub as any,
   );
 
@@ -728,7 +726,6 @@ async function testAuditStatus(ds: DataSource) {
         return g;
       },
     } as any,
-    { assertGuardAssignable: async () => undefined } as any,
     auditCapture.stub as any,
   );
 

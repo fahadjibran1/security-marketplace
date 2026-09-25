@@ -33,10 +33,14 @@ async function main(){
  await test('SIA verification required for VETTED',()=>assert.ok(svc.requirements(record({siaRegisterVerification:VerificationState.UNVERIFIED}),true).missing.some((x:string)=>x.includes('SIA'))));
  await test('RTW verification required for VETTED',()=>assert.ok(svc.requirements(record({rightToWorkVerification:VerificationState.UNVERIFIED}),true).missing.some((x:string)=>x.includes('Right to Work'))));
  await test('unresolved exception blocks completion',()=>assert.ok(svc.requirements(record({exceptions:[{resolved:false}] as any}),true).missing.some((x:string)=>x.includes('exceptions'))));
-const compliance=(vetted:boolean,blockers:string[]=[])=>new ComplianceService({} as any,{} as any,{findOne:async()=>({user:{status:UserStatus.ACTIVE},approvalStatus:GuardApprovalStatus.APPROVED,isApproved:true})} as any,{} as any,{getBlockingReasons:async()=>blockers} as any,{isGuardVetted:async()=>vetted} as any);
- await test('VETTED plus operational compliance is assignable',()=>compliance(true).assertGuardAssignable(1,1));
- await test('non-VETTED guard is not assignable',async()=>{await assert.rejects(()=>compliance(false).assertGuardAssignable(1,1),ForbiddenException);});
- await test('expired compliance removes eligibility',async()=>{await assert.rejects(()=>compliance(true,['SIA expired']).assertGuardAssignable(1,1),ForbiddenException);});
+// Assignability no longer takes a screening argument, because it no longer consults screening: a
+// company that vetted its own guard deploys them without buying the S4 service. The legacy approval
+// columns are varied here only to prove they are ignored.
+const compliance=(opts:{blockers?:string[];status?:UserStatus;approved?:boolean}={})=>new ComplianceService({} as any,{} as any,{findOne:async()=>({user:{status:opts.status??UserStatus.ACTIVE},approvalStatus:opts.approved===false?GuardApprovalStatus.PENDING:GuardApprovalStatus.APPROVED,isApproved:opts.approved!==false})} as any,{} as any,{getBlockingReasons:async()=>opts.blockers??[]} as any);
+ await test('company-managed guard is assignable with no S4 screening involved',()=>compliance().assertGuardAssignable(1,1));
+ await test('legacy pending platform approval does not block assignment',()=>compliance({approved:false}).assertGuardAssignable(1,1));
+ await test('expired compliance removes eligibility',async()=>{await assert.rejects(()=>compliance({blockers:['SIA expired']}).assertGuardAssignable(1,1),ForbiddenException);});
+ await test('inactive guard account is not assignable',async()=>{await assert.rejects(()=>compliance({status:UserStatus.SUSPENDED}).assertGuardAssignable(1,1),ForbiddenException);});
  await test('company outcome is deliberately minimal',()=>assert.deepEqual(Object.keys({guardId:1,status:ScreeningStatus.VETTED,vetted:true}),['guardId','status','vetted']));
  await test('guard profile DTO has no status field',()=>{const source=require('fs').readFileSync(require('path').join(__dirname,'../src/screening/dto/screening.dto.ts'),'utf8');const body=source.split('export class UpdateScreeningProfileDto')[1].split('export class AddHistoryDto')[0];assert.equal(/\bstatus\b/.test(body),false);});
  await test('screening evidence keys are opaque',()=>assert.match('screening/guard/12/91b5bd5b-8311-4d90-9482-1a60c068184d',/^screening\/guard\/\d+\/[0-9a-f-]{36}$/));

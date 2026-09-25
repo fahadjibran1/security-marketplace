@@ -9,7 +9,10 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { GuardProfile } from '../guard-profile/entities/guard-profile.entity';
 import { CompanyGuard, CompanyGuardStatus } from '../company-guard/entities/company-guard.entity';
-import { User } from '../user/entities/user.entity';
+import { CompanyGuardEmployment } from './entities/company-guard-employment.entity';
+import { UserRole } from '../user/entities/user.entity';
+import { CompanyMembershipService } from '../company-membership/company-membership.service';
+import { CompanyPermission } from '../company-membership/company-membership-types';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EncryptionService } from './encryption.service';
 import { GuardBankDetails } from './entities/guard-bank-details.entity';
@@ -60,10 +63,11 @@ export class BankDetailsService {
     private readonly bankRepo: Repository<GuardBankDetails>,
     @InjectRepository(CompanyGuard)
     private readonly companyGuardRepo: Repository<CompanyGuard>,
-    @InjectRepository(User)
-    private readonly userRepo: Repository<User>,
+    @InjectRepository(CompanyGuardEmployment)
+    private readonly employmentRepo: Repository<CompanyGuardEmployment>,
     private readonly encryptionService: EncryptionService,
     private readonly auditLogService: AuditLogService,
+    private readonly membershipService: CompanyMembershipService,
   ) {}
 
   // ── Guard self-service ──────────────────────────────────────────────────────
@@ -193,12 +197,23 @@ export class BankDetailsService {
   // ── Company masked access (ACTIVE relationship required) ────────────────────
   // accountHolderName is never exposed to Company — not even masked.
 
+  /**
+   * Masked, and only for a Guard this Company has actually engaged.
+   *
+   * An ACTIVE relationship alone is no longer enough. Under the marketplace model a Guard may be in
+   * several Companies' workforces at once, and a Company that has merely accepted someone has no
+   * payment reason to see their bank record — not even the last four digits. The employment record
+   * for this specific relationship is that reason, so it is required here. It is existing state, not
+   * a new flag: the Company creates it when it sets the Guard's engagement terms.
+   */
   async getBankDetailsForCompany(
     companyUserId: number,
+    companyUserRole: UserRole,
     guardId: number,
   ): Promise<BankDetailsCompanyResponseDto> {
-    const companyId = await this.requireCompanyIdForUser(companyUserId);
-    await this.requireOwnedActiveRelationship(companyId, guardId);
+    const companyId = await this.requireCompanyIdForUser(companyUserId, companyUserRole);
+    const relationship = await this.requireOwnedActiveRelationship(companyId, guardId);
+    await this.requireEngagement(relationship.id);
 
     const record = await this.findWithSensitive(guardId);
     const bankSet = this.isBankSet(record);
@@ -236,17 +251,19 @@ export class BankDetailsService {
     return guard;
   }
 
-  private async requireCompanyIdForUser(userId: number): Promise<number> {
-    const user = await this.userRepo.findOne({
-      where: { id: userId },
-      relations: ['companyProfile'],
-    });
-    const companyId = user?.companyProfile?.id;
-    if (!companyId) throw new ForbiddenException('No company profile associated with this account');
-    return companyId;
+  /**
+   * Resolved through the membership matrix, so a permitted finance staff member can read and an
+   * unpermitted one cannot. The previous lookup read the owned company straight off the user record,
+   * which answered only for the account owning the Company row and skipped personnel_bank.view.
+   */
+  private async requireCompanyIdForUser(userId: number, userRole: UserRole): Promise<number> {
+    const { company } = await this.membershipService.resolveCompanyContext(
+      userId, userRole, CompanyPermission.PERSONNEL_BANK_VIEW,
+    );
+    return company.id;
   }
 
-  private async requireOwnedActiveRelationship(companyId: number, guardId: number): Promise<void> {
+  private async requireOwnedActiveRelationship(companyId: number, guardId: number): Promise<CompanyGuard> {
     const relation = await this.companyGuardRepo.findOne({
       where: {
         company: { id: companyId },
@@ -256,6 +273,18 @@ export class BankDetailsService {
     });
     if (!relation) {
       throw new ForbiddenException('No active relationship between this company and guard');
+    }
+    return relation;
+  }
+
+  private async requireEngagement(companyGuardId: number): Promise<void> {
+    const employment = await this.employmentRepo.findOne({
+      where: { companyGuard: { id: companyGuardId } },
+    });
+    if (!employment) {
+      throw new ForbiddenException(
+        'Bank details require an employment record for this guard at this company',
+      );
     }
   }
 

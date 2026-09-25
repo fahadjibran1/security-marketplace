@@ -13,13 +13,13 @@ import { NotificationService } from '../notification/notification.service';
 import { NotificationType } from '../notification/entities/notification.entity';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { isCompanyRole, UserRole } from '../user/entities/user.entity';
-import { CompanyService } from '../company/company.service';
+import { CompanyMembershipService } from '../company-membership/company-membership.service';
+import { CompanyPermission } from '../company-membership/company-membership-types';
 import { SiteService } from '../site/site.service';
 import { CompanyGuardService } from '../company-guard/company-guard.service';
 import { CompanyGuardRelationshipType } from '../company-guard/entities/company-guard.entity';
 import { ReviewJobApplicationDto } from './dto/review-job-application.dto';
 import { AvailabilityService } from '../availability/availability.service';
-import { ComplianceService } from '../compliance/compliance.service';
 import { Job } from '../job/entities/job.entity';
 
 @Injectable()
@@ -33,13 +33,32 @@ export class JobApplicationService {
     private readonly shiftService: ShiftService,
     private readonly auditLogService: AuditLogService,
     private readonly notificationService: NotificationService,
-    private readonly companyService: CompanyService,
     private readonly siteService: SiteService,
     private readonly companyGuardService: CompanyGuardService,
     private readonly availabilityService: AvailabilityService,
-    private readonly complianceService: ComplianceService,
     private readonly dataSource: DataSource,
+    private readonly membershipService: CompanyMembershipService,
   ) {}
+
+  /**
+   * Company context for recruitment actions. Resolved from membership so a permitted staff member
+   * can act and an unpermitted one cannot — the previous companyService.findByUserId lookup answered
+   * only for the account that owns the Company record, which bypassed the permission matrix entirely.
+   * Hiring adds the Guard to the workforce, so it carries GUARDS_MANAGE; creating the shift that may
+   * accompany a hire additionally carries SHIFTS_MANAGE, which is checked separately rather than
+   * folded in, so neither permission is broadened by the other.
+   */
+  private async recruitmentCompany(user: JwtPayload, alsoCreatingShift = false) {
+    const { company } = await this.membershipService.resolveCompanyContext(
+      user.sub, user.role, CompanyPermission.GUARDS_MANAGE,
+    );
+    if (alsoCreatingShift) {
+      await this.membershipService.resolveCompanyContext(
+        user.sub, user.role, CompanyPermission.SHIFTS_MANAGE,
+      );
+    }
+    return company;
+  }
 
   findAll(): Promise<JobApplication[]> {
     return this.appRepo.find();
@@ -80,12 +99,26 @@ export class JobApplicationService {
     return this.appRepo.save(application);
   }
 
+  /**
+   * The recruitment pipeline for the caller's own company, or a Guard's own applications.
+   *
+   * Company context comes from the membership matrix, for the same reason review and hire do: the
+   * previous lookup resolved the company from the account that owns the Company row, so a permitted
+   * staff member was refused outright while no permission was checked for anyone.
+   *
+   * The permission is guards.manage, not guards.view, and deliberately so. Every membership role
+   * holds guards.view, so it could never refuse anyone; and FINANCE's guards.view is documented as a
+   * no-personal-data projection, which these rows are not — they carry candidate names and their
+   * assignment and shift history. Recruitment is the population that acts on this pipeline, so it is
+   * the population that may read it, and read and write stay on one permission.
+   */
   async findAllForUser(user: JwtPayload): Promise<JobApplication[]> {
     if (user.role === UserRole.ADMIN) return this.findAll();
 
     if (isCompanyRole(user.role)) {
-      const company = await this.companyService.findByUserId(user.sub);
-      if (!company) throw new NotFoundException('Company not found');
+      const { company } = await this.membershipService.resolveCompanyContext(
+        user.sub, user.role, CompanyPermission.GUARDS_MANAGE,
+      );
       const applications = await this.appRepo.find({
         where: { job: { company: { id: company.id } } },
         relations: { assignments: { shifts: true } },
@@ -125,9 +158,13 @@ export class JobApplicationService {
     return this.createForGuard(dto.jobId, guard.id);
   }
 
+  /**
+   * Hiring is an engagement decision, not a deployment. It deliberately does not run
+   * assertGuardAssignable: a Company may accept a Guard before its compliance file for them is
+   * complete, and S4 screening is never required to hire. The deployment gate applies when a shift
+   * is actually created — including the shift this hire may create below, via ShiftService.create.
+   */
   private async preflightHire(application: JobApplication, dto: HireApplicationDto) {
-    await this.complianceService.assertGuardAssignable(application.job.company.id, application.guard.id);
-
     if (!dto.createShift) return;
     if (!dto.siteId || !dto.start || !dto.end) {
       throw new BadRequestException('siteId, start and end are required when createShift=true');
@@ -245,8 +282,7 @@ export class JobApplicationService {
     const application = await this.findOne(applicationId);
 
     if (user.role !== UserRole.ADMIN) {
-      const company = await this.companyService.findByUserId(user.sub);
-      if (!company) throw new NotFoundException('Company not found');
+      const company = await this.recruitmentCompany(user);
       if (application.job.company.id !== company.id) {
         throw new ForbiddenException('Job application does not belong to the current company');
       }
@@ -289,8 +325,7 @@ export class JobApplicationService {
     const application = await this.findOne(applicationId);
 
     if (user.role !== UserRole.ADMIN) {
-      const company = await this.companyService.findByUserId(user.sub);
-      if (!company) throw new NotFoundException('Company not found');
+      const company = await this.recruitmentCompany(user, Boolean(dto.createShift));
       if (application.job.company.id !== company.id) {
         throw new ForbiddenException('Job application does not belong to the current company');
       }

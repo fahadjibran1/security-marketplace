@@ -114,7 +114,6 @@ function harness(failAt?: FailurePoint) {
     } as any,
     { log: async () => undefined } as any,
     { createForUser: async () => undefined } as any,
-    {} as any,
     { findOne: async () => ({ id: 80, company }) } as any,
     {
       ensureRelationship: async (_params: any, manager: any) => {
@@ -125,8 +124,8 @@ function harness(failAt?: FailurePoint) {
       },
     } as any,
     { assertGuardCanTakeShift: async () => undefined } as any,
-    { assertGuardAssignable: async () => undefined } as any,
     dataSource as any,
+    { resolveCompanyContext: async () => ({ company, membershipRole: 'owner' }) } as any,
   );
 
   return { service, state: () => committed };

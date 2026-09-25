@@ -224,6 +224,10 @@ export class ShiftService {
     }
 
     if (guard) {
+      // Every route that attaches a Guard to a shift funnels through here, so the tenancy assertion
+      // belongs here rather than in each caller. It is manager-aware because a hire may establish the
+      // relationship and create the shift inside one transaction.
+      await this.companyGuardService.ensureActiveRelationship(company.id, guard.id, manager);
       await this.complianceService.assertGuardAssignable(company.id, guard.id);
       await this.availabilityService.assertGuardCanTakeShift(company.id, guard.id, start, end);
     }
