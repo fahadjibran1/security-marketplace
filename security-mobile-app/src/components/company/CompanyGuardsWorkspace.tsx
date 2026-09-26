@@ -6,7 +6,6 @@ import type {
   CompanyGuard,
   ComplianceRecord,
   CompanyScreeningOutcome,
-  GuardProfile,
   Shift,
 } from '../../types/models';
 import { colors, radii, spacing, typography } from '../../theme';
@@ -49,7 +48,6 @@ type PendingAction = {
 
 export type CompanyGuardsWorkspaceProps = {
   companyGuards: CompanyGuard[];
-  availablePlatformGuards: GuardProfile[];
   shifts: Shift[];
   complianceRecords: ComplianceRecord[];
   /** Status-only screening projection, one entry per guard the company can see. */
@@ -57,10 +55,8 @@ export type CompanyGuardsWorkspaceProps = {
   loading: boolean;
   refreshing: boolean;
   onRefresh: () => void;
-  linkingGuardId: number | null;
   canManageGuards: boolean;
   canPayAdmin: boolean;
-  onLinkGuard: (guardId: number) => Promise<void>;
   onUpdateGuardStatus: (companyGuardId: number, status: 'ACTIVE' | 'INACTIVE' | 'BLOCKED') => Promise<void>;
   onOpenPayAdmin: (guardId: number, guardName: string) => void;
   /** Opens Compliance focused on this Guard. Only offered when `canViewCompliance`. */
@@ -226,15 +222,12 @@ const FILTER_TABS: Array<{ key: FilterKey; label: string }> = [
 
 export function CompanyGuardsWorkspace({
   companyGuards,
-  availablePlatformGuards,
   shifts,
   complianceRecords,
   screeningOutcomes,
   loading,
-  linkingGuardId,
   canManageGuards,
   canPayAdmin,
-  onLinkGuard,
   onUpdateGuardStatus,
   onOpenPayAdmin,
   onNavigateToCompliance,
@@ -251,21 +244,8 @@ export function CompanyGuardsWorkspace({
   );
 
   const [quickView, setQuickView] = React.useState<CompanyGuard | null>(null);
-  const [linkOpen, setLinkOpen] = React.useState(false);
-  const [linkSearch, setLinkSearch] = React.useState('');
   const [pendingAction, setPendingAction] = React.useState<PendingAction | null>(null);
   const [statusChanging, setStatusChanging] = React.useState(false);
-
-  // Exclude guards already in workforce at any status from the link modal
-  const allLinkedGuardIds = React.useMemo(
-    () => new Set(companyGuards.map(cg => cg.guard?.id).filter((id): id is number => typeof id === 'number')),
-    [companyGuards],
-  );
-
-  const trulyAvailableGuards = React.useMemo(
-    () => availablePlatformGuards.filter(g => !allLinkedGuardIds.has(g.id)),
-    [availablePlatformGuards, allLinkedGuardIds],
-  );
 
   // ── Summary metrics ────────────────────────────────────────────────────────
   const totalCount = companyGuards.length;
@@ -319,28 +299,7 @@ export function CompanyGuardsWorkspace({
     return rows;
   }, [companyGuards, filter, search, shifts, complianceRecords]);
 
-  // ── Link guard search ─────────────────────────────────────────────────────
-  const filteredAvailable = React.useMemo(() => {
-    if (!linkSearch.trim()) return trulyAvailableGuards;
-    const q = linkSearch.trim().toLowerCase();
-    return trulyAvailableGuards.filter(g =>
-      g.fullName.toLowerCase().includes(q) ||
-      (g.phone || '').toLowerCase().includes(q) ||
-      (g.siaLicenseNumber || g.siaLicenceNumber || '').toLowerCase().includes(q),
-    );
-  }, [trulyAvailableGuards, linkSearch]);
-
   // ── Handlers ──────────────────────────────────────────────────────────────
-  const handleOpenLinkDrawer = () => {
-    setLinkSearch('');
-    setLinkOpen(true);
-  };
-
-  const handleLinkGuard = async (guardId: number) => {
-    await onLinkGuard(guardId);
-    setLinkOpen(false);
-  };
-
   const requestStatusChange = (type: PendingAction['type'], cg: CompanyGuard) => {
     const guardId = cg.guard?.id;
     const guardName = cg.guard?.fullName ?? 'this guard';
@@ -473,15 +432,6 @@ export function CompanyGuardsWorkspace({
               clearButtonMode="while-editing"
             />
           </View>
-          {canManageGuards ? (
-            <Pressable
-              style={styles.linkButton}
-              onPress={handleOpenLinkDrawer}
-              accessibilityRole="button"
-            >
-              <Text style={styles.linkButtonText}>+ Link Guard</Text>
-            </Pressable>
-          ) : null}
         </View>
         <View style={styles.filterTabs}>
           {FILTER_TABS.map(tab => (
@@ -517,11 +467,9 @@ export function CompanyGuardsWorkspace({
               <TableEmptyState
                 message={
                   companyGuards.length === 0
-                    ? 'No guards linked to your workforce.'
+                    ? 'No guards in your workforce yet. Use Invite Guard below to bring one in.'
                     : 'No guards match your search or filter.'
                 }
-                actionLabel={canManageGuards && companyGuards.length === 0 ? 'Link Guard' : undefined}
-                onAction={canManageGuards && companyGuards.length === 0 ? handleOpenLinkDrawer : undefined}
               />
             ) : (
               filteredGuards.map(cg => {
@@ -705,54 +653,6 @@ export function CompanyGuardsWorkspace({
         ) : null}
       </Drawer>
 
-      {/* ── Link Guard Drawer ──────────────────────────────────────────────── */}
-      <Drawer
-        visible={canManageGuards && linkOpen}
-        onClose={() => setLinkOpen(false)}
-        title="Link Guard"
-        subtitle="Add an existing guard to your workforce."
-        compact
-      >
-        <View style={styles.linkDrawerBody}>
-          <TextInput
-            style={styles.searchInput}
-            value={linkSearch}
-            onChangeText={setLinkSearch}
-            placeholder="Search by name, phone or SIA…"
-            placeholderTextColor={colors.textSecondary}
-          />
-          {filteredAvailable.length === 0 ? (
-            <View style={styles.linkEmptyState}>
-              <Text style={styles.linkEmptyText}>
-                {trulyAvailableGuards.length === 0
-                  ? 'Every guard visible to you is already in your workforce.'
-                  : 'No guards match your search.'}
-              </Text>
-            </View>
-          ) : (
-            filteredAvailable.map(guard => (
-              <View key={guard.id} style={styles.linkRow}>
-                <View style={styles.linkRowInfo}>
-                  <Text style={styles.linkRowName}>{guard.fullName}</Text>
-                  <Text style={styles.linkRowMeta}>
-                    {guard.phone}
-                    {guard.siaLicenseNumber || guard.siaLicenceNumber
-                      ? ` · ${guard.siaLicenseNumber || guard.siaLicenceNumber}`
-                      : ''}
-                  </Text>
-                </View>
-                <Button
-                  label={linkingGuardId === guard.id ? 'Adding…' : 'Add to workforce'}
-                  variant="secondary"
-                  onPress={() => handleLinkGuard(guard.id)}
-                  disabled={linkingGuardId !== null}
-                />
-              </View>
-            ))
-          )}
-        </View>
-      </Drawer>
-
       {/* ── Confirmation dialogs ───────────────────────────────────────────── */}
       {pendingAction && confirmCopy ? (
         <ConfirmationDialog
@@ -920,19 +820,6 @@ const styles = StyleSheet.create({
   filterTabTextActive: {
     color: '#FFFFFF',
   },
-  linkButton: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: 9,
-    borderRadius: radii.sm,
-    backgroundColor: colors.accentTeal,
-    flexShrink: 0,
-    ...(IS_WEB ? { cursor: 'pointer' } as any : {}),
-  },
-  linkButtonText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#FFFFFF',
-  },
 
   // Table
   tableCard: {
@@ -1035,42 +922,5 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     textDecorationLine: 'underline',
     ...(IS_WEB ? { cursor: 'pointer' } as any : {}),
-  },
-
-  // Link guard drawer
-  linkDrawerBody: {
-    gap: spacing.md,
-    paddingVertical: spacing.sm,
-  },
-  linkEmptyState: {
-    paddingVertical: spacing.xl,
-    alignItems: 'center',
-  },
-  linkEmptyText: {
-    ...typography.body,
-    color: colors.textSecondary,
-    textAlign: 'center',
-  },
-  linkRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    gap: spacing.md,
-  },
-  linkRowInfo: {
-    flex: 1,
-    gap: 2,
-  },
-  linkRowName: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: colors.textPrimary,
-  },
-  linkRowMeta: {
-    fontSize: 12,
-    color: colors.textSecondary,
   },
 });

@@ -52,15 +52,31 @@ async function main() {
     );
   });
 
-  await test('C-3 "Approve" no longer represents company workforce linking', () => {
-    assert.ok(!/handleApproveGuard/.test(dashboard), 'the misleading handler name must be gone');
-    assert.ok(/handleAddGuardToWorkforce/.test(dashboard), 'renamed to describe what it does');
-    assert.ok(/Add to workforce/.test(dashboard), 'the control reads "Add to workforce"');
-    assert.ok(/Add to workforce/.test(workspace), 'the workspace link control reads "Add to workforce"');
-    assert.ok(
-      !/approvingGuardId/.test(workspace),
-      'the workspace pending-id must no longer be named after approval',
-    );
+  await test('C-3 the legacy company direct-link UI is gone entirely', () => {
+    // Post-UAT cleanup: invitations are the single onboarding path. Two competing routes would
+    // undermine consent, because the direct link attaches a guard without asking them.
+    assert.ok(!/handleApproveGuard/.test(dashboard), 'the misleading handler is gone');
+    assert.ok(!/handleAddGuardToWorkforce/.test(dashboard), 'the direct-link handler is gone');
+    assert.ok(!/\+ Link Guard/.test(workspace), '"+ Link Guard" is no longer rendered');
+    assert.ok(!/Link Guard/.test(workspace), 'no Link Guard control or drawer remains');
+    assert.ok(!/onLinkGuard/.test(workspace), 'the link callback prop is gone');
+    assert.ok(!/onLinkGuard/.test(dashboard), 'and is no longer passed');
+    assert.ok(!/approvingGuardId/.test(workspace) && !/approvingGuardId/.test(dashboard));
+  });
+
+  await test('C-3b no company-facing platform-guard selection UI remains', () => {
+    assert.ok(!/availablePlatformGuards/.test(workspace), 'the picker prop is gone');
+    assert.ok(!/availablePlatformGuards/.test(dashboard), 'and its feed is gone');
+    assert.ok(!/Available Platform Guards/.test(dashboard), 'the legacy panel is gone');
+    assert.ok(!/renderGuardsSection/.test(dashboard), 'the unreachable legacy section is gone');
+    assert.ok(!/linkDrawerBody|linkRow|linkButton/.test(workspace), 'its styles are gone');
+  });
+
+  await test('C-3c the backend link capability is untouched', () => {
+    // Hire and platform-admin flows still use POST /company-guards; only the company UI stopped
+    // offering it, so the API client keeps the function.
+    assert.ok(/export function linkGuard\(/.test(api), 'the API client still exposes linkGuard');
+    assert.ok(/'\/company-guards'/.test(api), 'pointing at the unchanged endpoint');
   });
 
   await test('C-4 Invite Guard is offered to authorised company users only', () => {
@@ -297,6 +313,9 @@ async function main() {
       assert.ok(new RegExp(`${prop}=\\{`).test(dashboard), `${prop} still passed`);
     }
     assert.ok(/screeningOutcomes=\{screeningOutcomes\}/.test(dashboard), 'screening outcomes passed');
+    // Active Workforce and the Invitations panel are both still mounted in the guards section.
+    assert.ok(/<CompanyGuardsWorkspace/.test(dashboard), 'Active Workforce still renders');
+    assert.ok(/<CompanyGuardInvitationsPanel/.test(dashboard), 'Invitations still render');
   });
 
   await test('C-27 the guard screen keeps its existing tabs', () => {

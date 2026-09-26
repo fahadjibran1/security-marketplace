@@ -38,8 +38,6 @@ import { CompanyTimesheetsWorkspace } from '../components/company/CompanyTimeshe
 import {
   ApiError,
   acknowledgeSafetyAlert,
-  approveGuard,
-  linkGuard,
   closeSafetyAlert,
   createClient,
   createJob,
@@ -1234,7 +1232,6 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
   const [savingSite, setSavingSite] = React.useState(false);
   const [savingRota, setSavingRota] = React.useState(false);
   const [creatingJob, setCreatingJob] = React.useState(false);
-  const [approvingGuardId, setApprovingGuardId] = React.useState<number | null>(null);
   const [reviewingApplicationId, setReviewingApplicationId] = React.useState<number | null>(null);
   const [shiftOffersFeedback, setShiftOffersFeedback] = React.useState<ShiftOffersFeedback | null>(null);
   const [liveOperationsFeedback, setLiveOperationsFeedback] = React.useState<{
@@ -1454,11 +1451,6 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
     [companyGuards],
   );
 
-  const linkedGuardIds = React.useMemo(
-    () => new Set(activeCompanyGuards.map((entry) => entry.guard?.id).filter((value): value is number => typeof value === 'number')),
-    [activeCompanyGuards],
-  );
-
   const linkedGuards = React.useMemo(() => {
     const unique = new Map<number, GuardProfile>();
     activeCompanyGuards.forEach((entry) => {
@@ -1468,13 +1460,6 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
     });
     return Array.from(unique.values()).sort((left, right) => left.fullName.localeCompare(right.fullName));
   }, [activeCompanyGuards]);
-
-  // Guards visible to this company that are not already in its workforce. No approval filtering:
-  // whether S4 has screened someone is shown as a separate, honest label rather than used to hide them.
-  const availablePlatformGuards = React.useMemo(
-    () => guards.filter((guard) => !linkedGuardIds.has(guard.id)),
-    [guards, linkedGuardIds],
-  );
 
   const clientMap = React.useMemo(() => new Map(clients.map((client) => [client.id, client])), [clients]);
   const siteMap = React.useMemo(() => new Map(sites.map((site) => [site.id, site])), [sites]);
@@ -2666,21 +2651,6 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
     },
     [refreshGuardInvitations],
   );
-
-  // Adds an existing guard to this company's workforce directly. The consent-based invitation
-  // flow is the normal route; this remains for guards already related to the company.
-  const handleAddGuardToWorkforce = async (guardId: number) => {
-    try {
-      setApprovingGuardId(guardId);
-      await linkGuard(guardId);
-      await loadData(true);
-    } catch (approveError) {
-      const message = formatApiErrorMessage(approveError, 'Unable to link this guard right now.');
-      setError(guardOnboardingMessage(message));
-    } finally {
-      setApprovingGuardId(null);
-    }
-  };
 
   const handleUpdateGuardStatus = async (companyGuardId: number, status: 'ACTIVE' | 'INACTIVE' | 'BLOCKED') => {
     await updateCompanyGuard(companyGuardId, status);
@@ -4090,44 +4060,6 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
     );
   };
 
-  const renderGuardsSection = () => (
-    <View style={styles.sectionStack}>
-      <View style={styles.splitLayout}>
-        <View style={styles.tableCard}>
-          <Text style={styles.panelTitle}>Available Platform Guards</Text>
-          {availablePlatformGuards.map((guard) => (
-            <View key={guard.id} style={styles.tableRow}>
-              <Text style={styles.tableCellStrong}>{guard.fullName}</Text>
-              <Text style={styles.tableCell}>{guard.siaLicenseNumber || guard.siaLicenceNumber || 'No SIA yet'}</Text>
-              <Text style={styles.tableCell}>{guard.phone}</Text>
-              <View style={styles.rowActions}>
-                <Pressable style={styles.primaryButton} onPress={() => handleAddGuardToWorkforce(guard.id)} disabled={approvingGuardId === guard.id}>
-                  <Text style={styles.primaryButtonText}>{approvingGuardId === guard.id ? 'Adding...' : 'Add to workforce'}</Text>
-                </Pressable>
-              </View>
-            </View>
-          ))}
-        </View>
-        <View style={styles.tableCard}>
-          <Text style={styles.panelTitle}>Linked Guards</Text>
-          {linkedGuards.map((guard) => (
-            <View key={guard.id} style={styles.tableRow}>
-              <Text style={styles.tableCellStrong}>{guard.fullName}</Text>
-              <Text style={styles.tableCell}>{guard.phone}</Text>
-              <Text style={styles.tableCell}>{shifts.filter((shift) => (shift.guard?.id ?? shift.guardId) === guard.id).length} shifts</Text>
-              <View style={styles.rowActions}>
-                <Pressable style={styles.secondaryButton} onPress={() => handleSelectPayrollGuard(guard.id, guard.fullName)}>
-                  <Text style={styles.secondaryButtonText}>Pay Admin</Text>
-                </Pressable>
-              </View>
-            </View>
-          ))}
-        </View>
-      </View>
-      {renderPayrollAdminPanel()}
-    </View>
-  );
-
   const renderShiftOffersSection = () => (
     <CompanyShiftOffersWorkspace
       shifts={shifts}
@@ -4287,13 +4219,11 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
           <>
             <CompanyGuardsWorkspace
               companyGuards={companyGuards}
-              availablePlatformGuards={availablePlatformGuards}
               shifts={shifts}
               complianceRecords={complianceRecords}
               loading={loading && !refreshing}
               refreshing={refreshing}
               onRefresh={() => loadData(true)}
-              linkingGuardId={approvingGuardId}
               canManageGuards={
                 user?.companyPermissions
                   ? user.companyPermissions.includes('guards.manage')
@@ -4304,7 +4234,6 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
                   ? user.companyPermissions.includes('payroll.manage')
                   : (user?.role === 'company_admin' || user?.role === 'company')
               }
-              onLinkGuard={handleAddGuardToWorkforce}
               onUpdateGuardStatus={handleUpdateGuardStatus}
               onOpenPayAdmin={(guardId, guardName) => handleSelectPayrollGuard(guardId, guardName)}
               canViewCompliance={guardNavPermissions.canViewCompliance}
