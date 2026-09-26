@@ -44,6 +44,7 @@ import { GuardPersonnelModule } from './guard-personnel/guard-personnel.module';
 import { ClientWeeklyApprovalModule } from './client-weekly-approval/client-weekly-approval.module';
 import { CompanyMembershipModule } from './company-membership/company-membership.module';
 import { RotaSlotModule } from './rota-slot/rota-slot.module';
+import { OperationsModule } from './operations/operations.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, validate: validateRuntimeEnv }),
@@ -107,6 +108,7 @@ import { RotaSlotModule } from './rota-slot/rota-slot.module';
     ClientWeeklyApprovalModule,
     CompanyMembershipModule,
     RotaSlotModule,
+    OperationsModule,
   ],
   controllers: [HealthController],
 })

@@ -14,13 +14,13 @@ import { CompanyService } from '../company/company.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { NotificationService } from '../notification/notification.service';
 import { NotificationType } from '../notification/entities/notification.entity';
-import { DailyLog, DailyLogType } from '../daily-log/entities/daily-log.entity';
+import { DailyLog } from '../daily-log/entities/daily-log.entity';
 import { AttendanceEvent, AttendanceEventType } from '../attendance/entities/attendance.entity';
 import { Shift } from '../shift/entities/shift.entity';
-
-// A Guard's scheduled "check call" (what the Guard app records) and a supervisor "welfare check" both prove the
-// Guard was reachable, so either resets the missed-check timer.
-const WELFARE_CHECK_LOG_TYPES = [DailyLogType.CHECK_CALL, DailyLogType.WELFARE_CHECK];
+import { WelfareWindowService } from '../operations/welfare-window.service';
+// What satisfies a Welfare Check — a Guard's scheduled "check call" or a supervisor "welfare check" — is now
+// decided in one place, alongside the window engine, rather than by a list local to this sweep.
+import { WELFARE_COMPLETION_LOG_TYPES } from '../operations/operational-completion';
 
 @Injectable()
 export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
@@ -41,6 +41,7 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
     private readonly companyService: CompanyService,
     private readonly auditLogService: AuditLogService,
     private readonly notificationService: NotificationService,
+    private readonly welfareWindowService: WelfareWindowService,
   ) {}
 
   onModuleInit() {
@@ -130,14 +131,16 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
       const guard = shift.guard ?? shift.assignment?.guard;
       if (!guard?.id || !shift.company?.id) continue;
 
-      const intervalMinutes = Math.max(
-        5,
-        Number(shift.site?.welfareCheckIntervalMinutes ?? shift.checkCallIntervalMinutes ?? 60) || 60,
-      );
+      // Same arithmetic as before, now read from the one authoritative resolver so the reporting
+      // paths can be repointed at it in W2 and stop disagreeing with this sweep.
+      const intervalMinutes = this.welfareWindowService.resolveIntervalMinutes({
+        siteWelfareCheckIntervalMinutes: shift.site?.welfareCheckIntervalMinutes,
+        shiftCheckCallIntervalMinutes: shift.checkCallIntervalMinutes,
+      });
 
       const [latestWelfare, latestCheckIn] = await Promise.all([
         this.dailyLogRepo.findOne({
-          where: { shift: { id: shift.id }, logType: In(WELFARE_CHECK_LOG_TYPES) },
+          where: { shift: { id: shift.id }, logType: In(WELFARE_COMPLETION_LOG_TYPES) },
           order: { createdAt: 'DESC' },
         }),
         this.attendanceRepo.findOne({

@@ -11,10 +11,12 @@ import { NotificationModule } from '../notification/notification.module';
 import { DailyLog } from '../daily-log/entities/daily-log.entity';
 import { AttendanceEvent } from '../attendance/entities/attendance.entity';
 import { Shift } from '../shift/entities/shift.entity';
+import { OperationsModule } from '../operations/operations.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([SafetyAlert, DailyLog, AttendanceEvent, Shift]),
+    OperationsModule,
     GuardProfileModule,
     ShiftModule,
     CompanyModule,
