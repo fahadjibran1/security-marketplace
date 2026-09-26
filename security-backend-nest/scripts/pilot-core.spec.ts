@@ -14,6 +14,12 @@
  * action goes over HTTP. SQL is used only where the product has no API in a test environment: compliance evidence
  * rows (no object storage), the platform-Admin VETTED review, time travel of already-recorded timestamps, and a
  * trigger that injects a Timesheet write failure to prove Book Off rollback.
+ *
+ * Guard approval is a Platform Admin action (it writes platform-global state on the shared GuardProfile, so no one
+ * Company may do it), and public registration deliberately cannot mint an Admin. The Platform Admin identity is
+ * therefore created through the product's own operator provisioning path, AdminOperatorService — the same code the
+ * `admin:bootstrap` CLI runs — and then logged in normally, so the approval call itself still crosses real HTTP
+ * and real authorization.
  */
 process.env.TZ = 'UTC'; // DB `timestamp` columns are UTC; keep Node in the same zone so event times round-trip exactly.
 
@@ -26,6 +32,7 @@ import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
 import { AuthService } from '../src/auth/auth.service';
 import { SafetyAlertService } from '../src/safety-alert/safety-alert.service';
+import { AdminOperatorService } from '../src/admin-operator/admin-operator.service';
 
 const url = process.env.PILOT_CORE_DATABASE_URL;
 if (!url) throw new Error('PILOT_CORE_DATABASE_URL is required');
@@ -113,8 +120,8 @@ async function main() {
   try {
     // ─────────────────────────── fixtures: real registration + real sessions ───────────────────────────
     const password = 'Str0ng-pass-1!';
-    const session = async (email: string): Promise<Session> => {
-      const s: any = await auth.login({ email, password });
+    const session = async (email: string, secret = password): Promise<Session> => {
+      const s: any = await auth.login({ email, password: secret });
       return { token: s.accessToken, userId: s.user.id, companyId: s.user.companyId, guardId: s.user.guardId, email };
     };
     const registerCompany = async (label: string) => {
@@ -155,7 +162,8 @@ async function main() {
       assert.equal(link.status, 201, errText(link));
     }
 
-    // Ineligible Guard cannot be offered work (compliance gate is untouched by this pack).
+    // A non-compliant Guard cannot be offered work (compliance gate is untouched by this pack). The block is a
+    // compliance one: at this point the Guards have no SIA expiry, no right-to-work status and no documents.
     const d1 = day(2);
     const slot1 = await api('POST', '/rota-slots', co.token, {
       siteId, startAt: iso(at(d1, 9)), endAt: iso(at(d1, 17)), requiredGuardCount: 1, checkCallIntervalMinutes: 30, title: 'Day cover', instructions: 'Front desk',
@@ -164,12 +172,36 @@ async function main() {
     const slot1Id: number = slot1.body.id;
     const shift1Id = positionId(positionsOf((await api('GET', `/rota-slots/${slot1Id}`, co.token)).body)[0]);
     const blocked = await api('POST', `/rota-slots/${slot1Id}/assign`, co.token, { shiftId: shift1Id, guardId: gid.A });
-    assert.equal(blocked.status, 403, 'unapproved Guard must not be assignable');
-    pass('SETUP: ineligible Guard is still blocked from assignment');
+    assert.equal(blocked.status, 403, 'non-compliant Guard must not be assignable');
+    assert.match(errText(blocked), /compliance/i, `the block must be the compliance gate: ${errText(blocked)}`);
+    pass('SETUP: non-compliant Guard is still blocked from assignment');
 
-    // Make every Guard eligible: approval (API), profile + evidence + VETTED (no storage / Admin UI in this environment).
+    // Platform Admin, provisioned through the product's own operator path because public registration cannot mint
+    // one. A fixed identity keeps the spec re-runnable against a database it has already used.
+    const adminEmail = 'platform.admin@pilot-core.test';
+    const adminPassword = 'Pilot-Core-Admin-1!';
+    const operator = new AdminOperatorService(ds);
+    const adminCount = await count(`SELECT count(*) n FROM users WHERE role = 'admin'`);
+    if (adminCount === 0) {
+      await operator.bootstrap(adminEmail, adminPassword);
+    } else if ((await count(`SELECT count(*) n FROM users WHERE role = 'admin' AND LOWER(email) = $1`, [adminEmail])) === 1) {
+      // This spec's own Admin from an earlier run: reset its password through the documented recovery path.
+      await operator.recover(adminEmail, adminPassword, true);
+    } else {
+      throw new Error('This database already has a Platform Admin this spec did not create; use a disposable database.');
+    }
+    const admin = await session(adminEmail, adminPassword);
+    assert.ok(admin.token, 'Platform Admin session established');
+
+    // Approval writes platform-global state on the shared GuardProfile, so a Company may not do it (Phase A).
+    const companyAttempt = await api('PATCH', `/guards/${gid.A}/approve`, co.token);
+    assert.equal(companyAttempt.status, 403, `a Company token must not approve a Guard: ${companyAttempt.status}`);
+    pass('SETUP: Guard approval is refused to a Company token (Platform Admin only)');
+
+    // Make every Guard eligible: approval (Platform Admin API), profile + evidence + VETTED (no storage / Admin UI
+    // in this environment). Approval is platform record-keeping; assignability is decided by the compliance gate.
     for (const k of ['A', 'B', 'C', 'D'] as const) {
-      const ap = await api('PATCH', `/guards/${gid[k]}/approve`, co.token);
+      const ap = await api('PATCH', `/guards/${gid[k]}/approve`, admin.token);
       assert.equal(ap.status, 200, errText(ap));
     }
     const ids = Object.values(gid).join(',');
