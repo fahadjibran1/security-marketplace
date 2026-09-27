@@ -1,7 +1,7 @@
 /**
  * Migration rehearsal for 58 → 59 (AddWelfareWindowEvidence).
  *
- * Runs the repository's own migrations against a disposable PostgreSQL 17, rolls back to the schema
+ * Runs the repository's own migrations against a disposable PostgreSQL (16 or newer), rolls back to the schema
  * production is on today (58), seeds rows exactly as production holds them — a CompanyGuard
  * relationship established by invitation, a site, a daily log and a legacy rolling welfare alert —
  * then applies 59 and proves every one of them survives untouched, the new columns default to NULL,
@@ -42,6 +42,9 @@ const test = async (id: string, fn: () => Promise<void> | void) => {
 
 const MIGRATION_59 = 'AddWelfareWindowEvidence1720900000005';
 
+/** The oldest PostgreSQL this schema is run against anywhere: CI uses 16, production and local 17. */
+const MINIMUM_POSTGRES_MAJOR = 16;
+
 async function main() {
   const ds = new DataSource({ ...base, migrations: [migrationsGlob] });
   await ds.initialize();
@@ -71,9 +74,17 @@ async function main() {
     // Located by name rather than by a total, so a later migration does not break this rehearsal the
     // way a hard-coded count broke the Phase B one.
     const subjectIndex = applied.findIndex((migration) => migration.name === MIGRATION_59);
-    await test('M59-APPLIES-ON-POSTGRES-17', async () => {
+    await test('M59-APPLIES-ON-A-SUPPORTED-POSTGRES', async () => {
       const version = String(await scalar('SHOW server_version'));
-      assert.ok(version.startsWith('17.'), `expected PostgreSQL 17, found ${version}`);
+      // A compatibility floor, not an exact version. Migration 59 needs nothing newer than
+      // PostgreSQL 12 — ALTER TYPE ... ADD VALUE IF NOT EXISTS, partial unique indexes and running
+      // outside a transaction are all long-standing — so requiring exactly 17 turned the local
+      // rehearsal environment into a release requirement and failed CI, which runs PostgreSQL 16 by
+      // deliberate choice. The dedicated local rehearsal on 17.x remains the PostgreSQL 17 evidence.
+      const major = Number(/^(\d+)/.exec(version)?.[1]);
+      console.log(`      server_version = ${version} (major ${major})`);
+      assert.ok(Number.isInteger(major), `could not parse a major version from ${version}`);
+      assert.ok(major >= MINIMUM_POSTGRES_MAJOR, `PostgreSQL ${MINIMUM_POSTGRES_MAJOR}+ required, found ${version}`);
       assert.ok(subjectIndex >= 0, `${MIGRATION_59} must be among the ${applied.length} applied migrations`);
     });
 
