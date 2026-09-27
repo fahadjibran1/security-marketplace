@@ -13,8 +13,14 @@ import { Shift } from '../../shift/entities/shift.entity';
 export enum DailyLogType {
   PATROL = 'patrol',
   OBSERVATION = 'observation',
+  /** Historical Welfare Check evidence: what the Guard app records today. Still counts as a completion. */
   CHECK_CALL = 'check_call',
   WELFARE_CHECK = 'welfare_check',
+  /**
+   * A periodic written LOG BOOK entry, distinct from a voluntary OBSERVATION. Persisted from
+   * Migration 59; nothing writes it until the Guard app is updated in W5.
+   */
+  LOG_BOOK = 'log_book',
   VISITOR = 'visitor',
   DELIVERY = 'delivery',
   MAINTENANCE = 'maintenance',

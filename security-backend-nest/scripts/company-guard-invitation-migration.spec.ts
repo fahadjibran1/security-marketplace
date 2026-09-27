@@ -30,6 +30,9 @@ const base = {
   logging: false,
 };
 
+/** The migration this rehearsal is about; later migrations must not affect it. */
+const SUBJECT = 'AddCompanyGuardInvitations1720900000004';
+
 let passed = 0;
 const test = async (id: string, fn: () => Promise<void> | void) => {
   await fn();
@@ -45,20 +48,23 @@ async function main() {
     assert.equal(ds.options.synchronize, false, 'DATABASE_SYNCHRONIZE must remain false');
 
     const applied = await ds.runMigrations({ transaction: 'each' });
-    await test('PHASEB-MIGRATION-COUNT-58', () => {
-      assert.equal(applied.length, 58, `expected 58 migrations, applied ${applied.length}`);
-      assert.equal(
-        applied[applied.length - 1].name,
-        'AddCompanyGuardInvitations1720900000004',
-        'the new migration must be the last one',
-      );
+    const subjectIndex = applied.findIndex((migration) => migration.name === SUBJECT);
+    await test('PHASEB-SUBJECT-MIGRATION-APPLIED', () => {
+      assert.ok(subjectIndex >= 0, `${SUBJECT} must be among the ${applied.length} applied migrations`);
     });
 
-    // Roll back to the schema version production is on right now.
-    await ds.undoLastMigration({ transaction: 'each' });
-    const at57 = Number((await ds.query('SELECT count(*)::int n FROM typeorm_migrations'))[0].n);
-    await test('PHASEB-BACK-TO-57', () => {
-      assert.equal(at57, 57, `expected to be back at 57, found ${at57}`);
+    // Roll back to the schema version immediately before the migration under test, whatever has been
+    // added since. Asserting a total count instead would break on every later migration.
+    for (let index = applied.length - 1; index >= subjectIndex; index -= 1) {
+      await ds.undoLastMigration({ transaction: 'each' });
+    }
+    const beforeSubject = Number((await ds.query('SELECT count(*)::int n FROM typeorm_migrations'))[0].n);
+    await test('PHASEB-ROLLED-BACK-TO-BEFORE-SUBJECT', () => {
+      assert.equal(
+        beforeSubject,
+        subjectIndex,
+        `expected ${subjectIndex} migrations before the subject, found ${beforeSubject}`,
+      );
     });
 
     await test('PHASEB-DOWN-REMOVED-EVERYTHING-IT-ADDED', async () => {
@@ -118,11 +124,11 @@ async function main() {
       await ds.query(`SELECT * FROM company_guards WHERE "companyId"=$1 AND "guardId"=$2`, [companyId, guardId])
     )[0];
 
-    // Apply 58 on top of populated production-shaped data.
+    // Apply the subject, and anything after it, on top of populated production-shaped data.
     const reapplied = await ds.runMigrations({ transaction: 'each' });
-    await test('PHASEB-REAPPLY-ONLY-58', () => {
-      assert.equal(reapplied.length, 1, `expected exactly 1 migration, applied ${reapplied.length}`);
-      assert.equal(reapplied[0].name, 'AddCompanyGuardInvitations1720900000004');
+    await test('PHASEB-REAPPLY-STARTS-WITH-SUBJECT', () => {
+      assert.ok(reapplied.length >= 1, 'the subject migration must be pending again');
+      assert.equal(reapplied[0].name, SUBJECT, 'and it must be the first one re-applied');
     });
 
     await test('PHASEB-EXISTING-RELATIONSHIP-PRESERVED', async () => {
@@ -205,7 +211,9 @@ async function main() {
       const again = await ds.runMigrations({ transaction: 'each' });
       assert.equal(again.length, 0, 'a second run must apply nothing');
       const total = Number((await ds.query('SELECT count(*)::int n FROM typeorm_migrations'))[0].n);
-      assert.equal(total, 58);
+      // Compared against the set that was applied at the start rather than a literal, so a later
+      // migration does not break this rehearsal.
+      assert.equal(total, applied.length, 'the full set is applied and nothing was lost');
     });
 
     await test('PHASEB-FK-CASCADE-AND-SET-NULL', async () => {

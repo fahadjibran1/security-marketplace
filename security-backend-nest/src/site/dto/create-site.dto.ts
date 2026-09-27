@@ -65,6 +65,19 @@ export class CreateSiteDto {
   @Min(5)
   welfareCheckIntervalMinutes?: number;
 
+  /**
+   * LOG BOOK requirement. Omit or send null for "as required" (no periodic obligation); 60 is hourly
+   * and 120 every two hours. Left as a bounded integer rather than a 60/120 choice so a client asking
+   * for, say, 30 needs no schema or API change. @IsOptional() also permits an explicit null, which is
+   * how a company turns the requirement back off. Upper bound is a day: a longer period than the
+   * longest possible shift could never come due.
+   */
+  @IsOptional()
+  @IsInt()
+  @Min(5)
+  @Max(1440)
+  logBookIntervalMinutes?: number | null;
+
   @IsOptional()
   @IsString()
   specialInstructions?: string;

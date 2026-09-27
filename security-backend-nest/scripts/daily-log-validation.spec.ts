@@ -80,8 +80,17 @@ async function main() {
     const omitted = (await validate({ shiftId: 1, message: 'No type supplied.' })) as CreateDailyLogDto;
     assert.equal(omitted.logType, undefined, 'the service, not the DTO, applies the default');
 
-    assert.notEqual(await errorsFrom({ shiftId: 1, message: 'x', logType: 'log_book' }), null,
-      'log_book is not a persisted type until Migration 59 and must still be refused');
+    // Migration 59 persists log_book, so the DTO now accepts it. Nothing writes it until the Guard
+    // app is updated in W5, but the API contract has to allow it before that can happen.
+    const logBook = (await validate({
+      shiftId: 1,
+      message: 'Site secure. Perimeter checked, all doors locked.',
+      logType: DailyLogType.LOG_BOOK,
+    })) as CreateDailyLogDto;
+    assert.equal(logBook.logType, DailyLogType.LOG_BOOK, 'log_book is a persisted type from Migration 59');
+
+    assert.notEqual(await errorsFrom({ shiftId: 1, message: 'x', logType: 'not_a_real_type' }), null,
+      'an unknown log type is still refused');
     assert.notEqual(await errorsFrom({ shiftId: 1, message: 'x', unexpected: true }), null,
       'forbidNonWhitelisted still rejects unknown properties');
   });

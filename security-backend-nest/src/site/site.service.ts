@@ -76,6 +76,8 @@ export class SiteService {
     site.operatingStartTime = dto.operatingStartTime?.trim() || null;
     site.operatingEndTime = dto.operatingEndTime?.trim() || null;
     site.welfareCheckIntervalMinutes = dto.welfareCheckIntervalMinutes ?? 60;
+    // NULL, not 60: a new site has no periodic Log Book obligation until someone asks for one.
+    site.logBookIntervalMinutes = dto.logBookIntervalMinutes ?? null;
     site.specialInstructions = dto.specialInstructions?.trim() || null;
     site.latitude = dto.latitude ?? null;
     site.longitude = dto.longitude ?? null;
@@ -115,6 +117,7 @@ export class SiteService {
         operatingStartTime: saved.operatingStartTime,
         operatingEndTime: saved.operatingEndTime,
         welfareCheckIntervalMinutes: saved.welfareCheckIntervalMinutes,
+        logBookIntervalMinutes: saved.logBookIntervalMinutes,
         requireGpsCheckIn: saved.requireGpsCheckIn,
         geofenceRadiusMeters: saved.geofenceRadiusMeters,
         requireNfcCheckIn: saved.requireNfcCheckIn,
@@ -157,6 +160,7 @@ export class SiteService {
       operatingStartTime: site.operatingStartTime,
       operatingEndTime: site.operatingEndTime,
       welfareCheckIntervalMinutes: site.welfareCheckIntervalMinutes,
+      logBookIntervalMinutes: site.logBookIntervalMinutes,
       specialInstructions: site.specialInstructions,
       latitude: site.latitude,
       longitude: site.longitude,
@@ -209,6 +213,7 @@ export class SiteService {
         operatingStartTime: saved.operatingStartTime,
         operatingEndTime: saved.operatingEndTime,
         welfareCheckIntervalMinutes: saved.welfareCheckIntervalMinutes,
+        logBookIntervalMinutes: saved.logBookIntervalMinutes,
         specialInstructions: saved.specialInstructions,
         latitude: saved.latitude,
         longitude: saved.longitude,

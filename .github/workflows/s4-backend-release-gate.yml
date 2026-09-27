@@ -65,6 +65,8 @@ jobs:
       PHASEB_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_guard_invitations
       PHASEB_MIGRATION_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_guard_invitation_migration
       PILOT_CORE_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_pilot_core
+      W2_WELFARE_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_w2_welfare
+      WELFARE_MIGRATION_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_welfare_migration
 
     steps:
       - name: Checkout repository
@@ -138,6 +140,12 @@ jobs:
 
       - name: Create pilot-core operations certification database
         run: PGPASSWORD=s4_test_password psql -h localhost -U s4 -d s4_release_gate -c "CREATE DATABASE s4_pilot_core;"
+
+      - name: Create W2 welfare evidence certification database
+        run: PGPASSWORD=s4_test_password psql -h localhost -U s4 -d s4_release_gate -c "CREATE DATABASE s4_w2_welfare;"
+
+      - name: Create welfare evidence migration rehearsal database
+        run: PGPASSWORD=s4_test_password psql -h localhost -U s4 -d s4_release_gate -c "CREATE DATABASE s4_welfare_migration;"
 
       - name: Run release smoke tests
         run: npm run test:release

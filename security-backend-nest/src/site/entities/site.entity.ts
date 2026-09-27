@@ -45,6 +45,17 @@ export class Site {
   @Column({ type: 'int', default: 60 })
   welfareCheckIntervalMinutes!: number;
 
+  /**
+   * How often a written LOG BOOK entry is required during a shift.
+   *
+   * NULL means "as required": entries are welcome and recorded, but no period carries an obligation
+   * and nothing can be missing. Nullable with no default on purpose — a NOT NULL DEFAULT 60 would
+   * impose an hourly written-log duty on every existing site the moment the migration ran.
+   * 60 = hourly, 120 = every two hours.
+   */
+  @Column({ type: 'int', nullable: true })
+  logBookIntervalMinutes?: number | null;
+
   @Column({ type: 'text', nullable: true })
   specialInstructions?: string | null;
 

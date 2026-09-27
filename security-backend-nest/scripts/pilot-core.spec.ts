@@ -319,18 +319,33 @@ async function main() {
     await q('UPDATE shifts SET "start" = $1, "end" = $2 WHERE id = $3', [shiftStart, shiftEnd, shift1Id]);
     await q('UPDATE attendance_events SET "occurredAt" = $1 WHERE id = $2', [lateArrival, on.body.id]);
 
-    // Control: with NO contact since Book On the scan raises the alert — proves the scan really sees this Shift.
+    // Control: with NO contact since Book On, the scan records evidence for each elapsed window and
+    // raises exactly one actionable summary. This proves the scan really sees a Shift built by the API.
     const controlShift = shift1Id;
-    await scanner.runMissedWelfareChecks();
-    assert.equal(await count(`SELECT count(*) n FROM safety_alerts WHERE "shiftId" = $1 AND type = 'missed_checkcall'`, [controlShift]), 1, 'control: overdue Shift with no check call alerts');
-    await q(`DELETE FROM safety_alerts WHERE "shiftId" = $1`, [controlShift]);
-    pass('P0-3 CONTROL: no contact for >interval → alert (scan is live for this Shift)');
+    const indexedFor = async (shiftId: number) =>
+      (await q(`SELECT "welfareWindowIndex" i FROM safety_alerts WHERE "shiftId" = $1 AND "welfareWindowIndex" IS NOT NULL ORDER BY 1`, [shiftId]))
+        .map((r: { i: number }) => Number(r.i));
+    const summariesFor = (shiftId: number) =>
+      count(`SELECT count(*) n FROM safety_alerts WHERE "shiftId" = $1 AND type = 'missed_checkcall' AND "welfareWindowIndex" IS NULL`, [shiftId]);
 
+    await scanner.runMissedWelfareChecks();
+    const controlEvidence = await indexedFor(controlShift);
+    assert.ok(controlEvidence.length >= 1, `the scan must see this Shift: ${controlEvidence.length} evidence rows`);
+    assert.equal(await summariesFor(controlShift), 1, 'and raise exactly one actionable summary');
+    await q(`DELETE FROM safety_alerts WHERE "shiftId" = $1`, [controlShift]);
+    pass('P0-3 CONTROL: no contact → per-window evidence plus one summary (scan is live for this Shift)');
+
+    // Suppression, through the real Guard API: a check call completes the window that contains it.
     const cc = await api('POST', '/daily-logs', guards.A.token, { shiftId: shift1Id, message: 'Check call: all secure', logType: 'check_call' });
     assert.equal(cc.status, 201, errText(cc));
+    // Place the API-created entry inside the first elapsed window. The authoritative interval here is
+    // the site's 60 minutes, which overrides the slot's 30.
+    await q(`UPDATE daily_logs SET "createdAt" = $1 WHERE id = $2`, [new Date(shiftStart.getTime() + 30 * MIN), cc.body.id]);
     await scanner.runMissedWelfareChecks();
-    assert.equal(await count(`SELECT count(*) n FROM safety_alerts WHERE "shiftId" = $1 AND type = 'missed_checkcall'`, [shift1Id]), 0, 'check call must prevent a false missed-check alert');
-    pass('P0-3 E2E: Guard check call → missed-check scan raises NO alert');
+    const afterCall = await indexedFor(shift1Id);
+    assert.ok(!afterCall.includes(0), `the window holding the check call must not be reported missed: ${afterCall}`);
+    assert.ok(afterCall.includes(1), `a genuinely unanswered later window is still recorded: ${afterCall}`);
+    pass('P0-3 E2E: a Guard check call recorded through the API completes its own window');
 
     const off = await api('POST', '/attendance/check-out', guards.A.token, { shiftId: shift1Id });
     assert.equal(off.status, 201, `Book Off must succeed: ${off.status} ${errText(off)}`);
@@ -457,18 +472,25 @@ async function main() {
 
     // ═══════════════════════════ P0-3 SCANNER SCENARIOS (interval 60 min) ═══════════════════════════
     const now = Date.now();
-    const mkLiveShift = async (guardKey: 'A' | 'B' | 'C' | 'D', startedMinsAgo: number, opts: { intervalSite?: number } = {}) => {
+    const mkLiveShift = async (
+      guardKey: 'A' | 'B' | 'C' | 'D',
+      startedMinsAgo: number,
+      opts: { intervalSite?: number; durationHours?: number; bookOnMinsAgo?: number | null } = {},
+    ) => {
       const guardId = gid[guardKey];
       const start = new Date(now - startedMinsAgo * MIN);
       const [row] = await q(
         `INSERT INTO shifts ("companyId","guardId","siteId","siteName","start","end",status,"checkCallIntervalMinutes","createdByUserId")
          VALUES ($1,$2,$3,'Acme Store 1',$4,$5,'in_progress',$6,$7) RETURNING id`,
-        [co.companyId, guardId, siteId, start, new Date(start.getTime() + 12 * HOUR), opts.intervalSite ?? 60, co.userId],
+        [co.companyId, guardId, siteId, start, new Date(start.getTime() + (opts.durationHours ?? 12) * HOUR), opts.intervalSite ?? 60, co.userId],
       );
-      await q(
-        `INSERT INTO attendance_events ("shiftId","guardId",type,"nfcVerified","gpsVerified","occurredAt") VALUES ($1,$2,'check-in',false,false,$3)`,
-        [row.id, guardId, start],
-      );
+      const bookOn = opts.bookOnMinsAgo === undefined ? startedMinsAgo : opts.bookOnMinsAgo;
+      if (bookOn !== null) {
+        await q(
+          `INSERT INTO attendance_events ("shiftId","guardId",type,"nfcVerified","gpsVerified","occurredAt") VALUES ($1,$2,'check-in',false,false,$3)`,
+          [row.id, guardId, new Date(now - bookOn * MIN)],
+        );
+      }
       return row.id as number;
     };
     const callAt = async (shiftId: number, guardKey: 'A' | 'B' | 'C' | 'D', minsAgo: number, logType = 'check_call') => {
@@ -477,51 +499,75 @@ async function main() {
         [shiftId, gid[guardKey], logType, new Date(Date.now() - minsAgo * MIN)],
       );
     };
-    const alerts = (shiftId: number) => count(`SELECT count(*) n FROM safety_alerts WHERE "shiftId" = $1 AND type = 'missed_checkcall'`, [shiftId]);
+    // W2 tells the two roles of a missed_checkcall row apart by welfareWindowIndex: NOT NULL is durable
+    // per-window evidence, NULL is the single actionable shift-level summary.
+    const evidenceCount = (shiftId: number) =>
+      count(`SELECT count(*) n FROM safety_alerts WHERE "shiftId" = $1 AND type = 'missed_checkcall' AND "welfareWindowIndex" IS NOT NULL`, [shiftId]);
+    const evidenceIdx = async (shiftId: number) =>
+      (await q(`SELECT "welfareWindowIndex" i FROM safety_alerts WHERE "shiftId" = $1 AND "welfareWindowIndex" IS NOT NULL ORDER BY 1`, [shiftId]))
+        .map((r: { i: number }) => Number(r.i));
+    const summaryRows = (shiftId: number) =>
+      q(`SELECT id, status, priority, message FROM safety_alerts WHERE "shiftId" = $1 AND type = 'missed_checkcall' AND "welfareWindowIndex" IS NULL ORDER BY id`, [shiftId]);
     const scanAll = async () => {
       await scanner.runMissedWelfareChecks();
     };
 
-    // Success: check calls inside every interval.
+    // Contact inside every elapsed window: nothing is owed.
     const okShift = await mkLiveShift('A', 5 * 60);
     for (const ago of [255, 200, 145, 90, 40]) await callAt(okShift, 'A', ago);
-    // Missed: nothing since check-in.
+    // Booked on three hours ago and silent since: windows 0 and 1 have settled unmet.
     const missShift = await mkLiveShift('B', 3 * 60);
-    // Late: contact resumed only after the deadline passed.
-    const lateShift = await mkLiveShift('C', 3 * 60);
-    await callAt(lateShift, 'C', 100); // 80 min after check-in: late, and 100 min ago → deadline already passed again
-    // Stopped calling: regular calls that stop 3h ago.
-    const stoppedShift = await mkLiveShift('D', 6 * 60);
-    for (const ago of [340, 290, 240, 190]) await callAt(stoppedShift, 'D', ago);
-    // Supervisor welfare_check is equivalent contact.
-    const welfareShift = await mkLiveShift('A', 3 * 60);
-    await callAt(welfareShift, 'A', 20, 'welfare_check');
-    // Contact logged against a DIFFERENT shift must not count.
+    // A supervisor welfare_check completes its own window just as a Guard check_call does.
+    const welfareShift = await mkLiveShift('A', 70);
+    await callAt(welfareShift, 'A', 40, 'welfare_check');
+    // Contact logged against a DIFFERENT shift must not count for this one.
     const isolatedShift = await mkLiveShift('B', 3 * 60);
     await callAt(okShift, 'B', 10);
+    // Scheduled end is the boundary: a four-hour shift left running for ten hours owes four windows.
+    const endBoundaryShift = await mkLiveShift('C', 10 * 60, { durationHours: 4 });
+    // Booked on two hours late: the windows before that carried no obligation.
+    const lateBookOnShift = await mkLiveShift('D', 250, { bookOnMinsAgo: 130 });
 
     await scanAll();
-    assert.equal(await alerts(okShift), 0, 'regular check calls → no alert');
-    assert.equal(await alerts(welfareShift), 0, 'welfare_check still counts');
-    assert.equal(await alerts(missShift), 1, 'no check call → alert');
-    assert.equal(await alerts(isolatedShift), 1, "another Shift's call does not count");
-    assert.equal(await alerts(lateShift), 1, 'late contact after the deadline does not erase the lapse');
-    assert.equal(await alerts(stoppedShift), 1, 'calls that stopped → alert');
-    pass('P0-3 SUCCESS/MISSED: check_call and welfare_check suppress; absence alerts; per-Shift');
+
+    assert.equal(await evidenceCount(okShift), 0, 'contact in every elapsed window leaves no evidence');
+    assert.equal((await summaryRows(okShift)).length, 0, 'and raises no summary');
+    assert.equal(await evidenceCount(welfareShift), 0, 'welfare_check completes its window');
+    assert.deepEqual(await evidenceIdx(missShift), [0, 1], 'one durable record per missed window');
+    assert.deepEqual(await evidenceIdx(isolatedShift), [0, 1], "another Shift's call does not count");
+    pass('P0-3 EVIDENCE: every missed window leaves its own indexed record; completions suppress');
+
+    // The measured pre-W2 behaviour was ONE alert for any length of lapse. Now the count is the truth.
+    assert.deepEqual(await evidenceIdx(endBoundaryShift), [0, 1, 2, 3], 'no window past the scheduled end');
+    const lateIdx = await evidenceIdx(lateBookOnShift);
+    assert.ok(!lateIdx.includes(0) && !lateIdx.includes(1), `no retrospective misses before Book On: ${lateIdx}`);
+    assert.deepEqual(lateIdx, [2, 3], 'only windows overlapping actual duty');
+    pass('P0-3 BOUNDARIES: obligation stops at scheduled end and starts at actual Book On');
+
+    const missSummary = await summaryRows(missShift);
+    assert.equal(missSummary.length, 1, 'exactly one actionable summary beside the evidence');
+    assert.equal(missSummary[0].status, 'open');
+    assert.equal(missSummary[0].priority, 'high');
+    assert.match(missSummary[0].message, /2 consecutive checks missed/);
+    const openOnMiss = await count(`SELECT count(*) n FROM safety_alerts WHERE "shiftId" = $1 AND status = 'open'`, [missShift]);
+    assert.equal(openOnMiss, 1, 'the evidence rows do not flood the control room');
+    pass('P0-3 SUMMARY: one escalating shift-level alert carries the action');
 
     await scanAll();
     await scanAll();
-    for (const s of [missShift, isolatedShift, lateShift, stoppedShift]) assert.equal(await alerts(s), 1, 'repeated scans across intervals never duplicate an alert');
-    assert.equal(await alerts(okShift), 0);
-    const [openAlert] = await q(`SELECT priority, status FROM safety_alerts WHERE "shiftId" = $1`, [missShift]);
-    assert.equal(openAlert.priority, 'high');
-    pass('P0-3 MULTI-INTERVAL: repeated scans do not create duplicate false alerts');
+    assert.deepEqual(await evidenceIdx(missShift), [0, 1], 'repeated sweeps never duplicate evidence');
+    assert.equal((await summaryRows(missShift)).length, 1, 'nor the summary');
+    assert.equal(await evidenceCount(okShift), 0);
+    pass('P0-3 IDEMPOTENT: repeated sweeps converge on the same evidence and summary');
 
-    // Late contact clears the current lapse: new call → no additional alert on the next scan.
-    await callAt(missShift, 'B', 1);
+    // Contact inside the latest settled window resolves the summary; the evidence stays.
+    await callAt(missShift, 'B', 65);
     await scanAll();
-    assert.equal(await alerts(missShift), 1);
-    pass('P0-3 LATE: a late check call ends the lapse without raising a second alert');
+    const resolved = await summaryRows(missShift);
+    assert.equal(resolved.length, 1, 'the summary is closed, not deleted');
+    assert.equal(resolved[0].status, 'closed');
+    assert.deepEqual(await evidenceIdx(missShift), [0, 1], 'historical evidence is preserved');
+    pass('P0-3 RESOLUTION: a later Welfare Check closes the summary and keeps the evidence');
 
     // Overnight: shift began 22:00 the previous UTC day; contact spans midnight and continues into today.
     //
@@ -534,16 +580,40 @@ async function main() {
     if (Date.now() - midnight.getTime() < 90 * MIN) midnight.setTime(midnight.getTime() - 24 * HOUR);
     const nightStart = new Date(midnight.getTime() - 2 * HOUR);
     const minsSince = (t: Date) => Math.round((Date.now() - t.getTime()) / MIN);
-    const nightOk = await mkLiveShift('C', minsSince(nightStart));
-    for (const ago of [minsSince(new Date(midnight.getTime() - 60 * MIN)), minsSince(new Date(midnight.getTime() + 20 * MIN)), 25]) {
-      if (ago > 0) await callAt(nightOk, 'C', ago);
+    const nightStartedMins = minsSince(nightStart);
+    // The shift must be long enough to hold every window that has elapsed since nightStart, which can
+    // be as much as 27 hours ago once the 90-minute step-back applies. A 12-hour default would cap the
+    // grid below the elapsed period and the expectation would over-count.
+    const nightDurationHours = 28;
+    // Windows that have fully elapsed, so the ones an overnight Guard owes by now, never more than the
+    // grid actually contains.
+    const elapsedNightWindows = Math.min(
+      Math.floor((nightStartedMins - 5) / 60),
+      nightDurationHours,
+    );
+    assert.ok(elapsedNightWindows >= 3, `the overnight fixture needs elapsed windows, got ${elapsedNightWindows}`);
+
+    const nightOk = await mkLiveShift('C', nightStartedMins, { durationHours: nightDurationHours });
+    for (let i = 0; i < elapsedNightWindows; i += 1) {
+      await callAt(nightOk, 'C', nightStartedMins - i * 60 - 30); // mid-window, so attribution is unambiguous
     }
-    const nightMissed = await mkLiveShift('D', minsSince(nightStart));
-    await callAt(nightMissed, 'D', minsSince(new Date(midnight.getTime() - 30 * MIN)));
+    const nightMissed = await mkLiveShift('D', nightStartedMins, { durationHours: nightDurationHours });
+    await callAt(nightMissed, 'D', nightStartedMins - 30); // window 0 only, then silence
+
     await scanAll();
-    assert.equal(await alerts(nightOk), 0, 'overnight Shift with calls across midnight → no alert');
-    assert.equal(await alerts(nightMissed), 1, 'overnight Shift whose calls stopped at 23:30 → alert');
-    pass('P0-3 OVERNIGHT: check calls across midnight are honoured; a lapse still alerts once');
+    assert.equal(
+      await evidenceCount(nightOk),
+      0,
+      'a call in every elapsed window is honoured straight through midnight',
+    );
+    const missedNight = await evidenceIdx(nightMissed);
+    assert.ok(!missedNight.includes(0), 'the window that was answered leaves no evidence');
+    assert.equal(
+      missedNight.length,
+      elapsedNightWindows - 1,
+      `every later unanswered window is recorded: ${missedNight}`,
+    );
+    pass('P0-3 OVERNIGHT: windows cross midnight correctly and each lapse is recorded once');
 
     // ═════════════════════ REGRESSIONS: decline → replacement, and a 3-Guard slot ═════════════════════
     const d5 = day(6);
