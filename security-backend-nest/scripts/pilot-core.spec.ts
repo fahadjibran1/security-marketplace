@@ -29,7 +29,11 @@ import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { JwtService } from '@nestjs/jwt';
 import { DataSource } from 'typeorm';
-import { AppModule } from '../src/app.module';
+// AppModule is imported dynamically inside main(), NOT here. Importing it evaluates
+// ConfigModule.forRoot({ validate }), which snapshots process.env at that moment, and
+// @nestjs/config gives that snapshot precedence over later process.env writes. A static import is
+// hoisted above the assignments below, so the app would bind to whatever DATABASE_URL the
+// surrounding environment already had — the release-gate database rather than this spec's own.
 import { AuthService } from '../src/auth/auth.service';
 import { SafetyAlertService } from '../src/safety-alert/safety-alert.service';
 import { AdminOperatorService } from '../src/admin-operator/admin-operator.service';
@@ -38,6 +42,9 @@ const url = process.env.PILOT_CORE_DATABASE_URL;
 if (!url) throw new Error('PILOT_CORE_DATABASE_URL is required');
 if (!['127.0.0.1', 'localhost'].includes(new URL(url).hostname)) throw new Error('Pilot core database must be local');
 process.env.DATABASE_URL = url;
+// DATABASE_POOLER_URL wins over DATABASE_URL wherever the app builds its connection, so an ambient
+// pooler URL would silently redirect this spec away from its disposable database. Clear it.
+delete process.env.DATABASE_POOLER_URL;
 process.env.DATABASE_SSL = 'false';
 process.env.DATABASE_SYNCHRONIZE = 'false';
 process.env.NODE_ENV = 'test';
@@ -84,6 +91,8 @@ async function main() {
   await migrator.runMigrations({ transaction: 'each' });
   await migrator.destroy();
 
+  // Imported here, after the environment above is in place, for the reason given at the import block.
+  const { AppModule } = await import('../src/app.module');
   const app = await NestFactory.create(AppModule, { logger: false });
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: true }));
   await app.listen(0, '127.0.0.1');
@@ -91,6 +100,15 @@ async function main() {
   if (!address || typeof address === 'string') throw new Error('No test port');
   const base = `http://127.0.0.1:${address.port}`;
   const ds = app.get(DataSource);
+
+  // Prove the running app is on THIS spec's disposable database and not one it inherited. Without
+  // this, a misdirected connection surfaces as a baffling "relation does not exist" much later.
+  const expectedDatabase = new URL(url!).pathname.replace(/^\//, '');
+  const [{ current_database: actualDatabase }] = await ds.query('SELECT current_database()');
+  if (actualDatabase !== expectedDatabase) {
+    throw new Error(`Refusing to run: the app is connected to "${actualDatabase}", not "${expectedDatabase}".`);
+  }
+
   const auth = app.get(AuthService);
   const scanner = app.get(SafetyAlertService);
   const jwtSecret = process.env.JWT_SECRET!;
@@ -506,7 +524,14 @@ async function main() {
     pass('P0-3 LATE: a late check call ends the lapse without raising a second alert');
 
     // Overnight: shift began 22:00 the previous UTC day; contact spans midnight and continues into today.
+    //
+    // The anchor must be a UTC midnight that is already comfortably behind us. nightMissed's last call
+    // is 30 minutes before the anchor, so its 60-minute deadline falls 30 minutes after it; anchoring
+    // to today's midnight therefore made this scenario fail whenever the suite ran within half an hour
+    // of UTC midnight, because the lapse was not yet overdue. Stepping back a day when we are too close
+    // keeps a genuine midnight crossing while making the outcome independent of the wall clock.
     const midnight = new Date(); midnight.setUTCHours(0, 0, 0, 0);
+    if (Date.now() - midnight.getTime() < 90 * MIN) midnight.setTime(midnight.getTime() - 24 * HOUR);
     const nightStart = new Date(midnight.getTime() - 2 * HOUR);
     const minsSince = (t: Date) => Math.round((Date.now() - t.getTime()) / MIN);
     const nightOk = await mkLiveShift('C', minsSince(nightStart));

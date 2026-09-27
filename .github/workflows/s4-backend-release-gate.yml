@@ -64,6 +64,7 @@ jobs:
       COMPANY_MANAGED_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_company_managed
       PHASEB_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_guard_invitations
       PHASEB_MIGRATION_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_guard_invitation_migration
+      PILOT_CORE_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_pilot_core
 
     steps:
       - name: Checkout repository
@@ -134,6 +135,9 @@ jobs:
 
       - name: Create guard-invitation migration rehearsal database
         run: PGPASSWORD=s4_test_password psql -h localhost -U s4 -d s4_release_gate -c "CREATE DATABASE s4_guard_invitation_migration;"
+
+      - name: Create pilot-core operations certification database
+        run: PGPASSWORD=s4_test_password psql -h localhost -U s4 -d s4_release_gate -c "CREATE DATABASE s4_pilot_core;"
 
       - name: Run release smoke tests
         run: npm run test:release
