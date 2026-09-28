@@ -68,6 +68,11 @@ jobs:
       - name: Verify assign compliance guidance
         run: npm run test:assign-compliance
 
+      # UAT-ATT-01: an assigned Guard may Book On early, on time or late — the confirmation for a very
+      # early Book On is a warning, never a block.
+      - name: Verify guard book on
+        run: npm run test:book-on
+
       - name: Verify Expo dependency compatibility
         run: npx expo install --check
 

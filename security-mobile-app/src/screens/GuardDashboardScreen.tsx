@@ -4,6 +4,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { FeatureCard } from '../components/FeatureCard';
 import { StatePanel } from '../components/StatePanel';
 import { StatusBadge, StatusTone } from '../components/StatusBadge';
+import { ConfirmationDialog } from '../components/ui/ConfirmationDialog';
+import {
+  BEFORE_SHIFT_GUIDANCE,
+  beforeShiftStatusLine,
+  bookOnDecision,
+  type BookOnDecision,
+} from '../components/guard/bookOnPresentation';
 import { GuardCompaniesPanel } from '../components/guard/GuardCompaniesPanel';
 import { GuardCompliancePanel } from '../components/guard/GuardCompliancePanel';
 import { GuardScreeningJourney, GuardScreeningPanel } from '../components/guard/GuardScreeningPanel';
@@ -340,7 +347,7 @@ function getGuardPhaseStatusLine(
     case 'offer_pending':
       return 'A shift is waiting on your answer — open Offers or use Main action below.';
     case 'before_shift':
-      return `Next shift starts ${formatTimeLabel(shift.start)} on ${formatDateLabel(shift.start)}. You are early — check-in unlocks at that time.`;
+      return beforeShiftStatusLine(formatTimeLabel(shift.start), formatDateLabel(shift.start));
     case 'shift_window_check_in': {
       if (nowMs >= new Date(shift.end).getTime()) {
         return 'This shift window has ended. Check in only if control has asked you to, or contact them.';
@@ -381,7 +388,8 @@ function getGuardPhasePrimaryLabel(phase: GuardShiftPhase, shift: Shift | null):
     case 'offer_pending':
       return 'Review Offer';
     case 'before_shift':
-      return 'Check in at start';
+      // Early attendance is permitted, so the label must offer the action, not defer it.
+      return 'Book on early';
     case 'shift_window_check_in':
       return 'Check in now';
     case 'on_shift':
@@ -403,7 +411,7 @@ function getPrimaryActionGuidance(phase: GuardShiftPhase): string | null {
     case 'offer_pending':
       return 'Main action jumps to the Offers tab — same accept / reject flow as before.';
     case 'before_shift':
-      return 'You cannot clock in yet. Use the time above to travel, sign in on site, and be ready at start.';
+      return BEFORE_SHIFT_GUIDANCE;
     case 'shift_ended':
       return 'View summary shows check-in, check-out, and incidents for this post. History holds timesheets and older shifts.';
     case 'shift_window_check_in':
@@ -435,7 +443,7 @@ function getSecondaryActionsHelper(
     return 'Accept the offer first. After you are booked and checked in, incident and check call unlock here.';
   }
   if (phase === 'before_shift') {
-    return 'You are before start time — reporting stays off until you check in and the shift goes live.';
+    return 'Incident and check call unlock once you Book On and the shift goes live.';
   }
   if (statusNorm === 'in_progress') {
     if (phase === 'check_call_overdue') {
@@ -1570,9 +1578,27 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
     () => deriveGuardShiftPhase(liveNow, currentHomeShift, currentHomeDailyLogs, currentHomeTimesheet),
     [liveNow, currentHomeShift, currentHomeDailyLogs, currentHomeTimesheet],
   );
+  /** Pending very-early Book On awaiting confirmation. Null whenever no question is outstanding. */
+  const [earlyBookOn, setEarlyBookOn] = useState<{ shiftId: number; decision: BookOnDecision } | null>(null);
+
+  /**
+   * Confirming runs the SAME check-in path as a normal Book On. The pending state is cleared first so
+   * one press can never produce two check-ins, however fast the dialog is tapped.
+   */
+  const confirmEarlyBookOn = useCallback(() => {
+    if (!earlyBookOn) return;
+    const { shiftId } = earlyBookOn;
+    setEarlyBookOn(null);
+    handleCheckIn(shiftId);
+  }, [earlyBookOn]);
+
+  /** Cancelling does nothing at all — no check-in, no state change beyond closing the question. */
+  const cancelEarlyBookOn = useCallback(() => setEarlyBookOn(null), []);
 
   function handleCurrentShiftPrimaryPress() {
-    if (!currentHomeShift || guardShiftPhase === 'before_shift') return;
+    // `before_shift` is presentation only (UAT-ATT-01). It must NOT return early here: an assigned
+    // Guard on site ahead of schedule is entitled to Book On, and the server accepts it.
+    if (!currentHomeShift) return;
     if (guardShiftPhase === 'shift_ended' || guardShiftPhase === 'timesheet_pending') {
       setHistorySummaryShiftId(currentHomeShift.id);
       const status = normalizeShiftLifecycleStatus(currentHomeShift.status);
@@ -1674,6 +1700,17 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
       return;
     }
     if (status === 'ready') {
+      // A substantially early Book On is confirmed, never blocked. Both paths call the same
+      // handleCheckIn; the confirmation only inserts a question in front of it.
+      const decision = bookOnDecision({
+        startMs: new Date(currentHomeShift.start).getTime(),
+        nowMs: Date.now(),
+        formatStart: (ms) => formatTimeLabel(new Date(ms).toISOString()),
+      });
+      if (decision.kind === 'confirm') {
+        setEarlyBookOn({ shiftId: currentHomeShift.id, decision });
+        return;
+      }
       handleCheckIn(currentHomeShift.id);
       return;
     }
@@ -1818,8 +1855,9 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
                 (() => {
                   const statusNorm = normalizeShiftLifecycleStatus(currentHomeShift.status);
                   const primaryLabel = getGuardPhasePrimaryLabel(guardShiftPhase, currentHomeShift);
-                  const primaryDisabled =
-                    guardShiftPhase === 'before_shift' || attendanceBusyShiftId === currentHomeShift.id;
+                  // UAT-ATT-01: being before the scheduled start is NOT a reason to disable Book On.
+                  // Only an in-flight attendance request disables the button.
+                  const primaryDisabled = attendanceBusyShiftId === currentHomeShift.id;
                   const attendanceBusy = attendanceBusyShiftId === currentHomeShift.id;
                   const secondariesDisabled = statusNorm !== 'in_progress' || attendanceBusy;
                   const primaryGuidance = getPrimaryActionGuidance(guardShiftPhase);
@@ -3080,6 +3118,18 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
         ))}
       </View>
       </View>
+
+      {/* UAT-ATT-01: a substantially early Book On is confirmed, not prevented. */}
+      <ConfirmationDialog
+        visible={earlyBookOn !== null && earlyBookOn.decision.kind === 'confirm'}
+        onClose={cancelEarlyBookOn}
+        onConfirm={confirmEarlyBookOn}
+        title={earlyBookOn?.decision.kind === 'confirm' ? earlyBookOn.decision.title : ''}
+        message={earlyBookOn?.decision.kind === 'confirm' ? earlyBookOn.decision.message : ''}
+        confirmLabel={earlyBookOn?.decision.kind === 'confirm' ? earlyBookOn.decision.confirmLabel : 'Book On'}
+        cancelLabel={earlyBookOn?.decision.kind === 'confirm' ? earlyBookOn.decision.cancelLabel : 'Cancel'}
+        variant="standard"
+      />
 
       {quickActionModal === 'log' ? (
         <View style={styles.modalBackdrop}>

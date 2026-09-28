@@ -16,6 +16,16 @@ import { UserRole } from '../user/entities/user.entity';
 import { RecordAttendanceDto } from './dto/record-attendance.dto';
 import { SiteService } from '../site/site.service';
 
+/**
+ * How long after a Shift's scheduled END a Book On is still accepted (UAT-ATT-01).
+ *
+ * This is NOT a late-arrival rule — a Guard arriving late, or part-way through, or shortly after the
+ * scheduled end is always accepted. It exists only to stop an abandoned `ready` Shift being bookable
+ * indefinitely, because no process ever marks a stale Shift `missed`. Twelve hours clears a full
+ * night shift plus handover while still refusing yesterday's work.
+ */
+export const STALE_BOOK_ON_GRACE_HOURS = 12;
+
 @Injectable()
 export class AttendanceService {
   constructor(
@@ -52,12 +62,29 @@ export class AttendanceService {
 
     // Retry-safe Book On: if the first request committed but its response was lost,
     // return the existing check-in rather than creating a duplicate or failing the guard.
+    //
+    // DELIBERATELY BEFORE the staleness check below: a Guard who genuinely booked on must keep getting
+    // their event back even if the retry arrives after the stale boundary, otherwise a lost response
+    // near the boundary would turn a successful Book On into an error.
     if (normalizedStatus === 'in_progress' && latest?.type === AttendanceEventType.CHECK_IN && latest.guard?.id === guard.id) {
       return latest;
     }
 
     if (normalizedStatus !== 'ready') throw new BadRequestException('Only ready shifts can be checked in');
     if (latest?.type === AttendanceEventType.CHECK_IN) throw new BadRequestException('Shift is already checked in');
+
+    // UAT-ATT-01. There is deliberately NO early cutoff and NO ordinary late cutoff: an assigned Guard
+    // may Book On hours before a scheduled start at a site manager's request, and a late Guard must
+    // still be able to record attendance. S4 records reality rather than preventing the record.
+    //
+    // The one exception is an abandoned shift. Nothing in the system ever transitions a stale `ready`
+    // Shift to `missed`, so without this a Shift scheduled weeks ago would stay bookable forever and a
+    // mis-tap could start it. This boundary is long enough that it can never catch an operational
+    // delay — half a day past the scheduled END, not past the start.
+    const staleAfterMs = new Date(shift.end).getTime() + STALE_BOOK_ON_GRACE_HOURS * 3_600_000;
+    if (Number.isFinite(staleAfterMs) && Date.now() > staleAfterMs) {
+      throw new BadRequestException('This shift is too old to Book On. Contact Control.');
+    }
 
     const evidence = await this.verifyAttendanceEvidence(shift.site?.id, dto, { enforceGps: true, enforceNfc: true });
     const event = this.attendanceRepo.create({

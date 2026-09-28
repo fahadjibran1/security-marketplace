@@ -33,7 +33,8 @@
     "test:live-operations-welfare": "node scripts/live-operations-welfare.spec.cjs",
     "test:shift-entry": "node scripts/shift-creation-entry.spec.cjs",
     "test:web-style": "node scripts/web-style-safety.spec.cjs",
-    "test:assign-compliance": "node scripts/assign-compliance-guidance.spec.cjs"
+    "test:assign-compliance": "node scripts/assign-compliance-guidance.spec.cjs",
+    "test:book-on": "node scripts/guard-book-on.spec.cjs"
   },
   "dependencies": {
     "@expo/metro-runtime": "~6.1.2",

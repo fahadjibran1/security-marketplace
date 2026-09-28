@@ -63,6 +63,7 @@ jobs:
       MIGRATION_REHEARSAL_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_migration_rehearsal
       COMPANY_MANAGED_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_company_managed
       AVAILABILITY_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_availability
+      ATTENDANCE_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_attendance
       PHASEB_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_guard_invitations
       PHASEB_MIGRATION_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_guard_invitation_migration
       PILOT_CORE_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_pilot_core
@@ -136,6 +137,9 @@ jobs:
 
       - name: Create availability semantics certification database
         run: PGPASSWORD=s4_test_password psql -h localhost -U s4 -d s4_release_gate -c "CREATE DATABASE s4_availability;"
+
+      - name: Create attendance book on certification database
+        run: PGPASSWORD=s4_test_password psql -h localhost -U s4 -d s4_release_gate -c "CREATE DATABASE s4_attendance;"
 
       - name: Create guard-invitation isolation database
         run: PGPASSWORD=s4_test_password psql -h localhost -U s4 -d s4_release_gate -c "CREATE DATABASE s4_guard_invitations;"
