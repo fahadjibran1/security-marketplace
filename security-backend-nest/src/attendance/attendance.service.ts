@@ -1,4 +1,10 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+  UnprocessableEntityException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { createHash, timingSafeEqual } from 'crypto';
@@ -212,6 +218,16 @@ export class AttendanceService {
     }
 
     if (policy.enforceGps && site.requireGpsCheckIn && !gpsVerified) {
+      // A site that demands GPS but has no point to measure against is misconfigured, and that is not
+      // the Guard's fault. Previously this fell through to "GPS location is required", which blamed the
+      // Guard for a setting only the Company can fix and sent them round a loop no location fix could
+      // satisfy. 422 rather than 403 is deliberate: the Guard's request is well formed, and the client's
+      // GPS retry transport only reacts to the 403, so it will not pointlessly re-acquire a position.
+      if (!this.hasSiteCoordinates(site)) {
+        throw new UnprocessableEntityException(
+          'GPS verification is not configured correctly for this site. Contact Control.',
+        );
+      }
       if (dto.latitude === undefined || dto.longitude === undefined) {
         throw new ForbiddenException('GPS location is required for attendance at this site');
       }
@@ -227,6 +243,16 @@ export class AttendanceService {
     }
 
     return { gpsVerified, nfcVerified, distanceFromSiteMeters };
+  }
+
+  /** A usable geofence centre: both values present and finite. Null/NaN cannot be measured against. */
+  private hasSiteCoordinates(site: { latitude?: number | null; longitude?: number | null }): boolean {
+    return (
+      site.latitude != null &&
+      site.longitude != null &&
+      Number.isFinite(Number(site.latitude)) &&
+      Number.isFinite(Number(site.longitude))
+    );
   }
 
   private async getGuardAndOwnedShift(userId: number, shiftId: number) {

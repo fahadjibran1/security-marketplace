@@ -18,7 +18,7 @@
 import 'reflect-metadata';
 import { strict as assert } from 'node:assert';
 import { DataSource } from 'typeorm';
-import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, UnprocessableEntityException } from '@nestjs/common';
 import { appEntities } from '../src/database/entities';
 import { User, UserRole, UserStatus } from '../src/user/entities/user.entity';
 import { GuardProfile } from '../src/guard-profile/entities/guard-profile.entity';
@@ -352,6 +352,257 @@ async function main() {
         quarterHour.every((w) => w.end.getTime() > bookOnAt.getTime()),
         'the 18:00-18:15 window closed before Book On and is not a miss',
       );
+    });
+
+    // ══════════ GPS-01..12: site-configurable GPS evidence (UAT-ATT-04) ══════════
+    //
+    // Deterministic geometry, never the runner's real position. With longitude fixed, the service's
+    // Haversine reduces exactly to R * deltaLatitude, so offsetting latitude by `metres / M_PER_DEG_LAT`
+    // puts the Guard that many metres from the site to within floating-point error. Verified: an offset
+    // computed for 150 m measures 150.000000 m.
+    const M_PER_DEG_LAT = 6371000 * (Math.PI / 180);
+    const SITE_LAT = 51.5;
+    const SITE_LON = -0.12;
+    /** Latitude that is exactly `metres` north of the site point. */
+    const latMetresAway = (metres: number) => SITE_LAT + metres / M_PER_DEG_LAT;
+
+    let siteSeq = 0;
+    const makeSite = async (over: Partial<Site>) => {
+      siteSeq += 1;
+      const created: Site = await sites.save(sites.create({
+        company, name: `GPS Site ${siteSeq}`, address: `${siteSeq} Geofence Road`,
+        requireGpsCheckIn: false, requireNfcCheckIn: false,
+        ...over,
+      } as Partial<Site>));
+      return created;
+    };
+
+    /** A READY shift at a specific site, positioned inside its window so only evidence is under test. */
+    const makeShiftAtSite = async (atSite: Site, guard: GuardProfile) => {
+      const start = new Date(Date.now() - MIN);
+      const saved: Shift = await shifts.save(shifts.create({
+        company, site: atSite, siteName: atSite.name, guard,
+        status: 'ready', start, end: new Date(start.getTime() + 8 * HOUR),
+        checkCallIntervalMinutes: 60,
+      } as Partial<Shift>));
+      return saved;
+    };
+
+    const bookOnWith = (guard: GuardProfile, shift: Shift, evidence: Record<string, unknown>) =>
+      service.checkIn(guard.user.id, { shiftId: shift.id, ...evidence } as never);
+
+    const gpsRequiredSite = await makeSite({
+      requireGpsCheckIn: true, latitude: SITE_LAT, longitude: SITE_LON, geofenceRadiusMeters: 150,
+    });
+    const gpsOffWithCoords = await makeSite({
+      requireGpsCheckIn: false, latitude: SITE_LAT, longitude: SITE_LON, geofenceRadiusMeters: 150,
+    });
+    const gpsRequiredNoCoords = await makeSite({ requireGpsCheckIn: true, latitude: null, longitude: null });
+
+    /** The stored evidence for a shift's single check-in event, read back from the database. */
+    const evidenceFor = async (shift: Shift) => {
+      const [row] = (await ds.query(
+        `SELECT latitude, longitude, "gpsAccuracyMeters", "distanceFromSiteMeters", "gpsVerified", "nfcVerified"
+           FROM attendance_events WHERE "shiftId" = $1`,
+        [shift.id],
+      )) as Array<Record<string, unknown>>;
+      return row;
+    };
+
+    await test('GPS-01-GPS-OFF-NO-COORDINATES-BOOKS-ON-AND-STORES-NO-LOCATION', async () => {
+      const shift = await makeShiftAtSite(await makeSite({ requireGpsCheckIn: false }), guardA);
+      await bookOn(guardA, shift);
+      const row = await evidenceFor(shift);
+      assert.equal(row.gpsVerified, false, 'nothing was verified because nothing was required');
+      assert.equal(row.distanceFromSiteMeters, null, 'and no distance is computed');
+      assert.equal(row.latitude, null, 'no location is stored when the site does not require it');
+      assert.equal(row.longitude, null);
+    });
+
+    await test('GPS-02-GPS-REQUIRED-WITHOUT-GUARD-COORDINATES-IS-REFUSED', async () => {
+      const shift = await makeShiftAtSite(gpsRequiredSite, guardA);
+      await assert.rejects(
+        () => bookOn(guardA, shift),
+        (error: unknown) => {
+          assert.ok(error instanceof ForbiddenException, `expected 403, got ${error}`);
+          assert.equal((error as Error).message, 'GPS location is required for attendance at this site');
+          return true;
+        },
+      );
+      assert.equal(await attendance.count({ where: { shift: { id: shift.id } } }), 0, 'and writes no event');
+    });
+
+    await test('GPS-03-GPS-REQUIRED-INSIDE-THE-RADIUS-SUCCEEDS-AND-STORES-THE-DISTANCE', async () => {
+      const shift = await makeShiftAtSite(gpsRequiredSite, guardA);
+      await bookOnWith(guardA, shift, { latitude: latMetresAway(100), longitude: SITE_LON, gpsAccuracyMeters: 5 });
+      const row = await evidenceFor(shift);
+      assert.equal(row.gpsVerified, true);
+      assert.ok(Math.abs(Number(row.distanceFromSiteMeters) - 100) < 1, `distance ~100 m, got ${row.distanceFromSiteMeters}`);
+      assert.ok(Number(row.latitude) > SITE_LAT, 'the reported position is stored');
+      assert.equal(Number(row.gpsAccuracyMeters), 5, 'as is the reported accuracy');
+    });
+
+    await test('GPS-04-EXACTLY-ON-THE-RADIUS-SUCCEEDS-UNDER-THE-INCLUSIVE-RULE', async () => {
+      // The rule is `distance <= radius + allowance`, so the boundary itself is inside.
+      const shift = await makeShiftAtSite(gpsRequiredSite, guardA);
+      await bookOnWith(guardA, shift, { latitude: latMetresAway(150), longitude: SITE_LON });
+      const row = await evidenceFor(shift);
+      assert.equal(row.gpsVerified, true, '150 m against a 150 m radius is inside');
+      assert.ok(Math.abs(Number(row.distanceFromSiteMeters) - 150) < 1);
+    });
+
+    await test('GPS-05-OUTSIDE-THE-RADIUS-IS-REFUSED', async () => {
+      const shift = await makeShiftAtSite(gpsRequiredSite, guardA);
+      await assert.rejects(
+        () => bookOnWith(guardA, shift, { latitude: latMetresAway(200), longitude: SITE_LON }),
+        (error: unknown) => {
+          assert.ok(error instanceof ForbiddenException);
+          assert.equal((error as Error).message, 'Guard is outside the permitted site geofence');
+          return true;
+        },
+      );
+      assert.equal(await attendance.count({ where: { shift: { id: shift.id } } }), 0);
+    });
+
+    // ── GPS-06/07/11: the DTO is the boundary, so it is validated as the transport layer would ──
+    const validateDto = async (payload: Record<string, unknown>) => {
+      const { validate } = await import('class-validator');
+      const { plainToInstance } = await import('class-transformer');
+      const { RecordAttendanceDto } = await import('../src/attendance/dto/record-attendance.dto');
+      const errors = await validate(plainToInstance(RecordAttendanceDto, payload), {
+        whitelist: true,
+        forbidNonWhitelisted: true,
+      });
+      return errors.map((error) => error.property);
+    };
+
+    await test('GPS-06-LATITUDE-BEYOND-90-IS-REJECTED-BY-VALIDATION', async () => {
+      assert.deepEqual(await validateDto({ shiftId: 1, latitude: 91, longitude: 0 }), ['latitude']);
+      assert.deepEqual(await validateDto({ shiftId: 1, latitude: -91, longitude: 0 }), ['latitude']);
+      assert.deepEqual(await validateDto({ shiftId: 1, latitude: 'north', longitude: 0 }), ['latitude']);
+    });
+
+    await test('GPS-07-LONGITUDE-BEYOND-180-IS-REJECTED-BY-VALIDATION', async () => {
+      assert.deepEqual(await validateDto({ shiftId: 1, latitude: 0, longitude: 181 }), ['longitude']);
+      assert.deepEqual(await validateDto({ shiftId: 1, latitude: 0, longitude: -181 }), ['longitude']);
+      // And a valid pair passes, so the assertions above are testing the bound and not the plumbing.
+      assert.deepEqual(await validateDto({ shiftId: 1, latitude: SITE_LAT, longitude: SITE_LON, gpsAccuracyMeters: 8 }), []);
+    });
+
+    await test('GPS-11-NEGATIVE-ACCURACY-IS-REJECTED-BY-VALIDATION', async () => {
+      assert.deepEqual(await validateDto({ shiftId: 1, latitude: 0, longitude: 0, gpsAccuracyMeters: -1 }), ['gpsAccuracyMeters']);
+      assert.deepEqual(await validateDto({ shiftId: 1, latitude: 0, longitude: 0, gpsAccuracyMeters: 0 }), [], 'zero is a legitimate reading');
+      // An unknown field is refused outright, so a client cannot smuggle extra evidence.
+      assert.deepEqual(await validateDto({ shiftId: 1, spoofedDistance: 0 }), ['spoofedDistance']);
+    });
+
+    await test('GPS-08-A-GPS-REQUIRED-SITE-WITH-NO-COORDINATES-BLAMES-THE-SITE-NOT-THE-GUARD', async () => {
+      const shift = await makeShiftAtSite(gpsRequiredNoCoords, guardA);
+      const expectRejection = async (evidence: Record<string, unknown>) => {
+        await assert.rejects(
+          () => bookOnWith(guardA, shift, evidence),
+          (error: unknown) => {
+            // 422, deliberately NOT the 403 the client's GPS retry transport reacts to: acquiring a
+            // position can never satisfy a site that has no point to measure against.
+            assert.ok(error instanceof UnprocessableEntityException, `expected 422, got ${error}`);
+            assert.equal(
+              (error as Error).message,
+              'GPS verification is not configured correctly for this site. Contact Control.',
+            );
+            return true;
+          },
+        );
+      };
+      // Whether or not the Guard supplies a position, the answer names the real cause.
+      await expectRejection({});
+      await expectRejection({ latitude: SITE_LAT, longitude: SITE_LON, gpsAccuracyMeters: 5 });
+
+      // The message must not leak internals: no field names, coordinates, SQL or class names.
+      const error = await bookOnWith(guardA, shift, {}).catch((e: Error) => e);
+      // No internals: no field names, coordinates, SQL, class names or property access. Note "this
+      // site." is ordinary English, so the check looks for `site.<identifier>` rather than a bare dot.
+      assert.doesNotMatch(
+        (error as Error).message,
+        /latitude|longitude|geofence|requireGps|site\.\w|SELECT|Exception|null|undefined|\d+\.\d+/i,
+        'the site-configuration message exposes no internals',
+      );
+      assert.notEqual((error as Error).message, 'GPS location is required for attendance at this site');
+      assert.notEqual((error as Error).message, 'Guard is outside the permitted site geofence');
+      assert.equal(await attendance.count({ where: { shift: { id: shift.id } } }), 0, 'and nothing is written');
+    });
+
+    await test('GPS-09-REPORTED-ACCURACY-WIDENS-THE-FENCE', async () => {
+      // 170 m against a 150 m radius fails on its own, but a 20 m accuracy reading admits it.
+      const strict = await makeShiftAtSite(gpsRequiredSite, guardA);
+      await assert.rejects(
+        () => bookOnWith(guardA, strict, { latitude: latMetresAway(170), longitude: SITE_LON }),
+        /outside the permitted site geofence/,
+      );
+
+      const tolerant = await makeShiftAtSite(gpsRequiredSite, guardA);
+      await bookOnWith(guardA, tolerant, { latitude: latMetresAway(170), longitude: SITE_LON, gpsAccuracyMeters: 20 });
+      const row = await evidenceFor(tolerant);
+      assert.equal(row.gpsVerified, true, '150 m radius + 20 m reported accuracy admits 170 m');
+      assert.ok(Math.abs(Number(row.distanceFromSiteMeters) - 170) < 1, 'and the true distance is still recorded');
+    });
+
+    await test('GPS-10-THE-ACCURACY-ALLOWANCE-IS-CAPPED-AT-50-METRES', async () => {
+      // A client claiming 500 m accuracy must not buy a 500 m fence: the cap holds it to 150 + 50.
+      const beyondCap = await makeShiftAtSite(gpsRequiredSite, guardA);
+      await assert.rejects(
+        () => bookOnWith(guardA, beyondCap, { latitude: latMetresAway(400), longitude: SITE_LON, gpsAccuracyMeters: 500 }),
+        /outside the permitted site geofence/,
+      );
+      // 201 m is one metre beyond the capped ceiling and must still fail.
+      const justBeyond = await makeShiftAtSite(gpsRequiredSite, guardA);
+      await assert.rejects(
+        () => bookOnWith(guardA, justBeyond, { latitude: latMetresAway(201), longitude: SITE_LON, gpsAccuracyMeters: 9999 }),
+        /outside the permitted site geofence/,
+      );
+      // 200 m exactly is the ceiling and is admitted, which pins the cap to 50 rather than something larger.
+      const atCap = await makeShiftAtSite(gpsRequiredSite, guardA);
+      await bookOnWith(guardA, atCap, { latitude: latMetresAway(200), longitude: SITE_LON, gpsAccuracyMeters: 9999 });
+      assert.equal((await evidenceFor(atCap)).gpsVerified, true);
+    });
+
+    await test('GPS-12-COORDINATES-ON-A-GPS-OFF-SITE-ARE-RECORDED-AND-NEVER-BLOCK', async () => {
+      // Supplying a position must not switch enforcement on. Even a position far outside the radius is
+      // recorded and accepted, because this site's policy does not require GPS.
+      const inside = await makeShiftAtSite(gpsOffWithCoords, guardA);
+      await bookOnWith(guardA, inside, { latitude: latMetresAway(100), longitude: SITE_LON, gpsAccuracyMeters: 5 });
+      const insideRow = await evidenceFor(inside);
+      assert.equal(insideRow.gpsVerified, true, 'the evidence is still evaluated and recorded');
+      assert.ok(Math.abs(Number(insideRow.distanceFromSiteMeters) - 100) < 1);
+
+      const faraway = await makeShiftAtSite(gpsOffWithCoords, guardA);
+      await bookOnWith(guardA, faraway, { latitude: latMetresAway(5000), longitude: SITE_LON });
+      const farRow = await evidenceFor(faraway);
+      assert.equal(farRow.gpsVerified, false, 'recorded as unverified');
+      assert.ok(Number(farRow.distanceFromSiteMeters) > 4000, 'with the real distance kept for audit');
+    });
+
+    await test('GPS-13-BOOK-OFF-IS-NEVER-BLOCKED-BY-SITE-GPS-POLICY', async () => {
+      // A Guard must never be trapped on shift because location cannot be obtained.
+      const shift = await makeShiftAtSite(gpsRequiredSite, guardA);
+      await bookOnWith(guardA, shift, { latitude: latMetresAway(50), longitude: SITE_LON });
+      // No coordinates at all on the way out, at a GPS-REQUIRED site.
+      const out = await service.checkOut(guardA.user.id, { shiftId: shift.id } as never);
+      assert.equal(out.type, AttendanceEventType.CHECK_OUT, 'Book Off succeeds regardless');
+      const after = await shifts.findOneOrFail({ where: { id: shift.id } });
+      assert.equal(after.status, 'completed');
+    });
+
+    await test('GPS-14-NFC-REMAINS-A-SEPARATE-GATE-WITH-ITS-OWN-MESSAGE', async () => {
+      // Not implementing NFC — proving the two gates stay distinguishable, so the client's GPS retry
+      // cannot mistake an NFC refusal for a GPS one.
+      const nfcSite = await makeSite({
+        requireGpsCheckIn: false, requireNfcCheckIn: true, attendanceNfcTag: 'a'.repeat(64),
+      });
+      const shift = await makeShiftAtSite(nfcSite, guardA);
+      const error = await bookOn(guardA, shift).catch((e: Error) => e);
+      assert.ok(error instanceof ForbiddenException, `expected 403, got ${error}`);
+      assert.equal((error as Error).message, 'A valid site NFC tag is required for check-in');
+      assert.doesNotMatch((error as Error).message, /gps location is required for attendance/i, 'distinct from the GPS refusal');
     });
 
     console.log(`\n${passed} attendance book on checks passed`);

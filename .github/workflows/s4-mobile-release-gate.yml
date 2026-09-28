@@ -84,6 +84,12 @@ jobs:
       - name: Verify compliance date handling
         run: npm run test:compliance-date
 
+      # UAT-ATT-04: the GPS evidence client, executed with only the expo-location boundary stubbed —
+      # never the runner's real GPS. Location is acquired only in response to the site's own GPS-required
+      # 403, exactly once, and no other refusal triggers it.
+      - name: Verify attendance GPS transport
+        run: npm run test:gps-transport
+
       - name: Verify Expo dependency compatibility
         run: npx expo install --check
 
