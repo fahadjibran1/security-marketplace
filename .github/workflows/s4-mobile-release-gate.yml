@@ -55,6 +55,14 @@ jobs:
       - name: Type-check Guard Mobile
         run: npm run build:frontend
 
+      # A bundle exports perfectly happily with a style that crashes the browser, so the export alone
+      # never proved the web app renders. These two render real elements and exercise the journey.
+      - name: Verify web style safety
+        run: npm run test:web-style
+
+      - name: Verify shift creation entry point
+        run: npm run test:shift-entry
+
       - name: Verify Expo dependency compatibility
         run: npx expo install --check
 
