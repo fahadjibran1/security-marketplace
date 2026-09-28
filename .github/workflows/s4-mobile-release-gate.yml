@@ -73,6 +73,12 @@ jobs:
       - name: Verify guard book on
         run: npm run test:book-on
 
+      # Pilot build provenance: app.json is the authoritative version source, and the pilot profile is an
+      # internal APK on the PRODUCTION API. A tester who cannot name their build cannot report a
+      # frontend defect reliably, and the newest existing build pointed at staging.
+      - name: Verify pilot build provenance
+        run: npm run test:pilot-build
+
       - name: Verify Expo dependency compatibility
         run: npx expo install --check
 

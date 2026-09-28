@@ -1,7 +1,7 @@
 {
   "cli": {
     "version": ">= 12.0.0",
-    "appVersionSource": "remote"
+    "appVersionSource": "local"
   },
   "build": {
     "development": {
@@ -23,6 +23,15 @@
       },
       "env": {
         "EXPO_PUBLIC_API_URL": "https://security-marketplace-api-staging.onrender.com"
+      }
+    },
+    "pilot": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_BUILD_LABEL": "pilot"
       }
     },
     "production": {

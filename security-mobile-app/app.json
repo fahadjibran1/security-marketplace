@@ -3,7 +3,7 @@
     "name": "S4 Security",
     "description": "Staff. Sites. Shifts. Security.",
     "slug": "security-marketplace",
-    "version": "1.0.6",
+    "version": "1.0.7",
     "scheme": "securitymarketplace",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
@@ -24,7 +24,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.securitymarketplace.mobile",
-      "buildNumber": "1",
+      "buildNumber": "11",
       "config": {
         "usesNonExemptEncryption": false
       },
@@ -34,7 +34,7 @@
     },
     "android": {
       "softwareKeyboardLayoutMode": "resize",
-      "versionCode": 7,
+      "versionCode": 8,
       "package": "com.securitymarketplace.mobile",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",

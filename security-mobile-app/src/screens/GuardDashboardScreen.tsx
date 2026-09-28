@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { FeatureCard } from '../components/FeatureCard';
 import { StatePanel } from '../components/StatePanel';
 import { StatusBadge, StatusTone } from '../components/StatusBadge';
+import { AppBuildFooter } from '../components/ui/AppBuildFooter';
 import { ConfirmationDialog } from '../components/ui/ConfirmationDialog';
 import {
   BEFORE_SHIFT_GUIDANCE,
@@ -3068,6 +3069,7 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
               <GuardScreeningPanel onContinue={() => selectTab('screening')} />
               <GuardAvailabilityScreen />
             </View>
+            <AppBuildFooter appLabel="S4 Guard" />
           </View>
         ) : null}
         {activeTab === 'screening' ? <GuardScreeningJourney onBack={() => selectTab('profile')} scrollViewRef={screeningScrollRef} /> : null}

@@ -130,6 +130,7 @@ import {
 import { CompanySidebar } from '../components/company/CompanySidebar';
 import { CompanyTopBar } from '../components/company/CompanyTopBar';
 import { CompanyWeeklyApprovalsScreen } from './CompanyWeeklyApprovalsScreen';
+import { AppBuildFooter } from '../components/ui/AppBuildFooter';
 import { Card } from '../components/ui/Card';
 import { KpiCard, KpiTone } from '../components/ui/KpiCard';
 import { PageHeader } from '../components/ui/PageHeader';
@@ -4500,6 +4501,9 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
           ) : null}
 
           {renderContent()}
+
+          {/* Build provenance, unobtrusive and below all operational content (UAT build audit). */}
+          <AppBuildFooter appLabel="S4 Company" />
         </ScrollView>
       </View>
     </View>
