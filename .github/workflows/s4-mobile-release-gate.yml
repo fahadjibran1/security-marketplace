@@ -63,6 +63,11 @@ jobs:
       - name: Verify shift creation entry point
         run: npm run test:shift-entry
 
+      # UAT-DEPLOY-01: the candidate list must separate a real blocker from an unknown, keep Assign
+      # disabled while the server says ineligible, and route to the existing Compliance workflow.
+      - name: Verify assign compliance guidance
+        run: npm run test:assign-compliance
+
       - name: Verify Expo dependency compatibility
         run: npx expo install --check
 

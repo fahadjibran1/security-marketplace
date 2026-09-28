@@ -6,8 +6,12 @@ import { Button } from '../ui/Button';
 import { ConfirmationDialog } from '../ui/ConfirmationDialog';
 import { Drawer } from '../ui/Drawer';
 import { FormField, FieldInput, FieldTextarea } from '../ui/FormField';
+import { assessCandidate, assignFailureMessage, candidateBlockerHeading } from './assignEligibility';
+import type { CandidateAssessment } from './assignEligibility';
+import { buildBlockers } from './compliance-model';
 import type {
   EligibleGuardRow,
+  GuardComplianceSummary,
   RotaCoveragePhase,
   RotaCoverageState,
   RotaDayCells,
@@ -141,6 +145,16 @@ function slotStateTokens(state: RotaCoverageState): {
     case 'cancelled':           return { bg: colors.pendingSurface,  fg: colors.pending,  label: 'Cancelled', problem: false };
     default:                    return { bg: colors.pendingSurface,  fg: colors.pending,  label: '',          problem: false };
   }
+}
+
+/**
+ * Styling for the candidate availability line. Neutral for "Not set", because an absent availability
+ * rule is unknown rather than a problem — it does not block assignment (see assignEligibility.ts).
+ */
+function availabilityToneStyle(tone: 'success' | 'warning' | 'neutral') {
+  if (tone === 'success') return db.candidateAvailabilitySuccess;
+  if (tone === 'warning') return db.candidateAvailabilityWarning;
+  return db.candidateAvailabilityNeutral;
 }
 
 function positionStatusTokens(status: string): { fg: string; label: string } {
@@ -328,6 +342,20 @@ type CompanyRotaPlannerWorkspaceProps = {
   onCancelPosition: (slotId: number, shiftId: number) => Promise<RotaSlotDetail>;
   onCancelSlot: (slotId: number) => Promise<void>;
   onGetEligibleGuards: (shiftId: number) => Promise<EligibleGuardRow[]>;
+
+  // ── Guard compliance blockers (UAT-DEPLOY-01) ───────────────────────────────
+  // The eligibility projection reports THAT compliance failed and carries only the first reason
+  // (assertGuardAssignable throws with blockers[0]). The authoritative full list already exists in the
+  // Company Compliance projection, so the drawer reads that rather than a new endpoint or a second copy
+  // of the rules. All three are optional: without them the drawer degrades to the single server reason.
+  /** compliance.view — may the Fix Compliance route be offered at all. */
+  canFixCompliance?: boolean;
+  /** compliance.manage — decides whether a next step is an action or "ask a compliance manager". */
+  canManageCompliance?: boolean;
+  /** Opens the EXISTING Company Compliance workflow on this guard. */
+  onFixCompliance?: (guardId: number) => void;
+  /** GET /compliance/statuses. Loaded once per assign panel, never polled. */
+  onGetComplianceSummaries?: () => Promise<GuardComplianceSummary[]>;
 };
 
 // ── Day name constants ─────────────────────────────────────────────────────────
@@ -368,6 +396,10 @@ export function CompanyRotaPlannerWorkspace({
   onCancelPosition,
   onCancelSlot,
   onGetEligibleGuards,
+  canFixCompliance = false,
+  canManageCompliance = false,
+  onFixCompliance,
+  onGetComplianceSummaries,
 }: CompanyRotaPlannerWorkspaceProps) {
 
   // ── Slot detail state ──────────────────────────────────────────────────────
@@ -406,6 +438,9 @@ export function CompanyRotaPlannerWorkspace({
   const [assignShiftId, setAssignShiftId] = React.useState<number | null>(null);
   const [eligibleGuards, setEligibleGuards] = React.useState<EligibleGuardRow[]>([]);
   const [loadingEligible, setLoadingEligible] = React.useState(false);
+  // Authoritative compliance blockers by guard id, for the assign panel's detail only.
+  const [complianceByGuardId, setComplianceByGuardId] =
+    React.useState<Map<number, GuardComplianceSummary>>(new Map());
   const [guardSearch, setGuardSearch]     = React.useState('');
   const [selectedGuardId, setSelectedGuardId] = React.useState<number | null>(null);
   const [assigning, setAssigning]         = React.useState(false);
@@ -633,7 +668,30 @@ export function CompanyRotaPlannerWorkspace({
     } finally {
       setLoadingEligible(false);
     }
-  }, [onGetEligibleGuards]);
+    // Blocker DETAIL only, so it is fetched after eligibility and never blocks the list or the spinner.
+    // A failure here simply leaves the drawer on the single reason eligibility already gave.
+    if (!onGetComplianceSummaries) return;
+    try {
+      const summaries = await onGetComplianceSummaries();
+      setComplianceByGuardId(new Map(summaries.map((summary) => [summary.guardId, summary])));
+    } catch {
+      /* keep whatever was already loaded */
+    }
+  }, [onGetEligibleGuards, onGetComplianceSummaries]);
+
+  /**
+   * What the drawer shows for one candidate. `isEligible` and the blocking/informational split come from
+   * the server; the compliance summary only supplies the FULL blocker list instead of just the first.
+   */
+  const assessFor = React.useCallback((row: EligibleGuardRow): CandidateAssessment => {
+    const summary = complianceByGuardId.get(row.guardId) ?? null;
+    return assessCandidate(row, {
+      complianceBlockers: buildBlockers(summary, canManageCompliance)
+        .filter((blocker) => blocker.severity === 'blocking')
+        .map((blocker) => ({ text: blocker.text, nextStep: blocker.nextStep })),
+      canFixCompliance: canFixCompliance && Boolean(onFixCompliance),
+    });
+  }, [complianceByGuardId, canManageCompliance, canFixCompliance, onFixCompliance]);
 
   const handleAssign = React.useCallback(async () => {
     if (!slotDetail || !assignShiftId || !selectedGuardId) return;
@@ -646,16 +704,19 @@ export function CompanyRotaPlannerWorkspace({
       setSelectedGuardId(null);
       onRefreshWeek();
     } catch (err: any) {
-      const msg: string = err?.message ?? '';
-      setAssignError(
-        msg.includes('already been filled') || msg.includes('no longer available')
-          ? 'This position has already been filled or is no longer available.'
-          : msg || 'Unable to assign guard.',
-      );
+      setAssignError(assignFailureMessage(err));
+      // Eligibility may have changed underneath us (evidence unverified, a clash created, leave
+      // approved). Re-read the server's verdict so the panel stops offering what it just refused.
+      try {
+        const guards = await onGetEligibleGuards(assignShiftId);
+        setEligibleGuards(guards);
+      } catch {
+        /* the banner already explains the failure */
+      }
     } finally {
       setAssigning(false);
     }
-  }, [slotDetail, assignShiftId, selectedGuardId, onAssignPosition, onRefreshWeek]);
+  }, [slotDetail, assignShiftId, selectedGuardId, onAssignPosition, onRefreshWeek, onGetEligibleGuards]);
 
   // ── Bulk assign ────────────────────────────────────────────────────────────
 
@@ -1025,6 +1086,8 @@ export function CompanyRotaPlannerWorkspace({
           onCloseAssign={() => { setAssignShiftId(null); setAssignError(null); }}
           eligibleGuards={eligibleGuards}
           loadingEligible={loadingEligible}
+          assessCandidateRow={assessFor}
+          onFixCompliance={onFixCompliance}
           guardSearch={guardSearch}
           onGuardSearch={setGuardSearch}
           selectedGuardId={selectedGuardId}
@@ -1281,7 +1344,8 @@ function SlotDetailBody({
   editTitle, onEditTitle, editInstructions, onEditInstructions,
   editError, cancelSlotError,
   assignShiftId, onOpenAssign, onCloseAssign,
-  eligibleGuards, loadingEligible, guardSearch, onGuardSearch,
+  eligibleGuards, loadingEligible, assessCandidateRow, onFixCompliance,
+  guardSearch, onGuardSearch,
   selectedGuardId, onSelectGuard, onConfirmAssign, assigning, assignError,
   bulkOpen, onOpenBulk, onCloseBulk,
   bulkMap, onBulkMapChange, bulkGuards, bulkGuardSearch, onBulkGuardSearch,
@@ -1306,6 +1370,8 @@ function SlotDetailBody({
   onCloseAssign: () => void;
   eligibleGuards: EligibleGuardRow[];
   loadingEligible: boolean;
+  assessCandidateRow: (row: EligibleGuardRow) => CandidateAssessment;
+  onFixCompliance?: (guardId: number) => void;
   guardSearch: string;
   onGuardSearch: (v: string) => void;
   selectedGuardId: number | null;
@@ -1511,6 +1577,8 @@ function SlotDetailBody({
                   onCloseAssign={onCloseAssign}
                   eligibleGuards={eligibleGuards}
                   loadingEligible={loadingEligible}
+                  assessCandidateRow={assessCandidateRow}
+                  onFixCompliance={onFixCompliance}
                   guardSearch={guardSearch}
                   onGuardSearch={onGuardSearch}
                   selectedGuardId={selectedGuardId}
@@ -1540,7 +1608,8 @@ function SlotDetailBody({
 function PositionRow({
   position, isAssigning,
   onOpenAssign, onCloseAssign,
-  eligibleGuards, loadingEligible, guardSearch, onGuardSearch,
+  eligibleGuards, loadingEligible, assessCandidateRow, onFixCompliance,
+  guardSearch, onGuardSearch,
   selectedGuardId, onSelectGuard, onConfirmAssign, assigning, assignError,
   canAssign, canCancel, onRequestCancel,
 }: {
@@ -1550,6 +1619,8 @@ function PositionRow({
   onCloseAssign: () => void;
   eligibleGuards: EligibleGuardRow[];
   loadingEligible: boolean;
+  assessCandidateRow: (row: EligibleGuardRow) => CandidateAssessment;
+  onFixCompliance?: (guardId: number) => void;
   guardSearch: string;
   onGuardSearch: (v: string) => void;
   selectedGuardId: number | null;
@@ -1569,6 +1640,13 @@ function PositionRow({
       !q || (g.fullName ?? '').toLowerCase().includes(q),
     );
   }, [eligibleGuards, guardSearch]);
+
+  // The selected candidate's own server verdict gates the Assign button, so the manager is never invited
+  // to click into a refusal the server has already reported.
+  const selectedAssessment = React.useMemo(() => {
+    const row = eligibleGuards.find((g) => g.guardId === selectedGuardId);
+    return row ? assessCandidateRow(row) : null;
+  }, [eligibleGuards, selectedGuardId, assessCandidateRow]);
 
   return (
     <View style={db.positionBlock}>
@@ -1628,42 +1706,75 @@ function PositionRow({
                   {guardSearch ? 'No guards match.' : 'No eligible guards available.'}
                 </Text>
               )}
-              {filteredGuards.map((g) => (
-                <Pressable
-                  key={g.guardId}
-                  onPress={() => onSelectGuard(selectedGuardId === g.guardId ? null : g.guardId)}
-                  style={({ pressed }: any) => [
-                    db.guardItem,
-                    selectedGuardId === g.guardId && db.guardItemSelected,
-                    pressed && db.guardItemPressed,
-                  ]}
-                >
-                  <View style={db.guardItemMain}>
-                    <Text style={db.guardItemName} numberOfLines={1}>{g.fullName ?? `Guard #${g.guardId}`}</Text>
-                    {!g.isEligible && (
-                      <Text style={db.guardItemIneligible}>Ineligible</Text>
+              {filteredGuards.map((g) => {
+                const assessment = assessCandidateRow(g);
+                const heading = candidateBlockerHeading(assessment);
+                return (
+                  <Pressable
+                    key={g.guardId}
+                    onPress={() => onSelectGuard(selectedGuardId === g.guardId ? null : g.guardId)}
+                    style={({ pressed }: any) => [
+                      db.guardItem,
+                      selectedGuardId === g.guardId && db.guardItemSelected,
+                      pressed && db.guardItemPressed,
+                    ]}
+                  >
+                    <View style={db.guardItemMain}>
+                      <Text style={db.guardItemName} numberOfLines={1}>{g.fullName ?? `Guard #${g.guardId}`}</Text>
+                      {!assessment.isEligible && (
+                        <Text style={db.guardItemIneligible}>Ineligible</Text>
+                      )}
+                    </View>
+
+                    {/* Blockers: what actually prevents assignment, one line each, in the server's words. */}
+                    {!assessment.isEligible && assessment.blockers.length > 0 && (
+                      <View style={db.candidateBlockers}>
+                        <Text style={db.candidateBlockerHeading}>{heading}</Text>
+                        {assessment.blockers.map((blocker) => (
+                          <Text key={blocker.key} style={db.candidateBlockerItem}>
+                            {`• ${blocker.text}`}
+                          </Text>
+                        ))}
+                      </View>
                     )}
-                    {g.isEligible && g.availabilityStatus === 'available' && (
-                      <Text style={db.guardItemAvail}>Available</Text>
+
+                    {/* Availability is reported separately because `no_rule` does not block assignment. */}
+                    <Text style={db.candidateAvailability}>
+                      <Text style={db.candidateAvailabilityLabel}>Availability: </Text>
+                      <Text style={availabilityToneStyle(assessment.availability.tone)}>
+                        {assessment.availability.label}
+                      </Text>
+                    </Text>
+
+                    {assessment.action === 'fix_compliance' && onFixCompliance && (
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Fix Compliance"
+                        onPress={() => onFixCompliance(g.guardId)}
+                        style={({ pressed }: any) => [db.fixComplianceBtn, pressed && db.fixComplianceBtnPressed]}
+                      >
+                        <Text style={db.fixComplianceBtnText}>Fix Compliance</Text>
+                      </Pressable>
                     )}
-                    {g.isEligible && g.availabilityStatus !== 'available' && (
-                      <Text style={db.guardItemUnavail}>{g.availabilityStatus}</Text>
-                    )}
-                  </View>
-                  {g.reasons.length > 0 && (
-                    <Text style={db.guardItemReason} numberOfLines={2}>{g.reasons.join(' · ')}</Text>
-                  )}
-                </Pressable>
-              ))}
+                  </Pressable>
+                );
+              })}
             </ScrollView>
           )}
           <View style={db.assignFooter}>
+            {selectedAssessment && !selectedAssessment.isEligible && (
+              <Text style={db.assignBlockedHint} numberOfLines={2}>
+                {selectedAssessment.complianceBlocked
+                  ? 'Add and verify the outstanding compliance evidence before assigning.'
+                  : 'This guard cannot be assigned to this shift.'}
+              </Text>
+            )}
             <Button
               label="Assign"
               variant="primary"
               size="sm"
               onPress={onConfirmAssign}
-              disabled={!selectedGuardId || assigning}
+              disabled={!selectedGuardId || assigning || (!!selectedAssessment && !selectedAssessment.isEligible)}
               loading={assigning}
             />
           </View>
@@ -1725,6 +1836,10 @@ function BulkAssignPanel({
                 {guards.slice(0, 12).map((g) => {
                   const isChosen = selected === g.guardId;
                   const usedElsewhere = !isChosen && alreadySelectedGuardIds.has(g.guardId);
+                  // Same server verdict, same rule as single assign: an ineligible guard is not
+                  // selectable, so bulk cannot walk into the refusal either. Remediation lives in the
+                  // single-assign panel, which has the room to explain it.
+                  const blocked = usedElsewhere || g.isEligible === false;
                   return (
                     <Pressable
                       key={g.guardId}
@@ -1734,17 +1849,18 @@ function BulkAssignPanel({
                         else next.set(pos.shiftId, g.guardId);
                         onBulkMapChange(next);
                       }}
-                      disabled={usedElsewhere}
+                      disabled={blocked}
                       style={({ pressed }: any) => [
                         db.guardItem,
                         isChosen && db.guardItemSelected,
-                        usedElsewhere && db.guardItemDimmed,
-                        pressed && !usedElsewhere && db.guardItemPressed,
+                        blocked && db.guardItemDimmed,
+                        pressed && !blocked && db.guardItemPressed,
                       ]}
                     >
                       <Text style={db.guardItemName} numberOfLines={1}>
                         {g.fullName ?? `Guard #${g.guardId}`}
                         {usedElsewhere ? '  (assigned elsewhere)' : ''}
+                        {!usedElsewhere && g.isEligible === false ? '  (ineligible)' : ''}
                       </Text>
                     </Pressable>
                   );
@@ -2009,6 +2125,27 @@ const db = StyleSheet.create({
   guardItemUnavail: { fontSize: 11, color: colors.warning, fontWeight: '600', marginLeft: spacing.xs },
   guardItemIneligible: { fontSize: 11, color: colors.danger, fontWeight: '600', marginLeft: spacing.xs },
   guardItemReason: { fontSize: 11, color: colors.textMuted, marginTop: 2 },
+
+  // ── Candidate blockers / availability / remediation (UAT-DEPLOY-01) ─────────
+  candidateBlockers: { marginTop: 4, gap: 1 },
+  candidateBlockerHeading: { fontSize: 11, color: colors.danger, fontWeight: '600' },
+  candidateBlockerItem: { fontSize: 11, color: colors.textSecondary, marginLeft: spacing.xs },
+  candidateAvailability: { fontSize: 11, marginTop: 3 },
+  candidateAvailabilityLabel: { color: colors.textMuted },
+  candidateAvailabilityNeutral: { color: colors.textMuted, fontWeight: '600' },
+  candidateAvailabilityWarning: { color: colors.warning, fontWeight: '600' },
+  candidateAvailabilitySuccess: { color: colors.success, fontWeight: '600' },
+  fixComplianceBtn: {
+    alignSelf: 'flex-start',
+    marginTop: spacing.xs,
+    paddingVertical: 4, paddingHorizontal: spacing.sm,
+    borderRadius: radii.sm,
+    borderWidth: 1, borderColor: colors.accentTeal,
+    backgroundColor: colors.accentTealSoft,
+  },
+  fixComplianceBtnPressed: { opacity: 0.7 },
+  fixComplianceBtnText: { fontSize: 11, color: colors.accentTeal, fontWeight: '600' },
+  assignBlockedHint: { flex: 1, fontSize: 11, color: colors.textMuted, marginRight: spacing.sm },
   assignFooter: { alignItems: 'flex-end' },
   noGuardsText: { fontSize: 12, color: colors.textMuted, fontStyle: 'italic', paddingVertical: spacing.sm } as any,
 

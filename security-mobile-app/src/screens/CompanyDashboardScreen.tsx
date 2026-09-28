@@ -49,6 +49,7 @@ import {
   listClients,
   listCompanyDailyLogs,
   listCompanyGuards,
+  listCompanyGuardComplianceStatuses,
   listGuardInvitations,
   createGuardInvitation,
   revokeGuardInvitation,
@@ -1189,6 +1190,13 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
   const handleGuardTargetConsumed = React.useCallback((requestId: number) => {
     setGuardTarget((current) => consumeGuardTarget(current, requestId));
   }, []);
+  // Rota Planner -> Fix Compliance (UAT-DEPLOY-01). Deliberately the SAME one-shot target the Guards
+  // workspace uses rather than a second intent counter: a monotonic requestId cannot be re-consumed, a
+  // null initial value cannot be mistaken for a request (the bug the Add Shift counter first had), and
+  // reconcileGuardTarget already drops it when the section changes. No new mechanism, no new drawer.
+  const handleFixGuardCompliance = React.useCallback((guardId: number) => {
+    openGuardWorkspace('compliance', guardId);
+  }, [openGuardWorkspace]);
   // A target belongs to its own section only; leaving that section (any route) drops it so it can never go stale.
   // (Declared with the other hooks, above the component's early returns.)
   React.useEffect(() => {
@@ -3849,6 +3857,10 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
       onCancelPosition={handleRotaCancelPosition}
       onCancelSlot={handleRotaCancelSlot}
       onGetEligibleGuards={handleRotaGetEligibleGuards}
+      canFixCompliance={guardNavPermissions.canViewCompliance}
+      canManageCompliance={compliancePermissions.canManage}
+      onFixCompliance={handleFixGuardCompliance}
+      onGetComplianceSummaries={listCompanyGuardComplianceStatuses}
       legacyShiftsByDate={legacyShiftsByDate}
     />
   );
