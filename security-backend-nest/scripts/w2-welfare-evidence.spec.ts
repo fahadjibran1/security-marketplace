@@ -72,7 +72,8 @@ async function main() {
   // future change that starts depending on them fails loudly here rather than silently.
   const auditLogService = new AuditLogService(repo(AuditLog), null as never);
   const notifications = { createForUser: async () => undefined, createForUserUnlessRecentDuplicate: async () => undefined };
-  const welfare = new WelfareWindowService(new OperationalWindowService());
+  const windowEngine = new OperationalWindowService();
+  const welfare = new WelfareWindowService(windowEngine);
   const sweep = new SafetyAlertService(
     alerts,
     repo(DailyLog),
@@ -84,6 +85,7 @@ async function main() {
     auditLogService,
     notifications as never,
     welfare,
+    windowEngine,
     ds,
   );
 
@@ -388,7 +390,7 @@ async function main() {
       const restarted = new SafetyAlertService(
         alerts, repo(DailyLog), repo(AttendanceEvent), shifts,
         null as never, null as never, null as never,
-        auditLogService, notifications as never, welfare, ds,
+        auditLogService, notifications as never, welfare, windowEngine, ds,
       );
       await restarted.runMissedWelfareChecks();
       assert.equal(await indexedEvidence(shift.id), 3, 'no in-memory state is involved');

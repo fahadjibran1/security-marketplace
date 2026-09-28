@@ -19,6 +19,7 @@ import { AttendanceEvent, AttendanceEventType } from '../attendance/entities/att
 import { Shift } from '../shift/entities/shift.entity';
 import { GuardProfile } from '../guard-profile/entities/guard-profile.entity';
 import { WelfareWindowService } from '../operations/welfare-window.service';
+import { OperationalWindowService } from '../operations/operational-window.service';
 // What satisfies a Welfare Check — a Guard's scheduled "check call" or a supervisor "welfare check" — is now
 // decided in one place, alongside the window engine, rather than by a list local to this sweep.
 import {
@@ -70,6 +71,7 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
     private readonly auditLogService: AuditLogService,
     private readonly notificationService: NotificationService,
     private readonly welfareWindowService: WelfareWindowService,
+    private readonly windowEngine: OperationalWindowService,
     private readonly dataSource: DataSource,
   ) {}
 
@@ -352,7 +354,7 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
     resolution: OperationalWindowResolution,
     counters: WelfareSweepCounters,
   ) {
-    const missedRun = this.trailingMissedRun(resolution.windows);
+    const missedRun = this.windowEngine.trailingMissedRun(resolution.windows);
     const active = await manager.findOne(SafetyAlert, {
       where: {
         shift: { id: shift.id },
@@ -536,31 +538,6 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
         afterData: { shiftId: alert.shift.id, status: saved.status },
       });
     }
-  }
-
-  /**
-   * How many windows in a row, counting back from the most recent settled one, were missed.
-   *
-   * This is what the control room needs: not how many windows the shift missed in total, but how long
-   * the Guard has been out of contact right now. Windows that carried no obligation are skipped, and
-   * a window still inside its grace period is passed over rather than counted, so the run only ever
-   * reflects settled outcomes. A completed window ends the run.
-   */
-  private trailingMissedRun(windows: readonly ResolvedOperationalWindow[]): number {
-    let run = 0;
-    for (let index = windows.length - 1; index >= 0; index -= 1) {
-      const window = windows[index];
-      if (!window.applicable) continue;
-      if (window.state === OperationalWindowState.DUE || window.state === OperationalWindowState.OVERDUE) {
-        continue;
-      }
-      if (window.state === OperationalWindowState.MISSED) {
-        run += 1;
-        continue;
-      }
-      break;
-    }
-    return run;
   }
 
   private formatWindowLabel(window: ResolvedOperationalWindow, timezone?: string | null): string {

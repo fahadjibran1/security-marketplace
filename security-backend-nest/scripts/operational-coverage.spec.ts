@@ -42,6 +42,7 @@ function serviceFor(rows: any[], companyId = 1) {
     } as any,
     { resolveCompanyContext: async () => ({ company: { id: companyId } }) } as any,
     {} as any,
+    { projectForShifts: async () => new Map() } as any,
   );
   return { service, receivedWhere: () => receivedWhere };
 }

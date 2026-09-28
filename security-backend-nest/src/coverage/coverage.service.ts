@@ -7,6 +7,7 @@ import { CompanyMembershipService } from '../company-membership/company-membersh
 import { CompanyPermission } from '../company-membership/company-membership-types';
 import { UserRole } from '../user/entities/user.entity';
 import { Shift } from '../shift/entities/shift.entity';
+import { OperationsProjectionService, ShiftOperationsView } from './operations-projection.service';
 
 type CoverageStatus = 'fully_covered' | 'partially_covered' | 'unfilled' | 'overstaffed';
 
@@ -83,6 +84,7 @@ export class CoverageService {
     @InjectRepository(Shift) private readonly shiftRepo: Repository<Shift>,
     private readonly membershipService: CompanyMembershipService,
     private readonly availabilityService: AvailabilityService,
+    private readonly operationsProjection: OperationsProjectionService,
   ) {}
 
   async listShiftCoverage(userId: number, userRole: UserRole, query: CoverageQuery) {
@@ -96,13 +98,19 @@ export class CoverageService {
       where: { company: { id: company.id }, start: Between(from, to) },
       order: { start: 'ASC' },
     });
-    return shifts
+    const visible = shifts
       .filter((shift) => isOperationalCoverageShift(shift))
       .filter((shift) => !query.siteId || String(shift.site?.id) === query.siteId)
       .filter((shift) => !query.clientId || String(shift.site?.client?.id) === query.clientId)
       .filter((shift) => !query.shiftId || String(shift.id) === query.shiftId)
-      .filter((shift) => query.uncoveredOnly !== 'true' || isUncoveredOperationalShift(shift))
-      .map((shift) => this.toCoverageRow(shift));
+      .filter((shift) => query.uncoveredOnly !== 'true' || isUncoveredOperationalShift(shift));
+
+    // The window maths is the backend's job: the board presents these values and never recomputes them.
+    const operations = await this.operationsProjection.projectForShifts(visible, now);
+    return visible.map((shift) => ({
+      ...this.toCoverageRow(shift),
+      operations: operations.get(shift.id) ?? null,
+    }));
   }
 
   async listSiteCoverage(userId: number, userRole: UserRole, query: CoverageQuery) {

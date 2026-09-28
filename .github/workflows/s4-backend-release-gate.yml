@@ -67,6 +67,7 @@ jobs:
       PILOT_CORE_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_pilot_core
       W2_WELFARE_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_w2_welfare
       WELFARE_MIGRATION_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_welfare_migration
+      W3_LIVE_OPS_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_w3_live_ops
 
     steps:
       - name: Checkout repository
@@ -146,6 +147,9 @@ jobs:
 
       - name: Create welfare evidence migration rehearsal database
         run: PGPASSWORD=s4_test_password psql -h localhost -U s4 -d s4_release_gate -c "CREATE DATABASE s4_welfare_migration;"
+
+      - name: Create W3 live operations certification database
+        run: PGPASSWORD=s4_test_password psql -h localhost -U s4 -d s4_release_gate -c "CREATE DATABASE s4_w3_live_ops;"
 
       - name: Run release smoke tests
         run: npm run test:release

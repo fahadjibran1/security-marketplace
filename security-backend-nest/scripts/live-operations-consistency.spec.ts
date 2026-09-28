@@ -29,7 +29,7 @@ function serviceFor(rows: any[], companyId = 1) {
       return rows.filter((row) => row.company.id === repositoryCompanyId && row.start >= from && row.start <= to);
     },
     findOne: async () => null,
-  } as any, { resolveCompanyContext: async () => ({ company: { id: companyId } }) } as any, {} as any);
+  } as any, { resolveCompanyContext: async () => ({ company: { id: companyId } }) } as any, {} as any, { projectForShifts: async () => new Map() } as any);
   return { service, repositoryCompanyId: () => repositoryCompanyId };
 }
 

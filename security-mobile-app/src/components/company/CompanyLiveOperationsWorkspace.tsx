@@ -1,6 +1,14 @@
 import * as React from 'react';
 import { Fragment } from 'react/jsx-runtime';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import type { ShiftOperationsView } from '../../types/models';
+import {
+  logBookCell,
+  operationalExceptions,
+  operationsDetailLines,
+  welfareCell,
+  type OperationsTone,
+} from './operationsPresentation';
 import { colors, radii, spacing } from '../../theme';
 import { DailyLog, Incident, SafetyAlert, Shift, Timesheet } from '../../types/models';
 
@@ -70,6 +78,8 @@ export type LiveFilters = {
 
 export type LiveBoardRow = {
   shift: Shift;
+  /** Server-computed monitoring. Presented as given; the board never recomputes a window or a count. */
+  operations: ShiftOperationsView | null;
   attendance: { checkInAt: string | null; checkOutAt: string | null } | undefined;
   timesheet: Timesheet | undefined;
   shiftLogs: DailyLog[];
@@ -103,6 +113,7 @@ export type CloseOutSummary = {
 
 export type SelectedShiftContext = {
   shift: Shift;
+  operations: ShiftOperationsView | null;
   attendance: { checkInAt: string | null; checkOutAt: string | null } | undefined;
   timesheet: Timesheet | undefined;
   logs: DailyLog[];
@@ -491,12 +502,25 @@ function LiveOpsFilterToolbar({
 
 // ─── Board table ──────────────────────────────────────────────────────────────
 
-const BOARD_COL_HDR = ['Site / Guard', 'Scheduled', 'Attendance', 'Status', 'Risk', 'Alerts', 'Action'] as const;
+/**
+ * Amber for an operational exception, red only for a welfare breach. A missing Log Book entry is
+ * incomplete paperwork; colouring it like a possible harm to a person would teach the control room to
+ * ignore the colour that matters.
+ */
+function operationsToneColor(tone: OperationsTone): string {
+  if (tone === 'danger') return colors.danger;
+  if (tone === 'warning') return colors.warning;
+  if (tone === 'good') return colors.success;
+  return colors.textSecondary;
+}
+
+const BOARD_COL_HDR = ['Site / Guard', 'Scheduled', 'Attendance', 'Welfare / Log Book', 'Status', 'Risk', 'Alerts', 'Action'] as const;
 
 const COL: any[] = [
   { flex: 26, minWidth: 160 },                 // Site / Guard (stacked)
   { flex: 7,  minWidth: 64 },                  // Scheduled time
   { flex: 12, minWidth: 96 },                  // Attendance state
+  { flex: 14, minWidth: 116 },                 // Welfare status + Log Book, stacked
   { flex: 8,  minWidth: 72 },                  // Status badge
   { flex: 7,  minWidth: 60 },                  // Risk
   { flex: 5,  minWidth: 44 },                  // Alerts
@@ -532,7 +556,9 @@ function BoardRow({
   onPress: () => void;
   onAction: (shift: Shift) => void;
 }) {
-  const { shift, lifecycleStatus, risk, delay, likelyLate, siteRiskLabel, primaryActionLabel, rowTone, shiftIncidents, panicOrWelfareCount } = row;
+  const { shift, lifecycleStatus, risk, delay, likelyLate, siteRiskLabel, primaryActionLabel, rowTone, shiftIncidents, panicOrWelfareCount, operations } = row;
+  const welfare = welfareCell(operations?.welfare, operations?.timezone);
+  const logBook = logBookCell(operations?.logBook, operations?.timezone);
   const badge = getStatusBadge(shift.status || 'unfilled');
   const accent = getRowAccent(rowTone);
   const att = getAttendanceState(row);
@@ -563,26 +589,39 @@ function BoardRow({
         <Text style={[styles.boardCellAttPrimary, { color: att.color }]}>{att.primary}</Text>
         {att.secondary ? <Text style={styles.boardCellSm}>{att.secondary}</Text> : null}
       </View>
+      {/* Welfare / Log Book — the smallest readable form; detail lives in the drawer */}
+      <View style={[COL[3], styles.boardCellCol]}>
+        <Text style={[styles.boardCellWelfare, { color: operationsToneColor(welfare.tone) }]} numberOfLines={1}>
+          {welfare.label}
+        </Text>
+        {welfare.detail ? <Text style={styles.boardCellSm} numberOfLines={1}>{welfare.detail}</Text> : null}
+        {welfare.missedSummary ? (
+          <Text style={[styles.boardCellSm, { color: colors.danger }]} numberOfLines={1}>{welfare.missedSummary}</Text>
+        ) : null}
+        <Text style={[styles.boardCellSm, { color: operationsToneColor(logBook.tone) }]} numberOfLines={1}>
+          Log Book: {logBook.label}
+        </Text>
+      </View>
       {/* Status */}
-      <View style={[COL[3], styles.boardCellStatusWrap]}>
+      <View style={[COL[4], styles.boardCellStatusWrap]}>
         <View style={[styles.boardStatusBadge, { borderColor: badge.color, backgroundColor: `${badge.color}14` }]}>
           <Text style={[styles.boardStatusText, { color: badge.color }]}>{badge.label}</Text>
         </View>
       </View>
       {/* Risk */}
-      <View style={[COL[4], styles.boardCellCol]}>
+      <View style={[COL[5], styles.boardCellCol]}>
         <Text style={[styles.boardCellRisk, { color: risk.color }]}>{risk.label}</Text>
         {delay !== null ? <Text style={styles.boardCellDelay}>{delay}m late</Text> : null}
         {likelyLate && delay === null ? <Text style={styles.boardCellDelay}>Likely late</Text> : null}
       </View>
       {/* Alerts */}
-      <View style={[COL[5], styles.boardCellAlerts]}>
+      <View style={[COL[6], styles.boardCellAlerts]}>
         {shiftIncidents.length > 0      ? <Text style={styles.boardAlertInc}>{shiftIncidents.length}I</Text>  : null}
         {panicOrWelfareCount > 0        ? <Text style={styles.boardAlertPanic}>{panicOrWelfareCount}P</Text>  : null}
         {shiftIncidents.length === 0 && panicOrWelfareCount === 0 ? <Text style={styles.boardAlertNone}>—</Text> : null}
       </View>
       {/* Action */}
-      <View style={[COL[6], styles.boardCellAction]}>
+      <View style={[COL[7], styles.boardCellAction]}>
         <Pressable
           style={({ pressed }: any) => [styles.boardActionBtn, pressed ? styles.boardActionBtnPressed : null, IS_WEB ? WEB_PTR : null]}
           onPress={(e: any) => { e?.stopPropagation?.(); onAction(shift); }}
@@ -1153,7 +1192,9 @@ function DetailPanelContent({
   onSaveCloseOutNotes: () => void;
   onOpenCoverage: (context?: { uncoveredOnly?: boolean; shiftId?: number }) => void;
 }) {
-  const { shift, attendance, timesheet, logs, incidents, alerts, lifecycleStatus, badge, exception, clientName } = ctx;
+  const { shift, attendance, timesheet, logs, incidents, alerts, lifecycleStatus, badge, exception, clientName, operations } = ctx;
+  const operationsSections = operationsDetailLines(operations);
+  const operationsExceptions = operationalExceptions(operations);
 
   return (
     <>
@@ -1229,6 +1270,35 @@ function DetailPanelContent({
                 <Text style={styles.detailPrimaryBtnText}>{savingCloseOutNotes ? 'Saving…' : 'Save Note'}</Text>
               </Pressable>
             </View>
+          </View>
+        ) : null}
+
+        {operationsSections.length ? (
+          <View style={styles.detailCard}>
+            <Text style={styles.detailCardTitle}>Operational monitoring</Text>
+            {operationsExceptions.length ? (
+              <View style={styles.detailExceptionWrap}>
+                {operationsExceptions.map((item) => (
+                  <View
+                    key={item.key}
+                    style={[styles.detailExceptionChip, { borderColor: operationsToneColor(item.tone) }]}
+                  >
+                    <Text style={[styles.detailExceptionLabel, { color: operationsToneColor(item.tone) }]}>
+                      {item.label}
+                    </Text>
+                    <Text style={styles.detailExceptionDetail}>{item.detail}</Text>
+                  </View>
+                ))}
+              </View>
+            ) : null}
+            {operationsSections.map((section) => (
+              <View key={section.heading} style={styles.detailOpsSection}>
+                <Text style={styles.detailOpsHeading}>{section.heading}</Text>
+                {section.lines.map((line, index) => (
+                  <Text key={`${section.heading}-${index}`} style={styles.detailLine}>{line}</Text>
+                ))}
+              </View>
+            ))}
           </View>
         ) : null}
 
@@ -1520,6 +1590,11 @@ const styles = StyleSheet.create({
   boardCellAttPrimary: {
     fontSize: 12,
     fontWeight: '500',
+  },
+  boardCellWelfare: {
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.2,
   },
   boardCellSm: {
     fontSize: 11,
@@ -2080,6 +2155,35 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 0.5,
     marginBottom: 2,
+  },
+  detailOpsSection: {
+    marginTop: spacing.sm,
+  },
+  detailOpsHeading: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.textPrimary,
+    marginBottom: 2,
+  },
+  detailExceptionWrap: {
+    gap: spacing.xs,
+    marginBottom: spacing.xs,
+  },
+  detailExceptionChip: {
+    borderWidth: 1,
+    borderRadius: radii.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+  },
+  detailExceptionLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+  },
+  detailExceptionDetail: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    marginTop: 1,
   },
   detailLine: {
     fontSize: 12,

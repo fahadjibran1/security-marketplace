@@ -540,6 +540,73 @@ export interface GuardLeavePayload {
   status?: GuardLeaveStatus | string;
 }
 
+/**
+ * Live Operations monitoring, computed by the backend.
+ *
+ * Every value here is presented as given. The window boundaries, applicability, counts and status are
+ * decided server-side by the operational window engine, so the board must never recompute them — two
+ * implementations of the same arithmetic would eventually disagree, and the backend is authoritative.
+ */
+export interface OperationalWindowView {
+  index: number;
+  start: string;
+  end: string;
+}
+
+export type WelfarePresentationStatus =
+  | 'not_applicable'
+  | 'no_book_on'
+  | 'current'
+  | 'due'
+  | 'overdue'
+  | 'missed'
+  | 'shift_complete';
+
+export interface WelfareOperationsView {
+  enabled: boolean;
+  intervalMinutes: number | null;
+  status: WelfarePresentationStatus;
+  currentWindow: OperationalWindowView | null;
+  lastWelfareAt: string | null;
+  nextDueAt: string | null;
+  overdueByMinutes: number | null;
+  requiredCount: number;
+  completedCount: number;
+  missedCount: number;
+  consecutiveMissed: number;
+}
+
+export interface LogBookOperationsView {
+  required: boolean;
+  intervalMinutes: number | null;
+  currentWindow: OperationalWindowView | null;
+  currentWindowSubmitted: boolean;
+  requiredCount: number;
+  submittedCount: number;
+  missingCount: number;
+  lastEntryAt: string | null;
+}
+
+/** The single actionable Welfare alert. Indexed evidence rows never appear here. */
+export interface WelfareSummaryView {
+  id: number;
+  status: string;
+  message: string;
+  acknowledged: boolean;
+  createdAt: string;
+}
+
+export interface ShiftOperationsView {
+  bookOnAt: string | null;
+  bookOffAt: string | null;
+  timezone: string;
+  welfare: WelfareOperationsView;
+  logBook: LogBookOperationsView;
+  welfareSummary: WelfareSummaryView | null;
+  welfareEvidenceCount: number;
+  missingBookOff: boolean;
+}
+
 export interface CoverageShiftRow {
   shiftId: number;
   siteId?: number | null;
@@ -555,6 +622,8 @@ export interface CoverageShiftRow {
   coverageState?: 'uncovered' | 'waiting_response' | 'confirmed';
   guardId?: number | null;
   guardName?: string | null;
+  /** Null for a shift whose obligation is over, or before the backend has a projection for it. */
+  operations?: ShiftOperationsView | null;
 }
 
 export interface CoverageSiteRow {

@@ -140,6 +140,34 @@ export class OperationalWindowService {
     return { intervalMinutes, windows: resolved, summary: this.summarise(intervalMinutes, resolved) };
   }
 
+  /**
+   * How many windows in a row, counting back from the most recent settled one, were missed.
+   *
+   * This is what a control room needs: not how many windows a shift missed in total, but how long
+   * the obligation has been unmet right now. Windows that carried no obligation are skipped, and a
+   * window still inside its grace period is passed over rather than counted, so the run only ever
+   * reflects settled outcomes. A completed window ends the run.
+   */
+  trailingMissedRun(windows: readonly ResolvedOperationalWindow[]): number {
+    let run = 0;
+    for (let index = windows.length - 1; index >= 0; index -= 1) {
+      const window = windows[index];
+      if (!window.applicable) continue;
+      if (
+        window.state === OperationalWindowState.DUE ||
+        window.state === OperationalWindowState.OVERDUE
+      ) {
+        continue;
+      }
+      if (window.state === OperationalWindowState.MISSED) {
+        run += 1;
+        continue;
+      }
+      break;
+    }
+    return run;
+  }
+
   summarise(
     intervalMinutes: number | null,
     windows: readonly ResolvedOperationalWindow[],

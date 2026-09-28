@@ -97,6 +97,7 @@ import {
   CompanyScreeningOutcome,
   CreateCompanyGuardInvitationPayload,
   CoverageShiftRow,
+  ShiftOperationsView,
   CreateClientPayload,
   CreateJobPayload,
   CreateShiftPayload,
@@ -1129,6 +1130,11 @@ type CompanyDashboardScreenProps = {
 /** Native phones below this width show a pilot message instead of the desktop company workspace. */
 const COMPANY_NATIVE_MIN_WIDTH = 768;
 
+/** Today in the site-agnostic YYYY-MM-DD form the coverage endpoint expects. */
+function todayIsoDate(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
 export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScreenProps = {}) {
   const { width: layoutWidth } = useWindowDimensions();
   const companyMobileLayoutDisabled = !IS_WEB && layoutWidth < COMPANY_NATIVE_MIN_WIDTH;
@@ -1206,6 +1212,7 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
   const [uncoveredShifts, setUncoveredShifts] = React.useState<CoverageShiftRow[]>([]);
   const [complianceRecords, setComplianceRecords] = React.useState<ComplianceRecord[]>([]);
   const [coverageNavigationContext, setCoverageNavigationContext] = React.useState<CoverageNavigationContext | undefined>(undefined);
+  const [operationsByShiftId, setOperationsByShiftId] = React.useState<Map<number, ShiftOperationsView>>(new Map());
   const [selectedSiteId, setSelectedSiteId] = React.useState<number | null>(null);
   const [selectedShiftId, setSelectedShiftId] = React.useState<number | null>(null);
   const [clientForm, setClientForm] = React.useState<ClientFormState>(CLIENT_FORM_EMPTY);
@@ -1332,6 +1339,15 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
             label: 'uncovered coverage',
             run: () => listCoverageShifts({ uncoveredOnly: true }),
             apply: (value: CoverageShiftRow[]) => setUncoveredShifts(value),
+          },
+          {
+            // Welfare Check and Log Book monitoring, computed by the backend. The board presents these
+            // values; it never recalculates a window, a count or a due time.
+            label: 'live operations monitoring',
+            run: () => listCoverageShifts({ from: todayIsoDate(), to: todayIsoDate() }),
+            apply: (value: CoverageShiftRow[]) => setOperationsByShiftId(
+              new Map(value.filter((row) => row.operations).map((row) => [row.shiftId, row.operations!])),
+            ),
           },
           {
             label: 'guards',
@@ -3146,11 +3162,12 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
         return {
           shift, timesheet, attendance, shiftLogs, shiftIncidents, shiftAlerts, lastCheckCall,
           panicOrWelfareCount, lifecycleStatus, risk, delay, likelyLate, siteRiskLabel, primaryActionLabel, rowTone,
+          operations: operationsByShiftId.get(shift.id) ?? null,
         };
       }),
     [
       liveOperationRows, timesheetByShiftId, attendanceByShiftId, logsByShiftId,
-      incidentsByShiftId, alertsByShiftId, lastCheckCallByShiftId, shifts,
+      incidentsByShiftId, alertsByShiftId, lastCheckCallByShiftId, shifts, operationsByShiftId,
     ],
   );
 
@@ -3170,8 +3187,11 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
       selectedShift.site?.client?.name ||
       clientMap.get(selectedShift.site?.clientId || 0)?.name ||
       'No client';
-    return { shift: selectedShift, attendance, timesheet, logs, incidents, alerts, lifecycleStatus, badge, exception, clientName };
-  }, [selectedShift, attendanceByShiftId, timesheetByShiftId, logsByShiftId, incidentsByShiftId, alertsByShiftId, clientMap]);
+    return {
+      shift: selectedShift, attendance, timesheet, logs, incidents, alerts, lifecycleStatus, badge, exception, clientName,
+      operations: operationsByShiftId.get(selectedShift.id) ?? null,
+    };
+  }, [selectedShift, attendanceByShiftId, timesheetByShiftId, logsByShiftId, incidentsByShiftId, alertsByShiftId, clientMap, operationsByShiftId]);
 
   const liveOperationsKpis = React.useMemo(
     () =>
