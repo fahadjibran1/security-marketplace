@@ -31,7 +31,8 @@
     "build:brand-assets": "node scripts/build-s4-assets.cjs",
     "test:auth-refresh": "node scripts/auth-refresh.spec.cjs",
     "test:live-operations-welfare": "node scripts/live-operations-welfare.spec.cjs",
-    "test:shift-entry": "node scripts/shift-creation-entry.spec.cjs"
+    "test:shift-entry": "node scripts/shift-creation-entry.spec.cjs",
+    "test:web-style": "node scripts/web-style-safety.spec.cjs"
   },
   "dependencies": {
     "@expo/metro-runtime": "~6.1.2",

@@ -177,7 +177,7 @@ function NativeDateInput({ value, onChange, hasError }: {
         type="date"
         value={value}
         onChange={(e: any) => onChange(e.target.value)}
-        style={[nativeInputStyle, hasError && nativeInputErrorStyle]}
+        style={{ ...nativeInputStyle, ...(hasError ? nativeInputErrorStyle : null) }}
       />
     );
   }
@@ -202,7 +202,7 @@ function NativeTimeInput({ value, onChange, hasError }: {
         type="time"
         value={value}
         onChange={(e: any) => onChange(e.target.value)}
-        style={[nativeInputStyle, hasError && nativeInputErrorStyle]}
+        style={{ ...nativeInputStyle, ...(hasError ? nativeInputErrorStyle : null) }}
       />
     );
   }
