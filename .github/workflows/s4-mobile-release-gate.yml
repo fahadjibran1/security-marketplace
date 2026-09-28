@@ -55,40 +55,102 @@ jobs:
       - name: Type-check Guard Mobile
         run: npm run build:frontend
 
-      # A bundle exports perfectly happily with a style that crashes the browser, so the export alone
-      # never proved the web app renders. These two render real elements and exercise the journey.
-      - name: Verify web style safety
-        run: npm run test:web-style
+      # ── Core configuration and session (TECH-DEBT-CI-01) ──────────────────────
+      # The mobile build inventory found every recent Android build pointing at the STAGING API, so
+      # "latest build" and "sees production data" were not the same thing. This executes the real
+      # resolver, which is what decides that.
+      - name: Verify API base URL resolution
+        run: npm run test:api-base-url
 
-      - name: Verify shift creation entry point
-        run: npm run test:shift-entry
+      # Real UAT saw intermittent 401s (UAT-CONN-01 / UAT-AUTH-01). These two execute the real request(),
+      # refreshAccessToken() and logout() against a scripted fetch, so the single-flight guarantee, the
+      # one-retry rule and "401 and only 401 clears the session" are proven rather than assumed.
+      - name: Verify auth token refresh
+        run: npm run test:auth-refresh
+
+      - name: Verify session expiry handling
+        run: npm run test:session-expiry
+
+      # ── Role boundaries and navigation ────────────────────────────────────────
+      # S4 is multi-role and the server role must override the chosen login portal. Also covers stored
+      # session round-tripping, which is how a returning Guard lands back on the right surface.
+      - name: Verify role routing and session restore
+        run: npm run test:role-routing
+
+      # Gated for one narrow reason: canAccessAdminPortal is the only assertion anywhere that a
+      # non-admin role cannot reach the admin portal. The rest of this suite is admin UX that rides
+      # along for free at under two seconds.
+      - name: Verify admin portal role boundary
+        run: npm run test:admin-portal
+
+      # ── Workforce and compliance ──────────────────────────────────────────────
+      # Option 3 is core pilot functionality: the pilot literally begins with a company inviting a guard.
+      - name: Verify workforce invitation UI
+        run: npm run test:workforce-invitations
+
+      # UAT-COMP-01 changed two of this suite's assertions and the previous gate would not have caught
+      # the breakage that change introduced — it was found by running the suite by hand.
+      - name: Verify company compliance workspace
+        run: npm run test:company-compliance
 
       # UAT-DEPLOY-01: the candidate list must separate a real blocker from an unknown, keep Assign
       # disabled while the server says ineligible, and route to the existing Compliance workflow.
       - name: Verify assign compliance guidance
         run: npm run test:assign-compliance
 
-      # UAT-ATT-01: an assigned Guard may Book On early, on time or late — the confirmation for a very
-      # early Book On is a warning, never a block.
-      - name: Verify guard book on
-        run: npm run test:book-on
-
-      # Pilot build provenance: app.json is the authoritative version source, and the pilot profile is an
-      # internal APK on the PRODUCTION API. A tester who cannot name their build cannot report a
-      # frontend defect reliably, and the newest existing build pointed at staging.
-      - name: Verify pilot build provenance
-        run: npm run test:pilot-build
-
       # UAT-COMP-01: compliance expiry dates are entered and displayed as DD/MM/YYYY and converted to ISO
       # at the API boundary. The calendar arithmetic is executed, because Date rolls 31 April into 1 May.
       - name: Verify compliance date handling
         run: npm run test:compliance-date
+
+      # Despite the file name this is the COMPANY-side Guards -> Compliance / Availability one-shot
+      # target — the mechanism the UAT-DEPLOY-01 "Fix Compliance" route depends on.
+      - name: Verify company guard navigation targets
+        run: npm run test:guard-navigation
+
+      # ── Shift operations ──────────────────────────────────────────────────────
+      - name: Verify shift creation entry point
+        run: npm run test:shift-entry
+
+      # Guard profile completeness and vetting labels — a different layer from Book On, which never
+      # looks at whether the Guard's own profile is usable.
+      - name: Verify guard lifecycle labels
+        run: npm run test:guard-lifecycle
+
+      # UAT-ATT-01: an assigned Guard may Book On early, on time or late — the confirmation for a very
+      # early Book On is a warning, never a block.
+      - name: Verify guard book on
+        run: npm run test:book-on
 
       # UAT-ATT-04: the GPS evidence client, executed with only the expo-location boundary stubbed —
       # never the runner's real GPS. Location is acquired only in response to the site's own GPS-required
       # 403, exactly once, and no other refusal triggers it.
       - name: Verify attendance GPS transport
         run: npm run test:gps-transport
+
+      # W3 is pilot-critical. This also pins the dashboard to ONE refresh loop and fails if the frontend
+      # ever grows its own welfare window arithmetic alongside the backend's.
+      - name: Verify live operations welfare presentation
+        run: npm run test:live-operations-welfare
+
+      # ── Screening ─────────────────────────────────────────────────────────────
+      # Protects the Guard screening journey and the locked distinction that Company-Managed deployment
+      # is NOT S4 Screening. Note it also reads backend screening sources, so it doubles as a contract
+      # check across the monorepo.
+      - name: Verify guard screening UI
+        run: npm run test:screening-ui
+
+      # ── Web safety ────────────────────────────────────────────────────────────
+      # A bundle exports perfectly happily with a style that crashes the browser, so the export alone
+      # never proved the web app renders. This renders real elements through react-dom/server.
+      - name: Verify web style safety
+        run: npm run test:web-style
+
+      # ── Build provenance ──────────────────────────────────────────────────────
+      # app.json is the authoritative version source, and the pilot profile is an internal APK on the
+      # PRODUCTION API. A tester who cannot name their build cannot report a frontend defect reliably.
+      - name: Verify pilot build provenance
+        run: npm run test:pilot-build
 
       - name: Verify Expo dependency compatibility
         run: npx expo install --check

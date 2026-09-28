@@ -17,6 +17,16 @@ new Function('exports', 'module', 'require', compiled)(
 
 const { LIVE_API_BASE_URL, resolveApiBaseUrl } = moduleUnderTest.exports;
 
+// The value, not just the precedence. Every assertion below uses LIVE_API_BASE_URL on both sides, so
+// they prove which input wins but would happily pass if the constant itself were repointed at staging —
+// which is the exact confusion the pilot build inventory uncovered. Pin the host explicitly.
+assert.equal(
+  LIVE_API_BASE_URL,
+  'https://security-marketplace-api.onrender.com',
+  'the live API fallback must be the PRODUCTION host, never staging',
+);
+assert.doesNotMatch(LIVE_API_BASE_URL, /staging/i, 'and must never contain staging');
+
 assert.equal(
   resolveApiBaseUrl({
     configuredUrl: LIVE_API_BASE_URL,
