@@ -9,12 +9,9 @@ const ts = require('typescript');
 const root = path.join(__dirname, '..');
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
 
-function loadTs(file) {
-  const out = ts.transpileModule(read(file), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2019 } }).outputText;
-  const mod = { exports: {} };
-  new Function('module', 'exports', 'require', out)(mod, mod.exports, require);
-  return mod.exports;
-}
+// Shared loader: resolves relative imports between pure source modules (compliance-model now imports
+// ukDate at runtime), so this spec keeps executing the real logic rather than a transpiled fragment.
+const { loadTs } = require('./load-ts.cjs');
 
 const sel = loadTs('src/components/company/compliance-selection.ts');
 const model = loadTs('src/components/company/compliance-model.ts');
@@ -351,7 +348,9 @@ const FIXTURE = [
     assert.equal(model.describeVerification(doc(1, 'x', { verified: true, verifiedAt: '2026-08-02T09:00:00Z', verifiedByUserId: 9 }), 7), 'Verified 2 Aug 2026 by user #9');
     assert.equal(model.describeVerification(doc(1, 'x', { verified: false })), null);
     assert.match(drawerBody, /describeVerification\(document, currentUserId\)/);
-    assert.match(drawerBody, /Uploaded \{formatDate\(document\.uploadedAt\)\} · Expiry \{formatDate\(document\.expiryDate\)\}/);
+    // UAT-COMP-01: the upload timestamp keeps the shared long format; the EXPIRY is a company-facing
+    // compliance date and now reads as DD/MM/YYYY.
+    assert.match(drawerBody, /Uploaded \{formatDate\(document\.uploadedAt\)\} · Expiry \{formatUkDate\(document\.expiryDate\)\}/);
   });
 
   await test('MISSING DOCUMENT: shows Missing with Add document for managers and never a Verify action', () => {
@@ -373,7 +372,11 @@ const FIXTURE = [
     assert.match(model.validateUpload({ name: null }), /Choose a document/);
     assert.match(model.validateUpload({ name: 'a.exe', mimeType: 'application/x-msdownload', size: 10 }), /PDF, JPEG\/JPG or PNG/);
     assert.match(model.validateUpload({ name: 'a.pdf', mimeType: 'application/pdf', size: 11 * 1024 * 1024 }), /10 MB/);
-    assert.match(model.validateUpload({ name: 'a.pdf', mimeType: 'application/pdf', size: 5, expiryDate: '31/12/2030' }), /YYYY-MM-DD/);
+    // Still refuses a non-ISO expiry — this is the contract guard on the value about to be sent to the
+    // API. The caller converts DD/MM/YYYY first (UAT-COMP-01), so the message no longer names the
+    // internal format: a user must never be shown YYYY-MM-DD.
+    assert.match(model.validateUpload({ name: 'a.pdf', mimeType: 'application/pdf', size: 5, expiryDate: '31/12/2030' }), /DD\/MM\/YYYY/);
+    assert.doesNotMatch(model.validateUpload({ name: 'a.pdf', mimeType: 'application/pdf', size: 5, expiryDate: '31/12/2030' }), /YYYY-MM-DD/);
     assert.equal(model.validateUpload({ name: 'a.jpg', mimeType: '', size: 5, expiryDate: '2030-12-31' }), null, 'mime falls back to the extension');
     assert.match(drawerBody, /<Section title="Documents">[\s\S]*canManage && uploadOpen/);
   });

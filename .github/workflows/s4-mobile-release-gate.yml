@@ -79,6 +79,11 @@ jobs:
       - name: Verify pilot build provenance
         run: npm run test:pilot-build
 
+      # UAT-COMP-01: compliance expiry dates are entered and displayed as DD/MM/YYYY and converted to ISO
+      # at the API boundary. The calendar arithmetic is executed, because Date rolls 31 April into 1 May.
+      - name: Verify compliance date handling
+        run: npm run test:compliance-date
+
       - name: Verify Expo dependency compatibility
         run: npx expo install --check
 

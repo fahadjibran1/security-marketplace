@@ -12,7 +12,6 @@ import {
   buildBlockers,
   ComplianceRow,
   formatDate,
-  isIsoDate,
   RECORD_TYPES,
   rightToWorkIndicator,
   ScreeningOutcome,
@@ -25,6 +24,13 @@ import {
   validateUpload,
 } from './compliance-model';
 import { documentTypeLabel, getDocumentPresentation } from './compliance-selection';
+import {
+  formatUkDate,
+  isoToUkDate,
+  ukDateToIso,
+  UK_DATE_ERROR,
+  UK_DATE_PLACEHOLDER,
+} from './ukDate';
 import type { PickedDocument } from './complianceDataSource';
 
 const IS_WEB = typeof document !== 'undefined';
@@ -118,14 +124,28 @@ export function ComplianceGuardDrawerBody(props: ComplianceGuardDrawerBodyProps)
   };
 
   const submitUpload = async () => {
-    const problem = validateUpload({ name: uploadFile?.name, mimeType: uploadFile?.mimeType, size: uploadFile?.size ?? 1, expiryDate: uploadExpiry });
+    // The expiry is entered as DD/MM/YYYY and converted here — this is the single boundary between what
+    // the manager types and the ISO date the API expects. The optional field stays optional: blank is
+    // allowed, but anything typed must be a real calendar date.
+    const typedExpiry = uploadExpiry.trim();
+    const isoExpiry = typedExpiry ? ukDateToIso(typedExpiry) : '';
+    if (typedExpiry && isoExpiry === null) {
+      setUploadError(UK_DATE_ERROR);
+      return;
+    }
+    const problem = validateUpload({
+      name: uploadFile?.name,
+      mimeType: uploadFile?.mimeType,
+      size: uploadFile?.size ?? 1,
+      expiryDate: isoExpiry ?? '',
+    });
     if (problem || !uploadFile) {
       setUploadError(problem ?? 'Choose a document to upload.');
       return;
     }
     setUploadBusy(true);
     setUploadError(null);
-    const error = await props.onUploadDocument({ type: uploadType, file: uploadFile, expiryDate: uploadExpiry.trim() });
+    const error = await props.onUploadDocument({ type: uploadType, file: uploadFile, expiryDate: isoExpiry ?? '' });
     setUploadBusy(false);
     if (error) setUploadError(error);
     else setUploadOpen(false);
@@ -148,24 +168,28 @@ export function ComplianceGuardDrawerBody(props: ComplianceGuardDrawerBodyProps)
     setRecordType(type);
     setRecordName(existing?.documentName ?? '');
     setRecordNumber(existing?.documentNumber ?? '');
-    setRecordIssue(existing?.issueDate ?? '');
-    setRecordExpiry(existing?.expiryDate ?? '');
+    // Stored values are ISO; the form is UK, so an existing record opens in the format it is edited in.
+    setRecordIssue(isoToUkDate(existing?.issueDate) ?? '');
+    setRecordExpiry(isoToUkDate(existing?.expiryDate) ?? '');
     setRecordError(null);
     setRecordOpen(true);
   };
 
   const submitRecord = async () => {
     if (!recordName.trim()) return setRecordError('Enter a document name.');
-    if (!isIsoDate(recordExpiry.trim())) return setRecordError('Enter the expiry date as YYYY-MM-DD.');
-    if (recordIssue.trim() && !isIsoDate(recordIssue.trim())) return setRecordError('Enter the issue date as YYYY-MM-DD, or leave it blank.');
+    const isoExpiry = ukDateToIso(recordExpiry.trim());
+    if (isoExpiry === null) return setRecordError(UK_DATE_ERROR);
+    const typedIssue = recordIssue.trim();
+    const isoIssue = typedIssue ? ukDateToIso(typedIssue) : null;
+    if (typedIssue && isoIssue === null) return setRecordError(UK_DATE_ERROR);
     setRecordBusy(true);
     setRecordError(null);
     const error = await props.onSaveRecord({
       type: recordType,
       documentName: recordName.trim(),
       documentNumber: recordNumber.trim() || null,
-      issueDate: recordIssue.trim() || null,
-      expiryDate: recordExpiry.trim(),
+      issueDate: isoIssue,
+      expiryDate: isoExpiry,
     });
     setRecordBusy(false);
     if (error) setRecordError(error);
@@ -212,14 +236,14 @@ export function ComplianceGuardDrawerBody(props: ComplianceGuardDrawerBodyProps)
           {/* ── SIA ───────────────────────────────────────────────────── */}
           <Section title="SIA licence">
             <Row label="Number"><Text style={styles.value}>{summary.siaLicenceNumber || '—'}</Text></Row>
-            <Row label="Expiry"><Text style={styles.value}>{formatDate(summary.siaExpiryDate)}</Text></Row>
+            <Row label="Expiry"><Text style={styles.value}>{formatUkDate(summary.siaExpiryDate)}</Text></Row>
             <Row label="Assessment"><StatusBadge label={sia.label} tone={sia.tone} size="small" /></Row>
           </Section>
 
           {/* ── Right to work ─────────────────────────────────────────── */}
           <Section title="Right to work">
             <Row label="Status"><Text style={styles.value}>{summary.rightToWorkStatus || '—'}</Text></Row>
-            <Row label="Expiry"><Text style={styles.value}>{formatDate(summary.rightToWorkExpiryDate)}</Text></Row>
+            <Row label="Expiry"><Text style={styles.value}>{formatUkDate(summary.rightToWorkExpiryDate)}</Text></Row>
             <Row label="Assessment"><StatusBadge label={rtw.label} tone={rtw.tone} size="small" /></Row>
           </Section>
         </>
@@ -308,7 +332,7 @@ export function ComplianceGuardDrawerBody(props: ComplianceGuardDrawerBodyProps)
                 </View>
                 <Text style={styles.docFile} numberOfLines={1}>{document.originalFileName || 'Private evidence'}</Text>
                 <Text style={styles.meta}>
-                  Uploaded {formatDate(document.uploadedAt)} · Expiry {formatDate(document.expiryDate)}
+                  Uploaded {formatDate(document.uploadedAt)} · Expiry {formatUkDate(document.expiryDate)}
                 </Text>
                 {verification ? <Text style={styles.meta}>{verification}</Text> : null}
                 {!view.uploadComplete ? (
@@ -368,8 +392,16 @@ export function ComplianceGuardDrawerBody(props: ComplianceGuardDrawerBodyProps)
                   <Text style={styles.fileName} numberOfLines={1}>{uploadFile?.name ?? 'No file selected'}</Text>
                 </View>
               </FormField>
-              <FormField label="Expiry date (optional)">
-                <FieldInput value={uploadExpiry} onChangeText={setUploadExpiry} placeholder="YYYY-MM-DD" autoCapitalize="none" />
+              <FormField label="Expiry date (optional)" helperText={`Use ${UK_DATE_PLACEHOLDER}, for example 01/01/2028.`}>
+                <FieldInput
+                  value={uploadExpiry}
+                  // Editing clears a previous complaint, so a stale error cannot sit under a field the
+                  // manager has already corrected — the behaviour that made real UAT feel broken.
+                  onChangeText={(next: string) => { setUploadExpiry(next); if (uploadError) setUploadError(null); }}
+                  placeholder={UK_DATE_PLACEHOLDER}
+                  autoCapitalize="none"
+                  keyboardType="numbers-and-punctuation"
+                />
               </FormField>
               {uploadError ? <Text style={styles.error} accessibilityLiveRegion="polite">{uploadError}</Text> : null}
               <Text style={styles.hint}>The document is stored privately and starts as Pending until someone verifies it.</Text>
@@ -405,7 +437,7 @@ export function ComplianceGuardDrawerBody(props: ComplianceGuardDrawerBodyProps)
                   />
                 </View>
                 <Text style={styles.docFile} numberOfLines={1}>{record.documentName}{record.documentNumber ? ` · ${record.documentNumber}` : ''}</Text>
-                <Text style={styles.meta}>Expiry {formatDate(record.expiryDate)}</Text>
+                <Text style={styles.meta}>Expiry {formatUkDate(record.expiryDate)}</Text>
                 <View style={styles.actions}>
                   <Button label="Update record" variant="secondary" size="sm" onPress={() => openRecord(record.type as RecordType)} />
                 </View>
@@ -434,11 +466,23 @@ export function ComplianceGuardDrawerBody(props: ComplianceGuardDrawerBodyProps)
               <FormField label="Document number (optional)">
                 <FieldInput value={recordNumber} onChangeText={setRecordNumber} />
               </FormField>
-              <FormField label="Issue date (optional)">
-                <FieldInput value={recordIssue} onChangeText={setRecordIssue} placeholder="YYYY-MM-DD" autoCapitalize="none" />
+              <FormField label="Issue date (optional)" helperText={`Use ${UK_DATE_PLACEHOLDER}.`}>
+                <FieldInput
+                  value={recordIssue}
+                  onChangeText={(next: string) => { setRecordIssue(next); if (recordError) setRecordError(null); }}
+                  placeholder={UK_DATE_PLACEHOLDER}
+                  autoCapitalize="none"
+                  keyboardType="numbers-and-punctuation"
+                />
               </FormField>
-              <FormField label="Expiry date" required>
-                <FieldInput value={recordExpiry} onChangeText={setRecordExpiry} placeholder="YYYY-MM-DD" autoCapitalize="none" />
+              <FormField label="Expiry date" required helperText={`Use ${UK_DATE_PLACEHOLDER}, for example 01/01/2028.`}>
+                <FieldInput
+                  value={recordExpiry}
+                  onChangeText={(next: string) => { setRecordExpiry(next); if (recordError) setRecordError(null); }}
+                  placeholder={UK_DATE_PLACEHOLDER}
+                  autoCapitalize="none"
+                  keyboardType="numbers-and-punctuation"
+                />
               </FormField>
               {editingExisting ? <Text style={styles.hint}>Saving replaces the existing {recordType.replace('_', ' ').toLowerCase()} record for this Guard.</Text> : null}
               {recordError ? <Text style={styles.error} accessibilityLiveRegion="polite">{recordError}</Text> : null}

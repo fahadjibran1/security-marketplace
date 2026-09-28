@@ -6,6 +6,7 @@
 // relationship, availability, shift clashes or account approval — so it never uses "Eligible" / "Ready to work".
 
 import type { CompanyGuard, ComplianceRecord, GuardComplianceSummary, GuardDocument } from '../../types/models';
+import { formatUkDate, UK_DATE_ERROR } from './ukDate';
 
 export type ComplianceStatusKey = 'valid' | 'expiring' | 'expired' | 'invalid' | 'unknown';
 export type ComplianceFilter = 'all' | 'valid' | 'expiring' | 'attention' | 'unknown';
@@ -200,7 +201,9 @@ export type Indicator = { label: string; detail?: string; tone: Tone };
 
 function expiryIndicator(expiry: string | null | undefined, now: Date): Indicator {
   const days = daysUntil(expiry, now);
-  const date = formatDate(expiry);
+  // Compliance expiries are company-facing UK dates. formatDate is deliberately left alone: it is
+  // shared with Finance, Coverage, Availability and Contract Pricing.
+  const date = formatUkDate(expiry);
   if (days === null) return { label: 'Invalid date', detail: expiry ? String(expiry) : undefined, tone: 'danger' };
   if (days < 0) return { label: 'Expired', detail: date, tone: 'danger' };
   if (days === 0) return { label: 'Expires today', detail: date, tone: 'warning' };
@@ -241,7 +244,7 @@ export function rightToWorkIndicator(summary: GuardComplianceSummary | null, now
     // An indefinite status normally has no expiry; if one is recorded it is still checked, as the backend does.
     if (summary.rightToWorkExpiryDate) {
       const days = daysUntil(summary.rightToWorkExpiryDate, now);
-      if (days !== null && days < 0) return { label: 'Expired', detail: formatDate(summary.rightToWorkExpiryDate), tone: 'danger' };
+      if (days !== null && days < 0) return { label: 'Expired', detail: formatUkDate(summary.rightToWorkExpiryDate), tone: 'danger' };
     }
     return { label: 'Indefinite', tone: 'success' };
   }
@@ -464,7 +467,10 @@ export function validateUpload(input: { name?: string | null; mimeType?: string;
   if (!input.size || input.size < 1) return 'The selected document is empty or its size is unavailable.';
   if (input.size > MAX_EVIDENCE_BYTES) return 'The selected document exceeds the 10 MB size limit.';
   const expiry = (input.expiryDate ?? '').trim();
-  if (expiry && !isIsoDate(expiry)) return 'Enter the expiry date as YYYY-MM-DD, or leave it blank.';
+  // The caller converts the manager's DD/MM/YYYY entry before reaching here, so this is a contract
+  // guard on the value about to be sent to the API rather than a message a user should ever see. The
+  // wording still avoids ISO, because a user must never be shown the internal format.
+  if (expiry && !isIsoDate(expiry)) return UK_DATE_ERROR;
   return null;
 }
 

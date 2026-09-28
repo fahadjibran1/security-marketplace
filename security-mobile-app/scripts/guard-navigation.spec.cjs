@@ -9,12 +9,8 @@ const ts = require('typescript');
 const root = path.join(__dirname, '..');
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
 
-function loadTs(file) {
-  const out = ts.transpileModule(read(file), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2019 } }).outputText;
-  const mod = { exports: {} };
-  new Function('module', 'exports', 'require', out)(mod, mod.exports, require);
-  return mod.exports;
-}
+// Shared loader (scripts/load-ts.cjs): resolves relative imports between pure source modules.
+const { loadTs: loadTs } = require('./load-ts.cjs');
 
 const nav = loadTs('src/components/company/guard-navigation.ts');
 const model = loadTs('src/components/company/compliance-model.ts');

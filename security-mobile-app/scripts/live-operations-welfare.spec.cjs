@@ -23,17 +23,8 @@ const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
 // ── load the pure presentation module for real ─────────────────────────────────────────────────────
-function loadModule(rel) {
-  const source = read(rel);
-  const js = ts.transpileModule(source, {
-    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
-  }).outputText;
-  const m = new Module(rel, null);
-  m.filename = path.join(ROOT, rel);
-  m.paths = Module._nodeModulePaths(path.dirname(m.filename));
-  m._compile(js, m.filename);
-  return m.exports;
-}
+// Shared loader (scripts/load-ts.cjs): resolves relative imports between pure source modules.
+const { loadTs: loadModule } = require('./load-ts.cjs');
 
 const ops = loadModule('src/components/company/operationsPresentation.ts');
 
