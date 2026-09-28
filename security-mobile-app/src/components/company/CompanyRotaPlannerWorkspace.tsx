@@ -285,6 +285,12 @@ const filterSelectStyle: any = {
 // ── Props ─────────────────────────────────────────────────────────────────────
 
 type CompanyRotaPlannerWorkspaceProps = {
+  /**
+   * One-shot request to open the existing Add Shift drawer, sent by another screen. Each new value is
+   * acted on exactly once; re-renders with an unchanged value do nothing.
+   */
+  createShiftIntent?: number;
+
   // Filters
   plannerClientId: string;
   plannerSiteId: string;
@@ -333,6 +339,7 @@ const DAY_NAMES = [
 // ── Main component ────────────────────────────────────────────────────────────
 
 export function CompanyRotaPlannerWorkspace({
+  createShiftIntent,
   plannerClientId,
   plannerSiteId,
   setPlannerClientId,
@@ -554,6 +561,20 @@ export function CompanyRotaPlannerWorkspace({
     setCreateError(null);
     setCreateOpen(true);
   }, [plannerSiteId, weekCommencing]);
+
+  // Consume an Add Shift intent from another screen exactly once. The token is compared against the
+  // last one handled, so neither a background refresh nor any other re-render can reopen the drawer
+  // after the user has closed it.
+  const handledCreateIntent = React.useRef<number | undefined>(undefined);
+  React.useEffect(() => {
+    // The token starts at zero and only ever increments, so a falsy value means nothing has been
+    // requested. Comparing against undefined instead would treat the initial zero as a request and
+    // open the drawer every time someone simply navigated to the planner.
+    if (!createShiftIntent) return;
+    if (handledCreateIntent.current === createShiftIntent) return;
+    handledCreateIntent.current = createShiftIntent;
+    openCreate();
+  }, [createShiftIntent, openCreate]);
 
   const handleCreate = React.useCallback(async () => {
     const errs: Record<string, string> = {};

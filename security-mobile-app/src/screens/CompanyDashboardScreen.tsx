@@ -1164,6 +1164,14 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
     [user?.companyPermissions, user?.role],
   );
   const canViewCompliance = compliancePermissions.canView;
+  // shifts.manage, resolved the same way the dashboard already resolves guards.manage and
+  // payroll.manage: the session list when present, the legacy owner roles only when it is absent.
+  const canManageShifts = React.useMemo(
+    () => (user?.companyPermissions
+      ? user.companyPermissions.includes("shifts.manage")
+      : (user?.role === "company_admin" || user?.role === "company")),
+    [user?.companyPermissions, user?.role],
+  );
   const guardNavPermissions = React.useMemo(
     () => resolveGuardNavPermissions(user?.companyPermissions, user?.role),
     [user?.companyPermissions, user?.role],
@@ -1213,6 +1221,9 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
   const [complianceRecords, setComplianceRecords] = React.useState<ComplianceRecord[]>([]);
   const [coverageNavigationContext, setCoverageNavigationContext] = React.useState<CoverageNavigationContext | undefined>(undefined);
   const [operationsByShiftId, setOperationsByShiftId] = React.useState<Map<number, ShiftOperationsView>>(new Map());
+  // Increments once per Add Shift request. The planner acts on each new value exactly once, so a
+  // background refresh cannot reopen the drawer the user has closed.
+  const [createShiftIntent, setCreateShiftIntent] = React.useState(0);
   const [selectedSiteId, setSelectedSiteId] = React.useState<number | null>(null);
   const [selectedShiftId, setSelectedShiftId] = React.useState<number | null>(null);
   const [clientForm, setClientForm] = React.useState<ClientFormState>(CLIENT_FORM_EMPTY);
@@ -2381,6 +2392,12 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
     setPlannerSiteId(String(site.id));
     setActiveSection('rota-planner');
   };
+
+  /** Live Operations to the existing Add Shift form in one click. */
+  const handleAddShiftFromLiveOperations = React.useCallback(() => {
+    setActiveSection("rota-planner");
+    setCreateShiftIntent((token) => token + 1);
+  }, []);
 
   const handlePlannerPrevWeek = () => {
     setPlannerWeekCommencing(
@@ -3804,6 +3821,7 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
 
   const renderRotaPlannerSection = () => (
     <CompanyRotaPlannerWorkspace
+      createShiftIntent={createShiftIntent}
       plannerClientId={plannerClientId}
       plannerSiteId={plannerSiteId}
       setPlannerClientId={setPlannerClientId}
@@ -3846,6 +3864,8 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
         urgentOperationalItems={urgentOperationalItems}
         urgentActionItemId={urgentActionItemId}
         liveOperationsFeedback={liveOperationsFeedback}
+        canManageShifts={canManageShifts}
+        onAddShift={handleAddShiftFromLiveOperations}
         liveOperationEnrichedRows={liveOperationEnrichedRows}
         selectedShiftId={selectedShiftId}
         setSelectedShiftId={setSelectedShiftId}

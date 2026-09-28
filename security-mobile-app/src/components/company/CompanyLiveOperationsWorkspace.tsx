@@ -126,6 +126,14 @@ export type SelectedShiftContext = {
 };
 
 export type CompanyLiveOperationsWorkspaceProps = {
+  /**
+   * shifts.manage. Without it the shortcut is not rendered at all, because the backend would refuse
+   * the create anyway and offering the button would only produce a dead end.
+   */
+  canManageShifts: boolean;
+  /** Opens the existing Rota Planner Add Shift drawer. No form lives in this component. */
+  onAddShift: () => void;
+
   // Status counts
   liveShiftsCount: number;
   guardsNotBookedOnCount: number;
@@ -1014,6 +1022,8 @@ function DetailEmpty({ title, desc }: { title: string; desc: string }) {
 // ─── Main component ────────────────────────────────────────────────────────────
 
 export function CompanyLiveOperationsWorkspace({
+  canManageShifts,
+  onAddShift,
   liveShiftsCount,
   guardsNotBookedOnCount,
   activePanicAlertsCount,
@@ -1082,6 +1092,26 @@ export function CompanyLiveOperationsWorkspace({
 
   return (
     <View style={styles.root}>
+
+      {/* ── Header ──────────────────────────────────────────────────────────
+          Add Shift lives here because this is where a control room works. It opens the existing Rota
+          Planner drawer rather than a second form, so there stays exactly one shift-creation path. */}
+      <View style={styles.liveOpsHeaderRow}>
+        <View style={styles.liveOpsHeaderText}>
+          <Text style={styles.liveOpsHeaderTitle}>Live Operations</Text>
+          <Text style={styles.liveOpsHeaderCaption}>Monitor book-ons, Welfare Checks, and the Log Book.</Text>
+        </View>
+        {canManageShifts ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Add Shift"
+            style={({ pressed }: any) => [styles.addShiftBtn, pressed ? styles.addShiftBtnPressed : null, IS_WEB ? WEB_PTR : null]}
+            onPress={onAddShift}
+          >
+            <Text style={styles.addShiftBtnText}>+ Add Shift</Text>
+          </Pressable>
+        ) : null}
+      </View>
 
       {/* ── Feedback banner ─────────────────────────────────────────────── */}
       {liveOperationsFeedback ? (
@@ -1344,6 +1374,41 @@ const styles = StyleSheet.create({
   },
 
   // ── Feedback banner ───────────────────────────────────────────────────────
+  addShiftBtn: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 9,
+    borderRadius: radii.sm,
+    backgroundColor: colors.accentTeal,
+    flexShrink: 0,
+  },
+  addShiftBtnPressed: {
+    opacity: 0.85,
+  },
+  addShiftBtnText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#FFFFFF",
+  },
+  liveOpsHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  liveOpsHeaderText: {
+    flex: 1,
+    gap: 2,
+  },
+  liveOpsHeaderTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: colors.textPrimary,
+  },
+  liveOpsHeaderCaption: {
+    fontSize: 12,
+    color: colors.textSecondary,
+  },
   feedbackBanner: {
     borderRadius: radii.card,
     borderWidth: 1,
