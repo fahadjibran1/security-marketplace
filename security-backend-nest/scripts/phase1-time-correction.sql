@@ -282,14 +282,31 @@ ROLLBACK;
 -- Take a backup first (ops/backup-postgres.sh) and keep the Part A output as the before-image.
 -- ═════════════════════════════════════════════════════════════════════════════════════════════════
 
+-- ENUMERATED FROM PRODUCTION, 2026-09-29, read-only. Snapshot at enumeration time:
+--   59 migrations, latest AddWelfareWindowEvidence1720900000005, PostgreSQL 17.6, TimeZone=UTC
+--   1 site (id 14, Europe/London), 4 rota_slots, 4 shifts, 2 timesheets, 2 attendance_events,
+--   0 daily_logs, 0 safety_alerts, 0 assignments
+--
+-- All 20 candidate values classified A_legacy_wall_clock. Zero B, C, D or E: no ambiguous fall-back
+-- value, no nonexistent spring-forward value, and the one site has a timezone. Every value moves
+-- exactly -60 minutes because all four records fall on 28-29 September 2026, inside BST. Scheduled
+-- durations are unchanged by the correction (110, 60, 120, 120 minutes before and after).
+--
+-- The four other operator-enterable time columns on timesheets — companyApprovedStartAt/EndAt and
+-- clientBillingApprovedStartAt/EndAt — are NULL on every row, so the six columns below are the complete
+-- correction set. Every other naive timestamp column in the schema is a server-stamped recorded or audit
+-- instant (createdAt, submittedAt, verifiedAt, occurredAt, …) and is correct as it stands.
+
 -- BEGIN;
 -- SET LOCAL statement_timeout = '60s';
 --
--- -- B1. Rota slots. One row per approved record, values copied from A3.
+-- -- B1. Rota slots. Values copied verbatim from A3.
 -- WITH approved(id, expect_start, expect_end, new_start, new_end) AS (
 --   VALUES
---     -- (0, timestamp '0001-01-01 00:00', timestamp '0001-01-01 00:00', timestamp '0001-01-01 00:00', timestamp '0001-01-01 00:00')
---     -- ^ replace with the approved rows from A3
+--     (5, timestamp '2026-09-28 11:40', timestamp '2026-09-28 13:30', timestamp '2026-09-28 10:40', timestamp '2026-09-28 12:30'),
+--     (6, timestamp '2026-09-28 13:30', timestamp '2026-09-28 14:30', timestamp '2026-09-28 12:30', timestamp '2026-09-28 13:30'),
+--     (7, timestamp '2026-09-29 11:30', timestamp '2026-09-29 13:30', timestamp '2026-09-29 10:30', timestamp '2026-09-29 12:30'),
+--     (8, timestamp '2026-09-29 11:30', timestamp '2026-09-29 13:30', timestamp '2026-09-29 10:30', timestamp '2026-09-29 12:30')
 -- )
 -- UPDATE rota_slots rs
 -- SET "startAt" = a.new_start, "endAt" = a.new_end
@@ -297,11 +314,17 @@ ROLLBACK;
 -- WHERE rs.id = a.id
 --   AND rs."startAt" = a.expect_start   -- before-image guard: makes a second run a no-op
 --   AND rs."endAt"   = a.expect_end;
+-- -- expect: UPDATE 4
 --
--- -- B2. Shifts, including the positions under a corrected slot and any legacy standalone shift.
+-- -- B2. Shifts — the positions under each corrected slot (shift 12->slot 5, 13->6, 14->7, 15->8).
+-- --     Cancelled and missed shifts are included: their scheduled times are wrong in the same way, and
+-- --     leaving them behind would make historical reporting disagree with the rota it came from.
 -- WITH approved(id, expect_start, expect_end, new_start, new_end) AS (
 --   VALUES
---     -- (0, timestamp '0001-01-01 00:00', timestamp '0001-01-01 00:00', timestamp '0001-01-01 00:00', timestamp '0001-01-01 00:00')
+--     (12, timestamp '2026-09-28 11:40', timestamp '2026-09-28 13:30', timestamp '2026-09-28 10:40', timestamp '2026-09-28 12:30'),
+--     (13, timestamp '2026-09-28 13:30', timestamp '2026-09-28 14:30', timestamp '2026-09-28 12:30', timestamp '2026-09-28 13:30'),
+--     (14, timestamp '2026-09-29 11:30', timestamp '2026-09-29 13:30', timestamp '2026-09-29 10:30', timestamp '2026-09-29 12:30'),
+--     (15, timestamp '2026-09-29 11:30', timestamp '2026-09-29 13:30', timestamp '2026-09-29 10:30', timestamp '2026-09-29 12:30')
 -- )
 -- UPDATE shifts sh
 -- SET start = a.new_start, "end" = a.new_end
@@ -309,12 +332,14 @@ ROLLBACK;
 -- WHERE sh.id = a.id
 --   AND sh.start = a.expect_start
 --   AND sh."end" = a.expect_end;
+-- -- expect: UPDATE 4
 --
--- -- B3. Timesheet copies of the scheduled times — ONLY those A5 reported as provenance_clear.
--- --     Recorded attendance times are deliberately untouched.
+-- -- B3. Timesheet copies of the scheduled times. Both rows were reported provenance_clear by A5 — each
+-- --     still matches the shift it was copied from. Recorded attendance times are NOT touched.
 -- WITH approved(id, expect_start, expect_end, new_start, new_end) AS (
 --   VALUES
---     -- (0, timestamp '0001-01-01 00:00', timestamp '0001-01-01 00:00', timestamp '0001-01-01 00:00', timestamp '0001-01-01 00:00')
+--     (6, timestamp '2026-09-28 13:30', timestamp '2026-09-28 14:30', timestamp '2026-09-28 12:30', timestamp '2026-09-28 13:30'),
+--     (7, timestamp '2026-09-29 11:30', timestamp '2026-09-29 13:30', timestamp '2026-09-29 10:30', timestamp '2026-09-29 12:30')
 -- )
 -- UPDATE timesheets t
 -- SET "scheduledStartAt" = a.new_start, "scheduledEndAt" = a.new_end
@@ -322,7 +347,10 @@ ROLLBACK;
 -- WHERE t.id = a.id
 --   AND t."scheduledStartAt" = a.expect_start
 --   AND t."scheduledEndAt"   = a.expect_end;
+-- -- expect: UPDATE 2
 --
--- -- Verify before committing: re-run Part A. Every approved record must now classify B_already_correct,
--- -- and the class A count must be zero. Then, and only then:
+-- -- Verify before committing: re-run Part A. A2 must report zero A_legacy_wall_clock values and all 20
+-- -- as B_already_correct. Spot-check timesheet 7 / shift 15, whose attendance is a true instant already:
+-- --   corrected scheduled start 2026-09-29 10:30:00 vs check-in 2026-09-29 10:30:00.612451
+-- --   => booked on 0.6 seconds after the scheduled start, instead of the 59m 59s early it reads today.
 -- ROLLBACK; -- change to COMMIT once that check passes.
