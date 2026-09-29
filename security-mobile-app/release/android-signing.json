@@ -28,7 +28,7 @@
   },
   "expectedRelease": {
     "versionName": "1.0.7",
-    "versionCode": 9,
+    "versionCode": 10,
     "minSdkVersion": 24
   },
   "rejectedBuilds": [

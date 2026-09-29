@@ -37,12 +37,19 @@ const easJson = JSON.parse(read('eas.json'));
 
 // ═══════════════════ the controlled version ═══════════════════
 
-test('BUILD-01-APP-VERSION-IS-1-0-7-AND-BUILD-8', () => {
+test('BUILD-01-APP-VERSION-IS-1-0-7-AND-BUILD-10', () => {
   assert.equal(appJson.expo.version, '1.0.7');
-  // Build 8 was rejected for distribution: it carried an EAS-generated signing identity and so could
-  // not update an installed S4 build (UAT-MOB-02). Build 9 is the first DISTRIBUTABLE pilot build.
-  assert.equal(appJson.expo.android.versionCode, 9, 'Build 9 supersedes the rejected Build 8');
-  assert.ok(appJson.expo.android.versionCode > 8, 'above the rejected build');
+  // Build 10 carries the Phase 1 timezone correction. It has to exist as its own build because Build 9
+  // still reads a scheduled time's hour literally out of the ISO string, so once production data holds
+  // true instants Build 9 would display every BST shift an hour early.
+  //
+  // The lineage this number has to clear:
+  //   5  the 1.0.4 installed on the pilot device
+  //   8  rejected for distribution — EAS-generated signing identity, could not update an S4 build
+  //   9  first distributable pilot build, permanent S4 identity
+  assert.equal(appJson.expo.android.versionCode, 10, 'Build 10 carries the Phase 1 timezone correction');
+  assert.ok(appJson.expo.android.versionCode > 9, 'and can update the installed Build 9');
+  assert.ok(appJson.expo.android.versionCode > 8, 'above the rejected Build 8');
   assert.ok(appJson.expo.android.versionCode > 5, 'and above the installed 1.0.4 (versionCode 5)');
 });
 
