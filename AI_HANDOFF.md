@@ -264,6 +264,17 @@ occurrence (`AMBIGUOUS_POLICY = 'earliest-occurrence'`), which covers the site f
 direction for a security rota. Offering the operator the choice needs a form control and an API field.
 The resolver already returns `ambiguous: true` so a caller can warn; nothing surfaces it yet.
 
+**TECH-DEBT-CI-02 — test database environment variables fail OPEN.**
+Several backend specs resolve their database from an environment variable that, when unset, silently
+falls back to a hard-coded local Supabase instance at `127.0.0.1:54322` instead of refusing to run. At
+least `APP_BOOT_DATABASE_URL` (`scripts/app-boot.spec.ts`) and `ROTA_SLOT_TEST_DB_URL`
+(`scripts/shift-offer-lifecycle.spec.ts`, `scripts/company-guard-lifecycle.spec.ts`,
+`scripts/rota-slot-service.spec.ts`, `scripts/rota-slot-api.spec.ts`). The CI workflow sets neither, so
+`test:app-boot` inside `test:release` certifies against whatever happens to be at that address rather
+than the gate's own database — a green result that did not test what it claims. Locally it also points
+test writes at an unrelated developer stack. These should fail closed with a clear message naming the
+variable. Not fixed in Phase 1.
+
 **Not yet applied: existing rows.** Shift rows written before Phase 1 hold a site-local wall clock in a
 column that is now read as an instant, so a pre-existing BST shift reads one hour later than intended
 until it is corrected. No backfill has been run and no migration was created.
