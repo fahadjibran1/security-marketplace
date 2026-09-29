@@ -200,7 +200,10 @@ function main() {
     return output;
   };
 
-  const signerOutput = run(tools.apksigner, ['verify', '--print-certs', apkPath]);
+  // --verbose is REQUIRED, not cosmetic: without it apksigner prints only the certificate block and
+  // omits the "Verifies" line entirely, so the signature-validity check could never see a pass. That
+  // failed safe (a good APK looked unverified) but it would have blocked every release.
+  const signerOutput = run(tools.apksigner, ['verify', '--verbose', '--print-certs', apkPath]);
   const badgingOutput = run(tools.aapt2, ['dump', 'badging', apkPath]);
 
   const actual = {

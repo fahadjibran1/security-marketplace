@@ -218,6 +218,13 @@ test('SIGNER-11-THE-CHECK-IS-A-POST-BUILD-STEP-NOT-A-PRETEND-GATE-STEP', () => {
   assert.match(source, /--signer-only/, 'supports comparing an arbitrary APK to the pinned identity');
   assert.match(source, /process\.exit\(1\)/, 'and exits non-zero on mismatch');
   assert.match(source, /shell: true/, 'launches apksigner.bat correctly on Windows');
+  // Without --verbose apksigner omits the "Verifies" line entirely, so the validity check could never
+  // pass. Pinned because the symptom (a good APK reported unverified) looks like a bad artefact.
+  assert.match(
+    source,
+    /\['verify', '--verbose', '--print-certs', apkPath\]/,
+    'apksigner is asked for the verbose output that contains the Verifies line',
+  );
 });
 
 console.log(`\n${passed} signer provenance checks passed`);
