@@ -75,6 +75,7 @@ import {
   Shift,
   Timesheet,
 } from '../types/models';
+import { formatInstantDate, formatInstantTime } from '../services/siteTime';
 import { colors } from '../theme';
 
 interface GuardDashboardScreenProps {
@@ -109,49 +110,17 @@ function normalizeShiftLifecycleStatus(status?: string | null) {
   }
 }
 
-function getLiteralDateTimeParts(value?: string | null) {
-  if (!value) return null;
-  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s](\d{2}):(\d{2})(?::(\d{2}))?)?/);
-  if (!match) return null;
-  return {
-    year: match[1],
-    month: match[2],
-    day: match[3],
-    hour: match[4] || null,
-    minute: match[5] || null,
-  };
+// A shift's start and end, and every attendance timestamp, are TRUE INSTANTS. These labels used to read
+// the hour and minute literally out of the ISO string, which made an 11:30 BST shift stored as 10:30Z
+// read "10:30" on the guard's phone. They now render in the SITE's zone where the caller knows it,
+// falling back to this device's — a guard standing at the site is in it either way.
+
+function formatDateLabel(value?: string | null, timeZone?: string | null) {
+  return formatInstantDate(value, timeZone, 'TBC');
 }
 
-function formatDateLabel(value?: string | null) {
-  if (!value) return 'TBC';
-  const literalParts = getLiteralDateTimeParts(value);
-  if (literalParts) {
-    return new Date(
-      Number(literalParts.year),
-      Number(literalParts.month) - 1,
-      Number(literalParts.day),
-    ).toLocaleDateString(undefined, {
-      weekday: 'short',
-      day: '2-digit',
-      month: 'short',
-      year: 'numeric',
-    });
-  }
-  return new Date(value).toLocaleDateString(undefined, {
-    weekday: 'short',
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-  });
-}
-
-function formatTimeLabel(value?: string | null) {
-  if (!value) return 'TBC';
-  const literalParts = getLiteralDateTimeParts(value);
-  if (literalParts?.hour && literalParts?.minute) {
-    return `${literalParts.hour}:${literalParts.minute}`;
-  }
-  return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+function formatTimeLabel(value?: string | null, timeZone?: string | null) {
+  return formatInstantTime(value, timeZone, 'TBC');
 }
 
 /** Plain-language urgency from booked start only (presentation). */
@@ -348,7 +317,10 @@ function getGuardPhaseStatusLine(
     case 'offer_pending':
       return 'A shift is waiting on your answer — open Offers or use Main action below.';
     case 'before_shift':
-      return beforeShiftStatusLine(formatTimeLabel(shift.start), formatDateLabel(shift.start));
+      return beforeShiftStatusLine(
+        formatTimeLabel(shift.start, shift.site?.timezone),
+        formatDateLabel(shift.start, shift.site?.timezone),
+      );
     case 'shift_window_check_in': {
       if (nowMs >= new Date(shift.end).getTime()) {
         return 'This shift window has ended. Check in only if control has asked you to, or contact them.';
@@ -1706,7 +1678,7 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
       const decision = bookOnDecision({
         startMs: new Date(currentHomeShift.start).getTime(),
         nowMs: Date.now(),
-        formatStart: (ms) => formatTimeLabel(new Date(ms).toISOString()),
+        formatStart: (ms) => formatTimeLabel(new Date(ms).toISOString(), currentHomeShift.site?.timezone),
       });
       if (decision.kind === 'confirm') {
         setEarlyBookOn({ shiftId: currentHomeShift.id, decision });
@@ -1876,9 +1848,9 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
                           <View style={styles.flexGrow}>
                             <Text style={[styles.siteName, styles.guardSiteTitle]}>{currentHomeShift.siteName}</Text>
                             <View style={styles.guardTimeStack}>
-                              <Text style={styles.shiftDate}>{formatDateLabel(currentHomeShift.start)}</Text>
+                              <Text style={styles.shiftDate}>{formatDateLabel(currentHomeShift.start, currentHomeShift.site?.timezone)}</Text>
                               <Text style={styles.shiftTime}>
-                                {formatTimeLabel(currentHomeShift.start)} – {formatTimeLabel(currentHomeShift.end)}
+                                {formatTimeLabel(currentHomeShift.start, currentHomeShift.site?.timezone)} – {formatTimeLabel(currentHomeShift.end, currentHomeShift.site?.timezone)}
                               </Text>
                             </View>
                             {statusNorm === 'in_progress' ? (
@@ -1919,7 +1891,7 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
                               <Text style={styles.liveStatusLabel}>Checked in</Text>
                               <Text style={styles.liveStatusValue}>
                                 {currentHomeShiftAttendance?.checkInAt
-                                  ? formatTimeLabel(currentHomeShiftAttendance.checkInAt)
+                                  ? formatTimeLabel(currentHomeShiftAttendance.checkInAt, currentHomeShift.site?.timezone)
                                   : 'Pending'}
                               </Text>
                             </View>
@@ -2154,9 +2126,9 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
                   >
                     <View style={styles.flexGrow}>
                       <Text style={styles.historyPastSite}>{shift.siteName}</Text>
-                      <Text style={styles.historyPastDate}>{formatDateLabel(shift.start)}</Text>
+                      <Text style={styles.historyPastDate}>{formatDateLabel(shift.start, shift.site?.timezone)}</Text>
                       <Text style={styles.historyPastTime}>
-                        {formatTimeLabel(shift.start)} – {formatTimeLabel(shift.end)}
+                        {formatTimeLabel(shift.start, shift.site?.timezone)} – {formatTimeLabel(shift.end, shift.site?.timezone)}
                       </Text>
                     </View>
                     <StatusBadge label={guardHistoryShiftStatusLabel(shift.status)} tone={shiftStatusTone(shift.status)} />
@@ -3255,9 +3227,9 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
               </View>
               <View style={styles.summaryHero}>
                 <Text style={styles.summaryHeroSite}>{historySummaryShift.siteName}</Text>
-                <Text style={styles.summaryHeroDate}>{formatDateLabel(historySummaryShift.start)}</Text>
+                <Text style={styles.summaryHeroDate}>{formatDateLabel(historySummaryShift.start, historySummaryShift.site?.timezone)}</Text>
                 <Text style={styles.summaryHeroTime}>
-                  {formatTimeLabel(historySummaryShift.start)} – {formatTimeLabel(historySummaryShift.end)}
+                  {formatTimeLabel(historySummaryShift.start, historySummaryShift.site?.timezone)} – {formatTimeLabel(historySummaryShift.end, historySummaryShift.site?.timezone)}
                 </Text>
                 <StatusBadge label={guardHistoryShiftStatusLabel(historySummaryShift.status)} tone={shiftStatusTone(historySummaryShift.status)} />
               </View>

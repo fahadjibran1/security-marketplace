@@ -6,6 +6,7 @@ import { StatePanel } from '../components/StatePanel';
 import { StatusBadge } from '../components/StatusBadge';
 import { formatApiErrorMessage, submitTimesheet, updateTimesheet } from '../services/api';
 import { AttendanceEvent, Timesheet } from '../types/models';
+import { formatInstantDate, formatInstantDateTime, formatInstantTime } from '../services/siteTime';
 import { colors, control, radii, spacing, typography } from '../theme';
 
 export interface GuardTimesheetsScreenProps {
@@ -20,24 +21,17 @@ function showAlert(title: string, message: string) {
   if (typeof window !== 'undefined' && typeof window.alert === 'function') { window.alert(`${title}\n\n${message}`); return; }
   Alert.alert(title, message);
 }
-function getLiteralDateTimeParts(value?: string | null) {
-  if (!value) return null;
-  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s](\d{2}):(\d{2})(?::(\d{2}))?)?/);
-  if (!match) return null;
-  return { year: match[1], month: match[2], day: match[3], hour: match[4] || null, minute: match[5] || null };
+// Scheduled and booked times are TRUE INSTANTS, not digits to be read out of the ISO string — see
+// src/services/siteTime.ts. Rendered in the shift's site zone where known, otherwise this device's.
+function formatDateLabel(value?: string | null, timeZone?: string | null) {
+  return formatInstantDate(value, timeZone);
 }
-function formatDateLabel(value?: string | null) {
-  if (!value) return '—';
-  const p = getLiteralDateTimeParts(value);
-  const date = p ? new Date(Number(p.year), Number(p.month) - 1, Number(p.day)) : new Date(value);
-  return date.toLocaleDateString(undefined, { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
+function formatTimeLabel(value?: string | null, timeZone?: string | null) {
+  return formatInstantTime(value, timeZone);
 }
-function formatTimeLabel(value?: string | null) {
-  if (!value) return '—';
-  const p = getLiteralDateTimeParts(value);
-  return p?.hour && p?.minute ? `${p.hour}:${p.minute}` : new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+function formatDateTimeLabel(value?: string | null, timeZone?: string | null) {
+  return formatInstantDateTime(value, timeZone);
 }
-function formatDateTimeLabel(value?: string | null) { return value ? `${formatDateLabel(value)} · ${formatTimeLabel(value)}` : '—'; }
 function normalizeStatus(status?: string | null) { return (status || '').trim().toLowerCase(); }
 function statusLabel(status?: string | null) { const s = normalizeStatus(status); return ({draft:'Draft',submitted:'Submitted',approved:'Approved',rejected:'Rejected',returned:'Returned'} as Record<string,string>)[s] || (status || 'Unknown').replace(/_/g,' '); }
 function statusMeaning(status: string) {
@@ -74,6 +68,8 @@ function TimesheetCard({ timesheet, attendanceSlice, onReload, onNotify, onTimes
 
   const schedStart = timesheet.scheduledStartAt ?? timesheet.shift?.start ?? null;
   const schedEnd = timesheet.scheduledEndAt ?? timesheet.shift?.end ?? null;
+  // A shift is read on the clock of the site it is at, not the clock of wherever the phone happens to be.
+  const siteZone = timesheet.shift?.site?.timezone ?? null;
   const checkIn = timesheet.actualCheckInAt ?? attendanceSlice?.checkInAt ?? null;
   const checkOut = timesheet.actualCheckOutAt ?? attendanceSlice?.checkOutAt ?? null;
   const claimed = parseHours(hoursText);
@@ -98,10 +94,10 @@ function TimesheetCard({ timesheet, attendanceSlice, onReload, onNotify, onTimes
   }
 
   return <View style={styles.card}>
-    <View style={styles.headerRow}><View style={styles.flex}><Text style={styles.siteTitle}>{timesheet.shift?.siteName || `Shift #${timesheet.shiftId}`}</Text><Text style={styles.schedule}>{formatDateLabel(schedStart)} · {formatTimeLabel(schedStart)}–{formatTimeLabel(schedEnd)}</Text></View><StatusBadge label={statusLabel(timesheet.approvalStatus)} /></View>
+    <View style={styles.headerRow}><View style={styles.flex}><Text style={styles.siteTitle}>{timesheet.shift?.siteName || `Shift #${timesheet.shiftId}`}</Text><Text style={styles.schedule}>{formatDateLabel(schedStart, siteZone)} · {formatTimeLabel(schedStart, siteZone)}–{formatTimeLabel(schedEnd, siteZone)}</Text></View><StatusBadge label={statusLabel(timesheet.approvalStatus)} /></View>
     <Text style={styles.meaning}>{statusMeaning(status)}</Text>
 
-    <View style={styles.infoGrid}><Info label="Booked on" value={formatDateTimeLabel(checkIn)} /><Info label="Booked off" value={formatDateTimeLabel(checkOut)} /></View>
+    <View style={styles.infoGrid}><Info label="Booked on" value={formatDateTimeLabel(checkIn, siteZone)} /><Info label="Booked off" value={formatDateTimeLabel(checkOut, siteZone)} /></View>
 
     <View style={styles.field}><Text style={styles.label}>{editable ? 'Hours you are claiming' : 'Claimed hours'}</Text>{editable ? <TextInput style={styles.input} value={hoursText} onChangeText={setHoursText} keyboardType="decimal-pad" placeholder="e.g. 8 or 7.5" placeholderTextColor={colors.fieldPlaceholder} editable={!saving && !submitting} /> : <Text style={styles.readonly}>{Number(timesheet.hoursWorked) || 0} h</Text>}</View>
     <View style={styles.field}><Text style={styles.label}>Note</Text>{editable ? <TextInput style={[styles.input, styles.noteInput]} value={noteText} onChangeText={setNoteText} placeholder="Optional note for payroll or reviewer" placeholderTextColor={colors.fieldPlaceholder} multiline textAlignVertical="top" editable={!saving && !submitting} /> : <Text style={styles.readonly}>{timesheet.guardNote?.trim() || '—'}</Text>}</View>

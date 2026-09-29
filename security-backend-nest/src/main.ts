@@ -6,10 +6,15 @@ import { NextFunction, Request, Response } from 'express';
 import { AppModule } from './app.module';
 import { getCorsOrigins, getTrustProxySetting, isSwaggerEnabled } from './config/runtime-env';
 import { configureHttpSecurity } from './config/http-security';
+import { requireUtcProcessTimezone } from './config/process-timezone';
 
 const logger = new Logger('Bootstrap');
 
 async function bootstrap() {
+  // Before anything else: the database driver reads and writes our naive timestamp columns using this
+  // process's own clock, so a non-UTC clock corrupts every stored instant without erroring anywhere.
+  const timezone = requireUtcProcessTimezone();
+
   const app = await NestFactory.create(AppModule);
   const port = Number(process.env.PORT || 3000);
   const enableSwagger = isSwaggerEnabled(process.env);
@@ -78,6 +83,7 @@ async function bootstrap() {
       port,
       environment: process.env.NODE_ENV || 'development',
       swaggerEnabled: enableSwagger,
+      processTimeZone: timezone.resolvedTimeZone,
     }),
   );
 }

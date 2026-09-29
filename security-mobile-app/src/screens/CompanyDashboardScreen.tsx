@@ -15,6 +15,13 @@ import { CompanyAvailabilityWorkspace } from '../components/company/CompanyAvail
 import { CompanyComplianceWorkspace } from '../components/company/CompanyComplianceWorkspace';
 import { resolveCompliancePermissions } from '../components/company/compliance-model';
 import {
+  DEFAULT_SITE_TIME_ZONE,
+  formatInstantTime,
+  resolveDisplayZone,
+  siteLocalEndToInstant,
+  siteLocalToInstant,
+} from '../services/siteTime';
+import {
   canOpenGuardWorkspace,
   clearGuardTarget,
   consumeGuardTarget,
@@ -366,65 +373,49 @@ function formatDateTimeLabel(value?: string | null) {
       });
 }
 
-function getLiteralDateTimeParts(value?: string | null) {
-  if (!value) {
-    return null;
-  }
+// Scheduled and recorded times are TRUE INSTANTS. These used to read the hour and minute literally out
+// of the ISO string, so an 11:30 BST shift stored as 10:30Z displayed as "10:30". They now render in a
+// real zone — the site's where the caller knows it, otherwise this device's.
 
-  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s](\d{2}):(\d{2})(?::(\d{2}))?)?/);
-  if (!match) {
-    return null;
-  }
-
-  return {
-    year: match[1],
-    month: match[2],
-    day: match[3],
-    hour: match[4] || null,
-    minute: match[5] || null,
-  };
-}
-
-function formatDateLabel(value?: string | null) {
+function formatDateLabel(value?: string | null, timeZone?: string | null) {
   if (!value) {
     return 'Not set';
   }
 
-  const literalParts = getLiteralDateTimeParts(value);
-  if (literalParts) {
-    return `${literalParts.day}/${literalParts.month}/${literalParts.year}`;
+  // A plain YYYY-MM-DD is a calendar date, not an instant, and must not be shifted by any zone.
+  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (dateOnly) {
+    return `${dateOnly[3]}/${dateOnly[2]}/${dateOnly[1]}`;
   }
 
-  const date = new Date(value);
-  return Number.isNaN(date.getTime())
-    ? value
-    : date.toLocaleDateString(UK_LOCALE, {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
-      });
+  const instant = new Date(value);
+  if (Number.isNaN(instant.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat(UK_LOCALE, {
+    timeZone: resolveDisplayZone(timeZone),
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  }).format(instant);
 }
 
-function formatTimeLabel(value?: string | null) {
+function formatTimeLabel(value?: string | null, timeZone?: string | null) {
   if (!value) {
     return 'Not set';
   }
 
+  // Already a bare clock reading (an operating-hours field, say) — nothing to convert.
   if (/^\d{2}:\d{2}$/.test(value)) {
     return value;
   }
 
-  const literalParts = getLiteralDateTimeParts(value);
-  if (literalParts?.hour && literalParts?.minute) {
-    return `${literalParts.hour}:${literalParts.minute}`;
+  if (Number.isNaN(new Date(value).getTime())) {
+    return value;
   }
 
-  const date = new Date(value);
-  if (!Number.isNaN(date.getTime())) {
-    return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
-  }
-
-  return value;
+  return formatInstantTime(value, timeZone, 'Not set');
 }
 
 function formatStatusLabel(value?: string | null) {
@@ -806,9 +797,6 @@ function ShiftStatusBadge({ status }: { status?: string | null }) {
   );
 }
 
-function buildIsoDateTime(date: string, time: string) {
-  return `${date}T${time}:00`;
-}
 
 function parseDateInput(value: string) {
   if (!isValidDateInput(value)) {
@@ -826,17 +814,22 @@ function formatDateInput(date: Date) {
   return `${year}-${month}-${day}`;
 }
 
-function buildShiftDateTimes(date: string, startTime: string, endTime: string) {
-  const startAt = buildIsoDateTime(date, startTime);
-  const endDate =
-    endTime <= startTime
-      ? formatDateInput(addDays(parseDateInput(date) || new Date(`${date}T00:00:00`), 1))
-      : date;
-
-  return {
-    startAt,
-    endAt: buildIsoDateTime(endDate, endTime),
-  };
+/**
+ * Scheduled start/end for the legacy day-grid rota save, as TRUE INSTANTS in the site's timezone.
+ *
+ * This used to emit an offset-less `2026-09-29T11:30:00`, which the server read as its own local time.
+ * That is the same defect fixed in the Rota Planner, so it is fixed the same way rather than left as a
+ * second, quieter way to store a wall clock. Returns null with a message when the operator's time cannot
+ * exist at that site — the hour skipped when the clocks go forward.
+ */
+function buildShiftDateTimes(
+  date: string, startTime: string, endTime: string, timeZone: string,
+): { startAt: string; endAt: string } | { error: string } {
+  const start = siteLocalToInstant(date, startTime, timeZone);
+  const end = siteLocalEndToInstant(date, startTime, endTime, timeZone);
+  if (!start.ok) return { error: start.message };
+  if (!end.ok) return { error: end.message };
+  return { startAt: start.iso, endAt: end.iso };
 }
 
 function isValidDateInput(value: string) {
@@ -1213,6 +1206,25 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
   const [clients, setClients] = React.useState<Client[]>([]);
   const [sites, setSites] = React.useState<Site[]>([]);
   const [shifts, setShifts] = React.useState<Shift[]>([]);
+  /**
+   * The IANA timezone of each site, from the site records already loaded for this company.
+   *
+   * The Rota Planner converts what the operator types into a true instant, and that conversion must be
+   * anchored to the SITE, not to the device: a manager working from Dubai scheduling a London site still
+   * means London time. Sites are created with a timezone (defaulting to Europe/London), but the field is
+   * nullable on older rows, so fall back to the platform default rather than to the device zone.
+   */
+  const siteTimeZoneById = React.useMemo(
+    () => new Map(sites.map((site) => [site.id, site.timezone || DEFAULT_SITE_TIME_ZONE])),
+    [sites],
+  );
+
+  const resolveSiteZone = React.useCallback(
+    (siteId?: number | null) =>
+      (siteId == null ? undefined : siteTimeZoneById.get(Number(siteId))) ?? DEFAULT_SITE_TIME_ZONE,
+    [siteTimeZoneById],
+  );
+
   const [guards, setGuards] = React.useState<GuardProfile[]>([]);
   const [companyGuards, setCompanyGuards] = React.useState<CompanyGuard[]>([]);
   const [guardInvitations, setGuardInvitations] = React.useState<CompanyGuardInvitation[]>([]);
@@ -1778,7 +1790,7 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
         guardName: shift.guardName || 'No confirmed guard',
         category: 'uncovered_shift',
         issueType: 'Uncovered shift',
-        message: `${formatDateLabel(shift.start)} · ${formatTimeLabel(shift.start)}-${formatTimeLabel(shift.end)} · ${formatStatusLabel(shift.coverageState || shift.coverageStatus)}`,
+        message: `${formatDateLabel(shift.start, resolveSiteZone(shift.siteId))} · ${formatTimeLabel(shift.start, resolveSiteZone(shift.siteId))}-${formatTimeLabel(shift.end, resolveSiteZone(shift.siteId))} · ${formatStatusLabel(shift.coverageState || shift.coverageStatus)}`,
         occurredAt: shift.start,
       });
     });
@@ -2169,6 +2181,7 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
         .map((site) => ({ label: site.name, value: String(site.id) })),
     [plannerClientId, sites],
   );
+
 
   const plannerWeekDays = React.useMemo(() => buildWeekDays(plannerWeekCommencing), [plannerWeekCommencing]);
 
@@ -2595,7 +2608,13 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
         }
 
         const guardsRequired = Math.max(1, toNumber(row.guardsRequired) || 1);
-        const { startAt, endAt } = buildShiftDateTimes(row.date, row.startTime, row.endTime);
+        const times = buildShiftDateTimes(
+          row.date, row.startTime, row.endTime, resolveSiteZone(plannerSite.id),
+        );
+        if ('error' in times) {
+          throw new Error(`${formatDateLabel(row.date)}: ${times.error}`);
+        }
+        const { startAt, endAt } = times;
         const plannedStatus = normalizePlannerStatus(row.status, row.assignedGuardId);
         const existingIds = [...row.sourceShiftIds];
 
@@ -3603,7 +3622,7 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
                       <View style={styles.dashLiveRowLeft}>
                         <Text style={styles.dashListRowTitle} numberOfLines={1}>{shift.site?.name || shift.siteName}</Text>
                         <Text style={styles.dashListRowMeta}>
-                          {formatTimeLabel(shift.start)}–{formatTimeLabel(shift.end)}
+                          {formatTimeLabel(shift.start, resolveSiteZone(shift.siteId))}–{formatTimeLabel(shift.end, resolveSiteZone(shift.siteId))}
                         </Text>
                       </View>
                       <Text style={styles.dashLiveRowStatus} numberOfLines={1}>
@@ -3790,7 +3809,7 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
                   >
                     <Text style={styles.dashListRowTitle} numberOfLines={1}>{shift.site?.name || shift.siteName}</Text>
                     <Text style={styles.dashListRowMeta}>
-                      {formatDateLabel(shift.start)} · {formatTimeLabel(shift.start)}–{formatTimeLabel(shift.end)}
+                      {formatDateLabel(shift.start, resolveSiteZone(shift.siteId))} · {formatTimeLabel(shift.start, resolveSiteZone(shift.siteId))}–{formatTimeLabel(shift.end, resolveSiteZone(shift.siteId))}
                     </Text>
                   </Pressable>
                 ))
@@ -3863,6 +3882,7 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
       onFixCompliance={handleFixGuardCompliance}
       onGetComplianceSummaries={listCompanyGuardComplianceStatuses}
       legacyShiftsByDate={legacyShiftsByDate}
+      resolveSiteZone={resolveSiteZone}
     />
   );
 

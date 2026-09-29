@@ -133,6 +133,14 @@ jobs:
       - name: Verify live operations welfare presentation
         run: npm run test:live-operations-welfare
 
+      # UAT Round 1 Finding 4: a scheduled shift time is a true INSTANT in the SITE's timezone, never a
+      # wall clock and never the operator's device zone. Executes the real conversion — DST transitions,
+      # overnight shifts, the rejected spring-forward hour — and sweeps the source for the two conventions
+      # that caused the defect: an offset-less ISO on a write path, and reading the hour literally out of an
+      # ISO string on a display path.
+      - name: Verify scheduled times are true instants
+        run: npm run test:site-time
+
       # ── Screening ─────────────────────────────────────────────────────────────
       # Protects the Guard screening journey and the locked distinction that Company-Managed deployment
       # is NOT S4 Screening. Note it also reads backend screening sources, so it doubles as a contract

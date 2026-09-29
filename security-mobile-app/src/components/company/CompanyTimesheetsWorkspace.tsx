@@ -3,6 +3,7 @@ import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, Text
 
 import { formatApiErrorMessage, getCompanyWeeklyApprovals, getEligibleTimesheets, submitWeeklyApproval, updateTimesheet } from '../../services/api';
 import { ClientWeeklyApprovalSummary, EligibleTimesheetRow, Timesheet } from '../../types/models';
+import { formatInstantTime, resolveDisplayZone } from '../../services/siteTime';
 import { colors } from '../../theme';
 
 type WorkspaceLevel = 'overview' | 'detail';
@@ -91,55 +92,36 @@ type GuardGroup = {
 const UK_LOCALE = 'en-GB';
 const GBP_CURRENCY = 'GBP';
 
-function getLiteralDateTimeParts(value?: string | null) {
-  if (!value) return null;
-  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s](\d{2}):(\d{2})(?::(\d{2}))?)?/);
-  if (!match) return null;
-  return {
-    year: match[1],
-    month: match[2],
-    day: match[3],
-    hour: match[4] || null,
-    minute: match[5] || null,
-  };
-}
+// Scheduled and recorded timesheet times are TRUE INSTANTS. These used to lift the hour and minute out
+// of the ISO string, so a shift stored as 10:30Z read "10:30" instead of the 11:30 BST it actually was —
+// and the week bucketing below inherited the same skew. Everything here now goes through real instants.
 
+/** An instant, or local midnight for a bare YYYY-MM-DD (a calendar date, which carries no instant). */
 function parseDateValue(value?: string | null) {
   if (!value) return null;
-  const literalParts = getLiteralDateTimeParts(value);
-  if (literalParts) {
-    const date = new Date(
-      Number(literalParts.year),
-      Number(literalParts.month) - 1,
-      Number(literalParts.day),
-      Number(literalParts.hour || '0'),
-      Number(literalParts.minute || '0'),
-    );
-    return Number.isNaN(date.getTime()) ? null : date;
-  }
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-function formatDateLabel(value?: string | null) {
+function formatDateLabel(value?: string | null, timeZone?: string | null) {
   const date = parseDateValue(value);
   if (!date) return 'Not set';
-  return date.toLocaleDateString(UK_LOCALE, { day: '2-digit', month: 'short', year: 'numeric' });
+  return new Intl.DateTimeFormat(UK_LOCALE, {
+    timeZone: resolveDisplayZone(timeZone),
+    day: '2-digit', month: 'short', year: 'numeric',
+  }).format(date);
 }
 
-function formatTimeLabel(value?: string | null) {
+function formatTimeLabel(value?: string | null, timeZone?: string | null) {
   if (!value) return 'Not set';
   if (/^\d{2}:\d{2}$/.test(value)) return value;
-  const literalParts = getLiteralDateTimeParts(value);
-  if (literalParts?.hour && literalParts?.minute) return `${literalParts.hour}:${literalParts.minute}`;
-  const date = parseDateValue(value);
-  if (!date) return value;
-  return date.toLocaleTimeString(UK_LOCALE, { hour: '2-digit', minute: '2-digit', hour12: false });
+  if (!parseDateValue(value)) return value;
+  return formatInstantTime(value, timeZone, 'Not set');
 }
 
-function formatDateTimeLabel(value?: string | null) {
+function formatDateTimeLabel(value?: string | null, timeZone?: string | null) {
   if (!value) return 'Not recorded';
-  return `${formatDateLabel(value)} | ${formatTimeLabel(value)}`;
+  return `${formatDateLabel(value, timeZone)} | ${formatTimeLabel(value, timeZone)}`;
 }
 
 function normalizeStatus(value?: string | null) {
@@ -455,6 +437,8 @@ export function CompanyTimesheetsWorkspace({
         const hourlyRate = getTimesheetRate(timesheet);
         const claimedAmount = getAmountForHours(toHours(timesheet.hoursWorked), hourlyRate);
         const approvedAmount = getAmountForHours(getApprovedHoursValue(timesheet), hourlyRate);
+        // Site clock, not browser clock — a controller in another country still reads the site time.
+        const siteZone = timesheet.shift?.site?.timezone ?? null;
         return {
           timesheet,
           siteId,
@@ -464,9 +448,9 @@ export function CompanyTimesheetsWorkspace({
           displayStatus,
           searchText: [siteName, guardName, timesheet.id, timesheet.shiftId, timesheet.guardNote || '', timesheet.companyNote || ''].join(' ').toLowerCase(),
           shiftDate,
-          shiftDateLabel: formatDateLabel(scheduledStart || timesheet.createdAt),
-          scheduledLabel: `${formatTimeLabel(scheduledStart)} - ${formatTimeLabel(scheduledEnd)}`,
-          attendanceLabel: `${formatTimeLabel(timesheet.actualCheckInAt)} / ${formatTimeLabel(timesheet.actualCheckOutAt)}`,
+          shiftDateLabel: formatDateLabel(scheduledStart || timesheet.createdAt, siteZone),
+          scheduledLabel: `${formatTimeLabel(scheduledStart, siteZone)} - ${formatTimeLabel(scheduledEnd, siteZone)}`,
+          attendanceLabel: `${formatTimeLabel(timesheet.actualCheckInAt, siteZone)} / ${formatTimeLabel(timesheet.actualCheckOutAt, siteZone)}`,
           hourlyRate,
           claimedAmount,
           approvedAmount,

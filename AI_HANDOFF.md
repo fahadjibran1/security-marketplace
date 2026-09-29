@@ -228,6 +228,46 @@ If there is a shift date bug:
 
 Do NOT patch date issues blindly in the UI.
 
+### The time model (locked, Phase 1)
+
+A scheduled shift time is an **INSTANT**, not a wall clock.
+
+- The operator types a date and a clock time. The **site's IANA timezone** converts that to an instant —
+  never the operator's device, never the server's clock.
+- What is sent, stored, compared and returned is that one instant. Scheduled-time API fields **must**
+  carry an explicit offset (`+01:00`, `Z`). An offset-less date-time is rejected with a 400 that says so.
+- Display converts the instant back to the site's timezone, so the operator reads what they typed. Never
+  render an instant by reading the digits out of the ISO string, and never by forcing `timeZone: 'UTC'`.
+- Clock changes come from the IANA database. There is no "subtract an hour" anywhere: it is wrong in
+  winter, wrong outside the UK, and wrong on the two transition days.
+  - A time that does not exist (clocks forward) is **rejected**, not moved.
+  - A time that happens twice (clocks back) takes the **earliest occurrence**, deterministically.
+- Attendance timestamps are unchanged by this: the server stamps `occurredAt` when the event arrives.
+
+One implementation on each side, and both are executed in tests:
+`security-mobile-app/src/services/siteTime.ts` and `security-backend-nest/src/common/site-time.ts`
+(`npm run test:site-time`, `npm run test:scheduled-instant`).
+
+### Open time tech debt
+
+**TECH-DEBT-TIME-01 — scheduled and attendance columns are `timestamp without time zone`.**
+The node-postgres driver reads and writes those columns using the *process's* local clock, so the stored
+instant is only correct because the API process runs with `TZ=UTC` (set explicitly on the Render service).
+`src/config/process-timezone.ts` asserts this at boot and **refuses to start** otherwise, because a wrong
+clock corrupts every stored instant silently rather than erroring. The real fix is `timestamptz`, which
+does not depend on the process clock at all; that needs a migration with a reviewed backfill and has not
+been done. Do not remove the boot assertion while the columns are naive.
+
+**TECH-DEBT-TIME-02 — no operator choice on the fall-back hour.**
+On the night the clocks go back, a time like 01:30 occurs twice. The platform always picks the earlier
+occurrence (`AMBIGUOUS_POLICY = 'earliest-occurrence'`), which covers the site for longer — the safer
+direction for a security rota. Offering the operator the choice needs a form control and an API field.
+The resolver already returns `ambiguous: true` so a caller can warn; nothing surfaces it yet.
+
+**Not yet applied: existing rows.** Shift rows written before Phase 1 hold a site-local wall clock in a
+column that is now read as an instant, so a pre-existing BST shift reads one hour later than intended
+until it is corrected. No backfill has been run and no migration was created.
+
 ---
 
 ## Company Scoping Rules

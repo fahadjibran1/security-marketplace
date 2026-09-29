@@ -21,6 +21,7 @@ import {
   ClientWeeklyApprovalStatus,
   CompanyApprovalDetail,
 } from '../types/models';
+import { siteLocalToInstant } from '../services/siteTime';
 import { colors } from '../theme';
 
 type ScreenMode = 'list' | 'detail';
@@ -63,21 +64,18 @@ function isoToHhmm(iso: string | null | undefined, tz = 'Europe/London'): string
   } catch { return ''; }
 }
 
-function hhmmToIso(shiftDate: string, hhmm: string, refIso: string, tz = 'Europe/London'): string {
-  if (!shiftDate || !hhmm || !refIso) return '';
-  try {
-    const ref = new Date(refIso);
-    const localTime = ref.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: tz });
-    const [refLH, refLM] = localTime.split(':').map(Number);
-    const offsetMins = (refLH * 60 + refLM) - (ref.getUTCHours() * 60 + ref.getUTCMinutes());
-    const [h, m] = hhmm.split(':').map(Number);
-    if (isNaN(h) || isNaN(m)) return '';
-    const utcMins = (h * 60 + m) - offsetMins;
-    const utcH = ((Math.floor(utcMins / 60)) % 24 + 24) % 24;
-    const utcM = ((utcMins % 60) + 60) % 60;
-    const pad = (n: number) => String(n).padStart(2, '0');
-    return `${shiftDate}T${pad(utcH)}:${pad(utcM)}:00.000Z`;
-  } catch { return ''; }
+/**
+ * A corrected billable start/end, as a true instant in the SITE's zone.
+ *
+ * This used to derive the offset by hand from a reference instant and then wrap the UTC hour with %24,
+ * which silently kept the original calendar date when the conversion crossed midnight — 00:30 BST became
+ * 23:30Z on the same day instead of the day before. The shared conversion has the IANA database behind it
+ * and handles transition days, so there is one implementation of this arithmetic in the app rather than two.
+ */
+function hhmmToIso(shiftDate: string, hhmm: string, tz = 'Europe/London'): string {
+  if (!shiftDate || !hhmm) return '';
+  const resolved = siteLocalToInstant(shiftDate, hhmm, tz);
+  return resolved.ok ? new Date(resolved.instant).toISOString() : '';
 }
 
 interface Props {
@@ -174,8 +172,8 @@ export function CompanyWeeklyApprovalsScreen({ onSelect }: Props) {
     if (!selectedId || billingCorrectTimesheetId == null) return;
     const reason = billingCorrectionReason.trim();
     if (!billingStartInput.trim() || !billingEndInput.trim() || !reason) return;
-    const startIso = hhmmToIso(billingShiftDate, billingStartInput.trim(), billingRefStartIso, billingTz);
-    const endIso = hhmmToIso(billingShiftDate, billingEndInput.trim(), billingRefStartIso, billingTz);
+    const startIso = hhmmToIso(billingShiftDate, billingStartInput.trim(), billingTz);
+    const endIso = hhmmToIso(billingShiftDate, billingEndInput.trim(), billingTz);
     if (!startIso || !endIso) return;
     setActionLoading(true);
     setActionError(null);

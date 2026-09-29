@@ -1,9 +1,10 @@
-import { IsDateString } from 'class-validator';
+import { IsInstantString } from '../../common/validators/is-instant-string.validator';
 
 export class ChangeRotaSlotTimeDto {
-  @IsDateString()
+  // Scheduled times are instants, carrying the site's offset. See IsInstantString.
+  @IsInstantString()
   startAt!: string;
 
-  @IsDateString()
+  @IsInstantString()
   endAt!: string;
 }

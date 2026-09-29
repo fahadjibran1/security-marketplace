@@ -17,6 +17,7 @@ import { CompanyPermission } from '../company-membership/company-membership-type
 import { GuardProfile } from '../guard-profile/entities/guard-profile.entity';
 import { Shift } from '../shift/entities/shift.entity';
 import { Site } from '../site/entities/site.entity';
+import { hasExplicitUtcOffset } from '../common/site-time';
 import { RotaSlot } from './entities/rota-slot.entity';
 import {
   AssignMultipleResult,
@@ -59,6 +60,18 @@ export class RotaSlotService {
   }
 
   private parseDates(startAt: string, endAt: string): { start: Date; end: Date } {
+    // Scheduled times must carry an explicit offset. The DTO enforces this at the HTTP edge; repeating it
+    // here covers any internal caller, because `new Date('2026-09-29T11:30:00')` would otherwise resolve
+    // against the server clock and store a time the operator never chose.
+    for (const [field, value] of [['startAt', startAt], ['endAt', endAt]] as const) {
+      if (!hasExplicitUtcOffset(String(value ?? ''))) {
+        throw new BadRequestException(
+          `${field} must include an explicit UTC offset (for example 2026-09-29T11:30:00+01:00). ` +
+            'A date-time without one is a wall clock, not a point in time.',
+        );
+      }
+    }
+
     const start = new Date(startAt);
     const end = new Date(endAt);
     if (isNaN(start.getTime()) || isNaN(end.getTime())) {

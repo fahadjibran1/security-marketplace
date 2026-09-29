@@ -7,6 +7,15 @@ import { ConfirmationDialog } from '../ui/ConfirmationDialog';
 import { Drawer } from '../ui/Drawer';
 import { FormField, FieldInput, FieldTextarea } from '../ui/FormField';
 import { assessCandidate, assignFailureMessage, candidateBlockerHeading } from './assignEligibility';
+import {
+  formatSiteDateInput,
+  formatSiteDateLong,
+  formatSiteTime,
+  isSiteDateInput,
+  isSiteTimeInput,
+  siteLocalEndToInstant,
+  siteLocalToInstant,
+} from '../../services/siteTime';
 import type { CandidateAssessment } from './assignEligibility';
 import { buildBlockers } from './compliance-model';
 import type {
@@ -55,69 +64,26 @@ export type LegacyShiftRow = {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function formatUtcTime(iso: string): string {
-  try {
-    return new Date(iso).toLocaleTimeString([], {
-      hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC',
-    });
-  } catch {
-    return iso.slice(11, 16);
-  }
+// ── Site-local scheduling helpers (Phase 1) ───────────────────────────────────
+//
+// These used to force timeZone: 'UTC' and send a naive wall clock, which made the Company view
+// self-consistent while every instant-based consumer — Guard Book On, the welfare engine, the stale
+// boundary — was out by the site's UTC offset. Everything now goes through services/siteTime.ts, so a
+// scheduled time is a true instant and is displayed back in the SITE's timezone, never the device's.
+
+function formatSiteClock(iso: string, timeZone: string): string {
+  return formatSiteTime(iso, timeZone);
 }
 
-function formatUtcDate(iso: string): string {
-  try {
-    return new Date(iso).toLocaleDateString([], {
-      weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC',
-    });
-  } catch {
-    return iso.slice(0, 10);
-  }
+function formatSiteDay(iso: string, timeZone: string): string {
+  return formatSiteDateLong(iso, timeZone);
 }
 
-/** Build a naive ISO datetime (no Z) from a local date string + HH:MM time. */
-function buildNaiveIso(date: string, time: string): string {
-  return `${date}T${time}:00`;
-}
-
-/** Build endAt naive ISO, advancing the date by 1 day when end ≤ start (overnight shift). */
-function buildNaiveIsoEnd(date: string, startTime: string, endTime: string): string {
-  if (endTime <= startTime) {
-    const [y, m, d] = date.split('-').map(Number);
-    const next = new Date(y, m - 1, d + 1);
-    const nd = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}-${String(next.getDate()).padStart(2, '0')}`;
-    return `${nd}T${endTime}:00`;
-  }
-  return `${date}T${endTime}:00`;
-}
-
-function isValidDate(s: string): boolean {
-  return /^\d{4}-\d{2}-\d{2}$/.test(s) && !isNaN(new Date(s).getTime());
-}
-
-function isValidTime(s: string): boolean {
-  return /^\d{2}:\d{2}$/.test(s);
-}
-
-/** Convert ISO timestamp to HH:MM for the time input (UTC display). */
-function isoToTimeDisplay(iso: string): string {
-  try {
-    return new Date(iso).toLocaleTimeString([], {
-      hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC',
-    });
-  } catch {
-    return '';
-  }
-}
-
-/** Convert ISO timestamp to YYYY-MM-DD for the date input (UTC date). */
-function isoToDateDisplay(iso: string): string {
-  try {
-    return new Date(iso).toISOString().slice(0, 10);
-  } catch {
-    return '';
-  }
-}
+// The form-field validators live in services/siteTime.ts, next to the conversion they gate. This file
+// imports react-native, so nothing in it can be executed by the spec suite; a validator that quietly
+// stopped matching would block every save with no test to notice.
+const isValidDate = isSiteDateInput;
+const isValidTime = isSiteTimeInput;
 
 // ── Coverage state tokens ─────────────────────────────────────────────────────
 
@@ -342,6 +308,12 @@ type CompanyRotaPlannerWorkspaceProps = {
   onCancelPosition: (slotId: number, shiftId: number) => Promise<RotaSlotDetail>;
   onCancelSlot: (slotId: number) => Promise<void>;
   onGetEligibleGuards: (shiftId: number) => Promise<EligibleGuardRow[]>;
+  /**
+   * The SITE's IANA timezone, from already-loaded site data. Scheduling is entered and displayed in
+   * this zone and converted to a true instant; the operator's device timezone is never the authority,
+   * so a manager abroad still schedules a London site in London time.
+   */
+  resolveSiteZone: (siteId?: number | null) => string;
 
   // ── Guard compliance blockers (UAT-DEPLOY-01) ───────────────────────────────
   // The eligibility projection reports THAT compliance failed and carries only the first reason
@@ -396,6 +368,7 @@ export function CompanyRotaPlannerWorkspace({
   onCancelPosition,
   onCancelSlot,
   onGetEligibleGuards,
+  resolveSiteZone,
   canFixCompliance = false,
   canManageCompliance = false,
   onFixCompliance,
@@ -474,6 +447,9 @@ export function CompanyRotaPlannerWorkspace({
     ? `${plannerWeekDays[0].shortLabel} – ${plannerWeekDays[6].shortLabel}`
     : `${weekCommencing} – ${weekEnding}`;
 
+  // Every schedule time in the open drawer is read in the SITE's zone, never the operator's device.
+  const slotDetailZone = resolveSiteZone(slotDetail?.siteId);
+
   // Editing is allowed only for future slots that are not cancelled
   const canEdit = slotDetail
     && slotDetail.coveragePhase === 'future'
@@ -515,9 +491,10 @@ export function CompanyRotaPlannerWorkspace({
 
   const enterEditMode = React.useCallback(() => {
     if (!slotDetail) return;
-    setEditDate(isoToDateDisplay(slotDetail.startAt));
-    setEditStart(isoToTimeDisplay(slotDetail.startAt));
-    setEditEnd(isoToTimeDisplay(slotDetail.endAt));
+    const editZone = slotDetailZone;
+    setEditDate(formatSiteDateInput(slotDetail.startAt, editZone));
+    setEditStart(formatSiteTime(slotDetail.startAt, editZone));
+    setEditEnd(formatSiteTime(slotDetail.endAt, editZone));
     setEditGuards(String(slotDetail.counts.required));
     setEditCheckCall(String(slotDetail.checkCallIntervalMinutes));
     setEditTitle(slotDetail.title ?? '');
@@ -529,17 +506,22 @@ export function CompanyRotaPlannerWorkspace({
   const handleSaveEdits = React.useCallback(async () => {
     if (!slotDetail) return;
     const changes: RotaSlotChanges = {};
-    const origDate  = isoToDateDisplay(slotDetail.startAt);
-    const origStart = isoToTimeDisplay(slotDetail.startAt);
-    const origEnd   = isoToTimeDisplay(slotDetail.endAt);
+    const zone = slotDetailZone;
+    const origDate  = formatSiteDateInput(slotDetail.startAt, zone);
+    const origStart = formatSiteTime(slotDetail.startAt, zone);
+    const origEnd   = formatSiteTime(slotDetail.endAt, zone);
 
     if (editDate !== origDate || editStart !== origStart || editEnd !== origEnd) {
       if (!isValidDate(editDate) || !isValidTime(editStart) || !isValidTime(editEnd)) {
         setEditError('Date and times must be valid.');
         return;
       }
-      changes.startAt = buildNaiveIso(editDate, editStart);
-      changes.endAt   = buildNaiveIsoEnd(editDate, editStart, editEnd);
+      const startAt = siteLocalToInstant(editDate, editStart, zone);
+      const endAt = siteLocalEndToInstant(editDate, editStart, editEnd, zone);
+      if (!startAt.ok) { setEditError(startAt.message); return; }
+      if (!endAt.ok) { setEditError(endAt.message); return; }
+      changes.startAt = startAt.iso;
+      changes.endAt   = endAt.iso;
     }
 
     const newCount = parseInt(editGuards, 10);
@@ -623,15 +605,24 @@ export function CompanyRotaPlannerWorkspace({
     if (createCheckCall && (isNaN(checkNum!) || checkNum! < 5)) {
       errs.checkCall = 'Check-call interval must be at least 5 minutes.';
     }
-    if (Object.keys(errs).length > 0) { setCreateErrors(errs); return; }
+
+    // Convert the site-local entry to a true instant BEFORE validation completes, so a clock time that
+    // does not exist (the hour skipped when the clocks go forward) is reported against the field rather
+    // than silently rolled to a different time.
+    const createZone = resolveSiteZone(createSiteId ? Number(createSiteId) : null);
+    const createStartAt = siteLocalToInstant(createDate, createStart, createZone);
+    const createEndAt = siteLocalEndToInstant(createDate, createStart, createEnd, createZone);
+    if (!createStartAt.ok && !errs.start) errs.start = createStartAt.message;
+    if (!createEndAt.ok && !errs.end) errs.end = createEndAt.message;
+    if (Object.keys(errs).length > 0 || !createStartAt.ok || !createEndAt.ok) { setCreateErrors(errs); return; }
 
     setCreating(true);
     setCreateError(null);
     try {
       const payload: RotaCreatePayload = {
         siteId: parseInt(createSiteId, 10),
-        startAt: buildNaiveIso(createDate, createStart),
-        endAt: buildNaiveIsoEnd(createDate, createStart, createEnd),
+        startAt: createStartAt.iso,
+        endAt: createEndAt.iso,
         requiredGuardCount: guardsNum,
         ...(checkNum !== undefined ? { checkCallIntervalMinutes: checkNum } : {}),
         ...(createTitle.trim() ? { title: createTitle.trim() } : {}),
@@ -928,6 +919,7 @@ export function CompanyRotaPlannerWorkspace({
           onSwitchToDayList={() => setViewMode('day-list')}
           onOpenSlot={openSlot}
           onOpenCreate={(sid, date) => openCreate(date, sid)}
+          resolveSiteZone={resolveSiteZone}
         />
       )}
 
@@ -983,6 +975,7 @@ export function CompanyRotaPlannerWorkspace({
                       <Fragment key={`slot-${cell.slotId}`}>
                         <RotaSlotRow
                           cell={cell}
+                          timeZone={resolveSiteZone(cell.siteId)}
                           isLast={idx === slots.length - 1 && legacyRows.length === 0}
                           onPress={() => openSlot(cell.slotId)}
                         />
@@ -1040,7 +1033,7 @@ export function CompanyRotaPlannerWorkspace({
         title={slotDetail?.siteName ?? 'Loading…'}
         subtitle={
           slotDetail
-            ? `${formatUtcDate(slotDetail.startAt)} · ${formatUtcTime(slotDetail.startAt)}–${formatUtcTime(slotDetail.endAt)}`
+            ? `${formatSiteDay(slotDetail.startAt, slotDetailZone)} · ${formatSiteClock(slotDetail.startAt, slotDetailZone)}–${formatSiteClock(slotDetail.endAt, slotDetailZone)}`
             : ''
         }
         compact
@@ -1069,6 +1062,7 @@ export function CompanyRotaPlannerWorkspace({
       >
         <SlotDetailBody
           detail={slotDetail}
+          timeZone={slotDetailZone}
           loading={loadingSlot}
           editMode={editMode}
           canEdit={!!canEdit}
@@ -1142,14 +1136,16 @@ export function CompanyRotaPlannerWorkspace({
 // ── RotaSlot row ──────────────────────────────────────────────────────────────
 
 function RotaSlotRow({
-  cell, isLast, onPress,
+  cell, isLast, onPress, timeZone,
 }: {
   cell: FlatSlotCell;
   isLast: boolean;
   onPress: () => void;
+  /** The IANA zone of the slot's site — the clock the operator expects to read. */
+  timeZone: string;
 }) {
   const tok     = slotStateTokens(cell.coverageState);
-  const timeStr = `${formatUtcTime(cell.startAt)}–${formatUtcTime(cell.endAt)}`;
+  const timeStr = `${formatSiteClock(cell.startAt, timeZone)}–${formatSiteClock(cell.endAt, timeZone)}`;
 
   // Awaiting is not covered — use phase-appropriate numerator
   const coverNum   = cell.coveragePhase === 'live' ? cell.counts.onShift
@@ -1350,9 +1346,10 @@ function SlotDetailBody({
   bulkOpen, onOpenBulk, onCloseBulk,
   bulkMap, onBulkMapChange, bulkGuards, bulkGuardSearch, onBulkGuardSearch,
   bulkLoadingShiftId, onLoadBulkGuards, onBulkAssign, bulkSaving, bulkResult,
-  onRequestCancelPosition,
+  onRequestCancelPosition, timeZone,
 }: {
   detail: RotaSlotDetail | null;
+  timeZone: string;
   loading: boolean;
   editMode: boolean;
   canEdit: boolean;
@@ -1461,9 +1458,9 @@ function SlotDetailBody({
           </>
         ) : (
           <>
-            <DetailRow label="Date"  value={formatUtcDate(detail.startAt)} />
-            <DetailRow label="Start" value={formatUtcTime(detail.startAt)} />
-            <DetailRow label="End"   value={formatUtcTime(detail.endAt)} />
+            <DetailRow label="Date"  value={formatSiteDay(detail.startAt, timeZone)} />
+            <DetailRow label="Start" value={formatSiteClock(detail.startAt, timeZone)} />
+            <DetailRow label="End"   value={formatSiteClock(detail.endAt, timeZone)} />
             {detail.title && <DetailRow label="Title" value={detail.title} />}
           </>
         )}
@@ -2172,13 +2169,14 @@ const DAY_COL_W  = 155;
 
 /** Compact slot card rendered inside a matrix cell. */
 function SlotMiniCard({
-  cell, onPress,
+  cell, onPress, timeZone,
 }: {
   cell: RotaSlotCell;
   onPress: () => void;
+  timeZone: string;
 }) {
   const tok = slotStateTokens(cell.coverageState);
-  const timeStr = `${formatUtcTime(cell.startAt)}–${formatUtcTime(cell.endAt)}`;
+  const timeStr = `${formatSiteClock(cell.startAt, timeZone)}–${formatSiteClock(cell.endAt, timeZone)}`;
 
   // Named positions: confirmed (ready / in_progress / completed)
   const confirmedPos = cell.positions.filter(
@@ -2282,10 +2280,11 @@ function SlotMiniCard({
 
 /** One cell of the Site Week matrix — empty or contains slot cards. */
 function MatrixDayCell({
-  slots, siteId, date, onOpenSlot, onOpenCreate, isLastCol,
+  slots, siteId, date, onOpenSlot, onOpenCreate, isLastCol, timeZone,
 }: {
   slots: RotaSlotCell[];
   siteId: number;
+  timeZone: string;
   date: string;
   onOpenSlot: (slotId: number) => void;
   onOpenCreate: (siteId: string, date: string) => void;
@@ -2301,6 +2300,7 @@ function MatrixDayCell({
             <Fragment key={slot.slotId}>
               <SlotMiniCard
                 cell={slot}
+                timeZone={timeZone}
                 onPress={() => onOpenSlot(slot.slotId)}
               />
             </Fragment>
@@ -2334,9 +2334,10 @@ function MatrixDayCell({
 
 /** The full Site × Week planning matrix. */
 function SiteWeekMatrix({
-  sites, plannerWeekDays, legacyCount, onSwitchToDayList, onOpenSlot, onOpenCreate,
+  sites, plannerWeekDays, legacyCount, onSwitchToDayList, onOpenSlot, onOpenCreate, resolveSiteZone,
 }: {
   sites: RotaSiteWeekRow[];
+  resolveSiteZone: (siteId?: number | null) => string;
   plannerWeekDays: PlannerWeekDay[];
   legacyCount: number;
   onSwitchToDayList: () => void;
@@ -2403,6 +2404,7 @@ function SiteWeekMatrix({
                     <MatrixDayCell
                       slots={slots}
                       siteId={site.siteId}
+                      timeZone={resolveSiteZone(site.siteId)}
                       date={day.date}
                       onOpenSlot={onOpenSlot}
                       onOpenCreate={onOpenCreate}

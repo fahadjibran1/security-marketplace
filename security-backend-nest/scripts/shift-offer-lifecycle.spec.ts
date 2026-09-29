@@ -555,8 +555,8 @@ async function test15GuardScenario(ds: DataSource) {
   // Create a 15-guard slot
   const slot = await rotaSvc.createSlot(companyUser, {
     siteId: site.id,
-    startAt: '2027-06-20T08:00:00',
-    endAt: '2027-06-20T16:00:00',
+    startAt: '2027-06-20T08:00:00Z',
+    endAt: '2027-06-20T16:00:00Z',
     requiredGuardCount: 15,
     title: '15-guard event',
   });
@@ -667,8 +667,8 @@ async function testCoverageAfterAccept(ds: DataSource) {
 
   const slot = await rotaSvc.createSlot(companyUser, {
     siteId: site.id,
-    startAt: '2027-06-25T08:00:00',
-    endAt: '2027-06-25T16:00:00',
+    startAt: '2027-06-25T08:00:00Z',
+    endAt: '2027-06-25T16:00:00Z',
     requiredGuardCount: 3,
   });
   const shifts = await ds.getRepository(Shift).find({ where: { rotaSlotId: slot.id }, order: { id: 'ASC' } });
@@ -711,8 +711,8 @@ async function testCoverageAfterReject(ds: DataSource) {
 
   const slot = await rotaSvc.createSlot(companyUser, {
     siteId: site.id,
-    startAt: '2027-06-26T08:00:00',
-    endAt: '2027-06-26T16:00:00',
+    startAt: '2027-06-26T08:00:00Z',
+    endAt: '2027-06-26T16:00:00Z',
     requiredGuardCount: 3,
   });
   const shifts = await ds.getRepository(Shift).find({ where: { rotaSlotId: slot.id }, order: { id: 'ASC' } });
@@ -760,8 +760,8 @@ async function testDirectCreateClash(ds: DataSource) {
     () => svc.createForUser(makeCompanyUser(), {
       guardId: guard.id,
       siteId: site.id,
-      start: '2027-06-28T10:00:00',
-      end: '2027-06-28T18:00:00',
+      start: '2027-06-28T10:00:00Z',
+      end: '2027-06-28T18:00:00Z',
       companyId: company.id,
     }),
     (err: any) => {
@@ -819,8 +819,8 @@ async function testRotaAssignmentRegression(ds: DataSource) {
 
   const slot = await rotaSvc.createSlot(user, {
     siteId: site.id,
-    startAt: '2027-07-01T08:00:00',
-    endAt: '2027-07-01T16:00:00',
+    startAt: '2027-07-01T08:00:00Z',
+    endAt: '2027-07-01T16:00:00Z',
     requiredGuardCount: 1,
   });
   const [shift] = await ds.getRepository(Shift).find({ where: { rotaSlotId: slot.id } });
@@ -858,8 +858,8 @@ async function testReplaceRejected(ds: DataSource) {
 
   const slot = await rotaSvc.createSlot(user, {
     siteId: site.id,
-    startAt: '2027-08-01T08:00:00',
-    endAt: '2027-08-01T16:00:00',
+    startAt: '2027-08-01T08:00:00Z',
+    endAt: '2027-08-01T16:00:00Z',
     requiredGuardCount: 3,
   });
   const shifts = await ds.getRepository(Shift).find({ where: { rotaSlotId: slot.id }, order: { id: 'ASC' } });
@@ -896,8 +896,8 @@ async function testReplaceHistory(ds: DataSource) {
 
   const slot = await rotaSvc.createSlot(user, {
     siteId: site.id,
-    startAt: '2027-08-02T08:00:00',
-    endAt: '2027-08-02T16:00:00',
+    startAt: '2027-08-02T08:00:00Z',
+    endAt: '2027-08-02T16:00:00Z',
     requiredGuardCount: 2,
   });
   const shifts = await ds.getRepository(Shift).find({ where: { rotaSlotId: slot.id }, order: { id: 'ASC' } });
@@ -923,8 +923,8 @@ async function testReplaceAssign(ds: DataSource) {
 
   const slot = await rotaSvc.createSlot(user, {
     siteId: site.id,
-    startAt: '2027-08-03T08:00:00',
-    endAt: '2027-08-03T16:00:00',
+    startAt: '2027-08-03T08:00:00Z',
+    endAt: '2027-08-03T16:00:00Z',
     requiredGuardCount: 2,
   });
   const shifts = await ds.getRepository(Shift).find({ where: { rotaSlotId: slot.id }, order: { id: 'ASC' } });
@@ -950,8 +950,8 @@ async function testReplaceAccept(ds: DataSource) {
 
   const slot = await rotaSvc.createSlot(companyUser, {
     siteId: site.id,
-    startAt: '2027-08-04T08:00:00',
-    endAt: '2027-08-04T16:00:00',
+    startAt: '2027-08-04T08:00:00Z',
+    endAt: '2027-08-04T16:00:00Z',
     requiredGuardCount: 3,
   });
   const shifts = await ds.getRepository(Shift).find({ where: { rotaSlotId: slot.id }, order: { id: 'ASC' } });
@@ -992,8 +992,8 @@ async function testReplaceConcurrency(ds: DataSource) {
 
   const slot = await rotaSvc.createSlot(user, {
     siteId: site.id,
-    startAt: '2027-08-05T08:00:00',
-    endAt: '2027-08-05T16:00:00',
+    startAt: '2027-08-05T08:00:00Z',
+    endAt: '2027-08-05T16:00:00Z',
     requiredGuardCount: 2,
   });
   const shifts = await ds.getRepository(Shift).find({ where: { rotaSlotId: slot.id }, order: { id: 'ASC' } });
@@ -1036,8 +1036,8 @@ async function testReplaceWrongStatus(ds: DataSource) {
 
   const slot = await rotaSvc.createSlot(user, {
     siteId: site.id,
-    startAt: '2027-08-06T08:00:00',
-    endAt: '2027-08-06T16:00:00',
+    startAt: '2027-08-06T08:00:00Z',
+    endAt: '2027-08-06T16:00:00Z',
     requiredGuardCount: 5,
   });
   const shifts = await ds.getRepository(Shift).find({ where: { rotaSlotId: slot.id }, order: { id: 'ASC' } });
@@ -1089,8 +1089,8 @@ async function testReplaceTenant(ds: DataSource) {
 
   const slot = await rotaSvcA.createSlot(userA, {
     siteId: siteA.id,
-    startAt: '2027-08-07T08:00:00',
-    endAt: '2027-08-07T16:00:00',
+    startAt: '2027-08-07T08:00:00Z',
+    endAt: '2027-08-07T16:00:00Z',
     requiredGuardCount: 2,
   });
   const shifts = await ds.getRepository(Shift).find({ where: { rotaSlotId: slot.id }, order: { id: 'ASC' } });
@@ -1121,8 +1121,8 @@ async function testCoverageBefore(ds: DataSource) {
 
   const slot = await rotaSvc.createSlot(user, {
     siteId: site.id,
-    startAt: '2027-08-10T08:00:00',
-    endAt: '2027-08-10T16:00:00',
+    startAt: '2027-08-10T08:00:00Z',
+    endAt: '2027-08-10T16:00:00Z',
     requiredGuardCount: 3,
   });
   const shifts = await ds.getRepository(Shift).find({ where: { rotaSlotId: slot.id }, order: { id: 'ASC' } });
@@ -1153,8 +1153,8 @@ async function testCoverageAwaiting(ds: DataSource) {
 
   const slot = await rotaSvc.createSlot(user, {
     siteId: site.id,
-    startAt: '2027-08-11T08:00:00',
-    endAt: '2027-08-11T16:00:00',
+    startAt: '2027-08-11T08:00:00Z',
+    endAt: '2027-08-11T16:00:00Z',
     requiredGuardCount: 3,
   });
   const shifts = await ds.getRepository(Shift).find({ where: { rotaSlotId: slot.id }, order: { id: 'ASC' } });
@@ -1190,8 +1190,8 @@ async function testCoverageComplete(ds: DataSource) {
 
   const slot = await rotaSvc.createSlot(user, {
     siteId: site.id,
-    startAt: '2027-08-12T08:00:00',
-    endAt: '2027-08-12T16:00:00',
+    startAt: '2027-08-12T08:00:00Z',
+    endAt: '2027-08-12T16:00:00Z',
     requiredGuardCount: 3,
   });
   const shifts = await ds.getRepository(Shift).find({ where: { rotaSlotId: slot.id }, order: { id: 'ASC' } });
@@ -1230,8 +1230,8 @@ async function testReqIncreaseHistory(ds: DataSource) {
 
   const slot = await rotaSvc.createSlot(user, {
     siteId: site.id,
-    startAt: '2027-08-13T08:00:00',
-    endAt: '2027-08-13T16:00:00',
+    startAt: '2027-08-13T08:00:00Z',
+    endAt: '2027-08-13T16:00:00Z',
     requiredGuardCount: 3,
   });
   const shifts = await ds.getRepository(Shift).find({ where: { rotaSlotId: slot.id }, order: { id: 'ASC' } });
@@ -1265,8 +1265,8 @@ async function testReqDecreaseHistory(ds: DataSource) {
 
   const slot = await rotaSvc.createSlot(user, {
     siteId: site.id,
-    startAt: '2027-08-14T08:00:00',
-    endAt: '2027-08-14T16:00:00',
+    startAt: '2027-08-14T08:00:00Z',
+    endAt: '2027-08-14T16:00:00Z',
     requiredGuardCount: 3,
   });
   const shifts = await ds.getRepository(Shift).find({ where: { rotaSlotId: slot.id }, order: { id: 'ASC' } });

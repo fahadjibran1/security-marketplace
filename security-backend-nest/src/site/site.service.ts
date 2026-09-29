@@ -99,6 +99,8 @@ export class SiteService {
         startTime: dto.initialShiftStartTime.trim(),
         endTime: dto.initialShiftEndTime?.trim() || saved.operatingEndTime || undefined,
         instructions: saved.specialInstructions,
+        // The form times are wall clock readings at this site, so the site's zone converts them.
+        timeZone: saved.timezone,
       });
     }
     await this.auditLogService.log({

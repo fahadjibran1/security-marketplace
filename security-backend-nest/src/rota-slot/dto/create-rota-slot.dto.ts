@@ -1,21 +1,16 @@
-import {
-  IsDateString,
-  IsInt,
-  IsOptional,
-  IsString,
-  MaxLength,
-  Min,
-} from 'class-validator';
+import { IsInt, IsOptional, IsString, MaxLength, Min } from 'class-validator';
+import { IsInstantString } from '../../common/validators/is-instant-string.validator';
 
 export class CreateRotaSlotDto {
   @IsInt()
   @Min(1)
   siteId!: number;
 
-  @IsDateString()
+  // Scheduled times are instants, carrying the site's offset. See IsInstantString.
+  @IsInstantString()
   startAt!: string;
 
-  @IsDateString()
+  @IsInstantString()
   endAt!: string;
 
   @IsOptional()

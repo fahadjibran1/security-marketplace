@@ -5,6 +5,7 @@ import { StatePanel } from '../components/StatePanel';
 import { StatusBadge } from '../components/StatusBadge';
 import { createJobApplication, formatApiErrorMessage, listJobs, listMyJobApplications } from '../services/api';
 import { AuthUser, Job, JobApplication } from '../types/models';
+import { formatInstantDate } from '../services/siteTime';
 import { colors, control, radii, spacing, typography } from '../theme';
 
 interface JobsScreenProps { user: AuthUser }
@@ -13,17 +14,10 @@ function showAlert(title: string, message: string) {
   if (typeof window !== 'undefined' && typeof window.alert === 'function') { window.alert(`${title}\n\n${message}`); return; }
   Alert.alert(title, message);
 }
-function getLiteralDateTimeParts(value?: string | null) {
-  if (!value) return null;
-  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s](\d{2}):(\d{2})(?::(\d{2}))?)?/);
-  if (!match) return null;
-  return { year: match[1], month: match[2], day: match[3], hour: match[4] || null, minute: match[5] || null };
-}
+// `appliedAt` is a true instant, so the day is whatever day it was where the reader is — not the day
+// spelled out in the UTC string. Same convention as everywhere else; see src/services/siteTime.ts.
 function formatAppliedDateLabel(value?: string | null) {
-  if (!value) return 'Date pending';
-  const p = getLiteralDateTimeParts(value);
-  const date = p ? new Date(Number(p.year), Number(p.month) - 1, Number(p.day)) : new Date(value);
-  return date.toLocaleDateString(undefined, { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
+  return formatInstantDate(value, null, 'Date pending');
 }
 function isOpenJob(job: Job) { return (job.status || '').trim().toLowerCase() === 'open'; }
 function formatJobHourlyPay(rate: number | undefined | null) {

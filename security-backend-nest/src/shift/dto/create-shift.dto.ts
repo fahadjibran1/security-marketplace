@@ -1,4 +1,5 @@
-import { IsDateString, IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { IsInstantString } from '../../common/validators/is-instant-string.validator';
 
 export class CreateShiftDto {
   @IsOptional()
@@ -37,10 +38,11 @@ export class CreateShiftDto {
   @IsString()
   siteName?: string;
 
-  @IsDateString()
+  // Scheduled times are instants, carrying the site's offset. See IsInstantString.
+  @IsInstantString()
   start!: string;
 
-  @IsDateString()
+  @IsInstantString()
   end!: string;
 
   @IsOptional()

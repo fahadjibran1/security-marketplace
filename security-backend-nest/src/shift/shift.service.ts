@@ -24,6 +24,15 @@ import { Timesheet } from '../timesheet/entities/timesheet.entity';
 import { UpdateShiftDto } from './dto/update-shift.dto';
 import { RespondShiftDto } from './dto/respond-shift.dto';
 import { Site } from '../site/entities/site.entity';
+import {
+  DEFAULT_SITE_TIME_ZONE,
+  hasExplicitUtcOffset,
+  siteLocalEndToInstant,
+  siteLocalToInstant,
+} from '../common/site-time';
+
+/** Length of the optional first shift created with a new site, when no end time is given. */
+const DEFAULT_STARTER_SHIFT_HOURS = 8;
 
 @Injectable()
 export class ShiftService {
@@ -157,6 +166,18 @@ export class ShiftService {
     const guardRepo = manager?.getRepository(GuardProfile) ?? this.guardRepo;
     const jobRepo = manager?.getRepository(Job) ?? this.jobRepo;
     const jobApplicationRepo = manager?.getRepository(JobApplication) ?? this.jobApplicationRepo;
+    // Scheduled times must carry an explicit offset. The DTO enforces this at the HTTP edge; repeating it
+    // here covers internal callers, because `new Date('2026-09-29T11:30:00')` would otherwise resolve
+    // against the server clock and store a time nobody chose.
+    for (const [field, value] of [['start', dto.start], ['end', dto.end]] as const) {
+      if (!hasExplicitUtcOffset(String(value ?? ''))) {
+        throw new BadRequestException(
+          `Shift ${field} must include an explicit UTC offset (for example 2026-09-29T11:30:00+01:00). ` +
+            'A date-time without one is a wall clock, not a point in time.',
+        );
+      }
+    }
+
     const start = new Date(dto.start);
     const end = new Date(dto.end);
     if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
@@ -343,6 +364,16 @@ export class ShiftService {
     });
   }
 
+  /**
+   * The first shift created alongside a new site, from the date and times on the site form.
+   *
+   * Those are wall-clock readings AT THE SITE, so they are converted with the site's own timezone. This
+   * used to emit an offset-less `${date}T${time}:00`, which resolved against the server clock — the same
+   * defect fixed on the client in Phase 1, and the only remaining place the server originated one.
+   *
+   * A time that does not exist at that site (the hour skipped when the clocks go forward) is rejected
+   * rather than shifted, so nobody ends up with a shift at a time they did not ask for.
+   */
   async createStarterShiftForSite(params: {
     companyId: number;
     siteId: number;
@@ -351,39 +382,36 @@ export class ShiftService {
     startTime: string;
     endTime?: string;
     instructions?: string | null;
+    timeZone?: string | null;
   }) {
-    const start = `${params.date}T${params.startTime}:00`;
-    const formatLocalDate = (date: Date) => {
-      const year = date.getFullYear();
-      const month = String(date.getMonth() + 1).padStart(2, '0');
-      const day = String(date.getDate()).padStart(2, '0');
-      return `${year}-${month}-${day}`;
-    };
-    const formatLocalTime = (date: Date) => {
-      const hours = String(date.getHours()).padStart(2, '0');
-      const minutes = String(date.getMinutes()).padStart(2, '0');
-      return `${hours}:${minutes}`;
-    };
+    const timeZone = params.timeZone?.trim() || DEFAULT_SITE_TIME_ZONE;
+    const startTime = params.startTime.trim();
 
-    let endDate = params.date;
-    let endTime = params.endTime?.trim();
-    if (!endTime) {
-      const startDate = new Date(start);
-      startDate.setHours(startDate.getHours() + 8);
-      endDate = formatLocalDate(startDate);
-      endTime = formatLocalTime(startDate);
-    } else if (endTime <= params.startTime) {
-      const nextDay = new Date(`${params.date}T00:00:00`);
-      nextDay.setDate(nextDay.getDate() + 1);
-      endDate = formatLocalDate(nextDay);
+    const start = siteLocalToInstant(params.date, startTime, timeZone);
+    if (!start.ok) {
+      throw new BadRequestException(start.message);
+    }
+
+    const submittedEnd = params.endTime?.trim();
+    let endIso: string;
+    if (submittedEnd) {
+      const end = siteLocalEndToInstant(params.date, startTime, submittedEnd, timeZone);
+      if (!end.ok) {
+        throw new BadRequestException(end.message);
+      }
+      endIso = end.iso;
+    } else {
+      // No end time given: the shift runs eight hours. Added to the INSTANT, so it is eight hours even
+      // across a clock change, and never re-parsed as a wall clock that a transition night could move.
+      endIso = new Date(start.instant + DEFAULT_STARTER_SHIFT_HOURS * 3600000).toISOString();
     }
 
     return this.create({
       companyId: params.companyId,
       siteId: params.siteId,
       createdByUserId: params.createdByUserId,
-      start,
-      end: `${endDate}T${endTime}:00`,
+      start: start.iso,
+      end: endIso,
       status: 'unfilled',
       instructions: params.instructions ?? undefined,
     });

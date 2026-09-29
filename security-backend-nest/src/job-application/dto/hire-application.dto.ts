@@ -1,4 +1,5 @@
-import { IsBoolean, IsDateString, IsInt, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsInt, IsOptional, IsString } from 'class-validator';
+import { IsInstantString } from '../../common/validators/is-instant-string.validator';
 
 export class HireApplicationDto {
   @IsOptional()
@@ -13,11 +14,12 @@ export class HireApplicationDto {
   @IsInt()
   siteId?: number;
 
+  // Hiring may create the first shift, so these are scheduled times and must be instants.
   @IsOptional()
-  @IsDateString()
+  @IsInstantString()
   start?: string;
 
   @IsOptional()
-  @IsDateString()
+  @IsInstantString()
   end?: string;
 }
