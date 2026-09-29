@@ -1,6 +1,8 @@
 import * as React from 'react';
-import { KeyboardAvoidingView, Modal as RNModal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { KeyboardAvoidingView, Modal as RNModal, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, radii, spacing, typography } from '../../theme';
+import { resolveModalLayout, type ModalPlatform, type SafeAreaInsets } from './modalLayout';
 
 const IS_WEB = typeof document !== 'undefined';
 
@@ -33,8 +35,36 @@ type AppModalProps = React.PropsWithChildren<{
  *   large    640px  — complex forms, multi-step flows
  *
  * Use ConfirmationDialog for destructive confirms — it wraps this component.
+ *
+ * WHY THIS IS THE HOST FOR EVERY FORM (Phase 2)
+ * A real RNModal renders in its own native window above the host view hierarchy, so the persistent
+ * bottom navigation cannot paint over it — which is precisely what happened to the Guard action forms
+ * when they were absolutely-positioned Views with a zIndex and no elevation. See modalLayout.ts.
+ *
+ * The footer is rendered OUTSIDE the scrollable body. That is the property that keeps Submit reachable:
+ * however long the content is, and whatever the keyboard does, the action row is still there.
  */
-export function AppModal({
+export function AppModal(props: AppModalProps) {
+  const insets = useSafeAreaInsets();
+  const { height, width } = useWindowDimensions();
+  return (
+    <ModalFrame
+      {...props}
+      viewport={{ height, width }}
+      insets={{ top: insets.top, bottom: insets.bottom }}
+      platform={Platform.OS === 'ios' ? 'ios' : Platform.OS === 'android' ? 'android' : 'web'}
+    />
+  );
+}
+
+/**
+ * The modal's layout, with every environment value passed in rather than read from a hook.
+ *
+ * Split out so the structure can be executed in tests — a spec can call this directly and walk the
+ * element tree to prove there is a scroll container and that the footer sits outside it, which is the
+ * behaviour the pilot defect turned on. AppModal above is only the hook wiring.
+ */
+export function ModalFrame({
   visible,
   onClose,
   title,
@@ -43,8 +73,20 @@ export function AppModal({
   footer,
   size = 'standard',
   closeOnBackdrop = true,
-}: AppModalProps) {
+  viewport,
+  insets,
+  platform,
+  keyboardVisible = false,
+  keyboardHeight = 0,
+}: AppModalProps & {
+  viewport: { height: number; width: number };
+  insets: SafeAreaInsets;
+  platform: ModalPlatform;
+  keyboardVisible?: boolean;
+  keyboardHeight?: number;
+}) {
   const maxWidth = MAX_WIDTH[size];
+  const layout = resolveModalLayout({ viewport, insets, platform, keyboardVisible, keyboardHeight });
 
   return (
     <RNModal
@@ -54,7 +96,16 @@ export function AppModal({
       onRequestClose={onClose}
       statusBarTranslucent
     >
-      <View style={styles.overlay}>
+      <View
+        style={[
+          styles.overlay,
+          {
+            paddingTop: layout.overlayPaddingTop,
+            paddingBottom: layout.overlayPaddingBottom,
+            paddingHorizontal: layout.overlayPaddingHorizontal,
+          },
+        ]}
+      >
         {/* Backdrop */}
         {closeOnBackdrop ? (
           <Pressable
@@ -69,9 +120,13 @@ export function AppModal({
 
         {/* Panel */}
         <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          behavior={layout.keyboardBehavior}
           style={[
             styles.panel,
+            // The ceiling is what gives the body ScrollView something to scroll within. Without it the
+            // panel sizes to its content, the content simply overflows the screen, and no amount of
+            // ScrollView helps.
+            { maxHeight: layout.panelMaxHeight },
             IS_WEB ? ({ maxWidth } as any) : null,
           ]}
         >
@@ -100,7 +155,11 @@ export function AppModal({
             <ScrollView
               style={styles.body}
               contentContainerStyle={styles.bodyContent}
+              // A tap on Submit must land even while an input holds focus; without this the first tap is
+              // consumed dismissing the keyboard and the user has to press twice.
               keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="none"
+              showsVerticalScrollIndicator
             >
               {children}
             </ScrollView>
@@ -120,7 +179,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(11, 31, 51, 0.5)',
     justifyContent: 'center',
     alignItems: 'center',
-    padding: spacing.xl,
+    // Padding is supplied per render from modalLayout, because it carries the safe-area insets.
   },
   backdropFill: {
     position: 'absolute',
@@ -131,6 +190,8 @@ const styles = StyleSheet.create({
   },
   panel: {
     width: '100%',
+    // Allowed to shrink, so panelMaxHeight is respected rather than being overridden by content height.
+    flexShrink: 1,
     backgroundColor: colors.card,
     borderRadius: radii.drawer,
     shadowColor: colors.primaryNavy,
@@ -189,6 +250,8 @@ const styles = StyleSheet.create({
     padding: spacing.xl,
   },
   footer: {
+    // flexShrink:0 is the guarantee: a long body can never squeeze the action row down to nothing.
+    flexShrink: 0,
     flexDirection: 'row',
     justifyContent: 'flex-end',
     alignItems: 'center',

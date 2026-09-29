@@ -40,7 +40,8 @@
     "test:gps-transport": "node scripts/attendance-gps-transport.spec.cjs",
     "verify:apk-signer": "node scripts/verify-apk-signer.cjs",
     "test:signer-provenance": "node scripts/signer-provenance.spec.cjs",
-    "test:site-time": "node scripts/site-time.spec.cjs"
+    "test:site-time": "node scripts/site-time.spec.cjs",
+    "test:guard-action-forms": "node scripts/guard-action-forms.spec.cjs"
   },
   "dependencies": {
     "@expo/metro-runtime": "~6.1.2",

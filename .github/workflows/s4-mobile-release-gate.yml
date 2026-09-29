@@ -141,6 +141,14 @@ jobs:
       - name: Verify scheduled times are true instants
         run: npm run test:site-time
 
+      # Phase 2 P0: a Guard could open an operational action form on the real device but could not
+      # reliably press Submit — the persistent bottom nav (elevation 6) painted over an overlay that
+      # only carried a zIndex, the card sat under the Android system navigation, and nothing scrolled.
+      # Executes the layout arithmetic and the submit-button state, and renders the real modal to prove
+      # the footer is NOT inside the scroll container.
+      - name: Verify guard action forms stay reachable
+        run: npm run test:guard-action-forms
+
       # ── Screening ─────────────────────────────────────────────────────────────
       # Protects the Guard screening journey and the locked distinction that Company-Managed deployment
       # is NOT S4 Screening. Note it also reads backend screening sources, so it doubles as a contract

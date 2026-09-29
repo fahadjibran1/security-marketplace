@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, AppState, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { Fragment } from 'react/jsx-runtime';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { FeatureCard } from '../components/FeatureCard';
 import { StatePanel } from '../components/StatePanel';
@@ -76,6 +77,13 @@ import {
   Timesheet,
 } from '../types/models';
 import { formatInstantDate, formatInstantTime } from '../services/siteTime';
+import { AppModal } from '../components/ui/Modal';
+import { Button } from '../components/ui/Button';
+import {
+  GUARD_ACTION_FORMS,
+  resolveActionSubmitState,
+  type GuardActionKey,
+} from '../components/guard/guardActionForms';
 import { colors } from '../theme';
 
 interface GuardDashboardScreenProps {
@@ -482,6 +490,40 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
   const [incidentMessage, setIncidentMessage] = useState('');
   const [welfareMessage, setWelfareMessage] = useState('');
   const [panicConfirmation, setPanicConfirmation] = useState('');
+
+  // ── Live-shift action forms (Phase 2) ──────────────────────────────────────
+  // One renderer drives all five, so the value, the busy flag and the submit handler are looked up by
+  // action key. The handlers themselves are untouched: this is a layout and reachability fix, and each
+  // handler keeps its own validation, its own feedback and its own request.
+
+  const actionFormValue = (key: GuardActionKey): string =>
+    key === 'incident' ? incidentMessage
+    : key === 'welfare' ? welfareMessage
+    : key === 'panic' ? panicConfirmation
+    : dailyLogMessage; // 'log' and 'checkCall' share one note field, exactly as before
+
+  const setActionFormValue = (key: GuardActionKey, next: string) => {
+    if (key === 'incident') setIncidentMessage(next);
+    else if (key === 'welfare') setWelfareMessage(next);
+    else if (key === 'panic') setPanicConfirmation(next);
+    else setDailyLogMessage(next);
+  };
+
+  const actionFormBusy = (key: GuardActionKey): boolean =>
+    key === 'incident' ? submittingIncident
+    : key === 'welfare' || key === 'panic' ? submittingAlertType !== null
+    : submittingDailyLogType !== null;
+
+  const closeQuickAction = () => setQuickActionModal(null);
+
+  /** Routes to the existing handler for that action. No submission logic lives here. */
+  const submitQuickAction = (key: GuardActionKey) => {
+    if (key === 'log') return void handleCreateLog('observation');
+    if (key === 'checkCall') return void handleCreateLog('check_call');
+    if (key === 'incident') return void handleCreateIncident();
+    if (key === 'welfare') return void handleCreateWelfareAlert();
+    return void handleCreatePanicAlert();
+  };
   const [actionFeedback, setActionFeedback] = useState<{
     tone: 'success' | 'error' | 'info';
     title: string;
@@ -3105,126 +3147,73 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
         variant="standard"
       />
 
-      {quickActionModal === 'log' ? (
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Add Log</Text>
-              <Pressable style={styles.modalCloseButton} onPress={() => setQuickActionModal(null)}>
-                <Text style={styles.modalClose}>Close</Text>
-              </Pressable>
-            </View>
+      {/* ── Live-shift action forms (Phase 2) ──────────────────────────
+          One AppModal per action, from a single renderer. These were five separate
+          absolutely-positioned overlays, each of which the bottom navigation and the
+          keyboard could cover — hiding Submit. AppModal is a real RNModal, so it renders
+          above the navigation, its body scrolls, and its footer never scrolls away. */}
+      {GUARD_ACTION_FORMS.map((form) => {
+        const value = actionFormValue(form.key);
+        const busy = actionFormBusy(form.key);
+        const submit = resolveActionSubmitState(form, { value, busy });
+        return (
+          <Fragment key={form.key}>
+          <AppModal
+            visible={quickActionModal === form.key}
+            onClose={closeQuickAction}
+            title={form.title}
+            size="standard"
+            closeOnBackdrop={!busy}
+            footer={
+              <>
+                <Button label="Cancel" variant="secondary" size="md" onPress={closeQuickAction} disabled={busy} />
+                <Button
+                  label={submit.label}
+                  variant={form.destructive ? 'danger' : 'primary'}
+                  size="md"
+                  onPress={() => submitQuickAction(form.key)}
+                  disabled={submit.disabled}
+                  loading={busy}
+                />
+              </>
+            }
+          >
+            {form.helperText ? <Text style={styles.helperText}>{form.helperText}</Text> : null}
             <TextInput
-              style={[styles.input, styles.modalInput]}
-              placeholder="Write a short operational update"
-              value={dailyLogMessage}
-              onChangeText={setDailyLogMessage}
-              multiline
+              style={form.multiline ? [styles.input, styles.modalInput] : styles.input}
+              placeholder={form.placeholder}
+              placeholderTextColor={colors.fieldPlaceholder}
+              value={value}
+              onChangeText={(next: string) => setActionFormValue(form.key, next)}
+              multiline={form.multiline}
+              autoCapitalize={form.confirmWord ? 'characters' : 'sentences'}
+              editable={!busy}
+              accessibilityLabel={form.title}
             />
-            <Pressable
-              style={[styles.primaryActionButton, submittingDailyLogType !== null && styles.buttonDisabled]}
-              onPress={() => handleCreateLog('observation')}
-              disabled={submittingDailyLogType !== null}
-            >
-              <Text style={styles.primaryActionText}>{submittingDailyLogType ? 'Saving...' : 'Submit Log'}</Text>
-            </Pressable>
-          </View>
-        </View>
-      ) : null}
+          </AppModal>
+          </Fragment>
+        );
+      })}
 
-      {quickActionModal === 'incident' ? (
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Incident</Text>
-              <Pressable style={styles.modalCloseButton} onPress={() => setQuickActionModal(null)}>
-                <Text style={styles.modalClose}>Close</Text>
-              </Pressable>
-            </View>
-            <TextInput
-              style={[styles.input, styles.modalInput]}
-              placeholder="Short incident description"
-              value={incidentMessage}
-              onChangeText={setIncidentMessage}
-              multiline
-            />
-            <Pressable
-              style={[styles.primaryActionButton, submittingIncident && styles.buttonDisabled]}
-              onPress={handleCreateIncident}
-              disabled={submittingIncident}
-            >
-              <Text style={styles.primaryActionText}>{submittingIncident ? 'Submitting...' : 'Submit Incident'}</Text>
-            </Pressable>
-          </View>
-        </View>
-      ) : null}
-
-      {quickActionModal === 'welfare' ? (
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Welfare</Text>
-              <Pressable style={styles.modalCloseButton} onPress={() => setQuickActionModal(null)}>
-                <Text style={styles.modalClose}>Close</Text>
-              </Pressable>
-            </View>
-            <TextInput
-              style={[styles.input, styles.modalInput]}
-              placeholder="Quick welfare update"
-              value={welfareMessage}
-              onChangeText={setWelfareMessage}
-              multiline
-            />
-            <Pressable
-              style={[styles.primaryActionButton, submittingAlertType !== null && styles.buttonDisabled]}
-              onPress={handleCreateWelfareAlert}
-              disabled={submittingAlertType !== null}
-            >
-              <Text style={styles.primaryActionText}>{submittingAlertType ? 'Sending...' : 'Send Welfare Update'}</Text>
-            </Pressable>
-          </View>
-        </View>
-      ) : null}
-
-      {quickActionModal === 'panic' ? (
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Panic</Text>
-              <Pressable style={styles.modalCloseButton} onPress={() => setQuickActionModal(null)}>
-                <Text style={styles.modalClose}>Close</Text>
-              </Pressable>
-            </View>
-            <Text style={styles.helperText}>Type PANIC to confirm you want to send an emergency alert.</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Type PANIC"
-              value={panicConfirmation}
-              onChangeText={setPanicConfirmation}
-              autoCapitalize="characters"
-            />
-            <Pressable
-              style={[styles.panicConfirmButton, submittingAlertType !== null && styles.buttonDisabled]}
-              onPress={handleCreatePanicAlert}
-              disabled={submittingAlertType !== null}
-            >
-              <Text style={styles.panicConfirmButtonText}>{submittingAlertType ? 'Sending...' : 'Confirm Panic Alert'}</Text>
-            </Pressable>
-          </View>
-        </View>
-      ) : null}
-
+      {/* The shift summary had the same unscrollable, nav-overlappable shape as the action forms, and
+          its only control sits at the very bottom of long content. Same primitive, same fix. */}
       {historySummaryShift ? (
-        <View style={styles.modalBackdrop}>
-          <Pressable style={styles.summaryBackdropTapZone} onPress={() => setHistorySummaryShiftId(null)} />
-          <View style={styles.summarySheetWrap}>
-            <Pressable style={[styles.modalCard, styles.summarySheetCard]} onPress={() => {}}>
-              <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>Shift summary</Text>
-                <Pressable style={styles.modalCloseButton} onPress={() => setHistorySummaryShiftId(null)}>
-                  <Text style={styles.modalClose}>Close</Text>
-                </Pressable>
-              </View>
+        <AppModal
+          visible
+          onClose={() => setHistorySummaryShiftId(null)}
+          title="Shift summary"
+          size="standard"
+          footer={
+            <Button
+              label="Close summary"
+              variant="primary"
+              size="md"
+              onPress={() => setHistorySummaryShiftId(null)}
+            />
+          }
+        >
+            <View>
+              {/* AppModal supplies the title and the close control. */}
               <View style={styles.summaryHero}>
                 <Text style={styles.summaryHeroSite}>{historySummaryShift.siteName}</Text>
                 <Text style={styles.summaryHeroDate}>{formatDateLabel(historySummaryShift.start, historySummaryShift.site?.timezone)}</Text>
@@ -3308,40 +3297,10 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
                   </View>
                 )}
               </View>
-              <Pressable style={styles.summaryDoneButton} onPress={() => setHistorySummaryShiftId(null)}>
-                <Text style={styles.summaryDoneButtonText}>Close summary</Text>
-              </Pressable>
-            </Pressable>
-          </View>
-        </View>
+            </View>
+        </AppModal>
       ) : null}
 
-      {quickActionModal === 'checkCall' ? (
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Check Call</Text>
-              <Pressable style={styles.modalCloseButton} onPress={() => setQuickActionModal(null)}>
-                <Text style={styles.modalClose}>Close</Text>
-              </Pressable>
-            </View>
-            <TextInput
-              style={[styles.input, styles.modalInput]}
-              placeholder="Short check call update"
-              value={dailyLogMessage}
-              onChangeText={setDailyLogMessage}
-              multiline
-            />
-            <Pressable
-              style={[styles.primaryActionButton, submittingDailyLogType !== null && styles.buttonDisabled]}
-              onPress={() => handleCreateLog('check_call')}
-              disabled={submittingDailyLogType !== null}
-            >
-              <Text style={styles.primaryActionText}>{submittingDailyLogType ? 'Saving...' : 'Record Check Call'}</Text>
-            </Pressable>
-          </View>
-        </View>
-      ) : null}
     </View>
   );
 }
@@ -3925,68 +3884,7 @@ const styles = StyleSheet.create({
   },
   bottomNavLabel: { color: colors.textSecondary, fontWeight: '700', fontSize: 13 },
   bottomNavLabelActive: { color: colors.primaryNavy, fontWeight: '800' },
-  modalBackdrop: {
-    position: 'absolute',
-    top: 0,
-    right: 0,
-    bottom: 0,
-    left: 0,
-    backgroundColor: 'rgba(11,27,43,0.45)',
-    justifyContent: 'flex-end',
-    padding: 16,
-    zIndex: 20,
-  },
-  summaryBackdropTapZone: {
-    position: 'absolute',
-    top: 0,
-    right: 0,
-    bottom: 0,
-    left: 0,
-  },
-  summarySheetWrap: {
-    flex: 1,
-    justifyContent: 'flex-end',
-  },
-  modalCard: {
-    backgroundColor: colors.card,
-    borderRadius: 24,
-    padding: 18,
-    gap: 12,
-    maxWidth: 720,
-    width: '100%',
-    alignSelf: 'center',
-  },
-  summarySheetCard: {
-    maxHeight: '78%',
-  },
-  summaryDoneButton: {
-    marginTop: 8,
-    minHeight: 52,
-    borderRadius: 16,
-    backgroundColor: colors.primaryNavy,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  summaryDoneButtonText: {
-    color: colors.textOnBrand,
-    fontWeight: '800',
-    fontSize: 15,
-  },
-  modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
-  modalTitle: { fontSize: 20, fontWeight: '800', color: colors.textPrimary },
-  modalCloseButton: {
-    minHeight: 36,
-    minWidth: 64,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.background,
-  },
-  modalClose: { color: colors.supportBlue, fontWeight: '700' },
   modalInput: { minHeight: 120, textAlignVertical: 'top' },
-  panicConfirmButton: { backgroundColor: colors.danger, borderRadius: 18, minHeight: 56, alignItems: 'center', justifyContent: 'center' },
-  panicConfirmButtonText: { color: colors.textOnBrand, fontWeight: '800', fontSize: 16 },
   summaryBlock: { borderRadius: 14, backgroundColor: colors.card, padding: 12, gap: 6 },
   summaryLabel: { color: colors.textSecondary, fontSize: 12, fontWeight: '700', textTransform: 'uppercase' },
   summaryValue: { color: colors.textPrimary, fontWeight: '700', fontSize: 15, lineHeight: 22 },
