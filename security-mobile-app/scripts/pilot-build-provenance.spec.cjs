@@ -39,8 +39,11 @@ const easJson = JSON.parse(read('eas.json'));
 
 test('BUILD-01-APP-VERSION-IS-1-0-7-AND-BUILD-8', () => {
   assert.equal(appJson.expo.version, '1.0.7');
-  assert.equal(appJson.expo.android.versionCode, 8, 'Build 8 is the first controlled pilot build');
-  assert.ok(appJson.expo.android.versionCode > 7, 'above the previous repository value');
+  // Build 8 was rejected for distribution: it carried an EAS-generated signing identity and so could
+  // not update an installed S4 build (UAT-MOB-02). Build 9 is the first DISTRIBUTABLE pilot build.
+  assert.equal(appJson.expo.android.versionCode, 9, 'Build 9 supersedes the rejected Build 8');
+  assert.ok(appJson.expo.android.versionCode > 8, 'above the rejected build');
+  assert.ok(appJson.expo.android.versionCode > 5, 'and above the installed 1.0.4 (versionCode 5)');
 });
 
 test('BUILD-02-APP-JSON-IS-THE-AUTHORITATIVE-VERSION-SOURCE', () => {

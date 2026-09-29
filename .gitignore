@@ -9,3 +9,12 @@ security-backend/dist
 *.dump
 .blk004-ca-escaped.txt
 .p1f-staging-rotated-creds
+
+# Android release signing (UAT-MOB-02). credentials.json holds the keystore passwords that EAS uses to
+# sign a build; the keystore itself lives outside the repository. Neither may ever be committed — the
+# permanent S4 signing identity is valid to 2056 and losing or leaking it cannot be undone.
+credentials.json
+security-mobile-app/credentials.json
+*.keystore
+*.jks
+*.p12

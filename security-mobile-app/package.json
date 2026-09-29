@@ -37,7 +37,9 @@
     "test:book-on": "node scripts/guard-book-on.spec.cjs",
     "test:pilot-build": "node scripts/pilot-build-provenance.spec.cjs",
     "test:compliance-date": "node scripts/compliance-date.spec.cjs",
-    "test:gps-transport": "node scripts/attendance-gps-transport.spec.cjs"
+    "test:gps-transport": "node scripts/attendance-gps-transport.spec.cjs",
+    "verify:apk-signer": "node scripts/verify-apk-signer.cjs",
+    "test:signer-provenance": "node scripts/signer-provenance.spec.cjs"
   },
   "dependencies": {
     "@expo/metro-runtime": "~6.1.2",

@@ -152,6 +152,14 @@ jobs:
       - name: Verify pilot build provenance
         run: npm run test:pilot-build
 
+      # UAT-MOB-02: the permanent Android signing identity. CI signs nothing, so this step makes NO claim
+      # about an artefact — it certifies that the expected certificate is pinned (public fingerprint only)
+      # and that the comparison logic really refuses a wrong signer, executed against recorded output from
+      # the historical 1.0.4 and the rejected Build 8. The APK itself is checked after an EAS build by
+      # `npm run verify:apk-signer -- <apk>`, which is the only place a signed APK exists.
+      - name: Verify android signer provenance
+        run: npm run test:signer-provenance
+
       - name: Verify Expo dependency compatibility
         run: npx expo install --check
 

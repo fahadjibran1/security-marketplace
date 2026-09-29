@@ -1,0 +1,44 @@
+{
+  "$comment": [
+    "PERMANENT Android release identity for S4 Security (UAT-MOB-02).",
+    "",
+    "This file holds PUBLIC data only: the certificate SHA-256 fingerprint, the package id and the",
+    "expected release metadata. It contains no keystore, no alias, no password and no private key, and it",
+    "must never be made to hold any of them — the keystore itself stays outside the repository.",
+    "",
+    "Why it exists: EAS Build 8 (deb416d3-565b-49b7-be4b-8b64319bb8cf) was produced with an",
+    "EAS-generated keystore instead of the retained S4 keystore, so Android refused to update the",
+    "installed 1.0.4 and the Samsung installer reported only 'App not installed'. Nothing in the release",
+    "process could see that, because the ordinary JS/Expo gate never touches a signed APK. Pinning the",
+    "expected signer here gives the post-build check something authoritative to compare against.",
+    "",
+    "The fingerprint below is the certificate carried by every historical S4 APK from 1.0.0 to 1.0.5,",
+    "including the 1.0.4 currently installed on the pilot device, and by the retained keystore. An APK",
+    "signed by any other key must fail verification before it reaches a tester or a client."
+  ],
+  "package": "com.securitymarketplace.mobile",
+  "signer": {
+    "certificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
+    "certificateSha1": "45a530aa1681f2da1e3b0568d982f492eeedb75e",
+    "subject": "CN=S4 Security, OU=S4 Pilot, O=Vesoft Services Limited, C=GB",
+    "keyAlgorithm": "RSA",
+    "keySizeBits": 2048,
+    "validFrom": "2026-09-21",
+    "validUntil": "2056-09-13"
+  },
+  "expectedRelease": {
+    "versionName": "1.0.7",
+    "versionCode": 9,
+    "minSdkVersion": 24
+  },
+  "rejectedBuilds": [
+    {
+      "easBuildId": "deb416d3-565b-49b7-be4b-8b64319bb8cf",
+      "versionName": "1.0.7",
+      "versionCode": 8,
+      "certificateSha256": "d9ae541413eedc417dc46fc7957fc773df48d507e20b7d5f57bdc40906e4e5dc",
+      "reason": "Signed with an EAS-generated keystore, not the permanent S4 identity. Cannot update an installed S4 build. Rejected for distribution; history retained.",
+      "rejectedOn": "2026-09-29"
+    }
+  ]
+}
