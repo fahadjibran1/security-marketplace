@@ -70,14 +70,23 @@ const RECORDED = {
     ].join('\n'),
     badging: "package: name='com.securitymarketplace.mobile' versionCode='9' versionName='1.0.7'\nminSdkVersion:'24'\ntargetSdkVersion:'36'",
   },
-  /** What a correct Build 10 must look like: the same S4 identity at versionCode 10. */
-  expectedBuild10: {
+  /** Build 10: Phase 1 only. Verified and signed with the S4 identity, but never installed. */
+  build10: {
     apksigner: [
       'Verifies',
       'Number of signers: 1',
       `Signer #1 certificate SHA-256 digest: ${S4_CERT_SHA256}`,
     ].join('\n'),
     badging: "package: name='com.securitymarketplace.mobile' versionCode='10' versionName='1.0.7'\nminSdkVersion:'24'\ntargetSdkVersion:'36'",
+  },
+  /** What a correct Build 11 must look like: the same S4 identity at versionCode 11. */
+  expectedBuild11: {
+    apksigner: [
+      'Verifies',
+      'Number of signers: 1',
+      `Signer #1 certificate SHA-256 digest: ${S4_CERT_SHA256}`,
+    ].join('\n'),
+    badging: "package: name='com.securitymarketplace.mobile' versionCode='11' versionName='1.0.7'\nminSdkVersion:'24'\ntargetSdkVersion:'36'",
   },
 };
 
@@ -127,7 +136,8 @@ test('SIGNER-04-THE-EXPECTED-RELEASE-MATCHES-APP-JSON', () => {
   assert.equal(config.expectedRelease.versionCode, appJson.expo.android.versionCode);
   assert.equal(config.package, appJson.expo.android.package);
   assert.equal(appJson.expo.version, '1.0.7');
-  assert.equal(appJson.expo.android.versionCode, 10, 'Build 10 carries the Phase 1 timezone correction');
+  assert.equal(appJson.expo.android.versionCode, 11, 'Build 11 carries Phase 1 + Phase 2');
+  assert.ok(appJson.expo.android.versionCode > 10, 'above the Phase-1-only Build 10');
   assert.ok(appJson.expo.android.versionCode > 9, 'and can update the installed Build 9');
   assert.ok(appJson.expo.android.versionCode > 8, 'above the rejected Build 8');
   assert.ok(appJson.expo.android.versionCode > 5, 'and above the installed 1.0.4 (versionCode 5)');
@@ -148,49 +158,55 @@ test('SIGNER-05-THE-PILOT-RELEASE-SHAPE-IS-UNCHANGED', () => {
 
 // ═══════════════════ the comparison logic, executed ═══════════════════
 
-test('SIGNER-06-A-CORRECT-BUILD-10-WOULD-PASS-FULL-VERIFICATION', () => {
-  const result = verifier.assessApk(config, observe(RECORDED.expectedBuild10));
-  assert.equal(result.ok, true, `a correct Build 10 must pass, got: ${result.failures.join('; ')}`);
+test('SIGNER-06-A-CORRECT-BUILD-11-WOULD-PASS-FULL-VERIFICATION', () => {
+  const result = verifier.assessApk(config, observe(RECORDED.expectedBuild11));
+  assert.equal(result.ok, true, `a correct Build 11 must pass, got: ${result.failures.join('; ')}`);
 });
 
-test('SIGNER-06B-THE-SUPERSEDED-BUILD-9-NO-LONGER-PASSES-AS-THE-CURRENT-RELEASE', () => {
-  // Build 9's signer is correct — it is the same permanent identity — but it is no longer the release
-  // this repository expects. Without this, re-verifying a stale download would look like a pass and
-  // Build 9 could be handed to the pilot device by mistake.
-  const observed = observe(RECORDED.build9);
-  assert.equal(verifier.assessSignerOnly(config, observed).ok, true, 'the signer itself is still ours');
+test('SIGNER-06B-A-SUPERSEDED-BUILD-NO-LONGER-PASSES-AS-THE-CURRENT-RELEASE', () => {
+  // Build 9 and Build 10 both carry the correct permanent identity but are no longer the release this
+  // repository expects. Without this, re-verifying a stale download would look like a pass and the wrong
+  // APK could reach the pilot device — Build 10 especially, since it is signed, verified, and only one
+  // number behind.
+  for (const stale of [RECORDED.build9, RECORDED.build10]) {
+    const observed = observe(stale);
+    assert.equal(verifier.assessSignerOnly(config, observed).ok, true, 'the signer itself is still ours');
 
-  const full = verifier.assessApk(config, observed);
-  assert.equal(full.ok, false, 'but it is not the current release');
-  assert.ok(
-    full.failures.some((f) => /versionCode/.test(f)),
-    `the versionCode must be named as the reason; got ${JSON.stringify(full.failures)}`,
-  );
+    const full = verifier.assessApk(config, observed);
+    assert.equal(full.ok, false, `vc${observed.versionCode} is not the current release`);
+    assert.ok(
+      full.failures.some((f) => /versionCode/.test(f)),
+      `the versionCode must be named as the reason; got ${JSON.stringify(full.failures)}`,
+    );
+  }
 });
 
-test('SIGNER-06C-BUILD-10-CAN-UPDATE-BUILD-9-AND-THE-HISTORICAL-LINEAGE', () => {
+test('SIGNER-06C-BUILD-11-CAN-UPDATE-EVERY-EARLIER-S4-BUILD', () => {
   // Android installs an update only over an identical package signed by an identical certificate, with a
   // versionCode that does not go backwards. Build 8 failed exactly this and could not be installed.
-  const build10 = observe(RECORDED.expectedBuild10);
-  const build9 = observe(RECORDED.build9);
-  const historical = observe(RECORDED.historical104);
+  const build11 = observe(RECORDED.expectedBuild11);
+  const lineage = [
+    ['Build 10 (never installed)', observe(RECORDED.build10)],
+    ['Build 9 (on the test phone)', observe(RECORDED.build9)],
+    ['the installed 1.0.4', observe(RECORDED.historical104)],
+  ];
 
-  for (const [label, earlier] of [['Build 9', build9], ['the installed 1.0.4', historical]]) {
-    assert.equal(build10.packageName, earlier.packageName, `same package as ${label}`);
+  for (const [label, earlier] of lineage) {
+    assert.equal(build11.packageName, earlier.packageName, `same package as ${label}`);
     assert.equal(
-      verifier.normaliseFingerprint(build10.certificateSha256),
+      verifier.normaliseFingerprint(build11.certificateSha256),
       verifier.normaliseFingerprint(earlier.certificateSha256),
       `same signing certificate as ${label}`,
     );
     assert.ok(
-      build10.versionCode > earlier.versionCode,
-      `versionCode must advance over ${label}: ${build10.versionCode} > ${earlier.versionCode}`,
+      build11.versionCode > earlier.versionCode,
+      `versionCode must advance over ${label}: ${build11.versionCode} > ${earlier.versionCode}`,
     );
   }
 
   // And it is the identity the repository pins, not merely self-consistent.
-  assert.equal(verifier.normaliseFingerprint(build10.certificateSha256), S4_CERT_SHA256);
-  assert.equal(build10.versionCode, appJson.expo.android.versionCode);
+  assert.equal(verifier.normaliseFingerprint(build11.certificateSha256), S4_CERT_SHA256);
+  assert.equal(build11.versionCode, appJson.expo.android.versionCode);
 });
 
 test('SIGNER-07-THE-REJECTED-BUILD-8-SIGNER-IS-REFUSED', () => {

@@ -37,17 +37,18 @@ const easJson = JSON.parse(read('eas.json'));
 
 // ═══════════════════ the controlled version ═══════════════════
 
-test('BUILD-01-APP-VERSION-IS-1-0-7-AND-BUILD-10', () => {
+test('BUILD-01-APP-VERSION-IS-1-0-7-AND-BUILD-11', () => {
   assert.equal(appJson.expo.version, '1.0.7');
-  // Build 10 carries the Phase 1 timezone correction. It has to exist as its own build because Build 9
-  // still reads a scheduled time's hour literally out of the ISO string, so once production data holds
-  // true instants Build 9 would display every BST shift an hour early.
+  // Build 11 carries Phase 1 (scheduled times as true instants) AND Phase 2 (the live-shift action forms
+  // moved onto a real modal so Submit cannot be hidden by the bottom nav or the keyboard).
   //
   // The lineage this number has to clear:
   //   5  the 1.0.4 installed on the pilot device
   //   8  rejected for distribution — EAS-generated signing identity, could not update an S4 build
-  //   9  first distributable pilot build, permanent S4 identity
-  assert.equal(appJson.expo.android.versionCode, 10, 'Build 10 carries the Phase 1 timezone correction');
+  //   9  first distributable pilot build, and the one currently on the test phone
+  //  10  Phase 1 only; verified and signed, but never installed
+  assert.equal(appJson.expo.android.versionCode, 11, 'Build 11 carries Phase 1 + Phase 2');
+  assert.ok(appJson.expo.android.versionCode > 10, 'above the Phase-1-only Build 10');
   assert.ok(appJson.expo.android.versionCode > 9, 'and can update the installed Build 9');
   assert.ok(appJson.expo.android.versionCode > 8, 'above the rejected Build 8');
   assert.ok(appJson.expo.android.versionCode > 5, 'and above the installed 1.0.4 (versionCode 5)');
