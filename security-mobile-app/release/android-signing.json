@@ -62,8 +62,11 @@
   "approvedArtefact": {
     "versionName": "1.0.7",
     "versionCode": 12,
-    "status": "pending-rebuild",
-    "requiredGitCommit": "aaf6c5e",
-    "note": "Must contain fix(guard): target live shift for current-shift actions. Until easBuildId and apkSha256 are recorded here, no versionCode 12 artefact is approved for distribution."
+    "status": "approved",
+    "easBuildId": "fcd24b02-f620-4226-a424-273b759b34b7",
+    "gitCommit": "3fbb3645757bc5ecc9a716cd6447972727a49bf8",
+    "apkSha256": "2363e43b8758594265b8bb6631e2397770abef1ebdf0aa14ea1b0ff19f4539ed",
+    "approvedOn": "2026-09-30",
+    "note": "The replacement Build 12, containing fix(guard): target live shift for current-shift actions. Two artefacts carry versionCode 12; this build id and hash identify the one approved for UAT."
   }
 }
