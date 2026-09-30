@@ -10,6 +10,13 @@ import { CompanySitesWorkspace, type SiteFormState, SITE_FORM_EMPTY } from '../c
 import { CompanyLiveOperationsWorkspace } from '../components/company/CompanyLiveOperationsWorkspace';
 import type { LiveBoardRow, CloseOutSummary, SelectedShiftContext } from '../components/company/CompanyLiveOperationsWorkspace';
 import { CompanyShiftOffersWorkspace, type ShiftOffersFeedback } from '../components/company/CompanyShiftOffersWorkspace';
+import {
+  classifyLiveOperation,
+  isActionableWelfareAlert,
+  selectCurrentAttention,
+  type InclusionReason,
+  type OperationalShift,
+} from '../components/company/liveOperationsPolicy';
 import { CompanyAnalyticsWorkspace } from '../components/company/CompanyAnalyticsWorkspace';
 import { CompanyAvailabilityWorkspace } from '../components/company/CompanyAvailabilityWorkspace';
 import { CompanyComplianceWorkspace } from '../components/company/CompanyComplianceWorkspace';
@@ -342,6 +349,27 @@ const SHIFT_STATUS_OPTIONS = [
 
 const UK_LOCALE = 'en-GB';
 const MISSED_CHECK_IN_GRACE_MINUTES = 15;
+
+/** The single operational refresh tick. Everything below is a multiple of it. */
+const OPERATIONAL_REFRESH_TICK_MS = 15000;
+
+/**
+ * How many ticks between reloads, per section, for the surfaces whose data changes when a Guard
+ * accepts an offer, books on or books off.
+ *
+ * UAT found a Guard could accept and start a shift while Company Rota still read Awaiting until the
+ * user navigated away and back: the existing poll ran ONLY on Live Operations. This is the same single
+ * timer, now gating more than one section, because a second timer would be a second thing to get wrong.
+ * The control room is every tick; a planning surface is slower on purpose, since reloading the shift
+ * list under someone who is mid-edit is its own kind of defect.
+ */
+const OPERATIONAL_REFRESH_TICKS: Partial<Record<CompanySection, number>> = {
+  'live-operations': 1,
+  'shift-offers': 2,
+  coverage: 2,
+  'rota-planner': 4,
+  dashboard: 4,
+};
 
 function toNumber(value?: string | number | null) {
   if (typeof value === 'number') {
@@ -1468,17 +1496,33 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
     loadData();
   }, [loadData]);
 
+  // THE operational clock. Live Operations decides what is current by comparing instants against it,
+  // so it has to advance for a shift to cross the +4h horizon or age off the board on its own. It is
+  // advanced by the one refresh timer below rather than by a timer of its own.
+  const [operationalNow, setOperationalNow] = React.useState<Date>(new Date());
+
   React.useEffect(() => {
     if (companyMobileLayoutDisabled) {
       return;
     }
-    if (activeSection !== 'live-operations') {
+    const everyTicks = OPERATIONAL_REFRESH_TICKS[activeSection];
+    if (!everyTicks) {
       return;
     }
 
+    // Entering the section is itself current state; do not make the user wait a tick for it.
+    setOperationalNow(new Date());
+
+    // The clock advances with the data, not independently of it: a board showing 15-second-old shifts
+    // against a one-second-old clock would be the same inconsistency in a subtler form, and it saves
+    // re-rendering this screen on ticks where nothing was reloaded.
+    let tick = 0;
     const intervalId = setInterval(() => {
+      tick += 1;
+      if (tick % everyTicks !== 0) return;
+      setOperationalNow(new Date());
       loadData(true);
-    }, 15000);
+    }, OPERATIONAL_REFRESH_TICK_MS);
 
     return () => clearInterval(intervalId);
   }, [activeSection, loadData, companyMobileLayoutDisabled]);
@@ -1726,8 +1770,16 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
     () => alerts.filter((alert) => (alert.status || '').toLowerCase() !== 'closed'),
     [alerts],
   );
+  // A missed Welfare Check writes durable per-window evidence AND one shift-level summary. Only the
+  // summary is a thing to act on, so twenty-four missed windows are one queue item and one count —
+  // which is the distinction the backend's own board projection has always drawn.
   const missedCheckCalls = React.useMemo(
-    () => outstandingAlerts.filter((alert) => ['check_call', 'missed_checkcall'].includes((alert.type || '').toLowerCase())),
+    () =>
+      outstandingAlerts.filter(
+        (alert) =>
+          ['check_call', 'missed_checkcall'].includes((alert.type || '').toLowerCase()) &&
+          isActionableWelfareAlert(alert),
+      ),
     [outstandingAlerts],
   );
   const activePanicAlerts = React.useMemo(
@@ -1767,8 +1819,32 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
       ),
     [shiftOfferRows],
   );
+  /**
+   * The schedule behind every shift an attention item can name.
+   *
+   * Coverage rows are folded in as well: an uncovered shift is reported by the coverage endpoint and
+   * may not be in the shift list at all, and an item whose schedule cannot be found is one the expiry
+   * rule has to keep rather than quietly drop.
+   */
+  const operationalShiftById = React.useMemo(() => {
+    const map = new Map<number, OperationalShift>();
+    shifts.forEach((shift) => {
+      map.set(shift.id, { id: shift.id, start: shift.start, end: shift.end, status: shift.status || '' });
+    });
+    uncoveredShifts.forEach((row) => {
+      if (map.has(row.shiftId)) return;
+      map.set(row.shiftId, {
+        id: row.shiftId,
+        start: row.start,
+        end: row.end,
+        status: row.coverageState || row.coverageStatus || 'unfilled',
+      });
+    });
+    return map;
+  }, [shifts, uncoveredShifts]);
+
   const urgentOperationalItems = React.useMemo(() => {
-    const now = new Date();
+    const now = operationalNow;
     const items: UrgentOperationalItem[] = [];
     const readyShiftsNotBookedOn = shifts.filter((shift) => {
       const attendance = attendanceByShiftId.get(shift.id);
@@ -1900,7 +1976,14 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
     });
 
     outstandingAlerts
-      .filter((alert) => ['welfare', 'late_checkin', 'other'].includes((alert.type || '').toLowerCase()))
+      // Every other persisted safety alert. missing_book_off and site_request were both written by the
+      // backend and shown nowhere: a missing Book Off was only ever visible on its own board row, so it
+      // vanished with the row once the shift stopped being current.
+      .filter((alert) =>
+        ['welfare', 'site_request', 'late_checkin', 'missing_book_off', 'other'].includes(
+          (alert.type || '').toLowerCase(),
+        ),
+      )
       .forEach((alert) => {
       items.push({
         id: `attention-${alert.id}`,
@@ -1916,8 +1999,21 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
         });
       });
 
-    return items
-      .filter((item, index, current) => current.findIndex((candidate) => candidate.id === item.id) === index)
+    const deduped = items.filter(
+      (item, index, current) => current.findIndex((candidate) => candidate.id === item.id) === index,
+    );
+
+    // Derived items expire; persisted alerts do not. "Re-cover required" is computed from the shift's
+    // own schedule with nothing written down behind it, so there was nothing for anyone to acknowledge
+    // and Monday's uncovered shift stayed in Wednesday's queue. It now ages out on its own once the
+    // work stops being operationally current — and the shift itself is untouched, still in Rota and
+    // Coverage. A persisted safety alert keeps its open/acknowledged/closed lifecycle, and nothing here
+    // expires one: someone clears it deliberately or it stays.
+    return selectCurrentAttention(
+      deduped,
+      (item) => (item.shiftId == null ? null : operationalShiftById.get(item.shiftId) ?? null),
+      now,
+    )
       .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt))
       .slice(0, 10);
   }, [
@@ -1926,6 +2022,8 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
     missedShiftOffers,
     missedCheckCalls,
     openIncidents,
+    operationalNow,
+    operationalShiftById,
     outstandingAlerts,
     rejectedShiftOffers,
     shifts,
@@ -3139,10 +3237,30 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
     }
   };
 
+  /**
+   * What is on the board right now.
+   *
+   * There was no operational policy here at all: the board was every shift the company had ever
+   * created, passed through the user's own filters, so Monday's uncovered shift and Tuesday's completed
+   * ones sat beside the shift actually being worked. The policy now decides inclusion from the
+   * schedule, and carries the REASON each row is here so the counts and the metric filters below read
+   * the same value the board did. Nothing is deleted or rewritten: every excluded shift is still in
+   * `shifts`, and Rota Planner and Coverage still show all of it.
+   */
   const liveOperationRows = React.useMemo(() => {
     const priority = { high: 3, medium: 2, low: 1 };
+    const inclusionByShiftId = new Map<number, InclusionReason>();
 
     return shifts
+      .filter((shift) => {
+        const decision = classifyLiveOperation(
+          { id: shift.id, start: shift.start, end: shift.end, status: shift.status || '' },
+          { now: operationalNow, bookedOn: Boolean(attendanceByShiftId.get(shift.id)?.checkInAt) },
+        );
+        if (!decision.include) return false;
+        inclusionByShiftId.set(shift.id, decision.reason);
+        return true;
+      })
       .filter((shift) => {
         const clientId = String(shift.site?.client?.id ?? shift.site?.clientId ?? '');
         const siteId = String(shift.site?.id ?? shift.siteId ?? '');
@@ -3186,20 +3304,19 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
         }
 
         return right.start.localeCompare(left.start);
-      });
-  }, [alertsByShiftId, attendanceByShiftId, incidentsByShiftId, liveFilters, shifts]);
+      })
+      .map((shift) => ({ shift, inclusion: inclusionByShiftId.get(shift.id) as InclusionReason }));
+  }, [alertsByShiftId, attendanceByShiftId, incidentsByShiftId, liveFilters, operationalNow, shifts]);
+  // The same value the board used to include the row. The old version counted `ready` rows while the
+  // metric filter it drives showed `in_progress` ones, so pressing a card reading 3 could show 0 rows.
   const guardsNotBookedOn = React.useMemo(
-    () =>
-      liveOperationRows.filter((shift) => {
-        const attendance = attendanceByShiftId.get(shift.id);
-        return ['ready'].includes(normalizeShiftLifecycleStatus(shift.status)) && !attendance?.checkInAt;
-      }),
-    [liveOperationRows, attendanceByShiftId],
+    () => liveOperationRows.filter((row) => row.inclusion === 'late_not_booked_on'),
+    [liveOperationRows],
   );
 
   const liveOperationEnrichedRows: LiveBoardRow[] = React.useMemo(
     () =>
-      liveOperationRows.map((shift) => {
+      liveOperationRows.map(({ shift, inclusion }) => {
         const timesheet = timesheetByShiftId.get(shift.id);
         const attendance = attendanceByShiftId.get(shift.id);
         const shiftLogs = logsByShiftId.get(shift.id) || [];
@@ -3228,7 +3345,7 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
           lifecycleStatus === 'rejected' ? 'Re-offer' : 'Review Shift';
         const rowTone = getLiveShiftBoardRowTone(lifecycleStatus, risk.level);
         return {
-          shift, timesheet, attendance, shiftLogs, shiftIncidents, shiftAlerts, lastCheckCall,
+          shift, inclusion, timesheet, attendance, shiftLogs, shiftIncidents, shiftAlerts, lastCheckCall,
           panicOrWelfareCount, lifecycleStatus, risk, delay, likelyLate, siteRiskLabel, primaryActionLabel, rowTone,
           operations: operationsByShiftId.get(shift.id) ?? null,
         };
@@ -3238,6 +3355,28 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
       incidentsByShiftId, alertsByShiftId, lastCheckCallByShiftId, shifts, operationsByShiftId,
     ],
   );
+
+  /**
+   * The Live Operations status bar, counted from the SAME two sets the workspace renders.
+   *
+   * These were read off the unfiltered company-wide lists, which is how the board could say one shift
+   * while a card above it said five. A card that cannot be reconciled with the rows underneath it is
+   * worse than no card.
+   */
+  const liveOperationsCounts = React.useMemo(() => {
+    const withReason = (reason: InclusionReason) =>
+      liveOperationEnrichedRows.filter((row) => row.inclusion === reason).length;
+    const inCategory = (category: string) =>
+      urgentOperationalItems.filter((item) => item.category === category).length;
+
+    return {
+      liveShifts: withReason('in_progress'),
+      guardsNotBookedOn: withReason('late_not_booked_on'),
+      activePanicAlerts: inCategory('panic'),
+      openIncidents: inCategory('incident'),
+      missedCheckCalls: inCategory('missed_check_call'),
+    };
+  }, [liveOperationEnrichedRows, urgentOperationalItems]);
 
   const selectedShiftContext: SelectedShiftContext | null = React.useMemo(() => {
     if (!selectedShift) return null;
@@ -3912,11 +4051,11 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
   const renderLiveOperationsSection = () => (
     <View style={styles.sectionStack}>
       <CompanyLiveOperationsWorkspace
-        liveShiftsCount={liveShifts.length}
-        guardsNotBookedOnCount={guardsNotBookedOn.length}
-        activePanicAlertsCount={activePanicAlerts.length}
-        openIncidentsCount={openIncidents.length}
-        missedCheckCallsCount={missedCheckCalls.length}
+        liveShiftsCount={liveOperationsCounts.liveShifts}
+        guardsNotBookedOnCount={liveOperationsCounts.guardsNotBookedOn}
+        activePanicAlertsCount={liveOperationsCounts.activePanicAlerts}
+        openIncidentsCount={liveOperationsCounts.openIncidents}
+        missedCheckCallsCount={liveOperationsCounts.missedCheckCalls}
         urgentOperationalItems={urgentOperationalItems}
         urgentActionItemId={urgentActionItemId}
         liveOperationsFeedback={liveOperationsFeedback}

@@ -186,7 +186,14 @@ test('W3F-40-THE-PROJECTION-RIDES-THE-EXISTING-15-SECOND-REFRESH', () => {
   // One polling loop, not two.
   const intervals = dashboard.split('setInterval').length - 1;
   assert.equal(intervals, 1, `exactly one polling loop, found ${intervals}`);
-  assert.ok(dashboard.includes('}, 15000);'), 'still fifteen seconds');
+  // The cadence moved into a named constant in Phase 3B so more than one section could share the one
+  // timer. The interval itself is unchanged, and this asserts the VALUE rather than the literal that
+  // used to sit at the call site.
+  assert.ok(
+    dashboard.includes('const OPERATIONAL_REFRESH_TICK_MS = 15000;'),
+    'the shared tick is still fifteen seconds',
+  );
+  assert.ok(dashboard.includes('}, OPERATIONAL_REFRESH_TICK_MS);'), 'and the one timer runs on it');
   assert.ok(
     dashboard.includes("label: 'live operations monitoring'"),
     'the projection is a loader in the existing set, so it refreshes on that same cycle',

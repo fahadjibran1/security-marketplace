@@ -161,7 +161,12 @@ test('SHIFT-ENTRY-09-EXISTING-LIVE-OPERATIONS-FUNCTIONALITY-INTACT', () => {
 test('SHIFT-ENTRY-10-NO-SECOND-POLLING-LOOP', () => {
   const intervals = dashboard.split('setInterval').length - 1;
   assert.equal(intervals, 1, `exactly one polling loop, found ${intervals}`);
-  assert.ok(dashboard.includes('}, 15000);'), 'still the existing fifteen second cycle');
+  // Phase 3B gave the one timer a named tick so several sections could share it. Same 15 seconds,
+  // asserted by value now that the literal no longer sits at the call site.
+  assert.ok(
+    dashboard.includes('const OPERATIONAL_REFRESH_TICK_MS = 15000;'),
+    'still the existing fifteen second cycle',
+  );
 });
 
 console.log(`\n${passed} shift creation entry point checks passed`);

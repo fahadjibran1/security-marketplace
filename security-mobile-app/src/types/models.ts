@@ -1505,10 +1505,26 @@ export interface CreateIncidentPayload {
 
 export interface SafetyAlert {
   id: number;
-  type: 'check_call' | 'panic' | 'welfare' | 'late_checkin' | 'missed_checkcall' | 'other';
+  type:
+    | 'check_call'
+    | 'panic'
+    | 'welfare'
+    | 'site_request'
+    | 'late_checkin'
+    | 'missed_checkcall'
+    | 'missing_book_off'
+    | 'other';
   priority: 'low' | 'medium' | 'high' | 'critical';
   message: string;
   status: 'open' | 'acknowledged' | 'closed';
+  /**
+   * Which Welfare Check window this row is evidence for, counted from the scheduled shift start.
+   *
+   * NULL identifies the one actionable shift-level summary; a number identifies durable per-window
+   * evidence. The backend returns both from the company alert list, and a control room needs the
+   * summary: twenty-four missed windows are twenty-four records but a single thing to act on.
+   */
+  welfareWindowIndex?: number | null;
   acknowledgedAt?: string | null;
   closedAt?: string | null;
   createdAt: string;

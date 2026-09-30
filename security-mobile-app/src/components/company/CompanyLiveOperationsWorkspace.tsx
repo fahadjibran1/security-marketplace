@@ -15,6 +15,7 @@ import {
   formatInstantDateTime,
   formatInstantTime,
 } from '../../services/siteTime';
+import type { InclusionReason } from './liveOperationsPolicy';
 import { colors, radii, spacing } from '../../theme';
 import { DailyLog, Incident, SafetyAlert, Shift, Timesheet } from '../../types/models';
 
@@ -84,6 +85,14 @@ export type LiveFilters = {
 
 export type LiveBoardRow = {
   shift: Shift;
+  /**
+   * Why the policy put this row on the board.
+   *
+   * Carried rather than recomputed so the counts, the metric filters and the rows can never disagree:
+   * each reads this one value. Live Operations is the control room, not shift history, and this is the
+   * reason a row is part of "now".
+   */
+  inclusion: InclusionReason;
   /** Server-computed monitoring. Presented as given; the board never recomputes a window or a count. */
   operations: ShiftOperationsView | null;
   attendance: { checkInAt: string | null; checkOutAt: string | null } | undefined;
@@ -656,6 +665,7 @@ function LiveOpsOperationsBoard({
   selectedShiftId,
   highlightedLiveShiftId,
   metricFocus,
+  filtersActive,
   onSelectRow,
   onAction,
   onClearMetricFocus,
@@ -664,6 +674,8 @@ function LiveOpsOperationsBoard({
   selectedShiftId: number | null;
   highlightedLiveShiftId: number | null;
   metricFocus: MetricFocus;
+  /** Whether the user has narrowed the board themselves, which changes what empty means. */
+  filtersActive: boolean;
   onSelectRow: (id: number) => void;
   onAction: (shift: Shift) => void;
   onClearMetricFocus: () => void;
@@ -676,15 +688,30 @@ function LiveOpsOperationsBoard({
       </View>
       {rows.length === 0 ? (
         <View style={styles.boardEmpty}>
-          <Text style={styles.boardEmptyTitle}>
-            {metricFocus !== 'all' ? 'No operations match this view' : 'No shifts match these filters'}
-          </Text>
+          {/* Three different kinds of empty, and a control room needs to know which one it is looking
+              at. "Nothing is happening" is a legitimate answer and must read as one — the board never
+              reaches back for historical shifts to avoid showing it. */}
           {metricFocus !== 'all' ? (
-            <Pressable style={[styles.boardEmptyClearBtn, IS_WEB ? (WEB_PTR as any) : null]} onPress={onClearMetricFocus}>
-              <Text style={styles.boardEmptyClearText}>Clear metric filter</Text>
-            </Pressable>
+            <>
+              <Text style={styles.boardEmptyTitle}>No operations match this view</Text>
+              <Pressable style={[styles.boardEmptyClearBtn, IS_WEB ? (WEB_PTR as any) : null]} onPress={onClearMetricFocus}>
+                <Text style={styles.boardEmptyClearText}>Clear metric filter</Text>
+              </Pressable>
+            </>
+          ) : filtersActive ? (
+            <>
+              <Text style={styles.boardEmptyTitle}>No current operations match these filters</Text>
+              <Text style={styles.boardEmptyDesc}>
+                Clear the filters above to see everything live and upcoming. Past shifts are in Rota Planner and Coverage.
+              </Text>
+            </>
           ) : (
-            <Text style={styles.boardEmptyDesc}>Broaden filters or refresh to see live data.</Text>
+            <>
+              <Text style={styles.boardEmptyTitle}>No live or upcoming operations requiring attention.</Text>
+              <Text style={styles.boardEmptyDesc}>
+                Nothing is in progress and nothing starts in the next 4 hours. Completed and historical shifts remain in Rota Planner and Coverage.
+              </Text>
+            </>
           )}
         </View>
       ) : (
@@ -1076,14 +1103,20 @@ export function CompanyLiveOperationsWorkspace({
   onDetailLayout,
 }: CompanyLiveOperationsWorkspaceProps) {
   const [metricFocus, setMetricFocus] = React.useState<MetricFocus>('all');
+  const filtersActive = Boolean(
+    liveFilters.clientId || liveFilters.siteId || liveFilters.guardId || liveFilters.date || liveFilters.status,
+  );
   const handleMetricPress = React.useCallback(
     (focus: MetricFocus) => setMetricFocus((prev) => (prev === focus ? 'all' : focus)),
     [],
   );
 
+  // Both filters read the inclusion reason the counts were computed from, so pressing a card reading 3
+  // shows exactly those 3 rows. Previously "Guards Not Booked On" counted `ready` shifts and then filtered
+  // the board for `in_progress` ones, so the card and the rows described different things.
   const focusedBoardRows = React.useMemo(() => {
-    if (metricFocus === 'live')       return liveOperationEnrichedRows.filter((r) => r.lifecycleStatus === 'in_progress');
-    if (metricFocus === 'not-booked') return liveOperationEnrichedRows.filter((r) => r.lifecycleStatus === 'in_progress' && !r.attendance?.checkInAt);
+    if (metricFocus === 'live')       return liveOperationEnrichedRows.filter((r) => r.inclusion === 'in_progress');
+    if (metricFocus === 'not-booked') return liveOperationEnrichedRows.filter((r) => r.inclusion === 'late_not_booked_on');
     return liveOperationEnrichedRows;
   }, [liveOperationEnrichedRows, metricFocus]);
 
@@ -1094,7 +1127,7 @@ export function CompanyLiveOperationsWorkspace({
     if (metricFocus === 'not-booked') {
       const notBookedShiftIds = new Set(
         liveOperationEnrichedRows
-          .filter((r) => r.lifecycleStatus === 'in_progress' && !r.attendance?.checkInAt)
+          .filter((r) => r.inclusion === 'late_not_booked_on')
           .map((r) => r.shift.id),
       );
       return urgentOperationalItems.filter((i) => i.shiftId != null && notBookedShiftIds.has(i.shiftId));
@@ -1175,6 +1208,7 @@ export function CompanyLiveOperationsWorkspace({
           selectedShiftId={selectedShiftId}
           highlightedLiveShiftId={highlightedLiveShiftId}
           metricFocus={metricFocus}
+          filtersActive={filtersActive}
           onSelectRow={setSelectedShiftId}
           onAction={onLiveBoardPrimaryAction}
           onClearMetricFocus={() => setMetricFocus('all')}

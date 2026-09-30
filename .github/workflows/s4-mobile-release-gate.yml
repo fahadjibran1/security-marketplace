@@ -155,6 +155,15 @@ jobs:
       - name: Verify guard actions reach the API
         run: npm run test:guard-action-dispatch
 
+      # Phase 3B: Live Operations is the control room, not shift history. It had no inclusion policy at
+      # all — the board was every shift the company had ever created, so Monday's uncovered shift and
+      # Tuesday's completed ones sat beside the one being worked, and "Re-cover required" never cleared
+      # because it is derived and had nothing to acknowledge. This executes the inclusion and expiry
+      # policy, both sides of the +4h and post-end boundaries, and the production UAT scenario.
+      - name: Verify live operations stays operationally current
+        run: npm run test:live-ops-policy
+
+
       # ── Screening ─────────────────────────────────────────────────────────────
       # Protects the Guard screening journey and the locked distinction that Company-Managed deployment
       # is NOT S4 Screening. Note it also reads backend screening sources, so it doubles as a contract
