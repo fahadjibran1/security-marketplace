@@ -465,6 +465,120 @@ test('the Rota Planner resolves the zone from the site, never from the device', 
   assert.match(dashboard, /resolveSiteZone=\{resolveSiteZone\}/);
 });
 
+// ── BEHAVIOURAL sweep: a renamed literal reader must still fail ──────────────────────────────────
+
+test('no source file extracts a clock time from the DIGITS of an ISO string', () => {
+  // Phase 1 swept for the NAMES `getLiteralDateTimeParts` and `timeZone: 'UTC'`. Live Operations had
+  // the same defect under a different name — a local `fmtTime` doing
+  //
+  //     value.match(/^(d{4})-(d{2})-(d{2})(?:[Ts](d{2}):(d{2}))?/)  ->  `${m[4]}:${m[5]}`
+  //
+  // so it sailed through and shipped an hour wrong for a whole release. This looks for the BEHAVIOUR:
+  // a regex that captures a date AND a time out of one string, which is only ever done to read the
+  // digits rather than the instant.
+  // Matched as LITERAL SOURCE TEXT, not as a meta-pattern. Both historical offenders contained this
+  // exact substring, and it is only ever written to pull the hour and minute out of an ISO string:
+  //
+  //   getLiteralDateTimeParts  /^(\d{4})-(\d{2})-(\d{2})(?:[T\s](\d{2}):(\d{2})(?::(\d{2}))?)?/
+  //   Live Operations fmtTime  /^(\d{4})-(\d{2})-(\d{2})(?:[T\s](\d{2}):(\d{2}))?/
+  //
+  // A date-only capture is legitimate (a YYYY-MM-DD input validator), and so is `(\d{2}):(\d{2})` for
+  // validating a typed HH:MM. What is never legitimate is capturing the time out of a date-TIME, which
+  // is what the `[T\s]` separator in front of the capture identifies.
+  const ISO_TIME_CAPTURE = '[T\\s](\\d{2}):(\\d{2})';
+  // And a formatter reaching for capture groups 4 and 5 — in an ISO match those are hour and minute.
+  const GROUPS_4_AND_5 = /match\??\.?\[4\][\s\S]{0,120}match\??\.?\[5\]/;
+
+  // KNOWN, UNFIXED, AND DELIBERATELY NOT SILENT.
+  //
+  // This sweep found these two the moment it existed — the same defect as Live Operations, in the Shift
+  // Offers surfaces. Phase 3A was scoped to Live Operations only, so they are named here rather than
+  // fixed, and the list is explicit so it cannot grow by accident: any NEW file with this shape fails.
+  // Recorded as TECH-DEBT-TIME-03.
+  const KNOWN_UNFIXED = [
+    path.join('src', 'components', 'company', 'CompanyShiftOffersWorkspace.tsx'),
+    path.join('src', 'components', 'guard', 'GuardShiftOffersWorkspace.tsx'),
+  ];
+
+  const offenders = [];
+  for (const file of sourceFiles()) {
+    const code = codeOf(file);
+    if (code.includes(ISO_TIME_CAPTURE) || GROUPS_4_AND_5.test(code)) {
+      offenders.push(path.relative(ROOT, file));
+    }
+  }
+
+  const unexpected = offenders.filter((file) => !KNOWN_UNFIXED.includes(file));
+  assert.deepEqual(unexpected, [], `these files read a clock time out of ISO digits: ${unexpected.join(', ')}`);
+
+  // The allow-list must not outlive the defect: once a file is fixed it has to come off this list, or
+  // the list would quietly protect a file that no longer needs protecting.
+  const staleAllowances = KNOWN_UNFIXED.filter((file) => !offenders.includes(file));
+  assert.deepEqual(staleAllowances, [], `fixed — remove from KNOWN_UNFIXED: ${staleAllowances.join(', ')}`);
+});
+
+test('Live Operations renders every instant on the site clock', () => {
+  const live = codeOf(path.join(ROOT, 'src/components/company/CompanyLiveOperationsWorkspace.tsx'));
+
+  // Each formatter must REQUIRE a timezone, so omitting one is a compile error rather than silent UTC.
+  for (const name of ['fmtTime', 'fmtDate', 'fmtDateTime']) {
+    assert.ok(
+      live.includes(`function ${name}(value: string | null | undefined, timeZone: string)`),
+      `${name} must take a required timeZone argument`,
+    );
+  }
+
+  // Arity is the compiler's job — the parameter is required, so tsc already rejects a call that omits
+  // it. What tsc cannot check is WHERE the zone comes from, and that is the part that was wrong: the
+  // zone must be derived from the shift's own site, never hard-coded and never the controller's device.
+  assert.ok(
+    live.includes('shift.site?.timezone || operations?.timezone || DEFAULT_SITE_TIME_ZONE'),
+    'the row and detail zones must come from the shift site',
+  );
+  assert.ok(
+    live.includes('resolveShiftZone(item.shiftId)') && live.includes('resolveShiftZone(a.shiftId)'),
+    'attention and activity items must resolve their zone from the shift they reference',
+  );
+  const hardCoded = live.match(/fmt(?:Time|DateTime|Date)\([^;]*?'(?:Europe|America|Asia|UTC)[^']*'/g) || [];
+  assert.deepEqual(hardCoded, [], 'no call may hard-code a timezone');
+  assert.ok(!live.includes('deviceTimeZone'), 'and the board must never fall back to the device zone');
+
+  // The board must not reimplement the conversion; it delegates to the tested module.
+  assert.ok(live.includes("from '../../services/siteTime'"), 'it must delegate to the tested module');
+  assert.ok(
+    !live.includes('toLocaleTimeString') && !live.includes('getHours()'),
+    'no device-clock formatting may remain',
+  );
+});
+
+test('the Live Operations date filter buckets by the SITE day, not the UTC day', () => {
+  // `shift.start.slice(0, 10)` took the UTC date, so a 00:30 BST shift (23:30Z the previous day) was
+  // filtered onto the wrong day. Proven by conversion, not by reading the source.
+  const lateEvening = '2026-09-29T23:30:00.000Z'; // 00:30 on 30 Sep in London
+  assert.equal(lateEvening.slice(0, 10), '2026-09-29', 'the old behaviour bucketed it on the 29th');
+  assert.equal(
+    formatSiteDateInput(lateEvening, LONDON),
+    '2026-09-30',
+    'the site day is the 30th, which is the day the operator would filter for',
+  );
+
+  const dashboard = codeOf(path.join(ROOT, 'src/screens/CompanyDashboardScreen.tsx'));
+  assert.ok(
+    dashboard.includes('const date = formatSiteDateInput(shift.start, resolveSiteZone('),
+    'the Live Operations filter must derive the site-local day',
+  );
+});
+
+test('the real UAT discrepancy is gone: 10:10Z reads 11:10 at a London site', () => {
+  // Production shift 16. The Guard app already showed 11:10-12:10; Live Operations showed 10:10-11:10.
+  assert.equal(formatInstantTime('2026-09-30T10:10:00.000Z', LONDON), '11:10');
+  assert.equal(formatInstantTime('2026-09-30T11:10:00.000Z', LONDON), '12:10');
+  assert.equal(formatInstantTime('2026-09-30T10:10:15.580Z', LONDON), '11:10', 'and the Book On time');
+  // The Welfare column was always right, so the two must now agree rather than differ by an hour.
+  const welfareNextDue = '2026-09-30T11:10:00.000Z';
+  assert.equal(formatInstantTime(welfareNextDue, LONDON), '12:10', 'Welfare already read 12:10');
+});
+
 // ── Result ──────────────────────────────────────────────────────────────────────────────────────
 
 console.log(`\n${passed} passed, ${failures.length} failed\n`);

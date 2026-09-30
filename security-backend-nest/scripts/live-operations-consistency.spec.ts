@@ -96,7 +96,10 @@ test('unfilled detail exposes safe Coverage route and operational context', () =
   const workspace = readFileSync(resolve(__dirname, '../../security-mobile-app/src/components/company/CompanyLiveOperationsWorkspace.tsx'), 'utf8');
   assert(workspace.includes('Manage Coverage') && workspace.includes('onOpenCoverage({ uncoveredOnly: true, shiftId: shift.id })'), 'coverage action missing');
   assert(dashboard.includes('onOpenCoverage={openCoverage}'), 'workspace is not handed the Coverage navigation handler');
-  ['Shift #{shift.id}', 'shift.site?.name', 'fmtDate(shift.start)', "shift.guard?.fullName || 'No guard assigned'", 'badge.label'].forEach((value) => assert(workspace.includes(value), `missing detail: ${value}`));
+  // Phase 3A-i made the timezone a required argument on these formatters, so the detail date is now
+  // fmtDate(shift.start, timeZone) — the board reads every instant on the SITE's clock rather than
+  // lifting the UTC digits out of the ISO string.
+  ['Shift #{shift.id}', 'shift.site?.name', 'fmtDate(shift.start, timeZone)', "shift.guard?.fullName || 'No guard assigned'", 'badge.label'].forEach((value) => assert(workspace.includes(value), `missing detail: ${value}`));
 });
 
 async function main() {

@@ -9,6 +9,12 @@ import {
   welfareCell,
   type OperationsTone,
 } from './operationsPresentation';
+import {
+  DEFAULT_SITE_TIME_ZONE,
+  formatInstantDate,
+  formatInstantDateTime,
+  formatInstantTime,
+} from '../../services/siteTime';
 import { colors, radii, spacing } from '../../theme';
 import { DailyLog, Incident, SafetyAlert, Shift, Timesheet } from '../../types/models';
 
@@ -158,6 +164,8 @@ export type CompanyLiveOperationsWorkspaceProps = {
   // Lower strip
   uncoveredShiftCount: number;
   recentOperationalActivity: OperationalActivityItem[];
+  /** Resolves a shift's SITE timezone. Live Operations renders every instant on the site's clock. */
+  resolveShiftZone: (shiftId?: number | null) => string;
   // Detail panel
   selectedShiftContext: SelectedShiftContext | null;
   selectedShiftCloseOutSummary: CloseOutSummary | null;
@@ -180,22 +188,24 @@ export type CompanyLiveOperationsWorkspaceProps = {
 
 // ─── Pure helpers (duplicated for component isolation) ────────────────────────
 
-function fmtTime(value?: string | null): string {
-  if (!value) return '—';
-  if (/^\d{2}:\d{2}$/.test(value)) return value;
-  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s](\d{2}):(\d{2}))?/);
-  if (match?.[4] && match?.[5]) return `${match[4]}:${match[5]}`;
-  const d = new Date(value);
-  if (!isNaN(d.getTime())) return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
-  return value;
+// Every time on this board is a TRUE INSTANT and must be read on the SITE's clock.
+//
+// These three used to lift the hour and minute straight out of the ISO string — `match[4]:match[5]` — so
+// a shift stored as 10:10Z displayed as "10:10" while the Guard app correctly showed 11:10 BST. The
+// Welfare column never had the bug, because it already went through operationsPresentation with the site
+// timezone, so one row showed "Next 12:10" beside "10:10–11:10": two conventions in a single row.
+//
+// The timezone is now a REQUIRED argument rather than an optional one. An omission is a type error, not a
+// silent fall back to UTC digits or to whatever zone the controller's browser happens to be in.
+
+function fmtTime(value: string | null | undefined, timeZone: string): string {
+  // A bare HH:MM (an operating-hours field) is already a clock reading, not an instant.
+  if (value && /^\d{2}:\d{2}$/.test(value)) return value;
+  return formatInstantTime(value, timeZone);
 }
 
-function fmtDateTime(value?: string | null): string {
-  if (!value) return 'Not recorded';
-  const d = new Date(value);
-  return isNaN(d.getTime())
-    ? value
-    : d.toLocaleString(UK_LOCALE, { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+function fmtDateTime(value: string | null | undefined, timeZone: string): string {
+  return formatInstantDateTime(value, timeZone, 'Not recorded', ' ');
 }
 
 function fmtStatus(value?: string | null): string {
@@ -217,12 +227,8 @@ function fmtActivityType(eventType: string): string {
   }
 }
 
-function fmtDate(value?: string | null): string {
-  if (!value) return 'Not set';
-  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (match) return `${match[3]}/${match[2]}/${match[1]}`;
-  const d = new Date(value);
-  return isNaN(d.getTime()) ? value : d.toLocaleDateString(UK_LOCALE, { day: '2-digit', month: '2-digit', year: 'numeric' });
+function fmtDate(value: string | null | undefined, timeZone: string): string {
+  return formatInstantDate(value, timeZone, 'Not set');
 }
 
 function normalizeLifecycle(value?: string | null): string {
@@ -304,11 +310,11 @@ function getUrgentPrimaryLabel(item: UrgentOperationalItem): string {
   }
 }
 
-function getAttendanceState(row: LiveBoardRow): { primary: string; secondary: string | null; color: string } {
+function getAttendanceState(row: LiveBoardRow, timeZone: string): { primary: string; secondary: string | null; color: string } {
   const { lifecycleStatus, attendance } = row;
   if (lifecycleStatus === 'in_progress') {
     if (attendance?.checkInAt) {
-      return { primary: '● On site', secondary: fmtTime(attendance.checkInAt), color: colors.success };
+      return { primary: '● On site', secondary: fmtTime(attendance.checkInAt, timeZone), color: colors.success };
     }
     return { primary: '⚠ Not booked on', secondary: null, color: colors.warning };
   }
@@ -318,7 +324,7 @@ function getAttendanceState(row: LiveBoardRow): { primary: string; secondary: st
   if (lifecycleStatus === 'completed') {
     return {
       primary: '● Off site',
-      secondary: attendance?.checkOutAt ? fmtTime(attendance.checkOutAt) : null,
+      secondary: attendance?.checkOutAt ? fmtTime(attendance.checkOutAt, timeZone) : null,
       color: colors.textSecondary,
     };
   }
@@ -569,7 +575,9 @@ function BoardRow({
   const logBook = logBookCell(operations?.logBook, operations?.timezone);
   const badge = getStatusBadge(shift.status || 'unfilled');
   const accent = getRowAccent(rowTone);
-  const att = getAttendanceState(row);
+  // The SITE's clock, from the shift's own site; operations.timezone is the server's copy of the same.
+  const timeZone = shift.site?.timezone || operations?.timezone || DEFAULT_SITE_TIME_ZONE;
+  const att = getAttendanceState(row, timeZone);
 
   return (
     <Pressable
@@ -591,7 +599,7 @@ function BoardRow({
         {siteRiskLabel !== 'LOW' ? <Text style={styles.boardCellSiteRisk}>{siteRiskLabel}</Text> : null}
       </View>
       {/* Scheduled */}
-      <Text style={[COL[1], styles.boardCell]}>{fmtTime(shift.start)}–{fmtTime(shift.end)}</Text>
+      <Text style={[COL[1], styles.boardCell]}>{fmtTime(shift.start, timeZone)}–{fmtTime(shift.end, timeZone)}</Text>
       {/* Attendance */}
       <View style={[COL[2], styles.boardCellCol]}>
         <Text style={[styles.boardCellAttPrimary, { color: att.color }]}>{att.primary}</Text>
@@ -752,6 +760,7 @@ function AttentionItem({
   item,
   isLast,
   urgentActionItemId,
+  resolveShiftZone,
   onOpenUrgentDetail,
   onOpenUrgentShift,
   onUrgentIncidentFollowUp,
@@ -759,6 +768,8 @@ function AttentionItem({
 }: {
   item: UrgentOperationalItem;
   isLast: boolean;
+  /** An attention item carries only a shiftId, so the site's clock is resolved from that. */
+  resolveShiftZone: (shiftId?: number | null) => string;
   urgentActionItemId: string | null;
   onOpenUrgentDetail: (item: UrgentOperationalItem) => void;
   onOpenUrgentShift: (item: UrgentOperationalItem) => void;
@@ -792,7 +803,7 @@ function AttentionItem({
         <View style={[styles.attentionBadge, { borderColor: sevColor, backgroundColor: `${sevColor}12` }]}>
           <Text style={[styles.attentionBadgeText, { color: sevColor }]}>{badgeLabel}</Text>
         </View>
-        <Text style={styles.attentionTime}>{fmtTime(item.occurredAt)}</Text>
+        <Text style={styles.attentionTime}>{fmtTime(item.occurredAt, resolveShiftZone(item.shiftId))}</Text>
       </View>
       {/* Meta */}
       <Text style={styles.attentionMeta} numberOfLines={1}>{item.siteName} · {item.guardName}</Text>
@@ -816,6 +827,7 @@ function LiveOpsAttentionRail({
   items,
   metricFocus,
   urgentActionItemId,
+  resolveShiftZone,
   onOpenUrgentDetail,
   onOpenUrgentShift,
   onUrgentIncidentFollowUp,
@@ -823,6 +835,7 @@ function LiveOpsAttentionRail({
 }: {
   items: UrgentOperationalItem[];
   metricFocus: MetricFocus;
+  resolveShiftZone: (shiftId?: number | null) => string;
   urgentActionItemId: string | null;
   onOpenUrgentDetail: (item: UrgentOperationalItem) => void;
   onOpenUrgentShift: (item: UrgentOperationalItem) => void;
@@ -857,6 +870,7 @@ function LiveOpsAttentionRail({
               <AttentionItem
                 item={item}
                 isLast={idx === total - 1}
+                resolveShiftZone={resolveShiftZone}
                 urgentActionItemId={urgentActionItemId}
                 onOpenUrgentDetail={onOpenUrgentDetail}
                 onOpenUrgentShift={onOpenUrgentShift}
@@ -880,9 +894,11 @@ function LiveOpsActivityFeed({
   recentOperationalActivity,
   liveOperationEnrichedRows,
   onOpenCoverage,
+  resolveShiftZone,
 }: {
   uncoveredShiftCount: number;
   recentOperationalActivity: OperationalActivityItem[];
+  resolveShiftZone: (shiftId?: number | null) => string;
   liveOperationEnrichedRows: LiveBoardRow[];
   onOpenCoverage: (context?: { uncoveredOnly?: boolean; shiftId?: number }) => void;
 }) {
@@ -959,7 +975,7 @@ function LiveOpsActivityFeed({
               key={a.id}
               style={[styles.activityItem, idx < recentSlice.length - 1 ? styles.activityItemDivider : null]}
             >
-              <Text style={styles.activityItemTime}>{fmtTime(a.occurredAt)}</Text>
+              <Text style={styles.activityItemTime}>{fmtTime(a.occurredAt, resolveShiftZone(a.shiftId))}</Text>
               <View style={styles.activityItemBody}>
                 <Text style={styles.activityItemEvent} numberOfLines={1}>{fmtActivityType(a.eventType)}</Text>
                 <Text style={styles.activityItemSite} numberOfLines={1}>{a.siteName}</Text>
@@ -987,7 +1003,7 @@ function LiveOpsActivityFeed({
                       {item.kind === 'starting' ? 'Starting' : 'Ending'}
                     </Text>
                   </View>
-                  <Text style={styles.next60Time}>{fmtTime(new Date(item.at).toISOString())}</Text>
+                  <Text style={styles.next60Time}>{fmtTime(new Date(item.at).toISOString(), item.shift.site?.timezone || DEFAULT_SITE_TIME_ZONE)}</Text>
                 </View>
                 <Text style={styles.next60Site} numberOfLines={1}>
                   {item.shift.site?.name || item.shift.siteName || 'Unknown'}
@@ -1043,6 +1059,7 @@ export function CompanyLiveOperationsWorkspace({
   linkedGuardOptions,
   uncoveredShiftCount,
   recentOperationalActivity,
+  resolveShiftZone,
   selectedShiftContext,
   selectedShiftCloseOutSummary,
   closeOutNotesDraft,
@@ -1165,6 +1182,7 @@ export function CompanyLiveOperationsWorkspace({
         <LiveOpsAttentionRail
           items={focusedAttentionItems}
           metricFocus={metricFocus}
+          resolveShiftZone={resolveShiftZone}
           urgentActionItemId={urgentActionItemId}
           onOpenUrgentDetail={onOpenUrgentDetail}
           onOpenUrgentShift={onOpenUrgentShift}
@@ -1177,6 +1195,7 @@ export function CompanyLiveOperationsWorkspace({
       <LiveOpsActivityFeed
         uncoveredShiftCount={uncoveredShiftCount}
         recentOperationalActivity={recentOperationalActivity}
+        resolveShiftZone={resolveShiftZone}
         liveOperationEnrichedRows={liveOperationEnrichedRows}
         onOpenCoverage={onOpenCoverage}
       />
@@ -1223,6 +1242,7 @@ function DetailPanelContent({
   onOpenCoverage: (context?: { uncoveredOnly?: boolean; shiftId?: number }) => void;
 }) {
   const { shift, attendance, timesheet, logs, incidents, alerts, lifecycleStatus, badge, exception, clientName, operations } = ctx;
+  const timeZone = shift.site?.timezone || operations?.timezone || DEFAULT_SITE_TIME_ZONE;
   const operationsSections = operationsDetailLines(operations);
   const operationsExceptions = operationalExceptions(operations);
 
@@ -1233,7 +1253,7 @@ function DetailPanelContent({
           <Text style={styles.detailTitle}>Shift #{shift.id}</Text>
           <Text style={styles.detailMeta}>{clientName} · {shift.site?.name || shift.siteName}</Text>
           <Text style={styles.detailMeta}>
-            {shift.guard?.fullName || 'No guard assigned'} · {fmtDate(shift.start)} · {fmtTime(shift.start)}–{fmtTime(shift.end)}
+            {shift.guard?.fullName || 'No guard assigned'} · {fmtDate(shift.start, timeZone)} · {fmtTime(shift.start, timeZone)}–{fmtTime(shift.end, timeZone)}
           </Text>
           <Text style={styles.detailMeta}>Check calls every {shift.checkCallIntervalMinutes || 60} min</Text>
         </View>
@@ -1277,8 +1297,8 @@ function DetailPanelContent({
             <Text style={closeOutSummary.closedCleanly ? styles.detailCloseOutGood : styles.detailCloseOutWarn}>
               {closeOutSummary.closedCleanly ? 'Closed cleanly' : `Needs follow-up (${closeOutSummary.unresolvedFollowUpCount})`}
             </Text>
-            <Text style={styles.detailLine}>Scheduled: {fmtDateTime(closeOutSummary.scheduledStart)} → {fmtDateTime(closeOutSummary.scheduledEnd)}</Text>
-            <Text style={styles.detailLine}>Actual: {fmtDateTime(closeOutSummary.actualCheckInAt)} → {fmtDateTime(closeOutSummary.actualCheckOutAt)}</Text>
+            <Text style={styles.detailLine}>Scheduled: {fmtDateTime(closeOutSummary.scheduledStart, timeZone)} → {fmtDateTime(closeOutSummary.scheduledEnd, timeZone)}</Text>
+            <Text style={styles.detailLine}>Actual: {fmtDateTime(closeOutSummary.actualCheckInAt, timeZone)} → {fmtDateTime(closeOutSummary.actualCheckOutAt, timeZone)}</Text>
             <Text style={styles.detailLine}>Logs: {closeOutSummary.logsCount} · Incidents: {closeOutSummary.incidentsCount} · Safety: {closeOutSummary.safetyEventsCount}</Text>
             <Text style={styles.detailLine}>Check calls: {closeOutSummary.completedCheckCalls} complete / {closeOutSummary.missedCheckCalls} missed</Text>
             <Text style={styles.detailLine}>Timesheet: {fmtStatus(closeOutSummary.timesheetStatus)}</Text>
@@ -1334,8 +1354,8 @@ function DetailPanelContent({
 
         <View style={styles.detailCard}>
           <Text style={styles.detailCardTitle}>Attendance &amp; Timesheet</Text>
-          <Text style={styles.detailLine}>Book on: {attendance?.checkInAt ? fmtDateTime(attendance.checkInAt) : 'Pending'}</Text>
-          <Text style={styles.detailLine}>Book off: {attendance?.checkOutAt ? fmtDateTime(attendance.checkOutAt) : 'Pending'}</Text>
+          <Text style={styles.detailLine}>Book on: {attendance?.checkInAt ? fmtDateTime(attendance.checkInAt, timeZone) : 'Pending'}</Text>
+          <Text style={styles.detailLine}>Book off: {attendance?.checkOutAt ? fmtDateTime(attendance.checkOutAt, timeZone) : 'Pending'}</Text>
           <Text style={styles.detailLine}>Timesheet: {fmtStatus(timesheet?.approvalStatus || 'pending')}</Text>
         </View>
 

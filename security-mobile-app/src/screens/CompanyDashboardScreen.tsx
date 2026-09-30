@@ -17,6 +17,7 @@ import { resolveCompliancePermissions } from '../components/company/compliance-m
 import {
   DEFAULT_SITE_TIME_ZONE,
   formatInstantTime,
+  formatSiteDateInput,
   resolveDisplayZone,
   siteLocalEndToInstant,
   siteLocalToInstant,
@@ -2183,6 +2184,26 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
   );
 
 
+  /**
+   * A shift's SITE timezone, keyed by shift id.
+   *
+   * Live Operations attention items and activity entries carry only a shiftId, never a site, so they
+   * cannot resolve the site's clock themselves. Phase 1 corrected the stored instants, but that board
+   * still read the UTC digits out of them: an 11:10 BST shift displayed as 10:10 while the Guard app
+   * showed 11:10. The same row's Welfare column was already right, because it went through
+   * operationsPresentation with the timezone.
+   */
+  const shiftSiteIdById = React.useMemo(
+    () => new Map(shifts.map((shift) => [shift.id, shift.site?.id ?? shift.siteId ?? null])),
+    [shifts],
+  );
+
+  const resolveShiftZone = React.useCallback(
+    (shiftId?: number | null) =>
+      resolveSiteZone(shiftId == null ? null : shiftSiteIdById.get(shiftId) ?? null),
+    [resolveSiteZone, shiftSiteIdById],
+  );
+
   const plannerWeekDays = React.useMemo(() => buildWeekDays(plannerWeekCommencing), [plannerWeekCommencing]);
 
   const plannerRowsByDate = React.useMemo(() => {
@@ -3126,7 +3147,9 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
         const clientId = String(shift.site?.client?.id ?? shift.site?.clientId ?? '');
         const siteId = String(shift.site?.id ?? shift.siteId ?? '');
         const guardId = String(shift.guard?.id ?? shift.guardId ?? '');
-        const date = shift.start.slice(0, 10);
+        // The SITE's calendar day, not the UTC one: shift.start.slice(0, 10) takes the UTC date, so a
+        // 00:30 BST shift (23:30Z the day before) filtered onto the wrong day. Same defect family.
+        const date = formatSiteDateInput(shift.start, resolveSiteZone(shift.site?.id ?? shift.siteId));
         const status = (shift.status || '').toLowerCase();
 
         return (
@@ -3900,6 +3923,7 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
         canManageShifts={canManageShifts}
         onAddShift={handleAddShiftFromLiveOperations}
         liveOperationEnrichedRows={liveOperationEnrichedRows}
+        resolveShiftZone={resolveShiftZone}
         selectedShiftId={selectedShiftId}
         setSelectedShiftId={setSelectedShiftId}
         highlightedLiveShiftId={highlightedLiveShiftId}
