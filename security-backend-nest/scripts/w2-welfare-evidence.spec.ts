@@ -643,14 +643,41 @@ async function main() {
       assert.equal(updated.v, 120, 'and it can be set when a client asks for one');
     });
 
-    await test('W2-37-SITE-INTERVAL-OVERRIDES-THE-SHIFT-INTERVAL', async () => {
-      // Proves the sweep reads the authoritative resolver: site 30 beats shift 60.
+    await test('W2-37-SHIFT-INTERVAL-OVERRIDES-THE-SITE-DEFAULT', async () => {
+      // PHASE 3A-ii REVERSED THIS, and this test previously asserted the opposite ("site 30 beats
+      // shift 60"). Its real purpose is unchanged and still valuable: it proves the SWEEP goes through
+      // the authoritative resolver rather than reading one interval field directly, and it does so
+      // against real database rows and a real sweep run.
+      //
+      // It now mirrors the production UAT case that exposed the defect: the operator entered 15 minutes
+      // against the shift, the site carried the 60-minute default, and the platform generated a single
+      // 60-minute window — so Live Operations reported no missed checks on a shift configured to demand
+      // one every fifteen minutes.
       const tenant = await makeCompany('charlie');
-      tenant.site.welfareCheckIntervalMinutes = 30;
+      tenant.site.welfareCheckIntervalMinutes = 60;
       await repo(Site).save(tenant.site);
-      const shift = await makeShift({ tenant, startedMinsAgo: 70, intervalMinutes: 60 });
+      // Started 70 minutes ago, so at a 15-minute interval four windows have settled past the 5-minute
+      // grace (0-15, 15-30, 30-45, 45-60) while the fifth is still open.
+      const shift = await makeShift({ tenant, startedMinsAgo: 70, intervalMinutes: 15 });
       await sweep.runMissedWelfareChecks();
-      assert.equal(await indexedEvidence(shift.id), 2, 'two 30-minute windows elapsed, not one 60-minute one');
+      assert.equal(
+        await indexedEvidence(shift.id),
+        4,
+        'four settled 15-minute windows, not one 60-minute window from the site default',
+      );
+
+      // And the converse, so the rule is not merely "shorter wins": an explicit LONGER shift interval
+      // must also beat a shorter site default.
+      const other = await makeCompany('charlie-long');
+      other.site.welfareCheckIntervalMinutes = 15;
+      await repo(Site).save(other.site);
+      const longShift = await makeShift({ tenant: other, startedMinsAgo: 70, intervalMinutes: 60 });
+      await sweep.runMissedWelfareChecks();
+      assert.equal(
+        await indexedEvidence(longShift.id),
+        1,
+        'one settled 60-minute window, not four from the shorter site default',
+      );
     });
 
     console.log(JSON.stringify({ event: 'w2_welfare_evidence_certified', tests: passed }));

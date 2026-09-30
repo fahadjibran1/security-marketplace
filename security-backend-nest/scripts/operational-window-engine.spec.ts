@@ -308,20 +308,34 @@ async function main() {
   // ── Welfare interval precedence ────────────────────────────────────────────────────────────
 
   await test('W1-16-WELFARE-INTERVAL-PRECEDENCE', () => {
+    // PHASE 3A-ii REVERSED THIS ORDER, and this test previously asserted the opposite.
+    //
+    // It read the SITE first. Because `sites.welfareCheckIntervalMinutes` is NOT NULL with a default, a
+    // site value always existed, so the per-shift value could never win — it was dead config. Real UAT
+    // proved it: the operator entered 15 minutes on the rota slot, it was stored correctly on both the
+    // slot and the shift, and the platform still generated one 60-minute window from the site default.
+    //
+    // The locked rule is specific-beats-general: a value entered against a shift is an instruction about
+    // that shift; the site value is the default for shifts that say nothing.
     const resolve = (site: number | null, shift: number | null) =>
       welfare.resolveIntervalMinutes({
         siteWelfareCheckIntervalMinutes: site,
         shiftCheckCallIntervalMinutes: shift,
       });
 
-    assert.equal(resolve(30, 60), 30, 'the site setting wins');
-    assert.equal(resolve(null, 45), 45, 'then the shift setting');
-    assert.equal(resolve(null, null), 60, 'then the 60-minute default');
-    assert.equal(resolve(1, null), 5, 'floored at 5 minutes so bad config cannot cause an alert storm');
-    // Pinning the pre-existing `Number(x) || 60` semantics the sweep has always had: a zero site
-    // interval resolves to the default rather than falling through to the shift value.
-    assert.equal(resolve(0, 45), 60, 'a zero site interval means the default, not the shift value');
-    assert.equal(resolve(Number.NaN, null), 60, 'unusable values become the default');
+    assert.equal(resolve(60, 15), 15, 'an explicit shift override wins — the real UAT case');
+    assert.equal(resolve(60, 30), 30, 'and again with a different override');
+    assert.equal(resolve(15, 60), 60, 'even when the override is LONGER than the site default');
+    assert.equal(resolve(60, null), 60, 'no override falls back to the site default');
+    assert.equal(resolve(null, null), 60, 'neither set falls back to the 60-minute system default');
+    assert.equal(resolve(null, 45), 45, 'a shift value with no site default still applies');
+    assert.equal(resolve(null, 1), 5, 'floored at 5 minutes so bad config cannot cause an alert storm');
+    assert.equal(resolve(1, null), 5, 'the floor applies to the site value too');
+    // The `Number(x) || 60` coercion is unchanged, only the order it is applied in. A zero or unusable
+    // SHIFT value is now the one that falls through to the default, because the shift is read first.
+    assert.equal(resolve(15, 0), 60, 'a zero shift override means the default, not the site value');
+    assert.equal(resolve(15, Number.NaN), 60, 'an unusable shift override likewise');
+    assert.equal(resolve(0, null), 60, 'a zero site value still means the default');
   });
 
   // ── Completion classification ──────────────────────────────────────────────────────────────
@@ -502,12 +516,83 @@ async function main() {
     assert.equal(runaway.length, MAX_WINDOWS_PER_SHIFT);
   });
 
-  await test('W1-30-RESOLVER-IS-BEHAVIOUR-IDENTICAL-TO-THE-OLD-SWEEP-EXPRESSION', () => {
-    // W1 repointed the missed-welfare sweep at resolveIntervalMinutes. That is only a safe
-    // internal refactor if the resolver is indistinguishable from the expression it replaced, so
-    // the old one is reproduced verbatim here and compared across every awkward input.
-    const previous = (site: unknown, shift: unknown) =>
-      Math.max(5, Number((site ?? shift ?? 60) as number) || 60);
+  await test('W1-16B-THE-REAL-UAT-SHIFT-PRODUCES-FOUR-FIFTEEN-MINUTE-WINDOWS', () => {
+    // Production shift 16, exactly as inspected: 11:10–12:10 Europe/London (10:10Z–11:10Z), Book On at
+    // 11:10:15 site time, shift/slot interval 15, site default 60. Before Phase 3A-ii this produced ONE
+    // 60-minute window, which is why Live Operations correctly showed MISSED CHECKS = 0 for a shift the
+    // operator had configured to demand a check every fifteen minutes.
+    const shiftStart = new Date('2026-09-30T10:10:00.000Z');
+    const shiftEnd = new Date('2026-09-30T11:10:00.000Z');
+    const bookOn = new Date('2026-09-30T10:10:15.580Z');
+
+    const resolution = welfare.resolve({
+      shiftStart,
+      shiftEnd,
+      interval: { siteWelfareCheckIntervalMinutes: 60, shiftCheckCallIntervalMinutes: 15 },
+      completions: [],
+      applicability: { bookOnAt: bookOn, bookOffAt: null, shiftEnd },
+      // Well past the shift and its grace, so every window has settled.
+      now: new Date('2026-09-30T12:00:00.000Z'),
+    });
+
+    assert.equal(resolution.intervalMinutes, 15, 'the operator-entered 15 minutes must be used');
+    assert.equal(resolution.windows.length, 4, 'a 60-minute shift at 15-minute intervals owes four checks');
+
+    // The site-local grid the operator expects: 11:10–11:25, 11:25–11:40, 11:40–11:55, 11:55–12:10.
+    const asSiteLocal = (d: Date) =>
+      new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Europe/London',
+        hour: '2-digit',
+        minute: '2-digit',
+        hourCycle: 'h23',
+      }).format(d);
+    assert.deepEqual(
+      resolution.windows.map((w) => `${asSiteLocal(w.start)}-${asSiteLocal(w.end)}`),
+      ['11:10-11:25', '11:25-11:40', '11:40-11:55', '11:55-12:10'],
+    );
+
+    // The guard deliberately missed all of them, so each settled window is missed evidence in its own
+    // right rather than one rolling alert for the whole shift.
+    assert.equal(
+      resolution.windows.filter((w) => w.state === OperationalWindowState.MISSED).length,
+      4,
+      'every settled unmet window is its own missed record',
+    );
+    assert.equal(resolution.summary.missedCount, 4, 'and the summary counts all four');
+
+    // Mid-shift the grid is already four windows, so the board cannot read zero merely because the
+    // shift has not finished. At 11:41 site time the first two have settled past grace.
+    const midShift = welfare.resolve({
+      shiftStart,
+      shiftEnd,
+      interval: { siteWelfareCheckIntervalMinutes: 60, shiftCheckCallIntervalMinutes: 15 },
+      completions: [],
+      applicability: { bookOnAt: bookOn, bookOffAt: null, shiftEnd },
+      now: new Date('2026-09-30T10:41:00.000Z'),
+    });
+    assert.equal(midShift.intervalMinutes, 15, 'the fix applies at every now()');
+    assert.equal(midShift.windows.length, 4, 'and never collapses back to one site-default window');
+    // At 11:41 site time only the FIRST window has settled past its 5-minute grace (11:10-11:25, due
+    // 11:25, missed from 11:30). The second (11:25-11:40, due 11:40) is still inside grace until 11:45,
+    // so it is OVERDUE rather than MISSED - the grace semantics W1/W2 locked are untouched here.
+    assert.equal(
+      midShift.windows.filter((w) => w.state === OperationalWindowState.MISSED).length,
+      1,
+      'one window has settled past grace by 11:41 site time',
+    );
+    assert.equal(
+      midShift.windows.filter((w) => w.state === OperationalWindowState.OVERDUE).length,
+      1,
+      'and the second is elapsed but still within grace',
+    );
+  });
+
+  await test('W1-30-RESOLVER-MATCHES-THE-LOCKED-PRECEDENCE-ACROSS-EVERY-AWKWARD-INPUT', () => {
+    // This test used to pin the resolver to the OLD sweep expression, site-first. Phase 3A-ii changed the
+    // product rule, so it now pins the LOCKED one — shift override, then site default, then 60 — and the
+    // coercion and floor are still exercised across every awkward input rather than only the tidy ones.
+    const locked = (site: unknown, shift: unknown) =>
+      Math.max(5, Number((shift ?? site ?? 60) as number) || 60);
 
     const candidates: unknown[] = [null, undefined, 0, 1, 5, 30, 45, 60, 120, -10, Number.NaN, '30', 'oops'];
     candidates.forEach((site) =>
@@ -517,10 +602,20 @@ async function main() {
             siteWelfareCheckIntervalMinutes: site as number | null,
             shiftCheckCallIntervalMinutes: shift as number | null,
           }),
-          previous(site, shift),
-          `interval must be unchanged for site=${String(site)} shift=${String(shift)}`,
+          locked(site, shift),
+          `interval must follow shift-then-site for site=${String(site)} shift=${String(shift)}`,
         ),
       ),
+    );
+
+    // And the direction is asserted explicitly, so a silent revert to site-first fails here too.
+    assert.notEqual(
+      welfare.resolveIntervalMinutes({
+        siteWelfareCheckIntervalMinutes: 60,
+        shiftCheckCallIntervalMinutes: 15,
+      }),
+      60,
+      'a site default must never override an explicit shift interval',
     );
   });
 

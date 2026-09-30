@@ -51,18 +51,27 @@ export class WelfareWindowService {
   /**
    * THE authoritative Welfare interval rule:
    *
-   *   site.welfareCheckIntervalMinutes ?? shift.checkCallIntervalMinutes ?? 60, floored at 5.
+   *   shift.checkCallIntervalMinutes ?? site.welfareCheckIntervalMinutes ?? 60, floored at 5.
    *
-   * This reproduces the long-standing arithmetic in the missed-welfare sweep exactly, including
-   * the `Number(x) || 60` fallback that turns 0, NaN and unparseable values into the default. It
-   * exists so the sweep, the live projection and the reports stop disagreeing: the reporting paths
-   * currently read `shift.checkCallIntervalMinutes` alone and so ignore both the site setting and
-   * the floor. W2 repoints them here.
+   * THE ORDER MATTERS AND IT USED TO BE THE WRONG WAY ROUND.
+   * It read the SITE first, and because `sites.welfareCheckIntervalMinutes` is NOT NULL with a default,
+   * the site value always existed — so the per-shift value could never win and was effectively dead.
+   * Real UAT proved it: shift 16 and its rota slot both stored the 15 minutes the operator entered, the
+   * site carried the 60-minute default, and the platform generated ONE 60-minute window instead of four
+   * 15-minute ones. Missed checks then read zero, correctly for 60 and wrongly for what was asked.
+   *
+   * A value entered against a specific shift or rota slot is a deliberate instruction about that shift;
+   * the site value is the default for shifts that say nothing. So the specific beats the general, and
+   * the system default applies only when neither is set.
+   *
+   * The `Number(x) || 60` coercion and the five-minute floor are unchanged: 0, NaN and unparseable
+   * values still fall back to the default, and a misconfigured one-minute interval still cannot generate
+   * an alert storm against a Guard who is doing nothing wrong.
    */
   resolveIntervalMinutes(source: WelfareIntervalSource): number {
     const candidate =
-      source.siteWelfareCheckIntervalMinutes ??
       source.shiftCheckCallIntervalMinutes ??
+      source.siteWelfareCheckIntervalMinutes ??
       WELFARE_DEFAULT_INTERVAL_MINUTES;
     const numeric = Number(candidate) || WELFARE_DEFAULT_INTERVAL_MINUTES;
     return Math.max(WELFARE_MINIMUM_INTERVAL_MINUTES, numeric);

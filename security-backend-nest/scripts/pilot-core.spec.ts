@@ -338,9 +338,15 @@ async function main() {
     // Suppression, through the real Guard API: a check call completes the window that contains it.
     const cc = await api('POST', '/daily-logs', guards.A.token, { shiftId: shift1Id, message: 'Check call: all secure', logType: 'check_call' });
     assert.equal(cc.status, 201, errText(cc));
-    // Place the API-created entry inside the first elapsed window. The authoritative interval here is
-    // the site's 60 minutes, which overrides the slot's 30.
-    await q(`UPDATE daily_logs SET "createdAt" = $1 WHERE id = $2`, [new Date(shiftStart.getTime() + 30 * MIN), cc.body.id]);
+    // Place the API-created entry inside the first elapsed window.
+    //
+    // PHASE 3A-ii CHANGED WHICH INTERVAL APPLIES HERE. This site carries 60 minutes and the slot carries
+    // an explicit 30, and the slot now wins — so the grid is 30-minute, not 60-minute. The entry used to
+    // be placed at start+30, which sat inside the single 0-60 window; on a 30-minute grid that instant is
+    // the half-open BOUNDARY and belongs to window 1, leaving window 0 correctly reported missed. Moved
+    // to start+15 so it is unambiguously inside window 0, which is what this test is actually about: a
+    // check call completes the window that contains it, and a later unanswered window is still recorded.
+    await q(`UPDATE daily_logs SET "createdAt" = $1 WHERE id = $2`, [new Date(shiftStart.getTime() + 15 * MIN), cc.body.id]);
     await scanner.runMissedWelfareChecks();
     const afterCall = await indexedFor(shift1Id);
     assert.ok(!afterCall.includes(0), `the window holding the check call must not be reported missed: ${afterCall}`);
