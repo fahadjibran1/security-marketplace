@@ -84,6 +84,12 @@ import {
   resolveActionSubmitState,
   type GuardActionKey,
 } from '../components/guard/guardActionForms';
+import {
+  dispatchGuardAction,
+  guardActionBlockedReason,
+  type GuardActionApi,
+  type GuardActionOutcome,
+} from '../components/guard/guardActionDispatch';
 import { colors } from '../theme';
 
 interface GuardDashboardScreenProps {
@@ -503,6 +509,7 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
     : dailyLogMessage; // 'log' and 'checkCall' share one note field, exactly as before
 
   const setActionFormValue = (key: GuardActionKey, next: string) => {
+    setActionOutcome((prev) => (prev[key] ? { ...prev, [key]: undefined } : prev));
     if (key === 'incident') setIncidentMessage(next);
     else if (key === 'welfare') setWelfareMessage(next);
     else if (key === 'panic') setPanicConfirmation(next);
@@ -514,15 +521,49 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
     : key === 'welfare' || key === 'panic' ? submittingAlertType !== null
     : submittingDailyLogType !== null;
 
-  const closeQuickAction = () => setQuickActionModal(null);
+  // The dispatcher's result for each action, shown INSIDE the form. A screen-level banner was not
+  // enough: on Build 11 a refusal was reported only through the feedback strip, which the open modal
+  // and the keyboard cover, so pressing Submit looked like nothing happening at all.
+  const [actionOutcome, setActionOutcome] = useState<Partial<Record<GuardActionKey, GuardActionOutcome>>>({});
 
-  /** Routes to the existing handler for that action. No submission logic lives here. */
-  const submitQuickAction = (key: GuardActionKey) => {
-    if (key === 'log') return void handleCreateLog('observation');
-    if (key === 'checkCall') return void handleCreateLog('check_call');
-    if (key === 'incident') return void handleCreateIncident();
-    if (key === 'welfare') return void handleCreateWelfareAlert();
-    return void handleCreatePanicAlert();
+  const closeQuickAction = () => {
+    setQuickActionModal(null);
+    setActionOutcome({});
+  };
+
+  /** The real API client, injected so the dispatcher can be executed in tests against a fake. */
+  const guardActionApi: GuardActionApi = {
+    createDailyLog,
+    createIncident,
+    createSafetyAlert,
+  };
+
+  /**
+   * Every live-shift action goes through the ONE shared dispatcher, which the tests execute too.
+   * The screen supplies the state and the side effects; the routing, preconditions and API writes all
+   * live in guardActionDispatch.ts so press-to-API can be proven rather than assumed.
+   */
+  const submitQuickAction = async (key: GuardActionKey) => {
+    const outcome = await dispatchGuardAction(
+      key,
+      { shift: selectedShift, value: actionFormValue(key), busy: actionFormBusy(key) },
+      guardActionApi,
+      {
+        setBusy: (which, busy) => {
+          if (which === 'incident') setSubmittingIncident(busy);
+          else if (which === 'welfare') setSubmittingAlertType(busy ? 'welfare' : null);
+          else if (which === 'panic') setSubmittingAlertType(busy ? 'panic' : null);
+          else setSubmittingDailyLogType(busy ? (which === 'checkCall' ? 'check_call' : 'observation') : null);
+        },
+        clearValue: (which) => setActionFormValue(which, ''),
+        closeForm: closeQuickAction,
+        reload: () => loadData(),
+        timeline: pushTimelineEvent,
+        feedback: pushFeedback,
+      },
+    );
+    // Kept only while it is actionable. A success has already closed the form.
+    setActionOutcome((prev) => ({ ...prev, [key]: outcome.kind === 'success' ? undefined : outcome }));
   };
   const [actionFeedback, setActionFeedback] = useState<{
     tone: 'success' | 'error' | 'info';
@@ -1280,137 +1321,6 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
     } finally {
       setRespondingShiftId(null);
       setOfferRespondAction(null);
-    }
-  }
-
-  async function handleCreateLog(logType: DailyLog['logType']) {
-    if (!selectedShift?.id || selectedShiftStatus !== 'in_progress') {
-      pushFeedback('info', 'Log unavailable', 'Logs are only available during an active shift.');
-      return;
-    }
-    if (!dailyLogMessage.trim()) {
-      pushFeedback('error', 'Note required', 'Write a short update before saving the log.');
-      return;
-    }
-    try {
-      setSubmittingDailyLogType(logType);
-      await createDailyLog({
-        shiftId: selectedShift.id,
-        message: dailyLogMessage.trim(),
-        logType,
-      });
-      pushTimelineEvent(
-        selectedShift.id,
-        logType === 'check_call' ? 'Check call recorded' : 'Log added',
-        dailyLogMessage.trim(),
-      );
-      setDailyLogMessage('');
-      setQuickActionModal(null);
-      await loadData();
-      pushFeedback(
-        'success',
-        logType === 'check_call' ? 'Check call recorded' : 'Log added',
-        logType === 'check_call' ? 'Your check call was recorded.' : 'Your log entry was saved.',
-      );
-    } catch (error) {
-      const message = formatApiErrorMessage(error, 'Unable to save this log.');
-      pushFeedback('error', 'Log failed', message);
-      showAlert('Log failed', message);
-    } finally {
-      setSubmittingDailyLogType(null);
-    }
-  }
-
-  async function handleCreateIncident() {
-    if (!selectedShift?.id || selectedShiftStatus !== 'in_progress') {
-      pushFeedback('info', 'Incident unavailable', 'Incident reporting is only available during an active shift.');
-      return;
-    }
-    if (!incidentMessage.trim()) {
-      pushFeedback('error', 'Description required', 'Add a short incident description before submitting.');
-      return;
-    }
-    try {
-      setSubmittingIncident(true);
-      await createIncident({
-        title: 'Guard incident',
-        notes: incidentMessage.trim(),
-        severity: 'medium',
-        shiftId: selectedShift.id,
-      });
-      pushTimelineEvent(selectedShift.id, 'Incident raised', incidentMessage.trim());
-      setIncidentMessage('');
-      setQuickActionModal(null);
-      await loadData();
-      pushFeedback('success', 'Incident reported', 'The company can now see this incident.');
-    } catch (error) {
-      const message = formatApiErrorMessage(error, 'Unable to submit this incident.');
-      pushFeedback('error', 'Incident failed', message);
-      showAlert('Incident failed', message);
-    } finally {
-      setSubmittingIncident(false);
-    }
-  }
-
-  async function handleCreateWelfareAlert() {
-    if (!selectedShift?.id || selectedShiftStatus !== 'in_progress') {
-      pushFeedback('info', 'Welfare unavailable', 'Welfare actions are only available during an active shift.');
-      return;
-    }
-    if (!welfareMessage.trim()) {
-      pushFeedback('error', 'Update required', 'Add a short welfare update before sending it.');
-      return;
-    }
-    try {
-      setSubmittingAlertType('welfare');
-      await createSafetyAlert({
-        shiftId: selectedShift.id,
-        type: 'welfare',
-        priority: 'high',
-        message: welfareMessage.trim(),
-      });
-      pushTimelineEvent(selectedShift.id, 'Welfare update recorded', welfareMessage.trim());
-      setWelfareMessage('');
-      setQuickActionModal(null);
-      await loadData();
-      pushFeedback('success', 'Welfare update sent', 'The control room can now see your welfare update.');
-    } catch (error) {
-      const message = formatApiErrorMessage(error, 'Unable to send this welfare update.');
-      pushFeedback('error', 'Welfare failed', message);
-      showAlert('Welfare failed', message);
-    } finally {
-      setSubmittingAlertType(null);
-    }
-  }
-
-  async function handleCreatePanicAlert() {
-    if (!selectedShift?.id || selectedShiftStatus !== 'in_progress') {
-      pushFeedback('info', 'Panic unavailable', 'Panic alerts are only available during an active shift.');
-      return;
-    }
-    if (panicConfirmation.trim().toUpperCase() !== 'PANIC') {
-      pushFeedback('error', 'Confirmation required', 'Type PANIC to confirm sending this alert.');
-      return;
-    }
-    try {
-      setSubmittingAlertType('panic');
-      await createSafetyAlert({
-        shiftId: selectedShift.id,
-        type: 'panic',
-        priority: 'critical',
-        message: 'Emergency alert raised by guard from the mobile app.',
-      });
-      pushTimelineEvent(selectedShift.id, 'Panic alert sent', 'Emergency alert sent to control room.');
-      setPanicConfirmation('');
-      setQuickActionModal(null);
-      await loadData();
-      pushFeedback('success', 'Panic alert sent', 'Emergency alert sent to control room.');
-    } catch (error) {
-      const message = formatApiErrorMessage(error, 'Unable to send the panic alert.');
-      pushFeedback('error', 'Panic failed', message);
-      showAlert('Panic failed', message);
-    } finally {
-      setSubmittingAlertType(null);
     }
   }
 
@@ -3178,6 +3088,27 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
               </>
             }
           >
+            {(() => {
+              // Shown in the form itself: either the dispatcher's result, or — before any press — the
+              // reason the button is not ready, so the Guard is never left guessing.
+              const outcome = actionOutcome[form.key];
+              const inline = outcome && outcome.kind !== 'success'
+                ? { tone: outcome.kind === 'blocked' && outcome.reason === 'busy' ? 'info' : 'error', message: outcome.message }
+                : (() => {
+                    const pending = guardActionBlockedReason(form.key, { shift: selectedShift, value, busy });
+                    return pending && pending.reason !== 'busy' && value.trim().length > 0
+                      ? { tone: 'error' as const, message: pending.message }
+                      : pending && pending.reason === 'no_active_shift'
+                        ? { tone: 'error' as const, message: pending.message }
+                        : null;
+                  })();
+              if (!inline) return null;
+              return (
+                <View style={inline.tone === 'error' ? styles.actionInlineError : styles.actionInlineInfo}>
+                  <Text style={styles.actionInlineText} accessibilityLiveRegion="polite">{inline.message}</Text>
+                </View>
+              );
+            })()}
             {form.helperText ? <Text style={styles.helperText}>{form.helperText}</Text> : null}
             <TextInput
               style={form.multiline ? [styles.input, styles.modalInput] : styles.input}
@@ -3885,6 +3816,24 @@ const styles = StyleSheet.create({
   bottomNavLabel: { color: colors.textSecondary, fontWeight: '700', fontSize: 13 },
   bottomNavLabelActive: { color: colors.primaryNavy, fontWeight: '800' },
   modalInput: { minHeight: 120, textAlignVertical: 'top' },
+  // Inline action feedback. Inside the form, so the keyboard and the modal cannot hide it.
+  actionInlineError: {
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    backgroundColor: colors.dangerSurface,
+    borderWidth: 1,
+    borderColor: colors.dangerBorder,
+  },
+  actionInlineInfo: {
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    backgroundColor: colors.infoSurface,
+    borderWidth: 1,
+    borderColor: colors.info,
+  },
+  actionInlineText: { color: colors.textPrimary, fontSize: 13, fontWeight: '600' },
   summaryBlock: { borderRadius: 14, backgroundColor: colors.card, padding: 12, gap: 6 },
   summaryLabel: { color: colors.textSecondary, fontSize: 12, fontWeight: '700', textTransform: 'uppercase' },
   summaryValue: { color: colors.textPrimary, fontWeight: '700', fontSize: 15, lineHeight: 22 },

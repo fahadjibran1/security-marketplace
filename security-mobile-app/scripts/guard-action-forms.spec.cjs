@@ -406,27 +406,24 @@ test('FORM-20-ALL-FIVE-ACTIONS-RENDER-THROUGH-APPMODAL-FROM-ONE-RENDERER', () =>
   assert.match(screen, /footer=\{/, 'with the actions in the footer slot');
 });
 
-test('FORM-21-EACH-ACTION-STILL-CALLS-ITS-ORIGINAL-HANDLER-EXACTLY-ONCE', () => {
+test('FORM-21-EVERY-ACTION-ROUTES-THROUGH-THE-ONE-SHARED-DISPATCHER', () => {
+  // This used to assert the router called handleCreateLog / handleCreateIncident and so on by name.
+  // Phase 3A-iii removed those four handlers: their routing, preconditions and API writes moved into
+  // guardActionDispatch.ts so the press-to-API path could be EXECUTED rather than pattern-matched.
+  // Build 11 is exactly why that mattered — the router was provably reached and no request was ever
+  // emitted, which a source-text assertion like the old one could never have caught.
+  //
+  // What each action actually sends is now certified by execution in guard-action-dispatch.spec.cjs
+  // (DISPATCH-01..05). This keeps only the structural half: one dispatcher, no second path.
   const screen = codeOf(SCREEN);
-  const router = /const submitQuickAction[\s\S]*?\n  \};/.exec(screen);
-  assert.ok(router, 'the router must exist');
-  const body = router[0];
-  for (const [key, call] of [
-    ['log', "handleCreateLog('observation')"],
-    ['checkCall', "handleCreateLog('check_call')"],
-    ['incident', 'handleCreateIncident()'],
-    ['welfare', 'handleCreateWelfareAlert()'],
-  ]) {
-    assert.ok(body.includes(call), `${key} must route to ${call}`);
-    assert.equal(
-      (body.match(new RegExp(call.replace(/[()']/g, (c) => `\\${c}`), 'g')) || []).length, 1,
-      `${key} must be routed once, not twice`,
-    );
-  }
-  assert.ok(body.includes('handleCreatePanicAlert()'), 'panic must route to its handler');
+  const start = screen.indexOf('const submitQuickAction');
+  assert.ok(start > 0, 'the router must exist');
+  const router = screen.slice(start, screen.indexOf('\n  };', start));
 
-  // The handlers must not have been reimplemented in the router.
-  assert.ok(!/createDailyLog|createIncident|createSafetyAlert/.test(body), 'no submission logic in the router');
+  assert.ok(router.includes('await dispatchGuardAction('), 'it must delegate to the shared dispatcher');
+  for (const payloadCall of ['createDailyLog({', 'createIncident({', 'createSafetyAlert({']) {
+    assert.ok(!router.includes(payloadCall), `the router must build no API payload of its own (${payloadCall})`);
+  }
 });
 
 test('FORM-22-THE-BUSY-FLAG-COMES-FROM-THE-EXISTING-SUBMISSION-STATE', () => {

@@ -148,6 +148,12 @@ jobs:
       # the footer is NOT inside the scroll container.
       - name: Verify guard action forms stay reachable
         run: npm run test:guard-action-forms
+      # Phase 3A-iii: Build 11 showed a reachable button that emitted no HTTP request, and reported the
+      # refusal only through a banner the modal and keyboard covered. Phase 2 proved the press reached
+      # the ROUTER and stopped there. This executes the production dispatcher itself — including a real
+      # press on the real Button inside the real modal — through to a fake API adapter.
+      - name: Verify guard actions reach the API
+        run: npm run test:guard-action-dispatch
 
       # ── Screening ─────────────────────────────────────────────────────────────
       # Protects the Guard screening journey and the locked distinction that Company-Managed deployment
