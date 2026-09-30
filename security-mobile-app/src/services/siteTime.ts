@@ -280,3 +280,34 @@ export function siteMidnight(year: number, month: number, day: number, timeZone:
   const naive = Date.UTC(year, month - 1, day);
   return new Date(naive - zoneOffsetMs(new Date(naive), timeZone));
 }
+
+/**
+ * Today's date at a site, as a YYYY-MM-DD input value. (Phase 4A.2.)
+ *
+ * The control room's "Today" is the SITE's today. At 00:30 in London a site in New York is still on the
+ * previous day, and a controller stepping to "Today" must land on the operational day that site is
+ * actually working.
+ */
+export function siteToday(timeZone: string, now: Date = new Date()): string {
+  return formatSiteDateInput(now.toISOString(), timeZone);
+}
+
+/**
+ * A YYYY-MM-DD input value moved by whole days.
+ *
+ * Pure calendar arithmetic on a date the site already resolved, carried at noon UTC so no zone offset can
+ * push the result across a boundary — the bug that "+1 day" naively implemented with epoch milliseconds
+ * produces twice a year, when the day in question is 23 or 25 hours long.
+ *
+ * Returns the input unchanged when it is not a date, rather than inventing one.
+ */
+export function shiftSiteDateInput(dateInput: string, days: number): string {
+  if (!isSiteDateInput(dateInput)) return dateInput;
+  const [year, month, day] = dateInput.split('-').map(Number);
+  const carrier = new Date(Date.UTC(year, month - 1, day, 12));
+  carrier.setUTCDate(carrier.getUTCDate() + days);
+  const yyyy = carrier.getUTCFullYear();
+  const mm = String(carrier.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(carrier.getUTCDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}

@@ -49,8 +49,14 @@ const WEB_PTR = IS_WEB ? ({ cursor: 'pointer' } as const) : null;
  */
 
 const IDENTITY_WIDTH = 220;
-/** Pixels per hour on the axis. 24h therefore scrolls rather than compressing into the viewport. */
+/**
+ * The NARROWEST an hour may be drawn. The axis takes any width the card gives it beyond that, so a wide
+ * desktop spreads the hours out instead of leaving dead grid to the right; a narrow one keeps the hours
+ * legible and scrolls. 24h therefore still scrolls rather than compressing into the viewport.
+ */
 const HOUR_WIDTH = 132;
+/** Everything on the axis is placed by its fraction of the window, so the axis can be any width. */
+const pct = (fraction: number) => `${fraction * 100}%` as `${number}%`;
 const ROW_HEIGHT = 56;
 const SITE_HEADER_HEIGHT = 32;
 
@@ -66,6 +72,8 @@ export type OperationsTimelineProps = {
   selectedShiftId: number | null;
   /** Set briefly when an Attention item targets a row, so it can flash into view. */
   highlightedShiftId: number | null;
+  /** Range the axis opens on. The controller still changes it from the header; this only seeds it. */
+  initialRangeHours?: TimelineRangeHours;
   onSelectShift: (shiftId: number) => void;
   onExportCsv: () => void;
   onExportXlsx: () => void;
@@ -79,12 +87,15 @@ export function CompanyOperationsTimeline({
   anchorMs,
   selectedShiftId,
   highlightedShiftId,
+  initialRangeHours,
   onSelectShift,
   onExportCsv,
   onExportXlsx,
   exporting,
 }: OperationsTimelineProps) {
-  const [rangeHours, setRangeHours] = React.useState<TimelineRangeHours>(DEFAULT_TIMELINE_RANGE);
+  const [rangeHours, setRangeHours] = React.useState<TimelineRangeHours>(
+    initialRangeHours ?? DEFAULT_TIMELINE_RANGE,
+  );
   /** Whole-hour pan offset. Time state lives here, never in a scroll position. */
   const [panHours, setPanHours] = React.useState(0);
   const [exportOpen, setExportOpen] = React.useState(false);
@@ -102,7 +113,7 @@ export function CompanyOperationsTimeline({
   const groups = React.useMemo(() => buildTimeline(inputs, window, nowMs), [inputs, window, nowMs]);
   const rowCount = timelineRowCount(groups);
   const ticks = React.useMemo(() => timelineHourTicks(window, headerTimeZone), [window, headerTimeZone]);
-  const axisWidth = rangeHours * HOUR_WIDTH;
+  const axisMinWidth = rangeHours * HOUR_WIDTH;
 
   // Null when the controller has panned away from now. The foundation refuses to clamp, so the line is
   // simply absent rather than lying about where now is.
@@ -248,13 +259,13 @@ export function CompanyOperationsTimeline({
             horizontal
             showsHorizontalScrollIndicator
             style={styles.axisScroll}
-            contentContainerStyle={{ width: axisWidth }}
+            contentContainerStyle={{ minWidth: axisMinWidth, flexGrow: 1 }}
           >
-            <View style={{ width: axisWidth }}>
+            <View style={{ minWidth: axisMinWidth, flexGrow: 1 }}>
               {/* Sticky hour header */}
               <View style={[styles.axisHeader, styles.axisHeaderRow]}>
                 {ticks.map((tick) => (
-                  <View key={tick.ms} style={[styles.tick, { left: tick.fraction * axisWidth }]}>
+                  <View key={tick.ms} style={[styles.tick, { left: pct(tick.fraction) }]}>
                     <Text style={styles.tickLabel}>{tick.label}</Text>
                   </View>
                 ))}
@@ -263,14 +274,14 @@ export function CompanyOperationsTimeline({
               <View style={styles.axisBody}>
                 {/* Hour gridlines, behind everything */}
                 {ticks.map((tick) => (
-                  <View key={`line-${tick.ms}`} style={[styles.gridLine, { left: tick.fraction * axisWidth }]} />
+                  <View key={`line-${tick.ms}`} style={[styles.gridLine, { left: pct(tick.fraction) }]} />
                 ))}
 
                 {/* NOW line. Absent — not clamped — when panned away from now. */}
                 {nowFraction !== null ? (
                   <View
                     accessibilityLabel="Current time"
-                    style={[styles.nowLine, { left: nowFraction * axisWidth }]}
+                    style={[styles.nowLine, { left: pct(nowFraction) }]}
                   >
                     <View style={styles.nowFlag}><Text style={styles.nowFlagText}>NOW</Text></View>
                   </View>
@@ -294,7 +305,7 @@ export function CompanyOperationsTimeline({
                             ]}
                             onPress={() => onSelectShift(row.shiftId)}
                           >
-                            <ShiftBar row={row} axisWidth={axisWidth} />
+                            <ShiftBar row={row} />
                           </Pressable>
                         ))}
                   </Fragment>
@@ -341,10 +352,8 @@ const STATUS_STYLE: Record<TimelineRow['status'], { bar: any; text: any }> = {
   'Coverage Gap': { bar: { backgroundColor: colors.dangerSurface, borderColor: colors.danger }, text: { color: colors.danger } },
 };
 
-function ShiftBar({ row, axisWidth }: { row: TimelineRow; axisWidth: number }) {
+function ShiftBar({ row }: { row: TimelineRow }) {
   const tone = STATUS_STYLE[row.status] ?? STATUS_STYLE.Upcoming;
-  const left = row.span.startFraction * axisWidth;
-  const width = Math.max(row.span.widthFraction * axisWidth, 6);
 
   return (
     <View
@@ -352,8 +361,10 @@ function ShiftBar({ row, axisWidth }: { row: TimelineRow; axisWidth: number }) {
         styles.bar,
         tone.bar,
         {
-          left,
-          width,
+          left: pct(row.span.startFraction),
+          width: pct(row.span.widthFraction),
+          // A shift too short to see at this range still has to be clickable.
+          minWidth: 6,
           // A clipped edge is squared off, so a bar that continues past the view does not read as if it
           // ended there.
           borderTopLeftRadius: row.span.clippedStart ? 0 : radii.sm,
@@ -372,7 +383,7 @@ function ShiftBar({ row, axisWidth }: { row: TimelineRow; axisWidth: number }) {
       {/* Welfare markers sit along the bar, positioned by the foundation. */}
       <View style={styles.markerStrip} pointerEvents="box-none">
         {row.welfare.map((marker) => (
-          <WelfareMarkerDot key={`${row.shiftId}-${marker.index}`} marker={marker} axisWidth={axisWidth} left={left} />
+          <WelfareMarkerDot key={`${row.shiftId}-${marker.index}`} marker={marker} span={row.span} />
         ))}
       </View>
     </View>
@@ -389,24 +400,25 @@ const MARKER_TONE: Record<WelfareMarker['state'], any> = {
 
 function WelfareMarkerDot({
   marker,
-  axisWidth,
-  left: barLeft,
+  span,
 }: {
   key?: string | number;
   marker: WelfareMarker;
-  axisWidth: number;
-  left: number;
+  span: TimelineRow['span'];
 }) {
-  // Positioned against the axis, then offset into the bar's own coordinate space.
-  const absolute = marker.span.startFraction * axisWidth;
-  const width = Math.max(marker.span.widthFraction * axisWidth, 10);
+  // The marker is placed against the axis by the foundation; here it is re-expressed in the bar's own
+  // coordinate space, because the bar is what it is drawn inside. A bar clipped to a sliver still divides
+  // cleanly — the guard keeps a degenerate span from dividing by zero.
+  const barWidth = Math.max(span.widthFraction, 1e-9);
+  const left = (marker.span.startFraction - span.startFraction) / barWidth;
+  const width = marker.span.widthFraction / barWidth;
 
   return (
     <View
       // `title` is what produces a native tooltip on web; the accessibility label covers native.
       {...(IS_WEB ? ({ title: marker.accessibleLabel } as any) : null)}
       accessibilityLabel={marker.accessibleLabel}
-      style={[styles.marker, { left: absolute - barLeft, width }]}
+      style={[styles.marker, { left: pct(left), width: pct(width), minWidth: 10 }]}
     >
       <Text style={[styles.markerGlyph, MARKER_TONE[marker.state]]}>{marker.glyph}</Text>
     </View>

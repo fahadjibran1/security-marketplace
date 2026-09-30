@@ -14,6 +14,8 @@ import {
   formatInstantDate,
   formatInstantDateTime,
   formatInstantTime,
+  shiftSiteDateInput,
+  siteToday,
 } from '../../services/siteTime';
 import type { InclusionReason } from './liveOperationsPolicy';
 import { CompanyOperationsTimeline } from './CompanyOperationsTimeline';
@@ -515,25 +517,70 @@ function LiveOpsFilterToolbar({
   siteClientOptions,
   siteOptions,
   linkedGuardOptions,
+  operationalTimeZone,
 }: {
   liveFilters: LiveFilters;
   setLiveFilters: React.Dispatch<React.SetStateAction<LiveFilters>>;
   siteClientOptions: Array<{ value: string; label: string }>;
   siteOptions: Array<{ value: string; label: string }>;
   linkedGuardOptions: Array<{ value: string; label: string }>;
+  /** The zone "Today" and the day steps are resolved against — the site's, never the device's. */
+  operationalTimeZone: string;
 }) {
+  /**
+   * Day navigation writes to `liveFilters.date` — the ONE operational date the timeline, the filters,
+   * the counts and the export all read. A second date state is how a controller ends up exporting a
+   * different day from the one on screen.
+   *
+   * An empty date means "live", so stepping from empty starts at the site's today rather than at the
+   * device's, and at 00:30 in London a New York site correctly starts on its own previous day.
+   */
+  const stepDay = (days: number) => setLiveFilters((prev) => ({
+    ...prev,
+    date: shiftSiteDateInput(prev.date || siteToday(operationalTimeZone), days),
+  }));
   return (
     <View style={styles.filterBar}>
       <WSelect value={liveFilters.clientId} onChange={(v) => setLiveFilters((f) => ({ ...f, clientId: v }))} options={siteClientOptions} placeholder="Client" />
       <WSelect value={liveFilters.siteId}   onChange={(v) => setLiveFilters((f) => ({ ...f, siteId: v }))}   options={siteOptions}       placeholder="Site" />
       <WSelect value={liveFilters.guardId}  onChange={(v) => setLiveFilters((f) => ({ ...f, guardId: v }))}  options={linkedGuardOptions} placeholder="Guard" />
-      <TextInput
-        style={styles.filterInput}
-        value={liveFilters.date}
-        onChangeText={(v: string) => setLiveFilters((f) => ({ ...f, date: v }))}
-        placeholder="YYYY-MM-DD"
-        placeholderTextColor={colors.textMuted}
-      />
+      <View style={styles.dateNav}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Previous day"
+          style={[styles.dateNavBtn, IS_WEB ? (WEB_PTR as any) : null]}
+          onPress={() => stepDay(-1)}
+        >
+          <Text style={styles.dateNavBtnText}>‹</Text>
+        </Pressable>
+        <TextInput
+          style={[styles.filterInput, styles.dateNavInput]}
+          value={liveFilters.date}
+          onChangeText={(v: string) => setLiveFilters((f) => ({ ...f, date: v }))}
+          placeholder="YYYY-MM-DD"
+          placeholderTextColor={colors.textMuted}
+          // A real date picker on web; the typed field remains the fallback everywhere else.
+          {...(IS_WEB ? ({ type: 'date' } as any) : null)}
+        />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Next day"
+          style={[styles.dateNavBtn, IS_WEB ? (WEB_PTR as any) : null]}
+          onPress={() => stepDay(1)}
+        >
+          <Text style={styles.dateNavBtnText}>›</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Today"
+          accessibilityState={{ selected: !liveFilters.date }}
+          style={[styles.dateNavToday, !liveFilters.date ? styles.dateNavTodayActive : null, IS_WEB ? (WEB_PTR as any) : null]}
+          // Clearing the date returns to the live view, which IS today and keeps following the clock.
+          onPress={() => setLiveFilters((f) => ({ ...f, date: '' }))}
+        >
+          <Text style={[styles.dateNavTodayText, !liveFilters.date ? styles.dateNavTodayTextActive : null]}>Today</Text>
+        </Pressable>
+      </View>
       <WSelect value={liveFilters.status} onChange={(v) => setLiveFilters((f) => ({ ...f, status: v }))} options={SHIFT_STATUS_OPTS} placeholder="Status" />
     </View>
   );
@@ -930,7 +977,6 @@ function LiveOpsAttentionRail({
 
 // ─── LiveOpsSnapshotStrip ─────────────────────────────────────────────────────
 
-const NEXT60_MAX = 4;
 
 function LiveOpsActivityFeed({
   uncoveredShiftCount,
@@ -949,30 +995,6 @@ function LiveOpsActivityFeed({
   const uncoveredRows = liveOperationEnrichedRows.filter((r) => r.lifecycleStatus === 'unfilled').length;
   const coveredRows = totalShifts - uncoveredRows;
 
-  const next60 = React.useMemo(() => {
-    const now = Date.now();
-    const horizon = now + 60 * 60_000;
-    const items: Array<{ kind: 'starting' | 'ending'; at: number; shift: Shift }> = [];
-
-    for (const row of liveOperationEnrichedRows) {
-      if (['cancelled', 'completed'].includes(row.lifecycleStatus)) continue;
-      const startMs = row.shift.start ? new Date(row.shift.start).getTime() : null;
-      const endMs   = row.shift.end   ? new Date(row.shift.end).getTime()   : null;
-
-      if (!['in_progress', 'completed', 'cancelled', 'missed'].includes(row.lifecycleStatus)) {
-        if (startMs !== null && !isNaN(startMs) && startMs >= now && startMs <= horizon) {
-          items.push({ kind: 'starting', at: startMs, shift: row.shift });
-        }
-      }
-      if (row.lifecycleStatus === 'in_progress') {
-        if (endMs !== null && !isNaN(endMs) && endMs >= now && endMs <= horizon) {
-          items.push({ kind: 'ending', at: endMs, shift: row.shift });
-        }
-      }
-    }
-    items.sort((a, b) => a.at - b.at);
-    return items;
-  }, [liveOperationEnrichedRows]);
 
   const recentSlice = recentOperationalActivity.slice(0, 5);
 
@@ -1028,40 +1050,6 @@ function LiveOpsActivityFeed({
         )}
       </View>
 
-      {/* ── Next 60 Min ───────────────────────────────────────────────────── */}
-      <View style={[styles.lowerPanel, styles.lowerPanelNext60]}>
-        <Text style={styles.lowerPanelTitle}>Next 60 Min</Text>
-        {next60.length === 0 ? (
-          <Text style={styles.lowerPanelCalm}>No shift changes in the next 60 min.</Text>
-        ) : (
-          <>
-            {next60.slice(0, NEXT60_MAX).map((item, idx) => (
-              <View
-                key={`${item.kind}-${item.shift.id}`}
-                style={[styles.next60Item, idx < Math.min(next60.length, NEXT60_MAX) - 1 ? styles.next60ItemDivider : null]}
-              >
-                <View style={styles.next60Head}>
-                  <View style={[styles.next60KindChip, item.kind === 'starting' ? styles.next60KindStart : styles.next60KindEnd]}>
-                    <Text style={[styles.next60KindText, item.kind === 'starting' ? styles.next60KindTextStart : styles.next60KindTextEnd]}>
-                      {item.kind === 'starting' ? 'Starting' : 'Ending'}
-                    </Text>
-                  </View>
-                  <Text style={styles.next60Time}>{fmtTime(new Date(item.at).toISOString(), item.shift.site?.timezone || DEFAULT_SITE_TIME_ZONE)}</Text>
-                </View>
-                <Text style={styles.next60Site} numberOfLines={1}>
-                  {item.shift.site?.name || item.shift.siteName || 'Unknown'}
-                </Text>
-                <Text style={styles.next60Guard} numberOfLines={1}>
-                  {item.shift.guard?.fullName || 'Unassigned'}
-                </Text>
-              </View>
-            ))}
-            {next60.length > NEXT60_MAX ? (
-              <Text style={styles.next60More}>+ {next60.length - NEXT60_MAX} more</Text>
-            ) : null}
-          </>
-        )}
-      </View>
 
     </View>
   );
@@ -1241,6 +1229,7 @@ export function CompanyLiveOperationsWorkspace({
         siteClientOptions={siteClientOptions}
         siteOptions={siteOptions}
         linkedGuardOptions={linkedGuardOptions}
+        operationalTimeZone={timelineHeaderZone}
       />
 
       {/* ── Metric focus hint ────────────────────────────────────────────── */}
@@ -1665,6 +1654,20 @@ const styles = StyleSheet.create({
   // ── Command workspace row ─────────────────────────────────────────────────
   // The timeline takes the space the flat table used to, beside the Attention rail.
   timelineColumn: { flex: 1, minWidth: 0, gap: 6 },
+  dateNav: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  dateNavBtn: {
+    paddingHorizontal: 8, paddingVertical: 6, borderRadius: radii.sm,
+    borderWidth: 1, borderColor: colors.fieldBorder, backgroundColor: colors.card,
+  },
+  dateNavBtnText: { fontSize: 13, fontWeight: '800', color: colors.textSecondary, lineHeight: 15 },
+  dateNavInput: { minWidth: 132 },
+  dateNavToday: {
+    paddingHorizontal: 10, paddingVertical: 6, borderRadius: radii.sm,
+    borderWidth: 1, borderColor: colors.fieldBorder, backgroundColor: colors.card,
+  },
+  dateNavTodayActive: { borderColor: colors.accentTeal },
+  dateNavTodayText: { fontSize: 11, fontWeight: '700', color: colors.textSecondary },
+  dateNavTodayTextActive: { color: colors.accentTeal },
   clearFocusBtn: {
     alignSelf: 'flex-start',
     paddingHorizontal: 10,
@@ -2056,10 +2059,6 @@ const styles = StyleSheet.create({
     flex: IS_WEB ? 9 : 1,
     ...(IS_WEB ? { minWidth: 220 } : {}),
   },
-  lowerPanelNext60: {
-    flex: IS_WEB ? 6 : 1,
-    ...(IS_WEB ? { minWidth: 180 } : {}),
-  },
   lowerPanelTitle: {
     fontSize: 11,
     fontWeight: '600',
@@ -2150,72 +2149,6 @@ const styles = StyleSheet.create({
     lineHeight: 15,
   },
 
-  // ── Next 60 Min ───────────────────────────────────────────────────────────
-  next60Item: {
-    paddingVertical: 4,
-    gap: 1,
-  },
-  next60ItemDivider: {
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    paddingBottom: 5,
-    marginBottom: 2,
-  },
-  next60Head: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginBottom: 1,
-  },
-  next60KindChip: {
-    borderRadius: 3,
-    paddingHorizontal: 4,
-    paddingVertical: 1,
-    borderWidth: 1,
-  },
-  next60KindStart: {
-    borderColor: colors.accentTeal,
-    backgroundColor: `${colors.accentTeal}14`,
-  },
-  next60KindEnd: {
-    borderColor: colors.textMuted,
-    backgroundColor: colors.surfaceSubtle,
-  },
-  next60KindText: {
-    fontSize: 9,
-    fontWeight: '700',
-    letterSpacing: 0.3,
-    textTransform: 'uppercase',
-  },
-  next60KindTextStart: {
-    color: colors.accentTeal,
-  },
-  next60KindTextEnd: {
-    color: colors.textSecondary,
-  },
-  next60Time: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: colors.textPrimary,
-    letterSpacing: -0.2,
-  },
-  next60Site: {
-    fontSize: 11,
-    fontWeight: '500',
-    color: colors.textPrimary,
-    lineHeight: 15,
-  },
-  next60Guard: {
-    fontSize: 10,
-    color: colors.textSecondary,
-    lineHeight: 14,
-  },
-  next60More: {
-    fontSize: 10,
-    fontWeight: '500',
-    color: colors.textMuted,
-    marginTop: 3,
-  },
 
   // ── Shift detail panel ────────────────────────────────────────────────────
   detailPanel: {

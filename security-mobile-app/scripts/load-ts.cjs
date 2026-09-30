@@ -35,7 +35,14 @@ function loadFrom(absolutePath, cache) {
 
   const source = fs.readFileSync(absolutePath, 'utf8');
   const output = ts.transpileModule(source, {
-    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
+    // jsx is required for a .tsx component to load at all: without it the transpiler leaves JSX in
+    // place and the Function constructor throws on the first tag. Additive — before this, loading a .tsx
+    // simply failed, so nothing can have depended on the old behaviour.
+    compilerOptions: {
+      module: ts.ModuleKind.CommonJS,
+      target: ts.ScriptTarget.ES2020,
+      jsx: ts.JsxEmit.React,
+    },
   }).outputText;
 
   const mod = { exports: {} };

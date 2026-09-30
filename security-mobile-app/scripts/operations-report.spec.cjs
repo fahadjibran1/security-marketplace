@@ -350,4 +350,91 @@ test('XLSX-11-A-WORKBOOK-NEEDS-A-SHEET', () => {
   assert.throws(() => buildXlsx([]), /at least one sheet/);
 });
 
+// ═══════════════════ formula safety in BOTH formats ═══════════════════
+
+test('SAFE-01-XLSX-CELLS-CANNOT-BECOME-FORMULAS', () => {
+  // Excel evaluates a formula from a <f> element, or from a cell it parses as one. An inline string is
+  // displayed verbatim, which is why the writer emits t="inlineStr" for every cell. That is a stronger
+  // guarantee than quote-prefixing: the dangerous value cannot execute AND is preserved exactly, which
+  // matters when the file is evidence.
+  const dangerous = ['=1+1', '+SUM(A1)', '-2+3', '@SUM(1)', '=HYPERLINK("http://x")'];
+  const sheet = sheetXml({ name: 'S', rows: [dangerous] });
+
+  assert.ok(!sheet.includes('<f>'), 'no formula element anywhere');
+  assert.ok(!/t="str"/.test(sheet), 'and no formula-result cell type');
+  dangerous.forEach((value, i) => {
+    const ref = columnName(i) + '1';
+    assert.ok(sheet.includes('r="' + ref + '" t="inlineStr"'), ref + ' is an inline string');
+  });
+  assert.ok(sheet.includes('=1+1'), 'and the text is carried through unaltered');
+});
+
+test('SAFE-02-USER-CONTROLLED-NAMES-ARE-SAFE-IN-BOTH-FORMATS', () => {
+  // Site, client and guard names are free text typed by a company, and they reach both exports.
+  const hostile = {
+    ...SHIFT_19,
+    shift: {
+      ...SHIFT_19.shift,
+      site: { name: '=1+1', timezone: LONDON, client: { name: '@SUM(A1)' } },
+      guard: { fullName: '-cmd' },
+    },
+  };
+  const r = buildOperationsReport([hostile], SCOPE);
+
+  const csv = toCsv(r);
+  for (const neutralised of ["'=1+1", "'@SUM(A1)", "'-cmd"]) {
+    assert.ok(csv.includes(neutralised), 'CSV must neutralise ' + neutralised);
+  }
+
+  const sheet = sheetXml({ name: 'Welfare Detail', rows: r.welfare });
+  assert.ok(!sheet.includes('<f>'), 'XLSX has no formula element');
+  assert.ok(sheet.includes('t="inlineStr"'), 'every value is a string');
+});
+
+// ═══════════════════ the screen and the file agree ═══════════════════
+
+test('CONSISTENCY-01-THE-EXPORT-MATCHES-WHAT-THE-TIMELINE-DRAWS', () => {
+  // A silent difference between the board a controller reads and the evidence they hand over is the
+  // worst failure this feature could have. Same fixture, same instant, both surfaces.
+  const timeline = loadTs('src/components/company/operationsTimeline.ts');
+  const nowMs = Date.parse('2026-09-30T19:50:00.000Z');
+  const window = timeline.resolveTimelineWindow(nowMs, 4, LONDON);
+
+  const inputs = [SHIFT_19];
+  const groups = timeline.buildTimeline(inputs, window, nowMs);
+  const r = buildOperationsReport(inputs, SCOPE);
+
+  assert.equal(timeline.timelineRowCount(groups), r.summary.length, 'visible shifts == summary rows');
+
+  const drawn = groups[0].rows[0].welfare;
+  assert.equal(drawn.length, r.welfare.length, 'markers drawn == welfare detail rows');
+
+  const glyphToLabel = {
+    '\u2713': 'Completed',
+    '\u25cf': 'Due',
+    '!': 'Overdue Welfare Check',
+    '\u2715': 'Missed Welfare Check',
+    '\u2014': 'Not required',
+  };
+  drawn.forEach((marker, i) => {
+    const row = r.welfare[i];
+    assert.equal(
+      row[WELFARE_COLUMNS.indexOf('Welfare Status')],
+      glyphToLabel[marker.glyph],
+      'window ' + i + ': marker and exported status must agree',
+    );
+    assert.ok(
+      marker.accessibleLabel.includes(row[WELFARE_COLUMNS.indexOf('Welfare Window Start')]),
+      'window ' + i + ': the exported start appears in the marker label',
+    );
+  });
+
+  // A shift the timeline does not draw is off the axis, so the same scope does not export it either.
+  const offAxis = {
+    ...SHIFT_19,
+    shift: { ...SHIFT_19.shift, id: 99, start: '2026-09-25T08:00:00.000Z', end: '2026-09-25T16:00:00.000Z' },
+  };
+  assert.equal(timeline.timelineRowCount(timeline.buildTimeline([offAxis], window, nowMs)), 0);
+});
+
 console.log(`\n${passed} operations report checks passed`);
