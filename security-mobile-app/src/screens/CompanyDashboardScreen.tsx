@@ -10,6 +10,7 @@ import { CompanySitesWorkspace, type SiteFormState, SITE_FORM_EMPTY } from '../c
 import { CompanyLiveOperationsWorkspace } from '../components/company/CompanyLiveOperationsWorkspace';
 import type { LiveBoardRow, CloseOutSummary, SelectedShiftContext } from '../components/company/CompanyLiveOperationsWorkspace';
 import { CompanyShiftOffersWorkspace, type ShiftOffersFeedback } from '../components/company/CompanyShiftOffersWorkspace';
+import { isWelfareEvidence } from '../components/shifts/welfareEvidence';
 import {
   classifyLiveOperation,
   isActionableWelfareAlert,
@@ -2151,7 +2152,7 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
         // Historical `check_call` rows read as the Welfare Checks they are; `observation` keeps its
         // generic wording, because that is what it was.
         eventType:
-          ['check_call', 'welfare_check'].includes(log.logType)
+          isWelfareEvidence(log)
             ? 'Welfare Check recorded'
             : log.logType === 'log_book'
               ? 'Log Book entry added'
@@ -2232,9 +2233,7 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
     const shiftAlerts = alertsByShiftId.get(selectedShift.id) || [];
     // Both log types. A shift worked before Phase 3C recorded its Welfare Checks as `check_call`; one
     // worked after records `welfare_check`. Counting only one would under-report a completed shift.
-    const completedCheckCalls = shiftLogs.filter((log) =>
-      ['check_call', 'welfare_check'].includes(log.logType),
-    ).length;
+    const completedCheckCalls = shiftLogs.filter(isWelfareEvidence).length;
     const missedCheckCallsForShift = shiftAlerts.filter(
       (alert) => (alert.type || '').toLowerCase() === 'missed_checkcall',
     ).length;

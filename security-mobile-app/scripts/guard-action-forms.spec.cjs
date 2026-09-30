@@ -471,15 +471,29 @@ test('FORM-23-EXACTLY-ONE-LAUNCHER-PER-CANONICAL-ACTION', () => {
     .map((m) => m[1] || m[2])
     .filter((arg) => arg !== 'null');
 
-  // The grid is data-driven: one mapped launcher covering the routine actions, plus Emergency's own.
-  assert.deepEqual(opens.sort(), ['emergency', 'key'], `unexpected launchers: ${opens.join(', ')}`);
+  // Three call sites: the mapped routine tiles, Emergency's own button, and the one beside the Welfare
+  // Check status. Welfare Check belongs next to its own status and next-due time, so the grid drops it
+  // whenever that block is showing — a Guard is never offered the same action twice.
+  assert.deepEqual(
+    opens.sort(),
+    ['emergency', 'key', 'welfareCheck'],
+    `unexpected launchers: ${opens.join(', ')}`,
+  );
   assert.ok(
     /routine\.map\(\(key\) => \{/.test(screen),
     'the routine launchers must come from one map over the canonical list',
   );
   assert.ok(
-    screen.includes("const routine: GuardActionKey[] = ['welfareCheck', 'logBook', 'siteRequest', 'incident'];"),
-    'and that list is the four routine actions',
+    screen.includes('const routine: GuardActionKey[] = welfareCard'),
+    'the routine list must be conditional on whether the Welfare block carries the launcher',
+  );
+  assert.ok(
+    screen.includes("? ['logBook', 'siteRequest', 'incident']"),
+    'with Welfare Check omitted when its own block has it',
+  );
+  assert.ok(
+    screen.includes(": ['welfareCheck', 'logBook', 'siteRequest', 'incident']"),
+    'and included when there is no Welfare block to carry it',
   );
 });
 

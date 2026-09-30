@@ -85,7 +85,11 @@ import {
   resolveActionSubmitState,
   type GuardActionKey,
 } from '../components/guard/guardActionForms';
-import { lastWelfareEvidence } from '../components/guard/welfareEvidence';
+import {
+  guardLogBookCard,
+  guardWelfareCard,
+  guardWelfarePhase,
+} from '../components/guard/guardWelfarePresentation';
 import {
   dispatchGuardAction,
   guardActionBlockedReason,
@@ -240,7 +244,6 @@ function formatDurationLabel(startAt?: string | null, endAt?: string | null, now
 }
 
 /** UI-only thresholds for check-call and shift-end guidance (no API impact). */
-const WELFARE_DUE_SOON_MINUTES = 10;
 const SHIFT_ENDING_SOON_MINUTES = 30;
 
 type GuardShiftPhase =
@@ -274,28 +277,17 @@ function isTimesheetPendingGuard(timesheet: Timesheet): boolean {
 }
 
 
-/**
- * When the next Welfare Check is due, for this screen's own status line only.
- *
- * NOT a second window engine, and deliberately not extended into one. It is the pre-existing rolling
- * anchor this screen has always used, and it does NOT agree with the backend's fixed half-open window
- * grid, its 5-minute grace, or the shift-then-site-then-60 interval precedence locked in Phase 3A-ii.
- * Reconciling the two needs the backend's own projection on the Guard endpoint, which GET /shifts/my
- * does not carry; see TECH-DEBT-OPS-02. Phase 3C was told not to reproduce Welfare arithmetic here, so
- * this was left exactly as it was apart from the evidence types above.
- */
-function getNextWelfareDueMs(shift: Shift, dailyLogsForShift: DailyLog[]): number | null {
-  const interval = shift.checkCallIntervalMinutes;
-  if (!interval || interval <= 0) return null;
-  const last = lastWelfareEvidence(dailyLogsForShift);
-  const anchorMs = (last ? new Date(last.createdAt) : new Date(shift.start)).getTime();
-  return anchorMs + interval * 60 * 1000;
-}
 
+/**
+ * The Guard's shift phase.
+ *
+ * Welfare no longer contributes a locally-computed phase: `guardWelfarePhase` reads the status the
+ * backend's window engine decided, which is the same status the control room sees. The daily-log
+ * parameter went with the rolling anchor it fed.
+ */
 function deriveGuardShiftPhase(
   nowMs: number,
   shift: Shift | null,
-  dailyLogsForShift: DailyLog[],
   timesheet: Timesheet | null,
 ): GuardShiftPhase {
   if (!shift) return 'no_shift';
@@ -318,14 +310,9 @@ function deriveGuardShiftPhase(
   }
 
   if (status === 'in_progress') {
-    const nextDueMs = getNextWelfareDueMs(shift, dailyLogsForShift);
-    if (nextDueMs !== null) {
-      const minutesRemaining = Math.max(0, Math.round((nextDueMs - nowMs) / 60000));
-      if (nowMs >= nextDueMs) return 'welfare_overdue';
-      if (minutesRemaining > 0 && minutesRemaining <= WELFARE_DUE_SOON_MINUTES) {
-        return 'welfare_due';
-      }
-    }
+    // The engine's verdict, not a clock read on this device.
+    const welfarePhase = guardWelfarePhase(shift.operations);
+    if (welfarePhase) return welfarePhase;
     if (nowMs >= endMs - SHIFT_ENDING_SOON_MINUTES * 60 * 1000 && nowMs < endMs) {
       return 'shift_ending_soon';
     }
@@ -339,7 +326,6 @@ function getGuardPhaseStatusLine(
   phase: GuardShiftPhase,
   shift: Shift | null,
   nowMs: number,
-  dailyLogsForShift: DailyLog[],
 ): string {
   if (!shift) {
     return phase === 'no_shift'
@@ -365,13 +351,16 @@ function getGuardPhaseStatusLine(
     case 'on_shift':
       return 'You are on shift.';
     case 'welfare_due': {
-      const nextDueMs = getNextWelfareDueMs(shift, dailyLogsForShift);
-      if (nextDueMs === null) return 'You are on shift.';
-      const m = Math.max(1, Math.round((nextDueMs - nowMs) / 60000));
-      return `Welfare Check due in ${m} min.`;
+      const due = shift.operations?.welfare.nextDueAt;
+      if (!due) return 'You are on shift.';
+      return `Welfare Check due by ${formatTimeLabel(due, shift.site?.timezone)}.`;
     }
-    case 'welfare_overdue':
-      return 'Welfare Check overdue — record one as soon as you can.';
+    case 'welfare_overdue': {
+      const over = shift.operations?.welfare.overdueByMinutes;
+      return over !== null && over !== undefined
+        ? `Welfare Check overdue by ${over} min — record one as soon as you can.`
+        : 'Welfare Check overdue — record one as soon as you can.';
+    }
     case 'shift_ending_soon':
       return 'Your shift is ending soon — check out before end time unless instructed otherwise.';
     case 'timesheet_pending':
@@ -1483,7 +1472,7 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
     [timesheets, currentHomeShift?.id],
   );
   const guardShiftPhase = useMemo(
-    () => deriveGuardShiftPhase(liveNow, currentHomeShift, currentHomeDailyLogs, currentHomeTimesheet),
+    () => deriveGuardShiftPhase(liveNow, currentHomeShift, currentHomeTimesheet),
     [liveNow, currentHomeShift, currentHomeDailyLogs, currentHomeTimesheet],
   );
   /** Pending very-early Book On awaiting confirmation. Null whenever no question is outstanding. */
@@ -1560,20 +1549,32 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
     .sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime())
     .slice(0, 4);
 
+  // Presentation of the backend's projection for the shift on Home. Null when the shift carries no
+  // Welfare obligation at all, so the block is absent rather than showing zeroes — and the grid then
+  // carries the Welfare Check launcher instead, so there is always exactly one.
+  const homeShiftLive =
+    normalizeShiftLifecycleStatus(currentHomeShift?.status) === 'in_progress';
+  const welfareCard = homeShiftLive ? guardWelfareCard(currentHomeShift?.operations) : null;
+  const logBookCard = homeShiftLive ? guardLogBookCard(currentHomeShift?.operations) : null;
+
   /**
    * The canonical live-shift actions, and the only launchers for them.
    *
-   * Welfare Check leads because it is the one with a clock on it. Emergency is separated and
-   * destructive-styled rather than sitting fifth in a uniform grid. Book Off is NOT here at all — it is
-   * the shift card's own primary control, which is what keeps an accidental end-of-shift away from
-   * routine reporting.
+   * Emergency is separated and destructive-styled rather than sitting last in a uniform grid. Book Off
+   * is NOT here at all — it is the shift card's own primary control, which is what keeps an accidental
+   * end-of-shift away from routine reporting.
+   *
+   * Welfare Check is here ONLY when the Welfare Check block above is not showing it, so that each
+   * action has exactly one launcher. Its natural home is beside its own status and next-due time.
    *
    * Every label is the action's own name. The grid used to read LOG / CALL / INC / CARE / SOS over
    * Add Log / Check Call / Incident / Welfare / Panic, and Check Call and Welfare were two names for
    * the thing a guard calls a welfare check.
    */
   function renderHomeQuickActions() {
-    const routine: GuardActionKey[] = ['welfareCheck', 'logBook', 'siteRequest', 'incident'];
+    const routine: GuardActionKey[] = welfareCard
+      ? ['logBook', 'siteRequest', 'incident']
+      : ['welfareCheck', 'logBook', 'siteRequest', 'incident'];
     const emergency = guardActionForm('emergency');
 
     return (
@@ -1821,7 +1822,7 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
                               : null,
                           ]}
                         >
-                          {getGuardPhaseStatusLine(guardShiftPhase, currentHomeShift, liveNow, currentHomeDailyLogs)}
+                          {getGuardPhaseStatusLine(guardShiftPhase, currentHomeShift, liveNow)}
                         </Text>
                       </View>
 
@@ -1848,6 +1849,58 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
                               </Text>
                             </View>
                           </View>
+                        </View>
+                      ) : null}
+
+                      {/* ── Welfare Check ────────────────────────────────────────────────
+                          Every value below is the backend's, via the operations projection on this
+                          shift. The Guard and the control room read the same status, the same next
+                          due time and the same counts, because nothing here recomputes them. */}
+                      {welfareCard ? (
+                        <View
+                          style={[
+                            styles.guardSection,
+                            welfareCard.tone === 'danger' ? styles.guardSectionUrgent : null,
+                          ]}
+                        >
+                          <Text style={styles.guardSectionLabel}>Welfare Check</Text>
+                          <View style={styles.welfareStatusRow}>
+                            <Text
+                              style={[
+                                styles.welfareStatusLabel,
+                                welfareCard.tone === 'danger' ? styles.welfareStatusDanger : null,
+                                welfareCard.tone === 'warning' ? styles.welfareStatusWarning : null,
+                                welfareCard.tone === 'good' ? styles.welfareStatusGood : null,
+                              ]}
+                            >
+                              {welfareCard.label}
+                            </Text>
+                            {welfareCard.nextDue ? (
+                              <Text style={styles.welfareNextDue}>Next due {welfareCard.nextDue}</Text>
+                            ) : null}
+                          </View>
+                          {welfareCard.detail ? (
+                            <Text style={styles.welfareDetail}>{welfareCard.detail}</Text>
+                          ) : null}
+                          {welfareCard.missedSummary ? (
+                            <Text style={styles.welfareMissed}>{welfareCard.missedSummary}</Text>
+                          ) : null}
+                          <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel="Record Welfare Check"
+                            style={[
+                              styles.welfareActionButton,
+                              welfareCard.actionUrgent ? styles.welfareActionUrgent : null,
+                            ]}
+                            onPress={() => setQuickActionModal('welfareCheck')}
+                          >
+                            <Text style={styles.welfareActionText}>Record Welfare Check</Text>
+                          </Pressable>
+                          {logBookCard ? (
+                            <Text style={styles.welfareLogBookLine}>
+                              {`Log Book · ${logBookCard.label}${logBookCard.detail ? ` · ${logBookCard.detail}` : ''}`}
+                            </Text>
+                          ) : null}
                         </View>
                       ) : null}
 
@@ -3486,6 +3539,61 @@ const styles = StyleSheet.create({
   },
   quickActionDanger: { backgroundColor: colors.danger, borderColor: colors.danger },
   quickActionText: { color: colors.textOnBrand, fontWeight: '800', fontSize: 15 },
+  // ── Welfare Check block (Phase 3D) ───────────────────────────────────────
+  guardSectionUrgent: {
+    borderLeftWidth: 3,
+    borderLeftColor: colors.danger,
+  },
+  welfareStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  welfareStatusLabel: {
+    fontSize: 18,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+    color: colors.textPrimary,
+  },
+  welfareStatusGood: { color: colors.success },
+  welfareStatusWarning: { color: colors.warning },
+  welfareStatusDanger: { color: colors.danger },
+  welfareNextDue: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.textSecondary,
+  },
+  welfareDetail: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    marginTop: 2,
+  },
+  welfareMissed: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.danger,
+    marginTop: 4,
+  },
+  welfareActionButton: {
+    marginTop: 10,
+    borderRadius: 10,
+    paddingVertical: 12,
+    alignItems: 'center',
+    backgroundColor: colors.accentTeal,
+  },
+  welfareActionUrgent: { backgroundColor: colors.danger },
+  welfareActionText: {
+    color: colors.textOnBrand,
+    fontWeight: '800',
+    fontSize: 15,
+  },
+  welfareLogBookLine: {
+    marginTop: 8,
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.textSecondary,
+  },
   // Emergency is deliberately not a fifth tile in a uniform grid: full width, on its own row, so it
   // cannot be hit while reaching for Log Book.
   emergencyButton: {

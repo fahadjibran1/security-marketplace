@@ -18,6 +18,10 @@ import { CompanyGuardModule } from '../company-guard/company-guard.module';
 import { Timesheet } from '../timesheet/entities/timesheet.entity';
 import { ComplianceModule } from '../compliance/compliance.module';
 import { AvailabilityModule } from '../availability/availability.module';
+// For OperationsProjectionService, which CoverageModule already exports. The Guard shift response
+// and the company board must be computed by the same instance of the same engine, so this is
+// deliberately a reuse rather than a second provider.
+import { CoverageModule } from '../coverage/coverage.module';
 
 @Module({
   imports: [
@@ -32,6 +36,7 @@ import { AvailabilityModule } from '../availability/availability.module';
     ComplianceModule,
     AvailabilityModule,
     AuditLogModule,
+    CoverageModule,
   ],
   controllers: [ShiftController],
   providers: [ShiftService],

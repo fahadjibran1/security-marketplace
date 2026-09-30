@@ -54,6 +54,13 @@ import { Shift } from '../src/shift/entities/shift.entity';
 import { ShiftService } from '../src/shift/shift.service';
 import { Site } from '../src/site/entities/site.entity';
 import { User, UserRole, UserStatus } from '../src/user/entities/user.entity';
+import { AttendanceEvent } from '../src/attendance/entities/attendance.entity';
+import { DailyLog } from '../src/daily-log/entities/daily-log.entity';
+import { SafetyAlert } from '../src/safety-alert/entities/safety-alert.entity';
+import { OperationalWindowService } from '../src/operations/operational-window.service';
+import { WelfareWindowService } from '../src/operations/welfare-window.service';
+import { LogBookWindowService } from '../src/operations/log-book-window.service';
+import { OperationsProjectionService } from '../src/coverage/operations-projection.service';
 
 const TEST_PREFIX = 'SO-LIFECYCLE-TEST';
 const dbUrl =
@@ -145,6 +152,24 @@ interface ShiftServiceOptions {
   site: Site;
 }
 
+/**
+ * The real operations projection, for ShiftService's Guard shift response.
+ *
+ * Built from this spec's own DataSource rather than stubbed: the projection is stateless and the
+ * window engine is pure, so a real one costs nothing and cannot drift from production behaviour.
+ */
+function makeOperationsProjection(ds: DataSource): OperationsProjectionService {
+  const windowEngine = new OperationalWindowService();
+  return new OperationsProjectionService(
+    ds.getRepository(AttendanceEvent),
+    ds.getRepository(DailyLog),
+    ds.getRepository(SafetyAlert),
+    windowEngine,
+    new WelfareWindowService(windowEngine),
+    new LogBookWindowService(windowEngine),
+  );
+}
+
 function makeShiftService(ds: DataSource, opts: ShiftServiceOptions): ShiftService {
   const audit = opts.auditCapture ? opts.auditCapture.stub : auditStub;
   return new ShiftService(
@@ -164,6 +189,7 @@ function makeShiftService(ds: DataSource, opts: ShiftServiceOptions): ShiftServi
     opts.compliance ?? compliancePassStub,
     ds,
     audit as any,
+    makeOperationsProjection(ds),
   );
 }
 

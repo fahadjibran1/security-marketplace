@@ -670,6 +670,48 @@ export interface Shift {
   company?: CompanyProfile;
   guard?: GuardProfile;
   site?: Site | null;
+  /**
+   * The operational obligations that apply to this shift, computed by the backend's window engine.
+   *
+   * Present on GET /shifts/my from Phase 3D, and null for a shift outside the operational window — which
+   * means "nothing owed here", not "zero of everything". The Guard app PRESENTS these values and never
+   * recomputes a window, a due time or a count: this is the same projection the company board reads, so
+   * the two surfaces cannot disagree about whether a Welfare Check is due.
+   */
+  operations?: GuardShiftOperations | null;
+}
+
+/** One operational window as the engine resolved it. Instants; rendered in the site's zone. */
+export interface GuardOperationalWindow {
+  index: number;
+  start: string;
+  end: string;
+}
+
+export interface GuardShiftOperations {
+  /** The site's zone, so every instant above renders on the clock the Guard works to. */
+  timezone: string;
+  welfare: {
+    enabled: boolean;
+    intervalMinutes: number | null;
+    /** The engine's own status word, passed through unchanged so it cannot drift from the board's. */
+    status: WelfarePresentationStatus;
+    currentWindow: GuardOperationalWindow | null;
+    lastWelfareAt: string | null;
+    nextDueAt: string | null;
+    overdueByMinutes: number | null;
+    requiredCount: number;
+    completedCount: number;
+    missedCount: number;
+    consecutiveMissed: number;
+  };
+  logBook: {
+    required: boolean;
+    intervalMinutes: number | null;
+    currentWindow: GuardOperationalWindow | null;
+    currentWindowSubmitted: boolean;
+    lastEntryAt: string | null;
+  };
 }
 
 export interface PayBreakdown {

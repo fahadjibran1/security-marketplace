@@ -1,20 +1,22 @@
-// What counts as a completed Welfare Check on the Guard's own screen. (Phase 3C.)
+// What counts as a completed Welfare Check. (Phase 3C; relocated and re-pointed in Phase 3D.)
 //
 // WHY THIS IS ITS OWN MODULE
-// Phase 3C makes the Guard app write `daily_logs.welfare_check`. Every shift worked before it wrote
+// Phase 3C made the Guard app write `daily_logs.welfare_check`. Every shift worked before it wrote
 // `daily_logs.check_call`, and those rows are still evidence — the backend's WELFARE_COMPLETION_LOG_TYPES
 // has recognised both since Migration 59, historical rows are never rewritten, and the enum keeps both
-// values.
+// values. Recognising only the new type would make every Welfare Check recorded before the rename read
+// as a lapse.
 //
-// The Guard screen had its own recogniser that matched `check_call` and nothing else. Left alone, the
-// canonical write would have been invisible to it: a Guard would record a Welfare Check, the row would
-// land, the backend would count it, and this screen would still say "overdue" — permanently, because
-// nothing it recognised would ever arrive again. That is the one Welfare behaviour Phase 3C had to touch,
-// so it lives here where a test can execute it rather than inside a 4,000-line screen that cannot be.
+// WHO USES IT NOW
+// Phase 3D moved Welfare TIMING to the backend's window engine, so the Guard screen no longer decides
+// anything about welfare and no longer needs this. What still does is the COMPANY side, in two places
+// that count and label daily-log rows directly: the shift close-out summary, and the operational activity
+// feed. Hence the move out of `guard/` and into the folder shared by both roles — the same reasoning that
+// put `shiftOfferTime` here in Phase 3B.
 //
 // THIS IS RECOGNITION, NOT ARITHMETIC. It says which rows are evidence. It does not decide windows, grace
-// periods or interval precedence — the backend's operational window engine owns all of that, and the
-// Guard endpoint does not currently carry its projection (TECH-DEBT-OPS-02).
+// periods or interval precedence — the backend's operational window engine owns all of that, and from
+// Phase 3D it is the only thing that does.
 
 /** A daily log row, reduced to what evidence recognition needs. */
 export type WelfareEvidenceLog = { logType: string; createdAt: string };

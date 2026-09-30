@@ -27,7 +27,7 @@ let passed = 0;
 const test = (id, fn) => { fn(); passed += 1; console.log(`PASS  ${id}`); };
 const codeOf = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
-const evidence = loadTs('src/components/guard/welfareEvidence.ts');
+const evidence = loadTs('src/components/shifts/welfareEvidence.ts');
 const forms = loadTs('src/components/guard/guardActionForms.ts');
 const policy = loadTs('src/components/company/liveOperationsPolicy.ts');
 const { WELFARE_EVIDENCE_LOG_TYPES, isWelfareEvidence, lastWelfareEvidence } = evidence;
@@ -86,15 +86,22 @@ test('LEGACY-03-A-SHIFT-WORKED-ACROSS-THE-UPGRADE-READS-CORRECTLY', () => {
   assert.equal(lastWelfareEvidence([]), undefined);
 });
 
-test('LEGACY-04-THE-GUARD-SCREEN-USES-THE-SHARED-RECOGNISER', () => {
-  const guard = codeOf(GUARD_SCREEN);
-  assert.ok(guard.includes("from '../components/guard/welfareEvidence'"), 'it imports the shared module');
-  assert.ok(guard.includes('lastWelfareEvidence(dailyLogsForShift)'), 'and uses it');
-  // The single-type filter that would have made a new Welfare Check invisible to this screen.
+test('LEGACY-04-THE-COMPANY-SIDE-USES-THE-SHARED-RECOGNISER', () => {
+  // Phase 3D moved Welfare TIMING to the backend's window engine, so the Guard screen decides nothing
+  // about welfare and no longer needs this. What still counts and labels daily-log rows directly is the
+  // company side, which is why the module moved out of guard/ and into the shared shifts folder.
+  const company = codeOf(COMPANY_SCREEN);
   assert.ok(
-    !guard.includes("entry.logType === 'check_call'"),
-    'the check_call-only recogniser must be gone from the Guard screen',
+    company.includes("from '../components/shifts/welfareEvidence'"),
+    'the company screen imports the shared recogniser',
   );
+  assert.ok(company.includes('shiftLogs.filter(isWelfareEvidence)'), 'the close-out count uses it');
+  assert.ok(company.includes('isWelfareEvidence(log)'), 'and so does the activity feed');
+
+  // The Guard screen must not have kept a check_call-only recogniser behind.
+  const guard = codeOf(GUARD_SCREEN);
+  assert.ok(!guard.includes("entry.logType === 'check_call'"), 'no single-type filter in the Guard screen');
+  assert.ok(!guard.includes('welfareEvidence'), 'and no stale import of the recogniser');
 });
 
 test('LEGACY-05-THE-COMPANY-CLOSE-OUT-COUNTS-BOTH-TYPES', () => {
@@ -102,8 +109,8 @@ test('LEGACY-05-THE-COMPANY-CLOSE-OUT-COUNTS-BOTH-TYPES', () => {
   // from the day this shipped.
   const company = codeOf(COMPANY_SCREEN);
   assert.ok(
-    company.includes("['check_call', 'welfare_check'].includes(log.logType)"),
-    'the close-out summary must count both Welfare log types',
+    company.includes('shiftLogs.filter(isWelfareEvidence).length'),
+    'the close-out summary must count both Welfare log types, via the shared rule',
   );
   assert.ok(
     !company.includes("shiftLogs.filter((log) => log.logType === 'check_call')"),

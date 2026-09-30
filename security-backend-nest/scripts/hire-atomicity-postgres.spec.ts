@@ -154,6 +154,9 @@ function services(dataSource: DataSource, failAt?: FailurePoint) {
     assignmentService, timesheetService, siteService as any, {} as any, guardService as any,
     companyGuardService, availability as any, compliance as any,
     dataSource, { log: async () => undefined } as any,
+    // This spec exercises the hire transaction only; getGuardShifts is never called, so the projection
+    // is a typed no-op rather than a real one pretending to be covered here.
+    { projectForShifts: async () => new Map() } as any,
   );
   const originalShift = shiftService.create.bind(shiftService);
   shiftService.create = async (dto: any, manager?: EntityManager) => {

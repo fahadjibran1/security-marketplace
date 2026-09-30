@@ -30,9 +30,24 @@ import {
   siteLocalEndToInstant,
   siteLocalToInstant,
 } from '../common/site-time';
+import { OperationsProjectionService } from '../coverage/operations-projection.service';
+import {
+  GuardShiftOperationsView,
+  needsGuardOperations,
+  toGuardShiftOperations,
+} from './guard-shift-operations';
+import { resolveShiftWelfareInterval } from './shift-welfare-interval';
 
 /** Length of the optional first shift created with a new site, when no end time is given. */
 const DEFAULT_STARTER_SHIFT_HOURS = 8;
+
+/**
+ * A Guard's own shift, plus the operational obligations that apply to it.
+ *
+ * `operations` is null for a shift outside the operational window, which the app renders as "nothing
+ * owed" rather than as zeroes.
+ */
+export type GuardShiftResponse = Shift & { operations: GuardShiftOperationsView | null };
 
 @Injectable()
 export class ShiftService {
@@ -71,6 +86,7 @@ export class ShiftService {
     private readonly complianceService: ComplianceService,
     private readonly dataSource: DataSource,
     private readonly auditLogService: AuditLogService,
+    private readonly operationsProjection: OperationsProjectionService,
   ) {}
 
   async findAll(): Promise<Shift[]> {
@@ -109,16 +125,39 @@ export class ShiftService {
     });
   }
 
-  async getGuardShifts(user: JwtPayload): Promise<Shift[]> {
+  /**
+   * The authenticated Guard's own shifts, each carrying the operational obligations that apply to it.
+   *
+   * AUTHORIZATION IS STRUCTURAL. The query is filtered by the guard profile resolved from the token's
+   * own subject, and the caller passes no identifier at all — there is no shift id, guard id or company
+   * id in the request to tamper with. A Guard cannot reach another Guard's operations here because
+   * there is nothing to change.
+   *
+   * The projection is the SAME service the company board uses, so the two surfaces cannot disagree.
+   * Nothing is recomputed here and nothing is recomputed on the client.
+   */
+  async getGuardShifts(user: JwtPayload): Promise<GuardShiftResponse[]> {
     const guard = await this.guardProfileService.findByUserId(user.sub);
     if (!guard) {
       throw new NotFoundException('Guard profile not found');
     }
 
-    return this.shiftRepo.find({
+    const shifts = await this.shiftRepo.find({
       where: { guard: { id: guard.id } },
       relations: ['assignment', 'company', 'guard', 'site', 'job', 'jobApplication'],
       order: { start: 'DESC' },
+    });
+
+    // Only the shifts where an obligation can currently apply. This is every shift the Guard has ever
+    // worked, and a window grid for all of it would be work nobody reads.
+    const now = new Date();
+    const relevant = shifts.filter((shift) => needsGuardOperations(shift, now));
+    const operations = await this.operationsProjection.projectForShifts(relevant, now);
+
+    return shifts.map((shift) => {
+      const view = Object.assign(Object.create(Object.getPrototypeOf(shift)), shift) as GuardShiftResponse;
+      view.operations = toGuardShiftOperations(operations.get(shift.id));
+      return view;
     });
   }
 
@@ -269,8 +308,10 @@ export class ShiftService {
     shift.siteName = site.name;
     shift.start = start;
     shift.end = end;
-    shift.checkCallIntervalMinutes =
-      dto.checkCallIntervalMinutes ?? site.welfareCheckIntervalMinutes ?? 60;
+    shift.checkCallIntervalMinutes = resolveShiftWelfareInterval(
+      dto.checkCallIntervalMinutes,
+      site.welfareCheckIntervalMinutes,
+    );
     shift.instructions = dto.instructions?.trim() || null;
     shift.closeOutNotes = dto.closeOutNotes?.trim() || null;
     shift.status = status;
@@ -358,8 +399,10 @@ export class ShiftService {
       jobApplicationId: jobApplication?.id ?? dto.jobApplicationId,
       createdByUserId: user.sub,
       siteId: site.id,
-      checkCallIntervalMinutes:
-        dto.checkCallIntervalMinutes ?? site.welfareCheckIntervalMinutes ?? undefined,
+      checkCallIntervalMinutes: resolveShiftWelfareInterval(
+        dto.checkCallIntervalMinutes,
+        site.welfareCheckIntervalMinutes,
+      ),
       status: dto.status ?? (contextGuard ? 'offered' : 'unfilled'),
     });
   }
@@ -528,8 +571,13 @@ export class ShiftService {
       }
       shift.site = site;
       shift.siteName = site.name;
+      // Moving a shift to another site re-materialises the interval from the NEW site, unless the caller
+      // states one. Falling back to the shift's existing value keeps a deliberate override intact.
       if (!dto.checkCallIntervalMinutes) {
-        shift.checkCallIntervalMinutes = site.welfareCheckIntervalMinutes ?? shift.checkCallIntervalMinutes;
+        shift.checkCallIntervalMinutes = resolveShiftWelfareInterval(
+          undefined,
+          site.welfareCheckIntervalMinutes ?? shift.checkCallIntervalMinutes,
+        );
       }
     }
 

@@ -283,23 +283,29 @@ TECH-DEBT-TIME-03, which Phase 3B closed for Shift Offers; the fix is `formatSit
 site's zone, as Live Operations already does. Out of scope for Phase 3B and 3C, and the planner's own
 week navigation still reaches every shift, so nothing is unreachable — only mis-bucketed at the boundary.
 
-**TECH-DEBT-OPS-02 — the Guard endpoint carries no operational window projection.**
-`GET /shifts/my` returns bare `Shift` entities. `OperationsProjectionService` — which computes the
-Welfare window grid, its status, `nextDueAt` and the completion counts — is wired only into
-`CoverageService`, a company-scoped endpoint, so none of it reaches the Guard app.
+**TECH-DEBT-OPS-02 — CLOSED in Phase 3D.**
+`GET /shifts/my` returned bare `Shift` entities, and `OperationsProjectionService` was wired only into
+the company-scoped `CoverageService`, so the Welfare window grid, its status, `nextDueAt` and the counts
+never reached the Guard app. The Guard screen therefore had its own timing in `getNextWelfareDueMs`: a
+rolling anchor of "last evidence + interval", against the engine's fixed half-open grid, its 5-minute
+grace and its resolved interval. A Guard and their control room could disagree about whether a check was
+due, and the Guard — the one who has to act — had the weaker version.
 
-The Guard screen consequently has its own, *different* welfare timing in `getNextWelfareDueMs`: a rolling
-anchor of "last evidence + interval", against the backend's fixed half-open window grid from the
-scheduled start with a 5-minute grace. It also reads `shift.checkCallIntervalMinutes` alone, with no site
-fallback, no 60-minute default and no 5-minute floor, so it ignores the `shift ?? site ?? 60` precedence
-locked in Phase 3A-ii. A Guard and their control room can therefore disagree about whether a Welfare
-Check is due.
+Closed by attaching the SAME projection to the Guard shift response, narrowed by
+`toGuardShiftOperations` to what the Guard needs. `getNextWelfareDueMs` is deleted and nothing on the
+client computes welfare timing. Certified in `scripts/guard-operations-projection.spec.ts`, which asserts
+Guard and Company agree at every instant across the grace boundary, and in
+`guard-welfare-status.spec.cjs`, which asserts the presentation module never reads a clock.
 
-Phase 3C was explicitly told not to reproduce Welfare arithmetic in the Guard client, so this was left as
-it was and the Welfare status block (status + next due on the active shift) was NOT built. The smallest
-fix is to attach the existing `ShiftOperationsView` to the Guard shift response — no new computation, no
-migration, just the projection the backend already builds for the company, scoped to the Guard's own
-shifts. Then the client displays it and deletes its own arithmetic.
+**A note on the read-time interval fallback, in case it looks like a bug.**
+The window engine resolves the interval as `shift ?? site ?? 60` (locked in Phase 3A-ii), and
+`shifts.checkCallIntervalMinutes` is `integer NOT NULL DEFAULT 60` — so the shift term is never null and
+the site term there is **unreachable**. That is correct, not broken: `resolveShiftWelfareInterval`
+consults the site when the shift is WRITTEN, and migration 1719040000000 backfilled the column from each
+site when it was added. The stored value is a materialised copy of the effective interval, which is what
+makes a shift's Welfare timing stable — changing a site default does not silently re-time checks on
+shifts already planned and briefed. A Phase 3D test initially asserted a read-time fallback and failed;
+the rule was extracted and executed instead of the assumption being restated.
 
 **Not yet applied: existing rows.** Shift rows written before Phase 1 hold a site-local wall clock in a
 column that is now read as an instant, so a pre-existing BST shift reads one hour later than intended
