@@ -2,3 +2,7 @@
 node_modules/
 dist/
 web-build/
+
+# Local visual-review and export artefacts from scripts/operations-timeline-preview.cjs
+# and scripts/operations-export-sample.cjs. Generated, never evidence in the repo.
+preview/
