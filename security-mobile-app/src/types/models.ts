@@ -551,6 +551,14 @@ export interface OperationalWindowView {
   index: number;
   start: string;
   end: string;
+  /**
+   * The engine's own verdict, published from Phase 4A for the timeline markers and the export rows.
+   * Optional because the Log Book windows and the narrowed Guard view do not carry it.
+   */
+  state?: 'completed' | 'due' | 'overdue' | 'missed' | 'not_applicable';
+  applicable?: boolean;
+  completedAt?: string | null;
+  completionCount?: number;
 }
 
 export type WelfarePresentationStatus =
@@ -567,6 +575,14 @@ export interface WelfareOperationsView {
   intervalMinutes: number | null;
   status: WelfarePresentationStatus;
   currentWindow: OperationalWindowView | null;
+  /**
+   * Every resolved Welfare window for the shift, in order, published from Phase 4A.
+   *
+   * The control-room timeline draws one marker per window and the operations export emits one row per
+   * window. Neither rebuilds the grid — this IS the engine's grid, the same array the counts above were
+   * derived from. Empty when the shift carries no Welfare obligation.
+   */
+  windows: OperationalWindowView[];
   lastWelfareAt: string | null;
   nextDueAt: string | null;
   overdueByMinutes: number | null;
@@ -686,6 +702,15 @@ export interface GuardOperationalWindow {
   index: number;
   start: string;
   end: string;
+  /**
+   * The engine's own verdict for this window, published from Phase 4A so the control-room timeline can
+   * draw one marker per window and the operations export can emit one row per window. Absent on the
+   * narrowed Guard view, which only needs the current window.
+   */
+  state?: 'completed' | 'due' | 'overdue' | 'missed' | 'not_applicable';
+  applicable?: boolean;
+  completedAt?: string | null;
+  completionCount?: number;
 }
 
 export interface GuardShiftOperations {

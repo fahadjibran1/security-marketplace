@@ -46,6 +46,7 @@
     "test:guard-action-consolidation": "node scripts/guard-action-consolidation.spec.cjs",
     "test:guard-welfare-status": "node scripts/guard-welfare-status.spec.cjs",
     "test:current-shift-actions": "node scripts/current-shift-action-target.spec.cjs",
+    "test:operations-timeline": "node scripts/operations-timeline.spec.cjs",
     "test:live-ops-policy": "node scripts/live-operations-policy.spec.cjs",
     "test:shift-offer-time": "node scripts/shift-offer-time.spec.cjs"
   },

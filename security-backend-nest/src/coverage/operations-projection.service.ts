@@ -43,11 +43,40 @@ export type OperationalWindowView = {
   end: string;
 };
 
+/**
+ * One resolved Welfare window, as the engine decided it.
+ *
+ * Published so the control-room timeline can draw a marker per window and the operations export can
+ * emit a row per window, WITHOUT either of them rebuilding the grid. `state` is the engine's own
+ * verdict — completed, due, overdue, missed, not_applicable — passed through unchanged, because a
+ * second mapping is how two surfaces start disagreeing.
+ *
+ * `applicable` is false for a window the Guard was never on duty for: nothing was owed, so the
+ * timeline shows it as not-applicable rather than as a gap or a miss.
+ */
+export type WelfareWindowView = {
+  index: number;
+  start: string;
+  end: string;
+  state: OperationalWindowState;
+  applicable: boolean;
+  /** The first qualifying completion inside the window, or null. */
+  completedAt: string | null;
+  /** More than one completion in a window is legitimate; the obligation is still met once. */
+  completionCount: number;
+};
+
 export type WelfareOperationsView = {
   enabled: boolean;
   intervalMinutes: number | null;
   status: WelfarePresentationStatus;
   currentWindow: OperationalWindowView | null;
+  /**
+   * Every resolved window for the shift, in order. Empty when the shift carries no Welfare
+   * obligation. This is the grid the timeline draws and the export rows; it is NOT a second source of
+   * truth, it is the same `welfare.windows` the summary counts are derived from.
+   */
+  windows: WelfareWindowView[];
   lastWelfareAt: string | null;
   nextDueAt: string | null;
   overdueByMinutes: number | null;
@@ -248,6 +277,7 @@ export class OperationsProjectionService {
           consecutiveMissed,
         }),
         currentWindow: this.toWindowView(currentWelfareWindow),
+        windows: welfare.windows.map((window) => this.toWelfareWindowView(window)),
         lastWelfareAt,
         nextDueAt: currentWelfareWindow ? currentWelfareWindow.end.toISOString() : null,
         overdueByMinutes:
@@ -342,6 +372,19 @@ export class OperationsProjectionService {
   private toWindowView(window: ResolvedOperationalWindow | null): OperationalWindowView | null {
     if (!window) return null;
     return { index: window.index, start: window.start.toISOString(), end: window.end.toISOString() };
+  }
+
+  /** The engine's verdict for one window, published verbatim. Nothing is recomputed or re-mapped. */
+  private toWelfareWindowView(window: ResolvedOperationalWindow): WelfareWindowView {
+    return {
+      index: window.index,
+      start: window.start.toISOString(),
+      end: window.end.toISOString(),
+      state: window.state,
+      applicable: window.applicable,
+      completedAt: window.completedAt ? window.completedAt.toISOString() : null,
+      completionCount: window.completionCount,
+    };
   }
 
   private earliest(events: AttendanceEvent[], type: AttendanceEventType): Date | null {

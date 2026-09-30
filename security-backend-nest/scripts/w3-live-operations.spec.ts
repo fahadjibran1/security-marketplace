@@ -214,6 +214,74 @@ async function main() {
       assert.ok(Math.abs(due - (Date.now() + 30 * MIN)) < 90_000, 'thirty minutes from now');
     });
 
+    await test('W3-08B-THE-WHOLE-WELFARE-WINDOW-GRID-IS-PUBLISHED', async () => {
+      // Phase 4A: the control-room timeline draws one marker per window and the operations export emits
+      // one row per window. Neither may rebuild the grid, so the engine publishes it. A 12-hour shift at
+      // the site's 60-minute interval owes twelve.
+      const shift = await makeShift({ startedMinsAgo: 30 });
+      const v = await view(shift);
+
+      assert.equal(v.welfare.windows.length, v.welfare.requiredCount, 'the grid IS what the counts count');
+      assert.ok(v.welfare.windows.length >= 2, 'a 12-hour shift at 60 minutes has several windows');
+
+      // In order, contiguous, and each one interval long — the engine's grid, not a re-derivation.
+      v.welfare.windows.forEach((w, i) => {
+        assert.equal(w.index, i, 'windows are published in order');
+        const span = (new Date(w.end).getTime() - new Date(w.start).getTime()) / MIN;
+        assert.equal(span, v.welfare.intervalMinutes, `window ${i} spans one interval`);
+        if (i > 0) {
+          assert.equal(w.start, v.welfare.windows[i - 1].end, 'half-open and contiguous');
+        }
+        assert.ok(
+          ['completed', 'due', 'overdue', 'missed', 'not_applicable'].includes(w.state),
+          `window ${i} carries an engine state, got ${w.state}`,
+        );
+        assert.equal(typeof w.applicable, 'boolean');
+        assert.equal(typeof w.completionCount, 'number');
+      });
+
+      // The published grid must agree with the summary it was counted from.
+      const completed = v.welfare.windows.filter((w) => w.state === 'completed').length;
+      const missed = v.welfare.windows.filter((w) => w.state === 'missed').length;
+      assert.equal(completed, v.welfare.completedCount, 'completed markers match the count');
+      assert.equal(missed, v.welfare.missedCount, 'missed markers match the count');
+
+      // And the current window the board chases must be one of them.
+      const current = v.welfare.windows.find((w) => w.index === v.welfare.currentWindow!.index);
+      assert.ok(current, 'the current window is part of the published grid');
+      assert.equal(current.start, v.welfare.currentWindow!.start);
+      assert.equal(current.end, v.welfare.currentWindow!.end);
+    });
+
+    await test('W3-08C-A-COMPLETED-WINDOW-CARRIES-ITS-COMPLETION-TIME', async () => {
+      // The export needs "Welfare Completed At" per window, and the timeline tooltip shows it.
+      const shift = await makeShift({ startedMinsAgo: 90 });
+      await logAt(shift, 80, DailyLogType.WELFARE_CHECK);
+      const v = await view(shift);
+
+      const done = v.welfare.windows.filter((w) => w.state === 'completed');
+      assert.ok(done.length >= 1, 'the welfare check completed a window');
+      for (const w of done) {
+        assert.ok(w.completedAt, 'a completed window states when');
+        assert.ok(w.completionCount >= 1);
+        const at = new Date(w.completedAt).getTime();
+        assert.ok(
+          at >= new Date(w.start).getTime() && at < new Date(w.end).getTime(),
+          'and the completion sits inside its own window',
+        );
+      }
+      for (const w of v.welfare.windows.filter((x) => x.state !== 'completed')) {
+        assert.equal(w.completedAt, null, 'an unmet window has no completion time');
+      }
+    });
+
+    await test('W3-08D-NO-WELFARE-OBLIGATION-PUBLISHES-AN-EMPTY-GRID', async () => {
+      // Not a grid of not_applicable markers, and not null: empty, so the timeline draws nothing.
+      const shift = await makeShift({ startedMinsAgo: 30, bookOnMinsAgo: null });
+      const v = await view(shift);
+      assert.equal(Array.isArray(v.welfare.windows), true, 'always an array');
+    });
+
     await test('W3-09-INSIDE-GRACE-IS-OVERDUE-AND-KEEPS-CHASING-THAT-WINDOW', async () => {
       // Window 0 ended 3 minutes ago, so window 1 is technically open. The board must still show the
       // lapse rather than quietly presenting the new window as merely due.
