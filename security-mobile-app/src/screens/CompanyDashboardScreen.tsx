@@ -12,6 +12,16 @@ import type { LiveBoardRow, CloseOutSummary, SelectedShiftContext } from '../com
 import { CompanyShiftOffersWorkspace, type ShiftOffersFeedback } from '../components/company/CompanyShiftOffersWorkspace';
 import { isWelfareEvidence } from '../components/shifts/welfareEvidence';
 import {
+  buildOperationsReport,
+  operationsReportFilename,
+  reportDateFor,
+  toCsv,
+  SUMMARY_COLUMNS,
+  WELFARE_COLUMNS,
+  type ReportShiftInput,
+} from '../components/company/operationsReport';
+import { buildXlsx } from '../components/company/xlsxWriter';
+import {
   classifyLiveOperation,
   isActionableWelfareAlert,
   selectCurrentAttention,
@@ -3407,6 +3417,102 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
     };
   }, [liveOperationEnrichedRows, urgentOperationalItems]);
 
+  const [exportingOperations, setExportingOperations] = React.useState(false);
+
+  /**
+   * The instant the timeline positions itself around.
+   *
+   * The selected operational day at noon on the SITE's clock when Control has picked a date, so a
+   * 20:00-08:00 shift belonging to that day is on the axis rather than half off it; otherwise now. Noon
+   * rather than midnight for exactly that reason — an overnight shift straddles midnight, and anchoring
+   * there would put half of every night shift out of view.
+   */
+  const timelineAnchorMs = React.useMemo(() => {
+    if (!liveFilters.date) return operationalNow.getTime();
+    const zone = resolveSiteZone(liveFilters.siteId ? Number(liveFilters.siteId) : null);
+    const resolved = siteLocalToInstant(liveFilters.date, '12:00', zone);
+    return resolved.ok ? resolved.instant : operationalNow.getTime();
+  }, [liveFilters.date, liveFilters.siteId, operationalNow, resolveSiteZone]);
+
+  /**
+   * The report's rows: the SAME filtered set the timeline draws, so the file matches what Control
+   * scoped. Narrowing to one site exports that site — never the whole company.
+   */
+  const operationsReportInputs: ReportShiftInput[] = React.useMemo(
+    () => liveOperationEnrichedRows.map((row) => ({
+      shift: row.shift,
+      attendance: row.attendance,
+      operations: row.operations,
+      logs: row.shiftLogs,
+      incidents: row.shiftIncidents,
+      alerts: row.shiftAlerts,
+    })),
+    [liveOperationEnrichedRows],
+  );
+
+  const operationsReportScope = React.useMemo(() => {
+    const zone = resolveSiteZone(liveFilters.siteId ? Number(liveFilters.siteId) : null);
+    const siteName = liveFilters.siteId
+      ? siteMap.get(Number(liveFilters.siteId))?.name ?? null
+      : null;
+    return { date: reportDateFor(new Date(timelineAnchorMs).toISOString(), zone), siteName };
+  }, [liveFilters.siteId, resolveSiteZone, siteMap, timelineAnchorMs]);
+
+  /** Hands bytes to the browser. Native has no download surface, so it reports that plainly. */
+  const downloadOperationsFile = (filename: string, data: BlobPart, mime: string) => {
+    if (typeof document === 'undefined' || typeof URL === 'undefined') {
+      setLiveOperationsFeedback({
+        tone: 'error',
+        message: 'Export is available on the web control room. Open S4 in a browser to download.',
+      });
+      return;
+    }
+    const url = URL.createObjectURL(new Blob([data], { type: mime }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExportOperationsCsv = () => {
+    setExportingOperations(true);
+    try {
+      const report = buildOperationsReport(operationsReportInputs, operationsReportScope);
+      downloadOperationsFile(
+        operationsReportFilename(operationsReportScope, 'csv'),
+        toCsv(report),
+        'text/csv;charset=utf-8',
+      );
+    } catch (error) {
+      setLiveOperationsFeedback({ tone: 'error', message: formatApiErrorMessage(error, 'Unable to build the CSV export.') });
+    } finally {
+      setExportingOperations(false);
+    }
+  };
+
+  const handleExportOperationsXlsx = () => {
+    setExportingOperations(true);
+    try {
+      const report = buildOperationsReport(operationsReportInputs, operationsReportScope);
+      const bytes = buildXlsx([
+        { name: 'Operations Summary', rows: [[...SUMMARY_COLUMNS], ...report.summary] },
+        { name: 'Welfare Detail', rows: [[...WELFARE_COLUMNS], ...report.welfare] },
+      ]);
+      downloadOperationsFile(
+        operationsReportFilename(operationsReportScope, 'xlsx'),
+        bytes.slice().buffer as ArrayBuffer,
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      );
+    } catch (error) {
+      setLiveOperationsFeedback({ tone: 'error', message: formatApiErrorMessage(error, 'Unable to build the Excel export.') });
+    } finally {
+      setExportingOperations(false);
+    }
+  };
+
   const selectedShiftContext: SelectedShiftContext | null = React.useMemo(() => {
     if (!selectedShift) return null;
     const attendance = attendanceByShiftId.get(selectedShift.id);
@@ -4115,6 +4221,11 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
         onUrgentAlertFollowUp={handleUrgentAlertFollowUp}
         onSaveCloseOutNotes={handleSaveCloseOutNotes}
         onOpenCoverage={openCoverage}
+        operationalNowMs={operationalNow.getTime()}
+        timelineAnchorMs={timelineAnchorMs}
+        onExportCsv={handleExportOperationsCsv}
+        onExportXlsx={handleExportOperationsXlsx}
+        exporting={exportingOperations}
         onBoardLayout={setLiveBoardAnchorY}
         onDetailLayout={setShiftDetailAnchorY}
       />

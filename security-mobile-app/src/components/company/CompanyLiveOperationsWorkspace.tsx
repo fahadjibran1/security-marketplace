@@ -16,6 +16,9 @@ import {
   formatInstantTime,
 } from '../../services/siteTime';
 import type { InclusionReason } from './liveOperationsPolicy';
+import { CompanyOperationsTimeline } from './CompanyOperationsTimeline';
+import type { TimelineShiftInput } from './operationsTimeline';
+import { Drawer } from '../ui/Drawer';
 import { colors, radii, spacing } from '../../theme';
 import { DailyLog, Incident, SafetyAlert, Shift, Timesheet } from '../../types/models';
 
@@ -164,7 +167,7 @@ export type CompanyLiveOperationsWorkspaceProps = {
   // Board
   liveOperationEnrichedRows: LiveBoardRow[];
   selectedShiftId: number | null;
-  setSelectedShiftId: (id: number) => void;
+  setSelectedShiftId: (id: number | null) => void;
   highlightedLiveShiftId: number | null;
   // Filters
   liveFilters: LiveFilters;
@@ -193,6 +196,13 @@ export type CompanyLiveOperationsWorkspaceProps = {
   onSaveCloseOutNotes: () => void;
   onOpenCoverage: (context?: { uncoveredOnly?: boolean; shiftId?: number }) => void;
   // Layout anchors
+  /** The operational clock from the ONE existing refresh cycle. The timeline never keeps its own. */
+  operationalNowMs: number;
+  /** The instant the visible window is positioned around — the selected operational day. */
+  timelineAnchorMs: number;
+  onExportCsv: () => void;
+  onExportXlsx: () => void;
+  exporting: boolean;
   onBoardLayout: (y: number) => void;
   onDetailLayout: (y: number) => void;
 };
@@ -1105,10 +1115,25 @@ export function CompanyLiveOperationsWorkspace({
   onUrgentAlertFollowUp,
   onSaveCloseOutNotes,
   onOpenCoverage,
+  operationalNowMs,
+  timelineAnchorMs,
+  onExportCsv,
+  onExportXlsx,
+  exporting,
   onBoardLayout,
   onDetailLayout,
 }: CompanyLiveOperationsWorkspaceProps) {
   const [metricFocus, setMetricFocus] = React.useState<MetricFocus>('all');
+  /**
+   * The zone the hour header is labelled in.
+   *
+   * Taken from the first site in view rather than the device, so a single-site control room reads its
+   * own clock. Each ROW still renders its own site's zone — the foundation keeps per-site semantics —
+   * and the timeline header says "mixed site timezones" when more than one is on screen, so the axis is
+   * never silently someone else's clock.
+   */
+  const timelineHeaderZone =
+    liveOperationEnrichedRows[0]?.shift.site?.timezone || DEFAULT_SITE_TIME_ZONE;
   const filtersActive = Boolean(
     liveFilters.clientId || liveFilters.siteId || liveFilters.guardId || liveFilters.date || liveFilters.status,
   );
@@ -1140,6 +1165,20 @@ export function CompanyLiveOperationsWorkspace({
     }
     return urgentOperationalItems;
   }, [urgentOperationalItems, liveOperationEnrichedRows, metricFocus]);
+
+  /**
+   * The timeline's dataset: the same filtered, enriched rows the summary counts and Attention Now are
+   * derived from. One dataset means the three can never contradict each other, and it is why there is
+   * no request per cell or per Welfare marker — the whole visible scope arrives in one payload.
+   */
+  const timelineInputs: TimelineShiftInput[] = React.useMemo(
+    () => focusedBoardRows.map((row) => ({
+      shift: row.shift,
+      attendance: row.attendance,
+      operations: row.operations,
+    })),
+    [focusedBoardRows],
+  );
 
   const effectiveSelectedShiftContext = React.useMemo(() => {
     if (!selectedShiftContext) return null;
@@ -1209,16 +1248,29 @@ export function CompanyLiveOperationsWorkspace({
 
       {/* ── Command workspace ────────────────────────────────────────────── */}
       <View style={styles.workspaceRow} onLayout={(e: any) => onBoardLayout(e.nativeEvent.layout.y)}>
-        <LiveOpsOperationsBoard
-          rows={focusedBoardRows}
-          selectedShiftId={selectedShiftId}
-          highlightedLiveShiftId={highlightedLiveShiftId}
-          metricFocus={metricFocus}
-          filtersActive={filtersActive}
-          onSelectRow={setSelectedShiftId}
-          onAction={onLiveBoardPrimaryAction}
-          onClearMetricFocus={() => setMetricFocus('all')}
-        />
+        <View style={styles.timelineColumn}>
+          <CompanyOperationsTimeline
+            inputs={timelineInputs}
+            nowMs={operationalNowMs}
+            headerTimeZone={timelineHeaderZone}
+            anchorMs={timelineAnchorMs}
+            selectedShiftId={selectedShiftId}
+            highlightedShiftId={highlightedLiveShiftId}
+            onSelectShift={setSelectedShiftId}
+            onExportCsv={onExportCsv}
+            onExportXlsx={onExportXlsx}
+            exporting={exporting}
+          />
+          {metricFocus !== 'all' ? (
+            <Pressable
+              accessibilityRole="button"
+              style={[styles.clearFocusBtn, IS_WEB ? (WEB_PTR as any) : null]}
+              onPress={() => setMetricFocus('all')}
+            >
+              <Text style={styles.clearFocusText}>Clear metric filter</Text>
+            </Pressable>
+          ) : null}
+        </View>
         <LiveOpsAttentionRail
           items={focusedAttentionItems}
           metricFocus={metricFocus}
@@ -1240,23 +1292,37 @@ export function CompanyLiveOperationsWorkspace({
         onOpenCoverage={onOpenCoverage}
       />
 
-      {/* ── Selected shift detail ────────────────────────────────────────── */}
-      {effectiveSelectedShiftContext ? (
-        <View
-          style={styles.detailPanel}
-          onLayout={(e: any) => onDetailLayout(e.nativeEvent.layout.y)}
-        >
-          <DetailPanelContent
-            ctx={effectiveSelectedShiftContext}
-            closeOutSummary={selectedShiftCloseOutSummary}
-            closeOutNotesDraft={closeOutNotesDraft}
-            setCloseOutNotesDraft={setCloseOutNotesDraft}
-            savingCloseOutNotes={savingCloseOutNotes}
-            onSaveCloseOutNotes={onSaveCloseOutNotes}
-            onOpenCoverage={onOpenCoverage}
-          />
-        </View>
-      ) : null}
+      {/* ── Shift detail, on demand ──────────────────────────────────────
+          Previously every selected shift rendered a full-height card below the board, so the page grew
+          with the operation and a controller scrolled past the thing they were watching. The same
+          content now opens in a drawer: Operational Monitoring, Attendance & Timesheet, Daily Logs,
+          Incidents and Safety Alerts are reused verbatim — this recovers vertical space, it does not
+          rebuild their workflows. */}
+      <Drawer
+        visible={!!effectiveSelectedShiftContext}
+        onClose={() => setSelectedShiftId(null)}
+        title="Shift Operations"
+        subtitle={
+          effectiveSelectedShiftContext
+            ? `${effectiveSelectedShiftContext.shift.site?.name || effectiveSelectedShiftContext.shift.siteName || 'Site'} · ${effectiveSelectedShiftContext.shift.guard?.fullName || 'Unassigned'}`
+            : undefined
+        }
+        width={620}
+      >
+        {effectiveSelectedShiftContext ? (
+          <View onLayout={(e: any) => onDetailLayout(e.nativeEvent.layout.y)}>
+            <DetailPanelContent
+              ctx={effectiveSelectedShiftContext}
+              closeOutSummary={selectedShiftCloseOutSummary}
+              closeOutNotesDraft={closeOutNotesDraft}
+              setCloseOutNotesDraft={setCloseOutNotesDraft}
+              savingCloseOutNotes={savingCloseOutNotes}
+              onSaveCloseOutNotes={onSaveCloseOutNotes}
+              onOpenCoverage={onOpenCoverage}
+            />
+          </View>
+        ) : null}
+      </Drawer>
 
     </View>
   );
@@ -1597,6 +1663,17 @@ const styles = StyleSheet.create({
   },
 
   // ── Command workspace row ─────────────────────────────────────────────────
+  // The timeline takes the space the flat table used to, beside the Attention rail.
+  timelineColumn: { flex: 1, minWidth: 0, gap: 6 },
+  clearFocusBtn: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: radii.sm,
+    borderWidth: 1,
+    borderColor: colors.accentTeal,
+  },
+  clearFocusText: { fontSize: 11, fontWeight: '700', color: colors.accentTeal },
   workspaceRow: {
     flexDirection: 'row',
     gap: spacing.sm,
