@@ -18,12 +18,14 @@
 // The canonical set is now: WELFARE CHECK, LOG BOOK, SITE REQUEST, INCIDENT, EMERGENCY — and Book Off,
 // which stays where it is, as the shift card's own control, well away from routine reporting.
 //
-// WHY THE CONFIRMATION WORD CHANGED
-// The alert is still SafetyAlertType.PANIC on the wire; only what the Guard reads has changed. Leaving
-// "Type PANIC to confirm" under a button labelled Emergency is exactly the mismatched copy this phase
-// exists to remove, and hesitating over which word to type is worse in an emergency than four extra
-// characters. The requirement itself is unchanged: an exact match, checked in the same place, by the same
-// function, with the button inert until it matches.
+// THE CONFIRMATION WORD
+// The alert is still SafetyAlertType.PANIC on the wire; only what the Guard reads has changed. The typed
+// word is SOS. It has to be deliberate enough that a pocket cannot send it, and short enough to type
+// one-handed under real duress — PANIC no longer matched the button, and EMERGENCY, which Phase 3C
+// briefly used for copy consistency, was nine characters at the worst possible moment.
+//
+// The requirement itself is NOT weakened to a single tap: still an exact match, checked in the same
+// place, by the same function, with the button inert until it matches.
 
 export type GuardActionKey = 'welfareCheck' | 'logBook' | 'siteRequest' | 'incident' | 'emergency';
 
@@ -94,12 +96,12 @@ export const GUARD_ACTION_FORMS: readonly GuardActionForm[] = [
   {
     key: 'emergency',
     title: 'Emergency',
-    helperText: 'Type EMERGENCY to confirm you need immediate assistance.',
-    placeholder: 'Type EMERGENCY',
+    helperText: 'Type SOS to confirm you need immediate assistance.',
+    placeholder: 'Type SOS',
     submitLabel: 'Send Emergency Alert',
     busyLabel: 'Sending...',
     multiline: false,
-    confirmWord: 'EMERGENCY',
+    confirmWord: 'SOS',
     destructive: true,
     launchAccessibilityLabel: 'Send Emergency alert',
   },

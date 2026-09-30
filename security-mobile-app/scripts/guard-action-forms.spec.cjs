@@ -342,7 +342,7 @@ test('FORM-15-THE-CANONICAL-ACTION-SET', () => {
   }
   assert.equal(new Set(GUARD_ACTION_FORMS.map((f) => f.title)).size, 5, 'no two actions share a name');
 
-  assert.equal(guardActionForm('emergency').confirmWord, 'EMERGENCY');
+  assert.equal(guardActionForm('emergency').confirmWord, 'SOS');
   assert.equal(guardActionForm('emergency').destructive, true);
   // Only Emergency is destructive, and only Emergency needs a typed confirmation.
   assert.deepEqual(GUARD_ACTION_FORMS.filter((f) => f.destructive).map((f) => f.key), ['emergency']);
@@ -371,13 +371,13 @@ test('FORM-17-EMERGENCY-REQUIRES-THE-CONFIRMATION-WORD', () => {
   // still checked in the same function, still inert until it matches. PANIC — the old word — must no
   // longer be accepted, or there would be two ways in and one of them undocumented.
   const emergency = guardActionForm('emergency');
-  for (const bad of ['', 'emergenc', 'EMERG', 'help', 'PANIC', 'panic']) {
+  for (const bad of ['', 'so', 'SO', 'S O S', 'help', 'PANIC', 'panic', 'EMERGENCY']) {
     const state = resolveActionSubmitState(emergency, { value: bad, busy: false });
     assert.equal(state.disabled, true, `"${bad}" must not enable an emergency alert`);
     assert.equal(state.blockedReason, 'confirmation');
   }
   // Case and surrounding space are forgiven, exactly as the dispatcher forgives them.
-  for (const good of ['EMERGENCY', 'emergency', '  Emergency  ']) {
+  for (const good of ['SOS', 'sos', '  Sos  ']) {
     assert.equal(
       resolveActionSubmitState(emergency, { value: good, busy: false }).disabled,
       false,

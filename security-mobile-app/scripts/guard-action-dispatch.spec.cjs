@@ -143,14 +143,14 @@ async function main() {
     // reading it exactly as before.
     const h = harness();
     const outcome = await dispatchGuardAction(
-      'emergency', { shift: LIVE_SHIFT, value: 'EMERGENCY', busy: false }, h.api, h.effects,
+      'emergency', { shift: LIVE_SHIFT, value: 'SOS', busy: false }, h.api, h.effects,
     );
     assert.deepEqual(outcome, { kind: 'success' });
     assert.equal(h.calls.createSafetyAlert.length, 1);
     assert.equal(h.calls.createSafetyAlert[0].type, 'panic');
     assert.equal(h.calls.createSafetyAlert[0].priority, 'critical');
     assert.ok(
-      !h.calls.createSafetyAlert[0].message.includes('EMERGENCY'),
+      !h.calls.createSafetyAlert[0].message.includes('SOS'),
       'the confirmation word is not the alert body',
     );
     assert.equal(h.total(), 1);
@@ -164,7 +164,7 @@ async function main() {
       ['logBook', 'note'],
       ['siteRequest', 'note'],
       ['incident', 'note'],
-      ['emergency', 'EMERGENCY'],
+      ['emergency', 'SOS'],
     ];
     assert.equal(cases.length, GUARD_ACTION_FORMS.length, 'every declared form is covered here');
     for (const [key, value] of cases) {
@@ -183,7 +183,7 @@ async function main() {
     const emittedAlertTypes = [];
     for (const [key, value] of [
       ['welfareCheck', 'note'], ['logBook', 'note'], ['siteRequest', 'note'],
-      ['incident', 'note'], ['emergency', 'EMERGENCY'],
+      ['incident', 'note'], ['emergency', 'SOS'],
     ]) {
       const h = harness();
       await dispatchGuardAction(key, { shift: LIVE_SHIFT, value, busy: false }, h.api, h.effects);
