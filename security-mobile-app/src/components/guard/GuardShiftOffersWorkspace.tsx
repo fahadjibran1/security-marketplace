@@ -7,6 +7,12 @@ import {
   Text,
   View,
 } from 'react-native';
+import {
+  formatOfferDate,
+  formatOfferTime,
+  formatOfferWindow,
+  shiftZone,
+} from '../shifts/shiftOfferTime';
 import { colors, control, radii, shadows, spacing } from '../../theme';
 import { Shift } from '../../types/models';
 import { StatePanel } from '../StatePanel';
@@ -28,43 +34,21 @@ export interface GuardShiftOffersWorkspaceProps {
 
 // ── Local date/time helpers ────────────────────────────────────────────────
 
-function getLiteralParts(value?: string | null) {
-  if (!value) return null;
-  const m = value.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s](\d{2}):(\d{2}))?/);
-  if (!m) return null;
-  return { year: m[1], month: m[2], day: m[3], hour: m[4] ?? null, minute: m[5] ?? null };
+// Offer times are the SITE's wall clock, because that is the clock the Guard has to turn up against.
+// The arithmetic lives in shiftOfferTime, shared with the Company surface and executed by
+// scripts/shift-offer-time.spec.cjs; these two wrappers only carry this screen's "TBC" placeholder.
+
+const offerZone = shiftZone;
+
+function fmtDate(value: string | null | undefined, timeZone: string): string {
+  return formatOfferDate(value, timeZone, 'TBC');
 }
 
-function fmtDate(value?: string | null): string {
-  if (!value) return 'TBC';
-  const p = getLiteralParts(value);
-  if (p) {
-    return new Date(Number(p.year), Number(p.month) - 1, Number(p.day)).toLocaleDateString(
-      undefined,
-      { weekday: 'short', day: '2-digit', month: 'short' },
-    );
-  }
-  return new Date(value).toLocaleDateString(undefined, {
-    weekday: 'short', day: '2-digit', month: 'short',
-  });
+function fmtTimePair(start: string, end: string, timeZone: string): string {
+  return formatOfferWindow(start, end, timeZone, { separator: ' – ', empty: 'TBC' });
 }
 
-function fmtTime(value?: string | null): string {
-  if (!value) return 'TBC';
-  const p = getLiteralParts(value);
-  if (p?.hour && p?.minute) return `${p.hour}:${p.minute}`;
-  return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
-
-function fmtTimePair(start: string, end: string): string {
-  // Detect overnight: end date > start date (ISO comparison)
-  const startDate = start.slice(0, 10);
-  const endDate = end.slice(0, 10);
-  const suffix = endDate > startDate ? ' (+1)' : '';
-  return `${fmtTime(start)} – ${fmtTime(end)}${suffix}`;
-}
-
-function getUrgencyLine(startAt: string, nowMs: number): string {
+function getUrgencyLine(startAt: string, nowMs: number, timeZone: string): string {
   const diffMs = new Date(startAt).getTime() - nowMs;
   if (!Number.isFinite(diffMs)) return '';
   if (diffMs <= 0) return 'Start time passed — contact control before accepting.';
@@ -79,7 +63,7 @@ function getUrgencyLine(startAt: string, nowMs: number): string {
   if (diffMs < 2 * d) return 'Starts tomorrow';
   const days = Math.ceil(diffMs / d);
   if (days <= 7) return `Starts in ${days} days`;
-  return `Starts ${fmtDate(startAt)}`;
+  return `Starts ${fmtDate(startAt, timeZone)}`;
 }
 
 function isUrgent(startAt: string, nowMs: number): boolean {
@@ -182,7 +166,8 @@ export function GuardShiftOffersWorkspace({
               />
             ) : (
               offers.map((offer, index) => {
-                const urgency = getUrgencyLine(offer.start, liveNow);
+                const zone = offerZone(offer);
+                const urgency = getUrgencyLine(offer.start, liveNow, zone);
                 const urgent = isUrgent(offer.start, liveNow);
                 return (
                   <View
@@ -197,8 +182,8 @@ export function GuardShiftOffersWorkspace({
                       <Text style={styles.offerSite} numberOfLines={2}>
                         {offer.siteName}
                       </Text>
-                      <Text style={styles.offerDate}>{fmtDate(offer.start)}</Text>
-                      <Text style={styles.offerTime}>{fmtTimePair(offer.start, offer.end)}</Text>
+                      <Text style={styles.offerDate}>{fmtDate(offer.start, zone)}</Text>
+                      <Text style={styles.offerTime}>{fmtTimePair(offer.start, offer.end, zone)}</Text>
                       {urgency ? (
                         <Text style={[styles.offerUrgency, urgent && styles.offerUrgencyAlert]}>
                           {urgency}
@@ -257,12 +242,12 @@ export function GuardShiftOffersWorkspace({
               {/* WHERE / WHEN */}
               <View style={styles.detailHero}>
                 <Text style={styles.detailSite}>{selectedOffer.siteName}</Text>
-                <Text style={styles.detailDate}>{fmtDate(selectedOffer.start)}</Text>
+                <Text style={styles.detailDate}>{fmtDate(selectedOffer.start, offerZone(selectedOffer))}</Text>
                 <Text style={styles.detailTime}>
-                  {fmtTimePair(selectedOffer.start, selectedOffer.end)}
+                  {fmtTimePair(selectedOffer.start, selectedOffer.end, offerZone(selectedOffer))}
                 </Text>
                 {(() => {
-                  const u = getUrgencyLine(selectedOffer.start, liveNow);
+                  const u = getUrgencyLine(selectedOffer.start, liveNow, offerZone(selectedOffer));
                   const urgent = isUrgent(selectedOffer.start, liveNow);
                   return u ? (
                     <Text style={[styles.detailUrgency, urgent && styles.detailUrgencyAlert]}>

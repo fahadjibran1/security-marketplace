@@ -163,6 +163,11 @@ jobs:
       - name: Verify live operations stays operationally current
         run: npm run test:live-ops-policy
 
+      # Phase 3B: the last two surfaces reading a clock time out of the stored ISO digits. Correct while
+      # the backend stored a wall clock; wrong from the moment Phase 1 made those columns true instants,
+      # which offered a 00:30 BST shift to the Guard as 23:30 on the previous day.
+      - name: Verify shift offers render in site time
+        run: npm run test:shift-offer-time
 
       # ── Screening ─────────────────────────────────────────────────────────────
       # Protects the Guard screening journey and the locked distinction that Company-Managed deployment

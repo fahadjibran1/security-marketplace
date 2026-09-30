@@ -495,10 +495,10 @@ test('no source file extracts a clock time from the DIGITS of an ISO string', ()
   // Offers surfaces. Phase 3A was scoped to Live Operations only, so they are named here rather than
   // fixed, and the list is explicit so it cannot grow by accident: any NEW file with this shape fails.
   // Recorded as TECH-DEBT-TIME-03.
-  const KNOWN_UNFIXED = [
-    path.join('src', 'components', 'company', 'CompanyShiftOffersWorkspace.tsx'),
-    path.join('src', 'components', 'guard', 'GuardShiftOffersWorkspace.tsx'),
-  ];
+  // Empty, as of Phase 3B. Both Shift Offers surfaces were the last two offenders (TECH-DEBT-TIME-03);
+  // they now share src/components/shifts/shiftOfferTime.ts, which scripts/shift-offer-time.spec.cjs
+  // executes against real instants across a DST boundary. Anything added back here needs a reason.
+  const KNOWN_UNFIXED = [];
 
   const offenders = [];
   for (const file of sourceFiles()) {

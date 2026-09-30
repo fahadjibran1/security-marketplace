@@ -2,6 +2,12 @@ import * as React from 'react';
 import { Fragment } from 'react/jsx-runtime';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { Shift } from '../../types/models';
+import {
+  formatOfferDate,
+  formatOfferWindow,
+  shiftZone,
+  weekCommencingForOffer,
+} from '../shifts/shiftOfferTime';
 import { colors, control, radii, spacing, typography } from '../../theme';
 import { Button } from '../ui/Button';
 import { Drawer } from '../ui/Drawer';
@@ -39,47 +45,13 @@ type Props = {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function pad2(n: number): string {
-  return String(n).padStart(2, '0');
-}
+// Offer times are the SITE's wall clock: it is the site a guard has to be at, and the company is
+// planning cover for it. The arithmetic lives in shiftOfferTime, shared with the Guard surface and
+// executed by scripts/shift-offer-time.spec.cjs.
 
-function fmtDate(iso?: string | null): string {
-  if (!iso) return '—';
-  try {
-    const d = new Date(iso);
-    if (isNaN(d.getTime())) return iso.slice(0, 10);
-    return d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
-  } catch {
-    return iso.slice(0, 10);
-  }
-}
+const fmtDate = formatOfferDate;
 
-function fmtTime(iso?: string | null): string {
-  if (!iso) return '—';
-  const lit = iso.match(/[T\s](\d{2}):(\d{2})/);
-  if (lit) return `${lit[1]}:${lit[2]}`;
-  try {
-    const d = new Date(iso);
-    if (isNaN(d.getTime())) return '—';
-    return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
-  } catch {
-    return '—';
-  }
-}
-
-function isOvernightShift(start?: string | null, end?: string | null): boolean {
-  if (!start || !end) return false;
-  const startDate = start.slice(0, 10);
-  const endDate = end.slice(0, 10);
-  return endDate > startDate;
-}
-
-function fmtShiftWindow(start?: string | null, end?: string | null): string {
-  const s = fmtTime(start);
-  const e = fmtTime(end);
-  if (isOvernightShift(start, end)) return `${s}–${e} (+1)`;
-  return `${s}–${e}`;
-}
+const fmtShiftWindow = formatOfferWindow;
 
 function startUrgency(start?: string | null): string | null {
   if (!start) return null;
@@ -107,19 +79,7 @@ function isShiftInFuture(end?: string | null): boolean {
   }
 }
 
-function weekCommencingFor(isoDate?: string | null): string {
-  try {
-    const d = isoDate ? new Date(isoDate) : new Date();
-    if (isNaN(d.getTime())) return (isoDate || '').slice(0, 10);
-    const day = d.getDay();
-    const offset = day === 0 ? -6 : 1 - day;
-    const monday = new Date(d);
-    monday.setDate(d.getDate() + offset);
-    return monday.toISOString().slice(0, 10);
-  } catch {
-    return (isoDate || '').slice(0, 10);
-  }
-}
+const weekCommencingFor = weekCommencingForOffer;
 
 function normalizeOfferStatus(status?: string | null): OfferStatus | 'other' {
   const s = (status || '').toLowerCase().trim();
@@ -344,7 +304,7 @@ export function CompanyShiftOffersWorkspace({
     (shift: Shift) => {
       const siteId = getSiteId(shift);
       if (!siteId) return;
-      onNavigateToRota(siteId, weekCommencingFor(shift.start));
+      onNavigateToRota(siteId, weekCommencingFor(shift.start, shiftZone(shift)));
       setDrawerOffer(null);
     },
     [onNavigateToRota],
@@ -374,7 +334,8 @@ export function CompanyShiftOffersWorkspace({
     const canPlanCover = hasSiteId && (ns === 'rejected' || (ns === 'missed' && isShiftInFuture(shift.end)));
     const canViewInRota = hasSiteId && (ns === 'awaiting' || ns === 'accepted');
 
-    const shiftWindow = `${fmtDate(shift.start)} · ${fmtShiftWindow(shift.start, shift.end)}`;
+    const zone = shiftZone(shift);
+    const shiftWindow = `${fmtDate(shift.start, zone)} · ${fmtShiftWindow(shift.start, shift.end, zone)}`;
 
     const drawerFooter = (
       <View style={styles.drawerFooter}>
@@ -564,8 +525,8 @@ export function CompanyShiftOffersWorkspace({
 
                   {/* Shift date + time */}
                   <TableCell width={COL_SHIFT_W}>
-                    <Text style={styles.shiftDate} numberOfLines={1}>{fmtDate(shift.start)}</Text>
-                    <Text style={styles.shiftTime} numberOfLines={1}>{fmtShiftWindow(shift.start, shift.end)}</Text>
+                    <Text style={styles.shiftDate} numberOfLines={1}>{fmtDate(shift.start, shiftZone(shift))}</Text>
+                    <Text style={styles.shiftTime} numberOfLines={1}>{fmtShiftWindow(shift.start, shift.end, shiftZone(shift))}</Text>
                   </TableCell>
 
                   {/* Guard */}
@@ -604,7 +565,7 @@ export function CompanyShiftOffersWorkspace({
         title="Withdraw this offer?"
         message={
           withdrawTarget
-            ? `The guard will no longer be able to accept this offer for ${getSiteName(withdrawTarget)} on ${fmtDate(withdrawTarget.start)}. The position will be cancelled and cover may need to be planned again.`
+            ? `The guard will no longer be able to accept this offer for ${getSiteName(withdrawTarget)} on ${fmtDate(withdrawTarget.start, shiftZone(withdrawTarget))}. The position will be cancelled and cover may need to be planned again.`
             : 'The guard will no longer be able to accept this offer. The position will be cancelled and cover may need to be planned again.'
         }
         confirmLabel="Withdraw Offer"
