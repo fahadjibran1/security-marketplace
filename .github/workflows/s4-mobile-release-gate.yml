@@ -172,6 +172,16 @@ jobs:
       - name: Verify guard welfare status comes from the backend
         run: npm run test:guard-welfare-status
 
+      # Build 12 P0: the Guard screen carried TWO shift identities. The Current Shift card, the LIVE
+      # badge, the live clock, the Welfare projection and Book On/Off all read currentHomeShift, while
+      # the action dispatcher read selectedShift — which was re-pointed only when its id vanished from
+      # the list, so a stale-but-present id stuck and every action refused a shift that genuinely was
+      # not active. On a real device a shift showed In Progress, LIVE and checked in at 18:53 while
+      # Welfare Check, Log Book and Emergency all refused as if no shift were active. This reproduces
+      # that exact state and proves actions now target the live shift.
+      - name: Verify current-shift actions target the live shift
+        run: npm run test:current-shift-actions
+
       # Phase 3B: Live Operations is the control room, not shift history. It had no inclusion policy at
       # all — the board was every shift the company had ever created, so Monday's uncovered shift and
       # Tuesday's completed ones sat beside the one being worked, and "Re-cover required" never cleared

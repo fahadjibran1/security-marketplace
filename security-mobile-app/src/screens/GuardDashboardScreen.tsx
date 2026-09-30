@@ -13,6 +13,7 @@ import {
   bookOnDecision,
   type BookOnDecision,
 } from '../components/guard/bookOnPresentation';
+import { currentShiftActionShift } from '../components/guard/currentShiftActionTarget';
 import { GuardCompaniesPanel } from '../components/guard/GuardCompaniesPanel';
 import { GuardCompliancePanel } from '../components/guard/GuardCompliancePanel';
 import { GuardScreeningJourney, GuardScreeningPanel } from '../components/guard/GuardScreeningPanel';
@@ -523,7 +524,7 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
   const submitQuickAction = async (key: GuardActionKey) => {
     const outcome = await dispatchGuardAction(
       key,
-      { shift: selectedShift, value: actionFormValue(key), busy: actionFormBusy(key) },
+      { shift: currentShiftActionTarget, value: actionFormValue(key), busy: actionFormBusy(key) },
       guardActionApi,
       {
         setBusy: (which, busy) => setSubmittingAction(busy ? which : null),
@@ -1463,6 +1464,21 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
     .sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime())
     .slice(0, 4);
   const currentHomeShiftAttendance = currentHomeShift?.id ? attendanceByShiftId[currentHomeShift.id] : undefined;
+
+  /**
+   * The shift a Current Shift action is raised against — null when none can be.
+   *
+   * Resolved from `currentHomeShift` and ITS attendance: the same two values the Current Shift card,
+   * the LIVE badge, the live clock, the Welfare projection and Book On / Book Off all read. Build 12
+   * showed a shift as In Progress / LIVE / checked in at 18:53 while every action refused with "only
+   * available during an active shift", because the dispatcher was handed `selectedShift` instead —
+   * which was still pointing at a completed shift and was only ever re-pointed when its id vanished
+   * from the list entirely.
+   *
+   * `selectedShift` keeps its job for Offers, History and the shift detail panel. It no longer has
+   * any say in whether a live Guard may raise an action.
+   */
+  const currentShiftActionTarget = currentShiftActionShift(currentHomeShift, currentHomeShiftAttendance);
   const currentHomeDailyLogs = useMemo(
     () => dailyLogs.filter((entry) => entry.shift?.id === currentHomeShift?.id),
     [dailyLogs, currentHomeShift?.id],
@@ -3118,7 +3134,7 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
               const inline = outcome && outcome.kind !== 'success'
                 ? { tone: outcome.kind === 'blocked' && outcome.reason === 'busy' ? 'info' : 'error', message: outcome.message }
                 : (() => {
-                    const pending = guardActionBlockedReason(form.key, { shift: selectedShift, value, busy });
+                    const pending = guardActionBlockedReason(form.key, { shift: currentShiftActionTarget, value, busy });
                     return pending && pending.reason !== 'busy' && value.trim().length > 0
                       ? { tone: 'error' as const, message: pending.message }
                       : pending && pending.reason === 'no_active_shift'
