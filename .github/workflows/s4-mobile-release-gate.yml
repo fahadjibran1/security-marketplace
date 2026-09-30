@@ -164,6 +164,14 @@ jobs:
       - name: Verify live-shift action consolidation and legacy records
         run: npm run test:guard-action-consolidation
 
+      # Phase 3D closed TECH-DEBT-OPS-02: the Guard app used to work out Welfare timing itself — last
+      # evidence plus the shift's interval — against the backend's fixed window grid, its grace period
+      # and its resolved interval. A Guard and their control room could disagree about whether a check
+      # was due. The client now presents the backend's projection and decides nothing; this executes
+      # that presentation and asserts it never reads a clock.
+      - name: Verify guard welfare status comes from the backend
+        run: npm run test:guard-welfare-status
+
       # Phase 3B: Live Operations is the control room, not shift history. It had no inclusion policy at
       # all — the board was every shift the company had ever created, so Monday's uncovered shift and
       # Tuesday's completed ones sat beside the one being worked, and "Re-cover required" never cleared

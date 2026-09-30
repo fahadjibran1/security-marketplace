@@ -37,21 +37,29 @@ const easJson = JSON.parse(read('eas.json'));
 
 // ═══════════════════ the controlled version ═══════════════════
 
-test('BUILD-01-APP-VERSION-IS-1-0-7-AND-BUILD-11', () => {
+test('BUILD-01-APP-VERSION-IS-1-0-7-AND-BUILD-12', () => {
   assert.equal(appJson.expo.version, '1.0.7');
-  // Build 11 carries Phase 1 (scheduled times as true instants) AND Phase 2 (the live-shift action forms
-  // moved onto a real modal so Submit cannot be hidden by the bottom nav or the keyboard).
+  // Build 12 is the full operational UAT candidate: Phase 1 (scheduled times as true instants),
+  // Phase 2 (action forms on a real modal), Phase 3A (Live Operations in site time, shift welfare
+  // override), 3A-iii (actions actually reach the API), 3B (Live Operations stays operationally current,
+  // Shift Offers in site time), 3C (one canonical action model) and 3D (the Guard reads the backend's
+  // own welfare verdict).
   //
   // The lineage this number has to clear:
   //   5  the 1.0.4 installed on the pilot device
   //   8  rejected for distribution — EAS-generated signing identity, could not update an S4 build
-  //   9  first distributable pilot build, and the one currently on the test phone
+  //   9  first distributable pilot build
   //  10  Phase 1 only; verified and signed, but never installed
-  assert.equal(appJson.expo.android.versionCode, 11, 'Build 11 carries Phase 1 + Phase 2');
+  //  11  Phase 1 + Phase 2; verified and signed, UAT found the Phase 3 defects
+  assert.equal(appJson.expo.android.versionCode, 12, 'Build 12 carries Phase 1 through Phase 3D');
+  assert.ok(appJson.expo.android.versionCode > 11, 'above Build 11, so it installs over it');
   assert.ok(appJson.expo.android.versionCode > 10, 'above the Phase-1-only Build 10');
-  assert.ok(appJson.expo.android.versionCode > 9, 'and can update the installed Build 9');
+  assert.ok(appJson.expo.android.versionCode > 9, 'and above the first distributable pilot build');
   assert.ok(appJson.expo.android.versionCode > 8, 'above the rejected Build 8');
   assert.ok(appJson.expo.android.versionCode > 5, 'and above the installed 1.0.4 (versionCode 5)');
+
+  // iOS reports its own build number; it must be bumped with Android or the two would disagree.
+  assert.equal(appJson.expo.ios.buildNumber, '12', 'the iOS build number tracks the Android one');
 });
 
 test('BUILD-02-APP-JSON-IS-THE-AUTHORITATIVE-VERSION-SOURCE', () => {

@@ -24,7 +24,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.securitymarketplace.mobile",
-      "buildNumber": "11",
+      "buildNumber": "12",
       "config": {
         "usesNonExemptEncryption": false
       },
@@ -34,7 +34,7 @@
     },
     "android": {
       "softwareKeyboardLayoutMode": "resize",
-      "versionCode": 11,
+      "versionCode": 12,
       "package": "com.securitymarketplace.mobile",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
