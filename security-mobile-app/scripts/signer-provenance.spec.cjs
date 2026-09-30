@@ -233,6 +233,60 @@ test('SIGNER-06C-BUILD-12-CAN-UPDATE-EVERY-EARLIER-S4-BUILD', () => {
   assert.equal(build12.versionCode, appJson.expo.android.versionCode);
 });
 
+test('SIGNER-06D-THE-SUPERSEDED-BUILD-12-IS-NAMED-AND-NOT-DISTRIBUTABLE', () => {
+  // Two artefacts now carry versionCode 12. The first was correctly signed and is defective: on a real
+  // device the Current Shift card showed In Progress / LIVE with a Book On recorded, while every action
+  // form refused as if no shift were active, because the dispatcher validated a historical
+  // selectedShift. A versionCode alone therefore no longer identifies the approved build.
+  const superseded = (config.supersededBuilds || []).find(
+    (entry) => entry.easBuildId === '4085faf6-c755-4720-9e86-c15ac2e63926',
+  );
+  assert.ok(superseded, 'the defective Build 12 must be recorded');
+  assert.equal(superseded.versionCode, 12);
+  assert.equal(superseded.distribute, false, 'and marked as not distributable');
+  assert.match(superseded.reason, /selectedShift|current-shift/i, 'with the reason stated');
+  assert.match(superseded.apkSha256, /^[0-9a-f]{64}$/, 'identified by artefact hash, not just version');
+
+  // It must NOT be filed as a rejected build: that list is keyed by certificate fingerprint and is only
+  // consulted to explain a signer MISMATCH. This artefact carries our own correct signer, so an entry
+  // there would never trigger and could describe a validly signed APK as rejected.
+  const misfiled = (config.rejectedBuilds || []).find((entry) => entry.versionCode === 12);
+  assert.equal(misfiled, undefined, 'a content defect is not a signer rejection');
+  for (const entry of config.rejectedBuilds || []) {
+    assert.notEqual(
+      verifier.normaliseFingerprint(entry.certificateSha256),
+      verifier.normaliseFingerprint(config.signer.certificateSha256),
+      'no rejected entry may carry the permanent identity',
+    );
+  }
+});
+
+test('SIGNER-06E-THE-APPROVED-ARTEFACT-IS-EXPLICIT', () => {
+  // Because two artefacts share a versionCode, something has to say which one is approved. Until the
+  // replacement is built and its id and hash are recorded, NO versionCode 12 artefact is approved —
+  // stated as data rather than left implicit.
+  const approved = config.approvedArtefact;
+  assert.ok(approved, 'the approved artefact must be named');
+  assert.equal(approved.versionCode, config.expectedRelease.versionCode);
+  assert.equal(approved.versionName, config.expectedRelease.versionName);
+
+  if (approved.status === 'pending-rebuild') {
+    assert.ok(approved.requiredGitCommit, 'the commit the rebuild must contain');
+    assert.ok(!approved.easBuildId, 'a pending artefact has no build id yet');
+    assert.ok(!approved.apkSha256, 'nor a hash');
+  } else {
+    assert.equal(approved.status, 'approved');
+    assert.match(approved.easBuildId, /^[0-9a-f-]{36}$/, 'a real EAS build id');
+    assert.match(approved.apkSha256, /^[0-9a-f]{64}$/, 'and a real artefact hash');
+    assert.match(approved.gitCommit, /^[0-9a-f]{7,40}$/, 'built from a known commit');
+    // The approved artefact must never be the superseded one.
+    for (const entry of config.supersededBuilds || []) {
+      assert.notEqual(approved.easBuildId, entry.easBuildId, 'approved must not be a superseded build');
+      assert.notEqual(approved.apkSha256, entry.apkSha256, 'nor the same artefact');
+    }
+  }
+});
+
 test('SIGNER-07-THE-REJECTED-BUILD-8-SIGNER-IS-REFUSED', () => {
   const observed = observe(RECORDED.rejectedBuild8);
   assert.equal(observed.certificateSha256, BUILD8_CERT_SHA256, 'the recorded output parses');
