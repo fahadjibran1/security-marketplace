@@ -1,16 +1,11 @@
-// Dispatch for the Guard live-shift actions. (Phase 3A-iii.)
+// Dispatch for the Guard live-shift actions. (Phase 3A-iii; canonical write paths in Phase 3C.)
 //
-// WHAT THE EVIDENCE SAYS
-// On Build 11 a Guard opened Add Log, typed a note and pressed Submit once. Render's request log shows
+// WHY THE DISPATCH LIVES HERE
+// On Build 11 a Guard opened Add Log, typed a note and pressed Submit once. Render's request log showed
 // POST /attendance/check-in, /attendance/check-out and /auth/refresh from the same device and session,
-// and NO POST /daily-logs. Production daily_logs, incidents and safety_alerts have never held a row.
+// and NO POST /daily-logs. Nothing appeared on screen either, because a refusal was reported only through
+// a screen-level strip that the open modal and the keyboard cover.
 //
-// Executing the real modal with the real Button proves the press reaches the router, and the fetch
-// interceptor passes every request through untouched. So the press was fine and the transport was fine:
-// the handler returned early at its own precondition, and said so only through a transient toast that on
-// a small screen appears behind the keyboard. From the Guard's side, nothing happened at all.
-//
-// WHY THE DISPATCH LIVES HERE NOW
 // The five handlers each repeated the same shape — check a precondition, write, then do side effects —
 // inside a 4,000-line screen that imports react-native and therefore cannot be executed by a test. That
 // is why press-to-API was never covered: there was nowhere to stand. This module is pure and
@@ -18,6 +13,21 @@
 //
 // A REFUSAL IS NO LONGER SILENT. The outcome is returned as well as reported, so the form can state the
 // reason in place, beside the button that would not work.
+//
+// PHASE 3C — ONE CANONICAL RECORD PER TAP
+// Each action writes exactly one row, of exactly one type:
+//
+//   WELFARE CHECK   daily_logs.welfare_check      (not check_call, and no companion safety alert)
+//   LOG BOOK        daily_logs.log_book           (not observation)
+//   SITE REQUEST    safety_alerts.site_request    (medium — it is a need, not an emergency)
+//   INCIDENT        incidents                     (unchanged)
+//   EMERGENCY       safety_alerts.panic, critical (the wire type is unchanged for compatibility)
+//
+// All three daily-log and alert values have existed in the schema since Migration 59, and both DTOs
+// validate with @IsEnum over the whole enum, so nothing here needed a backend change.
+//
+// Historical rows are untouched and still count: the backend's WELFARE_COMPLETION_LOG_TYPES recognises
+// check_call AND welfare_check, so a shift worked before this change still reads as complete.
 
 import type { GuardActionKey } from './guardActionForms';
 import { guardActionForm, resolveActionSubmitState } from './guardActionForms';
@@ -29,7 +39,7 @@ export type GuardActionApi = {
   createDailyLog: (payload: {
     shiftId: number;
     message: string;
-    logType: 'observation' | 'check_call';
+    logType: 'welfare_check' | 'log_book';
   }) => Promise<unknown>;
   createIncident: (payload: {
     title: string;
@@ -39,8 +49,8 @@ export type GuardActionApi = {
   }) => Promise<unknown>;
   createSafetyAlert: (payload: {
     shiftId: number;
-    type: 'welfare' | 'panic';
-    priority: 'high' | 'critical';
+    type: 'site_request' | 'panic';
+    priority: 'medium' | 'critical';
     message: string;
   }) => Promise<unknown>;
 };
@@ -60,7 +70,8 @@ export type BlockedReason =
   /** No shift, or a shift that is not in progress. The action needs a live shift either way. */
   | 'no_active_shift'
   | 'note_required'
-  | 'panic_confirmation_required'
+  /** The Emergency confirmation word was absent or did not match. */
+  | 'emergency_confirmation_required'
   /** A submission is already in flight. This is the double-tap guard. */
   | 'busy';
 
@@ -88,10 +99,7 @@ export function guardActionBlockedReason(
 ): { reason: BlockedReason; message: string } | null {
   const form = guardActionForm(key);
 
-  if (!ctx.shift) {
-    return { reason: 'no_active_shift', message: `${form.title} is only available during an active shift.` };
-  }
-  if (!isLiveShift(ctx.shift)) {
+  if (!ctx.shift || !isLiveShift(ctx.shift)) {
     return { reason: 'no_active_shift', message: `${form.title} is only available during an active shift.` };
   }
 
@@ -102,21 +110,33 @@ export function guardActionBlockedReason(
     return { reason: 'busy', message: 'Still sending your last submission.' };
   }
   if (submit.blockedReason === 'confirmation') {
-    return { reason: 'panic_confirmation_required', message: `Type ${form.confirmWord} to confirm.` };
+    return {
+      reason: 'emergency_confirmation_required',
+      message: `Type ${form.confirmWord} to confirm.`,
+    };
   }
   return { reason: 'note_required', message: 'Enter a note before submitting.' };
 }
 
 const SUCCESS: Record<GuardActionKey, { title: string; message: string }> = {
-  log: { title: 'Log added', message: 'Your log entry was saved.' },
-  checkCall: { title: 'Check call recorded', message: 'Your check call was recorded.' },
+  welfareCheck: { title: 'Welfare Check recorded', message: 'Your Welfare Check was recorded.' },
+  logBook: { title: 'Log Book entry saved', message: 'Your Log Book entry was saved.' },
+  siteRequest: { title: 'Site Request sent', message: 'The company can now see what the site needs.' },
   incident: { title: 'Incident reported', message: 'The company can now see this incident.' },
-  welfare: { title: 'Welfare update sent', message: 'Your welfare update was recorded.' },
-  panic: { title: 'Panic alert sent', message: 'Emergency alert sent to control room.' },
+  emergency: { title: 'Emergency alert sent', message: 'Emergency alert sent to control room.' },
+};
+
+/** What goes on the Guard's own timeline for each action. */
+const TIMELINE_TITLE: Record<GuardActionKey, string> = {
+  welfareCheck: 'Welfare Check recorded',
+  logBook: 'Log Book entry added',
+  siteRequest: 'Site Request sent',
+  incident: 'Incident raised',
+  emergency: 'Emergency alert sent',
 };
 
 /**
- * Runs one Guard action end to end: precondition, API write, side effects.
+ * Runs one Guard action end to end: precondition, ONE API write, side effects.
  *
  * Never throws. A transport failure comes back as `failed` and the form stays open with the Guard's text
  * intact, because a submission they cannot retry is worse than the defect this replaces.
@@ -141,18 +161,20 @@ export async function dispatchGuardAction(
   try {
     fx.setBusy(key, true);
 
-    if (key === 'log') {
-      await api.createDailyLog({ shiftId, message: text, logType: 'observation' });
-      fx.timeline(shiftId, 'Log added', text);
-    } else if (key === 'checkCall') {
-      await api.createDailyLog({ shiftId, message: text, logType: 'check_call' });
-      fx.timeline(shiftId, 'Check call recorded', text);
+    // Exactly one call per branch. No branch writes twice, and no branch writes a second record of a
+    // different kind for the same tap: one tap, one canonical row.
+    if (key === 'welfareCheck') {
+      await api.createDailyLog({ shiftId, message: text, logType: 'welfare_check' });
+      fx.timeline(shiftId, TIMELINE_TITLE[key], text);
+    } else if (key === 'logBook') {
+      await api.createDailyLog({ shiftId, message: text, logType: 'log_book' });
+      fx.timeline(shiftId, TIMELINE_TITLE[key], text);
+    } else if (key === 'siteRequest') {
+      await api.createSafetyAlert({ shiftId, type: 'site_request', priority: 'medium', message: text });
+      fx.timeline(shiftId, TIMELINE_TITLE[key], text);
     } else if (key === 'incident') {
       await api.createIncident({ title: 'Guard incident', notes: text, severity: 'medium', shiftId });
-      fx.timeline(shiftId, 'Incident raised', text);
-    } else if (key === 'welfare') {
-      await api.createSafetyAlert({ shiftId, type: 'welfare', priority: 'high', message: text });
-      fx.timeline(shiftId, 'Welfare update recorded', text);
+      fx.timeline(shiftId, TIMELINE_TITLE[key], text);
     } else {
       // The typed value is the confirmation word, never the alert body.
       await api.createSafetyAlert({
@@ -161,7 +183,7 @@ export async function dispatchGuardAction(
         priority: 'critical',
         message: 'Emergency alert raised by guard from the mobile app.',
       });
-      fx.timeline(shiftId, 'Panic alert sent', 'Emergency alert sent to control room.');
+      fx.timeline(shiftId, TIMELINE_TITLE[key], 'Emergency alert sent to control room.');
     }
 
     fx.clearValue(key);

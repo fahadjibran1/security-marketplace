@@ -155,6 +155,15 @@ jobs:
       - name: Verify guard actions reach the API
         run: npm run test:guard-action-dispatch
 
+      # Phase 3C consolidated the active shift onto one action model: Welfare Check, Log Book, Site
+      # Request, Incident, Emergency, and Book Off. Two of the old five had a second launcher in an
+      # "On-shift reporting" block, and Check Call and Welfare were two names for one thing. The riskiest
+      # part is legacy compatibility: the app now writes daily_logs.welfare_check, and every Welfare Check
+      # recorded before this wrote check_call. Recognising only the new type would make all of that
+      # history read as incomplete on both surfaces, so this executes the recogniser.
+      - name: Verify live-shift action consolidation and legacy records
+        run: npm run test:guard-action-consolidation
+
       # Phase 3B: Live Operations is the control room, not shift history. It had no inclusion policy at
       # all — the board was every shift the company had ever created, so Monday's uncovered shift and
       # Tuesday's completed ones sat beside the one being worked, and "Re-cover required" never cleared

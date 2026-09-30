@@ -81,9 +81,11 @@ import { AppModal } from '../components/ui/Modal';
 import { Button } from '../components/ui/Button';
 import {
   GUARD_ACTION_FORMS,
+  guardActionForm,
   resolveActionSubmitState,
   type GuardActionKey,
 } from '../components/guard/guardActionForms';
+import { lastWelfareEvidence } from '../components/guard/welfareEvidence';
 import {
   dispatchGuardAction,
   guardActionBlockedReason,
@@ -98,7 +100,8 @@ interface GuardDashboardScreenProps {
 }
 
 type GuardTab = 'home' | 'offers' | 'jobs' | 'history' | 'profile' | 'screening' | 'companies';
-type QuickActionModal = 'log' | 'checkCall' | 'incident' | 'welfare' | 'panic' | null;
+/** The open form, identified by the canonical action it raises. */
+type QuickActionModal = GuardActionKey | null;
 
 type LocalTimelineEvent = {
   id: string;
@@ -237,7 +240,7 @@ function formatDurationLabel(startAt?: string | null, endAt?: string | null, now
 }
 
 /** UI-only thresholds for check-call and shift-end guidance (no API impact). */
-const CHECK_CALL_DUE_SOON_MINUTES = 10;
+const WELFARE_DUE_SOON_MINUTES = 10;
 const SHIFT_ENDING_SOON_MINUTES = 30;
 
 type GuardShiftPhase =
@@ -246,27 +249,45 @@ type GuardShiftPhase =
   | 'before_shift'
   | 'shift_window_check_in'
   | 'on_shift'
-  | 'check_call_due'
-  | 'check_call_overdue'
+  | 'welfare_due'
+  | 'welfare_overdue'
   | 'shift_ending_soon'
   | 'shift_ended'
   | 'timesheet_pending';
 
+const dailyLogTimelineTitle = (logType: DailyLog['logType']): string => {
+  switch (logType) {
+    case 'welfare_check':
+    // A shift worked before Phase 3C recorded its Welfare Checks as check_call rows. They are the same
+    // thing to a Guard reading their own timeline, so they read the same.
+    case 'check_call':
+      return 'Welfare Check recorded';
+    case 'log_book':
+      return 'Log Book entry added';
+    default:
+      return 'Log added';
+  }
+};
 function isTimesheetPendingGuard(timesheet: Timesheet): boolean {
   const s = String(timesheet.approvalStatus || '').toLowerCase();
   return ['draft', 'returned', 'submitted', 'rejected'].includes(s);
 }
 
-function getLastCheckCallLog(dailyLogsForShift: DailyLog[]): DailyLog | undefined {
-  return [...dailyLogsForShift]
-    .filter((entry) => entry.logType === 'check_call')
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
-}
 
-function getNextCheckCallDueMs(shift: Shift, dailyLogsForShift: DailyLog[]): number | null {
+/**
+ * When the next Welfare Check is due, for this screen's own status line only.
+ *
+ * NOT a second window engine, and deliberately not extended into one. It is the pre-existing rolling
+ * anchor this screen has always used, and it does NOT agree with the backend's fixed half-open window
+ * grid, its 5-minute grace, or the shift-then-site-then-60 interval precedence locked in Phase 3A-ii.
+ * Reconciling the two needs the backend's own projection on the Guard endpoint, which GET /shifts/my
+ * does not carry; see TECH-DEBT-OPS-02. Phase 3C was told not to reproduce Welfare arithmetic here, so
+ * this was left exactly as it was apart from the evidence types above.
+ */
+function getNextWelfareDueMs(shift: Shift, dailyLogsForShift: DailyLog[]): number | null {
   const interval = shift.checkCallIntervalMinutes;
   if (!interval || interval <= 0) return null;
-  const last = getLastCheckCallLog(dailyLogsForShift);
+  const last = lastWelfareEvidence(dailyLogsForShift);
   const anchorMs = (last ? new Date(last.createdAt) : new Date(shift.start)).getTime();
   return anchorMs + interval * 60 * 1000;
 }
@@ -297,12 +318,12 @@ function deriveGuardShiftPhase(
   }
 
   if (status === 'in_progress') {
-    const nextDueMs = getNextCheckCallDueMs(shift, dailyLogsForShift);
+    const nextDueMs = getNextWelfareDueMs(shift, dailyLogsForShift);
     if (nextDueMs !== null) {
       const minutesRemaining = Math.max(0, Math.round((nextDueMs - nowMs) / 60000));
-      if (nowMs >= nextDueMs) return 'check_call_overdue';
-      if (minutesRemaining > 0 && minutesRemaining <= CHECK_CALL_DUE_SOON_MINUTES) {
-        return 'check_call_due';
+      if (nowMs >= nextDueMs) return 'welfare_overdue';
+      if (minutesRemaining > 0 && minutesRemaining <= WELFARE_DUE_SOON_MINUTES) {
+        return 'welfare_due';
       }
     }
     if (nowMs >= endMs - SHIFT_ENDING_SOON_MINUTES * 60 * 1000 && nowMs < endMs) {
@@ -343,14 +364,14 @@ function getGuardPhaseStatusLine(
     }
     case 'on_shift':
       return 'You are on shift.';
-    case 'check_call_due': {
-      const nextDueMs = getNextCheckCallDueMs(shift, dailyLogsForShift);
-      if (nextDueMs === null) return 'Stay available for your next check call.';
+    case 'welfare_due': {
+      const nextDueMs = getNextWelfareDueMs(shift, dailyLogsForShift);
+      if (nextDueMs === null) return 'You are on shift.';
       const m = Math.max(1, Math.round((nextDueMs - nowMs) / 60000));
-      return `Check call due in ${m} min.`;
+      return `Welfare Check due in ${m} min.`;
     }
-    case 'check_call_overdue':
-      return 'Check call overdue — record a check call as soon as you can.';
+    case 'welfare_overdue':
+      return 'Welfare Check overdue — record one as soon as you can.';
     case 'shift_ending_soon':
       return 'Your shift is ending soon — check out before end time unless instructed otherwise.';
     case 'timesheet_pending':
@@ -380,8 +401,8 @@ function getGuardPhasePrimaryLabel(phase: GuardShiftPhase, shift: Shift | null):
     case 'shift_window_check_in':
       return 'Check in now';
     case 'on_shift':
-    case 'check_call_due':
-    case 'check_call_overdue':
+    case 'welfare_due':
+    case 'welfare_overdue':
     case 'shift_ending_soon':
       return getPrimaryActionLabel('in_progress');
     case 'timesheet_pending':
@@ -402,13 +423,13 @@ function getPrimaryActionGuidance(phase: GuardShiftPhase): string | null {
     case 'shift_ended':
       return 'View summary shows check-in, check-out, and incidents for this post. History holds timesheets and older shifts.';
     case 'shift_window_check_in':
-      return 'Use this when you are on site and ready to work. You can still use Live shift actions below after you go live.';
+      return 'Use this when you are on site and ready to work.';
     case 'on_shift':
       return 'End shift when your post is fully finished and signed off — not before.';
-    case 'check_call_due':
-      return 'Record your check call before the window passes. The same form is in Live shift actions below if you prefer.';
-    case 'check_call_overdue':
-      return 'Record check call is the priority when it is safe. End shift stays here for when you are completely done.';
+    case 'welfare_due':
+      return 'Record your Welfare Check before the window passes.';
+    case 'welfare_overdue':
+      return 'A Welfare Check is the priority as soon as it is safe.';
     case 'shift_ending_soon':
       return 'Plan your handover now, then check out on time unless control tells you otherwise.';
     case 'timesheet_pending':
@@ -418,34 +439,6 @@ function getPrimaryActionGuidance(phase: GuardShiftPhase): string | null {
   }
 }
 
-function getSecondaryActionsHelper(
-  phase: GuardShiftPhase,
-  statusNorm: string,
-  attendanceBusy: boolean,
-): string {
-  if (attendanceBusy) {
-    return 'Wait until check-in or check-out finishes — these buttons unlock straight after.';
-  }
-  if (phase === 'offer_pending') {
-    return 'Accept the offer first. After you are booked and checked in, incident and check call unlock here.';
-  }
-  if (phase === 'before_shift') {
-    return 'Incident and check call unlock once you Book On and the shift goes live.';
-  }
-  if (statusNorm === 'in_progress') {
-    if (phase === 'check_call_overdue') {
-      return 'Control room sees the same check call whether you tap here or use Check call in Live shift actions below.';
-    }
-    if (phase === 'check_call_due') {
-      return 'Quick access: same modals as the Live shift actions card further down the screen.';
-    }
-    return 'Available the whole time you are live — use if something changes on site.';
-  }
-  if (phase === 'timesheet_pending' || phase === 'shift_ended') {
-    return 'Only for a live shift. This shift is finished — use timesheet follow-up or History for hours.';
-  }
-  return 'Unlocks after you check in and the shift shows as live.';
-}
 
 export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenProps) {
   const insets = useSafeAreaInsets();
@@ -487,39 +480,34 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
   const [refreshing, setRefreshing] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
   const [attendanceBusyShiftId, setAttendanceBusyShiftId] = useState<number | null>(null);
-  const [submittingDailyLogType, setSubmittingDailyLogType] = useState<DailyLog['logType'] | null>(null);
-  const [submittingIncident, setSubmittingIncident] = useState(false);
-  const [submittingAlertType, setSubmittingAlertType] = useState<'welfare' | 'panic' | null>(null);
+  // One action in flight at a time, identified by its key. This replaces three overlapping flags that
+  // were keyed by API client rather than by action, which meant Welfare and Emergency shared a busy
+  // state and neither could be told apart while sending.
+  const [submittingAction, setSubmittingAction] = useState<GuardActionKey | null>(null);
   const [respondingShiftId, setRespondingShiftId] = useState<number | null>(null);
   const [offerRespondAction, setOfferRespondAction] = useState<'accepted' | 'rejected' | null>(null);
-  const [dailyLogMessage, setDailyLogMessage] = useState('');
-  const [incidentMessage, setIncidentMessage] = useState('');
-  const [welfareMessage, setWelfareMessage] = useState('');
-  const [panicConfirmation, setPanicConfirmation] = useState('');
+  // A draft per canonical action. Previously Add Log and Check Call shared one note field, so a
+  // half-written entry surfaced in the other form; there is no shared field now.
+  const [actionDrafts, setActionDrafts] = useState<Record<GuardActionKey, string>>({
+    welfareCheck: '',
+    logBook: '',
+    siteRequest: '',
+    incident: '',
+    emergency: '',
+  });
 
-  // ── Live-shift action forms (Phase 2) ──────────────────────────────────────
-  // One renderer drives all five, so the value, the busy flag and the submit handler are looked up by
-  // action key. The handlers themselves are untouched: this is a layout and reachability fix, and each
-  // handler keeps its own validation, its own feedback and its own request.
+  // ── Live-shift action forms (Phase 2 layout, Phase 3C model) ───────────────
+  // One renderer drives all five canonical actions, and one dispatcher submits them. The value, the
+  // busy flag and the outcome are all looked up by the same action key.
 
-  const actionFormValue = (key: GuardActionKey): string =>
-    key === 'incident' ? incidentMessage
-    : key === 'welfare' ? welfareMessage
-    : key === 'panic' ? panicConfirmation
-    : dailyLogMessage; // 'log' and 'checkCall' share one note field, exactly as before
+  const actionFormValue = (key: GuardActionKey): string => actionDrafts[key] ?? '';
 
   const setActionFormValue = (key: GuardActionKey, next: string) => {
     setActionOutcome((prev) => (prev[key] ? { ...prev, [key]: undefined } : prev));
-    if (key === 'incident') setIncidentMessage(next);
-    else if (key === 'welfare') setWelfareMessage(next);
-    else if (key === 'panic') setPanicConfirmation(next);
-    else setDailyLogMessage(next);
+    setActionDrafts((prev) => ({ ...prev, [key]: next }));
   };
 
-  const actionFormBusy = (key: GuardActionKey): boolean =>
-    key === 'incident' ? submittingIncident
-    : key === 'welfare' || key === 'panic' ? submittingAlertType !== null
-    : submittingDailyLogType !== null;
+  const actionFormBusy = (key: GuardActionKey): boolean => submittingAction === key;
 
   // The dispatcher's result for each action, shown INSIDE the form. A screen-level banner was not
   // enough: on Build 11 a refusal was reported only through the feedback strip, which the open modal
@@ -549,12 +537,7 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
       { shift: selectedShift, value: actionFormValue(key), busy: actionFormBusy(key) },
       guardActionApi,
       {
-        setBusy: (which, busy) => {
-          if (which === 'incident') setSubmittingIncident(busy);
-          else if (which === 'welfare') setSubmittingAlertType(busy ? 'welfare' : null);
-          else if (which === 'panic') setSubmittingAlertType(busy ? 'panic' : null);
-          else setSubmittingDailyLogType(busy ? (which === 'checkCall' ? 'check_call' : 'observation') : null);
-        },
+        setBusy: (which, busy) => setSubmittingAction(busy ? which : null),
         clearValue: (which) => setActionFormValue(which, ''),
         closeForm: closeQuickAction,
         reload: () => loadData(),
@@ -1476,7 +1459,7 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
     ...selectedShiftLogs.map((entry) => ({
       id: `log-${entry.id}`,
       shiftId: entry.shift?.id ?? 0,
-      title: entry.logType === 'check_call' ? 'Check call recorded' : 'Log added',
+      title: dailyLogTimelineTitle(entry.logType),
       message: entry.message,
       occurredAt: entry.createdAt,
     })),
@@ -1541,7 +1524,7 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
       .filter((entry) => entry.shift?.id === currentHomeShift?.id)
       .map((entry) => ({
         id: `home-log-${entry.id}`,
-        title: entry.logType === 'check_call' ? 'Check call recorded' : 'Log added',
+        title: dailyLogTimelineTitle(entry.logType),
         message: entry.message,
         occurredAt: entry.createdAt,
       })),
@@ -1577,40 +1560,52 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
     .sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime())
     .slice(0, 4);
 
+  /**
+   * The canonical live-shift actions, and the only launchers for them.
+   *
+   * Welfare Check leads because it is the one with a clock on it. Emergency is separated and
+   * destructive-styled rather than sitting fifth in a uniform grid. Book Off is NOT here at all — it is
+   * the shift card's own primary control, which is what keeps an accidental end-of-shift away from
+   * routine reporting.
+   *
+   * Every label is the action's own name. The grid used to read LOG / CALL / INC / CARE / SOS over
+   * Add Log / Check Call / Incident / Welfare / Panic, and Check Call and Welfare were two names for
+   * the thing a guard calls a welfare check.
+   */
   function renderHomeQuickActions() {
+    const routine: GuardActionKey[] = ['welfareCheck', 'logBook', 'siteRequest', 'incident'];
+    const emergency = guardActionForm('emergency');
+
     return (
       <FeatureCard
-        title="Live Shift Actions"
-        subtitle="Use these during the active shift without leaving Home."
+        title="Shift Records"
+        subtitle="Recorded against this shift."
         style={[styles.quickActionCard, styles.guardLiveActionsCard]}
       >
         <View style={styles.quickActionGrid}>
-          <Pressable accessibilityRole="button" accessibilityLabel="Add log" style={styles.quickActionButton} onPress={() => setQuickActionModal('log')}>
-            <Text style={styles.quickActionIcon}>LOG</Text>
-            <Text style={styles.quickActionText}>Add Log</Text>
-          </Pressable>
-          <Pressable accessibilityRole="button" accessibilityLabel="Record check call" style={styles.quickActionButton} onPress={() => setQuickActionModal('checkCall')}>
-            <Text style={styles.quickActionIcon}>CALL</Text>
-            <Text style={styles.quickActionText}>Check Call</Text>
-          </Pressable>
-          <Pressable accessibilityRole="button" accessibilityLabel="Report incident" style={styles.quickActionButton} onPress={() => setQuickActionModal('incident')}>
-            <Text style={styles.quickActionIcon}>INC</Text>
-            <Text style={styles.quickActionText}>Incident</Text>
-          </Pressable>
-          <Pressable accessibilityRole="button" accessibilityLabel="Welfare check" style={styles.quickActionButton} onPress={() => setQuickActionModal('welfare')}>
-            <Text style={styles.quickActionIcon}>CARE</Text>
-            <Text style={styles.quickActionText}>Welfare</Text>
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Send panic alert"
-            style={[styles.quickActionButton, styles.quickActionDanger]}
-            onPress={() => setQuickActionModal('panic')}
-          >
-            <Text style={styles.quickActionIcon}>SOS</Text>
-            <Text style={styles.quickActionDangerText}>Panic</Text>
-          </Pressable>
+          {routine.map((key) => {
+            const form = guardActionForm(key);
+            return (
+              <Pressable
+                key={key}
+                accessibilityRole="button"
+                accessibilityLabel={form.launchAccessibilityLabel}
+                style={styles.quickActionButton}
+                onPress={() => setQuickActionModal(key)}
+              >
+                <Text style={styles.quickActionText}>{form.title}</Text>
+              </Pressable>
+            );
+          })}
         </View>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={emergency.launchAccessibilityLabel}
+          style={[styles.quickActionButton, styles.quickActionDanger, styles.emergencyButton]}
+          onPress={() => setQuickActionModal('emergency')}
+        >
+          <Text style={styles.quickActionDangerText}>{emergency.title}</Text>
+        </Pressable>
       </FeatureCard>
     );
   }
@@ -1784,13 +1779,8 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
                   // Only an in-flight attendance request disables the button.
                   const primaryDisabled = attendanceBusyShiftId === currentHomeShift.id;
                   const attendanceBusy = attendanceBusyShiftId === currentHomeShift.id;
-                  const secondariesDisabled = statusNorm !== 'in_progress' || attendanceBusy;
+
                   const primaryGuidance = getPrimaryActionGuidance(guardShiftPhase);
-                  const secondaryHelper = getSecondaryActionsHelper(
-                    guardShiftPhase,
-                    statusNorm,
-                    attendanceBusy,
-                  );
 
                   return (
                     <>
@@ -1822,8 +1812,8 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
                           style={[
                             styles.helperLine,
                             styles.guardStatusText,
-                            guardShiftPhase === 'check_call_overdue' ? styles.helperLineUrgent : null,
-                            guardShiftPhase === 'check_call_due' ||
+                            guardShiftPhase === 'welfare_overdue' ? styles.helperLineUrgent : null,
+                            guardShiftPhase === 'welfare_due' ||
                             guardShiftPhase === 'shift_ending_soon' ||
                             guardShiftPhase === 'offer_pending' ||
                             guardShiftPhase === 'timesheet_pending'
@@ -1926,26 +1916,6 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
                         </View>
                       ) : null}
 
-                      <View style={[styles.guardSection, styles.guardSectionMuted]}>
-                        <Text style={styles.guardSectionLabel}>On-shift reporting</Text>
-                        <View style={styles.guardSecondaryRow}>
-                          <Pressable
-                            style={[styles.guardSecondaryBtn, secondariesDisabled && styles.buttonDisabled]}
-                            disabled={secondariesDisabled}
-                            onPress={() => setQuickActionModal('incident')}
-                          >
-                            <Text style={styles.guardSecondaryBtnText}>Report incident</Text>
-                          </Pressable>
-                          <Pressable
-                            style={[styles.guardSecondaryBtn, secondariesDisabled && styles.buttonDisabled]}
-                            disabled={secondariesDisabled}
-                            onPress={() => setQuickActionModal('checkCall')}
-                          >
-                            <Text style={styles.guardSecondaryBtnText}>Record check call</Text>
-                          </Pressable>
-                        </View>
-                        <Text style={styles.guardSecondaryHint}>{secondaryHelper}</Text>
-                      </View>
                     </>
                   );
                 })()
@@ -1964,8 +1934,8 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
         currentHomeShift &&
         [
           'on_shift',
-          'check_call_due',
-          'check_call_overdue',
+          'welfare_due',
+          'welfare_overdue',
           'shift_ending_soon',
           'shift_ended',
           'timesheet_pending',
@@ -3390,12 +3360,6 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     textAlign: 'center',
   },
-  guardSecondaryHint: {
-    fontSize: 13,
-    lineHeight: 20,
-    color: colors.textSecondary,
-    marginTop: 8,
-  },
   guardLinkStack: {
     gap: 10,
   },
@@ -3521,14 +3485,13 @@ const styles = StyleSheet.create({
     borderColor: colors.primaryNavySoft,
   },
   quickActionDanger: { backgroundColor: colors.danger, borderColor: colors.danger },
-  quickActionIcon: {
-    fontSize: 12,
-    color: colors.textOnBrand,
-    fontWeight: '800',
-    letterSpacing: 1.1,
-    textTransform: 'uppercase',
-  },
   quickActionText: { color: colors.textOnBrand, fontWeight: '800', fontSize: 15 },
+  // Emergency is deliberately not a fifth tile in a uniform grid: full width, on its own row, so it
+  // cannot be hit while reaching for Log Book.
+  emergencyButton: {
+    width: '100%',
+    marginTop: 10,
+  },
   quickActionDangerText: { color: colors.textOnBrand, fontWeight: '800', fontSize: 15 },
   guardOffersRoot: { width: '100%', gap: 12, paddingBottom: 8 },
   offersListSection: { gap: 0, paddingTop: 2 },

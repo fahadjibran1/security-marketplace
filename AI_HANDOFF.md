@@ -275,6 +275,32 @@ than the gate's own database — a green result that did not test what it claims
 test writes at an unrelated developer stack. These should fail closed with a clear message naming the
 variable. Not fixed in Phase 1.
 
+**TECH-DEBT-TIME-04 — Rota Planner buckets shifts by the UTC date.**
+`legacyShiftsByDate` in `CompanyDashboardScreen.tsx` groups shifts into planner days with
+`shift.start.slice(0, 10)`, which is the UTC date, not the site's. A 00:30 BST shift (23:30Z the day
+before) therefore lands on the previous day in the planner grid. Same defect family as
+TECH-DEBT-TIME-03, which Phase 3B closed for Shift Offers; the fix is `formatSiteDateInput` with the
+site's zone, as Live Operations already does. Out of scope for Phase 3B and 3C, and the planner's own
+week navigation still reaches every shift, so nothing is unreachable — only mis-bucketed at the boundary.
+
+**TECH-DEBT-OPS-02 — the Guard endpoint carries no operational window projection.**
+`GET /shifts/my` returns bare `Shift` entities. `OperationsProjectionService` — which computes the
+Welfare window grid, its status, `nextDueAt` and the completion counts — is wired only into
+`CoverageService`, a company-scoped endpoint, so none of it reaches the Guard app.
+
+The Guard screen consequently has its own, *different* welfare timing in `getNextWelfareDueMs`: a rolling
+anchor of "last evidence + interval", against the backend's fixed half-open window grid from the
+scheduled start with a 5-minute grace. It also reads `shift.checkCallIntervalMinutes` alone, with no site
+fallback, no 60-minute default and no 5-minute floor, so it ignores the `shift ?? site ?? 60` precedence
+locked in Phase 3A-ii. A Guard and their control room can therefore disagree about whether a Welfare
+Check is due.
+
+Phase 3C was explicitly told not to reproduce Welfare arithmetic in the Guard client, so this was left as
+it was and the Welfare status block (status + next due on the active shift) was NOT built. The smallest
+fix is to attach the existing `ShiftOperationsView` to the Guard shift response — no new computation, no
+migration, just the projection the backend already builds for the company, scoped to the Guard's own
+shifts. Then the client displays it and deletes its own arithmetic.
+
 **Not yet applied: existing rows.** Shift rows written before Phase 1 hold a site-local wall clock in a
 column that is now read as an instant, so a pre-existing BST shift reads one hour later than intended
 until it is corrected. No backfill has been run and no migration was created.

@@ -228,12 +228,12 @@ function renderFrame(extra = {}) {
   return Modal.ModalFrame({
     visible: true,
     onClose: () => {},
-    title: 'Check Call',
+    title: 'Welfare Check',
     viewport: SMALL_ANDROID,
     insets: ANDROID_INSETS,
     platform: 'android',
     children: React.createElement(RNW.TextInput, { accessibilityLabel: 'note', multiline: true }),
-    footer: React.createElement(RNW.Text, null, 'Record Check Call'),
+    footer: React.createElement(RNW.Text, null, 'Record Welfare Check'),
     ...extra,
   });
 }
@@ -258,11 +258,11 @@ test('FORM-10-THERE-IS-A-SCROLL-CONTAINER-AND-THE-FOOTER-IS-OUTSIDE-IT', () => {
   // The load-bearing structural property: the footer must NOT be reachable from inside the ScrollView.
   const insideScroll = [...walk(scroll.props.children)];
   const footerTextInside = insideScroll.some(
-    (el) => el.props && el.props.children === 'Record Check Call',
+    (el) => el.props && el.props.children === 'Record Welfare Check',
   );
   assert.equal(footerTextInside, false, 'the action row must not live inside the scrollable area');
 
-  const footerTextAnywhere = elements.some((el) => el.props && el.props.children === 'Record Check Call');
+  const footerTextAnywhere = elements.some((el) => el.props && el.props.children === 'Record Welfare Check');
   assert.equal(footerTextAnywhere, true, 'but it must still be rendered');
 });
 
@@ -318,26 +318,35 @@ test('FORM-14-IT-RENDERS-ON-WEB-WITHOUT-AN-INDEXED-STYLE-CRASH', () => {
   const markup = renderToStaticMarkup(React.createElement(() => panel));
   assert.ok(markup.length > 0, 'the panel must render to markup');
   assert.ok(!/style="[^"]*\b\d+:/.test(markup), `no numeric CSS property may be emitted: ${markup.slice(0, 300)}`);
-  assert.match(markup, /Record Check Call/, 'and the action label must reach the document');
-  assert.match(markup, /Check Call/, 'along with the title');
+  assert.match(markup, /Record Welfare Check/, 'and the action label must reach the document');
+  assert.match(markup, /Welfare Check/, 'along with the title');
 });
 
 // ═══════════════════ the action inventory and submit state ═══════════════════
 
-test('FORM-15-EVERY-AFFECTED-ACTION-IS-IN-THE-INVENTORY-WITH-ITS-CURRENT-WORDING', () => {
+test('FORM-15-THE-CANONICAL-ACTION-SET', () => {
+  // The locked user-facing model. A sixth action, a renamed one, or a resurrected Check Call all fail
+  // here first.
   const keys = GUARD_ACTION_FORMS.map((f) => f.key);
-  assert.deepEqual(keys, ['log', 'checkCall', 'incident', 'welfare', 'panic']);
+  assert.deepEqual(keys, ['welfareCheck', 'logBook', 'siteRequest', 'incident', 'emergency']);
 
-  // Phase 5 will rationalise this vocabulary. Until then it must not drift, or a UAT report stops
-  // matching what the tester sees.
-  assert.equal(guardActionForm('log').title, 'Add Log');
-  assert.equal(guardActionForm('checkCall').title, 'Check Call');
-  assert.equal(guardActionForm('checkCall').submitLabel, 'Record Check Call');
-  assert.equal(guardActionForm('incident').title, 'Incident');
-  assert.equal(guardActionForm('welfare').submitLabel, 'Send Welfare Update');
-  assert.equal(guardActionForm('panic').title, 'Panic');
-  assert.equal(guardActionForm('panic').confirmWord, 'PANIC');
-  assert.equal(guardActionForm('panic').destructive, true);
+  assert.deepEqual(
+    GUARD_ACTION_FORMS.map((f) => f.title),
+    ['Welfare Check', 'Log Book', 'Site Request', 'Incident', 'Emergency'],
+  );
+
+  // One name per action, and no abbreviations. The grid used to read LOG / CALL / INC / CARE.
+  for (const form of GUARD_ACTION_FORMS) {
+    assert.ok(form.title.length > 4, `${form.key} must have a name, not an abbreviation`);
+    assert.equal(form.title, form.title.trim());
+  }
+  assert.equal(new Set(GUARD_ACTION_FORMS.map((f) => f.title)).size, 5, 'no two actions share a name');
+
+  assert.equal(guardActionForm('emergency').confirmWord, 'EMERGENCY');
+  assert.equal(guardActionForm('emergency').destructive, true);
+  // Only Emergency is destructive, and only Emergency needs a typed confirmation.
+  assert.deepEqual(GUARD_ACTION_FORMS.filter((f) => f.destructive).map((f) => f.key), ['emergency']);
+  assert.deepEqual(GUARD_ACTION_FORMS.filter((f) => f.confirmWord).map((f) => f.key), ['emergency']);
 
   for (const form of GUARD_ACTION_FORMS) {
     assert.ok(form.submitLabel && form.busyLabel, `${form.key} needs both labels`);
@@ -357,16 +366,23 @@ test('FORM-16-THE-BUTTON-IS-ENABLED-ONLY-WHEN-THE-HANDLER-WOULD-ACCEPT-IT', () =
   }
 });
 
-test('FORM-17-PANIC-REQUIRES-THE-CONFIRMATION-WORD', () => {
-  const panic = guardActionForm('panic');
-  for (const bad of ['', 'panick', 'PAN', 'help']) {
-    const state = resolveActionSubmitState(panic, { value: bad, busy: false });
+test('FORM-17-EMERGENCY-REQUIRES-THE-CONFIRMATION-WORD', () => {
+  // The word the Guard types changed with the label; the REQUIREMENT did not. Still an exact match,
+  // still checked in the same function, still inert until it matches. PANIC — the old word — must no
+  // longer be accepted, or there would be two ways in and one of them undocumented.
+  const emergency = guardActionForm('emergency');
+  for (const bad of ['', 'emergenc', 'EMERG', 'help', 'PANIC', 'panic']) {
+    const state = resolveActionSubmitState(emergency, { value: bad, busy: false });
     assert.equal(state.disabled, true, `"${bad}" must not enable an emergency alert`);
     assert.equal(state.blockedReason, 'confirmation');
   }
-  // Case and surrounding space are forgiven, exactly as the handler forgives them.
-  for (const good of ['PANIC', 'panic', '  Panic  ']) {
-    assert.equal(resolveActionSubmitState(panic, { value: good, busy: false }).disabled, false, `"${good}"`);
+  // Case and surrounding space are forgiven, exactly as the dispatcher forgives them.
+  for (const good of ['EMERGENCY', 'emergency', '  Emergency  ']) {
+    assert.equal(
+      resolveActionSubmitState(emergency, { value: good, busy: false }).disabled,
+      false,
+      `"${good}"`,
+    );
   }
 });
 
@@ -426,25 +442,91 @@ test('FORM-21-EVERY-ACTION-ROUTES-THROUGH-THE-ONE-SHARED-DISPATCHER', () => {
   }
 });
 
-test('FORM-22-THE-BUSY-FLAG-COMES-FROM-THE-EXISTING-SUBMISSION-STATE', () => {
+test('FORM-22-BUSY-IS-TRACKED-PER-ACTION', () => {
+  // Three overlapping flags keyed by API CLIENT became one key keyed by ACTION. Welfare and Emergency
+  // used to share `submittingAlertType`, so sending one showed the other as busy.
   const screen = codeOf(SCREEN);
-  const busy = /const actionFormBusy[\s\S]*?submittingDailyLogType !== null;/.exec(screen);
-  assert.ok(busy, 'the busy lookup must exist');
-  for (const flag of ['submittingIncident', 'submittingAlertType', 'submittingDailyLogType']) {
-    assert.ok(busy[0].includes(flag), `${flag} must still drive the button`);
+  assert.ok(
+    screen.includes('const actionFormBusy = (key: GuardActionKey): boolean => submittingAction === key;'),
+    'busy must be the one in-flight action key',
+  );
+  assert.ok(
+    screen.includes('setBusy: (which, busy) => setSubmittingAction(busy ? which : null),'),
+    'and the dispatcher must be what sets it',
+  );
+  for (const gone of ['submittingDailyLogType', 'submittingAlertType', 'submittingIncident']) {
+    assert.ok(!screen.includes(gone), `${gone} is superseded and must be gone`);
   }
   // Closing during a submission would orphan the request's feedback.
   assert.match(screen, /closeOnBackdrop=\{!busy\}/, 'the backdrop must not dismiss mid-submission');
 });
 
-test('FORM-23-PHASE-5-TERMINOLOGY-IS-EXPLICITLY-NOT-DONE-YET', () => {
-  // Guards against a well-meaning rename landing with the layout fix and making a UAT regression
-  // impossible to attribute.
-  const titles = GUARD_ACTION_FORMS.map((f) => f.title);
-  assert.ok(titles.includes('Add Log'), 'still "Add Log", not "Log Book"');
-  assert.ok(titles.includes('Welfare'), 'still "Welfare", not "Welfare Check"');
-  assert.ok(!titles.includes('Site Request'), 'Site Request is Phase 5');
-  assert.ok(!titles.includes('Emergency'), 'Emergency is Phase 5');
+test('FORM-23-EXACTLY-ONE-LAUNCHER-PER-CANONICAL-ACTION', () => {
+  // Phase 2 left two launchers each for Incident and Check Call: the action grid, and a second
+  // "On-shift reporting" block underneath it. This is the assertion that the duplicate is gone rather
+  // than merely hidden — a hidden launcher would still be a `setQuickActionModal` call site.
+  const screen = codeOf(SCREEN);
+
+  const opens = [...screen.matchAll(/setQuickActionModal\((?:'([a-zA-Z]+)'|([a-zA-Z]+))\)/g)]
+    .map((m) => m[1] || m[2])
+    .filter((arg) => arg !== 'null');
+
+  // The grid is data-driven: one mapped launcher covering the routine actions, plus Emergency's own.
+  assert.deepEqual(opens.sort(), ['emergency', 'key'], `unexpected launchers: ${opens.join(', ')}`);
+  assert.ok(
+    /routine\.map\(\(key\) => \{/.test(screen),
+    'the routine launchers must come from one map over the canonical list',
+  );
+  assert.ok(
+    screen.includes("const routine: GuardActionKey[] = ['welfareCheck', 'logBook', 'siteRequest', 'incident'];"),
+    'and that list is the four routine actions',
+  );
+});
+
+test('FORM-24-THE-DUPLICATE-SURFACE-AND-ITS-VOCABULARY-ARE-GONE', () => {
+  const screen = codeOf(SCREEN);
+  // Rendered strings only. Backend enum values (`check_call`, `panic`, `observation`) legitimately
+  // remain in payloads and in the legacy-evidence list, so banning those names outright would be
+  // certifying the wrong thing.
+  const rendered = [...screen.matchAll(/>([^<>{}\n]{3,})</g)].map((m) => m[1].trim());
+  const banned = [
+    'On-shift reporting', 'Report incident', 'Record check call', 'Check Call', 'Add Log',
+    'Panic', 'Welfare', 'LOG', 'CALL', 'INC', 'CARE', 'SOS',
+  ];
+  for (const text of banned) {
+    assert.ok(!rendered.includes(text), `"${text}" is still rendered on the Guard screen`);
+  }
+
+  // The copy that existed only to explain the duplication.
+  for (const phrase of [
+    'Live shift actions below',
+    'same modals as the Live shift actions card',
+    'whether you tap here or use Check call',
+    'The same form is in Live shift actions below',
+  ]) {
+    assert.ok(!screen.includes(phrase), `obsolete copy remains: "${phrase}"`);
+  }
+  assert.ok(!screen.includes('getSecondaryActionsHelper'), 'the helper for the removed block must go too');
+});
+
+test('FORM-25-BOOK-OFF-IS-NOT-AMONG-THE-REPORTING-ACTIONS', () => {
+  // An accidental end-of-shift is far more costly than an accidental log entry, so Book Off stays the
+  // shift card's own primary control and never becomes a tile in the grid.
+  const keys = GUARD_ACTION_FORMS.map((f) => f.key);
+  for (const bookOff of ['bookOff', 'checkOut', 'endShift']) {
+    assert.ok(!keys.includes(bookOff), `${bookOff} must not be a live-shift action form`);
+  }
+  const screen = codeOf(SCREEN);
+  const grid = screen.slice(
+    screen.indexOf('function renderHomeQuickActions'),
+    screen.indexOf('</FeatureCard>', screen.indexOf('function renderHomeQuickActions')),
+  );
+  assert.ok(grid.length > 0, 'the action grid must be findable');
+  for (const term of ['handleCheckOut', 'Book Off', 'End shift']) {
+    assert.ok(!grid.includes(term), `${term} must not appear in the action grid`);
+  }
+  // Emergency is in the card but deliberately outside the grid of routine tiles.
+  assert.ok(grid.includes('styles.emergencyButton'), 'Emergency must be visually separated');
 });
 
 console.log(`\n${passed} guard action form checks passed`);

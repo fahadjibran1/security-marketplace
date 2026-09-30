@@ -1,36 +1,49 @@
-// Guard live-shift action forms — presentation contract. (Phase 2, P0.)
+// Guard live-shift action forms — presentation contract. (Phase 2 layout, Phase 3C vocabulary.)
 //
-// The five operational actions a Guard can raise during a live shift each had their own hand-rolled
-// overlay in GuardDashboardScreen, and each overlay reproduced the same layout defect that hid Submit
-// behind the bottom navigation and the keyboard. They now all render through AppModal, and this module
-// holds the per-action copy and the submit-button state so both are executed by tests rather than only
-// read.
+// The operational actions a Guard can raise during a live shift each had their own hand-rolled overlay in
+// GuardDashboardScreen, and each overlay reproduced the same layout defect that hid Submit behind the
+// bottom navigation and the keyboard. They now all render through AppModal, and this module holds the
+// per-action copy and the submit-button state so both are executed by tests rather than only read.
 //
-// SCOPE DISCIPLINE
-// The titles and labels below are the CURRENT ones, character for character. Phase 5 will rationalise the
-// vocabulary (Welfare Check / Log Book / Site Request / Incident / Emergency / Book Off); renaming here
-// would have meant changing behaviour and layout in one step, which makes a regression impossible to
-// attribute. Nothing in this file changes what is submitted or where.
+// PHASE 3C — ONE ACTION MODEL
+// Phase 2 deliberately kept the old labels character for character, so that a layout fix and a rename
+// could not be confused for one another. The rename is now done, and the duplication with it.
+//
+// What a Guard saw before: Add Log, Check Call, Incident, Welfare, Panic in one grid, plus a second
+// "On-shift reporting" block offering Report incident and Record check call AGAIN, plus copy explaining
+// that the same form was also available somewhere else. Two of the five actions had two launchers, the
+// grid labelled them LOG / CALL / INC / CARE, and Check Call and Welfare were two names for what a guard
+// understands as one thing.
+//
+// The canonical set is now: WELFARE CHECK, LOG BOOK, SITE REQUEST, INCIDENT, EMERGENCY — and Book Off,
+// which stays where it is, as the shift card's own control, well away from routine reporting.
+//
+// WHY THE CONFIRMATION WORD CHANGED
+// The alert is still SafetyAlertType.PANIC on the wire; only what the Guard reads has changed. Leaving
+// "Type PANIC to confirm" under a button labelled Emergency is exactly the mismatched copy this phase
+// exists to remove, and hesitating over which word to type is worse in an emergency than four extra
+// characters. The requirement itself is unchanged: an exact match, checked in the same place, by the same
+// function, with the button inert until it matches.
 
-export type GuardActionKey = 'log' | 'checkCall' | 'incident' | 'welfare' | 'panic';
+export type GuardActionKey = 'welfareCheck' | 'logBook' | 'siteRequest' | 'incident' | 'emergency';
 
 export type GuardActionForm = {
   key: GuardActionKey;
-  /** Modal title, unchanged from the pre-Phase-2 overlay. */
+  /** Modal title. Also the name on the launcher, so a Guard sees one word for one action. */
   title: string;
-  /** Helper line above the input, where the current form has one. */
+  /** Helper line above the input, where the form has one. */
   helperText?: string;
   placeholder: string;
   /** Label on the primary button when idle. */
   submitLabel: string;
-  /** Label while the existing submission handler is in flight. */
+  /** Label while the submission is in flight. */
   busyLabel: string;
   /** A free-text operational note, so the input is multiline and grows. */
   multiline: boolean;
   /**
-   * Set for an action that requires the guard to type a word to confirm. The submission handler checks
-   * this itself; it is repeated here so the button can reflect it instead of looking enabled and then
-   * failing with a toast.
+   * Set for an action that requires the guard to type a word to confirm. The dispatcher checks this
+   * itself; it is repeated here so the button can reflect it instead of looking enabled and then
+   * refusing.
    */
   confirmWord?: string;
   /** Destructive styling for the primary action. */
@@ -41,22 +54,33 @@ export type GuardActionForm = {
 
 export const GUARD_ACTION_FORMS: readonly GuardActionForm[] = [
   {
-    key: 'log',
-    title: 'Add Log',
-    placeholder: 'Write a short operational update',
-    submitLabel: 'Submit Log',
+    key: 'welfareCheck',
+    title: 'Welfare Check',
+    placeholder: 'Short welfare update',
+    submitLabel: 'Record Welfare Check',
     busyLabel: 'Saving...',
     multiline: true,
-    launchAccessibilityLabel: 'Add log',
+    launchAccessibilityLabel: 'Record Welfare Check',
   },
   {
-    key: 'checkCall',
-    title: 'Check Call',
-    placeholder: 'Short check call update',
-    submitLabel: 'Record Check Call',
+    key: 'logBook',
+    title: 'Log Book',
+    placeholder: 'Write a Log Book entry',
+    submitLabel: 'Save Log Book Entry',
     busyLabel: 'Saving...',
     multiline: true,
-    launchAccessibilityLabel: 'Record check call',
+    launchAccessibilityLabel: 'Add Log Book entry',
+  },
+  {
+    key: 'siteRequest',
+    // Non-emergency: something the site needs. Fuel, log books, equipment, welfare supplies, access,
+    // lighting. The placeholder carries the examples so the form needs no explanatory paragraph.
+    title: 'Site Request',
+    placeholder: 'What does the site need? Fuel, log books, equipment, access, lighting',
+    submitLabel: 'Send Site Request',
+    busyLabel: 'Sending...',
+    multiline: true,
+    launchAccessibilityLabel: 'Raise Site Request',
   },
   {
     key: 'incident',
@@ -65,28 +89,19 @@ export const GUARD_ACTION_FORMS: readonly GuardActionForm[] = [
     submitLabel: 'Submit Incident',
     busyLabel: 'Submitting...',
     multiline: true,
-    launchAccessibilityLabel: 'Report incident',
+    launchAccessibilityLabel: 'Report Incident',
   },
   {
-    key: 'welfare',
-    title: 'Welfare',
-    placeholder: 'Quick welfare update',
-    submitLabel: 'Send Welfare Update',
-    busyLabel: 'Sending...',
-    multiline: true,
-    launchAccessibilityLabel: 'Welfare check',
-  },
-  {
-    key: 'panic',
-    title: 'Panic',
-    helperText: 'Type PANIC to confirm you want to send an emergency alert.',
-    placeholder: 'Type PANIC',
-    submitLabel: 'Confirm Panic Alert',
+    key: 'emergency',
+    title: 'Emergency',
+    helperText: 'Type EMERGENCY to confirm you need immediate assistance.',
+    placeholder: 'Type EMERGENCY',
+    submitLabel: 'Send Emergency Alert',
     busyLabel: 'Sending...',
     multiline: false,
-    confirmWord: 'PANIC',
+    confirmWord: 'EMERGENCY',
     destructive: true,
-    launchAccessibilityLabel: 'Panic alert',
+    launchAccessibilityLabel: 'Send Emergency alert',
   },
 ] as const;
 
@@ -108,11 +123,11 @@ export type ActionSubmitState = {
 /**
  * The primary button's state for one render.
  *
- * DELIBERATELY MIRRORS THE HANDLERS, IT DOES NOT REPLACE THEM. Each submission handler already refuses
- * an empty note, and the panic handler already refuses anything but the word PANIC — those checks stay
- * exactly where they are, because they are what actually protects the request. Reflecting them in the
- * button is a usability change only: on a small screen a toast can appear behind the keyboard, so a
- * button that is visibly not ready is better than one that looks ready and quietly refuses.
+ * DELIBERATELY MIRRORS THE DISPATCHER, IT DOES NOT REPLACE IT. `dispatchGuardAction` already refuses an
+ * empty note, and refuses an Emergency whose confirmation word does not match — those checks stay where
+ * they are, because they are what actually protects the request. Reflecting them in the button is a
+ * usability change only: a button that is visibly not ready is better than one that looks ready and
+ * quietly refuses.
  *
  * `busy` wins over everything, which is the double-tap protection: while a submission is in flight the
  * button is disabled, so a second tap cannot start a second request.

@@ -72,32 +72,59 @@ function harness({ fail = null } = {}) {
 async function main() {
   // ═══════════════════ success: press reaches the API, exactly once ═══════════════════
 
-  await test('DISPATCH-01-ADD-LOG-CALLS-createDailyLog-EXACTLY-ONCE', async () => {
+  // Phase 3C locked one canonical record per tap. Each of these asserts the request that IS made, the
+  // request that is NOT made, and that the total across every endpoint is exactly one — so a dual write
+  // to a legacy type cannot hide behind a passing test.
+
+  await test('DISPATCH-01-WELFARE-CHECK-WRITES-ONE-daily_logs.welfare_check', async () => {
     const h = harness();
     const outcome = await dispatchGuardAction(
-      'log', { shift: LIVE_SHIFT, value: 'UAT test log', busy: false }, h.api, h.effects,
+      'welfareCheck', { shift: LIVE_SHIFT, value: 'All well at the gate', busy: false }, h.api, h.effects,
     );
     assert.deepEqual(outcome, { kind: 'success' });
     assert.equal(h.calls.createDailyLog.length, 1, 'exactly one request');
     assert.deepEqual(h.calls.createDailyLog[0], {
-      shiftId: 16, message: 'UAT test log', logType: 'observation',
+      shiftId: 16, message: 'All well at the gate', logType: 'welfare_check',
     });
-    assert.equal(h.total(), 1, 'and no other endpoint was touched');
+    // The two things Phase 3C forbids for this tap.
+    assert.notEqual(h.calls.createDailyLog[0].logType, 'check_call', 'no legacy check_call');
+    assert.equal(h.calls.createSafetyAlert.length, 0, 'and no companion safety_alerts.welfare');
+    assert.equal(h.total(), 1, 'one tap, one record');
   });
 
-  await test('DISPATCH-02-CHECK-CALL-USES-check_call', async () => {
+  await test('DISPATCH-02-LOG-BOOK-WRITES-ONE-daily_logs.log_book', async () => {
     const h = harness();
     const outcome = await dispatchGuardAction(
-      'checkCall', { shift: LIVE_SHIFT, value: 'All secure at the gate', busy: false }, h.api, h.effects,
+      'logBook', { shift: LIVE_SHIFT, value: 'Perimeter walked, all clear', busy: false }, h.api, h.effects,
     );
     assert.deepEqual(outcome, { kind: 'success' });
     assert.equal(h.calls.createDailyLog.length, 1);
-    assert.equal(h.calls.createDailyLog[0].logType, 'check_call');
-    assert.equal(h.calls.createDailyLog[0].shiftId, 16);
-    assert.equal(h.calls.createDailyLog[0].message, 'All secure at the gate');
+    assert.deepEqual(h.calls.createDailyLog[0], {
+      shiftId: 16, message: 'Perimeter walked, all clear', logType: 'log_book',
+    });
+    // A written Log Book entry is not a voluntary observation: pointing it at `observation` would let a
+    // casual note discharge a periodic obligation, which is the distinction the type exists to make.
+    assert.notEqual(h.calls.createDailyLog[0].logType, 'observation', 'no generic observation');
+    assert.equal(h.total(), 1);
   });
 
-  await test('DISPATCH-03-INCIDENT-CALLS-createIncident-ONCE', async () => {
+  await test('DISPATCH-03-SITE-REQUEST-WRITES-ONE-site_request-ALERT', async () => {
+    const h = harness();
+    const outcome = await dispatchGuardAction(
+      'siteRequest', { shift: LIVE_SHIFT, value: 'Generator low on fuel', busy: false }, h.api, h.effects,
+    );
+    assert.deepEqual(outcome, { kind: 'success' });
+    assert.equal(h.calls.createSafetyAlert.length, 1);
+    assert.deepEqual(h.calls.createSafetyAlert[0], {
+      shiftId: 16, type: 'site_request', priority: 'medium', message: 'Generator low on fuel',
+    });
+    // Medium, not critical: the site needs something, nobody is in danger.
+    assert.notEqual(h.calls.createSafetyAlert[0].priority, 'critical');
+    assert.equal(h.calls.createDailyLog.length, 0, 'a request is not a log entry');
+    assert.equal(h.total(), 1);
+  });
+
+  await test('DISPATCH-04-INCIDENT-WRITES-ONE-INCIDENT', async () => {
     const h = harness();
     const outcome = await dispatchGuardAction(
       'incident', { shift: LIVE_SHIFT, value: 'Broken window, north side', busy: false }, h.api, h.effects,
@@ -108,49 +135,80 @@ async function main() {
       title: 'Guard incident', notes: 'Broken window, north side', severity: 'medium', shiftId: 16,
     });
     assert.equal(h.calls.createDailyLog.length, 0, 'an incident is not a daily log');
+    assert.equal(h.total(), 1);
   });
 
-  await test('DISPATCH-04-WELFARE-CALLS-createSafetyAlert-ONCE-CURRENT-BEHAVIOUR', async () => {
-    // Phase 3C will make Welfare Check write daily_logs.welfare_check. This pins what Build 11 does
-    // TODAY so that change is a deliberate, visible one rather than a silent drift.
+  await test('DISPATCH-05-EMERGENCY-IS-panic-critical-AND-NEVER-SENDS-THE-TYPED-WORD', async () => {
+    // Renamed for the Guard; unchanged on the wire, so a company surface and the alert history keep
+    // reading it exactly as before.
     const h = harness();
     const outcome = await dispatchGuardAction(
-      'welfare', { shift: LIVE_SHIFT, value: 'All well', busy: false }, h.api, h.effects,
-    );
-    assert.deepEqual(outcome, { kind: 'success' });
-    assert.equal(h.calls.createSafetyAlert.length, 1);
-    assert.deepEqual(h.calls.createSafetyAlert[0], {
-      shiftId: 16, type: 'welfare', priority: 'high', message: 'All well',
-    });
-    assert.equal(h.calls.createDailyLog.length, 0, 'not yet a daily log — that is Phase 3C');
-  });
-
-  await test('DISPATCH-05-PANIC-IS-panic-critical-AND-NEVER-SENDS-THE-TYPED-WORD', async () => {
-    const h = harness();
-    const outcome = await dispatchGuardAction(
-      'panic', { shift: LIVE_SHIFT, value: 'PANIC', busy: false }, h.api, h.effects,
+      'emergency', { shift: LIVE_SHIFT, value: 'EMERGENCY', busy: false }, h.api, h.effects,
     );
     assert.deepEqual(outcome, { kind: 'success' });
     assert.equal(h.calls.createSafetyAlert.length, 1);
     assert.equal(h.calls.createSafetyAlert[0].type, 'panic');
     assert.equal(h.calls.createSafetyAlert[0].priority, 'critical');
     assert.ok(
-      !h.calls.createSafetyAlert[0].message.includes('PANIC'),
+      !h.calls.createSafetyAlert[0].message.includes('EMERGENCY'),
       'the confirmation word is not the alert body',
     );
+    assert.equal(h.total(), 1);
+  });
+
+  await test('DISPATCH-05B-EVERY-CANONICAL-ACTION-MAKES-EXACTLY-ONE-REQUEST', async () => {
+    // The same guarantee stated once over the whole set, so a sixth action cannot be added later
+    // without one.
+    const cases = [
+      ['welfareCheck', 'note'],
+      ['logBook', 'note'],
+      ['siteRequest', 'note'],
+      ['incident', 'note'],
+      ['emergency', 'EMERGENCY'],
+    ];
+    assert.equal(cases.length, GUARD_ACTION_FORMS.length, 'every declared form is covered here');
+    for (const [key, value] of cases) {
+      const h = harness();
+      const outcome = await dispatchGuardAction(key, { shift: LIVE_SHIFT, value, busy: false }, h.api, h.effects);
+      assert.deepEqual(outcome, { kind: 'success' }, key);
+      assert.equal(h.total(), 1, `${key} must make exactly one request`);
+      assert.equal(h.fx.timeline.length, 1, `${key} records one timeline entry`);
+    }
+  });
+
+  await test('DISPATCH-05C-NO-LEGACY-TYPE-IS-EMITTED-BY-ANY-NEW-ACTION', async () => {
+    // Swept across the whole canonical set rather than asserted per action: nothing may write
+    // check_call, observation, or a welfare safety alert any more.
+    const emittedLogTypes = [];
+    const emittedAlertTypes = [];
+    for (const [key, value] of [
+      ['welfareCheck', 'note'], ['logBook', 'note'], ['siteRequest', 'note'],
+      ['incident', 'note'], ['emergency', 'EMERGENCY'],
+    ]) {
+      const h = harness();
+      await dispatchGuardAction(key, { shift: LIVE_SHIFT, value, busy: false }, h.api, h.effects);
+      h.calls.createDailyLog.forEach((c) => emittedLogTypes.push(c.logType));
+      h.calls.createSafetyAlert.forEach((c) => emittedAlertTypes.push(c.type));
+    }
+    assert.deepEqual(emittedLogTypes.sort(), ['log_book', 'welfare_check']);
+    assert.deepEqual(emittedAlertTypes.sort(), ['panic', 'site_request']);
+    for (const legacy of ['check_call', 'observation']) {
+      assert.ok(!emittedLogTypes.includes(legacy), `no new action writes ${legacy}`);
+    }
+    assert.ok(!emittedAlertTypes.includes('welfare'), 'no new action writes safety_alerts.welfare');
   });
 
   // ═══════════════════ preconditions: blocked, and ZERO API calls ═══════════════════
 
   await test('DISPATCH-06-A-LIVE-SHIFT-PROCEEDS', async () => {
     assert.equal(isLiveShift(LIVE_SHIFT), true);
-    assert.equal(guardActionBlockedReason('log', { shift: LIVE_SHIFT, value: 'note', busy: false }), null);
+    assert.equal(guardActionBlockedReason('logBook', { shift: LIVE_SHIFT, value: 'note', busy: false }), null);
   });
 
   await test('DISPATCH-07-NO-SHIFT-IS-BLOCKED-WITH-ZERO-CALLS', async () => {
     for (const shift of [null, undefined]) {
       const h = harness();
-      const outcome = await dispatchGuardAction('log', { shift, value: 'note', busy: false }, h.api, h.effects);
+      const outcome = await dispatchGuardAction('logBook', { shift, value: 'note', busy: false }, h.api, h.effects);
       assert.equal(outcome.kind, 'blocked');
       assert.equal(outcome.reason, 'no_active_shift');
       assert.equal(h.total(), 0, 'nothing may be sent without a shift');
@@ -163,7 +221,7 @@ async function main() {
     for (const status of ['ready', 'completed', 'offered', 'unfilled', 'cancelled', 'missed']) {
       const h = harness();
       const outcome = await dispatchGuardAction(
-        'log', { shift: { id: 16, status }, value: 'note', busy: false }, h.api, h.effects,
+        'logBook', { shift: { id: 16, status }, value: 'note', busy: false }, h.api, h.effects,
       );
       assert.equal(outcome.kind, 'blocked', status);
       assert.equal(outcome.reason, 'no_active_shift', status);
@@ -175,19 +233,19 @@ async function main() {
   await test('DISPATCH-09-AN-EMPTY-NOTE-IS-BLOCKED-WITH-ZERO-CALLS', async () => {
     for (const value of ['', '   ', '\n\t']) {
       const h = harness();
-      const outcome = await dispatchGuardAction('log', { shift: LIVE_SHIFT, value, busy: false }, h.api, h.effects);
+      const outcome = await dispatchGuardAction('logBook', { shift: LIVE_SHIFT, value, busy: false }, h.api, h.effects);
       assert.equal(outcome.kind, 'blocked');
       assert.equal(outcome.reason, 'note_required');
       assert.equal(h.total(), 0);
     }
   });
 
-  await test('DISPATCH-10-PANIC-WITHOUT-THE-WORD-IS-BLOCKED-WITH-ZERO-CALLS', async () => {
+  await test('DISPATCH-10-EMERGENCY-WITHOUT-THE-WORD-IS-BLOCKED-WITH-ZERO-CALLS', async () => {
     for (const value of ['', 'help', 'pani']) {
       const h = harness();
-      const outcome = await dispatchGuardAction('panic', { shift: LIVE_SHIFT, value, busy: false }, h.api, h.effects);
+      const outcome = await dispatchGuardAction('emergency', { shift: LIVE_SHIFT, value, busy: false }, h.api, h.effects);
       assert.equal(outcome.kind, 'blocked');
-      assert.equal(outcome.reason, 'panic_confirmation_required');
+      assert.equal(outcome.reason, 'emergency_confirmation_required');
       assert.equal(h.total(), 0, 'an emergency alert must never fire unconfirmed');
     }
   });
@@ -208,7 +266,7 @@ async function main() {
   await test('DISPATCH-12-AN-API-FAILURE-IS-REPORTED-AND-THE-FORM-STAYS-USABLE', async () => {
     const h = harness({ fail: new Error('Unable to reach the live API.') });
     const outcome = await dispatchGuardAction(
-      'log', { shift: LIVE_SHIFT, value: 'UAT test log', busy: false }, h.api, h.effects,
+      'logBook', { shift: LIVE_SHIFT, value: 'UAT test log', busy: false }, h.api, h.effects,
     );
     assert.equal(outcome.kind, 'failed');
     assert.equal(outcome.reason, 'api_error');
@@ -218,7 +276,7 @@ async function main() {
     assert.equal(h.fx.closed, 0, 'the form must NOT close on failure');
     assert.deepEqual(h.fx.cleared, [], 'and the typed note must survive for the retry');
     assert.equal(h.fx.reloaded, 0, 'nothing was written, so nothing to reload');
-    assert.deepEqual(h.fx.busy, [['log', true], ['log', false]], 'busy is always released');
+    assert.deepEqual(h.fx.busy, [['logBook', true], ['logBook', false]], 'busy is always released');
     assert.ok(h.fx.feedback.some(([tone]) => tone === 'error'), 'and it is reported');
   });
 
@@ -233,24 +291,24 @@ async function main() {
     };
 
     const first = await dispatchGuardAction(
-      'log', { shift: LIVE_SHIFT, value: 'UAT test log', busy: false }, h.api, h.effects,
+      'logBook', { shift: LIVE_SHIFT, value: 'UAT test log', busy: false }, h.api, h.effects,
     );
     assert.equal(first.kind, 'failed');
     assert.equal(h.fx.closed, 0);
 
     const second = await dispatchGuardAction(
-      'log', { shift: LIVE_SHIFT, value: 'UAT test log', busy: false }, h.api, h.effects,
+      'logBook', { shift: LIVE_SHIFT, value: 'UAT test log', busy: false }, h.api, h.effects,
     );
     assert.deepEqual(second, { kind: 'success' });
     assert.equal(h.calls.createDailyLog.length, 2, 'one per press, never a duplicate');
     assert.equal(h.fx.closed, 1, 'and the form closes once, on the success');
-    assert.deepEqual(h.fx.cleared, ['log'], 'clearing the note only on success');
+    assert.deepEqual(h.fx.cleared, ['logBook'], 'clearing the note only on success');
     assert.equal(h.fx.reloaded, 1);
   });
 
   await test('DISPATCH-14-A-NON-ERROR-REJECTION-STILL-PRODUCES-A-SAFE-MESSAGE', async () => {
     const h = harness({ fail: { weird: true } });
-    const outcome = await dispatchGuardAction('log', { shift: LIVE_SHIFT, value: 'x', busy: false }, h.api, h.effects);
+    const outcome = await dispatchGuardAction('logBook', { shift: LIVE_SHIFT, value: 'x', busy: false }, h.api, h.effects);
     assert.equal(outcome.kind, 'failed');
     assert.ok(outcome.message.length > 0, 'a message is always produced');
     assert.ok(!outcome.message.includes('weird'), 'and never leaks internals');
@@ -259,10 +317,10 @@ async function main() {
 
   await test('DISPATCH-15-SUCCESS-CLOSES-RESETS-AND-RELOADS-ONCE', async () => {
     const h = harness();
-    await dispatchGuardAction('log', { shift: LIVE_SHIFT, value: '  spaced  ', busy: false }, h.api, h.effects);
+    await dispatchGuardAction('logBook', { shift: LIVE_SHIFT, value: '  spaced  ', busy: false }, h.api, h.effects);
     assert.equal(h.calls.createDailyLog[0].message, 'spaced', 'the note is trimmed');
     assert.equal(h.fx.closed, 1);
-    assert.deepEqual(h.fx.cleared, ['log']);
+    assert.deepEqual(h.fx.cleared, ['logBook']);
     assert.equal(h.fx.reloaded, 1);
     assert.equal(h.fx.timeline.length, 1, 'and one timeline entry');
     assert.ok(h.fx.feedback.some(([tone]) => tone === 'success'));
@@ -312,7 +370,7 @@ async function main() {
     const Modal = loadTsx('src/components/ui/Modal.tsx');
     const ButtonMod = loadTsx('src/components/ui/Button.tsx');
 
-    const form = guardActionForm('log');
+    const form = guardActionForm('logBook');
     const value = 'UAT test log';
     const h = harness();
     const submit = resolveActionSubmitState(form, { value, busy: false });
@@ -332,7 +390,7 @@ async function main() {
         disabled: submit.disabled,
         loading: false,
         onPress: () => pressed.push(
-          dispatchGuardAction('log', { shift: LIVE_SHIFT, value, busy: false }, h.api, h.effects),
+          dispatchGuardAction('logBook', { shift: LIVE_SHIFT, value, busy: false }, h.api, h.effects),
         ),
       }),
     );
@@ -366,7 +424,7 @@ async function main() {
 
     assert.equal(h.calls.createDailyLog.length, 1, 'ONE press, ONE request — the Build 11 gap');
     assert.deepEqual(h.calls.createDailyLog[0], {
-      shiftId: 16, message: 'UAT test log', logType: 'observation',
+      shiftId: 16, message: 'UAT test log', logType: 'log_book',
     });
   });
 

@@ -1548,6 +1548,11 @@ export interface DailyLog {
     | 'observation'
     | 'check_call'
     | 'welfare_check'
+    /**
+     * A periodic written Log Book entry, distinct from a voluntary `observation`. Persisted from
+     * Migration 59; written by the Guard app's Log Book action from Phase 3C.
+     */
+    | 'log_book'
     | 'visitor'
     | 'delivery'
     | 'maintenance'

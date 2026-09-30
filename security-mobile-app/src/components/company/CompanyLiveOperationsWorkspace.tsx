@@ -45,6 +45,8 @@ type UrgentCategory =
   | 'missed_check_call'
   | 'rejected_offer'
   | 'safety'
+  /** A Guard-raised non-emergency need at the site: fuel, log books, equipment, access, lighting. */
+  | 'site_request'
   | 'upcoming_risk'
   | 'missed_shift'
   | 'uncovered_shift';
@@ -289,6 +291,8 @@ function getExceptionSummary(status?: string | null): { title: string; message: 
 function getAttentionSeverity(category: UrgentCategory): 'red' | 'amber' | 'blue' {
   if (['panic', 'incident', 'missed_shift'].includes(category)) return 'red';
   if (['late_start', 'missed_check_call', 'uncovered_shift', 'rejected_offer', 'safety'].includes(category)) return 'amber';
+  // A Site Request is a need, not a risk. Colouring it like a welfare lapse would train the control
+  // room to discount the colour that matters.
   return 'blue';
 }
 
@@ -300,6 +304,7 @@ function getAttentionLabel(category: UrgentCategory): string {
     case 'missed_check_call':return 'Miss check';
     case 'rejected_offer':   return 'Rejected';
     case 'safety':           return 'Welfare';
+    case 'site_request':     return 'Site Request';
     case 'upcoming_risk':    return 'Risk shift';
     case 'missed_shift':     return 'Missed';
     case 'uncovered_shift':  return 'Coverage gap';
@@ -315,6 +320,7 @@ function getUrgentPrimaryLabel(item: UrgentOperationalItem): string {
     case 'panic':           return item.status === 'acknowledged' ? 'Resolve Alert' : 'View Alert';
     case 'missed_check_call': return item.status === 'acknowledged' ? 'Close Follow-up' : 'View Safety Detail';
     case 'safety':          return item.status === 'acknowledged' ? 'Close Alert' : 'View Safety Detail';
+    case 'site_request':    return item.status === 'acknowledged' ? 'Close Request' : 'View Request';
     default:                return 'Open Shift';
   }
 }

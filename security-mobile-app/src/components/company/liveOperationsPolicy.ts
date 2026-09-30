@@ -217,6 +217,8 @@ export const PERSISTED_ATTENTION_CATEGORIES: readonly string[] = [
   'incident',
   'missed_check_call',
   'safety',
+  /** Phase 3C: a Guard-raised Site Request. Persisted as safety_alerts.site_request. */
+  'site_request',
 ];
 
 export function isDerivedAttentionCategory(category: string): boolean {

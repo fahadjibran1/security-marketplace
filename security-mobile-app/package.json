@@ -43,6 +43,7 @@
     "test:site-time": "node scripts/site-time.spec.cjs",
     "test:guard-action-forms": "node scripts/guard-action-forms.spec.cjs",
     "test:guard-action-dispatch": "node scripts/guard-action-dispatch.spec.cjs",
+    "test:guard-action-consolidation": "node scripts/guard-action-consolidation.spec.cjs",
     "test:live-ops-policy": "node scripts/live-operations-policy.spec.cjs",
     "test:shift-offer-time": "node scripts/shift-offer-time.spec.cjs"
   },

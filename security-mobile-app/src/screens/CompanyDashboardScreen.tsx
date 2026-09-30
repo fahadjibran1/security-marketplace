@@ -253,6 +253,8 @@ type UrgentOperationalItem = {
     | 'missed_check_call'
     | 'rejected_offer'
     | 'safety'
+    /** A Guard-raised non-emergency need at the site: fuel, log books, equipment, access, lighting. */
+    | 'site_request'
     | 'upcoming_risk'
     | 'missed_shift'
     | 'uncovered_shift';
@@ -549,6 +551,8 @@ function getUrgentPrimaryActionLabel(item: UrgentOperationalItem) {
       return item.status === 'acknowledged' ? 'Close Follow-up' : 'View Safety Detail';
     case 'safety':
       return item.status === 'acknowledged' ? 'Close Alert' : 'View Safety Detail';
+    case 'site_request':
+      return item.status === 'acknowledged' ? 'Close Request' : 'View Request';
     case 'late_start':
     case 'upcoming_risk':
     default:
@@ -676,6 +680,7 @@ function getAttentionSeverity(category: UrgentOperationalItem['category']): 'red
     case 'rejected_offer':
     case 'safety':
       return 'amber';
+    // A Site Request is a need, not a risk — it falls through to blue with the informational items.
     default:
       return 'blue';
   }
@@ -691,6 +696,7 @@ function getAttentionBadgeLabel(category: UrgentOperationalItem['category']): st
     case 'missed_check_call': return 'Missed check';
     case 'rejected_offer':    return 'Offer rejected';
     case 'safety':            return 'Safety';
+    case 'site_request':      return 'Site Request';
     case 'upcoming_risk':     return 'Upcoming risk';
     default:                  return String(category).replace(/_/g, ' ');
   }
@@ -1961,6 +1967,25 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
       });
     });
 
+    // Phase 3C: the Guard's Site Request action. A non-emergency operational need at the site, named
+    // as such rather than presented as a safety or welfare item.
+    outstandingAlerts
+      .filter((alert) => (alert.type || '').toLowerCase() === 'site_request')
+      .forEach((alert) => {
+        items.push({
+          id: `site-request-${alert.id}`,
+          alertId: alert.id,
+          shiftId: alert.shift?.id ?? null,
+          status: alert.status,
+          siteName: alert.shift?.site?.name || alert.shift?.siteName || 'Unknown site',
+          guardName: alert.guard?.fullName || 'Unknown guard',
+          category: 'site_request',
+          issueType: 'Site Request',
+          message: alert.message || 'The guard has raised a site request.',
+          occurredAt: alert.createdAt,
+        });
+      });
+
     rejectedShiftOffers.forEach((shift) => {
       items.push({
         id: `rejected-${shift.id}`,
@@ -1976,13 +2001,12 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
     });
 
     outstandingAlerts
-      // Every other persisted safety alert. missing_book_off and site_request were both written by the
-      // backend and shown nowhere: a missing Book Off was only ever visible on its own board row, so it
-      // vanished with the row once the shift stopped being current.
+      // Every other persisted safety alert. missing_book_off was written by the backend and shown
+      // nowhere: it was only ever visible on its own board row, so it vanished with the row once the
+      // shift stopped being current. site_request is handled separately below, because a control room
+      // reading "Safety / welfare needs attention" against a request for log books learns nothing.
       .filter((alert) =>
-        ['welfare', 'site_request', 'late_checkin', 'missing_book_off', 'other'].includes(
-          (alert.type || '').toLowerCase(),
-        ),
+        ['welfare', 'late_checkin', 'missing_book_off', 'other'].includes((alert.type || '').toLowerCase()),
       )
       .forEach((alert) => {
       items.push({
@@ -2124,11 +2148,13 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
         shiftId: log.shift?.id,
         siteName: log.shift?.site?.name || log.shift?.siteName || 'Unknown site',
         guardName: log.guard?.fullName || 'Unknown guard',
+        // Historical `check_call` rows read as the Welfare Checks they are; `observation` keeps its
+        // generic wording, because that is what it was.
         eventType:
-          log.logType === 'check_call'
-            ? 'Check call recorded'
-            : log.logType === 'welfare_check'
-              ? 'Welfare update recorded'
+          ['check_call', 'welfare_check'].includes(log.logType)
+            ? 'Welfare Check recorded'
+            : log.logType === 'log_book'
+              ? 'Log Book entry added'
               : 'Log entry added',
         message: log.message,
         occurredAt: log.createdAt,
@@ -2204,7 +2230,11 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
     const shiftLogs = logsByShiftId.get(selectedShift.id) || [];
     const shiftIncidents = incidentsByShiftId.get(selectedShift.id) || [];
     const shiftAlerts = alertsByShiftId.get(selectedShift.id) || [];
-    const completedCheckCalls = shiftLogs.filter((log) => log.logType === 'check_call').length;
+    // Both log types. A shift worked before Phase 3C recorded its Welfare Checks as `check_call`; one
+    // worked after records `welfare_check`. Counting only one would under-report a completed shift.
+    const completedCheckCalls = shiftLogs.filter((log) =>
+      ['check_call', 'welfare_check'].includes(log.logType),
+    ).length;
     const missedCheckCallsForShift = shiftAlerts.filter(
       (alert) => (alert.type || '').toLowerCase() === 'missed_checkcall',
     ).length;
