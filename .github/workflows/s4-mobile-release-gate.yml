@@ -196,6 +196,33 @@ jobs:
       - name: Verify shift offers render in site time
         run: npm run test:shift-offer-time
 
+      # ── Phase 4A: the control-room timeline ───────────────────────────────────
+      # The timeline replaced a flat table a controller read one shift at a time. Every position, label
+      # and marker state comes from a pure geometry module, which is why the whole surface could be
+      # proven before a pixel existed: which shifts are on the axis, where their bars start and end,
+      # where each Welfare window marker sits and which state it carries, and where NOW is.
+      - name: Verify operations timeline geometry
+        run: npm run test:operations-timeline
+
+      # The daily operations export, in both formats. Includes the formula-injection guard: a site or
+      # guard name beginning = + - @ is user-supplied free text, and this file is evidence.
+      - name: Verify operations report and export safety
+        run: npm run test:operations-report
+
+      # Phase 4A.3: Next Up, Upcoming Handovers and Today So Far — pure functions of the rows the board
+      # already holds. Certifies the refusals above all: a replacement is never named when two shifts
+      # could be it, never taken from another site, and never invented when there is none.
+      - name: Verify control-room operational summaries
+        run: npm run test:operations-outlook
+
+      # Phase 4A.3 presentation, asserted against markup rendered through react-native-web rather than
+      # by reading the source. A live shift carrying an overdue and a missed Welfare Check must not be
+      # painted in the most reassuring colour on the page, and the exception markers must differ in
+      # SHAPE, not only in colour. Also re-checks that the whole surface still has exactly one polling
+      # loop and no socket.
+      - name: Verify control-room presentation
+        run: npm run test:operations-visual
+
       # ── Screening ─────────────────────────────────────────────────────────────
       # Protects the Guard screening journey and the locked distinction that Company-Managed deployment
       # is NOT S4 Screening. Note it also reads backend screening sources, so it doubles as a contract
@@ -228,6 +255,18 @@ jobs:
 
       - name: Verify Android production bundle
         run: npx expo export --platform android --output-dir dist-android
+
+      # The Company control room is a WEB deployment, so the web bundle is the artefact that actually
+      # ships for Phase 4A. The Android export above says nothing about it.
+      - name: Verify web production bundle
+        run: npx expo export --platform web --output-dir dist-web
+
+      # The board a controller reads and the file they hand over must describe the same operations. A
+      # silent difference between them is the worst failure this feature could have, so it is proven
+      # here against a fixture at a fixed instant: visible rows against summary rows, markers against
+      # Welfare detail rows, and every marker's glyph against its exported status.
+      - name: Verify timeline and export agree
+        run: npm run test:operations-consistency
 
       - name: Commit deterministic lockfile reconciliation
         working-directory: .
