@@ -48,6 +48,8 @@
     "test:current-shift-actions": "node scripts/current-shift-action-target.spec.cjs",
     "test:operations-timeline": "node scripts/operations-timeline.spec.cjs",
     "test:operations-report": "node scripts/operations-report.spec.cjs",
+    "test:operations-outlook": "node scripts/operations-outlook.spec.cjs",
+    "test:operations-visual": "node scripts/operations-visual.spec.cjs",
     "test:live-ops-policy": "node scripts/live-operations-policy.spec.cjs",
     "test:shift-offer-time": "node scripts/shift-offer-time.spec.cjs"
   },
