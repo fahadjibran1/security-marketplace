@@ -19,7 +19,14 @@ import {
 } from '../../services/siteTime';
 import type { InclusionReason } from './liveOperationsPolicy';
 import { CompanyOperationsTimeline } from './CompanyOperationsTimeline';
-import type { TimelineShiftInput } from './operationsTimeline';
+import {
+  buildHandovers,
+  buildNextUp,
+  type Handover,
+  type NextUpEvent,
+  type OutlookShiftInput,
+} from './operationsOutlook';
+import { buildTodaySoFar, type TodaySoFar } from './operationsSummary';
 import { Drawer } from '../ui/Drawer';
 import { colors, radii, spacing } from '../../theme';
 import { DailyLog, Incident, SafetyAlert, Shift, Timesheet } from '../../types/models';
@@ -178,7 +185,6 @@ export type CompanyLiveOperationsWorkspaceProps = {
   siteOptions: Array<{ value: string; label: string }>;
   linkedGuardOptions: Array<{ value: string; label: string }>;
   // Lower strip
-  uncoveredShiftCount: number;
   recentOperationalActivity: OperationalActivityItem[];
   /** Resolves a shift's SITE timezone. Live Operations renders every instant on the site's clock. */
   resolveShiftZone: (shiftId?: number | null) => string;
@@ -913,7 +919,7 @@ function AttentionItem({
 
 // ─── LiveOpsAttentionRail ─────────────────────────────────────────────────────
 
-function LiveOpsAttentionRail({
+export function LiveOpsAttentionRail({
   items,
   metricFocus,
   urgentActionItemId,
@@ -922,6 +928,7 @@ function LiveOpsAttentionRail({
   onOpenUrgentShift,
   onUrgentIncidentFollowUp,
   onUrgentAlertFollowUp,
+  nextUp,
 }: {
   items: UrgentOperationalItem[];
   metricFocus: MetricFocus;
@@ -931,9 +938,17 @@ function LiveOpsAttentionRail({
   onOpenUrgentShift: (item: UrgentOperationalItem) => void;
   onUrgentIncidentFollowUp: (item: UrgentOperationalItem, status: 'in_review' | 'resolved') => Promise<void>;
   onUrgentAlertFollowUp: (item: UrgentOperationalItem, action: 'acknowledge' | 'close') => Promise<void>;
+  nextUp: NextUpEvent[];
 }) {
   const total = items.length;
 
+  /**
+   * The operations rail: what needs doing now, then what is about to need doing.
+   *
+   * Two sections, one column, in that order — a controller's eye starts at the exception queue and falls
+   * into the next few minutes. Recent Activity deliberately stays out: history is evidence, not an
+   * action, and putting it here would make the rail something to read rather than something to work.
+   */
   return (
     <View style={styles.attentionColumn}>
       <View style={[styles.attentionPanelHeader, styles.attentionPanelHeaderBg]}>
@@ -970,6 +985,29 @@ function LiveOpsAttentionRail({
             </Fragment>
           ))
         )}
+
+        <View style={styles.railSectionHeader}>
+          <Text style={styles.railSectionTitle}>Next Up</Text>
+          <Text style={styles.railSectionHint}>next 4h</Text>
+        </View>
+        {nextUp.length === 0 ? (
+          <View style={styles.attentionEmpty}>
+            <Text style={styles.attentionEmptyDesc}>Nothing due in the next few hours.</Text>
+          </View>
+        ) : (
+          nextUp.map((event, idx) => (
+            <View
+              key={event.id}
+              style={[styles.nextUpItem, idx === nextUp.length - 1 ? styles.attentionItemLast : null]}
+            >
+              <Text style={styles.nextUpTime}>{event.at}</Text>
+              <View style={styles.nextUpBody}>
+                <Text style={styles.nextUpLabel} numberOfLines={1}>{event.label}</Text>
+                <Text style={styles.nextUpSite} numberOfLines={1}>{event.siteName}</Text>
+              </View>
+            </View>
+          ))
+        )}
       </ScrollView>
     </View>
   );
@@ -978,14 +1016,34 @@ function LiveOpsAttentionRail({
 // ─── LiveOpsSnapshotStrip ─────────────────────────────────────────────────────
 
 
-function LiveOpsActivityFeed({
-  uncoveredShiftCount,
+/** One labelled number in Today So Far. Deliberately a number and a word — no chart, no gauge. */
+function SummaryStat({ label, value, tone }: { label: string; value: number; tone?: 'warn' | 'bad' }) {
+  return (
+    <View style={styles.summaryStat}>
+      <Text
+        style={[
+          styles.summaryStatValue,
+          value > 0 && tone === 'warn' ? styles.summaryStatWarn : null,
+          value > 0 && tone === 'bad' ? styles.summaryStatBad : null,
+        ]}
+      >
+        {value}
+      </Text>
+      <Text style={styles.summaryStatLabel}>{label}</Text>
+    </View>
+  );
+}
+
+export function LiveOpsLowerPanels({
+  todaySoFar,
+  handovers,
   recentOperationalActivity,
   liveOperationEnrichedRows,
   onOpenCoverage,
   resolveShiftZone,
 }: {
-  uncoveredShiftCount: number;
+  todaySoFar: TodaySoFar;
+  handovers: Handover[];
   recentOperationalActivity: OperationalActivityItem[];
   resolveShiftZone: (shiftId?: number | null) => string;
   liveOperationEnrichedRows: LiveBoardRow[];
@@ -993,43 +1051,104 @@ function LiveOpsActivityFeed({
 }) {
   const totalShifts = liveOperationEnrichedRows.length;
   const uncoveredRows = liveOperationEnrichedRows.filter((r) => r.lifecycleStatus === 'unfilled').length;
-  const coveredRows = totalShifts - uncoveredRows;
-
-
   const recentSlice = recentOperationalActivity.slice(0, 5);
 
+  /**
+   * The panels below the board.
+   *
+   * They wrap, so with two or three sites they fill the space the timeline does not need, and with
+   * twenty they simply sit further down the page. Nothing here constrains the timeline's height: the
+   * board is the primary surface and these are what a controller reads once they have finished with it.
+   */
   return (
     <View style={styles.lowerStrip}>
 
-      {/* ── Coverage ─────────────────────────────────────────────────────── */}
-      <View style={[styles.lowerPanel, styles.lowerPanelCoverage]}>
-        <Text style={styles.lowerPanelTitle}>Coverage</Text>
-        {totalShifts > 0 ? (
-          <Text style={styles.lowerCoverLine}>
-            <Text style={styles.lowerCoverNum}>{coveredRows}</Text>
-            <Text style={styles.lowerCoverOf}> / {totalShifts}</Text>
-            <Text style={styles.lowerCoverLabel}> covered</Text>
-          </Text>
-        ) : null}
+      {/* ── Today So Far ──────────────────────────────────────────────────
+          Nine numbers over the SAME rows the timeline draws — one pass, no request per metric. */}
+      <View style={[styles.lowerPanel, styles.lowerPanelSummary]}>
+        <View style={styles.lowerPanelTitleRow}>
+          <Text style={styles.lowerPanelTitle}>Today So Far</Text>
+          <Text style={styles.lowerPanelScope}>{todaySoFar.shiftCount} shifts in view</Text>
+        </View>
+
+        <Text style={styles.summaryGroupLabel}>Attendance</Text>
+        <View style={styles.summaryRow}>
+          <SummaryStat label="Booked on" value={todaySoFar.attendance.bookedOn} />
+          <SummaryStat label="Late / not on" value={todaySoFar.attendance.lateNotBookedOn} tone="bad" />
+          <SummaryStat label="Booked off" value={todaySoFar.attendance.bookedOff} />
+        </View>
+
+        {/* "Windows", on its face: Attention Now counts one missed-Welfare item per shift, this counts
+            every window. Two honest numbers that measure different things must say which is which. */}
+        <Text style={styles.summaryGroupLabel}>Welfare windows</Text>
+        <View style={styles.summaryRow}>
+          <SummaryStat label="Completed" value={todaySoFar.welfare.completed} />
+          <SummaryStat label="Overdue" value={todaySoFar.welfare.overdue} tone="warn" />
+          <SummaryStat label="Missed" value={todaySoFar.welfare.missed} tone="bad" />
+        </View>
+
+        <Text style={styles.summaryGroupLabel}>Operations</Text>
+        <View style={styles.summaryRow}>
+          <SummaryStat label="Open incidents" value={todaySoFar.operations.openIncidents} tone="warn" />
+          <SummaryStat label="Site requests" value={todaySoFar.operations.siteRequests} />
+          <SummaryStat label="Emergency" value={todaySoFar.operations.emergencyAlerts} tone="bad" />
+        </View>
+
         {uncoveredRows > 0 ? (
-          <>
-            <Text style={styles.lowerPanelStat}>
-              <Text style={styles.lowerPanelStatValue}>{uncoveredRows}</Text>
-              {' '}require cover
+          <Pressable
+            style={[styles.lowerPanelCta, IS_WEB ? (WEB_PTR as any) : null]}
+            onPress={() => onOpenCoverage({ uncoveredOnly: true })}
+          >
+            <Text style={styles.lowerPanelCtaText}>
+              {uncoveredRows} of {totalShifts} require cover — manage coverage →
             </Text>
-            <Pressable
-              style={[styles.lowerPanelCta, IS_WEB ? (WEB_PTR as any) : null]}
-              onPress={() => onOpenCoverage({ uncoveredOnly: true })}
-            >
-              <Text style={styles.lowerPanelCtaText}>Manage coverage →</Text>
-            </Pressable>
-          </>
+          </Pressable>
+        ) : null}
+      </View>
+
+      {/* ── Upcoming Handovers ───────────────────────────────────────────
+          Never a guess: a replacement is named only when exactly one shift starts around the end. */}
+      <View style={[styles.lowerPanel, styles.lowerPanelHandovers]}>
+        <Text style={styles.lowerPanelTitle}>Upcoming Handovers</Text>
+        {handovers.length === 0 ? (
+          <Text style={styles.lowerPanelCalm}>No staffing changes in the next few hours</Text>
         ) : (
-          totalShifts > 0 ? <Text style={styles.lowerPanelGood}>All covered</Text> : null
+          handovers.map((h, idx) => (
+            <View
+              key={h.id}
+              style={[styles.handoverItem, idx < handovers.length - 1 ? styles.activityItemDivider : null]}
+            >
+              <Text style={styles.handoverTime}>{h.at}</Text>
+              <View style={styles.handoverBody}>
+                <Text style={styles.handoverSite} numberOfLines={1}>{h.siteName}</Text>
+                {h.ending ? (
+                  <Text style={styles.handoverLine} numberOfLines={1}>{h.ending.guardName} ending</Text>
+                ) : null}
+                {/* A shift with nobody on it has no name to print, so the note says the whole thing —
+                    and when it does have a name, that line already says "due to start", so the note
+                    would only repeat it. */}
+                {!h.ending && h.startingAssigned && h.starting ? (
+                  <Text style={styles.handoverLine} numberOfLines={1}>{h.starting.guardName} due to start</Text>
+                ) : (
+                  <Text
+                    style={[
+                      styles.handoverNote,
+                      h.replacement === 'none' || !h.startingAssigned ? styles.handoverNoteBad : null,
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {h.note}
+                  </Text>
+                )}
+              </View>
+            </View>
+          ))
         )}
       </View>
 
-      {/* ── Recent Activity ───────────────────────────────────────────────── */}
+      {/* ── Recent Activity ───────────────────────────────────────────────
+          Kept, and kept HERE. It is the only chronological evidence of what has already happened, which
+          the rail (actions) and Today So Far (counts) do not carry. */}
       <View style={[styles.lowerPanel, styles.lowerPanelActivity]}>
         <Text style={styles.lowerPanelTitle}>Recent Activity</Text>
         {recentSlice.length === 0 ? (
@@ -1049,7 +1168,6 @@ function LiveOpsActivityFeed({
           ))
         )}
       </View>
-
 
     </View>
   );
@@ -1088,7 +1206,6 @@ export function CompanyLiveOperationsWorkspace({
   siteClientOptions,
   siteOptions,
   linkedGuardOptions,
-  uncoveredShiftCount,
   recentOperationalActivity,
   resolveShiftZone,
   selectedShiftContext,
@@ -1159,13 +1276,38 @@ export function CompanyLiveOperationsWorkspace({
    * derived from. One dataset means the three can never contradict each other, and it is why there is
    * no request per cell or per Welfare marker — the whole visible scope arrives in one payload.
    */
-  const timelineInputs: TimelineShiftInput[] = React.useMemo(
+  const timelineInputs: OutlookShiftInput[] = React.useMemo(
     () => focusedBoardRows.map((row) => ({
       shift: row.shift,
       attendance: row.attendance,
       operations: row.operations,
+      // Carried on the SAME row the bar is drawn from, so Today So Far counts the incidents and alerts
+      // belonging to exactly the shifts on screen. No second fetch, and nothing per metric.
+      logs: row.shiftLogs,
+      incidents: row.shiftIncidents,
+      alerts: row.shiftAlerts,
     })),
     [focusedBoardRows],
+  );
+
+  /**
+   * Next Up, Upcoming Handovers and Today So Far all read `timelineInputs`.
+   *
+   * That is the whole of rule §15: one filtered dataset, three presentations. Each is a pure function of
+   * the array and the operational clock the board already has, so none of them can invent a universe of
+   * its own — and none of them issues a request.
+   */
+  const nextUp = React.useMemo(
+    () => buildNextUp(timelineInputs, operationalNowMs),
+    [timelineInputs, operationalNowMs],
+  );
+  const handovers = React.useMemo(
+    () => buildHandovers(timelineInputs, operationalNowMs),
+    [timelineInputs, operationalNowMs],
+  );
+  const todaySoFar = React.useMemo(
+    () => buildTodaySoFar(timelineInputs, operationalNowMs),
+    [timelineInputs, operationalNowMs],
   );
 
   const effectiveSelectedShiftContext = React.useMemo(() => {
@@ -1182,7 +1324,7 @@ export function CompanyLiveOperationsWorkspace({
       <View style={styles.liveOpsHeaderRow}>
         <View style={styles.liveOpsHeaderText}>
           <Text style={styles.liveOpsHeaderTitle}>Live Operations</Text>
-          <Text style={styles.liveOpsHeaderCaption}>Monitor book-ons, Welfare Checks, and the Log Book.</Text>
+          <Text style={styles.liveOpsHeaderCaption}>Monitor live shifts, attendance, Welfare Checks and operational alerts.</Text>
         </View>
         {canManageShifts ? (
           <Pressable
@@ -1269,12 +1411,14 @@ export function CompanyLiveOperationsWorkspace({
           onOpenUrgentShift={onOpenUrgentShift}
           onUrgentIncidentFollowUp={onUrgentIncidentFollowUp}
           onUrgentAlertFollowUp={onUrgentAlertFollowUp}
+          nextUp={nextUp}
         />
       </View>
 
-      {/* ── Supporting snapshot strip ────────────────────────────────────── */}
-      <LiveOpsActivityFeed
-        uncoveredShiftCount={uncoveredShiftCount}
+      {/* ── Supporting operational summaries ─────────────────────────────── */}
+      <LiveOpsLowerPanels
+        todaySoFar={todaySoFar}
+        handovers={handovers}
         recentOperationalActivity={recentOperationalActivity}
         resolveShiftZone={resolveShiftZone}
         liveOperationEnrichedRows={liveOperationEnrichedRows}
@@ -1447,10 +1591,19 @@ function DetailPanelContent({
           </View>
         ) : null}
 
+        {/* Attendance reads as a comparison, because that is the question: did the guard arrive when
+            they were supposed to? The scheduled time sits beside the actual one rather than three lines
+            away in the header. */}
         <View style={styles.detailCard}>
           <Text style={styles.detailCardTitle}>Attendance &amp; Timesheet</Text>
-          <Text style={styles.detailLine}>Book on: {attendance?.checkInAt ? fmtDateTime(attendance.checkInAt, timeZone) : 'Pending'}</Text>
-          <Text style={styles.detailLine}>Book off: {attendance?.checkOutAt ? fmtDateTime(attendance.checkOutAt, timeZone) : 'Pending'}</Text>
+          <Text style={styles.detailStateLine}>
+            Book On {attendance?.checkInAt ? fmtTime(attendance.checkInAt, timeZone) : '—'}
+            <Text style={styles.detailStateMuted}>{'  ·  '}Scheduled {fmtTime(shift.start, timeZone)}</Text>
+          </Text>
+          <Text style={styles.detailStateLine}>
+            Book Off {attendance?.checkOutAt ? fmtTime(attendance.checkOutAt, timeZone) : '—'}
+            <Text style={styles.detailStateMuted}>{'  ·  '}Scheduled {fmtTime(shift.end, timeZone)}</Text>
+          </Text>
           <Text style={styles.detailLine}>Timesheet: {fmtStatus(timesheet?.approvalStatus || 'pending')}</Text>
         </View>
 
@@ -1458,21 +1611,36 @@ function DetailPanelContent({
           <Text style={styles.detailCardTitle}>Daily Logs</Text>
           {logs.length === 0
             ? <DetailEmpty title="No daily logs" desc="Logs for this shift will appear here." />
-            : logs.map((log) => <Text key={log.id} style={styles.detailListLine}>– {log.message}</Text>)}
+            : logs.map((log) => (
+                <Text key={log.id} style={styles.detailListLine}>
+                  <Text style={styles.detailListTime}>{fmtTime(log.createdAt, timeZone)}</Text>
+                  {'  '}{log.message}
+                </Text>
+              ))}
         </View>
 
         <View style={styles.detailCard}>
           <Text style={styles.detailCardTitle}>Incidents</Text>
           {incidents.length === 0
             ? <DetailEmpty title="No incidents" desc="Incidents linked to this shift will appear here." />
-            : incidents.map((inc) => <Text key={inc.id} style={styles.detailListLine}>– {inc.title} ({fmtStatus(inc.status)})</Text>)}
+            : incidents.map((inc) => (
+                <Text key={inc.id} style={styles.detailListLine}>
+                  <Text style={styles.detailListTime}>{fmtTime(inc.createdAt, timeZone)}</Text>
+                  {'  '}{inc.title} ({fmtStatus(inc.status)})
+                </Text>
+              ))}
         </View>
 
         <View style={styles.detailCard}>
-          <Text style={styles.detailCardTitle}>Safety / Check Calls</Text>
+          <Text style={styles.detailCardTitle}>Safety Alerts</Text>
           {alerts.length === 0
-            ? <DetailEmpty title="No safety events" desc="Welfare, panic, and check-call items will appear here." />
-            : alerts.map((a) => <Text key={a.id} style={styles.detailListLine}>– {fmtStatus(a.type)} ({fmtStatus(a.status)})</Text>)}
+            ? <DetailEmpty title="No safety events" desc="Welfare, Emergency and Site Request items will appear here." />
+            : alerts.map((a) => (
+                <Text key={a.id} style={styles.detailListLine}>
+                  <Text style={styles.detailListTime}>{fmtTime(a.createdAt, timeZone)}</Text>
+                  {'  '}{fmtStatus(a.type)} ({fmtStatus(a.status)})
+                </Text>
+              ))}
         </View>
 
       </View>
@@ -1680,7 +1848,10 @@ const styles = StyleSheet.create({
   workspaceRow: {
     flexDirection: 'row',
     gap: spacing.sm,
-    height:    IS_WEB ? 380 : undefined,
+    // No fixed height on web any more. The timeline is the primary surface and sizes to its own rows;
+    // the summaries below simply start lower down when there are many sites. `flex-start` keeps the
+    // rail from stretching to match a tall board.
+    alignItems: IS_WEB ? 'flex-start' : undefined,
     flex:      IS_WEB ? undefined : 1,
     minHeight: IS_WEB ? undefined : 300,
   },
@@ -1917,13 +2088,48 @@ const styles = StyleSheet.create({
 
   // ── Attention rail (28-32%) ───────────────────────────────────────────────
   attentionColumn: {
-    flex: 30,
+    // A fixed 268px on desktop rather than 30% of the row: at 1366 a percentage rail ate a third of the
+    // board, and the timeline is the surface a control room actually works from. Narrow enough to leave
+    // the axis dominant, wide enough that "Missed Welfare Check" and a site name still fit on a line.
+    ...(IS_WEB ? { width: 268, flexGrow: 0, flexShrink: 0, maxHeight: 620 } : { flex: 30 }),
     borderRadius: radii.card,
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.card,
     overflow: 'hidden',
   },
+  railSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    backgroundColor: colors.surfaceSubtle,
+  },
+  railSectionTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: colors.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.7,
+  },
+  railSectionHint: { fontSize: 10, color: colors.textMuted, fontWeight: '600' },
+  nextUpItem: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 7,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  nextUpTime: { fontSize: 11, fontWeight: '800', color: colors.textPrimary, width: 38 },
+  nextUpBody: { flex: 1, minWidth: 0, gap: 1 },
+  nextUpLabel: { fontSize: 11, color: colors.textPrimary, fontWeight: '600' },
+  nextUpSite: { fontSize: 10, color: colors.textSecondary },
   attentionPanelHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2051,14 +2257,48 @@ const styles = StyleSheet.create({
     gap: 4,
     minHeight: 72,
   },
-  lowerPanelCoverage: {
-    flex: IS_WEB ? 5 : 1,
-    ...(IS_WEB ? { minWidth: 160 } : {}),
+  lowerPanelSummary: {
+    flex: IS_WEB ? 10 : 1,
+    ...(IS_WEB ? { minWidth: 300 } : {}),
+  },
+  lowerPanelHandovers: {
+    flex: IS_WEB ? 8 : 1,
+    ...(IS_WEB ? { minWidth: 240 } : {}),
   },
   lowerPanelActivity: {
-    flex: IS_WEB ? 9 : 1,
+    flex: IS_WEB ? 7 : 1,
     ...(IS_WEB ? { minWidth: 220 } : {}),
   },
+  lowerPanelTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+  },
+  lowerPanelScope: { fontSize: 10, color: colors.textMuted, fontWeight: '600', marginBottom: 4 },
+
+  summaryGroupLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: colors.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    marginTop: 6,
+  },
+  summaryRow: { flexDirection: 'row', gap: spacing.md, flexWrap: 'wrap' },
+  summaryStat: { minWidth: 82, gap: 0 },
+  summaryStatValue: { fontSize: 18, fontWeight: '800', color: colors.textPrimary, lineHeight: 22 },
+  summaryStatWarn: { color: colors.warning },
+  summaryStatBad: { color: colors.danger },
+  summaryStatLabel: { fontSize: 10, color: colors.textSecondary, fontWeight: '600' },
+
+  handoverItem: { flexDirection: 'row', gap: spacing.sm, paddingVertical: 6 },
+  handoverTime: { fontSize: 11, fontWeight: '800', color: colors.textPrimary, width: 38 },
+  handoverBody: { flex: 1, minWidth: 0, gap: 1 },
+  handoverSite: { fontSize: 11, fontWeight: '700', color: colors.textPrimary },
+  handoverLine: { fontSize: 11, color: colors.textSecondary },
+  handoverNote: { fontSize: 10, color: colors.textSecondary, fontWeight: '600' },
+  handoverNoteBad: { color: colors.danger, fontWeight: '800' },
   lowerPanelTitle: {
     fontSize: 11,
     fontWeight: '600',
@@ -2066,34 +2306,7 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 0.7,
     marginBottom: 4,
-  },
-  lowerCoverLine: {
-    fontSize: 12,
-    color: colors.textPrimary,
-  },
-  lowerCoverNum: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: colors.accentTeal,
-  },
-  lowerCoverOf: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: colors.textSecondary,
-  },
-  lowerCoverLabel: {
-    fontSize: 12,
-    color: colors.textSecondary,
-  },
-  lowerPanelStat: {
-    fontSize: 12,
-    color: colors.textPrimary,
-  },
-  lowerPanelStatValue: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: colors.warning,
-  },
+  },
   lowerPanelCta: {
     alignSelf: 'flex-start',
     marginTop: 2,
@@ -2102,11 +2315,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: colors.accentTeal,
-  },
-  lowerPanelGood: {
-    fontSize: 12,
-    color: colors.success,
-    fontWeight: '500',
   },
   lowerPanelCalm: {
     fontSize: 12,
@@ -2283,22 +2491,37 @@ const styles = StyleSheet.create({
   detailCardCloseOut: {
     ...(IS_WEB ? { flexBasis: '100%' } : {}),
   },
+  // Section headings are the drawer's spine: a controller scans these five words to find the one part
+  // of the shift they came in for, so they are set apart from the lines beneath them.
   detailCardTitle: {
-    fontSize: 12,
-    fontWeight: '600',
+    fontSize: 10,
+    fontWeight: '800',
     color: colors.textSecondary,
     textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginBottom: 2,
+    letterSpacing: 0.9,
+    marginBottom: 6,
+    paddingBottom: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
   },
+  /** The one line per section a controller must be able to read without stopping. */
+  detailStateLine: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.textPrimary,
+    lineHeight: 19,
+  },
+  detailStateMuted: { fontSize: 12, fontWeight: '500', color: colors.textSecondary },
+  detailListTime: { fontWeight: '700', color: colors.textSecondary },
   detailOpsSection: {
     marginTop: spacing.sm,
   },
   detailOpsHeading: {
     fontSize: 12,
-    fontWeight: '700',
+    fontWeight: '800',
     color: colors.textPrimary,
-    marginBottom: 2,
+    letterSpacing: 0.2,
+    marginBottom: 3,
   },
   detailExceptionWrap: {
     gap: spacing.xs,

@@ -4206,7 +4206,6 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
         siteClientOptions={siteClientOptions}
         siteOptions={siteOptions}
         linkedGuardOptions={linkedGuardOptions}
-        uncoveredShiftCount={uncoveredShifts.length}
         recentOperationalActivity={recentOperationalActivity}
         selectedShiftContext={selectedShiftContext}
         selectedShiftCloseOutSummary={selectedShiftCloseOutSummary as CloseOutSummary | null}

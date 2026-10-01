@@ -7,10 +7,13 @@ import {
   TIMELINE_RANGES,
   axisFraction,
   buildTimeline,
+  nowScrollOffset,
   panTimelineWindow,
   resolveTimelineWindow,
   timelineHourTicks,
   timelineRowCount,
+  WELFARE_MARKER_GLYPH,
+  WELFARE_MARKER_WORD,
   type TimelineRangeHours,
   type TimelineRow,
   type TimelineShiftInput,
@@ -58,6 +61,8 @@ const HOUR_WIDTH = 132;
 /** Everything on the axis is placed by its fraction of the window, so the axis can be any width. */
 const pct = (fraction: number) => `${fraction * 100}%` as `${number}%`;
 const ROW_HEIGHT = 56;
+/** The Welfare marker's hit area and chip diameter. Big enough to find, small enough to stay a marker. */
+const MARKER_SIZE = 16;
 const SITE_HEADER_HEIGHT = 32;
 
 export type OperationsTimelineProps = {
@@ -105,6 +110,19 @@ export function CompanyOperationsTimeline({
   // nothing against the new one.
   React.useEffect(() => { setPanHours(0); }, [rangeHours, anchorMs]);
 
+  /**
+   * The horizontal viewport, measured rather than assumed.
+   *
+   * At 24h the axis is wider than any screen, so where the viewport OPENS matters: scrolled to the left
+   * it shows lunchtime while the work is at 21:00, and the board looks empty. These two measurements let
+   * the effect below put NOW in shot. Neither is time state — the window of instants is untouched.
+   */
+  const axisScrollRef = React.useRef<InstanceType<typeof ScrollView> | null>(null);
+  const [axisViewportWidth, setAxisViewportWidth] = React.useState(0);
+  const [axisContentWidth, setAxisContentWidth] = React.useState(0);
+  /** Bumped by "Now" so pressing it re-centres the viewport even when the window did not move. */
+  const [recentreToken, setRecentreToken] = React.useState(0);
+
   const window: TimelineWindow = React.useMemo(
     () => panTimelineWindow(resolveTimelineWindow(anchorMs, rangeHours, headerTimeZone), panHours),
     [anchorMs, rangeHours, headerTimeZone, panHours],
@@ -118,6 +136,27 @@ export function CompanyOperationsTimeline({
   // Null when the controller has panned away from now. The foundation refuses to clamp, so the line is
   // simply absent rather than lying about where now is.
   const nowFraction = axisFraction(nowMs, window);
+
+  /**
+   * Re-position the viewport around NOW.
+   *
+   * Read through a ref, deliberately: `nowFraction` changes on every 15-second tick, and an effect that
+   * depended on it would yank the axis back from wherever the controller had scrolled it. It runs when
+   * the range, the day, the pan or the measured widths change — and when "Now" is pressed.
+   */
+  const nowFractionRef = React.useRef(nowFraction);
+  nowFractionRef.current = nowFraction;
+
+  React.useEffect(() => {
+    // Only the long ranges open centred. At 8h the axis starts where the window starts, which is where a
+    // bar's status badge is drawn — auto-scrolling the default view would push "LIVE", "LATE" and
+    // "COMPLETED" off the left edge of every shift that began earlier. 12h and 24h are wide enough that
+    // the opposite problem wins: without this the controller is shown lunchtime while the work is at 21:00.
+    // Pressing "Now" always re-centres, because then it is what the controller asked for.
+    if (rangeHours <= DEFAULT_TIMELINE_RANGE && recentreToken === 0) return;
+    const offset = nowScrollOffset(nowFractionRef.current, axisContentWidth, axisViewportWidth);
+    axisScrollRef.current?.scrollTo({ x: offset, y: 0, animated: false });
+  }, [rangeHours, anchorMs, panHours, axisContentWidth, axisViewportWidth, recentreToken]);
 
   const zonesInView = React.useMemo(
     () => Array.from(new Set(groups.map((group) => group.timeZone))),
@@ -139,7 +178,11 @@ export function CompanyOperationsTimeline({
         <View style={styles.headerControls}>
           <View style={styles.panGroup}>
             <TimelineButton label="Earlier" onPress={() => setPanHours((h) => h - rangeHours / 2)} />
-            <TimelineButton label="Now" onPress={() => setPanHours(0)} active={panHours === 0} />
+            <TimelineButton
+              label="Now"
+              onPress={() => { setPanHours(0); setRecentreToken((t) => t + 1); }}
+              active={panHours === 0}
+            />
             <TimelineButton label="Later" onPress={() => setPanHours((h) => h + rangeHours / 2)} />
           </View>
 
@@ -242,11 +285,15 @@ export function CompanyOperationsTimeline({
                         <Text style={styles.identityScheduled} numberOfLines={1}>
                           {row.scheduled}{row.overnight ? ' (+1)' : ''}
                         </Text>
-                        <Text
-                          style={[styles.identityAttendance, row.attendance.late ? styles.identityLate : null]}
-                          numberOfLines={1}
-                        >
-                          {row.attendance.bookOn} · {row.attendance.bookOff}
+                        {/* Actual attendance is the line a controller scans for, so Book On carries the
+                            weight and Book Off sits behind it. A missing Book On past the start is the
+                            one thing on this row that must catch the eye. */}
+                        <Text style={styles.identityAttendance} numberOfLines={1}>
+                          <Text style={row.attendance.late ? styles.identityLate : styles.identityOn}>
+                            {row.attendance.bookOn}
+                          </Text>
+                          <Text style={styles.identitySep}>{'  ·  '}</Text>
+                          <Text style={styles.identityOff}>{row.attendance.bookOff}</Text>
                         </Text>
                       </Pressable>
                     ))}
@@ -256,10 +303,16 @@ export function CompanyOperationsTimeline({
 
           {/* ── Scrolling time axis ─────────────────────────────────────── */}
           <ScrollView
+            ref={axisScrollRef}
             horizontal
             showsHorizontalScrollIndicator
+            // A stable handle on the scrolling axis for the visual-review preview and for end-to-end
+            // tests, which otherwise have to guess which div is the viewport.
+            nativeID="operations-timeline-axis"
             style={styles.axisScroll}
             contentContainerStyle={{ minWidth: axisMinWidth, flexGrow: 1 }}
+            onLayout={(e: any) => setAxisViewportWidth(e.nativeEvent.layout.width)}
+            onContentSizeChange={(w: number) => setAxisContentWidth(w)}
           >
             <View style={{ minWidth: axisMinWidth, flexGrow: 1 }}>
               {/* Sticky hour header */}
@@ -320,14 +373,17 @@ export function CompanyOperationsTimeline({
       {rowCount > 0 ? (
         <View style={styles.legend}>
           <Text style={styles.legendTitle}>Welfare Check</Text>
-          {([
-            ['✓', 'Completed'],
-            ['●', 'Due'],
-            ['!', 'Overdue'],
-            ['✕', 'Missed'],
-            ['—', 'Not required'],
-          ] as const).map(([glyph, word]) => (
-            <Text key={word} style={styles.legendItem}>{glyph} {word}</Text>
+          {/* The key is drawn with the SAME treatment as the bar, chips included, so it explains what is
+              actually on screen rather than a simplified version of it. */}
+          {(['completed', 'due', 'overdue', 'missed', 'not_applicable'] as const).map((state) => (
+            <View key={state} style={styles.legendEntry}>
+              <View style={[styles.markerChip, MARKER_TONE[state].chip ?? null]}>
+                <Text style={[styles.markerGlyph, MARKER_TONE[state].glyph]}>
+                  {WELFARE_MARKER_GLYPH[state]}
+                </Text>
+              </View>
+              <Text style={styles.legendItem}>{WELFARE_MARKER_WORD[state]}</Text>
+            </View>
           ))}
         </View>
       ) : null}
@@ -344,12 +400,50 @@ function identityLabel(row: TimelineRow): string {
 
 // ─── the bar ──────────────────────────────────────────────────────────────────
 
-const STATUS_STYLE: Record<TimelineRow['status'], { bar: any; text: any }> = {
-  Live: { bar: { backgroundColor: colors.successSurface, borderColor: colors.success }, text: { color: colors.success } },
-  Late: { bar: { backgroundColor: colors.warningSurface, borderColor: colors.warning }, text: { color: colors.warning } },
-  Upcoming: { bar: { backgroundColor: colors.surfaceSubtle, borderColor: colors.border }, text: { color: colors.textSecondary } },
-  Completed: { bar: { backgroundColor: colors.surfaceSubtle, borderColor: colors.fieldBorder }, text: { color: colors.textSecondary } },
-  'Coverage Gap': { bar: { backgroundColor: colors.dangerSurface, borderColor: colors.danger }, text: { color: colors.danger } },
+/**
+ * How each status is drawn.
+ *
+ * LIVE IS NOT GREEN. A green bar reads as "all good", and a live shift with an overdue and a missed
+ * Welfare Check is not all good — the old treatment painted the worst row on the board in the most
+ * reassuring colour available. Live is now a neutral surface with a teal edge and a solid LIVE badge: it
+ * says "this is running", which is the only thing the bar itself knows. Welfare condition is left
+ * entirely to the markers, which is where it is actually measured.
+ *
+ * Late, Coverage Gap and Completed stay distinct, because each of those IS a verdict about the shift.
+ */
+const STATUS_STYLE: Record<TimelineRow['status'], { bar: any; badge: any; badgeText: any }> = {
+  Live: {
+    bar: {
+      backgroundColor: colors.card,
+      borderColor: colors.fieldBorder,
+      borderLeftWidth: 3,
+      borderLeftColor: colors.accentTeal,
+    },
+    badge: { backgroundColor: colors.primaryNavy },
+    badgeText: { color: colors.textOnBrand },
+  },
+  Late: {
+    bar: { backgroundColor: colors.warningSurface, borderColor: colors.warning },
+    badge: { backgroundColor: colors.warning },
+    badgeText: { color: colors.textOnBrand },
+  },
+  Upcoming: {
+    bar: { backgroundColor: colors.card, borderColor: colors.border, borderStyle: 'dashed' },
+    badge: { backgroundColor: colors.surfaceSubtle, borderWidth: 1, borderColor: colors.border },
+    badgeText: { color: colors.textSecondary },
+  },
+  Completed: {
+    bar: { backgroundColor: colors.surfaceSubtle, borderColor: colors.fieldBorder },
+    // A lighter chip with darker type: the grey-on-grey it replaced was the least legible thing on the
+    // board, and a finished shift still has to be readable when a controller is reconstructing a day.
+    badge: { backgroundColor: colors.border },
+    badgeText: { color: colors.textPrimary },
+  },
+  'Coverage Gap': {
+    bar: { backgroundColor: colors.dangerSurface, borderColor: colors.danger },
+    badge: { backgroundColor: colors.danger },
+    badgeText: { color: colors.textOnBrand },
+  },
 };
 
 function ShiftBar({ row }: { row: TimelineRow }) {
@@ -376,7 +470,9 @@ function ShiftBar({ row }: { row: TimelineRow }) {
     >
       <View style={styles.barLabelRow}>
         {row.span.clippedStart ? <Text style={styles.clipCue}>‹</Text> : null}
-        <Text style={[styles.barStatus, tone.text]} numberOfLines={1}>{row.status}</Text>
+        <View style={[styles.statusBadge, tone.badge]}>
+          <Text style={[styles.statusBadgeText, tone.badgeText]} numberOfLines={1}>{row.status}</Text>
+        </View>
         {row.span.clippedEnd ? <Text style={styles.clipCue}>›</Text> : null}
       </View>
 
@@ -390,12 +486,20 @@ function ShiftBar({ row }: { row: TimelineRow }) {
   );
 }
 
-const MARKER_TONE: Record<WelfareMarker['state'], any> = {
-  completed: { color: colors.success },
-  due: { color: colors.textSecondary },
-  overdue: { color: colors.warning },
-  missed: { color: colors.danger },
-  not_applicable: { color: colors.disabledText },
+/**
+ * How each Welfare state is drawn on the bar.
+ *
+ * Overdue and Missed are the two a controller must find while scanning thirty rows, so they are given a
+ * filled chip — a difference in SHAPE, not only in colour, which is what survives a monochrome screen and
+ * colour-vision deficiency. Completed, Due and Not required stay as bare glyphs so the exceptions are the
+ * only things that stand out. Every marker still carries its glyph and its accessible label.
+ */
+const MARKER_TONE: Record<WelfareMarker['state'], { glyph: any; chip?: any }> = {
+  completed: { glyph: { color: colors.success } },
+  due: { glyph: { color: colors.textSecondary } },
+  overdue: { glyph: { color: colors.textOnBrand }, chip: { backgroundColor: colors.warning } },
+  missed: { glyph: { color: colors.textOnBrand }, chip: { backgroundColor: colors.danger } },
+  not_applicable: { glyph: { color: colors.disabledText } },
 };
 
 function WelfareMarkerDot({
@@ -412,15 +516,18 @@ function WelfareMarkerDot({
   const barWidth = Math.max(span.widthFraction, 1e-9);
   const left = (marker.span.startFraction - span.startFraction) / barWidth;
   const width = marker.span.widthFraction / barWidth;
+  const tone = MARKER_TONE[marker.state];
 
   return (
     <View
       // `title` is what produces a native tooltip on web; the accessibility label covers native.
       {...(IS_WEB ? ({ title: marker.accessibleLabel } as any) : null)}
       accessibilityLabel={marker.accessibleLabel}
-      style={[styles.marker, { left: pct(left), width: pct(width), minWidth: 10 }]}
+      style={[styles.marker, { left: pct(left), width: pct(width), minWidth: MARKER_SIZE }]}
     >
-      <Text style={[styles.markerGlyph, MARKER_TONE[marker.state]]}>{marker.glyph}</Text>
+      <View style={[styles.markerChip, tone.chip ?? null]}>
+        <Text style={[styles.markerGlyph, tone.glyph]}>{marker.glyph}</Text>
+      </View>
     </View>
   );
 }
@@ -519,10 +626,13 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border,
     gap: 1,
   },
-  identityGuard: { fontSize: 12, fontWeight: '700', color: colors.textPrimary },
+  identityGuard: { fontSize: 13, fontWeight: '700', color: colors.textPrimary, letterSpacing: 0.1 },
   identityScheduled: { fontSize: 11, color: colors.textSecondary, fontWeight: '600' },
-  identityAttendance: { fontSize: 10, color: colors.textSecondary },
-  identityLate: { color: colors.warning, fontWeight: '700' },
+  identityAttendance: { fontSize: 11, color: colors.textSecondary, marginTop: 1 },
+  identityOn: { color: colors.textPrimary, fontWeight: '700' },
+  identityOff: { color: colors.textSecondary, fontWeight: '600' },
+  identitySep: { color: colors.textMuted },
+  identityLate: { color: colors.danger, fontWeight: '800' },
 
   siteHeader: {
     height: SITE_HEADER_HEIGHT,
@@ -588,13 +698,20 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     overflow: 'hidden',
   },
-  barLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 2, paddingHorizontal: 6 },
-  barStatus: { fontSize: 10, fontWeight: '800', letterSpacing: 0.3 },
+  barLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 5, paddingTop: 1 },
+  statusBadge: {
+    paddingHorizontal: 5, paddingVertical: 1, borderRadius: radii.sm, flexShrink: 1,
+  },
+  statusBadgeText: { fontSize: 9, fontWeight: '800', letterSpacing: 0.5, textTransform: 'uppercase' },
   clipCue: { fontSize: 10, fontWeight: '800', color: colors.textSecondary },
 
-  markerStrip: { position: 'absolute', left: 0, right: 0, bottom: 2, height: 14 },
-  marker: { position: 'absolute', alignItems: 'center', justifyContent: 'center', height: 14 },
-  markerGlyph: { fontSize: 11, fontWeight: '800', lineHeight: 13 },
+  markerStrip: { position: 'absolute', left: 0, right: 0, bottom: 2, height: MARKER_SIZE },
+  marker: { position: 'absolute', alignItems: 'center', justifyContent: 'center', height: MARKER_SIZE },
+  markerChip: {
+    minWidth: MARKER_SIZE, height: MARKER_SIZE, borderRadius: MARKER_SIZE / 2,
+    paddingHorizontal: 2, alignItems: 'center', justifyContent: 'center',
+  },
+  markerGlyph: { fontSize: 12, fontWeight: '800', lineHeight: 14 },
 
   legend: {
     flexDirection: 'row', alignItems: 'center', gap: 12, flexWrap: 'wrap',
@@ -602,5 +719,6 @@ const styles = StyleSheet.create({
     borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.surfaceSubtle,
   },
   legendTitle: { fontSize: 10, fontWeight: '800', color: colors.textSecondary, letterSpacing: 0.6 },
+  legendEntry: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   legendItem: { fontSize: 10, color: colors.textSecondary, fontWeight: '600' },
 });

@@ -123,6 +123,29 @@ export function axisFraction(ms: number, window: TimelineWindow): number | null 
   return (ms - window.startMs) / (window.endMs - window.startMs);
 }
 
+/**
+ * Where the horizontal viewport should sit so NOW is in shot, in pixels from the axis's left edge.
+ *
+ * At 24h the axis is wider than any screen, so opening it scrolled to the left means a controller is shown
+ * lunchtime while the work they are watching is at 21:00 — an apparently empty board. This puts NOW a
+ * third of the way across the viewport, the same proportion the window itself uses, and clamps to the
+ * scrollable range so the axis can never be scrolled past its own ends.
+ *
+ * It is the VIEWPORT that moves. The window of instants is untouched, so Earlier / Now / Later and the
+ * NOW line still mean exactly what they meant before.
+ */
+export function nowScrollOffset(
+  nowFraction: number | null,
+  contentWidth: number,
+  viewportWidth: number,
+  offsetFraction: number = NOW_OFFSET_FRACTION,
+): number {
+  if (nowFraction === null || !Number.isFinite(nowFraction)) return 0;
+  if (!(contentWidth > viewportWidth) || !(viewportWidth > 0)) return 0;
+  const target = nowFraction * contentWidth - viewportWidth * offsetFraction;
+  return Math.max(0, Math.min(target, contentWidth - viewportWidth));
+}
+
 // ─── bars ─────────────────────────────────────────────────────────────────────
 
 export type TimelineSpan = {
