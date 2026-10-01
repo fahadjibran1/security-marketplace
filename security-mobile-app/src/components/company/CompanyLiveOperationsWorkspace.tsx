@@ -844,6 +844,22 @@ function getPrimaryAttentionAction(
       : () => onOpenUrgentDetail(item);
     return { label, onPress, disabled: isDisabled };
   }
+  /**
+   * A Missing Book Off is resolved from the queue, open or acknowledged.
+   *
+   * It fell through to the default branch when the category was introduced, so its primary button read
+   * "Open Shift" and the resolution dialog was unreachable for the one item type that most needs it —
+   * a guard unaccounted for after their shift ended. It routes through the SAME alert path as every
+   * other durable alert: `onUrgentAlertFollowUp(item, 'close')` opens the existing dialog, which
+   * collects the reason and note. No second handler, no second modal.
+   */
+  if (item.category === 'missing_book_off') {
+    return {
+      label: busy ? '…' : 'Resolve',
+      onPress: () => onUrgentAlertFollowUp(item, 'close'),
+      disabled: busy,
+    };
+  }
   if (item.category === 'missed_check_call' || item.category === 'safety') {
     const label = item.status === 'acknowledged' ? (busy ? '…' : getUrgentPrimaryLabel(item)) : getUrgentPrimaryLabel(item);
     const isDisabled = busy && item.status === 'acknowledged';
@@ -2368,7 +2384,7 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 0.7,
     marginBottom: 4,
-  },
+  },
   lowerPanelCta: {
     alignSelf: 'flex-start',
     marginTop: 2,

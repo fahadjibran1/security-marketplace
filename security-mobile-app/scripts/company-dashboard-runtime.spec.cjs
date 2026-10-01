@@ -74,6 +74,7 @@ if (typeof globalThis.document === 'undefined') globalThis.document = {};
 if (typeof globalThis.window === 'undefined') globalThis.window = { addEventListener() {}, removeEventListener() {} };
 
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const path = require('node:path');
 const { loadTs, ROOT } = require('./load-ts.cjs');
 
@@ -154,9 +155,13 @@ test('BOOT-01-THE-COMPANY-DASHBOARD-RENDERS-WITHOUT-A-REFERENCE-ERROR', () => {
  * Operations section mounts — the same ones the production page builds — rather than asserting against
  * a section the screen is not currently showing.
  */
-function renderLiveOperations(itemStatus) {
+function renderLiveOperations(
+  itemStatus,
+  itemsOverride,
+  workspacePath = 'src/components/company/CompanyLiveOperationsWorkspace.tsx',
+) {
   const RNW = appRequire('react-native-web');
-  const workspace = loadTs('src/components/company/CompanyLiveOperationsWorkspace.tsx');
+  const workspace = loadTs(workspacePath);
   const outlook = loadTs('src/components/company/operationsOutlook.ts');
 
   const now = Date.now();
@@ -175,7 +180,7 @@ function renderLiveOperations(itemStatus) {
 
   const element = React.createElement(workspace.LiveOpsAttentionRail, {
     // A Missing Book Off item: the exact category whose presence triggered the production crash.
-    items: [{
+    items: itemsOverride ?? [{
       id: 'attention-501', alertId: 501, shiftId: 19, status: itemStatus,
       siteName: 'TEST SITE', guardName: 'Fahad test',
       category: 'missing_book_off', issueType: 'Missing Book Off',
@@ -221,6 +226,96 @@ test('BOOT-04-THE-RESOLUTION-CONTROLS-RENDER-WITHOUT-WRITING-ANYTHING', () => {
   assert.ok(acknowledged.includes('Acknowledged'), 'an acknowledged item says so in words');
   assert.ok(!acknowledged.includes('>Acknowledge<'),
     'and is no longer offered an acknowledgement it already has');
+});
+
+// ═══════════════════ the Missing Book Off primary action ═══════════════════
+
+test('MBO-01-AN-OPEN-ITEM-OFFERS-ACKNOWLEDGE-AND-RESOLVE', () => {
+  // It fell through to the default branch when the category was introduced, so the button read
+  // "Open Shift" and the resolution dialog was unreachable for the one item that most needs it.
+  const open = renderLiveOperations('open');
+  assert.ok(open.includes('Acknowledge'), 'Acknowledge is offered');
+  assert.ok(open.includes('>Resolve<'), 'and Resolve is the primary action');
+  assert.ok(!open.includes('Open Shift'), 'never "Open Shift"');
+});
+
+test('MBO-02-AN-ACKNOWLEDGED-ITEM-SAYS-SO-AND-STILL-OFFERS-RESOLVE', () => {
+  const acknowledged = renderLiveOperations('acknowledged');
+  assert.ok(acknowledged.includes('Acknowledged'), 'the state is stated in words');
+  assert.ok(acknowledged.includes('>Resolve<'), 'and it can still be resolved');
+  assert.ok(!acknowledged.includes('>Acknowledge<'), 'but is not asked to acknowledge again');
+  assert.ok(!acknowledged.includes('Open Shift'));
+});
+
+test('MBO-03-A-CLOSED-ITEM-IS-NOT-IN-THE-QUEUE-AT-ALL', () => {
+  // Attention Now is built from `outstandingAlerts`, which drops anything closed before an item is
+  // ever made — so a resolved Missing Book Off cannot reach the rail.
+  const screen = fs.readFileSync(path.join(ROOT, 'src/screens/CompanyDashboardScreen.tsx'), 'utf8');
+  assert.ok(
+    /const outstandingAlerts = React\.useMemo\(\s*\(\) => alerts\.filter\(\(alert\) => \(alert\.status \|\| ''\)\.toLowerCase\(\) !== 'closed'\)/.test(screen),
+    'closed alerts are filtered out before any attention item is built',
+  );
+  const empty = renderLiveOperations('closed', []);
+  assert.ok(!empty.includes('Missing Book Off'), 'and nothing closed is drawn');
+});
+
+test('MBO-04-RESOLVE-OPENS-THE-EXISTING-DIALOG-AND-SENDS-NO-REQUEST', () => {
+  // The button routes through the SAME alert path as every other durable alert; the screen's handler
+  // turns 'close' into the resolve dialog rather than an API call.
+  const workspace = fs.readFileSync(
+    path.join(ROOT, 'src/components/company/CompanyLiveOperationsWorkspace.tsx'), 'utf8',
+  );
+  assert.ok(
+    /if \(item\.category === 'missing_book_off'\) \{[\s\S]{0,320}onUrgentAlertFollowUp\(item, 'close'\)/.test(workspace),
+    'it uses the existing alert resolution path',
+  );
+  const screen = fs.readFileSync(path.join(ROOT, 'src/screens/CompanyDashboardScreen.tsx'), 'utf8');
+  assert.ok(/openResolveForAlert\(item\);/.test(screen), "and 'close' opens the dialog");
+  assert.equal((screen.match(/closeSafetyAlert\(/g) || []).length, 1,
+    'the only close call in the screen is the dialog submit');
+
+  // Rendering and opening the dialog must reach nothing. Every API function is replaced by a counter.
+  let calls = 0;
+  const api = loadTs('src/services/api.ts');
+  for (const key of Object.keys(api)) {
+    if (typeof api[key] === 'function') api[key] = async () => { calls += 1; return []; };
+  }
+  renderLiveOperations('open');
+  assert.equal(calls, 0, 'rendering the queue issues no request');
+});
+
+test('MBO-05-RESOLVING-STILL-CANNOT-INVENT-A-BOOK-OFF', () => {
+  // The frontend half of the rule the backend proves by asserting what is absent from the database.
+  const drawer = fs.readFileSync(
+    path.join(ROOT, 'src/components/company/CompanyResolveAlertDrawer.tsx'), 'utf8',
+  );
+  assert.ok(!/from '\.\.\/\.\.\/services\/api'/.test(drawer), 'the dialog reaches no endpoint itself');
+  assert.ok(!/bookOn|bookOff|checkIn|checkOut|AttendanceEvent/.test(drawer), 'and names no attendance concept');
+  assert.ok(/does not change attendance, Welfare evidence or the/.test(drawer), 'and says so on its face');
+});
+
+test('MBO-06-MUTATION-REMOVING-THE-CATEGORY-BREAKS-THESE-TESTS', () => {
+  // An assertion that cannot fail proves nothing. This builds a copy of the workspace with
+  // `missing_book_off` taken out of the resolve branch and renders it: the button must fall back to
+  // "Open Shift", which is exactly what MBO-01 and MBO-02 forbid.
+  const file = path.join(ROOT, 'src/components/company/CompanyLiveOperationsWorkspace.tsx');
+  const original = fs.readFileSync(file, 'utf8');
+  const mutated = original.replace(
+    "  if (item.category === 'missing_book_off') {",
+    "  if (false && item.category === 'missing_book_off') {",
+  );
+  assert.notEqual(mutated, original, 'the resolve branch was found and mutated');
+
+  const mutantPath = path.join(ROOT, 'src/components/company/MutantWorkspace.tsx');
+  fs.writeFileSync(mutantPath, mutated);
+  try {
+    const markup = renderLiveOperations('open', undefined, 'src/components/company/MutantWorkspace.tsx');
+    assert.ok(markup.includes('Open Shift'),
+      'without the branch the item falls back to "Open Shift" — the defect this fix removes');
+    assert.ok(!markup.includes('>Resolve<'), 'and Resolve is unreachable');
+  } finally {
+    fs.unlinkSync(mutantPath);
+  }
 });
 
 test('BOOT-05-NO-HOOK-ORDER-OR-INITIALISATION-ERROR-ON-A-SECOND-RENDER', () => {
