@@ -430,9 +430,15 @@ test('CONSISTENCY-01-THE-EXPORT-MATCHES-WHAT-THE-TIMELINE-DRAWS', () => {
   });
 
   // A shift the timeline does not draw is off the axis, so the same scope does not export it either.
+  //
+  // SETTLED, deliberately. UAT FIX 01: a shift booked on and never booked off has not ended, so its bar
+  // runs to now and it stays on the board however old its schedule is. Taking SHIFT_19's live attendance
+  // and only moving its dates would construct that carry-over by accident and assert the opposite of
+  // what this line means.
   const offAxis = {
     ...SHIFT_19,
-    shift: { ...SHIFT_19.shift, id: 99, start: '2026-09-25T08:00:00.000Z', end: '2026-09-25T16:00:00.000Z' },
+    shift: { ...SHIFT_19.shift, id: 99, status: 'completed', start: '2026-09-25T08:00:00.000Z', end: '2026-09-25T16:00:00.000Z' },
+    attendance: { checkInAt: '2026-09-25T07:58:00.000Z', checkOutAt: '2026-09-25T16:01:00.000Z' },
   };
   assert.equal(timeline.timelineRowCount(timeline.buildTimeline([offAxis], window, nowMs)), 0);
 });

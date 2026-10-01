@@ -223,6 +223,13 @@ jobs:
       - name: Verify control-room presentation
         run: npm run test:operations-visual
 
+      # PRODUCTION UAT FIX 01. Two defects the real board showed minutes after the Phase 4A deploy: the
+      # Shift Operations drawer opened by itself on a plain navigation and reopened after the operator
+      # closed it, and the screen contradicted itself — metric 1, summary 1 shift, timeline 0 — because a
+      # guard who booked on and never booked off was still drawn at yesterday's scheduled time.
+      - name: Verify Live Operations entry and live carry-over
+        run: npm run test:live-ops-entry
+
       # ── Screening ─────────────────────────────────────────────────────────────
       # Protects the Guard screening journey and the locked distinction that Company-Managed deployment
       # is NOT S4 Screening. Note it also reads backend screening sources, so it doubles as a contract

@@ -310,6 +310,41 @@ export function resolveAttendanceLabels(
   };
 }
 
+/** A shift whose outcome is already decided. Its bar is whatever the schedule said it was. */
+const SETTLED_STATUSES = ['completed', 'cancelled', 'missed', 'rejected'];
+
+/**
+ * When a shift's bar actually ends — which is not always when it was scheduled to.
+ *
+ * PRODUCTION UAT FIX 01. A guard booked on at 20:33 and never booked off was still standing on site at
+ * 10:55 the next morning. The relevance policy kept the shift — `in_progress` is unbounded, deliberately,
+ * because "a shift someone is standing on is the control room's first responsibility whatever the clock
+ * says". But the timeline drew the bar at its SCHEDULED span, 20:35–21:35 yesterday, which is thirteen
+ * hours behind today's axis, so the board said "0 shifts" while the metric beside it said "1 live".
+ *
+ * The honest answer is that the shift has not ended. A Book On with no Book Off is an open-ended
+ * occupancy, so the bar runs to now and keeps running. Nothing is clamped and no window is widened: the
+ * span is simply the truth about how long the guard has been there.
+ *
+ * It applies to that case ONLY. A settled shift, one already booked off, and one never booked on all
+ * keep their scheduled end — so a completed, missed, unfilled or ordinary previous-day shift does not
+ * reappear on today's board.
+ */
+export function effectiveShiftEndMs(
+  shift: { end: string; status?: string | null },
+  attendance: { checkInAt?: string | null; checkOutAt?: string | null } | null | undefined,
+  nowMs: number,
+): number {
+  const scheduledEnd = Date.parse(shift.end);
+  if (!Number.isFinite(scheduledEnd)) return scheduledEnd;
+
+  if (SETTLED_STATUSES.includes((shift.status || '').trim().toLowerCase())) return scheduledEnd;
+  if (!attendance?.checkInAt) return scheduledEnd;
+  if (attendance?.checkOutAt) return scheduledEnd;
+
+  return Math.max(scheduledEnd, nowMs);
+}
+
 // ─── row status ───────────────────────────────────────────────────────────────
 
 export type TimelineStatus = 'Upcoming' | 'Late' | 'Live' | 'Completed' | 'Coverage Gap';
@@ -403,7 +438,13 @@ export function buildTimeline(
   const groups = new Map<string, TimelineSiteGroup>();
 
   for (const input of inputs) {
-    const span = resolveTimelineSpan(Date.parse(input.shift.start), Date.parse(input.shift.end), window);
+    // The bar is drawn against the shift's EFFECTIVE end, so a guard who booked on and never booked off
+    // is still on the board the next morning. Every other row is unaffected.
+    const span = resolveTimelineSpan(
+      Date.parse(input.shift.start),
+      effectiveShiftEndMs(input.shift, input.attendance, nowMs),
+      window,
+    );
     if (!span) continue;
 
     const timeZone = siteZoneOf(input);

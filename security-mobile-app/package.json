@@ -51,6 +51,7 @@
     "test:operations-outlook": "node scripts/operations-outlook.spec.cjs",
     "test:operations-visual": "node scripts/operations-visual.spec.cjs",
     "test:operations-consistency": "node scripts/operations-consistency.spec.cjs",
+    "test:live-ops-entry": "node scripts/live-operations-entry.spec.cjs",
     "test:live-ops-policy": "node scripts/live-operations-policy.spec.cjs",
     "test:shift-offer-time": "node scripts/shift-offer-time.spec.cjs"
   },

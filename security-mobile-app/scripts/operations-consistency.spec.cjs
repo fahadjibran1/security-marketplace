@@ -100,14 +100,29 @@ for (const hours of [8, 24]) {
 
 // A shift the timeline does not draw is off the axis, so the same scope does not put it on screen
 // either — the two surfaces agree about absence as well as about content.
-const offAxis = {
-  ...FIXTURE[0],
-  shift: { ...FIXTURE[0].shift, id: 999, start: '2026-09-20T08:00:00.000Z', end: '2026-09-20T16:00:00.000Z' },
-};
+//
+// It has to be a SETTLED shift. A shift someone booked on to and never booked off from has not ended,
+// so its bar runs to now and it is drawn however old its schedule is — that is UAT FIX 01's carry-over
+// rule, and the case below is asserted immediately after so the distinction is on the record.
 const window8 = timeline.resolveTimelineWindow(NOW, 8, LONDON);
+const settledOffAxis = {
+  ...FIXTURE[0],
+  shift: { ...FIXTURE[0].shift, id: 999, status: 'completed', start: '2026-09-20T08:00:00.000Z', end: '2026-09-20T16:00:00.000Z' },
+  attendance: { checkInAt: '2026-09-20T07:58:00.000Z', checkOutAt: '2026-09-20T16:02:00.000Z' },
+};
 check(
-  timeline.timelineRowCount(timeline.buildTimeline([offAxis], window8, NOW)) === 0,
-  'a shift off the axis is drawn as no row',
+  timeline.timelineRowCount(timeline.buildTimeline([settledOffAxis], window8, NOW)) === 0,
+  'a settled shift off the axis is drawn as no row',
+);
+
+const unclosedOffAxis = {
+  ...FIXTURE[0],
+  shift: { ...FIXTURE[0].shift, id: 998, status: 'in_progress', start: '2026-09-20T08:00:00.000Z', end: '2026-09-20T16:00:00.000Z' },
+  attendance: { checkInAt: '2026-09-20T07:58:00.000Z', checkOutAt: null },
+};
+check(
+  timeline.timelineRowCount(timeline.buildTimeline([unclosedOffAxis], window8, NOW)) === 1,
+  'but a shift still booked on IS drawn, however old — the relevance policy holds in_progress with no time bound',
 );
 
 assert.ok(FIXTURE.length > 0, 'the fixture must not be empty');

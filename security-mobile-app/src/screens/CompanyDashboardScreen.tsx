@@ -1453,9 +1453,16 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
           setSelectedSiteId(latestSites[0].id);
         }
 
-        if (!selectedShiftId && latestShifts[0]) {
-          setSelectedShiftId(latestShifts[0].id);
-        }
+        // NOTHING IS SELECTED HERE. This loader used to select `latestShifts[0]` whenever nothing was
+        // selected, which was harmless while the shift detail was an inline card further down the page.
+        // Phase 4A turned that same state into a modal drawer, so the auto-selection became a Shift
+        // Operations drawer that opened over the board on a normal navigation into Live Operations —
+        // and, because this loader also runs on every 15-second refresh, one that reopened itself a few
+        // seconds after the operator closed it. A shift is opened by the operator: a timeline row, a
+        // shift bar, or an Attention item. Never by a data load.
+        //
+        // (`selectedSiteId` above is a different thing and stays: it is the default value of a site
+        // picker, not a surface that appears over the operator's work.)
 
         const sectionLoaders: Partial<Record<CompanySection, SettledLoader[]>> = {
           dashboard: [
@@ -1506,7 +1513,10 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
         setRefreshing(false);
       }
     },
-    [activeSection, runSettledLoaders, selectedShiftId, selectedSiteId, companyMobileLayoutDisabled, canViewCompliance],
+    // `selectedShiftId` is deliberately NOT a dependency any more: the loader no longer reads it, and
+    // keeping it here made this callback — and therefore the whole load — re-run every time the operator
+    // opened or closed a shift.
+    [activeSection, runSettledLoaders, selectedSiteId, companyMobileLayoutDisabled, canViewCompliance],
   );
 
   React.useEffect(() => {
