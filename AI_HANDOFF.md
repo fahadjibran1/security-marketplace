@@ -311,6 +311,25 @@ the rule was extracted and executed instead of the assumption being restated.
 column that is now read as an instant, so a pre-existing BST shift reads one hour later than intended
 until it is corrected. No backfill has been run and no migration was created.
 
+**TECH-DEBT-OPS-03 — a live carry-over shift is visible but never named as overdue for Book Off.**
+OPEN. Found during Phase 4A production UAT, recorded deliberately and NOT implemented in UAT FIX 01.
+
+Since UAT FIX 01 a shift that was booked on and never booked off stays on the Operations Timeline with
+its bar running to now, however far past its scheduled end — which is right, because the relevance
+policy holds `in_progress` with no time bound. What the board does NOT do is say so. A guard thirteen
+hours past their scheduled end with no Book Off reads as an ordinary Live row; the controller has to
+compare the identity column's scheduled window against the clock themselves.
+
+It should surface in Attention Now as **Missing Book Off**, with the overdue duration.
+
+The data is already there and no new state machine is needed: `OperationsProjectionService` publishes
+`missingBookOff` on `ShiftOperationsView`, derived from the same attendance the board reads, and the
+15-minute Book Off grace that decides when to raise it already exists. The work is to turn that flag
+into an urgent item in the existing `urgentOperationalItems` list — one more `UrgentCategory`, one more
+builder beside the ones for incidents and missed Welfare Checks — not to compute anything new.
+
+Do not implement until the current Phase 4A UAT is complete.
+
 ---
 
 ## Company Scoping Rules
