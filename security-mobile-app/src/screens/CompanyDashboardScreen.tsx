@@ -1888,6 +1888,32 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
     return map;
   }, [shifts, uncoveredShifts]);
 
+  /**
+   * A shift's SITE timezone, keyed by shift id.
+   *
+   * Live Operations attention items and activity entries carry only a shiftId, never a site, so they
+   * cannot resolve the site's clock themselves. Phase 1 corrected the stored instants, but that board
+   * still read the UTC digits out of them: an 11:10 BST shift displayed as 10:10 while the Guard app
+   * showed 11:10. The same row's Welfare column was already right, because it went through
+   * operationsPresentation with the timezone.
+   *
+   * DECLARED HERE, ABOVE `urgentOperationalItems`, AND IT HAS TO STAY ABOVE IT. That memo's factory
+   * runs DURING the render and calls `resolveShiftZone` for a Missing Book Off item; when this pair
+   * sat further down the body, the binding was still in its temporal dead zone at that moment and the
+   * whole screen died with "Cannot access 'resolveShiftZone' before initialization" — a white page in
+   * production, and only for companies that actually had a missing_book_off alert. Certified by
+   * `render-initialisation.spec.cjs`.
+   */
+  const shiftSiteIdById = React.useMemo(
+    () => new Map(shifts.map((shift) => [shift.id, shift.site?.id ?? shift.siteId ?? null])),
+    [shifts],
+  );
+
+  const resolveShiftZone = React.useCallback(
+    (shiftId?: number | null) =>
+      resolveSiteZone(shiftId == null ? null : shiftSiteIdById.get(shiftId) ?? null),
+    [resolveSiteZone, shiftSiteIdById],
+  );
   const urgentOperationalItems = React.useMemo(() => {
     const now = operationalNow;
     const items: UrgentOperationalItem[] = [];
@@ -2373,25 +2399,6 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
   );
 
 
-  /**
-   * A shift's SITE timezone, keyed by shift id.
-   *
-   * Live Operations attention items and activity entries carry only a shiftId, never a site, so they
-   * cannot resolve the site's clock themselves. Phase 1 corrected the stored instants, but that board
-   * still read the UTC digits out of them: an 11:10 BST shift displayed as 10:10 while the Guard app
-   * showed 11:10. The same row's Welfare column was already right, because it went through
-   * operationsPresentation with the timezone.
-   */
-  const shiftSiteIdById = React.useMemo(
-    () => new Map(shifts.map((shift) => [shift.id, shift.site?.id ?? shift.siteId ?? null])),
-    [shifts],
-  );
-
-  const resolveShiftZone = React.useCallback(
-    (shiftId?: number | null) =>
-      resolveSiteZone(shiftId == null ? null : shiftSiteIdById.get(shiftId) ?? null),
-    [resolveSiteZone, shiftSiteIdById],
-  );
 
   /**
    * Open the resolve dialog for an Attention item.

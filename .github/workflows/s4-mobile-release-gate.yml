@@ -237,6 +237,19 @@ jobs:
       - name: Verify alert resolution workflow
         run: npm run test:alert-resolution
 
+      # P0 white screen, 8f574bf. That release bundled cleanly, typechecked cleanly, passed every suite,
+      # and then painted a blank page: a useMemo factory reached a const declared four hundred lines
+      # below it, so the binding was still in its temporal dead zone when the factory ran during render.
+      # Static, deliberately — the call sat inside a loop over missing_book_off alerts, so it only threw
+      # for a company that had one. Production did; no fixture did.
+      - name: Verify nothing runs before it is initialised
+        run: npm run test:render-init
+
+      # And the screen is rendered for real, because `expo export` proves the module graph resolves and
+      # executes none of it.
+      - name: Verify the Company Dashboard renders
+        run: npm run test:dashboard-runtime
+
       # ── Screening ─────────────────────────────────────────────────────────────
       # Protects the Guard screening journey and the locked distinction that Company-Managed deployment
       # is NOT S4 Screening. Note it also reads backend screening sources, so it doubles as a contract
