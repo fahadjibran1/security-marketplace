@@ -15,6 +15,13 @@ import { AuditLogService } from '../audit-log/audit-log.service';
 import { NotificationService } from '../notification/notification.service';
 import { NotificationType } from '../notification/entities/notification.entity';
 import { UserRole } from '../user/entities/user.entity';
+import { INCIDENT_RESOLUTION_REASONS } from '../safety-alert/resolution-reasons';
+
+/** The resolution evidence an incident may be closed with. Validated against the incident set. */
+export type IncidentResolutionInput = {
+  resolutionReason?: string;
+  resolutionNote?: string;
+};
 
 @Injectable()
 export class IncidentService {
@@ -113,10 +120,11 @@ export class IncidentService {
     userId: number,
     incidentId: number,
     status: IncidentStatus,
+    resolution?: IncidentResolutionInput,
   ): Promise<Incident> {
     const incident = await this.incidentRepo.findOne({ where: { id: incidentId } });
     if (!incident) throw new NotFoundException('Incident not found');
-    return this.applyStatusUpdate(userId, incident, status);
+    return this.applyStatusUpdate(userId, incident, status, resolution);
   }
 
   async updateStatusForCompany(
@@ -124,6 +132,7 @@ export class IncidentService {
     userRole: UserRole,
     incidentId: number,
     status: IncidentStatus,
+    resolution?: IncidentResolutionInput,
   ): Promise<Incident> {
     const { company } = await this.membershipService.resolveCompanyContext(
       userId, userRole, CompanyPermission.INCIDENTS_MANAGE,
@@ -135,24 +144,59 @@ export class IncidentService {
       throw new BadRequestException('This incident does not belong to the current company');
     }
 
-    return this.applyStatusUpdate(userId, incident, status);
+    return this.applyStatusUpdate(userId, incident, status, resolution);
+  }
+
+  /**
+   * Resolution evidence for an incident, validated before anything is mutated.
+   *
+   * Only meaningful when the incident is actually being resolved or closed: moving one back to
+   * `in_review` is not a resolution and must not demand an explanation for one.
+   */
+  private resolveEvidence(status: IncidentStatus, resolution?: IncidentResolutionInput) {
+    const closing = status === IncidentStatus.RESOLVED || status === IncidentStatus.CLOSED;
+    const reason = resolution?.resolutionReason?.trim() || null;
+    const note = resolution?.resolutionNote?.trim() || null;
+
+    if (!closing) return { reason: null, note: null };
+    if (!reason && !note) return { reason: null, note: null };
+
+    if (reason && !INCIDENT_RESOLUTION_REASONS.includes(reason as never)) {
+      throw new BadRequestException(`"${reason}" is not an incident resolution reason.`);
+    }
+    if (!reason) {
+      throw new BadRequestException('A resolution reason is required to resolve an incident.');
+    }
+    // Always, for every reason: an incident is a thing that happened to someone's site, and "false
+    // alarm" with no explanation is not a record anyone can rely on later.
+    if (!note) {
+      throw new BadRequestException('A resolution note is required to resolve an incident.');
+    }
+
+    return { reason, note };
   }
 
   private async applyStatusUpdate(
     userId: number,
     incident: Incident,
     status: IncidentStatus,
+    resolution?: IncidentResolutionInput,
   ): Promise<Incident> {
     const company = incident.company;
+    const { reason, note } = this.resolveEvidence(status, resolution);
     const beforeData = {
       status: incident.status,
       reviewedAt: incident.reviewedAt,
       reviewedByUserId: incident.reviewedByUserId,
       closedAt: incident.closedAt,
       closedByUserId: incident.closedByUserId,
+      resolutionReason: incident.resolutionReason ?? null,
     };
 
     incident.status = status;
+    // Into the resolution columns, never over `notes` — that is the guard's original report.
+    if (reason) incident.resolutionReason = reason;
+    if (note) incident.resolutionNote = note;
     if (status === IncidentStatus.IN_REVIEW || status === IncidentStatus.RESOLVED) {
       incident.reviewedAt = new Date();
       incident.reviewedByUserId = userId;
@@ -177,6 +221,8 @@ export class IncidentService {
         reviewedByUserId: saved.reviewedByUserId,
         closedAt: saved.closedAt,
         closedByUserId: saved.closedByUserId,
+        resolutionReason: saved.resolutionReason ?? null,
+        resolutionNote: saved.resolutionNote ?? null,
       },
     });
     return saved;

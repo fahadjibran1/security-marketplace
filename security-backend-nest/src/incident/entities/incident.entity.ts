@@ -98,6 +98,17 @@ export class Incident {
   @Column({ type: 'int', nullable: true })
   closedByUserId?: number | null;
 
+  /** Why the incident was resolved, from the incident reason set. A stable machine value. */
+  @Column({ type: 'varchar', length: 64, nullable: true })
+  resolutionReason?: string | null;
+
+  /**
+   * What the resolver wrote. Deliberately NOT `notes`, which is the guard's original report — an
+   * explanation written over the report would destroy the record it exists to explain.
+   */
+  @Column({ type: 'text', nullable: true })
+  resolutionNote?: string | null;
+
   @CreateDateColumn()
   createdAt!: Date;
 

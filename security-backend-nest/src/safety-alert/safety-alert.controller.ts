@@ -7,6 +7,7 @@ import { COMPANY_ADMIN_ROLES, COMPANY_VIEW_ROLES, UserRole } from '../user/entit
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { CreateSafetyAlertDto } from './dto/create-safety-alert.dto';
+import { ResolveSafetyAlertDto } from './dto/resolve-safety-alert.dto';
 
 @Controller('alerts')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -45,13 +46,30 @@ export class SafetyAlertController {
     return this.safetyAlertService.acknowledgeForCompany(user.sub, id);
   }
 
+  /**
+   * The body is optional so an existing caller that closes an alert with no payload keeps working;
+   * when one IS sent, the service validates the reason against the stored alert's own type.
+   */
   @Patch(':id/close')
   @Roles(UserRole.ADMIN, ...COMPANY_ADMIN_ROLES)
-  close(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
+  close(
+    @CurrentUser() user: JwtPayload,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ResolveSafetyAlertDto,
+  ) {
+    const resolution = dto?.resolutionReason || dto?.resolutionNote ? dto : undefined;
+
     if (user.role === UserRole.ADMIN) {
-      return this.safetyAlertService.closeAsAdmin(user.sub, id);
+      return this.safetyAlertService.closeAsAdmin(user.sub, id, resolution);
     }
 
-    return this.safetyAlertService.closeForCompany(user.sub, id);
+    return this.safetyAlertService.closeForCompany(user.sub, id, resolution);
+  }
+
+  /** The reasons this alert may be closed with, so the UI never offers a value the API will refuse. */
+  @Get(':id/resolution-reasons')
+  @Roles(UserRole.ADMIN, ...COMPANY_ADMIN_ROLES)
+  resolutionReasons(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
+    return this.safetyAlertService.resolutionOptions(user.sub, id, user.role === UserRole.ADMIN);
   }
 }

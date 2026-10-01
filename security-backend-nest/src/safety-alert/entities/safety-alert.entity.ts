@@ -117,6 +117,18 @@ export class SafetyAlert {
   @Column({ type: 'int', nullable: true })
   closedByUserId?: number | null;
 
+  /**
+   * Why Control closed this, as a stable machine value from the set for THIS alert type — never the
+   * words that were on the button. NULL on a row closed before resolution evidence was captured, and
+   * on one the system closed itself (a late Book Off answering its own Missing Book Off alert).
+   */
+  @Column({ type: 'varchar', length: 64, nullable: true })
+  resolutionReason?: string | null;
+
+  /** What Control wrote. Separate from `message`, which is the alert as it was raised. */
+  @Column({ type: 'text', nullable: true })
+  resolutionNote?: string | null;
+
   @CreateDateColumn()
   createdAt!: Date;
 

@@ -12,6 +12,8 @@ import { GuardProfileService } from '../guard-profile/guard-profile.service';
 import { ShiftService } from '../shift/shift.service';
 import { CompanyService } from '../company/company.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { ResolveSafetyAlertDto } from './dto/resolve-safety-alert.dto';
+import { alertRequiresResolutionNote, alertResolutionReasons } from './resolution-reasons';
 import { NotificationService } from '../notification/notification.service';
 import { NotificationType } from '../notification/entities/notification.entity';
 import { DailyLog } from '../daily-log/entities/daily-log.entity';
@@ -626,7 +628,11 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
     return this.acknowledge(alert, userId, alert.company);
   }
 
-  async closeForCompany(userId: number, alertId: number): Promise<SafetyAlert> {
+  async closeForCompany(
+    userId: number,
+    alertId: number,
+    resolution?: ResolveSafetyAlertDto,
+  ): Promise<SafetyAlert> {
     const company = await this.companyService.findByUserId(userId);
     if (!company) throw new NotFoundException('Company not found');
 
@@ -636,16 +642,100 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
       throw new BadRequestException('This alert does not belong to the current company');
     }
 
-    return this.close(alert, userId, company);
+    return this.close(alert, userId, company, resolution);
   }
 
-  async closeAsAdmin(userId: number, alertId: number): Promise<SafetyAlert> {
+  async closeAsAdmin(
+    userId: number,
+    alertId: number,
+    resolution?: ResolveSafetyAlertDto,
+  ): Promise<SafetyAlert> {
     const alert = await this.safetyAlertRepo.findOne({ where: { id: alertId } });
     if (!alert) throw new NotFoundException('Safety alert not found');
-    return this.close(alert, userId, alert.company);
+    return this.close(alert, userId, alert.company, resolution);
+  }
+
+  /**
+   * What the resolve dialog may offer for this alert.
+   *
+   * Served from the same functions the close path validates against, so the UI cannot drift into
+   * offering a reason the API would refuse — and `noteRequired` tells it which choices need words
+   * without the client re-deriving the rule.
+   */
+  async resolutionOptions(userId: number, alertId: number, asAdmin: boolean) {
+    const alert = await this.safetyAlertRepo.findOne({ where: { id: alertId } });
+    if (!alert) throw new NotFoundException('Safety alert not found');
+
+    if (!asAdmin) {
+      const company = await this.companyService.findByUserId(userId);
+      if (!company) throw new NotFoundException('Company not found');
+      if (alert.company.id !== company.id) {
+        throw new BadRequestException('This alert does not belong to the current company');
+      }
+    }
+
+    return {
+      alertId: alert.id,
+      type: alert.type,
+      reasons: alertResolutionReasons(alert.type).map((reason) => ({
+        value: reason,
+        noteRequired: alertRequiresResolutionNote(alert.type, reason),
+      })),
+    };
+  }
+
+  /**
+   * The resolution evidence for THIS alert, validated against its own type.
+   *
+   * The type comes from the stored row, never from the request: a caller cannot widen the reason set
+   * by claiming the alert is something it is not. A reason outside the type's set is refused rather
+   * than stored, because a Missing Book Off closed as "network signal issue" is a sentence that is
+   * not true about that record, and no later report can tell it apart from one that is.
+   */
+  private resolveEvidence(alert: SafetyAlert, resolution?: ResolveSafetyAlertDto) {
+    const reason = resolution?.resolutionReason?.trim() || null;
+    const note = resolution?.resolutionNote?.trim() || null;
+
+    const allowed = alertResolutionReasons(alert.type);
+
+    // Manual closure always states a reason. The automatic paths — a late Book Off answering its own
+    // alert, a completed window closing the welfare summary — call `close()` with no resolution at
+    // all and are deliberately unaffected: the system did not form a view, so it records none.
+    if (resolution && !reason) {
+      throw new BadRequestException('A resolution reason is required to close this alert.');
+    }
+
+    if (reason && !allowed.includes(reason)) {
+      throw new BadRequestException(
+        `"${reason}" is not a resolution reason for a ${alert.type} alert.`,
+      );
+    }
+
+    if (reason && alertRequiresResolutionNote(alert.type, reason) && !note) {
+      throw new BadRequestException(
+        reason === 'other'
+          ? 'A resolution note is required when the reason is "other".'
+          : 'A resolution note is required to close this alert.',
+      );
+    }
+
+    return { reason, note };
+  }
+
+  /** The lifecycle state of an alert before a transition, so the audit entry records what changed. */
+  private transitionBefore(alert: SafetyAlert) {
+    return {
+      status: alert.status,
+      acknowledgedAt: alert.acknowledgedAt ?? null,
+      acknowledgedByUserId: alert.acknowledgedByUserId ?? null,
+      closedAt: alert.closedAt ?? null,
+      closedByUserId: alert.closedByUserId ?? null,
+      resolutionReason: alert.resolutionReason ?? null,
+    };
   }
 
   private async acknowledge(alert: SafetyAlert, userId: number, company: SafetyAlert['company']) {
+    const beforeData = this.transitionBefore(alert);
     alert.status = SafetyAlertStatus.ACKNOWLEDGED;
     alert.acknowledgedAt = new Date();
     alert.acknowledgedByUserId = userId;
@@ -656,7 +746,10 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
       action: 'safety_alert.acknowledged',
       entityType: 'safety_alert',
       entityId: saved.id,
+      // The previous status, so the transition itself is auditable rather than only its outcome.
+      beforeData,
       afterData: {
+        type: saved.type,
         status: saved.status,
         acknowledgedAt: saved.acknowledgedAt,
         acknowledgedByUserId: saved.acknowledgedByUserId,
@@ -665,7 +758,17 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
     return saved;
   }
 
-  private async close(alert: SafetyAlert, userId: number, company: SafetyAlert['company']) {
+  private async close(
+    alert: SafetyAlert,
+    userId: number,
+    company: SafetyAlert['company'],
+    resolution?: ResolveSafetyAlertDto,
+  ) {
+    // Validated before anything is mutated: a refused resolution must leave the alert exactly as it
+    // was, still open and still in the queue.
+    const { reason, note } = this.resolveEvidence(alert, resolution);
+    const beforeData = this.transitionBefore(alert);
+
     if (!alert.acknowledgedAt) {
       alert.acknowledgedAt = new Date();
       alert.acknowledgedByUserId = userId;
@@ -673,6 +776,9 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
     alert.status = SafetyAlertStatus.CLOSED;
     alert.closedAt = new Date();
     alert.closedByUserId = userId;
+    if (reason) alert.resolutionReason = reason;
+    if (note) alert.resolutionNote = note;
+
     const saved = await this.safetyAlertRepo.save(alert);
     await this.auditLogService.log({
       company,
@@ -680,10 +786,14 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
       action: 'safety_alert.closed',
       entityType: 'safety_alert',
       entityId: saved.id,
+      beforeData,
       afterData: {
+        type: saved.type,
         status: saved.status,
         closedAt: saved.closedAt,
         closedByUserId: saved.closedByUserId,
+        resolutionReason: saved.resolutionReason ?? null,
+        resolutionNote: saved.resolutionNote ?? null,
       },
     });
     return saved;
