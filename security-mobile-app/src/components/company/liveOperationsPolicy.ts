@@ -219,6 +219,13 @@ export const PERSISTED_ATTENTION_CATEGORIES: readonly string[] = [
   'safety',
   /** Phase 3C: a Guard-raised Site Request. Persisted as safety_alerts.site_request. */
   'site_request',
+  /**
+   * UAT FIX 02: a shift that ended with no Book Off. Persisted as safety_alerts.missing_book_off,
+   * raised by the welfare sweep after its own 15-minute grace and closed either by a real late Book
+   * Off or by Control resolving it. PERSISTED, deliberately — a guard still unaccounted for must not
+   * age out of the queue because the shift stopped being operationally current.
+   */
+  'missing_book_off',
 ];
 
 export function isDerivedAttentionCategory(category: string): boolean {

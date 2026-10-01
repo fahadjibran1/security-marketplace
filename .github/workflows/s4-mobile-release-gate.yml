@@ -230,6 +230,13 @@ jobs:
       - name: Verify Live Operations entry and live carry-over
         run: npm run test:live-ops-entry
 
+      # UAT FIX 02. Attention Now identified problems but gave Control no way to handle one. Certifies
+      # that the resolve dialog offers exactly the reasons the API accepts, that the stored machine
+      # value and the displayed words stay separate, that a Missing Book Off is named and timed rather
+      # than lumped into generic safety, and that the Welfare terminology cleanup renamed no stored enum.
+      - name: Verify alert resolution workflow
+        run: npm run test:alert-resolution
+
       # ── Screening ─────────────────────────────────────────────────────────────
       # Protects the Guard screening journey and the locked distinction that Company-Managed deployment
       # is NOT S4 Screening. Note it also reads backend screening sources, so it doubles as a contract

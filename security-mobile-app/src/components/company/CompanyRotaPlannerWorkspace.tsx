@@ -1301,7 +1301,7 @@ function CreateSlotBody({
           />
         </FormField>
 
-        <SectionLabel label="Check Calls" spaced />
+        <SectionLabel label="Welfare Checks" spaced />
 
         <FormField label="Interval (minutes)" error={errors.checkCall}
           helperText="Leave blank to use the site default.">
@@ -1480,7 +1480,7 @@ function SlotDetailBody({
         )}
 
         {/* Check calls */}
-        <SectionLabel label="Check calls" spaced />
+        <SectionLabel label="Welfare Checks" spaced />
         {editMode ? (
           <FormField label="Interval (minutes)" required>
             <FieldInput

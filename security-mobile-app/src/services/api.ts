@@ -1119,10 +1119,20 @@ export function listCompanyIncidents() {
   return request<Incident[]>('/incidents/company');
 }
 
-export function updateIncidentStatus(id: number, status: string) {
+/**
+ * Resolution evidence rides with the status change.
+ *
+ * `resolutionNote` deliberately, not the legacy `notes` field: that one was accepted by the API and
+ * silently discarded until UAT FIX 02, and survives server-side only as a compatibility alias.
+ */
+export function updateIncidentStatus(
+  id: number,
+  status: string,
+  resolution?: { resolutionReason?: string; resolutionNote?: string },
+) {
   return request<Incident>(`/incidents/${id}/status`, {
     method: 'PATCH',
-    body: JSON.stringify({ status }),
+    body: JSON.stringify({ status, ...(resolution ?? {}) }),
   });
 }
 
@@ -1147,9 +1157,19 @@ export function acknowledgeSafetyAlert(id: number) {
   });
 }
 
-export function closeSafetyAlert(id: number) {
+/**
+ * Close an alert, with the reason and note that explain why.
+ *
+ * The body is optional so the automatic and legacy paths still close an alert making no claim about
+ * why. When a reason IS sent, the API validates it against the stored alert's own type.
+ */
+export function closeSafetyAlert(
+  id: number,
+  resolution?: { resolutionReason?: string; resolutionNote?: string },
+) {
   return request<SafetyAlert>(`/alerts/${id}/close`, {
     method: 'PATCH',
+    body: JSON.stringify(resolution ?? {}),
   });
 }
 

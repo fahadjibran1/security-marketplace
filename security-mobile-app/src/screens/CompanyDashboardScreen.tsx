@@ -8,6 +8,8 @@ import { CompanyClientsWorkspace, type ClientFormState, CLIENT_FORM_EMPTY } from
 import { CompanyRotaPlannerWorkspace, type PlannerWeekDay, type FlatSlotCell, type LegacyShiftRow } from '../components/company/CompanyRotaPlannerWorkspace';
 import { CompanySitesWorkspace, type SiteFormState, SITE_FORM_EMPTY } from '../components/company/CompanySitesWorkspace';
 import { CompanyLiveOperationsWorkspace } from '../components/company/CompanyLiveOperationsWorkspace';
+import { CompanyResolveAlertDrawer, type ResolveTarget } from '../components/company/CompanyResolveAlertDrawer';
+import { alertTypeLabel, missingBookOffSummary, resolutionFamilyForAlert } from '../components/company/alertResolution';
 import type { LiveBoardRow, CloseOutSummary, SelectedShiftContext } from '../components/company/CompanyLiveOperationsWorkspace';
 import { CompanyShiftOffersWorkspace, type ShiftOffersFeedback } from '../components/company/CompanyShiftOffersWorkspace';
 import { isWelfareEvidence } from '../components/shifts/welfareEvidence';
@@ -34,6 +36,7 @@ import { CompanyComplianceWorkspace } from '../components/company/CompanyComplia
 import { resolveCompliancePermissions } from '../components/company/compliance-model';
 import {
   DEFAULT_SITE_TIME_ZONE,
+  formatInstantDateTime,
   formatInstantTime,
   formatSiteDateInput,
   resolveDisplayZone,
@@ -266,6 +269,8 @@ type UrgentOperationalItem = {
     | 'safety'
     /** A Guard-raised non-emergency need at the site: fuel, log books, equipment, access, lighting. */
     | 'site_request'
+    /** A shift that ended with no Book Off. Its own category so it is never read as generic safety. */
+    | 'missing_book_off'
     | 'upcoming_risk'
     | 'missed_shift'
     | 'uncovered_shift';
@@ -690,6 +695,8 @@ function getAttentionSeverity(category: UrgentOperationalItem['category']): 'red
     case 'uncovered_shift':
     case 'rejected_offer':
     case 'safety':
+    // A guard unaccounted for after their shift ended is a welfare question, not an admin tidy-up.
+    case 'missing_book_off':
       return 'amber';
     // A Site Request is a need, not a risk — it falls through to blue with the informational items.
     default:
@@ -704,7 +711,8 @@ function getAttentionBadgeLabel(category: UrgentOperationalItem['category']): st
     case 'missed_shift':      return 'Missed shift';
     case 'late_start':        return 'Late start';
     case 'uncovered_shift':   return 'Coverage gap';
-    case 'missed_check_call': return 'Missed check';
+    case 'missed_check_call': return 'Missed Welfare Check';
+    case 'missing_book_off':  return 'Missing Book Off';
     case 'rejected_offer':    return 'Offer rejected';
     case 'safety':            return 'Safety';
     case 'site_request':      return 'Site Request';
@@ -1324,6 +1332,16 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
     message: string;
   } | null>(null);
   const [urgentActionItemId, setUrgentActionItemId] = React.useState<string | null>(null);
+  /**
+   * The item the resolve dialog is open for.
+   *
+   * Resolving is never a one-click action: it needs a reason from the item's own family and, for
+   * everything a guard's safety could depend on, a note. The dialog holds the draft; the record is
+   * only touched when it is submitted and accepted.
+   */
+  const [resolveTarget, setResolveTarget] = React.useState<ResolveTarget | null>(null);
+  const [resolvingItem, setResolvingItem] = React.useState(false);
+  const [resolveError, setResolveError] = React.useState<string | null>(null);
   const [managementActions, setManagementActions] = React.useState<ManagementActionItem[]>([]);
   const [closeOutNotesDraft, setCloseOutNotesDraft] = React.useState('');
   const [savingCloseOutNotes, setSavingCloseOutNotes] = React.useState(false);
@@ -1982,8 +2000,8 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
         siteName: alert.shift?.site?.name || alert.shift?.siteName || 'Unknown site',
         guardName: alert.guard?.fullName || 'Unknown guard',
         category: 'missed_check_call',
-        issueType: 'Missed or overdue check call',
-        message: alert.message || 'A scheduled check call needs attention.',
+        issueType: 'Missed Welfare Check',
+        message: alert.message || 'A scheduled Welfare Check needs attention.',
         occurredAt: alert.createdAt,
       });
     });
@@ -2021,13 +2039,37 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
       });
     });
 
+    // A shift that ended with no Book Off, as its own item. It reached this queue before, but inside
+    // the generic "Safety / welfare needs attention" bucket — a controller could not tell it from a
+    // site request without opening it, and it never said how overdue the guard was.
     outstandingAlerts
-      // Every other persisted safety alert. missing_book_off was written by the backend and shown
-      // nowhere: it was only ever visible on its own board row, so it vanished with the row once the
-      // shift stopped being current. site_request is handled separately below, because a control room
-      // reading "Safety / welfare needs attention" against a request for log books learns nothing.
+      .filter((alert) => (alert.type || '').toLowerCase() === 'missing_book_off')
+      .forEach((alert) => {
+        const zone = resolveShiftZone(alert.shift?.id ?? null);
+        items.push({
+          id: `attention-${alert.id}`,
+          alertId: alert.id,
+          shiftId: alert.shift?.id ?? null,
+          status: alert.status,
+          siteName: alert.shift?.site?.name || alert.shift?.siteName || 'Unknown site',
+          guardName: alert.guard?.fullName || 'Unknown guard',
+          category: 'missing_book_off',
+          issueType: 'Missing Book Off',
+          // Counted from the SCHEDULED END, not from when the alert was raised: the grace decides
+          // when to raise it, but "how overdue" means how long the guard has been unaccounted for.
+          message: alert.shift?.end
+            ? missingBookOffSummary(alert.shift.end, zone, operationalNow.getTime())
+            : alert.message || 'No Book Off recorded.',
+          occurredAt: alert.createdAt,
+        });
+      });
+
+    outstandingAlerts
+      // Every other persisted safety alert. site_request is handled separately below, because a
+      // control room reading "Safety / welfare needs attention" against a request for log books
+      // learns nothing.
       .filter((alert) =>
-        ['welfare', 'late_checkin', 'missing_book_off', 'other'].includes((alert.type || '').toLowerCase()),
+        ['welfare', 'late_checkin', 'other'].includes((alert.type || '').toLowerCase()),
       )
       .forEach((alert) => {
       items.push({
@@ -2350,6 +2392,59 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
       resolveSiteZone(shiftId == null ? null : shiftSiteIdById.get(shiftId) ?? null),
     [resolveSiteZone, shiftSiteIdById],
   );
+
+  /**
+   * Open the resolve dialog for an Attention item.
+   *
+   * The heading facts come from the item and its shift, so a controller clearing a queue knows
+   * exactly what they are closing before they say why.
+   */
+  const openResolveForAlert = React.useCallback((item: UrgentOperationalItem) => {
+    if (!item.alertId) return;
+    const zone = resolveShiftZone(item.shiftId);
+    const shift = item.shiftId ? shifts.find((candidate) => candidate.id === item.shiftId) : null;
+    const alert = alerts.find((candidate) => candidate.id === item.alertId);
+
+    setResolveError(null);
+    setResolveTarget({
+      kind: 'alert',
+      id: item.alertId,
+      family: resolutionFamilyForAlert(alert?.type),
+      title: alertTypeLabel(alert?.type) || item.issueType,
+      siteName: item.siteName,
+      guardName: item.guardName,
+      shiftLabel: shift
+        ? `#${shift.id} · ${formatTimeLabel(shift.start, zone)}–${formatTimeLabel(shift.end, zone)}`
+        : 'Not linked to a shift',
+      raisedLabel: formatInstantDateTime(item.occurredAt, zone),
+    });
+  }, [alerts, shifts, resolveShiftZone]);
+
+  /** Submit the dialog: write the evidence, then let the queue reload without it. */
+  const handleSubmitResolution = React.useCallback(async (
+    resolution: { resolutionReason: string; resolutionNote?: string },
+  ) => {
+    if (!resolveTarget) return;
+    setResolvingItem(true);
+    setResolveError(null);
+    try {
+      if (resolveTarget.kind === 'alert') {
+        await closeSafetyAlert(resolveTarget.id, resolution);
+      } else {
+        await updateIncidentStatus(resolveTarget.id, 'resolved', resolution);
+      }
+      setResolveTarget(null);
+      await loadData(true);
+      setLiveOperationsFeedback({
+        tone: 'success',
+        message: `${resolveTarget.title} resolved.`,
+      });
+    } catch (resolveFailure) {
+      setResolveError(formatApiErrorMessage(resolveFailure, 'Unable to resolve this item right now.'));
+    } finally {
+      setResolvingItem(false);
+    }
+  }, [resolveTarget, loadData]);
 
   const plannerWeekDays = React.useMemo(() => buildWeekDays(plannerWeekCommencing), [plannerWeekCommencing]);
 
@@ -3076,7 +3171,12 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
       return;
     }
 
-    if (item.category === 'panic' || item.category === 'missed_check_call' || item.category === 'safety') {
+    if (
+      item.category === 'panic'
+      || item.category === 'missed_check_call'
+      || item.category === 'safety'
+      || item.category === 'missing_book_off'
+    ) {
       setActiveSection('alerts');
       setLiveOperationsFeedback({
         tone: 'success',
@@ -3197,7 +3297,11 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
       if (action === 'acknowledge') {
         await acknowledgeSafetyAlert(item.alertId);
       } else {
-        await closeSafetyAlert(item.alertId);
+        // Resolving requires a reason and usually a note, so it is never a one-click action: the
+        // dialog collects the evidence and calls the API itself.
+        openResolveForAlert(item);
+        setUrgentActionItemId(null);
+        return;
       }
       await loadData(true);
       recordManagementAction({
@@ -3206,21 +3310,21 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
         guardName: item.guardName,
         itemType:
           item.category === 'panic'
-            ? 'Panic alert'
+            ? 'Emergency alert'
             : item.category === 'missed_check_call'
-              ? 'Missed check call'
+              ? 'Missed Welfare Check'
               : 'Safety alert',
         actionTaken:
           action === 'acknowledge'
             ? item.category === 'panic'
-              ? 'Panic alert escalated'
+              ? 'Emergency alert escalated'
               : item.category === 'missed_check_call'
-                ? 'Missed check call followed up'
+                ? 'Missed Welfare Check acknowledged'
                 : 'Safety alert acknowledged'
             : item.category === 'panic'
-              ? 'Panic alert resolved'
+              ? 'Emergency alert resolved'
               : item.category === 'missed_check_call'
-                ? 'Missed check call closed'
+                ? 'Missed Welfare Check resolved'
                 : 'Safety alert closed',
       });
       setLiveOperationsFeedback({
@@ -3229,16 +3333,16 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
           action === 'acknowledge'
             ? `${
                 item.category === 'panic'
-                  ? 'Panic alert'
+                  ? 'Emergency alert'
                   : item.category === 'missed_check_call'
-                    ? 'Missed check call'
+                    ? 'Missed Welfare Check'
                     : 'Safety alert'
               } was marked for follow-up.`
             : `${
                 item.category === 'panic'
-                  ? 'Panic alert'
+                  ? 'Emergency alert'
                   : item.category === 'missed_check_call'
-                    ? 'Missed check call'
+                    ? 'Missed Welfare Check'
                     : 'Safety alert'
               } was closed successfully.`,
       });
@@ -3567,7 +3671,7 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
           tone: (openIncidents.length > 0 ? 'attention' : 'good') as KpiTone,
         },
         {
-          label: 'Missed Check Calls',
+          label: 'Missed Welfare Checks',
           value: String(missedCheckCalls.length),
           icon: '📞',
           tone: (missedCheckCalls.length > 0 ? 'warning' : 'good') as KpiTone,
@@ -4237,6 +4341,16 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
         exporting={exportingOperations}
         onBoardLayout={setLiveBoardAnchorY}
         onDetailLayout={setShiftDetailAnchorY}
+      />
+
+      {/* Resolving is deliberately not a one-click action: the reason and, for anything a guard's
+          safety could depend on, the note are collected before the record is touched. */}
+      <CompanyResolveAlertDrawer
+        target={resolveTarget}
+        submitting={resolvingItem}
+        error={resolveError}
+        onCancel={() => { setResolveTarget(null); setResolveError(null); }}
+        onSubmit={handleSubmitResolution}
       />
 
     </View>
@@ -6589,10 +6703,10 @@ const LIVE_SHIFT_BOARD_COLUMN_LABELS = [
   'Delay',
   'Book On',
   'Book Off',
-  'Last Check Call',
+  'Last Welfare Check',
   'Logs',
   'Incidents',
-  'Panic / Welfare',
+  'Emergency / Welfare',
   'Timesheet',
   'Action',
 ] as const;

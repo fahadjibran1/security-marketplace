@@ -707,7 +707,7 @@ export function CompanySitesWorkspace({
                 </Text>
               </View>
               <View style={styles.qvRow}>
-                <Text style={styles.qvLabel}>Check calls</Text>
+                <Text style={styles.qvLabel}>Welfare Checks</Text>
                 <Text style={styles.qvValue}>{fmtCheckCall(qv.welfareCheckIntervalMinutes)}</Text>
               </View>
             </View>

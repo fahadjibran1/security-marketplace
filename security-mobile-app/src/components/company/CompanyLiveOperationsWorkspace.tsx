@@ -59,6 +59,8 @@ type UrgentCategory =
   | 'safety'
   /** A Guard-raised non-emergency need at the site: fuel, log books, equipment, access, lighting. */
   | 'site_request'
+  /** A shift that ended with no Book Off. Its own category so it is never read as generic safety. */
+  | 'missing_book_off'
   | 'upcoming_risk'
   | 'missed_shift'
   | 'uncovered_shift';
@@ -325,6 +327,7 @@ function getAttentionLabel(category: UrgentCategory): string {
     case 'site_request':     return 'Site Request';
     case 'upcoming_risk':    return 'Risk shift';
     case 'missed_shift':     return 'Missed';
+    case 'missing_book_off': return 'Missing Book Off';
     case 'uncovered_shift':  return 'Coverage gap';
     default:                 return 'Alert';
   }
@@ -886,6 +889,9 @@ function AttentionItem({
   };
 
   const primary = getPrimaryAttentionAction(item, busy, onOpenUrgentDetail, onUrgentAlertFollowUp);
+  const acknowledged = (item.status || '').trim().toLowerCase() === 'acknowledged';
+  /** Only a durable record can be acknowledged; a derived item has nothing to write the ack onto. */
+  const canAcknowledge = Boolean(item.alertId) || Boolean(item.incidentId);
 
   return (
     <Pressable
@@ -903,9 +909,36 @@ function AttentionItem({
       </View>
       {/* Meta */}
       <Text style={styles.attentionMeta} numberOfLines={1}>{item.siteName} · {item.guardName}</Text>
-      {/* Single primary action */}
+      {item.message ? (
+        <Text style={styles.attentionDetail} numberOfLines={2}>{item.message}</Text>
+      ) : null}
+
+      {/* The lifecycle, in a word. Acknowledged must not be a shade of a colour: a controller
+          scanning the queue has to see that someone already has this one. */}
+      {acknowledged ? (
+        <View style={styles.attentionState}>
+          <Text style={styles.attentionStateMark}>✓</Text>
+          <Text style={styles.attentionStateText}>Acknowledged</Text>
+        </View>
+      ) : null}
+
+      {/* Open: Acknowledge and Resolve. Acknowledged: Resolve only — there is nothing left to
+          acknowledge, and offering it again would invite a second pointless write. */}
       <View style={styles.attentionActions}>
+        {canAcknowledge && !acknowledged ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Acknowledge"
+            style={[styles.aBtn, styles.aBtnSecondary, IS_WEB ? (WEB_PTR as any) : null]}
+            onPress={() => { void onUrgentAlertFollowUp(item, 'acknowledge'); }}
+            disabled={busy}
+          >
+            <Text style={styles.aBtnSecondaryText}>Acknowledge</Text>
+          </Pressable>
+        ) : null}
         <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={primary.label}
           style={[styles.aBtn, styles.aBtnPrimary, IS_WEB ? (WEB_PTR as any) : null]}
           onPress={primary.onPress}
           disabled={primary.disabled}
@@ -1494,7 +1527,7 @@ function DetailPanelContent({
           <Text style={styles.detailMeta}>
             {shift.guard?.fullName || 'No guard assigned'} · {fmtDate(shift.start, timeZone)} · {fmtTime(shift.start, timeZone)}–{fmtTime(shift.end, timeZone)}
           </Text>
-          <Text style={styles.detailMeta}>Check calls every {shift.checkCallIntervalMinutes || 60} min</Text>
+          <Text style={styles.detailMeta}>Welfare Check every {shift.checkCallIntervalMinutes || 60} min</Text>
         </View>
         <View style={[styles.detailBadge, { borderColor: badge.color, backgroundColor: `${badge.color}14` }]}>
           <Text style={[styles.detailBadgeText, { color: badge.color }]}>{badge.icon} {badge.label}</Text>
@@ -1539,7 +1572,7 @@ function DetailPanelContent({
             <Text style={styles.detailLine}>Scheduled: {fmtDateTime(closeOutSummary.scheduledStart, timeZone)} → {fmtDateTime(closeOutSummary.scheduledEnd, timeZone)}</Text>
             <Text style={styles.detailLine}>Actual: {fmtDateTime(closeOutSummary.actualCheckInAt, timeZone)} → {fmtDateTime(closeOutSummary.actualCheckOutAt, timeZone)}</Text>
             <Text style={styles.detailLine}>Logs: {closeOutSummary.logsCount} · Incidents: {closeOutSummary.incidentsCount} · Safety: {closeOutSummary.safetyEventsCount}</Text>
-            <Text style={styles.detailLine}>Check calls: {closeOutSummary.completedCheckCalls} complete / {closeOutSummary.missedCheckCalls} missed</Text>
+            <Text style={styles.detailLine}>Welfare Checks: {closeOutSummary.completedCheckCalls} complete / {closeOutSummary.missedCheckCalls} missed</Text>
             <Text style={styles.detailLine}>Timesheet: {fmtStatus(closeOutSummary.timesheetStatus)}</Text>
             <View style={styles.detailCloseOutNotes}>
               <Text style={styles.detailSubLabel}>Close-out notes</Text>
@@ -2169,6 +2202,25 @@ const styles = StyleSheet.create({
   attentionItemLast: {
     borderBottomWidth: 0,
   },
+  attentionDetail: {
+    fontSize: 11,
+    color: colors.textSecondary,
+    marginTop: 1,
+  },
+  attentionState: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 4,
+  },
+  attentionStateMark: { fontSize: 11, fontWeight: '800', color: colors.success },
+  attentionStateText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: colors.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+  },
   attentionItemHead: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2225,6 +2277,16 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '600',
     color: colors.textOnBrand,
+  },
+  aBtnSecondary: {
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.fieldBorder,
+  },
+  aBtnSecondaryText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: colors.textSecondary,
   },
   attentionEmpty: {
     padding: spacing.lg,
