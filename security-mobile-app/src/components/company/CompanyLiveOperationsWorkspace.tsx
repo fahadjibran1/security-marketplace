@@ -27,6 +27,7 @@ import {
   type OutlookShiftInput,
 } from './operationsOutlook';
 import { buildTodaySoFar, type TodaySoFar } from './operationsSummary';
+import { incidentAttentionActions } from './incidentLifecycle';
 import { Drawer } from '../ui/Drawer';
 import { colors, radii, spacing } from '../../theme';
 import { DailyLog, Incident, SafetyAlert, Shift, Timesheet } from '../../types/models';
@@ -203,6 +204,8 @@ export type CompanyLiveOperationsWorkspaceProps = {
   onOpenUrgentShift: (item: UrgentOperationalItem) => void;
   onUrgentIncidentFollowUp: (item: UrgentOperationalItem, status: 'in_review' | 'resolved') => Promise<void>;
   onUrgentAlertFollowUp: (item: UrgentOperationalItem, action: 'acknowledge' | 'close') => Promise<void>;
+  /** Open the resolution dialog for an INCIDENT. Never the safety-alert path. */
+  onOpenIncidentResolution: (item: UrgentOperationalItem) => void;
   onSaveCloseOutNotes: () => void;
   onOpenCoverage: (context?: { uncoveredOnly?: boolean; shiftId?: number }) => void;
   // Layout anchors
@@ -827,14 +830,29 @@ function getPrimaryAttentionAction(
   busy: boolean,
   onOpenUrgentDetail: (i: UrgentOperationalItem) => void,
   onUrgentAlertFollowUp: (i: UrgentOperationalItem, action: 'acknowledge' | 'close') => Promise<void>,
+  onOpenIncidentResolution: (i: UrgentOperationalItem) => void,
 ): { label: string; onPress: () => void; disabled: boolean } {
-  const statusLower = (item.status || '').toLowerCase();
   if (item.category === 'uncovered_shift') {
     return { label: 'Manage coverage', onPress: () => onOpenUrgentDetail(item), disabled: false };
   }
+  /**
+   * An incident resolves where it is, through the INCIDENT path.
+   *
+   * This branch used to route to `onOpenUrgentDetail`, which only ran `setActiveSection('incidents')`
+   * — so a button labelled "View & Resolve" navigated to the register and offered no way to resolve
+   * anything. It now opens the resolution dialog for this incident, and the label follows the real
+   * lifecycle rather than being decided here.
+   */
   if (item.category === 'incident') {
-    const label = ['open', 'in_review'].includes(statusLower) ? 'View & Resolve' : 'View Incident';
-    return { label, onPress: () => onOpenUrgentDetail(item), disabled: false };
+    const { resolveLabel } = incidentAttentionActions(item.status);
+    if (!resolveLabel) {
+      return { label: 'View Incident', onPress: () => onOpenUrgentDetail(item), disabled: false };
+    }
+    return {
+      label: busy ? '…' : resolveLabel,
+      onPress: () => onOpenIncidentResolution(item),
+      disabled: busy,
+    };
   }
   if (item.category === 'panic') {
     const label = item.status === 'acknowledged' ? (busy ? '…' : 'Resolve Alert') : 'View Alert';
@@ -880,6 +898,7 @@ function AttentionItem({
   onOpenUrgentShift,
   onUrgentIncidentFollowUp,
   onUrgentAlertFollowUp,
+  onOpenIncidentResolution,
 }: {
   item: UrgentOperationalItem;
   isLast: boolean;
@@ -890,6 +909,8 @@ function AttentionItem({
   onOpenUrgentShift: (item: UrgentOperationalItem) => void;
   onUrgentIncidentFollowUp: (item: UrgentOperationalItem, status: 'in_review' | 'resolved') => Promise<void>;
   onUrgentAlertFollowUp: (item: UrgentOperationalItem, action: 'acknowledge' | 'close') => Promise<void>;
+  /** Open the resolution dialog for an INCIDENT. Never the safety-alert path. */
+  onOpenIncidentResolution: (item: UrgentOperationalItem) => void;
 }) {
   const sev = getAttentionSeverity(item.category);
   const sevColor = sev === 'red' ? colors.danger : sev === 'amber' ? colors.warning : colors.info;
@@ -904,10 +925,24 @@ function AttentionItem({
     }
   };
 
-  const primary = getPrimaryAttentionAction(item, busy, onOpenUrgentDetail, onUrgentAlertFollowUp);
+  const primary = getPrimaryAttentionAction(
+    item, busy, onOpenUrgentDetail, onUrgentAlertFollowUp, onOpenIncidentResolution,
+  );
   const acknowledged = (item.status || '').trim().toLowerCase() === 'acknowledged';
-  /** Only a durable record can be acknowledged; a derived item has nothing to write the ack onto. */
-  const canAcknowledge = Boolean(item.alertId) || Boolean(item.incidentId);
+  const isIncident = item.category === 'incident';
+  /**
+   * Only a SAFETY ALERT can be acknowledged.
+   *
+   * This condition used to be `item.alertId || item.incidentId`, so the generic Acknowledge button
+   * rendered on incidents — and it is wired to the safety-alert handler, which opens by rejecting
+   * anything without an `alertId`. An incident carries `incidentId` and never `alertId`, so every
+   * press failed with "No safety alert is linked to this urgent item". An incident is not a safety
+   * alert and gets its own transition below.
+   */
+  const canAcknowledge = !isIncident && Boolean(item.alertId);
+  const incidentActions = isIncident
+    ? incidentAttentionActions(item.status)
+    : { canMarkInReview: false, resolveLabel: null, stateLabel: null };
 
   return (
     <Pressable
@@ -931,16 +966,36 @@ function AttentionItem({
 
       {/* The lifecycle, in a word. Acknowledged must not be a shade of a colour: a controller
           scanning the queue has to see that someone already has this one. */}
-      {acknowledged ? (
+      {acknowledged && !isIncident ? (
         <View style={styles.attentionState}>
           <Text style={styles.attentionStateMark}>✓</Text>
           <Text style={styles.attentionStateText}>Acknowledged</Text>
         </View>
       ) : null}
 
+      {/* An incident states its own lifecycle word, which is never "Acknowledged". */}
+      {incidentActions.stateLabel ? (
+        <View style={styles.attentionState}>
+          <Text style={styles.attentionStateMark}>✓</Text>
+          <Text style={styles.attentionStateText}>{incidentActions.stateLabel}</Text>
+        </View>
+      ) : null}
+
       {/* Open: Acknowledge and Resolve. Acknowledged: Resolve only — there is nothing left to
           acknowledge, and offering it again would invite a second pointless write. */}
       <View style={styles.attentionActions}>
+        {/* An incident's real first transition is open → in_review, so the button says that. */}
+        {incidentActions.canMarkInReview ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Mark In Review"
+            style={[styles.aBtn, styles.aBtnSecondary, IS_WEB ? (WEB_PTR as any) : null]}
+            onPress={() => { void onUrgentIncidentFollowUp(item, 'in_review'); }}
+            disabled={busy}
+          >
+            <Text style={styles.aBtnSecondaryText}>{busy ? '…' : 'Mark In Review'}</Text>
+          </Pressable>
+        ) : null}
         {canAcknowledge && !acknowledged ? (
           <Pressable
             accessibilityRole="button"
@@ -977,6 +1032,7 @@ export function LiveOpsAttentionRail({
   onOpenUrgentShift,
   onUrgentIncidentFollowUp,
   onUrgentAlertFollowUp,
+  onOpenIncidentResolution,
   nextUp,
 }: {
   items: UrgentOperationalItem[];
@@ -987,6 +1043,8 @@ export function LiveOpsAttentionRail({
   onOpenUrgentShift: (item: UrgentOperationalItem) => void;
   onUrgentIncidentFollowUp: (item: UrgentOperationalItem, status: 'in_review' | 'resolved') => Promise<void>;
   onUrgentAlertFollowUp: (item: UrgentOperationalItem, action: 'acknowledge' | 'close') => Promise<void>;
+  /** Open the resolution dialog for an INCIDENT. Never the safety-alert path. */
+  onOpenIncidentResolution: (item: UrgentOperationalItem) => void;
   nextUp: NextUpEvent[];
 }) {
   const total = items.length;
@@ -1030,6 +1088,7 @@ export function LiveOpsAttentionRail({
                 onOpenUrgentShift={onOpenUrgentShift}
                 onUrgentIncidentFollowUp={onUrgentIncidentFollowUp}
                 onUrgentAlertFollowUp={onUrgentAlertFollowUp}
+                onOpenIncidentResolution={onOpenIncidentResolution}
               />
             </Fragment>
           ))
@@ -1267,6 +1326,7 @@ export function CompanyLiveOperationsWorkspace({
   onOpenUrgentShift,
   onUrgentIncidentFollowUp,
   onUrgentAlertFollowUp,
+  onOpenIncidentResolution,
   onSaveCloseOutNotes,
   onOpenCoverage,
   operationalNowMs,
@@ -1460,6 +1520,7 @@ export function CompanyLiveOperationsWorkspace({
           onOpenUrgentShift={onOpenUrgentShift}
           onUrgentIncidentFollowUp={onUrgentIncidentFollowUp}
           onUrgentAlertFollowUp={onUrgentAlertFollowUp}
+          onOpenIncidentResolution={onOpenIncidentResolution}
           nextUp={nextUp}
         />
       </View>

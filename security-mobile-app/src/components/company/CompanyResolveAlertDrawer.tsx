@@ -25,6 +25,23 @@ export type ResolveTarget = {
   guardName: string;
   shiftLabel: string;
   raisedLabel: string;
+  /**
+   * The record's own identity, e.g. "Incident #4".
+   *
+   * An incident is a numbered thing a client will ask about by number, so the dialog states which
+   * one it is rather than leaving the controller to infer it from the title.
+   */
+  reference?: string;
+  severityLabel?: string;
+  /** Where the record currently sits in its lifecycle: "Open", "In Review". */
+  statusLabel?: string;
+  /**
+   * What was originally reported, verbatim.
+   *
+   * Shown, never edited, and never written over: the resolution note is a separate field precisely
+   * so the guard's own account of what happened survives being resolved.
+   */
+  reportText?: string;
 };
 
 /**
@@ -77,7 +94,7 @@ export function CompanyResolveAlertDrawer({
     <Drawer
       visible
       onClose={onCancel}
-      title="Resolve"
+      title={target.kind === 'incident' ? 'Resolve Incident' : 'Resolve'}
       subtitle={target.title}
       width={560}
       footer={
@@ -102,20 +119,35 @@ export function CompanyResolveAlertDrawer({
         </View>
       }
     >
-      {/* What is being closed. */}
+      {/* What is being closed. Rows the caller did not supply are omitted, not shown empty. */}
       <View style={styles.facts}>
         {([
-          ['Site', target.siteName],
-          ['Guard', target.guardName],
-          ['Shift', target.shiftLabel],
-          ['Raised', target.raisedLabel],
-        ] as const).map(([label, value]) => (
-          <View key={label} style={styles.factRow}>
-            <Text style={styles.factLabel}>{label}</Text>
-            <Text style={styles.factValue} numberOfLines={2}>{value || '—'}</Text>
-          </View>
-        ))}
+          [target.kind === 'incident' ? 'Incident' : 'Reference', target.reference, false],
+          ['Site', target.siteName, true],
+          ['Guard', target.guardName, true],
+          ['Shift', target.shiftLabel, true],
+          ['Severity', target.severityLabel, false],
+          ['Raised', target.raisedLabel, true],
+          ['Status', target.statusLabel, false],
+        ] as const)
+          .filter(([, value, always]) => always || Boolean(value))
+          .map(([label, value]) => (
+            <View key={label} style={styles.factRow}>
+              <Text style={styles.factLabel}>{label}</Text>
+              <Text style={styles.factValue} numberOfLines={2}>{value || '—'}</Text>
+            </View>
+          ))}
       </View>
+
+      {/* The original report, read before it is resolved. */}
+      {target.reportText ? (
+        <>
+          <Text style={styles.sectionLabel}>Reported</Text>
+          <View style={styles.report}>
+            <Text style={styles.reportText}>{target.reportText}</Text>
+          </View>
+        </>
+      ) : null}
 
       <Text style={styles.sectionLabel}>Resolution reason</Text>
       <View style={styles.reasonList}>
@@ -166,8 +198,9 @@ export function CompanyResolveAlertDrawer({
       {error ? <Text style={styles.problem}>{error}</Text> : null}
 
       <Text style={styles.footnote}>
-        This records how the alert was resolved. It does not change attendance, Welfare evidence or the
-        shift itself.
+        {target.kind === 'incident'
+          ? 'This records how the incident was resolved, beside the original report rather than over it. It does not change attendance, Welfare evidence or the shift itself.'
+          : 'This records how the alert was resolved. It does not change attendance, Welfare evidence or the shift itself.'}
       </Text>
     </Drawer>
   );
@@ -195,6 +228,16 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
     marginTop: spacing.sm,
   },
+  report: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.sm,
+    backgroundColor: colors.surfaceSubtle,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  reportText: { fontSize: 12, color: colors.textPrimary, lineHeight: 18 },
+
   reasonList: { gap: 2 },
   reason: {
     flexDirection: 'row',

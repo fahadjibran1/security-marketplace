@@ -10,6 +10,8 @@ import { CompanySitesWorkspace, type SiteFormState, SITE_FORM_EMPTY } from '../c
 import { CompanyLiveOperationsWorkspace } from '../components/company/CompanyLiveOperationsWorkspace';
 import { CompanyResolveAlertDrawer, type ResolveTarget } from '../components/company/CompanyResolveAlertDrawer';
 import { alertTypeLabel, missingBookOffSummary, resolutionFamilyForAlert } from '../components/company/alertResolution';
+import { CompanyIncidentDetailDrawer } from '../components/company/CompanyIncidentDetailDrawer';
+import { incidentLifecycleLabel, incidentSeverityLabel } from '../components/company/incidentLifecycle';
 import type { LiveBoardRow, CloseOutSummary, SelectedShiftContext } from '../components/company/CompanyLiveOperationsWorkspace';
 import { CompanyShiftOffersWorkspace, type ShiftOffersFeedback } from '../components/company/CompanyShiftOffersWorkspace';
 import { isWelfareEvidence } from '../components/shifts/welfareEvidence';
@@ -1342,6 +1344,8 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
   const [resolveTarget, setResolveTarget] = React.useState<ResolveTarget | null>(null);
   const [resolvingItem, setResolvingItem] = React.useState(false);
   const [resolveError, setResolveError] = React.useState<string | null>(null);
+  /** Which incident the register is showing in full, if any. */
+  const [incidentDetailId, setIncidentDetailId] = React.useState<number | null>(null);
   const [managementActions, setManagementActions] = React.useState<ManagementActionItem[]>([]);
   const [closeOutNotesDraft, setCloseOutNotesDraft] = React.useState('');
   const [savingCloseOutNotes, setSavingCloseOutNotes] = React.useState(false);
@@ -1810,6 +1814,17 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
   const openIncidents = React.useMemo(
     () => incidents.filter((incident) => ['open', 'in_review'].includes((incident.status || '').toLowerCase())),
     [incidents],
+  );
+  /**
+   * The incident the detail drawer is showing.
+   *
+   * Resolved by id against the live list rather than copied into state, so a reload after resolving
+   * shows the new evidence instead of a stale snapshot. An id that no longer appears simply yields
+   * null and the drawer closes itself.
+   */
+  const incidentDetail = React.useMemo(
+    () => (incidentDetailId ? incidents.find((candidate) => candidate.id === incidentDetailId) ?? null : null),
+    [incidentDetailId, incidents],
   );
   const outstandingAlerts = React.useMemo(
     () => alerts.filter((alert) => (alert.status || '').toLowerCase() !== 'closed'),
@@ -2427,6 +2442,41 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
     });
   }, [alerts, shifts, resolveShiftZone]);
 
+  /**
+   * Open the resolve dialog for an INCIDENT.
+   *
+   * The incident path, not the alert path: the record is found in `incidents` by `incidentId`, the
+   * reason family is the incident set, and submission goes to `PATCH /incidents/:id/status`. The
+   * dialog opens on the incident's own facts — which one, how severe, what was reported — because a
+   * controller resolving a numbered record a client will ask about must read it before closing it.
+   */
+  const openResolveForIncident = React.useCallback((item: UrgentOperationalItem) => {
+    if (!item.incidentId) return;
+    const incident = incidents.find((candidate) => candidate.id === item.incidentId);
+    const shiftId = incident?.shift?.id ?? item.shiftId ?? null;
+    const zone = resolveShiftZone(shiftId);
+    const shift = shiftId ? shifts.find((candidate) => candidate.id === shiftId) : null;
+
+    setResolveError(null);
+    setResolveTarget({
+      kind: 'incident',
+      id: item.incidentId,
+      family: 'incident',
+      title: incident?.title || item.message || `Incident #${item.incidentId}`,
+      reference: `#${item.incidentId}`,
+      siteName: incident?.site?.name || incident?.shift?.site?.name || item.siteName,
+      guardName: incident?.guard?.fullName || item.guardName,
+      shiftLabel: shift
+        ? `#${shift.id} · ${formatTimeLabel(shift.start, zone)}–${formatTimeLabel(shift.end, zone)}`
+        : 'Not linked to a shift',
+      severityLabel: incidentSeverityLabel(incident?.severity),
+      statusLabel: incidentLifecycleLabel(incident?.status ?? item.status),
+      // The guard's own account, shown verbatim. The resolution note is written elsewhere.
+      reportText: incident?.notes?.trim() || '',
+      raisedLabel: formatInstantDateTime(incident?.reportedAt || incident?.createdAt || item.occurredAt, zone),
+    });
+  }, [incidents, shifts, resolveShiftZone]);
+
   /** Submit the dialog: write the evidence, then let the queue reload without it. */
   const handleSubmitResolution = React.useCallback(async (
     resolution: { resolutionReason: string; resolutionNote?: string },
@@ -2444,7 +2494,9 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
       await loadData(true);
       setLiveOperationsFeedback({
         tone: 'success',
-        message: `${resolveTarget.title} resolved.`,
+        message: resolveTarget.kind === 'incident'
+          ? `Incident ${resolveTarget.reference || `#${resolveTarget.id}`} resolved.`
+          : `${resolveTarget.title} resolved.`,
       });
     } catch (resolveFailure) {
       setResolveError(formatApiErrorMessage(resolveFailure, 'Unable to resolve this item right now.'));
@@ -3145,6 +3197,28 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
       return;
     }
 
+    /**
+     * An incident, before the linked-shift guard below.
+     *
+     * This branch used to run `setActiveSection('incidents')` and nothing else, which is why a button
+     * labelled "View & Resolve" merely navigated to the register. Resolving now happens in the
+     * dialog, so what is left here is genuinely viewing: open the register and the incident's own
+     * detail. An incident need not be attached to a shift to be read, so it is handled above the
+     * `!item.shiftId` guard rather than being refused for want of one.
+     */
+    if (item.category === 'incident') {
+      if (item.shiftId) focusShiftInLiveBoard(item.shiftId);
+      if (item.incidentId) setIncidentDetailId(item.incidentId);
+      setActiveSection('incidents');
+      setLiveOperationsFeedback({
+        tone: 'success',
+        message: item.incidentId
+          ? `Opening Incident #${item.incidentId}.`
+          : 'Opening the incident register.',
+      });
+      return;
+    }
+
     if (item.category === 'rejected_offer' || item.category === 'missed_shift') {
       if (item.shiftId) {
         setSelectedShiftId(item.shiftId);
@@ -3168,15 +3242,6 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
     }
 
     focusShiftInLiveBoard(item.shiftId);
-
-    if (item.category === 'incident') {
-      setActiveSection('incidents');
-      setLiveOperationsFeedback({
-        tone: 'success',
-        message: `Opening incident review for Shift #${item.shiftId}.`,
-      });
-      return;
-    }
 
     if (
       item.category === 'panic'
@@ -3258,19 +3323,26 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
       }
       await updateIncidentStatus(item.incidentId, nextStatus);
       await loadData(true);
+      /**
+       * Named for the transition that actually happens.
+       *
+       * It used to read "Incident acknowledged", borrowing a safety-alert word for a record that has
+       * no acknowledged state. What the API persists is `in_review`, with `reviewedAt` and
+       * `reviewedByUserId`, so that is what the audit line and the controller are told.
+       */
       recordManagementAction({
         shiftId: item.shiftId,
         siteName: item.siteName,
         guardName: item.guardName,
         itemType: 'Incident',
         actionTaken:
-          nextStatus === 'in_review' ? 'Incident acknowledged' : 'Incident resolved',
+          nextStatus === 'in_review' ? 'Incident marked in review' : 'Incident resolved',
       });
       setLiveOperationsFeedback({
         tone: 'success',
         message:
           nextStatus === 'in_review'
-            ? `Incident #${item.incidentId} was acknowledged and moved to in review.`
+            ? `Incident #${item.incidentId} is now In Review.`
             : `Incident #${item.incidentId} was resolved successfully.`,
       });
     } catch (followUpError) {
@@ -4339,6 +4411,7 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
         onOpenUrgentShift={handleOpenUrgentShift}
         onUrgentIncidentFollowUp={handleUrgentIncidentFollowUp}
         onUrgentAlertFollowUp={handleUrgentAlertFollowUp}
+        onOpenIncidentResolution={openResolveForIncident}
         onSaveCloseOutNotes={handleSaveCloseOutNotes}
         onOpenCoverage={openCoverage}
         operationalNowMs={operationalNow.getTime()}
@@ -4358,6 +4431,12 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
         error={resolveError}
         onCancel={() => { setResolveTarget(null); setResolveError(null); }}
         onSubmit={handleSubmitResolution}
+      />
+
+      <CompanyIncidentDetailDrawer
+        incident={incidentDetail}
+        timeZone={resolveShiftZone(incidentDetail?.shift?.id ?? null)}
+        onClose={() => setIncidentDetailId(null)}
       />
 
     </View>
@@ -4810,16 +4889,29 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
         return renderSimpleTableSection(
           'Incidents',
           ['Incident', 'Shift', 'Site', 'Guard', 'Severity', 'Status', 'Time'],
+          /**
+           * Every row opens the incident itself.
+           *
+           * The register listed seven columns and stopped there, so the one surface that is meant to
+           * answer "what happened on #4, and what did we do?" could not. The row is the way in; the
+           * drawer holds the report, the handling and the resolution.
+           */
           incidents.map((incident) => (
-            <View key={incident.id} style={styles.tableRow}>
+            <Pressable
+              key={incident.id}
+              accessibilityRole="button"
+              accessibilityLabel={`Open Incident #${incident.id}`}
+              style={styles.tableRow}
+              onPress={() => setIncidentDetailId(incident.id)}
+            >
               <Text style={styles.tableCellStrong}>#{incident.id}</Text>
               <Text style={styles.tableCell}>{incident.shift?.id ? `#${incident.shift.id}` : '—'}</Text>
               <Text style={styles.tableCell}>{incident.site?.name || incident.shift?.site?.name || '—'}</Text>
               <Text style={styles.tableCell}>{incident.guard?.fullName || '—'}</Text>
-              <Text style={styles.tableCell}>{formatStatusLabel(incident.severity)}</Text>
-              <Text style={styles.tableCell}>{formatStatusLabel(incident.status)}</Text>
+              <Text style={styles.tableCell}>{incidentSeverityLabel(incident.severity) || '—'}</Text>
+              <Text style={styles.tableCell}>{incidentLifecycleLabel(incident.status)}</Text>
               <Text style={styles.tableCell}>{formatDateTimeLabel(incident.createdAt)}</Text>
-            </View>
+            </Pressable>
           )),
         );
       case 'alerts':
