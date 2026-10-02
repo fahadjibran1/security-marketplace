@@ -30,7 +30,12 @@ function paragraphs(value: string): string {
 }
 
 export type PrintOptions = {
-  /** The company whose report this is. The letterhead, not a database row. */
+  /**
+   * The guarding company, when the caller knows it better than the incident does.
+   *
+   * Normally omitted: the model already carries the company from the incident's own record, and
+   * that is the authoritative answer to "whose report is this?".
+   */
   companyName?: string;
   /** When the document was produced, already formatted. */
   generatedAt: string;
@@ -51,7 +56,14 @@ export function renderIncidentReportHtml(
   model: IncidentReportModel,
   options: PrintOptions,
 ): string {
-  const company = options.companyName?.trim() || 'S4 Security';
+  /**
+   * The guarding company, or nothing.
+   *
+   * S4 is the platform the report was produced with, which the footer says separately — it is NOT
+   * necessarily the company guarding the client's site, so its name is never substituted here. When
+   * the record does not name a company, that side of the footer is simply left empty.
+   */
+  const company = (options.companyName || model.companyName || '').trim();
 
   const overviewRows = model.overview
     .map((field) => `
@@ -143,7 +155,11 @@ export function renderIncidentReportHtml(
           font-size: 10pt; align-self: flex-start; }
   .sub-label { font-size: 9pt; font-weight: 700; color: #5B6B7A; margin: 8pt 0 3pt; }
   footer { margin-top: 18pt; padding-top: 6pt; border-top: 0.75pt solid #D7E0E8;
-           font-size: 8.5pt; color: #5B6B7A; display: flex; justify-content: space-between; }
+           font-size: 8.5pt; color: #5B6B7A; display: flex; justify-content: space-between;
+           align-items: flex-end; }
+  .foot-left { display: flex; flex-direction: column; gap: 1pt; }
+  .foot-company { font-weight: 700; color: #102536; font-size: 9.5pt; }
+  .foot-platform { font-size: 8pt; }
   @media print { body { padding: 0; } .noprint { display: none !important; } }
 </style></head>
 <body>
@@ -187,7 +203,10 @@ export function renderIncidentReportHtml(
   </section>
 
   <footer>
-    <span>${escapeHtml(company)}</span>
+    <div class="foot-left">
+      ${company ? `<span class="foot-company">${escapeHtml(company)}</span>` : ''}
+      <span class="foot-platform">Generated using S4</span>
+    </div>
     <span>Report generated ${escapeHtml(options.generatedAt)}</span>
   </footer>
 </body></html>`;

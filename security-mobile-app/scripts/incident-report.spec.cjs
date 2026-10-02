@@ -281,7 +281,15 @@ test('INC-REPORT-07-HANDLING-TIMELINE-PRESERVES-LIFECYCLE-ORDER', () => {
    */
   assert.match(model.handling[1].at, /15:32|16:32/, 'the in-review moment is the audited one, not the row’s');
   assert.equal(model.handling[1].actor, 'control@example.invalid');
-  assert.equal(model.handling[0].actor, 'guard@example.invalid');
+  /**
+   * UPDATED BY THE FINALISATION PASS, not relaxed.
+   *
+   * This asserted the guard's account email. The client-facing report now prefers the person's real
+   * name where the records genuinely hold one, and `incident.guard.fullName` is exactly that for the
+   * person who filed the report — the same individual, named properly. FINAL-04 to FINAL-06 own this
+   * rule; the assertion here simply follows it.
+   */
+  assert.equal(model.handling[0].actor, 'Fahad test');
 });
 
 test('INC-REPORT-08-INCIDENT-4-SHAPED-FIXTURE-RENDERS-THE-KNOWN-FACTS', () => {
@@ -472,12 +480,17 @@ test('INC-REPORT-14-THE-REPORT-STAYS-INSIDE-THE-AUTHENTICATED-WORKSPACE', () => 
       .replace(/^\s*\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, ''),
   ), 'the printed report defines no public URL');
 
-  // Sharing is prepared but deliberately inert.
+  /**
+   * Sharing is absent entirely, not disabled.
+   *
+   * This previously asserted a "coming soon" placeholder. The finalisation pass removed it: a
+   * greyed-out promise on a client-facing surface is clutter, and the assertion that matters is that
+   * nothing here can send anything. FINAL-09 owns its removal.
+   */
   const drawerSource = fs.readFileSync(path.join(ROOT, 'src/components/company/CompanyIncidentReportDrawer.tsx'), 'utf8');
-  assert.match(drawerSource, /Share with Client — coming soon/);
   assert.ok(
-    !/onPress=\{[^}]*[Ss]hare/.test(drawerSource),
-    'the share affordance has no handler: it cannot send anything',
+    !/[Ss]hare|[Ee]mail|[Ss]end/.test(stripComments(drawerSource)),
+    'the report has no sharing affordance at all',
   );
 
   /**
@@ -537,6 +550,250 @@ test('RENDER-02-LONG-TEXT-IS-NOT-TRUNCATED', () => {
   const html = print.renderIncidentReportHtml(model, { generatedAt: GENERATED });
   assert.ok(html.includes(print.escapeHtml(long)), 'and the printout carries all of it');
   assert.match(html, /white-space: pre-wrap/, 'wrapping, not clipping');
+});
+
+// ═══════════════════ finalisation pass ═══════════════════
+//
+// Four presentation changes, certified: one shift-window rule shared by both surfaces, a
+// human-readable actor identity that never invents one, a footer that does not pass S4 off as the
+// guarding company, and no placeholder for an action this release does not ship.
+
+/** The same shift on the same day, and one that runs through the night. */
+const SAME_DAY = { ...INCIDENT_4, shift: { id: 19, start: '2026-09-30T19:35:00.000Z', end: '2026-09-30T20:35:00.000Z' } };
+const OVERNIGHT = { ...INCIDENT_4, shift: { id: 20, start: '2026-09-30T19:00:00.000Z', end: '2026-10-01T07:00:00.000Z' } };
+const scheduledOf = (model) => model.overview.find((field) => field.label === 'Scheduled shift').value;
+
+test('FINAL-01-SAME-DAY-SHIFT-STATES-ITS-DATE-ONCE', () => {
+  const value = scheduledOf(report.buildIncidentReport(SAME_DAY, AUDIT_4, [], LONDON));
+  assert.equal(value, 'Wed, 30 Sept 2026 · 20:35–21:35');
+
+  // The date appears exactly once, and the times are a range rather than two stamps.
+  assert.equal((value.match(/30 Sept 2026/g) || []).length, 1, 'the date is not repeated');
+  assert.match(value, /20:35–21:35/);
+
+  const html = print.renderIncidentReportHtml(
+    report.buildIncidentReport(SAME_DAY, AUDIT_4, [], LONDON), { generatedAt: GENERATED },
+  );
+  assert.ok(html.includes('20:35–21:35'), 'and the printout says the same');
+  assert.equal((html.match(/30 Sept 2026 · 20:35/g) || []).length, 1);
+});
+
+test('FINAL-02-OVERNIGHT-SHIFT-NAMES-BOTH-CALENDAR-DATES', () => {
+  const value = scheduledOf(report.buildIncidentReport(OVERNIGHT, AUDIT_4, [], LONDON));
+
+  assert.match(value, /30 Sept 2026/, 'the day it started');
+  assert.match(value, /01 Oct 2026/, 'and the day it ended — the change of day is explicit');
+  assert.match(value, / – /, 'spaced around the dash, because the reader needs the pause');
+  assert.ok(value.includes('20:00') && value.includes('08:00'), 'both times, on the site clock');
+
+  const html = print.renderIncidentReportHtml(
+    report.buildIncidentReport(OVERNIGHT, AUDIT_4, [], LONDON), { generatedAt: GENERATED },
+  );
+  assert.ok(html.includes('30 Sept 2026') && html.includes('01 Oct 2026'), 'the printout keeps both');
+});
+
+test('FINAL-03-DRAWER-AND-PRINT-SHARE-ONE-SHIFT-RULE', () => {
+  // One exported formatter, and both surfaces read the SAME built value — they cannot drift.
+  assert.equal(typeof report.scheduledShiftLabel, 'function');
+  for (const incident of [SAME_DAY, OVERNIGHT]) {
+    const model = report.buildIncidentReport(incident, AUDIT_4, [], LONDON);
+    const expected = report.scheduledShiftLabel(incident.shift, LONDON);
+    assert.equal(scheduledOf(model), expected, 'the model uses the shared formatter');
+    assert.ok(textOf(drawer(model)).includes(expected), 'the drawer renders that value');
+    assert.ok(
+      print.renderIncidentReportHtml(model, { generatedAt: GENERATED }).includes(print.escapeHtml(expected)),
+      'and so does the printout',
+    );
+  }
+
+  // Neither surface formats a shift window of its own.
+  for (const file of [
+    'src/components/company/CompanyIncidentReportDrawer.tsx',
+    'src/components/company/incidentReportPrint.ts',
+  ]) {
+    const source = fs.readFileSync(path.join(ROOT, file), 'utf8');
+    assert.ok(!/formatInstantDateTime|scheduledShiftLabel/.test(source), `${file} formats no times itself`);
+  }
+});
+
+test('FINAL-04-A-REAL-NAME-IS-PREFERRED-WHEN-GENUINELY-AVAILABLE', () => {
+  const named = AUDIT_4.map((entry) => (entry.action === 'incident.status_updated'
+    ? { ...entry, user: { id: 21, firstName: 'Dana', lastName: 'Okafor', email: 'control@example.invalid' } }
+    : entry));
+  const model = report.buildIncidentReport(INCIDENT_4, named, [], LONDON);
+
+  const review = model.handling.find((entry) => entry.label === 'Marked In Review');
+  const resolved = model.handling.find((entry) => entry.label === 'Resolved');
+  assert.equal(review.actor, 'Dana Okafor', 'the name, not the account');
+  assert.equal(resolved.actor, 'Dana Okafor');
+  assert.equal(model.resolution.by, 'Dana Okafor', 'and "Resolved by" agrees');
+
+  const rendered = textOf(drawer(model));
+  // `textOf` joins each text node with " | ", so the "By" label and the name are separate nodes.
+  assert.match(rendered, /By\s*\|\s*Dana Okafor/, 'the name is what the drawer shows');
+  assert.ok(!rendered.includes('control@example.invalid'), 'the email gives way to the name');
+
+  // A guard's profile name is the person's real name, so it is preferred over their account email.
+  const reported = model.handling.find((entry) => entry.label === 'Reported');
+  assert.equal(reported.actor, 'Fahad test');
+
+  // A single name is still a name.
+  assert.equal(report.actorLabel({ firstName: 'Dana', email: 'd@example.invalid' }), 'Dana');
+});
+
+test('FINAL-05-EMAIL-REMAINS-A-TRUTHFUL-FALLBACK', () => {
+  /**
+   * This is what PRODUCTION looks like today: `users.firstName` and `users.lastName` are NULL for
+   * every actor, so the email is the only identity the API can offer. A presentation preference is
+   * not a reason to add a column or an endpoint.
+   */
+  const model = report.buildIncidentReport(INCIDENT_4, AUDIT_4, [], LONDON);
+  assert.equal(model.handling.find((e) => e.label === 'Marked In Review').actor, 'control@example.invalid');
+  assert.equal(model.resolution.by, 'control@example.invalid');
+  assert.equal(report.actorLabel({ email: 'who@example.invalid' }), 'who@example.invalid');
+  assert.equal(
+    report.actorLabel({ firstName: '   ', lastName: null, email: 'who@example.invalid' }),
+    'who@example.invalid',
+    'whitespace is not a name',
+  );
+});
+
+test('FINAL-06-NO-ACTOR-IDENTITY-IS-EVER-INVENTED', () => {
+  // No user on the audit row at all: a control action says Control, and names nobody.
+  const anonymous = AUDIT_4.map((entry) => ({ ...entry, user: null }));
+  const model = report.buildIncidentReport({ ...INCIDENT_4, guard: null }, anonymous, [], LONDON);
+
+  assert.equal(model.handling.find((e) => e.label === 'Marked In Review').actor, report.CONTROL_ACTOR);
+  assert.equal(model.resolution.by, report.CONTROL_ACTOR);
+  // A report the guard filed is never attributed to Control: it is simply left unnamed.
+  assert.equal(model.handling.find((e) => e.label === 'Reported').actor, '');
+
+  const rendered = textOf(drawer(model));
+  assert.match(rendered, /Recorded by Control/);
+  for (const leak of ['User #', 'undefined', 'null', '@']) {
+    assert.ok(!rendered.includes(leak), `no "${leak}" stands in for a person`);
+  }
+  assert.equal(report.actorLabel(null), '', 'nothing in, nothing out');
+  assert.equal(report.actorLabel({}), '');
+});
+
+test('FINAL-07-FOOTER-NAMES-THE-REAL-GUARDING-COMPANY', () => {
+  const model = report.buildIncidentReport(
+    { ...INCIDENT_4, company: { id: 8, name: 'vesoft Test Company' } }, AUDIT_4, [], LONDON,
+  );
+  assert.equal(model.companyName, 'vesoft Test Company', 'taken from the incident’s own record');
+
+  const html = print.renderIncidentReportHtml(model, { generatedAt: GENERATED });
+  assert.match(html, /<span class="foot-company">vesoft Test Company<\/span>/);
+  assert.ok(html.includes(`Report generated ${GENERATED}`));
+
+  // S4 is the platform, never a stand-in for the guarding company.
+  const nameless = print.renderIncidentReportHtml(
+    report.buildIncidentReport({ ...INCIDENT_4, company: null }, AUDIT_4, [], LONDON),
+    { generatedAt: GENERATED },
+  );
+  // The stylesheet always DEFINES .foot-company; only an emitted span proves a name was printed.
+  assert.ok(
+    !/<span class="foot-company">/.test(nameless),
+    'an unnamed company is omitted, not substituted',
+  );
+  assert.ok(!/S4 Security/.test(nameless), 'and S4 never fills the gap');
+});
+
+test('FINAL-08-PRINTABLE-REPORT-CREDITS-THE-PLATFORM', () => {
+  const model = report.buildIncidentReport(INCIDENT_4, AUDIT_4, [], LONDON);
+  const html = print.renderIncidentReportHtml(model, { generatedAt: GENERATED });
+  assert.match(html, /Generated using S4/);
+  // Stated as the tool, separately from whoever guarded the site.
+  assert.ok(
+    html.indexOf('Generated using S4') > html.indexOf('<span class="foot-company">'),
+    'beneath the company, not in place of it',
+  );
+});
+
+test('FINAL-09-NO-SHARE-PLACEHOLDER-IN-THE-PRODUCTION-REPORT', () => {
+  const drawerSource = fs.readFileSync(path.join(ROOT, 'src/components/company/CompanyIncidentReportDrawer.tsx'), 'utf8');
+  const code = stripComments(drawerSource);
+  for (const banned of ['Share with Client', 'coming soon', 'sharePlaceholder']) {
+    assert.ok(!code.includes(banned), `"${banned}" is gone from the component`);
+  }
+
+  const model = report.buildIncidentReport(INCIDENT_4, AUDIT_4, [], LONDON);
+  const rendered = textOf(drawer(model));
+  assert.ok(!/Share|coming soon/i.test(rendered), 'and nothing renders it');
+
+  const html = print.renderIncidentReportHtml(model, { generatedAt: GENERATED });
+  assert.ok(!/Share|coming soon/i.test(html), 'nor the printout');
+});
+
+test('FINAL-10-CLOSE-AND-PRINT-REMAIN-THE-ACTIONS', () => {
+  const model = report.buildIncidentReport(INCIDENT_4, AUDIT_4, [], LONDON);
+  const buttons = buttonsOf(drawer(model));
+  const labels = buttons.map((button) => button.label);
+
+  assert.ok(labels.includes('Close'), 'Close remains');
+  assert.ok(labels.includes('Print / Save PDF'), 'Print / Save PDF remains');
+  assert.deepEqual(
+    labels.filter((label) => !/^Close/.test(label)), ['Print / Save PDF'],
+    'and they are the only actions',
+  );
+
+  // Print is wired to the handler it is labelled with.
+  let printed = 0;
+  const live = buttonsOf(drawer(model, { onPrint: () => { printed += 1; } }));
+  live.find((button) => button.label === 'Print / Save PDF').press();
+  assert.equal(printed, 1);
+});
+
+test('FINAL-11-INCIDENT-4-STILL-READS-AS-IT-DID', () => {
+  const model = report.buildIncidentReport(INCIDENT_4, AUDIT_4, [], LONDON);
+  const rendered = textOf(drawer(model));
+  for (const fact of ['Broken fence', 'Client informed', 'no issue', 'No evidence attached']) {
+    assert.ok(rendered.includes(fact), `the report still shows "${fact}"`);
+  }
+  const html = print.renderIncidentReportHtml(model, { generatedAt: GENERATED });
+  for (const fact of ['Broken fence', 'Client informed', 'no issue', 'No evidence attached']) {
+    assert.ok(html.includes(fact), `and so does the printout: "${fact}"`);
+  }
+});
+
+test('FINAL-12-HISTORICAL-NULL-SAFE-REPORT-STILL-PASSES', () => {
+  const model = report.buildIncidentReport(HISTORICAL, [], [], LONDON);
+  const rendered = textOf(drawer(model));
+
+  assert.match(rendered, /No resolution evidence recorded/);
+  assert.match(rendered, /No evidence attached/);
+  assert.ok(rendered.includes(report.NOT_RECORDED), 'absent facts read as an em dash');
+  assert.equal(scheduledOf(model), report.NOT_RECORDED, 'a shiftless incident states no window');
+  for (const leak of ['null', 'undefined', 'NaN', 'Invalid Date', 'User #']) {
+    assert.ok(!rendered.includes(leak), `nothing renders as "${leak}"`);
+  }
+  const html = print.renderIncidentReportHtml(model, { generatedAt: GENERATED });
+  assert.ok(!/undefined|NaN|Invalid Date/.test(html));
+  assert.ok(!/<span class="foot-company">/.test(html), 'and no company is invented for it');
+});
+
+test('FINAL-13-VIEWING-AND-PRINTING-STILL-WRITE-NOTHING', () => {
+  for (const file of [
+    'src/components/company/incidentReport.ts',
+    'src/components/company/incidentReportPrint.ts',
+    'src/components/company/CompanyIncidentReportDrawer.tsx',
+  ]) {
+    const source = fs.readFileSync(path.join(ROOT, file), 'utf8');
+    assert.ok(!/services\/api/.test(source), `${file} imports no API client`);
+    assert.ok(!/\bfetch\(|XMLHttpRequest|axios/.test(source), `${file} issues no request`);
+    assert.ok(!/method:\s*['"](POST|PATCH|PUT|DELETE)/i.test(source), `${file} performs no write`);
+  }
+
+  // Pressing Print calls only the print handler — nothing else is dispatched.
+  const model = report.buildIncidentReport(INCIDENT_4, AUDIT_4, [], LONDON);
+  const calls = [];
+  const buttons = buttonsOf(drawer(model, {
+    onPrint: () => calls.push('print'),
+    onClose: () => calls.push('close'),
+  }));
+  buttons.forEach((button) => button.press());
+  assert.ok(calls.every((call) => call === 'print' || call === 'close'), `only print/close, got ${calls.join(',')}`);
 });
 
 console.log(`\n${passed} incident report checks passed`);

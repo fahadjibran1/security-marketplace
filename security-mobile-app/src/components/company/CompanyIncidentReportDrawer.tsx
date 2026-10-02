@@ -66,13 +66,10 @@ export function CompanyIncidentReportDrawer({
             <Text style={styles.primaryBtnText}>{printing ? 'Preparing…' : 'Print / Save PDF'}</Text>
           </Pressable>
           {/*
-            Sharing is deliberately inert. It is shown so the workflow reads as finished, and it is
-            disabled because nothing behind it exists yet: a button that silently does nothing is
-            worse than one that says it is not ready.
+            No placeholder for a future action. Sharing a report with a client will need a recipient,
+            a sender, a timestamp and a record of the version sent; until that exists there is nothing
+            honest to put here, and a greyed-out promise on a client-facing surface is clutter.
           */}
-          <View style={styles.sharePlaceholder}>
-            <Text style={styles.sharePlaceholderText}>Share with Client — coming soon</Text>
-          </View>
         </View>
       }
     >
@@ -285,9 +282,4 @@ const styles = StyleSheet.create({
   },
   primaryBtnBusy: { opacity: 0.7 },
   primaryBtnText: { fontSize: 13, fontWeight: '800', color: colors.textOnBrand },
-  sharePlaceholder: {
-    paddingHorizontal: spacing.sm, paddingVertical: 8, borderRadius: radii.sm,
-    borderWidth: 1, borderStyle: 'dashed', borderColor: colors.border,
-  },
-  sharePlaceholderText: { fontSize: 11, color: colors.textMuted, fontWeight: '600' },
 });

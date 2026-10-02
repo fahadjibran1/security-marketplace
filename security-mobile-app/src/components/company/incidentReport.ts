@@ -53,6 +53,13 @@ export type IncidentReportModel = {
   reference: string;
   statusLabel: string;
   title: string;
+  /**
+   * The guarding company this incident belongs to, from the incident's own eager `company` relation.
+   *
+   * Empty when the record does not name one, which the footer then simply omits — S4 is the platform,
+   * not necessarily the guarding company, so its name must never stand in for a client's provider.
+   */
+  companyName: string;
   overview: ReportField[];
   /** The guard's own words, verbatim. Empty when none was recorded. */
   originalReport: string;
@@ -81,27 +88,56 @@ export function formatFileSize(bytes: number | null | undefined): string {
 }
 
 /**
- * How a person is named in the report.
+ * What the report says when no identity is available at all.
  *
- * A name when the record holds one, an email when it only holds that, and nothing at all when it
- * holds neither — never "User #21", which means nothing to a client reading the report.
+ * Truthful rather than blank: the action WAS taken by the control room, and saying so is better than
+ * an empty line that looks like a rendering fault. It is never a stand-in for a person's name.
  */
-export function actorLabel(user: AuditLog['user'] | null | undefined): string {
-  if (!user) return '';
+export const CONTROL_ACTOR = 'Recorded by Control';
+
+/**
+ * How a person is named in the CLIENT-FACING report.
+ *
+ * Priority: the person's name, then their email, then the safe fallback. Never "User #21", which
+ * means nothing to a client, and never a name that was not recorded.
+ *
+ * WHAT THE API ACTUALLY PROVIDES, checked rather than assumed: `audit_logs.user` is an eager
+ * relation on a `User` carrying nullable `firstName`/`lastName` and a non-null `email`
+ * (`passwordHash` is `select: false`, so it never ships). There is no display-name or username
+ * column anywhere on `User`. In production today both name columns are NULL for every actor, so the
+ * email fallback is what a report currently shows — a presentation requirement is not a reason to
+ * add a column or an endpoint, so the limitation is reported instead of engineered around.
+ *
+ * The Audit Trail is unaffected and still shows the technical account identity.
+ */
+export function actorLabel(
+  user: AuditLog['user'] | null | undefined,
+  options?: { fallback?: string },
+): string {
+  const fallback = options?.fallback ?? '';
+  if (!user) return fallback;
   const name = [user.firstName, user.lastName].filter(Boolean).join(' ').trim();
-  return name || user.email || '';
+  return name || user.email || fallback;
 }
 
 const WHEN = (value: string | null | undefined, timeZone: string): string =>
   (value ? formatInstantDateTime(value, timeZone) : '');
 
 /**
- * A shift's scheduled window, with the date stated once when it does not cross midnight.
+ * A shift's scheduled window — THE one rule, used by the drawer and the printed page alike.
  *
- * "Wed, 30 Sept 2026 · 20:35 – Wed, 30 Sept 2026 · 21:35" is the same fact told twice, and on a
- * client's report that reads as padding. An overnight shift still shows both dates, because there
- * the second one is the point. If the formatter's shape ever changes, the comparison simply fails to
- * match and both ends are shown in full — the fallback is verbose, never wrong.
+ * Same day:  Wed, 30 Sept 2026 · 20:35–21:35
+ * Overnight: Wed, 30 Sept 2026 · 20:00 – Thu, 01 Oct 2026 · 08:00
+ *
+ * Repeating the date on the end time is the same fact told twice, and on a client's report that
+ * reads as padding. But a shift that crosses midnight must say so plainly, so there both calendar
+ * dates stay — spaced around the dash, because that is where the reader needs the pause.
+ *
+ * Both surfaces read this through the view model's `overview`, so they cannot drift. If the
+ * formatter's shape ever changes, the date comparison simply stops matching and both ends are shown
+ * in full: the fallback is verbose, never wrong, and never loses the change of day.
+ *
+ * Stored timestamps are untouched; this is presentation only.
  */
 export function scheduledShiftLabel(
   shift: { start?: string | null; end?: string | null } | null | undefined,
@@ -114,7 +150,7 @@ export function scheduledShiftLabel(
 
   const [startDate] = startLabel.split(' · ');
   const [endDate, endTime] = endLabel.split(' · ');
-  if (startDate && endTime && startDate === endDate) return `${startLabel} – ${endTime}`;
+  if (startDate && endTime && startDate === endDate) return `${startLabel}–${endTime}`;
   return `${startLabel} – ${endLabel}`;
 }
 
@@ -184,11 +220,28 @@ export function buildHandlingHistory(
     }
     if (!label) continue;
 
+    /**
+     * The guard's own name is the most human identity the records hold for the report entry, and it
+     * is the same person: `createForGuard` resolves the guard FROM the acting user, then audits the
+     * creation as that user. So a profile name is preferred over that user's email — it is the same
+     * individual named properly, not a substitution.
+     */
+    const reportedByGuard = label === 'Reported' ? (incident.guard?.fullName || '') : '';
+    const named = actorLabel(log.user);
+    const prefersProfileName = reportedByGuard && (!named || named.includes('@'));
+
     entries.push({
       key: `audit-${log.id}`,
       label,
       at: WHEN(log.createdAt, timeZone),
-      actor: actorLabel(log.user),
+      /**
+       * "Recorded by Control" is only ever used for a CONTROL action. Saying it of a report the
+       * guard filed would be a claim about who raised the incident, so an unidentifiable reporter
+       * is left unnamed instead.
+       */
+      actor: prefersProfileName
+        ? reportedByGuard
+        : (named || reportedByGuard || (label === 'Reported' ? '' : CONTROL_ACTOR)),
       atMs,
     });
   }
@@ -258,7 +311,9 @@ function resolutionActor(
     .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
 
   const last = closing[closing.length - 1];
-  if (last) return { by: actorLabel(last.user), at: WHEN(last.createdAt, timeZone) };
+  if (last) {
+    return { by: actorLabel(last.user, { fallback: CONTROL_ACTOR }), at: WHEN(last.createdAt, timeZone) };
+  }
 
   const fallback = incident.closedAt || null;
   return { by: '', at: WHEN(fallback, timeZone) };
@@ -305,6 +360,7 @@ export function buildIncidentReport(
     reference: `#${incident.id}`,
     statusLabel: incidentLifecycleLabel(incident.status),
     title: incident.title || '',
+    companyName: incident.company?.name?.trim() || '',
     overview,
     originalReport: incident.notes?.trim() || '',
     evidence: buildEvidence(attachments, incident.id, timeZone),

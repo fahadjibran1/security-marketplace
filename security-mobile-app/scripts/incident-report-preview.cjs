@@ -51,7 +51,7 @@ const INCIDENT_4 = {
   resolutionReason: 'client_informed',
   resolutionNote: 'no issue',
   createdAt: '2026-09-30T19:49:00.000Z',
-  company: { id: 1, name: 'S4 Company' },
+  company: { id: 8, name: 'vesoft Test Company' },
   shift: { id: 19, start: '2026-09-30T19:35:00.000Z', end: '2026-09-30T20:35:00.000Z', site: { id: 14, name: 'test site' } },
   site: { id: 14, name: 'test site', clientName: 'client test' },
   guard: { id: 20, fullName: 'Fahad test' },
@@ -134,6 +134,14 @@ const EVIDENCE = [
     uploadedBy: { id: 21, email: 'control@example.invalid' },
   },
 ];
+
+const OVERNIGHT_AUDIT = AUDIT_4.map((entry) => ({ ...entry, entityId: 12 }));
+
+const OVERNIGHT_INCIDENT = {
+  ...INCIDENT_4,
+  id: 12,
+  shift: { id: 21, start: '2026-09-30T19:00:00.000Z', end: '2026-10-01T07:00:00.000Z', site: { id: 14, name: 'test site' } },
+};
 
 const HISTORICAL = {
   id: 2,
@@ -243,12 +251,13 @@ const printables = [
   ['print-incident-4.html', INCIDENT_4, AUDIT_4, []],
   ['print-full.html', LONG_INCIDENT, LONG_AUDIT, EVIDENCE],
   ['print-historical.html', HISTORICAL, [], []],
+  ['print-overnight.html', OVERNIGHT_INCIDENT, OVERNIGHT_AUDIT, []],
 ];
 for (const [name, incident, audit, attachments] of printables) {
   const model = buildIncidentReport(incident, audit, attachments, LONDON);
   fs.writeFileSync(
     path.join(OUT_DIR, name),
-    renderIncidentReportHtml(model, { companyName: incident.company?.name, generatedAt: GENERATED }),
+    renderIncidentReportHtml(model, { generatedAt: GENERATED }),
   );
   console.log('wrote', path.join(OUT_DIR, name));
 }
