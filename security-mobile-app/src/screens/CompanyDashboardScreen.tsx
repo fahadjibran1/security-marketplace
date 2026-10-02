@@ -2550,9 +2550,8 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
     setPrintingIncidentReport(true);
     setIncidentReportNotice(null);
     try {
+      // The footer's company comes from the model, which took it from the incident's own record.
       const html = renderIncidentReportHtml(incidentReportModel, {
-        // The company this incident belongs to, from the incident's own record.
-        companyName: incidentDetail?.company?.name || undefined,
         generatedAt: formatInstantDateTime(new Date().toISOString(), resolveShiftZone(incidentDetail?.shift?.id ?? null)),
       });
       if (!printIncidentReport(html)) {
