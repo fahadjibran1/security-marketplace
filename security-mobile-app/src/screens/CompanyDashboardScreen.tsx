@@ -4518,14 +4518,6 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
         onSubmit={handleSubmitResolution}
       />
 
-      <CompanyIncidentReportDrawer
-        model={incidentReportModel}
-        printing={printingIncidentReport}
-        notice={incidentReportNotice}
-        onPrint={handlePrintIncidentReport}
-        onClose={() => { setIncidentDetailId(null); setIncidentReportNotice(null); }}
-      />
-
     </View>
   );
 
@@ -5140,6 +5132,21 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
           <AppBuildFooter appLabel="S4 Company" />
         </ScrollView>
       </View>
+
+      {/*
+        The Incident Report belongs to the SCREEN, not to a section.
+        It is opened from the Incidents register, and it was previously mounted inside
+        `renderLiveOperationsSection()` — so on the Incidents page it was never rendered at all and a
+        row press set the state for a drawer that did not exist. Mounted here it is reachable from
+        every section that can open it, which is the register and the Attention Now queue alike.
+      */}
+      <CompanyIncidentReportDrawer
+        model={incidentReportModel}
+        printing={printingIncidentReport}
+        notice={incidentReportNotice}
+        onPrint={handlePrintIncidentReport}
+        onClose={() => { setIncidentDetailId(null); setIncidentReportNotice(null); }}
+      />
     </View>
   );
 }

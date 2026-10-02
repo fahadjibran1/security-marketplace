@@ -180,6 +180,31 @@ test('INC-REPORT-02-CLICKING-ROW-OPENS-INCIDENT-REPORT', () => {
   assert.match(screenCode, /onPress=\{\(\) => openIncidentReport\(incident\.id\)\}/);
   assert.match(screenCode, /<CompanyIncidentReportDrawer/, 'and it is the report that opens');
 
+  /**
+   * MOUNTED ON THE SCREEN, NOT INSIDE A SECTION.
+   *
+   * This is the assertion that was missing, and production found the gap: the drawer was mounted
+   * inside `renderLiveOperationsSection()`, so on the Incidents page it was never rendered and a row
+   * press set state for a drawer that did not exist. Asserting the component merely APPEARS in the
+   * file could never catch that — it has to be checked where it sits.
+   */
+  const liveOpsSection = screenCode.slice(
+    screenCode.indexOf('const renderLiveOperationsSection'),
+    screenCode.indexOf('const renderContent'),
+  );
+  assert.ok(liveOpsSection.length > 200, 'the Live Operations section was located');
+  assert.ok(
+    !liveOpsSection.includes('<CompanyIncidentReportDrawer'),
+    'the report is not trapped inside the Live Operations section',
+  );
+
+  // It sits in the screen's own return, after the content shell and before the screen closes.
+  const mainReturn = screenCode.slice(screenCode.indexOf('<AppBuildFooter appLabel="S4 Company" />'));
+  assert.ok(
+    mainReturn.includes('<CompanyIncidentReportDrawer'),
+    'the report is mounted on the screen, so every section that opens it can show it',
+  );
+
   // The report is not raw audit JSON: it is a built view model.
   assert.match(screenCode, /buildIncidentReport\(/);
   const rendered = textOf(drawer(report.buildIncidentReport(INCIDENT_4, AUDIT_4, [], LONDON)));
