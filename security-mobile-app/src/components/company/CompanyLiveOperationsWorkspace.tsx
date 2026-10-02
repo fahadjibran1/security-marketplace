@@ -28,6 +28,7 @@ import {
 } from './operationsOutlook';
 import { buildTodaySoFar, type TodaySoFar } from './operationsSummary';
 import { incidentAttentionActions } from './incidentLifecycle';
+import { logTypeLabel } from './logBookRegister';
 import { Drawer } from '../ui/Drawer';
 import { colors, radii, spacing } from '../../theme';
 import { DailyLog, Incident, SafetyAlert, Shift, Timesheet } from '../../types/models';
@@ -1270,6 +1271,15 @@ export function LiveOpsLowerPanels({
               <Text style={styles.activityItemTime}>{fmtTime(a.occurredAt, resolveShiftZone(a.shiftId))}</Text>
               <View style={styles.activityItemBody}>
                 <Text style={styles.activityItemEvent} numberOfLines={1}>{fmtActivityType(a.eventType)}</Text>
+                {/*
+                  A preview of what was written, not just that something was.
+                  "Log Book entry added" told a controller nothing they could act on. One line is
+                  enough here — the full record is in the Log Book register and the shift drawer, so
+                  truncating this copy loses nothing.
+                */}
+                {a.message ? (
+                  <Text style={styles.activityItemPreview} numberOfLines={1}>{a.message}</Text>
+                ) : null}
                 <Text style={styles.activityItemSite} numberOfLines={1}>{a.siteName}</Text>
               </View>
             </View>
@@ -1721,11 +1731,20 @@ function DetailPanelContent({
           <Text style={styles.detailCardTitle}>Daily Logs</Text>
           {logs.length === 0
             ? <DetailEmpty title="No daily logs" desc="Logs for this shift will appear here." />
+            /*
+              Each entry names its own type. A Log Book entry and a Welfare Check were rendered
+              identically here, so a controller could not tell a written narrative from a proof of
+              presence — and the two satisfy different obligations. The stored enum is untouched;
+              only the reading changes.
+            */
             : logs.map((log) => (
-                <Text key={log.id} style={styles.detailListLine}>
-                  <Text style={styles.detailListTime}>{fmtTime(log.createdAt, timeZone)}</Text>
-                  {'  '}{log.message}
-                </Text>
+                <View key={log.id} style={styles.detailLogRow}>
+                  <Text style={styles.detailListLine}>
+                    <Text style={styles.detailListTime}>{fmtTime(log.createdAt, timeZone)}</Text>
+                    {'  '}{log.message}
+                  </Text>
+                  <Text style={styles.detailLogKind}>{logTypeLabel(log.logType).toUpperCase()}</Text>
+                </View>
               ))}
         </View>
 
@@ -2493,6 +2512,19 @@ const styles = StyleSheet.create({
   activityItemSite: {
     fontSize: 11,
     color: colors.textSecondary,
+    lineHeight: 15,
+  },
+  /** The entry preview: readable, but quieter than the event it belongs to. */
+  detailLogRow: { gap: 1, paddingBottom: 4 },
+  detailLogKind: {
+    fontSize: 9,
+    fontWeight: 800,
+    letterSpacing: 0.7,
+    color: colors.textSecondary,
+  },
+  activityItemPreview: {
+    fontSize: 11,
+    color: colors.textPrimary,
     lineHeight: 15,
   },
 

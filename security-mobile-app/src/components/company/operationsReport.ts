@@ -31,8 +31,13 @@ export type ReportShiftInput = {
   };
   attendance?: { checkInAt?: string | null; checkOutAt?: string | null } | null;
   operations?: ShiftOperationsView | null;
-  /** Daily logs for this shift, used for the Log Book count. */
-  logs?: Array<{ logType: string }>;
+  /**
+   * Daily logs for this shift.
+   *
+   * `createdAt` and `message` are read for the Log Book sheet — the export now carries the entries
+   * themselves, not only how many there were.
+   */
+  logs?: Array<{ logType: string; createdAt: string; message: string }>;
   /** Incidents raised on this shift. */
   incidents?: Array<{ id: number }>;
   /** Safety alerts on this shift, used for the Site Request and Emergency counts. */
@@ -74,10 +79,33 @@ const WELFARE_STATUS_LABEL: Record<string, string> = {
   not_applicable: 'Not required',
 };
 
+/**
+ * The Log Book sheet: the entries themselves, and the periods that were required.
+ *
+ * A count told a client how many entries existed and nothing about what they said or whether the
+ * site's obligation was met. This carries the evidence: one row per Log Book entry, plus a row for
+ * every required period that no entry satisfied, so a missing hour is as visible as a present one.
+ */
+export const LOG_BOOK_COLUMNS = [
+  'Date', 'Client', 'Site', 'Shift', 'Guard',
+  'Scheduled Start', 'Scheduled End',
+  'Recorded At', 'Log Type', 'Entry',
+  'Required Period Start', 'Required Period End', 'Period Status',
+] as const;
+
+/** How a Log Book period reads in a compliance export. */
+const LOG_BOOK_PERIOD_LABEL: Record<string, string> = {
+  completed: 'Completed',
+  due: 'Due',
+  missing: 'Missing',
+  not_applicable: 'Not required',
+};
+
 export type OperationsReport = {
   scope: ReportScope;
   summary: string[][];
   welfare: string[][];
+  logBook: string[][];
 };
 
 const zoneOf = (input: ReportShiftInput) => input.shift.site?.timezone || 'Europe/London';
@@ -124,10 +152,12 @@ export function buildOperationsReport(
 ): OperationsReport {
   const summary: string[][] = [];
   const welfare: string[][] = [];
+  const logBook: string[][] = [];
 
   for (const input of inputs) {
     const f = shiftFacts(input);
     const windows = input.operations?.welfare?.windows ?? [];
+    buildLogBookRows(input, f, logBook);
 
     summary.push([
       f.date, f.client, f.site, f.guard,
@@ -161,7 +191,54 @@ export function buildOperationsReport(
     }
   }
 
-  return { scope, summary, welfare };
+  return { scope, summary, welfare, logBook };
+}
+
+/**
+ * The Log Book rows for one shift: every entry, then every period no entry satisfied.
+ *
+ * The entries carry their FULL text — truncating the only machine-readable copy would make the
+ * export useless as evidence. Period columns are blank on an entry row and the entry columns are
+ * blank on a missing-period row, because one row never describes both.
+ *
+ * An "as required" site contributes entry rows and NO period rows: it has no obligation, so it can
+ * have no missing period, and inventing "0 missing" for it would read as a pass it never sat.
+ * Periods come from the backend's published windows; nothing is graded here.
+ */
+function buildLogBookRows(
+  input: ReportShiftInput,
+  f: ReturnType<typeof shiftFacts>,
+  out: string[][],
+): void {
+  const shiftRef = `#${input.shift.id}`;
+  const common = [f.date, f.client, f.site, shiftRef, f.guard, f.schedStart, f.schedEnd];
+
+  const entries = (input.logs ?? []).filter((log) => log.logType === 'log_book');
+  for (const entry of entries) {
+    out.push([
+      ...common,
+      formatInstantTime(entry.createdAt, f.tz),
+      'Log Book',
+      entry.message ?? '',
+      '', '', '',
+    ]);
+  }
+
+  const logBookView = input.operations?.logBook;
+  if (!logBookView?.required) return;
+
+  for (const window of logBookView.windows ?? []) {
+    const state = String(window.state ?? '');
+    // Only the periods nothing satisfied: a completed period is already evidenced by its entry row.
+    if (state !== 'missed' && state !== 'overdue') continue;
+    out.push([
+      ...common,
+      '', '', '',
+      formatInstantTime(window.start, f.tz),
+      formatInstantTime(window.end, f.tz),
+      LOG_BOOK_PERIOD_LABEL.missing,
+    ]);
+  }
 }
 
 // ─── CSV ──────────────────────────────────────────────────────────────────────
