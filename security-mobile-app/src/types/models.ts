@@ -1553,6 +1553,17 @@ export interface Incident {
   reviewedByUserId?: number | null;
   closedAt?: string | null;
   closedByUserId?: number | null;
+  /**
+   * Why this incident was resolved, and what Control established. (Migration 60.)
+   *
+   * `resolutionReason` is a stable machine value from the incident reason set, never display text.
+   * Both are null on every incident raised before the resolution workflow existed, so every reader
+   * must treat them as absent rather than empty.
+   *
+   * Neither is `notes`: that field is the guard's original report and is never written over.
+   */
+  resolutionReason?: string | null;
+  resolutionNote?: string | null;
   updatedAt?: string;
   createdAt: string;
   shift?: Shift | null;
