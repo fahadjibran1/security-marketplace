@@ -262,6 +262,12 @@ jobs:
       - name: Verify the incident report
         run: npm run test:incident-report
 
+      # Phase 4B: the Log Book is a record somebody will later rely on. This certifies the rules that
+      # keep it truthful - an as-required site never appears to have failed an hourly duty, a Welfare
+      # Check never satisfies a Log Book period, and one entry reads the same on every surface.
+      - name: Verify the Log Book
+        run: npm run test:log-book
+
       # ── Screening ─────────────────────────────────────────────────────────────
       # Protects the Guard screening journey and the locked distinction that Company-Managed deployment
       # is NOT S4 Screening. Note it also reads backend screening sources, so it doubles as a contract

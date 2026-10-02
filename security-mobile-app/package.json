@@ -57,6 +57,7 @@
     "test:dashboard-runtime": "node scripts/company-dashboard-runtime.spec.cjs",
     "test:incident-workflow": "node scripts/incident-workflow.spec.cjs",
     "test:incident-report": "node scripts/incident-report.spec.cjs",
+    "test:log-book": "node scripts/log-book.spec.cjs",
     "test:live-ops-policy": "node scripts/live-operations-policy.spec.cjs",
     "test:shift-offer-time": "node scripts/shift-offer-time.spec.cjs"
   },
