@@ -34,7 +34,8 @@ const { loadTs, ROOT } = require('./load-ts.cjs');
 
 const lifecycle = loadTs('src/components/company/incidentLifecycle.ts');
 const { LiveOpsAttentionRail } = loadTs('src/components/company/CompanyLiveOperationsWorkspace.tsx');
-const { CompanyIncidentDetailDrawer } = loadTs('src/components/company/CompanyIncidentDetailDrawer.tsx');
+const { CompanyIncidentReportDrawer } = loadTs('src/components/company/CompanyIncidentReportDrawer.tsx');
+const { buildIncidentReport } = loadTs('src/components/company/incidentReport.ts');
 
 /** Source with comments stripped, so an assertion is about code and never about my own prose. */
 const stripComments = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
@@ -318,7 +319,8 @@ test('INC-11-VIEWING-AN-INCIDENT-NO-LONGER-STANDS-IN-FOR-RESOLVING-IT', () => {
     screenCode.indexOf('const handleLiveBoardPrimaryAction'),
   );
   const incidentBranch = detail.slice(detail.indexOf("item.category === 'incident'"));
-  assert.ok(incidentBranch.includes('setIncidentDetailId(item.incidentId)'), 'viewing opens the incident itself');
+  // Viewing opens the Incident Report for that incident (which also loads its evidence), not a list.
+  assert.ok(incidentBranch.includes('openIncidentReport(item.incidentId)'), 'viewing opens the incident itself');
   assert.ok(incidentBranch.includes("setActiveSection('incidents')"), 'alongside the register');
 
   // An incident can be read without a shift: the branch must sit above the linked-shift refusal.
@@ -369,21 +371,22 @@ test('INC-12-THE-REGISTER-OPENS-AN-INCIDENT-AND-SURVIVES-NULL-EVIDENCE', () => {
     site: null,
     guard: null,
   };
-  const bare = textOf(React.createElement(CompanyIncidentDetailDrawer, {
-    incident: historical, timeZone: LONDON, onClose: () => {},
+  const model = buildIncidentReport(historical, [], [], LONDON);
+  const bare = textOf(React.createElement(CompanyIncidentReportDrawer, {
+    model, onClose: () => {}, onPrint: () => {}, printing: false, notice: null,
   }));
   assert.match(bare, /#4/, 'the incident is identified by number');
   assert.match(bare, /High/, 'severity reads as a word');
   assert.match(bare, /Open/, 'and so does the lifecycle');
   assert.match(bare, /rear fire exit pane cracked/, 'the original report is shown');
-  assert.match(bare, /No resolution has been recorded/, 'and an absent resolution is stated, not faked');
+  assert.match(bare, /No resolution evidence recorded/, 'and an absent resolution is stated, not faked');
   for (const leak of ['null', 'undefined', 'NaN', 'Invalid Date']) {
     assert.ok(!bare.includes(leak), `a missing fact never renders as "${leak}"`);
   }
 
   // A resolved one: the evidence the workflow wrote is readable, as display words not stored values.
-  const resolved = textOf(React.createElement(CompanyIncidentDetailDrawer, {
-    incident: {
+  const resolved = textOf(React.createElement(CompanyIncidentReportDrawer, {
+    model: buildIncidentReport({
       ...historical,
       status: 'resolved',
       reviewedAt: '2026-10-01T21:40:00.000Z',
@@ -393,25 +396,24 @@ test('INC-12-THE-REGISTER-OPENS-AN-INCIDENT-AND-SURVIVES-NULL-EVIDENCE', () => {
       site: { id: 3, name: 'Northgate Retail Park' },
       guard: { id: 20, fullName: 'A. Guard' },
       shift: { id: 77 },
-    },
-    timeZone: LONDON,
-    onClose: () => {},
+    }, [], [], LONDON),
+    onClose: () => {}, onPrint: () => {}, printing: false, notice: null,
   }));
   assert.match(resolved, /Resolved/);
   assert.match(resolved, /Maintenance \/ repair arranged/, 'the reason reads as words, never as the stored value');
   assert.ok(!resolved.includes('maintenance_arranged'), 'and the stored value is not shown');
   assert.match(resolved, /Glazier booked/, 'the resolution note is readable');
-  assert.match(resolved, /Reviewed/, 'with the handling evidence beside it');
 
   // Nothing is rendered at all when there is nothing to show.
   assert.equal(
-    CompanyIncidentDetailDrawer({ incident: null, timeZone: LONDON, onClose: () => {} }), null,
+    CompanyIncidentReportDrawer({ model: null, onClose: () => {}, onPrint: () => {}, printing: false, notice: null }),
+    null,
   );
 
   // And the register row is the way in.
   assert.match(screenCode, /accessibilityLabel=\{`Open Incident #\$\{incident\.id\}`\}/, 'each row opens its incident');
-  assert.match(screenCode, /onPress=\{\(\) => setIncidentDetailId\(incident\.id\)\}/);
-  assert.match(screenCode, /<CompanyIncidentDetailDrawer/, 'and the drawer is mounted');
+  assert.match(screenCode, /onPress=\{\(\) => openIncidentReport\(incident\.id\)\}/);
+  assert.match(screenCode, /<CompanyIncidentReportDrawer/, 'and the report is mounted');
 });
 
 // ─── the mutation: prove the old routing really was the defect ────────────────

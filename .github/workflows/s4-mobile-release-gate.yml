@@ -256,6 +256,12 @@ jobs:
       - name: Verify the incident workflow
         run: npm run test:incident-workflow
 
+      # The Incident Report is what a client is shown, so it is certified for provenance as much as
+      # appearance: the guard's words survive resolution, an absent fact reads as absent, and the
+      # printed A4 page carries no navigation, no audit JSON and no internal identifiers.
+      - name: Verify the incident report
+        run: npm run test:incident-report
+
       # ── Screening ─────────────────────────────────────────────────────────────
       # Protects the Guard screening journey and the locked distinction that Company-Managed deployment
       # is NOT S4 Screening. Note it also reads backend screening sources, so it doubles as a contract
