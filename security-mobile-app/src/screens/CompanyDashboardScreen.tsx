@@ -11,6 +11,11 @@ import { CompanyLiveOperationsWorkspace } from '../components/company/CompanyLiv
 import { CompanyResolveAlertDrawer, type ResolveTarget } from '../components/company/CompanyResolveAlertDrawer';
 import { alertTypeLabel, missingBookOffSummary, resolutionFamilyForAlert } from '../components/company/alertResolution';
 import { CompanyIncidentReportDrawer } from '../components/company/CompanyIncidentReportDrawer';
+import { CompanyLogBookWorkspace, type LogBookDayPeriod } from '../components/company/CompanyLogBookWorkspace';
+import { CompanyLogBookEntryDrawer, type LogBookEntryDetail } from '../components/company/CompanyLogBookEntryDrawer';
+import { buildLogBookRegister, logBookPeriods, siteDayKey } from '../components/company/logBookRegister';
+import { buildDailySiteLog } from '../components/company/dailySiteLog';
+import { renderDailySiteLogHtml } from '../components/company/dailySiteLogPrint';
 import { buildIncidentReport } from '../components/company/incidentReport';
 import { renderIncidentReportHtml, printIncidentReport } from '../components/company/incidentReportPrint';
 import { incidentLifecycleLabel, incidentSeverityLabel } from '../components/company/incidentLifecycle';
@@ -23,6 +28,7 @@ import {
   reportDateFor,
   toCsv,
   SUMMARY_COLUMNS,
+  LOG_BOOK_COLUMNS,
   WELFARE_COLUMNS,
   type ReportShiftInput,
 } from '../components/company/operationsReport';
@@ -217,6 +223,7 @@ type CompanySection =
   | 'contract-pricing'
   | 'pay-rules'
   | 'audit'
+  | 'log-book'
   | 'incidents'
   | 'alerts'
   | 'weekly-approvals';
@@ -321,6 +328,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'contract-pricing', label: 'Contract Pricing', caption: 'Client and site commercial rules.' },
   { id: 'pay-rules', label: 'Pay Rules', caption: 'Guard payable-hours calculation settings.' },
   { id: 'audit', label: 'Audit Trail', caption: 'Trace financial actions and before/after data.' },
+  { id: 'log-book', label: 'Log Book', caption: 'The site occurrence record and Daily Site Log.' },
   { id: 'incidents', label: 'Incidents', caption: 'Track reported site issues.' },
   { id: 'alerts', label: 'Safety Alerts', caption: 'Watch welfare and check-call alerts.' },
 ];
@@ -349,9 +357,24 @@ const COMPANY_NAV_GROUPS: Array<{ id: string; title: string; itemIds: CompanySec
   {
     id: 'management',
     title: 'Management',
-    itemIds: ['coverage', 'analytics', 'incidents', 'alerts', 'audit', 'recruitment'],
+    itemIds: ['coverage', 'analytics', 'log-book', 'incidents', 'alerts', 'audit', 'recruitment'],
   },
 ];
+
+/**
+ * Today, as a YYYY-MM-DD the register can compare against.
+ *
+ * `en-CA` yields exactly that shape, so the key sorts and compares as a plain string. The register's
+ * default view is today, which is what a control room opens the occurrence book to see.
+ */
+function todaySiteDayKey(): string {
+  try {
+    return new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit' })
+      .format(new Date());
+  } catch {
+    return new Date().toISOString().slice(0, 10);
+  }
+}
 
 const JOB_FORM_EMPTY: JobFormState = {
   title: '',
@@ -1352,6 +1375,14 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
   const [resolveError, setResolveError] = React.useState<string | null>(null);
   /** Which incident the register is showing in full, if any. */
   const [incidentDetailId, setIncidentDetailId] = React.useState<number | null>(null);
+  /** Log Book register filters. The date is a site-local YYYY-MM-DD; today by default. */
+  const [logBookDate, setLogBookDate] = React.useState(todaySiteDayKey());
+  const [logBookSearch, setLogBookSearch] = React.useState('');
+  const [logBookClient, setLogBookClient] = React.useState('');
+  const [logBookSite, setLogBookSite] = React.useState('');
+  const [logBookGuard, setLogBookGuard] = React.useState('');
+  const [logBookEntryId, setLogBookEntryId] = React.useState<number | null>(null);
+  const [logBookNotice, setLogBookNotice] = React.useState<string | null>(null);
   /**
    * The evidence the Incident Report needs, fetched only when a report is opened.
    *
@@ -1965,6 +1996,135 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
       : null),
     [incidentDetail, incidentAuditLogs, incidentAttachments, resolveShiftZone],
   );
+
+  // ─── Log Book register ──────────────────────────────────────────────────────
+  //
+  // Every surface below reads the SAME pure helpers, so the register, the entry drawer, the Daily
+  // Site Log and the export cannot form four opinions about one entry.
+
+  const shiftsById = React.useMemo(() => {
+    const map = new Map<number, Shift>();
+    shifts.forEach((shift) => map.set(shift.id, shift));
+    return map;
+  }, [shifts]);
+
+  /** The company zone, used only to decide which site-local day a row belongs to. */
+  const logBookZone = React.useMemo(
+    () => resolveShiftZone(shifts[0]?.id ?? null),
+    [resolveShiftZone, shifts],
+  );
+
+  const logBookRows = React.useMemo(
+    () => buildLogBookRegister(dailyLogs, shiftsById, logBookZone, {
+      date: logBookDate || undefined,
+      clientName: logBookClient || undefined,
+      siteId: logBookSite ? Number(logBookSite) : null,
+      guardId: logBookGuard ? Number(logBookGuard) : null,
+      search: logBookSearch || undefined,
+    }),
+    [dailyLogs, shiftsById, logBookZone, logBookDate, logBookClient, logBookSite, logBookGuard, logBookSearch],
+  );
+
+  /** The shifts the current register view covers — the basis for periods and the Daily Site Log. */
+  const logBookDayShifts = React.useMemo(() => shifts.filter((shift) => {
+    if (logBookDate && siteDayKey(shift.start, resolveShiftZone(shift.id)) !== logBookDate) return false;
+    if (logBookSite && String(shift.site?.id ?? shift.siteId ?? '') !== logBookSite) return false;
+    if (logBookClient && (shift.site?.client?.name || shift.site?.clientName || '') !== logBookClient) return false;
+    return true;
+  }), [shifts, logBookDate, logBookSite, logBookClient, resolveShiftZone]);
+
+  /** Required periods, straight from the backend's published windows. Empty when as required. */
+  const logBookDayPeriods = React.useMemo<LogBookDayPeriod[]>(() => {
+    const out: LogBookDayPeriod[] = [];
+    logBookDayShifts.forEach((shift) => {
+      const zone = resolveShiftZone(shift.id);
+      logBookPeriods(operationsByShiftId.get(shift.id)).forEach((period) => {
+        out.push({
+          ...period,
+          shiftId: shift.id,
+          siteName: shift.site?.name || shift.siteName || '',
+          startLabel: formatTimeLabel(period.start, zone),
+          endLabel: formatTimeLabel(period.end, zone),
+          completedLabel: period.completedAt ? formatTimeLabel(period.completedAt, zone) : '',
+        });
+      });
+    });
+    return out.sort((a, b) => Date.parse(a.start) - Date.parse(b.start));
+  }, [logBookDayShifts, operationsByShiftId, resolveShiftZone]);
+
+  const logBookFilterOptions = React.useMemo(() => {
+    const clients = new Map<string, string>();
+    const sites = new Map<string, string>();
+    const guards = new Map<string, string>();
+    shifts.forEach((shift) => {
+      const client = shift.site?.client?.name || shift.site?.clientName || '';
+      if (client) clients.set(client, client);
+      const siteId = shift.site?.id ?? shift.siteId;
+      if (siteId != null) sites.set(String(siteId), shift.site?.name || shift.siteName || `Site ${siteId}`);
+    });
+    dailyLogs.forEach((log) => {
+      if (log.guard?.id != null) guards.set(String(log.guard.id), log.guard.fullName || `Guard ${log.guard.id}`);
+    });
+    const toOptions = (map: Map<string, string>) =>
+      [...map.entries()].map(([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label));
+    return { clients: toOptions(clients), sites: toOptions(sites), guards: toOptions(guards) };
+  }, [shifts, dailyLogs]);
+
+  /** The entry the drawer is showing, resolved by id so a reload shows the live row. */
+  const logBookEntryDetail = React.useMemo<LogBookEntryDetail | null>(() => {
+    if (!logBookEntryId) return null;
+    const row = buildLogBookRegister(dailyLogs, shiftsById, logBookZone, {}).find((r) => r.id === logBookEntryId);
+    if (!row) return null;
+    const shift = row.shiftId != null ? shiftsById.get(row.shiftId) : undefined;
+    const zone = resolveShiftZone(row.shiftId);
+    const period = row.shiftId != null
+      ? logBookPeriods(operationsByShiftId.get(row.shiftId))
+        .find((p) => Date.parse(p.start) <= row.atMs && row.atMs < Date.parse(p.end))
+      : undefined;
+    return {
+      ...row,
+      scheduledShift: shift
+        ? `${formatInstantDateTime(shift.start, zone)} – ${formatTimeLabel(shift.end, zone)}`
+        : '',
+      recordedAt: formatInstantDateTime(row.at, zone),
+      periodLabel: period
+        ? `${formatTimeLabel(period.start, zone)}–${formatTimeLabel(period.end, zone)}`
+        : '',
+    };
+  }, [logBookEntryId, dailyLogs, shiftsById, logBookZone, resolveShiftZone, operationsByShiftId]);
+
+  /** A Daily Site Log describes ONE site on ONE date, so both must be chosen. */
+  const dailySiteLogEnabled = Boolean(logBookDate && logBookSite);
+
+  const handleOpenDailySiteLog = React.useCallback(() => {
+    if (!dailySiteLogEnabled) return;
+    setLogBookNotice(null);
+    const siteId = Number(logBookSite);
+    const zone = resolveShiftZone(logBookDayShifts[0]?.id ?? null);
+    const model = buildDailySiteLog({
+      siteId,
+      dateKey: logBookDate,
+      dateLabel: formatDateLabel(logBookDate),
+      timeZone: zone,
+      companyName: logBookDayShifts[0]?.site?.company?.name
+        || incidents.find((incident) => incident.company?.name)?.company?.name
+        || '',
+      shifts: logBookDayShifts,
+      operationsByShiftId,
+      dailyLogs,
+      incidents,
+      alerts,
+    });
+    const html = renderDailySiteLogHtml(model, {
+      generatedAt: formatInstantDateTime(new Date().toISOString(), zone),
+    });
+    if (!printIncidentReport(html)) {
+      setLogBookNotice('The browser blocked the report window. Allow pop-ups for this site and try again.');
+    }
+  }, [
+    dailySiteLogEnabled, logBookSite, logBookDate, logBookDayShifts,
+    operationsByShiftId, dailyLogs, incidents, alerts, resolveShiftZone,
+  ]);
 
   const urgentOperationalItems = React.useMemo(() => {
     const now = operationalNow;
@@ -3778,6 +3938,8 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
       const bytes = buildXlsx([
         { name: 'Operations Summary', rows: [[...SUMMARY_COLUMNS], ...report.summary] },
         { name: 'Welfare Detail', rows: [[...WELFARE_COLUMNS], ...report.welfare] },
+        // The Log Book evidence: every entry in full, plus every required period nothing satisfied.
+        { name: 'Log Book', rows: [[...LOG_BOOK_COLUMNS], ...report.logBook] },
       ]);
       downloadOperationsFile(
         operationsReportFilename(operationsReportScope, 'xlsx'),
@@ -4964,6 +5126,30 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
         return <CompanyPayRulesSettings />;
       case 'audit':
         return <CompanyAuditWorkspace />;
+      case 'log-book':
+        return (
+          <CompanyLogBookWorkspace
+            rows={logBookRows}
+            periods={logBookDayPeriods}
+            date={logBookDate}
+            onDateChange={setLogBookDate}
+            search={logBookSearch}
+            onSearchChange={setLogBookSearch}
+            clientOptions={logBookFilterOptions.clients}
+            siteOptions={logBookFilterOptions.sites}
+            guardOptions={logBookFilterOptions.guards}
+            clientFilter={logBookClient}
+            siteFilter={logBookSite}
+            guardFilter={logBookGuard}
+            onClientFilter={setLogBookClient}
+            onSiteFilter={setLogBookSite}
+            onGuardFilter={setLogBookGuard}
+            onOpenEntry={setLogBookEntryId}
+            onOpenDailySiteLog={handleOpenDailySiteLog}
+            dailySiteLogEnabled={dailySiteLogEnabled}
+            timeLabel={(iso) => formatTimeLabel(iso, logBookZone)}
+          />
+        );
       case 'incidents':
         return renderSimpleTableSection(
           'Incidents',
@@ -5140,6 +5326,12 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
         row press set the state for a drawer that did not exist. Mounted here it is reachable from
         every section that can open it, which is the register and the Attention Now queue alike.
       */}
+      {/* The Log Book entry, read-only. Screen-level for the same reason the Incident Report is. */}
+      <CompanyLogBookEntryDrawer
+        entry={logBookEntryDetail}
+        onClose={() => setLogBookEntryId(null)}
+      />
+
       <CompanyIncidentReportDrawer
         model={incidentReportModel}
         printing={printingIncidentReport}
