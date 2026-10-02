@@ -250,6 +250,12 @@ jobs:
       - name: Verify the Company Dashboard renders
         run: npm run test:dashboard-runtime
 
+      # UAT FIX 03: an incident is not a safety alert. Both production defects were correctly-rendered
+      # buttons wired to the wrong handler, which no source grep and no bundle export could see — so
+      # this step presses the real buttons on the real queue and asserts WHICH callback fires.
+      - name: Verify the incident workflow
+        run: npm run test:incident-workflow
+
       # ── Screening ─────────────────────────────────────────────────────────────
       # Protects the Guard screening journey and the locked distinction that Company-Managed deployment
       # is NOT S4 Screening. Note it also reads backend screening sources, so it doubles as a contract

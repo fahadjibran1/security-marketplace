@@ -284,9 +284,23 @@ test('FLOW-01-OPEN-OFFERS-ACKNOWLEDGE-AND-RESOLVE', () => {
     'Acknowledge is offered only while there is something to acknowledge',
   );
   assert.ok(/accessibilityLabel="Acknowledge"/.test(workspaceSource), 'and is a real control');
+  /**
+   * CORRECTED BY UAT FIX 03, not relaxed.
+   *
+   * This used to pin `Boolean(item.alertId) || Boolean(item.incidentId)` — which is the defect
+   * itself: the button rendered for incidents and was wired to the safety-alert handler, so it
+   * failed on every press with "No safety alert is linked to this urgent item". The intent being
+   * asserted is unchanged and now stricter: Acknowledge is offered only where there is a SAFETY
+   * ALERT to write the acknowledgement onto. An incident has its own transition, certified in
+   * `incident-workflow.spec.cjs`.
+   */
   assert.ok(
-    /const canAcknowledge = Boolean\(item\.alertId\) \|\| Boolean\(item\.incidentId\);/.test(workspaceSource),
-    'a derived item has no record to write an acknowledgement onto',
+    /const canAcknowledge = !isIncident && Boolean\(item\.alertId\);/.test(workspaceSource),
+    'only a safety alert can be acknowledged; a derived item and an incident cannot',
+  );
+  assert.ok(
+    !/canAcknowledge = Boolean\(item\.alertId\) \|\| Boolean\(item\.incidentId\)/.test(workspaceSource),
+    'and the condition that offered it on incidents is gone',
   );
 });
 

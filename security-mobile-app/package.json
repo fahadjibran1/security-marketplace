@@ -55,6 +55,7 @@
     "test:alert-resolution": "node scripts/alert-resolution.spec.cjs",
     "test:render-init": "node scripts/render-initialisation.spec.cjs",
     "test:dashboard-runtime": "node scripts/company-dashboard-runtime.spec.cjs",
+    "test:incident-workflow": "node scripts/incident-workflow.spec.cjs",
     "test:live-ops-policy": "node scripts/live-operations-policy.spec.cjs",
     "test:shift-offer-time": "node scripts/shift-offer-time.spec.cjs"
   },

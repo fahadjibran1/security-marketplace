@@ -325,6 +325,7 @@ function renderPage({ rangeLabel, rangeHours, drawerOpen, highlightShiftId }) {
           onOpenUrgentShift: () => {},
           onUrgentIncidentFollowUp: async () => {},
           onUrgentAlertFollowUp: async () => {},
+          onOpenIncidentResolution: () => {},
           nextUp: NEXT_UP,
         }),
       ),
