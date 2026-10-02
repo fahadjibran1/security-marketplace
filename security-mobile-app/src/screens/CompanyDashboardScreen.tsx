@@ -10,7 +10,9 @@ import { CompanySitesWorkspace, type SiteFormState, SITE_FORM_EMPTY } from '../c
 import { CompanyLiveOperationsWorkspace } from '../components/company/CompanyLiveOperationsWorkspace';
 import { CompanyResolveAlertDrawer, type ResolveTarget } from '../components/company/CompanyResolveAlertDrawer';
 import { alertTypeLabel, missingBookOffSummary, resolutionFamilyForAlert } from '../components/company/alertResolution';
-import { CompanyIncidentDetailDrawer } from '../components/company/CompanyIncidentDetailDrawer';
+import { CompanyIncidentReportDrawer } from '../components/company/CompanyIncidentReportDrawer';
+import { buildIncidentReport } from '../components/company/incidentReport';
+import { renderIncidentReportHtml, printIncidentReport } from '../components/company/incidentReportPrint';
 import { incidentLifecycleLabel, incidentSeverityLabel } from '../components/company/incidentLifecycle';
 import type { LiveBoardRow, CloseOutSummary, SelectedShiftContext } from '../components/company/CompanyLiveOperationsWorkspace';
 import { CompanyShiftOffersWorkspace, type ShiftOffersFeedback } from '../components/company/CompanyShiftOffersWorkspace';
@@ -70,6 +72,8 @@ import {
   ApiError,
   acknowledgeSafetyAlert,
   closeSafetyAlert,
+  listCompanyAttachments,
+  listCompanyAuditLogs,
   createClient,
   createJob,
   createShift,
@@ -133,6 +137,8 @@ import {
   CreateClientPayload,
   CreateJobPayload,
   CreateShiftPayload,
+  Attachment,
+  AuditLog,
   CreateSitePayload,
   DailyLog,
   GuardProfile,
@@ -1346,6 +1352,18 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
   const [resolveError, setResolveError] = React.useState<string | null>(null);
   /** Which incident the register is showing in full, if any. */
   const [incidentDetailId, setIncidentDetailId] = React.useState<number | null>(null);
+  /**
+   * The evidence the Incident Report needs, fetched only when a report is opened.
+   *
+   * Neither is wanted by any other surface, and the audit log in particular is a long list that no
+   * dashboard load should be paying for. They are read through the existing company-scoped
+   * endpoints — no new endpoint, and the same authorisation as the Audit Trail and attachments
+   * workspaces already enforce.
+   */
+  const [incidentAuditLogs, setIncidentAuditLogs] = React.useState<AuditLog[]>([]);
+  const [incidentAttachments, setIncidentAttachments] = React.useState<Attachment[]>([]);
+  const [incidentReportNotice, setIncidentReportNotice] = React.useState<string | null>(null);
+  const [printingIncidentReport, setPrintingIncidentReport] = React.useState(false);
   const [managementActions, setManagementActions] = React.useState<ManagementActionItem[]>([]);
   const [closeOutNotesDraft, setCloseOutNotesDraft] = React.useState('');
   const [savingCloseOutNotes, setSavingCloseOutNotes] = React.useState(false);
@@ -1826,6 +1844,7 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
     () => (incidentDetailId ? incidents.find((candidate) => candidate.id === incidentDetailId) ?? null : null),
     [incidentDetailId, incidents],
   );
+
   const outstandingAlerts = React.useMemo(
     () => alerts.filter((alert) => (alert.status || '').toLowerCase() !== 'closed'),
     [alerts],
@@ -1929,6 +1948,24 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
       resolveSiteZone(shiftId == null ? null : shiftSiteIdById.get(shiftId) ?? null),
     [resolveSiteZone, shiftSiteIdById],
   );
+  /**
+   * The report itself, assembled from the incident row, the audit log and the attachments.
+   *
+   * The audit log is the authority for the handling history: resolving an incident overwrites
+   * `reviewedAt` with the resolution time, so the row alone cannot say when it was marked in review.
+   */
+  const incidentReportModel = React.useMemo(
+    () => (incidentDetail
+      ? buildIncidentReport(
+        incidentDetail,
+        incidentAuditLogs,
+        incidentAttachments,
+        resolveShiftZone(incidentDetail.shift?.id ?? null),
+      )
+      : null),
+    [incidentDetail, incidentAuditLogs, incidentAttachments, resolveShiftZone],
+  );
+
   const urgentOperationalItems = React.useMemo(() => {
     const now = operationalNow;
     const items: UrgentOperationalItem[] = [];
@@ -2476,6 +2513,55 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
       raisedLabel: formatInstantDateTime(incident?.reportedAt || incident?.createdAt || item.occurredAt, zone),
     });
   }, [incidents, shifts, resolveShiftZone]);
+
+  /**
+   * Open the Incident Report for one incident.
+   *
+   * The report opens immediately on what the register already holds, and the audit log and
+   * attachments arrive a moment later — so a controller never waits on a list request to see the
+   * incident. A failed fetch degrades to "no handling history recorded" and "no evidence attached",
+   * which is honest: the report states what it can evidence and nothing more.
+   *
+   * Both reads are GETs through existing endpoints. Opening a report writes nothing.
+   */
+  const openIncidentReport = React.useCallback((incidentId: number) => {
+    setIncidentDetailId(incidentId);
+    setIncidentReportNotice(null);
+
+    void (async () => {
+      const [auditResult, attachmentResult] = await Promise.allSettled([
+        listCompanyAuditLogs(),
+        listCompanyAttachments(),
+      ]);
+      if (auditResult.status === 'fulfilled') setIncidentAuditLogs(auditResult.value ?? []);
+      if (attachmentResult.status === 'fulfilled') setIncidentAttachments(attachmentResult.value ?? []);
+    })();
+  }, []);
+
+  /**
+   * Print, or save as PDF, through the browser's own dialogue.
+   *
+   * A purpose-built A4 document is written into a new same-origin window, so the navigation, the
+   * Attention Now rail, the filters and the audit JSON are not hidden from the printout — they were
+   * never in it. Nothing is uploaded and nothing leaves the authenticated session.
+   */
+  const handlePrintIncidentReport = React.useCallback(() => {
+    if (!incidentReportModel) return;
+    setPrintingIncidentReport(true);
+    setIncidentReportNotice(null);
+    try {
+      const html = renderIncidentReportHtml(incidentReportModel, {
+        // The company this incident belongs to, from the incident's own record.
+        companyName: incidentDetail?.company?.name || undefined,
+        generatedAt: formatInstantDateTime(new Date().toISOString(), resolveShiftZone(incidentDetail?.shift?.id ?? null)),
+      });
+      if (!printIncidentReport(html)) {
+        setIncidentReportNotice('The browser blocked the report window. Allow pop-ups for this site and try again.');
+      }
+    } finally {
+      setPrintingIncidentReport(false);
+    }
+  }, [incidentReportModel, incidentDetail, resolveShiftZone]);
 
   /** Submit the dialog: write the evidence, then let the queue reload without it. */
   const handleSubmitResolution = React.useCallback(async (
@@ -3208,7 +3294,7 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
      */
     if (item.category === 'incident') {
       if (item.shiftId) focusShiftInLiveBoard(item.shiftId);
-      if (item.incidentId) setIncidentDetailId(item.incidentId);
+      if (item.incidentId) openIncidentReport(item.incidentId);
       setActiveSection('incidents');
       setLiveOperationsFeedback({
         tone: 'success',
@@ -4433,10 +4519,12 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
         onSubmit={handleSubmitResolution}
       />
 
-      <CompanyIncidentDetailDrawer
-        incident={incidentDetail}
-        timeZone={resolveShiftZone(incidentDetail?.shift?.id ?? null)}
-        onClose={() => setIncidentDetailId(null)}
+      <CompanyIncidentReportDrawer
+        model={incidentReportModel}
+        printing={printingIncidentReport}
+        notice={incidentReportNotice}
+        onPrint={handlePrintIncidentReport}
+        onClose={() => { setIncidentDetailId(null); setIncidentReportNotice(null); }}
       />
 
     </View>
@@ -4890,11 +4978,13 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
           'Incidents',
           ['Incident', 'Shift', 'Site', 'Guard', 'Severity', 'Status', 'Time'],
           /**
-           * Every row opens the incident itself.
+           * Every row opens the Incident Report.
            *
            * The register listed seven columns and stopped there, so the one surface that is meant to
-           * answer "what happened on #4, and what did we do?" could not. The row is the way in; the
-           * drawer holds the report, the handling and the resolution.
+           * answer "what happened on #4, and what did we do?" could not. The row is the way in.
+           *
+           * Every incident stays listed, whatever its status: the register is the historical record,
+           * and a resolved incident that vanished from it would be the opposite of evidence.
            */
           incidents.map((incident) => (
             <Pressable
@@ -4902,7 +4992,7 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
               accessibilityRole="button"
               accessibilityLabel={`Open Incident #${incident.id}`}
               style={styles.tableRow}
-              onPress={() => setIncidentDetailId(incident.id)}
+              onPress={() => openIncidentReport(incident.id)}
             >
               <Text style={styles.tableCellStrong}>#{incident.id}</Text>
               <Text style={styles.tableCell}>{incident.shift?.id ? `#${incident.shift.id}` : '—'}</Text>
