@@ -597,6 +597,15 @@ export interface LogBookOperationsView {
   intervalMinutes: number | null;
   currentWindow: OperationalWindowView | null;
   currentWindowSubmitted: boolean;
+  /**
+   * The engine's verdict for every Log Book period, exactly as Welfare publishes its own.
+   *
+   * The counts below have always been derived from these; the windows themselves were simply never
+   * sent, so a register could say "2 missing" but never which periods. Reading them is the only way
+   * to show periods without building a second scheduling grid here that could disagree with the
+   * backend. Empty for an "as required" site — there is no period to report on.
+   */
+  windows: OperationalWindowView[];
   requiredCount: number;
   submittedCount: number;
   missingCount: number;

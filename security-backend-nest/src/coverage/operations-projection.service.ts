@@ -91,11 +91,26 @@ export type LogBookOperationsView = {
   intervalMinutes: number | null;
   currentWindow: OperationalWindowView | null;
   currentWindowSubmitted: boolean;
+  /**
+   * The engine's verdict for every Log Book period, published exactly as Welfare's already is.
+   *
+   * The counts below have always been derived from these windows; the windows themselves were simply
+   * never sent. Without them a register can only say "2 missing" and never WHICH periods — and the
+   * only alternative would be a second scheduling grid in the frontend, computing an answer that
+   * could disagree with the backend's. This is the same `LogBookWindowService` output, unmodified:
+   * nothing here recomputes, re-anchors or re-grades a period.
+   *
+   * Empty for an "as required" site, because there is no period to report on.
+   */
+  windows: LogBookWindowView[];
   requiredCount: number;
   submittedCount: number;
   missingCount: number;
   lastEntryAt: string | null;
 };
+
+/** One Log Book period, as the engine graded it. Identical in shape to `WelfareWindowView`. */
+export type LogBookWindowView = WelfareWindowView;
 
 /**
  * The actionable Welfare alert, identified semantically: type missed_checkcall with a NULL window
@@ -297,6 +312,8 @@ export class OperationsProjectionService {
         currentWindowSubmitted: Boolean(
           currentLogBookWindow && currentLogBookWindow.completionCount > 0,
         ),
+        // The same windows the counts below are derived from, published verbatim.
+        windows: logBook.windows.map((window) => this.toWelfareWindowView(window)),
         requiredCount: logBook.summary.requiredCount,
         submittedCount: logBook.summary.completedCount,
         missingCount: logBook.summary.missedCount,
