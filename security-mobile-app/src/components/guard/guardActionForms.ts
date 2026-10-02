@@ -67,6 +67,8 @@ export const GUARD_ACTION_FORMS: readonly GuardActionForm[] = [
   {
     key: 'logBook',
     title: 'Log Book',
+    // The boundary between the four written actions, stated once where the Guard is deciding.
+    helperText: 'A routine record of what you did or saw. Nothing needs action.',
     placeholder: 'Write a Log Book entry',
     submitLabel: 'Save Log Book Entry',
     busyLabel: 'Saving...',
@@ -78,6 +80,7 @@ export const GUARD_ACTION_FORMS: readonly GuardActionForm[] = [
     // Non-emergency: something the site needs. Fuel, log books, equipment, welfare supplies, access,
     // lighting. The placeholder carries the examples so the form needs no explanatory paragraph.
     title: 'Site Request',
+    helperText: 'Something the site needs. Control will arrange it.',
     placeholder: 'What does the site need? Fuel, log books, equipment, access, lighting',
     submitLabel: 'Send Site Request',
     busyLabel: 'Sending...',
@@ -87,6 +90,7 @@ export const GUARD_ACTION_FORMS: readonly GuardActionForm[] = [
   {
     key: 'incident',
     title: 'Incident',
+    helperText: 'Something happened that needs reporting and follow-up.',
     placeholder: 'Short incident description',
     submitLabel: 'Submit Incident',
     busyLabel: 'Submitting...',
@@ -96,7 +100,7 @@ export const GUARD_ACTION_FORMS: readonly GuardActionForm[] = [
   {
     key: 'emergency',
     title: 'Emergency',
-    helperText: 'Type SOS to confirm you need immediate assistance.',
+    helperText: 'You need immediate help. Type SOS to confirm.',
     placeholder: 'Type SOS',
     submitLabel: 'Send Emergency Alert',
     busyLabel: 'Sending...',
