@@ -25,7 +25,7 @@ const { loadTs, ROOT } = require('./load-ts.cjs');
 
 const OUT_DIR = process.argv[2] || path.join(ROOT, 'preview-log-book');
 const LONDON = 'Europe/London';
-const GENERATED = '01 Oct 2026, 09:15';
+const GENERATED = '01-10-2026 · 09:15';
 
 const reg = loadTs('src/components/company/logBookRegister.ts');
 const dsl = loadTs('src/components/company/dailySiteLog.ts');
@@ -177,7 +177,7 @@ const registerProps = (over = {}) => ({
 });
 
 const dayModel = (shifts, siteId) => dsl.buildDailySiteLog({
-  siteId, dateKey: '2026-09-30', dateLabel: 'Wed, 30 September 2026', timeZone: LONDON,
+  siteId, dateKey: '2026-09-30', dateLabel: '30-09-2026', timeZone: LONDON,
   companyName: 'vesoft Test Company',
   shifts, operationsByShiftId: OPS, dailyLogs: LOGS, incidents: INCIDENTS, alerts: ALERTS,
 });
@@ -196,8 +196,8 @@ const pages = [
     React.createElement(CompanyLogBookEntryDrawer, {
       entry: {
         ...ROWS.find((r) => r.id === 103),
-        scheduledShift: 'Wed, 30 Sept 2026 · 19:00–23:00',
-        recordedAt: 'Wed, 30 Sept 2026 · 21:12',
+        scheduledShift: '30-09-2026 · 19:00–23:00',
+        recordedAt: '30-09-2026 · 21:12',
         periodLabel: '21:00–22:00',
       },
       onClose: () => {},

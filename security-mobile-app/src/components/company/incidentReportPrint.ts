@@ -221,7 +221,20 @@ export function renderIncidentReportHtml(
  */
 export function printIncidentReport(html: string): boolean {
   if (typeof window === 'undefined' || typeof window.open !== 'function') return false;
-  const frame = window.open('', '_blank', 'noopener,noreferrer,width=900,height=1200');
+  /**
+   * NO `noopener` HERE, AND THAT IS NOT AN OVERSIGHT.
+   *
+   * `window.open()` with `noopener` is specified to return null — the whole point of the flag is to
+   * sever the handle. Chrome does exactly that: with pop-up blocking disabled, so the flag is the
+   * only variable, `window.open('', '_blank', 'noopener,…')` returns null while the same call
+   * without it returns a window whose document can be written. The browser still opens the tab, so
+   * the report was never written into it and a client saw a blank page. That was UAT FIX 01.
+   *
+   * Nothing is given up by omitting it. The window is `about:blank` on this origin, it is never
+   * navigated anywhere, and the only thing written into it is the document built below — there is no
+   * cross-origin page to protect an opener reference from.
+   */
+  const frame = window.open('', '_blank', 'width=900,height=1200');
   if (!frame) return false;
 
   frame.document.open();

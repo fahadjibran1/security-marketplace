@@ -47,6 +47,9 @@ import { resolveCompliancePermissions } from '../components/company/compliance-m
 import {
   DEFAULT_SITE_TIME_ZONE,
   formatInstantDateTime,
+  formatUkDate,
+  formatUkDateTime,
+  formatUkRange,
   formatInstantTime,
   formatSiteDateInput,
   resolveDisplayZone,
@@ -2083,10 +2086,9 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
       : undefined;
     return {
       ...row,
-      scheduledShift: shift
-        ? `${formatInstantDateTime(shift.start, zone)} – ${formatTimeLabel(shift.end, zone)}`
-        : '',
-      recordedAt: formatInstantDateTime(row.at, zone),
+      // UK operational format on the Log Book surfaces; the Incident Report keeps its own style.
+      scheduledShift: shift ? formatUkRange(shift.start, shift.end, zone, '') : '',
+      recordedAt: formatUkDateTime(row.at, zone),
       periodLabel: period
         ? `${formatTimeLabel(period.start, zone)}–${formatTimeLabel(period.end, zone)}`
         : '',
@@ -2104,7 +2106,8 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
     const model = buildDailySiteLog({
       siteId,
       dateKey: logBookDate,
-      dateLabel: formatDateLabel(logBookDate),
+      // The report heading reads DD-MM-YYYY; `logBookDate` itself stays the ISO filter key.
+      dateLabel: formatUkDate(`${logBookDate}T12:00:00.000Z`, zone, logBookDate),
       timeZone: zone,
       companyName: logBookDayShifts[0]?.site?.company?.name
         || incidents.find((incident) => incident.company?.name)?.company?.name

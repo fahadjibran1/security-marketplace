@@ -8,7 +8,7 @@
 // It is pure, so the screen, the printed A4 page and the export are three renderings of ONE reading
 // of the day and cannot quietly disagree.
 
-import { formatInstantDateTime, formatInstantTime } from '../../services/siteTime';
+import { formatInstantTime, formatUkDateTime, formatUkRange } from '../../services/siteTime';
 import { isLogBookEntry, logBookCompliance, logBookPeriods, type LogBookCompliance, type LogBookPeriod } from './logBookRegister';
 import { isWelfareEvidence } from '../shifts/welfareEvidence';
 import type { DailyLog, Incident, SafetyAlert, Shift, ShiftOperationsView } from '../../types/models';
@@ -153,7 +153,7 @@ export function buildDailySiteLog(input: DailySiteLogInput): DailySiteLogModel {
     return {
       shiftId: shift.id,
       guardName,
-      scheduled: `${at(shift.start)}–${at(shift.end)}`,
+      scheduled: formatUkRange(shift.start, shift.end, timeZone, NOT_RECORDED),
       bookOn: operations?.bookOnAt ? at(operations.bookOnAt) : NOT_RECORDED,
       bookOff: operations?.bookOffAt ? at(operations.bookOffAt) : NOT_RECORDED,
       state: attendanceState(operations),
@@ -318,5 +318,5 @@ export function dailySiteLogTitle(model: DailySiteLogModel): string {
 
 /** A readable stamp for "generated at". */
 export function generatedAtLabel(nowIso: string, timeZone: string): string {
-  return formatInstantDateTime(nowIso, timeZone);
+  return formatUkDateTime(nowIso, timeZone);
 }

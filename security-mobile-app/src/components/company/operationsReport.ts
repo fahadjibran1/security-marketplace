@@ -15,7 +15,7 @@
 // Welfare Check throughout. The backend enums still say `check_call` for historical rows, and those rows
 // still count as Welfare evidence, but nothing user-facing here repeats the old vocabulary.
 
-import { formatInstantDate, formatInstantTime, formatSiteDateInput } from '../../services/siteTime';
+import { formatInstantDate, formatInstantTime, formatSiteDateInput, formatUkDate } from '../../services/siteTime';
 import type { ShiftOperationsView } from '../../types/models';
 import { isWelfareEvidence } from '../shifts/welfareEvidence';
 
@@ -211,7 +211,15 @@ function buildLogBookRows(
   out: string[][],
 ): void {
   const shiftRef = `#${input.shift.id}`;
-  const common = [f.date, f.client, f.site, shiftRef, f.guard, f.schedStart, f.schedEnd];
+  /**
+   * The Log Book sheet states its date the UK way, DD-MM-YYYY.
+   *
+   * Only this sheet. The Summary and Welfare Detail sheets predate Phase 4B and keep the format
+   * their existing readers already parse; restyling them would be collateral nobody asked for. The
+   * filename and the report scope stay ISO, because deterministic naming depends on it.
+   */
+  const ukDate = formatUkDate(input.shift.start, f.tz, f.date);
+  const common = [ukDate, f.client, f.site, shiftRef, f.guard, f.schedStart, f.schedEnd];
 
   const entries = (input.logs ?? []).filter((log) => log.logType === 'log_book');
   for (const entry of entries) {

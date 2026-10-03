@@ -9,7 +9,7 @@
 // so the drawer on screen and the printed A4 page are built from the SAME view model and cannot
 // drift apart.
 
-import { formatInstantDateTime } from '../../services/siteTime';
+import { formatInstantDateTime, formatUkRange } from '../../services/siteTime';
 import { resolutionLabel } from './alertResolution';
 import {
   incidentCategoryLabel,
@@ -152,6 +152,20 @@ export function scheduledShiftLabel(
   const [endDate, endTime] = endLabel.split(' · ');
   if (startDate && endTime && startDate === endDate) return `${startLabel}–${endTime}`;
   return `${startLabel} – ${endLabel}`;
+}
+
+/**
+ * The same rule in the UK operational format, for the Log Book surfaces.
+ *
+ * Kept beside its sibling rather than parameterised: the Incident Report's wording is deliberate and
+ * a shared switch would be one edit away from silently restyling a client's incident document.
+ */
+export function scheduledShiftLabelUk(
+  shift: { start?: string | null; end?: string | null } | null | undefined,
+  timeZone: string,
+): string {
+  if (!shift?.start || !shift?.end) return '';
+  return formatUkRange(shift.start, shift.end, timeZone, '');
 }
 
 /**

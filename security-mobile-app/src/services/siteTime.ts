@@ -263,6 +263,65 @@ export function formatInstantDateTime(
   return `${formatInstantDate(iso, timeZone)}${separator}${formatInstantTime(iso, timeZone)}`;
 }
 
+// ─── UK operational date display (Phase 4B) ──────────────────────────────────
+//
+// The Log Book and the Daily Site Log are read by UK control rooms and sent to UK clients, who write
+// a date DD-MM-YYYY. These are DISPLAY-ONLY: nothing here touches an API parameter, a filter value,
+// a `<input type="date">` value, a database value, a deterministic key or a filename, all of which
+// stay ISO. The arithmetic is still Intl's — no date is parsed out of a string.
+//
+// The Incident Report deliberately keeps its own "Wed, 30 Sept 2026 · 20:49" style and does not use
+// these; it is a different document with a different voice.
+
+/** e.g. "30-09-2026" for a true instant, on the site's clock. */
+export function formatUkDate(iso: string | null | undefined, timeZone?: string | null, empty = '—'): string {
+  if (!iso) return empty;
+  const instant = new Date(iso);
+  if (Number.isNaN(instant.getTime())) return String(iso);
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: resolveDisplayZone(timeZone),
+    day: '2-digit', month: '2-digit', year: 'numeric',
+  }).formatToParts(instant);
+  const get = (type: string) => parts.find((part) => part.type === type)?.value ?? '';
+  return `${get('day')}-${get('month')}-${get('year')}`;
+}
+
+/** e.g. "30-09-2026 · 20:34". */
+export function formatUkDateTime(
+  iso: string | null | undefined, timeZone?: string | null, empty = '—',
+): string {
+  if (!iso) return empty;
+  const instant = new Date(iso);
+  if (Number.isNaN(instant.getTime())) return String(iso);
+  return `${formatUkDate(iso, timeZone)} · ${formatInstantTime(iso, timeZone)}`;
+}
+
+/**
+ * A window, with the date stated once when it does not cross midnight.
+ *
+ *   same day:  30-09-2026 · 20:35–21:35
+ *   overnight: 30-09-2026 · 20:00 – 01-10-2026 · 08:00
+ *
+ * The comparison is on the formatted site-local DATE, so a shift that runs past midnight keeps both
+ * dates — which is the whole point of showing them.
+ */
+export function formatUkRange(
+  startIso: string | null | undefined,
+  endIso: string | null | undefined,
+  timeZone?: string | null,
+  empty = '—',
+): string {
+  if (!startIso || !endIso) return empty;
+  const startDate = formatUkDate(startIso, timeZone, '');
+  const endDate = formatUkDate(endIso, timeZone, '');
+  const startTime = formatInstantTime(startIso, timeZone, '');
+  const endTime = formatInstantTime(endIso, timeZone, '');
+  if (!startDate || !endDate || !startTime || !endTime) return empty;
+
+  if (startDate === endDate) return `${startDate} · ${startTime}–${endTime}`;
+  return `${startDate} · ${startTime} – ${endDate} · ${endTime}`;
+}
+
 /** The site-local calendar day of an instant, for day bucketing and coverage boundaries. */
 export function siteDateParts(instant: Date, timeZone: string) {
   const p = partsInZone(instant, timeZone);

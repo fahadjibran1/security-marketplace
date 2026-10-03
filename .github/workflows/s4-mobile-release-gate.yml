@@ -268,6 +268,12 @@ jobs:
       - name: Verify the Log Book
         run: npm run test:log-book
 
+      # UAT FIX 01: the Daily Site Log opened a blank tab because window.open() with `noopener` is
+      # specified to return null, so the document was never written into it. This drives the real
+      # production shape through a browser-shaped window and asserts the page is actually written.
+      - name: Verify the Daily Site Log opens
+        run: npm run test:daily-site-log
+
       # ── Screening ─────────────────────────────────────────────────────────────
       # Protects the Guard screening journey and the locked distinction that Company-Managed deployment
       # is NOT S4 Screening. Note it also reads backend screening sources, so it doubles as a contract
