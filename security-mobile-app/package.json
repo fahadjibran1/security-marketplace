@@ -59,6 +59,7 @@
     "test:incident-report": "node scripts/incident-report.spec.cjs",
     "test:log-book": "node scripts/log-book.spec.cjs",
     "test:daily-site-log": "node scripts/daily-site-log-runtime.spec.cjs",
+    "test:day-boundary": "node scripts/daily-site-log-day-boundary.spec.cjs",
     "test:live-ops-policy": "node scripts/live-operations-policy.spec.cjs",
     "test:shift-offer-time": "node scripts/shift-offer-time.spec.cjs"
   },

@@ -117,9 +117,15 @@ test('EXPORT-01-THE-WORKBOOK-IS-VALID-AND-COMPLETE', () => {
 
 test('EXPORT-02-THE-LOG-BOOK-SHEET-HAS-THE-EXPECTED-SHAPE', () => {
   assert.deepEqual(logBookSheet[0], [...preview.report.LOG_BOOK_COLUMNS], 'header row');
-  // 3 entries + 2 missing periods across the two shifts, plus the header.
   assert.equal(logBookSheet.length, preview.built.logBook.length + 1, 'every built row reached the file');
-  assert.equal(logBookSheet.length, 7);
+  /**
+   * Two entries on 30-09 plus two missing periods on 30-09, and the header.
+   *
+   * The overnight shift's 01-10 entry is deliberately absent: UAT FIX 02 made the export obey the
+   * report's own site-local day, so a later day's record no longer rides into this file on a
+   * matching shift id. It belongs to the 01-10 export.
+   */
+  assert.equal(logBookSheet.length, 6);
   assert.equal(summarySheet.length, preview.built.summary.length + 1);
   assert.equal(welfareSheet.length, preview.built.welfare.length + 1);
 });

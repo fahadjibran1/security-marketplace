@@ -340,6 +340,50 @@ export function siteMidnight(year: number, month: number, day: number, timeZone:
   return new Date(naive - zoneOffsetMs(new Date(naive), timeZone));
 }
 
+export type SiteDayWindow = {
+  /** The instant the site-local day begins. Inclusive. */
+  startMs: number;
+  /** The instant the NEXT site-local day begins. Exclusive. */
+  endMs: number;
+};
+
+/**
+ * The true instants bounding one site-local calendar day. (UAT FIX 02.)
+ *
+ * A Daily Site Log is a statement about a site's day, so the boundary has to be that site's
+ * midnight — not the reader's, and not a naive slice of a UTC string. In London on 30 September the
+ * day runs 23:00Z to 23:00Z; in New York it does not, and on a DST transition day it is 23 or 25
+ * hours long. Both boundaries are resolved through `siteMidnight`, which goes through the existing
+ * `siteLocalToInstant`, so the arithmetic is the one the rest of the app already trusts.
+ *
+ * The end is the NEXT day's midnight rather than 23:59:59, so a long day is covered exactly and an
+ * event at 23:59:30 cannot fall through the gap.
+ *
+ * Returns null for anything that is not a YYYY-MM-DD, rather than inventing a day.
+ */
+export function siteDayWindow(dateInput: string, timeZone: string): SiteDayWindow | null {
+  if (!isSiteDateInput(dateInput)) return null;
+  const [year, month, day] = dateInput.split('-').map(Number);
+  const start = siteMidnight(year, month, day, timeZone);
+
+  const nextInput = shiftSiteDateInput(dateInput, 1);
+  const [nextYear, nextMonth, nextDay] = nextInput.split('-').map(Number);
+  const end = siteMidnight(nextYear, nextMonth, nextDay, timeZone);
+
+  const startMs = start.getTime();
+  const endMs = end.getTime();
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return null;
+  return { startMs, endMs };
+}
+
+/** Whether an instant falls inside a site-local day. Half-open: [start, end). */
+export function isWithinSiteDay(iso: string | null | undefined, window: SiteDayWindow | null): boolean {
+  if (!iso || !window) return false;
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return false;
+  return ms >= window.startMs && ms < window.endMs;
+}
+
 /**
  * Today's date at a site, as a YYYY-MM-DD input value. (Phase 4A.2.)
  *

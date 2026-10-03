@@ -74,6 +74,23 @@ export function renderDailySiteLogHtml(
        </table>
        <p class="muted note">No periodic Log Book obligation applies to this site, so no period can be missing.</p>`;
 
+  /**
+   * Outcomes that landed after the report date.
+   *
+   * Visually separate from the chronology on purpose, and every timestamp carries its own date, so a
+   * reader cannot take a later action for one that happened on this day.
+   */
+  const followUpBlock = model.followUps.length
+    ? model.followUps.map((item) => `
+        <div class="followup">
+          <p class="fu-title">${escapeHtml(item.title)}${item.outstanding ? '<span class="fu-open">Outstanding</span>' : ''}</p>
+          <table class="fields">
+            ${item.lines.map((line) => `
+              <tr><th scope="row">${escapeHtml(line.label)}</th><td>${paragraphs(line.value)}</td></tr>`).join('')}
+          </table>
+        </div>`).join('')
+    : '';
+
   const welfare = model.welfare.applicable
     ? `<table class="fields">
          <tr><th scope="row">Required</th><td>${model.welfare.required}</td></tr>
@@ -122,6 +139,12 @@ export function renderDailySiteLogHtml(
   tr.emergency td.l { color: #B42318; }
   thead { display: table-header-group; }
   .muted { color: #5B6B7A; font-style: italic; }
+  /* Outcomes sit in their own boxes so they cannot be read as part of the chronology above. */
+  .followup { border: 0.75pt solid #D7E0E8; border-left: 2.5pt solid #5B6B7A; border-radius: 2pt;
+              padding: 6pt 9pt; margin-top: 5pt; page-break-inside: avoid; background: #FAFCFD; }
+  .fu-title { margin: 0 0 3pt; font-weight: 700; }
+  .fu-open { display: inline-block; margin-left: 6pt; padding: 1pt 5pt; border: 0.75pt solid #A15C07;
+             border-radius: 2pt; color: #A15C07; font-size: 8pt; font-weight: 700; text-transform: uppercase; }
   .note { margin: 4pt 0 0; font-size: 9pt; }
   footer { margin-top: 16pt; padding-top: 6pt; border-top: 0.75pt solid #D7E0E8;
            font-size: 8.5pt; color: #5B6B7A; display: flex; justify-content: space-between; align-items: flex-end; }
@@ -158,6 +181,12 @@ export function renderDailySiteLogHtml(
       <tbody>${eventRows}</tbody>
     </table>
   </section>
+
+  ${followUpBlock ? `<section>
+    <h2>Follow-up / outcomes</h2>
+    <p class="muted note">Recorded after ${escapeHtml(model.dateLabel)}. Shown with their own dates; they are not part of this day's occurrence record.</p>
+    ${followUpBlock}
+  </section>` : ''}
 
   <section>
     <h2>Log Book compliance</h2>

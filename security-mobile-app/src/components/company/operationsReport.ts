@@ -15,7 +15,10 @@
 // Welfare Check throughout. The backend enums still say `check_call` for historical rows, and those rows
 // still count as Welfare evidence, but nothing user-facing here repeats the old vocabulary.
 
-import { formatInstantDate, formatInstantTime, formatSiteDateInput, formatUkDate } from '../../services/siteTime';
+import {
+  formatInstantDate, formatInstantTime, formatSiteDateInput, formatUkDate,
+  isWithinSiteDay, siteDayWindow, type SiteDayWindow,
+} from '../../services/siteTime';
 import type { ShiftOperationsView } from '../../types/models';
 import { isWelfareEvidence } from '../shifts/welfareEvidence';
 
@@ -157,7 +160,7 @@ export function buildOperationsReport(
   for (const input of inputs) {
     const f = shiftFacts(input);
     const windows = input.operations?.welfare?.windows ?? [];
-    buildLogBookRows(input, f, logBook);
+    buildLogBookRows(input, f, logBook, siteDayWindow(scope.date, f.tz));
 
     summary.push([
       f.date, f.client, f.site, f.guard,
@@ -209,6 +212,17 @@ function buildLogBookRows(
   input: ReportShiftInput,
   f: ReturnType<typeof shiftFacts>,
   out: string[][],
+  /**
+   * The report's own site-local day. (UAT FIX 02.)
+   *
+   * A row reached this sheet because its shift touched the day; that is not the same as having
+   * happened on it. An entry recorded two days later, or a required period belonging to the
+   * following morning of an overnight shift, is a fact about ITS day — and listing it here let a
+   * 02-10 event appear in a 30-09 export merely because the shift ids matched.
+   *
+   * Null for a malformed scope date, in which case nothing is filtered rather than everything.
+   */
+  dayWindow: SiteDayWindow | null,
 ): void {
   const shiftRef = `#${input.shift.id}`;
   /**
@@ -221,7 +235,11 @@ function buildLogBookRows(
   const ukDate = formatUkDate(input.shift.start, f.tz, f.date);
   const common = [ukDate, f.client, f.site, shiftRef, f.guard, f.schedStart, f.schedEnd];
 
-  const entries = (input.logs ?? []).filter((log) => log.logType === 'log_book');
+  const inDay = (iso: string | null | undefined) => (dayWindow ? isWithinSiteDay(iso, dayWindow) : true);
+
+  const entries = (input.logs ?? [])
+    .filter((log) => log.logType === 'log_book')
+    .filter((log) => inDay(log.createdAt));
   for (const entry of entries) {
     out.push([
       ...common,
@@ -239,6 +257,13 @@ function buildLogBookRows(
     const state = String(window.state ?? '');
     // Only the periods nothing satisfied: a completed period is already evidenced by its entry row.
     if (state !== 'missed' && state !== 'overdue') continue;
+    // And only those belonging to the report's own site-local day.
+    if (dayWindow) {
+      const startMs = Date.parse(window.start);
+      const endMs = Date.parse(window.end);
+      if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) continue;
+      if (!(startMs < dayWindow.endMs && endMs > dayWindow.startMs)) continue;
+    }
     out.push([
       ...common,
       '', '', '',

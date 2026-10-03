@@ -274,6 +274,12 @@ jobs:
       - name: Verify the Daily Site Log opens
         run: npm run test:daily-site-log
 
+      # UAT FIX 02: a Daily Site Log is a statement about a SITE-LOCAL DAY. Filtering by shiftId put a
+      # 02-10 Welfare Check and a 02-10 incident resolution into a 30-09 client report, rendered
+      # time-only. This certifies the day boundary, DST included, and the Follow-up section.
+      - name: Verify the Daily Site Log day boundary
+        run: npm run test:day-boundary
+
       # ── Screening ─────────────────────────────────────────────────────────────
       # Protects the Guard screening journey and the locked distinction that Company-Managed deployment
       # is NOT S4 Screening. Note it also reads backend screening sources, so it doubles as a contract

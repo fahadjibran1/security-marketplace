@@ -8,9 +8,13 @@
 // It is pure, so the screen, the printed A4 page and the export are three renderings of ONE reading
 // of the day and cannot quietly disagree.
 
-import { formatInstantTime, formatUkDateTime, formatUkRange } from '../../services/siteTime';
+import {
+  formatInstantTime, formatUkDate, formatUkDateTime, formatUkRange,
+  isWithinSiteDay, siteDayWindow, type SiteDayWindow,
+} from '../../services/siteTime';
 import { isLogBookEntry, logBookCompliance, logBookPeriods, type LogBookCompliance, type LogBookPeriod } from './logBookRegister';
 import { isWelfareEvidence } from '../shifts/welfareEvidence';
+import { resolutionLabel } from './alertResolution';
 import type { DailyLog, Incident, SafetyAlert, Shift, ShiftOperationsView } from '../../types/models';
 
 export const NOT_RECORDED = '—';
@@ -55,6 +59,23 @@ export type ShiftAttendanceRow = {
   state: string;
 };
 
+/**
+ * A durable item raised on the report date whose outcome landed later.
+ *
+ * It is NOT in the occurrence record, because it did not happen on this day — but dropping it
+ * silently would leave a client reading "Incident #4 reported" with no idea it was dealt with. Every
+ * later timestamp carries its own DATE, so nothing here can be mistaken for the report date.
+ */
+export type FollowUpOutcome = {
+  key: string;
+  /** e.g. "Incident #4 — Broken fence". */
+  title: string;
+  /** Label/value pairs, each already formatted with its full date where it is a later day. */
+  lines: Array<{ label: string; value: string }>;
+  /** True when nothing has closed it yet. */
+  outstanding: boolean;
+};
+
 export type DailySiteLogModel = {
   companyName: string;
   clientName: string;
@@ -68,6 +89,8 @@ export type DailySiteLogModel = {
   logBook: LogBookCompliance;
   /** The periods behind the compliance counts, for the surfaces that show them. */
   periods: LogBookPeriod[];
+  /** Items raised today whose outcome came later. Empty when there are none. */
+  followUps: FollowUpOutcome[];
   welfare: { required: number; completed: number; missed: number; applicable: boolean };
   operational: { incidents: number; siteRequests: number; emergencies: number };
 };
@@ -120,6 +143,11 @@ export function buildDailySiteLog(input: DailySiteLogInput): DailySiteLogModel {
   const { timeZone } = input;
   const shiftIds = new Set(input.shifts.map((shift) => shift.id));
   const at = (iso: string) => formatInstantTime(iso, timeZone);
+  /** The site's own midnight-to-midnight, DST included. Null only for a malformed date key. */
+  const dayWindow: SiteDayWindow | null = siteDayWindow(input.dateKey, timeZone);
+  const inDay = (iso: string | null | undefined) => isWithinSiteDay(iso, dayWindow);
+  /** A later-day moment always carries its date, so it can never read as the report date. */
+  const stamped = (iso: string | null | undefined) => formatUkDateTime(iso, timeZone, NOT_RECORDED);
 
   const site = input.shifts[0]?.site ?? null;
   const siteName = site?.name || input.shifts[0]?.siteName || '';
@@ -132,6 +160,16 @@ export function buildDailySiteLog(input: DailySiteLogInput): DailySiteLogModel {
   ) => {
     const stamp = ms(iso);
     if (!ok(stamp)) return; // A record with no usable time is omitted, never placed by guesswork.
+    /**
+     * THE DAY IS THE BOUNDARY, NOT THE SHIFT.
+     *
+     * A record reached this report because it belongs to a shift that touched the day; that is not
+     * the same as having happened on it. A Welfare Check made two days later, or an incident
+     * resolved two days later, is a fact about ITS day — rendering it time-only in this one made a
+     * 02-10 action read as 30-09 on a client document. Anything outside the window is dropped here
+     * and, where it is a durable outcome, reported separately under Follow-up with its full date.
+     */
+    if (!isWithinSiteDay(iso, dayWindow)) return;
     events.push({ key, kind, at: at(iso as string), atMs: stamp, label, detail, guardName });
   };
 
@@ -161,7 +199,15 @@ export function buildDailySiteLog(input: DailySiteLogInput): DailySiteLogModel {
   });
 
   // ── log book and welfare ──────────────────────────────────────────────────
-  const dayLogs = input.dailyLogs.filter((log) => log.shift?.id != null && shiftIds.has(log.shift.id));
+  /**
+   * The day's logs: on one of this report's shifts AND recorded on this site-local day.
+   *
+   * The shift filter alone counted an overnight shift's small-hours entries on the previous day's
+   * report too, so "Entries recorded" could say 2 while the occurrence record listed 1.
+   */
+  const dayLogs = input.dailyLogs.filter((log) => log.shift?.id != null
+    && shiftIds.has(log.shift.id)
+    && inDay(log.createdAt));
 
   dayLogs.forEach((log) => {
     const guardName = log.guard?.fullName || '';
@@ -187,41 +233,124 @@ export function buildDailySiteLog(input: DailySiteLogInput): DailySiteLogModel {
     if (!compliance.scheduled) return;
 
     anyScheduled = true;
-    logBookRequired += compliance.required;
-    logBookCompleted += compliance.completed;
-    logBookMissing += compliance.missing;
 
-    logBookPeriods(operations).forEach((period) => {
-      periods.push(period);
-      if (period.status === 'missing') {
-        push(
-          'log_book_missed', `missed-${shift.id}-${period.index}`, period.end,
-          'Log Book period missed',
-          `No entry recorded for ${at(period.start)}–${at(period.end)}`,
-          shift.guard?.fullName || '',
-        );
-      }
-    });
+    /**
+     * Only the periods that INTERSECT this site-local day.
+     *
+     * An overnight shift's grid spans two reports, and assigning the whole grid to the scheduled
+     * start date would show a client periods that belong to the following morning. A window is
+     * clipped by overlap, not by its start, so one genuinely crossing midnight appears on both days
+     * — which is the truth about it. Nothing is re-graded: the engine's verdict travels unchanged.
+     */
+    logBookPeriods(operations)
+      .filter((period) => {
+        if (!dayWindow) return true;
+        const startMs = ms(period.start);
+        const endMs = ms(period.end);
+        if (!ok(startMs) || !ok(endMs)) return false;
+        return startMs < dayWindow.endMs && endMs > dayWindow.startMs;
+      })
+      .forEach((period) => {
+        periods.push(period);
+        /**
+         * The counts describe THIS day, so they are tallied from the clipped periods rather than
+         * taken from the shift-wide projection. For a single-day shift the two agree; for an
+         * overnight one, reporting the whole shift's totals on both days would double-count the
+         * obligation and overstate what either day actually required.
+         */
+        if (period.status === 'not_applicable') return;
+        logBookRequired += 1;
+        if (period.status === 'completed') logBookCompleted += 1;
+        if (period.status === 'missing') {
+          logBookMissing += 1;
+          push(
+            'log_book_missed', `missed-${shift.id}-${period.index}`, period.end,
+            'Log Book period missed',
+            `No entry recorded for ${at(period.start)}–${at(period.end)}`,
+            shift.guard?.fullName || '',
+          );
+        }
+      });
   });
 
   // ── incidents ─────────────────────────────────────────────────────────────
   // Referenced, never reproduced: the Incident Report remains the detailed evidence document.
-  const dayIncidents = input.incidents.filter((incident) => incident.shift?.id != null && shiftIds.has(incident.shift.id));
+  const followUps: FollowUpOutcome[] = [];
+  const shiftIncidents = input.incidents.filter((incident) => incident.shift?.id != null && shiftIds.has(incident.shift.id));
+
+  /** Only incidents REPORTED on this day are this day's incidents. */
+  const dayIncidents = shiftIncidents.filter((incident) => inDay(incident.reportedAt || incident.createdAt));
+
   dayIncidents.forEach((incident) => {
     const guardName = incident.guard?.fullName || '';
     push(
       'incident_reported', `inc-${incident.id}`, incident.reportedAt || incident.createdAt,
       `Incident #${incident.id} reported`, incident.title || '', guardName,
     );
+
     const status = (incident.status || '').toLowerCase();
-    if (incident.reviewedAt && status !== 'resolved' && status !== 'closed') {
-      push('incident_in_review', `inc-${incident.id}-rev`, incident.reviewedAt,
+    const settled = status === 'resolved' || status === 'closed';
+    const reviewedAt = incident.reviewedAt || null;
+    const resolvedAt = settled ? (incident.closedAt || incident.reviewedAt || null) : null;
+
+    // An outcome that landed TODAY is part of today's chronology.
+    if (reviewedAt && !settled && inDay(reviewedAt)) {
+      push('incident_in_review', `inc-${incident.id}-rev`, reviewedAt,
         `Incident #${incident.id} marked In Review`, '', '');
     }
-    if (status === 'resolved' || status === 'closed') {
-      // The row keeps only the latest review time, which for a resolved incident IS the resolution.
-      push('incident_resolved', `inc-${incident.id}-res`, incident.closedAt || incident.reviewedAt,
-        `Incident #${incident.id} resolved`, incident.resolutionReason ? '' : '', '');
+    if (settled && inDay(resolvedAt)) {
+      push('incident_resolved', `inc-${incident.id}-res`, resolvedAt,
+        `Incident #${incident.id} resolved`, '', '');
+    }
+
+    /**
+     * An outcome that landed LATER is reported here instead, dated.
+     *
+     * Suppressing it entirely would leave a client reading that an incident was raised and never
+     * hearing what happened; placing it in the chronology made a 02-10 action read as 30-09. This is
+     * the honest third option: a separate section, every timestamp carrying its own date.
+     */
+    const laterReview = reviewedAt && !inDay(reviewedAt) && !settled;
+    const laterResolve = settled && resolvedAt && !inDay(resolvedAt);
+    const unresolved = !settled;
+
+    if (laterReview || laterResolve || unresolved) {
+      const lines: Array<{ label: string; value: string }> = [
+        { label: 'Reported', value: stamped(incident.reportedAt || incident.createdAt) },
+      ];
+      /**
+       * "Marked In Review" only while the incident is still in review.
+       *
+       * The row keeps ONE `reviewedAt`, and resolving overwrites it — so on a resolved incident that
+       * column is the resolution moment, not the review. Printing it under both labels would show a
+       * client two events at the same minute and imply a review step the record cannot evidence.
+       * The Incident Report can tell them apart because it reads the audit log; this summary does
+       * not, so it says only what it knows.
+       */
+      if (reviewedAt && !settled && !inDay(reviewedAt)) {
+        lines.push({ label: 'Marked In Review', value: stamped(reviewedAt) });
+      }
+      if (settled && resolvedAt && !inDay(resolvedAt)) {
+        lines.push({ label: 'Resolved', value: stamped(resolvedAt) });
+        if (incident.resolutionReason) {
+          lines.push({ label: 'Resolution', value: resolutionLabel('incident', incident.resolutionReason) });
+        }
+        if (incident.resolutionNote?.trim()) {
+          lines.push({ label: 'Resolution note', value: incident.resolutionNote.trim() });
+        }
+      }
+      // Nothing is invented for an item still open: it is simply outstanding.
+      if (unresolved) lines.push({ label: 'Status', value: 'Outstanding' });
+
+      // Only worth a section when something is actually said beyond "reported".
+      if (lines.length > 1) {
+        followUps.push({
+          key: `incident-${incident.id}`,
+          title: `Incident #${incident.id}${incident.title ? ` — ${incident.title}` : ''}`,
+          lines,
+          outstanding: unresolved,
+        });
+      }
     }
   });
 
@@ -233,20 +362,50 @@ export function buildDailySiteLog(input: DailySiteLogInput): DailySiteLogModel {
   dayAlerts.forEach((alert) => {
     const type = (alert.type || '').toLowerCase();
     const guardName = alert.guard?.fullName || '';
-    if (SITE_REQUEST_TYPES.has(type)) {
-      siteRequests += 1;
-      push('site_request', `req-${alert.id}`, alert.createdAt, 'Site Request raised', alert.message || '', guardName);
-      if (alert.closedAt) {
-        push('site_request_resolved', `req-${alert.id}-done`, alert.closedAt, 'Site Request resolved', '', '');
-      }
-    } else if (type === 'panic') {
-      emergencies += 1;
-      push('emergency', `sos-${alert.id}`, alert.createdAt, 'Emergency raised', alert.message || '', guardName);
-      if (alert.closedAt) {
-        push('emergency_resolved', `sos-${alert.id}-done`, alert.closedAt, 'Emergency resolved', '', '');
-      }
+    const isRequest = SITE_REQUEST_TYPES.has(type);
+    const isPanic = type === 'panic';
+    if (!isRequest && !isPanic) return; // Welfare alerts are summarised, not listed as occurrences.
+
+    // Raised on another day? Then it belongs to that day's report, not this one.
+    if (!inDay(alert.createdAt)) return;
+
+    const noun = isRequest ? 'Site Request' : 'Emergency';
+    if (isRequest) siteRequests += 1; else emergencies += 1;
+
+    push(
+      isRequest ? 'site_request' : 'emergency',
+      `${isRequest ? 'req' : 'sos'}-${alert.id}`,
+      alert.createdAt, `${noun} raised`, alert.message || '', guardName,
+    );
+
+    if (alert.closedAt && inDay(alert.closedAt)) {
+      push(
+        isRequest ? 'site_request_resolved' : 'emergency_resolved',
+        `${isRequest ? 'req' : 'sos'}-${alert.id}-done`,
+        alert.closedAt, `${noun} resolved`, '', '',
+      );
+    } else if (alert.closedAt) {
+      // Closed on a later day: reported as an outcome, with its date.
+      followUps.push({
+        key: `alert-${alert.id}`,
+        title: `${noun} — ${alert.message || `#${alert.id}`}`,
+        lines: [
+          { label: 'Raised', value: stamped(alert.createdAt) },
+          { label: 'Resolved', value: stamped(alert.closedAt) },
+        ],
+        outstanding: false,
+      });
+    } else if ((alert.status || '').toLowerCase() !== 'closed') {
+      followUps.push({
+        key: `alert-${alert.id}`,
+        title: `${noun} — ${alert.message || `#${alert.id}`}`,
+        lines: [
+          { label: 'Raised', value: stamped(alert.createdAt) },
+          { label: 'Status', value: 'Outstanding' },
+        ],
+        outstanding: true,
+      });
     }
-    // Welfare alerts are summarised below, not listed as occurrences.
   });
 
   // ── welfare summary, from the existing projection ─────────────────────────
@@ -254,13 +413,42 @@ export function buildDailySiteLog(input: DailySiteLogInput): DailySiteLogModel {
   let welfareCompleted = 0;
   let welfareMissed = 0;
   let welfareApplicable = false;
+  /**
+   * The Welfare summary describes THIS day too.
+   *
+   * The projection's counts are shift-wide, so on an overnight shift they would report the whole
+   * night on both days' reports. The engine's published windows carry their own instants, so the
+   * day's figures are counted from the windows that intersect it — the same verdicts, narrowed to
+   * the day. The Welfare engine itself is untouched; nothing here recomputes a window.
+   *
+   * A projection that publishes no windows falls back to its own counts, because a shift-wide
+   * number is better than silently reporting zero.
+   */
   input.shifts.forEach((shift) => {
     const welfare = input.operationsByShiftId.get(shift.id)?.welfare;
     if (!welfare || !welfare.enabled) return;
     welfareApplicable = true;
-    welfareRequired += welfare.requiredCount ?? 0;
-    welfareCompleted += welfare.completedCount ?? 0;
-    welfareMissed += welfare.missedCount ?? 0;
+
+    const windows = welfare.windows ?? [];
+    if (windows.length === 0) {
+      welfareRequired += welfare.requiredCount ?? 0;
+      welfareCompleted += welfare.completedCount ?? 0;
+      welfareMissed += welfare.missedCount ?? 0;
+      return;
+    }
+
+    windows.forEach((window) => {
+      if (window.applicable === false) return;
+      if (dayWindow) {
+        const startMs = ms(window.start);
+        const endMs = ms(window.end);
+        if (!ok(startMs) || !ok(endMs)) return;
+        if (!(startMs < dayWindow.endMs && endMs > dayWindow.startMs)) return;
+      }
+      welfareRequired += 1;
+      if (window.state === 'completed') welfareCompleted += 1;
+      if (window.state === 'missed' || window.state === 'overdue') welfareMissed += 1;
+    });
   });
 
   /**
@@ -293,6 +481,7 @@ export function buildDailySiteLog(input: DailySiteLogInput): DailySiteLogModel {
       entries: dayLogs.filter(isLogBookEntry).length,
     },
     periods,
+    followUps,
     welfare: {
       required: welfareRequired,
       completed: welfareCompleted,

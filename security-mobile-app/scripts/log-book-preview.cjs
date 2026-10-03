@@ -111,7 +111,7 @@ const INCIDENTS = [{
   id: 4, title: 'Broken fence panel, north boundary', notes: 'Fence panel pushed in near column 7.',
   severity: 'medium', category: 'damage', status: 'resolved',
   reportedAt: '2026-09-30T19:49:00.000Z', createdAt: '2026-09-30T19:49:00.000Z',
-  reviewedAt: '2026-09-30T20:30:00.000Z', closedAt: null,
+  reviewedAt: '2026-10-02T16:25:00.000Z', closedAt: null,
   resolutionReason: 'client_informed', resolutionNote: 'Client informed; contractor booked.',
   shift: SHIFT_A, site: SITE_A, guard: SHIFT_A.guard, company: { id: 8, name: 'vesoft Test Company' },
 }];
@@ -176,8 +176,8 @@ const registerProps = (over = {}) => ({
   ...over,
 });
 
-const dayModel = (shifts, siteId) => dsl.buildDailySiteLog({
-  siteId, dateKey: '2026-09-30', dateLabel: '30-09-2026', timeZone: LONDON,
+const dayModel = (shifts, siteId, dateKey = '2026-09-30') => dsl.buildDailySiteLog({
+  siteId, dateKey, dateLabel: dateKey.split('-').reverse().join('-'), timeZone: LONDON,
   companyName: 'vesoft Test Company',
   shifts, operationsByShiftId: OPS, dailyLogs: LOGS, incidents: INCIDENTS, alerts: ALERTS,
 });
@@ -210,13 +210,14 @@ for (const [name, build] of pages) {
 }
 
 // The printed A4 documents.
-for (const [name, shifts, siteId] of [
+for (const [name, shifts, siteId, overrideDate] of [
   ['print-daily-site-log.html', [SHIFT_A], 14],
   ['print-as-required.html', [SHIFT_B], 15],
+  ['print-crossmidnight.html', [SHIFT_B], 15, '2026-10-01'],
 ]) {
   fs.writeFileSync(
     path.join(OUT_DIR, name),
-    dslPrint.renderDailySiteLogHtml(dayModel(shifts, siteId), { generatedAt: GENERATED }),
+    dslPrint.renderDailySiteLogHtml(dayModel(shifts, siteId, overrideDate), { generatedAt: GENERATED }),
   );
   console.log('wrote', path.join(OUT_DIR, name));
 }
