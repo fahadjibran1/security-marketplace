@@ -14,7 +14,7 @@ import { CompanyIncidentReportDrawer } from '../components/company/CompanyIncide
 import { CompanyLogBookWorkspace, type LogBookDayPeriod } from '../components/company/CompanyLogBookWorkspace';
 import { CompanyLogBookEntryDrawer, type LogBookEntryDetail } from '../components/company/CompanyLogBookEntryDrawer';
 import { buildLogBookRegister, logBookPeriods, siteDayKey } from '../components/company/logBookRegister';
-import { buildDailySiteLog } from '../components/company/dailySiteLog';
+import { buildDailySiteLog, generatedAtLabel } from '../components/company/dailySiteLog';
 import { renderDailySiteLogHtml } from '../components/company/dailySiteLogPrint';
 import { buildIncidentReport } from '../components/company/incidentReport';
 import { renderIncidentReportHtml, printIncidentReport } from '../components/company/incidentReportPrint';
@@ -2119,7 +2119,8 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
       alerts,
     });
     const html = renderDailySiteLogHtml(model, {
-      generatedAt: formatInstantDateTime(new Date().toISOString(), zone),
+      // Through the report's own helper, so the footer cannot drift from the dates in its body.
+      generatedAt: generatedAtLabel(new Date().toISOString(), zone),
     });
     if (!printIncidentReport(html)) {
       setLogBookNotice('The browser blocked the report window. Allow pop-ups for this site and try again.');

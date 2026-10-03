@@ -357,4 +357,53 @@ test('DAY-09-MUTATION-REMOVING-THE-SITE-DAY-FILTER-IS-CAUGHT', () => {
   assert.ok(!/deviceTimeZone\(\)/.test(source), 'never the browser zone');
 });
 
+test('DAY-10-THE-FOOTER-STAMP-IS-UK-FORMAT-TOO', () => {
+  /**
+   * The printed footer must not drift from the dates in the body.
+   *
+   * Production showed "Report generated Sat, 03 Oct 2026 · 20:22" under a report whose every other
+   * date read DD-MM-YYYY — the call site passed the Incident Report's formatter. It now goes through
+   * the report's own `generatedAtLabel`, so there is one formatting path, not two.
+   */
+  assert.equal(
+    dsl.generatedAtLabel('2026-10-03T19:22:00.000Z', LONDON), '03-10-2026 · 20:22',
+    'the helper produces the UK stamp',
+  );
+
+  const html = dslPrint.renderDailySiteLogHtml(
+    dayLog(), { generatedAt: dsl.generatedAtLabel('2026-10-03T19:22:00.000Z', LONDON) },
+  );
+  assert.ok(html.includes('Report generated 03-10-2026 · 20:22'), 'the footer reads the UK stamp');
+  assert.ok(!/Report generated Sat, 03 Oct 2026/.test(html), 'and never the long form');
+  assert.ok(!/\b\d{1,2} (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\b/.test(html),
+    'no long-form date survives anywhere in the Daily Site Log');
+
+  // The shipped call site routes through the helper rather than formatting its own.
+  const screen = fs.readFileSync(path.join(ROOT, 'src/screens/CompanyDashboardScreen.tsx'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+  const call = screen.slice(screen.indexOf('renderDailySiteLogHtml(model'), screen.indexOf('renderDailySiteLogHtml(model') + 220);
+  assert.match(call, /generatedAt: generatedAtLabel\(/, 'the Daily Site Log uses its own helper');
+  assert.ok(!/generatedAt: formatInstantDateTime\(/.test(call), 'and not the long-date formatter');
+});
+
+test('DAY-11-THE-INCIDENT-REPORT-KEEPS-ITS-LONG-DATE-PRESENTATION', () => {
+  // The owner's UK request covers the Log Book workflow; the Incident Report is a different document.
+  const incidentPrint = loadTs('src/components/company/incidentReportPrint.ts');
+  const incidentReport = loadTs('src/components/company/incidentReport.ts');
+
+  const model = incidentReport.buildIncidentReport(INCIDENT_4, [], [], LONDON);
+  const reported = model.overview.find((f) => f.label === 'Reported').value;
+  assert.match(reported, /Wed, 30 Sept 2026 · 20:49/, 'still the approved long form');
+  assert.ok(!/30-09-2026/.test(reported), 'not restyled as collateral');
+
+  const html = incidentPrint.renderIncidentReportHtml(model, { generatedAt: 'Sat, 03 Oct 2026 · 20:22' });
+  assert.match(html, /Report generated Sat, 03 Oct 2026 · 20:22/, 'and its own footer is unchanged');
+
+  // The screen still passes the long formatter for the Incident Report specifically.
+  const screen = fs.readFileSync(path.join(ROOT, 'src/screens/CompanyDashboardScreen.tsx'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+  const call = screen.slice(screen.indexOf('renderIncidentReportHtml(incidentReportModel'), screen.indexOf('renderIncidentReportHtml(incidentReportModel') + 260);
+  assert.match(call, /generatedAt: formatInstantDateTime\(/, 'the Incident Report keeps the long formatter');
+});
+
 console.log(`\n${passed} day boundary checks passed`);
