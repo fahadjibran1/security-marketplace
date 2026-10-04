@@ -16,6 +16,13 @@ import { AuthThrottlerGuard } from './auth-throttler.guard';
 import { CompanyMembership } from '../company-membership/entities/company-membership.entity';
 import { AuthSession } from './entities/auth-session.entity';
 import { AuthSessionService } from './auth-session.service';
+import { UserVerificationToken } from './entities/user-verification-token.entity';
+import { UserVerificationTokenService } from './user-verification-token.service';
+import { AccountRecoveryService } from './account-recovery.service';
+import { AccountDeletionService } from './account-deletion.service';
+import { AccountRecoveryController } from './account-recovery.controller';
+import { AccountController } from './account.controller';
+import { EmailModule } from '../email/email.module';
 
 @Module({
   imports: [
@@ -26,8 +33,9 @@ import { AuthSessionService } from './auth-session.service';
     GuardProfileModule,
     ClientPortalUserModule,
     AuditLogModule,
+    EmailModule,
     PassportModule,
-    TypeOrmModule.forFeature([CompanyMembership, AuthSession]),
+    TypeOrmModule.forFeature([CompanyMembership, AuthSession, UserVerificationToken]),
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -37,8 +45,16 @@ import { AuthSessionService } from './auth-session.service';
       })
     })
   ],
-  controllers: [AuthController],
-  providers: [AuthService, AuthSessionService, JwtStrategy, AuthThrottlerGuard],
+  controllers: [AuthController, AccountRecoveryController, AccountController],
+  providers: [
+    AuthService,
+    AuthSessionService,
+    UserVerificationTokenService,
+    AccountRecoveryService,
+    AccountDeletionService,
+    JwtStrategy,
+    AuthThrottlerGuard,
+  ],
   // ThrottlerModule and the proxy-aware guard are exported so other modules can rate-limit their own
   // bearer-secret endpoints against the same configuration instead of registering a second throttler
   // with separate storage.

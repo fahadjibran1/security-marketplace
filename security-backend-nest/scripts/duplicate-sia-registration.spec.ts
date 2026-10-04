@@ -12,6 +12,7 @@ function harness(seed: { email?: string; sia?: string } = {}, failure: Failure =
   let users: any[] = seed.email ? [{ id: 90, email: seed.email }] : [];
   let guards: any[] = seed.sia ? [{ id: 91, siaLicenseNumber: seed.sia }] : [];
   let sessions = 0;
+  let verificationsSent = 0;
 
   const userService = {
     create: async (dto: any) => {
@@ -50,8 +51,9 @@ function harness(seed: { email?: string; sia?: string } = {}, failure: Failure =
     guardService as any,
     {} as any, {} as any, { create: async () => { throw new Error('auth session not expected in this test'); } } as any, dataSource as any,
     { find: async () => [], findOne: async () => null } as any,
+    { sendVerification: async () => { verificationsSent += 1; } } as any,
   );
-  return { service, users: () => users, guards: () => guards, sessions: () => sessions };
+  return { service, users: () => users, guards: () => guards, sessions: () => sessions, verificationsSent: () => verificationsSent };
 }
 
 const guardRegistration = (siaLicenseNumber: string, email = 'new@example.test') => ({
@@ -73,9 +75,12 @@ async function expectStatus(action: () => Promise<unknown>, status: number, mess
 async function main() {
   const success = harness();
   const registered = await success.service.register(guardRegistration(' 1234567890123456 '));
-  equal(registered.user.status, UserStatus.ACTIVE);
+  // Gate 2: a new self-registered account proves its email address before it gets a session.
+  equal(registered.verificationRequired, true);
+  equal(success.users()[0].status, UserStatus.ACTIVE);
   equal(success.guards()[0].siaLicenseNumber, '1234567890123456');
-  equal(success.sessions(), 1);
+  equal(success.sessions(), 0);
+  equal(success.verificationsSent(), 1);
 
   const duplicateEmail = harness({ email: 'used@example.test' });
   await expectStatus(() => duplicateEmail.service.register(guardRegistration('2234567890123456', 'used@example.test')), 409, 'Email already exists');

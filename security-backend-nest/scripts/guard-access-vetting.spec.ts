@@ -40,6 +40,7 @@ function authHarness() {
     { create: async () => { throw new Error('auth session not expected in this test'); } } as any,
     { transaction: async (work: (manager: unknown) => Promise<unknown>) => work({}) } as any,
     { find: async () => [], findOne: async () => null } as any,
+    { sendVerification: async () => undefined } as any,
   );
   return { service, users, guards };
 }
@@ -72,7 +73,10 @@ async function main() {
     fullName: 'Lifecycle Guard', siaLicenseNumber: '1234567890123456', phone: '07000000000',
   });
   equal(users[0].status, UserStatus.ACTIVE);
-  equal(registration.user.status, UserStatus.ACTIVE);
+  // Gate 2: registration issues no session; the address is verified first. Model that here so the
+  // status assertions below exercise a verified account.
+  equal(registration.verificationRequired, true);
+  Object.assign(users[0], { emailVerificationRequired: true, isEmailVerified: true });
   equal((await service.login({ email: 'guard@example.test', password: 'secret123' })).user.status, UserStatus.ACTIVE);
 
   users[0].status = UserStatus.SUSPENDED;

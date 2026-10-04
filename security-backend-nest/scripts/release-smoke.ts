@@ -28,6 +28,7 @@ type Calls = {
   userCreates: any[];
   companyCreates: any[];
   guardCreates: any[];
+  verificationsSent: number;
 };
 
 function buildHarness() {
@@ -35,6 +36,7 @@ function buildHarness() {
     userCreates: [],
     companyCreates: [],
     guardCreates: [],
+    verificationsSent: 0,
   };
 
   let companyProfile: any = null;
@@ -88,6 +90,7 @@ function buildHarness() {
     { create: async () => { throw new Error('auth session not expected in this test'); } } as any,
     { transaction: async (work: (manager: unknown) => Promise<unknown>) => work({}) } as any,
     { find: async () => [], findOne: async () => null } as any,
+    { sendVerification: async () => { calls.verificationsSent += 1; } } as any,
   );
 
   return { service, calls };
@@ -112,7 +115,12 @@ function buildJwtStrategyHarness(user: any | null, clientUser: any | null = null
   const clientPortalUserService = {
     findById: async () => clientUser ?? Promise.reject(new Error('not found')),
   };
-  return new JwtStrategy(config as any, userService as any, clientPortalUserService as any);
+  return new JwtStrategy(
+    config as any,
+    userService as any,
+    clientPortalUserService as any,
+    { lastPasswordResetAt: async () => null } as any,
+  );
 }
 
 async function expectUnauthorized(work: () => Promise<unknown>) {
@@ -225,7 +233,8 @@ async function testGuardRegistrationCreatesActiveAccount() {
   equal(calls.guardCreates[0].status, GuardApprovalStatus.PENDING);
   equal(calls.guardCreates[0].approvalStatus, GuardApprovalStatus.PENDING);
   equal(calls.guardCreates[0].isApproved, false);
-  equal(result.user.status, UserStatus.ACTIVE);
+  equal(result.verificationRequired, true);
+  equal(calls.verificationsSent, 1);
 }
 
 async function testCompanyRegistrationMapsToCompanyAdmin() {
@@ -246,7 +255,7 @@ async function testCompanyRegistrationMapsToCompanyAdmin() {
   equal(calls.userCreates[0].status, UserStatus.ACTIVE);
   equal(calls.companyCreates.length, 1);
   equal(calls.companyCreates[0].status, CompanyStatus.ONBOARDING);
-  equal(result.user.role, UserRole.COMPANY_ADMIN);
+  equal(result.verificationRequired, true);
 }
 
 // RB-006: build a minimal fake ExecutionContext carrying only what RolesGuard

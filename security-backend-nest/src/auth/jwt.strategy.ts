@@ -6,6 +6,8 @@ import { JwtPayload } from './types/jwt-payload.type';
 import { UserService } from '../user/user.service';
 import { ClientPortalUserService } from '../client-portal-user/client-portal-user.service';
 import { UserStatus } from '../user/entities/user.entity';
+import { AccountRecoveryService } from './account-recovery.service';
+import { mustVerifyEmail } from './auth.service';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
@@ -13,6 +15,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     config: ConfigService,
     private readonly userService: UserService,
     private readonly clientPortalUserService: ClientPortalUserService,
+    private readonly accountRecoveryService: AccountRecoveryService,
   ) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
@@ -21,7 +24,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
   }
 
-  async validate(payload: JwtPayload): Promise<JwtPayload> {
+  async validate(payload: JwtPayload & { iat?: number }): Promise<JwtPayload> {
     if (payload.principalType === 'client_portal') {
       const clientUser = await this.clientPortalUserService.findById(payload.sub).catch(() => null);
       if (!clientUser || !clientUser.isActive) {
@@ -39,8 +42,16 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     }
 
     const user = await this.userService.findById(payload.sub).catch(() => null);
-    if (!user || user.status !== UserStatus.ACTIVE) {
+    if (!user || user.status !== UserStatus.ACTIVE || user.deletionCompletedAt || mustVerifyEmail(user)) {
       throw new UnauthorizedException('User not found');
+    }
+
+    // A password reset ends every session, including web sessions that hold only an access token: a
+    // token signed before the reset is no longer honoured. Compared at whole-second precision because
+    // that is all iat carries, so a token signed in the same second as the reset is still accepted.
+    const resetAt = await this.accountRecoveryService.lastPasswordResetAt(user.id);
+    if (resetAt && typeof payload.iat === 'number' && payload.iat < Math.floor(resetAt.getTime() / 1000)) {
+      throw new UnauthorizedException('Session is no longer valid');
     }
 
     return {

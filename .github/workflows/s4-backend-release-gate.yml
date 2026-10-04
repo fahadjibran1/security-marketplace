@@ -72,6 +72,8 @@ jobs:
       W3_LIVE_OPS_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_w3_live_ops
       GUARD_OPERATIONS_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_guard_operations
       RESOLUTION_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_resolution
+      GATE2_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_gate2
+      GATE2_MIGRATION_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_gate2_migration
 
     steps:
       - name: Checkout repository
@@ -172,6 +174,15 @@ jobs:
       # the suite drops the schema, and because the Missing Book Off cases run the real welfare sweep.
       - name: Create resolution workflow certification database
         run: PGPASSWORD=s4_test_password psql -h localhost -U s4 -d s4_release_gate -c "CREATE DATABASE s4_resolution;"
+
+      # Migration 61 / S4 Pilot Gate 2: account deletion, password reset, email verification. The lifecycle
+      # suite boots the whole application against a migration-built schema; the migration suite rolls 61
+      # back and forward. Each drops its own schema, so each gets its own database.
+      - name: Create Gate 2 account lifecycle certification database
+        run: PGPASSWORD=s4_test_password psql -h localhost -U s4 -d s4_release_gate -c "CREATE DATABASE s4_gate2;"
+
+      - name: Create Migration 61 rehearsal database
+        run: PGPASSWORD=s4_test_password psql -h localhost -U s4 -d s4_release_gate -c "CREATE DATABASE s4_gate2_migration;"
 
       - name: Run release smoke tests
         run: npm run test:release

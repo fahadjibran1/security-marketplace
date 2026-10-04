@@ -56,7 +56,7 @@ export class AuthSession {
 
   /** Why the row stopped being usable — rotation is routine, the others are not. */
   @Column({ type: 'varchar', length: 32, nullable: true })
-  revokedReason?: 'rotated' | 'logout' | 'reuse_detected' | 'password_change' | null;
+  revokedReason?: 'rotated' | 'logout' | 'reuse_detected' | 'password_change' | 'account_deleted' | null;
 
   @Column({ type: 'timestamptz', nullable: true })
   lastUsedAt?: Date | null;

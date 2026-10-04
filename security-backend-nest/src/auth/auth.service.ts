@@ -14,6 +14,8 @@ import { GuardApprovalStatus } from '../guard-profile/entities/guard-profile.ent
 import { ClientPortalUserService } from '../client-portal-user/client-portal-user.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { AuthSessionService } from './auth-session.service';
+import { AccountRecoveryService } from './account-recovery.service';
+import { isUsablePasswordHash } from './password-policy';
 import { DataSource, QueryFailedError } from 'typeorm';
 import { CompanyMembership } from '../company-membership/entities/company-membership.entity';
 import {
@@ -24,6 +26,21 @@ import {
 } from '../company-membership/company-membership-types';
 
 const DUPLICATE_SIA_MESSAGE = 'SIA licence number is already registered.';
+
+/**
+ * Returned (403) when the password is right but the address has not been verified yet. Carries a stable
+ * code so the app can offer "resend verification email". Only reachable after the password check, so it
+ * reveals nothing to someone who does not already hold the credentials.
+ */
+export const EMAIL_VERIFICATION_REQUIRED = {
+  code: 'EMAIL_VERIFICATION_REQUIRED',
+  message: 'Verify your email address before signing in to S4. Check your inbox for the verification link.',
+} as const;
+
+/** Whether this account may hold a session at all, beyond its status. */
+export function mustVerifyEmail(user: { emailVerificationRequired?: boolean | null; isEmailVerified?: boolean | null }) {
+  return user.emailVerificationRequired === true && user.isEmailVerified !== true;
+}
 
 function uniqueViolation(error: unknown) {
   if (!(error instanceof QueryFailedError)) return null;
@@ -60,6 +77,7 @@ export class AuthService {
     private readonly dataSource: DataSource,
     @InjectRepository(CompanyMembership)
     private readonly membershipRepo: Repository<CompanyMembership>,
+    private readonly accountRecoveryService: AccountRecoveryService,
   ) {}
 
   async register(dto: RegisterDto) {
@@ -134,19 +152,33 @@ export class AuthService {
       throw error;
     }
 
-    return this.signToken(user.id, user.email, user.role, user.status);
+    // A new self-registered account proves control of its address before it may sign in, so no session
+    // is issued here. Sending is best-effort: the account holder can request another link.
+    try {
+      await this.accountRecoveryService.sendVerification(user);
+    } catch {
+      // The account exists either way; "resend verification" recovers a failed first send.
+    }
+
+    return {
+      verificationRequired: true,
+      email: user.email,
+      message: 'Your S4 account has been created. Check your email for a link to verify your address, then sign in.',
+    };
   }
 
   async login(dto: LoginDto, isMobileClient = false) {
     const user = await this.usersService.findByEmail(dto.email);
     if (!user) throw new UnauthorizedException('Invalid credentials');
 
-    const valid = await bcrypt.compare(dto.password, user.passwordHash);
+    // A deleted account's hash is a non-bcrypt sentinel: no password can ever match it.
+    const valid = isUsablePasswordHash(user.passwordHash) && (await bcrypt.compare(dto.password, user.passwordHash));
     if (!valid) throw new UnauthorizedException('Invalid credentials');
 
-    if (user.status !== UserStatus.ACTIVE) {
+    if (user.status !== UserStatus.ACTIVE || user.deletionCompletedAt) {
       throw new ForbiddenException(`Account status ${user.status} is not allowed to log in`);
     }
+    if (mustVerifyEmail(user)) throw new ForbiddenException(EMAIL_VERIFICATION_REQUIRED);
 
     await this.usersService.updateLastLogin(user.id);
     const signed = await this.signToken(user.id, user.email, user.role, user.status);
@@ -171,8 +203,8 @@ export class AuthService {
 
     const user = await this.usersService.findById(userId);
     if (!user) throw new UnauthorizedException('Session is no longer valid');
-    if (user.status !== UserStatus.ACTIVE) {
-      // A suspended account must not be able to keep renewing its way back in.
+    if (user.status !== UserStatus.ACTIVE || user.deletionCompletedAt || mustVerifyEmail(user)) {
+      // A suspended, deleted or unverified account must not be able to keep renewing its way back in.
       await this.authSessionService.revokeAllForUser(userId, 'reuse_detected');
       throw new UnauthorizedException('Session is no longer valid');
     }

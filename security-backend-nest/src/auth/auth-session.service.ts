@@ -1,6 +1,6 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { IsNull, Repository } from 'typeorm';
+import { EntityManager, IsNull, Repository } from 'typeorm';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { AuthSession } from './entities/auth-session.entity';
 import { AuditLogService } from '../audit-log/audit-log.service';
@@ -173,11 +173,17 @@ export class AuthSessionService {
     );
   }
 
-  /** Used by a future password change/reset to drop every device. */
-  async revokeAllForUser(userId: number, reason: AuthSession['revokedReason']): Promise<void> {
+  /** Drops every device: password reset, account deletion, and a suspended account's refresh. */
+  async revokeAllForUser(
+    userId: number,
+    reason: AuthSession['revokedReason'],
+    manager?: EntityManager,
+  ): Promise<void> {
     // Addressed by the FK column rather than a nested relation: TypeORM's update() does not
     // resolve `{ user: { id } }` in its criteria and would match nothing at all.
-    await this.sessions
+    // A caller may pass its transaction so revocation commits or rolls back with the change that
+    // caused it (a password reset, an account deletion).
+    await (manager ? manager.getRepository(AuthSession) : this.sessions)
       .createQueryBuilder()
       .update(AuthSession)
       .set({ revokedAt: new Date(), revokedReason: reason })

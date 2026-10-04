@@ -46,7 +46,33 @@ export class UserService {
     });
   }
 
+  /**
+   * The account a recovery request (password reset, verification resend) refers to. An exact match
+   * wins; otherwise a case-insensitive match is used only when it is unambiguous. Deleted accounts are
+   * never returned — their address has already been replaced, but this makes it explicit.
+   */
+  async findForRecovery(email: string): Promise<User | null> {
+    const trimmed = email.trim();
+    if (!trimmed) return null;
+    const exact = await this.usersRepo.findOne({ where: { email: trimmed } });
+    if (exact) return exact.deletionCompletedAt ? null : exact;
+    const folded = await this.usersRepo
+      .createQueryBuilder('user')
+      .where('LOWER(user.email) = LOWER(:email)', { email: trimmed })
+      .andWhere('user.deletionCompletedAt IS NULL')
+      .limit(2)
+      .getMany();
+    return folded.length === 1 ? folded[0] : null;
+  }
+
   async updateStatus(id: number, status: UserStatus): Promise<void> {
-    await this.usersRepo.update(id, { status });
+    // A deleted account is anonymised for good: no path may re-activate it.
+    await this.usersRepo
+      .createQueryBuilder()
+      .update(User)
+      .set({ status })
+      .where('id = :id', { id })
+      .andWhere('"deletionCompletedAt" IS NULL')
+      .execute();
   }
 }
