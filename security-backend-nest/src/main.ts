@@ -1,5 +1,5 @@
 import { Logger, ValidationPipe } from '@nestjs/common';
-import { NestFactory } from '@nestjs/core';
+import { HttpAdapterHost, NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { randomUUID } from 'crypto';
 import { NextFunction, Request, Response } from 'express';
@@ -7,6 +7,7 @@ import { AppModule } from './app.module';
 import { getCorsOrigins, getTrustProxySetting, isSwaggerEnabled } from './config/runtime-env';
 import { configureHttpSecurity } from './config/http-security';
 import { requireUtcProcessTimezone } from './config/process-timezone';
+import { initMonitoring, MonitoringExceptionFilter } from './monitoring/monitoring';
 
 const logger = new Logger('Bootstrap');
 
@@ -14,8 +15,13 @@ async function bootstrap() {
   // Before anything else: the database driver reads and writes our naive timestamp columns using this
   // process's own clock, so a non-UTC clock corrupts every stored instant without erroring anywhere.
   const timezone = requireUtcProcessTimezone();
+  // Off unless SENTRY_DSN is set; see src/monitoring/monitoring.ts.
+  const monitoringEnabled = initMonitoring(process.env);
 
   const app = await NestFactory.create(AppModule);
+  if (monitoringEnabled) {
+    app.useGlobalFilters(new MonitoringExceptionFilter(app.get(HttpAdapterHost).httpAdapter));
+  }
   const port = Number(process.env.PORT || 3000);
   const enableSwagger = isSwaggerEnabled(process.env);
   const httpAdapter = app.getHttpAdapter().getInstance();
@@ -83,6 +89,7 @@ async function bootstrap() {
       port,
       environment: process.env.NODE_ENV || 'development',
       swaggerEnabled: enableSwagger,
+      errorMonitoring: monitoringEnabled ? 'sentry' : 'disabled',
       processTimeZone: timezone.resolvedTimeZone,
     }),
   );
