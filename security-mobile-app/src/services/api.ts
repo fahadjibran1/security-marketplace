@@ -356,15 +356,108 @@ export async function clientLogin(email: string, password: string) {
   return normalizedSession;
 }
 
-export async function register(payload: RegisterPayload) {
-  const session = await request<AuthSession>('/auth/register', {
+/** A new account must verify its email address before it can sign in, so registration yields no session. */
+export interface RegistrationPending {
+  verificationRequired: true;
+  email: string;
+  message: string;
+}
+
+export async function register(payload: RegisterPayload): Promise<AuthSession | RegistrationPending> {
+  const result = await request<AuthSession | RegistrationPending>('/auth/register', {
     method: 'POST',
     body: JSON.stringify(payload),
   });
 
-  const normalizedSession = normalizeSession(session);
+  if (isRegistrationPending(result)) return result;
+
+  // A backend from before email verification still answers with a session.
+  const normalizedSession = normalizeSession(result as AuthSession);
   accessToken = normalizedSession.accessToken;
   return normalizedSession;
+}
+
+export function isRegistrationPending(value: unknown): value is RegistrationPending {
+  return !!value && typeof value === 'object' && (value as { verificationRequired?: unknown }).verificationRequired === true;
+}
+
+/** True when sign-in was refused only because the email address is not verified yet. */
+export function isEmailVerificationRequired(error: unknown): boolean {
+  if (!(error instanceof ApiError) || error.status !== 403) return false;
+  const body = error.body as { code?: unknown; message?: unknown } | null;
+  return !!body && typeof body === 'object' && (body.code === 'EMAIL_VERIFICATION_REQUIRED');
+}
+
+// ── Account recovery (unauthenticated) ─────────────────────────────────────────────────────────────
+//
+// Tokens travel in request bodies only, never in a URL the app builds, so they cannot land in request
+// logs or browser history from here.
+
+export interface AccountMessage {
+  message: string;
+}
+
+export function requestPasswordReset(email: string) {
+  return request<AccountMessage & { accepted: boolean }>('/auth/forgot-password', {
+    method: 'POST',
+    body: JSON.stringify({ email: email.trim() }),
+  });
+}
+
+export function resetPassword(token: string, newPassword: string) {
+  return request<AccountMessage & { passwordReset: boolean }>('/auth/reset-password', {
+    method: 'POST',
+    body: JSON.stringify({ token, newPassword }),
+  });
+}
+
+export function verifyEmailAddress(token: string) {
+  return request<AccountMessage & { emailVerified: boolean }>('/auth/verify-email', {
+    method: 'POST',
+    body: JSON.stringify({ token }),
+  });
+}
+
+export function resendVerificationEmail(email: string) {
+  return request<AccountMessage & { accepted: boolean }>('/auth/resend-verification', {
+    method: 'POST',
+    body: JSON.stringify({ email: email.trim() }),
+  });
+}
+
+// ── Account deletion (authenticated) ───────────────────────────────────────────────────────────────
+
+export interface AccountDeletionStatus {
+  deletionRequestedAt: string | null;
+  deletionCompletedAt: string | null;
+  selfServiceAvailable: boolean;
+  blocker: 'platform_admin' | 'company_owner' | null;
+  blockerMessage: string | null;
+}
+
+export function getAccountDeletionStatus() {
+  return request<AccountDeletionStatus>('/account/deletion');
+}
+
+export function requestAccountDeletion() {
+  return request<AccountDeletionStatus>('/account/deletion/request', { method: 'POST', body: '{}' });
+}
+
+export function confirmAccountDeletion(password: string) {
+  return request<{ deleted: boolean; deletionCompletedAt: string; message: string }>('/account/deletion/confirm', {
+    method: 'POST',
+    body: JSON.stringify({ password }),
+  });
+}
+
+/**
+ * Drop local auth state without calling the server. Used after account deletion, when every session
+ * has already been revoked server-side and a logout call would only bounce off a 401.
+ */
+export function clearLocalSession() {
+  accessToken = null;
+  refreshToken = null;
+  inFlightRefresh = null;
 }
 
 export function restoreSession(session: { accessToken?: string; refreshToken?: string }) {

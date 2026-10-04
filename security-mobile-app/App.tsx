@@ -7,7 +7,10 @@ import { GuardDashboardScreen } from './src/screens/GuardDashboardScreen';
 import { AdminDashboardScreen } from './src/screens/AdminDashboardScreen';
 import { AuthScreen } from './src/screens/AuthScreen';
 import { StatePanel } from './src/components/StatePanel';
-import { fetchCurrentUser, getRefreshToken, logout, restoreSession, setRefreshPersister, setUnauthorizedHandler } from './src/services/api';
+import { clearLocalSession, fetchCurrentUser, getRefreshToken, logout, restoreSession, setRefreshPersister, setUnauthorizedHandler } from './src/services/api';
+import { AppErrorBoundary } from './src/components/AppErrorBoundary';
+import { AccountLinkScreen } from './src/screens/AccountLinkScreen';
+import { AccountLink, takeAccountLink } from './src/components/account/accountLinks';
 import { installAttendanceLocationTransport } from './src/services/attendanceTransport';
 import { clearStoredSession, loadStoredSession, persistSession } from './src/services/session';
 import { AuthSession } from './src/types/models';
@@ -20,6 +23,11 @@ export default function App() {
   const [session, setSession] = useState<AuthSession | null>(null);
   const [booting, setBooting] = useState(true);
   const [authNotice, setAuthNotice] = useState<string | null>(null);
+  // An emailed link (/reset-password, /verify-email) opened on the S4 web app. Read once at start-up,
+  // with the token stripped from the address bar in the same step.
+  const [accountLink, setAccountLink] = useState<AccountLink | null>(() =>
+    IS_WEB && typeof window !== 'undefined' ? takeAccountLink(window.location, window.history) : null,
+  );
 
   useEffect(() => installAttendanceLocationTransport(), []);
   useEffect(() => {
@@ -62,18 +70,25 @@ export default function App() {
     restoreSession(nextSession); if (nextSession.refreshToken) await persistSession({ user: nextSession.user, refreshToken: nextSession.refreshToken }); setAuthNotice(null); setSession(nextSession);
   }
   async function handleLogout() { await logout(); await clearStoredSession(); setAuthNotice(null); setSession(null); }
+  // Every server session was revoked by the deletion itself, so only local state is left to clear.
+  async function handleAccountDeleted(message: string) { clearLocalSession(); await clearStoredSession(); setSession(null); setAuthNotice(message); }
+  function leaveAccountLink() {
+    try { if (IS_WEB && typeof window !== 'undefined') window.history.replaceState(null, '', '/'); } catch { /* best effort */ }
+    setAccountLink(null);
+  }
 
   const surface = session ? getAppSurface(session.user.role) : null;
   const surfaceLabel = surface === 'admin' ? 'Platform Admin' : surface === 'company' ? 'Company' : surface === 'client' ? 'Client' : surface === 'guard' ? 'Guard' : 'Access Denied';
 
-  return <SafeAreaProvider>
-    {booting ? <SafeAreaView style={styles.safeArea} edges={['top','right','bottom','left']}><StatusBar barStyle="dark-content" backgroundColor={colors.background}/><View style={styles.loadingContainer}><StatePanel title={`Loading ${brand.appName}`} message="Restoring your secure session." tone="info" loading /></View></SafeAreaView>
+  return <SafeAreaProvider><AppErrorBoundary onSignOut={session ? handleLogout : undefined}>
+    {accountLink ? <SafeAreaView style={styles.safeArea} edges={['top','right','bottom','left']}><StatusBar barStyle="dark-content" backgroundColor={colors.background}/><AccountLinkScreen link={accountLink} onDone={leaveAccountLink} /></SafeAreaView>
+    : booting ? <SafeAreaView style={styles.safeArea} edges={['top','right','bottom','left']}><StatusBar barStyle="dark-content" backgroundColor={colors.background}/><View style={styles.loadingContainer}><StatePanel title={`Loading ${brand.appName}`} message="Restoring your secure session." tone="info" loading /></View></SafeAreaView>
     : !session ? <SafeAreaView style={styles.safeArea} edges={['top','right','bottom','left']}><StatusBar barStyle="dark-content" backgroundColor={colors.background}/><AuthScreen onLoggedIn={handleLoggedIn} noticeMessage={authNotice} onDismissNotice={() => setAuthNotice(null)} /></SafeAreaView>
     : <SafeAreaView style={styles.safeArea} edges={['top','right','bottom','left']}><StatusBar barStyle="light-content" backgroundColor={colors.primaryNavy}/><View style={styles.screenContainer}>
         {surface !== 'company' ? <View style={styles.topBar}><View style={styles.brandBlock}><Text style={styles.brandMark}>{brand.shortBrand}</Text><View><Text style={styles.surfaceName}>{surfaceLabel}</Text><Text style={styles.productLabel}>{surface === 'guard' ? brand.guardAppName : brand.appName}</Text></View></View><Pressable accessibilityRole="button" onPress={handleLogout} style={({ pressed }: { pressed: boolean }) => [styles.logoutButton, pressed && styles.pressed]}><Text style={styles.logoutText}>Log out</Text></Pressable></View> : null}
-        {surface === 'admin' ? <AdminDashboardScreen /> : surface === 'company' ? <CompanyDashboardScreen user={session.user} onLogout={handleLogout} /> : surface === 'client' ? <ClientPortalScreen user={session.user} /> : surface === 'guard' ? <GuardDashboardScreen user={session.user} onLogout={handleLogout} /> : <View style={styles.loadingContainer}><StatePanel title="Access denied" message="This account cannot open an S4 workspace. Log out and contact an administrator." tone="error" /></View>}
+        {surface === 'admin' ? <AdminDashboardScreen /> : surface === 'company' ? <CompanyDashboardScreen user={session.user} onLogout={handleLogout} onAccountDeleted={handleAccountDeleted} /> : surface === 'client' ? <ClientPortalScreen user={session.user} /> : surface === 'guard' ? <GuardDashboardScreen user={session.user} onLogout={handleLogout} onAccountDeleted={handleAccountDeleted} /> : <View style={styles.loadingContainer}><StatePanel title="Access denied" message="This account cannot open an S4 workspace. Log out and contact an administrator." tone="error" /></View>}
       </View></SafeAreaView>}
-  </SafeAreaProvider>;
+  </AppErrorBoundary></SafeAreaProvider>;
 }
 
 const styles = StyleSheet.create({

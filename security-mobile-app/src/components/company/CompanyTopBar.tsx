@@ -11,6 +11,8 @@ type CompanyTopBarProps = {
   refreshing: boolean;
   onRefresh: () => void;
   onLogout: () => void;
+  /** Opens the signed-in user's own Account settings (account deletion lives there). */
+  onAccount?: () => void;
 };
 
 /**
@@ -26,6 +28,7 @@ export function CompanyTopBar({
   refreshing,
   onRefresh,
   onLogout,
+  onAccount,
 }: CompanyTopBarProps) {
   const userInitial = userEmail.charAt(0).toUpperCase() || '?';
 
@@ -76,6 +79,21 @@ export function CompanyTopBar({
         >
           <Text accessible={false} style={styles.identityInitial}>{userInitial}</Text>
         </View>
+
+        {onAccount ? (
+          <Pressable
+            onPress={onAccount}
+            accessibilityRole="button"
+            accessibilityLabel="Account settings"
+            style={({ pressed }: any) => [
+              styles.textBtn,
+              pressed ? styles.textBtnPressed : null,
+              IS_WEB ? (styles.cursorPointer as any) : null,
+            ]}
+          >
+            <Text style={styles.textBtnLabel}>Account</Text>
+          </Pressable>
+        ) : null}
 
         <Pressable
           onPress={onLogout}

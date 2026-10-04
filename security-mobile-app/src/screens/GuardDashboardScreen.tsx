@@ -98,10 +98,13 @@ import {
   type GuardActionOutcome,
 } from '../components/guard/guardActionDispatch';
 import { colors } from '../theme';
+import { AccountSettingsPanel } from '../components/account/AccountSettingsPanel';
 
 interface GuardDashboardScreenProps {
   user: AuthUser;
   onLogout: () => void;
+  /** Called after the server deletes the account; signs out locally. */
+  onAccountDeleted?: (message: string) => void | Promise<void>;
 }
 
 type GuardTab = 'home' | 'offers' | 'jobs' | 'history' | 'profile' | 'screening' | 'companies';
@@ -430,7 +433,7 @@ function getPrimaryActionGuidance(phase: GuardShiftPhase): string | null {
 }
 
 
-export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenProps) {
+export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: GuardDashboardScreenProps) {
   const insets = useSafeAreaInsets();
   const [activeTab, setActiveTab] = useState<GuardTab>('home');
   const [myCompanies, setMyCompanies] = useState<GuardCompanyMembership[]>([]);
@@ -3031,6 +3034,7 @@ export function GuardDashboardScreen({ user, onLogout }: GuardDashboardScreenPro
               <GuardCompliancePanel onManageCompliance={() => selectTab('screening')} />
               <GuardScreeningPanel onContinue={() => selectTab('screening')} />
               <GuardAvailabilityScreen />
+              <AccountSettingsPanel email={user?.email} onDeleted={(message) => (onAccountDeleted ? onAccountDeleted(message) : onLogout())} />
             </View>
             <AppBuildFooter appLabel="S4 Guard" />
           </View>

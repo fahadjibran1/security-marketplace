@@ -181,6 +181,7 @@ import { Card } from '../components/ui/Card';
 import { KpiCard, KpiTone } from '../components/ui/KpiCard';
 import { PageHeader } from '../components/ui/PageHeader';
 import { brand, colors, radii, spacing } from '../theme';
+import { AccountSettingsPanel } from '../components/account/AccountSettingsPanel';
 
 const IS_WEB = typeof document !== 'undefined';
 
@@ -229,7 +230,10 @@ type CompanySection =
   | 'log-book'
   | 'incidents'
   | 'alerts'
-  | 'weekly-approvals';
+  | 'weekly-approvals'
+  // Reached from the top bar's Account button, not the sidebar: it is the signed-in user's own
+  // account, not part of the company workspace.
+  | 'account';
 
 type JobFormState = {
   title: string;
@@ -1208,6 +1212,8 @@ function ControlledTimeInput({
 type CompanyDashboardScreenProps = {
   user?: AuthUser;
   onLogout?: () => void;
+  /** Called after the server deletes the account; signs out locally. */
+  onAccountDeleted?: (message: string) => void | Promise<void>;
 };
 
 /** Native phones below this width show a pilot message instead of the desktop company workspace. */
@@ -1218,7 +1224,7 @@ function todayIsoDate(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScreenProps = {}) {
+export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: CompanyDashboardScreenProps = {}) {
   const { width: layoutWidth } = useWindowDimensions();
   const companyMobileLayoutDisabled = !IS_WEB && layoutWidth < COMPANY_NATIVE_MIN_WIDTH;
 
@@ -5128,6 +5134,13 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
         return <CompanyContractPricingWorkspace />;
       case 'pay-rules':
         return <CompanyPayRulesSettings />;
+      case 'account':
+        return (
+          <AccountSettingsPanel
+            email={user?.email}
+            onDeleted={(message) => (onAccountDeleted ? onAccountDeleted(message) : onLogout?.())}
+          />
+        );
       case 'audit':
         return <CompanyAuditWorkspace />;
       case 'log-book':
@@ -5229,7 +5242,10 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
     );
   }
 
-  const activeNavItem = NAV_ITEMS.find((item) => item.id === activeSection);
+  const activeNavItem: NavItem | undefined =
+    activeSection === 'account'
+      ? { id: 'account', label: 'Account', caption: 'Your own S4 account.' }
+      : NAV_ITEMS.find((item) => item.id === activeSection);
 
   const handleNavigate = (section: CompanySection) => {
     if (section === 'coverage') setCoverageNavigationContext(undefined);
@@ -5297,6 +5313,7 @@ export function CompanyDashboardScreen({ user, onLogout }: CompanyDashboardScree
           refreshing={refreshing}
           onRefresh={() => loadData(true)}
           onLogout={() => onLogout?.()}
+          onAccount={() => handleNavigate('account')}
         />
 
         <ScrollView

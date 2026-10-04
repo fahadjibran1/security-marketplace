@@ -3,12 +3,21 @@ declare const process: { env: Record<string, string | undefined> };
 declare module 'react' {
   export type SetStateAction<S> = S | ((prevState: S) => S);
   export type Dispatch<A> = (value: A) => void;
-  export function useState<T>(initial: T): [T, Dispatch<SetStateAction<T>>];
+  export function useState<T>(initial: T | (() => T)): [T, Dispatch<SetStateAction<T>>];
   export function useRef<T>(initial: T): { current: T };
   export function useMemo<T>(factory: () => T, deps: unknown[]): T;
   export function useCallback<T>(callback: T, deps: unknown[]): T;
   export function useEffect(effect: () => void | (() => void), deps?: unknown[]): void;
   export type PropsWithChildren<P = unknown> = P & { children?: unknown };
+  export type ReactNode = any;
+  /** Class components are used for exactly one thing here: the app-level error boundary. */
+  export class Component<P = {}, S = {}> {
+    constructor(props: P);
+    readonly props: Readonly<P>;
+    state: Readonly<S>;
+    setState(state: Partial<S> | ((previous: Readonly<S>) => Partial<S>)): void;
+    render(): any;
+  }
 }
 
 declare module 'react/jsx-runtime' {

@@ -1,6 +1,6 @@
 ﻿import { useCallback, useRef, useState } from 'react';
 import { Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { clientLogin, formatApiErrorMessage, login, register } from '../services/api';
+import { clientLogin, formatApiErrorMessage, isEmailVerificationRequired, isRegistrationPending, login, register, requestPasswordReset, resendVerificationEmail } from '../services/api';
 import { AuthSession, AppRole } from '../types/models';
 import { brand, colors, control, radii, spacing, typography } from '../theme';
 
@@ -10,7 +10,7 @@ interface AuthScreenProps {
   onDismissNotice?: () => void;
 }
 
-type AuthMode = 'login' | 'register';
+type AuthMode = 'login' | 'register' | 'forgot';
 type RegistrationRole = 'company' | 'guard';
 type LoginRole = 'admin' | 'company' | 'guard' | 'client';
 
@@ -62,13 +62,44 @@ export function AuthScreen({ onLoggedIn, noticeMessage, onDismissNotice }: AuthS
   const [contactDetails, setContactDetails] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [infoMessage, setInfoMessage] = useState<string | null>(null);
+  // Set when sign-in was refused only because the address is unverified: offers a fresh link.
+  const [needsVerification, setNeedsVerification] = useState(false);
   const isDesktopWeb = width >= 980;
+
+  function switchMode(next: AuthMode) {
+    setMode(next);
+    setErrorMessage(null);
+    setInfoMessage(null);
+    setNeedsVerification(false);
+  }
+
+  async function handleResendVerification() {
+    try {
+      setSubmitting(true);
+      setErrorMessage(null);
+      const result = await resendVerificationEmail(email);
+      setInfoMessage(result.message);
+    } catch (error) {
+      setErrorMessage(formatApiErrorMessage(error, 'We could not send a new verification link. Try again shortly.'));
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
   async function handleSubmit() {
     try {
       setSubmitting(true);
       setErrorMessage(null);
+      setInfoMessage(null);
+      setNeedsVerification(false);
       onDismissNotice?.();
+      if (mode === 'forgot') {
+        // The answer is the same whether or not the account exists.
+        const result = await requestPasswordReset(email);
+        setInfoMessage(result.message);
+        return;
+      }
       const session = mode === 'login'
         ? loginRole === 'client' ? await clientLogin(email, password) : await login(email, password)
         : await register({
@@ -83,17 +114,26 @@ export function AuthScreen({ onLoggedIn, noticeMessage, onDismissNotice }: AuthS
             address: role === 'company' ? address : undefined,
             contactDetails: role === 'company' ? contactDetails : undefined,
           });
+      if (isRegistrationPending(session)) {
+        // No session until the address is verified: send the person to sign in once they have.
+        setMode('login');
+        setLoginRole(role === 'company' ? 'company' : 'guard');
+        setPassword('');
+        setInfoMessage(session.message);
+        return;
+      }
       await onLoggedIn(session);
     } catch (error) {
-      setErrorMessage(formatApiErrorMessage(error, mode === 'login' ? 'We could not sign you in. Check your details and try again.' : 'We could not create your account. Check the details and try again.'));
+      if (mode === 'login' && isEmailVerificationRequired(error)) setNeedsVerification(true);
+      setErrorMessage(formatApiErrorMessage(error, mode === 'login' ? 'We could not sign you in. Check your details and try again.' : mode === 'forgot' ? 'We could not send a reset link. Try again shortly.' : 'We could not create your account. Check the details and try again.'));
     } finally {
       setSubmitting(false);
     }
   }
 
   const isGuard = mode === 'login' ? loginRole === 'guard' : role === 'guard';
-  const heading = mode === 'login' ? (isGuard ? 'Welcome back' : 'Sign in to S4') : (role === 'guard' ? 'Create your Guard account' : 'Create your Company account');
-  const subheading = mode === 'login' ? (isGuard ? 'Sign in to manage your work, shifts and compliance.' : 'Use your existing S4 account to continue.') : (role === 'guard' ? 'Create your account now. Work eligibility remains subject to profile, compliance and approval checks.' : 'Set up your organisation to start managing security operations.');
+  const heading = mode === 'forgot' ? 'Reset your password' : mode === 'login' ? (isGuard ? 'Welcome back' : 'Sign in to S4') : (role === 'guard' ? 'Create your Guard account' : 'Create your Company account');
+  const subheading = mode === 'forgot' ? `Enter the email address you use for ${brand.appName}. If it belongs to an account, we will email a link to choose a new password.` : mode === 'login' ? (isGuard ? 'Sign in to manage your work, shifts and compliance.' : 'Use your existing S4 account to continue.') : (role === 'guard' ? 'Create your account now. Work eligibility remains subject to profile, compliance and approval checks.' : 'Set up your organisation to start managing security operations.');
 
   return (
     <KeyboardAvoidingView style={styles.keyboardRoot} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={Platform.OS === 'ios' ? 6 : 0} enabled>
@@ -122,16 +162,22 @@ export function AuthScreen({ onLoggedIn, noticeMessage, onDismissNotice }: AuthS
 
             {noticeMessage ? <View style={styles.noticeBanner}><Text style={styles.noticeText}>{noticeMessage}</Text></View> : null}
             {errorMessage ? <View style={styles.errorBanner}><Text style={styles.errorText}>{errorMessage}</Text></View> : null}
+            {infoMessage ? <View style={styles.noticeBanner}><Text style={styles.noticeText}>{infoMessage}</Text></View> : null}
+            {needsVerification ? (
+              <Pressable accessibilityRole="button" onPress={handleResendVerification} disabled={submitting} style={styles.linkButton}>
+                <Text style={styles.linkText}>Send a new verification email</Text>
+              </Pressable>
+            ) : null}
 
             <View style={styles.modeRow}>
               {(['login', 'register'] as AuthMode[]).map((value) => (
-                <Pressable key={value} accessibilityRole="button" style={[styles.segment, mode === value && styles.segmentActive]} onPress={() => { setMode(value); setErrorMessage(null); }}>
+                <Pressable key={value} accessibilityRole="button" style={[styles.segment, mode === value && styles.segmentActive]} onPress={() => switchMode(value)}>
                   <Text style={[styles.segmentText, mode === value && styles.segmentTextActive]}>{value === 'login' ? 'Sign in' : 'Create account'}</Text>
                 </Pressable>
               ))}
             </View>
 
-            {mode === 'login' ? (
+            {mode === 'forgot' ? null : mode === 'login' ? (
               <View style={styles.roleSection}>
                 <Text style={styles.sectionLabel}>I’m signing in as</Text>
                 <View style={styles.roleGrid}>
@@ -157,7 +203,7 @@ export function AuthScreen({ onLoggedIn, noticeMessage, onDismissNotice }: AuthS
 
             <View style={styles.fields}>
               <LabeledInput label="Email address" autoCapitalize="none" keyboardType="email-address" editable={!submitting} value={email} onChangeText={setEmail} placeholder="you@example.com" onInputFocus={!isDesktopWeb ? bumpScrollForKeyboard : undefined} />
-              <LabeledInput label="Password" secureTextEntry editable={!submitting} value={password} onChangeText={setPassword} placeholder="Enter your password" onInputFocus={!isDesktopWeb ? bumpScrollForKeyboard : undefined} />
+              {mode === 'forgot' ? null : <LabeledInput label="Password" secureTextEntry editable={!submitting} value={password} onChangeText={setPassword} placeholder="Enter your password" onInputFocus={!isDesktopWeb ? bumpScrollForKeyboard : undefined} />}
 
               {mode === 'register' && role === 'company' ? <>
                 <LabeledInput label="Company name" editable={!submitting} value={companyName} onChangeText={setCompanyName} placeholder="Company name" onInputFocus={!isDesktopWeb ? bumpScrollForKeyboard : undefined} />
@@ -175,8 +221,18 @@ export function AuthScreen({ onLoggedIn, noticeMessage, onDismissNotice }: AuthS
             </View>
 
             <Pressable accessibilityRole="button" style={({ pressed }: { pressed: boolean }) => [styles.primaryButton, pressed && styles.primaryButtonPressed, submitting && styles.primaryButtonDisabled]} onPress={handleSubmit} disabled={submitting}>
-              <Text style={styles.primaryButtonText}>{submitting ? (mode === 'login' ? 'Signing in…' : 'Creating account…') : (mode === 'login' ? 'Sign in securely' : 'Create account')}</Text>
+              <Text style={styles.primaryButtonText}>{submitting ? (mode === 'login' ? 'Signing in…' : mode === 'forgot' ? 'Sending…' : 'Creating account…') : (mode === 'login' ? 'Sign in securely' : mode === 'forgot' ? 'Send reset link' : 'Create account')}</Text>
             </Pressable>
+            {mode === 'login' && loginRole !== 'client' ? (
+              <Pressable accessibilityRole="button" onPress={() => switchMode('forgot')} style={styles.linkButton}>
+                <Text style={styles.linkText}>Forgot your password?</Text>
+              </Pressable>
+            ) : null}
+            {mode === 'forgot' ? (
+              <Pressable accessibilityRole="button" onPress={() => switchMode('login')} style={styles.linkButton}>
+                <Text style={styles.linkText}>Back to sign in</Text>
+              </Pressable>
+            ) : null}
           </View>
         </View>
       </ScrollView>
@@ -209,6 +265,8 @@ const styles = StyleSheet.create({
   subtitle: { color: colors.textSecondary, ...typography.body },
   noticeBanner: { backgroundColor: colors.infoSurface, borderRadius: radii.md, padding: spacing.md, borderWidth: 1, borderColor: colors.infoBorder },
   noticeText: { color: colors.info, ...typography.label },
+  linkButton: { minHeight: control.minTouchTarget, alignItems: 'center', justifyContent: 'center' },
+  linkText: { color: colors.accentTealStrong, ...typography.label },
   errorBanner: { backgroundColor: colors.dangerSurface, borderRadius: radii.md, padding: spacing.md, borderWidth: 1, borderColor: colors.dangerBorder },
   errorText: { color: colors.danger, ...typography.label },
   modeRow: { flexDirection: 'row', backgroundColor: colors.surfaceSubtle, borderRadius: radii.md, padding: spacing.xs, gap: spacing.xs },
