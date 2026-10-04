@@ -139,7 +139,7 @@ const ts = require('typescript');
   // TEST A: denied location permission → plain Error re-thrown → correct message shown
   await (async () => {
     const permissionMsg =
-      'Location permission is required to Book On at this site. Allow location access while using S4 Security and try again.';
+      'Location permission is required to Book On at this site. Allow location access while using S4 and try again.';
     let thrown;
     try { await requestCatchAfter(async () => { throw new Error(permissionMsg); }); } catch (e) { thrown = e; }
     assert.ok(!(thrown instanceof NetworkError),

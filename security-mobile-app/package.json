@@ -63,7 +63,8 @@
     "test:live-ops-policy": "node scripts/live-operations-policy.spec.cjs",
     "test:shift-offer-time": "node scripts/shift-offer-time.spec.cjs",
     "test:error-boundary": "node scripts/error-boundary.spec.cjs",
-    "test:account-lifecycle": "node scripts/account-lifecycle-ui.spec.cjs"
+    "test:account-lifecycle": "node scripts/account-lifecycle-ui.spec.cjs",
+    "test:store-identity": "node scripts/store-identity.spec.cjs"
   },
   "dependencies": {
     "@expo/metro-runtime": "~6.1.2",

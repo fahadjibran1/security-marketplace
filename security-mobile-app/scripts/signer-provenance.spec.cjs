@@ -31,6 +31,8 @@ const verifier = require('./verify-apk-signer.cjs');
 const config = JSON.parse(read('release/android-signing.json'));
 const appJson = JSON.parse(read('app.json'));
 const easJson = JSON.parse(read('eas.json'));
+/** What the retired com.securitymarketplace.mobile builds (1.0.4 to Build 12) are checked against. */
+const legacy = verifier.legacyExpectation(config);
 
 /** The permanent identity, as independently verified from the retained keystore and every historical APK. */
 const S4_CERT_SHA256 = '0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b';
@@ -108,7 +110,9 @@ const observe = (recorded) => ({
 // ═══════════════════ the pinned expectation ═══════════════════
 
 test('SIGNER-01-THE-PERMANENT-IDENTITY-IS-PINNED-AND-IS-THE-HISTORICAL-S4-CERTIFICATE', () => {
-  assert.equal(config.package, 'com.securitymarketplace.mobile');
+  // Gate 4A: the permanent store identity. The signer did NOT change with the package.
+  assert.equal(config.package, 'com.sfour.s4');
+  assert.equal(config.legacyPackage.package, 'com.securitymarketplace.mobile', 'the development package is kept as history');
   assert.equal(config.signer.certificateSha256, S4_CERT_SHA256, 'the pinned signer is the historical S4 certificate');
   assert.match(config.signer.certificateSha256, /^[0-9a-f]{64}$/, 'a lowercase 64-hex SHA-256');
   assert.notEqual(config.signer.certificateSha256, BUILD8_CERT_SHA256, 'and NOT the EAS-generated Build 8 certificate');
@@ -144,13 +148,13 @@ test('SIGNER-04-THE-EXPECTED-RELEASE-MATCHES-APP-JSON', () => {
   assert.equal(config.expectedRelease.versionName, appJson.expo.version);
   assert.equal(config.expectedRelease.versionCode, appJson.expo.android.versionCode);
   assert.equal(config.package, appJson.expo.android.package);
-  assert.equal(appJson.expo.version, '1.0.7');
-  assert.equal(appJson.expo.android.versionCode, 12, 'Build 12 carries Phase 1 through Phase 3D');
-  assert.ok(appJson.expo.android.versionCode > 11, 'above Build 11, so it installs over it');
-  assert.ok(appJson.expo.android.versionCode > 10, 'above the Phase-1-only Build 10');
-  assert.ok(appJson.expo.android.versionCode > 9, 'and above the first distributable pilot build');
-  assert.ok(appJson.expo.android.versionCode > 8, 'above the rejected Build 8');
-  assert.ok(appJson.expo.android.versionCode > 5, 'and above the installed 1.0.4 (versionCode 5)');
+  assert.equal(appJson.expo.version, '1.1.0');
+  assert.equal(appJson.expo.android.versionCode, 13, 'the first permanent-identity candidate');
+  // com.sfour.s4 is a new Android application, so no install-over is involved — the code still never
+  // goes backwards, so every S4 artefact ever made has a distinct, increasing number.
+  assert.ok(appJson.expo.android.versionCode > config.legacyPackage.finalRelease.versionCode, 'above the final development-package Build 12');
+  assert.equal(config.legacyPackage.finalRelease.versionCode, 12);
+  assert.equal(config.legacyPackage.finalRelease.versionName, '1.0.7');
 });
 
 test('SIGNER-05-THE-PILOT-RELEASE-SHAPE-IS-UNCHANGED', () => {
@@ -161,6 +165,9 @@ test('SIGNER-05-THE-PILOT-RELEASE-SHAPE-IS-UNCHANGED', () => {
   // EAS-generated one. Reverting it to the remote default is exactly how Build 8 came to be signed with
   // the wrong identity, and it would be invisible until a tester could not install the APK.
   assert.equal(easJson.build.pilot.credentialsSource, 'local', 'the pilot profile signs with the local S4 keystore');
+  // The store profile too. Left on the remote default, EAS would GENERATE a new keystore for the new
+  // package com.sfour.s4 — Build 8's failure again, this time on the store upload key.
+  assert.equal(easJson.build.production.android.credentialsSource, 'local', 'the store profile signs with the local S4 keystore');
   assert.ok(!('EXPO_PUBLIC_API_URL' in (easJson.build.pilot.env || {})), 'pilot still uses the production API');
   assert.equal(appJson.expo.extra.apiBaseUrl, 'https://security-marketplace-api.onrender.com');
   assert.deepEqual(appJson.expo.updates, { enabled: false }, 'OTA stays disabled');
@@ -169,8 +176,8 @@ test('SIGNER-05-THE-PILOT-RELEASE-SHAPE-IS-UNCHANGED', () => {
 // ═══════════════════ the comparison logic, executed ═══════════════════
 
 test('SIGNER-06-A-CORRECT-BUILD-12-WOULD-PASS-FULL-VERIFICATION', () => {
-  const result = verifier.assessApk(config, observe(RECORDED.expectedBuild12));
-  assert.equal(result.ok, true, `a correct Build 12 must pass, got: ${result.failures.join('; ')}`);
+  const result = verifier.assessApk(legacy, observe(RECORDED.expectedBuild12));
+  assert.equal(result.ok, true, `a correct Build 12 must pass its own (legacy) release check, got: ${result.failures.join('; ')}`);
 });
 
 test('SIGNER-06B-A-SUPERSEDED-BUILD-NO-LONGER-PASSES-AS-THE-CURRENT-RELEASE', () => {
@@ -183,7 +190,7 @@ test('SIGNER-06B-A-SUPERSEDED-BUILD-NO-LONGER-PASSES-AS-THE-CURRENT-RELEASE', ()
     const observed = observe(stale);
     assert.equal(verifier.assessSignerOnly(config, observed).ok, true, 'the signer itself is still ours');
 
-    const full = verifier.assessApk(config, observed);
+    const full = verifier.assessApk(legacy, observed);
     assert.equal(full.ok, false, `vc${observed.versionCode} is not the current release`);
     assert.ok(
       full.failures.some((f) => /versionCode/.test(f)),
@@ -230,7 +237,7 @@ test('SIGNER-06C-BUILD-12-CAN-UPDATE-EVERY-EARLIER-S4-BUILD', () => {
 
   // And it is the identity the repository pins, not merely self-consistent.
   assert.equal(verifier.normaliseFingerprint(build12.certificateSha256), S4_CERT_SHA256);
-  assert.equal(build12.versionCode, appJson.expo.android.versionCode);
+  assert.equal(build12.versionCode, config.legacyPackage.finalRelease.versionCode);
 });
 
 test('SIGNER-06D-THE-SUPERSEDED-BUILD-12-IS-NAMED-AND-NOT-DISTRIBUTABLE', () => {
@@ -238,7 +245,7 @@ test('SIGNER-06D-THE-SUPERSEDED-BUILD-12-IS-NAMED-AND-NOT-DISTRIBUTABLE', () => 
   // device the Current Shift card showed In Progress / LIVE with a Book On recorded, while every action
   // form refused as if no shift were active, because the dispatcher validated a historical
   // selectedShift. A versionCode alone therefore no longer identifies the approved build.
-  const superseded = (config.supersededBuilds || []).find(
+  const superseded = (config.legacyPackage.supersededBuilds || []).find(
     (entry) => entry.easBuildId === '4085faf6-c755-4720-9e86-c15ac2e63926',
   );
   assert.ok(superseded, 'the defective Build 12 must be recorded');
@@ -265,10 +272,18 @@ test('SIGNER-06E-THE-APPROVED-ARTEFACT-IS-EXPLICIT', () => {
   // Because two artefacts share a versionCode, something has to say which one is approved. Until the
   // replacement is built and its id and hash are recorded, NO versionCode 12 artefact is approved —
   // stated as data rather than left implicit.
-  const approved = config.approvedArtefact;
-  assert.ok(approved, 'the approved artefact must be named');
-  assert.equal(approved.versionCode, config.expectedRelease.versionCode);
-  assert.equal(approved.versionName, config.expectedRelease.versionName);
+  // The final development-package build stays explicitly identified.
+  const approved = config.legacyPackage.approvedArtefact;
+  assert.ok(approved, 'the approved legacy artefact must still be named');
+  assert.equal(approved.versionCode, config.legacyPackage.finalRelease.versionCode);
+  assert.equal(approved.versionName, config.legacyPackage.finalRelease.versionName);
+
+  // And no 1.1.0 artefact is claimed before one has been built and verified.
+  assert.equal(config.approvedArtefact.versionCode, config.expectedRelease.versionCode);
+  assert.equal(config.approvedArtefact.versionName, config.expectedRelease.versionName);
+  assert.equal(config.approvedArtefact.status, 'pending-build', 'nothing is approved for 1.1.0 yet');
+  assert.ok(!config.approvedArtefact.easBuildId && !config.approvedArtefact.apkSha256 && !config.approvedArtefact.aabSha256,
+    'a pending artefact has no build id or hash');
 
   if (approved.status === 'pending-rebuild') {
     assert.ok(approved.requiredGitCommit, 'the commit the rebuild must contain');
@@ -280,7 +295,7 @@ test('SIGNER-06E-THE-APPROVED-ARTEFACT-IS-EXPLICIT', () => {
     assert.match(approved.apkSha256, /^[0-9a-f]{64}$/, 'and a real artefact hash');
     assert.match(approved.gitCommit, /^[0-9a-f]{7,40}$/, 'built from a known commit');
     // The approved artefact must never be the superseded one.
-    for (const entry of config.supersededBuilds || []) {
+    for (const entry of config.legacyPackage.supersededBuilds || []) {
       assert.notEqual(approved.easBuildId, entry.easBuildId, 'approved must not be a superseded build');
       assert.notEqual(approved.apkSha256, entry.apkSha256, 'nor the same artefact');
     }
@@ -369,6 +384,54 @@ test('SIGNER-11-THE-CHECK-IS-A-POST-BUILD-STEP-NOT-A-PRETEND-GATE-STEP', () => {
     /\['verify', '--verbose', '--print-certs', apkPath\]/,
     'apksigner is asked for the verbose output that contains the Verifies line',
   );
+});
+
+// ═══════════════════ Gate 4A: the permanent package ═══════════════════
+
+test('SIGNER-12-A-DEVELOPMENT-PACKAGE-APK-CAN-NEVER-PASS-AS-THE-STORE-CANDIDATE', () => {
+  // Build 12 is correctly signed and current for its own package — and is still not S4 1.1.0. If it were
+  // re-verified against the new expectation by mistake, the package must be named as the reason.
+  const full = verifier.assessApk(config, observe(RECORDED.expectedBuild12));
+  assert.equal(full.ok, false);
+  assert.ok(full.failures.some((f) => /package id/.test(f) && /com\.sfour\.s4/.test(f)), JSON.stringify(full.failures));
+  assert.ok(full.failures.every((f) => !/signer certificate/.test(f)), 'the signer itself is still the permanent key');
+});
+
+test('SIGNER-13-A-CORRECT-1-1-0-COM-SFOUR-S4-ARTEFACT-WOULD-PASS', () => {
+  // Constructed in the exact apksigner/aapt2 shapes recorded above; no such artefact exists yet.
+  const candidate = observe({
+    apksigner: RECORDED.expectedBuild12.apksigner,
+    badging: "package: name='com.sfour.s4' versionCode='13' versionName='1.1.0'\nminSdkVersion:'24'",
+  });
+  const result = verifier.assessApk(config, candidate);
+  assert.equal(result.ok, true, result.failures.join('; '));
+  // A wrong code or name on the right package is still refused.
+  assert.equal(verifier.assessApk(config, { ...candidate, versionCode: 14 }).ok, false);
+  assert.equal(verifier.assessApk(config, { ...candidate, versionName: '1.0.7' }).ok, false);
+});
+
+test('SIGNER-14-AN-UPLOADED-AAB-SIGNER-IS-READ-FROM-KEYTOOL', () => {
+  const keytoolOutput = [
+    'Signer #1:',
+    '',
+    'Certificate #1:',
+    'Owner: CN=S4 Security, OU=S4 Pilot, O=Vesoft Services Limited, C=GB',
+    'Certificate fingerprints:',
+    '\t SHA1: 45:A5:30:AA:16:81:F2:DA:1E:3B:05:68:D9:82:F4:92:EE:ED:B7:5E',
+    '\t SHA256: 0D:58:94:49:33:5F:91:54:E0:4A:6B:97:3E:B1:86:E8:8F:D6:17:58:1A:98:43:FB:62:AC:C2:E8:EC:76:31:1B',
+  ].join('\n');
+  assert.equal(verifier.parseKeytoolSha256(keytoolOutput), S4_CERT_SHA256);
+  assert.equal(verifier.assessSignerOnly(config, { certificateSha256: verifier.parseKeytoolSha256(keytoolOutput) }).ok, true);
+  assert.equal(verifier.parseKeytoolSha256('keytool error: java.lang.Exception: Not a signed jar file'), null, 'an unsigned AAB yields no signer');
+  assert.equal(verifier.assessSignerOnly(config, { certificateSha256: verifier.parseKeytoolSha256('') }).ok, false);
+});
+
+test('SIGNER-15-PLAY-APP-SIGNING-IS-RECORDED-HONESTLY', () => {
+  // The upload certificate is ours; the app-signing certificate is Google's and does not exist until the
+  // Play app is created in Gate 4B. It must be null, not guessed.
+  assert.equal(config.playAppSigning.status, 'not-yet-enrolled');
+  assert.equal(config.playAppSigning.uploadCertificateSha256, S4_CERT_SHA256);
+  assert.equal(config.playAppSigning.appSigningCertificateSha256, null);
 });
 
 console.log(`\n${passed} signer provenance checks passed`);

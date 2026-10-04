@@ -1,27 +1,25 @@
 {
   "$comment": [
-    "PERMANENT Android release identity for S4 Security (UAT-MOB-02).",
+    "PERMANENT Android release identity for S4 (UAT-MOB-02, Gate 4A).",
     "",
     "This file holds PUBLIC data only: the certificate SHA-256 fingerprint, the package id and the",
     "expected release metadata. It contains no keystore, no alias, no password and no private key, and it",
     "must never be made to hold any of them — the keystore itself stays outside the repository.",
     "",
-    "Why it exists: EAS Build 8 (deb416d3-565b-49b7-be4b-8b64319bb8cf) was produced with an",
-    "EAS-generated keystore instead of the retained S4 keystore, so Android refused to update the",
-    "installed 1.0.4 and the Samsung installer reported only 'App not installed'. Nothing in the release",
-    "process could see that, because the ordinary JS/Expo gate never touches a signed APK. Pinning the",
-    "expected signer here gives the post-build check something authoritative to compare against.",
+    "Gate 4A moved S4 to its permanent store identity, com.sfour.s4, starting at 1.1.0 / versionCode 13.",
+    "That is a NEW Android application: it cannot update, and is not updated by, the development-era",
+    "com.securitymarketplace.mobile builds, whose records are kept below under legacyPackage.",
     "",
-    "The fingerprint below is the certificate carried by every historical S4 APK from 1.0.0 to 1.0.5,",
-    "including the 1.0.4 currently installed on the pilot device, and by the retained keystore. An APK",
-    "signed by any other key must fail verification before it reaches a tester or a client.",
+    "The signer is unchanged: the same permanent S4 certificate signed every historical S4 APK and signs",
+    "com.sfour.s4. Under Google Play App Signing (Gate 4B) it is the UPLOAD key, so this is the",
+    "certificate an uploaded AAB, or a locally signed APK, must carry. The certificate Google then signs",
+    "installed copies with is recorded here as playAppSigning.appSigningCertificateSha256 once the Play",
+    "app exists — it is not known before then and must not be guessed.",
     "",
-    "TWO artefacts carry versionCode 12. `supersededBuilds` names the one that must not be distributed,",
-    "keyed by EAS build id rather than by certificate — it is correctly signed, and the defect is in its",
-    "CONTENT. `approvedArtefact` names the one that may be. A versionCode alone no longer identifies the",
-    "approved build, so anything handing an APK to a tester must check the build id or the SHA-256."
+    "Why the pin exists at all: EAS Build 8 was signed with an EAS-generated keystore instead of this one,",
+    "and nothing in the release process could see it until a device refused the update."
   ],
-  "package": "com.securitymarketplace.mobile",
+  "package": "com.sfour.s4",
   "signer": {
     "certificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
     "certificateSha1": "45a530aa1681f2da1e3b0568d982f492eeedb75e",
@@ -29,15 +27,29 @@
     "keyAlgorithm": "RSA",
     "keySizeBits": 2048,
     "validFrom": "2026-09-21",
-    "validUntil": "2056-09-13"
+    "validUntil": "2056-09-13",
+    "role": "Permanent S4 key. Signs locally built artefacts and is the intended Google Play upload key for com.sfour.s4."
   },
   "expectedRelease": {
-    "versionName": "1.0.7",
-    "versionCode": 12,
+    "versionName": "1.1.0",
+    "versionCode": 13,
     "minSdkVersion": 24
+  },
+  "approvedArtefact": {
+    "versionName": "1.1.0",
+    "versionCode": 13,
+    "status": "pending-build",
+    "note": "No 1.1.0 artefact exists yet. Gate 4B records the EAS build id, the git commit and the AAB SHA-256 here after verifying the upload signer."
+  },
+  "playAppSigning": {
+    "status": "not-yet-enrolled",
+    "uploadCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
+    "appSigningCertificateSha256": null,
+    "note": "Filled in Gate 4B from the Play Console App integrity page after the Play app is created."
   },
   "rejectedBuilds": [
     {
+      "package": "com.securitymarketplace.mobile",
       "easBuildId": "deb416d3-565b-49b7-be4b-8b64319bb8cf",
       "versionName": "1.0.7",
       "versionCode": 8,
@@ -46,27 +58,36 @@
       "rejectedOn": "2026-09-29"
     }
   ],
-  "supersededBuilds": [
-    {
-      "easBuildId": "4085faf6-c755-4720-9e86-c15ac2e63926",
+  "legacyPackage": {
+    "package": "com.securitymarketplace.mobile",
+    "status": "final development-package pilot build; retire once S4 1.1.0 is approved on Google Play Internal Testing",
+    "finalRelease": {
       "versionName": "1.0.7",
       "versionCode": 12,
-      "gitCommit": "0c93a014171e27998df13316b63ab8887dbc80f1",
-      "apkSha256": "5a84e942fe45992ceb25a6fc543c50fce90168b0e2cc6c56785f0c9d4ecb4475",
-      "reason": "Current-shift actions could validate a historical selectedShift instead of the authoritative live shift. Confirmed on a real device: the Current Shift card showed In Progress / LIVE with a Book On recorded, while Welfare Check, Log Book and Emergency all refused with \"only available during an active shift\" and emitted no request. Signed correctly with the permanent S4 identity; superseded for its content, not its signer.",
-      "supersededOn": "2026-09-30",
-      "supersededBy": "the replacement Build 12 built from aaf6c5e or a descendant",
-      "distribute": false
-    }
-  ],
-  "approvedArtefact": {
-    "versionName": "1.0.7",
-    "versionCode": 12,
-    "status": "approved",
-    "easBuildId": "fcd24b02-f620-4226-a424-273b759b34b7",
-    "gitCommit": "3fbb3645757bc5ecc9a716cd6447972727a49bf8",
-    "apkSha256": "2363e43b8758594265b8bb6631e2397770abef1ebdf0aa14ea1b0ff19f4539ed",
-    "approvedOn": "2026-09-30",
-    "note": "The replacement Build 12, containing fix(guard): target live shift for current-shift actions. Two artefacts carry versionCode 12; this build id and hash identify the one approved for UAT."
+      "minSdkVersion": 24
+    },
+    "approvedArtefact": {
+      "versionName": "1.0.7",
+      "versionCode": 12,
+      "status": "approved",
+      "easBuildId": "fcd24b02-f620-4226-a424-273b759b34b7",
+      "gitCommit": "3fbb3645757bc5ecc9a716cd6447972727a49bf8",
+      "apkSha256": "2363e43b8758594265b8bb6631e2397770abef1ebdf0aa14ea1b0ff19f4539ed",
+      "approvedOn": "2026-09-30",
+      "note": "The replacement Build 12, containing fix(guard): target live shift for current-shift actions. Two artefacts carry versionCode 12; this build id and hash identify the one approved for UAT."
+    },
+    "supersededBuilds": [
+      {
+        "easBuildId": "4085faf6-c755-4720-9e86-c15ac2e63926",
+        "versionName": "1.0.7",
+        "versionCode": 12,
+        "gitCommit": "0c93a014171e27998df13316b63ab8887dbc80f1",
+        "apkSha256": "5a84e942fe45992ceb25a6fc543c50fce90168b0e2cc6c56785f0c9d4ecb4475",
+        "reason": "Current-shift actions could validate a historical selectedShift instead of the authoritative live shift. Confirmed on a real device: the Current Shift card showed In Progress / LIVE with a Book On recorded, while Welfare Check, Log Book and Emergency all refused with \"only available during an active shift\" and emitted no request. Signed correctly with the permanent S4 identity; superseded for its content, not its signer.",
+        "supersededOn": "2026-09-30",
+        "supersededBy": "the replacement Build 12 built from aaf6c5e or a descendant",
+        "distribute": false
+      }
+    ]
   }
 }

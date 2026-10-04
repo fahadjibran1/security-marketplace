@@ -5336,7 +5336,7 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
           {renderContent()}
 
           {/* Build provenance, unobtrusive and below all operational content (UAT build audit). */}
-          <AppBuildFooter appLabel="S4 Company" />
+          <AppBuildFooter appLabel="S4" />
         </ScrollView>
       </View>
 

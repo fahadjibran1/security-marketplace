@@ -36,7 +36,13 @@
       }
     },
     "production": {
-      "autoIncrement": true
+      "android": {
+        "buildType": "app-bundle",
+        "credentialsSource": "local"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://security-marketplace-api.onrender.com"
+      }
     }
   },
   "submit": {

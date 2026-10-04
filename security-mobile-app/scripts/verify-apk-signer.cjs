@@ -113,6 +113,31 @@ function assessApk(expected, actual) {
   return { ok: failures.length === 0, failures, checks };
 }
 
+/**
+ * Pulls the certificate SHA-256 out of `keytool -printcert -jarfile <app.aab>` output. An Android App
+ * Bundle is what Google Play receives, and apksigner cannot read one; keytool (shipped with every JDK)
+ * prints the upload certificate as colon-separated hex.
+ */
+function parseKeytoolSha256(keytoolOutput) {
+  const match = /SHA256:\s*([0-9A-Fa-f:]{95})/.exec(String(keytoolOutput ?? ''));
+  return match ? normaliseFingerprint(match[1]) : null;
+}
+
+/**
+ * The expectation for the retired development-era package. Historical APKs (1.0.4, Builds 9-12) are
+ * verified against it rather than against the current release, so their records stay checkable after
+ * the move to com.sfour.s4.
+ */
+function legacyExpectation(config) {
+  const legacy = config.legacyPackage;
+  return {
+    package: legacy.package,
+    signer: config.signer,
+    expectedRelease: legacy.finalRelease,
+    rejectedBuilds: config.rejectedBuilds,
+  };
+}
+
 /** Signer-only assessment, for comparing an arbitrary APK (e.g. the historical 1.0.4) to the pinned identity. */
 function assessSignerOnly(expected, actual) {
   const expectedSigner = normaliseFingerprint(expected.signer.certificateSha256);
@@ -125,6 +150,8 @@ module.exports = {
   parseSignerSha256,
   parseVerifies,
   parseBadging,
+  parseKeytoolSha256,
+  legacyExpectation,
   assessApk,
   assessSignerOnly,
   CONFIG_PATH,
@@ -161,9 +188,11 @@ function main() {
   // --signer-only compares JUST the certificate, for checking an APK that is not the current release —
   // the historical 1.0.4, for instance, which legitimately carries an older versionCode.
   const signerOnly = args.includes('--signer-only');
+  // --legacy checks against the retired com.securitymarketplace.mobile expectations (Build 12 and earlier).
+  const legacy = args.includes('--legacy');
   const apkPath = args.find((a) => !a.startsWith('--'));
   if (!apkPath) {
-    console.error('usage: node scripts/verify-apk-signer.cjs [--signer-only] <path-to.apk>');
+    console.error('usage: node scripts/verify-apk-signer.cjs [--signer-only] [--legacy] <path-to.apk|path-to.aab>');
     process.exit(2);
   }
   if (!fs.existsSync(apkPath)) {
@@ -171,7 +200,32 @@ function main() {
     process.exit(2);
   }
 
-  const expected = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+  const config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+  const expected = legacy ? legacyExpectation(config) : config;
+
+  if (/\.aab$/i.test(apkPath)) {
+    // An App Bundle carries the UPLOAD signature only; Play re-signs what devices install. Package and
+    // version come from the EAS build record for the same artefact. Only the signer is checked here.
+    const keytool = process.env.JAVA_HOME
+      ? path.join(process.env.JAVA_HOME, 'bin', process.platform === 'win32' ? 'keytool.exe' : 'keytool')
+      : 'keytool';
+    let output = '';
+    try {
+      output = execFileSync(keytool, ['-printcert', '-jarfile', apkPath], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (error) {
+      output = `${error.stdout || ''}${error.stderr || ''}`;
+    }
+    const signer = assessSignerOnly(expected, { certificateSha256: parseKeytoolSha256(output) });
+    console.log(`AAB            : ${apkPath}`);
+    console.log(`${signer.ok ? 'OK  ' : 'FAIL'}  upload certificate   ${signer.actualSigner || '(none — is a JDK keytool on PATH or JAVA_HOME?)'}`);
+    console.log(`      expected             ${signer.expectedSigner}`);
+    if (signer.ok) {
+      console.log('\nUPLOAD SIGNER MATCHES the permanent S4 key. Confirm package/version from the EAS build record.');
+      process.exit(0);
+    }
+    console.error('\nUPLOAD SIGNER DOES NOT MATCH the permanent S4 key. Do NOT upload this AAB.');
+    process.exit(1);
+  }
   const tools = findSdkTools();
   if (!tools) {
     console.error('Android SDK build-tools (apksigner + aapt2) not found. Set ANDROID_SDK_ROOT.');

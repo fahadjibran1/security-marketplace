@@ -1,10 +1,10 @@
 {
   "expo": {
-    "name": "S4 Security",
+    "name": "S4",
     "description": "Staff. Sites. Shifts. Security.",
     "slug": "security-marketplace",
-    "version": "1.0.7",
-    "scheme": "securitymarketplace",
+    "version": "1.1.0",
+    "scheme": "s4security",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "primaryColor": "#0B1F33",
@@ -23,8 +23,8 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.securitymarketplace.mobile",
-      "buildNumber": "12",
+      "bundleIdentifier": "com.sfour.s4",
+      "buildNumber": "13",
       "config": {
         "usesNonExemptEncryption": false
       },
@@ -34,12 +34,26 @@
     },
     "android": {
       "softwareKeyboardLayoutMode": "resize",
-      "versionCode": 12,
-      "package": "com.securitymarketplace.mobile",
+      "versionCode": 13,
+      "package": "com.sfour.s4",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#05161C"
-      }
+      },
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION"
+      ],
+      "blockedPermissions": [
+        "android.permission.ACCESS_BACKGROUND_LOCATION",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_LOCATION",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.CAMERA"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -49,7 +63,9 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "Allow S4 Security to use your location when you Book On so the app can verify you are at the assigned site."
+          "locationWhenInUsePermission": "S4 uses your location only when you Book On at a site that requires location verification, to confirm you are at that site. S4 does not track your location in the background.",
+          "isAndroidBackgroundLocationEnabled": false,
+          "isIosBackgroundLocationEnabled": false
         }
       ]
     ],

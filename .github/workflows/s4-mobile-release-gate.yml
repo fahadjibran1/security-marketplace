@@ -320,6 +320,12 @@ jobs:
       - name: Verify android signer provenance
         run: npm run test:signer-provenance
 
+      # Gate 4A: the permanent store identity. S4 / com.sfour.s4 / s4security / 1.1.0 / 13, the minimum
+      # Android permissions, truthful location copy, a store profile that can only reach production, and
+      # no deprecated product name ("S4 Security", "S4 Guard", "Security Marketplace") in user-facing code.
+      - name: Verify the permanent S4 store identity
+        run: npm run test:store-identity
+
       - name: Verify Expo dependency compatibility
         run: npx expo install --check
 

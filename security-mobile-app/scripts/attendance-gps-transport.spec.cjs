@@ -207,7 +207,7 @@ async function main() {
   await expectNoSecondRequest(
     'GPS-CLIENT-04-DENIED-PERMISSION-DOES-NOT-RETRY-AND-EXPLAINS-WHAT-TO-DO',
     { existingPermission: 'denied', requestedPermission: 'denied' },
-    /Location permission is required to Book On at this site\. Allow location access while using S4 Security and try again\./,
+    /Location permission is required to Book On at this site\. Allow location access while using S4 and try again\./,
   );
 
   await expectNoSecondRequest(

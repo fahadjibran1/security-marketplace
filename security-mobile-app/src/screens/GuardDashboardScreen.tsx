@@ -3036,7 +3036,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
               <GuardAvailabilityScreen />
               <AccountSettingsPanel email={user?.email} onDeleted={(message) => (onAccountDeleted ? onAccountDeleted(message) : onLogout())} />
             </View>
-            <AppBuildFooter appLabel="S4 Guard" />
+            <AppBuildFooter appLabel="S4" />
           </View>
         ) : null}
         {activeTab === 'screening' ? <GuardScreeningJourney onBack={() => selectTab('profile')} scrollViewRef={screeningScrollRef} /> : null}

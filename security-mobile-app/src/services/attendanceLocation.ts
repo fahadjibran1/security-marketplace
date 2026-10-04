@@ -24,7 +24,7 @@ export async function getAttendanceLocationEvidence(
   if (permission.status !== 'granted') {
     if (required) {
       throw new Error(
-        'Location permission is required to Book On at this site. Allow location access while using S4 Security and try again.',
+        'Location permission is required to Book On at this site. Allow location access while using S4 and try again.',
       );
     }
     return {};

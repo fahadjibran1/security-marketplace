@@ -8,8 +8,11 @@
  */
 
 export const brand = {
+  /**
+   * The product is called S4 — on every surface, for every role. Guard, Company, Client and Platform Admin
+   * are workspaces inside S4, never product names, so there is deliberately no per-role app name here.
+   */
   appName: 'S4',
-  guardAppName: 'S4 Guard',
   shortBrand: 'S4',
   tagline: 'Sites • Shifts • Staff • Security',
 } as const;

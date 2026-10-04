@@ -236,7 +236,7 @@ export function AdminDashboardScreen() {
   const reasonCopy=reviewReasonAction?({complete:{label:'Completion decision note',help:'Record why this screening is being approved.',button:'Complete screening'},request:{label:'Information requested from candidate',help:'Explain exactly what the candidate must provide or correct.',button:'Send information request'},reject:{label:'Rejection reason',help:'Record why this screening is being rejected.',button:'Reject screening'},expire:{label:'Expiry reason',help:'Record why this screening approval is being expired.',button:'Mark expired'}} as const)[reviewReasonAction]:null;
 
   const navigation = <ScrollView horizontal={compact} style={compact ? styles.mobileNav : styles.sidebar} contentContainerStyle={compact ? styles.mobileNavContent : styles.sidebarContent}>
-    {!compact ? <Text style={styles.brand}>S4 Platform Admin</Text> : null}
+    {!compact ? <Text style={styles.brand}>Platform Admin</Text> : null}
     {ADMIN_NAV_ITEMS.map((item) => <Pressable key={item.key} accessibilityRole="button" accessibilityState={{ selected: item.key === section }} onPress={() => setSection(item.key)} style={[styles.navItem, item.key === section && styles.navItemActive]}><Text style={[styles.navText, item.key === section && styles.navTextActive]}>{item.label}</Text></Pressable>)}
   </ScrollView>;
 

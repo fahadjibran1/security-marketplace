@@ -37,8 +37,13 @@ const easJson = JSON.parse(read('eas.json'));
 
 // ═══════════════════ the controlled version ═══════════════════
 
-test('BUILD-01-APP-VERSION-IS-1-0-7-AND-BUILD-12', () => {
-  assert.equal(appJson.expo.version, '1.0.7');
+test('BUILD-01-APP-VERSION-IS-1-1-0-AND-BUILD-13', () => {
+  // Gate 4A: S4 1.1.0 / 13 is the first permanent-identity store candidate (com.sfour.s4). It is a new
+  // Android package, so nothing installs over anything — but the code keeps climbing, so every S4
+  // artefact ever produced carries a distinct, increasing number. The development-package history:
+  assert.equal(appJson.expo.version, '1.1.0');
+  assert.equal(appJson.expo.android.versionCode, 13, 'the first permanent-identity candidate');
+  assert.ok(appJson.expo.android.versionCode > 12, 'above the final development-package Build 12');
   // Build 12 is the full operational UAT candidate: Phase 1 (scheduled times as true instants),
   // Phase 2 (action forms on a real modal), Phase 3A (Live Operations in site time, shift welfare
   // override), 3A-iii (actions actually reach the API), 3B (Live Operations stays operationally current,
@@ -51,15 +56,15 @@ test('BUILD-01-APP-VERSION-IS-1-0-7-AND-BUILD-12', () => {
   //   9  first distributable pilot build
   //  10  Phase 1 only; verified and signed, but never installed
   //  11  Phase 1 + Phase 2; verified and signed, UAT found the Phase 3 defects
-  assert.equal(appJson.expo.android.versionCode, 12, 'Build 12 carries Phase 1 through Phase 3D');
-  assert.ok(appJson.expo.android.versionCode > 11, 'above Build 11, so it installs over it');
+  //  12  final com.securitymarketplace.mobile build (Phase 1 through Phase 3D)
+  assert.ok(appJson.expo.android.versionCode > 11, 'above Build 11');
   assert.ok(appJson.expo.android.versionCode > 10, 'above the Phase-1-only Build 10');
   assert.ok(appJson.expo.android.versionCode > 9, 'and above the first distributable pilot build');
   assert.ok(appJson.expo.android.versionCode > 8, 'above the rejected Build 8');
   assert.ok(appJson.expo.android.versionCode > 5, 'and above the installed 1.0.4 (versionCode 5)');
 
   // iOS reports its own build number; it must be bumped with Android or the two would disagree.
-  assert.equal(appJson.expo.ios.buildNumber, '12', 'the iOS build number tracks the Android one');
+  assert.equal(appJson.expo.ios.buildNumber, '13', 'the iOS build number tracks the Android one');
 });
 
 test('BUILD-02-APP-JSON-IS-THE-AUTHORITATIVE-VERSION-SOURCE', () => {
@@ -107,8 +112,15 @@ test('BUILD-06-PREVIEW-STAGING-STILL-POINTS-AT-STAGING', () => {
 });
 
 test('BUILD-07-OTHER-PROFILES-ARE-INTACT-AND-OTA-STAYS-DISABLED', () => {
-  assert.equal(easJson.build.production.autoIncrement, true, 'the store profile is unchanged');
-  assert.ok(!easJson.build.production.distribution, 'and is still store distribution, not the pilot profile');
+  // Gate 4A store profile: an AAB, signed with the permanent S4 key (never an EAS-generated one), on the
+  // production API stated explicitly, and with NO autoIncrement — with appVersionSource local that would
+  // rewrite app.json during the build and ship a versionCode nobody certified.
+  const production = easJson.build.production;
+  assert.ok(!('autoIncrement' in production), 'the certified versionCode is not bumped by the build');
+  assert.ok(!production.distribution, 'store distribution, not the pilot profile');
+  assert.equal(production.android.buildType, 'app-bundle');
+  assert.equal(production.android.credentialsSource, 'local');
+  assert.equal(production.env.EXPO_PUBLIC_API_URL, 'https://security-marketplace-api.onrender.com');
   assert.equal(easJson.build.preview.distribution, 'internal');
   assert.ok(easJson.build.development.developmentClient);
   assert.ok(easJson.build['ios-simulator'].ios.simulator);
@@ -135,12 +147,12 @@ test('BUILD-08-DISPLAYED-METADATA-COMES-FROM-RUNTIME-CONFIG', () => {
 
 test('BUILD-09-ANDROID-SHOWS-A-REAL-BUILD-NUMBER-AND-WEB-INVENTS-NONE', () => {
   const android = buildInfo.resolveAppBuildInfo({ version: '1.0.7', androidVersionCode: 8, platform: 'android' });
-  assert.deepEqual(buildInfo.formatBuildInfoLines(android, 'S4 Guard'), ['S4 Guard', 'Version 1.0.7', 'Build 8']);
+  assert.deepEqual(buildInfo.formatBuildInfoLines(android, 'S4'), ['S4', 'Version 1.0.7', 'Build 8']);
 
   // On web there is no installed package, so no build number may be shown or fabricated.
   const web = buildInfo.resolveAppBuildInfo({ version: '1.0.7', androidVersionCode: 8, platform: 'web' });
   assert.equal(web.buildNumber, null);
-  assert.deepEqual(buildInfo.formatBuildInfoLines(web, 'S4 Guard'), ['S4 Guard', 'Version 1.0.7']);
+  assert.deepEqual(buildInfo.formatBuildInfoLines(web, 'S4'), ['S4', 'Version 1.0.7']);
 
   // iOS reports its own buildNumber, never Android's versionCode.
   const ios = buildInfo.resolveAppBuildInfo({ version: '1.0.7', androidVersionCode: 8, iosBuildNumber: '11', platform: 'ios' });
@@ -149,7 +161,7 @@ test('BUILD-09-ANDROID-SHOWS-A-REAL-BUILD-NUMBER-AND-WEB-INVENTS-NONE', () => {
 
 test('BUILD-10-A-PILOT-LABEL-IS-APPENDED-AND-IS-NEVER-A-SECRET', () => {
   const pilot = buildInfo.resolveAppBuildInfo({ version: '1.0.7', androidVersionCode: 8, buildLabel: 'pilot', platform: 'android' });
-  assert.deepEqual(buildInfo.formatBuildInfoLines(pilot, 'S4 Guard'), ['S4 Guard', 'Version 1.0.7', 'Build 8 · pilot']);
+  assert.deepEqual(buildInfo.formatBuildInfoLines(pilot, 'S4'), ['S4', 'Version 1.0.7', 'Build 8 · pilot']);
   assert.equal(easJson.build.pilot.env.EXPO_PUBLIC_BUILD_LABEL, 'pilot');
   // Only a label is exposed — no token, key, URL or credential is inlined into the bundle.
   const env = JSON.stringify(easJson.build.pilot.env);
@@ -158,15 +170,16 @@ test('BUILD-10-A-PILOT-LABEL-IS-APPENDED-AND-IS-NEVER-A-SECRET', () => {
 
 test('BUILD-11-MISSING-METADATA-DEGRADES-HONESTLY', () => {
   const unknown = buildInfo.resolveAppBuildInfo({ version: null, androidVersionCode: 'x', platform: 'android' });
-  assert.deepEqual(buildInfo.formatBuildInfoLines(unknown, 'S4 Guard'), ['S4 Guard', 'Version unavailable']);
+  assert.deepEqual(buildInfo.formatBuildInfoLines(unknown, 'S4'), ['S4', 'Version unavailable']);
   // A zero or negative versionCode is not a build number either.
   assert.equal(buildInfo.resolveAppBuildInfo({ version: '1.0.7', androidVersionCode: 0, platform: 'android' }).buildNumber, null);
   assert.equal(buildInfo.resolveAppBuildInfo({ version: '1.0.7', androidVersionCode: -3, platform: 'android' }).buildNumber, null);
 });
 
 test('BUILD-12-BOTH-ROLES-SHOW-IT-AND-NEITHER-CLUTTERS-OPERATIONS', () => {
-  assert.match(guard, /<AppBuildFooter appLabel="S4 Guard" \/>/, 'Guard Profile shows it');
-  assert.match(company, /<AppBuildFooter appLabel="S4 Company" \/>/, 'Company shows it too');
+  // The product is S4 in every workspace — the footer names the app, not the role.
+  assert.match(guard, /<AppBuildFooter appLabel="S4" \/>/, 'Guard Profile shows it');
+  assert.match(company, /<AppBuildFooter appLabel="S4" \/>/, 'Company shows it too');
   // Guard: inside the profile tab only, never the operational Home screen.
   const profileBlock = guard.slice(guard.indexOf("{activeTab === 'profile' ?"));
   assert.ok(

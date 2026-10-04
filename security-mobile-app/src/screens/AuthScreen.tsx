@@ -143,7 +143,6 @@ export function AuthScreen({ onLoggedIn, noticeMessage, onDismissNotice }: AuthS
             <Image source={require('../../assets/icon.png')} style={styles.brandLogo} resizeMode="contain" accessibilityLabel={brand.appName} />
             <View>
               <Text style={styles.brandName}>{brand.shortBrand}</Text>
-              <Text style={styles.productName}>{isGuard ? brand.guardAppName : brand.appName}</Text>
             </View>
             <Text style={[styles.brandHeadline, isDesktopWeb && styles.brandHeadlineDesktop]}>Security operations, without the noise.</Text>
             <Text style={styles.brandCopy}>One trusted workspace for people, sites, shifts and compliance.</Text>
@@ -155,7 +154,7 @@ export function AuthScreen({ onLoggedIn, noticeMessage, onDismissNotice }: AuthS
 
           <View style={styles.formCard}>
             <View style={styles.formHeader}>
-              <Text style={styles.eyebrow}>{isGuard ? 'S4 GUARD' : 'S4 SECURITY'}</Text>
+              <Text style={styles.eyebrow}>{brand.appName}</Text>
               <Text style={styles.title}>{heading}</Text>
               <Text style={styles.subtitle}>{subheading}</Text>
             </View>
@@ -251,7 +250,6 @@ const styles = StyleSheet.create({
   brandPanelDesktop: { flex: 1, maxWidth: 460, padding: spacing.xxl, justifyContent: 'center' },
   brandLogo: { width: 56, height: 56 },
   brandName: { color: colors.accentTeal, fontSize: 28, fontWeight: '800', letterSpacing: 1 },
-  productName: { color: colors.textOnBrand, ...typography.label },
   brandHeadline: { color: colors.textOnBrand, ...typography.title, marginTop: spacing.md },
   brandHeadlineDesktop: { fontSize: 32, lineHeight: 38 },
   brandCopy: { color: colors.surfaceSubtle, ...typography.body },

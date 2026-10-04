@@ -199,7 +199,7 @@ test('INC-REPORT-02-CLICKING-ROW-OPENS-INCIDENT-REPORT', () => {
   );
 
   // It sits in the screen's own return, after the content shell and before the screen closes.
-  const mainReturn = screenCode.slice(screenCode.indexOf('<AppBuildFooter appLabel="S4 Company" />'));
+  const mainReturn = screenCode.slice(screenCode.indexOf('<AppBuildFooter appLabel="S4" />'));
   assert.ok(
     mainReturn.includes('<CompanyIncidentReportDrawer'),
     'the report is mounted on the screen, so every section that opens it can show it',
