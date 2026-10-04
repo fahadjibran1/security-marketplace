@@ -55,3 +55,15 @@ services:
         sync: false
       - key: EVIDENCE_SIGNED_URL_TTL_SECONDS
         value: "180"
+      # Transactional authentication email (password reset, email verification) through Resend. Optional at
+      # boot: without both values production logs transactional_email_not_configured and sends nothing, which
+      # leaves new self-registered accounts unable to verify. EMAIL_FROM must be on a Resend-verified domain.
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: S4_WEB_APP_URL
+        # Where emailed links open: /reset-password and /verify-email on the S4 web app.
+        value: https://app.sfour.co.uk
+      # SENTRY_DSN is deliberately NOT declared: error monitoring stays off until it is approved and the DSN
+      # is added by hand. See security-backend-nest/src/monitoring/monitoring.ts.
