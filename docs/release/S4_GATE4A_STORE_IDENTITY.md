@@ -54,11 +54,9 @@ Do not distribute any further `com.securitymarketplace.mobile` build.
 - Keystore and `credentials.json` stay outside Git (`*.jks`, `credentials.json` ignored).
 - The store profile signs Android builds with the **local** S4 key (`credentialsSource: local`). Left on
   the EAS default, a new package would get an EAS-generated key — the Build 8 failure again.
-- **Backup: NOT CONFIRMED.** Two identical plaintext copies exist on one workstation
-  (`~/.s4-pilot-secrets/` and `~/Downloads/`). There is no encrypted, offline or second-location backup.
-  **BLOCKER BEFORE FIRST PLAY UPLOAD:** make an encrypted backup (password manager / encrypted archive on
-  separate offline media), store the keystore passwords separately from it, then remove the stray copy
-  from `Downloads`.
+- **Backup: CONFIRMED BY OWNER.** A separate secure backup of the permanent signing keystore exists. It is
+  held separately from Git, from the S4 repository and from the primary development copy. Its location and
+  credentials are deliberately not recorded in Git.
 
 ## Google Play App Signing — recommendation (executed in Gate 4B)
 
@@ -68,7 +66,7 @@ key**.
 - `com.sfour.s4` has no installed base anywhere, so nothing requires the app-signing key to be the old
   certificate. A Google-held key is protected by Google's infrastructure and supports key upgrade.
 - If the upload key is ever lost or compromised it can be reset through Play support; an app-signing key
-  that only exists on one PC cannot. (That does not remove the backup blocker above.)
+  that only exists on one PC cannot.
 - Consequence: copies installed from Play are signed by Google's certificate, so a locally signed APK of
   `com.sfour.s4` cannot update a Play install. Rule: **`com.sfour.s4` is distributed only through Google
   Play** (Internal Testing, then production). The `pilot` APK profile is for the legacy package only.
@@ -128,11 +126,11 @@ account, screenshots.
 
 S4 Privacy Policy and S4 Terms need publishing and review; `/account-deletion` belongs in `s4-website`;
 Sentry stays disabled; retention periods are owner/legal decisions; Render region is Oregon (US West);
-production account-deletion UAT is deferred; the signing-key backup is unconfirmed.
+production account-deletion UAT is deferred.
 
 ## Gate 4B prerequisites
 
-1. **Signing-key backup confirmed** (encrypted, offline, passwords stored separately). Blocker.
+1. Signing-key backup — CONFIRMED BY OWNER (Gate 4A checkpoint).
 2. Google Play developer account as an **organisation**: Vesoft Services Limited (D-U-N-S, verified
    organisation details, developer contact email and phone).
 3. Create the Play app `com.sfour.s4`, name S4; enrol in Play App Signing as recommended above; record
