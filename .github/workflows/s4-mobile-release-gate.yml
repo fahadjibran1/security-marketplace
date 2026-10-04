@@ -250,6 +250,19 @@ jobs:
       - name: Verify the Company Dashboard renders
         run: npm run test:dashboard-runtime
 
+      # S4 Pilot Gate 2: an uncaught render error anywhere in the app must produce the S4 recovery screen,
+      # never a blank page. Renders with React's real reconciler (server rendering cannot exercise an error
+      # boundary), including the real App with a screen that throws on first paint, and a control proving
+      # the same fault without the boundary does blank the app.
+      - name: Verify the app-wide error boundary
+        run: npm run test:error-boundary
+
+      # S4 Pilot Gate 2: password reset, email verification and account deletion on the client — emailed
+      # link parsing and token stripping, request shapes against the real api.ts, factual deletion copy,
+      # and the rendered deletion journey including a company owner who cannot self-delete.
+      - name: Verify account lifecycle journeys
+        run: npm run test:account-lifecycle
+
       # UAT FIX 03: an incident is not a safety alert. Both production defects were correctly-rendered
       # buttons wired to the wrong handler, which no source grep and no bundle export could see — so
       # this step presses the real buttons on the real queue and asserts WHICH callback fires.
