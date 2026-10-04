@@ -142,6 +142,17 @@ async function main() {
       const s: any = await auth.login({ email, password: secret });
       return { token: s.accessToken, userId: s.user.id, companyId: s.user.companyId, guardId: s.user.guardId, email };
     };
+    // Gate 2: a self-registered account signs in only after verifying its address. Done the way a person
+    // does it — the link from the (development outbox) email, spent through the real verification path.
+    const { TransactionalEmailService } = await import('../src/email/transactional-email.service');
+    const { AccountRecoveryService } = await import('../src/auth/account-recovery.service');
+    const verifyEmail = async (email: string) => {
+      const message = [...app.get(TransactionalEmailService).capturedMessages()].reverse()
+        .find((m) => m.kind === 'email_verification' && m.to === email);
+      const token = message && /verify-email\?token=([A-Za-z0-9_-]+)/.exec(message.text)?.[1];
+      assert.ok(token, `a verification email was sent to ${email}`);
+      await app.get(AccountRecoveryService).verifyEmail(token);
+    };
     const registerCompany = async (label: string) => {
       const email = `${label}.${RUN}@pilot-core.test`;
       await auth.register({
@@ -149,6 +160,7 @@ async function main() {
         companyName: `${label} Security Ltd`, companyNumber: String(10000000 + Math.floor(Math.random() * 8999999)),
         address: '1 High St, London', contactDetails: `ops@${label}.test`,
       } as any);
+      await verifyEmail(email);
       return session(email);
     };
     let siaSeq = Math.floor(Math.random() * 1e6);
@@ -158,6 +170,7 @@ async function main() {
         email, password, role: 'guard' as any, fullName: `${label} Guard`, phone: '07700000000',
         siaLicenseNumber: String(6000000000000000 + (siaSeq += 7919)),
       } as any);
+      await verifyEmail(email);
       return session(email);
     };
 
