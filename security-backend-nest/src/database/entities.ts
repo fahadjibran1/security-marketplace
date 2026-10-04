@@ -1,4 +1,5 @@
 import { AuthSession } from '../auth/entities/auth-session.entity';
+import { UserVerificationToken } from '../auth/entities/user-verification-token.entity';
 import { AttendanceEvent } from '../attendance/entities/attendance.entity';
 import { Assignment } from '../assignment/entities/assignment.entity';
 import { Attachment } from '../attachment/entities/attachment.entity';
@@ -96,4 +97,5 @@ export const appEntities = [
   CompanyMembership,
   CompanyInvitation,
   RotaSlot,
+  UserVerificationToken,
 ];
