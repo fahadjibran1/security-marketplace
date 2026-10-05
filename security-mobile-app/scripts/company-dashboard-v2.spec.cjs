@@ -313,6 +313,65 @@ test('ATT-05-AN-EMPTY-QUEUE-SAYS-ALL-CLEAR', () => {
   assert.ok(t.includes('Operational position is clear.'));
 });
 
+// ═══════════════════ More than ten items are never lost ═══════════════════
+
+/** Fourteen distinct outstanding items, each on its own named site so every one can be found. */
+const FOURTEEN = Array.from({ length: 14 }, (_, index) => item(
+  `many-${index + 1}`, index % 2 ? 'missed_check_call' : 'safety', -(index + 1) * 3,
+  { issueType: index % 2 ? 'Missed Welfare Check' : 'Safety / welfare needs attention', siteName: `CAPSITE ${String(index + 1).padStart(2, '0')}` },
+));
+
+function memoBody(source, marker) {
+  const start = source.indexOf(marker);
+  assert.ok(start >= 0, `${marker} exists`);
+  return source.slice(start, source.indexOf('}, [', start));
+}
+
+test('CAP-01-ATTENTION-NOW-HAS-NO-TEN-ITEM-CAP', () => {
+  const queue = memoBody(SCREEN, 'const urgentOperationalItems = React.useMemo');
+  assert.ok(queue.includes('selectCurrentAttention('), 'still filtered by the shared expiry policy');
+  assert.ok(!/\.slice\(/.test(queue), 'and never truncated');
+  assert.ok(/const allAttentionItems = urgentOperationalItems;/.test(SCREEN),
+    'the Dashboard and Attention Now read one queue, so their N cannot differ');
+  const counts = memoBody(SCREEN, 'const liveOperationsCounts = React.useMemo');
+  assert.ok(counts.includes('urgentOperationalItems.filter'), 'the Live Operations status bar counts that whole queue');
+});
+
+test('CAP-02-THE-ATTENTION-NOW-RAIL-RENDERS-ALL-FOURTEEN-ITEMS', () => {
+  const RNW = appRequire('react-native-web');
+  const workspace = loadTs('src/components/company/CompanyLiveOperationsWorkspace.tsx');
+  const outlook = loadTs('src/components/company/operationsOutlook.ts');
+  const element = React.createElement(workspace.LiveOpsAttentionRail, {
+    items: FOURTEEN,
+    metricFocus: 'all',
+    resolveShiftZone: () => 'Europe/London',
+    urgentActionItemId: null,
+    onOpenUrgentDetail: () => {},
+    onOpenUrgentShift: () => {},
+    onUrgentIncidentFollowUp: async () => {},
+    onUrgentAlertFollowUp: async () => {},
+    onOpenIncidentResolution: () => {},
+    nextUp: outlook.buildNextUp([], NOW.getTime()),
+  });
+  RNW.AppRegistry.registerComponent('CapRail', () => () => element);
+  const markup = renderToStaticMarkup(RNW.AppRegistry.getApplication('CapRail', {}).element);
+  const t = text(markup);
+  for (let index = 1; index <= 14; index += 1) {
+    const site = `CAPSITE ${String(index).padStart(2, '0')}`;
+    assert.ok(t.includes(site), `${site} is in Attention Now (items 11-14 were silently dropped before)`);
+  }
+  assert.ok(/Attention Now\s+14\b/.test(t), 'and the rail count reads 14');
+});
+
+test('CAP-03-DASHBOARD-TOTAL-AND-VIEW-ALL-MATCH-THE-FULL-QUEUE', () => {
+  const summary = model.summariseAttention(FOURTEEN);
+  assert.equal(summary.total, 14);
+  assert.equal(summary.shown.length, 5);
+  const t = text(render(baseProps({ attention: summary })));
+  assert.ok(t.includes('14 items requiring action'));
+  assert.ok(t.includes('View all 14 items in Live Operations'), 'the link promises exactly what the rail now shows');
+});
+
 // ═══════════════════ Live Operations ═══════════════════
 
 test('LIVE-01-A-LIVE-ROW-CARRIES-THE-OPERATIONAL-FACTS-THE-DATA-SUPPORTS', () => {

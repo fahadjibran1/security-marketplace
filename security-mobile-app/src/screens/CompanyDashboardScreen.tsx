@@ -2399,19 +2399,14 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
       (item) => (item.shiftId == null ? null : operationalShiftById.get(item.shiftId) ?? null),
       now,
     )
-      .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt))
-      .slice(0, 10);
+      // NO cap. Attention Now used to keep only the newest ten, so its count — and the status-bar counts
+      // read from it — silently under-reported once more than ten items were outstanding, and the
+      // Dashboard's "View all N" led to a list that could not show all N. The rail scrolls.
+      .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt));
   }, [attentionCandidates, operationalNow, operationalShiftById]);
 
-  /** The same current queue without the Attention Now cap: the Dashboard's count and priority list. */
-  const allAttentionItems = React.useMemo(
-    () => selectCurrentAttention(
-      attentionCandidates,
-      (item) => (item.shiftId == null ? null : operationalShiftById.get(item.shiftId) ?? null),
-      operationalNow,
-    ),
-    [attentionCandidates, operationalNow, operationalShiftById],
-  );
+  /** The Dashboard reads the SAME queue as Attention Now, so the two can never disagree about N. */
+  const allAttentionItems = urgentOperationalItems;
   const recentOperationalActivity = React.useMemo(() => {
     const items: OperationalActivityItem[] = [];
 
