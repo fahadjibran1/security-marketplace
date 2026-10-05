@@ -100,7 +100,9 @@ test('STORE-05-LOCATION-COPY-MATCHES-WHAT-THE-APP-DOES', () => {
   const [, options] = expo.plugins.find((plugin) => Array.isArray(plugin) && plugin[0] === 'expo-location');
   assert.equal(options.isAndroidBackgroundLocationEnabled, false);
   assert.equal(options.isIosBackgroundLocationEnabled, false);
-  assert.ok(!('locationAlwaysAndWhenInUsePermission' in options) && !('locationAlwaysPermission' in options), 'no "always" prompt');
+  // false (not merely absent) — absent would let the plugin inject its generic "Always" strings on iOS.
+  assert.equal(options.locationAlwaysAndWhenInUsePermission, false, 'no "always" prompt');
+  assert.equal(options.locationAlwaysPermission, false, 'no "always" prompt');
   const copy = options.locationWhenInUsePermission;
   assert.match(copy, /^S4 /, 'names the app as S4');
   assert.match(copy, /Book On/);
@@ -178,6 +180,50 @@ test('STORE-09-IOS-IDENTITY-IS-SET-AND-NOTHING-IS-BUILT', () => {
   // No hand-written usage strings that could drift from the plugin's, and none for unused capabilities.
   const plist = JSON.stringify(expo.ios.infoPlist);
   assert.doesNotMatch(plist, /NSCameraUsageDescription|NSMicrophoneUsageDescription|NSContactsUsageDescription|NSLocationAlways/);
+
+  // Gate 4C: expo-location and expo-secure-store inject generic "Always" location and Face ID purpose
+  // strings by default. S4 never asks for Always location and never uses biometrics, so both plugins are
+  // told to omit them (false deletes the key) — every purpose string the app ships describes real use.
+  const [, location] = expo.plugins.find((plugin) => Array.isArray(plugin) && plugin[0] === 'expo-location');
+  assert.equal(location.locationAlwaysAndWhenInUsePermission, false);
+  assert.equal(location.locationAlwaysPermission, false);
+  const [, secureStore] = expo.plugins.find((plugin) => Array.isArray(plugin) && plugin[0] === 'expo-secure-store');
+  assert.equal(secureStore.faceIDPermission, false);
+});
+
+test('STORE-10-THE-IOS-PRIVACY-MANIFEST-DECLARES-WHAT-THE-PODS-USE', () => {
+  // Apple does not reliably read the PrivacyInfo files inside static CocoaPods dependencies, so the
+  // required-reason APIs are declared at app level. Every entry is copied from a bundled dependency's own
+  // manifest (React Native, its third-party pods, expo-constants, expo-file-system) — none is invented.
+  const manifest = expo.ios.privacyManifests;
+  assert.equal(manifest.NSPrivacyTracking, false, 'no tracking');
+  assert.deepEqual(manifest.NSPrivacyTrackingDomains, []);
+  const declared = Object.fromEntries(
+    manifest.NSPrivacyAccessedAPITypes.map((entry) => [entry.NSPrivacyAccessedAPIType, [...entry.NSPrivacyAccessedAPITypeReasons].sort()]),
+  );
+
+  const required = {};
+  const manifests = [
+    'node_modules/react-native/React/Resources/PrivacyInfo.xcprivacy',
+    'node_modules/react-native/ReactCommon/cxxreact/PrivacyInfo.xcprivacy',
+    'node_modules/react-native/third-party-podspecs/boost/PrivacyInfo.xcprivacy',
+    'node_modules/react-native/third-party-podspecs/glog/PrivacyInfo.xcprivacy',
+    'node_modules/react-native/third-party-podspecs/RCT-Folly/PrivacyInfo.xcprivacy',
+    'node_modules/expo-constants/ios/PrivacyInfo.xcprivacy',
+    'node_modules/expo-file-system/ios/PrivacyInfo.xcprivacy',
+  ];
+  for (const rel of manifests) {
+    const xml = read(rel);
+    for (const match of xml.matchAll(/<key>NSPrivacyAccessedAPIType<\/key>\s*<string>([^<]+)<\/string>\s*<key>NSPrivacyAccessedAPITypeReasons<\/key>\s*<array>([\s\S]*?)<\/array>/g)) {
+      required[match[1]] = new Set([...(required[match[1]] || []), ...[...match[2].matchAll(/<string>([^<]+)<\/string>/g)].map((r) => r[1])]);
+    }
+  }
+  assert.ok(Object.keys(required).length >= 3, 'the dependency manifests were read');
+  for (const [api, reasons] of Object.entries(required)) {
+    assert.ok(declared[api], `${api} is declared at app level`);
+    for (const reason of reasons) assert.ok(declared[api].includes(reason), `${api} carries ${reason}`);
+  }
+  for (const api of Object.keys(declared)) assert.ok(required[api], `${api} is declared only because a dependency uses it`);
 });
 
 console.log(`\n${passed} store identity checks passed`);
