@@ -525,6 +525,47 @@ test('COMP-01-COMPLIANCE-SHOWS-THE-COMPLIANCE-SCREENS-OWN-METRICS', () => {
   assert.ok(/computeMetrics\(buildComplianceRows\(complianceSummaries, companyGuards\)\)/.test(SCREEN));
 });
 
+test('COMP-03-NEUTRAL-CARD-WITH-SEVERITY-CARRIED-BY-THE-METRICS', () => {
+  const RNW = appRequire('react-native-web');
+  const { colors } = loadTs('src/theme/brand.ts');
+  const props = baseProps();
+  assert.ok(props.compliance.metrics.needsAttention > 0 && props.compliance.metrics.expiring > 0,
+    'the fixture has records needing attention and expiring');
+  const nodes = tree(props);
+
+  // 1. Production copy, exactly.
+  const card = nodes.find((node) => node.props && node.props.title === 'Compliance Overview');
+  assert.ok(card, 'the Compliance card is present');
+  assert.equal(card.props.subtitle, 'Guard document and certification status.');
+  assert.ok(text(render(props)).includes('Guard document and certification status.'));
+  assert.ok(!/as the Compliance screen reports it/.test(COMPONENT_SRC), 'the implementation wording is gone');
+
+  // 2. The outer card stays neutral even with records needing attention; Coverage keeps its own warning.
+  assert.equal(card.props.tone, 'default', 'Compliance never paints the whole card red or amber');
+  const coverage = nodes.find((node) => node.props && node.props.title === "Today's Coverage");
+  assert.equal(coverage.props.tone, 'warning', "Today's Coverage warning border is unchanged");
+
+  // 3 and 4. The individual metrics keep their emphasis.
+  const valueColour = (label) => {
+    const stat = nodes.find((node) => node.props && typeof node.props.accessibilityLabel === 'string'
+      && node.props.accessibilityLabel.startsWith(`${label}:`));
+    assert.ok(stat, `${label} metric found`);
+    const value = elements(stat.props.children).find((node) => node.props && typeof node.props.children === 'number');
+    return RNW.StyleSheet.flatten(value.props.style).color;
+  };
+  assert.equal(valueColour('Needs attention'), colors.danger, 'Needs attention stays red');
+  assert.equal(valueColour('Expiring'), colors.warning, 'Expiring stays amber');
+  assert.notEqual(valueColour('Valid'), colors.danger);
+  assert.notEqual(valueColour('Unknown'), colors.danger);
+
+  // 5. Navigation into Compliance still works.
+  const calls = [];
+  const link = elements(overview.CompanyDashboardOverview({ ...props, onNavigate: (target) => calls.push(target) }))
+    .find((node) => node.props && node.props.label === 'View compliance');
+  link.props.onPress();
+  assert.deepEqual(calls, ['compliance']);
+});
+
 test('COMP-02-EMPTY-AND-NO-PERMISSION-STATES', () => {
   const empty = complianceModel.computeMetrics([]);
   assert.ok(text(render(baseProps({ compliance: { canView: true, metrics: empty } }))).includes('No compliance records'));

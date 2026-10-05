@@ -487,8 +487,10 @@ export function CompanyDashboardOverview(props: CompanyDashboardOverviewProps) {
             style={styles.panelNatural}
             webSurfaceHover
             title="Compliance Overview"
-            subtitle="Guard compliance status, as the Compliance screen reports it."
-            tone={compliance.metrics && compliance.metrics.needsAttention > 0 ? 'danger' : compliance.metrics && compliance.metrics.expiring > 0 ? 'warning' : 'default'}
+            subtitle="Guard document and certification status."
+            // Always the neutral card: compliance needing attention matters, but the card must not compete
+            // with live operational issues. Severity is carried by the individual metrics below.
+            tone="default"
             headingLevel={2}
           >
             {!compliance.canView ? (
