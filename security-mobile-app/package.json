@@ -31,6 +31,7 @@
     "build:brand-assets": "node scripts/build-s4-assets.cjs",
     "test:auth-refresh": "node scripts/auth-refresh.spec.cjs",
     "test:live-operations-welfare": "node scripts/live-operations-welfare.spec.cjs",
+    "test:dashboard-v2": "node scripts/company-dashboard-v2.spec.cjs",
     "test:shift-entry": "node scripts/shift-creation-entry.spec.cjs",
     "test:web-style": "node scripts/web-style-safety.spec.cjs",
     "test:assign-compliance": "node scripts/assign-compliance-guidance.spec.cjs",
