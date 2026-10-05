@@ -278,12 +278,23 @@ test('SIGNER-06E-THE-APPROVED-ARTEFACT-IS-EXPLICIT', () => {
   assert.equal(approved.versionCode, config.legacyPackage.finalRelease.versionCode);
   assert.equal(approved.versionName, config.legacyPackage.finalRelease.versionName);
 
-  // And no 1.1.0 artefact is claimed before one has been built and verified.
-  assert.equal(config.approvedArtefact.versionCode, config.expectedRelease.versionCode);
-  assert.equal(config.approvedArtefact.versionName, config.expectedRelease.versionName);
-  assert.equal(config.approvedArtefact.status, 'pending-build', 'nothing is approved for 1.1.0 yet');
-  assert.ok(!config.approvedArtefact.easBuildId && !config.approvedArtefact.apkSha256 && !config.approvedArtefact.aabSha256,
-    'a pending artefact has no build id or hash');
+  // A 1.1.0 artefact is claimed only once it has been built AND certified, and then it is identified
+  // completely: build id, source commit, AAB hash and the upload signer it was verified against.
+  const current = config.approvedArtefact;
+  assert.equal(current.versionCode, config.expectedRelease.versionCode);
+  assert.equal(current.versionName, config.expectedRelease.versionName);
+  if (current.status === 'pending-build') {
+    assert.ok(!current.easBuildId && !current.apkSha256 && !current.aabSha256, 'a pending artefact has no build id or hash');
+  } else {
+    assert.equal(current.status, 'certified-awaiting-play');
+    assert.match(current.easBuildId, /^[0-9a-f-]{36}$/, 'a real EAS build id');
+    assert.match(current.gitCommit, /^[0-9a-f]{40}$/, 'the full source commit');
+    assert.match(current.aabSha256, /^[0-9a-f]{64}$/, 'the AAB hash');
+    assert.match(current.aabFilename, /\.aab$/, 'an App Bundle, not an APK');
+    assert.equal(current.uploadCertificateSha256, config.signer.certificateSha256, 'verified against the permanent upload key');
+    // Until Play signs anything, the upload certificate is the only one known; it is never overwritten.
+    assert.equal(config.playAppSigning.uploadCertificateSha256, config.signer.certificateSha256);
+  }
 
   if (approved.status === 'pending-rebuild') {
     assert.ok(approved.requiredGitCommit, 'the commit the rebuild must contain');

@@ -38,8 +38,16 @@
   "approvedArtefact": {
     "versionName": "1.1.0",
     "versionCode": 13,
-    "status": "pending-build",
-    "note": "No 1.1.0 artefact exists yet. Gate 4B records the EAS build id, the git commit and the AAB SHA-256 here after verifying the upload signer."
+    "status": "certified-awaiting-play",
+    "easBuildId": "545b6ed6-78ca-43ce-9689-b11f0e34e7ad",
+    "easBuildProfile": "production",
+    "gitCommit": "6cf29c8b3444a9cabb81bb79e90e21ce7ddf5626",
+    "aabFilename": "s4-1.1.0-vc13-545b6ed6.aab",
+    "aabSha256": "955fd091465ab7cac189179d1e99149a13a9146bb74207bb6272ff0e6e020f86",
+    "aabSizeBytes": 58675805,
+    "uploadCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
+    "certifiedOn": "2026-10-05",
+    "note": "Certified locally from the downloaded AAB: package, version and permissions from the bundle manifest (bundletool), upload signer via keytool. Not yet uploaded to Google Play."
   },
   "playAppSigning": {
     "status": "not-yet-enrolled",
