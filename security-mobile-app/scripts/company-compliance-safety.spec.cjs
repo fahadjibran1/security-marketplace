@@ -443,7 +443,10 @@ const FIXTURE = [
     assert.match(dashboard, /canManageCompliance=\{compliancePermissions\.canManage\}/);
     assert.match(dashboard, /canViewScreening=\{compliancePermissions\.canViewScreening\}/);
     assert.match(dashboard, /loader\.label !== 'compliance' \|\| canViewCompliance/, 'no compliance request (and no 403 banner) for roles without compliance.view');
-    assert.match(dashboard, /Compliance not available/);
+    // The dashboard tile moved into CompanyDashboardOverview (Operations V2): the screen hands it the
+    // permission, and the component renders the not-available state, never the metrics, without it.
+    assert.match(dashboard, /compliance=\{\{ canView: canViewCompliance,/);
+    assert.match(read('src/components/company/CompanyDashboardOverview.tsx'), /!compliance\.canView \? \(\s*<PanelMessage title="Compliance not available"/);
     assert.match(workspace, /if \(!canViewCompliance\) return;\s*load\('initial'\)/, 'the workspace loads nothing without compliance.view');
     assert.match(workspace, /Compliance is not available for your role/);
   });

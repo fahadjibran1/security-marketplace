@@ -14,6 +14,8 @@ type KpiCardProps = {
   icon: string;
   tone?: KpiTone;
   onPress?: () => void;
+  /** Spoken after the label and value, e.g. where pressing the card leads. */
+  accessibilityHint?: string;
 };
 
 const TONE: Record<KpiTone, { iconBg: string; value: string; border: string }> = {
@@ -39,7 +41,7 @@ const TONE: Record<KpiTone, { iconBg: string; value: string; border: string }> =
   },
 };
 
-export function KpiCard({ label, value, icon, tone = 'neutral', onPress }: KpiCardProps) {
+export function KpiCard({ label, value, icon, tone = 'neutral', onPress, accessibilityHint }: KpiCardProps) {
   const toneStyle = TONE[tone] || TONE.neutral;
   const [surfaceHovered, setSurfaceHovered] = React.useState(false);
 
@@ -49,7 +51,13 @@ export function KpiCard({ label, value, icon, tone = 'neutral', onPress }: KpiCa
         <Text style={styles.label} numberOfLines={2}>
           {label}
         </Text>
-        <View style={[styles.iconPuck, { backgroundColor: toneStyle.iconBg }]}>
+        {/* The icon is decoration: the label already names the metric. */}
+        <View
+          style={[styles.iconPuck, { backgroundColor: toneStyle.iconBg }]}
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+          {...({ 'aria-hidden': true } as any)}
+        >
           <Text style={styles.iconText}>{icon}</Text>
         </View>
       </View>
@@ -74,10 +82,14 @@ export function KpiCard({ label, value, icon, tone = 'neutral', onPress }: KpiCa
     return (
       <Pressable
         {...({ onPress, onClick: onPress } as const)}
-        style={({ hovered, pressed }: any) => [
+        accessibilityRole="button"
+        accessibilityLabel={`${label}: ${value}`}
+        accessibilityHint={accessibilityHint}
+        style={({ hovered, pressed, focused }: any) => [
           ...cardChrome(Boolean(hovered && !pressed)),
           hovered && !pressed ? styles.cardHover   : null,
           pressed             ? styles.cardPressed : null,
+          IS_WEB && focused   ? (styles.cardFocused as any) : null,
           WEB_POINTER as any,
         ]}
       >
@@ -120,6 +132,7 @@ const styles = StyleSheet.create({
   kpiCardWebCursor: { cursor: 'default' } as any,
   cardHover:   { shadowOpacity: 0.07, transform: [{ translateY: -1 }] },
   cardPressed: { transform: [{ translateY: 0 }] },
+  cardFocused: { outlineStyle: 'solid', outlineWidth: 2, outlineColor: colors.focusRing, outlineOffset: 2 } as any,
   cardInner: {
     flex: 1,
     paddingHorizontal: 20,

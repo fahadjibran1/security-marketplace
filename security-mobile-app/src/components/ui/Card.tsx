@@ -14,6 +14,8 @@ type CardProps = React.PropsWithChildren<{
   onPress?: () => void;
   style?: any;
   webSurfaceHover?: boolean;
+  /** When set, the title is exposed to assistive technology as a heading of this level. */
+  headingLevel?: 2 | 3;
 }>;
 
 const TONE_STYLES: Record<CardTone, { borderColor: string; headerColor: string; wash: string }> = {
@@ -23,15 +25,18 @@ const TONE_STYLES: Record<CardTone, { borderColor: string; headerColor: string; 
   danger:  { borderColor: colors.dangerBorder,                headerColor: colors.danger,        wash: colors.card },
 };
 
-export function Card({ title, subtitle, tone = 'default', right, onPress, children, style, webSurfaceHover }: CardProps) {
+export function Card({ title, subtitle, tone = 'default', right, onPress, children, style, webSurfaceHover, headingLevel }: CardProps) {
   const toneStyle = TONE_STYLES[tone] || TONE_STYLES.default;
   const [surfaceHovered, setSurfaceHovered] = React.useState(false);
+  const headingProps = headingLevel
+    ? ({ accessibilityRole: 'header', 'aria-level': headingLevel } as any)
+    : null;
 
   const headerBlock =
     title || subtitle || right ? (
       <View style={styles.header}>
         <View style={styles.headerText}>
-          {title    ? <Text style={[styles.title, { color: toneStyle.headerColor }]}>{title}</Text>       : null}
+          {title    ? <Text {...headingProps} style={[styles.title, { color: toneStyle.headerColor }]}>{title}</Text> : null}
           {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text>                                      : null}
         </View>
         {right ? <View style={styles.headerRight}>{right}</View> : null}

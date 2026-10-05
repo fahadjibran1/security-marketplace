@@ -43,7 +43,18 @@ import {
 import { CompanyAnalyticsWorkspace } from '../components/company/CompanyAnalyticsWorkspace';
 import { CompanyAvailabilityWorkspace } from '../components/company/CompanyAvailabilityWorkspace';
 import { CompanyComplianceWorkspace } from '../components/company/CompanyComplianceWorkspace';
-import { resolveCompliancePermissions } from '../components/company/compliance-model';
+import { buildComplianceRows, computeMetrics, resolveCompliancePermissions } from '../components/company/compliance-model';
+import { CompanyDashboardOverview, type DashboardSourceState } from '../components/company/CompanyDashboardOverview';
+import {
+  buildLiveShiftRows,
+  buildUpcomingShifts,
+  dashboardDisplayZone,
+  formatDashboardClock,
+  formatUpdatedLabel,
+  nextSuccessfulLoad,
+  summariseAttention,
+  summariseCoverage,
+} from '../components/company/dashboardOverview';
 import {
   DEFAULT_SITE_TIME_ZONE,
   formatInstantDateTime,
@@ -172,6 +183,7 @@ import {
   RotaCreatePayload,
   RotaSlotChanges,
   RotaAssignMultipleResult,
+  GuardComplianceSummary,
 } from '../types/models';
 import { CompanySidebar } from '../components/company/CompanySidebar';
 import { CompanyTopBar } from '../components/company/CompanyTopBar';
@@ -1334,6 +1346,12 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
   const [notifications, setNotifications] = React.useState<Notification[]>([]);
   const [uncoveredShifts, setUncoveredShifts] = React.useState<CoverageShiftRow[]>([]);
   const [complianceRecords, setComplianceRecords] = React.useState<ComplianceRecord[]>([]);
+  /** Per-Guard compliance status for the Dashboard overview; null until loaded. */
+  const [complianceSummaries, setComplianceSummaries] = React.useState<GuardComplianceSummary[] | null>(null);
+  /** Labels of the loaders that failed on the most recent load. */
+  const [failedSources, setFailedSources] = React.useState<string[]>([]);
+  /** The last load in which every source succeeded, and for which section. */
+  const [lastSuccessfulLoad, setLastSuccessfulLoad] = React.useState<{ section: CompanySection; at: Date } | null>(null);
   const [coverageNavigationContext, setCoverageNavigationContext] = React.useState<CoverageNavigationContext | undefined>(undefined);
   const [operationsByShiftId, setOperationsByShiftId] = React.useState<Map<number, ShiftOperationsView>>(new Map());
   // Increments once per Add Shift request. The planner acts on each new value exactly once, so a
@@ -1434,13 +1452,15 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
   const runSettledLoaders = React.useMemo(
     () => async (loaders: SettledLoader[]) => {
       const results = await Promise.allSettled(loaders.map((loader) => loader.run()));
-      const failures: unknown[] = [];
+      // Each failure keeps its loader's label, so a surface can say WHICH of its sources failed instead of
+      // presenting a stale or empty list as if it were current.
+      const failures: Array<{ label: string; reason: unknown }> = [];
 
       results.forEach((result, index) => {
         if (result.status === 'fulfilled') {
         loaders[index].apply(result.value);
       } else {
-        failures.push(result.reason);
+        failures.push({ label: loaders[index].label, reason: result.reason });
       }
       });
 
@@ -1552,7 +1572,13 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
             { label: 'alerts', run: listCompanySafetyAlerts, apply: (value: SafetyAlert[]) => setAlerts(value) },
             { label: 'daily logs', run: listCompanyDailyLogs, apply: (value: DailyLog[]) => setDailyLogs(value) },
             { label: 'notifications', run: listCompanyNotifications, apply: (value: Notification[]) => setNotifications(value) },
-            { label: 'compliance', run: listComplianceRecords, apply: (value: ComplianceRecord[]) => setComplianceRecords(value) },
+            // The Compliance screen's own source: one authoritative status per Guard, so the dashboard's
+            // counts are the counts the operator sees on arrival there.
+            {
+              label: 'compliance',
+              run: listCompanyGuardComplianceStatuses,
+              apply: (value: GuardComplianceSummary[]) => setComplianceSummaries(value),
+            },
           ],
           'live-operations': [
               { label: 'attendance', run: listCompanyAttendance, apply: (value: AttendanceEvent[]) => setAttendanceEvents(value) },
@@ -1585,8 +1611,11 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
         );
         const failures = [...coreFailures, ...sectionFailures];
 
+        setFailedSources(failures.map((failure) => failure.label));
+        // Freshness is only ever claimed for a load in which every source succeeded.
+        setLastSuccessfulLoad((previous) => nextSuccessfulLoad(previous, activeSection, failures.length, new Date()));
         if (failures.length > 0) {
-          setError(formatApiErrorMessage(failures[0], 'Some company workspace data could not be loaded.'));
+          setError(formatApiErrorMessage(failures[0].reason, 'Some company workspace data could not be loaded.'));
         }
       } finally {
         setLoading(false);
@@ -2136,7 +2165,13 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
     operationsByShiftId, dailyLogs, incidents, alerts, resolveShiftZone,
   ]);
 
-  const urgentOperationalItems = React.useMemo(() => {
+  /**
+   * Every attention candidate, before the expiry policy runs. Two queues read it: Live Operations'
+   * Attention Now (`urgentOperationalItems`, the newest ten, exactly as before) and the Dashboard
+   * (`allAttentionItems`, the whole current set, so its count is never capped). Both apply the same
+   * shared policy to it.
+   */
+  const attentionCandidates = React.useMemo(() => {
     const now = operationalNow;
     const items: UrgentOperationalItem[] = [];
     const readyShiftsNotBookedOn = shifts.filter((shift) => {
@@ -2337,20 +2372,7 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
     const deduped = items.filter(
       (item, index, current) => current.findIndex((candidate) => candidate.id === item.id) === index,
     );
-
-    // Derived items expire; persisted alerts do not. "Re-cover required" is computed from the shift's
-    // own schedule with nothing written down behind it, so there was nothing for anyone to acknowledge
-    // and Monday's uncovered shift stayed in Wednesday's queue. It now ages out on its own once the
-    // work stops being operationally current — and the shift itself is untouched, still in Rota and
-    // Coverage. A persisted safety alert keeps its open/acknowledged/closed lifecycle, and nothing here
-    // expires one: someone clears it deliberately or it stays.
-    return selectCurrentAttention(
-      deduped,
-      (item) => (item.shiftId == null ? null : operationalShiftById.get(item.shiftId) ?? null),
-      now,
-    )
-      .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt))
-      .slice(0, 10);
+    return deduped;
   }, [
     activePanicAlerts,
     attendanceByShiftId,
@@ -2358,12 +2380,38 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
     missedCheckCalls,
     openIncidents,
     operationalNow,
-    operationalShiftById,
     outstandingAlerts,
     rejectedShiftOffers,
     shifts,
     uncoveredShifts,
   ]);
+
+  // Derived items expire; persisted alerts do not. "Re-cover required" is computed from the shift's
+  // own schedule with nothing written down behind it, so there was nothing for anyone to acknowledge
+  // and Monday's uncovered shift stayed in Wednesday's queue. It now ages out on its own once the
+  // work stops being operationally current — and the shift itself is untouched, still in Rota and
+  // Coverage. A persisted safety alert keeps its open/acknowledged/closed lifecycle, and nothing here
+  // expires one: someone clears it deliberately or it stays.
+  const urgentOperationalItems = React.useMemo(() => {
+    const now = operationalNow;
+    return selectCurrentAttention(
+      attentionCandidates,
+      (item) => (item.shiftId == null ? null : operationalShiftById.get(item.shiftId) ?? null),
+      now,
+    )
+      .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt))
+      .slice(0, 10);
+  }, [attentionCandidates, operationalNow, operationalShiftById]);
+
+  /** The same current queue without the Attention Now cap: the Dashboard's count and priority list. */
+  const allAttentionItems = React.useMemo(
+    () => selectCurrentAttention(
+      attentionCandidates,
+      (item) => (item.shiftId == null ? null : operationalShiftById.get(item.shiftId) ?? null),
+      operationalNow,
+    ),
+    [attentionCandidates, operationalNow, operationalShiftById],
+  );
   const recentOperationalActivity = React.useMemo(() => {
     const items: OperationalActivityItem[] = [];
 
@@ -4089,44 +4137,6 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
     </View>
   );
 
-  const dashboardKpis = React.useMemo(() => {
-    const kpis: Array<{
-      label: string;
-      value: number;
-      icon: string;
-      tone: KpiTone;
-      coverageContext?: CoverageNavigationContext;
-    }> = [
-      { label: 'Active Clients', value: activeClients.length, icon: '🏢', tone: activeClients.length > 0 ? 'good' : 'neutral' },
-      { label: 'Active Sites', value: activeSites.length, icon: '📍', tone: activeSites.length > 0 ? 'good' : 'neutral' },
-      { label: 'Linked Guards', value: linkedGuards.length, icon: '🛡️', tone: linkedGuards.length > 0 ? 'good' : 'neutral' },
-      { label: 'Shifts Today', value: shiftsToday.length, icon: '🗓️', tone: 'neutral' },
-      { label: 'Live Shifts', value: liveShifts.length, icon: '🟢', tone: liveShifts.length > 0 ? 'good' : 'neutral' },
-      { label: 'Pending Timesheets', value: pendingTimesheets.length, icon: '⏱️', tone: pendingTimesheets.length > 0 ? 'warning' : 'good' },
-      { label: 'Open Incidents', value: openIncidents.length, icon: '🚨', tone: openIncidents.length > 0 ? 'attention' : 'good' },
-      { label: 'Alerts', value: outstandingAlerts.length, icon: '🔔', tone: outstandingAlerts.length > 0 ? 'attention' : 'good' },
-      { label: 'Uncovered Shifts', value: uncoveredShifts.length, icon: '⚠️', tone: uncoveredShifts.length > 0 ? 'attention' : 'good', coverageContext: { uncoveredOnly: true } },
-      {
-        label: 'Sites With Coverage Gaps',
-        value: new Set(uncoveredShifts.map((shift) => shift.siteId).filter((siteId) => siteId != null)).size,
-        icon: '📍',
-        tone: uncoveredShifts.length > 0 ? 'warning' : 'good',
-        coverageContext: { uncoveredOnly: true },
-      },
-    ];
-    return kpis;
-  }, [
-    activeClients.length,
-    activeSites.length,
-    linkedGuards.length,
-    liveShifts.length,
-    openIncidents.length,
-    outstandingAlerts.length,
-    pendingTimesheets.length,
-    shiftsToday.length,
-    uncoveredShifts,
-  ]);
-
   const actionRequiredRows = React.useMemo(() => {
     const payrollCount = pendingPayrollTimesheets.length;
     const invoiceCount = pendingInvoiceTimesheets.length;
@@ -4168,404 +4178,87 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
     [actionRequiredRows],
   );
 
-  const dashComplianceCounts = React.useMemo(() => ({
-    valid:    complianceRecords.filter((r) => (r.status || '').toLowerCase() === 'valid').length,
-    expiring: complianceRecords.filter((r) => (r.status || '').toLowerCase() === 'expiring').length,
-    expired:  complianceRecords.filter((r) => (r.status || '').toLowerCase() === 'expired').length,
-  }), [complianceRecords]);
+  // ─── Company Dashboard (Operations V2) ───────────────────────────────────────
+  //
+  // The dashboard summarises the operational surfaces and leads into them. Every number below is read
+  // through the same policy the destination screen uses; definitions live in dashboardOverview.ts.
 
-  const upcomingShifts = React.useMemo(() => {
-    const nowIso = new Date().toISOString();
-    return shifts
-      .filter((s) => s.start > nowIso && !['completed', 'cancelled'].includes(normalizeShiftLifecycleStatus(s.status)))
-      .sort((a, b) => a.start.localeCompare(b.start))
-      .slice(0, 6);
-  }, [shifts]);
+  const dashboardZone = React.useMemo(() => dashboardDisplayZone(sites), [sites]);
+
+  /** Outstanding AND actionable: a missed Welfare Check's per-window evidence rows are not separate alerts. */
+  const actionableOutstandingAlerts = React.useMemo(
+    () => outstandingAlerts.filter(isActionableWelfareAlert),
+    [outstandingAlerts],
+  );
+
+  const dashboardLiveRows = React.useMemo(
+    () => buildLiveShiftRows(shifts, {
+      attendanceByShiftId,
+      operationsByShiftId,
+      attentionItems: allAttentionItems,
+      resolveZone: (siteId) => resolveSiteZone(siteId),
+      now: operationalNow,
+    }),
+    [shifts, attendanceByShiftId, operationsByShiftId, allAttentionItems, resolveSiteZone, operationalNow],
+  );
+
+  const dashboardAttention = React.useMemo(() => summariseAttention(allAttentionItems), [allAttentionItems]);
+
+  const dashboardUpcoming = React.useMemo(
+    () => buildUpcomingShifts(shifts, { resolveZone: (siteId) => resolveSiteZone(siteId), now: operationalNow }),
+    [shifts, resolveSiteZone, operationalNow],
+  );
+
+  const dashboardComplianceMetrics = React.useMemo(
+    () => (complianceSummaries ? computeMetrics(buildComplianceRows(complianceSummaries, companyGuards)) : null),
+    [complianceSummaries, companyGuards],
+  );
 
   const renderDashboardSection = () => {
-    const coverageGapCount = uncoveredShifts.length;
-    const coverageGapSites = new Set(uncoveredShifts.map((s) => s.siteId).filter(Boolean)).size;
+    const sourceState = (...labels: string[]): DashboardSourceState =>
+      labels.some((label) => failedSources.includes(label)) ? 'error' : 'ready';
+    const updatedAt = lastSuccessfulLoad?.section === 'dashboard' ? lastSuccessfulLoad.at : null;
 
     return (
-      <View style={styles.sectionStack}>
-
-        {/* ── ROW 1: OPERATIONAL KPI STRIP ── */}
-        <View style={styles.dashKpiStrip}>
-          <View style={styles.dashKpiStripCell}>
-            <KpiCard
-              label="Active Sites"
-              value={String(activeSites.length)}
-              icon="📍"
-              tone={activeSites.length > 0 ? 'good' : 'neutral'}
-              onPress={() => setActiveSection('sites')}
-            />
-          </View>
-          <View style={styles.dashKpiStripCell}>
-            <KpiCard
-              label="Live Shifts"
-              value={String(liveShifts.length)}
-              icon="🟢"
-              tone={liveShifts.length > 0 ? 'good' : 'neutral'}
-              onPress={() => setActiveSection('live-operations')}
-            />
-          </View>
-          <View style={styles.dashKpiStripCell}>
-            <KpiCard
-              label="Coverage Gaps"
-              value={String(coverageGapCount)}
-              icon="⚠️"
-              tone={coverageGapCount > 0 ? 'attention' : 'good'}
-              onPress={() => openCoverage({ uncoveredOnly: true })}
-            />
-          </View>
-          <View style={styles.dashKpiStripCell}>
-            <KpiCard
-              label="Open Incidents"
-              value={String(openIncidents.length)}
-              icon="🚨"
-              tone={openIncidents.length > 0 ? 'attention' : 'good'}
-              onPress={() => setActiveSection('incidents')}
-            />
-          </View>
-          <View style={styles.dashKpiStripCell}>
-            <KpiCard
-              label="Alerts"
-              value={String(outstandingAlerts.length)}
-              icon="🔔"
-              tone={outstandingAlerts.length > 0 ? 'attention' : 'good'}
-              onPress={() => setActiveSection('live-operations')}
-            />
-          </View>
-        </View>
-
-        {/* ── ROW 2: ATTENTION REQUIRED ── */}
-        <View style={styles.dashAttentionPanel}>
-          <View style={styles.dashAttentionHeader}>
-            <Text style={styles.dashAttentionTitle}>
-              {urgentOperationalItems.length > 0 ? 'Attention Required' : 'All Clear'}
-            </Text>
-            <Text style={styles.dashAttentionSubtitle}>
-              {urgentOperationalItems.length > 0
-                ? `${urgentOperationalItems.length} item${urgentOperationalItems.length !== 1 ? 's' : ''} requiring action.`
-                : 'No operational conditions require immediate attention right now.'}
-            </Text>
-          </View>
-          {urgentOperationalItems.length === 0 ? (
-            <View style={styles.dashAttentionEmpty}>
-              <Text style={styles.dashAttentionEmptyText}>Operational position is clear.</Text>
-            </View>
-          ) : (
-            <>
-              {urgentOperationalItems.slice(0, 5).map((item, index, arr) => {
-                const severity = getAttentionSeverity(item.category);
-                return (
-                  <Pressable
-                    key={item.id}
-                    onPress={() => handleOpenUrgentDetail(item)}
-                    accessibilityRole="button"
-                    accessibilityLabel={item.issueType}
-                    style={({ hovered, pressed }: any) => [
-                      styles.dashAttentionItem,
-                      index === arr.length - 1 && urgentOperationalItems.length <= 5 ? styles.dashAttentionItemLast : null,
-                      hovered ? styles.dashAttentionItemHover : null,
-                      pressed ? styles.dashAttentionItemPressed : null,
-                      IS_WEB ? (WEB_POINTER_STYLE as any) : null,
-                    ]}
-                  >
-                    <View
-                      style={[
-                        styles.dashAttentionBar,
-                        severity === 'red' ? styles.dashAttentionBarRed
-                          : severity === 'amber' ? styles.dashAttentionBarAmber
-                          : styles.dashAttentionBarBlue,
-                      ]}
-                    />
-                    <View style={styles.dashAttentionItemBody}>
-                      <Text style={styles.dashAttentionItemLabel} numberOfLines={1}>{item.issueType}</Text>
-                      <Text style={styles.dashAttentionItemMeta} numberOfLines={1}>
-                        {item.siteName}{item.guardName && item.guardName !== 'Unknown guard' ? ` · ${item.guardName}` : ''}
-                      </Text>
-                    </View>
-                    <View
-                      style={[
-                        styles.dashAttentionSeverityBadge,
-                        severity === 'red' ? styles.dashAttentionSeverityRed
-                          : severity === 'amber' ? styles.dashAttentionSeverityAmber
-                          : styles.dashAttentionSeverityBlue,
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.dashAttentionSeverityText,
-                          severity === 'red' ? styles.dashAttentionSeverityTextRed
-                            : severity === 'amber' ? styles.dashAttentionSeverityTextAmber
-                            : styles.dashAttentionSeverityTextBlue,
-                        ]}
-                      >
-                        {getAttentionBadgeLabel(item.category)}
-                      </Text>
-                    </View>
-                    <Text style={styles.dashAttentionCta}>{'→'}</Text>
-                  </Pressable>
-                );
-              })}
-              {urgentOperationalItems.length > 5 ? (
-                <Pressable
-                  onPress={() => setActiveSection('live-operations')}
-                  accessibilityRole="button"
-                  style={({ hovered, pressed }: any) => [
-                    styles.dashAttentionViewAll,
-                    hovered ? styles.dashAttentionItemHover : null,
-                    pressed ? styles.dashAttentionItemPressed : null,
-                    IS_WEB ? (WEB_POINTER_STYLE as any) : null,
-                  ]}
-                >
-                  <Text style={styles.dashAttentionViewAllText}>
-                    {`View all ${urgentOperationalItems.length} attention items  →`}
-                  </Text>
-                </Pressable>
-              ) : null}
-            </>
-          )}
-        </View>
-
-        {/* ── ROW 3: LIVE OPERATIONS (2/3) + TODAY'S COVERAGE (1/3) ── */}
-        <View style={styles.dashRow3}>
-          <View style={styles.dashRow3Main}>
-            <Card
-              style={styles.dashLivePanelCard}
-              webSurfaceHover
-              title="Live Operations"
-              subtitle="Guards on duty right now. Tap a row to open the monitoring board."
-            >
-              {liveShifts.length === 0 ? (
-                <DashboardPanelEmpty
-                  title="No live shifts right now"
-                  description="When guards are on duty they appear here for rapid monitoring access."
-                  actionLabel="Open Live Operations"
-                  onAction={() => setActiveSection('live-operations')}
-                />
-              ) : (
-                liveShifts.slice(0, 8).map((shift, index, arr) => (
-                  <Pressable
-                    key={shift.id}
-                    style={({ hovered, pressed }: any) => [
-                      styles.dashListRow,
-                      IS_WEB ? styles.dashListRowWeb : null,
-                      index === arr.length - 1 ? styles.dashListRowLast : null,
-                      hovered ? styles.dashListRowHovered : null,
-                      hovered && IS_WEB ? styles.dashListRowWebHover : null,
-                      pressed ? styles.dashListRowPressed : null,
-                      IS_WEB ? (WEB_POINTER_STYLE as any) : null,
-                    ]}
-                    onPress={() => {
-                      setSelectedShiftId(shift.id);
-                      setActiveSection('live-operations');
-                    }}
-                    accessibilityRole="button"
-                    accessibilityLabel={`${shift.site?.name || shift.siteName} — open in Live Operations`}
-                  >
-                    <View style={styles.dashLiveRowInner}>
-                      <View style={styles.dashLiveRowLeft}>
-                        <Text style={styles.dashListRowTitle} numberOfLines={1}>{shift.site?.name || shift.siteName}</Text>
-                        <Text style={styles.dashListRowMeta}>
-                          {formatTimeLabel(shift.start, resolveSiteZone(shift.siteId))}–{formatTimeLabel(shift.end, resolveSiteZone(shift.siteId))}
-                        </Text>
-                      </View>
-                      <Text style={styles.dashLiveRowStatus} numberOfLines={1}>
-                        {formatStatusLabel(normalizeShiftLifecycleStatus(shift.status))}
-                      </Text>
-                    </View>
-                  </Pressable>
-                ))
-              )}
-            </Card>
-          </View>
-
-          <View style={styles.dashRow3Side}>
-            <Card
-              style={styles.dashLivePanelCard}
-              webSurfaceHover
-              title="Today's Coverage"
-              subtitle="Shift coverage position right now."
-              tone={coverageGapCount > 0 ? 'warning' : 'default'}
-            >
-              <View style={styles.dashCoverageStats}>
-                <View style={styles.dashCoverageStat}>
-                  <Text style={styles.dashCoverageStatValue}>{liveShifts.length}</Text>
-                  <Text style={styles.dashCoverageStatLabel}>Live now</Text>
-                </View>
-                <View style={styles.dashCoverageDivider} />
-                <View style={styles.dashCoverageStat}>
-                  <Text style={[styles.dashCoverageStatValue, coverageGapCount > 0 ? styles.dashCoverageStatValueWarn : null]}>
-                    {coverageGapCount}
-                  </Text>
-                  <Text style={styles.dashCoverageStatLabel}>Uncovered</Text>
-                </View>
-                <View style={styles.dashCoverageDivider} />
-                <View style={styles.dashCoverageStat}>
-                  <Text style={[styles.dashCoverageStatValue, coverageGapSites > 0 ? styles.dashCoverageStatValueWarn : null]}>
-                    {coverageGapSites}
-                  </Text>
-                  <Text style={styles.dashCoverageStatLabel}>Gap sites</Text>
-                </View>
-              </View>
-              {coverageGapCount > 0 ? (
-                <Pressable
-                  onPress={() => openCoverage({ uncoveredOnly: true })}
-                  accessibilityRole="button"
-                  style={({ hovered, pressed }: any) => [
-                    styles.dashCoverageAction,
-                    hovered ? styles.dashCoverageActionHover : null,
-                    pressed ? styles.dashCoverageActionPressed : null,
-                    IS_WEB ? (WEB_POINTER_STYLE as any) : null,
-                  ]}
-                >
-                  <Text style={styles.dashCoverageActionText}>Review coverage gaps →</Text>
-                </Pressable>
-              ) : (
-                <DashboardPanelEmpty
-                  title="Coverage looks good"
-                  description="No uncovered shifts detected at this time."
-                />
-              )}
-            </Card>
-          </View>
-        </View>
-
-        {/* ── ROW 4: RECENT ACTIVITY + COMPLIANCE OVERVIEW + UPCOMING SHIFTS ── */}
-        <View style={styles.dashRow4}>
-          <View style={styles.dashRow4Cell}>
-            <Card
-              style={styles.dashLivePanelCard}
-              webSurfaceHover
-              title="Recent Activity"
-              subtitle="Latest operational events and shift updates."
-            >
-              {recentOperationalActivity.length === 0 ? (
-                <DashboardPanelEmpty
-                  title="No recent activity"
-                  description="Shift events and operational updates appear here as they occur."
-                />
-              ) : (
-                recentOperationalActivity.slice(0, 6).map((activity, index, arr) => (
-                  <View
-                    key={activity.id}
-                    style={[
-                      styles.dashListRow,
-                      IS_WEB ? styles.dashListRowWeb : null,
-                      index === arr.length - 1 ? styles.dashListRowLast : null,
-                    ]}
-                  >
-                    <Text style={styles.dashListRowTitle} numberOfLines={1}>{activity.eventType}</Text>
-                    <Text style={styles.dashListRowMeta} numberOfLines={1}>
-                      {activity.siteName} · {formatDateTimeLabel(activity.occurredAt)}
-                    </Text>
-                  </View>
-                ))
-              )}
-            </Card>
-          </View>
-
-          <View style={styles.dashRow4Cell}>
-            <Card
-              style={styles.dashLivePanelCard}
-              webSurfaceHover
-              title="Compliance Overview"
-              subtitle="Guard document and certification status."
-              tone={dashComplianceCounts.expired > 0 ? 'danger' : dashComplianceCounts.expiring > 0 ? 'warning' : 'default'}
-            >
-              {!canViewCompliance ? (
-                <DashboardPanelEmpty
-                  title="Compliance not available"
-                  description="Your role does not include access to guard compliance."
-                />
-              ) : complianceRecords.length === 0 ? (
-                <DashboardPanelEmpty
-                  title="No compliance records"
-                  description="Guard certifications and documents appear here once guards are linked to your company."
-                  actionLabel="View compliance"
-                  onAction={() => setActiveSection('compliance')}
-                />
-              ) : (
-                <>
-                  <View style={styles.dashComplianceStats}>
-                    <View style={[styles.dashComplianceStat, styles.dashComplianceStatValid]}>
-                      <Text style={styles.dashComplianceStatValue}>{dashComplianceCounts.valid}</Text>
-                      <Text style={styles.dashComplianceStatLabel}>Valid</Text>
-                    </View>
-                    <View style={[styles.dashComplianceStat, styles.dashComplianceStatExpiring]}>
-                      <Text style={[styles.dashComplianceStatValue, dashComplianceCounts.expiring > 0 ? styles.dashComplianceStatValueWarning : null]}>
-                        {dashComplianceCounts.expiring}
-                      </Text>
-                      <Text style={styles.dashComplianceStatLabel}>Expiring</Text>
-                    </View>
-                    <View style={styles.dashComplianceStat}>
-                      <Text style={[styles.dashComplianceStatValue, dashComplianceCounts.expired > 0 ? styles.dashComplianceStatValueDanger : null]}>
-                        {dashComplianceCounts.expired}
-                      </Text>
-                      <Text style={styles.dashComplianceStatLabel}>Expired</Text>
-                    </View>
-                  </View>
-                  <Pressable
-                    onPress={() => setActiveSection('compliance')}
-                    accessibilityRole="button"
-                    style={({ hovered, pressed }: any) => [
-                      styles.dashCoverageAction,
-                      hovered ? styles.dashCoverageActionHover : null,
-                      pressed ? styles.dashCoverageActionPressed : null,
-                      IS_WEB ? (WEB_POINTER_STYLE as any) : null,
-                    ]}
-                  >
-                    <Text style={styles.dashCoverageActionText}>View all compliance →</Text>
-                  </Pressable>
-                </>
-              )}
-            </Card>
-          </View>
-
-          <View style={styles.dashRow4Cell}>
-            <Card
-              style={styles.dashLivePanelCard}
-              webSurfaceHover
-              title="Upcoming Shifts"
-              subtitle="Next scheduled shifts starting soon."
-            >
-              {upcomingShifts.length === 0 ? (
-                <DashboardPanelEmpty
-                  title="No upcoming shifts"
-                  description="Future scheduled shifts appear here when planning is in place."
-                  actionLabel="View shift schedule"
-                  onAction={() => setActiveSection('rota-planner')}
-                />
-              ) : (
-                upcomingShifts.map((shift, index, arr) => (
-                  <Pressable
-                    key={shift.id}
-                    style={({ hovered, pressed }: any) => [
-                      styles.dashListRow,
-                      IS_WEB ? styles.dashListRowWeb : null,
-                      index === arr.length - 1 ? styles.dashListRowLast : null,
-                      hovered ? styles.dashListRowHovered : null,
-                      hovered && IS_WEB ? styles.dashListRowWebHover : null,
-                      pressed ? styles.dashListRowPressed : null,
-                      IS_WEB ? (WEB_POINTER_STYLE as any) : null,
-                    ]}
-                    onPress={() => setActiveSection('rota-planner')}
-                    accessibilityRole="button"
-                  >
-                    <Text style={styles.dashListRowTitle} numberOfLines={1}>{shift.site?.name || shift.siteName}</Text>
-                    <Text style={styles.dashListRowMeta}>
-                      {formatDateLabel(shift.start, resolveSiteZone(shift.siteId))} · {formatTimeLabel(shift.start, resolveSiteZone(shift.siteId))}–{formatTimeLabel(shift.end, resolveSiteZone(shift.siteId))}
-                    </Text>
-                  </Pressable>
-                ))
-              )}
-            </Card>
-          </View>
-        </View>
-
-      </View>
+      <CompanyDashboardOverview
+        loading={loading && !refreshing}
+        now={operationalNow}
+        freshness={{
+          clock: formatDashboardClock(operationalNow, dashboardZone.zone),
+          zoneNote: dashboardZone.mixed ? dashboardZone.zone : null,
+          updated: formatUpdatedLabel(updatedAt, dashboardZone.zone),
+          refreshing,
+          lastLoadFailed: failedSources.length > 0,
+          autoRefreshSeconds: ((OPERATIONAL_REFRESH_TICKS.dashboard ?? 1) * OPERATIONAL_REFRESH_TICK_MS) / 1000,
+        }}
+        kpis={{
+          activeSites: activeSites.length,
+          liveShifts: dashboardLiveRows.length,
+          coverageGaps: uncoveredShifts.length,
+          openIncidents: openIncidents.length,
+          alerts: actionableOutstandingAlerts.length,
+        }}
+        attention={dashboardAttention}
+        liveRows={dashboardLiveRows}
+        coverage={summariseCoverage(dashboardLiveRows.length, uncoveredShifts)}
+        upcoming={dashboardUpcoming}
+        compliance={{ canView: canViewCompliance, metrics: dashboardComplianceMetrics }}
+        sources={{
+          attention: sourceState('shifts', 'uncovered coverage', 'attendance', 'incidents', 'alerts'),
+          live: sourceState('shifts', 'attendance', 'live operations monitoring'),
+          coverage: sourceState('shifts', 'attendance', 'uncovered coverage'),
+          upcoming: sourceState('shifts', 'sites'),
+          compliance: sourceState('compliance', 'company guards'),
+        }}
+        onNavigate={(target) => setActiveSection(target)}
+        onOpenCoverageGaps={() => openCoverage({ uncoveredOnly: true })}
+        onOpenAttentionItem={handleOpenUrgentDetail}
+        onViewAllAttention={() => setActiveSection('live-operations')}
+        onOpenLiveShift={(shiftId) => {
+          setSelectedShiftId(shiftId);
+          setActiveSection('live-operations');
+        }}
+      />
     );
   };
 
@@ -5963,11 +5656,6 @@ const styles = StyleSheet.create({
     borderLeftWidth: 2,
     borderLeftColor: colors.pendingSurface,
   },
-  dashLivePanelCard: {
-    flex: 1,
-    alignSelf: 'stretch',
-    minHeight: 112,
-  },
   sectionTitle: {
     fontSize: 24,
     fontWeight: '800',
@@ -6400,46 +6088,6 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     fontSize: 13,
   },
-  dashListRow: {
-    gap: 6,
-    paddingVertical: 13,
-    paddingHorizontal: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(226, 232, 240, 0.88)',
-  },
-  dashListRowWeb: {
-    paddingVertical: 14,
-    paddingHorizontal: 12,
-    borderBottomColor: 'rgba(226, 232, 240, 0.8)',
-  } as any,
-  dashListRowLast: {
-    borderBottomWidth: 0,
-    paddingBottom: 6,
-  },
-  dashListRowTitle: {
-    color: colors.primaryNavy,
-    fontWeight: '800',
-    fontSize: 14,
-    letterSpacing: 0.05,
-    lineHeight: 20,
-  },
-  dashListRowMeta: {
-    color: colors.textSecondary,
-    fontSize: 12,
-    lineHeight: 18,
-    fontWeight: '500',
-  },
-  dashListRowHovered: {
-    backgroundColor: 'rgba(15, 23, 42, 0.032)',
-    borderRadius: 12,
-  },
-  dashListRowWebHover: {
-    backgroundColor: 'rgba(15, 23, 42, 0.045)',
-  } as any,
-  dashListRowPressed: {
-    backgroundColor: 'rgba(15, 23, 42, 0.055)',
-    borderRadius: 12,
-  },
   actionRequiredAnchor: {
     borderRadius: 18,
     padding: IS_WEB ? 6 : 6,
@@ -6781,325 +6429,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
   },
-  dashEmptyWrap: {
-    paddingVertical: 18,
-    paddingHorizontal: 4,
-    gap: 8,
-    alignItems: 'flex-start',
-  },
-  dashEmptyTitle: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: colors.primaryNavy,
-    letterSpacing: 0.1,
-  },
-  dashEmptyDesc: {
-    fontSize: 13,
-    lineHeight: 20,
-    color: colors.textSecondary,
-    fontWeight: '500',
-    maxWidth: 520,
-  },
-  dashEmptyCta: {
-    marginTop: 6,
-    alignSelf: 'flex-start',
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 12,
-    backgroundColor: 'rgba(37, 99, 235, 0.08)',
-    borderWidth: 1,
-    borderColor: 'rgba(37, 99, 235, 0.22)',
-  },
-  dashEmptyCtaWebHover: {
-    backgroundColor: 'rgba(37, 99, 235, 0.11)',
-    borderColor: 'rgba(29, 78, 216, 0.35)',
-  } as any,
-  dashEmptyCtaWebPressed: {
-    opacity: 0.92,
-  } as any,
-  dashEmptyCtaText: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: colors.info,
-  },
-  dashKpiStrip: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-  },
-  dashKpiStripCell: {
-    flexGrow: 1,
-    flexBasis: 160,
-    minWidth: 140,
-    maxWidth: 260,
-    alignSelf: 'stretch',
-  },
-  dashAttentionPanel: {
-    backgroundColor: colors.card,
-    borderRadius: radii.card,
-    borderWidth: 1,
-    borderColor: colors.border,
-    overflow: 'hidden',
-  },
-  dashAttentionHeader: {
-    paddingHorizontal: 20,
-    paddingTop: 18,
-    paddingBottom: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    gap: 4,
-  },
-  dashAttentionTitle: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: colors.primaryNavy,
-    letterSpacing: -0.1,
-  },
-  dashAttentionSubtitle: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: colors.textSecondary,
-    lineHeight: 19,
-  },
-  dashAttentionEmpty: {
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-  },
-  dashAttentionEmptyText: {
-    fontSize: 13,
-    color: colors.textSecondary,
-    fontWeight: '500',
-  },
-  dashAttentionItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(226, 232, 240, 0.88)',
-    paddingRight: 16,
-  },
-  dashAttentionItemLast: {
-    borderBottomWidth: 0,
-  },
-  dashAttentionItemHover: {
-    backgroundColor: 'rgba(15, 23, 42, 0.028)',
-  },
-  dashAttentionItemPressed: {
-    backgroundColor: 'rgba(15, 23, 42, 0.05)',
-  },
-  dashAttentionBar: {
-    width: 4,
-    alignSelf: 'stretch',
-    minHeight: 52,
-  },
-  dashAttentionBarRed: {
-    backgroundColor: colors.danger,
-  },
-  dashAttentionBarAmber: {
-    backgroundColor: colors.warning,
-  },
-  dashAttentionBarBlue: {
-    backgroundColor: colors.info,
-  },
-  dashAttentionItemBody: {
-    flex: 1,
-    gap: 3,
-    paddingVertical: 13,
-  },
-  dashAttentionItemLabel: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: colors.primaryNavy,
-    lineHeight: 20,
-  },
-  dashAttentionItemMeta: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: colors.textSecondary,
-    lineHeight: 17,
-  },
-  dashAttentionSeverityBadge: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-    borderWidth: 1,
-    flexShrink: 0,
-  },
-  dashAttentionSeverityRed: {
-    borderColor: colors.dangerBorder,
-    backgroundColor: colors.dangerSurface,
-  },
-  dashAttentionSeverityAmber: {
-    borderColor: colors.warningBorder,
-    backgroundColor: colors.warningSurface,
-  },
-  dashAttentionSeverityBlue: {
-    borderColor: 'rgba(29, 78, 216, 0.3)',
-    backgroundColor: colors.infoSurface,
-  },
-  dashAttentionSeverityText: {
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 0.9,
-    textTransform: 'uppercase',
-  } as any,
-  dashAttentionSeverityTextRed: {
-    color: colors.danger,
-  },
-  dashAttentionSeverityTextAmber: {
-    color: colors.warning,
-  },
-  dashAttentionSeverityTextBlue: {
-    color: colors.info,
-  },
-  dashAttentionCta: {
-    fontSize: 16,
-    color: colors.textSecondary,
-    flexShrink: 0,
-  },
-  dashAttentionViewAll: {
-    paddingHorizontal: 20,
-    paddingVertical: 11,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(226, 232, 240, 0.88)',
-  },
-  dashAttentionViewAllText: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: colors.accentTeal,
-    letterSpacing: 0.1,
-  },
-  dashRow3: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 22,
-  },
-  dashRow3Main: {
-    flexGrow: 2,
-    flexBasis: 440,
-    minWidth: 280,
-  },
-  dashRow3Side: {
-    flexGrow: 1,
-    flexBasis: 200,
-    minWidth: 200,
-  },
-  dashLiveRowInner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  dashLiveRowLeft: {
-    flex: 1,
-    gap: 3,
-  },
-  dashLiveRowStatus: {
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 0.5,
-    color: colors.textSecondary,
-    textTransform: 'uppercase',
-    flexShrink: 0,
-  } as any,
-  dashCoverageStats: {
-    flexDirection: 'row',
-    marginBottom: 16,
-  },
-  dashCoverageStat: {
-    flex: 1,
-    alignItems: 'center',
-    paddingVertical: 16,
-    gap: 4,
-  },
-  dashCoverageStatValue: {
-    fontSize: 32,
-    fontWeight: '800',
-    color: colors.primaryNavy,
-    letterSpacing: -0.5,
-  },
-  dashCoverageStatValueWarn: {
-    color: colors.warning,
-  },
-  dashCoverageStatLabel: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: colors.textSecondary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.7,
-  } as any,
-  dashCoverageDivider: {
-    width: 1,
-    backgroundColor: colors.border,
-    marginVertical: 12,
-  },
-  dashCoverageAction: {
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 12,
-    backgroundColor: 'rgba(11, 31, 51, 0.04)',
-    borderWidth: 1,
-    borderColor: 'rgba(11, 31, 51, 0.1)',
-    marginTop: 4,
-    alignItems: 'center',
-  },
-  dashCoverageActionHover: {
-    backgroundColor: 'rgba(11, 31, 51, 0.07)',
-  },
-  dashCoverageActionPressed: {
-    opacity: 0.85,
-  },
-  dashCoverageActionText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: colors.primaryNavy,
-  },
-  dashRow4: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 22,
-  },
-  dashRow4Cell: {
-    flexGrow: 1,
-    flexBasis: 260,
-    minWidth: 220,
-  },
-  dashComplianceStats: {
-    flexDirection: 'row',
-    marginBottom: 14,
-  },
-  dashComplianceStat: {
-    flex: 1,
-    alignItems: 'center',
-    paddingVertical: 14,
-    gap: 4,
-  },
-  dashComplianceStatValid: {
-    borderRightWidth: 1,
-    borderRightColor: colors.border,
-  },
-  dashComplianceStatExpiring: {
-    borderRightWidth: 1,
-    borderRightColor: colors.border,
-  },
-  dashComplianceStatValue: {
-    fontSize: 28,
-    fontWeight: '800',
-    color: colors.primaryNavy,
-    letterSpacing: -0.3,
-  },
-  dashComplianceStatValueWarning: {
-    color: colors.warning,
-  },
-  dashComplianceStatValueDanger: {
-    color: colors.danger,
-  },
-  dashComplianceStatLabel: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: colors.textSecondary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.7,
-  } as any,
 });
 
 const LIVE_SHIFT_BOARD_COLUMN_LABELS = [
@@ -7177,33 +6506,3 @@ function DashboardSection({ title, subtitle, children }: DashboardSectionProps) 
     </View>
   );
 }
-
-type DashboardPanelEmptyProps = {
-  title: string;
-  description: string;
-  actionLabel?: string;
-  onAction?: () => void;
-};
-
-function DashboardPanelEmpty({ title, description, actionLabel, onAction }: DashboardPanelEmptyProps) {
-  return (
-    <View style={styles.dashEmptyWrap}>
-      <Text style={styles.dashEmptyTitle}>{title}</Text>
-      <Text style={styles.dashEmptyDesc}>{description}</Text>
-      {actionLabel && onAction ? (
-        <Pressable
-          onPress={onAction}
-          style={({ hovered, pressed }: any) => [
-            styles.dashEmptyCta,
-            hovered && IS_WEB ? styles.dashEmptyCtaWebHover : null,
-            pressed && IS_WEB ? styles.dashEmptyCtaWebPressed : null,
-            WEB_POINTER_STYLE,
-          ]}
-        >
-          <Text style={styles.dashEmptyCtaText}>{actionLabel}</Text>
-        </Pressable>
-      ) : null}
-    </View>
-  );
-}
-
