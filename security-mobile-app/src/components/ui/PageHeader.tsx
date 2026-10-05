@@ -61,6 +61,8 @@ const styles = StyleSheet.create({
   },
   description: {
     ...typography.body,
+    // 14px: the 20px line height was always a 14px line; at 16px the subtitle read larger than the page.
+    fontSize: 14,
     color: colors.textSecondary,
     lineHeight: 20,
   },

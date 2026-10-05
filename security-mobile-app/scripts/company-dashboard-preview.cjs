@@ -6,7 +6,7 @@
  * produces the shipped stylesheet, and every value is computed by the certified `dashboardOverview` model
  * from a deterministic local fixture. No API client is loaded and no network call is made.
  *
- * Each page is placed in the same shell the app gives the dashboard at that width — a 228px sidebar from
+ * Each page is placed in the same shell the app gives the dashboard at that width — a 212px sidebar from
  * 1280px, the 64px collapsed sidebar from 1024px, the overlay navigation below that, and 24px content
  * padding — so the dashboard is reviewed at the width it really gets, not the whole window.
  *
@@ -20,6 +20,13 @@ Module._resolveFilename = function (request, ...rest) {
   return originalResolve.call(this, request === 'react-native' ? 'react-native-web' : request, ...rest);
 };
 if (typeof globalThis.document === 'undefined') globalThis.document = {};
+
+// Icon fonts need native font loading; the preview draws the shell without glyphs.
+const originalLoad = Module._load;
+Module._load = function (request, ...rest) {
+  if (request.startsWith('@expo/vector-icons')) { const Stub = () => null; return Object.assign(Stub, { default: Stub, __esModule: true }); }
+  return originalLoad.call(this, request, ...rest);
+};
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -37,13 +44,16 @@ const { CompanyDashboardOverview } = loadTs('src/components/company/CompanyDashb
 const OUT_DIR = process.argv[2] || path.join(ROOT, 'preview', 'dashboard-v2');
 const WIDTHS = [1440, 1024, 768, 390];
 
+/** The screen shell: sidebarShell 228 / collapsed 64; contentContainer padding and gap spacing.xl. */
+const SHELL = { sidebarExpanded: 212, sidebarCollapsed: 64, contentPadding: 24, contentGap: 24 };
+
 // Monday 5 October 2026, 18:55 London (BST).
 const NOW = new Date('2026-10-05T17:55:00.000Z');
 const at = (minutes) => new Date(NOW.getTime() + minutes * 60_000).toISOString();
 const ZONE = () => 'Europe/London';
 
 function attention(id, category, occurred, issueType, site = 'TEST SITE', guard = 'Fahad Test', extra = {}) {
-  return { id, category, shiftId: extra.shiftId ?? null, status: 'open', siteName: site, guardName: guard, issueType, message: extra.message || '', occurredAt: at(occurred) };
+  return { id, category, severity: extra.severity ?? null, shiftId: extra.shiftId ?? null, status: 'open', siteName: site, guardName: guard, issueType, message: extra.message || '', occurredAt: at(occurred) };
 }
 
 function welfare(status, extra = {}) {
@@ -94,6 +104,8 @@ function scenario({ attentionItems, shifts, attendance, ops, uncovered, complian
       coverageGaps: uncovered.length,
       openIncidents: attentionItems.filter((entry) => entry.category === 'incident').length,
       alerts: attentionItems.filter((entry) => ['panic', 'missed_check_call', 'safety', 'site_request', 'missing_book_off'].includes(entry.category)).length,
+      incidentsCritical: attentionItems.some((entry) => entry.category === 'incident' && entry.severity === 'critical'),
+      alertsCritical: attentionItems.some((entry) => entry.category === 'panic'),
     },
     attention: model.summariseAttention(attentionItems),
     liveRows: live,
@@ -131,7 +143,7 @@ const SCENARIOS = {
     uncovered: [{ siteId: 8 }],
     compliance: complianceMetrics(['valid', 'valid', 'valid', 'expiring', 'expired', 'unknown']),
   }),
-  zero: scenario({
+  empty: scenario({
     attentionItems: [], shifts: [], attendance: new Map(), ops: new Map(), uncovered: [],
     compliance: complianceModel.computeMetrics([]),
   }),
@@ -175,30 +187,57 @@ const SCENARIOS = {
   }),
 };
 
+// ─── the app's real shell ────────────────────────────────────────────────────
+// The sidebar, top bar and page header are the shipped components, and the column padding and gaps are
+// the screen's own `contentContainer` values, so above-the-fold judgements are made against what the
+// operator actually sees.
+const { View } = appRequire('react-native-web');
+const { CompanySidebar } = loadTs('src/components/company/CompanySidebar.tsx');
+const { CompanyTopBar } = loadTs('src/components/company/CompanyTopBar.tsx');
+const { PageHeader } = loadTs('src/components/ui/PageHeader.tsx');
+
+const SCREEN_SRC = fs.readFileSync(path.join(ROOT, 'src/screens/CompanyDashboardScreen.tsx'), 'utf8');
+const literal = (name) => {
+  const start = SCREEN_SRC.indexOf(`const ${name}`);
+  const open = SCREEN_SRC.indexOf('= [', start) + 2;
+  const close = SCREEN_SRC.indexOf('\n];', open) + 2;
+  return new Function(`return ${SCREEN_SRC.slice(open, close)};`)();
+};
+const NAV_ITEMS = literal('NAV_ITEMS');
+const NAV_GROUPS = literal('COMPANY_NAV_GROUPS');
+const DASHBOARD_NAV = NAV_ITEMS.find((entry) => entry.id === 'dashboard');
+
+/** Breakpoints and sizes from CompanyDashboardScreen: overlay nav below 1024, collapsed 1024–1279. */
 function shellFor(width) {
-  if (width >= 1280) return { sidebar: 228 };
-  if (width >= 1024) return { sidebar: 64 };
-  return { sidebar: 0 };
+  if (width >= 1280) return { sidebar: 'expanded' };
+  if (width >= 1024) return { sidebar: 'collapsed' };
+  return { sidebar: 'overlay' };
 }
 
 function page(name, props, width) {
-  const element = React.createElement(CompanyDashboardOverview, props);
+  const { sidebar } = shellFor(width);
+  const h = React.createElement;
+  const element = h(View, { style: { flexDirection: 'row', minHeight: '100%', backgroundColor: '#EAF0F5' } },
+    sidebar === 'overlay' ? null : h(View, {
+      style: { width: sidebar === 'expanded' ? SHELL.sidebarExpanded : SHELL.sidebarCollapsed, backgroundColor: '#0B1F33', flexShrink: 0 },
+    }, h(CompanySidebar, {
+      activeId: 'dashboard', navItems: NAV_ITEMS, groups: NAV_GROUPS, collapsed: sidebar === 'collapsed',
+      onNavigate() {}, onToggleCollapse() {},
+    })),
+    h(View, { style: { flex: 1, minWidth: 0 } },
+      h(CompanyTopBar, { pageTitle: 'Dashboard', userEmail: 'control@example.invalid', onMenuAction() {}, refreshing: false, onRefresh() {}, onLogout() {}, onAccount() {} }),
+      h(View, { style: { paddingHorizontal: SHELL.contentPadding, paddingTop: SHELL.contentPadding, paddingBottom: 48, gap: SHELL.contentGap } },
+        h(PageHeader, { title: DASHBOARD_NAV.label, description: DASHBOARD_NAV.caption }),
+        h(CompanyDashboardOverview, { ...props, density: width >= 1024 ? 'compact' : 'comfortable' }))));
   const key = `Dashboard_${name}_${width}`;
   AppRegistry.registerComponent(key, () => () => element);
   const app = AppRegistry.getApplication(key, {});
   const body = renderToStaticMarkup(app.element);
   const styles = renderToStaticMarkup(app.getStyleElement());
-  const { sidebar } = shellFor(width);
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Dashboard V2 — ${name} @ ${width}px</title>${styles}
-<style>html,body{margin:0;background:#EAF0F5;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
-.shell{display:flex;min-height:100vh}.sidebar{width:${sidebar}px;background:#0B1F33;flex-shrink:0}
-.content{flex:1;min-width:0;padding:24px 24px 48px}.title{font-size:28px;font-weight:800;color:#0B1F33;margin:0 0 4px}
-.caption{font-size:14px;color:#52606D;margin:0 0 16px;padding-bottom:16px;border-bottom:1px solid #DCE3EA}
-.topbar{height:56px;background:#fff;border-bottom:1px solid #DCE3EA}</style></head>
-<body><div class="shell">${sidebar ? '<div class="sidebar" aria-hidden="true"></div>' : ''}<div class="content-col" style="flex:1;min-width:0">
-<div class="topbar" aria-hidden="true"></div><div class="content"><h1 class="title">Dashboard</h1>
-<p class="caption">Your live operational position and items requiring attention.</p>${body}</div></div></div></body></html>`;
+<style>html,body{margin:0;height:100%;background:#EAF0F5;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}</style></head>
+<body>${body}</body></html>`;
 }
 
 fs.mkdirSync(OUT_DIR, { recursive: true });

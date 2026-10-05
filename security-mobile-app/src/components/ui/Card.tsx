@@ -16,6 +16,8 @@ type CardProps = React.PropsWithChildren<{
   webSurfaceHover?: boolean;
   /** When set, the title is exposed to assistive technology as a heading of this level. */
   headingLevel?: 2 | 3;
+  /** Desktop control-room density: 16px padding and tighter body spacing. Default keeps 24px. */
+  density?: 'default' | 'compact';
 }>;
 
 const TONE_STYLES: Record<CardTone, { borderColor: string; headerColor: string; wash: string }> = {
@@ -25,7 +27,8 @@ const TONE_STYLES: Record<CardTone, { borderColor: string; headerColor: string; 
   danger:  { borderColor: colors.dangerBorder,                headerColor: colors.danger,        wash: colors.card },
 };
 
-export function Card({ title, subtitle, tone = 'default', right, onPress, children, style, webSurfaceHover, headingLevel }: CardProps) {
+export function Card({ title, subtitle, tone = 'default', right, onPress, children, style, webSurfaceHover, headingLevel, density = 'default' }: CardProps) {
+  const compact = density === 'compact';
   const toneStyle = TONE_STYLES[tone] || TONE_STYLES.default;
   const [surfaceHovered, setSurfaceHovered] = React.useState(false);
   const headingProps = headingLevel
@@ -36,17 +39,18 @@ export function Card({ title, subtitle, tone = 'default', right, onPress, childr
     title || subtitle || right ? (
       <View style={styles.header}>
         <View style={styles.headerText}>
-          {title    ? <Text {...headingProps} style={[styles.title, { color: toneStyle.headerColor }]}>{title}</Text> : null}
+          {title    ? <Text {...headingProps} style={[styles.title, compact ? styles.titleCompact : null, { color: toneStyle.headerColor }]}>{title}</Text> : null}
           {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text>                                      : null}
         </View>
         {right ? <View style={styles.headerRight}>{right}</View> : null}
       </View>
     ) : null;
 
-  const bodyBlock = children ? <View style={styles.body}>{children}</View> : null;
+  const bodyBlock = children ? <View style={[styles.body, compact ? styles.bodyCompact : null]}>{children}</View> : null;
 
   const baseStyle = [
     styles.card,
+    compact ? styles.cardCompact : null,
     { borderColor: toneStyle.borderColor, backgroundColor: toneStyle.wash },
     style,
   ];
@@ -142,4 +146,7 @@ const styles = StyleSheet.create({
     marginTop: spacing.md,
     gap: spacing.md,
   },
+  cardCompact: { padding: spacing.lg },
+  titleCompact: { fontSize: 16, lineHeight: 21 },
+  bodyCompact: { marginTop: spacing.sm, gap: spacing.sm },
 });

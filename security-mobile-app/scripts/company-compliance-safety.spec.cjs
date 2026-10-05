@@ -446,7 +446,7 @@ const FIXTURE = [
     // The dashboard tile moved into CompanyDashboardOverview (Operations V2): the screen hands it the
     // permission, and the component renders the not-available state, never the metrics, without it.
     assert.match(dashboard, /compliance=\{\{ canView: canViewCompliance,/);
-    assert.match(read('src/components/company/CompanyDashboardOverview.tsx'), /!compliance\.canView \? \(\s*<PanelMessage title="Compliance not available"/);
+    assert.match(read('src/components/company/CompanyDashboardOverview.tsx'), /!compliance\.canView \? \(\s*<PanelMessage[^>]*title="Compliance not available"/);
     assert.match(workspace, /if \(!canViewCompliance\) return;\s*load\('initial'\)/, 'the workspace loads nothing without compliance.view');
     assert.match(workspace, /Compliance is not available for your role/);
   });

@@ -38,34 +38,48 @@ const MINUTE_MS = 60_000;
 // ─── Attention Required ──────────────────────────────────────────────────────
 
 /**
- * Priority tier per attention category. Lower is more urgent.
+ * Priority rank per attention category. Lower is more urgent.
  *
- *  0 critical / safety      — panic, open incidents, safety and welfare alerts
- *  1 missed operational checks — missed Welfare Checks, Guards not booked on, missed shifts
- *  2 coverage and Book Off  — missing Book Off, coverage gaps, rejected offers
- *  3 lower-priority warnings — upcoming risk, Site Requests
+ *  0 active panic / SOS
+ *  1 other immediate safety and welfare alerts
+ *  2 incident explicitly marked critical
+ *  3 other unresolved incident
+ *  4 missed Welfare Check
+ *  5 missing or late Book On (Guard not booked on, missed shift)
+ *  6 missing Book Off
+ *  7 coverage (uncovered shift, rejected offer)
+ *  8 lower-priority warnings (upcoming risk, Site Request)
  *
- * This only ORDERS the existing categories; it decides nothing about whether an item exists.
+ * This only ORDERS the existing categories, using the incident's own recorded severity; it decides
+ * nothing about whether an item exists.
  */
-export const ATTENTION_PRIORITY_TIER: Record<UrgentOperationalItem['category'], number> = {
+export const ATTENTION_PRIORITY_RANK: Record<UrgentOperationalItem['category'], number> = {
   panic: 0,
-  incident: 0,
-  safety: 0,
-  missed_check_call: 1,
-  late_start: 1,
-  missed_shift: 1,
-  missing_book_off: 2,
-  uncovered_shift: 2,
-  rejected_offer: 2,
-  upcoming_risk: 3,
-  site_request: 3,
+  safety: 1,
+  incident: 3,
+  missed_check_call: 4,
+  late_start: 5,
+  missed_shift: 5,
+  missing_book_off: 6,
+  uncovered_shift: 7,
+  rejected_offer: 7,
+  upcoming_risk: 8,
+  site_request: 8,
 };
 
 export const DASHBOARD_ATTENTION_LIMIT = 5;
 
-function tierOf(item: UrgentOperationalItem): number {
-  return ATTENTION_PRIORITY_TIER[item.category] ?? 3;
+/** The incident severity an operator recorded as critical; the only severity that outranks other incidents. */
+export function isCriticalIncident(item: { category: string; severity?: string | null }): boolean {
+  return item.category === 'incident' && (item.severity || '').trim().toLowerCase() === 'critical';
 }
+
+export function attentionRank(item: UrgentOperationalItem): number {
+  if (isCriticalIncident(item)) return 2;
+  return ATTENTION_PRIORITY_RANK[item.category] ?? 8;
+}
+
+const tierOf = attentionRank;
 
 function timeOf(value: string | null | undefined): number {
   const ms = Date.parse(value || '');

@@ -288,6 +288,7 @@ type OperationalActivityItem = {
 
 type UrgentOperationalItem = {
   id: string;
+  severity?: string | null;
   shiftId?: number | null;
   incidentId?: number | null;
   alertId?: number | null;
@@ -2224,6 +2225,7 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
         siteName: incident.site?.name || incident.shift?.site?.name || 'Unknown site',
         guardName: incident.guard?.fullName || 'Unknown guard',
         category: 'incident',
+        severity: incident.severity,
         issueType: 'Incident unresolved',
         message: incident.title,
         occurredAt: incident.createdAt,
@@ -4216,6 +4218,8 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
 
     return (
       <CompanyDashboardOverview
+        // Desktop control-room density from the laptop breakpoint; tablet and phone keep touch sizes.
+        density={layoutWidth >= 1024 ? 'compact' : 'comfortable'}
         loading={loading && !refreshing}
         now={operationalNow}
         freshness={{
@@ -4232,6 +4236,9 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
           coverageGaps: uncoveredShifts.length,
           openIncidents: openIncidents.length,
           alerts: actionableOutstandingAlerts.length,
+          // Severity from existing data only: a recorded critical incident, an outstanding panic alert.
+          incidentsCritical: openIncidents.some((incident) => (incident.severity || '').toLowerCase() === 'critical'),
+          alertsCritical: activePanicAlerts.length > 0,
         }}
         attention={dashboardAttention}
         liveRows={dashboardLiveRows}
@@ -5073,7 +5080,9 @@ const styles = StyleSheet.create({
   },
   // ── Permanent sidebar ─────────────────────────────────────────────────────
   sidebarShell: {
-    width: 228,
+    // 212 rather than 228: the longest labels (Client Timesheets, Contract Pricing) still fit, and the
+    // dashboard gets the width back.
+    width: 212,
     backgroundColor: colors.primaryNavy,
     overflow: 'hidden',
     minHeight: 0,

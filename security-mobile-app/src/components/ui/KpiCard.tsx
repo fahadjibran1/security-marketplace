@@ -16,6 +16,10 @@ type KpiCardProps = {
   onPress?: () => void;
   /** Spoken after the label and value, e.g. where pressing the card leads. */
   accessibilityHint?: string;
+  /** Desktop control-room density: a shorter card with tighter padding. Default keeps the original size. */
+  compact?: boolean;
+  /** A short status word beside the value ("Warning", "Critical"), so severity is never colour alone. */
+  statusText?: string;
 };
 
 const TONE: Record<KpiTone, { iconBg: string; value: string; border: string }> = {
@@ -41,39 +45,45 @@ const TONE: Record<KpiTone, { iconBg: string; value: string; border: string }> =
   },
 };
 
-export function KpiCard({ label, value, icon, tone = 'neutral', onPress, accessibilityHint }: KpiCardProps) {
+export function KpiCard({ label, value, icon, tone = 'neutral', onPress, accessibilityHint, compact = false, statusText }: KpiCardProps) {
   const toneStyle = TONE[tone] || TONE.neutral;
   const [surfaceHovered, setSurfaceHovered] = React.useState(false);
 
   const inner = (
-    <View style={styles.cardInner}>
+    <View style={[styles.cardInner, compact ? styles.cardInnerCompact : null]}>
       <View style={styles.headerRow}>
         <Text style={styles.label} numberOfLines={2}>
           {label}
         </Text>
         {/* The icon is decoration: the label already names the metric. */}
         <View
-          style={[styles.iconPuck, { backgroundColor: toneStyle.iconBg }]}
+          style={[styles.iconPuck, compact ? styles.iconPuckCompact : null, { backgroundColor: toneStyle.iconBg }]}
           accessibilityElementsHidden
           importantForAccessibility="no-hide-descendants"
           {...({ 'aria-hidden': true } as any)}
         >
-          <Text style={styles.iconText}>{icon}</Text>
+          <Text style={[styles.iconText, compact ? styles.iconTextCompact : null]}>{icon}</Text>
         </View>
       </View>
-      <Text
-        style={[styles.value, { color: toneStyle.value }, IS_WEB ? (styles.valueWeb as any) : null]}
-        numberOfLines={1}
-        adjustsFontSizeToFit
-        minimumFontScale={0.85}
-      >
-        {value}
-      </Text>
+      <View style={styles.valueRow}>
+        <Text
+          style={[styles.value, { color: toneStyle.value }, IS_WEB ? (styles.valueWeb as any) : null]}
+          numberOfLines={1}
+          adjustsFontSizeToFit
+          minimumFontScale={0.85}
+        >
+          {value}
+        </Text>
+        {statusText ? (
+          <Text style={[styles.statusText, { color: toneStyle.value }]} numberOfLines={1}>{statusText}</Text>
+        ) : null}
+      </View>
     </View>
   );
 
   const cardChrome = (hovered: boolean) => [
     styles.card,
+    compact ? styles.cardCompact : null,
     { borderColor: toneStyle.border },
     IS_WEB && hovered ? styles.kpiCardWebHover : null,
   ];
@@ -83,7 +93,7 @@ export function KpiCard({ label, value, icon, tone = 'neutral', onPress, accessi
       <Pressable
         {...({ onPress, onClick: onPress } as const)}
         accessibilityRole="button"
-        accessibilityLabel={`${label}: ${value}`}
+        accessibilityLabel={`${label}: ${value}${statusText ? `, ${statusText}` : ''}`}
         accessibilityHint={accessibilityHint}
         style={({ hovered, pressed, focused }: any) => [
           ...cardChrome(Boolean(hovered && !pressed)),
@@ -133,6 +143,13 @@ const styles = StyleSheet.create({
   cardHover:   { shadowOpacity: 0.07, transform: [{ translateY: -1 }] },
   cardPressed: { transform: [{ translateY: 0 }] },
   cardFocused: { outlineStyle: 'solid', outlineWidth: 2, outlineColor: colors.focusRing, outlineOffset: 2 } as any,
+  // Compact: about 90px tall instead of 110, for the desktop dashboard. Mobile keeps the default.
+  cardCompact: { minHeight: 0 },
+  cardInnerCompact: { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 14, gap: 6 },
+  iconPuckCompact: { width: 24, height: 24, borderRadius: 8 },
+  iconTextCompact: { fontSize: 12, lineHeight: 16 },
+  valueRow: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
+  statusText: { fontSize: 11, fontWeight: '700', letterSpacing: 0.5, textTransform: 'uppercase', flexShrink: 1 } as any,
   cardInner: {
     flex: 1,
     paddingHorizontal: 20,

@@ -215,7 +215,8 @@ test('KPI-01-THE-FIVE-OPERATIONAL-KPIS-RENDER-WITH-THEIR-FIXTURE-VALUES', () => 
   for (const label of ['Active Sites', 'Live Shifts', 'Coverage Gaps', 'Open Incidents', 'Alerts']) {
     assert.ok(t.includes(label), `${label} is on the page`);
   }
-  for (const name of ['Active Sites: 2', 'Live Shifts: 2', 'Coverage Gaps: 1', 'Open Incidents: 1', 'Alerts: 4']) {
+  // A non-zero problem card is announced with its status word, so severity is never colour alone.
+  for (const name of ['Active Sites: 2', 'Live Shifts: 2', 'Coverage Gaps: 1, Needs cover', 'Open Incidents: 1, Open', 'Alerts: 4, Outstanding']) {
     assert.ok(markup.includes(`aria-label="${name}"`), `the card is announced as "${name}"`);
   }
   assert.ok(!/Active Clients|Linked Guards|Pending Timesheets/.test(t), 'only the five operational KPIs are shown');
@@ -280,20 +281,70 @@ test('ATT-02-VIEW-ALL-APPEARS-ONLY-WHEN-THERE-ARE-MORE-THAN-FIVE', () => {
   assert.equal(five.hasMore, false);
 });
 
-test('ATT-03-ORDER-IS-CRITICAL-THEN-MISSED-CHECKS-THEN-COVERAGE-THEN-WARNINGS', () => {
+test('ATT-03-ORDER-PUTS-PANIC-FIRST-THEN-INCIDENTS-WELFARE-BOOK-ON-BOOK-OFF-COVERAGE-WARNINGS', () => {
   const order = model.prioritiseAttention(SEVEN_ITEMS).map((entry) => entry.id);
   assert.deepEqual(order, [
-    'incident-7',      // tier 0, raised 90 min ago
-    'panic-4',         // tier 0, raised 2 min ago
-    'checkcall-3',     // tier 1, longest outstanding first
+    'panic-4',         // active panic outranks an incident, however recent
+    'incident-7',      // unresolved incident
+    'checkcall-3',     // missed Welfare, longest outstanding first
     'checkcall-5',
-    'attention-6',     // tier 2 missing Book Off
-    'uncovered-2',     // tier 2 coverage gap
-    'site-request-1',  // tier 3
+    'attention-6',     // missing Book Off
+    'uncovered-2',     // coverage gap
+    'site-request-1',  // lower-priority warning
   ]);
   // The ordering is stable: shuffling the input does not change it.
   const shuffled = [...SEVEN_ITEMS].reverse();
   assert.deepEqual(model.prioritiseAttention(shuffled).map((entry) => entry.id), order);
+});
+
+test('PRI-01-THE-FULL-PRIORITY-LADDER-USES-RECORDED-INCIDENT-SEVERITY', () => {
+  // One of each, all raised at the same moment so only the priority rule can order them. The ids sort
+  // alphabetically in the OPPOSITE order to the expected result, so the id tie-break cannot produce it.
+  const ladder = [
+    { ...item('a-upcoming', 'upcoming_risk', -5) },
+    { ...item('b-cover', 'uncovered_shift', -5) },
+    { ...item('c-bookoff', 'missing_book_off', -5) },
+    { ...item('d-late', 'late_start', -5) },
+    { ...item('e-welfare', 'missed_check_call', -5) },
+    { ...item('f-incident', 'incident', -5), severity: 'high' },
+    { ...item('g-critical-incident', 'incident', -5), severity: 'critical' },
+    { ...item('h-safety', 'safety', -5) },
+    { ...item('i-panic', 'panic', -5) },
+  ];
+  assert.deepEqual(model.prioritiseAttention(ladder).map((entry) => entry.id), [
+    'i-panic', 'h-safety', 'g-critical-incident', 'f-incident', 'e-welfare', 'd-late', 'c-bookoff', 'b-cover', 'a-upcoming',
+  ]);
+  assert.equal(model.isCriticalIncident({ category: 'incident', severity: 'CRITICAL' }), true);
+  assert.equal(model.isCriticalIncident({ category: 'incident', severity: 'high' }), false);
+  assert.equal(model.isCriticalIncident({ category: 'panic', severity: 'critical' }), false, 'severity only ranks incidents');
+  assert.ok(/severity: incident\.severity,/.test(SCREEN), 'the screen carries the recorded severity onto the item');
+});
+
+test('SEV-01-KPI-SEVERITY-IS-NOT-UNIFORMLY-RED', () => {
+  const quiet = render(baseProps({ kpis: { activeSites: 2, liveShifts: 2, coverageGaps: 3, openIncidents: 1, alerts: 4 } }));
+  assert.ok(quiet.includes('aria-label="Coverage Gaps: 3, Needs cover"'), 'coverage is a warning, named as such');
+  assert.ok(quiet.includes('aria-label="Open Incidents: 1, Open"'), 'a non-critical incident is not called critical');
+  assert.ok(quiet.includes('aria-label="Alerts: 4, Outstanding"'), 'alerts without an SOS are outstanding, not critical');
+  const loud = render(baseProps({ kpis: { activeSites: 2, liveShifts: 2, coverageGaps: 0, openIncidents: 1, alerts: 4, incidentsCritical: true, alertsCritical: true } }));
+  assert.ok(loud.includes('aria-label="Open Incidents: 1, Critical"'));
+  assert.ok(loud.includes('aria-label="Alerts: 4, SOS active"'));
+  assert.ok(loud.includes('aria-label="Coverage Gaps: 0"'), 'a zero card carries no status word');
+  assert.ok(/tone=\{kpis\.coverageGaps > 0 \? 'warning' : 'good'\}/.test(COMPONENT_SRC), 'coverage never uses the critical tone');
+  assert.ok(/alertsCritical: activePanicAlerts\.length > 0/.test(SCREEN), 'SOS comes from the outstanding panic alerts');
+  assert.ok(/incidentsCritical: openIncidents\.some\(\(incident\) => \(incident\.severity \|\| ''\)\.toLowerCase\(\) === 'critical'\)/.test(SCREEN));
+});
+
+test('DEN-01-COMPACT-DENSITY-IS-DESKTOP-ONLY', () => {
+  assert.ok(/density=\{layoutWidth >= 1024 \? 'compact' : 'comfortable'\}/.test(SCREEN), 'compact from the laptop breakpoint only');
+  const compact = render(baseProps({ density: 'compact' }));
+  const comfortable = render(baseProps({ density: 'comfortable' }));
+  assert.notEqual(compact, comfortable, 'the two densities really differ');
+  assert.equal(text(compact), text(comfortable), 'and differ in layout only: the same information is shown');
+  // Comfortable keeps a 44px touch target on every action link; compact never shrinks text below 11px.
+  assert.ok(/minHeight: 44,/.test(COMPONENT_SRC));
+  const compactBlock = COMPONENT_SRC.slice(COMPONENT_SRC.indexOf('const cs: Record<string, any> = StyleSheet.create({'));
+  const sizes = [...compactBlock.matchAll(/fontSize: (\d+)/g)].map((m) => Number(m[1]));
+  assert.ok(sizes.length > 0 && sizes.every((size) => size >= 11), `compact text sizes ${sizes}`);
 });
 
 test('ATT-04-A-ROW-SHOWS-ISSUE-SITE-GUARD-TIMING-AND-A-STATUS-WORD', () => {

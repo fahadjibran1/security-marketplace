@@ -34,7 +34,14 @@ export type DashboardKpis = {
   coverageGaps: number;
   openIncidents: number;
   alerts: number;
+  /** An open incident is recorded as critical severity. */
+  incidentsCritical?: boolean;
+  /** An active panic / SOS alert is outstanding. */
+  alertsCritical?: boolean;
 };
+
+/** compact: desktop control-room density (from 1024px). comfortable: the touch-friendly default. */
+export type DashboardDensity = 'compact' | 'comfortable';
 
 export type DashboardFreshness = {
   /** "Monday, 5 October · 18:55" on the dashboard's clock. */
@@ -51,6 +58,7 @@ export type DashboardFreshness = {
 
 export type CompanyDashboardOverviewProps = {
   loading: boolean;
+  density?: DashboardDensity;
   freshness: DashboardFreshness;
   kpis: DashboardKpis;
   attention: AttentionSummary;
@@ -121,7 +129,7 @@ function guardPart(name: string | null | undefined): string | null {
 
 // ─── small building blocks ───────────────────────────────────────────────────
 
-function ActionLink({ label, onPress, accessibilityLabel }: { label: string; onPress: () => void; accessibilityLabel?: string }) {
+function ActionLink({ label, onPress, accessibilityLabel, compact = false }: { label: string; onPress: () => void; accessibilityLabel?: string; compact?: boolean }) {
   return (
     <Pressable
       onPress={onPress}
@@ -129,6 +137,7 @@ function ActionLink({ label, onPress, accessibilityLabel }: { label: string; onP
       accessibilityLabel={accessibilityLabel ?? label}
       style={({ hovered, pressed, focused }: any) => [
         styles.actionLink,
+        compact ? cs.actionLink : null,
         hovered ? styles.actionLinkHover : null,
         pressed ? styles.actionLinkPressed : null,
         IS_WEB && focused ? (styles.focusRing as any) : null,
@@ -142,10 +151,10 @@ function ActionLink({ label, onPress, accessibilityLabel }: { label: string; onP
   );
 }
 
-function PanelMessage({ title, description, tone = 'neutral' }: { title: string; description?: string; tone?: 'neutral' | 'error' | 'good' }) {
+function PanelMessage({ title, description, tone = 'neutral', compact = false }: { title: string; description?: string; tone?: 'neutral' | 'error' | 'good'; compact?: boolean }) {
   return (
     <View
-      style={[styles.panelMessage, tone === 'error' ? styles.panelMessageError : null]}
+      style={[styles.panelMessage, compact ? cs.panelMessage : null, tone === 'error' ? styles.panelMessageError : null]}
       {...(tone === 'error' ? ({ accessibilityRole: 'alert' } as any) : {})}
     >
       <Text style={[styles.panelMessageTitle, tone === 'error' ? styles.panelMessageTitleError : tone === 'good' ? styles.panelMessageTitleGood : null]}>
@@ -178,16 +187,20 @@ export function CompanyDashboardOverview(props: CompanyDashboardOverviewProps) {
   const { freshness, kpis, attention, liveRows, coverage, upcoming, compliance, sources, now } = props;
   const shownLiveRows = liveRows.slice(0, DASHBOARD_LIVE_ROWS_LIMIT);
   const moreLiveRows = liveRows.length - shownLiveRows.length;
+  const compact = props.density === 'compact';
+  /** The compact override for a style key, or nothing in comfortable density. */
+  const c = (key: string) => (compact ? cs[key] : null);
+  const cardDensity = compact ? 'compact' : 'default';
 
   return (
-    <View style={styles.stack}>
+    <View style={[styles.stack, c('stack')]}>
       {/* ── Freshness ── */}
       <View style={styles.freshness}>
-        <Text style={styles.freshnessClock}>
+        <Text style={[styles.freshnessClock, c('freshnessClock')]}>
           {freshness.clock}
           {freshness.zoneNote ? <Text style={styles.freshnessZone}>{`  (${freshness.zoneNote})`}</Text> : null}
         </Text>
-        <Text style={[styles.freshnessStatus, freshness.lastLoadFailed ? styles.freshnessStatusWarn : null]} {...({ accessibilityLiveRegion: 'polite', 'aria-live': 'polite' } as any)}>
+        <Text style={[styles.freshnessStatus, c('freshnessStatus'), freshness.lastLoadFailed ? styles.freshnessStatusWarn : null]} {...({ accessibilityLiveRegion: 'polite', 'aria-live': 'polite' } as any)}>
           {freshness.refreshing
             ? 'Refreshing…'
             : freshness.lastLoadFailed
@@ -201,34 +214,39 @@ export function CompanyDashboardOverview(props: CompanyDashboardOverviewProps) {
       {/* ── ROW 1: KPIs ── */}
       <View style={styles.kpiStrip}>
         <View style={styles.kpiCell}>
-          <KpiCard label="Active Sites" value={String(kpis.activeSites)} icon="📍" tone={kpis.activeSites > 0 ? 'good' : 'neutral'}
+          <KpiCard compact={compact} label="Active Sites" value={String(kpis.activeSites)} icon="📍" tone={kpis.activeSites > 0 ? 'good' : 'neutral'}
             onPress={() => props.onNavigate('sites')} accessibilityHint="Opens Sites" />
         </View>
         <View style={styles.kpiCell}>
-          <KpiCard label="Live Shifts" value={String(kpis.liveShifts)} icon="🟢" tone={kpis.liveShifts > 0 ? 'good' : 'neutral'}
+          <KpiCard compact={compact} label="Live Shifts" value={String(kpis.liveShifts)} icon="🟢" tone={kpis.liveShifts > 0 ? 'good' : 'neutral'}
             onPress={() => props.onNavigate('live-operations')} accessibilityHint="Opens Live Operations" />
         </View>
         <View style={styles.kpiCell}>
-          <KpiCard label="Coverage Gaps" value={String(kpis.coverageGaps)} icon="⚠️" tone={kpis.coverageGaps > 0 ? 'attention' : 'good'}
+          <KpiCard compact={compact} label="Coverage Gaps" value={String(kpis.coverageGaps)} icon="⚠️"
+            tone={kpis.coverageGaps > 0 ? 'warning' : 'good'} statusText={kpis.coverageGaps > 0 ? 'Needs cover' : undefined}
             onPress={props.onOpenCoverageGaps} accessibilityHint="Opens uncovered shifts in Coverage" />
         </View>
         <View style={styles.kpiCell}>
-          <KpiCard label="Open Incidents" value={String(kpis.openIncidents)} icon="🚨" tone={kpis.openIncidents > 0 ? 'attention' : 'good'}
+          <KpiCard compact={compact} label="Open Incidents" value={String(kpis.openIncidents)} icon="🚨"
+            tone={kpis.openIncidents > 0 ? (kpis.incidentsCritical ? 'attention' : 'warning') : 'good'}
+            statusText={kpis.openIncidents > 0 ? (kpis.incidentsCritical ? 'Critical' : 'Open') : undefined}
             onPress={() => props.onNavigate('incidents')} accessibilityHint="Opens Incidents" />
         </View>
         <View style={styles.kpiCell}>
-          <KpiCard label="Alerts" value={String(kpis.alerts)} icon="🔔" tone={kpis.alerts > 0 ? 'attention' : 'good'}
+          <KpiCard compact={compact} label="Alerts" value={String(kpis.alerts)} icon="🔔"
+            tone={kpis.alerts > 0 ? (kpis.alertsCritical ? 'attention' : 'warning') : 'good'}
+            statusText={kpis.alerts > 0 ? (kpis.alertsCritical ? 'SOS active' : 'Outstanding') : undefined}
             onPress={() => props.onNavigate('alerts')} accessibilityHint="Opens Safety Alerts" />
         </View>
       </View>
 
       {/* ── ROW 2: Attention Required ── */}
       <View style={styles.attentionPanel}>
-        <View style={styles.attentionHeader}>
-          <Text style={styles.attentionTitle} {...HEADING_2}>
+        <View style={[styles.attentionHeader, c('attentionHeader')]}>
+          <Text style={[styles.attentionTitle, c('attentionTitle')]} {...HEADING_2}>
             {attention.total > 0 ? 'Attention Required' : 'All Clear'}
           </Text>
-          <Text style={styles.attentionSubtitle}>
+          <Text style={[styles.attentionSubtitle, c('attentionSubtitle')]}>
             {attention.total > 0
               ? `${attention.total} item${attention.total !== 1 ? 's' : ''} requiring action${attention.hasMore ? ` · showing the ${attention.shown.length} most urgent` : ''}.`
               : props.loading ? 'Checking operational conditions…' : 'No operational conditions require immediate attention right now.'}
@@ -236,11 +254,11 @@ export function CompanyDashboardOverview(props: CompanyDashboardOverviewProps) {
         </View>
         {sources.attention === 'error' && attention.total > 0 ? <StaleNotice what="Attention items" /> : null}
         {props.loading ? (
-          <PanelMessage title="Loading attention items…" />
+          <PanelMessage compact={compact} title="Loading attention items…" />
         ) : sources.attention === 'error' && attention.total === 0 ? (
-          <PanelMessage tone="error" title="Attention items could not be loaded" description="Use Refresh to try again. Live Operations shows the full queue." />
+          <PanelMessage compact={compact} tone="error" title="Attention items could not be loaded" description="Use Refresh to try again. Live Operations shows the full queue." />
         ) : attention.total === 0 ? (
-          <PanelMessage tone="good" title="Operational position is clear." />
+          <PanelMessage compact={compact} tone="good" title="Operational position is clear." />
         ) : (
           <>
             {attention.shown.map((item, index) => {
@@ -256,6 +274,7 @@ export function CompanyDashboardOverview(props: CompanyDashboardOverviewProps) {
                   accessibilityLabel={joinParts([`${badge}: ${item.issueType}`, where, timing])}
                   style={({ hovered, pressed, focused }: any) => [
                     styles.attentionItem,
+                    c('attentionItem'),
                     index === attention.shown.length - 1 && !attention.hasMore ? styles.attentionItemLast : null,
                     hovered ? styles.rowHover : null,
                     pressed ? styles.rowPressed : null,
@@ -263,18 +282,21 @@ export function CompanyDashboardOverview(props: CompanyDashboardOverviewProps) {
                     WEB_POINTER as any,
                   ]}
                 >
-                  <View style={[styles.attentionBar, styles[`bar_${severity}`]]} />
+                  <View style={[styles.attentionBar, c('attentionBar'), styles[`bar_${severity}`]]} />
                   {/* Body and status share a wrapping line: on a narrow screen the status drops below the
                       text instead of squeezing the issue, site and Guard into ellipses. */}
-                  <View style={styles.attentionContent}>
-                    <View style={styles.attentionBody}>
-                      <Text style={styles.attentionLabel} numberOfLines={1}>{item.issueType}</Text>
-                      <Text style={styles.attentionMeta} numberOfLines={1}>{where}</Text>
-                      {timing ? <Text style={styles.attentionTiming} numberOfLines={1}>{timing}</Text> : null}
+                  <View style={[styles.attentionContent, c('attentionContent')]}>
+                    <View style={[styles.attentionBody, c('attentionBody')]}>
+                      <Text style={[styles.attentionLabel, c('attentionLabel')]} numberOfLines={1}>{item.issueType}</Text>
+                      {/* Where and how long share a line when there is room, and wrap on a phone. */}
+                      <View style={styles.metaRow}>
+                        <Text style={[styles.attentionMeta, c('attentionMeta')]} numberOfLines={1}>{where}</Text>
+                        {timing ? <Text style={[styles.attentionTiming, c('attentionTiming')]} numberOfLines={1}>{timing}</Text> : null}
+                      </View>
                     </View>
                     <View style={styles.attentionStatus}>
-                      <View style={[styles.badge, styles[`badge_${severity}`]]}>
-                        <Text style={[styles.badgeText, styles[`badgeText_${severity}`]]} numberOfLines={1}>{badge}</Text>
+                      <View style={[styles.badge, c('badge'), styles[`badge_${severity}`]]}>
+                        <Text style={[styles.badgeText, c('badgeText'), styles[`badgeText_${severity}`]]} numberOfLines={1}>{badge}</Text>
                       </View>
                       <Text style={styles.chevron} {...HIDDEN_FROM_AT}>→</Text>
                     </View>
@@ -283,8 +305,8 @@ export function CompanyDashboardOverview(props: CompanyDashboardOverviewProps) {
               );
             })}
             {attention.hasMore ? (
-              <View style={styles.viewAllRow}>
-                <ActionLink
+              <View style={[styles.viewAllRow, c('viewAllRow')]}>
+                <ActionLink compact={compact}
                   label={`View all ${attention.total} items in Live Operations`}
                   onPress={props.onViewAllAttention}
                 />
@@ -295,16 +317,16 @@ export function CompanyDashboardOverview(props: CompanyDashboardOverviewProps) {
       </View>
 
       {/* ── ROW 3: Live Operations (2/3) + Today's Coverage (1/3) ── */}
-      <View style={styles.row}>
+      <View style={[styles.row, c('row')]}>
         <View style={styles.rowMain}>
-          <Card style={styles.panel} webSurfaceHover title="Live Operations" subtitle="Guards on duty right now." headingLevel={2}>
+          <Card density={cardDensity} style={styles.panel} webSurfaceHover title="Live Operations" subtitle="Guards on duty right now." headingLevel={2}>
             {sources.live === 'error' && liveRows.length > 0 ? <StaleNotice what="Live shifts" /> : null}
             {props.loading ? (
-              <PanelMessage title="Loading live shifts…" />
+              <PanelMessage compact={compact} title="Loading live shifts…" />
             ) : sources.live === 'error' && liveRows.length === 0 ? (
-              <PanelMessage tone="error" title="Live shifts could not be loaded" description="Use Refresh to try again, or open Live Operations." />
+              <PanelMessage compact={compact} tone="error" title="Live shifts could not be loaded" description="Use Refresh to try again, or open Live Operations." />
             ) : liveRows.length === 0 ? (
-              <PanelMessage title="No live shifts right now" description="When Guards are booked on and working, they appear here." />
+              <PanelMessage compact={compact} title="No live shifts right now" description="When Guards are booked on and working, they appear here." />
             ) : (
               <View>
                 {shownLiveRows.map((row, index) => (
@@ -323,6 +345,7 @@ export function CompanyDashboardOverview(props: CompanyDashboardOverviewProps) {
                     ])}
                     style={({ hovered, pressed, focused }: any) => [
                       styles.liveRow,
+                      c('liveRow'),
                       index === shownLiveRows.length - 1 ? styles.liveRowLast : null,
                       hovered ? styles.rowHover : null,
                       pressed ? styles.rowPressed : null,
@@ -332,8 +355,8 @@ export function CompanyDashboardOverview(props: CompanyDashboardOverviewProps) {
                   >
                     <View style={styles.liveRowHead}>
                       <Text style={styles.liveSite} numberOfLines={1}>{row.siteName}</Text>
-                      <View style={[styles.badge, row.stateLabel === 'In progress' ? styles.badge_good : styles.badge_amber]}>
-                        <Text style={[styles.badgeText, row.stateLabel === 'In progress' ? styles.badgeText_good : styles.badgeText_amber]} numberOfLines={1}>
+                      <View style={[styles.badge, c('badge'), row.stateLabel === 'In progress' ? styles.badge_good : styles.badge_amber]}>
+                        <Text style={[styles.badgeText, c('badgeText'), row.stateLabel === 'In progress' ? styles.badgeText_good : styles.badgeText_amber]} numberOfLines={1}>
                           {row.stateLabel}
                         </Text>
                       </View>
@@ -370,12 +393,13 @@ export function CompanyDashboardOverview(props: CompanyDashboardOverviewProps) {
                 ) : null}
               </View>
             )}
-            <ActionLink label="Open Live Operations" onPress={() => props.onNavigate('live-operations')} />
+            <ActionLink compact={compact} label="Open Live Operations" onPress={() => props.onNavigate('live-operations')} />
           </Card>
         </View>
 
         <View style={styles.rowSide}>
           <Card
+            density={cardDensity}
             style={styles.panelNatural}
             webSurfaceHover
             title="Today's Coverage"
@@ -384,56 +408,56 @@ export function CompanyDashboardOverview(props: CompanyDashboardOverviewProps) {
             headingLevel={2}
           >
             {sources.coverage === 'error' ? <StaleNotice what="Coverage" /> : null}
-            <View style={styles.stats}>
-              <View style={styles.stat}>
-                <Text style={styles.statValue}>{coverage.liveNow}</Text>
+            <View style={[styles.stats, c('stats')]}>
+              <View style={[styles.stat, c('stat')]}>
+                <Text style={[styles.statValue, c('statValue')]}>{coverage.liveNow}</Text>
                 <Text style={styles.statLabel}>Live now</Text>
               </View>
               <View style={styles.statDivider} />
-              <View style={styles.stat}>
-                <Text style={[styles.statValue, coverage.uncovered > 0 ? styles.statValueWarn : null]}>{coverage.uncovered}</Text>
+              <View style={[styles.stat, c('stat')]}>
+                <Text style={[styles.statValue, c('statValue'), coverage.uncovered > 0 ? styles.statValueWarn : null]}>{coverage.uncovered}</Text>
                 <Text style={styles.statLabel}>Uncovered</Text>
               </View>
               <View style={styles.statDivider} />
-              <View style={styles.stat}>
-                <Text style={[styles.statValue, coverage.gapSites > 0 ? styles.statValueWarn : null]}>{coverage.gapSites}</Text>
+              <View style={[styles.stat, c('stat')]}>
+                <Text style={[styles.statValue, c('statValue'), coverage.gapSites > 0 ? styles.statValueWarn : null]}>{coverage.gapSites}</Text>
                 <Text style={styles.statLabel}>Gap sites</Text>
               </View>
             </View>
             {coverage.uncovered > 0 ? (
               <>
-                <PanelMessage
+                <PanelMessage compact={compact}
                   title={`${coverage.uncovered} uncovered shift${coverage.uncovered !== 1 ? 's need' : ' needs'} cover`}
                   description={`Across ${coverage.gapSites} site${coverage.gapSites !== 1 ? 's' : ''}.`}
                 />
-                <ActionLink label="Review coverage gaps" onPress={props.onOpenCoverageGaps} />
+                <ActionLink compact={compact} label="Review coverage gaps" onPress={props.onOpenCoverageGaps} />
               </>
             ) : (
-              <PanelMessage tone="good" title="Coverage looks good" description="No uncovered shifts detected." />
+              <PanelMessage compact={compact} tone="good" title="Coverage looks good" description="No uncovered shifts detected." />
             )}
           </Card>
         </View>
       </View>
 
       {/* ── ROW 4: Upcoming Shifts (1/2) + Compliance Overview (1/2) ── */}
-      <View style={styles.row}>
+      <View style={[styles.row, c('row')]}>
         <View style={styles.rowHalf}>
-          <Card style={styles.panel} webSurfaceHover title="Upcoming Shifts" subtitle="The next shifts, unassigned ones first." headingLevel={2}>
+          <Card density={cardDensity} style={styles.panel} webSurfaceHover title="Upcoming Shifts" subtitle="The next shifts, unassigned ones first." headingLevel={2}>
             {sources.upcoming === 'error' && upcoming.length > 0 ? <StaleNotice what="Shifts" /> : null}
             {props.loading ? (
-              <PanelMessage title="Loading shifts…" />
+              <PanelMessage compact={compact} title="Loading shifts…" />
             ) : sources.upcoming === 'error' && upcoming.length === 0 ? (
-              <PanelMessage tone="error" title="Shifts could not be loaded" description="Use Refresh to try again." />
+              <PanelMessage compact={compact} tone="error" title="Shifts could not be loaded" description="Use Refresh to try again." />
             ) : upcoming.length === 0 ? (
-              <PanelMessage title="No upcoming shifts" description="Future shifts appear here once they are planned." />
+              <PanelMessage compact={compact} title="No upcoming shifts" description="Future shifts appear here once they are planned." />
             ) : (
               upcoming.map((group) => (
-                <View key={group.label} style={styles.group}>
+                <View key={group.label} style={[styles.group, c('group')]}>
                   <Text style={styles.groupLabel} {...HEADING_3}>{group.label}</Text>
                   {group.rows.map((row) => (
                     <View
                       key={row.shiftId}
-                      style={styles.upcomingRow}
+                      style={[styles.upcomingRow, c('upcomingRow')]}
                       accessible
                       accessibilityLabel={joinParts([group.label, row.timeRange, row.siteName, row.unassigned ? 'Unassigned' : row.guardName])}
                     >
@@ -441,8 +465,8 @@ export function CompanyDashboardOverview(props: CompanyDashboardOverviewProps) {
                       <View style={styles.upcomingBody}>
                         <Text style={styles.upcomingSite} numberOfLines={1}>{row.siteName}</Text>
                         {row.unassigned ? (
-                          <View style={[styles.badge, styles.badge_amber, styles.badgeInline]}>
-                            <Text style={[styles.badgeText, styles.badgeText_amber]}>Unassigned</Text>
+                          <View style={[styles.badge, c('badge'), styles.badge_amber, styles.badgeInline]}>
+                            <Text style={[styles.badgeText, c('badgeText'), styles.badgeText_amber]}>Unassigned</Text>
                           </View>
                         ) : (
                           <Text style={styles.upcomingGuard} numberOfLines={1}>{row.guardName}</Text>
@@ -453,12 +477,13 @@ export function CompanyDashboardOverview(props: CompanyDashboardOverviewProps) {
                 </View>
               ))
             )}
-            <ActionLink label="View shift schedule" onPress={() => props.onNavigate('rota-planner')} />
+            <ActionLink compact={compact} label="View shift schedule" onPress={() => props.onNavigate('rota-planner')} />
           </Card>
         </View>
 
         <View style={styles.rowHalf}>
           <Card
+            density={cardDensity}
             style={styles.panelNatural}
             webSurfaceHover
             title="Compliance Overview"
@@ -467,17 +492,17 @@ export function CompanyDashboardOverview(props: CompanyDashboardOverviewProps) {
             headingLevel={2}
           >
             {!compliance.canView ? (
-              <PanelMessage title="Compliance not available" description="Your role does not include access to Guard compliance." />
+              <PanelMessage compact={compact} title="Compliance not available" description="Your role does not include access to Guard compliance." />
             ) : sources.compliance === 'error' && !compliance.metrics ? (
-              <PanelMessage tone="error" title="Compliance could not be loaded" description="Use Refresh to try again." />
+              <PanelMessage compact={compact} tone="error" title="Compliance could not be loaded" description="Use Refresh to try again." />
             ) : props.loading || !compliance.metrics ? (
-              <PanelMessage title="Loading compliance…" />
+              <PanelMessage compact={compact} title="Loading compliance…" />
             ) : compliance.metrics.total === 0 ? (
-              <PanelMessage title="No compliance records" description="Guard compliance appears here once Guards are linked to your company." />
+              <PanelMessage compact={compact} title="No compliance records" description="Guard compliance appears here once Guards are linked to your company." />
             ) : (
               <>
                 {sources.compliance === 'error' ? <StaleNotice what="Compliance" /> : null}
-                <View style={styles.stats}>
+                <View style={[styles.stats, c('stats')]}>
                   {([
                     ['Valid', compliance.metrics.valid, null],
                     ['Expiring', compliance.metrics.expiring, compliance.metrics.expiring > 0 ? styles.statValueWarn : null],
@@ -486,18 +511,18 @@ export function CompanyDashboardOverview(props: CompanyDashboardOverviewProps) {
                   ] as const).map(([label, value, tone], index) => (
                     <View
                       key={label}
-                      style={[styles.stat, index > 0 ? styles.statBordered : null]}
+                      style={[styles.stat, c('stat'), index > 0 ? styles.statBordered : null]}
                       accessible
                       accessibilityLabel={`${label}: ${value} Guard${value !== 1 ? 's' : ''}`}
                     >
-                      <Text style={[styles.statValueSmall, tone]}>{value}</Text>
+                      <Text style={[styles.statValueSmall, c('statValueSmall'), tone]}>{value}</Text>
                       <Text style={styles.statLabel}>{label}</Text>
                     </View>
                   ))}
                 </View>
               </>
             )}
-            {compliance.canView ? <ActionLink label="View compliance" onPress={() => props.onNavigate('compliance')} /> : null}
+            {compliance.canView ? <ActionLink compact={compact} label="View compliance" onPress={() => props.onNavigate('compliance')} /> : null}
           </Card>
         </View>
       </View>
@@ -570,6 +595,7 @@ const styles: Record<string, any> = StyleSheet.create({
   attentionBody: { flexGrow: 1, flexShrink: 1, flexBasis: 220, minWidth: 0, gap: 2 },
   attentionStatus: { flexDirection: 'row', alignItems: 'center', gap: 12, flexShrink: 0, marginLeft: 'auto' } as any,
   attentionLabel: { fontSize: 14, fontWeight: '700', color: colors.primaryNavy, lineHeight: 20 },
+  metaRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'baseline', columnGap: 10 } as any,
   attentionMeta: { fontSize: 13, fontWeight: '500', color: colors.textPrimary, lineHeight: 18 },
   attentionTiming: { fontSize: 12, fontWeight: '600', color: colors.textSecondary, lineHeight: 17 },
   chevron: { fontSize: 16, color: colors.textSecondary, flexShrink: 0 },
@@ -683,10 +709,46 @@ const styles: Record<string, any> = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 10,
     borderRadius: 8,
-    minHeight: 36,
+    // Comfortable density is the touch layout, so a full 44px target.
+    minHeight: 44,
     justifyContent: 'center',
   },
   actionLinkHover: { backgroundColor: 'rgba(11, 31, 51, 0.05)' },
   actionLinkPressed: { opacity: 0.85 },
   actionLinkText: { fontSize: 13, fontWeight: '700', color: colors.accentTealStrong },
+});
+
+/**
+ * Compact (desktop, from 1024px) overrides. A control room reads this at a desk with a mouse, so rows,
+ * cards and gaps tighten to fit the queue and the start of Live Operations above the fold. Comfortable
+ * density below 1024px keeps the touch-sized originals above.
+ */
+const cs: Record<string, any> = StyleSheet.create({
+  stack: { gap: 14 },
+  row: { gap: 14 },
+  freshnessClock: { fontSize: 13 },
+  freshnessStatus: { fontSize: 12 },
+  attentionHeader: { paddingHorizontal: 16, paddingTop: 11, paddingBottom: 9, gap: 2 },
+  attentionTitle: { fontSize: 16, lineHeight: 21 },
+  attentionSubtitle: { fontSize: 12, lineHeight: 17 },
+  attentionItem: { paddingRight: 14, gap: 12 },
+  attentionBar: { minHeight: 44 },
+  attentionContent: { paddingVertical: 10 },
+  attentionBody: { gap: 1 },
+  attentionLabel: { lineHeight: 19 },
+  attentionMeta: { fontSize: 12, lineHeight: 17 },
+  attentionTiming: { fontSize: 12, lineHeight: 17 },
+  badge: { paddingVertical: 2, paddingHorizontal: 7 },
+  // Compact pills keep 11px text — the status word is what the operator reads — with tighter padding.
+  badgeText: { fontSize: 11, letterSpacing: 0.4, lineHeight: 14 },
+  viewAllRow: { paddingVertical: 2 },
+  liveRow: { paddingVertical: 7, gap: 2 },
+  stats: { marginBottom: 2 },
+  stat: { paddingVertical: 6 },
+  statValue: { fontSize: 24 },
+  statValueSmall: { fontSize: 22 },
+  group: { marginBottom: 4 },
+  upcomingRow: { paddingVertical: 5 },
+  panelMessage: { paddingVertical: 6 },
+  actionLink: { marginTop: 2, paddingVertical: 5, minHeight: 30 },
 });

@@ -69,6 +69,8 @@ type UrgentCategory =
 
 export type UrgentOperationalItem = {
   id: string;
+  /** An incident's own recorded severity (low / medium / high / critical); absent for other items. */
+  severity?: string | null;
   shiftId?: number | null;
   incidentId?: number | null;
   alertId?: number | null;
