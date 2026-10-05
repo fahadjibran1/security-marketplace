@@ -67,7 +67,7 @@
     },
     "android": {
       "softwareKeyboardLayoutMode": "resize",
-      "versionCode": 13,
+      "versionCode": 14,
       "package": "com.sfour.s4",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",

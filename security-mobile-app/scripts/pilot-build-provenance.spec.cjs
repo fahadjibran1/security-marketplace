@@ -37,12 +37,14 @@ const easJson = JSON.parse(read('eas.json'));
 
 // ═══════════════════ the controlled version ═══════════════════
 
-test('BUILD-01-APP-VERSION-IS-1-1-0-AND-BUILD-13', () => {
-  // Gate 4A: S4 1.1.0 / 13 is the first permanent-identity store candidate (com.sfour.s4). It is a new
+test('BUILD-01-APP-VERSION-IS-1-1-0-AND-ANDROID-BUILD-14', () => {
+  // Phase 4E: S4 1.1.0 / 14 is the Google Play Internal Testing candidate. Gate 4A's 1.1.0 / 13 was the
+  // first permanent-identity candidate (com.sfour.s4); it is retired because it predates Dashboard V2. It is a new
   // Android package, so nothing installs over anything — but the code keeps climbing, so every S4
   // artefact ever produced carries a distinct, increasing number. The development-package history:
   assert.equal(appJson.expo.version, '1.1.0');
-  assert.equal(appJson.expo.android.versionCode, 13, 'the first permanent-identity candidate');
+  assert.equal(appJson.expo.android.versionCode, 14, 'the RC14 Internal Testing candidate');
+  assert.ok(appJson.expo.android.versionCode > 13, 'above the retired first permanent-identity candidate 13');
   assert.ok(appJson.expo.android.versionCode > 12, 'above the final development-package Build 12');
   // Build 12 is the full operational UAT candidate: Phase 1 (scheduled times as true instants),
   // Phase 2 (action forms on a real modal), Phase 3A (Live Operations in site time, shift welfare
@@ -63,8 +65,9 @@ test('BUILD-01-APP-VERSION-IS-1-1-0-AND-BUILD-13', () => {
   assert.ok(appJson.expo.android.versionCode > 8, 'above the rejected Build 8');
   assert.ok(appJson.expo.android.versionCode > 5, 'and above the installed 1.0.4 (versionCode 5)');
 
-  // iOS reports its own build number; it must be bumped with Android or the two would disagree.
-  assert.equal(appJson.expo.ios.buildNumber, '13', 'the iOS build number tracks the Android one');
+  // iOS has its own counter. It tracked Android up to 13; iOS 13 has never been built, so Android RC14
+  // deliberately leaves it at 13 rather than skipping an unused number.
+  assert.equal(appJson.expo.ios.buildNumber, '13', 'the iOS build number stays at its unbuilt 13');
 });
 
 test('BUILD-02-APP-JSON-IS-THE-AUTHORITATIVE-VERSION-SOURCE', () => {

@@ -149,7 +149,8 @@ test('SIGNER-04-THE-EXPECTED-RELEASE-MATCHES-APP-JSON', () => {
   assert.equal(config.expectedRelease.versionCode, appJson.expo.android.versionCode);
   assert.equal(config.package, appJson.expo.android.package);
   assert.equal(appJson.expo.version, '1.1.0');
-  assert.equal(appJson.expo.android.versionCode, 13, 'the first permanent-identity candidate');
+  assert.equal(appJson.expo.android.versionCode, 14, 'the RC14 Internal Testing candidate');
+  assert.ok(appJson.expo.android.versionCode > 13, 'above the retired first permanent-identity candidate 13');
   // com.sfour.s4 is a new Android application, so no install-over is involved — the code still never
   // goes backwards, so every S4 artefact ever made has a distinct, increasing number.
   assert.ok(appJson.expo.android.versionCode > config.legacyPackage.finalRelease.versionCode, 'above the final development-package Build 12');
@@ -412,13 +413,31 @@ test('SIGNER-13-A-CORRECT-1-1-0-COM-SFOUR-S4-ARTEFACT-WOULD-PASS', () => {
   // Constructed in the exact apksigner/aapt2 shapes recorded above; no such artefact exists yet.
   const candidate = observe({
     apksigner: RECORDED.expectedBuild12.apksigner,
-    badging: "package: name='com.sfour.s4' versionCode='13' versionName='1.1.0'\nminSdkVersion:'24'",
+    badging: "package: name='com.sfour.s4' versionCode='14' versionName='1.1.0'\nminSdkVersion:'24'",
   });
   const result = verifier.assessApk(config, candidate);
   assert.equal(result.ok, true, result.failures.join('; '));
-  // A wrong code or name on the right package is still refused.
-  assert.equal(verifier.assessApk(config, { ...candidate, versionCode: 14 }).ok, false);
+  // A wrong code or name on the right package is still refused — including the retired 13.
+  assert.equal(verifier.assessApk(config, { ...candidate, versionCode: 13 }).ok, false);
+  assert.equal(verifier.assessApk(config, { ...candidate, versionCode: 15 }).ok, false);
   assert.equal(verifier.assessApk(config, { ...candidate, versionName: '1.0.7' }).ok, false);
+});
+
+test('SIGNER-13B-THE-RETIRED-VC13-ARTEFACT-IS-KEPT-EXACTLY', () => {
+  // Phase 4E: the certified 1.1.0 (13) AAB predates Dashboard V2 and is not intended for upload, but its
+  // certification is history and is never rewritten — only its status records the retirement.
+  const retired = (config.retiredArtefacts || []).find((entry) => entry.versionCode === 13);
+  assert.ok(retired, 'versionCode 13 is recorded as retired');
+  assert.equal(retired.status, 'certified-retired');
+  assert.equal(retired.easBuildId, '545b6ed6-78ca-43ce-9689-b11f0e34e7ad');
+  assert.equal(retired.gitCommit, '6cf29c8b3444a9cabb81bb79e90e21ce7ddf5626');
+  assert.equal(retired.aabSha256, '955fd091465ab7cac189179d1e99149a13a9146bb74207bb6272ff0e6e020f86');
+  assert.equal(retired.aabSizeBytes, 58675805);
+  assert.equal(retired.uploadCertificateSha256, config.signer.certificateSha256);
+  assert.equal(retired.certifiedOn, '2026-10-05');
+  assert.match(retired.retiredReason, /Dashboard Operations V2/);
+  assert.match(retired.retiredReason, /not intended for Google Play upload/);
+  assert.notEqual(config.approvedArtefact.versionCode, 13, 'and it is no longer the approved artefact');
 });
 
 test('SIGNER-14-AN-UPLOADED-AAB-SIGNER-IS-READ-FROM-KEYTOOL', () => {
