@@ -38,10 +38,16 @@
   "approvedArtefact": {
     "versionName": "1.1.0",
     "versionCode": 14,
-    "status": "pending-build",
+    "status": "certified-awaiting-play",
+    "easBuildId": "4b31e82d-7b36-4b76-8887-59c446527931",
     "easBuildProfile": "production",
-    "requiredBaseCommit": "35a6230",
-    "note": "Android RC14 for Google Play Internal Testing: S4 1.1.0 (14) built from the RC14 preparation commit on 35a6230, which includes Dashboard Operations V2. No build id or hash until it is built and certified."
+    "gitCommit": "e099c4e22fac3a2af32053b6870060bda4d9d5ef",
+    "aabFilename": "s4-1.1.0-vc14-4b31e82d.aab",
+    "aabSha256": "e07c4dc8dc33c9c66b8fe107296be69506b50681b6da9dec21008f39e23dde66",
+    "aabSizeBytes": 58685803,
+    "uploadCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
+    "certifiedOn": "2026-10-06",
+    "note": "Android RC14 for Google Play Internal Testing, built from e099c4e (35a6230 + RC14 preparation) and including Dashboard Operations V2. Certified locally from the downloaded AAB: package, version, permissions and debuggable from the bundle manifest (bundletool), upload signer via keytool. Not yet uploaded to Google Play."
   },
   "retiredArtefacts": [
     {
