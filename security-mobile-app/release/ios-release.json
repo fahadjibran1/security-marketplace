@@ -16,18 +16,29 @@
   "privacyManifest": "app-level, generated from app.json ios.privacyManifests: tracking false; required-reason APIs UserDefaults, FileTimestamp, DiskSpace, SystemBootTime with the reasons their bundled dependencies declare",
   "exportCompliance": "ITSAppUsesNonExemptEncryption=false (OS HTTPS/TLS and Keychain only)",
   "appleAccount": {
-    "membership": "Individual; conversion to organisation (Vesoft Services Limited) requested, pending Apple review",
-    "programLicenseAgreement": "updated agreement awaiting the owner's acceptance; required before App ID / credential / App Store Connect actions"
+    "membership": "Individual (team SXH4TLU2B5, fahad jibran); conversion to organisation (Vesoft Services Limited) requested, pending Apple review - proceeding with TestFlight on the Individual membership by owner decision",
+    "programLicenseAgreement": "updated agreement awaiting the owner's acceptance; required before App ID / credential / App Store Connect actions",
+    "appId": "com.sfour.s4 registered by the owner (description S4)",
+    "appStoreConnectApp": "S4 (iOS, com.sfour.s4, SKU s4-ios-001) created by the owner. The legacy S4 Security record (com.securitymarketplace.mobile) is not used."
   },
   "signing": {
-    "status": "not-created",
-    "note": "No App ID, distribution certificate or provisioning profile for com.sfour.s4 has been created or changed. Creating them requires owner approval after the organisation conversion."
+    "status": "created-eas-managed",
+    "distributionCertificate": "existing Apple Distribution certificate reused (owner, eas credentials); SHA-256 of the DER as embedded in the profile: c1f9c5b6c04f4f37939ade278960a16870c88afd2efca94a75b570aab5830196",
+    "provisioningProfile": "*[expo] com.sfour.s4 AppStore 2026-10-08T18:00:31.293Z (App Store distribution, no device list), created 2026-10-08, expires 2027-06-17",
+    "note": "Remote (EAS-managed) iOS credentials set up interactively by the owner. Nothing revoked or replaced."
   },
   "artefact": {
-    "status": "not-built",
-    "easBuildId": null,
-    "gitCommit": null,
-    "ipaSha256": null
+    "status": "certified-awaiting-testflight",
+    "easBuildId": "fa7c7560-f734-4bbe-a86e-5224811f624c",
+    "easBuildProfile": "production",
+    "distribution": "STORE",
+    "gitCommit": "876712819a9c889923de7734146b990720258866",
+    "ipaFilename": "s4-ios-1.1.0-b13-fa7c7560.ipa",
+    "ipaSha256": "95a6881ce92a00bedc2b45f620021c1a0701482672806a016f304ef50ac0e7ca",
+    "ipaSizeBytes": 9327185,
+    "completedAt": "2026-10-08T18:10:06Z",
+    "certifiedOn": "2026-10-08",
+    "note": "Certified locally from the downloaded IPA: Info.plist, embedded App Store provisioning profile, privacy manifest, code-signing certificate and main.jsbundle. Not submitted to App Store Connect."
   },
   "testFlight": "NOT SUBMITTED",
   "appStore": "NOT SUBMITTED"
