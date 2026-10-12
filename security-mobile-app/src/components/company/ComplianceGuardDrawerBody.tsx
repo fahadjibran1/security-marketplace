@@ -40,7 +40,7 @@ import {
 } from './ukDate';
 import type { PickedDocument } from './complianceDataSource';
 import { CheckFormMode, CompanyCheckSection } from './CompanyCheckSection';
-import { outstandingRequirements, requirementPresentation } from './compliance-checks';
+import { outstandingRequirements, requirementPresentation, workRestrictionNotice } from './compliance-checks';
 
 const IS_WEB = typeof document !== 'undefined';
 const REQUIRED_TYPES: Array<'sia_licence' | 'right_to_work'> = ['sia_licence', 'right_to_work'];
@@ -269,6 +269,15 @@ export function ComplianceGuardDrawerBody(props: ComplianceGuardDrawerBodyProps)
               );
             })
           )}
+          {workRestrictionNotice(summary) ? (
+            <View style={styles.requirement}>
+              <StatusBadge label="Check each shift" tone="warning" size="small" />
+              <View style={styles.requirementText}>
+                <Text style={styles.requirementLabel}>Work restrictions</Text>
+                <Text style={styles.meta}>{workRestrictionNotice(summary)}</Text>
+              </View>
+            </View>
+          ) : null}
           <Text style={styles.hint}>S4 screening is optional and is not needed for the rota.</Text>
         </Section>
       ) : null}

@@ -46,6 +46,11 @@ export type CandidateAssessment = {
   action: CandidateAction;
   /** True when compliance is (one of) the reasons this candidate cannot be assigned. */
   complianceBlocked: boolean;
+  /**
+   * Recorded right to work restriction, shown as a warning. Never affects isEligible: S4 does not check
+   * shifts against restrictions, so the company must.
+   */
+  workRestrictionNotice: string | null;
 };
 
 /**
@@ -64,6 +69,8 @@ export type AssessCandidateOptions = {
   complianceBlockers?: ComplianceBlockerInput[] | null;
   /** compliance.view — whether the Fix Compliance route may be offered at all. */
   canFixCompliance?: boolean;
+  /** From workRestrictionNotice(summary) in compliance-checks.ts. Display only. */
+  workRestrictionNotice?: string | null;
 };
 
 const AVAILABILITY_LABELS: Record<string, AvailabilityPresentation> = {
@@ -156,6 +163,7 @@ export function assessCandidate(
     // approved leave is not fixed in the Compliance workspace, so pointing there would be wrong.
     action: complianceBlocked && options.canFixCompliance === true ? 'fix_compliance' : 'none',
     complianceBlocked,
+    workRestrictionNotice: options.workRestrictionNotice?.trim() || null,
   };
 }
 

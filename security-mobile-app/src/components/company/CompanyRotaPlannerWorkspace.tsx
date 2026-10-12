@@ -18,6 +18,7 @@ import {
 } from '../../services/siteTime';
 import type { CandidateAssessment } from './assignEligibility';
 import { buildBlockers } from './compliance-model';
+import { workRestrictionNotice } from './compliance-checks';
 import type {
   EligibleGuardRow,
   GuardComplianceSummary,
@@ -681,6 +682,7 @@ export function CompanyRotaPlannerWorkspace({
         .filter((blocker) => blocker.severity === 'blocking')
         .map((blocker) => ({ text: blocker.text, nextStep: blocker.nextStep })),
       canFixCompliance: canFixCompliance && Boolean(onFixCompliance),
+      workRestrictionNotice: workRestrictionNotice(summary),
     });
   }, [complianceByGuardId, canManageCompliance, canFixCompliance, onFixCompliance]);
 
@@ -1743,6 +1745,11 @@ function PositionRow({
                       </Text>
                     </Text>
 
+                    {/* A recorded restriction is a warning only: S4 does not check this shift against it. */}
+                    {assessment.workRestrictionNotice ? (
+                      <Text style={db.candidateRestriction}>{`⚠ ${assessment.workRestrictionNotice}`}</Text>
+                    ) : null}
+
                     {assessment.action === 'fix_compliance' && onFixCompliance && (
                       <Pressable
                         accessibilityRole="button"
@@ -2131,6 +2138,7 @@ const db = StyleSheet.create({
   candidateAvailabilityLabel: { color: colors.textMuted },
   candidateAvailabilityNeutral: { color: colors.textMuted, fontWeight: '600' },
   candidateAvailabilityWarning: { color: colors.warning, fontWeight: '600' },
+  candidateRestriction: { fontSize: 11, marginTop: 3, color: colors.warning, fontWeight: '600', lineHeight: 15 },
   candidateAvailabilitySuccess: { color: colors.success, fontWeight: '600' },
   fixComplianceBtn: {
     alignSelf: 'flex-start',

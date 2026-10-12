@@ -22,6 +22,7 @@ import {
   initialCheckForm,
   methodsFor,
   validateCheckForm,
+  workRestrictionNotice,
 } from './compliance-checks';
 import { daysUntil, rightToWorkIndicator, siaIndicator } from './compliance-model';
 import { documentTypeLabel } from './compliance-selection';
@@ -173,7 +174,11 @@ export function CompanyCheckSection(props: CompanyCheckSectionProps) {
                 : `Follow-up check due by ${formatUkDate(current.expiryDate)}.`}
             </Text>
           ) : null}
-          {current.workRestrictions ? <Text style={styles.meta}>Restrictions: {current.workRestrictions}</Text> : null}
+          {kind === 'right_to_work' && workRestrictionNotice(summary) ? (
+            <View style={styles.warning} accessibilityRole="alert">
+              <Text style={styles.warningText}>{workRestrictionNotice(summary)}</Text>
+            </View>
+          ) : null}
           <Text style={styles.meta}>Checked by {current.checkedByName}</Text>
         </View>
       ) : (
@@ -290,7 +295,10 @@ export function CompanyCheckSection(props: CompanyCheckSectionProps) {
           ) : null}
 
           {kind === 'right_to_work' ? (
-            <FormField label="Work restrictions (optional)" helperText="Any condition shown by the check, for example limited hours in term time.">
+            <FormField
+              label="Work restrictions (optional)"
+              helperText="Any condition shown by this check, for example limited hours in term time. Recording it does not approve any shift: S4 does not check rotas against it."
+            >
               <FieldInput value={form.workRestrictions} onChangeText={(next: string) => update({ workRestrictions: next })} />
             </FormField>
           ) : null}
@@ -360,6 +368,8 @@ const styles = StyleSheet.create({
   declared: { fontSize: 12, color: colors.textSecondary, lineHeight: 17, fontStyle: 'italic' },
   meta: { fontSize: 12, color: colors.textSecondary, lineHeight: 17 },
   error: { fontSize: 13, color: colors.danger, fontWeight: '600' },
+  warning: { padding: spacing.sm, borderRadius: radii.sm, borderWidth: 1, borderColor: colors.warning, backgroundColor: colors.surfaceSubtle, marginTop: 2 },
+  warningText: { fontSize: 12, color: colors.textPrimary, lineHeight: 17, fontWeight: '600' },
   actions: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.xs },
   history: { gap: spacing.xs, marginTop: spacing.xs },
   historyRow: { gap: 2, padding: spacing.sm, borderRadius: radii.sm, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceSubtle },

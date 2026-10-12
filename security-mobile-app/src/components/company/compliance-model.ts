@@ -249,9 +249,13 @@ export function rightToWorkIndicator(summary: GuardComplianceSummary | null, now
     const check = summary.companyChecks.rightToWork;
     if (!check) return { label: 'Not checked', detail: 'No company check recorded', tone: 'danger' };
     if (check.outcome !== 'confirmed') return { label: 'Not confirmed', detail: `Checked ${formatUkDate(check.checkDate)}`, tone: 'danger' };
-    if (check.rightToWorkExcuse === 'continuous') return { label: 'Continuous', detail: `Checked ${formatUkDate(check.checkDate)}`, tone: 'success' };
+    // Restrictions are flagged in the detail, never in the label or tone: they do not change compliance.
+    const restricted = check.workRestrictions?.trim() ? ' · restrictions recorded' : '';
+    if (check.rightToWorkExcuse === 'continuous') return { label: 'Continuous', detail: `Checked ${formatUkDate(check.checkDate)}${restricted}`, tone: 'success' };
     const expiry = expiryIndicator(check.expiryDate, now);
-    return expiry.tone === 'neutral' ? { label: 'Valid', detail: `Until ${expiry.label}`, tone: 'success' } : expiry;
+    return expiry.tone === 'neutral'
+      ? { label: 'Valid', detail: `Until ${expiry.label}${restricted}`, tone: 'success' }
+      : { ...expiry, detail: `${expiry.detail ?? ''}${restricted}` || undefined };
   }
   const status = String(summary.rightToWorkStatus ?? '').trim().toLowerCase();
   if (!status) return { label: 'Missing', tone: 'danger' };

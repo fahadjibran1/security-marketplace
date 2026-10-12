@@ -246,4 +246,68 @@ test('Drawer: layouts wrap at narrow widths (chips, actions, requirement rows)',
   assert.match(section, /historyText: \{ flex: 1, minWidth: 160/);
 });
 
+// ── Phase 1B: work restrictions ──────────────────────────────────────────────
+const eligibility = loadTs('src/components/company/assignEligibility.ts');
+const rota = read('src/components/company/CompanyRotaPlannerWorkspace.tsx');
+
+test('Work restrictions: one notice, only for a confirmed check that records one, never read as approval', () => {
+  const restricted = { companyChecks: { rightToWork: current({ workRestrictions: '  Student: 20 hours a week in term time ' }) } };
+  const notice = checks.workRestrictionNotice(restricted);
+  assert.match(notice, /^Right to work restriction recorded: "Student: 20 hours a week in term time"\./);
+  assert.match(notice, /S4 does not check shifts against it/);
+  assert.doesNotMatch(notice, /approved|verified|allowed to work/i, 'no wording that reads as approval');
+  assert.equal(checks.workRestrictionNotice({ companyChecks: { rightToWork: current({ workRestrictions: null }) } }), null);
+  assert.equal(checks.workRestrictionNotice({ companyChecks: { rightToWork: current({ outcome: 'not_confirmed', workRestrictions: 'x' }) } }), null);
+  assert.equal(checks.workRestrictionNotice({ companyChecks: null }), null, 'older API: nothing to show');
+  assert.equal(checks.workRestrictionNotice(null), null);
+});
+
+test('Work restrictions: shown in the drawer, the still-needed list, the table and the rota assign panel', () => {
+  assert.match(section, /workRestrictionNotice\(summary\)/);
+  assert.match(section, /accessibilityRole="alert"/);
+  assert.match(section, /Recording it does not approve any shift: S4 does not check rotas against it\./);
+  assert.match(drawer, /label="Check each shift" tone="warning"/);
+  const restricted = summary({ companyChecks: { sia: null, rightToWork: current({ rightToWorkExcuse: 'continuous', expiryDate: null, workRestrictions: 'x' }) } });
+  const indicator = model.rightToWorkIndicator(restricted, NOW);
+  assert.equal(indicator.label, 'Continuous', 'the label and tone do not change');
+  assert.equal(indicator.tone, 'success');
+  assert.match(indicator.detail, /restrictions recorded$/);
+  // Rota: the warning reaches the candidate, and never changes eligibility.
+  const row = { guardId: 7, fullName: 'G', isEligible: true, availabilityStatus: 'available', reasons: [] };
+  const assessed = eligibility.assessCandidate(row, { workRestrictionNotice: 'notice text' });
+  assert.equal(assessed.isEligible, true);
+  assert.equal(assessed.workRestrictionNotice, 'notice text');
+  assert.equal(eligibility.assessCandidate({ ...row, isEligible: false, reasons: ['x'] }, { workRestrictionNotice: 'n' }).isEligible, false);
+  assert.equal(eligibility.assessCandidate(row, {}).workRestrictionNotice, null);
+  assert.match(rota, /workRestrictionNotice: workRestrictionNotice\(summary\)/);
+  assert.match(rota, /assessment\.workRestrictionNotice \?/);
+});
+
+test('A follow-up check never carries an old restriction over; a correction shows it', () => {
+  const withRestriction = current({ workRestrictions: '20 hours' });
+  assert.equal(checks.initialCheckForm('right_to_work', withRestriction, TODAY).workRestrictions, '');
+  assert.equal(checks.correctionForm('right_to_work', withRestriction).workRestrictions, '20 hours');
+});
+
+// ── Phase 1B: new web against the previous backend (web may deploy before Render) ──
+test('Previous backend (no companyChecks/requirements/warnings): the drawer falls back to the earlier read-only view', () => {
+  const legacy = summary({ siaExpiryDate: '2030-01-01', rightToWorkStatus: 'permanent', blockingReasons: ['SIA licence document is not verified'] });
+  assert.equal(model.siaIndicator(legacy, NOW).tone, 'neutral', 'declaration-based reading, as before');
+  assert.equal(model.rightToWorkIndicator(legacy, NOW).label, 'Indefinite');
+  assert.deepEqual(checks.outstandingRequirements(legacy.requirements), []);
+  assert.equal(checks.workRestrictionNotice(legacy), null);
+  assert.ok(model.buildBlockers(legacy, true).every((b) => b.action === null || b.action.kind !== 'record_check'), 'no Record check action against an API that lacks it');
+  // The drawer only renders check sections (and their Record buttons) when the API supplied companyChecks.
+  assert.match(drawer, /const companyView = Boolean\(summary\?\.companyChecks\);/);
+  assert.match(drawer, /\{summary && companyView \? \(\s*<Section title="Still needed">/);
+});
+
+test('Guard app: a refused Book On (403) shows the server message verbatim, as shipped builds do', () => {
+  const formatter = api.split('export function formatApiErrorMessage')[1].split('\n}\n')[0];
+  const forbidden = formatter.split('if (error.status === 403) {')[1].split("return 'You are not allowed to perform this action.';")[0];
+  assert.match(forbidden, /typeof body\.message === 'string' && body\.message\.trim\(\)\) \{\s*return body\.message;/);
+  const dashboard = read('src/screens/GuardDashboardScreen.tsx');
+  assert.match(dashboard, /formatApiErrorMessage\(error, 'Unable to start this shift\.'\)/);
+});
+
 console.log(`company-compliance-checks: ${count} passed`);

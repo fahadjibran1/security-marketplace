@@ -70,6 +70,11 @@ export type GuardComplianceSummary = {
   companyChecks: { sia: CompanyCheckSummary | null; rightToWork: CompanyCheckSummary | null } | null;
   /** Company view only (empty in the Guard's own view): each requirement and whether it is met. */
   requirements: ComplianceRequirement[];
+  /**
+   * Non-blocking notices the company must act on itself. They never change complianceStatus or
+   * assignability: for example recorded right to work restrictions, which S4 does not check rotas against.
+   */
+  warnings: string[];
 };
 
 export type SafeGuardDocument = {
@@ -101,6 +106,7 @@ type AssessmentState = {
   expiringReasons: string[];
   missingDocuments: string[];
   requirements: ComplianceRequirement[];
+  warnings: string[];
 };
 
 /** A calendar date as people in the UK read it (DD/MM/YYYY), for requirement details shown to users. */
@@ -108,6 +114,10 @@ const ukDate = (value: string | Date | null | undefined) => {
   const iso = toCalendarDate(value);
   return iso ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}` : 'an unknown date';
 };
+
+/** Shown wherever restrictions are recorded: S4 stores them but does not enforce them. */
+export const RIGHT_TO_WORK_RESTRICTION_WARNING =
+  'Right to work restrictions are recorded for this Guard. S4 does not check shifts against them: confirm each shift is allowed before assigning it.';
 
 const REQUIRED_DOCUMENT_TYPES: Array<{ type: GuardDocumentType; label: string }> = [
   { type: GuardDocumentType.SIA_LICENCE, label: 'SIA licence document' },
@@ -199,6 +209,7 @@ export class GuardComplianceService {
       documents: documents.map((document) => this.toSafeDocument(document)),
       companyChecks: checks ? { sia: currentCheck('sia'), rightToWork: currentCheck('right_to_work') } : null,
       requirements: assessment.requirements,
+      warnings: assessment.warnings,
     };
   }
 
@@ -579,6 +590,7 @@ export class GuardComplianceService {
       expiringReasons: [],
       missingDocuments: [],
       requirements: [],
+      warnings: [],
     };
 
     if (companyChecks) {
@@ -663,6 +675,10 @@ export class GuardComplianceService {
       state.invalidReasons.push('Right to work check did not confirm permission to work');
       state.requirements.push({ key: 'right_to_work_check', label, state: 'not_confirmed', detail: 'The last check did not confirm permission to work.' });
       return;
+    }
+    if (check.workRestrictions?.trim()) {
+      // Recorded so the company sees it; never treated as approval of any shift pattern.
+      state.warnings.push(RIGHT_TO_WORK_RESTRICTION_WARNING);
     }
     if (check.rightToWorkExcuse === 'continuous') {
       state.requirements.push({ key: 'right_to_work_check', label, state: 'met', detail: 'Continuous right to work. No follow-up check needed.' });

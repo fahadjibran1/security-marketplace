@@ -475,6 +475,8 @@ export interface GuardComplianceSummary {
   companyChecks?: { sia: CompanyCheckSummary | null; rightToWork: CompanyCheckSummary | null } | null;
   /** Company view: each requirement for this company and whether it is met. */
   requirements?: ComplianceRequirement[];
+  /** Company view: non-blocking notices (for example recorded work restrictions S4 does not enforce). */
+  warnings?: string[];
 }
 
 export type ComplianceCheckKind = 'sia' | 'right_to_work';

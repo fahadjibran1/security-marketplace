@@ -134,7 +134,8 @@ export function initialCheckForm(kind: ComplianceCheckKind, current: CompanyChec
     licenceNumber: kind === 'sia' ? current?.licenceNumber ?? '' : '',
     checkDate: isoToUkDate(today) ?? '',
     expiryDate: '',
-    workRestrictions: current?.workRestrictions ?? '',
+    // A new check records what THIS check shows; an old restriction is never carried over silently.
+    workRestrictions: '',
     checkedByName: '',
     evidenceReference: '',
     evidenceDocumentId: null,
@@ -150,6 +151,7 @@ export function correctionForm(kind: ComplianceCheckKind, current: CompanyCheckS
     outcome: current.outcome === 'not_confirmed' ? 'not_confirmed' : 'confirmed',
     checkDate: isoToUkDate(current.checkDate) ?? '',
     expiryDate: isoToUkDate(current.expiryDate) ?? '',
+    workRestrictions: current.workRestrictions ?? '',
     checkedByName: current.checkedByName,
     changeType: 'correction',
   };
@@ -262,6 +264,20 @@ export const REQUIREMENT_PRESENTATION: Record<string, { label: string; tone: Ton
 
 export function requirementPresentation(requirement: Pick<ComplianceRequirement, 'state'>): { label: string; tone: Tone } {
   return REQUIREMENT_PRESENTATION[requirement.state] ?? { label: 'Unknown', tone: 'neutral' };
+}
+
+/**
+ * The company-facing notice for recorded right to work restrictions. S4 stores the restriction but never
+ * checks shifts, hours or duties against it, so recording one must never read as approval.
+ * Null when the current confirmed right to work check records no restriction.
+ */
+export function workRestrictionNotice(
+  summary: { companyChecks?: { rightToWork: Pick<CompanyCheckSummary, 'outcome' | 'workRestrictions'> | null } | null } | null | undefined,
+): string | null {
+  const check = summary?.companyChecks?.rightToWork;
+  const text = check?.outcome === 'confirmed' ? check.workRestrictions?.trim() : '';
+  if (!text) return null;
+  return `Right to work restriction recorded: "${text}". S4 does not check shifts against it. Make sure each shift is allowed before assigning it.`;
 }
 
 /** Requirements that still need action, in the order the server gave them. */
