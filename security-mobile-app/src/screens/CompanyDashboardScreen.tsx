@@ -306,6 +306,8 @@ type UrgentOperationalItem = {
     | 'site_request'
     /** A shift that ended with no Book Off. Its own category so it is never read as generic safety. */
     | 'missing_book_off'
+    /** A mandatory company compliance check lapsed during a live shift. Urgent, but never an SOS. */
+    | 'compliance_lapse'
     | 'upcoming_risk'
     | 'missed_shift'
     | 'uncovered_shift';
@@ -740,6 +742,7 @@ function getAttentionSeverity(category: UrgentOperationalItem['category']): 'red
     case 'panic':
     case 'incident':
     case 'missed_shift':
+    case 'compliance_lapse':
       return 'red';
     case 'late_start':
     case 'missed_check_call':
@@ -764,6 +767,7 @@ function getAttentionBadgeLabel(category: UrgentOperationalItem['category']): st
     case 'uncovered_shift':   return 'Coverage gap';
     case 'missed_check_call': return 'Missed Welfare Check';
     case 'missing_book_off':  return 'Missing Book Off';
+    case 'compliance_lapse':  return 'Compliance';
     case 'rejected_offer':    return 'Offer rejected';
     case 'safety':            return 'Safety';
     case 'site_request':      return 'Site Request';
@@ -2324,6 +2328,26 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
       });
     });
 
+    // Migration 63: a mandatory company SIA / Right to Work check lapsed while the Guard is on shift.
+    // Its own category, never 'panic' and never 'safety': it is urgent, but it is not an emergency, and
+    // the generic safety bucket would hide what it is.
+    outstandingAlerts
+      .filter((alert) => (alert.type || '').toLowerCase() === 'compliance_lapse')
+      .forEach((alert) => {
+        items.push({
+          id: `compliance-lapse-${alert.id}`,
+          alertId: alert.id,
+          shiftId: alert.shift?.id ?? null,
+          status: alert.status,
+          siteName: alert.shift?.site?.name || alert.shift?.siteName || 'Unknown site',
+          guardName: alert.guard?.fullName || 'Unknown guard',
+          category: 'compliance_lapse',
+          issueType: 'Urgent compliance review',
+          message: alert.message || 'A mandatory compliance check lapsed during this shift.',
+          occurredAt: alert.createdAt,
+        });
+      });
+
     // A shift that ended with no Book Off, as its own item. It reached this queue before, but inside
     // the generic "Safety / welfare needs attention" bucket — a controller could not tell it from a
     // site request without opening it, and it never said how overdue the guard was.
@@ -3548,6 +3572,7 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
       || item.category === 'missed_check_call'
       || item.category === 'safety'
       || item.category === 'missing_book_off'
+      || item.category === 'compliance_lapse'
     ) {
       setActiveSection('alerts');
       setLiveOperationsFeedback({

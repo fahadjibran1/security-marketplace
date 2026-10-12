@@ -226,6 +226,11 @@ export const PERSISTED_ATTENTION_CATEGORIES: readonly string[] = [
    * age out of the queue because the shift stopped being operationally current.
    */
   'missing_book_off',
+  /**
+   * Migration 63: a mandatory company compliance check lapsed during a live shift. Persisted as
+   * safety_alerts.compliance_lapse and cleared only by a person resolving it.
+   */
+  'compliance_lapse',
 ];
 
 export function isDerivedAttentionCategory(category: string): boolean {

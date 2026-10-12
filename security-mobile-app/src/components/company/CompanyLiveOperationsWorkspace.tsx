@@ -63,6 +63,8 @@ type UrgentCategory =
   | 'site_request'
   /** A shift that ended with no Book Off. Its own category so it is never read as generic safety. */
   | 'missing_book_off'
+  /** A mandatory company compliance check lapsed during a live shift. Urgent, but never an SOS. */
+  | 'compliance_lapse'
   | 'upcoming_risk'
   | 'missed_shift'
   | 'uncovered_shift';
@@ -315,7 +317,7 @@ function getExceptionSummary(status?: string | null): { title: string; message: 
 }
 
 function getAttentionSeverity(category: UrgentCategory): 'red' | 'amber' | 'blue' {
-  if (['panic', 'incident', 'missed_shift'].includes(category)) return 'red';
+  if (['panic', 'incident', 'missed_shift', 'compliance_lapse'].includes(category)) return 'red';
   if (['late_start', 'missed_check_call', 'uncovered_shift', 'rejected_offer', 'safety'].includes(category)) return 'amber';
   // A Site Request is a need, not a risk. Colouring it like a welfare lapse would train the control
   // room to discount the colour that matters.
@@ -334,6 +336,7 @@ function getAttentionLabel(category: UrgentCategory): string {
     case 'upcoming_risk':    return 'Risk shift';
     case 'missed_shift':     return 'Missed';
     case 'missing_book_off': return 'Missing Book Off';
+    case 'compliance_lapse': return 'Compliance';
     case 'uncovered_shift':  return 'Coverage gap';
     default:                 return 'Alert';
   }
@@ -880,6 +883,15 @@ function getPrimaryAttentionAction(
       onPress: () => onUrgentAlertFollowUp(item, 'close'),
       disabled: busy,
     };
+  }
+  /**
+   * A compliance lapse (Migration 63) is acknowledged first, then resolved with a reason and a mandatory
+   * note through the same alert path as every other durable alert. Nothing here ends the shift.
+   */
+  if (item.category === 'compliance_lapse') {
+    return item.status === 'acknowledged'
+      ? { label: busy ? '…' : 'Resolve', onPress: () => onUrgentAlertFollowUp(item, 'close'), disabled: busy }
+      : { label: busy ? '…' : 'Acknowledge', onPress: () => onUrgentAlertFollowUp(item, 'acknowledge'), disabled: busy };
   }
   if (item.category === 'missed_check_call' || item.category === 'safety') {
     const label = item.status === 'acknowledged' ? (busy ? '…' : getUrgentPrimaryLabel(item)) : getUrgentPrimaryLabel(item);

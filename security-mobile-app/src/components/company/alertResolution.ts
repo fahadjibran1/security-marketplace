@@ -23,6 +23,7 @@ export type ResolutionOption = {
 export type ResolutionFamily =
   | 'welfare'
   | 'missing_book_off'
+  | 'compliance_lapse'
   | 'site_request'
   | 'emergency'
   | 'general'
@@ -47,6 +48,18 @@ const MISSING_BOOK_OFF: ResolutionOption[] = [
   { value: 'device_network_issue', label: 'Device / network issue' },
   { value: 'shift_extended', label: 'Shift extended' },
   { value: 'incorrect_schedule', label: 'Incorrect schedule' },
+  { value: 'other', label: 'Other' },
+];
+
+/**
+ * A mandatory compliance check lapsed during a live shift (Migration 63). Each value says what the
+ * company did; a note is always required. Mirrors COMPLIANCE_LAPSE_RESOLUTION_REASONS on the backend.
+ */
+const COMPLIANCE_LAPSE: ResolutionOption[] = [
+  { value: 'guard_stood_down', label: 'Guard stood down' },
+  { value: 'valid_check_recorded', label: 'Valid check recorded' },
+  { value: 'check_record_corrected', label: 'Check record corrected' },
+  { value: 'escalated_to_management', label: 'Escalated to management' },
   { value: 'other', label: 'Other' },
 ];
 
@@ -92,6 +105,7 @@ const INCIDENT: ResolutionOption[] = [
 const FAMILIES: Record<ResolutionFamily, ResolutionOption[]> = {
   welfare: WELFARE,
   missing_book_off: MISSING_BOOK_OFF,
+  compliance_lapse: COMPLIANCE_LAPSE,
   site_request: SITE_REQUEST,
   emergency: EMERGENCY,
   general: GENERAL,
@@ -111,6 +125,8 @@ export function resolutionFamilyForAlert(type: string | null | undefined): Resol
       return 'welfare';
     case 'missing_book_off':
       return 'missing_book_off';
+    case 'compliance_lapse':
+      return 'compliance_lapse';
     case 'welfare':
     case 'site_request':
       return 'site_request';
@@ -194,6 +210,8 @@ export function alertTypeLabel(type: string | null | undefined): string {
       return 'Missed Welfare Check';
     case 'missing_book_off':
       return 'Missing Book Off';
+    case 'compliance_lapse':
+      return 'Compliance lapse';
     case 'panic':
       return 'Emergency';
     case 'welfare':

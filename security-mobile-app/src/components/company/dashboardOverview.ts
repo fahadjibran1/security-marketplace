@@ -55,6 +55,8 @@ const MINUTE_MS = 60_000;
  */
 export const ATTENTION_PRIORITY_RANK: Record<UrgentOperationalItem['category'], number> = {
   panic: 0,
+  // Straight after an SOS: a Guard may be working illegally or unlicensed right now.
+  compliance_lapse: 1,
   safety: 1,
   incident: 3,
   missed_check_call: 4,

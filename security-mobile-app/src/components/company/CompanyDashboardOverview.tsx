@@ -88,6 +88,7 @@ function severityOf(category: UrgentOperationalItem['category']): Severity {
     case 'panic':
     case 'incident':
     case 'missed_shift':
+    case 'compliance_lapse':
       return 'red';
     case 'late_start':
     case 'missed_check_call':
@@ -111,6 +112,7 @@ export function attentionBadgeLabel(category: UrgentOperationalItem['category'])
     case 'uncovered_shift':   return 'Coverage gap';
     case 'missed_check_call': return 'Missed Welfare Check';
     case 'missing_book_off':  return 'Missing Book Off';
+    case 'compliance_lapse':  return 'Compliance';
     case 'rejected_offer':    return 'Offer rejected';
     case 'safety':            return 'Safety';
     case 'site_request':      return 'Site Request';

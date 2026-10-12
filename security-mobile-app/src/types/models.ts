@@ -1664,7 +1664,9 @@ export interface SafetyAlert {
     | 'late_checkin'
     | 'missed_checkcall'
     | 'missing_book_off'
-    | 'other';
+    | 'other'
+    /** Migration 63: a company SIA / Right to Work check lapsed while the Guard was on shift. Raised by S4 only. */
+    | 'compliance_lapse';
   priority: 'low' | 'medium' | 'high' | 'critical';
   message: string;
   status: 'open' | 'acknowledged' | 'closed';
@@ -1676,6 +1678,9 @@ export interface SafetyAlert {
    * summary: twenty-four missed windows are twenty-four records but a single thing to act on.
    */
   welfareWindowIndex?: number | null;
+  /** compliance_lapse only: which mandatory check, and why it lapsed. */
+  complianceCategory?: 'sia' | 'right_to_work' | null;
+  complianceReason?: 'expired' | 'not_confirmed' | 'missing' | null;
   acknowledgedAt?: string | null;
   closedAt?: string | null;
   createdAt: string;
