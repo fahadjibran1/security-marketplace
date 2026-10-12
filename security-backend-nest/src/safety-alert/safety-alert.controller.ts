@@ -36,8 +36,10 @@ export class SafetyAlertController {
     return this.safetyAlertService.createForGuard(user.sub, dto);
   }
 
+  // Entry gate. Company staff reach this only to act on their own company's compliance lapse alerts with
+  // compliance.manage; that, and everything else, is enforced in the service.
   @Patch(':id/ack')
-  @Roles(UserRole.ADMIN, ...COMPANY_ADMIN_ROLES)
+  @Roles(UserRole.ADMIN, ...COMPANY_ADMIN_ROLES, UserRole.COMPANY_STAFF)
   acknowledge(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
     if (user.role === UserRole.ADMIN) {
       return this.safetyAlertService.acknowledgeAsAdmin(user.sub, id);
@@ -51,7 +53,7 @@ export class SafetyAlertController {
    * when one IS sent, the service validates the reason against the stored alert's own type.
    */
   @Patch(':id/close')
-  @Roles(UserRole.ADMIN, ...COMPANY_ADMIN_ROLES)
+  @Roles(UserRole.ADMIN, ...COMPANY_ADMIN_ROLES, UserRole.COMPANY_STAFF)
   close(
     @CurrentUser() user: JwtPayload,
     @Param('id', ParseIntPipe) id: number,
@@ -68,7 +70,7 @@ export class SafetyAlertController {
 
   /** The reasons this alert may be closed with, so the UI never offers a value the API will refuse. */
   @Get(':id/resolution-reasons')
-  @Roles(UserRole.ADMIN, ...COMPANY_ADMIN_ROLES)
+  @Roles(UserRole.ADMIN, ...COMPANY_ADMIN_ROLES, UserRole.COMPANY_STAFF)
   resolutionReasons(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
     return this.safetyAlertService.resolutionOptions(user.sub, id, user.role === UserRole.ADMIN);
   }

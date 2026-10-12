@@ -6,7 +6,8 @@
  *   LAPSE-01..05  detection: SIA expiry, time-limited RTW expiry, continuous RTW, not confirmed, missing
  *   LAPSE-06..07  multiple companies, multiple active shifts
  *   LAPSE-08..09  repeated and concurrent sweeps: exactly one alert per company + shift + category
- *   LAPSE-10      notification recipients and content
+ *   LAPSE-10      notification recipients and content: compliance people get the reason; Operations and
+ *                 Control Room get an eligibility review notice only; nobody else
  *   LAPSE-11      audit: detection, acknowledgement and resolution, with who and when
  *   LAPSE-12      a closed lapse is not re-raised; a new lapse is
  *   LAPSE-13      shift safety: no Book Off, no change to the shift; Book Off stays available; no new start
@@ -14,6 +15,9 @@
  *   LAPSE-15      a stale abandoned shift is not paged about
  *   LAPSE-16      old client compatibility of the alert list
  *   LAPSE-17      static: the sweep only adds records, uses the shared assessment, no external channel
+ *   LAPSE-18..23  company members: HR / Compliance (compliance.manage) acknowledge and resolve compliance
+ *                 lapse alerts only, in their own company, with reason + note and a full audit trail;
+ *                 other roles, other alert types and other companies are refused; the owner is unchanged
  *
  * Needs COMPLIANCE_LAPSE_DATABASE_URL pointing at a DISPOSABLE local database — it drops the schema.
  */
@@ -320,27 +324,39 @@ async function main() {
     });
 
     // ══ notifications ══════════════════════════════════════════════════════════════════════════════
-    await test('LAPSE-10-ONLY-AUTHORISED-COMPANY-PEOPLE-ARE-NOTIFIED-IN-APP-WITHOUT-EVIDENCE', async () => {
+    await test('LAPSE-10-COMPLIANCE-PEOPLE-GET-THE-REASON-OPERATIONS-GET-A-REVIEW-NOTICE-NOBODY-ELSE', async () => {
       const g = await guard('lapse10', [A]);
-      await fullChecks(A, g);
+      await fullChecks(A, g, { rightToWorkExcuse: 'time_limited', expiryDate: ukDay(30) });
       const shift = await onShift(A, g);
-      await expireCurrent(A, g, 'sia');
+      await expireCurrent(A, g, 'right_to_work');
       const before = await notificationsFor(A.id);
       await sweep.runComplianceLapseScan();
       const fresh = (await notificationsFor(A.id)).slice(before.length);
-      const recipients = fresh.map((row) => row.userId).sort((a: number, b: number) => a - b);
-      const expected = [A.ownerId, A.staff.owner, A.staff.admin, A.staff.hr_compliance].sort((a, b) => a - b);
-      assert.deepEqual(recipients, expected, 'owner + members with compliance.manage only');
-      for (const role of ['operations', 'control_room', 'finance', 'viewer']) {
-        assert.ok(!recipients.includes(A.staff[role]), `${role} is not notified`);
-      }
-      assert.ok(!recipients.includes(g.userId), 'the Guard is not notified');
-      for (const row of fresh) {
-        assert.equal(row.title, 'Urgent compliance review required');
-        assert.match(row.message, /lapse10 Guard is on shift at Main Site: SIA licence check expired on /);
+      const ids = (rows: any[]) => rows.map((row) => row.userId).sort((a: number, b: number) => a - b);
+      const compliance = fresh.filter((row) => row.title === 'Urgent compliance review required');
+      const operational = fresh.filter((row) => row.title === 'Urgent eligibility review required');
+      assert.equal(compliance.length + operational.length, fresh.length, 'no other kind of notification');
+      assert.deepEqual(ids(compliance), [A.ownerId, A.staff.owner, A.staff.admin, A.staff.hr_compliance].sort((a, b) => a - b),
+        'owner + members with compliance.manage');
+      assert.deepEqual(ids(operational), [A.staff.operations, A.staff.control_room].sort((a, b) => a - b), 'Operations + Control Room');
+      for (const role of ['finance', 'viewer']) assert.ok(!ids(fresh).includes(A.staff[role]), `${role} is not notified`);
+      assert.ok(!ids(fresh).includes(g.userId), 'the Guard is not notified');
+      for (const row of compliance) {
+        assert.match(row.message, /lapse10 Guard is on shift at Main Site: Right to work check expired on /);
         assert.match(row.message, /S4 has not ended the shift/);
-        assert.doesNotMatch(row.message, new RegExp(`${g.licence}|HR/lapse-spec|public register|\\.pdf`), 'no licence number, method or evidence');
       }
+      for (const row of operational) {
+        assert.match(row.message, /^lapse10 Guard on the \d\d:\d\d-\d\d:\d\d shift at Main Site needs an urgent eligibility review by your compliance team\. S4 has not ended the shift; Book Off remains available\.$/);
+        assert.doesNotMatch(row.message, /SIA|right to work|licence|expired|confirmed|missing|immigration|visa|permission/i,
+          'no check category, reason, expiry or immigration detail');
+      }
+      for (const row of fresh) {
+        assert.doesNotMatch(row.message, new RegExp(`${g.licence}|HR/lapse-spec|public register|manual document|time.limited|\\.pdf`), 'no licence number, method or evidence');
+      }
+      // Repeated sweeps notify nobody again.
+      await sweep.runComplianceLapseScan();
+      await sweep.runComplianceLapseScan();
+      assert.equal((await notificationsFor(A.id)).length, before.length + fresh.length);
       // In-app only: the sweep writes rows to `notifications` and calls no email, SMS or push service
       // (asserted statically in LAPSE-17).
       assert.equal((await lapses(shift)).length, 1);
@@ -451,12 +467,119 @@ async function main() {
       for (const key of ['id', 'type', 'priority', 'message', 'status', 'createdAt', 'shift', 'guard']) assert.ok(key in lapse, key);
       assert.ok((list.body as any[]).every((a) => typeof a.type === 'string' && typeof a.message === 'string'));
     });
+    // ══ company members acting on alerts ════════════════════════════════════════════════════════════
+    const memberToken = async (c: typeof A, role: string) => login(`${c === A ? 'lapsea' : 'lapseb'}.staff.${role}@example.invalid`);
+    const memberGuard = await guard('lapse18', [A]);
+    await fullChecks(A, memberGuard);
+    const memberShift = await onShift(A, memberGuard);
+    await expireCurrent(A, memberGuard, 'sia');
+    await sweep.runComplianceLapseScan();
+    const [memberAlert] = await lapses(memberShift);
+    // A panic and a Missing Book Off on the same company, which members must not be able to act on.
+    const [{ id: panicId }] = await q(`INSERT INTO safety_alerts ("companyId","guardId","shiftId",type,priority,status,message)
+      VALUES ($1,$2,$3,'panic','critical','open','SOS') RETURNING id`, [A.id, memberGuard.id, memberShift]);
+    const [{ id: bookOffId }] = await q(`INSERT INTO safety_alerts ("companyId","guardId","shiftId",type,priority,status,message)
+      VALUES ($1,$2,$3,'missing_book_off','medium','open','No Book Off') RETURNING id`, [A.id, memberGuard.id, memberShift]);
+
+    await test('LAPSE-18-HR-COMPLIANCE-ACKNOWLEDGES-AND-RESOLVES-A-COMPLIANCE-LAPSE-WITH-REASON-AND-NOTE', async () => {
+      const hr = await memberToken(A, 'hr_compliance');
+      const reasons = await api('GET', `/alerts/${memberAlert.id}/resolution-reasons`, hr);
+      assert.equal(reasons.status, 200, JSON.stringify(reasons.body));
+      const ack = await api('PATCH', `/alerts/${memberAlert.id}/ack`, hr);
+      assert.equal(ack.status, 200, JSON.stringify(ack.body));
+      assert.equal((await api('PATCH', `/alerts/${memberAlert.id}/close`, hr, {})).status, 400, 'no bare close');
+      assert.equal((await api('PATCH', `/alerts/${memberAlert.id}/close`, hr, { resolutionReason: 'valid_check_recorded' })).status, 400, 'a note is mandatory');
+      const closed = await api('PATCH', `/alerts/${memberAlert.id}/close`, hr, {
+        resolutionReason: 'valid_check_recorded', resolutionNote: 'Renewed licence checked on the SIA register and recorded.',
+      });
+      assert.equal(closed.status, 200, JSON.stringify(closed.body));
+      const audits = await q(`SELECT action, "userId", "beforeData", "afterData", "createdAt" FROM audit_logs
+        WHERE "entityType" = 'safety_alert' AND "entityId" = $1 AND action IN ('safety_alert.acknowledged','safety_alert.closed') ORDER BY id`, [memberAlert.id]);
+      assert.deepEqual(audits.map((a) => [a.action, a.userId]), [
+        ['safety_alert.acknowledged', A.staff.hr_compliance],
+        ['safety_alert.closed', A.staff.hr_compliance],
+      ], 'the actor is recorded');
+      assert.equal(audits[0].beforeData.status, 'open');
+      assert.equal(audits[0].afterData.status, 'acknowledged');
+      assert.equal(audits[1].beforeData.status, 'acknowledged');
+      assert.equal(audits[1].afterData.status, 'closed');
+      assert.equal(audits[1].afterData.resolutionReason, 'valid_check_recorded');
+      assert.equal(audits[1].afterData.resolutionNote, 'Renewed licence checked on the SIA register and recorded.');
+      assert.ok(audits.every((a) => a.createdAt), 'with the time');
+    });
+
+    await test('LAPSE-19-HR-COMPLIANCE-CANNOT-ACT-ON-PANIC-MISSING-BOOK-OFF-OR-OTHER-ALERTS', async () => {
+      const hr = await memberToken(A, 'hr_compliance');
+      for (const id of [panicId, bookOffId]) {
+        for (const [method, path, body] of [
+          ['PATCH', `/alerts/${id}/ack`, undefined],
+          ['PATCH', `/alerts/${id}/close`, { resolutionReason: 'other', resolutionNote: 'x' }],
+          ['GET', `/alerts/${id}/resolution-reasons`, undefined],
+        ] as const) {
+          const r = await api(method, path, hr, body);
+          assert.equal(r.status, 403, `${method} ${path}: ${r.status}`);
+        }
+      }
+      const rows = await q(`SELECT status::text AS status FROM safety_alerts WHERE id IN ($1, $2)`, [panicId, bookOffId]);
+      assert.ok(rows.every((r) => r.status === 'open'), 'untouched');
+    });
+
+    await test('LAPSE-20-ROLES-WITHOUT-COMPLIANCE-MANAGE-CANNOT-ACT-AND-OTHER-COMPANIES-ARE-ISOLATED', async () => {
+      const g = await guard('lapse20', [A]);
+      await fullChecks(A, g);
+      const shift = await onShift(A, g);
+      await expireCurrent(A, g, 'sia');
+      await sweep.runComplianceLapseScan();
+      const [alert] = await lapses(shift);
+      for (const role of ['operations', 'control_room', 'finance', 'viewer']) {
+        const r = await api('PATCH', `/alerts/${alert.id}/ack`, await memberToken(A, role));
+        assert.equal(r.status, 403, `${role}: ${r.status}`);
+      }
+      const otherHr = await memberToken(B, 'hr_compliance');
+      assert.equal((await api('PATCH', `/alerts/${alert.id}/ack`, otherHr)).status, 400, 'another company’s HR cannot act');
+      assert.equal((await api('PATCH', `/alerts/${alert.id}/close`, otherHr, { resolutionReason: 'other', resolutionNote: 'x' })).status, 400);
+      assert.equal((await api('PATCH', `/alerts/${alert.id}/ack`, g.token)).status, 403, 'nor the Guard');
+      assert.equal((await one(`SELECT status::text AS s FROM safety_alerts WHERE id = $1`, [alert.id])).s, 'open');
+    });
+
+    await test('LAPSE-21-MEMBERS-SEE-ONLY-THEIR-OWN-COMPANYS-COMPLIANCE-ALERTS', async () => {
+      for (const role of ['hr_compliance', 'operations', 'control_room', 'viewer']) {
+        const list = await api('GET', '/alerts/company', await memberToken(A, role));
+        assert.equal(list.status, 200, role);
+        assert.ok(list.body.length > 0, `${role} sees the company's compliance alerts`);
+        assert.ok(list.body.every((a: any) => a.type === 'compliance_lapse'), `${role} sees no other alert type`);
+        assert.ok(list.body.every((a: any) => a.company?.id === A.id), `${role} sees no other company`);
+      }
+      assert.equal((await api('GET', '/alerts/company', await memberToken(A, 'finance'))).status, 404, 'finance has no compliance.view: unchanged');
+      const bList = await api('GET', '/alerts/company', await memberToken(B, 'hr_compliance'));
+      assert.ok(bList.body.every((a: any) => a.company?.id === B.id));
+    });
+
+    await test('LAPSE-22-THE-OWNER-ACCOUNT-KEEPS-ITS-EXISTING-POWERS', async () => {
+      const list = await api('GET', '/alerts/company', A.token);
+      const types = new Set((list.body as any[]).map((a) => a.type));
+      assert.ok(types.has('panic') && types.has('missing_book_off') && types.has('compliance_lapse'), 'the owner sees every alert');
+      assert.equal((await api('PATCH', `/alerts/${panicId}/ack`, A.token)).status, 200, 'and may still act on a panic alert');
+      assert.equal((await api('PATCH', `/alerts/${panicId}/close`, A.token, { resolutionReason: 'guard_confirmed_safe', resolutionNote: 'Spoke to the guard.' })).status, 200);
+    });
+
+    await test('LAPSE-23-BOOK-OFF-STAYS-AVAILABLE-WHILE-A-MEMBER-HANDLES-THE-ALERT', async () => {
+      const off = await api('POST', '/attendance/check-out', memberGuard.token, { shiftId: memberShift });
+      assert.ok(off.status === 201 || off.status === 200, `Book Off: ${off.status} ${JSON.stringify(off.body)}`);
+      assert.equal((await shiftState(memberShift)).status, 'completed');
+      await sweep.runComplianceLapseScan();
+      assert.equal((await lapses(memberShift)).length, 1, 'no new alert for the same lapse; nothing re-raised after resolution');
+    });
+
     // ══ static guarantees ═══════════════════════════════════════════════════════════════════════════
     await test('LAPSE-17-THE-SWEEP-ONLY-ADDS-RECORDS-AND-USES-NO-EXTERNAL-CHANNEL', async () => {
       const { readFileSync } = await import('node:fs');
       const { join } = await import('node:path');
       const source = readFileSync(join(__dirname, '..', 'src', 'safety-alert', 'safety-alert.service.ts'), 'utf8');
-      const scan = source.split('async runComplianceLapseScan(')[1].split('private formatWindowLabel(')[0];
+      // Executable code only: the doc comments legitimately name the channels the sweep must NOT use.
+      const scan = source.split('async runComplianceLapseScan(')[1].split('private formatWindowLabel(')[0]
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/^\s*\/\/.*$/gm, '');
       assert.doesNotMatch(scan, /email|sms|whatsapp|push|resend|twilio|fetch\(/i, 'in-app notifications only');
       assert.doesNotMatch(scan, /\.update\(|\.delete\(|\.remove\(|UPDATE |DELETE |status = |checkOut|CHECK_OUT|assertGuardMayStartWork/, 'never changes a shift, attendance or an existing alert');
       assert.match(scan, /getGuardSummary\(guard\.id, shift\.company\.id\)/, 'the same company-scoped assessment as the gates');

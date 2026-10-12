@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, In, IsNull, MoreThan, Repository } from 'typeorm';
 import {
@@ -24,7 +24,12 @@ import { WelfareWindowService } from '../operations/welfare-window.service';
 import { OperationalWindowService } from '../operations/operational-window.service';
 import { GuardComplianceService } from '../compliance/guard-compliance.service';
 import { CompanyMembership } from '../company-membership/entities/company-membership.entity';
-import { CompanyMembershipStatus, CompanyPermission, hasPermission } from '../company-membership/company-membership-types';
+import {
+  CompanyMembershipRole,
+  CompanyMembershipStatus,
+  CompanyPermission,
+  hasPermission,
+} from '../company-membership/company-membership-types';
 import { AuditLog } from '../audit-log/entities/audit-log.entity';
 import { Notification } from '../notification/entities/notification.entity';
 import {
@@ -682,7 +687,8 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
     );
 
     const siteName = shift.site?.name || shift.siteName || 'the site';
-    for (const userId of await this.complianceRecipients(manager, shift.company.id)) {
+    const recipients = await this.lapseRecipients(manager, shift.company.id);
+    for (const userId of recipients.compliance) {
       await manager.save(
         manager.create(Notification, {
           user: { id: userId },
@@ -694,23 +700,51 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
       );
       counters.notificationsCreated += 1;
     }
+
+    // Operations and Control Room run the live shift, so they are told an urgent eligibility review is
+    // needed — but not what lapsed: no check category, reason, expiry, licence, immigration status or
+    // evidence. The compliance detail stays with compliance-authorised roles.
+    const window = `${this.formatTimeOfDay(new Date(shift.start), shift.site?.timezone)}-${this.formatTimeOfDay(new Date(shift.end), shift.site?.timezone)}`;
+    for (const userId of recipients.operational) {
+      await manager.save(
+        manager.create(Notification, {
+          user: { id: userId },
+          company: { id: shift.company.id },
+          type: NotificationType.COMPLIANCE_ALERT,
+          title: 'Urgent eligibility review required',
+          message: `${guard.fullName || 'The assigned Guard'} on the ${window} shift at ${siteName} needs an urgent eligibility review by your compliance team. S4 has not ended the shift; Book Off remains available.`,
+        }),
+      );
+      counters.notificationsCreated += 1;
+    }
   }
 
   /**
-   * Who is told: the company owner, and active members whose role carries compliance.manage (Owner, Admin,
-   * HR / Compliance). Never another company's people and never Guards. In-app only: no email, SMS or push.
+   * Who is told, by what they may know. In-app only: no email, SMS, WhatsApp or push. Never another
+   * company's people and never Guards.
+   *   compliance  — the company owner account and active members with compliance.manage (Owner, Admin,
+   *                 HR / Compliance): the full, non-evidential reason.
+   *   operational — active Operations and Control Room members: an eligibility review notice only.
+   * Each user is in at most one list.
    */
-  private async complianceRecipients(manager: EntityManager, companyId: number): Promise<number[]> {
+  private async lapseRecipients(manager: EntityManager, companyId: number): Promise<{ compliance: number[]; operational: number[] }> {
     const [owner] = await manager.query('SELECT "userId" FROM "companies" WHERE id = $1', [companyId]);
     const members = await manager.getRepository(CompanyMembership).find({
       where: { companyId, status: CompanyMembershipStatus.ACTIVE },
     });
-    const ids = new Set<number>();
-    if (owner?.userId) ids.add(Number(owner.userId));
+    const compliance = new Set<number>();
+    const operational = new Set<number>();
+    if (owner?.userId) compliance.add(Number(owner.userId));
     for (const member of members) {
-      if (hasPermission(member.membershipRole, CompanyPermission.COMPLIANCE_MANAGE)) ids.add(member.userId);
+      if (hasPermission(member.membershipRole, CompanyPermission.COMPLIANCE_MANAGE)) compliance.add(member.userId);
     }
-    return [...ids].sort((a, b) => a - b);
+    for (const member of members) {
+      const operationalRole =
+        member.membershipRole === CompanyMembershipRole.OPERATIONS || member.membershipRole === CompanyMembershipRole.CONTROL_ROOM;
+      if (operationalRole && !compliance.has(member.userId)) operational.add(member.userId);
+    }
+    const sorted = (set: Set<number>) => [...set].sort((a, b) => a - b);
+    return { compliance: sorted(compliance), operational: sorted(operational) };
   }
 
   private formatWindowLabel(window: ResolvedOperationalWindow, timezone?: string | null): string {
@@ -771,26 +805,64 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
   }
 
   async findForCompany(userId: number): Promise<SafetyAlert[]> {
-    const company = await this.companyService.findByUserId(userId);
-    if (!company) throw new NotFoundException('Company not found');
-
+    const actor = await this.alertActor(userId);
+    if (actor.owner) {
+      return this.safetyAlertRepo.find({
+        where: { company: { id: actor.companyId } },
+        order: { createdAt: 'DESC' },
+      });
+    }
+    // A company member (not the owner account) sees only its own company's compliance lapse alerts, and
+    // only with compliance.view. Every other alert type stays as before: owner and Platform Admin only.
+    if (!hasPermission(actor.role, CompanyPermission.COMPLIANCE_VIEW)) throw new NotFoundException('Company not found');
     return this.safetyAlertRepo.find({
-      where: { company: { id: company.id } },
+      where: { company: { id: actor.companyId }, type: SafetyAlertType.COMPLIANCE_LAPSE },
       order: { createdAt: 'DESC' },
     });
   }
 
-  async acknowledgeForCompany(userId: number, alertId: number): Promise<SafetyAlert> {
+  /**
+   * Who is acting on a company alert. The company owner account (the legacy owner, resolved exactly as
+   * before) may act on any of its company's alerts. Anyone else must hold an ACTIVE company membership;
+   * what that member may do is decided per alert by memberMayActOn.
+   */
+  private async alertActor(
+    userId: number,
+  ): Promise<{ owner: true; companyId: number; company: SafetyAlert['company'] } | { owner: false; companyId: number; role: CompanyMembershipRole }> {
     const company = await this.companyService.findByUserId(userId);
-    if (!company) throw new NotFoundException('Company not found');
+    if (company) return { owner: true, companyId: company.id, company };
+    const membership = await this.dataSource.getRepository(CompanyMembership).findOne({
+      where: { userId, status: CompanyMembershipStatus.ACTIVE },
+    });
+    if (!membership) throw new NotFoundException('Company not found');
+    return { owner: false, companyId: membership.companyId, role: membership.membershipRole };
+  }
+
+  /**
+   * A company member (Owner / Admin / HR-Compliance membership, i.e. compliance.manage) may acknowledge and
+   * resolve its own company's COMPLIANCE LAPSE alerts and nothing else: panic / SOS, welfare, Missing Book
+   * Off, site requests and incidents stay with the owner account and Platform Admin, as before.
+   */
+  private assertMemberMayAct(role: CompanyMembershipRole, alert: SafetyAlert) {
+    if (alert.type !== SafetyAlertType.COMPLIANCE_LAPSE) {
+      throw new ForbiddenException('Your role can act only on compliance alerts.');
+    }
+    if (!hasPermission(role, CompanyPermission.COMPLIANCE_MANAGE)) {
+      throw new ForbiddenException('Insufficient permissions.');
+    }
+  }
+
+  async acknowledgeForCompany(userId: number, alertId: number): Promise<SafetyAlert> {
+    const actor = await this.alertActor(userId);
 
     const alert = await this.safetyAlertRepo.findOne({ where: { id: alertId } });
     if (!alert) throw new NotFoundException('Safety alert not found');
-    if (alert.company.id !== company.id) {
+    if (alert.company.id !== actor.companyId) {
       throw new BadRequestException('This alert does not belong to the current company');
     }
+    if (!actor.owner) this.assertMemberMayAct(actor.role, alert);
 
-    return this.acknowledge(alert, userId, company);
+    return this.acknowledge(alert, userId, actor.owner ? actor.company : alert.company);
   }
 
   async acknowledgeAsAdmin(userId: number, alertId: number): Promise<SafetyAlert> {
@@ -804,16 +876,16 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
     alertId: number,
     resolution?: ResolveSafetyAlertDto,
   ): Promise<SafetyAlert> {
-    const company = await this.companyService.findByUserId(userId);
-    if (!company) throw new NotFoundException('Company not found');
+    const actor = await this.alertActor(userId);
 
     const alert = await this.safetyAlertRepo.findOne({ where: { id: alertId } });
     if (!alert) throw new NotFoundException('Safety alert not found');
-    if (alert.company.id !== company.id) {
+    if (alert.company.id !== actor.companyId) {
       throw new BadRequestException('This alert does not belong to the current company');
     }
+    if (!actor.owner) this.assertMemberMayAct(actor.role, alert);
 
-    return this.close(alert, userId, company, resolution);
+    return this.close(alert, userId, actor.owner ? actor.company : alert.company, resolution);
   }
 
   async closeAsAdmin(
@@ -838,11 +910,11 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
     if (!alert) throw new NotFoundException('Safety alert not found');
 
     if (!asAdmin) {
-      const company = await this.companyService.findByUserId(userId);
-      if (!company) throw new NotFoundException('Company not found');
-      if (alert.company.id !== company.id) {
+      const actor = await this.alertActor(userId);
+      if (alert.company.id !== actor.companyId) {
         throw new BadRequestException('This alert does not belong to the current company');
       }
+      if (!actor.owner) this.assertMemberMayAct(actor.role, alert);
     }
 
     return {
