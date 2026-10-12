@@ -2,6 +2,7 @@ import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundEx
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, In, IsNull, MoreThan, Repository } from 'typeorm';
 import {
+  GUARD_RAISABLE_ALERT_TYPES,
   SafetyAlert,
   SafetyAlertPriority,
   SafetyAlertStatus,
@@ -129,17 +130,30 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
   }
 
   async createForGuard(userId: number, dto: CreateSafetyAlertDto): Promise<SafetyAlert> {
-    // A compliance lapse is raised only by the backend sweep from the company assessment. A Guard cannot
-    // raise, imitate or pre-empt one.
-    if (dto.type === SafetyAlertType.COMPLIANCE_LAPSE) {
+    // System-generated types (missed Welfare Check, Missing Book Off, compliance lapse, ...) come only from
+    // the server's own sweeps. A Guard may raise only the types in GUARD_RAISABLE_ALERT_TYPES; checked
+    // first, before anything is looked up, so a forged type learns nothing about shifts.
+    const type = dto.type ?? SafetyAlertType.OTHER;
+    if (!GUARD_RAISABLE_ALERT_TYPES.includes(type)) {
       throw new BadRequestException('This alert type is raised by S4 only.');
     }
     const guard = await this.guardProfileService.findByUserId(userId);
     if (!guard) throw new NotFoundException('Guard profile not found');
 
+    // The company, site and Guard all come from the authenticated Guard and THEIR OWN in-progress shift.
+    // Nothing else in the request can name a company, site or Guard (the global whitelist rejects any
+    // such field). A shift that does not exist and a shift that is someone else's are refused with the
+    // same answer, so shift ids cannot be probed.
     let shift = null;
     if (dto.shiftId) {
-      shift = await this.shiftService.findOne(dto.shiftId);
+      try {
+        shift = await this.shiftService.findOne(dto.shiftId);
+      } catch (error) {
+        if (error instanceof NotFoundException) {
+          throw new BadRequestException('This shift is not assigned to the current guard');
+        }
+        throw error;
+      }
       this.shiftService.assertGuardCanOperateShift(shift, guard.id, 'raise a safety alert');
     }
 
@@ -148,7 +162,6 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
       throw new BadRequestException('Safety alerts must be linked to an assigned shift');
     }
 
-    const type = dto.type ?? SafetyAlertType.OTHER;
     const priority =
       type === SafetyAlertType.PANIC
         ? SafetyAlertPriority.CRITICAL
