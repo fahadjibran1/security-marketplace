@@ -29,7 +29,18 @@ export enum SafetyAlertType {
   MISSED_CHECKCALL = 'missed_checkcall',
   MISSING_BOOK_OFF = 'missing_book_off',
   OTHER = 'other',
+  /**
+   * Migration 63. A Guard's mandatory company SIA or Right to Work check expired, was recorded as not
+   * confirmed, or is missing while they are on an in-progress shift. Raised by the backend sweep; never
+   * a panic/SOS alert, and never closes or changes the shift. See SafetyAlertService.runComplianceLapseScan.
+   */
+  COMPLIANCE_LAPSE = 'compliance_lapse',
 }
+
+/** The mandatory company check a compliance lapse alert is about. */
+export type ComplianceLapseCategory = 'sia' | 'right_to_work';
+/** Why it lapsed, from the company assessment's requirement state. */
+export type ComplianceLapseReason = 'expired' | 'not_confirmed' | 'missing';
 
 export enum SafetyAlertPriority {
   LOW = 'low',
@@ -56,6 +67,23 @@ export enum SafetyAlertStatus {
 @Index('uq_safety_alerts_shift_missing_book_off', ['shift'], {
   unique: true,
   where: `"type" = 'missing_book_off'`,
+})
+/**
+ * Migration 63. At most one ACTIVE (open or acknowledged) compliance lapse alert per company, shift and
+ * check category, however many sweeps run and on however many instances.
+ */
+@Index('uq_safety_alerts_compliance_lapse_active', ['company', 'shift', 'complianceCategory'], {
+  unique: true,
+  where: `"type" = 'compliance_lapse' AND "status" IN ('open', 'acknowledged')`,
+})
+/**
+ * Migration 63. The same lapse (same check, same reason) is raised once per shift, ever: closing it is a
+ * decision, and the sweep must not re-raise it five minutes later. A different lapse (a new check that
+ * then lapses, or a change of reason) is a new event and may be raised once the previous one is closed.
+ */
+@Index('uq_safety_alerts_compliance_lapse_key', ['shift', 'complianceCategory', 'lapseKey'], {
+  unique: true,
+  where: `"type" = 'compliance_lapse'`,
 })
 @Entity('safety_alerts')
 export class SafetyAlert {
@@ -128,6 +156,21 @@ export class SafetyAlert {
   /** What Control wrote. Separate from `message`, which is the alert as it was raised. */
   @Column({ type: 'text', nullable: true })
   resolutionNote?: string | null;
+
+  /** Migration 63, compliance_lapse only: 'sia' | 'right_to_work'. NULL on every other alert. */
+  @Column({ type: 'varchar', length: 32, nullable: true })
+  complianceCategory?: ComplianceLapseCategory | null;
+
+  /** Migration 63, compliance_lapse only: 'expired' | 'not_confirmed' | 'missing'. */
+  @Column({ type: 'varchar', length: 32, nullable: true })
+  complianceReason?: ComplianceLapseReason | null;
+
+  /**
+   * Migration 63, compliance_lapse only: category, the lapsed check's id (or 'none') and the reason.
+   * Internal deduplication key; contains no evidence.
+   */
+  @Column({ type: 'varchar', length: 120, nullable: true })
+  lapseKey?: string | null;
 
   @CreateDateColumn()
   createdAt!: Date;

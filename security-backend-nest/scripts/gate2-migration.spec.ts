@@ -3,9 +3,9 @@
  *
  * Against a fresh, disposable PostgreSQL:
  *
- *   M61-01  a fresh database migrates 0 → 61, and the only migration after 61 is 62
- *           (AddGuardComplianceChecks, certified separately by m62-migration.spec.ts). This spec runs the
- *           migrations up to and including 61 only, so 61 is still certified on its own.
+ *   M61-01  a fresh database migrates 0 → 61, and the only migrations after 61 are 62
+ *           (AddGuardComplianceChecks) and 63 (AddComplianceLapseAlerts), each certified by its own spec.
+ *           This spec runs the migrations up to and including 61 only, so 61 is still certified on its own.
  *   M61-02  down() returns exactly to the schema production is on today (60)
  *   M61-03  rows seeded at 60, shaped like production users, survive 60 → 61 untouched
  *   M61-04  every account existing when 61 runs is grandfathered: emailVerificationRequired = false
@@ -82,15 +82,15 @@ async function main() {
 
     // ── fresh database to the head ───────────────────────────────────────────────────────────────────
     const applied = await ds.runMigrations({ transaction: 'each' });
-    await test('M61-01-FRESH-DATABASE-MIGRATES-TO-61-AND-ONLY-62-FOLLOWS', async () => {
+    await test('M61-01-FRESH-DATABASE-MIGRATES-TO-61-AND-ONLY-62-AND-63-FOLLOW', async () => {
       assert.equal(applied.length, 61, `61 migrations apply to a fresh database (got ${applied.length})`);
       assert.equal(applied[59].name, MIGRATION_60);
       assert.equal(applied[60].name, MIGRATION_61, 'Migration 61 is the subject');
-      assert.equal(allMigrationFiles.length, 62, 'exactly 62 migration files');
+      assert.equal(allMigrationFiles.length, 63, 'exactly 63 migration files');
       assert.deepEqual(
         allMigrationFiles.slice(61),
-        ['1720900000008-AddGuardComplianceChecks.ts'],
-        'the only migration after 61 is 62 (AddGuardComplianceChecks)',
+        ['1720900000008-AddGuardComplianceChecks.ts', '1720900000009-AddComplianceLapseAlerts.ts'],
+        'the only migrations after 61 are 62 (AddGuardComplianceChecks) and 63 (AddComplianceLapseAlerts)',
       );
     });
     const head = await snapshot();

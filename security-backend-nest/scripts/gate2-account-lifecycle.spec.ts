@@ -75,10 +75,11 @@ async function main() {
   });
   await ds.initialize();
   const applied = await ds.runMigrations({ transaction: 'each' });
-  // Runs at the head schema: Migration 61 (the subject) is applied, and the head is 62
-  // (AddGuardComplianceChecks), which the booted app's entities also need.
+  // Runs at the head schema: Migration 61 (the subject) is applied, and the head is 63
+  // (AddComplianceLapseAlerts, after 62 AddGuardComplianceChecks), which the booted app's entities need.
   assert.ok(applied.some((m) => m.name === 'AddAccountLifecycleAndVerificationTokens1720900000007'), 'Migration 61 applied');
-  assert.equal(applied[applied.length - 1]?.name, 'AddGuardComplianceChecks1720900000008');
+  assert.ok(applied.some((m) => m.name === 'AddGuardComplianceChecks1720900000008'), 'Migration 62 applied');
+  assert.equal(applied[applied.length - 1]?.name, 'AddComplianceLapseAlerts1720900000009');
 
   const { User, UserRole, UserStatus } = await import('../src/user/entities/user.entity');
   const { GuardProfile } = await import('../src/guard-profile/entities/guard-profile.entity');

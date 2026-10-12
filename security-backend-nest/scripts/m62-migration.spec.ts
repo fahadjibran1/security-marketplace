@@ -3,7 +3,8 @@
  *
  * Against a fresh, disposable PostgreSQL:
  *
- *   M62-01  a fresh database migrates 0 → 62 and 62 is the last migration
+ *   M62-01  a fresh database migrates 0 → 62 (this spec runs migrations up to 62 only), and the only
+ *           migration after 62 is 63 (AddComplianceLapseAlerts, certified by m63-migration.spec.ts)
  *   M62-02  down() returns exactly to 61, the schema production is on today
  *   M62-03  down() removes the table, its indexes and constraints, and nothing else
  *   M62-04  production-shaped rows seeded at 61 (users, companies, Guards with declared SIA / Right to
@@ -49,9 +50,15 @@ const test = async (id: string, fn: () => Promise<void> | void) => {
 async function main() {
   const path = require('node:path');
   const migrationsDir = path.join(__dirname, '..', 'src', 'database', 'migrations');
+  const allMigrationFiles: string[] = require('node:fs').readdirSync(migrationsDir).filter((f: string) => /\.ts$/.test(f)).sort();
+  // Migrations up to and including 62 (1720900000008). Later migrations are certified by their own specs
+  // (m63-migration.spec.ts); excluding them keeps this one about 62.
+  const throughM62 = allMigrationFiles
+    .filter((f) => Number(f.split('-')[0]) <= 1720900000008)
+    .map((f) => path.join(migrationsDir, f));
   const ds = new DataSource({
     type: 'postgres', url, entities: appEntities, synchronize: false, dropSchema: true,
-    migrations: [path.join(migrationsDir, '*.ts')], migrationsTableName: 'typeorm_migrations', logging: false,
+    migrations: throughM62, migrationsTableName: 'typeorm_migrations', logging: false,
   });
   await ds.initialize();
 
@@ -94,12 +101,16 @@ async function main() {
 
     // ── fresh database to the head ───────────────────────────────────────────────────────────────
     const applied = await ds.runMigrations({ transaction: 'each' });
-    await test('M62-01-FRESH-DATABASE-MIGRATES-TO-62-AND-62-IS-LAST', () => {
+    await test('M62-01-FRESH-DATABASE-MIGRATES-TO-62-AND-ONLY-63-FOLLOWS', () => {
       assert.equal(applied.length, 62, `62 migrations apply to a fresh database (got ${applied.length})`);
       assert.equal(applied[60].name, MIGRATION_61);
-      assert.equal(applied[61].name, MIGRATION_62, 'Migration 62 is the subject and the last');
-      const files = require('node:fs').readdirSync(migrationsDir).filter((f: string) => /\.ts$/.test(f));
-      assert.equal(files.length, 62, 'exactly 62 migration files');
+      assert.equal(applied[61].name, MIGRATION_62, 'Migration 62 is the subject');
+      assert.equal(allMigrationFiles.length, 63, 'exactly 63 migration files');
+      assert.deepEqual(
+        allMigrationFiles.slice(62),
+        ['1720900000009-AddComplianceLapseAlerts.ts'],
+        'the only migration after 62 is 63 (AddComplianceLapseAlerts)',
+      );
     });
     const head = await snapshot();
     const headRest = await restOfSchema();
