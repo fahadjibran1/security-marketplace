@@ -46,6 +46,30 @@ at that moment raises "missing check" alerts (see the go/no-go in §3).
   overrides compliance. Book Off always remains available. A new shift cannot start while the check is lapsed (the
   Book On gate). What to do about the live shift is the company's operational and legal decision.
 
+## 1b. Alert creation security (fixed in this release)
+
+**Before:** the Guard alert route (`POST /alerts`) accepted any alert type except `compliance_lapse`, so a Guard
+account could create alerts that look system-generated (`missing_book_off`, `missed_checkcall`, legacy
+`check_call`, `late_checkin`) in its own company's control-room queue and reports. A missing shift id was also
+answered differently (404) from someone else's shift (400), so shift ids could be probed.
+
+**After:**
+- `POST /alerts` is the only public route that creates an alert, and it is Guard-only. A Guard may raise only
+  `panic` (SOS, always stored as critical), `site_request`, the legacy `welfare` site request label, and `other`
+  (the default manual safety report). Every other type is refused with "This alert type is raised by S4 only.",
+  before any shift is looked up, and nothing is written, notified or audited.
+- System types are created only by the server's own sweeps: the welfare sweep (missed Welfare Check evidence and
+  summary, Missing Book Off) and the compliance lapse sweep.
+- Company, site and Guard always come from the authenticated Guard's own in-progress shift. Any company, site, guard
+  or status field in the request is rejected (global whitelist). Another Guard's shift, another company's shift and a
+  shift that does not exist all get the same refusal.
+- Acknowledgement and resolution permissions are unchanged by the fix.
+- Shipped Guard apps (Android vc14, iOS build 13) send only `panic` and `site_request`: unaffected.
+
+**Verification before deployment:** `alert-creation-security.spec.ts` (SEC-01..10) must pass in the release gate. It
+covers every system type refused, SOS and site requests still working, forged ids, isolation, the sweeps still
+creating their alerts, and unchanged acknowledgement / resolution permissions.
+
 ## 2. Deployment mechanics (as configured today)
 
 - **Web (Vercel):** production branch `release/s4-pilot-rc1`. A push deploys app.sfour.co.uk automatically.
@@ -147,7 +171,7 @@ from companies co order by co.id;
 - **Restrictions:** recorded work restrictions are shown as warnings and are not enforced.
 - **Retention:** compliance checks and alerts are kept indefinitely; a retention period (the guide expects the
   employment period plus two years for check evidence) is still to be set.
-- **Pre-existing issue:** a Guard can still create the other system-raised alert types (`missing_book_off`,
-  `missed_checkcall`) through the Guard alert endpoint; only `compliance_lapse` is refused.
+- **Guard-set priority:** a Guard may still set the priority (low to critical) of a site request or manual report;
+  the control-room queue orders by type, not priority, and an SOS is always critical.
 - **Company 8:** its stale `in_progress` test shift is left unchanged by decision. It is outside the compliance
   watch window and raises no Compliance alert.
