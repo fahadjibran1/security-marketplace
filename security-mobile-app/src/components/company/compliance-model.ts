@@ -213,8 +213,18 @@ function expiryIndicator(expiry: string | null | undefined, now: Date): Indicato
 
 // ─── SIA ─────────────────────────────────────────────────────────────────────
 
+/**
+ * Company view: since Migration 62 the company's own SIA check decides, not the Guard's declaration.
+ * Older API responses (no companyChecks) keep the declaration-based reading below.
+ */
 export function siaIndicator(summary: GuardComplianceSummary | null, now: Date = new Date()): Indicator {
   if (!summary) return { label: '—', tone: 'neutral' };
+  if (summary.companyChecks) {
+    const check = summary.companyChecks.sia;
+    if (!check) return { label: 'Not checked', detail: 'No company check recorded', tone: 'danger' };
+    if (check.outcome !== 'confirmed') return { label: 'Not confirmed', detail: `Checked ${formatUkDate(check.checkDate)}`, tone: 'danger' };
+    return expiryIndicator(check.expiryDate, now);
+  }
   if (!summary.siaLicenceNumber || !String(summary.siaLicenceNumber).trim()) return { label: 'Missing', tone: 'danger' };
   if (!summary.siaExpiryDate) return { label: 'No expiry date', tone: 'danger' };
   return expiryIndicator(summary.siaExpiryDate, now);
@@ -235,6 +245,14 @@ const RTW_INDEFINITE_STATUSES = ['permanent', 'indefinite', 'settled', 'british'
 
 export function rightToWorkIndicator(summary: GuardComplianceSummary | null, now: Date = new Date()): Indicator {
   if (!summary) return { label: '—', tone: 'neutral' };
+  if (summary.companyChecks) {
+    const check = summary.companyChecks.rightToWork;
+    if (!check) return { label: 'Not checked', detail: 'No company check recorded', tone: 'danger' };
+    if (check.outcome !== 'confirmed') return { label: 'Not confirmed', detail: `Checked ${formatUkDate(check.checkDate)}`, tone: 'danger' };
+    if (check.rightToWorkExcuse === 'continuous') return { label: 'Continuous', detail: `Checked ${formatUkDate(check.checkDate)}`, tone: 'success' };
+    const expiry = expiryIndicator(check.expiryDate, now);
+    return expiry.tone === 'neutral' ? { label: 'Valid', detail: `Until ${expiry.label}`, tone: 'success' } : expiry;
+  }
   const status = String(summary.rightToWorkStatus ?? '').trim().toLowerCase();
   if (!status) return { label: 'Missing', tone: 'danger' };
   if (RTW_INVALID_STATUSES.includes(status)) {
@@ -326,7 +344,8 @@ export function indexScreeningOutcomes(outcomes: ScreeningOutcome[] | null | und
 
 export type BlockerAction =
   | { kind: 'add_document'; documentType: 'sia_licence' | 'right_to_work' }
-  | { kind: 'update_record'; recordType: 'SIA' | 'RIGHT_TO_WORK' };
+  | { kind: 'update_record'; recordType: 'SIA' | 'RIGHT_TO_WORK' }
+  | { kind: 'record_check'; checkKind: 'sia' | 'right_to_work' };
 
 export type Blocker = {
   key: string;
@@ -357,12 +376,29 @@ export function describeReason(
   reason: string,
   severity: Blocker['severity'],
   canManage: boolean,
+  /** True when the summary carries the company's own checks (company view since Migration 62). */
+  companyChecks = false,
 ): Pick<Blocker, 'nextStep' | 'action'> {
   const r = reason.toLowerCase();
   const documentType = documentTypeFromReason(reason);
   const docName = documentType ? DOCUMENT_NAMES[documentType] : 'document';
   const managerOnly = (step: string, restricted: string, action: BlockerAction | null) =>
     canManage ? { nextStep: step, action } : { nextStep: restricted, action: null };
+
+  // The company's own SIA and right to work checks (company view since Migration 62).
+  if (companyChecks) {
+    const sia: BlockerAction = { kind: 'record_check', checkKind: 'sia' };
+    const rtw: BlockerAction = { kind: 'record_check', checkKind: 'right_to_work' };
+    const restricted = 'A compliance manager needs to record the check.';
+    if (/^sia licence check not recorded$/.test(r)) return managerOnly('Check the SIA licence and record your check.', restricted, sia);
+    if (/^sia licence check did not confirm/.test(r)) return managerOnly('Do not deploy. If the licence is reinstated or renewed, check it again and record the new check.', restricted, sia);
+    if (/^sia licence expired$/.test(r)) return managerOnly('Check the renewed licence and record the new check.', restricted, sia);
+    if (/^sia licence expires within/.test(r)) return managerOnly('When the licence is renewed, check it and record the new check.', restricted, sia);
+    if (/^right to work check not recorded$/.test(r)) return managerOnly('Carry out a right to work check and record it.', restricted, rtw);
+    if (/^right to work check did not confirm/.test(r)) return managerOnly('Do not deploy. If the Guard can later show permission to work, carry out a new check and record it.', restricted, rtw);
+    if (/^right to work permission expired$/.test(r)) return managerOnly('Carry out a follow-up right to work check and record it.', restricted, rtw);
+    if (/^right to work permission expires within/.test(r)) return managerOnly('Carry out the follow-up right to work check on or before the expiry date, then record it.', restricted, rtw);
+  }
 
   // Guard profile fields (only the Guard can change these)
   if (/^missing sia licence number/.test(r)) return { nextStep: 'Ask the Guard to add their SIA licence number.', action: null };
@@ -407,7 +443,7 @@ export function buildBlockers(summary: GuardComplianceSummary | null, canManage:
       key: `${severity}-${index}-${reason}`,
       severity,
       text: prettyReason(reason),
-      ...describeReason(reason, severity, canManage),
+      ...describeReason(reason, severity, canManage, Boolean(summary.companyChecks)),
     }));
   return [...make(summary.blockingReasons, 'blocking'), ...make(summary.expiringReasons, 'expiring')];
 }

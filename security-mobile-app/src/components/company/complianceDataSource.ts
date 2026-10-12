@@ -12,7 +12,9 @@ import {
   listCompanyGuardComplianceStatuses,
   listCompanyGuards,
   listCompanyScreeningOutcomes,
+  listComplianceChecks,
   listComplianceRecords,
+  recordComplianceCheck,
   saveComplianceRecord,
   uploadGuardDocument,
   verifyGuardDocument,
@@ -22,6 +24,8 @@ import type {
   CompanyScreeningOutcome,
   ComplianceRecord,
   ComplianceRecordPayload,
+  ComplianceCheck,
+  RecordComplianceCheckPayload,
   GuardComplianceSummary,
   GuardDocument,
   GuardDocumentAccess,
@@ -41,6 +45,10 @@ export type ComplianceDataSource = {
   accessDocument(documentId: number): Promise<GuardDocumentAccess>;
   verifyDocument(documentId: number, verified: boolean): Promise<GuardDocument>;
   saveRecord(payload: ComplianceRecordPayload): Promise<ComplianceRecord>;
+  /** This company's SIA / Right to Work check history for one Guard (loaded when the manager asks for it). */
+  listChecks(guardId: number): Promise<ComplianceCheck[]>;
+  /** Records a company check. The server derives the company and re-assesses the Guard. */
+  recordCheck(payload: RecordComplianceCheckPayload): Promise<ComplianceCheck>;
   pickDocument(): Promise<PickedDocument | null>;
   /** create upload → PUT to the signed URL → complete. Throws with a user-safe message on failure. */
   uploadDocument(input: { guardId: number; type: string; file: PickedDocument; expiryDate?: string | null }): Promise<void>;
@@ -54,6 +62,8 @@ export const liveComplianceDataSource: ComplianceDataSource = {
   accessDocument: (documentId) => accessGuardDocument(documentId),
   verifyDocument: (documentId, verified) => verifyGuardDocument(documentId, verified),
   saveRecord: (payload) => saveComplianceRecord(payload),
+  listChecks: (guardId) => listComplianceChecks(guardId),
+  recordCheck: (payload) => recordComplianceCheck(payload),
 
   async pickDocument() {
     const result = await DocumentPicker.getDocumentAsync({

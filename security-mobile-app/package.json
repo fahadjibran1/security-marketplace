@@ -24,6 +24,7 @@
     "test:screening-ui": "node scripts/screening-ui.spec.cjs",
     "test:screening-review": "node scripts/screening-review-refresh.spec.cjs",
     "test:company-compliance": "node scripts/company-compliance-safety.spec.cjs",
+    "test:compliance-checks": "node scripts/company-compliance-checks.spec.cjs",
     "test:guard-navigation": "node scripts/guard-navigation.spec.cjs",
     "test:workforce-invitations": "node scripts/workforce-invitation-ui.spec.cjs",
     "test:session-expiry": "node scripts/session-expiry.spec.cjs",

@@ -468,6 +468,68 @@ export interface GuardComplianceSummary {
   expiringReasons: string[];
   missingDocuments: string[];
   documents: GuardDocument[];
+  /**
+   * Company view: this company's current SIA and Right to Work checks. These, not the Guard's own
+   * declarations above, decide eligibility. Absent from older API responses and from the Guard's own view.
+   */
+  companyChecks?: { sia: CompanyCheckSummary | null; rightToWork: CompanyCheckSummary | null } | null;
+  /** Company view: each requirement for this company and whether it is met. */
+  requirements?: ComplianceRequirement[];
+}
+
+export type ComplianceCheckKind = 'sia' | 'right_to_work';
+
+/** The current company check of one kind, as carried on the compliance summary (no evidence reference). */
+export interface CompanyCheckSummary {
+  id: number;
+  outcome: 'confirmed' | 'not_confirmed' | string;
+  method: string;
+  rightToWorkExcuse: 'continuous' | 'time_limited' | 'time_limited_pvn' | string | null;
+  licenceNumber: string | null;
+  checkDate: string;
+  expiryDate: string | null;
+  workRestrictions: string | null;
+  checkedByName: string;
+  recordedByUserId: number | null;
+  createdAt: string;
+}
+
+export interface ComplianceRequirement {
+  key: 'sia_check' | 'right_to_work_check' | 'sia_document' | 'right_to_work_document' | string;
+  label: string;
+  state: 'met' | 'expiring' | 'missing' | 'expired' | 'not_confirmed' | 'unverified' | string;
+  detail: string;
+}
+
+/** One row of a company's check history (GET /compliance/checks). Evidence fields are null without compliance.manage. */
+export interface ComplianceCheck extends Omit<CompanyCheckSummary, 'createdAt'> {
+  guardId: number;
+  kind: ComplianceCheckKind | string;
+  evidenceReference: string | null;
+  evidenceDocumentId: number | null;
+  changeType: 'new_check' | 'correction' | string;
+  changeReason: string | null;
+  supersededAt: string | null;
+  supersededByCheckId: number | null;
+  createdAt: string;
+}
+
+export interface RecordComplianceCheckPayload {
+  guardId: number;
+  kind: ComplianceCheckKind;
+  outcome: 'confirmed' | 'not_confirmed';
+  method: string;
+  rightToWorkExcuse?: string | null;
+  licenceNumber?: string | null;
+  checkDate: string;
+  expiryDate?: string | null;
+  workRestrictions?: string | null;
+  checkedByName: string;
+  evidenceReference?: string | null;
+  evidenceDocumentId?: number | null;
+  replacesCheckId?: number | null;
+  changeType?: 'new_check' | 'correction';
+  changeReason?: string | null;
 }
 
 export interface GuardAvailabilityRule {

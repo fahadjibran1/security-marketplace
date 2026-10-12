@@ -8,6 +8,7 @@ import type {
   CompanyScreeningOutcome,
   ComplianceRecord,
   ComplianceRecordPayload,
+  RecordComplianceCheckPayload,
   GuardComplianceSummary,
   GuardDocument,
 } from '../../types/models';
@@ -323,6 +324,22 @@ export function CompanyComplianceWorkspace({
     return null;
   }, [ds, load, showNotice]);
 
+  const recordCheck = React.useCallback(async (
+    guardId: number,
+    payload: RecordComplianceCheckPayload,
+  ): Promise<string | null> => {
+    if (payload.guardId !== guardId) return 'The selected guard changed. Nothing was saved. Reopen the guard and try again.';
+    try {
+      await ds.recordCheck(payload);
+    } catch (error) {
+      return formatApiErrorMessage(error, 'Unable to save the check.');
+    }
+    // The server re-assesses the Guard; reloading shows the recalculated status and what is still needed.
+    await load('refresh');
+    showNotice({ tone: 'success', message: `${payload.kind === 'sia' ? 'SIA licence' : 'Right to work'} check saved. Compliance has been recalculated.` });
+    return null;
+  }, [ds, load, showNotice]);
+
   const verificationDialog = pendingVerification
     ? buildVerificationDialog({ guardName: pendingVerification.guardName, document: pendingVerification.document, verified: pendingVerification.verified })
     : null;
@@ -519,6 +536,8 @@ export function CompanyComplianceWorkspace({
             onPickDocument={() => ds.pickDocument()}
             onUploadDocument={(input) => uploadDocument(activeRow.guardId, input)}
             onSaveRecord={(payload) => saveRecord(activeRow.guardId, payload)}
+            onRecordCheck={(payload) => recordCheck(activeRow.guardId, payload)}
+            onLoadCheckHistory={() => ds.listChecks(activeRow.guardId)}
             onReview={() => load('refresh')}
           />
           </Fragment>

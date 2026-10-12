@@ -2,7 +2,14 @@ import * as React from 'react';
 import { Fragment } from 'react/jsx-runtime';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import type { ComplianceRecord, ComplianceRecordPayload, GuardDocument } from '../../types/models';
+import type {
+  ComplianceCheck,
+  ComplianceCheckKind,
+  ComplianceRecord,
+  ComplianceRecordPayload,
+  GuardDocument,
+  RecordComplianceCheckPayload,
+} from '../../types/models';
 import { colors, radii, spacing } from '../../theme';
 import { StatusBadge } from '../StatusBadge';
 import { Button } from '../ui/Button';
@@ -32,6 +39,8 @@ import {
   UK_DATE_PLACEHOLDER,
 } from './ukDate';
 import type { PickedDocument } from './complianceDataSource';
+import { CheckFormMode, CompanyCheckSection } from './CompanyCheckSection';
+import { outstandingRequirements, requirementPresentation } from './compliance-checks';
 
 const IS_WEB = typeof document !== 'undefined';
 const REQUIRED_TYPES: Array<'sia_licence' | 'right_to_work'> = ['sia_licence', 'right_to_work'];
@@ -56,6 +65,10 @@ export type ComplianceGuardDrawerBodyProps = {
   /** Resolves to an error message, or null on success. */
   onUploadDocument: (input: { type: string; file: PickedDocument; expiryDate: string }) => Promise<string | null>;
   onSaveRecord: (payload: Omit<ComplianceRecordPayload, 'guardId'>) => Promise<string | null>;
+  /** Records a company SIA / Right to Work check for this Guard. Resolves to an error message, or null on success. */
+  onRecordCheck: (payload: RecordComplianceCheckPayload) => Promise<string | null>;
+  /** This company's check history for this Guard. */
+  onLoadCheckHistory: () => Promise<ComplianceCheck[]>;
   onReview: () => void;
 };
 
@@ -196,9 +209,15 @@ export function ComplianceGuardDrawerBody(props: ComplianceGuardDrawerBodyProps)
     else setRecordOpen(false);
   };
 
+  // ── Company checks: which check form is open (here, so a blocker's action can open it) ──
+  const [checkForm, setCheckForm] = React.useState<{ kind: ComplianceCheckKind; mode: CheckFormMode } | null>(null);
+  const companyView = Boolean(summary?.companyChecks);
+  const stillNeeded = outstandingRequirements(summary?.requirements);
+
   const runAction = (action: BlockerAction | null) => {
     if (!action) return;
     if (action.kind === 'add_document') openUpload(action.documentType);
+    else if (action.kind === 'record_check') setCheckForm({ kind: action.checkKind, mode: 'new' });
     else openRecord(action.recordType);
   };
 
@@ -231,7 +250,48 @@ export function ComplianceGuardDrawerBody(props: ComplianceGuardDrawerBodyProps)
         )}
       </Section>
 
-      {summary ? (
+      {/* ── What is still needed (company view) ──────────────────────── */}
+      {summary && companyView ? (
+        <Section title="Still needed">
+          {stillNeeded.length === 0 ? (
+            <Text style={styles.hint}>All requirements for your company are met.</Text>
+          ) : (
+            stillNeeded.map((requirement) => {
+              const badge = requirementPresentation(requirement);
+              return (
+                <View key={requirement.key} style={styles.requirement}>
+                  <StatusBadge label={badge.label} tone={badge.tone} size="small" />
+                  <View style={styles.requirementText}>
+                    <Text style={styles.requirementLabel}>{requirement.label}</Text>
+                    <Text style={styles.meta}>{requirement.detail}</Text>
+                  </View>
+                </View>
+              );
+            })
+          )}
+          <Text style={styles.hint}>S4 screening is optional and is not needed for the rota.</Text>
+        </Section>
+      ) : null}
+
+      {summary && companyView ? (
+        <>
+          {(['sia', 'right_to_work'] as const).map((kind) => (
+            <View key={kind}>
+              <CompanyCheckSection
+                kind={kind}
+                guardId={row.guardId}
+                summary={summary}
+                canManage={canManage}
+                formMode={checkForm?.kind === kind ? checkForm.mode : null}
+                onOpenForm={(mode) => setCheckForm({ kind, mode })}
+                onCloseForm={() => setCheckForm(null)}
+                onSubmit={props.onRecordCheck}
+                onLoadHistory={props.onLoadCheckHistory}
+              />
+            </View>
+          ))}
+        </>
+      ) : summary ? (
         <>
           {/* ── SIA ───────────────────────────────────────────────────── */}
           <Section title="SIA licence">
@@ -283,7 +343,7 @@ export function ComplianceGuardDrawerBody(props: ComplianceGuardDrawerBodyProps)
                 {blocker.action ? (
                   <View style={styles.actions}>
                     <Button
-                      label={blocker.action.kind === 'add_document' ? 'Add document' : 'Update record'}
+                      label={blocker.action.kind === 'add_document' ? 'Add document' : blocker.action.kind === 'record_check' ? 'Record check' : 'Update record'}
                       variant="secondary"
                       size="sm"
                       onPress={() => runAction(blocker.action)}
@@ -523,6 +583,10 @@ const styles = StyleSheet.create({
   meta: { fontSize: 12, color: colors.textSecondary, lineHeight: 17 },
   error: { fontSize: 13, color: colors.danger, fontWeight: '600' },
   actions: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.xs },
+
+  requirement: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm, paddingVertical: 2 },
+  requirementText: { flex: 1, minWidth: 0, gap: 1 },
+  requirementLabel: { fontSize: 13, color: colors.textPrimary, fontWeight: '600' },
 
   blocker: {
     gap: 4,

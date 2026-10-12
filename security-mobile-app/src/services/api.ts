@@ -25,6 +25,8 @@ import {
   CompanyScreeningOutcome,
   ComplianceRecord,
   ComplianceRecordPayload,
+  ComplianceCheck,
+  RecordComplianceCheckPayload,
   CoverageShiftRow,
   CoverageSiteRow,
   ContractPricingRule,
@@ -800,6 +802,19 @@ export function listMyComplianceRecords() {
 export function saveComplianceRecord(payload: ComplianceRecordPayload) {
   return request<ComplianceRecord>('/compliance', {
     method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+}
+
+/** A company's own SIA / Right to Work check history for one Guard, newest first. */
+export function listComplianceChecks(guardId: number) {
+  return request<ComplianceCheck[]>(`/compliance/checks?guardId=${encodeURIComponent(String(guardId))}`);
+}
+
+/** Records a company check, or a new version of the current one (append-only on the server). */
+export function recordComplianceCheck(payload: RecordComplianceCheckPayload) {
+  return request<ComplianceCheck>('/compliance/checks', {
+    method: 'POST',
     body: JSON.stringify(payload),
   });
 }
