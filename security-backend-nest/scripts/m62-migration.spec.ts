@@ -19,6 +19,8 @@
  *   M62-10  up() is safe to repeat statement by statement
  *   M62-11  no PostgreSQL enum types; no synchronize; the entity and the migration agree (no drift
  *           for guard_compliance_checks, and no drift added anywhere else)
+ *   M62-12  rollback: the previous release's pre-deploy migration run against a 62 database applies
+ *           nothing, fails nothing and keeps recorded checks
  *
  * Needs M62_MIGRATION_DATABASE_URL pointing at a DISPOSABLE local database — it drops the schema.
  */
@@ -264,6 +266,29 @@ async function main() {
       }
       assert.deepEqual(await snapshot(), head);
       assert.deepEqual(await dumpRows(), before);
+    });
+
+    await test('M62-12-PREVIOUS-RELEASE-PREDEPLOY-AGAINST-A-62-DATABASE-IS-A-NO-OP', async () => {
+      // A Render rollback redeploys the previous release, whose preDeployCommand runs migration:run with
+      // migrations only up to 61. Against a database that already recorded 62 it must apply nothing,
+      // fail nothing and leave the table and its rows alone.
+      const files = require('node:fs').readdirSync(migrationsDir).filter((f: string) => /\.ts$/.test(f))
+        .filter((f: string) => Number(f.split('-')[0]) <= 1720900000007).map((f: string) => path.join(migrationsDir, f));
+      const previous = new DataSource({
+        type: 'postgres', url, entities: appEntities.filter((e: any) => e.name !== 'GuardComplianceCheck'),
+        synchronize: false, migrations: files, migrationsTableName: 'typeorm_migrations', logging: false,
+      });
+      await previous.initialize();
+      try {
+        const [{ id: keep }] = await ds.query(`INSERT INTO ${TABLE} ("companyId","guardId",kind,outcome,method,"checkDate","checkedByName") VALUES ($1,$2,'sia','confirmed','sia_public_register','2026-10-01','Rehearsal') RETURNING id`, [company.id, guards[1]]);
+        assert.equal((await previous.runMigrations({ transaction: 'each' })).length, 0);
+        assert.equal(await migrationCount(), 62);
+        assert.equal(Number((await ds.query(`SELECT count(*)::int n FROM ${TABLE} WHERE id = $1`, [keep]))[0].n), 1, 'recorded checks survive a rollback');
+        await ds.query(`DELETE FROM ${TABLE}`);
+      } finally {
+        await previous.destroy();
+      }
+      assert.deepEqual(await snapshot(), head);
     });
 
     await test('M62-11-NO-ENUMS-NO-SYNCHRONIZE-NO-DRIFT', async () => {
