@@ -620,7 +620,23 @@ async function main() {
     await test('CHK-GATE-02-EVERY-ASSIGNMENT-PATH-STILL-CALLS-THE-GATE-AND-NONE-WAS-WEAKENED', () => {
       const src = (rel: string) => readFileSync(join(__dirname, '..', 'src', rel), 'utf8');
       const shift = src('shift/shift.service.ts');
-      assert.equal((shift.match(/this\.complianceService\.assertGuardAssignable\(/g) || []).length, 4, 'create, createForUser context, offer acceptance, guard change');
+      assert.equal(
+        (shift.match(/this\.complianceService\.assertGuardAssignable\(/g) || []).length,
+        5,
+        'create, createForUser context, offer acceptance, guard change, and (phase 1B) the start-of-work gate',
+      );
+      // Phase 1B: both routes that start work run the shared start-of-work gate.
+      const startGate = shift.split('async assertGuardMayStartWork(')[1].split('async findOne(')[0];
+      assert.match(startGate, /ensureActiveRelationship\(companyId, guardId\)[\s\S]*assertGuardAssignable\(companyId, guardId\)/);
+      assert.match(
+        shift.split('async updateForUser(')[1].split('async removeForUser(')[0],
+        /nextStatus === 'in_progress' && currentStatus !== 'in_progress' && nextGuard\) \{\s*await this\.assertGuardMayStartWork\(/,
+      );
+      const attendance = src('attendance/attendance.service.ts');
+      const checkIn = attendance.split('async checkIn(')[1].split('async checkOut(')[0];
+      assert.match(checkIn, /await this\.assertMayBookOn\(/);
+      assert.match(attendance, /await this\.shiftService\.assertGuardMayStartWork\(shift\.company\.id, guardId\)/);
+      assert.doesNotMatch(attendance.split('async checkOut(')[1].split('private async verifyAttendanceEvidence(')[0], /assertGuardMayStartWork|assertMayBookOn/, 'Book Off is never gated');
       assert.match(src('availability/availability.service.ts'), /this\.complianceService\.assertGuardAssignable\(/);
       assert.match(src('rota-slot/rota-slot.service.ts').split('async assignPosition(')[1].split('async assignMultiple(')[0], /assertGuardCanTakeShift/);
       const gate = src('compliance/compliance.service.ts').split('async assertGuardAssignable')[1].split('async getBlockingRecords')[0];
