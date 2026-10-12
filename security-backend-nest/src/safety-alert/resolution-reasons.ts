@@ -65,6 +65,19 @@ export const EMERGENCY_RESOLUTION_REASONS = [
   'false_activation',
 ] as const;
 
+/**
+ * A mandatory company SIA / Right to Work check lapsed while the Guard was on shift (Migration 63).
+ * Every value is a statement about what the company did; a note is always required, because this is
+ * evidence of how a possible illegal-working or unlicensed-working situation was handled.
+ */
+export const COMPLIANCE_LAPSE_RESOLUTION_REASONS = [
+  'guard_stood_down',
+  'valid_check_recorded',
+  'check_record_corrected',
+  'escalated_to_management',
+  'other',
+] as const;
+
 /** Anything else durable on the alert table: late check-in and `other`. */
 export const GENERAL_ALERT_RESOLUTION_REASONS = [
   'resolved_by_control',
@@ -91,6 +104,7 @@ export type ResolutionReason =
   | (typeof SITE_REQUEST_RESOLUTION_REASONS)[number]
   | (typeof EMERGENCY_RESOLUTION_REASONS)[number]
   | (typeof GENERAL_ALERT_RESOLUTION_REASONS)[number]
+  | (typeof COMPLIANCE_LAPSE_RESOLUTION_REASONS)[number]
   | (typeof INCIDENT_RESOLUTION_REASONS)[number];
 
 /** The reasons a given alert type may be closed with. */
@@ -108,6 +122,8 @@ export function alertResolutionReasons(type: SafetyAlertType): readonly string[]
       return SITE_REQUEST_RESOLUTION_REASONS;
     case SafetyAlertType.PANIC:
       return EMERGENCY_RESOLUTION_REASONS;
+    case SafetyAlertType.COMPLIANCE_LAPSE:
+      return COMPLIANCE_LAPSE_RESOLUTION_REASONS;
     default:
       return GENERAL_ALERT_RESOLUTION_REASONS;
   }

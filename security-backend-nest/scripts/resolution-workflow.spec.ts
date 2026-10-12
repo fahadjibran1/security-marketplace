@@ -124,6 +124,7 @@ async function main() {
     repo(SafetyAlert), repo(DailyLog), repo(AttendanceEvent), repo(Shift),
     {} as never, {} as never, companyServiceStub, auditLogService,
     notificationStub, new WelfareWindowService(windowEngine), windowEngine, ds,
+    { getGuardSummary: async () => { throw new Error('compliance lapse scan not exercised by this spec'); } } as never,
   );
   // The sweep timer belongs to the running application, not to a test process.
   alertService.onModuleDestroy();

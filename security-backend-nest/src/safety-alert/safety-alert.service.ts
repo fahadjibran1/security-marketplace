@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, EntityManager, In, IsNull, Repository } from 'typeorm';
+import { DataSource, EntityManager, In, IsNull, MoreThan, Repository } from 'typeorm';
 import {
   SafetyAlert,
   SafetyAlertPriority,
@@ -22,6 +22,18 @@ import { Shift } from '../shift/entities/shift.entity';
 import { GuardProfile } from '../guard-profile/entities/guard-profile.entity';
 import { WelfareWindowService } from '../operations/welfare-window.service';
 import { OperationalWindowService } from '../operations/operational-window.service';
+import { GuardComplianceService } from '../compliance/guard-compliance.service';
+import { CompanyMembership } from '../company-membership/entities/company-membership.entity';
+import { CompanyMembershipStatus, CompanyPermission, hasPermission } from '../company-membership/company-membership-types';
+import { AuditLog } from '../audit-log/entities/audit-log.entity';
+import { Notification } from '../notification/entities/notification.entity';
+import {
+  COMPLIANCE_LAPSE_MONITOR_HOURS_AFTER_END,
+  ComplianceLapse,
+  complianceLapsesFrom,
+  describeLapse,
+  lapseAlertMessage,
+} from './compliance-lapse';
 // What satisfies a Welfare Check — a Guard's scheduled "check call" or a supervisor "welfare check" — is now
 // decided in one place, alongside the window engine, rather than by a list local to this sweep.
 import {
@@ -42,6 +54,16 @@ const MISSING_BOOK_OFF_GRACE_MINUTES = 15;
  * namespace (534_401_400) so the two can never collide.
  */
 const WELFARE_SWEEP_LOCK_NAMESPACE = 534_401_401;
+
+/** Advisory-lock namespace for the compliance lapse sweep, one lock per shift. */
+const COMPLIANCE_LAPSE_LOCK_NAMESPACE = 534_401_402;
+
+export type ComplianceLapseSweepCounters = {
+  shiftsChecked: number;
+  shiftsSkippedLocked: number;
+  alertsRaised: number;
+  notificationsCreated: number;
+};
 
 type WelfareSweepCounters = {
   shiftsChecked: number;
@@ -75,13 +97,21 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
     private readonly welfareWindowService: WelfareWindowService,
     private readonly windowEngine: OperationalWindowService,
     private readonly dataSource: DataSource,
+    private readonly guardComplianceService: GuardComplianceService,
   ) {}
 
+  /**
+   * The backend's own five-minute sweep. Started by the application at boot, independent of any page being
+   * open, and re-established by every deploy or restart. Each scan logs its own failure and the next tick
+   * simply runs again; a failing welfare scan never stops the compliance scan. Per-shift advisory locks and
+   * unique indexes make overlapping or concurrent runs safe.
+   */
   onModuleInit() {
     this.welfareInterval = setInterval(() => {
-      this.runMissedWelfareChecks().catch((error) =>
-        this.logger.error(`Missed welfare check scan failed: ${error?.message || error}`),
-      );
+      this.runMissedWelfareChecks()
+        .catch((error) => this.logger.error(`Missed welfare check scan failed: ${error?.message || error}`))
+        .then(() => this.runComplianceLapseScan())
+        .catch((error) => this.logger.error(`Compliance lapse scan failed: ${error?.message || error}`));
     }, 5 * 60 * 1000);
   }
 
@@ -94,6 +124,11 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
   }
 
   async createForGuard(userId: number, dto: CreateSafetyAlertDto): Promise<SafetyAlert> {
+    // A compliance lapse is raised only by the backend sweep from the company assessment. A Guard cannot
+    // raise, imitate or pre-empt one.
+    if (dto.type === SafetyAlertType.COMPLIANCE_LAPSE) {
+      throw new BadRequestException('This alert type is raised by S4 only.');
+    }
     const guard = await this.guardProfileService.findByUserId(userId);
     if (!guard) throw new NotFoundException('Guard profile not found');
 
@@ -542,6 +577,142 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /**
+   * Compliance lapse sweep (Migration 63).
+   *
+   * For every in_progress shift still operationally live (scheduled end within the last
+   * COMPLIANCE_LAPSE_MONITOR_HOURS_AFTER_END hours), re-reads the shift company's own assessment of the Guard
+   * and raises one critical compliance_lapse alert per lapsed SIA / Right to Work check: expired, recorded as
+   * not confirmed, or missing.
+   *
+   * It only ever ADDS an alert, an audit entry and in-app notifications. It never books the Guard off,
+   * changes the shift, removes the Guard, reassigns cover or overrides compliance. Closing the alert is a
+   * company decision made through the existing acknowledge / close lifecycle.
+   *
+   * Idempotent and concurrency-safe: a per-shift advisory lock (skip if held) plus two partial unique
+   * indexes (one active alert per company + shift + category; one alert per distinct lapse ever) with
+   * ON CONFLICT DO NOTHING, so repeated sweeps and concurrent instances converge on one row.
+   */
+  async runComplianceLapseScan(now: Date = new Date()): Promise<ComplianceLapseSweepCounters> {
+    const watchFrom = new Date(now.getTime() - COMPLIANCE_LAPSE_MONITOR_HOURS_AFTER_END * 3_600_000);
+    const shifts = await this.shiftRepo.find({
+      where: { status: 'in_progress', end: MoreThan(watchFrom) },
+      order: { start: 'ASC' },
+    });
+    const counters: ComplianceLapseSweepCounters = { shiftsChecked: 0, shiftsSkippedLocked: 0, alertsRaised: 0, notificationsCreated: 0 };
+
+    for (const shift of shifts) {
+      const guard = shift.guard ?? shift.assignment?.guard;
+      if (!guard?.id || !shift.company?.id) continue;
+      counters.shiftsChecked += 1;
+      const summary = await this.guardComplianceService.getGuardSummary(guard.id, shift.company.id);
+      const lapses = complianceLapsesFrom(summary);
+      if (!lapses.length) continue;
+
+      await this.dataSource.transaction(async (manager) => {
+        const [{ locked }] = await manager.query('SELECT pg_try_advisory_xact_lock($1, $2) AS locked', [
+          COMPLIANCE_LAPSE_LOCK_NAMESPACE,
+          shift.id,
+        ]);
+        if (!locked) {
+          counters.shiftsSkippedLocked += 1;
+          return;
+        }
+        for (const lapse of lapses) {
+          await this.raiseComplianceLapse(manager, shift, guard, lapse, now, counters);
+        }
+      });
+    }
+    return counters;
+  }
+
+  /** One lapse: insert-or-ignore the alert; only a NEW row gets an audit entry and notifications. */
+  private async raiseComplianceLapse(
+    manager: EntityManager,
+    shift: Shift,
+    guard: GuardProfile,
+    lapse: ComplianceLapse,
+    now: Date,
+    counters: ComplianceLapseSweepCounters,
+  ) {
+    const inserted = await manager
+      .createQueryBuilder()
+      .insert()
+      .into(SafetyAlert)
+      .values({
+        company: { id: shift.company.id },
+        guard: { id: guard.id },
+        shift: { id: shift.id },
+        type: SafetyAlertType.COMPLIANCE_LAPSE,
+        // Critical so it ranks with the most urgent work. Never type PANIC: every SOS / emergency surface
+        // keys on the panic type, so this cannot be counted or shown as an SOS.
+        priority: SafetyAlertPriority.CRITICAL,
+        status: SafetyAlertStatus.OPEN,
+        welfareWindowIndex: null,
+        complianceCategory: lapse.category,
+        complianceReason: lapse.reason,
+        lapseKey: lapse.key,
+        message: lapseAlertMessage(lapse),
+      })
+      .orIgnore()
+      .execute();
+    const identifiers = (inserted.identifiers ?? []).filter(Boolean);
+    if (!identifiers.length) return;
+    const alertId = Number((identifiers[0] as { id?: number }).id);
+    counters.alertsRaised += 1;
+
+    // Same transaction as the alert: the alert, its audit entry and its notifications commit together.
+    await manager.save(
+      manager.create(AuditLog, {
+        company: { id: shift.company.id },
+        user: null,
+        action: 'shift.compliance_lapse_detected',
+        entityType: 'safety_alert',
+        entityId: alertId,
+        afterData: {
+          shiftId: shift.id,
+          guardId: guard.id,
+          siteId: shift.site?.id ?? null,
+          category: lapse.category,
+          reason: lapse.reason,
+          checkId: lapse.checkId,
+          detectedAt: now.toISOString(),
+        },
+      }),
+    );
+
+    const siteName = shift.site?.name || shift.siteName || 'the site';
+    for (const userId of await this.complianceRecipients(manager, shift.company.id)) {
+      await manager.save(
+        manager.create(Notification, {
+          user: { id: userId },
+          company: { id: shift.company.id },
+          type: NotificationType.COMPLIANCE_ALERT,
+          title: 'Urgent compliance review required',
+          message: `${guard.fullName || 'A Guard'} is on shift at ${siteName}: ${describeLapse(lapse)}. Review it now in Live Operations. S4 has not ended the shift.`,
+        }),
+      );
+      counters.notificationsCreated += 1;
+    }
+  }
+
+  /**
+   * Who is told: the company owner, and active members whose role carries compliance.manage (Owner, Admin,
+   * HR / Compliance). Never another company's people and never Guards. In-app only: no email, SMS or push.
+   */
+  private async complianceRecipients(manager: EntityManager, companyId: number): Promise<number[]> {
+    const [owner] = await manager.query('SELECT "userId" FROM "companies" WHERE id = $1', [companyId]);
+    const members = await manager.getRepository(CompanyMembership).find({
+      where: { companyId, status: CompanyMembershipStatus.ACTIVE },
+    });
+    const ids = new Set<number>();
+    if (owner?.userId) ids.add(Number(owner.userId));
+    for (const member of members) {
+      if (hasPermission(member.membershipRole, CompanyPermission.COMPLIANCE_MANAGE)) ids.add(member.userId);
+    }
+    return [...ids].sort((a, b) => a - b);
+  }
+
   private formatWindowLabel(window: ResolvedOperationalWindow, timezone?: string | null): string {
     return `${this.formatTimeOfDay(window.start, timezone)}-${this.formatTimeOfDay(window.end, timezone)}`;
   }
@@ -697,6 +868,13 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
     const note = resolution?.resolutionNote?.trim() || null;
 
     const allowed = alertResolutionReasons(alert.type);
+
+    // A compliance lapse is evidence of how possible illegal or unlicensed working was handled, and nothing
+    // closes one automatically: closing it ALWAYS states a reason and a note, even from a caller that sends
+    // no body (the legacy no-payload close stays available for every other type).
+    if (alert.type === SafetyAlertType.COMPLIANCE_LAPSE && !reason) {
+      throw new BadRequestException('A resolution reason and note are required to close a compliance lapse alert.');
+    }
 
     // Manual closure always states a reason. The automatic paths — a late Book Off answering its own
     // alert, a completed window closing the welfare summary — call `close()` with no resolution at

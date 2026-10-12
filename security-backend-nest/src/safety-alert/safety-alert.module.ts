@@ -12,6 +12,7 @@ import { DailyLog } from '../daily-log/entities/daily-log.entity';
 import { AttendanceEvent } from '../attendance/entities/attendance.entity';
 import { Shift } from '../shift/entities/shift.entity';
 import { OperationsModule } from '../operations/operations.module';
+import { ComplianceModule } from '../compliance/compliance.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { OperationsModule } from '../operations/operations.module';
     CompanyModule,
     AuditLogModule,
     NotificationModule,
+    ComplianceModule,
   ],
   controllers: [SafetyAlertController],
   providers: [SafetyAlertService],
