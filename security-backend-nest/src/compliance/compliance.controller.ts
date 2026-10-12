@@ -10,6 +10,8 @@ import { ComplianceService } from './compliance.service';
 import { CreateGuardDocumentDto } from './dto/create-guard-document.dto';
 import { UpsertComplianceRecordDto } from './dto/upsert-compliance-record.dto';
 import { VerifyGuardDocumentDto } from './dto/verify-guard-document.dto';
+import { RecordComplianceCheckDto } from './dto/record-compliance-check.dto';
+import { GuardComplianceCheckService } from './guard-compliance-check.service';
 import { GuardComplianceService, GuardComplianceStatus } from './guard-compliance.service';
 
 @Controller('compliance')
@@ -18,6 +20,7 @@ export class ComplianceController {
   constructor(
     private readonly complianceService: ComplianceService,
     private readonly guardComplianceService: GuardComplianceService,
+    private readonly guardComplianceCheckService: GuardComplianceCheckService,
   ) {}
 
   @Get()
@@ -111,6 +114,22 @@ export class ComplianceController {
     @Body() dto: VerifyGuardDocumentDto,
   ) {
     return this.guardComplianceService.verifyDocumentForCompanyUser(user.sub, user.role, id, dto.verified);
+  }
+
+  // Company SIA / Right to Work check history for one Guard. Entry gate only; COMPLIANCE_VIEW and the
+  // company relationship are enforced in the service, and evidence references need COMPLIANCE_MANAGE.
+  @Get('checks')
+  @Roles(...COMPANY_VIEW_ROLES)
+  listChecks(@CurrentUser() user: JwtPayload, @Query('guardId', ParseIntPipe) guardId: number) {
+    return this.guardComplianceCheckService.listForCompanyUser(user.sub, user.role, guardId);
+  }
+
+  // Records a new company check or amends the current one (append-only). Entry gate only; the
+  // authoritative checks are COMPLIANCE_MANAGE and the ACTIVE relationship, enforced in the service.
+  @Post('checks')
+  @Roles(...COMPANY_VIEW_ROLES)
+  recordCheck(@CurrentUser() user: JwtPayload, @Body() dto: RecordComplianceCheckDto) {
+    return this.guardComplianceCheckService.recordForCompanyUser(user.sub, user.role, dto);
   }
 
   // Entry gate only; the authoritative check is COMPLIANCE_MANAGE, enforced in the service.

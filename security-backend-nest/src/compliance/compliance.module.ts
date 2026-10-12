@@ -10,7 +10,9 @@ import { ComplianceController } from './compliance.controller';
 import { ComplianceService } from './compliance.service';
 import { ComplianceRecord } from './entities/compliance-record.entity';
 import { GuardDocument } from './entities/guard-document.entity';
+import { GuardComplianceCheck } from './entities/guard-compliance-check.entity';
 import { GuardComplianceService } from './guard-compliance.service';
+import { GuardComplianceCheckService } from './guard-compliance-check.service';
 import { AuditLogModule } from '../audit-log/audit-log.module';
 import { JobApplication } from '../job-application/entities/job-application.entity';
 import { PreHireComplianceAuthorizationService } from './pre-hire-compliance-authorization.service';
@@ -18,7 +20,7 @@ import { EvidenceStorageService, S3CompatibleEvidenceStorageService } from './ev
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([ComplianceRecord, GuardDocument, CompanyGuard, JobApplication]),
+    TypeOrmModule.forFeature([ComplianceRecord, GuardDocument, GuardComplianceCheck, CompanyGuard, JobApplication]),
     CompanyModule,
     CompanyMembershipModule,
     GuardProfileModule,
@@ -29,6 +31,7 @@ import { EvidenceStorageService, S3CompatibleEvidenceStorageService } from './ev
   providers: [
     ComplianceService,
     GuardComplianceService,
+    GuardComplianceCheckService,
     PreHireComplianceAuthorizationService,
     S3CompatibleEvidenceStorageService,
     { provide: EvidenceStorageService, useExisting: S3CompatibleEvidenceStorageService },

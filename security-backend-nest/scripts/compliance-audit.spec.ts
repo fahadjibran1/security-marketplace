@@ -6,6 +6,7 @@ import { GuardDocumentType } from '../src/compliance/entities/guard-document.ent
 import { GuardApprovalStatus } from '../src/guard-profile/entities/guard-profile.entity';
 import { GuardProfileService } from '../src/guard-profile/guard-profile.service';
 import { UserRole, UserStatus } from '../src/user/entities/user.entity';
+import { confirmedChecksRepo } from './compliance-check-fixtures';
 
 type AuditInput = Record<string, any>;
 const evidenceMetadata = { originalFileName: 'evidence.pdf', mimeType: 'application/pdf', sizeBytes: 1024 };
@@ -84,6 +85,7 @@ function buildComplianceHarness(options: { crossTenant?: boolean; failSave?: boo
     auditLogService as any,
     {} as any,
     storage as any,
+    confirmedChecksRepo as never,
   );
   return { service, audits, guard, company, setDocument: (value: any) => (document = value) };
 }

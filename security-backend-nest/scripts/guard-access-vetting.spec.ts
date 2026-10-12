@@ -11,6 +11,7 @@ import { GuardComplianceService } from '../src/compliance/guard-compliance.servi
 import { GuardDocumentType } from '../src/compliance/entities/guard-document.entity';
 import { ActivatePendingGuardAccounts1719900000000 } from '../src/database/migrations/1719900000000-ActivatePendingGuardAccounts';
 import { GuardApprovalStatus } from '../src/guard-profile/entities/guard-profile.entity';
+import { confirmedChecksRepo } from './compliance-check-fixtures';
 
 const future = '2035-12-31';
 
@@ -63,6 +64,7 @@ function complianceHarness(verified: boolean) {
     {} as any,
     { findOne: async () => guard } as any,
     {} as any, {} as any, {} as any, {} as any,
+    confirmedChecksRepo as never,
   );
 }
 

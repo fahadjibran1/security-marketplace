@@ -7,6 +7,7 @@ import { GuardDocumentType } from '../src/compliance/entities/guard-document.ent
 import { PreHireComplianceAuthorizationService } from '../src/compliance/pre-hire-compliance-authorization.service';
 import { JobApplicationService } from '../src/job-application/job-application.service';
 import { UserRole, UserStatus } from '../src/user/entities/user.entity';
+import { confirmedChecksRepo } from './compliance-check-fixtures';
 
 const guard = { id: 31, fullName: 'Pre-hire Guard', user: { id: 310 } };
 const companyA = { id: 41, user: { id: 410 } };
@@ -66,6 +67,7 @@ function buildHarness(applications: any[] = [application()]) {
     { log: async (entry: any) => (audits.push(entry), entry) } as any,
     authorization,
     storage as any,
+    confirmedChecksRepo as never,
   );
   return { service, documents, audits, authorization };
 }

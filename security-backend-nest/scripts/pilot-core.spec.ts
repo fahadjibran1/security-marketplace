@@ -37,6 +37,7 @@ import { DataSource } from 'typeorm';
 import { AuthService } from '../src/auth/auth.service';
 import { SafetyAlertService } from '../src/safety-alert/safety-alert.service';
 import { AdminOperatorService } from '../src/admin-operator/admin-operator.service';
+import { complianceToday } from '../src/compliance/compliance-dates';
 
 const url = process.env.PILOT_CORE_DATABASE_URL;
 if (!url) throw new Error('PILOT_CORE_DATABASE_URL is required');
@@ -249,6 +250,26 @@ async function main() {
          ON CONFLICT ("guardId") DO UPDATE SET status = 'VETTED'`,
         [gid[k]],
       );
+    }
+    // Since Migration 62 the company's own SIA and right to work checks decide eligibility. They are recorded
+    // over real HTTP through the product endpoint, by the company itself, as a compliance manager would.
+    const checkDate = complianceToday();
+    for (const k of ['A', 'B', 'C', 'D'] as const) {
+      const [{ siaLicenseNumber }] = await q(`SELECT "siaLicenseNumber" FROM guard_profiles WHERE id = $1`, [gid[k]]);
+      const history = await api('GET', `/compliance/checks?guardId=${gid[k]}`, co.token);
+      assert.equal(history.status, 200, errText(history));
+      const currentId = (kind: string) => (history.body as any[]).find((c) => c.kind === kind && !c.supersededAt)?.id ?? undefined;
+      for (const body of [
+        { kind: 'sia', outcome: 'confirmed', method: 'sia_public_register', licenceNumber: siaLicenseNumber, expiryDate: ymd(day(400)) },
+        { kind: 'right_to_work', outcome: 'confirmed', method: 'manual_document', rightToWorkExcuse: 'continuous' },
+      ]) {
+        const replacesCheckId = currentId(body.kind);
+        const r = await api('POST', '/compliance/checks', co.token, {
+          ...body, guardId: gid[k], checkDate, checkedByName: 'Pilot Core', evidenceReference: `pilot-core/${RUN}`,
+          ...(replacesCheckId ? { replacesCheckId, changeType: 'new_check' } : {}),
+        });
+        assert.equal(r.status, 201, errText(r));
+      }
     }
     const availability = async (d: Date, g: Session) => {
       const r = await api('POST', '/availability/mine/rules', g.token, { weekday: at(d, 9).getUTCDay(), startTime: '00:00', endTime: '23:59', isAvailable: true });

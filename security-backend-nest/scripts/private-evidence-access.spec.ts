@@ -3,6 +3,7 @@ import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { GuardComplianceService } from '../src/compliance/guard-compliance.service';
 import { GuardDocumentType } from '../src/compliance/entities/guard-document.entity';
 import { UserRole, UserStatus } from '../src/user/entities/user.entity';
+import { confirmedChecksRepo } from './compliance-check-fixtures';
 
 const companyA = { id: 11 };
 const companyB = { id: 22 };
@@ -52,6 +53,7 @@ function buildHarness() {
     { log: async (entry: any) => (audits.push(entry), entry) } as any,
     { authorize: async (companyId: number) => ({ guard, companyId }) } as any,
     storage as any,
+    confirmedChecksRepo as never,
   );
   return { service, documents, audits, signed };
 }

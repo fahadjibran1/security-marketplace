@@ -47,6 +47,8 @@ import { Site } from '../src/site/entities/site.entity';
 import { AvailabilityService } from '../src/availability/availability.service';
 import { ComplianceService } from '../src/compliance/compliance.service';
 import { GuardComplianceService } from '../src/compliance/guard-compliance.service';
+import { GuardComplianceCheck } from '../src/compliance/entities/guard-compliance-check.entity';
+import { insertCompanyChecks } from './compliance-check-fixtures';
 
 let passed = 0;
 async function test(id: string, fn: () => Promise<void> | void) {
@@ -145,9 +147,12 @@ async function main() {
         verifiedAt: verified ? new Date() : null,
       }));
 
+    // A complete company file: both verified documents and, since Migration 62, the company's own
+    // recorded SIA and Right to Work checks.
     const completeFileFor = async (guard: GuardProfile) => {
       await fileEvidence(guard, GuardDocumentType.SIA_LICENCE);
       await fileEvidence(guard, GuardDocumentType.RIGHT_TO_WORK);
+      await insertCompanyChecks(ds.getRepository(GuardComplianceCheck), company.id, guard.id);
     };
 
     // ── services under test (real implementations) ─────────────────────────────
@@ -166,6 +171,7 @@ async function main() {
       { createForUserUnlessRecentDuplicate: async () => undefined } as never,
       { log: async () => undefined } as never,
       {} as never, {} as never,
+      ds.getRepository(GuardComplianceCheck),
     );
     const compliance = new ComplianceService(
       ds.getRepository('ComplianceRecord') as never, membershipStub, guardProfileService,
@@ -297,9 +303,11 @@ async function main() {
       const result = await evaluate(invited);
       assert.equal(result.complianceValid, false);
       assert.equal(result.isEligible, false);
+      // Since Migration 62 the first refusal for an empty file is the company's own missing SIA check;
+      // the missing documents are still reported in full (JOURNEY-02).
       assert.ok(
-        result.reasons.some((reason) => /Missing SIA licence document/.test(reason)),
-        `expected the missing-document refusal, got ${JSON.stringify(result.reasons)}`,
+        result.reasons.some((reason) => /SIA licence check not recorded/.test(reason)),
+        `expected the missing-check refusal, got ${JSON.stringify(result.reasons)}`,
       );
     });
 
@@ -312,6 +320,8 @@ async function main() {
         blockers.some((reason) => /Missing Right-to-work document/.test(reason)),
         `both required documents must be reported, got ${JSON.stringify(blockers)}`,
       );
+      assert.ok(blockers.includes('SIA licence check not recorded'), 'and both missing company checks');
+      assert.ok(blockers.includes('Right to work check not recorded'), 'and both missing company checks');
       const summary = await guardCompliance.getGuardSummary(invited.id, company.id);
       assert.equal(summary.assignable, false);
       assert.deepEqual(
@@ -322,6 +332,8 @@ async function main() {
     });
 
     await test('JOURNEY-03-UNVERIFIED-EVIDENCE-IS-STILL-A-REFUSAL', async () => {
+      // The company records its own SIA and right to work checks first, so the evidence is what is tested.
+      await insertCompanyChecks(ds.getRepository(GuardComplianceCheck), company.id, invited.id);
       const unverified = await fileEvidence(invited, GuardDocumentType.SIA_LICENCE, false);
       const result = await evaluate(invited);
       assert.equal(result.isEligible, false, 'an upload nobody checked is not a compliance file');

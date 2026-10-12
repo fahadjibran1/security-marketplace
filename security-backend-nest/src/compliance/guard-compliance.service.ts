@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { In, IsNull, Repository } from 'typeorm';
 
 import { CompanyGuard, CompanyGuardStatus } from '../company-guard/entities/company-guard.entity';
 import { GuardProfileService } from '../guard-profile/guard-profile.service';
@@ -21,12 +21,41 @@ import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { UserRole, isCompanyRole } from '../user/entities/user.entity';
 import { CompanyMembershipService } from '../company-membership/company-membership.service';
 import { CompanyPermission } from '../company-membership/company-membership-types';
+import { GuardComplianceCheck } from './entities/guard-compliance-check.entity';
+import { daysUntilCalendarDate, toCalendarDate } from './compliance-dates';
 
 export type GuardComplianceStatus = 'valid' | 'expiring' | 'expired' | 'invalid';
+
+/** The current company check of one kind, as shown on the compliance summary. No evidence reference. */
+export type CompanyCheckSummary = {
+  id: number;
+  outcome: string;
+  method: string;
+  rightToWorkExcuse: string | null;
+  licenceNumber: string | null;
+  checkDate: string;
+  expiryDate: string | null;
+  workRestrictions: string | null;
+  checkedByName: string;
+  recordedByUserId: number | null;
+  createdAt: Date;
+};
+
+/** One line of the "what is still needed" checklist. */
+export type ComplianceRequirement = {
+  key: 'sia_check' | 'right_to_work_check' | 'sia_document' | 'right_to_work_document';
+  label: string;
+  state: 'met' | 'expiring' | 'missing' | 'expired' | 'not_confirmed' | 'unverified';
+  detail: string;
+};
 
 export type GuardComplianceSummary = {
   guardId: number;
   fullName: string;
+  /**
+   * The Guard's own declarations (guard_profiles). Shown for reference only: in a company view they
+   * never satisfy a requirement. Only the company's own checks (companyChecks) do.
+   */
   siaLicenceNumber: string | null;
   siaExpiryDate: string | null;
   rightToWorkStatus: string | null;
@@ -37,6 +66,10 @@ export type GuardComplianceSummary = {
   expiringReasons: string[];
   missingDocuments: string[];
   documents: SafeGuardDocument[];
+  /** Company view only (null in the Guard's own view): this company's current checks. */
+  companyChecks: { sia: CompanyCheckSummary | null; rightToWork: CompanyCheckSummary | null } | null;
+  /** Company view only (empty in the Guard's own view): each requirement and whether it is met. */
+  requirements: ComplianceRequirement[];
 };
 
 export type SafeGuardDocument = {
@@ -67,6 +100,13 @@ type AssessmentState = {
   expiredReasons: string[];
   expiringReasons: string[];
   missingDocuments: string[];
+  requirements: ComplianceRequirement[];
+};
+
+/** A calendar date as people in the UK read it (DD/MM/YYYY), for requirement details shown to users. */
+const ukDate = (value: string | Date | null | undefined) => {
+  const iso = toCalendarDate(value);
+  return iso ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}` : 'an unknown date';
 };
 
 const REQUIRED_DOCUMENT_TYPES: Array<{ type: GuardDocumentType; label: string }> = [
@@ -89,6 +129,8 @@ export class GuardComplianceService {
     private readonly auditLogService: AuditLogService,
     private readonly preHireAuthorization: PreHireComplianceAuthorizationService,
     private readonly evidenceStorage: EvidenceStorageService,
+    @InjectRepository(GuardComplianceCheck)
+    private readonly complianceCheckRepo: Repository<GuardComplianceCheck>,
   ) {}
 
   async listStatusesForCompanyUser(userId: number, userRole: UserRole, status?: GuardComplianceStatus) {
@@ -128,8 +170,19 @@ export class GuardComplianceService {
       order: { expiryDate: 'ASC', id: 'DESC' },
     });
 
-    const assessment = this.assessGuard(guard, documents, records);
+    // Company view: the company's own current checks decide the SIA and Right to Work requirements.
+    // Guard view (no company): there is no single company whose checks apply, so the Guard's own
+    // declarations are assessed instead. That view is informational and never gates assignment —
+    // every assignment path calls getBlockingReasons with a companyId.
+    const checks = companyId
+      ? await this.complianceCheckRepo.find({ where: { companyId, guardId: guard.id, supersededAt: IsNull() } })
+      : null;
+    const assessment = this.assessGuard(guard, documents, records, checks);
     const complianceStatus = this.resolveStatus(assessment);
+    const currentCheck = (kind: string) => {
+      const check = checks?.find((item) => item.kind === kind);
+      return check ? this.toCheckSummary(check) : null;
+    };
 
     return {
       guardId: guard.id,
@@ -144,6 +197,24 @@ export class GuardComplianceService {
       expiringReasons: assessment.expiringReasons,
       missingDocuments: assessment.missingDocuments,
       documents: documents.map((document) => this.toSafeDocument(document)),
+      companyChecks: checks ? { sia: currentCheck('sia'), rightToWork: currentCheck('right_to_work') } : null,
+      requirements: assessment.requirements,
+    };
+  }
+
+  private toCheckSummary(check: GuardComplianceCheck): CompanyCheckSummary {
+    return {
+      id: check.id,
+      outcome: check.outcome,
+      method: check.method,
+      rightToWorkExcuse: check.rightToWorkExcuse ?? null,
+      licenceNumber: check.licenceNumber ?? null,
+      checkDate: toCalendarDate(check.checkDate) ?? String(check.checkDate),
+      expiryDate: toCalendarDate(check.expiryDate),
+      workRestrictions: check.workRestrictions ?? null,
+      checkedByName: check.checkedByName,
+      recordedByUserId: check.recordedByUserId ?? null,
+      createdAt: check.createdAt,
     };
   }
 
@@ -500,14 +571,120 @@ export class GuardComplianceService {
     guard: Awaited<ReturnType<GuardProfileService['findOne']>>,
     documents: GuardDocument[],
     records: ComplianceRecord[],
+    companyChecks: GuardComplianceCheck[] | null,
   ): AssessmentState {
     const state: AssessmentState = {
       invalidReasons: [],
       expiredReasons: [],
       expiringReasons: [],
       missingDocuments: [],
+      requirements: [],
     };
 
+    if (companyChecks) {
+      this.assessSiaCheck(companyChecks.find((check) => check.kind === 'sia') ?? null, state);
+      this.assessRightToWorkCheck(companyChecks.find((check) => check.kind === 'right_to_work') ?? null, state);
+    } else {
+      this.assessGuardDeclarations(guard, state);
+    }
+
+    for (const requirement of REQUIRED_DOCUMENT_TYPES) {
+      const key = requirement.type === GuardDocumentType.SIA_LICENCE ? 'sia_document' : 'right_to_work_document';
+      const matching = documents.filter((document) => document.type === requirement.type && document.uploadCompletedAt);
+      const verified = matching.find((document) => document.verified);
+      if (!matching.length) {
+        state.invalidReasons.push(`Missing ${requirement.label}`);
+        state.missingDocuments.push(requirement.label);
+        this.pushRequirement(state, companyChecks, key, requirement.label, 'missing', 'No document uploaded.');
+        continue;
+      }
+      if (!verified) {
+        state.invalidReasons.push(`${requirement.label} is not verified`);
+        this.pushRequirement(state, companyChecks, key, requirement.label, 'unverified', 'Uploaded but not yet verified.');
+        continue;
+      }
+      const outcome = this.pushExpiryState(requirement.label, verified.expiryDate || null, state, false);
+      const detail = outcome === 'expiring'
+        ? 'Verified; expires within 30 days.'
+        : outcome === 'expired'
+          ? 'Verified, but it has expired.'
+          : 'Verified.';
+      this.pushRequirement(state, companyChecks, key, requirement.label, outcome, detail);
+    }
+
+    records.forEach((record) => {
+      if (![ComplianceRecordType.SIA, ComplianceRecordType.RIGHT_TO_WORK].includes(record.type)) return;
+      if (record.status === ComplianceRecordStatus.EXPIRED) {
+        state.expiredReasons.push(`${this.formatRecordType(record.type)} compliance record expired`);
+      } else if (record.status === ComplianceRecordStatus.EXPIRING) {
+        state.expiringReasons.push(`${this.formatRecordType(record.type)} compliance record expiring soon`);
+      }
+    });
+
+    return state;
+  }
+
+  /** The company's own SIA licence check: required, and it must confirm an unexpired, active licence. */
+  private assessSiaCheck(check: GuardComplianceCheck | null, state: AssessmentState) {
+    const label = 'SIA licence check';
+    if (!check) {
+      state.invalidReasons.push('SIA licence check not recorded');
+      state.requirements.push({ key: 'sia_check', label, state: 'missing', detail: 'Record your check of the SIA licence.' });
+      return;
+    }
+    if (check.outcome !== 'confirmed') {
+      state.invalidReasons.push('SIA licence check did not confirm an active licence');
+      state.requirements.push({ key: 'sia_check', label, state: 'not_confirmed', detail: 'The last check did not confirm an active licence.' });
+      return;
+    }
+    const outcome = this.pushExpiryState('SIA licence', check.expiryDate, state, true);
+    const expiry = ukDate(check.expiryDate);
+    state.requirements.push({
+      key: 'sia_check',
+      label,
+      state: outcome,
+      detail: outcome === 'expired' ? `Licence expired ${expiry}.` : `Licence active, expires ${expiry}.`,
+    });
+  }
+
+  /**
+   * The company's own Right to Work check: required, and it must confirm permission to work. A
+   * continuous excuse has no end date. A time-limited one (including a six-month PVN) ends on its
+   * expiry date, after which a follow-up check is needed.
+   */
+  private assessRightToWorkCheck(check: GuardComplianceCheck | null, state: AssessmentState) {
+    const label = 'Right to work check';
+    if (!check) {
+      state.invalidReasons.push('Right to work check not recorded');
+      state.requirements.push({ key: 'right_to_work_check', label, state: 'missing', detail: 'Record your right to work check.' });
+      return;
+    }
+    if (check.outcome !== 'confirmed') {
+      state.invalidReasons.push('Right to work check did not confirm permission to work');
+      state.requirements.push({ key: 'right_to_work_check', label, state: 'not_confirmed', detail: 'The last check did not confirm permission to work.' });
+      return;
+    }
+    if (check.rightToWorkExcuse === 'continuous') {
+      state.requirements.push({ key: 'right_to_work_check', label, state: 'met', detail: 'Continuous right to work. No follow-up check needed.' });
+      return;
+    }
+    const outcome = this.pushExpiryState('Right to work permission', check.expiryDate, state, true);
+    const expiry = ukDate(check.expiryDate);
+    state.requirements.push({
+      key: 'right_to_work_check',
+      label,
+      state: outcome,
+      detail: outcome === 'expired'
+        ? `Time-limited permission ended ${expiry}. A follow-up check is needed.`
+        : `Time-limited permission until ${expiry}. Follow-up check due by then.`,
+    });
+  }
+
+  /**
+   * The Guard's own declarations. Used only for the Guard's own (company-less) view, which never gates
+   * assignment. Never consulted when a company assesses a Guard.
+   */
+  private assessGuardDeclarations(guard: Awaited<ReturnType<GuardProfileService['findOne']>>, state: AssessmentState) {
     if (!guard.siaLicenseNumber?.trim()) {
       state.invalidReasons.push('Missing SIA licence number');
     }
@@ -524,54 +701,51 @@ export class GuardComplianceService {
     } else if (guard.rightToWorkExpiryDate) {
       this.pushExpiryState('Right-to-work clearance', guard.rightToWorkExpiryDate, state, false);
     }
-
-    for (const requirement of REQUIRED_DOCUMENT_TYPES) {
-      const matching = documents.filter((document) => document.type === requirement.type && document.uploadCompletedAt);
-      const verified = matching.find((document) => document.verified);
-      if (!matching.length) {
-        state.invalidReasons.push(`Missing ${requirement.label}`);
-        state.missingDocuments.push(requirement.label);
-        continue;
-      }
-      if (!verified) {
-        state.invalidReasons.push(`${requirement.label} is not verified`);
-        continue;
-      }
-      this.pushExpiryState(requirement.label, verified.expiryDate || null, state, false);
-    }
-
-    records.forEach((record) => {
-      if (![ComplianceRecordType.SIA, ComplianceRecordType.RIGHT_TO_WORK].includes(record.type)) return;
-      if (record.status === ComplianceRecordStatus.EXPIRED) {
-        state.expiredReasons.push(`${this.formatRecordType(record.type)} compliance record expired`);
-      } else if (record.status === ComplianceRecordStatus.EXPIRING) {
-        state.expiringReasons.push(`${this.formatRecordType(record.type)} compliance record expiring soon`);
-      }
-    });
-
-    return state;
   }
 
-  private pushExpiryState(label: string, expiryDate: string | null, state: AssessmentState, required: boolean) {
+  private pushRequirement(
+    state: AssessmentState,
+    companyChecks: GuardComplianceCheck[] | null,
+    key: ComplianceRequirement['key'],
+    label: string,
+    outcome: ComplianceRequirement['state'],
+    detail: string,
+  ) {
+    if (companyChecks) state.requirements.push({ key, label, state: outcome, detail });
+  }
+
+  /**
+   * Records the expiry state of a calendar date (UK calendar, see compliance-dates.ts) and returns it.
+   * A missing required date or an unreadable date counts as 'missing'.
+   */
+  private pushExpiryState(
+    label: string,
+    expiryDate: string | Date | null,
+    state: AssessmentState,
+    required: boolean,
+  ): 'met' | 'expiring' | 'expired' | 'missing' {
     if (!expiryDate) {
       if (required) {
         state.invalidReasons.push(`Missing ${label.toLowerCase()} expiry date`);
+        return 'missing';
       }
-      return;
+      return 'met';
     }
 
-    const daysUntil = this.getDaysUntil(expiryDate);
+    const daysUntil = daysUntilCalendarDate(expiryDate);
     if (daysUntil === null) {
       state.invalidReasons.push(`Invalid ${label.toLowerCase()} expiry date`);
-      return;
+      return 'missing';
     }
     if (daysUntil < 0) {
       state.expiredReasons.push(`${label} expired`);
-      return;
+      return 'expired';
     }
     if (daysUntil <= 30) {
       state.expiringReasons.push(`${label} expires within 30 days`);
+      return 'expiring';
     }
+    return 'met';
   }
 
   private resolveStatus(state: AssessmentState): GuardComplianceStatus {
@@ -584,15 +758,6 @@ export class GuardComplianceService {
   private requiresRightToWorkExpiry(status: string) {
     if (!status) return true;
     return !['permanent', 'indefinite', 'settled', 'british', 'citizen', 'no_expiry'].includes(status);
-  }
-
-  private getDaysUntil(value: string) {
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return null;
-    date.setHours(0, 0, 0, 0);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    return Math.floor((date.getTime() - today.getTime()) / 86400000);
   }
 
   private formatRecordType(type: ComplianceRecordType) {

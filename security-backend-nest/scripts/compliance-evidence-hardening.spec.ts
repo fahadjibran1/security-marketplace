@@ -8,6 +8,7 @@ import { ScreeningController } from '../src/screening/screening.controller';
 import { ScreeningService } from '../src/screening/screening.service';
 import { ScreeningStatus } from '../src/screening/entities/screening.entities';
 import { UserRole, UserStatus } from '../src/user/entities/user.entity';
+import { confirmedChecksRepo } from './compliance-check-fixtures';
 
 // 2D3.1 — evidence access permission, verification safety, company-scoped Guard uploads and the
 // Company screening outcome projection. The membership mock enforces the REAL ROLE_PERMISSIONS
@@ -87,6 +88,7 @@ function buildHarness(links: Link[], preHireCompanyIds: number[] = []) {
     { log: async (entry: any) => (audits.push(entry), entry) } as any,
     { authorize: async (companyId: number) => { if (!preHireCompanyIds.includes(companyId)) throw new ForbiddenException('no pre-hire application'); return { guard, companyId }; } } as any,
     storage as any,
+    confirmedChecksRepo as never,
   );
   return { service, documents, audits };
 }

@@ -38,6 +38,8 @@ import {
   CompanyMembershipRole,
   CompanyMembershipStatus,
 } from '../src/company-membership/company-membership-types';
+import { GuardComplianceCheck } from '../src/compliance/entities/guard-compliance-check.entity';
+import { insertCompanyChecks } from './compliance-check-fixtures';
 
 let passed = 0;
 async function test(id: string, fn: () => Promise<void> | void) {
@@ -144,9 +146,16 @@ async function main() {
         verifiedAt: opts.verified === false ? null : new Date(),
       }));
 
-    const completeFileFor = async (company: Company, guard: GuardProfile) => {
+    // A complete company file: both verified documents and, since Migration 62, the company's own
+    // recorded SIA and Right to Work checks (overridable per kind; null leaves a kind unrecorded).
+    const completeFileFor = async (
+      company: Company,
+      guard: GuardProfile,
+      checks: Parameters<typeof insertCompanyChecks>[3] = {},
+    ) => {
       await fileEvidence(company, guard, GuardDocumentType.SIA_LICENCE);
       await fileEvidence(company, guard, GuardDocumentType.RIGHT_TO_WORK);
+      await insertCompanyChecks(ds.getRepository(GuardComplianceCheck), company.id, guard.id, checks);
     };
 
     // ── services under test (real implementations) ────────────────────────────
@@ -165,6 +174,7 @@ async function main() {
       { createForUserUnlessRecentDuplicate: async () => undefined } as never,
       { log: async () => undefined } as never,
       {} as never, {} as never,
+      ds.getRepository(GuardComplianceCheck),
     );
     const compliance = new ComplianceService(
       ds.getRepository('ComplianceRecord') as never, membershipStub, guardProfileService,
@@ -200,18 +210,20 @@ async function main() {
     });
 
     // ── 4-7: the gates that must still bite ───────────────────────────────────
-    const expiredSia = await makeGuard('expiredsia', { siaExpiryDate: daysFromNow(-1) });
+    // Since Migration 62 these are driven by the company's own checks. The Guard's profile
+    // declarations stay valid throughout, to prove they are not what decides.
+    const expiredSia = await makeGuard('expiredsia');
     await link(abc, expiredSia);
-    await completeFileFor(abc, expiredSia);
+    await completeFileFor(abc, expiredSia, { sia: { expiryDate: daysFromNow(-1) } });
     await expectForbidden(
       'EXPIRED-SIA-BLOCKS: an expired licence blocks deployment',
       () => compliance.assertGuardAssignable(abc.id, expiredSia.id),
       /SIA licence expired/,
     );
 
-    const expiringSia = await makeGuard('expiringsia', { siaExpiryDate: daysFromNow(20) });
+    const expiringSia = await makeGuard('expiringsia');
     await link(abc, expiringSia);
-    await completeFileFor(abc, expiringSia);
+    await completeFileFor(abc, expiringSia, { sia: { expiryDate: daysFromNow(20) } });
     await test('EXPIRING-SIA-DOES-NOT-BLOCK: within 30 days warns but still deploys', async () => {
       await compliance.assertGuardAssignable(abc.id, expiringSia.id);
       const summary = await guardCompliance.getGuardSummary(expiringSia.id, abc.id);
@@ -223,28 +235,48 @@ async function main() {
       );
     });
 
-    const noRtw = await makeGuard('nortw', { rightToWorkStatus: null });
+    const noRtw = await makeGuard('nortw');
     await link(abc, noRtw);
-    await completeFileFor(abc, noRtw);
+    await completeFileFor(abc, noRtw, { rightToWork: null });
     await expectForbidden(
-      'MISSING-RTW-BLOCKS: absent right-to-work status blocks deployment',
+      'MISSING-RTW-BLOCKS: no company right to work check blocks deployment',
       () => compliance.assertGuardAssignable(abc.id, noRtw.id),
-      /right-to-work status/i,
+      /Right to work check not recorded/,
     );
 
-    const revokedRtw = await makeGuard('revokedrtw', { rightToWorkStatus: 'revoked' });
+    const revokedRtw = await makeGuard('revokedrtw');
     await link(abc, revokedRtw);
-    await completeFileFor(abc, revokedRtw);
+    await completeFileFor(abc, revokedRtw, {
+      rightToWork: { outcome: 'not_confirmed', rightToWorkExcuse: null, expiryDate: null },
+    });
     await expectForbidden(
-      'INVALID-RTW-BLOCKS: a revoked right to work blocks deployment',
+      'INVALID-RTW-BLOCKS: a check that did not confirm the right to work blocks deployment',
       () => compliance.assertGuardAssignable(abc.id, revokedRtw.id),
-      /Right-to-work status is revoked/,
+      /did not confirm permission to work/,
     );
+
+    const declaredOnly = await makeGuard('declaredonly');
+    await link(abc, declaredOnly);
+    await fileEvidence(abc, declaredOnly, GuardDocumentType.SIA_LICENCE);
+    await fileEvidence(abc, declaredOnly, GuardDocumentType.RIGHT_TO_WORK);
+    await expectForbidden(
+      'PROFILE-DECLARATIONS-DO-NOT-GRANT: valid Guard declarations without company checks block',
+      () => compliance.assertGuardAssignable(abc.id, declaredOnly.id),
+      /SIA licence check not recorded/,
+    );
+
+    await test('PROFILE-DECLARATIONS-DO-NOT-BLOCK: empty declarations with company checks deploy', async () => {
+      const undeclared = await makeGuard('undeclared', { siaExpiryDate: null, rightToWorkStatus: null, rightToWorkExpiryDate: null });
+      await link(abc, undeclared);
+      await completeFileFor(abc, undeclared);
+      await compliance.assertGuardAssignable(abc.id, undeclared.id);
+    });
 
     const unverifiedDoc = await makeGuard('unverifieddoc');
     await link(abc, unverifiedDoc);
     await fileEvidence(abc, unverifiedDoc, GuardDocumentType.SIA_LICENCE, { verified: false });
     await fileEvidence(abc, unverifiedDoc, GuardDocumentType.RIGHT_TO_WORK);
+    await insertCompanyChecks(ds.getRepository(GuardComplianceCheck), abc.id, unverifiedDoc.id);
     await expectForbidden(
       'UNVERIFIED-DOCUMENT-BLOCKS: uploaded but unverified evidence is not a compliance file',
       () => compliance.assertGuardAssignable(abc.id, unverifiedDoc.id),
@@ -254,6 +286,7 @@ async function main() {
     const missingDoc = await makeGuard('missingdoc');
     await link(abc, missingDoc);
     await fileEvidence(abc, missingDoc, GuardDocumentType.SIA_LICENCE);
+    await insertCompanyChecks(ds.getRepository(GuardComplianceCheck), abc.id, missingDoc.id);
     await expectForbidden(
       'MISSING-DOCUMENT-BLOCKS: the company must hold both required documents',
       () => compliance.assertGuardAssignable(abc.id, missingDoc.id),

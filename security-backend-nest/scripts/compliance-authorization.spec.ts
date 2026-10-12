@@ -10,6 +10,7 @@ import { GuardDocumentType } from '../src/compliance/entities/guard-document.ent
 import { GuardComplianceService } from '../src/compliance/guard-compliance.service';
 import { PreHireComplianceAuthorizationService } from '../src/compliance/pre-hire-compliance-authorization.service';
 import { UserRole, UserStatus } from '../src/user/entities/user.entity';
+import { confirmedChecksRepo } from './compliance-check-fixtures';
 
 // 2D3.1B — Company compliance mutation authority is CompanyPermission.COMPLIANCE_MANAGE, enforced in the
 // service through the membership permission model, and every write is tenant/Guard scoped.
@@ -118,6 +119,7 @@ function buildHarness() {
   const guardCompliance = new GuardComplianceService(
     documentRepo as any, complianceRepo as any, companyGuardRepo as any, membership as any, guardProfileService as any,
     {} as any, { log: async (entry: any) => (audits.push(entry), entry) } as any, preHire as any, storage as any,
+    confirmedChecksRepo as never,
   );
   const compliance = new ComplianceService(complianceRepo as any, membership as any, guardProfileService as any, {} as any, guardCompliance);
   return { compliance, guardCompliance, documents, records, audits, links };
