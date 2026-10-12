@@ -161,6 +161,19 @@ export class ShiftService {
     });
   }
 
+  /**
+   * Fresh deployment gate at the moment work starts: a Guard's Book On, or a company moving a shift to
+   * in_progress by hand. It is exactly the gate assignment runs (ACTIVE relationship, then the company's
+   * compliance assessment), re-evaluated now, because a check can expire or be recorded as not confirmed
+   * between assignment and the start of the shift. There is no override.
+   *
+   * It is never applied to Book Off: a Guard already at work must always be able to record leaving.
+   */
+  async assertGuardMayStartWork(companyId: number, guardId: number): Promise<void> {
+    await this.companyGuardService.ensureActiveRelationship(companyId, guardId);
+    await this.complianceService.assertGuardAssignable(companyId, guardId);
+  }
+
   async findOne(id: number): Promise<Shift> {
     const shift = await this.shiftRepo.findOne({
       where: { id },
@@ -622,6 +635,12 @@ export class ShiftService {
 
     if (nextStatus === 'unfilled') {
       nextGuard = null;
+    }
+
+    // Starting a shift by hand puts the Guard to work exactly as a Book On does, so it runs the same
+    // fresh gate. Without this, ready → in_progress here would bypass the Book On compliance check.
+    if (nextStatus === 'in_progress' && currentStatus !== 'in_progress' && nextGuard) {
+      await this.assertGuardMayStartWork(actorCompany.id, nextGuard.id);
     }
 
     shift.guard = nextGuard;

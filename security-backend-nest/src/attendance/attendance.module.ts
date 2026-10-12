@@ -9,6 +9,7 @@ import { TimesheetModule } from '../timesheet/timesheet.module';
 import { AssignmentModule } from '../assignment/assignment.module';
 import { CompanyMembershipModule } from '../company-membership/company-membership.module';
 import { SiteModule } from '../site/site.module';
+import { AuditLogModule } from '../audit-log/audit-log.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { SiteModule } from '../site/site.module';
     AssignmentModule,
     CompanyMembershipModule,
     SiteModule,
+    AuditLogModule,
   ],
   controllers: [AttendanceController],
   providers: [AttendanceService],

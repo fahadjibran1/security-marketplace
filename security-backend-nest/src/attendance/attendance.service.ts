@@ -21,6 +21,7 @@ import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { UserRole } from '../user/entities/user.entity';
 import { RecordAttendanceDto } from './dto/record-attendance.dto';
 import { SiteService } from '../site/site.service';
+import { AuditLogService } from '../audit-log/audit-log.service';
 
 /**
  * How long after a Shift's scheduled END a Book On is still accepted (UAT-ATT-01).
@@ -31,6 +32,15 @@ import { SiteService } from '../site/site.service';
  * night shift plus handover while still refusing yesterday's work.
  */
 export const STALE_BOOK_ON_GRACE_HOURS = 12;
+
+/** Turns the start-of-work gate's refusal into words a Guard can act on. */
+export function bookOnRefusalReason(message: string): string {
+  const compliance = /^Guard compliance invalid: (.+)$/.exec(message);
+  if (compliance) return compliance[1];
+  if (/not active\/approved for this company/.test(message)) return 'you are not currently active with this company';
+  if (/Guard account is not active/.test(message)) return 'your account is not active';
+  return 'your company has not cleared you to work';
+}
 
 @Injectable()
 export class AttendanceService {
@@ -44,6 +54,7 @@ export class AttendanceService {
     private readonly membershipService: CompanyMembershipService,
     private readonly siteService: SiteService,
     private readonly dataSource: DataSource,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   async findMine(userId: number): Promise<AttendanceEvent[]> {
@@ -91,6 +102,10 @@ export class AttendanceService {
     if (Number.isFinite(staleAfterMs) && Date.now() > staleAfterMs) {
       throw new BadRequestException('This shift is too old to Book On. Contact Control.');
     }
+
+    // Fresh company compliance gate (see ShiftService.assertGuardMayStartWork). Before the location check,
+    // so a Guard who may not work is told why regardless of where they are standing.
+    await this.assertMayBookOn(userId, guard.id, shift);
 
     const evidence = await this.verifyAttendanceEvidence(shift.site?.id, dto, { enforceGps: true, enforceNfc: true });
     const event = this.attendanceRepo.create({
@@ -253,6 +268,32 @@ export class AttendanceService {
       Number.isFinite(Number(site.latitude)) &&
       Number.isFinite(Number(site.longitude))
     );
+  }
+
+  /**
+   * Refuses a Book On the company's assessment does not allow, with a reason the Guard can act on, and
+   * keeps an audit record of the refusal. The reason is the assessment's own wording (for example
+   * "Right to work permission expired"); it never contains evidence, references or document details.
+   * No attendance event is written and the shift stays ready.
+   */
+  private async assertMayBookOn(userId: number, guardId: number, shift: Shift) {
+    try {
+      await this.shiftService.assertGuardMayStartWork(shift.company.id, guardId);
+    } catch (error) {
+      if (!(error instanceof ForbiddenException)) throw error;
+      const reason = bookOnRefusalReason(error.message);
+      await this.auditLogService.log({
+        company: { id: shift.company.id },
+        user: { id: userId },
+        action: 'attendance.book_on_refused',
+        entityType: 'shift',
+        entityId: shift.id,
+        afterData: { guardId, reason },
+      });
+      throw new ForbiddenException(
+        `You cannot Book On for this shift: ${reason}. Contact ${shift.company.name || 'your company'} to resolve it.`,
+      );
+    }
   }
 
   private async getGuardAndOwnedShift(userId: number, shiftId: number) {

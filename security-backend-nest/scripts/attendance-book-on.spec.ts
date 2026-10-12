@@ -125,6 +125,9 @@ async function main() {
       findOne: async (id: number) => shifts.findOneOrFail({ where: { id } }),
       save: (shift: Shift) => shifts.save(shift),
       normalizeLifecycleStatus: (status: string) => String(status || '').toLowerCase(),
+      // This spec certifies the time rules only; the start-of-work compliance gate is certified with the
+      // real services in book-on-compliance.spec.ts.
+      assertGuardMayStartWork: async () => undefined,
     } as never;
     const siteService = {
       findVerificationConfig: async (id: number) => sites.findOneOrFail({ where: { id } }),
@@ -139,6 +142,7 @@ async function main() {
       { resolveCompanyContext: async () => { throw new Error('not used'); } } as never,
       siteService,
       ds,
+      { log: async () => undefined } as never,
     );
 
     const bookOn = (guard: GuardProfile, shift: Shift) => service.checkIn(guard.user.id, { shiftId: shift.id } as never);
