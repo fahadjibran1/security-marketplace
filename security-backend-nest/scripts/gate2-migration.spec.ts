@@ -3,7 +3,9 @@
  *
  * Against a fresh, disposable PostgreSQL:
  *
- *   M61-01  a fresh database migrates 0 → 61 and 61 is the LAST migration (there is no 62)
+ *   M61-01  a fresh database migrates 0 → 61, and the only migration after 61 is 62
+ *           (AddGuardComplianceChecks, certified separately by m62-migration.spec.ts). This spec runs the
+ *           migrations up to and including 61 only, so 61 is still certified on its own.
  *   M61-02  down() returns exactly to the schema production is on today (60)
  *   M61-03  rows seeded at 60, shaped like production users, survive 60 → 61 untouched
  *   M61-04  every account existing when 61 runs is grandfathered: emailVerificationRequired = false
@@ -38,10 +40,18 @@ const test = async (id: string, fn: () => Promise<void> | void) => {
 };
 
 async function main() {
-  const migrationsGlob = require('node:path').join(__dirname, '..', 'src', 'database', 'migrations', '*.ts');
+  const path = require('node:path');
+  const migrationsDir = path.join(__dirname, '..', 'src', 'database', 'migrations');
+  const allMigrationFiles: string[] = require('node:fs').readdirSync(migrationsDir).filter((f: string) => /\.ts$/.test(f)).sort();
+  // Migrations up to and including 61 (timestamp 1720900000007). Later migrations are certified by their
+  // own specs; excluding them keeps this one about 61. The entity set includes later entities, which is
+  // harmless here: synchronize is off and nothing below touches their tables.
+  const throughM61 = allMigrationFiles
+    .filter((f) => Number(f.split('-')[0]) <= 1720900000007)
+    .map((f) => path.join(migrationsDir, f));
   const ds = new DataSource({
     type: 'postgres', url, entities: appEntities, synchronize: false, dropSchema: true,
-    migrations: [migrationsGlob], migrationsTableName: 'typeorm_migrations', logging: false,
+    migrations: throughM61, migrationsTableName: 'typeorm_migrations', logging: false,
   });
   await ds.initialize();
 
@@ -72,12 +82,16 @@ async function main() {
 
     // ── fresh database to the head ───────────────────────────────────────────────────────────────────
     const applied = await ds.runMigrations({ transaction: 'each' });
-    await test('M61-01-FRESH-DATABASE-MIGRATES-TO-61-AND-61-IS-LAST', async () => {
+    await test('M61-01-FRESH-DATABASE-MIGRATES-TO-61-AND-ONLY-62-FOLLOWS', async () => {
       assert.equal(applied.length, 61, `61 migrations apply to a fresh database (got ${applied.length})`);
       assert.equal(applied[59].name, MIGRATION_60);
       assert.equal(applied[60].name, MIGRATION_61, 'Migration 61 is the subject');
-      const files = require('node:fs').readdirSync(require('node:path').join(__dirname, '..', 'src', 'database', 'migrations'));
-      assert.equal(files.filter((f: string) => /\.ts$/.test(f)).length, 61, 'exactly 61 migration files: there is no Migration 62');
+      assert.equal(allMigrationFiles.length, 62, 'exactly 62 migration files');
+      assert.deepEqual(
+        allMigrationFiles.slice(61),
+        ['1720900000008-AddGuardComplianceChecks.ts'],
+        'the only migration after 61 is 62 (AddGuardComplianceChecks)',
+      );
     });
     const head = await snapshot();
     const headUsers = await usersShape();

@@ -13,6 +13,7 @@ import { CompanyGuard } from '../company-guard/entities/company-guard.entity';
 import { CompanyGuardInvitation } from '../company-guard/entities/company-guard-invitation.entity';
 import { ComplianceRecord } from '../compliance/entities/compliance-record.entity';
 import { GuardDocument } from '../compliance/entities/guard-document.entity';
+import { GuardComplianceCheck } from '../compliance/entities/guard-compliance-check.entity';
 import { ContractPricingRule } from '../contract-pricing/entities/contract-pricing-rule.entity';
 import { DailyLog } from '../daily-log/entities/daily-log.entity';
 import { GuardBankDetails } from '../guard-personnel/entities/guard-bank-details.entity';
@@ -60,6 +61,7 @@ export const appEntities = [
   CompanyGuardInvitation,
   ComplianceRecord,
   GuardDocument,
+  GuardComplianceCheck,
   ContractPricingRule,
   DailyLog,
   CompanyGuardPayroll,
