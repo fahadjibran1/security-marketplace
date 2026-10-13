@@ -9,6 +9,8 @@ on:
       - main
     paths:
       - 'security-backend-nest/**'
+      # 21 backend specs inspect web/mobile source (dashboard wiring, API contracts); a web-only change must run them.
+      - 'security-mobile-app/src/**'
       - '.github/workflows/s4-backend-release-gate.yml'
   pull_request:
     branches:
@@ -17,6 +19,8 @@ on:
       - release/s4-pilot-rc1
     paths:
       - 'security-backend-nest/**'
+      # 21 backend specs inspect web/mobile source (dashboard wiring, API contracts); a web-only change must run them.
+      - 'security-mobile-app/src/**'
       - '.github/workflows/s4-backend-release-gate.yml'
 
 permissions:
@@ -74,6 +78,14 @@ jobs:
       RESOLUTION_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_resolution
       GATE2_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_gate2
       GATE2_MIGRATION_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_gate2_migration
+      M62_MIGRATION_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_m62_migration
+      COMPLIANCE_CHECKS_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_compliance_checks
+      BOOK_ON_COMPLIANCE_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_book_on_compliance
+      M63_MIGRATION_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_m63_migration
+      COMPLIANCE_LAPSE_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_compliance_lapse
+      ALERT_SECURITY_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_alert_security
+      POOL_DIAGNOSTICS_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_pool_diagnostics
+      PERF_STABILISATION_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_perf_stabilisation
 
     steps:
       - name: Checkout repository
@@ -183,6 +195,15 @@ jobs:
 
       - name: Create Migration 61 rehearsal database
         run: PGPASSWORD=s4_test_password psql -h localhost -U s4 -d s4_release_gate -c "CREATE DATABASE s4_gate2_migration;"
+
+      # Compliance (Migrations 62/63), alert security, pool diagnostics and performance specs. Each drops or
+      # migrates its own schema, so each gets its own database; without them these specs cannot run in CI.
+      - name: Create compliance, alert security and database performance certification databases
+        shell: bash
+        run: |
+          for db in s4_m62_migration s4_compliance_checks s4_book_on_compliance s4_m63_migration s4_compliance_lapse s4_alert_security s4_pool_diagnostics s4_perf_stabilisation; do
+            PGPASSWORD=s4_test_password psql -h localhost -U s4 -d s4_release_gate -c "CREATE DATABASE $db;"
+          done
 
       - name: Run release smoke tests
         run: npm run test:release
