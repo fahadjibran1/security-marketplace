@@ -80,7 +80,11 @@ test('company isolation is applied in repository query', async () => {
 });
 test('dashboard consumes authoritative uncovered API count', () => {
   const source = readFileSync(resolve(__dirname, '../../security-mobile-app/src/screens/CompanyDashboardScreen.tsx'), 'utf8');
-  assert(source.includes("listCoverageShifts({ uncoveredOnly: true })") && source.includes("label: 'Uncovered Shifts'"), 'dashboard wiring missing');
+  // Dashboard Operations V2 (ec100a9) replaced the 'Uncovered Shifts' metric card with the Coverage Gaps card;
+  // it is still fed only by the authoritative uncovered-coverage API.
+  assert(source.includes("listCoverageShifts({ uncoveredOnly: true })")
+    && source.includes('coverageGaps: uncoveredShifts.length')
+    && source.includes('summariseCoverage(dashboardLiveRows.length, uncoveredShifts)'), 'dashboard wiring missing');
 });
 test('Live Operations adds uncovered rows to urgent queue', () => {
   // The Dashboard builds the urgent queue; the Live Operations workspace (Phase 1F) renders the "Manage coverage" action.
@@ -91,7 +95,8 @@ test('Live Operations adds uncovered rows to urgent queue', () => {
 });
 test('dashboard deep link opens uncovered Coverage', () => {
   const source = readFileSync(resolve(__dirname, '../../security-mobile-app/src/screens/CompanyDashboardScreen.tsx'), 'utf8');
-  assert(source.includes("coverageContext: { uncoveredOnly: true }"), 'dashboard context missing');
+  // Dashboard Operations V2: the Coverage Gaps card opens Coverage filtered to uncovered shifts.
+  assert(source.includes("onOpenCoverageGaps={() => openCoverage({ uncoveredOnly: true })}"), 'dashboard context missing');
 });
 test('Live Operations deep link carries specific shift', () => {
   const source = readFileSync(resolve(__dirname, '../../security-mobile-app/src/screens/CompanyDashboardScreen.tsx'), 'utf8');

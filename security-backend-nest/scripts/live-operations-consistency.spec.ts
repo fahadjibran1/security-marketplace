@@ -80,7 +80,9 @@ test('tenant isolation remains repository-enforced', async () => {
 test('Dashboard and Live Operations still consume authoritative Coverage rows', () => {
   const source = readFileSync(resolve(__dirname, '../../security-mobile-app/src/screens/CompanyDashboardScreen.tsx'), 'utf8');
   assert(source.includes("listCoverageShifts({ uncoveredOnly: true })"), 'authoritative API not consumed');
-  assert(source.includes("category: 'uncovered_shift'") && source.includes("label: 'Uncovered Shifts'"), 'surfaces not wired');
+  // Attention items and the Dashboard Operations V2 Coverage Gaps card (which replaced the 'Uncovered Shifts'
+  // metric card in ec100a9) both come from the same authoritative rows.
+  assert(source.includes("category: 'uncovered_shift'") && source.includes('coverageGaps: uncoveredShifts.length'), 'surfaces not wired');
 });
 test('Review Shift selects, highlights and focuses the detail panel', () => {
   // Focus/scroll logic lives in the Dashboard; the selected-row highlight is rendered by the Live Operations workspace.
