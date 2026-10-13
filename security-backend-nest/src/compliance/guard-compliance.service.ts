@@ -151,13 +151,62 @@ export class GuardComplianceService {
       order: { id: 'DESC' },
     });
 
-    const summaries = await Promise.all(
-      links
-        .filter((link) => link.guard)
-        .map((link) => this.getGuardSummary(link.guard.id, company.id)),
-    );
+    const guards = links.filter((link) => link.guard).map((link) => link.guard);
+    const summaries = await this.getGuardSummariesForCompany(guards.map((guard) => guard.id), company.id);
 
     return status ? summaries.filter((item) => item.complianceStatus === status) : summaries;
+  }
+
+  /**
+   * The company view of several Guards at once: exactly what getGuardSummary(guardId, companyId)
+   * returns for each, in the order given, but read with one query per table for the whole set
+   * instead of four per Guard run in parallel. That fan-out (31 pooled connections and 6 held at
+   * once for a 6-Guard company) was the largest single consumer of the connection pool. Every query
+   * is still scoped to companyId, so no other company's documents, records or checks can be read.
+   */
+  async getGuardSummariesForCompany(guardIds: number[], companyId: number): Promise<GuardComplianceSummary[]> {
+    if (!guardIds.length) return [];
+    const uniqueIds = [...new Set(guardIds)];
+    const [guards, documents, records, checks] = await Promise.all([
+      this.guardProfileService.findManyByIds(uniqueIds),
+      this.guardDocumentRepo.find({
+        where: { company: { id: companyId }, guard: { id: In(uniqueIds) } },
+        order: { uploadedAt: 'DESC', id: 'DESC' },
+      }),
+      this.complianceRepo.find({
+        where: { company: { id: companyId }, guard: { id: In(uniqueIds) } },
+        order: { expiryDate: 'ASC', id: 'DESC' },
+      }),
+      this.complianceCheckRepo.find({ where: { companyId, guardId: In(uniqueIds), supersededAt: IsNull() } }),
+    ]);
+    const guardById = new Map(guards.map((guard) => [guard.id, guard]));
+    // Grouping preserves the query's ORDER BY within each Guard, which is the order the per-Guard
+    // queries returned.
+    const byGuard = <T>(rows: T[], guardIdOf: (row: T) => number | undefined) => {
+      const grouped = new Map<number, T[]>();
+      for (const row of rows) {
+        const id = guardIdOf(row);
+        if (id == null) continue;
+        const list = grouped.get(id);
+        if (list) list.push(row);
+        else grouped.set(id, [row]);
+      }
+      return grouped;
+    };
+    const documentsByGuard = byGuard(documents, (document) => document.guard?.id);
+    const recordsByGuard = byGuard(records, (record) => record.guard?.id);
+    const checksByGuard = byGuard(checks, (check) => check.guardId);
+
+    return guardIds.map((guardId) => {
+      const guard = guardById.get(guardId);
+      if (!guard) throw new NotFoundException('Guard profile not found');
+      return this.buildGuardSummary(
+        guard,
+        documentsByGuard.get(guardId) ?? [],
+        recordsByGuard.get(guardId) ?? [],
+        checksByGuard.get(guardId) ?? [],
+      );
+    });
   }
 
   async getStatusForGuardUser(userId: number) {
@@ -187,6 +236,16 @@ export class GuardComplianceService {
     const checks = companyId
       ? await this.complianceCheckRepo.find({ where: { companyId, guardId: guard.id, supersededAt: IsNull() } })
       : null;
+    return this.buildGuardSummary(guard, documents, records, checks);
+  }
+
+  /** One Guard's summary from rows already read; shared by the single and the batched paths. */
+  private buildGuardSummary(
+    guard: Awaited<ReturnType<GuardProfileService['findOne']>>,
+    documents: GuardDocument[],
+    records: ComplianceRecord[],
+    checks: GuardComplianceCheck[] | null,
+  ): GuardComplianceSummary {
     const assessment = this.assessGuard(guard, documents, records, checks);
     const complianceStatus = this.resolveStatus(assessment);
     const currentCheck = (kind: string) => {

@@ -1,6 +1,6 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, Repository } from 'typeorm';
+import { EntityManager, In, Repository } from 'typeorm';
 import { GuardApprovalStatus, GuardProfile } from './entities/guard-profile.entity';
 import { CreateGuardProfileDto } from './dto/create-guard-profile.dto';
 import { UserService } from '../user/user.service';
@@ -68,6 +68,12 @@ export class GuardProfileService {
     });
 
     return links.map((link) => link.guard);
+  }
+
+  /** The same rows findOne returns, for several Guards in one query (missing ids are simply absent). */
+  async findManyByIds(ids: number[]): Promise<GuardProfile[]> {
+    if (!ids.length) return [];
+    return this.guardRepo.find({ where: { id: In(ids) } });
   }
 
   async findOne(id: number): Promise<GuardProfile> {
