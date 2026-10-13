@@ -269,6 +269,15 @@ jobs:
       - name: Verify the incident workflow
         run: npm run test:incident-workflow
 
+      # The Company dashboard renders with its real components: KPI severity, attention, coverage, freshness.
+      - name: Verify the Company dashboard
+        run: npm run test:dashboard-v2
+
+      # A failed data source is shown as unavailable - never a zero, "All Clear" or "Coverage looks good" -
+      # on the dashboard and in Live Operations, while a known SOS stays visible.
+      - name: Verify fail-safe operational data
+        run: npm run test:fail-safe-operations
+
       # The Incident Report is what a client is shown, so it is certified for provenance as much as
       # appearance: the guard's words survive resolution, an absent fact reads as absent, and the
       # printed A4 page carries no navigation, no audit JSON and no internal identifiers.

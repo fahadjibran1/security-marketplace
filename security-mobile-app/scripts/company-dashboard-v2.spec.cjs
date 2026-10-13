@@ -329,7 +329,11 @@ test('SEV-01-KPI-SEVERITY-IS-NOT-UNIFORMLY-RED', () => {
   assert.ok(loud.includes('aria-label="Open Incidents: 1, Critical"'));
   assert.ok(loud.includes('aria-label="Alerts: 4, SOS active"'));
   assert.ok(loud.includes('aria-label="Coverage Gaps: 0"'), 'a zero card carries no status word');
-  assert.ok(/tone=\{kpis\.coverageGaps > 0 \? 'warning' : 'good'\}/.test(COMPONENT_SRC), 'coverage never uses the critical tone');
+  // Coverage is warning when it has gaps (or is unavailable) and good only when known to be zero — never the
+  // critical tone. (Performance P1 made KPI tones source-aware: see fail-safe-operations.spec.)
+  assert.ok(/tone=\{zeroIsGoodTone\(k\.coverageGaps, 'warning'\)\}/.test(COMPONENT_SRC), 'coverage never uses the critical tone');
+  const unavailableCoverage = render(baseProps({ kpis: { activeSites: 2, liveShifts: 2, coverageGaps: 0, openIncidents: 1, alerts: 4 }, kpiSources: { coverageGaps: 'error' } }));
+  assert.ok(unavailableCoverage.includes('aria-label="Coverage Gaps: —, Unavailable"'), 'unavailable coverage is a warning word, never critical');
   assert.ok(/alertsCritical: activePanicAlerts\.length > 0/.test(SCREEN), 'SOS comes from the outstanding panic alerts');
   assert.ok(/incidentsCritical: openIncidents\.some\(\(incident\) => \(incident\.severity \|\| ''\)\.toLowerCase\(\) === 'critical'\)/.test(SCREEN));
 });
