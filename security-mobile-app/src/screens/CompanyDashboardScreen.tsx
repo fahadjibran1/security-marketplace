@@ -8,6 +8,7 @@ import { CompanyClientsWorkspace, type ClientFormState, CLIENT_FORM_EMPTY } from
 import { CompanyRotaPlannerWorkspace, type PlannerWeekDay, type FlatSlotCell, type LegacyShiftRow } from '../components/company/CompanyRotaPlannerWorkspace';
 import { CompanySitesWorkspace, type SiteFormState, SITE_FORM_EMPTY } from '../components/company/CompanySitesWorkspace';
 import { CompanyLiveOperationsWorkspace } from '../components/company/CompanyLiveOperationsWorkspace';
+import { sourceState as sourceStateOf } from '../components/company/sourceAvailability';
 import { CompanyResolveAlertDrawer, type ResolveTarget } from '../components/company/CompanyResolveAlertDrawer';
 import { alertTypeLabel, missingBookOffSummary, resolutionFamilyForAlert } from '../components/company/alertResolution';
 import { CompanyIncidentReportDrawer } from '../components/company/CompanyIncidentReportDrawer';
@@ -4265,6 +4266,13 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
           incidentsCritical: openIncidents.some((incident) => (incident.severity || '').toLowerCase() === 'critical'),
           alertsCritical: activePanicAlerts.length > 0,
         }}
+        kpiSources={{
+          activeSites: sourceState('sites'),
+          liveShifts: sourceState('shifts', 'attendance'),
+          coverageGaps: sourceState('uncovered coverage'),
+          openIncidents: sourceState('incidents'),
+          alerts: sourceState('alerts'),
+        }}
         attention={dashboardAttention}
         liveRows={dashboardLiveRows}
         coverage={summariseCoverage(dashboardLiveRows.length, uncoveredShifts)}
@@ -4356,6 +4364,15 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
   const renderLiveOperationsSection = () => (
     <View style={styles.sectionStack}>
       <CompanyLiveOperationsWorkspace
+        sourceStates={{
+          shifts: sourceStateOf(failedSources, 'shifts'),
+          attendance: sourceStateOf(failedSources, 'attendance'),
+          monitoring: sourceStateOf(failedSources, 'live operations monitoring'),
+          coverage: sourceStateOf(failedSources, 'uncovered coverage'),
+          incidents: sourceStateOf(failedSources, 'incidents'),
+          alerts: sourceStateOf(failedSources, 'alerts'),
+          dailyLogs: sourceStateOf(failedSources, 'daily logs'),
+        }}
         liveShiftsCount={liveOperationsCounts.liveShifts}
         guardsNotBookedOnCount={liveOperationsCounts.guardsNotBookedOn}
         activePanicAlertsCount={liveOperationsCounts.activePanicAlerts}

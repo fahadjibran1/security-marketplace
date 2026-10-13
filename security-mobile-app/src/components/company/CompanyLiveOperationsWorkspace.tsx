@@ -19,6 +19,7 @@ import {
 } from '../../services/siteTime';
 import type { InclusionReason } from './liveOperationsPolicy';
 import { CompanyOperationsTimeline } from './CompanyOperationsTimeline';
+import { countStatusWord, countText, safeCount, type SafeCount, type SourceState } from './sourceAvailability';
 import {
   buildHandovers,
   buildNextUp,
@@ -162,7 +163,33 @@ export type SelectedShiftContext = {
   clientName: string;
 };
 
+/**
+ * Whether each Live Operations data source loaded on the latest attempt. A failed source is shown as
+ * unavailable — never as zero, "Queue clear" or "nothing in progress". Omitted entries are ready.
+ */
+export type LiveOpsSourceStates = Partial<Record<
+  'shifts' | 'attendance' | 'monitoring' | 'coverage' | 'incidents' | 'alerts' | 'dailyLogs',
+  SourceState
+>>;
+
+/** 'error' if any of the given sources failed. */
+function anyFailed(states: LiveOpsSourceStates, ...keys: Array<keyof LiveOpsSourceStates>): SourceState {
+  return keys.some((key) => states[key] === 'error') ? 'error' : 'ready';
+}
+
+const SOURCE_LABELS: Record<keyof LiveOpsSourceStates, string> = {
+  shifts: 'shifts',
+  attendance: 'attendance',
+  monitoring: 'Welfare and Log Book monitoring',
+  coverage: 'coverage',
+  incidents: 'incidents',
+  alerts: 'safety alerts',
+  dailyLogs: 'Log Book entries',
+};
+
 export type CompanyLiveOperationsWorkspaceProps = {
+  /** See LiveOpsSourceStates. */
+  sourceStates?: LiveOpsSourceStates;
   /**
    * shifts.manage. Without it the shortcut is not rendered at all, because the backend would refuse
    * the create anyway and offering the button would only produce a dead end.
@@ -442,10 +469,13 @@ type MetricFocus = 'all' | 'live' | 'not-booked' | 'panic' | 'incidents' | 'miss
 type StatusDotTone = 'aqua' | 'warning' | 'danger' | null;
 
 function StatusMetric({
-  value, label, tone, active, onPress,
+  count, label, tone: knownTone, active, onPress,
 }: {
-  value: number; label: string; tone: StatusDotTone; active: boolean; onPress: () => void;
+  count: SafeCount; label: string; tone: StatusDotTone; active: boolean; onPress: () => void;
 }) {
+  // An unavailable figure is flagged in warning colour; a stale one keeps its (non-zero) severity.
+  const tone: StatusDotTone = count.kind === 'unavailable' ? 'warning' : count.kind === 'loading' ? null : knownTone;
+  const statusWord = countStatusWord(count);
   const dotColor =
     tone === 'aqua'    ? colors.accentAqua :
     tone === 'warning' ? colors.warning :
@@ -468,15 +498,17 @@ function StatusMetric({
     >
       <View style={styles.statusMetricRow}>
         <View style={[styles.statusDot, { backgroundColor: dotColor }]} />
-        <Text style={[styles.statusMetricValue, { color: valueColor }]}>{value}</Text>
+        <Text style={[styles.statusMetricValue, { color: valueColor }]}>{countText(count)}</Text>
       </View>
       <Text style={styles.statusMetricLabel}>{label}</Text>
+      {statusWord ? <Text style={styles.statusMetricState}>{statusWord}</Text> : null}
       {active && <View style={styles.statusMetricActiveLine} />}
     </Pressable>
   );
 }
 
 function LiveOpsStatusBar({
+  sources,
   liveShiftsCount,
   guardsNotBookedOnCount,
   activePanicAlertsCount,
@@ -492,18 +524,24 @@ function LiveOpsStatusBar({
   missedCheckCallsCount: number;
   metricFocus: MetricFocus;
   onMetricPress: (f: MetricFocus) => void;
+  sources: LiveOpsSourceStates;
 }) {
+  const live = safeCount(liveShiftsCount, anyFailed(sources, 'shifts', 'attendance'));
+  const notBookedOn = safeCount(guardsNotBookedOnCount, anyFailed(sources, 'shifts', 'attendance'));
+  const panic = safeCount(activePanicAlertsCount, anyFailed(sources, 'alerts'));
+  const incidents = safeCount(openIncidentsCount, anyFailed(sources, 'incidents'));
+  const missedChecks = safeCount(missedCheckCallsCount, anyFailed(sources, 'alerts'));
   return (
     <View style={styles.statusBar}>
-      <StatusMetric value={liveShiftsCount}        label="Live shifts"    tone={liveShiftsCount > 0        ? 'aqua'    : null} active={metricFocus === 'live'}          onPress={() => onMetricPress('live')} />
+      <StatusMetric count={live}         label="Live shifts"    tone={liveShiftsCount > 0        ? 'aqua'    : null} active={metricFocus === 'live'}          onPress={() => onMetricPress('live')} />
       <View style={styles.statusBarSep} />
-      <StatusMetric value={guardsNotBookedOnCount} label="Not booked on"  tone={guardsNotBookedOnCount > 0 ? 'warning' : null} active={metricFocus === 'not-booked'}    onPress={() => onMetricPress('not-booked')} />
+      <StatusMetric count={notBookedOn}  label="Not booked on"  tone={guardsNotBookedOnCount > 0 ? 'warning' : null} active={metricFocus === 'not-booked'}    onPress={() => onMetricPress('not-booked')} />
       <View style={styles.statusBarSep} />
-      <StatusMetric value={activePanicAlertsCount} label="Panic alerts"   tone={activePanicAlertsCount > 0 ? 'danger'  : null} active={metricFocus === 'panic'}         onPress={() => onMetricPress('panic')} />
+      <StatusMetric count={panic}        label="Panic alerts"   tone={activePanicAlertsCount > 0 ? 'danger'  : null} active={metricFocus === 'panic'}         onPress={() => onMetricPress('panic')} />
       <View style={styles.statusBarSep} />
-      <StatusMetric value={openIncidentsCount}     label="Open incidents" tone={openIncidentsCount > 0     ? 'danger'  : null} active={metricFocus === 'incidents'}     onPress={() => onMetricPress('incidents')} />
+      <StatusMetric count={incidents}    label="Open incidents" tone={openIncidentsCount > 0     ? 'danger'  : null} active={metricFocus === 'incidents'}     onPress={() => onMetricPress('incidents')} />
       <View style={styles.statusBarSep} />
-      <StatusMetric value={missedCheckCallsCount}  label="Missed checks"  tone={missedCheckCallsCount > 0  ? 'warning' : null} active={metricFocus === 'missed-checks'} onPress={() => onMetricPress('missed-checks')} />
+      <StatusMetric count={missedChecks} label="Missed checks"  tone={missedCheckCallsCount > 0  ? 'warning' : null} active={metricFocus === 'missed-checks'} onPress={() => onMetricPress('missed-checks')} />
     </View>
   );
 }
@@ -1049,6 +1087,7 @@ export function LiveOpsAttentionRail({
   onUrgentAlertFollowUp,
   onOpenIncidentResolution,
   nextUp,
+  sourceStates,
 }: {
   items: UrgentOperationalItem[];
   metricFocus: MetricFocus;
@@ -1061,8 +1100,14 @@ export function LiveOpsAttentionRail({
   /** Open the resolution dialog for an INCIDENT. Never the safety-alert path. */
   onOpenIncidentResolution: (item: UrgentOperationalItem) => void;
   nextUp: NextUpEvent[];
+  /** See LiveOpsSourceStates. Omitted: all ready. */
+  sourceStates?: LiveOpsSourceStates;
 }) {
   const total = items.length;
+  const sources = sourceStates ?? {};
+  // The queue is built from shifts, attendance, coverage, incidents and alerts; if any failed it may be
+  // incomplete, and an empty queue cannot be called clear.
+  const queueIncomplete = anyFailed(sources, 'shifts', 'attendance', 'coverage', 'incidents', 'alerts') === 'error';
 
   /**
    * The operations rail: what needs doing now, then what is about to need doing.
@@ -1086,7 +1131,17 @@ export function LiveOpsAttentionRail({
         showsVerticalScrollIndicator={IS_WEB}
         nestedScrollEnabled
       >
-        {total === 0 ? (
+        {queueIncomplete && total > 0 ? (
+          <View style={styles.sourceNotice} {...({ accessibilityRole: 'alert' } as any)}>
+            <Text style={styles.sourceNoticeText}>Some sources could not be loaded, so this queue may be incomplete.</Text>
+          </View>
+        ) : null}
+        {total === 0 && queueIncomplete ? (
+          <View style={styles.attentionEmpty}>
+            <Text style={[styles.attentionEmptyTitle, styles.unavailableText]}>Queue status unavailable</Text>
+            <Text style={styles.attentionEmptyDesc}>Some sources could not be loaded, so S4 cannot confirm that nothing needs action. Use Refresh.</Text>
+          </View>
+        ) : total === 0 ? (
           <View style={styles.attentionEmpty}>
             <Text style={styles.attentionEmptyTitle}>{metricFocus !== 'all' ? 'No items match' : 'Queue clear'}</Text>
             <Text style={styles.attentionEmptyDesc}>{metricFocus !== 'all' ? 'No items match this view.' : 'No urgent operational items right now.'}</Text>
@@ -1140,7 +1195,9 @@ export function LiveOpsAttentionRail({
 
 
 /** One labelled number in Today So Far. Deliberately a number and a word — no chart, no gauge. */
-function SummaryStat({ label, value, tone }: { label: string; value: number; tone?: 'warn' | 'bad' }) {
+function SummaryStat({ label, value, tone, source = 'ready' }: { label: string; value: number; tone?: 'warn' | 'bad'; source?: SourceState }) {
+  const count = safeCount(value, source);
+  const statusWord = countStatusWord(count);
   return (
     <View style={styles.summaryStat}>
       <Text
@@ -1148,11 +1205,12 @@ function SummaryStat({ label, value, tone }: { label: string; value: number; ton
           styles.summaryStatValue,
           value > 0 && tone === 'warn' ? styles.summaryStatWarn : null,
           value > 0 && tone === 'bad' ? styles.summaryStatBad : null,
+          count.kind === 'unavailable' ? styles.unavailableText : null,
         ]}
       >
-        {value}
+        {countText(count)}
       </Text>
-      <Text style={styles.summaryStatLabel}>{label}</Text>
+      <Text style={styles.summaryStatLabel}>{statusWord ? `${label} · ${statusWord.toLowerCase()}` : label}</Text>
     </View>
   );
 }
@@ -1164,7 +1222,10 @@ export function LiveOpsLowerPanels({
   liveOperationEnrichedRows,
   onOpenCoverage,
   resolveShiftZone,
+  sourceStates,
 }: {
+  /** See LiveOpsSourceStates. Omitted: all ready. */
+  sourceStates?: LiveOpsSourceStates;
   todaySoFar: TodaySoFar;
   handovers: Handover[];
   recentOperationalActivity: OperationalActivityItem[];
@@ -1172,6 +1233,9 @@ export function LiveOpsLowerPanels({
   liveOperationEnrichedRows: LiveBoardRow[];
   onOpenCoverage: (context?: { uncoveredOnly?: boolean; shiftId?: number }) => void;
 }) {
+  const sources = sourceStates ?? {};
+  const attendanceSource = anyFailed(sources, 'shifts', 'attendance');
+  const welfareSource = anyFailed(sources, 'shifts', 'monitoring');
   const totalShifts = liveOperationEnrichedRows.length;
   const uncoveredRows = liveOperationEnrichedRows.filter((r) => r.lifecycleStatus === 'unfilled').length;
   const recentSlice = recentOperationalActivity.slice(0, 5);
@@ -1196,25 +1260,25 @@ export function LiveOpsLowerPanels({
 
         <Text style={styles.summaryGroupLabel}>Attendance</Text>
         <View style={styles.summaryRow}>
-          <SummaryStat label="Booked on" value={todaySoFar.attendance.bookedOn} />
-          <SummaryStat label="Late / not on" value={todaySoFar.attendance.lateNotBookedOn} tone="bad" />
-          <SummaryStat label="Booked off" value={todaySoFar.attendance.bookedOff} />
+          <SummaryStat label="Booked on" value={todaySoFar.attendance.bookedOn} source={attendanceSource} />
+          <SummaryStat label="Late / not on" value={todaySoFar.attendance.lateNotBookedOn} tone="bad" source={attendanceSource} />
+          <SummaryStat label="Booked off" value={todaySoFar.attendance.bookedOff} source={attendanceSource} />
         </View>
 
         {/* "Windows", on its face: Attention Now counts one missed-Welfare item per shift, this counts
             every window. Two honest numbers that measure different things must say which is which. */}
         <Text style={styles.summaryGroupLabel}>Welfare windows</Text>
         <View style={styles.summaryRow}>
-          <SummaryStat label="Completed" value={todaySoFar.welfare.completed} />
-          <SummaryStat label="Overdue" value={todaySoFar.welfare.overdue} tone="warn" />
-          <SummaryStat label="Missed" value={todaySoFar.welfare.missed} tone="bad" />
+          <SummaryStat label="Completed" value={todaySoFar.welfare.completed} source={welfareSource} />
+          <SummaryStat label="Overdue" value={todaySoFar.welfare.overdue} tone="warn" source={welfareSource} />
+          <SummaryStat label="Missed" value={todaySoFar.welfare.missed} tone="bad" source={welfareSource} />
         </View>
 
         <Text style={styles.summaryGroupLabel}>Operations</Text>
         <View style={styles.summaryRow}>
-          <SummaryStat label="Open incidents" value={todaySoFar.operations.openIncidents} tone="warn" />
-          <SummaryStat label="Site requests" value={todaySoFar.operations.siteRequests} />
-          <SummaryStat label="Emergency" value={todaySoFar.operations.emergencyAlerts} tone="bad" />
+          <SummaryStat label="Open incidents" value={todaySoFar.operations.openIncidents} tone="warn" source={anyFailed(sources, 'shifts', 'incidents')} />
+          <SummaryStat label="Site requests" value={todaySoFar.operations.siteRequests} source={anyFailed(sources, 'shifts', 'alerts')} />
+          <SummaryStat label="Emergency" value={todaySoFar.operations.emergencyAlerts} tone="bad" source={anyFailed(sources, 'shifts', 'alerts')} />
         </View>
 
         {uncoveredRows > 0 ? (
@@ -1319,6 +1383,7 @@ function DetailEmpty({ title, desc }: { title: string; desc: string }) {
 // ─── Main component ────────────────────────────────────────────────────────────
 
 export function CompanyLiveOperationsWorkspace({
+  sourceStates,
   canManageShifts,
   onAddShift,
   liveShiftsCount,
@@ -1448,6 +1513,12 @@ export function CompanyLiveOperationsWorkspace({
     return focusedBoardRows.some((r) => r.shift.id === selectedShiftContext.shift.id) ? selectedShiftContext : null;
   }, [selectedShiftContext, focusedBoardRows]);
 
+  const sources = sourceStates ?? {};
+  const failedSourceNames = (Object.keys(SOURCE_LABELS) as Array<keyof LiveOpsSourceStates>)
+    .filter((key) => sources[key] === 'error')
+    .map((key) => SOURCE_LABELS[key]);
+  const shiftsUnavailable = anyFailed(sources, 'shifts', 'attendance') === 'error';
+
   return (
     <View style={styles.root}>
 
@@ -1486,6 +1557,18 @@ export function CompanyLiveOperationsWorkspace({
         </View>
       ) : null}
 
+      {/* ── Unavailable data ───────────────────────────────────────────────
+          Named, so a controller knows which figures to distrust. Actions (Book On, Book Off, alert and
+          incident follow-up) do not depend on these reads and keep working. */}
+      {failedSourceNames.length > 0 ? (
+        <View style={[styles.feedbackBanner, styles.feedbackBannerError]} {...({ accessibilityRole: 'alert' } as any)}>
+          <Text style={[styles.feedbackTitle, styles.feedbackTitleError]}>Some live data could not be loaded</Text>
+          <Text style={[styles.feedbackText, styles.feedbackTextError]}>
+            {`Unavailable: ${failedSourceNames.join(', ')}. Figures shown as — are unavailable; other figures may be out of date. Use Refresh.`}
+          </Text>
+        </View>
+      ) : null}
+
       {/* ── Operational state bar ───────────────────────────────────────── */}
       <LiveOpsStatusBar
         liveShiftsCount={liveShiftsCount}
@@ -1495,6 +1578,7 @@ export function CompanyLiveOperationsWorkspace({
         missedCheckCallsCount={missedCheckCallsCount}
         metricFocus={metricFocus}
         onMetricPress={handleMetricPress}
+        sources={sources}
       />
 
       {/* ── Filter toolbar ───────────────────────────────────────────────── */}
@@ -1524,6 +1608,7 @@ export function CompanyLiveOperationsWorkspace({
             onExportCsv={onExportCsv}
             onExportXlsx={onExportXlsx}
             exporting={exporting}
+            unavailable={shiftsUnavailable}
           />
           {metricFocus !== 'all' ? (
             <Pressable
@@ -1546,6 +1631,7 @@ export function CompanyLiveOperationsWorkspace({
           onUrgentAlertFollowUp={onUrgentAlertFollowUp}
           onOpenIncidentResolution={onOpenIncidentResolution}
           nextUp={nextUp}
+          sourceStates={sources}
         />
       </View>
 
@@ -1557,6 +1643,7 @@ export function CompanyLiveOperationsWorkspace({
         resolveShiftZone={resolveShiftZone}
         liveOperationEnrichedRows={liveOperationEnrichedRows}
         onOpenCoverage={onOpenCoverage}
+        sourceStates={sources}
       />
 
       {/* ── Shift detail, on demand ──────────────────────────────────────
@@ -1834,6 +1921,27 @@ const styles = StyleSheet.create({
   liveOpsHeaderCaption: {
     fontSize: 12,
     color: colors.textSecondary,
+  },
+  statusMetricState: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: colors.warning,
+    marginTop: 1,
+  },
+  sourceNotice: {
+    backgroundColor: colors.dangerSurface,
+    borderColor: colors.dangerBorder,
+    borderWidth: 1,
+    borderRadius: radii.card,
+    padding: spacing.sm,
+    margin: spacing.sm,
+  },
+  sourceNoticeText: {
+    fontSize: 12,
+    color: colors.danger,
+  },
+  unavailableText: {
+    color: colors.warning,
   },
   feedbackBanner: {
     borderRadius: radii.card,

@@ -15,6 +15,7 @@ import {
   type UpcomingGroup,
 } from './dashboardOverview';
 import type { OperationsTone } from './operationsPresentation';
+import { countStatusWord, countText, isKnownZero, isPositive, safeCount, type SafeCount, type SourceState } from './sourceAvailability';
 
 const IS_WEB = typeof document !== 'undefined';
 const WEB_POINTER = IS_WEB ? ({ cursor: 'pointer' } as const) : null;
@@ -73,6 +74,11 @@ export type CompanyDashboardOverviewProps = {
     upcoming: DashboardSourceState;
     compliance: DashboardSourceState;
   };
+  /**
+   * Whether each KPI's own data loaded. A KPI whose source failed never shows a zero: it shows "—"
+   * and "Unavailable", or its last loaded non-zero value marked "Not refreshed". Omitted: all ready.
+   */
+  kpiSources?: Partial<Record<'activeSites' | 'liveShifts' | 'coverageGaps' | 'openIncidents' | 'alerts', SourceState>>;
   now: Date;
   onNavigate: (target: DashboardTarget) => void;
   onOpenCoverageGaps: () => void;
@@ -185,8 +191,42 @@ const TONE_TEXT: Record<OperationsTone, any> = {
 
 // ─── the dashboard ───────────────────────────────────────────────────────────
 
+/** Tone for a count that is good when zero (gaps, incidents, alerts): never good unless S4 knows it is zero. */
+function zeroIsGoodTone(count: SafeCount, positive: 'warning' | 'attention'): 'good' | 'warning' | 'attention' | 'neutral' {
+  if (isPositive(count)) return positive;
+  if (isKnownZero(count)) return 'good';
+  return count.kind === 'unavailable' ? 'warning' : 'neutral';
+}
+
+/** Tone for a count that is good when positive (sites, live shifts): good only when current. */
+function positiveIsGoodTone(count: SafeCount): 'good' | 'warning' | 'neutral' {
+  if (count.kind === 'unavailable') return 'warning';
+  return count.kind === 'value' && count.value > 0 && !count.stale ? 'good' : 'neutral';
+}
+
+/** Status word for a KPI: the severity of what is known, plus whether it is current. */
+function kpiStatus(count: SafeCount, severityWord?: string): string | undefined {
+  const availability = countStatusWord(count);
+  if (count.kind !== 'value' || count.value === 0) return availability ?? undefined;
+  if (severityWord && availability) return `${severityWord} · ${availability.toLowerCase()}`;
+  return severityWord ?? availability ?? undefined;
+}
+
 export function CompanyDashboardOverview(props: CompanyDashboardOverviewProps) {
   const { freshness, kpis, attention, liveRows, coverage, upcoming, compliance, sources, now } = props;
+  const kpiSources = props.kpiSources ?? {};
+  // Before the first successful load every count is still empty: that is "loading", not zero.
+  const firstLoad = props.loading && !freshness.updated;
+  const k = {
+    activeSites: safeCount(kpis.activeSites, kpiSources.activeSites, firstLoad),
+    liveShifts: safeCount(kpis.liveShifts, kpiSources.liveShifts, firstLoad),
+    coverageGaps: safeCount(kpis.coverageGaps, kpiSources.coverageGaps, firstLoad),
+    openIncidents: safeCount(kpis.openIncidents, kpiSources.openIncidents, firstLoad),
+    alerts: safeCount(kpis.alerts, kpiSources.alerts, firstLoad),
+  };
+  // Coverage is only "good" when its sources loaded; otherwise S4 cannot say.
+  const coverageKnown = sources.coverage !== 'error';
+  const coverageFigure = (value: number) => countText(safeCount(value, sources.coverage, firstLoad));
   const shownLiveRows = liveRows.slice(0, DASHBOARD_LIVE_ROWS_LIMIT);
   const moreLiveRows = liveRows.length - shownLiveRows.length;
   const compact = props.density === 'compact';
@@ -216,28 +256,30 @@ export function CompanyDashboardOverview(props: CompanyDashboardOverviewProps) {
       {/* ── ROW 1: KPIs ── */}
       <View style={styles.kpiStrip}>
         <View style={styles.kpiCell}>
-          <KpiCard compact={compact} label="Active Sites" value={String(kpis.activeSites)} icon="📍" tone={kpis.activeSites > 0 ? 'good' : 'neutral'}
+          <KpiCard compact={compact} label="Active Sites" value={countText(k.activeSites)} icon="📍" tone={positiveIsGoodTone(k.activeSites)}
+            statusText={kpiStatus(k.activeSites)}
             onPress={() => props.onNavigate('sites')} accessibilityHint="Opens Sites" />
         </View>
         <View style={styles.kpiCell}>
-          <KpiCard compact={compact} label="Live Shifts" value={String(kpis.liveShifts)} icon="🟢" tone={kpis.liveShifts > 0 ? 'good' : 'neutral'}
+          <KpiCard compact={compact} label="Live Shifts" value={countText(k.liveShifts)} icon="🟢" tone={positiveIsGoodTone(k.liveShifts)}
+            statusText={kpiStatus(k.liveShifts)}
             onPress={() => props.onNavigate('live-operations')} accessibilityHint="Opens Live Operations" />
         </View>
         <View style={styles.kpiCell}>
-          <KpiCard compact={compact} label="Coverage Gaps" value={String(kpis.coverageGaps)} icon="⚠️"
-            tone={kpis.coverageGaps > 0 ? 'warning' : 'good'} statusText={kpis.coverageGaps > 0 ? 'Needs cover' : undefined}
+          <KpiCard compact={compact} label="Coverage Gaps" value={countText(k.coverageGaps)} icon="⚠️"
+            tone={zeroIsGoodTone(k.coverageGaps, 'warning')} statusText={kpiStatus(k.coverageGaps, 'Needs cover')}
             onPress={props.onOpenCoverageGaps} accessibilityHint="Opens uncovered shifts in Coverage" />
         </View>
         <View style={styles.kpiCell}>
-          <KpiCard compact={compact} label="Open Incidents" value={String(kpis.openIncidents)} icon="🚨"
-            tone={kpis.openIncidents > 0 ? (kpis.incidentsCritical ? 'attention' : 'warning') : 'good'}
-            statusText={kpis.openIncidents > 0 ? (kpis.incidentsCritical ? 'Critical' : 'Open') : undefined}
+          <KpiCard compact={compact} label="Open Incidents" value={countText(k.openIncidents)} icon="🚨"
+            tone={zeroIsGoodTone(k.openIncidents, kpis.incidentsCritical ? 'attention' : 'warning')}
+            statusText={kpiStatus(k.openIncidents, kpis.incidentsCritical ? 'Critical' : 'Open')}
             onPress={() => props.onNavigate('incidents')} accessibilityHint="Opens Incidents" />
         </View>
         <View style={styles.kpiCell}>
-          <KpiCard compact={compact} label="Alerts" value={String(kpis.alerts)} icon="🔔"
-            tone={kpis.alerts > 0 ? (kpis.alertsCritical ? 'attention' : 'warning') : 'good'}
-            statusText={kpis.alerts > 0 ? (kpis.alertsCritical ? 'SOS active' : 'Outstanding') : undefined}
+          <KpiCard compact={compact} label="Alerts" value={countText(k.alerts)} icon="🔔"
+            tone={zeroIsGoodTone(k.alerts, kpis.alertsCritical ? 'attention' : 'warning')}
+            statusText={kpiStatus(k.alerts, kpis.alertsCritical ? 'SOS active' : 'Outstanding')}
             onPress={() => props.onNavigate('alerts')} accessibilityHint="Opens Safety Alerts" />
         </View>
       </View>
@@ -246,12 +288,20 @@ export function CompanyDashboardOverview(props: CompanyDashboardOverviewProps) {
       <View style={styles.attentionPanel}>
         <View style={[styles.attentionHeader, c('attentionHeader')]}>
           <Text style={[styles.attentionTitle, c('attentionTitle')]} {...HEADING_2}>
-            {attention.total > 0 ? 'Attention Required' : 'All Clear'}
+            {attention.total > 0
+              ? 'Attention Required'
+              : sources.attention === 'error'
+                ? 'Status unavailable'
+                : props.loading
+                  ? 'Checking…'
+                  : 'All Clear'}
           </Text>
           <Text style={[styles.attentionSubtitle, c('attentionSubtitle')]}>
             {attention.total > 0
               ? `${attention.total} item${attention.total !== 1 ? 's' : ''} requiring action${attention.hasMore ? ` · showing the ${attention.shown.length} most urgent` : ''}.`
-              : props.loading ? 'Checking operational conditions…' : 'No operational conditions require immediate attention right now.'}
+              : sources.attention === 'error'
+                ? 'Attention items could not be loaded, so S4 cannot confirm that nothing needs action.'
+                : props.loading ? 'Checking operational conditions…' : 'No operational conditions require immediate attention right now.'}
           </Text>
         </View>
         {sources.attention === 'error' && attention.total > 0 ? <StaleNotice what="Attention items" /> : null}
@@ -406,23 +456,23 @@ export function CompanyDashboardOverview(props: CompanyDashboardOverviewProps) {
             webSurfaceHover
             title="Today's Coverage"
             subtitle="Shift coverage position right now."
-            tone={coverage.uncovered > 0 ? 'warning' : 'default'}
+            tone={coverage.uncovered > 0 || !coverageKnown ? 'warning' : 'default'}
             headingLevel={2}
           >
-            {sources.coverage === 'error' ? <StaleNotice what="Coverage" /> : null}
+            {sources.coverage === 'error' && coverage.uncovered > 0 ? <StaleNotice what="Coverage" /> : null}
             <View style={[styles.stats, c('stats')]}>
               <View style={[styles.stat, c('stat')]}>
-                <Text style={[styles.statValue, c('statValue')]}>{coverage.liveNow}</Text>
+                <Text style={[styles.statValue, c('statValue')]}>{coverageFigure(coverage.liveNow)}</Text>
                 <Text style={styles.statLabel}>Live now</Text>
               </View>
               <View style={styles.statDivider} />
               <View style={[styles.stat, c('stat')]}>
-                <Text style={[styles.statValue, c('statValue'), coverage.uncovered > 0 ? styles.statValueWarn : null]}>{coverage.uncovered}</Text>
+                <Text style={[styles.statValue, c('statValue'), coverage.uncovered > 0 ? styles.statValueWarn : null]}>{coverageFigure(coverage.uncovered)}</Text>
                 <Text style={styles.statLabel}>Uncovered</Text>
               </View>
               <View style={styles.statDivider} />
               <View style={[styles.stat, c('stat')]}>
-                <Text style={[styles.statValue, c('statValue'), coverage.gapSites > 0 ? styles.statValueWarn : null]}>{coverage.gapSites}</Text>
+                <Text style={[styles.statValue, c('statValue'), coverage.gapSites > 0 ? styles.statValueWarn : null]}>{coverageFigure(coverage.gapSites)}</Text>
                 <Text style={styles.statLabel}>Gap sites</Text>
               </View>
             </View>
@@ -434,6 +484,14 @@ export function CompanyDashboardOverview(props: CompanyDashboardOverviewProps) {
                 />
                 <ActionLink compact={compact} label="Review coverage gaps" onPress={props.onOpenCoverageGaps} />
               </>
+            ) : !coverageKnown ? (
+              <>
+                <PanelMessage compact={compact} tone="error" title="Coverage unavailable"
+                  description="Coverage could not be loaded, so S4 cannot confirm that every shift is covered. Use Refresh, or open Coverage." />
+                <ActionLink compact={compact} label="Open Coverage" onPress={props.onOpenCoverageGaps} />
+              </>
+            ) : firstLoad ? (
+              <PanelMessage compact={compact} title="Loading coverage…" />
             ) : (
               <PanelMessage compact={compact} tone="good" title="Coverage looks good" description="No uncovered shifts detected." />
             )}

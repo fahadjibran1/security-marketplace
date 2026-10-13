@@ -83,6 +83,8 @@ export type OperationsTimelineProps = {
   onExportCsv: () => void;
   onExportXlsx: () => void;
   exporting: boolean;
+  /** The shifts or attendance behind these rows failed to load: an empty view is then not "nothing on". */
+  unavailable?: boolean;
 };
 
 export function CompanyOperationsTimeline({
@@ -97,6 +99,7 @@ export function CompanyOperationsTimeline({
   onExportCsv,
   onExportXlsx,
   exporting,
+  unavailable = false,
 }: OperationsTimelineProps) {
   const [rangeHours, setRangeHours] = React.useState<TimelineRangeHours>(
     initialRangeHours ?? DEFAULT_TIMELINE_RANGE,
@@ -235,7 +238,14 @@ export function CompanyOperationsTimeline({
         </View>
       </View>
 
-      {rowCount === 0 ? (
+      {rowCount === 0 && unavailable ? (
+        <View style={styles.empty}>
+          <Text style={styles.emptyTitle}>Live operations could not be loaded.</Text>
+          <Text style={styles.emptyDesc}>
+            S4 cannot show what is in progress right now. Use Refresh; Book On, Book Off and alert actions still work.
+          </Text>
+        </View>
+      ) : rowCount === 0 ? (
         <View style={styles.empty}>
           <Text style={styles.emptyTitle}>No live or scheduled operations for this view.</Text>
           <Text style={styles.emptyDesc}>
