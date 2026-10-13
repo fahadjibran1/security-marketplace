@@ -38,6 +38,7 @@ import { CoverageModule } from './coverage/coverage.module';
 import { FinanceModule } from './finance/finance.module';
 import { HealthController } from './health.controller';
 import { buildNestTypeOrmOptions } from './database/typeorm.config';
+import { PoolDiagnosticsService } from './database/pool-diagnostics/pool-diagnostics.service';
 import { validateRuntimeEnv } from './config/runtime-env';
 import { ScreeningModule } from './screening/screening.module';
 import { GuardPersonnelModule } from './guard-personnel/guard-personnel.module';
@@ -111,5 +112,6 @@ import { OperationsModule } from './operations/operations.module';
     OperationsModule,
   ],
   controllers: [HealthController],
+  providers: [PoolDiagnosticsService],
 })
 export class AppModule {}

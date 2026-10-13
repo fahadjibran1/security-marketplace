@@ -8,6 +8,8 @@ import { getCorsOrigins, getTrustProxySetting, isSwaggerEnabled } from './config
 import { configureHttpSecurity } from './config/http-security';
 import { requireUtcProcessTimezone } from './config/process-timezone';
 import { initMonitoring, MonitoringExceptionFilter } from './monitoring/monitoring';
+import { readPoolDiagnosticsConfig } from './database/pool-diagnostics/pool-diagnostics.config';
+import { dbRequestContextMiddleware } from './database/pool-diagnostics/pool-diagnostics.middleware';
 
 const logger = new Logger('Bootstrap');
 
@@ -60,6 +62,11 @@ async function bootstrap() {
 
     next();
   });
+
+  // Off unless DB_POOL_DIAGNOSTICS is set; see src/database/pool-diagnostics.
+  if (readPoolDiagnosticsConfig(process.env).enabled) {
+    app.use(dbRequestContextMiddleware());
+  }
 
   app.enableCors({
     origin: getCorsOrigins(process.env),
