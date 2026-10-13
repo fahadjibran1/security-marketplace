@@ -123,6 +123,59 @@ async function test(id, fn) { await fn(); passed += 1; console.log(`PASS  ${id}`
     assert.equal(api.getRefreshToken(), 'r2');
   });
 
+  // ── SERVICE UNAVAILABLE DURING REFRESH ───────────────────────────────────────────────────────
+  // Production incident: an overloaded backend answered /auth/refresh with 500, and the client
+  // treated that as a dead session and signed people out, sending everyone to Login at once.
+  for (const [id, refreshResponse] of [
+    ['REFRESH-SERVER-ERROR-KEEPS-SESSION', { status: 500, body: { message: 'Internal server error' } }],
+    ['REFRESH-BAD-GATEWAY-KEEPS-SESSION', { status: 502, body: null }],
+    ['REFRESH-RATE-LIMITED-KEEPS-SESSION', { status: 429, body: { message: 'Too many requests' } }],
+    ['REFRESH-UNREACHABLE-KEEPS-SESSION', 'throw'],
+  ]) {
+    await test(id, async () => {
+      const { api, calls, setRouter } = loadApi();
+      api.restoreSession({ accessToken: 'expired', refreshToken: 'r1' });
+      const notices = [];
+      api.setUnauthorizedHandler(async (m) => notices.push(m));
+
+      let serviceBack = false;
+      setRouter((url) => {
+        if (url.endsWith('/auth/refresh')) {
+          if (serviceBack) return { status: 200, body: { accessToken: 'a2', refreshToken: 'r2', user } };
+          if (refreshResponse === 'throw') throw new TypeError('Network request failed');
+          return refreshResponse;
+        }
+        const auth = calls.at(-1).init.headers.get('authorization');
+        return auth === 'Bearer a2' ? { status: 200, body: [{ id: 1 }] } : { status: 401, body: {} };
+      });
+
+      await assert.rejects(api.listCompanies(), (e) => e.status === 503 && /still signed in/.test(e.body.message));
+      assert.deepEqual(notices, [], 'an unavailable service must never show the login screen');
+      assert.equal(api.getRefreshToken(), 'r1', 'the session must be kept for the next attempt');
+      assert.equal(calls.filter((c) => c.url.endsWith('/auth/refresh')).length, 1, 'still exactly one refresh per burst');
+
+      // When the service recovers, the kept session renews and the request succeeds.
+      serviceBack = true;
+      assert.deepEqual(await api.listCompanies(), [{ id: 1 }]);
+      assert.equal(api.getRefreshToken(), 'r2');
+      assert.deepEqual(notices, []);
+    });
+  }
+
+  await test('REFRESH-REFUSED-STILL-ENDS-SESSION', async () => {
+    // 400/401/403 from refresh are refusals: the session is over, exactly as before.
+    for (const status of [400, 401, 403]) {
+      const { api, setRouter } = loadApi();
+      api.restoreSession({ accessToken: 'expired', refreshToken: 'dead' });
+      const notices = [];
+      api.setUnauthorizedHandler(async (m) => notices.push(m));
+      setRouter((url) => (url.endsWith('/auth/refresh') ? { status, body: {} } : { status: 401, body: {} }));
+      await assert.rejects(api.listCompanies(), (e) => e.status === 401);
+      assert.deepEqual(notices, ['Your session expired. Please sign in again.'], `refresh ${status}`);
+      assert.equal(api.getRefreshToken(), null, `refresh ${status} drops the session`);
+    }
+  });
+
   // ── INVALID / EXPIRED / REVOKED REFRESH ──────────────────────────────────────────────────────
   await test('INVALID-REFRESH-SHOWS-LOGIN', async () => {
     const { api, calls, setRouter } = loadApi();

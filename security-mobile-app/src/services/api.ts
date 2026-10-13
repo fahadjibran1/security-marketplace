@@ -136,7 +136,12 @@ let accessToken: string | null = null;
 /** Renewable session token. Mirrored into SecureStore by the persister below; never on web. */
 let refreshToken: string | null = null;
 /** Shared by all concurrent 401s so only one /auth/refresh is ever in flight. */
-let inFlightRefresh: Promise<boolean> | null = null;
+/**
+ * renewed: a new session was issued. rejected: the server refused this session (it is over).
+ * unavailable: the server could not answer (5xx, 429, unreachable) — that says nothing about the session.
+ */
+type RefreshOutcome = 'renewed' | 'rejected' | 'unavailable';
+let inFlightRefresh: Promise<RefreshOutcome> | null = null;
 let refreshPersist:
   | ((session: { user: AuthUser; refreshToken: string }) => Promise<void>)
   | null = null;
@@ -255,8 +260,18 @@ async function request<T>(path: string, options?: RequestInit, retried = false):
       // The access token has almost certainly just expired. Try to renew once — all concurrent
       // 401s share the same attempt — and replay this request exactly once. `retried` makes a
       // refresh loop impossible: a second 401 falls straight through to the handler below.
-      if (!retried && (await refreshAccessToken())) {
+      const outcome: RefreshOutcome = retried ? 'rejected' : await refreshAccessToken();
+      if (outcome === 'renewed') {
         return request<T>(path, options, true);
+      }
+
+      // The service could not renew the session right now (overloaded, restarting, unreachable).
+      // That is not the session ending: keep it, so the next attempt can renew it, and report a
+      // temporary failure instead of sending the person back to Login while the service recovers.
+      if (outcome === 'unavailable') {
+        throw new ApiError(503, 'Service Unavailable', {
+          message: 'S4 is temporarily unavailable, so your session could not be renewed. You are still signed in — please try again shortly.',
+        });
       }
 
       // Renewal is genuinely not possible: expired, revoked, reused, or no refresh token at all
@@ -475,8 +490,8 @@ export function restoreSession(session: { accessToken?: string; refreshToken?: s
  * request would rotate the token independently and all but one would then be presenting a
  * rotated token — which the server correctly treats as theft and revokes the whole family.
  */
-async function refreshAccessToken(): Promise<boolean> {
-  if (!refreshToken) return false;
+async function refreshAccessToken(): Promise<RefreshOutcome> {
+  if (!refreshToken) return 'rejected';
   if (inFlightRefresh) return inFlightRefresh;
 
   const presented = refreshToken;
@@ -487,20 +502,23 @@ async function refreshAccessToken(): Promise<boolean> {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ refreshToken: presented }),
       });
-      if (!response.ok) return false;
+      if (!response.ok) {
+        // Only a refusal ends the session. A server error or rate limit is the service, not the session.
+        return response.status >= 500 || response.status === 429 ? 'unavailable' : 'rejected';
+      }
 
       const body = (await response.json()) as AuthSession;
-      if (!body?.accessToken || !body?.refreshToken) return false;
+      if (!body?.accessToken || !body?.refreshToken) return 'rejected';
 
       accessToken = body.accessToken;
       refreshToken = body.refreshToken;
       // Persist the rotated token immediately: the presented one is already dead server-side, so
       // losing the successor here would strand the device.
       await refreshPersist?.({ user: body.user, refreshToken: body.refreshToken });
-      return true;
+      return 'renewed';
     } catch {
       // Offline or unreachable — not an auth failure. Keep the token so a later attempt can work.
-      return false;
+      return 'unavailable';
     } finally {
       inFlightRefresh = null;
     }
