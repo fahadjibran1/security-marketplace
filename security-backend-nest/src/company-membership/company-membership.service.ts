@@ -49,11 +49,18 @@ export class CompanyMembershipService {
     userRole: UserRole,
     requiredPermission?: CompanyPermission,
   ): Promise<CompanyContext> {
-    // Step 1: ACTIVE-first query — deterministic when historical rows exist for other companies
-    const activeMembership = await this.membershipRepo.findOne({
-      where: { userId, status: CompanyMembershipStatus.ACTIVE },
+    // Every membership row this user has, in ONE query. This runs on every company request; it used to
+    // be three sequential lookups (ACTIVE, then SUSPENDED, then REVOKED) before the legacy owner
+    // fallback, and on the production database path each round trip costs about 120 ms. The decision
+    // below is the same, in the same order. Ordered by id so the choice is deterministic.
+    const memberships = await this.membershipRepo.find({
+      where: { userId },
       relations: ['company'],
+      order: { id: 'ASC' },
     });
+
+    // Step 1: ACTIVE first — deterministic when historical rows exist for other companies
+    const activeMembership = memberships.find((row) => row.status === CompanyMembershipStatus.ACTIVE);
 
     if (activeMembership) {
       if (requiredPermission && !hasPermission(activeMembership.membershipRole, requiredPermission)) {
@@ -63,18 +70,12 @@ export class CompanyMembershipService {
     }
 
     // Step 2: SUSPENDED — fail closed, no fallback regardless of role
-    const suspendedMembership = await this.membershipRepo.findOne({
-      where: { userId, status: CompanyMembershipStatus.SUSPENDED },
-    });
-    if (suspendedMembership) {
+    if (memberships.some((row) => row.status === CompanyMembershipStatus.SUSPENDED)) {
       throw new ForbiddenException('Your company access has been suspended.');
     }
 
     // Step 3: REVOKED — fail closed, no fallback even for legacy owner roles
-    const revokedMembership = await this.membershipRepo.findOne({
-      where: { userId, status: CompanyMembershipStatus.REVOKED },
-    });
-    if (revokedMembership) {
+    if (memberships.some((row) => row.status === CompanyMembershipStatus.REVOKED)) {
       throw new ForbiddenException('Your company access has been revoked.');
     }
 

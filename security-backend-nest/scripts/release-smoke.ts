@@ -1,7 +1,7 @@
 import { equal, ok } from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { BadRequestException, ExecutionContext, ForbiddenException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ExecutionContext, ForbiddenException, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { getMetadataArgsStorage } from 'typeorm';
 import { AuthService } from '../src/auth/auth.service';
@@ -109,18 +109,14 @@ async function expectBadRequest(action: () => Promise<unknown>) {
 
 function buildJwtStrategyHarness(user: any | null, clientUser: any | null = null) {
   const config = { get: () => 'release-smoke-secret' };
-  const userService = {
-    findById: async () => user ?? Promise.reject(new Error('not found')),
+  // As the real services: a missing account is { user: null } / NotFoundException.
+  const accountRecoveryService = {
+    findSessionSubject: async () => ({ user: user ?? null, lastPasswordResetAt: null }),
   };
   const clientPortalUserService = {
-    findById: async () => clientUser ?? Promise.reject(new Error('not found')),
+    findById: async () => clientUser ?? Promise.reject(new NotFoundException('Client portal user not found')),
   };
-  return new JwtStrategy(
-    config as any,
-    userService as any,
-    clientPortalUserService as any,
-    { lastPasswordResetAt: async () => null } as any,
-  );
+  return new JwtStrategy(config as any, clientPortalUserService as any, accountRecoveryService as any);
 }
 
 async function expectUnauthorized(work: () => Promise<unknown>) {

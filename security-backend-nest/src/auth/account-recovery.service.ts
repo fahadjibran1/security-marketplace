@@ -7,7 +7,7 @@ import { TransactionalEmailService } from '../email/transactional-email.service'
 import { User } from '../user/entities/user.entity';
 import { UserService } from '../user/user.service';
 import { AuthSessionService } from './auth-session.service';
-import { VerificationTokenPurpose } from './entities/user-verification-token.entity';
+import { UserVerificationToken, VerificationTokenPurpose } from './entities/user-verification-token.entity';
 import {
   EMAIL_VERIFICATION_TTL_MS,
   PASSWORD_RESET_TTL_MS,
@@ -125,6 +125,34 @@ export class AccountRecoveryService {
    * is no longer honoured, so a reset ends web sessions (which hold only an access token) as well as
    * mobile refresh sessions.
    */
+  /**
+   * The signed-in account and when its password was last reset, in ONE round trip. Every
+   * authenticated request needs both; fetched one after the other they doubled the database cost of
+   * authentication, which on the production path (about 120 ms per round trip) was paid on every
+   * request. Same columns as UserService.findById and the same rule as lastPasswordResetAt.
+   * A missing account is { user: null }; a database failure is thrown, never reported as "no user".
+   */
+  async findSessionSubject(userId: number): Promise<{ user: User | null; lastPasswordResetAt: Date | null }> {
+    const { entities, raw } = await this.dataSource
+      .getRepository(User)
+      .createQueryBuilder('user')
+      .addSelect(
+        (sub) =>
+          sub
+            .select('MAX("reset"."usedAt")')
+            .from(UserVerificationToken, 'reset')
+            .where('"reset"."userId" = "user"."id"')
+            .andWhere('"reset"."purpose" = :resetPurpose')
+            .andWhere('"reset"."usedAt" IS NOT NULL'),
+        'last_password_reset_at',
+      )
+      .where('"user"."id" = :userId', { userId })
+      .setParameter('resetPurpose', VerificationTokenPurpose.PASSWORD_RESET)
+      .getRawAndEntities();
+    const at = raw[0]?.last_password_reset_at;
+    return { user: entities[0] ?? null, lastPasswordResetAt: at ? new Date(at) : null };
+  }
+
   async lastPasswordResetAt(userId: number): Promise<Date | null> {
     const row = await this.dataSource.query(
       `SELECT MAX("usedAt") AS "at" FROM "user_verification_tokens"
