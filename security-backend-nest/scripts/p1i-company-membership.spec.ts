@@ -333,12 +333,21 @@ test('RESOLVE-6 resolveCompanyContext never trusts frontend companyId', () => {
 
 test('RESOLVE-7 resolveCompanyContext queries ACTIVE membership first — deterministic multi-row safety', () => {
   const src = backend('company-membership/company-membership.service.ts');
-  // Critical: with REVOKED A + ACTIVE B for the same user, findOne without status filter is non-deterministic.
-  // The resolver MUST filter by ACTIVE in the first query to deterministically find the live context.
-  assert(src.includes('status: CompanyMembershipStatus.ACTIVE'), 'First query must filter by ACTIVE status explicitly');
-  // Separate SUSPENDED and REVOKED checks must also exist — three distinct status queries
-  assert(src.includes('status: CompanyMembershipStatus.SUSPENDED'), 'Separate SUSPENDED check required');
-  assert(src.includes('status: CompanyMembershipStatus.REVOKED'), 'Separate REVOKED check required');
+  // Critical: with REVOKED A + ACTIVE B for the same user, taking an arbitrary row is non-deterministic.
+  // The resolver reads the user's membership rows in ONE query (performance stabilisation) and must then
+  // select the live context by ACTIVE status explicitly, refuse SUSPENDED and REVOKED before any legacy
+  // fallback, and order the rows so the choice is deterministic. Behaviourally certified against the
+  // previous three-query resolver, including this multi-row case, by perf-stabilisation.spec PS-01.
+  const body = src.split('async resolveCompanyContext(')[1].split('async canAcceptInvitation(')[0];
+  assert(/membershipRepo\.find\(\{\s*where: \{ userId \},[\s\S]*?order: \{ id: 'ASC' \}/.test(body), 'All membership rows read once, in a deterministic order');
+  const active = body.indexOf('row.status === CompanyMembershipStatus.ACTIVE');
+  const suspended = body.indexOf('row.status === CompanyMembershipStatus.SUSPENDED');
+  const revoked = body.indexOf('row.status === CompanyMembershipStatus.REVOKED');
+  const legacy = body.indexOf('isLegacyOwnerRole');
+  assert(active > 0, 'The live context must be selected by ACTIVE status explicitly');
+  assert(suspended > active, 'Separate SUSPENDED check required, after ACTIVE');
+  assert(revoked > suspended, 'Separate REVOKED check required, after SUSPENDED');
+  assert(legacy > revoked, 'SUSPENDED and REVOKED must be refused before the legacy owner fallback');
   // canAcceptInvitation must exist — formalises the acceptance pre-condition for Phase 2
   assert(src.includes('canAcceptInvitation'), 'canAcceptInvitation must be present for Phase 2 acceptance guard');
 });
