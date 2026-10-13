@@ -64,6 +64,7 @@ import { OperationsModule } from './operations/operations.module';
           DATABASE_USER: config.get<string>('DATABASE_USER'),
           DATABASE_PASSWORD: config.get<string>('DATABASE_PASSWORD'),
           DATABASE_NAME: config.get<string>('DATABASE_NAME'),
+          DATABASE_POOL_IDLE_TIMEOUT_MS: config.get<string>('DATABASE_POOL_IDLE_TIMEOUT_MS'),
         }),
         retryAttempts: 1,
         retryDelay: 0,

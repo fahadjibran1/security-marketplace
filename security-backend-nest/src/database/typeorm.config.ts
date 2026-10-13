@@ -17,7 +17,21 @@ type DatabaseEnv = {
   DATABASE_USER?: string;
   DATABASE_PASSWORD?: string;
   DATABASE_NAME?: string;
+  DATABASE_POOL_IDLE_TIMEOUT_MS?: string;
 };
+
+/**
+ * How long an unused pooled connection is kept before it is closed. Unset: 30 s, as it has always been.
+ * Opening a connection through the production pooler costs several cross-region round trips, and the
+ * dashboard refreshes every 60 s, so 30 s closes and reopens connections on every refresh; this lets
+ * that be tuned from pool diagnostics evidence without a code change. Bounded to 10 s – 10 min. It
+ * changes how long connections are kept, never how many (max stays 10).
+ */
+export function poolIdleTimeoutMillis(value: string | undefined): number {
+  const parsed = Number(value);
+  if (value == null || value.trim() === '' || !Number.isFinite(parsed)) return 30000;
+  return Math.min(600000, Math.max(10000, Math.round(parsed)));
+}
 
 function parseBoolean(value: string | undefined, fallback: boolean): boolean {
   if (value == null || value === '') {
@@ -47,7 +61,7 @@ export function buildTypeOrmOptions(env: DatabaseEnv): DataSourceOptions {
     synchronize,
     extra: {
       connectionTimeoutMillis: 10000,
-      idleTimeoutMillis: 30000,
+      idleTimeoutMillis: poolIdleTimeoutMillis(env.DATABASE_POOL_IDLE_TIMEOUT_MS),
       max: 10,
       keepAlive: true,
     },
