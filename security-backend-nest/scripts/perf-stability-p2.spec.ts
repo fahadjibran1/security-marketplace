@@ -168,7 +168,11 @@ async function main() {
     const s = net.createServer().listen(0, '127.0.0.1', () => { const p = (s.address() as net.AddressInfo).port; s.close(() => resolve(p)); });
   });
   const refused = await realError(`postgresql://s4test@127.0.0.1:${closedPort}/x`);
-  const missingDb = await realError(`postgresql://${target.username}@${target.host}/s4_p2_database_that_does_not_exist`);
+  // The spec's own server and credentials, only the database name changed, so the server itself answers
+  // "database does not exist" whether it uses trust (local) or password (CI) authentication.
+  const missingDbUrl = new URL(url);
+  missingDbUrl.pathname = '/s4_p2_database_that_does_not_exist';
+  const missingDb = await realError(missingDbUrl.toString());
   assert.ok(refused && missingDb, 'both connections must fail');
   assert.deepEqual(classifyConnectError(refused), { category: 'refused', code: 'ECONNREFUSED', transient: true });
   assert.deepEqual(classifyConnectError(missingDb), { category: 'configuration', code: '3D000', transient: false });
