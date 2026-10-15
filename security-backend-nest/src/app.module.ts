@@ -38,6 +38,7 @@ import { CoverageModule } from './coverage/coverage.module';
 import { FinanceModule } from './finance/finance.module';
 import { HealthController } from './health.controller';
 import { buildNestTypeOrmOptions } from './database/typeorm.config';
+import { buildConnectRetryPolicy, readConnectRetryConfig } from './database/connect-retry';
 import { PoolDiagnosticsService } from './database/pool-diagnostics/pool-diagnostics.service';
 import { validateRuntimeEnv } from './config/runtime-env';
 import { ScreeningModule } from './screening/screening.module';
@@ -66,8 +67,13 @@ import { OperationsModule } from './operations/operations.module';
           DATABASE_NAME: config.get<string>('DATABASE_NAME'),
           DATABASE_POOL_IDLE_TIMEOUT_MS: config.get<string>('DATABASE_POOL_IDLE_TIMEOUT_MS'),
         }),
-        retryAttempts: 1,
-        retryDelay: 0,
+        // Bounded start-up retries for transient connection failures; see database/connect-retry.
+        ...buildConnectRetryPolicy(
+          readConnectRetryConfig({
+            DATABASE_CONNECT_ATTEMPTS: config.get<string>('DATABASE_CONNECT_ATTEMPTS'),
+            DATABASE_CONNECT_RETRY_DELAY_MS: config.get<string>('DATABASE_CONNECT_RETRY_DELAY_MS'),
+          }),
+        ),
       }),
     }),
     UserModule,
