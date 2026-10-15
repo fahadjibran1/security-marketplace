@@ -51,6 +51,7 @@ import {
   OperationalWindowState,
   ResolvedOperationalWindow,
 } from '../operations/operational-window.types';
+import { SingleFlightJob, SingleFlightOutcome } from '../scheduler/single-flight-job';
 
 /** A Book Off is late, not missing, until the shift has been over for a quarter of an hour. */
 const MISSING_BOOK_OFF_GRACE_MINUTES = 15;
@@ -63,6 +64,26 @@ const WELFARE_SWEEP_LOCK_NAMESPACE = 534_401_401;
 
 /** Advisory-lock namespace for the compliance lapse sweep, one lock per shift. */
 const COMPLIANCE_LAPSE_LOCK_NAMESPACE = 534_401_402;
+
+/** The safety sweep's cadence, unchanged by Performance P2. */
+const SAFETY_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+/** A sweep still running after two intervals is reported at error level on every skipped tick. */
+const SAFETY_SWEEP_OVERRUN_MS = 2 * SAFETY_SWEEP_INTERVAL_MS;
+
+/**
+ * What the sweeps read from a shift: its company (and the company's owner account, who is notified), its
+ * guard (or the assignment's guard), and its site (timezone, Welfare interval, name). Performance P2: the
+ * shift's eager graph also joined the company's and guard's users, the job, the application and the
+ * assignment's own job, company and application, and the site's company and client - on every in-progress
+ * shift, every five minutes, whether or not anyone was signed in. None of that is read here.
+ */
+const SWEEP_SHIFT_READ = {
+  relations: { company: { user: true }, guard: true, assignment: { guard: true }, site: true },
+  loadEagerRelations: false,
+} as const;
+
+/** Rows grouped by shift need only their own columns and the shift's id. */
+const SWEEP_CHILD_READ = { relations: { shift: true }, loadEagerRelations: false } as const;
 
 export type ComplianceLapseSweepCounters = {
   shiftsChecked: number;
@@ -85,6 +106,7 @@ type WelfareSweepCounters = {
 export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(SafetyAlertService.name);
   private welfareInterval?: NodeJS.Timeout;
+  private safetySweep?: SingleFlightJob;
 
   constructor(
     @InjectRepository(SafetyAlert)
@@ -111,18 +133,38 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
    * open, and re-established by every deploy or restart. Each scan logs its own failure and the next tick
    * simply runs again; a failing welfare scan never stops the compliance scan. Per-shift advisory locks and
    * unique indexes make overlapping or concurrent runs safe.
+   *
+   * Performance P2: one sweep at a time in this process. A tick that arrives while the previous sweep is
+   * still running is skipped and logged rather than started beside it (scheduler/single-flight-job). Both
+   * scans recompute everything from the database on each run, so the next tick does whatever a skipped one
+   * would have done: a missed Welfare window, a missing Book Off or a lapse is deferred, never lost.
    */
   onModuleInit() {
-    this.welfareInterval = setInterval(() => {
-      this.runMissedWelfareChecks()
-        .catch((error) => this.logger.error(`Missed welfare check scan failed: ${error?.message || error}`))
-        .then(() => this.runComplianceLapseScan())
-        .catch((error) => this.logger.error(`Compliance lapse scan failed: ${error?.message || error}`));
-    }, 5 * 60 * 1000);
+    this.safetySweep = new SingleFlightJob(
+      'safety-sweep',
+      () =>
+        this.runMissedWelfareChecks()
+          .catch((error) => this.logger.error(`Missed welfare check scan failed: ${error?.message || error}`))
+          .then(() => this.runComplianceLapseScan())
+          .catch((error) => this.logger.error(`Compliance lapse scan failed: ${error?.message || error}`)),
+      { overrunAfterMs: SAFETY_SWEEP_OVERRUN_MS },
+    );
+    this.welfareInterval = setInterval(() => void this.triggerSafetySweep(), SAFETY_SWEEP_INTERVAL_MS);
   }
 
   onModuleDestroy() {
     if (this.welfareInterval) clearInterval(this.welfareInterval);
+    this.safetySweep?.stop();
+  }
+
+  /** What one timer tick does: start a sweep unless one is already running. Never rejects. */
+  triggerSafetySweep(): Promise<SingleFlightOutcome> {
+    if (!this.safetySweep) return Promise.resolve({ ran: false, skippedBecause: 'stopped' });
+    return this.safetySweep.tick();
+  }
+
+  safetySweepStats() {
+    return this.safetySweep?.stats() ?? null;
   }
 
   findAll(): Promise<SafetyAlert[]> {
@@ -221,6 +263,7 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
     const shifts = await this.shiftRepo.find({
       where: { status: 'in_progress' },
       order: { start: 'ASC' },
+      ...SWEEP_SHIFT_READ,
     });
 
     const counters = {
@@ -237,17 +280,18 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
       const shiftIds = shifts.map((shift) => shift.id);
 
       // Two set-based reads for the whole sweep rather than two per shift. The (shiftId, createdAt)
-      // and (shiftId, occurredAt) indexes added by migration 59 serve exactly these.
-      const [welfareLogs, attendanceEvents] = await Promise.all([
-        this.dailyLogRepo.find({
-          where: { shift: { id: In(shiftIds) }, logType: In(WELFARE_COMPLETION_LOG_TYPES) },
-          order: { createdAt: 'ASC' },
-        }),
-        this.attendanceRepo.find({
-          where: { shift: { id: In(shiftIds) } },
-          order: { occurredAt: 'ASC' },
-        }),
-      ]);
+      // and (shiftId, occurredAt) indexes added by migration 59 serve exactly these. One after the other
+      // (Performance P2), so the two reads never take two pooled connections at once.
+      const welfareLogs = await this.dailyLogRepo.find({
+        ...SWEEP_CHILD_READ,
+        where: { shift: { id: In(shiftIds) }, logType: In(WELFARE_COMPLETION_LOG_TYPES) },
+        order: { createdAt: 'ASC' },
+      });
+      const attendanceEvents = await this.attendanceRepo.find({
+        ...SWEEP_CHILD_READ,
+        where: { shift: { id: In(shiftIds) } },
+        order: { occurredAt: 'ASC' },
+      });
 
       const logsByShift = this.groupBy(welfareLogs, (log) => log.shift?.id);
       const attendanceByShift = this.groupBy(attendanceEvents, (event) => event.shift?.id);
@@ -418,6 +462,9 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
         status: In([SafetyAlertStatus.OPEN, SafetyAlertStatus.ACKNOWLEDGED]),
       },
       order: { createdAt: 'DESC' },
+      // Only the summary's own columns are read or changed (status, closedAt, message); relations that are
+      // not loaded are left untouched when it is saved. Performance P2.
+      loadEagerRelations: false,
     });
 
     if (missedRun === 0) {
@@ -564,16 +611,21 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
    * original creation time and any acknowledgement intact.
    */
   private async resolveMissingBookOffAlerts(counters: WelfareSweepCounters) {
+    // The alert's company (for its audit entry) and shift id are all this reads; the alert is saved with
+    // only status and closedAt changed, and relations that were not loaded are left untouched.
     const open = await this.safetyAlertRepo.find({
       where: {
         type: SafetyAlertType.MISSING_BOOK_OFF,
         status: In([SafetyAlertStatus.OPEN, SafetyAlertStatus.ACKNOWLEDGED]),
       },
+      relations: { company: true, shift: true },
+      loadEagerRelations: false,
     });
     const shiftIds = open.map((alert) => alert.shift?.id).filter((id): id is number => Boolean(id));
     if (!shiftIds.length) return;
 
     const checkOuts = await this.attendanceRepo.find({
+      ...SWEEP_CHILD_READ,
       where: { shift: { id: In(shiftIds) }, type: AttendanceEventType.CHECK_OUT },
     });
     const bookedOff = new Set(checkOuts.map((event) => event.shift?.id).filter(Boolean));
@@ -616,6 +668,7 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
     const shifts = await this.shiftRepo.find({
       where: { status: 'in_progress', end: MoreThan(watchFrom) },
       order: { start: 'ASC' },
+      ...SWEEP_SHIFT_READ,
     });
     const counters: ComplianceLapseSweepCounters = { shiftsChecked: 0, shiftsSkippedLocked: 0, alertsRaised: 0, notificationsCreated: 0 };
 

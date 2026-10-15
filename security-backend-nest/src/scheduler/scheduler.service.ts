@@ -17,6 +17,9 @@ import {
   TimesheetPayrollStatus,
   TimesheetStatus,
 } from '../timesheet/entities/timesheet.entity';
+import { SingleFlightJob } from './single-flight-job';
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 type Suggestion = {
   companyId: number;
@@ -36,6 +39,17 @@ export class AutomationSchedulerService implements OnModuleInit, OnModuleDestroy
   private readonly logger = new Logger(AutomationSchedulerService.name);
   private dailyInterval?: NodeJS.Timeout;
   private weeklyInterval?: NodeJS.Timeout;
+  // One run of each at a time (Performance P2); see single-flight-job.
+  private readonly reminderJob = new SingleFlightJob(
+    'daily-reminders',
+    () => this.runReminders().catch((error) => this.logger.error(`Reminder job failed: ${error?.message || error}`)),
+    { overrunAfterMs: DAY_MS },
+  );
+  private readonly suggestionJob = new SingleFlightJob(
+    'weekly-suggestions',
+    () => this.runAutomationSuggestions().catch((error) => this.logger.error(`Suggestion job failed: ${error?.message || error}`)),
+    { overrunAfterMs: DAY_MS },
+  );
 
   constructor(
     @InjectRepository(Company) private readonly companyRepo: Repository<Company>,
@@ -50,17 +64,15 @@ export class AutomationSchedulerService implements OnModuleInit, OnModuleDestroy
   ) {}
 
   onModuleInit() {
-    this.dailyInterval = setInterval(() => {
-      this.runReminders().catch((error) => this.logger.error(`Reminder job failed: ${error?.message || error}`));
-    }, 24 * 60 * 60 * 1000);
-    this.weeklyInterval = setInterval(() => {
-      this.runAutomationSuggestions().catch((error) => this.logger.error(`Suggestion job failed: ${error?.message || error}`));
-    }, 7 * 24 * 60 * 60 * 1000);
+    this.dailyInterval = setInterval(() => void this.reminderJob.tick(), DAY_MS);
+    this.weeklyInterval = setInterval(() => void this.suggestionJob.tick(), 7 * DAY_MS);
   }
 
   onModuleDestroy() {
     if (this.dailyInterval) clearInterval(this.dailyInterval);
     if (this.weeklyInterval) clearInterval(this.weeklyInterval);
+    this.reminderJob.stop();
+    this.suggestionJob.stop();
   }
 
   async getPayrollSuggestionsForCompany(userId: number) {
@@ -77,7 +89,9 @@ export class AutomationSchedulerService implements OnModuleInit, OnModuleDestroy
 
   async runPayrollSuggestions() {
     const companies = await this.companyRepo.find();
-    const summaries = await Promise.all(companies.map(async (company) => {
+    // One company at a time (Performance P2): a Promise.all over every company fanned the run out across
+    // the whole connection pool at once, growing with the number of companies. Same results, same order.
+    const summaries = await this.forEachCompanyInTurn(companies, async (company) => {
       const suggestions = await this.buildPayrollSuggestions(company.id);
       if (suggestions.length && company.user?.id) {
         await this.createReminderIfMissing({
@@ -100,13 +114,13 @@ export class AutomationSchedulerService implements OnModuleInit, OnModuleDestroy
         }
       }
       return { companyId: company.id, suggestions: suggestions.length };
-    }));
+    });
     return { companiesChecked: companies.length, summaries };
   }
 
   async runInvoiceSuggestions() {
     const companies = await this.companyRepo.find();
-    const summaries = await Promise.all(companies.map(async (company) => {
+    const summaries = await this.forEachCompanyInTurn(companies, async (company) => {
       const suggestions = await this.buildInvoiceSuggestions(company.id);
       if (suggestions.length && company.user?.id) {
         await this.createReminderIfMissing({
@@ -131,8 +145,14 @@ export class AutomationSchedulerService implements OnModuleInit, OnModuleDestroy
         }
       }
       return { companyId: company.id, suggestions: suggestions.length };
-    }));
+    });
     return { companiesChecked: companies.length, summaries };
+  }
+
+  private async forEachCompanyInTurn<T>(companies: Company[], work: (company: Company) => Promise<T>): Promise<T[]> {
+    const results: T[] = [];
+    for (const company of companies) results.push(await work(company));
+    return results;
   }
 
   async runReminders() {
@@ -212,7 +232,8 @@ export class AutomationSchedulerService implements OnModuleInit, OnModuleDestroy
   }
 
   private async runAutomationSuggestions() {
-    const [payroll, invoices] = await Promise.all([this.runPayrollSuggestions(), this.runInvoiceSuggestions()]);
+    const payroll = await this.runPayrollSuggestions();
+    const invoices = await this.runInvoiceSuggestions();
     return { payroll, invoices };
   }
 
