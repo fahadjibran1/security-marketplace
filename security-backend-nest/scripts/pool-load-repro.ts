@@ -16,10 +16,27 @@
  *
  * Requires POOL_LOAD_DATABASE_URL (localhost). Optional: POOL_LOAD_ONE_WAY_MS (default 60),
  * POOL_LOAD_CONNECT_PENALTY_MS (default 480), POOL_LOAD_USERS (default 3), POOL_LOAD_SECONDS (default 60).
+ *
+ * Performance P2 additions (all off by default, so earlier runs reproduce exactly):
+ *   POOL_LOAD_CLIENT=uncoordinated|coordinated  how phase C's dashboards refresh. "uncoordinated" is the
+ *       pre-P2 web app: every timer tick starts a reload whether or not the last one finished, and the
+ *       browser abandons a request after 30 s while the server keeps working on it. "coordinated" is the
+ *       P2 web app: the next reload starts only after the last one finished. Either way the browser's
+ *       30 s abort applies.
+ *   POOL_LOAD_SWEEP_SECONDS=N  drive the five-minute safety sweep every N seconds (compressed time) during
+ *       phases C and D, through whatever the running build's timer does: P2's single-flight tick, or the
+ *       pre-P2 bare interval body.
+ *   POOL_LOAD_STALE_SHIFTS=N   in-progress shifts left running long past their end (as in production) for
+ *       the sweep to work on (default 4).
+ *   POOL_LOAD_IDLE_SECONDS=N   phase D: nobody signed in, only the sweep and the health probe.
+ *   POOL_LOAD_SKIP_AB=true     skip phases A and B.
+ * With any of these set, a Render-style probe calls /health/ready and /health/live every 5 s with a 5 s
+ * timeout throughout phases C and D, and the report counts the probes Render would have failed.
  */
 import 'reflect-metadata';
 import * as assert from 'assert';
 import * as net from 'net';
+import { monitorEventLoopDelay } from 'perf_hooks';
 import { randomUUID } from 'crypto';
 import { LoggerService, ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
@@ -35,6 +52,14 @@ const ONE_WAY_MS = Number(process.env.POOL_LOAD_ONE_WAY_MS ?? 60);
 const CONNECT_PENALTY_MS = Number(process.env.POOL_LOAD_CONNECT_PENALTY_MS ?? 480);
 const USERS = Number(process.env.POOL_LOAD_USERS ?? 3);
 const SECONDS = Number(process.env.POOL_LOAD_SECONDS ?? 60);
+const CLIENT = process.env.POOL_LOAD_CLIENT as 'coordinated' | 'uncoordinated' | undefined;
+const SWEEP_SECONDS = Number(process.env.POOL_LOAD_SWEEP_SECONDS ?? 0);
+const IDLE_SECONDS = Number(process.env.POOL_LOAD_IDLE_SECONDS ?? 0);
+const STALE_SHIFTS = Number(process.env.POOL_LOAD_STALE_SHIFTS ?? 4);
+const SKIP_AB = process.env.POOL_LOAD_SKIP_AB === 'true';
+const P2_MODE = Boolean(CLIENT || SWEEP_SECONDS || IDLE_SECONDS);
+/** The web app's own request timeout (security-mobile-app/src/services/api.ts). */
+const BROWSER_ABORT_MS = 30_000;
 
 /** Delays every chunk in both directions, preserving order; the first server reply is delayed further. */
 class LatencyProxy {
@@ -164,7 +189,7 @@ async function main() {
   const [{ current_database: db }] = await ds.query('SELECT current_database()');
   assert.equal(db, target.pathname.slice(1), 'app is on the disposable database');
 
-  const api = async (method: string, path: string, token: string | null, body?: unknown): Promise<Res> => {
+  const api = async (method: string, path: string, token: string | null, body?: unknown, timeoutMs = 60_000): Promise<Res> => {
     const started = Date.now();
     let res: globalThis.Response;
     try {
@@ -172,9 +197,11 @@ async function main() {
         method,
         headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
         body: body === undefined ? undefined : JSON.stringify(body),
-        signal: AbortSignal.timeout(60_000),
+        signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (error) {
+      // The browser gave up (P2 modes): the server is still working on it, which is the point.
+      if (timeoutMs < 60_000) return { status: 598, ms: Date.now() - started, body: null };
       // No response within 60 s: recorded as 599 so a hang is reported, not fatal. The server's own view
       // of every session (read directly, not through the proxy) says whether PostgreSQL is still working
       // on something — a lock wait, a running query — or has answered and the reply never arrived.
@@ -271,6 +298,102 @@ async function main() {
     assert.equal(slot.status, 201, JSON.stringify(slot.body));
   }
   phase("fixtures seeded");
+
+  // ── P2: background sweep and Render-style health probe ─────────────────────────────────────────
+  const { Shift } = await import('../src/shift/entities/shift.entity');
+  const { AttendanceEvent, AttendanceEventType } = await import('../src/attendance/entities/attendance.entity');
+  const { SafetyAlertService } = await import('../src/safety-alert/safety-alert.service');
+  const sweepService: any = app.get(SafetyAlertService);
+  // The build's own five-minute timer is replaced by the harness's compressed one below.
+  clearInterval(sweepService.welfareInterval);
+  if (P2_MODE) {
+    // Shaped like production on 15 Oct: shifts still 'in_progress' long after their scheduled end, never
+    // booked off, plus one genuinely live shift. Each has a Book On and no Welfare entries.
+    for (let i = 0; i < STALE_SHIFTS; i += 1) {
+      const startedHoursAgo = i === 0 ? 3 : 14 + i * 10;
+      const start = new Date(Date.now() - startedHoursAgo * 3_600_000);
+      const shift: any = await ds.getRepository(Shift).save(ds.getRepository(Shift).create({
+        company: { id: companyId }, site: { id: site.body.id }, siteName: 'Acme Store 1', guard: { id: guardIds[i % guardIds.length] },
+        start, end: new Date(start.getTime() + 12 * 3_600_000), status: 'in_progress', checkCallIntervalMinutes: 60,
+      } as any));
+      await ds.getRepository(AttendanceEvent).save(ds.getRepository(AttendanceEvent).create({
+        shift: { id: shift.id }, guard: { id: guardIds[i % guardIds.length] }, type: AttendanceEventType.CHECK_IN, occurredAt: start,
+      } as any));
+    }
+  }
+  const sweeps = { ticks: 0, started: 0, skipped: 0, durationsMs: [] as number[], maxConcurrent: 0, concurrent: 0, singleFlight: typeof sweepService.triggerSafetySweep === 'function' };
+  const sweepTick = () => {
+    sweeps.ticks += 1;
+    const t0 = Date.now();
+    if (sweeps.singleFlight) {
+      void sweepService.triggerSafetySweep().then((o: any) => {
+        if (o.ran) { sweeps.started += 1; sweeps.durationsMs.push(Date.now() - t0); } else sweeps.skipped += 1;
+      });
+      return;
+    }
+    // Exactly the pre-P2 interval body: no guard against a sweep already running.
+    sweeps.started += 1;
+    sweeps.concurrent += 1;
+    sweeps.maxConcurrent = Math.max(sweeps.maxConcurrent, sweeps.concurrent);
+    void sweepService.runMissedWelfareChecks()
+      .catch(() => undefined)
+      .then(() => sweepService.runComplianceLapseScan())
+      .catch(() => undefined)
+      .finally(() => { sweeps.concurrent -= 1; sweeps.durationsMs.push(Date.now() - t0); });
+  };
+  const probes: Array<{ at: number; readyMs: number; readyOk: boolean; liveMs: number; liveOk: boolean }> = [];
+  const probeOnce = async () => {
+    const one = async (path: string) => {
+      const t0 = Date.now();
+      try {
+        const r = await fetch(base + path, { signal: AbortSignal.timeout(5_000) });
+        await r.text();
+        return { ms: Date.now() - t0, ok: r.status === 200 };
+      } catch {
+        return { ms: Date.now() - t0, ok: false };
+      }
+    };
+    const [ready, live] = await Promise.all([one('/health/ready'), one('/health/live')]);
+    probes.push({ at: Date.now(), readyMs: ready.ms, readyOk: ready.ok, liveMs: live.ms, liveOk: live.ok });
+  };
+  const startBackground = () => {
+    const sweepTimers: NodeJS.Timeout[] = [];
+    const probeTimers: NodeJS.Timeout[] = [];
+    if (SWEEP_SECONDS > 0) { sweepTick(); sweepTimers.push(setInterval(sweepTick, SWEEP_SECONDS * 1000)); }
+    if (P2_MODE) probeTimers.push(setInterval(() => void probeOnce(), 5_000));
+    const stopSweeps = () => sweepTimers.forEach(clearInterval);
+    const stopAll = () => { stopSweeps(); probeTimers.forEach(clearInterval); };
+    return Object.assign(stopAll, { stopSweeps });
+  };
+  /** Event-loop delay: how long the process could not run anything else (a probe, a request). */
+  const loopDelay = () => {
+    const h = monitorEventLoopDelay({ resolution: 20 });
+    h.enable();
+    return () => { h.disable(); return { p50: Math.round(h.percentile(50) / 1e6), p99: Math.round(h.percentile(99) / 1e6), max: Math.round(h.max / 1e6) }; };
+  };
+  const probeSummary = (from: number) => {
+    const p = probes.slice(from);
+    const streak = (ok: (x: typeof p[number]) => boolean) => {
+      let best = 0, run = 0;
+      for (const x of p) { run = ok(x) ? 0 : run + 1; best = Math.max(best, run); }
+      return best;
+    };
+    const sorted = (k: 'readyMs' | 'liveMs') => p.map((x) => x[k]).sort((a, b) => a - b);
+    const pct = (arr: number[], q: number) => arr[Math.min(arr.length - 1, Math.floor(arr.length * q))] ?? 0;
+    return {
+      probes: p.length,
+      readyFailed: p.filter((x) => !x.readyOk).length,
+      readyLongestFailStreak: streak((x) => x.readyOk),
+      readyMs: { p50: pct(sorted('readyMs'), 0.5), p95: pct(sorted('readyMs'), 0.95), max: pct(sorted('readyMs'), 1) },
+      liveFailed: p.filter((x) => !x.liveOk).length,
+      liveMs: { p50: pct(sorted('liveMs'), 0.5), max: pct(sorted('liveMs'), 1) },
+    };
+  };
+  const sweepSummary = () => {
+    const d = [...sweeps.durationsMs].sort((a, b) => a - b);
+    return { singleFlight: sweeps.singleFlight, ticks: sweeps.ticks, started: sweeps.started, skipped: sweeps.skipped, completed: d.length,
+      maxConcurrent: sweeps.singleFlight ? 1 : sweeps.maxConcurrent, durationMs: { p50: d[Math.floor(d.length / 2)] ?? 0, max: d[d.length - 1] ?? 0 }, allDurationsMs: [...sweeps.durationsMs] };
+  };
   const fixture = {
     guards: guardIds.length,
     checksRecorded: Number((await ds.query('SELECT count(*)::int n FROM guard_compliance_checks WHERE "companyId" = $1', [companyId]))[0].n),
@@ -289,8 +412,9 @@ async function main() {
   };
   const reload = async (section: keyof typeof SECTION) => {
     const results: Array<{ path: string } & Res> = [];
+    const timeoutMs = P2_MODE ? BROWSER_ABORT_MS : 60_000;
     const run = async (paths: string[]) =>
-      Promise.all(paths.map(async (path) => results.push({ path, ...(await api('GET', path, token)) })));
+      Promise.all(paths.map(async (path) => results.push({ path, ...(await api('GET', path, token, undefined, timeoutMs)) })));
     const started = Date.now();
     await run(CORE);
     await run(SECTION[section]);
@@ -338,23 +462,27 @@ async function main() {
 
   const report: any = { settings: { oneWayMs: ONE_WAY_MS, connectPenaltyMs: CONNECT_PENALTY_MS, users: USERS, seconds: SECONDS, pool: { max: pool.options.max, connectionTimeoutMillis: pool.options.connectionTimeoutMillis, idleTimeoutMillis: pool.options.idleTimeoutMillis } }, fixture };
 
-  // A: no latency, warm pool — the query cost of one dashboard load.
   let mark = capture.poolLines.length;
+  if (!SKIP_AB) {
+  // A: no latency, warm pool — the query cost of one dashboard load.
   await reload('dashboard');
   mark = capture.poolLines.length;
   const a = await reload('dashboard');
   report.A_noLatency_warm = { reloadMs: a.ms, statuses: [...new Set(a.results.map((r) => r.status))], perRoute: byRoute(summaries(mark)) };
 
   phase("A done");
+  }
   // B: production-like latency, cold pool — one user opening the dashboard.
   proxy.oneWayMs = ONE_WAY_MS;
   proxy.connectPenaltyMs = CONNECT_PENALTY_MS;
+  if (!SKIP_AB) {
   await waitForDrain();
   mark = capture.poolLines.length;
   const b = await reload('dashboard');
   report.B_latency_cold_singleUser = { reloadMs: b.ms, poolTotalAfter: pool.totalCount, failedRequests: b.results.filter((r) => r.status >= 500).map((r) => r.path), perRoute: byRoute(summaries(mark)) };
 
   phase("B done");
+  }
   // C: production-like latency, several open dashboards on their real cadences, for SECONDS.
   mark = capture.poolLines.length;
   const stopAt = Date.now() + SECONDS * 1000;
@@ -364,20 +492,48 @@ async function main() {
   const failures: string[] = [];
   let peakWaiting = 0;
   const sampler = setInterval(() => (peakWaiting = Math.max(peakWaiting, pool.waitingCount)), 100);
+  const probeMarkC = probes.length;
+  const stopLoopC = loopDelay();
+  const stopBackgroundC = startBackground();
+  let peakInFlightReloads = 0;
+  let clientAborts = 0;
+  const record = (r: { ms: number; results: Array<{ path: string } & Res> }) => {
+    loads.push(r.ms);
+    r.results.filter((x) => x.status >= 500).forEach((x) => (x.status === 598 ? (clientAborts += 1) : failures.push(`${x.status} ${x.path.split('?')[0]}`)));
+  };
+  if (CLIENT === 'uncoordinated') {
+    // Pre-P2 web app: the refresh timer fires on cadence whatever is still in flight.
+    let inFlight = 0;
+    const pending: Promise<void>[] = [];
+    await Promise.all(
+      Array.from({ length: USERS }, async (_, u) => {
+        const section = sections[u % sections.length];
+        await new Promise((r) => setTimeout(r, u * 1_500));
+        while (Date.now() < stopAt) {
+          inFlight += 1;
+          peakInFlightReloads = Math.max(peakInFlightReloads, inFlight);
+          pending.push(reload(section).then(record).finally(() => { inFlight -= 1; }));
+          await new Promise((res) => setTimeout(res, cadence[section]));
+        }
+      }),
+    );
+    await Promise.all(pending);
+  } else {
   await Promise.all(
     Array.from({ length: USERS }, async (_, u) => {
       const section = sections[u % sections.length];
       await new Promise((r) => setTimeout(r, u * 1_500));
       while (Date.now() < stopAt) {
         const r = await reload(section);
-        loads.push(r.ms);
-        r.results.filter((x) => x.status >= 500).forEach((x) => failures.push(`${x.status} ${x.path.split('?')[0]}`));
+        record(r);
         const wait = cadence[section] - r.ms;
         if (wait > 0 && Date.now() + wait < stopAt) await new Promise((res) => setTimeout(res, wait));
         else if (wait > 0) break;
       }
     }),
   );
+  }
+  stopBackgroundC();
   clearInterval(sampler);
   phase("C done");
   const snapshots = capture.poolLines.slice(mark).map((l) => JSON.parse(l)).filter((e) => e.event === 'db_pool_snapshot');
@@ -394,6 +550,39 @@ async function main() {
     establishMsP95: Math.max(0, ...snapshots.map((s) => s.establishMs?.p95 ?? 0)),
     perRoute: byRoute(summaries(mark)).slice(0, 12),
   };
+  if (P2_MODE) {
+    Object.assign(report.C_latency_concurrentUsers, {
+      client: CLIENT ?? 'coordinated', peakInFlightReloads, clientAborts, eventLoopDelayMs: stopLoopC(),
+      health: probeSummary(probeMarkC), sweep: sweepSummary(),
+    });
+  }
+
+  // D: nobody signed in — only the background sweep and the health probe (P2).
+  if (IDLE_SECONDS > 0) {
+    await waitForDrain();
+    const probeMarkD = probes.length;
+    const before = sweepSummary();
+    let peakWaitingD = 0;
+    const samplerD = setInterval(() => (peakWaitingD = Math.max(peakWaitingD, pool.waitingCount)), 100);
+    const stopLoopD = loopDelay();
+    const startedD = Date.now();
+    const stopBackgroundD = startBackground();
+    await new Promise((r) => setTimeout(r, IDLE_SECONDS * 1000));
+    stopBackgroundD.stopSweeps();
+    // Let the last sweep finish before reporting, still probing as Render would.
+    const deadline = Date.now() + 1_200_000;
+    while ((sweeps.singleFlight ? sweepService.safetySweep?.isRunning?.() : sweeps.concurrent > 0) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 250));
+    stopBackgroundD();
+    clearInterval(samplerD);
+    const wallMs = Date.now() - startedD;
+    const eventLoopDelayMs = stopLoopD();
+    const after = sweepSummary();
+    report.D_idle_backgroundOnly = {
+      seconds: IDLE_SECONDS, wallMs, eventLoopDelayMs, peakWaiting: peakWaitingD, health: probeSummary(probeMarkD),
+      sweep: { ...after, ticks: after.ticks - before.ticks, started: after.started - before.started, skipped: after.skipped - before.skipped },
+    };
+    phase("D done");
+  }
 
   // Privacy: nothing seeded as personal data appears in any diagnostics line.
   const allPool = capture.poolLines.join('\n');
