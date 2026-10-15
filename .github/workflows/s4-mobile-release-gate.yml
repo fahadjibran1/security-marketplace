@@ -278,6 +278,11 @@ jobs:
       - name: Verify fail-safe operational data
         run: npm run test:fail-safe-operations
 
+      # One refresh cycle at a time per workspace: timer ticks never pile up behind a slow backend, and
+      # an operator's refresh is never lost (Performance P2).
+      - name: Verify dashboard refresh control
+        run: npm run test:refresh-coordinator
+
       # The Incident Report is what a client is shown, so it is certified for provenance as much as
       # appearance: the guard's words survive resolution, an absent fact reads as absent, and the
       # printed A4 page carries no navigation, no audit JSON and no internal identifiers.

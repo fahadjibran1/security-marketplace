@@ -9,6 +9,7 @@ import { CompanyRotaPlannerWorkspace, type PlannerWeekDay, type FlatSlotCell, ty
 import { CompanySitesWorkspace, type SiteFormState, SITE_FORM_EMPTY } from '../components/company/CompanySitesWorkspace';
 import { CompanyLiveOperationsWorkspace } from '../components/company/CompanyLiveOperationsWorkspace';
 import { sourceState as sourceStateOf } from '../components/company/sourceAvailability';
+import { createRefreshCoordinator, type RefreshCoordinator, type RefreshTrigger } from '../services/refreshCoordinator';
 import { CompanyResolveAlertDrawer, type ResolveTarget } from '../components/company/CompanyResolveAlertDrawer';
 import { alertTypeLabel, missingBookOffSummary, resolutionFamilyForAlert } from '../components/company/alertResolution';
 import { CompanyIncidentReportDrawer } from '../components/company/CompanyIncidentReportDrawer';
@@ -1456,11 +1457,13 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
   const [payrollAdminFeedback, setPayrollAdminFeedback] = React.useState<{ tone: 'success' | 'error'; message: string } | null>(null);
 
   const runSettledLoaders = React.useMemo(
-    () => async (loaders: SettledLoader[]) => {
+    () => async (loaders: SettledLoader[], isCurrent: () => boolean = () => true) => {
       const results = await Promise.allSettled(loaders.map((loader) => loader.run()));
       // Each failure keeps its loader's label, so a surface can say WHICH of its sources failed instead of
       // presenting a stale or empty list as if it were current.
       const failures: Array<{ label: string; reason: unknown }> = [];
+      // A superseded cycle's results are obsolete: a newer cycle is already on its way to replace them.
+      if (!isCurrent()) return failures;
 
       results.forEach((result, index) => {
         if (result.status === 'fulfilled') {
@@ -1475,9 +1478,20 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
     [],
   );
 
-  const loadData = React.useMemo(
+  // At most one refresh cycle at a time for this workspace; see services/refreshCoordinator. Created
+  // lazily so that a remount (including React's development double-mount) gets a fresh one.
+  const refreshCoordinatorRef = React.useRef<RefreshCoordinator | null>(null);
+  const refreshCoordinator = React.useCallback(() => {
+    if (!refreshCoordinatorRef.current || refreshCoordinatorRef.current.isDisposed()) {
+      refreshCoordinatorRef.current = createRefreshCoordinator();
+    }
+    return refreshCoordinatorRef.current;
+  }, []);
+  React.useEffect(() => () => refreshCoordinatorRef.current?.dispose(), []);
+
+  const runLoadCycle = React.useMemo(
     () =>
-    async (isRefresh = false) => {
+    async (isRefresh: boolean, isCurrent: () => boolean) => {
       if (companyMobileLayoutDisabled) {
         setLoading(false);
         setRefreshing(false);
@@ -1553,7 +1567,8 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
             run: listCompanyScreeningOutcomes,
             apply: (value: CompanyScreeningOutcome[]) => setScreeningOutcomes(value),
           },
-        ]);
+        ], isCurrent);
+        if (!isCurrent()) return;
 
         if (!selectedSiteId && latestSites[0]) {
           setSelectedSiteId(latestSites[0].id);
@@ -1614,7 +1629,9 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
 
         const sectionFailures = await runSettledLoaders(
           (sectionLoaders[activeSection] || []).filter((loader) => loader.label !== 'compliance' || canViewCompliance),
+          isCurrent,
         );
+        if (!isCurrent()) return;
         const failures = [...coreFailures, ...sectionFailures];
 
         setFailedSources(failures.map((failure) => failure.label));
@@ -1624,14 +1641,28 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
           setError(formatApiErrorMessage(failures[0].reason, 'Some company workspace data could not be loaded.'));
         }
       } finally {
-        setLoading(false);
-        setRefreshing(false);
+        // A superseded cycle leaves the indicators to the cycle that replaced it.
+        if (isCurrent()) {
+          setLoading(false);
+          setRefreshing(false);
+        }
       }
     },
     // `selectedShiftId` is deliberately NOT a dependency any more: the loader no longer reads it, and
     // keeping it here made this callback — and therefore the whole load — re-run every time the operator
     // opened or closed a shift.
     [activeSection, runSettledLoaders, selectedSiteId, companyMobileLayoutDisabled, canViewCompliance],
+  );
+
+  /**
+   * Every reload goes through the coordinator. The timer passes 'timer' and is skipped while a cycle is
+   * running; everything else — a manual refresh, a section change, a reload after an operator action —
+   * is an explicit request that is never dropped, only coalesced into the next cycle.
+   */
+  const loadData = React.useCallback(
+    (isRefresh = false, trigger: RefreshTrigger = 'request') =>
+      refreshCoordinator().request(trigger, (isCurrent) => runLoadCycle(isRefresh, isCurrent)),
+    [refreshCoordinator, runLoadCycle],
   );
 
   React.useEffect(() => {
@@ -1663,7 +1694,7 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
       tick += 1;
       if (tick % everyTicks !== 0) return;
       setOperationalNow(new Date());
-      loadData(true);
+      loadData(true, 'timer');
     }, OPERATIONAL_REFRESH_TICK_MS);
 
     return () => clearInterval(intervalId);

@@ -65,14 +65,21 @@ const SHIFT_19 = {
 };
 
 /**
- * The body of `loadData`, which is the callback the 15-second refresh re-runs.
+ * The loader the 15-second refresh re-runs: since Performance P2, the load cycle itself (`runLoadCycle`)
+ * plus `loadData`, the wrapper that hands each cycle to the refresh coordinator. Both are checked, so a
+ * selection could not hide in either.
  *
- * Isolated by paren-matching from its opening line so an assertion about "the loader" really is about
+ * Isolated by paren-matching from each opening line so an assertion about "the loader" really is about
  * the loader and not about the whole 6,700-line screen.
  */
 function loaderBody() {
-  const start = screenSource.indexOf('const loadData = React.useMemo(');
-  assert.ok(start >= 0, 'the company data loader must be findable');
+  // The cycle last, so its dependency array is the final "[" (ENTRY-03 reads it).
+  return ['const loadData = React.useCallback(', 'const runLoadCycle = React.useMemo('].map(callbackBody).join('\n');
+}
+
+function callbackBody(opening) {
+  const start = screenSource.indexOf(opening);
+  assert.ok(start >= 0, 'the company data loader must be findable: ' + opening);
   let depth = 0;
   for (let i = start; i < screenSource.length; i += 1) {
     const ch = screenSource[i];
