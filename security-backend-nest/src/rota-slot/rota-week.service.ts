@@ -98,12 +98,16 @@ export class RotaWeekService {
       ? query.siteIds.split(',').map((s) => parseInt(s.trim(), 10)).filter((n) => !isNaN(n))
       : null;
 
+    // Performance P2: the week reads only each site's own columns and its client, so neither the site's
+    // company nor the client's company (nor their users) is joined any more.
     const allSites = await this.siteRepo.find({
       where: siteWhere,
       order: { name: 'ASC' },
+      relations: { client: true },
+      loadEagerRelations: false,
     });
 
-    // Post-filter by clientId (site.client is eager-loaded)
+    // Post-filter by clientId (site.client is loaded explicitly above)
     const sites = allSites
       .filter((s) => !query.clientId || s.client?.id === query.clientId)
       .filter((s) => !requestedSiteIds || requestedSiteIds.includes(s.id));
@@ -130,10 +134,19 @@ export class RotaWeekService {
       ? slots.filter((sl) => siteIds.includes(sl.siteId))
       : slots;
 
-    // Query 3: All Shifts for the loaded RotaSlots
+    // Query 3: All Shifts for the loaded RotaSlots. A position reads the shift's id, status and slot and
+    // its guard's id and name; the rest of the shift's eager graph (company, site, job, assignment,
+    // application, and the guard's user) is not used by the week and is no longer loaded (Performance P2).
     const slotIdList = filteredSlots.map((s) => s.id);
     const allShifts = slotIdList.length > 0
-      ? await this.shiftRepo.find({ where: { rotaSlotId: In(slotIdList) } })
+      ? await this.shiftRepo.find({
+          where: { rotaSlotId: In(slotIdList) },
+          relations: { guard: true },
+          loadEagerRelations: false,
+          // Positions within a slot used to come back in whatever order the join plan produced; now in
+          // the order the shifts were created, every time.
+          order: { id: 'ASC' },
+        })
       : [];
 
     const shiftsBySlotId = new Map<number, Shift[]>();

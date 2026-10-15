@@ -136,6 +136,12 @@ export type ShiftOperationsView = {
   missingBookOff: boolean;
 };
 
+/**
+ * The projection groups by `shift.id` and otherwise reads only the row's own columns, so the shift is
+ * joined without any of its eager relations and nothing else is loaded.
+ */
+const PROJECTION_READ = { relations: { shift: true }, loadEagerRelations: false } as const;
+
 /** Shift statuses whose welfare obligation is over: the board should stop asking for checks. */
 const SETTLED_SHIFT_STATUSES = new Set(['completed', 'cancelled', 'missed']);
 
@@ -156,40 +162,51 @@ export class OperationsProjectionService {
    * Four set-based reads for the whole board rather than four per shift: the caller has already
    * scoped the shifts to one company, so every read here is bounded by those ids and the migration 59
    * indexes serve them directly. Returned as a Map so the caller can attach each block to its row.
+   *
+   * Performance P2: the reads run one after another, so a projection holds at most ONE pooled
+   * connection at a time instead of four at once, and each loads its own columns plus the shift id
+   * only (PROJECTION_READ). The entities' eager relations would otherwise re-load the full shift,
+   * company, guard, site, job and assignment graph for every attendance event, log and alert, and the
+   * projection reads none of it.
    */
   async projectForShifts(shifts: Shift[], now = new Date()): Promise<Map<number, ShiftOperationsView>> {
     const projections = new Map<number, ShiftOperationsView>();
     if (!shifts.length) return projections;
 
     const shiftIds = shifts.map((shift) => shift.id);
-    const [attendance, welfareLogs, logBookLogs, alerts] = await Promise.all([
-      this.attendanceRepo.find({ where: { shift: { id: In(shiftIds) } }, order: { occurredAt: 'ASC' } }),
-      this.dailyLogRepo.find({
-        where: { shift: { id: In(shiftIds) }, logType: In(WELFARE_COMPLETION_LOG_TYPES) },
-        order: { createdAt: 'ASC' },
-      }),
-      this.dailyLogRepo.find({
-        where: { shift: { id: In(shiftIds) }, logType: DailyLogType.LOG_BOOK },
-        order: { createdAt: 'ASC' },
-      }),
-      this.safetyAlertRepo.find({
-        where: [
-          // The actionable Welfare summary, never the indexed evidence rows.
-          {
-            shift: { id: In(shiftIds) },
-            type: SafetyAlertType.MISSED_CHECKCALL,
-            welfareWindowIndex: IsNull(),
-            status: In([SafetyAlertStatus.OPEN, SafetyAlertStatus.ACKNOWLEDGED]),
-          },
-          {
-            shift: { id: In(shiftIds) },
-            type: SafetyAlertType.MISSING_BOOK_OFF,
-            status: In([SafetyAlertStatus.OPEN, SafetyAlertStatus.ACKNOWLEDGED]),
-          },
-        ],
-        order: { createdAt: 'DESC' },
-      }),
-    ]);
+    const attendance = await this.attendanceRepo.find({
+      ...PROJECTION_READ,
+      where: { shift: { id: In(shiftIds) } },
+      order: { occurredAt: 'ASC' },
+    });
+    const welfareLogs = await this.dailyLogRepo.find({
+      ...PROJECTION_READ,
+      where: { shift: { id: In(shiftIds) }, logType: In(WELFARE_COMPLETION_LOG_TYPES) },
+      order: { createdAt: 'ASC' },
+    });
+    const logBookLogs = await this.dailyLogRepo.find({
+      ...PROJECTION_READ,
+      where: { shift: { id: In(shiftIds) }, logType: DailyLogType.LOG_BOOK },
+      order: { createdAt: 'ASC' },
+    });
+    const alerts = await this.safetyAlertRepo.find({
+      ...PROJECTION_READ,
+      where: [
+        // The actionable Welfare summary, never the indexed evidence rows.
+        {
+          shift: { id: In(shiftIds) },
+          type: SafetyAlertType.MISSED_CHECKCALL,
+          welfareWindowIndex: IsNull(),
+          status: In([SafetyAlertStatus.OPEN, SafetyAlertStatus.ACKNOWLEDGED]),
+        },
+        {
+          shift: { id: In(shiftIds) },
+          type: SafetyAlertType.MISSING_BOOK_OFF,
+          status: In([SafetyAlertStatus.OPEN, SafetyAlertStatus.ACKNOWLEDGED]),
+        },
+      ],
+      order: { createdAt: 'DESC' },
+    });
 
     const attendanceByShift = this.groupBy(attendance, (event) => event.shift?.id);
     const welfareByShift = this.groupBy(welfareLogs, (log) => log.shift?.id);

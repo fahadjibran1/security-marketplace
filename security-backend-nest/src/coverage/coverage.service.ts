@@ -24,6 +24,18 @@ const NON_OPERATIONAL_SHIFT_STATUSES = new Set(['cancelled', 'completed', 'misse
 const CONFIRMED_COVER_SHIFT_STATUSES = new Set(['ready', 'in_progress']);
 const COVERAGE_TIME_ZONE = 'Europe/London';
 
+/**
+ * Exactly the relations a coverage row and the operations projection read: the site and its client
+ * (names, required guards, timezone, Welfare and Log Book intervals), the job (guards required) and the
+ * guard (id, name). Performance P2: without this the shift's eager graph also joined its company and that
+ * company's user, the assignment with its own job, company, guard and application, the application's job
+ * and guard, the guard's user, the site's company and the client's company, on every coverage request.
+ */
+const COVERAGE_SHIFT_READ = {
+  relations: { site: { client: true }, job: true, guard: true },
+  loadEagerRelations: false,
+} as const;
+
 function ukDateParts(value: Date) {
   const parts = new Intl.DateTimeFormat('en-GB', {
     timeZone: COVERAGE_TIME_ZONE,
@@ -97,6 +109,7 @@ export class CoverageService {
     const shifts = await this.shiftRepo.find({
       where: { company: { id: company.id }, start: Between(from, to) },
       order: { start: 'ASC' },
+      ...COVERAGE_SHIFT_READ,
     });
     const visible = shifts
       .filter((shift) => isOperationalCoverageShift(shift))
