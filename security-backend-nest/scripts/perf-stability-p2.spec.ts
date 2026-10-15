@@ -242,7 +242,9 @@ async function main() {
     assert.ok(!out.includes('P2CHILD_STARTED'), 'the application must not start without a database');
     assert.deepEqual(attempts.map((a: any) => a.attempt), [1, 2, 3, 4]);
     assert.deepEqual(attempts.map((a: any) => a.retrying), [true, true, true, false]);
-    assert.ok(attempts.every((a: any) => a.transient && a.category === 'reset' && a.code === 'ECONNRESET'), JSON.stringify(attempts));
+    // A dropped connection reaches the driver as ECONNRESET, or (on Linux, when the close wins the race) as
+    // a code-less "Connection terminated unexpectedly". Both are the same transient reset.
+    assert.ok(attempts.every((a: any) => a.transient && a.category === 'reset' && [null, 'ECONNRESET'].includes(a.code)), JSON.stringify(attempts));
     const nestRetries = childLines.filter((l: any) => l.context === 'TypeOrmModule' && /Unable to connect to the database/.test(l.message));
     assert.equal(nestRetries.length, 4, 'and Nest logs each attempt as before');
     for (const a of childLines.filter((l: any) => l.context === 'DatabaseConnect')) assert.doesNotMatch(a.message, /127\.0\.0\.1|s4test|postgresql:/);
