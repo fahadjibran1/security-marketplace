@@ -124,13 +124,16 @@ class CaptureLogger implements LoggerService {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** Strips the find options P2 added, which restores each entity's eager graph: the pre-P2 query. */
+/**
+ * Strips the find options P2 added, which restores each entity's eager graph: the pre-P2 query. Since P3
+ * the application reads large eager graphs in batches (database/eager-graph); an explicit
+ * relationLoadStrategy 'join' is left alone by that, so this is still the single pre-P2 statement.
+ */
 function prePhase2<T extends object>(repo: Repository<T>): Repository<T> {
   const proxy = Object.create(repo) as Repository<T>;
   const strip = (options: any) => {
-    if (!options) return options;
-    const { relations, loadEagerRelations, ...rest } = options;
-    return rest;
+    const { relations, loadEagerRelations, ...rest } = options ?? {};
+    return { ...rest, relationLoadStrategy: 'join' };
   };
   (proxy as any).find = (options?: any) => repo.find(strip(options));
   (proxy as any).findOne = (options: any) => repo.findOne(strip(options));
