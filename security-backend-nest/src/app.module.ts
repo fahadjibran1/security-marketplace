@@ -39,6 +39,8 @@ import { FinanceModule } from './finance/finance.module';
 import { HealthController } from './health.controller';
 import { buildNestTypeOrmOptions } from './database/typeorm.config';
 import { buildConnectRetryPolicy, readConnectRetryConfig } from './database/connect-retry';
+import { enableGraphLoading } from './database/eager-graph';
+import { DataSource } from 'typeorm';
 import { PoolDiagnosticsService } from './database/pool-diagnostics/pool-diagnostics.service';
 import { validateRuntimeEnv } from './config/runtime-env';
 import { ScreeningModule } from './screening/screening.module';
@@ -75,6 +77,9 @@ import { OperationsModule } from './operations/operations.module';
           }),
         ),
       }),
+      // Eager entity graphs are read in batches instead of one 57-71 JOIN statement; see
+      // database/eager-graph. Initialisation (and its retries) stays with Nest, as before.
+      dataSourceFactory: async (options) => enableGraphLoading(new DataSource(options!)),
     }),
     UserModule,
     AuthModule,
