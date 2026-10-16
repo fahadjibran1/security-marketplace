@@ -788,11 +788,20 @@ export class ShiftService {
       return;
     }
 
+    // A shift that is in progress is completed by the Guard's Book Off (AttendanceService), which records
+    // the event, the actual times and the timesheet actuals together. Completing it here would do none of
+    // that and record no reason, leaving a "completed" shift indistinguishable from a booked-off one.
+    if (currentStatus === 'in_progress' && nextStatus === 'completed') {
+      throw new BadRequestException(
+        'An in-progress shift is completed by the Guard booking off. It cannot be marked completed by editing the shift.',
+      );
+    }
+
     const allowedTransitions: Record<string, string[]> = {
       unfilled: ['offered', 'cancelled'],
       offered: ['ready', 'rejected', 'cancelled'],
       ready: ['in_progress', 'missed', 'cancelled'],
-      in_progress: ['completed'],
+      in_progress: [],
       completed: [],
       rejected: ['unfilled'],
       missed: ['unfilled', 'cancelled'],
