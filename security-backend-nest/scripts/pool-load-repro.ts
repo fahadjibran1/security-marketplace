@@ -61,6 +61,26 @@ const P2_MODE = Boolean(CLIENT || SWEEP_SECONDS || IDLE_SECONDS);
 /** The web app's own request timeout (security-mobile-app/src/services/api.ts). */
 const BROWSER_ABORT_MS = 30_000;
 
+/**
+ * Performance P3: a model of what a statement with a large eager JOIN graph cost on the production
+ * database, where the local one plans it in ~100 ms. Off unless POOL_LOAD_HEAVY_COST_MS is set.
+ * A statement with more than HEAVY_JOINS JOINs is held for HEAVY_COST_MS before PostgreSQL sees it, and
+ * holds one of DB_CPUS "database CPU" slots meanwhile, so heavy statements queue behind each other as
+ * they did on the Nano instance. Statements at or below HEAVY_JOINS cost nothing extra.
+ * Default cost 2700 ms: the median production round trip of the pre-P2 eager statements measured on
+ * 15 Oct 2026 (EXPLAIN only: 6538, 2705, 9218, 495, 431 ms).
+ */
+const HEAVY_COST_MS = Number(process.env.POOL_LOAD_HEAVY_COST_MS ?? 0);
+const HEAVY_JOINS = 8;
+const DB_CPUS = Number(process.env.POOL_LOAD_DB_CPUS ?? 2);
+const cpu = { free: DB_CPUS, queue: [] as Array<() => void>, heavyStatements: 0, maxQueued: 0 };
+const takeCpu = () => new Promise<void>((resolve) => {
+  if (cpu.free > 0) { cpu.free -= 1; resolve(); return; }
+  cpu.queue.push(resolve);
+  cpu.maxQueued = Math.max(cpu.maxQueued, cpu.queue.length);
+});
+const giveCpu = () => { const next = cpu.queue.shift(); if (next) next(); else cpu.free += 1; };
+
 /** Delays every chunk in both directions, preserving order; the first server reply is delayed further. */
 class LatencyProxy {
   oneWayMs = 0;
@@ -96,7 +116,29 @@ class LatencyProxy {
           queue.push({ due: Math.max(Date.now() + delay, last), fn });
           if (!timer) timer = setTimeout(drain, Math.max(0, queue[0].due - Date.now()));
         };
-        from.on('data', (chunk) => schedule(() => !to.destroyed && to.write(chunk)));
+        if (HEAVY_COST_MS > 0 && !isReply) {
+          // Client -> server, cost model on: JOINs are counted across the chunks of one extended-query
+          // batch, and the chunk that ends it (Sync: 'S' 00 00 00 04) is held for the modelled cost.
+          let joins = 0;
+          let chain = Promise.resolve();
+          from.on('data', (chunk: Buffer) => {
+            joins += (chunk.toString('latin1').match(/\bJOIN\b/g) ?? []).length;
+            const endsBatch = chunk.length >= 5 && chunk[chunk.length - 5] === 0x53 && chunk.readInt32BE(chunk.length - 4) === 4;
+            const heavy = endsBatch && joins > HEAVY_JOINS;
+            if (endsBatch) joins = 0;
+            chain = chain.then(async () => {
+              if (heavy) {
+                cpu.heavyStatements += 1;
+                await takeCpu();
+                await new Promise((r) => setTimeout(r, HEAVY_COST_MS));
+                giveCpu();
+              }
+              schedule(() => !to.destroyed && to.write(chunk));
+            });
+          });
+        } else {
+          from.on('data', (chunk) => schedule(() => !to.destroyed && to.write(chunk)));
+        }
         from.on('end', () => schedule(() => !to.destroyed && to.end()));
         from.on('error', (error: NodeJS.ErrnoException) => {
           this.socketErrors.push(error.code ?? error.name);
@@ -600,6 +642,7 @@ async function main() {
   report.acquireFailures = events.filter((e) => e.event === 'db_pool_acquire_failed').map((e) => ({ kind: e.kind, route: e.route, waitedMs: e.waitedMs }));
   report.poolAtEnd = { total: pool.totalCount, idle: pool.idleCount, waiting: pool.waitingCount };
   report.proxySocketErrors = proxy.socketErrors;
+  if (HEAVY_COST_MS > 0) report.costModel = { heavyCostMs: HEAVY_COST_MS, dbCpus: DB_CPUS, heavyJoinsAbove: HEAVY_JOINS, heavyStatements: cpu.heavyStatements, maxQueuedForCpu: cpu.maxQueued };
   report.privacy = { poolLines: capture.poolLines.length, seededValuesChecked: secrets.length, leaks: 0 };
 
   console.log(JSON.stringify(report, null, 1));
