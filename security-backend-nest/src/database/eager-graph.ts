@@ -22,11 +22,19 @@ import { RelationMetadata } from 'typeorm/metadata/RelationMetadata';
  *     JOIN_BUDGET JOINs, which keeps the number of round trips down;
  *  3. the objects are assembled as TypeORM's joins would have assembled them.
  *
+ * The single statement saw one snapshot of the database; so do the batches. Outside a transaction they
+ * run on one connection inside a short REPEATABLE READ, READ ONLY transaction (`inSnapshot`), so a row
+ * deleted or changed while the read is in flight is either wholly there or wholly absent, never half.
+ * Inside the caller's transaction they run on its connection, as before. An `IN (...)` list never holds
+ * more than IN_CHUNK keys (PostgreSQL allows 65,535 parameters per statement), and a read that could not
+ * be completed raises an error rather than returning a graph with relations missing.
+ *
  * Which relations are loaded is decided exactly as TypeORM 0.3 decides it (see `closure`): the root's
  * eager relations recursively, and each explicit relation with its own direct eager relations.
  * Anything it does not model (custom `select`, locks, relations other than many-to-one, owning
- * one-to-one and one-to-many, composite keys) is passed to `repo.find` unchanged, so the result is
- * never different, at worst not faster. Proven against TypeORM's own find in scripts/perf-dashboard-p3.spec.ts.
+ * one-to-one and one-to-many, composite keys, a page of rows ordered by a related entity's column) is
+ * passed to `repo.find` unchanged, so the result is never different, at worst not faster. Proven against
+ * TypeORM's own find in scripts/perf-dashboard-p3.spec.ts.
  */
 
 type Tree = { [property: string]: Tree };
@@ -191,24 +199,68 @@ function readOptions(metadata: EntityMetadata, joined: Tree, deferred: Tree) {
   };
 }
 
+/** True when `order` sorts by a column of a related entity (`{ site: { name: 'ASC' } }`). */
+function ordersByRelation(metadata: EntityMetadata, order: FindManyOptions<any>['order']): boolean {
+  return Object.keys(order ?? {}).some((name) => Boolean(metadata.findRelationWithPropertyPath(name)));
+}
+
 /**
  * The relation tree to assemble for `options` on `metadata`, or null when `repo.find` should run as it
  * is: options outside what is modelled, or a graph small enough (at most `minJoins - 1` JOINs) that one
- * statement is the cheaper way to read it.
+ * statement is the cheaper way to read it. `single` marks a findOne (TypeORM reads it as `take: 1`).
+ *
+ * A page of rows (`take`/`skip`, findOne) ordered by a related entity's column is not modelled: TypeORM
+ * pages a joined read through a DISTINCT sub-select that must select the ordered column, which it does
+ * only when that relation is joined AND selected, as the eager joins did.
  */
-export function graphPlan(metadata: EntityMetadata, options: FindManyOptions<any> | undefined, minJoins: number): Tree | null {
+export function graphPlan(metadata: EntityMetadata, options: FindManyOptions<any> | undefined, minJoins: number, single = false): Tree | null {
   const opts = options ?? {};
   if (!modelled(opts) || metadata.primaryColumns.length !== 1) return null;
+  const paged = single || opts.take !== undefined || opts.skip !== undefined;
+  if (paged && ordersByRelation(metadata, opts.order)) return null;
   const tree = closure(metadata, toTree(opts.relations), opts.loadEagerRelations !== false);
   return tree && treeSize(tree) >= minJoins ? tree : null;
+}
+
+/**
+ * Runs `read` on one pooled connection inside a REPEATABLE READ, READ ONLY transaction: every statement
+ * sees the snapshot taken by the first, as the one joined statement did. The transaction lasts exactly
+ * as long as the read's own statements (plus its START and COMMIT round trips); it writes nothing, so
+ * it can never fail to serialise. On any failure it is rolled back and, if even that fails, the
+ * connection is discarded rather than returned to the pool.
+ */
+export async function inSnapshot<T>(dataSource: DataSource, read: (manager: EntityManager) => Promise<T>): Promise<T> {
+  const runner = dataSource.createQueryRunner('master');
+  try {
+    await runner.query('START TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY');
+    const value = await read(runner.manager);
+    await runner.query('COMMIT');
+    await runner.release();
+    return value;
+  } catch (error) {
+    // Never connected (the pool could not give it a connection): nothing to roll back or return.
+    if (!(runner as any).databaseConnection) await runner.release();
+    else if (!runner.isReleased) {
+      await runner.query('ROLLBACK').then(
+        () => runner.release(),
+        (rollbackError) => (runner as any).releasePostgresConnection(rollbackError),
+      );
+    }
+    throw error;
+  }
 }
 
 async function loadGraph(manager: EntityManager, original: OriginalFinders, target: any, metadata: EntityMetadata, options: FindManyOptions<any>, tree: Tree) {
   const { relations: _relations, loadEagerRelations: _eager, ...rest } = options;
   const { joined, deferred } = split(metadata, tree, JOIN_BUDGET);
-  const roots: ObjectLiteral[] = await original.find.call(manager, target, { ...rest, ...readOptions(metadata, joined, deferred) });
-  await new GraphAssembler(manager, original).run(metadata, roots, deferred);
-  return roots;
+  const read = async (m: EntityManager) => {
+    const roots: ObjectLiteral[] = await original.find.call(m, target, { ...rest, ...readOptions(metadata, joined, deferred) });
+    await new GraphAssembler(m, original).run(metadata, roots, deferred);
+    return roots;
+  };
+  // One statement, or a caller's own connection (its transaction, or a query runner it manages): as is.
+  if (!Object.keys(deferred).length || manager.queryRunner) return read(manager);
+  return inSnapshot(manager.connection, read);
 }
 
 interface OriginalFinders {
@@ -230,11 +282,11 @@ export function enableGraphLoading(dataSource: DataSource, minJoins = GRAPH_LOAD
   const proto = EntityManager.prototype as any;
   originals = { find: proto.find, findOne: proto.findOne };
   const o = originals;
-  const plan = (manager: EntityManager, target: any, options: any) => {
+  const plan = (manager: EntityManager, target: any, options: any, single = false) => {
     const minimum = enabled.get(manager.connection);
     if (minimum === undefined) return null;
     const metadata = manager.connection.getMetadata(target);
-    const tree = graphPlan(metadata, options, minimum);
+    const tree = graphPlan(metadata, options, minimum, single);
     return tree ? { metadata, tree } : null;
   };
   proto.find = function find(this: EntityManager, target: any, options?: any) {
@@ -245,7 +297,7 @@ export function enableGraphLoading(dataSource: DataSource, minJoins = GRAPH_LOAD
     return this.find(target, { where });
   };
   proto.findOne = async function findOne(this: EntityManager, target: any, options: any) {
-    const p = plan(this, target, options);
+    const p = plan(this, target, options, true);
     if (!p) return o.findOne.call(this, target, options);
     const [first] = await loadGraph(this, o, target, p.metadata, { ...options, take: 1 }, p.tree);
     return first ?? null;
@@ -278,22 +330,49 @@ interface ChildNode {
   pending: Set<string>;
 }
 
-class GraphAssembler {
+/**
+ * Keys per `IN (...)` list. PostgreSQL's protocol allows 65,535 bind parameters per statement; a larger
+ * set of related rows is read in ceil(n / IN_CHUNK) statements, every row still read exactly once.
+ */
+export const IN_CHUNK = 5000;
+
+/** `keys` in IN_CHUNK-sized slices, in their original order. */
+export function chunks<T>(keys: T[], size = IN_CHUNK): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < keys.length; i += size) out.push(keys.slice(i, i + size));
+  return out;
+}
+
+/**
+ * Waves of batched reads one graph may take. Each wave reads one level deeper into the relation tree
+ * (a node's subtree is strictly smaller than its parent's), and `closure` never builds a tree deeper
+ * than MAX_DEPTH, so a complete read always finishes well inside this.
+ */
+const MAX_WAVES = MAX_DEPTH * 2 + 1;
+
+/** Exported for the certification spec only. */
+export class GraphAssembler {
   private readonly nodes = new Map<string, Node>();
   private readonly childNodes = new Map<string, ChildNode>();
   private readonly owningLinks: Array<{ entity: ObjectLiteral; relation: RelationMetadata; node: Node; fk: string | null }> = [];
   private readonly childLinks: Array<{ entity: ObjectLiteral; relation: RelationMetadata; node: ChildNode; parent: string | null }> = [];
 
-  constructor(private readonly manager: EntityManager, private readonly original: OriginalFinders) {}
+  constructor(private readonly manager: EntityManager, private readonly original: OriginalFinders, private readonly maxWaves = MAX_WAVES) {}
 
   async run(metadata: EntityMetadata, roots: ObjectLiteral[], tree: Tree) {
     this.link(metadata, roots, tree);
-    for (let wave = 0; wave <= MAX_DEPTH * 2; wave += 1) {
+    for (let wave = 0; wave < this.maxWaves; wave += 1) {
       const owning = [...this.nodes.values()].filter((n) => n.pending.size);
       const children = [...this.childNodes.values()].filter((n) => n.pending.size);
       if (!owning.length && !children.length) break;
       for (const node of owning) await this.loadNode(node);
       for (const node of children) await this.loadChildren(node);
+    }
+    const unread = [...this.nodes.values(), ...this.childNodes.values()].filter((n) => n.pending.size);
+    if (unread.length) {
+      // Never a partial graph: relations left unread would otherwise come back as null or [].
+      const what = unread.map((n) => ('metadata' in n ? n.metadata.name : `${n.relation.entityMetadata.name}.${n.relation.propertyName}`));
+      throw new Error(`Entity graph read of ${metadata.name} did not complete within ${this.maxWaves} batches (unread: ${[...new Set(what)].join(', ')})`);
     }
     for (const { entity, relation, node, fk } of this.owningLinks) {
       // Assigned, not setEntityValue: that merges into the { id } object loadRelationIds left there.
@@ -338,18 +417,20 @@ class GraphAssembler {
     node.pending.clear();
     const primary = node.metadata.primaryColumns[0];
     const { joined, deferred } = split(node.metadata, node.subtree, JOIN_BUDGET);
-    const rows: ObjectLiteral[] = await this.original.find.call(this.manager, node.metadata.target, {
-      where: { [primary.propertyPath]: In(ids) },
-      ...readOptions(node.metadata, joined, deferred),
-    });
-    const fresh: ObjectLiteral[] = [];
-    for (const row of rows) {
-      const id = keyOf(primary.getEntityValue(row))!;
-      if (node.rows.has(id)) continue;
-      node.rows.set(id, row);
-      fresh.push(row);
+    for (const slice of chunks(ids)) {
+      const rows: ObjectLiteral[] = await this.original.find.call(this.manager, node.metadata.target, {
+        where: { [primary.propertyPath]: In(slice) },
+        ...readOptions(node.metadata, joined, deferred),
+      });
+      const fresh: ObjectLiteral[] = [];
+      for (const row of rows) {
+        const id = keyOf(primary.getEntityValue(row))!;
+        if (node.rows.has(id)) continue;
+        node.rows.set(id, row);
+        fresh.push(row);
+      }
+      this.link(node.metadata, fresh, deferred);
     }
-    this.link(node.metadata, fresh, deferred);
   }
 
   private async loadChildren(node: ChildNode) {
@@ -359,21 +440,24 @@ class GraphAssembler {
     const target = node.relation.inverseEntityMetadata;
     const parentPrimary = node.relation.entityMetadata.primaryColumns[0];
     const ownOwning = owningNames(target, node.subtree);
-    const rows: ObjectLiteral[] = await this.original.find.call(this.manager, target.target, {
-      where: { [inverse.propertyPath]: { [parentPrimary.propertyPath]: In(parents) } },
-      // A joined load leaves a one-to-many array in whatever order the join produced; primary-key order
-      // is the deterministic equivalent.
-      order: { [target.primaryColumns[0].propertyPath]: 'ASC' },
-      loadEagerRelations: false,
-      ...idsOption([...new Set([...ownOwning, inverse.propertyPath])]),
-    });
     for (const parent of parents) node.byParent.set(parent, []);
-    for (const row of rows) {
-      const parent = fkOf((row as any)[inverse.propertyPath], node.relation.entityMetadata);
-      // The back-reference was read only to group the children; a joined load leaves it unset.
-      if (!ownOwning.includes(inverse.propertyPath)) delete (row as any)[inverse.propertyPath];
-      if (parent !== null) node.byParent.get(parent)?.push(row);
+    // Every child of one parent is in that parent's slice, so each array is still in primary-key order.
+    for (const slice of chunks(parents)) {
+      const rows: ObjectLiteral[] = await this.original.find.call(this.manager, target.target, {
+        where: { [inverse.propertyPath]: { [parentPrimary.propertyPath]: In(slice) } },
+        // A joined load leaves a one-to-many array in whatever order the join produced; primary-key order
+        // is the deterministic equivalent.
+        order: { [target.primaryColumns[0].propertyPath]: 'ASC' },
+        loadEagerRelations: false,
+        ...idsOption([...new Set([...ownOwning, inverse.propertyPath])]),
+      });
+      for (const row of rows) {
+        const parent = fkOf((row as any)[inverse.propertyPath], node.relation.entityMetadata);
+        // The back-reference was read only to group the children; a joined load leaves it unset.
+        if (!ownOwning.includes(inverse.propertyPath)) delete (row as any)[inverse.propertyPath];
+        if (parent !== null) node.byParent.get(parent)?.push(row);
+      }
+      this.link(target, rows, node.subtree);
     }
-    this.link(target, rows, node.subtree);
   }
 }
