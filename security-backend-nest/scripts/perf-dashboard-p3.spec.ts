@@ -20,11 +20,24 @@
  *   P3-08  scope: only the DataSource it is enabled on; small graphs stay one statement
  *   P3-09  the application's own DataSource has it (AppModule wiring)
  *
+ * Final safety remediation (S4 P3 safety review, 16 Oct 2026):
+ *   P3-10  one snapshot: a row deleted or changed by another connection between the batches is seen as
+ *          the first statement saw it (never an attendance event whose shift is null); one connection,
+ *          one REPEATABLE READ, READ ONLY transaction per read, none inside the caller's transaction
+ *   P3-11  a failure part-way through (an error, a connection killed mid-read) surfaces, is rolled back,
+ *          leaves no connection held and no transaction open, and the next read works
+ *   P3-12  a page of rows (take/skip, findOne) ordered by a related column: identical to TypeORM (read
+ *          as TypeORM reads it); unpaged relation order and paged relation filters stay batched
+ *   P3-13  cross-company isolation under 200 concurrent interleaved reads
+ *   P3-14  a read that cannot complete raises an error; it never returns a graph with relations missing
+ *   P3-15  large reads: 66,000 related rows (past PostgreSQL's 65,535 bind parameters) and 6,000
+ *          one-to-many parents are read in bounded IN lists, complete, nothing truncated, deterministic
+ *
  * Requires PERF_P3_DATABASE_URL (localhost).
  */
 import 'reflect-metadata';
 import * as assert from 'assert';
-import { DataSource, EntityManager, In, Logger as TypeOrmLogger } from 'typeorm';
+import { DataSource, EntityManager, In, Like, Logger as TypeOrmLogger, SelectQueryBuilder } from 'typeorm';
 
 const url = process.env.PERF_P3_DATABASE_URL ?? '';
 if (!url) throw new Error('PERF_P3_DATABASE_URL is required');
@@ -50,7 +63,13 @@ const pass = (name: string) => {
 class StatementCapture implements TypeOrmLogger {
   on = false;
   statements: number[] = [];
-  logQuery(query: string) {
+  /** Every statement while `on`, transaction control included. */
+  raw: string[] = [];
+  /** The most bind parameters any one statement carried while `on`. */
+  maxParams = 0;
+  logQuery(query: string, parameters?: unknown[]) {
+    if (this.on) this.raw.push(query);
+    if (this.on) this.maxParams = Math.max(this.maxParams, parameters?.length ?? 0);
     if (this.on && !/^(START TRANSACTION|COMMIT|ROLLBACK|SAVEPOINT|RELEASE)/i.test(query)) this.statements.push((query.match(/\bJOIN\b/g) ?? []).length);
   }
   logQueryError() {}
@@ -58,12 +77,14 @@ class StatementCapture implements TypeOrmLogger {
   logSchemaBuild() {}
   logMigration() {}
   log() {}
-  async measure<T>(fn: () => Promise<T>): Promise<{ value: T; statements: number; maxJoins: number }> {
+  async measure<T>(fn: () => Promise<T>): Promise<{ value: T; statements: number; maxJoins: number; raw: string[]; maxParams: number }> {
     this.statements = [];
+    this.raw = [];
+    this.maxParams = 0;
     this.on = true;
     try {
       const value = await fn();
-      return { value, statements: this.statements.length, maxJoins: Math.max(0, ...this.statements) };
+      return { value, statements: this.statements.length, maxJoins: Math.max(0, ...this.statements), raw: this.raw, maxParams: this.maxParams };
     } finally {
       this.on = false;
     }
@@ -97,9 +118,26 @@ function companyIdsIn(value: unknown, acc = new Set<number>(), seen = new Set<un
   return acc;
 }
 
+/**
+ * A one-shot action run right after the next `getMany` of `entity` (a find's root rows) returns, before
+ * any batch that follows it: the window in which another connection's write lands between statements.
+ */
+const between: { entity: string | null; run: (() => Promise<void>) | null } = { entity: null, run: null };
+const getMany = SelectQueryBuilder.prototype.getMany;
+(SelectQueryBuilder.prototype as any).getMany = async function (this: any) {
+  const rows = await getMany.call(this);
+  if (between.run && this.expressionMap?.mainAlias?.metadata?.name === between.entity) {
+    const run = between.run;
+    between.run = null;
+    await run();
+  }
+  return rows;
+};
+const after = (entity: string, run: () => Promise<void>) => Object.assign(between, { entity, run });
+
 async function main() {
   const { buildTypeOrmOptions } = await import('../src/database/typeorm.config');
-  const { enableGraphLoading, graphPlan, GRAPH_LOADING_MIN_JOINS } = await import('../src/database/eager-graph');
+  const { enableGraphLoading, graphPlan, GRAPH_LOADING_MIN_JOINS, GraphAssembler, IN_CHUNK } = await import('../src/database/eager-graph');
   const options = buildTypeOrmOptions({ DATABASE_URL: url, DATABASE_SSL: 'false', DATABASE_SYNCHRONIZE: 'false', NODE_ENV: 'test' });
 
   const migrator = new DataSource(options);
@@ -281,10 +319,12 @@ async function main() {
     await graph.transaction(async (m) => {
       const inserted: any = await m.save(m.create(Incident, { company: A.company, guard: A.guards[0], shift: A.shifts[0], site: A.siteA, title: 'In-transaction', notes: 'n' } as any));
       const before = pool.totalCount;
-      const seen: any = await m.findOne(Incident, { where: { id: inserted.id } });
+      const read = await graphLog.measure(() => m.findOne(Incident, { where: { id: inserted.id } }));
+      const seen: any = read.value;
       assert.equal(seen?.title, 'In-transaction', 'the transaction sees its own write');
       assert.equal(seen.shift.site.client.company.id, A.company.id, 'with the whole graph');
       assert.equal(pool.totalCount, before, 'and opens no other connection');
+      assert.ok(read.statements > 1 && !read.raw.some((q) => /START TRANSACTION|SAVEPOINT|COMMIT/i.test(q)), 'and leaves the caller\'s transaction exactly as it was');
       throw Object.assign(new Error('rollback'), { rollback: true });
     }).catch((e) => { if (!e.rollback) throw e; });
     assert.equal(await graph.manager.count(Incident, { where: { title: 'In-transaction' } }), 0);
@@ -305,6 +345,7 @@ async function main() {
     assert.ok(plainShift.maxJoins >= 57, 'a DataSource it is not enabled on is untouched');
     const site = await graphLog.measure(() => graph.manager.find(Site, { where: { company: { id: A.company.id } } }));
     assert.equal(site.statements, 1, `a graph below ${GRAPH_LOADING_MIN_JOINS} JOINs stays one statement`);
+    assert.deepEqual(site.raw.filter((q) => /TRANSACTION|COMMIT/i.test(q)), [], '...with no transaction around it');
     pass(`P3-08 only the DataSource it is enabled on; graphs under ${GRAPH_LOADING_MIN_JOINS} JOINs (Site: ${site.maxJoins}) stay one statement`);
   }
 
@@ -322,6 +363,229 @@ async function main() {
     assert.ok(r.maxJoins <= 8 && r.statements > 1, `the application's DataSource reads graphs in batches (${r.statements} statements, max ${r.maxJoins} JOINs)`);
     await app.close();
     pass(`P3-09 AppModule's DataSource has graph loading (GET /shifts: ${r.statements} statements, max ${r.maxJoins} JOINs)`);
+  }
+
+  const pool: any = (graph.driver as any).master;
+  const held = () => pool.totalCount - pool.idleCount;
+  const openTransactions = async () =>
+    Number((await plain.query(`SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND state LIKE 'idle in transaction%'`))[0].n);
+
+  // ── P3-10 one snapshot ────────────────────────────────────────────────────────────────────────────
+  {
+    const connect = pool.connect;
+    let checkouts = 0;
+    pool.connect = function (this: unknown, ...args: unknown[]) { checkouts += 1; return connect.apply(this, args); };
+    const victimFor = async (minutes: number) => {
+      const shift: any = await save(Shift, { company: A.company, site: A.siteA, siteName: 'victim', guard: A.guards[1], start: at(minutes), end: at(minutes + 480), status: 'completed', checkCallIntervalMinutes: 60 });
+      const event: any = await save(AttendanceEvent, { shift, guard: A.guards[1], type: AttendanceEventType.CHECK_IN, occurredAt: at(minutes + 1) });
+      return { shift, event, expected: await plain.manager.find(AttendanceEvent, { where: { id: event.id } }) };
+    };
+
+    // (a) the shift is deleted (its attendance cascades) once the root rows are read.
+    const v = await victimFor(90_000);
+    after('AttendanceEvent', async () => { await plain.query('DELETE FROM shifts WHERE id = $1', [v.shift.id]); });
+    checkouts = 0;
+    const read = await graphLog.measure(() => graph.manager.find(AttendanceEvent, { where: { id: v.event.id } }));
+    assert.equal(between.run, null, 'the deletion ran between the batches');
+    assert.equal(await plain.manager.count(Shift, { where: { id: v.shift.id } }), 0, '...and was committed');
+    assert.equal((read.value as any[])[0].shift?.id, v.shift.id, 'the event is returned with its shift, never shift = null');
+    assert.deepStrictEqual(typed(read.value), typed(v.expected), 'the whole graph is the snapshot its first statement saw');
+    assert.equal(read.raw[0], 'START TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY');
+    assert.equal(read.raw[read.raw.length - 1], 'COMMIT');
+    assert.ok(read.statements > 1 && checkouts === 1, `${read.statements} statements on ${checkouts} pooled connection(s)`);
+
+    // (b) control: the same deletion on a connection the caller manages (outside any transaction) is not
+    // given a snapshot, and tears exactly as the review found: this test detects the defect.
+    const w = await victimFor(91_000);
+    const runner = graph.createQueryRunner();
+    after('AttendanceEvent', async () => { await plain.query('DELETE FROM shifts WHERE id = $1', [w.shift.id]); });
+    const torn: any[] = await runner.manager.find(AttendanceEvent, { where: { id: w.event.id } });
+    await runner.release();
+    assert.equal(torn[0].shift, null, 'without one snapshot the event comes back with shift = null');
+
+    // (c) a related row changed meanwhile is read as it was when the read began.
+    const expected = await plain.manager.find(Incident, { where: { company: { id: A.company.id } }, order: { id: 'ASC' } });
+    after('Incident', async () => {
+      await plain.query('UPDATE sites SET name = $1 WHERE id = $2', ['Renamed meanwhile', A.siteA.id]);
+      await plain.query('UPDATE clients SET name = $1 WHERE "companyId" = $2', ['Renamed meanwhile', A.company.id]);
+    });
+    const changed = await graph.manager.find(Incident, { where: { company: { id: A.company.id } }, order: { id: 'ASC' } });
+    await plain.query('UPDATE sites SET name = $1 WHERE id = $2', [A.siteA.name, A.siteA.id]);
+    await plain.query('UPDATE clients SET name = $1 WHERE "companyId" = $2', ['p3a Retail', A.company.id]);
+    assert.equal(between.run, null);
+    assert.deepStrictEqual(typed(changed), typed(expected), 'rows changed meanwhile are read as of the snapshot, at every depth');
+    pool.connect = connect;
+    assert.equal(held(), 0);
+    assert.equal(await openTransactions(), 0, 'no transaction is left open');
+    pass(`P3-10 one snapshot per read: a shift deleted mid-read is still there with its event (control without the snapshot: shift = null); rows changed mid-read read as of the snapshot; ${read.statements} statements, 1 connection, REPEATABLE READ READ ONLY, committed`);
+  }
+
+  // ── P3-11 failure part-way through ────────────────────────────────────────────────────────────────
+  {
+    const read = () => graph.manager.find(Incident, { where: { company: { id: A.company.id } }, order: { id: 'ASC' } });
+    const expected = await plain.manager.find(Incident, { where: { company: { id: A.company.id } }, order: { id: 'ASC' } });
+    const outcome = (p: Promise<unknown>) => p.then(() => 'no error', (e) => String(e?.message ?? e));
+
+    after('Incident', async () => { throw new Error('injected failure between batches'); });
+    const failed = await graphLog.measure(() => outcome(read()));
+    assert.match(failed.value, /injected failure between batches/, 'the error surfaces');
+    assert.equal(failed.raw[failed.raw.length - 1], 'ROLLBACK', 'the snapshot transaction is rolled back');
+    assert.equal(held(), 0, 'no connection is held');
+    assert.equal(await openTransactions(), 0);
+
+    after('Incident', async () => { throw new Error('injected failure in the caller transaction'); });
+    const inTx = await outcome(graph.transaction((m) => m.find(Incident, { where: { company: { id: A.company.id } } })));
+    assert.match(inTx, /injected failure in the caller transaction/, 'inside a transaction the error surfaces to the caller, who rolls back');
+    assert.equal(held(), 0);
+    assert.equal(await openTransactions(), 0);
+
+    // The snapshot's own connection killed between batches (a pooler or database restart).
+    after('Incident', async () => {
+      await plain.query(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND state = 'idle in transaction' AND pid <> pg_backend_pid()`);
+      await new Promise((r) => setTimeout(r, 200));
+    });
+    const killed = await outcome(read());
+    assert.notEqual(killed, 'no error', 'a read whose connection died fails, it does not return part of a graph');
+    assert.equal(held(), 0, 'the dead connection is not held');
+    assert.equal(await openTransactions(), 0);
+    assert.deepStrictEqual(typed(await read()), typed(expected), 'the pool recovers: the next read is complete');
+    pass(`P3-11 failures part-way through: error surfaced and rolled back (outside and inside a transaction), connection killed mid-read fails cleanly ("${killed.slice(0, 50)}"), 0 connections held, 0 transactions open, next read complete`);
+  }
+
+  // ── P3-12 pages ordered by a related column ───────────────────────────────────────────────────────
+  {
+    const eventMeta = graph.getMetadata(AttendanceEvent);
+    const byShiftStart = { shift: { start: 'DESC' as const } };
+    assert.equal(graphPlan(eventMeta, { order: byShiftStart, take: 3 }, GRAPH_LOADING_MIN_JOINS), null);
+    assert.equal(graphPlan(eventMeta, { order: byShiftStart, skip: 1 }, GRAPH_LOADING_MIN_JOINS), null);
+    assert.equal(graphPlan(eventMeta, { order: byShiftStart }, GRAPH_LOADING_MIN_JOINS, true), null, 'findOne is a page of one');
+    assert.notEqual(graphPlan(eventMeta, { order: byShiftStart }, GRAPH_LOADING_MIN_JOINS), null, 'unpaged, it is batched');
+    const paged: Array<[string, (m: EntityManager) => Promise<unknown>]> = [
+      ['take/skip ordered by a related column', (m) => m.find(AttendanceEvent, { where: { shift: { company: { id: A.company.id } } }, order: { shift: { start: 'DESC' }, id: 'ASC' }, take: 3, skip: 1 })],
+      ['take ordered by a related column', (m) => m.find(Shift, { where: { company: { id: A.company.id } }, order: { site: { name: 'DESC' }, id: 'ASC' }, take: 4 })],
+      ['findOne ordered by a related column', (m) => m.findOne(AttendanceEvent, { where: { guard: { id: A.guards[1].id } }, order: { shift: { start: 'DESC' }, id: 'DESC' } })],
+      ['findOneOrFail ordered by a related column', (m) => m.findOneOrFail(Incident, { where: { company: { id: A.company.id } }, order: { site: { name: 'ASC' }, id: 'ASC' } })],
+    ];
+    for (const [name, read] of paged) {
+      const r = await both(read);
+      assert.ok(r.plain.value && (!Array.isArray(r.plain.value) || r.plain.value.length), `${name}: the fixture has rows`);
+      assert.equal(r.graph.statements, r.plain.statements, `${name}: read exactly as TypeORM reads it`);
+    }
+    const batched: Array<[string, (m: EntityManager) => Promise<unknown>]> = [
+      ['unpaged, ordered by a related column', (m) => m.find(Shift, { where: { company: { id: In([A.company.id, B.company.id]) } }, order: { site: { name: 'DESC' }, id: 'ASC' } })],
+      ['paged, filtered on a related column, own order', (m) => m.find(AttendanceEvent, { where: { shift: { company: { id: A.company.id } } }, order: { occurredAt: 'DESC', id: 'ASC' }, take: 3, skip: 2 })],
+      ['findOne filtered on a nested related column', (m) => m.findOne(Incident, { where: { shift: { site: { company: { id: A.company.id } } } }, order: { createdAt: 'DESC', id: 'DESC' } })],
+    ];
+    for (const [name, read] of batched) {
+      const r = await both(read);
+      assert.ok(r.graph.statements > 1 && r.graph.maxJoins <= 8, `${name}: batched (${r.graph.statements} statements, max ${r.graph.maxJoins} JOINs)`);
+    }
+    pass(`P3-12 ${paged.length} pages ordered by a related column (take/skip, findOne, findOneOrFail) identical to TypeORM and read as it reads them; ${batched.length} unpaged-order / related-filter reads identical and still batched`);
+  }
+
+  // ── P3-13 cross-company isolation under concurrency ───────────────────────────────────────────────
+  {
+    const expectedA = await plain.manager.find(Shift, { where: { company: { id: A.company.id } }, order: { id: 'ASC' } });
+    const expectedB = await plain.manager.find(Shift, { where: { company: { id: B.company.id } }, order: { id: 'ASC' } });
+    const out = await Promise.all(Array.from({ length: 200 }, (_, i) => {
+      const t = i % 2 ? B : A;
+      const read = i % 3 === 0
+        ? graph.manager.find(Shift, { where: { company: { id: t.company.id } }, order: { id: 'ASC' } })
+        : i % 3 === 1
+          ? graph.manager.find(AttendanceEvent, { where: { shift: { company: { id: t.company.id } } }, order: { id: 'ASC' } })
+          : graph.manager.findOne(Incident, { where: { company: { id: t.company.id }, title: 'Incident 3' } });
+      return read.then((value) => ({ i, t, value }));
+    }));
+    for (const { i, t, value } of out) {
+      assert.deepEqual([...companyIdsIn(value)], [t.company.id], `read ${i}: only its own company anywhere in the graph`);
+      if (i % 3 === 0) assert.deepStrictEqual(typed(value), typed(t === A ? expectedA : expectedB), `read ${i}: identical to TypeORM`);
+    }
+    assert.equal(held(), 0);
+    assert.equal(await openTransactions(), 0);
+    pass('P3-13 200 concurrent interleaved reads for two companies: no row of the other company at any depth; every list identical to TypeORM; nothing held afterwards');
+  }
+
+  // ── P3-14 never a partial graph ───────────────────────────────────────────────────────────────────
+  {
+    // The batches assembled straight onto fully read rows, with a limit on how many waves they may take.
+    const finders = { find: EntityManager.prototype.find, findOne: EntityManager.prototype.findOne } as any;
+    const summary: string[] = [];
+    for (const entity of [Shift, AttendanceEvent, Incident] as any[]) {
+      const meta = graph.getMetadata(entity);
+      const tree = graphPlan(meta, {}, GRAPH_LOADING_MIN_JOINS)!;
+      const where = { company: { id: A.company.id } };
+      const read = () => plain.manager.find(entity, { where: meta.name === 'AttendanceEvent' ? { shift: where } : where, order: { id: 'ASC' } });
+      const expected = await read();
+      let needed = -1;
+      for (let waves = 0; waves <= 33 && needed < 0; waves += 1) {
+        const rows = await read();
+        const outcome = await new GraphAssembler(plain.manager, finders, waves).run(meta, rows, tree).then(() => null, (e: Error) => e.message);
+        if (outcome === null) {
+          needed = waves;
+          assert.deepStrictEqual(typed(rows), typed(expected), `${meta.name}: within ${waves} waves the assembly is complete`);
+        } else {
+          assert.match(outcome, new RegExp(`^Entity graph read of ${meta.name} did not complete within ${waves} batches \\(unread: .+\\)$`));
+        }
+      }
+      assert.ok(needed >= 1, `${meta.name} completes`);
+      summary.push(`${meta.name} ${needed}`);
+    }
+    pass(`P3-14 a graph read that runs out of batches raises an error naming what is unread, at every limit short of complete (waves needed: ${summary.join(', ')}); it never returns relations as null or []`);
+  }
+
+  // ── P3-15 large reads ─────────────────────────────────────────────────────────────────────────────
+  {
+    const C = await tenant('p3c');
+    const N = 66_000;
+    await plain.query(
+      `INSERT INTO shifts ("companyId", "siteId", "siteName", "guardId", start, "end", status)
+       SELECT $1, $2, 'bulk', $3, $5::timestamptz - make_interval(mins => g), $5::timestamptz - make_interval(mins => g) + interval '8 hours', 'completed'
+       FROM generate_series(1, $4) g`,
+      [C.company.id, C.siteA.id, C.guards[1].id, N, at(0)],
+    );
+    await plain.query(`INSERT INTO attendance_events ("shiftId", "guardId", type, "occurredAt") SELECT id, "guardId", 'check-in', start FROM shifts WHERE "companyId" = $1 AND "siteName" = 'bulk'`, [C.company.id]);
+    const truth: Array<{ id: number; shiftId: number; siteId: number; clientId: number | null; guardId: number }> = await plain.query(
+      `SELECT a.id, a."shiftId", s."siteId", st."clientId", a."guardId" FROM attendance_events a JOIN shifts s ON s.id = a."shiftId" JOIN sites st ON st.id = s."siteId" WHERE s."companyId" = $1 ORDER BY a.id`, [C.company.id]);
+    assert.ok(truth.length > N && new Set(truth.map((t) => t.shiftId)).size > 65_535, 'more distinct shifts than PostgreSQL allows bind parameters');
+
+    const read = () => graph.manager.find(AttendanceEvent, { where: { shift: { company: { id: C.company.id } } }, order: { id: 'ASC' } });
+    const started = Date.now();
+    const big = await graphLog.measure(read);
+    const ms = Date.now() - started;
+    const rows = big.value as any[];
+    assert.equal(rows.length, truth.length, 'every row, nothing truncated');
+    rows.forEach((row, i) => {
+      const t = truth[i];
+      assert.ok(row.id === t.id && row.shift?.id === t.shiftId && row.shift.site?.id === t.siteId && row.guard?.id === t.guardId, `row ${i}: complete and correct`);
+      assert.ok(row.shift.company?.user?.id === C.company.user.id && (row.shift.site.client?.id ?? null) === t.clientId, `row ${i}: complete at depth`);
+      if (t.clientId !== null) assert.equal(row.shift.site.client.company?.user?.id, C.company.user.id, `row ${i}: complete at depth`);
+    });
+    assert.ok(big.maxParams <= IN_CHUNK, `at most ${IN_CHUNK} keys per statement (largest: ${big.maxParams})`);
+    const shiftBatches = Math.ceil(new Set(truth.map((t) => t.shiftId)).size / IN_CHUNK);
+    assert.ok(big.statements <= 14 + shiftBatches, `${big.statements} statements: bounded by entity types plus ceil(rows / ${IN_CHUNK})`);
+    assert.equal(held(), 0);
+    const again = (await read()) as any[];
+    assert.deepEqual(again.map((r) => [r.id, r.shift.id, r.shift.site.id]), rows.map((r) => [r.id, r.shift.id, r.shift.site.id]), 'deterministic');
+    const sample = truth.filter((_, i) => i % 220 === 0).map((t) => t.id);
+    await both((m) => m.find(AttendanceEvent, { where: { id: In(sample) }, order: { id: 'ASC' } }));
+
+    // One-to-many with more parents than one IN list holds: 6,000 shifts, each at its own Site of its own
+    // Client, read with each Client's Sites.
+    await plain.query(
+      `WITH c AS (INSERT INTO clients ("companyId", name) SELECT $1, 'bulk client ' || g FROM generate_series(1, 6000) g RETURNING id, name),
+            st AS (INSERT INTO sites ("companyId", "clientId", name, address, status, timezone) SELECT $1, id, name || ' site', 'a', 'active', 'Europe/London' FROM c RETURNING id, name)
+       INSERT INTO shifts ("companyId", "siteId", "siteName", "guardId", start, "end", status)
+       SELECT $1, id, 'bulk2', $2, $3::timestamptz, $3::timestamptz + interval '8 hours', 'completed' FROM st`,
+      [C.company.id, C.guards[2].id, at(0)],
+    );
+    const withSites = { where: { company: { id: C.company.id }, siteName: 'bulk2' }, relations: { site: { client: { sites: true } } }, order: { id: 'ASC' as const } };
+    assert.notEqual(graphPlan(graph.getMetadata(Shift), withSites, GRAPH_LOADING_MIN_JOINS), null, 'this read is batched');
+    const sites = await both((m) => m.find(Shift, withSites), true);
+    const shifts = sites.graph.value as any[];
+    assert.equal(shifts.length, 6000);
+    assert.ok(shifts.every((x) => x.site.client.sites.length === 1 && x.site.client.sites[0].id === x.site.id), 'every Client has its Site');
+    assert.ok(sites.graph.maxParams <= IN_CHUNK, `one-to-many: at most ${IN_CHUNK} parents per statement (largest: ${sites.graph.maxParams})`);
+    pass(`P3-15 large reads: ${rows.length.toLocaleString('en-GB')} attendance events over ${new Set(truth.map((t) => t.shiftId)).size.toLocaleString('en-GB')} distinct shifts in ${big.statements} statements, ${ms} ms, at most ${big.maxParams} keys per statement, every row complete; 6,000 one-to-many parents identical to TypeORM; deterministic`);
   }
 
   console.log('\nshape before -> after (max JOINs per statement, statements):');
