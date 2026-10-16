@@ -98,6 +98,7 @@ type WelfareSweepCounters = {
   summariesOpened: number;
   summariesEscalated: number;
   summariesResolved: number;
+  summariesSuppressed: number;
   missingBookOffCreated: number;
   missingBookOffClosed: number;
 };
@@ -272,6 +273,7 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
       summariesOpened: 0,
       summariesEscalated: 0,
       summariesResolved: 0,
+      summariesSuppressed: 0,
       missingBookOffCreated: 0,
       missingBookOffClosed: 0,
     };
@@ -437,7 +439,7 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
    *   trailing run of missed windows > 0, no active summary   open one (OPEN, HIGH)
    *   trailing run grows, summary already active              rewrite the message only
    *   trailing run is 0 (latest settled window completed)     close the active summary
-   *   summary already CLOSED and a new miss appears           open a fresh one
+   *   summary CLOSED, a miss recorded after that closure      open a fresh one; the same misses never reopen it
    *
    * Status is never changed while misses continue, so a summary someone has ACKNOWLEDGED keeps that
    * state and does not silently revert to OPEN just because the sweep ran again: a human has taken
@@ -487,6 +489,10 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
     const message = `Welfare overdue - ${missedRun} consecutive check${missedRun === 1 ? '' : 's'} missed`;
 
     if (!active) {
+      if (!(await this.hasMissSinceLastSummaryClosed(manager, shift, resolution))) {
+        counters.summariesSuppressed += 1;
+        return;
+      }
       const created = await manager.save(
         manager.create(SafetyAlert, {
           company: shift.company,
@@ -545,6 +551,51 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
         Math.max(5, resolution.intervalMinutes ?? 60),
       );
     }
+  }
+
+  /**
+   * Whether the current run of misses contains a miss the control room has not already dealt with.
+   *
+   * A summary that has been closed — by a person, or by the sweep when a later check was completed — is
+   * not opened again for the same misses. Before this rule, a shift whose Guard never booked off kept its
+   * trailing run above zero forever, so every sweep after a controller closed the summary created a fresh
+   * one for exactly the same missed windows.
+   *
+   * "Not already dealt with" is judged from the per-window evidence: a run window whose evidence row was
+   * recorded after the most recent summary closure is a miss nobody had been shown when they closed it,
+   * including one the sweep only caught up on after the closure. The comparison uses the evidence row's
+   * own detection time (`closedAt`, set as it is inserted) rather than the window's schedule.
+   */
+  private async hasMissSinceLastSummaryClosed(
+    manager: EntityManager,
+    shift: Shift,
+    resolution: OperationalWindowResolution,
+  ) {
+    const lastClosed = await manager.findOne(SafetyAlert, {
+      where: {
+        shift: { id: shift.id },
+        type: SafetyAlertType.MISSED_CHECKCALL,
+        welfareWindowIndex: IsNull(),
+        status: SafetyAlertStatus.CLOSED,
+      },
+      order: { closedAt: { direction: 'DESC', nulls: 'LAST' }, id: 'DESC' },
+      loadEagerRelations: false,
+    });
+    if (!lastClosed) return true;
+
+    const runIndexes = this.windowEngine.trailingMissedWindows(resolution.windows).map((window) => window.index);
+    if (!runIndexes.length) return false;
+
+    // Both instants are compared inside the database, so neither passes through a JS Date. A summary
+    // closed before closedAt was recorded falls back to its last update, which is when it was closed.
+    const [{ n }] = await manager.query(
+      `SELECT count(*)::int AS n FROM safety_alerts evidence
+         WHERE evidence."shiftId" = $1 AND evidence.type = $2 AND evidence."welfareWindowIndex" = ANY($3::int[])
+           AND COALESCE(evidence."closedAt", evidence."createdAt") >
+               (SELECT COALESCE(summary."closedAt", summary."updatedAt") FROM safety_alerts summary WHERE summary.id = $4)`,
+      [shift.id, SafetyAlertType.MISSED_CHECKCALL, runIndexes, lastClosed.id],
+    );
+    return Number(n) > 0;
   }
 
   /**

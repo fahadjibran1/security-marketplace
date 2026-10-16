@@ -149,7 +149,12 @@ export class OperationalWindowService {
    * reflects settled outcomes. A completed window ends the run.
    */
   trailingMissedRun(windows: readonly ResolvedOperationalWindow[]): number {
-    let run = 0;
+    return this.trailingMissedWindows(windows).length;
+  }
+
+  /** The windows that make up `trailingMissedRun`, most recent first. */
+  trailingMissedWindows(windows: readonly ResolvedOperationalWindow[]): ResolvedOperationalWindow[] {
+    const run: ResolvedOperationalWindow[] = [];
     for (let index = windows.length - 1; index >= 0; index -= 1) {
       const window = windows[index];
       if (!window.applicable) continue;
@@ -160,7 +165,7 @@ export class OperationalWindowService {
         continue;
       }
       if (window.state === OperationalWindowState.MISSED) {
-        run += 1;
+        run.push(window);
         continue;
       }
       break;
