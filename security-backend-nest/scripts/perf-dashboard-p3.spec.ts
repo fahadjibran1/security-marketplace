@@ -514,7 +514,7 @@ async function main() {
       const meta = graph.getMetadata(entity);
       const tree = graphPlan(meta, {}, GRAPH_LOADING_MIN_JOINS)!;
       const where = { company: { id: A.company.id } };
-      const read = () => plain.manager.find(entity, { where: meta.name === 'AttendanceEvent' ? { shift: where } : where, order: { id: 'ASC' } });
+      const read = () => plain.manager.find(entity, { where: (meta.name === 'AttendanceEvent' ? { shift: where } : where) as any, order: { id: 'ASC' } as any });
       const expected = await read();
       let needed = -1;
       for (let waves = 0; waves <= 33 && needed < 0; waves += 1) {
