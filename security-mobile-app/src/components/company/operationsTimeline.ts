@@ -34,6 +34,7 @@ import {
   zoneOffsetMs,
 } from '../../services/siteTime';
 import type { GuardOperationalWindow, ShiftOperationsView } from '../../types/models';
+import { isBookOffOverdue } from './liveOperationsPolicy';
 
 // ─── the visible axis ─────────────────────────────────────────────────────────
 
@@ -347,7 +348,7 @@ export function effectiveShiftEndMs(
 
 // ─── row status ───────────────────────────────────────────────────────────────
 
-export type TimelineStatus = 'Upcoming' | 'Late' | 'Live' | 'Completed' | 'Coverage Gap';
+export type TimelineStatus = 'Upcoming' | 'Late' | 'Live' | 'No Book Off' | 'Completed' | 'Coverage Gap';
 
 /**
  * The compact status word for a bar.
@@ -356,7 +357,7 @@ export type TimelineStatus = 'Upcoming' | 'Late' | 'Live' | 'Completed' | 'Cover
  * a bar is a few millimetres tall and a sentence in it is unreadable.
  */
 export function resolveTimelineStatus(
-  shift: { start: string; status?: string | null },
+  shift: { start: string; end?: string | null; status?: string | null },
   attendance: { checkInAt?: string | null; checkOutAt?: string | null } | null | undefined,
   nowMs: number,
 ): TimelineStatus {
@@ -364,8 +365,11 @@ export function resolveTimelineStatus(
   if (status === 'completed') return 'Completed';
   if (['unfilled', 'rejected', 'missed', 'cancelled'].includes(status)) return 'Coverage Gap';
   if (attendance?.checkOutAt) return 'Completed';
-  if (attendance?.checkInAt) return 'Live';
-  if (status === 'in_progress') return 'Live';
+  if (attendance?.checkInAt || status === 'in_progress') {
+    // Worked, and the Book Off is overdue: not live any more, whatever the status column says. Asked of
+    // the board's own policy, so the bar and the board use one boundary (and the backend alert's).
+    return isBookOffOverdue(shift.end, nowMs) ? 'No Book Off' : 'Live';
+  }
 
   const startMs = Date.parse(shift.start);
   if (Number.isFinite(startMs) && nowMs > startMs) return 'Late';

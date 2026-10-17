@@ -17,7 +17,9 @@ import {
   shiftSiteDateInput,
   siteToday,
 } from '../../services/siteTime';
-import type { InclusionReason } from './liveOperationsPolicy';
+import type { BoardInclusion } from './liveOperationsPolicy';
+import { hoursPastEnd, type BoardDateMode } from './liveOperationsBoard';
+import { NativeDateInput } from './NativeDateInput';
 import { CompanyOperationsTimeline } from './CompanyOperationsTimeline';
 import { countStatusWord, countText, safeCount, type SafeCount, type SourceState } from './sourceAvailability';
 import {
@@ -106,6 +108,17 @@ export type LiveFilters = {
 
 // ─── Exported pre-computed data types ─────────────────────────────────────────
 
+/**
+ * A shift in the Needs Reconciliation queue: worked, never booked off, more than 24 hours past its
+ * scheduled end. Listed so it is never lost; nothing here changes it.
+ */
+export type ReconciliationRow = {
+  shift: Shift;
+  bookedOnAt: string | null;
+  /** Open or acknowledged actionable alerts on the shift (Missing Book Off, Welfare summary...). */
+  openAlerts: number;
+};
+
 export type LiveBoardRow = {
   shift: Shift;
   /**
@@ -115,7 +128,7 @@ export type LiveBoardRow = {
    * each reads this one value. Live Operations is the control room, not shift history, and this is the
    * reason a row is part of "now".
    */
-  inclusion: InclusionReason;
+  inclusion: BoardInclusion;
   /** Server-computed monitoring. Presented as given; the board never recomputes a window or a count. */
   operations: ShiftOperationsView | null;
   attendance: { checkInAt: string | null; checkOutAt: string | null } | undefined;
@@ -201,6 +214,15 @@ export type CompanyLiveOperationsWorkspaceProps = {
   // Status counts
   liveShiftsCount: number;
   guardsNotBookedOnCount: number;
+  /** Worked shifts past end + 15 minutes with no Book Off, under 24 hours. Never in liveShiftsCount. */
+  overdueBookOffCount: number;
+  /** Worked shifts more than 24 hours past their end with no Book Off. Independent of the selected date. */
+  reconciliationRows: ReconciliationRow[];
+  /** 'live' (no date), 'today' (the site's today selected) or 'day' (another day). */
+  boardDateMode: BoardDateMode;
+  /** Selects the site's today, re-centres the timeline on now and refreshes the data. */
+  onToday: () => void;
+  timelineRecentreSignal: number;
   activePanicAlertsCount: number;
   openIncidentsCount: number;
   missedCheckCallsCount: number;
@@ -462,7 +484,7 @@ const wSelectStyle = {
 
 // ─── MetricFocus ──────────────────────────────────────────────────────────────
 
-type MetricFocus = 'all' | 'live' | 'not-booked' | 'panic' | 'incidents' | 'missed-checks';
+type MetricFocus = 'all' | 'live' | 'not-booked' | 'no-book-off' | 'panic' | 'incidents' | 'missed-checks';
 
 // ─── LiveOpsStatusBar ─────────────────────────────────────────────────────────
 
@@ -511,6 +533,7 @@ function LiveOpsStatusBar({
   sources,
   liveShiftsCount,
   guardsNotBookedOnCount,
+  overdueBookOffCount,
   activePanicAlertsCount,
   openIncidentsCount,
   missedCheckCallsCount,
@@ -519,6 +542,7 @@ function LiveOpsStatusBar({
 }: {
   liveShiftsCount: number;
   guardsNotBookedOnCount: number;
+  overdueBookOffCount: number;
   activePanicAlertsCount: number;
   openIncidentsCount: number;
   missedCheckCallsCount: number;
@@ -528,6 +552,7 @@ function LiveOpsStatusBar({
 }) {
   const live = safeCount(liveShiftsCount, anyFailed(sources, 'shifts', 'attendance'));
   const notBookedOn = safeCount(guardsNotBookedOnCount, anyFailed(sources, 'shifts', 'attendance'));
+  const noBookOff = safeCount(overdueBookOffCount, anyFailed(sources, 'shifts', 'attendance'));
   const panic = safeCount(activePanicAlertsCount, anyFailed(sources, 'alerts'));
   const incidents = safeCount(openIncidentsCount, anyFailed(sources, 'incidents'));
   const missedChecks = safeCount(missedCheckCallsCount, anyFailed(sources, 'alerts'));
@@ -536,6 +561,8 @@ function LiveOpsStatusBar({
       <StatusMetric count={live}         label="Live shifts"    tone={liveShiftsCount > 0        ? 'aqua'    : null} active={metricFocus === 'live'}          onPress={() => onMetricPress('live')} />
       <View style={styles.statusBarSep} />
       <StatusMetric count={notBookedOn}  label="Not booked on"  tone={guardsNotBookedOnCount > 0 ? 'warning' : null} active={metricFocus === 'not-booked'}    onPress={() => onMetricPress('not-booked')} />
+      <View style={styles.statusBarSep} />
+      <StatusMetric count={noBookOff}    label="No Book Off"    tone={overdueBookOffCount > 0    ? 'warning' : null} active={metricFocus === 'no-book-off'}   onPress={() => onMetricPress('no-book-off')} />
       <View style={styles.statusBarSep} />
       <StatusMetric count={panic}        label="Panic alerts"   tone={activePanicAlertsCount > 0 ? 'danger'  : null} active={metricFocus === 'panic'}         onPress={() => onMetricPress('panic')} />
       <View style={styles.statusBarSep} />
@@ -549,7 +576,7 @@ function LiveOpsStatusBar({
 // ─── MetricFocusHint ──────────────────────────────────────────────────────────
 
 const METRIC_FOCUS_LABELS: Record<MetricFocus, string> = {
-  'all': '', 'live': 'Live shifts', 'not-booked': 'Not booked on',
+  'all': '', 'live': 'Live shifts', 'not-booked': 'Not booked on', 'no-book-off': 'No Book Off',
   'panic': 'Panic alerts', 'incidents': 'Open incidents', 'missed-checks': 'Missed checks',
 };
 
@@ -567,6 +594,19 @@ function MetricFocusHint({ metricFocus, onClear }: { metricFocus: MetricFocus; o
 
 // ─── LiveOpsFilterToolbar ─────────────────────────────────────────────────────
 
+/** The shared date input, sized to sit in this toolbar beside the 32px selects. A plain object: on web it
+ *  is spread onto a DOM element, where a StyleSheet reference would not apply. */
+const LIVE_DATE_INPUT_STYLE = {
+  height: 32,
+  minWidth: 132,
+  borderRadius: 8,
+  borderWidth: 1,
+  borderColor: colors.border,
+  paddingHorizontal: spacing.sm,
+  fontSize: 12,
+  color: colors.primaryNavyStrong,
+};
+
 function LiveOpsFilterToolbar({
   liveFilters,
   setLiveFilters,
@@ -574,15 +614,20 @@ function LiveOpsFilterToolbar({
   siteOptions,
   linkedGuardOptions,
   operationalTimeZone,
+  boardDateMode,
+  onToday,
 }: {
   liveFilters: LiveFilters;
   setLiveFilters: React.Dispatch<React.SetStateAction<LiveFilters>>;
   siteClientOptions: Array<{ value: string; label: string }>;
   siteOptions: Array<{ value: string; label: string }>;
   linkedGuardOptions: Array<{ value: string; label: string }>;
-  /** The zone "Today" and the day steps are resolved against — the site's, never the device's. */
+  /** The zone the day steps are resolved against — the site's, never the device's. */
   operationalTimeZone: string;
+  boardDateMode: BoardDateMode;
+  onToday: () => void;
 }) {
+  const todayActive = boardDateMode !== 'day';
   /**
    * Day navigation writes to `liveFilters.date` — the ONE operational date the timeline, the filters,
    * the counts and the export all read. A second date state is how a controller ends up exporting a
@@ -609,14 +654,13 @@ function LiveOpsFilterToolbar({
         >
           <Text style={styles.dateNavBtnText}>‹</Text>
         </Pressable>
-        <TextInput
-          style={[styles.filterInput, styles.dateNavInput]}
+        {/* The browser's own date picker on web (React Native Web's TextInput dropped `type="date"`, so
+            this used to be a plain text box); a typed ISO field elsewhere. */}
+        <NativeDateInput
           value={liveFilters.date}
-          onChangeText={(v: string) => setLiveFilters((f) => ({ ...f, date: v }))}
-          placeholder="YYYY-MM-DD"
-          placeholderTextColor={colors.textMuted}
-          // A real date picker on web; the typed field remains the fallback everywhere else.
-          {...(IS_WEB ? ({ type: 'date' } as any) : null)}
+          onChange={(v: string) => setLiveFilters((f) => ({ ...f, date: v }))}
+          accessibilityLabel="Operational date"
+          style={LIVE_DATE_INPUT_STYLE}
         />
         <Pressable
           accessibilityRole="button"
@@ -629,12 +673,13 @@ function LiveOpsFilterToolbar({
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Today"
-          accessibilityState={{ selected: !liveFilters.date }}
-          style={[styles.dateNavToday, !liveFilters.date ? styles.dateNavTodayActive : null, IS_WEB ? (WEB_PTR as any) : null]}
-          // Clearing the date returns to the live view, which IS today and keeps following the clock.
-          onPress={() => setLiveFilters((f) => ({ ...f, date: '' }))}
+          accessibilityState={{ selected: todayActive }}
+          style={[styles.dateNavToday, todayActive ? styles.dateNavTodayActive : null, IS_WEB ? (WEB_PTR as any) : null]}
+          // Selects the site's today (it used to clear the date, which was already the default, so it did
+          // nothing), re-centres the timeline on now and refreshes the data.
+          onPress={onToday}
         >
-          <Text style={[styles.dateNavTodayText, !liveFilters.date ? styles.dateNavTodayTextActive : null]}>Today</Text>
+          <Text style={[styles.dateNavTodayText, todayActive ? styles.dateNavTodayTextActive : null]}>Today</Text>
         </Pressable>
       </View>
       <WSelect value={liveFilters.status} onChange={(v) => setLiveFilters((f) => ({ ...f, status: v }))} options={SHIFT_STATUS_OPTS} placeholder="Status" />
@@ -1388,6 +1433,11 @@ export function CompanyLiveOperationsWorkspace({
   onAddShift,
   liveShiftsCount,
   guardsNotBookedOnCount,
+  overdueBookOffCount,
+  reconciliationRows,
+  boardDateMode,
+  onToday,
+  timelineRecentreSignal,
   activePanicAlertsCount,
   openIncidentsCount,
   missedCheckCallsCount,
@@ -1451,6 +1501,7 @@ export function CompanyLiveOperationsWorkspace({
   const focusedBoardRows = React.useMemo(() => {
     if (metricFocus === 'live')       return liveOperationEnrichedRows.filter((r) => r.inclusion === 'in_progress');
     if (metricFocus === 'not-booked') return liveOperationEnrichedRows.filter((r) => r.inclusion === 'late_not_booked_on');
+    if (metricFocus === 'no-book-off') return liveOperationEnrichedRows.filter((r) => r.inclusion === 'overdue_book_off');
     return liveOperationEnrichedRows;
   }, [liveOperationEnrichedRows, metricFocus]);
 
@@ -1510,8 +1561,12 @@ export function CompanyLiveOperationsWorkspace({
 
   const effectiveSelectedShiftContext = React.useMemo(() => {
     if (!selectedShiftContext) return null;
-    return focusedBoardRows.some((r) => r.shift.id === selectedShiftContext.shift.id) ? selectedShiftContext : null;
-  }, [selectedShiftContext, focusedBoardRows]);
+    const id = selectedShiftContext.shift.id;
+    // A shift opened from Needs Reconciliation is not on the board, and must still open.
+    return focusedBoardRows.some((r) => r.shift.id === id) || reconciliationRows.some((r) => r.shift.id === id)
+      ? selectedShiftContext
+      : null;
+  }, [selectedShiftContext, focusedBoardRows, reconciliationRows]);
 
   const sources = sourceStates ?? {};
   const failedSourceNames = (Object.keys(SOURCE_LABELS) as Array<keyof LiveOpsSourceStates>)
@@ -1573,6 +1628,7 @@ export function CompanyLiveOperationsWorkspace({
       <LiveOpsStatusBar
         liveShiftsCount={liveShiftsCount}
         guardsNotBookedOnCount={guardsNotBookedOnCount}
+        overdueBookOffCount={overdueBookOffCount}
         activePanicAlertsCount={activePanicAlertsCount}
         openIncidentsCount={openIncidentsCount}
         missedCheckCallsCount={missedCheckCallsCount}
@@ -1589,6 +1645,8 @@ export function CompanyLiveOperationsWorkspace({
         siteOptions={siteOptions}
         linkedGuardOptions={linkedGuardOptions}
         operationalTimeZone={timelineHeaderZone}
+        boardDateMode={boardDateMode}
+        onToday={onToday}
       />
 
       {/* ── Metric focus hint ────────────────────────────────────────────── */}
@@ -1609,6 +1667,7 @@ export function CompanyLiveOperationsWorkspace({
             onExportXlsx={onExportXlsx}
             exporting={exporting}
             unavailable={shiftsUnavailable}
+            recentreSignal={timelineRecentreSignal}
           />
           {metricFocus !== 'all' ? (
             <Pressable
@@ -1634,6 +1693,17 @@ export function CompanyLiveOperationsWorkspace({
           sourceStates={sources}
         />
       </View>
+
+      {/* ── Needs Reconciliation ───────────────────────────────────────────
+          Worked, never booked off, more than 24 hours past the scheduled end. Off the live board and out
+          of every live count, but listed here whatever date is selected so it can never be lost. Their
+          alerts stay in Attention Now on their own lifecycle. Read-only: nothing here changes a shift. */}
+      <LiveOpsReconciliationQueue
+        rows={reconciliationRows}
+        nowMs={operationalNowMs}
+        resolveShiftZone={resolveShiftZone}
+        onOpenShift={setSelectedShiftId}
+      />
 
       {/* ── Supporting operational summaries ─────────────────────────────── */}
       <LiveOpsLowerPanels
@@ -1678,6 +1748,61 @@ export function CompanyLiveOperationsWorkspace({
         ) : null}
       </Drawer>
 
+    </View>
+  );
+}
+
+// ─── LiveOpsReconciliationQueue ────────────────────────────────────────────────
+
+function LiveOpsReconciliationQueue({
+  rows,
+  nowMs,
+  resolveShiftZone,
+  onOpenShift,
+}: {
+  rows: ReconciliationRow[];
+  nowMs: number;
+  resolveShiftZone: (shiftId?: number | null) => string;
+  onOpenShift: (shiftId: number) => void;
+}) {
+  if (rows.length === 0) return null;
+  return (
+    <View style={styles.reconPanel} {...({ accessibilityRole: 'region', 'aria-label': 'Needs reconciliation' } as any)}>
+      <Text style={styles.reconTitle}>Needs reconciliation · {rows.length}</Text>
+      <Text style={styles.reconCaption}>
+        Booked On with no Book Off, more than 24 hours after the scheduled end. Not counted as live. Nothing
+        here changes the shift or its alerts.
+      </Text>
+      {rows.map(({ shift, bookedOnAt, openAlerts }) => {
+        const zone = resolveShiftZone(shift.id);
+        const hoursOverdue = hoursPastEnd(shift.end, nowMs);
+        return (
+          <Pressable
+            key={shift.id}
+            accessibilityRole="button"
+            accessibilityLabel={`Open shift ${shift.id}`}
+            style={[styles.reconRow, IS_WEB ? (WEB_PTR as any) : null]}
+            onPress={() => onOpenShift(shift.id)}
+          >
+            <View style={styles.reconRowMain}>
+              <Text style={styles.reconRowTitle} numberOfLines={1}>
+                {shift.site?.name || shift.siteName || 'Site'} · {shift.guard?.fullName || 'Unassigned'}
+              </Text>
+              <Text style={styles.reconRowMeta} numberOfLines={2}>
+                {formatInstantDateTime(shift.start, zone)} – {formatInstantDateTime(shift.end, zone)}
+                {' · '}Booked On {bookedOnAt ? formatInstantDateTime(bookedOnAt, zone) : 'not recorded'}
+                {' · '}No Book Off
+              </Text>
+            </View>
+            <View style={styles.reconRowSide}>
+              <Text style={styles.reconBadge}>{hoursOverdue}h overdue</Text>
+              {openAlerts > 0 ? (
+                <Text style={styles.reconAlerts}>{openAlerts} open alert{openAlerts === 1 ? '' : 's'}</Text>
+              ) : null}
+            </View>
+          </Pressable>
+        );
+      })}
     </View>
   );
 }
@@ -2070,6 +2195,36 @@ const styles = StyleSheet.create({
     color: colors.primaryNavyStrong,
   },
 
+  // ── Needs Reconciliation ──────────────────────────────────────────────────
+  reconPanel: {
+    marginTop: spacing.md,
+    padding: spacing.md,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.warning,
+    backgroundColor: colors.warningSurface,
+    gap: spacing.xs,
+  },
+  reconTitle: { fontSize: 14, fontWeight: '700', color: colors.primaryNavyStrong },
+  reconCaption: { fontSize: 12, color: colors.textSecondary },
+  reconRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    borderRadius: radii.sm,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  reconRowMain: { flex: 1, minWidth: 0 },
+  reconRowTitle: { fontSize: 13, fontWeight: '700', color: colors.primaryNavyStrong },
+  reconRowMeta: { fontSize: 12, color: colors.textSecondary },
+  reconRowSide: { alignItems: 'flex-end' },
+  reconBadge: { fontSize: 11, fontWeight: '700', color: colors.warning },
+  reconAlerts: { fontSize: 11, color: colors.textSecondary },
+
   // ── Command workspace row ─────────────────────────────────────────────────
   // The timeline takes the space the flat table used to, beside the Attention rail.
   timelineColumn: { flex: 1, minWidth: 0, gap: 6 },
@@ -2079,7 +2234,6 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: colors.fieldBorder, backgroundColor: colors.card,
   },
   dateNavBtnText: { fontSize: 13, fontWeight: '800', color: colors.textSecondary, lineHeight: 15 },
-  dateNavInput: { minWidth: 132 },
   dateNavToday: {
     paddingHorizontal: 10, paddingVertical: 6, borderRadius: radii.sm,
     borderWidth: 1, borderColor: colors.fieldBorder, backgroundColor: colors.card,

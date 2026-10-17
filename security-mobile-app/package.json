@@ -66,6 +66,7 @@
     "test:daily-site-log": "node scripts/daily-site-log-runtime.spec.cjs",
     "test:day-boundary": "node scripts/daily-site-log-day-boundary.spec.cjs",
     "test:live-ops-policy": "node scripts/live-operations-policy.spec.cjs",
+    "test:live-ops-board": "node scripts/live-operations-board.spec.cjs",
     "test:shift-offer-time": "node scripts/shift-offer-time.spec.cjs",
     "test:error-boundary": "node scripts/error-boundary.spec.cjs",
     "test:account-lifecycle": "node scripts/account-lifecycle-ui.spec.cjs",

@@ -59,11 +59,32 @@ export const POST_END_ATTENTION_MINUTES = 24 * 60;
  */
 export const SETTLED_CLOSE_OUT_MINUTES = 2 * 60;
 
+/**
+ * How late a Book Off may be before the shift stops counting as live. (S4 Live Operations Phase 2.)
+ *
+ * The same fifteen minutes after which the backend raises its Missing Book Off alert
+ * (MISSING_BOOK_OFF_GRACE_MINUTES), so the board and the alert agree about when a Book Off is missing.
+ * Up to and including end + 15 minutes the shift is live; after it, it is overdue.
+ */
+export const BOOK_OFF_GRACE_MINUTES = 15;
+
+/**
+ * How long after its scheduled end a shift with no Book Off stays on the board as overdue. Beyond this it
+ * needs reconciliation: it leaves the board and every live count and is listed in its own queue until a
+ * person resolves it. The same 24 hours as POST_END_ATTENTION_MINUTES, measured from the scheduled end.
+ */
+export const RECONCILIATION_AFTER_END_MINUTES = POST_END_ATTENTION_MINUTES;
+
 const MINUTE_MS = 60_000;
 
 export type InclusionReason =
-  /** Being worked now: status says so, or a Book On exists and the shift has started. */
+  /**
+   * Live now: being worked (status says so, or a Book On exists and the start has passed) and the
+   * scheduled end plus the Book Off grace has not passed. The only reason the live-shift count reads.
+   */
   | 'in_progress'
+  /** Worked, but end + Book Off grace has passed with no Book Off, under 24 hours after the scheduled end. */
+  | 'overdue_book_off'
   /** Actionable and starting inside the horizon. */
   | 'upcoming'
   /** Scheduled start has passed, still actionable, and no successful Book On exists. */
@@ -80,6 +101,12 @@ export type ExclusionReason =
   | 'settled_historical'
   /** Past the post-end attention window. */
   | 'outside_relevance'
+  /**
+   * Worked, never booked off, and more than 24 hours past its scheduled end. Off the live board and out
+   * of every live count, but NOT hidden: the screen lists these in the Needs Reconciliation queue, and
+   * their alerts stay in Attention Now on their own lifecycle.
+   */
+  | 'needs_reconciliation'
   /** No usable schedule to decide with. */
   | 'unknown_schedule';
 
@@ -118,11 +145,11 @@ export function classifyLiveOperation(
   const minutesSinceEnd = (nowMs - end) / MINUTE_MS;
   const minutesUntilStart = (start - nowMs) / MINUTE_MS;
 
-  // A — genuinely in progress. Every one of them, with no time bound: a shift someone is standing on is
-  // the control room's first responsibility whatever the clock says, and an in_progress shift whose end
-  // passed long ago is itself the exception Control needs to see.
+  // A — being worked. Phase 2 bounded this by the schedule: it used to be every in_progress shift with no
+  // time bound, so a shift whose Guard never booked off on Tuesday still counted as live on Friday. The
+  // stored status is not changed; only how the board presents it.
   if (status === 'in_progress') {
-    return { include: true, reason: 'in_progress' };
+    return workedShiftDecision(minutesSinceEnd);
   }
 
   // Finished work, inside its close-out tail. The tail has a lower bound too, so a shift cancelled for
@@ -142,14 +169,13 @@ export function classifyLiveOperation(
         ? { include: true, reason: 'upcoming' }
         : { include: false, reason: 'beyond_horizon' };
     }
+    // The start has passed. Attendance decides what this is: a Book On means the work is being done
+    // whatever the status column still says, and its absence is the exception Control chases.
+    if (ctx.bookedOn) return workedShiftDecision(minutesSinceEnd);
     if (minutesSinceEnd > POST_END_ATTENTION_MINUTES) {
       return { include: false, reason: 'outside_relevance' };
     }
-    // The start has passed. Attendance decides what this is: a Book On means the work is being done
-    // whatever the status column still says, and its absence is the exception Control chases.
-    return ctx.bookedOn
-      ? { include: true, reason: 'in_progress' }
-      : { include: true, reason: 'late_not_booked_on' };
+    return { include: true, reason: 'late_not_booked_on' };
   }
 
   // D — coverage problems, and anything whose status this policy does not recognise. An unrecognised
@@ -163,6 +189,36 @@ export function classifyLiveOperation(
   }
   return { include: true, reason: 'current_coverage_gap' };
 }
+
+/**
+ * A shift that is being worked, placed by how long ago its scheduled end was.
+ *
+ *   end + 15 min not yet passed            live now             (in the live count)
+ *   end + 15 min passed, end + 24 h not    overdue Book Off     (on the board, amber, outside the live count)
+ *   end + 24 h passed                      needs reconciliation (off the board, in its own queue)
+ *
+ * A Book On before the scheduled start is live: the Guard is on site.
+ */
+function workedShiftDecision(minutesSinceEnd: number): LiveOperationDecision {
+  if (minutesSinceEnd <= BOOK_OFF_GRACE_MINUTES) return { include: true, reason: 'in_progress' };
+  if (minutesSinceEnd <= RECONCILIATION_AFTER_END_MINUTES) return { include: true, reason: 'overdue_book_off' };
+  return { include: false, reason: 'needs_reconciliation' };
+}
+
+/**
+ * Whether a worked shift's Book Off is now overdue: its scheduled end plus the Book Off grace has passed.
+ * The one place the timeline and the board ask, so a bar can never say "Live" while the board says overdue.
+ */
+export function isBookOffOverdue(end: string | null | undefined, nowMs: number): boolean {
+  const endMs = Date.parse(end || '');
+  return Number.isFinite(endMs) && (nowMs - endMs) / MINUTE_MS > BOOK_OFF_GRACE_MINUTES;
+}
+
+/**
+ * Why a row is on the board: a policy inclusion, or — when Control has picked a day — a shift scheduled
+ * on that day that is not operationally current (history, later the same day, or awaiting reconciliation).
+ */
+export type BoardInclusion = InclusionReason | 'needs_reconciliation' | 'scheduled_on_day';
 
 /** Convenience over {@link classifyLiveOperation} for callers that only need the yes/no. */
 export function isCurrentOperation(shift: OperationalShift, ctx: ShiftOperationalContext): boolean {

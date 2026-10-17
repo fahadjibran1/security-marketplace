@@ -23,6 +23,7 @@ const timeline = loadTs('src/components/company/operationsTimeline.ts');
 const policy = loadTs('src/components/company/liveOperationsPolicy.ts');
 const summary = loadTs('src/components/company/operationsSummary.ts');
 const outlook = loadTs('src/components/company/operationsOutlook.ts');
+const board = loadTs('src/components/company/liveOperationsBoard.ts');
 
 const LONDON = 'Europe/London';
 const MIN = 60_000;
@@ -157,16 +158,17 @@ test('ENTRY-04-EVERY-REMAINING-SELECTION-IS-AN-EXPLICIT-OPERATOR-ACTION', () => 
 
 // ═══════════════════ 5-6 · the live carry-over shift ═══════════════════
 
-test('CARRYOVER-01-A-LIVE-SHIFT-FROM-YESTERDAY-IS-ON-TODAYS-TIMELINE', () => {
-  // The production case. At 10:55 the next morning the guard is still on site, so the board must show
-  // them — at every range, not just the wide ones.
+test('CARRYOVER-01-A-WORKED-SHIFT-FROM-YESTERDAY-IS-ON-TODAYS-TIMELINE-AS-NO-BOOK-OFF', () => {
+  // The production case. At 10:55 the next morning there is still no Book Off, so the board must show
+  // the shift — at every range, not just the wide ones. S4 Live Operations Phase 2: thirteen hours past
+  // its scheduled end it is no longer "Live" but overdue, labelled No Book Off (it was "Live" before).
   for (const hours of [4, 8, 12, 24]) {
     const window = timeline.resolveTimelineWindow(NOW, hours, LONDON);
     const groups = timeline.buildTimeline([SHIFT_19], window, NOW);
-    assert.equal(timeline.timelineRowCount(groups), 1, `${hours}h view shows the live shift`);
+    assert.equal(timeline.timelineRowCount(groups), 1, `${hours}h view shows the shift`);
 
     const [row] = groups[0].rows;
-    assert.equal(row.status, 'Live');
+    assert.equal(row.status, 'No Book Off');
     assert.equal(row.scheduled, '20:35–21:35', 'the identity column still states the SCHEDULE truthfully');
     assert.equal(row.attendance.bookOn, 'ON 20:33');
     assert.equal(row.attendance.bookOff, 'OFF —');
@@ -217,32 +219,29 @@ test('CARRYOVER-03-NOTHING-ELSE-FROM-YESTERDAY-COMES-BACK', () => {
   }
 });
 
-test('CARRYOVER-05-THE-CARRY-OVER-IS-NOT-TIME-BOUNDED-BECAUSE-THE-POLICY-IS-NOT', () => {
-  // A deliberate decision, recorded here because it is the one place the rule could reasonably have
-  // gone the other way. The relevance policy holds `in_progress` with NO time bound — "a shift someone
-  // is standing on is the control room's first responsibility whatever the clock says, and an
-  // in_progress shift whose end passed long ago is itself the exception Control needs to see". The
-  // LIVE SHIFTS metric counts it on that basis. If the timeline capped the carry-over at, say, 24
-  // hours, the board would go empty while the metric still said 1 — which is the exact defect this fix
-  // exists to remove, reintroduced one day later.
+test('CARRYOVER-05-A-LONG-STALE-SHIFT-MOVES-TO-RECONCILIATION-AND-THE-COUNTS-STILL-AGREE', () => {
+  // This test used to record the opposite decision: `in_progress` held with NO time bound, so a shift
+  // whose Guard never booked off ten days ago still counted as LIVE. S4 Live Operations Phase 2 reversed
+  // that on the owner's decision (production: Tuesday's shifts shown live on Friday). Its real point is
+  // kept: the board must not go empty while a metric still counts the shift. Now NEITHER counts it as
+  // live — and it is not hidden: it is listed in Needs Reconciliation.
   const tenDaysAgo = {
     ...SHIFT_19,
     shift: { ...SHIFT_19.shift, id: 998, start: '2026-09-20T08:00:00.000Z', end: '2026-09-20T16:00:00.000Z' },
     attendance: { checkInAt: '2026-09-20T07:58:00.000Z', checkOutAt: null },
   };
 
-  const decision = policy.classifyLiveOperation(
-    { ...tenDaysAgo.shift, attendance: tenDaysAgo.attendance },
-    { now: new Date(NOW), attendance: tenDaysAgo.attendance },
-  );
-  assert.equal(decision.include, true, 'the policy still calls it live');
-  assert.equal(decision.reason, 'in_progress');
+  const decision = policy.classifyLiveOperation(tenDaysAgo.shift, { now: new Date(NOW), bookedOn: true });
+  assert.equal(decision.include, false, 'off the live board');
+  assert.equal(decision.reason, 'needs_reconciliation');
 
-  const window = timeline.resolveTimelineWindow(NOW, 8, LONDON);
-  assert.equal(
-    timeline.timelineRowCount(timeline.buildTimeline([tenDaysAgo], window, NOW)), 1,
-    'so the board shows it, and cannot disagree with the metric',
+  const selection = board.selectLiveBoard(
+    [tenDaysAgo],
+    (row) => ({ shift: row.shift, bookedOn: true, timeZone: LONDON }),
+    { now: new Date(NOW), date: '', referenceZone: LONDON },
   );
+  assert.equal(selection.board.length, 0, 'not drawn on the live board');
+  assert.deepEqual(selection.reconciliation, [tenDaysAgo], 'but listed for reconciliation, never hidden');
 });
 
 test('CARRYOVER-04-AN-ORDINARY-LIVE-SHIFT-IS-UNTOUCHED', () => {
@@ -267,24 +266,32 @@ test('CARRYOVER-04-AN-ORDINARY-LIVE-SHIFT-IS-UNTOUCHED', () => {
 test('AGREE-01-METRIC-TIMELINE-AND-TODAY-SO-FAR-TELL-THE-SAME-STORY', () => {
   // The production screenshot: metric 1, Today So Far 1, drawer "Live", timeline 0. Four readings of
   // one dataset, one of them different.
-  const decision = policy.classifyLiveOperation(
-    { ...SHIFT_19.shift, attendance: SHIFT_19.attendance },
-    { now: new Date(NOW), attendance: SHIFT_19.attendance },
-  );
+  // Phase 2: thirteen hours past its end with no Book Off, shift 19 is overdue — counted under No Book
+  // Off, not LIVE SHIFTS. The four readings must still agree with each other.
+  const decision = policy.classifyLiveOperation(SHIFT_19.shift, { now: new Date(NOW), bookedOn: true });
   assert.equal(decision.include, true);
-  assert.equal(decision.reason, 'in_progress');
+  assert.equal(decision.reason, 'overdue_book_off');
 
   const rows = [SHIFT_19];
-  const liveMetric = rows.filter((r) => r.shift.status === 'in_progress').length;
+  const selection = board.selectLiveBoard(
+    rows,
+    (row) => ({ shift: row.shift, bookedOn: true, timeZone: LONDON }),
+    { now: new Date(NOW), date: '', referenceZone: LONDON },
+  );
+  const liveMetric = selection.board.filter((r) => r.inclusion === 'in_progress').length;
+  const noBookOffMetric = selection.board.filter((r) => r.inclusion === 'overdue_book_off').length;
   const today = summary.buildTodaySoFar(rows, NOW);
   const window = timeline.resolveTimelineWindow(NOW, 8, LONDON);
-  const drawn = timeline.timelineRowCount(timeline.buildTimeline(rows, window, NOW));
+  const groups = timeline.buildTimeline(rows, window, NOW);
+  const drawn = timeline.timelineRowCount(groups);
 
-  assert.equal(liveMetric, 1, 'LIVE SHIFTS');
+  assert.equal(liveMetric, 0, 'LIVE SHIFTS does not count it');
+  assert.equal(noBookOffMetric, 1, 'NO BOOK OFF does');
   assert.equal(drawn, 1, 'timeline rows');
+  assert.equal(groups[0].rows[0].status, 'No Book Off', 'and the bar says what the metric says');
   assert.equal(today.shiftCount, 1, 'Today So Far scope');
   assert.equal(today.attendance.bookedOn, 1, 'Today So Far attendance');
-  assert.equal(liveMetric, drawn, 'the metric and the board agree');
+  assert.equal(noBookOffMetric, drawn, 'the metric and the board agree');
   assert.equal(drawn, today.shiftCount, 'the board and the summary agree');
 });
 

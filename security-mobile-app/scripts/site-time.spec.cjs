@@ -562,11 +562,18 @@ test('the Live Operations date filter buckets by the SITE day, not the UTC day',
     'the site day is the 30th, which is the day the operator would filter for',
   );
 
+  // Phase 2 moved the day test into liveOperationsBoard, which the screen feeds each shift's site zone.
   const dashboard = codeOf(path.join(ROOT, 'src/screens/CompanyDashboardScreen.tsx'));
+  const board = codeOf(path.join(ROOT, 'src/components/company/liveOperationsBoard.ts'));
   assert.ok(
-    dashboard.includes('const date = formatSiteDateInput(shift.start, resolveSiteZone('),
+    dashboard.includes('timeZone: resolveSiteZone(shift.site?.id ?? shift.siteId)'),
+    'the screen gives the board each shift\'s SITE zone',
+  );
+  assert.ok(
+    board.includes('formatSiteDateInput(shift.start, timeZone) === date'),
     'the Live Operations filter must derive the site-local day',
   );
+  assert.ok(!/\.slice\(0, ?10\)/.test(board), 'and never slices the UTC date');
 });
 
 test('the real UAT discrepancy is gone: 10:10Z reads 11:10 at a London site', () => {

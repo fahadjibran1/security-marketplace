@@ -21,7 +21,7 @@ import { renderDailySiteLogHtml } from '../components/company/dailySiteLogPrint'
 import { buildIncidentReport } from '../components/company/incidentReport';
 import { renderIncidentReportHtml, printIncidentReport } from '../components/company/incidentReportPrint';
 import { incidentLifecycleLabel, incidentSeverityLabel } from '../components/company/incidentLifecycle';
-import type { LiveBoardRow, CloseOutSummary, SelectedShiftContext } from '../components/company/CompanyLiveOperationsWorkspace';
+import type { LiveBoardRow, CloseOutSummary, ReconciliationRow, SelectedShiftContext } from '../components/company/CompanyLiveOperationsWorkspace';
 import { CompanyShiftOffersWorkspace, type ShiftOffersFeedback } from '../components/company/CompanyShiftOffersWorkspace';
 import { isWelfareEvidence } from '../components/shifts/welfareEvidence';
 import {
@@ -36,12 +36,12 @@ import {
 } from '../components/company/operationsReport';
 import { buildXlsx } from '../components/company/xlsxWriter';
 import {
-  classifyLiveOperation,
   isActionableWelfareAlert,
   selectCurrentAttention,
-  type InclusionReason,
+  type BoardInclusion,
   type OperationalShift,
 } from '../components/company/liveOperationsPolicy';
+import { boardDateMode, selectLiveBoard } from '../components/company/liveOperationsBoard';
 import { CompanyAnalyticsWorkspace } from '../components/company/CompanyAnalyticsWorkspace';
 import { CompanyAvailabilityWorkspace } from '../components/company/CompanyAvailabilityWorkspace';
 import { CompanyComplianceWorkspace } from '../components/company/CompanyComplianceWorkspace';
@@ -64,10 +64,10 @@ import {
   formatUkDateTime,
   formatUkRange,
   formatInstantTime,
-  formatSiteDateInput,
   resolveDisplayZone,
   siteLocalEndToInstant,
   siteLocalToInstant,
+  siteToday,
 } from '../services/siteTime';
 import {
   canOpenGuardWorkspace,
@@ -3826,6 +3826,41 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
     }
   };
 
+  /** The zone "today" and the selected day are judged on: the filtered site's, else the company default. */
+  const liveOperationsZone = resolveSiteZone(liveFilters.siteId ? Number(liveFilters.siteId) : null);
+
+  /**
+   * The board and the Needs Reconciliation queue, from one pass of the policy (liveOperationsBoard).
+   *
+   * Phase 2: the date is no longer applied AFTER the live policy, where it could only narrow today's live
+   * set. A selected day now shows that day's scheduled shifts; today shows the live set plus today's
+   * schedule. The queue ignores the date so a stale shift can never be hidden by the day on screen.
+   */
+  const liveBoardSelection = React.useMemo(() => {
+    const filtered = shifts.filter((shift) => {
+      const clientId = String(shift.site?.client?.id ?? shift.site?.clientId ?? '');
+      const siteId = String(shift.site?.id ?? shift.siteId ?? '');
+      const guardId = String(shift.guard?.id ?? shift.guardId ?? '');
+      const status = (shift.status || '').toLowerCase();
+      return (
+        (!liveFilters.clientId || clientId === liveFilters.clientId) &&
+        (!liveFilters.siteId || siteId === liveFilters.siteId) &&
+        (!liveFilters.guardId || guardId === liveFilters.guardId) &&
+        (!liveFilters.status || status === liveFilters.status.toLowerCase())
+      );
+    });
+    return selectLiveBoard(
+      filtered,
+      (shift) => ({
+        shift: { id: shift.id, start: shift.start, end: shift.end, status: shift.status || '' },
+        bookedOn: Boolean(attendanceByShiftId.get(shift.id)?.checkInAt),
+        // The SITE's calendar day, never the UTC one or the device's.
+        timeZone: resolveSiteZone(shift.site?.id ?? shift.siteId),
+      }),
+      { now: operationalNow, date: liveFilters.date, referenceZone: liveOperationsZone },
+    );
+  }, [attendanceByShiftId, liveFilters, liveOperationsZone, operationalNow, resolveSiteZone, shifts]);
+
   /**
    * What is on the board right now.
    *
@@ -3838,35 +3873,12 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
    */
   const liveOperationRows = React.useMemo(() => {
     const priority = { high: 3, medium: 2, low: 1 };
-    const inclusionByShiftId = new Map<number, InclusionReason>();
+    const inclusionByShiftId = new Map<number, BoardInclusion>(
+      liveBoardSelection.board.map(({ row, inclusion }) => [row.id, inclusion]),
+    );
 
-    return shifts
-      .filter((shift) => {
-        const decision = classifyLiveOperation(
-          { id: shift.id, start: shift.start, end: shift.end, status: shift.status || '' },
-          { now: operationalNow, bookedOn: Boolean(attendanceByShiftId.get(shift.id)?.checkInAt) },
-        );
-        if (!decision.include) return false;
-        inclusionByShiftId.set(shift.id, decision.reason);
-        return true;
-      })
-      .filter((shift) => {
-        const clientId = String(shift.site?.client?.id ?? shift.site?.clientId ?? '');
-        const siteId = String(shift.site?.id ?? shift.siteId ?? '');
-        const guardId = String(shift.guard?.id ?? shift.guardId ?? '');
-        // The SITE's calendar day, not the UTC one: shift.start.slice(0, 10) takes the UTC date, so a
-        // 00:30 BST shift (23:30Z the day before) filtered onto the wrong day. Same defect family.
-        const date = formatSiteDateInput(shift.start, resolveSiteZone(shift.site?.id ?? shift.siteId));
-        const status = (shift.status || '').toLowerCase();
-
-        return (
-          (!liveFilters.clientId || clientId === liveFilters.clientId) &&
-          (!liveFilters.siteId || siteId === liveFilters.siteId) &&
-          (!liveFilters.guardId || guardId === liveFilters.guardId) &&
-          (!liveFilters.date || date === liveFilters.date) &&
-          (!liveFilters.status || status === liveFilters.status.toLowerCase())
-        );
-      })
+    return liveBoardSelection.board
+      .map(({ row }) => row)
       .sort((left, right) => {
         const riskA = getShiftRisk(
           left,
@@ -3894,8 +3906,8 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
 
         return right.start.localeCompare(left.start);
       })
-      .map((shift) => ({ shift, inclusion: inclusionByShiftId.get(shift.id) as InclusionReason }));
-  }, [alertsByShiftId, attendanceByShiftId, incidentsByShiftId, liveFilters, operationalNow, shifts]);
+      .map((shift) => ({ shift, inclusion: inclusionByShiftId.get(shift.id) as BoardInclusion }));
+  }, [alertsByShiftId, attendanceByShiftId, incidentsByShiftId, liveBoardSelection]);
   // The same value the board used to include the row. The old version counted `ready` rows while the
   // metric filter it drives showed `in_progress` ones, so pressing a card reading 3 could show 0 rows.
   const guardsNotBookedOn = React.useMemo(
@@ -3953,21 +3965,53 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
    * worse than no card.
    */
   const liveOperationsCounts = React.useMemo(() => {
-    const withReason = (reason: InclusionReason) =>
+    const withReason = (reason: BoardInclusion) =>
       liveOperationEnrichedRows.filter((row) => row.inclusion === reason).length;
     const inCategory = (category: string) =>
       urgentOperationalItems.filter((item) => item.category === category).length;
 
     return {
+      // Live now only. Overdue and reconciliation shifts are counted separately, never here.
       liveShifts: withReason('in_progress'),
       guardsNotBookedOn: withReason('late_not_booked_on'),
+      overdueBookOff: withReason('overdue_book_off'),
       activePanicAlerts: inCategory('panic'),
       openIncidents: inCategory('incident'),
       missedCheckCalls: inCategory('missed_check_call'),
     };
   }, [liveOperationEnrichedRows, urgentOperationalItems]);
 
+  /**
+   * Needs Reconciliation: worked, never booked off, more than 24 hours past the scheduled end. Read-only
+   * here — listing a shift never changes it or its alerts. Its open alerts are counted, not hidden.
+   */
+  const reconciliationRows: ReconciliationRow[] = React.useMemo(
+    () => liveBoardSelection.reconciliation.map((shift) => ({
+      shift,
+      bookedOnAt: attendanceByShiftId.get(shift.id)?.checkInAt ?? null,
+      openAlerts: (alertsByShiftId.get(shift.id) || []).filter(
+        (alert) => (alert.status || '').toLowerCase() !== 'closed' && isActionableWelfareAlert(alert),
+      ).length,
+    })),
+    [alertsByShiftId, attendanceByShiftId, liveBoardSelection],
+  );
+
   const [exportingOperations, setExportingOperations] = React.useState(false);
+
+  /** Bumped by Today, so the timeline re-centres on now even when the anchor instant did not move. */
+  const [timelineRecentreSignal, setTimelineRecentreSignal] = React.useState(0);
+  const liveBoardDateMode = boardDateMode(liveFilters.date, liveOperationsZone, operationalNow);
+
+  /**
+   * Today: select the site's today, re-centre the timeline on now, and refresh the operational data.
+   * Read-only — the refresh is the same reload the Refresh button performs.
+   */
+  const handleLiveOperationsToday = React.useCallback(() => {
+    setLiveFilters((filters) => ({ ...filters, date: siteToday(liveOperationsZone) }));
+    setTimelineRecentreSignal((signal) => signal + 1);
+    void loadData(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveOperationsZone]);
 
   /**
    * The instant the timeline positions itself around.
@@ -3978,11 +4022,11 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
    * there would put half of every night shift out of view.
    */
   const timelineAnchorMs = React.useMemo(() => {
-    if (!liveFilters.date) return operationalNow.getTime();
-    const zone = resolveSiteZone(liveFilters.siteId ? Number(liveFilters.siteId) : null);
-    const resolved = siteLocalToInstant(liveFilters.date, '12:00', zone);
+    // The live view and today both follow the clock: today is when Control wants now in shot.
+    if (liveBoardDateMode !== 'day') return operationalNow.getTime();
+    const resolved = siteLocalToInstant(liveBoardSelection.date, '12:00', liveOperationsZone);
     return resolved.ok ? resolved.instant : operationalNow.getTime();
-  }, [liveFilters.date, liveFilters.siteId, operationalNow, resolveSiteZone]);
+  }, [liveBoardDateMode, liveBoardSelection.date, liveOperationsZone, operationalNow]);
 
   /**
    * The report's rows: the SAME filtered set the timeline draws, so the file matches what Control
@@ -4406,6 +4450,11 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
         }}
         liveShiftsCount={liveOperationsCounts.liveShifts}
         guardsNotBookedOnCount={liveOperationsCounts.guardsNotBookedOn}
+        overdueBookOffCount={liveOperationsCounts.overdueBookOff}
+        reconciliationRows={reconciliationRows}
+        boardDateMode={liveBoardDateMode}
+        onToday={handleLiveOperationsToday}
+        timelineRecentreSignal={timelineRecentreSignal}
         activePanicAlertsCount={liveOperationsCounts.activePanicAlerts}
         openIncidentsCount={liveOperationsCounts.openIncidents}
         missedCheckCallsCount={liveOperationsCounts.missedCheckCalls}

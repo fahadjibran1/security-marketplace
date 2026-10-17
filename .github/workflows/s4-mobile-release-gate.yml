@@ -189,6 +189,8 @@ jobs:
       # policy, both sides of the +4h and post-end boundaries, and the production UAT scenario.
       - name: Verify live operations stays operationally current
         run: npm run test:live-ops-policy
+      - name: Live Operations board (live, overdue, reconciliation, dates, Today)
+        run: npm run test:live-ops-board
 
       # Phase 3B: the last two surfaces reading a clock time out of the stored ISO digits. Correct while
       # the backend stored a wall clock; wrong from the moment Phase 1 made those columns true instants,

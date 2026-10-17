@@ -74,11 +74,14 @@ test('CONST-01-LOCKED-POLICY-VALUES', () => {
 
 // ─── A. In progress ───────────────────────────────────────────────────────────
 
-test('POLICY-01-IN-PROGRESS-IS-ALWAYS-CURRENT', () => {
+test('POLICY-01-IN-PROGRESS-IS-LIVE-ONLY-UNTIL-END-PLUS-GRACE', () => {
   assert.equal(reasonOf(shiftAt('in_progress', -60, 300)), 'in_progress');
-  // Deliberately unbounded. A shift still marked in progress three days after its scheduled end is
-  // itself the exception a control room has to see, so it must not age off the board.
-  assert.equal(reasonOf(shiftAt('in_progress', -4400, -4100)), 'in_progress');
+  // S4 Live Operations Phase 2 bounded this. It used to be deliberately unbounded, which is how a shift
+  // never booked off on Tuesday was still a LIVE shift on Friday. Three days past its end it is not live:
+  // it is off the board and in the Needs Reconciliation queue — not hidden.
+  const stale = classify(shiftAt('in_progress', -4400, -4100));
+  assert.equal(stale.include, false);
+  assert.equal(stale.reason, 'needs_reconciliation');
 });
 
 // ─── B. Upcoming, and the +4h boundary on both sides ──────────────────────────
@@ -189,8 +192,12 @@ test('INSTANT-01-THE-SAME-INSTANT-CLASSIFIES-THE-SAME-HOWEVER-IT-IS-WRITTEN', ()
 
   // And a shift whose UTC date is "yesterday" while its site date is "today" is judged by the clock, not
   // by which side of midnight the digits fall on.
-  const acrossUtcMidnight = { id: 92, status: 'in_progress', start: '2026-09-29T23:00:00.000Z', end: '2026-09-30T07:00:00.000Z' };
+  const acrossUtcMidnight = { id: 92, status: 'in_progress', start: '2026-09-29T23:00:00.000Z', end: '2026-09-30T15:00:00.000Z' };
   assert.equal(reasonOf(acrossUtcMidnight), 'in_progress');
+  // Phase 2: the same overnight shift ending at 07:00Z is seven hours past its end at NOW — overdue,
+  // judged by the clock just the same.
+  const endedThisMorning = { ...acrossUtcMidnight, id: 93, end: '2026-09-30T07:00:00.000Z' };
+  assert.equal(reasonOf(endedThisMorning), 'overdue_book_off');
 });
 
 test('INSTANT-02-NO-STRING-SLICING-OR-DEVICE-CLOCK-IN-THE-POLICY', () => {
@@ -444,9 +451,14 @@ test('WIRE-01-THE-BOARD-IS-FILTERED-BY-THE-POLICY-THAT-WAS-TESTED', () => {
     screenSrc.includes("} from '../components/company/liveOperationsPolicy';"),
     'the screen imports the policy module',
   );
-  const rows = memoBody(screenSrc, 'const liveOperationRows = React.useMemo');
-  assert.ok(rows.includes('classifyLiveOperation('), 'inclusion is decided by the shared policy');
-  assert.ok(rows.includes('if (!decision.include) return false;'), 'an excluded shift does not reach the board');
+  // Phase 2: the screen hands the policy decision to liveOperationsBoard (which adds the selected day and
+  // the reconciliation queue); that module is what calls the policy, and only an included shift reaches
+  // the live view. Its behaviour is executed in live-operations-board.spec.cjs.
+  const rows = memoBody(screenSrc, 'const liveBoardSelection = React.useMemo');
+  assert.ok(rows.includes('selectLiveBoard('), 'the board is selected by the shared board module');
+  const boardSrc = stripComments(codeOf('src/components/company/liveOperationsBoard.ts'));
+  assert.ok(boardSrc.includes('classifyLiveOperation('), 'which decides inclusion by the shared policy');
+  assert.ok(boardSrc.includes('if (decision.include) {'), 'an excluded shift does not reach the live view');
   assert.ok(rows.includes('now: operationalNow'), 'the policy is given the operational clock');
   assert.ok(
     rows.includes("bookedOn: Boolean(attendanceByShiftId.get(shift.id)?.checkInAt)"),
@@ -553,8 +565,8 @@ test('WIRE-08-A-CONTROL-ROOM-EMPTY-STATE', () => {
 test('WIRE-09-HISTORY-IS-NEITHER-DELETED-NOR-UNREACHABLE', () => {
   // The policy filters a view. Nothing removes a shift from state, and the surfaces that own history
   // still read the full list.
-  const rows = memoBody(screenSrc, 'const liveOperationRows = React.useMemo');
-  assert.ok(rows.includes('return shifts'), 'the board filters `shifts`; it does not replace it');
+  const rows = memoBody(screenSrc, 'const liveBoardSelection = React.useMemo');
+  assert.ok(rows.includes('const filtered = shifts.filter('), 'the board filters `shifts`; it does not replace it');
   for (const mutation of ['setShifts(shifts.filter', 'splice(', 'delete ']) {
     assert.ok(!rows.includes(mutation), `the board must not mutate the shift list (${mutation})`);
   }

@@ -85,6 +85,8 @@ export type OperationsTimelineProps = {
   exporting: boolean;
   /** The shifts or attendance behind these rows failed to load: an empty view is then not "nothing on". */
   unavailable?: boolean;
+  /** Bumped by the page's Today button: re-centre on now exactly as the timeline's own "Now" does. */
+  recentreSignal?: number;
 };
 
 export function CompanyOperationsTimeline({
@@ -100,6 +102,7 @@ export function CompanyOperationsTimeline({
   onExportXlsx,
   exporting,
   unavailable = false,
+  recentreSignal = 0,
 }: OperationsTimelineProps) {
   const [rangeHours, setRangeHours] = React.useState<TimelineRangeHours>(
     initialRangeHours ?? DEFAULT_TIMELINE_RANGE,
@@ -125,6 +128,14 @@ export function CompanyOperationsTimeline({
   const [axisContentWidth, setAxisContentWidth] = React.useState(0);
   /** Bumped by "Now" so pressing it re-centres the viewport even when the window did not move. */
   const [recentreToken, setRecentreToken] = React.useState(0);
+  const recentreOnNow = React.useCallback(() => {
+    setPanHours(0);
+    setRecentreToken((t) => t + 1);
+  }, []);
+  // Today, from the page: the same action as "Now". Skipped on mount so opening the page does not scroll.
+  React.useEffect(() => {
+    if (recentreSignal > 0) recentreOnNow();
+  }, [recentreSignal, recentreOnNow]);
 
   const window: TimelineWindow = React.useMemo(
     () => panTimelineWindow(resolveTimelineWindow(anchorMs, rangeHours, headerTimeZone), panHours),
@@ -183,7 +194,7 @@ export function CompanyOperationsTimeline({
             <TimelineButton label="Earlier" onPress={() => setPanHours((h) => h - rangeHours / 2)} />
             <TimelineButton
               label="Now"
-              onPress={() => { setPanHours(0); setRecentreToken((t) => t + 1); }}
+              onPress={recentreOnNow}
               active={panHours === 0}
             />
             <TimelineButton label="Later" onPress={() => setPanHours((h) => h + rangeHours / 2)} />
@@ -434,6 +445,12 @@ const STATUS_STYLE: Record<TimelineRow['status'], { bar: any; badge: any; badgeT
   },
   Late: {
     bar: { backgroundColor: colors.warningSurface, borderColor: colors.warning },
+    badge: { backgroundColor: colors.warning },
+    badgeText: { color: colors.textOnBrand },
+  },
+  // Amber like Late: an operational exception to chase, not a welfare breach.
+  'No Book Off': {
+    bar: { backgroundColor: colors.warningSurface, borderColor: colors.warning, borderStyle: 'dashed' },
     badge: { backgroundColor: colors.warning },
     badgeText: { color: colors.textOnBrand },
   },
