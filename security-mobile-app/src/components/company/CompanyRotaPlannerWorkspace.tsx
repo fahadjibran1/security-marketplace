@@ -19,6 +19,7 @@ import {
 import type { CandidateAssessment } from './assignEligibility';
 import { buildBlockers } from './compliance-model';
 import { workRestrictionNotice } from './compliance-checks';
+import { NativeDateInput, nativeInputErrorStyle, nativeInputStyle } from './NativeDateInput';
 import type {
   EligibleGuardRow,
   GuardComplianceSummary,
@@ -147,31 +148,7 @@ function isPositionOpen(status: string): boolean {
 }
 
 // ── Web-native input components ───────────────────────────────────────────────
-
-function NativeDateInput({ value, onChange, hasError }: {
-  value: string; onChange: (v: string) => void; hasError?: boolean;
-}) {
-  if (IS_WEB) {
-    const InputTag: any = 'input';
-    return (
-      <InputTag
-        type="date"
-        value={value}
-        onChange={(e: any) => onChange(e.target.value)}
-        style={{ ...nativeInputStyle, ...(hasError ? nativeInputErrorStyle : null) }}
-      />
-    );
-  }
-  return (
-    <TextInput
-      value={value}
-      onChangeText={onChange}
-      placeholder="YYYY-MM-DD"
-      placeholderTextColor={colors.fieldPlaceholder}
-      style={[nativeInputStyle, hasError && nativeInputErrorStyle]}
-    />
-  );
-}
+// NativeDateInput is shared with Live Operations (./NativeDateInput).
 
 function NativeTimeInput({ value, onChange, hasError }: {
   value: string; onChange: (v: string) => void; hasError?: boolean;
@@ -197,23 +174,6 @@ function NativeTimeInput({ value, onChange, hasError }: {
     />
   );
 }
-
-const nativeInputStyle: any = {
-  height: control.inputHeight,
-  borderWidth: 1.5,
-  borderColor: colors.fieldBorder,
-  borderRadius: radii.sm,
-  paddingHorizontal: spacing.md,
-  fontSize: 14,
-  color: colors.textPrimary,
-  backgroundColor: colors.card,
-  outlineStyle: 'none',
-};
-
-const nativeInputErrorStyle: any = {
-  borderColor: colors.danger,
-  backgroundColor: colors.dangerSurface,
-};
 
 // ── Filter select ─────────────────────────────────────────────────────────────
 

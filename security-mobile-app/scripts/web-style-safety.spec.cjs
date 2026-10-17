@@ -66,8 +66,12 @@ test('WEBSTYLE-01-AN-ARRAY-STYLE-ON-A-RAW-DOM-ELEMENT-EMITS-A-NUMERIC-CSS-PROPER
  * crashed, with the precise style expression the source now uses.
  */
 function rotaWebInput(hasError) {
-  const source = read('src/components/company/CompanyRotaPlannerWorkspace.tsx');
-  const expr = /style=\{\{ \.\.\.nativeInputStyle, \.\.\.\(hasError \? nativeInputErrorStyle : null\) \}\}/g;
+  // The date input moved to the shared NativeDateInput (S4 Live Operations Phase 2), which also takes a
+  // layout-only `style` override spread last; the time input stays in the Rota Planner. Both must still
+  // compose a single flattened object — never an array — on the DOM element.
+  const source =
+    read('src/components/company/CompanyRotaPlannerWorkspace.tsx') + read('src/components/company/NativeDateInput.tsx');
+  const expr = /style=\{\{ \.\.\.nativeInputStyle, \.\.\.\(hasError \? nativeInputErrorStyle : null\)(?:, \.\.\.\(style \?\? null\))? \}\}/g;
   const occurrences = (source.match(expr) || []).length;
   const nativeInputStyle = {
     height: 40, borderWidth: 1.5, borderColor: '#ccc', borderRadius: 6,
@@ -99,8 +103,10 @@ test('WEBSTYLE-02-ADD-SHIFT-DATE-AND-TIME-INPUTS-RENDER-WITHOUT-AN-INDEXED-STYLE
 test('WEBSTYLE-03-THE-NATIVE-BRANCHES-KEEP-THEIR-ARRAYS', () => {
   // React Native's TextInput flattens arrays itself, so those branches were never broken and must not
   // have been changed: doing so would be churn on the path this defect never touched.
-  const source = read('src/components/company/CompanyRotaPlannerWorkspace.tsx');
-  const nativeArrays = (source.match(/^ {6}style=\{\[nativeInputStyle, hasError && nativeInputErrorStyle\]\}$/gm) || []).length;
+  // The date branch now lives in the shared NativeDateInput (Phase 2), with a layout override appended.
+  const source =
+    read('src/components/company/CompanyRotaPlannerWorkspace.tsx') + '\n' + read('src/components/company/NativeDateInput.tsx');
+  const nativeArrays = (source.match(/^ {6}style=\{\[nativeInputStyle, hasError && nativeInputErrorStyle(?:, style as any)?\]\}\r?$/gm) || []).length;
   assert.equal(nativeArrays, 2, `both native TextInput branches still pass arrays, found ${nativeArrays}`);
 });
 
