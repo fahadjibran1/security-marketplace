@@ -764,6 +764,16 @@ export function reconcileShiftWithoutBookOff(id: number, payload: { reason: stri
   );
 }
 
+/**
+ * Which of these shifts were closed without a Book Off by a person, from the reconciliation audit entry
+ * (company-scoped, bounded). Used only to label history; never inferred from the shift's state.
+ */
+export function listShiftReconciliations(shiftIds: number[]) {
+  return request<Array<{ shiftId: number; reconciledAt: string | null; reason: string | null }>>(
+    `/shifts/reconciliations?shiftIds=${shiftIds.join(',')}`,
+  );
+}
+
 export function respondToShift(id: number, payload: { response: 'accepted' | 'rejected'; reason?: string }) {
   return request<Shift>(`/shifts/${id}/respond`, {
     method: 'PATCH',

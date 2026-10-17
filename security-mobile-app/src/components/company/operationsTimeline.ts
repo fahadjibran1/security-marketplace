@@ -302,6 +302,7 @@ export function resolveAttendanceLabels(
   attendance: { checkInAt?: string | null; checkOutAt?: string | null } | null | undefined,
   nowMs: number,
   timeZone: string,
+  closedByControl = false,
 ): AttendanceLabels {
   const on = attendance?.checkInAt ?? null;
   const off = attendance?.checkOutAt ?? null;
@@ -317,7 +318,7 @@ export function resolveAttendanceLabels(
     bookOff: off
       ? `OFF ${formatInstantTime(off, timeZone)}`
       : !on ? 'OFF —'
-      : status === 'completed' ? 'No Book Off'
+      : status === 'completed' ? (closedByControl ? 'No Book Off' : 'Book Off missing')
       : shift.end && isAwaitingReconciliation(shift.end, nowMs) ? `OFF missing · ${formatElapsedSinceEnd(shift.end, nowMs)}`
       : shift.end && isBookOffOverdue(shift.end, nowMs) ? `OFF overdue ${formatElapsedSinceEnd(shift.end, nowMs)}`
       : 'OFF —',
@@ -395,11 +396,14 @@ export function resolveTimelineStatus(
   shift: { start: string; end?: string | null; status?: string | null },
   attendance: { checkInAt?: string | null; checkOutAt?: string | null } | null | undefined,
   nowMs: number,
+  closedByControl = false,
 ): TimelineStatus {
   const status = (shift.status || '').trim().toLowerCase();
-  // Completed with a Book On and no Book Off: Control closed it without one (Phase 4, Close without Book
-  // Off). Told apart from a Guard's own Book Off by the attendance alone — nothing is fabricated to mark it.
-  if (status === 'completed') return attendance?.checkInAt && !attendance?.checkOutAt ? 'Closed by Control' : 'Completed';
+  // "Closed by Control" only when the reconciliation audit entry exists. A completed shift with no Book Off
+  // and no such entry is just Completed, and its Book Off slot says it is missing.
+  if (status === 'completed') {
+    return closedByControl && attendance?.checkInAt && !attendance?.checkOutAt ? 'Closed by Control' : 'Completed';
+  }
   if (['unfilled', 'rejected', 'missed', 'cancelled'].includes(status)) return 'Coverage Gap';
   if (attendance?.checkOutAt) return 'Completed';
   if (attendance?.checkInAt || status === 'in_progress') {
@@ -430,6 +434,8 @@ export type TimelineShiftInput = {
   };
   attendance?: { checkInAt?: string | null; checkOutAt?: string | null } | null;
   operations?: ShiftOperationsView | null;
+  /** True only when a reconciliation AUDIT ENTRY exists for this shift (Close without Book Off). */
+  closedByControl?: boolean;
 };
 
 export type TimelineRow = {
@@ -511,8 +517,8 @@ export function buildTimeline(
       shiftId: input.shift.id,
       guardName,
       scheduled: `${formatInstantTime(input.shift.start, timeZone)}–${formatInstantTime(input.shift.end, timeZone)}`,
-      status: resolveTimelineStatus(input.shift, input.attendance, nowMs),
-      attendance: resolveAttendanceLabels(input.shift, input.attendance, nowMs, timeZone),
+      status: resolveTimelineStatus(input.shift, input.attendance, nowMs, Boolean(input.closedByControl)),
+      attendance: resolveAttendanceLabels(input.shift, input.attendance, nowMs, timeZone, Boolean(input.closedByControl)),
       span,
       welfare: resolveWelfareMarkers(input.operations?.welfare?.windows, window, { guardName, timeZone }),
       overnight:

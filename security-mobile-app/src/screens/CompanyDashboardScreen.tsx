@@ -12,7 +12,7 @@ import { sourceState as sourceStateOf } from '../components/company/sourceAvaila
 import { createRefreshCoordinator, type RefreshCoordinator, type RefreshTrigger } from '../services/refreshCoordinator';
 import { CompanyResolveAlertDrawer, type ResolveTarget } from '../components/company/CompanyResolveAlertDrawer';
 import { CompanyReconcileShiftDrawer, type ReconcileTarget } from '../components/company/CompanyReconcileShiftDrawer';
-import { CLOSED_BY_CONTROL_LABEL, isClosedWithoutBookOff } from '../components/company/shiftReconciliation';
+import { completedWithoutBookOffLabel, isCompletedWithoutBookOff } from '../components/company/shiftReconciliation';
 import { formatElapsedSinceEnd } from '../components/company/operationsTimeline';
 import { alertTypeLabel, missingBookOffSummary, resolutionFamilyForAlert } from '../components/company/alertResolution';
 import { CompanyIncidentReportDrawer } from '../components/company/CompanyIncidentReportDrawer';
@@ -153,6 +153,7 @@ import {
   updateClient,
   updateShift,
   reconcileShiftWithoutBookOff,
+  listShiftReconciliations,
   updateSite,
 } from '../services/api';
 import {
@@ -1279,6 +1280,17 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
   const canViewCompliance = compliancePermissions.canView;
   // shifts.manage, resolved the same way the dashboard already resolves guards.manage and
   // payroll.manage: the session list when present, the legacy owner roles only when it is absent.
+  /**
+   * Close without Book Off: shifts.reconcile — owner, admin, operations and control room. Narrower than
+   * shifts.manage, so a control room can reconcile without being able to edit shifts. A session issued before
+   * this permission existed lacks it until the next sign-in or refresh, so the action stays hidden until then.
+   */
+  const canReconcileShifts = React.useMemo(
+    () => (user?.companyPermissions
+      ? user.companyPermissions.includes("shifts.reconcile")
+      : (user?.role === "company_admin" || user?.role === "company")),
+    [user?.companyPermissions, user?.role],
+  );
   const canManageShifts = React.useMemo(
     () => (user?.companyPermissions
       ? user.companyPermissions.includes("shifts.manage")
@@ -3887,6 +3899,29 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
   };
 
   /** The zone "today" and the selected day are judged on: the filtered site's, else the company default. */
+  /**
+   * Which completed-without-Book-Off shifts Control closed (from the reconciliation audit entry). Read only
+   * for shifts in that state — usually none — so it adds no request to an ordinary refresh.
+   */
+  const [reconciledShiftIds, setReconciledShiftIds] = React.useState<Set<number>>(() => new Set());
+  const completedWithoutBookOffKey = React.useMemo(
+    () => shifts
+      .filter((shift) => isCompletedWithoutBookOff(shift, attendanceByShiftId.get(shift.id)))
+      .map((shift) => shift.id)
+      .sort((a, b) => a - b)
+      .join(','),
+    [attendanceByShiftId, shifts],
+  );
+  React.useEffect(() => {
+    if (!completedWithoutBookOffKey) { setReconciledShiftIds(new Set()); return; }
+    let cancelled = false;
+    listShiftReconciliations(completedWithoutBookOffKey.split(',').map(Number))
+      .then((rows) => { if (!cancelled) setReconciledShiftIds(new Set(rows.map((row) => row.shiftId))); })
+      // Unknown is shown as "Completed — Book Off missing": never claim a reconciliation we cannot read.
+      .catch(() => { if (!cancelled) setReconciledShiftIds(new Set()); });
+    return () => { cancelled = true; };
+  }, [completedWithoutBookOffKey]);
+
   const liveOperationsZone = resolveSiteZone(liveFilters.siteId ? Number(liveFilters.siteId) : null);
 
   /**
@@ -4006,6 +4041,7 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
           lifecycleStatus === 'rejected' ? 'Re-offer' : 'Review Shift';
         const rowTone = getLiveShiftBoardRowTone(lifecycleStatus, risk.level);
         return {
+          closedByControl: reconciledShiftIds.has(shift.id),
           shift, inclusion, timesheet, attendance, shiftLogs, shiftIncidents, shiftAlerts, lastCheckCall,
           panicOrWelfareCount, lifecycleStatus, risk, delay, likelyLate, siteRiskLabel, primaryActionLabel, rowTone,
           operations: operationsByShiftId.get(shift.id) ?? null,
@@ -4013,7 +4049,7 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
       }),
     [
       liveOperationRows, timesheetByShiftId, attendanceByShiftId, logsByShiftId,
-      incidentsByShiftId, alertsByShiftId, lastCheckCallByShiftId, shifts, operationsByShiftId,
+      incidentsByShiftId, alertsByShiftId, lastCheckCallByShiftId, shifts, operationsByShiftId, reconciledShiftIds,
     ],
   );
 
@@ -4184,8 +4220,9 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
     const badge = lifecycleStatus === 'missed'
       ? { icon: '⚠️', label: 'Missed', color: colors.warning }
       // Phase 4: completed by Control without a Book Off — never shown as an ordinary completion.
-      : isClosedWithoutBookOff(selectedShift, attendance)
-        ? { icon: '⚠️', label: CLOSED_BY_CONTROL_LABEL, color: colors.warning }
+      // Completed with a Book On and no Book Off: the audit entry decides which it is, never the state alone.
+      : isCompletedWithoutBookOff(selectedShift, attendance)
+        ? { icon: '⚠️', label: completedWithoutBookOffLabel(reconciledShiftIds.has(selectedShift.id)), color: colors.warning }
       : bookOffMissing
         ? {
           icon: '⚠️',
@@ -4201,8 +4238,9 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
     return {
       shift: selectedShift, attendance, timesheet, logs, incidents, alerts, lifecycleStatus, badge, exception, clientName,
       operations: operationsByShiftId.get(selectedShift.id) ?? null,
+      closedByControl: reconciledShiftIds.has(selectedShift.id),
     };
-  }, [selectedShift, attendanceByShiftId, timesheetByShiftId, logsByShiftId, incidentsByShiftId, alertsByShiftId, clientMap, operationsByShiftId, operationalNow]);
+  }, [selectedShift, attendanceByShiftId, timesheetByShiftId, logsByShiftId, incidentsByShiftId, alertsByShiftId, clientMap, operationsByShiftId, operationalNow, reconciledShiftIds]);
 
   const liveOperationsKpis = React.useMemo(
     () =>
@@ -4527,7 +4565,7 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
         reconciliationRows={reconciliationRows}
         boardDateMode={liveBoardDateMode}
         onToday={handleLiveOperationsToday}
-        onReconcileShift={canManageShifts ? handleOpenReconcile : undefined}
+        onReconcileShift={canReconcileShifts ? handleOpenReconcile : undefined}
         timelineRecentreSignal={timelineRecentreSignal}
         activePanicAlertsCount={liveOperationsCounts.activePanicAlerts}
         openIncidentsCount={liveOperationsCounts.openIncidents}

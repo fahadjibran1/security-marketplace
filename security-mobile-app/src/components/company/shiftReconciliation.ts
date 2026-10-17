@@ -18,8 +18,19 @@ export type ShiftReconciliationReason = (typeof SHIFT_RECONCILIATION_OPTIONS)[nu
 /** Matches the API's limit. */
 export const SHIFT_RECONCILIATION_NOTE_MAX = 1000;
 
-/** What every reconciled shift reads as in historical views. */
+/**
+ * What a reconciled shift reads as in historical views — ONLY when the reconciliation audit entry exists
+ * (GET /shifts/reconciliations). Never inferred from the shift's state alone.
+ */
 export const CLOSED_BY_CONTROL_LABEL = 'Closed by Control — No Book Off';
+
+/** A completed shift with a Book On and no Book Off that has NO reconciliation audit entry. */
+export const COMPLETED_BOOK_OFF_MISSING_LABEL = 'Completed — Book Off missing';
+
+/** The historical label for a completed shift with no Book Off: audited reconciliation or not. */
+export function completedWithoutBookOffLabel(closedByControl: boolean): string {
+  return closedByControl ? CLOSED_BY_CONTROL_LABEL : COMPLETED_BOOK_OFF_MISSING_LABEL;
+}
 
 export function validateShiftReconciliation(input: { reason: string | null; note: string }):
   { ok: true } | { ok: false; message: string } {
@@ -49,8 +60,11 @@ export function isEligibleForReconciliation(
   return isBookOffOverdue(shift.end, nowMs);
 }
 
-/** A completed shift with a Book On and no Book Off: closed by Control, never booked off by the Guard. */
-export function isClosedWithoutBookOff(
+/**
+ * A completed shift with a Book On and no Book Off. This is the STATE only: whether Control closed it is a
+ * separate fact, read from the reconciliation audit entry (see completedWithoutBookOffLabel).
+ */
+export function isCompletedWithoutBookOff(
   shift: { status?: string | null },
   attendance: { checkInAt?: string | null; checkOutAt?: string | null } | null | undefined,
 ): boolean {

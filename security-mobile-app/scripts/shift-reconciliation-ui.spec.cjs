@@ -125,12 +125,14 @@ test('UI-07-INSIDE-THE-GRACE-THE-SHIFT-IS-STILL-LIVE', () => {
 
 // ═══════════════════ after reconciliation: history ═══════════════════
 
-test('UI-08-A-RECONCILED-SHIFT-READS-CLOSED-BY-CONTROL-NO-BOOK-OFF', () => {
+test('UI-08-ONLY-AN-AUDITED-RECONCILIATION-READS-CLOSED-BY-CONTROL', () => {
+  // Release safety review: the label comes from the reconciliation AUDIT ENTRY, never from the state alone.
   const s = worked(30 * 60, 'completed');
   const a = on(s);
-  assert.equal(recon.isClosedWithoutBookOff(s, a), true);
-  assert.equal(recon.isClosedWithoutBookOff(s, { checkInAt: 'x', checkOutAt: 'y' }), false, 'a Guard Book Off is not');
-  assert.equal(recon.CLOSED_BY_CONTROL_LABEL, 'Closed by Control — No Book Off');
+  assert.equal(recon.isCompletedWithoutBookOff(s, a), true, 'the state');
+  assert.equal(recon.isCompletedWithoutBookOff(s, { checkInAt: 'x', checkOutAt: 'y' }), false, 'a Guard Book Off is not');
+  assert.equal(recon.completedWithoutBookOffLabel(true), 'Closed by Control — No Book Off', 'with the audit entry');
+  assert.equal(recon.completedWithoutBookOffLabel(false), 'Completed — Book Off missing', 'without it');
   // It leaves the reconciliation queue and Live counts...
   const live = board.selectLiveBoard([s], () => ({ shift: s, bookedOn: true, timeZone: LONDON }), { now: new Date(NOW), date: '', referenceZone: LONDON });
   assert.deepEqual(live.reconciliation, [], 'removed from the queue');
@@ -139,25 +141,42 @@ test('UI-08-A-RECONCILED-SHIFT-READS-CLOSED-BY-CONTROL-NO-BOOK-OFF', () => {
   const day = board.selectLiveBoard([s], () => ({ shift: s, bookedOn: true, timeZone: LONDON }), { now: new Date(NOW), date: siteDay(s.start), referenceZone: LONDON });
   assert.equal(day.board.length, 1, 'visible in the historical day view');
   const window = timeline.resolveTimelineWindow(Date.parse(s.start) + 4 * HOUR, 24, LONDON);
-  const [row] = timeline.buildTimeline([{ shift: s, attendance: a }], window, NOW)[0].rows;
+  const [row] = timeline.buildTimeline([{ shift: s, attendance: a, closedByControl: true }], window, NOW)[0].rows;
   assert.equal(row.status, 'Closed by Control');
   assert.equal(row.attendance.bookOff, 'No Book Off', 'no Book Off time shown or invented');
+  // The same shift with no audit entry is NOT labelled as closed by Control.
+  const [unaudited] = timeline.buildTimeline([{ shift: s, attendance: a }], window, NOW)[0].rows;
+  assert.equal(unaudited.status, 'Completed');
+  assert.equal(unaudited.attendance.bookOff, 'Book Off missing');
   assert.equal(timeline.effectiveShiftEndMs(s, a, NOW), Date.parse(s.end), 'the bar is the schedule');
   const tl = codeOf('src/components/company/CompanyOperationsTimeline.tsx');
   assert.ok(tl.includes("row.status === 'Closed by Control' ? 'Closed by Control — No Book Off'"), 'screen readers hear the full phrase');
+  assert.ok(tl.includes("? 'Completed — Book Off missing'"), 'and the unaudited one');
   const ws = codeOf('src/components/company/CompanyLiveOperationsWorkspace.tsx');
-  assert.ok(ws.includes('${CLOSED_BY_CONTROL_LABEL}. No Book Off time was recorded.'), 'the shift drawer says it in full');
-  assert.ok(ws.includes('closeOutSummary.closedCleanly && !isClosedWithoutBookOff(shift, attendance)'), 'and its close-out never says Closed cleanly');
+  assert.ok(ws.includes('${completedWithoutBookOffLabel(ctx.closedByControl)}. No Book Off time was recorded.'), 'the shift drawer says it in full');
+  assert.ok(ws.includes('closeOutSummary.closedCleanly && !isCompletedWithoutBookOff(shift, attendance)'), 'and its close-out never says Closed cleanly');
+  assert.ok(ws.includes('closedByControl: row.closedByControl,'), 'the timeline gets the audited flag');
   const screen = codeOf('src/screens/CompanyDashboardScreen.tsx');
-  assert.ok(screen.includes('{ icon: \'⚠️\', label: CLOSED_BY_CONTROL_LABEL, color: colors.warning }'), 'and so does its badge');
+  assert.ok(screen.includes('label: completedWithoutBookOffLabel(reconciledShiftIds.has(selectedShift.id))'), 'and so does its badge');
+  assert.ok(screen.includes('closedByControl: reconciledShiftIds.has(shift.id),'), 'board rows carry the audited flag');
+  // The flag is read from the audit endpoint, only for shifts in that state, and a failed read claims nothing.
+  assert.ok(screen.includes('listShiftReconciliations(completedWithoutBookOffKey.split'), 'from GET /shifts/reconciliations');
+  assert.ok(screen.includes('.catch(() => { if (!cancelled) setReconciledShiftIds(new Set()); });'), 'unknown is never shown as reconciled');
+  const client = codeOf('src/services/api.ts');
+  assert.ok(client.includes('`/shifts/reconciliations?shiftIds=${shiftIds.join(\',\')}`'), 'the route the API serves');
 });
 
 // ═══════════════════ wiring: who, confirmation, never automatic ═══════════════════
 
-test('UI-09-ONLY-SHIFT-MANAGERS-ARE-OFFERED-IT', () => {
+test('UI-09-ONLY-RECONCILE-HOLDERS-ARE-OFFERED-IT', () => {
+  // shifts.reconcile (owner, admin, operations, control room), matching the API's own check.
   const screen = codeOf('src/screens/CompanyDashboardScreen.tsx');
-  assert.ok(screen.includes('onReconcileShift={canManageShifts ? handleOpenReconcile : undefined}'));
-  assert.ok(screen.includes('user.companyPermissions.includes("shifts.manage")'), 'canManageShifts is the shifts.manage permission');
+  assert.ok(screen.includes('onReconcileShift={canReconcileShifts ? handleOpenReconcile : undefined}'));
+  assert.ok(screen.includes('user.companyPermissions.includes("shifts.reconcile")'), 'canReconcileShifts is the shifts.reconcile permission');
+  const api = backendOf('src/shift/shift-reconciliation.service.ts');
+  assert.ok(api.includes('CompanyPermission.SHIFTS_RECONCILE,'), 'the API checks the same permission');
+  const matrix = backendOf('src/company-membership/company-membership-types.ts');
+  assert.ok(matrix.includes("SHIFTS_RECONCILE = 'shifts.reconcile',"), 'the value the app looks for');
   const ws = codeOf('src/components/company/CompanyLiveOperationsWorkspace.tsx');
   assert.ok(ws.includes('{onReconcileShift ? ('), 'the queue button only exists when offered');
   assert.ok(ws.includes('onReconcileShift && isEligibleForReconciliation(shift, attendance, nowMs)'), 'the drawer button only for an eligible shift');
@@ -188,6 +207,21 @@ test('UI-11-NOTHING-RECONCILES-AUTOMATICALLY', () => {
   // No effect anywhere starts it.
   const effects = screen.split('React.useEffect(').slice(1).map((chunk) => chunk.slice(0, chunk.indexOf('}, [')));
   assert.ok(!effects.some((body) => /handleSubmitReconcile|reconcileShiftWithoutBookOff/.test(body)), 'no effect reconciles');
+});
+
+test('UI-12-OVERDUE-BADGES-STAY-READABLE-WITHOUT-WIDENING-THE-BAR-AND-PHONES-STACK', () => {
+  // Release safety review, found in the browser: a short overdue bar hid its badge, and at phone width the
+  // timeline was ~80px wide beside Attention Now.
+  const tl = codeOf('src/components/company/CompanyOperationsTimeline.tsx');
+  assert.ok(!tl.includes('minWidth: row.span.endedBeforeWindow ? 128 : 6'), 'the bar is no longer widened to fit its badge');
+  assert.ok(tl.includes('minWidth: 6,'), 'it keeps only the clickable minimum');
+  assert.ok(tl.includes("if (row.status !== 'No Book Off' && row.status !== 'Missing Book Off') return false;"), 'only overdue rows move their badge');
+  assert.ok(tl.includes('{row.span.endedBeforeWindow ? null : ('), 'a bar that ended before the view draws no bar at all');
+  assert.ok(tl.includes('left: pct(row.span.endedBeforeWindow ? 0 : row.span.startFraction + row.span.widthFraction)'), 'the badge sits just after the bar end');
+  const ws = codeOf('src/components/company/CompanyLiveOperationsWorkspace.tsx');
+  assert.ok(ws.includes('const stacked = IS_WEB && windowWidth < 768;'), 'narrow web stacks');
+  assert.ok(ws.includes("workspaceRowStacked: { flexDirection: 'column', alignItems: 'stretch' }"));
+  assert.ok(ws.includes("attentionColumnStacked: { width: '100%', maxHeight: undefined }"));
 });
 
 console.log(`\n${passed} shift reconciliation UI checks passed`);

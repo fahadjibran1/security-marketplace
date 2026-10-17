@@ -330,9 +330,10 @@ test('STATUS-01-THE-FIVE-COMPACT-WORDS', () => {
     resolveTimelineStatus({ start: '2026-09-30T21:00:00.000Z', status: 'ready' }, undefined, NOW),
     'Upcoming',
   );
-  // Phase 4: completed with a Book On and NO Book Off means Control closed it without one; completed with
-  // both is an ordinary Book Off.
-  assert.equal(resolveTimelineStatus({ start, status: 'completed' }, on, NOW), 'Closed by Control');
+  // Completed with a Book On and NO Book Off reads "Closed by Control" only with the reconciliation audit
+  // entry (the 4th argument); without it, it is Completed. Completed with both is an ordinary Book Off.
+  assert.equal(resolveTimelineStatus({ start, status: 'completed' }, on, NOW), 'Completed');
+  assert.equal(resolveTimelineStatus({ start, status: 'completed' }, on, NOW, true), 'Closed by Control');
   assert.equal(
     resolveTimelineStatus({ start, status: 'completed' }, { checkInAt: 'x', checkOutAt: 'y' }, NOW),
     'Completed',

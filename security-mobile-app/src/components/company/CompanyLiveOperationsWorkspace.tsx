@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { Fragment } from 'react/jsx-runtime';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import type { ShiftOperationsView } from '../../types/models';
 import {
   logBookCell,
@@ -20,7 +20,7 @@ import {
 } from '../../services/siteTime';
 import type { BoardInclusion } from './liveOperationsPolicy';
 import { hoursPastEnd, type BoardDateMode } from './liveOperationsBoard';
-import { CLOSED_BY_CONTROL_LABEL, isClosedWithoutBookOff, isEligibleForReconciliation } from './shiftReconciliation';
+import { completedWithoutBookOffLabel, isCompletedWithoutBookOff, isEligibleForReconciliation } from './shiftReconciliation';
 import { NativeDateInput } from './NativeDateInput';
 import { CompanyOperationsTimeline } from './CompanyOperationsTimeline';
 import { countStatusWord, countText, safeCount, type SafeCount, type SourceState } from './sourceAvailability';
@@ -131,6 +131,8 @@ export type LiveBoardRow = {
    * reason a row is part of "now".
    */
   inclusion: BoardInclusion;
+  /** True only when the reconciliation audit entry exists for this shift (Close without Book Off). */
+  closedByControl: boolean;
   /** Server-computed monitoring. Presented as given; the board never recomputes a window or a count. */
   operations: ShiftOperationsView | null;
   attendance: { checkInAt: string | null; checkOutAt: string | null } | undefined;
@@ -176,6 +178,8 @@ export type SelectedShiftContext = {
   badge: { label: string; color: string; icon: string };
   exception: { title: string; message: string; outcome: string } | null;
   clientName: string;
+  /** True only when the reconciliation audit entry exists for this shift. */
+  closedByControl: boolean;
 };
 
 /**
@@ -1142,9 +1146,12 @@ export function LiveOpsAttentionRail({
   onOpenIncidentResolution,
   nextUp,
   sourceStates,
+  stacked = false,
 }: {
   items: UrgentOperationalItem[];
   metricFocus: MetricFocus;
+  /** Below the timeline at full width (narrow web), rather than a fixed-width column beside it. */
+  stacked?: boolean;
   resolveShiftZone: (shiftId?: number | null) => string;
   urgentActionItemId: string | null;
   onOpenUrgentDetail: (item: UrgentOperationalItem) => void;
@@ -1171,7 +1178,7 @@ export function LiveOpsAttentionRail({
    * action, and putting it here would make the rail something to read rather than something to work.
    */
   return (
-    <View style={styles.attentionColumn}>
+    <View style={[styles.attentionColumn, stacked ? styles.attentionColumnStacked : null]}>
       <View style={[styles.attentionPanelHeader, styles.attentionPanelHeaderBg]}>
         <Text style={styles.panelTitle}>Attention Now</Text>
         {total > 0 ? (
@@ -1487,6 +1494,10 @@ export function CompanyLiveOperationsWorkspace({
   onDetailLayout,
 }: CompanyLiveOperationsWorkspaceProps) {
   const [metricFocus, setMetricFocus] = React.useState<MetricFocus>('all');
+  // Below 768px the 268px Attention Now column beside the timeline left the timeline about 80px wide, too
+  // narrow to read a bar. There the two stack: the timeline at full width, then Attention Now below it.
+  const { width: windowWidth } = useWindowDimensions();
+  const stacked = IS_WEB && windowWidth < 768;
   /**
    * The zone the hour header is labelled in.
    *
@@ -1540,6 +1551,7 @@ export function CompanyLiveOperationsWorkspace({
       shift: row.shift,
       attendance: row.attendance,
       operations: row.operations,
+      closedByControl: row.closedByControl,
       // Carried on the SAME row the bar is drawn from, so Today So Far counts the incidents and alerts
       // belonging to exactly the shifts on screen. No second fetch, and nothing per metric.
       logs: row.shiftLogs,
@@ -1663,7 +1675,7 @@ export function CompanyLiveOperationsWorkspace({
       <MetricFocusHint metricFocus={metricFocus} onClear={() => setMetricFocus('all')} />
 
       {/* ── Command workspace ────────────────────────────────────────────── */}
-      <View style={styles.workspaceRow} onLayout={(e: any) => onBoardLayout(e.nativeEvent.layout.y)}>
+      <View style={[styles.workspaceRow, stacked ? styles.workspaceRowStacked : null]} onLayout={(e: any) => onBoardLayout(e.nativeEvent.layout.y)}>
         <View style={styles.timelineColumn}>
           <CompanyOperationsTimeline
             inputs={timelineInputs}
@@ -1690,6 +1702,7 @@ export function CompanyLiveOperationsWorkspace({
           ) : null}
         </View>
         <LiveOpsAttentionRail
+          stacked={stacked}
           items={focusedAttentionItems}
           metricFocus={metricFocus}
           resolveShiftZone={resolveShiftZone}
@@ -1909,9 +1922,9 @@ function DetailPanelContent({
       {lifecycleStatus === 'ready'       ? <Text style={styles.detailInfoMsg}>Guard confirmed. Ready for book on.</Text>                          : null}
       {lifecycleStatus === 'completed' ? (
         <Text style={styles.detailInfoMsg}>
-          {isClosedWithoutBookOff(shift, attendance)
-            // Phase 4: told apart from a Guard's own Book Off by attendance alone; no time is shown or invented.
-            ? `${CLOSED_BY_CONTROL_LABEL}. No Book Off time was recorded. Records remain visible.`
+          {isCompletedWithoutBookOff(shift, attendance)
+            // Which label is decided by the reconciliation audit entry, never inferred. No time is shown or invented.
+            ? `${completedWithoutBookOffLabel(ctx.closedByControl)}. No Book Off time was recorded. Records remain visible.`
             : 'Shift completed. Records remain visible.'}
         </Text>
       ) : null}
@@ -1940,11 +1953,11 @@ function DetailPanelContent({
           <View style={[styles.detailCard, styles.detailCardCloseOut]}>
             <Text style={styles.detailCardTitle}>Close-Out</Text>
             {/* Phase 4: a shift Control closed without a Book Off is never "Closed cleanly". */}
-            <Text style={closeOutSummary.closedCleanly && !isClosedWithoutBookOff(shift, attendance) ? styles.detailCloseOutGood : styles.detailCloseOutWarn}>
-              {isClosedWithoutBookOff(shift, attendance)
+            <Text style={closeOutSummary.closedCleanly && !isCompletedWithoutBookOff(shift, attendance) ? styles.detailCloseOutGood : styles.detailCloseOutWarn}>
+              {isCompletedWithoutBookOff(shift, attendance)
                 ? closeOutSummary.unresolvedFollowUpCount > 0
-                  ? `${CLOSED_BY_CONTROL_LABEL} · needs follow-up (${closeOutSummary.unresolvedFollowUpCount})`
-                  : CLOSED_BY_CONTROL_LABEL
+                  ? `${completedWithoutBookOffLabel(ctx.closedByControl)} · needs follow-up (${closeOutSummary.unresolvedFollowUpCount})`
+                  : completedWithoutBookOffLabel(ctx.closedByControl)
                 : closeOutSummary.closedCleanly ? 'Closed cleanly' : `Needs follow-up (${closeOutSummary.unresolvedFollowUpCount})`}
             </Text>
             <Text style={styles.detailLine}>Scheduled: {fmtDateTime(closeOutSummary.scheduledStart, timeZone)} → {fmtDateTime(closeOutSummary.scheduledEnd, timeZone)}</Text>
@@ -2327,6 +2340,8 @@ const styles = StyleSheet.create({
     borderColor: colors.accentTeal,
   },
   clearFocusText: { fontSize: 11, fontWeight: '700', color: colors.accentTeal },
+  workspaceRowStacked: { flexDirection: 'column', alignItems: 'stretch' },
+  attentionColumnStacked: { width: '100%', maxHeight: undefined },
   workspaceRow: {
     flexDirection: 'row',
     gap: spacing.sm,

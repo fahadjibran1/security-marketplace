@@ -416,7 +416,9 @@ const siteKey = (group: TimelineSiteGroup) => String(group.siteId ?? group.siteN
 
 /** One sentence carrying everything the row shows, for a screen reader and the row tooltip. */
 function identityLabel(row: TimelineRow): string {
-  const status = row.status === 'Closed by Control' ? 'Closed by Control — No Book Off' : row.status;
+  const status = row.status === 'Closed by Control' ? 'Closed by Control — No Book Off'
+    : row.status === 'Completed' && row.attendance.bookOff === 'Book Off missing' ? 'Completed — Book Off missing'
+    : row.status;
   const ended = row.span.endedBeforeWindow ? ', ended before this view' : '';
   return `${row.guardName}, scheduled ${row.scheduled}, ${status}${ended}, ${row.attendance.bookOn}, ${row.attendance.bookOff}`;
 }
@@ -489,10 +491,32 @@ const STATUS_STYLE: Record<TimelineRow['status'], { bar: any; badge: any; badgeT
   },
 };
 
+/**
+ * An overdue Book Off whose visible bar is too short to hold its badge — or that ended before this view
+ * entirely — has its badge drawn BESIDE the bar. The bar itself is never widened past the scheduled end.
+ */
+const OVERDUE_BADGE_OUTSIDE_BELOW = 0.12;
+function badgeOutside(row: TimelineRow): boolean {
+  if (row.status !== 'No Book Off' && row.status !== 'Missing Book Off') return false;
+  return Boolean(row.span.endedBeforeWindow) || row.span.widthFraction < OVERDUE_BADGE_OUTSIDE_BELOW;
+}
+
 function ShiftBar({ row }: { row: TimelineRow }) {
   const tone = STATUS_STYLE[row.status] ?? STATUS_STYLE.Upcoming;
+  const outside = badgeOutside(row);
+  const badge = (
+    <View style={styles.barLabelRow}>
+      {row.span.clippedStart ? <Text style={styles.clipCue}>‹</Text> : null}
+      <View style={[styles.statusBadge, tone.badge]}>
+        <Text style={[styles.statusBadgeText, tone.badgeText]} numberOfLines={1}>{row.status}</Text>
+      </View>
+      {row.span.clippedEnd ? <Text style={styles.clipCue}>›</Text> : null}
+    </View>
+  );
 
   return (
+    <>
+    {row.span.endedBeforeWindow ? null : (
     <View
       style={[
         styles.bar,
@@ -500,10 +524,8 @@ function ShiftBar({ row }: { row: TimelineRow }) {
         {
           left: pct(row.span.startFraction),
           width: pct(row.span.widthFraction),
-          // A shift too short to see at this range still has to be clickable. A bar that ended before this
-          // view (an overdue Book Off, Phase 4) is a marker at the left edge, wide enough for its badge.
-          minWidth: row.span.endedBeforeWindow ? 128 : 6,
-          ...(row.span.endedBeforeWindow ? { borderStyle: 'dashed' } : null),
+          // A shift too short to see at this range still has to be clickable.
+          minWidth: 6,
           // A clipped edge is squared off, so a bar that continues past the view does not read as if it
           // ended there.
           borderTopLeftRadius: row.span.clippedStart ? 0 : radii.sm,
@@ -513,13 +535,7 @@ function ShiftBar({ row }: { row: TimelineRow }) {
         },
       ]}
     >
-      <View style={styles.barLabelRow}>
-        {row.span.clippedStart ? <Text style={styles.clipCue}>‹</Text> : null}
-        <View style={[styles.statusBadge, tone.badge]}>
-          <Text style={[styles.statusBadgeText, tone.badgeText]} numberOfLines={1}>{row.status}</Text>
-        </View>
-        {row.span.clippedEnd ? <Text style={styles.clipCue}>›</Text> : null}
-      </View>
+      {outside ? null : badge}
 
       {/* Welfare markers sit along the bar, positioned by the foundation. */}
       <View style={styles.markerStrip} pointerEvents="box-none">
@@ -528,6 +544,16 @@ function ShiftBar({ row }: { row: TimelineRow }) {
         ))}
       </View>
     </View>
+    )}
+    {outside ? (
+      <View
+        style={[styles.outsideBadge, { left: pct(row.span.endedBeforeWindow ? 0 : row.span.startFraction + row.span.widthFraction) }]}
+        pointerEvents="none"
+      >
+        {badge}
+      </View>
+    ) : null}
+    </>
   );
 }
 
@@ -744,6 +770,8 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   barLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 5, paddingTop: 1 },
+  // Beside a short or off-view overdue bar: positioned like a bar, without a bar's background.
+  outsideBadge: { position: 'absolute', top: 8, height: ROW_HEIGHT - 18, justifyContent: 'center' },
   statusBadge: {
     paddingHorizontal: 5, paddingVertical: 1, borderRadius: radii.sm, flexShrink: 1,
   },
