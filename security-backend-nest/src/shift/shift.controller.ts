@@ -3,6 +3,8 @@ import { ShiftService } from './shift.service';
 import { CreateShiftDto } from './dto/create-shift.dto';
 import { UpdateShiftDto } from './dto/update-shift.dto';
 import { RespondShiftDto } from './dto/respond-shift.dto';
+import { ReconcileShiftDto } from './dto/reconcile-shift.dto';
+import { ShiftReconciliationService } from './shift-reconciliation.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -13,7 +15,10 @@ import { JwtPayload } from '../auth/types/jwt-payload.type';
 @Controller('shifts')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class ShiftController {
-  constructor(private readonly shiftService: ShiftService) {}
+  constructor(
+    private readonly shiftService: ShiftService,
+    private readonly reconciliationService: ShiftReconciliationService,
+  ) {}
 
   // Get all shifts relevant to logged user
   @Get()
@@ -50,6 +55,22 @@ export class ShiftController {
     @Body() dto: RespondShiftDto,
   ) {
     return this.shiftService.respondForGuard(user, id, dto);
+  }
+
+  /**
+   * Close without Book Off (S4 Live Operations Phase 4). Company shift managers only; the service checks the
+   * shifts.manage permission and the caller's company. Never automatic: only a person calls this.
+   */
+  @Post(':id/reconcile-without-book-off')
+  // Company accounts, including staff; the deciding check is the membership's shifts.manage permission
+  // (owner, admin, operations), enforced in the service. Platform admins and Guards are excluded.
+  @Roles(...COMPANY_VIEW_ROLES)
+  reconcileWithoutBookOff(
+    @CurrentUser() user: JwtPayload,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ReconcileShiftDto,
+  ) {
+    return this.reconciliationService.reconcileWithoutBookOff(user, id, dto);
   }
 
   @Delete(':id')

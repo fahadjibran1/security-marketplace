@@ -52,15 +52,13 @@ import {
   ResolvedOperationalWindow,
 } from '../operations/operational-window.types';
 import { SingleFlightJob, SingleFlightOutcome } from '../scheduler/single-flight-job';
+// The welfare sweep's per-shift advisory-lock namespace (534_401_401, beside admin-operator's 534_401_400).
+// Shared with shift reconciliation, which waits on the same lock.
+import { WELFARE_SWEEP_LOCK_NAMESPACE } from '../operations/advisory-locks';
 
 /** A Book Off is late, not missing, until the shift has been over for a quarter of an hour. */
 const MISSING_BOOK_OFF_GRACE_MINUTES = 15;
 
-/**
- * Advisory-lock namespace for the welfare sweep, one lock per shift. Sits beside the admin-operator
- * namespace (534_401_400) so the two can never collide.
- */
-const WELFARE_SWEEP_LOCK_NAMESPACE = 534_401_401;
 
 /** Advisory-lock namespace for the compliance lapse sweep, one lock per shift. */
 const COMPLIANCE_LAPSE_LOCK_NAMESPACE = 534_401_402;

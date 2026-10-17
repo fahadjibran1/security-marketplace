@@ -4,6 +4,7 @@ import { AuditLogModule } from '../audit-log/audit-log.module';
 import { Shift } from './entities/shift.entity';
 import { ShiftController } from './shift.controller';
 import { ShiftService } from './shift.service';
+import { ShiftReconciliationService } from './shift-reconciliation.service';
 import { AssignmentModule } from '../assignment/assignment.module';
 import { TimesheetModule } from '../timesheet/timesheet.module';
 import { SiteModule } from '../site/site.module';
@@ -39,7 +40,7 @@ import { CoverageModule } from '../coverage/coverage.module';
     CoverageModule,
   ],
   controllers: [ShiftController],
-  providers: [ShiftService],
+  providers: [ShiftService, ShiftReconciliationService],
   exports: [ShiftService, TypeOrmModule]
 })
 export class ShiftModule {}

@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import { AuditLog } from './entities/audit-log.entity';
 import { CompanyMembershipService } from '../company-membership/company-membership.service';
 import { CompanyPermission } from '../company-membership/company-membership-types';
@@ -40,6 +40,27 @@ export class AuditLogService {
     });
 
     return this.auditLogRepo.save(logEntry);
+  }
+
+  /**
+   * The same entry, written inside the caller's transaction, so the record of a change commits or rolls
+   * back with the change itself. Insert-only, like `log`.
+   */
+  logInTransaction(manager: EntityManager, input: AuditLogInput): Promise<AuditLog> {
+    const repo = manager.getRepository(AuditLog);
+    return repo.save(
+      repo.create({
+        company: input.company ?? null,
+        user: input.user ?? null,
+        action: input.action,
+        entityType: input.entityType,
+        entityId: input.entityId ?? null,
+        beforeData: input.beforeData ?? null,
+        afterData: input.afterData ?? null,
+        ipAddress: input.ipAddress ?? null,
+        userAgent: input.userAgent ?? null,
+      }),
+    );
   }
 
   findAll(): Promise<AuditLog[]> {
