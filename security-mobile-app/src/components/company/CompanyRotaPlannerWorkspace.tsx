@@ -9,7 +9,7 @@ import { FormField, FieldInput, FieldTextarea } from '../ui/FormField';
 import { assessCandidate, assignFailureMessage, candidateBlockerHeading } from './assignEligibility';
 import {
   formatSiteDateInput,
-  formatSiteDateLong,
+  formatUkDay,
   formatSiteTime,
   isSiteDateInput,
   isSiteTimeInput,
@@ -77,8 +77,9 @@ function formatSiteClock(iso: string, timeZone: string): string {
   return formatSiteTime(iso, timeZone);
 }
 
+/** "Tuesday 29-09-2026" on the site's clock (DD-MM-YYYY, S4 Live Operations Phase 3). */
 function formatSiteDay(iso: string, timeZone: string): string {
-  return formatSiteDateLong(iso, timeZone);
+  return formatUkDay(iso, timeZone);
 }
 
 // The form-field validators live in services/siteTime.ts, next to the conversion they gate. This file
@@ -474,7 +475,7 @@ export function CompanyRotaPlannerWorkspace({
 
     if (editDate !== origDate || editStart !== origStart || editEnd !== origEnd) {
       if (!isValidDate(editDate) || !isValidTime(editStart) || !isValidTime(editEnd)) {
-        setEditError('Date and times must be valid.');
+        setEditError(!isValidDate(editDate) ? 'Enter a real date as DD-MM-YYYY.' : 'Times must be valid (HH:MM).');
         return;
       }
       const startAt = siteLocalToInstant(editDate, editStart, zone);
@@ -557,7 +558,7 @@ export function CompanyRotaPlannerWorkspace({
   const handleCreate = React.useCallback(async () => {
     const errs: Record<string, string> = {};
     if (!createSiteId) errs.site = 'Site is required.';
-    if (!isValidDate(createDate)) errs.date = 'Valid date required (YYYY-MM-DD).';
+    if (!isValidDate(createDate)) errs.date = createDate.trim() ? 'Enter a real date as DD-MM-YYYY.' : 'Date is required.';
     if (!isValidTime(createStart)) errs.start = 'Valid start time required (HH:MM).';
     if (!isValidTime(createEnd))   errs.end   = 'Valid end time required (HH:MM).';
     const guardsNum = parseInt(createGuards, 10);

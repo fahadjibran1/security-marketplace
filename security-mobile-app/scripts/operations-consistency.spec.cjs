@@ -120,9 +120,32 @@ const unclosedOffAxis = {
   shift: { ...FIXTURE[0].shift, id: 998, status: 'in_progress', start: '2026-09-20T08:00:00.000Z', end: '2026-09-20T16:00:00.000Z' },
   attendance: { checkInAt: '2026-09-20T07:58:00.000Z', checkOutAt: null },
 };
+// S4 Live Operations Phase 3 reversed "however old": a shift booked on and never booked off more than
+// 24 hours ago is awaiting reconciliation. Its bar stops at the SCHEDULED end, so it is not on today's
+// axis (it is listed in Needs Reconciliation instead), and on its own day it is drawn as Missing Book Off.
 check(
-  timeline.timelineRowCount(timeline.buildTimeline([unclosedOffAxis], window8, NOW)) === 1,
-  'but a shift still booked on IS drawn, however old — the relevance policy holds in_progress with no time bound',
+  timeline.timelineRowCount(timeline.buildTimeline([unclosedOffAxis], window8, NOW)) === 0,
+  'a shift awaiting reconciliation is not stretched onto today\'s axis',
+);
+const ownDay = timeline.resolveTimelineWindow(Date.parse('2026-09-20T12:00:00.000Z'), 24, LONDON);
+const ownDayGroups = timeline.buildTimeline([unclosedOffAxis], ownDay, NOW);
+check(
+  timeline.timelineRowCount(ownDayGroups) === 1 && ownDayGroups[0].rows[0].status === 'Missing Book Off',
+  'on its own day it is drawn, marked Missing Book Off',
+);
+check(
+  timeline.effectiveShiftEndMs(unclosedOffAxis.shift, unclosedOffAxis.attendance, NOW) === Date.parse(unclosedOffAxis.shift.end),
+  'its bar ends at the scheduled end — no Book Off time is invented',
+);
+// The UAT FIX 01 carry-over is kept for a shift that ended less than 24 hours ago: its bar runs to now.
+const recentUnclosed = {
+  ...unclosedOffAxis,
+  shift: { ...unclosedOffAxis.shift, id: 997, start: new Date(NOW - 10 * 3600_000).toISOString(), end: new Date(NOW - 2 * 3600_000).toISOString() },
+  attendance: { checkInAt: new Date(NOW - 10 * 3600_000).toISOString(), checkOutAt: null },
+};
+check(
+  timeline.timelineRowCount(timeline.buildTimeline([recentUnclosed], window8, NOW)) === 1,
+  'a shift booked on and not booked off within the last 24 hours IS still drawn up to now',
 );
 
 assert.ok(FIXTURE.length > 0, 'the fixture must not be empty');

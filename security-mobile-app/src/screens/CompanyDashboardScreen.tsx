@@ -37,6 +37,8 @@ import {
 import { buildXlsx } from '../components/company/xlsxWriter';
 import {
   isActionableWelfareAlert,
+  isAwaitingReconciliation,
+  isBookOffOverdue,
   selectCurrentAttention,
   type BoardInclusion,
   type OperationalShift,
@@ -64,11 +66,15 @@ import {
   formatUkDateTime,
   formatUkRange,
   formatInstantTime,
+  formatSiteDateInput,
+  formatSiteTime,
+  isSiteDateInput,
   resolveDisplayZone,
   siteLocalEndToInstant,
   siteLocalToInstant,
   siteToday,
 } from '../services/siteTime';
+import { isoToUkOperationalDate, isoWeekday } from '../services/ukDate';
 import {
   canOpenGuardWorkspace,
   clearGuardTarget,
@@ -485,9 +491,9 @@ function formatDateLabel(value?: string | null, timeZone?: string | null) {
   }
 
   // A plain YYYY-MM-DD is a calendar date, not an instant, and must not be shifted by any zone.
-  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
-  if (dateOnly) {
-    return `${dateOnly[3]}/${dateOnly[2]}/${dateOnly[1]}`;
+  // DD-MM-YYYY from the shared calendar (S4 Live Operations Phase 3; this used to print DD/MM/YYYY).
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return isoToUkOperationalDate(value) ?? value;
   }
 
   const instant = new Date(value);
@@ -943,8 +949,9 @@ function buildShiftDateTimes(
   return { startAt: start.iso, endAt: end.iso };
 }
 
+/** A real YYYY-MM-DD calendar day (2026-02-31 is not). The shared strict calendar decides. */
 function isValidDateInput(value: string) {
-  return /^\d{4}-\d{2}-\d{2}$/.test(value);
+  return isSiteDateInput(value);
 }
 
 function isValidTimeInput(value: string) {
@@ -987,22 +994,6 @@ function isoToDateInput(value?: string | null) {
   return `${year}-${month}-${day}`;
 }
 
-function isoToTimeInput(value?: string | null) {
-  if (!value) {
-    return '';
-  }
-
-  if (/^\d{2}:\d{2}$/.test(value)) {
-    return value;
-  }
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return '';
-  }
-
-  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
-}
 
 function addDays(date: Date, days: number) {
   const next = new Date(date);
@@ -1011,7 +1002,9 @@ function addDays(date: Date, days: number) {
 }
 
 function weekCommencingFor(raw?: string) {
-  const base = raw ? parseDateInput(raw) || new Date(`${raw}T00:00:00`) : new Date();
+  // The default week is the one containing the SITE's today (company default zone), not the device's.
+  const base = parseDateInput(raw && isValidDateInput(raw) ? raw : siteToday(DEFAULT_SITE_TIME_ZONE))
+    || new Date(`${raw}T00:00:00`);
   const day = base.getDay();
   const mondayOffset = day === 0 ? -6 : 1 - day;
   const monday = addDays(base, mondayOffset);
@@ -1022,10 +1015,13 @@ function buildWeekDays(weekCommencing: string) {
   const start = parseDateInput(weekCommencing) || new Date(`${weekCommencing}T00:00:00`);
   return Array.from({ length: 7 }, (_, index) => {
     const date = addDays(start, index);
+    const iso = formatDateInput(date);
+    // Calendar arithmetic on the date itself, so the label is the same on every device and locale (the
+    // browser's locale used to decide, e.g. "Oct 12" on a US browser). DD-MM-YYYY from the shared calendar.
     return {
-      date: formatDateInput(date),
-      label: date.toLocaleDateString([], { weekday: 'long' }),
-      shortLabel: date.toLocaleDateString([], { weekday: 'short', day: '2-digit', month: 'short' }),
+      date: iso,
+      label: isoWeekday(iso, 'long') ?? iso,
+      shortLabel: isoToUkOperationalDate(iso) ?? iso,
     };
   });
 }
@@ -1238,9 +1234,14 @@ type CompanyDashboardScreenProps = {
 /** Native phones below this width show a pilot message instead of the desktop company workspace. */
 const COMPANY_NATIVE_MIN_WIDTH = 768;
 
-/** Today in the site-agnostic YYYY-MM-DD form the coverage endpoint expects. */
+/**
+ * Today as the YYYY-MM-DD the coverage endpoint expects, on the company's operational clock.
+ *
+ * Phase 3: this was `new Date().toISOString().slice(0, 10)` — the UTC date, which is yesterday between
+ * 00:00 and 01:00 BST, so the first hour of every summer day asked for yesterday's coverage.
+ */
 function todayIsoDate(): string {
-  return new Date().toISOString().slice(0, 10);
+  return siteToday(DEFAULT_SITE_TIME_ZONE);
 }
 
 export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: CompanyDashboardScreenProps = {}) {
@@ -1894,10 +1895,13 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
     [sites],
   );
 
-  const todayIso = formatDateInput(new Date());
+  // Each shift on its own site's day and that site's today — never the UTC date or the device's.
   const shiftsToday = React.useMemo(
-    () => shifts.filter((shift) => shift.start.slice(0, 10) === todayIso),
-    [shifts, todayIso],
+    () => shifts.filter((shift) => {
+      const zone = resolveSiteZone(shift.site?.id ?? shift.siteId);
+      return formatSiteDateInput(shift.start, zone) === siteToday(zone, operationalNow);
+    }),
+    [operationalNow, resolveSiteZone, shifts],
   );
   const liveShifts = React.useMemo(
     () => shifts.filter((shift) => ['ready', 'in_progress'].includes(normalizeShiftLifecycleStatus(shift.status))),
@@ -2746,7 +2750,7 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
       shiftLabel: shift
         ? `#${shift.id} · ${formatTimeLabel(shift.start, zone)}–${formatTimeLabel(shift.end, zone)}`
         : 'Not linked to a shift',
-      raisedLabel: formatInstantDateTime(item.occurredAt, zone),
+      raisedLabel: formatUkDateTime(item.occurredAt, zone),
     });
   }, [alerts, shifts, resolveShiftZone]);
 
@@ -2781,7 +2785,7 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
       statusLabel: incidentLifecycleLabel(incident?.status ?? item.status),
       // The guard's own account, shown verbatim. The resolution note is written elsewhere.
       reportText: incident?.notes?.trim() || '',
-      raisedLabel: formatInstantDateTime(incident?.reportedAt || incident?.createdAt || item.occurredAt, zone),
+      raisedLabel: formatUkDateTime(incident?.reportedAt || incident?.createdAt || item.occurredAt, zone),
     });
   }, [incidents, shifts, resolveShiftZone]);
 
@@ -2887,16 +2891,20 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
     }
 
     const weekDates = new Set(plannerWeekDays.map((day) => day.date));
+    // A shift belongs to its START day on its SITE's clock (Phase 3): `slice(0, 10)` took the UTC date, so
+    // a 00:30 BST shift sat on the previous day, and the device clock read the times. The save path already
+    // converts back in the site zone, so reading in it too makes the round trip exact.
+    const plannerZone = resolveSiteZone(Number(plannerSiteId));
     const matchingShifts = shifts.filter((shift) => {
       const siteId = shift.site?.id ?? shift.siteId;
-      return String(siteId ?? '') === plannerSiteId && weekDates.has(shift.start.slice(0, 10));
+      return String(siteId ?? '') === plannerSiteId && weekDates.has(formatSiteDateInput(shift.start, plannerZone));
     });
 
     const rows = matchingShifts.map((shift) => ({
       localId: `shift-${shift.id}`,
-      date: shift.start.slice(0, 10),
-      startTime: isoToTimeInput(shift.start),
-      endTime: isoToTimeInput(shift.end),
+      date: formatSiteDateInput(shift.start, plannerZone),
+      startTime: formatSiteTime(shift.start, plannerZone),
+      endTime: formatSiteTime(shift.end, plannerZone),
       guardsRequired: '1',
       assignedGuardId: shift.guard?.id ? String(shift.guard.id) : '',
       status: normalizeShiftLifecycleStatus(shift.status),
@@ -2906,7 +2914,7 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
 
     setPlannerRows(rows);
     setPlannerRemovedShiftIds([]);
-  }, [plannerSiteId, plannerWeekDays, shifts]);
+  }, [plannerSiteId, plannerWeekDays, resolveSiteZone, shifts]);
 
   // R4C1 — Flatten week response into day-keyed FlatSlotCell map
   const slotsByDayName = React.useMemo((): Map<string, FlatSlotCell[]> => {
@@ -2940,16 +2948,19 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
     const weekDates = new Set(plannerWeekDays.map((d) => d.date));
     const map = new Map<string, LegacyShiftRow[]>();
     plannerWeekDays.forEach((d) => map.set(d.date, []));
+    // Placed on the START day in the shift's own SITE zone (Phase 3), the same rule Live Operations uses.
+    const siteDayOf = (shift: Shift) => formatSiteDateInput(shift.start, resolveSiteZone(shift.site?.id ?? shift.siteId));
     shifts
-      .filter((shift) => weekDates.has(shift.start.slice(0, 10)) && !shift.rotaSlotId)
+      .filter((shift) => weekDates.has(siteDayOf(shift)) && !shift.rotaSlotId)
       .forEach((shift) => {
-        const date = shift.start.slice(0, 10);
+        const zone = resolveSiteZone(shift.site?.id ?? shift.siteId);
+        const date = siteDayOf(shift);
         const rows = map.get(date) ?? [];
         rows.push({
           id: shift.id,
           date,
-          startTime: isoToTimeInput(shift.start),
-          endTime: isoToTimeInput(shift.end),
+          startTime: formatSiteTime(shift.start, zone),
+          endTime: formatSiteTime(shift.end, zone),
           siteName: shift.site?.name ?? shift.siteName ?? '—',
           guardName: shift.guard?.fullName ?? null,
           status: shift.status ?? 'unfilled',
@@ -2957,7 +2968,7 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
         map.set(date, rows);
       });
     return map;
-  }, [shifts, plannerWeekDays]);
+  }, [shifts, plannerWeekDays, resolveSiteZone]);
 
   // R4C1 — Week ending derived from backend or computed from commencing + 6 days
   const plannerWeekEnding = rotaWeekData?.weekEnding ?? (() => {
@@ -4117,9 +4128,19 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
     const incidents = incidentsByShiftId.get(selectedShift.id) || [];
     const alerts = alertsByShiftId.get(selectedShift.id) || [];
     const lifecycleStatus = normalizeShiftLifecycleStatus(selectedShift.status);
+    // A worked shift past its Book Off grace is not "Live", whatever the stored status says (Phase 3).
+    const nowMs = operationalNow.getTime();
+    const bookOffMissing = lifecycleStatus === 'in_progress' && !attendance?.checkOutAt
+      && isBookOffOverdue(selectedShift.end, nowMs);
     const badge = lifecycleStatus === 'missed'
       ? { icon: '⚠️', label: 'Missed', color: colors.warning }
-      : getShiftStatusBadge(selectedShift.status || 'unfilled');
+      : bookOffMissing
+        ? {
+          icon: '⚠️',
+          label: isAwaitingReconciliation(selectedShift.end, nowMs) ? 'Missing Book Off' : 'No Book Off',
+          color: colors.warning,
+        }
+        : getShiftStatusBadge(selectedShift.status || 'unfilled');
     const exception = getShiftExceptionSummary(selectedShift.status);
     const clientName =
       selectedShift.site?.client?.name ||
@@ -4129,7 +4150,7 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
       shift: selectedShift, attendance, timesheet, logs, incidents, alerts, lifecycleStatus, badge, exception, clientName,
       operations: operationsByShiftId.get(selectedShift.id) ?? null,
     };
-  }, [selectedShift, attendanceByShiftId, timesheetByShiftId, logsByShiftId, incidentsByShiftId, alertsByShiftId, clientMap, operationsByShiftId]);
+  }, [selectedShift, attendanceByShiftId, timesheetByShiftId, logsByShiftId, incidentsByShiftId, alertsByShiftId, clientMap, operationsByShiftId, operationalNow]);
 
   const liveOperationsKpis = React.useMemo(
     () =>

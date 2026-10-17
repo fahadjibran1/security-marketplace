@@ -11,9 +11,10 @@ import {
 } from './operationsPresentation';
 import {
   DEFAULT_SITE_TIME_ZONE,
-  formatInstantDate,
-  formatInstantDateTime,
   formatInstantTime,
+  formatUkDate,
+  formatUkDateTime,
+  formatUkRange,
   shiftSiteDateInput,
   siteToday,
 } from '../../services/siteTime';
@@ -293,7 +294,8 @@ function fmtTime(value: string | null | undefined, timeZone: string): string {
 }
 
 function fmtDateTime(value: string | null | undefined, timeZone: string): string {
-  return formatInstantDateTime(value, timeZone, 'Not recorded', ' ');
+  // DD-MM-YYYY · HH:MM on the site's clock (S4 Live Operations Phase 3).
+  return formatUkDateTime(value, timeZone, 'Not recorded');
 }
 
 function fmtStatus(value?: string | null): string {
@@ -316,7 +318,8 @@ function fmtActivityType(eventType: string): string {
 }
 
 function fmtDate(value: string | null | undefined, timeZone: string): string {
-  return formatInstantDate(value, timeZone, 'Not set');
+  // DD-MM-YYYY on the site's clock (S4 Live Operations Phase 3).
+  return formatUkDate(value, timeZone, 'Not set');
 }
 
 function normalizeLifecycle(value?: string | null): string {
@@ -1788,9 +1791,9 @@ function LiveOpsReconciliationQueue({
               <Text style={styles.reconRowTitle} numberOfLines={1}>
                 {shift.site?.name || shift.siteName || 'Site'} · {shift.guard?.fullName || 'Unassigned'}
               </Text>
-              <Text style={styles.reconRowMeta} numberOfLines={2}>
-                {formatInstantDateTime(shift.start, zone)} – {formatInstantDateTime(shift.end, zone)}
-                {' · '}Booked On {bookedOnAt ? formatInstantDateTime(bookedOnAt, zone) : 'not recorded'}
+              <Text style={styles.reconRowMeta} numberOfLines={3}>
+                {formatUkRange(shift.start, shift.end, zone)}
+                {' · '}Booked On {bookedOnAt ? formatUkDateTime(bookedOnAt, zone) : 'not recorded'}
                 {' · '}No Book Off
               </Text>
             </View>
@@ -1867,7 +1870,14 @@ function DetailPanelContent({
         </View>
       ) : null}
       {lifecycleStatus === 'offered'     ? <Text style={styles.detailInfoMsg}>Waiting for guard confirmation before live controls are used.</Text> : null}
-      {lifecycleStatus === 'in_progress' ? <Text style={styles.detailInfoMsg}>Guard is booked on and the shift is live.</Text>                    : null}
+      {lifecycleStatus === 'in_progress' ? (
+        <Text style={styles.detailInfoMsg}>
+          {ctx.badge.label === 'Missing Book Off' || ctx.badge.label === 'No Book Off'
+            // Phase 3: never "live" once the Book Off is overdue. No Book Off time is shown or invented.
+            ? 'Booked On, but no Book Off has been recorded. The shift stays in progress until the Guard books off or it is reconciled.'
+            : 'Guard is booked on and the shift is live.'}
+        </Text>
+      ) : null}
       {lifecycleStatus === 'ready'       ? <Text style={styles.detailInfoMsg}>Guard confirmed. Ready for book on.</Text>                          : null}
       {lifecycleStatus === 'completed'   ? <Text style={styles.detailInfoMsg}>Shift completed. Records remain visible.</Text>                    : null}
       {shift.instructions ? (
@@ -2095,7 +2105,9 @@ const styles = StyleSheet.create({
   // ── Operational state bar ─────────────────────────────────────────────────
   statusBar: {
     flexDirection: 'row',
-    height: 52,
+    // A minimum, not a fixed height (Phase 3): at phone width "NOT BOOKED ON" and "NO BOOK OFF" wrap to
+    // three lines and were clipped. On a desktop every label is one line and the bar is still 52px.
+    minHeight: 52,
     flexShrink: 0,
     borderRadius: radii.card,
     borderWidth: 1,
@@ -2178,9 +2190,12 @@ const styles = StyleSheet.create({
   // ── Filter toolbar ────────────────────────────────────────────────────────
   filterBar: {
     flexDirection: 'row',
+    // Wraps on a narrow screen (Phase 3): at phone width the fixed-height single row pushed the date
+    // field and Today off the edge. On a desktop it is still one row.
+    flexWrap: 'wrap',
     gap: spacing.sm,
-    alignItems: 'center',
-    height: 36,
+    alignItems: 'flex-start',
+    minHeight: 36,
     flexShrink: 0,
   },
   filterInput: {

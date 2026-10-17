@@ -34,7 +34,7 @@ import {
   zoneOffsetMs,
 } from '../../services/siteTime';
 import type { GuardOperationalWindow, ShiftOperationsView } from '../../types/models';
-import { isBookOffOverdue } from './liveOperationsPolicy';
+import { isAwaitingReconciliation, isBookOffOverdue } from './liveOperationsPolicy';
 
 // ─── the visible axis ─────────────────────────────────────────────────────────
 
@@ -292,7 +292,7 @@ export type AttendanceLabels = {
  * and `late` is the same question Live Operations already asks — start passed, nothing recorded.
  */
 export function resolveAttendanceLabels(
-  shift: { start: string; status?: string | null },
+  shift: { start: string; end?: string | null; status?: string | null },
   attendance: { checkInAt?: string | null; checkOutAt?: string | null } | null | undefined,
   nowMs: number,
   timeZone: string,
@@ -306,7 +306,11 @@ export function resolveAttendanceLabels(
 
   return {
     bookOn: on ? `ON ${formatInstantTime(on, timeZone)}` : 'ON —',
-    bookOff: off ? `OFF ${formatInstantTime(off, timeZone)}` : 'OFF —',
+    // A shift awaiting reconciliation says so instead of an empty dash. No time is shown or invented:
+    // there is no Book Off to show (Phase 3).
+    bookOff: off
+      ? `OFF ${formatInstantTime(off, timeZone)}`
+      : on && shift.end && isAwaitingReconciliation(shift.end, nowMs) ? 'OFF missing' : 'OFF —',
     late: !on && !settled && Number.isFinite(startMs) && nowMs > startMs,
   };
 }
@@ -342,13 +346,18 @@ export function effectiveShiftEndMs(
   if (SETTLED_STATUSES.includes((shift.status || '').trim().toLowerCase())) return scheduledEnd;
   if (!attendance?.checkInAt) return scheduledEnd;
   if (attendance?.checkOutAt) return scheduledEnd;
+  // Phase 3: once a shift is awaiting reconciliation (24 hours past its end with no Book Off) the bar
+  // stops at the SCHEDULED end. Running it on to now would draw days of occupancy nobody recorded; the
+  // bar instead says Missing Book Off, and no Book Off time is invented.
+  if (isAwaitingReconciliation(shift.end, nowMs)) return scheduledEnd;
 
   return Math.max(scheduledEnd, nowMs);
 }
 
 // ─── row status ───────────────────────────────────────────────────────────────
 
-export type TimelineStatus = 'Upcoming' | 'Late' | 'Live' | 'No Book Off' | 'Completed' | 'Coverage Gap';
+export type TimelineStatus =
+  'Upcoming' | 'Late' | 'Live' | 'No Book Off' | 'Missing Book Off' | 'Completed' | 'Coverage Gap';
 
 /**
  * The compact status word for a bar.
@@ -368,6 +377,8 @@ export function resolveTimelineStatus(
   if (attendance?.checkInAt || status === 'in_progress') {
     // Worked, and the Book Off is overdue: not live any more, whatever the status column says. Asked of
     // the board's own policy, so the bar and the board use one boundary (and the backend alert's).
+    // Past 24 hours it is awaiting reconciliation: Missing Book Off (Phase 3).
+    if (isAwaitingReconciliation(shift.end, nowMs)) return 'Missing Book Off';
     return isBookOffOverdue(shift.end, nowMs) ? 'No Book Off' : 'Live';
   }
 

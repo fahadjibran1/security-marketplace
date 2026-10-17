@@ -215,6 +215,15 @@ export function isBookOffOverdue(end: string | null | undefined, nowMs: number):
 }
 
 /**
+ * Whether a worked shift with no Book Off is past the reconciliation threshold (24 hours after its
+ * scheduled end). The timeline asks this to stop its bar at the scheduled end. (Phase 3.)
+ */
+export function isAwaitingReconciliation(end: string | null | undefined, nowMs: number): boolean {
+  const endMs = Date.parse(end || '');
+  return Number.isFinite(endMs) && (nowMs - endMs) / MINUTE_MS > RECONCILIATION_AFTER_END_MINUTES;
+}
+
+/**
  * Why a row is on the board: a policy inclusion, or — when Control has picked a day — a shift scheduled
  * on that day that is not operationally current (history, later the same day, or awaiting reconciliation).
  */

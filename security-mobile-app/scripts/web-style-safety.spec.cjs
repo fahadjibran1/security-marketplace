@@ -66,12 +66,11 @@ test('WEBSTYLE-01-AN-ARRAY-STYLE-ON-A-RAW-DOM-ELEMENT-EMITS-A-NUMERIC-CSS-PROPER
  * crashed, with the precise style expression the source now uses.
  */
 function rotaWebInput(hasError) {
-  // The date input moved to the shared NativeDateInput (S4 Live Operations Phase 2), which also takes a
-  // layout-only `style` override spread last; the time input stays in the Rota Planner. Both must still
-  // compose a single flattened object — never an array — on the DOM element.
-  const source =
-    read('src/components/company/CompanyRotaPlannerWorkspace.tsx') + read('src/components/company/NativeDateInput.tsx');
-  const expr = /style=\{\{ \.\.\.nativeInputStyle, \.\.\.\(hasError \? nativeInputErrorStyle : null\)(?:, \.\.\.\(style \?\? null\))? \}\}/g;
+  // S4 Live Operations Phase 3: the date field is now a DD-MM-YYYY React Native TextInput everywhere
+  // (shared NativeDateInput), so the only raw DOM <input> left in the drawer is the time input. Its style
+  // must still be one flattened object. The date control's hidden picker is checked in WEBSTYLE-02B.
+  const source = read('src/components/company/CompanyRotaPlannerWorkspace.tsx');
+  const expr = /style=\{\{ \.\.\.nativeInputStyle, \.\.\.\(hasError \? nativeInputErrorStyle : null\) \}\}/g;
   const occurrences = (source.match(expr) || []).length;
   const nativeInputStyle = {
     height: 40, borderWidth: 1.5, borderColor: '#ccc', borderRadius: 6,
@@ -93,7 +92,7 @@ function rotaWebInput(hasError) {
 test('WEBSTYLE-02-ADD-SHIFT-DATE-AND-TIME-INPUTS-RENDER-WITHOUT-AN-INDEXED-STYLE', () => {
   const clean = rotaWebInput(false);
   const errored = rotaWebInput(true);
-  assert.equal(clean.occurrences, 2, 'both the date and time web inputs use the flattened form');
+  assert.equal(clean.occurrences, 1, 'the time web input uses the flattened form');
   assert.ok(!hasIndexedStyle(clean.markup), `no numeric CSS property, got ${clean.markup}`);
   assert.ok(!hasIndexedStyle(errored.markup), 'including in the error state');
   assert.match(clean.markup, /height:40px/, 'the base style still applies');
@@ -103,11 +102,19 @@ test('WEBSTYLE-02-ADD-SHIFT-DATE-AND-TIME-INPUTS-RENDER-WITHOUT-AN-INDEXED-STYLE
 test('WEBSTYLE-03-THE-NATIVE-BRANCHES-KEEP-THEIR-ARRAYS', () => {
   // React Native's TextInput flattens arrays itself, so those branches were never broken and must not
   // have been changed: doing so would be churn on the path this defect never touched.
-  // The date branch now lives in the shared NativeDateInput (Phase 2), with a layout override appended.
-  const source =
-    read('src/components/company/CompanyRotaPlannerWorkspace.tsx') + '\n' + read('src/components/company/NativeDateInput.tsx');
-  const nativeArrays = (source.match(/^ {6}style=\{\[nativeInputStyle, hasError && nativeInputErrorStyle(?:, style as any)?\]\}\r?$/gm) || []).length;
-  assert.equal(nativeArrays, 2, `both native TextInput branches still pass arrays, found ${nativeArrays}`);
+  const rota = read('src/components/company/CompanyRotaPlannerWorkspace.tsx');
+  const timeArrays = (rota.match(/^ {6}style=\{\[nativeInputStyle, hasError && nativeInputErrorStyle\]\}\r?$/gm) || []).length;
+  assert.equal(timeArrays, 1, `the native time TextInput still passes an array, found ${timeArrays}`);
+  // The DD-MM-YYYY date field (Phase 3) is a TextInput on every platform, so an array is correct there.
+  const date = read('src/components/company/NativeDateInput.tsx');
+  assert.match(date, /<TextInput[\s\S]*?style=\{\[nativeInputStyle,/, 'the date TextInput composes with an array');
+});
+
+test('WEBSTYLE-02B-THE-DATE-CONTROLS-HIDDEN-PICKER-TAKES-A-PLAIN-OBJECT', () => {
+  // The only DOM element in NativeDateInput is the hidden <input type="date"> behind the calendar button.
+  const source = read('src/components/company/NativeDateInput.tsx');
+  assert.match(source, /<PickerTag[\s\S]*?style=\{HIDDEN_PICKER_STYLE\}/, 'the picker gets one named object');
+  assert.match(source, /const HIDDEN_PICKER_STYLE = \{/, 'which is a plain object literal, not an array');
 });
 
 // ═══════════════════ no raw DOM element anywhere takes an array ═══════════════════

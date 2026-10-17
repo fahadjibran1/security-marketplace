@@ -108,9 +108,11 @@ test('CLASS-07-THE-TIMELINE-BAR-AGREES-WITH-THE-POLICY-AT-EVERY-BOUNDARY', () =>
   const on = { checkInAt: 'x', checkOutAt: null };
   for (const minutesAgo of [-60, 0, 14, 15, 15.02, 16, 60, 24 * 60, 24 * 60 + 1, 72 * 60]) {
     const s = endedAgo('in_progress', FRI, minutesAgo);
-    const live = classify(s, FRI).reason === 'in_progress';
+    const reason = classify(s, FRI).reason;
     const bar = timeline.resolveTimelineStatus(s, on, FRI);
-    assert.equal(bar, live ? 'Live' : 'No Book Off', `ended ${minutesAgo} min ago`);
+    // Phase 3 names the reconciliation case on the bar: Missing Book Off.
+    const expected = { in_progress: 'Live', overdue_book_off: 'No Book Off', needs_reconciliation: 'Missing Book Off' }[reason];
+    assert.equal(bar, expected, `ended ${minutesAgo} min ago`);
   }
   // A Book Off still reads Completed; one never made still reads Late before the start.
   assert.equal(timeline.resolveTimelineStatus(endedAgo('in_progress', FRI, 60), { checkInAt: 'x', checkOutAt: 'y' }, FRI), 'Completed');
@@ -338,7 +340,9 @@ test('WIRE-02-THE-WEB-DATE-CONTROL-IS-A-REAL-DATE-INPUT', () => {
   assert.ok(ws.includes('<NativeDateInput'), 'Live Operations uses the shared date input');
   assert.ok(!ws.includes("{ type: 'date' }"), 'not a TextInput with a dropped type attribute');
   const input = codeOf('src/components/company/NativeDateInput.tsx');
-  assert.ok(/<InputTag\s+type="date"/.test(input), 'which renders <input type="date"> on web');
+  // Phase 3: a DD-MM-YYYY text field, with the browser's own picker behind a calendar button on web.
+  assert.ok(/<PickerTag[\s\S]*?type="date"/.test(input), 'the web calendar is the browser\'s <input type="date">');
+  assert.ok(input.includes('placeholder={UK_OPERATIONAL_DATE_PLACEHOLDER}'), 'and the field reads DD-MM-YYYY');
   const rota = codeOf('src/components/company/CompanyRotaPlannerWorkspace.tsx');
   assert.ok(rota.includes("from './NativeDateInput'") && !rota.includes('function NativeDateInput('),
     'the Rota Planner uses the same component: one date control, not two');

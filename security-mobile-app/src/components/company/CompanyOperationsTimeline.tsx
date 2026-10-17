@@ -454,6 +454,13 @@ const STATUS_STYLE: Record<TimelineRow['status'], { bar: any; badge: any; badgeT
     badge: { backgroundColor: colors.warning },
     badgeText: { color: colors.textOnBrand },
   },
+  // Awaiting reconciliation: the bar stops at the scheduled end, with a solid amber edge so it is not
+  // mistaken for a completed shift.
+  'Missing Book Off': {
+    bar: { backgroundColor: colors.warningSurface, borderColor: colors.warning, borderLeftWidth: 3, borderLeftColor: colors.warning },
+    badge: { backgroundColor: colors.warning },
+    badgeText: { color: colors.textOnBrand },
+  },
   Upcoming: {
     bar: { backgroundColor: colors.card, borderColor: colors.border, borderStyle: 'dashed' },
     badge: { backgroundColor: colors.surfaceSubtle, borderWidth: 1, borderColor: colors.border },
