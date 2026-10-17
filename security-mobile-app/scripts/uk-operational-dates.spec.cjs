@@ -226,15 +226,16 @@ test('HIST-01-A-RECONCILIATION-BAR-STOPS-AT-THE-SCHEDULED-END', () => {
   const drawn = groups[0].rows[0];
   assert.equal(drawn.status, 'Missing Book Off', 'clearly marked');
   assert.equal(drawn.attendance.bookOn, 'ON 20:49', 'the actual Book On time is kept (20:49 BST)');
-  assert.equal(drawn.attendance.bookOff, 'OFF missing', 'and no Book Off time is shown');
+  assert.equal(drawn.attendance.bookOff, 'OFF missing · 65h', 'no Book Off time is shown; the time since the scheduled end is (Phase 4)');
   assert.ok(drawn.span.clippedEnd, 'the bar runs to the edge of a window that ends before 05:00 on the 14th');
   const friday = timeline.resolveTimelineWindow(NOW, 8, LONDON);
   assert.equal(timeline.timelineRowCount(timeline.buildTimeline([row], friday, NOW)), 0, 'and not stretched onto Friday');
 });
 
-test('HIST-02-AN-OVERDUE-BAR-UNDER-24-HOURS-STILL-RUNS-TO-NOW', () => {
+test('HIST-02-AN-OVERDUE-BAR-UNDER-24-HOURS-STOPS-AT-THE-SCHEDULED-END', () => {
+  // Phase 4 (owner decision) extended Phase 3's clipping to every overdue Book Off.
   const row = { ...reconciliationRow(), shift: { ...reconciliationRow().shift, start: '2026-10-16T10:00:00.000Z', end: '2026-10-16T18:00:00.000Z' } };
-  assert.equal(timeline.effectiveShiftEndMs(row.shift, { checkInAt: '2026-10-16T10:00:00.000Z', checkOutAt: null }, NOW), NOW);
+  assert.equal(timeline.effectiveShiftEndMs(row.shift, { checkInAt: '2026-10-16T10:00:00.000Z', checkOutAt: null }, NOW), Date.parse(row.shift.end));
   assert.equal(timeline.resolveTimelineStatus(row.shift, { checkInAt: 'x', checkOutAt: null }, NOW), 'No Book Off');
 });
 

@@ -752,6 +752,18 @@ export function updateShift(id: number, payload: UpdateShiftPayload) {
   });
 }
 
+/**
+ * Close without Book Off (S4 Live Operations Phase 4). Company shift managers only; the API checks the
+ * permission, the company, and that the shift is overdue with a Book On and no Book Off. It records no
+ * Book Off and creates no timesheet.
+ */
+export function reconcileShiftWithoutBookOff(id: number, payload: { reason: string; note?: string | null }) {
+  return request<{ shiftId: number; status: 'completed'; reconciledAt: string; reason: string; closedAlertIds: number[] }>(
+    `/shifts/${id}/reconcile-without-book-off`,
+    { method: 'POST', body: JSON.stringify(payload) },
+  );
+}
+
 export function respondToShift(id: number, payload: { response: 'accepted' | 'rejected'; reason?: string }) {
   return request<Shift>(`/shifts/${id}/respond`, {
     method: 'PATCH',

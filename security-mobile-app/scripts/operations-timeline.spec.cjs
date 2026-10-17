@@ -330,7 +330,13 @@ test('STATUS-01-THE-FIVE-COMPACT-WORDS', () => {
     resolveTimelineStatus({ start: '2026-09-30T21:00:00.000Z', status: 'ready' }, undefined, NOW),
     'Upcoming',
   );
-  assert.equal(resolveTimelineStatus({ start, status: 'completed' }, on, NOW), 'Completed');
+  // Phase 4: completed with a Book On and NO Book Off means Control closed it without one; completed with
+  // both is an ordinary Book Off.
+  assert.equal(resolveTimelineStatus({ start, status: 'completed' }, on, NOW), 'Closed by Control');
+  assert.equal(
+    resolveTimelineStatus({ start, status: 'completed' }, { checkInAt: 'x', checkOutAt: 'y' }, NOW),
+    'Completed',
+  );
   assert.equal(
     resolveTimelineStatus({ start, status: 'in_progress' }, { checkInAt: 'x', checkOutAt: 'y' }, NOW),
     'Completed', 'a Book Off ends it',

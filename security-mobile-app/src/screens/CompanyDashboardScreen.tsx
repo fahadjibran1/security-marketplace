@@ -11,6 +11,9 @@ import { CompanyLiveOperationsWorkspace } from '../components/company/CompanyLiv
 import { sourceState as sourceStateOf } from '../components/company/sourceAvailability';
 import { createRefreshCoordinator, type RefreshCoordinator, type RefreshTrigger } from '../services/refreshCoordinator';
 import { CompanyResolveAlertDrawer, type ResolveTarget } from '../components/company/CompanyResolveAlertDrawer';
+import { CompanyReconcileShiftDrawer, type ReconcileTarget } from '../components/company/CompanyReconcileShiftDrawer';
+import { CLOSED_BY_CONTROL_LABEL, isClosedWithoutBookOff } from '../components/company/shiftReconciliation';
+import { formatElapsedSinceEnd } from '../components/company/operationsTimeline';
 import { alertTypeLabel, missingBookOffSummary, resolutionFamilyForAlert } from '../components/company/alertResolution';
 import { CompanyIncidentReportDrawer } from '../components/company/CompanyIncidentReportDrawer';
 import { CompanyLogBookWorkspace, type LogBookDayPeriod } from '../components/company/CompanyLogBookWorkspace';
@@ -149,6 +152,7 @@ import {
   updateIncidentStatus,
   updateClient,
   updateShift,
+  reconcileShiftWithoutBookOff,
   updateSite,
 } from '../services/api';
 import {
@@ -1408,6 +1412,10 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
   const [resolveTarget, setResolveTarget] = React.useState<ResolveTarget | null>(null);
   const [resolvingItem, setResolvingItem] = React.useState(false);
   const [resolveError, setResolveError] = React.useState<string | null>(null);
+  /** Close without Book Off (Phase 4): the shift being reconciled, if the dialog is open. */
+  const [reconcileTarget, setReconcileTarget] = React.useState<ReconcileTarget | null>(null);
+  const [reconcilingShift, setReconcilingShift] = React.useState(false);
+  const [reconcileError, setReconcileError] = React.useState<string | null>(null);
   /** Which incident the register is showing in full, if any. */
   const [incidentDetailId, setIncidentDetailId] = React.useState<number | null>(null);
   /** Log Book register filters. The date is a site-local YYYY-MM-DD; today by default. */
@@ -2837,6 +2845,47 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
     }
   }, [incidentReportModel, incidentDetail, resolveShiftZone]);
 
+  /**
+   * Open Close without Book Off for a shift (Phase 4). Only reachable when the user can manage shifts; the
+   * dialog states the facts and asks for a reason and confirmation before anything is sent.
+   */
+  const handleOpenReconcile = React.useCallback((shiftId: number) => {
+    const shift = shifts.find((item) => item.id === shiftId);
+    if (!shift) return;
+    const zone = resolveSiteZone(shift.site?.id ?? shift.siteId);
+    const bookOnAt = attendanceByShiftId.get(shift.id)?.checkInAt ?? null;
+    setReconcileError(null);
+    setReconcileTarget({
+      shiftId: shift.id,
+      siteName: shift.site?.name || shift.siteName || 'Site',
+      guardName: shift.guard?.fullName || 'Unassigned',
+      scheduledLabel: formatUkRange(shift.start, shift.end, zone),
+      bookOnLabel: bookOnAt ? formatUkDateTime(bookOnAt, zone) : 'Not recorded',
+      overdueLabel: formatElapsedSinceEnd(shift.end, Date.now()),
+    });
+  }, [attendanceByShiftId, resolveSiteZone, shifts]);
+
+  /** Submit Close without Book Off, then reload so the shift leaves the queue and shows as closed. */
+  const handleSubmitReconcile = React.useCallback(async (input: { reason: string; note: string | null }) => {
+    if (!reconcileTarget) return;
+    setReconcilingShift(true);
+    setReconcileError(null);
+    try {
+      await reconcileShiftWithoutBookOff(reconcileTarget.shiftId, input);
+      const closed = reconcileTarget;
+      setReconcileTarget(null);
+      await loadData(true);
+      setLiveOperationsFeedback({
+        tone: 'success',
+        message: `Shift #${closed.shiftId} (${closed.siteName} · ${closed.guardName}) closed without Book Off.`,
+      });
+    } catch (reconcileFailure) {
+      setReconcileError(formatApiErrorMessage(reconcileFailure, 'Unable to close this shift right now.'));
+    } finally {
+      setReconcilingShift(false);
+    }
+  }, [reconcileTarget, loadData]);
+
   /** Submit the dialog: write the evidence, then let the queue reload without it. */
   const handleSubmitResolution = React.useCallback(async (
     resolution: { resolutionReason: string; resolutionNote?: string },
@@ -4134,6 +4183,9 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
       && isBookOffOverdue(selectedShift.end, nowMs);
     const badge = lifecycleStatus === 'missed'
       ? { icon: '⚠️', label: 'Missed', color: colors.warning }
+      // Phase 4: completed by Control without a Book Off — never shown as an ordinary completion.
+      : isClosedWithoutBookOff(selectedShift, attendance)
+        ? { icon: '⚠️', label: CLOSED_BY_CONTROL_LABEL, color: colors.warning }
       : bookOffMissing
         ? {
           icon: '⚠️',
@@ -4475,6 +4527,7 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
         reconciliationRows={reconciliationRows}
         boardDateMode={liveBoardDateMode}
         onToday={handleLiveOperationsToday}
+        onReconcileShift={canManageShifts ? handleOpenReconcile : undefined}
         timelineRecentreSignal={timelineRecentreSignal}
         activePanicAlertsCount={liveOperationsCounts.activePanicAlerts}
         openIncidentsCount={liveOperationsCounts.openIncidents}
@@ -4526,6 +4579,15 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
         error={resolveError}
         onCancel={() => { setResolveTarget(null); setResolveError(null); }}
         onSubmit={handleSubmitResolution}
+      />
+
+      {/* Close without Book Off: a reason and a confirmation, never automatic. */}
+      <CompanyReconcileShiftDrawer
+        target={reconcileTarget}
+        submitting={reconcilingShift}
+        error={reconcileError}
+        onCancel={() => { setReconcileTarget(null); setReconcileError(null); }}
+        onSubmit={handleSubmitReconcile}
       />
 
     </View>

@@ -171,18 +171,26 @@ test('CARRYOVER-01-A-WORKED-SHIFT-FROM-YESTERDAY-IS-ON-TODAYS-TIMELINE-AS-NO-BOO
     assert.equal(row.status, 'No Book Off');
     assert.equal(row.scheduled, '20:35–21:35', 'the identity column still states the SCHEDULE truthfully');
     assert.equal(row.attendance.bookOn, 'ON 20:33');
-    assert.equal(row.attendance.bookOff, 'OFF —');
+    // Phase 4: the overdue time is its own figure, measured from the scheduled end — never a Book Off time.
+    assert.equal(row.attendance.bookOff, 'OFF overdue 13h 20m');
     assert.ok(row.span.clippedStart, 'and the bar says it began before this view');
+    // Its bar stops at the scheduled end (21:35 yesterday), before every one of these views, so the row is
+    // kept with an edge marker rather than a bar stretched to now.
+    assert.equal(row.span.endedBeforeWindow, true, `${hours}h view marks it as ended before the view`);
   }
 });
 
-test('CARRYOVER-02-THE-BAR-RUNS-TO-NOW-BECAUSE-THE-SHIFT-HAS-NOT-ENDED', () => {
-  const end = timeline.effectiveShiftEndMs(SHIFT_19.shift, SHIFT_19.attendance, NOW);
-  assert.equal(end, NOW, 'a Book On with no Book Off is an open-ended occupancy');
-
-  // And it keeps running: ten minutes later the bar is ten minutes longer.
-  const later = NOW + 10 * MIN;
-  assert.equal(timeline.effectiveShiftEndMs(SHIFT_19.shift, SHIFT_19.attendance, later), later);
+test('CARRYOVER-02-AN-OVERDUE-BAR-STOPS-AT-THE-SCHEDULED-END', () => {
+  // This test used to assert the opposite (UAT FIX 01): a Book On with no Book Off drawn as an open-ended
+  // occupancy running to now. S4 Live Operations Phase 4 reversed that on the owner's decision: once the Book
+  // Off is overdue (end + 15 minutes) the bar stops at the SCHEDULED end and the overdue time is shown on
+  // its own. Nothing about when the Guard left is implied by the bar.
+  const scheduledEnd = Date.parse(SHIFT_19.shift.end);
+  assert.equal(timeline.effectiveShiftEndMs(SHIFT_19.shift, SHIFT_19.attendance, NOW), scheduledEnd);
+  assert.equal(timeline.effectiveShiftEndMs(SHIFT_19.shift, SHIFT_19.attendance, NOW + 10 * MIN), scheduledEnd, 'and it does not grow');
+  // Inside the 15-minute grace the shift is still live, and its bar still runs to now.
+  const inGrace = scheduledEnd + 10 * MIN;
+  assert.equal(timeline.effectiveShiftEndMs(SHIFT_19.shift, SHIFT_19.attendance, inGrace), inGrace);
 });
 
 test('CARRYOVER-03-NOTHING-ELSE-FROM-YESTERDAY-COMES-BACK', () => {

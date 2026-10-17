@@ -20,6 +20,7 @@ import {
 } from '../../services/siteTime';
 import type { BoardInclusion } from './liveOperationsPolicy';
 import { hoursPastEnd, type BoardDateMode } from './liveOperationsBoard';
+import { CLOSED_BY_CONTROL_LABEL, isClosedWithoutBookOff, isEligibleForReconciliation } from './shiftReconciliation';
 import { NativeDateInput } from './NativeDateInput';
 import { CompanyOperationsTimeline } from './CompanyOperationsTimeline';
 import { countStatusWord, countText, safeCount, type SafeCount, type SourceState } from './sourceAvailability';
@@ -223,6 +224,11 @@ export type CompanyLiveOperationsWorkspaceProps = {
   boardDateMode: BoardDateMode;
   /** Selects the site's today, re-centres the timeline on now and refreshes the data. */
   onToday: () => void;
+  /**
+   * Opens Close without Book Off for a shift (Phase 4). Absent when the user cannot manage shifts, so the
+   * action is never offered to someone the API would refuse.
+   */
+  onReconcileShift?: (shiftId: number) => void;
   timelineRecentreSignal: number;
   activePanicAlertsCount: number;
   openIncidentsCount: number;
@@ -1440,6 +1446,7 @@ export function CompanyLiveOperationsWorkspace({
   reconciliationRows,
   boardDateMode,
   onToday,
+  onReconcileShift,
   timelineRecentreSignal,
   activePanicAlertsCount,
   openIncidentsCount,
@@ -1706,6 +1713,7 @@ export function CompanyLiveOperationsWorkspace({
         nowMs={operationalNowMs}
         resolveShiftZone={resolveShiftZone}
         onOpenShift={setSelectedShiftId}
+        onReconcileShift={onReconcileShift}
       />
 
       {/* ── Supporting operational summaries ─────────────────────────────── */}
@@ -1746,6 +1754,8 @@ export function CompanyLiveOperationsWorkspace({
               savingCloseOutNotes={savingCloseOutNotes}
               onSaveCloseOutNotes={onSaveCloseOutNotes}
               onOpenCoverage={onOpenCoverage}
+              nowMs={operationalNowMs}
+              onReconcileShift={onReconcileShift}
             />
           </View>
         ) : null}
@@ -1762,29 +1772,32 @@ function LiveOpsReconciliationQueue({
   nowMs,
   resolveShiftZone,
   onOpenShift,
+  onReconcileShift,
 }: {
   rows: ReconciliationRow[];
   nowMs: number;
   resolveShiftZone: (shiftId?: number | null) => string;
   onOpenShift: (shiftId: number) => void;
+  /** Opens the Close without Book Off dialog; nothing is changed until it is confirmed there. */
+  onReconcileShift?: (shiftId: number) => void;
 }) {
   if (rows.length === 0) return null;
   return (
     <View style={styles.reconPanel} {...({ accessibilityRole: 'region', 'aria-label': 'Needs reconciliation' } as any)}>
       <Text style={styles.reconTitle}>Needs reconciliation · {rows.length}</Text>
       <Text style={styles.reconCaption}>
-        Booked On with no Book Off, more than 24 hours after the scheduled end. Not counted as live. Nothing
-        here changes the shift or its alerts.
+        Booked On with no Book Off, more than 24 hours after the scheduled end. Not counted as live. A shift
+        leaves this list only when the Guard books off or a shift manager closes it without a Book Off.
       </Text>
       {rows.map(({ shift, bookedOnAt, openAlerts }) => {
         const zone = resolveShiftZone(shift.id);
         const hoursOverdue = hoursPastEnd(shift.end, nowMs);
         return (
+          <View key={shift.id} style={styles.reconRow}>
           <Pressable
-            key={shift.id}
             accessibilityRole="button"
             accessibilityLabel={`Open shift ${shift.id}`}
-            style={[styles.reconRow, IS_WEB ? (WEB_PTR as any) : null]}
+            style={[styles.reconRowOpen, IS_WEB ? (WEB_PTR as any) : null]}
             onPress={() => onOpenShift(shift.id)}
           >
             <View style={styles.reconRowMain}>
@@ -1804,6 +1817,17 @@ function LiveOpsReconciliationQueue({
               ) : null}
             </View>
           </Pressable>
+          {onReconcileShift ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Close shift ${shift.id} without Book Off`}
+              style={[styles.reconAction, IS_WEB ? (WEB_PTR as any) : null]}
+              onPress={() => onReconcileShift(shift.id)}
+            >
+              <Text style={styles.reconActionText}>Close without Book Off</Text>
+            </Pressable>
+          ) : null}
+          </View>
         );
       })}
     </View>
@@ -1820,6 +1844,8 @@ function DetailPanelContent({
   savingCloseOutNotes,
   onSaveCloseOutNotes,
   onOpenCoverage,
+  nowMs,
+  onReconcileShift,
 }: {
   ctx: SelectedShiftContext;
   closeOutSummary: CloseOutSummary | null;
@@ -1828,6 +1854,8 @@ function DetailPanelContent({
   savingCloseOutNotes: boolean;
   onSaveCloseOutNotes: () => void;
   onOpenCoverage: (context?: { uncoveredOnly?: boolean; shiftId?: number }) => void;
+  nowMs: number;
+  onReconcileShift?: (shiftId: number) => void;
 }) {
   const { shift, attendance, timesheet, logs, incidents, alerts, lifecycleStatus, badge, exception, clientName, operations } = ctx;
   const timeZone = shift.site?.timezone || operations?.timezone || DEFAULT_SITE_TIME_ZONE;
@@ -1879,7 +1907,29 @@ function DetailPanelContent({
         </Text>
       ) : null}
       {lifecycleStatus === 'ready'       ? <Text style={styles.detailInfoMsg}>Guard confirmed. Ready for book on.</Text>                          : null}
-      {lifecycleStatus === 'completed'   ? <Text style={styles.detailInfoMsg}>Shift completed. Records remain visible.</Text>                    : null}
+      {lifecycleStatus === 'completed' ? (
+        <Text style={styles.detailInfoMsg}>
+          {isClosedWithoutBookOff(shift, attendance)
+            // Phase 4: told apart from a Guard's own Book Off by attendance alone; no time is shown or invented.
+            ? `${CLOSED_BY_CONTROL_LABEL}. No Book Off time was recorded. Records remain visible.`
+            : 'Shift completed. Records remain visible.'}
+        </Text>
+      ) : null}
+      {onReconcileShift && isEligibleForReconciliation(shift, attendance, nowMs) ? (
+        <View style={styles.detailAction}>
+          <Text style={styles.detailActionMsg}>
+            Booked On, no Book Off, and past the scheduled end plus 15 minutes. A shift manager can close it
+            without a Book Off, with a reason; nothing is fabricated.
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            style={[styles.detailPrimaryBtn, IS_WEB ? (WEB_PTR as any) : null]}
+            onPress={() => onReconcileShift(shift.id)}
+          >
+            <Text style={styles.detailPrimaryBtnText}>Close without Book Off</Text>
+          </Pressable>
+        </View>
+      ) : null}
       {shift.instructions ? (
         <Text style={styles.detailInstructions}>Instructions: {shift.instructions}</Text>
       ) : null}
@@ -1889,8 +1939,13 @@ function DetailPanelContent({
         {lifecycleStatus === 'completed' && closeOutSummary ? (
           <View style={[styles.detailCard, styles.detailCardCloseOut]}>
             <Text style={styles.detailCardTitle}>Close-Out</Text>
-            <Text style={closeOutSummary.closedCleanly ? styles.detailCloseOutGood : styles.detailCloseOutWarn}>
-              {closeOutSummary.closedCleanly ? 'Closed cleanly' : `Needs follow-up (${closeOutSummary.unresolvedFollowUpCount})`}
+            {/* Phase 4: a shift Control closed without a Book Off is never "Closed cleanly". */}
+            <Text style={closeOutSummary.closedCleanly && !isClosedWithoutBookOff(shift, attendance) ? styles.detailCloseOutGood : styles.detailCloseOutWarn}>
+              {isClosedWithoutBookOff(shift, attendance)
+                ? closeOutSummary.unresolvedFollowUpCount > 0
+                  ? `${CLOSED_BY_CONTROL_LABEL} · needs follow-up (${closeOutSummary.unresolvedFollowUpCount})`
+                  : CLOSED_BY_CONTROL_LABEL
+                : closeOutSummary.closedCleanly ? 'Closed cleanly' : `Needs follow-up (${closeOutSummary.unresolvedFollowUpCount})`}
             </Text>
             <Text style={styles.detailLine}>Scheduled: {fmtDateTime(closeOutSummary.scheduledStart, timeZone)} → {fmtDateTime(closeOutSummary.scheduledEnd, timeZone)}</Text>
             <Text style={styles.detailLine}>Actual: {fmtDateTime(closeOutSummary.actualCheckInAt, timeZone)} → {fmtDateTime(closeOutSummary.actualCheckOutAt, timeZone)}</Text>
@@ -2224,6 +2279,7 @@ const styles = StyleSheet.create({
   reconCaption: { fontSize: 12, color: colors.textSecondary },
   reconRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
     gap: spacing.sm,
     paddingVertical: spacing.sm,
@@ -2233,6 +2289,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
   },
+  reconRowOpen: { flex: 1, minWidth: 220, flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  reconAction: {
+    paddingHorizontal: spacing.sm, paddingVertical: 6, borderRadius: radii.sm, borderWidth: 1,
+    borderColor: colors.warning, backgroundColor: colors.warningSurface,
+  },
+  reconActionText: { fontSize: 12, fontWeight: '800', color: colors.primaryNavyStrong },
   reconRowMain: { flex: 1, minWidth: 0 },
   reconRowTitle: { fontSize: 13, fontWeight: '700', color: colors.primaryNavyStrong },
   reconRowMeta: { fontSize: 12, color: colors.textSecondary },

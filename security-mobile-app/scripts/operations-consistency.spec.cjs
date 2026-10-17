@@ -145,7 +145,7 @@ const recentUnclosed = {
 };
 check(
   timeline.timelineRowCount(timeline.buildTimeline([recentUnclosed], window8, NOW)) === 1,
-  'a shift booked on and not booked off within the last 24 hours IS still drawn up to now',
+  'a shift booked on and not booked off within the last 24 hours IS still drawn (Phase 4: its bar stops at the scheduled end)',
 );
 
 assert.ok(FIXTURE.length > 0, 'the fixture must not be empty');

@@ -193,6 +193,8 @@ jobs:
         run: npm run test:live-ops-board
       - name: UK operational dates, site timezones and the historical timeline
         run: npm run test:uk-operational-dates
+      - name: Close without Book Off and the overdue timeline
+        run: npm run test:shift-reconciliation-ui
 
       # Phase 3B: the last two surfaces reading a clock time out of the stored ISO digits. Correct while
       # the backend stored a wall clock; wrong from the moment Phase 1 made those columns true instants,

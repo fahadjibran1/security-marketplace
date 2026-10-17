@@ -416,7 +416,9 @@ const siteKey = (group: TimelineSiteGroup) => String(group.siteId ?? group.siteN
 
 /** One sentence carrying everything the row shows, for a screen reader and the row tooltip. */
 function identityLabel(row: TimelineRow): string {
-  return `${row.guardName}, scheduled ${row.scheduled}, ${row.status}, ${row.attendance.bookOn}, ${row.attendance.bookOff}`;
+  const status = row.status === 'Closed by Control' ? 'Closed by Control — No Book Off' : row.status;
+  const ended = row.span.endedBeforeWindow ? ', ended before this view' : '';
+  return `${row.guardName}, scheduled ${row.scheduled}, ${status}${ended}, ${row.attendance.bookOn}, ${row.attendance.bookOff}`;
 }
 
 // ─── the bar ──────────────────────────────────────────────────────────────────
@@ -473,6 +475,13 @@ const STATUS_STYLE: Record<TimelineRow['status'], { bar: any; badge: any; badgeT
     badge: { backgroundColor: colors.border },
     badgeText: { color: colors.textPrimary },
   },
+  // Phase 4: closed by Control without a Book Off. Settled like Completed, with an amber edge so it is never
+  // read as an ordinary Book Off.
+  'Closed by Control': {
+    bar: { backgroundColor: colors.surfaceSubtle, borderColor: colors.fieldBorder, borderLeftWidth: 3, borderLeftColor: colors.warning },
+    badge: { backgroundColor: colors.border },
+    badgeText: { color: colors.textPrimary },
+  },
   'Coverage Gap': {
     bar: { backgroundColor: colors.dangerSurface, borderColor: colors.danger },
     badge: { backgroundColor: colors.danger },
@@ -491,8 +500,10 @@ function ShiftBar({ row }: { row: TimelineRow }) {
         {
           left: pct(row.span.startFraction),
           width: pct(row.span.widthFraction),
-          // A shift too short to see at this range still has to be clickable.
-          minWidth: 6,
+          // A shift too short to see at this range still has to be clickable. A bar that ended before this
+          // view (an overdue Book Off, Phase 4) is a marker at the left edge, wide enough for its badge.
+          minWidth: row.span.endedBeforeWindow ? 128 : 6,
+          ...(row.span.endedBeforeWindow ? { borderStyle: 'dashed' } : null),
           // A clipped edge is squared off, so a bar that continues past the view does not read as if it
           // ended there.
           borderTopLeftRadius: row.span.clippedStart ? 0 : radii.sm,

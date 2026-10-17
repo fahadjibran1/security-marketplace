@@ -158,6 +158,12 @@ export type TimelineSpan = {
   clippedStart: boolean;
   /** True when the bar continues past the visible axis. */
   clippedEnd: boolean;
+  /**
+   * Phase 4: the shift's bar ended before this view, but the row is still drawn because its Book Off is
+   * overdue. The UI shows a marker at the left edge rather than a bar, so the board and the timeline keep
+   * agreeing about what is outstanding without stretching the bar to now.
+   */
+  endedBeforeWindow?: boolean;
 };
 
 /**
@@ -300,19 +306,37 @@ export function resolveAttendanceLabels(
   const on = attendance?.checkInAt ?? null;
   const off = attendance?.checkOutAt ?? null;
   const startMs = Date.parse(shift.start);
-  const settled = ['completed', 'cancelled', 'missed', 'rejected'].includes(
-    (shift.status || '').trim().toLowerCase(),
-  );
+  const status = (shift.status || '').trim().toLowerCase();
+  const settled = ['completed', 'cancelled', 'missed', 'rejected'].includes(status);
 
   return {
     bookOn: on ? `ON ${formatInstantTime(on, timeZone)}` : 'ON —',
-    // A shift awaiting reconciliation says so instead of an empty dash. No time is shown or invented:
-    // there is no Book Off to show (Phase 3).
+    // No Book Off time is ever shown or invented. Instead (Phase 4): a shift Control closed without one
+    // says so; one awaiting reconciliation says "missing"; an overdue one shows how long since its
+    // scheduled end, as its own figure — the bar itself stops at the scheduled end.
     bookOff: off
       ? `OFF ${formatInstantTime(off, timeZone)}`
-      : on && shift.end && isAwaitingReconciliation(shift.end, nowMs) ? 'OFF missing' : 'OFF —',
+      : !on ? 'OFF —'
+      : status === 'completed' ? 'No Book Off'
+      : shift.end && isAwaitingReconciliation(shift.end, nowMs) ? `OFF missing · ${formatElapsedSinceEnd(shift.end, nowMs)}`
+      : shift.end && isBookOffOverdue(shift.end, nowMs) ? `OFF overdue ${formatElapsedSinceEnd(shift.end, nowMs)}`
+      : 'OFF —',
     late: !on && !settled && Number.isFinite(startMs) && nowMs > startMs,
   };
+}
+
+/**
+ * "2h 15m" / "26h" — how long ago a shift's SCHEDULED end was. A figure about the schedule, never a
+ * claimed departure time.
+ */
+export function formatElapsedSinceEnd(end: string, nowMs: number): string {
+  const endMs = Date.parse(end);
+  if (!Number.isFinite(endMs) || nowMs <= endMs) return '0m';
+  const minutes = Math.floor((nowMs - endMs) / 60_000);
+  const hours = Math.floor(minutes / 60);
+  if (hours >= 24) return `${hours}h`;
+  if (hours === 0) return `${minutes}m`;
+  return `${hours}h ${minutes % 60}m`;
 }
 
 /** A shift whose outcome is already decided. Its bar is whatever the schedule said it was. */
@@ -346,10 +370,11 @@ export function effectiveShiftEndMs(
   if (SETTLED_STATUSES.includes((shift.status || '').trim().toLowerCase())) return scheduledEnd;
   if (!attendance?.checkInAt) return scheduledEnd;
   if (attendance?.checkOutAt) return scheduledEnd;
-  // Phase 3: once a shift is awaiting reconciliation (24 hours past its end with no Book Off) the bar
-  // stops at the SCHEDULED end. Running it on to now would draw days of occupancy nobody recorded; the
-  // bar instead says Missing Book Off, and no Book Off time is invented.
-  if (isAwaitingReconciliation(shift.end, nowMs)) return scheduledEnd;
+  // Phase 4 (owner decision): once the Book Off is OVERDUE — past the scheduled end plus the 15-minute
+  // grace — the bar stops at the SCHEDULED end. Running it on to now drew hours of occupancy nobody
+  // recorded. The overdue time is shown as its own figure, the badge says No Book Off / Missing Book Off,
+  // and no Book Off time is invented. (Phase 3 did this only past 24 hours.)
+  if (isBookOffOverdue(shift.end, nowMs)) return scheduledEnd;
 
   return Math.max(scheduledEnd, nowMs);
 }
@@ -357,7 +382,8 @@ export function effectiveShiftEndMs(
 // ─── row status ───────────────────────────────────────────────────────────────
 
 export type TimelineStatus =
-  'Upcoming' | 'Late' | 'Live' | 'No Book Off' | 'Missing Book Off' | 'Completed' | 'Coverage Gap';
+  | 'Upcoming' | 'Late' | 'Live' | 'No Book Off' | 'Missing Book Off' | 'Completed' | 'Closed by Control'
+  | 'Coverage Gap';
 
 /**
  * The compact status word for a bar.
@@ -371,7 +397,9 @@ export function resolveTimelineStatus(
   nowMs: number,
 ): TimelineStatus {
   const status = (shift.status || '').trim().toLowerCase();
-  if (status === 'completed') return 'Completed';
+  // Completed with a Book On and no Book Off: Control closed it without one (Phase 4, Close without Book
+  // Off). Told apart from a Guard's own Book Off by the attendance alone — nothing is fabricated to mark it.
+  if (status === 'completed') return attendance?.checkInAt && !attendance?.checkOutAt ? 'Closed by Control' : 'Completed';
   if (['unfilled', 'rejected', 'missed', 'cancelled'].includes(status)) return 'Coverage Gap';
   if (attendance?.checkOutAt) return 'Completed';
   if (attendance?.checkInAt || status === 'in_progress') {
@@ -455,11 +483,13 @@ export function buildTimeline(
   for (const input of inputs) {
     // The bar is drawn against the shift's EFFECTIVE end, so a guard who booked on and never booked off
     // is still on the board the next morning. Every other row is unaffected.
-    const span = resolveTimelineSpan(
-      Date.parse(input.shift.start),
-      effectiveShiftEndMs(input.shift, input.attendance, nowMs),
-      window,
-    );
+    const endMs = effectiveShiftEndMs(input.shift, input.attendance, nowMs);
+    let span = resolveTimelineSpan(Date.parse(input.shift.start), endMs, window);
+    // Phase 4: an overdue Book Off whose bar ended before this view still gets its row, with a marker at
+    // the left edge, so the board and the timeline agree about what is outstanding.
+    if (!span && isOverdueWithoutBookOff(input.shift, input.attendance, nowMs) && endMs <= window.startMs) {
+      span = { startFraction: 0, widthFraction: 0, clippedStart: true, clippedEnd: false, endedBeforeWindow: true };
+    }
     if (!span) continue;
 
     const timeZone = siteZoneOf(input);
@@ -495,6 +525,18 @@ export function buildTimeline(
     group.rows.sort((a, b) => a.scheduled.localeCompare(b.scheduled) || a.shiftId - b.shiftId);
   }
   return ordered;
+}
+
+/** Booked on, not booked off, not settled, and past the Book Off grace. */
+function isOverdueWithoutBookOff(
+  shift: { end: string; status?: string | null },
+  attendance: { checkInAt?: string | null; checkOutAt?: string | null } | null | undefined,
+  nowMs: number,
+): boolean {
+  if (!attendance?.checkInAt || attendance.checkOutAt) return false;
+  if (SETTLED_STATUSES.includes((shift.status || '').trim().toLowerCase())) return false;
+  // Past 24 hours it awaits reconciliation and is listed in its own queue, not marked on today's axis.
+  return isBookOffOverdue(shift.end, nowMs) && !isAwaitingReconciliation(shift.end, nowMs);
 }
 
 /** Total rows on the timeline, so a count beside the header cannot disagree with what is drawn. */
