@@ -129,7 +129,7 @@ test('COMPDATE-07-A-DATE-ONLY-VALUE-NEVER-SHIFTS-BY-A-DAY', () => {
   assert.equal(uk.isoToUkDate('2028-01-01T00:00:00Z'), '01/01/2028');
   assert.equal(uk.isoToUkDate('2028-01-01T23:59:59Z'), '01/01/2028');
   // No Date construction anywhere in the module.
-  const source = read('src/components/company/ukDate.ts').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const source = read('src/services/ukDate.ts').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
   assert.doesNotMatch(source, /new Date\(/, 'the parser must not construct a Date');
   assert.doesNotMatch(source, /Date\.parse|toISOString|getTimezoneOffset/, 'nor rely on any Date behaviour');
 });

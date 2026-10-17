@@ -22,6 +22,8 @@
 // full IANA database. There is no UK-specific arithmetic anywhere below: "subtract an hour" would be
 // wrong in GMT, wrong for any other zone, and wrong on transition days.
 
+import { formatUkOperationalDay, isIsoCalendarDate, isoToUkOperationalDate } from './ukDate';
+
 export const DEFAULT_SITE_TIME_ZONE = 'Europe/London';
 
 /** A wall-clock reading in some zone, as calendar fields. */
@@ -65,9 +67,15 @@ export function offsetSuffix(offsetMs: number): string {
   return `${sign}${pad(Math.floor(total / 60))}:${pad(total % 60)}`;
 }
 
-/** True for a YYYY-MM-DD date input that names a real calendar day. */
+/**
+ * True for a YYYY-MM-DD date input that names a real calendar day.
+ *
+ * Strict since S4 Live Operations Phase 3. It used to ask `new Date(value)`, which accepts 2026-02-31
+ * (rolling it into March), so an impossible date got as far as the clock-change check and was reported
+ * with a misleading message. The shared calendar in services/ukDate.ts now decides.
+ */
 export function isSiteDateInput(value: string): boolean {
-  return /^\d{4}-\d{2}-\d{2}$/.test(String(value ?? '')) && !Number.isNaN(new Date(value).getTime());
+  return isIsoCalendarDate(value);
 }
 
 /** True for a 24-hour HH:MM time input. */
@@ -273,17 +281,26 @@ export function formatInstantDateTime(
 // The Incident Report deliberately keeps its own "Wed, 30 Sept 2026 · 20:49" style and does not use
 // these; it is a different document with a different voice.
 
-/** e.g. "30-09-2026" for a true instant, on the site's clock. */
+/**
+ * e.g. "30-09-2026" for a true instant, on the site's clock. The site-local calendar day comes from
+ * the zone arithmetic here; its DD-MM-YYYY spelling from the shared calendar (services/ukDate.ts).
+ */
 export function formatUkDate(iso: string | null | undefined, timeZone?: string | null, empty = '—'): string {
   if (!iso) return empty;
   const instant = new Date(iso);
   if (Number.isNaN(instant.getTime())) return String(iso);
-  const parts = new Intl.DateTimeFormat('en-GB', {
-    timeZone: resolveDisplayZone(timeZone),
-    day: '2-digit', month: '2-digit', year: 'numeric',
-  }).formatToParts(instant);
-  const get = (type: string) => parts.find((part) => part.type === type)?.value ?? '';
-  return `${get('day')}-${get('month')}-${get('year')}`;
+  const siteDay = formatSiteDateInput(iso, resolveDisplayZone(timeZone));
+  return isoToUkOperationalDate(siteDay) ?? String(iso);
+}
+
+/** "Tuesday 29-09-2026" (or "Tue 29-09-2026") for a true instant, on the site's clock. */
+export function formatUkDay(
+  iso: string | null | undefined, timeZone?: string | null, style: 'long' | 'short' = 'long', empty = '—',
+): string {
+  if (!iso) return empty;
+  const instant = new Date(iso);
+  if (Number.isNaN(instant.getTime())) return String(iso);
+  return formatUkOperationalDay(formatSiteDateInput(iso, resolveDisplayZone(timeZone)), style);
 }
 
 /** e.g. "30-09-2026 · 20:34". */
