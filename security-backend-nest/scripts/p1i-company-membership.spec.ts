@@ -169,9 +169,9 @@ test('ENTITY-6 CompanyMembershipModule is imported in AppModule', () => {
 // C.  PERMISSION FOUNDATION
 // ═══════════════════════════════════════════════════════════════════════
 
-test('PERMISSION-1 hasPermission returns true for OWNER on all 31 permissions', () => {
+test('PERMISSION-1 hasPermission returns true for OWNER on all 32 permissions', () => {
   const all = Object.values(CompanyPermission);
-  assert(all.length === 31, `Expected 31 permissions, got ${all.length}`);
+  assert(all.length === 32, `Expected 32 permissions (31 + shifts.reconcile), got ${all.length}`);
   for (const p of all) {
     assert(hasPermission(CompanyMembershipRole.OWNER, p), `OWNER must have ${p}`);
   }
@@ -639,7 +639,7 @@ test('P2-BILLING-BOUNDARY-2 VIEWER role is read-only (no manage permissions)', (
   });
 });
 
-test('P2-OWNER-BOUNDARY-1 OWNER has all 31 permissions', () => {
+test('P2-OWNER-BOUNDARY-1 OWNER has all 32 permissions', () => {
   const allPermissions = Object.values(CompanyPermission);
   allPermissions.forEach((p) => {
     assert(hasPermission(CompanyMembershipRole.OWNER, p), `OWNER must have ${p}`);

@@ -22,6 +22,9 @@ import {
   reconciliationAlertNote,
 } from './shift-reconciliation';
 
+/** The most shift ids one reconciliation lookup reads. */
+export const RECONCILIATION_LOOKUP_MAX = 500;
+
 export type ShiftReconciliationResult = {
   shiftId: number;
   status: 'completed';
@@ -58,6 +61,36 @@ export class ShiftReconciliationService {
     private readonly auditLogService: AuditLogService,
   ) {}
 
+  /**
+   * Which of the given shifts were closed without a Book Off by a person — read from the reconciliation
+   * AUDIT ENTRY, never inferred from "completed with no Book Off" (a shift can reach that state other ways).
+   *
+   * Company-scoped by the caller's membership; bounded to the ids asked for, so the read stays small without
+   * an index on audit_logs (adding one would be a migration).
+   */
+  async listReconciliations(
+    user: JwtPayload,
+    shiftIds: number[],
+  ): Promise<Array<{ shiftId: number; reconciledAt: string | null; reason: string | null }>> {
+    const { company } = await this.membershipService.resolveCompanyContext(
+      user.sub,
+      user.role,
+      CompanyPermission.SHIFTS_VIEW,
+    );
+    const ids = [...new Set(shiftIds.filter((id) => Number.isInteger(id) && id > 0))].slice(0, RECONCILIATION_LOOKUP_MAX);
+    if (!ids.length) return [];
+    const rows = (await this.dataSource.query(
+      `SELECT DISTINCT ON ("entityId") "entityId" AS "shiftId", "afterData"->>'reconciledAt' AS "reconciledAt",
+              "afterData"->>'reason' AS "reason"
+         FROM "audit_logs"
+        WHERE "companyId" = $1 AND "action" = 'shift.reconciled_without_book_off' AND "entityType" = 'shift'
+          AND "entityId" = ANY($2::int[])
+        ORDER BY "entityId", "id" DESC`,
+      [company.id, ids],
+    )) as Array<{ shiftId: number; reconciledAt: string | null; reason: string | null }>;
+    return rows.map((row) => ({ shiftId: Number(row.shiftId), reconciledAt: row.reconciledAt, reason: row.reason }));
+  }
+
   async reconcileWithoutBookOff(
     user: JwtPayload,
     shiftId: number,
@@ -73,11 +106,12 @@ export class ShiftReconciliationService {
       throw new BadRequestException('Explain why the shift is being closed without a Book Off.');
     }
 
-    // Shift-management permission in the caller's own company. Checked before anything is read.
+    // The reconcile permission in the caller's own company (owner, admin, operations, control room).
+    // Narrower than shifts.manage, which a control room does not hold. Checked before anything is read.
     const { company } = await this.membershipService.resolveCompanyContext(
       user.sub,
       user.role,
-      CompanyPermission.SHIFTS_MANAGE,
+      CompanyPermission.SHIFTS_RECONCILE,
     );
 
     return this.dataSource.transaction(async (manager) => {

@@ -28,6 +28,12 @@ export enum CompanyPermission {
   SCREENING_VIEW = 'screening.view',
   SHIFTS_VIEW = 'shifts.view',
   SHIFTS_MANAGE = 'shifts.manage',
+  /**
+   * Close without Book Off (S4 Live Operations). Narrower than shifts.manage: it reconciles a shift a Guard
+   * booked on to and never booked off from, and nothing else — so a control room can do it without being
+   * able to create, edit or cancel shifts.
+   */
+  SHIFTS_RECONCILE = 'shifts.reconcile',
   ATTENDANCE_VIEW = 'attendance.view',
   TIMESHEETS_VIEW = 'timesheets.view',
   TIMESHEETS_REVIEW = 'timesheets.review',
@@ -72,6 +78,7 @@ const ADMIN_PERMISSIONS: Set<CompanyPermission> = new Set([
   CompanyPermission.SCREENING_VIEW,
   CompanyPermission.SHIFTS_VIEW,
   CompanyPermission.SHIFTS_MANAGE,
+  CompanyPermission.SHIFTS_RECONCILE,
   CompanyPermission.ATTENDANCE_VIEW,
   CompanyPermission.TIMESHEETS_VIEW,
   CompanyPermission.TIMESHEETS_REVIEW,
@@ -103,6 +110,7 @@ const OPERATIONS_PERMISSIONS: Set<CompanyPermission> = new Set([
   CompanyPermission.SCREENING_VIEW,
   CompanyPermission.SHIFTS_VIEW,
   CompanyPermission.SHIFTS_MANAGE,
+  CompanyPermission.SHIFTS_RECONCILE,
   CompanyPermission.ATTENDANCE_VIEW,
   CompanyPermission.TIMESHEETS_VIEW,
   CompanyPermission.TIMESHEETS_REVIEW,
@@ -124,6 +132,8 @@ const CONTROL_ROOM_PERMISSIONS: Set<CompanyPermission> = new Set([
   CompanyPermission.GUARDS_VIEW,
   CompanyPermission.COMPLIANCE_VIEW,
   CompanyPermission.SHIFTS_VIEW,
+  // Close without Book Off only: a control room cannot create, edit or cancel shifts (no shifts.manage).
+  CompanyPermission.SHIFTS_RECONCILE,
   CompanyPermission.ATTENDANCE_VIEW,
   CompanyPermission.TIMESHEETS_VIEW,
   CompanyPermission.INCIDENTS_VIEW,

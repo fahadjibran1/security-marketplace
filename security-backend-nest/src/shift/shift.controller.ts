@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { ShiftService } from './shift.service';
 import { CreateShiftDto } from './dto/create-shift.dto';
 import { UpdateShiftDto } from './dto/update-shift.dto';
@@ -77,6 +77,17 @@ export class ShiftController {
   @Roles(UserRole.ADMIN, ...COMPANY_ADMIN_ROLES)
   remove(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
     return this.shiftService.removeForUser(user, id);
+  }
+
+  /**
+   * Which of the given shifts were closed without a Book Off, from the reconciliation audit entry.
+   * `?shiftIds=1,2,3` — company-scoped, bounded. Declared before `:id` so it is not read as a shift id.
+   */
+  @Get('reconciliations')
+  @Roles(...COMPANY_VIEW_ROLES)
+  listReconciliations(@CurrentUser() user: JwtPayload, @Query('shiftIds') shiftIds?: string) {
+    const ids = String(shiftIds ?? '').split(',').map((value) => Number(value.trim()));
+    return this.reconciliationService.listReconciliations(user, ids);
   }
 
   // Get single shift (must stay LAST)

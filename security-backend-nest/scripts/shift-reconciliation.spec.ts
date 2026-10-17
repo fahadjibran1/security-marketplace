@@ -29,7 +29,7 @@ import { SafetyAlert, SafetyAlertStatus, SafetyAlertType } from '../src/safety-a
 import { AuditLog } from '../src/audit-log/entities/audit-log.entity';
 import { AuditLogService } from '../src/audit-log/audit-log.service';
 import { CompanyMembership } from '../src/company-membership/entities/company-membership.entity';
-import { CompanyMembershipRole, CompanyMembershipStatus } from '../src/company-membership/company-membership-types';
+import { CompanyMembershipRole, CompanyMembershipStatus, CompanyPermission, hasPermission } from '../src/company-membership/company-membership-types';
 import { CompanyMembershipService } from '../src/company-membership/company-membership.service';
 import { ShiftReconciliationService } from '../src/shift/shift-reconciliation.service';
 import { ReconcileShiftDto } from '../src/shift/dto/reconcile-shift.dto';
@@ -247,13 +247,17 @@ async function main() {
 
     // ═══════════════════ permissions and isolation ═══════════════════
 
-    await test('RECON-06-ONLY-SHIFT-MANAGERS-MAY-RECONCILE', async () => {
-      for (const role of [CompanyMembershipRole.ADMIN, CompanyMembershipRole.OPERATIONS]) {
+    await test('RECON-06-ONLY-RECONCILE-HOLDERS-MAY-RECONCILE', async () => {
+      // shifts.reconcile: owner, admin, operations and control room. A control room may reconcile but still
+      // cannot create, edit or cancel shifts — it does not hold shifts.manage.
+      assert.equal(hasPermission(CompanyMembershipRole.CONTROL_ROOM, CompanyPermission.SHIFTS_RECONCILE), true);
+      assert.equal(hasPermission(CompanyMembershipRole.CONTROL_ROOM, CompanyPermission.SHIFTS_MANAGE), false, 'no shift editing for a control room');
+      for (const role of [CompanyMembershipRole.ADMIN, CompanyMembershipRole.OPERATIONS, CompanyMembershipRole.CONTROL_ROOM]) {
         const shift = await workedShift({ endedMinsAgo: 120 });
         await service.reconcileWithoutBookOff(await member(A.company, role), shift.id, { reason: 'guard_forgot_book_off' });
         assert.equal(await shiftStatus(shift.id), 'completed', `${role} may`);
       }
-      for (const role of [CompanyMembershipRole.CONTROL_ROOM, CompanyMembershipRole.VIEWER, CompanyMembershipRole.FINANCE, CompanyMembershipRole.HR_COMPLIANCE]) {
+      for (const role of [CompanyMembershipRole.VIEWER, CompanyMembershipRole.FINANCE, CompanyMembershipRole.HR_COMPLIANCE]) {
         const shift = await workedShift({ endedMinsAgo: 120 });
         await rejects(service.reconcileWithoutBookOff(await member(A.company, role), shift.id, { reason: 'guard_forgot_book_off' }), ForbiddenException);
         assert.equal(await shiftStatus(shift.id), 'in_progress', `${role} may not`);
@@ -390,6 +394,31 @@ async function main() {
       assert.ok(!/\.update\(|\.delete\(|\.remove\(/.test(audit), 'audit entries are only ever inserted');
       const callers = fs.readFileSync('src/shift/shift.controller.ts', 'utf8');
       assert.equal((callers.match(/reconcileWithoutBookOff\(/g) || []).length, 2, 'one route is the only caller');
+    });
+
+    await test('RECON-14-RECONCILIATION-IS-READ-FROM-THE-AUDIT-ENTRY-NOT-INFERRED', async () => {
+      const reconciled = await workedShift({ endedMinsAgo: 120 });
+      await service.reconcileWithoutBookOff(A.owner, reconciled.id, { reason: 'control_confirmed_departure' });
+      // Completed with a Book On and no Book Off, but NOT by reconciliation (e.g. a legacy edit): no audit entry.
+      const legacy = await workedShift({ endedMinsAgo: 120, status: 'completed' });
+      const foreign = await workedShift({ tenant: B, endedMinsAgo: 120 });
+      await service.reconcileWithoutBookOff(B.owner, foreign.id, { reason: 'guard_forgot_book_off' });
+
+      const viewer = await member(A.company, CompanyMembershipRole.VIEWER);
+      const rows = await service.listReconciliations(viewer, [reconciled.id, legacy.id, foreign.id, 999999, -1, NaN]);
+      assert.deepEqual(rows.map((r) => r.shiftId), [reconciled.id], 'only the audited reconciliation, only in my company');
+      assert.equal(rows[0].reason, 'control_confirmed_departure');
+      assert.ok(rows[0].reconciledAt && Number.isFinite(Date.parse(rows[0].reconciledAt)));
+      assert.deepEqual(await service.listReconciliations(B.owner, [reconciled.id]), [], 'another company cannot see it');
+      assert.deepEqual(await service.listReconciliations(viewer, []), []);
+      // A Guard has no company membership.
+      await rejects(service.listReconciliations({ sub: A.guardUser.id, role: UserRole.GUARD } as never, [reconciled.id]), NotFoundException);
+      // The lookup route is declared before GET :id, so "reconciliations" is never parsed as a shift id.
+      const fs = await import('node:fs');
+      const controller = fs.readFileSync('src/shift/shift.controller.ts', 'utf8');
+      assert.ok(controller.indexOf("@Get('reconciliations')") < controller.indexOf("@Get(':id')"));
+      const roles = Reflect.getMetadata(ROLES_KEY, ShiftController.prototype.listReconciliations) as UserRole[];
+      assert.ok(!roles.includes(UserRole.GUARD) && !roles.includes(UserRole.ADMIN), 'company accounts only');
     });
 
     console.log(JSON.stringify({ event: 'shift_reconciliation_certified', tests: passed }));
