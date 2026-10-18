@@ -619,10 +619,33 @@ export interface OperationalWindowView {
    * The engine's own verdict, published from Phase 4A for the timeline markers and the export rows.
    * Optional because the Log Book windows and the narrowed Guard view do not carry it.
    */
-  state?: 'completed' | 'due' | 'overdue' | 'missed' | 'not_applicable';
+  state?: 'completed' | 'due' | 'overdue' | 'missed' | 'not_applicable' | 'ended_at_book_off';
   applicable?: boolean;
   completedAt?: string | null;
   completionCount?: number;
+  /**
+   * Welfare history, only on GET /coverage/operations (Welfare Phase 2): when the sweep recorded this
+   * window as missed, and the actionable alert that carried it (null when none did).
+   */
+  missRecordedAt?: string | null;
+  alert?: WelfareWindowAlertView | null;
+}
+
+/** The control-room alert a missed window was raised under, as it stands now. */
+export interface WelfareWindowAlertView {
+  id: number;
+  status: 'open' | 'acknowledged' | 'closed';
+  acknowledged: boolean;
+  closedAt: string | null;
+  /** Closed by the previous sweep rule (a later window was met), not by a person. */
+  closedBySystem: boolean;
+  resolutionReason: string | null;
+}
+
+/** One row of GET /coverage/operations. */
+export interface ShiftOperationsRow {
+  shiftId: number;
+  operations: ShiftOperationsView | null;
 }
 
 export type WelfarePresentationStatus =
@@ -780,7 +803,7 @@ export interface GuardOperationalWindow {
    * draw one marker per window and the operations export can emit one row per window. Absent on the
    * narrowed Guard view, which only needs the current window.
    */
-  state?: 'completed' | 'due' | 'overdue' | 'missed' | 'not_applicable';
+  state?: 'completed' | 'due' | 'overdue' | 'missed' | 'not_applicable' | 'ended_at_book_off';
   applicable?: boolean;
   completedAt?: string | null;
   completionCount?: number;
@@ -1683,6 +1706,9 @@ export interface SafetyAlert {
   complianceReason?: 'expired' | 'not_confirmed' | 'missing' | null;
   acknowledgedAt?: string | null;
   closedAt?: string | null;
+  /** Who closed it; null for a row the system closed (or wrote closed, as missed-window history). */
+  closedByUserId?: number | null;
+  resolutionReason?: string | null;
   createdAt: string;
   shift?: Shift | null;
   company?: CompanyProfile;

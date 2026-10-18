@@ -21,6 +21,7 @@ import {
 } from '../../services/siteTime';
 import type { ShiftOperationsView } from '../../types/models';
 import { isWelfareEvidence } from '../shifts/welfareEvidence';
+import { isAwaitingBookOn } from './welfareMonitoring';
 
 export type ReportShiftInput = {
   shift: {
@@ -52,6 +53,11 @@ export type ReportScope = {
   date: string;
   /** The site name when a single site is selected, for the filename. */
   siteName?: string | null;
+  /**
+   * The board's clock. With it, a window the engine calls "due" that has not started yet exports as
+   * Upcoming — exactly as the timeline marks it (Welfare Phase 2). Without it, "Due", as before.
+   */
+  nowMs?: number;
 };
 
 /** The summary sheet: one row per shift. */
@@ -75,12 +81,26 @@ export const WELFARE_COLUMNS = [
 
 /** How the engine's window state reads in a compliance export. Never the legacy vocabulary. */
 const WELFARE_STATUS_LABEL: Record<string, string> = {
+  upcoming: 'Upcoming',
   completed: 'Completed',
   due: 'Due',
   overdue: 'Overdue Welfare Check',
   missed: 'Missed Welfare Check',
+  // A final window the Guard booked off part-way through: neither missed nor "not required" until the
+  // owner sets that policy (Welfare Phase 4), so it says what happened.
+  ended_at_book_off: 'Ended at Book Off',
   not_applicable: 'Not required',
 };
+
+/**
+ * The engine's state, read exactly as the timeline marks it: a window not yet started is Upcoming when it is
+ * "due", or when the shift is still to be booked on (the engine owes nothing before Book On).
+ */
+function welfareStatusKey(w: { state?: string; start: string }, nowMs: number | undefined, awaitingBookOn: boolean): string {
+  const state = String(w.state);
+  const ahead = nowMs !== undefined && Date.parse(w.start) > nowMs;
+  return ahead && (state === 'due' || (state === 'not_applicable' && awaitingBookOn)) ? 'upcoming' : state;
+}
 
 /**
  * The Log Book sheet: the entries themselves, and the periods that were required.
@@ -187,7 +207,7 @@ export function buildOperationsReport(
         ...common,
         formatInstantTime(w.start, f.tz),
         formatInstantTime(w.end, f.tz),
-        WELFARE_STATUS_LABEL[String(w.state)] ?? 'Not required',
+        WELFARE_STATUS_LABEL[welfareStatusKey(w, scope.nowMs, isAwaitingBookOn(input.attendance?.checkInAt ?? input.operations?.bookOnAt ?? null, input.shift.status))] ?? 'Not required',
         w.completedAt ? formatInstantTime(w.completedAt, f.tz) : '',
         ...tail,
       ]);

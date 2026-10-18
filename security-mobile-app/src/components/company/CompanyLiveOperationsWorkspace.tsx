@@ -34,6 +34,8 @@ import {
 import { buildTodaySoFar, type TodaySoFar } from './operationsSummary';
 import { incidentAttentionActions } from './incidentLifecycle';
 import { logTypeLabel } from './logBookRegister';
+import { safetyAlertDrawerLabel, welfareIntervalLabel, welfareWindowRows, type WelfareDisplayState } from './welfareMonitoring';
+import { WELFARE_MARKER_GLYPH } from './operationsTimeline';
 import { Drawer } from '../ui/Drawer';
 import { colors, radii, spacing } from '../../theme';
 import { DailyLog, Incident, SafetyAlert, Shift, Timesheet } from '../../types/models';
@@ -1874,6 +1876,7 @@ function DetailPanelContent({
   const timeZone = shift.site?.timezone || operations?.timezone || DEFAULT_SITE_TIME_ZONE;
   const operationsSections = operationsDetailLines(operations);
   const operationsExceptions = operationalExceptions(operations);
+  const welfareRows = welfareWindowRows(operations, { nowMs, timeZone, shiftStatus: shift.status });
 
   return (
     <>
@@ -1884,7 +1887,7 @@ function DetailPanelContent({
           <Text style={styles.detailMeta}>
             {shift.guard?.fullName || 'No guard assigned'} · {fmtDate(shift.start, timeZone)} · {fmtTime(shift.start, timeZone)}–{fmtTime(shift.end, timeZone)}
           </Text>
-          <Text style={styles.detailMeta}>Welfare Check every {shift.checkCallIntervalMinutes || 60} min</Text>
+          <Text style={styles.detailMeta}>{welfareIntervalLabel(operations, shift)}</Text>
         </View>
         <View style={[styles.detailBadge, { borderColor: badge.color, backgroundColor: `${badge.color}14` }]}>
           <Text style={[styles.detailBadgeText, { color: badge.color }]}>{badge.icon} {badge.label}</Text>
@@ -2015,6 +2018,34 @@ function DetailPanelContent({
           </View>
         ) : null}
 
+        {/* Welfare Phase 2: every scheduled window, what happened in it, and the alert it raised. The states
+            and times are the backend's; this card only words them. A history record of a miss is never
+            presented as "Closed" — the alert that carried it says who resolved it, if anyone did. */}
+        {welfareRows.length ? (
+          <View style={styles.detailCard}>
+            <Text style={styles.detailCardTitle}>Welfare Checks</Text>
+            {welfareRows.map((row) => (
+              <View
+                key={row.key}
+                style={styles.welfareRow}
+                accessibilityLabel={`${row.date} ${row.window}, ${row.stateWord}${row.checkedAt ? `, checked at ${row.checkedAt}` : ''}${row.alert ? `, ${row.alert}` : ''}`}
+              >
+                <Text style={styles.welfareWindow}>
+                  {row.window}
+                  <Text style={styles.detailStateMuted}>{'  '}{row.date}</Text>
+                </Text>
+                <Text style={[styles.welfareState, WELFARE_ROW_TONE[row.state] ?? null]}>
+                  {WELFARE_MARKER_GLYPH[row.state]} {row.stateWord}
+                </Text>
+                <Text style={styles.welfareDetail}>
+                  {row.checkedAt ? `Checked ${row.checkedAt}` : row.missRecordedAt ? `Recorded ${row.missRecordedAt}` : ''}
+                  {row.alert ? `${row.checkedAt || row.missRecordedAt ? ' · ' : ''}${row.alert}` : ''}
+                </Text>
+              </View>
+            ))}
+          </View>
+        ) : null}
+
         {/* Attendance reads as a comparison, because that is the question: did the guard arrive when
             they were supposed to? The scheduled time sits beside the actual one rather than three lines
             away in the header. */}
@@ -2071,7 +2102,7 @@ function DetailPanelContent({
             : alerts.map((a) => (
                 <Text key={a.id} style={styles.detailListLine}>
                   <Text style={styles.detailListTime}>{fmtTime(a.createdAt, timeZone)}</Text>
-                  {'  '}{fmtStatus(a.type)} ({fmtStatus(a.status)})
+                  {'  '}{safetyAlertDrawerLabel(a)}
                 </Text>
               ))}
         </View>
@@ -2081,9 +2112,29 @@ function DetailPanelContent({
   );
 }
 
+/** Missed and still-due windows stand out in the drawer list; the glyph and word carry the meaning too. */
+const WELFARE_ROW_TONE: Partial<Record<WelfareDisplayState, any>> = {
+  missed: { color: colors.danger },
+  overdue: { color: colors.warning },
+  completed: { color: colors.success },
+};
+
 // ─── Styles ────────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
+  welfareRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'baseline',
+    columnGap: spacing.sm,
+    rowGap: 2,
+    paddingVertical: 3,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  welfareWindow: { fontSize: 12, fontWeight: '700', color: colors.textPrimary, minWidth: 150 },
+  welfareState: { fontSize: 12, fontWeight: '700', color: colors.textSecondary, minWidth: 130 },
+  welfareDetail: { fontSize: 12, color: colors.textSecondary, flexShrink: 1 },
   root: {
     flex: 1,
     gap: spacing.sm,

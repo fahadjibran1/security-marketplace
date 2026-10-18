@@ -210,6 +210,11 @@ jobs:
       - name: Verify operations timeline geometry
         run: npm run test:operations-timeline
 
+      # Welfare Phase 2: each window's state, check time and alert, overnight and on any day, and the
+      # drawer never presenting a missed-window history record as "Closed".
+      - name: Verify live welfare monitoring
+        run: npm run test:welfare-monitoring
+
       # The daily operations export, in both formats. Includes the formula-injection guard: a site or
       # guard name beginning = + - @ is user-supplied free text, and this file is evidence.
       - name: Verify operations report and export safety

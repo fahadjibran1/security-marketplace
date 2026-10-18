@@ -28,6 +28,7 @@ import {
   ComplianceCheck,
   RecordComplianceCheckPayload,
   CoverageShiftRow,
+  ShiftOperationsRow,
   CoverageSiteRow,
   ContractPricingRule,
   ContractPricingRulePayload,
@@ -973,6 +974,14 @@ export function listCoverageShifts(params: { from?: string; to?: string; siteId?
   });
   const suffix = query.toString() ? `?${query.toString()}` : '';
   return request<CoverageShiftRow[]>(`/coverage/shifts${suffix}`);
+}
+
+/**
+ * Welfare and Log Book monitoring for the named shifts, whatever their status or start day (Welfare Phase 2).
+ * The backend scopes them to the signed-in company; an id that is not this company's is simply absent.
+ */
+export function listShiftOperations(shiftIds: number[]) {
+  return request<ShiftOperationsRow[]>(`/coverage/operations?shiftIds=${shiftIds.join(',')}`);
 }
 
 export function listCoverageSites(params: { from?: string; to?: string; siteId?: string; shiftId?: string; uncoveredOnly?: boolean } = {}) {

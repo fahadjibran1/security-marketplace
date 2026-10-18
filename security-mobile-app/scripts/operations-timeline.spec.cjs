@@ -172,18 +172,22 @@ const windowsAt = (states, firstMs, intervalMin = 15) =>
     completionCount: state === 'completed' ? 1 : 0,
   }));
 
-test('MARKER-01-THE-FIVE-CANONICAL-STATES-EACH-HAVE-A-GLYPH-AND-A-WORD', () => {
+// Welfare Phase 2 adds two to the original five: Upcoming (the engine's "due" for a window not yet started)
+// and Ended at Book Off (a partly-worked final window, deliberately unjudged until the owner sets that policy).
+test('MARKER-01-EVERY-STATE-HAS-A-GLYPH-AND-A-WORD', () => {
   assert.deepEqual(Object.keys(WELFARE_MARKER_GLYPH).sort(), [
-    'completed', 'due', 'missed', 'not_applicable', 'overdue',
+    'completed', 'due', 'ended_at_book_off', 'missed', 'not_applicable', 'overdue', 'upcoming',
   ]);
   assert.equal(WELFARE_MARKER_GLYPH.completed, '✓');
   assert.equal(WELFARE_MARKER_GLYPH.due, '●');
   assert.equal(WELFARE_MARKER_GLYPH.overdue, '!');
   assert.equal(WELFARE_MARKER_GLYPH.missed, '✕');
   assert.equal(WELFARE_MARKER_GLYPH.not_applicable, '—');
+  assert.equal(WELFARE_MARKER_GLYPH.upcoming, '○');
+  assert.equal(WELFARE_MARKER_GLYPH.ended_at_book_off, '◐');
   // Never colour alone: every state also has a word, and no two share a glyph.
-  assert.equal(new Set(Object.values(WELFARE_MARKER_GLYPH)).size, 5, 'glyphs are distinguishable');
-  assert.equal(new Set(Object.values(WELFARE_MARKER_WORD)).size, 5, 'and so is the wording');
+  assert.equal(new Set(Object.values(WELFARE_MARKER_GLYPH)).size, 7, 'glyphs are distinguishable');
+  assert.equal(new Set(Object.values(WELFARE_MARKER_WORD)).size, 7, 'and so is the wording');
 });
 
 test('MARKER-02-FOUR-MARKERS-PER-HOUR-AT-A-FIFTEEN-MINUTE-INTERVAL', () => {
@@ -510,8 +514,9 @@ test('UAT19-THE-SHIFT-19-EVENING-IS-READABLE-AT-A-GLANCE', () => {
   assert.equal(row.status, 'Live');
   assert.equal(row.overnight, false);
 
-  // And the Welfare history as a readable strip: ✓ ! ✕ ●
-  assert.deepEqual(row.welfare.map((m) => m.glyph), ['✓', '!', '✕', '●']);
+  // And the Welfare history as a readable strip: ✓ ! ✕ ○. Window 3 (21:20–21:35) has not started at NOW
+  // (20:50), so since Welfare Phase 2 the engine's "due" reads as Upcoming (○) rather than Due (●).
+  assert.deepEqual(row.welfare.map((m) => m.glyph), ['✓', '!', '✕', '○']);
   assert.match(row.welfare[0].accessibleLabel, /Completed at 20:48/);
   assert.match(row.welfare[2].accessibleLabel, /Fahad test, Welfare Check 21:05–21:20, Missed/);
 

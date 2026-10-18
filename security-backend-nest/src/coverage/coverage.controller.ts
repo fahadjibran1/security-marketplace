@@ -19,6 +19,13 @@ export class CoverageController {
     return this.coverageService.listShiftCoverage(user.sub, user.role, query);
   }
 
+  /** Welfare and Log Book monitoring for named shifts: `GET /coverage/operations?shiftIds=12,13`. */
+  @Get('operations')
+  @Roles(...COMPANY_VIEW_ROLES)
+  operations(@CurrentUser() user: JwtPayload, @Query('shiftIds') shiftIds?: string) {
+    return this.coverageService.listShiftOperations(user.sub, user.role, shiftIds);
+  }
+
   @Get('sites')
   @Roles(...COMPANY_VIEW_ROLES)
   sites(@CurrentUser() user: JwtPayload, @Query() query: CoverageQuery) {

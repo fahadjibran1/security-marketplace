@@ -1,6 +1,6 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Between, Repository } from 'typeorm';
+import { Between, In, Repository } from 'typeorm';
 
 import { AvailabilityService } from '../availability/availability.service';
 import { CompanyMembershipService } from '../company-membership/company-membership.service';
@@ -23,6 +23,23 @@ export type CoverageQuery = {
 const NON_OPERATIONAL_SHIFT_STATUSES = new Set(['cancelled', 'completed', 'missed']);
 const CONFIRMED_COVER_SHIFT_STATUSES = new Set(['ready', 'in_progress']);
 const COVERAGE_TIME_ZONE = 'Europe/London';
+
+/** The most shifts one welfare monitoring request may name. A board shows a few dozen. */
+export const OPERATIONS_MAX_SHIFT_IDS = 200;
+
+/** "12,13,14" to [12, 13, 14]. Anything else, an empty list or more than the cap is refused. */
+export function parseOperationsShiftIds(raw: string | undefined): number[] {
+  const parts = (raw ?? '').split(',').map((part) => part.trim()).filter(Boolean);
+  if (!parts.length) throw new BadRequestException('shiftIds is required: a comma-separated list of shift ids.');
+  if (parts.length > OPERATIONS_MAX_SHIFT_IDS) {
+    throw new BadRequestException(`At most ${OPERATIONS_MAX_SHIFT_IDS} shift ids per request.`);
+  }
+  const ids = parts.map((part) => (/^[1-9]\d{0,9}$/.test(part) ? Number(part) : NaN));
+  if (ids.some((id) => !Number.isSafeInteger(id) || id > 2_147_483_647)) {
+    throw new BadRequestException('shiftIds must be positive whole numbers.');
+  }
+  return [...new Set(ids)];
+}
 
 /**
  * Exactly the relations a coverage row and the operations projection read: the site and its client
@@ -124,6 +141,32 @@ export class CoverageService {
       ...this.toCoverageRow(shift),
       operations: operations.get(shift.id) ?? null,
     }));
+  }
+
+  /**
+   * Welfare and Log Book monitoring for the shifts Live Operations is showing, whatever their status.
+   *
+   * The board used to read this from the coverage list, which only covers shifts STARTING on the requested
+   * UK day that are still operational — so a live overnight shift lost its welfare windows at midnight, a
+   * booked-off or reconciled shift lost them on completion, and a historical day had none. The board knows
+   * exactly which shifts it can show, so it names them.
+   *
+   * Tenant isolation is the query itself: only this company's shifts are read, and an id belonging to
+   * another company is simply absent from the answer — never an error that would confirm it exists.
+   * Same permission as coverage. The projection is the same one coverage uses, plus each window's miss
+   * and alert history (one more bounded read).
+   */
+  async listShiftOperations(userId: number, userRole: UserRole, shiftIdsParam: string | undefined) {
+    const ids = parseOperationsShiftIds(shiftIdsParam);
+    const { company } = await this.membershipService.resolveCompanyContext(userId, userRole, CompanyPermission.SITES_VIEW);
+    const now = new Date();
+    const shifts = await this.shiftRepo.find({
+      where: { id: In(ids), company: { id: company.id } },
+      order: { start: 'ASC' },
+      ...COVERAGE_SHIFT_READ,
+    });
+    const operations = await this.operationsProjection.projectForShifts(shifts, now, { welfareHistory: true });
+    return shifts.map((shift) => ({ shiftId: shift.id, operations: operations.get(shift.id) ?? null }));
   }
 
   async listSiteCoverage(userId: number, userRole: UserRole, query: CoverageQuery) {

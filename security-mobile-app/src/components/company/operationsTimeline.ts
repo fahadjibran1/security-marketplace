@@ -33,7 +33,8 @@ import {
   formatSiteDateInput,
   zoneOffsetMs,
 } from '../../services/siteTime';
-import type { GuardOperationalWindow, ShiftOperationsView } from '../../types/models';
+import type { GuardOperationalWindow, ShiftOperationsView, WelfareWindowAlertView } from '../../types/models';
+import { isAwaitingBookOn, welfareAlertWord } from './welfareMonitoring';
 import { isAwaitingReconciliation, isBookOffOverdue } from './liveOperationsPolicy';
 
 // ─── the visible axis ─────────────────────────────────────────────────────────
@@ -195,8 +196,20 @@ export function resolveTimelineSpan(
 
 // ─── welfare markers ──────────────────────────────────────────────────────────
 
-/** The five canonical marker states, which are the engine's own window states. */
-export type WelfareMarkerState = 'completed' | 'due' | 'overdue' | 'missed' | 'not_applicable';
+/**
+ * The marker states: the engine's own window states, with "due" split by the clock into Upcoming (not
+ * started) and Due (running now) — a reading of the time, never a recalculation of the window — and the
+ * Welfare Phase 2 state for a final window the Guard booked off part-way through, which is deliberately
+ * neither a miss nor "not required" until the owner sets that policy.
+ */
+export type WelfareMarkerState =
+  | 'upcoming'
+  | 'completed'
+  | 'due'
+  | 'overdue'
+  | 'missed'
+  | 'ended_at_book_off'
+  | 'not_applicable';
 
 /**
  * Glyph and text for each state.
@@ -205,18 +218,22 @@ export type WelfareMarkerState = 'completed' | 'due' | 'overdue' | 'missed' | 'n
  * monochrome screen, to a screen reader, and to a controller with colour-vision deficiency.
  */
 export const WELFARE_MARKER_GLYPH: Record<WelfareMarkerState, string> = {
+  upcoming: '○',
   completed: '✓',
   due: '●',
   overdue: '!',
   missed: '✕',
+  ended_at_book_off: '◐',
   not_applicable: '—',
 };
 
 export const WELFARE_MARKER_WORD: Record<WelfareMarkerState, string> = {
+  upcoming: 'Upcoming',
   completed: 'Completed',
   due: 'Due',
   overdue: 'Overdue',
   missed: 'Missed',
+  ended_at_book_off: 'Ended at Book Off',
   not_applicable: 'Not required',
 };
 
@@ -240,7 +257,7 @@ export type WelfareMarker = {
 export function resolveWelfareMarkers(
   windows: readonly GuardOperationalWindow[] | undefined,
   window: TimelineWindow,
-  context: { guardName: string; timeZone: string },
+  context: { guardName: string; timeZone: string; nowMs?: number; awaitingBookOn?: boolean },
 ): WelfareMarker[] {
   if (!windows || windows.length === 0) return [];
 
@@ -252,8 +269,12 @@ export function resolveWelfareMarkers(
     if (!span) continue;
 
     const state = (w as { state?: string }).state as WelfareMarkerState | undefined;
+    const known: WelfareMarkerState = state && state in WELFARE_MARKER_GLYPH ? state : 'not_applicable';
+    // Not started yet: the engine's "due" for a window still ahead reads as Upcoming, and so does a future
+    // window of a shift not yet booked on (the engine owes nothing before Book On; it is not "not required").
+    const ahead = context.nowMs !== undefined && startMs > context.nowMs;
     const resolved: WelfareMarkerState =
-      state && state in WELFARE_MARKER_GLYPH ? state : 'not_applicable';
+      ahead && (known === 'due' || (known === 'not_applicable' && context.awaitingBookOn)) ? 'upcoming' : known;
 
     markers.push({
       index: w.index,
@@ -266,18 +287,25 @@ export function resolveWelfareMarkers(
   return markers;
 }
 
-/** "Fahad test, Welfare Check 20:45–21:00, Completed at 20:48" — guard, window, state, and when. */
+/**
+ * "Fahad test, Welfare Check 20:45–21:00, Completed at 20:48" — guard, window, state, and when — and for a
+ * missed window, when it was recorded and the alert that carried it, so hovering a marker answers the
+ * control room's question without opening the shift.
+ */
 export function welfareMarkerLabel(
-  w: GuardOperationalWindow & { state?: string; completedAt?: string | null },
+  w: GuardOperationalWindow & { state?: string; completedAt?: string | null; missRecordedAt?: string | null; alert?: WelfareWindowAlertView | null },
   state: WelfareMarkerState,
   context: { guardName: string; timeZone: string },
 ): string {
   const from = formatInstantTime(w.start, context.timeZone);
   const to = formatInstantTime(w.end, context.timeZone);
   const base = `${context.guardName}, Welfare Check ${from}–${to}, ${WELFARE_MARKER_WORD[state]}`;
-  return state === 'completed' && w.completedAt
-    ? `${base} at ${formatInstantTime(w.completedAt, context.timeZone)}`
-    : base;
+  if (state === 'completed' && w.completedAt) return `${base} at ${formatInstantTime(w.completedAt, context.timeZone)}`;
+  if (state === 'missed' && w.missRecordedAt) {
+    const alert = welfareAlertWord(w.alert) ?? 'no alert raised';
+    return `${base}, recorded ${formatInstantTime(w.missRecordedAt, context.timeZone)}, ${alert}`;
+  }
+  return base;
 }
 
 // ─── attendance ───────────────────────────────────────────────────────────────
@@ -520,7 +548,10 @@ export function buildTimeline(
       status: resolveTimelineStatus(input.shift, input.attendance, nowMs, Boolean(input.closedByControl)),
       attendance: resolveAttendanceLabels(input.shift, input.attendance, nowMs, timeZone, Boolean(input.closedByControl)),
       span,
-      welfare: resolveWelfareMarkers(input.operations?.welfare?.windows, window, { guardName, timeZone }),
+      welfare: resolveWelfareMarkers(input.operations?.welfare?.windows, window, {
+        guardName, timeZone, nowMs,
+        awaitingBookOn: isAwaitingBookOn(input.attendance?.checkInAt ?? input.operations?.bookOnAt ?? null, input.shift.status),
+      }),
       overnight:
         formatSiteDateInput(input.shift.end, timeZone) > formatSiteDateInput(input.shift.start, timeZone),
     });

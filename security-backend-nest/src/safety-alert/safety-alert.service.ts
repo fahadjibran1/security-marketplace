@@ -487,27 +487,23 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
     const missedNow = resolution.windows.filter((window) => window.state === OperationalWindowState.MISSED);
     if (!missedNow.length) return;
 
-    const active = await manager.findOne(SafetyAlert, {
-      where: {
-        shift: { id: shift.id },
-        type: SafetyAlertType.MISSED_CHECKCALL,
-        welfareWindowIndex: IsNull(),
-        status: In([SafetyAlertStatus.OPEN, SafetyAlertStatus.ACKNOWLEDGED]),
-      },
-      order: { createdAt: 'DESC' },
-      // Only the summary's own columns are read or changed (its message); relations that are not loaded
-      // are left untouched when it is saved. Performance P2.
-      loadEagerRelations: false,
-    });
-
-    const outstanding = await this.outstandingMisses(manager, shift, missedNow, active?.id ?? null);
+    // One statement answers everything a sweep usually needs: which summary is active, and which misses
+    // are outstanding and new since it was written. On most sweeps nothing has changed and this is the only
+    // query the shift costs here, as the single active-summary read was before.
+    const { activeSummaryId, outstanding } = await this.outstandingMisses(manager, shift, missedNow);
     if (!outstanding.length) {
-      if (!active) counters.summariesSuppressed += 1;
+      if (activeSummaryId === null) counters.summariesSuppressed += 1;
       return;
     }
     // An active summary changes only for a miss recorded since it was last written. Nothing else — a
     // later good check, a recalculation, an older message format — rewrites or re-notifies it.
-    if (active && !outstanding.some((miss) => miss.sinceSummaryWritten)) return;
+    if (activeSummaryId !== null && !outstanding.some((miss) => miss.sinceSummaryWritten)) return;
+
+    // Only the summary's own columns are read or changed (its message and status); relations that are not
+    // loaded are left untouched when it is saved. Performance P2.
+    const active = activeSummaryId === null
+      ? null
+      : await manager.findOne(SafetyAlert, { where: { id: activeSummaryId }, loadEagerRelations: false });
 
     const missedRun = this.windowEngine.trailingMissedRun(resolution.windows);
     const { message, consecutive, earlier } = this.welfareSummaryMessage(
@@ -653,38 +649,46 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
     manager: EntityManager,
     shift: Shift,
     missedNow: readonly ResolvedOperationalWindow[],
-    activeSummaryId: number | null,
-  ): Promise<{ index: number; evidenceId: number; sinceSummaryWritten: boolean }[]> {
-    const lastClosed = await manager.findOne(SafetyAlert, {
-      where: {
-        shift: { id: shift.id },
-        type: SafetyAlertType.MISSED_CHECKCALL,
-        welfareWindowIndex: IsNull(),
-        status: SafetyAlertStatus.CLOSED,
-      },
-      order: { closedAt: { direction: 'DESC', nulls: 'LAST' }, id: 'DESC' },
-      loadEagerRelations: false,
-    });
-
-    // `fresh`: recorded after the active summary was last written. Both are database-clock times, and an
-    // evidence row and the summary written in the same sweep transaction carry the same one.
-    const rows: { i: number; id: number; fresh: boolean | null }[] = await manager.query(
-      `SELECT evidence."welfareWindowIndex" AS i, evidence.id AS id,
-              evidence."createdAt" > (SELECT active."updatedAt" FROM safety_alerts active WHERE active.id = $5) AS fresh
-         FROM safety_alerts evidence
-         WHERE evidence."shiftId" = $1 AND evidence.type = $2 AND evidence."welfareWindowIndex" = ANY($3::int[])
-           AND ($4::int IS NULL OR COALESCE(evidence."closedAt", evidence."createdAt") >
-               (SELECT COALESCE(summary."closedAt", summary."updatedAt") FROM safety_alerts summary WHERE summary.id = $4))
-         ORDER BY evidence."welfareWindowIndex" ASC`,
-      [
-        shift.id,
-        SafetyAlertType.MISSED_CHECKCALL,
-        missedNow.map((window) => window.index),
-        lastClosed?.id ?? null,
-        activeSummaryId,
-      ],
+  ): Promise<{
+    activeSummaryId: number | null;
+    outstanding: { index: number; evidenceId: number; sinceSummaryWritten: boolean }[];
+  }> {
+    // active       the open or acknowledged summary, newest first (an adopted legacy alert included)
+    // last_closed  the most recent closure, by a person or by reconciliation
+    // `fresh`      recorded after the active summary was last written. Both are database-clock times, and an
+    //              evidence row and the summary written in the same sweep transaction carry the same one.
+    // The LEFT JOIN keeps one row, with null evidence columns, when nothing is outstanding, so the active
+    // summary is still reported.
+    const rows: { active_id: number | null; i: number | null; id: number | null; fresh: boolean | null }[] = await manager.query(
+      `WITH active AS (
+           SELECT s.id, s."updatedAt" FROM safety_alerts s
+            WHERE s."shiftId" = $1 AND s.type = $2 AND s."welfareWindowIndex" IS NULL AND s.status IN ('open', 'acknowledged')
+            ORDER BY s."createdAt" DESC LIMIT 1
+         ), last_closed AS (
+           SELECT COALESCE(s."closedAt", s."updatedAt") AS at FROM safety_alerts s
+            WHERE s."shiftId" = $1 AND s.type = $2 AND s."welfareWindowIndex" IS NULL AND s.status = 'closed'
+            ORDER BY s."closedAt" DESC NULLS LAST, s.id DESC LIMIT 1
+         )
+       SELECT (SELECT id FROM active) AS active_id, e.i, e.id, e.fresh
+         FROM (SELECT 1) AS one
+         LEFT JOIN LATERAL (
+           SELECT evidence."welfareWindowIndex" AS i, evidence.id AS id,
+                  evidence."createdAt" > (SELECT "updatedAt" FROM active) AS fresh
+             FROM safety_alerts evidence
+            WHERE evidence."shiftId" = $1 AND evidence.type = $2 AND evidence."welfareWindowIndex" = ANY($3::int[])
+              AND (NOT EXISTS (SELECT 1 FROM last_closed)
+                   OR COALESCE(evidence."closedAt", evidence."createdAt") > (SELECT at FROM last_closed))
+         ) AS e ON true
+        ORDER BY e.i ASC NULLS FIRST`,
+      [shift.id, SafetyAlertType.MISSED_CHECKCALL, missedNow.map((window) => window.index)],
     );
-    return rows.map((row) => ({ index: Number(row.i), evidenceId: Number(row.id), sinceSummaryWritten: row.fresh === true }));
+    const activeId = rows[0]?.active_id;
+    return {
+      activeSummaryId: activeId == null ? null : Number(activeId),
+      outstanding: rows
+        .filter((row) => row.i != null)
+        .map((row) => ({ index: Number(row.i), evidenceId: Number(row.id), sinceSummaryWritten: row.fresh === true })),
+    };
   }
 
   /**

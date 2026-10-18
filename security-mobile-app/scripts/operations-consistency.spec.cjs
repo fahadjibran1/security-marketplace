@@ -22,7 +22,8 @@ const { FIXTURE, NOW, LONDON } = require('./operations-timeline-preview.cjs');
 const timeline = loadTs('src/components/company/operationsTimeline.ts');
 const report = loadTs('src/components/company/operationsReport.ts');
 
-const scope = { date: report.reportDateFor(new Date(NOW).toISOString(), LONDON), siteName: null };
+// The board's clock goes to both surfaces, so Upcoming means the same thing on the timeline and in the file.
+const scope = { date: report.reportDateFor(new Date(NOW).toISOString(), LONDON), siteName: null, nowMs: NOW };
 const built = report.buildOperationsReport(FIXTURE, scope);
 
 /** The marker a controller sees, and the words the file prints for the same window. */
@@ -32,6 +33,9 @@ const GLYPH_TO_LABEL = {
   '!': 'Overdue Welfare Check',
   '\u2715': 'Missed Welfare Check',
   '\u2014': 'Not required',
+  // Welfare Phase 2.
+  '\u25cb': 'Upcoming',
+  '\u25d0': 'Ended at Book Off',
 };
 
 const col = (name) => report.WELFARE_COLUMNS.indexOf(name);

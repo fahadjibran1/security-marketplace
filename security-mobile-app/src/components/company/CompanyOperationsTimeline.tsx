@@ -396,7 +396,7 @@ export function CompanyOperationsTimeline({
           <Text style={styles.legendTitle}>Welfare Check</Text>
           {/* The key is drawn with the SAME treatment as the bar, chips included, so it explains what is
               actually on screen rather than a simplified version of it. */}
-          {(['completed', 'due', 'overdue', 'missed', 'not_applicable'] as const).map((state) => (
+          {(['upcoming', 'due', 'overdue', 'completed', 'missed', 'ended_at_book_off', 'not_applicable'] as const).map((state) => (
             <View key={state} style={styles.legendEntry}>
               <View style={[styles.markerChip, MARKER_TONE[state].chip ?? null]}>
                 <Text style={[styles.markerGlyph, MARKER_TONE[state].glyph]}>
@@ -566,10 +566,12 @@ function ShiftBar({ row }: { row: TimelineRow }) {
  * only things that stand out. Every marker still carries its glyph and its accessible label.
  */
 const MARKER_TONE: Record<WelfareMarker['state'], { glyph: any; chip?: any }> = {
+  upcoming: { glyph: { color: colors.disabledText } },
   completed: { glyph: { color: colors.success } },
   due: { glyph: { color: colors.textSecondary } },
   overdue: { glyph: { color: colors.textOnBrand }, chip: { backgroundColor: colors.warning } },
   missed: { glyph: { color: colors.textOnBrand }, chip: { backgroundColor: colors.danger } },
+  ended_at_book_off: { glyph: { color: colors.textSecondary } },
   not_applicable: { glyph: { color: colors.disabledText } },
 };
 

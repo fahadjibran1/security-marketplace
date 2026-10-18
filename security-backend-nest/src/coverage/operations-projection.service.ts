@@ -64,6 +64,30 @@ export type WelfareWindowView = {
   completedAt: string | null;
   /** More than one completion in a window is legitimate; the obligation is still met once. */
   completionCount: number;
+  /**
+   * Welfare history, published only when the caller asks for it (`projectForShifts(..., { welfareHistory })`,
+   * Live Operations' welfare monitoring). Absent otherwise, so every existing response is byte-for-byte as it
+   * was. When present:
+   *   missRecordedAt  when the sweep recorded this window as missed (its durable evidence row), or null
+   *   alert           the actionable alert that carried that miss to the control room, or null when none
+   *                   did (a miss recorded before the 18 October 2026 policy could be closed without one)
+   */
+  missRecordedAt?: string | null;
+  alert?: WelfareWindowAlertView | null;
+};
+
+/**
+ * The control-room alert a missed window was raised under, as it stands now. Derived from stored rows
+ * only: `closedBySystem` is a summary the previous sweep closed by itself when a later window was met,
+ * which the current policy never does, so the board can say so rather than imply a person resolved it.
+ */
+export type WelfareWindowAlertView = {
+  id: number;
+  status: SafetyAlertStatus;
+  acknowledged: boolean;
+  closedAt: string | null;
+  closedBySystem: boolean;
+  resolutionReason: string | null;
 };
 
 export type WelfareOperationsView = {
@@ -169,7 +193,11 @@ export class OperationsProjectionService {
    * company, guard, site, job and assignment graph for every attendance event, log and alert, and the
    * projection reads none of it.
    */
-  async projectForShifts(shifts: Shift[], now = new Date()): Promise<Map<number, ShiftOperationsView>> {
+  async projectForShifts(
+    shifts: Shift[],
+    now = new Date(),
+    options: { welfareHistory?: boolean } = {},
+  ): Promise<Map<number, ShiftOperationsView>> {
     const projections = new Map<number, ShiftOperationsView>();
     if (!shifts.length) return projections;
 
@@ -208,6 +236,18 @@ export class OperationsProjectionService {
       order: { createdAt: 'DESC' },
     });
 
+    // Welfare history: every missed-check row for these shifts — the per-window evidence and every summary,
+    // whatever its status — so each missed window can name the alert it was raised under. One more bounded
+    // read, served by the safety_alerts shift indexes, and only for the caller that asks.
+    const history = options.welfareHistory
+      ? await this.safetyAlertRepo.find({
+          ...PROJECTION_READ,
+          where: { shift: { id: In(shiftIds) }, type: SafetyAlertType.MISSED_CHECKCALL },
+          order: { createdAt: 'ASC', id: 'ASC' },
+        })
+      : null;
+    const historyByShift = history ? this.groupBy(history, (row) => row.shift?.id) : null;
+
     const attendanceByShift = this.groupBy(attendance, (event) => event.shift?.id);
     const welfareByShift = this.groupBy(welfareLogs, (log) => log.shift?.id);
     const logBookByShift = this.groupBy(logBookLogs, (log) => log.shift?.id);
@@ -223,6 +263,7 @@ export class OperationsProjectionService {
           logBookByShift.get(shift.id) ?? [],
           alertsByShift.get(shift.id) ?? [],
           now,
+          historyByShift ? historyByShift.get(shift.id) ?? [] : null,
         ),
       );
     }
@@ -236,6 +277,7 @@ export class OperationsProjectionService {
     logBookLogs: DailyLog[],
     alerts: SafetyAlert[],
     now: Date,
+    welfareHistory: SafetyAlert[] | null = null,
   ): ShiftOperationsView {
     const timezone = shift.site?.timezone || 'Europe/London';
     const shiftStart = new Date(shift.start);
@@ -309,7 +351,10 @@ export class OperationsProjectionService {
           consecutiveMissed,
         }),
         currentWindow: this.toWindowView(currentWelfareWindow),
-        windows: welfare.windows.map((window) => this.toWelfareWindowView(window)),
+        windows: welfare.windows.map((window) => {
+          const view = this.toWelfareWindowView(window);
+          return welfareHistory ? { ...view, ...this.windowHistory(window.index, welfareHistory) } : view;
+        }),
         lastWelfareAt,
         nextDueAt: currentWelfareWindow ? currentWelfareWindow.end.toISOString() : null,
         overdueByMinutes:
@@ -406,6 +451,45 @@ export class OperationsProjectionService {
   private toWindowView(window: ResolvedOperationalWindow | null): OperationalWindowView | null {
     if (!window) return null;
     return { index: window.index, start: window.start.toISOString(), end: window.end.toISOString() };
+  }
+
+  /**
+   * When a window's miss was recorded, and which actionable alert carried it.
+   *
+   * There is no stored link between a summary and the windows it covers (a column would need a migration,
+   * deferred by the owner), so it is read from the rows' own times, exactly as the sweep wrote them: the
+   * covering summary is the latest one created no later than the evidence row — written in the same sweep
+   * transaction, they share a database timestamp — unless that summary had already been closed before the
+   * miss was detected, in which case no alert carried it.
+   */
+  private windowHistory(
+    index: number,
+    rows: readonly SafetyAlert[],
+  ): { missRecordedAt: string | null; alert: WelfareWindowAlertView | null } {
+    const evidence = rows.find((row) => row.welfareWindowIndex === index);
+    if (!evidence) return { missRecordedAt: null, alert: null };
+    const detectedAt = evidence.closedAt ?? evidence.createdAt;
+
+    let covering: SafetyAlert | null = null;
+    for (const row of rows) {
+      if (row.welfareWindowIndex != null) continue;
+      if (row.createdAt.getTime() <= evidence.createdAt.getTime()) covering = row;
+    }
+    if (covering?.closedAt && covering.closedAt.getTime() < detectedAt.getTime()) covering = null;
+
+    return {
+      missRecordedAt: detectedAt.toISOString(),
+      alert: covering
+        ? {
+            id: covering.id,
+            status: covering.status,
+            acknowledged: covering.status === SafetyAlertStatus.ACKNOWLEDGED,
+            closedAt: covering.closedAt ? covering.closedAt.toISOString() : null,
+            closedBySystem: covering.status === SafetyAlertStatus.CLOSED && covering.closedByUserId == null,
+            resolutionReason: covering.resolutionReason ?? null,
+          }
+        : null,
+    };
   }
 
   /** The engine's verdict for one window, published verbatim. Nothing is recomputed or re-mapped. */

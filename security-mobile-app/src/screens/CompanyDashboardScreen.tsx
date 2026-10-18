@@ -74,9 +74,11 @@ import {
   isSiteDateInput,
   resolveDisplayZone,
   siteLocalEndToInstant,
+  siteDayWindow,
   siteLocalToInstant,
   siteToday,
 } from '../services/siteTime';
+import { operationsShiftIds } from '../components/company/welfareMonitoring';
 import { isoToUkOperationalDate, isoWeekday } from '../services/ukDate';
 import {
   canOpenGuardWorkspace,
@@ -130,6 +132,7 @@ import {
   listCompanyTimesheets,
   listComplianceRecords,
   listCoverageShifts,
+  listShiftOperations,
   listGuards,
   listJobApplications,
   listJobs,
@@ -166,6 +169,7 @@ import {
   CompanyScreeningOutcome,
   CreateCompanyGuardInvitationPayload,
   CoverageShiftRow,
+  ShiftOperationsRow,
   ShiftOperationsView,
   CreateClientPayload,
   CreateJobPayload,
@@ -1403,6 +1407,8 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
     date: '',
     status: '',
   });
+  /** The board's selected day as the load cycle last saw it ('' = live), for the welfare monitoring request. */
+  const monitoringDayRef = React.useRef('');
   const [savingClient, setSavingClient] = React.useState(false);
   const [savingSite, setSavingSite] = React.useState(false);
   const [savingRota, setSavingRota] = React.useState(false);
@@ -1560,15 +1566,6 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
             apply: (value: CoverageShiftRow[]) => setUncoveredShifts(value),
           },
           {
-            // Welfare Check and Log Book monitoring, computed by the backend. The board presents these
-            // values; it never recalculates a window, a count or a due time.
-            label: 'live operations monitoring',
-            run: () => listCoverageShifts({ from: todayIsoDate(), to: todayIsoDate() }),
-            apply: (value: CoverageShiftRow[]) => setOperationsByShiftId(
-              new Map(value.filter((row) => row.operations).map((row) => [row.shiftId, row.operations!])),
-            ),
-          },
-          {
             label: 'guards',
             run: listGuards,
             apply: (value: GuardProfile[]) => setGuards(value),
@@ -1587,6 +1584,29 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
             label: 'screening outcomes',
             run: listCompanyScreeningOutcomes,
             apply: (value: CompanyScreeningOutcome[]) => setScreeningOutcomes(value),
+          },
+        ], isCurrent);
+        if (!isCurrent()) return;
+
+        // Welfare Check and Log Book monitoring, computed by the backend; the board presents these values and
+        // never recalculates a window, a count or a due time. Welfare Phase 2: requested for the shifts the
+        // board can show — in progress, or near the selected day — whatever their status or start day. It
+        // used to come from the coverage list for "today", which drops a shift at UK midnight, on completion,
+        // and for every historical day.
+        const monitoringFailures = await runSettledLoaders([
+          {
+            label: 'live operations monitoring',
+            run: () => {
+              const nowMs = Date.now();
+              const day = siteDayWindow(monitoringDayRef.current || todayIsoDate(), DEFAULT_SITE_TIME_ZONE);
+              const ids = operationsShiftIds(latestShifts, day
+                ? { dayStartMs: day.startMs, dayEndMs: day.endMs }
+                : { dayStartMs: nowMs - 12 * 3_600_000, dayEndMs: nowMs + 12 * 3_600_000 });
+              return ids.length ? listShiftOperations(ids) : Promise.resolve([] as ShiftOperationsRow[]);
+            },
+            apply: (value: ShiftOperationsRow[]) => setOperationsByShiftId(
+              new Map(value.filter((row) => row.operations).map((row) => [row.shiftId, row.operations!])),
+            ),
           },
         ], isCurrent);
         if (!isCurrent()) return;
@@ -1653,7 +1673,7 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
           isCurrent,
         );
         if (!isCurrent()) return;
-        const failures = [...coreFailures, ...sectionFailures];
+        const failures = [...coreFailures, ...monitoringFailures, ...sectionFailures];
 
         setFailedSources(failures.map((failure) => failure.label));
         // Freshness is only ever claimed for a load in which every source succeeded.
@@ -1689,6 +1709,13 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
   React.useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // A different day on the board needs that day's welfare monitoring now, not at the next 15-second tick.
+  React.useEffect(() => {
+    if (monitoringDayRef.current === liveFilters.date) return;
+    monitoringDayRef.current = liveFilters.date;
+    void loadData(true);
+  }, [liveFilters.date, loadData]);
 
   // THE operational clock. Live Operations decides what is current by comparing instants against it,
   // so it has to advance for a shift to cross the +4h horizon or age off the board on its own. It is
@@ -4145,8 +4172,8 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
     const siteName = liveFilters.siteId
       ? siteMap.get(Number(liveFilters.siteId))?.name ?? null
       : null;
-    return { date: reportDateFor(new Date(timelineAnchorMs).toISOString(), zone), siteName };
-  }, [liveFilters.siteId, resolveSiteZone, siteMap, timelineAnchorMs]);
+    return { date: reportDateFor(new Date(timelineAnchorMs).toISOString(), zone), siteName, nowMs: operationalNow.getTime() };
+  }, [liveFilters.siteId, resolveSiteZone, siteMap, timelineAnchorMs, operationalNow]);
 
   /** Hands bytes to the browser. Native has no download surface, so it reports that plainly. */
   const downloadOperationsFile = (filename: string, data: BlobPart, mime: string) => {

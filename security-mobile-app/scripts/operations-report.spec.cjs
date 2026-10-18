@@ -402,7 +402,8 @@ test('CONSISTENCY-01-THE-EXPORT-MATCHES-WHAT-THE-TIMELINE-DRAWS', () => {
 
   const inputs = [SHIFT_19];
   const groups = timeline.buildTimeline(inputs, window, nowMs);
-  const r = buildOperationsReport(inputs, SCOPE);
+  // The same clock as the timeline, so a not-yet-started window is Upcoming on both.
+  const r = buildOperationsReport(inputs, { ...SCOPE, nowMs });
 
   assert.equal(timeline.timelineRowCount(groups), r.summary.length, 'visible shifts == summary rows');
 
@@ -415,6 +416,9 @@ test('CONSISTENCY-01-THE-EXPORT-MATCHES-WHAT-THE-TIMELINE-DRAWS', () => {
     '!': 'Overdue Welfare Check',
     '\u2715': 'Missed Welfare Check',
     '\u2014': 'Not required',
+    // Welfare Phase 2.
+    '\u25cb': 'Upcoming',
+    '\u25d0': 'Ended at Book Off',
   };
   drawn.forEach((marker, i) => {
     const row = r.welfare[i];
