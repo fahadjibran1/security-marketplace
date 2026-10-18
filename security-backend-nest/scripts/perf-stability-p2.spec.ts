@@ -651,6 +651,8 @@ async function main() {
           else if (k === 'guardId') o[k] = guardKey.get(x as number) ?? x;
           else if (k === 'siteId') o[k] = x === t.siteA.id ? 'siteA' : x === t.siteB.id ? 'siteB' : x;
           else if (k === 'checkId' || k === 'detectedAt') o[k] = typeof x;
+          // Welfare Phase 1: the evidence rows a summary stands for, by tenant-neutral alert key.
+          else if (k === 'evidenceAlertIds') o[k] = (x as number[]).map((id) => alertKey.get(id) ?? id);
           else o[k] = scrub(x);
         }
         return o;

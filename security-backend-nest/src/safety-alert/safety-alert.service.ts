@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, In, IsNull, MoreThan, Repository } from 'typeorm';
 import {
@@ -95,7 +95,6 @@ type WelfareSweepCounters = {
   evidenceCreated: number;
   summariesOpened: number;
   summariesEscalated: number;
-  summariesResolved: number;
   summariesSuppressed: number;
   missingBookOffCreated: number;
   missingBookOffClosed: number;
@@ -270,7 +269,6 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
       evidenceCreated: 0,
       summariesOpened: 0,
       summariesEscalated: 0,
-      summariesResolved: 0,
       summariesSuppressed: 0,
       missingBookOffCreated: 0,
       missingBookOffClosed: 0,
@@ -430,20 +428,31 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * At most one active shift-level summary, and it is the alert a control room acts on.
+   * The actionable shift-level summary: what a control room acknowledges and resolves.
    *
-   * The rule, deliberately the smallest that fits the existing OPEN / ACKNOWLEDGED / CLOSED lifecycle:
+   * OWNER POLICY, 18 October 2026: every genuinely missed Welfare window must reach the control room as
+   * an actionable alert once its grace period has passed. One miss is enough; the summary does not wait
+   * for a second, and does not depend on whether the Guard has been heard from since.
    *
-   *   trailing run of missed windows > 0, no active summary   open one (OPEN, HIGH)
-   *   trailing run grows, summary already active              rewrite the message only
-   *   trailing run is 0 (latest settled window completed)     close the active summary
-   *   summary CLOSED, a miss recorded after that closure      open a fresh one; the same misses never reopen it
+   *   an outstanding miss, no active summary    open one (OPEN, HIGH) and notify
+   *   a further outstanding miss, active one    rewrite the message and notify (escalation); the status
+   *                                             is kept, so an ACKNOWLEDGED summary stays acknowledged
+   *   a later Welfare Check, or a Book Off      changes nothing: the summary stays outstanding until a
+   *                                             controller resolves it with a reason, or the shift is
+   *                                             reconciled
+   *   summary CLOSED, a miss detected after     open a fresh one; misses already dealt with never
+   *   that closure                              reopen anything
    *
-   * Status is never changed while misses continue, so a summary someone has ACKNOWLEDGED keeps that
-   * state and does not silently revert to OPEN just because the sweep ran again: a human has taken
-   * ownership, and the escalating message is what tells them it is getting worse.
+   * "Outstanding" is judged from the durable per-window evidence: a missed window whose evidence row was
+   * recorded after the most recent summary closure (all of them, if no summary was ever closed). The
+   * evidence rows themselves stay as they are — closed, permanent history — so one missed window is
+   * one control-room action, never two.
    *
-   * An alert left OPEN by the old rolling sweep matches this query and is adopted as the summary
+   * Before this policy the summary opened only while the latest settled window was missed, and the sweep
+   * closed it as soon as a later window was met. A single miss followed by a good check therefore never
+   * reached anyone: it existed only as a closed history row.
+   *
+   * An alert left OPEN by the old rolling sweep matches the active query and is adopted as the summary
    * rather than duplicated beside it, which is the role it already played.
    */
   private async maintainWelfareSummary(
@@ -453,7 +462,11 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
     resolution: OperationalWindowResolution,
     counters: WelfareSweepCounters,
   ) {
-    const missedRun = this.windowEngine.trailingMissedRun(resolution.windows);
+    // Nothing is missed on the current grid, so there is nothing to raise — and, by policy, nothing to
+    // close either. A healthy shift costs no queries here.
+    const missedNow = resolution.windows.filter((window) => window.state === OperationalWindowState.MISSED);
+    if (!missedNow.length) return;
+
     const active = await manager.findOne(SafetyAlert, {
       where: {
         shift: { id: shift.id },
@@ -462,35 +475,34 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
         status: In([SafetyAlertStatus.OPEN, SafetyAlertStatus.ACKNOWLEDGED]),
       },
       order: { createdAt: 'DESC' },
-      // Only the summary's own columns are read or changed (status, closedAt, message); relations that are
-      // not loaded are left untouched when it is saved. Performance P2.
+      // Only the summary's own columns are read or changed (its message); relations that are not loaded
+      // are left untouched when it is saved. Performance P2.
       loadEagerRelations: false,
     });
 
-    if (missedRun === 0) {
-      if (!active) return;
-      active.status = SafetyAlertStatus.CLOSED;
-      active.closedAt = new Date();
-      const resolved = await manager.save(active);
-      counters.summariesResolved += 1;
-      await this.auditLogService.log({
-        company: shift.company,
-        user: null,
-        action: 'welfare_check.summary_resolved',
-        entityType: 'safety_alert',
-        entityId: resolved.id,
-        afterData: { shiftId: shift.id, guardId: guard.id, status: resolved.status },
-      });
+    const outstanding = await this.outstandingMisses(manager, shift, missedNow, active?.id ?? null);
+    if (!outstanding.length) {
+      if (!active) counters.summariesSuppressed += 1;
       return;
     }
+    // An active summary changes only for a miss recorded since it was last written. Nothing else — a
+    // later good check, a recalculation, an older message format — rewrites or re-notifies it.
+    if (active && !outstanding.some((miss) => miss.sinceSummaryWritten)) return;
 
-    const message = `Welfare overdue - ${missedRun} consecutive check${missedRun === 1 ? '' : 's'} missed`;
+    const missedRun = this.windowEngine.trailingMissedRun(resolution.windows);
+    const { message, consecutive, earlier } = this.welfareSummaryMessage(
+      resolution.windows,
+      outstanding.map((miss) => miss.index),
+    );
+    // Which windows, and which evidence rows, this one control-room action stands for.
+    const covers = {
+      consecutiveMissed: consecutive,
+      missedCount: outstanding.length,
+      welfareWindowIndexes: outstanding.map((miss) => miss.index),
+      evidenceAlertIds: outstanding.map((miss) => miss.evidenceId),
+    };
 
     if (!active) {
-      if (!(await this.hasMissSinceLastSummaryClosed(manager, shift, resolution))) {
-        counters.summariesSuppressed += 1;
-        return;
-      }
       const created = await manager.save(
         manager.create(SafetyAlert, {
           company: shift.company,
@@ -510,7 +522,7 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
         action: 'welfare_check.summary_opened',
         entityType: 'safety_alert',
         entityId: created.id,
-        afterData: { shiftId: shift.id, guardId: guard.id, missedRun },
+        afterData: { shiftId: shift.id, guardId: guard.id, missedRun, ...covers },
       });
       if (shift.company.user?.id) {
         await this.notificationService.createForUser({
@@ -535,7 +547,7 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
       action: 'welfare_check.summary_escalated',
       entityType: 'safety_alert',
       entityId: escalated.id,
-      afterData: { shiftId: shift.id, guardId: guard.id, missedRun, status: escalated.status },
+      afterData: { shiftId: shift.id, guardId: guard.id, missedRun, ...covers, status: escalated.status },
     });
     if (shift.company.user?.id) {
       await this.notificationService.createForUserUnlessRecentDuplicate(
@@ -544,7 +556,7 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
           company: shift.company,
           type: NotificationType.ALERT_RAISED,
           title: 'Missed welfare check',
-          message: `${guard.fullName || 'A guard'} has now missed ${missedRun} welfare checks for ${shift.siteName}.`,
+          message: `${guard.fullName || 'A guard'} has now missed ${consecutive + earlier} welfare checks for ${shift.siteName}.`,
         },
         Math.max(5, resolution.intervalMinutes ?? 60),
       );
@@ -552,23 +564,51 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Whether the current run of misses contains a miss the control room has not already dealt with.
+   * The summary's message.
    *
-   * A summary that has been closed — by a person, or by the sweep when a later check was completed — is
-   * not opened again for the same misses. Before this rule, a shift whose Guard never booked off kept its
-   * trailing run above zero forever, so every sweep after a controller closed the summary created a fresh
-   * one for exactly the same missed windows.
+   * It reports the unbroken run of missed windows ending at the newest outstanding miss — the whole run,
+   * including windows a controller already dealt with, because "silent for four hours" is what the
+   * control room needs to read — plus how many earlier outstanding misses sit outside that run.
    *
-   * "Not already dealt with" is judged from the per-window evidence: a run window whose evidence row was
-   * recorded after the most recent summary closure is a miss nobody had been shown when they closed it,
-   * including one the sweep only caught up on after the closure. The comparison uses the evidence row's
-   * own detection time (`closedAt`, set as it is inserted) rather than the window's schedule.
+   * Both figures are fixed once those windows are settled, so a later good Welfare Check cannot rewrite
+   * the message and a repeat sweep cannot "escalate" an alert nothing new has happened to; only a new
+   * miss changes it. A run with nothing earlier keeps the wording the summary has always used, so an
+   * existing summary reads the same after this change.
    */
-  private async hasMissSinceLastSummaryClosed(
+  private welfareSummaryMessage(
+    windows: readonly ResolvedOperationalWindow[],
+    outstanding: readonly number[],
+  ): { message: string; consecutive: number; earlier: number } {
+    const run = new Set<number>();
+    for (let index = outstanding[outstanding.length - 1]; index >= 0; index -= 1) {
+      if (windows[index]?.state !== OperationalWindowState.MISSED) break;
+      run.add(index);
+    }
+    const consecutive = run.size;
+    const earlier = outstanding.filter((index) => !run.has(index)).length;
+    const base = `Welfare overdue - ${consecutive} consecutive check${consecutive === 1 ? '' : 's'} missed`;
+    return { message: earlier ? `${base} (+${earlier} earlier)` : base, consecutive, earlier };
+  }
+
+  /**
+   * The missed windows the control room has not already dealt with, in window order.
+   *
+   * A miss is outstanding when its evidence row was recorded after the most recent summary closure — by a
+   * person, or by reconciliation — or when no summary was ever closed. Only windows the current grid also
+   * calls MISSED are considered, so evidence recorded under an older rule (before the early-check
+   * tolerance) for a window that now reads as met never raises anything new.
+   *
+   * The comparison uses the evidence row's own detection time (`closedAt`, set as it is inserted) rather
+   * than the window's schedule, and both instants are compared inside the database, so neither passes
+   * through a JS Date. A summary closed before closedAt was recorded falls back to its last update, which
+   * is when it was closed. Served by the (shiftId, welfareWindowIndex) partial unique index.
+   */
+  private async outstandingMisses(
     manager: EntityManager,
     shift: Shift,
-    resolution: OperationalWindowResolution,
-  ) {
+    missedNow: readonly ResolvedOperationalWindow[],
+    activeSummaryId: number | null,
+  ): Promise<{ index: number; evidenceId: number; sinceSummaryWritten: boolean }[]> {
     const lastClosed = await manager.findOne(SafetyAlert, {
       where: {
         shift: { id: shift.id },
@@ -579,21 +619,26 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
       order: { closedAt: { direction: 'DESC', nulls: 'LAST' }, id: 'DESC' },
       loadEagerRelations: false,
     });
-    if (!lastClosed) return true;
 
-    const runIndexes = this.windowEngine.trailingMissedWindows(resolution.windows).map((window) => window.index);
-    if (!runIndexes.length) return false;
-
-    // Both instants are compared inside the database, so neither passes through a JS Date. A summary
-    // closed before closedAt was recorded falls back to its last update, which is when it was closed.
-    const [{ n }] = await manager.query(
-      `SELECT count(*)::int AS n FROM safety_alerts evidence
+    // `fresh`: recorded after the active summary was last written. Both are database-clock times, and an
+    // evidence row and the summary written in the same sweep transaction carry the same one.
+    const rows: { i: number; id: number; fresh: boolean | null }[] = await manager.query(
+      `SELECT evidence."welfareWindowIndex" AS i, evidence.id AS id,
+              evidence."createdAt" > (SELECT active."updatedAt" FROM safety_alerts active WHERE active.id = $5) AS fresh
+         FROM safety_alerts evidence
          WHERE evidence."shiftId" = $1 AND evidence.type = $2 AND evidence."welfareWindowIndex" = ANY($3::int[])
-           AND COALESCE(evidence."closedAt", evidence."createdAt") >
-               (SELECT COALESCE(summary."closedAt", summary."updatedAt") FROM safety_alerts summary WHERE summary.id = $4)`,
-      [shift.id, SafetyAlertType.MISSED_CHECKCALL, runIndexes, lastClosed.id],
+           AND ($4::int IS NULL OR COALESCE(evidence."closedAt", evidence."createdAt") >
+               (SELECT COALESCE(summary."closedAt", summary."updatedAt") FROM safety_alerts summary WHERE summary.id = $4))
+         ORDER BY evidence."welfareWindowIndex" ASC`,
+      [
+        shift.id,
+        SafetyAlertType.MISSED_CHECKCALL,
+        missedNow.map((window) => window.index),
+        lastClosed?.id ?? null,
+        activeSummaryId,
+      ],
     );
-    return Number(n) > 0;
+    return rows.map((row) => ({ index: Number(row.i), evidenceId: Number(row.id), sinceSummaryWritten: row.fresh === true }));
   }
 
   /**
@@ -1063,9 +1108,15 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
       throw new BadRequestException('A resolution reason and note are required to close a compliance lapse alert.');
     }
 
-    // Manual closure always states a reason. The automatic paths — a late Book Off answering its own
-    // alert, a completed window closing the welfare summary — call `close()` with no resolution at
-    // all and are deliberately unaffected: the system did not form a view, so it records none.
+    // A missed Welfare Check is an unanswered question about a Guard's safety. Nothing closes one
+    // automatically any more (owner policy, 18 October 2026), so a person closing it always says why.
+    if (alert.type === SafetyAlertType.MISSED_CHECKCALL && !reason) {
+      throw new BadRequestException('A resolution reason and note are required to close a missed Welfare Check alert.');
+    }
+
+    // Manual closure always states a reason. The one automatic closure left — a late Book Off answering
+    // its own Missing Book Off alert — never comes through here and records none: the system did not
+    // form a view.
     if (resolution && !reason) {
       throw new BadRequestException('A resolution reason is required to close this alert.');
     }
@@ -1099,7 +1150,24 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
+  /**
+   * A closed alert is a settled record. Acknowledging it would put it back in the queue, and closing it
+   * again would overwrite who resolved it and why; neither is allowed. This also covers the per-window
+   * missed Welfare Check evidence, which is written closed as permanent history and is never itself
+   * the item a controller acts on — the shift's welfare summary is.
+   */
+  private assertNotClosed(alert: SafetyAlert) {
+    if (alert.status === SafetyAlertStatus.CLOSED) {
+      throw new ConflictException(
+        alert.type === SafetyAlertType.MISSED_CHECKCALL && alert.welfareWindowIndex != null
+          ? 'This is a permanent record of a missed Welfare Check window. Act on the shift’s welfare alert instead.'
+          : 'This alert is already closed.',
+      );
+    }
+  }
+
   private async acknowledge(alert: SafetyAlert, userId: number, company: SafetyAlert['company']) {
+    this.assertNotClosed(alert);
     const beforeData = this.transitionBefore(alert);
     alert.status = SafetyAlertStatus.ACKNOWLEDGED;
     alert.acknowledgedAt = new Date();
@@ -1131,6 +1199,7 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
   ) {
     // Validated before anything is mutated: a refused resolution must leave the alert exactly as it
     // was, still open and still in the queue.
+    this.assertNotClosed(alert);
     const { reason, note } = this.resolveEvidence(alert, resolution);
     const beforeData = this.transitionBefore(alert);
 

@@ -453,30 +453,35 @@ async function main() {
       assert.equal(open[0].n, 1, 'only the summary is an open, actionable alert');
     });
 
-    await test('W2-23-A-LATER-WELFARE-CHECK-RESOLVES-THE-SUMMARY', async () => {
+    // Owner policy, 18 October 2026: a later Welfare Check is good news, not a resolution. Before it, the
+    // sweep closed the summary itself here (W2-23 "A-LATER-WELFARE-CHECK-RESOLVES-THE-SUMMARY").
+    await test('W2-23-A-LATER-WELFARE-CHECK-DOES-NOT-RESOLVE-THE-SUMMARY', async () => {
       const shift = await makeShift({ startedMinsAgo: 190 });
       await sweep.runMissedWelfareChecks();
-      assert.equal((await summaries(shift.id, SafetyAlertStatus.OPEN)).length, 1);
+      const [opened] = await summaries(shift.id, SafetyAlertStatus.OPEN);
+      assert.ok(opened);
 
       // Contact inside the latest settled window, so the trailing run of misses reaches zero.
       await logAt(shift, 20);
       await sweep.runMissedWelfareChecks();
 
-      assert.equal((await summaries(shift.id, SafetyAlertStatus.OPEN)).length, 0, 'summary no longer open');
-      assert.equal((await summaries(shift.id, SafetyAlertStatus.CLOSED)).length, 1, 'it was closed, not deleted');
+      const after = await summaries(shift.id);
+      assert.equal(after.length, 1, 'the same summary, nothing new');
+      assert.equal(after[0].status, SafetyAlertStatus.OPEN, 'still outstanding until a controller resolves it');
+      assert.equal(after[0].message, opened.message, 'and not rewritten by the good news');
+      assert.equal(await auditCount('welfare_check.summary_resolved', shift.id), 0, 'no automatic resolution');
       assert.ok((await indexedEvidence(shift.id)) >= 3, 'historical evidence is untouched');
     });
 
-    await test('W2-24-A-RESOLVED-SUMMARY-IS-NOT-REOPENED-BY-A-REPEAT-SWEEP', async () => {
+    await test('W2-24-REPEAT-SWEEPS-AFTER-RECOVERY-CHANGE-NOTHING', async () => {
       const shift = await makeShift({ startedMinsAgo: 190 });
       await sweep.runMissedWelfareChecks();
       await logAt(shift, 20);
       await sweep.runMissedWelfareChecks();
-      const closed = await summaries(shift.id, SafetyAlertStatus.CLOSED);
-      assert.equal(closed.length, 1);
+      const before = await summaries(shift.id);
       for (let i = 0; i < 3; i += 1) await sweep.runMissedWelfareChecks();
-      assert.equal((await summaries(shift.id, SafetyAlertStatus.OPEN)).length, 0, 'not reopened');
-      assert.equal((await summaries(shift.id)).length, 1, 'and no second summary invented');
+      assert.deepEqual(await summaries(shift.id), before, 'no closure, no rewrite, no second summary');
+      assert.equal(await auditCount('welfare_check.summary_escalated', shift.id), 0, 'nothing escalated');
     });
 
     await test('W2-25-ACKNOWLEDGED-SUMMARY-KEEPS-ITS-STATUS-WHILE-MISSES-CONTINUE', async () => {

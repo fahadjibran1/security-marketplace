@@ -290,22 +290,33 @@ async function main() {
       assert.equal(rows.length, 1, 'opened for the miss nobody had seen');
     });
 
-    await test('LOC-04-A-SYSTEM-CLOSED-SUMMARY-REOPENS-ONLY-FOR-A-LATER-MISS', async () => {
+    // Owner policy, 18 October 2026: the sweep no longer closes a summary when a later window is met, so the
+    // "system-closed" case this test used to certify cannot arise. What it certifies now: the good news leaves
+    // the summary outstanding, and a later miss escalates that same summary instead of opening a second one.
+    await test('LOC-04-A-LATER-CHECK-KEEPS-THE-SUMMARY-AND-A-LATER-MISS-ESCALATES-IT', async () => {
       const shift = await makeShift({ startedMinsAgo: 190 });
       await sweep.runMissedWelfareChecks();
-      // A welfare check inside the latest settled window: the sweep closes the summary itself.
+      // A welfare check inside the latest settled window.
       const saved = await repo(DailyLog).save(
         repo(DailyLog).create({ company: base.company, guard: base.guard, shift, message: 'entry', logType: DailyLogType.CHECK_CALL }),
       );
       await ds.query(`UPDATE daily_logs SET "createdAt" = now() - interval '20 minutes' WHERE id = $1`, [saved.id]);
       await sweep.runMissedWelfareChecks();
-      assert.equal((await summaries(shift.id, SafetyAlertStatus.OPEN)).length, 0);
+      const [kept] = await summaries(shift.id, SafetyAlertStatus.OPEN);
+      assert.ok(kept, 'still outstanding after the good check');
       for (let i = 0; i < 3; i += 1) await sweep.runMissedWelfareChecks();
       assert.equal((await summaries(shift.id)).length, 1, 'repeat sweeps add nothing');
 
-      await advance(shift.id, 60);
+      // Two hours on: the check met window 2, and windows 3 and 4 have since been missed. The newest run is
+      // two long, and windows 0 and 1 are still outstanding behind the met window.
+      await advance(shift.id, 120);
       await sweep.runMissedWelfareChecks();
-      assert.equal((await summaries(shift.id, SafetyAlertStatus.OPEN)).length, 1, 'a later miss opens a fresh one');
+      const rows = await summaries(shift.id);
+      assert.equal(rows.length, 1, 'no second summary beside the outstanding one');
+      assert.equal(rows[0].id, kept.id);
+      assert.equal(rows[0].status, SafetyAlertStatus.OPEN);
+      assert.equal(rows[0].message, 'Welfare overdue - 2 consecutive checks missed (+2 earlier)', 'escalated with the new misses');
+      assert.equal(await auditCount('welfare_check.summary_escalated', shift.id), 1);
     });
 
     await test('LOC-05-LEGACY-CLOSED-SUMMARY-WITHOUT-CLOSEDAT-IS-NOT-REOPENED', async () => {

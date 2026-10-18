@@ -600,14 +600,16 @@ async function main() {
     assert.equal(await evidenceCount(okShift), 0);
     pass('P0-3 IDEMPOTENT: repeated sweeps converge on the same evidence and summary');
 
-    // Contact inside the latest settled window resolves the summary; the evidence stays.
+    // Owner policy, 18 October 2026: contact inside the latest settled window is good news, not a resolution.
+    // Before it, the sweep closed the summary here. Now it stays outstanding until a controller resolves it.
     await callAt(missShift, 'B', 65);
     await scanAll();
-    const resolved = await summaryRows(missShift);
-    assert.equal(resolved.length, 1, 'the summary is closed, not deleted');
-    assert.equal(resolved[0].status, 'closed');
+    const kept = await summaryRows(missShift);
+    assert.equal(kept.length, 1, 'the same summary, nothing new');
+    assert.equal(kept[0].status, 'open', 'still outstanding: only a controller resolves it');
+    assert.match(kept[0].message, /2 consecutive checks missed/, 'and not rewritten by the good news');
     assert.deepEqual(await evidenceIdx(missShift), [0, 1], 'historical evidence is preserved');
-    pass('P0-3 RESOLUTION: a later Welfare Check closes the summary and keeps the evidence');
+    pass('P0-3 RESOLUTION: a later Welfare Check leaves the summary outstanding and keeps the evidence');
 
     // Overnight: shift began 22:00 the previous UTC day; contact spans midnight and continues into today.
     //

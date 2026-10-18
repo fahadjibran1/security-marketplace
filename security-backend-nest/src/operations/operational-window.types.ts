@@ -99,11 +99,15 @@ export interface ResolvedOperationalWindow extends OperationalWindow {
   readonly dueAt: Date;
   /** `end + grace` — the moment an unmet obligation becomes MISSED, inclusive. */
   readonly missedFrom: Date;
-  /** The first qualifying completion inside the window, if any. */
+  /**
+   * The first qualifying completion attributed to the window, if any — its real timestamp, which
+   * under an early-check tolerance can be a few minutes before `start`.
+   */
   readonly completedAt: Date | null;
   /**
-   * Every qualifying completion inside the window. More than one is legitimate and each is
-   * retained for the Operations Log; the obligation is still satisfied exactly once.
+   * Every qualifying completion attributed to the window. More than one is legitimate and each is
+   * retained for the Operations Log; the obligation is still satisfied exactly once. A completion is
+   * attributed to exactly one window.
    */
   readonly completionCount: number;
 }
@@ -133,10 +137,35 @@ export interface OperationalWindowResolution {
   readonly summary: OperationalWindowSummary;
 }
 
+/**
+ * How completions are attributed to windows, beyond plain containment.
+ *
+ * Without one, a completion belongs to the window that contains it and nothing else (Log Book).
+ * Welfare supplies one: an entry made in the last few minutes before a window starts may count for
+ * that window, and only an entry made while the Guard was actually Booked On discharges anything.
+ */
+export interface CompletionAttribution {
+  /**
+   * Minutes before a window starts in which a completion may count for it instead of for the window
+   * it falls in. It moves ONLY when the window it falls in is already met by an earlier completion
+   * (or carried no obligation), so the tolerance can never turn a met window into a missed one.
+   * 0 means strict containment.
+   */
+  readonly earlyToleranceMinutes: number;
+  /**
+   * Only a completion inside the actual duty period — at or after Book On and, once booked off, at
+   * or before Book Off — may discharge a window. Others are still attributed and counted, so the
+   * Operations Log can show the entry, but they complete nothing.
+   */
+  readonly onDutyOnly: boolean;
+}
+
 export interface ResolveOperationalWindowsInput {
   readonly grid: OperationalWindowGrid;
   readonly applicability: OperationalApplicability;
   readonly completions: readonly Date[];
   readonly now: Date;
   readonly graceMinutes: number;
+  /** Omitted: strict containment, every attributed completion counts. */
+  readonly attribution?: CompletionAttribution;
 }

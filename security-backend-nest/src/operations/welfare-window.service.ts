@@ -12,6 +12,14 @@ import {
 /** Grace before an unmet Welfare Check window becomes MISSED. Product-locked at 5 minutes. */
 export const WELFARE_GRACE_MINUTES = 5;
 
+/**
+ * How early a Welfare Check may be made and still count for the window about to start, provided the
+ * window it was made in is already met. Owner-approved, 18 October 2026: a Guard who checks in at
+ * 23:57, having already checked in at 23:05, has not missed 00:00-01:00. See
+ * OperationalWindowService.attribute for the exact rule.
+ */
+export const WELFARE_EARLY_TOLERANCE_MINUTES = 5;
+
 /** Used when neither the site nor the shift specifies an interval. */
 export const WELFARE_DEFAULT_INTERVAL_MINUTES = 60;
 
@@ -97,6 +105,9 @@ export class WelfareWindowService {
         .map((completion) => completion.at),
       now: input.now,
       graceMinutes: WELFARE_GRACE_MINUTES,
+      // Only a check made while genuinely Booked On counts, and one made just before a window starts may
+      // count for it. Neither moves or rewrites the check's own timestamp.
+      attribution: { earlyToleranceMinutes: WELFARE_EARLY_TOLERANCE_MINUTES, onDutyOnly: true },
     });
   }
 }

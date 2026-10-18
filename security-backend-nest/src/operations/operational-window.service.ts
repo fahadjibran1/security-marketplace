@@ -102,8 +102,9 @@ export class OperationalWindowService {
    * Resolve every window of the grid against the completions that qualified for it.
    *
    * Each window resolves independently: three consecutive unmet windows are three MISSED windows,
-   * not one rolling overdue state. A completion satisfies only the window that contains it — it
-   * never carries forward into the next window or back into the previous one.
+   * not one rolling overdue state. A completion is attributed to exactly one window — the one that
+   * contains it, or under an early-check tolerance the next one (see `attribute`) — and satisfies
+   * only that window. It never carries back into an earlier window.
    *
    * Applicability wins over completion. A completion inside a window the Guard was not on duty for
    * is still counted in `completionCount`, so the Operations Log can show the entry, but the
@@ -120,24 +121,86 @@ export class OperationalWindowService {
       .filter((instant): instant is number => instant !== null)
       .sort((left, right) => left - right);
 
-    const resolved = windows.map<ResolvedOperationalWindow>((window) => {
-      const start = window.start.getTime();
+    const applicable = windows.map((window) => this.isApplicable(window, input.applicability));
+    const attributed = this.attribute(windows, applicable, completions, input.applicability, input.attribution);
+
+    const resolved = windows.map<ResolvedOperationalWindow>((window, index) => {
       const end = window.end.getTime();
-      const inside = completions.filter((instant) => instant >= start && instant < end);
-      const applicable = this.isApplicable(window, input.applicability);
+      const { all, discharging } = attributed[index];
 
       return {
         ...window,
-        applicable,
-        state: this.stateOf({ applicable, completed: inside.length > 0, end, graceMs, now }),
+        applicable: applicable[index],
+        state: this.stateOf({ applicable: applicable[index], completed: discharging.length > 0, end, graceMs, now }),
         dueAt: window.end,
         missedFrom: new Date(end + graceMs),
-        completedAt: inside.length > 0 ? new Date(inside[0]) : null,
-        completionCount: inside.length,
+        completedAt: discharging.length > 0 ? new Date(discharging[0]) : null,
+        completionCount: all.length,
       };
     });
 
     return { intervalMinutes, windows: resolved, summary: this.summarise(intervalMinutes, resolved) };
+  }
+
+  /**
+   * Which window each completion belongs to, and which of them discharge it.
+   *
+   * Completions are taken in time order, and each decision depends only on earlier completions, so a
+   * later entry can never change where an earlier one was attributed — the result is deterministic
+   * and stable as a shift goes on.
+   *
+   * THE EARLY-CHECK TOLERANCE. An entry made in the last `earlyToleranceMinutes` before window N+1
+   * starts counts for window N+1 only if window N is ALREADY met by an earlier entry (or N carried no
+   * obligation, or the entry falls before the first window). Otherwise it stays in window N. So:
+   *   22:05 and 22:57 on an hourly grid   22:05 meets 22:00-23:00, 22:57 meets 23:00-00:00
+   *   22:57 alone                          it meets 22:00-23:00; 23:00-00:00 still needs its own
+   * The tolerance can therefore never turn a met window into a missed one, and an entry still
+   * satisfies only one window. Its real timestamp is kept: nothing is moved or rewritten.
+   *
+   * With no `attribution`, this is plain half-open containment and every entry discharges.
+   */
+  private attribute(
+    windows: readonly OperationalWindow[],
+    applicable: readonly boolean[],
+    completions: readonly number[],
+    applicability: OperationalApplicability,
+    attribution?: ResolveOperationalWindowsInput['attribution'],
+  ): { all: number[]; discharging: number[] }[] {
+    const result = windows.map(() => ({ all: [] as number[], discharging: [] as number[] }));
+    if (!windows.length) return result;
+
+    const toleranceMs =
+      Math.max(0, Math.floor(Number(attribution?.earlyToleranceMinutes) || 0)) * MILLISECONDS_PER_MINUTE;
+    const bookOn = this.timeOf(applicability.bookOnAt);
+    const bookOff = this.timeOf(applicability.bookOffAt);
+    const onDuty = (instant: number) =>
+      !attribution?.onDutyOnly ||
+      (bookOn !== null && instant >= bookOn && (bookOff === null || instant <= bookOff));
+
+    const first = windows[0].start.getTime();
+    const last = windows[windows.length - 1].end.getTime();
+    // Windows are contiguous and equal, so the containing index is arithmetic, not a search.
+    const step = windows[0].end.getTime() - first;
+
+    for (const instant of completions) {
+      const containing = instant >= first && instant < last ? Math.floor((instant - first) / step) : -1;
+      const counts = onDuty(instant);
+      let target = containing;
+
+      if (toleranceMs > 0 && counts) {
+        const next = containing === -1 ? (instant < first ? 0 : -1) : containing + 1;
+        const nearNext =
+          next >= 0 && next < windows.length && instant >= windows[next].start.getTime() - toleranceMs;
+        const currentSettled =
+          containing === -1 || !applicable[containing] || result[containing].discharging.length > 0;
+        if (nearNext && applicable[next] && currentSettled) target = next;
+      }
+
+      if (target === -1) continue;
+      result[target].all.push(instant);
+      if (counts) result[target].discharging.push(instant);
+    }
+    return result;
   }
 
   /**
