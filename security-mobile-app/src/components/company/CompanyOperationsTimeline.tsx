@@ -10,6 +10,9 @@ import {
   nowScrollOffset,
   panTimelineWindow,
   resolveTimelineWindow,
+  timelineFollowAnchor,
+  timelineFollowReducer,
+  INITIAL_TIMELINE_FOLLOW,
   timelineHourTicks,
   timelineRowCount,
   WELFARE_MARKER_GLYPH,
@@ -87,6 +90,13 @@ export type OperationsTimelineProps = {
   unavailable?: boolean;
   /** Bumped by the page's Today button: re-centre on now exactly as the timeline's own "Now" does. */
   recentreSignal?: number;
+  /**
+   * Which day the axis shows ('live', 'today' or the YYYY-MM-DD picked). A change here is a new view and
+   * re-centres; the anchor itself also moves with the clock, which must NOT (follow mode, Welfare Phase 3).
+   */
+  anchorKey?: string;
+  /** Opens the server-built Shift Attendance / Welfare Monitoring report dialog (Welfare Phase 3). */
+  onOpenReport?: (kind: 'shift-attendance' | 'welfare-monitoring') => void;
 };
 
 export function CompanyOperationsTimeline({
@@ -103,18 +113,36 @@ export function CompanyOperationsTimeline({
   exporting,
   unavailable = false,
   recentreSignal = 0,
+  anchorKey,
+  onOpenReport,
 }: OperationsTimelineProps) {
   const [rangeHours, setRangeHours] = React.useState<TimelineRangeHours>(
     initialRangeHours ?? DEFAULT_TIMELINE_RANGE,
   );
-  /** Whole-hour pan offset. Time state lives here, never in a scroll position. */
-  const [panHours, setPanHours] = React.useState(0);
+  /** Follow mode and the whole-hour pan. Time state lives here, never in a scroll position. */
+  const [follow, setFollow] = React.useState(INITIAL_TIMELINE_FOLLOW);
+  const dispatchFollow = React.useCallback(
+    (event: Parameters<typeof timelineFollowReducer>[1]) => setFollow((state) => timelineFollowReducer(state, event)),
+    [],
+  );
+  const panHours = follow.panHours;
+  const effectiveAnchorMs = timelineFollowAnchor(follow, anchorMs);
   const [exportOpen, setExportOpen] = React.useState(false);
   const [collapsedSites, setCollapsedSites] = React.useState<Record<string, boolean>>({});
 
-  // Changing the range or the day re-centres, because a pan measured against the old window means
-  // nothing against the new one.
-  React.useEffect(() => { setPanHours(0); }, [rangeHours, anchorMs]);
+  // A different day is a new view: follow again, centred on it. The anchor moving with the clock is not a new
+  // view — that was what pulled a controller back to now every 15 seconds. Skipped on mount.
+  const viewKey = anchorKey ?? 'live';
+  const firstView = React.useRef(true);
+  React.useEffect(() => {
+    if (firstView.current) { firstView.current = false; return; }
+    dispatchFollow({ type: 'view-changed' });
+  }, [viewKey]);
+  const firstRange = React.useRef(true);
+  React.useEffect(() => {
+    if (firstRange.current) { firstRange.current = false; return; }
+    dispatchFollow({ type: 'range-changed' });
+  }, [rangeHours]);
 
   /**
    * The horizontal viewport, measured rather than assumed.
@@ -129,17 +157,42 @@ export function CompanyOperationsTimeline({
   /** Bumped by "Now" so pressing it re-centres the viewport even when the window did not move. */
   const [recentreToken, setRecentreToken] = React.useState(0);
   const recentreOnNow = React.useCallback(() => {
-    setPanHours(0);
+    dispatchFollow({ type: 'now' });
     setRecentreToken((t) => t + 1);
   }, []);
+  /**
+   * Telling the controller's scroll from ours. The code scrolls the axis when it centres on now, and the
+   * browser scrolls it by itself when the axis is resized (a range change clamps the offset) — neither comes
+   * with any input. So a scroll pauses following only when it follows the controller's own input on the
+   * axis: a wheel, a pointer (the scrollbar included), a touch or a key on web; a drag on native.
+   */
+  const USER_INTENT_MS = 1500;
+  const userIntentUntil = React.useRef(0);
+  React.useEffect(() => {
+    if (!IS_WEB || typeof document === 'undefined') return undefined;
+    const node = document.getElementById('operations-timeline-axis');
+    if (!node) return undefined;
+    const mark = () => { userIntentUntil.current = Date.now() + USER_INTENT_MS; };
+    const events = ['wheel', 'pointerdown', 'touchstart', 'keydown'] as const;
+    events.forEach((name) => node.addEventListener(name, mark, { passive: true }));
+    return () => events.forEach((name) => node.removeEventListener(name, mark));
+    // Re-attached when the axis appears: it is not rendered while the board is empty.
+  }, [axisViewportWidth > 0]);
+  const pauseForController = React.useCallback(() => {
+    if (follow.following) dispatchFollow({ type: 'manual-scroll', anchorMs });
+  }, [follow.following, anchorMs, dispatchFollow]);
+  const onAxisScroll = React.useCallback(() => {
+    if (Date.now() > userIntentUntil.current) return;
+    pauseForController();
+  }, [pauseForController]);
   // Today, from the page: the same action as "Now". Skipped on mount so opening the page does not scroll.
   React.useEffect(() => {
     if (recentreSignal > 0) recentreOnNow();
   }, [recentreSignal, recentreOnNow]);
 
   const window: TimelineWindow = React.useMemo(
-    () => panTimelineWindow(resolveTimelineWindow(anchorMs, rangeHours, headerTimeZone), panHours),
-    [anchorMs, rangeHours, headerTimeZone, panHours],
+    () => panTimelineWindow(resolveTimelineWindow(effectiveAnchorMs, rangeHours, headerTimeZone), panHours),
+    [effectiveAnchorMs, rangeHours, headerTimeZone, panHours],
   );
 
   const groups = React.useMemo(() => buildTimeline(inputs, window, nowMs), [inputs, window, nowMs]);
@@ -167,10 +220,12 @@ export function CompanyOperationsTimeline({
     // "COMPLETED" off the left edge of every shift that began earlier. 12h and 24h are wide enough that
     // the opposite problem wins: without this the controller is shown lunchtime while the work is at 21:00.
     // Pressing "Now" always re-centres, because then it is what the controller asked for.
+    // Paused, nothing moves the viewport: the controller is looking at something (follow mode).
+    if (!follow.following) return;
     if (rangeHours <= DEFAULT_TIMELINE_RANGE && recentreToken === 0) return;
     const offset = nowScrollOffset(nowFractionRef.current, axisContentWidth, axisViewportWidth);
     axisScrollRef.current?.scrollTo({ x: offset, y: 0, animated: false });
-  }, [rangeHours, anchorMs, panHours, axisContentWidth, axisViewportWidth, recentreToken]);
+  }, [rangeHours, effectiveAnchorMs, follow.following, panHours, axisContentWidth, axisViewportWidth, recentreToken]);
 
   const zonesInView = React.useMemo(
     () => Array.from(new Set(groups.map((group) => group.timeZone))),
@@ -178,7 +233,9 @@ export function CompanyOperationsTimeline({
   );
 
   return (
-    <View style={styles.root}>
+    // While the Export menu is open the card stops clipping, and the header sits above the grid, so the whole
+    // menu is drawn over the rows instead of under them (Welfare Phase 3: the menu grew from two items to four).
+    <View style={[styles.root, exportOpen ? styles.rootMenuOpen : null]}>
       {/* ── Header: identity, time navigation, range, export ─────────────── */}
       <View style={styles.headerRow}>
         <View style={styles.headerTitleBlock}>
@@ -191,14 +248,17 @@ export function CompanyOperationsTimeline({
 
         <View style={styles.headerControls}>
           <View style={styles.panGroup}>
-            <TimelineButton label="Earlier" onPress={() => setPanHours((h) => h - rangeHours / 2)} />
+            <TimelineButton label="Earlier" onPress={() => dispatchFollow({ type: 'pan', deltaHours: -rangeHours / 2, anchorMs })} />
             <TimelineButton
               label="Now"
               onPress={recentreOnNow}
-              active={panHours === 0}
+              active={follow.following && panHours === 0}
             />
-            <TimelineButton label="Later" onPress={() => setPanHours((h) => h + rangeHours / 2)} />
+            <TimelineButton label="Later" onPress={() => dispatchFollow({ type: 'pan', deltaHours: rangeHours / 2, anchorMs })} />
           </View>
+          {follow.following ? null : (
+            <Text style={styles.pausedHint} accessibilityLiveRegion="polite">Paused · press Now to follow</Text>
+          )}
 
           <View style={styles.rangeGroup}>
             {TIMELINE_RANGES.map((hours) => (
@@ -243,6 +303,25 @@ export function CompanyOperationsTimeline({
                 >
                   <Text style={styles.exportItemText}>CSV (.csv)</Text>
                 </Pressable>
+                {onOpenReport ? (
+                  <>
+                    <Text style={styles.exportSection}>Reports from S4 records</Text>
+                    <Pressable
+                      accessibilityRole="button"
+                      style={[styles.exportItem, IS_WEB ? (WEB_PTR as any) : null]}
+                      onPress={() => { setExportOpen(false); onOpenReport('shift-attendance'); }}
+                    >
+                      <Text style={styles.exportItemText}>Shift Attendance report…</Text>
+                    </Pressable>
+                    <Pressable
+                      accessibilityRole="button"
+                      style={[styles.exportItem, IS_WEB ? (WEB_PTR as any) : null]}
+                      onPress={() => { setExportOpen(false); onOpenReport('welfare-monitoring'); }}
+                    >
+                      <Text style={styles.exportItemText}>Welfare Monitoring report…</Text>
+                    </Pressable>
+                  </>
+                ) : null}
               </View>
             ) : null}
           </View>
@@ -334,6 +413,9 @@ export function CompanyOperationsTimeline({
             contentContainerStyle={{ minWidth: axisMinWidth, flexGrow: 1 }}
             onLayout={(e: any) => setAxisViewportWidth(e.nativeEvent.layout.width)}
             onContentSizeChange={(w: number) => setAxisContentWidth(w)}
+            onScroll={onAxisScroll}
+            onScrollBeginDrag={pauseForController}
+            scrollEventThrottle={100}
           >
             <View style={{ minWidth: axisMinWidth, flexGrow: 1 }}>
               {/* Sticky hour header */}
@@ -627,7 +709,10 @@ const styles = StyleSheet.create({
     backgroundColor: colors.card,
     overflow: 'hidden',
   },
+  rootMenuOpen: { overflow: 'visible', zIndex: 30 },
   headerRow: {
+    position: 'relative',
+    zIndex: 20,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -788,6 +873,8 @@ const styles = StyleSheet.create({
   },
   markerGlyph: { fontSize: 12, fontWeight: '800', lineHeight: 14 },
 
+  pausedHint: { fontSize: 11, fontWeight: '700', color: colors.warning, alignSelf: 'center' },
+  exportSection: { fontSize: 10, fontWeight: '800', color: colors.textSecondary, letterSpacing: 0.6, paddingHorizontal: 12, paddingTop: 8 },
   legend: {
     flexDirection: 'row', alignItems: 'center', gap: 12, flexWrap: 'wrap',
     paddingHorizontal: 12, paddingVertical: 8,

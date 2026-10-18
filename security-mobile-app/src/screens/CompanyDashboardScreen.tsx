@@ -79,6 +79,8 @@ import {
   siteToday,
 } from '../services/siteTime';
 import { operationsShiftIds } from '../components/company/welfareMonitoring';
+import { CompanyReportExportDialog, type ReportRequest } from '../components/company/CompanyReportExportDialog';
+import { reportFilename, reportToCsv, reportToXlsx, type ReportKind } from '../components/company/operationsExports';
 import { isoToUkOperationalDate, isoWeekday } from '../services/ukDate';
 import {
   canOpenGuardWorkspace,
@@ -133,6 +135,7 @@ import {
   listComplianceRecords,
   listCoverageShifts,
   listShiftOperations,
+  getOperationsReport,
   listGuards,
   listJobApplications,
   listJobs,
@@ -4194,6 +4197,30 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
     URL.revokeObjectURL(url);
   };
 
+  /** Welfare Phase 3: the server-built reports, opened from the timeline's Export menu. */
+  const [reportDialogKind, setReportDialogKind] = React.useState<ReportKind | null>(null);
+  const handleGenerateReport = React.useCallback(async (request: ReportRequest): Promise<string> => {
+    if (typeof document === 'undefined' || typeof URL === 'undefined') {
+      throw new Error('Reports download in the web control room. Open S4 in a browser.');
+    }
+    let sheet;
+    try {
+      sheet = await getOperationsReport(request.kind, { from: request.from, to: request.to, siteId: request.siteId });
+    } catch (error) {
+      throw new Error(formatApiErrorMessage(error, 'The report could not be generated. Nothing was downloaded.'));
+    }
+    const siteName = request.siteId ? siteMap.get(request.siteId)?.name ?? sheet.site : null;
+    const filename = reportFilename(request.kind, request.from, request.to, siteName ?? null, request.format);
+    if (request.format === 'csv') {
+      downloadOperationsFile(filename, reportToCsv(sheet), 'text/csv;charset=utf-8');
+    } else {
+      downloadOperationsFile(filename, reportToXlsx(sheet).slice().buffer as ArrayBuffer, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    }
+    return sheet.rows.length
+      ? `Downloaded ${filename} — ${sheet.rows.length} row${sheet.rows.length === 1 ? '' : 's'}.`
+      : `Downloaded ${filename}. Nothing was recorded in this period, so it has headings only.`;
+  }, [siteMap]);
+
   const handleExportOperationsCsv = () => {
     setExportingOperations(true);
     try {
@@ -4629,11 +4656,22 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
         onOpenCoverage={openCoverage}
         operationalNowMs={operationalNow.getTime()}
         timelineAnchorMs={timelineAnchorMs}
+        timelineAnchorKey={liveBoardDateMode === 'day' ? liveBoardSelection.date : liveBoardDateMode}
+        onOpenReport={setReportDialogKind}
         onExportCsv={handleExportOperationsCsv}
         onExportXlsx={handleExportOperationsXlsx}
         exporting={exportingOperations}
         onBoardLayout={setLiveBoardAnchorY}
         onDetailLayout={setShiftDetailAnchorY}
+      />
+
+      <CompanyReportExportDialog
+        visible={reportDialogKind !== null}
+        initialKind={reportDialogKind ?? 'shift-attendance'}
+        initialDate={liveBoardDateMode === 'day' ? liveBoardSelection.date : siteToday(liveOperationsZone)}
+        siteOptions={siteOptions}
+        onClose={() => setReportDialogKind(null)}
+        onGenerate={handleGenerateReport}
       />
 
       {/* Resolving is deliberately not a one-click action: the reason and, for anything a guard's

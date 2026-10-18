@@ -215,6 +215,10 @@ jobs:
       - name: Verify live welfare monitoring
         run: npm run test:welfare-monitoring
 
+      # Welfare Phase 3: the server-built Shift Attendance / Welfare Monitoring files, and timeline follow mode.
+      - name: Verify operations report files and timeline follow mode
+        run: npm run test:operations-reports
+
       # The daily operations export, in both formats. Includes the formula-injection guard: a site or
       # guard name beginning = + - @ is user-supplied free text, and this file is evidence.
       - name: Verify operations report and export safety

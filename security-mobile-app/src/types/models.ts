@@ -642,6 +642,23 @@ export interface WelfareWindowAlertView {
   resolutionReason: string | null;
 }
 
+/**
+ * GET /reports/shift-attendance and /reports/welfare-monitoring (Welfare Phase 3): one report as a sheet —
+ * headings, string rows and a summary — built from the database. The web app writes it to CSV or XLSX as is.
+ */
+export interface OperationsReportSheet {
+  report: 'shift-attendance' | 'welfare-monitoring';
+  title: string;
+  company: string;
+  period: { from: string; to: string; fromUtc: string; toUtc: string; days: number };
+  site: string | null;
+  generatedAtUtc: string;
+  timezoneNote: string;
+  columns: string[];
+  rows: string[][];
+  summary: string[][];
+}
+
 /** One row of GET /coverage/operations. */
 export interface ShiftOperationsRow {
   shiftId: number;

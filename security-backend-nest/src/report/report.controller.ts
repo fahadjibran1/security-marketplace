@@ -10,6 +10,7 @@ import { AnalyticsReportQueryDto } from './dto/analytics-report-query.dto';
 import { MarginReportQueryDto } from './dto/margin-report-query.dto';
 import { IncidentAnalyticsService } from './incident-analytics.service';
 import { ReportService } from './report.service';
+import { OperationsExportService, ReportQuery } from './operations-export.service';
 
 @Controller('reports')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -17,7 +18,25 @@ export class ReportController {
   constructor(
     private readonly reportService: ReportService,
     private readonly incidentAnalyticsService: IncidentAnalyticsService,
+    private readonly operationsExport: OperationsExportService,
   ) {}
+
+  /**
+   * Welfare Phase 3. One sheet per call — columns, rows and a summary — for the web app to write as CSV or
+   * XLSX. Company context and `reports.operational` are resolved in the service, never taken from the query.
+   * `from` / `to` are YYYY-MM-DD (at most 31 days); `siteId` optionally narrows to one of the company's sites.
+   */
+  @Get('shift-attendance')
+  @Roles(...COMPANY_VIEW_ROLES)
+  getShiftAttendance(@CurrentUser() user: JwtPayload, @Query() query: ReportQuery) {
+    return this.operationsExport.shiftAttendance(user.sub, user.role, query);
+  }
+
+  @Get('welfare-monitoring')
+  @Roles(...COMPANY_VIEW_ROLES)
+  getWelfareMonitoring(@CurrentUser() user: JwtPayload, @Query() query: ReportQuery) {
+    return this.operationsExport.welfareMonitoring(user.sub, user.role, query);
+  }
 
   @Get('margin')
   @Roles(...COMPANY_VIEW_ROLES)

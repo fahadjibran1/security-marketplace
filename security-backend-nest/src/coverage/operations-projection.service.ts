@@ -74,6 +74,8 @@ export type WelfareWindowView = {
    */
   missRecordedAt?: string | null;
   alert?: WelfareWindowAlertView | null;
+  /** The per-window evidence row's id, when the miss was recorded (Welfare Phase 3 reports cite it). */
+  evidenceAlertId?: number | null;
 };
 
 /**
@@ -88,6 +90,11 @@ export type WelfareWindowAlertView = {
   closedAt: string | null;
   closedBySystem: boolean;
   resolutionReason: string | null;
+  /** Who acknowledged it and when, as the row stands now (a reopened alert has none until picked up again). */
+  acknowledgedAt: string | null;
+  acknowledgedByUserId: number | null;
+  /** Who closed it; null when the previous sweep rule closed it (`closedBySystem`) or it is still open. */
+  closedByUserId: number | null;
 };
 
 export type WelfareOperationsView = {
@@ -465,9 +472,9 @@ export class OperationsProjectionService {
   private windowHistory(
     index: number,
     rows: readonly SafetyAlert[],
-  ): { missRecordedAt: string | null; alert: WelfareWindowAlertView | null } {
+  ): { missRecordedAt: string | null; alert: WelfareWindowAlertView | null; evidenceAlertId: number | null } {
     const evidence = rows.find((row) => row.welfareWindowIndex === index);
-    if (!evidence) return { missRecordedAt: null, alert: null };
+    if (!evidence) return { missRecordedAt: null, alert: null, evidenceAlertId: null };
     const detectedAt = evidence.closedAt ?? evidence.createdAt;
 
     let covering: SafetyAlert | null = null;
@@ -479,6 +486,7 @@ export class OperationsProjectionService {
 
     return {
       missRecordedAt: detectedAt.toISOString(),
+      evidenceAlertId: evidence.id,
       alert: covering
         ? {
             id: covering.id,
@@ -487,6 +495,9 @@ export class OperationsProjectionService {
             closedAt: covering.closedAt ? covering.closedAt.toISOString() : null,
             closedBySystem: covering.status === SafetyAlertStatus.CLOSED && covering.closedByUserId == null,
             resolutionReason: covering.resolutionReason ?? null,
+            acknowledgedAt: covering.acknowledgedAt ? covering.acknowledgedAt.toISOString() : null,
+            acknowledgedByUserId: covering.acknowledgedByUserId ?? null,
+            closedByUserId: covering.closedByUserId ?? null,
           }
         : null,
     };

@@ -280,6 +280,10 @@ export type CompanyLiveOperationsWorkspaceProps = {
   operationalNowMs: number;
   /** The instant the visible window is positioned around — the selected operational day. */
   timelineAnchorMs: number;
+  /** Which day that is ('live', 'today' or YYYY-MM-DD): a change re-centres the timeline, a clock tick does not. */
+  timelineAnchorKey?: string;
+  /** Opens the server-built report dialog (Welfare Phase 3). */
+  onOpenReport?: (kind: 'shift-attendance' | 'welfare-monitoring') => void;
   onExportCsv: () => void;
   onExportXlsx: () => void;
   exporting: boolean;
@@ -1489,6 +1493,8 @@ export function CompanyLiveOperationsWorkspace({
   onOpenCoverage,
   operationalNowMs,
   timelineAnchorMs,
+  timelineAnchorKey,
+  onOpenReport,
   onExportCsv,
   onExportXlsx,
   exporting,
@@ -1692,6 +1698,8 @@ export function CompanyLiveOperationsWorkspace({
             exporting={exporting}
             unavailable={shiftsUnavailable}
             recentreSignal={timelineRecentreSignal}
+            anchorKey={timelineAnchorKey}
+            onOpenReport={onOpenReport}
           />
           {metricFocus !== 'all' ? (
             <Pressable

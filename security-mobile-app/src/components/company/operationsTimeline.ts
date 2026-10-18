@@ -87,6 +87,58 @@ export function resolveTimelineWindow(
   return { startMs, endMs: startMs + span, rangeHours };
 }
 
+// ─── follow mode (Welfare Phase 3) ──────────────────────────────────────────────
+
+/**
+ * Whether the axis follows the clock.
+ *
+ * THE DEFECT. In the live and today views the axis is anchored to the operational clock, which advances on
+ * every 15-second refresh, and that change reset the pan and re-centred the scroll — so a controller who
+ * went back to look at 03:00 was pulled back to now a few seconds later.
+ *
+ *   following      the axis moves with the clock (the default, and what Now / Today select)
+ *   paused         after Earlier, Later or a manual scroll: the axis is frozen at the anchor it had then,
+ *                  and refreshes update the data without moving it
+ *   view-changed   a different day: back to following, centred on that day's anchor
+ *   range-changed  the controller's range choice: same mode, pan cleared (a pan measured against the old
+ *                  window means nothing against the new one)
+ */
+export type TimelineFollow = { following: boolean; frozenAnchorMs: number | null; panHours: number };
+
+export type TimelineFollowEvent =
+  | { type: 'now' }
+  | { type: 'pan'; deltaHours: number; anchorMs: number }
+  | { type: 'manual-scroll'; anchorMs: number }
+  | { type: 'view-changed' }
+  | { type: 'range-changed' };
+
+export const INITIAL_TIMELINE_FOLLOW: TimelineFollow = { following: true, frozenAnchorMs: null, panHours: 0 };
+
+export function timelineFollowReducer(state: TimelineFollow, event: TimelineFollowEvent): TimelineFollow {
+  switch (event.type) {
+    case 'now':
+    case 'view-changed':
+      return INITIAL_TIMELINE_FOLLOW;
+    case 'range-changed':
+      return { ...state, panHours: 0 };
+    case 'pan':
+      return {
+        following: false,
+        frozenAnchorMs: state.following ? event.anchorMs : state.frozenAnchorMs ?? event.anchorMs,
+        panHours: state.panHours + event.deltaHours,
+      };
+    case 'manual-scroll':
+      return state.following ? { ...state, following: false, frozenAnchorMs: event.anchorMs } : state;
+    default:
+      return state;
+  }
+}
+
+/** The anchor the axis uses: the live one while following, the one frozen at the pause otherwise. */
+export function timelineFollowAnchor(state: TimelineFollow, liveAnchorMs: number): number {
+  return state.following ? liveAnchorMs : state.frozenAnchorMs ?? liveAnchorMs;
+}
+
 /** Shift the visible axis by whole hours — the Earlier / Later controls. */
 export function panTimelineWindow(window: TimelineWindow, hours: number): TimelineWindow {
   return {

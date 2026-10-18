@@ -29,6 +29,7 @@ import {
   RecordComplianceCheckPayload,
   CoverageShiftRow,
   ShiftOperationsRow,
+  OperationsReportSheet,
   CoverageSiteRow,
   ContractPricingRule,
   ContractPricingRulePayload,
@@ -982,6 +983,20 @@ export function listCoverageShifts(params: { from?: string; to?: string; siteId?
  */
 export function listShiftOperations(shiftIds: number[]) {
   return request<ShiftOperationsRow[]>(`/coverage/operations?shiftIds=${shiftIds.join(',')}`);
+}
+
+/**
+ * A Shift Attendance or Welfare Monitoring report (Welfare Phase 3) for YYYY-MM-DD `from`..`to` (at most
+ * 31 days), optionally one site. The company is the signed-in user's own; the backend checks
+ * reports.operational.
+ */
+export function getOperationsReport(
+  kind: 'shift-attendance' | 'welfare-monitoring',
+  params: { from: string; to: string; siteId?: number | null },
+) {
+  const query = new URLSearchParams({ from: params.from, to: params.to });
+  if (params.siteId) query.set('siteId', String(params.siteId));
+  return request<OperationsReportSheet>(`/reports/${kind}?${query.toString()}`);
 }
 
 export function listCoverageSites(params: { from?: string; to?: string; siteId?: string; shiftId?: string; uncoveredOnly?: boolean } = {}) {
