@@ -1,12 +1,15 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, LessThan, MoreThan, Not, Repository } from 'typeorm';
+import { RotaSlot } from '../rota-slot/entities/rota-slot.entity';
 
 import { AttendanceEvent, AttendanceEventType } from '../attendance/entities/attendance.entity';
 import {
   CoverageAssessment,
   OtherShiftEvidence,
+  StaffingAssessment,
   assessCoverage,
+  assessStaffing,
   earlyBookOff,
 } from '../operations/early-book-off';
 import { Shift } from '../shift/entities/shift.entity';
@@ -20,6 +23,11 @@ export type EarlyBookOffView = {
   coverage: Omit<CoverageAssessment, 'segments'> & {
     segments: Array<{ from: string; to: string; kind: CoverageAssessment['segments'][number]['kind']; shiftIds: number[] }>;
   };
+  /**
+   * Welfare Phase 5: against the Rota Planner slot's required Guards. Null when the shift has no rota slot —
+   * no genuine requirement is stored for it, so none is assumed.
+   */
+  staffing: (StaffingAssessment & { rotaSlotId: number }) | null;
 };
 
 /**
@@ -34,6 +42,8 @@ export class EarlyBookOffService {
   constructor(
     @InjectRepository(Shift) private readonly shiftRepo: Repository<Shift>,
     @InjectRepository(AttendanceEvent) private readonly attendanceRepo: Repository<AttendanceEvent>,
+    // Optional so a caller built without it gets coverage only (staffing null), exactly as Phase 4.
+    @Optional() @InjectRepository(RotaSlot) private readonly rotaSlotRepo?: Repository<RotaSlot>,
   ) {}
 
   /**
@@ -97,10 +107,32 @@ export class EarlyBookOffService {
       };
     };
 
+    // The genuine staffing requirement: the rota slot each early shift belongs to (one bounded read).
+    const slotIds = [...new Set(early.map((e) => e.shift.rotaSlotId).filter((id): id is number => typeof id === 'number'))];
+    const slots = this.rotaSlotRepo && slotIds.length
+      ? await this.rotaSlotRepo.find({ where: { id: In(slotIds) }, select: { id: true, requiredGuardCount: true }, loadEagerRelations: false })
+      : [];
+    const requiredBySlot = new Map(slots.map((slot) => [slot.id, slot.requiredGuardCount]));
+
     for (const e of early) {
       const siteId = e.shift.site?.id;
       const sameSite = candidates.filter((s) => s.id !== e.shift.id && siteId !== undefined && s.site?.id === siteId);
       const assessment = assessCoverage(e.bookOffAt, new Date(e.shift.end), sameSite.map(evidence), now);
+      const slotId = e.shift.rotaSlotId ?? null;
+      const required = slotId !== null ? requiredBySlot.get(slotId) : undefined;
+      const staffing = slotId !== null && typeof required === 'number' && required >= 1
+        ? {
+            rotaSlotId: slotId,
+            ...assessStaffing(
+              e.bookOffAt,
+              new Date(e.shift.end),
+              // Same slot, or ad hoc (no slot): another slot's shifts carry their own requirement.
+              sameSite.filter((s) => s.rotaSlotId === slotId || s.rotaSlotId == null).map(evidence),
+              now,
+              required,
+            ),
+          }
+        : null;
       result.set(e.shift.id, {
         bookOffAt: e.bookOffAt.toISOString(),
         scheduledEnd: new Date(e.shift.end).toISOString(),
@@ -110,6 +142,7 @@ export class EarlyBookOffService {
           ...assessment,
           segments: assessment.segments.map((s) => ({ from: s.from.toISOString(), to: s.to.toISOString(), kind: s.kind, shiftIds: s.shiftIds })),
         },
+        staffing,
       });
     }
     return result;

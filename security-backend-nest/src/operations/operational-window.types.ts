@@ -41,10 +41,11 @@ export enum OperationalWindowState {
   /** The Guard was not on duty for this window, so nothing was ever required. */
   NOT_APPLICABLE = 'not_applicable',
   /**
-   * The Guard booked off part-way through this window and it was not met. Neither missed nor "not
-   * required": what a partly-worked final window owes is an owner policy decision still to be made
-   * (Welfare Remediation Phase 4), so it is reported as exactly what happened and never raises an alert.
-   * Only produced when the caller asks for it (`holdPartialWindowAtBookOff`); Log Book does not.
+   * The Guard booked off part-way through this window, worked less than the owed fraction of it (Welfare:
+   * half the interval, owner decision for Phase 5) and did not meet it: no check was owed, so it is reported
+   * as exactly what happened and never raises an alert. A partly-worked window at or above the fraction is
+   * graded like any other. Only produced when the caller asks for it (`partialWindowAtBookOff`); Log Book
+   * does not.
    */
   ENDED_AT_BOOK_OFF = 'ended_at_book_off',
 }
@@ -178,8 +179,9 @@ export interface ResolveOperationalWindowsInput {
   /** Omitted: strict containment, every attributed completion counts. */
   readonly attribution?: CompletionAttribution;
   /**
-   * Report an unmet window the Guard booked off part-way through as ENDED_AT_BOOK_OFF instead of judging
-   * it. Omitted: such a window is graded like any other applicable window.
+   * A window the Guard booked off part-way through owes its obligation only when they genuinely worked at
+   * least `minimumWorkedFraction` of it (from the later of Book On and the window start, to Book Off). Less
+   * than that, an unmet window is ENDED_AT_BOOK_OFF. Omitted: such a window is graded like any other.
    */
-  readonly holdPartialWindowAtBookOff?: boolean;
+  readonly partialWindowAtBookOff?: { readonly minimumWorkedFraction: number };
 }

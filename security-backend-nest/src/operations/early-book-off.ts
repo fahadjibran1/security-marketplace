@@ -168,6 +168,91 @@ export function assessCoverage(from: Date, to: Date, others: readonly OtherShift
   };
 }
 
+// ─── staffing (Welfare Phase 5) ──────────────────────────────────────────────────
+
+/**
+ * STAFFING is a different question from coverage: not "was anyone else there" but "were as many Guards there
+ * as the shift's requirement says". The only genuine requirement S4 stores is the Rota Planner's slot
+ * (`rota_slots.requiredGuardCount`, one shift per position). `sites.requiredGuardCount` defaults to 1 and
+ * cannot be told apart from a configured 1, so it is never used, and a shift with no rota slot has no
+ * staffing requirement — it is reported as such, never assumed to need one Guard.
+ *
+ * Counted towards the requirement after the early Book Off: the other positions of the same slot, and ad hoc
+ * shifts at the site with no slot (a replacement). A shift of a DIFFERENT slot at the same site has its own
+ * requirement, so it never fills this one (it still counts for coverage).
+ *
+ *   fully_staffed       at least the required number on duty (or, ahead, assigned) throughout
+ *   partially_staffed   some Guards, but fewer than required, for some of the time
+ *   unstaffed           nobody on duty or assigned at any point
+ *   undetermined        short of the requirement while a Guard's departure is unrecorded
+ */
+export type StaffingStatus = 'fully_staffed' | 'partially_staffed' | 'unstaffed' | 'undetermined';
+
+export type StaffingAssessment = {
+  required: number;
+  status: StaffingStatus;
+  fullMinutes: number;
+  shortMinutes: number;
+  unstaffedMinutes: number;
+  unknownMinutes: number;
+  /** The fewest Guards on duty (or assigned, ahead) at any point in the gap. */
+  minOnDuty: number;
+  reliesOnSchedule: boolean;
+};
+
+export function assessStaffing(
+  from: Date,
+  to: Date,
+  others: readonly OtherShiftEvidence[],
+  now: Date,
+  required: number,
+): StaffingAssessment {
+  const a = from.getTime();
+  const b = to.getTime();
+  const intervals = others.flatMap((o) => contributions(o, a, b, now.getTime()));
+  const points = [...new Set([a, b, ...intervals.flatMap((i) => [i.from, i.to])])].filter((p) => p >= a && p <= b).sort((x, y) => x - y);
+  const totals = { full: 0, short: 0, none: 0, unknown: 0 };
+  let minOnDuty = Number.POSITIVE_INFINITY;
+  let reliesOnSchedule = false;
+  for (let k = 0; k + 1 < points.length; k += 1) {
+    const lo = points[k];
+    const hi = points[k + 1];
+    if (hi <= lo) continue;
+    const here = intervals.filter((i) => i.from <= lo && i.to >= hi);
+    const onDuty = new Set(here.filter((i) => i.kind !== 'unknown').map((i) => i.shiftId)).size;
+    const unknown = here.some((i) => i.kind === 'unknown');
+    if (here.some((i) => i.kind === 'planned')) reliesOnSchedule = true;
+    minOnDuty = Math.min(minOnDuty, onDuty);
+    const span = hi - lo;
+    if (onDuty >= required) totals.full += span;
+    else if (unknown) totals.unknown += span;
+    else if (onDuty === 0) totals.none += span;
+    else totals.short += span;
+  }
+  const m = (ms: number) => Math.round(ms / MS);
+  const status: StaffingStatus = totals.short + totals.none + totals.unknown === 0 ? 'fully_staffed'
+    : totals.unknown > 0 ? 'undetermined'
+    : totals.full + totals.short === 0 ? 'unstaffed'
+    : 'partially_staffed';
+  return {
+    required,
+    status,
+    fullMinutes: m(totals.full),
+    shortMinutes: m(totals.short),
+    unstaffedMinutes: m(totals.none),
+    unknownMinutes: m(totals.unknown),
+    minOnDuty: Number.isFinite(minOnDuty) ? minOnDuty : 0,
+    reliesOnSchedule,
+  };
+}
+
+export const STAFFING_STATUS_WORD: Record<StaffingStatus, string> = {
+  fully_staffed: 'Fully staffed',
+  partially_staffed: 'Partially staffed',
+  unstaffed: 'Unstaffed',
+  undetermined: 'Staffing undetermined',
+};
+
 /** "Coverage maintained", "Partial coverage gap", "Uncovered period", "Coverage undetermined". */
 export const COVERAGE_STATUS_WORD: Record<CoverageStatus, string> = {
   maintained: 'Coverage maintained',

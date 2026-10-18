@@ -37,6 +37,33 @@ export const COVERAGE_WORD: Record<EarlyBookOffView['coverage']['status'], strin
   undetermined: 'Coverage undetermined',
 };
 
+export const STAFFING_WORD: Record<NonNullable<EarlyBookOffView['staffing']>['status'], string> = {
+  fully_staffed: 'Fully staffed',
+  partially_staffed: 'Partially staffed',
+  unstaffed: 'Unstaffed',
+  undetermined: 'Staffing undetermined',
+};
+
+/**
+ * The staffing line (Welfare Phase 5): against the Rota Planner slot's requirement, or plainly that no
+ * requirement is set for a shift that is not from the Rota Planner — never an assumed "one Guard".
+ */
+export function staffingSentence(view: EarlyBookOffView): string {
+  const s = view.staffing;
+  if (!s) return 'No staffing requirement is set for this shift (it is not from the Rota Planner).';
+  const base = `${STAFFING_WORD[s.status]}: ${s.required} Guard${s.required === 1 ? '' : 's'} required`;
+  switch (s.status) {
+    case 'fully_staffed':
+      return `${base}, and that many were on duty throughout.`;
+    case 'partially_staffed':
+      return `${base}; as few as ${s.minOnDuty} on duty, short for ${formatDuration(s.shortMinutes)}${s.unstaffedMinutes ? ` and unstaffed for ${formatDuration(s.unstaffedMinutes)}` : ''}.`;
+    case 'unstaffed':
+      return `${base}; none on duty for the remaining ${formatDuration(view.remainingMinutes)}.`;
+    default:
+      return `${base}; it cannot be confirmed because another Guard's departure is not recorded.`;
+  }
+}
+
 /** Tone for the coverage line: an uncovered or partial gap is the thing to notice. */
 export const COVERAGE_TONE: Record<EarlyBookOffView['coverage']['status'], 'good' | 'warning' | 'danger' | 'neutral'> = {
   maintained: 'good',

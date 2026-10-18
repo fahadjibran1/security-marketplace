@@ -1596,7 +1596,11 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
         // board can show — in progress, or near the selected day — whatever their status or start day. It
         // used to come from the coverage list for "today", which drops a shift at UK midnight, on completion,
         // and for every historical day.
-        const monitoringFailures = await runSettledLoaders([
+        //
+        // It needs the shift list, so it cannot run with the core loaders; it runs IN PARALLEL with the section
+        // loaders below rather than as a step of its own, so a reload costs no extra round trip (Phase 5 load
+        // test: a separate step added ~1.7 s to every reload at 5 users).
+        const monitoringLoaders: SettledLoader[] = [
           {
             label: 'live operations monitoring',
             run: () => {
@@ -1611,8 +1615,7 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
               new Map(value.filter((row) => row.operations).map((row) => [row.shiftId, row.operations!])),
             ),
           },
-        ], isCurrent);
-        if (!isCurrent()) return;
+        ];
 
         if (!selectedSiteId && latestSites[0]) {
           setSelectedSiteId(latestSites[0].id);
@@ -1671,10 +1674,13 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
           ],
         };
 
-        const sectionFailures = await runSettledLoaders(
-          (sectionLoaders[activeSection] || []).filter((loader) => loader.label !== 'compliance' || canViewCompliance),
-          isCurrent,
-        );
+        const [monitoringFailures, sectionFailures] = await Promise.all([
+          runSettledLoaders(monitoringLoaders, isCurrent),
+          runSettledLoaders(
+            (sectionLoaders[activeSection] || []).filter((loader) => loader.label !== 'compliance' || canViewCompliance),
+            isCurrent,
+          ),
+        ]);
         if (!isCurrent()) return;
         const failures = [...coreFailures, ...monitoringFailures, ...sectionFailures];
 

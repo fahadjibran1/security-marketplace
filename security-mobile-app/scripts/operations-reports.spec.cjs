@@ -77,6 +77,103 @@ test('RPT-03-XLSX-HAS-A-SUMMARY-AND-DETAIL-AND-NO-FORMULAS', () => {
   assert.ok(attendance.includes('name="Shifts"'));
 });
 
+/**
+ * Opens the workbook the way a spreadsheet application would: reads the ZIP's central directory, takes
+ * each stored entry, and reads every inline-string cell back. Proves the file's contents, not only that
+ * bytes were produced.
+ */
+function readXlsx(bytes) {
+  const buf = Buffer.from(bytes);
+  const entries = new Map();
+  let eocd = buf.length - 22;
+  while (eocd >= 0 && buf.readUInt32LE(eocd) !== 0x06054b50) eocd -= 1;
+  assert.ok(eocd >= 0, 'end of central directory present');
+  const count = buf.readUInt16LE(eocd + 10);
+  let p = buf.readUInt32LE(eocd + 16);
+  for (let i = 0; i < count; i += 1) {
+    assert.equal(buf.readUInt32LE(p), 0x02014b50, 'central directory entry');
+    const method = buf.readUInt16LE(p + 10);
+    const size = buf.readUInt32LE(p + 20);
+    const nameLen = buf.readUInt16LE(p + 28);
+    const extraLen = buf.readUInt16LE(p + 30);
+    const commentLen = buf.readUInt16LE(p + 32);
+    const local = buf.readUInt32LE(p + 42);
+    const name = buf.slice(p + 46, p + 46 + nameLen).toString('utf8');
+    assert.equal(method, 0, 'stored entry');
+    const dataAt = local + 30 + buf.readUInt16LE(local + 26) + buf.readUInt16LE(local + 28);
+    entries.set(name, buf.slice(dataAt, dataAt + size).toString('utf8'));
+    p += 46 + nameLen + extraLen + commentLen;
+  }
+  const unescape = (s) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
+  const workbook = entries.get('xl/workbook.xml');
+  const names = [...workbook.matchAll(/<sheet name="([^"]+)" sheetId="(\d+)"/g)].map((m) => unescape(m[1]));
+  const sheets = {};
+  names.forEach((name, i) => {
+    const xml = entries.get(`xl/worksheets/sheet${i + 1}.xml`);
+    assert.ok(!/<f[ >]/.test(xml), `no formulas in ${name}`);
+    // Cells are placed by their reference (A, B, ...): an empty cell is omitted from the file, as Excel
+    // expects, and reads back as empty — exactly what a spreadsheet application shows.
+    const colIndex = (letters) => [...letters].reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0) - 1;
+    sheets[name] = [...xml.matchAll(/<row[^>]*>([\s\S]*?)<\/row>|<row[^>]*\/>/g)].map((row) => {
+      const cells = [];
+      for (const c of (row[1] || '').matchAll(/<c r="([A-Z]+)\d+" t="inlineStr"><is><t xml:space="preserve">([\s\S]*?)<\/t><\/is><\/c>/g)) {
+        cells[colIndex(c[1])] = unescape(c[2]);
+      }
+      return Array.from(cells, (v) => v ?? '');
+    });
+  });
+  return sheets;
+}
+
+/** Reads the CSV back: RFC 4180 quoting, the BOM, and the formula guard's leading apostrophe. */
+function readCsv(text) {
+  assert.ok(text.startsWith('\ufeff'));
+  const rows = [];
+  let row = [];
+  let cell = '';
+  let quoted = false;
+  const s = text.slice(1);
+  for (let i = 0; i < s.length; i += 1) {
+    const ch = s[i];
+    if (quoted) {
+      if (ch === '"' && s[i + 1] === '"') { cell += '"'; i += 1; } else if (ch === '"') quoted = false; else cell += ch;
+    } else if (ch === '"') quoted = true;
+    else if (ch === ',') { row.push(cell); cell = ''; }
+    else if (ch === '\r' && s[i + 1] === '\n') { row.push(cell); rows.push(row); row = []; cell = ''; i += 1; }
+    else cell += ch;
+  }
+  return rows;
+}
+
+test('RPT-08-THE-FILES-READ-BACK-EXACTLY-AS-THE-API-SHEET', () => {
+  const sheets = readXlsx(ex.reportToXlsx(SHEET));
+  assert.deepEqual(Object.keys(sheets), ['Summary', 'Welfare windows']);
+  const trim = (row) => { const out = [...row]; while (out.length && out[out.length - 1] === '') out.pop(); return out; };
+  assert.deepEqual(sheets['Welfare windows'], [SHEET.columns, ...SHEET.rows].map(trim), 'every detail cell, verbatim (trailing empty cells are absent, as in Excel)');
+  assert.deepEqual(sheets.Summary[0], ['Welfare Monitoring']);
+  assert.deepEqual(sheets.Summary.find((r) => r[0] === 'Period'), ['Period', '12-10-2026 to 18-10-2026']);
+  assert.ok(sheets.Summary.some((r) => r[0] === 'North Gate' && r[3] === '2'), "the server's summary table");
+  const csv = readCsv(ex.reportToCsv(SHEET));
+  assert.deepEqual(csv[0], SHEET.columns);
+  const unguard = (v) => (/^'[=+\-@]/.test(v) ? v.slice(1) : v);
+  assert.deepEqual(csv.slice(1).map((r) => r.map(unguard)), SHEET.rows, 'every CSV cell, with only the formula guard added');
+  assert.equal(csv[2][1], `'=HYPERLINK("http://example.invalid","x")`, 'and the guard is there');
+});
+
+test('RPT-09-A-LARGE-REPORT-BUILDS-AND-READS-BACK', () => {
+  // Welfare Phase 5: the ZIP builder used to spread every byte into a call, which overflowed the call stack
+  // at about 60 welfare rows — a weekly Welfare Monitoring workbook could not be downloaded.
+  const rows = Array.from({ length: 20000 }, (_, i) => [String(i), `Guard ${i}`, '01:00–02:00', i % 7 ? 'Completed' : 'Missed', '']);
+  const big = { ...SHEET, rows };
+  const bytes = ex.reportToXlsx(big);
+  assert.ok(bytes.length > 2_000_000, `a large workbook (${bytes.length} bytes)`);
+  const sheets = readXlsx(bytes);
+  assert.equal(sheets['Welfare windows'].length, 20001, 'every row back');
+  // 19999 is a multiple of 7, so that row is 'Missed'.
+  assert.deepEqual(sheets['Welfare windows'][20000], ['19999', 'Guard 19999', '01:00–02:00', 'Missed']);
+  assert.ok(ex.reportToCsv(big).length > 600_000);
+});
+
 test('RPT-04-AN-EMPTY-REPORT-STILL-HAS-HEADINGS', () => {
   const csv = ex.reportToCsv({ ...SHEET, rows: [] });
   assert.equal(csv, '﻿Shift ID,Guard,Window,Status,Alert status\r\n');

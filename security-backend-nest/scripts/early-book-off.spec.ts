@@ -35,7 +35,12 @@ import { CoverageService } from '../src/coverage/coverage.service';
 import { EarlyBookOffService } from '../src/coverage/early-book-off.service';
 import { OperationsExportService } from '../src/report/operations-export.service';
 import { CompanyMembershipRole, CompanyPermission, hasPermission } from '../src/company-membership/company-membership-types';
-import { EARLY_BOOK_OFF_MINUTES, assessCoverage, earlyBookOff } from '../src/operations/early-book-off';
+import { EARLY_BOOK_OFF_MINUTES, assessCoverage, assessStaffing, earlyBookOff } from '../src/operations/early-book-off';
+import { RotaSlot } from '../src/rota-slot/entities/rota-slot.entity';
+import { IncidentAnalyticsService } from '../src/report/incident-analytics.service';
+import { Incident } from '../src/incident/entities/incident.entity';
+import { DailyLogType } from '../src/daily-log/entities/daily-log.entity';
+import { SafetyAlertPriority, SafetyAlertStatus, SafetyAlertType } from '../src/safety-alert/entities/safety-alert.entity';
 
 let passed = 0;
 async function test(id: string, fn: () => Promise<void> | void) {
@@ -100,6 +105,29 @@ async function main() {
     assert.equal(unassigned.status, 'uncovered', 'an unfilled shift covers nothing');
   });
 
+  await test('EBO-14-STAFFING-RULES', () => {
+    const from = Z('2026-10-18T01:00:00Z');
+    const to = Z('2026-10-18T06:00:00Z');
+    const after = Z('2026-10-18T09:00:00Z');
+    const other = (id: number, on: string | null, off: string | null, status = 'completed') => ({
+      shiftId: id, status, start: Z('2026-10-17T20:00:00Z'), end: Z('2026-10-18T06:00:00Z'), hasGuard: true,
+      bookOnAt: on ? Z(on) : null, bookOffAt: off ? Z(off) : null,
+    });
+    const staying = other(1, '2026-10-17T19:55:00Z', '2026-10-18T06:02:00Z');
+    assert.equal(assessStaffing(from, to, [staying], after, 1).status, 'fully_staffed', 'one required, one stayed');
+    const two = assessStaffing(from, to, [staying], after, 2);
+    assert.equal(two.status, 'partially_staffed', 'two required, one stayed');
+    assert.equal(two.minOnDuty, 1);
+    assert.equal(two.shortMinutes, 300);
+    assert.equal(assessStaffing(from, to, [], after, 2).status, 'unstaffed');
+    assert.equal(assessStaffing(from, to, [staying, other(2, '2026-10-18T00:50:00Z', '2026-10-18T06:00:00Z')], after, 2).status, 'fully_staffed',
+      'a replacement brings it back to two');
+    assert.equal(assessStaffing(from, to, [staying, other(3, '2026-10-17T19:55:00Z', null)], after, 2).status, 'undetermined',
+      'short of two while another departure is unrecorded');
+    assert.equal(assessStaffing(from, to, [staying, other(3, '2026-10-17T19:55:00Z', null)], after, 1).status, 'fully_staffed',
+      'enough without the unknown one');
+  });
+
   // ═══════════════════ the real services ═══════════════════
 
   const url = process.env.EARLY_BOOK_OFF_DATABASE_URL;
@@ -113,7 +141,7 @@ async function main() {
   const projection = new OperationsProjectionService(
     repo(AttendanceEvent), repo(DailyLog), repo(SafetyAlert), engine, new WelfareWindowService(engine), new LogBookWindowService(engine),
   );
-  const earlyService = new EarlyBookOffService(repo(Shift), repo(AttendanceEvent));
+  const earlyService = new EarlyBookOffService(repo(Shift), repo(AttendanceEvent), repo(RotaSlot));
   const actors = new Map<number, Company>();
   const membership = {
     resolveCompanyContext: async (userId: number, _role: UserRole, permission: CompanyPermission) => {
@@ -266,6 +294,81 @@ async function main() {
       assert.equal(rowan[col('Early Book Off')], 'No');
       assert.equal(rowan[col('Coverage after early Book Off')], '', 'nothing claimed for a shift that was not early');
       assert.ok(sheet.summary.some((r) => r[0] === 'Partial coverage gap' && r[1] === '1'));
+    });
+
+    // ═══════════════════ staffing against the Rota Planner requirement (Phase 5) ═══════════════════
+
+    const slot = async (t: Tenant, site: Site, start: string, end: string, required: number) =>
+      repo(RotaSlot).save(repo(RotaSlot).create({ company: t.company, site, startAt: Z(start), endAt: Z(end), requiredGuardCount: required }));
+    const inSlot = async (s: Shift, slotRow: RotaSlot) => { await ds.query('UPDATE shifts SET "rotaSlotId" = $1 WHERE id = $2', [slotRow.id, s.id]); };
+
+    await test('EBO-15-A-TWO-GUARD-SLOT-WITH-ONE-LEFT-IS-PARTIALLY-STAFFED', async () => {
+      const night = await slot(alpha, alpha.gate, '2026-10-11T20:00:00Z', '2026-10-12T06:00:00Z', 2);
+      const leaver = await shift(alpha, alpha.gate, uma, '2026-10-11T20:00:00Z', '2026-10-12T06:00:00Z', 'completed', '2026-10-11T19:58:00Z', '2026-10-12T02:00:00Z');
+      const stayer = await shift(alpha, alpha.gate, rowan, '2026-10-11T20:00:00Z', '2026-10-12T06:00:00Z', 'completed', '2026-10-11T19:58:00Z', '2026-10-12T06:01:00Z');
+      await inSlot(leaver, night);
+      await inSlot(stayer, night);
+      const e = early((await ops(alpha, [leaver.id]))[0]) as unknown as { coverage: { status: string }; staffing: { status: string; required: number; minOnDuty: number; shortMinutes: number; rotaSlotId: number } };
+      assert.equal(e.coverage.status, 'maintained', 'the site was still guarded');
+      assert.equal(e.staffing.status, 'partially_staffed', 'but one short of the two the slot requires');
+      assert.equal(e.staffing.required, 2);
+      assert.equal(e.staffing.minOnDuty, 1);
+      assert.equal(e.staffing.shortMinutes, 240);
+      assert.equal(e.staffing.rotaSlotId, night.id);
+    });
+
+    await test('EBO-16-AN-AD-HOC-REPLACEMENT-FILLS-THE-SLOT-ANOTHER-SLOT-DOES-NOT', async () => {
+      const day = await slot(alpha, alpha.dock, '2026-10-11T07:00:00Z', '2026-10-11T15:00:00Z', 1);
+      const otherPost = await slot(alpha, alpha.dock, '2026-10-11T07:00:00Z', '2026-10-11T15:00:00Z', 1);
+      const leaver = await shift(alpha, alpha.dock, uma, '2026-10-11T07:00:00Z', '2026-10-11T15:00:00Z', 'completed', '2026-10-11T07:00:00Z', '2026-10-11T11:00:00Z');
+      await inSlot(leaver, day);
+      const elsewhere = await shift(alpha, alpha.dock, rowan, '2026-10-11T07:00:00Z', '2026-10-11T15:00:00Z', 'completed', '2026-10-11T07:00:00Z', '2026-10-11T15:00:00Z');
+      await inSlot(elsewhere, otherPost);
+      let e = early((await ops(alpha, [leaver.id]))[0]) as unknown as { coverage: { status: string }; staffing: { status: string } };
+      assert.equal(e.coverage.status, 'maintained', 'another post was guarded');
+      assert.equal(e.staffing.status, 'unstaffed', "but that post's Guard does not fill this one");
+      await shift(alpha, alpha.dock, theo, '2026-10-11T11:00:00Z', '2026-10-11T15:00:00Z', 'completed', '2026-10-11T10:59:00Z', '2026-10-11T15:00:00Z');
+      e = early((await ops(alpha, [leaver.id]))[0]) as unknown as { coverage: { status: string }; staffing: { status: string } };
+      assert.equal(e.staffing.status, 'fully_staffed', 'an ad hoc replacement (no slot) does');
+    });
+
+    await test('EBO-17-NO-ROTA-SLOT-MEANS-NO-ASSUMED-REQUIREMENT', async () => {
+      const e = early((await ops(alpha, [umaGate.id]))[0]) as unknown as { staffing: unknown };
+      assert.equal(e.staffing, null, 'not a Rota Planner shift: no requirement is assumed, even though sites default to 1');
+      const sheet = await reports.shiftAttendance(alpha.owner.id, UserRole.COMPANY_ADMIN, { from: '2026-10-11', to: '2026-10-17' }, NOW);
+      const col = (name: string) => sheet.columns.indexOf(name);
+      const rowOf = (id: number) => sheet.rows.find((r) => r[col('Shift ID')] === String(id))!;
+      assert.equal(rowOf(umaGate.id)[col('Staffing after early Book Off')], 'No staffing requirement set (not a Rota Planner shift)');
+      const slotRows = sheet.rows.filter((r) => /^Partially staffed \(1 of 2 required at the lowest, short 4h\)$/.test(r[col('Staffing after early Book Off')]));
+      assert.equal(slotRows.length, 1, 'the two-Guard slot reads partially staffed in the report');
+    });
+
+    // ═══════════════════ the corrected /reports/welfare counts (Phase 5) ═══════════════════
+
+    await test('EBO-18-THE-WELFARE-REPORT-COUNTS-BOTH-CHECK-TYPES-AND-EACH-MISS-ONCE', async () => {
+      const analytics = new IncidentAnalyticsService(
+        repo(Incident), repo(SafetyAlert), repo(Shift), repo(AttendanceEvent), repo(DailyLog),
+        { findByUserId: async (id: number) => actors.get(id) } as never, {} as never,
+      );
+      const s = await shift(bravo, bravo.dock, rhys, '2026-10-10T07:00:00Z', '2026-10-10T11:00:00Z', 'completed', '2026-10-10T07:00:00Z', '2026-10-10T11:00:00Z');
+      for (const [at, type] of [['2026-10-10T07:20:00Z', DailyLogType.WELFARE_CHECK], ['2026-10-10T08:20:00Z', DailyLogType.CHECK_CALL], ['2026-10-10T10:20:00Z', DailyLogType.WELFARE_CHECK]] as const) {
+        const log = await repo(DailyLog).save(repo(DailyLog).create({ company: bravo.company, guard: rhys, shift: s, message: 'ok', logType: type }));
+        await ds.query('UPDATE daily_logs SET "createdAt" = $1 WHERE id = $2', [Z(at), log.id]);
+      }
+      // Window 2 missed: one evidence row and the shift's summary alert.
+      for (const idx of [2, null]) {
+        await repo(SafetyAlert).save(repo(SafetyAlert).create({
+          company: bravo.company, guard: rhys, shift: s, type: SafetyAlertType.MISSED_CHECKCALL, priority: SafetyAlertPriority.HIGH,
+          status: idx === null ? SafetyAlertStatus.OPEN : SafetyAlertStatus.CLOSED, welfareWindowIndex: idx, message: 'm',
+        }));
+      }
+      const report = await analytics.getWelfareReport(bravo.owner.id, { startDate: '2026-10-10', endDate: '2026-10-10' } as never);
+      const rows = report.records as unknown as Array<{ shiftId: number; expectedCheckCalls: number; completedCheckCalls: number; missedCheckCalls: number; complianceRate: number }>;
+      const row = rows.find((r) => r.shiftId === s.id)!;
+      assert.equal(row.expectedCheckCalls, 4);
+      assert.equal(row.completedCheckCalls, 3, 'welfare_check and check_call both count, each once');
+      assert.equal(row.missedCheckCalls, 1, 'one missed window, not two (the summary is not a second miss)');
+      assert.equal(row.complianceRate, 75);
     });
 
     console.log(JSON.stringify({ event: 'early_book_off_certified', tests: passed }));

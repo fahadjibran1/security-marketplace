@@ -677,6 +677,21 @@ export interface EarlyBookOffView {
     coveringShiftIds: number[];
     segments: Array<{ from: string; to: string; kind: 'present' | 'planned' | 'unknown' | 'none'; shiftIds: number[] }>;
   };
+  /**
+   * Welfare Phase 5: against the Rota Planner slot's required Guards; null when the shift has no rota slot
+   * (no genuine requirement is stored, so none is assumed).
+   */
+  staffing?: {
+    rotaSlotId: number;
+    required: number;
+    status: 'fully_staffed' | 'partially_staffed' | 'unstaffed' | 'undetermined';
+    fullMinutes: number;
+    shortMinutes: number;
+    unstaffedMinutes: number;
+    unknownMinutes: number;
+    minOnDuty: number;
+    reliesOnSchedule: boolean;
+  } | null;
 }
 
 /** One row of GET /coverage/operations. */

@@ -35,7 +35,7 @@ import { buildTodaySoFar, type TodaySoFar } from './operationsSummary';
 import { incidentAttentionActions } from './incidentLifecycle';
 import { logTypeLabel } from './logBookRegister';
 import { safetyAlertDrawerLabel, welfareIntervalLabel, welfareWindowRows, type WelfareDisplayState } from './welfareMonitoring';
-import { COVERAGE_TONE, COVERAGE_WORD, coverageSentence, earlyBookOffMinutes, formatDuration } from './earlyBookOff';
+import { COVERAGE_TONE, COVERAGE_WORD, coverageSentence, earlyBookOffMinutes, formatDuration, staffingSentence } from './earlyBookOff';
 import { WELFARE_MARKER_GLYPH } from './operationsTimeline';
 import { Drawer } from '../ui/Drawer';
 import { colors, radii, spacing } from '../../theme';
@@ -2022,6 +2022,7 @@ function DetailPanelContent({
                   {COVERAGE_WORD[early.coverage.status]}
                 </Text>
                 <Text style={styles.detailLine}>{coverageSentence(early)}</Text>
+                <Text style={styles.detailLine}>{staffingSentence(early)}</Text>
               </>
             ) : (
               <Text style={styles.detailLine}>Coverage assessment is not available right now.</Text>

@@ -20,6 +20,13 @@ export const WELFARE_GRACE_MINUTES = 5;
  */
 export const WELFARE_EARLY_TOLERANCE_MINUTES = 5;
 
+/**
+ * Owner decision, Welfare Phase 5: a final window the Guard booked off part-way through owes a check when
+ * they worked at least half of it — 30 minutes of an hourly window, half of any other interval. Less, and
+ * it is Ended at Book Off. Exactly half is owed.
+ */
+export const WELFARE_PARTIAL_WINDOW_MINIMUM_FRACTION = 0.5;
+
 /** Used when neither the site nor the shift specifies an interval. */
 export const WELFARE_DEFAULT_INTERVAL_MINUTES = 60;
 
@@ -108,9 +115,9 @@ export class WelfareWindowService {
       // Only a check made while genuinely Booked On counts, and one made just before a window starts may
       // count for it. Neither moves or rewrites the check's own timestamp.
       attribution: { earlyToleranceMinutes: WELFARE_EARLY_TOLERANCE_MINUTES, onDutyOnly: true },
-      // Owner decision, 18 October 2026: a partly-worked final window is neither missed nor "not required"
-      // until the Phase 4 policy is set, so it is reported as ended at Book Off and raises nothing.
-      holdPartialWindowAtBookOff: true,
+      // A partly-worked final window owes a check once half of it was worked (see the constant above). The
+      // check, Book On and Book Off keep their recorded times; nothing is created for a window.
+      partialWindowAtBookOff: { minimumWorkedFraction: WELFARE_PARTIAL_WINDOW_MINIMUM_FRACTION },
     });
   }
 }

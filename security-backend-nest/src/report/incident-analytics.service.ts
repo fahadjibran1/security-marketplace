@@ -5,6 +5,7 @@ import { Repository } from 'typeorm';
 import { AttendanceEvent, AttendanceEventType } from '../attendance/entities/attendance.entity';
 import { CompanyService } from '../company/company.service';
 import { DailyLog, DailyLogType } from '../daily-log/entities/daily-log.entity';
+import { WELFARE_COMPLETION_LOG_TYPES } from '../operations/operational-completion';
 import { Incident, IncidentSeverity } from '../incident/entities/incident.entity';
 import { NotificationService } from '../notification/notification.service';
 import { NotificationType } from '../notification/entities/notification.entity';
@@ -460,8 +461,19 @@ export class IncidentAnalyticsService {
       const logs = logsByShift.get(shift.id) || [];
       const alerts = alertsByShift.get(shift.id) || [];
       const attendance = (attendanceByShift.get(shift.id) || []).slice().sort((left, right) => left.occurredAt.getTime() - right.occurredAt.getTime());
-      const checkCallLogs = logs.filter((log) => log.logType === DailyLogType.CHECK_CALL).length;
-      const missedCheckCallAlerts = alerts.filter((alert) => alert.type === SafetyAlertType.MISSED_CHECKCALL).length;
+      // Welfare Phase 5. Both log types that complete a Welfare window count — the older check_call and the
+      // welfare_check every current Guard app records (only check_call was counted, so a compliant shift read
+      // as missing every check). One log has one type, so nothing is counted twice.
+      const checkCallLogs = logs.filter((log) => WELFARE_COMPLETION_LOG_TYPES.includes(log.logType)).length;
+      // Missed checks from the per-window evidence rows, one per missed window. The shift's actionable summary
+      // alert is not a further miss (both used to be counted, doubling every miss); a pre-evidence shift falls
+      // back to its legacy rolling alerts.
+      const missedEvidence = alerts.filter(
+        (alert) => alert.type === SafetyAlertType.MISSED_CHECKCALL && alert.welfareWindowIndex != null,
+      ).length;
+      const missedCheckCallAlerts = missedEvidence > 0
+        ? missedEvidence
+        : alerts.filter((alert) => alert.type === SafetyAlertType.MISSED_CHECKCALL).length;
       const welfareAlerts = alerts.filter((alert) => alert.type === SafetyAlertType.WELFARE).length;
       const panicAlerts = alerts.filter((alert) => alert.type === SafetyAlertType.PANIC).length;
       const lateAlerts = alerts.filter((alert) => alert.type === SafetyAlertType.LATE_CHECKIN).length;
@@ -482,7 +494,7 @@ export class IncidentAnalyticsService {
         expectedCheckCalls,
         completedCheckCalls: checkCallLogs,
         missedCheckCalls,
-        complianceRate: expectedCheckCalls > 0 ? this.roundPercent((checkCallLogs / expectedCheckCalls) * 100) : 100,
+        complianceRate: expectedCheckCalls > 0 ? this.roundPercent(Math.min(1, checkCallLogs / expectedCheckCalls) * 100) : 100,
         lateCheckIn,
         welfareAlerts,
         panicAlerts,

@@ -30,6 +30,9 @@
  *       the sweep to work on (default 4).
  *   POOL_LOAD_IDLE_SECONDS=N   phase D: nobody signed in, only the sweep and the health probe.
  *   POOL_LOAD_SKIP_AB=true     skip phases A and B.
+ *   POOL_LOAD_WELFARE_MONITORING=true  the Welfare Phase 2+ web app: the core loaders without the "today"
+ *       coverage call, then GET /coverage/operations for the company's shifts in parallel with the section
+ *       loaders.
  * With any of these set, a Render-style probe calls /health/ready and /health/live every 5 s with a 5 s
  * timeout throughout phases C and D, and the report counts the probes Render would have failed.
  */
@@ -452,14 +455,23 @@ async function main() {
     dashboard: ['/attendance/company', '/timesheets/company', '/incidents/company', '/alerts/company', '/daily-logs/company', '/notifications/company', '/compliance/statuses'],
     'live-operations': ['/attendance/company', '/timesheets/company', '/incidents/company', '/alerts/company', '/daily-logs/company', '/notifications/company'],
   };
+  // Welfare Phase 2+: welfare monitoring is requested for the board's shifts after the core loaders.
+  const WELFARE_MONITORING = process.env.POOL_LOAD_WELFARE_MONITORING === 'true';
+  const monitoredIds = WELFARE_MONITORING
+    ? (await ds.query('SELECT id FROM shifts WHERE "companyId" = $1 ORDER BY id LIMIT 200', [companyId])).map((r: { id: number }) => r.id)
+    : [];
+  const core = WELFARE_MONITORING ? CORE.filter((p) => !p.startsWith('/coverage/shifts?from=')) : CORE;
   const reload = async (section: keyof typeof SECTION) => {
     const results: Array<{ path: string } & Res> = [];
     const timeoutMs = P2_MODE ? BROWSER_ABORT_MS : 60_000;
     const run = async (paths: string[]) =>
       Promise.all(paths.map(async (path) => results.push({ path, ...(await api('GET', path, token, undefined, timeoutMs)) })));
     const started = Date.now();
-    await run(CORE);
-    await run(SECTION[section]);
+    await run(core);
+    await run([
+      ...(WELFARE_MONITORING && monitoredIds.length ? [`/coverage/operations?shiftIds=${monitoredIds.join(',')}`] : []),
+      ...SECTION[section],
+    ]);
     return { ms: Date.now() - started, results };
   };
 

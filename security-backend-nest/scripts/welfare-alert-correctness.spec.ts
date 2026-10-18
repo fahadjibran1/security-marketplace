@@ -273,8 +273,42 @@ async function engineCases() {
     assert.equal(at.windows[1].state, NOT_APPLICABLE);
     const inGrace = resolveWelfareAt({ start: Z(17, 20), end: Z(18, 6), checks: [], bookOffAt: Z(17, 21), now: Z(17, 21, 4, 59) });
     assert.equal(inGrace.windows[0].state, OperationalWindowState.OVERDUE, 'still inside its grace period');
+    // A millisecond short of the end is a partial window, but almost all of it was worked: under the Phase 5
+    // 50% rule it was owed, and unmet it is missed.
     const justBefore = resolveWelfareAt({ start: Z(17, 20), end: Z(18, 6), checks: [], bookOffAt: Z(17, 20, 59, 59, 999), now: Z(17, 22) });
-    assert.equal(justBefore.windows[0].state, ENDED_AT_BOOK_OFF, 'a millisecond short of the end is a partial window');
+    assert.equal(justBefore.windows[0].state, MISSED, 'a millisecond short of the end: owed, and missed');
+  });
+
+  await test('WAC-E16-THE-50-PERCENT-RULE', () => {
+    const base = { start: Z(17, 20), end: Z(18, 6), checks: [] as Date[] };
+    const stateAt = (bookOffAt: Date, now = Z(18, 7), extra: Partial<Parameters<typeof resolveWelfareAt>[0]> = {}) =>
+      resolveWelfareAt({ ...base, bookOffAt, now, ...extra }).windows[2].state;
+    // Window 2 is 22:00-23:00Z.
+    assert.equal(stateAt(Z(17, 22, 29, 59, 999)), ENDED_AT_BOOK_OFF, '29:59.999 worked: nothing owed');
+    assert.equal(stateAt(Z(17, 22, 30)), MISSED, 'exactly 30:00 worked: owed, unmet, missed');
+    assert.equal(stateAt(Z(17, 22, 31)), MISSED, '31 minutes: owed');
+    assert.equal(stateAt(Z(17, 22, 40), Z(17, 22, 50)), DUE, 'owed, and judged at the window end, not at the Book Off');
+    assert.equal(stateAt(Z(17, 22, 40), Z(17, 23, 3)), OperationalWindowState.OVERDUE, 'grace runs from the window end');
+    assert.equal(stateAt(Z(17, 22, 40), Z(18, 7), { checks: [Z(17, 22, 35)] }), COMPLETED, 'met before the Book Off');
+    // Worked time is genuine duty: booked on at 22:10 and off at 22:35 is 25 minutes — not owed.
+    assert.equal(stateAt(Z(17, 22, 35), Z(18, 7), { bookOnAt: Z(17, 22, 10) }), ENDED_AT_BOOK_OFF, 'a late Book On counts from the Book On');
+    assert.equal(stateAt(Z(17, 22, 45), Z(18, 7), { bookOnAt: Z(17, 22, 10) }), MISSED, '35 minutes worked: owed');
+    // Half of any interval: a 30-minute grid owes after 15 minutes.
+    const half = (off: Date) => welfare.resolve({
+      shiftStart: Z(17, 20), shiftEnd: Z(18, 6),
+      interval: { siteWelfareCheckIntervalMinutes: 30, shiftCheckCallIntervalMinutes: 30 },
+      completions: [], applicability: { bookOnAt: Z(17, 20), bookOffAt: off, shiftEnd: Z(18, 6) }, now: Z(18, 7),
+    }).windows[0].state;
+    assert.equal(half(Z(17, 20, 14, 59)), ENDED_AT_BOOK_OFF);
+    assert.equal(half(Z(17, 20, 15)), MISSED);
+  });
+
+  await test('WAC-E17-THE-RULE-HOLDS-ACROSS-THE-AUTUMN-CLOCK-CHANGE', () => {
+    // 25-10-2026: the 01:00-02:00Z window is 02:00-01:00 on the site clock as it falls back; 30 real minutes
+    // are what count.
+    const r = (off: Date) => resolveWelfareAt({ start: Z(24, 20), end: Z(25, 7), checks: [], bookOffAt: off, now: Z(25, 9) }).windows[5].state;
+    assert.equal(r(Z(25, 1, 29)), ENDED_AT_BOOK_OFF);
+    assert.equal(r(Z(25, 1, 30)), MISSED);
   });
 
   await test('WAC-E11-CROSS-MIDNIGHT-SHIFT', () => {
@@ -846,10 +880,21 @@ async function sweepCases() {
       assert.equal((await evidence(beyond.id)).length, 0, 'one 26 hours ago is outside the bound');
     });
 
+    await test('WAC-22B-NORMAL-RUNNING-IS-NOT-RECOVERY', async () => {
+      const instance = restartedSweep();
+      (instance as unknown as { lastWelfareSweepSucceededAt: number }).lastWelfareSweepSucceededAt = Date.now() - 5 * MIN;
+      assert.equal((await instance.runMissedWelfareChecks()).lookbackMinutes, 120, 'five minutes since the last sweep: two hours');
+      (instance as unknown as { lastWelfareSweepSucceededAt: number }).lastWelfareSweepSucceededAt = Date.now() - 14 * MIN;
+      assert.equal((await instance.runMissedWelfareChecks()).lookbackMinutes, 120, 'a skipped sweep or two is still normal');
+      (instance as unknown as { lastWelfareSweepSucceededAt: number }).lastWelfareSweepSucceededAt = Date.now() - 30 * MIN;
+      const recovering = (await instance.runMissedWelfareChecks()).lookbackMinutes;
+      assert.ok(recovering >= 150 && recovering < 152, `a 30-minute gap recovers 30 minutes + two hours (${recovering})`);
+    });
+
     await test('WAC-22-A-FAILED-SWEEP-DOES-NOT-COUNT-AS-SUCCESS', async () => {
       const instance = restartedSweep();
       await instance.runMissedWelfareChecks();
-      assert.equal((await instance.runMissedWelfareChecks()).lookbackMinutes, 120);
+      assert.equal((await instance.runMissedWelfareChecks()).lookbackMinutes, 120, 'right after a success: normal running');
       // The database "fails" for one sweep.
       const live = instance as unknown as { dailyLogRepo: Repository<DailyLog> };
       const real = live.dailyLogRepo;
@@ -862,6 +907,33 @@ async function sweepCases() {
       const counters = await instance.runMissedWelfareChecks();
       assert.ok(counters.lookbackMinutes >= 300 && counters.lookbackMinutes < 310, `gap + two hours (${counters.lookbackMinutes})`);
       assert.deepEqual((await evidence(lost.id)).map((e) => e.i), [0], 'the miss inside the gap is recorded');
+    });
+
+    await test('WAC-23-AN-OWED-PARTIAL-WINDOW-IS-RECORDED-EVEN-WHEN-IT-ENDS-LONG-AFTER-THE-BOOK-OFF', async () => {
+      // A five-hour interval: booked off 2h30m into window 0 (exactly half), whose end — and grace — come
+      // 2h35m later, past the usual two-hour recheck. The sweep keeps the shift until that window settles.
+      const shift = await makeShift({ startedMinsAgo: 310, durationMinutes: 600, checksMinsAgo: [] });
+      await ds.query('UPDATE shifts SET "checkCallIntervalMinutes" = 300 WHERE id = $1', [shift.id]);
+      await bookOff(shift, 160);
+      const steady = restartedSweep();
+      (steady as unknown as { lastWelfareSweepSucceededAt: number }).lastWelfareSweepSucceededAt = Date.now() - 5 * MIN;
+      const counters = await steady.runMissedWelfareChecks();
+      assert.equal(counters.lookbackMinutes, 120, 'normal running, not recovery');
+      assert.deepEqual((await evidence(shift.id)).map((e) => e.i), [0], 'the owed half-worked window is recorded');
+      assert.equal((await summaries(shift.id))[0].status, SafetyAlertStatus.OPEN, 'and raised');
+    });
+
+    await test('WAC-24-BOOKING-OFF-AND-ONTO-THE-NEXT-SHIFT-DOES-NOT-ESCAPE-AN-OWED-WINDOW', async () => {
+      // Shift A: booked off 40 minutes into window 1 (20 minutes ago), no check. The Guard books straight on
+      // to shift B.
+      const a = await makeShift({ startedMinsAgo: 120, durationMinutes: 600, checksMinsAgo: [110] });
+      await bookOff(a, 20);
+      const b = await makeShift({ startedMinsAgo: 39, durationMinutes: 600, checksMinsAgo: [30] });
+      await advance(a.id, 30); // window 1 of A has now ended and passed its grace
+      await sweep.runMissedWelfareChecks();
+      assert.deepEqual((await evidence(a.id)).map((e) => e.i), [1], "A's owed window is missed whatever happens on B");
+      assert.equal((await summaries(a.id))[0].status, SafetyAlertStatus.OPEN);
+      assert.equal((await evidence(b.id)).length, 0, 'B is judged on its own windows');
     });
 
     console.log(JSON.stringify({ event: 'welfare_alert_correctness_certified', tests: passed }));

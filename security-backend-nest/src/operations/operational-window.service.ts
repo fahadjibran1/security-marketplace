@@ -124,12 +124,20 @@ export class OperationalWindowService {
     const applicable = windows.map((window) => this.isApplicable(window, input.applicability));
     const attributed = this.attribute(windows, applicable, completions, input.applicability, input.attribution);
     const bookOff = this.timeOf(input.applicability.bookOffAt);
+    const bookOn = this.timeOf(input.applicability.bookOnAt);
+    const partial = input.partialWindowAtBookOff;
 
     const resolved = windows.map<ResolvedOperationalWindow>((window, index) => {
       const end = window.end.getTime();
       const { all, discharging } = attributed[index];
-      // Booked off inside this window: it was only partly worked.
-      const cutShort = Boolean(input.holdPartialWindowAtBookOff) && bookOff !== null && bookOff < end;
+      // Booked off inside this window and worked less than the owed fraction of it: nothing was owed.
+      // Worked time is genuine duty only — from the later of Book On and the window start, to Book Off.
+      let cutShort = false;
+      if (partial && bookOff !== null && bookOff < end) {
+        const start = window.start.getTime();
+        const worked = Math.max(0, bookOff - Math.max(start, bookOn ?? start));
+        cutShort = worked < partial.minimumWorkedFraction * (end - start);
+      }
 
       return {
         ...window,

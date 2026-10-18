@@ -20,7 +20,7 @@ import {
 } from '../shift/shift-reconciliation';
 import { Timesheet } from '../timesheet/entities/timesheet.entity';
 import { EarlyBookOffService, EarlyBookOffView } from '../coverage/early-book-off.service';
-import { COVERAGE_STATUS_WORD, earlyBookOff, formatMinutes } from '../operations/early-book-off';
+import { COVERAGE_STATUS_WORD, STAFFING_STATUS_WORD, earlyBookOff, formatMinutes } from '../operations/early-book-off';
 import { User, UserRole } from '../user/entities/user.entity';
 
 /**
@@ -72,7 +72,7 @@ const ATTENDANCE_COLUMNS = [
   'Scheduled start', 'Scheduled end', 'Scheduled start (UTC)', 'Scheduled end (UTC)',
   'Book On', 'Book Off', 'Book On (UTC)', 'Book Off (UTC)',
   'Shift status', 'Attendance status', 'Missing Book Off', 'Early Book Off',
-  'Remaining scheduled time', 'Coverage after early Book Off', 'Covering shift IDs',
+  'Remaining scheduled time', 'Coverage after early Book Off', 'Covering shift IDs', 'Staffing after early Book Off',
   'Reconciliation', 'Reconciliation audit ref', 'Timesheet status',
 ];
 
@@ -190,6 +190,22 @@ export function attendanceStatus(f: AttendanceFacts): string {
  */
 export function earlyBookOffMinutes(f: Pick<AttendanceFacts, 'end' | 'bookOffAt'>): number | null {
   return earlyBookOff(f.end, f.bookOffAt)?.minutesEarly ?? null;
+}
+
+/**
+ * "Partially staffed (1 of 2 required, short 4h 50m)", or that no requirement is set — the shift is not from
+ * the Rota Planner, so S4 holds no genuine requirement for it and none is assumed.
+ */
+export function staffingWords(view: EarlyBookOffView | null | undefined): string {
+  if (!view) return '';
+  const s = view.staffing;
+  if (!s) return 'No staffing requirement set (not a Rota Planner shift)';
+  const parts = [`${s.minOnDuty} of ${s.required} required at the lowest`];
+  if (s.shortMinutes) parts.push(`short ${formatMinutes(s.shortMinutes)}`);
+  if (s.unstaffedMinutes) parts.push(`unstaffed ${formatMinutes(s.unstaffedMinutes)}`);
+  if (s.unknownMinutes) parts.push(`unknown ${formatMinutes(s.unknownMinutes)}`);
+  if (s.reliesOnSchedule) parts.push('partly from the schedule');
+  return `${STAFFING_STATUS_WORD[s.status]} (${parts.join(', ')})`;
 }
 
 /** "Coverage maintained (another Guard on duty: shifts 41)" and the like, from the assessment. */
@@ -344,7 +360,7 @@ export class OperationsExportService {
             const key = COVERAGE_STATUS_WORD[earlyBy.get(shift.id)!.coverage.status];
             coverageCounts.set(key, (coverageCounts.get(key) ?? 0) + 1);
           }
-          return [words.status, words.shifts];
+          return [words.status, words.shifts, staffingWords(earlyBy.get(shift.id))];
         })(),
         recon
           ? `Closed without Book Off — ${reasonLabel}, by ${names.get(recon.userId ?? -1) ?? 'unknown user'}, ${ukDateTime(recon.reconciledAt ?? recon.createdAt, tz)}`

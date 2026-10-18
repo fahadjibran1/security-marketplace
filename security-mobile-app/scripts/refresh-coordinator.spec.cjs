@@ -238,7 +238,8 @@ test('RC-12 an obsolete cycle touches no state: loaders, failures, freshness and
   assert.ok(runner.indexOf('if (!isCurrent()) return failures;') < runner.indexOf('loaders[index].apply(result.value);'));
   const cycle = SCREEN.slice(SCREEN.indexOf('const runLoadCycle = React.useMemo('), SCREEN.indexOf('const loadData = React.useCallback('));
   assert.match(cycle, /\], isCurrent\);\n\s+if \(!isCurrent\(\)\) return;/);
-  assert.match(cycle, /isCurrent,\n\s+\);\n\s+if \(!isCurrent\(\)\) return;\n\s+const failures = /);
+  // Welfare Phase 5: the monitoring and section loaders run in parallel; both are gated, and so is the join.
+  assert.match(cycle, /await Promise\.all\(\[\n\s+runSettledLoaders\(monitoringLoaders, isCurrent\),\n\s+runSettledLoaders\([\s\S]*?isCurrent,\n\s+\),\n\s+\]\);\n\s+if \(!isCurrent\(\)\) return;\n\s+const failures = /);
   assert.match(cycle, /finally \{[\s\S]*?if \(isCurrent\(\)\) \{\s*setLoading\(false\);\s*setRefreshing\(false\);/);
   assert.ok(cycle.indexOf('if (!isCurrent()) return;\n        const failures') < cycle.indexOf('setFailedSources('));
 });

@@ -176,40 +176,58 @@ type ZipEntry = { path: string; data: Uint8Array };
  * export is evidence and someone asks whether two files are the same one.
  */
 export function buildZip(entries: readonly ZipEntry[]): Uint8Array {
-  const chunks: number[] = [];
-  const central: number[] = [];
+  // Built from byte blocks and assembled once at the end. The earlier version pushed every byte of every
+  // entry through a spread call, which overflowed the call stack once a sheet passed a few hundred
+  // kilobytes — a month-long report could not be downloaded (Welfare Phase 5). Same bytes, any size.
+  const local: Uint8Array[] = [];
+  const central: Uint8Array[] = [];
+  let localLength = 0;
+  let centralLength = 0;
   const DOS_TIME = 0;
   const DOS_DATE = 0x2100; // 1 Jan 1980, the ZIP epoch.
 
-  const push = (target: number[], ...bytes: number[]) => target.push(...bytes);
   const u16 = (v: number) => [v & 0xff, (v >> 8) & 0xff];
   const u32 = (v: number) => [v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >>> 24) & 0xff];
+  const addLocal = (block: Uint8Array) => { local.push(block); localLength += block.length; };
+  const addCentral = (block: Uint8Array) => { central.push(block); centralLength += block.length; };
 
   for (const entry of entries) {
     const nameBytes = utf8Bytes(entry.path);
     const crc = crc32(entry.data);
-    const offset = chunks.length;
+    const offset = localLength;
 
-    push(chunks, ...u32(0x04034b50), ...u16(20), ...u16(0x0800), ...u16(0));
-    push(chunks, ...u16(DOS_TIME), ...u16(DOS_DATE));
-    push(chunks, ...u32(crc), ...u32(entry.data.length), ...u32(entry.data.length));
-    push(chunks, ...u16(nameBytes.length), ...u16(0));
-    push(chunks, ...nameBytes, ...entry.data);
+    addLocal(new Uint8Array([
+      ...u32(0x04034b50), ...u16(20), ...u16(0x0800), ...u16(0),
+      ...u16(DOS_TIME), ...u16(DOS_DATE),
+      ...u32(crc), ...u32(entry.data.length), ...u32(entry.data.length),
+      ...u16(nameBytes.length), ...u16(0),
+    ]));
+    addLocal(nameBytes);
+    addLocal(entry.data);
 
-    push(central, ...u32(0x02014b50), ...u16(20), ...u16(20), ...u16(0x0800), ...u16(0));
-    push(central, ...u16(DOS_TIME), ...u16(DOS_DATE));
-    push(central, ...u32(crc), ...u32(entry.data.length), ...u32(entry.data.length));
-    push(central, ...u16(nameBytes.length), ...u16(0), ...u16(0), ...u16(0), ...u16(0));
-    push(central, ...u32(0), ...u32(offset), ...nameBytes);
+    addCentral(new Uint8Array([
+      ...u32(0x02014b50), ...u16(20), ...u16(20), ...u16(0x0800), ...u16(0),
+      ...u16(DOS_TIME), ...u16(DOS_DATE),
+      ...u32(crc), ...u32(entry.data.length), ...u32(entry.data.length),
+      ...u16(nameBytes.length), ...u16(0), ...u16(0), ...u16(0), ...u16(0),
+      ...u32(0), ...u32(offset),
+    ]));
+    addCentral(nameBytes);
   }
 
-  const centralOffset = chunks.length;
-  const all = chunks.concat(central);
-  all.push(...u32(0x06054b50), ...u16(0), ...u16(0),
+  const end = new Uint8Array([
+    ...u32(0x06054b50), ...u16(0), ...u16(0),
     ...u16(entries.length), ...u16(entries.length),
-    ...u32(central.length), ...u32(centralOffset), ...u16(0));
+    ...u32(centralLength), ...u32(localLength), ...u16(0),
+  ]);
 
-  return new Uint8Array(all);
+  const out = new Uint8Array(localLength + centralLength + end.length);
+  let at = 0;
+  for (const block of [...local, ...central, end]) {
+    out.set(block, at);
+    at += block.length;
+  }
+  return out;
 }
 
 /** The workbook, as bytes ready to download. */

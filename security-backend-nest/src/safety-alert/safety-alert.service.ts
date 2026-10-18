@@ -78,6 +78,9 @@ const BOOKED_OFF_RECHECK_MINUTES = 120;
  */
 export const BOOKED_OFF_RECOVERY_MAX_MINUTES = 24 * 60;
 
+/** A gap since the last successful sweep longer than three five-minute cycles is treated as an outage. */
+const SWEEP_GAP_RECOVERY_MINUTES = 15;
+
 /** A late Book Off can follow the scheduled end by up to the stale Book On boundary (12 hours). */
 const LATE_BOOK_OFF_MAX_MINUTES = 12 * 60;
 
@@ -345,7 +348,10 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
           // Only a genuine, recent Book Off brings a completed shift back. A shift closed by reconciliation
           // has no Book Off: a controller has already dealt with it.
           const bookOffAt = this.latest(attendance, AttendanceEventType.CHECK_OUT);
-          if (!bookOffAt || bookOffAt < recheckFrom) continue;
+          // The lookback runs from when the shift's welfare state last could change: the end of the window the
+          // Book Off fell in (an owed partial window settles at its end + grace, possibly well after the Book
+          // Off — Phase 5), and never earlier than the Book Off itself.
+          if (!bookOffAt || this.bookOffSettlesAt(shift, bookOffAt) < recheckFrom) continue;
           counters.bookedOffRechecked += 1;
         }
         counters.shiftsChecked += 1;
@@ -364,13 +370,33 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * The end of the welfare window a Book Off fell in (capped at the scheduled end), or the Book Off itself
+   * when it fell outside the grid. Arithmetic on the shift's own grid — the same anchor and interval the
+   * engine uses — so no extra read.
+   */
+  private bookOffSettlesAt(shift: Shift, bookOffAt: Date): Date {
+    const start = new Date(shift.start).getTime();
+    const end = new Date(shift.end).getTime();
+    const off = bookOffAt.getTime();
+    const step = this.welfareWindowService.resolveIntervalMinutes({
+      siteWelfareCheckIntervalMinutes: shift.site?.welfareCheckIntervalMinutes,
+      shiftCheckCallIntervalMinutes: shift.checkCallIntervalMinutes,
+    }) * 60_000;
+    if (!Number.isFinite(start) || !Number.isFinite(end) || off < start || off >= end) return bookOffAt;
+    return new Date(Math.min(end, start + (Math.floor((off - start) / step) + 1) * step));
+  }
+
+  /**
    * How far back a Book Off brings a completed shift into this sweep: two hours normally; after a gap, back
    * to the last successful sweep plus those two hours; after a restart, the 24-hour maximum. Never more.
    */
   private bookedOffLookbackMinutes(nowMs: number): number {
     if (this.lastWelfareSweepSucceededAt === null) return BOOKED_OFF_RECOVERY_MAX_MINUTES;
     const sinceLastMinutes = Math.max(0, nowMs - this.lastWelfareSweepSucceededAt) / 60_000;
-    return Math.min(BOOKED_OFF_RECOVERY_MAX_MINUTES, Math.max(BOOKED_OFF_RECHECK_MINUTES, sinceLastMinutes + BOOKED_OFF_RECHECK_MINUTES));
+    // A sweep every five minutes is normal running: exactly the two-hour recheck. Only a real gap — three
+    // missed cycles or more — is recovery, which reaches back further (and is logged).
+    if (sinceLastMinutes <= SWEEP_GAP_RECOVERY_MINUTES) return BOOKED_OFF_RECHECK_MINUTES;
+    return Math.min(BOOKED_OFF_RECOVERY_MAX_MINUTES, sinceLastMinutes + BOOKED_OFF_RECHECK_MINUTES);
   }
 
   /**

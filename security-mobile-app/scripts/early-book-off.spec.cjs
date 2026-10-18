@@ -84,6 +84,18 @@ test('EBOW-05-COVERAGE-WORDING-CLAIMS-NO-MORE-THAN-THE-EVIDENCE', () => {
   assert.match(ebo.coverageSentence(view('maintained', { reliesOnSchedule: true, coveringShiftIds: [50] })), /from the schedule/);
 });
 
+test('EBOW-07-STAFFING-WORDING', () => {
+  const base = { bookOffAt: '2026-10-18T01:09:36.000Z', scheduledEnd: END, minutesEarly: 290, remainingMinutes: 290,
+    coverage: { status: 'maintained', coveredMinutes: 290, uncoveredMinutes: 0, unknownMinutes: 0, reliesOnSchedule: false, coveringShiftIds: [32], segments: [] } };
+  const staffing = (status, extra = {}) => ({ ...base, staffing: { rotaSlotId: 22, required: 2, status, fullMinutes: 0, shortMinutes: 0, unstaffedMinutes: 0, unknownMinutes: 0, minOnDuty: 1, reliesOnSchedule: false, ...extra } });
+  assert.equal(ebo.staffingSentence({ ...base, staffing: null }), 'No staffing requirement is set for this shift (it is not from the Rota Planner).');
+  assert.equal(ebo.staffingSentence(staffing('partially_staffed', { shortMinutes: 290 })), 'Partially staffed: 2 Guards required; as few as 1 on duty, short for 4h 50m.');
+  assert.equal(ebo.staffingSentence(staffing('fully_staffed')), 'Fully staffed: 2 Guards required, and that many were on duty throughout.');
+  assert.match(ebo.staffingSentence(staffing('unstaffed', { minOnDuty: 0 })), /none on duty for the remaining 4h 50m/);
+  assert.match(ebo.staffingSentence(staffing('undetermined')), /cannot be confirmed/);
+  assert.match(codeOf('src/components/company/CompanyLiveOperationsWorkspace.tsx'), /staffingSentence\(early\)/);
+});
+
 test('EBOW-06-THE-DRAWER-NO-LONGER-SAYS-CLOSED-CLEANLY-FOR-AN-EARLY-BOOK-OFF', () => {
   const drawer = codeOf('src/components/company/CompanyLiveOperationsWorkspace.tsx');
   assert.match(drawer, /minutesEarly !== null\s*\?\s*`Booked off early/);
