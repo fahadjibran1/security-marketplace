@@ -8,6 +8,7 @@ import { ContractPricingModule } from '../contract-pricing/contract-pricing.modu
 import { DailyLog } from '../daily-log/entities/daily-log.entity';
 import { Incident } from '../incident/entities/incident.entity';
 import { NotificationModule } from '../notification/notification.module';
+import { OperationsModule } from '../operations/operations.module';
 import { SafetyAlert } from '../safety-alert/entities/safety-alert.entity';
 import { Shift } from '../shift/entities/shift.entity';
 import { Timesheet } from '../timesheet/entities/timesheet.entity';
@@ -27,6 +28,7 @@ import { ReportService } from './report.service';
     CompanyMembershipModule,
     ContractPricingModule,
     NotificationModule,
+    OperationsModule,
   ],
   controllers: [ReportController],
   providers: [ReportService, IncidentAnalyticsService, OperationsExportService],

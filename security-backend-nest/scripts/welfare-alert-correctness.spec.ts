@@ -936,6 +936,30 @@ async function sweepCases() {
       assert.equal((await evidence(b.id)).length, 0, 'B is judged on its own windows');
     });
 
+    await test('WAC-25-A-PARTIAL-WINDOW-MISS-READS-DIFFERENTLY-FROM-A-FULL-MISSED-WINDOW', async () => {
+      // Full: on duty for all of window 0, no check. Partial: booked off 40 minutes into window 1, no check.
+      const full = await makeShift({ startedMinsAgo: 70, durationMinutes: 600, checksMinsAgo: [] });
+      const part = await makeShift({ startedMinsAgo: 120, durationMinutes: 600, checksMinsAgo: [110] });
+      await bookOff(part, 20);
+      await advance(part.id, 30);
+      await sweep.runMissedWelfareChecks();
+      const record = async (shiftId: number) => {
+        const [row] = (await ds.query(
+          `SELECT a.message, l."afterData" AS after FROM safety_alerts a
+             JOIN audit_logs l ON l."entityId" = a.id AND l.action = 'welfare_check.window_missed'
+            WHERE a."shiftId" = $1 AND a."welfareWindowIndex" IS NOT NULL ORDER BY a."welfareWindowIndex" LIMIT 1`, [shiftId],
+        )) as { message: string; after: { partialWindow: unknown } }[];
+        return row;
+      };
+      const f = await record(full.id);
+      assert.match(f.message, /^Welfare Check missed - \d\d:\d\d-\d\d:\d\d$/, 'a full missed window carries no partial note');
+      assert.equal(f.after.partialWindow, null);
+      const p = await record(part.id);
+      assert.match(p.message, /^Welfare Check missed - \d\d:\d\d-\d\d:\d\d \(partial window: on duty 40 of 60 min, Book Off \d\d:\d\d\)$/);
+      assert.deepEqual(Object.keys(p.after.partialWindow as object).sort(), ['bookOffAt', 'bookOnAt', 'onDutyMinutes', 'windowMinutes']);
+      assert.equal((p.after.partialWindow as { onDutyMinutes: number }).onDutyMinutes, 40);
+    });
+
     console.log(JSON.stringify({ event: 'welfare_alert_correctness_certified', tests: passed }));
   } finally {
     await ds.destroy();

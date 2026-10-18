@@ -59,7 +59,7 @@ export class ReportController {
   @Get('welfare')
   @Roles(...COMPANY_VIEW_ROLES)
   getWelfareReport(@CurrentUser() user: JwtPayload, @Query() query: AnalyticsReportQueryDto) {
-    return this.incidentAnalyticsService.getWelfareReport(user.sub, query);
+    return this.incidentAnalyticsService.getWelfareReport(user.sub, user.role, query);
   }
 
   @Get('sites-risk')

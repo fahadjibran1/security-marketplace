@@ -21,7 +21,7 @@ import { DailyLog } from '../daily-log/entities/daily-log.entity';
 import { AttendanceEvent, AttendanceEventType } from '../attendance/entities/attendance.entity';
 import { Shift } from '../shift/entities/shift.entity';
 import { GuardProfile } from '../guard-profile/entities/guard-profile.entity';
-import { WelfareWindowService } from '../operations/welfare-window.service';
+import { WelfareWindowService, welfareWindowDuty } from '../operations/welfare-window.service';
 import { OperationalWindowService } from '../operations/operational-window.service';
 import { GuardComplianceService } from '../compliance/guard-compliance.service';
 import { CompanyMembership } from '../company-membership/entities/company-membership.entity';
@@ -443,7 +443,7 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
 
       for (const window of resolution.windows) {
         if (window.state !== OperationalWindowState.MISSED) continue;
-        await this.recordWelfareMiss(manager, shift, guard, window, resolution.intervalMinutes, counters);
+        await this.recordWelfareMiss(manager, shift, guard, window, resolution.intervalMinutes, counters, bookOnAt, bookOffAt);
       }
 
       await this.maintainWelfareSummary(manager, shift, guard, resolution, counters);
@@ -470,9 +470,20 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
     window: ResolvedOperationalWindow,
     intervalMinutes: number | null,
     counters: WelfareSweepCounters,
+    bookOnAt: Date | null = null,
+    bookOffAt: Date | null = null,
   ) {
     const timezone = shift.site?.timezone;
     const detectedAt = new Date();
+    // A partial-window miss says so, with the recorded times that made it partial (release gate). The grading
+    // is the engine's; this only words it, so a full missed window and a partial one never read the same.
+    const duty = welfareWindowDuty(window, bookOnAt, bookOffAt);
+    const partialNote = duty.partial
+      ? ` (partial window: on duty ${duty.onDutyMinutes} of ${duty.windowMinutes} min`
+        + (duty.bookedOnLate && bookOnAt ? `, Book On ${this.formatTimeOfDay(bookOnAt, timezone)}` : '')
+        + (duty.bookedOffEarly && bookOffAt ? `, Book Off ${this.formatTimeOfDay(bookOffAt, timezone)}` : '')
+        + ')'
+      : '';
     const inserted = await manager
       .createQueryBuilder()
       .insert()
@@ -486,7 +497,7 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
         status: SafetyAlertStatus.CLOSED,
         closedAt: detectedAt,
         welfareWindowIndex: window.index,
-        message: `Welfare Check missed - ${this.formatWindowLabel(window, timezone)}`,
+        message: `Welfare Check missed - ${this.formatWindowLabel(window, timezone)}${partialNote}`,
       })
       .orIgnore()
       .execute();
@@ -510,6 +521,9 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
         windowEnd: window.end.toISOString(),
         dueAt: window.dueAt.toISOString(),
         missedFrom: window.missedFrom.toISOString(),
+        partialWindow: duty.partial
+          ? { onDutyMinutes: duty.onDutyMinutes, windowMinutes: duty.windowMinutes, bookOnAt: bookOnAt?.toISOString() ?? null, bookOffAt: bookOffAt?.toISOString() ?? null }
+          : null,
       },
     });
   }

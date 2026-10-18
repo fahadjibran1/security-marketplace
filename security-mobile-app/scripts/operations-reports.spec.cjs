@@ -226,4 +226,14 @@ test('RPT-07-THE-SCREENS-USE-THE-SERVER-REPORTS-AND-KEEP-THE-EXISTING-EXPORT', (
   assert.match(api, /\/reports\/\$\{kind\}\?/);
 });
 
+test('RPT-10-ANALYTICS-SHOWS-THE-WELFARE-REPORT-WHEN-ANOTHER-REPORT-IS-REFUSED', () => {
+  // Welfare release gate: /reports/welfare is open to reports.operational roles; incidents and site risk are
+  // still owner-only. The page settles each report on its own, so a refusal does not blank the others.
+  const page = codeOf('src/components/company/CompanyAnalyticsWorkspace.tsx');
+  assert.match(page, /await Promise\.allSettled\(\[\s*getIncidentAnalyticsReport\(filters\),\s*getWelfareAnalyticsReport\(filters\),\s*getSiteRiskReport\(filters\),\s*\]\)/);
+  assert.match(page, /setWelfareReport\(nextWelfare\.status === 'fulfilled' \? nextWelfare\.value : null\)/);
+  assert.match(page, /could not be loaded\. Your role may not have access\./);
+  assert.doesNotMatch(page, /await Promise\.all\(\[\s*getIncidentAnalyticsReport/);
+});
+
 console.log(JSON.stringify({ event: 'operations_reports_certified', tests: passed }));

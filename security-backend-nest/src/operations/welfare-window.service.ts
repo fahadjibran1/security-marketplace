@@ -27,6 +27,34 @@ export const WELFARE_EARLY_TOLERANCE_MINUTES = 5;
  */
 export const WELFARE_PARTIAL_WINDOW_MINIMUM_FRACTION = 0.5;
 
+/**
+ * How much of one window the Guard was on duty for, from the recorded Book On and Book Off only.
+ *
+ * Release gate: a partial-window miss (Book On late into the window, or Book Off part-way through it after at
+ * least half was worked) must read differently from a full missed window. This does not change the grading
+ * — the window engine decides MISSED — it only says how much of the window that grading covered.
+ * `partial` is false for a window the Guard was on duty for end to end, or when no Book On is recorded.
+ */
+export function welfareWindowDuty(
+  window: { start: Date; end: Date },
+  bookOnAt: Date | null,
+  bookOffAt: Date | null,
+): { partial: boolean; onDutyMinutes: number; windowMinutes: number; bookedOnLate: boolean; bookedOffEarly: boolean } {
+  const start = window.start.getTime();
+  const end = window.end.getTime();
+  const windowMinutes = Math.round((end - start) / 60_000);
+  const on = bookOnAt ? bookOnAt.getTime() : null;
+  const off = bookOffAt ? bookOffAt.getTime() : null;
+  if (on === null) return { partial: false, onDutyMinutes: windowMinutes, windowMinutes, bookedOnLate: false, bookedOffEarly: false };
+  // A whole minute or more off duty makes the window partial; a Book On a few seconds after the start does not.
+  const bookedOnLate = on - start >= 60_000 && on < end;
+  const bookedOffEarly = off !== null && off > start && end - off >= 60_000;
+  const from = Math.max(start, on);
+  const to = off === null ? end : Math.min(end, off);
+  const onDutyMinutes = Math.max(0, Math.floor((to - from) / 60_000));
+  return { partial: bookedOnLate || bookedOffEarly, onDutyMinutes, windowMinutes, bookedOnLate, bookedOffEarly };
+}
+
 /** Used when neither the site nor the shift specifies an interval. */
 export const WELFARE_DEFAULT_INTERVAL_MINUTES = 60;
 

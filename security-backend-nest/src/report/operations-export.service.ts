@@ -21,6 +21,7 @@ import {
 import { Timesheet } from '../timesheet/entities/timesheet.entity';
 import { EarlyBookOffService, EarlyBookOffView } from '../coverage/early-book-off.service';
 import { COVERAGE_STATUS_WORD, STAFFING_STATUS_WORD, earlyBookOff, formatMinutes } from '../operations/early-book-off';
+import { welfareWindowDuty } from '../operations/welfare-window.service';
 import { User, UserRole } from '../user/entities/user.entity';
 
 /**
@@ -79,7 +80,7 @@ const ATTENDANCE_COLUMNS = [
 const WELFARE_COLUMNS = [
   'Company', 'Site', 'Site timezone', 'Shift ID', 'Guard', 'Shift date', 'Welfare interval (min)',
   'Window', 'Window start', 'Window end', 'Window start (UTC)', 'Window end (UTC)',
-  'Status', 'Check recorded at', 'Check recorded at (UTC)',
+  'Status', 'Time on duty in window', 'Check recorded at', 'Check recorded at (UTC)',
   'Missed-window record', 'Missed-window recorded at', 'Missed-window recorded at (UTC)', 'Missed-window audit ref',
   'Alert', 'Alert status', 'Acknowledged', 'Resolved', 'Resolution reason', 'Alert audit refs',
 ];
@@ -94,6 +95,30 @@ const WELFARE_STATUS_WORD: Record<string, string> = {
   ended_at_book_off: 'Ended at Book Off',
   not_applicable: 'Not required',
 };
+
+/**
+ * "Full window", or "Partial — 40 of 60 min (Book Off 10:40)": how much of the window the Guard was on duty
+ * for, so a partial-window miss never reads the same as a full missed window (release gate). Blank where no
+ * duty applies yet (Upcoming, Due) or at all (Not required). From the recorded Book On and Book Off only.
+ */
+export function dutyWords(
+  w: { start: Date | string; end: Date | string },
+  status: string,
+  bookOnAt: string | null,
+  bookOffAt: string | null,
+  tz: string,
+): string {
+  if (!['Completed', 'Overdue', 'Missed', 'Ended at Book Off'].includes(status)) return '';
+  const on = bookOnAt ? new Date(bookOnAt) : null;
+  const off = bookOffAt ? new Date(bookOffAt) : null;
+  const duty = welfareWindowDuty({ start: new Date(w.start), end: new Date(w.end) }, on, off);
+  if (!duty.partial) return 'Full window';
+  const why = [
+    duty.bookedOnLate && on ? `Book On ${hhmm(on, tz)}` : '',
+    duty.bookedOffEarly && off ? `Book Off ${hhmm(off, tz)}` : '',
+  ].filter(Boolean).join(', ');
+  return `Partial — ${duty.onDutyMinutes} of ${duty.windowMinutes} min (${why})`;
+}
 
 /** "YYYY-MM-DD" to [from 00:00, to + 1 day 00:00) on the UK calendar, with the number of days; refused otherwise. */
 export function parseReportRange(query: ReportQuery, now = new Date()) {
@@ -459,6 +484,7 @@ export class OperationsExportService {
           utc(w.start),
           utc(w.end),
           status,
+          dutyWords(w, status, view.bookOnAt, view.bookOffAt, tz),
           ukDateTime(w.completedAt, tz),
           utc(w.completedAt),
           w.evidenceAlertId ? `Record #${w.evidenceAlertId} (history, not an alert)` : '',

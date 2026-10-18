@@ -34,7 +34,9 @@ import { OperationsProjectionService } from '../src/coverage/operations-projecti
 import { CoverageService } from '../src/coverage/coverage.service';
 import { EarlyBookOffService } from '../src/coverage/early-book-off.service';
 import { OperationsExportService } from '../src/report/operations-export.service';
-import { CompanyMembershipRole, CompanyPermission, hasPermission } from '../src/company-membership/company-membership-types';
+import { CompanyMembershipRole, CompanyMembershipStatus, CompanyPermission, hasPermission } from '../src/company-membership/company-membership-types';
+import { CompanyMembership } from '../src/company-membership/entities/company-membership.entity';
+import { CompanyMembershipService } from '../src/company-membership/company-membership.service';
 import { EARLY_BOOK_OFF_MINUTES, assessCoverage, assessStaffing, earlyBookOff } from '../src/operations/early-book-off';
 import { RotaSlot } from '../src/rota-slot/entities/rota-slot.entity';
 import { IncidentAnalyticsService } from '../src/report/incident-analytics.service';
@@ -345,11 +347,15 @@ async function main() {
 
     // ═══════════════════ the corrected /reports/welfare counts (Phase 5) ═══════════════════
 
+    // The real membership resolver, so the report's permission and tenant rules are what production runs.
+    const companyLookup = { findByUserId: (id: number) => repo(Company).findOne({ where: { user: { id } }, relations: ['user'] }) };
+    const analytics = new IncidentAnalyticsService(
+      repo(Incident), repo(SafetyAlert), repo(Shift), repo(AttendanceEvent), repo(DailyLog),
+      companyLookup as never, {} as never, new CompanyMembershipService(repo(CompanyMembership), companyLookup as never),
+      new WelfareWindowService(engine),
+    );
+
     await test('EBO-18-THE-WELFARE-REPORT-COUNTS-BOTH-CHECK-TYPES-AND-EACH-MISS-ONCE', async () => {
-      const analytics = new IncidentAnalyticsService(
-        repo(Incident), repo(SafetyAlert), repo(Shift), repo(AttendanceEvent), repo(DailyLog),
-        { findByUserId: async (id: number) => actors.get(id) } as never, {} as never,
-      );
       const s = await shift(bravo, bravo.dock, rhys, '2026-10-10T07:00:00Z', '2026-10-10T11:00:00Z', 'completed', '2026-10-10T07:00:00Z', '2026-10-10T11:00:00Z');
       for (const [at, type] of [['2026-10-10T07:20:00Z', DailyLogType.WELFARE_CHECK], ['2026-10-10T08:20:00Z', DailyLogType.CHECK_CALL], ['2026-10-10T10:20:00Z', DailyLogType.WELFARE_CHECK]] as const) {
         const log = await repo(DailyLog).save(repo(DailyLog).create({ company: bravo.company, guard: rhys, shift: s, message: 'ok', logType: type }));
@@ -362,13 +368,72 @@ async function main() {
           status: idx === null ? SafetyAlertStatus.OPEN : SafetyAlertStatus.CLOSED, welfareWindowIndex: idx, message: 'm',
         }));
       }
-      const report = await analytics.getWelfareReport(bravo.owner.id, { startDate: '2026-10-10', endDate: '2026-10-10' } as never);
+      // The owner has no membership row: the legacy owner path, unchanged.
+      const report = await analytics.getWelfareReport(bravo.owner.id, UserRole.COMPANY_ADMIN, { startDate: '2026-10-10', endDate: '2026-10-10' } as never);
       const rows = report.records as unknown as Array<{ shiftId: number; expectedCheckCalls: number; completedCheckCalls: number; missedCheckCalls: number; complianceRate: number }>;
       const row = rows.find((r) => r.shiftId === s.id)!;
       assert.equal(row.expectedCheckCalls, 4);
       assert.equal(row.completedCheckCalls, 3, 'welfare_check and check_call both count, each once');
       assert.equal(row.missedCheckCalls, 1, 'one missed window, not two (the summary is not a second miss)');
       assert.equal(row.complianceRate, 75);
+    });
+
+    await test('EBO-19-THE-WELFARE-REPORT-IS-OPEN-TO-OPERATIONAL-ROLES-AND-STAYS-INSIDE-THE-TENANT', async () => {
+      const delta = await tenant('Delta');
+      const una = await guard('Una Delta');
+      const own = await shift(delta, delta.gate, una, '2026-10-10T07:00:00Z', '2026-10-10T09:00:00Z', 'completed', '2026-10-10T07:00:00Z', '2026-10-10T09:00:00Z');
+      const member = async (role: CompanyMembershipRole, status = CompanyMembershipStatus.ACTIVE) => {
+        const u = await repo(User).save(repo(User).create({ email: `m${(seq += 1)}@example.invalid`, passwordHash: 'x', role: UserRole.COMPANY_STAFF, status: UserStatus.ACTIVE }));
+        await repo(CompanyMembership).save(repo(CompanyMembership).create({ userId: u.id, companyId: delta.company.id, membershipRole: role, status }));
+        return u.id;
+      };
+      const range = { startDate: '2026-10-10', endDate: '2026-10-10' } as never;
+      const shiftIdsFor = async (userId: number) =>
+        (await analytics.getWelfareReport(userId, UserRole.COMPANY_STAFF, range)).records.map((r) => r.shiftId);
+
+      for (const role of [CompanyMembershipRole.OPERATIONS, CompanyMembershipRole.CONTROL_ROOM, CompanyMembershipRole.ADMIN, CompanyMembershipRole.HR_COMPLIANCE]) {
+        const ids = await shiftIdsFor(await member(role));
+        assert.deepEqual(ids, [own.id], `${role}: sees its own company's shift and nothing of Bravo's`);
+      }
+      for (const role of [CompanyMembershipRole.FINANCE, CompanyMembershipRole.VIEWER]) {
+        const id = await member(role);
+        await assert.rejects(shiftIdsFor(id), (e: Error) => e.constructor.name === 'ForbiddenException', `${role}: no reports.operational`);
+      }
+      const suspended = await member(CompanyMembershipRole.OPERATIONS, CompanyMembershipStatus.SUSPENDED);
+      await assert.rejects(shiftIdsFor(suspended), (e: Error) => e.constructor.name === 'ForbiddenException', 'a suspended member is refused');
+      const stranger = await repo(User).save(repo(User).create({ email: `s${(seq += 1)}@example.invalid`, passwordHash: 'x', role: UserRole.COMPANY_STAFF, status: UserStatus.ACTIVE }));
+      await assert.rejects(shiftIdsFor(stranger.id), (e: Error) => e.constructor.name === 'NotFoundException', 'staff with no membership see nothing');
+      // The owner of Delta still gets Delta through the legacy path; Bravo's owner still gets Bravo only.
+      assert.deepEqual((await analytics.getWelfareReport(delta.owner.id, UserRole.COMPANY_ADMIN, range)).records.map((r) => r.shiftId), [own.id]);
+      assert.ok(!(await analytics.getWelfareReport(bravo.owner.id, UserRole.COMPANY_ADMIN, range)).records.some((r) => r.shiftId === own.id));
+      // No free text reaches the report.
+      const keys = Object.keys((await analytics.getWelfareReport(delta.owner.id, UserRole.COMPANY_ADMIN, range)).records[0]);
+      assert.ok(!keys.some((k) => /note|message|text|comment/i.test(k)), `record fields: ${keys.join(',')}`);
+    });
+
+    await test('EBO-20-THE-WELFARE-REPORT-AGREES-WITH-THE-WINDOW-ENGINE', async () => {
+      // The legacy count was scheduled checks minus logs: a shift not yet worked, a no-show and the windows after an
+      // early Book Off all read as missed checks. It now counts decided windows only, as the export does.
+      const echo = await tenant('Echo');
+      const vic = await guard('Vic Echo');
+      const at = '2026-10-11';
+      const range = { startDate: at, endDate: at } as never;
+      // Booked on at the start, one check in window 0, booked off 2h10m into a 4h shift: window 1 missed, window 2
+      // worked 10 of 60 min (Ended at Book Off), window 3 not required.
+      const early = await shift(echo, echo.gate, vic, `${at}T08:00:00Z`, `${at}T12:00:00Z`, 'completed', `${at}T08:00:00Z`, `${at}T10:10:00Z`);
+      const log = await repo(DailyLog).save(repo(DailyLog).create({ company: echo.company, guard: vic, shift: early, message: 'ok', logType: DailyLogType.WELFARE_CHECK }));
+      await ds.query('UPDATE daily_logs SET "createdAt" = $1 WHERE id = $2', [Z(`${at}T08:30:00Z`), log.id]);
+      // Never booked on: a no-show is an attendance failure, not missed welfare checks.
+      const noShow = await shift(echo, echo.dock, vic, `${at}T14:00:00Z`, `${at}T18:00:00Z`, 'missed');
+      const report = await analytics.getWelfareReport(echo.owner.id, UserRole.COMPANY_ADMIN, range);
+      const row = (id: number) => report.records.find((r) => r.shiftId === id)!;
+      assert.deepEqual([row(early.id).expectedCheckCalls, row(early.id).completedCheckCalls, row(early.id).missedCheckCalls, row(early.id).complianceRate], [2, 1, 1, 50]);
+      assert.deepEqual([row(noShow.id).expectedCheckCalls, row(noShow.id).missedCheckCalls, row(noShow.id).complianceRate], [0, 0, 100]);
+      assert.deepEqual([report.expectedCheckCalls, report.completedCheckCalls, report.missedCheckCalls], [2, 1, 1]);
+      // A shift still to come owes nothing yet.
+      const future = await shift(echo, echo.gate, vic, '2099-01-01T08:00:00Z', '2099-01-01T12:00:00Z', 'assigned');
+      const later = await analytics.getWelfareReport(echo.owner.id, UserRole.COMPANY_ADMIN, { startDate: '2099-01-01', endDate: '2099-01-01' } as never);
+      assert.deepEqual([later.records.find((r) => r.shiftId === future.id)!.expectedCheckCalls, later.missedCheckCalls], [0, 0]);
     });
 
     console.log(JSON.stringify({ event: 'early_book_off_certified', tests: passed }));

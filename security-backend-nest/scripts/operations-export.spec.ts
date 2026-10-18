@@ -274,7 +274,13 @@ async function main() {
       const statuses = rowFor(sheet, early.id).map((r) => r[col(sheet, 'Status')]);
       assert.deepEqual(statuses, ['Completed', 'Completed', 'Completed', 'Completed', 'Completed', 'Ended at Book Off',
         'Not required', 'Not required', 'Not required', 'Not required']);
+      // Release gate: how much of each window was worked, so a partial window never reads like a full one.
+      assert.deepEqual(rowFor(sheet, early.id).map((r) => r[col(sheet, 'Time on duty in window')]), [
+        'Full window', 'Full window', 'Full window', 'Full window', 'Full window',
+        'Partial — 9 of 60 min (Book Off 02:09)', '', '', '', '',
+      ]);
       assert.ok(rowFor(sheet, tonight.id).every((r) => r[col(sheet, 'Status')] === 'Upcoming'), 'tonight, not yet booked on');
+      assert.ok(rowFor(sheet, tonight.id).every((r) => r[col(sheet, 'Time on duty in window')] === ''), 'nothing claimed before Book On');
       assert.equal(rowFor(sheet, early.id)[3][col(sheet, 'Window')], '00:00–01:00', 'site-local, across midnight');
       assert.equal(rowFor(sheet, early.id)[3][col(sheet, 'Window start')], '18-10-2026 00:00');
     });

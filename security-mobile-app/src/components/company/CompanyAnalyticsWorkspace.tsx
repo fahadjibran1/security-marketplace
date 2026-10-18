@@ -87,14 +87,23 @@ export function CompanyAnalyticsWorkspace() {
     setLoading(true);
     setError(null);
     try {
-      const [nextIncidents, nextWelfare, nextRisk] = await Promise.all([
+      // Settled independently: an operations or control-room member may read the welfare report while the
+      // incident and site-risk reports stay owner-only, so one refusal must not blank the whole page.
+      const [nextIncidents, nextWelfare, nextRisk] = await Promise.allSettled([
         getIncidentAnalyticsReport(filters),
         getWelfareAnalyticsReport(filters),
         getSiteRiskReport(filters),
       ]);
-      setIncidentReport(nextIncidents);
-      setWelfareReport(nextWelfare);
-      setSiteRiskReport(nextRisk);
+      setIncidentReport(nextIncidents.status === 'fulfilled' ? nextIncidents.value : null);
+      setWelfareReport(nextWelfare.status === 'fulfilled' ? nextWelfare.value : null);
+      setSiteRiskReport(nextRisk.status === 'fulfilled' ? nextRisk.value : null);
+      const failed = ([['Incident', nextIncidents], ['Welfare', nextWelfare], ['Site risk', nextRisk]] as const)
+        .filter(([, result]) => result.status === 'rejected');
+      if (failed.length === 3) {
+        setError(formatApiErrorMessage((failed[0][1] as PromiseRejectedResult).reason, 'Unable to load analytics reports.'));
+      } else if (failed.length > 0) {
+        setError(`${failed.map(([label]) => label).join(' and ')} report${failed.length > 1 ? 's' : ''} could not be loaded. Your role may not have access.`);
+      }
     } catch (err) {
       setError(formatApiErrorMessage(err, 'Unable to load analytics reports.'));
     } finally {

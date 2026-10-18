@@ -3,14 +3,20 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
 import { AttendanceEvent, AttendanceEventType } from '../attendance/entities/attendance.entity';
+import { Company } from '../company/entities/company.entity';
 import { CompanyService } from '../company/company.service';
+import { CompanyMembershipService } from '../company-membership/company-membership.service';
+import { CompanyPermission } from '../company-membership/company-membership-types';
 import { DailyLog, DailyLogType } from '../daily-log/entities/daily-log.entity';
-import { WELFARE_COMPLETION_LOG_TYPES } from '../operations/operational-completion';
+import { WELFARE_COMPLETION_LOG_TYPES, toOperationalCompletions } from '../operations/operational-completion';
+import { OperationalWindowState } from '../operations/operational-window.types';
+import { WelfareWindowService } from '../operations/welfare-window.service';
 import { Incident, IncidentSeverity } from '../incident/entities/incident.entity';
 import { NotificationService } from '../notification/notification.service';
 import { NotificationType } from '../notification/entities/notification.entity';
 import { SafetyAlert, SafetyAlertType } from '../safety-alert/entities/safety-alert.entity';
 import { Shift } from '../shift/entities/shift.entity';
+import { UserRole } from '../user/entities/user.entity';
 import { AnalyticsReportQueryDto } from './dto/analytics-report-query.dto';
 
 type IncidentRecordRow = {
@@ -117,6 +123,8 @@ export class IncidentAnalyticsService {
     @InjectRepository(DailyLog) private readonly dailyLogRepo: Repository<DailyLog>,
     private readonly companyService: CompanyService,
     private readonly notificationService: NotificationService,
+    private readonly membershipService: CompanyMembershipService,
+    private readonly welfareWindowService: WelfareWindowService,
   ) {}
 
   async getIncidentReport(userId: number, query: AnalyticsReportQueryDto): Promise<IncidentAnalyticsReport> {
@@ -192,8 +200,17 @@ export class IncidentAnalyticsService {
     };
   }
 
-  async getWelfareReport(userId: number, query: AnalyticsReportQueryDto): Promise<WelfareAnalyticsReport> {
-    const scoped = await this.loadScopedData(userId, query);
+  /**
+   * Welfare release gate: the company comes from the caller's membership and `reports.operational` — the
+   * same rule as the Welfare Monitoring export, which already shows these roles the same check data per
+   * window. The owner sees exactly what they saw before (legacy owner fallback in resolveCompanyContext);
+   * operations, control room and other members holding the permission can now read it too. The report
+   * carries counts and names only, no free text. The incident and site-risk reports are unchanged:
+   * the incident report includes free-text notes.
+   */
+  async getWelfareReport(userId: number, userRole: UserRole, query: AnalyticsReportQueryDto): Promise<WelfareAnalyticsReport> {
+    const { company } = await this.membershipService.resolveCompanyContext(userId, userRole, CompanyPermission.REPORTS_OPERATIONAL);
+    const scoped = await this.loadScopedData(userId, query, company);
     const shiftRows = this.buildWelfareRows(scoped);
     const bySite = new Map<string, { siteId: number | null; site: string; client: string; expected: number; completed: number; missed: number; complianceRate: number; lateCheckIns: number }>();
     const byGuard = new Map<string, { guardId: number | null; guard: string; expected: number; completed: number; missed: number; complianceRate: number; lateCheckIns: number }>();
@@ -370,8 +387,8 @@ export class IncidentAnalyticsService {
     };
   }
 
-  private async loadScopedData(userId: number, query: AnalyticsReportQueryDto): Promise<ScopedOperationalData> {
-    const company = await this.companyService.findByUserId(userId);
+  private async loadScopedData(userId: number, query: AnalyticsReportQueryDto, resolved?: Company): Promise<ScopedOperationalData> {
+    const company = resolved ?? await this.companyService.findByUserId(userId);
     if (!company) throw new NotFoundException('Company not found');
 
     const startDate = this.parseOptionalDate(query.startDate, false);
@@ -433,7 +450,7 @@ export class IncidentAnalyticsService {
     };
   }
 
-  private buildWelfareRows(scoped: ScopedOperationalData): WelfareShiftRow[] {
+  private buildWelfareRows(scoped: ScopedOperationalData, now = new Date()): WelfareShiftRow[] {
     const attendanceByShift = new Map<number, AttendanceEvent[]>();
     const logsByShift = new Map<number, DailyLog[]>();
     const alertsByShift = new Map<number, SafetyAlert[]>();
@@ -461,25 +478,32 @@ export class IncidentAnalyticsService {
       const logs = logsByShift.get(shift.id) || [];
       const alerts = alertsByShift.get(shift.id) || [];
       const attendance = (attendanceByShift.get(shift.id) || []).slice().sort((left, right) => left.occurredAt.getTime() - right.occurredAt.getTime());
-      // Welfare Phase 5. Both log types that complete a Welfare window count — the older check_call and the
-      // welfare_check every current Guard app records (only check_call was counted, so a compliant shift read
-      // as missing every check). One log has one type, so nothing is counted twice.
-      const checkCallLogs = logs.filter((log) => WELFARE_COMPLETION_LOG_TYPES.includes(log.logType)).length;
-      // Missed checks from the per-window evidence rows, one per missed window. The shift's actionable summary
-      // alert is not a further miss (both used to be counted, doubling every miss); a pre-evidence shift falls
-      // back to its legacy rolling alerts.
-      const missedEvidence = alerts.filter(
-        (alert) => alert.type === SafetyAlertType.MISSED_CHECKCALL && alert.welfareWindowIndex != null,
-      ).length;
-      const missedCheckCallAlerts = missedEvidence > 0
-        ? missedEvidence
-        : alerts.filter((alert) => alert.type === SafetyAlertType.MISSED_CHECKCALL).length;
+      // Welfare release gate. The counts come from the same window engine as the sweep, Live Operations and the
+      // Welfare Monitoring export, so this report can no longer disagree with them. Expected is the windows that
+      // have been decided (completed or missed); a window not yet over, one the Guard was never on duty for
+      // (no Book On, after an early Book Off) and a final window ended at Book Off under the 50% rule are not
+      // expected and not missed. One check satisfies one window, and both welfare log types count. Nothing is
+      // derived from alerts, so a shift-level summary is never a second miss.
+      const bookOnAt = attendance.find((event) => event.type === AttendanceEventType.CHECK_IN)?.occurredAt ?? null;
+      const bookOffAt = [...attendance].reverse().find((event) => event.type === AttendanceEventType.CHECK_OUT)?.occurredAt ?? null;
+      const resolution = this.welfareWindowService.resolve({
+        shiftStart: new Date(shift.start),
+        shiftEnd: new Date(shift.end),
+        interval: {
+          siteWelfareCheckIntervalMinutes: shift.site?.welfareCheckIntervalMinutes,
+          shiftCheckCallIntervalMinutes: shift.checkCallIntervalMinutes,
+        },
+        completions: toOperationalCompletions(logs.filter((log) => WELFARE_COMPLETION_LOG_TYPES.includes(log.logType))),
+        applicability: { bookOnAt, bookOffAt, shiftEnd: new Date(shift.end), cancelled: shift.status === 'cancelled' },
+        now,
+      });
+      const completedWindows = resolution.windows.filter((w) => w.state === OperationalWindowState.COMPLETED).length;
+      const missedWindows = resolution.windows.filter((w) => w.state === OperationalWindowState.MISSED).length;
       const welfareAlerts = alerts.filter((alert) => alert.type === SafetyAlertType.WELFARE).length;
       const panicAlerts = alerts.filter((alert) => alert.type === SafetyAlertType.PANIC).length;
       const lateAlerts = alerts.filter((alert) => alert.type === SafetyAlertType.LATE_CHECKIN).length;
-      const expectedCheckCalls = this.getExpectedCheckCalls(shift);
-      const missedFromGap = Math.max(expectedCheckCalls - checkCallLogs, 0);
-      const missedCheckCalls = Math.max(missedFromGap, missedCheckCallAlerts);
+      const expectedCheckCalls = completedWindows + missedWindows;
+      const missedCheckCalls = missedWindows;
       const firstCheckIn = attendance.find((event) => event.type === AttendanceEventType.CHECK_IN);
       const lateCheckIn = !!firstCheckIn
         ? firstCheckIn.occurredAt.getTime() - shift.start.getTime() > 10 * 60 * 1000
@@ -492,21 +516,14 @@ export class IncidentAnalyticsService {
         client: shift.site?.client?.name || shift.site?.clientName || 'Client unavailable',
         guard: shift.guard?.fullName || shift.assignment?.guard?.fullName || 'Unassigned',
         expectedCheckCalls,
-        completedCheckCalls: checkCallLogs,
+        completedCheckCalls: completedWindows,
         missedCheckCalls,
-        complianceRate: expectedCheckCalls > 0 ? this.roundPercent(Math.min(1, checkCallLogs / expectedCheckCalls) * 100) : 100,
+        complianceRate: expectedCheckCalls > 0 ? this.roundPercent(Math.min(1, completedWindows / expectedCheckCalls) * 100) : 100,
         lateCheckIn,
         welfareAlerts,
         panicAlerts,
       };
     });
-  }
-
-  private getExpectedCheckCalls(shift: Shift) {
-    const interval = Number(shift.checkCallIntervalMinutes || 0);
-    if (!Number.isFinite(interval) || interval <= 0) return 0;
-    const durationMinutes = Math.max(Math.round((shift.end.getTime() - shift.start.getTime()) / 60000), 0);
-    return Math.floor(durationMinutes / interval);
   }
 
   private getPeriodKey(value: Date | string) {
