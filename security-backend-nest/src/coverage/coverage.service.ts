@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Between, In, Repository } from 'typeorm';
 
@@ -8,6 +8,7 @@ import { CompanyPermission } from '../company-membership/company-membership-type
 import { UserRole } from '../user/entities/user.entity';
 import { Shift } from '../shift/entities/shift.entity';
 import { OperationsProjectionService, ShiftOperationsView } from './operations-projection.service';
+import { EarlyBookOffService } from './early-book-off.service';
 
 type CoverageStatus = 'fully_covered' | 'partially_covered' | 'unfilled' | 'overstaffed';
 
@@ -114,6 +115,8 @@ export class CoverageService {
     private readonly membershipService: CompanyMembershipService,
     private readonly availabilityService: AvailabilityService,
     private readonly operationsProjection: OperationsProjectionService,
+    // Optional so a caller built without it (older specs) gets the projection exactly as before.
+    @Optional() private readonly earlyBookOffService?: EarlyBookOffService,
   ) {}
 
   async listShiftCoverage(userId: number, userRole: UserRole, query: CoverageQuery) {
@@ -156,16 +159,27 @@ export class CoverageService {
    * Same permission as coverage. The projection is the same one coverage uses, plus each window's miss
    * and alert history (one more bounded read).
    */
-  async listShiftOperations(userId: number, userRole: UserRole, shiftIdsParam: string | undefined) {
+  async listShiftOperations(userId: number, userRole: UserRole, shiftIdsParam: string | undefined, now = new Date()) {
     const ids = parseOperationsShiftIds(shiftIdsParam);
     const { company } = await this.membershipService.resolveCompanyContext(userId, userRole, CompanyPermission.SITES_VIEW);
-    const now = new Date();
     const shifts = await this.shiftRepo.find({
       where: { id: In(ids), company: { id: company.id } },
       order: { start: 'ASC' },
       ...COVERAGE_SHIFT_READ,
     });
     const operations = await this.operationsProjection.projectForShifts(shifts, now, { welfareHistory: true });
+    // Welfare Phase 4: an early Book Off, and whether another Guard covered the rest of the shift.
+    if (this.earlyBookOffService) {
+      const bookOffBy = new Map(shifts.map((shift) => {
+        const off = operations.get(shift.id)?.bookOffAt;
+        return [shift.id, off ? new Date(off) : null] as const;
+      }));
+      const early = await this.earlyBookOffService.assess(company.id, shifts, bookOffBy, now);
+      for (const shift of shifts) {
+        const view = operations.get(shift.id);
+        if (view) view.earlyBookOff = early.get(shift.id) ?? null;
+      }
+    }
     return shifts.map((shift) => ({ shiftId: shift.id, operations: operations.get(shift.id) ?? null }));
   }
 

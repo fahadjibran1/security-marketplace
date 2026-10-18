@@ -35,6 +35,7 @@ import {
 } from '../../services/siteTime';
 import type { GuardOperationalWindow, ShiftOperationsView, WelfareWindowAlertView } from '../../types/models';
 import { isAwaitingBookOn, welfareAlertWord } from './welfareMonitoring';
+import { earlyBookOffMinutes, formatDuration } from './earlyBookOff';
 import { isAwaitingReconciliation, isBookOffOverdue } from './liveOperationsPolicy';
 
 // ─── the visible axis ─────────────────────────────────────────────────────────
@@ -396,7 +397,12 @@ export function resolveAttendanceLabels(
     // says so; one awaiting reconciliation says "missing"; an overdue one shows how long since its
     // scheduled end, as its own figure — the bar itself stops at the scheduled end.
     bookOff: off
-      ? `OFF ${formatInstantTime(off, timeZone)}`
+      ? (() => {
+          const early = earlyBookOffMinutes(shift.end, off);
+          return early !== null
+            ? `OFF ${formatInstantTime(off, timeZone)} · ${formatDuration(early)} early`
+            : `OFF ${formatInstantTime(off, timeZone)}`;
+        })()
       : !on ? 'OFF —'
       : status === 'completed' ? (closedByControl ? 'No Book Off' : 'Book Off missing')
       : shift.end && isAwaitingReconciliation(shift.end, nowMs) ? `OFF missing · ${formatElapsedSinceEnd(shift.end, nowMs)}`
@@ -464,7 +470,7 @@ export function effectiveShiftEndMs(
 
 export type TimelineStatus =
   | 'Upcoming' | 'Late' | 'Live' | 'No Book Off' | 'Missing Book Off' | 'Completed' | 'Closed by Control'
-  | 'Coverage Gap';
+  | 'Coverage Gap' | 'Booked Off Early';
 
 /**
  * The compact status word for a bar.
@@ -481,11 +487,14 @@ export function resolveTimelineStatus(
   const status = (shift.status || '').trim().toLowerCase();
   // "Closed by Control" only when the reconciliation audit entry exists. A completed shift with no Book Off
   // and no such entry is just Completed, and its Book Off slot says it is missing.
+  // Welfare Phase 4: a recorded Book Off more than 15 minutes before the scheduled end is not "Completed".
+  const bookedOffEarly = earlyBookOffMinutes(shift.end, attendance?.checkOutAt) !== null;
   if (status === 'completed') {
+    if (bookedOffEarly) return 'Booked Off Early';
     return closedByControl && attendance?.checkInAt && !attendance?.checkOutAt ? 'Closed by Control' : 'Completed';
   }
   if (['unfilled', 'rejected', 'missed', 'cancelled'].includes(status)) return 'Coverage Gap';
-  if (attendance?.checkOutAt) return 'Completed';
+  if (attendance?.checkOutAt) return bookedOffEarly ? 'Booked Off Early' : 'Completed';
   if (attendance?.checkInAt || status === 'in_progress') {
     // Worked, and the Book Off is overdue: not live any more, whatever the status column says. Asked of
     // the board's own policy, so the bar and the board use one boundary (and the backend alert's).

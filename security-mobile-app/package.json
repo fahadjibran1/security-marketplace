@@ -54,6 +54,7 @@
     "test:operations-timeline": "node scripts/operations-timeline.spec.cjs",
     "test:welfare-monitoring": "node scripts/welfare-monitoring.spec.cjs",
     "test:operations-reports": "node scripts/operations-reports.spec.cjs",
+    "test:early-book-off": "node scripts/early-book-off.spec.cjs",
     "test:operations-report": "node scripts/operations-report.spec.cjs",
     "test:operations-outlook": "node scripts/operations-outlook.spec.cjs",
     "test:operations-visual": "node scripts/operations-visual.spec.cjs",

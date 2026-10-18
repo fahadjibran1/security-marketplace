@@ -10,6 +10,7 @@ import {
   SafetyAlertType,
 } from '../safety-alert/entities/safety-alert.entity';
 import { Shift } from '../shift/entities/shift.entity';
+import type { EarlyBookOffView } from './early-book-off.service';
 import {
   WELFARE_COMPLETION_LOG_TYPES,
   toOperationalCompletions,
@@ -159,6 +160,11 @@ export type WelfareSummaryView = {
 export type ShiftOperationsView = {
   bookOnAt: string | null;
   bookOffAt: string | null;
+  /**
+   * Welfare Phase 4, only on GET /coverage/operations: the early Book Off and the coverage that remained,
+   * or null when the shift was not booked off more than 15 minutes early. Absent elsewhere.
+   */
+  earlyBookOff?: EarlyBookOffView | null;
   timezone: string;
   welfare: WelfareOperationsView;
   logBook: LogBookOperationsView;

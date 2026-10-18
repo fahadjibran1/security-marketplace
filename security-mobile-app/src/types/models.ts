@@ -659,6 +659,26 @@ export interface OperationsReportSheet {
   summary: string[][];
 }
 
+/**
+ * An early Book Off and the coverage that remained (Welfare Phase 4), on GET /coverage/operations only. The
+ * Book Off and scheduled end are recorded instants; nothing here is invented.
+ */
+export interface EarlyBookOffView {
+  bookOffAt: string;
+  scheduledEnd: string;
+  minutesEarly: number;
+  remainingMinutes: number;
+  coverage: {
+    status: 'maintained' | 'partial' | 'uncovered' | 'undetermined';
+    coveredMinutes: number;
+    uncoveredMinutes: number;
+    unknownMinutes: number;
+    reliesOnSchedule: boolean;
+    coveringShiftIds: number[];
+    segments: Array<{ from: string; to: string; kind: 'present' | 'planned' | 'unknown' | 'none'; shiftIds: number[] }>;
+  };
+}
+
 /** One row of GET /coverage/operations. */
 export interface ShiftOperationsRow {
   shiftId: number;
@@ -728,6 +748,8 @@ export interface WelfareSummaryView {
 export interface ShiftOperationsView {
   bookOnAt: string | null;
   bookOffAt: string | null;
+  /** Welfare Phase 4: the early Book Off and its coverage, or null when not early (monitoring endpoint only). */
+  earlyBookOff?: EarlyBookOffView | null;
   timezone: string;
   welfare: WelfareOperationsView;
   logBook: LogBookOperationsView;

@@ -219,6 +219,10 @@ jobs:
       - name: Verify operations report files and timeline follow mode
         run: npm run test:operations-reports
 
+      # Welfare Phase 4: an early Book Off is named on the board, never "Completed" or "Closed cleanly".
+      - name: Verify early Book Off presentation
+        run: npm run test:early-book-off
+
       # The daily operations export, in both formats. Includes the formula-injection guard: a site or
       # guard name beginning = + - @ is user-supplied free text, and this file is evidence.
       - name: Verify operations report and export safety

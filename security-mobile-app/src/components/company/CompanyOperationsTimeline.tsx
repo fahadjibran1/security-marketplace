@@ -566,6 +566,13 @@ const STATUS_STYLE: Record<TimelineRow['status'], { bar: any; badge: any; badgeT
     badge: { backgroundColor: colors.border },
     badgeText: { color: colors.textPrimary },
   },
+  // Welfare Phase 4: booked off more than 15 minutes early. Settled, with an amber edge and a dashed outline so
+  // the scheduled time after the Book Off never reads as worked; the badge names it.
+  'Booked Off Early': {
+    bar: { backgroundColor: colors.surfaceSubtle, borderColor: colors.warning, borderStyle: 'dashed', borderLeftWidth: 3, borderLeftColor: colors.warning },
+    badge: { backgroundColor: colors.warning },
+    badgeText: { color: colors.textOnBrand },
+  },
   'Coverage Gap': {
     bar: { backgroundColor: colors.dangerSurface, borderColor: colors.danger },
     badge: { backgroundColor: colors.danger },

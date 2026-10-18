@@ -14,6 +14,7 @@
 
 import type { OutlookShiftInput } from './operationsOutlook';
 import type { WelfareMarkerState } from './operationsTimeline';
+import { earlyBookOffMinutes } from './earlyBookOff';
 
 export type TodaySoFar = {
   attendance: {
@@ -21,6 +22,8 @@ export type TodaySoFar = {
     /** Scheduled start has passed with nothing recorded, and the shift has not settled. */
     lateNotBookedOn: number;
     bookedOff: number;
+    /** Of those, booked off more than 15 minutes before the scheduled end (Welfare Phase 4). */
+    bookedOffEarly: number;
   };
   welfare: {
     completed: number;
@@ -41,7 +44,7 @@ const SETTLED = ['completed', 'cancelled', 'missed', 'rejected'];
 const OPEN_INCIDENT_STATUSES = ['open', 'in_review'];
 
 const EMPTY: TodaySoFar = {
-  attendance: { bookedOn: 0, lateNotBookedOn: 0, bookedOff: 0 },
+  attendance: { bookedOn: 0, lateNotBookedOn: 0, bookedOff: 0, bookedOffEarly: 0 },
   welfare: { completed: 0, overdue: 0, missed: 0 },
   operations: { openIncidents: 0, siteRequests: 0, emergencyAlerts: 0 },
   shiftCount: 0,
@@ -72,6 +75,7 @@ export function buildTodaySoFar(
 
     if (on) total.attendance.bookedOn += 1;
     if (off) total.attendance.bookedOff += 1;
+    if (earlyBookOffMinutes(input.shift.end, off) !== null) total.attendance.bookedOffEarly += 1;
     if (!on && !settled && Number.isFinite(startMs) && nowMs > startMs) {
       total.attendance.lateNotBookedOn += 1;
     }

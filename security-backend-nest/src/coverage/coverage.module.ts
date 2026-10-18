@@ -11,6 +11,7 @@ import { Shift } from '../shift/entities/shift.entity';
 import { CoverageController } from './coverage.controller';
 import { CoverageService } from './coverage.service';
 import { OperationsProjectionService } from './operations-projection.service';
+import { EarlyBookOffService } from './early-book-off.service';
 
 @Module({
   imports: [
@@ -20,7 +21,7 @@ import { OperationsProjectionService } from './operations-projection.service';
     OperationsModule,
   ],
   controllers: [CoverageController],
-  providers: [CoverageService, OperationsProjectionService],
-  exports: [CoverageService, OperationsProjectionService],
+  providers: [CoverageService, OperationsProjectionService, EarlyBookOffService],
+  exports: [CoverageService, OperationsProjectionService, EarlyBookOffService],
 })
 export class CoverageModule {}

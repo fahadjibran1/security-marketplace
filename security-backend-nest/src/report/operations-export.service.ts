@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Between, In, Repository } from 'typeorm';
 
@@ -19,6 +19,8 @@ import {
   ShiftReconciliationReason,
 } from '../shift/shift-reconciliation';
 import { Timesheet } from '../timesheet/entities/timesheet.entity';
+import { EarlyBookOffService, EarlyBookOffView } from '../coverage/early-book-off.service';
+import { COVERAGE_STATUS_WORD, earlyBookOff, formatMinutes } from '../operations/early-book-off';
 import { User, UserRole } from '../user/entities/user.entity';
 
 /**
@@ -44,8 +46,6 @@ export const REPORT_MAX_DAYS = 31;
 export const REPORT_MAX_SHIFTS = 2000;
 /** Welfare rows per report (one per window). */
 export const REPORT_MAX_WELFARE_ROWS = 50_000;
-/** Booked off more than this before the scheduled end reads as an early Book Off. */
-export const EARLY_BOOK_OFF_MINUTES = 15;
 /** No Book Off this long after the scheduled end reads as a missing Book Off (as the sweep raises it). */
 const MISSING_BOOK_OFF_GRACE_MINUTES = 15;
 const REPORT_TIME_ZONE_FALLBACK = 'Europe/London';
@@ -72,6 +72,7 @@ const ATTENDANCE_COLUMNS = [
   'Scheduled start', 'Scheduled end', 'Scheduled start (UTC)', 'Scheduled end (UTC)',
   'Book On', 'Book Off', 'Book On (UTC)', 'Book Off (UTC)',
   'Shift status', 'Attendance status', 'Missing Book Off', 'Early Book Off',
+  'Remaining scheduled time', 'Coverage after early Book Off', 'Covering shift IDs',
   'Reconciliation', 'Reconciliation audit ref', 'Timesheet status',
 ];
 
@@ -183,11 +184,27 @@ export function attendanceStatus(f: AttendanceFacts): string {
   return f.now.getTime() > f.end.getTime() + MISSING_BOOK_OFF_GRACE_MINUTES * 60_000 ? 'Missing Book Off' : 'On shift';
 }
 
-/** Minutes a Book Off came before the scheduled end, when more than the threshold; otherwise null. */
+/**
+ * Minutes a Book Off came before the scheduled end, when it was more than 15 minutes early; otherwise null.
+ * The one rule Live Operations uses too (operations/early-book-off.ts).
+ */
 export function earlyBookOffMinutes(f: Pick<AttendanceFacts, 'end' | 'bookOffAt'>): number | null {
-  if (!f.bookOffAt) return null;
-  const minutes = Math.floor((f.end.getTime() - f.bookOffAt.getTime()) / 60_000);
-  return minutes > EARLY_BOOK_OFF_MINUTES ? minutes : null;
+  return earlyBookOff(f.end, f.bookOffAt)?.minutesEarly ?? null;
+}
+
+/** "Coverage maintained (another Guard on duty: shifts 41)" and the like, from the assessment. */
+export function coverageWords(view: EarlyBookOffView | null | undefined): { status: string; shifts: string } {
+  if (!view) return { status: '', shifts: '' };
+  const c = view.coverage;
+  const parts: string[] = [];
+  if (c.coveredMinutes) parts.push(`covered ${formatMinutes(c.coveredMinutes)}`);
+  if (c.uncoveredMinutes) parts.push(`uncovered ${formatMinutes(c.uncoveredMinutes)}`);
+  if (c.unknownMinutes) parts.push(`unknown ${formatMinutes(c.unknownMinutes)}`);
+  if (c.reliesOnSchedule) parts.push('partly from the schedule');
+  return {
+    status: `${COVERAGE_STATUS_WORD[c.status]}${parts.length ? ` (${parts.join(', ')})` : ''}`,
+    shifts: c.coveringShiftIds.join(' '),
+  };
 }
 
 /** Status for one welfare window: the engine's state, with a future window read as Upcoming exactly as the board does. */
@@ -216,6 +233,7 @@ export class OperationsExportService {
     @InjectRepository(User) private readonly userRepo: Repository<User>,
     private readonly membershipService: CompanyMembershipService,
     private readonly projection: OperationsProjectionService,
+    @Optional() private readonly earlyBookOffService?: EarlyBookOffService,
   ) {}
 
   async shiftAttendance(userId: number, userRole: UserRole, query: ReportQuery, now = new Date()): Promise<OperationsReportSheet> {
@@ -263,6 +281,17 @@ export class OperationsExportService {
     const timesheetBy = byShift(timesheets);
     const missingBy = byShift(missingBookOff);
     const reconBy = new Map(reconciliations.map((r) => [Number(r.entityId), r]));
+    // Welfare Phase 4: whether another Guard covered the rest of each early-booked-off shift.
+    const bookOffBy = new Map<number, Date | null>(shifts.map((shift) => {
+      const offs = (attendanceBy.get(shift.id) ?? [])
+        .filter((e) => e.type === AttendanceEventType.CHECK_OUT)
+        .map((e) => e.occurredAt.getTime());
+      return [shift.id, offs.length ? new Date(Math.max(...offs)) : null];
+    }));
+    const earlyBy = this.earlyBookOffService
+      ? await this.earlyBookOffService.assess(company.id, shifts, bookOffBy, now)
+      : new Map<number, EarlyBookOffView>();
+    const coverageCounts = new Map<string, number>();
 
     const counts = new Map<string, number>();
     const rows = shifts.map((shift) => {
@@ -308,6 +337,15 @@ export class OperationsExportService {
           ? `Yes (alert #${mbo.id}, ${mbo.status === SafetyAlertStatus.CLOSED ? (mbo.closedByUserId == null ? 'closed by the late Book Off' : 'resolved') : humanise(mbo.status)})`
           : word === 'Missing Book Off' || word === 'Completed — Book Off missing' ? 'Yes' : 'No',
         bookOffAt ? (early !== null ? `Yes — ${early} min before scheduled end` : 'No') : '',
+        early !== null ? formatMinutes(early) : '',
+        ...(() => {
+          const words = coverageWords(earlyBy.get(shift.id));
+          if (words.status) {
+            const key = COVERAGE_STATUS_WORD[earlyBy.get(shift.id)!.coverage.status];
+            coverageCounts.set(key, (coverageCounts.get(key) ?? 0) + 1);
+          }
+          return [words.status, words.shifts];
+        })(),
         recon
           ? `Closed without Book Off — ${reasonLabel}, by ${names.get(recon.userId ?? -1) ?? 'unknown user'}, ${ukDateTime(recon.reconciledAt ?? recon.createdAt, tz)}`
           : '',
@@ -319,6 +357,8 @@ export class OperationsExportService {
     const summary: string[][] = [
       ['Shifts', String(rows.length)],
       ...[...counts.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([word, n]) => [word, String(n)]),
+      ...(coverageCounts.size ? [[], ['Early Book Off coverage', ''],
+        ...[...coverageCounts.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([word, n]) => [word, String(n)])] : []),
     ];
     return this.sheet('shift-attendance', 'Shift Attendance', company.name, range, siteId, shifts, ATTENDANCE_COLUMNS, rows, summary, now);
   }

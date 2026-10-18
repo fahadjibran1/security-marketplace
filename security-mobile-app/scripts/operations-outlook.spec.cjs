@@ -333,7 +333,8 @@ test('SUMMARY-04-IT-COUNTS-THE-ROWS-IT-IS-GIVEN-AND-NOTHING-ELSE', () => {
   assert.equal(t.attendance.bookedOn, 1);
   assert.equal(t.welfare.missed, 1);
   assert.deepEqual(buildTodaySoFar([], NOW), {
-    attendance: { bookedOn: 0, lateNotBookedOn: 0, bookedOff: 0 },
+    // Welfare Phase 4 adds the early Book Off count beside Booked off.
+    attendance: { bookedOn: 0, lateNotBookedOn: 0, bookedOff: 0, bookedOffEarly: 0 },
     welfare: { completed: 0, overdue: 0, missed: 0 },
     operations: { openIncidents: 0, siteRequests: 0, emergencyAlerts: 0 },
     shiftCount: 0,

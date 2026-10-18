@@ -35,6 +35,7 @@ import { buildTodaySoFar, type TodaySoFar } from './operationsSummary';
 import { incidentAttentionActions } from './incidentLifecycle';
 import { logTypeLabel } from './logBookRegister';
 import { safetyAlertDrawerLabel, welfareIntervalLabel, welfareWindowRows, type WelfareDisplayState } from './welfareMonitoring';
+import { COVERAGE_TONE, COVERAGE_WORD, coverageSentence, earlyBookOffMinutes, formatDuration } from './earlyBookOff';
 import { WELFARE_MARKER_GLYPH } from './operationsTimeline';
 import { Drawer } from '../ui/Drawer';
 import { colors, radii, spacing } from '../../theme';
@@ -1330,6 +1331,7 @@ export function LiveOpsLowerPanels({
           <SummaryStat label="Booked on" value={todaySoFar.attendance.bookedOn} source={attendanceSource} />
           <SummaryStat label="Late / not on" value={todaySoFar.attendance.lateNotBookedOn} tone="bad" source={attendanceSource} />
           <SummaryStat label="Booked off" value={todaySoFar.attendance.bookedOff} source={attendanceSource} />
+          <SummaryStat label="Booked off early" value={todaySoFar.attendance.bookedOffEarly} source={attendanceSource} />
         </View>
 
         {/* "Windows", on its face: Attention Now counts one missed-Welfare item per shift, this counts
@@ -1885,6 +1887,10 @@ function DetailPanelContent({
   const operationsSections = operationsDetailLines(operations);
   const operationsExceptions = operationalExceptions(operations);
   const welfareRows = welfareWindowRows(operations, { nowMs, timeZone, shiftStatus: shift.status });
+  // Welfare Phase 4: a recorded Book Off more than 15 minutes before the scheduled end. The coverage
+  // assessment is the backend's; when monitoring has not loaded it is said to be unavailable, never guessed.
+  const minutesEarly = earlyBookOffMinutes(shift.end, attendance?.checkOutAt);
+  const early = operations?.earlyBookOff ?? null;
 
   return (
     <>
@@ -1936,7 +1942,9 @@ function DetailPanelContent({
           {isCompletedWithoutBookOff(shift, attendance)
             // Which label is decided by the reconciliation audit entry, never inferred. No time is shown or invented.
             ? `${completedWithoutBookOffLabel(ctx.closedByControl)}. No Book Off time was recorded. Records remain visible.`
-            : 'Shift completed. Records remain visible.'}
+            : minutesEarly !== null
+              ? `Booked off early, ${formatDuration(minutesEarly)} before the scheduled end. Records remain visible.`
+              : 'Shift completed. Records remain visible.'}
         </Text>
       ) : null}
       {onReconcileShift && isEligibleForReconciliation(shift, attendance, nowMs) ? (
@@ -1964,8 +1972,11 @@ function DetailPanelContent({
           <View style={[styles.detailCard, styles.detailCardCloseOut]}>
             <Text style={styles.detailCardTitle}>Close-Out</Text>
             {/* Phase 4: a shift Control closed without a Book Off is never "Closed cleanly". */}
-            <Text style={closeOutSummary.closedCleanly && !isCompletedWithoutBookOff(shift, attendance) ? styles.detailCloseOutGood : styles.detailCloseOutWarn}>
-              {isCompletedWithoutBookOff(shift, attendance)
+            <Text style={closeOutSummary.closedCleanly && !isCompletedWithoutBookOff(shift, attendance) && minutesEarly === null ? styles.detailCloseOutGood : styles.detailCloseOutWarn}>
+              {/* Welfare Phase 4: never "Closed cleanly" when the Guard left more than 15 minutes early. */}
+              {minutesEarly !== null
+                ? `Booked off early${early ? ` · ${COVERAGE_WORD[early.coverage.status]}` : ''}${closeOutSummary.unresolvedFollowUpCount > 0 ? ` · needs follow-up (${closeOutSummary.unresolvedFollowUpCount})` : ''}`
+                : isCompletedWithoutBookOff(shift, attendance)
                 ? closeOutSummary.unresolvedFollowUpCount > 0
                   ? `${completedWithoutBookOffLabel(ctx.closedByControl)} · needs follow-up (${closeOutSummary.unresolvedFollowUpCount})`
                   : completedWithoutBookOffLabel(ctx.closedByControl)
@@ -1994,6 +2005,31 @@ function DetailPanelContent({
                 <Text style={styles.detailPrimaryBtnText}>{savingCloseOutNotes ? 'Saving…' : 'Save Note'}</Text>
               </Pressable>
             </View>
+          </View>
+        ) : null}
+
+        {minutesEarly !== null ? (
+          <View style={[styles.detailCard, styles.detailCardCloseOut]} accessibilityLabel="Early Book Off">
+            <Text style={styles.detailCardTitle}>Booked Off Early</Text>
+            <Text style={styles.detailStateLine}>
+              Book Off {fmtTime(attendance?.checkOutAt ?? null, timeZone)}
+              <Text style={styles.detailStateMuted}>{'  ·  '}Scheduled end {fmtDateTime(shift.end, timeZone)}</Text>
+            </Text>
+            <Text style={styles.detailLine}>Remaining scheduled time: {formatDuration(minutesEarly)}</Text>
+            {early ? (
+              <>
+                <Text style={[styles.detailLine, { color: operationsToneColor(COVERAGE_TONE[early.coverage.status]), fontWeight: '700' }]}>
+                  {COVERAGE_WORD[early.coverage.status]}
+                </Text>
+                <Text style={styles.detailLine}>{coverageSentence(early)}</Text>
+              </>
+            ) : (
+              <Text style={styles.detailLine}>Coverage assessment is not available right now.</Text>
+            )}
+            <Text style={styles.detailStateMuted}>
+              Recorded as the Guard booked off. Worked hours come from the attendance record and are not changed;
+              related alerts are listed under Safety Alerts.
+            </Text>
           </View>
         ) : null}
 
