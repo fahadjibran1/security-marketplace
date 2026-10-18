@@ -365,7 +365,8 @@ async function main() {
       assert.equal(companyId, bravo.company.id, 'and it belongs to that company');
     });
 
-    await test('LOC-08-ACKNOWLEDGED-SUMMARY-STILL-ESCALATES-WITHOUT-DUPLICATES', async () => {
+    // Owner decision, 18 October 2026: the new miss also reopens it (previously it stayed acknowledged).
+    await test('LOC-08-ACKNOWLEDGED-SUMMARY-REOPENS-AND-ESCALATES-WITHOUT-DUPLICATES', async () => {
       const shift = await makeShift({ startedMinsAgo: 190 });
       await sweep.runMissedWelfareChecks();
       const [summary] = await summaries(shift.id);
@@ -373,8 +374,8 @@ async function main() {
       await advance(shift.id, 60);
       await sweep.runMissedWelfareChecks();
       const rows = await summaries(shift.id);
-      assert.equal(rows.length, 1);
-      assert.equal(rows[0].status, SafetyAlertStatus.ACKNOWLEDGED);
+      assert.equal(rows.length, 1, 'the same summary, not a second one');
+      assert.equal(rows[0].status, SafetyAlertStatus.OPEN);
       assert.match(rows[0].message, /4 consecutive checks missed/);
     });
 

@@ -352,8 +352,9 @@ async function main() {
       const shift = await makeShift({ startedMinsAgo: 310, bookOffMinsAgo: 180 });
       await sweep.runMissedWelfareChecks();
       const indexes = await evidenceIndexes(shift.id);
-      // Window 2 was partly worked, so it still carried an obligation; window 3 began after Book Off.
-      assert.deepEqual(indexes, [0, 1, 2], 'nothing required after Book Off');
+      // Window 3 began after Book Off. Window 2 was partly worked: owner decision 18 October 2026, it is
+      // reported as ended at Book Off and judged by the Phase 4 policy, never recorded as missed meanwhile.
+      assert.deepEqual(indexes, [0, 1], 'nothing required after Book Off, and the partial window is not a miss');
     });
 
     await test('W2-14-LATE-BOOK-OFF-ADDS-NO-WINDOWS-PAST-SCHEDULED-END', async () => {
@@ -484,7 +485,9 @@ async function main() {
       assert.equal(await auditCount('welfare_check.summary_escalated', shift.id), 0, 'nothing escalated');
     });
 
-    await test('W2-25-ACKNOWLEDGED-SUMMARY-KEEPS-ITS-STATUS-WHILE-MISSES-CONTINUE', async () => {
+    // Owner decision, 18 October 2026: a genuinely new miss returns an acknowledged summary to OPEN. Before
+    // it, this test certified the opposite (W2-25 "ACKNOWLEDGED-SUMMARY-KEEPS-ITS-STATUS-WHILE-MISSES-CONTINUE").
+    await test('W2-25-A-NEW-MISS-REOPENS-AN-ACKNOWLEDGED-SUMMARY', async () => {
       const shift = await makeShift({ startedMinsAgo: 190 });
       await sweep.runMissedWelfareChecks();
       const [summary] = await summaries(shift.id);
@@ -504,10 +507,13 @@ async function main() {
       const after = await summaries(shift.id);
       assert.equal(after.length, 1, 'no second summary beside the acknowledged one');
       assert.equal(after[0].id, summary.id);
-      assert.equal(after[0].status, SafetyAlertStatus.ACKNOWLEDGED, 'a human took ownership; do not undo that');
-      assert.match(after[0].message, /4 consecutive checks missed/, 'but it still escalates');
+      assert.equal(after[0].status, SafetyAlertStatus.OPEN, 'back in the queue: what was acknowledged got worse');
+      assert.match(after[0].message, /4 consecutive checks missed/, 'and it escalates');
       const ack = await ds.query('SELECT "acknowledgedByUserId" AS u FROM safety_alerts WHERE id = $1', [summary.id]);
-      assert.ok(ack[0].u, 'and the acknowledging user is preserved');
+      assert.equal(ack[0].u, null, 'the next acknowledgement records who picked it up this time');
+      const [reopened] = await ds.query(
+        `SELECT "beforeData" FROM audit_logs WHERE action = 'welfare_check.summary_reopened' AND "entityId" = $1`, [summary.id]);
+      assert.equal(reopened.beforeData.acknowledgedByUserId, base.company.user!.id, 'the original acknowledgement stays on record');
     });
 
     // ═══════════════════ MISSING BOOK OFF ═══════════════════

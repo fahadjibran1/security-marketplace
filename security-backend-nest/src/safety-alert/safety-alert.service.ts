@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, EntityManager, In, IsNull, MoreThan, Repository } from 'typeorm';
+import { DataSource, EntityManager, In, IsNull, MoreThan, MoreThanOrEqual, Repository } from 'typeorm';
 import {
   GUARD_RAISABLE_ALERT_TYPES,
   SafetyAlert,
@@ -59,6 +59,15 @@ import { WELFARE_SWEEP_LOCK_NAMESPACE } from '../operations/advisory-locks';
 /** A Book Off is late, not missing, until the shift has been over for a quarter of an hour. */
 const MISSING_BOOK_OFF_GRACE_MINUTES = 15;
 
+/**
+ * How long after a Book Off the welfare sweep keeps looking at the shift. A whole window that ended before
+ * the Book Off becomes MISSED only at its end + grace, which can be after the Book Off; without this pass
+ * that miss was never recorded, because the sweep only read in-progress shifts. Two hours covers the grace,
+ * the five-minute cadence and a run of skipped or failed sweeps, and bounds the extra work to a handful of
+ * shifts.
+ */
+const BOOKED_OFF_RECHECK_MINUTES = 120;
+
 
 /** Advisory-lock namespace for the compliance lapse sweep, one lock per shift. */
 const COMPLIANCE_LAPSE_LOCK_NAMESPACE = 534_401_402;
@@ -92,6 +101,8 @@ export type ComplianceLapseSweepCounters = {
 
 type WelfareSweepCounters = {
   shiftsChecked: number;
+  /** Completed shifts revisited because they were booked off recently (included in shiftsChecked). */
+  bookedOffRechecked: number;
   evidenceCreated: number;
   summariesOpened: number;
   summariesEscalated: number;
@@ -258,14 +269,19 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
    */
   async runMissedWelfareChecks() {
     const now = new Date();
+    const recheckFrom = new Date(now.getTime() - BOOKED_OFF_RECHECK_MINUTES * 60_000);
+    // In-progress shifts, plus completed shifts that may have been booked off recently: one statement. A
+    // completed shift whose scheduled end is more than two hours ago and that was booked off after its end
+    // had every window settled while it was still in progress; one booked off early still has its end ahead.
     const shifts = await this.shiftRepo.find({
-      where: { status: 'in_progress' },
+      where: [{ status: 'in_progress' }, { status: 'completed', end: MoreThanOrEqual(recheckFrom) }],
       order: { start: 'ASC' },
       ...SWEEP_SHIFT_READ,
     });
 
     const counters = {
-      shiftsChecked: shifts.length,
+      shiftsChecked: 0,
+      bookedOffRechecked: 0,
       evidenceCreated: 0,
       summariesOpened: 0,
       summariesEscalated: 0,
@@ -295,13 +311,16 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
       const attendanceByShift = this.groupBy(attendanceEvents, (event) => event.shift?.id);
 
       for (const shift of shifts) {
-        await this.processShiftWelfare(
-          shift,
-          logsByShift.get(shift.id) ?? [],
-          attendanceByShift.get(shift.id) ?? [],
-          now,
-          counters,
-        );
+        const attendance = attendanceByShift.get(shift.id) ?? [];
+        if (shift.status !== 'in_progress') {
+          // Only a genuine, recent Book Off brings a completed shift back. A shift closed by reconciliation
+          // has no Book Off: a controller has already dealt with it.
+          const bookOffAt = this.latest(attendance, AttendanceEventType.CHECK_OUT);
+          if (!bookOffAt || bookOffAt < recheckFrom) continue;
+          counters.bookedOffRechecked += 1;
+        }
+        counters.shiftsChecked += 1;
+        await this.processShiftWelfare(shift, logsByShift.get(shift.id) ?? [], attendance, now, counters);
       }
     }
 
@@ -435,8 +454,9 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
    * for a second, and does not depend on whether the Guard has been heard from since.
    *
    *   an outstanding miss, no active summary    open one (OPEN, HIGH) and notify
-   *   a further outstanding miss, active one    rewrite the message and notify (escalation); the status
-   *                                             is kept, so an ACKNOWLEDGED summary stays acknowledged
+   *   a further outstanding miss, active one    rewrite the message and notify (escalation); an
+   *                                             ACKNOWLEDGED summary returns to OPEN (reopened) with a
+   *                                             fresh notification
    *   a later Welfare Check, or a Book Off      changes nothing: the summary stays outstanding until a
    *                                             controller resolves it with a reason, or the shift is
    *                                             reconciled
@@ -536,20 +556,46 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    if (active.message === message) return;
+    // Owner decision, 18 October 2026: a genuinely new miss returns an ACKNOWLEDGED summary to OPEN, because
+    // what the controller took ownership of has got worse. The original acknowledgement stays in the audit
+    // trail (its own entry, and `beforeData` here); the row's acknowledgement is cleared so the next one
+    // records who picked it up this time.
+    const reopened = active.status === SafetyAlertStatus.ACKNOWLEDGED;
+    if (active.message === message && !reopened) return;
 
+    const beforeData = {
+      status: active.status,
+      message: active.message,
+      acknowledgedAt: active.acknowledgedAt ?? null,
+      acknowledgedByUserId: active.acknowledgedByUserId ?? null,
+    };
     active.message = message;
+    if (reopened) {
+      active.status = SafetyAlertStatus.OPEN;
+      active.acknowledgedAt = null;
+      active.acknowledgedByUserId = null;
+    }
     const escalated = await manager.save(active);
     counters.summariesEscalated += 1;
     await this.auditLogService.log({
       company: shift.company,
       user: null,
-      action: 'welfare_check.summary_escalated',
+      action: reopened ? 'welfare_check.summary_reopened' : 'welfare_check.summary_escalated',
       entityType: 'safety_alert',
       entityId: escalated.id,
+      beforeData,
       afterData: { shiftId: shift.id, guardId: guard.id, missedRun, ...covers, status: escalated.status },
     });
-    if (shift.company.user?.id) {
+    if (shift.company.user?.id && reopened) {
+      // Always a fresh notification: it is a new event, whatever was sent before.
+      await this.notificationService.createForUser({
+        userId: shift.company.user.id,
+        company: shift.company,
+        type: NotificationType.ALERT_RAISED,
+        title: 'Missed welfare check',
+        message: `${guard.fullName || 'A guard'} has missed another welfare check for ${shift.siteName} (${consecutive + earlier} outstanding).`,
+      });
+    } else if (shift.company.user?.id) {
       await this.notificationService.createForUserUnlessRecentDuplicate(
         {
           userId: shift.company.user.id,

@@ -40,6 +40,13 @@ export enum OperationalWindowState {
   MISSED = 'missed',
   /** The Guard was not on duty for this window, so nothing was ever required. */
   NOT_APPLICABLE = 'not_applicable',
+  /**
+   * The Guard booked off part-way through this window and it was not met. Neither missed nor "not
+   * required": what a partly-worked final window owes is an owner policy decision still to be made
+   * (Welfare Remediation Phase 4), so it is reported as exactly what happened and never raises an alert.
+   * Only produced when the caller asks for it (`holdPartialWindowAtBookOff`); Log Book does not.
+   */
+  ENDED_AT_BOOK_OFF = 'ended_at_book_off',
 }
 
 /**
@@ -121,6 +128,8 @@ export interface OperationalWindowSummary {
   readonly overdueCount: number;
   readonly missedCount: number;
   readonly notApplicableCount: number;
+  /** Partly-worked final windows left unjudged; see OperationalWindowState.ENDED_AT_BOOK_OFF. */
+  readonly endedAtBookOffCount: number;
   /**
    * `completed / required`, to two decimal places, or `null` when nothing was required.
    *
@@ -168,4 +177,9 @@ export interface ResolveOperationalWindowsInput {
   readonly graceMinutes: number;
   /** Omitted: strict containment, every attributed completion counts. */
   readonly attribution?: CompletionAttribution;
+  /**
+   * Report an unmet window the Guard booked off part-way through as ENDED_AT_BOOK_OFF instead of judging
+   * it. Omitted: such a window is graded like any other applicable window.
+   */
+  readonly holdPartialWindowAtBookOff?: boolean;
 }

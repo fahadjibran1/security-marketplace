@@ -80,7 +80,7 @@ async function refused(fn: () => Promise<unknown>, type: new (...args: never[]) 
 }
 
 const MIN = 60_000;
-const { MISSED, COMPLETED, DUE, NOT_APPLICABLE } = OperationalWindowState;
+const { MISSED, COMPLETED, DUE, NOT_APPLICABLE, ENDED_AT_BOOK_OFF } = OperationalWindowState;
 
 // ═══════════════════ pure engine fixtures ═══════════════════
 
@@ -114,6 +114,7 @@ const resolveWelfareAt = (opts: {
   });
 
 const statesOf = (r: { windows: { state: OperationalWindowState }[] }) => r.windows.map((w) => w.state);
+const engineRun = (r: ReturnType<typeof resolveWelfareAt>) => windowEngine.trailingMissedRun(r.windows);
 
 /** Pilot shift 32 as recorded in production (UTC). */
 const S32 = {
@@ -188,7 +189,8 @@ async function engineCases() {
 
   await test('WAC-E08-NOTHING-COUNTS-AFTER-BOOK-OFF-OR-INTO-A-WINDOW-OFF-DUTY', () => {
     const after = resolveWelfareAt({ start: Z(17, 20), end: Z(18, 6), checks: [Z(17, 22, 31)], bookOffAt: Z(17, 22, 30), now: Z(18, 7) });
-    assert.equal(after.windows[2].state, MISSED, 'a check after Book Off discharges nothing');
+    assert.notEqual(after.windows[2].state, COMPLETED, 'a check after Book Off discharges nothing');
+    assert.equal(after.windows[2].completedAt, null);
     // Booked off at 22:58: 23:00-00:00 carried no obligation, so a 22:57 check stays where it was made.
     const edge = resolveWelfareAt({
       start: Z(17, 20), end: Z(18, 6), checks: [Z(17, 22, 10), Z(17, 22, 57)], bookOffAt: Z(17, 22, 58), now: Z(18, 7),
@@ -235,6 +237,44 @@ async function engineCases() {
         });
       }
     }
+  });
+
+  await test('WAC-E14-A-PARTLY-WORKED-FINAL-WINDOW-IS-NEVER-JUDGED', () => {
+    // Pilot shift 33: booked off at 01:09:36Z inside 01:00-02:00Z, last check 00:03Z. Owner decision: not a
+    // miss, and not "not required" either, until the Phase 4 policy is set.
+    const bookOff = Z(18, 1, 9, 36);
+    const r = resolveWelfareAt({
+      start: Z(17, 20), end: Z(18, 6), bookOnAt: Z(17, 18, 29), bookOffAt: bookOff,
+      checks: [Z(17, 20, 45), Z(17, 21, 2), Z(17, 22, 1), Z(17, 23, 1), Z(18, 0, 3)], now: Z(18, 9),
+    });
+    assert.deepEqual(statesOf(r), [
+      COMPLETED, COMPLETED, COMPLETED, COMPLETED, COMPLETED, ENDED_AT_BOOK_OFF,
+      NOT_APPLICABLE, NOT_APPLICABLE, NOT_APPLICABLE, NOT_APPLICABLE,
+    ]);
+    assert.equal(r.summary.missedCount, 0, 'not counted as missed');
+    assert.equal(r.summary.endedAtBookOffCount, 1);
+    assert.equal(engineRun(r), 0, 'and never part of a missed run');
+    // Met before the Book Off, it is simply completed.
+    const met = resolveWelfareAt({
+      start: Z(17, 20), end: Z(18, 6), bookOffAt: bookOff, checks: [Z(18, 1, 5)], now: Z(18, 9),
+    });
+    assert.equal(met.windows[5].state, COMPLETED);
+    // Log Book keeps grading a partly-worked period as before.
+    const lb = logBook.resolve({
+      shiftStart: Z(17, 20), shiftEnd: Z(18, 6), intervalMinutes: 60, completions: [],
+      applicability: { bookOnAt: Z(17, 20), bookOffAt: bookOff, shiftEnd: Z(18, 6) }, now: Z(18, 9),
+    });
+    assert.equal(lb.windows[5].state, MISSED, 'Log Book is unchanged');
+  });
+
+  await test('WAC-E15-BOOK-OFF-EXACTLY-AT-A-WINDOW-END-LEAVES-A-WHOLE-WINDOW', () => {
+    const at = resolveWelfareAt({ start: Z(17, 20), end: Z(18, 6), checks: [], bookOffAt: Z(17, 21), now: Z(17, 21, 5) });
+    assert.equal(at.windows[0].state, MISSED, 'worked in full, grace over: missed');
+    assert.equal(at.windows[1].state, NOT_APPLICABLE);
+    const inGrace = resolveWelfareAt({ start: Z(17, 20), end: Z(18, 6), checks: [], bookOffAt: Z(17, 21), now: Z(17, 21, 4, 59) });
+    assert.equal(inGrace.windows[0].state, OperationalWindowState.OVERDUE, 'still inside its grace period');
+    const justBefore = resolveWelfareAt({ start: Z(17, 20), end: Z(18, 6), checks: [], bookOffAt: Z(17, 20, 59, 59, 999), now: Z(17, 22) });
+    assert.equal(justBefore.windows[0].state, ENDED_AT_BOOK_OFF, 'a millisecond short of the end is a partial window');
   });
 
   await test('WAC-E11-CROSS-MIDNIGHT-SHIFT', () => {
@@ -514,12 +554,13 @@ async function sweepCases() {
       assert.equal(acked.status, SafetyAlertStatus.ACKNOWLEDGED);
       assert.equal(acked.acknowledgedByUserId, alpha.owner);
 
-      // Escalation keeps the human's acknowledgement.
+      // A new miss reopens it (owner decision, 18 October 2026); it is acknowledged again before resolving.
       await advance(shift.id, 60);
       await sweep.runMissedWelfareChecks();
       const [escalated] = await summaries(shift.id);
-      assert.equal(escalated.status, SafetyAlertStatus.ACKNOWLEDGED);
+      assert.equal(escalated.status, SafetyAlertStatus.OPEN);
       assert.equal(escalated.message, 'Welfare overdue - 2 consecutive checks missed');
+      await sweep.acknowledgeForCompany(alpha.owner, summary.id);
 
       await refused(() => sweep.closeForCompany(alpha.owner, summary.id), BadRequestException, 'no reason at all');
       await refused(
@@ -542,9 +583,13 @@ async function sweepCases() {
         `SELECT action, "userId", "beforeData", "afterData" FROM audit_logs WHERE "entityType" = 'safety_alert' AND "entityId" = $1 ORDER BY id`,
         [summary.id],
       );
-      assert.deepEqual(trail.map((a: { action: string }) => a.action),
-        ['welfare_check.summary_opened', 'safety_alert.acknowledged', 'welfare_check.summary_escalated', 'safety_alert.closed']);
-      const close = trail[3];
+      assert.deepEqual(trail.map((a: { action: string }) => a.action), [
+        'welfare_check.summary_opened', 'safety_alert.acknowledged', 'welfare_check.summary_reopened',
+        'safety_alert.acknowledged', 'safety_alert.closed',
+      ]);
+      assert.equal(trail[2].beforeData.status, SafetyAlertStatus.ACKNOWLEDGED, 'the reopening records what it reopened');
+      assert.equal(trail[2].beforeData.acknowledgedByUserId, alpha.owner);
+      const close = trail[4];
       assert.equal(close.userId, alpha.owner);
       assert.equal(close.beforeData.status, SafetyAlertStatus.ACKNOWLEDGED);
       assert.equal(close.afterData.resolutionReason, 'guard_confirmed_safe');
@@ -654,6 +699,103 @@ async function sweepCases() {
       assert.equal(resolvedAudits[0].n, 0);
       assert.ok((await evidence(shift.id)).every((e) => e.status === SafetyAlertStatus.CLOSED && e.by === null),
         'history rows are closed by nobody');
+    });
+
+    /** The Guard books off now (or `minsAgo` ago), as AttendanceService.checkOut does: event, then status. */
+    const bookOff = async (shift: Shift, minsAgo = 0, t: Tenant = alpha) => {
+      await repo(AttendanceEvent).save(repo(AttendanceEvent).create({
+        shift, guard: t.guard, type: AttendanceEventType.CHECK_OUT, occurredAt: new Date(Date.now() - minsAgo * MIN),
+      }));
+      await ds.query(`UPDATE shifts SET status = 'completed' WHERE id = $1`, [shift.id]);
+    };
+
+    await test('WAC-14-A-WHOLE-WINDOW-MISSED-BEFORE-BOOK-OFF-IS-NOT-LOST', async () => {
+      // Window 0 ended 3 minutes ago, unmet; the Guard booked off a minute ago, inside the grace period.
+      // Before this change the shift left the sweep with that miss never recorded.
+      const shift = await makeShift({ startedMinsAgo: 63, checksMinsAgo: [] });
+      await bookOff(shift, 1);
+      await sweep.runMissedWelfareChecks();
+      assert.equal((await evidence(shift.id)).length, 0, 'still inside its grace period: nothing yet');
+
+      await advance(shift.id, 5);
+      const counters = await sweep.runMissedWelfareChecks();
+      assert.ok(counters.bookedOffRechecked >= 1, 'the booked-off shift is revisited');
+      assert.deepEqual((await evidence(shift.id)).map((e) => e.i), [0], 'recorded once the grace period ends');
+      const [summary] = await summaries(shift.id);
+      assert.equal(summary.status, SafetyAlertStatus.OPEN, 'and it reaches the control room');
+      const [{ n }] = await ds.query(`SELECT count(*)::int AS n FROM attendance_events WHERE "shiftId" = $1 AND type = 'check-out'`, [shift.id]);
+      assert.equal(n, 1, 'the Book Off is untouched');
+    });
+
+    await test('WAC-15-A-PARTLY-WORKED-FINAL-WINDOW-RAISES-NOTHING', async () => {
+      // Booked off 20 minutes into window 1, fifty minutes ago: window 1 is long past its end and grace.
+      const shift = await makeShift({ startedMinsAgo: 130, checksMinsAgo: [100] });
+      await bookOff(shift, 50);
+      for (let i = 0; i < 3; i += 1) await sweep.runMissedWelfareChecks();
+      assert.deepEqual(await evidence(shift.id), [], 'no evidence for the partial window');
+      assert.deepEqual(await summaries(shift.id), [], 'and no alert');
+    });
+
+    await test('WAC-16-RECHECK-IS-BOUNDED-AND-SKIPS-RECONCILED-SHIFTS', async () => {
+      // Booked off three hours ago with an unrecorded whole-window miss: outside the two-hour recheck. In
+      // production two hours of five-minute sweeps would have recorded it long before.
+      const old = await makeShift({ startedMinsAgo: 250, durationMinutes: 600, checksMinsAgo: [] });
+      await bookOff(old, 180);
+      // Completed without a Book Off (reconciled): a controller dealt with it; the sweep leaves it alone.
+      const reconciled = await makeShift({ startedMinsAgo: 130, durationMinutes: 600, checksMinsAgo: [] });
+      await ds.query(`UPDATE shifts SET status = 'completed' WHERE id = $1`, [reconciled.id]);
+      await sweep.runMissedWelfareChecks();
+      assert.equal((await evidence(old.id)).length, 0);
+      assert.equal((await evidence(reconciled.id)).length, 0);
+      assert.equal((await summaries(reconciled.id)).length, 0);
+    });
+
+    await test('WAC-17-CONCURRENT-SWEEPS-ON-A-BOOKED-OFF-SHIFT', async () => {
+      const shift = await makeShift({ startedMinsAgo: 70, checksMinsAgo: [] });
+      await bookOff(shift, 0);
+      const before = notified.length;
+      await Promise.all([sweep.runMissedWelfareChecks(), sweep.runMissedWelfareChecks(), sweep.runMissedWelfareChecks()]);
+      for (let i = 0; i < 2; i += 1) await sweep.runMissedWelfareChecks();
+      assert.equal((await evidence(shift.id)).length, 1);
+      assert.equal((await summaries(shift.id)).length, 1);
+      assert.equal((await audits('welfare_check.summary_opened', shift.id)).length, 1);
+      assert.equal(notified.length - before, 1);
+    });
+
+    await test('WAC-18-A-NEW-MISS-REOPENS-AN-ACKNOWLEDGED-ALERT-ONCE', async () => {
+      const shift = await makeShift({ startedMinsAgo: 70, checksMinsAgo: [] });
+      await sweep.runMissedWelfareChecks();
+      const [summary] = await summaries(shift.id);
+      await sweep.acknowledgeForCompany(alpha.owner, summary.id);
+      for (let i = 0; i < 2; i += 1) await sweep.runMissedWelfareChecks();
+      assert.equal((await summaries(shift.id))[0].status, SafetyAlertStatus.ACKNOWLEDGED, 'no new miss: stays acknowledged');
+
+      const before = notified.length;
+      await advance(shift.id, 60);
+      await Promise.all([sweep.runMissedWelfareChecks(), sweep.runMissedWelfareChecks()]);
+      for (let i = 0; i < 2; i += 1) await sweep.runMissedWelfareChecks();
+      const rows = await summaries(shift.id);
+      assert.equal(rows.length, 1, 'reopened in place, never duplicated');
+      assert.equal(rows[0].status, SafetyAlertStatus.OPEN);
+      assert.equal((await audits('welfare_check.summary_reopened', shift.id)).length, 1, 'reopened exactly once');
+      assert.equal(notified.length - before, 1, 'one fresh notification');
+      assert.match(notified[notified.length - 1].message, /missed another welfare check/);
+      const acks = await ds.query(`SELECT count(*)::int AS n FROM audit_logs WHERE action = 'safety_alert.acknowledged' AND "entityId" = $1`, [summary.id]);
+      assert.equal(acks[0].n, 1, 'the original acknowledgement audit is preserved');
+    });
+
+    await test('WAC-19-BOOK-OFF-RACE-AFTER-AN-ACKNOWLEDGEMENT', async () => {
+      // Acknowledged miss in window 0; window 1 then ends unmet and the Guard books off three minutes later,
+      // inside its grace period, before any sweep has recorded it.
+      const shift = await makeShift({ startedMinsAgo: 70, checksMinsAgo: [] });
+      await sweep.runMissedWelfareChecks();
+      const [summary] = await summaries(shift.id);
+      await sweep.acknowledgeForCompany(alpha.owner, summary.id);
+      await advance(shift.id, 57); // window 1 ended 7 minutes ago
+      await bookOff(shift, 4);
+      await sweep.runMissedWelfareChecks();
+      assert.deepEqual((await evidence(shift.id)).map((e) => e.i), [0, 1]);
+      assert.equal((await summaries(shift.id))[0].status, SafetyAlertStatus.OPEN, 'the new whole-window miss reopens it');
     });
 
     console.log(JSON.stringify({ event: 'welfare_alert_correctness_certified', tests: passed }));

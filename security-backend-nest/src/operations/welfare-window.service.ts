@@ -108,6 +108,9 @@ export class WelfareWindowService {
       // Only a check made while genuinely Booked On counts, and one made just before a window starts may
       // count for it. Neither moves or rewrites the check's own timestamp.
       attribution: { earlyToleranceMinutes: WELFARE_EARLY_TOLERANCE_MINUTES, onDutyOnly: true },
+      // Owner decision, 18 October 2026: a partly-worked final window is neither missed nor "not required"
+      // until the Phase 4 policy is set, so it is reported as ended at Book Off and raises nothing.
+      holdPartialWindowAtBookOff: true,
     });
   }
 }

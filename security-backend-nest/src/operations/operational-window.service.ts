@@ -123,15 +123,18 @@ export class OperationalWindowService {
 
     const applicable = windows.map((window) => this.isApplicable(window, input.applicability));
     const attributed = this.attribute(windows, applicable, completions, input.applicability, input.attribution);
+    const bookOff = this.timeOf(input.applicability.bookOffAt);
 
     const resolved = windows.map<ResolvedOperationalWindow>((window, index) => {
       const end = window.end.getTime();
       const { all, discharging } = attributed[index];
+      // Booked off inside this window: it was only partly worked.
+      const cutShort = Boolean(input.holdPartialWindowAtBookOff) && bookOff !== null && bookOff < end;
 
       return {
         ...window,
         applicable: applicable[index],
-        state: this.stateOf({ applicable: applicable[index], completed: discharging.length > 0, end, graceMs, now }),
+        state: this.stateOf({ applicable: applicable[index], completed: discharging.length > 0, cutShort, end, graceMs, now }),
         dueAt: window.end,
         missedFrom: new Date(end + graceMs),
         completedAt: discharging.length > 0 ? new Date(discharging[0]) : null,
@@ -223,7 +226,8 @@ export class OperationalWindowService {
       if (!window.applicable) continue;
       if (
         window.state === OperationalWindowState.DUE ||
-        window.state === OperationalWindowState.OVERDUE
+        window.state === OperationalWindowState.OVERDUE ||
+        window.state === OperationalWindowState.ENDED_AT_BOOK_OFF
       ) {
         continue;
       }
@@ -254,6 +258,7 @@ export class OperationalWindowService {
       overdueCount: countOf(OperationalWindowState.OVERDUE),
       missedCount: countOf(OperationalWindowState.MISSED),
       notApplicableCount: countOf(OperationalWindowState.NOT_APPLICABLE),
+      endedAtBookOffCount: countOf(OperationalWindowState.ENDED_AT_BOOK_OFF),
       compliancePercent:
         requiredCount > 0 ? Math.round((completedCount / requiredCount) * 10000) / 100 : null,
     };
@@ -274,12 +279,14 @@ export class OperationalWindowService {
   private stateOf(input: {
     applicable: boolean;
     completed: boolean;
+    cutShort: boolean;
     end: number;
     graceMs: number;
     now: number | null;
   }): OperationalWindowState {
     if (!input.applicable) return OperationalWindowState.NOT_APPLICABLE;
     if (input.completed) return OperationalWindowState.COMPLETED;
+    if (input.cutShort) return OperationalWindowState.ENDED_AT_BOOK_OFF;
     // Without a usable clock nothing can be declared late; DUE is the only honest answer.
     if (input.now === null || input.now < input.end) return OperationalWindowState.DUE;
     if (input.now < input.end + input.graceMs) return OperationalWindowState.OVERDUE;
