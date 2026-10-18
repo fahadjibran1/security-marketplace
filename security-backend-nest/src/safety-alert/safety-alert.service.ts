@@ -68,6 +68,19 @@ const MISSING_BOOK_OFF_GRACE_MINUTES = 15;
  */
 const BOOKED_OFF_RECHECK_MINUTES = 120;
 
+/**
+ * Recovery after the sweep could not run (Welfare Phase 3). The two-hour recheck assumes the sweep has been
+ * running; after a process restart, or a database outage the process survived, the lookback instead reaches
+ * back to the last successful sweep plus the usual two hours — so a whole window missed before a Book Off
+ * during the outage is still recorded, and alerted, once the sweep runs again. Bounded: never more than
+ * 24 hours, and a restart (when the last success is unknown) uses exactly that. A longer outage is a
+ * documented limit, not an unbounded historical scan.
+ */
+export const BOOKED_OFF_RECOVERY_MAX_MINUTES = 24 * 60;
+
+/** A late Book Off can follow the scheduled end by up to the stale Book On boundary (12 hours). */
+const LATE_BOOK_OFF_MAX_MINUTES = 12 * 60;
+
 
 /** Advisory-lock namespace for the compliance lapse sweep, one lock per shift. */
 const COMPLIANCE_LAPSE_LOCK_NAMESPACE = 534_401_402;
@@ -101,6 +114,8 @@ export type ComplianceLapseSweepCounters = {
 
 type WelfareSweepCounters = {
   shiftsChecked: number;
+  /** How far back a Book Off was looked for: 120 normally, more while recovering from a gap. */
+  lookbackMinutes: number;
   /** Completed shifts revisited because they were booked off recently (included in shiftsChecked). */
   bookedOffRechecked: number;
   evidenceCreated: number;
@@ -116,6 +131,11 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(SafetyAlertService.name);
   private welfareInterval?: NodeJS.Timeout;
   private safetySweep?: SingleFlightJob;
+  /**
+   * When the welfare sweep last completed without an error, on this process. In memory on purpose: after a
+   * restart it is unknown, and the first sweep then recovers the full bounded window. No schema involved.
+   */
+  private lastWelfareSweepSucceededAt: number | null = null;
 
   constructor(
     @InjectRepository(SafetyAlert)
@@ -269,19 +289,28 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
    */
   async runMissedWelfareChecks() {
     const now = new Date();
-    const recheckFrom = new Date(now.getTime() - BOOKED_OFF_RECHECK_MINUTES * 60_000);
-    // In-progress shifts, plus completed shifts that may have been booked off recently: one statement. A
-    // completed shift whose scheduled end is more than two hours ago and that was booked off after its end
-    // had every window settled while it was still in progress; one booked off early still has its end ahead.
+    const lookbackMinutes = this.bookedOffLookbackMinutes(now.getTime());
+    const recovering = lookbackMinutes > BOOKED_OFF_RECHECK_MINUTES;
+    const recheckFrom = new Date(now.getTime() - lookbackMinutes * 60_000);
+    // In-progress shifts, plus completed shifts that may have been booked off inside the lookback: one
+    // statement. In normal running, a completed shift whose scheduled end is more than two hours ago and that
+    // was booked off after its end had every window settled while it was still in progress, and one booked
+    // off early still has its end ahead. Recovering, the sweep may not have been running while it was in
+    // progress, so a late Book Off up to twelve hours after the end is reached as well.
+    const endFrom = new Date(recheckFrom.getTime() - (recovering ? LATE_BOOK_OFF_MAX_MINUTES * 60_000 : 0));
     const shifts = await this.shiftRepo.find({
-      where: [{ status: 'in_progress' }, { status: 'completed', end: MoreThanOrEqual(recheckFrom) }],
+      where: [{ status: 'in_progress' }, { status: 'completed', end: MoreThanOrEqual(endFrom) }],
       order: { start: 'ASC' },
       ...SWEEP_SHIFT_READ,
     });
+    if (recovering) {
+      this.logger.log(JSON.stringify({ event: 'welfare_sweep_recovery', lookbackMinutes: Math.round(lookbackMinutes) }));
+    }
 
     const counters = {
       shiftsChecked: 0,
       bookedOffRechecked: 0,
+      lookbackMinutes: Math.round(lookbackMinutes),
       evidenceCreated: 0,
       summariesOpened: 0,
       summariesEscalated: 0,
@@ -328,7 +357,20 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
     // needs its missing-Book-Off alert closing is no longer 'in_progress' and would never be revisited.
     await this.resolveMissingBookOffAlerts(counters);
 
+    // Reached only when nothing above threw: a failed sweep leaves the last success where it was, so the next
+    // one reaches back further.
+    this.lastWelfareSweepSucceededAt = now.getTime();
     return counters;
+  }
+
+  /**
+   * How far back a Book Off brings a completed shift into this sweep: two hours normally; after a gap, back
+   * to the last successful sweep plus those two hours; after a restart, the 24-hour maximum. Never more.
+   */
+  private bookedOffLookbackMinutes(nowMs: number): number {
+    if (this.lastWelfareSweepSucceededAt === null) return BOOKED_OFF_RECOVERY_MAX_MINUTES;
+    const sinceLastMinutes = Math.max(0, nowMs - this.lastWelfareSweepSucceededAt) / 60_000;
+    return Math.min(BOOKED_OFF_RECOVERY_MAX_MINUTES, Math.max(BOOKED_OFF_RECHECK_MINUTES, sinceLastMinutes + BOOKED_OFF_RECHECK_MINUTES));
   }
 
   /**

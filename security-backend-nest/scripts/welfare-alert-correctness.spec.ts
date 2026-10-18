@@ -798,6 +798,72 @@ async function sweepCases() {
       assert.equal((await summaries(shift.id))[0].status, SafetyAlertStatus.OPEN, 'the new whole-window miss reopens it');
     });
 
+    // ═══════════════════ RECOVERY AFTER AN OUTAGE (Welfare Phase 3) ═══════════════════
+
+    /** A fresh service instance: what the process looks like after a restart. */
+    const restartedSweep = () => {
+      const fresh = new SafetyAlertService(
+        repo(SafetyAlert), repo(DailyLog), repo(AttendanceEvent), repo(Shift),
+        {} as never, {} as never,
+        { findByUserId: async (userId: number) => companies.find((c) => c.user?.id === userId) ?? null } as never,
+        auditLogService, notifications as never, welfare, windowEngine, ds,
+        { getGuardSummary: async () => { throw new Error('compliance lapse scan not exercised by this spec'); } } as never,
+      );
+      fresh.onModuleDestroy();
+      return fresh;
+    };
+    /** A whole window missed just before a Book Off `bookOffMinsAgo` ago, never recorded (the sweep was down). */
+    const lostFinalWindow = async (bookOffMinsAgo: number) => {
+      // Window 0 ends two minutes before the Book Off, unmet.
+      const shift = await makeShift({ startedMinsAgo: bookOffMinsAgo + 62, checksMinsAgo: [] });
+      await bookOff(shift, bookOffMinsAgo);
+      return shift;
+    };
+
+    await test('WAC-20-AN-OUTAGE-LONGER-THAN-TWO-HOURS-LOSES-NOTHING', async () => {
+      const shift = await lostFinalWindow(180);
+      // A running process whose last successful sweep was four hours ago (a database outage it survived).
+      const survivor = restartedSweep();
+      (survivor as unknown as { lastWelfareSweepSucceededAt: number }).lastWelfareSweepSucceededAt = Date.now() - 4 * 60 * MIN;
+      const recovering = await survivor.runMissedWelfareChecks();
+      assert.ok(recovering.lookbackMinutes >= 360 && recovering.lookbackMinutes < 365, `four-hour gap + two hours (${recovering.lookbackMinutes})`);
+      assert.deepEqual((await evidence(shift.id)).map((e) => e.i), [0], 'recorded on the first sweep after the gap');
+      assert.equal((await summaries(shift.id))[0].status, SafetyAlertStatus.OPEN, 'and raised to the control room');
+
+      // The same shift under normal running (last success just now) would be outside the two-hour recheck.
+      const steady = await lostFinalWindow(180);
+      const counters = await survivor.runMissedWelfareChecks();
+      assert.equal(counters.lookbackMinutes, 120, 'back to the two-hour lookback once sweeps succeed again');
+      assert.equal((await evidence(steady.id)).length, 0, 'normal running does not rescan history');
+    });
+
+    await test('WAC-21-A-RESTART-RECOVERS-UP-TO-24-HOURS-AND-NO-FURTHER', async () => {
+      const within = await lostFinalWindow(20 * 60);
+      const beyond = await lostFinalWindow(26 * 60);
+      const counters = await restartedSweep().runMissedWelfareChecks();
+      assert.equal(counters.lookbackMinutes, 24 * 60, 'a restart recovers the full bounded window');
+      assert.deepEqual((await evidence(within.id)).map((e) => e.i), [0], 'a Book Off 20 hours ago is recovered');
+      assert.equal((await evidence(beyond.id)).length, 0, 'one 26 hours ago is outside the bound');
+    });
+
+    await test('WAC-22-A-FAILED-SWEEP-DOES-NOT-COUNT-AS-SUCCESS', async () => {
+      const instance = restartedSweep();
+      await instance.runMissedWelfareChecks();
+      assert.equal((await instance.runMissedWelfareChecks()).lookbackMinutes, 120);
+      // The database "fails" for one sweep.
+      const live = instance as unknown as { dailyLogRepo: Repository<DailyLog> };
+      const real = live.dailyLogRepo;
+      live.dailyLogRepo = { find: async () => { throw new Error('connection terminated'); } } as never;
+      await assert.rejects(() => instance.runMissedWelfareChecks(), /connection terminated/);
+      live.dailyLogRepo = real;
+      // Pretend the failure lasted three hours: the last success is still the one before it.
+      (instance as unknown as { lastWelfareSweepSucceededAt: number }).lastWelfareSweepSucceededAt = Date.now() - 3 * 60 * MIN;
+      const lost = await lostFinalWindow(150);
+      const counters = await instance.runMissedWelfareChecks();
+      assert.ok(counters.lookbackMinutes >= 300 && counters.lookbackMinutes < 310, `gap + two hours (${counters.lookbackMinutes})`);
+      assert.deepEqual((await evidence(lost.id)).map((e) => e.i), [0], 'the miss inside the gap is recorded');
+    });
+
     console.log(JSON.stringify({ event: 'welfare_alert_correctness_certified', tests: passed }));
   } finally {
     await ds.destroy();
