@@ -478,6 +478,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
   // state and neither could be told apart while sending.
   const [submittingAction, setSubmittingAction] = useState<GuardActionKey | null>(null);
   const [respondingShiftId, setRespondingShiftId] = useState<number | null>(null);
+  const respondInFlightRef = useRef(false);
   const [offerRespondAction, setOfferRespondAction] = useState<'accepted' | 'rejected' | null>(null);
   // A draft per canonical action. Previously Add Log and Check Call shared one note field, so a
   // half-written entry surfaced in the other form; there is no shared field now.
@@ -1260,6 +1261,11 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
   }
 
   async function handleRespondToShift(shiftId: number, response: 'accepted' | 'rejected') {
+    // Synchronous re-entry guard: respondingShiftId only disables the buttons on the next render, so a
+    // fast double tap could otherwise send two responses. The server's conditional UPDATE would refuse the
+    // second, but the Guard would then be told the offer was "no longer available" after accepting it.
+    if (respondInFlightRef.current) return;
+    respondInFlightRef.current = true;
     try {
       setRespondingShiftId(shiftId);
       setOfferRespondAction(response);
@@ -1295,6 +1301,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
         showAlert(response === 'accepted' ? 'Accept failed' : 'Decline failed', message);
       }
     } finally {
+      respondInFlightRef.current = false;
       setRespondingShiftId(null);
       setOfferRespondAction(null);
     }

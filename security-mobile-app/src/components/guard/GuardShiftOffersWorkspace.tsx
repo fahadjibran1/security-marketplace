@@ -16,6 +16,7 @@ import {
 import { colors, control, radii, shadows, spacing } from '../../theme';
 import { Shift } from '../../types/models';
 import { StatePanel } from '../StatePanel';
+import { AppModal } from '../ui/Modal';
 
 export interface GuardShiftOffersWorkspaceProps {
   offers: Shift[];
@@ -207,141 +208,126 @@ export function GuardShiftOffersWorkspace({
         </View>
       </ScrollView>
 
-      {/* ── Offer detail bottom sheet ─────────────────────────────────────── */}
-      {selectedOffer ? (
-        <View style={styles.sheetBackdrop}>
-          <Pressable
-            style={styles.sheetBackdropTap}
-            onPress={closeDetail}
-            accessibilityLabel="Close offer detail"
-            accessibilityRole="button"
-          />
-          <View style={styles.sheet}>
-            {/* Sheet drag handle (visual) */}
-            <View style={styles.sheetHandle} />
-
-            {/* Sheet header */}
-            <View style={styles.sheetHeader}>
-              <Text style={styles.sheetHeaderEyebrow}>SHIFT OFFER</Text>
+      {/*
+        ── Offer detail ───────────────────────────────────────────────────────
+        Hosted in AppModal, a real RNModal, for the same reason as the Guard action forms. This was an
+        absolutely-positioned backdrop and sheet inside this workspace, and the workspace sits inside the
+        dashboard's ScrollView, so the sheet was anchored to the bottom of the whole offer LIST rather than
+        the screen. With more offers than fit on screen, the backdrop greyed the visible list while Accept
+        and Decline were laid out below the fold, behind the bottom navigation: a Guard saw a grey overlay
+        and no way to respond. AppModal is positioned against the window and keeps its footer outside the
+        scrolling body, so the actions are on screen whatever the list length, scroll position or text size.
+      */}
+      <AppModal
+        visible={selectedOffer !== null}
+        onClose={() => {
+          if (!offerBusy) closeDetail();
+        }}
+        closeOnBackdrop={!offerBusy}
+        title="Shift offer"
+        footer={selectedOffer ? (showDeclineConfirm ? (
+          <View style={styles.actions}>
+            <View style={styles.declineConfirmBlock}>
+              <Text style={styles.declineConfirmTitle}>Decline this shift?</Text>
+              <Text style={styles.declineConfirmBody}>
+                You will no longer be assigned to this offer and the company will need to arrange cover.
+              </Text>
+            </View>
+            <View style={styles.actionRow}>
               <Pressable
-                style={styles.sheetCloseBtn}
-                onPress={closeDetail}
+                style={[styles.keepBtn, offerBusy && styles.btnDisabled]}
+                onPress={() => setShowDeclineConfirm(false)}
+                disabled={offerBusy}
                 accessibilityRole="button"
-                accessibilityLabel="Close"
+                accessibilityLabel="Keep offer"
+                accessibilityHint="Dismiss decline confirmation and keep the offer open"
               >
-                <Text style={styles.sheetCloseBtnText}>Close</Text>
+                <Text style={styles.keepBtnText}>Keep Offer</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.declineConfirmBtn, offerBusy && styles.btnDisabled]}
+                onPress={handleDeclineConfirm}
+                disabled={offerBusy}
+                accessibilityRole="button"
+                accessibilityLabel="Confirm decline"
+                accessibilityHint="Permanently declines this shift offer"
+              >
+                <Text style={styles.declineConfirmBtnText}>
+                  {offerBusy && offerRespondAction === 'rejected' ? 'Declining…' : 'Decline Shift'}
+                </Text>
               </Pressable>
             </View>
-
-            {/* Scrollable detail body */}
-            <ScrollView
-              style={styles.sheetScroll}
-              contentContainerStyle={styles.sheetScrollContent}
-              showsVerticalScrollIndicator={false}
-            >
-              {/* WHERE / WHEN */}
-              <View style={styles.detailHero}>
-                <Text style={styles.detailSite}>{selectedOffer.siteName}</Text>
-                <Text style={styles.detailDate}>{fmtDate(selectedOffer.start, offerZone(selectedOffer))}</Text>
-                <Text style={styles.detailTime}>
-                  {fmtTimePair(selectedOffer.start, selectedOffer.end, offerZone(selectedOffer))}
-                </Text>
-                {(() => {
-                  const u = getUrgencyLine(selectedOffer.start, liveNow, offerZone(selectedOffer));
-                  const urgent = isUrgent(selectedOffer.start, liveNow);
-                  return u ? (
-                    <Text style={[styles.detailUrgency, urgent && styles.detailUrgencyAlert]}>
-                      {u}
-                    </Text>
-                  ) : null;
-                })()}
-              </View>
-
-              {/* INSTRUCTIONS */}
-              <View style={styles.detailSection}>
-                <Text style={styles.detailSectionLabel}>INSTRUCTIONS</Text>
-                <Text style={styles.detailSectionBody}>
-                  {selectedOffer.instructions?.trim() || 'No additional shift instructions.'}
-                </Text>
-              </View>
-
-              {/* CHECK CALLS */}
-              {selectedOffer.checkCallIntervalMinutes &&
-              selectedOffer.checkCallIntervalMinutes > 0 ? (
-                <View style={styles.detailSection}>
-                  <Text style={styles.detailSectionLabel}>CHECK CALLS</Text>
-                  <Text style={styles.detailSectionBody}>
-                    Every {selectedOffer.checkCallIntervalMinutes} minutes
-                  </Text>
-                </View>
-              ) : null}
-            </ScrollView>
-
-            {/* ── Actions ───────────────────────────────────────────────── */}
-            {showDeclineConfirm ? (
-              <View style={styles.actions}>
-                <View style={styles.declineConfirmBlock}>
-                  <Text style={styles.declineConfirmTitle}>Decline this shift?</Text>
-                  <Text style={styles.declineConfirmBody}>
-                    You will no longer be assigned to this offer and the company will need to arrange cover.
-                  </Text>
-                </View>
-                <View style={styles.actionRow}>
-                  <Pressable
-                    style={[styles.keepBtn, offerBusy && styles.btnDisabled]}
-                    onPress={() => setShowDeclineConfirm(false)}
-                    disabled={offerBusy}
-                    accessibilityRole="button"
-                    accessibilityLabel="Keep offer"
-                    accessibilityHint="Dismiss decline confirmation and keep the offer open"
-                  >
-                    <Text style={styles.keepBtnText}>Keep Offer</Text>
-                  </Pressable>
-                  <Pressable
-                    style={[styles.declineConfirmBtn, offerBusy && styles.btnDisabled]}
-                    onPress={handleDeclineConfirm}
-                    disabled={offerBusy}
-                    accessibilityRole="button"
-                    accessibilityLabel="Confirm decline"
-                    accessibilityHint="Permanently declines this shift offer"
-                  >
-                    <Text style={styles.declineConfirmBtnText}>
-                      {offerBusy && offerRespondAction === 'rejected' ? 'Declining…' : 'Decline Shift'}
-                    </Text>
-                  </Pressable>
-                </View>
-              </View>
-            ) : (
-              <View style={styles.actions}>
-                <Pressable
-                  style={[styles.declineBtn, offerBusy && styles.btnDisabled]}
-                  onPress={handleDeclinePress}
-                  disabled={offerBusy}
-                  accessibilityRole="button"
-                  accessibilityLabel="Decline this shift offer"
-                  accessibilityHint="Shows a confirmation before declining"
-                >
-                  <Text style={styles.declineBtnText}>
-                    {offerBusy && offerRespondAction === 'rejected' ? 'Declining…' : 'Decline'}
-                  </Text>
-                </Pressable>
-                <Pressable
-                  style={[styles.acceptBtn, offerBusy && styles.btnDisabled]}
-                  onPress={handleAccept}
-                  disabled={offerBusy}
-                  accessibilityRole="button"
-                  accessibilityLabel="Accept this shift"
-                  accessibilityHint="Accepts the offer and moves the shift to your Home tab"
-                >
-                  <Text style={styles.acceptBtnText}>
-                    {offerBusy && offerRespondAction === 'accepted' ? 'Accepting…' : 'Accept Shift'}
-                  </Text>
-                </Pressable>
-              </View>
-            )}
           </View>
-        </View>
-      ) : null}
+        ) : (
+          <View style={styles.actions}>
+            <Pressable
+              style={[styles.declineBtn, offerBusy && styles.btnDisabled]}
+              onPress={handleDeclinePress}
+              disabled={offerBusy}
+              accessibilityRole="button"
+              accessibilityLabel="Decline this shift offer"
+              accessibilityHint="Shows a confirmation before declining"
+            >
+              <Text style={styles.declineBtnText}>
+                {offerBusy && offerRespondAction === 'rejected' ? 'Declining…' : 'Decline'}
+              </Text>
+            </Pressable>
+            <Pressable
+              style={[styles.acceptBtn, offerBusy && styles.btnDisabled]}
+              onPress={handleAccept}
+              disabled={offerBusy}
+              accessibilityRole="button"
+              accessibilityLabel="Accept this shift"
+              accessibilityHint="Accepts the offer and moves the shift to your Home tab"
+            >
+              <Text style={styles.acceptBtnText}>
+                {offerBusy && offerRespondAction === 'accepted' ? 'Accepting…' : 'Accept Shift'}
+              </Text>
+            </Pressable>
+          </View>
+        )) : null}
+      >
+        {selectedOffer ? (
+          <View style={styles.detailBody}>
+            {/* WHERE / WHEN */}
+            <View style={styles.detailHero}>
+              <Text style={styles.detailSite}>{selectedOffer.siteName}</Text>
+              <Text style={styles.detailDate}>{fmtDate(selectedOffer.start, offerZone(selectedOffer))}</Text>
+              <Text style={styles.detailTime}>
+                {fmtTimePair(selectedOffer.start, selectedOffer.end, offerZone(selectedOffer))}
+              </Text>
+              {(() => {
+                const u = getUrgencyLine(selectedOffer.start, liveNow, offerZone(selectedOffer));
+                const urgent = isUrgent(selectedOffer.start, liveNow);
+                return u ? (
+                  <Text style={[styles.detailUrgency, urgent && styles.detailUrgencyAlert]}>
+                    {u}
+                  </Text>
+                ) : null;
+              })()}
+            </View>
+
+            {/* INSTRUCTIONS */}
+            <View style={styles.detailSection}>
+              <Text style={styles.detailSectionLabel}>INSTRUCTIONS</Text>
+              <Text style={styles.detailSectionBody}>
+                {selectedOffer.instructions?.trim() || 'No additional shift instructions.'}
+              </Text>
+            </View>
+
+            {/* CHECK CALLS */}
+            {selectedOffer.checkCallIntervalMinutes &&
+            selectedOffer.checkCallIntervalMinutes > 0 ? (
+              <View style={styles.detailSection}>
+                <Text style={styles.detailSectionLabel}>CHECK CALLS</Text>
+                <Text style={styles.detailSectionBody}>
+                  Every {selectedOffer.checkCallIntervalMinutes} minutes
+                </Text>
+              </View>
+            ) : null}
+          </View>
+        ) : null}
+      </AppModal>
     </View>
   );
 }
@@ -447,81 +433,8 @@ const styles = StyleSheet.create({
     letterSpacing: 0.1,
   },
 
-  // Bottom sheet backdrop
-  sheetBackdrop: {
-    position: 'absolute',
-    top: 0,
-    right: 0,
-    bottom: 0,
-    left: 0,
-    backgroundColor: 'rgba(11,27,43,0.46)',
-    justifyContent: 'flex-end',
-    zIndex: 20,
-  },
-  sheetBackdropTap: {
-    position: 'absolute',
-    top: 0,
-    right: 0,
-    bottom: 0,
-    left: 0,
-  },
-
-  // Bottom sheet
-  sheet: {
-    backgroundColor: colors.card,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    maxHeight: '84%',
-    ...shadows.elevated,
-  },
-  sheetHandle: {
-    width: 40,
-    height: 4,
-    borderRadius: radii.pill,
-    backgroundColor: colors.border,
-    alignSelf: 'center',
-    marginTop: spacing.md,
-    marginBottom: spacing.xs,
-  },
-  sheetHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  sheetHeaderEyebrow: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: colors.textSecondary,
-    letterSpacing: 1,
-    textTransform: 'uppercase',
-  },
-  sheetCloseBtn: {
-    minHeight: control.buttonHeightSm,
-    minWidth: 60,
-    borderRadius: radii.sm,
-    backgroundColor: colors.background,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: spacing.md,
-  },
-  sheetCloseBtnText: {
-    color: colors.supportBlue,
-    fontWeight: '700',
-    fontSize: 14,
-  },
-
-  // Detail scroll body
-  sheetScroll: {
-    flexShrink: 1,
-  },
-  sheetScrollContent: {
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.lg,
-    paddingBottom: spacing.md,
+  // Detail body (inside AppModal's scrolling body)
+  detailBody: {
     gap: spacing.lg,
   },
 
@@ -580,13 +493,10 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
 
-  // Actions area (pinned at sheet bottom)
+  // Actions — AppModal's footer, outside its scrolling body, supplies the padding and top border
   actions: {
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.lg,
+    flex: 1,
     gap: spacing.sm,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
   },
   actionRow: {
     flexDirection: 'row',

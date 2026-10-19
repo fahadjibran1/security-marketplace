@@ -148,6 +148,13 @@ jobs:
       # the footer is NOT inside the scroll container.
       - name: Verify guard action forms stay reachable
         run: npm run test:guard-action-forms
+      # Post-release P0 (19 Oct 2026): Review offer showed a grey overlay and no Accept or Decline. The
+      # offer detail was an absolute backdrop and sheet inside the Offers list, which sits in the
+      # dashboard's ScrollView, so the sheet's action row was laid out below the fold behind the bottom
+      # navigation. Renders the real workspace in the real AppModal and drives accept, decline, cancel,
+      # the in-flight state and a withdrawn offer; scans every Guard surface for hand-rolled overlays.
+      - name: Verify guard shift offers can be accepted and declined
+        run: npm run test:guard-shift-offers
       # Phase 3A-iii: Build 11 showed a reachable button that emitted no HTTP request, and reported the
       # refusal only through a banner the modal and keyboard covered. Phase 2 proved the press reached
       # the ROUTER and stopped there. This executes the production dispatcher itself — including a real
