@@ -39,7 +39,7 @@ const easJson = JSON.parse(read('eas.json'));
 
 test('BUILD-01-APP-VERSION-IS-1-1-0-AND-ANDROID-BUILD-15', () => {
   // Guard release (20 Oct 2026): S4 1.1.0 / 15 carries the Guard shift-offer fix and supersedes 1.1.0 / 14, which
-  // was certified for Google Play Internal Testing but never uploaded. Phase 4E: S4 1.1.0 / 14 was the Google Play Internal Testing candidate. Gate 4A's 1.1.0 / 13 was the
+  // is active in Google Play Internal Testing (owner-confirmed 20 Oct 2026). Phase 4E: S4 1.1.0 / 14 was the Google Play Internal Testing candidate. Gate 4A's 1.1.0 / 13 was the
   // first permanent-identity candidate (com.sfour.s4); it is retired because it predates Dashboard V2. It is a new
   // Android package, so nothing installs over anything — but the code keeps climbing, so every S4
   // artefact ever produced carries a distinct, increasing number. The development-package history:

@@ -443,18 +443,21 @@ test('SIGNER-13B-THE-RETIRED-VC13-ARTEFACT-IS-KEPT-EXACTLY', () => {
 });
 
 test('SIGNER-13C-THE-SUPERSEDED-VC14-ARTEFACT-IS-KEPT-EXACTLY', () => {
-  // Guard release (20 Oct 2026): the certified 1.1.0 (14) AAB predates the Guard shift-offer fix and was never
-  // uploaded. Its certification is history and is kept exactly; only its status and reason record the change.
+  // Guard release (20 Oct 2026): the certified 1.1.0 (14) AAB predates the Guard shift-offer fix. It is active in
+  // Google Play Internal Testing (owner-confirmed). Its certification is history and is kept exactly; only its status,
+  // reason and the owner-confirmed Play state record the change.
   const superseded = (config.retiredArtefacts || []).find((entry) => entry.versionCode === 14);
   assert.ok(superseded, 'versionCode 14 is recorded as superseded');
-  assert.equal(superseded.status, 'certified-superseded');
+  assert.equal(superseded.status, 'superseded-active-in-play-internal-testing');
   assert.equal(superseded.easBuildId, '4b31e82d-7b36-4b76-8887-59c446527931');
   assert.equal(superseded.gitCommit, 'e099c4e22fac3a2af32053b6870060bda4d9d5ef');
   assert.equal(superseded.aabSha256, 'e07c4dc8dc33c9c66b8fe107296be69506b50681b6da9dec21008f39e23dde66');
   assert.equal(superseded.aabSizeBytes, 58685803);
   assert.equal(superseded.uploadCertificateSha256, config.signer.certificateSha256);
   assert.equal(superseded.certifiedOn, '2026-10-06');
-  assert.match(superseded.retiredReason, /never uploaded/);
+  assert.match(superseded.retiredReason, /active in Google Play Internal Testing/);
+  assert.equal(superseded.playInternalTesting.status, 'active');
+  assert.equal(superseded.playInternalTesting.confirmedBy, 'owner', 'store facts are attributed, not presented as inspected');
   assert.match(superseded.retiredReason, /d880ef0/);
   assert.equal(config.approvedArtefact.versionCode, 15, 'the Guard release is the approved artefact');
   assert.equal(config.approvedArtefact.status, 'pending-build', 'and it has not been built');
@@ -477,9 +480,9 @@ test('SIGNER-14-AN-UPLOADED-AAB-SIGNER-IS-READ-FROM-KEYTOOL', () => {
 });
 
 test('SIGNER-15-PLAY-APP-SIGNING-IS-RECORDED-HONESTLY', () => {
-  // The upload certificate is ours; the app-signing certificate is Google's and does not exist until the
-  // Play app is created in Gate 4B. It must be null, not guessed.
-  assert.equal(config.playAppSigning.status, 'not-yet-enrolled');
+  // The upload certificate is ours; the app-signing certificate is Google's. 1.1.0 (14) is in Internal Testing, so
+  // Play App Signing is in use, but its certificate has not been read from Play Console: null, not guessed.
+  assert.equal(config.playAppSigning.status, 'in-use-certificate-not-recorded');
   assert.equal(config.playAppSigning.uploadCertificateSha256, S4_CERT_SHA256);
   assert.equal(config.playAppSigning.appSigningCertificateSha256, null);
 });
