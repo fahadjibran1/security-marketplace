@@ -62,3 +62,63 @@ that can never read or write production data, and a Guard test build that talks 
 
 Staging has no production dependency: suspending the staging service and deleting the staging database returns
 to today's state (a broken, unused staging service).
+
+## Recommended minimal design (added 20 Oct 2026, after the 1.1.0 builds)
+
+Production is a Render Starter web service plus a **Supabase** Postgres. For staging the recommendation is
+Option A, a **Render** Postgres: being on a different provider from production, its connection string cannot be
+mistaken for production's, and creating it cannot touch the production Supabase project.
+
+| Part | Choice | Approx. monthly cost (check the provider's pricing page before approving) |
+|---|---|---|
+| API | Reuse `security-marketplace-api-staging` (`srv-da8t3d0ae00c73d7g5jg`), branch `release/s4-pilot-rc1`, manual deploys | Free: $0 (spins down; ~50 s cold start). Starter: about $7, recommended while devices are testing |
+| Database | New Render Postgres `s4-staging-db`, Basic 256 MB, same region as the service | about $6 (the Free tier expires after 30 days) |
+| Email / evidence storage | Disabled, or a separate sandbox; never the production keys | $0 |
+| Total | | about $13 a month on Starter + Basic, billed pro rata; $0 once deleted |
+
+URL: `https://security-marketplace-api-staging.onrender.com` (the existing service name; no DNS change).
+
+### Accounts and data
+- Staging-only accounts, created on staging after the isolation check: one test company owner, one control-room
+  user, two test Guards (A and B), one client. Company SIA / Right to Work checks recorded with test values.
+- One site with GPS required and one without; shifts covering offered, accepted, starting in 2 h, live, ending
+  in 10 min, and a short welfare interval for the missed-welfare test.
+- Logins generated, stored only in the git-ignored secrets folder.
+- A seed script would run against the staging URL over the API only, and refuse to run unless the host is the
+  staging host (adapted from the local P0 seed). Writing it is a separate, reviewable change.
+
+### Authentication and permissions
+Same code and migrations as production (63), new `JWT_SECRET` and guard-data keys, so production tokens and
+encrypted fields are unusable on staging and vice versa. Tenant rules are those in the release commit;
+platform-admin access on staging is used only by the owner.
+
+### Reset
+1. Suspend the service. 2. In the database, `DROP SCHEMA public CASCADE; CREATE SCHEMA public;` (staging
+database only, confirmed by host). 3. Deploy the same commit again; the pre-deploy step re-runs all migrations.
+4. Re-run the seed. About 10 minutes; production is not involved.
+
+### Shutdown
+Suspend the service (keeps settings, $0 on Free) or delete it, and delete `s4-staging-db`. Remove the UAT build
+profile. Nothing else depends on staging.
+
+## UAT build (separate approval, after staging passes its isolation check)
+
+Store profiles stay exactly as they are. A UAT variant needs a small, reviewable source change:
+
+- `app.config.js` that reads `APP_VARIANT`; when it is `uat`: name `S4 UAT`, Android package
+  `com.sfour.s4.uat`, iOS bundle `com.sfour.s4.uat`, same versions. Otherwise it returns `app.json` unchanged
+  (the store identity specs keep pinning `com.sfour.s4`).
+- `eas.json` profile `uat`: `distribution: internal`; Android `buildType: apk`, `credentialsSource: local`;
+  env `APP_VARIANT=uat`, `EXPO_PUBLIC_API_URL=https://security-marketplace-api-staging.onrender.com`,
+  `EXPO_PUBLIC_BUILD_LABEL=UAT`.
+- Replace the unusable `preview-staging` profile with it.
+- The app has no push notifications or Firebase file, so a different package name needs no extra service set-up.
+
+Distribution:
+- Android: the APK is installed directly (link from the EAS build page). It installs beside the real app.
+- iOS: ad hoc. Each test iPhone is registered (`eas device:create`, owner opens the link on the phone), and EAS
+  creates the `com.sfour.s4.uat` App ID and an ad hoc profile. This needs an Apple sign-in by the owner
+  (interactive), because the App Store Connect API key held by EAS is currently rejected.
+
+Expo usage: about $1 per Android medium build and $2 per iOS medium build from the Starter plan's build credit
+($18 of $45 used in the period ending 28 Oct 2026). Two rounds of both platforms is about $6, inside the credit.
