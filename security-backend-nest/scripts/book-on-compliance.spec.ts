@@ -5,8 +5,8 @@
  * A Guard can be assigned while compliant and fall out of compliance before the shift starts (a check
  * expires, or is re-recorded as not confirmed). Work therefore re-checks the company's assessment at the
  * moment it starts, using the SAME gate as assignment (ShiftService.assertGuardMayStartWork:
- * ACTIVE relationship, then ComplianceService.assertGuardAssignable). Both routes that start work are
- * covered: the Guard's Book On and a company moving a shift to in_progress by hand.
+ * ACTIVE relationship, then ComplianceService.assertGuardAssignable). The Guard's Book On is the only route
+ * that starts work: a company moving a shift to in_progress by hand is refused outright (BOC-10).
  *
  *   BOC-01..06  eligibility and refusal: complete file, no company checks, expired / not confirmed checks,
  *               continuous right to work, expiring-soon still allowed
@@ -281,16 +281,23 @@ async function main() {
     });
 
     // ══ BOC-10..11 bypass attempts ══════════════════════════════════════════════════════════════════
-    await test('BOC-10-COMPANY-CANNOT-START-A-NON-COMPLIANT-GUARDS-SHIFT-BY-HAND', async () => {
+    await test('BOC-10-COMPANY-CANNOT-START-A-GUARDS-SHIFT-BY-HAND', async () => {
+      // Shift editing remediation (19 Oct 2026): a shift starts by the Guard's Book On, never by editing it —
+      // ready → in_progress by hand left in-progress work with no attendance behind it. The refusal no longer
+      // depends on compliance: a non-compliant Guard is refused, and so is a compliant one. A company-side
+      // confirmed Book On is a separate, owner-approved attendance.confirm design.
       const g = await guard('boc10', [{ c: A }]);
       const shift = await readyShift(A, g);
       const refused = await api('PATCH', `/shifts/${shift}`, A.token, { status: 'in_progress' });
-      assert.equal(refused.status, 403, JSON.stringify(refused.body));
-      assert.match(refused.body.message, /Guard compliance invalid: SIA licence check not recorded/);
+      assert.equal(refused.status, 409, JSON.stringify(refused.body));
+      assert.match(refused.body.message, /starts when the Guard books on/);
       assert.equal(await shiftStatus(shift), 'ready');
       await fullChecks(A, g);
-      const started = await api('PATCH', `/shifts/${shift}`, A.token, { status: 'in_progress' });
-      assert.equal(started.status, 200, JSON.stringify(started.body));
+      const stillRefused = await api('PATCH', `/shifts/${shift}`, A.token, { status: 'in_progress' });
+      assert.equal(stillRefused.status, 409, JSON.stringify(stillRefused.body));
+      assert.equal(await shiftStatus(shift), 'ready');
+      assert.equal(Number((await one(`SELECT count(*) n FROM attendance_events WHERE "shiftId" = $1`, [shift])).n), 0, 'no work without a Book On');
+      assert.equal((await bookOn(g, shift)).status, 201, 'the Guard books on as normal once compliant');
       assert.equal(await shiftStatus(shift), 'in_progress');
     });
 

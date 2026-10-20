@@ -41,8 +41,10 @@ export class ShiftController {
     return this.shiftService.createForUser(user, dto);
   }
 
+  // Company accounts only, with shifts.manage on the shift's own company (checked in the service). Platform
+  // administrators do not bypass tenant authorisation to edit or delete a company's shifts.
   @Patch(':id')
-  @Roles(UserRole.ADMIN, ...COMPANY_ADMIN_ROLES)
+  @Roles(...COMPANY_ADMIN_ROLES)
   update(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number, @Body() dto: UpdateShiftDto) {
     return this.shiftService.updateForUser(user, id, dto);
   }
@@ -74,7 +76,7 @@ export class ShiftController {
   }
 
   @Delete(':id')
-  @Roles(UserRole.ADMIN, ...COMPANY_ADMIN_ROLES)
+  @Roles(...COMPANY_ADMIN_ROLES)
   remove(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
     return this.shiftService.removeForUser(user, id);
   }

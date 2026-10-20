@@ -37,6 +37,14 @@ import {
   toGuardShiftOperations,
 } from './guard-shift-operations';
 import { resolveShiftWelfareInterval } from './shift-welfare-interval';
+import {
+  COMPANY_FORBIDDEN_TRANSITIONS,
+  DELETABLE_STATUSES,
+  MISSED_SHIFT_GRACE_MINUTES,
+  SCHEDULE_LOCKED_STATUSES,
+  changedFields,
+  shiftAuditSnapshot,
+} from './shift-edit-policy';
 
 /** Length of the optional first shift created with a new site, when no end time is given. */
 const DEFAULT_STARTER_SHIFT_HOURS = 8;
@@ -561,12 +569,25 @@ export class ShiftService {
     }
   }
 
+  /**
+   * The company allowed to change or delete this shift: the caller's own, with shifts.manage, and only for
+   * a shift that company owns. Platform administrators are not a company and do not bypass this (owner
+   * decision, 20 Oct 2026); a shift of another company reads as not found, exactly as findOneForUser does.
+   */
+  private async companyForShiftChange(user: JwtPayload, shift: Shift): Promise<Company> {
+    if (!isCompanyRole(user.role)) {
+      throw new ForbiddenException('Only the company that owns a shift can change or delete it.');
+    }
+    const { company } = await this.membershipService.resolveCompanyContext(user.sub, user.role, CompanyPermission.SHIFTS_MANAGE);
+    if (shift.company?.id !== company.id) {
+      throw new NotFoundException(`Shift with id ${shift.id} not found`);
+    }
+    return company;
+  }
+
   async updateForUser(user: JwtPayload, id: number, dto: UpdateShiftDto): Promise<Shift> {
     const shift = await this.findOneForUser(user, id);
-    const actorCompany =
-      user.role === UserRole.ADMIN
-        ? shift.company
-        : (await this.membershipService.resolveCompanyContext(user.sub, user.role, CompanyPermission.SHIFTS_MANAGE)).company;
+    const actorCompany = await this.companyForShiftChange(user, shift);
 
     const nextStart = dto.start ? new Date(dto.start) : shift.start;
     const nextEnd = dto.end ? new Date(dto.end) : shift.end;
@@ -577,8 +598,33 @@ export class ShiftService {
       throw new BadRequestException('Shift end must be after shift start');
     }
 
-    if (dto.siteId && dto.siteId !== shift.site?.id) {
-      const site = await this.siteService.findOne(dto.siteId);
+    const currentStatus = this.normalizeLifecycleStatus(shift.status);
+    const before = shiftAuditSnapshot(shift);
+    const timesChanged = nextStart.getTime() !== shift.start.getTime() || nextEnd.getTime() !== shift.end.getTime();
+    const siteChanged = !!dto.siteId && dto.siteId !== shift.site?.id;
+    const intervalChanged = !!dto.checkCallIntervalMinutes && dto.checkCallIntervalMinutes !== shift.checkCallIntervalMinutes;
+
+    // A started, finished or decided shift keeps its schedule, site and Welfare Check interval: every welfare
+    // window, Live Operations row and export is graded against them.
+    if ((timesChanged || siteChanged || intervalChanged) && SCHEDULE_LOCKED_STATUSES.has(currentStatus)) {
+      throw new ConflictException(
+        `This shift is ${currentStatus.replace('_', ' ')}. Its times, site and Welfare Check interval are part of its record and cannot be changed.`,
+      );
+    }
+
+    const requestedStatusChange = dto.status?.trim() ? this.normalizeLifecycleStatus(dto.status) : null;
+    if (requestedStatusChange && requestedStatusChange !== currentStatus) {
+      const forbidden = COMPANY_FORBIDDEN_TRANSITIONS[currentStatus]?.[requestedStatusChange];
+      if (forbidden) {
+        throw new ConflictException(forbidden);
+      }
+      if (requestedStatusChange === 'missed') {
+        await this.assertMayMarkMissed(shift);
+      }
+    }
+
+    if (siteChanged) {
+      const site = await this.siteService.findOne(dto.siteId!);
       if (site.company.id !== actorCompany.id) {
         throw new ForbiddenException('Site does not belong to the current company');
       }
@@ -594,7 +640,6 @@ export class ShiftService {
       }
     }
 
-    const currentStatus = this.normalizeLifecycleStatus(shift.status);
     let nextGuard = shift.guard ?? null;
 
     if (dto.guardId !== undefined && dto.guardId !== shift.guard?.id) {
@@ -637,8 +682,8 @@ export class ShiftService {
       nextGuard = null;
     }
 
-    // Starting a shift by hand puts the Guard to work exactly as a Book On does, so it runs the same
-    // fresh gate. Without this, ready → in_progress here would bypass the Book On compliance check.
+    // ready → in_progress is refused above (COMPANY_FORBIDDEN_TRANSITIONS): a shift starts by Book On. This
+    // gate stays as defence in depth, so no future path through here can start work without the Book On check.
     if (nextStatus === 'in_progress' && currentStatus !== 'in_progress' && nextGuard) {
       await this.assertGuardMayStartWork(actorCompany.id, nextGuard.id);
     }
@@ -655,7 +700,30 @@ export class ShiftService {
       shift.closeOutNotes = dto.closeOutNotes?.trim() || null;
     }
 
-    const savedShift = await this.shiftRepo.save(shift);
+    const loadedStatus = before.status;
+    const changes = changedFields(before, shiftAuditSnapshot(shift));
+
+    // One transaction: the shift row is locked so a Guard's accept, a Book On or another edit cannot land
+    // between the checks above and this write, and the audit entry commits with it.
+    const savedShift = await this.dataSource.transaction(async (manager) => {
+      const [locked] = await manager.query(`SELECT "status" FROM "shifts" WHERE "id" = $1 FOR UPDATE`, [shift.id]);
+      if (!locked || locked.status !== loadedStatus) {
+        throw new ConflictException('This shift changed while it was being edited. Reload it and try again.');
+      }
+      const saved = await manager.getRepository(Shift).save(shift);
+      if (Object.keys(changes.after).length > 0) {
+        await this.auditLogService.logInTransaction(manager, {
+          company: { id: actorCompany.id },
+          user: { id: user.sub },
+          action: 'shift.updated',
+          entityType: 'shift',
+          entityId: shift.id,
+          beforeData: changes.before,
+          afterData: changes.after,
+        });
+      }
+      return saved;
+    });
     const timesheets = await this.timesheetRepo.find({
       where: { shift: { id: savedShift.id } },
       relations: ['shift', 'guard', 'company'],
@@ -680,11 +748,69 @@ export class ShiftService {
     return this.findOne(savedShift.id);
   }
 
+  /**
+   * Deletes a shift that was never worked or decided. Anything else is part of the operational record:
+   * deleting a shift cascades in the database to its attendance events and Welfare Check logs, so a worked
+   * shift is never deleted here — it is cancelled. Needs shifts.manage (finding it only needs shifts.view).
+   */
   async removeForUser(user: JwtPayload, id: number): Promise<{ success: true }> {
     const shift = await this.findOneForUser(user, id);
-    await this.timesheetRepo.delete({ shift: { id: shift.id } });
-    await this.shiftRepo.delete({ id: shift.id });
+    const actorCompany = await this.companyForShiftChange(user, shift);
+
+    const status = this.normalizeLifecycleStatus(shift.status);
+    if (shift.rotaSlotId != null) {
+      throw new ConflictException('This shift is a rota position. Cancel the position on the rota instead.');
+    }
+    if (!DELETABLE_STATUSES.has(status)) {
+      throw new ConflictException(`This shift is ${status.replace('_', ' ')} and is part of the operational record. It cannot be deleted.`);
+    }
+
+    await this.dataSource.transaction(async (manager) => {
+      const [locked] = await manager.query(`SELECT "status" FROM "shifts" WHERE "id" = $1 FOR UPDATE`, [shift.id]);
+      if (!locked || locked.status !== shift.status) {
+        throw new ConflictException('This shift changed while it was being deleted. Reload it and try again.');
+      }
+      const [{ evidence }] = await manager.query(
+        `SELECT (EXISTS (SELECT 1 FROM "attendance_events" WHERE "shiftId" = $1)
+              OR EXISTS (SELECT 1 FROM "daily_logs" WHERE "shiftId" = $1)
+              OR EXISTS (SELECT 1 FROM "safety_alerts" WHERE "shiftId" = $1)
+              OR EXISTS (SELECT 1 FROM "incidents" WHERE "shiftId" = $1)) AS "evidence"`,
+        [shift.id],
+      );
+      if (evidence) {
+        throw new ConflictException('This shift has attendance, logs, alerts or incidents recorded against it. It cannot be deleted.');
+      }
+      await this.auditLogService.logInTransaction(manager, {
+        company: { id: actorCompany.id },
+        user: { id: user.sub },
+        action: 'shift.deleted',
+        entityType: 'shift',
+        entityId: shift.id,
+        beforeData: { ...shiftAuditSnapshot(shift) },
+      });
+      await manager.getRepository(Timesheet).delete({ shift: { id: shift.id } });
+      await manager.getRepository(Shift).delete({ id: shift.id });
+    });
     return { success: true };
+  }
+
+  /**
+   * Marking a shift missed is a no-show finding. It needs the scheduled start plus the grace to have passed
+   * and no Book On — the same rule Live Operations applies — so a future or a worked shift cannot be marked.
+   */
+  private async assertMayMarkMissed(shift: Shift): Promise<void> {
+    if (Date.now() < shift.start.getTime() + MISSED_SHIFT_GRACE_MINUTES * 60_000) {
+      throw new ConflictException(
+        `A shift can only be marked missed ${MISSED_SHIFT_GRACE_MINUTES} minutes after its scheduled start.`,
+      );
+    }
+    const [{ booked }] = await this.dataSource.query(
+      `SELECT EXISTS (SELECT 1 FROM "attendance_events" WHERE "shiftId" = $1 AND "type" = 'check-in') AS "booked"`,
+      [shift.id],
+    );
+    if (booked) {
+      throw new ConflictException('The Guard has booked on to this shift. It cannot be marked missed.');
+    }
   }
 
   normalizeLifecycleStatus(status?: string | null): string {
