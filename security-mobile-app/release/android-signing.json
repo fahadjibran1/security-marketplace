@@ -25,10 +25,11 @@
     "certificateSha1": "45a530aa1681f2da1e3b0568d982f492eeedb75e",
     "subject": "CN=S4 Security, OU=S4 Pilot, O=Vesoft Services Limited, C=GB",
     "keyAlgorithm": "RSA",
-    "keySizeBits": 2048,
+    "keySizeBits": 4096,
     "validFrom": "2026-09-21",
     "validUntil": "2056-09-13",
-    "role": "Permanent S4 key. Signs locally built artefacts and is the intended Google Play upload key for com.sfour.s4."
+    "role": "Permanent S4 key. Signs locally built artefacts and is the intended Google Play upload key for com.sfour.s4.",
+    "keySizeNote": "Corrected 2026-10-20 from 2048: keytool on the keystore and jarsigner on the 1.1.0 (15) AAB both report a 4096-bit RSA key. The certificate SHA-256 (which covers the public key) was always correct; only the size field was mis-recorded."
   },
   "expectedRelease": {
     "versionName": "1.1.0",
@@ -38,8 +39,32 @@
   "approvedArtefact": {
     "versionName": "1.1.0",
     "versionCode": 15,
-    "status": "pending-build",
-    "note": "Guard release 1.1.0 (15): production release a7b5b22 (d880ef0 Guard shift-offer modal fix, cc03ecc and a7b5b22 backend security) plus this version preparation. Pending: not built. Build only on owner approval; record the EAS build id, commit, AAB hash and upload signer here once built and certified."
+    "status": "certified-awaiting-play",
+    "easBuildId": "8d1873a3-ec09-48f6-90f4-0ca75f178ba8",
+    "easBuildUrl": "https://expo.dev/accounts/fahadjibran/projects/security-marketplace/builds/8d1873a3-ec09-48f6-90f4-0ca75f178ba8",
+    "easBuildProfile": "production",
+    "distribution": "STORE",
+    "gitCommit": "6b8e41b679bfa3726ae4ca21d36701fafb2a38c7",
+    "easFingerprint": "9bd1f7537811a2d473f835809e33144cc1966dff",
+    "aabFilename": "s4-1.1.0-vc15-8d1873a3.aab",
+    "aabSha256": "5e69f8d830f4bbc1d08500bf3e0b9430438bf0fd91a747018b5ffae2c22ccf80",
+    "aabSizeBytes": 58728585,
+    "uploadCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
+    "completedAt": "2026-10-20T16:09:26Z",
+    "certifiedOn": "2026-10-20",
+    "verified": {
+      "package": "com.sfour.s4",
+      "versionCode": 15,
+      "versionName": "1.1.0",
+      "minSdkVersion": 24,
+      "targetSdkVersion": 36,
+      "debuggable": false,
+      "usesCleartextTraffic": false,
+      "apiBaseUrl": "https://security-marketplace-api.onrender.com",
+      "stagingOrLocalApiUrls": 0,
+      "secretMarkers": 0
+    },
+    "note": "Guard release 1.1.0 (15): production a7b5b22 plus the release-audit remediation (7938f86 keyboard-aware Guard forms, 52de287 Book Off confirmation and Book On / Book Off wording) and records. Built by EAS with the local upload key from the git-ignored credentials.json (not regenerated or rotated). Certified locally from the downloaded AAB: manifest identity and versions, signer certificate via keytool -printcert, and the JS bundle API URL. jarsigner reports the expected self-signed / untimestamped warnings for an upload key. Not uploaded to Google Play; the AAB is kept outside Git in the owner secrets artifacts folder."
   },
   "retiredArtefacts": [
     {
