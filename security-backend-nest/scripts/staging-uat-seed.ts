@@ -80,6 +80,13 @@ function resolveTarget(): Target {
         JWT_SECRET: staging.JWT_SECRET,
         GUARD_DATA_ENCRYPTION_KEY: staging.GUARD_DATA_ENCRYPTION_KEY,
         GUARD_DATA_HMAC_KEY: staging.GUARD_DATA_HMAC_KEY,
+        // The staging bucket's own key, exactly as configured on the staging service.
+        EVIDENCE_STORAGE_ENDPOINT: staging.EVIDENCE_STORAGE_ENDPOINT,
+        EVIDENCE_STORAGE_REGION: staging.EVIDENCE_STORAGE_REGION,
+        EVIDENCE_STORAGE_BUCKET: staging.EVIDENCE_STORAGE_BUCKET,
+        EVIDENCE_STORAGE_ACCESS_KEY_ID: staging.EVIDENCE_STORAGE_ACCESS_KEY_ID,
+        EVIDENCE_STORAGE_SECRET_ACCESS_KEY: staging.EVIDENCE_STORAGE_SECRET_ACCESS_KEY,
+        EVIDENCE_SIGNED_URL_TTL_SECONDS: staging.EVIDENCE_SIGNED_URL_TTL_SECONDS || '180',
       },
       loginsFile: path.join(SECRETS, 'staging-uat.env'),
     };
@@ -148,10 +155,68 @@ function describePlan() {
   console.log(`  company 1: ${COMPANY.companyName} (number ${COMPANY.companyNumber}); client 1: ${CLIENT.name}`);
   console.log(`  sites 2: "${SITES.main.name}" (GPS off, Welfare 60 min), "${SITES.gps.name}" (GPS required, fixed fictional point)`);
   console.log('  workforce links 2 (Alpha, Bravo); company compliance checks 4 (SIA + Right to Work confirmed for each, test values)');
+  console.log(`  documents 4: a fictional SIA licence PDF and a fictional Right to Work PDF per Guard ("UAT-FICTIONAL-…-NOT-REAL.pdf",`);
+  console.log(`    every line stating it is fictional), uploaded through the real presigned flow to the ${STAGING_EVIDENCE_BUCKET} bucket, server-checked, then verified`);
   console.log(`  shifts ${SHIFTS.length}:`);
   for (const s of SHIFTS) console.log(`    ${s.key.padEnd(16)} ${s.guard.padEnd(6)} ${s.site.padEnd(5)} ${s.start()} → ${s.end()}  ends ${s.then.padEnd(9)} — ${s.purpose}`);
   console.log('  Book On events 2 (A-live, B-live, at seeding time); no Welfare checks, incidents, site requests or alerts are seeded.');
   console.log('  Side effects inside the target only: audit entries, in-app notification rows and draft timesheets the product creates for these actions.');
+}
+
+// ─── fictional evidence ────────────────────────────────────────────────────────────────────────────────────
+
+/** The staging evidence bucket. Anything else — above all the production bucket — is refused. */
+const STAGING_EVIDENCE_BUCKET = 's4-staging-evidence';
+const PRODUCTION_EVIDENCE_BUCKET = 's4-evidence-pilot';
+
+/**
+ * A real, minimal PDF whose every line says it is fictional. Uploaded through the product's own presigned flow, so
+ * the server's HEAD check sees genuine bytes; it is never a stand-in record. It names no real person and carries
+ * no real licence or immigration data.
+ */
+export function fictionalPdf(title: string, holder: string, reference: string): Buffer {
+  const lines = [
+    'FICTIONAL TEST DOCUMENT - S4 STAGING UAT ONLY',
+    title,
+    `Holder: ${holder} (fictional test person)`,
+    `Reference: ${reference} (test value, not issued by any authority)`,
+    'This is NOT an SIA licence and NOT evidence of identity or right to work.',
+    'It must never be relied on for any real compliance decision.',
+  ];
+  const esc = (s: string) => s.replace(/[\\()]/g, (c) => `\\${c}`);
+  const stream = ['BT', '/F1 14 Tf', '50 780 Td', '18 TL', ...lines.map((l) => `(${esc(l)}) Tj T*`), 'ET'].join('\n');
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
+    `<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`,
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+  ];
+  let pdf = '%PDF-1.4\n';
+  const offsets: number[] = [];
+  objects.forEach((body, i) => { offsets.push(Buffer.byteLength(pdf)); pdf += `${i + 1} 0 obj\n${body}\nendobj\n`; });
+  const xref = Buffer.byteLength(pdf);
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.map((o) => `${String(o).padStart(10, '0')} 00000 n \n`).join('')}`;
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(pdf, 'latin1');
+}
+
+/** Why the configured evidence storage is not the staging bucket (placeholder, production, unnamed), or null. */
+export function stagingEvidenceProblem(env: Record<string, string>, productionKeyId?: string): string | null {
+  let endpoint: URL;
+  try { endpoint = new URL(env.EVIDENCE_STORAGE_ENDPOINT ?? ''); } catch { return 'evidence endpoint missing'; }
+  if (endpoint.hostname.endsWith('.invalid')) return 'staging evidence storage is still the placeholder; create and certify the staging bucket first';
+  if (endpoint.protocol !== 'https:' || !endpoint.hostname.endsWith('.r2.cloudflarestorage.com')) return `evidence endpoint is not Cloudflare R2 over HTTPS (${endpoint.hostname})`;
+  if (env.EVIDENCE_STORAGE_BUCKET === PRODUCTION_EVIDENCE_BUCKET) return 'evidence bucket is the PRODUCTION bucket';
+  if (env.EVIDENCE_STORAGE_BUCKET !== STAGING_EVIDENCE_BUCKET) return `evidence bucket must be ${STAGING_EVIDENCE_BUCKET}`;
+  if (productionKeyId && productionKeyId === env.EVIDENCE_STORAGE_ACCESS_KEY_ID) return 'evidence key is the PRODUCTION key';
+  return null;
+}
+
+function assertStagingEvidence(env: Record<string, string>, report: (problem: string | null) => void) {
+  const prodFile = path.join(SECRETS, 'evidence-storage.env');
+  const productionKeyId = fs.existsSync(prodFile) ? readEnvFile(prodFile).EVIDENCE_STORAGE_ACCESS_KEY_ID : undefined;
+  report(stagingEvidenceProblem(env, productionKeyId));
 }
 
 // ─── run ───────────────────────────────────────────────────────────────────────────────────────────────────
@@ -232,6 +297,7 @@ async function seed(t: Target) {
     for (const [key, site] of Object.entries(SITES)) siteIds[key] = (await api('POST', '/sites', ownerToken, { ...site, clientId: client.id })).id;
 
     const guards: Record<'alpha' | 'bravo', { guardId: number; token: string }> = {} as any;
+    const documents: Array<{ guard: string; type: string; id: number; bytes: number }> = [];
     for (const key of ['alpha', 'bravo'] as const) {
       const p = PEOPLE[key];
       const pass = password();
@@ -244,6 +310,25 @@ async function seed(t: Target) {
       const day = (n: number) => new Date(Date.now() + n * 24 * HOUR).toISOString().slice(0, 10);
       await api('POST', '/compliance/checks', ownerToken, { guardId: g.user.guardId, kind: 'sia', outcome: 'confirmed', method: 'sia_public_register', licenceNumber: p.sia, checkDate: day(0), expiryDate: day(365), checkedByName: 'UAT Checker', evidenceReference: 'UAT test record — not a real check' });
       await api('POST', '/compliance/checks', ownerToken, { guardId: g.user.guardId, kind: 'right_to_work', outcome: 'confirmed', method: 'manual_document', rightToWorkExcuse: 'continuous', checkDate: day(0), checkedByName: 'UAT Checker', evidenceReference: 'UAT test record — not a real check' });
+
+      // The company's document evidence, through the product's real upload workflow: request a presigned PUT, upload
+      // genuine PDF bytes to the staging bucket, let the server HEAD-check the stored object, then verify it. Never
+      // the file-less legacy path (no fileUrl is ever sent).
+      for (const doc of [
+        { type: 'sia_licence', title: 'FICTIONAL SIA LICENCE (TEST)', file: 'UAT-FICTIONAL-SIA-LICENCE-NOT-REAL.pdf', reference: p.sia, expiryDate: day(365) },
+        { type: 'right_to_work', title: 'FICTIONAL RIGHT TO WORK RECORD (TEST)', file: 'UAT-FICTIONAL-RIGHT-TO-WORK-NOT-REAL.pdf', reference: 'UAT-RTW-TEST', expiryDate: null },
+      ]) {
+        const pdf = fictionalPdf(doc.title, p.fullName, doc.reference);
+        const created = await api('POST', '/compliance/documents', ownerToken, {
+          guardId: g.user.guardId, type: doc.type, originalFileName: doc.file, mimeType: 'application/pdf', sizeBytes: pdf.length, expiryDate: doc.expiryDate,
+        });
+        if (!created?.upload?.url || created.upload.method !== 'PUT') throw new Error('no presigned upload returned');
+        const put = await fetch(created.upload.url, { method: 'PUT', headers: created.upload.headers ?? { 'Content-Type': 'application/pdf' }, body: new Uint8Array(pdf) });
+        if (!put.ok) throw new Error(`evidence PUT refused by the bucket (${put.status})`);
+        await api('POST', `/compliance/documents/${created.id}/complete-upload`, ownerToken);
+        await api('PATCH', `/compliance/documents/${created.id}/verify`, ownerToken, { verified: true });
+        documents.push({ guard: key, type: doc.type, id: created.id, bytes: pdf.length });
+      }
     }
 
     const created: Array<{ key: string; id: number; status: string }> = [];
@@ -260,6 +345,7 @@ async function seed(t: Target) {
     fs.writeFileSync(t.loginsFile, `# S4 STAGING UAT logins (fictional accounts). Generated ${new Date().toISOString()}. Never production.\n` +
       Object.entries(logins).map(([k, v]) => `${k}=${v}`).join('\n') + '\n', { mode: 0o600 });
     console.log(`seeded: company ${companyId}, client ${client.id}, sites ${Object.values(siteIds).join(', ')}, guards ${guards.alpha.guardId} (Alpha), ${guards.bravo.guardId} (Bravo)`);
+    for (const d of documents) console.log(`  document ${d.id} ${d.guard} ${d.type} uploaded (${d.bytes} bytes) and verified`);
     for (const c of created) console.log(`  shift ${c.id} ${c.key} -> ${c.status}`);
     console.log(`logins written to ${t.loginsFile} (not printed)`);
   } finally {
@@ -267,14 +353,19 @@ async function seed(t: Target) {
   }
 }
 
-(async () => {
+if (require.main === module) (async () => {
   const t = resolveTarget();
   if (target === 'staging' && !dryRun && process.env.S4_STAGING_SEED_CONFIRM !== CONFIRM) fail(`set S4_STAGING_SEED_CONFIRM=${CONFIRM} to write to staging`);
-  // Blocked by design until the owner chooses how Guard documents are evidenced (20 Oct 2026). At a7b5b22 a Guard
-  // is assignable only with an uploaded AND verified SIA licence and Right to Work document, and uploads need real
-  // evidence storage; staging has a deliberate placeholder. Without a decision the seeder would stop part-way at the
-  // first shift offer, so it writes nothing at all.
-  if (!dryRun && target === 'staging') fail('Guard document evidence strategy not chosen (staging evidence storage is a placeholder); see STAGING_RESTORE_PLAN.md');
+  // At a7b5b22 a Guard is assignable only with an uploaded AND verified SIA licence and Right to Work document, so the
+  // seeder needs the real staging bucket. Until it exists and is configured (staging-render.env and the Render
+  // service), this refuses before anything is written rather than stopping part-way at the first shift offer.
+  if (target === 'staging') {
+    assertStagingEvidence(t.appEnv, (problem) => {
+      if (!problem) return console.log('evidence storage: the staging bucket is configured');
+      if (dryRun) return console.log(`evidence storage NOT ready (a real run would refuse): ${problem}`);
+      fail(problem);
+    });
+  }
   await preflight(t);
   describePlan();
   if (dryRun) { console.log('DRY RUN: nothing written.'); return; }

@@ -30,6 +30,73 @@ staging today, and Offers, Book On, Welfare, Incident, Site Request and Book Off
 2. **Product's legacy test path** (`fileUrl` only, no file): documents are recorded as uploaded with no stored
    file, then verified. No new resource, but it is simulated evidence — excluded by the owner's current instruction.
 
+The owner approved option 1 in principle on 20 Oct 2026 (design below; nothing created yet).
+
+## Staging evidence storage — design for approval (not executed)
+
+### Why the document is required (code at `a7b5b22`)
+`ComplianceService.assertGuardAssignable` (called by shift creation and availability) refuses a Guard unless
+`GuardComplianceService.getBlockingReasons(companyId, guardId)` is empty. For a company that is: the company's own
+current **SIA check** and **Right to Work check** (confirmed, unexpired) AND, for each of `sia_licence` and
+`right_to_work`, a document **uploaded** (`uploadCompletedAt`) and **verified** by that company. Every read is scoped
+to the company. This is **employer compliance** (the company's own file). **S4 screening is not consulted** —
+`compliance.service.ts` says so explicitly and has no ScreeningService dependency. No policy change is proposed.
+
+### Architecture
+| Part | Choice |
+|---|---|
+| Account | The existing Cloudflare account (production evidence is R2 bucket `s4-evidence-pilot` there, 16 real documents) |
+| Bucket | **`s4-staging-evidence`**, Standard storage, location hint Western Europe, public access **off**, no custom domain, no r2.dev URL |
+| Credentials | A new R2 API token **"S4 staging evidence (UAT only)"**: Object Read & Write, **Apply to specific buckets only = `s4-staging-evidence`**, no TTL needed (revoked at teardown). Never account-wide, never admin |
+| CORS | Only `http://localhost:8098` (local web control room against staging), methods PUT/GET, header `content-type`. Mobile and the seeder need none |
+| App config | No code change: the S3-compatible signer is path-style SigV4 with a configurable endpoint/region/bucket; R2 uses region `auto` (DEPLOYMENT.md "Private evidence storage") |
+| Staging env | Replace the five placeholders: `EVIDENCE_STORAGE_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com`, `_REGION=auto`, `_BUCKET=s4-staging-evidence`, `_ACCESS_KEY_ID`, `_SECRET_ACCESS_KEY` (in Render and in `staging-render.env`) |
+
+### Cost
+R2 Standard free tier per account per month: 10 GB-month storage, 1 million Class A (writes/lists), 10 million
+Class B (reads/HEAD); egress free; deletes free. Beyond it: $0.015/GB-month, $4.50 per million Class A, $0.36 per
+million Class B. The free tier is shared with production's tiny usage. UAT uses well under 1 MB and a few hundred
+operations: **expected $0.00/month**. The account already has R2 enabled (production uses it); nothing new to subscribe.
+
+### Isolation
+- The staging token is bucket-scoped: it cannot list, read, write or delete `s4-evidence-pilot`.
+- `scripts/staging-evidence-isolation-probe.cjs` proves it after creation with the staging key only: read-only list,
+  HEAD and GET against the production bucket must all be 401/403 with no data; a staging list must succeed (control).
+  It never sends PUT or DELETE to production.
+- `npm run test:evidence-storage` (existing spec) certifies the staging bucket: signed PUT/HEAD/GET, refusal of
+  tampered and unsigned access and anonymous listing, expiry. It writes only synthetic PDFs and deletes them.
+- The seeder refuses the placeholder, any non-R2 endpoint, the production bucket, any bucket but
+  `s4-staging-evidence`, and the production access key (compared with `evidence-storage.env`).
+- Production's own key is not touched. (Owner may confirm in the token list that it too is bucket-scoped.)
+
+### Fictional documents
+The seeder generates real PDFs whose every line states "FICTIONAL TEST DOCUMENT - S4 STAGING UAT ONLY … NOT an SIA
+licence and NOT evidence of identity or right to work", named `UAT-FICTIONAL-SIA-LICENCE-NOT-REAL.pdf` /
+`UAT-FICTIONAL-RIGHT-TO-WORK-NOT-REAL.pdf`, for the fictional Test Guards, uploaded through the real workflow
+(`POST /compliance/documents` → PUT bytes to the presigned URL → `complete-upload`, where the server HEAD-checks the
+stored object's size and type → `PATCH verify`). It never sends `fileUrl` and never writes evidence rows directly
+(`staging-uat-seed.spec.ts` SEED-03). The company checks carry "UAT test record — not a real check". All of it exists
+only in `s4_staging` and `s4-staging-evidence`.
+
+### Setup (owner in Cloudflare and Render; Claude verifies)
+1. Cloudflare › R2 › Create bucket `s4-staging-evidence` (Standard, Western Europe hint). Confirm public access off.
+2. Bucket › Settings › CORS: `[{"AllowedOrigins":["http://localhost:8098"],"AllowedMethods":["PUT","GET"],"AllowedHeaders":["content-type"],"ExposeHeaders":["ETag"],"MaxAgeSeconds":300}]`.
+3. R2 › Manage API tokens › Create token "S4 staging evidence (UAT only)": Object Read & Write, specific bucket
+   `s4-staging-evidence` only. Copy Access Key ID and Secret (shown once).
+4. Replace the five `EVIDENCE_STORAGE_*` lines in `~/.s4-pilot-secrets/staging-render.env` (keep TTL 180).
+5. Claude: `node scripts/staging-evidence-isolation-probe.cjs` (must PASS) and `npm run test:evidence-storage` against
+   the staging bucket (must PASS).
+6. Render staging service › Environment › Edit: replace the same five values; **Save and deploy** (a restart is needed
+   for the new values; it redeploys `a7b5b22`, migrations are a no-op).
+7. Claude: health, isolation, production unchanged; then (separate approval) the seeder dry run and real run.
+
+### Rollback / teardown
+- Seed data: suspend staging service → drop/recreate schema on `s4_staging` → redeploy → (re-seed if wanted).
+- Evidence: R2 › `s4-staging-evidence` › delete all objects, then delete the bucket (deletes are free).
+- Credential: R2 › Manage API tokens › revoke "S4 staging evidence (UAT only)"; restore the placeholder values in
+  Render staging and `staging-render.env` (the app then boots with uploads failing explicitly).
+- Production bucket, token and service are never part of any step.
+
 ## 1. What exists today (read-only, Render dashboard, 20 Oct 2026)
 
 | Item | Finding |
