@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { KeyboardAvoidingView, Modal as RNModal, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { Keyboard, KeyboardAvoidingView, Modal as RNModal, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, radii, spacing, typography } from '../../theme';
 import { resolveModalLayout, type ModalPlatform, type SafeAreaInsets } from './modalLayout';
@@ -47,14 +47,50 @@ type AppModalProps = React.PropsWithChildren<{
 export function AppModal(props: AppModalProps) {
   const insets = useSafeAreaInsets();
   const { height, width } = useWindowDimensions();
+  const keyboardOverlap = useAndroidKeyboardOverlap();
   return (
     <ModalFrame
       {...props}
       viewport={{ height, width }}
       insets={{ top: insets.top, bottom: insets.bottom }}
       platform={Platform.OS === 'ios' ? 'ios' : Platform.OS === 'android' ? 'android' : 'web'}
+      keyboardOverlap={keyboardOverlap.overlap}
+      onOverlayLayout={keyboardOverlap.onOverlayLayout}
     />
   );
+}
+
+/**
+ * How much of the modal overlay the Android soft keyboard covers, measured rather than assumed (see
+ * modalLayout.ts). The overlay is laid out from the top of the screen (statusBarTranslucent), so the keyboard's
+ * top edge in screen coordinates is directly comparable with the overlay's height. Android only: iOS keeps its
+ * KeyboardAvoidingView, and web has no soft keyboard event.
+ */
+export function useAndroidKeyboardOverlap(): {
+  overlap: number;
+  onOverlayLayout: (event: { nativeEvent: { layout: { height: number } } }) => void;
+} {
+  const [overlayHeight, setOverlayHeight] = React.useState(0);
+  const [keyboardTop, setKeyboardTop] = React.useState<number | null>(null);
+  React.useEffect(() => {
+    if (Platform.OS !== 'android') return undefined;
+    const shown = Keyboard.addListener('keyboardDidShow', (event) => setKeyboardTop(event.endCoordinates.screenY));
+    const hidden = Keyboard.addListener('keyboardDidHide', () => setKeyboardTop(null));
+    return () => {
+      shown.remove();
+      hidden.remove();
+    };
+  }, []);
+  const onOverlayLayout = React.useCallback((event: { nativeEvent: { layout: { height: number } } }) => {
+    setOverlayHeight(event.nativeEvent.layout.height);
+  }, []);
+  return { overlap: androidKeyboardOverlap(overlayHeight, keyboardTop), onOverlayLayout };
+}
+
+/** Pure: the part of an overlay of `overlayHeight` that lies below the keyboard's top edge (0 when there is none). */
+export function androidKeyboardOverlap(overlayHeight: number, keyboardTop: number | null): number {
+  if (keyboardTop === null || !(overlayHeight > 0)) return 0;
+  return Math.max(0, Math.round(overlayHeight - keyboardTop));
 }
 
 /**
@@ -78,15 +114,19 @@ export function ModalFrame({
   platform,
   keyboardVisible = false,
   keyboardHeight = 0,
+  keyboardOverlap = 0,
+  onOverlayLayout,
 }: AppModalProps & {
   viewport: { height: number; width: number };
   insets: SafeAreaInsets;
   platform: ModalPlatform;
   keyboardVisible?: boolean;
   keyboardHeight?: number;
+  keyboardOverlap?: number;
+  onOverlayLayout?: (event: { nativeEvent: { layout: { height: number } } }) => void;
 }) {
   const maxWidth = MAX_WIDTH[size];
-  const layout = resolveModalLayout({ viewport, insets, platform, keyboardVisible, keyboardHeight });
+  const layout = resolveModalLayout({ viewport, insets, platform, keyboardVisible, keyboardHeight, keyboardOverlap });
 
   return (
     <RNModal
@@ -97,6 +137,7 @@ export function ModalFrame({
       statusBarTranslucent
     >
       <View
+        onLayout={onOverlayLayout}
         style={[
           styles.overlay,
           {
@@ -253,6 +294,9 @@ const styles = StyleSheet.create({
     // flexShrink:0 is the guarantee: a long body can never squeeze the action row down to nothing.
     flexShrink: 0,
     flexDirection: 'row',
+    // Large system text on a small phone can make the actions wider than the panel; they wrap onto a second
+    // line rather than being clipped at the panel edge (seen on the emulator at 360 dp with font scale 1.3).
+    flexWrap: 'wrap',
     justifyContent: 'flex-end',
     alignItems: 'center',
     gap: spacing.md,

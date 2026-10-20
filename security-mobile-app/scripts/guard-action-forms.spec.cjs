@@ -543,4 +543,89 @@ test('FORM-25-BOOK-OFF-IS-NOT-AMONG-THE-REPORTING-ACTIONS', () => {
   assert.ok(grid.includes('styles.emergencyButton'), 'Emergency must be visually separated');
 });
 
+// ═══════════════════ the soft keyboard on Android (Guard release audit, 20 Oct 2026) ═══════════════════
+//
+// THE DEFECT
+// On the Android emulator the Modal's own window was NOT resized for the soft keyboard: with the note field
+// focused, Record Welfare Check / Save Log Book Entry / Send Site Request / Submit Incident sat behind the
+// keyboard and the Guard had to dismiss it first. FORM-05/06 assumed the viewport had already shrunk. AppModal
+// now measures how much of its overlay the keyboard covers and the layout lifts the panel above it.
+
+// Pixel 7 at 1080x2400 / 420dpi is 411x914 dp; the emulator's keyboard top sat ~568 dp down the overlay.
+const PIXEL7 = { height: 914, width: 411 };
+const PIXEL7_KEYBOARD_TOP = 568;
+
+test('FORM-26-AN-UNRESIZED-ANDROID-OVERLAY-LIFTS-THE-PANEL-ABOVE-THE-KEYBOARD', () => {
+  const overlap = Modal.androidKeyboardOverlap(PIXEL7.height, PIXEL7_KEYBOARD_TOP);
+  assert.equal(overlap, PIXEL7.height - PIXEL7_KEYBOARD_TOP, 'the hidden strip is measured, not assumed');
+  const l = resolveModalLayout({ viewport: PIXEL7, insets: ANDROID_INSETS, platform: 'android', keyboardOverlap: overlap });
+  // The panel occupies [paddingTop, height - paddingBottom]; its bottom edge must be at or above the keyboard.
+  const panelBottomLimit = PIXEL7.height - l.overlayPaddingBottom;
+  assert.ok(panelBottomLimit <= PIXEL7_KEYBOARD_TOP, `panel may end at ${panelBottomLimit}, keyboard starts at ${PIXEL7_KEYBOARD_TOP}`);
+  assert.ok(l.overlayPaddingTop + l.panelMaxHeight <= PIXEL7_KEYBOARD_TOP, 'and a full-height panel still ends above it');
+  assert.ok(l.panelMaxHeight >= MIN_PANEL_HEIGHT, 'leaving a usable panel whose body scrolls');
+});
+
+test('FORM-27-A-RESIZED-WINDOW-IS-NEVER-COUNTED-TWICE', () => {
+  // Where Android DOES resize the window, the overlay already ends at the keyboard: nothing is hidden.
+  assert.equal(Modal.androidKeyboardOverlap(PIXEL7_KEYBOARD_TOP, PIXEL7_KEYBOARD_TOP), 0);
+  assert.equal(Modal.androidKeyboardOverlap(PIXEL7_KEYBOARD_TOP - 3, PIXEL7_KEYBOARD_TOP), 0, 'never negative');
+  const closed = resolveModalLayout({ viewport: PIXEL7, insets: ANDROID_INSETS, platform: 'android' });
+  const zero = resolveModalLayout({ viewport: PIXEL7, insets: ANDROID_INSETS, platform: 'android', keyboardOverlap: 0 });
+  assert.deepEqual(zero, closed, 'no overlap leaves the layout exactly as it was');
+  // No keyboard, or no measurement yet: no overlap.
+  assert.equal(Modal.androidKeyboardOverlap(PIXEL7.height, null), 0);
+  assert.equal(Modal.androidKeyboardOverlap(0, PIXEL7_KEYBOARD_TOP), 0);
+});
+
+test('FORM-28-SMALL-SCREEN-AND-LARGE-TEXT-WITH-THE-KEYBOARD-KEEP-THE-ACTIONS-ON-SCREEN', () => {
+  // 720x1280 at 320dpi is 360x640 dp; the emulator keyboard took ~300 dp of it.
+  const keyboardTop = SMALL_ANDROID.height - 300;
+  const overlap = Modal.androidKeyboardOverlap(SMALL_ANDROID.height, keyboardTop);
+  const l = resolveModalLayout({ viewport: SMALL_ANDROID, insets: ANDROID_INSETS, platform: 'android', keyboardOverlap: overlap });
+  assert.ok(SMALL_ANDROID.height - l.overlayPaddingBottom <= keyboardTop, 'the panel ends above the keyboard');
+  // The panel floor wins on a very short remainder: the panel keeps a usable height and its body scrolls; the
+  // footer (outside the body, FORM-10) is what must stay visible, and it sits at the panel's bottom edge.
+  assert.ok(l.panelMaxHeight >= MIN_PANEL_HEIGHT);
+  assert.ok(bodyMustScroll({ contentHeight: 600, headerHeight: 72, footerHeight: 96, panelMaxHeight: l.panelMaxHeight }),
+    'large text makes the body scroll rather than pushing the footer away');
+});
+
+test('FORM-29-IOS-KEEPS-ITS-OWN-KEYBOARD-HANDLING', () => {
+  const ios = resolveModalLayout({ viewport: PIXEL7, insets: NO_INSETS, platform: 'ios' });
+  const iosWithOverlap = resolveModalLayout({ viewport: PIXEL7, insets: NO_INSETS, platform: 'ios', keyboardOverlap: 300 });
+  assert.deepEqual(iosWithOverlap, ios, 'the Android measurement never changes the iOS layout');
+  assert.equal(ios.keyboardBehavior, 'padding');
+});
+
+test('FORM-30-APPMODAL-MEASURES-ITS-OVERLAY-AND-LISTENS-TO-THE-KEYBOARD-ON-ANDROID-ONLY', () => {
+  let laidOut = null;
+  const tree = renderFrame({ keyboardOverlap: 0, onOverlayLayout: (e) => { laidOut = e.nativeEvent.layout.height; } });
+  const overlay = [...walk(tree)].find((el) => typeof el.props.onLayout === 'function');
+  assert.ok(overlay, 'the overlay reports its laid-out height');
+  overlay.props.onLayout({ nativeEvent: { layout: { height: 914 } } });
+  assert.equal(laidOut, 914);
+  const source = codeOf('src/components/ui/Modal.tsx');
+  assert.match(source, /if \(Platform\.OS !== 'android'\) return undefined;/, 'keyboard listeners are Android only');
+  assert.match(source, /Keyboard\.addListener\('keyboardDidShow'/);
+  assert.match(source, /Keyboard\.addListener\('keyboardDidHide'/);
+  assert.match(source, /shown\.remove\(\);\s*hidden\.remove\(\);/, 'and are removed on unmount');
+  assert.match(source, /keyboardOverlap=\{keyboardOverlap\.overlap\}/, 'AppModal passes the measurement to the layout');
+});
+
+test('FORM-31-LARGE-TEXT-WRAPS-THE-ACTIONS-INSTEAD-OF-CLIPPING-THEM', () => {
+  // At 360 dp with font scale 1.3, Cancel + Send Site Request were wider than the panel and Cancel was cut at
+  // the panel edge. The footer row wraps, so every action stays fully visible.
+  const tree = renderFrame();
+  const elements = [...walk(tree)];
+  // The footer row is the View whose direct child is the footer content renderFrame passes in.
+  const footer = elements.find((el) => nameOf(el) === 'View' && el.props.children && !Array.isArray(el.props.children)
+    && el.props.children.props && el.props.children.props.children === 'Record Welfare Check');
+  assert.ok(footer, 'the footer row is found');
+  const style = [].concat(footer.props.style).reduce((acc, s) => ({ ...acc, ...(s || {}) }), {});
+  assert.equal(style.flexDirection, 'row');
+  assert.equal(style.flexWrap, 'wrap', 'actions wrap instead of being clipped');
+  assert.equal(style.flexShrink, 0, 'and the footer still never shrinks away');
+});
+
 console.log(`\n${passed} guard action form checks passed`);
