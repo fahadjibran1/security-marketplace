@@ -182,6 +182,9 @@ function loadWithOverrides(relativePath, overrides) {
         const Pass = ({ children }) => h(React.Fragment, null, children);
         return { SafeAreaProvider: Pass, SafeAreaView: Pass };
       }
+      // App.tsx reads the app variant from the Expo config (store app vs. UAT); the native module cannot load in
+      // Node, so it is the store app's config here.
+      if (request === 'expo-constants') return { __esModule: true, default: { expoConfig: { extra: {} } } };
       return require(request);
     };
     new Function('module', 'exports', 'require', output)(mod, mod.exports, localRequire);

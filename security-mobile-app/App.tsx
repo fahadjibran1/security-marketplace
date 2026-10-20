@@ -16,8 +16,13 @@ import { clearStoredSession, loadStoredSession, persistSession } from './src/ser
 import { AuthSession } from './src/types/models';
 import { getAppSurface } from './src/navigation/role-routing';
 import { brand, colors, control, radii, spacing, typography } from './src/theme';
+import Constants from 'expo-constants';
+import { productLabelFor, resolveAppVariant } from './src/services/appVariant';
 
 const IS_WEB = typeof document !== 'undefined';
+// The store app resolves to 'production' and keeps its label; only the staging-only UAT app reads "S4 UAT · STAGING".
+const APP_VARIANT = resolveAppVariant(Constants.expoConfig?.extra);
+const PRODUCT_LABEL = productLabelFor(APP_VARIANT, brand.appName);
 
 export default function App() {
   const [session, setSession] = useState<AuthSession | null>(null);
@@ -85,7 +90,7 @@ export default function App() {
     : booting ? <SafeAreaView style={styles.safeArea} edges={['top','right','bottom','left']}><StatusBar barStyle="dark-content" backgroundColor={colors.background}/><View style={styles.loadingContainer}><StatePanel title={`Loading ${brand.appName}`} message="Restoring your secure session." tone="info" loading /></View></SafeAreaView>
     : !session ? <SafeAreaView style={styles.safeArea} edges={['top','right','bottom','left']}><StatusBar barStyle="dark-content" backgroundColor={colors.background}/><AuthScreen onLoggedIn={handleLoggedIn} noticeMessage={authNotice} onDismissNotice={() => setAuthNotice(null)} /></SafeAreaView>
     : <SafeAreaView style={styles.safeArea} edges={['top','right','bottom','left']}><StatusBar barStyle="light-content" backgroundColor={colors.primaryNavy}/><View style={styles.screenContainer}>
-        {surface !== 'company' ? <View style={styles.topBar}><View style={styles.brandBlock}><Text style={styles.brandMark}>{brand.shortBrand}</Text><View><Text style={styles.surfaceName}>{surfaceLabel}</Text><Text style={styles.productLabel}>{brand.appName}</Text></View></View><Pressable accessibilityRole="button" onPress={handleLogout} style={({ pressed }: { pressed: boolean }) => [styles.logoutButton, pressed && styles.pressed]}><Text style={styles.logoutText}>Log out</Text></Pressable></View> : null}
+        {surface !== 'company' ? <View style={styles.topBar}><View style={styles.brandBlock}><Text style={styles.brandMark}>{brand.shortBrand}</Text><View><Text style={styles.surfaceName}>{surfaceLabel}</Text><Text style={[styles.productLabel, APP_VARIANT === 'uat' ? styles.uatLabel : null]}>{PRODUCT_LABEL}</Text></View></View><Pressable accessibilityRole="button" onPress={handleLogout} style={({ pressed }: { pressed: boolean }) => [styles.logoutButton, pressed && styles.pressed]}><Text style={styles.logoutText}>Log out</Text></Pressable></View> : null}
         {surface === 'admin' ? <AdminDashboardScreen /> : surface === 'company' ? <CompanyDashboardScreen user={session.user} onLogout={handleLogout} onAccountDeleted={handleAccountDeleted} /> : surface === 'client' ? <ClientPortalScreen user={session.user} /> : surface === 'guard' ? <GuardDashboardScreen user={session.user} onLogout={handleLogout} onAccountDeleted={handleAccountDeleted} /> : <View style={styles.loadingContainer}><StatePanel title="Access denied" message="This account cannot open an S4 workspace. Log out and contact an administrator." tone="error" /></View>}
       </View></SafeAreaView>}
   </AppErrorBoundary></SafeAreaProvider>;
@@ -100,6 +105,7 @@ const styles = StyleSheet.create({
   brandMark: { color: colors.accentTeal, fontSize: 22, fontWeight: '900', letterSpacing: 1 },
   surfaceName: { color: colors.textOnBrand, ...typography.label },
   productLabel: { color: colors.border, ...typography.caption },
+  uatLabel: { color: '#FBBF24', fontWeight: '800' },
   logoutButton: { minHeight: control.minTouchTarget, justifyContent: 'center', borderRadius: radii.md, borderWidth: 1, borderColor: colors.primaryNavySoft, paddingHorizontal: spacing.md },
   logoutText: { color: colors.textOnBrand, ...typography.label },
   pressed: { opacity: 0.8 },

@@ -35,6 +35,18 @@
         "EXPO_PUBLIC_BUILD_LABEL": "pilot"
       }
     },
+    "uat": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk",
+        "credentialsSource": "local"
+      },
+      "env": {
+        "APP_VARIANT": "uat",
+        "EXPO_PUBLIC_API_URL": "https://security-marketplace-api-staging.onrender.com",
+        "EXPO_PUBLIC_BUILD_LABEL": "UAT"
+      }
+    },
     "production": {
       "android": {
         "buildType": "app-bundle",
