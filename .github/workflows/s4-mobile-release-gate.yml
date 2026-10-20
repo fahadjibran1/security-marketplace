@@ -161,6 +161,10 @@ jobs:
       # Guard surfaces for check-in wording.
       - name: Verify guard Book Off is confirmed and wording is Book On / Book Off
         run: npm run test:guard-book-off
+      # Staging UAT preparation (20 Oct 2026): the side-by-side S4 UAT app (com.sfour.s4.uat, staging API) must
+      # never leak into the store app — without APP_VARIANT=uat, app.config.js returns app.json unchanged.
+      - name: Verify the UAT variant is staging-only and leaves the store config unchanged
+        run: npm run test:uat-variant
       # Phase 3A-iii: Build 11 showed a reachable button that emitted no HTTP request, and reported the
       # refusal only through a banner the modal and keyboard covered. Phase 2 proved the press reached
       # the ROUTER and stopped there. This executes the production dispatcher itself — including a real
