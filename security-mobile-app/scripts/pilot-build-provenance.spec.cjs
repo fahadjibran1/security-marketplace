@@ -37,13 +37,15 @@ const easJson = JSON.parse(read('eas.json'));
 
 // ═══════════════════ the controlled version ═══════════════════
 
-test('BUILD-01-APP-VERSION-IS-1-1-0-AND-ANDROID-BUILD-14', () => {
-  // Phase 4E: S4 1.1.0 / 14 is the Google Play Internal Testing candidate. Gate 4A's 1.1.0 / 13 was the
+test('BUILD-01-APP-VERSION-IS-1-1-0-AND-ANDROID-BUILD-15', () => {
+  // Guard release (20 Oct 2026): S4 1.1.0 / 15 carries the Guard shift-offer fix and supersedes 1.1.0 / 14, which
+  // was certified for Google Play Internal Testing but never uploaded. Phase 4E: S4 1.1.0 / 14 was the Google Play Internal Testing candidate. Gate 4A's 1.1.0 / 13 was the
   // first permanent-identity candidate (com.sfour.s4); it is retired because it predates Dashboard V2. It is a new
   // Android package, so nothing installs over anything — but the code keeps climbing, so every S4
   // artefact ever produced carries a distinct, increasing number. The development-package history:
   assert.equal(appJson.expo.version, '1.1.0');
-  assert.equal(appJson.expo.android.versionCode, 14, 'the RC14 Internal Testing candidate');
+  assert.equal(appJson.expo.android.versionCode, 15, 'the Guard release candidate');
+  assert.ok(appJson.expo.android.versionCode > 14, 'above the superseded RC14');
   assert.ok(appJson.expo.android.versionCode > 13, 'above the retired first permanent-identity candidate 13');
   assert.ok(appJson.expo.android.versionCode > 12, 'above the final development-package Build 12');
   // Build 12 is the full operational UAT candidate: Phase 1 (scheduled times as true instants),
@@ -65,9 +67,9 @@ test('BUILD-01-APP-VERSION-IS-1-1-0-AND-ANDROID-BUILD-14', () => {
   assert.ok(appJson.expo.android.versionCode > 8, 'above the rejected Build 8');
   assert.ok(appJson.expo.android.versionCode > 5, 'and above the installed 1.0.4 (versionCode 5)');
 
-  // iOS has its own counter. It tracked Android up to 13; iOS 13 has never been built, so Android RC14
-  // deliberately leaves it at 13 rather than skipping an unused number.
-  assert.equal(appJson.expo.ios.buildNumber, '13', 'the iOS build number stays at its unbuilt 13');
+  // iOS has its own counter. Build 13 was uploaded to App Store Connect on 8 Oct 2026 (EAS Submit 90bd22f5), so
+  // App Store Connect will never accept 13 again: the Guard release is build 14.
+  assert.equal(appJson.expo.ios.buildNumber, '14', 'above the uploaded build 13');
 });
 
 test('BUILD-02-APP-JSON-IS-THE-AUTHORITATIVE-VERSION-SOURCE', () => {
