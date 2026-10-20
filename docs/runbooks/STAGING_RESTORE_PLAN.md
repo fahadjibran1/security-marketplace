@@ -1,7 +1,34 @@
-# S4 staging — configuration proposed for approval (not executed)
+# S4 staging — configuration and restoration record
 
-Prepared 20 October 2026. **Nothing in this document has been done on Render, Supabase, GitHub or any store.**
-Every hosting step needs the owner's explicit approval first. Production is not touched by any step.
+Prepared 20 October 2026; **sections 2–3 were executed on 20 October 2026 with the owner's approval** (status below).
+Production is not touched by any step.
+
+## Status (20 Oct 2026, 21:07Z)
+
+| Item | State |
+|---|---|
+| Branch | `staging/s4-uat` created on GitHub at `a7b5b22` (no new code; `release/s4-pilot-rc1` unchanged) |
+| Database | `s4-staging-db` = `dpg-dbbq13afngtc73a5ls20-a`, PostgreSQL 17.11, Oregon, `0.1c-256mb`, 1 GB — $6.30/month |
+| Service | `srv-da8t3d0ae00c73d7g5jg` on Starter `0.5c-512mb` ($7/month), branch `staging/s4-uat`, auto-deploy Off, pre-deploy `npm run migration:run:prod`, health `/health/ready` |
+| Environment | 20 staging-only variables (19 generated + `DATABASE_URL` = the database's **External** URL); verified by hash; no pooler, email or production values |
+| Deploy | `dep-dbbtau2fngtc73a47atg`, `a7b5b22`, manual; pre-deploy ran 63 migrations; live 21:58 BST |
+| Data | 63 migrations ending `AddComplianceLapseAlerts1720900000009`; **0 rows** in every operational table |
+| Production | `srv-d6ttvdea2pns7391pa0g` unchanged (last deploy 08:49, `a7b5b22`); 14 tables identical before/after |
+| Incident | The Starter upgrade auto-redeployed the old Free build (`a1c7a11`) with the new environment for ~5 minutes before `a7b5b22` replaced it. It connected only to the then-empty `s4-staging-db` and wrote nothing (0 tables before and after). |
+
+## Seeding is blocked on one owner decision: Guard document evidence
+
+At `a7b5b22` a Guard is assignable only with the company's SIA and Right to Work **checks** AND an **uploaded and
+verified** SIA licence document and Right to Work document. Uploads need real evidence storage; staging has the
+deliberate placeholder (`https://s4-staging-evidence-disabled.invalid`). So no Guard can be offered a shift on
+staging today, and Offers, Book On, Welfare, Incident, Site Request and Book Off cannot be exercised.
+`scripts/staging-uat-seed.ts` therefore refuses to write to staging until one of these is chosen:
+
+1. **Separate staging evidence bucket** (e.g. a new Cloudflare R2 bucket `s4-staging-evidence` with its own key;
+   R2 free tier). The seeder uploads small, clearly fictional PDF test files through the real presigned flow and
+   verifies them through the API. Full fidelity; evidence uploads become testable too.
+2. **Product's legacy test path** (`fileUrl` only, no file): documents are recorded as uploaded with no stored
+   file, then verified. No new resource, but it is simulated evidence — excluded by the owner's current instruction.
 
 ## 1. What exists today (read-only, Render dashboard, 20 Oct 2026)
 
