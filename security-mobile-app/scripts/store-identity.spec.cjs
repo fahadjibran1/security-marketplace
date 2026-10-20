@@ -39,10 +39,10 @@ test('STORE-01-THE-PERMANENT-S4-IDENTITY', () => {
   assert.equal(expo.ios.bundleIdentifier, 'com.sfour.s4');
   assert.equal(expo.scheme, 's4security');
   assert.equal(expo.version, '1.1.0');
-  // Android RC14 (Phase 4E): versionCode 14 supersedes the retired 13 (built before Dashboard V2). iOS
-  // has its own counter and has never been built at 13, so it deliberately stays at 13.
-  assert.equal(expo.android.versionCode, 14);
-  assert.equal(expo.ios.buildNumber, '13');
+  // Guard release (20 Oct 2026): Android versionCode 15 and iOS build 14 carry the Guard shift-offer fix. Android
+  // 14 (never uploaded) and iOS 13 (uploaded to TestFlight on 8 Oct, so never reusable) are superseded.
+  assert.equal(expo.android.versionCode, 15);
+  assert.equal(expo.ios.buildNumber, '14');
 });
 
 test('STORE-02-THE-EXISTING-EAS-PROJECT-IS-KEPT-AND-OTA-STAYS-OFF', () => {
@@ -176,7 +176,7 @@ test('STORE-08-ONE-PRODUCT-NAME-FOR-EVERY-ROLE', () => {
 
 test('STORE-09-IOS-IDENTITY-IS-SET-AND-NOTHING-IS-BUILT', () => {
   assert.equal(expo.ios.bundleIdentifier, 'com.sfour.s4');
-  assert.equal(expo.ios.buildNumber, '13');
+  assert.equal(expo.ios.buildNumber, '14');
   assert.equal(expo.ios.infoPlist.ITSAppUsesNonExemptEncryption, false);
   assert.equal(expo.ios.config.usesNonExemptEncryption, false);
   // No hand-written usage strings that could drift from the plugin's, and none for unused capabilities.

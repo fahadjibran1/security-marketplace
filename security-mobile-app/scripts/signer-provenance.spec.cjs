@@ -149,7 +149,8 @@ test('SIGNER-04-THE-EXPECTED-RELEASE-MATCHES-APP-JSON', () => {
   assert.equal(config.expectedRelease.versionCode, appJson.expo.android.versionCode);
   assert.equal(config.package, appJson.expo.android.package);
   assert.equal(appJson.expo.version, '1.1.0');
-  assert.equal(appJson.expo.android.versionCode, 14, 'the RC14 Internal Testing candidate');
+  assert.equal(appJson.expo.android.versionCode, 15, 'the Guard release candidate');
+  assert.ok(appJson.expo.android.versionCode > 14, 'above the superseded RC14');
   assert.ok(appJson.expo.android.versionCode > 13, 'above the retired first permanent-identity candidate 13');
   // com.sfour.s4 is a new Android application, so no install-over is involved — the code still never
   // goes backwards, so every S4 artefact ever made has a distinct, increasing number.
@@ -413,13 +414,14 @@ test('SIGNER-13-A-CORRECT-1-1-0-COM-SFOUR-S4-ARTEFACT-WOULD-PASS', () => {
   // Constructed in the exact apksigner/aapt2 shapes recorded above; no such artefact exists yet.
   const candidate = observe({
     apksigner: RECORDED.expectedBuild12.apksigner,
-    badging: "package: name='com.sfour.s4' versionCode='14' versionName='1.1.0'\nminSdkVersion:'24'",
+    badging: "package: name='com.sfour.s4' versionCode='15' versionName='1.1.0'\nminSdkVersion:'24'",
   });
   const result = verifier.assessApk(config, candidate);
   assert.equal(result.ok, true, result.failures.join('; '));
   // A wrong code or name on the right package is still refused — including the retired 13.
   assert.equal(verifier.assessApk(config, { ...candidate, versionCode: 13 }).ok, false);
-  assert.equal(verifier.assessApk(config, { ...candidate, versionCode: 15 }).ok, false);
+  assert.equal(verifier.assessApk(config, { ...candidate, versionCode: 14 }).ok, false);
+  assert.equal(verifier.assessApk(config, { ...candidate, versionCode: 16 }).ok, false);
   assert.equal(verifier.assessApk(config, { ...candidate, versionName: '1.0.7' }).ok, false);
 });
 
@@ -438,6 +440,24 @@ test('SIGNER-13B-THE-RETIRED-VC13-ARTEFACT-IS-KEPT-EXACTLY', () => {
   assert.match(retired.retiredReason, /Dashboard Operations V2/);
   assert.match(retired.retiredReason, /not intended for Google Play upload/);
   assert.notEqual(config.approvedArtefact.versionCode, 13, 'and it is no longer the approved artefact');
+});
+
+test('SIGNER-13C-THE-SUPERSEDED-VC14-ARTEFACT-IS-KEPT-EXACTLY', () => {
+  // Guard release (20 Oct 2026): the certified 1.1.0 (14) AAB predates the Guard shift-offer fix and was never
+  // uploaded. Its certification is history and is kept exactly; only its status and reason record the change.
+  const superseded = (config.retiredArtefacts || []).find((entry) => entry.versionCode === 14);
+  assert.ok(superseded, 'versionCode 14 is recorded as superseded');
+  assert.equal(superseded.status, 'certified-superseded');
+  assert.equal(superseded.easBuildId, '4b31e82d-7b36-4b76-8887-59c446527931');
+  assert.equal(superseded.gitCommit, 'e099c4e22fac3a2af32053b6870060bda4d9d5ef');
+  assert.equal(superseded.aabSha256, 'e07c4dc8dc33c9c66b8fe107296be69506b50681b6da9dec21008f39e23dde66');
+  assert.equal(superseded.aabSizeBytes, 58685803);
+  assert.equal(superseded.uploadCertificateSha256, config.signer.certificateSha256);
+  assert.equal(superseded.certifiedOn, '2026-10-06');
+  assert.match(superseded.retiredReason, /never uploaded/);
+  assert.match(superseded.retiredReason, /d880ef0/);
+  assert.equal(config.approvedArtefact.versionCode, 15, 'the Guard release is the approved artefact');
+  assert.equal(config.approvedArtefact.status, 'pending-build', 'and it has not been built');
 });
 
 test('SIGNER-14-AN-UPLOADED-AAB-SIGNER-IS-READ-FROM-KEYTOOL', () => {

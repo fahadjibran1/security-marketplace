@@ -10,7 +10,7 @@
   "bundleIdentifier": "com.sfour.s4",
   "displayName": "S4",
   "marketingVersion": "1.1.0",
-  "buildNumber": "13",
+  "buildNumber": "14",
   "deploymentTarget": "15.1",
   "easBuildImage": "default for SDK 54: macos-sequoia-15.6-xcode-26.0 (Xcode 26.0, iOS 26 SDK)",
   "privacyManifest": "app-level, generated from app.json ios.privacyManifests: tracking false; required-reason APIs UserDefaults, FileTimestamp, DiskSpace, SystemBootTime with the reasons their bundled dependencies declare",
@@ -28,7 +28,7 @@
     "note": "Remote (EAS-managed) iOS credentials set up interactively by the owner. Nothing revoked or replaced."
   },
   "artefact": {
-    "status": "certified-awaiting-testflight",
+    "status": "uploaded-to-testflight",
     "easBuildId": "fa7c7560-f734-4bbe-a86e-5224811f624c",
     "easBuildProfile": "production",
     "distribution": "STORE",
@@ -38,8 +38,14 @@
     "ipaSizeBytes": 9327185,
     "completedAt": "2026-10-08T18:10:06Z",
     "certifiedOn": "2026-10-08",
-    "note": "Certified locally from the downloaded IPA: Info.plist, embedded App Store provisioning profile, privacy manifest, code-signing certificate and main.jsbundle. Not submitted to App Store Connect."
+    "note": "Certified locally from the downloaded IPA: Info.plist, embedded App Store provisioning profile, privacy manifest, code-signing certificate and main.jsbundle. Uploaded to App Store Connect by EAS Submit (submission 90bd22f5-e5f7-492f-9bad-81c048085234, workflow job \"Submit app to TestFlight\", 2026-10-08 22:59Z to 23:02Z UTC, succeeded), so build 13 can never be reused. Superseded by build 14, which carries the P0 Guard shift-offer fix (d880ef0); build 13 has the faulty offer overlay."
   },
-  "testFlight": "NOT SUBMITTED",
-  "appStore": "NOT SUBMITTED"
+  "testFlight": "1.1.0 (13) uploaded 2026-10-08 via EAS Submit (90bd22f5); TestFlight processing, testers and review state not verifiable from this machine (App Store Connect not signed in).",
+  "appStore": "NOT SUBMITTED",
+  "nextArtefact": {
+    "marketingVersion": "1.1.0",
+    "buildNumber": "14",
+    "status": "pending-build",
+    "note": "Guard release 1.1.0 (14): production release a7b5b22 (d880ef0 Guard shift-offer modal fix). Pending: not built, not submitted. Build and TestFlight upload only on owner approval."
+  }
 }

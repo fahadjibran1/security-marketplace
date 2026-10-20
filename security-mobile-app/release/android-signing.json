@@ -32,22 +32,14 @@
   },
   "expectedRelease": {
     "versionName": "1.1.0",
-    "versionCode": 14,
+    "versionCode": 15,
     "minSdkVersion": 24
   },
   "approvedArtefact": {
     "versionName": "1.1.0",
-    "versionCode": 14,
-    "status": "certified-awaiting-play",
-    "easBuildId": "4b31e82d-7b36-4b76-8887-59c446527931",
-    "easBuildProfile": "production",
-    "gitCommit": "e099c4e22fac3a2af32053b6870060bda4d9d5ef",
-    "aabFilename": "s4-1.1.0-vc14-4b31e82d.aab",
-    "aabSha256": "e07c4dc8dc33c9c66b8fe107296be69506b50681b6da9dec21008f39e23dde66",
-    "aabSizeBytes": 58685803,
-    "uploadCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
-    "certifiedOn": "2026-10-06",
-    "note": "Android RC14 for Google Play Internal Testing, built from e099c4e (35a6230 + RC14 preparation) and including Dashboard Operations V2. Certified locally from the downloaded AAB: package, version, permissions and debuggable from the bundle manifest (bundletool), upload signer via keytool. Not yet uploaded to Google Play."
+    "versionCode": 15,
+    "status": "pending-build",
+    "note": "Guard release 1.1.0 (15): production release a7b5b22 (d880ef0 Guard shift-offer modal fix, cc03ecc and a7b5b22 backend security) plus this version preparation. Pending: not built. Build only on owner approval; record the EAS build id, commit, AAB hash and upload signer here once built and certified."
   },
   "retiredArtefacts": [
     {
@@ -65,6 +57,22 @@
       "note": "Certified locally from the downloaded AAB: package, version and permissions from the bundle manifest (bundletool), upload signer via keytool. Not yet uploaded to Google Play.",
       "retiredOn": "2026-10-05",
       "retiredReason": "Built from 6cf29c8, before Dashboard Operations V2 (live on the web from 35a6230). Retained as a historical certified artefact; not intended for Google Play upload. Superseded by versionCode 14."
+    },
+    {
+      "versionName": "1.1.0",
+      "versionCode": 14,
+      "status": "certified-superseded",
+      "easBuildId": "4b31e82d-7b36-4b76-8887-59c446527931",
+      "easBuildProfile": "production",
+      "gitCommit": "e099c4e22fac3a2af32053b6870060bda4d9d5ef",
+      "aabFilename": "s4-1.1.0-vc14-4b31e82d.aab",
+      "aabSha256": "e07c4dc8dc33c9c66b8fe107296be69506b50681b6da9dec21008f39e23dde66",
+      "aabSizeBytes": 58685803,
+      "uploadCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
+      "certifiedOn": "2026-10-06",
+      "note": "Android RC14 for Google Play Internal Testing, built from e099c4e (35a6230 + RC14 preparation) and including Dashboard Operations V2. Certified locally from the downloaded AAB: package, version, permissions and debuggable from the bundle manifest (bundletool), upload signer via keytool. Not yet uploaded to Google Play.",
+      "retiredOn": "2026-10-20",
+      "retiredReason": "Superseded by versionCode 15, which carries the P0 Guard shift-offer fix (d880ef0): on vc14 Review offer could show a grey overlay with no Accept or Decline. vc14 was never uploaded: as of 2026-10-20 the release Google login has no Google Play developer account and EAS records no Android submission. Kept as history; not intended for Google Play upload."
     }
   ],
   "playAppSigning": {
