@@ -13,6 +13,7 @@ import {
   bookOnDecision,
   type BookOnDecision,
 } from '../components/guard/bookOnPresentation';
+import { bookOffDecision, type BookOffDecision } from '../components/guard/bookOffPresentation';
 import { currentShiftActionShift } from '../components/guard/currentShiftActionTarget';
 import { GuardCompaniesPanel } from '../components/guard/GuardCompaniesPanel';
 import { GuardCompliancePanel } from '../components/guard/GuardCompliancePanel';
@@ -228,9 +229,9 @@ function getPrimaryActionLabel(status?: string | null) {
     case 'offered':
       return 'Review Offer';
     case 'ready':
-      return 'Start Shift';
+      return 'Book On';
     case 'in_progress':
-      return 'End Shift';
+      return 'Book Off';
     case 'completed':
       return 'View Summary';
     default:
@@ -346,12 +347,12 @@ function getGuardPhaseStatusLine(
 ): string {
   if (!shift) {
     return phase === 'no_shift'
-      ? "You're between shifts — nothing needs clocking in on Home right now."
+      ? "You're between shifts — nothing to Book On to on Home right now."
       : 'No shift details.';
   }
   switch (phase) {
     case 'no_shift':
-      return "You're between shifts — nothing needs clocking in on Home right now.";
+      return "You're between shifts — nothing to Book On to on Home right now.";
     case 'offer_pending':
       return 'A shift is waiting on your answer — open Offers or use Main action below.';
     case 'before_shift':
@@ -361,9 +362,9 @@ function getGuardPhaseStatusLine(
       );
     case 'shift_window_check_in': {
       if (nowMs >= new Date(shift.end).getTime()) {
-        return 'This shift window has ended. Check in only if control has asked you to, or contact them.';
+        return 'This shift window has ended. Book On only if control has asked you to, or contact them.';
       }
-      return 'You are within your shift window — check in to go live.';
+      return 'You are within your shift window — Book On to go live.';
     }
     case 'on_shift':
       return 'You are on shift.';
@@ -379,13 +380,13 @@ function getGuardPhaseStatusLine(
         : 'Welfare Check overdue — record one as soon as you can.';
     }
     case 'shift_ending_soon':
-      return 'Your shift is ending soon — check out before end time unless instructed otherwise.';
+      return 'Your shift is ending soon — Book Off at your end time unless instructed otherwise.';
     case 'timesheet_pending':
       return 'Hours for this shift still need a timesheet step — finish it so payroll can move.';
     case 'shift_ended': {
       const st = normalizeShiftLifecycleStatus(shift.status);
       if (st === 'missed') return 'This shift was marked missed — check History or your supervisor if that looks wrong.';
-      if (st === 'cancelled') return 'This shift was cancelled — nothing more to clock here.';
+      if (st === 'cancelled') return 'This shift was cancelled — nothing more to do here.';
       if (st === 'rejected') return 'You declined this offer — watch Offers if another slot appears.';
       return 'This shift is finished — recap below; timesheets and older posts sit under History.';
     }
@@ -403,9 +404,9 @@ function getGuardPhasePrimaryLabel(phase: GuardShiftPhase, shift: Shift | null):
       return 'Review Offer';
     case 'before_shift':
       // Early attendance is permitted, so the label must offer the action, not defer it.
-      return 'Book on early';
+      return 'Book On early';
     case 'shift_window_check_in':
-      return 'Check in now';
+      return 'Book On now';
     case 'on_shift':
     case 'welfare_due':
     case 'welfare_overdue':
@@ -427,17 +428,17 @@ function getPrimaryActionGuidance(phase: GuardShiftPhase): string | null {
     case 'before_shift':
       return BEFORE_SHIFT_GUIDANCE;
     case 'shift_ended':
-      return 'View summary shows check-in, check-out, and incidents for this post. History holds timesheets and older shifts.';
+      return 'View summary shows your Book On, Book Off and incidents for this post. History holds timesheets and older shifts.';
     case 'shift_window_check_in':
       return 'Use this when you are on site and ready to work.';
     case 'on_shift':
-      return 'End shift when your post is fully finished and signed off — not before.';
+      return 'Book Off when your post is fully finished and signed off — not before.';
     case 'welfare_due':
       return 'Record your Welfare Check before the window passes.';
     case 'welfare_overdue':
       return 'A Welfare Check is the priority as soon as it is safe.';
     case 'shift_ending_soon':
-      return 'Plan your handover now, then check out on time unless control tells you otherwise.';
+      return 'Plan your handover now, then Book Off on time unless control tells you otherwise.';
     case 'timesheet_pending':
       return 'View summary is optional. The important step is your timesheet — use the follow-up block or History.';
     default:
@@ -1316,14 +1317,14 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
       setAttendanceBusyShiftId(shiftId);
       await checkInShift({ shiftId });
       updateShiftStatusLocally(shiftId, 'in_progress');
-      pushTimelineEvent(shiftId, 'Shift started', 'Checked in successfully.');
+      pushTimelineEvent(shiftId, 'Booked On', 'Booked On successfully.');
       await loadData();
-      pushFeedback('success', 'Checked in', 'Your shift is now live.');
-      showAlert('Checked in', 'Your shift is now marked as in progress.');
+      pushFeedback('success', 'Booked On', 'Your shift is now live.');
+      showAlert('Booked On', 'You are booked on. Your shift is now in progress.');
     } catch (error) {
       const message = formatApiErrorMessage(error, 'Unable to start this shift.');
-      pushFeedback('error', 'Start shift failed', message);
-      showAlert('Start shift failed', message);
+      pushFeedback('error', 'Book On failed', message);
+      showAlert('Book On failed', message);
     } finally {
       setAttendanceBusyShiftId(null);
     }
@@ -1334,14 +1335,14 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
       setAttendanceBusyShiftId(shiftId);
       await checkOutShift({ shiftId });
       updateShiftStatusLocally(shiftId, 'completed');
-      pushTimelineEvent(shiftId, 'Shift ended', 'Checked out successfully.');
+      pushTimelineEvent(shiftId, 'Booked Off', 'Booked Off successfully.');
       await loadData();
-      pushFeedback('success', 'Checked out', 'Your shift is now completed.');
-      showAlert('Shift ended', 'Your shift has been checked out successfully.');
+      pushFeedback('success', 'Booked Off', 'Your shift is now completed.');
+      showAlert('Booked Off', 'You have booked off. Your shift is now complete.');
     } catch (error) {
       const message = formatApiErrorMessage(error, 'Unable to end this shift.');
-      pushFeedback('error', 'End shift failed', message);
-      showAlert('End shift failed', message);
+      pushFeedback('error', 'Book Off failed', message);
+      showAlert('Book Off failed', message);
     } finally {
       setAttendanceBusyShiftId(null);
     }
@@ -1613,6 +1614,20 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
   /** Cancelling does nothing at all — no check-in, no state change beyond closing the question. */
   const cancelEarlyBookOn = useCallback(() => setEarlyBookOn(null), []);
 
+  /** Pending Book Off awaiting confirmation (every Book Off is confirmed; an early one is warned about). */
+  const [pendingBookOff, setPendingBookOff] = useState<{ shiftId: number; decision: BookOffDecision } | null>(null);
+
+  /** Confirming runs the SAME check-out path. The pending state is cleared first, so one confirmation is one Book Off. */
+  const confirmBookOff = useCallback(() => {
+    if (!pendingBookOff) return;
+    const { shiftId } = pendingBookOff;
+    setPendingBookOff(null);
+    handleCheckOut(shiftId);
+  }, [pendingBookOff]);
+
+  /** "Stay on shift" does nothing at all — no check-out, no state change beyond closing the question. */
+  const cancelBookOff = useCallback(() => setPendingBookOff(null), []);
+
   function handleCurrentShiftPrimaryPress() {
     // `before_shift` is presentation only (UAT-ATT-01). It must NOT return early here: an assigned
     // Guard on site ahead of schedule is entitled to Book On, and the server accepts it.
@@ -1650,8 +1665,8 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
       ? [
           {
             id: `home-check-in-${currentHomeShift?.id}`,
-            title: 'Checked in',
-            message: 'Shift started successfully.',
+            title: 'Booked On',
+            message: 'Booked On successfully.',
             occurredAt: currentHomeShiftAttendance.checkInAt,
           },
         ]
@@ -1660,7 +1675,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
       ? [
           {
             id: `home-check-out-${currentHomeShift?.id}`,
-            title: 'Checked out',
+            title: 'Booked Off',
             message: 'Shift completed.',
             occurredAt: currentHomeShiftAttendance.checkOutAt,
           },
@@ -1757,7 +1772,16 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
       return;
     }
     if (status === 'in_progress') {
-      handleCheckOut(currentHomeShift.id);
+      // Every Book Off is confirmed first; an early one shows the scheduled end and how early it is. Confirming
+      // calls the same handleCheckOut, and the backend's early Book Off rules are unchanged.
+      setPendingBookOff({
+        shiftId: currentHomeShift.id,
+        decision: bookOffDecision({
+          endMs: new Date(currentHomeShift.end).getTime(),
+          nowMs: Date.now(),
+          formatEnd: (ms) => formatTimeLabel(new Date(ms).toISOString(), currentHomeShift.site?.timezone),
+        }),
+      });
       return;
     }
     if (status === 'completed') {
@@ -1876,7 +1900,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
                   : guardShiftPhase === 'offer_pending'
                     ? 'A company has offered you work — your next step is to decide.'
                     : guardShiftPhase === 'before_shift'
-                      ? 'Upcoming shift — get on site; check-in opens at the booked start time.'
+                      ? 'Upcoming shift — get on site, then Book On.'
                       : guardShiftPhase === 'timesheet_pending'
                         ? 'Last completed shift still needs a timesheet step from you.'
                         : guardShiftPhase === 'shift_ended'
@@ -1977,7 +2001,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
                           <Text style={styles.guardSectionLabel}>Live clock</Text>
                           <View style={[styles.liveStatusBlock, styles.guardLiveStatusFlush]}>
                             <View style={styles.liveStatusItem}>
-                              <Text style={styles.liveStatusLabel}>Checked in</Text>
+                              <Text style={styles.liveStatusLabel}>Booked On</Text>
                               <Text style={styles.liveStatusValue}>
                                 {currentHomeShiftAttendance?.checkInAt
                                   ? formatTimeLabel(currentHomeShiftAttendance.checkInAt, currentHomeShift.site?.timezone)
@@ -3225,6 +3249,18 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
         confirmLabel={earlyBookOn?.decision.kind === 'confirm' ? earlyBookOn.decision.confirmLabel : 'Book On'}
         cancelLabel={earlyBookOn?.decision.kind === 'confirm' ? earlyBookOn.decision.cancelLabel : 'Cancel'}
         variant="standard"
+      />
+
+      {/* Every Book Off is confirmed; one more than 15 minutes early shows the scheduled end and how early it is. */}
+      <ConfirmationDialog
+        visible={pendingBookOff !== null}
+        onClose={cancelBookOff}
+        onConfirm={confirmBookOff}
+        title={pendingBookOff?.decision.title ?? ''}
+        message={pendingBookOff?.decision.message ?? ''}
+        confirmLabel={pendingBookOff?.decision.confirmLabel ?? 'Book Off'}
+        cancelLabel={pendingBookOff?.decision.cancelLabel ?? 'Stay on shift'}
+        variant={pendingBookOff?.decision.early ? 'danger' : 'standard'}
       />
 
       {/* ── Live-shift action forms (Phase 2) ──────────────────────────

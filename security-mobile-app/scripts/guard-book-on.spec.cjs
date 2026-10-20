@@ -179,7 +179,7 @@ test('BOOKON-12-RESTRICTIVE-COPY-IS-GONE', () => {
     assert.doesNotMatch(guard, banned, `restrictive copy must be gone: ${banned}`);
   }
   // Replaced with wording that offers the action.
-  assert.ok(guard.includes('Book on early'), 'the action label invites early attendance');
+  assert.ok(guard.includes('Book On early'), 'the action label invites early attendance');
   assert.match(bookOn.beforeShiftStatusLine('18:00', 'Mon 28 Sep'), /Book On is available now/);
   assert.match(bookOn.BEFORE_SHIFT_GUIDANCE, /You can Book On before your scheduled start/);
 });
@@ -206,7 +206,10 @@ test('BOOKON-14-ONE-PRESS-CANNOT-PRODUCE-TWO-CONFIRMATIONS', () => {
 test('BOOKON-15-GPS-NFC-AND-LIFECYCLE-PRESENTATION-ARE-UNTOUCHED', () => {
   // Still only ever calls check-in for a READY shift, check-out for in_progress.
   assert.match(guard, /if \(status === 'ready'\) \{/, 'ready still means Book On');
-  assert.match(guard, /if \(status === 'in_progress'\) \{\s*handleCheckOut/, 'in_progress still means Book Off');
+  // in_progress still means Book Off — since the Guard release audit (20 Oct 2026) through a confirmation whose
+  // only action is the same check-out (guard-book-off.spec.cjs drives it in full).
+  assert.match(guard, /if \(status === 'in_progress'\) \{[\s\S]*?setPendingBookOff\(\{/, 'in_progress still means Book Off, after confirming');
+  assert.match(guard, /const confirmBookOff = useCallback\(\(\) => \{[\s\S]*?handleCheckOut\(shiftId\);/, 'and confirming books off');
   assert.match(guard, /if \(status === 'offered'\) \{/, 'an offer still routes to Offers');
   // The caution for booking on after the window ended is preserved, not replaced by a block.
   assert.ok(guard.includes('This shift window has ended.'), 'the after-end caution remains');

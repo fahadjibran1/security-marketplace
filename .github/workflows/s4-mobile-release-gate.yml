@@ -155,6 +155,12 @@ jobs:
       # the in-flight state and a withdrawn offer; scans every Guard surface for hand-rolled overlays.
       - name: Verify guard shift offers can be accepted and declined
         run: npm run test:guard-shift-offers
+      # Guard release audit (20 Oct 2026): End Shift booked off on one tap, even hours early, and the Guard
+      # interface mixed check in / check out with Book On / Book Off. Runs the Book Off confirmation decision
+      # across the 15-minute early boundary, checks the screen only books off after confirming, and scans the
+      # Guard surfaces for check-in wording.
+      - name: Verify guard Book Off is confirmed and wording is Book On / Book Off
+        run: npm run test:guard-book-off
       # Phase 3A-iii: Build 11 showed a reachable button that emitted no HTTP request, and reported the
       # refusal only through a banner the modal and keyboard covered. Phase 2 proved the press reached
       # the ROUTER and stopped there. This executes the production dispatcher itself — including a real
