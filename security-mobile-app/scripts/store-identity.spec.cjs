@@ -40,7 +40,8 @@ test('STORE-01-THE-PERMANENT-S4-IDENTITY', () => {
   assert.equal(expo.scheme, 's4security');
   assert.equal(expo.version, '1.1.0');
   // Guard release (20 Oct 2026): Android versionCode 15 and iOS build 14 carry the Guard shift-offer fix. Android
-  // 14 (never uploaded) and iOS 13 (uploaded to TestFlight on 8 Oct, so never reusable) are superseded.
+  // 14 (active in Play Internal Testing) and iOS 13 (uploaded to App Store Connect on 8 Oct) are superseded; neither
+  // number can be reused.
   assert.equal(expo.android.versionCode, 15);
   assert.equal(expo.ios.buildNumber, '14');
 });

@@ -19,7 +19,8 @@
     "membership": "Individual (team SXH4TLU2B5, fahad jibran); conversion to organisation (Vesoft Services Limited) requested, pending Apple review - proceeding with TestFlight on the Individual membership by owner decision",
     "programLicenseAgreement": "updated agreement awaiting the owner's acceptance; required before App ID / credential / App Store Connect actions",
     "appId": "com.sfour.s4 registered by the owner (description S4)",
-    "appStoreConnectApp": "S4 (iOS, com.sfour.s4, SKU s4-ios-001) created by the owner. The legacy S4 Security record (com.securitymarketplace.mobile) is not used."
+    "appStoreConnectApp": "S4 (iOS, com.sfour.s4, SKU s4-ios-001) created by the owner. The legacy S4 Security record (com.securitymarketplace.mobile) is not used.",
+    "membershipConversion": "Owner-confirmed 2026-10-20: the Individual-to-Organisation conversion has been requested and, per the latest Apple correspondence, has not started or completed."
   },
   "signing": {
     "status": "created-eas-managed",
@@ -40,7 +41,7 @@
     "certifiedOn": "2026-10-08",
     "note": "Certified locally from the downloaded IPA: Info.plist, embedded App Store provisioning profile, privacy manifest, code-signing certificate and main.jsbundle. Uploaded to App Store Connect by EAS Submit (submission 90bd22f5-e5f7-492f-9bad-81c048085234, workflow job \"Submit app to TestFlight\", 2026-10-08 22:59Z to 23:02Z UTC, succeeded), so build 13 can never be reused. Superseded by build 14, which carries the P0 Guard shift-offer fix (d880ef0); build 13 has the faulty offer overlay."
   },
-  "testFlight": "1.1.0 (13) uploaded 2026-10-08 via EAS Submit (90bd22f5); TestFlight processing, testers and review state not verifiable from this machine (App Store Connect not signed in).",
+  "testFlight": "1.1.0 (13) uploaded 2026-10-08 via EAS Submit (90bd22f5). Owner-confirmed 2026-10-20: App Store Connect has the S4 app with an external TestFlight group of five testers and one associated build; which build that is, and its review state, are not recorded here.",
   "appStore": "NOT SUBMITTED",
   "nextArtefact": {
     "marketingVersion": "1.1.0",
