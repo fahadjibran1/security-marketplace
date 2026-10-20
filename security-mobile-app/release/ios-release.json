@@ -26,27 +26,56 @@
     "status": "created-eas-managed",
     "distributionCertificate": "existing Apple Distribution certificate reused (owner, eas credentials); SHA-256 of the DER as embedded in the profile: c1f9c5b6c04f4f37939ade278960a16870c88afd2efca94a75b570aab5830196",
     "provisioningProfile": "*[expo] com.sfour.s4 AppStore 2026-10-08T18:00:31.293Z (App Store distribution, no device list), created 2026-10-08, expires 2027-06-17",
-    "note": "Remote (EAS-managed) iOS credentials set up interactively by the owner. Nothing revoked or replaced."
+    "note": "Remote (EAS-managed) iOS credentials set up interactively by the owner. Nothing revoked or replaced.",
+    "ascApiKey": "At the 1.1.0 (14) build (2026-10-20) Apple rejected the App Store Connect API key held by EAS (Apple 401: credentials missing or invalid), so EAS validated the provisioning profile locally only. Signing does not need the key; EAS Submit to TestFlight does. Owner action before any submission: check or replace the key in App Store Connect and EAS (not done here)."
   },
   "artefact": {
-    "status": "uploaded-to-testflight",
-    "easBuildId": "fa7c7560-f734-4bbe-a86e-5224811f624c",
-    "easBuildProfile": "production",
-    "distribution": "STORE",
-    "gitCommit": "876712819a9c889923de7734146b990720258866",
-    "ipaFilename": "s4-ios-1.1.0-b13-fa7c7560.ipa",
-    "ipaSha256": "95a6881ce92a00bedc2b45f620021c1a0701482672806a016f304ef50ac0e7ca",
-    "ipaSizeBytes": 9327185,
-    "completedAt": "2026-10-08T18:10:06Z",
-    "certifiedOn": "2026-10-08",
-    "note": "Certified locally from the downloaded IPA: Info.plist, embedded App Store provisioning profile, privacy manifest, code-signing certificate and main.jsbundle. Uploaded to App Store Connect by EAS Submit (submission 90bd22f5-e5f7-492f-9bad-81c048085234, workflow job \"Submit app to TestFlight\", 2026-10-08 22:59Z to 23:02Z UTC, succeeded), so build 13 can never be reused. Superseded by build 14, which carries the P0 Guard shift-offer fix (d880ef0); build 13 has the faulty offer overlay."
-  },
-  "testFlight": "1.1.0 (13) uploaded 2026-10-08 via EAS Submit (90bd22f5). Owner-confirmed 2026-10-20: App Store Connect has the S4 app with an external TestFlight group of five testers and one associated build; which build that is, and its review state, are not recorded here.",
-  "appStore": "NOT SUBMITTED",
-  "nextArtefact": {
+    "status": "certified-not-submitted",
     "marketingVersion": "1.1.0",
     "buildNumber": "14",
-    "status": "pending-build",
-    "note": "Guard release 1.1.0 (14): production release a7b5b22 (d880ef0 Guard shift-offer modal fix). Pending: not built, not submitted. Build and TestFlight upload only on owner approval."
-  }
+    "easBuildId": "7333ba4d-be48-41d9-8527-9950dad1fa0a",
+    "easBuildUrl": "https://expo.dev/accounts/fahadjibran/projects/security-marketplace/builds/7333ba4d-be48-41d9-8527-9950dad1fa0a",
+    "easBuildProfile": "production",
+    "distribution": "STORE",
+    "gitCommit": "6b8e41b679bfa3726ae4ca21d36701fafb2a38c7",
+    "easFingerprint": "991b0f92be0f8cca8d41a7cda183261262afd953",
+    "ipaFilename": "s4-1.1.0-ios14-7333ba4d.ipa",
+    "ipaSha256": "af4cb849dc274923630782974ce3725e35ef30682f82e8eddc3cb51b8496ca4f",
+    "ipaSizeBytes": 9389194,
+    "completedAt": "2026-10-20T16:16:08Z",
+    "certifiedOn": "2026-10-20",
+    "verified": {
+      "bundleIdentifier": "com.sfour.s4",
+      "marketingVersion": "1.1.0",
+      "buildNumber": "14",
+      "minimumOSVersion": "15.1",
+      "usesNonExemptEncryption": false,
+      "allowsArbitraryLoads": false,
+      "provisioningProfile": "*[expo] com.sfour.s4 AppStore 2026-10-08T18:00:31.293Z (no device list, expires 2027-06-17)",
+      "teamId": "SXH4TLU2B5",
+      "getTaskAllow": false,
+      "distributionCertificateSha256": "c1f9c5b6c04f4f37939ade278960a16870c88afd2efca94a75b570aab5830196",
+      "apiBaseUrl": "https://security-marketplace-api.onrender.com",
+      "stagingOrLocalApiUrls": 0
+    },
+    "note": "Guard release 1.1.0 (14), same commit as Android 1.1.0 (15). Signed with the existing EAS-managed distribution certificate and App Store profile (unchanged). Certified locally from the downloaded IPA: Info.plist, embedded profile, signing certificate and main.jsbundle. Not submitted to App Store Connect / TestFlight; the IPA is kept outside Git."
+  },
+  "supersededArtefacts": [
+    {
+      "status": "uploaded-to-testflight",
+      "easBuildId": "fa7c7560-f734-4bbe-a86e-5224811f624c",
+      "easBuildProfile": "production",
+      "distribution": "STORE",
+      "gitCommit": "876712819a9c889923de7734146b990720258866",
+      "ipaFilename": "s4-ios-1.1.0-b13-fa7c7560.ipa",
+      "ipaSha256": "95a6881ce92a00bedc2b45f620021c1a0701482672806a016f304ef50ac0e7ca",
+      "ipaSizeBytes": 9327185,
+      "completedAt": "2026-10-08T18:10:06Z",
+      "certifiedOn": "2026-10-08",
+      "note": "Certified locally from the downloaded IPA: Info.plist, embedded App Store provisioning profile, privacy manifest, code-signing certificate and main.jsbundle. Uploaded to App Store Connect by EAS Submit (submission 90bd22f5-e5f7-492f-9bad-81c048085234, workflow job \"Submit app to TestFlight\", 2026-10-08 22:59Z to 23:02Z UTC, succeeded), so build 13 can never be reused. Superseded by build 14, which carries the P0 Guard shift-offer fix (d880ef0); build 13 has the faulty offer overlay.",
+      "supersededBy": "1.1.0 (14) 7333ba4d"
+    }
+  ],
+  "testFlight": "1.1.0 (13) uploaded 2026-10-08 via EAS Submit (90bd22f5). Owner-confirmed 2026-10-20: App Store Connect has the S4 app with an external TestFlight group of five testers and one associated build; which build that is, and its review state, are not recorded here.",
+  "appStore": "NOT SUBMITTED"
 }

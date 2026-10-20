@@ -460,7 +460,14 @@ test('SIGNER-13C-THE-SUPERSEDED-VC14-ARTEFACT-IS-KEPT-EXACTLY', () => {
   assert.equal(superseded.playInternalTesting.confirmedBy, 'owner', 'store facts are attributed, not presented as inspected');
   assert.match(superseded.retiredReason, /d880ef0/);
   assert.equal(config.approvedArtefact.versionCode, 15, 'the Guard release is the approved artefact');
-  assert.equal(config.approvedArtefact.status, 'pending-build', 'and it has not been built');
+  // Built and certified on 20 Oct 2026 (owner-approved EAS production build); not uploaded to Play.
+  assert.equal(config.approvedArtefact.status, 'certified-awaiting-play', 'built and certified, not yet in Play');
+  assert.equal(config.approvedArtefact.easBuildId, '8d1873a3-ec09-48f6-90f4-0ca75f178ba8');
+  assert.equal(config.approvedArtefact.gitCommit, '6b8e41b679bfa3726ae4ca21d36701fafb2a38c7');
+  assert.equal(config.approvedArtefact.aabSha256, '5e69f8d830f4bbc1d08500bf3e0b9430438bf0fd91a747018b5ffae2c22ccf80');
+  assert.equal(config.approvedArtefact.verified.package, 'com.sfour.s4');
+  assert.equal(config.approvedArtefact.verified.versionCode, 15);
+  assert.equal(config.signer.keySizeBits, 4096, 'the size keytool reports for the permanent key');
 });
 
 test('SIGNER-14-AN-UPLOADED-AAB-SIGNER-IS-READ-FROM-KEYTOOL', () => {
