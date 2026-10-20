@@ -78,6 +78,13 @@ export type ModalLayout = {
  *
  * `keyboardVisible` is only consulted on iOS: on Android the viewport height has already shrunk, so
  * reacting to the flag as well would subtract the keyboard twice.
+ *
+ * `keyboardOverlap` is Android's measured answer to "did it, though?" (Guard release audit, 20 Oct 2026). On
+ * the Android emulator the Modal's own window was NOT resized for the soft keyboard: the overlay stayed full
+ * height and the keyboard covered the footer, hiding Record / Save / Submit on every Guard form with a text
+ * field. AppModal therefore measures how much of the overlay the keyboard actually covers — the overlay's laid
+ * out height minus the keyboard's top edge — and passes that. Where the window IS resized, the overlay already
+ * ends at the keyboard and the overlap is 0, so nothing is subtracted twice either way.
  */
 export function resolveModalLayout({
   viewport,
@@ -85,12 +92,15 @@ export function resolveModalLayout({
   platform,
   keyboardVisible = false,
   keyboardHeight = 0,
+  keyboardOverlap = 0,
 }: {
   viewport: ModalViewport;
   insets: SafeAreaInsets;
   platform: ModalPlatform;
   keyboardVisible?: boolean;
   keyboardHeight?: number;
+  /** Android: the height of the overlay hidden behind the soft keyboard, measured. Ignored on iOS. */
+  keyboardOverlap?: number;
 }): ModalLayout {
   const isIos = platform === 'ios';
 
@@ -98,7 +108,11 @@ export function resolveModalLayout({
   // The footer sits at the bottom of the panel, so the system navigation inset has to be cleared
   // somewhere. It goes on the overlay rather than inside the footer so a modal with no footer is spaced
   // correctly too.
-  const overlayPaddingBottom = OVERLAY_GUTTER + Math.max(0, insets.bottom);
+  const safeBottom = OVERLAY_GUTTER + Math.max(0, insets.bottom);
+  // With the keyboard over the overlay, the panel has to end above the keyboard instead. The system
+  // navigation sits under the keyboard then, so the keyboard's height replaces the inset rather than adding to it.
+  const androidOverlap = !isIos ? Math.max(0, keyboardOverlap) : 0;
+  const overlayPaddingBottom = androidOverlap > 0 ? Math.max(safeBottom, androidOverlap + OVERLAY_GUTTER) : safeBottom;
   const overlayPaddingHorizontal = OVERLAY_GUTTER;
 
   // On iOS the keyboard floats over the window, so the height it covers has to be taken off ourselves.

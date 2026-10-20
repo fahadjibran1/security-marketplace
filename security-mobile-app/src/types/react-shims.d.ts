@@ -34,6 +34,12 @@ declare module 'react-native' {
   };
   export type ImageSourcePropType = number | { uri: string; headers?: Record<string, string> };
   export const Image: any;
+  export const Keyboard: {
+    addListener(
+      type: 'keyboardDidShow' | 'keyboardDidHide',
+      listener: (event: { endCoordinates: { screenY: number; height: number } }) => void,
+    ): { remove: () => void };
+  };
   export const KeyboardAvoidingView: any;
   export const Linking: { openURL: (url: string) => Promise<unknown> };
   export const Modal: any;
