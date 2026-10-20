@@ -1,124 +1,173 @@
-# S4 staging — restore plan (not executed)
+# S4 staging — configuration proposed for approval (not executed)
 
-Prepared 20 October 2026 for the Guard mobile release. **Nothing in this document has been done.** Every step
-that changes hosting needs owner approval first. Production is not touched by any step.
+Prepared 20 October 2026. **Nothing in this document has been done on Render, Supabase, GitHub or any store.**
+Every hosting step needs the owner's explicit approval first. Production is not touched by any step.
 
-## What exists today (read-only findings, 20 Oct 2026)
+## 1. What exists today (read-only, Render dashboard, 20 Oct 2026)
 
 | Item | Finding |
 |---|---|
-| Service | Render web service `security-marketplace-api-staging` (`srv-da8t3d0ae00c73d7g5jg`), Oregon, **Free** plan, Docker, root `security-backend-nest`, Dockerfile `./Dockerfile`, auto-deploy **off** |
-| Branch | `feature/p1hc-client-billing-reapproval` — an old feature branch, not `release/s4-pilot-rc1` |
-| Health | Crash loop. Every start exits 1: `TypeOrmModule Unable to connect to the database … Connection terminated unexpectedly` (20 Oct 11:29–11:33Z; also 11 Oct and 28 Sep) |
-| Database | Not identifiable without opening the service's secret environment variables (not done). No matching Render Postgres instance exists in the account (the only staging database listed is `d4drive-staging-db`, a different product). Most likely an expired free Render database or an external URL that no longer accepts connections. |
-| Isolation from production | **Unproven.** It cannot be shown without inspecting its `DATABASE_URL`. |
-| Mobile profile | `eas.json` `preview-staging` points at `https://security-marketplace-api-staging.onrender.com`, but signs with EAS-generated credentials (the Build 8 problem) — not usable as is. |
+| Service | `security-marketplace-api-staging` (`srv-da8t3d0ae00c73d7g5jg`), Oregon (US West), **Free** compute ($0; 0.1 CPU / 512 MB), Docker, Dockerfile and context `security-backend-nest/` |
+| Branch | `feature/p1hc-client-billing-reapproval` (an old feature branch) |
+| Auto-deploy | Off. PR previews off. Health check path `/health/ready` |
+| Pre-deploy command | Empty — and **locked on Free** (Free has no pre-deploy, shell, one-off jobs or disks) |
+| Health | Crash loop: the database it is configured for refuses connections (28 Sep, 11 Oct, 20 Oct) |
+| Database | Unknown (secret env not opened). No matching Render Postgres exists. Isolation from production **unproven** |
+| Workspace | Hobby plan; 7 of 25 services; bandwidth 2.92 of 5 GB included this month; October projected $20.30 |
 
-## Target
+Production for comparison: Render web service `security-marketplace-api` (Starter, `render.yaml`) + **Supabase**
+Postgres 17 (pooler). Production is not edited by anything below.
 
-A staging API that runs the production release commit against its **own** database, with its **own** secrets,
-that can never read or write production data, and a Guard test build that talks only to it.
+**Reuse verdict:** the existing staging service can be reused — same repo, Dockerfile, health path, auto-deploy
+off, its own `onrender.com` URL — but every one of its environment variables is replaced (its current
+`DATABASE_URL` is unknown and must not survive), its branch is changed and its compute is upgraded.
 
-## Plan
+## 2. Proposed Render configuration
 
-1. **Database (owner choice).**
-   - Option A: a new Render Postgres in the same region (Oregon), named `s4-staging-db`. Free tier expires after
-     30 days; the paid Basic tier does not.
-   - Option B: a separate Supabase project (`s4-staging`), never the production project.
-   Either way the database is new and empty. **No production dump is restored into it** (personal data).
-2. **Service settings (owner, Render dashboard).**
-   - Branch → `release/s4-pilot-rc1` (deploys are manual, auto-deploy stays off).
-   - Plan: Free is acceptable for UAT but spins down; Starter avoids 50-second cold starts during device tests.
-   - Environment, all **new staging-only values** — never copied from production:
-     `DATABASE_URL` (the new database), `DATABASE_SSL=true`, `DATABASE_SYNCHRONIZE=false`, `NODE_ENV=production`,
-     new random `JWT_SECRET`, `GUARD_DATA_ENCRYPTION_KEY`, `GUARD_DATA_HMAC_KEY`, `CORS_ORIGIN` set to the staging
-     web origin only, evidence storage pointed at a separate bucket or left disabled, email sending disabled or
-     sandboxed, `DB_POOL_DIAGNOSTICS` unset.
-3. **Deploy** `a7b5b22` (or the release commit current at the time). The pre-deploy step runs the migrations on
-   the empty database; expect all 63 to run and the ledger to read 63.
-4. **Verify isolation before any test account exists.**
-   - Owner confirms in the dashboard that the staging `DATABASE_URL` host is not the production host.
-   - From the build machine, read-only: the staging `/health/ready` returns 200; the production read-only
-     credential shows no new rows in production after the staging deploy (users, companies, shifts, audit).
-   - A login on staging with a production account fails (separate users table, separate JWT secret).
-5. **Seed test data on staging only.** One test company, one site (with and without GPS required), two test
-   Guards with company checks recorded, offered / accepted / live shifts. Test logins are generated and kept in
-   the git-ignored secrets folder, never in chat or Git.
-6. **Guard UAT build pointing at staging (separate approval).** Recommended: a distinct application identity
-   (`com.sfour.s4.uat`, iOS `com.sfour.s4.uat`) so it installs beside the real app and can never be mistaken for
-   it, signed with the existing upload key (Android, `credentialsSource: local`) and an internal/ad hoc profile
-   (iOS, test iPhone registered). Its `EXPO_PUBLIC_API_URL` is the staging URL, set explicitly in its own EAS
-   profile; the store profiles keep the production URL.
-7. **Retire or fix the old profile.** `preview-staging` (EAS-generated signing) is removed or replaced by the
-   profile in step 6.
+| Setting | Value |
+|---|---|
+| Web service | Reuse `srv-da8t3d0ae00c73d7g5jg`; compute **Starter `0.5c-512mb`** (same size as production) |
+| Why not Free | Free cannot run the pre-deploy migration step, spins down (≈50 s cold start in the middle of a device test), and has no shell |
+| Source | Dedicated branch **`staging/s4-uat`**, created at certified commit **`a7b5b22`** (the production release; the backend is byte-identical at `6b8e41b`). Auto-deploy stays **off**; deploys are manual. It never tracks `release/s4-pilot-rc1`. Creating the branch is a push of an existing commit and needs approval; the no-push alternative is "Deploy a specific commit" `a7b5b22` from the current branch setting |
+| Pre-deploy command | `npm run migration:run:prod` (as production) |
+| Health check | `/health/ready` (runs `SELECT 1`) |
+| Database | **New Render Postgres `s4-staging-db`**, PostgreSQL **17** (production runs 17), compute **`0.1c-256mb`**, storage **1 GB**, region **Oregon** (same private network as the service), no HA, no storage autoscaling |
+| URL | `https://security-marketplace-api-staging.onrender.com` (unchanged; no custom domain — the workspace's 2 included domains are both used) |
 
-## What stays true
+### Exact monthly cost (Render dashboard prices, 20 Oct 2026; billed per second)
 
-- Production (Render `a7b5b22`, Vercel, the production database) is not changed by any step.
-- No migration is written for staging; it runs the same migrations production already ran.
-- No production data, secret or credential is copied to staging.
+| Item | Monthly |
+|---|---|
+| Web service Starter `0.5c-512mb` | $7.00 |
+| Postgres `0.1c-256mb` | $6.00 |
+| Postgres storage 1 GB × $0.30/GB | $0.30 |
+| **Total** | **$13.30** |
 
-## Rollback
+Not included / limits: the form defaults to 15 GB ($4.50) — choose **1 GB** (it can grow later, never shrink;
+one increase per 6 h). Bandwidth comes out of the workspace's 5 GB included (UAT traffic is a few MB). Evidence
+storage (below) uses Cloudflare R2's free tier or a placeholder: $0. A Free Postgres ($0) is possible but expires
+after 30 days.
 
-Staging has no production dependency: suspending the staging service and deleting the staging database returns
-to today's state (a broken, unused staging service).
+## 3. Environment (all new, staging-only; never copied from production)
 
-## Recommended minimal design (added 20 Oct 2026, after the 1.1.0 builds)
+Production mode (`NODE_ENV=production`) is kept so staging runs the same checks as production.
 
-Production is a Render Starter web service plus a **Supabase** Postgres. For staging the recommendation is
-Option A, a **Render** Postgres: being on a different provider from production, its connection string cannot be
-mistaken for production's, and creating it cannot touch the production Supabase project.
+| Variable | Staging value |
+|---|---|
+| `NODE_ENV` | `production` |
+| `TZ` | `UTC` (boot refuses any other zone; the Dockerfile does not set it) |
+| `DATABASE_URL` | The **internal** URL of `s4-staging-db` |
+| `DATABASE_POOLER_URL` | **Must not exist** — it overrides `DATABASE_URL` |
+| `DATABASE_SSL` | `true` (production mode refuses `false`) |
+| `DATABASE_CA_CERT` | The CA that signs `s4-staging-db`'s certificate (verified from the build machine with a TLS handshake before the first deploy; certificate verification is always strict) |
+| `DATABASE_SYNCHRONIZE` | `false` |
+| `JWT_SECRET` | New random, 64+ characters |
+| `GUARD_DATA_ENCRYPTION_KEY`, `GUARD_DATA_HMAC_KEY` | New random, 64 hex each, different from each other |
+| `CORS_ORIGIN` | `http://localhost:8098` (the S4 web app run locally against staging for control-room checks); no production origin |
+| `S4_WEB_APP_URL` | `http://localhost:8098` — never the production web app |
+| `RESEND_API_KEY`, `EMAIL_FROM`, `EMAIL_REPLY_TO` | **Unset** → email disabled; nothing can be sent |
+| `EVIDENCE_STORAGE_*` (5) | A separate R2 bucket `s4-staging-evidence` with its own key, **or** a placeholder HTTPS endpoint (the app boots; evidence uploads fail). Never the production bucket |
+| `SENTRY_DSN` | Unset |
+| `ENABLE_SWAGGER` | `false` |
+| `TRUST_PROXY` | `1` |
+| `DB_POOL_DIAGNOSTICS` | Unset |
 
-| Part | Choice | Approx. monthly cost (check the provider's pricing page before approving) |
-|---|---|---|
-| API | Reuse `security-marketplace-api-staging` (`srv-da8t3d0ae00c73d7g5jg`), branch `release/s4-pilot-rc1`, manual deploys | Free: $0 (spins down; ~50 s cold start). Starter: about $7, recommended while devices are testing |
-| Database | New Render Postgres `s4-staging-db`, Basic 256 MB, same region as the service | about $6 (the Free tier expires after 30 days) |
-| Email / evidence storage | Disabled, or a separate sandbox; never the production keys | $0 |
-| Total | | about $13 a month on Starter + Basic, billed pro rata; $0 once deleted |
+All existing variables on the staging service are deleted first.
 
-URL: `https://security-marketplace-api-staging.onrender.com` (the existing service name; no DNS change).
+## 4. Security and isolation (backend audit, `6b8e41b`)
 
-### Accounts and data
-- Staging-only accounts, created on staging after the isolation check: one test company owner, one control-room
-  user, two test Guards (A and B), one client. Company SIA / Right to Work checks recorded with test values.
-- One site with GPS required and one without; shifts covering offered, accepted, starting in 2 h, live, ending
-  in 10 min, and a short welfare interval for the missed-welfare test.
-- Logins generated, stored only in the git-ignored secrets folder.
-- A seed script would run against the staging URL over the API only, and refuse to run unless the host is the
-  staging host (adapted from the local P0 seed). Writing it is a separate, reviewable change.
+- **Database:** a different provider from production (Render, not Supabase). The staging service holds only
+  `s4-staging-db`'s credentials; no Supabase URL, pooler URL or production key exists in its environment.
+  Advisory locks and scheduled jobs act only on the connected database.
+- **Tokens:** access tokens are HS256 with `JWT_SECRET`; a different secret means production tokens are
+  rejected on staging and vice versa. Refresh, reset and verification tokens are random and stored hashed in the
+  database that issued them, so they work nowhere else.
+- **Notifications:** the backend has **no SMS or push**. Its only outbound messages are password-reset and
+  verify-email emails via Resend, sent only when `RESEND_API_KEY` and `EMAIL_FROM` are both set — unset on
+  staging. Test accounts use `@example.com` (a reserved domain). The mobile app has no push either.
+- **Jobs:** the welfare sweep and compliance-lapse scan (every 5 min), daily reminders and weekly suggestions are
+  in-process timers that read and write only the connected database; they make no external calls. Notifications
+  are database rows.
+- **Outbound calls:** only Resend (off), the evidence store (separate or placeholder) and Sentry (off). No
+  payments, SIA lookups, maps or webhooks exist in the backend.
+- **Logs:** one JSON line per request (method, path, status, duration, request id) — no bodies, headers or tokens;
+  database connection errors log a category and code, never a host or URL; email logs never include recipients or
+  links. Synthetic data only, so names in notification rows are fictional.
+- **Production unchanged:** `render.yaml` (the production service) is not edited; production domains, the Vercel
+  app and both store builds' API (`security-marketplace-api.onrender.com`) are unchanged.
+- **Do not run** `scripts/pilot-journey.spec.ts` (or other `scripts/*.spec.ts` that drop or truncate) against
+  staging: several drop the whole schema of whatever database they are given.
 
-### Authentication and permissions
-Same code and migrations as production (63), new `JWT_SECRET` and guard-data keys, so production tokens and
-encrypted fields are unusable on staging and vice versa. Tenant rules are those in the release commit;
-platform-admin access on staging is used only by the owner.
+## 5. Accounts and test data (after isolation is proven)
 
-### Reset
-1. Suspend the service. 2. In the database, `DROP SCHEMA public CASCADE; CREATE SCHEMA public;` (staging
-database only, confirmed by host). 3. Deploy the same commit again; the pre-deploy step re-runs all migrations.
-4. Re-run the seed. About 10 minutes; production is not involved.
+Email verification is required to sign in and email is disabled on staging, so accounts are created by a
+**staging seed runner** (new script, separate review): it runs on the build machine, starts the backend's own
+services in-process against `s4-staging-db` (external URL, TLS), creates verified accounts through the real
+registration code (the in-process outbox stands in for email) and the real API, and refuses to start unless the
+database host is the staging host and `S4_STAGING_SEED_CONFIRM=s4-staging-db` is set. Logins are written only to
+`~/.s4-pilot-secrets/staging-uat.env`.
 
-### Shutdown
-Suspend the service (keeps settings, $0 on Free) or delete it, and delete `s4-staging-db`. Remove the UAT build
-profile. Nothing else depends on staging.
+Fictional dataset:
 
-## UAT build (separate approval, after staging passes its isolation check)
+| Record | Detail |
+|---|---|
+| Company | **UAT Test Security Ltd** (owner `uat-owner@example.com`, control-room user `uat-control@example.com`) |
+| Client | **UAT Example Client** |
+| Site | **UAT Test Site — Unit 1, Example Park** (Europe/London), GPS required; a second, GPS-free site for the denial test |
+| Guards | **Test Guard Alpha** (`uat-guard-a@example.com`), **Test Guard Bravo** (`uat-guard-b@example.com`); company SIA and Right to Work checks recorded with obvious test values |
+| Shifts (relative to the test day) | 1 offered to Alpha (Accept / Decline); 1 accepted, starting in 2 h (early Book On); 1 accepted, starting now (on-time Book On, hourly welfare); 1 live with a welfare check about to fall due (missed-welfare alert); 1 live ending in 10 min (plain Book Off); 1 live ending in 4 h (early Book Off); 1 for Bravo for company isolation and a second-Guard view |
+| Incidents / site requests | None seeded — created by testers |
 
-Store profiles stay exactly as they are. A UAT variant needs a small, reviewable source change:
+Reset: suspend the service → `DROP SCHEMA public CASCADE; CREATE SCHEMA public;` on `s4-staging-db` only
+(host confirmed) → manual deploy of the same commit (pre-deploy re-runs all 63 migrations) → seed runner.
+About 10 minutes.
 
-- `app.config.js` that reads `APP_VARIANT`; when it is `uat`: name `S4 UAT`, Android package
-  `com.sfour.s4.uat`, iOS bundle `com.sfour.s4.uat`, same versions. Otherwise it returns `app.json` unchanged
-  (the store identity specs keep pinning `com.sfour.s4`).
-- `eas.json` profile `uat`: `distribution: internal`; Android `buildType: apk`, `credentialsSource: local`;
-  env `APP_VARIANT=uat`, `EXPO_PUBLIC_API_URL=https://security-marketplace-api-staging.onrender.com`,
-  `EXPO_PUBLIC_BUILD_LABEL=UAT`.
-- Replace the unusable `preview-staging` profile with it.
-- The app has no push notifications or Firebase file, so a different package name needs no extra service set-up.
+## 6. Certification after the infrastructure is approved and created
 
-Distribution:
-- Android: the APK is installed directly (link from the EAS build page). It installs beside the real app.
-- iOS: ad hoc. Each test iPhone is registered (`eas device:create`, owner opens the link on the phone), and EAS
-  creates the `com.sfour.s4.uat` App ID and an ad hoc profile. This needs an Apple sign-in by the owner
-  (interactive), because the App Store Connect API key held by EAS is currently rejected.
+1. TLS handshake to `s4-staging-db` verifies with `DATABASE_CA_CERT`.
+2. Deploy `a7b5b22`; pre-deploy log shows 63 migrations; `GET /health/ready` = 200.
+3. Ledger read-only: `typeorm_migrations` = 63, last `AddComplianceLapseAlerts1720900000009`.
+4. Isolation: a production account cannot sign in on staging; production read-only counts (users, companies,
+   shifts, audit) unchanged across the staging deploy and seed.
+5. Seed; then over the staging API: sign-in for each role; Alpha cannot see Bravo's company data and a second
+   test company cannot see the first (tenant isolation).
+6. Book On (early with confirmation, on time) and Book Off (plain and early) for Alpha.
+7. Let a welfare check lapse; within one 5-minute sweep one welfare alert exists; acknowledge and resolve it.
+8. Incident and site request created and visible to control.
+9. A UAT build (separate approval) against staging: install, sign in, one full Guard journey.
 
-Expo usage: about $1 per Android medium build and $2 per iOS medium build from the Starter plan's build credit
-($18 of $45 used in the period ending 28 Oct 2026). Two rounds of both platforms is about $6, inside the credit.
+## 7. UAT mobile build (prepared in Git, not built)
+
+- `app.config.js`: with `APP_VARIANT=uat` → name **S4 UAT**, Android **`com.sfour.s4.uat`**, iOS
+  **`com.sfour.s4.uat`**, scheme `s4security-uat`, amber icon / adaptive icon / splash (`assets/uat/`, generated
+  by `scripts/make-uat-icons.cjs`), `extra.apiBaseUrl` = staging. Without it, `app.json` is returned unchanged.
+- In-app: the signed-in top bar reads **"S4 UAT · STAGING"** in amber; the build footer reads "UAT".
+- EAS profile **`uat`**: `distribution: internal`, Android APK with the local key, env `APP_VARIANT=uat`,
+  `EXPO_PUBLIC_API_URL` = staging, `EXPO_PUBLIC_BUILD_LABEL=UAT`. The `production` profile is unchanged.
+- `scripts/uat-variant.spec.cjs` (in the release gate) proves the store config is `app.json` unchanged and that
+  only the `uat` profile can set the variant.
+- iOS distribution: ad hoc — each test iPhone registered (`eas device:create`), EAS creates the `com.sfour.s4.uat`
+  App ID and an ad hoc profile with an interactive Apple sign-in by the owner (the EAS-held App Store Connect API
+  key is currently rejected).
+- Expo usage: about $1 per Android and $2 per iOS medium build from the Starter build credit ($18 of $45 used in
+  the period ending 28 Oct 2026).
+- The old `preview-staging` profile (EAS-generated signing) stays as recorded history for now; it is not used.
+
+## 8. Risks
+
+| Risk | Mitigation |
+|---|---|
+| Editing the wrong Render service | Only `srv-da8t3d0ae00c73d7g5jg` is touched; production `security-marketplace-api` is checked unchanged (plan, branch, deploy id) before and after |
+| An old staging secret points at production | Every existing env var is deleted before the new ones are set; certification step 4 proves no production change |
+| CA certificate mismatch blocks boot | Verified by a TLS handshake from the build machine before the first deploy. If the internal URL does not offer verifiable TLS, use the database's external URL (TLS) instead — still staging-only |
+| Staging emails a real person | Email unset; `@example.com` addresses only |
+| Test data mistaken for real | "UAT" / "Test" / "Example" in every name; amber UAT app |
+| Cost overrun | $13.30/month; billed per second; suspend or delete at any time |
+
+## 9. Shutdown and deletion
+
+- **Pause:** suspend the web service (Settings › Suspend) and, if wanted, downgrade it to Free — about $0 for the
+  service; the database keeps billing until deleted.
+- **Delete:** delete `s4-staging-db` (irreversible; synthetic data only), delete or suspend the service, delete the
+  `staging/s4-uat` branch, revoke the R2 staging key and delete its bucket if created. Nothing in production
+  depends on any of it.
