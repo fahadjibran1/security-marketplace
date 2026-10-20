@@ -9,7 +9,8 @@
  * in_progress, so no attendance exists for the work), and mark a shift missed before it had even started.
  * No edit was audited. DELETE /shifts/:id hard-deleted any shift in any status, and the database cascades
  * that to its attendance events and Welfare Check logs; it checked only shifts.view. A platform administrator
- * could edit or delete any company's shift without any company permission.
+ * could edit or delete any company's shift without any company permission. Deleting a never-worked shift
+ * also deleted its timesheet, whatever its approval, payroll or billing state (SES-22..24).
  *
  * Reacceptance after a material change, availability at edit time, the Guard's notice and rota-position
  * rules are the Workflow P1 release; SES-11, SES-14 and SES-16 pin today's behaviour until then.
@@ -352,6 +353,76 @@ async function main() {
       assert.equal(r.status, 200, `${r.status} ${JSON.stringify(r.body)}`);
       assert.equal((await row(accepted)).start.getTime(), startAt + HOUR, 'the position moves with its slot');
       assert.equal((await row(accepted)).status, 'ready');
+    });
+
+    // ════════════════ a timesheet is never deleted, and a shift with one is never deleted ════════════════
+    // Real states only, from the schema: approval draft/submitted/approved/rejected/returned; payroll
+    // unpaid/included/paid; billing uninvoiced/included/invoiced.
+
+    const TIMESHEET_STATES: Array<{ label: string; approval: string; payroll: string; billing: string; extra?: string }> = [
+      { label: 'draft', approval: 'draft', payroll: 'unpaid', billing: 'uninvoiced' },
+      { label: 'submitted', approval: 'submitted', payroll: 'unpaid', billing: 'uninvoiced', extra: `"submittedAt" = now()` },
+      { label: 'approved', approval: 'approved', payroll: 'unpaid', billing: 'uninvoiced', extra: `"submittedAt" = now(), "reviewedAt" = now()` },
+      { label: 'rejected', approval: 'rejected', payroll: 'unpaid', billing: 'uninvoiced', extra: `"reviewedAt" = now()` },
+      { label: 'returned', approval: 'returned', payroll: 'unpaid', billing: 'uninvoiced', extra: `"reviewedAt" = now()` },
+      { label: 'in payroll', approval: 'approved', payroll: 'included', billing: 'uninvoiced', extra: `"payrollIncludedAt" = now()` },
+      { label: 'paid', approval: 'approved', payroll: 'paid', billing: 'uninvoiced', extra: `"payrollPaidAt" = now()` },
+      { label: 'on an invoice batch', approval: 'approved', payroll: 'unpaid', billing: 'included' },
+      { label: 'invoiced', approval: 'approved', payroll: 'paid', billing: 'invoiced', extra: `"invoiceIssuedAt" = now()` },
+    ];
+
+    await test('SES-22-A-SHIFT-WITH-A-TIMESHEET-IN-ANY-STATE-CANNOT-BE-DELETED', async () => {
+      for (const [index, state] of TIMESHEET_STATES.entries()) {
+        for (const status of ['offered', 'cancelled']) {
+          const id = await shift(status, (500 + index * 24) * HOUR, 8);
+          const ts = (await one(`INSERT INTO timesheets ("shiftId","guardId","companyId","approvalStatus","payrollStatus","billingStatus") VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+            [id, g.id, A.id, state.approval, state.payroll, state.billing])).id;
+          if (state.extra) await q(`UPDATE timesheets SET ${state.extra} WHERE id = $1`, [ts]);
+          const before = await one(`SELECT row_to_json(t)::text j FROM timesheets t WHERE id = $1`, [ts]);
+          assert.equal((await api('DELETE', `/shifts/${id}`, B.token)).status, 404, `${state.label}/${status}: another company learns nothing`);
+          assert.equal((await api('DELETE', `/shifts/${id}`, viewerToken)).status, 403, `${state.label}/${status}: a viewer is refused first`);
+          const r = await api('DELETE', `/shifts/${id}`, A.token);
+          assert.equal(r.status, 409, `${state.label} timesheet on a ${status} shift: ${r.status} ${JSON.stringify(r.body)}`);
+          assert.match(r.body.message, /timesheet/i);
+          assert.ok(await row(id), `${state.label}/${status}: the shift survives`);
+          const after = await one(`SELECT row_to_json(t)::text j FROM timesheets t WHERE id = $1`, [ts]);
+          assert.equal(after?.j, before.j, `${state.label}/${status}: the timesheet is untouched`);
+          assert.equal((await audits(id, 'shift.deleted')).length, 0, `${state.label}/${status}: nothing is recorded as deleted`);
+        }
+      }
+    });
+
+    await test('SES-23-A-SHIFT-CREATED-WITH-A-GUARD-GETS-A-TIMESHEET-AND-IS-THEREFORE-KEPT', async () => {
+      const start = Date.now() + 900 * HOUR;
+      const created = await api('POST', '/shifts', A.token, { siteId: A.siteId, guardId: g.id, start: iso(start), end: iso(start + 8 * HOUR) });
+      assert.equal(created.status, 201, `${created.status} ${JSON.stringify(created.body)}`);
+      const id = created.body.shift.id as number; // POST /shifts returns { shift, timesheet }
+      assert.equal((await row(id)).status, 'offered');
+      assert.equal(Number((await one(`SELECT count(*) n FROM timesheets WHERE "shiftId" = $1`, [id])).n), 1, 'the real assignment path creates a draft timesheet');
+      assert.equal((await api('DELETE', `/shifts/${id}`, A.token)).status, 409, 'so the offer is cancelled, not deleted');
+      assert.equal((await api('PATCH', `/shifts/${id}`, A.token, { status: 'cancelled' })).status, 200, 'and cancelling it works');
+      const open = await api('POST', '/shifts', A.token, { siteId: A.siteId, start: iso(start + 24 * HOUR), end: iso(start + 32 * HOUR) });
+      assert.equal(open.status, 201);
+      assert.equal(Number((await one(`SELECT count(*) n FROM timesheets WHERE "shiftId" = $1`, [open.body.shift.id])).n), 0);
+      assert.equal((await api('DELETE', `/shifts/${open.body.shift.id}`, A.token)).status, 200, 'an open shift with no timesheet can still be deleted');
+    });
+
+    await test('SES-24-A-FAILED-DELETE-ROLLS-BACK-COMPLETELY', async () => {
+      // A fault after the audit entry is written — injected with a trigger in this disposable database only.
+      const id = await shift('unfilled', 26 * HOUR, 8, { guardId: null });
+      await q(`CREATE OR REPLACE FUNCTION ses_block_delete() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'injected fault'; END $$ LANGUAGE plpgsql`);
+      await q(`CREATE TRIGGER ses_block_delete BEFORE DELETE ON shifts FOR EACH ROW WHEN (OLD.id = ${Number(id)}) EXECUTE FUNCTION ses_block_delete()`);
+      try {
+        const r = await api('DELETE', `/shifts/${id}`, A.token);
+        assert.ok(r.status >= 500, `the injected fault fails the request: ${r.status}`);
+        assert.ok(await row(id), 'the shift is still there');
+        assert.equal((await audits(id, 'shift.deleted')).length, 0, 'and the audit entry written before the fault was rolled back');
+      } finally {
+        await q(`DROP TRIGGER IF EXISTS ses_block_delete ON shifts`);
+        await q(`DROP FUNCTION IF EXISTS ses_block_delete()`);
+      }
+      assert.equal((await api('DELETE', `/shifts/${id}`, A.token)).status, 200, 'with the fault removed the same delete succeeds');
+      assert.equal((await audits(id, 'shift.deleted')).length, 1);
     });
 
     // ════════════════ tenant isolation and the existing workflows ════════════════

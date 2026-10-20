@@ -35,7 +35,7 @@ export const MISSED_SHIFT_GRACE_MINUTES = 15;
 /**
  * Shifts that may be deleted: never worked and never decided. Anything else is history — cancel it instead.
  * Deletion also cascades to attendance and Welfare Check logs in the database, which is why evidence is
- * checked as well as status.
+ * checked as well as status; a shift with a timesheet in any state is never deleted either.
  */
 export const DELETABLE_STATUSES: ReadonlySet<string> = new Set(['unfilled', 'offered', 'cancelled']);
 

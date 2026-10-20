@@ -751,7 +751,8 @@ export class ShiftService {
   /**
    * Deletes a shift that was never worked or decided. Anything else is part of the operational record:
    * deleting a shift cascades in the database to its attendance events and Welfare Check logs, so a worked
-   * shift is never deleted here — it is cancelled. Needs shifts.manage (finding it only needs shifts.view).
+   * shift is never deleted here — it is cancelled. A shift with a timesheet in any state is refused too, and
+   * this route never deletes a timesheet. Needs shifts.manage (finding it only needs shifts.view).
    */
   async removeForUser(user: JwtPayload, id: number): Promise<{ success: true }> {
     const shift = await this.findOneForUser(user, id);
@@ -770,15 +771,22 @@ export class ShiftService {
       if (!locked || locked.status !== shift.status) {
         throw new ConflictException('This shift changed while it was being deleted. Reload it and try again.');
       }
-      const [{ evidence }] = await manager.query(
+      const [{ evidence, timesheet }] = await manager.query(
         `SELECT (EXISTS (SELECT 1 FROM "attendance_events" WHERE "shiftId" = $1)
               OR EXISTS (SELECT 1 FROM "daily_logs" WHERE "shiftId" = $1)
               OR EXISTS (SELECT 1 FROM "safety_alerts" WHERE "shiftId" = $1)
-              OR EXISTS (SELECT 1 FROM "incidents" WHERE "shiftId" = $1)) AS "evidence"`,
+              OR EXISTS (SELECT 1 FROM "incidents" WHERE "shiftId" = $1)) AS "evidence",
+                EXISTS (SELECT 1 FROM "timesheets" WHERE "shiftId" = $1) AS "timesheet"`,
         [shift.id],
       );
       if (evidence) {
         throw new ConflictException('This shift has attendance, logs, alerts or incidents recorded against it. It cannot be deleted.');
+      }
+      // A timesheet is financial and approval evidence in every state — draft, submitted, approved, rejected,
+      // returned, in payroll or paid, on an invoice — and client weekly approval lines and disputes point at it.
+      // A shift with one is never hard-deleted here, and no timesheet is ever deleted by this route.
+      if (timesheet) {
+        throw new ConflictException('This shift has a timesheet. It cannot be deleted; cancel it instead.');
       }
       await this.auditLogService.logInTransaction(manager, {
         company: { id: actorCompany.id },
@@ -788,7 +796,6 @@ export class ShiftService {
         entityId: shift.id,
         beforeData: { ...shiftAuditSnapshot(shift) },
       });
-      await manager.getRepository(Timesheet).delete({ shift: { id: shift.id } });
       await manager.getRepository(Shift).delete({ id: shift.id });
     });
     return { success: true };
