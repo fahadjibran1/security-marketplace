@@ -203,6 +203,18 @@ export function fictionalPdf(title: string, holder: string, reference: string): 
 }
 
 /** Why the configured evidence storage is not the staging bucket (placeholder, production, unnamed), or null. */
+/**
+ * POST /shifts answers { shift, timesheet } (ShiftService.create), not the shift itself. Returns the created shift and
+ * refuses any other shape, so a missing id stops the seed instead of becoming /shifts/undefined.
+ */
+export function createdShift(response: unknown): { id: number; status: string } {
+  const shift = (response as { shift?: { id?: unknown; status?: unknown } } | null)?.shift;
+  if (!shift || typeof shift.id !== 'number' || !Number.isInteger(shift.id)) {
+    throw new Error('POST /shifts did not return { shift: { id } }');
+  }
+  return shift as { id: number; status: string };
+}
+
 export function stagingEvidenceProblem(env: Record<string, string>, productionKeyId?: string): string | null {
   let endpoint: URL;
   try { endpoint = new URL(env.EVIDENCE_STORAGE_ENDPOINT ?? ''); } catch { return 'evidence endpoint missing'; }
@@ -347,10 +359,10 @@ async function seed(t: Target) {
 
     const created: Array<{ key: string; id: number; status: string }> = [];
     for (const s of SHIFTS) {
-      const shift = await api('POST', '/shifts', ownerToken, {
+      const shift = createdShift(await api('POST', '/shifts', ownerToken, {
         siteId: siteIds[s.site], guardId: guards[s.guard].guardId, start: s.start(), end: s.end(), checkCallIntervalMinutes: 60,
         instructions: `UAT scenario ${s.key}: ${s.purpose}. Fictional test data.`,
-      });
+      }));
       if (s.then !== 'offered') await api('PATCH', `/shifts/${shift.id}/respond`, guards[s.guard].token, { response: 'accepted' });
       if (s.then === 'booked-on') await api('POST', '/attendance/check-in', guards[s.guard].token, { shiftId: shift.id });
       created.push({ key: s.key, id: shift.id, status: s.then });

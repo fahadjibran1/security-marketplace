@@ -8,11 +8,13 @@
  *   SEED-03  documents go through the real workflow in order (presign -> PUT bytes -> complete-upload -> verify)
  *            and the file-less legacy path (fileUrl) is never used
  *   SEED-04  the database guards are present: staging host only, production host refused, empty target, ledger 63
+ *   SEED-05  the shift id is read from the real POST /shifts response ({ shift, timesheet }); the 21 Oct staging seed
+ *            stopped at /shifts/undefined/respond because the old code read .id off the wrapper
  */
 import * as assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
-import { fictionalPdf, stagingEvidenceProblem } from './staging-uat-seed';
+import { createdShift, fictionalPdf, stagingEvidenceProblem } from './staging-uat-seed';
 
 let passed = 0;
 const test = (id: string, fn: () => void) => { fn(); passed += 1; console.log(`PASS  ${id}`); };
@@ -79,6 +81,24 @@ test('SEED-04-DATABASE-GUARDS-ARE-PRESENT', () => {
   assert.match(source, /S4_STAGING_SEED_CONFIRM !== CONFIRM/);
   assert.match(source, /DATABASE_SYNCHRONIZE: 'false'/, 'the in-process app never alters the schema');
   assert.match(source, /DATABASE_POOLER_URL: ''/, 'no pooler URL can be picked up');
+});
+
+test('SEED-05-THE-SHIFT-ID-COMES-FROM-THE-REAL-POST-SHIFTS-RESPONSE', () => {
+  // The contract, read from the code the controller returns: create() answers { shift, timesheet }.
+  const service = fs.readFileSync(path.join(__dirname, '..', 'src', 'shift', 'shift.service.ts'), 'utf8');
+  const controller = fs.readFileSync(path.join(__dirname, '..', 'src', 'shift', 'shift.controller.ts'), 'utf8');
+  assert.match(service, /return \{ shift: savedShift, timesheet \};/, 'ShiftService.create still answers { shift, timesheet }');
+  assert.match(controller, /return this\.shiftService\.createForUser\(user, dto\);/);
+  // That shape yields the shift; the old reading (.id on the wrapper) is exactly what is now refused.
+  assert.deepEqual(createdShift({ shift: { id: 3, status: 'offered' }, timesheet: { id: 9 } }), { id: 3, status: 'offered' });
+  assert.equal(({ shift: { id: 3 }, timesheet: {} } as any).id, undefined, 'the wrapper itself has no id: the 21 Oct failure');
+  for (const bad of [{ id: 3, status: 'offered' }, { shift: {} }, { shift: { id: '3' } }, null, undefined]) {
+    assert.throws(() => createdShift(bad), /did not return \{ shift: \{ id \} \}/, JSON.stringify(bad));
+  }
+  // Every POST /shifts in the seeder goes through it.
+  const posts = source.match(/api\('POST', '\/shifts'/g) || [];
+  const wrapped = source.match(/createdShift\(await api\('POST', '\/shifts'/g) || [];
+  assert.ok(posts.length > 0 && posts.length === wrapped.length, `${wrapped.length} of ${posts.length} POST /shifts calls unwrap the response`);
 });
 
 console.log(`\n${passed} staging UAT seeder checks passed`);
