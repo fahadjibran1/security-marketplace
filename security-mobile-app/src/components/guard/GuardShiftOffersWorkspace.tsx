@@ -17,6 +17,7 @@ import { colors, control, radii, shadows, spacing } from '../../theme';
 import { Shift } from '../../types/models';
 import { StatePanel } from '../StatePanel';
 import { AppModal } from '../ui/Modal';
+import { OFFER_ENDED_LINE, OFFER_STARTED_LINE, offerTiming } from './offerTiming';
 
 export interface GuardShiftOffersWorkspaceProps {
   offers: Shift[];
@@ -49,10 +50,12 @@ function fmtTimePair(start: string, end: string, timeZone: string): string {
   return formatOfferWindow(start, end, timeZone, { separator: ' – ', empty: 'TBC' });
 }
 
-function getUrgencyLine(startAt: string, nowMs: number, timeZone: string): string {
+function getUrgencyLine(startAt: string, endAt: string, nowMs: number, timeZone: string): string {
   const diffMs = new Date(startAt).getTime() - nowMs;
   if (!Number.isFinite(diffMs)) return '';
-  if (diffMs <= 0) return 'Start time passed — contact control before accepting.';
+  const timing = offerTiming(startAt, endAt, nowMs);
+  if (timing === 'ended') return OFFER_ENDED_LINE;
+  if (timing === 'started') return OFFER_STARTED_LINE;
   const h = 3_600_000;
   const d = 86_400_000;
   if (diffMs < h) {
@@ -120,8 +123,11 @@ export function GuardShiftOffersWorkspace({
     setShowDeclineConfirm(false);
   }
 
+  // An offer whose shift has ended cannot be accepted (the server refuses it too); Decline stays available.
+  const selectedEnded = !!selectedOffer && offerTiming(selectedOffer.start, selectedOffer.end, liveNow) === 'ended';
+
   function handleAccept() {
-    if (!selectedOffer || offerBusy) return;
+    if (!selectedOffer || offerBusy || selectedEnded) return;
     onRespond(selectedOffer.id, 'accepted');
   }
 
@@ -168,7 +174,7 @@ export function GuardShiftOffersWorkspace({
             ) : (
               offers.map((offer, index) => {
                 const zone = offerZone(offer);
-                const urgency = getUrgencyLine(offer.start, liveNow, zone);
+                const urgency = getUrgencyLine(offer.start, offer.end, liveNow, zone);
                 const urgent = isUrgent(offer.start, liveNow);
                 return (
                   <View
@@ -273,15 +279,15 @@ export function GuardShiftOffersWorkspace({
               </Text>
             </Pressable>
             <Pressable
-              style={[styles.acceptBtn, offerBusy && styles.btnDisabled]}
+              style={[styles.acceptBtn, (offerBusy || selectedEnded) && styles.btnDisabled]}
               onPress={handleAccept}
-              disabled={offerBusy}
+              disabled={offerBusy || selectedEnded}
               accessibilityRole="button"
-              accessibilityLabel="Accept this shift"
-              accessibilityHint="Accepts the offer and moves the shift to your Home tab"
+              accessibilityLabel={selectedEnded ? 'Offer expired: this shift has ended' : 'Accept this shift'}
+              accessibilityHint={selectedEnded ? 'This shift has ended and can no longer be accepted' : 'Accepts the offer and moves the shift to your Home tab'}
             >
               <Text style={styles.acceptBtnText}>
-                {offerBusy && offerRespondAction === 'accepted' ? 'Accepting…' : 'Accept Shift'}
+                {selectedEnded ? 'Offer expired' : offerBusy && offerRespondAction === 'accepted' ? 'Accepting…' : 'Accept Shift'}
               </Text>
             </Pressable>
           </View>
@@ -297,7 +303,7 @@ export function GuardShiftOffersWorkspace({
                 {fmtTimePair(selectedOffer.start, selectedOffer.end, offerZone(selectedOffer))}
               </Text>
               {(() => {
-                const u = getUrgencyLine(selectedOffer.start, liveNow, offerZone(selectedOffer));
+                const u = getUrgencyLine(selectedOffer.start, selectedOffer.end, liveNow, offerZone(selectedOffer));
                 const urgent = isUrgent(selectedOffer.start, liveNow);
                 return u ? (
                   <Text style={[styles.detailUrgency, urgent && styles.detailUrgencyAlert]}>
