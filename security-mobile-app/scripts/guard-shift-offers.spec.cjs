@@ -276,6 +276,55 @@ test('OFFER-11-A-DOUBLE-TAP-CANNOT-SEND-TWO-RESPONSES', async () => {
   assert.match(handler, /finally \{\s*respondInFlightRef\.current = false;/, 'and is released however the request ends, so a retry works');
 });
 
+// Expired offers (owner rule, 21 Oct 2026): accept before start or while running; never at or after the end.
+const ENDED = offer(7, -14);   // 14 h ago → 2 h ago: over (production shift 42's shape)
+const STARTED = offer(8, -2);  // started 2 h ago, ends in 10 h: a late replacement
+
+test('OFFER-12-AN-ENDED-OFFER-SAYS-SO-AND-CANNOT-BE-ACCEPTED-BUT-CAN-BE-DECLINED', async () => {
+  const { renderer, responses } = await mount({ offers: [ENDED] });
+  const card = renderer.root.findAll((n) => n.props?.children === 'This shift has ended — it can no longer be accepted.');
+  assert.ok(card.length, 'the card says the shift has ended');
+  await press(reviewButtons(renderer)[0]);
+  const accept = one(renderer, 'Offer expired: this shift has ended');
+  assert.equal(accept.props.disabled, true, 'Accept is disabled');
+  assert.ok(renderer.root.findAll((n) => n.props?.children === 'Offer expired').length, 'and labelled Offer expired');
+  await press(accept);
+  assert.deepEqual(responses, [], 'nothing is sent even if pressed');
+  assert.ok(byLabel(renderer, 'Accept this shift').length === 0, 'no live Accept anywhere for an ended offer');
+  await press(one(renderer, 'Decline this shift offer'));
+  await press(one(renderer, 'Confirm decline'));
+  assert.deepEqual(responses, [[7, 'rejected']], 'Decline still works for an ended offer');
+});
+
+test('OFFER-13-A-STARTED-OFFER-SAYS-SO-AND-CAN-STILL-BE-ACCEPTED', async () => {
+  const { renderer, responses } = await mount({ offers: [STARTED] });
+  assert.ok(renderer.root.findAll((n) => n.props?.children === 'Already started — accept only if you can get there now.').length, 'the card says it has started');
+  await press(reviewButtons(renderer)[0]);
+  const accept = one(renderer, 'Accept this shift');
+  assert.notEqual(accept.props.disabled, true, 'a late replacement can be accepted');
+  await press(accept);
+  assert.deepEqual(responses, [[8, 'accepted']]);
+});
+
+test('OFFER-14-THE-SERVER-EXPIRED-ANSWER-IS-SHOWN-AS-OFFER-EXPIRED', async () => {
+  const timing = loadComponent('src/components/guard/offerTiming.ts');
+  // The device clock only shapes the display; the boundaries match the server's rule.
+  const s = '2026-10-20T18:00:00.000Z', e = '2026-10-21T06:00:00.000Z';
+  assert.equal(timing.offerTiming(s, e, Date.parse(s) - 1), 'upcoming');
+  assert.equal(timing.offerTiming(s, e, Date.parse(s)), 'started');
+  assert.equal(timing.offerTiming(s, e, Date.parse(e) - 1), 'started');
+  assert.equal(timing.offerTiming(s, e, Date.parse(e)), 'ended');
+  assert.equal(timing.isOfferExpiredError({ status: 409, body: { code: 'SHIFT_OFFER_EXPIRED', message: 'x' } }), true);
+  assert.equal(timing.isOfferExpiredError({ status: 409, body: { message: 'Shift is already ready' } }), false, 'other conflicts stay "no longer available"');
+  assert.equal(timing.isOfferExpiredError(new Error('network')), false);
+  // The screen checks for it first, so an expiry is never reported as a withdrawn offer.
+  const screen = codeOf('src/screens/GuardDashboardScreen.tsx');
+  const handler = screen.slice(screen.indexOf('async function handleRespondToShift'), screen.indexOf('useEffect(', screen.indexOf('async function handleRespondToShift')));
+  assert.ok(handler.indexOf('isOfferExpiredError(error)') > 0 && handler.indexOf('isOfferExpiredError(error)') < handler.indexOf('const isStaleOffer'));
+  assert.match(handler, /showAlert\(OFFER_EXPIRED_TITLE, OFFER_EXPIRED_MESSAGE\)/);
+  assert.match(timing.OFFER_EXPIRED_MESSAGE, /already ended/);
+});
+
 (async () => {
   for (const [name, fn] of pending) {
     await fn();

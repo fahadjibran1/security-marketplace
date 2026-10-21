@@ -29,6 +29,7 @@ import {
   isFeatureUnavailable,
 } from '../components/guard/guardShiftAmendments';
 import type { ShiftAmendment } from '../types/models';
+import { isOfferExpiredError, OFFER_EXPIRED_MESSAGE, OFFER_EXPIRED_TITLE } from '../components/guard/offerTiming';
 import { JobsScreen } from './JobsScreen';
 import { GuardTimesheetsScreen } from './GuardTimesheetsScreen';
 import { GuardAvailabilityScreen } from './GuardAvailabilityScreen';
@@ -1372,6 +1373,14 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
         response === 'accepted' ? 'Your shift is ready.' : 'The company can now arrange replacement cover.',
       );
     } catch (error) {
+      // The shift had already ended when the Guard accepted (server rule, SHIFT_OFFER_EXPIRED): say exactly that,
+      // not "withdrawn", so the Guard knows to call control rather than wonder what changed.
+      if (isOfferExpiredError(error)) {
+        await loadData();
+        pushFeedback('info', OFFER_EXPIRED_TITLE, OFFER_EXPIRED_MESSAGE);
+        showAlert(OFFER_EXPIRED_TITLE, OFFER_EXPIRED_MESSAGE);
+        return;
+      }
       // HTTP 400 "Only offered shifts" or 409 conflict = offer was withdrawn/changed before the guard responded
       const isStaleOffer =
         (error instanceof ApiError && (error.status === 409 || error.status === 400)) ||
