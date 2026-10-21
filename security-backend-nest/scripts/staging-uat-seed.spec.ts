@@ -15,13 +15,15 @@
  *   SEED-08  every HTTP request carries a 60 s timeout
  *   SEED-09  a state-changing request is sent once; after a failure the state is read back, never resent
  *   SEED-10  --report is read only, needs no confirmation, and prints no secret
+ *   SEED-11  --recover-logins touches only the 3 fictional accounts, only through the product's reset workflow,
+ *            saves each login before the next step and proves it on the deployed staging API
  */
 import * as assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import {
-  confirmOnce, createdShift, fictionalPdf, redact, registerSecret, REQUEST_TIMEOUT_MS, stagingEvidenceProblem, writeLogins,
+  confirmOnce, createdShift, fictionalPdf, redact, registerSecret, REQUEST_TIMEOUT_MS, stagingEvidenceProblem, UAT_ACCOUNT_EMAILS, writeLogins,
 } from './staging-uat-seed';
 
 let passed = 0;
@@ -201,6 +203,27 @@ test('SEED-10-REPORT-IS-READ-ONLY-AND-PRINTS-NO-SECRET', () => {
   assert.ok(main.indexOf('if (reportOnly)') < main.indexOf('S4_STAGING_SEED_CONFIRM'), 'needs no write confirmation');
   assert.ok(main.indexOf('resolveTarget()') < main.indexOf('if (reportOnly)'), 'same staging-only target guard');
   assert.ok(!/NestFactory/.test(body), 'does not start the application');
+});
+
+test('SEED-11-RECOVERY-USES-THE-PRODUCT-RESET-FLOW-FOR-THE-FICTIONAL-ACCOUNTS-ONLY', () => {
+  const body = code.slice(code.indexOf('async function recover('), code.indexOf('async function seed('));
+  assert.deepEqual(UAT_ACCOUNT_EMAILS, ['uat-guard-a@example.com', 'uat-guard-b@example.com', 'uat-owner@example.com']);
+  assert.ok(UAT_ACCOUNT_EMAILS.every((e) => e.endsWith('@example.com')), 'reserved, never-delivered domain');
+  // Refuses unless the users are exactly those three, read in a READ ONLY transaction, before the app starts.
+  assert.match(body, /BEGIN TRANSACTION READ ONLY/);
+  assert.match(body, /JSON\.stringify\(emails\) !== JSON\.stringify\(UAT_ACCOUNT_EMAILS\)/);
+  assert.ok(body.indexOf('UAT_ACCOUNT_EMAILS') < body.indexOf('bootApp(t)'), 'checked before the app starts');
+  // The product's own workflow: request (audited token), captured email, reset (audited, sessions revoked).
+  assert.ok(body.indexOf('recovery.forgotPassword(') < body.indexOf("m.kind === 'password_reset'"));
+  assert.ok(body.indexOf("m.kind === 'password_reset'") < body.indexOf('recovery.resetPassword('));
+  assert.ok(!/(INSERT INTO|UPDATE |DELETE FROM|passwordHash|bcrypt)/i.test(body), 'never writes a password or row directly');
+  // Saved before the sign-in proof, which goes to the deployed staging API.
+  assert.ok(body.indexOf('writeLogins(t.loginsFile, logins)') < body.indexOf('`${STAGING_API}/auth/login`'));
+  // Staging only, and only with its own confirmation.
+  const main = code.slice(code.indexOf('if (require.main === module)'));
+  assert.match(main, /if \(target !== 'staging'\) fail\('--recover-logins is for the staging UAT accounts only'\)/);
+  assert.match(main, /S4_STAGING_RECOVER_CONFIRM !== RECOVER_CONFIRM/);
+  assert.ok(main.indexOf('resolveTarget()') < main.indexOf('if (recoverLogins)'), 'same staging-only target guard');
 });
 
 queue.then(

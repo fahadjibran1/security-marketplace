@@ -49,6 +49,10 @@ const args = process.argv.slice(2);
 const target = args[args.indexOf('--target') + 1];
 const dryRun = args.includes('--dry-run');
 const reportOnly = args.includes('--report');
+const recoverLogins = args.includes('--recover-logins');
+/** The only accounts --recover-logins will touch: the three fictional UAT accounts, nothing else in the database. */
+export const UAT_ACCOUNT_EMAILS = ['uat-guard-a@example.com', 'uat-guard-b@example.com', 'uat-owner@example.com'];
+const RECOVER_CONFIRM = 's4-staging-db';
 
 /** Every HTTP request the seeder makes (in-process API, live staging API, bucket PUT and GET) gives up after this. */
 export const REQUEST_TIMEOUT_MS = 60_000;
@@ -336,7 +340,8 @@ async function preflight(t: Target) {
   }
 }
 
-async function seed(t: Target) {
+/** The real backend, in this process, against the target: no schema changes, no pooler, email captured in-process, no timers. */
+async function bootApp(t: Target) {
   registerSecret(t.url);
   for (const v of Object.values(t.appEnv)) registerSecret(v);
   // The app must never alter the schema here, never load a pooler URL from anywhere, and keep email in-process.
@@ -345,7 +350,6 @@ async function seed(t: Target) {
     RESEND_API_KEY: '', EMAIL_FROM: '', SENTRY_DSN: '', CORS_ORIGIN: 'http://127.0.0.1', ...t.appEnv,
   });
   const { NestFactory } = await import('@nestjs/core');
-  const { ValidationPipe } = await import('@nestjs/common');
   const { AppModule } = await import('../src/app.module');
   const app = await NestFactory.create(AppModule, { logger: ['error', 'warn'] });
   // Stop this process's timers at once: only the deployed staging service runs the sweeps.
@@ -354,6 +358,68 @@ async function seed(t: Target) {
   for (const svc of [app.get(SafetyAlertService) as any, app.get(AutomationSchedulerService) as any]) {
     for (const k of ['welfareInterval', 'dailyInterval', 'weeklyInterval']) if (svc[k]) clearInterval(svc[k]);
   }
+  return app;
+}
+
+/**
+ * Restores sign-in to the three fictional UAT accounts after their logins were lost, through the product's OWN
+ * password-reset workflow: forgotPassword issues and audits a reset token; the reset email is captured in-process
+ * (email delivery is disabled here, nothing leaves this machine); resetPassword consumes the token, sets a new random
+ * password, audits it and revokes every existing session. No row is deleted and no other account is touched. Each
+ * new login is then proved against the DEPLOYED staging API, and saved before the next account is started.
+ */
+async function recover(t: Target) {
+  const c = new Client({ connectionString: t.url, ssl: t.ssl });
+  await c.connect();
+  try {
+    await c.query('BEGIN TRANSACTION READ ONLY');
+    const emails = (await c.query(`select lower(email) e from users order by 1`)).rows.map((r: any) => r.e);
+    await c.query('ROLLBACK');
+    if (JSON.stringify(emails) !== JSON.stringify(UAT_ACCOUNT_EMAILS)) {
+      fail(`users are not exactly the three fictional UAT accounts (${emails.length} users); nothing recovered`);
+    }
+  } finally {
+    await c.end();
+  }
+  console.log('recovery preflight OK: the users are exactly the 3 fictional UAT accounts');
+  const app = await bootApp(t);
+  try {
+    const { AccountRecoveryService } = await import('../src/auth/account-recovery.service');
+    const { TransactionalEmailService } = await import('../src/email/transactional-email.service');
+    const recovery: any = app.get(AccountRecoveryService);
+    const outbox: any = app.get(TransactionalEmailService);
+    const logins: Record<string, string> = {};
+    const keyFor: Record<string, string> = { 'uat-owner@example.com': 'UAT_OWNER', 'uat-guard-a@example.com': 'UAT_GUARD_ALPHA', 'uat-guard-b@example.com': 'UAT_GUARD_BRAVO' };
+    for (const email of ['uat-owner@example.com', 'uat-guard-a@example.com', 'uat-guard-b@example.com']) {
+      await recovery.forgotPassword(email);
+      const message: any = [...outbox.capturedMessages()].reverse().find((m: any) => m.kind === 'password_reset' && m.to === email);
+      const token = message && decodeURIComponent(/reset-password\?token=([^\s"'<>&]+)/.exec(message.text)?.[1] ?? '');
+      if (!token) throw new Error(`no reset email captured for ${email} (rate limit, or the account is not eligible); stopped`);
+      registerSecret(token);
+      const pass = `${randomBytes(12).toString('base64url')}Aa1!`;
+      registerSecret(pass);
+      await recovery.resetPassword(token, pass);
+      logins[`${keyFor[email]}_EMAIL`] = email; logins[`${keyFor[email]}_PASSWORD`] = pass;
+      writeLogins(t.loginsFile, logins);
+      // Proof on the deployed service, exactly as a tester or the app would sign in.
+      const res = await fetch(`${STAGING_API}/auth/login`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email, password: pass }),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+      const body: any = await res.json().catch(() => null);
+      if (!res.ok || !body?.accessToken) throw new Error(`${email}: reset done but the staging API refused sign-in (HTTP ${res.status}); stopped`);
+      registerSecret(body.accessToken);
+      console.log(`  ${email}: reset through the product workflow (audited, sessions revoked); signs in to the deployed staging API`);
+    }
+    console.log(`logins written to ${t.loginsFile} (not printed)`);
+  } finally {
+    await app.close();
+  }
+}
+
+async function seed(t: Target) {
+  const { ValidationPipe } = await import('@nestjs/common');
+  const app = await bootApp(t);
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: true }));
   await app.listen(0, '127.0.0.1');
   const base = (await app.getUrl()).replace('[::1]', '127.0.0.1');
@@ -533,6 +599,12 @@ if (require.main === module) (async () => {
   const t = resolveTarget();
   registerSecret(t.url);
   if (reportOnly) { await report(t); return; }
+  if (recoverLogins) {
+    if (target !== 'staging') fail('--recover-logins is for the staging UAT accounts only');
+    if (process.env.S4_STAGING_RECOVER_CONFIRM !== RECOVER_CONFIRM) fail(`set S4_STAGING_RECOVER_CONFIRM=${RECOVER_CONFIRM} to reset the fictional UAT passwords`);
+    await recover(t);
+    return;
+  }
   if (target === 'staging' && !dryRun && process.env.S4_STAGING_SEED_CONFIRM !== CONFIRM) fail(`set S4_STAGING_SEED_CONFIRM=${CONFIRM} to write to staging`);
   // At a7b5b22 a Guard is assignable only with an uploaded AND verified SIA licence and Right to Work document, so the
   // seeder needs the real staging bucket. Until it exists and is configured (staging-render.env and the Render
