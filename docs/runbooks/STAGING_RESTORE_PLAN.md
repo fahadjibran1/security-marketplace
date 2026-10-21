@@ -265,6 +265,22 @@ About 10 minutes.
   `npx eas-cli build --platform android --profile uat` and `npx eas-cli build --platform ios --profile uat`.
   Never `--auto-submit`; no `eas update`.
 
+### Android UAT build (built 21 Oct 2026, owner-approved)
+
+| | |
+|---|---|
+| EAS build | `ebe08e57-7f34-40d5-9172-40957d1beac3`, profile `uat`, FINISHED 11:26:58Z |
+| Link | https://expo.dev/accounts/fahadjibran/projects/security-marketplace/builds/ebe08e57-7f34-40d5-9172-40957d1beac3 |
+| Source | `41ecbcd` (clean tree) |
+| APK | `s4-uat-1.1.0-vc15-ebe08e57.apk` (held in `~/.s4-pilot-secrets/artifacts`), 89,162,177 bytes, SHA-256 `cc0ef879ae6d35ddefab7a48e660088296508772ef87347b7789a213475255ab` |
+| Identity | `com.sfour.s4.uat`, label "S4 UAT", 1.1.0 (15), minSdk 24, targetSdk 36, not debuggable |
+| Signer | v2, 1 signer, `CN=S4 Security, OU=S4 Pilot, O=Vesoft Services Limited, C=GB`, SHA-256 `0d589449…c76311b`, RSA 4096 (the existing S4 key) |
+| API | embedded config `extra.apiBaseUrl` = staging, `appVariant: uat`, `updates.enabled: false`; JS bundle carries the staging URL (the single production string is the unused fallback constant) |
+| Secrets | no `.env`, credentials or keystore files in the APK |
+
+Not submitted, published or uploaded anywhere. Production artefacts re-hashed afterwards: vc15 AAB `5e69f8d8…`
+and build 14 IPA `af4cb849…` unchanged.
+
 ## 8. Risks
 
 | Risk | Mitigation |
