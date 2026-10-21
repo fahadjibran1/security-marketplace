@@ -31,6 +31,7 @@ const { Client } = require('pg') as { Client: new (config: object) => any };
 
 const STAGING_HOST = 'dpg-dbbq13afngtc73a5ls20-a.oregon-postgres.render.com';
 const STAGING_DB = 's4_staging';
+const STAGING_API = 'https://security-marketplace-api-staging.onrender.com';
 const CONFIRM = 's4-staging-db';
 const EXPECTED_MIGRATIONS = 63;
 const LAST_MIGRATION = 'AddComplianceLapseAlerts1720900000009';
@@ -259,9 +260,13 @@ async function seed(t: Target) {
   }
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: true }));
   await app.listen(0, '127.0.0.1');
-  const base = await app.getUrl();
-  const api = async (method: string, route: string, token: string | null, body?: unknown) => {
-    const res = await fetch(base.replace('[::1]', '127.0.0.1') + route, {
+  const base = (await app.getUrl()).replace('[::1]', '127.0.0.1');
+  // For staging, evidence goes through the DEPLOYED staging service (its signer, its HEAD check, its access URLs), so
+  // seeding also proves the live evidence workflow. Tokens issued in-process are signed with the staging JWT secret
+  // and resolve against the same database, so the live service accepts them.
+  const liveBase = target === 'staging' ? STAGING_API : base;
+  const call = async (root: string, method: string, route: string, token: string | null, body?: unknown) => {
+    const res = await fetch(root + route, {
       method, headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: body ? JSON.stringify(body) : undefined,
     });
     const text = await res.text();
@@ -269,6 +274,8 @@ async function seed(t: Target) {
     if (res.status >= 300) throw new Error(`${method} ${route} -> ${res.status} ${typeof json === 'object' ? JSON.stringify(json?.message ?? json) : ''}`);
     return json;
   };
+  const api = (method: string, route: string, token: string | null, body?: unknown) => call(base, method, route, token, body);
+  const liveApi = (method: string, route: string, token: string | null, body?: unknown) => call(liveBase, method, route, token, body);
 
   const { AuthService } = await import('../src/auth/auth.service');
   const { TransactionalEmailService } = await import('../src/email/transactional-email.service');
@@ -319,16 +326,23 @@ async function seed(t: Target) {
         { type: 'right_to_work', title: 'FICTIONAL RIGHT TO WORK RECORD (TEST)', file: 'UAT-FICTIONAL-RIGHT-TO-WORK-NOT-REAL.pdf', reference: 'UAT-RTW-TEST', expiryDate: null },
       ]) {
         const pdf = fictionalPdf(doc.title, p.fullName, doc.reference);
-        const created = await api('POST', '/compliance/documents', ownerToken, {
+        const created = await liveApi('POST', '/compliance/documents', ownerToken, {
           guardId: g.user.guardId, type: doc.type, originalFileName: doc.file, mimeType: 'application/pdf', sizeBytes: pdf.length, expiryDate: doc.expiryDate,
         });
         if (!created?.upload?.url || created.upload.method !== 'PUT') throw new Error('no presigned upload returned');
         const put = await fetch(created.upload.url, { method: 'PUT', headers: created.upload.headers ?? { 'Content-Type': 'application/pdf' }, body: new Uint8Array(pdf) });
         if (!put.ok) throw new Error(`evidence PUT refused by the bucket (${put.status})`);
-        await api('POST', `/compliance/documents/${created.id}/complete-upload`, ownerToken);
-        await api('PATCH', `/compliance/documents/${created.id}/verify`, ownerToken, { verified: true });
+        await liveApi('POST', `/compliance/documents/${created.id}/complete-upload`, ownerToken);
+        await liveApi('PATCH', `/compliance/documents/${created.id}/verify`, ownerToken, { verified: true });
         documents.push({ guard: key, type: doc.type, id: created.id, bytes: pdf.length });
       }
+    }
+
+    // Retrieval through the live service: a signed GET it issues must return the exact fictional bytes.
+    const access = await liveApi('GET', `/compliance/documents/${documents[0].id}/access`, ownerToken);
+    const fetched = Buffer.from(await (await fetch(access.url)).arrayBuffer());
+    if (fetched.length !== documents[0].bytes || !fetched.toString('latin1').includes('FICTIONAL TEST DOCUMENT')) {
+      throw new Error('live retrieval did not return the uploaded fictional document');
     }
 
     const created: Array<{ key: string; id: number; status: string }> = [];
@@ -346,6 +360,7 @@ async function seed(t: Target) {
       Object.entries(logins).map(([k, v]) => `${k}=${v}`).join('\n') + '\n', { mode: 0o600 });
     console.log(`seeded: company ${companyId}, client ${client.id}, sites ${Object.values(siteIds).join(', ')}, guards ${guards.alpha.guardId} (Alpha), ${guards.bravo.guardId} (Bravo)`);
     for (const d of documents) console.log(`  document ${d.id} ${d.guard} ${d.type} uploaded (${d.bytes} bytes) and verified`);
+    console.log(`  evidence via ${target === 'staging' ? 'the LIVE staging API' : 'the in-process API'}: upload, server check, verify and signed retrieval OK`);
     for (const c of created) console.log(`  shift ${c.id} ${c.key} -> ${c.status}`);
     console.log(`logins written to ${t.loginsFile} (not printed)`);
   } finally {

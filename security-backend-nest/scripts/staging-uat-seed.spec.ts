@@ -53,11 +53,16 @@ test('SEED-02-ONLY-THE-STAGING-BUCKET-IS-ACCEPTED', () => {
 
 test('SEED-03-REAL-UPLOAD-WORKFLOW-ONLY', () => {
   const order = [
-    "api('POST', '/compliance/documents'",
+    "liveApi('POST', '/compliance/documents'",
     "fetch(created.upload.url, { method: 'PUT'",
-    '/complete-upload`',
-    "/verify`, ownerToken, { verified: true }",
+    "liveApi('POST', `/compliance/documents/${created.id}/complete-upload`",
+    "liveApi('PATCH', `/compliance/documents/${created.id}/verify`, ownerToken, { verified: true }",
+    "liveApi('GET', `/compliance/documents/${documents[0].id}/access`",
   ].map((needle) => source.indexOf(needle));
+  // For staging, evidence goes through the deployed staging API, never the in-process copy.
+  assert.match(source, /const liveBase = target === 'staging' \? STAGING_API : base;/);
+  assert.match(source, /const STAGING_API = 'https:\/\/security-marketplace-api-staging\.onrender\.com';/);
+  assert.match(source, /includes\('FICTIONAL TEST DOCUMENT'\)/, 'retrieval must return the fictional bytes');
   order.forEach((at) => assert.ok(at > 0, 'each step is present'));
   assert.deepEqual([...order].sort((a, b) => a - b), order, 'presign, PUT, complete, verify — in that order');
   const code = source.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
