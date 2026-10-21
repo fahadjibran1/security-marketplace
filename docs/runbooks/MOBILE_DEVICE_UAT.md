@@ -24,6 +24,43 @@ Facts that shape the tests (from the source at `6b8e41b`):
 - There is **no network-state library**. Offline is detected only by a request failing; check the wording.
 - Location is used (`expo-location`) where a site requires GPS.
 
+## Pilot quick run (seeded staging data, about 90 minutes)
+
+Use this for the pilot go-ahead; the full checklist below stays the store-release bar. Every shift time is set
+at the moment of seeding, so **seed only when the testers and devices are ready**.
+
+Before seeding: S4 UAT installed (amber icon) on the Android phone and the iPhone; the web control room running
+locally against staging on `http://localhost:8098` (the only origin staging accepts). Logins are written by the
+seeder to `~/.s4-pilot-secrets/staging-uat.env`; they are fictional `@example.com` accounts.
+
+Seed (from `security-backend-nest`, PowerShell, owner-approved):
+
+```powershell
+$env:S4_STAGING_SEED_CONFIRM = 's4-staging-db'
+npx ts-node -r tsconfig-paths/register scripts/staging-uat-seed.ts --target staging
+Remove-Item Env:S4_STAGING_SEED_CONFIRM
+```
+
+| When (after seeding) | Who / device | Step | Expected |
+|---|---|---|---|
+| 0–5 min | Both phones, control room | 1. Launch S4 UAT; top bar reads "S4 UAT · STAGING". 2. Sign in: Guard Alpha on Android, Guard Bravo on iPhone; owner in the control room | Guard home with the live shift; nothing reaches production |
+| 5–20 min | Bravo (iPhone) | 8a. Book Off on **B-live** (ends 20 min after seeding) | "Book Off now?" with the scheduled end; one check-out in the control room |
+| 10–20 min | Alpha (Android), control room | 6. Leave Alpha's first Welfare Check (due ~10 min) unrecorded | App shows "Welfare Check overdue"; one missed-Welfare alert in Live Operations within ~10 min (5 min grace + 5 min sweep), no duplicate on the next sweep |
+| then | Alpha | 5. Record Welfare Check | Overdue clears; one entry in the control room; next due ~1 h on. Owner acknowledges and resolves the alert |
+| then | Alpha | 3. Accept **A-offer-1**, Decline **A-offer-2** (with a reason) | One acceptance, one decline in the control room |
+| then | Bravo | 3. Accept or Decline **B-offer**; confirm Alpha never sees it | Recorded once; Guard isolation holds |
+| then | Alpha | 7. Report an Incident and raise a Site Request on **A-live** | One of each, right site and time; Cancel sends nothing |
+| ~70 min | Alpha | 5. Record the second hourly Welfare Check (optional if time is short) | Recorded once, on time, no alert |
+| then | Alpha | 8b. Book Off early on **A-live** | "Book Off early?" warning; one early Book Off in the control room |
+| then | Alpha | 4. Book On to **A-early-book-on** | "Book on early?" confirmation; one Book On |
+| then | Bravo | 4. Book On to **B-gps** away from the site | Early-Book-On question, then a clear location refusal; nothing recorded |
+| end | Control room | 9. Attendance and welfare records for both Guards | Matches what was done: no duplicates, no missing entries |
+
+A normal (not early) Book On is not in the seed: the owner creates a shift starting within 30 minutes in the
+control room, offers it, and the Guard accepts and books on. To repeat the run on the other platform, swap the
+Guards between phones (the offers are used up, so the owner creates two more), or reset and re-seed (~10 min,
+`STAGING_RESTORE_PLAN.md`).
+
 ## Devices
 
 - Android: one small phone (≤ 6.1", or 720×1280-class) and one current Pixel/Samsung; Android 10 or newer.

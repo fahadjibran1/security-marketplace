@@ -246,6 +246,24 @@ About 10 minutes.
 - Expo usage: about $1 per Android and $2 per iOS medium build from the Starter build credit ($18 of $45 used in
   the period ending 28 Oct 2026).
 - The old `preview-staging` profile (EAS-generated signing) stays as recorded history for now; it is not used.
+  Since 21 Oct 2026 it cannot produce an app at all: `app.config.js` fails any EAS build that pairs the store
+  identity with a staging URL, or the UAT identity with anything but staging (UAT-08).
+
+### Build readiness (certified 21 Oct 2026, not built)
+
+- Release gate 57/57 (including `tsc`), `expo install --check` clean. Exports with `--clear`: store Android / iOS
+  bundles carry no staging URL; UAT Android / iOS bundles carry the staging URL (the one production string in them
+  is the unused fallback constant in `api-base-url.ts`). Both configs keep `updates.enabled: false`, 1.1.0 (15 / 14).
+- No EAS dashboard environment variables in development / preview / production, so nothing overrides the profiles.
+- Android: `uat` signs with `credentials.json` — the permanent S4 key (`0d589449…`, the Play upload key for
+  `com.sfour.s4`). Different package, so it cannot update or replace the store app; no key material enters the APK.
+- iOS: no devices are registered on team `SXH4TLU2B5`, and no `com.sfour.s4.uat` App ID or ad hoc profile exists.
+  Before the iOS build: `eas device:create` (open the link on each test iPhone, install the profile), then the
+  build itself is run interactively by the owner with an Apple sign-in. The existing Apple Distribution certificate
+  (`c1f9c5b6…`) can sign ad hoc; the App Store profile for `com.sfour.s4` is not touched.
+- Commands (from `security-mobile-app`, owner-approved only):
+  `npx eas-cli build --platform android --profile uat` and `npx eas-cli build --platform ios --profile uat`.
+  Never `--auto-submit`; no `eas update`.
 
 ## 8. Risks
 
