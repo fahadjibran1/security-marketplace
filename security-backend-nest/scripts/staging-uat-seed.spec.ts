@@ -10,14 +10,26 @@
  *   SEED-04  the database guards are present: staging host only, production host refused, empty target, ledger 63
  *   SEED-05  the shift id is read from the real POST /shifts response ({ shift, timesheet }); the 21 Oct staging seed
  *            stopped at /shifts/undefined/respond because the old code read .id off the wrapper
+ *   SEED-06  logins are written as each account is created, before any later step (the 21 Oct runs lost them)
+ *   SEED-07  redaction keeps the error and its stack frames but never a password, token, key, URL or signature
+ *   SEED-08  every HTTP request carries a 60 s timeout
+ *   SEED-09  a state-changing request is sent once; after a failure the state is read back, never resent
+ *   SEED-10  --report is read only, needs no confirmation, and prints no secret
  */
 import * as assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
-import { createdShift, fictionalPdf, stagingEvidenceProblem } from './staging-uat-seed';
+import * as os from 'os';
+import {
+  confirmOnce, createdShift, fictionalPdf, redact, registerSecret, REQUEST_TIMEOUT_MS, stagingEvidenceProblem, writeLogins,
+} from './staging-uat-seed';
 
 let passed = 0;
-const test = (id: string, fn: () => void) => { fn(); passed += 1; console.log(`PASS  ${id}`); };
+// Runs in order; an async check is awaited before the next starts, and any failure exits non-zero.
+let queue: Promise<void> = Promise.resolve();
+const test = (id: string, fn: () => void | Promise<void>) => {
+  queue = queue.then(async () => { await fn(); passed += 1; console.log(`PASS  ${id}`); });
+};
 const source = fs.readFileSync(path.join(__dirname, 'staging-uat-seed.ts'), 'utf8');
 
 test('SEED-01-THE-FICTIONAL-PDF-IS-WELL-FORMED-AND-SAYS-SO', () => {
@@ -69,7 +81,9 @@ test('SEED-03-REAL-UPLOAD-WORKFLOW-ONLY', () => {
   assert.deepEqual([...order].sort((a, b) => a - b), order, 'presign, PUT, complete, verify — in that order');
   const code = source.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
   assert.ok(!/fileUrl/.test(code), 'the legacy file-less path is never used');
-  assert.ok(!/guard_documents|INSERT INTO/i.test(code), 'no evidence rows are written directly');
+  // The read-only --report SELECTs from guard_documents; everything else must never name the table or write SQL.
+  const writing = code.slice(0, code.indexOf('async function report(')) + code.slice(code.indexOf('if (require.main === module)'));
+  assert.ok(!/guard_documents|INSERT INTO/i.test(writing), 'no evidence rows are written directly');
 });
 
 test('SEED-04-DATABASE-GUARDS-ARE-PRESENT', () => {
@@ -101,4 +115,95 @@ test('SEED-05-THE-SHIFT-ID-COMES-FROM-THE-REAL-POST-SHIFTS-RESPONSE', () => {
   assert.ok(posts.length > 0 && posts.length === wrapped.length, `${wrapped.length} of ${posts.length} POST /shifts calls unwrap the response`);
 });
 
-console.log(`\n${passed} staging UAT seeder checks passed`);
+const code = source.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+const seedBody = code.slice(code.indexOf('async function seed('), code.indexOf('async function report('));
+
+test('SEED-06-LOGINS-ARE-KEPT-AS-EACH-ACCOUNT-IS-CREATED', () => {
+  // Behaviour: the file holds exactly what was passed, and only that.
+  const file = path.join(os.tmpdir(), `seed-06-${process.pid}.env`);
+  try {
+    writeLogins(file, { UAT_OWNER_EMAIL: 'uat-owner@example.com', UAT_OWNER_PASSWORD: 'p-1' });
+    writeLogins(file, { UAT_OWNER_EMAIL: 'uat-owner@example.com', UAT_OWNER_PASSWORD: 'p-1', UAT_GUARD_ALPHA_EMAIL: 'a@example.com', UAT_GUARD_ALPHA_PASSWORD: 'p-2' });
+    const text = fs.readFileSync(file, 'utf8');
+    assert.match(text, /^# S4 STAGING UAT logins/);
+    assert.match(text, /UAT_OWNER_PASSWORD=p-1\n/); assert.match(text, /UAT_GUARD_ALPHA_PASSWORD=p-2\n/);
+    if (process.platform !== 'win32') assert.equal(fs.statSync(file).mode & 0o777, 0o600, 'owner-only');
+  } finally { fs.rmSync(file, { force: true }); }
+  // Order: each password is saved right after its account is registered, before anything else can fail.
+  const writes = [...seedBody.matchAll(/writeLogins\(t\.loginsFile, logins\)/g)].map((m) => m.index!);
+  const registers = [...seedBody.matchAll(/await auth\.register\(/g)].map((m) => m.index!);
+  assert.equal(registers.length, 2, 'owner, then the guard loop');
+  assert.ok(writes.length >= 2);
+  assert.ok(writes[0] > registers[0] && writes[0] < seedBody.indexOf("api('POST', '/clients'"), 'owner login saved before the first client');
+  assert.ok(writes[1] > registers[1] && writes[1] < seedBody.indexOf("api('POST', '/company-guards'"), 'each guard login saved before its first link');
+  assert.ok(writes[writes.length - 1] < seedBody.indexOf("api('POST', '/shifts'"), 'all saved before any shift step');
+});
+
+test('SEED-07-REDACTION-KEEPS-THE-STACK-AND-DROPS-SECRETS', () => {
+  const password = 'Zq7rN3xVb2kLp9Aa1!';
+  registerSecret(password);
+  const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOjEsInJvbGUiOiJndWFyZCJ9.c2lnbmF0dXJlLXZhbHVl';
+  const err = new Error(`login failed for body {"email":"uat-owner@example.com","password":"${password}"} via postgresql://s4_staging:pw@host/db`);
+  const out = redact(`${err.stack}\nAuthorization: Bearer ${jwt}\nhttps://x.r2.cloudflarestorage.com/b/k?X-Amz-Credential=AKIA123%2F2026&X-Amz-Signature=abcdef0123&X-Amz-Expires=60\n{"accessToken":"opaque-token-value"}`);
+  for (const secret of [password, jwt, 'postgresql://s4_staging:pw@host/db', 'abcdef0123', 'AKIA123', 'opaque-token-value']) {
+    assert.ok(!out.includes(secret), `leaked ${secret.slice(0, 6)}…`);
+  }
+  assert.match(out, /^Error: login failed for body/, 'the message survives');
+  assert.match(out, /\n\s+at .+staging-uat-seed\.spec\.ts:\d+:\d+/, 'stack frames survive');
+  assert.match(out, /X-Amz-Expires=60/, 'non-secret query parameters survive');
+  assert.match(out, /uat-owner@example\.com/, 'fictional identifiers survive');
+  // And it is applied to everything printed, including the final failure stack.
+  assert.match(code, /function installRedaction\(\)/);
+  assert.match(code, /installRedaction\(\);\s*const t = resolveTarget\(\);/, 'installed before anything else runs');
+  assert.match(code, /console\.error\('FAILED', redact\(String\(e\?\.stack/, 'the failure keeps its stack, redacted');
+});
+
+test('SEED-08-EVERY-REQUEST-TIMES-OUT-AFTER-60-SECONDS', () => {
+  assert.equal(REQUEST_TIMEOUT_MS, 60_000);
+  const fetches = [...code.matchAll(/await fetch\(/g)].length;
+  const timed = [...code.matchAll(/signal: AbortSignal\.timeout\(REQUEST_TIMEOUT_MS\)/g)].length;
+  assert.ok(fetches >= 3 && fetches === timed, `${timed} of ${fetches} fetch calls carry the timeout`);
+});
+
+test('SEED-09-A-STATE-CHANGE-IS-SENT-ONCE-AND-READ-BACK-AFTER-A-FAILURE', async () => {
+  const run = async (send: () => Promise<unknown>, state: string | Error) => {
+    let sends = 0, reads = 0;
+    const result = await confirmOnce('accept shift 4', async () => { sends += 1; return send(); },
+      async () => { reads += 1; if (state instanceof Error) throw state; return state; }, 'ready').then((r) => r, (e: Error) => e);
+    return { result, sends, reads };
+  };
+  const ok = await run(async () => ({}), 'ready');
+  assert.deepEqual([ok.sends, ok.reads, (ok.result as any).outcome], [1, 0, 'done'], 'success: no read-back needed');
+  // The 21 Oct case: the server committed, the response was a 500.
+  const committed = await run(async () => { throw new Error('PATCH /shifts/4/respond -> 500'); }, 'ready');
+  assert.deepEqual([committed.sends, committed.reads, (committed.result as any).outcome], [1, 1, 'confirmed-after-error']);
+  const notCommitted = await run(async () => { throw new Error('The operation was aborted due to timeout'); }, 'offered');
+  assert.equal(notCommitted.sends, 1, 'never resent');
+  assert.match(String(notCommitted.result), /read-back shows "offered", not "ready" — not retried/);
+  const unknown = await run(async () => { throw new Error('socket hang up'); }, new Error('read-back timed out'));
+  assert.equal(unknown.sends, 1);
+  assert.match(String(unknown.result), /state UNKNOWN — not retried/);
+  // The seeder routes Accept and Book On through it, and nothing in it loops on a request.
+  assert.match(seedBody, /confirmOnce\(`accept shift \$\{shift\.id\}[^]*?\/respond`/);
+  assert.match(seedBody, /confirmOnce\(`Book On shift \$\{shift\.id\}[^]*?\/attendance\/check-in'/);
+  assert.ok(!/api\('PATCH', `\/shifts\/\$\{shift\.id\}\/respond`[^)]*\);\s*$/m.test(seedBody.replace(/confirmOnce\([^]*?\);/g, '')), 'no bare Accept outside confirmOnce');
+  assert.ok(!/\b(retry|retries|attempts?)\b/i.test(seedBody), 'no retry loop in the seed');
+});
+
+test('SEED-10-REPORT-IS-READ-ONLY-AND-PRINTS-NO-SECRET', () => {
+  const body = code.slice(code.indexOf('async function report('), code.indexOf('if (require.main === module)'));
+  assert.match(body, /BEGIN TRANSACTION READ ONLY/);
+  assert.match(body, /ROLLBACK/);
+  assert.ok(!/(INSERT INTO|UPDATE "?\w+"? SET|DELETE FROM|TRUNCATE|DROP |ALTER )/i.test(body), 'no write statements');
+  assert.ok(!/password|storageKey|accessToken|"fileUrl"/i.test(body.replace(/values not printed/, '')), 'never selects a secret or storage key');
+  // It runs before the write confirmation and before the app starts, behind the same target guard.
+  const main = code.slice(code.indexOf('if (require.main === module)'));
+  assert.ok(main.indexOf('if (reportOnly)') < main.indexOf('S4_STAGING_SEED_CONFIRM'), 'needs no write confirmation');
+  assert.ok(main.indexOf('resolveTarget()') < main.indexOf('if (reportOnly)'), 'same staging-only target guard');
+  assert.ok(!/NestFactory/.test(body), 'does not start the application');
+});
+
+queue.then(
+  () => console.log(`\n${passed} staging UAT seeder checks passed`),
+  (error) => { console.error(error); process.exit(1); },
+);

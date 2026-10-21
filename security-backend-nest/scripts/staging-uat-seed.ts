@@ -20,6 +20,14 @@
  *     AddComplianceLapseAlerts1720900000009; the users table must be EMPTY (seed once; reset to re-seed).
  * Logins are written only to a git-ignored file (~/.s4-pilot-secrets/staging-uat.env for staging) and are never
  * printed. Output is ids and counts only.
+ *
+ * Recoverability (21 Oct 2026, after a seed stopped part-way and its logins were lost):
+ *   - the logins file is written as each account is created, before any later step can fail;
+ *   - every line this process prints goes through redact(), so full stack traces are kept and secrets are not;
+ *   - every HTTP request times out after 60 s; a state-changing request is never sent twice: after a failed or
+ *     ambiguous response the seeder reads the state back (confirmOnce) and stops if it is not what was asked for;
+ *   - --report prints what already exists in the target, READ ONLY, without starting the app:
+ *       npx ts-node -r tsconfig-paths/register scripts/staging-uat-seed.ts --target staging --report
  */
 import 'reflect-metadata';
 import * as fs from 'fs';
@@ -40,6 +48,80 @@ const SECRETS = path.join(os.homedir(), '.s4-pilot-secrets');
 const args = process.argv.slice(2);
 const target = args[args.indexOf('--target') + 1];
 const dryRun = args.includes('--dry-run');
+const reportOnly = args.includes('--report');
+
+/** Every HTTP request the seeder makes (in-process API, live staging API, bucket PUT and GET) gives up after this. */
+export const REQUEST_TIMEOUT_MS = 60_000;
+
+// ─── secrets out of everything printed ───────────────────────────────────────────────────────────────────────
+
+const knownSecrets = new Set<string>();
+/** Values that must never be printed: passwords, tokens, keys. Registered as soon as they exist. */
+export function registerSecret(value: string | undefined | null) {
+  if (value && value.length >= 8) knownSecrets.add(value);
+}
+
+/**
+ * Removes secrets from text while keeping everything else, stack frames included. Known values are replaced
+ * wherever they appear; database URLs, bearer and JWT tokens, presigned-URL signatures and credentials, and any
+ * JSON "password" / "token" / "secret" field are masked by shape, so an unregistered value is still caught.
+ */
+export function redact(text: string): string {
+  let out = text;
+  for (const s of [...knownSecrets].sort((a, b) => b.length - a.length)) out = out.split(s).join('<redacted>');
+  return out
+    .replace(/postgres(?:ql)?:\/\/\S+/gi, '<database-url>')
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/g, 'Bearer <redacted>')
+    .replace(/eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*/g, '<jwt>')
+    .replace(/(X-Amz-(?:Signature|Credential|Security-Token)=)[^&\s"']+/gi, '$1<redacted>')
+    .replace(/("(?:password|currentPassword|newPassword|accessToken|refreshToken|token|secret|secretAccessKey)"\s*:\s*")[^"]*"/gi, '$1<redacted>"');
+}
+
+/** Routes this process's stdout and stderr (our output, Nest's logger, uncaught stacks) through redact(). */
+function installRedaction() {
+  for (const stream of [process.stdout, process.stderr]) {
+    const write = stream.write.bind(stream) as (chunk: any, ...rest: any[]) => boolean;
+    (stream as any).write = (chunk: any, ...rest: any[]) => write(typeof chunk === 'string' || Buffer.isBuffer(chunk) ? redact(chunk.toString()) : chunk, ...rest);
+  }
+}
+
+// ─── logins, kept from the moment each account exists ────────────────────────────────────────────────────────
+
+/** (Re)writes the logins file, owner-only. Called after EACH account is created, so a later failure never strands it. */
+export function writeLogins(file: string, logins: Record<string, string>) {
+  fs.writeFileSync(file, `# S4 STAGING UAT logins (fictional accounts). Updated ${new Date().toISOString()}. Never production.\n` +
+    Object.entries(logins).map(([k, v]) => `${k}=${v}`).join('\n') + '\n', { mode: 0o600 });
+  try { fs.chmodSync(file, 0o600); } catch { /* best effort on Windows */ }
+}
+
+// ─── one attempt, then read back ────────────────────────────────────────────────────────────────────────────
+
+export type ConfirmOutcome = { outcome: 'done' } | { outcome: 'confirmed-after-error'; error: string };
+
+/**
+ * Sends a state-changing request exactly once. If it fails or times out, the result is ambiguous (the server may
+ * have committed it, as the 21 Oct shift 4 acceptance did), so the state is READ BACK instead of resending: if it
+ * already shows the requested change, carry on and say so; otherwise stop with both facts. Never retries.
+ */
+export async function confirmOnce(
+  description: string,
+  send: () => Promise<unknown>,
+  readBack: () => Promise<string>,
+  wanted: string,
+): Promise<ConfirmOutcome> {
+  try {
+    await send();
+    return { outcome: 'done' };
+  } catch (error) {
+    const message = String((error as Error)?.message ?? error);
+    let state: string;
+    try { state = await readBack(); } catch (readError) {
+      throw new Error(`${description}: request failed (${message}) and the read-back failed too (${String((readError as Error)?.message ?? readError)}); state UNKNOWN — not retried`);
+    }
+    if (state === wanted) return { outcome: 'confirmed-after-error', error: message };
+    throw new Error(`${description}: request failed (${message}); read-back shows "${state}", not "${wanted}" — not retried`);
+  }
+}
 
 function fail(message: string): never {
   console.error(`REFUSED: ${message}`);
@@ -255,6 +337,8 @@ async function preflight(t: Target) {
 }
 
 async function seed(t: Target) {
+  registerSecret(t.url);
+  for (const v of Object.values(t.appEnv)) registerSecret(v);
   // The app must never alter the schema here, never load a pooler URL from anywhere, and keep email in-process.
   Object.assign(process.env, {
     NODE_ENV: 'test', TZ: 'UTC', DATABASE_URL: t.url, DATABASE_POOLER_URL: '', DATABASE_SYNCHRONIZE: 'false',
@@ -277,9 +361,11 @@ async function seed(t: Target) {
   // seeding also proves the live evidence workflow. Tokens issued in-process are signed with the staging JWT secret
   // and resolve against the same database, so the live service accepts them.
   const liveBase = target === 'staging' ? STAGING_API : base;
+  // One attempt per request, never retried here; a timeout surfaces as an error the caller must resolve by reading back.
   const call = async (root: string, method: string, route: string, token: string | null, body?: unknown) => {
     const res = await fetch(root + route, {
       method, headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
     const text = await res.text();
     let json: any = null; try { json = text ? JSON.parse(text) : null; } catch { json = text; }
@@ -304,11 +390,14 @@ async function seed(t: Target) {
 
   try {
     const ownerPass = password();
+    registerSecret(ownerPass);
     await auth.register({ email: PEOPLE.owner.email, password: ownerPass, role: 'company', fullName: PEOPLE.owner.fullName, phone: '01632960001', ...COMPANY });
-    await verify(PEOPLE.owner.email);
     logins.UAT_OWNER_EMAIL = PEOPLE.owner.email; logins.UAT_OWNER_PASSWORD = ownerPass;
+    writeLogins(t.loginsFile, logins);
+    await verify(PEOPLE.owner.email);
     const owner = await auth.login({ email: PEOPLE.owner.email, password: ownerPass });
     const ownerToken: string = owner.accessToken;
+    registerSecret(ownerToken);
     const companyId: number = owner.user.companyId;
 
     const client = await api('POST', '/clients', ownerToken, CLIENT);
@@ -320,11 +409,14 @@ async function seed(t: Target) {
     for (const key of ['alpha', 'bravo'] as const) {
       const p = PEOPLE[key];
       const pass = password();
+      registerSecret(pass);
       await auth.register({ email: p.email, password: pass, role: 'guard', fullName: p.fullName, phone: '07700900000', siaLicenseNumber: p.sia });
+      logins[`UAT_GUARD_${key.toUpperCase()}_EMAIL`] = p.email; logins[`UAT_GUARD_${key.toUpperCase()}_PASSWORD`] = pass;
+      writeLogins(t.loginsFile, logins);
       await verify(p.email);
       const g = await auth.login({ email: p.email, password: pass });
+      registerSecret(g.accessToken);
       guards[key] = { guardId: g.user.guardId, token: g.accessToken };
-      logins[`UAT_GUARD_${key.toUpperCase()}_EMAIL`] = p.email; logins[`UAT_GUARD_${key.toUpperCase()}_PASSWORD`] = pass;
       await api('POST', '/company-guards', ownerToken, { companyId, guardId: g.user.guardId });
       const day = (n: number) => new Date(Date.now() + n * 24 * HOUR).toISOString().slice(0, 10);
       await api('POST', '/compliance/checks', ownerToken, { guardId: g.user.guardId, kind: 'sia', outcome: 'confirmed', method: 'sia_public_register', licenceNumber: p.sia, checkDate: day(0), expiryDate: day(365), checkedByName: 'UAT Checker', evidenceReference: 'UAT test record — not a real check' });
@@ -342,7 +434,7 @@ async function seed(t: Target) {
           guardId: g.user.guardId, type: doc.type, originalFileName: doc.file, mimeType: 'application/pdf', sizeBytes: pdf.length, expiryDate: doc.expiryDate,
         });
         if (!created?.upload?.url || created.upload.method !== 'PUT') throw new Error('no presigned upload returned');
-        const put = await fetch(created.upload.url, { method: 'PUT', headers: created.upload.headers ?? { 'Content-Type': 'application/pdf' }, body: new Uint8Array(pdf) });
+        const put = await fetch(created.upload.url, { method: 'PUT', headers: created.upload.headers ?? { 'Content-Type': 'application/pdf' }, body: new Uint8Array(pdf), signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
         if (!put.ok) throw new Error(`evidence PUT refused by the bucket (${put.status})`);
         await liveApi('POST', `/compliance/documents/${created.id}/complete-upload`, ownerToken);
         await liveApi('PATCH', `/compliance/documents/${created.id}/verify`, ownerToken, { verified: true });
@@ -352,7 +444,7 @@ async function seed(t: Target) {
 
     // Retrieval through the live service: a signed GET it issues must return the exact fictional bytes.
     const access = await liveApi('GET', `/compliance/documents/${documents[0].id}/access`, ownerToken);
-    const fetched = Buffer.from(await (await fetch(access.url)).arrayBuffer());
+    const fetched = Buffer.from(await (await fetch(access.url, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) })).arrayBuffer());
     if (fetched.length !== documents[0].bytes || !fetched.toString('latin1').includes('FICTIONAL TEST DOCUMENT')) {
       throw new Error('live retrieval did not return the uploaded fictional document');
     }
@@ -363,13 +455,22 @@ async function seed(t: Target) {
         siteId: siteIds[s.site], guardId: guards[s.guard].guardId, start: s.start(), end: s.end(), checkCallIntervalMinutes: 60,
         instructions: `UAT scenario ${s.key}: ${s.purpose}. Fictional test data.`,
       }));
-      if (s.then !== 'offered') await api('PATCH', `/shifts/${shift.id}/respond`, guards[s.guard].token, { response: 'accepted' });
-      if (s.then === 'booked-on') await api('POST', '/attendance/check-in', guards[s.guard].token, { shiftId: shift.id });
+      const token = guards[s.guard].token;
+      // The Guard's own view of the shift; 'accepted' is the legacy name of 'ready'.
+      const statusOf = async () => { const v = (await api('GET', `/shifts/${shift.id}`, token))?.status; return v === 'accepted' ? 'ready' : String(v); };
+      const notes: string[] = [];
+      if (s.then !== 'offered') {
+        const r = await confirmOnce(`accept shift ${shift.id} (${s.key})`, () => api('PATCH', `/shifts/${shift.id}/respond`, token, { response: 'accepted' }), statusOf, 'ready');
+        if (r.outcome === 'confirmed-after-error') notes.push(`accept answered "${r.error}" but the shift reads back as ready`);
+      }
+      if (s.then === 'booked-on') {
+        const r = await confirmOnce(`Book On shift ${shift.id} (${s.key})`, () => api('POST', '/attendance/check-in', token, { shiftId: shift.id }), statusOf, 'in_progress');
+        if (r.outcome === 'confirmed-after-error') notes.push(`Book On answered "${r.error}" but the shift reads back as in_progress`);
+      }
+      notes.forEach((n) => console.log(`  NOTE shift ${shift.id} ${s.key}: ${n}`));
       created.push({ key: s.key, id: shift.id, status: s.then });
     }
 
-    fs.writeFileSync(t.loginsFile, `# S4 STAGING UAT logins (fictional accounts). Generated ${new Date().toISOString()}. Never production.\n` +
-      Object.entries(logins).map(([k, v]) => `${k}=${v}`).join('\n') + '\n', { mode: 0o600 });
     console.log(`seeded: company ${companyId}, client ${client.id}, sites ${Object.values(siteIds).join(', ')}, guards ${guards.alpha.guardId} (Alpha), ${guards.bravo.guardId} (Bravo)`);
     for (const d of documents) console.log(`  document ${d.id} ${d.guard} ${d.type} uploaded (${d.bytes} bytes) and verified`);
     console.log(`  evidence via ${target === 'staging' ? 'the LIVE staging API' : 'the in-process API'}: upload, server check, verify and signed retrieval OK`);
@@ -380,8 +481,58 @@ async function seed(t: Target) {
   }
 }
 
+/**
+ * READ ONLY: what already exists in the target. Same target guards as seeding (staging host only, never production,
+ * strict TLS); one READ ONLY transaction, rolled back. Prints fictional names, ids, statuses and counts — no
+ * passwords, hashes, tokens, storage keys or URLs. The logins file is reported by its keys only.
+ */
+async function report(t: Target) {
+  const host = new URL(t.url).hostname;
+  if (/supabase|pooler/i.test(host)) fail('Supabase / pooler host');
+  const c = new Client({ connectionString: t.url, ssl: t.ssl });
+  await c.connect();
+  try {
+    await c.query('BEGIN TRANSACTION READ ONLY');
+    const q = async (sql: string) => (await c.query(sql)).rows as any[];
+    const [id] = await q(`select current_database() db, (select count(*)::int from typeorm_migrations) migrations, (select name from typeorm_migrations order by id desc limit 1) last`);
+    console.log(`REPORT (read only) ${host}/${id.db}: ledger ${id.migrations}, last ${id.last}`);
+    const users = await q(`select id, lower(email) email, role, "isEmailVerified" verified from users order by id`);
+    const fictional = users.every((u) => /@example\.com$/.test(u.email));
+    console.log(`users ${users.length}${fictional ? ' (all fictional @example.com)' : ' — NOT ALL FICTIONAL, emails withheld'}:`);
+    for (const u of users) console.log(`  ${u.id} ${fictional ? u.email : '<withheld>'} ${u.role}${u.verified === undefined ? '' : u.verified ? ' verified' : ' unverified'}`);
+    for (const r of await q(`select id, name from companies order by id`)) console.log(`company ${r.id}: ${r.name}`);
+    for (const r of await q(`select id, name from clients order by id`)) console.log(`client ${r.id}: ${r.name}`);
+    for (const r of await q(`select id, name, "requireGpsCheckIn" gps from sites order by id`)) console.log(`site ${r.id}: ${r.name}${r.gps ? ' (GPS required)' : ''}`);
+    const shifts = await q(`select s.id, s.status, s."start"::text st, s."end"::text en, s."guardId" g, s.instructions i from shifts s order by s.id`);
+    console.log(`shifts ${shifts.length} (times UTC):`);
+    for (const s of shifts) console.log(`  ${s.id} ${(/^UAT scenario (\S+):/.exec(s.i ?? '') ?? [, '(untagged)'])[1].padEnd(16)} guard ${s.g ?? '-'} ${String(s.status).padEnd(11)} ${s.st} → ${s.en}`);
+    const att = await q(`select "shiftId" sid, type, count(*)::int n from attendance_events group by 1, 2 order by 1, 2`);
+    console.log(`attendance: ${att.length ? att.map((a) => `shift ${a.sid} ${a.type}×${a.n}`).join(', ') : 'none'}`);
+    const logs = await q(`select "logType" t, count(*)::int n from daily_logs group by 1 order by 1`);
+    console.log(`daily logs: ${logs.length ? logs.map((l) => `${l.t}×${l.n}`).join(', ') : 'none'}`);
+    const alerts = await q(`select id, type, status, "shiftId" sid, "welfareWindowIndex" w from safety_alerts order by id`);
+    console.log(`alerts ${alerts.length}: ${alerts.map((a) => `${a.id} ${a.type}/${a.status} shift ${a.sid}${a.w == null ? '' : ` window ${a.w}`}`).join('; ') || 'none'}`);
+    const inc = await q(`select count(*)::int n from incidents`);
+    console.log(`incidents: ${inc[0].n}`);
+    const docs = await q(`select id, type, "originalFileName" f, ("uploadCompletedAt" is not null) up, verified from guard_documents order by id`);
+    console.log(`evidence records ${docs.length}: ${docs.map((d) => `${d.id} ${d.type} ${d.up ? 'uploaded' : 'NOT uploaded'} ${d.verified ? 'verified' : 'unverified'} ${/^UAT-FICTIONAL-.*-NOT-REAL\.pdf$/.test(d.f ?? '') ? '(fictional file)' : '(NOT a UAT file)'}`).join('; ') || 'none'}`);
+    await c.query('ROLLBACK');
+  } finally {
+    await c.end();
+  }
+  if (fs.existsSync(t.loginsFile)) {
+    const keys = Object.keys(readEnvFile(t.loginsFile));
+    console.log(`logins file present (${keys.length} keys: ${keys.filter((k) => k.endsWith('_EMAIL')).map((k) => k.replace(/_EMAIL$/, '')).join(', ')}); values not printed`);
+  } else {
+    console.log('logins file: ABSENT — these accounts cannot be signed in to with this file');
+  }
+}
+
 if (require.main === module) (async () => {
+  installRedaction();
   const t = resolveTarget();
+  registerSecret(t.url);
+  if (reportOnly) { await report(t); return; }
   if (target === 'staging' && !dryRun && process.env.S4_STAGING_SEED_CONFIRM !== CONFIRM) fail(`set S4_STAGING_SEED_CONFIRM=${CONFIRM} to write to staging`);
   // At a7b5b22 a Guard is assignable only with an uploaded AND verified SIA licence and Right to Work document, so the
   // seeder needs the real staging bucket. Until it exists and is configured (staging-render.env and the Render
@@ -397,4 +548,4 @@ if (require.main === module) (async () => {
   describePlan();
   if (dryRun) { console.log('DRY RUN: nothing written.'); return; }
   await seed(t);
-})().catch((e) => { console.error('FAILED', String(e?.message ?? e).replace(/postgres(ql)?:\/\/\S+/g, '<url>')); process.exit(1); });
+})().catch((e) => { console.error('FAILED', redact(String(e?.stack ?? e?.message ?? e))); process.exit(1); });
