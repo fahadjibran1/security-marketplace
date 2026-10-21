@@ -1325,6 +1325,114 @@ async function testReqDecreaseHistory(ds: DataSource) {
   console.log(`PASS REQ-DECREASE-HISTORY: historical rejection did not block valid decrease to 2`);
 }
 
+// ── Expired offers (owner rule, 21 Oct 2026): accept before start or while running, never at/after end ────────
+
+const isoIn = (ms: number) => new Date(Date.now() + ms).toISOString();
+const MIN_MS = 60_000;
+
+async function expectExpired(promise: Promise<unknown>, label: string) {
+  await rejects(promise, (e: any) => {
+    ok(e instanceof ConflictException, `${label}: a 409, never a 500 (got ${e?.constructor?.name})`);
+    const body = e.getResponse() as any;
+    equal(body.code, 'SHIFT_OFFER_EXPIRED', `${label}: machine-readable code`);
+    ok(/already ended/.test(body.message), `${label}: plain message`);
+    return true;
+  });
+}
+
+async function testExpiredOfferRefused(ds: DataSource) {
+  const { company, site } = await createCompanyWithSite(ds, 'expired');
+  const { guard, guardUser } = await createGuardWithRelationship(ds, company, 'expired-g1');
+  // Production shift 42's shape: an overnight shift that ended hours ago, still 'offered'.
+  const shift = await createOfferedShift(ds, company, site, guard, isoIn(-24 * 60 * MIN_MS), isoIn(-12 * 60 * MIN_MS));
+  const audit = makeCapturingAudit();
+  const svc = makeShiftService(ds, { company, site, userToGuard: new Map([[guardUser.id, guard]]), auditCapture: audit });
+  await expectExpired(svc.respondForGuard(makeGuardUser(guardUser.id), shift.id, { response: 'accepted' }), 'ended 12 h ago');
+  const after = await ds.getRepository(Shift).findOneOrFail({ where: { id: shift.id } });
+  equal(after.status, 'offered', 'the offer is left exactly as it was — not deleted, not re-statused');
+  equal(audit.captured.filter((a: any) => a.action === 'shift.offer_accepted').length, 0, 'no acceptance is recorded');
+  equal(await ds.getRepository(AttendanceEvent).count({ where: { shift: { id: shift.id } } }), 0, 'attendance untouched');
+  // Declining an expired offer is still allowed: it clears the Guard's list honestly.
+  const declined = await svc.respondForGuard(makeGuardUser(guardUser.id), shift.id, { response: 'rejected', reason: 'Offer expired' });
+  equal(declined.status, 'rejected', 'decline still works after the end');
+  console.log('PASS EXPIRED-OFFER: accept after the end → 409 SHIFT_OFFER_EXPIRED; offer untouched; decline still allowed');
+}
+
+async function testStartedOfferAccepted(ds: DataSource) {
+  const { company, site } = await createCompanyWithSite(ds, 'started');
+  const { guard, guardUser } = await createGuardWithRelationship(ds, company, 'started-g1');
+  // A legitimate late replacement: started 30 min ago, ends in 30 min.
+  const shift = await createOfferedShift(ds, company, site, guard, isoIn(-30 * MIN_MS), isoIn(30 * MIN_MS));
+  const svc = makeShiftService(ds, { company, site, userToGuard: new Map([[guardUser.id, guard]]) });
+  const result = await svc.respondForGuard(makeGuardUser(guardUser.id), shift.id, { response: 'accepted' });
+  equal(result.status, 'ready', 'a started, unfinished shift can still be accepted');
+  console.log('PASS LATE-REPLACEMENT: accept after the start but before the end → ready');
+}
+
+async function testExpiryBoundaryUsesDatabaseClock(ds: DataSource) {
+  const { company, site } = await createCompanyWithSite(ds, 'boundary');
+  const { guard, guardUser } = await createGuardWithRelationship(ds, company, 'boundary-g1');
+  // Ends 400 ms from now. The server-clock pre-check passes; the eligibility checks then take 1 s, so by the time
+  // the UPDATE runs the shift has ended by the DATABASE clock. The write itself must refuse it.
+  const shift = await createOfferedShift(ds, company, site, guard, isoIn(-60 * MIN_MS), isoIn(400));
+  const slowAvailability = { assertGuardCanTakeShift: async () => { await new Promise((r) => setTimeout(r, 1000)); } };
+  const svc = makeShiftService(ds, { company, site, userToGuard: new Map([[guardUser.id, guard]]), availability: slowAvailability });
+  await expectExpired(svc.respondForGuard(makeGuardUser(guardUser.id), shift.id, { response: 'accepted' }), 'expired in flight');
+  equal((await ds.getRepository(Shift).findOneOrFail({ where: { id: shift.id } })).status, 'offered', 'not accepted');
+  console.log('PASS EXPIRY-BOUNDARY: an offer that ends while the request is in flight is refused by the database clock');
+}
+
+async function testInFlightCancelIsNotReportedAsAccepted(ds: DataSource) {
+  const { company, site } = await createCompanyWithSite(ds, 'inflight');
+  const { guard, guardUser } = await createGuardWithRelationship(ds, company, 'inflight-g1');
+  const shift = await createOfferedShift(ds, company, site, guard, '2027-08-20T08:00:00Z', '2027-08-20T16:00:00Z');
+  // The company cancels the offer while the Guard's acceptance is between its checks and its write.
+  const cancelMidway = { assertGuardCanTakeShift: async () => { await ds.query(`UPDATE "shifts" SET "status" = 'cancelled' WHERE "id" = $1`, [shift.id]); } };
+  const audit = makeCapturingAudit();
+  const svc = makeShiftService(ds, { company, site, userToGuard: new Map([[guardUser.id, guard]]), availability: cancelMidway, auditCapture: audit });
+  // Before the fix the UPDATE's [rows, rowCount] result always had length 2, so this resolved as a success and
+  // wrote shift.offer_accepted for a cancelled shift.
+  await rejects(svc.respondForGuard(makeGuardUser(guardUser.id), shift.id, { response: 'accepted' }), (e: any) => {
+    ok(e instanceof ConflictException, `refused as no longer available (got ${e?.constructor?.name})`);
+    ok((e.getResponse() as any)?.code !== 'SHIFT_OFFER_EXPIRED', 'not misreported as expired');
+    return true;
+  });
+  equal((await ds.getRepository(Shift).findOneOrFail({ where: { id: shift.id } })).status, 'cancelled', 'the cancellation stands');
+  equal(audit.captured.filter((a: any) => a.action === 'shift.offer_accepted').length, 0, 'no false acceptance audit');
+  console.log('PASS IN-FLIGHT-CANCEL: a refused write is reported as refused, with no acceptance audit');
+}
+
+async function testConcurrentAcceptOfStartedShift(ds: DataSource) {
+  const { company, site } = await createCompanyWithSite(ds, 'concurrent');
+  const { guard, guardUser } = await createGuardWithRelationship(ds, company, 'concurrent-g1');
+  const shift = await createOfferedShift(ds, company, site, guard, isoIn(-5 * MIN_MS), isoIn(55 * MIN_MS));
+  const svc = makeShiftService(ds, { company, site, userToGuard: new Map([[guardUser.id, guard]]) });
+  const settled = await Promise.allSettled([
+    svc.respondForGuard(makeGuardUser(guardUser.id), shift.id, { response: 'accepted' }),
+    svc.respondForGuard(makeGuardUser(guardUser.id), shift.id, { response: 'accepted' }),
+  ]);
+  equal(settled.filter((s) => s.status === 'fulfilled').length, 1, 'exactly one acceptance wins');
+  const loser = settled.find((s) => s.status === 'rejected') as PromiseRejectedResult;
+  ok(!(loser.reason instanceof ConflictException && (loser.reason.getResponse() as any)?.code === 'SHIFT_OFFER_EXPIRED'), 'the loser is told it was already taken, not that it expired');
+  console.log('PASS CONCURRENT-ACCEPT: two accepts of a running shift → one wins, the other is refused as already accepted');
+}
+
+async function testClockChangeAndOvernight(ds: DataSource) {
+  const { company, site } = await createCompanyWithSite(ds, 'dst');
+  const { guard, guardUser } = await createGuardWithRelationship(ds, company, 'dst-g1');
+  const svc = makeShiftService(ds, { company, site, userToGuard: new Map([[guardUser.id, guard]]) });
+  // Past: 22:00 BST Sat 25 Oct 2025 → 06:00 GMT Sun 26 Oct 2025 (clocks went back at 02:00 BST): 9 h, long over.
+  const past = await createOfferedShift(ds, company, site, guard, '2025-10-25T21:00:00Z', '2025-10-26T06:00:00Z');
+  await expectExpired(svc.respondForGuard(makeGuardUser(guardUser.id), past.id, { response: 'accepted' }), 'ended overnight across a clock change');
+  // Future: 22:00 BST Sat 30 Oct 2027 → 06:00 GMT Sun 31 Oct 2027, the same shape a year ahead: acceptable.
+  const future = await createOfferedShift(ds, company, site, guard, '2027-10-30T21:00:00Z', '2027-10-31T06:00:00Z');
+  equal((await svc.respondForGuard(makeGuardUser(guardUser.id), future.id, { response: 'accepted' })).status, 'ready');
+  // Spring forward: 22:00 GMT Sat 27 Mar 2027 → 06:00 BST Sun 28 Mar 2027 (7 h), also acceptable before it starts.
+  const spring = await createOfferedShift(ds, company, site, guard, '2027-03-27T22:00:00Z', '2027-03-28T05:00:00Z');
+  equal((await svc.respondForGuard(makeGuardUser(guardUser.id), spring.id, { response: 'accepted' })).status, 'ready');
+  console.log('PASS CLOCK-CHANGE: overnight shifts across BST↔GMT are judged by their true instants');
+}
+
 // ── Main runner ───────────────────────────────────────────────────────────────
 
 async function main() {
@@ -1368,6 +1476,13 @@ async function main() {
     await testCoverageComplete(ds);
     await testReqIncreaseHistory(ds);
     await testReqDecreaseHistory(ds);
+
+    await testExpiredOfferRefused(ds);
+    await testStartedOfferAccepted(ds);
+    await testExpiryBoundaryUsesDatabaseClock(ds);
+    await testInFlightCancelIsNotReportedAsAccepted(ds);
+    await testConcurrentAcceptOfStartedShift(ds);
+    await testClockChangeAndOvernight(ds);
 
     console.log('\n✓ All shift-offer-lifecycle tests PASSED');
   } finally {

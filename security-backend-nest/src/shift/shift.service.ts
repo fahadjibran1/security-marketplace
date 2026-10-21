@@ -37,6 +37,7 @@ import {
   toGuardShiftOperations,
 } from './guard-shift-operations';
 import { resolveShiftWelfareInterval } from './shift-welfare-interval';
+import { offerAcceptanceWindow, shiftOfferExpiredException } from './offer-acceptance-window';
 import {
   COMPANY_FORBIDDEN_TRANSITIONS,
   DELETABLE_STATUSES,
@@ -503,6 +504,13 @@ export class ShiftService {
       throw new BadRequestException('Only offered shifts can be accepted or rejected');
     }
 
+    // An offer for a shift that has already ended can no longer be accepted (owner rule, 21 Oct 2026). Checked
+    // first, on the server clock, so an expired offer gets its own clear answer; the write below re-checks it
+    // against the database clock so a request racing the boundary cannot slip through.
+    if (dto.response === 'accepted' && offerAcceptanceWindow(new Date(preCheck.start), new Date(preCheck.end), new Date()) === 'ended') {
+      throw shiftOfferExpiredException();
+    }
+
     // On acceptance, re-verify current eligibility
     if (dto.response === 'accepted') {
       await this.companyGuardService.ensureActiveRelationship(preCheck.company.id, guard.id);
@@ -513,22 +521,32 @@ export class ShiftService {
     }
 
     // Atomic conditional UPDATE — only succeeds if status is still 'offered'
-    // and this guard is still assigned, preventing race conditions
+    // and this guard is still assigned, preventing race conditions. An acceptance also requires the shift not to
+    // have ended by the DATABASE clock ("end" is stored as UTC wall time; the process runs in UTC).
     const nextStatus = dto.response === 'accepted' ? 'ready' : 'rejected';
-    const rows: { id: number }[] = await this.dataSource.query(
+    const updateResult = await this.dataSource.query(
       `UPDATE "shifts"
          SET "status" = $1
        WHERE "id" = $2
          AND "guardId" = $3
          AND "status" = 'offered'
+         AND ($1 <> 'ready' OR "end" > (now() AT TIME ZONE 'UTC'))
        RETURNING "id"`,
       [nextStatus, id, guard.id],
     );
+    // TypeORM's Postgres driver answers an UPDATE … RETURNING with [rows, rowCount], not the rows themselves, so
+    // `.length` of the raw result is always 2 and a refused write would look like a success. Read the rows.
+    const rows: { id: number }[] = Array.isArray(updateResult?.[0]) ? updateResult[0] : updateResult;
 
     if (rows.length === 0) {
       const current = await this.shiftRepo.findOne({ where: { id }, relations: ['guard'] });
       if (!current || current.guard?.id !== guard.id) {
         throw new NotFoundException(`Shift with id ${id} not found`);
+      }
+      // Still exactly 'offered' to this Guard (the UPDATE's own conditions), so the end time is what failed:
+      // the offer expired in flight.
+      if (dto.response === 'accepted' && current.status === 'offered') {
+        throw shiftOfferExpiredException();
       }
       const currentNormalized = this.normalizeLifecycleStatus(current.status);
       throw new ConflictException(
