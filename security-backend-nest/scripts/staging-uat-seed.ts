@@ -16,8 +16,10 @@
  *     it must differ from the production database host in production-read.env; strict TLS with the staging CA;
  *     S4_STAGING_SEED_CONFIRM must equal "s4-staging-db".
  *   - local: the host must be 127.0.0.1 / localhost.
- *   - any target: no Supabase or pooler host; the migration ledger must hold exactly 63 entries ending in
- *     AddComplianceLapseAlerts1720900000009; the users table must be EMPTY (seed once; reset to re-seed).
+ *   - any target: no Supabase or pooler host; the migration ledger must hold exactly 64 entries ending in
+ *     AddShiftAmendments1720900000010 (Migration 64, Live Shift Amendments) — the same head as this repository's own
+ *     migrations, which is checked too, so the in-process app and the database always agree; the users table must be
+ *     EMPTY (seed once; reset to re-seed). --recover-logins applies the same ledger check before it boots the app.
  * Logins are written only to a git-ignored file (~/.s4-pilot-secrets/staging-uat.env for staging) and are never
  * printed. Output is ids and counts only.
  *
@@ -41,8 +43,8 @@ const STAGING_HOST = 'dpg-dbbq13afngtc73a5ls20-a.oregon-postgres.render.com';
 const STAGING_DB = 's4_staging';
 const STAGING_API = 'https://security-marketplace-api-staging.onrender.com';
 const CONFIRM = 's4-staging-db';
-const EXPECTED_MIGRATIONS = 63;
-const LAST_MIGRATION = 'AddComplianceLapseAlerts1720900000009';
+const EXPECTED_MIGRATIONS = 64;
+const LAST_MIGRATION = 'AddShiftAmendments1720900000010';
 const SECRETS = path.join(os.homedir(), '.s4-pilot-secrets');
 
 const args = process.argv.slice(2);
@@ -320,6 +322,30 @@ function assertStagingEvidence(env: Record<string, string>, report: (problem: st
 
 // ─── run ───────────────────────────────────────────────────────────────────────────────────────────────────
 
+/**
+ * The migration head this repository's own code expects: the number of migration files and the class of the last.
+ * The seeder boots this code in-process, so the expected ledger must be exactly this head — never a ledger the code
+ * would not run on.
+ */
+export function repositoryMigrationHead(dir = path.join(__dirname, '..', 'src', 'database', 'migrations')): { count: number; last: string } {
+  const files = fs.readdirSync(dir).filter((f) => /\.ts$/.test(f)).sort();
+  const lastSource = fs.readFileSync(path.join(dir, files[files.length - 1]), 'utf8');
+  const last = /export class (\w+)/.exec(lastSource)?.[1] ?? '';
+  return { count: files.length, last };
+}
+
+/** Refuses unless the constants, this repository's migrations and the target's ledger are all the same head. */
+async function assertLedger(c: any) {
+  const head = repositoryMigrationHead();
+  if (head.count !== EXPECTED_MIGRATIONS || head.last !== LAST_MIGRATION) {
+    fail(`this code's migration head is ${head.count} ending ${head.last}, but the seeder expects ${EXPECTED_MIGRATIONS} ending ${LAST_MIGRATION}`);
+  }
+  const ledger = await c.query(`select count(*)::int n, (select name from typeorm_migrations order by id desc limit 1) last from typeorm_migrations`);
+  if (ledger.rows[0].n !== EXPECTED_MIGRATIONS || ledger.rows[0].last !== LAST_MIGRATION) {
+    fail(`migration ledger is ${ledger.rows[0].n} ending ${ledger.rows[0].last}, expected ${EXPECTED_MIGRATIONS} ending ${LAST_MIGRATION}`);
+  }
+}
+
 async function preflight(t: Target) {
   const host = new URL(t.url).hostname;
   if (/supabase|pooler/i.test(host)) fail('Supabase / pooler host');
@@ -327,10 +353,7 @@ async function preflight(t: Target) {
   await c.connect();
   try {
     await c.query('BEGIN TRANSACTION READ ONLY');
-    const ledger = await c.query(`select count(*)::int n, (select name from typeorm_migrations order by id desc limit 1) last from typeorm_migrations`);
-    if (ledger.rows[0].n !== EXPECTED_MIGRATIONS || ledger.rows[0].last !== LAST_MIGRATION) {
-      fail(`migration ledger is ${ledger.rows[0].n} ending ${ledger.rows[0].last}, expected ${EXPECTED_MIGRATIONS} ending ${LAST_MIGRATION}`);
-    }
+    await assertLedger(c);
     const users = (await c.query(`select count(*)::int n from users`)).rows[0].n;
     if (users !== 0) fail(`the target already has ${users} user(s); seed only a fresh database (reset first)`);
     console.log(`preflight OK: ${host}/${new URL(t.url).pathname.slice(1)}, ${EXPECTED_MIGRATIONS} migrations, 0 users`);
@@ -355,9 +378,12 @@ async function bootApp(t: Target) {
   // Stop this process's timers at once: only the deployed staging service runs the sweeps.
   const { SafetyAlertService } = await import('../src/safety-alert/safety-alert.service');
   const { AutomationSchedulerService } = await import('../src/scheduler/scheduler.service');
-  for (const svc of [app.get(SafetyAlertService) as any, app.get(AutomationSchedulerService) as any]) {
-    for (const k of ['welfareInterval', 'dailyInterval', 'weeklyInterval']) if (svc[k]) clearInterval(svc[k]);
+  const { ShiftAmendmentService } = await import('../src/shift-amendment/shift-amendment.service');
+  for (const svc of [app.get(SafetyAlertService) as any, app.get(AutomationSchedulerService) as any, app.get(ShiftAmendmentService) as any]) {
+    for (const k of ['welfareInterval', 'dailyInterval', 'weeklyInterval', 'expiryInterval']) if (svc[k]) clearInterval(svc[k]);
   }
+  // The shift amendment expiry job (Migration 64) must not run here either: it would expire proposals on the target.
+  (app.get(ShiftAmendmentService) as any).expiryJob?.stop();
   return app;
 }
 
@@ -373,6 +399,8 @@ async function recover(t: Target) {
   await c.connect();
   try {
     await c.query('BEGIN TRANSACTION READ ONLY');
+    // The app booted below is this code: it must run only on the migration head it was built for.
+    await assertLedger(c);
     const emails = (await c.query(`select lower(email) e from users order by 1`)).rows.map((r: any) => r.e);
     await c.query('ROLLBACK');
     if (JSON.stringify(emails) !== JSON.stringify(UAT_ACCOUNT_EMAILS)) {
@@ -580,6 +608,15 @@ async function report(t: Target) {
     console.log(`alerts ${alerts.length}: ${alerts.map((a) => `${a.id} ${a.type}/${a.status} shift ${a.sid}${a.w == null ? '' : ` window ${a.w}`}`).join('; ') || 'none'}`);
     const inc = await q(`select count(*)::int n from incidents`);
     console.log(`incidents: ${inc[0].n}`);
+    // Live Shift Amendments (Migration 64). Read only, and tolerant of a database not yet migrated.
+    const [m64] = await q(`select to_regclass('public.shift_amendments') is not null amendments, to_regclass('public.company_shift_policies') is not null policies`);
+    if (m64.amendments && m64.policies) {
+      const byStatus = await q(`select status, count(*)::int n from shift_amendments group by 1 order by 1`);
+      const enabled = await q(`select "companyId" c from company_shift_policies where "amendmentsEnabled" order by 1`);
+      console.log(`shift amendments: ${byStatus.length ? byStatus.map((r) => `${r.status}×${r.n}`).join(', ') : 'none'}; amendments enabled for: ${enabled.length ? enabled.map((r) => `company ${r.c}`).join(', ') : 'no company'}`);
+    } else {
+      console.log('shift amendments: Migration 64 not applied on this database');
+    }
     const docs = await q(`select id, type, "originalFileName" f, ("uploadCompletedAt" is not null) up, verified from guard_documents order by id`);
     console.log(`evidence records ${docs.length}: ${docs.map((d) => `${d.id} ${d.type} ${d.up ? 'uploaded' : 'NOT uploaded'} ${d.verified ? 'verified' : 'unverified'} ${/^UAT-FICTIONAL-.*-NOT-REAL\.pdf$/.test(d.f ?? '') ? '(fictional file)' : '(NOT a UAT file)'}`).join('; ') || 'none'}`);
     await c.query('ROLLBACK');

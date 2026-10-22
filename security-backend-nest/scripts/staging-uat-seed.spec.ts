@@ -7,7 +7,7 @@
  *            bucket and the production key; it accepts only the staging bucket
  *   SEED-03  documents go through the real workflow in order (presign -> PUT bytes -> complete-upload -> verify)
  *            and the file-less legacy path (fileUrl) is never used
- *   SEED-04  the database guards are present: staging host only, production host refused, empty target, ledger 63
+ *   SEED-04  the database guards are present: staging host only, production host refused, empty target, ledger 64
  *   SEED-05  the shift id is read from the real POST /shifts response ({ shift, timesheet }); the 21 Oct staging seed
  *            stopped at /shifts/undefined/respond because the old code read .id off the wrapper
  *   SEED-06  logins are written as each account is created, before any later step (the 21 Oct runs lost them)
@@ -15,6 +15,8 @@
  *   SEED-08  every HTTP request carries a 60 s timeout
  *   SEED-09  a state-changing request is sent once; after a failure the state is read back, never resent
  *   SEED-10  --report is read only, needs no confirmation, and prints no secret
+ *   SEED-12  the expected ledger is this code's own migration head (64), checked before seeding AND before
+ *            --recover-logins boots the app; no in-process timer (incl. amendment expiry) runs; the report tolerates 63
  *   SEED-11  --recover-logins touches only the 3 fictional accounts, only through the product's reset workflow,
  *            saves each login before the next step and proves it on the deployed staging API
  */
@@ -23,7 +25,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import {
-  confirmOnce, createdShift, fictionalPdf, redact, registerSecret, REQUEST_TIMEOUT_MS, stagingEvidenceProblem, UAT_ACCOUNT_EMAILS, writeLogins,
+  confirmOnce, createdShift, fictionalPdf, redact, registerSecret, repositoryMigrationHead, REQUEST_TIMEOUT_MS, stagingEvidenceProblem,
+  UAT_ACCOUNT_EMAILS, writeLogins,
 } from './staging-uat-seed';
 
 let passed = 0;
@@ -93,7 +96,8 @@ test('SEED-04-DATABASE-GUARDS-ARE-PRESENT', () => {
   assert.match(source, /target host equals the production database host/);
   assert.match(source, /Supabase \/ pooler host/);
   assert.match(source, /seed only a fresh database/);
-  assert.match(source, /const EXPECTED_MIGRATIONS = 63;/);
+  assert.match(source, /const EXPECTED_MIGRATIONS = 64;/);
+  assert.match(source, /const LAST_MIGRATION = 'AddShiftAmendments1720900000010';/);
   assert.match(source, /S4_STAGING_SEED_CONFIRM !== CONFIRM/);
   assert.match(source, /DATABASE_SYNCHRONIZE: 'false'/, 'the in-process app never alters the schema');
   assert.match(source, /DATABASE_POOLER_URL: ''/, 'no pooler URL can be picked up');
@@ -224,6 +228,39 @@ test('SEED-11-RECOVERY-USES-THE-PRODUCT-RESET-FLOW-FOR-THE-FICTIONAL-ACCOUNTS-ON
   assert.match(main, /if \(target !== 'staging'\) fail\('--recover-logins is for the staging UAT accounts only'\)/);
   assert.match(main, /S4_STAGING_RECOVER_CONFIRM !== RECOVER_CONFIRM/);
   assert.ok(main.indexOf('resolveTarget()') < main.indexOf('if (recoverLogins)'), 'same staging-only target guard');
+});
+
+test('SEED-12-THE-LEDGER-IS-THIS-CODE-S-OWN-HEAD-AND-NO-IN-PROCESS-TIMER-RUNS', () => {
+  // The constants are exactly this repository's migration head (Migration 64 today) …
+  assert.deepEqual(repositoryMigrationHead(), { count: 64, last: 'AddShiftAmendments1720900000010' });
+  // … and a migration added later moves the head, so the seeder would refuse until it is updated with it.
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 's4-seed-head-'));
+  try {
+    const real = path.join(__dirname, '..', 'src', 'database', 'migrations');
+    for (const f of fs.readdirSync(real)) fs.copyFileSync(path.join(real, f), path.join(tmp, f));
+    fs.writeFileSync(path.join(tmp, '1720900000011-SomethingLater.ts'), 'export class SomethingLater1720900000011 {}\n');
+    assert.deepEqual(repositoryMigrationHead(tmp), { count: 65, last: 'SomethingLater1720900000011' });
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+  // One ledger check, used by both paths that boot the app, and before any write or app start.
+  assert.match(code, /async function assertLedger\(c: any\)/);
+  assert.match(code, /this code's migration head is/);
+  const pre = code.slice(code.indexOf('async function preflight('), code.indexOf('async function bootApp('));
+  assert.ok(pre.indexOf('await assertLedger(c)') > 0 && pre.indexOf('await assertLedger(c)') < pre.indexOf('select count(*)::int n from users'));
+  const rec = code.slice(code.indexOf('async function recover('), code.indexOf('async function report('));
+  assert.ok(rec.indexOf('await assertLedger(c)') > 0 && rec.indexOf('await assertLedger(c)') < rec.indexOf('bootApp(t)'),
+    'recovery checks the ledger before it boots the app');
+  // The in-process app runs no background job against the target, including the amendment expiry job.
+  const boot = code.slice(code.indexOf('async function bootApp('), code.indexOf('async function recover('));
+  assert.match(boot, /ShiftAmendmentService/);
+  assert.match(boot, /'expiryInterval'/);
+  assert.match(boot, /expiryJob\?\.stop\(\)/);
+  // The report stays read only and also works on a database before Migration 64.
+  const report = code.slice(code.indexOf('async function report('), code.indexOf('if (require.main === module)'));
+  assert.match(report, /to_regclass\('public\.shift_amendments'\)/);
+  assert.match(report, /BEGIN TRANSACTION READ ONLY/);
+  assert.ok(!/INSERT|UPDATE |DELETE /i.test(report), 'no write in the report');
 });
 
 queue.then(

@@ -28,6 +28,7 @@
  *   LSA-20  overnight and BST→GMT: scheduled hours and window grids are instant-based across the 25 Oct 2026 change
  *   LSA-21  Android 15 / iOS 14 compatibility: a pending proposal changes nothing the old apps read; afterwards they
  *           see the extended end, with every field they already used
+ *   LSA-22  while a company is switched off, every state-changing route is refused and nothing changes
  *
  * Deterministic races (the shift row, or the Guard lock, is held by a separate transaction until both requests are
  * queued behind it in a known order):
@@ -735,6 +736,56 @@ async function main() {
       assert.equal(ms(after.end), ms(before.end) + HOUR, 'after acceptance the extended end shows on refresh');
       const missing = Object.keys(before).filter((k) => !(k in after));
       assert.deepEqual(missing, [], 'every field the old apps already read is still present');
+    });
+
+    await test('LSA-22-NO-AMENDMENT-STATE-CHANGES-WHILE-DISABLED', async () => {
+      // Amendments in every actionable state, made while enabled …
+      const mk = async (label: string) => {
+        const g = await guard(label);
+        const id = await liveShift(g, -HOUR, 2 * HOUR);
+        return { g, id, end: ms((await shiftRow(id)).end) };
+      };
+      const p = await mk('lsa-off-pending');
+      const pending = (await propose(A.token, p.id, p.end + HOUR)).body.amendment.id;
+      const w = await mk('lsa-off-approval');
+      const awaiting = (await propose(A.token, w.id, Date.now() + 14.5 * HOUR)).body.amendment.id;
+      const v = await mk('lsa-off-verbal');
+      const verbal = (await propose(A.token, v.id, v.end + HOUR)).body.amendment.id;
+      const verbalBody = (end: number) => ({ agreedEnd: iso(end), contactMethod: 'telephone', contactAt: iso(Date.now()), confirmation: 'Phoned the Guard, who agreed to stay.', reason: 'Cover' });
+      assert.equal((await api('POST', `/shift-amendments/${verbal}/record-verbal-agreement`, A.token, verbalBody(v.end + HOUR))).status, 200);
+      const d = await mk('lsa-off-disputed');
+      const disputed = (await propose(A.token, d.id, d.end + HOUR)).body.amendment.id;
+      await api('POST', `/shift-amendments/${disputed}/record-verbal-agreement`, A.token, verbalBody(d.end + HOUR));
+      assert.equal((await api('POST', `/shift-amendments/${disputed}/dispute`, d.g.token, { reason: 'I did not agree' })).status, 200);
+      const n = await mk('lsa-off-new');
+      const snapshot = async () => ({
+        amendments: await q(`SELECT id, status, "updatedAt" FROM shift_amendments WHERE id = ANY($1::int[]) ORDER BY id`, [[pending, awaiting, verbal, disputed]]),
+        shifts: await q(`SELECT id, status, "end", "originalEnd" FROM shifts WHERE id = ANY($1::int[]) ORDER BY id`, [[p.id, w.id, v.id, d.id, n.id]]),
+        audit: Number((await one(`SELECT count(*) n FROM audit_logs WHERE "entityType" = 'shift_amendment'`)).n),
+      });
+      // … then S4 switches the company off.
+      assert.equal((await api('PUT', `/admin/shift-amendments/companies/${A.id}`, adminToken, { enabled: false })).status, 200);
+      const before = await snapshot();
+      const calls: Array<[string, Promise<Res>]> = [
+        ['propose', propose(A.token, n.id, n.end + HOUR)],
+        ['approve', api('POST', `/shift-amendments/${awaiting}/approve`, A.token, { statement: 'Approved while disabled', confirmSelfApproval: true })],
+        ['withdraw', api('POST', `/shift-amendments/${pending}/withdraw`, A.token, {})],
+        ['accept', respond(p.g, pending, 'accepted')],
+        ['decline', respond(p.g, pending, 'declined')],
+        ['record verbal agreement', api('POST', `/shift-amendments/${pending}/record-verbal-agreement`, ops.token, verbalBody(p.end + HOUR))],
+        ['dispute', api('POST', `/shift-amendments/${verbal}/dispute`, v.g.token, { reason: 'I did not agree' })],
+        ['resolve dispute', api('POST', `/shift-amendments/${disputed}/resolve-dispute`, A.token, { resolution: 'upheld', note: 'Upheld while disabled' })],
+      ];
+      for (const [label, call] of calls) {
+        const r = await call;
+        assert.equal(r.status, 403, `${label}: ${r.status} ${JSON.stringify(r.body)}`);
+        assert.equal(r.body.code, 'SHIFT_AMENDMENTS_DISABLED', label);
+      }
+      assert.deepEqual(await snapshot(), before, 'no amendment, shift or audit entry changed');
+      assert.equal((await api('GET', `/shifts/${p.id}/amendments`, A.token)).status, 200, 'the history stays readable');
+      // Switching back on restores normal behaviour.
+      assert.equal((await api('PUT', `/admin/shift-amendments/companies/${A.id}`, adminToken, { enabled: true })).status, 200);
+      assert.equal((await respond(p.g, pending, 'accepted')).status, 200);
     });
 
     // ════════════════ deterministic races ════════════════

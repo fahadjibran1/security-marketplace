@@ -4,7 +4,7 @@
  *
  *   M64-01  a fresh database migrates 0 → 64 and 64 is the last migration
  *   M64-02  the schema it adds: tables, columns, defaults, constraints, indexes, foreign keys, enum labels
- *   M64-03  every existing row (shifts, memberships, notifications) is byte-identical after the migration
+ *   M64-03  every existing row of every table (shifts, attendance, timesheets, Welfare logs, alerts, audit …) is byte-identical
  *   M64-04  a second run applies nothing; re-running up() directly changes nothing (every statement is guarded)
  *   M64-05  the database refuses invalid amendments: a second open proposal, a non-extension, different agreed
  *           terms, an incomplete acceptance or verbal record, a dispute of an in-app acceptance, an unknown status
@@ -76,11 +76,22 @@ async function main() {
   const labels = async () =>
     (await q(`SELECT e.enumlabel FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid WHERE t.typname = 'notifications_type_enum'
        ORDER BY e.enumsortorder`)).map((r: { enumlabel: string }) => r.enumlabel);
-  const dumpExisting = async () => ({
-    shifts: await q(`SELECT id, md5((to_jsonb(s) - 'originalEnd')::text) h FROM shifts s ORDER BY id`),
-    memberships: await q(`SELECT id, md5((to_jsonb(m) - 'canAmendShifts')::text) h FROM company_memberships m ORDER BY id`),
-    notifications: await q(`SELECT id, md5(to_jsonb(n)::text) h FROM notifications n ORDER BY id`),
-  });
+  /**
+   * Every row of EVERY existing table (shifts, attendance, timesheets, Welfare logs, alerts, audit, notifications …),
+   * hashed with the two new columns removed, so the comparison asks exactly "did any existing value change?".
+   */
+  const NEW_COLUMNS: Record<string, string[]> = { shifts: ['originalEnd'], company_memberships: ['canAmendShifts'] };
+  const hashAll = async (run: (sql: string) => Promise<any[]>) => {
+    const tables = (await run(`SELECT tablename t FROM pg_tables WHERE schemaname = 'public' ORDER BY 1`)).map((r) => r.t as string)
+      .filter((t) => !NEW_TABLES.includes(t) && t !== 'typeorm_migrations');
+    const out: Record<string, string[]> = {};
+    for (const t of tables) {
+      const drop = (NEW_COLUMNS[t] ?? []).map((c) => ` - '${c}'`).join('');
+      out[t] = (await run(`SELECT md5((to_jsonb(x)${drop})::text) h FROM "${t}" x ORDER BY 1`)).map((r) => r.h);
+    }
+    return out;
+  };
+  const dumpExisting = () => hashAll((sql) => q(sql));
 
   try {
     // ── to 63, seed production-shaped rows, then 64 ──────────────────────────────────────────────────────
@@ -105,12 +116,22 @@ async function main() {
       shiftIds.push(s.id);
     }
     await at63.query(`INSERT INTO notifications ("userId","companyId",type,title,message) VALUES ($1,$2,'alert_raised','t','m')`, [owner.id, company.id]);
+    // Operational and financial evidence on the worked shifts: Book On / Book Off, a Welfare Check, a missed window, a
+    // timesheet with actuals, and an audit entry.
+    const [live, done] = shiftIds;
+    await at63.query(`INSERT INTO attendance_events ("shiftId","guardId",type,"occurredAt") VALUES ($1,$3,'check-in',now() - interval '1 hour'),
+        ($2,$3,'check-in',now() - interval '30 hours'), ($2,$3,'check-out',now() - interval '22 hours')`, [live, done, guard.id]);
+    await at63.query(`INSERT INTO daily_logs ("companyId","guardId","shiftId",message,"logType") VALUES ($1,$2,$3,'All quiet','welfare_check')`, [company.id, guard.id, live]);
+    await at63.query(`INSERT INTO safety_alerts ("companyId","guardId","shiftId",type,priority,status,message,"welfareWindowIndex") VALUES ($1,$2,$3,'missed_checkcall','high','closed','missed',0)`,
+      [company.id, guard.id, done]);
+    await at63.query(`INSERT INTO timesheets ("shiftId","guardId","companyId","approvalStatus","payrollStatus","billingStatus","scheduledStartAt","scheduledEndAt","actualCheckInAt","actualCheckOutAt")
+        VALUES ($1,$2,$3,'approved','paid','invoiced',now() - interval '30 hours',now() - interval '22 hours',now() - interval '30 hours',now() - interval '22 hours')`, [done, guard.id, company.id]);
+    await at63.query(`INSERT INTO audit_logs ("companyId","userId",action,"entityType","entityId","afterData") VALUES ($1,$2,'shift.updated','shift',$3,'{"end":"x"}')`, [company.id, owner.id, done]);
     // The same reads as dumpExisting(), at 63 (the new columns do not exist yet, so removing them is a no-op).
-    const before = {
-      shifts: await at63.query(`SELECT id, md5((to_jsonb(s) - 'originalEnd')::text) h FROM shifts s ORDER BY id`),
-      memberships: await at63.query(`SELECT id, md5((to_jsonb(m) - 'canAmendShifts')::text) h FROM company_memberships m ORDER BY id`),
-      notifications: await at63.query(`SELECT id, md5(to_jsonb(n)::text) h FROM notifications n ORDER BY id`),
-    };
+    const before = await hashAll((sql) => at63.query(sql));
+    for (const t of ['shifts', 'attendance_events', 'timesheets', 'daily_logs', 'safety_alerts', 'audit_logs', 'notifications']) {
+      assert.ok(before[t]?.length > 0, `${t} is seeded for the comparison`);
+    }
     const labelsAt63 = (await at63.query(`SELECT e.enumlabel FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid
        WHERE t.typname = 'notifications_type_enum' ORDER BY e.enumsortorder`)).map((r: { enumlabel: string }) => r.enumlabel);
     await at63.destroy();
@@ -162,7 +183,7 @@ async function main() {
     });
 
     await test('M64-03-EXISTING-ROWS-ARE-UNCHANGED', async () => {
-      assert.deepEqual(await dumpExisting(), before, 'shifts, memberships and notifications are byte-identical apart from the new columns');
+      assert.deepEqual(await dumpExisting(), before, 'every existing row of every table (shifts, attendance, timesheets, Welfare logs, alerts, audit, notifications …) is byte-identical apart from the new columns');
       assert.equal(Number(await scalar(`SELECT count(*)::int FROM shifts WHERE "originalEnd" IS NOT NULL`)), 0, 'nothing is backfilled');
       assert.equal(Number(await scalar(`SELECT count(*)::int FROM company_memberships WHERE "canAmendShifts"`)), 0, 'no one is authorised by default');
       assert.equal(Number(await scalar(`SELECT count(*)::int FROM company_shift_policies`)), 0, 'no company is enabled');

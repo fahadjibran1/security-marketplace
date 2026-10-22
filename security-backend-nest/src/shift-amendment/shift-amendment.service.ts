@@ -540,6 +540,8 @@ export class ShiftAmendmentService implements OnModuleInit, OnModuleDestroy {
 
   async withdraw(user: JwtPayload, id: number, dto: WithdrawAmendmentDto) {
     const actor = await this.companyActor(user, 'withdraw');
+    // No amendment state may change while the company has amendments switched off (owner rule: disabled = unusable).
+    await this.requireEnabled(actor.companyId);
     const pre = await this.readAmendment(id);
     if (!pre || pre.companyId !== actor.companyId) throw amendmentError(HttpStatus.NOT_FOUND, E.NOT_FOUND, 'Shift extension not found.');
     await this.inTransaction(async (manager) => {
@@ -580,6 +582,8 @@ export class ShiftAmendmentService implements OnModuleInit, OnModuleDestroy {
     const guard = await this.guardActor(user);
     const pre = await this.readAmendment(id);
     if (!pre || pre.guardId !== guard.guardId) throw amendmentError(HttpStatus.NOT_FOUND, E.NOT_FOUND, 'Shift extension not found.');
+    // No amendment state may change while the company has amendments switched off (owner rule: disabled = unusable).
+    await this.requireEnabled(pre.companyId);
     const settled = this.settledAnswer(pre, dto.response);
     if (settled === 'same') return this.view(id);
     if (settled === 'different') throw this.alreadyAnswered(pre);
@@ -622,6 +626,8 @@ export class ShiftAmendmentService implements OnModuleInit, OnModuleDestroy {
 
   async recordVerbalAgreement(user: JwtPayload, id: number, dto: RecordVerbalAgreementDto) {
     const actor = await this.companyActor(user, 'record_agreement');
+    // No amendment state may change while the company has amendments switched off (owner rule: disabled = unusable).
+    await this.requireEnabled(actor.companyId);
     const pre = await this.readAmendment(id);
     if (!pre || pre.companyId !== actor.companyId) throw amendmentError(HttpStatus.NOT_FOUND, E.NOT_FOUND, 'Shift extension not found.');
     if (pre.status === 'awaiting_approval') {
@@ -845,6 +851,8 @@ export class ShiftAmendmentService implements OnModuleInit, OnModuleDestroy {
     const guard = await this.guardActor(user);
     const pre = await this.readAmendment(id);
     if (!pre || pre.guardId !== guard.guardId) throw amendmentError(HttpStatus.NOT_FOUND, E.NOT_FOUND, 'Shift extension not found.');
+    // No amendment state may change while the company has amendments switched off (owner rule: disabled = unusable).
+    await this.requireEnabled(pre.companyId);
     await this.inTransaction(async (manager) => {
       await this.lockShift(manager, pre.shiftId);
       const amendment = await this.lockAmendment(manager, id, pre.shiftId);
@@ -871,6 +879,8 @@ export class ShiftAmendmentService implements OnModuleInit, OnModuleDestroy {
 
   async resolveDispute(user: JwtPayload, id: number, dto: ResolveDisputeDto) {
     const actor = await this.companyActor(user, 'resolve_dispute');
+    // No amendment state may change while the company has amendments switched off (owner rule: disabled = unusable).
+    await this.requireEnabled(actor.companyId);
     const pre = await this.readAmendment(id);
     if (!pre || pre.companyId !== actor.companyId) throw amendmentError(HttpStatus.NOT_FOUND, E.NOT_FOUND, 'Shift extension not found.');
     await this.inTransaction(async (manager) => {
