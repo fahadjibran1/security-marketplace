@@ -622,8 +622,14 @@ async function main() {
       const shift = src('shift/shift.service.ts');
       assert.equal(
         (shift.match(/this\.complianceService\.assertGuardAssignable\(/g) || []).length,
-        5,
-        'create, createForUser context, offer acceptance, guard change, and (phase 1B) the start-of-work gate',
+        6,
+        'create, createForUser context, offer acceptance, guard change, (phase 1B) the start-of-work gate, and (phase 0b) retiming an assigned shift',
+      );
+      // Phase 0b: a shift retimed with its Guard re-runs the gate against the new window.
+      assert.match(
+        shift.split('async updateForUser(')[1].split('async removeForUser(')[0],
+        /if \(retimedWithGuard\) \{[\s\S]*?this\.complianceService\.assertGuardAssignable\(actorCompany\.id, nextGuard!\.id\)[\s\S]*?assertGuardCanTakeShift\(actorCompany\.id, nextGuard!\.id, nextStart, nextEnd, shift\.id\)/,
+        'retiming an assigned shift runs the compliance gate and the full eligibility check',
       );
       // Phase 1B: both routes that start work run the shared start-of-work gate.
       const startGate = shift.split('async assertGuardMayStartWork(')[1].split('async findOne(')[0];
