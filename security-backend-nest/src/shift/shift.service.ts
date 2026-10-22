@@ -38,6 +38,7 @@ import {
 } from './guard-shift-operations';
 import { resolveShiftWelfareInterval } from './shift-welfare-interval';
 import { offerAcceptanceWindow, shiftOfferExpiredException } from './offer-acceptance-window';
+import { lockGuardsForAssignment, returningRows } from '../operations/advisory-locks';
 import {
   COMPANY_FORBIDDEN_TRANSITIONS,
   DELETABLE_STATUSES,
@@ -221,7 +222,7 @@ export class ShiftService {
     return shift;
   }
 
-  async create(dto: CreateShiftDto, manager?: EntityManager) {
+  async create(dto: CreateShiftDto, manager?: EntityManager): Promise<{ shift: Shift; timesheet: Timesheet | null }> {
     const shiftRepo = manager?.getRepository(Shift) ?? this.shiftRepo;
     const companyRepo = manager?.getRepository(Company) ?? this.companyRepo;
     const guardRepo = manager?.getRepository(GuardProfile) ?? this.guardRepo;
@@ -306,12 +307,18 @@ export class ShiftService {
     }
 
     if (guard) {
+      // The overlap check and the insert must share a transaction holding the Guard's assignment lock. A
+      // caller without one (a company or admin create) is re-run inside a new transaction.
+      if (!manager) {
+        return this.dataSource.transaction((transactionManager) => this.create(dto, transactionManager));
+      }
       // Every route that attaches a Guard to a shift funnels through here, so the tenancy assertion
       // belongs here rather than in each caller. It is manager-aware because a hire may establish the
       // relationship and create the shift inside one transaction.
       await this.companyGuardService.ensureActiveRelationship(company.id, guard.id, manager);
       await this.complianceService.assertGuardAssignable(company.id, guard.id);
-      await this.availabilityService.assertGuardCanTakeShift(company.id, guard.id, start, end);
+      await lockGuardsForAssignment(manager, [guard.id]);
+      await this.availabilityService.assertGuardCanTakeShift(company.id, guard.id, start, end, undefined, manager);
     }
 
     const status = this.resolveInitialStatus({
@@ -511,32 +518,33 @@ export class ShiftService {
       throw shiftOfferExpiredException();
     }
 
-    // On acceptance, re-verify current eligibility
-    if (dto.response === 'accepted') {
-      await this.companyGuardService.ensureActiveRelationship(preCheck.company.id, guard.id);
-      await this.availabilityService.assertGuardCanTakeShift(
-        preCheck.company.id, guard.id, preCheck.start, preCheck.end, id,
-      );
-      await this.complianceService.assertGuardAssignable(preCheck.company.id, guard.id);
-    }
-
-    // Atomic conditional UPDATE — only succeeds if status is still 'offered'
-    // and this guard is still assigned, preventing race conditions. An acceptance also requires the shift not to
-    // have ended by the DATABASE clock ("end" is stored as UTC wall time; the process runs in UTC).
     const nextStatus = dto.response === 'accepted' ? 'ready' : 'rejected';
-    const updateResult = await this.dataSource.query(
-      `UPDATE "shifts"
-         SET "status" = $1
-       WHERE "id" = $2
-         AND "guardId" = $3
-         AND "status" = 'offered'
-         AND ($1 <> 'ready' OR "end" > (now() AT TIME ZONE 'UTC'))
-       RETURNING "id"`,
-      [nextStatus, id, guard.id],
-    );
-    // TypeORM's Postgres driver answers an UPDATE … RETURNING with [rows, rowCount], not the rows themselves, so
-    // `.length` of the raw result is always 2 and a refused write would look like a success. Read the rows.
-    const rows: { id: number }[] = Array.isArray(updateResult?.[0]) ? updateResult[0] : updateResult;
+    const rows = await this.dataSource.transaction(async (manager) => {
+      // On acceptance, re-verify current eligibility. The overlap check runs under the Guard's assignment lock,
+      // in the same transaction as the write, so a concurrent assignment of this Guard cannot pass in between.
+      if (dto.response === 'accepted') {
+        await this.companyGuardService.ensureActiveRelationship(preCheck.company.id, guard.id);
+        await lockGuardsForAssignment(manager, [guard.id]);
+        await this.availabilityService.assertGuardCanTakeShift(
+          preCheck.company.id, guard.id, preCheck.start, preCheck.end, id, manager,
+        );
+        await this.complianceService.assertGuardAssignable(preCheck.company.id, guard.id);
+      }
+
+      // Atomic conditional UPDATE — only succeeds if status is still 'offered'
+      // and this guard is still assigned, preventing race conditions. An acceptance also requires the shift not to
+      // have ended by the DATABASE clock ("end" is stored as UTC wall time; the process runs in UTC).
+      return returningRows<{ id: number }>(await manager.query(
+        `UPDATE "shifts"
+           SET "status" = $1
+         WHERE "id" = $2
+           AND "guardId" = $3
+           AND "status" = 'offered'
+           AND ($1 <> 'ready' OR "end" > (now() AT TIME ZONE 'UTC'))
+         RETURNING "id"`,
+        [nextStatus, id, guard.id],
+      ));
+    });
 
     if (rows.length === 0) {
       const current = await this.shiftRepo.findOne({ where: { id }, relations: ['guard'] });
@@ -723,7 +731,14 @@ export class ShiftService {
 
     // One transaction: the shift row is locked so a Guard's accept, a Book On or another edit cannot land
     // between the checks above and this write, and the audit entry commits with it.
+    const guardAssigned = Boolean(nextGuard) && nextGuard!.id !== before.guardId;
     const savedShift = await this.dataSource.transaction(async (manager) => {
+      // A newly assigned Guard: take their assignment lock (before the shift row lock) and repeat the overlap
+      // check through this transaction, so a concurrent assignment of the same Guard cannot pass in between.
+      if (guardAssigned) {
+        await lockGuardsForAssignment(manager, [nextGuard!.id]);
+        await this.availabilityService.assertGuardCanTakeShift(actorCompany.id, nextGuard!.id, nextStart, nextEnd, shift.id, manager);
+      }
       const [locked] = await manager.query(`SELECT "status" FROM "shifts" WHERE "id" = $1 FOR UPDATE`, [shift.id]);
       if (!locked || locked.status !== loadedStatus) {
         throw new ConflictException('This shift changed while it was being edited. Reload it and try again.');

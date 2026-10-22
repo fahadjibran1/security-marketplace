@@ -18,6 +18,7 @@ import { GuardProfile } from '../guard-profile/entities/guard-profile.entity';
 import { Shift } from '../shift/entities/shift.entity';
 import { Site } from '../site/entities/site.entity';
 import { hasExplicitUtcOffset } from '../common/site-time';
+import { lockGuardsForAssignment, returningRows } from '../operations/advisory-locks';
 import { RotaSlot } from './entities/rota-slot.entity';
 import {
   AssignMultipleResult,
@@ -311,15 +312,18 @@ export class RotaSlotService {
       }
 
       // Re-validate assigned guards against the new window, excluding each guard's own shift
+      const committed = allShifts.filter(
+        (s) => s.guard && !['cancelled', 'unfilled', 'rejected'].includes(s.status),
+      );
+      await lockGuardsForAssignment(manager, committed.map((s) => s.guard!.id));
       const conflicts: Array<{ guardId: number; reason: string }> = [];
-      for (const s of allShifts) {
-        if (!s.guard || ['cancelled', 'unfilled', 'rejected'].includes(s.status)) continue;
+      for (const s of committed) {
         try {
           await this.availabilityService.assertGuardCanTakeShift(
-            company.id, s.guard.id, startAt, endAt, s.id,
+            company.id, s.guard!.id, startAt, endAt, s.id, manager,
           );
         } catch (err: any) {
-          conflicts.push({ guardId: s.guard.id, reason: err.message });
+          conflicts.push({ guardId: s.guard!.id, reason: err.message });
         }
       }
 
@@ -439,28 +443,35 @@ export class RotaSlotService {
     }
 
     await this.companyGuardService.ensureActiveRelationship(company.id, guard.id);
-    await this.availabilityService.assertGuardCanTakeShift(
-      company.id, guard.id, slot.startAt, slot.endAt,
-    );
 
-    // Atomic conditional UPDATE: succeeds only if still unfilled and unassigned at write time
-    const rows: { id: number }[] = await this.dataSource.query(
-      `UPDATE "shifts"
-         SET "guardId" = $1, "status" = 'offered'
-       WHERE "id" = $2
-         AND "rotaSlotId" = $3
-         AND "guardId" IS NULL
-         AND "status" = 'unfilled'
-       RETURNING "id"`,
-      [guard.id, input.shiftId, slotId],
-    );
-
-    if (rows.length === 0) {
-      throw new ConflictException(
-        'This position has already been filled or is no longer available',
+    // The overlap check and the write share one transaction under the Guard's assignment lock, so a
+    // concurrent assignment of the same Guard elsewhere cannot pass its own check in between.
+    await this.dataSource.transaction(async (manager) => {
+      await lockGuardsForAssignment(manager, [guard.id]);
+      await this.availabilityService.assertGuardCanTakeShift(
+        company.id, guard.id, slot.startAt, slot.endAt, undefined, manager,
       );
-    }
 
+      // Atomic conditional UPDATE: succeeds only if still unfilled and unassigned at write time
+      const rows = returningRows<{ id: number }>(await manager.query(
+        `UPDATE "shifts"
+           SET "guardId" = $1, "status" = 'offered'
+         WHERE "id" = $2
+           AND "rotaSlotId" = $3
+           AND "guardId" IS NULL
+           AND "status" = 'unfilled'
+         RETURNING "id"`,
+        [guard.id, input.shiftId, slotId],
+      ));
+
+      if (rows.length === 0) {
+        throw new ConflictException(
+          'This position has already been filled or is no longer available',
+        );
+      }
+    });
+
+    // Only reached once the assignment has committed: a refused write leaves no audit entry.
     await this.auditLogService.log({
       company: { id: company.id },
       user: { id: user.sub },

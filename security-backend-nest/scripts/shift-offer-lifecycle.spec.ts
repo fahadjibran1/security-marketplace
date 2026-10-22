@@ -853,26 +853,34 @@ async function testRotaAssignmentRegression(ds: DataSource) {
   const { guard: g1 } = await createGuardWithRelationship(ds, company, 'rota-reg-g1');
   const { guard: g2 } = await createGuardWithRelationship(ds, company, 'rota-reg-g2');
 
+  const audit = makeCapturingAudit();
+  const auditedRotaSvc = new RotaSlotService(
+    ds.getRepository(RotaSlot), ds.getRepository(Shift), ds.getRepository(Site), ds.getRepository(GuardProfile),
+    ds, membershipStub(company) as any, cgStub, rotaAvailStub, audit.stub as any,
+  );
   const [r1, r2] = await Promise.allSettled([
-    rotaSvc.assignPosition(user, slot.id, { shiftId: shift.id, guardId: g1.id }),
-    rotaSvc.assignPosition(user, slot.id, { shiftId: shift.id, guardId: g2.id }),
+    auditedRotaSvc.assignPosition(user, slot.id, { shiftId: shift.id, guardId: g1.id }),
+    auditedRotaSvc.assignPosition(user, slot.id, { shiftId: shift.id, guardId: g2.id }),
   ]);
 
+  // Exactly one winner. The loser is told the truth (409), never a false success.
   const successes = [r1, r2].filter((r) => r.status === 'fulfilled');
-  ok(successes.length >= 1, 'ROTA-REGRESSION: at least one assignment succeeds');
+  const failures = [r1, r2].filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+  equal(successes.length, 1, 'ROTA-REGRESSION: exactly one assignment succeeds');
+  ok(failures[0].reason instanceof ConflictException, 'ROTA-REGRESSION: the losing assignment is a 409');
 
   // Final state invariant: shift must be in 'offered' with exactly one guard assigned
   const final = await ds.getRepository(Shift).findOneOrFail({ where: { id: shift.id }, relations: ['guard'] });
   equal(final.status, 'offered', 'ROTA-REGRESSION: shift is offered after assignment');
   ok(final.guard != null, 'ROTA-REGRESSION: shift has exactly one guard assigned');
+  equal((successes[0] as PromiseFulfilledResult<Shift>).value.guard?.id, final.guard!.id, 'ROTA-REGRESSION: the winner is the committed guard');
 
-  // If both resolved, verify they agree on the committed guard (second saw already-committed state)
-  if (successes.length === 2) {
-    const assignedGuardIds = new Set([g1.id, g2.id]);
-    ok(assignedGuardIds.has(final.guard!.id), 'ROTA-REGRESSION: committed guard is one of the two candidates');
-  }
+  // Exactly one audit entry, naming the committed guard: a refused write leaves no evidence behind.
+  const assigned = audit.captured.filter((a) => a.action === 'rota_slot.position_assigned' && a.entityId === shift.id);
+  equal(assigned.length, 1, 'ROTA-REGRESSION: exactly one position_assigned audit entry');
+  equal(assigned[0].afterData?.guardId, final.guard!.id, 'ROTA-REGRESSION: the audit entry names the committed guard');
 
-  console.log(`PASS ROTA-ASSIGNMENT-REGRESSION: concurrent assignment → guard=${final.guard!.id}, ${successes.length === 1 ? 'one winner + one 409' : 'both resolved to committed state'}`);
+  console.log(`PASS ROTA-ASSIGNMENT-REGRESSION: concurrent assignment → guard=${final.guard!.id}, one winner + one 409, one audit entry`);
 }
 
 // ── Replacement lifecycle tests ───────────────────────────────────────────────

@@ -58,6 +58,7 @@
     "test:rota-slot": "ts-node -r tsconfig-paths/register scripts/rota-slot-service.spec.ts",
     "test:shift-offers": "ts-node -r tsconfig-paths/register scripts/shift-offer-lifecycle.spec.ts",
     "test:offer-acceptance-window": "ts-node -r tsconfig-paths/register scripts/offer-acceptance-window.spec.ts",
+    "test:rota-assignment-concurrency": "ts-node -r tsconfig-paths/register scripts/rota-assignment-concurrency.spec.ts",
     "test:company-guards": "ts-node -r tsconfig-paths/register scripts/company-guard-lifecycle.spec.ts",
     "test:auth-permissions": "ts-node -r tsconfig-paths/register scripts/auth-session-permissions.spec.ts",
     "test:pay-admin-permissions": "ts-node -r tsconfig-paths/register scripts/pay-admin-permission.spec.ts",
