@@ -238,6 +238,29 @@ export class AttendanceService {
       );
       await manager.getRepository(Shift).update({ id: shift.id }, { status: 'completed' });
 
+      // Live Shift Amendments: a Book Off ends the shift, so any extension still awaiting approval or the Guard's answer
+      // is voided here, in the same transaction and after the shift row lock (the approved lock order: shift row, then
+      // amendment rows). The Book Off itself is never changed by an amendment.
+      const voided = (await manager.query(
+        `UPDATE "shift_amendments" SET "status" = 'voided', "voidedReason" = 'booked_off',
+            "voidedAt" = (statement_timestamp() AT TIME ZONE 'UTC'), "updatedAt" = now()
+          WHERE "shiftId" = $1 AND "status" IN ('awaiting_approval', 'pending')
+          RETURNING "id", "companyId", "status"`,
+        [shift.id],
+      )) as unknown;
+      const voidedRows = (Array.isArray(voided) && Array.isArray(voided[0]) ? voided[0] : voided) as Array<{ id: number; companyId: number }>;
+      for (const row of voidedRows) {
+        await this.auditLogService.logInTransaction(manager, {
+          company: { id: Number(row.companyId) },
+          user: { id: userId },
+          action: 'shift_amendment.voided',
+          entityType: 'shift_amendment',
+          entityId: Number(row.id),
+          beforeData: { status: 'open' },
+          afterData: { status: 'voided', reason: 'booked_off', shiftId: shift.id, bookOffEventId: savedEvent.id },
+        });
+      }
+
       if (shift.assignment) {
         await manager
           .getRepository(Assignment)
