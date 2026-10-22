@@ -7,7 +7,7 @@
  *   SS-03  a retime into the Guard's approved leave is refused
  *   SS-04  a retime while the Guard's compliance is invalid is refused
  *   SS-05  a retime after the company relationship is revoked is refused
- *   SS-06  a clean retime saves, and the status is unchanged (no new acceptance is asked of the Guard)
+ *   SS-06  a clean retime saves; an accepted shift goes back to its Guard for re-acceptance (owner rule, 22 Oct 2026)
  *   SS-07  a shift may move over its own previous window
  *   SS-08  an unfilled shift is retimed without any Guard check
  *   SS-09  an in-progress shift still cannot be retimed (409)
@@ -271,9 +271,9 @@ async function retimeTests(ds: DataSource) {
   const afterClean = await reload(ds, leaveShift.id);
   equal(afterClean.start.toISOString(), '2027-09-12T07:00:00.000Z', 'SS-06: start saved');
   equal(afterClean.end.toISOString(), '2027-09-12T13:00:00.000Z', 'SS-06: end saved');
-  equal(afterClean.status, 'ready', 'SS-06: status unchanged (no new acceptance asked of the Guard)');
+  equal(afterClean.status, 'offered', 'SS-06: the accepted shift is re-offered for re-acceptance (material-change rule)');
   equal(saved.guard?.id, guard.id, 'SS-06: the Guard keeps the shift');
-  pass('SS-06', 'clean retime saves; status stays ready, Guard kept');
+  pass('SS-06', 'clean retime saves; the accepted shift is re-offered to the same Guard');
 
   await shifts.updateForUser(companyUser, leaveShift.id, { start: '2027-09-12T08:00:00Z', end: '2027-09-12T14:00:00Z' } as any);
   equal((await reload(ds, leaveShift.id)).start.toISOString(), '2027-09-12T08:00:00.000Z', 'SS-07: moved over its own old window');

@@ -44,9 +44,13 @@ import {
   COMPANY_FORBIDDEN_TRANSITIONS,
   DELETABLE_STATUSES,
   MISSED_SHIFT_GRACE_MINUTES,
+  MaterialShiftTerms,
+  REACCEPTANCE_AUDIT_ACTION,
   RETIME_CHECKED_STATUSES,
   SCHEDULE_LOCKED_STATUSES,
   changedFields,
+  materialChanges,
+  reacceptanceAuditData,
   shiftAuditSnapshot,
 } from './shift-edit-policy';
 
@@ -511,7 +515,7 @@ export class ShiftService {
     // Pre-check: shift must exist and belong to this guard
     const preCheck = await this.shiftRepo.findOne({
       where: { id },
-      relations: ['company', 'guard'],
+      relations: ['company', 'guard', 'site'],
     });
     if (!preCheck || !preCheck.guard || preCheck.guard.id !== guard.id) {
       throw new NotFoundException(`Shift with id ${id} not found`);
@@ -542,6 +546,24 @@ export class ShiftService {
       // write, so a concurrent assignment of this Guard cannot pass in between.
       if (dto.response === 'accepted') {
         await lockGuardsForAssignment(manager, [guard.id]);
+        // An acceptance is of the terms checked above. If the company changed the start, end or site since they were
+        // read, this would confirm a revised shift that was never checked or seen; it is refused and the Guard
+        // responds to the revised offer instead. The row lock holds those terms until this transaction ends.
+        const [current] = (await manager.query(
+          'SELECT "start", "end", "siteId" FROM "shifts" WHERE "id" = $1 FOR UPDATE',
+          [id],
+        )) as Array<{ start: Date; end: Date; siteId: number | null }>;
+        if (
+          current &&
+          materialChanges(
+            { start: preCheck.start, end: preCheck.end, siteId: preCheck.site?.id ?? null },
+            { start: current.start, end: current.end, siteId: current.siteId ?? null },
+          ).length > 0
+        ) {
+          throw new ConflictException(
+            'This shift was changed by your company while you were responding. Review the updated shift, then accept or decline it.',
+          );
+        }
         await assertNoShiftClash(manager, guard.id, preCheck.start, preCheck.end, id);
       }
 
@@ -724,9 +746,26 @@ export class ShiftService {
       nextGuard = null;
     }
 
+    // Material-change re-acceptance (owner-approved 22 Oct 2026): the Guard accepted this shift on its start, end and
+    // site. Any actual change to one of them returns it to the same Guard as a revised offer, which is not confirmed
+    // until they accept it again through /shifts/:id/respond. Notes, instructions and the Welfare Check interval are
+    // not material. An offered shift stays offered; in-progress and closed shifts cannot be changed at all (above).
+    const acceptedTerms: MaterialShiftTerms = { start: new Date(before.start), end: new Date(before.end), siteId: before.siteId };
+    const revisedTerms: MaterialShiftTerms = { start: nextStart, end: nextEnd, siteId: siteChanged ? dto.siteId! : before.siteId };
+    const materialFields = materialChanges(acceptedTerms, revisedTerms);
+    const reofferedForReacceptance =
+      currentStatus === 'ready' &&
+      nextStatus === 'ready' &&
+      Boolean(nextGuard) &&
+      nextGuard!.id === before.guardId &&
+      materialFields.length > 0;
+    if (reofferedForReacceptance) {
+      nextStatus = 'offered';
+    }
+
     // A Guard who keeps a shift whose times change is checked against the new window exactly as a newly assigned
-    // Guard is: relationship, compliance, leave, availability and overlap. The status is unchanged, so a retime
-    // asks nothing new of the Guard. (In-progress and closed shifts cannot be retimed at all; see above.)
+    // Guard is: relationship, compliance, leave, availability and overlap. A refusal leaves the shift exactly as it
+    // was. (In-progress and closed shifts cannot be retimed at all; see above.)
     const retimedWithGuard =
       timesChanged && Boolean(nextGuard) && nextGuard!.id === before.guardId && RETIME_CHECKED_STATUSES.has(nextStatus);
     if (retimedWithGuard) {
@@ -783,28 +822,50 @@ export class ShiftService {
           afterData: changes.after,
         });
       }
+      // The re-offer has its own entry: the accepted terms, the revised terms, who changed them and why.
+      if (reofferedForReacceptance) {
+        await this.auditLogService.logInTransaction(manager, {
+          company: { id: actorCompany.id },
+          user: { id: user.sub },
+          action: REACCEPTANCE_AUDIT_ACTION,
+          entityType: 'shift',
+          entityId: shift.id,
+          ...reacceptanceAuditData({
+            guardId: nextGuard!.id,
+            accepted: acceptedTerms,
+            revised: revisedTerms,
+            changedFields: materialFields,
+            via: 'shift.update',
+            rotaSlotId: shift.rotaSlotId ?? null,
+          }),
+        });
+      }
+
+      // The draft timesheet carries the scheduled times; it is kept in step in the same transaction, so a retime and
+      // its timesheet commit together or not at all.
+      const timesheetRepo = manager.getRepository(Timesheet);
+      const timesheets = await timesheetRepo.find({
+        where: { shift: { id: saved.id } },
+        relations: ['shift', 'guard', 'company'],
+      });
+
+      if (saved.guard && timesheets.length === 0) {
+        await this.timesheetService.createForShift(saved, manager);
+      }
+
+      for (const timesheet of timesheets) {
+        timesheet.shift = saved;
+        if (!saved.guard) {
+          continue;
+        }
+        timesheet.guard = saved.guard;
+        timesheet.company = saved.company;
+        timesheet.scheduledStartAt = saved.start;
+        timesheet.scheduledEndAt = saved.end;
+        await timesheetRepo.save(timesheet);
+      }
       return saved;
     });
-    const timesheets = await this.timesheetRepo.find({
-      where: { shift: { id: savedShift.id } },
-      relations: ['shift', 'guard', 'company'],
-    });
-
-    if (savedShift.guard && timesheets.length === 0) {
-      await this.timesheetService.createForShift(savedShift);
-    }
-
-    for (const timesheet of timesheets) {
-      timesheet.shift = savedShift;
-      if (!savedShift.guard) {
-        continue;
-      }
-      timesheet.guard = savedShift.guard;
-      timesheet.company = savedShift.company;
-      timesheet.scheduledStartAt = savedShift.start;
-      timesheet.scheduledEndAt = savedShift.end;
-      await this.timesheetRepo.save(timesheet);
-    }
 
     return this.findOne(savedShift.id);
   }

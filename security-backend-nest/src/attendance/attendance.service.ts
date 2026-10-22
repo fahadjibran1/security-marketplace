@@ -33,6 +33,10 @@ import { AuditLogService } from '../audit-log/audit-log.service';
  */
 export const STALE_BOOK_ON_GRACE_HOURS = 12;
 
+/** Book On of a shift that is offered to the Guard, including one re-offered after a material change. */
+export const SHIFT_AWAITING_REACCEPTANCE_MESSAGE =
+  'This shift is waiting for you to accept it. If your company changed it, review the updated shift and accept it before you Book On.';
+
 /** Turns the start-of-work gate's refusal into words a Guard can act on. */
 export function bookOnRefusalReason(message: string): string {
   const compliance = /^Guard compliance invalid: (.+)$/.exec(message);
@@ -87,6 +91,8 @@ export class AttendanceService {
       return latest;
     }
 
+    // A shift waiting for the Guard's (re-)acceptance is not theirs to start yet.
+    if (normalizedStatus === 'offered') throw new BadRequestException(SHIFT_AWAITING_REACCEPTANCE_MESSAGE);
     if (normalizedStatus !== 'ready') throw new BadRequestException('Only ready shifts can be checked in');
     if (latest?.type === AttendanceEventType.CHECK_IN) throw new BadRequestException('Shift is already checked in');
 
@@ -108,31 +114,71 @@ export class AttendanceService {
     await this.assertMayBookOn(userId, guard.id, shift);
 
     const evidence = await this.verifyAttendanceEvidence(shift.site?.id, dto, { enforceGps: true, enforceNfc: true });
-    const event = this.attendanceRepo.create({
-      shift,
-      guard,
-      type: AttendanceEventType.CHECK_IN,
-      nfcTag: null,
-      nfcVerified: evidence.nfcVerified,
-      latitude: dto.latitude ?? null,
-      longitude: dto.longitude ?? null,
-      gpsAccuracyMeters: dto.gpsAccuracyMeters ?? null,
-      distanceFromSiteMeters: evidence.distanceFromSiteMeters,
-      gpsVerified: evidence.gpsVerified,
-      notes: dto.notes?.trim() || null,
+
+    // Book On is ONE transaction under the shift row lock, and only starts the shift the Guard accepted: still
+    // 'ready', still theirs, and still at the start, end and site checked above. A company change that re-offered
+    // the shift (material-change re-acceptance), or another Book On, cannot interleave between the checks and the
+    // write, and the shift's other columns are never written back from the copy read before the lock.
+    const result = await this.dataSource.transaction(async (manager) => {
+      const [locked] = (await manager.query(
+        'SELECT "status", "guardId", "start", "end", "siteId" FROM "shifts" WHERE "id" = $1 FOR UPDATE',
+        [shift.id],
+      )) as Array<{ status: string; guardId: number | null; start: Date; end: Date; siteId: number | null }>;
+      if (!locked || Number(locked.guardId) !== guard.id) throw new NotFoundException('Shift not found');
+      const lockedStatus = this.shiftService.normalizeLifecycleStatus(locked.status);
+      const attendanceRepo = manager.getRepository(AttendanceEvent);
+
+      if (lockedStatus === 'in_progress') {
+        // A concurrent Book On of this Guard committed first: the retry-safe answer, exactly as above.
+        const existing = await attendanceRepo.findOne({
+          where: { shift: { id: shift.id } },
+          order: { occurredAt: 'DESC', id: 'DESC' },
+        });
+        if (existing?.type === AttendanceEventType.CHECK_IN && existing.guard?.id === guard.id) {
+          return { event: existing, created: false };
+        }
+      }
+      const termsChanged =
+        new Date(locked.start).getTime() !== new Date(shift.start).getTime() ||
+        new Date(locked.end).getTime() !== new Date(shift.end).getTime() ||
+        (locked.siteId ?? null) !== (shift.site?.id ?? null);
+      if (lockedStatus === 'offered' || (lockedStatus === 'ready' && termsChanged)) {
+        throw new BadRequestException(SHIFT_AWAITING_REACCEPTANCE_MESSAGE);
+      }
+      if (lockedStatus !== 'ready') throw new BadRequestException('Only ready shifts can be checked in');
+
+      const savedEvent = await attendanceRepo.save(
+        attendanceRepo.create({
+          shift,
+          guard,
+          type: AttendanceEventType.CHECK_IN,
+          nfcTag: null,
+          nfcVerified: evidence.nfcVerified,
+          latitude: dto.latitude ?? null,
+          longitude: dto.longitude ?? null,
+          gpsAccuracyMeters: dto.gpsAccuracyMeters ?? null,
+          distanceFromSiteMeters: evidence.distanceFromSiteMeters,
+          gpsVerified: evidence.gpsVerified,
+          notes: dto.notes?.trim() || null,
+        }),
+      );
+      await manager.getRepository(Shift).update({ id: shift.id }, { status: 'in_progress' });
+
+      if (shift.assignment) {
+        await manager.getRepository(Assignment).update(
+          { id: shift.assignment.id },
+          {
+            status: AssignmentStatus.CHECKED_IN,
+            acceptedAt: shift.assignment.acceptedAt ?? savedEvent.occurredAt,
+            checkedInAt: savedEvent.occurredAt,
+          },
+        );
+      }
+      return { event: savedEvent, created: true };
     });
 
-    const savedEvent = await this.attendanceRepo.save(event);
-    shift.status = 'in_progress';
-    await this.shiftService.save(shift);
-
-    if (shift.assignment) {
-      shift.assignment.status = AssignmentStatus.CHECKED_IN;
-      shift.assignment.acceptedAt = shift.assignment.acceptedAt ?? savedEvent.occurredAt;
-      shift.assignment.checkedInAt = savedEvent.occurredAt;
-      await this.assignmentService.save(shift.assignment);
-    }
-    return savedEvent;
+    if (result.created) shift.status = 'in_progress';
+    return result.event;
   }
 
   async checkOut(userId: number, dto: RecordAttendanceDto) {

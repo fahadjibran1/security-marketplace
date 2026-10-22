@@ -12,8 +12,9 @@
  * could edit or delete any company's shift without any company permission. Deleting a never-worked shift
  * also deleted its timesheet, whatever its approval, payroll or billing state (SES-22..24).
  *
- * Reacceptance after a material change, availability at edit time, the Guard's notice and rota-position
- * rules are the Workflow P1 release; SES-11, SES-14 and SES-16 pin today's behaviour until then.
+ * Material-change re-acceptance (owner-approved 22 Oct 2026): changing an accepted shift's start, end or site returns
+ * it to the same Guard as a revised offer (SES-11, SES-12, SES-16; the full rule is certified in
+ * reacceptance.spec.ts). The Guard's notice is still the company's phone call; there is no push notification.
  *
  * Every test runs over real HTTP with real authorisation, against a disposable local database built from
  * the repository's own migrations.
@@ -290,29 +291,38 @@ async function main() {
     });
 
     // ════════════════ a future shift stays editable, and every edit is audited ════════════════
-    // Security P0 keeps today's offer and acceptance behaviour for future shifts. Returning an accepted shift
-    // to the Guard after a material change (reacceptance), with an availability check and a notice, is the
-    // Workflow P1 release; until then the change is at least on the record.
+    // A material change (start, end or site) to an accepted shift returns it to the same Guard for re-acceptance
+    // (owner-approved 22 Oct 2026). Notes and instructions do not.
 
-    await test('SES-11-RETIMING-A-FUTURE-ACCEPTED-SHIFT-IS-ALLOWED-AND-AUDITED', async () => {
+    await test('SES-11-RETIMING-A-FUTURE-ACCEPTED-SHIFT-RE-OFFERS-IT-AND-IS-AUDITED', async () => {
       const id = await shift('ready', 300 * HOUR, 8);
       const before = await row(id);
       const newStart = Date.now() + 301 * HOUR;
       const r = await api('PATCH', `/shifts/${id}`, A.token, { start: iso(newStart), end: iso(newStart + 8 * HOUR) });
       assert.equal(r.status, 200, `${r.status} ${JSON.stringify(r.body)}`);
-      assert.equal((await row(id)).status, 'ready', 'acceptance behaviour is unchanged in the security release');
+      const after = await row(id);
+      assert.equal(after.status, 'offered', 'an accepted shift whose times change needs the Guard to accept it again');
+      assert.equal(after.guardId, g.id, 'and stays with the same Guard');
       const [entry] = await audits(id, 'shift.updated');
       assert.ok(entry, 'the change is audited');
       assert.equal(new Date(entry.b.start).getTime(), before.start.getTime());
       assert.equal(new Date(entry.a.start).getTime(), newStart);
       assert.equal(entry.u, A.ownerId, 'by the manager who made it');
-      assert.equal(entry.b.status, undefined, 'only changed fields are recorded');
+      assert.equal(entry.b.status, 'ready', 'the status change is recorded');
+      assert.equal(entry.a.status, 'offered');
+      assert.equal(entry.b.instructions, undefined, 'only changed fields are recorded');
+      const reoffers = await audits(id, 'shift.reacceptance_required');
+      assert.equal(reoffers.length, 1, 'one re-acceptance entry');
+      assert.equal(new Date(reoffers[0].b.start).getTime(), before.start.getTime(), 'it keeps the accepted terms');
+      assert.equal(reoffers[0].a.reason, 'material_change');
     });
 
-    await test('SES-12-MOVING-A-FUTURE-SHIFT-TO-ANOTHER-SITE-IS-AUDITED', async () => {
+    await test('SES-12-MOVING-AN-ACCEPTED-SHIFT-TO-ANOTHER-SITE-RE-OFFERS-IT-AND-IS-AUDITED', async () => {
       const id = await shift('ready', 24 * HOUR, 8);
       const r = await api('PATCH', `/shifts/${id}`, A.token, { siteId: A.site2Id });
       assert.equal(r.status, 200, `${r.status} ${JSON.stringify(r.body)}`);
+      assert.equal((await row(id)).status, 'offered', 'a change of site needs the Guard to accept it again');
+      assert.equal((await audits(id, 'shift.reacceptance_required')).length, 1);
       const [entry] = await audits(id, 'shift.updated');
       assert.equal(entry.b.siteId, A.siteId);
       assert.equal(entry.a.siteId, A.site2Id);
@@ -347,7 +357,7 @@ async function main() {
       assert.deepEqual(await row(id), before);
     });
 
-    await test('SES-16-THE-ROTA-SLOT-TIME-CHANGE-IS-UNCHANGED-IN-THE-SECURITY-RELEASE', async () => {
+    await test('SES-16-THE-ROTA-SLOT-TIME-CHANGE-RE-OFFERS-AN-ACCEPTED-POSITION', async () => {
       const startAt = Date.now() + 72 * HOUR;
       const slot = (await one(`INSERT INTO rota_slots ("companyId","siteId","startAt","endAt","requiredGuardCount") VALUES ($1,$2,$3,$4,1) RETURNING id`,
         [A.id, A.siteId, new Date(startAt), new Date(startAt + 8 * HOUR)])).id;
@@ -355,7 +365,9 @@ async function main() {
       const r = await api('PATCH', `/rota-slots/${slot}/time`, A.token, { startAt: iso(startAt + HOUR), endAt: iso(startAt + 9 * HOUR) });
       assert.equal(r.status, 200, `${r.status} ${JSON.stringify(r.body)}`);
       assert.equal((await row(accepted)).start.getTime(), startAt + HOUR, 'the position moves with its slot');
-      assert.equal((await row(accepted)).status, 'ready');
+      assert.equal((await row(accepted)).status, 'offered', 'and goes back to its Guard for re-acceptance');
+      assert.equal((await row(accepted)).guardId, g.id);
+      assert.equal((await audits(accepted, 'shift.reacceptance_required')).length, 1);
     });
 
     // ════════════════ a timesheet is never deleted, and a shift with one is never deleted ════════════════

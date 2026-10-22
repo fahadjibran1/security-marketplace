@@ -68,7 +68,8 @@ type AuditEntry = { action: string; entityId?: number | null; afterData?: Record
 
 function makeCapturingAudit() {
   const captured: AuditEntry[] = [];
-  return { captured, stub: { log: async (input: AuditEntry) => { captured.push(input); return input; } } as any };
+  const capture = async (input: AuditEntry) => { captured.push(input); return input; };
+  return { captured, stub: { log: capture, logInTransaction: async (_manager: unknown, input: AuditEntry) => capture(input) } as any };
 }
 
 const membershipStub = (company: Company) => ({

@@ -29,6 +29,11 @@ import {
   ListSlotsQuery,
   SlotWithShifts,
 } from './rota-slot.types';
+import {
+  REACCEPTANCE_AUDIT_ACTION,
+  materialChanges,
+  reacceptanceAuditData,
+} from '../shift/shift-edit-policy';
 
 // Guard positions whose presence means execution is live or historical
 const EXECUTION_LOCK_STATUSES = ['in_progress', 'completed', 'missed'];
@@ -345,27 +350,69 @@ export class RotaSlotService {
         });
       }
 
+      // The positions' rows, locked after the Guard locks (the approved order). A Guard's acceptance or Book On that
+      // committed since they were read changes a status, and the time change is refused rather than applied over it.
+      const lockedRows = (await manager.query(
+        'SELECT "id", "status" FROM "shifts" WHERE "rotaSlotId" = $1 ORDER BY "id" FOR UPDATE',
+        [slotId],
+      )) as Array<{ id: number; status: string }>;
+      const loadedStatus = new Map(allShifts.map((s) => [s.id, s.status]));
+      if (
+        lockedRows.length !== allShifts.length ||
+        lockedRows.some((row) => loadedStatus.get(Number(row.id)) !== row.status)
+      ) {
+        throw new ConflictException('A position on this slot changed while its time was being changed. Reload it and try again.');
+      }
+
+      const beforeTimes = { startAt: slot.startAt, endAt: slot.endAt };
       slot.startAt = startAt;
       slot.endAt = endAt;
       await slotRepo.save(slot);
 
+      // Material-change re-acceptance (owner-approved 22 Oct 2026): every accepted position whose start or end
+      // actually changes goes back to its Guard as a revised offer, and is not confirmed until they accept it again.
+      const reofferedShiftIds: number[] = [];
       for (const s of allShifts) {
         if (s.status === 'cancelled') continue;
+        const accepted = { start: s.start, end: s.end, siteId: s.site?.id ?? null };
+        const revised = { start: startAt, end: endAt, siteId: s.site?.id ?? null };
+        const changedFields = materialChanges(accepted, revised);
+        const reoffer = s.status === 'ready' && Boolean(s.guard) && changedFields.length > 0;
         s.start = startAt;
         s.end = endAt;
+        if (reoffer) s.status = 'offered';
         await shiftRepo.save(s);
+        if (reoffer) {
+          reofferedShiftIds.push(s.id);
+          await this.auditLogService.logInTransaction(manager, {
+            company: { id: company.id },
+            user: { id: user.sub },
+            action: REACCEPTANCE_AUDIT_ACTION,
+            entityType: 'shift',
+            entityId: s.id,
+            ...reacceptanceAuditData({
+              guardId: s.guard!.id,
+              accepted,
+              revised,
+              changedFields,
+              via: 'rota_slot.time_changed',
+              rotaSlotId: slotId,
+            }),
+          });
+        }
       }
 
-      return slot;
-    });
+      await this.auditLogService.logInTransaction(manager, {
+        company: { id: company.id },
+        user: { id: user.sub },
+        action: 'rota_slot.time_changed',
+        entityType: 'rota_slot',
+        entityId: slotId,
+        beforeData: beforeTimes,
+        afterData: { startAt, endAt, reofferedShiftIds },
+      });
 
-    await this.auditLogService.log({
-      company: { id: company.id },
-      user: { id: user.sub },
-      action: 'rota_slot.time_changed',
-      entityType: 'rota_slot',
-      entityId: slotId,
-      afterData: { startAt, endAt },
+      return slot;
     });
 
     return slot;

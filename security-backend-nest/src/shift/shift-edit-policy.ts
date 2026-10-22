@@ -25,6 +25,55 @@ export const RETIME_CHECKED_STATUSES: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Material-change re-acceptance (owner-approved 22 Oct 2026). A Guard accepted a shift on its start, end and site.
+ * Any actual change to one of those, by any amount, returns an accepted ('ready') shift to the same Guard as a
+ * revised offer ('offered'): it is not confirmed again until the Guard accepts it. Notes, instructions and the
+ * Welfare Check interval are not material. Reassigning to another Guard is a separate, controlled workflow.
+ */
+export const REACCEPTANCE_REASON = 'material_change';
+export const REACCEPTANCE_AUDIT_ACTION = 'shift.reacceptance_required';
+
+export type MaterialShiftTerms = { start: Date; end: Date; siteId: number | null };
+export type MaterialField = 'start' | 'end' | 'siteId';
+
+/** Which of start, end and site actually differ. Empty when the accepted terms still stand. */
+export function materialChanges(before: MaterialShiftTerms, after: MaterialShiftTerms): MaterialField[] {
+  const fields: MaterialField[] = [];
+  if (new Date(before.start).getTime() !== new Date(after.start).getTime()) fields.push('start');
+  if (new Date(before.end).getTime() !== new Date(after.end).getTime()) fields.push('end');
+  if ((before.siteId ?? null) !== (after.siteId ?? null)) fields.push('siteId');
+  return fields;
+}
+
+/** The audit entry for one re-offer: the accepted terms, the revised terms, and why. */
+export function reacceptanceAuditData(params: {
+  guardId: number;
+  accepted: MaterialShiftTerms;
+  revised: MaterialShiftTerms;
+  changedFields: MaterialField[];
+  via: 'shift.update' | 'rota_slot.time_changed';
+  rotaSlotId?: number | null;
+}): { beforeData: Record<string, unknown>; afterData: Record<string, unknown> } {
+  const terms = (t: MaterialShiftTerms) => ({
+    start: new Date(t.start).toISOString(),
+    end: new Date(t.end).toISOString(),
+    siteId: t.siteId ?? null,
+  });
+  return {
+    beforeData: { status: 'ready', guardId: params.guardId, ...terms(params.accepted) },
+    afterData: {
+      status: 'offered',
+      guardId: params.guardId,
+      ...terms(params.revised),
+      reason: REACCEPTANCE_REASON,
+      changedFields: params.changedFields,
+      via: params.via,
+      ...(params.rotaSlotId != null ? { rotaSlotId: params.rotaSlotId } : {}),
+    },
+  };
+}
+
+/**
  * Status changes only the Guard (accept / decline through /shifts/:id/respond) or the attendance record
  * (Book On) may make. A company editing the shift into one of these would be acting as the Guard, or
  * starting work that has no Book On behind it.

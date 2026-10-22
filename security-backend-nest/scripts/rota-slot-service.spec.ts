@@ -66,6 +66,7 @@ const availabilityStub = {
 
 const auditStub = {
   log: async () => undefined,
+  logInTransaction: async () => undefined,
 } as any;
 
 const stubUser: JwtPayload = {
