@@ -605,7 +605,19 @@ async function main() {
     // Every setInterval in the application goes through a single-flight job (pool diagnostics only snapshot).
     const glob = require('child_process').execSync('git ls-files src', { cwd: require('path').join(__dirname, '..') }).toString().split('\n').filter((f: string) => f.endsWith('.ts'));
     const intervals = glob.filter((f: string) => /setInterval\(/.test(src('../' + f))).sort();
-    assert.deepEqual(intervals, ['src/database/pool-diagnostics/pool-diagnostics.service.ts', 'src/safety-alert/safety-alert.service.ts', 'src/scheduler/scheduler.service.ts']);
+    assert.deepEqual(intervals, [
+      'src/database/pool-diagnostics/pool-diagnostics.service.ts',
+      'src/safety-alert/safety-alert.service.ts',
+      'src/scheduler/scheduler.service.ts',
+      'src/shift-amendment/shift-amendment.service.ts',
+    ]);
+    // Live Shift Amendments: proposal expiry is single-flight too, every minute, and the timer only ticks the job.
+    const lsa = src('../src/shift-amendment/shift-amendment.service.ts');
+    const lsaInit = lsa.split('onModuleInit() {')[1].split('onModuleDestroy()')[0];
+    assert.match(lsaInit, /new SingleFlightJob\(\s*'shift-amendment-expiry'/);
+    assert.match(lsaInit, /setInterval\(\(\) => void this\.expiryJob\?\.tick\(\), AMENDMENT_EXPIRY_INTERVAL_MS\)/);
+    assert.match(lsa, /export const AMENDMENT_EXPIRY_INTERVAL_MS = 60_000;/, 'expiry cadence pinned');
+    assert.equal((lsa.match(/setInterval\(/g) ?? []).length, 1, 'one timer, and it only ticks the single-flight job');
     // The real sweep through the timer path: two ticks at once start one sweep.
     const [one, two] = await Promise.all([safety.triggerSafetySweep(), safety.triggerSafetySweep()]);
     assert.equal([one, two].filter((o) => o.ran).length, 1);
