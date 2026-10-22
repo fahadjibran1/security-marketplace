@@ -428,16 +428,16 @@ async function testOverlappingOffers(ds: DataSource) {
   const { company, site } = await createCompanyWithSite(ds, 'overlap');
   const { guard, guardUser } = await createGuardWithRelationship(ds, company, 'overlap-g1');
 
-  // Two overlapping shifts both offered to same guard
-  const shiftA = await createOfferedShift(ds, company, site, guard, '2027-06-15T08:00:00', '2027-06-15T16:00:00');
-  const shiftB = await createOfferedShift(ds, company, site, guard, '2027-06-15T12:00:00', '2027-06-15T20:00:00');
-
   const userMap = new Map([[guardUser.id, guard]]);
 
-  // Accept shift A using pass-through availability (shift B is still 'offered', not a committed clash)
+  // Shift A is offered and accepted first. An offered shift already holds its Guard's time (the overlap check
+  // counts it), and the acceptance repeats that check under the Guard's lock, so A must be accepted before the
+  // overlapping shift B is offered to the same Guard (directly in the database, as no API path would allow it).
+  const shiftA = await createOfferedShift(ds, company, site, guard, '2027-06-15T08:00:00', '2027-06-15T16:00:00');
   const svcPass = makeShiftService(ds, { company, site, userToGuard: userMap });
   const resultA = await svcPass.respondForGuard(makeGuardUser(guardUser.id), shiftA.id, { response: 'accepted' });
   equal(resultA.status, 'ready', 'OVERLAPPING: first accept succeeds');
+  const shiftB = await createOfferedShift(ds, company, site, guard, '2027-06-15T12:00:00', '2027-06-15T20:00:00');
 
   // Accept shift B — should fail because shift A is now 'ready' and overlaps
   const realAvail = makeRealClashAvailability(ds);

@@ -19,6 +19,7 @@ import { Shift } from '../shift/entities/shift.entity';
 import { Site } from '../site/entities/site.entity';
 import { hasExplicitUtcOffset } from '../common/site-time';
 import { lockGuardsForAssignment, returningRows } from '../operations/advisory-locks';
+import { assertNoShiftClash } from '../availability/shift-clash';
 import { RotaSlot } from './entities/rota-slot.entity';
 import {
   AssignMultipleResult,
@@ -315,15 +316,25 @@ export class RotaSlotService {
       const committed = allShifts.filter(
         (s) => s.guard && !['cancelled', 'unfilled', 'rejected'].includes(s.status),
       );
-      await lockGuardsForAssignment(manager, committed.map((s) => s.guard!.id));
       const conflicts: Array<{ guardId: number; reason: string }> = [];
       for (const s of committed) {
         try {
           await this.availabilityService.assertGuardCanTakeShift(
-            company.id, s.guard!.id, startAt, endAt, s.id, manager,
+            company.id, s.guard!.id, startAt, endAt, s.id,
           );
         } catch (err: any) {
           conflicts.push({ guardId: s.guard!.id, reason: err.message });
+        }
+      }
+      // Then, under the Guards' assignment locks, the overlap check again on this transaction's connection.
+      if (conflicts.length === 0) {
+        await lockGuardsForAssignment(manager, committed.map((s) => s.guard!.id));
+        for (const s of committed) {
+          try {
+            await assertNoShiftClash(manager, s.guard!.id, startAt, endAt, s.id);
+          } catch (err: any) {
+            conflicts.push({ guardId: s.guard!.id, reason: err.message });
+          }
         }
       }
 
@@ -443,14 +454,15 @@ export class RotaSlotService {
     }
 
     await this.companyGuardService.ensureActiveRelationship(company.id, guard.id);
+    await this.availabilityService.assertGuardCanTakeShift(
+      company.id, guard.id, slot.startAt, slot.endAt,
+    );
 
-    // The overlap check and the write share one transaction under the Guard's assignment lock, so a
+    // The overlap check is repeated and the write made in one transaction under the Guard's assignment lock, so a
     // concurrent assignment of the same Guard elsewhere cannot pass its own check in between.
     await this.dataSource.transaction(async (manager) => {
       await lockGuardsForAssignment(manager, [guard.id]);
-      await this.availabilityService.assertGuardCanTakeShift(
-        company.id, guard.id, slot.startAt, slot.endAt, undefined, manager,
-      );
+      await assertNoShiftClash(manager, guard.id, slot.startAt, slot.endAt);
 
       // Atomic conditional UPDATE: succeeds only if still unfilled and unassigned at write time
       const rows = returningRows<{ id: number }>(await manager.query(

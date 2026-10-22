@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, In, IsNull, LessThan, MoreThan, Not, Repository } from 'typeorm';
+import { In, IsNull, LessThan, MoreThan, Not, Repository } from 'typeorm';
 
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { CompanyService } from '../company/company.service';
@@ -132,7 +132,6 @@ export class AvailabilityService {
     startAt: Date;
     endAt: Date;
     excludeShiftId?: number;
-    manager?: EntityManager;
   }): Promise<GuardEligibilityResult> {
     const relation = await this.companyGuardRepo.findOne({
       where: { company: { id: input.companyId }, guard: { id: input.guardId } },
@@ -150,7 +149,6 @@ export class AvailabilityService {
       input.startAt,
       input.endAt,
       input.excludeShiftId,
-      input.manager,
     );
     if (hasShiftClash) reasons.push('Guard already has an overlapping shift.');
     let complianceValid = true;
@@ -191,8 +189,6 @@ export class AvailabilityService {
     startAt: Date,
     endAt: Date,
     excludeShiftId?: number,
-    // Inside an assignment transaction holding the Guard's assignment lock, the overlap check reads through it.
-    manager?: EntityManager,
   ) {
     const result = await this.evaluateGuardForShift({
       companyId,
@@ -200,7 +196,6 @@ export class AvailabilityService {
       startAt,
       endAt,
       excludeShiftId,
-      manager,
     });
     if (result.hasShiftClash) throw new ForbiddenException('Guard has an overlapping shift assignment.');
     if (result.hasApprovedLeave) throw new ForbiddenException('Guard has approved leave during this shift.');
@@ -379,7 +374,6 @@ export class AvailabilityService {
     startAt: Date,
     endAt: Date,
     excludeShiftId?: number,
-    manager?: EntityManager,
   ) {
     const where: any = {
       guard: { id: guardId },
@@ -388,7 +382,7 @@ export class AvailabilityService {
       end: MoreThan(startAt),
     };
     if (excludeShiftId) where.id = Not(excludeShiftId);
-    const count = await (manager ? manager.getRepository(Shift) : this.shiftRepo).count({ where });
+    const count = await this.shiftRepo.count({ where });
     return count > 0;
   }
 
