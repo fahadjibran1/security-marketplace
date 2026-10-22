@@ -71,7 +71,10 @@ test('OAW-05-ENFORCED-ON-SERVER-AND-DATABASE-CLOCKS-ACCEPT-ONLY', () => {
   assert.ok(preCheck > 0, 'server-clock check present');
   assert.ok(preCheck < respond.indexOf('assertGuardCanTakeShift'), 'checked before the eligibility work');
   assert.match(respond, /if \(dto\.response === 'accepted' && offerAcceptanceWindow/, 'acceptance only: declining is never blocked');
-  assert.match(respond, /AND \(\$1 <> 'ready' OR "end" > \(now\(\) AT TIME ZONE 'UTC'\)\)/, 'the atomic UPDATE re-checks by the database clock');
+  assert.match(respond, /AND \(\$1 <> 'ready' OR "end" > \(statement_timestamp\(\) AT TIME ZONE 'UTC'\)\)/, 'the atomic UPDATE re-checks by the database clock');
+  // The UPDATE runs inside a transaction that begins before the eligibility checks, where now() would be that
+  // earlier moment; only the statement clock is the database time of the write itself.
+  assert.ok(!/"end" > \(now\(\)/.test(respond), 'the expiry re-check does not use the transaction-start clock');
   assert.match(respond, /if \(dto\.response === 'accepted' && current\.status === 'offered'\) \{\s*throw shiftOfferExpiredException\(\);/, 'an in-flight expiry is reported as expired');
   // Nothing deletes or re-statuses an expired offer.
   assert.ok(!/DELETE FROM "shifts"|status: 'missed'|'expired'/.test(respond), 'no deletion or status change for expired offers');
