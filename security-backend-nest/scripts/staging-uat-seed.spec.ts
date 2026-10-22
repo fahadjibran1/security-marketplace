@@ -17,6 +17,8 @@
  *   SEED-10  --report is read only, needs no confirmation, and prints no secret
  *   SEED-12  the expected ledger is this code's own migration head (64), checked before seeding AND before
  *            --recover-logins boots the app; no in-process timer (incl. amendment expiry) runs; the report tolerates 63
+ *   SEED-13  the recovery allowlist is the 3 UAT accounts plus at most the approved platform administrator
+ *            (uat-s4-admin@example.com, admin role); any other user is refused; only the 3 UAT accounts are reset
  *   SEED-11  --recover-logins touches only the 3 fictional accounts, only through the product's reset workflow,
  *            saves each login before the next step and proves it on the deployed staging API
  */
@@ -25,8 +27,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import {
-  confirmOnce, createdShift, fictionalPdf, redact, registerSecret, repositoryMigrationHead, REQUEST_TIMEOUT_MS, stagingEvidenceProblem,
-  UAT_ACCOUNT_EMAILS, writeLogins,
+  confirmOnce, createdShift, fictionalPdf, recoveryUsersProblem, redact, registerSecret, repositoryMigrationHead, REQUEST_TIMEOUT_MS,
+  stagingEvidenceProblem, UAT_ACCOUNT_EMAILS, UAT_PLATFORM_ADMIN_EMAIL, writeLogins,
 } from './staging-uat-seed';
 
 let passed = 0;
@@ -213,10 +215,13 @@ test('SEED-11-RECOVERY-USES-THE-PRODUCT-RESET-FLOW-FOR-THE-FICTIONAL-ACCOUNTS-ON
   const body = code.slice(code.indexOf('async function recover('), code.indexOf('async function seed('));
   assert.deepEqual(UAT_ACCOUNT_EMAILS, ['uat-guard-a@example.com', 'uat-guard-b@example.com', 'uat-owner@example.com']);
   assert.ok(UAT_ACCOUNT_EMAILS.every((e) => e.endsWith('@example.com')), 'reserved, never-delivered domain');
-  // Refuses unless the users are exactly those three, read in a READ ONLY transaction, before the app starts.
+  // Refuses unless the users are the UAT set (SEED-13), read in a READ ONLY transaction, before the app starts.
   assert.match(body, /BEGIN TRANSACTION READ ONLY/);
-  assert.match(body, /JSON\.stringify\(emails\) !== JSON\.stringify\(UAT_ACCOUNT_EMAILS\)/);
-  assert.ok(body.indexOf('UAT_ACCOUNT_EMAILS') < body.indexOf('bootApp(t)'), 'checked before the app starts');
+  assert.match(body, /const problem = recoveryUsersProblem\(users\);/);
+  assert.ok(body.indexOf('recoveryUsersProblem(users)') < body.indexOf('bootApp(t)'), 'checked before the app starts');
+  // Only the three UAT accounts are ever reset — never the platform administrator.
+  assert.match(body, /for \(const email of \['uat-owner@example\.com', 'uat-guard-a@example\.com', 'uat-guard-b@example\.com'\]\)/);
+  assert.ok(!/uat-s4-admin|UAT_PLATFORM_ADMIN_EMAIL/.test(body), 'recovery never names the platform administrator');
   // The product's own workflow: request (audited token), captured email, reset (audited, sessions revoked).
   assert.ok(body.indexOf('recovery.forgotPassword(') < body.indexOf("m.kind === 'password_reset'"));
   assert.ok(body.indexOf("m.kind === 'password_reset'") < body.indexOf('recovery.resetPassword('));
@@ -261,6 +266,32 @@ test('SEED-12-THE-LEDGER-IS-THIS-CODE-S-OWN-HEAD-AND-NO-IN-PROCESS-TIMER-RUNS', 
   assert.match(report, /to_regclass\('public\.shift_amendments'\)/);
   assert.match(report, /BEGIN TRANSACTION READ ONLY/);
   assert.ok(!/INSERT|UPDATE |DELETE /i.test(report), 'no write in the report');
+});
+
+test('SEED-13-THE-ACCOUNT-ALLOWLIST-IS-THE-UAT-SET-PLUS-AT-MOST-THE-APPROVED-ADMIN', () => {
+  assert.equal(UAT_PLATFORM_ADMIN_EMAIL, 'uat-s4-admin@example.com');
+  const uat = [
+    { email: 'uat-owner@example.com', role: 'company_admin' },
+    { email: 'uat-guard-a@example.com', role: 'guard' },
+    { email: 'uat-guard-b@example.com', role: 'guard' },
+  ];
+  const admin = { email: 'uat-s4-admin@example.com', role: 'admin' };
+  // Allowed: exactly the three; the three plus the approved administrator (any case).
+  assert.equal(recoveryUsersProblem(uat), null);
+  assert.equal(recoveryUsersProblem([...uat, admin]), null);
+  assert.equal(recoveryUsersProblem([...uat, { email: 'UAT-S4-Admin@Example.com', role: 'admin' }]), null);
+  // Refused: anything else.
+  assert.match(String(recoveryUsersProblem(uat.slice(1))), /not all present/, 'a missing UAT account');
+  assert.match(String(recoveryUsersProblem([...uat.slice(1), admin])), /not all present/, 'the admin does not replace a UAT account');
+  assert.match(String(recoveryUsersProblem([...uat, { ...admin, role: 'company_admin' }])), /non-administrator/, 'the approved email with any other role');
+  assert.match(String(recoveryUsersProblem([...uat, { ...admin, role: 'guard' }])), /non-administrator/);
+  assert.match(String(recoveryUsersProblem([...uat, { email: 'someone@example.com', role: 'admin' }])), /not one of the approved/, 'an arbitrary extra user, even a fictional admin');
+  assert.match(String(recoveryUsersProblem([...uat, { email: 'real.person@gmail.com', role: 'guard' }])), /not one of the approved/);
+  assert.match(String(recoveryUsersProblem([...uat, admin, { email: 'uat-s4-admin2@example.com', role: 'admin' }])), /2 users besides/, 'a second extra user');
+  assert.match(String(recoveryUsersProblem([...uat, admin, admin])), /2 users besides/, 'the same administrator twice');
+  assert.match(String(recoveryUsersProblem([])), /not all present/, 'an empty database is not the UAT set');
+  // The seed path is unchanged: it still requires an EMPTY users table.
+  assert.match(code, /seed only a fresh database/);
 });
 
 queue.then(

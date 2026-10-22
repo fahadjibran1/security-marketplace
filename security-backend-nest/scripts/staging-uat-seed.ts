@@ -54,6 +54,30 @@ const reportOnly = args.includes('--report');
 const recoverLogins = args.includes('--recover-logins');
 /** The only accounts --recover-logins will touch: the three fictional UAT accounts, nothing else in the database. */
 export const UAT_ACCOUNT_EMAILS = ['uat-guard-a@example.com', 'uat-guard-b@example.com', 'uat-owner@example.com'];
+/**
+ * The one approved fictional S4 platform administrator on staging (owner approval, 23 Oct 2026), created with the
+ * product's own admin:bootstrap to activate Live Shift Amendments for the UAT company. It is never touched by this
+ * seeder: recovery resets only the three UAT accounts.
+ */
+export const UAT_PLATFORM_ADMIN_EMAIL = 'uat-s4-admin@example.com';
+
+/**
+ * Why the target's users are not exactly the staging UAT set, or null when they are: the three fictional UAT accounts
+ * (all present), plus at most the approved platform administrator — exactly that email AND the platform-admin role.
+ * Any other user, a second extra user, or that email with any other role is refused.
+ */
+export function recoveryUsersProblem(users: Array<{ email: string; role: string }>): string | null {
+  const emails = users.map((u) => String(u.email).trim().toLowerCase());
+  const missing = UAT_ACCOUNT_EMAILS.filter((e) => !emails.includes(e));
+  if (missing.length) return `the ${missing.length} expected fictional UAT account(s) are not all present`;
+  const extra = users.filter((u) => !UAT_ACCOUNT_EMAILS.includes(String(u.email).trim().toLowerCase()));
+  if (extra.length === 0) return null;
+  if (extra.length > 1) return `${extra.length} users besides the three UAT accounts (at most the approved platform administrator is allowed)`;
+  const [admin] = extra;
+  if (String(admin.email).trim().toLowerCase() !== UAT_PLATFORM_ADMIN_EMAIL) return 'a user that is not one of the approved staging accounts';
+  if (admin.role !== 'admin') return 'the approved platform administrator email belongs to a non-administrator account';
+  return null;
+}
 const RECOVER_CONFIRM = 's4-staging-db';
 
 /** Every HTTP request the seeder makes (in-process API, live staging API, bucket PUT and GET) gives up after this. */
@@ -401,15 +425,14 @@ async function recover(t: Target) {
     await c.query('BEGIN TRANSACTION READ ONLY');
     // The app booted below is this code: it must run only on the migration head it was built for.
     await assertLedger(c);
-    const emails = (await c.query(`select lower(email) e from users order by 1`)).rows.map((r: any) => r.e);
+    const users = (await c.query(`select lower(email) email, role::text role from users order by 1`)).rows as Array<{ email: string; role: string }>;
     await c.query('ROLLBACK');
-    if (JSON.stringify(emails) !== JSON.stringify(UAT_ACCOUNT_EMAILS)) {
-      fail(`users are not exactly the three fictional UAT accounts (${emails.length} users); nothing recovered`);
-    }
+    const problem = recoveryUsersProblem(users);
+    if (problem) fail(`users are not the staging UAT set (${users.length} users): ${problem}; nothing recovered`);
   } finally {
     await c.end();
   }
-  console.log('recovery preflight OK: the users are exactly the 3 fictional UAT accounts');
+  console.log('recovery preflight OK: the 3 fictional UAT accounts (and at most the approved staging platform administrator)');
   const app = await bootApp(t);
   try {
     const { AccountRecoveryService } = await import('../src/auth/account-recovery.service');
