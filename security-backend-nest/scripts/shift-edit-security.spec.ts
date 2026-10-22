@@ -325,7 +325,10 @@ async function main() {
     });
 
     await test('SES-14-AN-OFFERED-SHIFT-CAN-BE-RETIMED-AND-STAYS-OFFERED', async () => {
-      const id = await shift('offered', 24 * HOUR, 8);
+      // Its own fully compliant Guard: since Phase 0b a retime re-runs the Guard's eligibility check (owner decision,
+      // 22 Oct 2026), and the shared Guard g already holds several shifts in this window from the tests above.
+      const fresh = await guard('ses-retime');
+      const id = await shift('offered', 24 * HOUR, 8, { guardId: fresh.id });
       const r = await api('PATCH', `/shifts/${id}`, A.token, { end: iso(Date.now() + 33 * HOUR) });
       assert.equal(r.status, 200);
       assert.equal((await row(id)).status, 'offered');

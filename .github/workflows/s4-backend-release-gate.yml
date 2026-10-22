@@ -226,10 +226,10 @@ jobs:
       - name: Show compiled production migration state
         run: npm run migration:show:prod
 
-      # The expired-offer rule, the shift-offer lifecycle and rota assignment concurrency. These suites do not build
-      # a schema, so they run here, on the CI database the compiled migrations have just built. They may only touch
-      # that database, and they must leave none of their own rows behind for the steps that follow.
-      - name: Run shift-offer and rota assignment certification on the migrated CI database
+      # The expired-offer rule, the shift-offer lifecycle, rota assignment concurrency and scheduling safety. These
+      # suites do not build a schema, so they run here, on the CI database the compiled migrations have just built.
+      # They may only touch that database, and they must leave none of their own rows behind for the steps that follow.
+      - name: Run shift-offer, rota assignment and scheduling safety certification on the migrated CI database
         shell: bash
         env:
           ROTA_SLOT_TEST_DB_URL: postgresql://s4:s4_test_password@localhost:5432/s4_release_gate
@@ -241,9 +241,10 @@ jobs:
           npm run test:offer-acceptance-window
           npm run test:shift-offers
           npm run test:rota-assignment-concurrency
-          left=$(PGPASSWORD=s4_test_password psql -h localhost -U s4 -d s4_release_gate -tAc "SELECT (SELECT count(*) FROM companies WHERE name LIKE 'SO-LIFECYCLE-TEST%' OR name LIKE 'RAC-TEST%') + (SELECT count(*) FROM users WHERE email LIKE '%@SO-LIFECYCLE-TEST.example' OR email LIKE '%@RAC-TEST.example')")
+          npm run test:scheduling-safety
+          left=$(PGPASSWORD=s4_test_password psql -h localhost -U s4 -d s4_release_gate -tAc "SELECT (SELECT count(*) FROM companies WHERE name LIKE 'SO-LIFECYCLE-TEST%' OR name LIKE 'RAC-TEST%' OR name LIKE 'SS-TEST%') + (SELECT count(*) FROM users WHERE email LIKE '%@SO-LIFECYCLE-TEST.example' OR email LIKE '%@RAC-TEST.example' OR email LIKE '%@SS-TEST.example')")
           if [ "$left" != "0" ]; then echo "The suites left $left test rows behind."; exit 1; fi
-          echo 'Shift-offer and rota assignment suites passed and left no test rows behind.'
+          echo 'Shift-offer, rota assignment and scheduling safety suites passed and left no test rows behind.'
 
       - name: Capture entity-to-migration schema drift
         shell: bash

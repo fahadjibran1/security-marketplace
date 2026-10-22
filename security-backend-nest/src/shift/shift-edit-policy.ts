@@ -15,6 +15,16 @@ export const SCHEDULE_LOCKED_STATUSES: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Statuses in which a shift holds its Guard's time and may still be retimed. Retiming one re-runs the Guard's full
+ * eligibility check against the new window (Phase 0b, owner-approved 22 Oct 2026).
+ */
+export const RETIME_CHECKED_STATUSES: ReadonlySet<string> = new Set([
+  'scheduled',
+  'offered',
+  'ready',
+]);
+
+/**
  * Status changes only the Guard (accept / decline through /shifts/:id/respond) or the attendance record
  * (Book On) may make. A company editing the shift into one of these would be acting as the Guard, or
  * starting work that has no Book On behind it.

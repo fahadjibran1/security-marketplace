@@ -44,6 +44,7 @@ import {
   COMPANY_FORBIDDEN_TRANSITIONS,
   DELETABLE_STATUSES,
   MISSED_SHIFT_GRACE_MINUTES,
+  RETIME_CHECKED_STATUSES,
   SCHEDULE_LOCKED_STATUSES,
   changedFields,
   shiftAuditSnapshot,
@@ -723,6 +724,17 @@ export class ShiftService {
       nextGuard = null;
     }
 
+    // A Guard who keeps a shift whose times change is checked against the new window exactly as a newly assigned
+    // Guard is: relationship, compliance, leave, availability and overlap. The status is unchanged, so a retime
+    // asks nothing new of the Guard. (In-progress and closed shifts cannot be retimed at all; see above.)
+    const retimedWithGuard =
+      timesChanged && Boolean(nextGuard) && nextGuard!.id === before.guardId && RETIME_CHECKED_STATUSES.has(nextStatus);
+    if (retimedWithGuard) {
+      await this.companyGuardService.ensureActiveRelationship(actorCompany.id, nextGuard!.id);
+      await this.complianceService.assertGuardAssignable(actorCompany.id, nextGuard!.id);
+      await this.availabilityService.assertGuardCanTakeShift(actorCompany.id, nextGuard!.id, nextStart, nextEnd, shift.id);
+    }
+
     // ready → in_progress is refused above (COMPANY_FORBIDDEN_TRANSITIONS): a shift starts by Book On. This
     // gate stays as defence in depth, so no future path through here can start work without the Book On check.
     if (nextStatus === 'in_progress' && currentStatus !== 'in_progress' && nextGuard) {
@@ -748,9 +760,10 @@ export class ShiftService {
     // between the checks above and this write, and the audit entry commits with it.
     const guardAssigned = Boolean(nextGuard) && nextGuard!.id !== before.guardId;
     const savedShift = await this.dataSource.transaction(async (manager) => {
-      // A newly assigned Guard: take their assignment lock (before the shift row lock) and repeat the overlap
-      // check through this transaction, so a concurrent assignment of the same Guard cannot pass in between.
-      if (guardAssigned) {
+      // A newly assigned Guard, or a Guard whose shift is retimed: take their assignment lock (before the shift row
+      // lock) and repeat the overlap check through this transaction, so a concurrent assignment of the same Guard
+      // cannot pass in between.
+      if (guardAssigned || retimedWithGuard) {
         await lockGuardsForAssignment(manager, [nextGuard!.id]);
         await assertNoShiftClash(manager, nextGuard!.id, nextStart, nextEnd, shift.id);
       }

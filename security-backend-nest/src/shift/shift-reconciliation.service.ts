@@ -115,8 +115,13 @@ export class ShiftReconciliationService {
     );
 
     return this.dataSource.transaction(async (manager) => {
+      // FOR NO KEY UPDATE, not FOR UPDATE: this transaction then waits for the welfare sweep's per-shift lock, and a
+      // sweep holding that lock inserts alerts referencing this shift, which takes a FOR KEY SHARE lock on the row.
+      // FOR UPDATE would block that and deadlock; FOR NO KEY UPDATE does not, and still conflicts with Book Off's
+      // FOR UPDATE and with any other edit of the row, so reconciliation stays serialised against them. Only the
+      // (non-key) status column is written below.
       const [row] = (await manager.query(
-        'SELECT "id", "status", "start", "end", "companyId" FROM "shifts" WHERE "id" = $1 FOR UPDATE',
+        'SELECT "id", "status", "start", "end", "companyId" FROM "shifts" WHERE "id" = $1 FOR NO KEY UPDATE',
         [shiftId],
       )) as Array<{ id: number; status: string; start: Date; end: Date; companyId: number }>;
       // Another company's shift is reported exactly like one that does not exist.
