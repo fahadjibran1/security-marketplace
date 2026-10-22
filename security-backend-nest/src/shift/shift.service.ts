@@ -533,14 +533,16 @@ export class ShiftService {
 
       // Atomic conditional UPDATE — only succeeds if status is still 'offered'
       // and this guard is still assigned, preventing race conditions. An acceptance also requires the shift not to
-      // have ended by the DATABASE clock ("end" is stored as UTC wall time; the process runs in UTC).
+      // have ended by the DATABASE clock ("end" is stored as UTC wall time; the process runs in UTC). The clock is
+      // statement_timestamp(), not now(): inside this transaction now() is the moment it began, before the checks
+      // above, so an offer that ended while they ran would still look open.
       return returningRows<{ id: number }>(await manager.query(
         `UPDATE "shifts"
            SET "status" = $1
          WHERE "id" = $2
            AND "guardId" = $3
            AND "status" = 'offered'
-           AND ($1 <> 'ready' OR "end" > (now() AT TIME ZONE 'UTC'))
+           AND ($1 <> 'ready' OR "end" > (statement_timestamp() AT TIME ZONE 'UTC'))
          RETURNING "id"`,
         [nextStatus, id, guard.id],
       ));
