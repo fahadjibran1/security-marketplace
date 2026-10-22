@@ -60,6 +60,13 @@ export class CompanyMembership {
   @Column({ type: 'int', nullable: true })
   disabledByUserId!: number | null;
 
+  /**
+   * Per-person Live Shift Amendment authorisation for a Control Room member (Migration 64), granted by an Owner or
+   * Admin. It allows proposing / withdrawing extensions and recording verbal agreement, and nothing else.
+   */
+  @Column({ type: 'boolean', default: false })
+  canAmendShifts!: boolean;
+
   @CreateDateColumn()
   createdAt!: Date;
 

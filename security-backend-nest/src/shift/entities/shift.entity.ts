@@ -51,8 +51,16 @@ export class Shift {
   @Column({ type: 'timestamp' })
   start!: Date;
 
+  /** The EFFECTIVE operational end: after an accepted Live Shift Amendment it is the agreed, extended end. */
   @Column({ type: 'timestamp' })
   end!: Date;
+
+  /**
+   * The originally scheduled end, set once when the first extension of this shift is accepted (Migration 64); null
+   * for a shift never extended. A convenience copy: the full history is the shift_amendments chain and the audit log.
+   */
+  @Column({ type: 'timestamp', nullable: true })
+  originalEnd?: Date | null;
 
   @Column({ type: 'int', default: 60 })
   checkCallIntervalMinutes!: number;

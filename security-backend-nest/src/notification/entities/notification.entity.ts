@@ -22,6 +22,11 @@ export enum NotificationType {
   INVOICE_SUGGESTION = 'invoice_suggestion',
   COMPLIANCE_ALERT = 'compliance_alert',
   ALERT_RAISED = 'alert_raised',
+  // Live Shift Amendments (Migration 64)
+  SHIFT_AMENDMENT_REQUESTED = 'shift_amendment_requested',
+  SHIFT_AMENDMENT_RESPONDED = 'shift_amendment_responded',
+  SHIFT_AMENDMENT_DISPUTED = 'shift_amendment_disputed',
+  SHIFT_AMENDMENT_EXPIRED = 'shift_amendment_expired',
 }
 
 export enum NotificationStatus {

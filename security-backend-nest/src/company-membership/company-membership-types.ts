@@ -34,6 +34,18 @@ export enum CompanyPermission {
    * able to create, edit or cancel shifts.
    */
   SHIFTS_RECONCILE = 'shifts.reconcile',
+  /**
+   * Live Shift Amendments (owner-approved 22 Oct 2026). Propose / withdraw an extension of an in-progress shift.
+   * Narrower than shifts.manage. A Control Room member holds it only when individually authorised
+   * (company_memberships.canAmendShifts), never by role; see shift-amendment-policy.ts.
+   */
+  SHIFTS_AMEND = 'shifts.amend',
+  /** Record a Guard's verbal agreement to an extension (staff-reported, never a Guard response). */
+  SHIFTS_AMEND_RECORD_AGREEMENT = 'shifts.amend.record_agreement',
+  /** Management approval of an extension over the fatigue approval threshold (Owner / Admin). */
+  SHIFTS_AMEND_APPROVE = 'shifts.amend.approve',
+  /** Resolve a Guard's dispute of a staff-recorded verbal agreement (Owner / Admin). */
+  SHIFTS_AMEND_RESOLVE_DISPUTE = 'shifts.amend.resolve_dispute',
   ATTENDANCE_VIEW = 'attendance.view',
   TIMESHEETS_VIEW = 'timesheets.view',
   TIMESHEETS_REVIEW = 'timesheets.review',
@@ -79,6 +91,10 @@ const ADMIN_PERMISSIONS: Set<CompanyPermission> = new Set([
   CompanyPermission.SHIFTS_VIEW,
   CompanyPermission.SHIFTS_MANAGE,
   CompanyPermission.SHIFTS_RECONCILE,
+  CompanyPermission.SHIFTS_AMEND,
+  CompanyPermission.SHIFTS_AMEND_RECORD_AGREEMENT,
+  CompanyPermission.SHIFTS_AMEND_APPROVE,
+  CompanyPermission.SHIFTS_AMEND_RESOLVE_DISPUTE,
   CompanyPermission.ATTENDANCE_VIEW,
   CompanyPermission.TIMESHEETS_VIEW,
   CompanyPermission.TIMESHEETS_REVIEW,
@@ -111,6 +127,8 @@ const OPERATIONS_PERMISSIONS: Set<CompanyPermission> = new Set([
   CompanyPermission.SHIFTS_VIEW,
   CompanyPermission.SHIFTS_MANAGE,
   CompanyPermission.SHIFTS_RECONCILE,
+  CompanyPermission.SHIFTS_AMEND,
+  CompanyPermission.SHIFTS_AMEND_RECORD_AGREEMENT,
   CompanyPermission.ATTENDANCE_VIEW,
   CompanyPermission.TIMESHEETS_VIEW,
   CompanyPermission.TIMESHEETS_REVIEW,

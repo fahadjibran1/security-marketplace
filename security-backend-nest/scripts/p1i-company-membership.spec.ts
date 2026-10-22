@@ -169,11 +169,29 @@ test('ENTITY-6 CompanyMembershipModule is imported in AppModule', () => {
 // C.  PERMISSION FOUNDATION
 // ═══════════════════════════════════════════════════════════════════════
 
-test('PERMISSION-1 hasPermission returns true for OWNER on all 32 permissions', () => {
+test('PERMISSION-1 hasPermission returns true for OWNER on all 36 permissions', () => {
   const all = Object.values(CompanyPermission);
-  assert(all.length === 32, `Expected 32 permissions (31 + shifts.reconcile), got ${all.length}`);
+  assert(all.length === 36, `Expected 36 permissions (31 + shifts.reconcile + the four Live Shift Amendment permissions), got ${all.length}`);
   for (const p of all) {
     assert(hasPermission(CompanyMembershipRole.OWNER, p), `OWNER must have ${p}`);
+  }
+});
+
+test('PERMISSION-1B LIVE SHIFT AMENDMENT PERMISSIONS ARE EXACTLY THE APPROVED MATRIX', () => {
+  const amend = [CompanyPermission.SHIFTS_AMEND, CompanyPermission.SHIFTS_AMEND_RECORD_AGREEMENT, CompanyPermission.SHIFTS_AMEND_APPROVE, CompanyPermission.SHIFTS_AMEND_RESOLVE_DISPUTE];
+  const expected: Record<string, CompanyPermission[]> = {
+    owner: amend,
+    admin: amend,
+    operations: [CompanyPermission.SHIFTS_AMEND, CompanyPermission.SHIFTS_AMEND_RECORD_AGREEMENT],
+    // Control Room: none by role. Per-person authorisation (company_memberships.canAmendShifts) is the only way.
+    control_room: [],
+    hr_compliance: [],
+    finance: [],
+    viewer: [],
+  };
+  for (const role of Object.values(CompanyMembershipRole)) {
+    const held = amend.filter((perm) => hasPermission(role, perm));
+    assert(JSON.stringify(held) === JSON.stringify(expected[role]), `${role}: expected ${expected[role]}, got ${held}`);
   }
 });
 

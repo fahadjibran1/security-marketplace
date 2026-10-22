@@ -3,7 +3,7 @@
  *
  * Against a fresh, disposable PostgreSQL:
  *
- *   M63-01  a fresh database migrates 0 → 63 and 63 is the last migration
+ *   M63-01  a fresh database migrates 0 → 63 (the subject); the only migration after it is 64 (AddShiftAmendments)
  *   M63-02  down() (with no compliance lapse alerts) returns to 62 and removes the columns and indexes it
  *           added and nothing else; the enum label is deliberately kept (as migrations 58 / 59 do)
  *   M63-03  production-shaped alerts seeded at 62 (panic, welfare evidence + summary, missing Book Off,
@@ -46,9 +46,12 @@ async function main() {
   const fs = require('node:fs');
   const migrationsDir = path.join(__dirname, '..', 'src', 'database', 'migrations');
   const allFiles: string[] = fs.readdirSync(migrationsDir).filter((f: string) => /\.ts$/.test(f)).sort();
+  // Migration 63 is the subject: the suite runs through 63 only, exactly as m62-migration.spec.ts runs through 62.
+  // Migration 64 (AddShiftAmendments) is certified by m64-migration.spec.ts.
+  const throughM63 = allFiles.filter((f) => Number(f.split('-')[0]) <= 1720900000009);
   const ds = new DataSource({
     type: 'postgres', url, entities: appEntities, synchronize: false, dropSchema: true,
-    migrations: allFiles.map((f) => path.join(migrationsDir, f)), migrationsTableName: 'typeorm_migrations', logging: false,
+    migrations: throughM63.map((f) => path.join(migrationsDir, f)), migrationsTableName: 'typeorm_migrations', logging: false,
   });
   await ds.initialize();
 
@@ -85,12 +88,13 @@ async function main() {
 
   try {
     const applied = await ds.runMigrations({ transaction: 'each' });
-    await test('M63-01-FRESH-DATABASE-MIGRATES-TO-63-AND-63-IS-LAST', () => {
+    await test('M63-01-FRESH-DATABASE-MIGRATES-TO-63-AND-ONLY-64-FOLLOWS', () => {
       assert.equal(applied.length, 63, `got ${applied.length}`);
       assert.equal(applied[61].name, MIGRATION_62);
       assert.equal(applied[62].name, MIGRATION_63);
-      assert.equal(allFiles.length, 63);
+      assert.equal(allFiles.length, 64);
       assert.equal(allFiles[62], '1720900000009-AddComplianceLapseAlerts.ts');
+      assert.deepEqual(allFiles.slice(63), ['1720900000010-AddShiftAmendments.ts'], 'the only migration after 63 is 64 (AddShiftAmendments)');
     });
     const head = await schema();
     const headLabels = await enumLabels();

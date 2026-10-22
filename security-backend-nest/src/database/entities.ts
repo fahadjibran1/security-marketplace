@@ -45,6 +45,8 @@ import { ClientShiftDispute } from '../client-weekly-approval/entities/client-sh
 import { CompanyMembership } from '../company-membership/entities/company-membership.entity';
 import { CompanyInvitation } from '../company-membership/entities/company-invitation.entity';
 import { RotaSlot } from '../rota-slot/entities/rota-slot.entity';
+import { ShiftAmendment } from '../shift-amendment/entities/shift-amendment.entity';
+import { CompanyShiftPolicy } from '../shift-amendment/entities/company-shift-policy.entity';
 
 export const appEntities = [
   AuthSession,
@@ -99,5 +101,7 @@ export const appEntities = [
   CompanyMembership,
   CompanyInvitation,
   RotaSlot,
+  ShiftAmendment,
+  CompanyShiftPolicy,
   UserVerificationToken,
 ];
