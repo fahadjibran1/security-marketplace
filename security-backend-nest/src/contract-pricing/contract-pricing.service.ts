@@ -339,9 +339,15 @@ export class ContractPricingService {
     return this.isOvernight(timesheet) === rule.appliesOnOvernightShift;
   }
 
+  /**
+   * Overnight is a property of the shift as originally scheduled. A Live Shift Amendment that extends a shift past
+   * midnight does not re-price the whole shift (owner decision, 22 Oct 2026): the original scheduled end
+   * (shifts.originalEnd, set only when a shift is first extended) decides, and the extension is flagged for billing
+   * review on the amendment. Shifts never extended are classified exactly as before.
+   */
   private isOvernight(timesheet: Timesheet) {
     const start = this.getShiftStart(timesheet);
-    const endValue = timesheet.scheduledEndAt ?? timesheet.shift?.end ?? null;
+    const endValue = timesheet.shift?.originalEnd ?? timesheet.scheduledEndAt ?? timesheet.shift?.end ?? null;
     const end = endValue ? new Date(endValue) : null;
     if (!start || !end || Number.isNaN(end.getTime())) return false;
     return start.toDateString() !== end.toDateString() || end.getTime() <= start.getTime();
