@@ -21,6 +21,7 @@ import {
 import type { BoardInclusion } from './liveOperationsPolicy';
 import { hoursPastEnd, type BoardDateMode } from './liveOperationsBoard';
 import { completedWithoutBookOffLabel, isCompletedWithoutBookOff, isEligibleForReconciliation } from './shiftReconciliation';
+import { isEligibleForExtension } from './shiftAmendments';
 import { NativeDateInput } from './NativeDateInput';
 import { CompanyOperationsTimeline } from './CompanyOperationsTimeline';
 import { countStatusWord, countText, safeCount, type SafeCount, type SourceState } from './sourceAvailability';
@@ -236,6 +237,12 @@ export type CompanyLiveOperationsWorkspaceProps = {
    * action is never offered to someone the API would refuse.
    */
   onReconcileShift?: (shiftId: number) => void;
+  /**
+   * Opens Shift extension for a shift (Live Shift Amendments). Absent when the user holds no amendment permission;
+   * `amendmentsEnabled` is the company policy the API returned, so a switched-off company is never offered a proposal.
+   */
+  onManageExtension?: (shiftId: number) => void;
+  amendmentsEnabled?: boolean;
   timelineRecentreSignal: number;
   activePanicAlertsCount: number;
   openIncidentsCount: number;
@@ -1462,6 +1469,8 @@ export function CompanyLiveOperationsWorkspace({
   boardDateMode,
   onToday,
   onReconcileShift,
+  onManageExtension,
+  amendmentsEnabled,
   timelineRecentreSignal,
   activePanicAlertsCount,
   openIncidentsCount,
@@ -1781,6 +1790,8 @@ export function CompanyLiveOperationsWorkspace({
               onOpenCoverage={onOpenCoverage}
               nowMs={operationalNowMs}
               onReconcileShift={onReconcileShift}
+              onManageExtension={onManageExtension}
+              amendmentsEnabled={!!amendmentsEnabled}
             />
           </View>
         ) : null}
@@ -1871,6 +1882,8 @@ function DetailPanelContent({
   onOpenCoverage,
   nowMs,
   onReconcileShift,
+  onManageExtension,
+  amendmentsEnabled,
 }: {
   ctx: SelectedShiftContext;
   closeOutSummary: CloseOutSummary | null;
@@ -1881,6 +1894,8 @@ function DetailPanelContent({
   onOpenCoverage: (context?: { uncoveredOnly?: boolean; shiftId?: number }) => void;
   nowMs: number;
   onReconcileShift?: (shiftId: number) => void;
+  onManageExtension?: (shiftId: number) => void;
+  amendmentsEnabled: boolean;
 }) {
   const { shift, attendance, timesheet, logs, incidents, alerts, lifecycleStatus, badge, exception, clientName, operations } = ctx;
   const timeZone = shift.site?.timezone || operations?.timezone || DEFAULT_SITE_TIME_ZONE;
@@ -1959,6 +1974,29 @@ function DetailPanelContent({
             onPress={() => onReconcileShift(shift.id)}
           >
             <Text style={styles.detailPrimaryBtnText}>Close without Book Off</Text>
+          </Pressable>
+        </View>
+      ) : null}
+      {shift.originalEnd ? (
+        <Text style={styles.detailInfoMsg}>
+          Extended: originally scheduled to end {formatUkDateTime(shift.originalEnd, timeZone)}, now {formatUkDateTime(shift.end, timeZone)}.
+        </Text>
+      ) : null}
+      {onManageExtension && ((amendmentsEnabled && isEligibleForExtension(shift, attendance, nowMs)) || !!shift.originalEnd) ? (
+        <View style={styles.detailAction}>
+          <Text style={styles.detailActionMsg}>
+            {amendmentsEnabled && isEligibleForExtension(shift, attendance, nowMs)
+              ? "The Guard is on shift. Propose a later end, follow the Guard's answer and management approval, and see every change."
+              : 'See every extension of this shift and where each one stands.'}
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            style={[styles.detailPrimaryBtn, IS_WEB ? (WEB_PTR as any) : null]}
+            onPress={() => onManageExtension(shift.id)}
+          >
+            <Text style={styles.detailPrimaryBtnText}>
+              {amendmentsEnabled && isEligibleForExtension(shift, attendance, nowMs) ? 'Shift extension' : 'Extension history'}
+            </Text>
           </Pressable>
         </View>
       ) : null}

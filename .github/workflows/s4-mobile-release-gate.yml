@@ -256,6 +256,12 @@ jobs:
       - name: Verify Live Operations entry and live carry-over
         run: npm run test:live-ops-entry
 
+      # Live Shift Amendments Phase 2: the company web Shift extension drawer. Controls only for the permissions the
+      # session holds, nothing offered while S4 has not enabled the company, thresholds only from the API's policy,
+      # and a staff-recorded verbal agreement never shown as the Guard's electronic acceptance.
+      - name: Verify Live Shift Amendments web interface
+        run: npm run test:shift-amendments-ui
+
       # UAT FIX 02. Attention Now identified problems but gave Control no way to handle one. Certifies
       # that the resolve dialog offers exactly the reasons the API accepts, that the stored machine
       # value and the displayed words stay separate, that a Missing Book Off is named and timed rather

@@ -82,6 +82,10 @@ import {
   SiteRiskReport,
   Site,
   Shift,
+  ShiftAmendment,
+  ShiftAmendmentList,
+  ShiftPolicy,
+  VerbalContactMethod,
   Timesheet,
   UpdateCompanyPayload,
   UpdateClientPayload,
@@ -774,6 +778,45 @@ export function listShiftReconciliations(shiftIds: number[]) {
   return request<Array<{ shiftId: number; reconciledAt: string | null; reason: string | null }>>(
     `/shifts/reconciliations?shiftIds=${shiftIds.join(',')}`,
   );
+}
+
+// ─── Live Shift Amendments (company web). The API checks the company, the permission, whether the company has
+// extensions enabled, and the shift and proposal state under lock; these only send the request. ────────────
+
+/** The company's extension policy (thresholds and whether S4 has enabled extensions). Readable by all company staff. */
+export function getShiftAmendmentPolicy() {
+  return request<ShiftPolicy>('/shift-amendments/policy');
+}
+
+/** Every extension of a shift, oldest first, with its original and current end. */
+export function listShiftAmendments(shiftId: number) {
+  return request<ShiftAmendmentList>(`/shifts/${shiftId}/amendments`);
+}
+
+export function proposeShiftAmendment(shiftId: number, payload: { proposedEnd: string; reason: string }) {
+  return request<{ amendment: ShiftAmendment; warnings: string[] }>(`/shifts/${shiftId}/amendments`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function approveShiftAmendment(id: number, payload: { statement: string; confirmSelfApproval?: boolean }) {
+  return request<ShiftAmendment>(`/shift-amendments/${id}/approve`, { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export function withdrawShiftAmendment(id: number, payload: { reason?: string }) {
+  return request<ShiftAmendment>(`/shift-amendments/${id}/withdraw`, { method: 'POST', body: JSON.stringify(payload) });
+}
+
+/** Staff-reported: the Guard agreed verbally. Recorded as exactly that, never as the Guard's electronic acceptance. */
+export function recordShiftAmendmentVerbalAgreement(id: number, payload: {
+  agreedEnd: string; contactMethod: VerbalContactMethod; contactAt: string; confirmation: string; reason: string;
+}) {
+  return request<ShiftAmendment>(`/shift-amendments/${id}/record-verbal-agreement`, { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export function resolveShiftAmendmentDispute(id: number, payload: { resolution: 'upheld' | 'corrected'; note: string }) {
+  return request<ShiftAmendment>(`/shift-amendments/${id}/resolve-dispute`, { method: 'POST', body: JSON.stringify(payload) });
 }
 
 export function respondToShift(id: number, payload: { response: 'accepted' | 'rejected'; reason?: string }) {

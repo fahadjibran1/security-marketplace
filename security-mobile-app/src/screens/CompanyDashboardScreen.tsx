@@ -12,6 +12,8 @@ import { sourceState as sourceStateOf } from '../components/company/sourceAvaila
 import { createRefreshCoordinator, type RefreshCoordinator, type RefreshTrigger } from '../services/refreshCoordinator';
 import { CompanyResolveAlertDrawer, type ResolveTarget } from '../components/company/CompanyResolveAlertDrawer';
 import { CompanyReconcileShiftDrawer, type ReconcileTarget } from '../components/company/CompanyReconcileShiftDrawer';
+import { CompanyShiftAmendmentDrawer, type AmendmentTarget } from '../components/company/CompanyShiftAmendmentDrawer';
+import { resolveAmendmentPermissions } from '../components/company/shiftAmendments';
 import { completedWithoutBookOffLabel, isCompletedWithoutBookOff } from '../components/company/shiftReconciliation';
 import { formatElapsedSinceEnd } from '../components/company/operationsTimeline';
 import { alertTypeLabel, missingBookOffSummary, resolutionFamilyForAlert } from '../components/company/alertResolution';
@@ -159,6 +161,7 @@ import {
   updateClient,
   updateShift,
   reconcileShiftWithoutBookOff,
+  getShiftAmendmentPolicy,
   listShiftReconciliations,
   updateSite,
 } from '../services/api';
@@ -1298,6 +1301,14 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
       : (user?.role === "company_admin" || user?.role === "company")),
     [user?.companyPermissions, user?.role],
   );
+  /**
+   * Live Shift Amendments: shifts.amend / .record_agreement / .approve / .resolve_dispute from the session (a Control
+   * Room member individually authorised arrives with the first two). Display only — the API re-checks every action.
+   */
+  const amendmentPermissions = React.useMemo(
+    () => resolveAmendmentPermissions(user?.companyPermissions, user?.role),
+    [user?.companyPermissions, user?.role],
+  );
   const canManageShifts = React.useMemo(
     () => (user?.companyPermissions
       ? user.companyPermissions.includes("shifts.manage")
@@ -1437,6 +1448,10 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
   const [reconcileTarget, setReconcileTarget] = React.useState<ReconcileTarget | null>(null);
   const [reconcilingShift, setReconcilingShift] = React.useState(false);
   const [reconcileError, setReconcileError] = React.useState<string | null>(null);
+  /** Shift extension (Live Shift Amendments): the shift the drawer is open for, if any. */
+  const [amendmentTarget, setAmendmentTarget] = React.useState<AmendmentTarget | null>(null);
+  /** The company policy's switch as the API returned it; null until read (and treated as off). */
+  const [amendmentsEnabled, setAmendmentsEnabled] = React.useState<boolean | null>(null);
   /** Which incident the register is showing in full, if any. */
   const [incidentDetailId, setIncidentDetailId] = React.useState<number | null>(null);
   /** Log Book register filters. The date is a site-local YYYY-MM-DD; today by default. */
@@ -2912,6 +2927,40 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
       overdueLabel: formatElapsedSinceEnd(shift.end, Date.now()),
     });
   }, [attendanceByShiftId, resolveSiteZone, shifts]);
+
+  /** Whether S4 has enabled shift extensions for this company: read from the API, never assumed. */
+  React.useEffect(() => {
+    if (!amendmentPermissions.any) { setAmendmentsEnabled(null); return undefined; }
+    let cancelled = false;
+    getShiftAmendmentPolicy()
+      .then((policy) => { if (!cancelled) setAmendmentsEnabled(!!policy.amendmentsEnabled); })
+      .catch(() => { if (!cancelled) setAmendmentsEnabled(null); });
+    return () => { cancelled = true; };
+  }, [amendmentPermissions.any, user?.id]);
+
+  /** Opens Shift extension. The drawer loads the policy and history itself and offers only permitted actions. */
+  const handleOpenAmendment = React.useCallback((shiftId: number) => {
+    const shift = shifts.find((item) => item.id === shiftId);
+    if (!shift) return;
+    const attendance = attendanceByShiftId.get(shift.id);
+    setAmendmentTarget({
+      shiftId: shift.id,
+      siteName: shift.site?.name || shift.siteName || 'Site',
+      guardName: shift.guard?.fullName || 'Unassigned',
+      timeZone: resolveSiteZone(shift.site?.id ?? shift.siteId),
+      start: shift.start,
+      end: shift.end,
+      status: shift.status,
+      checkInAt: attendance?.checkInAt ?? null,
+      checkOutAt: attendance?.checkOutAt ?? null,
+    });
+  }, [attendanceByShiftId, resolveSiteZone, shifts]);
+
+  /** After a change in the drawer: say what happened and re-read the board so the new end shows everywhere. */
+  const handleAmendmentChanged = React.useCallback((message: string) => {
+    setLiveOperationsFeedback({ tone: 'success', message });
+    void loadData(true);
+  }, [loadData]);
 
   /** Submit Close without Book Off, then reload so the shift leaves the queue and shows as closed. */
   const handleSubmitReconcile = React.useCallback(async (input: { reason: string; note: string | null }) => {
@@ -4626,6 +4675,8 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
         boardDateMode={liveBoardDateMode}
         onToday={handleLiveOperationsToday}
         onReconcileShift={canReconcileShifts ? handleOpenReconcile : undefined}
+        onManageExtension={amendmentPermissions.any ? handleOpenAmendment : undefined}
+        amendmentsEnabled={amendmentsEnabled === true}
         timelineRecentreSignal={timelineRecentreSignal}
         activePanicAlertsCount={liveOperationsCounts.activePanicAlerts}
         openIncidentsCount={liveOperationsCounts.openIncidents}
@@ -4697,6 +4748,16 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
         error={reconcileError}
         onCancel={() => { setReconcileTarget(null); setReconcileError(null); }}
         onSubmit={handleSubmitReconcile}
+      />
+
+      {/* Shift extension: propose, approve, record verbal agreement, withdraw, review disputes, history. */}
+      <CompanyShiftAmendmentDrawer
+        target={amendmentTarget}
+        permissions={amendmentPermissions}
+        currentUserId={user?.id ?? null}
+        refreshSignal={operationalNow.getTime()}
+        onClose={() => setAmendmentTarget(null)}
+        onChanged={handleAmendmentChanged}
       />
 
     </View>

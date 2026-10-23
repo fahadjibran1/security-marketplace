@@ -823,6 +823,8 @@ export interface Shift {
   siteName: string;
   start: string;
   end: string;
+  /** Live Shift Amendments: the end before the first agreed extension; null/absent when never extended. */
+  originalEnd?: string | null;
   checkCallIntervalMinutes?: number;
   status: string;
   instructions?: string | null;
@@ -2224,4 +2226,84 @@ export interface GuardCompanyMembership {
   relationshipType: CompanyGuardRelationshipType;
   acceptedAt: string | null;
   since: string;
+}
+
+// ─── Live Shift Amendments (company web, Phase 2; API: security-backend-nest/src/shift-amendment) ──────────
+
+export type AmendmentStatus =
+  | 'awaiting_approval' | 'pending' | 'accepted' | 'declined' | 'withdrawn' | 'expired' | 'voided'
+  | 'disputed' | 'dispute_upheld' | 'dispute_corrected';
+export type AmendmentWarning = 'LONG_SHIFT' | 'SHORT_REST' | 'WEEKLY_HOURS' | 'LAST_MINUTE';
+/** Never "delivered": S4 only knows whether its email provider accepted the message. */
+export type ConfirmationEmailStatus = 'provider_accepted' | 'captured_outbox' | 'not_configured' | 'failed' | 'no_address';
+export type VerbalContactMethod = 'telephone' | 'in_person' | 'radio' | 'other';
+
+export interface ShiftPolicy {
+  amendmentsEnabled: boolean;
+  fatigueWarningHours: number;
+  approvalRequiredHours: number;
+  hardLimitHours: number | null;
+  minRestHours: number;
+  weeklyReviewHours: number;
+  lastMinuteWarningMinutes: number;
+  source: 'default' | 'company';
+}
+
+export interface ShiftAmendment {
+  id: number;
+  shiftId: number;
+  guardId: number;
+  sequence: number;
+  status: AmendmentStatus;
+  /** 'expired' as soon as an open proposal's deadline has passed, even before the sweep records it. */
+  effectiveStatus: AmendmentStatus;
+  originalEnd: string | null;
+  previousEnd: string | null;
+  proposedEnd: string | null;
+  agreedEnd: string | null;
+  additionalMinutes: number;
+  reason: string;
+  proposedByUserId: number | null;
+  proposedAt: string | null;
+  expiresAt: string | null;
+  fatigue: {
+    basis: 'scheduled_hours';
+    totalScheduledHours: number | null;
+    warnings: AmendmentWarning[];
+    restHoursBeforeNextShift: number | null;
+    sevenDayScheduledHours: number | null;
+  };
+  approvalRequired: boolean;
+  approvedByUserId: number | null;
+  approvedAt: string | null;
+  selfApproved: boolean;
+  responseMethod: 'guard_app' | 'staff_recorded_verbal' | null;
+  staffReported: boolean;
+  respondedByUserId: number | null;
+  respondedAt: string | null;
+  verbalContactMethod: VerbalContactMethod | null;
+  verbalContactAt: string | null;
+  verbalConfirmation: string | null;
+  confirmationEmailStatus: ConfirmationEmailStatus | null;
+  withdrawnAt: string | null;
+  voidedReason: string | null;
+  voidedAt: string | null;
+  expiredAt: string | null;
+  disputedAt: string | null;
+  disputeReason: string | null;
+  disputeResolution: 'upheld' | 'corrected' | null;
+  disputeResolutionNote: string | null;
+  disputeResolvedAt: string | null;
+  timesheetSync: string | null;
+  payrollReviewRequired: boolean;
+  billingReviewRequired: boolean;
+  complianceReviewRequired: boolean;
+}
+
+export interface ShiftAmendmentList {
+  shiftId: number;
+  originalEnd: string;
+  currentEnd: string;
+  extended: boolean;
+  amendments: ShiftAmendment[];
 }
