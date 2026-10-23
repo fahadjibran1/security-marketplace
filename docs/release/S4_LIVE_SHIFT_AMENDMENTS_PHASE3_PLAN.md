@@ -91,3 +91,29 @@ Steps (each needs the owner's go-ahead at the time):
   over the dispute field.
 - Current production builds (Android versionCode 14, iOS build 13) never call these routes; Phase 1 LSA-21 certifies
   the backend keeps their fields unchanged.
+
+## 5. Phase 3 completion record (23 Oct 2026)
+
+- Endpoints A and B implemented in `7fa7c96` (LSA-23, LSA-24; web LSA-UI-23..26). Assessment: dry run, nothing
+  written; rest/7-day figures returned only from the requesting company's own shifts. Staff directory: id, display
+  name (role when no name), role; Control Room authorisation only to Owner/Admin; no contact details.
+- Certified candidate `7fa7c96`: S4 Backend Release Gate 39926645838 and S4 Mobile Release Gate 39926645870 — success.
+- Staging: `staging/s4-uat` fast-forwarded `a68f9d6 → 7fa7c96`; Render staging deploy `dep-dbdi3mmq1p3s738n39v0`
+  succeeded; ledger 64 → 64; all 53 pre-existing tables byte-identical; company 1 still the only enabled company;
+  company regression W-01..W-09 9/9, Guard regression SG-01..SG-05 5/5. Production `b3c13db`, ledger 63, unchanged.
+
+## 6. Mobile build preflight — STOPPED before building
+
+The Guard apps distributed to the pilot (1.1.0: Android versionCode 15 built `8d1873a3`, iOS build 14 built
+`7333ba4d`; Play Internal Testing last owner-confirmed with 1.1.0 (14); TestFlight with one associated build of
+unconfirmed number) were built from the **local-only** branch `welfare-alert-remediation` (22 commits, not on GitHub,
+not in `release/s4-pilot-rc1` or this candidate). It carries the 1.1.0 Guard fixes (Book Off confirmation, keyboard,
+offer timing) and the S4 UAT variant (`app.config.js`, `uat` EAS profile, `com.sfour.s4.uat`, staging-only guard,
+amber icons) — which already meets every UAT safeguard requested.
+
+A UAT build from `7fa7c96` alone would therefore lack the 1.1.0 fixes and the UAT variant. Proposed (needs owner
+approval): merge `welfare-alert-remediation` into the amendment line on a new branch, resolve conflicts in
+`GuardDashboardScreen.tsx`, bump the UAT build to versionCode 16 (above the existing UAT APK 15) without changing the
+store identity, re-run both gates, then build the Android UAT APK with the existing `uat` profile (signed with the
+permanent S4 key, local credentials). iOS UAT (ad hoc, `com.sfour.s4.uat`) needs the owner to register test iPhones
+(`eas device:create`) and approve the App ID / ad hoc profile creation interactively.
