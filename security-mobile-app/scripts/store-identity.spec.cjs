@@ -39,11 +39,11 @@ test('STORE-01-THE-PERMANENT-S4-IDENTITY', () => {
   assert.equal(expo.ios.bundleIdentifier, 'com.sfour.s4');
   assert.equal(expo.scheme, 's4security');
   assert.equal(expo.version, '1.1.0');
-  // Guard release (20 Oct 2026): Android versionCode 15 and iOS build 14 carry the Guard shift-offer fix. Android
-  // 14 (active in Play Internal Testing) and iOS 13 (uploaded to App Store Connect on 8 Oct) are superseded; neither
-  // number can be reused.
-  assert.equal(expo.android.versionCode, 15);
-  assert.equal(expo.ios.buildNumber, '14');
+  // Pilot update (23 Oct 2026): Android versionCode 16 and iOS build 15 for the same store identity. Android 15 and
+  // iOS 14 (the 20 Oct Guard release) are superseded; 14 is in Play Internal Testing and 13 in App Store Connect, so
+  // no earlier number can be reused.
+  assert.equal(expo.android.versionCode, 16);
+  assert.equal(expo.ios.buildNumber, '15');
 });
 
 test('STORE-02-THE-EXISTING-EAS-PROJECT-IS-KEPT-AND-OTA-STAYS-OFF', () => {
@@ -177,7 +177,7 @@ test('STORE-08-ONE-PRODUCT-NAME-FOR-EVERY-ROLE', () => {
 
 test('STORE-09-IOS-IDENTITY-IS-SET-AND-NOTHING-IS-BUILT', () => {
   assert.equal(expo.ios.bundleIdentifier, 'com.sfour.s4');
-  assert.equal(expo.ios.buildNumber, '14');
+  assert.equal(expo.ios.buildNumber, '15');
   assert.equal(expo.ios.infoPlist.ITSAppUsesNonExemptEncryption, false);
   assert.equal(expo.ios.config.usesNonExemptEncryption, false);
   // No hand-written usage strings that could drift from the plugin's, and none for unused capabilities.

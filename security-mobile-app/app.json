@@ -24,7 +24,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.sfour.s4",
-      "buildNumber": "14",
+      "buildNumber": "15",
       "config": {
         "usesNonExemptEncryption": false
       },
@@ -67,7 +67,7 @@
     },
     "android": {
       "softwareKeyboardLayoutMode": "resize",
-      "versionCode": 15,
+      "versionCode": 16,
       "package": "com.sfour.s4",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",

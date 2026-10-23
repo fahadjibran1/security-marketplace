@@ -149,7 +149,8 @@ test('SIGNER-04-THE-EXPECTED-RELEASE-MATCHES-APP-JSON', () => {
   assert.equal(config.expectedRelease.versionCode, appJson.expo.android.versionCode);
   assert.equal(config.package, appJson.expo.android.package);
   assert.equal(appJson.expo.version, '1.1.0');
-  assert.equal(appJson.expo.android.versionCode, 15, 'the Guard release candidate');
+  assert.equal(appJson.expo.android.versionCode, 16, 'the pilot update candidate');
+  assert.ok(appJson.expo.android.versionCode > 15, 'above the superseded Guard release 15');
   assert.ok(appJson.expo.android.versionCode > 14, 'above the superseded RC14');
   assert.ok(appJson.expo.android.versionCode > 13, 'above the retired first permanent-identity candidate 13');
   // com.sfour.s4 is a new Android application, so no install-over is involved — the code still never
@@ -414,14 +415,15 @@ test('SIGNER-13-A-CORRECT-1-1-0-COM-SFOUR-S4-ARTEFACT-WOULD-PASS', () => {
   // Constructed in the exact apksigner/aapt2 shapes recorded above; no such artefact exists yet.
   const candidate = observe({
     apksigner: RECORDED.expectedBuild12.apksigner,
-    badging: "package: name='com.sfour.s4' versionCode='15' versionName='1.1.0'\nminSdkVersion:'24'",
+    badging: "package: name='com.sfour.s4' versionCode='16' versionName='1.1.0'\nminSdkVersion:'24'",
   });
   const result = verifier.assessApk(config, candidate);
   assert.equal(result.ok, true, result.failures.join('; '));
   // A wrong code or name on the right package is still refused — including the retired 13.
   assert.equal(verifier.assessApk(config, { ...candidate, versionCode: 13 }).ok, false);
   assert.equal(verifier.assessApk(config, { ...candidate, versionCode: 14 }).ok, false);
-  assert.equal(verifier.assessApk(config, { ...candidate, versionCode: 16 }).ok, false);
+  assert.equal(verifier.assessApk(config, { ...candidate, versionCode: 15 }).ok, false);
+  assert.equal(verifier.assessApk(config, { ...candidate, versionCode: 17 }).ok, false);
   assert.equal(verifier.assessApk(config, { ...candidate, versionName: '1.0.7' }).ok, false);
 });
 
@@ -459,15 +461,25 @@ test('SIGNER-13C-THE-SUPERSEDED-VC14-ARTEFACT-IS-KEPT-EXACTLY', () => {
   assert.equal(superseded.playInternalTesting.status, 'active');
   assert.equal(superseded.playInternalTesting.confirmedBy, 'owner', 'store facts are attributed, not presented as inspected');
   assert.match(superseded.retiredReason, /d880ef0/);
-  assert.equal(config.approvedArtefact.versionCode, 15, 'the Guard release is the approved artefact');
-  // Built and certified on 20 Oct 2026 (owner-approved EAS production build); not uploaded to Play.
-  assert.equal(config.approvedArtefact.status, 'certified-awaiting-play', 'built and certified, not yet in Play');
-  assert.equal(config.approvedArtefact.easBuildId, '8d1873a3-ec09-48f6-90f4-0ca75f178ba8');
-  assert.equal(config.approvedArtefact.gitCommit, '6b8e41b679bfa3726ae4ca21d36701fafb2a38c7');
-  assert.equal(config.approvedArtefact.aabSha256, '5e69f8d830f4bbc1d08500bf3e0b9430438bf0fd91a747018b5ffae2c22ccf80');
-  assert.equal(config.approvedArtefact.verified.package, 'com.sfour.s4');
-  assert.equal(config.approvedArtefact.verified.versionCode, 15);
   assert.equal(config.signer.keySizeBits, 4096, 'the size keytool reports for the permanent key');
+});
+
+test('SIGNER-13D-THE-SUPERSEDED-VC15-ARTEFACT-IS-KEPT-EXACTLY', () => {
+  // Pilot update (23 Oct 2026): the certified 1.1.0 (15) AAB (20 Oct Guard release) is superseded by 16. Its
+  // certification is history and is kept exactly; whether it reached Play is not asserted (owner to confirm).
+  const superseded = (config.retiredArtefacts || []).find((entry) => entry.versionCode === 15);
+  assert.ok(superseded, 'versionCode 15 is recorded as superseded');
+  assert.equal(superseded.status, 'certified-superseded');
+  assert.equal(superseded.easBuildId, '8d1873a3-ec09-48f6-90f4-0ca75f178ba8');
+  assert.equal(superseded.gitCommit, '6b8e41b679bfa3726ae4ca21d36701fafb2a38c7');
+  assert.equal(superseded.aabSha256, '5e69f8d830f4bbc1d08500bf3e0b9430438bf0fd91a747018b5ffae2c22ccf80');
+  assert.equal(superseded.verified.package, 'com.sfour.s4');
+  assert.equal(superseded.verified.versionCode, 15);
+  assert.equal(superseded.uploadCertificateSha256, config.signer.certificateSha256);
+  assert.match(superseded.retiredReason, /to be confirmed by the owner/, 'the Play state is not presented as known');
+  assert.equal(config.approvedArtefact.versionCode, 16, 'the pilot update is the next artefact');
+  assert.equal(config.approvedArtefact.status, 'pending-build', 'not built yet');
+  assert.equal(config.expectedRelease.versionCode, 16);
 });
 
 test('SIGNER-14-AN-UPLOADED-AAB-SIGNER-IS-READ-FROM-KEYTOOL', () => {

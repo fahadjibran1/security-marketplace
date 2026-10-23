@@ -33,38 +33,14 @@
   },
   "expectedRelease": {
     "versionName": "1.1.0",
-    "versionCode": 15,
+    "versionCode": 16,
     "minSdkVersion": 24
   },
   "approvedArtefact": {
     "versionName": "1.1.0",
-    "versionCode": 15,
-    "status": "certified-awaiting-play",
-    "easBuildId": "8d1873a3-ec09-48f6-90f4-0ca75f178ba8",
-    "easBuildUrl": "https://expo.dev/accounts/fahadjibran/projects/security-marketplace/builds/8d1873a3-ec09-48f6-90f4-0ca75f178ba8",
-    "easBuildProfile": "production",
-    "distribution": "STORE",
-    "gitCommit": "6b8e41b679bfa3726ae4ca21d36701fafb2a38c7",
-    "easFingerprint": "9bd1f7537811a2d473f835809e33144cc1966dff",
-    "aabFilename": "s4-1.1.0-vc15-8d1873a3.aab",
-    "aabSha256": "5e69f8d830f4bbc1d08500bf3e0b9430438bf0fd91a747018b5ffae2c22ccf80",
-    "aabSizeBytes": 58728585,
-    "uploadCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
-    "completedAt": "2026-10-20T16:09:26Z",
-    "certifiedOn": "2026-10-20",
-    "verified": {
-      "package": "com.sfour.s4",
-      "versionCode": 15,
-      "versionName": "1.1.0",
-      "minSdkVersion": 24,
-      "targetSdkVersion": 36,
-      "debuggable": false,
-      "usesCleartextTraffic": false,
-      "apiBaseUrl": "https://security-marketplace-api.onrender.com",
-      "stagingOrLocalApiUrls": 0,
-      "secretMarkers": 0
-    },
-    "note": "Guard release 1.1.0 (15): production a7b5b22 plus the release-audit remediation (7938f86 keyboard-aware Guard forms, 52de287 Book Off confirmation and Book On / Book Off wording) and records. Built by EAS with the local upload key from the git-ignored credentials.json (not regenerated or rotated). Certified locally from the downloaded AAB: manifest identity and versions, signer certificate via keytool -printcert, and the JS bundle API URL. jarsigner reports the expected self-signed / untimestamped warnings for an upload key. Not uploaded to Google Play; the AAB is kept outside Git in the owner secrets artifacts folder."
+    "versionCode": 16,
+    "status": "pending-build",
+    "note": "Pilot update 1.1.0 (16): the production release line (b3c13db) plus Live Shift Amendments Phases 1-3, the reconciled 1.1.0 Guard fixes (archive/welfare-alert-remediation) and the overnight-pricing correction, against the production API. Pending: not built. Build and Play Internal Testing upload only on owner approval."
   },
   "retiredArtefacts": [
     {
@@ -104,6 +80,38 @@
         "confirmedOn": "2026-10-20",
         "note": "Owner-confirmed: Vesoft Services Limited organisation account, S4 build 14 (1.1.0) active and available to the internal tester list of five, including the owner. Not inspected from the build machine (its Google login has no Play developer account)."
       }
+    },
+    {
+      "versionName": "1.1.0",
+      "versionCode": 15,
+      "status": "certified-superseded",
+      "easBuildId": "8d1873a3-ec09-48f6-90f4-0ca75f178ba8",
+      "easBuildUrl": "https://expo.dev/accounts/fahadjibran/projects/security-marketplace/builds/8d1873a3-ec09-48f6-90f4-0ca75f178ba8",
+      "easBuildProfile": "production",
+      "distribution": "STORE",
+      "gitCommit": "6b8e41b679bfa3726ae4ca21d36701fafb2a38c7",
+      "easFingerprint": "9bd1f7537811a2d473f835809e33144cc1966dff",
+      "aabFilename": "s4-1.1.0-vc15-8d1873a3.aab",
+      "aabSha256": "5e69f8d830f4bbc1d08500bf3e0b9430438bf0fd91a747018b5ffae2c22ccf80",
+      "aabSizeBytes": 58728585,
+      "uploadCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
+      "completedAt": "2026-10-20T16:09:26Z",
+      "certifiedOn": "2026-10-20",
+      "verified": {
+        "package": "com.sfour.s4",
+        "versionCode": 15,
+        "versionName": "1.1.0",
+        "minSdkVersion": 24,
+        "targetSdkVersion": 36,
+        "debuggable": false,
+        "usesCleartextTraffic": false,
+        "apiBaseUrl": "https://security-marketplace-api.onrender.com",
+        "stagingOrLocalApiUrls": 0,
+        "secretMarkers": 0
+      },
+      "note": "Guard release 1.1.0 (15): production a7b5b22 plus the release-audit remediation (7938f86 keyboard-aware Guard forms, 52de287 Book Off confirmation and Book On / Book Off wording) and records. Built by EAS with the local upload key from the git-ignored credentials.json (not regenerated or rotated). Certified locally from the downloaded AAB: manifest identity and versions, signer certificate via keytool -printcert, and the JS bundle API URL. jarsigner reports the expected self-signed / untimestamped warnings for an upload key. Not uploaded to Google Play; the AAB is kept outside Git in the owner secrets artifacts folder.",
+      "retiredOn": "2026-10-23",
+      "retiredReason": "Superseded by versionCode 16, the pilot update (scheduling safety, material-change re-acceptance, Live Shift Amendments, overnight-pricing correction). Built and certified 20 Oct 2026 (EAS 8d1873a3 from 6b8e41b); whether it was uploaded to Google Play Internal Testing is to be confirmed by the owner. versionCode 16 is above it either way, and its certification is kept exactly."
     }
   ],
   "playAppSigning": {

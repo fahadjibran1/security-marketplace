@@ -10,7 +10,7 @@
   "bundleIdentifier": "com.sfour.s4",
   "displayName": "S4",
   "marketingVersion": "1.1.0",
-  "buildNumber": "14",
+  "buildNumber": "15",
   "deploymentTarget": "15.1",
   "easBuildImage": "default for SDK 54: macos-sequoia-15.6-xcode-26.0 (Xcode 26.0, iOS 26 SDK)",
   "privacyManifest": "app-level, generated from app.json ios.privacyManifests: tracking false; required-reason APIs UserDefaults, FileTimestamp, DiskSpace, SystemBootTime with the reasons their bundled dependencies declare",
@@ -77,5 +77,11 @@
     }
   ],
   "testFlight": "1.1.0 (13) uploaded 2026-10-08 via EAS Submit (90bd22f5). Owner-confirmed 2026-10-20: App Store Connect has the S4 app with an external TestFlight group of five testers and one associated build; which build that is, and its review state, are not recorded here.",
-  "appStore": "NOT SUBMITTED"
+  "appStore": "NOT SUBMITTED",
+  "nextArtefact": {
+    "marketingVersion": "1.1.0",
+    "buildNumber": "15",
+    "status": "pending-build",
+    "note": "Pilot update 1.1.0 (15) for the existing TestFlight group: same source as Android 1.1.0 (16), production API. Build 14 (EAS 7333ba4d) is recorded as not submitted; 15 is used so the number is above any build that may have reached App Store Connect since. Pending: not built, not submitted. Build and TestFlight upload only on owner approval."
+  }
 }
