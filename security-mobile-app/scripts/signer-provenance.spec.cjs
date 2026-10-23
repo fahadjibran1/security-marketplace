@@ -149,7 +149,8 @@ test('SIGNER-04-THE-EXPECTED-RELEASE-MATCHES-APP-JSON', () => {
   assert.equal(config.expectedRelease.versionCode, appJson.expo.android.versionCode);
   assert.equal(config.package, appJson.expo.android.package);
   assert.equal(appJson.expo.version, '1.1.0');
-  assert.equal(appJson.expo.android.versionCode, 16, 'the pilot update candidate');
+  assert.equal(appJson.expo.android.versionCode, 17, 'the Welfare Check push update candidate');
+  assert.ok(appJson.expo.android.versionCode > 16, 'above the built pilot update 16');
   assert.ok(appJson.expo.android.versionCode > 15, 'above the superseded Guard release 15');
   assert.ok(appJson.expo.android.versionCode > 14, 'above the superseded RC14');
   assert.ok(appJson.expo.android.versionCode > 13, 'above the retired first permanent-identity candidate 13');
@@ -415,7 +416,7 @@ test('SIGNER-13-A-CORRECT-1-1-0-COM-SFOUR-S4-ARTEFACT-WOULD-PASS', () => {
   // Constructed in the exact apksigner/aapt2 shapes recorded above; no such artefact exists yet.
   const candidate = observe({
     apksigner: RECORDED.expectedBuild12.apksigner,
-    badging: "package: name='com.sfour.s4' versionCode='16' versionName='1.1.0'\nminSdkVersion:'24'",
+    badging: "package: name='com.sfour.s4' versionCode='17' versionName='1.1.0'\nminSdkVersion:'24'",
   });
   const result = verifier.assessApk(config, candidate);
   assert.equal(result.ok, true, result.failures.join('; '));
@@ -423,7 +424,8 @@ test('SIGNER-13-A-CORRECT-1-1-0-COM-SFOUR-S4-ARTEFACT-WOULD-PASS', () => {
   assert.equal(verifier.assessApk(config, { ...candidate, versionCode: 13 }).ok, false);
   assert.equal(verifier.assessApk(config, { ...candidate, versionCode: 14 }).ok, false);
   assert.equal(verifier.assessApk(config, { ...candidate, versionCode: 15 }).ok, false);
-  assert.equal(verifier.assessApk(config, { ...candidate, versionCode: 17 }).ok, false);
+  assert.equal(verifier.assessApk(config, { ...candidate, versionCode: 16 }).ok, false);
+  assert.equal(verifier.assessApk(config, { ...candidate, versionCode: 18 }).ok, false);
   assert.equal(verifier.assessApk(config, { ...candidate, versionName: '1.0.7' }).ok, false);
 });
 
@@ -477,9 +479,24 @@ test('SIGNER-13D-THE-SUPERSEDED-VC15-ARTEFACT-IS-KEPT-EXACTLY', () => {
   assert.equal(superseded.verified.versionCode, 15);
   assert.equal(superseded.uploadCertificateSha256, config.signer.certificateSha256);
   assert.match(superseded.retiredReason, /to be confirmed by the owner/, 'the Play state is not presented as known');
-  assert.equal(config.approvedArtefact.versionCode, 16, 'the pilot update is the next artefact');
+});
+
+test('SIGNER-13E-THE-BUILT-VC16-ARTEFACT-IS-SUPERSEDED-BY-THE-WELFARE-PUSH-UPDATE', () => {
+  // Welfare Check push update (23 Oct 2026): the built 1.1.0 (16) AAB is superseded by 17. Its build, hash and
+  // signer are recorded; whether it reached Play is not asserted (owner to confirm).
+  const superseded = (config.retiredArtefacts || []).find((entry) => entry.versionCode === 16);
+  assert.ok(superseded, 'versionCode 16 is recorded as superseded');
+  assert.equal(superseded.status, 'built-superseded');
+  assert.equal(superseded.easBuildId, '5a3bfe71-3125-4fd0-b8c5-dcf6b808de98');
+  assert.equal(superseded.gitCommit, 'e539b89cc7cdf5479837e9076b45c24c7ecc40f7');
+  assert.equal(superseded.aabSha256, '82f0aff91acf824d18134e192528459192ab88caff07ac47ad9c266e41974b60');
+  assert.equal(superseded.uploadCertificateSha256, config.signer.certificateSha256, 'signed by the permanent S4 key');
+  assert.match(superseded.retiredReason, /to be confirmed by the owner/, 'the Play state is not presented as known');
+  assert.equal(config.approvedArtefact.versionCode, 17, 'the Welfare Check push update is the next artefact');
   assert.equal(config.approvedArtefact.status, 'pending-build', 'not built yet');
-  assert.equal(config.expectedRelease.versionCode, 16);
+  assert.equal(config.expectedRelease.versionCode, 17);
+  // The Firebase client file and FCM key are EAS-held, never recorded here.
+  assert.doesNotMatch(JSON.stringify(config), /private_key|api_key|current_key|BEGIN [A-Z ]*PRIVATE KEY/);
 });
 
 test('SIGNER-14-AN-UPLOADED-AAB-SIGNER-IS-READ-FROM-KEYTOOL', () => {
