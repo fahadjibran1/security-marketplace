@@ -33,6 +33,8 @@
  *           discloses another company's schedule (only that a warning applies)
  *   LSA-24  the staff directory is company-scoped, holds no contact details, shows authorisation only to Owner/Admin;
  *           no self-escalation or cross-company grant
+ *   LSA-25  stored amendments, history, approvals and refusals never show a company another company's rest gap or 7-day
+ *           hours (warnings and approval stay; the Guard keeps their own figures; legacy rows withheld)
  *
  * Deterministic races (the shift row, or the Guard lock, is held by a separate transaction until both requests are
  * queued behind it in a known order):
@@ -777,6 +779,96 @@ async function main() {
       assert.equal(((await api('GET', '/shift-amendments/staff', A.token)).body.staff.find((s: any) => s.userId === control.id)).canAmendShifts, true);
       assert.equal((await put(A.token, control.id, false)).status, 200, 'Owner revokes');
       assert.equal(((await api('GET', '/shift-amendments/staff', admin.token)).body.staff.find((s: any) => s.userId === control.id)).canAmendShifts, false);
+    });
+
+    await test('LSA-25-STORED-AMENDMENTS-NEVER-SHOW-A-COMPANY-ANOTHER-COMPANYS-SCHEDULE', async () => {
+      const g = await guard('lsa-privacy');
+      await q(`INSERT INTO company_guards ("companyId","guardId",status,"relationshipType") VALUES ($1,$2,'ACTIVE','EMPLOYEE') ON CONFLICT DO NOTHING`, [B.id, g.id]);
+      const id = await liveShift(g, -2 * HOUR, 2 * HOUR);
+      const end = ms((await shiftRow(id)).end);
+      // company B: worked 9 h yesterday (7-day hours) and starts again 5 h after A's proposed end (short rest)
+      const bPast = Date.now() - 30 * HOUR;
+      await q(`INSERT INTO shifts ("companyId","siteId","siteName","guardId",status,start,"end") VALUES ($1,$2,'Rival Depot',$3,'completed',$4::timestamp,$5::timestamp)`,
+        [B.id, B.siteId, g.id, ts(bPast), ts(bPast + 9 * HOUR)]);
+      const bNext = end + HOUR + 5 * HOUR;
+      await q(`INSERT INTO shifts ("companyId","siteId","siteName","guardId",status,start,"end") VALUES ($1,$2,'Rival Depot',$3,'ready',$4::timestamp,$5::timestamp)`,
+        [B.id, B.siteId, g.id, ts(bNext), ts(bNext + 8 * HOUR)]);
+      const leaks = (body: unknown) => {
+        const text = JSON.stringify(body);
+        for (const leak of [iso(bNext), iso(bNext + 8 * HOUR), iso(bPast), 'Rival Depot']) assert.ok(!text.includes(leak), `no ${leak}`);
+      };
+      const companyFatigue = (f: any, where: string) => {
+        assert.ok(f.warnings.includes('SHORT_REST'), `${where}: the warning stays`);
+        assert.equal(f.restHoursBeforeNextShift, null, `${where}: no rest figure from another company`);
+        assert.equal(f.restFiguresWithheld, true, `${where}`);
+        assert.ok(f.sevenDayScheduledHours < 9, `${where}: this company's 7-day hours only (${f.sevenDayScheduledHours})`);
+        assert.equal(f.sevenDayIncludesOtherWork, true, where);
+      };
+
+      const p = await propose(A.token, id, end + HOUR);
+      assert.equal(p.status, 201, JSON.stringify(p.body));
+      assert.equal(p.body.amendment.status, 'awaiting_approval', 'the approval requirement stays');
+      assert.equal(p.body.amendment.approvalRequired, true);
+      companyFatigue(p.body.amendment.fatigue, 'propose response');
+      leaks(p.body);
+      const aId = p.body.amendment.id;
+      const list = await api('GET', `/shifts/${id}/amendments`, A.token);
+      companyFatigue(list.body.amendments[0].fatigue, 'history');
+      leaks(list.body);
+      const one1 = await api('GET', `/shift-amendments/${aId}`, A.token);
+      companyFatigue(one1.body.fatigue, 'single read');
+      leaks(one1.body);
+      const appr = await api('POST', `/shift-amendments/${aId}/approve`, A.token, { statement: 'Reviewed rest with the Guard', confirmSelfApproval: true });
+      assert.equal(appr.status, 200);
+      companyFatigue(appr.body.fatigue, 'approve response');
+
+      // the Guard sees their own full figures
+      const mine = (await api('GET', '/shift-amendments/mine', g.token)).body.find((a: any) => a.id === aId);
+      assert.equal(mine.fatigue.restHoursBeforeNextShift, 5, "the Guard's own rest gap");
+      assert.ok(mine.fatigue.sevenDayScheduledHours >= 9, 'and all of their own 7-day hours');
+      assert.equal(mine.fatigue.restFiguresWithheld, false);
+      assert.equal((await api('GET', `/shift-amendments/${aId}`, g.token)).body.fatigue.restHoursBeforeNextShift, 5);
+
+      // the stored row still holds the full assessment (for the Guard and the audit), plus the company-view facts
+      const stored = (await amendmentRow(aId)).fatigueAssessment;
+      assert.equal(stored.restHoursBeforeNextShift, 5);
+      assert.equal(stored.restFromOwnCompany, false);
+
+      // a refusal over the hard limit carries only company-safe figures (a Guard with past work at B, no next shift)
+      const g3 = await guard('lsa-privacy-hard');
+      await q(`INSERT INTO company_guards ("companyId","guardId",status,"relationshipType") VALUES ($1,$2,'ACTIVE','EMPLOYEE') ON CONFLICT DO NOTHING`, [B.id, g3.id]);
+      await q(`INSERT INTO shifts ("companyId","siteId","siteName","guardId",status,start,"end") VALUES ($1,$2,'Rival Depot',$3,'completed',$4::timestamp,$5::timestamp)`,
+        [B.id, B.siteId, g3.id, ts(bPast), ts(bPast + 9 * HOUR)]);
+      const id3 = await liveShift(g3, -2 * HOUR, 2 * HOUR);
+      const hard = await propose(A.token, id3, ms((await shiftRow(id3)).end) + 14 * HOUR);
+      assert.equal(hard.body.code, 'SHIFT_AMENDMENT_FATIGUE_LIMIT', JSON.stringify(hard.body));
+      assert.ok(!('sevenDayScheduledHours' in hard.body.details.assessment), 'no all-company 7-day figure');
+      assert.ok(!('restFromOwnCompany' in hard.body.details.assessment));
+      assert.equal(hard.body.details.assessment.sevenDayIncludesOtherWork, true);
+      // this company's only shift in the window is the one being extended, so its 7-day hours are exactly that shift's
+      assert.ok(Math.abs(hard.body.details.assessment.companySevenDayScheduledHours - hard.body.details.assessment.totalScheduledHours) < 0.05,
+        `only this company's hours: ${hard.body.details.assessment.companySevenDayScheduledHours} vs ${hard.body.details.assessment.totalScheduledHours}`);
+      assert.equal(hard.body.details.assessment.hardLimitExceeded, true, 'the restriction itself is unchanged');
+      leaks(hard.body);
+
+      // rows stored before this correction (no recorded owner of the next shift) are withheld from companies
+      await q(`UPDATE shift_amendments SET "fatigueAssessment" = "fatigueAssessment" - 'restFromOwnCompany' - 'companySevenDayScheduledHours' WHERE id = $1`, [aId]);
+      const legacy = (await api('GET', `/shift-amendments/${aId}`, A.token)).body.fatigue;
+      assert.equal(legacy.restHoursBeforeNextShift, null, 'legacy row: rest withheld');
+      assert.equal(legacy.sevenDayScheduledHours, null, 'legacy row: 7-day withheld');
+      assert.ok(legacy.warnings.includes('SHORT_REST'), 'legacy row: the warning stays');
+      assert.equal((await api('GET', `/shift-amendments/${aId}`, g.token)).body.fatigue.restHoursBeforeNextShift, 5, 'the Guard still sees it');
+
+      // the company's own next shift is the company's own schedule: shown
+      const g2 = await guard('lsa-privacy-own');
+      const id2 = await liveShift(g2, -HOUR, 2 * HOUR);
+      const end2 = ms((await shiftRow(id2)).end);
+      await q(`INSERT INTO shifts ("companyId","siteId","siteName","guardId",status,start,"end") VALUES ($1,$2,'Main Site',$3,'ready',$4::timestamp,$5::timestamp)`,
+        [A.id, A.siteId, g2.id, ts(end2 + HOUR + 4 * HOUR), ts(end2 + HOUR + 6 * HOUR)]);
+      const own = await propose(A.token, id2, end2 + HOUR);
+      assert.equal(own.body.amendment.fatigue.restHoursBeforeNextShift, 4);
+      assert.equal(own.body.amendment.fatigue.restFiguresWithheld, false);
+      assert.equal(own.body.amendment.fatigue.sevenDayIncludesOtherWork, false);
     });
 
     await test('LSA-18-MISSING-BOOK-OFF-USES-THE-EFFECTIVE-END', async () => {

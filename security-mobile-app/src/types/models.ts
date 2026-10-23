@@ -2272,6 +2272,10 @@ export interface ShiftAmendment {
     warnings: AmendmentWarning[];
     restHoursBeforeNextShift: number | null;
     sevenDayScheduledHours: number | null;
+    /** Company view: the rest gap was decided by another company's shift and is not shown (the warning stays). */
+    restFiguresWithheld?: boolean;
+    /** Company view: the 7-day figure is this company's hours only; the Guard has other scheduled work. */
+    sevenDayIncludesOtherWork?: boolean;
   };
   approvalRequired: boolean;
   approvedByUserId: number | null;

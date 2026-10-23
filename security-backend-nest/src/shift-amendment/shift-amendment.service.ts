@@ -97,6 +97,48 @@ const AMENDMENT_COLUMNS = `"id", "shiftId", "companyId", "guardId", "sequence", 
 const CLOCK = `(statement_timestamp() AT TIME ZONE 'UTC')`;
 const OPEN_SQL = `('awaiting_approval', 'pending')`;
 
+/** What an amendment's fatigue assessment is stored as: the pure assessment plus what the company view needs. */
+type StoredFatigueAssessment = FatigueAssessment & {
+  /** The deciding next shift (or none) belongs to the amending company. Absent on rows stored before 23 Oct 2026. */
+  restFromOwnCompany?: boolean;
+  /** The Guard's scheduled hours in the 7-day window at the amending company only. */
+  companySevenDayScheduledHours?: number;
+};
+type Audience = 'company' | 'guard';
+
+/**
+ * The company-safe version of an assessment: the rest gap only when it was decided by the company's own next shift,
+ * and the company's own 7-day hours; never another company's schedule. Warnings, approval and limits are untouched.
+ */
+function companySafeAssessment(fa: StoredFatigueAssessment) {
+  const restShown = fa.restFromOwnCompany === true;
+  const own = typeof fa.companySevenDayScheduledHours === 'number' ? fa.companySevenDayScheduledHours : null;
+  const { restHoursBeforeNextShift, sevenDayScheduledHours, restFromOwnCompany: _r, companySevenDayScheduledHours: _c, ...rest } = fa;
+  return {
+    ...rest,
+    restHoursBeforeNextShift: restShown ? restHoursBeforeNextShift : null,
+    restFiguresWithheld: !restShown && restHoursBeforeNextShift !== null,
+    companySevenDayScheduledHours: own,
+    sevenDayIncludesOtherWork: own === null ? true : sevenDayScheduledHours > own + 0.01,
+  };
+}
+
+function presentFatigue(fa: StoredFatigueAssessment | null, audience: Audience) {
+  if (!fa) {
+    return { basis: 'scheduled_hours' as const, totalScheduledHours: null, warnings: [], restHoursBeforeNextShift: null,
+      sevenDayScheduledHours: null, restFiguresWithheld: false, sevenDayIncludesOtherWork: false };
+  }
+  if (audience === 'guard') {
+    return { basis: 'scheduled_hours' as const, totalScheduledHours: fa.totalScheduledHours ?? null, warnings: fa.warnings ?? [],
+      restHoursBeforeNextShift: fa.restHoursBeforeNextShift ?? null, sevenDayScheduledHours: fa.sevenDayScheduledHours ?? null,
+      restFiguresWithheld: false, sevenDayIncludesOtherWork: false };
+  }
+  const safe = companySafeAssessment(fa);
+  return { basis: 'scheduled_hours' as const, totalScheduledHours: fa.totalScheduledHours ?? null, warnings: fa.warnings ?? [],
+    restHoursBeforeNextShift: safe.restHoursBeforeNextShift, sevenDayScheduledHours: safe.companySevenDayScheduledHours,
+    restFiguresWithheld: safe.restFiguresWithheld, sevenDayIncludesOtherWork: safe.sevenDayIncludesOtherWork };
+}
+
 const toShift = (r: any): ShiftRow | null =>
   r
     ? {
@@ -271,14 +313,19 @@ export class ShiftAmendmentService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  /** Scheduled hours only (never actual attendance): the rest gap before the next shift and the rolling 7 days. */
-  private async assess(shift: ShiftRow, guardId: number, proposedEndMs: number, policy: ShiftPolicyValues): Promise<FatigueAssessment> {
+  /**
+   * Scheduled hours only (never actual attendance): the rest gap before the next shift and the rolling 7 days, over
+   * the Guard's shifts at every company (that is what keeps the Guard safe). Also recorded, so the company view can
+   * withhold them: whether the deciding next shift is this company's, and this company's own 7-day hours.
+   */
+  private async assess(shift: ShiftRow, guardId: number, proposedEndMs: number, policy: ShiftPolicyValues): Promise<StoredFatigueAssessment> {
     const [next] = (await this.dataSource.query(
-      `SELECT EXTRACT(EPOCH FROM min("start")) * 1000 AS "ms" FROM "shifts"
+      `SELECT EXTRACT(EPOCH FROM "start") * 1000 AS "ms", "companyId" FROM "shifts"
         WHERE "guardId" = $1 AND "id" <> $2 AND "start" > $3::timestamp
-          AND "status" IN ('scheduled', 'offered', 'ready', 'in_progress')`,
+          AND "status" IN ('scheduled', 'offered', 'ready', 'in_progress')
+        ORDER BY "start" ASC LIMIT 1`,
       [guardId, shift.id, toDbTimestamp(shift.startMs)],
-    )) as Array<{ ms: string | null }>;
+    )) as Array<{ ms: string | null; companyId: number | null }>;
     const windowStart = toDbTimestamp(proposedEndMs - 7 * 24 * 3_600_000);
     const windowEnd = toDbTimestamp(proposedEndMs);
     const [week] = (await this.dataSource.query(
@@ -290,15 +337,28 @@ export class ShiftAmendmentService implements OnModuleInit, OnModuleDestroy {
           AND "start" < $4::timestamp AND (CASE WHEN "id" = $2 THEN $4::timestamp ELSE "end" END) > $3::timestamp`,
       [guardId, shift.id, windowStart, windowEnd],
     )) as Array<{ hours: string }>;
-    return assessFatigue({
-      startMs: shift.startMs,
-      currentEndMs: shift.endMs,
-      proposedEndMs,
-      nowMs: Date.now(),
-      nextShiftStartMs: next?.ms === null || next?.ms === undefined ? null : Number(next.ms),
-      sevenDayScheduledHours: Number(week?.hours ?? 0),
-      policy,
-    });
+    const [own] = (await this.dataSource.query(
+      `SELECT COALESCE(SUM(EXTRACT(EPOCH FROM (
+                LEAST(CASE WHEN "id" = $2 THEN $4::timestamp ELSE "end" END, $4::timestamp) - GREATEST("start", $3::timestamp)
+              ))), 0) / 3600 AS "hours"
+         FROM "shifts"
+        WHERE "guardId" = $1 AND "companyId" = $5 AND "status" IN ('offered', 'ready', 'in_progress', 'completed')
+          AND "start" < $4::timestamp AND (CASE WHEN "id" = $2 THEN $4::timestamp ELSE "end" END) > $3::timestamp`,
+      [guardId, shift.id, windowStart, windowEnd, shift.companyId],
+    )) as Array<{ hours: string }>;
+    return {
+      ...assessFatigue({
+        startMs: shift.startMs,
+        currentEndMs: shift.endMs,
+        proposedEndMs,
+        nowMs: Date.now(),
+        nextShiftStartMs: next?.ms === null || next?.ms === undefined ? null : Number(next.ms),
+        sevenDayScheduledHours: Number(week?.hours ?? 0),
+        policy,
+      }),
+      restFromOwnCompany: !next || Number(next.companyId) === shift.companyId,
+      companySevenDayScheduledHours: Math.round(Number(own?.hours ?? 0) * 100) / 100,
+    };
   }
 
   // ── Transactions ──────────────────────────────────────────────────────────────────────────────────
@@ -432,7 +492,7 @@ export class ShiftAmendmentService implements OnModuleInit, OnModuleDestroy {
     if (assessment.hardLimitExceeded) {
       throw amendmentError(HttpStatus.UNPROCESSABLE_ENTITY, E.FATIGUE_LIMIT,
         `The extended shift would be ${assessment.totalScheduledHours} scheduled hours, over the company limit of ${policy.hardLimitHours}.`,
-        { assessment });
+        { assessment: companySafeAssessment(assessment) });
     }
 
     const id = await this.inTransaction(async (manager) => {
@@ -585,7 +645,7 @@ export class ShiftAmendmentService implements OnModuleInit, OnModuleDestroy {
     // No amendment state may change while the company has amendments switched off (owner rule: disabled = unusable).
     await this.requireEnabled(pre.companyId);
     const settled = this.settledAnswer(pre, dto.response);
-    if (settled === 'same') return this.view(id);
+    if (settled === 'same') return this.view(id, 'guard');
     if (settled === 'different') throw this.alreadyAnswered(pre);
 
     if (dto.response === 'declined') {
@@ -612,7 +672,7 @@ export class ShiftAmendmentService implements OnModuleInit, OnModuleDestroy {
           'Shift extension declined', `The Guard declined the extension of shift ${amendment.shiftId}. The shift end is unchanged.`);
         return null;
       });
-      return this.view(id);
+      return this.view(id, 'guard');
     }
 
     await this.accept(pre, {
@@ -621,7 +681,7 @@ export class ShiftAmendmentService implements OnModuleInit, OnModuleDestroy {
       responseReason: dto.reason?.trim() || null,
       actorRole: 'guard',
     });
-    return this.view(id);
+    return this.view(id, 'guard');
   }
 
   async recordVerbalAgreement(user: JwtPayload, id: number, dto: RecordVerbalAgreementDto) {
@@ -700,7 +760,7 @@ export class ShiftAmendmentService implements OnModuleInit, OnModuleDestroy {
     if (assessment.hardLimitExceeded) {
       throw amendmentError(HttpStatus.UNPROCESSABLE_ENTITY, E.FATIGUE_LIMIT,
         `The extended shift would be ${assessment.totalScheduledHours} scheduled hours, over the company limit of ${policy.hardLimitHours}.`,
-        { assessment });
+        { assessment: companySafeAssessment(assessment) });
     }
 
     await this.inTransaction(async (manager) => {
@@ -874,7 +934,7 @@ export class ShiftAmendmentService implements OnModuleInit, OnModuleDestroy {
         `The Guard disputes the recorded agreement to extend shift ${amendment.shiftId}. The extension stays in force until an Owner or Admin reviews it.`);
       return null;
     });
-    return this.view(id);
+    return this.view(id, 'guard');
   }
 
   async resolveDispute(user: JwtPayload, id: number, dto: ResolveDisputeDto) {
@@ -937,13 +997,19 @@ export class ShiftAmendmentService implements OnModuleInit, OnModuleDestroy {
 
   // ── Reads ─────────────────────────────────────────────────────────────────────────────────────────
 
-  async view(id: number) {
+  async view(id: number, audience: Audience = 'company') {
     const a = await this.amendmentRepo.findOne({ where: { id } });
     if (!a) throw amendmentError(HttpStatus.NOT_FOUND, E.NOT_FOUND, 'Shift extension not found.');
-    return this.present(a);
+    return this.present(a, audience);
   }
 
-  private present(a: ShiftAmendment) {
+  /**
+   * The amendment as an API answer. `audience` decides the fatigue figures: the Guard sees their own (every company's
+   * shifts); a company sees only figures that come from its own shifts — the rest gap only when the deciding next
+   * shift is its own (rows stored before this was recorded are withheld), and its own 7-day hours. Warnings and the
+   * approval requirement are the same for both.
+   */
+  private present(a: ShiftAmendment, audience: Audience = 'company') {
     const t = (d: Date | null | undefined) => (d ? new Date(d).toISOString() : null);
     const open = OPEN_AMENDMENT_STATUSES.includes(a.status);
     const lapsed = open && new Date(a.expiresAt).getTime() <= Date.now();
@@ -963,13 +1029,7 @@ export class ShiftAmendmentService implements OnModuleInit, OnModuleDestroy {
       proposedByUserId: a.proposedByUserId,
       proposedAt: t(a.proposedAt),
       expiresAt: t(a.expiresAt),
-      fatigue: {
-        basis: 'scheduled_hours' as const,
-        totalScheduledHours: a.fatigueAssessment?.totalScheduledHours ?? null,
-        warnings: a.fatigueAssessment?.warnings ?? [],
-        restHoursBeforeNextShift: a.fatigueAssessment?.restHoursBeforeNextShift ?? null,
-        sevenDayScheduledHours: a.fatigueAssessment?.sevenDayScheduledHours ?? null,
-      },
+      fatigue: presentFatigue(a.fatigueAssessment as StoredFatigueAssessment | null, audience),
       approvalRequired: a.approvalRequired,
       approvedByUserId: a.approvedByUserId,
       approvedAt: t(a.approvedAt),
@@ -1013,7 +1073,7 @@ export class ShiftAmendmentService implements OnModuleInit, OnModuleDestroy {
       originalEnd: shift.originalEndMs === null ? iso(shift.endMs) : iso(shift.originalEndMs),
       currentEnd: iso(shift.endMs),
       extended: shift.originalEndMs !== null,
-      amendments: rows.map((a) => this.present(a)),
+      amendments: rows.map((a) => this.present(a, user.role === UserRole.GUARD ? 'guard' : 'company')),
     };
   }
 
@@ -1027,7 +1087,7 @@ export class ShiftAmendmentService implements OnModuleInit, OnModuleDestroy {
       const actor = await this.companyActor(user);
       if (a.companyId !== actor.companyId) throw amendmentError(HttpStatus.NOT_FOUND, E.NOT_FOUND, 'Shift extension not found.');
     }
-    return this.present(a);
+    return this.present(a, user.role === UserRole.GUARD ? 'guard' : 'company');
   }
 
   /** The Guard's open requests and recent decisions (last 7 days), for the 1.2.0 app. Older builds never call it. */
@@ -1039,7 +1099,7 @@ export class ShiftAmendmentService implements OnModuleInit, OnModuleDestroy {
       .andWhere(`(a.status IN ('pending') OR a.updatedAt > now() - interval '7 days')`)
       .orderBy('a.id', 'DESC')
       .getMany();
-    return rows.map((a) => this.present(a));
+    return rows.map((a) => this.present(a, 'guard'));
   }
 
   // ── Assessment (dry run) ──────────────────────────────────────────────────────────────────────────
@@ -1103,26 +1163,8 @@ export class ShiftAmendmentService implements OnModuleInit, OnModuleDestroy {
         message: `The extended shift would be ${assessment.totalScheduledHours} scheduled hours, over the company limit of ${policy.hardLimitHours}.` });
     }
 
-    // Only this company's figures are disclosed.
-    const [next] = (await this.dataSource.query(
-      `SELECT "companyId" FROM "shifts"
-        WHERE "guardId" = $1 AND "id" <> $2 AND "start" > $3::timestamp AND "status" IN ('scheduled', 'offered', 'ready', 'in_progress')
-        ORDER BY "start" ASC LIMIT 1`,
-      [guardId, pre.id, toDbTimestamp(pre.startMs)],
-    )) as Array<{ companyId: number }>;
-    const restIsOwnCompany = !next || Number(next.companyId) === actor.companyId;
-    const windowStart = toDbTimestamp(proposedEndMs - 7 * 24 * 3_600_000);
-    const windowEnd = toDbTimestamp(proposedEndMs);
-    const [own] = (await this.dataSource.query(
-      `SELECT COALESCE(SUM(EXTRACT(EPOCH FROM (
-                LEAST(CASE WHEN "id" = $2 THEN $4::timestamp ELSE "end" END, $4::timestamp) - GREATEST("start", $3::timestamp)
-              ))), 0) / 3600 AS "hours"
-         FROM "shifts"
-        WHERE "guardId" = $1 AND "companyId" = $5 AND "status" IN ('offered', 'ready', 'in_progress', 'completed')
-          AND "start" < $4::timestamp AND (CASE WHEN "id" = $2 THEN $4::timestamp ELSE "end" END) > $3::timestamp`,
-      [guardId, pre.id, windowStart, windowEnd, actor.companyId],
-    )) as Array<{ hours: string }>;
-    const ownSevenDay = Math.round(Number(own?.hours ?? 0) * 100) / 100;
+    // Only this company's figures are disclosed (the same rule as every stored amendment's company view).
+    const shown = companySafeAssessment(assessment);
     const [site] = (await this.dataSource.query(
       `SELECT s."timezone" FROM "shifts" sh LEFT JOIN "sites" s ON s."id" = sh."siteId" WHERE sh."id" = $1`,
       [pre.id],
@@ -1148,10 +1190,10 @@ export class ShiftAmendmentService implements OnModuleInit, OnModuleDestroy {
       hardLimitExceeded: assessment.hardLimitExceeded,
       complianceReviewRequired: assessment.complianceReviewRequired,
       // Figures from this company's shifts only; null when the deciding shift belongs to another company.
-      restHoursBeforeNextShift: restIsOwnCompany ? assessment.restHoursBeforeNextShift : null,
-      restFiguresWithheld: !restIsOwnCompany,
-      companySevenDayScheduledHours: ownSevenDay,
-      sevenDayIncludesOtherWork: assessment.sevenDayScheduledHours > ownSevenDay + 0.01,
+      restHoursBeforeNextShift: shown.restHoursBeforeNextShift,
+      restFiguresWithheld: shown.restFiguresWithheld,
+      companySevenDayScheduledHours: shown.companySevenDayScheduledHours,
+      sevenDayIncludesOtherWork: shown.sevenDayIncludesOtherWork,
       thresholds: assessment.thresholds,
       blockedBy,
       canPropose: blockedBy.length === 0,

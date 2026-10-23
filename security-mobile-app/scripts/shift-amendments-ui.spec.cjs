@@ -581,4 +581,16 @@ test('LSA-UI-26-ONLY-OWNER-AND-ADMIN-SEE-THE-CONTROL-ROOM-SWITCH', () => {
   assert.ok(service.includes("...(manager && role === CompanyMembershipRole.CONTROL_ROOM ? { canAmendShifts: Boolean(r.canAmendShifts) } : {}),"));
 });
 
+test('LSA-UI-27-A-STORED-AMENDMENT-SAYS-WHEN-A-FIGURE-IS-WITHHELD', () => {
+  const withheld = lsa.warningText('SHORT_REST', DEFAULT_POLICY, { restHoursBeforeNextShift: null, restFiguresWithheld: true });
+  assert.equal(withheld, "Short rest: less than 11 hours before the Guard's next scheduled shift (exact time not shown). Management approval is required.");
+  assert.match(lsa.warningText('SHORT_REST', DEFAULT_POLICY, { restHoursBeforeNextShift: 4, restFiguresWithheld: false }), /next shift \(4 h\)\./);
+  assert.match(lsa.warningText('WEEKLY_HOURS', DEFAULT_POLICY, { sevenDayScheduledHours: 18, sevenDayIncludesOtherWork: true }), /\(this company: 18 h\)\. Flagged/);
+  assert.match(lsa.warningText('WEEKLY_HOURS', DEFAULT_POLICY, { sevenDayScheduledHours: 50, sevenDayIncludesOtherWork: false }), /\(50 h\)\. Flagged/);
+  const backend = backendOf('src/shift-amendment/shift-amendment.service.ts');
+  assert.ok(backend.includes('restFiguresWithheld: safe.restFiguresWithheld, sevenDayIncludesOtherWork: safe.sevenDayIncludesOtherWork'), 'the API sends the flags the web words');
+  const drawer = stripComments(codeOf('src/components/company/CompanyShiftAmendmentDrawer.tsx'));
+  assert.ok(drawer.includes('text={warningText(w, policy, a.fatigue)}'), 'the stored figures and flags reach the words');
+});
+
 console.log(`\n${passed} passed`);

@@ -186,15 +186,18 @@ export function previewExtension(input: { startIso: string; currentEndIso: strin
 
 export function warningText(w: AmendmentWarning, policy: ShiftPolicy | null, values?: {
   totalScheduledHours?: number | null; restHoursBeforeNextShift?: number | null; sevenDayScheduledHours?: number | null;
+  restFiguresWithheld?: boolean; sevenDayIncludesOtherWork?: boolean;
 }): string {
   const hrs = (n: number | null | undefined) => (n === null || n === undefined ? '' : ` (${round2(n)} h)`);
   switch (w) {
     case 'LONG_SHIFT':
       return `Long shift: more than ${policy?.fatigueWarningHours ?? '—'} scheduled hours${hrs(values?.totalScheduledHours)}.`;
     case 'SHORT_REST':
-      return `Short rest: less than ${policy?.minRestHours ?? '—'} hours before the Guard's next shift${hrs(values?.restHoursBeforeNextShift)}. Management approval is required.`;
+      return values?.restFiguresWithheld
+        ? `Short rest: less than ${policy?.minRestHours ?? '—'} hours before the Guard's next scheduled shift (exact time not shown). Management approval is required.`
+        : `Short rest: less than ${policy?.minRestHours ?? '—'} hours before the Guard's next shift${hrs(values?.restHoursBeforeNextShift)}. Management approval is required.`;
     case 'WEEKLY_HOURS':
-      return `7-day hours: more than ${policy?.weeklyReviewHours ?? '—'} scheduled hours in the last 7 days${hrs(values?.sevenDayScheduledHours)}. Flagged for compliance review.`;
+      return `7-day hours: more than ${policy?.weeklyReviewHours ?? '—'} scheduled hours in the last 7 days${values?.sevenDayIncludesOtherWork && values?.sevenDayScheduledHours !== null && values?.sevenDayScheduledHours !== undefined ? ` (this company: ${round2(values.sevenDayScheduledHours)} h)` : hrs(values?.sevenDayScheduledHours)}. Flagged for compliance review.`;
     case 'LAST_MINUTE':
       return `Last minute: the shift ends within ${policy?.lastMinuteWarningMinutes ?? '—'} minutes. The Guard may not see the request in time.`;
     default:
