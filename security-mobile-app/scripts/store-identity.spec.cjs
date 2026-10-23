@@ -17,6 +17,7 @@
  *   STORE-11  Welfare Check notifications: visible reminders only (no silent background push), Apple's production push
  *             environment, the two Android permissions the library adds (show notifications, keep scheduled ones after
  *             a restart) and nothing else; Firebase's client file is supplied by EAS, never committed
+ *   STORE-12  the resolved iOS config (what EAS syncs App ID capabilities from) requests aps-environment production
  *
  * Executed against the real files, and the API resolver is executed rather than read.
  */
@@ -260,6 +261,21 @@ test('STORE-11-WELFARE-NOTIFICATIONS-ADD-ONLY-WHAT-THEY-NEED', () => {
   } finally {
     if (before === undefined) delete process.env.GOOGLE_SERVICES_JSON; else process.env.GOOGLE_SERVICES_JSON = before;
   }
+});
+
+test('STORE-12-THE-STORE-APP-REQUESTS-THE-PRODUCTION-PUSH-ENTITLEMENT', () => {
+  // EAS syncs the App ID's capabilities to the entitlements of the project it runs in, read from this exact command.
+  // On 24 Oct 2026 `eas credentials` run from a checkout without expo-notifications reported "Synced capabilities:
+  // Disabled: Push Notifications". From this tree the store app must ask for Apple's production push environment.
+  const env = { ...process.env };
+  for (const key of ['APP_VARIANT', 'EAS_BUILD', 'GOOGLE_SERVICES_JSON', 'EXPO_PUBLIC_API_URL']) delete env[key];
+  const cli = path.join(ROOT, 'node_modules', 'expo', 'bin', 'cli');
+  const out = require('node:child_process').execFileSync(process.execPath, [cli, 'config', '--type', 'introspect', '--json'], {
+    cwd: ROOT, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 120000,
+  });
+  const resolved = JSON.parse(out);
+  assert.equal(resolved.ios.bundleIdentifier, 'com.sfour.s4');
+  assert.deepEqual(resolved.ios.entitlements, { 'aps-environment': 'production' }, 'push, and no other capability');
 });
 
 console.log(`\n${passed} store identity checks passed`);
