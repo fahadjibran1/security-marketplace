@@ -26,6 +26,25 @@ function assertApiMatchesIdentity(isUat) {
   }
 }
 
+/**
+ * The UAT app's Android versionCode. It is its own number (the UAT app carries code the store release does not), set
+ * only by the EAS `uat` profile, and an EAS UAT build refuses to start unless it is above the store app's — so a new
+ * UAT build always installs over the previous UAT build and never borrows the store's number.
+ */
+function uatVersionCode(config) {
+  const raw = process.env.UAT_ANDROID_VERSION_CODE;
+  const store = Number(config.android && config.android.versionCode);
+  if (raw === undefined || raw === '') {
+    if (process.env.EAS_BUILD) throw new Error('S4 UAT must be built with UAT_ANDROID_VERSION_CODE (the eas.json `uat` profile sets it).');
+    return store;
+  }
+  const code = Number(raw);
+  if (!Number.isInteger(code) || code <= store) {
+    throw new Error(`UAT_ANDROID_VERSION_CODE must be a whole number above the store app's versionCode ${store}.`);
+  }
+  return code;
+}
+
 module.exports = ({ config }) => {
   const isUat = process.env.APP_VARIANT === 'uat';
   assertApiMatchesIdentity(isUat);
@@ -41,6 +60,7 @@ module.exports = ({ config }) => {
     android: {
       ...config.android,
       package: 'com.sfour.s4.uat',
+      versionCode: uatVersionCode(config),
       adaptiveIcon: { ...config.android.adaptiveIcon, foregroundImage: './assets/uat/adaptive-icon.png', backgroundColor: UAT_AMBER },
     },
     extra: { ...config.extra, apiBaseUrl: UAT_API_BASE_URL, appVariant: 'uat' },

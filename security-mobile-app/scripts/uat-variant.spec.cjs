@@ -53,7 +53,8 @@ test('UAT-02-THE-UAT-VARIANT-IS-A-SEPARATE-STAGING-ONLY-APP', () => {
   assert.equal(out.extra.appVariant, 'uat');
   assert.equal(out.android.adaptiveIcon.backgroundColor, '#B45309');
   assert.equal(out.splash.backgroundColor, '#B45309');
-  // Same versions as the certified release, so a UAT result applies to exactly that code.
+  // Same marketing version and iOS build as the store release; the Android versionCode is the UAT app's own
+  // (UAT-08), and without UAT_ANDROID_VERSION_CODE outside EAS it falls back to the store's.
   assert.equal(out.version, appJson.expo.version);
   assert.equal(out.android.versionCode, appJson.expo.android.versionCode);
   assert.equal(out.ios.buildNumber, appJson.expo.ios.buildNumber);
@@ -127,7 +128,7 @@ test('UAT-07-THE-STAGING-URL-LIVES-ONLY-IN-THE-UAT-CONFIG', () => {
 
 test('UAT-08-AN-APP-CANNOT-BE-BUILT-AGAINST-THE-OTHER-ENVIRONMENT', () => {
   // EXPO_PUBLIC_API_URL beats extra.apiBaseUrl at runtime, so identity and API are checked together at build time.
-  const keys = ['APP_VARIANT', 'EXPO_PUBLIC_API_URL', 'EAS_BUILD'];
+  const keys = ['APP_VARIANT', 'EXPO_PUBLIC_API_URL', 'EAS_BUILD', 'UAT_ANDROID_VERSION_CODE'];
   const run = (vars) => {
     const before = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
     keys.forEach((k) => { if (vars[k] === undefined) delete process.env[k]; else process.env[k] = vars[k]; });
@@ -139,6 +140,7 @@ test('UAT-08-AN-APP-CANNOT-BE-BUILT-AGAINST-THE-OTHER-ENVIRONMENT', () => {
   // Every profile in eas.json, as an EAS worker evaluates it.
   assert.equal(run(onEas('uat')).android.package, 'com.sfour.s4.uat');
   assert.equal(run(onEas('uat')).ios.bundleIdentifier, 'com.sfour.s4.uat');
+  assert.equal(run(onEas('uat')).android.versionCode, 16, 'the uat profile builds UAT versionCode 16');
   for (const name of ['production', 'pilot', 'preview', 'development', 'ios-simulator']) {
     assert.equal(run(onEas(name)).android.package, 'com.sfour.s4', `${name} stays the store identity`);
   }
@@ -155,6 +157,32 @@ test('UAT-08-AN-APP-CANNOT-BE-BUILT-AGAINST-THE-OTHER-ENVIRONMENT', () => {
   keys.forEach((k) => delete process.env[k]);
   try { assert.equal(makeConfig({ config: input }), input); } finally {
     keys.forEach((k) => { if (before[k] !== undefined) process.env[k] = before[k]; });
+  }
+});
+
+test('UAT-09-THE-UAT-APP-HAS-ITS-OWN-ANDROID-VERSION-CODE-ABOVE-THE-STORE-APP', () => {
+  const eas = JSON.parse(fs.readFileSync(path.join(ROOT, 'eas.json'), 'utf8'));
+  assert.equal(eas.build.uat.env.UAT_ANDROID_VERSION_CODE, '16', 'the next UAT build installs over UAT 1.1.0 (15), ebe08e57');
+  assert.equal(eas.build.production.env.UAT_ANDROID_VERSION_CODE, undefined, 'never on the store profile');
+  const prev = { ...process.env };
+  try {
+    process.env.UAT_ANDROID_VERSION_CODE = '16';
+    const uat = withVariant('uat', () => makeConfig({ config: fresh() }));
+    assert.equal(uat.android.versionCode, 16);
+    assert.equal(uat.android.package, 'com.sfour.s4.uat');
+    const store = withVariant(undefined, () => makeConfig({ config: fresh() }));
+    assert.equal(store.android.versionCode, appJson.expo.android.versionCode, 'the store app keeps its own number');
+    assert.equal(store.android.package, 'com.sfour.s4');
+    process.env.UAT_ANDROID_VERSION_CODE = String(appJson.expo.android.versionCode);
+    assert.throws(() => withVariant('uat', () => makeConfig({ config: fresh() })), /above the store app's versionCode/);
+    delete process.env.UAT_ANDROID_VERSION_CODE;
+    process.env.EAS_BUILD = 'true';
+    process.env.EXPO_PUBLIC_API_URL = STAGING;
+    assert.throws(() => withVariant('uat', () => makeConfig({ config: fresh() })), /UAT_ANDROID_VERSION_CODE/);
+  } finally {
+    for (const k of ['UAT_ANDROID_VERSION_CODE', 'EAS_BUILD', 'EXPO_PUBLIC_API_URL']) {
+      if (prev[k] === undefined) delete process.env[k]; else process.env[k] = prev[k];
+    }
   }
 });
 
