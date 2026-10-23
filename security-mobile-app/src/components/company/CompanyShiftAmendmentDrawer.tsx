@@ -9,6 +9,7 @@ import {
   amendmentErrorGuidance,
   amendmentStatusLabel,
   approvalReasonText,
+  assessmentLines,
   approvalStatusText,
   buildAmendmentHistory,
   confirmationEmailText,
@@ -22,6 +23,7 @@ import {
   resolveContactTime,
   resolveProposedEnd,
   reviewFlags,
+  staffNameResolver,
   unresolvedDisputeWarning,
   validateApproval,
   validateDisputeResolution,
@@ -31,16 +33,21 @@ import {
   warningText,
   type AmendmentPermissions,
   type ShiftAmendment,
+  type ShiftAmendmentAssessment,
+  type ShiftAmendmentStaffDirectory,
   type ShiftAmendmentList,
   type ShiftPolicy,
 } from './shiftAmendments';
 import {
   approveShiftAmendment,
+  assessShiftAmendment,
   getShiftAmendmentPolicy,
+  getShiftAmendmentStaff,
   listShiftAmendments,
   proposeShiftAmendment,
   recordShiftAmendmentVerbalAgreement,
   resolveShiftAmendmentDispute,
+  setControlRoomAmendmentAuthorisation,
   withdrawShiftAmendment,
 } from '../../services/api';
 import { formatSiteTime, formatUkDateTime } from '../../services/siteTime';
@@ -100,6 +107,12 @@ export function CompanyShiftAmendmentDrawer({
   const [submitting, setSubmitting] = React.useState(false);
   const [actionError, setActionError] = React.useState<{ message: string; retryable: boolean } | null>(null);
   const [nowMs, setNowMs] = React.useState(() => Date.now());
+  /** Names for the history (and, for Owner/Admin, Control Room authorisation). Optional: names fall back to references. */
+  const [staffDir, setStaffDir] = React.useState<ShiftAmendmentStaffDirectory | null>(null);
+  const [grantBusy, setGrantBusy] = React.useState<number | null>(null);
+  /** The API's dry run for the end being considered; a sequence number drops answers for an end no longer shown. */
+  const [assessment, setAssessment] = React.useState<{ endMs: number; result: ShiftAmendmentAssessment | null; failed: boolean } | null>(null);
+  const assessSeq = React.useRef(0);
 
   // form fields
   const [quickMinutes, setQuickMinutes] = React.useState<number | null>(null);
@@ -124,6 +137,7 @@ export function CompanyShiftAmendmentDrawer({
       const [p, list] = await Promise.all([getShiftAmendmentPolicy(), listShiftAmendments(shiftId)]);
       setPolicy(p);
       setData(list);
+      getShiftAmendmentStaff().then(setStaffDir).catch(() => { /* names fall back to staff references */ });
       setLoadError(null);
       setLoadedAt(Date.now());
     } catch (error) {
@@ -168,6 +182,26 @@ export function CompanyShiftAmendmentDrawer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshSignal]);
 
+  // The end being considered, worked out before the early return so the assessment hook always runs in order.
+  const consideredEndMs = (() => {
+    if (!target || mode !== 'propose') return null;
+    const end = data?.currentEnd ?? target.end;
+    if (quickMinutes !== null) return Date.parse(end) + quickMinutes * 60_000;
+    if (!customTime.trim()) return null;
+    const r = resolveProposedEnd(end, customTime, target.timeZone ?? 'Europe/London');
+    return r.ok ? r.ms : null;
+  })();
+  const assessEnabled = !!policy?.amendmentsEnabled;
+  // Ask the API whenever the considered end changes (a chip, or a complete HH:MM). No timer: one call per change.
+  React.useEffect(() => {
+    if (consideredEndMs === null || shiftId === null || !assessEnabled) return;
+    const seq = ++assessSeq.current;
+    setAssessment({ endMs: consideredEndMs, result: null, failed: false });
+    assessShiftAmendment(shiftId, { proposedEnd: new Date(consideredEndMs).toISOString() })
+      .then((result) => { if (seq === assessSeq.current) setAssessment({ endMs: consideredEndMs, result, failed: false }); })
+      .catch(() => { if (seq === assessSeq.current) setAssessment({ endMs: consideredEndMs, result: null, failed: true }); });
+  }, [consideredEndMs, shiftId, assessEnabled]);
+
   if (!target) return null;
 
   const amendments = data?.amendments ?? [];
@@ -179,7 +213,7 @@ export function CompanyShiftAmendmentDrawer({
   const liveShift = { status: target.status, end: currentEnd };
   const attendance = { checkInAt: target.checkInAt, checkOutAt: target.checkOutAt };
   const ineligible = extensionIneligibleReason(liveShift, attendance, nowMs);
-  const nameFor = (userId: number | null) => (userId === null ? null : userId === currentUserId ? 'You' : `Staff user #${userId}`);
+  const nameFor = staffNameResolver(staffDir, currentUserId);
   const history = buildAmendmentHistory(amendments, tz, nameFor);
   const disputeWarning = unresolvedDisputeWarning(amendments);
 
@@ -192,6 +226,9 @@ export function CompanyShiftAmendmentDrawer({
     ? previewExtension({ startIso: target.start, currentEndIso: currentEnd, proposedEndMs, nowMs: Date.now(), policy })
     : null;
 
+  const serverAssessment = assessment && assessment.endMs === proposedEndMs ? assessment : null;
+  const serverLines = serverAssessment?.result ? assessmentLines(serverAssessment.result) : null;
+
   const selfApproval = !!open && open.proposedByUserId !== null && open.proposedByUserId === currentUserId;
   const contact = contactTime.trim() ? resolveContactTime(contactTime, Date.now(), tz) : null;
 
@@ -200,6 +237,9 @@ export function CompanyShiftAmendmentDrawer({
       case 'propose':
         if (proposed && !proposed.ok) return { ok: false as const, message: proposed.message };
         if (disputeWarning && !disputeSeen) return { ok: false as const, message: 'Confirm that you have seen the unresolved dispute on this shift.' };
+        if (serverAssessment?.result && !serverAssessment.result.canPropose) {
+          return { ok: false as const, message: serverAssessment.result.blockedBy[0]?.message ?? 'S4 would refuse this extension.' };
+        }
         return validateProposal({ currentEndMs: Date.parse(currentEnd), proposedEndMs, reason, nowMs: Date.now(), preview, policy });
       case 'withdraw': return validateWithdrawal({ reason });
       case 'approve': return validateApproval({ statement, selfApproval, confirmSelfApproval: confirmSelf });
@@ -354,6 +394,30 @@ export function CompanyShiftAmendmentDrawer({
 
           {policy ? <Text style={styles.policy}>{policySummary(policy)}</Text> : null}
 
+          {staffDir?.canManageControlRoom && staffDir.staff.some((m) => m.role === 'control_room') ? (
+            <>
+              <Text style={styles.sectionLabel}>Control Room authorisation</Text>
+              <Text style={styles.muted}>Authorised Control Room members may propose, withdraw and record verbal agreement. They never approve or review disputes.</Text>
+              {staffDir.staff.filter((m) => m.role === 'control_room').map((m) => (
+                <Check
+                  key={m.userId}
+                  label={`${m.displayName}${grantBusy === m.userId ? ' — saving…' : ''}`}
+                  checked={!!m.canAmendShifts}
+                  onPress={() => {
+                    if (grantBusy !== null) return;
+                    setGrantBusy(m.userId);
+                    setActionError(null);
+                    setControlRoomAmendmentAuthorisation(m.userId, !m.canAmendShifts)
+                      .then(() => getShiftAmendmentStaff().then(setStaffDir))
+                      .then(() => onChanged(`${m.displayName}: amendment authorisation ${m.canAmendShifts ? 'revoked' : 'granted'}. It applies from their next sign-in or refresh.`))
+                      .catch((error) => setActionError({ message: amendmentErrorGuidance(error).message, retryable: false }))
+                      .finally(() => setGrantBusy(null));
+                  }}
+                />
+              ))}
+            </>
+          ) : null}
+
           <Text style={styles.sectionLabel}>Amendment history</Text>
           {history.length === 0 ? <Text style={styles.muted}>This shift has not been extended.</Text> : (
             <View style={styles.history}>
@@ -382,8 +446,8 @@ export function CompanyShiftAmendmentDrawer({
               New end {formatUkDateTime(new Date(proposedEndMs).toISOString(), tz)} (+{formatDuration(preview.additionalMinutes)}), {preview.totalScheduledHours} scheduled hours in total.
             </Text>
             <Text style={styles.confirmText}>
-              {preview.approvalRequired
-                ? approvalReasonText(preview, policy)
+              {(serverAssessment?.result ? serverAssessment.result.approvalRequired : preview.approvalRequired)
+                ? (serverLines?.approval ?? approvalReasonText(preview, policy))
                 : 'The Guard will be asked to agree in the S4 app. Nothing changes until they agree.'}
               {' '}The request expires at the current end, {formatSiteTime(currentEnd, tz)}. S4 also checks the Guard&apos;s rest before their next shift and 7-day hours when you send.
             </Text>
@@ -421,9 +485,23 @@ export function CompanyShiftAmendmentDrawer({
                 <Fact label="Approval" value={preview.approvalRequired ? 'Owner or Admin approval required' : 'Not required on length (rest is checked when you send)'} />
               </View>
             ) : null}
-            {preview?.approvalRequired && !preview.hardLimitExceeded ? <Banner tone="warning" text={approvalReasonText(preview, policy) ?? ''} /> : null}
-            {preview?.hardLimitExceeded ? <Banner tone="danger" text={`Not allowed: over the company limit of ${policy?.hardLimitHours} scheduled hours.`} /> : null}
-            {preview?.warnings.map((w) => <Banner key={w} tone="warning" text={warningText(w, policy, { totalScheduledHours: preview.totalScheduledHours })} />)}
+            {serverLines ? (
+              <>
+                <Text style={styles.muted}>Checked by S4 against the Guard's scheduled shifts (site time {serverAssessment?.result?.timeZone}).</Text>
+                {serverLines.blocked.map((m) => <Banner key={m} tone="danger" text={`Not allowed: ${m}`} />)}
+                {serverLines.approval ? <Banner tone="warning" text={serverLines.approval} /> : null}
+                {serverLines.warnings.map((w) => <Banner key={w} tone="warning" text={w} />)}
+                {!serverLines.blocked.length && !serverLines.approval && !serverLines.warnings.length ? <Banner tone="info" text="No fatigue or rest warnings for this end." /> : null}
+              </>
+            ) : (
+              <>
+                {serverAssessment && !serverAssessment.failed ? <Text style={styles.muted}>Checking with S4…</Text> : null}
+                {serverAssessment?.failed ? <Text style={styles.muted}>S4 could not check rest and 7-day hours just now; it checks them when you send.</Text> : null}
+                {preview?.approvalRequired && !preview.hardLimitExceeded ? <Banner tone="warning" text={approvalReasonText(preview, policy) ?? ''} /> : null}
+                {preview?.hardLimitExceeded ? <Banner tone="danger" text={`Not allowed: over the company limit of ${policy?.hardLimitHours} scheduled hours.`} /> : null}
+                {preview?.warnings.map((w) => <Banner key={w} tone="warning" text={warningText(w, policy, { totalScheduledHours: preview.totalScheduledHours })} />)}
+              </>
+            )}
             <Text style={styles.sectionLabel}>Reason (required)</Text>
             <TextInput style={styles.noteInput} multiline value={reason} onChangeText={setReason} maxLength={AMENDMENT_TEXT_MAX}
               placeholder="Why the shift needs to run longer" placeholderTextColor={colors.textMuted} accessibilityLabel="Reason" />
@@ -594,7 +672,7 @@ function Chip({ label, selected, onPress }: { label: string; selected: boolean; 
   );
 }
 
-function Check({ label, checked, onPress }: { label: string; checked: boolean; onPress: () => void }) {
+function Check({ label, checked, onPress }: { label: string; checked: boolean; onPress: () => void; key?: string | number }) {
   return (
     <Pressable accessibilityRole="checkbox" accessibilityState={{ checked }} accessibilityLabel={label} onPress={onPress}
       style={[styles.check, IS_WEB ? (WEB_PTR as any) : null]}>

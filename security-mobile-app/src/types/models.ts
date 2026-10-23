@@ -2307,3 +2307,35 @@ export interface ShiftAmendmentList {
   extended: boolean;
   amendments: ShiftAmendment[];
 }
+
+/** POST /shifts/:id/amendments/assessment — a dry run of a proposal. Figures come only from the company's own shifts. */
+export interface ShiftAmendmentAssessment {
+  shiftId: number;
+  timeZone: string;
+  currentEnd: string;
+  proposedEnd: string;
+  currentEndLocal: string;
+  proposedEndLocal: string;
+  additionalMinutes: number;
+  basis: 'scheduled_hours';
+  totalScheduledHours: number;
+  warnings: AmendmentWarning[];
+  approvalRequired: boolean;
+  approvalReasons: Array<'LONG_SHIFT' | 'SHORT_REST'>;
+  hardLimitExceeded: boolean;
+  complianceReviewRequired: boolean;
+  /** Null when the Guard's next shift belongs to another company: its time is never disclosed. */
+  restHoursBeforeNextShift: number | null;
+  restFiguresWithheld: boolean;
+  companySevenDayScheduledHours: number;
+  sevenDayIncludesOtherWork: boolean;
+  thresholds: Omit<ShiftPolicy, 'amendmentsEnabled' | 'source'>;
+  blockedBy: Array<{ code: string; message: string }>;
+  canPropose: boolean;
+}
+
+/** GET /shift-amendments/staff — names for the history; Control Room authorisation for Owner/Admin only. */
+export interface ShiftAmendmentStaffDirectory {
+  canManageControlRoom: boolean;
+  staff: Array<{ userId: number; displayName: string; role: string; isYou: boolean; canAmendShifts?: boolean }>;
+}

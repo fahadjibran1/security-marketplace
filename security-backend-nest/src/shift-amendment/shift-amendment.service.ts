@@ -1042,6 +1042,163 @@ export class ShiftAmendmentService implements OnModuleInit, OnModuleDestroy {
     return rows.map((a) => this.present(a));
   }
 
+  // ── Assessment (dry run) ──────────────────────────────────────────────────────────────────────────
+
+  /**
+   * What `propose` would decide for this end, without proposing: the same permission, company, enabled, live-shift,
+   * eligibility, overlap and fatigue checks, but nothing is locked, written, notified or audited. `propose` repeats
+   * every check under lock, so this answer is advice, never a reservation.
+   *
+   * The rest and 7-day checks count the Guard's shifts at every company (that is what keeps the Guard safe), but the
+   * figures are only returned when they come from the requesting company's own shifts: another company's schedule is
+   * never disclosed — only that a warning applies.
+   */
+  async assessProposal(user: JwtPayload, shiftId: number, proposedEnd: string) {
+    const actor = await this.companyActor(user, 'propose');
+    const policy = await this.requireEnabled(actor.companyId);
+    const pre = await this.readShift(shiftId);
+    if (!pre || pre.companyId !== actor.companyId) throw amendmentError(HttpStatus.NOT_FOUND, E.NOT_FOUND, 'Shift not found.');
+    if (pre.status !== 'in_progress' || !pre.guardId) {
+      throw amendmentError(HttpStatus.UNPROCESSABLE_ENTITY, E.NOT_LIVE, 'Only an in-progress shift can be extended. Change a future shift with the ordinary edit.');
+    }
+    const [att] = (await this.dataSource.query(
+      `SELECT bool_or("type" = $2) AS "bookedOn", bool_or("type" = $3) AS "bookedOff" FROM "attendance_events" WHERE "shiftId" = $1`,
+      [shiftId, AttendanceEventType.CHECK_IN, AttendanceEventType.CHECK_OUT],
+    )) as Array<{ bookedOn: boolean | null; bookedOff: boolean | null }>;
+    if (!att?.bookedOn || att?.bookedOff) {
+      throw amendmentError(HttpStatus.UNPROCESSABLE_ENTITY, E.NOT_LIVE, 'The Guard must be booked on, and not booked off, to extend this shift.');
+    }
+    const proposedEndMs = instantMs(proposedEnd, 'proposedEnd');
+    if (proposedEndMs <= pre.endMs) {
+      throw amendmentError(HttpStatus.UNPROCESSABLE_ENTITY, E.NOT_LATER, 'The new end must be later than the current end of the shift.');
+    }
+    if (pre.endMs <= Date.now()) {
+      throw amendmentError(HttpStatus.UNPROCESSABLE_ENTITY, E.TOO_LATE, 'The shift has already reached its scheduled end. It can no longer be extended.');
+    }
+    const guardId = pre.guardId;
+    const blockedBy: Array<{ code: string; message: string }> = [];
+    try {
+      await this.assertEligible(actor.companyId, guardId, pre, proposedEndMs);
+    } catch (error: any) {
+      const body = typeof error?.getResponse === 'function' ? (error.getResponse() as { code?: string; message?: string }) : null;
+      if (!body?.code) throw error;
+      blockedBy.push({ code: body.code, message: body.message ?? 'The Guard cannot take the extended shift.' });
+    }
+    if (!blockedBy.some((b) => b.code === E.CLASH)) {
+      try {
+        await assertNoShiftClash(this.dataSource.manager, guardId, new Date(pre.startMs), new Date(proposedEndMs), pre.id);
+      } catch {
+        blockedBy.push({ code: E.CLASH, message: 'Guard has an overlapping shift assignment.' });
+      }
+    }
+    const [openRow] = (await this.dataSource.query(
+      `SELECT "id" FROM "shift_amendments" WHERE "shiftId" = $1 AND "status" IN ${OPEN_SQL} AND "expiresAt" > ${CLOCK}`,
+      [shiftId],
+    )) as Array<{ id: number }>;
+    if (openRow) blockedBy.push({ code: E.PENDING, message: 'This shift already has an extension waiting for a decision.' });
+
+    const assessment = await this.assess(pre, guardId, proposedEndMs, policy);
+    if (assessment.hardLimitExceeded) {
+      blockedBy.push({ code: E.FATIGUE_LIMIT,
+        message: `The extended shift would be ${assessment.totalScheduledHours} scheduled hours, over the company limit of ${policy.hardLimitHours}.` });
+    }
+
+    // Only this company's figures are disclosed.
+    const [next] = (await this.dataSource.query(
+      `SELECT "companyId" FROM "shifts"
+        WHERE "guardId" = $1 AND "id" <> $2 AND "start" > $3::timestamp AND "status" IN ('scheduled', 'offered', 'ready', 'in_progress')
+        ORDER BY "start" ASC LIMIT 1`,
+      [guardId, pre.id, toDbTimestamp(pre.startMs)],
+    )) as Array<{ companyId: number }>;
+    const restIsOwnCompany = !next || Number(next.companyId) === actor.companyId;
+    const windowStart = toDbTimestamp(proposedEndMs - 7 * 24 * 3_600_000);
+    const windowEnd = toDbTimestamp(proposedEndMs);
+    const [own] = (await this.dataSource.query(
+      `SELECT COALESCE(SUM(EXTRACT(EPOCH FROM (
+                LEAST(CASE WHEN "id" = $2 THEN $4::timestamp ELSE "end" END, $4::timestamp) - GREATEST("start", $3::timestamp)
+              ))), 0) / 3600 AS "hours"
+         FROM "shifts"
+        WHERE "guardId" = $1 AND "companyId" = $5 AND "status" IN ('offered', 'ready', 'in_progress', 'completed')
+          AND "start" < $4::timestamp AND (CASE WHEN "id" = $2 THEN $4::timestamp ELSE "end" END) > $3::timestamp`,
+      [guardId, pre.id, windowStart, windowEnd, actor.companyId],
+    )) as Array<{ hours: string }>;
+    const ownSevenDay = Math.round(Number(own?.hours ?? 0) * 100) / 100;
+    const [site] = (await this.dataSource.query(
+      `SELECT s."timezone" FROM "shifts" sh LEFT JOIN "sites" s ON s."id" = sh."siteId" WHERE sh."id" = $1`,
+      [pre.id],
+    )) as Array<{ timezone: string | null }>;
+    const timeZone = site?.timezone || 'Europe/London';
+    const local = (ms: number) => new Intl.DateTimeFormat('en-GB', {
+      timeZone, day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+    }).format(new Date(ms)).replace(',', ' ·').replace(/\//g, '-');
+
+    return {
+      shiftId: pre.id,
+      timeZone,
+      currentEnd: iso(pre.endMs),
+      proposedEnd: iso(proposedEndMs),
+      currentEndLocal: local(pre.endMs),
+      proposedEndLocal: local(proposedEndMs),
+      additionalMinutes: Math.round((proposedEndMs - pre.endMs) / 60_000),
+      basis: 'scheduled_hours' as const,
+      totalScheduledHours: assessment.totalScheduledHours,
+      warnings: assessment.warnings,
+      approvalRequired: assessment.approvalRequired,
+      approvalReasons: assessment.approvalReasons,
+      hardLimitExceeded: assessment.hardLimitExceeded,
+      complianceReviewRequired: assessment.complianceReviewRequired,
+      // Figures from this company's shifts only; null when the deciding shift belongs to another company.
+      restHoursBeforeNextShift: restIsOwnCompany ? assessment.restHoursBeforeNextShift : null,
+      restFiguresWithheld: !restIsOwnCompany,
+      companySevenDayScheduledHours: ownSevenDay,
+      sevenDayIncludesOtherWork: assessment.sevenDayScheduledHours > ownSevenDay + 0.01,
+      thresholds: assessment.thresholds,
+      blockedBy,
+      canPropose: blockedBy.length === 0,
+    };
+  }
+
+  // ── Staff directory ───────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * The requesting company's staff who can act on amendments (Owner, Admin, Operations, Control Room), for naming
+   * people in the amendment history and (Owner/Admin only) for the Control Room authorisation switch. Identifier, display name and role only: never an email, phone, credential or
+   * anything about another company. A person without a name on file is shown by role.
+   */
+  async listStaff(user: JwtPayload) {
+    const actor = await this.companyActor(user);
+    const manager = actor.role === CompanyMembershipRole.OWNER || actor.role === CompanyMembershipRole.ADMIN;
+    const rows = (await this.dataSource.query(
+      `SELECT u."id" AS "userId", u."firstName", u."lastName", 'owner' AS "role", false AS "canAmendShifts"
+         FROM "companies" c JOIN "users" u ON u."id" = c."userId"
+        WHERE c."id" = $1
+       UNION ALL
+       SELECT u."id", u."firstName", u."lastName", m."membershipRole"::text, m."canAmendShifts"
+         FROM "company_memberships" m JOIN "users" u ON u."id" = m."userId"
+        WHERE m."companyId" = $1 AND m."status" = $2
+          AND m."membershipRole"::text IN ('owner', 'admin', 'operations', 'control_room')
+          AND m."userId" <> (SELECT "userId" FROM "companies" WHERE "id" = $1)
+        ORDER BY 1`,
+      [actor.companyId, CompanyMembershipStatus.ACTIVE],
+    )) as Array<{ userId: number; firstName: string | null; lastName: string | null; role: string; canAmendShifts: boolean }>;
+    const roleWord: Record<string, string> = { owner: 'Owner', admin: 'Admin', operations: 'Operations', control_room: 'Control Room' };
+    return {
+      canManageControlRoom: manager,
+      staff: rows.map((r) => {
+        const name = [r.firstName, r.lastName].map((p) => (p ?? '').trim()).filter(Boolean).join(' ');
+        const role = String(r.role);
+        return {
+          userId: Number(r.userId),
+          displayName: name || `${roleWord[role] ?? 'Staff'} (staff #${Number(r.userId)})`,
+          role,
+          isYou: Number(r.userId) === actor.userId,
+          // Amendment authorisation is shown only to those who can change it, and only where it applies.
+          ...(manager && role === CompanyMembershipRole.CONTROL_ROOM ? { canAmendShifts: Boolean(r.canAmendShifts) } : {}),
+        };
+      }),
+    };
+  }
+
   // ── Policy and authorisation ──────────────────────────────────────────────────────────────────────
 
   async getPolicy(user: JwtPayload) {

@@ -510,4 +510,75 @@ test('LSA-UI-22-AN-UNRESOLVED-DISPUTE-IS-ACKNOWLEDGED-BEFORE-PROPOSING-AGAIN', (
   assert.ok(/setTermsConfirmed\(false\);\s*setDisputeSeen\(false\);/.test(drawer), 'the acknowledgement never carries over');
 });
 
+// ═══════════════════ assessment and staff directory (Phase 3 completion) ═══════════════════
+
+const assessment = (over = {}) => ({
+  shiftId: 50, timeZone: LONDON, currentEnd: iso(NOW + HOUR), proposedEnd: iso(NOW + 2 * HOUR),
+  currentEndLocal: '23-10-2026 · 21:00', proposedEndLocal: '23-10-2026 · 22:00', additionalMinutes: 60, basis: 'scheduled_hours',
+  totalScheduledHours: 9, warnings: [], approvalRequired: false, approvalReasons: [], hardLimitExceeded: false,
+  complianceReviewRequired: false, restHoursBeforeNextShift: null, restFiguresWithheld: false, companySevenDayScheduledHours: 30,
+  sevenDayIncludesOtherWork: false,
+  thresholds: { fatigueWarningHours: 12, approvalRequiredHours: 14, hardLimitHours: 16, minRestHours: 11, weeklyReviewHours: 48, lastMinuteWarningMinutes: 10 },
+  blockedBy: [], canPropose: true, ...over,
+});
+
+test('LSA-UI-23-THE-NEW-REQUESTS-MATCH-THE-NEW-ROUTES', () => {
+  const client = stripComments(codeOf('src/services/api.ts'));
+  const controller = backendOf('src/shift-amendment/shift-amendment.controller.ts');
+  assert.ok(/@Post\('shifts\/:shiftId\/amendments\/assessment'\)\s*@HttpCode\(200\)\s*@Roles\(\.\.\.COMPANY_VIEW_ROLES\)/.test(controller));
+  assert.ok(/@Get\('shift-amendments\/staff'\)\s*@Roles\(\.\.\.COMPANY_VIEW_ROLES\)/.test(controller));
+  assert.ok(controller.indexOf("@Get('shift-amendments/staff')") < controller.indexOf("@Get('shift-amendments/:id')"), "'staff' is matched before ':id'");
+  assert.ok(/assessShiftAmendment\(shiftId: number, payload: \{ proposedEnd: string \}\)[\s\S]{0,200}\/amendments\/assessment`, \{ method: 'POST'/.test(client));
+  assert.ok(client.includes("request<ShiftAmendmentStaffDirectory>('/shift-amendments/staff')"));
+  assert.ok(/setControlRoomAmendmentAuthorisation\(userId: number, canAmendShifts: boolean\)[\s\S]{0,200}\/shift-amendments\/control-room\/\$\{userId\}`, \{ method: 'PUT'/.test(client), 'the existing authorised route');
+});
+
+test('LSA-UI-24-THE-ASSESSMENT-IS-SHOWN-IN-WORDS-WITHOUT-ANOTHER-COMPANYS-SCHEDULE', () => {
+  assert.deepEqual(lsa.assessmentLines(assessment()), { blocked: [], approval: null, warnings: [] });
+  const withheld = lsa.assessmentLines(assessment({ warnings: ['SHORT_REST'], approvalRequired: true, approvalReasons: ['SHORT_REST'], restFiguresWithheld: true }));
+  assert.equal(withheld.warnings[0], "Short rest: less than 11 hours before the Guard's next scheduled shift (exact time not shown).");
+  assert.match(withheld.approval, /less than 11 hours' rest before their next shift/);
+  const own = lsa.assessmentLines(assessment({ warnings: ['SHORT_REST'], approvalRequired: true, restHoursBeforeNextShift: 3 }));
+  assert.match(own.warnings[0], /\(3 h\)\.$/);
+  const weekly = lsa.assessmentLines(assessment({ warnings: ['WEEKLY_HOURS'], sevenDayIncludesOtherWork: true, companySevenDayScheduledHours: 30 }));
+  assert.equal(weekly.warnings[0], '7-day hours: more than 48 scheduled hours in the last 7 days (this company: 30 h). Flagged for compliance review.');
+  const blocked = lsa.assessmentLines(assessment({ canPropose: false, blockedBy: [{ code: 'SHIFT_AMENDMENT_CLASH', message: 'Guard has an overlapping shift assignment.' }] }));
+  assert.deepEqual(blocked.blocked, ['Guard has an overlapping shift assignment.']);
+  const long = lsa.assessmentLines(assessment({ totalScheduledHours: 15, warnings: ['LONG_SHIFT'], approvalRequired: true,
+    thresholds: { fatigueWarningHours: 8, approvalRequiredHours: 9, hardLimitHours: null, minRestHours: 12, weeklyReviewHours: 40, lastMinuteWarningMinutes: 30 } }));
+  assert.equal(long.warnings[0], 'Long shift: more than 8 scheduled hours (15 h).', "the API's own thresholds, not the client's");
+  assert.match(long.approval, /over the 9-hour approval threshold/);
+  const drawer = stripComments(codeOf('src/components/company/CompanyShiftAmendmentDrawer.tsx'));
+  assert.ok(/if \(serverAssessment\?\.result && !serverAssessment\.result\.canPropose\) \{\s*return \{ ok: false as const, message: serverAssessment\.result\.blockedBy\[0\]\?\.message/.test(drawer), 'a refusal predicted by S4 blocks sending');
+  assert.ok(drawer.includes("S4 could not check rest and 7-day hours just now; it checks them when you send."), 'a failed check falls back honestly');
+  assert.ok(/const seq = \+\+assessSeq\.current;[\s\S]{0,400}if \(seq === assessSeq\.current\)/.test(drawer), 'an answer for an end no longer shown is dropped');
+  assert.ok(drawer.indexOf('assessShiftAmendment(shiftId') < drawer.indexOf('  if (!target) return null;'), 'the hook runs before the early return');
+});
+
+test('LSA-UI-25-HISTORY-NAMES-COME-FROM-THE-STAFF-DIRECTORY', () => {
+  const dir = { canManageControlRoom: false, staff: [{ userId: 2, displayName: 'Olivia Okoro', role: 'operations', isYou: false }, { userId: 7, displayName: 'Sam Owner', role: 'owner', isYou: true }] };
+  const name = lsa.staffNameResolver(dir, 7);
+  assert.equal(name(7), 'You');
+  assert.equal(name(2), 'Olivia Okoro');
+  assert.equal(name(99), 'Staff user #99', 'unknown (e.g. no longer a member): a reference, never a guess');
+  assert.equal(name(null), null);
+  assert.equal(lsa.staffNameResolver(null, 7)(2), 'Staff user #2', 'directory unavailable: references');
+  const h = lsa.buildAmendmentHistory([amendment({ proposedByUserId: 2 })], LONDON, name);
+  assert.equal(h[0].actor, 'Olivia Okoro');
+  const drawer = stripComments(codeOf('src/components/company/CompanyShiftAmendmentDrawer.tsx'));
+  assert.ok(drawer.includes('const nameFor = staffNameResolver(staffDir, currentUserId);'));
+  assert.ok(drawer.includes('getShiftAmendmentStaff().then(setStaffDir).catch('), 'a directory failure never blocks the drawer');
+});
+
+test('LSA-UI-26-ONLY-OWNER-AND-ADMIN-SEE-THE-CONTROL-ROOM-SWITCH', () => {
+  const drawer = stripComments(codeOf('src/components/company/CompanyShiftAmendmentDrawer.tsx'));
+  assert.ok(drawer.includes("{staffDir?.canManageControlRoom && staffDir.staff.some((m) => m.role === 'control_room') ? ("), 'shown only when the API says this person manages it');
+  assert.ok(drawer.includes("staffDir.staff.filter((m) => m.role === 'control_room').map((m) => ("), 'only Control Room members are switchable');
+  assert.ok(drawer.includes('setControlRoomAmendmentAuthorisation(m.userId, !m.canAmendShifts)'));
+  assert.ok(/if \(grantBusy !== null\) return;\s*setGrantBusy\(m\.userId\);/.test(drawer), 'one change at a time');
+  assert.ok(drawer.includes("It applies from their next sign-in or refresh."), 'says when it takes effect');
+  const service = backendOf('src/shift-amendment/shift-amendment.service.ts');
+  assert.ok(service.includes("...(manager && role === CompanyMembershipRole.CONTROL_ROOM ? { canAmendShifts: Boolean(r.canAmendShifts) } : {}),"));
+});
+
 console.log(`\n${passed} passed`);

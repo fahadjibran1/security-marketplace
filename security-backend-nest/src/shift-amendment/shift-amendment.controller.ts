@@ -7,6 +7,7 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { COMPANY_VIEW_ROLES, UserRole } from '../user/entities/user.entity';
 import {
   ApproveAmendmentDto,
+  AssessAmendmentDto,
   CompanyAmendmentsEnabledDto,
   ControlRoomAuthorisationDto,
   DisputeAmendmentDto,
@@ -35,6 +36,14 @@ export class ShiftAmendmentController {
     return this.service.propose(user, shiftId, dto);
   }
 
+  /** Dry run of a proposal: what the company would see, with nothing written. Same permission as proposing. */
+  @Post('shifts/:shiftId/amendments/assessment')
+  @HttpCode(200)
+  @Roles(...COMPANY_VIEW_ROLES)
+  assess(@CurrentUser() user: JwtPayload, @Param('shiftId', ParseIntPipe) shiftId: number, @Body() dto: AssessAmendmentDto) {
+    return this.service.assessProposal(user, shiftId, dto.proposedEnd);
+  }
+
   @Get('shifts/:shiftId/amendments')
   @Roles(...COMPANY_VIEW_ROLES, UserRole.GUARD)
   listForShift(@CurrentUser() user: JwtPayload, @Param('shiftId', ParseIntPipe) shiftId: number) {
@@ -45,6 +54,13 @@ export class ShiftAmendmentController {
   @Roles(UserRole.GUARD)
   listMine(@CurrentUser() user: JwtPayload) {
     return this.service.listMine(user);
+  }
+
+  /** The requesting company's staff: id, display name, role (and Control Room authorisation for Owner/Admin). */
+  @Get('shift-amendments/staff')
+  @Roles(...COMPANY_VIEW_ROLES)
+  listStaff(@CurrentUser() user: JwtPayload) {
+    return this.service.listStaff(user);
   }
 
   @Get('shift-amendments/policy')

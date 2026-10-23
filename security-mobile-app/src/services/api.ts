@@ -83,7 +83,9 @@ import {
   Site,
   Shift,
   ShiftAmendment,
+  ShiftAmendmentAssessment,
   ShiftAmendmentList,
+  ShiftAmendmentStaffDirectory,
   ShiftPolicy,
   VerbalContactMethod,
   Timesheet,
@@ -798,6 +800,21 @@ export function proposeShiftAmendment(shiftId: number, payload: { proposedEnd: s
     method: 'POST',
     body: JSON.stringify(payload),
   });
+}
+
+/** A dry run of a proposal: nothing is written; the proposal itself re-checks everything under lock. */
+export function assessShiftAmendment(shiftId: number, payload: { proposedEnd: string }) {
+  return request<ShiftAmendmentAssessment>(`/shifts/${shiftId}/amendments/assessment`, { method: 'POST', body: JSON.stringify(payload) });
+}
+
+/** The company's staff who can act on amendments: id, display name, role (authorisation for Owner/Admin only). */
+export function getShiftAmendmentStaff() {
+  return request<ShiftAmendmentStaffDirectory>('/shift-amendments/staff');
+}
+
+/** Owner/Admin: switch a Control Room member's individual amendment authorisation on or off. */
+export function setControlRoomAmendmentAuthorisation(userId: number, canAmendShifts: boolean) {
+  return request<{ userId: number; canAmendShifts: boolean }>(`/shift-amendments/control-room/${userId}`, { method: 'PUT', body: JSON.stringify({ canAmendShifts }) });
 }
 
 export function approveShiftAmendment(id: number, payload: { statement: string; confirmSelfApproval?: boolean }) {

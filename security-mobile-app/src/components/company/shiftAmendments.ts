@@ -7,11 +7,13 @@
 
 import { formatSiteDateInput, formatUkDateTime, siteLocalToInstant } from '../../services/siteTime';
 import type {
-  AmendmentStatus, AmendmentWarning, ConfirmationEmailStatus, ShiftAmendment, ShiftAmendmentList, ShiftPolicy, VerbalContactMethod,
+  AmendmentStatus, AmendmentWarning, ConfirmationEmailStatus, ShiftAmendment, ShiftAmendmentAssessment, ShiftAmendmentList,
+  ShiftAmendmentStaffDirectory, ShiftPolicy, VerbalContactMethod,
 } from '../../types/models';
 
 export type {
-  AmendmentStatus, AmendmentWarning, ConfirmationEmailStatus, ShiftAmendment, ShiftAmendmentList, ShiftPolicy, VerbalContactMethod,
+  AmendmentStatus, AmendmentWarning, ConfirmationEmailStatus, ShiftAmendment, ShiftAmendmentAssessment, ShiftAmendmentList,
+  ShiftAmendmentStaffDirectory, ShiftPolicy, VerbalContactMethod,
 };
 
 // ─── contract (mirrors security-backend-nest/src/shift-amendment) ───────────────────────────────────────
@@ -336,6 +338,42 @@ export function unresolvedDisputeWarning(list: ShiftAmendment[] | null | undefin
   const d = disputedAmendment(list);
   if (!d) return null;
   return `Extension #${d.sequence} on this shift is disputed by the Guard and not yet reviewed ("${d.disputeReason ?? '—'}"). An Owner or Admin should review it before the shift is extended again.`;
+}
+
+/**
+ * The API's dry-run assessment in words, with the thresholds it used. Another company's schedule is never shown: when
+ * the deciding shift is not this company's, the rest warning says so without a time.
+ */
+export function assessmentLines(a: ShiftAmendmentAssessment): { blocked: string[]; approval: string | null; warnings: string[] } {
+  const t = a.thresholds;
+  const policyLike = { ...t, amendmentsEnabled: true, source: 'company' as const };
+  const warnings = a.warnings.map((w) => {
+    switch (w) {
+      case 'LONG_SHIFT': return `Long shift: more than ${t.fatigueWarningHours} scheduled hours (${a.totalScheduledHours} h).`;
+      case 'SHORT_REST': return a.restFiguresWithheld || a.restHoursBeforeNextShift === null
+        ? `Short rest: less than ${t.minRestHours} hours before the Guard's next scheduled shift (exact time not shown).`
+        : `Short rest: less than ${t.minRestHours} hours before the Guard's next shift (${a.restHoursBeforeNextShift} h).`;
+      case 'WEEKLY_HOURS': return `7-day hours: more than ${t.weeklyReviewHours} scheduled hours in the last 7 days`
+        + `${a.sevenDayIncludesOtherWork ? ` (this company: ${a.companySevenDayScheduledHours} h)` : ` (${a.companySevenDayScheduledHours} h)`}. Flagged for compliance review.`;
+      case 'LAST_MINUTE': return `Last minute: the shift ends within ${t.lastMinuteWarningMinutes} minutes. The Guard may not see the request in time.`;
+      default: return String(w);
+    }
+  });
+  return {
+    blocked: a.blockedBy.map((b) => b.message),
+    approval: approvalReasonText({ totalScheduledHours: a.totalScheduledHours, warnings: a.warnings, approvalRequired: a.approvalRequired }, policyLike),
+    warnings,
+  };
+}
+
+/** Names for the history from the staff directory; "You" for the viewer; a staff reference when unknown. */
+export function staffNameResolver(directory: ShiftAmendmentStaffDirectory | null, currentUserId: number | null) {
+  const names = new Map((directory?.staff ?? []).map((s) => [s.userId, s.displayName]));
+  return (userId: number | null): string | null => {
+    if (userId === null) return null;
+    if (userId === currentUserId) return 'You';
+    return names.get(userId) ?? `Staff user #${userId}`;
+  };
 }
 
 export function approvalStatusText(a: ShiftAmendment): string {

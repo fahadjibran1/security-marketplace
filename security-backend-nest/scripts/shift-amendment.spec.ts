@@ -29,6 +29,10 @@
  *   LSA-21  Android 15 / iOS 14 compatibility: a pending proposal changes nothing the old apps read; afterwards they
  *           see the extended end, with every field they already used
  *   LSA-22  while a company is switched off, every state-changing route is refused and nothing changes
+ *   LSA-23  the assessment is a dry run (nothing written), re-checked by the proposal, isolated like it, and never
+ *           discloses another company's schedule (only that a warning applies)
+ *   LSA-24  the staff directory is company-scoped, holds no contact details, shows authorisation only to Owner/Admin;
+ *           no self-escalation or cross-company grant
  *
  * Deterministic races (the shift row, or the Guard lock, is held by a separate transaction until both requests are
  * queued behind it in a known order):
@@ -653,6 +657,127 @@ async function main() {
     });
 
     // ════════════════ Welfare and Missing Book Off ════════════════
+
+    await test('LSA-23-ASSESSMENT-IS-A-DRY-RUN-THAT-NEVER-DISCLOSES-ANOTHER-COMPANYS-SCHEDULE', async () => {
+      const assess = (token: string, shiftId: number, endMs: number) => api('POST', `/shifts/${shiftId}/amendments/assessment`, token, { proposedEnd: iso(endMs) });
+      const counts = async () => one(`SELECT (SELECT count(*) FROM shift_amendments) a, (SELECT count(*) FROM notifications) n, (SELECT count(*) FROM audit_logs) l`);
+      const g = await guard('lsa-assess');
+      const id = await liveShift(g, -HOUR, 2 * HOUR);
+      const end = ms((await shiftRow(id)).end);
+      const before = await counts();
+      const ok = await assess(A.token, id, end + HOUR);
+      assert.equal(ok.status, 200, JSON.stringify(ok.body));
+      assert.equal(ok.body.canPropose, true);
+      assert.deepEqual(ok.body.blockedBy, []);
+      assert.equal(ok.body.additionalMinutes, 60);
+      assert.equal(ok.body.approvalRequired, false);
+      assert.equal(ok.body.timeZone, 'Europe/London');
+      assert.match(ok.body.proposedEndLocal, /^\d\d-\d\d-\d{4} · \d\d:\d\d$/, 'site-local display');
+      assert.equal(ok.body.basis, 'scheduled_hours');
+      assert.deepEqual(await counts(), before, 'no amendment, notification or audit row');
+      assert.equal(ms((await shiftRow(id)).end), end, 'the shift is untouched');
+
+      // over the hard limit: reported, not thrown, and still nothing written
+      const long = await assess(A.token, id, end + 16 * HOUR);
+      assert.equal(long.status, 200);
+      assert.equal(long.body.hardLimitExceeded, true);
+      assert.equal(long.body.canPropose, false);
+      assert.ok(long.body.blockedBy.some((b: any) => b.code === 'SHIFT_AMENDMENT_FATIGUE_LIMIT'));
+      assert.deepEqual(await counts(), before);
+
+      // permission and isolation exactly as for proposing
+      assert.equal((await assess(ops.token, id, end + HOUR)).status, 200, 'Operations may propose, so may assess');
+      for (const [who, token] of [['viewer', viewer.token], ['control room (not authorised)', control.token], ['guard', g.token]] as const) {
+        assert.equal((await assess(token, id, end + HOUR)).status, 403, who);
+      }
+      assert.equal((await assess(B.token, id, end + HOUR)).status, 404, 'another company');
+      assert.equal((await assess(A.token, id, end - HOUR)).body.code, 'SHIFT_AMENDMENT_NOT_LATER');
+
+      // another company's next shift drives a SHORT_REST warning, but its time is never returned
+      await q(`INSERT INTO company_guards ("companyId","guardId",status,"relationshipType") VALUES ($1,$2,'ACTIVE','EMPLOYEE') ON CONFLICT DO NOTHING`, [B.id, g.id]);
+      const bStart = end + HOUR + 5 * HOUR;
+      await q(`INSERT INTO shifts ("companyId","siteId","siteName","guardId",status,start,"end") VALUES ($1,$2,'Rival Depot',$3,'ready',$4::timestamp,$5::timestamp)`,
+        [B.id, B.siteId, g.id, ts(bStart), ts(bStart + 8 * HOUR)]);
+      const cross = await assess(A.token, id, end + HOUR);
+      assert.ok(cross.body.warnings.includes('SHORT_REST'), JSON.stringify(cross.body.warnings));
+      assert.equal(cross.body.approvalRequired, true);
+      assert.deepEqual(cross.body.approvalReasons, ['SHORT_REST']);
+      assert.equal(cross.body.restHoursBeforeNextShift, null, 'no figure from another company');
+      assert.equal(cross.body.restFiguresWithheld, true);
+      const text = JSON.stringify(cross.body);
+      for (const leak of [iso(bStart), iso(bStart + 8 * HOUR), 'Rival Depot']) {
+        assert.ok(!text.includes(leak), `does not disclose ${leak}`);
+      }
+      // exactly these fields: nothing that could carry another shift's site, company or times
+      assert.deepEqual(Object.keys(cross.body).sort(), ['additionalMinutes', 'approvalReasons', 'approvalRequired', 'basis', 'blockedBy',
+        'canPropose', 'companySevenDayScheduledHours', 'complianceReviewRequired', 'currentEnd', 'currentEndLocal', 'hardLimitExceeded',
+        'proposedEnd', 'proposedEndLocal', 'restFiguresWithheld', 'restHoursBeforeNextShift', 'sevenDayIncludesOtherWork', 'shiftId',
+        'thresholds', 'timeZone', 'totalScheduledHours', 'warnings']);
+      assert.equal(cross.body.shiftId, id, 'only the asked-about shift is named');
+      // the company's own next shift is disclosed: it is the company's own schedule
+      const aStart = end + HOUR + 3 * HOUR;
+      await q(`INSERT INTO shifts ("companyId","siteId","siteName","guardId",status,start,"end") VALUES ($1,$2,'Main Site',$3,'ready',$4::timestamp,$5::timestamp)`,
+        [A.id, A.siteId, g.id, ts(aStart), ts(aStart + HOUR)]);
+      const own = await assess(A.token, id, end + HOUR);
+      assert.equal(own.body.restFiguresWithheld, false);
+      assert.equal(own.body.restHoursBeforeNextShift, 3);
+
+      // advice, never a reservation: the proposal re-checks under lock
+      const g2 = await guard('lsa-assess-race');
+      const id2 = await liveShift(g2, -HOUR, 2 * HOUR);
+      const end2 = ms((await shiftRow(id2)).end);
+      assert.equal((await assess(A.token, id2, end2 + HOUR)).body.canPropose, true);
+      await q(`INSERT INTO shifts ("companyId","siteId","siteName","guardId",status,start,"end") VALUES ($1,$2,'Main Site',$3,'ready',$4::timestamp,$5::timestamp)`,
+        [A.id, A.siteId, g2.id, ts(end2 + 30 * MIN), ts(end2 + 3 * HOUR)]);
+      const now = await assess(A.token, id2, end2 + HOUR);
+      assert.equal(now.body.canPropose, false);
+      assert.ok(now.body.blockedBy.some((b: any) => b.code === 'SHIFT_AMENDMENT_CLASH'), JSON.stringify(now.body.blockedBy));
+      const p = await propose(A.token, id2, end2 + HOUR);
+      assert.equal(p.status, 409, `proposal re-validates: ${p.status} ${JSON.stringify(p.body)}`);
+      assert.equal(p.body.code, 'SHIFT_AMENDMENT_CLASH');
+    });
+
+    await test('LSA-24-STAFF-DIRECTORY-IS-COMPANY-SCOPED-AND-HOLDS-NO-CONTACT-DETAILS', async () => {
+      const opsUser = (await one(`SELECT "userId" FROM company_memberships WHERE "userId" = (SELECT id FROM users WHERE email = 'lsa.ops@example.invalid')`)).userId;
+      await q(`UPDATE users SET "firstName" = 'Olivia', "lastName" = 'Okoro', phone = '07000000001' WHERE id = $1`, [opsUser]);
+      const admin = await staff('lsa.dir.admin', 'admin');
+      const bControl = await staff('lsa.dir.bcontrol', 'control_room', B);
+      const dir = await api('GET', '/shift-amendments/staff', A.token);
+      assert.equal(dir.status, 200);
+      assert.equal(dir.body.canManageControlRoom, true);
+      const byId = new Map(dir.body.staff.map((s: any) => [s.userId, s]));
+      assert.equal((byId.get(A.ownerId) as any).role, 'owner');
+      assert.equal((byId.get(A.ownerId) as any).isYou, true);
+      assert.equal((byId.get(opsUser) as any).displayName, 'Olivia Okoro');
+      assert.equal((byId.get(control.id) as any).displayName, `Control Room (staff #${control.id})`, 'no name on file: role, never the email');
+      assert.equal((byId.get(control.id) as any).canAmendShifts, false);
+      assert.ok(!('canAmendShifts' in (byId.get(opsUser) as any)), 'authorisation shown only where it applies');
+      assert.ok(!byId.has(viewer.id), 'a role that cannot act on amendments is not listed');
+      assert.ok(!byId.has(bControl.id), "another company's staff are never listed");
+      const text = JSON.stringify(dir.body);
+      for (const leak of ['@', 'passwordHash', '07000000001', 'email', 'phone']) assert.ok(!text.includes(leak), `no ${leak}`);
+      for (const s of dir.body.staff) assert.deepEqual(Object.keys(s).sort().filter((k) => !['canAmendShifts'].includes(k)), ['displayName', 'isYou', 'role', 'userId']);
+
+      const opsDir = await api('GET', '/shift-amendments/staff', ops.token);
+      assert.equal(opsDir.status, 200);
+      assert.equal(opsDir.body.canManageControlRoom, false);
+      assert.ok(opsDir.body.staff.every((s: any) => !('canAmendShifts' in s)), 'only Owner/Admin see authorisation');
+      const bDir = await api('GET', '/shift-amendments/staff', B.token);
+      assert.ok(!bDir.body.staff.some((s: any) => s.userId === control.id || s.userId === opsUser), 'company B sees only its own');
+      assert.equal((await api('GET', '/shift-amendments/staff', (await guard('lsa-dir-guard')).token)).status, 403);
+
+      // grants through the existing route; no self-escalation, no cross-company change
+      const put = (token: string, userId: number, canAmendShifts: boolean) => api('PUT', `/shift-amendments/control-room/${userId}`, token, { canAmendShifts });
+      assert.equal((await put(control.token, control.id, true)).status, 403, 'Control Room cannot grant itself');
+      assert.equal((await put(ops.token, control.id, true)).status, 403, 'Operations cannot grant');
+      assert.equal((await put(admin.token, admin.id, true)).status, 422, 'Admin is not a Control Room member to grant');
+      assert.equal((await put(A.token, bControl.id, true)).status, 404, "another company's member");
+      assert.equal(Number((await one(`SELECT "canAmendShifts"::int v FROM company_memberships WHERE "userId" = $1`, [bControl.id])).v), 0);
+      assert.equal((await put(admin.token, control.id, true)).status, 200, 'Admin grants');
+      assert.equal(((await api('GET', '/shift-amendments/staff', A.token)).body.staff.find((s: any) => s.userId === control.id)).canAmendShifts, true);
+      assert.equal((await put(A.token, control.id, false)).status, 200, 'Owner revokes');
+      assert.equal(((await api('GET', '/shift-amendments/staff', admin.token)).body.staff.find((s: any) => s.userId === control.id)).canAmendShifts, false);
+    });
 
     await test('LSA-18-MISSING-BOOK-OFF-USES-THE-EFFECTIVE-END', async () => {
       const g = await guard('lsa-mbo-extended');

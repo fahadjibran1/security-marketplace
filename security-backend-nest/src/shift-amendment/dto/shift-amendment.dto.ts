@@ -28,6 +28,12 @@ export class ProposeAmendmentDto {
   reason!: string;
 }
 
+/** A dry-run assessment of a proposed end: the same instant rules as a proposal, nothing else. */
+export class AssessAmendmentDto {
+  @IsISO8601(ISO_INSTANT)
+  proposedEnd!: string;
+}
+
 export class ApproveAmendmentDto {
   @IsString()
   @MinLength(3)
