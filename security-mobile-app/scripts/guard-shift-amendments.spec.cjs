@@ -232,17 +232,19 @@ test('G-14-AN-OLDER-BACKEND-HIDES-THE-FEATURE-QUIETLY', () => {
 });
 
 test('G-15-EXISTING-SHIFT-AND-ATTENDANCE-PATHS-ARE-UNTOUCHED', () => {
-  // Fingerprints of the Book On, Book Off and shift-offer handlers as certified before Phase 3 (a38e14e): any edit to
-  // them fails here. (Phase 3's diff of this screen is additive only: 120 insertions, 0 deletions.)
+  // Fingerprints of the Book On, Book Off and shift-offer handlers exactly as shipped: Book On / Book Off as in the
+  // Android 1.1.0 (15) / iOS 1.1.0 (14) build source 6b8e41b, and the offer answer as in the preserved archive
+  // (tag archive/welfare-alert-remediation → 8825c11, which adds the ended-offer rule of 5f9795d). Any edit to them
+  // fails here. The amendment work adds to this screen and removes nothing.
   const raw = codeOf('src/screens/GuardDashboardScreen.tsx');
   const fp = (name) => {
     const i = raw.indexOf(`  async function ${name}(`);
     assert.ok(i >= 0, `${name} exists`);
     return crypto.createHash('sha256').update(raw.slice(i, raw.indexOf('\n  }\n', i))).digest('hex').slice(0, 16);
   };
-  assert.equal(fp('handleCheckIn'), 'af4b458d9218b3a4', 'Book On unchanged');
-  assert.equal(fp('handleCheckOut'), 'c795355b4b88ef85', 'Book Off unchanged');
-  assert.equal(fp('handleRespondToShift'), 'eb6869c337d12ff8', 'shift-offer answers unchanged');
+  assert.equal(fp('handleCheckIn'), 'de3fdd408ead604d', 'Book On as shipped in 1.1.0');
+  assert.equal(fp('handleCheckOut'), '3c8e7358c7d02070', 'Book Off as shipped in 1.1.0 (confirmation)');
+  assert.equal(fp('handleRespondToShift'), '34e8142fd85867d3', 'shift-offer answers as in the preserved archive');
   for (const fn of ['respondToShift(', 'checkIn', 'checkOut', 'createIncident', 'createDailyLog']) {
     assert.ok(codeOf('src/services/api.ts').includes(fn), `${fn} still in the client`);
   }
