@@ -4,7 +4,8 @@
  * app.config.js adds a second, side-by-side app — com.sfour.s4.uat, "S4 UAT" — that talks only to the isolated
  * staging API. The risk worth guarding is the other direction: that the variant leaks into the certified store
  * app. So the first checks prove that, without APP_VARIANT=uat, the config Expo builds from IS app.json, and that
- * only the EAS `uat` profile can turn the variant on.
+ * only the EAS `uat` profile can turn the variant on; UAT-08 proves no EAS profile can pair one app's identity
+ * with the other environment's API.
  */
 const assert = require('node:assert').strict;
 const fs = require('node:fs');
@@ -122,6 +123,39 @@ test('UAT-07-THE-STAGING-URL-LIVES-ONLY-IN-THE-UAT-CONFIG', () => {
   const offenders = walk(path.join(ROOT, 'src')).filter((f) => /\.(ts|tsx|js)$/.test(f) && fs.readFileSync(f, 'utf8').includes('api-staging'));
   assert.deepEqual(offenders, [], 'no source file hard-codes the staging API');
   assert.equal(appJson.expo.extra.apiBaseUrl, PRODUCTION, 'app.json still names production');
+});
+
+test('UAT-08-AN-APP-CANNOT-BE-BUILT-AGAINST-THE-OTHER-ENVIRONMENT', () => {
+  // EXPO_PUBLIC_API_URL beats extra.apiBaseUrl at runtime, so identity and API are checked together at build time.
+  const keys = ['APP_VARIANT', 'EXPO_PUBLIC_API_URL', 'EAS_BUILD'];
+  const run = (vars) => {
+    const before = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+    keys.forEach((k) => { if (vars[k] === undefined) delete process.env[k]; else process.env[k] = vars[k]; });
+    try { return makeConfig({ config: fresh() }); } finally {
+      keys.forEach((k) => { if (before[k] === undefined) delete process.env[k]; else process.env[k] = before[k]; });
+    }
+  };
+  const onEas = (name) => ({ ...(easJson.build[name].env || {}), EAS_BUILD: 'true' });
+  // Every profile in eas.json, as an EAS worker evaluates it.
+  assert.equal(run(onEas('uat')).android.package, 'com.sfour.s4.uat');
+  assert.equal(run(onEas('uat')).ios.bundleIdentifier, 'com.sfour.s4.uat');
+  for (const name of ['production', 'pilot', 'preview', 'development', 'ios-simulator']) {
+    assert.equal(run(onEas(name)).android.package, 'com.sfour.s4', `${name} stays the store identity`);
+  }
+  assert.throws(() => run(onEas('preview-staging')), /never be built against the staging API/, 'the old store-identity staging profile can no longer produce an app');
+  // UAT pointed anywhere but staging, or with no URL on EAS, fails.
+  assert.throws(() => run({ APP_VARIANT: 'uat', EXPO_PUBLIC_API_URL: PRODUCTION, EAS_BUILD: 'true' }), /refusing to build/);
+  assert.throws(() => run({ APP_VARIANT: 'uat', EAS_BUILD: 'true' }), /refusing to build/);
+  assert.throws(() => run({ APP_VARIANT: 'uat', EXPO_PUBLIC_API_URL: PRODUCTION }), /only talk to the staging API/);
+  // The store app on EAS with a staging URL fails.
+  assert.throws(() => run({ EXPO_PUBLIC_API_URL: STAGING, EAS_BUILD: 'true' }), /never be built against the staging API/);
+  // Outside EAS (the web export) the store config is still returned untouched.
+  const input = fresh();
+  const before = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+  keys.forEach((k) => delete process.env[k]);
+  try { assert.equal(makeConfig({ config: input }), input); } finally {
+    keys.forEach((k) => { if (before[k] !== undefined) process.env[k] = before[k]; });
+  }
 });
 
 console.log(`\n${passed} UAT variant checks passed`);
