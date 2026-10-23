@@ -63,6 +63,8 @@ import {
   MarginReport,
   ReviewJobApplicationPayload,
   DailyLog,
+  WelfareConfirmResult,
+  WelfareHelpResult,
   EligibleGuardRow,
   FinanceReceivablesResponse,
   FinanceReconciliationResponse,
@@ -1427,6 +1429,26 @@ export function createDailyLog(payload: CreateDailyLogPayload) {
     method: 'POST',
     body: JSON.stringify(payload),
   });
+}
+
+/** Register this phone for Welfare Check notifications (Guard only). The token addresses the phone; it is not a credential. */
+export function registerPushDevice(payload: { token: string; platform: 'ios' | 'android'; appVersion?: string }) {
+  return request<{ registered: boolean }>('/push-devices', { method: 'POST', body: JSON.stringify(payload) });
+}
+
+/** Stop notifications to this phone for the signed-in Guard (sign-out). */
+export function unregisterPushDevice(token: string) {
+  return request<{ unregistered: boolean }>('/push-devices/unregister', { method: 'POST', body: JSON.stringify({ token }) });
+}
+
+/** I'm Safe. The server decides whether a Welfare Check is due; the ids are only hints it re-validates. */
+export function confirmWelfareCheck(payload: { shiftId: number; reminderId?: number }) {
+  return request<WelfareConfirmResult>('/welfare-checks/confirm', { method: 'POST', body: JSON.stringify(payload) });
+}
+
+/** Need Help. Raises the existing panic alert to the Control Room; never a Welfare Check. */
+export function requestWelfareHelp(payload: { shiftId: number; reminderId?: number }) {
+  return request<WelfareHelpResult>('/welfare-checks/need-help', { method: 'POST', body: JSON.stringify(payload) });
 }
 
 export function listMyDailyLogs() {

@@ -16,7 +16,7 @@
 //
 // Pure: no request, no write, no clock of its own.
 
-import type { OperationalWindowView, SafetyAlert, ShiftOperationsView, WelfareWindowAlertView } from '../../types/models';
+import type { OperationalWindowView, SafetyAlert, ShiftOperationsView, WelfareReminderView, WelfareWindowAlertView } from '../../types/models';
 import { formatInstantTime, formatUkDate } from '../../services/siteTime';
 
 export type WelfareDisplayState =
@@ -84,6 +84,11 @@ export type WelfareWindowRow = {
   missRecordedAt: string | null;
   /** The alert that carried the miss, worded; "No alert raised" for a recorded miss with none. */
   alert: string | null;
+  /**
+   * Welfare push reminders for this window, worded in the push provider's terms: "Reminder sent to push service
+   * 21:00" says Expo accepted it, never that the phone received it or the Guard read it. Null when none was sent.
+   */
+  reminder: string | null;
 };
 
 /**
@@ -108,8 +113,33 @@ export function welfareWindowRows(
       checkedAt: w.completedAt ? formatInstantTime(w.completedAt, context.timeZone) : null,
       missRecordedAt: recorded ? formatInstantTime(recorded, context.timeZone) : null,
       alert: welfareAlertWord(w.alert) ?? (recorded ? 'No alert raised' : null),
+      reminder: welfareReminderWords((operations?.welfareReminders ?? []).filter((r) => r.windowIndex === w.index), context.timeZone),
     };
   });
+}
+
+/**
+ * How a window's push reminders read in the shift drawer. Provider words only: a reminder is never a Welfare Check,
+ * and nothing here says a phone received it or a Guard read it. The window state beside it is the only record of
+ * whether a check was made.
+ */
+export function welfareReminderWords(reminders: readonly WelfareReminderView[], timeZone: string): string | null {
+  if (!reminders.length) return null;
+  const at = (r: WelfareReminderView) => (r.sentAt ? ` ${formatInstantTime(r.sentAt, timeZone)}` : '');
+  const one = (r: WelfareReminderView) => {
+    const what = r.kind === 'follow_up' ? 'Follow-up' : 'Reminder';
+    switch (r.status) {
+      case 'provider_accepted':
+        return r.receiptStatus === 'provider_delivery_error'
+          ? `${what} sent to push service${at(r)}; push service reported a delivery error`
+          : `${what} sent to push service${at(r)}`;
+      case 'no_device': return `${what} not sent: no phone registered for notifications`;
+      case 'provider_rejected': return `${what} refused by push service`;
+      case 'failed': return `${what} could not reach push service`;
+      default: return `${what} sending`;
+    }
+  };
+  return reminders.map(one).join(' · ');
 }
 
 /**

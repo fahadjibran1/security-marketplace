@@ -14,6 +14,9 @@
  *   STORE-07  no user-facing source carries a deprecated product name
  *   STORE-08  the brand module has one product name for every role
  *   STORE-09  iOS identity and export-compliance flags are set, nothing is built
+ *   STORE-11  Welfare Check notifications: visible reminders only (no silent background push), Apple's production push
+ *             environment, the two Android permissions the library adds (show notifications, keep scheduled ones after
+ *             a restart) and nothing else; Firebase's client file is supplied by EAS, never committed
  *
  * Executed against the real files, and the API resolver is executed rather than read.
  */
@@ -227,6 +230,36 @@ test('STORE-10-THE-IOS-PRIVACY-MANIFEST-DECLARES-WHAT-THE-PODS-USE', () => {
     for (const reason of reasons) assert.ok(declared[api].includes(reason), `${api} carries ${reason}`);
   }
   for (const api of Object.keys(declared)) assert.ok(required[api], `${api} is declared only because a dependency uses it`);
+});
+
+test('STORE-11-WELFARE-NOTIFICATIONS-ADD-ONLY-WHAT-THEY-NEED', () => {
+  const entry = expo.plugins.find((plugin) => Array.isArray(plugin) && plugin[0] === 'expo-notifications');
+  assert.ok(entry, 'expo-notifications is configured');
+  const [, options] = entry;
+  assert.deepEqual(options, { mode: 'production', defaultChannel: 'welfare-checks', enableBackgroundRemoteNotifications: false });
+  // The library's own manifest is merged into the app: exactly these two permissions, none of them blocked above.
+  const manifest = read('node_modules/expo-notifications/android/src/main/AndroidManifest.xml');
+  const added = [...manifest.matchAll(/<uses-permission android:name="android\.permission\.([A-Z_]+)"/g)].map((m) => m[1]).sort();
+  assert.deepEqual(added, ['POST_NOTIFICATIONS', 'RECEIVE_BOOT_COMPLETED']);
+  for (const permission of added) assert.ok(!expo.android.blockedPermissions.includes(`android.permission.${permission}`), permission);
+  // No background modes: S4 sends only visible reminders.
+  assert.ok(!JSON.stringify(expo.ios.infoPlist || {}).includes('UIBackgroundModes'));
+  // Firebase's client file comes from the EAS file variable; it is never in the repository.
+  assert.ok(!fs.existsSync(path.join(ROOT, 'google-services.json')), 'google-services.json is not committed');
+  assert.ok(!('googleServicesFile' in expo.android), 'app.json names no Firebase file');
+  const makeConfig = require(path.join(ROOT, 'app.config.js'));
+  const before = process.env.GOOGLE_SERVICES_JSON;
+  try {
+    delete process.env.GOOGLE_SERVICES_JSON;
+    const input = JSON.parse(JSON.stringify(expo));
+    assert.equal(makeConfig({ config: input }), input, 'without the EAS variable the store config is app.json, untouched');
+    process.env.GOOGLE_SERVICES_JSON = '/eas/secrets/google-services.json';
+    const out = makeConfig({ config: JSON.parse(JSON.stringify(expo)) });
+    assert.equal(out.android.googleServicesFile, '/eas/secrets/google-services.json');
+    assert.equal(out.android.package, 'com.sfour.s4', 'identity unchanged');
+  } finally {
+    if (before === undefined) delete process.env.GOOGLE_SERVICES_JSON; else process.env.GOOGLE_SERVICES_JSON = before;
+  }
 });
 
 console.log(`\n${passed} store identity checks passed`);

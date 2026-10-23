@@ -47,6 +47,8 @@ import { CompanyInvitation } from '../company-membership/entities/company-invita
 import { RotaSlot } from '../rota-slot/entities/rota-slot.entity';
 import { ShiftAmendment } from '../shift-amendment/entities/shift-amendment.entity';
 import { CompanyShiftPolicy } from '../shift-amendment/entities/company-shift-policy.entity';
+import { PushDevice } from '../welfare-push/entities/push-device.entity';
+import { WelfareReminder } from '../welfare-push/entities/welfare-reminder.entity';
 
 export const appEntities = [
   AuthSession,
@@ -103,5 +105,7 @@ export const appEntities = [
   RotaSlot,
   ShiftAmendment,
   CompanyShiftPolicy,
+  PushDevice,
+  WelfareReminder,
   UserVerificationToken,
 ];

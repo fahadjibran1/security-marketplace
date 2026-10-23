@@ -18,6 +18,9 @@ import { getAppSurface } from './src/navigation/role-routing';
 import { brand, colors, control, radii, spacing, typography } from './src/theme';
 import Constants from 'expo-constants';
 import { productLabelFor, resolveAppVariant } from './src/services/appVariant';
+import { configureWelfareNotifications, registerWelfarePush, subscribeTokenChanges, subscribeWelfareResponses, unregisterWelfarePush, type PushRegistration } from './src/services/pushNotifications';
+import { WelfareCheckPrompt } from './src/components/guard/WelfareCheckPrompt';
+import type { WelfareIntent } from './src/components/guard/welfarePush';
 
 const IS_WEB = typeof document !== 'undefined';
 // The store app resolves to 'production' and keeps its label; only the staging-only UAT app reads "S4 UAT · STAGING".
@@ -35,6 +38,15 @@ export default function App() {
   );
 
   useEffect(() => installAttendanceLocationTransport(), []);
+  // Welfare Check notifications. A tap is held here until a Guard session is showing; it is submitted straight away
+  // only while the session that received it is still live (`sessionLive`), never after a sign-in.
+  const [welfareTap, setWelfareTap] = useState<{ intent: WelfareIntent; sessionLive: boolean } | null>(null);
+  const [pushState, setPushState] = useState<PushRegistration | null>(null);
+  const [pushNoticeDismissed, setPushNoticeDismissed] = useState(false);
+  useEffect(() => {
+    void configureWelfareNotifications();
+    return subscribeWelfareResponses((intent) => setWelfareTap({ intent, sessionLive: true }));
+  }, []);
   useEffect(() => {
     async function bootstrapSession() {
       try {
@@ -74,7 +86,7 @@ export default function App() {
     if (getAppSurface(nextSession.user.role) === 'denied') { await logout(); await clearStoredSession(); setSession(null); setAuthNotice('This account role is not supported. Contact an administrator.'); return; }
     restoreSession(nextSession); if (nextSession.refreshToken) await persistSession({ user: nextSession.user, refreshToken: nextSession.refreshToken }); setAuthNotice(null); setSession(nextSession);
   }
-  async function handleLogout() { await logout(); await clearStoredSession(); setAuthNotice(null); setSession(null); }
+  async function handleLogout() { await unregisterWelfarePush(); await logout(); await clearStoredSession(); setAuthNotice(null); setSession(null); }
   // Every server session was revoked by the deletion itself, so only local state is left to clear.
   async function handleAccountDeleted(message: string) { clearLocalSession(); await clearStoredSession(); setSession(null); setAuthNotice(message); }
   function leaveAccountLink() {
@@ -83,6 +95,20 @@ export default function App() {
   }
 
   const surface = session ? getAppSurface(session.user.role) : null;
+  // Signed out (expired, revoked, or never signed in): a held tap must be confirmed on screen after signing in.
+  useEffect(() => {
+    if (!booting && !session) setWelfareTap((tap) => (tap && tap.sessionLive ? { ...tap, sessionLive: false } : tap));
+  }, [booting, session]);
+  // Only Guards receive Welfare Check notifications; register this phone for the signed-in Guard.
+  const guardUserId = surface === 'guard' ? session?.user.id ?? null : null;
+  useEffect(() => {
+    if (!guardUserId) { setPushState(null); return; }
+    let live = true;
+    const register = () => registerWelfarePush().then((state) => { if (live) setPushState(state); });
+    void register();
+    const unsubscribe = subscribeTokenChanges(() => { void register(); });
+    return () => { live = false; unsubscribe(); };
+  }, [guardUserId]);
   const surfaceLabel = surface === 'admin' ? 'Platform Admin' : surface === 'company' ? 'Company' : surface === 'client' ? 'Client' : surface === 'guard' ? 'Guard' : 'Access Denied';
 
   return <SafeAreaProvider><AppErrorBoundary onSignOut={session ? handleLogout : undefined}>
@@ -91,6 +117,8 @@ export default function App() {
     : !session ? <SafeAreaView style={styles.safeArea} edges={['top','right','bottom','left']}><StatusBar barStyle="dark-content" backgroundColor={colors.background}/><AuthScreen onLoggedIn={handleLoggedIn} noticeMessage={authNotice} onDismissNotice={() => setAuthNotice(null)} /></SafeAreaView>
     : <SafeAreaView style={styles.safeArea} edges={['top','right','bottom','left']}><StatusBar barStyle="light-content" backgroundColor={colors.primaryNavy}/><View style={styles.screenContainer}>
         {surface !== 'company' ? <View style={styles.topBar}><View style={styles.brandBlock}><Text style={styles.brandMark}>{brand.shortBrand}</Text><View><Text style={styles.surfaceName}>{surfaceLabel}</Text><Text style={[styles.productLabel, APP_VARIANT === 'uat' ? styles.uatLabel : null]}>{PRODUCT_LABEL}</Text></View></View><Pressable accessibilityRole="button" onPress={handleLogout} style={({ pressed }: { pressed: boolean }) => [styles.logoutButton, pressed && styles.pressed]}><Text style={styles.logoutText}>Log out</Text></Pressable></View> : null}
+        {surface === 'guard' && pushState === 'denied' && !pushNoticeDismissed ? <Pressable accessibilityRole="button" accessibilityHint="Dismiss" onPress={() => setPushNoticeDismissed(true)} style={styles.pushNotice}><Text style={styles.pushNoticeText}>Notifications are off, so Welfare Check reminders will not appear. Your Welfare Checks still work in S4. Turn notifications on for S4 in your phone's Settings.  ✕</Text></Pressable> : null}
+        {surface === 'guard' && welfareTap ? <View key={welfareTap.intent.key} style={styles.promptHost}><WelfareCheckPrompt intent={welfareTap.intent} sessionLive={welfareTap.sessionLive} onClose={() => setWelfareTap(null)} /></View> : null}
         {surface === 'admin' ? <AdminDashboardScreen /> : surface === 'company' ? <CompanyDashboardScreen user={session.user} onLogout={handleLogout} onAccountDeleted={handleAccountDeleted} /> : surface === 'client' ? <ClientPortalScreen user={session.user} /> : surface === 'guard' ? <GuardDashboardScreen user={session.user} onLogout={handleLogout} onAccountDeleted={handleAccountDeleted} /> : <View style={styles.loadingContainer}><StatePanel title="Access denied" message="This account cannot open an S4 workspace. Log out and contact an administrator." tone="error" /></View>}
       </View></SafeAreaView>}
   </AppErrorBoundary></SafeAreaProvider>;
@@ -109,4 +137,7 @@ const styles = StyleSheet.create({
   logoutButton: { minHeight: control.minTouchTarget, justifyContent: 'center', borderRadius: radii.md, borderWidth: 1, borderColor: colors.primaryNavySoft, paddingHorizontal: spacing.md },
   logoutText: { color: colors.textOnBrand, ...typography.label },
   pressed: { opacity: 0.8 },
+  promptHost: { position: 'absolute', width: 0, height: 0 },
+  pushNotice: { backgroundColor: colors.warningSurface, borderBottomWidth: 1, borderBottomColor: colors.warningBorder, paddingHorizontal: spacing.lg, paddingVertical: spacing.sm },
+  pushNoticeText: { color: colors.textPrimary, ...typography.caption },
 });

@@ -18,6 +18,7 @@ import {
 import { LogBookWindowService } from '../operations/log-book-window.service';
 import { OperationalWindowService } from '../operations/operational-window.service';
 import { WelfareWindowService } from '../operations/welfare-window.service';
+import type { WelfareReminderView } from '../welfare-push/welfare-reminder.view';
 import {
   OperationalCompletion,
   OperationalCompletionKind,
@@ -165,6 +166,12 @@ export type ShiftOperationsView = {
    * or null when the shift was not booked off more than 15 minutes early. Absent elsewhere.
    */
   earlyBookOff?: EarlyBookOffView | null;
+  /**
+   * Welfare push reminders (Migration 65), only on GET /coverage/operations: what was sent to the push provider for
+   * each window and what the provider said. Never a Welfare Check and never proof the Guard saw it; the window states
+   * above remain the only record of whether a check was made. Absent elsewhere.
+   */
+  welfareReminders?: WelfareReminderView[];
   timezone: string;
   welfare: WelfareOperationsView;
   logBook: LogBookOperationsView;

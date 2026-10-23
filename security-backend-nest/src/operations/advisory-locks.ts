@@ -16,6 +16,14 @@ export const WELFARE_SWEEP_LOCK_NAMESPACE = 534_401_401;
  */
 export const GUARD_ASSIGNMENT_LOCK_NAMESPACE = 534_401_402;
 
+/**
+ * One lock per shift id, held (waiting, not try) by a Guard's Welfare Check confirmation or help request from a
+ * notification for the length of its transaction. Two taps, a retried request, or a tap racing the in-app form for the
+ * same shift therefore decide one after the other, so the second sees the first's record. Nothing else takes it, and
+ * nothing that holds it takes any other advisory lock.
+ */
+export const WELFARE_ACTION_LOCK_NAMESPACE = 534_401_403;
+
 export async function lockGuardsForAssignment(
   manager: { query: (sql: string, parameters?: unknown[]) => Promise<unknown> },
   guardIds: Array<number | null | undefined>,

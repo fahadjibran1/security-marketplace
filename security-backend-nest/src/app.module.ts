@@ -49,6 +49,7 @@ import { ClientWeeklyApprovalModule } from './client-weekly-approval/client-week
 import { CompanyMembershipModule } from './company-membership/company-membership.module';
 import { RotaSlotModule } from './rota-slot/rota-slot.module';
 import { ShiftAmendmentModule } from './shift-amendment/shift-amendment.module';
+import { WelfarePushModule } from './welfare-push/welfare-push.module';
 import { OperationsModule } from './operations/operations.module';
 @Module({
   imports: [
@@ -123,6 +124,7 @@ import { OperationsModule } from './operations/operations.module';
     CompanyMembershipModule,
     RotaSlotModule,
     ShiftAmendmentModule,
+    WelfarePushModule,
     OperationsModule,
   ],
   controllers: [HealthController],

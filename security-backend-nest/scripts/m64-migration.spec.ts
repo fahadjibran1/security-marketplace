@@ -51,11 +51,13 @@ async function main() {
   const migrationsDir = path.join(__dirname, '..', 'src', 'database', 'migrations');
   const allFiles: string[] = fs.readdirSync(migrationsDir).filter((f: string) => /\.ts$/.test(f)).sort();
   const through63 = allFiles.filter((f) => Number(f.split('-')[0]) <= 1720900000009).map((f) => path.join(migrationsDir, f));
+  // Migration 65 (Welfare push reminders) follows 64; this certification stays about 64 alone.
+  const through64 = allFiles.filter((f) => Number(f.split('-')[0]) <= 1720900000010).map((f) => path.join(migrationsDir, f));
   // The schema is dropped and built to 63 by `at63` below; this DataSource (all migrations, app entities) then takes
   // the database from 63 to 64. It must not drop the schema itself.
   const ds = new DataSource({
     type: 'postgres', url, entities: appEntities, synchronize: false, dropSchema: false,
-    migrations: allFiles.map((f) => path.join(migrationsDir, f)), migrationsTableName: 'typeorm_migrations', logging: false,
+    migrations: through64, migrationsTableName: 'typeorm_migrations', logging: false,
   });
   const q = (sql: string, params: unknown[] = []) => ds.query(sql, params);
   const scalar = async (sql: string, params: unknown[] = []) => Object.values((await q(sql, params))[0] ?? {})[0];
@@ -143,8 +145,9 @@ async function main() {
     await test('M64-01-FRESH-DATABASE-MIGRATES-TO-64-AND-64-IS-LAST', () => {
       assert.equal(applied.length, 1, 'only 64 is pending on a 63 database');
       assert.equal(applied[0].name, MIGRATION_64);
-      assert.equal(allFiles.length, 64);
+      assert.equal(allFiles.length, 65);
       assert.equal(allFiles[63], '1720900000010-AddShiftAmendments.ts');
+      assert.equal(allFiles[64], '1720900000011-AddWelfarePushReminders.ts', 'Migration 65 follows 64 and is certified by m65-migration.spec.ts');
     });
     const head = await schema();
     const headLabels = await labels();
@@ -281,7 +284,10 @@ async function main() {
       const drift = (await ds.driver.createSchemaBuilder().log()).upQueries.map((x) => x.query);
       const ours = drift.filter((x) => /shift_amendments|company_shift_policies|originalEnd|canAmendShifts|notifications_type_enum/.test(x));
       assert.deepEqual(ours, [], `entity and migration 64 disagree:\n${ours.join('\n')}`);
-      const semantic = drift.filter((x) =>
+      // This database stops at 64, so Migration 65's two tables are absent by design; m65-migration.spec.ts (M65-09)
+      // certifies that their entities and migration agree. Nothing else is set aside.
+      const after64 = /push_devices|welfare_reminders/;
+      const semantic = drift.filter((x) => !after64.test(x) &&
         /CREATE TABLE|DROP TABLE|CREATE TYPE|DROP TYPE|ALTER TYPE|ALTER TABLE.*ALTER COLUMN|ALTER TABLE.*DROP COLUMN|ALTER TABLE.*ADD "/i.test(x));
       assert.deepEqual(semantic, [], `semantic drift (the release gate would fail):\n${semantic.join('\n')}`);
       console.log(`      (diagnostic-only drift elsewhere, unchanged by 64: ${drift.length} statement(s))`);

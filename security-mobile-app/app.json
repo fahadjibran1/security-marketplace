@@ -107,6 +107,14 @@
           "isAndroidBackgroundLocationEnabled": false,
           "isIosBackgroundLocationEnabled": false
         }
+      ],
+      [
+        "expo-notifications",
+        {
+          "mode": "production",
+          "defaultChannel": "welfare-checks",
+          "enableBackgroundRemoteNotifications": false
+        }
       ]
     ],
     "extra": {

@@ -760,11 +760,41 @@ export interface WelfareSummaryView {
   createdAt: string;
 }
 
+/** What the push provider said about one Welfare Check reminder. Never proof the Guard saw it or is safe. */
+export interface WelfareReminderView {
+  id: number;
+  windowIndex: number;
+  kind: 'window_open' | 'follow_up';
+  status: 'sending' | 'provider_accepted' | 'provider_rejected' | 'no_device' | 'failed';
+  receiptStatus: 'provider_delivery_ok' | 'provider_delivery_error' | null;
+  deviceCount: number;
+  attempts: number;
+  sentAt: string | null;
+}
+
+export interface WelfareConfirmResult {
+  result: 'recorded' | 'already_recorded';
+  shiftId: number;
+  windowIndex: number;
+  windowStart: string;
+  windowEnd: string;
+  recordedAt: string | null;
+}
+
+export interface WelfareHelpResult {
+  result: 'raised' | 'already_raised';
+  alertId: number;
+  shiftId: number;
+  raisedAt: string;
+}
+
 export interface ShiftOperationsView {
   bookOnAt: string | null;
   bookOffAt: string | null;
   /** Welfare Phase 4: the early Book Off and its coverage, or null when not early (monitoring endpoint only). */
   earlyBookOff?: EarlyBookOffView | null;
+  /** Welfare push reminders per window (monitoring endpoint only). Provider status, never a Welfare Check. */
+  welfareReminders?: WelfareReminderView[];
   timezone: string;
   welfare: WelfareOperationsView;
   logBook: LogBookOperationsView;

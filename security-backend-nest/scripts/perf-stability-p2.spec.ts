@@ -610,7 +610,15 @@ async function main() {
       'src/safety-alert/safety-alert.service.ts',
       'src/scheduler/scheduler.service.ts',
       'src/shift-amendment/shift-amendment.service.ts',
+      'src/welfare-push/welfare-push.service.ts',
     ]);
+    // Welfare push reminders: single-flight, every minute, and the timer only ticks the job.
+    const wpr = src('../src/welfare-push/welfare-push.service.ts');
+    const wprInit = wpr.split('onModuleInit() {')[1].split('onModuleDestroy()')[0];
+    assert.match(wprInit, /new SingleFlightJob\(\s*'welfare-push-reminders'/);
+    assert.match(wprInit, /setInterval\(\(\) => void this\.reminderJob\?\.tick\(\), WELFARE_REMINDER_INTERVAL_MS\)/);
+    assert.match(wpr, /export const WELFARE_REMINDER_INTERVAL_MS = 60_000;/, 'reminder cadence pinned');
+    assert.equal((wpr.match(/setInterval\(/g) ?? []).length, 1, 'one timer, and it only ticks the single-flight job');
     // Live Shift Amendments: proposal expiry is single-flight too, every minute, and the timer only ticks the job.
     const lsa = src('../src/shift-amendment/shift-amendment.service.ts');
     const lsaInit = lsa.split('onModuleInit() {')[1].split('onModuleDestroy()')[0];

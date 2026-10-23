@@ -45,9 +45,22 @@ function uatVersionCode(config) {
   return code;
 }
 
-module.exports = ({ config }) => {
+/**
+ * Android Welfare Check notifications need the S4 Firebase project's client file (google-services.json), which Expo's
+ * push service uses to reach Firebase Cloud Messaging. It is supplied to EAS as the file environment variable
+ * GOOGLE_SERVICES_JSON and never committed. Without it the config is exactly as before and the app simply receives no
+ * push on Android (everything else, including in-app Welfare Checks, is unchanged).
+ */
+function withAndroidPushCredentials(config) {
+  const file = (process.env.GOOGLE_SERVICES_JSON || '').trim();
+  if (!file) return config;
+  return { ...config, android: { ...config.android, googleServicesFile: file } };
+}
+
+module.exports = ({ config: input }) => {
   const isUat = process.env.APP_VARIANT === 'uat';
   assertApiMatchesIdentity(isUat);
+  const config = withAndroidPushCredentials(input);
   if (!isUat) return config;
 
   return {

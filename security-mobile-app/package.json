@@ -80,7 +80,8 @@
     "test:shift-offer-time": "node scripts/shift-offer-time.spec.cjs",
     "test:error-boundary": "node scripts/error-boundary.spec.cjs",
     "test:account-lifecycle": "node scripts/account-lifecycle-ui.spec.cjs",
-    "test:store-identity": "node scripts/store-identity.spec.cjs"
+    "test:store-identity": "node scripts/store-identity.spec.cjs",
+    "test:welfare-push": "node scripts/welfare-push.spec.cjs"
   },
   "dependencies": {
     "@expo/metro-runtime": "~6.1.2",
@@ -89,6 +90,7 @@
     "expo-constants": "~18.0.13",
     "expo-document-picker": "~14.0.8",
     "expo-location": "~19.0.8",
+    "expo-notifications": "~0.32.17",
     "expo-secure-store": "~15.0.8",
     "react": "19.1.0",
     "react-dom": "19.1.0",

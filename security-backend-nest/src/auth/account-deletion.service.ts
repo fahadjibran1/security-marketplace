@@ -18,6 +18,7 @@ import { User, UserRole, UserStatus } from '../user/entities/user.entity';
 import { AuthSessionService } from './auth-session.service';
 import { DELETED_ACCOUNT_PASSWORD_SENTINEL, isUsablePasswordHash } from './password-policy';
 import { UserVerificationTokenService } from './user-verification-token.service';
+import { removePushDevicesForUser } from '../welfare-push/push-device-lifecycle';
 
 /** A unique, undeliverable address on the reserved .invalid TLD (RFC 2606). */
 export function deletedAccountEmail(userId: number): string {
@@ -184,6 +185,7 @@ export class AccountDeletionService {
 
       await this.tokens.invalidateOutstanding(userId, null, manager);
       await this.sessions.revokeAllForUser(userId, 'account_deleted', manager);
+      await removePushDevicesForUser(manager, userId);
       return { alreadyDeleted: false, completedAt, role: user.role };
     });
 

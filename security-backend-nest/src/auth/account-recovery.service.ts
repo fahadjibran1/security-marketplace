@@ -8,6 +8,7 @@ import { User } from '../user/entities/user.entity';
 import { UserService } from '../user/user.service';
 import { AuthSessionService } from './auth-session.service';
 import { UserVerificationToken, VerificationTokenPurpose } from './entities/user-verification-token.entity';
+import { revokePushDevicesForUser } from '../welfare-push/push-device-lifecycle';
 import {
   EMAIL_VERIFICATION_TTL_MS,
   PASSWORD_RESET_TTL_MS,
@@ -102,6 +103,7 @@ export class AccountRecoveryService {
       await this.tokens.invalidateOutstanding(user.id, null, manager);
       // Every device signs in again. Committed together with the password, or not at all.
       await this.sessions.revokeAllForUser(user.id, 'password_change', manager);
+      await revokePushDevicesForUser(manager, user.id, 'password_change');
       return { ok: true as const, userId: user.id, tokenId: spent.token.id };
     });
 

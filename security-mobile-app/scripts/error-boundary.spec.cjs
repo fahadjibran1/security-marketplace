@@ -204,6 +204,11 @@ const appOverrides = (extra = {}) => ({
       clearStoredSession: async () => undefined,
     },
     'src/services/attendanceTransport': { installAttendanceLocationTransport: () => noop },
+    // Welfare Check notifications use expo-notifications, a device module that cannot load in Node.
+    'src/services/pushNotifications': {
+      configureWelfareNotifications: async () => undefined, registerWelfarePush: async () => 'unsupported',
+      subscribeTokenChanges: () => noop, subscribeWelfareResponses: () => noop, unregisterWelfarePush: async () => undefined,
+    },
     // Signed-in workspaces are never reached without a session; they are replaced only so their device
     // dependencies (document picker, location) need not load in Node.
     'src/screens/CompanyDashboardScreen': { CompanyDashboardScreen: () => null },

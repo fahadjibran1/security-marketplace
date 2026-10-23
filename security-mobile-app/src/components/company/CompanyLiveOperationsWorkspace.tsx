@@ -2124,6 +2124,8 @@ function DetailPanelContent({
                   {row.checkedAt ? `Checked ${row.checkedAt}` : row.missRecordedAt ? `Recorded ${row.missRecordedAt}` : ''}
                   {row.alert ? `${row.checkedAt || row.missRecordedAt ? ' · ' : ''}${row.alert}` : ''}
                 </Text>
+                {/* Push reminders, in the provider's words. Never a check, never "delivered" or "seen". */}
+                {row.reminder ? <Text style={styles.welfareReminder}>{row.reminder}</Text> : null}
               </View>
             ))}
           </View>
@@ -2218,6 +2220,7 @@ const styles = StyleSheet.create({
   welfareWindow: { fontSize: 12, fontWeight: '700', color: colors.textPrimary, minWidth: 150 },
   welfareState: { fontSize: 12, fontWeight: '700', color: colors.textSecondary, minWidth: 130 },
   welfareDetail: { fontSize: 12, color: colors.textSecondary, flexShrink: 1 },
+  welfareReminder: { fontSize: 11, color: colors.textSecondary, flexBasis: '100%' },
   root: {
     flex: 1,
     gap: spacing.sm,

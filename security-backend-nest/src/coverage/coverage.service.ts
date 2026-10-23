@@ -9,6 +9,8 @@ import { UserRole } from '../user/entities/user.entity';
 import { Shift } from '../shift/entities/shift.entity';
 import { OperationsProjectionService, ShiftOperationsView } from './operations-projection.service';
 import { EarlyBookOffService } from './early-book-off.service';
+import { WelfareReminder } from '../welfare-push/entities/welfare-reminder.entity';
+import { toReminderView } from '../welfare-push/welfare-reminder.view';
 
 type CoverageStatus = 'fully_covered' | 'partially_covered' | 'unfilled' | 'overstaffed';
 
@@ -117,6 +119,8 @@ export class CoverageService {
     private readonly operationsProjection: OperationsProjectionService,
     // Optional so a caller built without it (older specs) gets the projection exactly as before.
     @Optional() private readonly earlyBookOffService?: EarlyBookOffService,
+    // Optional for the same reason: without it the response carries no welfareReminders, exactly as before.
+    @Optional() @InjectRepository(WelfareReminder) private readonly welfareReminderRepo?: Repository<WelfareReminder>,
   ) {}
 
   async listShiftCoverage(userId: number, userRole: UserRole, query: CoverageQuery) {
@@ -178,6 +182,18 @@ export class CoverageService {
       for (const shift of shifts) {
         const view = operations.get(shift.id);
         if (view) view.earlyBookOff = early.get(shift.id) ?? null;
+      }
+    }
+    // Welfare push reminders: what the push provider was asked to deliver, per window. Company-scoped twice over (the
+    // shifts above are this company's, and the read names the company).
+    if (this.welfareReminderRepo && shifts.length) {
+      const rows = await this.welfareReminderRepo.find({
+        where: { companyId: company.id, shiftId: In(shifts.map((shift) => shift.id)) },
+        order: { windowIndex: 'ASC', id: 'ASC' },
+      });
+      for (const shift of shifts) {
+        const view = operations.get(shift.id);
+        if (view) view.welfareReminders = rows.filter((row) => row.shiftId === shift.id).map(toReminderView);
       }
     }
     return shifts.map((shift) => ({ shiftId: shift.id, operations: operations.get(shift.id) ?? null }));

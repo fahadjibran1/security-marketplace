@@ -388,6 +388,11 @@ jobs:
       - name: Verify the permanent S4 store identity
         run: npm run test:store-identity
 
+      # Welfare Check push notifications: what a tap means, truthful result wording, unlocked-phone buttons that open
+      # S4, no silent confirmation after a sign-in, and provider-only wording in Live Operations.
+      - name: Verify Welfare Check push notifications
+        run: npm run test:welfare-push
+
       - name: Verify Expo dependency compatibility
         run: npx expo install --check
 

@@ -92,9 +92,9 @@ async function main() {
       assert.equal(applied.length, 63, `got ${applied.length}`);
       assert.equal(applied[61].name, MIGRATION_62);
       assert.equal(applied[62].name, MIGRATION_63);
-      assert.equal(allFiles.length, 64);
+      assert.equal(allFiles.length, 65);
       assert.equal(allFiles[62], '1720900000009-AddComplianceLapseAlerts.ts');
-      assert.deepEqual(allFiles.slice(63), ['1720900000010-AddShiftAmendments.ts'], 'the only migration after 63 is 64 (AddShiftAmendments)');
+      assert.deepEqual(allFiles.slice(63), ['1720900000010-AddShiftAmendments.ts', '1720900000011-AddWelfarePushReminders.ts'], 'after 63 come only 64 (AddShiftAmendments) and 65 (AddWelfarePushReminders)');
     });
     const head = await schema();
     const headLabels = await enumLabels();

@@ -13,10 +13,11 @@ import { CoverageService } from './coverage.service';
 import { OperationsProjectionService } from './operations-projection.service';
 import { EarlyBookOffService } from './early-book-off.service';
 import { RotaSlot } from '../rota-slot/entities/rota-slot.entity';
+import { WelfareReminder } from '../welfare-push/entities/welfare-reminder.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Shift, AttendanceEvent, DailyLog, SafetyAlert, RotaSlot]),
+    TypeOrmModule.forFeature([Shift, AttendanceEvent, DailyLog, SafetyAlert, RotaSlot, WelfareReminder]),
     CompanyMembershipModule,
     AvailabilityModule,
     OperationsModule,
