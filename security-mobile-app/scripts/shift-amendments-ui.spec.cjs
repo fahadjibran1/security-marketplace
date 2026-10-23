@@ -103,7 +103,12 @@ test('LSA-UI-02-EVERY-REQUEST-MATCHES-A-ROUTE-METHOD-AND-DTO', () => {
   assert.ok(/resolution: 'upheld' \| 'corrected'; note: string/.test(client));
   // the company web never calls the S4 activation route or the Guard's routes
   assert.ok(!client.includes('/admin/shift-amendments'), 'no activation from the company web');
-  assert.ok(!/shift-amendments\/\$\{id\}\/(respond|dispute)`/.test(client), 'no Guard answers from the company web');
+  // api.ts is shared with the Guard app (Phase 3), so the Guard's answer and dispute calls exist there; the company
+  // screens must never use them.
+  for (const rel of ['src/components/company/CompanyShiftAmendmentDrawer.tsx', 'src/screens/CompanyDashboardScreen.tsx', 'src/components/company/CompanyLiveOperationsWorkspace.tsx']) {
+    const src = stripComments(codeOf(rel));
+    assert.ok(!/respondToShiftAmendment|disputeShiftAmendment|listMyShiftAmendments/.test(src), `no Guard answers from ${rel}`);
+  }
 });
 
 // ═══════════════════ permissions and tenant isolation ═══════════════════
@@ -477,6 +482,32 @@ test('LSA-UI-20-RESPONSIVE-LAYOUT-WRAPS-AT-PHONE-WIDTH', () => {
   assert.ok(drawer.includes('width={600}'), 'drawer is capped on desktop and full width on a phone (Drawer: width 100%, maxWidth)');
   const ui = codeOf('src/components/ui/Drawer.tsx');
   assert.ok(ui.includes("width: '100%'") && ui.includes('({ maxWidth: width } as any)'));
+});
+
+// ═══════════════════ Phase 3 follow-ups on the company web ═══════════════════
+
+test('LSA-UI-21-APPROVAL-IS-EXPLAINED-WITH-THE-POLICY-THRESHOLD', () => {
+  assert.equal(lsa.approvalReasonText({ totalScheduledHours: 13, warnings: ['LONG_SHIFT'], approvalRequired: false }, DEFAULT_POLICY), null);
+  assert.equal(lsa.approvalReasonText({ totalScheduledHours: 15, warnings: ['LONG_SHIFT'], approvalRequired: true }, DEFAULT_POLICY),
+    'Owner or Admin approval needed before the Guard is asked: the shift would be 15 scheduled hours, over the 14-hour approval threshold.');
+  assert.match(lsa.approvalReasonText({ totalScheduledHours: 10, warnings: ['SHORT_REST'], approvalRequired: true }, STRICT_POLICY),
+    /less than 12 hours' rest before their next shift/);
+  assert.match(lsa.approvalReasonText({ totalScheduledHours: 15, warnings: ['LONG_SHIFT', 'SHORT_REST'], approvalRequired: true }, DEFAULT_POLICY), /threshold; and the Guard would have less than 11 hours/);
+  const drawer = stripComments(codeOf('src/components/company/CompanyShiftAmendmentDrawer.tsx'));
+  assert.ok(drawer.includes('? approvalReasonText(preview, policy)'), 'the confirmation states why approval is needed');
+  assert.ok(/a\.status === 'awaiting_approval' && a\.effectiveStatus !== 'expired' \? \(\s*<Banner tone="warning" text=\{approvalReasonText\(/.test(drawer), 'a waiting proposal states why');
+  assert.ok(drawer.includes("'Not required on length (rest is checked when you send)'"), 'the preview does not overclaim on rest');
+});
+
+test('LSA-UI-22-AN-UNRESOLVED-DISPUTE-IS-ACKNOWLEDGED-BEFORE-PROPOSING-AGAIN', () => {
+  assert.equal(lsa.unresolvedDisputeWarning([amendment({ status: 'accepted', effectiveStatus: 'accepted' })]), null);
+  const w = lsa.unresolvedDisputeWarning([amendment({ status: 'disputed', effectiveStatus: 'disputed', disputeReason: 'Only 30 minutes' })]);
+  assert.match(w, /^Extension #1 on this shift is disputed by the Guard and not yet reviewed \("Only 30 minutes"\)/);
+  assert.equal(lsa.unresolvedDisputeWarning([amendment({ status: 'dispute_upheld', effectiveStatus: 'dispute_upheld' })]), null, 'reviewed: no warning');
+  const drawer = stripComments(codeOf('src/components/company/CompanyShiftAmendmentDrawer.tsx'));
+  assert.ok(drawer.includes("if (disputeWarning && !disputeSeen) return { ok: false as const, message: 'Confirm that you have seen the unresolved dispute on this shift.' };"), 'proposing is blocked until acknowledged');
+  assert.ok(drawer.includes('{enabled && disputeWarning && !open && permissions.canPropose ? <Banner tone="danger" text={disputeWarning} /> : null}'), 'stated beside Propose');
+  assert.ok(/setTermsConfirmed\(false\);\s*setDisputeSeen\(false\);/.test(drawer), 'the acknowledgement never carries over');
 });
 
 console.log(`\n${passed} passed`);

@@ -262,6 +262,12 @@ jobs:
       - name: Verify Live Shift Amendments web interface
         run: npm run test:shift-amendments-ui
 
+      # Live Shift Amendments Phase 3: the Guard's extension request. One answer per tap, nothing changed on the device
+      # before the server confirms, refresh on the existing tick and foregrounding, no claim of instant delivery, an
+      # older backend hides the feature, and the Book On / Book Off / offer handlers are fingerprinted unchanged.
+      - name: Verify Live Shift Amendments Guard app
+        run: npm run test:guard-shift-amendments
+
       # UAT FIX 02. Attention Now identified problems but gave Control no way to handle one. Certifies
       # that the resolve dialog offers exactly the reasons the API accepts, that the stored machine
       # value and the displayed words stay separate, that a Missing Book Off is named and timed rather

@@ -309,6 +309,35 @@ export function amendmentStatusLabel(a: Pick<ShiftAmendment, 'status' | 'effecti
   }
 }
 
+/**
+ * Why management approval is (or will be) needed, in words with the policy's own threshold — so nobody has to infer
+ * it from a "long shift" warning. From the preview (before sending) or a stored amendment (after).
+ */
+export function approvalReasonText(input: {
+  totalScheduledHours: number | null; warnings: AmendmentWarning[]; approvalRequired: boolean;
+}, policy: ShiftPolicy | null): string | null {
+  if (!input.approvalRequired) return null;
+  const reasons: string[] = [];
+  if (policy && input.totalScheduledHours !== null && input.totalScheduledHours > policy.approvalRequiredHours) {
+    reasons.push(`the shift would be ${input.totalScheduledHours} scheduled hours, over the ${policy.approvalRequiredHours}-hour approval threshold`);
+  }
+  if (input.warnings.includes('SHORT_REST')) {
+    reasons.push(`the Guard would have less than ${policy?.minRestHours ?? '—'} hours' rest before their next shift`);
+  }
+  if (reasons.length === 0) reasons.push('the company policy requires it');
+  return `Owner or Admin approval needed before the Guard is asked: ${reasons.join('; and ')}.`;
+}
+
+/**
+ * A disputed extension on this shift still waiting for review. Proposing again is allowed, but the person should see
+ * it first and say they have.
+ */
+export function unresolvedDisputeWarning(list: ShiftAmendment[] | null | undefined): string | null {
+  const d = disputedAmendment(list);
+  if (!d) return null;
+  return `Extension #${d.sequence} on this shift is disputed by the Guard and not yet reviewed ("${d.disputeReason ?? '—'}"). An Owner or Admin should review it before the shift is extended again.`;
+}
+
 export function approvalStatusText(a: ShiftAmendment): string {
   if (!a.approvalRequired) return 'Not required';
   if (a.approvedAt) return a.selfApproved ? 'Approved (by the proposer, confirmed)' : 'Approved';

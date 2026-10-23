@@ -819,6 +819,23 @@ export function resolveShiftAmendmentDispute(id: number, payload: { resolution: 
   return request<ShiftAmendment>(`/shift-amendments/${id}/resolve-dispute`, { method: 'POST', body: JSON.stringify(payload) });
 }
 
+// ─── Live Shift Amendments (Guard app, Phase 3). The API checks that the request is the Guard's own, still open and
+// not expired, under lock; an answer repeated after a lost response returns the stored result. ─────────────
+
+/** The Guard's open requests and those changed in the last 7 days, newest first. */
+export function listMyShiftAmendments() {
+  return request<ShiftAmendment[]>('/shift-amendments/mine');
+}
+
+export function respondToShiftAmendment(id: number, payload: { response: 'accepted' | 'declined' }) {
+  return request<ShiftAmendment>(`/shift-amendments/${id}/respond`, { method: 'PATCH', body: JSON.stringify(payload) });
+}
+
+/** Only a staff-recorded verbal agreement can be disputed; the extension stays until the company reviews it. */
+export function disputeShiftAmendment(id: number, payload: { reason: string }) {
+  return request<ShiftAmendment>(`/shift-amendments/${id}/dispute`, { method: 'POST', body: JSON.stringify(payload) });
+}
+
 export function respondToShift(id: number, payload: { response: 'accepted' | 'rejected'; reason?: string }) {
   return request<Shift>(`/shifts/${id}/respond`, {
     method: 'PATCH',

@@ -8,6 +8,7 @@ import {
   VERBAL_CONTACT_METHOD_OPTIONS,
   amendmentErrorGuidance,
   amendmentStatusLabel,
+  approvalReasonText,
   approvalStatusText,
   buildAmendmentHistory,
   confirmationEmailText,
@@ -21,6 +22,7 @@ import {
   resolveContactTime,
   resolveProposedEnd,
   reviewFlags,
+  unresolvedDisputeWarning,
   validateApproval,
   validateDisputeResolution,
   validateProposal,
@@ -109,6 +111,7 @@ export function CompanyShiftAmendmentDrawer({
   const [contactTime, setContactTime] = React.useState('');
   const [confirmation, setConfirmation] = React.useState('');
   const [termsConfirmed, setTermsConfirmed] = React.useState(false);
+  const [disputeSeen, setDisputeSeen] = React.useState(false);
   const [resolution, setResolution] = React.useState<string | null>(null);
   const [note, setNote] = React.useState('');
 
@@ -141,6 +144,7 @@ export function CompanyShiftAmendmentDrawer({
     setContactTime('');
     setConfirmation('');
     setTermsConfirmed(false);
+    setDisputeSeen(false);
     setResolution(null);
     setNote('');
   }, []);
@@ -177,6 +181,7 @@ export function CompanyShiftAmendmentDrawer({
   const ineligible = extensionIneligibleReason(liveShift, attendance, nowMs);
   const nameFor = (userId: number | null) => (userId === null ? null : userId === currentUserId ? 'You' : `Staff user #${userId}`);
   const history = buildAmendmentHistory(amendments, tz, nameFor);
+  const disputeWarning = unresolvedDisputeWarning(amendments);
 
   // proposed end: a quick duration, or a site-local time
   const proposed = quickMinutes !== null
@@ -194,6 +199,7 @@ export function CompanyShiftAmendmentDrawer({
     switch (mode) {
       case 'propose':
         if (proposed && !proposed.ok) return { ok: false as const, message: proposed.message };
+        if (disputeWarning && !disputeSeen) return { ok: false as const, message: 'Confirm that you have seen the unresolved dispute on this shift.' };
         return validateProposal({ currentEndMs: Date.parse(currentEnd), proposedEndMs, reason, nowMs: Date.now(), preview, policy });
       case 'withdraw': return validateWithdrawal({ reason });
       case 'approve': return validateApproval({ statement, selfApproval, confirmSelfApproval: confirmSelf });
@@ -330,6 +336,7 @@ export function CompanyShiftAmendmentDrawer({
           {open ? <ProposalCard a={open} tz={tz} policy={policy} /> : null}
           {disputed ? <ProposalCard a={disputed} tz={tz} policy={policy} /> : null}
 
+          {enabled && disputeWarning && !open && permissions.canPropose ? <Banner tone="danger" text={disputeWarning} /> : null}
           {enabled ? (
             <View style={styles.actions}>
               {!open && permissions.canPropose ? (
@@ -376,7 +383,7 @@ export function CompanyShiftAmendmentDrawer({
             </Text>
             <Text style={styles.confirmText}>
               {preview.approvalRequired
-                ? 'This needs management approval before the Guard is asked.'
+                ? approvalReasonText(preview, policy)
                 : 'The Guard will be asked to agree in the S4 app. Nothing changes until they agree.'}
               {' '}The request expires at the current end, {formatSiteTime(currentEnd, tz)}. S4 also checks the Guard&apos;s rest before their next shift and 7-day hours when you send.
             </Text>
@@ -384,6 +391,12 @@ export function CompanyShiftAmendmentDrawer({
           </View>
         ) : (
           <>
+            {disputeWarning ? (
+              <>
+                <Banner tone="danger" text={disputeWarning} />
+                <Check label="I have seen the unresolved dispute and still need to extend this shift." checked={disputeSeen} onPress={() => setDisputeSeen(!disputeSeen)} />
+              </>
+            ) : null}
             <Text style={styles.sectionLabel}>Extend by</Text>
             <View style={styles.chips}>
               {QUICK_EXTENSION_MINUTES.map((m) => (
@@ -405,9 +418,10 @@ export function CompanyShiftAmendmentDrawer({
                 <Fact label="Proposed end" value={formatUkDateTime(new Date(proposedEndMs).toISOString(), tz)} />
                 <Fact label="Extension" value={`+${formatDuration(preview.additionalMinutes)}`} />
                 <Fact label="Total" value={`${preview.totalScheduledHours} scheduled hours`} />
-                <Fact label="Approval" value={preview.approvalRequired ? 'Owner or Admin approval required' : 'Not required on length'} />
+                <Fact label="Approval" value={preview.approvalRequired ? 'Owner or Admin approval required' : 'Not required on length (rest is checked when you send)'} />
               </View>
             ) : null}
+            {preview?.approvalRequired && !preview.hardLimitExceeded ? <Banner tone="warning" text={approvalReasonText(preview, policy) ?? ''} /> : null}
             {preview?.hardLimitExceeded ? <Banner tone="danger" text={`Not allowed: over the company limit of ${policy?.hardLimitHours} scheduled hours.`} /> : null}
             {preview?.warnings.map((w) => <Banner key={w} tone="warning" text={warningText(w, policy, { totalScheduledHours: preview.totalScheduledHours })} />)}
             <Text style={styles.sectionLabel}>Reason (required)</Text>
@@ -529,6 +543,9 @@ function ProposalCard({ a, tz, policy }: { a: ShiftAmendment; tz: string; policy
       <Fact label="Proposed end" value={`${formatUkDateTime(a.proposedEnd, tz)} (+${formatDuration(a.additionalMinutes)})`} />
       <Fact label="Reason" value={a.reason} />
       <Fact label="Management" value={approvalStatusText(a)} />
+      {a.status === 'awaiting_approval' && a.effectiveStatus !== 'expired' ? (
+        <Banner tone="warning" text={approvalReasonText({ totalScheduledHours: a.fatigue.totalScheduledHours, warnings: a.fatigue.warnings, approvalRequired: a.approvalRequired }, policy) ?? ''} />
+      ) : null}
       <Fact label="Guard" value={guardResponseText(a)} />
       {a.status === 'pending' || a.status === 'awaiting_approval' ? <Fact label="Expires" value={formatUkDateTime(a.expiresAt, tz)} /> : null}
       {verbal ? (

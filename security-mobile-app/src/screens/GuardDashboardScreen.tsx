@@ -18,6 +18,16 @@ import { GuardCompaniesPanel } from '../components/guard/GuardCompaniesPanel';
 import { GuardCompliancePanel } from '../components/guard/GuardCompliancePanel';
 import { GuardScreeningJourney, GuardScreeningPanel } from '../components/guard/GuardScreeningPanel';
 import { GuardShiftOffersWorkspace } from '../components/guard/GuardShiftOffersWorkspace';
+import { GuardShiftExtensionCard } from '../components/guard/GuardShiftExtensionCard';
+import {
+  GUARD_AMENDMENT_FOREGROUND_MIN_MS,
+  GUARD_AMENDMENT_REFRESH_MS,
+  cardRequestForShift,
+  disputableRequests,
+  guardAmendmentGuidance,
+  isFeatureUnavailable,
+} from '../components/guard/guardShiftAmendments';
+import type { ShiftAmendment } from '../types/models';
 import { JobsScreen } from './JobsScreen';
 import { GuardTimesheetsScreen } from './GuardTimesheetsScreen';
 import { GuardAvailabilityScreen } from './GuardAvailabilityScreen';
@@ -41,6 +51,9 @@ import {
   listMyDailyLogs,
   listMyIncidents,
   listMyShifts,
+  listMyShiftAmendments,
+  respondToShiftAmendment,
+  disputeShiftAmendment,
   listMyTimesheets,
   deleteMyBankDetails,
   removeMyEmergencyContact,
@@ -551,6 +564,18 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const screeningScrollRef = useRef<any>(null);
   const lastLoadTimeRef = useRef<number>(0);
+  /**
+   * Live Shift Amendments (Phase 3). Requests are re-read on the screen's existing minute tick while a shift is live,
+   * on foregrounding and after every full load — never by a timer of their own. An older backend without the routes
+   * answers a plain 404: the feature then stays hidden for the session instead of erroring on every refresh.
+   */
+  const [shiftAmendments, setShiftAmendments] = useState<ShiftAmendment[]>([]);
+  const [amendmentsReadAt, setAmendmentsReadAt] = useState<number | null>(null);
+  const [amendmentSubmitting, setAmendmentSubmitting] = useState(false);
+  const [amendmentProblem, setAmendmentProblem] = useState<{ amendmentId: number; message: string; retryable: boolean } | null>(null);
+  const amendmentsUnavailableRef = useRef(false);
+  const amendmentsReadAtRef = useRef<number>(0);
+  const amendmentInFlightRef = useRef(false);
   // True once the first load has settled, so later refreshes never replace the mounted tree.
   const hasLoadedOnceRef = useRef(false);
 
@@ -1187,6 +1212,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
       setIncidents(incidentRows);
       setDailyLogs(dailyLogRows);
       setTimesheets(timesheetRows);
+      void loadShiftAmendments();
     } catch (error) {
       const message = formatApiErrorMessage(error, 'Failed to load guard dashboard.');
       setLoadError(message);
@@ -1194,6 +1220,67 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
       hasLoadedOnceRef.current = true;
       setLoading(false);
       setRefreshing(false);
+    }
+  }
+
+  /** Re-reads the Guard's extension requests. A failure keeps the last answer shown; its "Checked" time says how old. */
+  async function loadShiftAmendments(minAgeMs = 0) {
+    if (amendmentsUnavailableRef.current) return;
+    if (minAgeMs > 0 && Date.now() - amendmentsReadAtRef.current < minAgeMs) return;
+    amendmentsReadAtRef.current = Date.now();
+    try {
+      const rows = await listMyShiftAmendments();
+      setShiftAmendments(Array.isArray(rows) ? rows : []);
+      setAmendmentsReadAt(Date.now());
+    } catch (error) {
+      if (isFeatureUnavailable(error)) amendmentsUnavailableRef.current = true;
+    }
+  }
+
+  /**
+   * Accept or decline. One answer at a time (a second tap while one is in flight does nothing), and the shift end is
+   * never changed on the device: after the server confirms, the shifts are re-read. A retry after a lost response is
+   * safe — the server returns the stored answer.
+   */
+  async function handleAmendmentAnswer(amendment: ShiftAmendment, response: 'accepted' | 'declined') {
+    if (amendmentInFlightRef.current) return;
+    amendmentInFlightRef.current = true;
+    setAmendmentSubmitting(true);
+    setAmendmentProblem(null);
+    try {
+      const saved = await respondToShiftAmendment(amendment.id, { response });
+      if (response === 'accepted') {
+        pushFeedback('success', 'Extension accepted', `Confirmed by S4. Your shift now ends at ${formatTimeLabel(saved.agreedEnd ?? amendment.proposedEnd ?? '')}.`);
+      } else {
+        pushFeedback('info', 'Extension declined', 'Your shift end has not changed.');
+      }
+      await loadData(true);
+    } catch (error) {
+      const guidance = guardAmendmentGuidance(error);
+      setAmendmentProblem({ amendmentId: amendment.id, message: guidance.message, retryable: guidance.retryable });
+      if (guidance.reload) await loadShiftAmendments();
+    } finally {
+      amendmentInFlightRef.current = false;
+      setAmendmentSubmitting(false);
+    }
+  }
+
+  async function handleAmendmentDispute(amendment: ShiftAmendment, reason: string) {
+    if (amendmentInFlightRef.current) return;
+    amendmentInFlightRef.current = true;
+    setAmendmentSubmitting(true);
+    setAmendmentProblem(null);
+    try {
+      await disputeShiftAmendment(amendment.id, { reason });
+      pushFeedback('info', 'Dispute sent', 'Your company will review it. The extension stays in place until then.');
+      await loadShiftAmendments();
+    } catch (error) {
+      const guidance = guardAmendmentGuidance(error);
+      setAmendmentProblem({ amendmentId: amendment.id, message: guidance.message, retryable: guidance.retryable });
+      if (guidance.reload) await loadShiftAmendments();
+    } finally {
+      amendmentInFlightRef.current = false;
+      setAmendmentSubmitting(false);
     }
   }
 
@@ -1329,6 +1416,8 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
         clearBankReveal();
         if (Date.now() - lastLoadTimeRef.current > 30_000) {
           loadData();
+        } else {
+          void loadShiftAmendments(GUARD_AMENDMENT_FOREGROUND_MIN_MS);
         }
       }
     }
@@ -1413,6 +1502,12 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, currentHomeShift?.id, currentHomeShift?.status,
       sortedShifts.some(s => normalizeShiftLifecycleStatus(s.status) === 'offered')]);
+
+  useEffect(() => {
+    if (activeTab !== 'home' || !currentHomeShift || normalizeShiftLifecycleStatus(currentHomeShift.status) !== 'in_progress') return;
+    void loadShiftAmendments(GUARD_AMENDMENT_REFRESH_MS - 5_000);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveNow]);
 
   useEffect(() => {
     if (!selectedShiftId && currentHomeShift?.id) {
@@ -1748,6 +1843,31 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
       <ScrollView ref={screeningScrollRef} style={styles.scrollView} contentContainerStyle={styles.content}>
         {activeTab === 'home' ? (
           <View style={styles.guardHomeRoot}>
+            {(() => {
+              const cards: Array<{ request: ShiftAmendment; shift: Shift | null }> = [];
+              const live = activeShift ? cardRequestForShift(shiftAmendments, activeShift.id) : null;
+              if (live && activeShift) cards.push({ request: live, shift: activeShift });
+              for (const d of disputableRequests(shiftAmendments)) {
+                if (!cards.some((c) => c.request.id === d.id)) cards.push({ request: d, shift: sortedShifts.find((x) => x.id === d.shiftId) ?? null });
+              }
+              return cards.map(({ request, shift }) => (
+                <GuardShiftExtensionCard
+                  key={`amendment-${request.id}`}
+                  request={request}
+                  shiftHistory={shiftAmendments.filter((a) => a.shiftId === request.shiftId)}
+                  originalEnd={shift?.originalEnd ?? request.originalEnd}
+                  currentEnd={shift?.end ?? request.agreedEnd ?? request.previousEnd ?? ''}
+                  timeZone={shift?.site?.timezone ?? null}
+                  nowMs={liveNow}
+                  submitting={amendmentSubmitting}
+                  problem={amendmentProblem && amendmentProblem.amendmentId === request.id ? amendmentProblem : null}
+                  refreshedAt={amendmentsReadAt}
+                  onAnswer={(response) => { void handleAmendmentAnswer(request, response); }}
+                  onDispute={(reason) => { void handleAmendmentDispute(request, reason); }}
+                  onRefresh={() => { setAmendmentProblem(null); void loadShiftAmendments(); }}
+                />
+              ));
+            })()}
             <FeatureCard
               title="Current Shift"
               subtitle={
