@@ -270,7 +270,16 @@ export class AuthService {
       });
 
       if (membership) {
-        return Array.from(ROLE_PERMISSIONS[membership.membershipRole] ?? []) as string[];
+        const permissions = Array.from(ROLE_PERMISSIONS[membership.membershipRole] ?? []) as string[];
+        // Live Shift Amendments: a Control Room member individually authorised by an Owner or Admin
+        // (company_memberships.canAmendShifts) may propose / withdraw extensions and record verbal agreement, so the
+        // client can show those actions. Display only: every route re-checks the authorisation on the server.
+        if (membership.membershipRole === CompanyMembershipRole.CONTROL_ROOM && membership.canAmendShifts) {
+          for (const p of [CompanyPermission.SHIFTS_AMEND, CompanyPermission.SHIFTS_AMEND_RECORD_AGREEMENT]) {
+            if (!permissions.includes(p)) permissions.push(p);
+          }
+        }
+        return permissions;
       }
 
       // Legacy fallback: pre-P1I owner accounts with no membership row

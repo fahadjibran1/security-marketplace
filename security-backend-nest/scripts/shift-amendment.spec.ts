@@ -531,6 +531,10 @@ async function main() {
       assert.equal((await api('PUT', `/shift-amendments/control-room/${ops.id}`, A.token, { canAmendShifts: true })).status, 422, 'only Control Room members are granted individually');
       const grant = await api('PUT', `/shift-amendments/control-room/${control.id}`, A.token, { canAmendShifts: true });
       assert.equal(grant.status, 200);
+      const shown = async () => (((await auth.getCurrentUser(control.id, 'company_admin' as never)) as any).companyPermissions ?? []) as string[];
+      const granted = await shown();
+      assert.ok(granted.includes('shifts.amend') && granted.includes('shifts.amend.record_agreement'), `the grant is shown to the web app: ${granted}`);
+      assert.ok(!granted.includes('shifts.amend.approve') && !granted.includes('shifts.amend.resolve_dispute'), 'but never approve or resolve');
       assert.equal((await audits('company_membership', (await one(`SELECT id FROM company_memberships WHERE "userId" = $1`, [control.id])).id, 'company_membership.amendment_authorisation')).length, 1);
       const p = await propose(control.token, id, end + HOUR);
       assert.equal(p.status, 201, `authorised control room: ${p.status} ${JSON.stringify(p.body)}`);
@@ -542,6 +546,7 @@ async function main() {
       assert.equal(verbal.status, 200, 'an authorised Control Room member may record agreement');
       assert.equal((await api('PUT', `/shift-amendments/control-room/${control.id}`, A.token, { canAmendShifts: false })).status, 200);
       assert.equal((await propose(control.token, id, end + 2 * HOUR)).status, 403, 'revoked');
+      assert.ok(!(await shown()).some((p) => p.startsWith('shifts.amend')), 'and the revocation is shown too');
     });
 
     await test('LSA-13-DISPUTE-KEEPS-THE-EXTENSION-UNTIL-REVIEWED', async () => {
