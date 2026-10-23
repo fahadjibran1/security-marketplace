@@ -30,3 +30,40 @@ Record for every case: device, OS, app build, time, PASS/FAIL, screenshot, and a
 
 Coordinator read-only checks (staging): `staging-baseline.cjs snapshot` before and after; `staging-guard-contract.cjs`
 and `staging-web-contract.cjs` re-runnable at any time. Production is never touched.
+
+## Build record — Android S4 UAT 1.1.0 (16) — 23 Oct 2026 (owner-approved)
+
+| | |
+|---|---|
+| Source | `c41e129` (integration/uat-mobile-reconcile, draft PR #30; gates 39936143901 / 39936143895 success), clean worktree |
+| EAS build | `5d758b92-4e22-4a9c-8146-713dac4b0356`, profile `uat`, internal distribution, FINISHED 10:51:44Z |
+| Link | https://expo.dev/accounts/fahadjibran/projects/security-marketplace/builds/5d758b92-4e22-4a9c-8146-713dac4b0356 |
+| APK | `s4-uat-1.1.0-vc16-5d758b92.apk` (held in `~/.s4-pilot-secrets/artifacts`), 89,231,065 bytes, SHA-256 `d0d6592f39b7ba2ee03c73f5253109d5b07b33c03eabe20752ff1bafbcee8310` |
+| Identity | `com.sfour.s4.uat`, label "S4 UAT", versionName 1.1.0, versionCode 16, minSdk 24, targetSdk 36, not debuggable |
+| Signer | APK Signature Scheme v2, 1 signer, `CN=S4 Security, OU=S4 Pilot, O=Vesoft Services Limited, C=GB`, SHA-256 `0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b`, RSA 4096 (the permanent S4 key, as the store app and UAT 15) |
+| API | embedded config `extra.apiBaseUrl` = staging, `appVariant: uat`, `updates.enabled: false`; build-time `EXPO_PUBLIC_API_URL` = staging (wins at runtime); the one production string in the bundle is the unused fallback constant |
+| Contents | Live Shift Amendment Guard card present; "S4 UAT · STAGING" label present; no credentials, keystore or `.env` files |
+
+Installs alongside the store app `com.sfour.s4` (different application id) and over UAT 1.1.0 (15). Not submitted,
+published or distributed.
+
+## iOS UAT — owner-operated steps (not started)
+
+No device is registered on Apple team `SXH4TLU2B5` and no `com.sfour.s4.uat` App ID or ad hoc profile exists.
+Ad hoc distribution installs only on registered iPhones.
+
+1. Apple Developer account: if Apple shows a pending Program License Agreement, accept it at
+   developer.apple.com/account (App ID and profile creation fail until it is accepted).
+2. Register each test iPhone. In a terminal in `security-mobile-app` (or `! ` from Claude Code):
+   `npx eas-cli device:create` → choose team `SXH4TLU2B5` → "Website" → open the link on each iPhone in **Safari**,
+   allow the configuration profile, then Settings → General → VPN & Device Management → install. Check with
+   `npx eas-cli device:list --apple-team-id SXH4TLU2B5`.
+3. On each iPhone (iOS 16+): Settings → Privacy & Security → Developer Mode → On (restart when asked). Needed to
+   open an ad hoc build.
+4. Build (interactive Apple sign-in, from a clean checkout of the approved commit):
+   `npx eas-cli build -p ios --profile uat` → sign in with the Apple ID (2FA) → let EAS create the App ID
+   `com.sfour.s4.uat`, reuse the existing Apple Distribution certificate, and create an **ad hoc** provisioning profile
+   containing the registered devices. Do not change the `com.sfour.s4` App Store profile.
+5. Verify before distributing: bundle id `com.sfour.s4.uat`, display name "S4 UAT", embedded API = staging, profile
+   type ad hoc, device list as expected. Adding an iPhone later needs `device:create` again and a rebuild (the
+   profile is regenerated).
