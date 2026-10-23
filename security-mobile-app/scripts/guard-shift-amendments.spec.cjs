@@ -171,7 +171,7 @@ test('G-08-FAILURES-HAVE-A-PLAIN-NEXT-STEP-AND-RETRIES-ARE-SAFE', () => {
   assert.match(g.guardAmendmentGuidance({ status: 404, body: { message: 'Cannot GET' } }).message, /not available to you/);
   // the server answers a repeated answer with the stored result, so a retry after a lost response cannot double-apply
   const service = backendOf('src/shift-amendment/shift-amendment.service.ts');
-  assert.ok(service.includes("if (settled === 'same') return this.view(id);"));
+  assert.ok(service.includes("if (settled === 'same') return this.view(id, 'guard');"), "the stored answer, with the Guard's own figures");
 });
 
 test('G-09-DOUBLE-TAPS-SEND-ONE-ANSWER', () => {
