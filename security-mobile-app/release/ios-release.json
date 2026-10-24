@@ -27,10 +27,10 @@
     "distributionCertificate": "existing Apple Distribution certificate reused (owner, eas credentials); SHA-256 of the DER as embedded in the profile: c1f9c5b6c04f4f37939ade278960a16870c88afd2efca94a75b570aab5830196",
     "provisioningProfile": "*[expo] com.sfour.s4 AppStore 2026-10-23T23:54:04.112Z (B7539588YY, App Store distribution, no device list, with aps-environment production), created 2026-10-23 by the owner from the feature/welfare-push checkout (EAS: \"Synced capabilities: Enabled: Push Notifications\"), expires 2027-06-17. Replaces the 2026-10-08 profile N5P5Y8325N, which had no push entitlement.",
     "note": "Remote (EAS-managed) iOS credentials set up interactively by the owner. Nothing revoked or replaced.",
-    "ascApiKey": "At the 1.1.0 (14) build (2026-10-20) Apple rejected the App Store Connect API key held by EAS (Apple 401: credentials missing or invalid), so EAS validated the provisioning profile locally only. Signing does not need the key; EAS Submit to TestFlight does. Owner action before any submission: check or replace the key in App Store Connect and EAS (not done here)."
+    "ascApiKey": "At the 1.1.0 (14) build (2026-10-20) Apple rejected the key for build-time profile validation (401). On 2026-10-24 the same key, 468TT6N8RB, uploaded 1.1.0 (16) through EAS Submit, so it is valid for submissions; not replaced."
   },
   "artefact": {
-    "status": "certified-not-submitted",
+    "status": "uploaded-to-testflight",
     "marketingVersion": "1.1.0",
     "buildNumber": "16",
     "easBuildId": "7d1a904f-8a21-4428-9b47-08eb6f7cfe5e",
@@ -61,7 +61,14 @@
       "stagingApiUrls": 0,
       "localApiUrls": "one: the web-only localhost development fallback in src/services/api-base-url.ts, unused on iOS"
     },
-    "note": "Welfare Check push update 1.1.0 (16), same commit as Android 1.1.0 (17). Signed with the existing EAS-managed distribution certificate and the push-capable profile B7539588YY; APNs key CXFMNB4HHN held by EAS. Certified locally from the downloaded IPA: Info.plist, embedded profile, executable signature entitlements and main.jsbundle. Not submitted to App Store Connect / TestFlight; the IPA is kept outside Git."
+    "note": "Welfare Check push update 1.1.0 (16), same commit as Android 1.1.0 (17). Signed with the existing EAS-managed distribution certificate and the push-capable profile B7539588YY; APNs key CXFMNB4HHN held by EAS. Certified locally from the downloaded IPA: Info.plist, embedded profile, executable signature entitlements and main.jsbundle. Not submitted to App Store Connect / TestFlight; the IPA is kept outside Git.",
+    "testFlightUpload": {
+      "easSubmissionId": "a5b9ce7d-57a9-4bef-8843-3a7039ab0d50",
+      "ascAppId": "6820632995",
+      "uploadedOn": "2026-10-24",
+      "ascApiKeyId": "468TT6N8RB",
+      "note": "Uploaded by EAS Submit from EAS build 7d1a904f (not rebuilt) to the existing S4 App Store Connect app. Apple processing and adding the build to the existing external TestFlight group are owner steps."
+    }
   },
   "supersededArtefacts": [
     {
@@ -126,7 +133,7 @@
       "supersededBy": "1.1.0 (14) 7333ba4d"
     }
   ],
-  "testFlight": "1.1.0 (13) uploaded 2026-10-08 via EAS Submit (90bd22f5). Owner-confirmed 2026-10-20: App Store Connect has the S4 app with an external TestFlight group of five testers and one associated build; which build that is, and its review state, are not recorded here.",
+  "testFlight": "1.1.0 (13) uploaded 2026-10-08 (EAS Submit 90bd22f5); 1.1.0 (16) uploaded 2026-10-24 (EAS Submit a5b9ce7d). Owner-confirmed 2026-10-20: one external TestFlight group of five testers.",
   "appStore": "NOT SUBMITTED",
   "push": {
     "apnsKeyId": "CXFMNB4HHN",
