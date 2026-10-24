@@ -493,7 +493,14 @@ test('SIGNER-13E-THE-BUILT-VC16-ARTEFACT-IS-SUPERSEDED-BY-THE-WELFARE-PUSH-UPDAT
   assert.equal(superseded.uploadCertificateSha256, config.signer.certificateSha256, 'signed by the permanent S4 key');
   assert.match(superseded.retiredReason, /to be confirmed by the owner/, 'the Play state is not presented as known');
   assert.equal(config.approvedArtefact.versionCode, 17, 'the Welfare Check push update is the next artefact');
-  assert.equal(config.approvedArtefact.status, 'pending-build', 'not built yet');
+  // Built and certified on 24 Oct 2026 (owner-approved EAS production build from 5a562f1); not uploaded to Play.
+  assert.equal(config.approvedArtefact.status, 'certified-awaiting-play', 'built and certified, not yet in Play');
+  assert.equal(config.approvedArtefact.easBuildId, 'dd77f96d-44cd-4d60-aa61-45f2b9a059ee');
+  assert.equal(config.approvedArtefact.gitCommit, '5a562f163a613dc780871345ee9e55d1ac1f24ef');
+  assert.equal(config.approvedArtefact.aabSha256, 'c82e0c40ea67ad4eb7c2ad42408973462bca3e3dcec29a312c5f82999934f9fa');
+  assert.equal(config.approvedArtefact.uploadCertificateSha256, config.signer.certificateSha256, 'signed by the permanent S4 key');
+  assert.equal(config.approvedArtefact.verified.package, 'com.sfour.s4');
+  assert.equal(config.approvedArtefact.verified.versionCode, 17);
   assert.equal(config.expectedRelease.versionCode, 17);
   // The Firebase client file and FCM key are EAS-held, never recorded here.
   assert.doesNotMatch(JSON.stringify(config), /private_key|api_key|current_key|BEGIN [A-Z ]*PRIVATE KEY/);

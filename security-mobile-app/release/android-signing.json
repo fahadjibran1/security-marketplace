@@ -39,8 +39,31 @@
   "approvedArtefact": {
     "versionName": "1.1.0",
     "versionCode": 17,
-    "status": "pending-build",
-    "note": "Welfare Check push update 1.1.0 (17): the pilot update (e539b89) plus Welfare Check push notifications (feature/welfare-push, PR #32), against the production API. Android push uses the S4 Firebase project sfour4-fe7fd through the EAS file variable GOOGLE_SERVICES_JSON and the FCM V1 service-account key held by EAS; neither is in the repository. Pending: not built. Build and Play Internal Testing upload only on owner approval."
+    "status": "certified-awaiting-play",
+    "easBuildId": "dd77f96d-44cd-4d60-aa61-45f2b9a059ee",
+    "easBuildUrl": "https://expo.dev/accounts/fahadjibran/projects/security-marketplace/builds/dd77f96d-44cd-4d60-aa61-45f2b9a059ee",
+    "easBuildProfile": "production",
+    "distribution": "STORE",
+    "gitCommit": "5a562f163a613dc780871345ee9e55d1ac1f24ef",
+    "aabFilename": "s4-1.1.0-vc17-dd77f96d.aab",
+    "aabSha256": "c82e0c40ea67ad4eb7c2ad42408973462bca3e3dcec29a312c5f82999934f9fa",
+    "aabSizeBytes": 59094503,
+    "uploadCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
+    "completedAt": "2026-10-24T00:19:13Z",
+    "certifiedOn": "2026-10-24",
+    "verified": {
+      "package": "com.sfour.s4",
+      "versionCode": 17,
+      "versionName": "1.1.0",
+      "postNotificationsPermission": true,
+      "firebaseMessagingService": true,
+      "firebaseProject": "sfour4-fe7fd (project number 852895409327, from google_app_id in resources)",
+      "defaultNotificationChannel": "welfare-checks",
+      "apiBaseUrl": "https://security-marketplace-api.onrender.com",
+      "stagingApiUrls": 0,
+      "localApiUrls": "one: the web-only localhost development fallback in src/services/api-base-url.ts (since 5c2d901, unchanged), never used by a native build that sets EXPO_PUBLIC_API_URL"
+    },
+    "note": "Welfare Check push update 1.1.0 (17) from feature/welfare-push 5a562f1 (draft PR #32, unmerged), production API. Built by EAS with the local upload key from the git-ignored credentials.json (copied into the build tree for the build and removed straight after; not regenerated or rotated) and the Firebase client file from the EAS production file variable GOOGLE_SERVICES_JSON. Certified locally from the downloaded AAB: compiled manifest, resources, JS bundle and signer via keytool -printcert. Not uploaded to Google Play; the AAB is kept outside Git in the owner secrets artifacts folder. Push reminders also need the backend (PR #32, Migration 65) and the reminder switch, neither of which is live."
   },
   "retiredArtefacts": [
     {

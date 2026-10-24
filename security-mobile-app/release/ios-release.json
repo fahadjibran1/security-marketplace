@@ -25,40 +25,43 @@
   "signing": {
     "status": "created-eas-managed",
     "distributionCertificate": "existing Apple Distribution certificate reused (owner, eas credentials); SHA-256 of the DER as embedded in the profile: c1f9c5b6c04f4f37939ade278960a16870c88afd2efca94a75b570aab5830196",
-    "provisioningProfile": "*[expo] com.sfour.s4 AppStore 2026-10-08T18:00:31.293Z (App Store distribution, no device list), created 2026-10-08, expires 2027-06-17",
+    "provisioningProfile": "*[expo] com.sfour.s4 AppStore 2026-10-23T23:54:04.112Z (B7539588YY, App Store distribution, no device list, with aps-environment production), created 2026-10-23 by the owner from the feature/welfare-push checkout (EAS: \"Synced capabilities: Enabled: Push Notifications\"), expires 2027-06-17. Replaces the 2026-10-08 profile N5P5Y8325N, which had no push entitlement.",
     "note": "Remote (EAS-managed) iOS credentials set up interactively by the owner. Nothing revoked or replaced.",
     "ascApiKey": "At the 1.1.0 (14) build (2026-10-20) Apple rejected the App Store Connect API key held by EAS (Apple 401: credentials missing or invalid), so EAS validated the provisioning profile locally only. Signing does not need the key; EAS Submit to TestFlight does. Owner action before any submission: check or replace the key in App Store Connect and EAS (not done here)."
   },
   "artefact": {
     "status": "certified-not-submitted",
     "marketingVersion": "1.1.0",
-    "buildNumber": "14",
-    "easBuildId": "7333ba4d-be48-41d9-8527-9950dad1fa0a",
-    "easBuildUrl": "https://expo.dev/accounts/fahadjibran/projects/security-marketplace/builds/7333ba4d-be48-41d9-8527-9950dad1fa0a",
+    "buildNumber": "16",
+    "easBuildId": "7d1a904f-8a21-4428-9b47-08eb6f7cfe5e",
+    "easBuildUrl": "https://expo.dev/accounts/fahadjibran/projects/security-marketplace/builds/7d1a904f-8a21-4428-9b47-08eb6f7cfe5e",
     "easBuildProfile": "production",
     "distribution": "STORE",
-    "gitCommit": "6b8e41b679bfa3726ae4ca21d36701fafb2a38c7",
-    "easFingerprint": "991b0f92be0f8cca8d41a7cda183261262afd953",
-    "ipaFilename": "s4-1.1.0-ios14-7333ba4d.ipa",
-    "ipaSha256": "af4cb849dc274923630782974ce3725e35ef30682f82e8eddc3cb51b8496ca4f",
-    "ipaSizeBytes": 9389194,
-    "completedAt": "2026-10-20T16:16:08Z",
-    "certifiedOn": "2026-10-20",
+    "gitCommit": "5a562f163a613dc780871345ee9e55d1ac1f24ef",
+    "ipaFilename": "s4-1.1.0-ios16-7d1a904f.ipa",
+    "ipaSha256": "945c77a6cbc516541f585df87f612f8219dc4c013f91460ea45ced941f026d07",
+    "ipaSizeBytes": 9698771,
+    "completedAt": "2026-10-24T00:16:46Z",
+    "certifiedOn": "2026-10-24",
     "verified": {
       "bundleIdentifier": "com.sfour.s4",
+      "displayName": "S4",
       "marketingVersion": "1.1.0",
-      "buildNumber": "14",
+      "buildNumber": "16",
       "minimumOSVersion": "15.1",
       "usesNonExemptEncryption": false,
       "allowsArbitraryLoads": false,
-      "provisioningProfile": "*[expo] com.sfour.s4 AppStore 2026-10-08T18:00:31.293Z (no device list, expires 2027-06-17)",
+      "backgroundModes": null,
+      "provisioningProfile": "*[expo] com.sfour.s4 AppStore 2026-10-23T23:54:04.112Z (B7539588YY)",
+      "profileApsEnvironment": "production",
+      "signedEntitlementsApsEnvironment": "production",
       "teamId": "SXH4TLU2B5",
       "getTaskAllow": false,
-      "distributionCertificateSha256": "c1f9c5b6c04f4f37939ade278960a16870c88afd2efca94a75b570aab5830196",
       "apiBaseUrl": "https://security-marketplace-api.onrender.com",
-      "stagingOrLocalApiUrls": 0
+      "stagingApiUrls": 0,
+      "localApiUrls": "one: the web-only localhost development fallback in src/services/api-base-url.ts, unused on iOS"
     },
-    "note": "Guard release 1.1.0 (14), same commit as Android 1.1.0 (15). Signed with the existing EAS-managed distribution certificate and App Store profile (unchanged). Certified locally from the downloaded IPA: Info.plist, embedded profile, signing certificate and main.jsbundle. Not submitted to App Store Connect / TestFlight; the IPA is kept outside Git."
+    "note": "Welfare Check push update 1.1.0 (16), same commit as Android 1.1.0 (17). Signed with the existing EAS-managed distribution certificate and the push-capable profile B7539588YY; APNs key CXFMNB4HHN held by EAS. Certified locally from the downloaded IPA: Info.plist, embedded profile, executable signature entitlements and main.jsbundle. Not submitted to App Store Connect / TestFlight; the IPA is kept outside Git."
   },
   "supersededArtefacts": [
     {
@@ -77,6 +80,38 @@
       "supersededBy": "1.1.0 (16), Welfare Check push notifications"
     },
     {
+      "status": "certified-superseded",
+      "marketingVersion": "1.1.0",
+      "buildNumber": "14",
+      "easBuildId": "7333ba4d-be48-41d9-8527-9950dad1fa0a",
+      "easBuildUrl": "https://expo.dev/accounts/fahadjibran/projects/security-marketplace/builds/7333ba4d-be48-41d9-8527-9950dad1fa0a",
+      "easBuildProfile": "production",
+      "distribution": "STORE",
+      "gitCommit": "6b8e41b679bfa3726ae4ca21d36701fafb2a38c7",
+      "easFingerprint": "991b0f92be0f8cca8d41a7cda183261262afd953",
+      "ipaFilename": "s4-1.1.0-ios14-7333ba4d.ipa",
+      "ipaSha256": "af4cb849dc274923630782974ce3725e35ef30682f82e8eddc3cb51b8496ca4f",
+      "ipaSizeBytes": 9389194,
+      "completedAt": "2026-10-20T16:16:08Z",
+      "certifiedOn": "2026-10-20",
+      "verified": {
+        "bundleIdentifier": "com.sfour.s4",
+        "marketingVersion": "1.1.0",
+        "buildNumber": "14",
+        "minimumOSVersion": "15.1",
+        "usesNonExemptEncryption": false,
+        "allowsArbitraryLoads": false,
+        "provisioningProfile": "*[expo] com.sfour.s4 AppStore 2026-10-08T18:00:31.293Z (no device list, expires 2027-06-17)",
+        "teamId": "SXH4TLU2B5",
+        "getTaskAllow": false,
+        "distributionCertificateSha256": "c1f9c5b6c04f4f37939ade278960a16870c88afd2efca94a75b570aab5830196",
+        "apiBaseUrl": "https://security-marketplace-api.onrender.com",
+        "stagingOrLocalApiUrls": 0
+      },
+      "note": "Guard release 1.1.0 (14), same commit as Android 1.1.0 (15). Signed with the existing EAS-managed distribution certificate and App Store profile (unchanged). Certified locally from the downloaded IPA: Info.plist, embedded profile, signing certificate and main.jsbundle. Not submitted to App Store Connect / TestFlight; the IPA is kept outside Git.",
+      "supersededBy": "1.1.0 (16) 7d1a904f"
+    },
+    {
       "status": "uploaded-to-testflight",
       "easBuildId": "fa7c7560-f734-4bbe-a86e-5224811f624c",
       "easBuildProfile": "production",
@@ -93,17 +128,11 @@
   ],
   "testFlight": "1.1.0 (13) uploaded 2026-10-08 via EAS Submit (90bd22f5). Owner-confirmed 2026-10-20: App Store Connect has the S4 app with an external TestFlight group of five testers and one associated build; which build that is, and its review state, are not recorded here.",
   "appStore": "NOT SUBMITTED",
-  "nextArtefact": {
-    "marketingVersion": "1.1.0",
-    "buildNumber": "16",
-    "status": "pending-build",
-    "note": "Welfare Check push update 1.1.0 (16) for the existing TestFlight group: same source as Android 1.1.0 (17), production API. Pending: not built, not submitted. Requires the push-capable provisioning profile above. Build and TestFlight upload only on owner approval."
-  },
   "push": {
     "apnsKeyId": "CXFMNB4HHN",
     "apnsKeyHeldBy": "EAS (assigned to com.sfour.s4, team SXH4TLU2B5); the .p8 is never in the repository",
     "unusedApnsKeyId": "DSKX62396R (created manually by the owner, not assigned in EAS)",
     "entitlement": "aps-environment production, from the expo-notifications config plugin",
-    "provisioningProfile": "The 2026-10-08 App Store profile has no aps-environment entitlement. Before build 16 the App ID must have Push Notifications enabled and EAS must hold a regenerated App Store profile that includes it, made with the same distribution certificate."
+    "provisioningProfile": "B7539588YY includes aps-environment production (verified 2026-10-24 from EAS and from the IPA). Made with the same distribution certificate."
   }
 }
