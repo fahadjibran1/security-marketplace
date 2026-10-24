@@ -29,6 +29,8 @@
  *   WPN-15  regression: the safety sweep still runs and records nothing new for a due window; reminders create no alert
  *   WPN-16  the reminder timer is single-flight
  *   WPN-17  a password reset revokes the account's devices and account deletion removes them, in the same transactions
+ *   WPN-18  company allowlist: with PUSH_WELFARE_REMINDER_COMPANY_IDS=9 company 9's Guards are reminded and company 8's
+ *           are not; a missing, empty or invalid allowlist reminds no company even with reminders switched on
  */
 process.env.TZ = 'UTC';
 
@@ -55,6 +57,8 @@ process.env.GUARD_DATA_HMAC_KEY ||= 'fedcba9876543210fedcba9876543210fedcba98765
 delete process.env.RESEND_API_KEY;
 delete process.env.EXPO_ACCESS_TOKEN;
 process.env.PUSH_WELFARE_REMINDERS_ENABLED = 'true';
+// The pilot allowlist: company A below is created as company 9 and company B as company 8, as in production.
+process.env.PUSH_WELFARE_REMINDER_COMPANY_IDS = '9';
 delete process.env.WELFARE_REMINDER_FOLLOW_UP_MINUTES_BEFORE_END;
 
 let passed = 0;
@@ -175,15 +179,15 @@ async function main() {
     const auth = app.get(AuthService);
     const login = async (email: string) => ((await auth.login({ email, password: PASSWORD } as never)) as any).accessToken as string;
 
-    const company = async (label: string, number: string) => {
+    const company = async (companyId: number, label: string, number: string) => {
       const ownerEmail = `${label}.owner@example.invalid`;
       const ownerId = await user(ownerEmail, 'company_admin');
-      const { id } = await one(`INSERT INTO companies ("userId",name,"companyNumber",address,"contactDetails") VALUES ($1,$2,$3,'1 Way','ops@example.invalid') RETURNING id`, [ownerId, `${label} Security Ltd`, number]);
+      const { id } = await one(`INSERT INTO companies (id,"userId",name,"companyNumber",address,"contactDetails") VALUES ($1,$2,$3,$4,'1 Way','ops@example.invalid') RETURNING id`, [companyId, ownerId, `${label} Security Ltd`, number]);
       const siteId = (await one(`INSERT INTO sites ("companyId",name,address,timezone) VALUES ($1,'Harbour Gate','2 Way','Europe/London') RETURNING id`, [id])).id as number;
       return { id: id as number, ownerId, siteId, token: await login(ownerEmail) };
     };
-    const A = await company('wpnalpha', '77555555');
-    const B = await company('wpnbeta', '77666666');
+    const A = await company(9, 'wpnalpha', '77555555');
+    const B = await company(8, 'wpnbeta', '77666666');
     const adminEmail = 'wpn.platform.admin@example.invalid';
     await user(adminEmail, 'admin');
     const adminToken = await login(adminEmail);
@@ -555,6 +559,47 @@ async function main() {
         /await this\.sessions\.revokeAllForUser\(user\.id, 'password_change', manager\);\s*await revokePushDevicesForUser\(manager, user\.id, 'password_change'\);/);
       assert.match(src('src/auth/account-deletion.service.ts'),
         /await this\.sessions\.revokeAllForUser\(userId, 'account_deleted', manager\);\s*await removePushDevicesForUser\(manager, userId\);/);
+    });
+
+    await test('WPN-18-ONLY-ALLOWLISTED-COMPANIES-ARE-REMINDED-AND-THE-ALLOWLIST-FAILS-CLOSED', async () => {
+      const { parseReminderCompanyIds } = await import('../src/welfare-push/welfare-push.service');
+      assert.deepEqual(parseReminderCompanyIds('9'), [9]);
+      assert.deepEqual(parseReminderCompanyIds(' 8, 9 ,9'), [8, 9]);
+      for (const bad of [undefined, null, '', '   ', ',', 'all', '*', '9,abc', '9;8', '0', '-9', '9.5', '09', '1e3', '99999999999']) {
+        assert.deepEqual(parseReminderCompanyIds(bad as never), [], `${JSON.stringify(bad)} names no company`);
+      }
+
+      // Switched on with no usable allowlist: the run reads no shift and sends nothing. The stub has no repositories, so
+      // any read would throw.
+      for (const ids of [undefined, '', 'all', '9,x']) {
+        const closed = Object.create(WelfarePushService.prototype) as InstanceType<typeof WelfarePushService>;
+        (closed as any).config = { get: (key: string) => (key === 'PUSH_WELFARE_REMINDERS_ENABLED' ? 'true' : ids) };
+        assert.equal(closed.remindersEnabled(), true);
+        assert.deepEqual(closed.reminderCompanyIds(), []);
+        const counters = await closed.runReminderJob(new Date());
+        assert.equal(counters.shiftsChecked, 0, `allowlist ${JSON.stringify(ids)} reminds no company`);
+      }
+      assert.deepEqual(push.reminderCompanyIds(), [9], 'this suite allows company 9 only');
+
+      // Live: a Guard of company 9 and a Guard of company 8, both Booked On with a Welfare window open and a phone.
+      const g9 = await guard('wpn-co9', A);
+      const g8 = await guard('wpn-co8', B);
+      await device(g9, token(1800));
+      await device(g8, token(1801));
+      const s9 = await liveShift(g9, 10 * MIN, 50 * MIN, 60, A);
+      const s8 = await liveShift(g8, 10 * MIN, 50 * MIN, 60, B);
+      assert.equal(A.id, 9);
+      assert.equal(B.id, 8);
+      await run(s9.S + 11 * MIN);
+      assert.deepEqual((await reminders(s9.id)).map((r: any) => [r.kind, r.status]), [['window_open', 'provider_accepted']], 'company 9 is reminded');
+      assert.equal(sentTo(s9.id).length, 1);
+      assert.equal((await reminders(s8.id)).length, 0, 'company 8 gets no reminder row');
+      assert.equal(sentTo(s8.id).length, 0, 'and nothing is sent to its Guard');
+      // Company 8's Welfare Check itself is unchanged: still due, and the Guard can still record it in the app.
+      const ops8 = (await api('GET', `/coverage/operations?shiftIds=${s8.id}`, B.token)).body[0];
+      assert.equal(ops8.operations.welfareReminders?.length ?? 0, 0);
+      const check = await api('POST', '/daily-logs', g8.token, { shiftId: s8.id, message: 'All quiet.', logType: 'welfare_check' });
+      assert.equal(check.status, 201, `in-app check: ${check.status} ${JSON.stringify(check.body)}`);
     });
   } finally {
     await app.close();

@@ -48,6 +48,17 @@ const RECEIPT_GIVE_UP_MS = 24 * 60 * 60_000;
 const STALE_SENDING_MS = 2 * 60_000;
 const RETRY_AFTER_MS = 60_000;
 
+/**
+ * PUSH_WELFARE_REMINDER_COMPANY_IDS: the companies whose Guards receive reminders, e.g. "9" or "8,9". Fail-closed: missing,
+ * empty, or any entry that is not a positive whole number means no company at all, never every company.
+ */
+export function parseReminderCompanyIds(raw: string | undefined | null): number[] {
+  const entries = String(raw ?? '').split(',').map((entry) => entry.trim());
+  if (entries.every((entry) => entry === '')) return [];
+  if (!entries.every((entry) => /^[1-9]\d{0,9}$/.test(entry))) return [];
+  return [...new Set(entries.map(Number))].filter((id) => Number.isSafeInteger(id));
+}
+
 export const WELFARE_NOTIFICATION_TITLE = 'S4 — Welfare Check';
 export const WELFARE_NOTIFICATION_CATEGORY = 'welfare_check';
 export const WELFARE_NOTIFICATION_CHANNEL = 'welfare-checks';
@@ -164,6 +175,11 @@ export class WelfarePushService implements OnModuleInit, OnModuleDestroy {
     return this.config.get<string>('PUSH_WELFARE_REMINDERS_ENABLED')?.trim().toLowerCase() === 'true';
   }
 
+  /** The companies reminders are sent for; [] (none) unless PUSH_WELFARE_REMINDER_COMPANY_IDS names valid ids. */
+  reminderCompanyIds(): number[] {
+    return parseReminderCompanyIds(this.config.get<string>('PUSH_WELFARE_REMINDER_COMPANY_IDS'));
+  }
+
   private followUpMinutes(): number {
     const raw = this.config.get<string>('WELFARE_REMINDER_FOLLOW_UP_MINUTES_BEFORE_END');
     if (raw === undefined || raw === null || String(raw).trim() === '') return WELFARE_FOLLOW_UP_DEFAULT_MINUTES_BEFORE_END;
@@ -216,10 +232,13 @@ export class WelfarePushService implements OnModuleInit, OnModuleDestroy {
       shiftsChecked: 0, remindersSent: 0, noDevice: 0, failed: 0, retried: 0, receiptsChecked: 0, devicesRevoked: 0,
     };
     if (!this.remindersEnabled()) return counters;
+    const companyIds = this.reminderCompanyIds();
+    if (!companyIds.length) return counters;
 
-    // Only shifts a Guard is Booked On to. Cancelled, completed (Booked Off) and not-started shifts are never read.
+    // Only shifts a Guard is Booked On to, in the allowed companies. Cancelled, completed (Booked Off) and not-started
+    // shifts are never read.
     const shifts = await this.shiftRepo.find({
-      where: { status: 'in_progress' },
+      where: { status: 'in_progress', company: { id: In(companyIds) } },
       relations: { company: true, guard: true, assignment: { guard: true }, site: true },
       loadEagerRelations: false,
       order: { start: 'ASC' },
