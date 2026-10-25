@@ -146,6 +146,11 @@ interface GuardDashboardScreenProps {
 type GuardTab = 'home' | 'offers' | 'jobs' | 'history' | 'profile' | 'screening' | 'companies' | 'inbox';
 /** Minimum age before a foreground return re-reads the inbox. */
 const INBOX_FOREGROUND_MIN_MS = 15_000;
+/** Added to a shift-offer answer when it was saved but the dashboard re-read after it failed. */
+const RESPONSE_SAVED_REFRESH_FAILED = 'Your response was saved, but the screen could not refresh. Pull down to refresh.';
+/** Added to a shift-offer answer that failed without a definite reply from the server. */
+const RESPONSE_OUTCOME_UNKNOWN =
+  'Check your connection. Your response may already have been saved: pull down on Offers or open Home to check before trying again, or contact your control room.';
 /** The open form, identified by the canonical action it raises. */
 type QuickActionModal = GuardActionKey | null;
 
@@ -604,6 +609,8 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const screeningScrollRef = useRef<any>(null);
   const lastLoadTimeRef = useRef<number>(0);
+  // Whether the latest dashboard read failed (its error is shown on screen); read after a shift-offer answer.
+  const lastLoadFailedRef = useRef(false);
   /**
    * Live Shift Amendments (Phase 3). Requests are re-read on the screen's existing minute tick while a shift is live,
    * on foregrounding and after every full load — never by a timer of their own. An older backend without the routes
@@ -1255,9 +1262,11 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
       setDailyLogs(dailyLogRows);
       setTimesheets(timesheetRows);
       void loadShiftAmendments();
+      lastLoadFailedRef.current = false;
     } catch (error) {
       const message = formatApiErrorMessage(error, 'Failed to load guard dashboard.');
       setLoadError(message);
+      lastLoadFailedRef.current = true;
     } finally {
       hasLoadedOnceRef.current = true;
       setLoading(false);
@@ -1474,20 +1483,24 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
         response === 'accepted' ? 'Shift accepted' : 'Shift declined',
         response === 'accepted' ? 'Shift is ready to start.' : 'Company can now arrange replacement cover.',
       );
-      await loadData();
+      // The answer is saved: say so now and free the buttons. The dashboard re-read runs in the background, because a
+      // slow or stalled read once left a Guard on "Accepting…" after the server had already recorded the acceptance.
+      const title = response === 'accepted' ? 'Shift accepted' : 'Shift declined';
+      const message = response === 'accepted' ? 'Your shift is ready.' : 'The company can now arrange replacement cover.';
       setActiveTab(response === 'accepted' ? 'home' : 'offers');
-      pushFeedback(
-        'success',
-        response === 'accepted' ? 'Shift accepted' : 'Shift declined',
-        response === 'accepted' ? 'Your shift is ready.' : 'The company can now arrange replacement cover.',
-      );
+      pushFeedback('success', title, message);
+      void loadData().then(() => {
+        if (lastLoadFailedRef.current) pushFeedback('info', title, `${message} ${RESPONSE_SAVED_REFRESH_FAILED}`);
+      });
     } catch (error) {
+      // In every failure case the answer is shown first and the offers are re-read in the background, so the buttons
+      // never wait on that read.
       // The shift had already ended when the Guard accepted (server rule, SHIFT_OFFER_EXPIRED): say exactly that,
       // not "withdrawn", so the Guard knows to call control rather than wonder what changed.
       if (isOfferExpiredError(error)) {
-        await loadData();
         pushFeedback('info', OFFER_EXPIRED_TITLE, OFFER_EXPIRED_MESSAGE);
         showAlert(OFFER_EXPIRED_TITLE, OFFER_EXPIRED_MESSAGE);
+        void loadData();
         return;
       }
       // HTTP 400 "Only offered shifts" or 409 conflict = offer was withdrawn/changed before the guard responded
@@ -1495,17 +1508,19 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
         (error instanceof ApiError && (error.status === 409 || error.status === 400)) ||
         formatApiErrorMessage(error, '').toLowerCase().includes('only offered shifts');
 
-      await loadData();
-
       if (isStaleOffer) {
         const staleMessage = 'Offer no longer available. This shift was changed or withdrawn before you responded.';
         pushFeedback('info', 'Offer no longer available', staleMessage);
         showAlert('Offer no longer available', staleMessage);
       } else {
-        const message = formatApiErrorMessage(error, 'Unable to update this shift response.');
+        // No answer, a timeout or a server error says nothing about whether the server recorded the response (in
+        // production an acceptance was saved while the phone heard nothing back), so the Guard is told how to check.
+        const outcomeUnknown = !(error instanceof ApiError) || error.status >= 500;
+        const message = `${formatApiErrorMessage(error, 'Unable to update this shift response.')}${outcomeUnknown ? ` ${RESPONSE_OUTCOME_UNKNOWN}` : ''}`;
         pushFeedback('error', response === 'accepted' ? 'Accept failed' : 'Decline failed', message);
         showAlert(response === 'accepted' ? 'Accept failed' : 'Decline failed', message);
       }
+      void loadData();
     } finally {
       respondInFlightRef.current = false;
       setRespondingShiftId(null);

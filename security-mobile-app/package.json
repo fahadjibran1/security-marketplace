@@ -82,7 +82,8 @@
     "test:account-lifecycle": "node scripts/account-lifecycle-ui.spec.cjs",
     "test:store-identity": "node scripts/store-identity.spec.cjs",
     "test:welfare-push": "node scripts/welfare-push.spec.cjs",
-    "test:guard-inbox": "node scripts/guard-inbox.spec.cjs"
+    "test:guard-inbox": "node scripts/guard-inbox.spec.cjs",
+    "test:push-registration-accept": "node scripts/push-registration-and-accept.spec.cjs"
   },
   "dependencies": {
     "@expo/metro-runtime": "~6.1.2",

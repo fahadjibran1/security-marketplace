@@ -234,7 +234,9 @@ test('G-14-AN-OLDER-BACKEND-HIDES-THE-FEATURE-QUIETLY', () => {
 test('G-15-EXISTING-SHIFT-AND-ATTENDANCE-PATHS-ARE-UNTOUCHED', () => {
   // Fingerprints of the Book On, Book Off and shift-offer handlers exactly as shipped: Book On / Book Off as in the
   // Android 1.1.0 (15) / iOS 1.1.0 (14) build source 6b8e41b, and the offer answer as in the preserved archive
-  // (tag archive/welfare-alert-remediation → 8825c11, which adds the ended-offer rule of 5f9795d). Any edit to them
+  // (tag archive/welfare-alert-remediation → 8825c11, which adds the ended-offer rule of 5f9795d), with one deliberate
+  // change: the answer is confirmed without waiting on the dashboard re-read, and an answer with no definite reply says
+  // how to check (push-registration-and-accept.spec.cjs, ACCEPT-01..04). Any other edit to them
   // fails here. The amendment work adds to this screen and removes nothing.
   const raw = codeOf('src/screens/GuardDashboardScreen.tsx');
   const fp = (name) => {
@@ -244,7 +246,7 @@ test('G-15-EXISTING-SHIFT-AND-ATTENDANCE-PATHS-ARE-UNTOUCHED', () => {
   };
   assert.equal(fp('handleCheckIn'), 'de3fdd408ead604d', 'Book On as shipped in 1.1.0');
   assert.equal(fp('handleCheckOut'), '3c8e7358c7d02070', 'Book Off as shipped in 1.1.0 (confirmation)');
-  assert.equal(fp('handleRespondToShift'), '34e8142fd85867d3', 'shift-offer answers as in the preserved archive');
+  assert.equal(fp('handleRespondToShift'), '80a76b8145563727', 'shift-offer answers as in the preserved archive, confirmed without waiting on the re-read');
   for (const fn of ['respondToShift(', 'checkIn', 'checkOut', 'createIncident', 'createDailyLog']) {
     assert.ok(codeOf('src/services/api.ts').includes(fn), `${fn} still in the client`);
   }

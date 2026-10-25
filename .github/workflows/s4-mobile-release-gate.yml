@@ -398,6 +398,13 @@ jobs:
       - name: Verify the Guard notifications inbox
         run: npm run test:guard-inbox
 
+      # Production, 25 Oct 2026: the Guard app registered its push token in a loop (the token fetch reports itself to the
+      # token listener), and an accepted offer waited on a dashboard re-read before confirming. Runs the real
+      # pushNotifications.ts, App and Guard dashboard: one registration per session start and per changed token, sign-out
+      # and sign-in, and an answer confirmed without waiting on the re-read.
+      - name: Verify push registration and offer answers
+        run: npm run test:push-registration-accept
+
       - name: Verify Expo dependency compatibility
         run: npx expo install --check
 
