@@ -2,7 +2,8 @@
  * Live Shift Amendments, Phase 1 (owner-approved 22 Oct 2026) — certification over real HTTP with real authorisation,
  * audit and notifications, on a disposable database built from the repository's own migrations (head 64).
  *
- *   LSA-01  feature flag: off by default for every company; only the S4 platform administrator switches it
+ *   LSA-01  standard feature: on for every company without activation (defaults 12/14/16/11/48/10); a company cannot
+ *           change the switch; only the S4 platform administrator switches one company off (emergency), audited
  *   LSA-02  normal extension accepted in the app: shift end moves, originalEnd kept, draft timesheet synced, audited
  *   LSA-03  declined: nothing changes
  *   LSA-04  withdrawn: the Guard can no longer answer
@@ -35,6 +36,8 @@
  *           no self-escalation or cross-company grant
  *   LSA-25  stored amendments, history, approvals and refusals never show a company another company's rest gap or 7-day
  *           hours (warnings and approval stay; the Guard keeps their own figures; legacy rows withheld)
+ *   LSA-26  platform safety limits: every threshold can be made stricter, never weaker (refused, named, unchanged,
+ *           unaudited); a row loosened outside the API is applied at the limits
  *
  * Deterministic races (the shift row, or the Guard lock, is held by a separate transaction until both requests are
  * queued behind it in a known order):
@@ -239,24 +242,52 @@ async function main() {
 
     // ════════════════ the feature flag ════════════════
 
-    await test('LSA-01-OFF-BY-DEFAULT-AND-ONLY-S4-SWITCHES-IT', async () => {
+    await test('LSA-01-ON-BY-DEFAULT-AND-ONLY-S4-CAN-SWITCH-A-COMPANY-OFF', async () => {
+      // Standard feature: a company that nobody has configured (no policy row) can extend, with the default safeguards.
+      for (const co of [A, B]) {
+        const policy = await api('GET', '/shift-amendments/policy', co.token);
+        assert.equal(policy.status, 200);
+        assert.equal(policy.body.amendmentsEnabled, true, `company ${co.id} has amendments without activation`);
+        assert.equal(policy.body.source, 'default');
+        assert.deepEqual(
+          [policy.body.fatigueWarningHours, policy.body.approvalRequiredHours, policy.body.hardLimitHours, policy.body.minRestHours, policy.body.weeklyReviewHours, policy.body.lastMinuteWarningMinutes],
+          [12, 14, 16, 11, 48, 10],
+        );
+      }
       const g = await guard('lsa-flag');
       const id = await liveShift(g, -HOUR, 2 * HOUR);
-      const r = await propose(A.token, id, Date.now() + 3 * HOUR);
-      assert.equal(r.status, 403, `${r.status} ${JSON.stringify(r.body)}`);
-      assert.equal(r.body.code, 'SHIFT_AMENDMENTS_DISABLED');
-      const policy = await api('GET', '/shift-amendments/policy', A.token);
-      assert.equal(policy.body.amendmentsEnabled, false);
-      assert.equal(policy.body.source, 'default');
-      const self = await api('PUT', `/admin/shift-amendments/companies/${A.id}`, A.token, { enabled: true });
-      assert.equal(self.status, 403, 'a company cannot switch amendments on for itself');
-      const tryPolicy = await api('PUT', '/shift-amendments/policy', A.token, { amendmentsEnabled: true });
+      const assessed = await api('POST', `/shifts/${id}/amendments/assessment`, A.token, { proposedEnd: iso(Date.now() + 3 * HOUR) });
+      assert.equal(assessed.status, 200, `default-on company can assess: ${assessed.status} ${JSON.stringify(assessed.body)}`);
+
+      // A company can never change the switch for itself, on or off.
+      for (const enabled of [false, true]) {
+        const self = await api('PUT', `/admin/shift-amendments/companies/${A.id}`, A.token, { enabled });
+        assert.equal(self.status, 403, `a company cannot switch amendments ${enabled ? 'on' : 'off'} for itself`);
+      }
+      const tryPolicy = await api('PUT', '/shift-amendments/policy', A.token, { amendmentsEnabled: false });
       assert.equal(tryPolicy.status, 400, 'nor through the policy route (unknown field)');
+
+      // The S4 platform administrator's emergency switch: off for A only, audited; B is unaffected.
+      const off = await api('PUT', `/admin/shift-amendments/companies/${A.id}`, adminToken, { enabled: false });
+      assert.equal(off.status, 200, `${off.status} ${JSON.stringify(off.body)}`);
       assert.equal((await api('GET', '/shift-amendments/policy', A.token)).body.amendmentsEnabled, false);
+      const refused = await propose(A.token, id, Date.now() + 3 * HOUR);
+      assert.equal(refused.status, 403, `${refused.status} ${JSON.stringify(refused.body)}`);
+      assert.equal(refused.body.code, 'SHIFT_AMENDMENTS_DISABLED');
+      assert.equal((await api('GET', '/shift-amendments/policy', B.token)).body.amendmentsEnabled, true, 'other companies stay on');
       await enable(A.id);
       assert.equal((await api('GET', '/shift-amendments/policy', A.token)).body.amendmentsEnabled, true);
-      assert.equal((await audits('company', A.id, 'company_shift_policy.amendments_enabled')).length, 1, 'activation is audited');
-      assert.equal((await api('GET', '/shift-amendments/policy', B.token)).body.amendmentsEnabled, false, 'other companies stay off');
+      const switches = await audits('company', A.id, 'company_shift_policy.amendments_enabled');
+      assert.deepEqual(switches.map((a: any) => [a.b.amendmentsEnabled, a.a.amendmentsEnabled]), [[true, false], [false, true]], 'each switch is audited');
+
+      // A new company that saves stricter thresholds before anything else keeps amendments on (the first save writes the
+      // switch in force, never the column default).
+      const saved = await api('PUT', '/shift-amendments/policy', B.token, { fatigueWarningHours: 11 });
+      assert.equal(saved.status, 200, `${saved.status} ${JSON.stringify(saved.body)}`);
+      assert.equal(saved.body.amendmentsEnabled, true);
+      assert.equal(saved.body.source, 'company');
+      assert.equal((await one(`SELECT "amendmentsEnabled" e FROM company_shift_policies WHERE "companyId" = $1`, [B.id])).e, true);
+      assert.equal((await api('PUT', '/shift-amendments/policy', B.token, { fatigueWarningHours: 12 })).status, 200);
     });
 
     // ════════════════ lifecycle ════════════════
@@ -450,9 +481,11 @@ async function main() {
       const lim = await propose(A.token, s3, Date.now() + 16 * HOUR);
       assert.equal(lim.status, 422);
       assert.equal(lim.body.code, 'SHIFT_AMENDMENT_FATIGUE_LIMIT');
-      // The company can change it; a null hard limit means none.
-      assert.equal((await api('PUT', '/shift-amendments/policy', A.token, { hardLimitHours: null })).status, 200);
-      assert.equal((await propose(A.token, s3, Date.now() + 16 * HOUR)).body.amendment.status, 'awaiting_approval');
+      // The company cannot remove or raise it (platform safety limit; LSA-26 covers every threshold).
+      const removed = await api('PUT', '/shift-amendments/policy', A.token, { hardLimitHours: null });
+      assert.equal(removed.status, 422);
+      assert.equal(removed.body.code, 'SHIFT_POLICY_WEAKER_THAN_PLATFORM');
+      assert.equal((await propose(A.token, s3, Date.now() + 16 * HOUR)).body.code, 'SHIFT_AMENDMENT_FATIGUE_LIMIT', 'still refused');
       assert.equal((await api('PUT', '/shift-amendments/policy', A.token, { hardLimitHours: 16 })).status, 200);
       assert.equal((await api('PUT', '/shift-amendments/policy', ops.token, { hardLimitHours: 30 })).status, 403, 'Operations cannot change policy');
       assert.equal((await api('PUT', '/shift-amendments/policy', A.token, { fatigueWarningHours: 15 })).status, 422, 'thresholds must stay in order');
@@ -1180,6 +1213,58 @@ async function main() {
       assert.equal(r.body.code, 'SHIFT_AMENDMENT_BUSY');
       assert.ok(waited >= 4_500 && waited < 15_000, `bounded wait (${waited} ms)`);
       assert.equal((await propose(A.token, id, end + HOUR)).status, 201, 'the retry succeeds');
+    });
+
+    await test('LSA-26-PLATFORM-SAFETY-LIMITS-CAN-BE-TIGHTENED-NEVER-WEAKENED', async () => {
+      const policy = async () => (await api('GET', '/shift-amendments/policy', A.token)).body;
+      const thresholds = (p: any) => [p.fatigueWarningHours, p.approvalRequiredHours, p.hardLimitHours, p.minRestHours, p.weeklyReviewHours, p.lastMinuteWarningMinutes];
+      assert.deepEqual(thresholds(await policy()), [12, 14, 16, 11, 48, 10], 'starts at the platform limits');
+      const updatesBefore = (await audits('company', A.id, 'company_shift_policy.updated')).length;
+
+      // Every way of weakening a safeguard is refused, names the field, and changes nothing.
+      const weaker: Array<[Record<string, unknown>, string]> = [
+        [{ fatigueWarningHours: 13, approvalRequiredHours: 14 }, 'fatigueWarningHours'],
+        [{ approvalRequiredHours: 15, hardLimitHours: 16 }, 'approvalRequiredHours'],
+        [{ hardLimitHours: null }, 'hardLimitHours'],
+        [{ hardLimitHours: 17 }, 'hardLimitHours'],
+        [{ minRestHours: 10.5 }, 'minRestHours'],
+        [{ minRestHours: 0 }, 'minRestHours'],
+        [{ weeklyReviewHours: 49 }, 'weeklyReviewHours'],
+        [{ lastMinuteWarningMinutes: 5 }, 'lastMinuteWarningMinutes'],
+      ];
+      for (const [body, field] of weaker) {
+        const r = await api('PUT', '/shift-amendments/policy', A.token, body);
+        assert.equal(r.status, 422, `${JSON.stringify(body)}: ${r.status} ${JSON.stringify(r.body)}`);
+        assert.equal(r.body.code, 'SHIFT_POLICY_WEAKER_THAN_PLATFORM', JSON.stringify(body));
+        assert.ok(r.body.details.violations.some((v: any) => v.field === field), `${JSON.stringify(body)} names ${field}`);
+        assert.match(r.body.message, /stricter, never weaker/);
+      }
+      assert.deepEqual(thresholds(await policy()), [12, 14, 16, 11, 48, 10], 'refusals change nothing');
+      assert.equal((await audits('company', A.id, 'company_shift_policy.updated')).length, updatesBefore, 'and audit nothing');
+
+      // Stricter is allowed, audited, and applied.
+      const strict = await api('PUT', '/shift-amendments/policy', A.token,
+        { fatigueWarningHours: 10, approvalRequiredHours: 12, hardLimitHours: 14, minRestHours: 12, weeklyReviewHours: 40, lastMinuteWarningMinutes: 15 });
+      assert.equal(strict.status, 200, `${strict.status} ${JSON.stringify(strict.body)}`);
+      assert.deepEqual(thresholds(strict.body), [10, 12, 14, 12, 40, 15]);
+      assert.equal((await audits('company', A.id, 'company_shift_policy.updated')).length, updatesBefore + 1);
+      const g = await guard('lsa-safety-strict');
+      const s = await liveShift(g, -HOUR, 2 * HOUR);
+      const over = await propose(A.token, s, Date.now() + 14 * HOUR); // 15 h scheduled > the company's 14 h maximum
+      assert.equal(over.body.code, 'SHIFT_AMENDMENT_FATIGUE_LIMIT', 'the stricter company limit is enforced');
+      assert.equal((await api('PUT', '/shift-amendments/policy', A.token,
+        { fatigueWarningHours: 12, approvalRequiredHours: 14, hardLimitHours: 16, minRestHours: 11, weeklyReviewHours: 48, lastMinuteWarningMinutes: 10 })).status, 200);
+
+      // A row loosened outside the API (or written before the limits existed) is applied at the platform limits.
+      await q(`UPDATE company_shift_policies SET "hardLimitHours" = NULL, "minRestHours" = 8, "weeklyReviewHours" = 60, "lastMinuteWarningMinutes" = 0 WHERE "companyId" = $1`, [A.id]);
+      try {
+        assert.deepEqual(thresholds(await policy()), [12, 14, 16, 11, 48, 10], 'read back at the platform limits');
+        const g2 = await guard('lsa-safety-legacy');
+        const s2 = await liveShift(g2, -HOUR, 2 * HOUR);
+        assert.equal((await propose(A.token, s2, Date.now() + 16 * HOUR)).body.code, 'SHIFT_AMENDMENT_FATIGUE_LIMIT', '16 h still refused');
+      } finally {
+        await q(`UPDATE company_shift_policies SET "hardLimitHours" = 16, "minRestHours" = 11, "weeklyReviewHours" = 48, "lastMinuteWarningMinutes" = 10 WHERE "companyId" = $1`, [A.id]);
+      }
     });
   } finally {
     await app.close();
