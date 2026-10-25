@@ -81,7 +81,8 @@
     "test:error-boundary": "node scripts/error-boundary.spec.cjs",
     "test:account-lifecycle": "node scripts/account-lifecycle-ui.spec.cjs",
     "test:store-identity": "node scripts/store-identity.spec.cjs",
-    "test:welfare-push": "node scripts/welfare-push.spec.cjs"
+    "test:welfare-push": "node scripts/welfare-push.spec.cjs",
+    "test:guard-inbox": "node scripts/guard-inbox.spec.cjs"
   },
   "dependencies": {
     "@expo/metro-runtime": "~6.1.2",

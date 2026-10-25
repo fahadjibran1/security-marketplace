@@ -393,6 +393,11 @@ jobs:
       - name: Verify Welfare Check push notifications
         run: npm run test:welfare-push
 
+      # Guard notifications inbox and Guard notification pushes: payload parsing (Welfare pushes ignored), newest-first
+      # list and unread count, optimistic read with rollback, where a tap leads, both Android channels, Welfare untouched.
+      - name: Verify the Guard notifications inbox
+        run: npm run test:guard-inbox
+
       - name: Verify Expo dependency compatibility
         run: npx expo install --check
 
