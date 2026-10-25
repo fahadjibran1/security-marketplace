@@ -622,8 +622,14 @@ async function main() {
       const shift = src('shift/shift.service.ts');
       assert.equal(
         (shift.match(/this\.complianceService\.assertGuardAssignable\(/g) || []).length,
-        6,
-        'create, createForUser context, offer acceptance, guard change, (phase 1B) the start-of-work gate, and (phase 0b) retiming an assigned shift',
+        7,
+        'create, createForUser context, offer acceptance, guard change, (phase 1B) the start-of-work gate, (phase 0b) retiming an assigned shift, and Replace Guard',
+      );
+      // Replace Guard runs the gate (and the full availability check) on the replacement before its transaction.
+      assert.match(
+        shift.split('private async assertReplacementEligible(')[1].split('async assertMayMarkMissed(')[0],
+        /ensureActiveRelationship\(companyId, guardId\)[\s\S]*this\.complianceService\.assertGuardAssignable\(companyId, guardId\)[\s\S]*evaluateGuardForShift\(/,
+        'Replace Guard checks the replacement with the compliance gate',
       );
       // Phase 0b: a shift retimed with its Guard re-runs the gate against the new window.
       assert.match(
