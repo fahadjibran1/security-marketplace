@@ -39,7 +39,7 @@
   "approvedArtefact": {
     "versionName": "1.1.0",
     "versionCode": 18,
-    "status": "built-not-uploaded",
+    "status": "distributed",
     "easBuildId": "1b76ec3f-0445-4d33-8f06-c379f31d1118",
     "easBuildUrl": "https://expo.dev/accounts/fahadjibran/projects/security-marketplace/builds/1b76ec3f-0445-4d33-8f06-c379f31d1118",
     "easBuildProfile": "production",
@@ -70,7 +70,14 @@
       "localApiUrls": "one: the web-only localhost development fallback in src/services/api-base-url.ts, never used by a native build that sets EXPO_PUBLIC_API_URL",
       "guardInboxInBundle": "yes: 'guard_notification' and the 'shift-updates' channel id are in the JS bundle; 'welfare-checks' unchanged"
     },
-    "note": "Guard notifications update 1.1.0 (18) from feature/guard-inbox c5a4f40 (draft PR #34, unmerged; contains release head 77cc18d), production API. Built by EAS with the existing upload key through credentialsSource local: the owner-authorised temporary copies of credentials.json and the keystore were placed by the main session, used only by the EAS build, and deleted straight after (originals unchanged); nothing was generated or replaced. Firebase client file from the EAS production file variable GOOGLE_SERVICES_JSON. Certified locally from the downloaded AAB: proto manifest, resources, JS bundle, and the signer certificate from META-INF/S4-PILOT.RSA (openssl), full SHA-256 equal to the vc17 upload certificate. Not uploaded to Google Play."
+    "note": "Guard notifications update 1.1.0 (18) from feature/guard-inbox c5a4f40 (draft PR #34, unmerged; contains release head 77cc18d), production API. Built by EAS with the existing upload key through credentialsSource local: the owner-authorised temporary copies of credentials.json and the keystore were placed by the main session, used only by the EAS build, and deleted straight after (originals unchanged); nothing was generated or replaced. Firebase client file from the EAS production file variable GOOGLE_SERVICES_JSON. Certified locally from the downloaded AAB: proto manifest, resources, JS bundle, and the signer certificate from META-INF/S4-PILOT.RSA (openssl), full SHA-256 equal to the vc17 upload certificate. Uploaded by the owner to Google Play Internal Testing (the certified AAB, SHA-256 above) and active there, owner-confirmed 25 Oct 2026.",
+    "playInternalTesting": {
+      "status": "active",
+      "confirmedBy": "owner",
+      "confirmedOn": "2026-10-25",
+      "uploadedAabSha256": "936bfe7531dfd94fa4afc5006b7d6755ef5b9d07e8e3a21c0baa67dd6a4f4bc8",
+      "note": "Owner-confirmed 25 Oct 2026: 1.1.0 (18) is Active in Google Play Internal Testing and available to the internal testers. The owner uploaded the certified AAB from EAS 1b76ec3f. Not inspected from the build machine."
+    }
   },
   "retiredArtefacts": [
     {
@@ -253,8 +260,8 @@
     "app": "S4 (com.sfour.s4)",
     "internalTesting": {
       "testers": 5,
-      "activeRelease": "1.1.0 (14)"
+      "activeRelease": "1.1.0 (18)"
     },
-    "source": "Owner-confirmed 2026-10-20. Not inspected from the build machine."
+    "source": "Owner-confirmed 2026-10-20 (account, testers); active release 1.1.0 (18) owner-confirmed 2026-10-25. Not inspected from the build machine."
   }
 }

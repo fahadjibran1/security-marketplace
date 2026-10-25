@@ -291,8 +291,8 @@ test('SIGNER-06E-THE-APPROVED-ARTEFACT-IS-EXPLICIT', () => {
   if (current.status === 'pending-build') {
     assert.ok(!current.easBuildId && !current.apkSha256 && !current.aabSha256, 'a pending artefact has no build id or hash');
   } else {
-    // Built and certified from the downloaded AAB; either awaiting the Play upload or recorded as not uploaded yet.
-    assert.ok(['certified-awaiting-play', 'built-not-uploaded'].includes(current.status), `unexpected status ${current.status}`);
+    // Built and certified from the downloaded AAB; awaiting the Play upload, recorded as not uploaded yet, or distributed.
+    assert.ok(['certified-awaiting-play', 'built-not-uploaded', 'distributed'].includes(current.status), `unexpected status ${current.status}`);
     assert.match(current.easBuildId, /^[0-9a-f-]{36}$/, 'a real EAS build id');
     assert.match(current.gitCommit, /^[0-9a-f]{40}$/, 'the full source commit');
     assert.match(current.aabSha256, /^[0-9a-f]{64}$/, 'the AAB hash');
@@ -526,7 +526,13 @@ test('SIGNER-13G-THE-BUILT-VC18-ARTEFACT-IS-SIGNED-BY-THE-SAME-UPLOAD-KEY-AS-VC1
   // key and certified from the downloaded AAB. Not uploaded to Google Play.
   const current = config.approvedArtefact;
   const vc17 = config.retiredArtefacts.find((entry) => entry.versionCode === 17);
-  assert.equal(current.status, 'built-not-uploaded', 'built and certified, not uploaded');
+  // Uploaded by the owner and Active in Google Play Internal Testing (owner-confirmed 25 Oct 2026): the certified AAB.
+  assert.equal(current.status, 'distributed', 'the certified AAB is distributed');
+  assert.equal(current.playInternalTesting.status, 'active');
+  assert.equal(current.playInternalTesting.confirmedBy, 'owner');
+  assert.equal(current.playInternalTesting.confirmedOn, '2026-10-25');
+  assert.equal(current.playInternalTesting.uploadedAabSha256, current.aabSha256, 'the uploaded AAB is the certified one');
+  assert.equal(config.playConsole.internalTesting.activeRelease, '1.1.0 (18)');
   assert.equal(current.easBuildId, '1b76ec3f-0445-4d33-8f06-c379f31d1118');
   assert.equal(current.gitCommit, 'c5a4f4099937b23228c355a8e70a687658ad887b');
   assert.equal(current.aabSha256, '936bfe7531dfd94fa4afc5006b7d6755ef5b9d07e8e3a21c0baa67dd6a4f4bc8');
@@ -542,7 +548,9 @@ test('SIGNER-13G-THE-BUILT-VC18-ARTEFACT-IS-SIGNED-BY-THE-SAME-UPLOAD-KEY-AS-VC1
   assert.equal(current.verified.defaultNotificationChannel, 'welfare-checks', 'the Welfare channel stays the default');
   assert.notEqual(current.aabSha256, vc17.aabSha256);
   assert.notEqual(current.easBuildId, vc17.easBuildId);
-  assert.doesNotMatch(current.note, /uploaded to Google Play Internal Testing/, 'not presented as uploaded');
+  assert.match(current.note, /Uploaded by the owner to Google Play Internal Testing \(the certified AAB/, 'the upload is the owner\'s, of the certified AAB');
+  // vc17 stays recorded as distributed and superseded.
+  assert.equal(vc17.status, 'distributed-superseded');
   assert.doesNotMatch(JSON.stringify(config), /private_key|api_key|current_key|BEGIN [A-Z ]*PRIVATE KEY/);
 });
 

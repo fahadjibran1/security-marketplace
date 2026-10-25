@@ -30,7 +30,7 @@
     "ascApiKey": "At the 1.1.0 (14) build (2026-10-20) Apple rejected the key for build-time profile validation (401). On 2026-10-24 the same key, 468TT6N8RB, uploaded 1.1.0 (16) through EAS Submit, so it is valid for submissions; not replaced."
   },
   "artefact": {
-    "status": "built-not-uploaded",
+    "status": "distributed",
     "marketingVersion": "1.1.0",
     "buildNumber": "17",
     "easBuildId": "1ce9598f-e1f4-41e8-ae69-62864efd0983",
@@ -66,7 +66,25 @@
       "localApiUrls": "one: the web-only localhost development fallback in src/services/api-base-url.ts, unused on iOS",
       "guardInboxInBundle": "yes: 'guard_notification' and 'shift-updates' are in main.jsbundle; 'welfare-checks' unchanged"
     },
-    "note": "Guard notifications update 1.1.0 (17), same commit as Android 1.1.0 (18) (c5a4f40, PR #34). Built --non-interactive with the existing EAS-managed credentials: distribution certificate serial 3933E468... (unchanged from build 16, same SHA-256) and profile B7539588YY; APNs key CXFMNB4HHN held by EAS. Nothing created or replaced. Certified locally from the downloaded IPA: Info.plist, embedded profile, executable signature entitlements and main.jsbundle. Not submitted to App Store Connect / TestFlight; the IPA is kept outside Git."
+    "note": "Guard notifications update 1.1.0 (17), same commit as Android 1.1.0 (18) (c5a4f40, PR #34). Built --non-interactive with the existing EAS-managed credentials: distribution certificate serial 3933E468... (unchanged from build 16, same SHA-256) and profile B7539588YY; APNs key CXFMNB4HHN held by EAS. Nothing created or replaced. Certified locally from the downloaded IPA: Info.plist, embedded profile, executable signature entitlements and main.jsbundle. Uploaded to TestFlight by EAS Submit (below, not rebuilt); the IPA is kept outside Git.",
+    "testFlightUpload": {
+      "easSubmissionId": "bde388d9-d014-4605-a9e8-8391c4eae6cb",
+      "ascAppId": "6820632995",
+      "uploadedOn": "2026-10-25",
+      "ascApiKey": "the EAS-stored App Store Connect API key",
+      "command": "eas submit -p ios --profile production --id 1ce9598f-e1f4-41e8-ae69-62864efd0983",
+      "note": "Uploaded by EAS Submit from EAS build 1ce9598f (not rebuilt) to the existing S4 App Store Connect app."
+    },
+    "testFlightDistribution": {
+      "status": "testing",
+      "groups": [
+        "Team (Expo)",
+        "S4 pilot guards"
+      ],
+      "confirmedBy": "owner",
+      "confirmedOn": "2026-10-25",
+      "note": "Owner-confirmed 25 Oct 2026: 1.1.0 (17) is in Testing and assigned to the TestFlight groups \"Team (Expo)\" and \"S4 pilot guards\". Not inspected from the build machine."
+    }
   },
   "supersededArtefacts": [
     {
@@ -179,7 +197,7 @@
       "supersededBy": "1.1.0 (14) 7333ba4d"
     }
   ],
-  "testFlight": "1.1.0 (13) uploaded 2026-10-08 (EAS Submit 90bd22f5); 1.1.0 (16) uploaded 2026-10-24 (EAS Submit a5b9ce7d) and distributed to the group \"S4 pilot guards\" (owner-confirmed 2026-10-24). Owner-confirmed 2026-10-20: one external TestFlight group of five testers.",
+  "testFlight": "1.1.0 (13) uploaded 2026-10-08 (EAS Submit 90bd22f5); 1.1.0 (16) uploaded 2026-10-24 (EAS Submit a5b9ce7d) and distributed to the group \"S4 pilot guards\" (owner-confirmed 2026-10-24). Owner-confirmed 2026-10-20: one external TestFlight group of five testers. 1.1.0 (17) uploaded 2026-10-25 (EAS Submit bde388d9) and in Testing for the groups \"Team (Expo)\" and \"S4 pilot guards\" (owner-confirmed 2026-10-25).",
   "appStore": "NOT SUBMITTED",
   "push": {
     "apnsKeyId": "CXFMNB4HHN",
