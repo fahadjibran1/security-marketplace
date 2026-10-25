@@ -160,6 +160,7 @@ import {
   updateIncidentStatus,
   updateClient,
   updateShift,
+  replaceShiftGuard,
   reconcileShiftWithoutBookOff,
   getShiftAmendmentPolicy,
   listShiftReconciliations,
@@ -1787,6 +1788,14 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
   const activeCompanyGuards = React.useMemo(
     () => companyGuards.filter((entry) => (entry.status || '').toUpperCase() === 'ACTIVE'),
     [companyGuards],
+  );
+  /** Replace Guard candidates: the active Guards, by name. The server re-checks each one's eligibility. */
+  const replacementGuardOptions = React.useMemo(
+    () => activeCompanyGuards
+      .filter((entry) => entry.guard?.id)
+      .map((entry) => ({ id: entry.guard!.id, name: entry.guard!.fullName || `Guard #${entry.guard!.id}` }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+    [activeCompanyGuards],
   );
 
   const linkedGuards = React.useMemo(() => {
@@ -3688,6 +3697,30 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
     }
   };
 
+  const handleReplaceShiftGuard = async (shiftId: number, replacementGuardId: number, reason: string) => {
+    setShiftOffersFeedback(null);
+    const shift = shifts.find((entry) => entry.id === shiftId) ?? null;
+    try {
+      await replaceShiftGuard(shiftId, { replacementGuardId, reason });
+    } catch (replaceError) {
+      // Shown in the drawer, which stays open so another Guard can be chosen.
+      throw new Error(formatApiErrorMessage(replaceError, 'Unable to replace the Guard right now.'));
+    }
+    await loadData(true);
+    const replacement = activeCompanyGuards.find((entry) => entry.guard?.id === replacementGuardId)?.guard;
+    recordManagementAction({
+      shiftId,
+      siteName: shift?.site?.name || shift?.siteName || 'Unknown site',
+      guardName: replacement?.fullName || 'Replacement Guard',
+      itemType: 'Shift offer',
+      actionTaken: 'Guard replaced',
+    });
+    setShiftOffersFeedback({
+      tone: 'success',
+      message: `Shift #${shiftId} is now offered to ${replacement?.fullName || 'the replacement Guard'}. It is confirmed once they accept it.`,
+    });
+  };
+
   const handleOpenUrgentShift = (item: UrgentOperationalItem) => {
     if (!item.shiftId) {
       setLiveOperationsFeedback({
@@ -4973,6 +5006,8 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
       onRefresh={() => loadData(true)}
       feedback={shiftOffersFeedback}
       onWithdrawOffer={handleCancelShiftOffer}
+      replacementGuards={replacementGuardOptions}
+      onReplaceGuard={handleReplaceShiftGuard}
       onNavigateToRota={(siteId, weekCommencing) => {
         setPlannerSiteId(siteId);
         setPlannerWeekCommencing(weekCommencing);

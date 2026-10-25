@@ -763,6 +763,18 @@ export function updateShift(id: number, payload: UpdateShiftPayload) {
 }
 
 /**
+ * Replace Guard: moves an offered, or accepted and not yet started, shift to another Guard as a new offer (they must
+ * accept it). Company shift managers only; the API checks the company, the shift's state and the replacement's
+ * eligibility, and answers a refusal with a code and a readable message.
+ */
+export function replaceShiftGuard(id: number, payload: { replacementGuardId: number; reason: string }) {
+  return request<Shift>(`/shifts/${id}/replace-guard`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+/**
  * Close without Book Off (S4 Live Operations Phase 4). Company shift managers only; the API checks the
  * permission, the company, and that the shift is overdue with a Book On and no Book Off. It records no
  * Book Off and creates no timesheet.

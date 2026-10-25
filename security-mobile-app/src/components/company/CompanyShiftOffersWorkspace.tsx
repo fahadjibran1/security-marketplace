@@ -41,6 +41,10 @@ type Props = {
   onWithdrawOffer: (shiftId: number) => Promise<void>;
   onNavigateToRota: (siteId: string, weekCommencing: string) => void;
   onNavigateToLiveOps: (shiftId: number) => void;
+  /** Replace Guard: the company's active Guards to choose from. Without both of these the action is not shown. */
+  replacementGuards?: Array<{ id: number; name: string }>;
+  /** Rejects with the server's refusal (its message says why); the drawer shows it and stays open. */
+  onReplaceGuard?: (shiftId: number, replacementGuardId: number, reason: string) => Promise<void>;
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -80,6 +84,17 @@ function isShiftInFuture(end?: string | null): boolean {
 }
 
 const weekCommencingFor = weekCommencingForOffer;
+
+/**
+ * Replace Guard is offered for an offer that has not ended, or an accepted shift that has not started (the server
+ * decides; this only hides a button that would be refused).
+ */
+function canReplaceGuard(shift: Shift, normalized: OfferStatus | 'other'): boolean {
+  if (!shift.guard?.id) return false;
+  if (normalized === 'awaiting') return isShiftInFuture(shift.end);
+  if (normalized === 'accepted') return isShiftInFuture(shift.start);
+  return false;
+}
 
 function normalizeOfferStatus(status?: string | null): OfferStatus | 'other' {
   const s = (status || '').toLowerCase().trim();
@@ -235,12 +250,27 @@ export function CompanyShiftOffersWorkspace({
   onWithdrawOffer,
   onNavigateToRota,
   onNavigateToLiveOps,
+  replacementGuards,
+  onReplaceGuard,
 }: Props) {
   const [search, setSearch]         = React.useState('');
   const [filter, setFilter]         = React.useState<FilterTab>('awaiting');
   const [drawerOffer, setDrawerOffer] = React.useState<Shift | null>(null);
   const [withdrawTarget, setWithdrawTarget] = React.useState<Shift | null>(null);
   const [withdrawing, setWithdrawing] = React.useState(false);
+  const [replaceMode, setReplaceMode] = React.useState(false);
+  const [replacementId, setReplacementId] = React.useState<number | null>(null);
+  const [replaceReason, setReplaceReason] = React.useState('');
+  const [replacing, setReplacing] = React.useState(false);
+  const [replaceError, setReplaceError] = React.useState<string | null>(null);
+
+  // A different (or closed) drawer starts the Replace Guard form afresh.
+  React.useEffect(() => {
+    setReplaceMode(false);
+    setReplacementId(null);
+    setReplaceReason('');
+    setReplaceError(null);
+  }, [drawerOffer?.id]);
 
   // ─── Derived ────────────────────────────────────────────────────────────
 
@@ -300,6 +330,20 @@ export function CompanyShiftOffersWorkspace({
     }
   }, [withdrawTarget, onWithdrawOffer]);
 
+  const handleConfirmReplace = React.useCallback(async () => {
+    if (!drawerOffer || !onReplaceGuard || !replacementId || !replaceReason.trim()) return;
+    try {
+      setReplacing(true);
+      setReplaceError(null);
+      await onReplaceGuard(drawerOffer.id, replacementId, replaceReason.trim());
+      setDrawerOffer(null);
+    } catch (error) {
+      setReplaceError(error instanceof Error && error.message ? error.message : 'Unable to replace the Guard right now.');
+    } finally {
+      setReplacing(false);
+    }
+  }, [drawerOffer, onReplaceGuard, replacementId, replaceReason]);
+
   const handleNavigateToRota = React.useCallback(
     (shift: Shift) => {
       const siteId = getSiteId(shift);
@@ -336,8 +380,24 @@ export function CompanyShiftOffersWorkspace({
 
     const zone = shiftZone(shift);
     const shiftWindow = `${fmtDate(shift.start, zone)} · ${fmtShiftWindow(shift.start, shift.end, zone)}`;
+    const showReplace = Boolean(onReplaceGuard && replacementGuards) && canReplaceGuard(shift, ns);
+    const candidates = (replacementGuards ?? []).filter((g) => g.id !== shift.guard?.id);
 
-    const drawerFooter = (
+    const replaceFooter = (
+      <View style={styles.drawerFooter}>
+        <Button label="Cancel" variant="secondary" size="md" onPress={() => setReplaceMode(false)} disabled={replacing} />
+        <Button
+          label="Replace Guard"
+          variant="primary"
+          size="md"
+          onPress={handleConfirmReplace}
+          loading={replacing}
+          disabled={!replacementId || !replaceReason.trim()}
+        />
+      </View>
+    );
+
+    const drawerFooter = replaceMode ? replaceFooter : (
       <View style={styles.drawerFooter}>
         <Button label="Close" variant="secondary" size="md" onPress={() => setDrawerOffer(null)} />
         {canViewInRota ? (
@@ -348,6 +408,9 @@ export function CompanyShiftOffersWorkspace({
         ) : null}
         {ns === 'accepted' ? (
           <Button label="Open in Live Operations" variant="secondary" size="md" onPress={() => handleNavigateToLiveOps(shift)} />
+        ) : null}
+        {showReplace ? (
+          <Button label="Replace Guard" variant="secondary" size="md" onPress={() => setReplaceMode(true)} />
         ) : null}
         {showWithdraw ? (
           <Button label="Withdraw Offer" variant="danger" size="md" onPress={() => handleRequestWithdraw(shift)} />
@@ -373,6 +436,43 @@ export function CompanyShiftOffersWorkspace({
         {/* Key / value rows */}
         <DrawerRow label="Guard" value={getGuardName(shift)} />
         <DrawerRow label="Shift" value={shiftWindow} />
+
+        {/* Replace Guard — one step: the shift becomes a new offer to the chosen Guard */}
+        {replaceMode ? (
+          <View style={styles.drawerInstructionsBlock}>
+            <Text style={styles.drawerSectionTitle}>Replace Guard</Text>
+            <Text style={styles.drawerMeta}>
+              The shift becomes a new offer to the Guard you choose, who must accept it. {getGuardName(shift)} is told the
+              shift is no longer theirs.
+            </Text>
+            <View style={styles.replaceList}>
+              {candidates.length === 0 ? (
+                <Text style={styles.drawerMeta}>No other active Guards in your company.</Text>
+              ) : (
+                candidates.map((g) => (
+                  <Pressable
+                    key={g.id}
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected: replacementId === g.id }}
+                    onPress={() => setReplacementId(g.id)}
+                    style={[styles.replaceOption, replacementId === g.id ? styles.replaceOptionActive : null]}
+                  >
+                    <Text style={styles.drawerInstructions}>{g.name}</Text>
+                  </Pressable>
+                ))
+              )}
+            </View>
+            <TextInput
+              style={styles.searchInput}
+              value={replaceReason}
+              onChangeText={setReplaceReason}
+              placeholder="Reason (recorded in the audit log)"
+              placeholderTextColor={colors.fieldPlaceholder}
+              maxLength={500}
+            />
+            {replaceError ? <Text style={[styles.drawerMeta, styles.drawerMetaDanger]}>{replaceError}</Text> : null}
+          </View>
+        ) : null}
 
         {/* Rota context — awaiting and accepted only */}
         {(ns === 'awaiting' || ns === 'accepted') ? (
@@ -832,5 +932,21 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: spacing.sm,
     justifyContent: 'flex-end',
+  },
+  replaceList: {
+    gap: spacing.xs,
+    marginVertical: spacing.sm,
+  },
+  replaceOption: {
+    borderWidth: 1,
+    borderColor: colors.fieldBorder,
+    borderRadius: radii.sm,
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.md,
+    backgroundColor: colors.card,
+  },
+  replaceOptionActive: {
+    borderColor: colors.info,
+    backgroundColor: colors.infoSurface,
   },
 });
