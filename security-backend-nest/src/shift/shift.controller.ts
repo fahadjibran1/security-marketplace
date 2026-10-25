@@ -3,6 +3,7 @@ import { ShiftService } from './shift.service';
 import { CreateShiftDto } from './dto/create-shift.dto';
 import { UpdateShiftDto } from './dto/update-shift.dto';
 import { RespondShiftDto } from './dto/respond-shift.dto';
+import { ReplaceGuardDto } from './dto/replace-guard.dto';
 import { ReconcileShiftDto } from './dto/reconcile-shift.dto';
 import { ShiftReconciliationService } from './shift-reconciliation.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -47,6 +48,17 @@ export class ShiftController {
   @Roles(...COMPANY_ADMIN_ROLES)
   update(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number, @Body() dto: UpdateShiftDto) {
     return this.shiftService.updateForUser(user, id, dto);
+  }
+
+  /**
+   * Replace Guard: one atomic move of an offered or accepted (not yet started) shift to another Guard as a fresh offer.
+   * Company accounts with shifts.manage on the shift's own company (checked in the service), exactly like an edit;
+   * Guards and platform administrators cannot call it.
+   */
+  @Post(':id/replace-guard')
+  @Roles(...COMPANY_ADMIN_ROLES)
+  replaceGuard(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number, @Body() dto: ReplaceGuardDto) {
+    return this.shiftService.replaceGuardForUser(user, id, dto);
   }
 
   @Patch(':id/respond')

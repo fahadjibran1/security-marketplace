@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException, Optional, forwardRef } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, HttpStatus, Inject, Injectable, NotFoundException, Optional, forwardRef } from '@nestjs/common';
 import { GuardNotificationService } from '../guard-notification/guard-notification.service';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
@@ -14,7 +14,7 @@ import { Job } from '../job/entities/job.entity';
 import { JobApplication } from '../job-application/entities/job-application.entity';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { GuardProfileService } from '../guard-profile/guard-profile.service';
-import { isCompanyRole, UserRole } from '../user/entities/user.entity';
+import { isCompanyRole, UserRole, UserStatus } from '../user/entities/user.entity';
 import { CompanyMembershipService } from '../company-membership/company-membership.service';
 import { CompanyPermission } from '../company-membership/company-membership-types';
 import { CompanyGuardService } from '../company-guard/company-guard.service';
@@ -24,6 +24,15 @@ import { AuditLogService } from '../audit-log/audit-log.service';
 import { Timesheet } from '../timesheet/entities/timesheet.entity';
 import { UpdateShiftDto } from './dto/update-shift.dto';
 import { RespondShiftDto } from './dto/respond-shift.dto';
+import { ReplaceGuardDto } from './dto/replace-guard.dto';
+import {
+  REPLACE_GUARD_AUDIT_ACTION,
+  REPLACE_GUARD_ERROR_CODES,
+  REPLACE_GUARD_VOID_REASON,
+  ReplaceGuardErrorCode,
+  replaceGuardError,
+  replaceGuardStateRefusal,
+} from './replace-guard-policy';
 import { Site } from '../site/entities/site.entity';
 import {
   DEFAULT_SITE_TIME_ZONE,
@@ -949,6 +958,223 @@ export class ShiftService {
       await manager.getRepository(Shift).delete({ id: shift.id });
     });
     return { success: true };
+  }
+
+  /**
+   * Replace Guard (owner-approved 25 Oct 2026; rules in replace-guard-policy.ts). One transaction moves an offered or
+   * accepted shift from the Guard who holds it to another Guard as a fresh offer, tells the outgoing Guard, offers it to
+   * the replacement, voids any open extension proposal of the outgoing Guard, moves the draft timesheet, and writes one
+   * audit entry. Company accounts with shifts.manage on the shift's own company only, exactly like an edit.
+   *
+   * Lock order (the approved one): the rota slot row (a rota position only, as a rota time change does), then the
+   * replacement's Guard assignment lock, then the shift row. A Guard's acceptance (Guard lock, then shift row) or a
+   * concurrent replacement therefore decides first or second, never half-way: the loser sees the shift changed.
+   *
+   * A retried request that already succeeded (the shift is on offer to the same replacement from the latest
+   * replacement) answers with the shift as it is and writes and notifies nothing.
+   */
+  async replaceGuardForUser(user: JwtPayload, id: number, dto: ReplaceGuardDto): Promise<Shift> {
+    const E = REPLACE_GUARD_ERROR_CODES;
+    const shift = await this.findOneForUser(user, id);
+    const actorCompany = await this.companyForShiftChange(user, shift);
+    const reason = String(dto.reason ?? '').trim();
+    if (!reason) {
+      throw replaceGuardError(HttpStatus.BAD_REQUEST, E.REASON_REQUIRED, 'Give a reason for replacing the Guard.');
+    }
+    const replacementGuardId = Number(dto.replacementGuardId);
+    const outgoingGuardId = shift.guard?.id ?? null;
+    const loadedStatus = shift.status;
+    const status = this.normalizeLifecycleStatus(shift.status);
+
+    if (outgoingGuardId === replacementGuardId) {
+      if (status === 'offered' && (await this.latestReplacementGuardId(shift.id)) === replacementGuardId) {
+        return shift;
+      }
+      throw replaceGuardError(HttpStatus.UNPROCESSABLE_ENTITY, E.SAME_GUARD, 'This Guard already holds the shift. Choose a different Guard.');
+    }
+    const refusal = replaceGuardStateRefusal(
+      { status, guardId: outgoingGuardId, startMs: shift.start.getTime(), endMs: shift.end.getTime() },
+      Date.now(),
+    );
+    if (refusal) throw refusal;
+
+    // The replacement's eligibility: the checks every assignment path runs, before the transaction on ordinary
+    // connections (as an assignment does), each refusal with its own code.
+    await this.assertReplacementEligible(actorCompany.id, replacementGuardId, shift);
+
+    const start = new Date(shift.start);
+    const end = new Date(shift.end);
+    await this.dataSource.transaction(async (manager) => {
+      if (shift.rotaSlotId != null) {
+        await manager.query(`SELECT "id" FROM "rota_slots" WHERE "id" = $1 FOR UPDATE`, [shift.rotaSlotId]);
+      }
+      await lockGuardsForAssignment(manager, [replacementGuardId]);
+      try {
+        await assertNoShiftClash(manager, replacementGuardId, start, end, shift.id);
+      } catch (error) {
+        if (error instanceof ForbiddenException) {
+          throw replaceGuardError(HttpStatus.UNPROCESSABLE_ENTITY, E.OVERLAP, 'This Guard has an overlapping shift.');
+        }
+        throw error;
+      }
+      const [locked] = (await manager.query(
+        `SELECT "status", "guardId", EXTRACT(EPOCH FROM "start") * 1000 AS "startMs", EXTRACT(EPOCH FROM "end") * 1000 AS "endMs",
+                EXTRACT(EPOCH FROM statement_timestamp()) * 1000 AS "nowMs"
+           FROM "shifts" WHERE "id" = $1 FOR UPDATE`,
+        [shift.id],
+      )) as Array<{ status: string; guardId: number | null; startMs: string; endMs: string; nowMs: string }>;
+      if (!locked) throw new NotFoundException(`Shift with id ${shift.id} not found`);
+      if (
+        locked.status !== loadedStatus ||
+        (locked.guardId === null ? null : Number(locked.guardId)) !== outgoingGuardId ||
+        Number(locked.startMs) !== start.getTime() ||
+        Number(locked.endMs) !== end.getTime()
+      ) {
+        throw replaceGuardError(HttpStatus.CONFLICT, E.CHANGED, 'This shift changed while the Guard was being replaced. Reload it and try again.');
+      }
+      // The same rules again on the database clock, so a request racing the start or the end cannot slip through.
+      const lockedRefusal = replaceGuardStateRefusal(
+        { status, guardId: outgoingGuardId, startMs: Number(locked.startMs), endMs: Number(locked.endMs) },
+        Number(locked.nowMs),
+      );
+      if (lockedRefusal) throw lockedRefusal;
+
+      // Live attendance and financial evidence are never moved to another Guard.
+      const [{ attendance, lockedTimesheet }] = await manager.query(
+        `SELECT EXISTS (SELECT 1 FROM "attendance_events" WHERE "shiftId" = $1) AS "attendance",
+                EXISTS (SELECT 1 FROM "timesheets" WHERE "shiftId" = $1 AND "approvalStatus" <> 'draft') AS "lockedTimesheet"`,
+        [shift.id],
+      );
+      if (attendance) {
+        throw replaceGuardError(HttpStatus.CONFLICT, E.ATTENDANCE_RECORDED,
+          'Attendance has been recorded on this shift. Its Guard cannot be replaced.');
+      }
+      if (lockedTimesheet) {
+        throw replaceGuardError(HttpStatus.CONFLICT, E.TIMESHEET_LOCKED, 'This shift has a submitted timesheet. Its Guard cannot be replaced.');
+      }
+
+      // Live Shift Amendments apply to in-progress shifts only, so none should be open here; any that is (it belongs
+      // to the outgoing Guard) is voided as a Book Off voids one: shift row first, amendment rows second.
+      const voided = returningRows<{ id: number; status: string }>(await manager.query(
+        `UPDATE "shift_amendments" SET "status" = 'voided', "voidedReason" = $2,
+            "voidedAt" = (statement_timestamp() AT TIME ZONE 'UTC'), "updatedAt" = now()
+          WHERE "shiftId" = $1 AND "status" IN ('awaiting_approval', 'pending')
+          RETURNING "id", "status"`,
+        [shift.id, REPLACE_GUARD_VOID_REASON],
+      ));
+      for (const row of voided) {
+        await this.auditLogService.logInTransaction(manager, {
+          company: { id: actorCompany.id },
+          user: { id: user.sub },
+          action: 'shift_amendment.voided',
+          entityType: 'shift_amendment',
+          entityId: Number(row.id),
+          beforeData: { status: 'open' },
+          afterData: { status: 'voided', reason: REPLACE_GUARD_VOID_REASON, shiftId: shift.id },
+        });
+      }
+
+      // Identifiers and the actor's reason only: no names, contact details or site details.
+      const audit = await this.auditLogService.logInTransaction(manager, {
+        company: { id: actorCompany.id },
+        user: { id: user.sub },
+        action: REPLACE_GUARD_AUDIT_ACTION,
+        entityType: 'shift',
+        entityId: shift.id,
+        beforeData: { guardId: outgoingGuardId, status },
+        afterData: {
+          guardId: replacementGuardId,
+          status: 'offered',
+          reason,
+          ...(voided.length ? { voidedAmendmentIds: voided.map((row) => Number(row.id)) } : {}),
+          ...(shift.rotaSlotId != null ? { rotaSlotId: shift.rotaSlotId } : {}),
+        },
+      });
+
+      // The outgoing Guard's notice is recorded while they still hold the shift (the recipient check reads this row).
+      await this.guardNotifications?.shiftReplaced(manager, {
+        companyId: actorCompany.id, guardId: outgoingGuardId!, shiftId: shift.id, replacementKey: audit.id,
+      });
+
+      const moved = returningRows<{ id: number }>(await manager.query(
+        `UPDATE "shifts" SET "guardId" = $2, "status" = 'offered'
+          WHERE "id" = $1 AND "guardId" = $3 AND "status" = $4 RETURNING "id"`,
+        [shift.id, replacementGuardId, outgoingGuardId, loadedStatus],
+      ));
+      if (!moved.length) {
+        throw replaceGuardError(HttpStatus.CONFLICT, E.CHANGED, 'This shift changed while the Guard was being replaced. Reload it and try again.');
+      }
+
+      // The draft timesheet follows the shift to its new Guard (non-draft ones were refused above).
+      const replacement = await manager.getRepository(GuardProfile).findOneOrFail({ where: { id: replacementGuardId } });
+      const timesheetRepo = manager.getRepository(Timesheet);
+      const timesheets = await timesheetRepo.find({ where: { shift: { id: shift.id } }, relations: ['shift', 'guard', 'company'] });
+      for (const timesheet of timesheets) {
+        timesheet.guard = replacement;
+        await timesheetRepo.save(timesheet);
+      }
+      if (!timesheets.length) {
+        const saved = await manager.getRepository(Shift).findOneOrFail({ where: { id: shift.id } });
+        await this.timesheetService.createForShift(saved, manager);
+      }
+
+      // A fresh offer: the replacement accepts it (or not) themselves.
+      await this.guardNotifications?.shiftOffered(manager, { companyId: actorCompany.id, guardId: replacementGuardId, shiftId: shift.id });
+    });
+
+    return this.findOne(shift.id);
+  }
+
+  /** The Guard the latest Replace Guard on this shift gave it to, or null. */
+  private async latestReplacementGuardId(shiftId: number): Promise<number | null> {
+    const [row] = await this.dataSource.query(
+      `SELECT ("afterData"->>'guardId')::int AS "guardId" FROM "audit_logs"
+        WHERE "entityType" = 'shift' AND "entityId" = $1 AND "action" = $2 ORDER BY "id" DESC LIMIT 1`,
+      [shiftId, REPLACE_GUARD_AUDIT_ACTION],
+    );
+    return row?.guardId == null ? null : Number(row.guardId);
+  }
+
+  /**
+   * The replacement may take this shift: exactly the checks an assignment runs (relationship, active Guard account,
+   * compliance, approved leave, availability, overlap), each refusal with a code. A Guard id this company cannot see
+   * reads as not linked, so nothing about another company's Guards is revealed.
+   */
+  private async assertReplacementEligible(companyId: number, guardId: number, shift: Shift): Promise<void> {
+    const E = REPLACE_GUARD_ERROR_CODES;
+    const refuse = (code: ReplaceGuardErrorCode, message: string) => replaceGuardError(HttpStatus.UNPROCESSABLE_ENTITY, code, message);
+    try {
+      await this.companyGuardService.ensureActiveRelationship(companyId, guardId);
+    } catch (error) {
+      if (!(error instanceof ForbiddenException)) throw error;
+      const [relation] = await this.dataSource.query(
+        `SELECT "status" FROM "company_guards" WHERE "companyId" = $1 AND "guardId" = $2`,
+        [companyId, guardId],
+      );
+      if (relation?.status === 'BLOCKED') throw refuse(E.BLOCKED, 'This Guard is blocked for your company.');
+      throw refuse(E.NOT_LINKED, 'This Guard is not an active Guard of your company.');
+    }
+    const profile = await this.guardRepo.findOne({ where: { id: guardId }, relations: ['user'] });
+    if (!profile?.user || profile.user.role !== UserRole.GUARD) {
+      throw refuse(E.NOT_A_GUARD, 'This profile does not belong to a Guard account.');
+    }
+    if (profile.user.status !== UserStatus.ACTIVE) {
+      throw refuse(E.ACCOUNT_INACTIVE, "This Guard's account is not active.");
+    }
+    try {
+      await this.complianceService.assertGuardAssignable(companyId, guardId);
+    } catch (error) {
+      if (!(error instanceof ForbiddenException)) throw error;
+      throw refuse(E.COMPLIANCE, error.message);
+    }
+    const result = await this.availabilityService.evaluateGuardForShift({
+      companyId, guardId, startAt: new Date(shift.start), endAt: new Date(shift.end), excludeShiftId: shift.id,
+    });
+    // The same order and the same refusals as AvailabilityService.assertGuardCanTakeShift.
+    if (result.hasShiftClash) throw refuse(E.OVERLAP, 'This Guard has an overlapping shift.');
+    if (result.hasApprovedLeave) throw refuse(E.ON_LEAVE, 'This Guard has approved leave during this shift.');
+    if (!result.complianceValid) throw refuse(E.COMPLIANCE, 'Guard compliance invalid.');
+    if (result.availabilityStatus === 'unavailable') throw refuse(E.UNAVAILABLE, 'This Guard is marked unavailable for this time.');
   }
 
   /**
