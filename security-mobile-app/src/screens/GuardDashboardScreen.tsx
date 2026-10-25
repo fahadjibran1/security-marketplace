@@ -20,6 +20,25 @@ import { GuardCompliancePanel } from '../components/guard/GuardCompliancePanel';
 import { GuardScreeningJourney, GuardScreeningPanel } from '../components/guard/GuardScreeningPanel';
 import { GuardShiftOffersWorkspace } from '../components/guard/GuardShiftOffersWorkspace';
 import { GuardShiftExtensionCard } from '../components/guard/GuardShiftExtensionCard';
+import { GuardNotificationsInbox } from '../components/guard/GuardNotificationsInbox';
+import {
+  EMPTY_INBOX,
+  MARK_READ_FAILED_MESSAGE,
+  inboxLoadProblem,
+  inboxReducer,
+  normaliseInbox,
+  resolveNotificationTarget,
+  shouldMarkRead,
+  unreadBadge,
+  unreadCount,
+  type GuardNotificationIntent,
+  type InboxAction,
+  type InboxAvailability,
+  type InboxItem,
+  type InboxState,
+  type InboxTarget,
+} from '../components/guard/guardInbox';
+import { subscribeGuardNotificationResponses, subscribeGuardNotificationsReceived } from '../services/pushNotifications';
 import {
   GUARD_AMENDMENT_FOREGROUND_MIN_MS,
   GUARD_AMENDMENT_REFRESH_MS,
@@ -71,6 +90,8 @@ import {
   listMyCompanies,
   previewGuardInvitation,
   declineGuardInvitation,
+  listMyNotifications,
+  markNotificationRead,
 } from '../services/api';
 import {
   AttendanceEvent,
@@ -122,7 +143,9 @@ interface GuardDashboardScreenProps {
   onAccountDeleted?: (message: string) => void | Promise<void>;
 }
 
-type GuardTab = 'home' | 'offers' | 'jobs' | 'history' | 'profile' | 'screening' | 'companies';
+type GuardTab = 'home' | 'offers' | 'jobs' | 'history' | 'profile' | 'screening' | 'companies' | 'inbox';
+/** Minimum age before a foreground return re-reads the inbox. */
+const INBOX_FOREGROUND_MIN_MS = 15_000;
 /** The open form, identified by the canonical action it raises. */
 type QuickActionModal = GuardActionKey | null;
 
@@ -483,6 +506,21 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
   const [historySummaryShiftId, setHistorySummaryShiftId] = useState<number | null>(null);
   const [historyFilter, setHistoryFilter] = useState<'all' | 'worked' | 'declined'>('all');
   const [pendingOfferIdForDetail, setPendingOfferIdForDetail] = useState<number | null>(null);
+  // Notifications inbox. A server without it (404) hides the badge for the rest of the session and is never retried
+  // in the background; a connection failure keeps the last list and is retried on the next refresh.
+  const [inbox, setInbox] = useState<InboxState>(EMPTY_INBOX);
+  // The latest inbox state, also read synchronously (a second tap before the next render must not send a second read).
+  const inboxRef = useRef<InboxState>(EMPTY_INBOX);
+  const dispatchInbox = useCallback((action: InboxAction) => {
+    inboxRef.current = inboxReducer(inboxRef.current, action);
+    setInbox(inboxRef.current);
+  }, []);
+  const [inboxAvailability, setInboxAvailability] = useState<InboxAvailability>('loading');
+  const [inboxProblem, setInboxProblem] = useState<string | null>(null);
+  const [inboxNotice, setInboxNotice] = useState<string | null>(null);
+  const [inboxRefreshing, setInboxRefreshing] = useState(false);
+  const inboxUnavailableRef = useRef(false);
+  const inboxReadAtRef = useRef(0);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -585,7 +623,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
   // tab's scroll offset — which reads as "the tab did nothing". Screening is a sub-view of
   // Profile rather than a sixth tab, so it keeps Profile lit in the bar.
   const navActiveTab: GuardTab =
-    activeTab === 'screening' || activeTab === 'companies' ? 'profile' : activeTab;
+    activeTab === 'screening' || activeTab === 'companies' ? 'profile' : activeTab === 'inbox' ? 'home' : activeTab;
   const selectTab = useCallback((tab: GuardTab) => {
     setActiveTab(tab);
     try {
@@ -1189,6 +1227,8 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
       }
       setLoadError(null);
       lastLoadTimeRef.current = Date.now();
+      // Independent of the dashboard read: an inbox failure never blocks the dashboard, and the reverse.
+      void loadInbox();
       const [myGuard, shiftRows, attendanceRows, incidentRows, dailyLogRows, timesheetRows] = await Promise.all([
         getMyGuard(),
         listMyShifts(),
@@ -1237,6 +1277,75 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
     } catch (error) {
       if (isFeatureUnavailable(error)) amendmentsUnavailableRef.current = true;
     }
+  }
+
+  /** Re-reads the Guard's notifications. Never throws; a failure keeps the last list. */
+  async function loadInbox(minAgeMs = 0) {
+    if (inboxUnavailableRef.current) return;
+    if (minAgeMs > 0 && Date.now() - inboxReadAtRef.current < minAgeMs) return;
+    inboxReadAtRef.current = Date.now();
+    try {
+      const rows = await listMyNotifications();
+      dispatchInbox({ type: 'loaded', items: normaliseInbox(rows) });
+      setInboxAvailability('ready');
+      setInboxProblem(null);
+    } catch (error) {
+      const problem = inboxLoadProblem(error);
+      if (problem.availability === 'unavailable') {
+        inboxUnavailableRef.current = true;
+        dispatchInbox({ type: 'reset' });
+      }
+      setInboxAvailability(problem.availability);
+      setInboxProblem(problem.message);
+    }
+  }
+
+  async function handleInboxRefresh() {
+    setInboxRefreshing(true);
+    try {
+      await loadInbox();
+    } finally {
+      setInboxRefreshing(false);
+    }
+  }
+
+  /**
+   * Shows the notification as read at once and asks the server to record it. A failed read is put back and a
+   * non-blocking note shown (`quiet` skips the note, for a push tap where the list may not be on screen).
+   */
+  async function markInboxRead(id: number, quiet = false) {
+    if (inboxUnavailableRef.current || !shouldMarkRead(inboxRef.current, id)) return;
+    dispatchInbox({ type: 'mark_read_started', id, at: new Date().toISOString() });
+    try {
+      const saved = await markNotificationRead(id);
+      dispatchInbox({ type: 'mark_read_succeeded', id, readAt: saved && typeof saved.readAt === 'string' ? saved.readAt : null });
+    } catch {
+      dispatchInbox({ type: 'mark_read_failed', id });
+      if (!quiet) setInboxNotice(MARK_READ_FAILED_MESSAGE);
+    }
+  }
+
+  /** Takes the Guard where a notification leads; with nowhere better, the inbox. */
+  function openInboxTarget(target: InboxTarget) {
+    if (!target) {
+      selectTab('inbox');
+      return;
+    }
+    if (target.tab === 'offers') {
+      // The offer opens in detail only while it is still on offer; otherwise the Offers list shows.
+      if (target.shiftId) setPendingOfferIdForDetail(target.shiftId);
+      selectTab('offers');
+      return;
+    }
+    // Home shows any extension request waiting for an answer at the top.
+    selectTab(target.tab);
+  }
+
+  function handleOpenNotification(item: InboxItem) {
+    setInboxNotice(null);
+    void markInboxRead(item.id);
+    const target = resolveNotificationTarget(item.type);
+    if (target) openInboxTarget(target);
   }
 
   /**
@@ -1434,6 +1543,42 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
     const sub = AppState.addEventListener('change', handleAppStateChange);
     return () => sub.remove();
   }, []);
+
+  // The inbox on returning to the foreground. A full reload (above, after 30s) already re-reads it; this covers the
+  // short gap, with its own minimum age so switching apps quickly never storms the server.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (nextState: string) => {
+      if (nextState === 'active') void loadInbox(INBOX_FOREGROUND_MIN_MS);
+    });
+    return () => sub.remove();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // A Guard notification that arrives while S4 is open refreshes the inbox and its badge.
+  useEffect(() => subscribeGuardNotificationsReceived(() => { void loadInbox(); }), []);
+
+  // Taps on Guard notification pushes. Subscribed here, so a tap is only acted on once a Guard is signed in and this
+  // screen shows: a tap that launched S4 from closed, or arrived while signed out, is read when the screen mounts.
+  const [notificationTap, setNotificationTap] = useState<GuardNotificationIntent | null>(null);
+  useEffect(() => subscribeGuardNotificationResponses((intent) => setNotificationTap(intent)), []);
+
+  // A tapped Guard notification push: mark it read with this Guard's session and open where it leads (the named offer,
+  // the extension request on Home, or the inbox). The push ids are hints; the server decides what is shown.
+  useEffect(() => {
+    if (!notificationTap) return;
+    const tap = notificationTap;
+    setNotificationTap(null);
+    const target = resolveNotificationTarget(tap.type, { shiftId: tap.shiftId, amendmentId: tap.amendmentId });
+    void markInboxRead(tap.notificationId, true);
+    if (!target) {
+      openInboxTarget(null);
+      void loadInbox();
+      return;
+    }
+    // Fresh shifts and extension requests first, so the offer or request it names is on screen when it opens.
+    void loadData(true).then(() => openInboxTarget(target));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notificationTap]);
 
   // One controlled refresh when the Offers tab is opened — respects the same 30s minimum
   useEffect(() => {
@@ -1831,8 +1976,32 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
                     ? 'Screening'
                     : activeTab === 'companies'
                       ? 'My Companies'
-                      : 'Profile'}
+                      : activeTab === 'inbox'
+                        ? 'Notifications'
+                        : 'Profile'}
         </Text>
+        {(() => {
+          // The inbox entry point. On a server without notifications the badge is hidden; the button still opens a
+          // calm explanation rather than disappearing.
+          const badge = inboxAvailability === 'unavailable' ? null : unreadBadge(unreadCount(inbox.items));
+          const open = activeTab === 'inbox';
+          return (
+            <Pressable
+              style={({ pressed }: { pressed: boolean }) => [styles.inboxButton, open && styles.inboxButtonActive, pressed && { opacity: 0.8 }]}
+              onPress={() => { setInboxNotice(null); selectTab(open ? 'home' : 'inbox'); if (!open) void loadInbox(INBOX_FOREGROUND_MIN_MS); }}
+              accessibilityRole="button"
+              accessibilityLabel={open ? 'Close notifications' : badge ? `Notifications, ${badge} unread` : 'Notifications'}
+              accessibilityState={{ selected: open }}
+            >
+              <Text style={[styles.inboxButtonText, open && styles.inboxButtonTextActive]}>{open ? 'Close' : 'Notifications'}</Text>
+              {badge && !open ? (
+                <View style={styles.navBadge}>
+                  <Text style={styles.navBadgeText}>{badge}</Text>
+                </View>
+              ) : null}
+            </Pressable>
+          );
+        })()}
       </View>
 
       <View style={styles.mainArea}>
@@ -3200,6 +3369,19 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
           </View>
         ) : null}
         {activeTab === 'screening' ? <GuardScreeningJourney onBack={() => selectTab('profile')} scrollViewRef={screeningScrollRef} /> : null}
+        {activeTab === 'inbox' ? (
+          <GuardNotificationsInbox
+            items={inbox.items}
+            availability={inboxAvailability}
+            problem={inboxProblem}
+            notice={inboxNotice}
+            onDismissNotice={() => setInboxNotice(null)}
+            refreshing={inboxRefreshing}
+            onRefresh={() => { void handleInboxRefresh(); }}
+            onOpen={handleOpenNotification}
+            nowMs={Date.now()}
+          />
+        ) : null}
         {activeTab === 'companies' ? (
           <View style={styles.companiesView}>
             <Pressable onPress={() => selectTab('profile')} accessibilityRole="button" style={styles.companiesBack}>
@@ -3488,7 +3670,21 @@ const styles = StyleSheet.create({
   companiesEntrySubtitle: { fontSize: 13, color: '#748392' },
   companiesEntryChevron: { fontSize: 22, color: '#748392' },
   container: { flex: 1, backgroundColor: colors.background },
-  header: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 12 },
+  header: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  inboxButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    minHeight: 44,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+  },
+  inboxButtonActive: { borderColor: colors.primaryNavy },
+  inboxButtonText: { color: colors.primaryNavy, fontWeight: '700', fontSize: 14 },
+  inboxButtonTextActive: { fontWeight: '800' },
   headerTitle: { fontSize: 24, fontWeight: '800', color: colors.textPrimary, letterSpacing: -0.3 },
   mainArea: { flex: 1 },
   contentArea: { flex: 1 },
