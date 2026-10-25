@@ -23,12 +23,16 @@ export interface ExpoPushMessage {
   /** Identifiers only. Never a token, credential or personal detail beyond the site name already in the body. */
   data: Record<string, string | number>;
   sound: 'default';
-  priority: 'high';
+  /** 'high' for Welfare Check reminders; 'normal' for Guard shift notifications. */
+  priority: 'high' | 'normal';
   /** Android notification channel (created by the app). */
   channelId: string;
-  /** iOS category / Android action set (registered by the app): the I'm Safe and Need Help buttons. */
-  categoryId: string;
-  /** Seconds the provider may keep trying; set to the end of the window so a stale reminder is dropped. */
+  /**
+   * iOS category / Android action set (registered by the app): the Welfare Check's I'm Safe and Need Help buttons.
+   * Omitted for notifications that carry no action buttons (Guard shift notifications).
+   */
+  categoryId?: string;
+  /** Seconds the provider may keep trying; set so a stale notification is dropped (window end, shift start/end). */
   ttl: number;
 }
 

@@ -18,3 +18,17 @@ export async function revokePushDevicesForUser(manager: Manager, userId: number,
 export async function removePushDevicesForUser(manager: Manager, userId: number): Promise<void> {
   await manager.query(`DELETE FROM push_devices WHERE "userId" = $1`, [userId]);
 }
+
+/**
+ * The provider said this installation is gone (Expo DeviceNotRegistered): revoke the device so nothing is sent to it
+ * again, exactly as the Welfare Check path does. The phone registers afresh when the app next signs in. Returns 1 if a
+ * device was revoked, else 0.
+ */
+export async function revokeDeadPushDevice(manager: Manager, deviceId: number): Promise<number> {
+  const result = await manager.query(
+    `UPDATE push_devices SET "revokedAt" = now(), "revokedReason" = 'device_not_registered' WHERE id = $1 AND "revokedAt" IS NULL RETURNING id`,
+    [deviceId],
+  );
+  const rows = Array.isArray(result) && Array.isArray(result[0]) ? result[0] : Array.isArray(result) ? result : [];
+  return rows.length;
+}
