@@ -149,7 +149,8 @@ test('SIGNER-04-THE-EXPECTED-RELEASE-MATCHES-APP-JSON', () => {
   assert.equal(config.expectedRelease.versionCode, appJson.expo.android.versionCode);
   assert.equal(config.package, appJson.expo.android.package);
   assert.equal(appJson.expo.version, '1.1.0');
-  assert.equal(appJson.expo.android.versionCode, 17, 'the Welfare Check push update candidate');
+  assert.equal(appJson.expo.android.versionCode, 18, 'the Guard notifications update candidate');
+  assert.ok(appJson.expo.android.versionCode > 17, 'above the distributed Welfare Check push release 17');
   assert.ok(appJson.expo.android.versionCode > 16, 'above the built pilot update 16');
   assert.ok(appJson.expo.android.versionCode > 15, 'above the superseded Guard release 15');
   assert.ok(appJson.expo.android.versionCode > 14, 'above the superseded RC14');
@@ -416,7 +417,7 @@ test('SIGNER-13-A-CORRECT-1-1-0-COM-SFOUR-S4-ARTEFACT-WOULD-PASS', () => {
   // Constructed in the exact apksigner/aapt2 shapes recorded above; no such artefact exists yet.
   const candidate = observe({
     apksigner: RECORDED.expectedBuild12.apksigner,
-    badging: "package: name='com.sfour.s4' versionCode='17' versionName='1.1.0'\nminSdkVersion:'24'",
+    badging: "package: name='com.sfour.s4' versionCode='18' versionName='1.1.0'\nminSdkVersion:'24'",
   });
   const result = verifier.assessApk(config, candidate);
   assert.equal(result.ok, true, result.failures.join('; '));
@@ -425,7 +426,8 @@ test('SIGNER-13-A-CORRECT-1-1-0-COM-SFOUR-S4-ARTEFACT-WOULD-PASS', () => {
   assert.equal(verifier.assessApk(config, { ...candidate, versionCode: 14 }).ok, false);
   assert.equal(verifier.assessApk(config, { ...candidate, versionCode: 15 }).ok, false);
   assert.equal(verifier.assessApk(config, { ...candidate, versionCode: 16 }).ok, false);
-  assert.equal(verifier.assessApk(config, { ...candidate, versionCode: 18 }).ok, false);
+  assert.equal(verifier.assessApk(config, { ...candidate, versionCode: 17 }).ok, false);
+  assert.equal(verifier.assessApk(config, { ...candidate, versionCode: 19 }).ok, false);
   assert.equal(verifier.assessApk(config, { ...candidate, versionName: '1.0.7' }).ok, false);
 });
 
@@ -492,17 +494,32 @@ test('SIGNER-13E-THE-BUILT-VC16-ARTEFACT-IS-SUPERSEDED-BY-THE-WELFARE-PUSH-UPDAT
   assert.equal(superseded.aabSha256, '82f0aff91acf824d18134e192528459192ab88caff07ac47ad9c266e41974b60');
   assert.equal(superseded.uploadCertificateSha256, config.signer.certificateSha256, 'signed by the permanent S4 key');
   assert.match(superseded.retiredReason, /to be confirmed by the owner/, 'the Play state is not presented as known');
-  assert.equal(config.approvedArtefact.versionCode, 17, 'the Welfare Check push update is the next artefact');
-  // Built and certified on 24 Oct 2026 (owner-approved EAS production build from 5a562f1); not uploaded to Play.
-  assert.equal(config.approvedArtefact.status, 'certified-awaiting-play', 'built and certified, not yet in Play');
-  assert.equal(config.approvedArtefact.easBuildId, 'dd77f96d-44cd-4d60-aa61-45f2b9a059ee');
-  assert.equal(config.approvedArtefact.gitCommit, '5a562f163a613dc780871345ee9e55d1ac1f24ef');
-  assert.equal(config.approvedArtefact.aabSha256, 'c82e0c40ea67ad4eb7c2ad42408973462bca3e3dcec29a312c5f82999934f9fa');
-  assert.equal(config.approvedArtefact.uploadCertificateSha256, config.signer.certificateSha256, 'signed by the permanent S4 key');
-  assert.equal(config.approvedArtefact.verified.package, 'com.sfour.s4');
-  assert.equal(config.approvedArtefact.verified.versionCode, 17);
-  assert.equal(config.expectedRelease.versionCode, 17);
   // The Firebase client file and FCM key are EAS-held, never recorded here.
+  assert.doesNotMatch(JSON.stringify(config), /private_key|api_key|current_key|BEGIN [A-Z ]*PRIVATE KEY/);
+});
+
+test('SIGNER-13F-THE-DISTRIBUTED-VC17-ARTEFACT-IS-SUPERSEDED-BY-THE-GUARD-NOTIFICATIONS-UPDATE', () => {
+  // Guard notifications update (25 Oct 2026): the 1.1.0 (17) AAB, built and certified on 24 Oct 2026 (EAS production
+  // build dd77f96d from 5a562f1), was uploaded to Google Play Internal Testing (owner-confirmed 24 Oct 2026). It is
+  // superseded by 18 and kept exactly: build, commit, hash and signer.
+  const superseded = (config.retiredArtefacts || []).find((entry) => entry.versionCode === 17);
+  assert.ok(superseded, 'versionCode 17 is recorded as superseded');
+  assert.equal(superseded.status, 'distributed-superseded');
+  assert.equal(superseded.easBuildId, 'dd77f96d-44cd-4d60-aa61-45f2b9a059ee');
+  assert.equal(superseded.gitCommit, '5a562f163a613dc780871345ee9e55d1ac1f24ef');
+  assert.equal(superseded.aabSha256, 'c82e0c40ea67ad4eb7c2ad42408973462bca3e3dcec29a312c5f82999934f9fa');
+  assert.equal(superseded.uploadCertificateSha256, config.signer.certificateSha256, 'signed by the permanent S4 key');
+  assert.equal(superseded.verified.package, 'com.sfour.s4');
+  assert.equal(superseded.verified.versionCode, 17);
+  assert.equal(superseded.playInternalTesting.confirmedBy, 'owner');
+  assert.equal(superseded.playInternalTesting.confirmedOn, '2026-10-24');
+  assert.match(superseded.retiredReason, /uploaded to Google Play Internal Testing \(owner-confirmed 24 Oct 2026\)/);
+  assert.equal((config.retiredArtefacts || []).filter((entry) => entry.versionCode === 17).length, 1, 'recorded once');
+  assert.equal(config.approvedArtefact.versionCode, 18, 'the Guard notifications update is the next artefact');
+  assert.equal(config.approvedArtefact.status, 'pending-build', 'not built yet');
+  assert.ok(!config.approvedArtefact.easBuildId && !config.approvedArtefact.aabSha256, 'no build id or hash before a build');
+  assert.match(config.approvedArtefact.note, /PR #34/);
+  assert.equal(config.expectedRelease.versionCode, 18);
   assert.doesNotMatch(JSON.stringify(config), /private_key|api_key|current_key|BEGIN [A-Z ]*PRIVATE KEY/);
 });
 

@@ -43,11 +43,13 @@ test('STORE-01-THE-PERMANENT-S4-IDENTITY', () => {
   assert.equal(expo.ios.bundleIdentifier, 'com.sfour.s4');
   assert.equal(expo.scheme, 's4security');
   assert.equal(expo.version, '1.1.0');
-  // Welfare Check push update (23 Oct 2026): Android versionCode 17 and iOS build 16 for the same store identity. The
-  // pilot update (Android 16, iOS 15, both built from e539b89) is superseded; 14 is in Play Internal Testing and 13 in
-  // App Store Connect, so no earlier number can be reused.
-  assert.equal(expo.android.versionCode, 17);
-  assert.equal(expo.ios.buildNumber, '16');
+  // Guard notifications update (25 Oct 2026): Android versionCode 18 and iOS build 17 for the same store identity. The
+  // Welfare Check push release (Android 17 in Play Internal Testing, iOS 16 in TestFlight, both owner-confirmed 24 Oct
+  // 2026) is superseded; 14 is in Play Internal Testing and 13 in App Store Connect, so no earlier number can be reused.
+  assert.equal(expo.android.versionCode, 18);
+  assert.equal(expo.ios.buildNumber, '17');
+  assert.ok(expo.android.versionCode > 17, 'above the distributed Android 17');
+  assert.ok(Number(expo.ios.buildNumber) > 16, 'above the distributed iOS 16');
 });
 
 test('STORE-02-THE-EXISTING-EAS-PROJECT-IS-KEPT-AND-OTA-STAYS-OFF', () => {
@@ -181,7 +183,7 @@ test('STORE-08-ONE-PRODUCT-NAME-FOR-EVERY-ROLE', () => {
 
 test('STORE-09-IOS-IDENTITY-IS-SET-AND-NOTHING-IS-BUILT', () => {
   assert.equal(expo.ios.bundleIdentifier, 'com.sfour.s4');
-  assert.equal(expo.ios.buildNumber, '16');
+  assert.equal(expo.ios.buildNumber, '17');
   assert.equal(expo.ios.infoPlist.ITSAppUsesNonExemptEncryption, false);
   assert.equal(expo.ios.config.usesNonExemptEncryption, false);
   // No hand-written usage strings that could drift from the plugin's, and none for unused capabilities.

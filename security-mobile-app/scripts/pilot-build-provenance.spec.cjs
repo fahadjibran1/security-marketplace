@@ -37,7 +37,9 @@ const easJson = JSON.parse(read('eas.json'));
 
 // ═══════════════════ the controlled version ═══════════════════
 
-test('BUILD-01-APP-VERSION-IS-1-1-0-AND-ANDROID-BUILD-17', () => {
+test('BUILD-01-APP-VERSION-IS-1-1-0-AND-ANDROID-BUILD-18', () => {
+  // Guard notifications update (25 Oct 2026): S4 1.1.0 / 18 adds the Guard notifications inbox (PR #34) over 1.1.0 / 17,
+  // which is in Google Play Internal Testing (owner-confirmed 24 Oct 2026).
   // Welfare Check push update (23 Oct 2026): S4 1.1.0 / 17 adds Welfare Check push notifications over the built 1.1.0 / 16.
   // Pilot update (23 Oct 2026): S4 1.1.0 / 16 supersedes the 20 Oct Guard release 1.1.0 / 15 on the same identity.
   // Guard release (20 Oct 2026): S4 1.1.0 / 15 carries the Guard shift-offer fix and supersedes 1.1.0 / 14, which
@@ -46,7 +48,8 @@ test('BUILD-01-APP-VERSION-IS-1-1-0-AND-ANDROID-BUILD-17', () => {
   // Android package, so nothing installs over anything — but the code keeps climbing, so every S4
   // artefact ever produced carries a distinct, increasing number. The development-package history:
   assert.equal(appJson.expo.version, '1.1.0');
-  assert.equal(appJson.expo.android.versionCode, 17, 'the Welfare Check push update candidate');
+  assert.equal(appJson.expo.android.versionCode, 18, 'the Guard notifications update candidate');
+  assert.ok(appJson.expo.android.versionCode > 17, 'above the distributed Welfare Check push release 17');
   assert.ok(appJson.expo.android.versionCode > 16, 'above the built pilot update 16');
   assert.ok(appJson.expo.android.versionCode > 15, 'above the superseded Guard release 15');
   assert.ok(appJson.expo.android.versionCode > 14, 'above the superseded RC14');
@@ -73,8 +76,10 @@ test('BUILD-01-APP-VERSION-IS-1-1-0-AND-ANDROID-BUILD-17', () => {
 
   // iOS has its own counter. Build 13 was uploaded to App Store Connect on 8 Oct 2026 (EAS Submit 90bd22f5), so
   // App Store Connect will never accept 13 again; the Guard release was build 14, the pilot update build 15, and the
-  // Welfare Check push update is build 16.
-  assert.equal(appJson.expo.ios.buildNumber, '16', 'above the uploaded build 13 and the built builds 14 and 15');
+  // Welfare Check push update build 16 (in TestFlight, owner-confirmed 24 Oct 2026), and the Guard notifications
+  // update is build 17.
+  assert.equal(appJson.expo.ios.buildNumber, '17', 'above the uploaded builds 13 and 16 and the built builds 14 and 15');
+  assert.ok(Number(appJson.expo.ios.buildNumber) > 16, 'above the distributed build 16');
 });
 
 test('BUILD-02-APP-JSON-IS-THE-AUTHORITATIVE-VERSION-SOURCE', () => {

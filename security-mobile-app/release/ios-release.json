@@ -10,7 +10,7 @@
   "bundleIdentifier": "com.sfour.s4",
   "displayName": "S4",
   "marketingVersion": "1.1.0",
-  "buildNumber": "16",
+  "buildNumber": "17",
   "deploymentTarget": "15.1",
   "easBuildImage": "default for SDK 54: macos-sequoia-15.6-xcode-26.0 (Xcode 26.0, iOS 26 SDK)",
   "privacyManifest": "app-level, generated from app.json ios.privacyManifests: tracking false; required-reason APIs UserDefaults, FileTimestamp, DiskSpace, SystemBootTime with the reasons their bundled dependencies declare",
@@ -30,47 +30,61 @@
     "ascApiKey": "At the 1.1.0 (14) build (2026-10-20) Apple rejected the key for build-time profile validation (401). On 2026-10-24 the same key, 468TT6N8RB, uploaded 1.1.0 (16) through EAS Submit, so it is valid for submissions; not replaced."
   },
   "artefact": {
-    "status": "uploaded-to-testflight",
+    "status": "pending-build",
     "marketingVersion": "1.1.0",
-    "buildNumber": "16",
-    "easBuildId": "7d1a904f-8a21-4428-9b47-08eb6f7cfe5e",
-    "easBuildUrl": "https://expo.dev/accounts/fahadjibran/projects/security-marketplace/builds/7d1a904f-8a21-4428-9b47-08eb6f7cfe5e",
-    "easBuildProfile": "production",
-    "distribution": "STORE",
-    "gitCommit": "5a562f163a613dc780871345ee9e55d1ac1f24ef",
-    "ipaFilename": "s4-1.1.0-ios16-7d1a904f.ipa",
-    "ipaSha256": "945c77a6cbc516541f585df87f612f8219dc4c013f91460ea45ced941f026d07",
-    "ipaSizeBytes": 9698771,
-    "completedAt": "2026-10-24T00:16:46Z",
-    "certifiedOn": "2026-10-24",
-    "verified": {
-      "bundleIdentifier": "com.sfour.s4",
-      "displayName": "S4",
-      "marketingVersion": "1.1.0",
-      "buildNumber": "16",
-      "minimumOSVersion": "15.1",
-      "usesNonExemptEncryption": false,
-      "allowsArbitraryLoads": false,
-      "backgroundModes": null,
-      "provisioningProfile": "*[expo] com.sfour.s4 AppStore 2026-10-23T23:54:04.112Z (B7539588YY)",
-      "profileApsEnvironment": "production",
-      "signedEntitlementsApsEnvironment": "production",
-      "teamId": "SXH4TLU2B5",
-      "getTaskAllow": false,
-      "apiBaseUrl": "https://security-marketplace-api.onrender.com",
-      "stagingApiUrls": 0,
-      "localApiUrls": "one: the web-only localhost development fallback in src/services/api-base-url.ts, unused on iOS"
-    },
-    "note": "Welfare Check push update 1.1.0 (16), same commit as Android 1.1.0 (17). Signed with the existing EAS-managed distribution certificate and the push-capable profile B7539588YY; APNs key CXFMNB4HHN held by EAS. Certified locally from the downloaded IPA: Info.plist, embedded profile, executable signature entitlements and main.jsbundle. Not submitted to App Store Connect / TestFlight; the IPA is kept outside Git.",
-    "testFlightUpload": {
-      "easSubmissionId": "a5b9ce7d-57a9-4bef-8843-3a7039ab0d50",
-      "ascAppId": "6820632995",
-      "uploadedOn": "2026-10-24",
-      "ascApiKeyId": "468TT6N8RB",
-      "note": "Uploaded by EAS Submit from EAS build 7d1a904f (not rebuilt) to the existing S4 App Store Connect app. Apple processing and adding the build to the existing external TestFlight group are owner steps."
-    }
+    "buildNumber": "17",
+    "signing": "unchanged: the existing EAS-managed Apple Distribution certificate (c1f9c5b6...), App Store profile B7539588YY with aps-environment production, APNs key CXFMNB4HHN held by EAS",
+    "note": "Guard notifications update 1.1.0 (17) for the existing TestFlight group: same source as Android 1.1.0 (18), production API. The Welfare Check push release (build 16) plus the Guard notifications inbox and Guard notification push taps (PR #34). Pending: not built, not submitted. Build and TestFlight upload only on owner approval."
   },
   "supersededArtefacts": [
+    {
+      "status": "distributed-superseded",
+      "marketingVersion": "1.1.0",
+      "buildNumber": "16",
+      "easBuildId": "7d1a904f-8a21-4428-9b47-08eb6f7cfe5e",
+      "easBuildUrl": "https://expo.dev/accounts/fahadjibran/projects/security-marketplace/builds/7d1a904f-8a21-4428-9b47-08eb6f7cfe5e",
+      "easBuildProfile": "production",
+      "distribution": "STORE",
+      "gitCommit": "5a562f163a613dc780871345ee9e55d1ac1f24ef",
+      "ipaFilename": "s4-1.1.0-ios16-7d1a904f.ipa",
+      "ipaSha256": "945c77a6cbc516541f585df87f612f8219dc4c013f91460ea45ced941f026d07",
+      "ipaSizeBytes": 9698771,
+      "completedAt": "2026-10-24T00:16:46Z",
+      "certifiedOn": "2026-10-24",
+      "verified": {
+        "bundleIdentifier": "com.sfour.s4",
+        "displayName": "S4",
+        "marketingVersion": "1.1.0",
+        "buildNumber": "16",
+        "minimumOSVersion": "15.1",
+        "usesNonExemptEncryption": false,
+        "allowsArbitraryLoads": false,
+        "backgroundModes": null,
+        "provisioningProfile": "*[expo] com.sfour.s4 AppStore 2026-10-23T23:54:04.112Z (B7539588YY)",
+        "profileApsEnvironment": "production",
+        "signedEntitlementsApsEnvironment": "production",
+        "teamId": "SXH4TLU2B5",
+        "getTaskAllow": false,
+        "apiBaseUrl": "https://security-marketplace-api.onrender.com",
+        "stagingApiUrls": 0,
+        "localApiUrls": "one: the web-only localhost development fallback in src/services/api-base-url.ts, unused on iOS"
+      },
+      "note": "Welfare Check push update 1.1.0 (16), same commit as Android 1.1.0 (17). Signed with the existing EAS-managed distribution certificate and the push-capable profile B7539588YY; APNs key CXFMNB4HHN held by EAS. Certified locally from the downloaded IPA: Info.plist, embedded profile, executable signature entitlements and main.jsbundle. Uploaded to TestFlight by EAS Submit (below); the IPA is kept outside Git.",
+      "testFlightUpload": {
+        "easSubmissionId": "a5b9ce7d-57a9-4bef-8843-3a7039ab0d50",
+        "ascAppId": "6820632995",
+        "uploadedOn": "2026-10-24",
+        "ascApiKeyId": "468TT6N8RB",
+        "note": "Uploaded by EAS Submit from EAS build 7d1a904f (not rebuilt) to the existing S4 App Store Connect app. Apple processing and adding the build to the existing external TestFlight group are owner steps."
+      },
+      "testFlightDistribution": {
+        "group": "S4 pilot guards",
+        "confirmedBy": "owner",
+        "confirmedOn": "2026-10-24",
+        "note": "Owner-confirmed 24 Oct 2026: build 16 was distributed to the TestFlight group \"S4 pilot guards\". Not inspected from the build machine."
+      },
+      "supersededBy": "1.1.0 (17), Guard notifications inbox and Guard notification push taps (PR #34)"
+    },
     {
       "status": "built-superseded",
       "marketingVersion": "1.1.0",
@@ -133,7 +147,7 @@
       "supersededBy": "1.1.0 (14) 7333ba4d"
     }
   ],
-  "testFlight": "1.1.0 (13) uploaded 2026-10-08 (EAS Submit 90bd22f5); 1.1.0 (16) uploaded 2026-10-24 (EAS Submit a5b9ce7d). Owner-confirmed 2026-10-20: one external TestFlight group of five testers.",
+  "testFlight": "1.1.0 (13) uploaded 2026-10-08 (EAS Submit 90bd22f5); 1.1.0 (16) uploaded 2026-10-24 (EAS Submit a5b9ce7d) and distributed to the group \"S4 pilot guards\" (owner-confirmed 2026-10-24). Owner-confirmed 2026-10-20: one external TestFlight group of five testers.",
   "appStore": "NOT SUBMITTED",
   "push": {
     "apnsKeyId": "CXFMNB4HHN",
