@@ -32,7 +32,9 @@ import {
   amendmentError,
   assessFatigue,
   mayPerformAmendmentAction,
+  platformSafetyViolations,
   toDbTimestamp,
+  withinPlatformSafety,
 } from './shift-amendment-policy';
 import {
   ApproveAmendmentDto,
@@ -269,14 +271,17 @@ export class ShiftAmendmentService implements OnModuleInit, OnModuleDestroy {
   async policyFor(companyId: number): Promise<ShiftPolicyValues & { source: 'default' | 'company' }> {
     const row = await this.policyRepo.findOne({ where: { companyId } });
     if (!row) return { ...DEFAULT_SHIFT_POLICY, source: 'default' };
+    // Never looser than the platform safety limits, whatever the row says.
     return {
       amendmentsEnabled: row.amendmentsEnabled,
-      fatigueWarningHours: Number(row.fatigueWarningHours),
-      approvalRequiredHours: Number(row.approvalRequiredHours),
-      hardLimitHours: row.hardLimitHours === null ? null : Number(row.hardLimitHours),
-      minRestHours: Number(row.minRestHours),
-      weeklyReviewHours: Number(row.weeklyReviewHours),
-      lastMinuteWarningMinutes: row.lastMinuteWarningMinutes,
+      ...withinPlatformSafety({
+        fatigueWarningHours: Number(row.fatigueWarningHours),
+        approvalRequiredHours: Number(row.approvalRequiredHours),
+        hardLimitHours: row.hardLimitHours === null ? null : Number(row.hardLimitHours),
+        minRestHours: Number(row.minRestHours),
+        weeklyReviewHours: Number(row.weeklyReviewHours),
+        lastMinuteWarningMinutes: row.lastMinuteWarningMinutes,
+      }),
       source: 'company',
     };
   }
@@ -1279,7 +1284,10 @@ export class ShiftAmendmentService implements OnModuleInit, OnModuleDestroy {
     return this.policyFor(actor.companyId);
   }
 
-  /** Owner / Admin change the thresholds. They cannot switch amendments on: that is an S4 decision (D5). */
+  /**
+   * Owner / Admin change the thresholds, only ever stricter than the platform safety limits. They cannot switch
+   * amendments on or off: that stays an S4 decision (D5), and saving thresholds keeps whatever is in force.
+   */
   async updatePolicy(user: JwtPayload, dto: UpdateShiftPolicyDto) {
     const actor = await this.companyActor(user, 'approve');
     const before = await this.policyFor(actor.companyId);
@@ -1293,20 +1301,28 @@ export class ShiftAmendmentService implements OnModuleInit, OnModuleDestroy {
     };
     if (next.fatigueWarningHours > next.approvalRequiredHours || (next.hardLimitHours !== null && next.hardLimitHours < next.approvalRequiredHours)) {
       throw amendmentError(HttpStatus.UNPROCESSABLE_ENTITY, E.FORBIDDEN,
-        'Thresholds must be in order: warning ≤ approval ≤ hard limit (or no hard limit).');
+        'Thresholds must be in order: warning ≤ approval ≤ hard limit.');
+    }
+    const violations = platformSafetyViolations(next);
+    if (violations.length) {
+      throw amendmentError(HttpStatus.UNPROCESSABLE_ENTITY, E.POLICY_WEAKER_THAN_PLATFORM,
+        `${violations.map((v) => v.message).join(' ')} A company can make these safeguards stricter, never weaker.`,
+        { violations: violations.map(({ field, limit }) => ({ field, limit })) });
     }
     await this.dataSource.transaction(async (manager) => {
+      // A first save writes the switch that is in force (the standard default, on) rather than leaving it to the
+      // column default; a later save never touches it.
       await manager.query(
         `INSERT INTO "company_shift_policies" ("companyId", "fatigueWarningHours", "approvalRequiredHours", "hardLimitHours",
-            "minRestHours", "weeklyReviewHours", "lastMinuteWarningMinutes", "updatedByUserId")
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            "minRestHours", "weeklyReviewHours", "lastMinuteWarningMinutes", "updatedByUserId", "amendmentsEnabled")
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          ON CONFLICT ("companyId") DO UPDATE SET "fatigueWarningHours" = EXCLUDED."fatigueWarningHours",
             "approvalRequiredHours" = EXCLUDED."approvalRequiredHours", "hardLimitHours" = EXCLUDED."hardLimitHours",
             "minRestHours" = EXCLUDED."minRestHours", "weeklyReviewHours" = EXCLUDED."weeklyReviewHours",
             "lastMinuteWarningMinutes" = EXCLUDED."lastMinuteWarningMinutes", "updatedByUserId" = EXCLUDED."updatedByUserId",
             "updatedAt" = now()`,
         [actor.companyId, next.fatigueWarningHours, next.approvalRequiredHours, next.hardLimitHours, next.minRestHours,
-          next.weeklyReviewHours, next.lastMinuteWarningMinutes, actor.userId],
+          next.weeklyReviewHours, next.lastMinuteWarningMinutes, actor.userId, before.amendmentsEnabled],
       );
       const { source: _s, amendmentsEnabled: _e, ...beforeThresholds } = before;
       await this.audit(manager, actor.companyId, actor.userId, 'company_shift_policy.updated', 'company', actor.companyId, beforeThresholds, next);
@@ -1351,7 +1367,9 @@ export class ShiftAmendmentService implements OnModuleInit, OnModuleDestroy {
         [companyId, enabled, user.sub],
       );
       await this.audit(manager, companyId, user.sub, 'company_shift_policy.amendments_enabled', 'company', companyId,
-        { amendmentsEnabled: Boolean(before?.amendmentsEnabled) }, { amendmentsEnabled: enabled, by: 'platform_admin' });
+        // The state in force before: the company's row, or the standard default when it has none.
+        { amendmentsEnabled: before ? Boolean(before.amendmentsEnabled) : DEFAULT_SHIFT_POLICY.amendmentsEnabled },
+        { amendmentsEnabled: enabled, by: 'platform_admin' });
       return { companyId, amendmentsEnabled: enabled };
     });
   }

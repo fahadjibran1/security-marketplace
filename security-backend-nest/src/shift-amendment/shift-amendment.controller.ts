@@ -85,7 +85,10 @@ export class ShiftAmendmentController {
     return this.service.setControlRoomAuthorisation(user, userId, dto.canAmendShifts);
   }
 
-  /** S4 platform administrator only (owner decision D5): activation is never a company setting. */
+  /**
+   * S4 platform administrator only (owner decision D5). Amendments are standard for every company; this is the
+   * emergency per-company switch (off, and back on). A company can never change it for itself.
+   */
   @Put('admin/shift-amendments/companies/:companyId')
   @Roles(UserRole.ADMIN)
   setCompanyEnabled(
