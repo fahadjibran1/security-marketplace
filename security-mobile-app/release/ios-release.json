@@ -9,8 +9,8 @@
   ],
   "bundleIdentifier": "com.sfour.s4",
   "displayName": "S4",
-  "marketingVersion": "1.1.0",
-  "buildNumber": "17",
+  "marketingVersion": "1.1.1",
+  "buildNumber": "18",
   "deploymentTarget": "15.1",
   "easBuildImage": "default for SDK 54: macos-sequoia-15.6-xcode-26.0 (Xcode 26.0, iOS 26 SDK)",
   "privacyManifest": "app-level, generated from app.json ios.privacyManifests: tracking false; required-reason APIs UserDefaults, FileTimestamp, DiskSpace, SystemBootTime with the reasons their bundled dependencies declare",
@@ -28,6 +28,25 @@
     "provisioningProfile": "*[expo] com.sfour.s4 AppStore 2026-10-23T23:54:04.112Z (B7539588YY, App Store distribution, no device list, with aps-environment production), created 2026-10-23 by the owner from the feature/welfare-push checkout (EAS: \"Synced capabilities: Enabled: Push Notifications\"), expires 2027-06-17. Replaces the 2026-10-08 profile N5P5Y8325N, which had no push entitlement.",
     "note": "Remote (EAS-managed) iOS credentials set up interactively by the owner. Nothing revoked or replaced.",
     "ascApiKey": "At the 1.1.0 (14) build (2026-10-20) Apple rejected the key for build-time profile validation (401). On 2026-10-24 the same key, 468TT6N8RB, uploaded 1.1.0 (16) through EAS Submit, so it is valid for submissions; not replaced."
+  },
+  "preparedArtefact": {
+    "status": "prepared-not-built",
+    "marketingVersion": "1.1.1",
+    "buildNumber": "18",
+    "easBuildProfile": "production",
+    "distribution": "STORE",
+    "sourceBranch": "fix/push-registration-loop",
+    "sourceFixCommit": "808a55c2d7f2bc8a803a3f23a18d6d24123922ac",
+    "sourceCommit": "the commit on fix/push-registration-loop that sets 1.1.1 / build 18 in app.json, directly on top of 808a55c (a commit cannot record its own id; the build record names it once built)",
+    "requiredSigning": {
+      "credentials": "EAS-managed (remote), unchanged",
+      "teamId": "SXH4TLU2B5",
+      "distributionCertificateSha256": "c1f9c5b6c04f4f37939ade278960a16870c88afd2efca94a75b570aab5830196",
+      "distributionCertificateSerial": "3933E4689FD03762FE3029E42A6BC3B5",
+      "provisioningProfile": "*[expo] com.sfour.s4 AppStore 2026-10-23T23:54:04.112Z (B7539588YY, UUID 1f19cdf5-67cd-4e7b-af8b-131c87c13964), as recorded for build 17",
+      "apsEnvironment": "production"
+    },
+    "note": "Maintenance release 1.1.1 (18), same source as Android 1.1.1 (19): the distributed 1.1.0 (17) plus the push-registration loop fix (808a55c). Same bundle id, the EAS-managed distribution certificate and profile recorded for build 17, aps-environment production, APNs key CXFMNB4HHN held by EAS, production API. Prepared only: not built, not submitted to App Store Connect or TestFlight, so there is no EAS build id, IPA hash or submission for it. 1.1.0 (17) stays the distributed iOS build until 1.1.1 (18) is built, certified and submitted on owner approval."
   },
   "artefact": {
     "status": "distributed",

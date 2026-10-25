@@ -37,7 +37,9 @@ const easJson = JSON.parse(read('eas.json'));
 
 // ═══════════════════ the controlled version ═══════════════════
 
-test('BUILD-01-APP-VERSION-IS-1-1-0-AND-ANDROID-BUILD-18', () => {
+test('BUILD-01-APP-VERSION-IS-1-1-1-AND-ANDROID-BUILD-19', () => {
+  // Maintenance release (25 Oct 2026): S4 1.1.1 / 19 adds the push-registration loop fix (808a55c) over 1.1.0 / 18, which
+  // is Active in Google Play Internal Testing (owner-confirmed 25 Oct 2026) and stays distributed until 19 is built.
   // Guard notifications update (25 Oct 2026): S4 1.1.0 / 18 adds the Guard notifications inbox (PR #34) over 1.1.0 / 17,
   // which is in Google Play Internal Testing (owner-confirmed 24 Oct 2026).
   // Welfare Check push update (23 Oct 2026): S4 1.1.0 / 17 adds Welfare Check push notifications over the built 1.1.0 / 16.
@@ -47,8 +49,9 @@ test('BUILD-01-APP-VERSION-IS-1-1-0-AND-ANDROID-BUILD-18', () => {
   // first permanent-identity candidate (com.sfour.s4); it is retired because it predates Dashboard V2. It is a new
   // Android package, so nothing installs over anything — but the code keeps climbing, so every S4
   // artefact ever produced carries a distinct, increasing number. The development-package history:
-  assert.equal(appJson.expo.version, '1.1.0');
-  assert.equal(appJson.expo.android.versionCode, 18, 'the Guard notifications update candidate');
+  assert.equal(appJson.expo.version, '1.1.1');
+  assert.equal(appJson.expo.android.versionCode, 19, 'the push-registration fix maintenance release candidate');
+  assert.ok(appJson.expo.android.versionCode > 18, 'above the distributed Guard notifications update 18');
   assert.ok(appJson.expo.android.versionCode > 17, 'above the distributed Welfare Check push release 17');
   assert.ok(appJson.expo.android.versionCode > 16, 'above the built pilot update 16');
   assert.ok(appJson.expo.android.versionCode > 15, 'above the superseded Guard release 15');
@@ -76,10 +79,68 @@ test('BUILD-01-APP-VERSION-IS-1-1-0-AND-ANDROID-BUILD-18', () => {
 
   // iOS has its own counter. Build 13 was uploaded to App Store Connect on 8 Oct 2026 (EAS Submit 90bd22f5), so
   // App Store Connect will never accept 13 again; the Guard release was build 14, the pilot update build 15, and the
-  // Welfare Check push update build 16 (in TestFlight, owner-confirmed 24 Oct 2026), and the Guard notifications
-  // update is build 17.
-  assert.equal(appJson.expo.ios.buildNumber, '17', 'above the uploaded builds 13 and 16 and the built builds 14 and 15');
+  // Welfare Check push update build 16 (in TestFlight, owner-confirmed 24 Oct 2026), the Guard notifications update
+  // build 17 (in TestFlight, owner-confirmed 25 Oct 2026), and the 1.1.1 maintenance release is build 18.
+  assert.equal(appJson.expo.ios.buildNumber, '18', 'above the uploaded builds 13, 16 and 17 and the built builds 14 and 15');
+  assert.ok(Number(appJson.expo.ios.buildNumber) > 17, 'above the distributed build 17');
   assert.ok(Number(appJson.expo.ios.buildNumber) > 16, 'above the distributed build 16');
+});
+
+test('BUILD-01B-THE-PREPARED-1-1-1-BUILDS-MATCH-APP-JSON-AND-ARE-ABOVE-THE-DISTRIBUTED-ONES', () => {
+  // The release records name the prepared (not built, not uploaded) 1.1.1 builds. Their numbers must be exactly what
+  // app.json carries, so a build cannot ship a number the record does not name, and strictly above the distributed
+  // Android 18 / iOS 17, which stay recorded as distributed.
+  const android = JSON.parse(read('release/android-signing.json'));
+  const ios = JSON.parse(read('release/ios-release.json'));
+  const semver = (v) => { assert.match(v, /^\d+\.\d+\.\d+$/); return v.split('.').map(Number); };
+  const above = (a, b) => { const [x, y] = [semver(a), semver(b)]; for (let i = 0; i < 3; i += 1) { if (x[i] !== y[i]) return x[i] > y[i]; } return false; };
+  const NOT_BUILT = /not built/;
+
+  const pa = android.preparedArtefact;
+  const da = android.approvedArtefact;
+  assert.equal(pa.status, 'prepared-not-built');
+  assert.equal(pa.versionName, appJson.expo.version);
+  assert.equal(pa.versionCode, appJson.expo.android.versionCode);
+  assert.equal(da.status, 'distributed', 'Android 18 stays the distributed build');
+  assert.equal(da.versionCode, 18);
+  assert.ok(pa.versionCode > da.versionCode, 'prepared versionCode strictly above the distributed one');
+  assert.ok(above(pa.versionName, da.versionName), 'prepared versionName strictly above the distributed one');
+  assert.ok(!pa.easBuildId && !pa.aabSha256, 'no EAS id or hash before a build');
+  assert.match(pa.note, NOT_BUILT);
+
+  const pi = ios.preparedArtefact;
+  const di = ios.artefact;
+  assert.equal(pi.status, 'prepared-not-built');
+  assert.equal(pi.marketingVersion, appJson.expo.version);
+  assert.equal(pi.buildNumber, appJson.expo.ios.buildNumber);
+  assert.equal(ios.marketingVersion, appJson.expo.version, 'the record header tracks app.json');
+  assert.equal(ios.buildNumber, appJson.expo.ios.buildNumber, 'the record header tracks app.json');
+  assert.equal(ios.bundleIdentifier, appJson.expo.ios.bundleIdentifier);
+  assert.equal(di.status, 'distributed', 'iOS 17 stays the distributed build');
+  assert.equal(di.buildNumber, '17');
+  assert.ok(Number(pi.buildNumber) > Number(di.buildNumber), 'prepared build number strictly above the distributed one');
+  assert.ok(above(pi.marketingVersion, di.marketingVersion), 'prepared marketing version strictly above the distributed one');
+  for (const key of ['easBuildId', 'easBuildUrl', 'ipaSha256', 'ipaFilename', 'ipaSizeBytes', 'gitCommit', 'completedAt', 'certifiedOn', 'verified', 'testFlightUpload', 'testFlightDistribution']) {
+    assert.ok(!(key in pi), `a prepared iOS artefact records no ${key}`);
+  }
+  assert.match(pi.note, NOT_BUILT);
+  assert.match(pi.note, /not submitted/);
+  assert.equal(pi.easBuildProfile, 'production');
+  assert.equal(pi.distribution, 'STORE');
+  // Same EAS-managed credentials as the distributed build 17: certificate, team and the push-capable profile.
+  assert.match(pi.requiredSigning.credentials, /EAS-managed/);
+  assert.equal(pi.requiredSigning.teamId, di.verified.teamId);
+  assert.equal(pi.requiredSigning.distributionCertificateSha256, di.verified.distributionCertificateSha256);
+  assert.equal(pi.requiredSigning.distributionCertificateSerial, di.verified.distributionCertificateSerial);
+  assert.match(pi.requiredSigning.provisioningProfile, /B7539588YY/);
+  assert.equal(pi.requiredSigning.apsEnvironment, 'production');
+  assert.equal(di.verified.profileApsEnvironment, 'production');
+
+  // Both platforms are prepared from the same fix commit on the same branch.
+  for (const p of [pa, pi]) {
+    assert.equal(p.sourceBranch, 'fix/push-registration-loop');
+    assert.equal(p.sourceFixCommit, '808a55c2d7f2bc8a803a3f23a18d6d24123922ac');
+  }
 });
 
 test('BUILD-02-APP-JSON-IS-THE-AUTHORITATIVE-VERSION-SOURCE', () => {
