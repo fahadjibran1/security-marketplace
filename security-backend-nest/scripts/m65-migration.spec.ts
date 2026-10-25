@@ -50,9 +50,11 @@ async function main() {
   const migrationsDir = path.join(__dirname, '..', 'src', 'database', 'migrations');
   const allFiles: string[] = fs.readdirSync(migrationsDir).filter((f: string) => /\.ts$/.test(f)).sort();
   const through64 = allFiles.filter((f) => Number(f.split('-')[0]) <= 1720900000010).map((f) => path.join(migrationsDir, f));
+  // Migration 66 (Guard shift notifications) follows 65; this certification stays about 65 alone.
+  const through65 = allFiles.filter((f) => Number(f.split('-')[0]) <= 1720900000011).map((f) => path.join(migrationsDir, f));
   const ds = new DataSource({
     type: 'postgres', url, entities: appEntities, synchronize: false, dropSchema: false,
-    migrations: allFiles.map((f) => path.join(migrationsDir, f)), migrationsTableName: 'typeorm_migrations', logging: false,
+    migrations: through65, migrationsTableName: 'typeorm_migrations', logging: false,
   });
   const q = (sql: string, params: unknown[] = []) => ds.query(sql, params);
   const scalar = async (sql: string, params: unknown[] = []) => Object.values((await q(sql, params))[0] ?? {})[0];
@@ -120,8 +122,9 @@ async function main() {
     await test('M65-01-A-64-DATABASE-MIGRATES-TO-65-AND-65-IS-LAST', () => {
       assert.equal(applied.length, 1, 'only 65 is pending on a 64 database');
       assert.equal(applied[0].name, MIGRATION_65);
-      assert.equal(allFiles.length, 65);
+      assert.equal(allFiles.length, 66);
       assert.equal(allFiles[64], '1720900000011-AddWelfarePushReminders.ts');
+      assert.equal(allFiles[65], '1720900000012-AddGuardNotificationDispatches.ts', 'Migration 66 follows 65 and is certified by m66-migration.spec.ts');
     });
     const head = await schema();
 
@@ -236,7 +239,10 @@ async function main() {
       const drift = (await ds.driver.createSchemaBuilder().log()).upQueries.map((x) => x.query);
       const ours = drift.filter((x) => /push_devices|welfare_reminders/.test(x));
       assert.deepEqual(ours, [], `entity and migration 65 disagree:\n${ours.join('\n')}`);
-      const semantic = drift.filter((x) =>
+      // This database stops at 65, so Migration 66's table and four notification labels are absent by design;
+      // m66-migration.spec.ts (M66-09) certifies that their entities and migration agree. Nothing else is set aside.
+      const after65 = /guard_notification_dispatches|notifications_type_enum/;
+      const semantic = drift.filter((x) => !after65.test(x) &&
         /CREATE TABLE|DROP TABLE|CREATE TYPE|DROP TYPE|ALTER TYPE|ALTER TABLE.*ALTER COLUMN|ALTER TABLE.*DROP COLUMN|ALTER TABLE.*ADD "/i.test(x));
       assert.deepEqual(semantic, [], `semantic drift (the release gate would fail):\n${semantic.join('\n')}`);
       console.log(`      (diagnostic-only drift elsewhere, unchanged by 65: ${drift.length} statement(s))`);

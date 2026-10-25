@@ -49,6 +49,7 @@ import { ShiftAmendment } from '../shift-amendment/entities/shift-amendment.enti
 import { CompanyShiftPolicy } from '../shift-amendment/entities/company-shift-policy.entity';
 import { PushDevice } from '../welfare-push/entities/push-device.entity';
 import { WelfareReminder } from '../welfare-push/entities/welfare-reminder.entity';
+import { GuardNotificationDispatch } from '../guard-notification/entities/guard-notification-dispatch.entity';
 
 export const appEntities = [
   AuthSession,
@@ -107,5 +108,6 @@ export const appEntities = [
   CompanyShiftPolicy,
   PushDevice,
   WelfareReminder,
+  GuardNotificationDispatch,
   UserVerificationToken,
 ];

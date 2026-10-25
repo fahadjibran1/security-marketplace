@@ -7,7 +7,7 @@
  *            bucket and the production key; it accepts only the staging bucket
  *   SEED-03  documents go through the real workflow in order (presign -> PUT bytes -> complete-upload -> verify)
  *            and the file-less legacy path (fileUrl) is never used
- *   SEED-04  the database guards are present: staging host only, production host refused, empty target, ledger 65
+ *   SEED-04  the database guards are present: staging host only, production host refused, empty target, ledger 66
  *   SEED-05  the shift id is read from the real POST /shifts response ({ shift, timesheet }); the 21 Oct staging seed
  *            stopped at /shifts/undefined/respond because the old code read .id off the wrapper
  *   SEED-06  logins are written as each account is created, before any later step (the 21 Oct runs lost them)
@@ -98,8 +98,8 @@ test('SEED-04-DATABASE-GUARDS-ARE-PRESENT', () => {
   assert.match(source, /target host equals the production database host/);
   assert.match(source, /Supabase \/ pooler host/);
   assert.match(source, /seed only a fresh database/);
-  assert.match(source, /const EXPECTED_MIGRATIONS = 65;/);
-  assert.match(source, /const LAST_MIGRATION = 'AddWelfarePushReminders1720900000011';/);
+  assert.match(source, /const EXPECTED_MIGRATIONS = 66;/);
+  assert.match(source, /const LAST_MIGRATION = 'AddGuardNotificationDispatches1720900000012';/);
   assert.match(source, /S4_STAGING_SEED_CONFIRM !== CONFIRM/);
   assert.match(source, /DATABASE_SYNCHRONIZE: 'false'/, 'the in-process app never alters the schema');
   assert.match(source, /DATABASE_POOLER_URL: ''/, 'no pooler URL can be picked up');
@@ -236,15 +236,15 @@ test('SEED-11-RECOVERY-USES-THE-PRODUCT-RESET-FLOW-FOR-THE-FICTIONAL-ACCOUNTS-ON
 });
 
 test('SEED-12-THE-LEDGER-IS-THIS-CODE-S-OWN-HEAD-AND-NO-IN-PROCESS-TIMER-RUNS', () => {
-  // The constants are exactly this repository's migration head (Migration 65 today) …
-  assert.deepEqual(repositoryMigrationHead(), { count: 65, last: 'AddWelfarePushReminders1720900000011' });
+  // The constants are exactly this repository's migration head (Migration 66 today) …
+  assert.deepEqual(repositoryMigrationHead(), { count: 66, last: 'AddGuardNotificationDispatches1720900000012' });
   // … and a migration added later moves the head, so the seeder would refuse until it is updated with it.
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 's4-seed-head-'));
   try {
     const real = path.join(__dirname, '..', 'src', 'database', 'migrations');
     for (const f of fs.readdirSync(real)) fs.copyFileSync(path.join(real, f), path.join(tmp, f));
-    fs.writeFileSync(path.join(tmp, '1720900000012-SomethingLater.ts'), 'export class SomethingLater1720900000012 {}\n');
-    assert.deepEqual(repositoryMigrationHead(tmp), { count: 66, last: 'SomethingLater1720900000012' });
+    fs.writeFileSync(path.join(tmp, '1720900000013-SomethingLater.ts'), 'export class SomethingLater1720900000013 {}\n');
+    assert.deepEqual(repositoryMigrationHead(tmp), { count: 67, last: 'SomethingLater1720900000013' });
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }

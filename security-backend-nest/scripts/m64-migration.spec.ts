@@ -145,9 +145,10 @@ async function main() {
     await test('M64-01-FRESH-DATABASE-MIGRATES-TO-64-AND-64-IS-LAST', () => {
       assert.equal(applied.length, 1, 'only 64 is pending on a 63 database');
       assert.equal(applied[0].name, MIGRATION_64);
-      assert.equal(allFiles.length, 65);
+      assert.equal(allFiles.length, 66);
       assert.equal(allFiles[63], '1720900000010-AddShiftAmendments.ts');
       assert.equal(allFiles[64], '1720900000011-AddWelfarePushReminders.ts', 'Migration 65 follows 64 and is certified by m65-migration.spec.ts');
+      assert.equal(allFiles[65], '1720900000012-AddGuardNotificationDispatches.ts', 'Migration 66 follows 65 and is certified by m66-migration.spec.ts');
     });
     const head = await schema();
     const headLabels = await labels();
@@ -282,11 +283,19 @@ async function main() {
 
     await test('M64-09-NO-SEMANTIC-DRIFT-AND-NO-DRIFT-ON-NEW-OBJECTS', async () => {
       const drift = (await ds.driver.createSchemaBuilder().log()).upQueries.map((x) => x.query);
-      const ours = drift.filter((x) => /shift_amendments|company_shift_policies|originalEnd|canAmendShifts|notifications_type_enum/.test(x));
+      // Migration 66 appends four notification labels the entity already declares. At 64 the database must hold exactly
+      // the entity's labels without those four (certified here directly), so the enum's re-creation drift is set aside.
+      const { NotificationType } = await import('../src/notification/entities/notification.entity');
+      const M66_LABELS = ['shift_offered', 'shift_offer_withdrawn', 'shift_reacceptance_required', 'shift_replaced'];
+      assert.deepEqual([...(await labels())].sort(), Object.values(NotificationType).filter((l) => !M66_LABELS.includes(l)).sort(),
+        'at 64 the notification labels are the entity\'s, less the four Migration 66 appends');
+      const ours = drift.filter((x) => !/guard_notification_dispatches/.test(x) &&
+        /shift_amendments|company_shift_policies|originalEnd|canAmendShifts/.test(x));
       assert.deepEqual(ours, [], `entity and migration 64 disagree:\n${ours.join('\n')}`);
-      // This database stops at 64, so Migration 65's two tables are absent by design; m65-migration.spec.ts (M65-09)
-      // certifies that their entities and migration agree. Nothing else is set aside.
-      const after64 = /push_devices|welfare_reminders/;
+      // This database stops at 64, so Migration 65's two tables and 66's table and labels are absent by design;
+      // m65-migration.spec.ts (M65-09) and m66-migration.spec.ts (M66-09) certify that their entities and migrations
+      // agree. Nothing else is set aside.
+      const after64 = /push_devices|welfare_reminders|guard_notification_dispatches|notifications_type_enum/;
       const semantic = drift.filter((x) => !after64.test(x) &&
         /CREATE TABLE|DROP TABLE|CREATE TYPE|DROP TYPE|ALTER TYPE|ALTER TABLE.*ALTER COLUMN|ALTER TABLE.*DROP COLUMN|ALTER TABLE.*ADD "/i.test(x));
       assert.deepEqual(semantic, [], `semantic drift (the release gate would fail):\n${semantic.join('\n')}`);

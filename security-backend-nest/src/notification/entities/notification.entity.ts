@@ -27,6 +27,12 @@ export enum NotificationType {
   SHIFT_AMENDMENT_RESPONDED = 'shift_amendment_responded',
   SHIFT_AMENDMENT_DISPUTED = 'shift_amendment_disputed',
   SHIFT_AMENDMENT_EXPIRED = 'shift_amendment_expired',
+  // Guard shift notifications (Migration 66)
+  SHIFT_OFFERED = 'shift_offered',
+  SHIFT_OFFER_WITHDRAWN = 'shift_offer_withdrawn',
+  SHIFT_REACCEPTANCE_REQUIRED = 'shift_reacceptance_required',
+  /** Reserved for the Replace Guard workflow. Nothing emits it yet. */
+  SHIFT_REPLACED = 'shift_replaced',
 }
 
 export enum NotificationStatus {
