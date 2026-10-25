@@ -23,6 +23,7 @@ import { AvailabilityModule } from '../availability/availability.module';
 // and the company board must be computed by the same instance of the same engine, so this is
 // deliberately a reuse rather than a second provider.
 import { CoverageModule } from '../coverage/coverage.module';
+import { GuardNotificationModule } from '../guard-notification/guard-notification.module';
 
 @Module({
   imports: [
@@ -38,6 +39,7 @@ import { CoverageModule } from '../coverage/coverage.module';
     AvailabilityModule,
     AuditLogModule,
     CoverageModule,
+    GuardNotificationModule,
   ],
   controllers: [ShiftController],
   providers: [ShiftService, ShiftReconciliationService],

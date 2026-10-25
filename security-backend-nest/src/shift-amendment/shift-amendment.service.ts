@@ -12,6 +12,7 @@ import { CompanyMembershipService } from '../company-membership/company-membersh
 import { CompanyMembershipRole, CompanyMembershipStatus, CompanyPermission } from '../company-membership/company-membership-types';
 import { ComplianceService } from '../compliance/compliance.service';
 import { TransactionalEmailService } from '../email/transactional-email.service';
+import { GuardNotificationService } from '../guard-notification/guard-notification.service';
 import { GuardProfileService } from '../guard-profile/guard-profile.service';
 import { NotificationStatus, NotificationType } from '../notification/entities/notification.entity';
 import { WELFARE_SWEEP_LOCK_NAMESPACE, lockGuardsForAssignment } from '../operations/advisory-locks';
@@ -215,6 +216,7 @@ export class ShiftAmendmentService implements OnModuleInit, OnModuleDestroy {
     private readonly availabilityService: AvailabilityService,
     private readonly auditLogService: AuditLogService,
     private readonly emailService: TransactionalEmailService,
+    private readonly guardNotifications: GuardNotificationService,
   ) {}
 
   onModuleInit() {
@@ -415,17 +417,45 @@ export class ShiftAmendmentService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  private async notify(manager: EntityManager, userIds: number[], companyId: number, type: NotificationType, title: string, message: string) {
+  private async notify(manager: EntityManager, userIds: number[], companyId: number, type: NotificationType, title: string, message: string): Promise<number[]> {
     const unique = [...new Set(userIds.filter((id) => Number.isInteger(id) && id > 0))];
-    if (!unique.length) return;
+    const ids: number[] = [];
+    if (!unique.length) return ids;
     // On the transaction's own connection, so the notification commits (or not) with the change it reports.
     for (const userId of unique) {
-      await manager.query(
+      const [row] = await manager.query(
         `INSERT INTO "notifications" ("userId", "companyId", "type", "title", "message", "status", "sentAt")
-         VALUES ($1, $2, $3, $4, $5, $6, now())`,
+         VALUES ($1, $2, $3, $4, $5, $6, now()) RETURNING "id"`,
         [userId, companyId, type, title, message, NotificationStatus.UNREAD],
       );
+      ids.push(Number(row.id));
     }
+    return ids;
+  }
+
+  /**
+   * The Guard-facing notice, exactly as before, plus an OS push of it to the Guard (after commit, best effort, at most
+   * once per amendment and outcome). Notices to company staff are never pushed.
+   */
+  private async notifyGuard(
+    manager: EntityManager,
+    guardUser: number,
+    amendment: { id: number; companyId: number; guardId: number; shiftId: number },
+    type: NotificationType.SHIFT_AMENDMENT_REQUESTED | NotificationType.SHIFT_AMENDMENT_RESPONDED,
+    outcome: 'requested' | 'recorded' | 'withdrawn' | 'dispute_reviewed',
+    title: string,
+    message: string,
+  ) {
+    const [notificationId] = await this.notify(manager, [guardUser], amendment.companyId, type, title, message);
+    if (!notificationId) return;
+    await this.guardNotifications.pushForNotice(manager, {
+      type,
+      companyId: amendment.companyId,
+      guardId: amendment.guardId,
+      shiftId: amendment.shiftId,
+      amendmentId: amendment.id,
+      eventKey: outcome === 'requested' ? `${type}:amendment:${amendment.id}` : `${type}:amendment:${amendment.id}:${outcome}`,
+    }, notificationId);
   }
 
   private async guardUserId(manager: EntityManager, guardId: number): Promise<number | null> {
@@ -546,7 +576,8 @@ export class ShiftAmendmentService implements OnModuleInit, OnModuleDestroy {
       if (status === 'pending') {
         const guardUser = await this.guardUserId(manager, guardId);
         if (guardUser) {
-          await this.notify(manager, [guardUser], actor.companyId, NotificationType.SHIFT_AMENDMENT_REQUESTED, 'Shift extension request',
+          await this.notifyGuard(manager, guardUser, { id: newId, companyId: actor.companyId, guardId, shiftId },
+            NotificationType.SHIFT_AMENDMENT_REQUESTED, 'requested', 'Shift extension request',
             `Your company asks you to extend your shift to ${iso(proposedEndMs)}. Open S4 to accept or decline before ${iso(shift.endMs)}.`);
         }
       }
@@ -588,7 +619,7 @@ export class ShiftAmendmentService implements OnModuleInit, OnModuleDestroy {
         { status: 'awaiting_approval' }, { status: 'pending', approvalStatement: dto.statement.trim(), selfApproved: self, approverRole: actor.role });
       const guardUser = await this.guardUserId(manager, amendment.guardId);
       if (guardUser) {
-        await this.notify(manager, [guardUser], actor.companyId, NotificationType.SHIFT_AMENDMENT_REQUESTED, 'Shift extension request',
+        await this.notifyGuard(manager, guardUser, amendment, NotificationType.SHIFT_AMENDMENT_REQUESTED, 'requested', 'Shift extension request',
           `Your company asks you to extend your shift to ${iso(amendment.proposedEndMs)}. Open S4 to accept or decline before ${iso(amendment.expiresAtMs)}.`);
       }
       return null;
@@ -627,7 +658,7 @@ export class ShiftAmendmentService implements OnModuleInit, OnModuleDestroy {
       if (amendment.status === 'pending') {
         const guardUser = await this.guardUserId(manager, amendment.guardId);
         if (guardUser) {
-          await this.notify(manager, [guardUser], actor.companyId, NotificationType.SHIFT_AMENDMENT_RESPONDED, 'Shift extension withdrawn',
+          await this.notifyGuard(manager, guardUser, amendment, NotificationType.SHIFT_AMENDMENT_RESPONDED, 'withdrawn', 'Shift extension withdrawn',
             'Your company withdrew its shift extension request. Your shift end is unchanged.');
         }
       }
@@ -837,7 +868,7 @@ export class ShiftAmendmentService implements OnModuleInit, OnModuleDestroy {
       } else {
         const guardUser = await this.guardUserId(manager, amendment.guardId);
         if (guardUser) {
-          await this.notify(manager, [guardUser], amendment.companyId, NotificationType.SHIFT_AMENDMENT_RESPONDED,
+          await this.notifyGuard(manager, guardUser, amendment, NotificationType.SHIFT_AMENDMENT_RESPONDED, 'recorded',
             'Shift extension recorded by your company',
             `Your company recorded that you agreed by ${verbal?.contactMethod?.replace('_', ' ')} to extend your shift to ${iso(amendment.proposedEndMs)}. If you did not agree, report it in S4 or contact your company.`);
         }
@@ -962,8 +993,8 @@ export class ShiftAmendmentService implements OnModuleInit, OnModuleDestroy {
         { status: 'disputed' }, { status, resolution: dto.resolution, note: dto.note.trim(), shiftEndChanged: false });
       const guardUser = await this.guardUserId(manager, amendment.guardId);
       if (guardUser) {
-        await this.notify(manager, [guardUser], actor.companyId, NotificationType.SHIFT_AMENDMENT_RESPONDED, 'Shift extension dispute reviewed',
-          `Your company reviewed your dispute (${dto.resolution}): ${dto.note.trim()}`);
+        await this.notifyGuard(manager, guardUser, amendment, NotificationType.SHIFT_AMENDMENT_RESPONDED, 'dispute_reviewed',
+          'Shift extension dispute reviewed', `Your company reviewed your dispute (${dto.resolution}): ${dto.note.trim()}`);
       }
       return null;
     });

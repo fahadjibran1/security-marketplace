@@ -3,6 +3,7 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  Optional,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -34,6 +35,7 @@ import {
   materialChanges,
   reacceptanceAuditData,
 } from '../shift/shift-edit-policy';
+import { GuardNotificationService } from '../guard-notification/guard-notification.service';
 
 // Guard positions whose presence means execution is live or historical
 const EXECUTION_LOCK_STATUSES = ['in_progress', 'completed', 'missed'];
@@ -56,6 +58,8 @@ export class RotaSlotService {
     private readonly companyGuardService: CompanyGuardService,
     private readonly availabilityService: AvailabilityService,
     private readonly auditLogService: AuditLogService,
+    // Optional only so that unit specs constructing this service by hand keep working; the app always injects it.
+    @Optional() private readonly guardNotifications?: GuardNotificationService,
   ) {}
 
   // ── Private helpers ──────────────────────────────────────────────────────────
@@ -384,6 +388,8 @@ export class RotaSlotService {
         await shiftRepo.save(s);
         if (reoffer) {
           reofferedShiftIds.push(s.id);
+          // The Guard's in-app notice (and push, after commit) that the revised shift needs accepting again.
+          await this.guardNotifications?.shiftReacceptanceRequired(manager, { companyId: company.id, guardId: s.guard!.id, shiftId: s.id });
           await this.auditLogService.logInTransaction(manager, {
             company: { id: company.id },
             user: { id: user.sub },
@@ -528,6 +534,8 @@ export class RotaSlotService {
           'This position has already been filled or is no longer available',
         );
       }
+      // The Guard's in-app notice, committed with the offer; the push follows the commit.
+      await this.guardNotifications?.shiftOffered(manager, { companyId: company.id, guardId: guard.id, shiftId: input.shiftId });
     });
 
     // Only reached once the assignment has committed: a refused write leaves no audit entry.
@@ -594,8 +602,17 @@ export class RotaSlotService {
       );
     }
 
+    // A Guard holding the position (offered or accepted, not yet Booked On) is told it was withdrawn, in the same
+    // transaction as the cancellation.
+    const holderGuardId = ['offered', 'ready'].includes(shift.status) ? shift.guard?.id ?? null : null;
     shift.status = 'cancelled';
-    const saved = await this.shiftRepo.save(shift);
+    const saved = await this.dataSource.transaction(async (manager) => {
+      const result = await manager.getRepository(Shift).save(shift);
+      if (holderGuardId) {
+        await this.guardNotifications?.shiftOfferWithdrawn(manager, { companyId: company.id, guardId: holderGuardId, shiftId });
+      }
+      return result;
+    });
 
     await this.auditLogService.log({
       company: { id: company.id },
@@ -719,6 +736,10 @@ export class RotaSlotService {
         );
       }
 
+      // Guards holding a position (offered or accepted, not yet Booked On) are told it was withdrawn.
+      const holders = (await shiftRepo.find({ where: { rotaSlotId: slotId, status: In(['offered', 'ready']) } }))
+        .filter((s) => s.guard?.id);
+
       await shiftRepo.update(
         { rotaSlotId: slotId, status: In(BULK_CANCELLABLE_STATUSES) },
         { status: 'cancelled' },
@@ -726,6 +747,10 @@ export class RotaSlotService {
 
       slot.status = 'cancelled';
       await slotRepo.save(slot);
+
+      for (const s of holders) {
+        await this.guardNotifications?.shiftOfferWithdrawn(manager, { companyId: company.id, guardId: s.guard!.id, shiftId: s.id });
+      }
 
       return slot;
     });

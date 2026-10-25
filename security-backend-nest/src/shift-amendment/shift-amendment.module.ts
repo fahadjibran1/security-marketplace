@@ -7,6 +7,7 @@ import { CompanyMembershipModule } from '../company-membership/company-membershi
 import { ComplianceModule } from '../compliance/compliance.module';
 import { EmailModule } from '../email/email.module';
 import { GuardProfileModule } from '../guard-profile/guard-profile.module';
+import { GuardNotificationModule } from '../guard-notification/guard-notification.module';
 import { CompanyShiftPolicy } from './entities/company-shift-policy.entity';
 import { ShiftAmendment } from './entities/shift-amendment.entity';
 import { ShiftAmendmentController } from './shift-amendment.controller';
@@ -22,6 +23,7 @@ import { ShiftAmendmentService } from './shift-amendment.service';
     ComplianceModule,
     EmailModule,
     GuardProfileModule,
+    GuardNotificationModule,
   ],
   controllers: [ShiftAmendmentController],
   providers: [ShiftAmendmentService],

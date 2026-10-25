@@ -5,6 +5,7 @@ import { AuditLogModule } from '../audit-log/audit-log.module';
 import { AvailabilityModule } from '../availability/availability.module';
 import { CompanyGuardModule } from '../company-guard/company-guard.module';
 import { CompanyMembershipModule } from '../company-membership/company-membership.module';
+import { GuardNotificationModule } from '../guard-notification/guard-notification.module';
 import { GuardProfile } from '../guard-profile/entities/guard-profile.entity';
 import { Shift } from '../shift/entities/shift.entity';
 import { Site } from '../site/entities/site.entity';
@@ -21,6 +22,7 @@ import { RotaSlotService } from './rota-slot.service';
     CompanyGuardModule,
     AvailabilityModule,
     AuditLogModule,
+    GuardNotificationModule,
   ],
   controllers: [RotaSlotController, RotaController],
   providers: [RotaSlotService, RotaWeekService],

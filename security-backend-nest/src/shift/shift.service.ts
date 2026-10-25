@@ -1,4 +1,5 @@
-import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException, forwardRef } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException, Optional, forwardRef } from '@nestjs/common';
+import { GuardNotificationService } from '../guard-notification/guard-notification.service';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
 import { Shift } from './entities/shift.entity';
@@ -103,6 +104,8 @@ export class ShiftService {
     private readonly dataSource: DataSource,
     private readonly auditLogService: AuditLogService,
     private readonly operationsProjection: OperationsProjectionService,
+    // Optional only so that unit specs constructing this service by hand keep working; the app always injects it.
+    @Optional() private readonly guardNotifications?: GuardNotificationService,
   ) {}
 
   async findAll(): Promise<Shift[]> {
@@ -362,6 +365,12 @@ export class ShiftService {
     const timesheet = savedShift.guard
       ? await this.timesheetService.createForShift(savedShift, manager)
       : null;
+
+    // A new offer to a Guard (company create, admin create, hire): the Guard's in-app notice is written on this
+    // transaction (a shift with a Guard is always created inside one, above) and the push follows its commit.
+    if (manager && savedShift.guard && savedShift.status === 'offered') {
+      await this.guardNotifications?.shiftOffered(manager, { companyId: company.id, guardId: savedShift.guard.id, shiftId: savedShift.id });
+    }
 
     return { shift: savedShift, timesheet };
   }
@@ -841,6 +850,20 @@ export class ShiftService {
         });
       }
 
+      // The Guard's in-app notice for what this edit means to them, committed with it; the push follows the commit.
+      if (this.guardNotifications) {
+        const target = { companyId: actorCompany.id, shiftId: shift.id };
+        if (reofferedForReacceptance) {
+          await this.guardNotifications.shiftReacceptanceRequired(manager, { ...target, guardId: nextGuard!.id });
+        } else if (nextStatus === 'offered' && nextGuard && (nextGuard.id !== before.guardId || currentStatus !== 'offered')) {
+          await this.guardNotifications.shiftOffered(manager, { ...target, guardId: nextGuard.id });
+        }
+        // "Withdraw offer" (and cancelling an accepted shift before Book On) tells the Guard who held it.
+        if (nextStatus === 'cancelled' && ['offered', 'ready'].includes(currentStatus) && before.guardId) {
+          await this.guardNotifications.shiftOfferWithdrawn(manager, { ...target, guardId: before.guardId });
+        }
+      }
+
       // The draft timesheet carries the scheduled times; it is kept in step in the same transaction, so a retime and
       // its timesheet commit together or not at all.
       const timesheetRepo = manager.getRepository(Timesheet);
@@ -918,6 +941,11 @@ export class ShiftService {
         entityId: shift.id,
         beforeData: { ...shiftAuditSnapshot(shift) },
       });
+      // Deleting an offered shift withdraws the offer: the Guard is told (recorded before the row goes; the notice
+      // and the push outlive it).
+      if (status === 'offered' && shift.guard?.id) {
+        await this.guardNotifications?.shiftOfferWithdrawn(manager, { companyId: actorCompany.id, guardId: shift.guard.id, shiftId: shift.id });
+      }
       await manager.getRepository(Shift).delete({ id: shift.id });
     });
     return { success: true };
