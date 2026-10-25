@@ -1,6 +1,10 @@
 // The phone side of Welfare Check notifications: permission, the Expo push token, the Android channel, the iOS/Android
 // action buttons, and taps. The only module that touches expo-notifications. Web does nothing here.
 //
+// It also carries the Guard's other notifications (kind 'guard_notification': shift offers, extension requests and the
+// like). Those use their own Android channel ('shift-updates', default importance), have no buttons, and a tap opens
+// the Guard's inbox in S4. They never pass through the Welfare handling, and Welfare pushes never pass through theirs.
+//
 // Why the buttons open S4 rather than answering in the background: in an Expo app a notification action that does not
 // open the app reaches JavaScript only if the app happens to be alive in the background; when it has been closed or
 // suspended the tap is not delivered until S4 next starts, and iOS gives no guaranteed time to finish a request.
@@ -20,6 +24,13 @@ import {
   WELFARE_CHANNEL_ID,
   type WelfareIntent,
 } from '../components/guard/welfarePush';
+import {
+  isGuardNotificationData,
+  parseGuardNotificationResponse,
+  SHIFT_UPDATES_CHANNEL_ID,
+  SHIFT_UPDATES_CHANNEL_NAME,
+  type GuardNotificationIntent,
+} from '../components/guard/guardInbox';
 
 const NATIVE = Platform.OS === 'ios' || Platform.OS === 'android';
 let configured = false;
@@ -32,7 +43,8 @@ export async function configureWelfareNotifications(): Promise<void> {
   if (!NATIVE || configured) return;
   configured = true;
   try {
-    // A reminder that arrives while S4 is open is still shown: the Guard may be on another screen.
+    // A reminder that arrives while S4 is open is still shown: the Guard may be on another screen. The same applies to
+    // Guard notifications (shift offers, extension requests): every S4 push shows as a normal banner in the foreground.
     Notifications.setNotificationHandler({
       handleNotification: async () => ({ shouldShowBanner: true, shouldShowList: true, shouldPlaySound: true, shouldSetBadge: false }),
     });
@@ -52,6 +64,18 @@ export async function configureWelfareNotifications(): Promise<void> {
     ]);
   } catch {
     // A device without notification support keeps working; Welfare Checks remain available in S4.
+  }
+  // Separate from the Welfare setup above so a failure here can never stop Welfare Checks being configured.
+  if (Platform.OS === 'android') {
+    try {
+      await Notifications.setNotificationChannelAsync(SHIFT_UPDATES_CHANNEL_ID, {
+        name: SHIFT_UPDATES_CHANNEL_NAME,
+        description: 'Shift offers, changes and extension requests.',
+        importance: Notifications.AndroidImportance.DEFAULT,
+      });
+    } catch {
+      // Without the channel Android shows these on its default channel; the inbox in S4 still lists them.
+    }
   }
 }
 
@@ -116,5 +140,36 @@ export function subscribeWelfareResponses(onIntent: (intent: WelfareIntent) => v
   };
   const sub = Notifications.addNotificationResponseReceivedListener(handle);
   Notifications.getLastNotificationResponseAsync().then(handle).catch(() => undefined);
+  return () => sub.remove();
+}
+
+/**
+ * Taps on Guard notifications (kind 'guard_notification'), including the one that launched S4 from closed. Each tap is
+ * reported once and the notification cleared from the tray. Welfare Check taps are left to subscribeWelfareResponses.
+ */
+export function subscribeGuardNotificationResponses(onIntent: (intent: GuardNotificationIntent) => void): () => void {
+  if (!NATIVE) return () => undefined;
+  const seen = new Set<string>();
+  const handle = (response: Notifications.NotificationResponse | null) => {
+    if (!response) return;
+    const request = response.notification.request;
+    const intent = parseGuardNotificationResponse({ actionIdentifier: response.actionIdentifier, data: request.content.data, requestId: request.identifier });
+    if (!intent || seen.has(intent.key)) return;
+    seen.add(intent.key);
+    onIntent(intent);
+    Notifications.dismissNotificationAsync(request.identifier).catch(() => undefined);
+    Notifications.clearLastNotificationResponseAsync?.().catch(() => undefined);
+  };
+  const sub = Notifications.addNotificationResponseReceivedListener(handle);
+  Notifications.getLastNotificationResponseAsync().then(handle).catch(() => undefined);
+  return () => sub.remove();
+}
+
+/** A Guard notification that arrived while S4 is open, so the inbox can refresh. Reads nothing from the payload. */
+export function subscribeGuardNotificationsReceived(onReceived: () => void): () => void {
+  if (!NATIVE) return () => undefined;
+  const sub = Notifications.addNotificationReceivedListener((notification: Notifications.Notification) => {
+    if (isGuardNotificationData(notification.request.content.data)) onReceived();
+  });
   return () => sub.remove();
 }
