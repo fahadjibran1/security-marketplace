@@ -30,11 +30,43 @@
     "ascApiKey": "At the 1.1.0 (14) build (2026-10-20) Apple rejected the key for build-time profile validation (401). On 2026-10-24 the same key, 468TT6N8RB, uploaded 1.1.0 (16) through EAS Submit, so it is valid for submissions; not replaced."
   },
   "artefact": {
-    "status": "pending-build",
+    "status": "built-not-uploaded",
     "marketingVersion": "1.1.0",
     "buildNumber": "17",
-    "signing": "unchanged: the existing EAS-managed Apple Distribution certificate (c1f9c5b6...), App Store profile B7539588YY with aps-environment production, APNs key CXFMNB4HHN held by EAS",
-    "note": "Guard notifications update 1.1.0 (17) for the existing TestFlight group: same source as Android 1.1.0 (18), production API. The Welfare Check push release (build 16) plus the Guard notifications inbox and Guard notification push taps (PR #34). Pending: not built, not submitted. Build and TestFlight upload only on owner approval."
+    "easBuildId": "1ce9598f-e1f4-41e8-ae69-62864efd0983",
+    "easBuildUrl": "https://expo.dev/accounts/fahadjibran/projects/security-marketplace/builds/1ce9598f-e1f4-41e8-ae69-62864efd0983",
+    "easBuildProfile": "production",
+    "distribution": "STORE",
+    "gitCommit": "c5a4f4099937b23228c355a8e70a687658ad887b",
+    "easFingerprint": "ddea4a9f6d5206eb97548ac73bb0f796a14f6006",
+    "ipaFilename": "s4-1.1.0-ios17-1ce9598f.ipa",
+    "ipaSha256": "d988b7d84e1f7687b090f5c9376f5e5930ad0272ebf3fa7d28178e9f283d0257",
+    "ipaSizeBytes": 9708729,
+    "completedAt": "2026-10-25T04:40:04Z",
+    "certifiedOn": "2026-10-25",
+    "verified": {
+      "bundleIdentifier": "com.sfour.s4",
+      "displayName": "S4",
+      "marketingVersion": "1.1.0",
+      "buildNumber": "17",
+      "minimumOSVersion": "15.1",
+      "usesNonExemptEncryption": false,
+      "backgroundModes": null,
+      "provisioningProfile": "*[expo] com.sfour.s4 AppStore 2026-10-23T23:54:04.112Z (B7539588YY, UUID 1f19cdf5-67cd-4e7b-af8b-131c87c13964, no device list, expires 2027-06-17)",
+      "profileApsEnvironment": "production",
+      "signedEntitlementsApsEnvironment": "production",
+      "signedEntitlements": "application-identifier, aps-environment, beta-reports-active, com.apple.developer.team-identifier, get-task-allow",
+      "teamId": "SXH4TLU2B5",
+      "getTaskAllow": false,
+      "distributionCertificateSha256": "c1f9c5b6c04f4f37939ade278960a16870c88afd2efca94a75b570aab5830196",
+      "distributionCertificateSerial": "3933E4689FD03762FE3029E42A6BC3B5",
+      "distributionCertificateSubject": "iPhone Distribution: fahad jibran (SXH4TLU2B5), expires 2027-06-17",
+      "apiBaseUrl": "https://security-marketplace-api.onrender.com",
+      "stagingApiUrls": 0,
+      "localApiUrls": "one: the web-only localhost development fallback in src/services/api-base-url.ts, unused on iOS",
+      "guardInboxInBundle": "yes: 'guard_notification' and 'shift-updates' are in main.jsbundle; 'welfare-checks' unchanged"
+    },
+    "note": "Guard notifications update 1.1.0 (17), same commit as Android 1.1.0 (18) (c5a4f40, PR #34). Built --non-interactive with the existing EAS-managed credentials: distribution certificate serial 3933E468... (unchanged from build 16, same SHA-256) and profile B7539588YY; APNs key CXFMNB4HHN held by EAS. Nothing created or replaced. Certified locally from the downloaded IPA: Info.plist, embedded profile, executable signature entitlements and main.jsbundle. Not submitted to App Store Connect / TestFlight; the IPA is kept outside Git."
   },
   "supersededArtefacts": [
     {

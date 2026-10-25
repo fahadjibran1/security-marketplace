@@ -291,7 +291,8 @@ test('SIGNER-06E-THE-APPROVED-ARTEFACT-IS-EXPLICIT', () => {
   if (current.status === 'pending-build') {
     assert.ok(!current.easBuildId && !current.apkSha256 && !current.aabSha256, 'a pending artefact has no build id or hash');
   } else {
-    assert.equal(current.status, 'certified-awaiting-play');
+    // Built and certified from the downloaded AAB; either awaiting the Play upload or recorded as not uploaded yet.
+    assert.ok(['certified-awaiting-play', 'built-not-uploaded'].includes(current.status), `unexpected status ${current.status}`);
     assert.match(current.easBuildId, /^[0-9a-f-]{36}$/, 'a real EAS build id');
     assert.match(current.gitCommit, /^[0-9a-f]{40}$/, 'the full source commit');
     assert.match(current.aabSha256, /^[0-9a-f]{64}$/, 'the AAB hash');
@@ -516,10 +517,32 @@ test('SIGNER-13F-THE-DISTRIBUTED-VC17-ARTEFACT-IS-SUPERSEDED-BY-THE-GUARD-NOTIFI
   assert.match(superseded.retiredReason, /uploaded to Google Play Internal Testing \(owner-confirmed 24 Oct 2026\)/);
   assert.equal((config.retiredArtefacts || []).filter((entry) => entry.versionCode === 17).length, 1, 'recorded once');
   assert.equal(config.approvedArtefact.versionCode, 18, 'the Guard notifications update is the next artefact');
-  assert.equal(config.approvedArtefact.status, 'pending-build', 'not built yet');
-  assert.ok(!config.approvedArtefact.easBuildId && !config.approvedArtefact.aabSha256, 'no build id or hash before a build');
   assert.match(config.approvedArtefact.note, /PR #34/);
   assert.equal(config.expectedRelease.versionCode, 18);
+});
+
+test('SIGNER-13G-THE-BUILT-VC18-ARTEFACT-IS-SIGNED-BY-THE-SAME-UPLOAD-KEY-AS-VC17', () => {
+  // Guard notifications update (25 Oct 2026): 1.1.0 (18) built by EAS (1b76ec3f) from c5a4f40 with the existing upload
+  // key and certified from the downloaded AAB. Not uploaded to Google Play.
+  const current = config.approvedArtefact;
+  const vc17 = config.retiredArtefacts.find((entry) => entry.versionCode === 17);
+  assert.equal(current.status, 'built-not-uploaded', 'built and certified, not uploaded');
+  assert.equal(current.easBuildId, '1b76ec3f-0445-4d33-8f06-c379f31d1118');
+  assert.equal(current.gitCommit, 'c5a4f4099937b23228c355a8e70a687658ad887b');
+  assert.equal(current.aabSha256, '936bfe7531dfd94fa4afc5006b7d6755ef5b9d07e8e3a21c0baa67dd6a4f4bc8');
+  assert.equal(current.aabFilename, 's4-1.1.0-vc18-1b76ec3f.aab');
+  assert.equal(current.uploadCertificateSha256, config.signer.certificateSha256, 'signed by the permanent S4 key');
+  assert.equal(current.uploadCertificateSha256, vc17.uploadCertificateSha256, 'the same upload certificate as the distributed vc17');
+  assert.equal(current.verified.signerCertificateSha256, S4_CERT_SHA256, 'full fingerprint read from the AAB signature');
+  assert.equal(current.verified.package, 'com.sfour.s4');
+  assert.equal(current.verified.versionCode, 18);
+  assert.equal(current.verified.versionName, '1.1.0');
+  assert.equal(current.verified.apiBaseUrl, 'https://security-marketplace-api.onrender.com');
+  assert.equal(current.verified.stagingApiUrls, 0);
+  assert.equal(current.verified.defaultNotificationChannel, 'welfare-checks', 'the Welfare channel stays the default');
+  assert.notEqual(current.aabSha256, vc17.aabSha256);
+  assert.notEqual(current.easBuildId, vc17.easBuildId);
+  assert.doesNotMatch(current.note, /uploaded to Google Play Internal Testing/, 'not presented as uploaded');
   assert.doesNotMatch(JSON.stringify(config), /private_key|api_key|current_key|BEGIN [A-Z ]*PRIVATE KEY/);
 });
 
