@@ -61,7 +61,7 @@ export function guardPushContent(type: GuardPushType, shiftStartMs: number | nul
     case 'shift_reacceptance_required':
       return { title: 'Shift changed', body: `Your shift on ${when} has changed. Open S4 to review it and accept it again.` };
     case 'shift_replaced':
-      return { title: 'Shift reassigned', body: `Your shift on ${when} is no longer assigned to you. Open S4 for details.` };
+      return { title: 'Your shift assignment has changed', body: `Your shift assignment for ${when} has changed. Open S4 for details.` };
     case 'shift_amendment_requested':
       return { title: 'Shift extension request', body: 'Your company asks you to extend your current shift. Open S4 to accept or decline.' };
     case 'shift_amendment_responded':
@@ -224,28 +224,38 @@ export class GuardNotificationService implements OnModuleInit, OnModuleDestroy {
    * replacement's transaction while they still hold the shift (before the reassignment is written), so the recipient
    * check sees them as its Guard. `replacementKey` is that replacement's audit entry id: each replacement is one
    * event, and a later replacement of the same Guard on the same shift (after being given it back) is another.
+   * `reasonLabel` is the neutral category the company chose; it appears in the in-app notice only (never the lock
+   * screen), and is never free text.
    */
-  async shiftReplaced(manager: EntityManager, input: { companyId: number; guardId: number; shiftId: number; replacementKey: number }) {
-    const { replacementKey, ...target } = input;
-    return this.notify(manager, {
-      type: 'shift_replaced', ...target, eventKey: `shift_replaced:shift:${input.shiftId}:audit:${replacementKey}`,
-    });
+  async shiftReplaced(
+    manager: EntityManager,
+    input: { companyId: number; guardId: number; shiftId: number; replacementKey: number; reasonLabel: string },
+  ) {
+    const { replacementKey, reasonLabel, ...target } = input;
+    return this.notify(
+      manager,
+      { type: 'shift_replaced', ...target, eventKey: `shift_replaced:shift:${input.shiftId}:audit:${replacementKey}` },
+      (content) => ({ title: content.title, message: `${content.body.replace(/ Open S4 for details\.$/, '')} Reason: ${reasonLabel}. Open S4 for details.` }),
+    );
   }
 
   /**
    * A new Guard event: writes the in-app notice and the dispatch on `manager` (the business transaction). Returns
    * null, writing nothing, when the event was already recorded or the recipient is not the Guard on that company's
-   * shift.
+   * shift. `notice` may be given as a function of the push content (to add a detail to what the push says).
    */
-  async notify(manager: EntityManager, event: GuardNotificationEvent, notice?: GuardInAppNotice): Promise<{ notificationId: number; dispatchId: number } | null> {
+  async notify(
+    manager: EntityManager,
+    event: GuardNotificationEvent,
+    given?: GuardInAppNotice | ((content: { title: string; body: string }) => GuardInAppNotice),
+  ): Promise<{ notificationId: number; dispatchId: number } | null> {
     const dispatch = await this.insertDispatch(manager, event);
     if (!dispatch) return null;
     const dispatchId = dispatch.id;
     // By default the in-app notice says what the push says (no site name or other detail; the app shows the shift).
-    notice ??= (() => {
-      const content = guardPushContent(event.type, dispatch.startMs, dispatch.timeZone);
-      return { title: content.title, message: content.body };
-    })();
+    const content = guardPushContent(event.type, dispatch.startMs, dispatch.timeZone);
+    const notice: GuardInAppNotice =
+      typeof given === 'function' ? given(content) : given ?? { title: content.title, message: content.body };
     // The same row shape every other producer writes (see ShiftAmendmentService.notify).
     const [row] = await manager.query(
       `INSERT INTO "notifications" ("userId", "companyId", "type", "title", "message", "status", "sentAt")
