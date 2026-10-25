@@ -118,7 +118,7 @@ export class UpdateShiftPolicyDto {
   @Max(48)
   approvalRequiredHours?: number;
 
-  /** null = no hard limit. */
+  /** Accepted for shape only: null (no hard limit) or above the platform maximum is refused by the service. */
   @IsOptional()
   @ValidateIf((_o, v) => v !== null)
   @Type(() => Number)

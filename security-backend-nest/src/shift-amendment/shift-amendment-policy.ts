@@ -2,7 +2,8 @@ import { HttpException, HttpStatus } from '@nestjs/common';
 import { CompanyMembershipRole, CompanyPermission, hasPermission } from '../company-membership/company-membership-types';
 
 /**
- * Live Shift Amendments (Phase 1, owner-approved 22 Oct 2026). A company extends an IN-PROGRESS shift; the Guard
+ * Live Shift Amendments (Phase 1, owner-approved 22 Oct 2026; a standard feature for every company since 25 Oct 2026,
+ * within platform safety limits a company may tighten but never weaken). A company extends an IN-PROGRESS shift; the Guard
  * agrees in the app, or authorised staff record the Guard's verbal agreement. Pure rules only: no I/O here.
  *
  * Lifecycle:
@@ -54,6 +55,7 @@ export const AMENDMENT_ERROR_CODES = {
   CLASH: 'SHIFT_AMENDMENT_CLASH',
   INELIGIBLE: 'SHIFT_AMENDMENT_GUARD_INELIGIBLE',
   FATIGUE_LIMIT: 'SHIFT_AMENDMENT_FATIGUE_LIMIT',
+  POLICY_WEAKER_THAN_PLATFORM: 'SHIFT_POLICY_WEAKER_THAN_PLATFORM',
   APPROVAL_REQUIRED: 'SHIFT_AMENDMENT_APPROVAL_REQUIRED',
   SELF_APPROVAL_CONFIRMATION: 'SHIFT_AMENDMENT_SELF_APPROVAL_CONFIRMATION_REQUIRED',
   AGREED_TERMS_MISMATCH: 'SHIFT_AMENDMENT_AGREED_TERMS_MISMATCH',
@@ -72,9 +74,13 @@ export function amendmentError(status: HttpStatus, code: AmendmentErrorCode, mes
 
 // ── Policy (company_shift_policies) ─────────────────────────────────────────────────────────────────
 
-/** Pilot defaults (owner-approved D6). Planning safeguards on SCHEDULED hours; not legal limits. */
+/**
+ * Defaults (owner-approved D6). Planning safeguards on SCHEDULED hours; not legal limits. Amendments are a standard
+ * feature: a company with no policy row has them, and only the S4 platform administrator can switch a company off (an
+ * emergency control, recorded in that company's row).
+ */
 export const DEFAULT_SHIFT_POLICY = {
-  amendmentsEnabled: false,
+  amendmentsEnabled: true,
   fatigueWarningHours: 12,
   approvalRequiredHours: 14,
   hardLimitHours: 16 as number | null,
@@ -83,6 +89,64 @@ export const DEFAULT_SHIFT_POLICY = {
   lastMinuteWarningMinutes: 10,
 };
 export type ShiftPolicyValues = typeof DEFAULT_SHIFT_POLICY;
+export type ShiftPolicyThresholds = Omit<ShiftPolicyValues, 'amendmentsEnabled'>;
+
+/**
+ * Platform safety limits: the loosest values any company may use. A company may make each one stricter (warn, require
+ * approval and refuse sooner; demand more rest; review fewer weekly hours; warn earlier before the end), never looser.
+ * They equal the defaults, so a company that has changed nothing is exactly at the limit.
+ */
+export const PLATFORM_SAFETY_LIMITS = {
+  maxFatigueWarningHours: 12,
+  maxApprovalRequiredHours: 14,
+  maxHardLimitHours: 16,
+  minMinRestHours: 11,
+  maxWeeklyReviewHours: 48,
+  minLastMinuteWarningMinutes: 10,
+} as const;
+
+export type PlatformSafetyViolation = { field: keyof ShiftPolicyThresholds; limit: number; message: string };
+
+/** Each threshold looser than the platform allows, with the limit, in words a Control Room can act on. */
+export function platformSafetyViolations(t: ShiftPolicyThresholds): PlatformSafetyViolation[] {
+  const L = PLATFORM_SAFETY_LIMITS;
+  const out: PlatformSafetyViolation[] = [];
+  if (t.fatigueWarningHours > L.maxFatigueWarningHours) {
+    out.push({ field: 'fatigueWarningHours', limit: L.maxFatigueWarningHours, message: `The fatigue warning cannot start later than ${L.maxFatigueWarningHours} hours.` });
+  }
+  if (t.approvalRequiredHours > L.maxApprovalRequiredHours) {
+    out.push({ field: 'approvalRequiredHours', limit: L.maxApprovalRequiredHours, message: `Management approval cannot start later than ${L.maxApprovalRequiredHours} hours.` });
+  }
+  if (t.hardLimitHours === null || t.hardLimitHours > L.maxHardLimitHours) {
+    out.push({ field: 'hardLimitHours', limit: L.maxHardLimitHours, message: `The maximum shift length cannot be removed or set above ${L.maxHardLimitHours} hours.` });
+  }
+  if (t.minRestHours < L.minMinRestHours) {
+    out.push({ field: 'minRestHours', limit: L.minMinRestHours, message: `Minimum rest cannot be less than ${L.minMinRestHours} hours.` });
+  }
+  if (t.weeklyReviewHours > L.maxWeeklyReviewHours) {
+    out.push({ field: 'weeklyReviewHours', limit: L.maxWeeklyReviewHours, message: `The weekly hours review cannot start above ${L.maxWeeklyReviewHours} hours.` });
+  }
+  if (t.lastMinuteWarningMinutes < L.minLastMinuteWarningMinutes) {
+    out.push({ field: 'lastMinuteWarningMinutes', limit: L.minLastMinuteWarningMinutes, message: `The last-minute warning cannot be shorter than ${L.minLastMinuteWarningMinutes} minutes.` });
+  }
+  return out;
+}
+
+/**
+ * The thresholds actually applied: the stricter of the company's value and the platform limit, field by field. A row
+ * written before the limits existed, or edited outside the API, can therefore never loosen a safeguard.
+ */
+export function withinPlatformSafety(t: ShiftPolicyThresholds): ShiftPolicyThresholds {
+  const L = PLATFORM_SAFETY_LIMITS;
+  return {
+    fatigueWarningHours: Math.min(t.fatigueWarningHours, L.maxFatigueWarningHours),
+    approvalRequiredHours: Math.min(t.approvalRequiredHours, L.maxApprovalRequiredHours),
+    hardLimitHours: t.hardLimitHours === null ? L.maxHardLimitHours : Math.min(t.hardLimitHours, L.maxHardLimitHours),
+    minRestHours: Math.max(t.minRestHours, L.minMinRestHours),
+    weeklyReviewHours: Math.min(t.weeklyReviewHours, L.maxWeeklyReviewHours),
+    lastMinuteWarningMinutes: Math.max(t.lastMinuteWarningMinutes, L.minLastMinuteWarningMinutes),
+  };
+}
 
 export type AmendmentWarning = 'LONG_SHIFT' | 'SHORT_REST' | 'WEEKLY_HOURS' | 'LAST_MINUTE';
 
