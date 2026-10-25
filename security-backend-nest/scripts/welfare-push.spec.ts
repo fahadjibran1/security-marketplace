@@ -31,6 +31,9 @@
  *   WPN-17  a password reset revokes the account's devices and account deletion removes them, in the same transactions
  *   WPN-18  company allowlist: with PUSH_WELFARE_REMINDER_COMPANY_IDS=9 company 9's Guards are reminded and company 8's
  *           are not; a missing, empty or invalid allowlist reminds no company even with reminders switched on
+ *   WPN-19  standard scope: PUSH_WELFARE_REMINDER_COMPANY_IDS=all reminds every company's Booked On Guards (each only on
+ *           their own shift); only exactly "all" means every company; PUSH_WELFARE_REMINDERS_ENABLED stays the global
+ *           emergency switch (not "true" → nothing for anyone, even with "all")
  */
 process.env.TZ = 'UTC';
 
@@ -571,15 +574,15 @@ async function main() {
 
       // Switched on with no usable allowlist: the run reads no shift and sends nothing. The stub has no repositories, so
       // any read would throw.
-      for (const ids of [undefined, '', 'all', '9,x']) {
+      for (const ids of [undefined, '', 'al', 'all,9', '*', '9,x']) {
         const closed = Object.create(WelfarePushService.prototype) as InstanceType<typeof WelfarePushService>;
         (closed as any).config = { get: (key: string) => (key === 'PUSH_WELFARE_REMINDERS_ENABLED' ? 'true' : ids) };
         assert.equal(closed.remindersEnabled(), true);
-        assert.deepEqual(closed.reminderCompanyIds(), []);
+        assert.deepEqual(closed.reminderScope(), []);
         const counters = await closed.runReminderJob(new Date());
         assert.equal(counters.shiftsChecked, 0, `allowlist ${JSON.stringify(ids)} reminds no company`);
       }
-      assert.deepEqual(push.reminderCompanyIds(), [9], 'this suite allows company 9 only');
+      assert.deepEqual(push.reminderScope(), [9], 'this suite allows company 9 only');
 
       // Live: a Guard of company 9 and a Guard of company 8, both Booked On with a Welfare window open and a phone.
       const g9 = await guard('wpn-co9', A);
@@ -600,6 +603,58 @@ async function main() {
       assert.equal(ops8.operations.welfareReminders?.length ?? 0, 0);
       const check = await api('POST', '/daily-logs', g8.token, { shiftId: s8.id, message: 'All quiet.', logType: 'welfare_check' });
       assert.equal(check.status, 201, `in-app check: ${check.status} ${JSON.stringify(check.body)}`);
+    });
+
+    await test('WPN-19-ALL-COMPANIES-SCOPE-AND-THE-GLOBAL-SWITCH', async () => {
+      const { parseReminderScope } = await import('../src/welfare-push/welfare-push.service');
+      for (const all of ['all', 'ALL', ' All ']) assert.equal(parseReminderScope(all), 'all', `${JSON.stringify(all)} is every company`);
+      assert.deepEqual(parseReminderScope('8,9'), [8, 9]);
+      for (const bad of [undefined, null, '', 'al', 'alll', 'all,9', '9,all', 'all 9', '*', 'everyone', 'true']) {
+        assert.deepEqual(parseReminderScope(bad as never), [], `${JSON.stringify(bad)} names no company`);
+      }
+
+      // The global switch wins over "all": not "true" → the run reads no shift (the stub has no repositories).
+      for (const enabled of [undefined, '', 'false', 'yes', '1']) {
+        const off = Object.create(WelfarePushService.prototype) as InstanceType<typeof WelfarePushService>;
+        (off as any).config = { get: (key: string) => (key === 'PUSH_WELFARE_REMINDERS_ENABLED' ? enabled : 'all') };
+        assert.equal(off.remindersEnabled(), false, `switch ${JSON.stringify(enabled)} is off`);
+        assert.equal((await off.runReminderJob(new Date())).shiftsChecked, 0, `switch ${JSON.stringify(enabled)} reminds nobody`);
+      }
+
+      // Live with "all": a Guard of company 9 and one of company 8, both Booked On with a window open, are each reminded
+      // once, on their own shift only.
+      const config = (push as any).config;
+      const realGet = config.get.bind(config);
+      (push as any).config = { get: (key: string) => (key === 'PUSH_WELFARE_REMINDER_COMPANY_IDS' ? 'all' : realGet(key)) };
+      try {
+        assert.equal(push.reminderScope(), 'all');
+        const g9 = await guard('wpn-all-co9', A);
+        const g8 = await guard('wpn-all-co8', B);
+        await device(g9, token(1900));
+        await device(g8, token(1901), 'ios');
+        const s9 = await liveShift(g9, 10 * MIN, 50 * MIN, 60, A);
+        const s8 = await liveShift(g8, 10 * MIN, 50 * MIN, 60, B);
+        await run(s9.S + 11 * MIN);
+        for (const [s, co, t] of [[s9, A, token(1900)], [s8, B, token(1901)]] as const) {
+          assert.deepEqual((await reminders(s.id)).map((r: any) => [r.kind, r.status]), [['window_open', 'provider_accepted']]);
+          assert.deepEqual((await q(`SELECT "companyId" c FROM welfare_reminders WHERE "shiftId" = $1`, [s.id])).map((r: any) => r.c), [co.id], `recorded for company ${co.id}`);
+          const sent = sentTo(s.id);
+          assert.equal(sent.length, 1, `company ${co.id}: one message`);
+          assert.deepEqual(sent.map((m: any) => m.to), [t], `company ${co.id}: only its own Guard's phone`);
+        }
+        // A repeated run in the same window sends nothing more (one reminder per window and kind, as before).
+        await run(s9.S + 12 * MIN);
+        assert.equal(sentTo(s9.id).length + sentTo(s8.id).length, 2);
+
+        // Emergency stop: the switch off with "all" still in place → no further reminder for anyone (the follow-up
+        // point is reached, but nothing is sent).
+        (push as any).config = { get: (key: string) => (key === 'PUSH_WELFARE_REMINDER_COMPANY_IDS' ? 'all' : key === 'PUSH_WELFARE_REMINDERS_ENABLED' ? 'false' : realGet(key)) };
+        await run(s9.S + 45 * MIN);
+        assert.equal(sentTo(s9.id).length + sentTo(s8.id).length, 2, 'switched off: no follow-up sent');
+        assert.equal((await reminders(s9.id)).length + (await reminders(s8.id)).length, 2);
+      } finally {
+        (push as any).config = config;
+      }
     });
   } finally {
     await app.close();

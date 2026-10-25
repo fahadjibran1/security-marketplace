@@ -49,14 +49,29 @@ const STALE_SENDING_MS = 2 * 60_000;
 const RETRY_AFTER_MS = 60_000;
 
 /**
- * PUSH_WELFARE_REMINDER_COMPANY_IDS: the companies whose Guards receive reminders, e.g. "9" or "8,9". Fail-closed: missing,
- * empty, or any entry that is not a positive whole number means no company at all, never every company.
+ * PUSH_WELFARE_REMINDER_COMPANY_IDS: the companies whose Guards receive reminders, e.g. "9" or "8,9", or exactly "all" for
+ * every company (see parseReminderScope). Fail-closed: missing, empty, or any entry that is not a positive whole number
+ * means no company at all, never every company.
  */
 export function parseReminderCompanyIds(raw: string | undefined | null): number[] {
   const entries = String(raw ?? '').split(',').map((entry) => entry.trim());
   if (entries.every((entry) => entry === '')) return [];
   if (!entries.every((entry) => /^[1-9]\d{0,9}$/.test(entry))) return [];
   return [...new Set(entries.map(Number))].filter((id) => Number.isSafeInteger(id));
+}
+
+/** Which companies' Guards receive reminders: every company, or the listed ones (possibly none). */
+export type ReminderScope = 'all' | number[];
+
+/**
+ * The reminder scope from PUSH_WELFARE_REMINDER_COMPANY_IDS. Exactly "all" (any case, surrounding spaces ignored) is the
+ * standard production setting: every company, including companies created later. Anything else is read as a company
+ * list by parseReminderCompanyIds, so a typo ("al", "all,9", "*") still means no company. PUSH_WELFARE_REMINDERS_ENABLED
+ * remains the global switch above this: while it is not "true", no company receives reminders whatever the scope.
+ */
+export function parseReminderScope(raw: string | undefined | null): ReminderScope {
+  if (String(raw ?? '').trim().toLowerCase() === 'all') return 'all';
+  return parseReminderCompanyIds(raw);
 }
 
 export const WELFARE_NOTIFICATION_TITLE = 'S4 — Welfare Check';
@@ -175,9 +190,9 @@ export class WelfarePushService implements OnModuleInit, OnModuleDestroy {
     return this.config.get<string>('PUSH_WELFARE_REMINDERS_ENABLED')?.trim().toLowerCase() === 'true';
   }
 
-  /** The companies reminders are sent for; [] (none) unless PUSH_WELFARE_REMINDER_COMPANY_IDS names valid ids. */
-  reminderCompanyIds(): number[] {
-    return parseReminderCompanyIds(this.config.get<string>('PUSH_WELFARE_REMINDER_COMPANY_IDS'));
+  /** The companies reminders are sent for: 'all', or the valid ids PUSH_WELFARE_REMINDER_COMPANY_IDS names ([] = none). */
+  reminderScope(): ReminderScope {
+    return parseReminderScope(this.config.get<string>('PUSH_WELFARE_REMINDER_COMPANY_IDS'));
   }
 
   private followUpMinutes(): number {
@@ -232,13 +247,13 @@ export class WelfarePushService implements OnModuleInit, OnModuleDestroy {
       shiftsChecked: 0, remindersSent: 0, noDevice: 0, failed: 0, retried: 0, receiptsChecked: 0, devicesRevoked: 0,
     };
     if (!this.remindersEnabled()) return counters;
-    const companyIds = this.reminderCompanyIds();
-    if (!companyIds.length) return counters;
+    const scope = this.reminderScope();
+    if (scope !== 'all' && !scope.length) return counters;
 
-    // Only shifts a Guard is Booked On to, in the allowed companies. Cancelled, completed (Booked Off) and not-started
-    // shifts are never read.
+    // Only shifts a Guard is Booked On to, in the allowed companies (every company when the scope is 'all'). Cancelled,
+    // completed (Booked Off) and not-started shifts are never read. Each reminder still goes only to that shift's Guard.
     const shifts = await this.shiftRepo.find({
-      where: { status: 'in_progress', company: { id: In(companyIds) } },
+      where: scope === 'all' ? { status: 'in_progress' } : { status: 'in_progress', company: { id: In(scope) } },
       relations: { company: true, guard: true, assignment: { guard: true }, site: true },
       loadEagerRelations: false,
       order: { start: 'ASC' },

@@ -640,8 +640,9 @@ async function report(t: Target) {
     const [m64] = await q(`select to_regclass('public.shift_amendments') is not null amendments, to_regclass('public.company_shift_policies') is not null policies`);
     if (m64.amendments && m64.policies) {
       const byStatus = await q(`select status, count(*)::int n from shift_amendments group by 1 order by 1`);
-      const enabled = await q(`select "companyId" c from company_shift_policies where "amendmentsEnabled" order by 1`);
-      console.log(`shift amendments: ${byStatus.length ? byStatus.map((r) => `${r.status}×${r.n}`).join(', ') : 'none'}; amendments enabled for: ${enabled.length ? enabled.map((r) => `company ${r.c}`).join(', ') : 'no company'}`);
+      // Standard for every company; a row with amendmentsEnabled = false is the platform administrator switching one off.
+      const off = await q(`select "companyId" c from company_shift_policies where not "amendmentsEnabled" order by 1`);
+      console.log(`shift amendments: ${byStatus.length ? byStatus.map((r) => `${r.status}×${r.n}`).join(', ') : 'none'}; switched off for: ${off.length ? off.map((r) => `company ${r.c}`).join(', ') : 'no company (standard: on for every company)'}`);
     } else {
       console.log('shift amendments: Migration 64 not applied on this database');
     }
