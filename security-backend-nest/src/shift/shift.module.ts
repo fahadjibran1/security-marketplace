@@ -24,6 +24,7 @@ import { AvailabilityModule } from '../availability/availability.module';
 // deliberately a reuse rather than a second provider.
 import { CoverageModule } from '../coverage/coverage.module';
 import { GuardNotificationModule } from '../guard-notification/guard-notification.module';
+import { ShiftAmendmentModule } from '../shift-amendment/shift-amendment.module';
 
 @Module({
   imports: [
@@ -40,6 +41,8 @@ import { GuardNotificationModule } from '../guard-notification/guard-notificatio
     AuditLogModule,
     CoverageModule,
     GuardNotificationModule,
+    // The shift policy (Live Shift Amendment thresholds within the platform safety limits) for Replace Guard.
+    ShiftAmendmentModule,
   ],
   controllers: [ShiftController],
   providers: [ShiftService, ShiftReconciliationService],

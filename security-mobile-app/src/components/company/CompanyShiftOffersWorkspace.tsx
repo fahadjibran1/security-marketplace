@@ -41,7 +41,30 @@ type Props = {
   onWithdrawOffer: (shiftId: number) => Promise<void>;
   onNavigateToRota: (siteId: string, weekCommencing: string) => void;
   onNavigateToLiveOps: (shiftId: number) => void;
+  /** Replace Guard: the company's active Guards to choose from. Without both of these the action is not shown. */
+  replacementGuards?: Array<{ id: number; name: string }>;
+  /**
+   * Rejects with the server's refusal (its message says why, `code` names it); the drawer shows it and stays open.
+   * A fatigue acknowledgement refusal lets the user confirm and send again.
+   */
+  onReplaceGuard?: (shiftId: number, input: ReplaceGuardInput) => Promise<void>;
 };
+
+export type ReplaceGuardReasonCategory = 'operational_change' | 'cover_rearranged' | 'schedule_change';
+export type ReplaceGuardInput = {
+  replacementGuardId: number;
+  reasonCategory: ReplaceGuardReasonCategory;
+  reason: string;
+  noShow?: boolean;
+  fatigueAcknowledged?: boolean;
+};
+
+/** The neutral reasons the outgoing Guard may be shown (the server holds the same fixed set). */
+const REASON_CATEGORIES: Array<{ key: ReplaceGuardReasonCategory; label: string }> = [
+  { key: 'operational_change', label: 'Operational change' },
+  { key: 'cover_rearranged', label: 'Cover rearranged' },
+  { key: 'schedule_change', label: 'Schedule change' },
+];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -80,6 +103,20 @@ function isShiftInFuture(end?: string | null): boolean {
 }
 
 const weekCommencingFor = weekCommencingForOffer;
+
+/**
+ * Replace Guard is offered for an offer or an accepted shift that has not ended; an accepted shift that has started is
+ * replaced only as a no-show, which the user confirms explicitly (the server decides; this only hides a button that
+ * would be refused).
+ */
+function canReplaceGuard(shift: Shift, normalized: OfferStatus | 'other'): boolean {
+  if (!shift.guard?.id) return false;
+  return (normalized === 'awaiting' || normalized === 'accepted') && isShiftInFuture(shift.end);
+}
+
+function isAcceptedAndStarted(shift: Shift, normalized: OfferStatus | 'other'): boolean {
+  return normalized === 'accepted' && !isShiftInFuture(shift.start) && isShiftInFuture(shift.end);
+}
 
 function normalizeOfferStatus(status?: string | null): OfferStatus | 'other' {
   const s = (status || '').toLowerCase().trim();
@@ -235,12 +272,35 @@ export function CompanyShiftOffersWorkspace({
   onWithdrawOffer,
   onNavigateToRota,
   onNavigateToLiveOps,
+  replacementGuards,
+  onReplaceGuard,
 }: Props) {
   const [search, setSearch]         = React.useState('');
   const [filter, setFilter]         = React.useState<FilterTab>('awaiting');
   const [drawerOffer, setDrawerOffer] = React.useState<Shift | null>(null);
   const [withdrawTarget, setWithdrawTarget] = React.useState<Shift | null>(null);
   const [withdrawing, setWithdrawing] = React.useState(false);
+  const [replaceMode, setReplaceMode] = React.useState(false);
+  const [replacementId, setReplacementId] = React.useState<number | null>(null);
+  const [replaceReason, setReplaceReason] = React.useState('');
+  const [replaceCategory, setReplaceCategory] = React.useState<ReplaceGuardReasonCategory | null>(null);
+  const [noShowConfirmed, setNoShowConfirmed] = React.useState(false);
+  const [needsFatigueAck, setNeedsFatigueAck] = React.useState(false);
+  const [replacing, setReplacing] = React.useState(false);
+  const [replaceError, setReplaceError] = React.useState<string | null>(null);
+
+  // A different (or closed) drawer starts the Replace Guard form afresh.
+  React.useEffect(() => {
+    setReplaceMode(false);
+    setReplacementId(null);
+    setReplaceReason('');
+    setReplaceCategory(null);
+    setNoShowConfirmed(false);
+    setNeedsFatigueAck(false);
+    setReplaceError(null);
+  }, [drawerOffer?.id]);
+  // A different Guard needs their own fatigue assessment.
+  React.useEffect(() => { setNeedsFatigueAck(false); }, [replacementId]);
 
   // ─── Derived ────────────────────────────────────────────────────────────
 
@@ -300,6 +360,29 @@ export function CompanyShiftOffersWorkspace({
     }
   }, [withdrawTarget, onWithdrawOffer]);
 
+  const handleConfirmReplace = React.useCallback(async () => {
+    if (!drawerOffer || !onReplaceGuard || !replacementId || !replaceCategory || !replaceReason.trim()) return;
+    const noShow = isAcceptedAndStarted(drawerOffer, normalizeOfferStatus(drawerOffer.status));
+    if (noShow && !noShowConfirmed) return;
+    try {
+      setReplacing(true);
+      setReplaceError(null);
+      await onReplaceGuard(drawerOffer.id, {
+        replacementGuardId: replacementId,
+        reasonCategory: replaceCategory,
+        reason: replaceReason.trim(),
+        ...(noShow ? { noShow: true } : {}),
+        ...(needsFatigueAck ? { fatigueAcknowledged: true } : {}),
+      });
+      setDrawerOffer(null);
+    } catch (error) {
+      if ((error as { code?: string })?.code === 'REPLACE_GUARD_FATIGUE_ACKNOWLEDGEMENT_REQUIRED') setNeedsFatigueAck(true);
+      setReplaceError(error instanceof Error && error.message ? error.message : 'Unable to replace the Guard right now.');
+    } finally {
+      setReplacing(false);
+    }
+  }, [drawerOffer, onReplaceGuard, replacementId, replaceCategory, replaceReason, noShowConfirmed, needsFatigueAck]);
+
   const handleNavigateToRota = React.useCallback(
     (shift: Shift) => {
       const siteId = getSiteId(shift);
@@ -336,8 +419,25 @@ export function CompanyShiftOffersWorkspace({
 
     const zone = shiftZone(shift);
     const shiftWindow = `${fmtDate(shift.start, zone)} · ${fmtShiftWindow(shift.start, shift.end, zone)}`;
+    const showReplace = Boolean(onReplaceGuard && replacementGuards) && canReplaceGuard(shift, ns);
+    const candidates = (replacementGuards ?? []).filter((g) => g.id !== shift.guard?.id);
+    const noShowCase = isAcceptedAndStarted(shift, ns);
 
-    const drawerFooter = (
+    const replaceFooter = (
+      <View style={styles.drawerFooter}>
+        <Button label="Cancel" variant="secondary" size="md" onPress={() => setReplaceMode(false)} disabled={replacing} />
+        <Button
+          label={needsFatigueAck ? 'Acknowledge and replace' : 'Replace Guard'}
+          variant="primary"
+          size="md"
+          onPress={handleConfirmReplace}
+          loading={replacing}
+          disabled={!replacementId || !replaceCategory || !replaceReason.trim() || (noShowCase && !noShowConfirmed)}
+        />
+      </View>
+    );
+
+    const drawerFooter = replaceMode ? replaceFooter : (
       <View style={styles.drawerFooter}>
         <Button label="Close" variant="secondary" size="md" onPress={() => setDrawerOffer(null)} />
         {canViewInRota ? (
@@ -348,6 +448,9 @@ export function CompanyShiftOffersWorkspace({
         ) : null}
         {ns === 'accepted' ? (
           <Button label="Open in Live Operations" variant="secondary" size="md" onPress={() => handleNavigateToLiveOps(shift)} />
+        ) : null}
+        {showReplace ? (
+          <Button label="Replace Guard" variant="secondary" size="md" onPress={() => setReplaceMode(true)} />
         ) : null}
         {showWithdraw ? (
           <Button label="Withdraw Offer" variant="danger" size="md" onPress={() => handleRequestWithdraw(shift)} />
@@ -373,6 +476,70 @@ export function CompanyShiftOffersWorkspace({
         {/* Key / value rows */}
         <DrawerRow label="Guard" value={getGuardName(shift)} />
         <DrawerRow label="Shift" value={shiftWindow} />
+
+        {/* Replace Guard — one step: the shift becomes a new offer to the chosen Guard */}
+        {replaceMode ? (
+          <View style={styles.drawerInstructionsBlock}>
+            <Text style={styles.drawerSectionTitle}>Replace Guard</Text>
+            <Text style={styles.drawerMeta}>
+              The shift becomes a new offer to the Guard you choose; it is not confirmed cover until they accept it.
+              {' '}{getGuardName(shift)} is told their shift assignment has changed, with the reason you pick below (never
+              the details).
+            </Text>
+            <View style={styles.replaceList}>
+              {candidates.length === 0 ? (
+                <Text style={styles.drawerMeta}>No other active Guards in your company.</Text>
+              ) : (
+                candidates.map((g) => (
+                  <Pressable
+                    key={g.id}
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected: replacementId === g.id }}
+                    onPress={() => setReplacementId(g.id)}
+                    style={[styles.replaceOption, replacementId === g.id ? styles.replaceOptionActive : null]}
+                  >
+                    <Text style={styles.drawerInstructions}>{g.name}</Text>
+                  </Pressable>
+                ))
+              )}
+            </View>
+            <Text style={styles.drawerSectionTitle}>Reason shown to {getGuardName(shift)}</Text>
+            <View style={styles.replaceList}>
+              {REASON_CATEGORIES.map((c) => (
+                <Pressable
+                  key={c.key}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected: replaceCategory === c.key }}
+                  onPress={() => setReplaceCategory(c.key)}
+                  style={[styles.replaceOption, replaceCategory === c.key ? styles.replaceOptionActive : null]}
+                >
+                  <Text style={styles.drawerInstructions}>{c.label}</Text>
+                </Pressable>
+              ))}
+            </View>
+            <TextInput
+              style={styles.searchInput}
+              value={replaceReason}
+              onChangeText={setReplaceReason}
+              placeholder="Details (audit log only; never shown to a Guard)"
+              placeholderTextColor={colors.fieldPlaceholder}
+              maxLength={500}
+            />
+            {noShowCase ? (
+              <Pressable
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: noShowConfirmed }}
+                onPress={() => setNoShowConfirmed((v) => !v)}
+                style={[styles.replaceOption, noShowConfirmed ? styles.replaceOptionActive : null, styles.replaceConfirm]}
+              >
+                <Text style={styles.drawerInstructions}>
+                  {noShowConfirmed ? '☑' : '☐'} This shift has started and {getGuardName(shift)} has not booked on (no-show).
+                </Text>
+              </Pressable>
+            ) : null}
+            {replaceError ? <Text style={[styles.drawerMeta, styles.drawerMetaDanger]}>{replaceError}</Text> : null}
+          </View>
+        ) : null}
 
         {/* Rota context — awaiting and accepted only */}
         {(ns === 'awaiting' || ns === 'accepted') ? (
@@ -832,5 +999,24 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: spacing.sm,
     justifyContent: 'flex-end',
+  },
+  replaceList: {
+    gap: spacing.xs,
+    marginVertical: spacing.sm,
+  },
+  replaceOption: {
+    borderWidth: 1,
+    borderColor: colors.fieldBorder,
+    borderRadius: radii.sm,
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.md,
+    backgroundColor: colors.card,
+  },
+  replaceOptionActive: {
+    borderColor: colors.info,
+    backgroundColor: colors.infoSurface,
+  },
+  replaceConfirm: {
+    marginTop: spacing.sm,
   },
 });

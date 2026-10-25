@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException, Optional, forwardRef } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, HttpStatus, Inject, Injectable, NotFoundException, Optional, forwardRef } from '@nestjs/common';
 import { GuardNotificationService } from '../guard-notification/guard-notification.service';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
@@ -14,7 +14,7 @@ import { Job } from '../job/entities/job.entity';
 import { JobApplication } from '../job-application/entities/job-application.entity';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { GuardProfileService } from '../guard-profile/guard-profile.service';
-import { isCompanyRole, UserRole } from '../user/entities/user.entity';
+import { isCompanyRole, UserRole, UserStatus } from '../user/entities/user.entity';
 import { CompanyMembershipService } from '../company-membership/company-membership.service';
 import { CompanyPermission } from '../company-membership/company-membership-types';
 import { CompanyGuardService } from '../company-guard/company-guard.service';
@@ -24,6 +24,21 @@ import { AuditLogService } from '../audit-log/audit-log.service';
 import { Timesheet } from '../timesheet/entities/timesheet.entity';
 import { UpdateShiftDto } from './dto/update-shift.dto';
 import { RespondShiftDto } from './dto/respond-shift.dto';
+import { ReplaceGuardDto } from './dto/replace-guard.dto';
+import {
+  NO_SHOW_GRACE_MINUTES,
+  REPLACE_GUARD_AUDIT_ACTION,
+  REPLACE_GUARD_ERROR_CODES,
+  REPLACE_GUARD_REASON_CATEGORIES,
+  REPLACE_GUARD_VOID_REASON,
+  ReplaceGuardErrorCode,
+  assessReplacementFatigue,
+  companySafeReplacementFatigue,
+  replaceGuardError,
+  replaceGuardStateRefusal,
+} from './replace-guard-policy';
+import { mayPerformAmendmentAction } from '../shift-amendment/shift-amendment-policy';
+import { ShiftAmendmentService } from '../shift-amendment/shift-amendment.service';
 import { Site } from '../site/entities/site.entity';
 import {
   DEFAULT_SITE_TIME_ZONE,
@@ -106,6 +121,9 @@ export class ShiftService {
     private readonly operationsProjection: OperationsProjectionService,
     // Optional only so that unit specs constructing this service by hand keep working; the app always injects it.
     @Optional() private readonly guardNotifications?: GuardNotificationService,
+    // The shift policy thresholds Replace Guard assesses against. Optional for the same reason; Replace Guard refuses
+    // to run without it rather than skip the fatigue check.
+    @Optional() private readonly shiftAmendments?: ShiftAmendmentService,
   ) {}
 
   async findAll(): Promise<Shift[]> {
@@ -950,6 +968,347 @@ export class ShiftService {
     });
     return { success: true };
   }
+
+  /**
+   * Replace Guard (owner-approved 25 Oct 2026; rules in replace-guard-policy.ts). One transaction moves an offered or
+   * accepted shift from the Guard who holds it to another Guard as a fresh offer, tells the outgoing Guard (with the
+   * neutral reason category only), offers it to the replacement, voids any open extension proposal of the outgoing
+   * Guard, moves the draft timesheet, and writes one audit entry. Company accounts with shifts.manage on the shift's own
+   * company only, exactly like an edit. A marketplace hire is refused (its assignment and application are never
+   * rewritten here).
+   *
+   * Lock order (the approved one): the rota slot row (a rota position only, as a rota time change does), then the
+   * replacement's Guard assignment lock, then the shift row. A Guard's acceptance or Book On (each: the shift row, then
+   * its own checks) or a concurrent replacement therefore decides first or second, never half-way: the loser sees the
+   * shift changed.
+   *
+   * A retried request that already succeeded (the shift is on offer to the same replacement from the latest
+   * replacement) answers with the shift as it is and writes and notifies nothing.
+   */
+  async replaceGuardForUser(user: JwtPayload, id: number, dto: ReplaceGuardDto): Promise<Shift & { replacementAssessment?: unknown }> {
+    const E = REPLACE_GUARD_ERROR_CODES;
+    const shift = await this.findOneForUser(user, id);
+    if (!isCompanyRole(user.role)) {
+      throw new ForbiddenException('Only the company that owns a shift can change or delete it.');
+    }
+    const { company: actorCompany, membershipRole } = await this.membershipService.resolveCompanyContext(
+      user.sub, user.role, CompanyPermission.SHIFTS_MANAGE,
+    );
+    if (shift.company?.id !== actorCompany.id) {
+      throw new NotFoundException(`Shift with id ${shift.id} not found`);
+    }
+    const reason = String(dto.reason ?? '').trim();
+    if (!reason) {
+      throw replaceGuardError(HttpStatus.BAD_REQUEST, E.REASON_REQUIRED, 'Give a reason for replacing the Guard.');
+    }
+    const reasonLabel = REPLACE_GUARD_REASON_CATEGORIES[dto.reasonCategory];
+    const noShow = dto.noShow === true;
+    const replacementGuardId = Number(dto.replacementGuardId);
+    const outgoingGuardId = shift.guard?.id ?? null;
+    const loadedStatus = shift.status;
+    const status = this.normalizeLifecycleStatus(shift.status);
+
+    if (outgoingGuardId === replacementGuardId) {
+      if (status === 'offered' && (await this.latestReplacementGuardId(shift.id)) === replacementGuardId) {
+        return shift;
+      }
+      throw replaceGuardError(HttpStatus.UNPROCESSABLE_ENTITY, E.SAME_GUARD, 'This Guard already holds the shift. Choose a different Guard.');
+    }
+    if (shift.assignment || shift.jobApplication) {
+      throw replaceGuardError(HttpStatus.CONFLICT, E.HIRE_LINKED,
+        'This shift belongs to a marketplace hire. Its Guard cannot be replaced here; cancel the shift and create a new one for the replacement.');
+    }
+    const refusal = replaceGuardStateRefusal(
+      { status, guardId: outgoingGuardId, startMs: shift.start.getTime(), endMs: shift.end.getTime() },
+      Date.now(),
+      noShow,
+    );
+    if (refusal) throw refusal;
+
+    // The replacement's eligibility and the fatigue / rest assessment of their resulting schedule: before the
+    // transaction on ordinary connections (as an assignment and an extension do), each refusal with its own code.
+    await this.assertReplacementEligible(actorCompany.id, replacementGuardId, shift);
+    const fatigue = await this.assessReplacement(actorCompany.id, replacementGuardId, shift);
+    if (fatigue.raw.hardLimitExceeded) {
+      throw replaceGuardError(HttpStatus.UNPROCESSABLE_ENTITY, E.FATIGUE_LIMIT,
+        `This shift is ${fatigue.raw.totalScheduledHours} scheduled hours, over the maximum shift length of ${fatigue.raw.thresholds.hardLimitHours} hours.`,
+        { assessment: fatigue.safe });
+    }
+    if (fatigue.raw.minRestViolated) {
+      throw replaceGuardError(HttpStatus.UNPROCESSABLE_ENTITY, E.MIN_REST,
+        `This Guard would not have the minimum ${fatigue.raw.thresholds.minRestHours} hours' rest between shifts.`,
+        { assessment: fatigue.safe });
+    }
+    if (fatigue.raw.approvalRequired) {
+      // Live Shift Amendments need an approver for this; here the person who may approve says so explicitly.
+      if (!mayPerformAmendmentAction(membershipRole, false, 'approve')) {
+        throw replaceGuardError(HttpStatus.FORBIDDEN, E.FATIGUE_APPROVER_REQUIRED,
+          `This shift is over ${fatigue.raw.thresholds.approvalRequiredHours} scheduled hours. An Owner or Admin must make this replacement.`,
+          { assessment: fatigue.safe });
+      }
+      if (dto.fatigueAcknowledged !== true) {
+        throw replaceGuardError(HttpStatus.UNPROCESSABLE_ENTITY, E.FATIGUE_ACKNOWLEDGEMENT_REQUIRED,
+          `This shift is over ${fatigue.raw.thresholds.approvalRequiredHours} scheduled hours. Confirm the fatigue assessment to replace the Guard.`,
+          { assessment: fatigue.safe });
+      }
+    }
+
+    const start = new Date(shift.start);
+    const end = new Date(shift.end);
+    await this.dataSource.transaction(async (manager) => {
+      if (shift.rotaSlotId != null) {
+        await manager.query(`SELECT "id" FROM "rota_slots" WHERE "id" = $1 FOR UPDATE`, [shift.rotaSlotId]);
+      }
+      await lockGuardsForAssignment(manager, [replacementGuardId]);
+      try {
+        await assertNoShiftClash(manager, replacementGuardId, start, end, shift.id);
+      } catch (error) {
+        if (error instanceof ForbiddenException) {
+          throw replaceGuardError(HttpStatus.UNPROCESSABLE_ENTITY, E.OVERLAP, 'This Guard has an overlapping shift.');
+        }
+        throw error;
+      }
+      const [locked] = (await manager.query(
+        `SELECT "status", "guardId", "assignmentId", "jobApplicationId",
+                EXTRACT(EPOCH FROM "start") * 1000 AS "startMs", EXTRACT(EPOCH FROM "end") * 1000 AS "endMs",
+                EXTRACT(EPOCH FROM statement_timestamp()) * 1000 AS "nowMs"
+           FROM "shifts" WHERE "id" = $1 FOR UPDATE`,
+        [shift.id],
+      )) as Array<{ status: string; guardId: number | null; assignmentId: number | null; jobApplicationId: number | null;
+        startMs: string; endMs: string; nowMs: string }>;
+      if (!locked) throw new NotFoundException(`Shift with id ${shift.id} not found`);
+      if (
+        locked.status !== loadedStatus ||
+        (locked.guardId === null ? null : Number(locked.guardId)) !== outgoingGuardId ||
+        Number(locked.startMs) !== start.getTime() ||
+        Number(locked.endMs) !== end.getTime()
+      ) {
+        throw replaceGuardError(HttpStatus.CONFLICT, E.CHANGED, 'This shift changed while the Guard was being replaced. Reload it and try again.');
+      }
+      if (locked.assignmentId !== null || locked.jobApplicationId !== null) {
+        throw replaceGuardError(HttpStatus.CONFLICT, E.HIRE_LINKED,
+          'This shift belongs to a marketplace hire. Its Guard cannot be replaced here; cancel the shift and create a new one for the replacement.');
+      }
+      // The same rules again on the database clock, so a request racing the start, the grace or the end cannot slip
+      // through.
+      const nowMs = Number(locked.nowMs);
+      const lockedRefusal = replaceGuardStateRefusal(
+        { status, guardId: outgoingGuardId, startMs: Number(locked.startMs), endMs: Number(locked.endMs) },
+        nowMs,
+        noShow,
+      );
+      if (lockedRefusal) throw lockedRefusal;
+
+      // Live attendance and financial evidence are never moved to another Guard. Under the row lock a Book On either
+      // committed first (and is seen here, or changed the status above) or waits and then finds the shift is not theirs.
+      const [{ attendance, lockedTimesheet }] = await manager.query(
+        `SELECT (SELECT count(*)::int FROM "attendance_events" WHERE "shiftId" = $1) AS "attendance",
+                EXISTS (SELECT 1 FROM "timesheets" WHERE "shiftId" = $1 AND "approvalStatus" <> 'draft') AS "lockedTimesheet"`,
+        [shift.id],
+      );
+      if (Number(attendance) > 0) {
+        throw replaceGuardError(HttpStatus.CONFLICT, E.ATTENDANCE_RECORDED,
+          'Attendance has been recorded on this shift. Its Guard cannot be replaced.');
+      }
+      if (lockedTimesheet) {
+        throw replaceGuardError(HttpStatus.CONFLICT, E.TIMESHEET_LOCKED, 'This shift has a submitted timesheet. Its Guard cannot be replaced.');
+      }
+
+      // Live Shift Amendments apply to in-progress shifts only, so none should be open here; any that is (it belongs
+      // to the outgoing Guard) is voided as a Book Off voids one: shift row first, amendment rows second.
+      const voided = returningRows<{ id: number; status: string }>(await manager.query(
+        `UPDATE "shift_amendments" SET "status" = 'voided', "voidedReason" = $2,
+            "voidedAt" = (statement_timestamp() AT TIME ZONE 'UTC'), "updatedAt" = now()
+          WHERE "shiftId" = $1 AND "status" IN ('awaiting_approval', 'pending')
+          RETURNING "id", "status"`,
+        [shift.id, REPLACE_GUARD_VOID_REASON],
+      ));
+      for (const row of voided) {
+        await this.auditLogService.logInTransaction(manager, {
+          company: { id: actorCompany.id },
+          user: { id: user.sub },
+          action: 'shift_amendment.voided',
+          entityType: 'shift_amendment',
+          entityId: Number(row.id),
+          beforeData: { status: 'open' },
+          afterData: { status: 'voided', reason: REPLACE_GUARD_VOID_REASON, shiftId: shift.id },
+        });
+      }
+
+      // Identifiers, the reason category, the actor's free-text reason (authorised history only), the no-show evidence
+      // and the fatigue assessment as the company may see it. No names, contact details or site details.
+      const audit = await this.auditLogService.logInTransaction(manager, {
+        company: { id: actorCompany.id },
+        user: { id: user.sub },
+        action: REPLACE_GUARD_AUDIT_ACTION,
+        entityType: 'shift',
+        entityId: shift.id,
+        beforeData: { guardId: outgoingGuardId, status },
+        afterData: {
+          guardId: replacementGuardId,
+          status: 'offered',
+          reasonCategory: dto.reasonCategory,
+          reason,
+          ...(noShow
+            ? {
+                noShow: {
+                  scheduledStart: new Date(Number(locked.startMs)).toISOString(),
+                  checkedAt: new Date(nowMs).toISOString(),
+                  graceMinutes: NO_SHOW_GRACE_MINUTES,
+                  attendanceEvents: 0,
+                },
+              }
+            : {}),
+          fatigue: fatigue.safe,
+          ...(fatigue.raw.approvalRequired ? { fatigueAcknowledged: true } : {}),
+          ...(voided.length ? { voidedAmendmentIds: voided.map((row) => Number(row.id)) } : {}),
+          ...(shift.rotaSlotId != null ? { rotaSlotId: shift.rotaSlotId } : {}),
+        },
+      });
+
+      // The outgoing Guard's notice is recorded while they still hold the shift (the recipient check reads this row).
+      await this.guardNotifications?.shiftReplaced(manager, {
+        companyId: actorCompany.id, guardId: outgoingGuardId!, shiftId: shift.id, replacementKey: audit.id, reasonLabel,
+      });
+
+      const moved = returningRows<{ id: number }>(await manager.query(
+        `UPDATE "shifts" SET "guardId" = $2, "status" = 'offered'
+          WHERE "id" = $1 AND "guardId" = $3 AND "status" = $4 RETURNING "id"`,
+        [shift.id, replacementGuardId, outgoingGuardId, loadedStatus],
+      ));
+      if (!moved.length) {
+        throw replaceGuardError(HttpStatus.CONFLICT, E.CHANGED, 'This shift changed while the Guard was being replaced. Reload it and try again.');
+      }
+
+      // The draft timesheet follows the shift to its new Guard (non-draft ones were refused above).
+      const replacement = await manager.getRepository(GuardProfile).findOneOrFail({ where: { id: replacementGuardId } });
+      const timesheetRepo = manager.getRepository(Timesheet);
+      const timesheets = await timesheetRepo.find({ where: { shift: { id: shift.id } }, relations: ['shift', 'guard', 'company'] });
+      for (const timesheet of timesheets) {
+        timesheet.guard = replacement;
+        await timesheetRepo.save(timesheet);
+      }
+      if (!timesheets.length) {
+        const saved = await manager.getRepository(Shift).findOneOrFail({ where: { id: shift.id } });
+        await this.timesheetService.createForShift(saved, manager);
+      }
+
+      // A fresh offer: the replacement accepts it (or not) themselves. Until then it is not confirmed cover.
+      await this.guardNotifications?.shiftOffered(manager, { companyId: actorCompany.id, guardId: replacementGuardId, shiftId: shift.id });
+    });
+
+    const result = (await this.findOne(shift.id)) as Shift & { replacementAssessment?: unknown };
+    result.replacementAssessment = fatigue.safe;
+    return result;
+  }
+
+  /** The Guard the latest Replace Guard on this shift gave it to, or null. */
+  private async latestReplacementGuardId(shiftId: number): Promise<number | null> {
+    const [row] = await this.dataSource.query(
+      `SELECT ("afterData"->>'guardId')::int AS "guardId" FROM "audit_logs"
+        WHERE "entityType" = 'shift' AND "entityId" = $1 AND "action" = $2 ORDER BY "id" DESC LIMIT 1`,
+      [shiftId, REPLACE_GUARD_AUDIT_ACTION],
+    );
+    return row?.guardId == null ? null : Number(row.guardId);
+  }
+
+  /**
+   * The replacement may take this shift: exactly the checks an assignment runs (relationship, active Guard account,
+   * compliance, approved leave, availability, overlap), each refusal with a code. A Guard id this company cannot see
+   * reads as not linked, so nothing about another company's Guards is revealed.
+   */
+  private async assertReplacementEligible(companyId: number, guardId: number, shift: Shift): Promise<void> {
+    const E = REPLACE_GUARD_ERROR_CODES;
+    const refuse = (code: ReplaceGuardErrorCode, message: string) => replaceGuardError(HttpStatus.UNPROCESSABLE_ENTITY, code, message);
+    try {
+      await this.companyGuardService.ensureActiveRelationship(companyId, guardId);
+    } catch (error) {
+      if (!(error instanceof ForbiddenException)) throw error;
+      const [relation] = await this.dataSource.query(
+        `SELECT "status" FROM "company_guards" WHERE "companyId" = $1 AND "guardId" = $2`,
+        [companyId, guardId],
+      );
+      if (relation?.status === 'BLOCKED') throw refuse(E.BLOCKED, 'This Guard is blocked for your company.');
+      throw refuse(E.NOT_LINKED, 'This Guard is not an active Guard of your company.');
+    }
+    const profile = await this.guardRepo.findOne({ where: { id: guardId }, relations: ['user'] });
+    if (!profile?.user || profile.user.role !== UserRole.GUARD) {
+      throw refuse(E.NOT_A_GUARD, 'This profile does not belong to a Guard account.');
+    }
+    if (profile.user.status !== UserStatus.ACTIVE) {
+      throw refuse(E.ACCOUNT_INACTIVE, "This Guard's account is not active.");
+    }
+    try {
+      await this.complianceService.assertGuardAssignable(companyId, guardId);
+    } catch (error) {
+      if (!(error instanceof ForbiddenException)) throw error;
+      throw refuse(E.COMPLIANCE, error.message);
+    }
+    const result = await this.availabilityService.evaluateGuardForShift({
+      companyId, guardId, startAt: new Date(shift.start), endAt: new Date(shift.end), excludeShiftId: shift.id,
+    });
+    // The same order and the same refusals as AvailabilityService.assertGuardCanTakeShift.
+    if (result.hasShiftClash) throw refuse(E.OVERLAP, 'This Guard has an overlapping shift.');
+    if (result.hasApprovedLeave) throw refuse(E.ON_LEAVE, 'This Guard has approved leave during this shift.');
+    if (!result.complianceValid) throw refuse(E.COMPLIANCE, 'Guard compliance invalid.');
+    if (result.availabilityStatus === 'unavailable') throw refuse(E.UNAVAILABLE, 'This Guard is marked unavailable for this time.');
+  }
+
+  /**
+   * The replacement's resulting schedule against the Live Shift Amendment thresholds (the company's policy, never looser
+   * than the platform safety limits; ShiftAmendmentService.policyFor). Scheduled hours only, over the Guard's shifts at
+   * every company (that is what keeps the Guard safe); what the company may see withholds figures another company's
+   * shift decides.
+   */
+  private async assessReplacement(companyId: number, guardId: number, shift: Shift) {
+    if (!this.shiftAmendments) throw new Error('Replace Guard needs the shift policy (ShiftAmendmentService)');
+    const policy = await this.shiftAmendments.policyFor(companyId);
+    const startMs = new Date(shift.start).getTime();
+    const endMs = new Date(shift.end).getTime();
+    const ts = (ms: number) => new Date(ms).toISOString().replace('T', ' ').replace('Z', '');
+    const [previous] = (await this.dataSource.query(
+      `SELECT EXTRACT(EPOCH FROM "end") * 1000 AS "ms", "companyId" FROM "shifts"
+        WHERE "guardId" = $1 AND "id" <> $2 AND "end" <= $3::timestamp
+          AND "status" IN ('scheduled', 'offered', 'ready', 'in_progress', 'completed')
+        ORDER BY "end" DESC LIMIT 1`,
+      [guardId, shift.id, ts(startMs)],
+    )) as Array<{ ms: string; companyId: number }>;
+    const [next] = (await this.dataSource.query(
+      `SELECT EXTRACT(EPOCH FROM "start") * 1000 AS "ms", "companyId" FROM "shifts"
+        WHERE "guardId" = $1 AND "id" <> $2 AND "start" >= $3::timestamp
+          AND "status" IN ('scheduled', 'offered', 'ready', 'in_progress')
+        ORDER BY "start" ASC LIMIT 1`,
+      [guardId, shift.id, ts(endMs)],
+    )) as Array<{ ms: string; companyId: number }>;
+    // The 7 days ending at this shift's end: the Guard's other committed or worked shifts, plus this one.
+    const windowStart = endMs - 7 * 24 * 3_600_000;
+    const [week] = (await this.dataSource.query(
+      `SELECT COALESCE(SUM(EXTRACT(EPOCH FROM (LEAST("end", $4::timestamp) - GREATEST("start", $3::timestamp)))), 0) / 3600 AS "all",
+              COALESCE(SUM(EXTRACT(EPOCH FROM (LEAST("end", $4::timestamp) - GREATEST("start", $3::timestamp))))
+                FILTER (WHERE "companyId" = $5), 0) / 3600 AS "own"
+         FROM "shifts"
+        WHERE "guardId" = $1 AND "id" <> $2 AND "status" IN ('offered', 'ready', 'in_progress', 'completed')
+          AND "start" < $4::timestamp AND "end" > $3::timestamp`,
+      [guardId, shift.id, ts(windowStart), ts(endMs), companyId],
+    )) as Array<{ all: string; own: string }>;
+    const thisShiftHours = (endMs - Math.max(startMs, windowStart)) / 3_600_000;
+    const raw = assessReplacementFatigue({
+      startMs,
+      endMs,
+      nowMs: Date.now(),
+      previousShiftEndMs: previous ? Number(previous.ms) : null,
+      nextShiftStartMs: next ? Number(next.ms) : null,
+      sevenDayScheduledHours: Number(week?.all ?? 0) + thisShiftHours,
+      policy,
+    });
+    const safe = companySafeReplacementFatigue(raw, {
+      restBeforeOwnCompany: !previous || Number(previous.companyId) === companyId,
+      restAfterOwnCompany: !next || Number(next.companyId) === companyId,
+      companySevenDayScheduledHours: Number(week?.own ?? 0) + thisShiftHours,
+    });
+    return { raw, safe };
+  }
+
 
   /**
    * Marking a shift missed is a no-show finding. It needs the scheduled start plus the grace to have passed

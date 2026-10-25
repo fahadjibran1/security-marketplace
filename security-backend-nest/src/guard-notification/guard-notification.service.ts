@@ -61,7 +61,7 @@ export function guardPushContent(type: GuardPushType, shiftStartMs: number | nul
     case 'shift_reacceptance_required':
       return { title: 'Shift changed', body: `Your shift on ${when} has changed. Open S4 to review it and accept it again.` };
     case 'shift_replaced':
-      return { title: 'Shift update', body: `Your shift on ${when} is no longer assigned to you. Open S4 for details.` };
+      return { title: 'Your shift assignment has changed', body: `Your shift assignment for ${when} has changed. Open S4 for details.` };
     case 'shift_amendment_requested':
       return { title: 'Shift extension request', body: 'Your company asks you to extend your current shift. Open S4 to accept or decline.' };
     case 'shift_amendment_responded':
@@ -119,8 +119,9 @@ type DispatchRow = {
  *   - The push is sent only after that transaction commits, best effort: a push failure never fails, blocks or rolls
  *     back the business action. Its outcome is recorded on the dispatch row.
  *   - Only to a Guard account (never company staff), only the Guard on that company's shift (never another company's
- *     Guard), never for a shift that has ended, and only to active (not revoked) devices. DeviceNotRegistered revokes
- *     the device, exactly as the Welfare Check path does.
+ *     Guard; for a replacement, the Guard who held it when it was recorded), never for a shift that has ended, and
+ *     only to active (not revoked) devices. DeviceNotRegistered revokes the device, exactly as the Welfare Check path
+ *     does.
  *   - PUSH_GUARD_NOTIFICATIONS_ENABLED (default off) gates the push only; the in-app notice is written regardless.
  */
 @Injectable()
@@ -219,19 +220,42 @@ export class GuardNotificationService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * Replace Guard: the Guard who held an offered or accepted shift is told it is no longer theirs. Recorded on the
+   * replacement's transaction while they still hold the shift (before the reassignment is written), so the recipient
+   * check sees them as its Guard. `replacementKey` is that replacement's audit entry id: each replacement is one
+   * event, and a later replacement of the same Guard on the same shift (after being given it back) is another.
+   * `reasonLabel` is the neutral category the company chose; it appears in the in-app notice only (never the lock
+   * screen), and is never free text.
+   */
+  async shiftReplaced(
+    manager: EntityManager,
+    input: { companyId: number; guardId: number; shiftId: number; replacementKey: number; reasonLabel: string },
+  ) {
+    const { replacementKey, reasonLabel, ...target } = input;
+    return this.notify(
+      manager,
+      { type: 'shift_replaced', ...target, eventKey: `shift_replaced:shift:${input.shiftId}:audit:${replacementKey}` },
+      (content) => ({ title: content.title, message: `${content.body.replace(/ Open S4 for details\.$/, '')} Reason: ${reasonLabel}. Open S4 for details.` }),
+    );
+  }
+
+  /**
    * A new Guard event: writes the in-app notice and the dispatch on `manager` (the business transaction). Returns
    * null, writing nothing, when the event was already recorded or the recipient is not the Guard on that company's
-   * shift.
+   * shift. `notice` may be given as a function of the push content (to add a detail to what the push says).
    */
-  async notify(manager: EntityManager, event: GuardNotificationEvent, notice?: GuardInAppNotice): Promise<{ notificationId: number; dispatchId: number } | null> {
+  async notify(
+    manager: EntityManager,
+    event: GuardNotificationEvent,
+    given?: GuardInAppNotice | ((content: { title: string; body: string }) => GuardInAppNotice),
+  ): Promise<{ notificationId: number; dispatchId: number } | null> {
     const dispatch = await this.insertDispatch(manager, event);
     if (!dispatch) return null;
     const dispatchId = dispatch.id;
     // By default the in-app notice says what the push says (no site name or other detail; the app shows the shift).
-    notice ??= (() => {
-      const content = guardPushContent(event.type, dispatch.startMs, dispatch.timeZone);
-      return { title: content.title, message: content.body };
-    })();
+    const content = guardPushContent(event.type, dispatch.startMs, dispatch.timeZone);
+    const notice: GuardInAppNotice =
+      typeof given === 'function' ? given(content) : given ?? { title: content.title, message: content.body };
     // The same row shape every other producer writes (see ShiftAmendmentService.notify).
     const [row] = await manager.query(
       `INSERT INTO "notifications" ("userId", "companyId", "type", "title", "message", "status", "sentAt")
@@ -360,10 +384,15 @@ export class GuardNotificationService implements OnModuleInit, OnModuleDestroy {
     const finish = (status: GuardDispatchStatus, extra: { error?: string | null } = {}) =>
       this.settle(row, status, extra.error ?? null);
     if (!this.pushEnabled()) return finish('skipped_disabled');
+    // A replaced Guard is, by definition, no longer the shift's Guard: their push stays owed while the shift is still
+    // that company's and still not theirs (if it has been given back to them since, the news is stale).
+    const replaced = row.type === 'shift_replaced';
     const stillTheGuard =
       row.role === 'guard' &&
       Number(row.profileUserId) === Number(row.userId) &&
-      (!row.shiftExists || (Number(row.shiftCompanyId) === Number(row.companyId) && Number(row.shiftGuardId) === Number(row.guardId)));
+      (!row.shiftExists ||
+        (Number(row.shiftCompanyId) === Number(row.companyId) &&
+          (replaced ? Number(row.shiftGuardId) !== Number(row.guardId) : Number(row.shiftGuardId) === Number(row.guardId))));
     if (!stillTheGuard) return finish('skipped_ineligible');
     const nowMs = Number(row.nowMs);
     const endMs = row.endMs === null ? null : Number(row.endMs);

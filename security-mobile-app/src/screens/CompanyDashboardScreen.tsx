@@ -27,7 +27,7 @@ import { buildIncidentReport } from '../components/company/incidentReport';
 import { renderIncidentReportHtml, printIncidentReport } from '../components/company/incidentReportPrint';
 import { incidentLifecycleLabel, incidentSeverityLabel } from '../components/company/incidentLifecycle';
 import type { LiveBoardRow, CloseOutSummary, ReconciliationRow, SelectedShiftContext } from '../components/company/CompanyLiveOperationsWorkspace';
-import { CompanyShiftOffersWorkspace, type ShiftOffersFeedback } from '../components/company/CompanyShiftOffersWorkspace';
+import { CompanyShiftOffersWorkspace, type ReplaceGuardInput, type ShiftOffersFeedback } from '../components/company/CompanyShiftOffersWorkspace';
 import { isWelfareEvidence } from '../components/shifts/welfareEvidence';
 import {
   buildOperationsReport,
@@ -160,6 +160,7 @@ import {
   updateIncidentStatus,
   updateClient,
   updateShift,
+  replaceShiftGuard,
   reconcileShiftWithoutBookOff,
   getShiftAmendmentPolicy,
   listShiftReconciliations,
@@ -1787,6 +1788,14 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
   const activeCompanyGuards = React.useMemo(
     () => companyGuards.filter((entry) => (entry.status || '').toUpperCase() === 'ACTIVE'),
     [companyGuards],
+  );
+  /** Replace Guard candidates: the active Guards, by name. The server re-checks each one's eligibility. */
+  const replacementGuardOptions = React.useMemo(
+    () => activeCompanyGuards
+      .filter((entry) => entry.guard?.id)
+      .map((entry) => ({ id: entry.guard!.id, name: entry.guard!.fullName || `Guard #${entry.guard!.id}` }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+    [activeCompanyGuards],
   );
 
   const linkedGuards = React.useMemo(() => {
@@ -3688,6 +3697,37 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
     }
   };
 
+  const handleReplaceShiftGuard = async (shiftId: number, input: ReplaceGuardInput) => {
+    setShiftOffersFeedback(null);
+    const shift = shifts.find((entry) => entry.id === shiftId) ?? null;
+    const { replacementGuardId } = input;
+    try {
+      await replaceShiftGuard(shiftId, input);
+    } catch (replaceError) {
+      // Shown in the drawer, which stays open so another Guard can be chosen. A Replace Guard refusal carries its own
+      // readable message and code (e.g. the fatigue acknowledgement the drawer then asks for).
+      const body = replaceError instanceof ApiError ? (replaceError.body as { code?: string; message?: string } | null) : null;
+      const code = typeof body?.code === 'string' && body.code.startsWith('REPLACE_GUARD_') ? body.code : undefined;
+      const message = code && typeof body?.message === 'string'
+        ? body.message
+        : formatApiErrorMessage(replaceError, 'Unable to replace the Guard right now.');
+      throw Object.assign(new Error(message), { code });
+    }
+    await loadData(true);
+    const replacement = activeCompanyGuards.find((entry) => entry.guard?.id === replacementGuardId)?.guard;
+    recordManagementAction({
+      shiftId,
+      siteName: shift?.site?.name || shift?.siteName || 'Unknown site',
+      guardName: replacement?.fullName || 'Replacement Guard',
+      itemType: 'Shift offer',
+      actionTaken: 'Guard replaced',
+    });
+    setShiftOffersFeedback({
+      tone: 'success',
+      message: `Shift #${shiftId} is now offered to ${replacement?.fullName || 'the replacement Guard'}. It is confirmed once they accept it.`,
+    });
+  };
+
   const handleOpenUrgentShift = (item: UrgentOperationalItem) => {
     if (!item.shiftId) {
       setLiveOperationsFeedback({
@@ -4973,6 +5013,8 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
       onRefresh={() => loadData(true)}
       feedback={shiftOffersFeedback}
       onWithdrawOffer={handleCancelShiftOffer}
+      replacementGuards={replacementGuardOptions}
+      onReplaceGuard={handleReplaceShiftGuard}
       onNavigateToRota={(siteId, weekCommencing) => {
         setPlannerSiteId(siteId);
         setPlannerWeekCommencing(weekCommencing);

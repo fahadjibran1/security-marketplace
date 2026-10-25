@@ -394,6 +394,13 @@ async function main() {
       assert.equal(entityWrites, 2, `shift.service.ts guard writes changed (${entityWrites}); re-audit the gates`);
       const sqlWrites = (rota.match(/SET "guardId"/g) || []).length;
       assert.equal(sqlWrites, 1, `rota-slot.service.ts guard writes changed (${sqlWrites}); re-audit the gates`);
+      // Replace Guard: the one raw SQL guard write in shift.service.ts, behind both gates on the replacement.
+      const shiftSqlWrites = (shift.match(/SET "guardId"/g) || []).length;
+      assert.equal(shiftSqlWrites, 1, `shift.service.ts raw guard writes changed (${shiftSqlWrites}); re-audit the gates`);
+      const replaceEligibility = shift.split('private async assertReplacementEligible(')[1].split('async assertMayMarkMissed(')[0];
+      assert.match(replaceEligibility, /ensureActiveRelationship/, 'Replace Guard must assert the replacement\'s ACTIVE relationship');
+      assert.match(replaceEligibility, /assertGuardAssignable/, 'Replace Guard must run the compliance gate on the replacement');
+      assert.match(shift.split('async replaceGuardForUser(')[1].split('private async latestReplacementGuardId(')[0], /await this\.assertReplacementEligible\(/);
 
       // shift create: the funnel for admin create, company create, hire-with-shift and starter shifts.
       const create = shift.split('async create(')[1].split('async createForUser(')[0];
