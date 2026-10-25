@@ -28,6 +28,15 @@
  *          an in-progress shift's open proposal is left exactly as it was
  *   RG-15  a replaced Guard's undelivered push is not sent once the shift has been given back to them
  *   RG-16  no personal data on the lock screen or in the audit entry
+ *   RG-17  no-show: an accepted shift that has started, with noShow: true, after the missed-shift grace, before the end,
+ *          with no attendance; audit evidence; the Guard who did not show cannot Book On afterwards
+ *   RG-18  no-show racing the outgoing Guard's Book On, both orders: exactly one wins, cleanly
+ *   RG-19  a marketplace hire (assignment and/or job application) is refused; the hire records are untouched
+ *   RG-20  Guards see only the neutral reason category (in the app, not on the lock screen); never the free text
+ *   RG-21  fatigue and rest of the replacement: maximum shift refused, approval threshold needs an Owner / Admin
+ *          acknowledgement, warnings returned and audited, minimum rest before and after refused (another company's
+ *          figures withheld), weekly review warned
+ *   RG-22  the replacement is not confirmed cover (rota counts, coverage) until they accept
  */
 process.env.TZ = 'UTC';
 
@@ -234,11 +243,12 @@ async function main() {
       (SELECT count(*)::int FROM audit_logs WHERE action = 'shift.guard_replaced') AS audits`);
     const shiftRow = (id: number) => one(`SELECT "guardId" g, status, start, "end" FROM shifts WHERE id = $1`, [id]);
 
-    // Each shift gets its own window, so the Guards' shifts never overlap by accident.
+    // Each shift gets its own window, 14 hours apart, so the Guards' shifts never overlap and never fall under the
+    // minimum rest (11 h) by accident.
     let cursor = 24 * HOUR;
     const nextWindow = (hours = 6) => {
       const start = Date.now() + cursor;
-      cursor += hours * HOUR + 2 * HOUR;
+      cursor += hours * HOUR + 14 * HOUR;
       return { start, end: start + hours * HOUR };
     };
     /** POST /shifts with a Guard: an offered shift of `co`. */
@@ -251,8 +261,13 @@ async function main() {
       const r = await api('PATCH', `/shifts/${shiftId}/respond`, g.token, { response: 'accepted' });
       assert.equal(r.status, 200, `accept: ${r.status} ${JSON.stringify(r.body)}`);
     };
-    const replace = (shiftId: number, replacementGuardId: unknown, tok: string | null = A.token, reason: unknown = REASON) =>
-      api('POST', `/shifts/${shiftId}/replace-guard`, tok, { replacementGuardId, reason });
+    const replace = (
+      shiftId: number,
+      replacementGuardId: unknown,
+      tok: string | null = A.token,
+      reason: unknown = REASON,
+      extra: Record<string, unknown> = {},
+    ) => api('POST', `/shifts/${shiftId}/replace-guard`, tok, { replacementGuardId, reasonCategory: 'cover_rearranged', reason, ...extra });
     /** A shift inserted directly in `status` (start / end relative to now). */
     const planted = async (g: { id: number } | null, status: string, startIn: number, endIn: number, co = A) => {
       const now = Date.now();
@@ -291,15 +306,16 @@ async function main() {
       assert.equal(outD.status, 'provider_accepted', JSON.stringify(outD));
       const outNotice = (await notices(ga.userId, 'shift_replaced')).find((x: any) => x.id === outD.nid);
       assert.ok(outNotice);
-      const body = `Your shift on ${londonWhen(s.start)} is no longer assigned to you. Open S4 for details.`;
-      assert.equal(outNotice.title, 'Shift reassigned');
-      assert.equal(outNotice.message, body);
+      const body = `Your shift assignment for ${londonWhen(s.start)} has changed. Open S4 for details.`;
+      assert.equal(outNotice.title, 'Your shift assignment has changed');
+      // In the app: the push text plus the neutral reason category, never the free-text reason.
+      assert.equal(outNotice.message, `Your shift assignment for ${londonWhen(s.start)} has changed. Reason: Cover rearranged. Open S4 for details.`);
       assert.equal(outNotice.c, A.id);
       const outMsgs = sentFor(outD.nid);
       assert.equal(outMsgs.length, 1);
       assert.equal(outMsgs[0].to, token(1));
-      assert.equal(outMsgs[0].title, 'Shift reassigned');
-      assert.equal(outMsgs[0].body, body);
+      assert.equal(outMsgs[0].title, 'Your shift assignment has changed');
+      assert.equal(outMsgs[0].body, body, 'the lock screen carries the shift time only');
       assert.deepEqual(outMsgs[0].data, { kind: 'guard_notification', notificationId: outNotice.id, type: 'shift_replaced', shiftId: s.id });
       assert.equal(outMsgs[0].channelId, 'shift-updates');
       assert.equal(outMsgs[0].priority, 'normal');
@@ -384,7 +400,12 @@ async function main() {
       assert.equal(row.u, A.ownerId, 'the actor');
       assert.equal(row.et, 'shift');
       assert.deepEqual(row.b, { guardId: ga.id, status: 'offered' });
-      assert.deepEqual(row.a, { guardId: gc.id, status: 'offered', reason: REASON });
+      const { fatigue, ...after } = row.a;
+      assert.deepEqual(after, { guardId: gc.id, status: 'offered', reasonCategory: 'cover_rearranged', reason: REASON });
+      assert.equal(fatigue.basis, 'scheduled_hours');
+      assert.equal(fatigue.totalScheduledHours, 6);
+      assert.deepEqual(fatigue.warnings, []);
+      assert.equal(r.body.replacementAssessment.totalScheduledHours, 6, 'the assessment is returned to the company');
       const at = new Date(row.at).getTime();
       assert.ok(at >= before - 5_000 && at <= Date.now() + 5_000, 'timestamped');
     });
@@ -551,8 +572,15 @@ async function main() {
       await refused('overlapping shift', busy.id, 'REPLACE_GUARD_OVERLAPPING_SHIFT');
       await refused('blank reason', gb.id, 'REPLACE_GUARD_REASON_REQUIRED', 400, '   ');
       await refused('malformed Guard id', 'abc', null, 400);
-      const noReason = await api('POST', `/shifts/${s.id}/replace-guard`, A.token, { replacementGuardId: gb.id });
+      const noReason = await api('POST', `/shifts/${s.id}/replace-guard`, A.token, { replacementGuardId: gb.id, reasonCategory: 'cover_rearranged' });
       assert.equal(noReason.status, 400, `missing reason: ${noReason.status}`);
+      const noCategory = await api('POST', `/shifts/${s.id}/replace-guard`, A.token, { replacementGuardId: gb.id, reason: REASON });
+      assert.equal(noCategory.status, 400, `missing reason category: ${noCategory.status}`);
+      for (const bad of ['performance', 'Guard was rude', '']) {
+        const r = await api('POST', `/shifts/${s.id}/replace-guard`, A.token, { replacementGuardId: gb.id, reason: REASON, reasonCategory: bad });
+        assert.equal(r.status, 400, `category "${bad}" is not one of the neutral set: ${r.status}`);
+      }
+      assert.equal((await shiftRow(s.id)).g, ga.id);
       const extra = await api('POST', `/shifts/${s.id}/replace-guard`, A.token, { replacementGuardId: gb.id, reason: REASON, status: 'ready' });
       assert.equal(extra.status, 400, 'no other field is accepted (never "accept on their behalf")');
       // The overlap is repeated inside the transaction, under the Guard's lock: a clash committed after the pre-checks
@@ -622,7 +650,7 @@ async function main() {
       assert.equal((await one(`SELECT status FROM shift_amendments WHERE id = $1`, [liveAmendment])).status, 'pending', 'RG-14: left exactly as it was');
       await refusedState('offered, ended', await planted(ga, 'offered', -8 * HOUR, -MIN), 'REPLACE_GUARD_SHIFT_ENDED');
       await refusedState('accepted, ended', await planted(ga, 'ready', -8 * HOUR, -MIN), 'REPLACE_GUARD_SHIFT_ENDED');
-      await refusedState('accepted, started', await planted(ga, 'ready', -10 * MIN, 6 * HOUR), 'REPLACE_GUARD_SHIFT_STARTED');
+      await refusedState('accepted, started, no no-show confirmation', await planted(ga, 'ready', -20 * MIN, 6 * HOUR), 'REPLACE_GUARD_NO_SHOW_CONFIRMATION_REQUIRED');
       for (const status of ['unfilled', 'rejected', 'cancelled', 'completed', 'missed']) {
         const id = await planted(status === 'unfilled' ? null : ga, status, 200 * HOUR, 206 * HOUR);
         await refusedState(status, id, 'REPLACE_GUARD_STATUS_NOT_REPLACEABLE');
@@ -724,13 +752,260 @@ async function main() {
         for (const word of banned) assert.ok(!`${row.title} ${row.message}`.includes(word), `notice "${row.message}" contains "${word}"`);
       }
       for (const row of await q(`SELECT "beforeData" b, "afterData" a FROM audit_logs WHERE action = 'shift.guard_replaced'`)) {
-        const allowed = ['guardId', 'status', 'reason', 'rotaSlotId', 'voidedAmendmentIds'];
+        const allowed = ['guardId', 'status', 'reasonCategory', 'reason', 'noShow', 'fatigue', 'fatigueAcknowledged', 'rotaSlotId', 'voidedAmendmentIds'];
         for (const k of [...Object.keys(row.b), ...Object.keys(row.a)]) assert.ok(allowed.includes(k), `audit field ${k}`);
         const text = JSON.stringify(row);
         for (const gd of guards) for (const v of [gd.label, gd.phone, gd.licence, gd.email]) assert.ok(!text.includes(v), `audit contains ${v}`);
         assert.ok(!text.includes(SITE_NAME) && !text.includes(SITE_ADDRESS));
       }
       assert.doesNotMatch(JSON.stringify(fake.sends), /Bearer|accessToken|refreshToken|password|eyJ[A-Za-z0-9_-]{10,}/);
+    });
+
+    await test('RG-17-NO-SHOW-REPLACEMENT-AFTER-THE-GRACE-WITH-EXPLICIT-CONFIRMATION', async () => {
+      const outgoing = await guard('rg-noshow-out');
+      const cover = await guard('rg-noshow-cover');
+      const before = await counts();
+      // Started 20 minutes ago (past the 15-minute missed-shift grace), accepted, never booked on.
+      const s = await planted(outgoing, 'ready', -20 * MIN, 6 * HOUR);
+      const noFlag = await replace(s, cover.id);
+      assert.equal(noFlag.status, 409);
+      assert.equal(noFlag.body.code, 'REPLACE_GUARD_NO_SHOW_CONFIRMATION_REQUIRED');
+      const early = await planted(outgoing, 'ready', -5 * MIN, 6 * HOUR);
+      const tooEarly = await replace(early, cover.id, A.token, REASON, { noShow: true });
+      assert.equal(tooEarly.status, 409);
+      assert.equal(tooEarly.body.code, 'REPLACE_GUARD_NO_SHOW_TOO_EARLY', 'the existing missed-shift grace applies');
+      const future = await planted(outgoing, 'ready', 900 * HOUR, 906 * HOUR);
+      const notStarted = await replace(future, cover.id, A.token, REASON, { noShow: true });
+      assert.equal(notStarted.status, 422);
+      assert.equal(notStarted.body.code, 'REPLACE_GUARD_NO_SHOW_NOT_APPLICABLE', 'no no-show before the start');
+      const offeredLive = await planted(outgoing, 'offered', -20 * MIN, 6 * HOUR);
+      const notAccepted = await replace(offeredLive, cover.id, A.token, REASON, { noShow: true });
+      assert.equal(notAccepted.body.code, 'REPLACE_GUARD_NO_SHOW_NOT_APPLICABLE', 'an offer was never accepted: not a no-show');
+      const ended = await planted(outgoing, 'ready', -8 * HOUR, -MIN);
+      assert.equal((await replace(ended, cover.id, A.token, REASON, { noShow: true })).body.code, 'REPLACE_GUARD_SHIFT_ENDED');
+      assert.deepEqual(await counts(), before, 'no refusal writes anything');
+
+      const startRow = await one(`SELECT start FROM shifts WHERE id = $1`, [s]);
+      const ok = await replace(s, cover.id, A.token, REASON, { noShow: true });
+      assert.equal(ok.status, 201, `${ok.status} ${JSON.stringify(ok.body)}`);
+      const row = await shiftRow(s);
+      assert.deepEqual([row.g, row.status], [cover.id, 'offered'], 'a fresh offer to the cover Guard');
+      const audit = await one(`SELECT "userId" u, "beforeData" b, "afterData" a FROM audit_logs WHERE action = 'shift.guard_replaced' AND "entityId" = $1`, [s]);
+      assert.equal(audit.u, A.ownerId, 'the actor');
+      assert.deepEqual(audit.b, { guardId: outgoing.id, status: 'ready' });
+      assert.equal(audit.a.noShow.scheduledStart, new Date(startRow.start).toISOString());
+      assert.equal(audit.a.noShow.graceMinutes, 15);
+      assert.equal(audit.a.noShow.attendanceEvents, 0);
+      assert.ok(new Date(audit.a.noShow.checkedAt).getTime() >= new Date(startRow.start).getTime() + 15 * MIN, 'checked after the grace');
+      // The Guard who did not show cannot Book On now: the shift is not theirs.
+      const late = await api('POST', '/attendance/check-in', outgoing.token, { shiftId: s });
+      // Book On's own pre-check answers "not assigned to the current guard" (403); under the lock it would be 404.
+      assert.ok([403, 404].includes(late.status), `late Book On: ${late.status} ${JSON.stringify(late.body)}`);
+      assert.equal((await q(`SELECT 1 FROM attendance_events WHERE "shiftId" = $1`, [s])).length, 0);
+      // The cover Guard accepts the late offer themselves, then can Book On.
+      await accept(cover, s);
+      const on = await api('POST', '/attendance/check-in', cover.token, { shiftId: s });
+      assert.equal(on.status, 201, `cover Book On: ${on.status} ${JSON.stringify(on.body)}`);
+    });
+
+    await test('RG-18-NO-SHOW-RACING-BOOK-ON-BOTH-ORDERS', async () => {
+      for (const first of ['bookOn', 'replace'] as const) {
+        const outgoing = await guard(`rg-race-out-${first}`);
+        const cover = await guard(`rg-race-cover-${first}`);
+        const s = await planted(outgoing, 'ready', -20 * MIN, 6 * HOUR);
+        const bookOn = () => api('POST', '/attendance/check-in', outgoing.token, { shiftId: s });
+        const rep = () => replace(s, cover.id, A.token, REASON, { noShow: true });
+        // Hold the shift row so both requests pass their pre-checks and queue on the lock in a known order.
+        const runner = ds.createQueryRunner();
+        await runner.connect();
+        await runner.startTransaction();
+        await runner.query(`SELECT 1 FROM shifts WHERE id = $1 FOR UPDATE`, [s]);
+        const a = first === 'bookOn' ? bookOn() : rep();
+        await new Promise((r) => setTimeout(r, 400));
+        const b = first === 'bookOn' ? rep() : bookOn();
+        await new Promise((r) => setTimeout(r, 400));
+        await runner.commitTransaction();
+        await runner.release();
+        const [ra, rb] = await Promise.all([a, b]);
+        const row = await shiftRow(s);
+        const events = await q(`SELECT "guardId" g FROM attendance_events WHERE "shiftId" = $1`, [s]);
+        if (first === 'bookOn') {
+          assert.equal(ra.status, 201, `Book On first wins: ${ra.status} ${JSON.stringify(ra.body)}`);
+          assert.equal(rb.status, 409, `then the replacement is refused: ${rb.status} ${JSON.stringify(rb.body)}`);
+          assert.ok(['REPLACE_GUARD_SHIFT_CHANGED', 'REPLACE_GUARD_SHIFT_IN_PROGRESS', 'REPLACE_GUARD_ATTENDANCE_RECORDED'].includes(rb.body.code), rb.body.code);
+          assert.deepEqual([row.g, row.status], [outgoing.id, 'in_progress']);
+          assert.equal(events.length, 1);
+          assert.equal((await dispatches(`"shiftId" = $1 AND type = 'shift_replaced'`, [s])).length, 0);
+          assert.equal((await q(`SELECT 1 FROM audit_logs WHERE action = 'shift.guard_replaced' AND "entityId" = $1`, [s])).length, 0);
+        } else {
+          assert.equal(ra.status, 201, `replace first wins: ${ra.status} ${JSON.stringify(ra.body)}`);
+          assert.equal(rb.status, 404, `then the Book On finds the shift is not theirs: ${rb.status} ${JSON.stringify(rb.body)}`);
+          assert.deepEqual([row.g, row.status], [cover.id, 'offered']);
+          assert.equal(events.length, 0, 'no attendance for the replaced Guard');
+        }
+      }
+    });
+
+    await test('RG-19-A-MARKETPLACE-HIRE-IS-REFUSED-AND-NEVER-REWRITTEN', async () => {
+      const job = (await one(`INSERT INTO jobs ("companyId",title,"guardsRequired","hourlyRate") VALUES ($1,'Hire spec job',1,15) RETURNING id`, [A.id])).id;
+      const application = (await one(`INSERT INTO job_applications ("jobId","guardId",status,"hiredAt") VALUES ($1,$2,'accepted',now()) RETURNING id`, [job, ga.id])).id;
+      const assignment = (await one(`INSERT INTO assignments ("jobId","companyId","guardId","applicationId",status) VALUES ($1,$2,$3,$4,'assigned') RETURNING id`,
+        [job, A.id, ga.id, application])).id;
+      const snapshot = async () => q(`SELECT a.id, a."guardId", a.status, a."applicationId", j.status js, ja.status jas, ja."guardId" jag
+        FROM assignments a JOIN jobs j ON j.id = a."jobId" JOIN job_applications ja ON ja.id = a."applicationId" WHERE a.id = $1`, [assignment]);
+      const before = await snapshot();
+      for (const link of [
+        { assignmentId: assignment, jobApplicationId: application },
+        { assignmentId: assignment, jobApplicationId: null },
+        { assignmentId: null, jobApplicationId: application },
+      ]) {
+        const s = await offer(ga);
+        await q(`UPDATE shifts SET "assignmentId" = $2, "jobApplicationId" = $3, "jobId" = $4 WHERE id = $1`, [s.id, link.assignmentId, link.jobApplicationId, job]);
+        const c = await counts();
+        const r = await replace(s.id, gb.id);
+        assert.equal(r.status, 409, `${JSON.stringify(link)}: ${r.status} ${JSON.stringify(r.body)}`);
+        assert.equal(r.body.code, 'REPLACE_GUARD_HIRE_LINKED');
+        assert.deepEqual(await counts(), c, 'nothing written');
+        const row = await one(`SELECT "guardId" g, status, "assignmentId" aid, "jobApplicationId" jid FROM shifts WHERE id = $1`, [s.id]);
+        assert.deepEqual([row.g, row.status, row.aid, row.jid], [ga.id, 'offered', link.assignmentId, link.jobApplicationId]);
+      }
+      assert.deepEqual(await snapshot(), before, 'the hire records are exactly as they were');
+    });
+
+    await test('RG-20-GUARDS-SEE-ONLY-THE-NEUTRAL-REASON-CATEGORY', async () => {
+      const labels: Record<string, string> = { operational_change: 'Operational change', cover_rearranged: 'Cover rearranged', schedule_change: 'Schedule change' };
+      let i = 0;
+      for (const [category, label] of Object.entries(labels)) {
+        i += 1;
+        const secret = `SECRET-FREE-TEXT-${i} the guard was late twice`;
+        const s = await offer(ga);
+        const r = await replace(s.id, gb.id, A.token, secret, { reasonCategory: category });
+        assert.equal(r.status, 201, JSON.stringify(r.body));
+        const [d] = await dispatches(`"shiftId" = $1 AND type = 'shift_replaced'`, [s.id]);
+        const notice = (await notices(ga.userId, 'shift_replaced')).find((x: any) => x.id === d.nid);
+        assert.ok(notice.message.includes(`Reason: ${label}.`), notice.message);
+        for (const m of sentFor(d.nid)) assert.ok(!m.body.includes(label) && !m.title.includes(label), 'not even the category on the lock screen');
+        const audit = await one(`SELECT "afterData" a FROM audit_logs WHERE action = 'shift.guard_replaced' AND "entityId" = $1`, [s.id]);
+        assert.equal(audit.a.reason, secret, 'the free text is kept in the authorised history');
+        assert.equal(audit.a.reasonCategory, category);
+      }
+      assert.equal((await one(`SELECT count(*)::int n FROM notifications WHERE message LIKE '%SECRET-FREE-TEXT%' OR title LIKE '%SECRET-FREE-TEXT%'`)).n, 0,
+        'no Guard (or anyone) is ever notified with the free text');
+      assert.ok(!JSON.stringify(fake.sends).includes('SECRET-FREE-TEXT'), 'and no push carries it');
+      // The Guard's own reads of their notices carry no free text either.
+      const mine = await api('GET', '/notifications', ga.token);
+      assert.ok(!JSON.stringify(mine.body).includes('SECRET-FREE-TEXT'));
+    });
+
+    await test('RG-21-FATIGUE-AND-REST-OF-THE-REPLACEMENT', async () => {
+      const OFF = 2000 * HOUR; // far from every other window in this suite
+      const opsEmail = 'rg.operations@example.invalid';
+      const opsId = await user(opsEmail, 'company_admin');
+      await q(`INSERT INTO company_memberships ("userId","companyId","membershipRole",status) VALUES ($1,$2,'operations','active')`, [opsId, A.id]);
+      const opsToken = await login(opsEmail);
+
+      // Over the maximum shift length (16 h): refused.
+      const f1 = await guard('rg-fatigue-1');
+      const long17 = await planted(ga, 'offered', OFF, OFF + 17 * HOUR);
+      let r = await replace(long17, f1.id);
+      assert.equal(r.status, 422, JSON.stringify(r.body));
+      assert.equal(r.body.code, 'REPLACE_GUARD_FATIGUE_LIMIT');
+      assert.equal(r.body.details.assessment.totalScheduledHours, 17);
+
+      // Over the approval threshold (14 h): an Owner / Admin acknowledges it explicitly; Operations may not.
+      const long15 = await planted(ga, 'offered', OFF + 40 * HOUR, OFF + 55 * HOUR);
+      r = await replace(long15, f1.id);
+      assert.equal(r.status, 422);
+      assert.equal(r.body.code, 'REPLACE_GUARD_FATIGUE_ACKNOWLEDGEMENT_REQUIRED');
+      r = await replace(long15, f1.id, opsToken, REASON, { fatigueAcknowledged: true });
+      assert.equal(r.status, 403, JSON.stringify(r.body));
+      assert.equal(r.body.code, 'REPLACE_GUARD_FATIGUE_APPROVER_REQUIRED');
+      assert.equal((await shiftRow(long15)).g, ga.id);
+      r = await replace(long15, f1.id, A.token, REASON, { fatigueAcknowledged: true });
+      assert.equal(r.status, 201, JSON.stringify(r.body));
+      assert.equal(r.body.replacementAssessment.approvalRequired, true);
+      assert.ok(r.body.replacementAssessment.warnings.includes('LONG_SHIFT'));
+      let audit = await one(`SELECT "afterData" a FROM audit_logs WHERE action = 'shift.guard_replaced' AND "entityId" = $1`, [long15]);
+      assert.equal(audit.a.fatigueAcknowledged, true);
+      assert.equal(audit.a.fatigue.approvalRequired, true);
+
+      // Over the warning (12 h), under approval: replaced, the warning returned and audited, no acknowledgement needed.
+      const f2 = await guard('rg-fatigue-2');
+      const long13 = await planted(ga, 'offered', OFF + 100 * HOUR, OFF + 113 * HOUR);
+      r = await replace(long13, f2.id);
+      assert.equal(r.status, 201, JSON.stringify(r.body));
+      assert.deepEqual(r.body.replacementAssessment.warnings, ['LONG_SHIFT']);
+      assert.equal(r.body.replacementAssessment.approvalRequired, false);
+      audit = await one(`SELECT "afterData" a FROM audit_logs WHERE action = 'shift.guard_replaced' AND "entityId" = $1`, [long13]);
+      assert.deepEqual(audit.a.fatigue.warnings, ['LONG_SHIFT']);
+      assert.ok(!('fatigueAcknowledged' in audit.a));
+
+      // Under the minimum rest (11 h) BEFORE this shift, decided by this company's shift: refused, figure shown.
+      const f3 = await guard('rg-fatigue-3');
+      const restBefore = await planted(ga, 'offered', OFF + 160 * HOUR, OFF + 166 * HOUR);
+      await planted(f3, 'ready', OFF + 149 * HOUR, OFF + 155 * HOUR);
+      r = await replace(restBefore, f3.id);
+      assert.equal(r.status, 422, JSON.stringify(r.body));
+      assert.equal(r.body.code, 'REPLACE_GUARD_MIN_REST');
+      assert.equal(r.body.details.assessment.restHoursBefore, 5);
+
+      // Under the minimum rest AFTER this shift, decided by ANOTHER company's shift: refused, the figure withheld.
+      const f4 = await guard('rg-fatigue-4');
+      await q(`INSERT INTO company_guards ("companyId","guardId",status,"relationshipType") VALUES ($1,$2,'ACTIVE','EMPLOYEE')`, [B.id, f4.id]);
+      const restAfter = await planted(ga, 'offered', OFF + 220 * HOUR, OFF + 226 * HOUR);
+      await planted(f4, 'ready', OFF + 230 * HOUR, OFF + 236 * HOUR, B);
+      r = await replace(restAfter, f4.id);
+      assert.equal(r.status, 422, JSON.stringify(r.body));
+      assert.equal(r.body.code, 'REPLACE_GUARD_MIN_REST');
+      assert.equal(r.body.details.assessment.restHoursAfter, null, "another company's schedule is never revealed");
+      assert.equal(r.body.details.assessment.restFiguresWithheld, true);
+      assert.doesNotMatch(r.body.message, /\b4\b/, 'no gap figure in the message');
+
+      // The rolling 7 days over the weekly review (48 h): replaced, with the WEEKLY_HOURS warning.
+      const f5 = await guard('rg-fatigue-5');
+      for (let k = 0; k < 6; k += 1) {
+        await planted(f5, 'ready', OFF + (290 + 24 * k) * HOUR, OFF + (300 + 24 * k) * HOUR);
+      }
+      // Last one ends at +420 h: 12 h rest before this shift (432 h–442 h); the 7-day window starts at 274 h.
+      const weekly = await planted(ga, 'offered', OFF + 432 * HOUR, OFF + 442 * HOUR);
+      r = await replace(weekly, f5.id);
+      assert.equal(r.status, 201, JSON.stringify(r.body));
+      assert.deepEqual(r.body.replacementAssessment.warnings, ['WEEKLY_HOURS']);
+      assert.equal(r.body.replacementAssessment.companySevenDayScheduledHours, 70, 'six 10-hour shifts plus this one');
+      assert.equal(r.body.replacementAssessment.restHoursBefore, 12);
+    });
+
+    await test('RG-22-THE-REPLACEMENT-IS-NOT-CONFIRMED-COVER-UNTIL-THEY-ACCEPT', async () => {
+      const w = nextWindow(8);
+      const slot = await api('POST', '/rota-slots', A.token, { siteId: A.siteId, startAt: iso(w.start), endAt: iso(w.end), requiredGuardCount: 1 });
+      const slotId = Number(slot.body.id ?? slot.body.slot?.id);
+      const [{ id: shiftId }] = await q(`SELECT id FROM shifts WHERE "rotaSlotId" = $1`, [slotId]);
+      assert.equal((await api('POST', `/rota-slots/${slotId}/assign`, A.token, { shiftId, guardId: ga.id })).status, 201);
+      await accept(ga, shiftId);
+      const ukDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/London', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(w.start));
+      const coverage = async () => {
+        const res = await api('GET', `/coverage/shifts?from=${ukDate}&to=${ukDate}&shiftId=${shiftId}`, A.token);
+        assert.equal(res.status, 200, JSON.stringify(res.body));
+        return (res.body as any[]).find((x) => x.id === shiftId || x.shiftId === shiftId);
+      };
+      const slotState = async () => (await api('GET', `/rota-slots/${slotId}`, A.token)).body;
+      let st = await slotState();
+      assert.equal(st.counts.confirmed, 1);
+      assert.equal(st.coverageState, 'fully_planned');
+      assert.equal((await coverage()).coverageState, 'confirmed');
+
+      assert.equal((await replace(shiftId, gb.id)).status, 201);
+      st = await slotState();
+      assert.equal(st.counts.confirmed, 0, 'the replacement is not confirmed cover');
+      assert.equal(st.counts.offered, 1);
+      assert.equal(st.coverageState, 'offered_pending');
+      assert.equal((await coverage()).coverageState, 'waiting_response', 'coverage waits for their response');
+
+      await accept(gb, shiftId);
+      st = await slotState();
+      assert.equal(st.counts.confirmed, 1);
+      assert.equal(st.coverageState, 'fully_planned');
+      assert.equal((await coverage()).coverageState, 'confirmed', 'confirmed only once they accept');
     });
   } finally {
     await gn.drain();
