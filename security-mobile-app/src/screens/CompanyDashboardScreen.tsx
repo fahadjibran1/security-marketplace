@@ -27,7 +27,7 @@ import { buildIncidentReport } from '../components/company/incidentReport';
 import { renderIncidentReportHtml, printIncidentReport } from '../components/company/incidentReportPrint';
 import { incidentLifecycleLabel, incidentSeverityLabel } from '../components/company/incidentLifecycle';
 import type { LiveBoardRow, CloseOutSummary, ReconciliationRow, SelectedShiftContext } from '../components/company/CompanyLiveOperationsWorkspace';
-import { CompanyShiftOffersWorkspace, type ShiftOffersFeedback } from '../components/company/CompanyShiftOffersWorkspace';
+import { CompanyShiftOffersWorkspace, type ReplaceGuardInput, type ShiftOffersFeedback } from '../components/company/CompanyShiftOffersWorkspace';
 import { isWelfareEvidence } from '../components/shifts/welfareEvidence';
 import {
   buildOperationsReport,
@@ -3697,14 +3697,21 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
     }
   };
 
-  const handleReplaceShiftGuard = async (shiftId: number, replacementGuardId: number, reason: string) => {
+  const handleReplaceShiftGuard = async (shiftId: number, input: ReplaceGuardInput) => {
     setShiftOffersFeedback(null);
     const shift = shifts.find((entry) => entry.id === shiftId) ?? null;
+    const { replacementGuardId } = input;
     try {
-      await replaceShiftGuard(shiftId, { replacementGuardId, reason });
+      await replaceShiftGuard(shiftId, input);
     } catch (replaceError) {
-      // Shown in the drawer, which stays open so another Guard can be chosen.
-      throw new Error(formatApiErrorMessage(replaceError, 'Unable to replace the Guard right now.'));
+      // Shown in the drawer, which stays open so another Guard can be chosen. A Replace Guard refusal carries its own
+      // readable message and code (e.g. the fatigue acknowledgement the drawer then asks for).
+      const body = replaceError instanceof ApiError ? (replaceError.body as { code?: string; message?: string } | null) : null;
+      const code = typeof body?.code === 'string' && body.code.startsWith('REPLACE_GUARD_') ? body.code : undefined;
+      const message = code && typeof body?.message === 'string'
+        ? body.message
+        : formatApiErrorMessage(replaceError, 'Unable to replace the Guard right now.');
+      throw Object.assign(new Error(message), { code });
     }
     await loadData(true);
     const replacement = activeCompanyGuards.find((entry) => entry.guard?.id === replacementGuardId)?.guard;

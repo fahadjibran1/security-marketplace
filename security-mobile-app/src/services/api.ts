@@ -767,7 +767,16 @@ export function updateShift(id: number, payload: UpdateShiftPayload) {
  * accept it). Company shift managers only; the API checks the company, the shift's state and the replacement's
  * eligibility, and answers a refusal with a code and a readable message.
  */
-export function replaceShiftGuard(id: number, payload: { replacementGuardId: number; reason: string }) {
+export function replaceShiftGuard(
+  id: number,
+  payload: {
+    replacementGuardId: number;
+    reasonCategory: 'operational_change' | 'cover_rearranged' | 'schedule_change';
+    reason: string;
+    noShow?: boolean;
+    fatigueAcknowledged?: boolean;
+  },
+) {
   return request<Shift>(`/shifts/${id}/replace-guard`, {
     method: 'POST',
     body: JSON.stringify(payload),
