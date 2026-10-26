@@ -39,14 +39,32 @@
   "preparedArtefact": {
     "versionName": "1.1.1",
     "versionCode": 19,
-    "status": "prepared-not-built",
+    "status": "built-not-uploaded",
+    "easBuildId": "b0506fbb-8644-4c51-b509-987b3d6b5796",
+    "easBuildUrl": "https://expo.dev/accounts/fahadjibran/projects/security-marketplace/builds/b0506fbb-8644-4c51-b509-987b3d6b5796",
     "easBuildProfile": "production",
     "distribution": "STORE",
     "sourceBranch": "fix/push-registration-loop",
     "sourceFixCommit": "808a55c2d7f2bc8a803a3f23a18d6d24123922ac",
-    "sourceCommit": "the commit on fix/push-registration-loop that sets 1.1.1 / versionCode 19 in app.json, directly on top of 808a55c (a commit cannot record its own id; the build record names it once built)",
+    "gitCommit": "1a6c856504c64bf41758fb1cfd73bf81dfd06040",
+    "aabFilename": "s4-1.1.1-vc19-b0506fbb.aab",
+    "aabSha256": "168c3f116ad84be0b41225ac5658b815968d7af5006e9ccd012e8a0363f731ca",
+    "aabSizeBytes": 59102350,
     "requiredUploadCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
-    "note": "Maintenance release 1.1.1 (19): the distributed 1.1.0 (18) plus the push-registration loop fix (808a55c: one push-device registration per session start and per changed token, and an offer answer confirmed without waiting on the dashboard re-read). Same package com.sfour.s4, same upload key as vc17 and vc18 (the permanent S4 certificate above), same Firebase setup, production API. Prepared only: not built, not uploaded to Google Play, so there is no EAS build id, AAB hash or Play state for it. 1.1.0 (18) stays the distributed Android build until 1.1.1 (19) is built, certified and uploaded on owner approval."
+    "uploadCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
+    "certifiedOn": "2026-10-26",
+    "verified": {
+      "package": "com.sfour.s4",
+      "versionCode": 19,
+      "versionName": "1.1.1",
+      "signerCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
+      "signerCheck": "scripts/verify-apk-signer.cjs: upload certificate equal to the permanent S4 key, the same as vc17 and vc18 (vc18 re-checked in the same run)",
+      "apiBaseUrl": "https://security-marketplace-api.onrender.com",
+      "stagingApiUrls": 0,
+      "guardInboxInBundle": "yes: 'guard_notification' and the 'shift-updates' channel id are in the JS bundle",
+      "pushRegistrationFixInBundle": "yes: the fix's 'screen could not refresh' note is in the JS bundle"
+    },
+    "note": "Maintenance release 1.1.1 (19): the distributed 1.1.0 (18) plus the push-registration loop fix (808a55c). Built by EAS (b0506fbb, production profile, STORE) from 1a6c856 on fix/push-registration-loop (draft PR #42), owner-approved, with the existing upload key; nothing was generated or replaced. Certified locally from the downloaded AAB: manifest (com.sfour.s4, versionCode 19, versionName 1.1.1), JS bundle (production API, no staging API, Guard inbox, the fix), and the signer certificate through scripts/verify-apk-signer.cjs, full SHA-256 equal to the vc17 and vc18 upload certificate. Not uploaded to Google Play; 1.1.0 (18) stays the distributed Android build and the Play active release."
   },
   "approvedArtefact": {
     "versionName": "1.1.0",
