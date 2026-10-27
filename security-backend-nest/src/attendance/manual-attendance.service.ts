@@ -26,6 +26,7 @@ import {
   intervalsOverlap,
   mayManageAttendance,
   mayRecordOldAttendance,
+  overlapBoundary,
   timesheetLockedForAttendance,
   validateManualAttendanceInput,
 } from './manual-attendance-policy';
@@ -75,6 +76,9 @@ type LockedShift = { id: number; status: string; guardId: number | null; start: 
 
 const EVENT_COLUMNS = `"id", "shiftId", "guardId", "type"::text AS "type", "occurredAt", "recordedAt", "source", "recordedByUserId",
   "reason", "verificationMethod", "verificationNote", "correctionOfEventId", "gpsVerified", "nfcVerified"`;
+/** EVENT_COLUMNS qualified with the `e` alias, for the overlap read that joins "shifts". */
+const OTHER_SHIFT_EVENT_COLUMNS = `e."id", e."shiftId", e."guardId", e."type"::text AS "type", e."occurredAt", e."recordedAt", e."source",
+  e."recordedByUserId", e."reason", e."verificationMethod", e."verificationNote", e."correctionOfEventId", e."gpsVerified", e."nfcVerified"`;
 
 /** "YYYY-MM-DD HH:MM:SS.mmm" UTC wall time, for the `timestamp` columns that store UTC (the process runs in UTC). */
 const dbTime = (ms: number) => new Date(ms).toISOString().replace('T', ' ').replace('Z', '');
@@ -649,24 +653,44 @@ export class ManualAttendanceService {
   /**
    * No overlapping attendance with the Guard's other shifts, judged on EFFECTIVE attendance. `interval` is this
    * shift's attendance after the write; a Book On with no Book Off yet is checked as a point (its Book Off will be
-   * checked when it is recorded). Another shift's open attendance (no Book Off) runs on indefinitely.
+   * checked when it is recorded).
+   *
+   * Another shift's attendance with no Book Off is bounded by `overlapBoundary` (owner decision 27 Oct 2026): open-ended
+   * while that shift is in progress (or not closed), and up to its scheduled end — a PROVISIONAL boundary for this check
+   * only, never written or shown as attendance — once it is closed (e.g. completed by Close without Book Off).
    */
   private async assertNoOverlap(manager: EntityManager, guardId: number, shiftId: number, interval: { from: number; to: number | null }) {
     const rows = (await manager.query(
-      `SELECT ${EVENT_COLUMNS} FROM "attendance_events" WHERE "guardId" = $1 AND "shiftId" <> $2`,
+      `SELECT ${OTHER_SHIFT_EVENT_COLUMNS}, s."status" AS "shiftStatus", s."end" AS "shiftEnd"
+         FROM "attendance_events" e JOIN "shifts" s ON s."id" = e."shiftId"
+        WHERE e."guardId" = $1 AND e."shiftId" <> $2`,
       [guardId, shiftId],
-    )) as EventRow[];
-    const byShift = new Map<number, EventRow[]>();
-    for (const row of rows.map((r) => this.normalise(r))) byShift.set(row.shiftId, [...(byShift.get(row.shiftId) ?? []), row]);
-    for (const [otherShiftId, events] of byShift) {
+    )) as Array<EventRow & { shiftStatus: string; shiftEnd: Date }>;
+    const byShift = new Map<number, { status: string; end: Date; events: EventRow[] }>();
+    for (const raw of rows) {
+      const row = this.normalise(raw);
+      const entry = byShift.get(row.shiftId) ?? { status: raw.shiftStatus, end: new Date(raw.shiftEnd), events: [] };
+      entry.events.push(row);
+      byShift.set(row.shiftId, entry);
+    }
+    for (const [otherShiftId, { status, end, events }] of byShift) {
       const other = effectiveAttendance(events);
       if (!other.bookOnAt) continue;
-      if (intervalsOverlap(interval, { from: other.bookOnAt.getTime(), to: other.bookOffAt ? other.bookOffAt.getTime() : null })) {
+      const boundary = overlapBoundary({
+        bookOnAtMs: other.bookOnAt.getTime(),
+        bookOffAtMs: other.bookOffAt ? other.bookOffAt.getTime() : null,
+        status: this.shiftService.normalizeLifecycleStatus(status),
+        scheduledEndMs: end.getTime(),
+      });
+      if (intervalsOverlap(interval, { from: other.bookOnAt.getTime(), to: boundary.to })) {
         throw attendanceError(
           HttpStatus.CONFLICT,
           E.OVERLAP,
           `This would overlap the Guard's attendance on shift #${otherShiftId}.`,
-          { shiftId: otherShiftId, bookOnAt: other.bookOnAt.toISOString(), bookOffAt: other.bookOffAt ? other.bookOffAt.toISOString() : null },
+          {
+            shiftId: otherShiftId, bookOnAt: other.bookOnAt.toISOString(), bookOffAt: other.bookOffAt ? other.bookOffAt.toISOString() : null,
+            ...(boundary.provisional ? { provisionalEnd: true } : {}),
+          },
         );
       }
     }

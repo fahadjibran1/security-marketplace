@@ -43,6 +43,14 @@
  *          allowed for Owner/Admin; Book Off likewise; a correction counts BOTH the new time and the replaced time
  *   MA-29  existing missed-check records are never deleted or rewritten by manual Book On / Book Off or corrections
  *   MA-30  the actual time (occurredAt) and the server recording time (recordedAt) are stored separately, Book On and Off
+ *   MA-31  the production defect: a shift closed without Book Off three days earlier no longer blocks a later manual Book
+ *          Off / Book On (shift 53 / 69 times); an in-progress shift with no Book Off still blocks indefinitely
+ *   MA-32  a reconciled shift still blocks manual attendance inside its scheduled window (provisionalEnd in the details)
+ *   MA-33  a missed / cancelled shift with a stray Book On is bounded by its scheduled end; a not-closed one is not
+ *   MA-34  a corrected Book Off chain on the other shift is read at its effective tip
+ *   MA-35  a verified manual Book Off on the reconciled shift itself (Owner/Admin when > 24 h) becomes the boundary;
+ *          the reconciliation audit is untouched and the timesheet carries the verified departure
+ *   MA-36  the scheduled end is only an overlap boundary: never written as attendance or timesheet actuals
  *
  * Needs MANUAL_ATTENDANCE_DATABASE_URL pointing at a DISPOSABLE local database — it drops the schema.
  */
@@ -877,6 +885,179 @@ async function main() {
         assert.ok(rec - new Date(row.occurredAt).getTime() > 30 * MIN, `${row.type}: recorded well after it occurred, and both are kept`);
         assert.deepEqual([row.recordedByUserId, row.source], [ops.id, 'manual']);
       }
+    });
+
+    // ═══════════════════ overlap with a closed shift that has no Book Off (production defect, 27 Oct 2026) ═══════════════════
+
+    const reconcile = async (shiftId: number) =>
+      expect(await api('POST', `/shifts/${shiftId}/reconcile-without-book-off`, A.token, { reason: 'guard_forgot_book_off' }), 201, undefined, `reconcile #${shiftId}`);
+    /** Closed shifts left with a Book On and no Book Off, checked untouched by MA-36. */
+    const noBookOff: Array<{ id: number; status: string; end: number }> = [];
+    const reconciliationAudit = async (shiftId: number) =>
+      q(`SELECT id, md5(to_jsonb(a)::text) h FROM audit_logs a WHERE action = 'shift.reconciled_without_book_off' AND "entityId" = $1 ORDER BY id`, [shiftId]);
+
+    await test('MA-31-A-RECONCILED-SHIFT-DAYS-EARLIER-DOES-NOT-BLOCK-LATER-MANUAL-ATTENDANCE', async () => {
+      // The production case: shift 53 (24 Oct 06:00–18:00, app Book On 06:32, closed without Book Off) blocked the manual
+      // Book Off of shift 69 (27 Oct 11:00–19:00, app Book On 11:26, Guard left 19:15, entered by Control Room at 19:22).
+      await api('PUT', `/attendance/control-room/${controlGranted.id}`, A.token, { canManageAttendance: true });
+      const g = await guard();
+      const s69 = await mkShift(g, 'in_progress', -(8 + 22 / 60), 8); // 11:00 → 19:00, "now" is 19:22
+      const s53 = await mkShift(g, 'in_progress', -(8 + 22 / 60) - 77, 12); // three days earlier, 06:00 → 18:00
+      await appEvent(s53.id, g, 'check-in', s53.start + 32 * MIN);
+      await reconcile(s53.id);
+      noBookOff.push({ id: s53.id, status: 'completed', end: s53.end });
+      const auditBefore = await reconciliationAudit(s53.id);
+      assert.equal(auditBefore.length, 1);
+      await appEvent(s69.id, g, 'check-in', s69.start + 26 * MIN);
+
+      // (c) an in-progress shift with no Book Off still runs on indefinitely: a Book On on a later shift, after shift 69's
+      // scheduled end, is refused while shift 69 is open — and the boundary is not provisional.
+      const s71 = await mkShift(g, 'missed', -2, 8);
+      const blocked = await bookOn(controlGranted.token, s71.id, Date.now() - 5 * MIN);
+      expect(blocked, 409, 'ATTENDANCE_OVERLAP', 'an in-progress shift with no Book Off is open-ended');
+      assert.equal(blocked.body.details.shiftId, s69.id);
+      assert.equal(blocked.body.details.bookOffAt, null);
+      assert.equal(blocked.body.details.provisionalEnd, undefined, 'an open in-progress shift is never given a provisional end');
+
+      // (a) the Control Room Book Off of shift 69 at 19:15 (recorded 19:22) is no longer blocked by shift 53.
+      const off = s69.end + 15 * MIN;
+      const r = await bookOff(controlGranted.token, s69.id, off, { verificationMethod: 'phone_call' });
+      expect(r, 201, undefined, 'a reconciled shift three days earlier does not block a later manual Book Off');
+      assert.equal(await status(s69.id), 'completed');
+      const sheet = await one(`SELECT "actualCheckInAt", "actualCheckOutAt", "verifiedMinutes", "verifiedSource", "approvalStatus" FROM timesheets WHERE "shiftId" = $1`, [s69.id]);
+      assert.ok(sheet, 'the Book Off created the missing timesheet');
+      assert.equal(new Date(sheet.actualCheckOutAt).getTime(), off);
+      assert.equal(new Date(sheet.actualCheckInAt).getTime(), s69.start + 26 * MIN);
+      assert.equal(sheet.verifiedMinutes, 8 * 60 + 15 - 26);
+      assert.deepEqual([sheet.verifiedSource, sheet.approvalStatus], ['manual', 'draft']);
+      // …and a later manual Book On for the same Guard is not blocked either.
+      expect(await bookOn(controlGranted.token, s71.id, Date.now() - 5 * MIN), 201, undefined, 'a later manual Book On');
+
+      // Shift 53 is exactly as Close without Book Off left it: no Book Off, no timesheet, the audit byte-identical.
+      assert.deepEqual((await rows(s53.id)).map((e: any) => e.type), ['check-in']);
+      assert.equal(await status(s53.id), 'completed');
+      assert.equal((await q(`SELECT id FROM timesheets WHERE "shiftId" = $1`, [s53.id])).length, 0);
+      assert.deepEqual(await reconciliationAudit(s53.id), auditBefore);
+    });
+
+    await test('MA-32-A-RECONCILED-SHIFT-STILL-BLOCKS-INSIDE-ITS-SCHEDULED-WINDOW', async () => {
+      const g = await guard();
+      const rec = await mkShift(g, 'in_progress', -30, 8); // ended 22 h ago
+      await appEvent(rec.id, g, 'check-in', rec.start + 5 * MIN);
+      await reconcile(rec.id);
+      noBookOff.push({ id: rec.id, status: 'completed', end: rec.end });
+      const later = await mkShift(g, 'missed', -28, 8);
+      const inside = await bookOn(A.token, later.id, rec.start + 3 * HOUR);
+      expect(inside, 409, 'ATTENDANCE_OVERLAP', 'a Book On inside the reconciled shift\'s scheduled window');
+      assert.equal(inside.body.details.shiftId, rec.id);
+      assert.equal(inside.body.details.provisionalEnd, true, 'the boundary was the scheduled end, provisionally');
+      assert.equal(inside.body.details.bookOffAt, null, 'the scheduled end is never reported as a Book Off');
+      assert.equal(inside.body.message, `This would overlap the Guard's attendance on shift #${rec.id}.`, 'the message is unchanged');
+      expect(await bookOn(A.token, later.id, rec.end), 201, undefined, 'touching the scheduled end does not overlap');
+      // A Book Off of an in-progress shift whose interval spans the reconciled window is refused too.
+      const g2 = await guard();
+      const rec2 = await mkShift(g2, 'in_progress', -20, 4); // -20h → -16h
+      await appEvent(rec2.id, g2, 'check-in', rec2.start + 2 * MIN);
+      await reconcile(rec2.id);
+      noBookOff.push({ id: rec2.id, status: 'completed', end: rec2.end });
+      const span = await mkShift(g2, 'in_progress', -22, 12);
+      await appEvent(span.id, g2, 'check-in', span.start);
+      const spanning = await bookOff(A.token, span.id, rec2.end + HOUR);
+      expect(spanning, 409, 'ATTENDANCE_OVERLAP', 'a Book Off spanning the reconciled window');
+      assert.equal(spanning.body.details.provisionalEnd, true);
+      assert.equal((await rows(span.id)).length, 1, 'nothing written');
+    });
+
+    await test('MA-33-MISSED-OR-CANCELLED-SHIFT-WITH-A-STRAY-BOOK-ON-IS-BOUNDED-BY-ITS-SCHEDULED-END', async () => {
+      const g = await guard();
+      const missed = await mkShift(g, 'missed', -20, 4); // -20h → -16h
+      await appEvent(missed.id, g, 'check-in', missed.start + 10 * MIN);
+      const cancelled = await mkShift(g, 'cancelled', -14, 4); // -14h → -10h
+      await appEvent(cancelled.id, g, 'check-in', cancelled.start + 5 * MIN);
+      noBookOff.push({ id: missed.id, status: 'missed', end: missed.end }, { id: cancelled.id, status: 'cancelled', end: cancelled.end });
+      const x = await mkShift(g, 'missed', -9, 8);
+      for (const [other, at] of [[missed, missed.start + HOUR], [cancelled, cancelled.start + HOUR]] as const) {
+        const r = await bookOn(A.token, x.id, at);
+        expect(r, 409, 'ATTENDANCE_OVERLAP', `inside shift #${other.id}`);
+        assert.equal(r.body.details.shiftId, other.id);
+        assert.equal(r.body.details.provisionalEnd, true);
+      }
+      expect(await bookOn(A.token, x.id, x.start), 201, undefined, 'after both scheduled ends: no longer blocked indefinitely');
+      // A ready (never-closed) shift with a stray Book On stays open-ended: only clearly closed shifts are bounded.
+      const g2 = await guard();
+      const odd = await mkShift(g2, 'ready', -20, 4);
+      await appEvent(odd.id, g2, 'check-in', odd.start + MIN);
+      const y = await mkShift(g2, 'missed', -9, 8);
+      const r = await bookOn(A.token, y.id, y.start);
+      expect(r, 409, 'ATTENDANCE_OVERLAP', 'a not-closed shift is open-ended');
+      assert.equal(r.body.details.provisionalEnd, undefined);
+    });
+
+    await test('MA-34-A-CORRECTED-BOOK-OFF-ON-THE-OTHER-SHIFT-IS-THE-BOUNDARY', async () => {
+      const g = await guard();
+      const p = await mkShift(g, 'completed', -20, 6); // -20h → -14h
+      await appEvent(p.id, g, 'check-in', p.start);
+      const pOff = await appEvent(p.id, g, 'check-out', p.end);
+      expect(await correct(A.token, pOff, p.end - 3 * HOUR), 201, undefined, 'the Book Off corrected to -17h');
+      const q2 = await mkShift(g, 'missed', -18, 8);
+      const before = await bookOn(A.token, q2.id, p.end - 3 * HOUR - 30 * MIN);
+      expect(before, 409, 'ATTENDANCE_OVERLAP', 'before the corrected Book Off');
+      assert.equal(new Date(before.body.details.bookOffAt).getTime(), p.end - 3 * HOUR, 'the effective (corrected) Book Off');
+      assert.equal(before.body.details.provisionalEnd, undefined, 'a verified Book Off is not provisional');
+      expect(await bookOn(A.token, q2.id, p.end - 2 * HOUR), 201, undefined, 'after the corrected Book Off, before the original one');
+    });
+
+    await test('MA-35-A-VERIFIED-BOOK-OFF-ON-THE-RECONCILED-SHIFT-BECOMES-THE-BOUNDARY', async () => {
+      const g = await guard();
+      const r = await mkShift(g, 'in_progress', -30, 8); // -30h → -22h
+      await appEvent(r.id, g, 'check-in', r.start);
+      await reconcile(r.id);
+      const auditBefore = await reconciliationAudit(r.id);
+      const t = await mkShift(g, 'missed', -27, 8);
+      expect(await bookOn(A.token, t.id, r.start + 3 * HOUR), 409, 'ATTENDANCE_OVERLAP', 'provisionally bounded at -22h');
+      // The Guard's verified departure (-28h) is recorded on the reconciled shift itself: Owner / Admin (> 24 h old).
+      expect(await bookOff(ops.token, r.id, r.start + 2 * HOUR), 403, 'ATTENDANCE_OLD_ENTRY_REQUIRES_OWNER_OR_ADMIN');
+      const off = await bookOff(A.token, r.id, r.start + 2 * HOUR, { verificationMethod: 'client_confirmation' });
+      expect(off, 201, undefined, 'the verified departure');
+      assert.equal(await status(r.id), 'completed');
+      assert.equal((await audits('attendance.manual_book_off', r.id))[0].afterData.afterReconciliation, true);
+      assert.deepEqual(await reconciliationAudit(r.id), auditBefore, 'the Close without Book Off audit is untouched');
+      const sheet = await one(`SELECT "actualCheckOutAt", "verifiedMinutes", "verifiedSource" FROM timesheets WHERE "shiftId" = $1`, [r.id]);
+      assert.equal(new Date(sheet.actualCheckOutAt).getTime(), r.start + 2 * HOUR, 'the timesheet carries the verified departure');
+      assert.deepEqual([sheet.verifiedMinutes, sheet.verifiedSource], [120, 'manual']);
+      const inside = await bookOn(A.token, t.id, r.start + HOUR);
+      expect(inside, 409, 'ATTENDANCE_OVERLAP', 'inside the verified attendance');
+      assert.equal(new Date(inside.body.details.bookOffAt).getTime(), r.start + 2 * HOUR);
+      assert.equal(inside.body.details.provisionalEnd, undefined);
+      expect(await bookOn(A.token, t.id, r.start + 3 * HOUR), 201, undefined, 'after the verified Book Off, inside the old scheduled window');
+    });
+
+    await test('MA-36-THE-SCHEDULED-END-IS-NEVER-WRITTEN-AS-ATTENDANCE', async () => {
+      const { overlapBoundary } = await import('../src/attendance/manual-attendance-policy');
+      const on = 1_000_000;
+      assert.deepEqual(overlapBoundary({ bookOnAtMs: on, bookOffAtMs: on + 5, status: 'completed', scheduledEndMs: on + 9 }), { to: on + 5, provisional: false });
+      assert.deepEqual(overlapBoundary({ bookOnAtMs: on, bookOffAtMs: null, status: 'in_progress', scheduledEndMs: on + 9 }), { to: null, provisional: false });
+      for (const s of ['completed', 'missed', 'cancelled', 'rejected']) {
+        assert.deepEqual(overlapBoundary({ bookOnAtMs: on, bookOffAtMs: null, status: s, scheduledEndMs: on + 9 }), { to: on + 9, provisional: true }, s);
+      }
+      for (const s of ['ready', 'offered', 'unfilled', '']) {
+        assert.deepEqual(overlapBoundary({ bookOnAtMs: on, bookOffAtMs: null, status: s, scheduledEndMs: on + 9 }), { to: null, provisional: false }, s);
+      }
+      assert.deepEqual(overlapBoundary({ bookOnAtMs: on + 20, bookOffAtMs: null, status: 'missed', scheduledEndMs: on + 9 }), { to: on + 20, provisional: true }, 'a Book On after the end is a point');
+      // Every closed shift these tests left without a Book Off is exactly as it was: no check-out row, no timesheet
+      // actuals, the same status and scheduled end — the provisional boundary was only ever read.
+      assert.ok(noBookOff.length >= 5, `tracked ${noBookOff.length}`);
+      for (const t of noBookOff) {
+        const s = await one(`SELECT status, "end" FROM shifts WHERE id = $1`, [t.id]);
+        assert.equal(s.status, t.status, `#${t.id} status`);
+        assert.equal(new Date(s.end).getTime(), t.end, `#${t.id} scheduled end`);
+        assert.deepEqual((await rows(t.id)).filter((e: any) => e.type === 'check-out'), [], `#${t.id} has no Book Off`);
+        const sheets = await q(`SELECT "actualCheckOutAt", "verifiedMinutes" FROM timesheets WHERE "shiftId" = $1`, [t.id]);
+        assert.ok(sheets.every((x: any) => x.actualCheckOutAt === null && x.verifiedMinutes === null), `#${t.id} timesheet actuals untouched`);
+      }
+      const svc = readFileSync(join(__dirname, '..', 'src', 'attendance', 'manual-attendance.service.ts'), 'utf8');
+      const check = svc.split('private async assertNoOverlap(')[1].split('private async insertEvent(')[0];
+      assert.doesNotMatch(check, /INSERT|UPDATE|recordAttendanceActuals|restampAttendanceActuals/, 'the overlap check only reads');
     });
 
     await test('MA-27-STATIC-APPEND-ONLY-LOCK-ORDER-AND-THE-GATE', async () => {

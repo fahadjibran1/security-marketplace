@@ -157,6 +157,32 @@ export function intervalsOverlap(a: { from: number; to: number | null }, b: { fr
   return a.from < bTo && b.from < aTo;
 }
 
+/**
+ * Closed shift statuses whose attendance with no Book Off is bounded by the scheduled end for the overlap check.
+ * Any other status (in_progress above all, and anything not clearly closed) keeps an open Book On open-ended.
+ */
+export const OVERLAP_PROVISIONAL_END_STATUSES: ReadonlySet<string> = new Set(['completed', 'missed', 'cancelled', 'rejected']);
+
+/**
+ * Where another shift's attendance ENDS for the overlap check (owner decision 27 Oct 2026).
+ *   - a verified (effective) Book Off: that time;
+ *   - no Book Off and the shift is still in progress (or not clearly closed): open-ended (null);
+ *   - no Book Off and the shift is closed (e.g. completed by Close without Book Off, missed, cancelled): its current
+ *     scheduled end (after any approved extension) as a PROVISIONAL boundary — never written or shown as attendance.
+ *     A Book On after that scheduled end is a point at the Book On.
+ */
+export function overlapBoundary(input: {
+  bookOnAtMs: number;
+  bookOffAtMs: number | null;
+  status: string;
+  scheduledEndMs: number;
+}): { to: number | null; provisional: boolean } {
+  if (input.bookOffAtMs !== null) return { to: input.bookOffAtMs, provisional: false };
+  const status = String(input.status ?? '').trim().toLowerCase();
+  if (!OVERLAP_PROVISIONAL_END_STATUSES.has(status) || !Number.isFinite(input.scheduledEndMs)) return { to: null, provisional: false };
+  return { to: Math.max(input.scheduledEndMs, input.bookOnAtMs), provisional: true };
+}
+
 /** Timesheet states in which verified actuals may still change (owner: approved and payroll-batched stay locked). */
 export function timesheetLockedForAttendance(row: { approvalStatus: string; payrollBatchId: number | null }): boolean {
   const status = String(row.approvalStatus ?? '').trim().toLowerCase();
