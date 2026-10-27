@@ -51,6 +51,9 @@
  *   MA-35  a verified manual Book Off on the reconciled shift itself (Owner/Admin when > 24 h) becomes the boundary;
  *          the reconciliation audit is untouched and the timesheet carries the verified departure
  *   MA-36  the scheduled end is only an overlap boundary: never written as attendance or timesheet actuals
+ *   MA-37  an overlap with ANOTHER company's shift is refused exactly as before, but the refusal names no shift id,
+ *          times, site or company (details { otherCompany: true }) — Book On, Book Off, correction, both directions;
+ *          a same-company overlap keeps its id and times
  *
  * Needs MANUAL_ATTENDANCE_DATABASE_URL pointing at a DISPOSABLE local database — it drops the schema.
  */
@@ -1058,6 +1061,75 @@ async function main() {
       const svc = readFileSync(join(__dirname, '..', 'src', 'attendance', 'manual-attendance.service.ts'), 'utf8');
       const check = svc.split('private async assertNoOverlap(')[1].split('private async insertEvent(')[0];
       assert.doesNotMatch(check, /INSERT|UPDATE|recordAttendanceActuals|restampAttendanceActuals/, 'the overlap check only reads');
+    });
+
+    await test('MA-37-OVERLAP-WITH-ANOTHER-COMPANYS-SHIFT-REVEALS-NOTHING-ABOUT-IT', async () => {
+      // The Guard works for B as well. B's shift is the clash: the protection is Guard-wide and unchanged, but A's
+      // operator is told only that it is another shift — no id, times, site or company.
+      const withTheirs = async (owner: Co = B) => {
+        const g = await guard();
+        const theirs = await mkShift(g, 'completed', -10, 4, owner); // worked -10h .. -6h
+        await appEvent(theirs.id, g, 'check-in', theirs.start);
+        await appEvent(theirs.id, g, 'check-out', theirs.end);
+        return { g, theirs };
+      };
+      const assertOpaque = (r: Res, theirs: { id: number; start: number; end: number }, what: string) => {
+        expect(r, 409, 'ATTENDANCE_OVERLAP', what);
+        assert.equal(r.body.message, "This would overlap the Guard's attendance on another shift.", what);
+        assert.deepEqual(r.body.details, { otherCompany: true }, `${what}: only a non-identifying flag`);
+        const text = JSON.stringify(r.body);
+        for (const s of [`#${theirs.id}`, '"shiftId"', iso(theirs.start), iso(theirs.end), 'Harbour', 'mabeta', 'maalpha', 'Security Ltd', 'companyId']) {
+          assert.ok(!text.includes(s), `${what}: leaks ${s}`);
+        }
+      };
+
+      {
+        const { g, theirs } = await withTheirs();
+        const mine = await mkShift(g, 'missed', -7, 6);
+        assertOpaque(await bookOn(A.token, mine.id, theirs.start + HOUR), theirs, "Book On inside another company's attendance");
+        assert.deepEqual(await rows(mine.id), [], 'nothing written');
+        assert.equal(await status(mine.id), 'missed');
+      }
+      {
+        const { g, theirs } = await withTheirs();
+        const spanning = await mkShift(g, 'in_progress', -12, 1); // booked on before B's shift began
+        await appEvent(spanning.id, g, 'check-in', spanning.start);
+        assertOpaque(await bookOff(admin.token, spanning.id, theirs.start + 30 * MIN), theirs, "Book Off spanning another company's attendance");
+        assert.equal((await rows(spanning.id)).length, 1, 'nothing written');
+      }
+      {
+        const { g, theirs } = await withTheirs();
+        const corrected = await mkShift(g, 'completed', -20, 4);
+        await appEvent(corrected.id, g, 'check-in', corrected.start);
+        const off = await appEvent(corrected.id, g, 'check-out', corrected.end);
+        assertOpaque(await correct(admin.token, off, theirs.start + 30 * MIN), theirs, "a correction into another company's attendance");
+        assert.equal((await rows(corrected.id)).length, 2, 'nothing written');
+      }
+      {
+        // The other way round: B's operator, against A's shift, learns just as little about A's.
+        const { g, theirs } = await withTheirs(A);
+        const bShift = await mkShift(g, 'in_progress', -12, 1, B);
+        await appEvent(bShift.id, g, 'check-in', bShift.start);
+        assertOpaque(await bookOff(B.token, bShift.id, theirs.start + 30 * MIN), theirs, "B's operator against A's shift");
+      }
+      {
+        // Same company: the operator keeps the detail (id and times) they need to resolve it.
+        const { g, theirs } = await withTheirs(A);
+        const own = await mkShift(g, 'missed', -7, 6);
+        const same = await bookOn(A.token, own.id, theirs.start + HOUR);
+        expect(same, 409, 'ATTENDANCE_OVERLAP', 'same company');
+        assert.equal(same.body.message, `This would overlap the Guard's attendance on shift #${theirs.id}.`);
+        assert.equal(same.body.details.shiftId, theirs.id);
+        assert.equal(same.body.details.bookOnAt, iso(theirs.start));
+        assert.equal(same.body.details.bookOffAt, iso(theirs.end));
+        assert.equal(same.body.details.otherCompany, undefined);
+      }
+      {
+        // The protection itself is unchanged: touching ends never overlap, whoever owns the other shift.
+        const { g, theirs } = await withTheirs();
+        const after = await mkShift(g, 'missed', -6, 4);
+        expect(await bookOn(A.token, after.id, theirs.end), 201, undefined, "touching the end of another company's shift");
+      }
     });
 
     await test('MA-27-STATIC-APPEND-ONLY-LOCK-ORDER-AND-THE-GATE', async () => {
