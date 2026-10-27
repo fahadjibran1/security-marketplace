@@ -63,26 +63,41 @@ Pre-activation backup:
 | Devices on 1.1.1 | The Android devices of Guards 27 and 11 report `appVersion` 1.1.1 | OBSERVED |
 | Registration writes | Total `push_devices` writes went from 6,990 to 6,992: one per app start, against about four per second before the fix | OBSERVED |
 
-## 5. Not yet verified
+## 5. Update, 27 Oct 2026 (about 11:45)
 
-None of the following has a production record or an owner report. Each stays unverified until it has one.
+**USER-CONFIRMED:** the owner reports phone push notifications working on **both Android and iPhone**. Welfare Check and
+shift-extension notifications were observed during live testing.
 
-- Shift offer push.
-- Offer withdrawal / cancellation push.
-- Re-acceptance (material shift change) push.
-- Inbox read / unread state on a device.
-- Any iOS push. No iPhone on 1.1.1 is registered yet: Guard 26's iOS device still reports 1.1.0, and the owner's
-  iPhone is not registered.
+**OBSERVED (production records, read-only):**
+- iOS: Guard 26's iPhone reports S4 1.1.1, so iOS 1.1.1 (18) reached a pilot Guard through TestFlight. One Welfare reminder
+  to it (company 9) was provider_accepted, and its receipt is provider_delivery_ok.
+- Shift offer push: guard notification dispatch 5,  (company 9), was provider_accepted, and its receipt is
+  provider_delivery_ok.
+- Extension push to the iPhone: dispatch 6,  (company 9), was provider_accepted.
+- Totals since activation:
+  - Welfare reminders: 9, all provider_delivery_ok.
+  - Duplicates: 0.
+  - Company or Guard mismatches: 0.
+  - Revoked devices: 0.
+- Inbox read: both  notices sent since activation have a .
+
+## 6. Not yet verified
+
+Nothing below has a production record yet. Each stays unverified until it does.
+
+- Offer withdrawal or cancellation push ().
+- Re-acceptance push after a material change to an accepted shift ().
+- A rota time change on 27 Oct () produced no Guard notice. The shift was not yet accepted at the
+  time; re-acceptance applies only to accepted shifts.
+- The unread side of the inbox: a notice staying unread until it is opened, and the badge count.
 - Guard 28 is still on 1.1.0.
-- TestFlight group assignment of iOS 1.1.1 (18). EAS submission `5118fcda-b1d0-4c6c-ae19-39fe1d2a6df2` uploaded it
-  to App Store Connect on 26 Oct 2026; its assignment to a TestFlight group is not confirmed.
 
-## 6. Operational note
+## 7. Operational note
 
 - missed_checkcall alert 45046 (shift 68, 22:05, before activation) was still open at 00:09. The control room is
   to resolve it under the normal procedure. It is not a push defect: it predates activation.
 
-## 7. Known missing notification events at 88e8a27
+## 8. Known missing notification events at 88e8a27
 
 These events produce no push, no in-app notification and no email on the current production backend. They are
 known gaps, not regressions from activation.
