@@ -1647,6 +1647,8 @@ export interface UpdateShiftPayload {
   status?: string;
   instructions?: string;
   closeOutNotes?: string | null;
+  /** Why the shift is being marked missed; sent only with `status: 'missed'` (backend: optional, at most 500 chars). */
+  reason?: string;
 }
 
 export interface CreateJobApplicationPayload {

@@ -264,6 +264,10 @@ test('MA-02-PERMISSION-AND-FEATURE-DETECTION', () => {
   assert.equal(ma.classifyCapabilitiesFailure(new ApiError(404, 'Not Found', { code: 'MANUAL_ATTENDANCE_NOT_FOUND', message: 'x' })), 'error', 'a coded 404 is not "old server"');
   assert.equal(ma.classifyCapabilitiesFailure(new ApiError(503, 'x', {})), 'error');
   assert.equal(ma.classifyCapabilitiesFailure(new Error('network')), 'error');
+  // The live backend has the route. A 401 that survives request()'s one refresh-and-replay (the session is then
+  // ended by the unauthorized handler) and a 403 (no access) are NOT "older server": hidden, without the old-server note.
+  assert.equal(ma.classifyCapabilitiesFailure(new ApiError(401, 'Unauthorized', { message: 'Unauthorized', statusCode: 401 })), 'error', '401 is not "old server"');
+  assert.equal(ma.classifyCapabilitiesFailure(new ApiError(403, 'Forbidden', { message: 'Forbidden resource', error: 'Forbidden', statusCode: 403 })), 'error', '403 is not "old server"');
   assert.equal(ma.manualActionsOffered(true, { state: 'available', capabilities: CAPABILITIES }), true);
   for (const state of ['loading', 'unavailable', 'error']) assert.equal(ma.manualActionsOffered(true, { state }), false, state);
   assert.equal(ma.manualActionsOffered(false, { state: 'available', capabilities: CAPABILITIES }), false);
@@ -586,7 +590,9 @@ test('MA-16-ONLY-THE-CONFIRMED-SUBMIT-WRITES', () => {
   // Close without Book Off and Mark Missed are untouched.
   assert.ok(screen.includes('onReconcileShift={canReconcileShifts ? handleOpenReconcile : undefined}'));
   assert.ok(screen.includes('onMarkMissed={canManageShifts ? handleOpenMarkMissed : undefined}'));
-  assert.ok(screen.includes("updateShift(target.shiftId, { status: 'missed' })"), 'Mark Missed sends what it sent before (reason is PR #49 / backend follow-up)');
+  // Mark Missed now carries its reason (issue #50; the backend at 671fb9f audits it as shift.marked_missed). The
+  // request shape itself is certified by NBO-07 in no-browser-status-mutations.spec.cjs.
+  assert.ok(screen.includes("updateShift(target.shiftId, { status: 'missed', reason })"), 'Mark Missed sends the status and its reason');
 });
 
 test('MA-17-CONTROL-ROOM-GRANT-TOGGLE-ONLY-WHEN-THE-BACKEND-REPORTS-IT', () => {

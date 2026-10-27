@@ -13,7 +13,7 @@ import { createRefreshCoordinator, type RefreshCoordinator, type RefreshTrigger 
 import { CompanyResolveAlertDrawer, type ResolveTarget } from '../components/company/CompanyResolveAlertDrawer';
 import { CompanyReconcileShiftDrawer, type ReconcileTarget } from '../components/company/CompanyReconcileShiftDrawer';
 import { CompanyMarkMissedDrawer, type MarkMissedTarget } from '../components/company/CompanyMarkMissedDrawer';
-import { NO_BOOK_ON_OVERDUE_LABEL, formatOverdueMinutes, noBookOnOverdueMinutes, noBookOnOverdueText } from '../components/company/noBookOnOverdue';
+import { NO_BOOK_ON_OVERDUE_LABEL, formatOverdueMinutes, noBookOnOverdueMinutes, noBookOnOverdueText, validateMarkMissedReason } from '../components/company/noBookOnOverdue';
 import { CompanyShiftAmendmentDrawer, type AmendmentTarget } from '../components/company/CompanyShiftAmendmentDrawer';
 import { resolveAmendmentPermissions } from '../components/company/shiftAmendments';
 import { CompanyManualAttendanceDrawer, type ManualAttendanceSubmission, type ManualAttendanceTarget } from '../components/company/CompanyManualAttendanceDrawer';
@@ -3122,16 +3122,25 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
       setMarkMissedError('This shift is no longer Ready without a Book On. Nothing was changed.');
       return;
     }
+    // The reason travels with the request (5–500 characters after trimming, the same rule as the dialog) so the
+    // backend records it in the `shift.marked_missed` audit entry. The backend (UpdateShiftDto) accepts an optional
+    // `reason` string of at most 500 characters on PATCH /shifts/:id.
+    const reason = input.reason.trim();
+    const verdict = validateMarkMissedReason(reason);
+    if (!verdict.ok) {
+      setMarkMissedError(verdict.message);
+      return;
+    }
     setMarkingMissed(true);
     setMarkMissedError(null);
     try {
-      await updateShift(target.shiftId, { status: 'missed' });
+      await updateShift(target.shiftId, { status: 'missed', reason });
       recordManagementAction({
         shiftId: target.shiftId,
         siteName: target.siteName,
         guardName: target.guardName,
         itemType: 'Mark Missed',
-        actionTaken: `Marked missed by Control — reason: ${input.reason}`,
+        actionTaken: `Marked missed by Control — reason: ${reason}`,
       });
       setMarkMissedTarget(null);
       setLiveOperationsFeedback({

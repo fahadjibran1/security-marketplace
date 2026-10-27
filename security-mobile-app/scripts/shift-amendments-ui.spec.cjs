@@ -578,7 +578,9 @@ test('LSA-UI-26-ONLY-OWNER-AND-ADMIN-SEE-THE-CONTROL-ROOM-SWITCH', () => {
   assert.ok(/if \(grantBusy !== null\) return;\s*setGrantBusy\(m\.userId\);/.test(drawer), 'one change at a time');
   assert.ok(drawer.includes("It applies from their next sign-in or refresh."), 'says when it takes effect');
   const service = backendOf('src/shift-amendment/shift-amendment.service.ts');
-  assert.ok(service.includes("...(manager && role === CompanyMembershipRole.CONTROL_ROOM ? { canAmendShifts: Boolean(r.canAmendShifts) } : {}),"));
+  // Part B (Migration 67) added the Control Room attendance grant beside the amendment grant in the same entry; both
+  // are still only disclosed to a manager and only for Control Room members.
+  assert.ok(service.includes("...(manager && role === CompanyMembershipRole.CONTROL_ROOM ? { canAmendShifts: Boolean(r.canAmendShifts), canManageAttendance: Boolean(r.canManageAttendance) } : {}),"));
 });
 
 test('LSA-UI-27-A-STORED-AMENDMENT-SAYS-WHEN-A-FIGURE-IS-WITHHELD', () => {

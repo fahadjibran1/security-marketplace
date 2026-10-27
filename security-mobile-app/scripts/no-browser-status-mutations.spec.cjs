@@ -16,7 +16,8 @@
  *   - A late acceptance (Ready hours after start) stays Ready and shows "No Book On — Overdue"; a late Book On
  *     clears the warning; a replaced-then-accepted shift is never written.
  *   - Mark Missed needs a press, a reason and a confirmation, and then sends exactly ONE updateShift with
- *     { status: 'missed' }. Cancel / Back / an empty reason send nothing. Without shifts.manage it is not offered.
+ *     { status: 'missed', reason } (the typed reason, trimmed, and no other field), which the backend audits as
+ *     `shift.marked_missed`. Cancel / Back / an empty reason send nothing. Without shifts.manage it is not offered.
  *   - Statically: no effect, interval or listener anywhere in src/ calls a mutating API function, except the
  *     reviewed non-operational ones listed in ALLOWED_AUTOMATIC below.
  *
@@ -406,14 +407,20 @@ test('NBO-07-MARK-MISSED-NEEDS-A-REASON-AND-CONFIRMATION-AND-SENDS-EXACTLY-ONE-U
   assert.deepEqual(calls.mutations, []);
 
   const input = dialog.find((n) => n.props && n.props.accessibilityLabel === 'Reason' && typeof n.props.onChangeText === 'function');
-  await act(async () => { input.props.onChangeText('Guard unreachable; client confirmed nobody on site'); });
+  // Padded on purpose: what is sent is the trimmed reason.
+  await act(async () => { input.props.onChangeText('  Guard unreachable; client confirmed nobody on site  '); });
   await press(pressables(modal(renderer), 'Continue')[0]);
   dialog = modal(renderer);
   assert.ok(/Reason:\s+Guard unreachable; client confirmed nobody on site/.test(textOf(dialog)), 'the reason is restated');
   assert.deepEqual(calls.mutations, [], 'still nothing before Confirm');
 
   await press(pressables(dialog, 'Confirm — mark missed')[0]);
-  assert.deepEqual(calls.mutations, [['updateShift', [74, { status: 'missed' }]]], 'exactly one status change');
+  assert.deepEqual(
+    calls.mutations,
+    [['updateShift', [74, { status: 'missed', reason: 'Guard unreachable; client confirmed nobody on site' }]]],
+    'exactly one status change, carrying the typed reason (trimmed) for the shift.marked_missed audit',
+  );
+  assert.deepEqual(Object.keys(calls.mutations[0][1][1]).sort(), ['reason', 'status'], 'and no other field is sent');
   assert.equal(modal(renderer), null, 'the dialog closes');
   await tickPolling(6);
   assert.equal(calls.mutations.length, 1, 'and nothing follows it');
@@ -526,7 +533,8 @@ test('NBO-11-THE-AUTOMATION-AND-ITS-STATE-ARE-GONE-AND-THE-ONLY-MISSED-WRITE-IS-
   const missedWrites = screen.match(/status: 'missed'/g) || [];
   assert.equal(missedWrites.length, 1, 'one place sends status missed');
   const submit = callBodies(screen, 'const handleSubmitMarkMissed = React.useCallback(')[0];
-  assert.ok(submit && submit.body.includes("updateShift(target.shiftId, { status: 'missed' })"), 'inside the Mark Missed submit');
+  assert.ok(submit && submit.body.includes("updateShift(target.shiftId, { status: 'missed', reason })"), 'inside the Mark Missed submit, with the reason');
+  assert.ok(submit.body.includes('validateMarkMissedReason(reason)'), 'the reason is re-validated (5–500 trimmed) before it is sent');
   assert.ok(submit.body.includes('recordManagementAction('), 'which logs the reason in the management action log');
   assert.ok(/onMarkMissed=\{canManageShifts \? handleOpenMarkMissed : undefined\}/.test(screen), 'gated on shifts.manage');
 });
