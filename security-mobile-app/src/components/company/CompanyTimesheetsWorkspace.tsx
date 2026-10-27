@@ -5,6 +5,7 @@ import { formatApiErrorMessage, getCompanyWeeklyApprovals, getEligibleTimesheets
 import { ClientWeeklyApprovalSummary, EligibleTimesheetRow, Timesheet } from '../../types/models';
 import { formatInstantTime, resolveDisplayZone } from '../../services/siteTime';
 import { timesheetSourceLabel } from './manualAttendance';
+import { verifiedAttendanceView } from './timesheetAttendance';
 import { colors } from '../../theme';
 
 type WorkspaceLevel = 'overview' | 'detail';
@@ -42,6 +43,8 @@ type EnrichedTimesheet = {
   shiftDateLabel: string;
   scheduledLabel: string;
   attendanceLabel: string;
+  /** Set when verified attendance differs from the claim / approval beyond the tolerance (informational). */
+  attendanceBadge: string | null;
   hourlyRate: number | null;
   claimedAmount: number | null;
   approvedAmount: number | null;
@@ -452,6 +455,7 @@ export function CompanyTimesheetsWorkspace({
           shiftDateLabel: formatDateLabel(scheduledStart || timesheet.createdAt, siteZone),
           scheduledLabel: `${formatTimeLabel(scheduledStart, siteZone)} - ${formatTimeLabel(scheduledEnd, siteZone)}`,
           attendanceLabel: `${formatTimeLabel(timesheet.actualCheckInAt, siteZone)} / ${formatTimeLabel(timesheet.actualCheckOutAt, siteZone)}`,
+          attendanceBadge: verifiedAttendanceView(timesheet, (value) => formatTimeLabel(value, siteZone)).badge,
           hourlyRate,
           claimedAmount,
           approvedAmount,
@@ -821,6 +825,10 @@ export function CompanyTimesheetsWorkspace({
   const activeSelected = selectedTimesheet?.timesheet;
   const isSubmittedForReview = normalizeStatus(activeSelected?.approvalStatus) === 'submitted';
   const selectedClaimedHours = activeSelected ? toHours(activeSelected.hoursWorked) : 0;
+  // Verified attendance beside the Guard's claim (informational; never gates a review action).
+  const selectedVerified = activeSelected
+    ? verifiedAttendanceView(activeSelected, (value) => formatDateTimeLabel(value, activeSelected.shift?.site?.timezone ?? null))
+    : null;
   const selectedApprovedHours = activeSelected && getApprovedHoursValue(activeSelected) !== null ? Number(getApprovedHoursValue(activeSelected)) : null;
   const parsedSelectedApprovedHours = parseHoursInput(approvedHoursInput);
   const adjustedHoursRequireNote = approvedHoursInput.trim().length > 0 && parsedSelectedApprovedHours !== null && Number.isFinite(parsedSelectedApprovedHours) && Math.abs(parsedSelectedApprovedHours - selectedClaimedHours) > 0.009 && !companyNote.trim();
@@ -1197,7 +1205,10 @@ export function CompanyTimesheetsWorkspace({
                         >
                           <Text style={[styles.shiftCell, styles.shiftDateCol]}>{entry.shiftDateLabel}</Text>
                           <Text style={[styles.shiftCell, styles.shiftScheduledCol]}>{entry.scheduledLabel}</Text>
-                          <Text style={[styles.shiftCell, styles.shiftAttendanceCol]}>{entry.attendanceLabel}</Text>
+                          <View style={styles.shiftAttendanceCol}>
+                            <Text style={styles.shiftCell}>{entry.attendanceLabel}</Text>
+                            {entry.attendanceBadge ? <Text style={styles.attendanceBadgeText}>{entry.attendanceBadge}</Text> : null}
+                          </View>
                           <Text style={[styles.shiftCell, styles.shiftClaimCol]}>{toHours(entry.timesheet.hoursWorked).toFixed(2)} h</Text>
                           <Text style={[styles.shiftCell, styles.shiftApprovedCol]}>{approvedHrs !== null ? `${approvedHrs.toFixed(2)} h` : '—'}</Text>
                           <View style={[styles.shiftStatusBadge, styles.shiftStatusCol, { backgroundColor: statusPalette.bg }]}>
@@ -1269,13 +1280,40 @@ export function CompanyTimesheetsWorkspace({
                     {timesheetSourceLabel(activeSelected.verifiedSource)} — see the shift's attendance history
                   </Text>
                 ) : null}
-                <Text style={styles.detailLine}>Check-in: {formatDateTimeLabel(activeSelected.actualCheckInAt)}</Text>
-                <Text style={styles.detailLine}>Check-out: {formatDateTimeLabel(activeSelected.actualCheckOutAt)}</Text>
-                <Text style={styles.detailLine}>Recorded: {activeSelected.workedMinutes ?? 0} min</Text>
+                {selectedVerified?.supported ? (
+                  <>
+                    {/* Verified attendance (the shift's effective Book On / Book Off) beside the Guard's claim below.
+                        Informational: it never gates approve / return / reject. */}
+                    <Text style={styles.detailLine}>Verified Book On: {selectedVerified.bookOnLabel}</Text>
+                    <Text style={styles.detailLine}>Verified Book Off: {selectedVerified.bookOffLabel}</Text>
+                    <Text style={styles.detailLine}>Verified time: {selectedVerified.durationLabel}</Text>
+                    {selectedVerified.flagged ? (
+                      <View style={styles.attendanceFlagBox}>
+                        <Text style={styles.attendanceFlagTitle}>{selectedVerified.flagTitle}</Text>
+                        {selectedVerified.flagLines.map((line) => (
+                          <Text key={line} style={styles.attendanceFlagText}>{line}</Text>
+                        ))}
+                        <Text style={styles.attendanceFlagNote}>{selectedVerified.toleranceNote}</Text>
+                      </View>
+                    ) : null}
+                  </>
+                ) : (
+                  <>
+                    <Text style={styles.detailLine}>Check-in: {formatDateTimeLabel(activeSelected.actualCheckInAt)}</Text>
+                    <Text style={styles.detailLine}>Check-out: {formatDateTimeLabel(activeSelected.actualCheckOutAt)}</Text>
+                    <Text style={styles.detailLine}>Recorded: {activeSelected.workedMinutes ?? 0} min</Text>
+                  </>
+                )}
               </View>
 
               <View style={styles.detailSection}>
                 <Text style={styles.detailSectionTitle}>GUARD CLAIM</Text>
+                {selectedVerified?.supported ? (
+                  <>
+                    <Text style={styles.detailLine}>Claimed start: {formatDateTimeLabel(activeSelected.actualCheckInAt)}</Text>
+                    <Text style={styles.detailLine}>Claimed finish: {formatDateTimeLabel(activeSelected.actualCheckOutAt)}</Text>
+                  </>
+                ) : null}
                 <Text style={styles.detailLine}>Claimed hours: {selectedClaimedHours.toFixed(2)} h</Text>
                 <Text style={styles.detailLine}>Submitted: {activeSelected.submittedAt ? formatDateTimeLabel(activeSelected.submittedAt) : 'Not submitted'}</Text>
               </View>
@@ -1494,6 +1532,11 @@ const styles = StyleSheet.create({
   shiftDateCol: { flex: 0.9 },
   shiftScheduledCol: { flex: 1 },
   shiftAttendanceCol: { flex: 1 },
+  attendanceBadgeText: { color: colors.warning, fontSize: 11, fontWeight: '800', marginTop: 2 },
+  attendanceFlagBox: { backgroundColor: colors.warningSurface, borderRadius: 10, padding: 10, gap: 4, marginTop: 4 },
+  attendanceFlagTitle: { color: colors.warning, fontSize: 13, fontWeight: '800' },
+  attendanceFlagText: { color: colors.warning, fontSize: 12, lineHeight: 17, fontWeight: '600' },
+  attendanceFlagNote: { color: colors.primaryNavySoft, fontSize: 11, lineHeight: 16 },
   shiftClaimCol: { flex: 0.7 },
   shiftApprovedCol: { flex: 0.7 },
   shiftStatusCol: { flex: 0.8 },

@@ -18,6 +18,13 @@ import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { isCompanyRole, UserRole } from '../user/entities/user.entity';
 import { CompanyMembershipService } from '../company-membership/company-membership.service';
 import { CompanyPermission } from '../company-membership/company-membership-types';
+import { effectiveAttendance, groupAttendanceByShift } from '../attendance/effective-attendance';
+import {
+  guardHasClaimedHours,
+  timesheetAttendanceDiscrepancy,
+  timesheetIsSettled,
+  verifiedAttendanceMinutes,
+} from './timesheet-attendance';
 
 @Injectable()
 export class TimesheetService {
@@ -34,7 +41,7 @@ export class TimesheetService {
 
   async findAll(): Promise<Timesheet[]> {
     const timesheets = await this.timesheetRepo.find();
-    return this.applyDerivedFinancials(timesheets);
+    return this.withVerifiedAttendance(await this.applyDerivedFinancials(timesheets));
   }
 
   async findAllForUser(user: JwtPayload): Promise<Timesheet[]> {
@@ -56,7 +63,7 @@ export class TimesheetService {
       where: { company: { id: company.id } },
       order: { createdAt: 'DESC' },
     });
-    return this.applyDerivedFinancials(timesheets);
+    return this.withVerifiedAttendance(await this.applyDerivedFinancials(timesheets));
   }
 
   async findMine(userId: number): Promise<Timesheet[]> {
@@ -66,7 +73,7 @@ export class TimesheetService {
     const timesheets = await this.buildGuardTimesheetQuery(guard.id)
       .orderBy('timesheet.createdAt', 'DESC')
       .getMany();
-    return this.applyDerivedFinancials(timesheets);
+    return this.withVerifiedAttendance(await this.applyDerivedFinancials(timesheets));
   }
 
   async findOne(id: number): Promise<Timesheet> {
@@ -393,15 +400,22 @@ export class TimesheetService {
   }
 
   /**
-   * Book Off: a worked Shift has exactly one Timesheet, and it carries the attendance-authoritative actual
-   * check-in / check-out. Runs inside the caller's Book Off transaction (`manager`).
+   * Book Off: a worked Shift has exactly one Timesheet, and it carries the attendance-verified duration. Runs inside
+   * the caller's Book Off transaction (`manager`).
    *
    *  - The Shift row is locked first, so concurrent Book Offs and the create-if-missing paths serialise and can never
    *    both create a Timesheet.
    *  - A Timesheet that already exists (any creation path — Shift create/assign, an earlier Book Off) is reused.
    *    Rota-created Shifts never had one, which is why Book Off used to fail with "Timesheet not found".
-   *  - Hours are stamped only the first time (`actualCheckOutAt` unset). A retried Book Off therefore heals a Shift
-   *    that was completed without a Timesheet, but never re-writes hours a Guard has since edited or submitted.
+   *  - verifiedMinutes / verifiedSource (the attendance evidence and the approval default) are stamped once, keyed on
+   *    verifiedMinutes being unset — NOT on the Guard's claimed check-out, which the Guard may have typed already
+   *    (that used to leave the timesheet with no verified minutes at all). A retried Book Off is a no-op.
+   *  - The Guard's claim (actualCheckInAt / actualCheckOutAt, hoursWorked / workedMinutes / roundedMinutes) is only
+   *    PRE-FILLED: each claimed time only while it is empty, the hours only while the Guard has entered none. A
+   *    Timesheet created by this call (e.g. a marketplace hire whose assignment stamps were copied in a moment ago)
+   *    holds no Guard input, so it is filled in full.
+   *  - An approved, rejected or payroll-batched Timesheet is never touched (see timesheetIsSettled). The attendance is
+   *    still recorded by the caller; the difference is shown beside the timesheet (attendanceDiscrepancy) for review.
    */
   async recordAttendanceActuals(
     manager: EntityManager,
@@ -427,25 +441,72 @@ export class TimesheetService {
 
     const timesheetRepo = manager.getRepository(Timesheet);
     let timesheet = await timesheetRepo.findOne({ where: { shift: { id: shiftId } }, order: { id: 'ASC' } });
+    let createdNow = false;
     if (!timesheet) {
       const shift = await manager.getRepository(Shift).findOne({ where: { id: shiftId } });
       if (!shift) throw new NotFoundException('Shift not found');
       timesheet = await this.createForShift(shift, manager);
+      createdNow = true;
     }
-    if (timesheet.actualCheckOutAt) return timesheet;
+    if (timesheetIsSettled(timesheet)) return timesheet;
+    if (!createdNow && timesheet.verifiedMinutes !== null && timesheet.verifiedMinutes !== undefined) return timesheet;
 
     const verifiedMinutes = Math.max(0, Math.round((actuals.checkOutAt.getTime() - actuals.checkInAt.getTime()) / 60000));
-    const hoursWorked = Number((verifiedMinutes / 60).toFixed(2));
-    const workedMinutes = Math.max(0, Math.round(hoursWorked * 60));
-    timesheet.hoursWorked = hoursWorked;
-    timesheet.workedMinutes = workedMinutes;
-    timesheet.roundedMinutes = workedMinutes;
     timesheet.verifiedMinutes = verifiedMinutes;
-    timesheet.actualCheckInAt = actuals.checkInAt;
-    timesheet.actualCheckOutAt = actuals.checkOutAt;
     timesheet.verifiedSource = options.verifiedSource ?? 'guard_app';
+    if (createdNow || !timesheet.actualCheckInAt) timesheet.actualCheckInAt = actuals.checkInAt;
+    if (createdNow || !timesheet.actualCheckOutAt) timesheet.actualCheckOutAt = actuals.checkOutAt;
+    if (createdNow || !guardHasClaimedHours(timesheet)) {
+      const hoursWorked = Number((verifiedMinutes / 60).toFixed(2));
+      const workedMinutes = Math.max(0, Math.round(hoursWorked * 60));
+      timesheet.hoursWorked = hoursWorked;
+      timesheet.workedMinutes = workedMinutes;
+      timesheet.roundedMinutes = workedMinutes;
+    }
     const saved = await timesheetRepo.save(timesheet);
     return this.applyDerivedFinancials(saved);
+  }
+
+  /**
+   * The verified attendance of each timesheet's shift, beside the Guard's claim, for the review screens. Read from the
+   * shift's append-only attendance events (effective Book On / Book Off), never from the timesheet's claimed columns,
+   * so it is right for every timesheet — including an approved one whose attendance changed after approval, which is
+   * flagged rather than rewritten. One indexed read for the whole list; nothing is written.
+   */
+  async withVerifiedAttendance<T extends Timesheet | Timesheet[]>(timesheetOrTimesheets: T): Promise<T> {
+    const list = (Array.isArray(timesheetOrTimesheets) ? timesheetOrTimesheets : [timesheetOrTimesheets]) as Timesheet[];
+    const shiftIds = [...new Set(list.map((t) => t.shift?.id).filter((id): id is number => typeof id === 'number'))];
+    const rows = shiftIds.length
+      ? ((await this.timesheetRepo.manager.query(
+          `SELECT "id", "shiftId", "type"::text AS "type", "occurredAt", "recordedAt", "source", "correctionOfEventId"
+             FROM "attendance_events" WHERE "shiftId" = ANY($1::int[])`,
+          [shiftIds],
+        )) as Array<{ id: number; shiftId: number; type: string; occurredAt: Date; recordedAt: Date | null; source: string | null;
+          correctionOfEventId: number | null }>)
+      : [];
+    const byShift = groupAttendanceByShift(
+      rows.map((r) => ({ ...r, id: Number(r.id), shiftId: Number(r.shiftId),
+        correctionOfEventId: r.correctionOfEventId === null ? null : Number(r.correctionOfEventId) })),
+    );
+    for (const timesheet of list) {
+      const effective = effectiveAttendance(byShift.get(Number(timesheet.shift?.id)) ?? []);
+      timesheet.verifiedCheckInAt = effective.bookOnAt;
+      timesheet.verifiedCheckOutAt = effective.bookOffAt;
+      timesheet.verifiedAttendanceMinutes = verifiedAttendanceMinutes(effective.bookOnAt, effective.bookOffAt);
+      timesheet.attendanceDiscrepancy = timesheetAttendanceDiscrepancy({
+        approvalStatus: timesheet.approvalStatus,
+        verifiedCheckInAt: effective.bookOnAt,
+        verifiedCheckOutAt: effective.bookOffAt,
+        claimedCheckInAt: timesheet.actualCheckInAt,
+        claimedCheckOutAt: timesheet.actualCheckOutAt,
+        claimedHours: timesheet.hoursWorked,
+        approvedMinutes: timesheet.approvedMinutes,
+        approvedHours: timesheet.approvedHours,
+        approvedStartAt: timesheet.companyApprovedStartAt,
+        approvedEndAt: timesheet.companyApprovedEndAt,
+      });
+    }
+    return timesheetOrTimesheets;
   }
 
   /**
@@ -454,56 +515,67 @@ export class TimesheetService {
    * submitted or returned) and not in a payroll batch. The caller refuses the correction before calling this when the
    * timesheet is locked; this re-checks under the timesheet row lock and refuses the same way.
    *
-   * verifiedMinutes and the actual times are restamped. The Guard-claimed hours (hoursWorked / workedMinutes /
-   * roundedMinutes) are restamped only while they still equal what attendance stamped, so a Guard's own edit is never
-   * overwritten. Approval itself is unchanged: the company approves through the existing review, which defaults
-   * approved minutes to verifiedMinutes.
+   * verifiedMinutes / verifiedSource are restamped. The Guard's claim follows attendance only where the Guard has not
+   * entered anything of their own: a claimed time moves only while it is empty or still equals the attendance time it
+   * was pre-filled from (`previous`, the effective attendance before this correction); the claimed hours (hoursWorked /
+   * workedMinutes / roundedMinutes) only while they are unset or still equal what attendance stamped. A Guard's own
+   * edit is never overwritten. Approval itself is unchanged: the company approves through the existing review, which
+   * defaults approved minutes to verifiedMinutes.
    *
-   * Returns whether anything was restamped and the timesheet's status (null when the shift has no timesheet, or no
-   * actuals yet, e.g. a corrected Book On on a shift still in progress).
+   * Returns whether the verified duration was restamped and the timesheet's status (null when the shift has no
+   * timesheet; restamped false while there is no Book Off yet, e.g. a corrected Book On on a shift still in progress).
    */
   async restampAttendanceActuals(
     manager: EntityManager,
     shiftId: number,
     actuals: { checkInAt: Date; checkOutAt: Date | null },
+    previous: { checkInAt: Date | null; checkOutAt: Date | null },
     verifiedSource: 'guard_app' | 'manual' | 'corrected',
     isLocked: (row: { approvalStatus: string; payrollBatchId: number | null }) => boolean,
     onLocked: () => Error,
   ): Promise<{ restamped: boolean; approvalStatus: string | null }> {
     const [row] = (await manager.query(
-      `SELECT "id", "approvalStatus"::text AS "approvalStatus", "payrollBatchId", "actualCheckOutAt", "verifiedMinutes",
-              "workedMinutes", "hoursWorked"
+      `SELECT "id", "approvalStatus"::text AS "approvalStatus", "payrollBatchId", "actualCheckInAt", "actualCheckOutAt",
+              "verifiedMinutes", "workedMinutes", "hoursWorked"
          FROM "timesheets" WHERE "shiftId" = $1 ORDER BY "id" ASC LIMIT 1 FOR UPDATE`,
       [shiftId],
-    )) as Array<{ id: number; approvalStatus: string; payrollBatchId: number | null; actualCheckOutAt: Date | null;
-      verifiedMinutes: number | null; workedMinutes: number; hoursWorked: string | number }>;
+    )) as Array<{ id: number; approvalStatus: string; payrollBatchId: number | null; actualCheckInAt: Date | null;
+      actualCheckOutAt: Date | null; verifiedMinutes: number | null; workedMinutes: number; hoursWorked: string | number }>;
     if (!row) return { restamped: false, approvalStatus: null };
     if (isLocked({ approvalStatus: row.approvalStatus, payrollBatchId: row.payrollBatchId === null ? null : Number(row.payrollBatchId) })) {
       throw onLocked();
     }
-    if (!actuals.checkOutAt || !row.actualCheckOutAt) {
-      // No verified actuals to restamp yet (the Book Off will stamp them). Only the actual Book On moves.
-      if (row.actualCheckOutAt === null) {
+    // A claimed time follows attendance only while it is empty or still the attendance time it was pre-filled from.
+    const follows = (claimed: Date | null, prior: Date | null) =>
+      claimed === null || (prior !== null && new Date(claimed).getTime() === prior.getTime());
+    const moveIn = follows(row.actualCheckInAt, previous.checkInAt);
+    if (!actuals.checkOutAt) {
+      // No Book Off yet (the Book Off will stamp the verified duration). Only an untouched claimed Book On moves.
+      if (moveIn) {
         await manager.query(`UPDATE "timesheets" SET "actualCheckInAt" = $2, "updatedAt" = now() WHERE "id" = $1`, [row.id, actuals.checkInAt]);
       }
       return { restamped: false, approvalStatus: row.approvalStatus };
     }
+    const moveOut = follows(row.actualCheckOutAt, previous.checkOutAt);
     const derived = (minutes: number) => {
       const hours = Number((minutes / 60).toFixed(2));
       return { hours, worked: Math.max(0, Math.round(hours * 60)) };
     };
     const verifiedMinutes = Math.max(0, Math.round((actuals.checkOutAt.getTime() - actuals.checkInAt.getTime()) / 60000));
     const next = derived(verifiedMinutes);
-    const previous = row.verifiedMinutes === null ? null : derived(Number(row.verifiedMinutes));
-    const claimedUntouched = previous !== null && Number(row.workedMinutes) === previous.worked && Number(row.hoursWorked) === previous.hours;
+    const prior = row.verifiedMinutes === null ? null : derived(Number(row.verifiedMinutes));
+    const claimedUntouched = !guardHasClaimedHours(row)
+      || (prior !== null && Number(row.workedMinutes) === prior.worked && Number(row.hoursWorked) === prior.hours);
     await manager.query(
-      `UPDATE "timesheets" SET "actualCheckInAt" = $2, "actualCheckOutAt" = $3, "verifiedMinutes" = $4, "verifiedSource" = $5,
-              "hoursWorked" = CASE WHEN $6 THEN $7 ELSE "hoursWorked" END,
-              "workedMinutes" = CASE WHEN $6 THEN $8 ELSE "workedMinutes" END,
-              "roundedMinutes" = CASE WHEN $6 THEN $8 ELSE "roundedMinutes" END,
+      `UPDATE "timesheets" SET "verifiedMinutes" = $2, "verifiedSource" = $3,
+              "actualCheckInAt" = CASE WHEN $4 THEN $5::timestamp ELSE "actualCheckInAt" END,
+              "actualCheckOutAt" = CASE WHEN $6 THEN $7::timestamp ELSE "actualCheckOutAt" END,
+              "hoursWorked" = CASE WHEN $8 THEN $9 ELSE "hoursWorked" END,
+              "workedMinutes" = CASE WHEN $8 THEN $10 ELSE "workedMinutes" END,
+              "roundedMinutes" = CASE WHEN $8 THEN $10 ELSE "roundedMinutes" END,
               "updatedAt" = now()
         WHERE "id" = $1`,
-      [row.id, actuals.checkInAt, actuals.checkOutAt, verifiedMinutes, verifiedSource, claimedUntouched, next.hours, next.worked],
+      [row.id, verifiedMinutes, verifiedSource, moveIn, actuals.checkInAt, moveOut, actuals.checkOutAt, claimedUntouched, next.hours, next.worked],
     );
     return { restamped: true, approvalStatus: row.approvalStatus };
   }

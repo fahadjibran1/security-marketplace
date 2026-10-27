@@ -296,7 +296,10 @@ export class ManualAttendanceService {
         });
       }
       await this.assertNoOverlap(manager, actor.companyId, guardId, locked.id, { from: effective.bookOnAt.getTime(), to: input.occurredAtMs });
-      await this.assertTimesheetOpen(manager, locked.id);
+      // A settled timesheet (approved, rejected or payroll-batched) does NOT refuse the Book Off (owner decision 27 Oct
+      // 2026): the attendance is recorded, the timesheet is left exactly as approved, and the review screens flag where
+      // the verified attendance differs from it. A correction of an existing time is still refused (409) instead.
+      const timesheetBefore = await this.timesheetState(manager, locked.id);
 
       const event = await this.insertEvent(manager, {
         shiftId: locked.id, guardId, type: CHECK_OUT, occurredAtMs: input.occurredAtMs, nowMs: now.getTime(), userId: actor.userId,
@@ -334,7 +337,8 @@ export class ManualAttendanceService {
         );
       }
 
-      // The timesheet carries the attendance-verified actuals, as on a Guard-app Book Off (written once).
+      // The timesheet carries the attendance-verified duration, as on a Guard-app Book Off (written once; the Guard's
+      // own claim is kept; a settled timesheet is left untouched).
       await this.timesheetService.recordAttendanceActuals(
         manager,
         locked.id,
@@ -373,9 +377,15 @@ export class ManualAttendanceService {
           reason: input.reason, verificationMethod: input.verificationMethod, verificationNote: input.verificationNote,
           bookOnAt: effective.bookOnAt.toISOString(), closedMissingBookOffAlertIds: closed.map((a) => Number(a.id)),
           afterReconciliation: status === 'completed',
+          timesheetStatus: timesheetBefore?.approvalStatus ?? null,
+          timesheetLeftUnchanged: timesheetBefore?.settled ?? false,
         },
       });
-      return { event: await this.view(manager, event, [...events, event]), shift: { id: locked.id, status: 'completed' } };
+      return {
+        event: await this.view(manager, event, [...events, event]),
+        shift: { id: locked.id, status: 'completed' },
+        timesheet: { approvalStatus: timesheetBefore?.approvalStatus ?? 'draft', leftUnchanged: timesheetBefore?.settled ?? false },
+      };
     });
   }
 
@@ -449,6 +459,8 @@ export class ManualAttendanceService {
             manager,
             locked.id,
             { checkInAt: after.bookOnAt, checkOutAt: after.bookOffAt },
+            // What the Guard's claim was pre-filled from: a claimed time that still equals it follows the correction.
+            { checkInAt: before.bookOnAt, checkOutAt: before.bookOffAt },
             after.verifiedSource,
             timesheetLockedForAttendance,
             () => this.timesheetLockedError(),
@@ -557,13 +569,21 @@ export class ManualAttendanceService {
   }
 
   private async assertTimesheetOpen(manager: EntityManager, shiftId: number) {
+    if ((await this.timesheetState(manager, shiftId))?.settled) throw this.timesheetLockedError();
+  }
+
+  /** The shift's timesheet status, and whether it is settled (approved, rejected or payroll-batched); null when none. */
+  private async timesheetState(manager: EntityManager, shiftId: number): Promise<{ approvalStatus: string; settled: boolean } | null> {
     const rows = (await manager.query(
-      `SELECT "approvalStatus"::text AS "approvalStatus", "payrollBatchId" FROM "timesheets" WHERE "shiftId" = $1`,
+      `SELECT "approvalStatus"::text AS "approvalStatus", "payrollBatchId" FROM "timesheets" WHERE "shiftId" = $1 ORDER BY "id" ASC`,
       [shiftId],
     )) as Array<{ approvalStatus: string; payrollBatchId: number | null }>;
-    if (rows.some((row) => timesheetLockedForAttendance({ approvalStatus: row.approvalStatus, payrollBatchId: row.payrollBatchId === null ? null : Number(row.payrollBatchId) }))) {
-      throw this.timesheetLockedError();
-    }
+    if (!rows.length) return null;
+    const settled = rows.some((row) => timesheetLockedForAttendance({
+      approvalStatus: row.approvalStatus,
+      payrollBatchId: row.payrollBatchId === null ? null : Number(row.payrollBatchId),
+    }));
+    return { approvalStatus: rows[0].approvalStatus, settled };
   }
 
   private assertBookOnStatus(status: string) {

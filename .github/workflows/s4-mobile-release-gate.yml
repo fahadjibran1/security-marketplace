@@ -415,6 +415,12 @@ jobs:
       - name: Verify manual attendance (Book On / Off for Guard, corrections, history, old-backend detection)
         run: npm run test:manual-attendance-ui
 
+      # Verified attendance beside the Guard's timesheet: the review row badge, the review panel showing the verified
+      # Book On / Book Off and time alongside the Guard's claimed start / finish / hours, the difference in words (over
+      # the server's tolerance), Approve / Return still offered (the flag gates nothing), and the Guard's own card.
+      - name: Verify verified attendance alongside Guard timesheets (company review and Guard view)
+        run: npm run test:timesheet-attendance-ui
+
       - name: Verify Expo dependency compatibility
         run: npx expo install --check
 

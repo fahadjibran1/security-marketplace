@@ -8,6 +8,7 @@ import { formatApiErrorMessage, submitTimesheet, updateTimesheet } from '../serv
 import { AttendanceEvent, Timesheet } from '../types/models';
 import { formatInstantDate, formatInstantDateTime, formatInstantTime } from '../services/siteTime';
 import { colors, control, radii, spacing, typography } from '../theme';
+import { verifiedAttendanceView } from '../components/company/timesheetAttendance';
 
 export interface GuardTimesheetsScreenProps {
   timesheets: Timesheet[];
@@ -70,8 +71,11 @@ function TimesheetCard({ timesheet, attendanceSlice, onReload, onNotify, onTimes
   const schedEnd = timesheet.scheduledEndAt ?? timesheet.shift?.end ?? null;
   // A shift is read on the clock of the site it is at, not the clock of wherever the phone happens to be.
   const siteZone = timesheet.shift?.site?.timezone ?? null;
-  const checkIn = timesheet.actualCheckInAt ?? attendanceSlice?.checkInAt ?? null;
-  const checkOut = timesheet.actualCheckOutAt ?? attendanceSlice?.checkOutAt ?? null;
+  // The verified Book On / Book Off (the server's effective attendance) when the server sends it; otherwise the
+  // timesheet's times and this device's attendance list, as before. Where the timesheet differs, it is flagged below.
+  const verified = verifiedAttendanceView(timesheet, (value) => formatDateTimeLabel(value, siteZone), 'guard');
+  const checkIn = (verified.supported ? timesheet.verifiedCheckInAt : null) ?? timesheet.actualCheckInAt ?? attendanceSlice?.checkInAt ?? null;
+  const checkOut = (verified.supported ? timesheet.verifiedCheckOutAt : null) ?? timesheet.actualCheckOutAt ?? attendanceSlice?.checkOutAt ?? null;
   const claimed = parseHours(hoursText);
   const valid = Number.isFinite(claimed) && claimed >= 0;
   const dirty = !valid || Math.abs(claimed - Number(timesheet.hoursWorked || 0)) > 0.01 || noteText.trim() !== (timesheet.guardNote ?? '').trim();
@@ -98,6 +102,7 @@ function TimesheetCard({ timesheet, attendanceSlice, onReload, onNotify, onTimes
     <Text style={styles.meaning}>{statusMeaning(status)}</Text>
 
     <View style={styles.infoGrid}><Info label="Booked on" value={formatDateTimeLabel(checkIn, siteZone)} /><Info label="Booked off" value={formatDateTimeLabel(checkOut, siteZone)} /></View>
+    {verified.flagged ? <View style={styles.warningBox}><Text style={styles.noteTitle}>{verified.flagTitle}</Text>{verified.flagLines.map((line) => <Text key={line} style={styles.noteBody}>{line}</Text>)}<Text style={styles.noteBody}>{verified.toleranceNote}</Text></View> : null}
 
     <View style={styles.field}><Text style={styles.label}>{editable ? 'Hours you are claiming' : 'Claimed hours'}</Text>{editable ? <TextInput style={styles.input} value={hoursText} onChangeText={setHoursText} keyboardType="decimal-pad" placeholder="e.g. 8 or 7.5" placeholderTextColor={colors.fieldPlaceholder} editable={!saving && !submitting} /> : <Text style={styles.readonly}>{Number(timesheet.hoursWorked) || 0} h</Text>}</View>
     <View style={styles.field}><Text style={styles.label}>Note</Text>{editable ? <TextInput style={[styles.input, styles.noteInput]} value={noteText} onChangeText={setNoteText} placeholder="Optional note for payroll or reviewer" placeholderTextColor={colors.fieldPlaceholder} multiline textAlignVertical="top" editable={!saving && !submitting} /> : <Text style={styles.readonly}>{timesheet.guardNote?.trim() || '—'}</Text>}</View>

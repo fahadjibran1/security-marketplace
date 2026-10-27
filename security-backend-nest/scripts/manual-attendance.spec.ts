@@ -20,7 +20,7 @@
  *   MA-14  race: Guard-app Book On vs manual Book On — exactly one wins, the other gets 409, one row
  *   MA-15  manual Book Off of an in-progress shift: completed, actuals stamped (verifiedSource manual), open extension
  *          voided, open Missing Book Off closed in the same transaction
- *   MA-16  manual Book Off after Close without Book Off; refused (409) when that timesheet is approved
+ *   MA-16  manual Book Off after Close without Book Off; recorded when that timesheet is approved, which is left untouched
  *   MA-17  Book Off refusals: not in progress, before the Book On, already booked off, in the future
  *   MA-18  corrections: append-only (original byte-identical), chain of any length with one effective value, only the
  *          tip, unchanged refused, order kept; timesheet restamped in draft / submitted / returned (Guard-edited hours
@@ -54,6 +54,15 @@
  *   MA-37  an overlap with ANOTHER company's shift is refused exactly as before, but the refusal names no shift id,
  *          times, site or company (details { otherCompany: true }) — Book On, Book Off, correction, both directions;
  *          a same-company overlap keeps its id and times
+ *   MA-38  gap 1: a Guard-typed finish time no longer stops the Book Off recording verifiedMinutes; the Guard's claimed
+ *          times and hours are kept; verified attendance and the discrepancy are shown in the company and Guard reads;
+ *          the unchanged approval defaults to the verified minutes
+ *   MA-39  gap 2: a marketplace-hire shift (assignment stamped before the timesheet existed) gets its verified minutes
+ *   MA-40  hours the Guard submitted before the Book Off are kept (no longer overwritten); return via the old workflow
+ *   MA-41  approved + payroll-batched timesheets are byte-identical after a Guard-app or manual Book Off (attendance is
+ *          recorded, the difference flagged against the approved figures); corrections still 409
+ *   MA-42  the Guard-app Book Off of an untouched timesheet fills it exactly as before; a retry writes nothing
+ *   MA-43  a correction moves verified minutes and untouched claimed values, never the Guard's own claimed time
  *
  * Needs MANUAL_ATTENDANCE_DATABASE_URL pointing at a DISPOSABLE local database — it drops the schema.
  */
@@ -538,14 +547,30 @@ async function main() {
       expect(r, 201, undefined, 'a reconciled shift can still get its real Book Off');
       assert.equal(await status(s.id), 'completed', 'stays completed');
       assert.equal((await audits('attendance.manual_book_off', s.id))[0].afterData.afterReconciliation, true);
-      // The same, but the company already approved the timesheet: locked.
+      // The same, but the company already approved the timesheet (owner decision 27 Oct 2026): the Book Off is recorded,
+      // the approved timesheet is left exactly as it was, and the review read flags the difference.
       const g2 = await guard();
       const s2 = await mkShift(g2, 'in_progress', -12, 8);
       await appEvent(s2.id, g2, 'check-in', s2.start);
-      await timesheet(s2.id, g2, 'approved');
+      const approvedSheet = await timesheet(s2.id, g2, 'approved');
+      await q(`UPDATE timesheets SET "approvedMinutes" = 480, "approvedHours" = 8 WHERE id = $1`, [approvedSheet]);
       expect(await api('POST', `/shifts/${s2.id}/reconcile-without-book-off`, A.token, { reason: 'guard_forgot_book_off' }), 201);
-      expect(await bookOff(admin.token, s2.id, s2.end - 2 * MIN), 409, 'ATTENDANCE_TIMESHEET_LOCKED');
-      assert.equal((await rows(s2.id)).length, 1, 'nothing written');
+      const frozen = await one(`SELECT md5(to_jsonb(t)::text) h FROM timesheets t WHERE id = $1`, [approvedSheet]);
+      const late = await bookOff(admin.token, s2.id, s2.end - 2 * HOUR);
+      expect(late, 201, undefined, 'a settled timesheet no longer blocks the Book Off');
+      assert.deepEqual(late.body.timesheet, { approvalStatus: 'approved', leftUnchanged: true });
+      assert.equal((await rows(s2.id)).length, 2, 'the Book Off is recorded');
+      assert.equal((await one(`SELECT md5(to_jsonb(t)::text) h FROM timesheets t WHERE id = $1`, [approvedSheet])).h, frozen.h, 'the approved timesheet is byte-identical');
+      const audit = (await audits('attendance.manual_book_off', s2.id))[0].afterData;
+      assert.deepEqual([audit.timesheetStatus, audit.timesheetLeftUnchanged], ['approved', true]);
+      const listed = (await api('GET', '/timesheets/company', A.token)).body.find((t: any) => t.id === approvedSheet);
+      assert.equal(Date.parse(listed.verifiedCheckOutAt), s2.end - 2 * HOUR, 'the verified Book Off is shown beside it');
+      assert.equal(listed.verifiedAttendanceMinutes, 6 * 60);
+      assert.equal(listed.attendanceDiscrepancy.comparedWith, 'approved');
+      assert.equal(listed.attendanceDiscrepancy.totalDifferenceMinutes, 120, 'approved 8 h, verified 6 h');
+      assert.deepEqual(listed.attendanceDiscrepancy.fields, ['total']);
+      assert.equal(listed.attendanceDiscrepancy.exceedsTolerance, true);
+      assert.equal(listed.approvedMinutes, 480, 'approval untouched');
     });
 
     await test('MA-17-BOOK-OFF-REFUSALS', async () => {
@@ -1130,6 +1155,184 @@ async function main() {
         const after = await mkShift(g, 'missed', -6, 4);
         expect(await bookOn(A.token, after.id, theirs.end), 201, undefined, "touching the end of another company's shift");
       }
+    });
+
+    // ═══════════════════ verified attendance beside the Guard's timesheet ═══════════════════
+
+    const sheetRow = (id: number) => one(`SELECT "actualCheckInAt", "actualCheckOutAt", "hoursWorked", "workedMinutes", "roundedMinutes",
+        "verifiedMinutes", "verifiedSource", "approvalStatus", "approvedMinutes" FROM timesheets WHERE id = $1`, [id]);
+    const sheetHash = async (id: number) => (await one(`SELECT md5(to_jsonb(t)::text) h FROM timesheets t WHERE id = $1`, [id])).h as string;
+    const listedFor = async (tok: string, id: number, path = '/timesheets/company') => {
+      const r = await api('GET', path, tok);
+      assert.equal(r.status, 200, `${path}: ${r.status}`);
+      return r.body.find((t: any) => t.id === id);
+    };
+
+    await test('MA-38-GAP-1-A-GUARD-TYPED-FINISH-NO-LONGER-HIDES-THE-VERIFIED-HOURS', async () => {
+      const g = await guard();
+      const s = await mkShift(g, 'in_progress', -9, 8); // -9h .. -1h
+      const on = s.start + 5 * MIN;
+      await appEvent(s.id, g, 'check-in', on);
+      const sheet = await timesheet(s.id, g, 'draft');
+      // The Guard types their own finish time and hours before anyone books them off.
+      const claimedOff = s.end + 30 * MIN;
+      expect(await api('PATCH', `/timesheets/${sheet}`, g.token, { actualCheckOutAt: iso(claimedOff), hoursWorked: 8.5 }), 200, undefined, 'guard edit');
+      const off = s.end - 20 * MIN;
+      expect(await bookOff(ops.token, s.id, off), 201);
+      const verified = Math.round((off - on) / MIN);
+      const t = await sheetRow(sheet);
+      assert.equal(t.verifiedMinutes, verified, 'the verified minutes are recorded (they used to be skipped)');
+      assert.equal(t.verifiedSource, 'manual');
+      assert.equal(new Date(t.actualCheckOutAt).getTime(), claimedOff, "the Guard's claimed finish is kept");
+      assert.equal(Number(t.hoursWorked), 8.5, "the Guard's claimed hours are kept");
+      assert.equal(new Date(t.actualCheckInAt).getTime(), on, 'an empty claimed start is pre-filled from attendance');
+      // Side by side, with the discrepancy highlighted: the company review and the Guard's own view.
+      for (const [tok, path] of [[A.token, '/timesheets/company'], [g.token, '/timesheets/mine']] as const) {
+        const listed = await listedFor(tok, sheet, path);
+        assert.equal(Date.parse(listed.verifiedCheckInAt), on, path);
+        assert.equal(Date.parse(listed.verifiedCheckOutAt), off, path);
+        assert.equal(listed.verifiedAttendanceMinutes, verified, path);
+        assert.equal(Date.parse(listed.actualCheckOutAt), claimedOff, `${path}: the claim is still the claim`);
+        const d = listed.attendanceDiscrepancy;
+        assert.deepEqual(
+          [d.comparedWith, d.toleranceMinutes, d.startDifferenceMinutes, d.endDifferenceMinutes, d.totalDifferenceMinutes, d.exceedsTolerance],
+          ['guard_claim', 10, 0, 50, 510 - verified, true], path);
+        assert.deepEqual(d.fields, ['end', 'total'], path);
+      }
+      // The ordinary workflow: the Guard submits, the company approves. The approval default is the VERIFIED duration.
+      expect(await api('PATCH', `/timesheets/${sheet}/submit`, g.token, {}), 200, undefined, 'submit');
+      const approve = await api('PATCH', `/timesheets/${sheet}`, A.token, { approvalStatus: 'approved' });
+      expect(approve, 200, undefined, 'approve');
+      assert.equal(approve.body.approvedMinutes, verified, 'approved at the verified minutes with no override');
+      assert.equal(Number(approve.body.hoursWorked), 8.5, "the Guard's claim stays on record");
+    });
+
+    await test('MA-39-GAP-2-A-MARKETPLACE-HIRE-SHIFT-GETS-ITS-VERIFIED-MINUTES', async () => {
+      const g = await guard();
+      const job = (await one(`INSERT INTO jobs ("companyId",title,"guardsRequired","hourlyRate") VALUES ($1,'Hire sync job',1,15) RETURNING id`, [A.id])).id;
+      const application = (await one(`INSERT INTO job_applications ("jobId","guardId",status,"hiredAt") VALUES ($1,$2,'accepted',now()) RETURNING id`, [job, g.id])).id;
+      const assignment = (await one(`INSERT INTO assignments ("jobId","companyId","guardId","applicationId",status) VALUES ($1,$2,$3,$4,'assigned') RETURNING id`,
+        [job, A.id, g.id, application])).id;
+      const s = await mkShift(g, 'ready', -9, 8);
+      await q(`UPDATE shifts SET "assignmentId" = $2, "jobApplicationId" = $3, "jobId" = $4 WHERE id = $1`, [s.id, assignment, application, job]);
+      assert.equal((await q(`SELECT 1 FROM timesheets WHERE "shiftId" = $1`, [s.id])).length, 0, 'no timesheet yet');
+      const on = s.start + 4 * MIN;
+      const off = s.end - 6 * MIN;
+      expect(await bookOn(A.token, s.id, on), 201);
+      expect(await bookOff(A.token, s.id, off), 201);
+      const a = await one(`SELECT status, "checkedInAt", "checkedOutAt" FROM assignments WHERE id = $1`, [assignment]);
+      assert.deepEqual([a.status, new Date(a.checkedInAt).getTime(), new Date(a.checkedOutAt).getTime()], ['checked_out', on, off], 'the hire is stamped as before');
+      const sheets = await q(`SELECT id FROM timesheets WHERE "shiftId" = $1`, [s.id]);
+      assert.equal(sheets.length, 1, 'exactly one timesheet');
+      const t = await sheetRow(sheets[0].id);
+      const minutes = Math.round((off - on) / MIN);
+      assert.equal(t.verifiedMinutes, minutes, 'the verified minutes are recorded (copied assignment stamps used to skip them)');
+      assert.equal(t.verifiedSource, 'manual');
+      assert.deepEqual([new Date(t.actualCheckInAt).getTime(), new Date(t.actualCheckOutAt).getTime(), t.workedMinutes], [on, off, minutes]);
+      assert.deepEqual([t.approvalStatus, t.approvedMinutes], ['draft', null], 'into the ordinary workflow; nothing financial yet');
+      const d = (await listedFor(A.token, sheets[0].id)).attendanceDiscrepancy;
+      assert.deepEqual([d.fields, d.exceedsTolerance], [[], false], 'the pre-filled claim equals the verified attendance');
+    });
+
+    await test('MA-40-HOURS-THE-GUARD-SUBMITTED-BEFORE-THE-BOOK-OFF-ARE-KEPT', async () => {
+      const g = await guard();
+      const s = await mkShift(g, 'in_progress', -9, 8);
+      await appEvent(s.id, g, 'check-in', s.start);
+      const sheet = await timesheet(s.id, g, 'draft');
+      expect(await api('PATCH', `/timesheets/${sheet}/submit`, g.token, { hoursWorked: 9 }), 200, undefined, 'submit 9 h');
+      const off = s.end - 2 * HOUR;
+      expect(await bookOff(A.token, s.id, off), 201);
+      const t = await sheetRow(sheet);
+      assert.equal(Number(t.hoursWorked), 9, 'kept (the Book Off used to overwrite it with the verified hours)');
+      assert.deepEqual([t.verifiedMinutes, t.approvalStatus], [6 * 60, 'submitted']);
+      assert.equal(new Date(t.actualCheckOutAt).getTime(), off, 'an empty claimed finish is pre-filled');
+      const d = (await listedFor(A.token, sheet)).attendanceDiscrepancy;
+      assert.deepEqual([d.totalDifferenceMinutes, d.fields], [180, ['total']]);
+      // The reviewer returns it through the existing workflow: no new queue, no new rule.
+      expect(await api('PATCH', `/timesheets/${sheet}`, A.token, { approvalStatus: 'returned', rejectionReason: 'Verified attendance shows 6 h' }), 200, undefined, 'return');
+    });
+
+    await test('MA-41-SETTLED-TIMESHEETS-ARE-NEVER-WRITTEN-BY-ATTENDANCE', async () => {
+      const [batch] = await q(`INSERT INTO payroll_batches ("periodStart","periodEnd","companyId") VALUES (now() - interval '7 days', now(), $1) RETURNING id`, [A.id]);
+      const settle = async (sheet: number) => q(`UPDATE timesheets SET "approvedMinutes" = 480, "approvedHours" = 8, "hoursWorked" = 8, "workedMinutes" = 480,
+          "payrollBatchId" = $2, "payrollStatus" = 'included', "approvedHoursSnapshot" = 8 WHERE id = $1`, [sheet, batch.id]);
+      // Approved and payroll-batched, then the Guard books off in the app: attendance recorded, timesheet byte-identical.
+      const g = await guard();
+      const s = await mkShift(g, 'in_progress', -9, 8);
+      await appEvent(s.id, g, 'check-in', s.start);
+      const sheet = await timesheet(s.id, g, 'approved');
+      await settle(sheet);
+      const frozen = await sheetHash(sheet);
+      const appOff = await api('POST', '/attendance/check-out', g.token, { shiftId: s.id });
+      assert.ok(appOff.status === 201 || appOff.status === 200, JSON.stringify(appOff.body));
+      assert.equal(await status(s.id), 'completed');
+      assert.equal(await sheetHash(sheet), frozen, 'a Guard-app Book Off never touches a settled timesheet');
+      // The same with a manual Book Off.
+      const g2 = await guard();
+      const s2 = await mkShift(g2, 'in_progress', -9, 8);
+      await appEvent(s2.id, g2, 'check-in', s2.start);
+      const sheet2 = await timesheet(s2.id, g2, 'approved');
+      await settle(sheet2);
+      const frozen2 = await sheetHash(sheet2);
+      const off = s2.end - 3 * HOUR;
+      const r = await bookOff(A.token, s2.id, off);
+      expect(r, 201, undefined, 'recorded');
+      assert.deepEqual(r.body.timesheet, { approvalStatus: 'approved', leftUnchanged: true });
+      assert.equal(await sheetHash(sheet2), frozen2, 'a manual Book Off never touches a settled timesheet');
+      const listed = await listedFor(A.token, sheet2);
+      assert.deepEqual([listed.approvedMinutes, Number(listed.approvedHoursSnapshot), listed.payrollStatus], [480, 8, 'included'], 'payroll figures untouched');
+      assert.deepEqual([listed.attendanceDiscrepancy.comparedWith, listed.attendanceDiscrepancy.totalDifferenceMinutes, listed.attendanceDiscrepancy.exceedsTolerance],
+        ['approved', 180, true], 'flagged for review instead');
+      // A correction of a settled timesheet's attendance is still refused, nothing written.
+      const tip = (await api('GET', `/attendance/shifts/${s2.id}/history`, A.token)).body.effective.bookOff.id;
+      const before = (await rows(s2.id)).length;
+      expect(await correct(A.token, tip, off + HOUR), 409, 'ATTENDANCE_TIMESHEET_LOCKED', 'correction');
+      assert.equal((await rows(s2.id)).length, before);
+      assert.equal(await sheetHash(sheet2), frozen2);
+    });
+
+    await test('MA-42-THE-GUARD-APP-BOOK-OFF-IS-UNCHANGED', async () => {
+      const g = await guard();
+      const s = await mkShift(g, 'in_progress', -2, 8);
+      await appEvent(s.id, g, 'check-in', s.start);
+      const sheet = await timesheet(s.id, g, 'draft');
+      const first = await api('POST', '/attendance/check-out', g.token, { shiftId: s.id });
+      assert.ok(first.status === 201 || first.status === 200, JSON.stringify(first.body));
+      const t = await sheetRow(sheet);
+      const offMs = new Date(t.actualCheckOutAt).getTime();
+      const minutes = Math.round((offMs - s.start) / MIN);
+      assert.equal(new Date(t.actualCheckInAt).getTime(), s.start);
+      assert.deepEqual([t.verifiedMinutes, t.verifiedSource, Number(t.hoursWorked), t.workedMinutes, t.roundedMinutes],
+        [minutes, 'guard_app', Number((minutes / 60).toFixed(2)), Math.round(Number((minutes / 60).toFixed(2)) * 60), Math.round(Number((minutes / 60).toFixed(2)) * 60)],
+        'an untouched timesheet is filled exactly as before');
+      const stamped = await sheetHash(sheet);
+      const retry = await api('POST', '/attendance/check-out', g.token, { shiftId: s.id });
+      assert.ok(retry.status === 201 || retry.status === 200, JSON.stringify(retry.body));
+      assert.equal(await sheetHash(sheet), stamped, 'a retried Book Off writes nothing');
+      const listed = await listedFor(g.token, sheet, '/timesheets/mine');
+      assert.equal(Date.parse(listed.verifiedCheckOutAt), offMs);
+      assert.deepEqual([listed.verifiedSource, listed.attendanceDiscrepancy.fields], ['guard_app', []]);
+    });
+
+    await test('MA-43-A-CORRECTION-KEEPS-THE-GUARDS-OWN-TIMES', async () => {
+      const g = await guard();
+      const s = await mkShift(g, 'completed', -10, 8);
+      const on = await appEvent(s.id, g, 'check-in', s.start);
+      const off = await appEvent(s.id, g, 'check-out', s.end);
+      const sheet = await timesheet(s.id, g, 'draft', { on: s.start, off: s.end });
+      // The Guard says they started 15 minutes earlier than they booked on.
+      expect(await api('PATCH', `/timesheets/${sheet}`, g.token, { actualCheckInAt: iso(s.start - 15 * MIN) }), 200, undefined, 'guard edit');
+      expect(await correct(ops.token, on, s.start + 10 * MIN), 201);
+      let t = await sheetRow(sheet);
+      assert.equal(new Date(t.actualCheckInAt).getTime(), s.start - 15 * MIN, "the Guard's claimed start is kept");
+      assert.equal(t.verifiedMinutes, 470, 'the verified minutes follow the correction');
+      assert.equal(t.workedMinutes, 470, 'hours the Guard never touched follow it too');
+      expect(await correct(ops.token, off, s.end - 20 * MIN), 201);
+      t = await sheetRow(sheet);
+      assert.equal(new Date(t.actualCheckOutAt).getTime(), s.end - 20 * MIN, 'a claimed finish still equal to the old Book Off follows');
+      assert.equal(t.verifiedMinutes, 450);
+      const d = (await listedFor(A.token, sheet)).attendanceDiscrepancy;
+      assert.deepEqual([d.startDifferenceMinutes, d.endDifferenceMinutes, d.fields], [-25, 0, ['start']]);
     });
 
     await test('MA-27-STATIC-APPEND-ONLY-LOCK-ORDER-AND-THE-GATE', async () => {

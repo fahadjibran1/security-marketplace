@@ -1,3 +1,5 @@
+import type { TimesheetAttendanceDiscrepancy } from '../components/company/timesheetAttendance';
+
 export type AppRole = 'admin' | 'company' | 'company_admin' | 'company_staff' | 'guard' | 'client_admin' | 'client_viewer';
 export type TimesheetApprovalStatus = 'draft' | 'submitted' | 'approved' | 'rejected' | 'returned';
 export type TimesheetPayrollStatus = 'unpaid' | 'included' | 'paid';
@@ -1002,6 +1004,15 @@ export interface Timesheet {
   actualCheckOutAt?: string | null;
   /** Informational (Part B): where the attendance-verified actuals came from. No approval rule depends on it. */
   verifiedSource?: 'guard_app' | 'manual' | 'corrected' | null;
+  /**
+   * Read-only, from the shift's effective attendance (servers with verified-attendance sync; absent on older ones).
+   * actualCheckInAt / actualCheckOutAt / hoursWorked are the Guard's claim; these are what attendance verified.
+   */
+  verifiedCheckInAt?: string | null;
+  verifiedCheckOutAt?: string | null;
+  verifiedAttendanceMinutes?: number | null;
+  attendanceDiscrepancy?: TimesheetAttendanceDiscrepancy | null;
+  approvedMinutes?: number | null;
   guardNote?: string | null;
   companyNote?: string | null;
   approvedHours?: number | null;
@@ -1803,6 +1814,8 @@ export interface ManualAttendancePayload {
 export interface ManualAttendanceResult {
   event: AttendanceEventView;
   shift: { id: number; status: string };
+  /** Book Off on servers with verified-attendance sync: a settled (approved / batched) timesheet is left unchanged. */
+  timesheet?: { approvalStatus: string; leftUnchanged: boolean };
 }
 
 export interface AttendanceCorrectionResult {

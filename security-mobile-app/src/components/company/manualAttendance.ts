@@ -335,10 +335,17 @@ export function manualAttendanceSuccessMessage(input: {
   occurredAt: string;
   timeZone: string;
   timesheetRestamped?: boolean | null;
+  /** Book Off: the timesheet was already approved / in payroll, so it was left as it was. */
+  timesheetLeftUnchanged?: boolean | null;
 }): string {
   const at = formatUkDateTime(input.occurredAt, input.timeZone);
   if (input.kind === 'book_on') return `Shift #${input.shiftId}: Book On recorded for ${input.guardName} at ${at} (manual).`;
-  if (input.kind === 'book_off') return `Shift #${input.shiftId}: Book Off recorded for ${input.guardName} at ${at} (manual).`;
+  if (input.kind === 'book_off') {
+    const settled = input.timesheetLeftUnchanged
+      ? ' The timesheet was already approved, so it was left unchanged; any difference is flagged in Timesheets for review.'
+      : '';
+    return `Shift #${input.shiftId}: Book Off recorded for ${input.guardName} at ${at} (manual).${settled}`;
+  }
   const word = input.eventType === 'check-out' ? 'Book Off' : 'Book On';
   const timesheet = input.timesheetRestamped
     ? ' The timesheet now shows the corrected time.'
