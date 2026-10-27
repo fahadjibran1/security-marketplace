@@ -22,6 +22,7 @@ import type { BoardInclusion } from './liveOperationsPolicy';
 import { hoursPastEnd, type BoardDateMode } from './liveOperationsBoard';
 import { completedWithoutBookOffLabel, isCompletedWithoutBookOff, isEligibleForReconciliation } from './shiftReconciliation';
 import { isEligibleForExtension } from './shiftAmendments';
+import { NO_BOOK_ON_OVERDUE_LABEL, noBookOnOverdueMinutes, noBookOnOverdueText } from './noBookOnOverdue';
 import { NativeDateInput } from './NativeDateInput';
 import { CompanyOperationsTimeline } from './CompanyOperationsTimeline';
 import { countStatusWord, countText, safeCount, type SafeCount, type SourceState } from './sourceAvailability';
@@ -80,6 +81,8 @@ type UrgentCategory =
 
 export type UrgentOperationalItem = {
   id: string;
+  /** A Ready shift with no Book On past start + 15 minutes: minutes since the scheduled start. Display only. */
+  noBookOnOverdueMinutes?: number | null;
   /** An incident's own recorded severity (low / medium / high / critical); absent for other items. */
   severity?: string | null;
   shiftId?: number | null;
@@ -139,6 +142,11 @@ export type LiveBoardRow = {
   closedByControl: boolean;
   /** Server-computed monitoring. Presented as given; the board never recomputes a window or a count. */
   operations: ShiftOperationsView | null;
+  /**
+   * Ready, no Book On, and at least 15 minutes past the scheduled start: the minutes since that start. Shown as
+   * "No Book On — Overdue". Nothing marks the shift missed because of it; only Mark Missed, pressed by a person.
+   */
+  noBookOnOverdueMinutes?: number | null;
   attendance: { checkInAt: string | null; checkOutAt: string | null } | undefined;
   timesheet: Timesheet | undefined;
   shiftLogs: DailyLog[];
@@ -237,6 +245,11 @@ export type CompanyLiveOperationsWorkspaceProps = {
    * action is never offered to someone the API would refuse.
    */
   onReconcileShift?: (shiftId: number) => void;
+  /**
+   * Opens Mark Missed for a Ready shift with no Book On past start + 15 minutes. Absent when the user cannot manage
+   * shifts (shifts.manage). Only opens the confirmation dialog; nothing is sent until it is confirmed with a reason.
+   */
+  onMarkMissed?: (shiftId: number) => void;
   /**
    * Opens Shift extension for a shift (Live Shift Amendments). Absent when the user holds no amendment permission;
    * `amendmentsEnabled` is the company policy the API returned, so a switched-off company is never offered a proposal.
@@ -448,6 +461,9 @@ function getAttendanceState(row: LiveBoardRow, timeZone: string): { primary: str
       secondary: attendance?.checkOutAt ? fmtTime(attendance.checkOutAt, timeZone) : null,
       color: colors.textSecondary,
     };
+  }
+  if (lifecycleStatus === 'ready' && row.noBookOnOverdueMinutes != null) {
+    return { primary: `⚠ ${NO_BOOK_ON_OVERDUE_LABEL}`, secondary: `${row.noBookOnOverdueMinutes} min since start`, color: colors.danger };
   }
   if (['ready', 'offered'].includes(lifecycleStatus)) {
     return { primary: '○ Not started', secondary: null, color: colors.textMuted };
@@ -1024,9 +1040,12 @@ function AttentionItem({
   onUrgentIncidentFollowUp,
   onUrgentAlertFollowUp,
   onOpenIncidentResolution,
+  onMarkMissed,
 }: {
   item: UrgentOperationalItem;
   isLast: boolean;
+  /** Opens the Mark Missed dialog. Absent without shifts.manage. */
+  onMarkMissed?: (shiftId: number) => void;
   /** An attention item carries only a shiftId, so the site's clock is resolved from that. */
   resolveShiftZone: (shiftId?: number | null) => string;
   urgentActionItemId: string | null;
@@ -1121,6 +1140,17 @@ function AttentionItem({
             <Text style={styles.aBtnSecondaryText}>{busy ? '…' : 'Mark In Review'}</Text>
           </Pressable>
         ) : null}
+        {/* No Book On — Overdue: the only way to mark it missed is this press, then the dialog. */}
+        {onMarkMissed && item.category === 'late_start' && item.noBookOnOverdueMinutes != null && item.shiftId ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Mark Missed"
+            style={[styles.aBtn, styles.aBtnSecondary, IS_WEB ? (WEB_PTR as any) : null]}
+            onPress={(e: any) => { e?.stopPropagation?.(); onMarkMissed(item.shiftId as number); }}
+          >
+            <Text style={styles.aBtnSecondaryText}>Mark Missed</Text>
+          </Pressable>
+        ) : null}
         {canAcknowledge && !acknowledged ? (
           <Pressable
             accessibilityRole="button"
@@ -1161,7 +1191,10 @@ export function LiveOpsAttentionRail({
   nextUp,
   sourceStates,
   stacked = false,
+  onMarkMissed,
 }: {
+  /** Opens the Mark Missed dialog for a No Book On — Overdue item. Absent without shifts.manage. */
+  onMarkMissed?: (shiftId: number) => void;
   items: UrgentOperationalItem[];
   metricFocus: MetricFocus;
   /** Below the timeline at full width (narrow web), rather than a fixed-width column beside it. */
@@ -1234,6 +1267,7 @@ export function LiveOpsAttentionRail({
                 onUrgentIncidentFollowUp={onUrgentIncidentFollowUp}
                 onUrgentAlertFollowUp={onUrgentAlertFollowUp}
                 onOpenIncidentResolution={onOpenIncidentResolution}
+                onMarkMissed={onMarkMissed}
               />
             </Fragment>
           ))
@@ -1469,6 +1503,7 @@ export function CompanyLiveOperationsWorkspace({
   boardDateMode,
   onToday,
   onReconcileShift,
+  onMarkMissed,
   onManageExtension,
   amendmentsEnabled,
   timelineRecentreSignal,
@@ -1735,6 +1770,7 @@ export function CompanyLiveOperationsWorkspace({
           onOpenIncidentResolution={onOpenIncidentResolution}
           nextUp={nextUp}
           sourceStates={sources}
+          onMarkMissed={onMarkMissed}
         />
       </View>
 
@@ -1790,6 +1826,7 @@ export function CompanyLiveOperationsWorkspace({
               onOpenCoverage={onOpenCoverage}
               nowMs={operationalNowMs}
               onReconcileShift={onReconcileShift}
+              onMarkMissed={onMarkMissed}
               onManageExtension={onManageExtension}
               amendmentsEnabled={!!amendmentsEnabled}
             />
@@ -1882,9 +1919,11 @@ function DetailPanelContent({
   onOpenCoverage,
   nowMs,
   onReconcileShift,
+  onMarkMissed,
   onManageExtension,
   amendmentsEnabled,
 }: {
+  onMarkMissed?: (shiftId: number) => void;
   ctx: SelectedShiftContext;
   closeOutSummary: CloseOutSummary | null;
   closeOutNotesDraft: string;
@@ -1905,6 +1944,8 @@ function DetailPanelContent({
   // Welfare Phase 4: a recorded Book Off more than 15 minutes before the scheduled end. The coverage
   // assessment is the backend's; when monitoring has not loaded it is said to be unavailable, never guessed.
   const minutesEarly = earlyBookOffMinutes(shift.end, attendance?.checkOutAt);
+  // Ready, no Book On, 15+ minutes past start. Shown, never acted on: only Mark Missed changes the status.
+  const overdueMinutes = noBookOnOverdueMinutes(shift, attendance, nowMs);
   const early = operations?.earlyBookOff ?? null;
 
   return (
@@ -1951,7 +1992,23 @@ function DetailPanelContent({
             : 'Guard is booked on and the shift is live.'}
         </Text>
       ) : null}
-      {lifecycleStatus === 'ready'       ? <Text style={styles.detailInfoMsg}>Guard confirmed. Ready for book on.</Text>                          : null}
+      {lifecycleStatus === 'ready' && overdueMinutes === null ? <Text style={styles.detailInfoMsg}>Guard confirmed. Ready for book on.</Text> : null}
+      {lifecycleStatus === 'ready' && overdueMinutes !== null ? (
+        <View style={styles.detailAction} {...({ accessibilityRole: 'alert' } as any)}>
+          <Text style={[styles.detailActionMsg, { color: colors.danger, fontWeight: '800' }]}>{NO_BOOK_ON_OVERDUE_LABEL}</Text>
+          <Text style={styles.detailActionMsg}>{noBookOnOverdueText(overdueMinutes)}</Text>
+          {onMarkMissed ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Mark Missed"
+              style={[styles.detailPrimaryBtn, IS_WEB ? (WEB_PTR as any) : null]}
+              onPress={() => onMarkMissed(shift.id)}
+            >
+              <Text style={styles.detailPrimaryBtnText}>Mark Missed</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      ) : null}
       {lifecycleStatus === 'completed' ? (
         <Text style={styles.detailInfoMsg}>
           {isCompletedWithoutBookOff(shift, attendance)

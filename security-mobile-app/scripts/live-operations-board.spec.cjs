@@ -299,16 +299,24 @@ test('SAFE-02-SELECTING-A-DATE-OR-TODAY-WRITES-NOTHING', () => {
   }
 });
 
-test('SAFE-03-AUTO-MARK-MISSED-DOES-NOT-DEPEND-ON-THE-SELECTED-DATE', () => {
-  // The one automatic write on this page marks a `ready` shift missed after 15 minutes without a Book On.
-  // It reads the full `shifts` list, never the board, so choosing a date can neither widen nor narrow it.
+test('SAFE-03-NO-BOOK-ON-OVERDUE-IS-A-WARNING-AND-DOES-NOT-DEPEND-ON-THE-SELECTED-DATE', () => {
+  // UPDATED (27 Oct 2026 production defect). This test used to certify "the one automatic write on this page":
+  // an effect that marked a `ready` shift missed 15 minutes after its start without a Book On. That write is gone
+  // — it took shift 70 from a Guard who had accepted it seconds earlier. What remains is a read-only warning
+  // ("No Book On — Overdue") in Attention Now, built from the full `shifts` list, never the board, so choosing a
+  // date can still neither widen nor narrow it. The only `status: 'missed'` write is the Mark Missed dialog submit
+  // (certified in scripts/no-browser-status-mutations.spec.cjs).
   const screen = codeOf('src/screens/CompanyDashboardScreen.tsx');
-  const start = screen.indexOf('const overdueReadyShifts = shifts.filter(');
-  assert.ok(start > 0, 'the automation still reads `shifts`');
-  const effect = screen.slice(screen.lastIndexOf('React.useEffect(() => {', start), screen.indexOf('}, [', start));
+  assert.ok(!screen.includes('const overdueReadyShifts = shifts.filter('), 'the automation is gone');
+  const start = screen.indexOf('const readyShiftsNotBookedOn = shifts.filter(');
+  assert.ok(start > 0, 'the overdue warning still reads `shifts`');
+  const memo = screen.slice(start, screen.indexOf('readyShiftsNotBookedOn.forEach', start));
   for (const dateSource of ['liveFilters', 'liveBoardSelection', 'liveOperationRows', 'timelineAnchorMs']) {
-    assert.ok(!effect.includes(dateSource), `auto-mark is independent of ${dateSource}`);
+    assert.ok(!memo.includes(dateSource), `the overdue warning is independent of ${dateSource}`);
   }
+  assert.equal((screen.match(/status: 'missed'/g) || []).length, 1, 'exactly one place sends status missed');
+  const submit = screen.indexOf('const handleSubmitMarkMissed = React.useCallback');
+  assert.ok(submit > 0 && screen.indexOf("status: 'missed'") > submit, 'and it is the Mark Missed submit');
 });
 
 test('SAFE-04-THE-RECONCILIATION-QUEUE-IS-READ-ONLY', () => {

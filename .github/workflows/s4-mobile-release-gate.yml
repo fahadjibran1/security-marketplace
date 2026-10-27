@@ -399,6 +399,15 @@ jobs:
       - name: Verify Replace Guard from Shift Offers and the Rota Planner
         run: npm run test:replace-guard-ui
 
+      # Production defect, 27 Oct 2026: an open Live Operations tab marked a Ready shift MISSED 15 minutes after its
+      # start, under the operator's identity, seconds after a replacement Guard accepted it; the Guard could not Book
+      # On. Mounts the real dashboard with every effect running and proves no mount, refresh, poll, re-render or
+      # second tab writes anything; the overdue state is a warning, and Mark Missed needs a press, a reason and a
+      # confirmation and sends exactly one update. Also scans src/ for any effect, interval or listener that calls a
+      # mutating API.
+      - name: Verify the dashboard never changes a shift by itself
+        run: npm run test:no-browser-status-mutations
+
       - name: Verify Expo dependency compatibility
         run: npx expo install --check
 
