@@ -19,6 +19,7 @@ import { NotificationService } from '../notification/notification.service';
 import { NotificationType } from '../notification/entities/notification.entity';
 import { DailyLog } from '../daily-log/entities/daily-log.entity';
 import { AttendanceEvent, AttendanceEventType } from '../attendance/entities/attendance.entity';
+import { effectiveAttendance, effectiveEvents } from '../attendance/effective-attendance';
 import { Shift } from '../shift/entities/shift.entity';
 import { GuardProfile } from '../guard-profile/entities/guard-profile.entity';
 import { WelfareWindowService, welfareWindowDuty } from '../operations/welfare-window.service';
@@ -347,7 +348,8 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
         if (shift.status !== 'in_progress') {
           // Only a genuine, recent Book Off brings a completed shift back. A shift closed by reconciliation
           // has no Book Off: a controller has already dealt with it.
-          const bookOffAt = this.latest(attendance, AttendanceEventType.CHECK_OUT);
+          // The EFFECTIVE Book Off (Migration 67: a corrected chain is read at its tip; manual or Guard app alike).
+          const bookOffAt = effectiveAttendance(attendance).bookOffAt;
           // The lookback runs from when the shift's welfare state last could change: the end of the window the
           // Book Off fell in (an owed partial window settles at its end + grace, possibly well after the Book
           // Off — Phase 5), and never earlier than the Book Off itself.
@@ -414,8 +416,12 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
     const guard = shift.guard ?? shift.assignment?.guard;
     if (!guard?.id || !shift.company?.id) return;
 
-    const bookOnAt = this.earliest(attendanceEvents, AttendanceEventType.CHECK_IN);
-    const bookOffAt = this.latest(attendanceEvents, AttendanceEventType.CHECK_OUT);
+    // Effective attendance (Migration 67). Welfare is judged from `monitoredFrom` — the effective Book On, but never
+    // earlier than when S4 first knew the Guard was on duty — so a late-recorded manual Book On, or a Book On corrected
+    // to an earlier time, never produces retrospective missed checks. Misses already written are kept as they are.
+    const effective = effectiveAttendance(attendanceEvents);
+    const bookOnAt = effective.monitoredFrom;
+    const bookOffAt = effective.bookOffAt;
 
     const resolution = this.welfareWindowService.resolve({
       shiftStart: new Date(shift.start),
@@ -447,7 +453,7 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
       }
 
       await this.maintainWelfareSummary(manager, shift, guard, resolution, counters);
-      await this.maintainMissingBookOff(manager, shift, guard, bookOnAt, bookOffAt, now, counters);
+      await this.maintainMissingBookOff(manager, shift, guard, effective.bookOnAt, bookOffAt, now, counters);
     });
   }
 
@@ -854,7 +860,8 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
       ...SWEEP_CHILD_READ,
       where: { shift: { id: In(shiftIds) }, type: AttendanceEventType.CHECK_OUT },
     });
-    const bookedOff = new Set(checkOuts.map((event) => event.shift?.id).filter(Boolean));
+    // Any effective Book Off — Guard app or manual (Migration 67) — answers the alert.
+    const bookedOff = new Set(effectiveEvents(checkOuts).map((event) => event.shift?.id).filter(Boolean));
 
     for (const alert of open) {
       if (!alert.shift?.id || !bookedOff.has(alert.shift.id)) continue;
@@ -1058,20 +1065,6 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
     } catch {
       return value.toISOString().slice(11, 16);
     }
-  }
-
-  private earliest(events: AttendanceEvent[], type: AttendanceEventType): Date | null {
-    const times = events
-      .filter((event) => event.type === type && event.occurredAt instanceof Date)
-      .map((event) => event.occurredAt.getTime());
-    return times.length ? new Date(Math.min(...times)) : null;
-  }
-
-  private latest(events: AttendanceEvent[], type: AttendanceEventType): Date | null {
-    const times = events
-      .filter((event) => event.type === type && event.occurredAt instanceof Date)
-      .map((event) => event.occurredAt.getTime());
-    return times.length ? new Date(Math.max(...times)) : null;
   }
 
   private groupBy<T>(items: T[], keyOf: (item: T) => number | undefined): Map<number, T[]> {

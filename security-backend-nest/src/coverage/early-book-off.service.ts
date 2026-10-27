@@ -3,7 +3,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { In, LessThan, MoreThan, Not, Repository } from 'typeorm';
 import { RotaSlot } from '../rota-slot/entities/rota-slot.entity';
 
-import { AttendanceEvent, AttendanceEventType } from '../attendance/entities/attendance.entity';
+import { AttendanceEvent } from '../attendance/entities/attendance.entity';
+import { effectiveAttendance, groupAttendanceByShift } from '../attendance/effective-attendance';
 import {
   CoverageAssessment,
   OtherShiftEvidence,
@@ -91,19 +92,18 @@ export class EarlyBookOffService {
           loadEagerRelations: false,
         })
       : [];
-    const times = (shiftId: number, type: AttendanceEventType) =>
-      attendance.filter((a) => a.shift?.id === shiftId && a.type === type).map((a) => a.occurredAt.getTime());
+    // Effective attendance (Migration 67): each other shift's Book On / Book Off is its chain's tip.
+    const attendanceByShift = groupAttendanceByShift(attendance);
     const evidence = (s: Shift): OtherShiftEvidence => {
-      const ons = times(s.id, AttendanceEventType.CHECK_IN);
-      const offs = times(s.id, AttendanceEventType.CHECK_OUT);
+      const effective = effectiveAttendance(attendanceByShift.get(s.id) ?? []);
       return {
         shiftId: s.id,
         status: s.status,
         start: new Date(s.start),
         end: new Date(s.end),
         hasGuard: Boolean(s.guard?.id),
-        bookOnAt: ons.length ? new Date(Math.min(...ons)) : null,
-        bookOffAt: offs.length ? new Date(Math.max(...offs)) : null,
+        bookOnAt: effective.bookOnAt,
+        bookOffAt: effective.bookOffAt,
       };
     };
 

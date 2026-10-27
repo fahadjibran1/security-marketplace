@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ForbiddenException,
+  HttpStatus,
   Injectable,
   NotFoundException,
   UnprocessableEntityException,
@@ -8,7 +9,10 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { createHash, timingSafeEqual } from 'crypto';
-import { AttendanceEvent, AttendanceEventType } from './entities/attendance.entity';
+import { AttendanceEvent, AttendanceEventType, AttendanceSource } from './entities/attendance.entity';
+import { effectiveAttendance } from './effective-attendance';
+import { MANUAL_ATTENDANCE_ERROR_CODES, attendanceError } from './manual-attendance-policy';
+import { ManualAttendanceService } from './manual-attendance.service';
 import { ShiftService } from '../shift/shift.service';
 import { GuardProfileService } from '../guard-profile/guard-profile.service';
 import { TimesheetService } from '../timesheet/timesheet.service';
@@ -37,6 +41,19 @@ export const STALE_BOOK_ON_GRACE_HOURS = 12;
 export const SHIFT_AWAITING_REACCEPTANCE_MESSAGE =
   'This shift is waiting for you to accept it. If your company changed it, review the updated shift and accept it before you Book On.';
 
+/**
+ * Migration 67: one root attendance row per (shift, type). A second Book On / Book Off committed by another path at the
+ * same moment (the Guard app racing a manual entry) is refused by the database; this turns that into a 409.
+ */
+export function duplicateAttendanceConflict(error: unknown) {
+  const e = error as { driverError?: { code?: string; constraint?: string }; code?: string; constraint?: string };
+  const code = e?.driverError?.code ?? e?.code;
+  const constraint = e?.driverError?.constraint ?? e?.constraint;
+  if (code !== '23505' || constraint !== 'UQ_attendance_events_one_root') return null;
+  return attendanceError(HttpStatus.CONFLICT, MANUAL_ATTENDANCE_ERROR_CODES.CONFLICT,
+    'Attendance for this shift was recorded at the same moment by someone else. Refresh and check it.');
+}
+
 /** Turns the start-of-work gate's refusal into words a Guard can act on. */
 export function bookOnRefusalReason(message: string): string {
   const compliance = /^Guard compliance invalid: (.+)$/.exec(message);
@@ -61,25 +78,32 @@ export class AttendanceService {
     private readonly auditLogService: AuditLogService,
   ) {}
 
-  async findMine(userId: number): Promise<AttendanceEvent[]> {
+  /**
+   * Every raw row is still returned (Migration 67 adds fields only): `source` says whether the Guard or company staff
+   * recorded it, `isCorrection` whether it corrects another row, and `effective` whether it is the value that counts.
+   * The Guard sees why and how a manual entry was verified, but not which staff member recorded it.
+   */
+  async findMine(userId: number) {
     const guard = await this.guardProfileService.findByUserId(userId);
     if (!guard) throw new NotFoundException('Guard profile not found');
-    return this.attendanceRepo.find({ where: { guard: { id: guard.id } }, order: { occurredAt: 'DESC' } });
+    const rows = await this.attendanceRepo.find({ where: { guard: { id: guard.id } }, order: { occurredAt: 'DESC' } });
+    return ManualAttendanceService.annotate(rows).map(({ recordedByUserId: _hidden, ...row }) => row);
   }
 
-  async findForCompany(user: JwtPayload): Promise<AttendanceEvent[]> {
-    if (user.role === UserRole.ADMIN) return this.attendanceRepo.find({ order: { occurredAt: 'DESC' } });
+  async findForCompany(user: JwtPayload) {
+    if (user.role === UserRole.ADMIN) return ManualAttendanceService.annotate(await this.attendanceRepo.find({ order: { occurredAt: 'DESC' } }));
     const { company } = await this.membershipService.resolveCompanyContext(user.sub, user.role, CompanyPermission.ATTENDANCE_VIEW);
-    return this.attendanceRepo.find({
+    return ManualAttendanceService.annotate(await this.attendanceRepo.find({
       where: { shift: { company: { id: company.id } } },
       order: { occurredAt: 'DESC' },
-    });
+    }));
   }
 
   async checkIn(userId: number, dto: RecordAttendanceDto) {
     const { guard, shift } = await this.getGuardAndOwnedShift(userId, dto.shiftId);
     const normalizedStatus = this.shiftService.normalizeLifecycleStatus(shift.status);
-    const latest = await this.latestForShift(shift.id);
+    // Effective attendance (Migration 67): the Book On is the check-in chain's tip, Guard app or manual.
+    const existingBookOn = effectiveAttendance(await this.eventsForShift(shift.id)).bookOn;
 
     // Retry-safe Book On: if the first request committed but its response was lost,
     // return the existing check-in rather than creating a duplicate or failing the guard.
@@ -87,14 +111,14 @@ export class AttendanceService {
     // DELIBERATELY BEFORE the staleness check below: a Guard who genuinely booked on must keep getting
     // their event back even if the retry arrives after the stale boundary, otherwise a lost response
     // near the boundary would turn a successful Book On into an error.
-    if (normalizedStatus === 'in_progress' && latest?.type === AttendanceEventType.CHECK_IN && latest.guard?.id === guard.id) {
-      return latest;
+    if (normalizedStatus === 'in_progress' && existingBookOn && existingBookOn.guard?.id === guard.id) {
+      return this.ownBookOnOrConflict(existingBookOn);
     }
 
     // A shift waiting for the Guard's (re-)acceptance is not theirs to start yet.
     if (normalizedStatus === 'offered') throw new BadRequestException(SHIFT_AWAITING_REACCEPTANCE_MESSAGE);
     if (normalizedStatus !== 'ready') throw new BadRequestException('Only ready shifts can be checked in');
-    if (latest?.type === AttendanceEventType.CHECK_IN) throw new BadRequestException('Shift is already checked in');
+    if (existingBookOn) throw new BadRequestException('Shift is already checked in');
 
     // UAT-ATT-01. There is deliberately NO early cutoff and NO ordinary late cutoff: an assigned Guard
     // may Book On hours before a scheduled start at a site manager's request, and a late Guard must
@@ -129,13 +153,11 @@ export class AttendanceService {
       const attendanceRepo = manager.getRepository(AttendanceEvent);
 
       if (lockedStatus === 'in_progress') {
-        // A concurrent Book On of this Guard committed first: the retry-safe answer, exactly as above.
-        const existing = await attendanceRepo.findOne({
-          where: { shift: { id: shift.id } },
-          order: { occurredAt: 'DESC', id: 'DESC' },
-        });
-        if (existing?.type === AttendanceEventType.CHECK_IN && existing.guard?.id === guard.id) {
-          return { event: existing, created: false };
+        // A concurrent Book On of this Guard committed first: the retry-safe answer, exactly as above. A Book On that
+        // company staff recorded manually in the meantime is not the Guard's own request, so it is a conflict.
+        const existing = effectiveAttendance(await attendanceRepo.find({ where: { shift: { id: shift.id } } })).bookOn;
+        if (existing && existing.guard?.id === guard.id) {
+          return { event: this.ownBookOnOrConflict(existing), created: false };
         }
       }
       const termsChanged =
@@ -175,6 +197,9 @@ export class AttendanceService {
         );
       }
       return { event: savedEvent, created: true };
+    }).catch((error: unknown) => {
+      // Migration 67's one-root index: a Book On for this shift committed by another path at the same moment.
+      throw duplicateAttendanceConflict(error) ?? error;
     });
 
     if (result.created) shift.status = 'in_progress';
@@ -195,28 +220,33 @@ export class AttendanceService {
       if (!locked) throw new NotFoundException('Shift not found');
       const normalizedStatus = this.shiftService.normalizeLifecycleStatus(locked.status);
       const attendanceRepo = manager.getRepository(AttendanceEvent);
-      const latest = await attendanceRepo.findOne({ where: { shift: { id: shift.id } }, order: { occurredAt: 'DESC', id: 'DESC' } });
+      // Effective attendance (Migration 67): each chain's tip, Guard app or manual.
+      const effective = effectiveAttendance(await attendanceRepo.find({ where: { shift: { id: shift.id } } }));
 
       // Retry-safe Book Off for the network-timeout scenario (first request committed, response lost): return the
       // existing check-out, and make sure the Timesheet exists (heals a Shift completed before the Timesheet fix).
-      if (normalizedStatus === 'completed' && latest?.type === AttendanceEventType.CHECK_OUT && latest.guard?.id === guard.id) {
-        const checkIn = await attendanceRepo.findOne({
-          where: { shift: { id: shift.id }, type: AttendanceEventType.CHECK_IN },
-          order: { occurredAt: 'DESC', id: 'DESC' },
-        });
-        if (checkIn) {
-          await this.timesheetService.recordAttendanceActuals(manager, shift.id, {
-            checkInAt: checkIn.occurredAt,
-            checkOutAt: latest.occurredAt,
-          });
+      // A Book Off company staff recorded manually is not the Guard's own request: that is a conflict.
+      if (normalizedStatus === 'completed' && effective.bookOff && effective.bookOff.guard?.id === guard.id) {
+        if (effective.bookOff.source === AttendanceSource.MANUAL) {
+          throw attendanceError(HttpStatus.CONFLICT, MANUAL_ATTENDANCE_ERROR_CODES.ALREADY_BOOKED_OFF,
+            'Your company has already recorded your Book Off for this shift.');
         }
-        return latest;
+        if (effective.bookOn) {
+          await this.timesheetService.recordAttendanceActuals(
+            manager,
+            shift.id,
+            { checkInAt: effective.bookOn.occurredAt, checkOutAt: effective.bookOff.occurredAt },
+            { verifiedSource: effective.verifiedSource },
+          );
+        }
+        return effective.bookOff;
       }
 
       if (normalizedStatus !== 'in_progress') throw new BadRequestException('Only in-progress shifts can be checked out');
-      if (!latest || latest.type !== AttendanceEventType.CHECK_IN) {
+      if (!effective.bookOn || effective.bookOff) {
         throw new BadRequestException('Shift must be checked in before checkout');
       }
+      const latest = effective.bookOn;
 
       // Checkout records any supplied evidence, but site policy named requireGpsCheckIn /
       // requireNfcCheckIn must not block a guard from ending a shift.
@@ -274,12 +304,31 @@ export class AttendanceService {
       // server-timestamped attendance events. This becomes the payroll default; hoursWorked/workedMinutes remain the
       // guard-facing claimed values. The Timesheet also stores those two events as its authoritative actual
       // check-in / check-out (Rota Shifts have no Assignment to copy them from).
-      await this.timesheetService.recordAttendanceActuals(manager, shift.id, {
-        checkInAt: latest.occurredAt,
-        checkOutAt: savedEvent.occurredAt,
-      });
+      await this.timesheetService.recordAttendanceActuals(
+        manager,
+        shift.id,
+        { checkInAt: latest.occurredAt, checkOutAt: savedEvent.occurredAt },
+        // A manual (or corrected) Book On makes the actuals manual even though the Guard booked off in the app.
+        { verifiedSource: effective.verifiedSource },
+      );
       return savedEvent;
+    }).catch((error: unknown) => {
+      // Migration 67's one-root index: a Book Off for this shift committed by another path at the same moment.
+      throw duplicateAttendanceConflict(error) ?? error;
     });
+  }
+
+  /** The Guard's own Book On is returned (retry-safe); one company staff recorded manually is a conflict. */
+  private ownBookOnOrConflict(event: AttendanceEvent): AttendanceEvent {
+    if (event.source === AttendanceSource.MANUAL) {
+      throw attendanceError(HttpStatus.CONFLICT, MANUAL_ATTENDANCE_ERROR_CODES.ALREADY_BOOKED_ON,
+        'Your company has already recorded your Book On for this shift.');
+    }
+    return event;
+  }
+
+  private eventsForShift(shiftId: number) {
+    return this.attendanceRepo.find({ where: { shift: { id: shiftId } } });
   }
 
   private async verifyAttendanceEvidence(
@@ -374,9 +423,6 @@ export class AttendanceService {
     return { guard, shift };
   }
 
-  private latestForShift(shiftId: number) {
-    return this.attendanceRepo.findOne({ where: { shift: { id: shiftId } }, order: { occurredAt: 'DESC' } });
-  }
 
   private hashNfcTag(value: string) {
     return createHash('sha256').update(value.trim(), 'utf8').digest('hex');

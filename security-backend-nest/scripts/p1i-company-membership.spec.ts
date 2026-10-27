@@ -169,9 +169,9 @@ test('ENTITY-6 CompanyMembershipModule is imported in AppModule', () => {
 // C.  PERMISSION FOUNDATION
 // ═══════════════════════════════════════════════════════════════════════
 
-test('PERMISSION-1 hasPermission returns true for OWNER on all 36 permissions', () => {
+test('PERMISSION-1 hasPermission returns true for OWNER on all 37 permissions', () => {
   const all = Object.values(CompanyPermission);
-  assert(all.length === 36, `Expected 36 permissions (31 + shifts.reconcile + the four Live Shift Amendment permissions), got ${all.length}`);
+  assert(all.length === 37, `Expected 37 permissions (31 + shifts.reconcile + the four Live Shift Amendment permissions + attendance.manage), got ${all.length}`);
   for (const p of all) {
     assert(hasPermission(CompanyMembershipRole.OWNER, p), `OWNER must have ${p}`);
   }
@@ -192,6 +192,14 @@ test('PERMISSION-1B LIVE SHIFT AMENDMENT PERMISSIONS ARE EXACTLY THE APPROVED MA
   for (const role of Object.values(CompanyMembershipRole)) {
     const held = amend.filter((perm) => hasPermission(role, perm));
     assert(JSON.stringify(held) === JSON.stringify(expected[role]), `${role}: expected ${expected[role]}, got ${held}`);
+  }
+});
+
+test('PERMISSION-1C MANUAL ATTENDANCE (attendance.manage) IS EXACTLY THE APPROVED MATRIX', () => {
+  // Owner, Admin and Operations by role. Control Room: none by role; per-person canManageAttendance is the only way.
+  const expected: Record<string, boolean> = { owner: true, admin: true, operations: true, control_room: false, hr_compliance: false, finance: false, viewer: false };
+  for (const role of Object.values(CompanyMembershipRole)) {
+    assert(hasPermission(role, CompanyPermission.ATTENDANCE_MANAGE) === expected[role], `${role}: attendance.manage should be ${expected[role]}`);
   }
 });
 

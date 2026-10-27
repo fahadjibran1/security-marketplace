@@ -55,7 +55,8 @@ async function main() {
   const through65 = allFiles.filter((f) => Number(f.split('-')[0]) <= 1720900000011).map((f) => path.join(migrationsDir, f));
   const ds = new DataSource({
     type: 'postgres', url, entities: appEntities, synchronize: false, dropSchema: false,
-    migrations: allFiles.map((f) => path.join(migrationsDir, f)), migrationsTableName: 'typeorm_migrations', logging: false,
+    // Migration 67 (manual attendance) follows 66; this certification stays about 66 alone.
+    migrations: allFiles.filter((f) => Number(f.split('-')[0]) <= 1720900000012).map((f) => path.join(migrationsDir, f)), migrationsTableName: 'typeorm_migrations', logging: false,
   });
   const q = (sql: string, params: unknown[] = []) => ds.query(sql, params);
   const scalar = async (sql: string, params: unknown[] = []) => Object.values((await q(sql, params))[0] ?? {})[0];
@@ -127,8 +128,9 @@ async function main() {
     await test('M66-01-A-65-DATABASE-MIGRATES-TO-66-AND-66-IS-LAST', () => {
       assert.equal(applied.length, 1, 'only 66 is pending on a 65 database');
       assert.equal(applied[0].name, MIGRATION_66);
-      assert.equal(allFiles.length, 66);
+      assert.equal(allFiles.length, 67);
       assert.equal(allFiles[65], '1720900000012-AddGuardNotificationDispatches.ts');
+      assert.equal(allFiles[66], '1720900000013-AddManualAttendance.ts', 'Migration 67 follows 66 and is certified by m67-migration.spec.ts');
     });
     const head = await schema();
     const headLabels = await labels();
@@ -265,7 +267,10 @@ async function main() {
       const drift = (await ds.driver.createSchemaBuilder().log()).upQueries.map((x) => x.query);
       const ours = drift.filter((x) => /guard_notification_dispatches|notifications_type_enum/.test(x));
       assert.deepEqual(ours, [], `entity and migration 66 disagree:\n${ours.join('\n')}`);
-      const semantic = drift.filter((x) =>
+      // This database stops at 66, so Migration 67's nine added columns are absent by design (m67-migration.spec.ts
+      // M67-10 certifies them); they are set aside statement by statement. Nothing else is.
+      const m67 = /^ALTER TABLE "(attendance_events" ADD "(source|recordedAt|recordedByUserId|reason|verificationMethod|verificationNote|correctionOfEventId)|company_memberships" ADD "canManageAttendance|timesheets" ADD "verifiedSource)" /;
+      const semantic = drift.filter((x) => !m67.test(x) &&
         /CREATE TABLE|DROP TABLE|CREATE TYPE|DROP TYPE|ALTER TYPE|ALTER TABLE.*ALTER COLUMN|ALTER TABLE.*DROP COLUMN|ALTER TABLE.*ADD "/i.test(x));
       assert.deepEqual(semantic, [], `semantic drift (the release gate would fail):\n${semantic.join('\n')}`);
       console.log(`      (diagnostic-only drift elsewhere, unchanged by 66: ${drift.length} statement(s))`);

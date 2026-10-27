@@ -170,6 +170,14 @@ export class Timesheet {
   @Column({ type: 'int', nullable: true })
   approvedMinutes?: number | null;
 
+  /**
+   * Where the attendance-verified actuals (actualCheckInAt / actualCheckOutAt / verifiedMinutes) came from
+   * (Migration 67): the Guard app, a manual Book On / Book Off by authorised staff, or a correction. Informational
+   * only: the existing submission and approval workflow decides worked hours, unchanged.
+   */
+  @Column({ type: 'varchar', length: 20, default: 'guard_app' })
+  verifiedSource!: 'guard_app' | 'manual' | 'corrected';
+
   @Column({ type: 'text', nullable: true })
   overrideReason?: string | null;
 

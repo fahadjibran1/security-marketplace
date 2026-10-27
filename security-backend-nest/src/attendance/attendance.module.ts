@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AttendanceController } from './attendance.controller';
 import { AttendanceService } from './attendance.service';
+import { ManualAttendanceService } from './manual-attendance.service';
 import { AttendanceEvent } from './entities/attendance.entity';
 import { ShiftModule } from '../shift/shift.module';
 import { GuardProfileModule } from '../guard-profile/guard-profile.module';
@@ -23,7 +24,7 @@ import { AuditLogModule } from '../audit-log/audit-log.module';
     AuditLogModule,
   ],
   controllers: [AttendanceController],
-  providers: [AttendanceService],
-  exports: [AttendanceService],
+  providers: [AttendanceService, ManualAttendanceService],
+  exports: [AttendanceService, ManualAttendanceService],
 })
 export class AttendanceModule {}

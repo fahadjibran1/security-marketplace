@@ -105,11 +105,11 @@ async function main() {
       assert.equal(applied.length, 62, `62 migrations apply to a fresh database (got ${applied.length})`);
       assert.equal(applied[60].name, MIGRATION_61);
       assert.equal(applied[61].name, MIGRATION_62, 'Migration 62 is the subject');
-      assert.equal(allMigrationFiles.length, 66, 'exactly 66 migration files');
+      assert.equal(allMigrationFiles.length, 67, 'exactly 67 migration files');
       assert.deepEqual(
         allMigrationFiles.slice(62),
-        ['1720900000009-AddComplianceLapseAlerts.ts', '1720900000010-AddShiftAmendments.ts', '1720900000011-AddWelfarePushReminders.ts', '1720900000012-AddGuardNotificationDispatches.ts'],
-        'the only migrations after 62 are 63 (AddComplianceLapseAlerts), 64 (AddShiftAmendments), 65 (AddWelfarePushReminders) and 66 (AddGuardNotificationDispatches)',
+        ['1720900000009-AddComplianceLapseAlerts.ts', '1720900000010-AddShiftAmendments.ts', '1720900000011-AddWelfarePushReminders.ts', '1720900000012-AddGuardNotificationDispatches.ts', '1720900000013-AddManualAttendance.ts'],
+        'the only migrations after 62 are 63 (AddComplianceLapseAlerts), 64 (AddShiftAmendments), 65 (AddWelfarePushReminders), 66 (AddGuardNotificationDispatches) and 67 (AddManualAttendance)',
       );
     });
     const head = await snapshot();

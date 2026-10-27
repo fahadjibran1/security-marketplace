@@ -4,7 +4,8 @@ import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { CompanyMembershipService } from '../company-membership/company-membership.service';
 import { CompanyPermission } from '../company-membership/company-membership-types';
-import { AttendanceEvent, AttendanceEventType } from '../attendance/entities/attendance.entity';
+import { AttendanceEvent } from '../attendance/entities/attendance.entity';
+import { effectiveAttendance } from '../attendance/effective-attendance';
 import {
   SafetyAlert,
   SafetyAlertStatus,
@@ -142,11 +143,13 @@ export class ShiftReconciliationService {
         order: { occurredAt: 'ASC', id: 'ASC' },
         loadEagerRelations: false,
       });
-      const bookOn = events.find((event) => event.type === AttendanceEventType.CHECK_IN) ?? null;
+      // Effective attendance (Migration 67): a corrected chain is read at its tip; a manual Book On counts as a Book On.
+      const effective = effectiveAttendance(events);
+      const bookOn = effective.bookOn;
       if (!bookOn) {
         throw new BadRequestException('This shift has no Book On, so there is nothing to close without a Book Off.');
       }
-      if (events.some((event) => event.type === AttendanceEventType.CHECK_OUT)) {
+      if (effective.bookOff) {
         throw new ConflictException('A Book Off is already recorded for this shift.');
       }
 

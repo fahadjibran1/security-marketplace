@@ -279,6 +279,12 @@ export class AuthService {
             if (!permissions.includes(p)) permissions.push(p);
           }
         }
+        // Manual attendance (Migration 67): a Control Room member individually authorised by an Owner or Admin
+        // (company_memberships.canManageAttendance) may record a Book On / Book Off and correct a recorded time.
+        // Display only: every manual attendance route re-checks the authorisation on the server.
+        if (membership.membershipRole === CompanyMembershipRole.CONTROL_ROOM && membership.canManageAttendance) {
+          if (!permissions.includes(CompanyPermission.ATTENDANCE_MANAGE)) permissions.push(CompanyPermission.ATTENDANCE_MANAGE);
+        }
         return permissions;
       }
 

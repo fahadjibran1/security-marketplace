@@ -47,6 +47,12 @@ export enum CompanyPermission {
   /** Resolve a Guard's dispute of a staff-recorded verbal agreement (Owner / Admin). */
   SHIFTS_AMEND_RESOLVE_DISPUTE = 'shifts.amend.resolve_dispute',
   ATTENDANCE_VIEW = 'attendance.view',
+  /**
+   * Manual attendance (Migration 67, owner-approved 27 Oct 2026): record a Book On / Book Off for a Guard and correct a
+   * recorded time (append-only). Owner, Admin and Operations by role. A Control Room member holds it only when
+   * individually authorised (company_memberships.canManageAttendance), never by role; see manual-attendance-policy.ts.
+   */
+  ATTENDANCE_MANAGE = 'attendance.manage',
   TIMESHEETS_VIEW = 'timesheets.view',
   TIMESHEETS_REVIEW = 'timesheets.review',
   CLIENT_BILLING_VIEW = 'client_billing.view',
@@ -96,6 +102,7 @@ const ADMIN_PERMISSIONS: Set<CompanyPermission> = new Set([
   CompanyPermission.SHIFTS_AMEND_APPROVE,
   CompanyPermission.SHIFTS_AMEND_RESOLVE_DISPUTE,
   CompanyPermission.ATTENDANCE_VIEW,
+  CompanyPermission.ATTENDANCE_MANAGE,
   CompanyPermission.TIMESHEETS_VIEW,
   CompanyPermission.TIMESHEETS_REVIEW,
   CompanyPermission.CLIENT_BILLING_VIEW,
@@ -130,6 +137,7 @@ const OPERATIONS_PERMISSIONS: Set<CompanyPermission> = new Set([
   CompanyPermission.SHIFTS_AMEND,
   CompanyPermission.SHIFTS_AMEND_RECORD_AGREEMENT,
   CompanyPermission.ATTENDANCE_VIEW,
+  CompanyPermission.ATTENDANCE_MANAGE,
   CompanyPermission.TIMESHEETS_VIEW,
   CompanyPermission.TIMESHEETS_REVIEW,
   CompanyPermission.CLIENT_BILLING_VIEW,

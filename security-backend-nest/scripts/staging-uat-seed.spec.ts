@@ -99,7 +99,7 @@ test('SEED-04-DATABASE-GUARDS-ARE-PRESENT', () => {
   assert.match(source, /Supabase \/ pooler host/);
   assert.match(source, /seed only a fresh database/);
   assert.match(source, /const EXPECTED_MIGRATIONS = 66;/);
-  assert.match(source, /const LAST_MIGRATION = 'AddGuardNotificationDispatches1720900000012';/);
+  assert.match(source, /const LAST_MIGRATION = 'AddManualAttendance1720900000013';/);
   assert.match(source, /S4_STAGING_SEED_CONFIRM !== CONFIRM/);
   assert.match(source, /DATABASE_SYNCHRONIZE: 'false'/, 'the in-process app never alters the schema');
   assert.match(source, /DATABASE_POOLER_URL: ''/, 'no pooler URL can be picked up');
@@ -236,8 +236,8 @@ test('SEED-11-RECOVERY-USES-THE-PRODUCT-RESET-FLOW-FOR-THE-FICTIONAL-ACCOUNTS-ON
 });
 
 test('SEED-12-THE-LEDGER-IS-THIS-CODE-S-OWN-HEAD-AND-NO-IN-PROCESS-TIMER-RUNS', () => {
-  // The constants are exactly this repository's migration head (Migration 66 today) …
-  assert.deepEqual(repositoryMigrationHead(), { count: 66, last: 'AddGuardNotificationDispatches1720900000012' });
+  // The constants are exactly this repository's migration head (Migration 67 today) …
+  assert.deepEqual(repositoryMigrationHead(), { count: 67, last: 'AddManualAttendance1720900000013' });
   // … and a migration added later moves the head, so the seeder would refuse until it is updated with it.
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 's4-seed-head-'));
   try {

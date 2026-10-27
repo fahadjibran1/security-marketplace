@@ -2,7 +2,8 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
-import { AttendanceEvent, AttendanceEventType } from '../attendance/entities/attendance.entity';
+import { AttendanceEvent } from '../attendance/entities/attendance.entity';
+import { effectiveAttendance } from '../attendance/effective-attendance';
 import { Company } from '../company/entities/company.entity';
 import { CompanyService } from '../company/company.service';
 import { CompanyMembershipService } from '../company-membership/company-membership.service';
@@ -484,8 +485,11 @@ export class IncidentAnalyticsService {
       // (no Book On, after an early Book Off) and a final window ended at Book Off under the 50% rule are not
       // expected and not missed. One check satisfies one window, and both welfare log types count. Nothing is
       // derived from alerts, so a shift-level summary is never a second miss.
-      const bookOnAt = attendance.find((event) => event.type === AttendanceEventType.CHECK_IN)?.occurredAt ?? null;
-      const bookOffAt = [...attendance].reverse().find((event) => event.type === AttendanceEventType.CHECK_OUT)?.occurredAt ?? null;
+      // Effective attendance (Migration 67): windows judged from monitoredFrom (as the sweep does), lateness from the
+      // effective Book On's actual time.
+      const effective = effectiveAttendance(attendance);
+      const bookOnAt = effective.monitoredFrom;
+      const bookOffAt = effective.bookOffAt;
       const resolution = this.welfareWindowService.resolve({
         shiftStart: new Date(shift.start),
         shiftEnd: new Date(shift.end),
@@ -504,7 +508,7 @@ export class IncidentAnalyticsService {
       const lateAlerts = alerts.filter((alert) => alert.type === SafetyAlertType.LATE_CHECKIN).length;
       const expectedCheckCalls = completedWindows + missedWindows;
       const missedCheckCalls = missedWindows;
-      const firstCheckIn = attendance.find((event) => event.type === AttendanceEventType.CHECK_IN);
+      const firstCheckIn = effective.bookOn;
       const lateCheckIn = !!firstCheckIn
         ? firstCheckIn.occurredAt.getTime() - shift.start.getTime() > 10 * 60 * 1000
         : lateAlerts > 0;

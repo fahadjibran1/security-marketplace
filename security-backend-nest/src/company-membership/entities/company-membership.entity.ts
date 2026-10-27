@@ -67,6 +67,13 @@ export class CompanyMembership {
   @Column({ type: 'boolean', default: false })
   canAmendShifts!: boolean;
 
+  /**
+   * Per-person manual attendance authorisation for a Control Room member (Migration 67), granted by an Owner or Admin.
+   * It allows recording a Book On / Book Off for a Guard and correcting a recorded time, and nothing else.
+   */
+  @Column({ type: 'boolean', default: false })
+  canManageAttendance!: boolean;
+
   @CreateDateColumn()
   createdAt!: Date;
 

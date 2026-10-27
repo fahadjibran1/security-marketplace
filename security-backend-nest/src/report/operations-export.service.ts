@@ -2,7 +2,8 @@ import { BadRequestException, Injectable, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Between, In, Repository } from 'typeorm';
 
-import { AttendanceEvent, AttendanceEventType } from '../attendance/entities/attendance.entity';
+import { AttendanceEvent } from '../attendance/entities/attendance.entity';
+import { effectiveAttendance } from '../attendance/effective-attendance';
 import { AuditLog } from '../audit-log/entities/audit-log.entity';
 import { CompanyMembershipService } from '../company-membership/company-membership.service';
 import { CompanyPermission } from '../company-membership/company-membership-types';
@@ -75,7 +76,16 @@ const ATTENDANCE_COLUMNS = [
   'Shift status', 'Attendance status', 'Missing Book Off', 'Early Book Off',
   'Remaining scheduled time', 'Coverage after early Book Off', 'Covering shift IDs', 'Staffing after early Book Off',
   'Reconciliation', 'Reconciliation audit ref', 'Timesheet status',
+  // Migration 67: whether each effective time came from the Guard app or was recorded / corrected by company staff.
+  'Book On recorded by', 'Book Off recorded by',
 ];
+
+/** "Guard app", "Manual" or "Manual (corrected)" for one effective attendance time; blank when there is none. */
+function attendanceSourceWords(source: string | null, corrected: boolean): string {
+  if (!source) return '';
+  if (corrected) return 'Manual (corrected)';
+  return source === 'manual' ? 'Manual' : 'Guard app';
+}
 
 const WELFARE_COLUMNS = [
   'Company', 'Site', 'Site timezone', 'Shift ID', 'Guard', 'Shift date', 'Welfare interval (min)',
@@ -323,12 +333,9 @@ export class OperationsExportService {
     const missingBy = byShift(missingBookOff);
     const reconBy = new Map(reconciliations.map((r) => [Number(r.entityId), r]));
     // Welfare Phase 4: whether another Guard covered the rest of each early-booked-off shift.
-    const bookOffBy = new Map<number, Date | null>(shifts.map((shift) => {
-      const offs = (attendanceBy.get(shift.id) ?? [])
-        .filter((e) => e.type === AttendanceEventType.CHECK_OUT)
-        .map((e) => e.occurredAt.getTime());
-      return [shift.id, offs.length ? new Date(Math.max(...offs)) : null];
-    }));
+    // Effective attendance (Migration 67): each chain's tip, Guard app or manual.
+    const effectiveBy = new Map(shifts.map((shift) => [shift.id, effectiveAttendance(attendanceBy.get(shift.id) ?? [])]));
+    const bookOffBy = new Map<number, Date | null>(shifts.map((shift) => [shift.id, effectiveBy.get(shift.id)?.bookOffAt ?? null]));
     const earlyBy = this.earlyBookOffService
       ? await this.earlyBookOffService.assess(company.id, shifts, bookOffBy, now)
       : new Map<number, EarlyBookOffView>();
@@ -337,12 +344,9 @@ export class OperationsExportService {
     const counts = new Map<string, number>();
     const rows = shifts.map((shift) => {
       const tz = shift.site?.timezone || REPORT_TIME_ZONE_FALLBACK;
-      const events = attendanceBy.get(shift.id) ?? [];
-      const times = (type: AttendanceEventType) => events.filter((e) => e.type === type).map((e) => e.occurredAt.getTime());
-      const ons = times(AttendanceEventType.CHECK_IN);
-      const offs = times(AttendanceEventType.CHECK_OUT);
-      const bookOnAt = ons.length ? new Date(Math.min(...ons)) : null;
-      const bookOffAt = offs.length ? new Date(Math.max(...offs)) : null;
+      const effective = effectiveBy.get(shift.id)!;
+      const bookOnAt = effective.bookOnAt;
+      const bookOffAt = effective.bookOffAt;
       const recon = reconBy.get(shift.id) ?? null;
       const facts: AttendanceFacts = {
         status: shift.status, start: new Date(shift.start), end: new Date(shift.end), bookOnAt, bookOffAt, reconciled: Boolean(recon), now,
@@ -392,6 +396,8 @@ export class OperationsExportService {
           : '',
         recon ? `audit #${recon.id}` : '',
         timesheet ? humanise(timesheet.approvalStatus) : 'No timesheet',
+        attendanceSourceWords(effective.bookOnSource, effective.bookOnCorrected),
+        attendanceSourceWords(effective.bookOffSource, effective.bookOffCorrected),
       ];
     });
 

@@ -428,6 +428,12 @@ async function main() {
 
       // availability preview funnels into the same compliance gate.
       assert.match(read('availability/availability.service.ts'), /assertGuardAssignable/);
+
+      // Part B (Migration 67): manual attendance records a Book On / Book Off for the shift's EXISTING Guard. It never
+      // writes a Guard onto a shift, so it is not a deployment path; its Book On still runs the start-of-work gate.
+      const manualAttendance = read('attendance/manual-attendance.service.ts');
+      assert.doesNotMatch(manualAttendance, /SET "guardId"|shift\.guard = /, 'manual attendance never assigns a Guard');
+      assert.match(manualAttendance.split('async bookOn(')[1].split('async bookOff(')[0], /assertGuardMayStartWork\(/);
     });
 
     // ── stage separation: hire is not deployment ──────────────────────────────
