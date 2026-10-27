@@ -863,7 +863,13 @@ export interface Shift {
   companyId?: number;
   guardId?: number;
   rotaSlotId?: number | null;
-  assignment?: Assignment;
+  assignment?: Assignment | null;
+  /**
+   * The marketplace job application this shift came from, when it is a hire. GET /shifts loads this relation with
+   * `assignment`; either one makes it a marketplace hire, which Replace Guard refuses (REPLACE_GUARD_HIRE_LINKED).
+   */
+  jobApplication?: { id: number } | null;
+  jobApplicationId?: number | null;
   job?: Job | null;
   company?: CompanyProfile;
   guard?: GuardProfile;

@@ -2166,6 +2166,11 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
     shifts.forEach((shift) => map.set(shift.id, shift));
     return map;
   }, [shifts]);
+  /**
+   * Rota Planner positions carry only a shift id, Guard and status; Replace Guard there reads the rest (the marketplace
+   * hire link, an extended end) from the same company shift list the Shift Offers drawer uses.
+   */
+  const lookupShiftById = React.useCallback((shiftId: number) => shiftsById.get(shiftId) ?? null, [shiftsById]);
 
   /** The company zone, used only to decide which site-local day a row belongs to. */
   const logBookZone = React.useMemo(
@@ -3713,6 +3718,9 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
         : formatApiErrorMessage(replaceError, 'Unable to replace the Guard right now.');
       throw Object.assign(new Error(message), { code });
     }
+    // Both entry points read from here: the shift list (Shift Offers) and the rota week (Rota Planner), so the incoming
+    // Guard shows as Awaiting in each.
+    setRotaLoadKey((key) => key + 1);
     await loadData(true);
     const replacement = activeCompanyGuards.find((entry) => entry.guard?.id === replacementGuardId)?.guard;
     recordManagementAction({
@@ -4691,6 +4699,9 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
       canManageCompliance={compliancePermissions.canManage}
       onFixCompliance={handleFixGuardCompliance}
       onGetComplianceSummaries={listCompanyGuardComplianceStatuses}
+      replacementGuards={replacementGuardOptions}
+      onReplaceGuard={handleReplaceShiftGuard}
+      lookupShift={lookupShiftById}
       legacyShiftsByDate={legacyShiftsByDate}
       resolveSiteZone={resolveSiteZone}
     />

@@ -20,7 +20,18 @@ import type { CandidateAssessment } from './assignEligibility';
 import { buildBlockers } from './compliance-model';
 import { workRestrictionNotice } from './compliance-checks';
 import { NativeDateInput, nativeInputErrorStyle, nativeInputStyle } from './NativeDateInput';
+import { ReplaceGuardPanel, ReplaceGuardUnavailableNote } from './ReplaceGuardForm';
+import {
+  isHireLinkedShift,
+  replaceGuardAvailability,
+  replaceGuardSuccessMessage,
+  replacementCandidatesFor,
+  type ReplaceGuardAvailability,
+  type ReplaceGuardInput,
+  type ReplacementGuardOption,
+} from './replaceGuard';
 import type {
+  Shift,
   EligibleGuardRow,
   GuardComplianceSummary,
   RotaCoveragePhase,
@@ -290,6 +301,17 @@ type CompanyRotaPlannerWorkspaceProps = {
   onFixCompliance?: (guardId: number) => void;
   /** GET /compliance/statuses. Loaded once per assign panel, never polled. */
   onGetComplianceSummaries?: () => Promise<GuardComplianceSummary[]>;
+
+  // ── Replace Guard (same form, rules and handler as the Shift Offers drawer) ──
+  /** The company's active Guards. Without this and onReplaceGuard, no Replace Guard action is shown. */
+  replacementGuards?: ReplacementGuardOption[];
+  /** CompanyDashboardScreen.handleReplaceShiftGuard → POST /shifts/:id/replace-guard. Rejects with the server's refusal. */
+  onReplaceGuard?: (shiftId: number, input: ReplaceGuardInput) => Promise<void>;
+  /**
+   * The full shift behind a position, from the company shift list, when loaded. Supplies what a rota position does
+   * not carry (the marketplace hire link, an extended end). Absent → the server's refusal explains instead.
+   */
+  lookupShift?: (shiftId: number) => Shift | null | undefined;
 };
 
 // ── Day name constants ─────────────────────────────────────────────────────────
@@ -335,6 +357,9 @@ export function CompanyRotaPlannerWorkspace({
   canManageCompliance = false,
   onFixCompliance,
   onGetComplianceSummaries,
+  replacementGuards,
+  onReplaceGuard,
+  lookupShift,
 }: CompanyRotaPlannerWorkspaceProps) {
 
   // ── Slot detail state ──────────────────────────────────────────────────────
@@ -394,6 +419,10 @@ export function CompanyRotaPlannerWorkspace({
   const [cancelPositionShiftId, setCancelPositionShiftId] = React.useState<number | null>(null);
   const [cancellingPosition, setCancellingPosition] = React.useState(false);
 
+  // ── Replace Guard state ────────────────────────────────────────────────────
+  const [replaceShiftId, setReplaceShiftId] = React.useState<number | null>(null);
+  const [replaceNotice, setReplaceNotice] = React.useState<string | null>(null);
+
   // ── Cancel slot state ──────────────────────────────────────────────────────
   const [cancelSlotConfirm, setCancelSlotConfirm] = React.useState(false);
   const [cancellingSlot, setCancellingSlot]       = React.useState(false);
@@ -429,6 +458,8 @@ export function CompanyRotaPlannerWorkspace({
     setSlotDrawerOpen(true);
     setEditMode(false);
     setAssignShiftId(null);
+    setReplaceShiftId(null);
+    setReplaceNotice(null);
     setBulkOpen(false);
     setBulkResult(null);
     try {
@@ -446,6 +477,8 @@ export function CompanyRotaPlannerWorkspace({
     setSlotDetail(null);
     setEditMode(false);
     setAssignShiftId(null);
+    setReplaceShiftId(null);
+    setReplaceNotice(null);
     setBulkOpen(false);
     setBulkResult(null);
     setEditError(null);
@@ -607,6 +640,7 @@ export function CompanyRotaPlannerWorkspace({
   // ── Single assign ──────────────────────────────────────────────────────────
 
   const openAssign = React.useCallback(async (shiftId: number) => {
+    setReplaceShiftId(null);
     setAssignShiftId(shiftId);
     setSelectedGuardId(null);
     setGuardSearch('');
@@ -736,6 +770,61 @@ export function CompanyRotaPlannerWorkspace({
       setCancelPositionShiftId(null);
     }
   }, [slotDetail, cancelPositionShiftId, onCancelPosition, onRefreshWeek]);
+
+  // ── Replace Guard ──────────────────────────────────────────────────────────
+  // The SAME rules (./replaceGuard) and form (./ReplaceGuardForm) as the Shift Offers drawer, sent to the same
+  // handler. Replace never cancels: the position stays, and becomes a new offer to the chosen Guard.
+
+  const replaceEnabled = Boolean(onReplaceGuard && replacementGuards);
+
+  /** Availability for one position: its live status and Guard, the shift's own times and hire link when loaded. */
+  const replaceAvailabilityFor = React.useCallback(
+    (pos: { shiftId: number; guardId: number | null; status: string }): ReplaceGuardAvailability => {
+      const shift = lookupShift?.(pos.shiftId) ?? null;
+      return replaceGuardAvailability(
+        {
+          status: pos.status,
+          guardId: pos.guardId,
+          start: shift?.start ?? slotDetail?.startAt ?? null,
+          end: shift?.end ?? slotDetail?.endAt ?? null,
+          hireLinked: isHireLinkedShift(shift),
+        },
+        Date.now(),
+        replacementCandidatesFor(replacementGuards, pos.guardId).length,
+      );
+    },
+    [lookupShift, slotDetail, replacementGuards],
+  );
+
+  const openReplace = React.useCallback((shiftId: number) => {
+    setAssignShiftId(null);
+    setReplaceNotice(null);
+    setReplaceShiftId(shiftId);
+  }, []);
+
+  /** After the server accepted it: re-read this shift and the week so the incoming Guard shows as Awaiting. */
+  const handleReplaced = React.useCallback(async (replacementName: string) => {
+    setReplaceShiftId(null);
+    setReplaceNotice(replaceGuardSuccessMessage(replacementName));
+    onRefreshWeek();
+    if (!slotDetail) return;
+    try {
+      setSlotDetail(await onLoadSlot(slotDetail.id));
+    } catch {
+      /* the week refresh above still runs; the drawer keeps the notice */
+    }
+  }, [slotDetail, onLoadSlot, onRefreshWeek]);
+
+  const renderReplacePanel = (pos: { shiftId: number; guardId: number | null; guardName: string | null }, noShow: boolean) => (
+    <ReplaceGuardPanel
+      key={pos.shiftId}
+      target={{ shiftId: pos.shiftId, guardId: pos.guardId, guardName: pos.guardName ?? 'The current Guard', noShow }}
+      replacementGuards={replacementGuards ?? []}
+      onReplaceGuard={onReplaceGuard ?? (async () => undefined)}
+      onBack={() => setReplaceShiftId(null)}
+      onReplaced={handleReplaced}
+    />
+  );
 
   // ── Cancel slot ────────────────────────────────────────────────────────────
 
@@ -1066,6 +1155,12 @@ export function CompanyRotaPlannerWorkspace({
           bulkSaving={bulkSaving}
           bulkResult={bulkResult}
           onRequestCancelPosition={setCancelPositionShiftId}
+          replaceEnabled={replaceEnabled}
+          replaceAvailabilityFor={replaceAvailabilityFor}
+          replaceShiftId={replaceShiftId}
+          onOpenReplace={openReplace}
+          renderReplacePanel={renderReplacePanel}
+          replaceNotice={replaceNotice}
         />
       </Drawer>
 
@@ -1310,6 +1405,7 @@ function SlotDetailBody({
   bulkMap, onBulkMapChange, bulkGuards, bulkGuardSearch, onBulkGuardSearch,
   bulkLoadingShiftId, onLoadBulkGuards, onBulkAssign, bulkSaving, bulkResult,
   onRequestCancelPosition, timeZone,
+  replaceEnabled = false, replaceAvailabilityFor, replaceShiftId = null, onOpenReplace, renderReplacePanel, replaceNotice = null,
 }: {
   detail: RotaSlotDetail | null;
   timeZone: string;
@@ -1353,6 +1449,12 @@ function SlotDetailBody({
   bulkSaving: boolean;
   bulkResult: RotaAssignMultipleResult | null;
   onRequestCancelPosition: (shiftId: number) => void;
+  replaceEnabled?: boolean;
+  replaceAvailabilityFor?: (pos: { shiftId: number; guardId: number | null; status: string }) => ReplaceGuardAvailability;
+  replaceShiftId?: number | null;
+  onOpenReplace?: (shiftId: number) => void;
+  renderReplacePanel?: (pos: { shiftId: number; guardId: number | null; guardName: string | null }, noShow: boolean) => any;
+  replaceNotice?: string | null;
 }) {
   if (loading) {
     return (
@@ -1527,8 +1629,22 @@ function SlotDetailBody({
               />
             )}
 
+            {/* Replace Guard result — the incoming Guard is Awaiting until they accept */}
+            {replaceNotice && (
+              <View style={[db.hintBox, db.hintBoxInfo]}>
+                <Text style={db.hintText}>{replaceNotice}</Text>
+              </View>
+            )}
+
             {/* Position list */}
-            {!bulkOpen && detail.positions.map((pos) => (
+            {!bulkOpen && detail.positions.map((pos) => {
+              // Replace Guard is offered on every position that names a Guard; when it is not available the
+              // reason is shown instead of the action disappearing.
+              const replaceAvailability = replaceEnabled && pos.guardId != null && replaceAvailabilityFor
+                ? replaceAvailabilityFor(pos)
+                : null;
+              const isReplacing = replaceShiftId === pos.shiftId && Boolean(replaceAvailability?.available);
+              return (
               <Fragment key={pos.shiftId}>
                 <PositionRow
                   position={pos}
@@ -1549,9 +1665,16 @@ function SlotDetailBody({
                   canAssign={!isCancelled && isPositionOpen(pos.status)}
                   canCancel={!isCancelled && canCancelPosition(pos.status)}
                   onRequestCancel={() => onRequestCancelPosition(pos.shiftId)}
+                  replaceAvailability={replaceAvailability}
+                  isReplacing={isReplacing}
+                  onOpenReplace={() => onOpenReplace?.(pos.shiftId)}
+                  replacePanel={isReplacing && renderReplacePanel && replaceAvailability?.available
+                    ? renderReplacePanel(pos, replaceAvailability.noShow)
+                    : null}
                 />
               </Fragment>
-            ))}
+              );
+            })}
             {detail.positions.length === 0 && (
               <Text style={db.noPositions}>No positions.</Text>
             )}
@@ -1572,6 +1695,7 @@ function PositionRow({
   guardSearch, onGuardSearch,
   selectedGuardId, onSelectGuard, onConfirmAssign, assigning, assignError,
   canAssign, canCancel, onRequestCancel,
+  replaceAvailability = null, isReplacing = false, onOpenReplace, replacePanel = null,
 }: {
   position: { shiftId: number; guardId: number | null; guardName: string | null; status: string };
   isAssigning: boolean;
@@ -1591,8 +1715,14 @@ function PositionRow({
   canAssign: boolean;
   canCancel: boolean;
   onRequestCancel: () => void;
+  /** Null when Replace Guard does not apply to this position (no Guard named, or not wired). */
+  replaceAvailability?: ReplaceGuardAvailability | null;
+  isReplacing?: boolean;
+  onOpenReplace?: () => void;
+  replacePanel?: any;
 }) {
   const tok = positionStatusTokens(position.status);
+  const guardLabel = position.guardName ?? 'this position';
 
   const filteredGuards = React.useMemo(() => {
     const q = guardSearch.toLowerCase();
@@ -1624,12 +1754,29 @@ function PositionRow({
               <Text style={[db.actionBtnText, { color: colors.accentTeal }]}>Assign</Text>
             </Pressable>
           )}
-          {canCancel && !isAssigning && (
+          {/* Replace Guard — never cancels: the position becomes a new offer to another Guard */}
+          {replaceAvailability && !isAssigning && !isReplacing && (
             <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Replace Guard for ${guardLabel}`}
+              accessibilityState={{ disabled: !replaceAvailability.available }}
+              disabled={!replaceAvailability.available}
+              onPress={onOpenReplace}
+              style={({ pressed }: any) => [db.actionBtn, pressed && replaceAvailability.available && db.actionBtnPressed]}
+            >
+              <Text style={[db.actionBtnText, { color: replaceAvailability.available ? colors.info : colors.textMuted }]}>
+                Replace Guard
+              </Text>
+            </Pressable>
+          )}
+          {canCancel && !isAssigning && !isReplacing && (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Cancel Position for ${guardLabel}`}
               onPress={onRequestCancel}
               style={({ pressed }: any) => [db.actionBtn, pressed && db.actionBtnPressed]}
             >
-              <Text style={[db.actionBtnText, { color: colors.danger }]}>Cancel</Text>
+              <Text style={[db.actionBtnText, { color: colors.danger }]}>Cancel Position</Text>
             </Pressable>
           )}
           {isAssigning && (
@@ -1642,6 +1789,14 @@ function PositionRow({
           )}
         </View>
       </View>
+
+      {/* Replace Guard unavailable — the reason, one line */}
+      {replaceAvailability && !replaceAvailability.available && !isAssigning && (
+        <ReplaceGuardUnavailableNote reason={replaceAvailability.reason} />
+      )}
+
+      {/* Replace Guard form — the shared one */}
+      {isReplacing && replacePanel}
 
       {/* Assign panel */}
       {isAssigning && (

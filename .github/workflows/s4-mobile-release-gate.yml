@@ -393,6 +393,12 @@ jobs:
       - name: Verify Welfare Check push notifications
         run: npm run test:welfare-push
 
+      # Replace Guard from both company entry points (Shift Offers drawer and Rota Planner positions), one shared form and
+      # rule set: available states replace without cancelling, every unavailable state shows its reason instead of
+      # hiding the action, server refusals are shown, and both views re-read so the incoming Guard shows as Awaiting.
+      - name: Verify Replace Guard from Shift Offers and the Rota Planner
+        run: npm run test:replace-guard-ui
+
       - name: Verify Expo dependency compatibility
         run: npx expo install --check
 
