@@ -85,7 +85,11 @@ test('STORE-03-NOTHING-DEPENDS-ON-THE-RETIRED-SCHEME', () => {
   assert.equal(links.parseAccountLink('/reset-password', '?token=x'.padEnd(40, 'x')).kind, 'reset-password');
   assert.equal(links.parseAccountLink('/verify-email', '?token=x'.padEnd(40, 'x')).kind, 'verify-email');
   const vercel = JSON.parse(read('vercel.json'));
-  assert.deepEqual(vercel.rewrites.map((r) => r.source).sort(), ['/reset-password', '/verify-email']);
+  assert.equal(links.parseAccountLink('/accept-invitation', '?token=x'.padEnd(40, 'x')).kind, 'accept-invitation');
+  assert.deepEqual(vercel.rewrites.map((r) => r.source).sort(), ['/accept-invitation', '/reset-password', '/verify-email']);
+  // Every emailed-link page is served without a Referer, uncached and unindexed.
+  assert.equal(vercel.headers[0].source, '/(reset-password|verify-email|accept-invitation)');
+  assert.ok(vercel.headers[0].headers.some((h) => h.key === 'Referrer-Policy' && h.value === 'no-referrer'));
 });
 
 test('STORE-04-ANDROID-PERMISSIONS-ARE-THE-PILOT-MINIMUM', () => {

@@ -105,6 +105,7 @@ jobs:
       EARLY_BOOK_OFF_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_early_book_off
       M67_MIGRATION_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_m67_migration
       MANUAL_ATTENDANCE_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_manual_attendance
+      COMPANY_STAFF_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_company_staff
 
     steps:
       - name: Checkout repository
@@ -220,7 +221,7 @@ jobs:
       - name: Create compliance, alert security and database performance certification databases
         shell: bash
         run: |
-          for db in s4_m62_migration s4_compliance_checks s4_book_on_compliance s4_m63_migration s4_compliance_lapse s4_alert_security s4_pool_diagnostics s4_perf_stabilisation s4_perf_p2 s4_perf_p3 s4_live_ops_correctness s4_shift_reconciliation s4_shift_edit_security s4_reacceptance s4_shift_amendment s4_m64_migration s4_m65_migration s4_welfare_push s4_m66_migration s4_guard_notifications s4_replace_guard s4_welfare_alert s4_welfare_monitoring s4_operations_export s4_early_book_off s4_m67_migration s4_manual_attendance; do
+          for db in s4_m62_migration s4_compliance_checks s4_book_on_compliance s4_m63_migration s4_compliance_lapse s4_alert_security s4_pool_diagnostics s4_perf_stabilisation s4_perf_p2 s4_perf_p3 s4_live_ops_correctness s4_shift_reconciliation s4_shift_edit_security s4_reacceptance s4_shift_amendment s4_m64_migration s4_m65_migration s4_welfare_push s4_m66_migration s4_guard_notifications s4_replace_guard s4_welfare_alert s4_welfare_monitoring s4_operations_export s4_early_book_off s4_m67_migration s4_manual_attendance s4_company_staff; do
             PGPASSWORD=s4_test_password psql -h localhost -U s4 -d s4_release_gate -c "CREATE DATABASE $db;"
           done
 

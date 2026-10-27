@@ -8,7 +8,7 @@ import { TransactionalEmail } from './transactional-email.service';
  * link, so they open on any device and do not depend on the mobile package identity.
  */
 
-function layout(heading: string, paragraphs: string[], action: { label: string; url: string }, footer: string) {
+export function layout(heading: string, paragraphs: string[], action: { label: string; url: string }, footer: string) {
   const body = paragraphs.map((p) => `<p style="margin:0 0 16px;font-size:15px;line-height:22px;color:#102536">${p}</p>`).join('');
   return `<!doctype html><html><body style="margin:0;background:#F4F7FA;font-family:Arial,Helvetica,sans-serif">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F4F7FA;padding:24px 0"><tr><td align="center">

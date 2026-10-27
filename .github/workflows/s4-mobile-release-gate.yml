@@ -415,6 +415,13 @@ jobs:
       - name: Verify manual attendance (Book On / Off for Guard, corrections, history, old-backend detection)
         run: npm run test:manual-attendance-ui
 
+      # Company staff management: the Staff section (Owner / Admin) and the emailed /accept-invitation page. Invite,
+      # role change, suspend, remove and withdraw each need a press (and a confirmation where access is taken away)
+      # and send exactly one request; Control Room grants use the existing endpoints; the invitee chooses their own
+      # password and an existing account sends none; nothing is written on load.
+      - name: Verify company staff management (Staff section, invitation page)
+        run: npm run test:company-staff-ui
+
       - name: Verify Expo dependency compatibility
         run: npx expo install --check
 

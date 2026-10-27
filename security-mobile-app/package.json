@@ -84,7 +84,8 @@
     "test:welfare-push": "node scripts/welfare-push.spec.cjs",
     "test:replace-guard-ui": "node scripts/replace-guard-ui.spec.cjs",
     "test:no-browser-status-mutations": "node scripts/no-browser-status-mutations.spec.cjs",
-    "test:manual-attendance-ui": "node scripts/manual-attendance-ui.spec.cjs"
+    "test:manual-attendance-ui": "node scripts/manual-attendance-ui.spec.cjs",
+    "test:company-staff-ui": "node scripts/company-staff-ui.spec.cjs"
   },
   "dependencies": {
     "@expo/metro-runtime": "~6.1.2",
