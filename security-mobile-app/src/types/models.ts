@@ -801,6 +801,19 @@ export interface ShiftOperationsView {
   welfareSummary: WelfareSummaryView | null;
   welfareEvidenceCount: number;
   missingBookOff: boolean;
+  /**
+   * Manual attendance (Part B): where the effective Book On / Book Off came from, whether either was corrected, and
+   * when S4 started monitoring Welfare. Absent on a backend without manual attendance.
+   */
+  attendance?: OperationsAttendanceView;
+}
+
+export interface OperationsAttendanceView {
+  bookOnSource: AttendanceSource | null;
+  bookOffSource: AttendanceSource | null;
+  bookOnCorrected: boolean;
+  bookOffCorrected: boolean;
+  monitoredFrom: string | null;
 }
 
 export interface CoverageShiftRow {
@@ -987,6 +1000,8 @@ export interface Timesheet {
   scheduledEndAt?: string | null;
   actualCheckInAt?: string | null;
   actualCheckOutAt?: string | null;
+  /** Informational (Part B): where the attendance-verified actuals came from. No approval rule depends on it. */
+  verifiedSource?: 'guard_app' | 'manual' | 'corrected' | null;
   guardNote?: string | null;
   companyNote?: string | null;
   approvedHours?: number | null;
@@ -1720,6 +1735,78 @@ export interface AttendanceEvent {
   occurredAt: string;
   shift?: Shift;
   guard?: GuardProfile;
+  /** Manual attendance (Part B). Absent on a backend without it: every row is then a Guard app row and effective. */
+  source?: AttendanceSource;
+  /** False for a row a later correction superseded. Absent (old backend) means effective. */
+  effective?: boolean;
+  correctionOfEventId?: number | null;
+}
+
+/** Who recorded an attendance event: the Guard in the app, or authorised company staff on the Guard's behalf. */
+export type AttendanceSource = 'guard_app' | 'manual';
+
+export type AttendanceVerificationMethod =
+  | 'phone_call' | 'supervisor_on_site' | 'cctv' | 'client_confirmation' | 'radio' | 'other';
+
+/** One raw attendance row as GET /attendance/shifts/:id/history returns it (append-only chain, oldest first). */
+export interface AttendanceEventView {
+  id: number;
+  shiftId: number;
+  guardId: number;
+  type: 'check-in' | 'check-out';
+  occurredAt: string;
+  recordedAt: string | null;
+  source: AttendanceSource;
+  recordedByUserId: number | null;
+  recordedByName: string | null;
+  reason: string | null;
+  verificationMethod: AttendanceVerificationMethod | null;
+  verificationNote: string | null;
+  correctionOfEventId: number | null;
+  correctedByEventId: number | null;
+  isCorrection: boolean;
+  effective: boolean;
+  gpsVerified: boolean;
+  nfcVerified: boolean;
+}
+
+export interface AttendanceHistory {
+  shiftId: number;
+  status: string;
+  guardId: number | null;
+  scheduledStart: string;
+  scheduledEnd: string;
+  effective: { bookOn: AttendanceEventView | null; bookOff: AttendanceEventView | null; monitoredFrom: string | null };
+  events: AttendanceEventView[];
+}
+
+/** GET /attendance/manual/capabilities: the feature-detection endpoint (404 on a backend without manual attendance). */
+export interface ManualAttendanceCapabilities {
+  manualAttendance: true;
+  verificationMethods: AttendanceVerificationMethod[];
+  windowBeforeStartHours: number;
+  windowAfterEndHours: number;
+  ownerAdminOnlyOlderThanHours: number;
+  canManage: boolean;
+  canRecordOlderThan24h: boolean;
+}
+
+export interface ManualAttendancePayload {
+  occurredAt: string;
+  reason: string;
+  verificationMethod: AttendanceVerificationMethod;
+  verificationNote?: string | null;
+}
+
+export interface ManualAttendanceResult {
+  event: AttendanceEventView;
+  shift: { id: number; status: string };
+}
+
+export interface AttendanceCorrectionResult {
+  event: AttendanceEventView;
+  correctedEventId: number;
+  timesheet: { restamped: boolean; approvalStatus: string | null };
 }
 
 export interface RecordAttendancePayload {
@@ -2377,5 +2464,5 @@ export interface ShiftAmendmentAssessment {
 /** GET /shift-amendments/staff — names for the history; Control Room authorisation for Owner/Admin only. */
 export interface ShiftAmendmentStaffDirectory {
   canManageControlRoom: boolean;
-  staff: Array<{ userId: number; displayName: string; role: string; isYou: boolean; canAmendShifts?: boolean }>;
+  staff: Array<{ userId: number; displayName: string; role: string; isYou: boolean; canAmendShifts?: boolean; canManageAttendance?: boolean }>;
 }

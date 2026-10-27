@@ -4,6 +4,7 @@ import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, Text
 import { formatApiErrorMessage, getCompanyWeeklyApprovals, getEligibleTimesheets, submitWeeklyApproval, updateTimesheet } from '../../services/api';
 import { ClientWeeklyApprovalSummary, EligibleTimesheetRow, Timesheet } from '../../types/models';
 import { formatInstantTime, resolveDisplayZone } from '../../services/siteTime';
+import { timesheetSourceLabel } from './manualAttendance';
 import { colors } from '../../theme';
 
 type WorkspaceLevel = 'overview' | 'detail';
@@ -1261,6 +1262,13 @@ export function CompanyTimesheetsWorkspace({
 
               <View style={styles.detailSection}>
                 <Text style={styles.detailSectionTitle}>ATTENDANCE</Text>
+                {/* Informational only (S4 Part B): attendance recorded or corrected by Control. The normal Guard
+                    submission and company approval apply unchanged. */}
+                {timesheetSourceLabel(activeSelected.verifiedSource) ? (
+                  <Text style={[styles.detailLine, { color: colors.warning, fontWeight: '800' }]}>
+                    {timesheetSourceLabel(activeSelected.verifiedSource)} — see the shift's attendance history
+                  </Text>
+                ) : null}
                 <Text style={styles.detailLine}>Check-in: {formatDateTimeLabel(activeSelected.actualCheckInAt)}</Text>
                 <Text style={styles.detailLine}>Check-out: {formatDateTimeLabel(activeSelected.actualCheckOutAt)}</Text>
                 <Text style={styles.detailLine}>Recorded: {activeSelected.workedMinutes ?? 0} min</Text>

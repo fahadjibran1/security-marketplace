@@ -89,6 +89,11 @@ import {
   ShiftAmendmentList,
   ShiftAmendmentStaffDirectory,
   ShiftPolicy,
+  AttendanceCorrectionResult,
+  AttendanceHistory,
+  ManualAttendanceCapabilities,
+  ManualAttendancePayload,
+  ManualAttendanceResult,
   VerbalContactMethod,
   Timesheet,
   UpdateCompanyPayload,
@@ -803,6 +808,55 @@ export function listShiftReconciliations(shiftIds: number[]) {
   return request<Array<{ shiftId: number; reconciledAt: string | null; reason: string | null }>>(
     `/shifts/reconciliations?shiftIds=${shiftIds.join(',')}`,
   );
+}
+
+// ─── Manual attendance (Part B, company web). The API checks the company, attendance.manage (or a Control Room
+// member's individual grant), the attendance window, the 24-hour Owner/Admin rule, overlap and the shift state under
+// lock; these only send the request. Nothing here is ever called by an effect, a timer or a refresh. ─────────────
+
+/**
+ * Feature detection: GET /attendance/manual/capabilities. A backend without manual attendance answers 404 with no
+ * `code` (Nest's route-missing reply), and the company web then hides every manual action.
+ */
+export function getManualAttendanceCapabilities() {
+  return request<ManualAttendanceCapabilities>('/attendance/manual/capabilities');
+}
+
+/** Manual Book On on the Guard's behalf (Ready, or Missed for a late arrival). One request per confirmed submit. */
+export function manualBookOn(shiftId: number, payload: ManualAttendancePayload) {
+  return request<ManualAttendanceResult>('/attendance/manual/book-on', {
+    method: 'POST',
+    body: JSON.stringify({ shiftId, ...payload }),
+  });
+}
+
+/** Manual Book Off on the Guard's behalf (in progress, or completed by Close without Book Off). */
+export function manualBookOff(shiftId: number, payload: ManualAttendancePayload) {
+  return request<ManualAttendanceResult>('/attendance/manual/book-off', {
+    method: 'POST',
+    body: JSON.stringify({ shiftId, ...payload }),
+  });
+}
+
+/** Append-only correction of the latest entry (the chain tip) of a Book On or Book Off. The original is never changed. */
+export function correctAttendanceEvent(eventId: number, payload: ManualAttendancePayload) {
+  return request<AttendanceCorrectionResult>(`/attendance/events/${eventId}/corrections`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+/** Every attendance row of a shift, oldest first, with the effective Book On / Book Off. */
+export function getAttendanceHistory(shiftId: number) {
+  return request<AttendanceHistory>(`/attendance/shifts/${shiftId}/history`);
+}
+
+/** Owner/Admin: switch a Control Room member's individual manual-attendance authorisation on or off. */
+export function setControlRoomAttendanceAuthorisation(userId: number, canManageAttendance: boolean) {
+  return request<{ userId: number; canManageAttendance: boolean }>(`/attendance/control-room/${userId}`, {
+    method: 'PUT',
+    body: JSON.stringify({ canManageAttendance }),
+  });
 }
 
 // ─── Live Shift Amendments (company web). The API checks the company, the permission, whether the company has

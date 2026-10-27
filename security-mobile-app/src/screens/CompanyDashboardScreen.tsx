@@ -16,6 +16,18 @@ import { CompanyMarkMissedDrawer, type MarkMissedTarget } from '../components/co
 import { NO_BOOK_ON_OVERDUE_LABEL, formatOverdueMinutes, noBookOnOverdueMinutes, noBookOnOverdueText } from '../components/company/noBookOnOverdue';
 import { CompanyShiftAmendmentDrawer, type AmendmentTarget } from '../components/company/CompanyShiftAmendmentDrawer';
 import { resolveAmendmentPermissions } from '../components/company/shiftAmendments';
+import { CompanyManualAttendanceDrawer, type ManualAttendanceSubmission, type ManualAttendanceTarget } from '../components/company/CompanyManualAttendanceDrawer';
+import {
+  MANUAL_ATTENDANCE_UNAVAILABLE_NOTE,
+  canManageAttendanceFromSession,
+  classifyCapabilitiesFailure,
+  effectiveAttendanceEvents,
+  manualActionsOffered,
+  manualAttendanceErrorGuidance,
+  manualAttendancePayload,
+  manualAttendanceSuccessMessage,
+  type ManualAttendanceAvailability,
+} from '../components/company/manualAttendance';
 import { completedWithoutBookOffLabel, isCompletedWithoutBookOff } from '../components/company/shiftReconciliation';
 import { formatElapsedSinceEnd } from '../components/company/operationsTimeline';
 import { alertTypeLabel, missingBookOffSummary, resolutionFamilyForAlert } from '../components/company/alertResolution';
@@ -167,9 +179,16 @@ import {
   getShiftAmendmentPolicy,
   listShiftReconciliations,
   updateSite,
+  getManualAttendanceCapabilities,
+  manualBookOn,
+  manualBookOff,
+  correctAttendanceEvent,
+  getAttendanceHistory,
 } from '../services/api';
 import {
   AttendanceEvent,
+  AttendanceEventView,
+  AttendanceHistory,
   AuthUser,
   Client,
   ComplianceRecord,
@@ -1296,6 +1315,14 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
     () => resolveAmendmentPermissions(user?.companyPermissions, user?.role),
     [user?.companyPermissions, user?.role],
   );
+  /**
+   * Manual Book On / Book Off and corrections: attendance.manage (Owner, Admin, Operations; a Control Room member only
+   * through their individual grant). Display only — the API re-checks every action, the window and the 24-hour rule.
+   */
+  const canManageAttendance = React.useMemo(
+    () => canManageAttendanceFromSession(user?.companyPermissions, user?.role),
+    [user?.companyPermissions, user?.role],
+  );
   const canManageShifts = React.useMemo(
     () => (user?.companyPermissions
       ? user.companyPermissions.includes("shifts.manage")
@@ -1443,6 +1470,16 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
   const [amendmentTarget, setAmendmentTarget] = React.useState<AmendmentTarget | null>(null);
   /** The company policy's switch as the API returned it; null until read (and treated as off). */
   const [amendmentsEnabled, setAmendmentsEnabled] = React.useState<boolean | null>(null);
+  /**
+   * Manual attendance (S4 Part B): whether this backend has it (feature-detected once per signed-in session from
+   * GET /attendance/manual/capabilities; a route-missing 404 means an older server and every manual action is hidden),
+   * the form that is open, and a signal that makes the attendance history re-read after a change.
+   */
+  const [manualAttendanceAvailability, setManualAttendanceAvailability] = React.useState<ManualAttendanceAvailability>({ state: 'loading' });
+  const [manualAttendanceTarget, setManualAttendanceTarget] = React.useState<ManualAttendanceTarget | null>(null);
+  const [recordingAttendance, setRecordingAttendance] = React.useState(false);
+  const [manualAttendanceError, setManualAttendanceError] = React.useState<string | null>(null);
+  const [attendanceHistorySignal, setAttendanceHistorySignal] = React.useState(0);
   /** Which incident the register is showing in full, if any. */
   const [incidentDetailId, setIncidentDetailId] = React.useState<number | null>(null);
   /** Log Book register filters. The date is a site-local YYYY-MM-DD; today by default. */
@@ -1807,7 +1844,7 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
   const attendanceByShiftId = React.useMemo(() => {
     const map = new Map<number, { checkInAt: string | null; checkOutAt: string | null }>();
 
-    attendanceEvents.forEach((event) => {
+    effectiveAttendanceEvents(attendanceEvents).forEach((event) => {
       const shiftId = event.shift?.id;
       if (!shiftId) {
         return;
@@ -2545,8 +2582,12 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
           shiftId,
           siteName: event.shift?.site?.name || event.shift?.siteName || 'Unknown site',
           guardName: event.guard?.fullName || 'Unknown guard',
-          eventType: 'Guard checked in',
-          message: 'Guard booked on and the shift is now live.',
+          eventType: event.correctionOfEventId != null ? 'Book On corrected' : event.source === 'manual' ? 'Manual Book On' : 'Guard checked in',
+          message: event.correctionOfEventId != null
+            ? 'Control corrected the Book On time. The original entry is kept in the attendance history.'
+            : event.source === 'manual'
+              ? "Control booked the Guard on, on the Guard's behalf."
+              : 'Guard booked on and the shift is now live.',
           occurredAt: event.occurredAt,
         });
       }
@@ -2557,8 +2598,12 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
           shiftId,
           siteName: event.shift?.site?.name || event.shift?.siteName || 'Unknown site',
           guardName: event.guard?.fullName || 'Unknown guard',
-          eventType: 'Guard checked out',
-          message: 'Guard booked off and the shift is completed.',
+          eventType: event.correctionOfEventId != null ? 'Book Off corrected' : event.source === 'manual' ? 'Manual Book Off' : 'Guard checked out',
+          message: event.correctionOfEventId != null
+            ? 'Control corrected the Book Off time. The original entry is kept in the attendance history.'
+            : event.source === 'manual'
+              ? "Control booked the Guard off, on the Guard's behalf."
+              : 'Guard booked off and the shift is completed.',
           occurredAt: event.occurredAt,
         });
       }
@@ -2910,6 +2955,115 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
     setLiveOperationsFeedback({ tone: 'success', message });
     void loadData(true);
   }, [loadData]);
+
+  /**
+   * Manual attendance feature detection: one read per signed-in session. Reads only; a failure is never guessed to be
+   * "available". A 404 with no code is an older server (the actions are hidden with a short note).
+   */
+  React.useEffect(() => {
+    let cancelled = false;
+    setManualAttendanceAvailability({ state: 'loading' });
+    getManualAttendanceCapabilities()
+      .then((capabilities) => {
+        if (cancelled) return;
+        setManualAttendanceAvailability(
+          capabilities && (capabilities as { manualAttendance?: unknown }).manualAttendance === true
+            ? { state: 'available', capabilities }
+            : { state: 'error' },
+        );
+      })
+      .catch((failure) => { if (!cancelled) setManualAttendanceAvailability({ state: classifyCapabilitiesFailure(failure) }); });
+    return () => { cancelled = true; };
+  }, [user?.id]);
+
+  /** Opens Book On / Book Off for Guard. Only opens the form: nothing is sent until it is confirmed. */
+  const handleOpenManualAttendance = React.useCallback((kind: 'book_on' | 'book_off', shiftId: number, lateArrival: boolean) => {
+    const shift = shifts.find((item) => item.id === shiftId);
+    if (!shift) return;
+    const attendance = attendanceByShiftId.get(shift.id);
+    setManualAttendanceError(null);
+    setManualAttendanceTarget({
+      kind,
+      shiftId: shift.id,
+      siteName: shift.site?.name || shift.siteName || 'Site',
+      guardName: shift.guard?.fullName || 'the Guard',
+      timeZone: resolveSiteZone(shift.site?.id ?? shift.siteId),
+      scheduledStart: shift.start,
+      scheduledEnd: shift.end,
+      status: shift.status,
+      bookOnAt: attendance?.checkInAt ?? null,
+      bookOffAt: attendance?.checkOutAt ?? null,
+      lateArrival,
+    });
+  }, [attendanceByShiftId, resolveSiteZone, shifts]);
+
+  /** Opens "Correct time" for the effective entry (the chain tip) of a Book On or Book Off. */
+  const handleOpenAttendanceCorrection = React.useCallback((shiftId: number, event: AttendanceEventView, history: AttendanceHistory) => {
+    const shift = shifts.find((item) => item.id === shiftId);
+    setManualAttendanceError(null);
+    setManualAttendanceTarget({
+      kind: 'correct',
+      shiftId,
+      siteName: shift?.site?.name || shift?.siteName || 'Site',
+      guardName: shift?.guard?.fullName || 'the Guard',
+      timeZone: resolveSiteZone(shift?.site?.id ?? shift?.siteId),
+      scheduledStart: history.scheduledStart,
+      scheduledEnd: history.scheduledEnd,
+      status: history.status,
+      bookOnAt: history.effective?.bookOn?.occurredAt ?? null,
+      bookOffAt: history.effective?.bookOff?.occurredAt ?? null,
+      eventId: event.id,
+      eventType: event.type,
+      currentOccurredAt: event.occurredAt,
+    });
+  }, [resolveSiteZone, shifts]);
+
+  /**
+   * Submit the confirmed form: exactly one request (manual Book On, manual Book Off, or a correction), then say what
+   * was recorded and re-read the board and the history. A refusal is shown in the form in words; nothing is retried.
+   */
+  const handleSubmitManualAttendance = React.useCallback(async (input: ManualAttendanceSubmission) => {
+    if (!manualAttendanceTarget || recordingAttendance) return;
+    const target = manualAttendanceTarget;
+    setRecordingAttendance(true);
+    setManualAttendanceError(null);
+    try {
+      const payload = manualAttendancePayload(input, { reason: input.reason, method: input.verificationMethod, note: input.verificationNote });
+      let timesheetRestamped: boolean | null = null;
+      if (target.kind === 'book_on') {
+        await manualBookOn(target.shiftId, payload);
+      } else if (target.kind === 'book_off') {
+        await manualBookOff(target.shiftId, payload);
+      } else if (target.eventId != null) {
+        const result = await correctAttendanceEvent(target.eventId, payload);
+        timesheetRestamped = result?.timesheet?.restamped ?? null;
+      }
+      setManualAttendanceTarget(null);
+      setLiveOperationsFeedback({
+        tone: 'success',
+        message: manualAttendanceSuccessMessage({
+          kind: target.kind,
+          eventType: target.eventType,
+          shiftId: target.shiftId,
+          guardName: target.guardName,
+          occurredAt: input.occurredAt,
+          timeZone: target.timeZone,
+          timesheetRestamped,
+        }),
+      });
+      setAttendanceHistorySignal((value) => value + 1);
+      await loadData(true);
+    } catch (failure) {
+      const guidance = manualAttendanceErrorGuidance(failure);
+      setManualAttendanceError(guidance.message);
+      if (guidance.reload) {
+        setAttendanceHistorySignal((value) => value + 1);
+        void loadData(true);
+      }
+    } finally {
+      setRecordingAttendance(false);
+    }
+  }, [manualAttendanceTarget, recordingAttendance, loadData]);
 
   /** Submit Close without Book Off, then reload so the shift leaves the queue and shows as closed. */
   const handleSubmitReconcile = React.useCallback(async (input: { reason: string; note: string | null }) => {
@@ -4727,6 +4881,16 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
         onMarkMissed={canManageShifts ? handleOpenMarkMissed : undefined}
         onManageExtension={amendmentPermissions.any ? handleOpenAmendment : undefined}
         amendmentsEnabled={amendmentsEnabled === true}
+        manualAttendance={{
+          offered: manualActionsOffered(canManageAttendance, manualAttendanceAvailability),
+          unavailableNote: canManageAttendance && manualAttendanceAvailability.state === 'unavailable' ? MANUAL_ATTENDANCE_UNAVAILABLE_NOTE : null,
+          historyAvailable: manualAttendanceAvailability.state === 'available',
+          capabilities: manualAttendanceAvailability.state === 'available' ? manualAttendanceAvailability.capabilities : null,
+          refreshSignal: operationalNow.getTime() + attendanceHistorySignal,
+          loadHistory: getAttendanceHistory,
+          onOpen: handleOpenManualAttendance,
+          onCorrect: handleOpenAttendanceCorrection,
+        }}
         timelineRecentreSignal={timelineRecentreSignal}
         activePanicAlertsCount={liveOperationsCounts.activePanicAlerts}
         openIncidentsCount={liveOperationsCounts.openIncidents}
@@ -4807,6 +4971,16 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
         error={markMissedError}
         onCancel={() => { setMarkMissedTarget(null); setMarkMissedError(null); }}
         onSubmit={handleSubmitMarkMissed}
+      />
+
+      {/* Manual Book On / Book Off for Guard and Correct time: a form, a confirmation, one request. Never automatic. */}
+      <CompanyManualAttendanceDrawer
+        target={manualAttendanceTarget}
+        capabilities={manualAttendanceAvailability.state === 'available' ? manualAttendanceAvailability.capabilities : null}
+        submitting={recordingAttendance}
+        error={manualAttendanceError}
+        onCancel={() => { setManualAttendanceTarget(null); setManualAttendanceError(null); }}
+        onSubmit={handleSubmitManualAttendance}
       />
 
       {/* Shift extension: propose, approve, record verbal agreement, withdraw, review disputes, history. */}

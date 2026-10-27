@@ -48,9 +48,11 @@ import {
   recordShiftAmendmentVerbalAgreement,
   resolveShiftAmendmentDispute,
   setControlRoomAmendmentAuthorisation,
+  setControlRoomAttendanceAuthorisation,
   withdrawShiftAmendment,
 } from '../../services/api';
 import { formatSiteTime, formatUkDateTime } from '../../services/siteTime';
+import { manualAttendanceErrorGuidance } from './manualAttendance';
 import { colors, radii, spacing } from '../../theme';
 
 const IS_WEB = typeof document !== 'undefined';
@@ -411,6 +413,32 @@ export function CompanyShiftAmendmentDrawer({
                       .then(() => getShiftAmendmentStaff().then(setStaffDir))
                       .then(() => onChanged(`${m.displayName}: amendment authorisation ${m.canAmendShifts ? 'revoked' : 'granted'}. It applies from their next sign-in or refresh.`))
                       .catch((error) => setActionError({ message: amendmentErrorGuidance(error).message, retryable: false }))
+                      .finally(() => setGrantBusy(null));
+                  }}
+                />
+              ))}
+            </>
+          ) : null}
+
+          {/* Manual attendance (S4 Part B): the per-person Control Room grant. Shown only when the backend reports it
+              (canManageAttendance present on the staff rows), so an older server never offers a toggle it cannot save. */}
+          {staffDir?.canManageControlRoom && staffDir.staff.some((m) => m.role === 'control_room' && typeof m.canManageAttendance === 'boolean') ? (
+            <>
+              <Text style={styles.sectionLabel}>Control Room: manage attendance</Text>
+              <Text style={styles.muted}>Authorised Control Room members may Book On / Book Off for a Guard and correct attendance times. Times more than 24 hours old still need an Owner or Admin.</Text>
+              {staffDir.staff.filter((m) => m.role === 'control_room' && typeof m.canManageAttendance === 'boolean').map((m) => (
+                <Check
+                  key={`attendance-${m.userId}`}
+                  label={`${m.displayName} — can manage attendance${grantBusy === m.userId ? ' — saving…' : ''}`}
+                  checked={!!m.canManageAttendance}
+                  onPress={() => {
+                    if (grantBusy !== null) return;
+                    setGrantBusy(m.userId);
+                    setActionError(null);
+                    setControlRoomAttendanceAuthorisation(m.userId, !m.canManageAttendance)
+                      .then(() => getShiftAmendmentStaff().then(setStaffDir))
+                      .then(() => onChanged(`${m.displayName}: attendance authorisation ${m.canManageAttendance ? 'revoked' : 'granted'}. It applies from their next sign-in or refresh.`))
+                      .catch((error) => setActionError({ message: manualAttendanceErrorGuidance(error).message, retryable: false }))
                       .finally(() => setGrantBusy(null));
                   }}
                 />

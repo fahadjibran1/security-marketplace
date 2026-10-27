@@ -408,6 +408,13 @@ jobs:
       - name: Verify the dashboard never changes a shift by itself
         run: npm run test:no-browser-status-mutations
 
+      # Manual attendance (S4 Part B): Book On / Book Off for Guard and Correct time each need a form, a reason, a
+      # verification method and a confirmation, then send exactly one request; refusals are shown in words; the
+      # attendance history shows the whole append-only chain with Manual / Corrected / Superseded badges and offers
+      # Correct time only on the effective entry; against a backend without the feature every action is hidden.
+      - name: Verify manual attendance (Book On / Off for Guard, corrections, history, old-backend detection)
+        run: npm run test:manual-attendance-ui
+
       - name: Verify Expo dependency compatibility
         run: npx expo install --check
 

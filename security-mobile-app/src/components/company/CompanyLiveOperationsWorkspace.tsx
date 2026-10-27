@@ -22,6 +22,9 @@ import type { BoardInclusion } from './liveOperationsPolicy';
 import { hoursPastEnd, type BoardDateMode } from './liveOperationsBoard';
 import { completedWithoutBookOffLabel, isCompletedWithoutBookOff, isEligibleForReconciliation } from './shiftReconciliation';
 import { isEligibleForExtension } from './shiftAmendments';
+import { manualAttendanceActions, operationsAttendanceBadges } from './manualAttendance';
+import { CompanyAttendanceHistoryPanel } from './CompanyAttendanceHistoryPanel';
+import type { AttendanceEventView, AttendanceHistory, ManualAttendanceCapabilities } from '../../types/models';
 import { NO_BOOK_ON_OVERDUE_LABEL, noBookOnOverdueMinutes, noBookOnOverdueText } from './noBookOnOverdue';
 import { NativeDateInput } from './NativeDateInput';
 import { CompanyOperationsTimeline } from './CompanyOperationsTimeline';
@@ -256,6 +259,12 @@ export type CompanyLiveOperationsWorkspaceProps = {
    */
   onManageExtension?: (shiftId: number) => void;
   amendmentsEnabled?: boolean;
+  /**
+   * Manual attendance (S4 Part B). `offered` is the attendance.manage permission AND a backend that supports the
+   * feature (feature-detected); `unavailableNote` is set when the user could manage attendance but this server
+   * predates it.
+   */
+  manualAttendance?: ManualAttendanceWiring;
   timelineRecentreSignal: number;
   activePanicAlertsCount: number;
   openIncidentsCount: number;
@@ -1506,6 +1515,7 @@ export function CompanyLiveOperationsWorkspace({
   onMarkMissed,
   onManageExtension,
   amendmentsEnabled,
+  manualAttendance,
   timelineRecentreSignal,
   activePanicAlertsCount,
   openIncidentsCount,
@@ -1829,6 +1839,7 @@ export function CompanyLiveOperationsWorkspace({
               onMarkMissed={onMarkMissed}
               onManageExtension={onManageExtension}
               amendmentsEnabled={!!amendmentsEnabled}
+              manualAttendance={manualAttendance}
             />
           </View>
         ) : null}
@@ -1909,6 +1920,22 @@ function LiveOpsReconciliationQueue({
 
 // ─── DetailPanelContent ────────────────────────────────────────────────────────
 
+/** Manual attendance (S4 Part B) as the dashboard hands it to the shift drawer. */
+export type ManualAttendanceWiring = {
+  /** attendance.manage AND a backend with manual attendance: the only case any manual action is shown. */
+  offered: boolean;
+  /** Set when the user holds attendance.manage but this server predates manual attendance. */
+  unavailableNote: string | null;
+  /** Whether the backend serves attendance history (feature-detected). */
+  historyAvailable: boolean;
+  capabilities: ManualAttendanceCapabilities | null;
+  refreshSignal: number;
+  /** GET /attendance/shifts/:id/history, injected so this workspace never imports the API module. */
+  loadHistory: (shiftId: number) => Promise<AttendanceHistory>;
+  onOpen: (kind: 'book_on' | 'book_off', shiftId: number, lateArrival: boolean) => void;
+  onCorrect: (shiftId: number, event: AttendanceEventView, history: AttendanceHistory) => void;
+};
+
 function DetailPanelContent({
   ctx,
   closeOutSummary,
@@ -1922,8 +1949,10 @@ function DetailPanelContent({
   onMarkMissed,
   onManageExtension,
   amendmentsEnabled,
+  manualAttendance,
 }: {
   onMarkMissed?: (shiftId: number) => void;
+  manualAttendance?: ManualAttendanceWiring;
   ctx: SelectedShiftContext;
   closeOutSummary: CloseOutSummary | null;
   closeOutNotesDraft: string;
@@ -1947,6 +1976,8 @@ function DetailPanelContent({
   // Ready, no Book On, 15+ minutes past start. Shown, never acted on: only Mark Missed changes the status.
   const overdueMinutes = noBookOnOverdueMinutes(shift, attendance, nowMs);
   const early = operations?.earlyBookOff ?? null;
+  // Manual attendance: Manual / Corrected beside the times, from the projection (absent on an older backend).
+  const attendanceBadges = operationsAttendanceBadges(operations?.attendance);
 
   return (
     <>
@@ -2034,6 +2065,22 @@ function DetailPanelContent({
           </Pressable>
         </View>
       ) : null}
+      {manualAttendance?.offered
+        ? manualAttendanceActions(shift, attendance, nowMs, manualAttendance.capabilities).map((action) => (
+            <View key={action.label} style={styles.detailAction}>
+              <Text style={styles.detailActionMsg}>{action.hint}</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={action.label}
+                style={[styles.detailPrimaryBtn, IS_WEB ? (WEB_PTR as any) : null]}
+                onPress={() => manualAttendance.onOpen(action.kind, shift.id, action.label.includes('late arrival'))}
+              >
+                <Text style={styles.detailPrimaryBtnText}>{action.label}</Text>
+              </Pressable>
+            </View>
+          ))
+        : null}
+      {manualAttendance?.unavailableNote ? <Text style={styles.detailInfoMsg}>{manualAttendance.unavailableNote}</Text> : null}
       {shift.originalEnd ? (
         <Text style={styles.detailInfoMsg}>
           Extended: originally scheduled to end {formatUkDateTime(shift.originalEnd, timeZone)}, now {formatUkDateTime(shift.end, timeZone)}.
@@ -2195,14 +2242,26 @@ function DetailPanelContent({
           <Text style={styles.detailCardTitle}>Attendance &amp; Timesheet</Text>
           <Text style={styles.detailStateLine}>
             Book On {attendance?.checkInAt ? fmtTime(attendance.checkInAt, timeZone) : '—'}
+            {attendanceBadges.bookOn ? <Text style={styles.detailSourceBadge}>{'  '}{attendanceBadges.bookOn}</Text> : null}
             <Text style={styles.detailStateMuted}>{'  ·  '}Scheduled {fmtTime(shift.start, timeZone)}</Text>
           </Text>
           <Text style={styles.detailStateLine}>
             Book Off {attendance?.checkOutAt ? fmtTime(attendance.checkOutAt, timeZone) : '—'}
+            {attendanceBadges.bookOff ? <Text style={styles.detailSourceBadge}>{'  '}{attendanceBadges.bookOff}</Text> : null}
             <Text style={styles.detailStateMuted}>{'  ·  '}Scheduled {fmtTime(shift.end, timeZone)}</Text>
           </Text>
           <Text style={styles.detailLine}>Timesheet: {fmtStatus(timesheet?.approvalStatus || 'pending')}</Text>
         </View>
+
+        {manualAttendance?.historyAvailable ? (
+          <CompanyAttendanceHistoryPanel
+            shiftId={shift.id}
+            timeZone={timeZone}
+            refreshSignal={manualAttendance.refreshSignal}
+            loadHistory={manualAttendance.loadHistory}
+            onCorrect={manualAttendance.offered ? (event, history) => manualAttendance.onCorrect(shift.id, event, history) : undefined}
+          />
+        ) : null}
 
         <View style={styles.detailCard}>
           <Text style={styles.detailCardTitle}>Daily Logs</Text>
@@ -3245,6 +3304,7 @@ const styles = StyleSheet.create({
     lineHeight: 19,
   },
   detailStateMuted: { fontSize: 12, fontWeight: '500', color: colors.textSecondary },
+  detailSourceBadge: { fontSize: 11, fontWeight: '800', color: colors.warning },
   detailListTime: { fontWeight: '700', color: colors.textSecondary },
   detailOpsSection: {
     marginTop: spacing.sm,
