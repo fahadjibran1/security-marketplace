@@ -12,6 +12,8 @@ import { sourceState as sourceStateOf } from '../components/company/sourceAvaila
 import { createRefreshCoordinator, type RefreshCoordinator, type RefreshTrigger } from '../services/refreshCoordinator';
 import { CompanyResolveAlertDrawer, type ResolveTarget } from '../components/company/CompanyResolveAlertDrawer';
 import { CompanyReconcileShiftDrawer, type ReconcileTarget } from '../components/company/CompanyReconcileShiftDrawer';
+import { CompanyMarkMissedDrawer, type MarkMissedTarget } from '../components/company/CompanyMarkMissedDrawer';
+import { NO_BOOK_ON_OVERDUE_LABEL, formatOverdueMinutes, noBookOnOverdueMinutes, noBookOnOverdueText } from '../components/company/noBookOnOverdue';
 import { CompanyShiftAmendmentDrawer, type AmendmentTarget } from '../components/company/CompanyShiftAmendmentDrawer';
 import { resolveAmendmentPermissions } from '../components/company/shiftAmendments';
 import { completedWithoutBookOffLabel, isCompletedWithoutBookOff } from '../components/company/shiftReconciliation';
@@ -312,6 +314,8 @@ type OperationalActivityItem = {
 
 type UrgentOperationalItem = {
   id: string;
+  /** A Ready shift with no Book On past start + 15 minutes: minutes since the scheduled start. Display only. */
+  noBookOnOverdueMinutes?: number | null;
   severity?: string | null;
   shiftId?: number | null;
   incidentId?: number | null;
@@ -816,24 +820,6 @@ function getShiftDelay(
   }
 
   return Math.max(1, Math.floor((now.getTime() - shiftStart.getTime()) / 60000));
-}
-
-function isShiftPastMissedGracePeriod(
-  shift: Shift,
-  attendance?: { checkInAt: string | null; checkOutAt: string | null } | null,
-) {
-  if (normalizeShiftLifecycleStatus(shift.status) !== 'ready' || attendance?.checkInAt) {
-    return false;
-  }
-
-  const shiftStart = new Date(shift.start);
-  const now = new Date();
-
-  if (Number.isNaN(shiftStart.getTime())) {
-    return false;
-  }
-
-  return now.getTime() - shiftStart.getTime() >= MISSED_CHECK_IN_GRACE_MINUTES * 60000;
 }
 
 function isLikelyToMissCheckIn(
@@ -1449,6 +1435,10 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
   const [reconcileTarget, setReconcileTarget] = React.useState<ReconcileTarget | null>(null);
   const [reconcilingShift, setReconcilingShift] = React.useState(false);
   const [reconcileError, setReconcileError] = React.useState<string | null>(null);
+  /** Mark Missed: the overdue Ready shift the dialog is open for. Only an operator's press opens it. */
+  const [markMissedTarget, setMarkMissedTarget] = React.useState<MarkMissedTarget | null>(null);
+  const [markingMissed, setMarkingMissed] = React.useState(false);
+  const [markMissedError, setMarkMissedError] = React.useState<string | null>(null);
   /** Shift extension (Live Shift Amendments): the shift the drawer is open for, if any. */
   const [amendmentTarget, setAmendmentTarget] = React.useState<AmendmentTarget | null>(null);
   /** The company policy's switch as the API returned it; null until read (and treated as off). */
@@ -1483,7 +1473,6 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
   const [pendingShiftDetailFocusId, setPendingShiftDetailFocusId] = React.useState<number | null>(null);
   const [highlightedLiveShiftId, setHighlightedLiveShiftId] = React.useState<number | null>(null);
   const [liveBoardHighlightTimeoutId, setLiveBoardHighlightTimeoutId] = React.useState<ReturnType<typeof setTimeout> | null>(null);
-  const [autoMarkingMissedShiftIds, setAutoMarkingMissedShiftIds] = React.useState<number[]>([]);
 
   // P1G-B — Guard Payroll / Payment Administration
   const [selectedPayrollGuardId, setSelectedPayrollGuardId] = React.useState<number | null>(null);
@@ -1899,71 +1888,11 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
     return map;
   }, [dailyLogs]);
 
-  React.useEffect(() => {
-    if (companyMobileLayoutDisabled) {
-      return;
-    }
-    if (activeSection !== 'live-operations') {
-      return;
-    }
-
-    const overdueReadyShifts = shifts.filter((shift) =>
-      isShiftPastMissedGracePeriod(shift, attendanceByShiftId.get(shift.id)),
-    );
-
-    if (overdueReadyShifts.length === 0) {
-      return;
-    }
-
-    let cancelled = false;
-
-    const runAutomation = async () => {
-      let automatedAny = false;
-
-      for (const shift of overdueReadyShifts) {
-        if (cancelled || autoMarkingMissedShiftIds.includes(shift.id)) {
-          continue;
-        }
-
-        setAutoMarkingMissedShiftIds((current) => [...current, shift.id]);
-
-        try {
-          await updateShift(shift.id, { status: 'missed' });
-          automatedAny = true;
-          recordManagementAction({
-            shiftId: shift.id,
-            siteName: shift.site?.name || shift.siteName || 'Unknown site',
-            guardName: shift.guard?.fullName || 'Unassigned',
-            itemType: 'Shift automation',
-            actionTaken: `Shift auto-marked missed after ${MISSED_CHECK_IN_GRACE_MINUTES} minutes without check-in`,
-          });
-          setLiveOperationsFeedback({
-            tone: 'success',
-            message: `Shift #${shift.id} was automatically marked as missed after ${MISSED_CHECK_IN_GRACE_MINUTES} minutes without check-in.`,
-          });
-        } catch (automationError) {
-          setAutoMarkingMissedShiftIds((current) => current.filter((id) => id !== shift.id));
-          if (!cancelled) {
-            setError(formatApiErrorMessage(automationError, 'Unable to mark this missed shift automatically.'));
-            setLiveOperationsFeedback({
-              tone: 'error',
-              message: formatApiErrorMessage(automationError, 'Unable to mark this missed shift automatically.'),
-            });
-          }
-        }
-      }
-
-      if (automatedAny && !cancelled) {
-        await loadData(true);
-      }
-    };
-
-    runAutomation();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [activeSection, attendanceByShiftId, autoMarkingMissedShiftIds, companyMobileLayoutDisabled, loadData, shifts]);
+  // No effect, timer or refresh in this screen changes a shift's status. (Production defect, 27 Oct 2026.)
+  // An effect here used to mark every Ready shift 15 minutes past its start with no Book On as MISSED, from
+  // whichever browser had Live Operations open and under that operator's name — including a shift replaced
+  // and accepted by a new Guard seconds earlier, who could then not Book On. The condition is now shown as
+  // "No Book On — Overdue", and a shift manager may mark it missed only through the Mark Missed dialog.
 
   const activeClients = React.useMemo(
     () => clients.filter((client) => (client.status || 'active').toLowerCase() !== 'archived'),
@@ -2358,6 +2287,9 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
     });
 
     readyShiftsNotBookedOn.forEach((shift) => {
+      // Past start + 15 minutes this is "No Book On — Overdue". A warning only: the shift stays Ready so a late
+      // Guard can still Book On, and only a person can mark it missed (the Mark Missed dialog).
+      const overdueMinutes = noBookOnOverdueMinutes(shift, attendanceByShiftId.get(shift.id), now.getTime());
       items.push({
         id: `ready-overdue-${shift.id}`,
         shiftId: shift.id,
@@ -2365,8 +2297,11 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
         siteName: shift.site?.name || shift.siteName || 'Unknown site',
         guardName: shift.guard?.fullName || 'Unassigned',
         category: 'late_start',
-        issueType: 'Guard not booked on',
-        message: 'Shift start time has passed but the guard has not booked on yet.',
+        issueType: overdueMinutes !== null ? NO_BOOK_ON_OVERDUE_LABEL : 'Guard not booked on',
+        message: overdueMinutes !== null
+          ? noBookOnOverdueText(overdueMinutes)
+          : 'Shift start time has passed but the guard has not booked on yet.',
+        noBookOnOverdueMinutes: overdueMinutes,
         occurredAt: shift.start,
       });
     });
@@ -2996,6 +2931,66 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
       setReconcilingShift(false);
     }
   }, [reconcileTarget, loadData]);
+
+  /**
+   * Open Mark Missed for a Ready shift with no Book On past start + 15 minutes. Offered only to shift managers
+   * (shifts.manage), and only from an operator's press: nothing here runs on load, refresh or a timer.
+   */
+  const handleOpenMarkMissed = React.useCallback((shiftId: number) => {
+    const shift = shifts.find((item) => item.id === shiftId);
+    if (!shift) return;
+    const overdueMinutes = noBookOnOverdueMinutes(shift, attendanceByShiftId.get(shift.id), Date.now());
+    if (overdueMinutes === null) {
+      setLiveOperationsFeedback({ tone: 'error', message: `Shift #${shift.id} is not overdue for Book On, so it cannot be marked missed.` });
+      return;
+    }
+    const zone = resolveSiteZone(shift.site?.id ?? shift.siteId);
+    setMarkMissedError(null);
+    setMarkMissedTarget({
+      shiftId: shift.id,
+      siteName: shift.site?.name || shift.siteName || 'Site',
+      guardName: shift.guard?.fullName || 'Unassigned',
+      scheduledLabel: formatUkRange(shift.start, shift.end, zone),
+      overdueLabel: formatOverdueMinutes(overdueMinutes),
+    });
+  }, [attendanceByShiftId, resolveSiteZone, shifts]);
+
+  /**
+   * Submit Mark Missed: exactly one status change, after confirmation and with a reason. The API re-checks the
+   * grace period and refuses a shift the Guard has booked on to. The reason is kept in this session's management
+   * action log: PATCH /shifts/:id has no audited field for it yet (backend follow-up).
+   */
+  const handleSubmitMarkMissed = React.useCallback(async (input: { reason: string }) => {
+    if (!markMissedTarget || markingMissed) return;
+    const target = markMissedTarget;
+    const shift = shifts.find((item) => item.id === target.shiftId);
+    if (!shift || noBookOnOverdueMinutes(shift, attendanceByShiftId.get(shift.id), Date.now()) === null) {
+      setMarkMissedError('This shift is no longer Ready without a Book On. Nothing was changed.');
+      return;
+    }
+    setMarkingMissed(true);
+    setMarkMissedError(null);
+    try {
+      await updateShift(target.shiftId, { status: 'missed' });
+      recordManagementAction({
+        shiftId: target.shiftId,
+        siteName: target.siteName,
+        guardName: target.guardName,
+        itemType: 'Mark Missed',
+        actionTaken: `Marked missed by Control — reason: ${input.reason}`,
+      });
+      setMarkMissedTarget(null);
+      setLiveOperationsFeedback({
+        tone: 'success',
+        message: `Shift #${target.shiftId} (${target.siteName} · ${target.guardName}) marked missed.`,
+      });
+      await loadData(true);
+    } catch (markFailure) {
+      setMarkMissedError(formatApiErrorMessage(markFailure, 'Unable to mark this shift missed.'));
+    } finally {
+      setMarkingMissed(false);
+    }
+  }, [markMissedTarget, markingMissed, shifts, attendanceByShiftId, loadData]);
 
   /** Submit the dialog: write the evidence, then let the queue reload without it. */
   const handleSubmitResolution = React.useCallback(async (
@@ -4178,11 +4173,14 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
           shift, inclusion, timesheet, attendance, shiftLogs, shiftIncidents, shiftAlerts, lastCheckCall,
           panicOrWelfareCount, lifecycleStatus, risk, delay, likelyLate, siteRiskLabel, primaryActionLabel, rowTone,
           operations: operationsByShiftId.get(shift.id) ?? null,
+          // Read-only: shown as "No Book On — Overdue". Never acted on without the operator.
+          noBookOnOverdueMinutes: noBookOnOverdueMinutes(shift, attendance, operationalNow.getTime()),
         };
       }),
     [
       liveOperationRows, timesheetByShiftId, attendanceByShiftId, logsByShiftId,
       incidentsByShiftId, alertsByShiftId, lastCheckCallByShiftId, shifts, operationsByShiftId, reconciledShiftIds,
+      operationalNow,
     ],
   );
 
@@ -4726,6 +4724,7 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
         boardDateMode={liveBoardDateMode}
         onToday={handleLiveOperationsToday}
         onReconcileShift={canReconcileShifts ? handleOpenReconcile : undefined}
+        onMarkMissed={canManageShifts ? handleOpenMarkMissed : undefined}
         onManageExtension={amendmentPermissions.any ? handleOpenAmendment : undefined}
         amendmentsEnabled={amendmentsEnabled === true}
         timelineRecentreSignal={timelineRecentreSignal}
@@ -4799,6 +4798,15 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
         error={reconcileError}
         onCancel={() => { setReconcileTarget(null); setReconcileError(null); }}
         onSubmit={handleSubmitReconcile}
+      />
+
+      {/* Mark Missed: the only way this dashboard marks a shift missed. Cancel sends nothing. */}
+      <CompanyMarkMissedDrawer
+        target={markMissedTarget}
+        submitting={markingMissed}
+        error={markMissedError}
+        onCancel={() => { setMarkMissedTarget(null); setMarkMissedError(null); }}
+        onSubmit={handleSubmitMarkMissed}
       />
 
       {/* Shift extension: propose, approve, record verbal agreement, withdraw, review disputes, history. */}

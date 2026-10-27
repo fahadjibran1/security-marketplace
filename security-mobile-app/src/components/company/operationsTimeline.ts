@@ -37,6 +37,7 @@ import type { GuardOperationalWindow, ShiftOperationsView, WelfareWindowAlertVie
 import { isAwaitingBookOn, welfareAlertWord } from './welfareMonitoring';
 import { earlyBookOffMinutes, formatDuration } from './earlyBookOff';
 import { isAwaitingReconciliation, isBookOffOverdue } from './liveOperationsPolicy';
+import { noBookOnOverdueMinutes } from './noBookOnOverdue';
 
 // ─── the visible axis ─────────────────────────────────────────────────────────
 
@@ -538,6 +539,11 @@ export type TimelineRow = {
   welfare: WelfareMarker[];
   /** True when the shift's scheduled end falls on a later SITE day than its start. */
   overnight: boolean;
+  /**
+   * Ready with no Book On, 15+ minutes past the scheduled start: minutes since that start, shown as "No Book On —
+   * Overdue". Display only; the shift stays Ready until the Guard books on or a person marks it missed.
+   */
+  noBookOnOverdueMinutes?: number | null;
 };
 
 export type TimelineSiteGroup = {
@@ -615,6 +621,7 @@ export function buildTimeline(
       }),
       overnight:
         formatSiteDateInput(input.shift.end, timeZone) > formatSiteDateInput(input.shift.start, timeZone),
+      noBookOnOverdueMinutes: noBookOnOverdueMinutes(input.shift, input.attendance, nowMs),
     });
   }
 

@@ -25,6 +25,7 @@ import {
   type WelfareMarker,
 } from './operationsTimeline';
 import { colors, radii } from '../../theme';
+import { NO_BOOK_ON_OVERDUE_LABEL, formatOverdueMinutes } from './noBookOnOverdue';
 
 const IS_WEB = typeof document !== 'undefined';
 const WEB_PTR = IS_WEB ? ({ cursor: 'pointer' } as const) : null;
@@ -390,7 +391,10 @@ export function CompanyOperationsTimeline({
                             one thing on this row that must catch the eye. */}
                         <Text style={styles.identityAttendance} numberOfLines={1}>
                           <Text style={row.attendance.late ? styles.identityLate : styles.identityOn}>
-                            {row.attendance.bookOn}
+                            {/* Ready, no Book On, 15+ minutes past start: a warning only — nothing marks it missed. */}
+                            {row.noBookOnOverdueMinutes != null
+                              ? `${NO_BOOK_ON_OVERDUE_LABEL} ${formatOverdueMinutes(row.noBookOnOverdueMinutes)}`
+                              : row.attendance.bookOn}
                           </Text>
                           <Text style={styles.identitySep}>{'  ·  '}</Text>
                           <Text style={styles.identityOff}>{row.attendance.bookOff}</Text>
