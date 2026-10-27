@@ -87,36 +87,41 @@ test('BUILD-01-APP-VERSION-IS-1-1-1-AND-ANDROID-BUILD-19', () => {
 });
 
 test('BUILD-01B-THE-1-1-1-BUILDS-MATCH-APP-JSON-AND-ARE-ABOVE-THE-DISTRIBUTED-ONES', () => {
-  // The release records name the 1.1.1 builds, first prepared (not built), now built and certified but not uploaded
-  // (26 Oct 2026, both from 1a6c856). Their numbers must be exactly what app.json carries, so a build cannot ship a
-  // number the record does not name, and strictly above the distributed Android 18 / iOS 17, which stay recorded as
-  // distributed.
+  // The release records name the 1.1.1 builds, first prepared (not built), then built and certified (26 Oct 2026, both
+  // from 1a6c856). Android 19 is now distributed (Play Internal Testing; production devices report 1.1.1) and 18 is
+  // distributed-superseded; iOS 18 is uploaded to App Store Connect (EAS Submit 5118fcda) with no confirmed TestFlight
+  // group, so iOS 17 stays the distributed build. Their numbers must be exactly what app.json carries, so a build
+  // cannot ship a number the record does not name, and strictly above the builds they follow.
   const android = JSON.parse(read('release/android-signing.json'));
   const ios = JSON.parse(read('release/ios-release.json'));
   const semver = (v) => { assert.match(v, /^\d+\.\d+\.\d+$/); return v.split('.').map(Number); };
   const above = (a, b) => { const [x, y] = [semver(a), semver(b)]; for (let i = 0; i < 3; i += 1) { if (x[i] !== y[i]) return x[i] > y[i]; } return false; };
   const NOT_BUILT = /not built/;
   const STATES = ['prepared-not-built', 'built-not-uploaded'];
+  const SUBMITTED = 'uploaded-to-testflight';
   const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
   const SOURCE_COMMIT = '1a6c856504c64bf41758fb1cfd73bf81dfd06040';
   const PRODUCTION_API = 'https://security-marketplace-api.onrender.com';
   const S4_CERT_SHA256 = '0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b';
 
-  const pa = android.preparedArtefact;
-  const da = android.approvedArtefact;
-  assert.ok(STATES.includes(pa.status), `unexpected Android 1.1.1 status ${pa.status}`);
+  // Android 1.1.1 (19) is now distributed (owner upload approved 26 Oct 2026; production devices report 1.1.1), so it is
+  // the approved artefact, and 1.1.0 (18) is retired as distributed-superseded, as 17 was when 18 replaced it.
+  assert.ok(!('preparedArtefact' in android), 'nothing is prepared in front of the distributed Android 1.1.1 (19)');
+  const pa = android.approvedArtefact;
+  const da = android.retiredArtefacts.find((entry) => entry.versionCode === 18);
+  assert.equal(pa.status, 'distributed', 'Android 1.1.1 (19) is the distributed build');
   assert.equal(pa.versionName, appJson.expo.version);
   assert.equal(pa.versionCode, appJson.expo.android.versionCode);
-  assert.equal(da.status, 'distributed', 'Android 18 stays the distributed build');
-  assert.equal(da.versionCode, 18);
-  assert.equal(android.playConsole.internalTesting.activeRelease, '1.1.0 (18)', 'Play still shows 18');
-  assert.ok(pa.versionCode > da.versionCode, 'prepared versionCode strictly above the distributed one');
-  assert.ok(above(pa.versionName, da.versionName), 'prepared versionName strictly above the distributed one');
-  assert.deepEqual(Object.keys(pa).filter((key) => /^play|internalTesting|uploaded/i.test(key)), [], 'no Play upload facts');
-  if (pa.status === 'prepared-not-built') {
-    assert.ok(!pa.easBuildId && !pa.aabSha256, 'no EAS id or hash before a build');
-    assert.match(pa.note, NOT_BUILT);
-  } else {
+  assert.equal(pa.versionCode, 19);
+  assert.equal(da.status, 'distributed-superseded', 'Android 18 was distributed and is superseded');
+  assert.equal(android.playConsole.internalTesting.activeRelease, `${pa.versionName} (${pa.versionCode})`, 'Play shows 1.1.1 (19)');
+  assert.ok(pa.versionCode > da.versionCode, 'versionCode strictly above the superseded distributed one');
+  assert.ok(above(pa.versionName, da.versionName), 'versionName strictly above the superseded distributed one');
+  assert.equal(pa.playInternalTesting.status, 'active');
+  assert.equal(pa.playInternalTesting.confirmedBy, 'owner');
+  assert.match(pa.playInternalTesting.evidence, /production devices report 1\.1\.1$/);
+  assert.equal(pa.playInternalTesting.productionDevices.appVersion, pa.versionName, 'the devices report this version');
+  {
     assert.match(pa.easBuildId, UUID, 'the EAS build id');
     assert.equal(pa.easBuildProfile, 'production');
     assert.equal(pa.distribution, 'STORE');
@@ -132,13 +137,13 @@ test('BUILD-01B-THE-1-1-1-BUILDS-MATCH-APP-JSON-AND-ARE-ABOVE-THE-DISTRIBUTED-ON
     assert.equal(pa.verified.apiBaseUrl, PRODUCTION_API);
     assert.equal(pa.verified.stagingApiUrls, 0);
     assert.notEqual(pa.aabSha256, da.aabSha256);
-    assert.match(pa.note, /Not uploaded to Google Play/);
-    assert.doesNotMatch(pa.note, /uploaded (by the owner )?to Google Play Internal Testing/i);
+    assert.match(pa.note, /Uploaded by the owner to Google Play Internal Testing/);
+    assert.doesNotMatch(pa.note, /Not uploaded to Google Play/);
   }
 
   const pi = ios.preparedArtefact;
   const di = ios.artefact;
-  assert.ok(STATES.includes(pi.status), `unexpected iOS 1.1.1 status ${pi.status}`);
+  assert.ok([...STATES, SUBMITTED].includes(pi.status), `unexpected iOS 1.1.1 status ${pi.status}`);
   assert.equal(pi.marketingVersion, appJson.expo.version);
   assert.equal(pi.buildNumber, appJson.expo.ios.buildNumber);
   assert.equal(ios.marketingVersion, appJson.expo.version, 'the record header tracks app.json');
@@ -148,13 +153,34 @@ test('BUILD-01B-THE-1-1-1-BUILDS-MATCH-APP-JSON-AND-ARE-ABOVE-THE-DISTRIBUTED-ON
   assert.equal(di.buildNumber, '17');
   assert.ok(Number(pi.buildNumber) > Number(di.buildNumber), 'prepared build number strictly above the distributed one');
   assert.ok(above(pi.marketingVersion, di.marketingVersion), 'prepared marketing version strictly above the distributed one');
-  // Never any TestFlight / App Store Connect submission fact in either state.
-  for (const key of ['testFlightUpload', 'testFlightDistribution']) {
-    assert.ok(!(key in pi), `a not-submitted iOS artefact records no ${key}`);
+  // A submitted-but-unconfirmed build (the status build 13 carries, uploaded-to-testflight) records exactly its
+  // EAS submission and nothing about TestFlight groups or Testing: it is not distributed until the owner confirms
+  // a group assignment, so 17 stays the distributed iOS build. Before submission, no submission fact at all.
+  assert.ok(!('testFlightDistribution' in pi), 'no TestFlight distribution is claimed for 1.1.1 (18)');
+  assert.doesNotMatch(JSON.stringify(pi), /"groups?"|in Testing|distributed to/i, 'no tester-group claim');
+  if (pi.status === SUBMITTED) {
+    assert.deepEqual(Object.keys(pi).filter((key) => /testflight|submission|ascAppId|uploaded/i.test(key)), ['testFlightUpload'], 'only the upload is recorded');
+    const up = pi.testFlightUpload;
+    assert.deepEqual(Object.keys(up).sort(), ['ascAppId', 'easSubmissionId', 'note', 'uploadedOn'], 'the submission and nothing more');
+    assert.match(up.easSubmissionId, UUID, 'the EAS submission id is required');
+    assert.equal(up.easSubmissionId, '5118fcda-b1d0-4c6c-ae19-39fe1d2a6df2');
+    assert.notEqual(up.easSubmissionId, di.testFlightUpload.easSubmissionId, 'a new submission, not build 17\'s');
+    assert.equal(up.ascAppId, '6820632995');
+    assert.equal(up.ascAppId, di.testFlightUpload.ascAppId, 'the same App Store Connect app as build 17');
+    assert.equal(up.uploadedOn, '2026-10-26');
+    assert.match(up.note, /not confirmed/);
+    assert.match(pi.note, /TestFlight group assignment is not confirmed/);
+    assert.match(pi.note, /1\.1\.0 \(17\) stays the distributed iOS build/);
+    assert.doesNotMatch(pi.note, /not submitted/i, 'no longer presented as not submitted');
+    assert.match(ios.testFlight, /1\.1\.1 \(18\) uploaded to App Store Connect 2026-10-26 \(EAS Submit 5118fcda\); TestFlight group assignment not confirmed\.$/);
+  } else {
+    for (const key of ['testFlightUpload', 'testFlightDistribution']) {
+      assert.ok(!(key in pi), `a not-submitted iOS artefact records no ${key}`);
+    }
+    assert.deepEqual(Object.keys(pi).filter((key) => /testflight|submission|ascAppId|uploaded/i.test(key)), [], 'no submission facts');
+    assert.match(pi.note, /not submitted/i);
+    assert.doesNotMatch(pi.note, /Uploaded to TestFlight|uploaded by EAS Submit/i, 'not presented as submitted');
   }
-  assert.deepEqual(Object.keys(pi).filter((key) => /testflight|submission|ascAppId|uploaded/i.test(key)), [], 'no submission facts');
-  assert.match(pi.note, /not submitted/i);
-  assert.doesNotMatch(pi.note, /Uploaded to TestFlight|uploaded by EAS Submit/i, 'not presented as submitted');
   if (pi.status === 'prepared-not-built') {
     for (const key of ['easBuildId', 'easBuildUrl', 'ipaSha256', 'ipaFilename', 'ipaSizeBytes', 'gitCommit', 'completedAt', 'certifiedOn', 'verified']) {
       assert.ok(!(key in pi), `a prepared iOS artefact records no ${key}`);

@@ -351,6 +351,22 @@ test('SIGNER-06E-THE-APPROVED-ARTEFACT-IS-EXPLICIT', () => {
     assert.equal(current.uploadCertificateSha256, config.signer.certificateSha256, 'verified against the permanent upload key');
     // Until Play signs anything, the upload certificate is the only one known; it is never overwritten.
     assert.equal(config.playAppSigning.uploadCertificateSha256, config.signer.certificateSha256);
+    if (current.status === 'distributed') {
+      // A distributed artefact names who confirmed it reached Play and when, is Play's active release, and is the
+      // only artefact at its versionCode: nothing retired may share or exceed it.
+      assert.equal(current.playInternalTesting.status, 'active', 'distributed means active in Play Internal Testing');
+      assert.equal(current.playInternalTesting.confirmedBy, 'owner', 'store facts are attributed, not presented as inspected');
+      assert.match(current.playInternalTesting.confirmedOn, /^\d{4}-\d{2}-\d{2}$/);
+      if ('uploadedAabSha256' in current.playInternalTesting) {
+        assert.equal(current.playInternalTesting.uploadedAabSha256, current.aabSha256, 'an uploaded hash is the certified one');
+      }
+      assert.equal(config.playConsole.internalTesting.activeRelease, `${current.versionName} (${current.versionCode})`, 'Play shows the distributed artefact');
+      for (const entry of config.retiredArtefacts || []) {
+        assert.ok(entry.versionCode < current.versionCode, `retired versionCode ${entry.versionCode} is below the distributed one`);
+        assert.notEqual(entry.aabSha256, current.aabSha256, 'a retired artefact is never the distributed one');
+        assert.notEqual(entry.easBuildId, current.easBuildId);
+      }
+    }
   }
 
   if (approved.status === 'pending-rebuild') {
@@ -569,25 +585,33 @@ test('SIGNER-13F-THE-DISTRIBUTED-VC17-ARTEFACT-IS-SUPERSEDED-BY-THE-GUARD-NOTIFI
   assert.equal(superseded.playInternalTesting.confirmedOn, '2026-10-24');
   assert.match(superseded.retiredReason, /uploaded to Google Play Internal Testing \(owner-confirmed 24 Oct 2026\)/);
   assert.equal((config.retiredArtefacts || []).filter((entry) => entry.versionCode === 17).length, 1, 'recorded once');
-  assert.equal(config.approvedArtefact.versionCode, 18, 'the Guard notifications update is the next artefact');
-  assert.match(config.approvedArtefact.note, /PR #34/);
-  // The next expected release is the prepared 1.1.1 (19) (SIGNER-13H); 18 stays the distributed approved artefact.
+  // The Guard notifications update 18 that superseded it is itself now superseded by 1.1.1 (19) (SIGNER-13G, 13H).
+  const vc18 = (config.retiredArtefacts || []).find((entry) => entry.versionCode === 18);
+  assert.ok(vc18, 'the Guard notifications update 18 is recorded');
+  assert.match(vc18.note, /PR #34/);
   assert.equal(config.expectedRelease.versionCode, 19);
-  assert.equal(config.expectedRelease.versionCode, config.preparedArtefact.versionCode);
+  assert.equal(config.expectedRelease.versionCode, config.approvedArtefact.versionCode);
 });
 
-test('SIGNER-13G-THE-BUILT-VC18-ARTEFACT-IS-SIGNED-BY-THE-SAME-UPLOAD-KEY-AS-VC17', () => {
+test('SIGNER-13G-THE-DISTRIBUTED-VC18-ARTEFACT-IS-SIGNED-BY-THE-SAME-UPLOAD-KEY-AS-VC17-AND-SUPERSEDED-BY-VC19', () => {
   // Guard notifications update (25 Oct 2026): 1.1.0 (18) built by EAS (1b76ec3f) from c5a4f40 with the existing upload
-  // key and certified from the downloaded AAB. Not uploaded to Google Play.
-  const current = config.approvedArtefact;
+  // key, certified from the downloaded AAB, uploaded by the owner and Active in Google Play Internal Testing
+  // (owner-confirmed 25 Oct 2026). Superseded on 26 Oct 2026 by 1.1.1 (19); kept exactly, as vc17 was by vc18.
+  const current = (config.retiredArtefacts || []).find((entry) => entry.versionCode === 18);
   const vc17 = config.retiredArtefacts.find((entry) => entry.versionCode === 17);
-  // Uploaded by the owner and Active in Google Play Internal Testing (owner-confirmed 25 Oct 2026): the certified AAB.
-  assert.equal(current.status, 'distributed', 'the certified AAB is distributed');
+  assert.ok(current, 'versionCode 18 is recorded as superseded');
+  assert.equal((config.retiredArtefacts || []).filter((entry) => entry.versionCode === 18).length, 1, 'recorded once');
+  assert.equal(current.status, 'distributed-superseded', 'the certified AAB was distributed and is now superseded');
+  assert.equal(current.status, vc17.status, 'the same superseded status vc17 carries');
+  assert.equal(current.retiredOn, '2026-10-26');
+  assert.match(current.retiredReason, /^Superseded by versionCode 19 \(1\.1\.1\)/);
+  assert.match(current.retiredReason, /808a55c/);
+  assert.match(current.retiredReason, /Active in Google Play Internal Testing \(owner-confirmed 25 Oct 2026\)/);
   assert.equal(current.playInternalTesting.status, 'active');
   assert.equal(current.playInternalTesting.confirmedBy, 'owner');
   assert.equal(current.playInternalTesting.confirmedOn, '2026-10-25');
   assert.equal(current.playInternalTesting.uploadedAabSha256, current.aabSha256, 'the uploaded AAB is the certified one');
-  assert.equal(config.playConsole.internalTesting.activeRelease, '1.1.0 (18)');
+  assert.notEqual(config.approvedArtefact.versionCode, 18, 'and it is no longer the approved artefact');
   assert.equal(current.easBuildId, '1b76ec3f-0445-4d33-8f06-c379f31d1118');
   assert.equal(current.gitCommit, 'c5a4f4099937b23228c355a8e70a687658ad887b');
   assert.equal(current.aabSha256, '936bfe7531dfd94fa4afc5006b7d6755ef5b9d07e8e3a21c0baa67dd6a4f4bc8');
@@ -609,17 +633,21 @@ test('SIGNER-13G-THE-BUILT-VC18-ARTEFACT-IS-SIGNED-BY-THE-SAME-UPLOAD-KEY-AS-VC1
   assert.doesNotMatch(JSON.stringify(config), /private_key|api_key|current_key|BEGIN [A-Z ]*PRIVATE KEY/);
 });
 
-test('SIGNER-13H-THE-1-1-1-VC19-IS-BUILT-NOT-UPLOADED-AND-USES-THE-VC17-VC18-UPLOAD-KEY', () => {
+test('SIGNER-13H-THE-1-1-1-VC19-IS-DISTRIBUTED-AND-USES-THE-VC17-VC18-UPLOAD-KEY', () => {
   // Maintenance release (25 Oct 2026): 1.1.1 (19) carries the push-registration loop fix (808a55c on
   // fix/push-registration-loop). Built by EAS (b0506fbb) from 1a6c856 on owner approval and certified from the
-  // downloaded AAB (26 Oct 2026); not uploaded to Google Play, and 1.1.0 (18) stays distributed.
-  const prepared = config.preparedArtefact;
-  const vc18 = config.approvedArtefact;
+  // downloaded AAB (26 Oct 2026). The owner uploaded it to Google Play Internal Testing (approved 26 Oct 2026) and
+  // production push_devices shows Android devices on appVersion 1.1.1 (27 Oct 2026): it is the distributed build.
+  assert.ok(!('preparedArtefact' in config), 'nothing is prepared in front of the distributed 1.1.1 (19)');
+  const prepared = config.approvedArtefact;
+  const vc18 = config.retiredArtefacts.find((entry) => entry.versionCode === 18);
   const vc17 = config.retiredArtefacts.find((entry) => entry.versionCode === 17);
   const semver = (v) => v.split('.').map(Number);
   const above = (a, b) => { const [x, y] = [semver(a), semver(b)]; for (let i = 0; i < 3; i += 1) { if (x[i] !== y[i]) return x[i] > y[i]; } return false; };
-  assert.ok(prepared, 'the prepared release is recorded');
-  assert.equal(prepared.status, 'built-not-uploaded', 'built and certified, not uploaded');
+  assert.ok(prepared, 'the 1.1.1 release is recorded');
+  assert.equal(prepared.status, 'distributed', 'built, certified and distributed');
+  assert.equal(prepared.versionCode, config.expectedRelease.versionCode, 'the expected release is the distributed one');
+  assert.equal(prepared.versionName, config.expectedRelease.versionName);
   assert.equal(prepared.versionName, '1.1.1');
   assert.equal(prepared.versionCode, 19);
   // It is exactly the version app.json now carries, and strictly above the distributed build.
@@ -653,16 +681,33 @@ test('SIGNER-13H-THE-1-1-1-VC19-IS-BUILT-NOT-UPLOADED-AND-USES-THE-VC17-VC18-UPL
   assert.notEqual(prepared.aabSha256, vc18.aabSha256);
   assert.notEqual(prepared.aabSha256, vc17.aabSha256);
   assert.notEqual(prepared.easBuildId, vc18.easBuildId);
-  // Not uploaded: no Play state on it, and the note says so.
-  assert.ok(!prepared.playInternalTesting, 'not uploaded');
-  assert.match(prepared.note, /Not uploaded to Google Play/);
-  assert.doesNotMatch(prepared.note, /uploaded (by the owner )?to Google Play Internal Testing/i);
-  // vc18 stays the distributed Android build, unchanged, and Play still shows it.
-  assert.equal(vc18.status, 'distributed');
+  // Distributed: the owner's upload (approved 26 Oct 2026) and the production devices that report 1.1.1, attributed
+  // and dated. The uploaded file's hash was not read back from Play, so none is claimed.
+  const play = prepared.playInternalTesting;
+  assert.ok(play, 'the Play state is recorded');
+  assert.equal(play.status, 'active');
+  assert.equal(play.confirmedBy, 'owner');
+  assert.equal(play.confirmedOn, '2026-10-26');
+  assert.equal(play.evidence, 'owner uploaded to Play Internal Testing (approved 26 Oct); production devices report 1.1.1');
+  assert.ok(!('uploadedAabSha256' in play), 'no uploaded hash is claimed that was not read back from Play');
+  assert.match(play.note, /hash was not read back from Play Console/);
+  assert.deepEqual(play.productionDevices, {
+    source: 'production push_devices',
+    platform: 'android',
+    appVersion: prepared.versionName,
+    devices: 2,
+    observedOn: '2026-10-27',
+  });
+  assert.match(prepared.note, /Uploaded by the owner to Google Play Internal Testing \(owner-approved 26 Oct 2026\)/);
+  assert.doesNotMatch(prepared.note, /Not uploaded to Google Play/, 'no longer presented as not uploaded');
+  assert.equal(config.playConsole.internalTesting.activeRelease, '1.1.1 (19)');
+  assert.match(config.playConsole.source, /active release 1\.1\.1 \(19\): owner uploaded to Play Internal Testing \(approved 26 Oct\); production devices report 1\.1\.1/);
+  // vc18 is kept exactly as the distributed-superseded build below it (SIGNER-13G).
+  assert.equal(vc18.status, 'distributed-superseded');
   assert.equal(vc18.versionCode, 18);
   assert.equal(vc18.aabSha256, '936bfe7531dfd94fa4afc5006b7d6755ef5b9d07e8e3a21c0baa67dd6a4f4bc8');
-  assert.equal(config.playConsole.internalTesting.activeRelease, '1.1.0 (18)');
-  assert.equal((config.retiredArtefacts || []).filter((entry) => entry.versionCode >= 18).length, 0, 'nothing at 18 or above is retired');
+  assert.equal((config.retiredArtefacts || []).filter((entry) => entry.versionCode >= 19).length, 0, 'nothing at 19 or above is retired');
+  assert.doesNotMatch(JSON.stringify(config), /private_key|api_key|current_key|BEGIN [A-Z ]*PRIVATE KEY/);
 });
 
 test('SIGNER-14-AN-UPLOADED-AAB-SIGNER-IS-READ-FROM-KEYTOOL', () => {
