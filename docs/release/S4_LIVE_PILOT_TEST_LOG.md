@@ -69,26 +69,28 @@ Pre-activation backup:
 shift-extension notifications were observed during live testing.
 
 **OBSERVED (production records, read-only):**
-- iOS: Guard 26's iPhone reports S4 1.1.1, so iOS 1.1.1 (18) reached a pilot Guard through TestFlight. One Welfare reminder
-  to it (company 9) was provider_accepted, and its receipt is provider_delivery_ok.
-- Shift offer push: guard notification dispatch 5,  (company 9), was provider_accepted, and its receipt is
-  provider_delivery_ok.
-- Extension push to the iPhone: dispatch 6,  (company 9), was provider_accepted.
+- iOS: Guard 26 (user 37) reports S4 1.1.1 on an iPhone, so iOS 1.1.1 (18) reached a pilot Guard through TestFlight.
+  One Welfare reminder to it (company 9) was provider_accepted, and its receipt is provider_delivery_ok.
+- Shift offer push: guard notification dispatch 5, `shift_offered` for shift 69 (company 9, user 37), created
+  10:28:55. It was provider_accepted, and its receipt is provider_delivery_ok. The Guard accepted the offer at 11:26:13
+  (`shift.offer_accepted`).
+- Extension push to the same iPhone: dispatch 6, `shift_amendment_requested` for shift 69, created 11:37:02, was
+  provider_accepted.
 - Totals since activation:
   - Welfare reminders: 9, all provider_delivery_ok.
   - Duplicates: 0.
   - Company or Guard mismatches: 0.
   - Revoked devices: 0.
-- Inbox read: both  notices sent since activation have a .
+- Inbox read: both `shift_amendment_requested` notices sent since activation have a `readAt`.
 
 ## 6. Not yet verified
 
 Nothing below has a production record yet. Each stays unverified until it does.
 
-- Offer withdrawal or cancellation push ().
-- Re-acceptance push after a material change to an accepted shift ().
-- A rota time change on 27 Oct () produced no Guard notice. The shift was not yet accepted at the
-  time; re-acceptance applies only to accepted shifts.
+- Offer withdrawal or cancellation push (`shift_offer_withdrawn`).
+- Re-acceptance push after a material change to an accepted shift (`shift_reacceptance_required`).
+  The rota time change on 27 Oct (`rota_slot.time_changed`, slot 46, 10:02:53) happened before any Guard was assigned
+  (10:28:57). So no Guard notice was expected, and it does not test this flow.
 - The unread side of the inbox: a notice staying unread until it is opened, and the badge count.
 - Guard 28 is still on 1.1.0.
 
