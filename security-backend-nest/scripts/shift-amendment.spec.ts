@@ -104,7 +104,7 @@ async function main() {
   } as never);
   await migrator.initialize();
   const migrated = await migrator.runMigrations({ transaction: 'each' });
-  assert.equal(migrated[migrated.length - 1]?.name, 'AddGuardNotificationDispatches1720900000012', 'the head is Migration 66');
+  assert.equal(migrated[migrated.length - 1]?.name, 'AddManualAttendance1720900000013', 'the head is Migration 67');
   await migrator.destroy();
 
   const { AppModule } = await import('../src/app.module');
@@ -786,12 +786,13 @@ async function main() {
       assert.equal((byId.get(opsUser) as any).displayName, 'Olivia Okoro');
       assert.equal((byId.get(control.id) as any).displayName, `Control Room (staff #${control.id})`, 'no name on file: role, never the email');
       assert.equal((byId.get(control.id) as any).canAmendShifts, false);
+      assert.equal((byId.get(control.id) as any).canManageAttendance, false, 'the manual attendance grant (Migration 67) sits beside it');
       assert.ok(!('canAmendShifts' in (byId.get(opsUser) as any)), 'authorisation shown only where it applies');
       assert.ok(!byId.has(viewer.id), 'a role that cannot act on amendments is not listed');
       assert.ok(!byId.has(bControl.id), "another company's staff are never listed");
       const text = JSON.stringify(dir.body);
       for (const leak of ['@', 'passwordHash', '07000000001', 'email', 'phone']) assert.ok(!text.includes(leak), `no ${leak}`);
-      for (const s of dir.body.staff) assert.deepEqual(Object.keys(s).sort().filter((k) => !['canAmendShifts'].includes(k)), ['displayName', 'isYou', 'role', 'userId']);
+      for (const s of dir.body.staff) assert.deepEqual(Object.keys(s).sort().filter((k) => !['canAmendShifts', 'canManageAttendance'].includes(k)), ['displayName', 'isYou', 'role', 'userId']);
 
       const opsDir = await api('GET', '/shift-amendments/staff', ops.token);
       assert.equal(opsDir.status, 200);

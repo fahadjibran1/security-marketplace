@@ -407,11 +407,23 @@ export class TimesheetService {
     manager: EntityManager,
     shiftId: number,
     actuals: { checkInAt: Date; checkOutAt: Date },
+    options: {
+      /** Where the actuals come from (Migration 67, informational). Default: the Guard app. */
+      verifiedSource?: 'guard_app' | 'manual' | 'corrected';
+      /**
+       * The caller already holds a lock on the shift row that conflicts with every FOR UPDATE (manual attendance holds
+       * FOR NO KEY UPDATE and the welfare-sweep lock, in the reconciliation order). Re-locking FOR UPDATE here would
+       * upgrade that lock and could deadlock with a transaction holding FOR KEY SHARE on the shift, so it is skipped.
+       */
+      shiftLocked?: boolean;
+    } = {},
   ): Promise<Timesheet> {
-    const locked: Array<{ id: number }> = await manager.query('SELECT "id" FROM "shifts" WHERE "id" = $1 FOR UPDATE', [
-      shiftId,
-    ]);
-    if (locked.length === 0) throw new NotFoundException('Shift not found');
+    if (!options.shiftLocked) {
+      const locked: Array<{ id: number }> = await manager.query('SELECT "id" FROM "shifts" WHERE "id" = $1 FOR UPDATE', [
+        shiftId,
+      ]);
+      if (locked.length === 0) throw new NotFoundException('Shift not found');
+    }
 
     const timesheetRepo = manager.getRepository(Timesheet);
     let timesheet = await timesheetRepo.findOne({ where: { shift: { id: shiftId } }, order: { id: 'ASC' } });
@@ -431,8 +443,69 @@ export class TimesheetService {
     timesheet.verifiedMinutes = verifiedMinutes;
     timesheet.actualCheckInAt = actuals.checkInAt;
     timesheet.actualCheckOutAt = actuals.checkOutAt;
+    timesheet.verifiedSource = options.verifiedSource ?? 'guard_app';
     const saved = await timesheetRepo.save(timesheet);
     return this.applyDerivedFinancials(saved);
+  }
+
+  /**
+   * Manual attendance correction (Migration 67): the effective Book On / Book Off changed, so the timesheet's
+   * attendance-verified actuals follow it — ONLY while the timesheet is still in the ordinary workflow (draft,
+   * submitted or returned) and not in a payroll batch. The caller refuses the correction before calling this when the
+   * timesheet is locked; this re-checks under the timesheet row lock and refuses the same way.
+   *
+   * verifiedMinutes and the actual times are restamped. The Guard-claimed hours (hoursWorked / workedMinutes /
+   * roundedMinutes) are restamped only while they still equal what attendance stamped, so a Guard's own edit is never
+   * overwritten. Approval itself is unchanged: the company approves through the existing review, which defaults
+   * approved minutes to verifiedMinutes.
+   *
+   * Returns whether anything was restamped and the timesheet's status (null when the shift has no timesheet, or no
+   * actuals yet, e.g. a corrected Book On on a shift still in progress).
+   */
+  async restampAttendanceActuals(
+    manager: EntityManager,
+    shiftId: number,
+    actuals: { checkInAt: Date; checkOutAt: Date | null },
+    verifiedSource: 'guard_app' | 'manual' | 'corrected',
+    isLocked: (row: { approvalStatus: string; payrollBatchId: number | null }) => boolean,
+    onLocked: () => Error,
+  ): Promise<{ restamped: boolean; approvalStatus: string | null }> {
+    const [row] = (await manager.query(
+      `SELECT "id", "approvalStatus"::text AS "approvalStatus", "payrollBatchId", "actualCheckOutAt", "verifiedMinutes",
+              "workedMinutes", "hoursWorked"
+         FROM "timesheets" WHERE "shiftId" = $1 ORDER BY "id" ASC LIMIT 1 FOR UPDATE`,
+      [shiftId],
+    )) as Array<{ id: number; approvalStatus: string; payrollBatchId: number | null; actualCheckOutAt: Date | null;
+      verifiedMinutes: number | null; workedMinutes: number; hoursWorked: string | number }>;
+    if (!row) return { restamped: false, approvalStatus: null };
+    if (isLocked({ approvalStatus: row.approvalStatus, payrollBatchId: row.payrollBatchId === null ? null : Number(row.payrollBatchId) })) {
+      throw onLocked();
+    }
+    if (!actuals.checkOutAt || !row.actualCheckOutAt) {
+      // No verified actuals to restamp yet (the Book Off will stamp them). Only the actual Book On moves.
+      if (row.actualCheckOutAt === null) {
+        await manager.query(`UPDATE "timesheets" SET "actualCheckInAt" = $2, "updatedAt" = now() WHERE "id" = $1`, [row.id, actuals.checkInAt]);
+      }
+      return { restamped: false, approvalStatus: row.approvalStatus };
+    }
+    const derived = (minutes: number) => {
+      const hours = Number((minutes / 60).toFixed(2));
+      return { hours, worked: Math.max(0, Math.round(hours * 60)) };
+    };
+    const verifiedMinutes = Math.max(0, Math.round((actuals.checkOutAt.getTime() - actuals.checkInAt.getTime()) / 60000));
+    const next = derived(verifiedMinutes);
+    const previous = row.verifiedMinutes === null ? null : derived(Number(row.verifiedMinutes));
+    const claimedUntouched = previous !== null && Number(row.workedMinutes) === previous.worked && Number(row.hoursWorked) === previous.hours;
+    await manager.query(
+      `UPDATE "timesheets" SET "actualCheckInAt" = $2, "actualCheckOutAt" = $3, "verifiedMinutes" = $4, "verifiedSource" = $5,
+              "hoursWorked" = CASE WHEN $6 THEN $7 ELSE "hoursWorked" END,
+              "workedMinutes" = CASE WHEN $6 THEN $8 ELSE "workedMinutes" END,
+              "roundedMinutes" = CASE WHEN $6 THEN $8 ELSE "roundedMinutes" END,
+              "updatedAt" = now()
+        WHERE "id" = $1`,
+      [row.id, actuals.checkInAt, actuals.checkOutAt, verifiedMinutes, verifiedSource, claimedUntouched, next.hours, next.worked],
+    );
+    return { restamped: true, approvalStatus: row.approvalStatus };
   }
 
   async submitMine(userId: number, id: number, dto: UpdateTimesheetDto): Promise<Timesheet> {

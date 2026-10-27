@@ -649,6 +649,11 @@ async function main() {
       assert.match(checkIn, /await this\.assertMayBookOn\(/);
       assert.match(attendance, /await this\.shiftService\.assertGuardMayStartWork\(shift\.company\.id, guardId\)/);
       assert.doesNotMatch(attendance.split('async checkOut(')[1].split('private async verifyAttendanceEvidence(')[0], /assertGuardMayStartWork|assertMayBookOn/, 'Book Off is never gated');
+      // Part B (Migration 67): a manual Book On by authorised company staff starts work too, so it runs the same
+      // start-of-work gate before its transaction; a manual Book Off and a correction never start work and are not gated.
+      const manual = src('attendance/manual-attendance.service.ts');
+      assert.match(manual.split('async bookOn(')[1].split('async bookOff(')[0], /await this\.shiftService\.assertGuardMayStartWork\(actor\.companyId, guardId\)/, 'manual Book On runs the start-of-work gate');
+      assert.doesNotMatch(manual.split('async bookOff(')[1].split('// ── Read')[0], /assertGuardMayStartWork|assertGuardAssignable/, 'manual Book Off and corrections are never gated');
       assert.match(src('availability/availability.service.ts'), /this\.complianceService\.assertGuardAssignable\(/);
       assert.match(src('rota-slot/rota-slot.service.ts').split('async assignPosition(')[1].split('async assignMultiple(')[0], /assertGuardCanTakeShift/);
       const gate = src('compliance/compliance.service.ts').split('async assertGuardAssignable')[1].split('async getBlockingRecords')[0];

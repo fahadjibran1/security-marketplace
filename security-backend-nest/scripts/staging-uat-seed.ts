@@ -16,8 +16,8 @@
  *     it must differ from the production database host in production-read.env; strict TLS with the staging CA;
  *     S4_STAGING_SEED_CONFIRM must equal "s4-staging-db".
  *   - local: the host must be 127.0.0.1 / localhost.
- *   - any target: no Supabase or pooler host; the migration ledger must hold exactly 66 entries ending in
- *     AddGuardNotificationDispatches1720900000012 (Migration 66, Guard shift notifications) — the same head as this repository's own
+ *   - any target: no Supabase or pooler host; the migration ledger must hold exactly 67 entries ending in
+ *     AddManualAttendance1720900000013 (Migration 67, manual attendance) — the same head as this repository's own
  *     migrations, which is checked too, so the in-process app and the database always agree; the users table must be
  *     EMPTY (seed once; reset to re-seed). --recover-logins applies the same ledger check before it boots the app.
  * Logins are written only to a git-ignored file (~/.s4-pilot-secrets/staging-uat.env for staging) and are never
@@ -43,8 +43,8 @@ const STAGING_HOST = 'dpg-dbbq13afngtc73a5ls20-a.oregon-postgres.render.com';
 const STAGING_DB = 's4_staging';
 const STAGING_API = 'https://security-marketplace-api-staging.onrender.com';
 const CONFIRM = 's4-staging-db';
-const EXPECTED_MIGRATIONS = 66;
-const LAST_MIGRATION = 'AddGuardNotificationDispatches1720900000012';
+const EXPECTED_MIGRATIONS = 67;
+const LAST_MIGRATION = 'AddManualAttendance1720900000013';
 const SECRETS = path.join(os.homedir(), '.s4-pilot-secrets');
 
 const args = process.argv.slice(2);

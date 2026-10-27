@@ -849,6 +849,23 @@ export class ShiftService {
           afterData: changes.after,
         });
       }
+      // Mark Missed has its own entry, with the reason when one was given (optional: an older web release sends none).
+      if (nextStatus === 'missed' && currentStatus !== 'missed') {
+        await this.auditLogService.logInTransaction(manager, {
+          company: { id: actorCompany.id },
+          user: { id: user.sub },
+          action: 'shift.marked_missed',
+          entityType: 'shift',
+          entityId: shift.id,
+          beforeData: { status: currentStatus, guardId: before.guardId },
+          afterData: {
+            status: 'missed',
+            reason: dto.reason?.trim() || null,
+            scheduledStart: new Date(before.start).toISOString(),
+            markedAt: new Date().toISOString(),
+          },
+        });
+      }
       // The re-offer has its own entry: the accepted terms, the revised terms, who changed them and why.
       if (reofferedForReacceptance) {
         await this.auditLogService.logInTransaction(manager, {
@@ -1321,7 +1338,8 @@ export class ShiftService {
       );
     }
     const [{ booked }] = await this.dataSource.query(
-      `SELECT EXISTS (SELECT 1 FROM "attendance_events" WHERE "shiftId" = $1 AND "type" = 'check-in') AS "booked"`,
+      // Effective attendance (Migration 67): any effective Book On, Guard app or manual.
+      `SELECT EXISTS (SELECT 1 FROM "effective_attendance_events" WHERE "shiftId" = $1 AND "type" = 'check-in') AS "booked"`,
       [shift.id],
     );
     if (booked) {

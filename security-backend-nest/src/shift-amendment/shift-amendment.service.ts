@@ -508,7 +508,7 @@ export class ShiftAmendmentService implements OnModuleInit, OnModuleDestroy {
       throw amendmentError(HttpStatus.UNPROCESSABLE_ENTITY, E.NOT_LIVE, 'Only an in-progress shift can be extended. Change a future shift with the ordinary edit.');
     }
     const [att] = (await this.dataSource.query(
-      `SELECT bool_or("type" = $2) AS "bookedOn", bool_or("type" = $3) AS "bookedOff" FROM "attendance_events" WHERE "shiftId" = $1`,
+      `SELECT bool_or("type" = $2) AS "bookedOn", bool_or("type" = $3) AS "bookedOff" FROM "effective_attendance_events" WHERE "shiftId" = $1`,
       [shiftId, AttendanceEventType.CHECK_IN, AttendanceEventType.CHECK_OUT],
     )) as Array<{ bookedOn: boolean | null; bookedOff: boolean | null }>;
     if (!att?.bookedOn || att?.bookedOff) {
@@ -1158,7 +1158,7 @@ export class ShiftAmendmentService implements OnModuleInit, OnModuleDestroy {
       throw amendmentError(HttpStatus.UNPROCESSABLE_ENTITY, E.NOT_LIVE, 'Only an in-progress shift can be extended. Change a future shift with the ordinary edit.');
     }
     const [att] = (await this.dataSource.query(
-      `SELECT bool_or("type" = $2) AS "bookedOn", bool_or("type" = $3) AS "bookedOff" FROM "attendance_events" WHERE "shiftId" = $1`,
+      `SELECT bool_or("type" = $2) AS "bookedOn", bool_or("type" = $3) AS "bookedOff" FROM "effective_attendance_events" WHERE "shiftId" = $1`,
       [shiftId, AttendanceEventType.CHECK_IN, AttendanceEventType.CHECK_OUT],
     )) as Array<{ bookedOn: boolean | null; bookedOff: boolean | null }>;
     if (!att?.bookedOn || att?.bookedOff) {
@@ -1247,18 +1247,18 @@ export class ShiftAmendmentService implements OnModuleInit, OnModuleDestroy {
     const actor = await this.companyActor(user);
     const manager = actor.role === CompanyMembershipRole.OWNER || actor.role === CompanyMembershipRole.ADMIN;
     const rows = (await this.dataSource.query(
-      `SELECT u."id" AS "userId", u."firstName", u."lastName", 'owner' AS "role", false AS "canAmendShifts"
+      `SELECT u."id" AS "userId", u."firstName", u."lastName", 'owner' AS "role", false AS "canAmendShifts", false AS "canManageAttendance"
          FROM "companies" c JOIN "users" u ON u."id" = c."userId"
         WHERE c."id" = $1
        UNION ALL
-       SELECT u."id", u."firstName", u."lastName", m."membershipRole"::text, m."canAmendShifts"
+       SELECT u."id", u."firstName", u."lastName", m."membershipRole"::text, m."canAmendShifts", m."canManageAttendance"
          FROM "company_memberships" m JOIN "users" u ON u."id" = m."userId"
         WHERE m."companyId" = $1 AND m."status" = $2
           AND m."membershipRole"::text IN ('owner', 'admin', 'operations', 'control_room')
           AND m."userId" <> (SELECT "userId" FROM "companies" WHERE "id" = $1)
         ORDER BY 1`,
       [actor.companyId, CompanyMembershipStatus.ACTIVE],
-    )) as Array<{ userId: number; firstName: string | null; lastName: string | null; role: string; canAmendShifts: boolean }>;
+    )) as Array<{ userId: number; firstName: string | null; lastName: string | null; role: string; canAmendShifts: boolean; canManageAttendance: boolean }>;
     const roleWord: Record<string, string> = { owner: 'Owner', admin: 'Admin', operations: 'Operations', control_room: 'Control Room' };
     return {
       canManageControlRoom: manager,
@@ -1271,7 +1271,7 @@ export class ShiftAmendmentService implements OnModuleInit, OnModuleDestroy {
           role,
           isYou: Number(r.userId) === actor.userId,
           // Amendment authorisation is shown only to those who can change it, and only where it applies.
-          ...(manager && role === CompanyMembershipRole.CONTROL_ROOM ? { canAmendShifts: Boolean(r.canAmendShifts) } : {}),
+          ...(manager && role === CompanyMembershipRole.CONTROL_ROOM ? { canAmendShifts: Boolean(r.canAmendShifts), canManageAttendance: Boolean(r.canManageAttendance) } : {}),
         };
       }),
     };

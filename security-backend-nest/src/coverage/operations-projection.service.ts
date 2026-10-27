@@ -2,7 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, IsNull, Repository } from 'typeorm';
 
-import { AttendanceEvent, AttendanceEventType } from '../attendance/entities/attendance.entity';
+import { AttendanceEvent } from '../attendance/entities/attendance.entity';
+import { effectiveAttendance } from '../attendance/effective-attendance';
 import { DailyLog, DailyLogType } from '../daily-log/entities/daily-log.entity';
 import {
   SafetyAlert,
@@ -158,9 +159,25 @@ export type WelfareSummaryView = {
   createdAt: string;
 };
 
+export type AttendanceSourceView = 'guard_app' | 'manual' | null;
+
+/**
+ * How the effective Book On / Book Off were recorded (Migration 67): by the Guard in the app, or manually by authorised
+ * company staff, and whether either has been corrected. `monitoredFrom` is when Welfare monitoring started.
+ */
+export type ShiftAttendanceSourceView = {
+  bookOnSource: AttendanceSourceView;
+  bookOffSource: AttendanceSourceView;
+  bookOnCorrected: boolean;
+  bookOffCorrected: boolean;
+  monitoredFrom: string | null;
+};
+
 export type ShiftOperationsView = {
+  /** The EFFECTIVE Book On / Book Off (each attendance chain's tip). */
   bookOnAt: string | null;
   bookOffAt: string | null;
+  attendance: ShiftAttendanceSourceView;
   /**
    * Welfare Phase 4, only on GET /coverage/operations: the early Book Off and the coverage that remained,
    * or null when the shift was not booked off more than 15 minutes early. Absent elsewhere.
@@ -306,9 +323,12 @@ export class OperationsProjectionService {
     const cancelled = status === 'cancelled';
     const settled = SETTLED_SHIFT_STATUSES.has(status);
 
-    const bookOnAt = this.earliest(attendance, AttendanceEventType.CHECK_IN);
-    const bookOffAt = this.latest(attendance, AttendanceEventType.CHECK_OUT);
-    const applicability = { bookOnAt, bookOffAt, shiftEnd, cancelled };
+    // Effective attendance (Migration 67): the times shown are each chain's tip; the windows are judged from
+    // `monitoredFrom`, exactly as the sweep judges them, so a late-recorded Book On shows no retrospective misses.
+    const effective = effectiveAttendance(attendance);
+    const bookOnAt = effective.bookOnAt;
+    const bookOffAt = effective.bookOffAt;
+    const applicability = { bookOnAt: effective.monitoredFrom, bookOffAt, shiftEnd, cancelled };
 
     // One classified batch, filtered by each obligation to its own kind — the same structural
     // separation the sweep relies on, so a Log Book entry can never satisfy a Welfare window here.
@@ -359,6 +379,13 @@ export class OperationsProjectionService {
     return {
       bookOnAt: bookOnAt ? bookOnAt.toISOString() : null,
       bookOffAt: bookOffAt ? bookOffAt.toISOString() : null,
+      attendance: {
+        bookOnSource: effective.bookOnSource as AttendanceSourceView,
+        bookOffSource: effective.bookOffSource as AttendanceSourceView,
+        bookOnCorrected: effective.bookOnCorrected,
+        bookOffCorrected: effective.bookOffCorrected,
+        monitoredFrom: effective.monitoredFrom ? effective.monitoredFrom.toISOString() : null,
+      },
       timezone,
       welfare: {
         enabled: welfare.windows.length > 0,
@@ -527,20 +554,6 @@ export class OperationsProjectionService {
       completedAt: window.completedAt ? window.completedAt.toISOString() : null,
       completionCount: window.completionCount,
     };
-  }
-
-  private earliest(events: AttendanceEvent[], type: AttendanceEventType): Date | null {
-    const times = events
-      .filter((event) => event.type === type && event.occurredAt instanceof Date)
-      .map((event) => event.occurredAt.getTime());
-    return times.length ? new Date(Math.min(...times)) : null;
-  }
-
-  private latest(events: AttendanceEvent[], type: AttendanceEventType): Date | null {
-    const times = events
-      .filter((event) => event.type === type && event.occurredAt instanceof Date)
-      .map((event) => event.occurredAt.getTime());
-    return times.length ? new Date(Math.max(...times)) : null;
   }
 
   private groupBy<T>(items: T[], keyOf: (item: T) => number | undefined): Map<number, T[]> {

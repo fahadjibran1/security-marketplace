@@ -139,4 +139,5 @@ export const COMPANY_ONLY_OPERATIONS_FIELDS: readonly string[] = [
   'missingBookOff',
   'bookOnAt',
   'bookOffAt',
+  'attendance',
 ];

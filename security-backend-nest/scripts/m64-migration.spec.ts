@@ -145,10 +145,11 @@ async function main() {
     await test('M64-01-FRESH-DATABASE-MIGRATES-TO-64-AND-64-IS-LAST', () => {
       assert.equal(applied.length, 1, 'only 64 is pending on a 63 database');
       assert.equal(applied[0].name, MIGRATION_64);
-      assert.equal(allFiles.length, 66);
+      assert.equal(allFiles.length, 67);
       assert.equal(allFiles[63], '1720900000010-AddShiftAmendments.ts');
       assert.equal(allFiles[64], '1720900000011-AddWelfarePushReminders.ts', 'Migration 65 follows 64 and is certified by m65-migration.spec.ts');
       assert.equal(allFiles[65], '1720900000012-AddGuardNotificationDispatches.ts', 'Migration 66 follows 65 and is certified by m66-migration.spec.ts');
+      assert.equal(allFiles[66], '1720900000013-AddManualAttendance.ts', 'Migration 67 follows 66 and is certified by m67-migration.spec.ts');
     });
     const head = await schema();
     const headLabels = await labels();
@@ -294,9 +295,11 @@ async function main() {
       assert.deepEqual(ours, [], `entity and migration 64 disagree:\n${ours.join('\n')}`);
       // This database stops at 64, so Migration 65's two tables and 66's table and labels are absent by design;
       // m65-migration.spec.ts (M65-09) and m66-migration.spec.ts (M66-09) certify that their entities and migrations
-      // agree. Nothing else is set aside.
+      // agree. Migration 67's nine added columns are absent too (m67-migration.spec.ts M67-10 certifies them), matched
+      // statement by statement. Nothing else is set aside.
       const after64 = /push_devices|welfare_reminders|guard_notification_dispatches|notifications_type_enum/;
-      const semantic = drift.filter((x) => !after64.test(x) &&
+      const m67 = /^ALTER TABLE "(attendance_events" ADD "(source|recordedAt|recordedByUserId|reason|verificationMethod|verificationNote|correctionOfEventId)|company_memberships" ADD "canManageAttendance|timesheets" ADD "verifiedSource)" /;
+      const semantic = drift.filter((x) => !after64.test(x) && !m67.test(x) &&
         /CREATE TABLE|DROP TABLE|CREATE TYPE|DROP TYPE|ALTER TYPE|ALTER TABLE.*ALTER COLUMN|ALTER TABLE.*DROP COLUMN|ALTER TABLE.*ADD "/i.test(x));
       assert.deepEqual(semantic, [], `semantic drift (the release gate would fail):\n${semantic.join('\n')}`);
       console.log(`      (diagnostic-only drift elsewhere, unchanged by 64: ${drift.length} statement(s))`);

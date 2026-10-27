@@ -9,7 +9,8 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, In, Repository } from 'typeorm';
-import { AttendanceEvent, AttendanceEventType } from '../attendance/entities/attendance.entity';
+import { AttendanceEvent } from '../attendance/entities/attendance.entity';
+import { effectiveAttendance } from '../attendance/effective-attendance';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { DailyLog, DailyLogType } from '../daily-log/entities/daily-log.entity';
 import { GuardProfileService } from '../guard-profile/guard-profile.service';
@@ -643,10 +644,8 @@ export class WelfarePushService implements OnModuleInit, OnModuleDestroy {
 
   /** Exactly the safety sweep's resolution of a shift's Welfare windows. */
   private resolve(shift: Shift, evidence: ShiftEvidence, now: Date): OperationalWindowResolution {
-    const times = (type: AttendanceEventType) =>
-      evidence.attendance.filter((e) => e.type === type).map((e) => new Date(e.occurredAt).getTime());
-    const ins = times(AttendanceEventType.CHECK_IN);
-    const outs = times(AttendanceEventType.CHECK_OUT);
+    // Effective attendance (Migration 67), judged from monitoredFrom exactly as the sweep is.
+    const effective = effectiveAttendance(evidence.attendance);
     return this.welfareWindowService.resolve({
       shiftStart: new Date(shift.start),
       shiftEnd: new Date(shift.end),
@@ -656,8 +655,8 @@ export class WelfarePushService implements OnModuleInit, OnModuleDestroy {
       },
       completions: toOperationalCompletions(evidence.logs),
       applicability: {
-        bookOnAt: ins.length ? new Date(Math.min(...ins)) : null,
-        bookOffAt: outs.length ? new Date(Math.max(...outs)) : null,
+        bookOnAt: effective.monitoredFrom,
+        bookOffAt: effective.bookOffAt,
         shiftEnd: new Date(shift.end),
         cancelled: shift.status === 'cancelled',
       },
