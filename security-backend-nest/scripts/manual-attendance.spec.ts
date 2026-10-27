@@ -38,6 +38,11 @@
  *   MA-26  Guard app after a manual entry: app Book On of a manually booked-on shift is a 409; app Book Off after a
  *          manual Book On stamps verifiedSource manual
  *   MA-27  static: append-only (no UPDATE/DELETE of attendance_events in src), lock order, the start-of-work gate
+ *   MA-28  the 24-hour Owner/Admin rule is the AGE OF THE ATTENDANCE TIME (now − occurredAt), never the shift start:
+ *          old shift + recent time → Operations / Control Room allowed; recent shift + time > 24 h → refused for them,
+ *          allowed for Owner/Admin; Book Off likewise; a correction counts BOTH the new time and the replaced time
+ *   MA-29  existing missed-check records are never deleted or rewritten by manual Book On / Book Off or corrections
+ *   MA-30  the actual time (occurredAt) and the server recording time (recordedAt) are stored separately, Book On and Off
  *
  * Needs MANUAL_ATTENDANCE_DATABASE_URL pointing at a DISPOSABLE local database — it drops the schema.
  */
@@ -798,6 +803,80 @@ async function main() {
       await appEvent(s2.id, g2, 'check-in', s2.start);
       expect(await bookOff(A.token, s2.id, Date.now() - MIN), 201);
       expect(await api('POST', '/attendance/check-out', g2.token, { shiftId: s2.id }), 409, 'ATTENDANCE_ALREADY_BOOKED_OFF', 'app Book Off after a manual one');
+    });
+
+    await test('MA-28-THE-24-HOUR-RULE-IS-THE-AGE-OF-THE-ATTENDANCE-TIME-NOT-THE-SHIFT-START', async () => {
+      // An old shift start (30 h ago, a 20-hour shift) with a RECENT actual time (20 h ago): Operations and a granted
+      // Control Room member may record it.
+      await api('PUT', `/attendance/control-room/${controlGranted.id}`, A.token, { canManageAttendance: true });
+      const oldStart = await mkShift(await guard(), 'ready', -30, 20);
+      expect(await bookOn(ops.token, oldStart.id, Date.now() - 20 * HOUR), 201, undefined, 'old shift start, recent time: Operations allowed');
+      const oldStart2 = await mkShift(await guard(), 'ready', -30, 20);
+      expect(await bookOn(controlGranted.token, oldStart2.id, Date.now() - 20 * HOUR), 201, undefined, 'old shift start, recent time: Control Room allowed');
+      // A recent shift (started 20 h ago, inside its start − 12 h window) with an actual time 26 h ago: refused for them,
+      // allowed for Owner / Admin.
+      const recent = await mkShift(await guard(), 'ready', -20, 8);
+      const old = Date.now() - 26 * HOUR;
+      expect(await bookOn(ops.token, recent.id, old), 403, 'ATTENDANCE_OLD_ENTRY_REQUIRES_OWNER_OR_ADMIN', 'recent shift, old time: Operations');
+      expect(await bookOn(controlGranted.token, recent.id, old), 403, 'ATTENDANCE_OLD_ENTRY_REQUIRES_OWNER_OR_ADMIN', 'recent shift, old time: Control Room');
+      expect(await bookOn(A.token, recent.id, old), 201, undefined, 'recent shift, old time: Owner');
+      // Book Off: the same rule on the Book Off time.
+      const g = await guard();
+      const live = await mkShift(g, 'in_progress', -30, 4);
+      await appEvent(live.id, g, 'check-in', live.start);
+      expect(await bookOff(ops.token, live.id, live.end), 403, 'ATTENDANCE_OLD_ENTRY_REQUIRES_OWNER_OR_ADMIN', 'Book Off time 26 h ago');
+      expect(await bookOff(admin.token, live.id, live.end), 201);
+      // Corrections: BOTH the new time's age and the replaced (original) time's age count, so a sub-24-hour role can
+      // neither move a recent time into the old past nor rewrite an old time with a recent one.
+      const g2 = await guard();
+      const c = await mkShift(g2, 'completed', -30, 20);
+      const oldOn = await appEvent(c.id, g2, 'check-in', c.start + 10 * MIN); // ~30 h ago
+      const recentOff = await appEvent(c.id, g2, 'check-out', c.end - 10 * MIN); // ~10 h ago
+      expect(await correct(ops.token, oldOn, Date.now() - 20 * HOUR), 403, 'ATTENDANCE_OLD_ENTRY_REQUIRES_OWNER_OR_ADMIN', 'original > 24 h, new recent');
+      expect(await correct(ops.token, recentOff, Date.now() - 25 * HOUR), 403, 'ATTENDANCE_OLD_ENTRY_REQUIRES_OWNER_OR_ADMIN', 'original recent, new > 24 h');
+      expect(await correct(ops.token, recentOff, c.end - 30 * MIN), 201, undefined, 'both recent: Operations allowed');
+      expect(await correct(A.token, oldOn, Date.now() - 20 * HOUR), 201, undefined, 'the Owner may correct an old time');
+    });
+
+    await test('MA-29-EXISTING-MISSED-CHECK-RECORDS-ARE-NEVER-DELETED-OR-REWRITTEN', async () => {
+      const g = await guard();
+      const s = await mkShift(g, 'in_progress', -6, 8);
+      const on = await appEvent(s.id, g, 'check-in', s.start + 2 * MIN);
+      await sweep.runMissedWelfareChecks();
+      const snapshot = async () => q(`SELECT id, md5(to_jsonb(a)::text) h FROM safety_alerts a WHERE "shiftId" = $1 AND type = 'missed_checkcall' ORDER BY id`, [s.id]);
+      const before = await snapshot();
+      assert.ok(before.length >= 4, `genuine misses were recorded (${before.length})`);
+      // Correct the Book On later (the misses before it are now outside attendance) and earlier, then book off manually.
+      const later = await correct(A.token, on, s.start + 3 * HOUR);
+      expect(later, 201);
+      await sweep.runMissedWelfareChecks();
+      expect(await correct(A.token, later.body.event.id, s.start + MIN), 201);
+      await sweep.runMissedWelfareChecks();
+      expect(await bookOff(A.token, s.id, Date.now() - MIN), 201);
+      await sweep.runMissedWelfareChecks();
+      const after = await snapshot();
+      assert.deepEqual(after.filter((r: any) => before.some((b: any) => b.id === r.id)), before, 'every existing missed-check record is byte-identical');
+      assert.equal(after.length, before.length, 'none deleted, none invented');
+    });
+
+    await test('MA-30-ACTUAL-TIME-AND-RECORDED-TIME-ARE-STORED-SEPARATELY-FOR-BOOK-ON-AND-BOOK-OFF', async () => {
+      const g = await guard();
+      const s = await mkShift(g, 'ready', -6, 8);
+      const actualOn = s.start + 4 * MIN;
+      const actualOff = Date.now() - 37 * MIN;
+      const t0 = Date.now();
+      expect(await bookOn(ops.token, s.id, actualOn), 201);
+      expect(await bookOff(ops.token, s.id, actualOff), 201);
+      const t1 = Date.now();
+      const stored = await q(`SELECT type::text, "occurredAt", "recordedAt", "recordedByUserId", source FROM attendance_events WHERE "shiftId" = $1 ORDER BY id`, [s.id]);
+      assert.equal(new Date(stored[0].occurredAt).getTime(), actualOn, 'Book On: the stated actual time');
+      assert.equal(new Date(stored[1].occurredAt).getTime(), actualOff, 'Book Off: the stated actual time');
+      for (const row of stored) {
+        const rec = new Date(row.recordedAt).getTime();
+        assert.ok(rec >= t0 - 1000 && rec <= t1 + 1000, `${row.type}: recordedAt is the server time of recording`);
+        assert.ok(rec - new Date(row.occurredAt).getTime() > 30 * MIN, `${row.type}: recorded well after it occurred, and both are kept`);
+        assert.deepEqual([row.recordedByUserId, row.source], [ops.id, 'manual']);
+      }
     });
 
     await test('MA-27-STATIC-APPEND-ONLY-LOCK-ORDER-AND-THE-GATE', async () => {
