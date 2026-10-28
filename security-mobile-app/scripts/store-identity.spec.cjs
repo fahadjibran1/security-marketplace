@@ -42,12 +42,16 @@ test('STORE-01-THE-PERMANENT-S4-IDENTITY', () => {
   assert.equal(expo.android.package, 'com.sfour.s4');
   assert.equal(expo.ios.bundleIdentifier, 'com.sfour.s4');
   assert.equal(expo.scheme, 's4security');
-  assert.equal(expo.version, '1.1.0');
-  // Welfare Check push update (23 Oct 2026): Android versionCode 17 and iOS build 16 for the same store identity. The
-  // pilot update (Android 16, iOS 15, both built from e539b89) is superseded; 14 is in Play Internal Testing and 13 in
-  // App Store Connect, so no earlier number can be reused.
-  assert.equal(expo.android.versionCode, 17);
-  assert.equal(expo.ios.buildNumber, '16');
+  // Maintenance release (25 Oct 2026): 1.1.1, Android versionCode 19 and iOS build 18 for the same store identity, with
+  // the push-registration loop fix. The Guard notifications update (Android 18 in Play Internal Testing, iOS 17 in
+  // TestFlight, owner-confirmed 25 Oct 2026) stays distributed until these are built; no earlier number can be reused.
+  assert.equal(expo.version, '1.1.1');
+  assert.equal(expo.android.versionCode, 19);
+  assert.equal(expo.ios.buildNumber, '18');
+  assert.ok(expo.android.versionCode > 18, 'above the distributed Android 18');
+  assert.ok(Number(expo.ios.buildNumber) > 17, 'above the distributed iOS 17');
+  assert.ok(expo.android.versionCode > 17, 'above the distributed Android 17');
+  assert.ok(Number(expo.ios.buildNumber) > 16, 'above the distributed iOS 16');
 });
 
 test('STORE-02-THE-EXISTING-EAS-PROJECT-IS-KEPT-AND-OTA-STAYS-OFF', () => {
@@ -181,7 +185,7 @@ test('STORE-08-ONE-PRODUCT-NAME-FOR-EVERY-ROLE', () => {
 
 test('STORE-09-IOS-IDENTITY-IS-SET-AND-NOTHING-IS-BUILT', () => {
   assert.equal(expo.ios.bundleIdentifier, 'com.sfour.s4');
-  assert.equal(expo.ios.buildNumber, '16');
+  assert.equal(expo.ios.buildNumber, '18');
   assert.equal(expo.ios.infoPlist.ITSAppUsesNonExemptEncryption, false);
   assert.equal(expo.ios.config.usesNonExemptEncryption, false);
   // No hand-written usage strings that could drift from the plugin's, and none for unused capabilities.

@@ -32,38 +32,53 @@
     "keySizeNote": "Corrected 2026-10-20 from 2048: keytool on the keystore and jarsigner on the 1.1.0 (15) AAB both report a 4096-bit RSA key. The certificate SHA-256 (which covers the public key) was always correct; only the size field was mis-recorded."
   },
   "expectedRelease": {
-    "versionName": "1.1.0",
-    "versionCode": 17,
+    "versionName": "1.1.1",
+    "versionCode": 19,
     "minSdkVersion": 24
   },
   "approvedArtefact": {
-    "versionName": "1.1.0",
-    "versionCode": 17,
-    "status": "certified-awaiting-play",
-    "easBuildId": "dd77f96d-44cd-4d60-aa61-45f2b9a059ee",
-    "easBuildUrl": "https://expo.dev/accounts/fahadjibran/projects/security-marketplace/builds/dd77f96d-44cd-4d60-aa61-45f2b9a059ee",
+    "versionName": "1.1.1",
+    "versionCode": 19,
+    "status": "distributed",
+    "easBuildId": "b0506fbb-8644-4c51-b509-987b3d6b5796",
+    "easBuildUrl": "https://expo.dev/accounts/fahadjibran/projects/security-marketplace/builds/b0506fbb-8644-4c51-b509-987b3d6b5796",
     "easBuildProfile": "production",
     "distribution": "STORE",
-    "gitCommit": "5a562f163a613dc780871345ee9e55d1ac1f24ef",
-    "aabFilename": "s4-1.1.0-vc17-dd77f96d.aab",
-    "aabSha256": "c82e0c40ea67ad4eb7c2ad42408973462bca3e3dcec29a312c5f82999934f9fa",
-    "aabSizeBytes": 59094503,
+    "sourceBranch": "fix/push-registration-loop",
+    "sourceFixCommit": "808a55c2d7f2bc8a803a3f23a18d6d24123922ac",
+    "gitCommit": "1a6c856504c64bf41758fb1cfd73bf81dfd06040",
+    "aabFilename": "s4-1.1.1-vc19-b0506fbb.aab",
+    "aabSha256": "168c3f116ad84be0b41225ac5658b815968d7af5006e9ccd012e8a0363f731ca",
+    "aabSizeBytes": 59102350,
+    "requiredUploadCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
     "uploadCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
-    "completedAt": "2026-10-24T00:19:13Z",
-    "certifiedOn": "2026-10-24",
+    "certifiedOn": "2026-10-26",
     "verified": {
       "package": "com.sfour.s4",
-      "versionCode": 17,
-      "versionName": "1.1.0",
-      "postNotificationsPermission": true,
-      "firebaseMessagingService": true,
-      "firebaseProject": "sfour4-fe7fd (project number 852895409327, from google_app_id in resources)",
-      "defaultNotificationChannel": "welfare-checks",
+      "versionCode": 19,
+      "versionName": "1.1.1",
+      "signerCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
+      "signerCheck": "scripts/verify-apk-signer.cjs: upload certificate equal to the permanent S4 key, the same as vc17 and vc18 (vc18 re-checked in the same run)",
       "apiBaseUrl": "https://security-marketplace-api.onrender.com",
       "stagingApiUrls": 0,
-      "localApiUrls": "one: the web-only localhost development fallback in src/services/api-base-url.ts (since 5c2d901, unchanged), never used by a native build that sets EXPO_PUBLIC_API_URL"
+      "guardInboxInBundle": "yes: 'guard_notification' and the 'shift-updates' channel id are in the JS bundle",
+      "pushRegistrationFixInBundle": "yes: the fix's 'screen could not refresh' note is in the JS bundle"
     },
-    "note": "Welfare Check push update 1.1.0 (17) from feature/welfare-push 5a562f1 (draft PR #32, unmerged), production API. Built by EAS with the local upload key from the git-ignored credentials.json (copied into the build tree for the build and removed straight after; not regenerated or rotated) and the Firebase client file from the EAS production file variable GOOGLE_SERVICES_JSON. Certified locally from the downloaded AAB: compiled manifest, resources, JS bundle and signer via keytool -printcert. Not uploaded to Google Play; the AAB is kept outside Git in the owner secrets artifacts folder. Push reminders also need the backend (PR #32, Migration 65) and the reminder switch, neither of which is live."
+    "note": "Maintenance release 1.1.1 (19): the distributed 1.1.0 (18) plus the push-registration loop fix (808a55c). Built by EAS (b0506fbb, production profile, STORE) from 1a6c856 on fix/push-registration-loop (draft PR #42), owner-approved, with the existing upload key; nothing was generated or replaced. Certified locally from the downloaded AAB: manifest (com.sfour.s4, versionCode 19, versionName 1.1.1), JS bundle (production API, no staging API, Guard inbox, the fix), and the signer certificate through scripts/verify-apk-signer.cjs, full SHA-256 equal to the vc17 and vc18 upload certificate. Uploaded by the owner to Google Play Internal Testing (owner-approved 26 Oct 2026) and in the field: production push_devices shows two Android devices on appVersion 1.1.1 (observed 27 Oct 2026). Play Console active release 1.1.1 (19); 1.1.0 (18) is superseded.",
+    "playInternalTesting": {
+      "status": "active",
+      "confirmedBy": "owner",
+      "confirmedOn": "2026-10-26",
+      "evidence": "owner uploaded to Play Internal Testing (approved 26 Oct); production devices report 1.1.1",
+      "productionDevices": {
+        "source": "production push_devices",
+        "platform": "android",
+        "appVersion": "1.1.1",
+        "devices": 2,
+        "observedOn": "2026-10-27"
+      },
+      "note": "The owner uploaded 1.1.1 (19) to Google Play Internal Testing on approval (26 Oct 2026); production push_devices then showed two Android devices reporting appVersion 1.1.1, consistent with that release. The uploaded file's hash was not read back from Play Console. Not inspected from the build machine."
+    }
   },
   "retiredArtefacts": [
     {
@@ -153,6 +168,88 @@
       "note": "Pilot update 1.1.0 (16) from e539b89, built by EAS with the local upload key from the git-ignored credentials.json (not regenerated or rotated). On 23 Oct 2026 the downloaded AAB was hashed and its signer read with keytool -printcert (the permanent S4 certificate); the AAB was not kept. It carries no push notifications.",
       "retiredOn": "2026-10-23",
       "retiredReason": "Superseded by versionCode 17, which adds Welfare Check push notifications (I'm Safe / Need Help) on the same identity and signer. Whether 16 was uploaded to Google Play Internal Testing is to be confirmed by the owner; 17 is above it either way."
+    },
+    {
+      "versionName": "1.1.0",
+      "versionCode": 17,
+      "status": "distributed-superseded",
+      "easBuildId": "dd77f96d-44cd-4d60-aa61-45f2b9a059ee",
+      "easBuildUrl": "https://expo.dev/accounts/fahadjibran/projects/security-marketplace/builds/dd77f96d-44cd-4d60-aa61-45f2b9a059ee",
+      "easBuildProfile": "production",
+      "distribution": "STORE",
+      "gitCommit": "5a562f163a613dc780871345ee9e55d1ac1f24ef",
+      "aabFilename": "s4-1.1.0-vc17-dd77f96d.aab",
+      "aabSha256": "c82e0c40ea67ad4eb7c2ad42408973462bca3e3dcec29a312c5f82999934f9fa",
+      "aabSizeBytes": 59094503,
+      "uploadCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
+      "completedAt": "2026-10-24T00:19:13Z",
+      "certifiedOn": "2026-10-24",
+      "verified": {
+        "package": "com.sfour.s4",
+        "versionCode": 17,
+        "versionName": "1.1.0",
+        "postNotificationsPermission": true,
+        "firebaseMessagingService": true,
+        "firebaseProject": "sfour4-fe7fd (project number 852895409327, from google_app_id in resources)",
+        "defaultNotificationChannel": "welfare-checks",
+        "apiBaseUrl": "https://security-marketplace-api.onrender.com",
+        "stagingApiUrls": 0,
+        "localApiUrls": "one: the web-only localhost development fallback in src/services/api-base-url.ts (since 5c2d901, unchanged), never used by a native build that sets EXPO_PUBLIC_API_URL"
+      },
+      "note": "Welfare Check push update 1.1.0 (17) from feature/welfare-push 5a562f1 (draft PR #32, unmerged), production API. Built by EAS with the local upload key from the git-ignored credentials.json (copied into the build tree for the build and removed straight after; not regenerated or rotated) and the Firebase client file from the EAS production file variable GOOGLE_SERVICES_JSON. Certified locally from the downloaded AAB: compiled manifest, resources, JS bundle and signer via keytool -printcert. The AAB is kept outside Git in the owner secrets artifacts folder. Push reminders also need the backend (PR #32, Migration 65) and the reminder switch, neither of which is live.",
+      "playInternalTesting": {
+        "status": "uploaded",
+        "confirmedBy": "owner",
+        "confirmedOn": "2026-10-24",
+        "note": "Owner-confirmed 24 Oct 2026: versionCode 17 was uploaded to Google Play Internal Testing. Not inspected from the build machine (its Google login has no Play developer account)."
+      },
+      "retiredOn": "2026-10-25",
+      "retiredReason": "Superseded by versionCode 18, which adds the Guard notifications inbox and Guard notification push taps (PR #34) on top of the Welfare Check push release, on the same identity and signer. versionCode 17 was uploaded to Google Play Internal Testing (owner-confirmed 24 Oct 2026), so it can never be reused; its build, hash and signer are kept exactly."
+    },
+    {
+      "versionName": "1.1.0",
+      "versionCode": 18,
+      "status": "distributed-superseded",
+      "easBuildId": "1b76ec3f-0445-4d33-8f06-c379f31d1118",
+      "easBuildUrl": "https://expo.dev/accounts/fahadjibran/projects/security-marketplace/builds/1b76ec3f-0445-4d33-8f06-c379f31d1118",
+      "easBuildProfile": "production",
+      "distribution": "STORE",
+      "gitCommit": "c5a4f4099937b23228c355a8e70a687658ad887b",
+      "easFingerprint": "e011250a2212c3c322d1eea12961fdb583a4b6a9",
+      "aabFilename": "s4-1.1.0-vc18-1b76ec3f.aab",
+      "aabSha256": "936bfe7531dfd94fa4afc5006b7d6755ef5b9d07e8e3a21c0baa67dd6a4f4bc8",
+      "aabSizeBytes": 59101459,
+      "uploadCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
+      "completedAt": "2026-10-25T04:49:19Z",
+      "certifiedOn": "2026-10-25",
+      "verified": {
+        "package": "com.sfour.s4",
+        "versionCode": 18,
+        "versionName": "1.1.0",
+        "minSdkVersion": 24,
+        "targetSdkVersion": 36,
+        "debuggable": false,
+        "postNotificationsPermission": true,
+        "firebaseMessagingService": true,
+        "firebaseProject": "sfour4-fe7fd (project number 852895409327, from resources)",
+        "defaultNotificationChannel": "welfare-checks",
+        "signerCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
+        "signerSubject": "C=GB, O=Vesoft Services Limited, OU=S4 Pilot, CN=S4 Security (RSA 4096)",
+        "apiBaseUrl": "https://security-marketplace-api.onrender.com",
+        "stagingApiUrls": 0,
+        "localApiUrls": "one: the web-only localhost development fallback in src/services/api-base-url.ts, never used by a native build that sets EXPO_PUBLIC_API_URL",
+        "guardInboxInBundle": "yes: 'guard_notification' and the 'shift-updates' channel id are in the JS bundle; 'welfare-checks' unchanged"
+      },
+      "note": "Guard notifications update 1.1.0 (18) from feature/guard-inbox c5a4f40 (draft PR #34, unmerged; contains release head 77cc18d), production API. Built by EAS with the existing upload key through credentialsSource local: the owner-authorised temporary copies of credentials.json and the keystore were placed by the main session, used only by the EAS build, and deleted straight after (originals unchanged); nothing was generated or replaced. Firebase client file from the EAS production file variable GOOGLE_SERVICES_JSON. Certified locally from the downloaded AAB: proto manifest, resources, JS bundle, and the signer certificate from META-INF/S4-PILOT.RSA (openssl), full SHA-256 equal to the vc17 upload certificate. Uploaded by the owner to Google Play Internal Testing (the certified AAB, SHA-256 above) and active there, owner-confirmed 25 Oct 2026.",
+      "playInternalTesting": {
+        "status": "active",
+        "confirmedBy": "owner",
+        "confirmedOn": "2026-10-25",
+        "uploadedAabSha256": "936bfe7531dfd94fa4afc5006b7d6755ef5b9d07e8e3a21c0baa67dd6a4f4bc8",
+        "note": "Owner-confirmed 25 Oct 2026: 1.1.0 (18) is Active in Google Play Internal Testing and available to the internal testers. The owner uploaded the certified AAB from EAS 1b76ec3f. Not inspected from the build machine."
+      },
+      "retiredOn": "2026-10-26",
+      "retiredReason": "Superseded by versionCode 19 (1.1.1), which adds the push-registration loop fix (808a55c) on the same identity and upload key. versionCode 18 was Active in Google Play Internal Testing (owner-confirmed 25 Oct 2026), so it can never be reused; its build, hash, signer and Play facts are kept exactly."
     }
   ],
   "playAppSigning": {
@@ -209,8 +306,8 @@
     "app": "S4 (com.sfour.s4)",
     "internalTesting": {
       "testers": 5,
-      "activeRelease": "1.1.0 (14)"
+      "activeRelease": "1.1.1 (19)"
     },
-    "source": "Owner-confirmed 2026-10-20. Not inspected from the build machine."
+    "source": "Owner-confirmed 2026-10-20 (account, testers); active release 1.1.0 (18) owner-confirmed 2026-10-25; active release 1.1.1 (19): owner uploaded to Play Internal Testing (approved 26 Oct); production devices report 1.1.1 (production push_devices, 27 Oct 2026). Not inspected from the build machine."
   }
 }

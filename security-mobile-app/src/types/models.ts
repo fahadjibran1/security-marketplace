@@ -1984,7 +1984,17 @@ export interface Notification {
     | 'timesheet_approved'
     | 'timesheet_rejected'
     | 'compliance_alert'
-    | 'alert_raised';
+    | 'alert_raised'
+    | 'shift_amendment_requested'
+    | 'shift_amendment_responded'
+    | 'shift_amendment_disputed'
+    | 'shift_amendment_expired'
+    | 'shift_offered'
+    | 'shift_offer_withdrawn'
+    | 'shift_reacceptance_required'
+    | 'shift_replaced'
+    // A newer server may add types; the Guard inbox shows them with the server's own title and message.
+    | (string & {});
   title: string;
   message: string;
   status: 'unread' | 'read';
