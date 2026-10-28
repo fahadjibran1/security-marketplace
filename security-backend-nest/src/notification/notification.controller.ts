@@ -22,7 +22,7 @@ export class NotificationController {
       return this.notificationService.findMine(req.user.sub);
     }
 
-    return this.notificationService.findForCompany(req.user.sub);
+    return this.notificationService.findForCompany(req.user.sub, req.user.role);
   }
 
   @Patch(':id/read')

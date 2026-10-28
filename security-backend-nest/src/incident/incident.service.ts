@@ -127,6 +127,11 @@ export class IncidentService {
     return this.applyStatusUpdate(userId, incident, status, resolution);
   }
 
+  /** incidents.manage in the caller's own company (Owner, Admin, Operations, Control Room); fails closed otherwise. */
+  async assertMayManageIncidents(userId: number, userRole: UserRole): Promise<void> {
+    await this.membershipService.resolveCompanyContext(userId, userRole, CompanyPermission.INCIDENTS_MANAGE);
+  }
+
   async updateStatusForCompany(
     userId: number,
     userRole: UserRole,

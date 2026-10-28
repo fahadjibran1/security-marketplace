@@ -492,6 +492,20 @@ test('SUI-14-DASHBOARD-WIRING', () => {
   assert.ok(screen.includes("case 'staff':\n        return canManageStaff ? <CompanyStaffWorkspace /> : null;"), 'and never rendered without it');
 });
 
+test('SUI-16-DASHBOARD-LOADS-ONLY-WHAT-THE-MEMBER-MAY-READ', () => {
+  // An invited Control Room member has no screening.view: the dashboard must not request screening outcomes (a 403
+  // shown as a failed source on every load). Everyone with screening.view still loads them.
+  const screen = read('src/screens/CompanyDashboardScreen.tsx');
+  assert.ok(screen.includes('const canViewScreening = compliancePermissions.canViewScreening;'));
+  assert.ok(/\.\.\.\(canViewScreening\s*\?\s*\[\{\s*label: 'screening outcomes',\s*run: listCompanyScreeningOutcomes,/.test(screen), 'gated on screening.view');
+  assert.ok(/companyMobileLayoutDisabled, canViewCompliance, canViewScreening\]/.test(screen), 'and re-evaluated when the permission changes');
+  const model = loadTs('src/components/company/compliance-model.ts');
+  const resolve = model.resolveCompliancePermissions;
+  assert.equal(resolve(['shifts.view', 'compliance.view', 'incidents.manage'], 'company_staff').canViewScreening, false, 'Control Room');
+  assert.equal(resolve(['screening.view'], 'company_staff').canViewScreening, true, 'Operations');
+  assert.equal(resolve(undefined, 'company_admin').canViewScreening, true, 'legacy owner session');
+});
+
 test('SUI-15-RELEASE-WIRING', () => {
   const pkg = JSON.parse(read('package.json'));
   assert.equal(pkg.scripts['test:company-staff-ui'], 'node scripts/company-staff-ui.spec.cjs');

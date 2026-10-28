@@ -1299,6 +1299,7 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
     [user?.companyPermissions, user?.role],
   );
   const canViewCompliance = compliancePermissions.canView;
+  const canViewScreening = compliancePermissions.canViewScreening;
   // shifts.manage, resolved the same way the dashboard already resolves guards.manage and
   // payroll.manage: the session list when present, the legacy owner roles only when it is absent.
   /**
@@ -1637,11 +1638,15 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
             run: listGuardInvitations,
             apply: (value: CompanyGuardInvitation[]) => setGuardInvitations(value),
           },
-          {
-            label: 'screening outcomes',
-            run: listCompanyScreeningOutcomes,
-            apply: (value: CompanyScreeningOutcome[]) => setScreeningOutcomes(value),
-          },
+          // screening.view only (Owner, Admin, Operations, HR, …). A Control Room member does not hold it, so the
+          // request would be a 403 shown as a failed source on every load; it is simply not made.
+          ...(canViewScreening
+            ? [{
+              label: 'screening outcomes',
+              run: listCompanyScreeningOutcomes,
+              apply: (value: CompanyScreeningOutcome[]) => setScreeningOutcomes(value),
+            }]
+            : []),
         ], isCurrent);
         if (!isCurrent()) return;
 
@@ -1755,7 +1760,7 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
     // `selectedShiftId` is deliberately NOT a dependency any more: the loader no longer reads it, and
     // keeping it here made this callback — and therefore the whole load — re-run every time the operator
     // opened or closed a shift.
-    [activeSection, runSettledLoaders, selectedSiteId, companyMobileLayoutDisabled, canViewCompliance],
+    [activeSection, runSettledLoaders, selectedSiteId, companyMobileLayoutDisabled, canViewCompliance, canViewScreening],
   );
 
   /**

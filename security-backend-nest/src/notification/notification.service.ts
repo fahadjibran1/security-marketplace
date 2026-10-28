@@ -7,6 +7,8 @@ import {
   NotificationType,
 } from './entities/notification.entity';
 import { CompanyService } from '../company/company.service';
+import { CompanyMembershipService } from '../company-membership/company-membership.service';
+import { UserRole } from '../user/entities/user.entity';
 
 type NotificationInput = {
   userId: number;
@@ -23,6 +25,7 @@ export class NotificationService {
     @InjectRepository(Notification)
     private readonly notificationRepo: Repository<Notification>,
     private readonly companyService: CompanyService,
+    private readonly membershipService: CompanyMembershipService,
   ) {}
 
   createForUser(input: NotificationInput): Promise<Notification> {
@@ -67,12 +70,24 @@ export class NotificationService {
     });
   }
 
-  async findForCompany(userId: number): Promise<Notification[]> {
+  /**
+   * The company account holder sees every notification of their company, as before. An invited member (no
+   * companies.userId) used to get 404 here, which the dashboard showed as a failed source on every load; they now
+   * get the notifications addressed to THEM inside their own company — never anyone else's, so no permission is
+   * widened. CompanyMembershipService fails closed on a suspended or removed membership.
+   */
+  async findForCompany(userId: number, userRole?: UserRole): Promise<Notification[]> {
     const company = await this.companyService.findByUserId(userId);
-    if (!company) throw new NotFoundException('Company not found');
-
+    if (company) {
+      return this.notificationRepo.find({
+        where: { company: { id: company.id } },
+        order: { createdAt: 'DESC' },
+      });
+    }
+    if (!userRole) throw new NotFoundException('Company not found');
+    const { company: memberCompany } = await this.membershipService.resolveCompanyContext(userId, userRole);
     return this.notificationRepo.find({
-      where: { company: { id: company.id } },
+      where: { company: { id: memberCompany.id }, user: { id: userId } },
       order: { createdAt: 'DESC' },
     });
   }

@@ -31,6 +31,14 @@
  *   CS-16  history: ids, actions, actors, targets, timestamps; nothing but the whitelisted fields; Owner/Admin only
  *   CS-17  no invitation token in any response, audit row or table; the email escapes company-entered text
  *   CS-18  wiring: module, routes, release gate, CI database
+ *   CS-19  the Control Room / Operations / Admin job as INVITED members (never the account holder): every dashboard
+ *          load call, Live Operations projection, alerts, incidents, daily logs, Close without Book Off, manual Book
+ *          On / Off, extensions, Mark Missed — the full status matrix, 403 only where the membership lacks the
+ *          permission or under the documented owner-only rule for non-compliance alerts
+ *   CS-20  the widened route guards (incident status, Mark Missed / shift edit, replace Guard) still refuse Viewer,
+ *          Finance, HR, Guards, platform admins, Control Room (shifts.manage), suspended members and other companies
+ *   CS-21  /notifications/company: an invited member sees only notifications addressed to them in their company
+ *   CS-22  the actions took effect, recorded against the member who performed them
  *
  * Needs COMPANY_STAFF_DATABASE_URL pointing at a DISPOSABLE local database — it drops the schema.
  */
@@ -645,6 +653,229 @@ async function main() {
       assert.ok(mail.html.includes('&lt;script&gt;alert(1)&lt;/script&gt; &amp; Co'));
       assert.match(mail.subject, /\bS4\b/);
       assert.doesNotMatch(mail.text + mail.html, /S4 Security|S4 Guard|Security Marketplace/);
+    });
+
+    // ═══ CS-19..CS-22: the Control Room / Operations / Admin job, as INVITED members (never the account holder) ═══
+    const { complianceToday } = await import('../src/compliance/compliance-dates');
+    const MIN = 60_000;
+    const HOUR = 60 * MIN;
+    const ukDay = (n: number) => {
+      const [y, m, d] = complianceToday().split('-').map(Number);
+      return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
+    };
+    const ts = (ms: number) => new Date(ms).toISOString().replace('T', ' ').replace('Z', '');
+    const minute = (ms: number) => Math.floor(ms / MIN) * MIN;
+    /** Invited through the real flow and accepted with their own password, then a normal web sign-in. */
+    const invited = async (label: string, role: string) => {
+      const email = `${label}@example.invalid`;
+      expect(await api('POST', '/company-staff/invitations', A.token, { email, role }), 201, `invite ${label}`);
+      expect(await accept(linkFor(email)!.token, { newPassword: `${label}-own-pass-1`, firstName: label, lastName: 'Job' }), 200, `accept ${label}`);
+      const id = Number((await one(`SELECT id FROM users WHERE email = $1`, [email])).id);
+      return { id, email, token: await login(email, `${label}-own-pass-1`) };
+    };
+    const jobControl = await invited('job.control', 'control_room');
+    const jobOps = await invited('job.ops', 'operations');
+    const jobAdmin = await invited('job.admin', 'admin');
+    expect(await api('PUT', `/attendance/control-room/${jobControl.id}`, A.token, { canManageAttendance: true }), 200);
+    expect(await api('PUT', `/shift-amendments/control-room/${jobControl.id}`, A.token, { canAmendShifts: true }), 200);
+    jobControl.token = await login(jobControl.email, 'job.control-own-pass-1');
+
+    const clientId = Number((await one(`INSERT INTO clients ("companyId", name) VALUES ($1, 'Job Client') RETURNING id`, [A.id])).id);
+    const siteId = Number((await one(`INSERT INTO sites ("companyId","clientId",name,address,timezone,"welfareCheckIntervalMinutes")
+      VALUES ($1,$2,'Job Site','3 Quay','Europe/London',60) RETURNING id`, [A.id, clientId])).id);
+    let gn = 0;
+    const jobGuard = async () => {
+      gn += 1;
+      const email = `job.guard${gn}@example.invalid`;
+      const userId = await user(email, 'guard');
+      const licence = `87000000000000${String(gn).padStart(2, '0')}`;
+      const { id } = await one(`INSERT INTO guard_profiles ("userId","fullName","siaLicenseNumber","siaExpiryDate","rightToWorkStatus",phone)
+        VALUES ($1,$2,$3,$4,'british',$5) RETURNING id`, [userId, `Job Guard ${gn}`, licence, ukDay(500), `0771090${String(gn).padStart(4, '0')}`]);
+      await q(`INSERT INTO company_guards ("companyId","guardId",status,"relationshipType") VALUES ($1,$2,'ACTIVE','EMPLOYEE')`, [A.id, id]);
+      for (const type of ['sia_licence', 'right_to_work']) {
+        await q(`INSERT INTO guard_documents ("guardId","companyId",type,"storageProvider","storageKey","originalFileName","mimeType","sizeBytes","uploadCompletedAt",verified,"uploadedByUserId","verifiedByUserId","verifiedAt")
+          VALUES ($1,$2,$3,'s3-compatible',$4,'e.pdf','application/pdf','1024',now(),true,null,null,now())`, [id, A.id, type, `job/${A.id}/${id}/${type}`]);
+      }
+      for (const body of [
+        { guardId: id, kind: 'sia', outcome: 'confirmed', checkDate: ukDay(0), checkedByName: 'Spec Checker', evidenceReference: 'HR/spec', method: 'sia_public_register', licenceNumber: licence, expiryDate: ukDay(400) },
+        { guardId: id, kind: 'right_to_work', outcome: 'confirmed', checkDate: ukDay(0), checkedByName: 'Spec Checker', evidenceReference: 'HR/spec', method: 'manual_document', rightToWorkExcuse: 'continuous' },
+      ]) {
+        expect(await api('POST', '/compliance/checks', A.token, body), 201, `compliance ${body.kind}`);
+      }
+      return Number(id);
+    };
+    const mkShift = async (guardId: number | null, status: string, startH: number, hours = 8) => {
+      const start = minute(Date.now() + startH * HOUR);
+      const end = start + hours * HOUR;
+      const { id } = await one(`INSERT INTO shifts ("companyId","siteId","siteName","guardId",status,start,"end","checkCallIntervalMinutes")
+        VALUES ($1,$2,'Job Site',$3,$4,$5,$6,60) RETURNING id`, [A.id, siteId, guardId, status, ts(start), ts(end)]);
+      return { id: Number(id), start, end };
+    };
+    const bookedOn = async (guardId: number, shiftId: number, atMs: number) =>
+      q(`INSERT INTO attendance_events ("shiftId","guardId",type,"occurredAt","recordedAt","gpsVerified") VALUES ($1,$2,'check-in',$3,$3,true)`, [shiftId, guardId, ts(atMs)]);
+
+    /** One complete Control Room working set per actor, so one actor's actions never change another's fixtures. */
+    const workingSet = async () => {
+      const [g1, g2, g3, g4, g5] = [await jobGuard(), await jobGuard(), await jobGuard(), await jobGuard(), await jobGuard()];
+      const ready = await mkShift(g1, 'ready', -0.25);
+      const live = await mkShift(g2, 'in_progress', -2);
+      await bookedOn(g2, live.id, live.start);
+      const bookOff = await mkShift(g3, 'in_progress', -3);
+      await bookedOn(g3, bookOff.id, bookOff.start);
+      const overdue = await mkShift(g4, 'in_progress', -10, 8);
+      await bookedOn(g4, overdue.id, overdue.start);
+      const noShow = await mkShift(g5, 'ready', -0.75);
+      const panic = Number((await one(`INSERT INTO safety_alerts ("companyId","guardId","shiftId",type,priority,status,message)
+        VALUES ($1,$2,$3,'panic','critical','open','SOS') RETURNING id`, [A.id, g2, live.id])).id);
+      const welfare = Number((await one(`INSERT INTO safety_alerts ("companyId","guardId","shiftId",type,priority,status,message)
+        VALUES ($1,$2,$3,'missed_checkcall','high','open','Welfare Check missed') RETURNING id`, [A.id, g2, live.id])).id);
+      const incident = Number((await one(`INSERT INTO incidents ("companyId","guardId","shiftId","siteId",title,notes)
+        VALUES ($1,$2,$3,$4,'Gate damaged','Reported by guard') RETURNING id`, [A.id, g2, live.id, siteId])).id);
+      await q(`INSERT INTO daily_logs ("companyId","guardId","shiftId",message,"logType") VALUES ($1,$2,$3,'All quiet','welfare_check')`, [A.id, g2, live.id]);
+      return { ready, live, bookOff, overdue, noShow, panic, welfare, incident };
+    };
+
+    type Actor = { name: string; token: string };
+    const actors: Actor[] = [
+      { name: 'control_room', token: jobControl.token },
+      { name: 'operations', token: jobOps.token },
+      { name: 'admin', token: jobAdmin.token },
+    ];
+    const matrix: Record<string, Record<string, number>> = {};
+    const record = (endpoint: string, actor: string, status: number) => {
+      (matrix[endpoint] ??= {})[actor] = status;
+    };
+    const REASON = 'Guard phone battery failed; confirmed by phone call';
+    for (const actor of actors) {
+      const set = await workingSet();
+      const ids = [set.ready.id, set.live.id, set.bookOff.id, set.overdue.id, set.noShow.id].join(',');
+      const reads: Array<[string, string]> = [
+        ['GET /auth/me', '/auth/me'],
+        ['GET /clients', '/clients'],
+        ['GET /sites', '/sites'],
+        ['GET /shifts', '/shifts'],
+        ['GET /coverage/shifts?uncoveredOnly', '/coverage/shifts?uncoveredOnly=true'],
+        ['GET /guards', '/guards'],
+        ['GET /company-guards', '/company-guards'],
+        ['GET /company-guards/invitations', '/company-guards/invitations'],
+        ['GET /screening/company/outcomes', '/screening/company/outcomes'],
+        ['GET /coverage/operations', `/coverage/operations?shiftIds=${ids}`],
+        ['GET /attendance/company', '/attendance/company'],
+        ['GET /timesheets/company', '/timesheets/company'],
+        ['GET /incidents/company', '/incidents/company'],
+        ['GET /alerts/company', '/alerts/company'],
+        ['GET /daily-logs/company', '/daily-logs/company'],
+        ['GET /notifications/company', '/notifications/company'],
+        ['GET /compliance/statuses', '/compliance/statuses'],
+        ['GET /shifts/reconciliations', `/shifts/reconciliations?shiftIds=${ids}`],
+        ['GET /shift-amendments/policy', '/shift-amendments/policy'],
+        ['GET /shift-amendments/staff', '/shift-amendments/staff'],
+        ['GET /attendance/manual/capabilities', '/attendance/manual/capabilities'],
+        ['GET /shifts/:id', `/shifts/${set.live.id}`],
+        ['GET /shifts/:id/amendments', `/shifts/${set.live.id}/amendments`],
+        ['GET /attendance/shifts/:id/history', `/attendance/shifts/${set.live.id}/history`],
+        ['GET /alerts/:id/resolution-reasons', `/alerts/${set.welfare}/resolution-reasons`],
+        ['GET /incidents/resolution-reasons', '/incidents/resolution-reasons'],
+      ];
+      for (const [label, path] of reads) record(label, actor.name, (await api('GET', path, actor.token)).status);
+      const writes: Array<[string, string, string, unknown]> = [
+        ['PATCH /alerts/:id/ack (panic)', 'PATCH', `/alerts/${set.panic}/ack`, undefined],
+        ['PATCH /alerts/:id/close (welfare)', 'PATCH', `/alerts/${set.welfare}/close`, { resolutionReason: 'guard_confirmed_safe', resolutionNote: 'Called the Guard, all well' }],
+        ['PATCH /incidents/:id/status', 'PATCH', `/incidents/${set.incident}/status`, { status: 'in_review' }],
+        ['POST reconcile-without-book-off', 'POST', `/shifts/${set.overdue.id}/reconcile-without-book-off`, { reason: 'guard_forgot_book_off' }],
+        ['POST manual book-on', 'POST', '/attendance/manual/book-on', { shiftId: set.ready.id, occurredAt: new Date(Date.now() - MIN).toISOString(), reason: REASON, verificationMethod: 'phone_call' }],
+        ['POST manual book-off', 'POST', '/attendance/manual/book-off', { shiftId: set.bookOff.id, occurredAt: new Date(Date.now() - MIN).toISOString(), reason: REASON, verificationMethod: 'phone_call' }],
+        ['POST shift extension', 'POST', `/shifts/${set.live.id}/amendments`, { proposedEnd: new Date(set.live.end + HOUR).toISOString(), reason: 'Relief officer delayed by traffic' }],
+        ['PATCH /shifts/:id (Mark Missed)', 'PATCH', `/shifts/${set.noShow.id}`, { status: 'missed', reason: 'Guard unreachable; client confirmed nobody on site' }],
+      ];
+      for (const [label, method, path, body] of writes) {
+        const r = await api(method, path, actor.token, body);
+        record(label, actor.name, r.status);
+        if (r.status >= 400 && r.status !== 403) console.log(`      ${actor.name} ${label}: ${r.status} ${r.text.slice(0, 200)}`);
+      }
+    }
+    console.log('\n      endpoint                                     control_room  operations  admin');
+    for (const [endpoint, row] of Object.entries(matrix)) {
+      console.log(`      ${endpoint.padEnd(45)} ${String(row.control_room).padEnd(13)} ${String(row.operations).padEnd(11)} ${row.admin}`);
+    }
+
+    await test('CS-19-CONTROL-ROOM-OPERATIONS-ADMIN-JOB-MATRIX', () => {
+      // 403 entries are BY DESIGN: the membership lacks the permission (Control Room: screening.view, shifts.manage),
+      // or the documented owner-only rule for non-compliance alerts (S4_COMPLIANCE_PHASE1_ACTIVATION.md §1a), which no
+      // CompanyPermission grants. Everything else must work for an invited member.
+      const ok = (cr: number, ops: number, adm: number) => ({ control_room: cr, operations: ops, admin: adm });
+      const expected: Record<string, Record<string, number>> = {};
+      for (const [label] of Object.entries(matrix)) expected[label] = ok(200, 200, 200);
+      expected['GET /screening/company/outcomes'] = ok(403, 200, 200);
+      expected['GET /alerts/:id/resolution-reasons'] = ok(403, 403, 403);
+      expected['PATCH /alerts/:id/ack (panic)'] = ok(403, 403, 403);
+      expected['PATCH /alerts/:id/close (welfare)'] = ok(403, 403, 403);
+      for (const label of ['POST reconcile-without-book-off', 'POST manual book-on', 'POST manual book-off', 'POST shift extension']) expected[label] = ok(201, 201, 201);
+      expected['PATCH /shifts/:id (Mark Missed)'] = ok(403, 200, 200);
+      assert.deepEqual(matrix, expected);
+    });
+
+    await test('CS-20-WIDENED-GUARDS-STILL-REFUSE-WHAT-THE-MEMBERSHIP-DOES-NOT-GRANT', async () => {
+      const set = await workingSet();
+      const inc = () => one(`SELECT status::text AS status FROM incidents WHERE id = $1`, [set.incident]);
+      const shiftStatus = () => one(`SELECT status FROM shifts WHERE id = $1`, [set.noShow.id]).then((r) => r.status);
+      for (const [who, tok] of [['viewer', viewer.token], ['finance', finance.token], ['hr', hr.token], ['guard', guardToken]] as const) {
+        expect(await api('PATCH', `/incidents/${set.incident}/status`, tok, { status: 'in_review' }), 403, `${who} incident status`);
+        expect(await api('GET', '/incidents/resolution-reasons', tok), 403, `${who} incident reasons`);
+        expect(await api('PATCH', `/shifts/${set.noShow.id}`, tok, { status: 'missed', reason: 'Guard unreachable; client confirmed' }), 403, `${who} Mark Missed`);
+        expect(await api('POST', `/shifts/${set.noShow.id}/replace-guard`, tok, { replacementGuardId: 1, reasonCategory: 'cover_rearranged', reason: 'Cover rearranged' }), 403, `${who} replace guard`);
+      }
+      expect(await api('PATCH', `/shifts/${set.noShow.id}`, jobControl.token, { status: 'missed', reason: 'Guard unreachable; client confirmed' }), 403, 'Control Room has no shifts.manage');
+      expect(await api('PATCH', `/shifts/${set.noShow.id}`, platform, { status: 'missed', reason: 'Guard unreachable; client confirmed' }), 403, 'platform admin');
+      // Another company's Operations member cannot reach company A's shift or incident.
+      const bOps = await member('cs.b.ops', 'operations', B);
+      const bInc = await api('PATCH', `/incidents/${set.incident}/status`, bOps.token, { status: 'in_review' });
+      assert.ok(bInc.status === 400 || bInc.status === 404, `another company's incident: ${bInc.status}`);
+      expect(await api('PATCH', `/shifts/${set.noShow.id}`, bOps.token, { status: 'missed', reason: 'Guard unreachable; client confirmed' }), 404, "another company's shift");
+      assert.equal((await inc()).status, 'open', 'the incident is untouched');
+      assert.equal(await shiftStatus(), 'ready', 'the shift is untouched');
+      // A suspended Operations member loses the widened routes too.
+      const susp = await invited('job.ops.suspended', 'operations');
+      expect(await api('POST', `/company-staff/members/${susp.id}/suspend`, A.token), 200);
+      expect(await api('PATCH', `/incidents/${set.incident}/status`, susp.token, { status: 'in_review' }), 403, 'suspended');
+      expect(await api('PATCH', `/shifts/${set.noShow.id}`, susp.token, { status: 'missed', reason: 'Guard unreachable; client confirmed' }), 403, 'suspended');
+    });
+
+    await test('CS-21-NOTIFICATIONS-A-MEMBER-SEES-ONLY-THEIR-OWN', async () => {
+      const add = (userId: number, companyId: number, title: string) =>
+        q(`INSERT INTO notifications ("userId","companyId",type,title,message) VALUES ($1,$2,'alert_raised',$3,'m')`, [userId, companyId, title]);
+      await add(jobControl.id, A.id, 'for-control');
+      await add(A.ownerId, A.id, 'for-owner');
+      await add(jobOps.id, A.id, 'for-ops');
+      await add(bControl.id, B.id, 'for-b');
+      const titles = async (tok: string) => (await api('GET', '/notifications/company', tok)).body.map((n: any) => n.title).sort();
+      assert.deepEqual(await titles(jobControl.token), ['for-control'], 'only their own');
+      assert.deepEqual(await titles(jobOps.token), ['for-ops']);
+      const owner = await titles(A.token);
+      assert.ok(owner.includes('for-owner') && owner.includes('for-control') && !owner.includes('for-b'), 'the account holder: the whole company, as before');
+      // A Guard has no company: "not found", exactly as before this change.
+      expect(await api('GET', '/notifications/company', guardToken), 404, 'guard');
+      const susp = await one(`SELECT id FROM users WHERE email = 'job.ops.suspended@example.invalid'`);
+      expect(await api('GET', '/notifications/company', await login('job.ops.suspended@example.invalid', 'job.ops.suspended-own-pass-1')), 403, `suspended member ${susp.id}`);
+    });
+
+    await test('CS-22-THE-ACTIONS-TOOK-EFFECT-AS-THE-MEMBER', async () => {
+      const audited = await q(`SELECT DISTINCT a."userId" FROM audit_logs a WHERE a."companyId" = $1 AND a."userId" = ANY($2)`,
+        [A.id, [jobControl.id, jobOps.id, jobAdmin.id]]);
+      assert.equal(audited.length, 3, 'every member is the recorded actor of their own actions');
+      const reconciled = await q(`SELECT count(*)::int AS n FROM shifts WHERE "companyId" = $1 AND status = 'completed' AND "siteId" = $2`, [A.id, siteId]);
+      assert.ok(reconciled[0].n >= 6, 'Close without Book Off and manual Book Off completed shifts for every actor');
+      const events = await q(`SELECT DISTINCT "recordedByUserId" FROM attendance_events WHERE source = 'manual'`);
+      const recorders = new Set(events.map((e) => Number(e.recordedByUserId)));
+      for (const who of [jobControl, jobOps, jobAdmin]) assert.ok(recorders.has(who.id), `manual attendance recorded by ${who.email}`);
+      const amendments = await q(`SELECT DISTINCT "proposedByUserId" FROM shift_amendments`);
+      const proposers = new Set(amendments.map((a) => Number(a.proposedByUserId)));
+      for (const who of [jobControl, jobOps, jobAdmin]) assert.ok(proposers.has(who.id), `extension proposed by ${who.email}`);
+      const missed = await q(`SELECT count(*)::int AS n FROM shifts WHERE "companyId" = $1 AND status = 'missed'`, [A.id]);
+      assert.equal(missed[0].n, 2, 'Mark Missed by Operations and Admin');
+      const reviewed = await q(`SELECT DISTINCT "reviewedByUserId" FROM incidents WHERE status = 'in_review'`);
+      const reviewers = new Set(reviewed.map((r) => Number(r.reviewedByUserId)));
+      for (const who of [jobControl, jobOps, jobAdmin]) assert.ok(reviewers.has(who.id), `incident reviewed by ${who.email}`);
     });
 
     // ═══ CS-18 ═══
