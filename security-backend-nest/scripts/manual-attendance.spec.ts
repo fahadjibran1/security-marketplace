@@ -129,7 +129,7 @@ async function main() {
   } as never);
   await migrator.initialize();
   const migrated = await migrator.runMigrations({ transaction: 'each' });
-  assert.equal(migrated[migrated.length - 1]?.name, 'AddManualAttendance1720900000013', 'the head is Migration 67');
+  assert.equal(migrated[migrated.length - 1]?.name, 'AddPatrolManagement1720900000014', 'the head is Migration 68 (patrols); manual attendance is Migration 67');
   await migrator.destroy();
 
   const { AppModule } = await import('../src/app.module');
@@ -284,7 +284,7 @@ async function main() {
         assert.equal(mayManageAttendance(role, true), expected[role] || role === CompanyMembershipRole.CONTROL_ROOM, `${role} with a grant`);
       }
       assert.equal(mayManageAttendance(CompanyMembershipRole.CONTROL_ROOM, false), false);
-      assert.equal(Object.values(CompanyPermission).length, 37, '36 + attendance.manage');
+      assert.equal(Object.values(CompanyPermission).length, 41, '36 + attendance.manage + the four patrols.* permissions (Migration 68)');
     });
 
     await test('MA-02-CAPABILITIES-PER-ROLE', async () => {

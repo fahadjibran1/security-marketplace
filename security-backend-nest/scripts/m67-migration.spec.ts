@@ -64,7 +64,9 @@ async function main() {
   const through66 = allFiles.filter((f) => Number(f.split('-')[0]) <= 1720900000012).map((f) => path.join(migrationsDir, f));
   const ds = new DataSource({
     type: 'postgres', url, entities: appEntities, synchronize: false, dropSchema: false,
-    migrations: allFiles.map((f) => path.join(migrationsDir, f)), migrationsTableName: 'typeorm_migrations', logging: false,
+    // Migration 68 (patrols) follows 67; this certification stays about 67 alone.
+    migrations: allFiles.filter((f) => Number(f.split('-')[0]) <= 1720900000013).map((f) => path.join(migrationsDir, f)),
+    migrationsTableName: 'typeorm_migrations', logging: false,
   });
   const q = (sql: string, params: unknown[] = []) => ds.query(sql, params);
   const scalar = async (sql: string, params: unknown[] = []) => Object.values((await q(sql, params))[0] ?? {})[0];
@@ -160,8 +162,9 @@ async function main() {
     await test('M67-01-A-66-DATABASE-MIGRATES-TO-67-AND-67-IS-LAST', () => {
       assert.equal(applied.length, 1, 'only 67 is pending on a 66 database');
       assert.equal(applied[0].name, MIGRATION_67);
-      assert.equal(allFiles.length, 67);
+      assert.equal(allFiles.length, 68);
       assert.equal(allFiles[66], '1720900000013-AddManualAttendance.ts');
+      assert.equal(allFiles[67], '1720900000014-AddPatrolManagement.ts', 'Migration 68 follows 67 and is certified by m68-migration.spec.ts');
     });
     const head = await schema();
 
@@ -328,7 +331,10 @@ async function main() {
       const ours = drift.filter((x) => /source|recordedAt|recordedByUserId|verificationMethod|verificationNote|correctionOfEventId|canManageAttendance|verifiedSource|"reason"/.test(x)
         && /attendance_events|company_memberships|timesheets/.test(x) && !/DROP CONSTRAINT|ADD CONSTRAINT|DROP INDEX|CREATE (UNIQUE )?INDEX/.test(x));
       assert.deepEqual(ours, [], `entity and migration 67 disagree:\n${ours.join('\n')}`);
-      const semantic = drift.filter((x) =>
+      // This database stops at 67, so Migration 68's eleven patrol tables and companies.patrolsEnabled are absent by
+      // design (m68-migration.spec.ts M68-10 certifies them); they are set aside statement by statement. Nothing else is.
+      const m68 = /^CREATE TABLE "patrol_(policies|schedules|checkpoints|routes|route_checkpoints|runs|checkpoint_visits|evidence|exceptions|evidence_holds|storage_usage_daily)" |^ALTER TABLE "companies" ADD "patrolsEnabled" /;
+      const semantic = drift.filter((x) => !m68.test(x) &&
         /CREATE TABLE|DROP TABLE|CREATE TYPE|DROP TYPE|ALTER TYPE|ALTER TABLE.*ALTER COLUMN|ALTER TABLE.*DROP COLUMN|ALTER TABLE.*ADD "/i.test(x));
       assert.deepEqual(semantic, [], `semantic drift (the release gate would fail):\n${semantic.join('\n')}`);
       console.log(`      (diagnostic-only drift elsewhere: ${drift.length} statement(s))`);
