@@ -92,12 +92,14 @@ export default function App() {
   }, []);
 
   async function handleLoggedIn(nextSession: AuthSession) {
-    if (getAppSurface(nextSession.user.role) === 'denied') { await logout(); await clearStoredSession(); setSession(null); setAuthNotice('This account role is not supported. Contact an administrator.'); return; }
+    if (getAppSurface(nextSession.user.role) === 'denied') { if ((await logout()) !== false) await clearStoredSession(); setSession(null); setAuthNotice('This account role is not supported. Contact an administrator.'); return; }
     restoreSession(nextSession); if (nextSession.refreshToken) await persistSession({ user: nextSession.user, refreshToken: nextSession.refreshToken }); setAuthNotice(null); setSession(nextSession);
   }
-  async function handleLogout() { await unregisterWelfarePush(); await logout(); await clearStoredSession(); setAuthNotice(null); setSession(null); }
+  // logout() is false only on web, when the stored session now belongs to a different account signed in from another
+  // tab: this tab has already been reset (with its notice) and that account's session must not be cleared.
+  async function handleLogout() { await unregisterWelfarePush(); if ((await logout()) === false) return; await clearStoredSession(); setAuthNotice(null); setSession(null); }
   // Every server session was revoked by the deletion itself, so only local state is left to clear.
-  async function handleAccountDeleted(message: string) { clearLocalSession(); await clearStoredSession(); setSession(null); setAuthNotice(message); }
+  async function handleAccountDeleted(message: string) { if (clearLocalSession() !== false) await clearStoredSession(); setSession(null); setAuthNotice(message); }
   function leaveAccountLink() {
     try { if (IS_WEB && typeof window !== 'undefined') window.history.replaceState(null, '', '/'); } catch { /* best effort */ }
     setAccountLink(null);

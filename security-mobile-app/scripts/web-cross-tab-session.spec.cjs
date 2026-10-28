@@ -124,6 +124,7 @@ function createWorld({ webLocks = true, refreshDelayMs = 15 } = {}) {
     revokedFamilies: new Set(),
     reuseDetected: 0,
     refreshCalls: [],
+    logoutCalls: [],
     concurrentRefreshes: 0,
     maxConcurrentRefreshes: 0,
     refreshMode: 'ok',
@@ -154,7 +155,9 @@ function createWorld({ webLocks = true, refreshDelayMs = 15 } = {}) {
   world.fetch = async (tab, url, init) => {
     const p = url.replace('https://test.example', '');
     const headers = init.headers;
-    const auth = headers && typeof headers.get === 'function' ? headers.get('authorization') : undefined;
+    const auth = !headers ? undefined
+      : typeof headers.get === 'function' ? headers.get('authorization')
+        : headers.Authorization ?? headers.authorization;
     tab.calls.push({ path: p, auth, body: init.body });
     const reply = (status, body) => ({
       ok: status >= 200 && status < 300,
@@ -176,6 +179,13 @@ function createWorld({ webLocks = true, refreshDelayMs = 15 } = {}) {
       server.concurrentRefreshes += 1;
       server.maxConcurrentRefreshes = Math.max(server.maxConcurrentRefreshes, server.concurrentRefreshes);
       try {
+        if (server.refreshMode === 'hang') {
+          // The renewal never answers; only its abort signal ends it, as fetch does. (Without a signal it simply
+          // never settles: the defect the 30 s renewal limit fixes.)
+          await new Promise((_, reject) => {
+            if (init.signal) init.signal.addEventListener('abort', () => reject(Object.assign(new Error('Aborted'), { name: 'AbortError' })));
+          });
+        }
         await sleep(refreshDelayMs);
         if (server.refreshMode === 'unavailable') return reply(503, { message: 'Service Unavailable' });
         const row = server.tokens.get(refreshToken);
@@ -193,6 +203,7 @@ function createWorld({ webLocks = true, refreshDelayMs = 15 } = {}) {
       }
     }
     if (p === '/auth/logout') {
+      server.logoutCalls.push({ tab: tab.name, presented: JSON.parse(init.body).refreshToken });
       const userId = server.accessUser(auth);
       if (!userId) return reply(401, {});
       const { refreshToken } = JSON.parse(init.body);
@@ -206,11 +217,18 @@ function createWorld({ webLocks = true, refreshDelayMs = 15 } = {}) {
     return reply(200, [{ id: 1, servedTo: userId }]);
   };
 
+  ALL_WORLDS.push(world);
   return world;
 }
+/** Every world built by a test; all but the deliberate-reuse ones must end with zero reuse events. */
+const ALL_WORLDS = [];
 
 // ── A tab: the real api.ts in its own context, wired the way App.tsx wires the web app ─────────────
-function openTab(world, name, { platform = 'web' } = {}) {
+/**
+ * fastTimeouts: each 30 s limit inside api.ts fires after 5 ms instead (the same technique as the Guard app 1.1.2
+ * REFRESH-TIMEOUT-KEEPS-SESSION test), so the renewal timeout can be exercised without waiting 30 s.
+ */
+function openTab(world, name, { platform = 'web', fastTimeouts = null } = {}) {
   const tab = { name, calls: [], listeners: [], deaf: false, closed: false, ui: 'booting', notice: null, user: null };
   const storage = world.storageFor(tab);
   const sandbox = {
@@ -218,7 +236,9 @@ function openTab(world, name, { platform = 'web' } = {}) {
     Date: world.FakeDate,
     atob: (s) => Buffer.from(s, 'base64').toString('binary'),
     fetch: (url, init) => world.fetch(tab, url, init),
-    AbortController, setTimeout, clearTimeout, setInterval, clearInterval,
+    AbortController, setInterval, clearInterval,
+    setTimeout: fastTimeouts ? (fn, ms) => { fastTimeouts.push(ms); return setTimeout(fn, ms >= 30_000 ? 5 : ms); } : setTimeout,
+    clearTimeout,
     Headers: class Headers {
       constructor(init) { this._h = {}; if (init) for (const k of Object.keys(init)) this._h[k.toLowerCase()] = init[k]; }
       has(k) { return k.toLowerCase() in this._h; }
@@ -282,7 +302,10 @@ function openTab(world, name, { platform = 'web' } = {}) {
     if (next.refreshToken) await persistSession({ user: next.user, refreshToken: next.refreshToken });
     tab.ui = 'app'; tab.user = next.user; tab.notice = null;
   };
-  tab.signOut = async () => { await api.logout(); await clearStoredSession(); tab.ui = 'login'; tab.user = null; };
+  // App.tsx handleLogout(): false = the stored session is another account's; this tab was reset and must not clear it.
+  tab.signOut = async () => { if ((await api.logout()) === false) return; await clearStoredSession(); tab.ui = 'login'; tab.user = null; };
+  // App.tsx handleAccountDeleted().
+  tab.accountDeleted = async (message) => { if (api.clearLocalSession() !== false) await clearStoredSession(); tab.ui = 'login'; tab.user = null; tab.notice = message; };
   tab.lastAuth = () => [...tab.calls].reverse().find((c) => !c.path.startsWith('/auth/refresh'))?.auth;
 
   world.tabs.push(tab);
@@ -384,7 +407,7 @@ async function signedInTabs(world, count) {
     });
 
     // ── (4) sign-out propagation ───────────────────────────────────────────────────────────────────
-    await test(`SIGN-OUT-PROPAGATES-TO-ALL-TABS [${variant.label}]`, async () => {
+    await test(`SAME-ACCOUNT-SIGN-OUT-PROPAGATES-TO-ALL-TABS [${variant.label}]`, async () => {
       const world = createWorld({ webLocks: variant.webLocks });
       const [a, b, c] = await signedInTabs(world, 3);
       c.deaf = true; // one tab misses the event; it must still end up signed out
@@ -460,6 +483,7 @@ async function signedInTabs(world, count) {
     // ── (6) genuine reuse is still detected and still ends the session ────────────────────────────
     await test(`GENUINE-TOKEN-REUSE-STILL-REVOKES [${variant.label}]`, async () => {
       const world = createWorld({ webLocks: variant.webLocks });
+      world.expectReuse = true;
       const [a, b] = await signedInTabs(world, 2);
       const stolen = a.api.getRefreshToken();
       world.advance(ACCESS_TTL_MS + 1000);
@@ -501,6 +525,89 @@ async function signedInTabs(world, count) {
       assert.equal((await b.api.listCompanies())[0].servedTo, 7, 'the lock was released: another tab renews');
       assert.equal((await a.api.listCompanies())[0].servedTo, 7);
       assert.equal(world.server.reuseDetected, 0);
+    });
+    // ── renewal timeout (the Guard app 1.1.2 30 s limit) + recovery, across tabs ─────────────────────
+    await test(`RENEWAL-TIMEOUT-KEEPS-SESSION-RELEASES-LOCK-AND-RECOVERS [${variant.label}]`, async () => {
+      const world = createWorld({ webLocks: variant.webLocks });
+      const delays = [];
+      const a = openTab(world, 'A', { fastTimeouts: delays });
+      await a.signIn('guard@example.invalid');
+      const b = openTab(world, 'B', { fastTimeouts: delays });
+      await b.boot();
+      await settle();
+      const before = storedRefreshToken(world);
+      world.advance(ACCESS_TTL_MS + 1000);
+      world.server.refreshMode = 'hang';
+      const outcome = await Promise.race([
+        a.api.listCompanies().then(() => 'resolved', (e) => e),
+        new Promise((resolve) => setTimeout(() => resolve('still hanging'), 2_000)),
+      ]);
+      assert.notEqual(outcome, 'still hanging', 'a stalled renewal must end');
+      assert.ok(outcome.status === 503 && /still signed in/.test(outcome.body.message), 'reported as unavailable, not as signed out');
+      assert.ok(delays.includes(30_000), 'the renewal has the same 30 s limit as other requests');
+      assert.equal(a.ui, 'app');
+      assert.equal(a.notice, null, 'no login screen');
+      assert.equal(a.api.getRefreshToken(), before, 'the session is kept for the next attempt');
+      assert.equal(storedRefreshToken(world), before, 'and so is the stored session');
+      if (!variant.webLocks) assert.equal(world.data.has(LEASE_KEY), false, 'the lease is released');
+      // The lock was released: another tab can renew straight away, and the first tab then follows it.
+      world.server.refreshMode = 'ok';
+      assert.equal((await b.api.listCompanies())[0].servedTo, 7, 'the next attempt (another tab) recovers');
+      assert.equal((await a.api.listCompanies())[0].servedTo, 7, 'and the timed-out tab recovers without renewing again');
+      assert.equal(world.server.refreshCalls.filter((c) => c.presented !== before).length, 0, 'only the current token was ever presented');
+      assert.equal(a.api.getRefreshToken(), storedRefreshToken(world));
+      assert.equal(world.server.reuseDetected, 0);
+    });
+
+    // ── different accounts: a stale tab's Log out never touches the other account ───────────────────
+    await test(`DIFFERENT-USER-STALE-TAB-LOGOUT-NEVER-TOUCHES-OTHER-SESSION [${variant.label}]`, async () => {
+      const world = createWorld({ webLocks: variant.webLocks });
+      const [a, b] = await signedInTabs(world, 2);
+      const aliceOwn = a.api.getRefreshToken();
+      a.deaf = true; // tab A is backgrounded and misses everything below
+      await b.signOut();
+      await b.signIn('other@example.invalid');
+      const c = openTab(world, 'C');
+      await c.boot(); // a second tab for the new account
+      await settle();
+      const bobStored = world.data.get(SESSION_KEY);
+      const bobRefresh = storedRefreshToken(world);
+      assert.equal(routing.parseStoredSession(bobStored).user.id, 8);
+      assert.equal(a.ui, 'app', 'tab A still shows the old account: it missed the events');
+
+      // Tab A comes back and its user clicks Log out.
+      a.deaf = false;
+      await a.signOut();
+      await settle();
+      assert.ok(!world.server.logoutCalls.some((x) => x.presented === bobRefresh), 'no /auth/logout with the other account\'s token');
+      assert.ok(world.server.logoutCalls.filter((x) => x.tab === 'A').every((x) => x.presented === aliceOwn), 'tab A revokes only its own token');
+      assert.equal(world.data.get(SESSION_KEY), bobStored, 'the other account\'s stored session is untouched');
+      assert.ok(world.server.familyAlive(world.server.familyOf(bobRefresh)), 'and still alive server-side');
+      assert.equal(a.ui, 'login');
+      assert.equal(a.notice, 'user-changed', 'tab A shows Login with the "different account in another tab" notice');
+      assert.equal(a.api.getRefreshToken(), null);
+      assert.equal(b.ui, 'app');
+      assert.equal(c.ui, 'app', 'the other account\'s tabs stay signed in');
+      // ...and keep renewing, coordinated, as normal.
+      world.advance(ACCESS_TTL_MS + 1000);
+      const refreshes = world.server.refreshCalls.length;
+      const [rb, rc] = await Promise.all([b.api.listCompanies(), c.api.listCompanies()]);
+      assert.equal(rb[0].servedTo, 8);
+      assert.equal(rc[0].servedTo, 8);
+      assert.equal(world.server.refreshCalls.length, refreshes + 1, 'one renewal for the other account');
+      assert.equal(world.server.reuseDetected, 0);
+
+      // Account-deletion clean-up in a stale tab must not clear the other account either.
+      const d = openTab(world, 'D');
+      await d.boot(); // account 8
+      d.deaf = true;
+      await b.signOut();
+      await b.signIn('guard@example.invalid'); // account 7 again
+      await settle();
+      const aliceAgain = world.data.get(SESSION_KEY);
+      d.deaf = false;
+      await d.accountDeleted('Your account was deleted.');
+      assert.equal(world.data.get(SESSION_KEY), aliceAgain, 'a stale tab\'s clean-up never clears another account\'s session');
     });
   }
 
@@ -601,6 +708,7 @@ async function signedInTabs(world, count) {
     // Two tabs WITHOUT the web path (each a native-style instance with only its own memory): the
     // measured #61 failure must reproduce here, or the tests above would prove nothing.
     const world = createWorld();
+    world.expectReuse = true;
     const a = openTab(world, 'A', { platform: 'native' });
     const b = openTab(world, 'B', { platform: 'native' });
     const session = await a.api.login('guard@example.invalid', 'pw');
@@ -644,6 +752,50 @@ async function signedInTabs(world, count) {
     const backendSpec = fs.readFileSync(path.join(ROOT, '..', 'security-backend-nest', 'scripts', 'auth-session.spec.ts'), 'utf8');
     assert.match(backendSpec, /test\('ROTATED-TOKEN-REUSE'/);
     assert.match(backendSpec, /reuse must revoke every session in the family/);
+  });
+
+  // ── the native path: the renewal timeout behaves exactly as in Guard app 1.1.2 ──────────────────
+  await test('NATIVE-RENEWAL-TIMEOUT-MATCHES-1.1.2', async () => {
+    const world = createWorld();
+    const delays = [];
+    const phone = openTab(world, 'phone', { platform: 'native', fastTimeouts: delays });
+    const notices = [];
+    phone.api.setUnauthorizedHandler(async (m) => notices.push(m));
+    phone.api.setRefreshPersister(async () => {});
+    const session = await phone.api.login('guard@example.invalid', 'pw');
+    phone.api.restoreSession(session);
+    world.advance(ACCESS_TTL_MS + 1000);
+    world.server.refreshMode = 'hang';
+    const outcome = await Promise.race([
+      phone.api.listCompanies().then(() => 'resolved', (e) => e),
+      new Promise((resolve) => setTimeout(() => resolve('still hanging'), 2_000)),
+    ]);
+    assert.notEqual(outcome, 'still hanging', 'a stalled renewal must end');
+    assert.ok(outcome.status === 503 && /still signed in/.test(outcome.body.message), 'reported as unavailable, not as signed out');
+    assert.ok(delays.includes(30_000), 'the renewal has the same 30 s limit as other requests');
+    assert.deepEqual(notices, [], 'no login screen');
+    assert.equal(phone.api.getRefreshToken(), session.refreshToken, 'the session is kept for the next attempt');
+    world.server.refreshMode = 'ok';
+    assert.equal((await phone.api.listCompanies())[0].servedTo, 7, 'and renews once the service answers');
+    assert.notEqual(phone.api.getRefreshToken(), session.refreshToken);
+    assert.equal(world.data.size, 0);
+    // Same code as the 1.1.2 line: the timer, the abort signal on the refresh fetch and the clear in finally.
+    const renew = API_SOURCE.split('async function renewWithServer')[1].split('\n}\n')[0];
+    assert.match(renew, /\/\/ The same 30 s limit as every other request\. Without it a stalled renewal left every request waiting on it \(each\n\s*\/\/ 401 retry shares this promise\) hanging for good; a timeout is the service being unavailable, not the session ending\./);
+    assert.match(renew, /const controller = new AbortController\(\);\n\s*const timeout = setTimeout\(\(\) => controller\.abort\(\), 30_000\);/);
+    assert.match(renew, /signal: controller\.signal,/);
+    assert.match(renew, /\} finally \{\n\s*clearTimeout\(timeout\);\n\s*\}/);
+  });
+
+  // ── normal coordination never revokes a login ──────────────────────────────────────────────────
+  await test('NO-FAMILY-REVOCATION-FROM-COORDINATION', () => {
+    const coordination = ALL_WORLDS.filter((w) => !w.expectReuse);
+    assert.ok(coordination.length >= 30, `covers every coordination scenario (${coordination.length} worlds)`);
+    const reuse = coordination.reduce((sum, w) => sum + w.server.reuseDetected, 0);
+    const revoked = coordination.reduce((sum, w) => sum + [...w.server.revokedFamilies].filter((f) => !w.server.logoutCalls.some((l) => w.server.familyOf(l.presented) === f)).length, 0);
+    assert.equal(reuse, 0, 'zero reuse events across all coordination scenarios');
+    assert.equal(revoked, 0, 'no login was revoked except by an explicit Log out');
+    assert.ok(ALL_WORLDS.filter((w) => w.expectReuse).every((w) => w.server.reuseDetected >= 1), 'the deliberate-reuse scenarios did detect reuse');
   });
 
   console.log(JSON.stringify({ event: 'web_cross_tab_session_tests_passed', tests: passed }));

@@ -286,6 +286,43 @@ function writeSharedAccess(forRefreshToken: string, newAccessToken: string) {
   }
 }
 
+/**
+ * Whether the stored session is this tab's own login, so this tab may revoke or clear it. Always true on a phone,
+ * and when nothing usable is stored (nothing of anyone else's to protect). Otherwise the stored user must be this
+ * tab's user; a tab that does not know its user must at least hold the stored token itself.
+ */
+function storedSessionIsOwn(): boolean {
+  if (!crossTab) return true;
+  const shared = readSharedSession();
+  if (shared.kind !== 'session') return true;
+  return tabUserId !== null ? shared.userId === tabUserId : shared.refreshToken === refreshToken;
+}
+
+/**
+ * Web, stale tab: revoke the token THIS tab holds (its own, replaced login) — never the stored one, which belongs to
+ * another user. Best effort, bounded by the usual 30 s, and deliberately not through request(): request() would first
+ * follow the stored session and so drop this tab's credentials.
+ */
+async function revokeOwnTokenOnly() {
+  const presented = refreshToken;
+  const access = accessToken;
+  if (!presented || !access) return;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+  try {
+    await fetch(`${API_BASE_URL}/auth/logout`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', Authorization: `Bearer ${access}` },
+      body: JSON.stringify({ refreshToken: presented }),
+      signal: controller.signal,
+    });
+  } catch {
+    // Offline or already dead: the replaced login simply expires on its own schedule.
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 /** Another tab ended this tab's session. Local only: the shared storage belongs to whoever is signed in now. */
 function endTabSession(reason: SessionEndedReason) {
   accessToken = null;
@@ -566,6 +603,11 @@ async function request<T>(path: string, options?: RequestInit, retried = false):
 
       // Renewal is genuinely not possible: expired, revoked, reused, or no refresh token at all
       // (a pre-v1.0.4 session). Clear local auth state and hand over to Login.
+      // Web: the unauthorized handler clears the stored session, so first make sure it is still this tab's login.
+      if (crossTab && !storedSessionIsOwn()) {
+        endTabSession('user-changed');
+        throw new ApiError(response.status, response.statusText, body);
+      }
       accessToken = null;
       refreshToken = null;
       if (unauthorizedHandler) {
@@ -765,12 +807,15 @@ export function confirmAccountDeletion(password: string) {
  * Drop local auth state without calling the server. Used after account deletion, when every session
  * has already been revoked server-side and a logout call would only bounce off a 401.
  */
-export function clearLocalSession() {
+export function clearLocalSession(): boolean {
+  // Web: false when the stored session is another user's (signed in from another tab) — the caller must not clear it.
+  const own = storedSessionIsOwn();
   accessToken = null;
   refreshToken = null;
   inFlightRefresh = null;
   tabUserId = null;
   sessionEpoch += 1;
+  return own;
 }
 
 /**
@@ -814,11 +859,16 @@ async function refreshAccessToken(sentAccessToken: string | null = null): Promis
 /** POST /auth/refresh with `presented` and take the rotation. This is the whole renewal on iOS/Android. */
 async function renewWithServer(presented: string): Promise<RefreshOutcome> {
   const epoch = sessionEpoch;
+  // The same 30 s limit as every other request. Without it a stalled renewal left every request waiting on it (each
+  // 401 retry shares this promise) hanging for good; a timeout is the service being unavailable, not the session ending.
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
   try {
     const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ refreshToken: presented }),
+      signal: controller.signal,
     });
     if (!response.ok) {
       // Only a refusal ends the session. A server error or rate limit is the service, not the session.
@@ -843,6 +893,8 @@ async function renewWithServer(presented: string): Promise<RefreshOutcome> {
   } catch {
     // Offline or unreachable — not an auth failure. Keep the token so a later attempt can work.
     return 'unavailable';
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -903,8 +955,16 @@ export function fetchCurrentUser(): Promise<AuthUser> {
  * The local clear happens in `finally` so a logout with no signal still signs the Guard out of
  * this device — the session then simply expires on its own schedule server-side.
  */
-export async function logout() {
-  // Web: revoke the session as it stands now — another tab may have rotated it.
+export async function logout(): Promise<boolean> {
+  // Web: a stale tab whose login was replaced by ANOTHER user's sign-in in another tab must never revoke or clear
+  // that user's session. It revokes only its own token (if it still holds one) and resets itself; the caller is told
+  // (false) not to clear the stored session. On a phone this is always the tab's own session.
+  if (crossTab && !storedSessionIsOwn()) {
+    await revokeOwnTokenOnly();
+    endTabSession('user-changed');
+    return false;
+  }
+  // Web, same login: revoke the session as it stands now — another tab may have rotated it.
   if (crossTab) syncFromSharedSession();
   const presented = refreshToken;
   try {
@@ -923,6 +983,7 @@ export async function logout() {
     tabUserId = null;
     sessionEpoch += 1;
   }
+  return true;
 }
 
 export function listCompanies() {
