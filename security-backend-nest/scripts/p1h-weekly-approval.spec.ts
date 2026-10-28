@@ -1090,8 +1090,10 @@ test('T129 workflow-state-ux: draft has no Company review controls', () => {
   assert(src.includes('isSubmittedForReview'), 'isSubmittedForReview gate missing — Company review controls not gated by status');
   // Approve / Return for correction / Reject must only be inside the isSubmittedForReview block
   const submittedGateIdx = src.indexOf('isSubmittedForReview ?');
-  const approveIdx = src.indexOf("'Approving...' : 'Approve'");
-  assert(submittedGateIdx > 0 && approveIdx > submittedGateIdx, 'Approve button must be inside isSubmittedForReview block');
+  // Timesheet review UX (28 Oct 2026): the panel's single Approve became "Approve claimed / verified / other hours";
+  // EVERY approve button (each shows 'Approving...' while busy) must be inside the gate.
+  const approveIdxs = [...src.matchAll(/'Approving\.\.\.'/g)].map((m) => m.index ?? -1);
+  assert(submittedGateIdx > 0 && approveIdxs.length >= 3 && approveIdxs.every((i) => i > submittedGateIdx), 'Approve buttons must be inside isSubmittedForReview block');
 });
 
 // T130: Draft detail panel shows "Awaiting Guard Submission" state message (P1H-C UX: separate title + body)

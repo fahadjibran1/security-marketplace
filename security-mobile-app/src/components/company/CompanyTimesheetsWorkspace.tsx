@@ -1,11 +1,20 @@
 import * as React from 'react';
 import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { formatApiErrorMessage, getCompanyWeeklyApprovals, getEligibleTimesheets, submitWeeklyApproval, updateTimesheet } from '../../services/api';
+import { formatApiErrorMessage, getCompanyWeeklyApprovals, getEligibleTimesheets, getTimesheetHistory, submitWeeklyApproval, updateTimesheet } from '../../services/api';
 import { ClientWeeklyApprovalSummary, EligibleTimesheetRow, Timesheet } from '../../types/models';
 import { formatInstantTime, resolveDisplayZone } from '../../services/siteTime';
 import { timesheetSourceLabel } from './manualAttendance';
 import { verifiedAttendanceView } from './timesheetAttendance';
+import { formatHoursHM, formatMinutesHM, formatMinutesWithDecimal, hoursToMinutes, parseHoursMinutes } from '../../services/timesheetHours';
+import {
+  ApprovalChoice,
+  historyLines,
+  planApproval,
+  REVIEW_REASON_MAX_CHARS,
+  reviewReasonProblem,
+  TimesheetHistoryItem,
+} from '../../services/timesheetReview';
 import { colors } from '../../theme';
 
 type WorkspaceLevel = 'overview' | 'detail';
@@ -229,18 +238,6 @@ function getAmountForHours(hours: number | null, rate: number | null) {
   return roundCurrency(hours * rate);
 }
 
-function formatHoursInput(value?: number | null) {
-  if (value === undefined || value === null || Number.isNaN(Number(value))) return '';
-  const normalized = roundHours(Number(value));
-  return Number.isInteger(normalized) ? String(normalized) : normalized.toFixed(2);
-}
-
-function parseHoursInput(value: string) {
-  const normalized = value.trim().replace(',', '.');
-  if (!normalized) return null;
-  const parsed = Number.parseFloat(normalized);
-  return Number.isFinite(parsed) ? roundHours(parsed) : Number.NaN;
-}
 
 function toIsoDateInput(value: Date) {
   const year = value.getFullYear();
@@ -387,7 +384,14 @@ export function CompanyTimesheetsWorkspace({
   // Review state
   const [selectedTimesheetId, setSelectedTimesheetId] = React.useState<number | null>(null);
   const [companyNote, setCompanyNote] = React.useState('');
-  const [approvedHoursInput, setApprovedHoursInput] = React.useState('');
+  // Review decisions: the reason for a return / rejection (shown to the Guard, required), and the payable-hours choice
+  // for an approval with its reason (required whenever the approved minutes differ from verified attendance or the claim).
+  const [reviewReason, setReviewReason] = React.useState('');
+  const [approvalChoice, setApprovalChoice] = React.useState<ApprovalChoice | null>(null);
+  const [approvalReason, setApprovalReason] = React.useState('');
+  const [otherHoursText, setOtherHoursText] = React.useState('');
+  const [otherMinutesText, setOtherMinutesText] = React.useState('');
+  const [reviewHistory, setReviewHistory] = React.useState<TimesheetHistoryItem[] | null>(null);
   const [busyAction, setBusyAction] = React.useState<string | null>(null);
   const [feedback, setFeedback] = React.useState<WorkspaceFeedback>(null);
 
@@ -634,11 +638,28 @@ export function CompanyTimesheetsWorkspace({
     setCompanyNote(selectedTimesheet?.timesheet.companyNote || '');
   }, [selectedTimesheet?.timesheet.id, selectedTimesheet?.timesheet.companyNote, selectedTimesheet?.timesheet.updatedAt]);
 
+  // A new selection starts a fresh decision: no reason carried over from another timesheet, no approval choice made.
   React.useEffect(() => {
-    if (!selectedTimesheet) { setApprovedHoursInput(''); return; }
-    const cur = selectedTimesheet.timesheet.approvedHours ?? selectedTimesheet.timesheet.hoursWorked;
-    setApprovedHoursInput(formatHoursInput(cur));
-  }, [selectedTimesheet?.timesheet.id, selectedTimesheet?.timesheet.approvedHours, selectedTimesheet?.timesheet.hoursWorked, selectedTimesheet?.timesheet.updatedAt]);
+    setReviewReason('');
+    setApprovalChoice(null);
+    setApprovalReason('');
+    setOtherHoursText('');
+    setOtherMinutesText('');
+  }, [selectedTimesheet?.timesheet.id]);
+
+  // The review history (submissions, returns with reasons, approvals) of the selected timesheet. An older server has
+  // no history route: the panel then shows none, and nothing else changes.
+  const selectedHistoryKey = selectedTimesheet ? `${selectedTimesheet.timesheet.id}:${selectedTimesheet.timesheet.updatedAt ?? ''}:${selectedTimesheet.timesheet.approvalStatus}` : null;
+  React.useEffect(() => {
+    if (!selectedTimesheet) { setReviewHistory(null); return; }
+    let live = true;
+    setReviewHistory(null);
+    getTimesheetHistory(selectedTimesheet.timesheet.id)
+      .then((answer) => { if (live) setReviewHistory(Array.isArray(answer?.items) ? answer.items : []); })
+      .catch(() => { if (live) setReviewHistory([]); });
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedHistoryKey]);
 
   // ── SEND MODAL LOAD ──────────────────────────────────────────────────────
   React.useEffect(() => {
@@ -772,66 +793,87 @@ export function CompanyTimesheetsWorkspace({
     [onRefresh],
   );
 
-  const buildApprovalPayload = React.useCallback(
-    (mode: 'save' | 'approve') => {
-      if (!selectedTimesheet) return null;
-      const claimedHours = toHours(selectedTimesheet.timesheet.hoursWorked);
-      const trimmedCompanyNote = companyNote.trim();
-      const parsedApprovedHours = parseHoursInput(approvedHoursInput);
-      const hasApprovedHoursValue = approvedHoursInput.trim().length > 0;
-      const finalApprovedHours = mode === 'approve'
-        ? hasApprovedHoursValue ? parsedApprovedHours : claimedHours
-        : hasApprovedHoursValue ? parsedApprovedHours : undefined;
-      if (finalApprovedHours != null && (!Number.isFinite(finalApprovedHours) || finalApprovedHours < 0)) {
-        setFeedback({ tone: 'error', title: 'Invalid approved hours', message: 'Approved hours must be 0 or more.' });
-        return null;
-      }
-      if (finalApprovedHours != null && Math.abs(finalApprovedHours - claimedHours) > 0.009 && !trimmedCompanyNote) {
-        setFeedback({ tone: 'error', title: 'Company note required', message: 'Add a company note when approved hours differ from claimed hours.' });
-        return null;
-      }
-      return { companyNote: trimmedCompanyNote || null, approvedHours: finalApprovedHours };
-    },
-    [approvedHoursInput, companyNote, selectedTimesheet],
-  );
-
   const handleSaveCompanyNote = React.useCallback(async () => {
     if (!selectedTimesheet) return;
-    const payload = buildApprovalPayload('save');
-    if (!payload) return;
-    await runCompanyAction(`note-${selectedTimesheet.timesheet.id}`, selectedTimesheet.timesheet.id, payload, 'Review details saved', 'The company note and approved hours were saved for this timesheet.');
-  }, [buildApprovalPayload, runCompanyAction, selectedTimesheet]);
+    await runCompanyAction(`note-${selectedTimesheet.timesheet.id}`, selectedTimesheet.timesheet.id, { companyNote: companyNote.trim() || null }, 'Company note saved', 'The company note was saved for this timesheet.');
+  }, [companyNote, runCompanyAction, selectedTimesheet]);
 
+  // Approve: which hours are paid is explicit. The Guard's claim and the attendance are never rewritten; only the
+  // existing approvedMinutes / overrideReason are set, by the existing approval (see planApproval).
+  const otherParsed = parseHoursMinutes(otherHoursText, otherMinutesText);
+  const approvalPlanFor = React.useCallback(
+    (timesheet: Timesheet, choice: ApprovalChoice, reason: string, note: string) => planApproval({
+      choice,
+      claimedHours: timesheet.hoursWorked,
+      verifiedMinutes: timesheet.verifiedMinutes,
+      otherMinutes: otherParsed.ok ? otherParsed.minutes : null,
+      reason,
+      companyNote: note,
+    }),
+    [otherParsed.ok, otherParsed.ok ? otherParsed.minutes : null],
+  );
+
+  const handleApproveChoice = React.useCallback(async (choice: ApprovalChoice) => {
+    if (!selectedTimesheet) return;
+    setApprovalChoice(choice);
+    const plan = approvalPlanFor(selectedTimesheet.timesheet, choice, approvalReason, companyNote);
+    if (!plan.ok || !plan.payload) {
+      setFeedback({ tone: 'error', title: 'Reason required', message: plan.error ?? 'Check the hours to approve.' });
+      return;
+    }
+    await runCompanyAction(`approve-${selectedTimesheet.timesheet.id}`, selectedTimesheet.timesheet.id, plan.payload, 'Timesheet approved',
+      `Approved ${formatMinutesWithDecimal(plan.approvedMinutes)} for payroll and client sign-off.`);
+  }, [approvalPlanFor, approvalReason, companyNote, runCompanyAction, selectedTimesheet]);
+
+  // The row's quick Approve approves the Guard's claim only when it needs no reason (it equals the verified
+  // attendance); otherwise it opens the review panel to choose the hours and give the reason.
   const handleApprove = React.useCallback(async (entry: EnrichedTimesheet) => {
-    const payload = entry.timesheet.id === selectedTimesheet?.timesheet.id
-      ? buildApprovalPayload('approve')
-      : { approvedHours: entry.timesheet.approvedHours ?? entry.timesheet.hoursWorked, companyNote: entry.timesheet.companyNote ?? null };
-    if (!payload) return;
-    await runCompanyAction(`approve-${entry.timesheet.id}`, entry.timesheet.id, { ...payload, approvalStatus: 'approved', rejectionReason: null }, 'Timesheet approved', 'The claimed hours were approved for payroll and client sign-off.');
-  }, [buildApprovalPayload, runCompanyAction, selectedTimesheet?.timesheet.id]);
+    const plan = approvalPlanFor(entry.timesheet, 'claimed', '', entry.timesheet.companyNote ?? '');
+    if (!plan.ok || !plan.payload) {
+      setSelectedTimesheetId(entry.timesheet.id);
+      setFeedback({ tone: 'info', title: 'Choose the hours to approve',
+        message: "The Guard's claim differs from the verified attendance (or there is none). Choose the hours to approve in the review panel and give a reason." });
+      return;
+    }
+    await runCompanyAction(`approve-${entry.timesheet.id}`, entry.timesheet.id, plan.payload, 'Timesheet approved',
+      `Approved ${formatMinutesWithDecimal(plan.approvedMinutes)} for payroll and client sign-off.`);
+  }, [approvalPlanFor, runCompanyAction]);
 
-  const handleReturn = React.useCallback(async (entry: EnrichedTimesheet) => {
-    const noteSource = entry.timesheet.id === selectedTimesheet?.timesheet.id ? companyNote.trim() : '';
-    const note = noteSource || entry.timesheet.rejectionReason?.trim() || 'Returned for correction by company reviewer.';
-    await runCompanyAction(`return-${entry.timesheet.id}`, entry.timesheet.id, { approvalStatus: 'returned', rejectionReason: note }, 'Returned for correction', 'The timesheet was returned to the guard for correction.');
-  }, [companyNote, runCompanyAction, selectedTimesheet?.timesheet.id]);
-
-  const handleReject = React.useCallback(async (entry: EnrichedTimesheet) => {
-    const noteSource = entry.timesheet.id === selectedTimesheet?.timesheet.id ? companyNote.trim() : '';
-    const note = noteSource || entry.timesheet.rejectionReason?.trim() || 'Rejected by company reviewer.';
-    await runCompanyAction(`reject-${entry.timesheet.id}`, entry.timesheet.id, { approvalStatus: 'rejected', rejectionReason: note }, 'Timesheet rejected', 'The timesheet was rejected and marked for follow-up.');
-  }, [companyNote, runCompanyAction, selectedTimesheet?.timesheet.id]);
+  // Return / Reject need a reason the Guard can act on: no generic default (the server refuses one too).
+  const handleDecision = React.useCallback(async (entry: EnrichedTimesheet, decision: 'returned' | 'rejected') => {
+    const isSelected = entry.timesheet.id === selectedTimesheet?.timesheet.id;
+    const reason = isSelected ? reviewReason.trim() : '';
+    const problem = reviewReasonProblem(reason);
+    if (problem) {
+      setSelectedTimesheetId(entry.timesheet.id);
+      setFeedback({ tone: 'error', title: 'Reason required', message: `${problem} Type it under "Reason for return or rejection" in the review panel.` });
+      return;
+    }
+    if (decision === 'returned') {
+      await runCompanyAction(`return-${entry.timesheet.id}`, entry.timesheet.id, { approvalStatus: 'returned', rejectionReason: reason }, 'Returned for correction', 'The timesheet was returned to the Guard with your reason.');
+    } else {
+      await runCompanyAction(`reject-${entry.timesheet.id}`, entry.timesheet.id, { approvalStatus: 'rejected', rejectionReason: reason }, 'Timesheet rejected', 'The timesheet was rejected; the Guard sees your reason.');
+    }
+  }, [reviewReason, runCompanyAction, selectedTimesheet?.timesheet.id]);
+  const handleReturn = React.useCallback((entry: EnrichedTimesheet) => handleDecision(entry, 'returned'), [handleDecision]);
+  const handleReject = React.useCallback((entry: EnrichedTimesheet) => handleDecision(entry, 'rejected'), [handleDecision]);
 
   const activeSelected = selectedTimesheet?.timesheet;
   const isSubmittedForReview = normalizeStatus(activeSelected?.approvalStatus) === 'submitted';
   const selectedClaimedHours = activeSelected ? toHours(activeSelected.hoursWorked) : 0;
+  const selectedClaimedMinutes = activeSelected ? hoursToMinutes(activeSelected.hoursWorked) : null;
+  const selectedVerifiedMinutes = activeSelected && activeSelected.verifiedMinutes !== null && activeSelected.verifiedMinutes !== undefined && Number.isFinite(Number(activeSelected.verifiedMinutes))
+    ? Math.round(Number(activeSelected.verifiedMinutes)) : null;
+  const claimDiffersFromVerified = selectedClaimedMinutes !== null && selectedClaimedMinutes !== selectedVerifiedMinutes;
+  const reviewReasonError = reviewReason.trim() ? reviewReasonProblem(reviewReason) : null;
+  const reviewReasonReady = reviewReasonProblem(reviewReason) === null;
+  const pendingPlan = activeSelected && approvalChoice ? approvalPlanFor(activeSelected, approvalChoice, approvalReason, companyNote) : null;
+  const selectedHistoryLines = historyLines(reviewHistory, 'company', (value) => formatDateTimeLabel(value, activeSelected?.shift?.site?.timezone ?? null));
   // Verified attendance beside the Guard's claim (informational; never gates a review action).
   const selectedVerified = activeSelected
     ? verifiedAttendanceView(activeSelected, (value) => formatDateTimeLabel(value, activeSelected.shift?.site?.timezone ?? null))
     : null;
   const selectedApprovedHours = activeSelected && getApprovedHoursValue(activeSelected) !== null ? Number(getApprovedHoursValue(activeSelected)) : null;
-  const parsedSelectedApprovedHours = parseHoursInput(approvedHoursInput);
-  const adjustedHoursRequireNote = approvedHoursInput.trim().length > 0 && parsedSelectedApprovedHours !== null && Number.isFinite(parsedSelectedApprovedHours) && Math.abs(parsedSelectedApprovedHours - selectedClaimedHours) > 0.009 && !companyNote.trim();
 
   // ── SEND-TO-CLIENT MODAL (shared between overview card and detail) ────────
   const sendModal = (
@@ -879,7 +921,7 @@ export function CompanyTimesheetsWorkspace({
               const checkOut = row.actualCheckOutAt ? new Date(row.actualCheckOutAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
               const approvedOn = row.companyApprovedStartAt ? new Date(row.companyApprovedStartAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
               const approvedOff = row.companyApprovedEndAt ? new Date(row.companyApprovedEndAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
-              const approvedHrs = row.approvedHours != null ? Number(row.approvedHours).toFixed(2) : row.approvedMinutes != null ? (Number(row.approvedMinutes) / 60).toFixed(2) : Number(row.hoursWorked).toFixed(2);
+              const approvedHrs = row.approvedMinutes != null ? formatMinutesHM(Number(row.approvedMinutes)) : row.approvedHours != null ? formatHoursHM(row.approvedHours) : formatHoursHM(row.hoursWorked);
               return (
                 <View key={row.id} style={[styles.sendRow, !isSelected && styles.sendRowExcluded]}>
                   <Pressable style={styles.sendCheckRow} onPress={() => toggleSendId(row.id)}>
@@ -889,7 +931,7 @@ export function CompanyTimesheetsWorkspace({
                     <View style={{ flex: 1 }}>
                       <Text style={styles.sendGuardName}>{guardLabel}</Text>
                       <Text style={styles.sendShiftMeta}>{shiftDateLabel} · Scheduled: {scheduledOn}–{scheduledOff} · Check-in: {checkIn} / {checkOut}</Text>
-                      <Text style={styles.sendShiftMeta}>Guard claimed: {Number(row.hoursWorked).toFixed(2)} h · Co. approved: {approvedHrs} h ({approvedOn}–{approvedOff})</Text>
+                      <Text style={styles.sendShiftMeta}>Guard claimed: {formatHoursHM(row.hoursWorked)} · Co. approved: {approvedHrs} ({approvedOn}–{approvedOff})</Text>
                       {!isSelected && <Text style={styles.sendExcludedLabel}>Excluded</Text>}
                     </View>
                   </Pressable>
@@ -910,10 +952,9 @@ export function CompanyTimesheetsWorkspace({
                 <View style={styles.sendSummary}>
                   <Text style={styles.sendSummaryText}>
                     Submit {sendSelectedIds.size} shift{sendSelectedIds.size !== 1 ? 's' : ''} / {
-                      sendEligible.filter((r) => sendSelectedIds.has(r.id))
-                        .reduce((sum, r) => sum + (r.approvedHours != null ? Number(r.approvedHours) : r.approvedMinutes != null ? Number(r.approvedMinutes) / 60 : Number(r.hoursWorked)), 0)
-                        .toFixed(2)
-                    } approved hrs to {sendGroup?.clientName} for approval?
+                      formatHoursHM(sendEligible.filter((r) => sendSelectedIds.has(r.id))
+                        .reduce((sum, r) => sum + (r.approvedHours != null ? Number(r.approvedHours) : r.approvedMinutes != null ? Number(r.approvedMinutes) / 60 : Number(r.hoursWorked)), 0), { withDecimal: true })
+                    } approved to {sendGroup?.clientName} for approval?
                   </Text>
                 </View>
                 <TextInput
@@ -1043,7 +1084,7 @@ export function CompanyTimesheetsWorkspace({
                     <Text style={styles.siteWeekSiteName}>{group.siteName}</Text>
                     <Text style={styles.siteWeekPeriod}>{group.weekLabel}</Text>
                     <Text style={styles.siteWeekMeta}>
-                      {group.totals.guardCount} guard{group.totals.guardCount !== 1 ? 's' : ''} · {group.totals.count} shift{group.totals.count !== 1 ? 's' : ''} · {group.totals.reviewedCount}/{group.totals.count} reviewed · {group.totals.approvedHours.toFixed(2)} Guard Pay approved h
+                      {group.totals.guardCount} guard{group.totals.guardCount !== 1 ? 's' : ''} · {group.totals.count} shift{group.totals.count !== 1 ? 's' : ''} · {group.totals.reviewedCount}/{group.totals.count} reviewed · Guard Pay approved hours: {formatHoursHM(group.totals.approvedHours)}
                     </Text>
                     {(group.totals.awaitingGuardCount > 0 || group.totals.awaitingCompanyCount > 0) && (
                       <Text style={styles.unreviewedWarning}>
@@ -1119,7 +1160,7 @@ export function CompanyTimesheetsWorkspace({
           <Text style={styles.detailPageTitle}>{activeGroup.siteName}</Text>
           <Text style={styles.detailPageWeek}>{activeGroup.weekLabel}</Text>
           <Text style={styles.detailPageMeta}>
-            {activeGroup.totals.guardCount} guard{activeGroup.totals.guardCount !== 1 ? 's' : ''} · {activeGroup.totals.count} shift{activeGroup.totals.count !== 1 ? 's' : ''} · {activeGroup.totals.reviewedCount}/{activeGroup.totals.count} reviewed · {activeGroup.totals.approvedHours.toFixed(2)} Guard Pay approved h
+            {activeGroup.totals.guardCount} guard{activeGroup.totals.guardCount !== 1 ? 's' : ''} · {activeGroup.totals.count} shift{activeGroup.totals.count !== 1 ? 's' : ''} · {activeGroup.totals.reviewedCount}/{activeGroup.totals.count} reviewed · Guard Pay approved hours: {formatHoursHM(activeGroup.totals.approvedHours)}
           </Text>
           {!detailAllReviewed && (
             <Text style={styles.unreviewedWarning}>
@@ -1172,7 +1213,7 @@ export function CompanyTimesheetsWorkspace({
                   <View style={styles.guardGroupHeaderCopy}>
                     <Text style={styles.guardGroupName}>{gg.guardName}</Text>
                     <Text style={styles.guardGroupMeta}>
-                      {gg.totals.count} shift{gg.totals.count !== 1 ? 's' : ''} · {gg.totals.claimedHours.toFixed(2)} claimed h · {gg.totals.approvedHours.toFixed(2)} approved h · {gg.totals.reviewedCount}/{gg.totals.count} reviewed
+                      {gg.totals.count} shift{gg.totals.count !== 1 ? 's' : ''} · {formatHoursHM(gg.totals.claimedHours)} claimed · {formatHoursHM(gg.totals.approvedHours)} approved · {gg.totals.reviewedCount}/{gg.totals.count} reviewed
                     </Text>
                   </View>
                   <Text style={styles.guardGroupToggle}>{isGuardCollapsed ? 'Expand' : 'Collapse'}</Text>
@@ -1209,8 +1250,8 @@ export function CompanyTimesheetsWorkspace({
                             <Text style={styles.shiftCell}>{entry.attendanceLabel}</Text>
                             {entry.attendanceBadge ? <Text style={styles.attendanceBadgeText}>{entry.attendanceBadge}</Text> : null}
                           </View>
-                          <Text style={[styles.shiftCell, styles.shiftClaimCol]}>{toHours(entry.timesheet.hoursWorked).toFixed(2)} h</Text>
-                          <Text style={[styles.shiftCell, styles.shiftApprovedCol]}>{approvedHrs !== null ? `${approvedHrs.toFixed(2)} h` : '—'}</Text>
+                          <Text style={[styles.shiftCell, styles.shiftClaimCol]}>{formatHoursHM(entry.timesheet.hoursWorked)}</Text>
+                          <Text style={[styles.shiftCell, styles.shiftApprovedCol]}>{approvedHrs !== null ? formatHoursHM(approvedHrs) : '—'}</Text>
                           <View style={[styles.shiftStatusBadge, styles.shiftStatusCol, { backgroundColor: statusPalette.bg }]}>
                             <Text style={[styles.shiftStatusText, { color: statusPalette.text }]}>{formatStatusLabel(entry.displayStatus)}</Text>
                           </View>
@@ -1314,13 +1355,14 @@ export function CompanyTimesheetsWorkspace({
                     <Text style={styles.detailLine}>Claimed finish: {formatDateTimeLabel(activeSelected.actualCheckOutAt)}</Text>
                   </>
                 ) : null}
-                <Text style={styles.detailLine}>Claimed hours: {selectedClaimedHours.toFixed(2)} h</Text>
+                <Text style={styles.detailLine}>Claimed hours: {formatHoursHM(selectedClaimedHours, { withDecimal: true })}</Text>
                 <Text style={styles.detailLine}>Submitted: {activeSelected.submittedAt ? formatDateTimeLabel(activeSelected.submittedAt) : 'Not submitted'}</Text>
               </View>
 
               <View style={styles.detailSection}>
                 <Text style={styles.detailSectionTitle}>COMPANY GUARD-PAY APPROVAL</Text>
-                <Text style={styles.detailLine}>Guard Pay Hours: {selectedApprovedHours !== null ? `${selectedApprovedHours.toFixed(2)} h` : 'Not approved yet'}</Text>
+                <Text style={styles.detailLine}>Guard Pay Hours: {selectedApprovedHours !== null ? formatHoursHM(selectedApprovedHours, { withDecimal: true }) : 'Not approved yet'}</Text>
+                {activeSelected.overrideReason?.trim() ? <Text style={styles.detailLine}>Reason for approved hours: {activeSelected.overrideReason.trim()}</Text> : null}
                 {activeSelected.companyApprovedStartAt && <Text style={styles.detailLine}>Approved On: {formatTimeLabel(activeSelected.companyApprovedStartAt)}</Text>}
                 {activeSelected.companyApprovedEndAt && <Text style={styles.detailLine}>Approved Off: {formatTimeLabel(activeSelected.companyApprovedEndAt)}</Text>}
               </View>
@@ -1340,38 +1382,85 @@ export function CompanyTimesheetsWorkspace({
                       style={[styles.input, styles.noteInput]}
                       multiline
                       textAlignVertical="top"
-                      placeholder="Add payroll / client approval context, or note why this should be returned."
+                      placeholder="Optional payroll / client approval context (the Guard can see it)."
                       placeholderTextColor="#64748b"
                     />
-                  </View>
-
-                  <View style={styles.detailSection}>
-                    <Text style={styles.detailSectionTitle}>Guard Pay Hours</Text>
-                    <Text style={styles.detailLine}>Claimed hours remain read-only so the original submission stays intact.</Text>
-                    <TextInput
-                      value={approvedHoursInput}
-                      onChangeText={setApprovedHoursInput}
-                      style={styles.input}
-                      keyboardType="decimal-pad"
-                      placeholder={formatHoursInput(activeSelected.hoursWorked)}
-                      placeholderTextColor="#64748b"
-                    />
-                    {adjustedHoursRequireNote && <Text style={styles.validationText}>Add a company note when approved hours differ from claimed hours.</Text>}
-                  </View>
-
-                  <View style={styles.detailActions}>
                     <Pressable style={styles.secondaryButton} onPress={handleSaveCompanyNote} disabled={busyAction === `note-${activeSelected.id}` || Boolean(busyAction)}>
-                      <Text style={styles.secondaryButtonText}>{busyAction === `note-${activeSelected.id}` ? 'Saving...' : 'Save review details'}</Text>
+                      <Text style={styles.secondaryButtonText}>{busyAction === `note-${activeSelected.id}` ? 'Saving...' : 'Save note'}</Text>
                     </Pressable>
-                    <Pressable style={styles.primaryButton} onPress={() => handleApprove(selectedTimesheet!)} disabled={busyAction === `approve-${activeSelected.id}` || Boolean(busyAction)}>
-                      <Text style={styles.primaryButtonText}>{busyAction === `approve-${activeSelected.id}` ? 'Approving...' : 'Approve'}</Text>
-                    </Pressable>
-                    <Pressable style={styles.warningButton} onPress={() => handleReturn(selectedTimesheet!)} disabled={busyAction === `return-${activeSelected.id}` || Boolean(busyAction)}>
-                      <Text style={styles.warningButtonText}>{busyAction === `return-${activeSelected.id}` ? 'Returning...' : 'Return for correction'}</Text>
-                    </Pressable>
-                    <Pressable style={styles.dangerButton} onPress={() => handleReject(selectedTimesheet!)} disabled={busyAction === `reject-${activeSelected.id}` || Boolean(busyAction)}>
-                      <Text style={styles.dangerButtonText}>{busyAction === `reject-${activeSelected.id}` ? 'Rejecting...' : 'Reject'}</Text>
-                    </Pressable>
+                  </View>
+
+                  {/* Approval: which hours are paid is explicit. Nothing here rewrites the Guard's claim or the attendance. */}
+                  <View style={styles.detailSection}>
+                    <Text style={styles.detailSectionTitle}>Guard Pay Hours — approve</Text>
+                    <Text style={styles.detailLine}>Claimed: {formatMinutesWithDecimal(selectedClaimedMinutes)} · Verified attendance: {selectedVerifiedMinutes !== null ? formatMinutesWithDecimal(selectedVerifiedMinutes) : 'none recorded'}</Text>
+                    <Text style={styles.detailLine}>Claimed hours remain read-only so the original submission stays intact.</Text>
+                    {claimDiffersFromVerified ? (
+                      <Text style={styles.validationText}>
+                        {selectedVerifiedMinutes === null
+                          ? 'There is no verified attendance for this shift: approving any hours needs a reason.'
+                          : `The claim differs from the verified attendance by ${formatMinutesHM(Math.abs((selectedClaimedMinutes ?? 0) - selectedVerifiedMinutes))}: approving the claimed or other hours needs a reason.`}
+                      </Text>
+                    ) : null}
+                    <Text style={styles.detailMetaLabel}>Other hours (only for "Approve other hours")</Text>
+                    <View style={styles.hmRow}>
+                      <TextInput value={otherHoursText} onChangeText={setOtherHoursText} style={[styles.input, styles.hmInput]} keyboardType="number-pad" placeholder="Hours" placeholderTextColor="#64748b" accessibilityLabel="Other hours: hours" />
+                      <TextInput value={otherMinutesText} onChangeText={setOtherMinutesText} style={[styles.input, styles.hmInput]} keyboardType="number-pad" placeholder="Minutes (0–59)" placeholderTextColor="#64748b" accessibilityLabel="Other hours: minutes" />
+                      {otherParsed.ok ? <Text style={styles.detailLine}>= {otherParsed.label}</Text> : (otherHoursText.trim() || otherMinutesText.trim()) ? <Text style={styles.validationText}>{otherParsed.error}</Text> : null}
+                    </View>
+                    <Text style={styles.detailMetaLabel}>Reason for the approved hours (required when they differ from the verified attendance or the claim)</Text>
+                    <TextInput
+                      value={approvalReason}
+                      onChangeText={setApprovalReason}
+                      style={[styles.input, styles.noteInput]}
+                      multiline
+                      textAlignVertical="top"
+                      maxLength={REVIEW_REASON_MAX_CHARS}
+                      placeholder="e.g. Site confirmed the Guard stayed until relieved at 10:00."
+                      placeholderTextColor="#64748b"
+                      accessibilityLabel="Reason for the approved hours"
+                    />
+                    {pendingPlan && !pendingPlan.ok ? <Text style={styles.validationText}>{pendingPlan.error}</Text> : null}
+                    <View style={styles.detailActions}>
+                      <Pressable style={styles.primaryButton} onPress={() => handleApproveChoice('claimed')} disabled={Boolean(busyAction)}>
+                        <Text style={styles.primaryButtonText}>{busyAction === `approve-${activeSelected.id}` && approvalChoice === 'claimed' ? 'Approving...' : `Approve claimed hours (${formatMinutesHM(selectedClaimedMinutes)})`}</Text>
+                      </Pressable>
+                      {selectedVerifiedMinutes !== null ? (
+                        <Pressable style={styles.primaryButton} onPress={() => handleApproveChoice('verified')} disabled={Boolean(busyAction)}>
+                          <Text style={styles.primaryButtonText}>{busyAction === `approve-${activeSelected.id}` && approvalChoice === 'verified' ? 'Approving...' : `Approve verified hours (${formatMinutesHM(selectedVerifiedMinutes)})`}</Text>
+                        </Pressable>
+                      ) : null}
+                      <Pressable style={styles.secondaryButton} onPress={() => handleApproveChoice('other')} disabled={Boolean(busyAction)}>
+                        <Text style={styles.secondaryButtonText}>{busyAction === `approve-${activeSelected.id}` && approvalChoice === 'other' ? 'Approving...' : `Approve other hours${otherParsed.ok ? ` (${formatMinutesHM(otherParsed.minutes)})` : ''}`}</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+
+                  {/* Return / Reject: the reason is required and is what the Guard is shown. No generic default. */}
+                  <View style={styles.detailSection}>
+                    <Text style={styles.detailSectionTitle}>Reason for return or rejection</Text>
+                    <Text style={styles.detailLine}>The Guard sees this reason. Say what to correct (at least 5 characters).</Text>
+                    <TextInput
+                      value={reviewReason}
+                      onChangeText={setReviewReason}
+                      style={[styles.input, styles.noteInput]}
+                      multiline
+                      textAlignVertical="top"
+                      maxLength={REVIEW_REASON_MAX_CHARS}
+                      placeholder="e.g. Your Book Off was 09:03, so 9h 30m looks too high. Check your hours or add a note."
+                      placeholderTextColor="#64748b"
+                      accessibilityLabel="Reason for return or rejection"
+                    />
+                    <Text style={styles.detailLine}>{reviewReason.trim().length}/{REVIEW_REASON_MAX_CHARS}</Text>
+                    {reviewReasonError ? <Text style={styles.validationText}>{reviewReasonError}</Text> : null}
+                    <View style={styles.detailActions}>
+                      <Pressable style={[styles.warningButton, !reviewReasonReady && styles.buttonDisabled]} onPress={() => handleReturn(selectedTimesheet!)} disabled={!reviewReasonReady || Boolean(busyAction)}>
+                        <Text style={styles.warningButtonText}>{busyAction === `return-${activeSelected.id}` ? 'Returning...' : 'Return for correction'}</Text>
+                      </Pressable>
+                      <Pressable style={[styles.dangerButton, !reviewReasonReady && styles.buttonDisabled]} onPress={() => handleReject(selectedTimesheet!)} disabled={!reviewReasonReady || Boolean(busyAction)}>
+                        <Text style={styles.dangerButtonText}>{busyAction === `reject-${activeSelected.id}` ? 'Rejecting...' : 'Reject'}</Text>
+                      </Pressable>
+                    </View>
                   </View>
                 </>
               ) : (
@@ -1391,12 +1480,13 @@ export function CompanyTimesheetsWorkspace({
                     <>
                       <Text style={styles.workflowStatePanelTitle}>Awaiting Guard Resubmission</Text>
                       <Text style={styles.workflowStatePanelText}>This timesheet was returned to the Guard for correction. Awaiting their resubmission.</Text>
+                      {activeSelected.rejectionReason?.trim() ? <Text style={styles.workflowStatePanelText}>Reason given: {activeSelected.rejectionReason.trim()}</Text> : null}
                     </>
                   )}
                   {(normalizeStatus(activeSelected.approvalStatus) === 'approved') && (
                     <>
                       <Text style={[styles.workflowStatePanelTitle, { color: colors.success }]}>
-                        Guard Pay Approved: {selectedApprovedHours !== null ? `${selectedApprovedHours.toFixed(2)} h` : '—'}
+                        Guard Pay Approved: {selectedApprovedHours !== null ? formatHoursHM(selectedApprovedHours, { withDecimal: true }) : '—'}
                       </Text>
                       {activeGroup.clientSubmissionStatus ? (
                         <Text style={styles.workflowStatePanelText}>
@@ -1415,10 +1505,28 @@ export function CompanyTimesheetsWorkspace({
                       <Text style={styles.workflowStatePanelText}>
                         This shift has been rejected and will not be included in the Client weekly timesheet.
                       </Text>
+                      {activeSelected.rejectionReason?.trim() ? <Text style={styles.workflowStatePanelText}>Reason given: {activeSelected.rejectionReason.trim()}</Text> : null}
                     </>
                   )}
                 </View>
               )}
+
+              {/* Review history from the audit log: every submission, return / rejection with its reason, approval. */}
+              <View style={styles.detailSection}>
+                <Text style={styles.detailSectionTitle}>REVIEW HISTORY</Text>
+                {reviewHistory === null ? (
+                  <Text style={styles.detailLine}>Loading…</Text>
+                ) : selectedHistoryLines.length === 0 ? (
+                  <Text style={styles.detailLine}>No review history recorded yet.</Text>
+                ) : (
+                  selectedHistoryLines.map((line) => (
+                    <View key={line.key} style={styles.historyItem}>
+                      <Text style={styles.historyTitle}>{line.title} · {line.when}</Text>
+                      {line.details.map((detail) => <Text key={detail} style={styles.detailLine}>{detail}</Text>)}
+                    </View>
+                  ))
+                )}
+              </View>
             </>
           ) : (
             <Text style={styles.emptyText}>Select a shift row to review guard hours and record an approval decision.</Text>
@@ -1566,6 +1674,11 @@ const styles = StyleSheet.create({
   validationText: { color: colors.warning, fontSize: 12, lineHeight: 18, fontWeight: '700' },
   noteInput: { minHeight: 90, textAlignVertical: 'top' },
   detailActions: { gap: 8 },
+  hmRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 },
+  hmInput: { minWidth: 110, flexGrow: 1 },
+  buttonDisabled: { opacity: 0.5 },
+  historyItem: { gap: 2, borderLeftWidth: 3, borderLeftColor: colors.border, paddingLeft: 8, marginTop: 6 },
+  historyTitle: { color: colors.primaryNavyStrong, fontSize: 13, lineHeight: 18, fontWeight: '700' },
 
   // Send-to-client modal
   sendOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center', padding: 16 },

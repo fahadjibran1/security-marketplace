@@ -1012,7 +1012,11 @@ export interface Timesheet {
   verifiedCheckOutAt?: string | null;
   verifiedAttendanceMinutes?: number | null;
   attendanceDiscrepancy?: TimesheetAttendanceDiscrepancy | null;
+  /** The attendance-verified duration stamped at Book Off: the approval default and the server's override baseline. */
+  verifiedMinutes?: number | null;
   approvedMinutes?: number | null;
+  /** Why the approved (payable) minutes differ from verifiedMinutes, when they do. */
+  overrideReason?: string | null;
   guardNote?: string | null;
   companyNote?: string | null;
   approvedHours?: number | null;
@@ -1067,6 +1071,9 @@ export interface UpdateTimesheetPayload {
   reviewedAt?: string | null;
   reviewedByUserId?: number;
   rejectionReason?: string | null;
+  /** Company approval: the payable minutes, and the reason when they differ from the verified attendance. */
+  approvedMinutes?: number;
+  overrideReason?: string | null;
 }
 
 export interface UpdateTimesheetPayrollPayload {

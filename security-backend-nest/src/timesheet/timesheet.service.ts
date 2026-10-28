@@ -25,6 +25,14 @@ import {
   timesheetIsSettled,
   verifiedAttendanceMinutes,
 } from './timesheet-attendance';
+import {
+  buildTimesheetHistory,
+  TIMESHEET_HISTORY_AUDIT_ACTIONS,
+  timesheetDecisionNoticeMessage,
+  TimesheetAuditRow,
+  TimesheetHistoryItem,
+  timesheetReviewReasonRefusal,
+} from './timesheet-review';
 
 @Injectable()
 export class TimesheetService {
@@ -80,6 +88,64 @@ export class TimesheetService {
     const timesheet = await this.timesheetRepo.findOne({ where: { id } });
     if (!timesheet) throw new NotFoundException('Timesheet not found');
     return this.applyDerivedFinancials(timesheet);
+  }
+
+  /**
+   * The timesheet's review history (submitted / returned / rejected / approved / approved-hours changes), derived from
+   * the existing audit_logs entries, so a return reason and the previous claim stay visible after the Guard resubmits
+   * (submitMine clears rejectionReason on the row). Readable by the owning Guard and the owning company (and admins);
+   * anyone else gets 404. Items carry no ids; actors are shown by role and display name (see timesheet-review.ts).
+   */
+  async findHistory(user: JwtPayload, id: number): Promise<{ items: TimesheetHistoryItem[] }> {
+    let companyId: number;
+    let audience: 'guard' | 'company' = 'company';
+    if (user.role === UserRole.ADMIN) {
+      const timesheet = await this.timesheetRepo.findOne({ where: { id } });
+      if (!timesheet) throw new NotFoundException('Timesheet not found');
+      companyId = timesheet.company.id;
+    } else if (user.role === UserRole.GUARD) {
+      const guard = await this.guardProfileService.findByUserId(user.sub);
+      if (!guard) throw new NotFoundException('Timesheet not found');
+      const timesheet = await this.buildGuardTimesheetQuery(guard.id)
+        .andWhere('timesheet.id = :timesheetId', { timesheetId: id })
+        .getOne();
+      if (!timesheet) throw new NotFoundException('Timesheet not found');
+      companyId = timesheet.company.id;
+      audience = 'guard';
+    } else if (isCompanyRole(user.role)) {
+      const { company } = await this.membershipService.resolveCompanyContext(user.sub, user.role);
+      const timesheet = await this.timesheetRepo.findOne({ where: { id, company: { id: company.id } } });
+      if (!timesheet) throw new NotFoundException('Timesheet not found');
+      companyId = company.id;
+    } else {
+      throw new NotFoundException('Timesheet not found');
+    }
+
+    const rows = (await this.timesheetRepo.manager.query(
+      `SELECT a."action", a."beforeData", a."afterData", a."createdAt", u."role"::text AS "role",
+              u."firstName", u."lastName"
+         FROM "audit_logs" a
+         LEFT JOIN "users" u ON u."id" = a."userId"
+        WHERE a."entityType" = 'timesheet' AND a."entityId" = $1 AND a."companyId" = $2 AND a."action" = ANY($3::text[])
+        ORDER BY a."createdAt" ASC, a."id" ASC`,
+      [id, companyId, [...TIMESHEET_HISTORY_AUDIT_ACTIONS]],
+    )) as TimesheetAuditRow[];
+    const parse = (value: unknown): Record<string, unknown> | null => {
+      if (value === null || value === undefined) return null;
+      if (typeof value === 'string') {
+        try {
+          return JSON.parse(value) as Record<string, unknown>;
+        } catch {
+          return null;
+        }
+      }
+      return value as Record<string, unknown>;
+    };
+    const items = buildTimesheetHistory(
+      rows.map((r) => ({ ...r, beforeData: parse(r.beforeData), afterData: parse(r.afterData) })),
+      audience,
+    );
+    return { items };
   }
 
   async createForShift(shift: Shift, manager?: EntityManager): Promise<Timesheet> {
@@ -283,6 +349,7 @@ export class TimesheetService {
       }
       timesheet.rejectionReason = null;
     } else if (dto.approvalStatus === TimesheetStatus.REJECTED) {
+      timesheet.rejectionReason = dto.rejectionReason!.trim();
       timesheet.reviewedAt = new Date();
       timesheet.reviewedByUserId = userId;
       this.clearApprovalDuration(timesheet);
@@ -294,6 +361,7 @@ export class TimesheetService {
       timesheet.invoicePaidAt = null;
       timesheet.invoiceBatch = null;
     } else if (dto.approvalStatus === TimesheetStatus.RETURNED) {
+      timesheet.rejectionReason = dto.rejectionReason!.trim();
       timesheet.reviewedAt = new Date();
       timesheet.reviewedByUserId = userId;
       this.clearApprovalDuration(timesheet);
@@ -366,11 +434,10 @@ export class TimesheetService {
           : isReturned
             ? 'Timesheet returned'
             : 'Timesheet rejected',
+        // A return / reject notice carries the reason (in-app only: timesheet notices are never pushed).
         message: isApproved
           ? `Your timesheet for shift #${saved.shift?.id ?? saved.id} has been approved.`
-          : isReturned
-            ? `Your timesheet for shift #${saved.shift?.id ?? saved.id} was returned for correction.`
-            : `Your timesheet for shift #${saved.shift?.id ?? saved.id} was rejected.`,
+          : timesheetDecisionNoticeMessage(isReturned ? 'returned' : 'rejected', saved.shift?.id ?? saved.id, saved.rejectionReason),
       });
     }
 
@@ -613,6 +680,7 @@ export class TimesheetService {
       afterData: {
         approvalStatus: saved.approvalStatus,
         submittedAt: saved.submittedAt,
+        hoursWorked: saved.hoursWorked,
         actualCheckInAt: saved.actualCheckInAt,
         actualCheckOutAt: saved.actualCheckOutAt,
         guardNote: saved.guardNote,
@@ -1004,18 +1072,11 @@ export class TimesheetService {
       throw new BadRequestException('Company review can only approve, reject, or return a submitted timesheet.');
     }
 
-    if (requestedStatus === TimesheetStatus.RETURNED) {
-      const returnReason = dto.rejectionReason?.trim();
-      if (!returnReason) {
-        throw new BadRequestException('A return reason is required when returning a timesheet for correction.');
-      }
-    }
-
-    if (requestedStatus === TimesheetStatus.REJECTED) {
-      const rejectionReason = dto.rejectionReason?.trim();
-      if (!rejectionReason) {
-        throw new BadRequestException('A rejection reason is required when rejecting a timesheet.');
-      }
+    // A return or a rejection needs a reason the Guard can act on (400 TIMESHEET_REVIEW_REASON_REQUIRED /
+    // TIMESHEET_REVIEW_REASON_TOO_LONG). There is no generic default: the reason is what the Guard is shown.
+    if (requestedStatus === TimesheetStatus.RETURNED || requestedStatus === TimesheetStatus.REJECTED) {
+      const refusal = timesheetReviewReasonRefusal(dto.rejectionReason, requestedStatus);
+      if (refusal) throw refusal;
     }
   }
 

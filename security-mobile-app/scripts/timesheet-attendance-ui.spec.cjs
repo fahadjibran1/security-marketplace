@@ -250,7 +250,7 @@ test('TA-06-THE-REVIEW-ROW-CARRIES-THE-BADGE-AND-THE-PANEL-SHOWS-BOTH-SIDES', as
   const panel = text();
   for (const words of ['Verified Book On:', 'Verified Book Off:', 'Verified time: 7 h 35 min',
     "Verified attendance differs from the Guard's timesheet", "Guard's finish is 50 min after the verified Book Off",
-    "Guard's total is 55 min more than the verified attendance", 'Claimed start:', 'Claimed finish:', 'Claimed hours: 8.50 h']) {
+    "Guard's total is 55 min more than the verified attendance", 'Claimed start:', 'Claimed finish:', 'Claimed hours: 8h 30m (8.50 h)']) {
     assert.ok(panel.includes(words), `the panel shows "${words}"`);
   }
   assert.ok(panel.includes('Manual attendance'), 'the Part B source label is still shown');
@@ -284,9 +284,12 @@ test('TA-08-THE-GUARD-SEES-THE-VERIFIED-TIMES-AND-THE-DIFFERENCE', async () => {
   assert.ok(text.includes('Your timesheet differs from your recorded Book On / Book Off'));
   assert.ok(text.includes('Your total is 55 min more than the verified attendance'));
   assert.ok(text.includes('Your company will review it.'));
-  const hours = renderer.root.findAll((n) => n.props && typeof n.props.onChangeText === 'function' && n.props.keyboardType === 'decimal-pad');
+  // Hours and minutes are separate inputs since the hours-and-minutes change (timesheet-review-ux.spec.cjs).
+  const hours = renderer.root.findAll((n) => n.props && typeof n.props.onChangeText === 'function' && n.props.accessibilityLabel === 'Hours worked');
+  const minutes = renderer.root.findAll((n) => n.props && typeof n.props.onChangeText === 'function' && n.props.accessibilityLabel === 'Minutes worked');
   assert.equal(hours.length, 1, 'the claimed hours stay editable');
-  assert.equal(hours[0].props.value, '8.5', "the Guard's own claim, not the verified hours");
+  assert.equal(minutes.length, 1, 'the claimed minutes stay editable');
+  assert.deepEqual([hours[0].props.value, minutes[0].props.value], ['8', '30'], "the Guard's own claim (8.5 h), not the verified hours");
   act(() => renderer.unmount());
 });
 
