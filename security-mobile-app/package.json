@@ -32,6 +32,7 @@
     "test:api-base-url": "node scripts/api-base-url.spec.cjs",
     "build:brand-assets": "node scripts/build-s4-assets.cjs",
     "test:auth-refresh": "node scripts/auth-refresh.spec.cjs",
+    "test:web-cross-tab-session": "node scripts/web-cross-tab-session.spec.cjs",
     "test:live-operations-welfare": "node scripts/live-operations-welfare.spec.cjs",
     "test:dashboard-v2": "node scripts/company-dashboard-v2.spec.cjs",
     "test:fail-safe-operations": "node scripts/fail-safe-operations.spec.cjs",

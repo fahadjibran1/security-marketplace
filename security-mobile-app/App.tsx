@@ -7,7 +7,7 @@ import { GuardDashboardScreen } from './src/screens/GuardDashboardScreen';
 import { AdminDashboardScreen } from './src/screens/AdminDashboardScreen';
 import { AuthScreen } from './src/screens/AuthScreen';
 import { StatePanel } from './src/components/StatePanel';
-import { clearLocalSession, fetchCurrentUser, getRefreshToken, logout, restoreSession, setRefreshPersister, setUnauthorizedHandler } from './src/services/api';
+import { clearLocalSession, fetchCurrentUser, getRefreshToken, logout, restoreSession, setRefreshPersister, setSessionEndedElsewhereHandler, setUnauthorizedHandler } from './src/services/api';
 import { AppErrorBoundary } from './src/components/AppErrorBoundary';
 import { AccountLinkScreen } from './src/screens/AccountLinkScreen';
 import { AccountLink, takeAccountLink } from './src/components/account/accountLinks';
@@ -58,6 +58,7 @@ export default function App() {
           restoreSession({
             accessToken: storedSession.legacyAccessToken,
             refreshToken: storedSession.refreshToken,
+            user: storedSession.user,
           });
           setSession({ accessToken: storedSession.legacyAccessToken ?? '', user: storedSession.user });
           // Refresh effective permissions from the live server; update in-memory
@@ -79,7 +80,15 @@ export default function App() {
     // Every silent rotation must reach SecureStore immediately: the token it replaces is already
     // dead server-side, so a missed write would strand the device on the next cold start.
     setRefreshPersister(async ({ user, refreshToken }) => { await persistSession({ user, refreshToken }); });
-    return () => { setUnauthorizedHandler(null); setRefreshPersister(null); };
+    // Web only (never fires on a phone): another browser tab signed out, or signed in as someone else.
+    // Only this tab is reset — the stored session belongs to whoever is signed in now.
+    setSessionEndedElsewhereHandler((reason) => {
+      setSession(null);
+      setAuthNotice(reason === 'user-changed'
+        ? 'You signed in to a different account in another tab, so this tab was signed out.'
+        : 'You signed out in another tab.');
+    });
+    return () => { setUnauthorizedHandler(null); setRefreshPersister(null); setSessionEndedElsewhereHandler(null); };
   }, []);
 
   async function handleLoggedIn(nextSession: AuthSession) {

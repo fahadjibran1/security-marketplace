@@ -3,6 +3,8 @@ import { StoredSession } from '../types/models';
 import { parseStoredSession, serializeStoredSession } from '../navigation/role-routing';
 
 const SESSION_KEY = 'security-app-session';
+/** Web only: the access token paired with the stored refresh token, shared between tabs (see api.ts). */
+const WEB_ACCESS_KEY = 'security-app-session-web-access';
 const isWeb = typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
 
 function readWebSession() {
@@ -27,6 +29,7 @@ function clearWebSession() {
   }
 
   window.localStorage.removeItem(SESSION_KEY);
+  window.localStorage.removeItem(WEB_ACCESS_KEY);
 }
 
 export async function loadStoredSession(): Promise<StoredSession | null> {

@@ -149,19 +149,284 @@ const API_BASE_URL = resolveApiBaseUrl({
   webHostname: hasBrowserWindow ? window.location.hostname : undefined,
 });
 let accessToken: string | null = null;
-/** Renewable session token. Mirrored into SecureStore by the persister below; never on web. */
+/** Renewable session token. Mirrored into SecureStore (localStorage on web) by the persister below. */
 let refreshToken: string | null = null;
 /** Shared by all concurrent 401s so only one /auth/refresh is ever in flight. */
 /**
  * renewed: a new session was issued. rejected: the server refused this session (it is over).
  * unavailable: the server could not answer (5xx, 429, unreachable) — that says nothing about the session.
+ * superseded (web only): another tab signed out or signed in as someone else, and this tab has
+ * already been signed out locally. The shared session is not this tab's to clear.
  */
-type RefreshOutcome = 'renewed' | 'rejected' | 'unavailable';
+type RefreshOutcome = 'renewed' | 'rejected' | 'unavailable' | 'superseded';
 let inFlightRefresh: Promise<RefreshOutcome> | null = null;
 let refreshPersist:
   | ((session: { user: AuthUser; refreshToken: string }) => Promise<void>)
   | null = null;
 let unauthorizedHandler: ((message: string) => void | Promise<void>) | null = null;
+
+// ── Cross-tab session coordination (web only, issue #61) ─────────────────────────────────────────
+//
+// The backend treats a refresh token presented after it was rotated as token theft and revokes the
+// whole login family. A phone runs one copy of this module, so the single-flight in
+// refreshAccessToken() is enough there. A browser runs one copy PER TAB, all sharing one
+// localStorage session: without coordination two tabs rotate the same token and sign the login
+// out. On web, therefore:
+//
+//  - renewal runs under a cross-tab exclusive lock (Web Locks, else a localStorage lease);
+//  - inside the lock the tab re-reads the stored session and, if another tab already rotated it,
+//    adopts that rotation instead of presenting its own (now dead) token;
+//  - every tab follows the stored session through `storage` events and before each request, so a
+//    rotation, a sign-out or a different user's sign-in in one tab reaches all of them. A different
+//    user's session is never adopted: this tab is signed out locally instead.
+//
+// Everything here is gated on `crossTab`, which is false on iOS/Android (no localStorage), so the
+// native path is unchanged. Nothing here may be imported from another module: every spec loads
+// api.ts on its own with stubbed requires.
+
+/** Must equal SESSION_KEY in session.ts (asserted by scripts/web-cross-tab-session.spec.cjs). */
+const SHARED_SESSION_KEY = 'security-app-session';
+/**
+ * Web only, and must equal WEB_ACCESS_KEY in session.ts: the access token that goes with the stored
+ * refresh token, so a tab that adopts another tab's rotation does not have to rotate again. Kept out
+ * of the v3 session blob so the persisted session format (and the native SecureStore entry) is
+ * unchanged. It is never trusted unless it is paired with the stored refresh token and unexpired.
+ */
+const SHARED_ACCESS_KEY = 'security-app-session-web-access';
+const SHARED_STORED_VERSION = 3;
+const REFRESH_LOCK_NAME = 's4-session-refresh';
+const REFRESH_LEASE_KEY = 's4-session-refresh-lease';
+/** How long a tab waits for another tab's renewal before reporting 'unavailable' (session kept). */
+const REFRESH_LOCK_WAIT_MS = 30_000;
+/** Fallback lease: a tab that dies holding it blocks the others for at most this long. */
+const REFRESH_LEASE_TTL_MS = 10_000;
+const REFRESH_LEASE_HEARTBEAT_MS = 2_500;
+const REFRESH_LEASE_POLL_MS = 50;
+const REFRESH_LEASE_SETTLE_MS = 30;
+/** An adopted access token must have at least this long left, or the tab renews instead. */
+const ACCESS_TOKEN_MIN_VALIDITY_MS = 30_000;
+
+type WebSessionStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
+type SessionEndedReason = 'signed-out' | 'user-changed';
+
+function webSessionStorage(): WebSessionStorage | null {
+  try {
+    if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return null;
+    return window.localStorage ?? null;
+  } catch {
+    // Storage blocked (sandboxed frame, disabled site data): behave like a single tab.
+    return null;
+  }
+}
+
+/** True only in a browser. React Native has no localStorage, so a phone never takes this path. */
+const crossTab = webSessionStorage() !== null;
+const TAB_ID = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+/** The user this tab is signed in as; another user's stored session is never adopted. */
+let tabUserId: number | null = null;
+/** Bumped whenever this tab's session identity changes, so a renewal that straddles it is dropped. */
+let sessionEpoch = 0;
+let sessionEndedHandler: ((reason: SessionEndedReason) => void) | null = null;
+
+type SharedSession =
+  | { kind: 'absent' }
+  | { kind: 'unreadable' }
+  | { kind: 'session'; refreshToken: string; userId: number | null; accessToken: string | null };
+
+/** Milliseconds since epoch at which a JWT expires, or null when it cannot be read. */
+function accessTokenExpiry(token: string): number | null {
+  try {
+    const payload = token.split('.')[1];
+    if (!payload || typeof atob !== 'function') return null;
+    const json = atob(payload.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(payload.length / 4) * 4, '='));
+    const exp = (JSON.parse(json) as { exp?: unknown }).exp;
+    return typeof exp === 'number' ? exp * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
+function isUsableAccessToken(token: string | null): token is string {
+  if (!token) return false;
+  const expiry = accessTokenExpiry(token);
+  return expiry !== null && expiry - Date.now() > ACCESS_TOKEN_MIN_VALIDITY_MS;
+}
+
+/** The latest session any tab persisted, read straight from localStorage (never cached). */
+function readSharedSession(): SharedSession {
+  const storage = webSessionStorage();
+  if (!storage) return { kind: 'unreadable' };
+  try {
+    const raw = storage.getItem(SHARED_SESSION_KEY);
+    if (raw === null) return { kind: 'absent' };
+    const parsed = JSON.parse(raw) as { version?: unknown; session?: { refreshToken?: unknown; user?: { id?: unknown } } };
+    if (parsed?.version !== SHARED_STORED_VERSION) return { kind: 'unreadable' };
+    const stored = parsed.session?.refreshToken;
+    if (typeof stored !== 'string' || !stored) return { kind: 'unreadable' };
+    const id = parsed.session?.user?.id;
+    let paired: string | null = null;
+    try {
+      const access = JSON.parse(storage.getItem(SHARED_ACCESS_KEY) ?? 'null') as { refreshToken?: unknown; accessToken?: unknown } | null;
+      if (access && access.refreshToken === stored && typeof access.accessToken === 'string') paired = access.accessToken;
+    } catch {
+      paired = null;
+    }
+    return { kind: 'session', refreshToken: stored, userId: typeof id === 'number' ? id : null, accessToken: paired };
+  } catch {
+    return { kind: 'unreadable' };
+  }
+}
+
+/** Written BEFORE the session itself, so a reader never pairs a new refresh token with an old access token. */
+function writeSharedAccess(forRefreshToken: string, newAccessToken: string) {
+  try {
+    webSessionStorage()?.setItem(SHARED_ACCESS_KEY, JSON.stringify({ refreshToken: forRefreshToken, accessToken: newAccessToken }));
+  } catch {
+    // Only an optimisation: without it another tab renews for itself, under the lock.
+  }
+}
+
+/** Another tab ended this tab's session. Local only: the shared storage belongs to whoever is signed in now. */
+function endTabSession(reason: SessionEndedReason) {
+  accessToken = null;
+  refreshToken = null;
+  tabUserId = null;
+  sessionEpoch += 1;
+  try {
+    sessionEndedHandler?.(reason);
+  } catch {
+    // The tab is already signed out locally; a failing UI callback must not undo that.
+  }
+}
+
+/**
+ * Bring this tab in line with the stored session: adopt another tab's rotation of the SAME login,
+ * follow a sign-out, and refuse a different user's session. A tab that is signed out never signs
+ * itself in from here — that takes a page load, which boots from storage normally.
+ */
+function syncFromSharedSession(): 'unchanged' | 'adopted' | 'ended' {
+  if (!crossTab || !refreshToken) return 'unchanged';
+  const shared = readSharedSession();
+  if (shared.kind === 'unreadable') return 'unchanged';
+  if (shared.kind === 'absent') {
+    endTabSession('signed-out');
+    return 'ended';
+  }
+  if (tabUserId !== null && shared.userId !== tabUserId) {
+    endTabSession('user-changed');
+    return 'ended';
+  }
+  // Restored without naming the user: the stored session that holds this tab's own token says who it is.
+  if (tabUserId === null && shared.refreshToken === refreshToken) tabUserId = shared.userId;
+  let adopted = false;
+  if (shared.refreshToken !== refreshToken) {
+    refreshToken = shared.refreshToken;
+    adopted = true;
+  }
+  if (shared.accessToken !== accessToken && isUsableAccessToken(shared.accessToken)) {
+    accessToken = shared.accessToken;
+    adopted = true;
+  }
+  return adopted ? 'adopted' : 'unchanged';
+}
+
+function delay(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+type RefreshLease = { owner: string; expires: number };
+
+function readLease(storage: WebSessionStorage): RefreshLease | null {
+  try {
+    const lease = JSON.parse(storage.getItem(REFRESH_LEASE_KEY) ?? 'null') as RefreshLease | null;
+    return lease && typeof lease.owner === 'string' && typeof lease.expires === 'number' ? lease : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fallback for browsers without Web Locks (Safari < 15.4, Firefox < 96). localStorage has no
+ * compare-and-set, so a claim is written, left to settle, and only counts if it is still ours. The
+ * holder renews it while it works; a tab that dies holding it stops renewing and it lapses.
+ */
+async function withRefreshLease<T>(work: () => Promise<T>, unavailable: T): Promise<T> {
+  const storage = webSessionStorage();
+  if (!storage) return work();
+  const deadline = Date.now() + REFRESH_LOCK_WAIT_MS;
+  const claim = () => storage.setItem(REFRESH_LEASE_KEY, JSON.stringify({ owner: TAB_ID, expires: Date.now() + REFRESH_LEASE_TTL_MS }));
+  try {
+    for (;;) {
+      const current = readLease(storage);
+      if (!current || current.owner === TAB_ID || current.expires <= Date.now()) {
+        claim();
+        await delay(REFRESH_LEASE_SETTLE_MS);
+        if (readLease(storage)?.owner === TAB_ID) break;
+      }
+      if (Date.now() >= deadline) return unavailable;
+      await delay(REFRESH_LEASE_POLL_MS);
+    }
+  } catch {
+    // Storage refused the lease: no exclusion is possible, so behave as a single tab did before.
+    return work();
+  }
+  const heartbeat = setInterval(() => {
+    try { claim(); } catch { /* the lease lapses on its own */ }
+  }, REFRESH_LEASE_HEARTBEAT_MS);
+  try {
+    return await work();
+  } finally {
+    clearInterval(heartbeat);
+    try {
+      if (readLease(storage)?.owner === TAB_ID) storage.removeItem(REFRESH_LEASE_KEY);
+    } catch {
+      // It lapses after REFRESH_LEASE_TTL_MS.
+    }
+  }
+}
+
+/** Runs `work` while no other tab of this origin is renewing. */
+async function withRefreshLock<T>(work: () => Promise<T>, unavailable: T): Promise<T> {
+  let locks: LockManager | undefined;
+  try {
+    locks = typeof window !== 'undefined' ? window.navigator?.locks : undefined;
+  } catch {
+    locks = undefined;
+  }
+  if (!locks || typeof locks.request !== 'function') return withRefreshLease(work, unavailable);
+
+  const waiting = new AbortController();
+  const waitLimit = setTimeout(() => waiting.abort(), REFRESH_LOCK_WAIT_MS);
+  let started = false;
+  try {
+    return await locks.request(REFRESH_LOCK_NAME, { mode: 'exclusive', signal: waiting.signal }, async () => {
+      started = true;
+      clearTimeout(waitLimit);
+      return work();
+    });
+  } catch (error) {
+    if (started) throw error;
+    // Gave up waiting for another tab: the service is busy, the session is not over.
+    if (waiting.signal.aborted) return unavailable;
+    // Web Locks present but unusable here (e.g. SecurityError in an opaque origin).
+    return withRefreshLease(work, unavailable);
+  } finally {
+    clearTimeout(waitLimit);
+  }
+}
+
+/** Called when another tab signed out, or signed in as someone else. The UI should show Login. */
+export function setSessionEndedElsewhereHandler(handler: ((reason: SessionEndedReason) => void) | null) {
+  sessionEndedHandler = handler;
+}
+
+if (crossTab) {
+  window.addEventListener('storage', (event: StorageEvent) => {
+    // key === null: storage was cleared wholesale.
+    if (event.key !== null && event.key !== SHARED_SESSION_KEY && event.key !== SHARED_ACCESS_KEY) return;
+    syncFromSharedSession();
+  });
+}
 
 export class ApiError extends Error {
   status: number;
@@ -227,6 +492,9 @@ async function request<T>(path: string, options?: RequestInit, retried = false):
   // Captured before the call: clearing the in-memory token on a failed renewal must not stop the
   // next 401 from reaching the handler. `couldRenew` covers the cold-start case, where there is
   // no access token at all yet — the stored refresh token is what mints the first one.
+  // On web, first follow whatever another tab did to the shared session (rotation, sign-out).
+  if (crossTab) syncFromSharedSession();
+  const sentAccessToken = accessToken;
   const sentWithToken = !!accessToken;
   const couldRenew = !!refreshToken;
   if (accessToken) {
@@ -276,9 +544,15 @@ async function request<T>(path: string, options?: RequestInit, retried = false):
       // The access token has almost certainly just expired. Try to renew once — all concurrent
       // 401s share the same attempt — and replay this request exactly once. `retried` makes a
       // refresh loop impossible: a second 401 falls straight through to the handler below.
-      const outcome: RefreshOutcome = retried ? 'rejected' : await refreshAccessToken();
+      const outcome: RefreshOutcome = retried ? 'rejected' : await refreshAccessToken(sentAccessToken);
       if (outcome === 'renewed') {
         return request<T>(path, options, true);
+      }
+
+      // Web: another tab ended this tab's session and the UI has been told. Do not clear storage —
+      // it may now hold someone else's session.
+      if (outcome === 'superseded') {
+        throw new ApiError(response.status, response.statusText, body);
       }
 
       // The service could not renew the session right now (overloaded, restarting, unreachable).
@@ -375,6 +649,10 @@ export async function login(email: string, password: string) {
   const normalizedSession = normalizeSession(session);
   accessToken = normalizedSession.accessToken;
   refreshToken = session.refreshToken ?? null;
+  tabUserId = typeof session.user?.id === 'number' ? session.user.id : null;
+  sessionEpoch += 1;
+  // Paired with the refresh token the app is about to persist, so a tab opened next can use it.
+  if (crossTab && refreshToken) writeSharedAccess(refreshToken, accessToken);
   return { ...normalizedSession, refreshToken: refreshToken ?? undefined };
 }
 
@@ -491,11 +769,19 @@ export function clearLocalSession() {
   accessToken = null;
   refreshToken = null;
   inFlightRefresh = null;
+  tabUserId = null;
+  sessionEpoch += 1;
 }
 
-export function restoreSession(session: { accessToken?: string; refreshToken?: string }) {
+/**
+ * `user` (optional) names who this session belongs to. On web it is what stops a tab from adopting
+ * a different user's session that another tab stored.
+ */
+export function restoreSession(session: { accessToken?: string; refreshToken?: string; user?: { id?: unknown } }) {
   accessToken = session.accessToken ?? null;
   refreshToken = session.refreshToken ?? null;
+  tabUserId = typeof session.user?.id === 'number' ? session.user.id : null;
+  sessionEpoch += 1;
 }
 
 /**
@@ -506,41 +792,88 @@ export function restoreSession(session: { accessToken?: string; refreshToken?: s
  * request would rotate the token independently and all but one would then be presenting a
  * rotated token — which the server correctly treats as theft and revokes the whole family.
  */
-async function refreshAccessToken(): Promise<RefreshOutcome> {
+async function refreshAccessToken(sentAccessToken: string | null = null): Promise<RefreshOutcome> {
   if (!refreshToken) return 'rejected';
   if (inFlightRefresh) return inFlightRefresh;
 
   const presented = refreshToken;
   inFlightRefresh = (async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ refreshToken: presented }),
-      });
-      if (!response.ok) {
-        // Only a refusal ends the session. A server error or rate limit is the service, not the session.
-        return response.status >= 500 || response.status === 429 ? 'unavailable' : 'rejected';
-      }
-
-      const body = (await response.json()) as AuthSession;
-      if (!body?.accessToken || !body?.refreshToken) return 'rejected';
-
-      accessToken = body.accessToken;
-      refreshToken = body.refreshToken;
-      // Persist the rotated token immediately: the presented one is already dead server-side, so
-      // losing the successor here would strand the device.
-      await refreshPersist?.({ user: body.user, refreshToken: body.refreshToken });
-      return 'renewed';
-    } catch {
-      // Offline or unreachable — not an auth failure. Keep the token so a later attempt can work.
-      return 'unavailable';
+      // Web: one renewal at a time across ALL tabs of this origin, not just within this one.
+      return crossTab
+        ? await withRefreshLock(() => renewAcrossTabs(sentAccessToken), 'unavailable' as RefreshOutcome)
+        : await renewWithServer(presented);
     } finally {
       inFlightRefresh = null;
     }
   })();
 
   return inFlightRefresh;
+}
+
+/** POST /auth/refresh with `presented` and take the rotation. This is the whole renewal on iOS/Android. */
+async function renewWithServer(presented: string): Promise<RefreshOutcome> {
+  const epoch = sessionEpoch;
+  try {
+    const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ refreshToken: presented }),
+    });
+    if (!response.ok) {
+      // Only a refusal ends the session. A server error or rate limit is the service, not the session.
+      return response.status >= 500 || response.status === 429 ? 'unavailable' : 'rejected';
+    }
+
+    const body = (await response.json()) as AuthSession;
+    if (!body?.accessToken || !body?.refreshToken) return 'rejected';
+
+    // Web: this tab was signed out (or switched user) while the call was in flight. The rotation
+    // belongs to a session nobody here owns any more, so it must not be taken or persisted.
+    if (crossTab && epoch !== sessionEpoch) return 'superseded';
+
+    accessToken = body.accessToken;
+    refreshToken = body.refreshToken;
+    if (crossTab) writeSharedAccess(body.refreshToken, body.accessToken);
+    // Persist the rotated token immediately: the presented one is already dead server-side, so
+    // losing the successor here would strand the device. On web this completes before the
+    // cross-tab lock is released, so the next tab to take the lock reads this rotation.
+    await refreshPersist?.({ user: body.user, refreshToken: body.refreshToken });
+    return 'renewed';
+  } catch {
+    // Offline or unreachable — not an auth failure. Keep the token so a later attempt can work.
+    return 'unavailable';
+  }
+}
+
+/**
+ * Web renewal, run while holding the cross-tab lock. The stored session is re-read first: if
+ * another tab has rotated it since this tab last looked, this tab's token is already dead
+ * server-side and presenting it would be reported as reuse — so the stored rotation is adopted, and
+ * the network is only used when no fresh access token came with it.
+ */
+async function renewAcrossTabs(sentAccessToken: string | null): Promise<RefreshOutcome> {
+  if (syncFromSharedSession() === 'ended' || !refreshToken) return 'superseded';
+  // A different, still-valid access token than the one that was refused: another tab renewed.
+  if (accessToken && accessToken !== sentAccessToken && isUsableAccessToken(accessToken)) return 'renewed';
+
+  const epoch = sessionEpoch;
+  const outcome = await renewWithServer(refreshToken);
+  if (epoch !== sessionEpoch) return 'superseded';
+  if (outcome === 'rejected') {
+    // A refusal of THIS login ends it everywhere (the unauthorized handler clears storage). But if
+    // storage meanwhile holds a different user's session, or none, this tab must not clear it.
+    const shared = readSharedSession();
+    if (shared.kind === 'absent') {
+      endTabSession('signed-out');
+      return 'superseded';
+    }
+    if (shared.kind === 'session' && tabUserId !== null && shared.userId !== tabUserId) {
+      endTabSession('user-changed');
+      return 'superseded';
+    }
+  }
+  return outcome;
 }
 
 export function setRefreshPersister(
@@ -550,6 +883,8 @@ export function setRefreshPersister(
 }
 
 export function getRefreshToken() {
+  // Web: callers persist what this returns, so never hand back a token another tab has replaced.
+  if (crossTab) syncFromSharedSession();
   return refreshToken;
 }
 
@@ -569,6 +904,8 @@ export function fetchCurrentUser(): Promise<AuthUser> {
  * this device — the session then simply expires on its own schedule server-side.
  */
 export async function logout() {
+  // Web: revoke the session as it stands now — another tab may have rotated it.
+  if (crossTab) syncFromSharedSession();
   const presented = refreshToken;
   try {
     if (presented && accessToken) {
@@ -583,6 +920,8 @@ export async function logout() {
     accessToken = null;
     refreshToken = null;
     inFlightRefresh = null;
+    tabUserId = null;
+    sessionEpoch += 1;
   }
 }
 

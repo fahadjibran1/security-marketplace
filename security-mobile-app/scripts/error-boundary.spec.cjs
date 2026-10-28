@@ -218,6 +218,7 @@ const appOverrides = (extra = {}) => ({
     'src/services/api': {
       clearLocalSession: noop, fetchCurrentUser: async () => ({}), getRefreshToken: () => null, logout: async () => undefined,
       restoreSession: noop, setRefreshPersister: noop, setUnauthorizedHandler: noop,
+      setSessionEndedElsewhereHandler: noop, // #61: App wires the web cross-tab sign-out notice
     },
     ...extra,
 });

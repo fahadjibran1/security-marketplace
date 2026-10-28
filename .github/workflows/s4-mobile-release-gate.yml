@@ -71,6 +71,15 @@ jobs:
       - name: Verify session expiry handling
         run: npm run test:session-expiry
 
+      # Issue #61: on web every tab runs its own api.ts against one shared localStorage session, and the
+      # backend revokes the whole login when a rotated refresh token is presented again. This runs the real
+      # api.ts once per simulated tab (shared storage + storage events, with and without Web Locks) against a
+      # server with strict reuse detection: one /auth/refresh per rotation, stale tabs adopt instead of
+      # presenting, sign-out propagates, another user's session is never adopted, real reuse still revokes,
+      # and the phone path is unchanged.
+      - name: Verify session renewal is coordinated across browser tabs
+        run: npm run test:web-cross-tab-session
+
       # ── Role boundaries and navigation ────────────────────────────────────────
       # S4 is multi-role and the server role must override the chosen login portal. Also covers stored
       # session round-tripping, which is how a returning Guard lands back on the right surface.
