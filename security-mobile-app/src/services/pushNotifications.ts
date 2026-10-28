@@ -35,8 +35,17 @@ import {
 const NATIVE = Platform.OS === 'ios' || Platform.OS === 'android';
 let configured = false;
 let registeredToken: string | null = null;
+// The device (FCM/APNs) token last obtained. Fetching the device token makes expo-notifications report it to every push
+// token listener as if it had changed, so a listener that registered again on every report would loop forever (one
+// Android phone sent POST /push-devices four times a second). A report of the token already obtained is that echo.
+let deviceToken: string | null = null;
+// One registration at a time: callers that arrive while one is running share its result.
+let inFlight: Promise<PushRegistration> | null = null;
+// Bumped on sign-out, so a registration still running for the previous Guard records nothing.
+let generation = 0;
 
 export type PushRegistration = 'registered' | 'denied' | 'unavailable' | 'unsupported';
+export type DevicePushToken = Notifications.DevicePushToken;
 
 /** Channel, buttons and foreground presentation. Idempotent; safe to call on every start. */
 export async function configureWelfareNotifications(): Promise<void> {
@@ -79,12 +88,27 @@ export async function configureWelfareNotifications(): Promise<void> {
   }
 }
 
+const tokenText = (token: Notifications.DevicePushToken) => (typeof token.data === 'string' ? token.data : JSON.stringify(token.data));
+
 /**
  * Ask for permission (once; the operating system remembers a refusal), get this installation's Expo push token, and
- * register it for the signed-in Guard. Never throws.
+ * register it for the signed-in Guard. Never throws. `rotated` is a device token the operating system reported as new;
+ * it is used as is rather than fetched, because fetching would report it to the listeners once more.
  */
-export async function registerWelfarePush(): Promise<PushRegistration> {
-  if (!NATIVE) return 'unsupported';
+export function registerWelfarePush(rotated?: Notifications.DevicePushToken): Promise<PushRegistration> {
+  if (!NATIVE) return Promise.resolve('unsupported');
+  if (inFlight) {
+    if (!rotated) return inFlight;
+    // A report that arrives mid-registration is usually the echo of the fetch in progress: once that finishes, it is
+    // the token already obtained and nothing more is sent. A genuinely different token is registered after it.
+    return inFlight.then((state) => (tokenText(rotated) === deviceToken ? state : registerWelfarePush(rotated)));
+  }
+  const mine = attemptRegistration(rotated, generation).finally(() => { if (inFlight === mine) inFlight = null; });
+  inFlight = mine;
+  return mine;
+}
+
+async function attemptRegistration(rotated: Notifications.DevicePushToken | undefined, startedIn: number): Promise<PushRegistration> {
   try {
     let permission = await Notifications.getPermissionsAsync();
     if (!permission.granted && permission.canAskAgain) {
@@ -92,9 +116,12 @@ export async function registerWelfarePush(): Promise<PushRegistration> {
     }
     if (!permission.granted) return 'denied';
     const projectId = (Constants.expoConfig?.extra as { eas?: { projectId?: string } } | undefined)?.eas?.projectId ?? Constants.easConfig?.projectId;
-    const { data: token } = await Notifications.getExpoPushTokenAsync(projectId ? { projectId } : undefined);
+    // The device token is fetched here, and remembered before anything else is awaited, so its echo is recognised.
+    const devicePushToken = rotated ?? (await Notifications.getDevicePushTokenAsync());
+    if (startedIn === generation) deviceToken = tokenText(devicePushToken);
+    const { data: token } = await Notifications.getExpoPushTokenAsync({ ...(projectId ? { projectId } : {}), devicePushToken });
     await registerPushDevice({ token, platform: Platform.OS as 'ios' | 'android', appVersion: Constants.expoConfig?.version });
-    registeredToken = token;
+    if (startedIn === generation) registeredToken = token;
     return 'registered';
   } catch {
     // e.g. no network, or the build has no push credentials yet. Reminders simply do not arrive; nothing else changes.
@@ -106,6 +133,10 @@ export async function registerWelfarePush(): Promise<PushRegistration> {
 export async function unregisterWelfarePush(): Promise<void> {
   const token = registeredToken;
   registeredToken = null;
+  // The next Guard to sign in on this phone registers afresh, without sharing anything still running for this one.
+  deviceToken = null;
+  inFlight = null;
+  generation += 1;
   if (!NATIVE || !token) return;
   try {
     await Promise.race([unregisterPushDevice(token), new Promise((resolve) => setTimeout(resolve, 5_000))]);
@@ -114,10 +145,15 @@ export async function unregisterWelfarePush(): Promise<void> {
   }
 }
 
-/** A token the operating system rotated is registered again, so reminders keep arriving. */
-export function subscribeTokenChanges(onChange: () => void): () => void {
+/**
+ * A token the operating system rotated is registered again, so reminders keep arriving. The echo of S4's own fetch
+ * (the token already obtained) is ignored; registerWelfarePush checks again for an echo that overtakes the fetch.
+ */
+export function subscribeTokenChanges(onChange: (token: Notifications.DevicePushToken) => void): () => void {
   if (!NATIVE) return () => undefined;
-  const sub = Notifications.addPushTokenListener(() => onChange());
+  const sub = Notifications.addPushTokenListener((token: Notifications.DevicePushToken) => {
+    if (tokenText(token) !== deviceToken) onChange(token);
+  });
   return () => sub.remove();
 }
 

@@ -3,7 +3,7 @@
     "name": "S4",
     "description": "Staff. Sites. Shifts. Security.",
     "slug": "security-marketplace",
-    "version": "1.1.0",
+    "version": "1.1.1",
     "scheme": "s4security",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
@@ -24,7 +24,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.sfour.s4",
-      "buildNumber": "17",
+      "buildNumber": "18",
       "config": {
         "usesNonExemptEncryption": false
       },
@@ -67,7 +67,7 @@
     },
     "android": {
       "softwareKeyboardLayoutMode": "resize",
-      "versionCode": 18,
+      "versionCode": 19,
       "package": "com.sfour.s4",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",

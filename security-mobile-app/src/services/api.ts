@@ -506,11 +506,16 @@ async function refreshAccessToken(): Promise<RefreshOutcome> {
 
   const presented = refreshToken;
   inFlightRefresh = (async () => {
+    // The same 30 s limit as every other request. Without it a stalled renewal left every request waiting on it (each
+    // 401 retry shares this promise) hanging for good; a timeout is the service being unavailable, not the session ending.
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30_000);
     try {
       const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ refreshToken: presented }),
+        signal: controller.signal,
       });
       if (!response.ok) {
         // Only a refusal ends the session. A server error or rate limit is the service, not the session.
@@ -530,6 +535,7 @@ async function refreshAccessToken(): Promise<RefreshOutcome> {
       // Offline or unreachable — not an auth failure. Keep the token so a later attempt can work.
       return 'unavailable';
     } finally {
+      clearTimeout(timeout);
       inFlightRefresh = null;
     }
   })();

@@ -140,7 +140,7 @@ test('UAT-08-AN-APP-CANNOT-BE-BUILT-AGAINST-THE-OTHER-ENVIRONMENT', () => {
   // Every profile in eas.json, as an EAS worker evaluates it.
   assert.equal(run(onEas('uat')).android.package, 'com.sfour.s4.uat');
   assert.equal(run(onEas('uat')).ios.bundleIdentifier, 'com.sfour.s4.uat');
-  assert.equal(run(onEas('uat')).android.versionCode, 19, 'the uat profile stays above the store app');
+  assert.equal(run(onEas('uat')).android.versionCode, 20, 'the uat profile stays above the store app');
   for (const name of ['production', 'pilot', 'preview', 'development', 'ios-simulator']) {
     assert.equal(run(onEas(name)).android.package, 'com.sfour.s4', `${name} stays the store identity`);
   }
@@ -162,13 +162,14 @@ test('UAT-08-AN-APP-CANNOT-BE-BUILT-AGAINST-THE-OTHER-ENVIRONMENT', () => {
 
 test('UAT-09-THE-UAT-APP-HAS-ITS-OWN-ANDROID-VERSION-CODE-ABOVE-THE-STORE-APP', () => {
   const eas = JSON.parse(fs.readFileSync(path.join(ROOT, 'eas.json'), 'utf8'));
-  assert.equal(eas.build.uat.env.UAT_ANDROID_VERSION_CODE, '19', 'above the store app (18) and the UAT 1.1.0 (16) build 5d758b92');
+  assert.equal(eas.build.uat.env.UAT_ANDROID_VERSION_CODE, '20', 'above the store app (19) and the UAT 1.1.0 (16) build 5d758b92');
+  assert.ok(Number(eas.build.uat.env.UAT_ANDROID_VERSION_CODE) > appJson.expo.android.versionCode, 'strictly above the store app');
   assert.equal(eas.build.production.env.UAT_ANDROID_VERSION_CODE, undefined, 'never on the store profile');
   const prev = { ...process.env };
   try {
-    process.env.UAT_ANDROID_VERSION_CODE = '19';
+    process.env.UAT_ANDROID_VERSION_CODE = '20';
     const uat = withVariant('uat', () => makeConfig({ config: fresh() }));
-    assert.equal(uat.android.versionCode, 19);
+    assert.equal(uat.android.versionCode, 20);
     assert.equal(uat.android.package, 'com.sfour.s4.uat');
     const store = withVariant(undefined, () => makeConfig({ config: fresh() }));
     assert.equal(store.android.versionCode, appJson.expo.android.versionCode, 'the store app keeps its own number');
