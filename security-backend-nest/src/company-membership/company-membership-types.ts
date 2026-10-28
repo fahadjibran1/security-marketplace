@@ -70,7 +70,27 @@ export enum CompanyPermission {
   PERSONNEL_BANK_VIEW = 'personnel_bank.view',
   REPORTS_OPERATIONAL = 'reports.operational',
   REPORTS_FINANCIAL = 'reports.financial',
+  /**
+   * Patrol Management (Migration 68, owner-approved 28 Oct 2026). Effective only while the company's patrolsEnabled
+   * switch is on (the session list omits them otherwise). Exceptions are handled through the existing alerts flow.
+   *   patrols.view      Owner, Admin, Operations, Control Room, Viewer
+   *   patrols.manage    Owner, Admin, Operations          (site settings, schedules, checkpoints, routes, labels)
+   *   patrols.evidence  Owner, Admin, Operations, Control Room   (patrol photo evidence and its metadata)
+   *   patrols.holds     Owner, Admin                      (evidence holds)
+   */
+  PATROLS_VIEW = 'patrols.view',
+  PATROLS_MANAGE = 'patrols.manage',
+  PATROLS_EVIDENCE = 'patrols.evidence',
+  PATROLS_HOLDS = 'patrols.holds',
 }
+
+/** The four Patrol Management permissions (Migration 68). */
+export const PATROL_PERMISSIONS: readonly CompanyPermission[] = [
+  CompanyPermission.PATROLS_VIEW,
+  CompanyPermission.PATROLS_MANAGE,
+  CompanyPermission.PATROLS_EVIDENCE,
+  CompanyPermission.PATROLS_HOLDS,
+];
 
 // --- Permission matrix ---
 // Data minimisation principles:
@@ -120,6 +140,10 @@ const ADMIN_PERMISSIONS: Set<CompanyPermission> = new Set([
   CompanyPermission.PERSONNEL_BANK_VIEW,
   CompanyPermission.REPORTS_OPERATIONAL,
   CompanyPermission.REPORTS_FINANCIAL,
+  CompanyPermission.PATROLS_VIEW,
+  CompanyPermission.PATROLS_MANAGE,
+  CompanyPermission.PATROLS_EVIDENCE,
+  CompanyPermission.PATROLS_HOLDS,
 ]);
 
 const OPERATIONS_PERMISSIONS: Set<CompanyPermission> = new Set([
@@ -150,6 +174,10 @@ const OPERATIONS_PERMISSIONS: Set<CompanyPermission> = new Set([
   CompanyPermission.PERSONNEL_BASIC_VIEW,
   CompanyPermission.REPORTS_OPERATIONAL,
   // reports.financial excluded — reveals billing rates / profit margins
+  CompanyPermission.PATROLS_VIEW,
+  CompanyPermission.PATROLS_MANAGE,
+  CompanyPermission.PATROLS_EVIDENCE,
+  // patrols.holds excluded — evidence holds are an Owner / Admin decision
 ]);
 
 const CONTROL_ROOM_PERMISSIONS: Set<CompanyPermission> = new Set([
@@ -166,6 +194,9 @@ const CONTROL_ROOM_PERMISSIONS: Set<CompanyPermission> = new Set([
   CompanyPermission.INCIDENTS_MANAGE,
   CompanyPermission.PERSONNEL_BASIC_VIEW,
   CompanyPermission.REPORTS_OPERATIONAL,
+  // Patrols: watch and review (including photo evidence), never configure (no patrols.manage) or hold.
+  CompanyPermission.PATROLS_VIEW,
+  CompanyPermission.PATROLS_EVIDENCE,
 ]);
 
 const HR_COMPLIANCE_PERMISSIONS: Set<CompanyPermission> = new Set([
@@ -210,6 +241,8 @@ const VIEWER_PERMISSIONS: Set<CompanyPermission> = new Set([
   CompanyPermission.TIMESHEETS_VIEW,
   CompanyPermission.CLIENT_BILLING_VIEW,
   CompanyPermission.INCIDENTS_VIEW,
+  // Patrols: read-only; no photo evidence (patrols.evidence).
+  CompanyPermission.PATROLS_VIEW,
 ]);
 
 export const ROLE_PERMISSIONS: Record<CompanyMembershipRole, Set<CompanyPermission>> = {

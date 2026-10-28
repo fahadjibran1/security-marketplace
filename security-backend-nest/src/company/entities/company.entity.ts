@@ -66,6 +66,14 @@ export class Company {
   })
   status!: CompanyStatus;
 
+  /**
+   * Patrol Management feature switch (Migration 68), off by default; only an S4 platform administrator changes it
+   * (PUT /admin/patrols/companies/:companyId, audited). `select: false` keeps every existing company response exactly as
+   * it was: the flag is read explicitly where Patrols needs it, never serialised with the company.
+   */
+  @Column({ type: 'boolean', default: false, select: false })
+  patrolsEnabled?: boolean;
+
   @OneToMany(() => Job, (job) => job.company)
   jobs?: Job[];
 
