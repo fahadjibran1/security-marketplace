@@ -83,7 +83,7 @@ shift-extension notifications were observed during live testing.
   - Revoked devices: 0.
 - Inbox read: both `shift_amendment_requested` notices sent since activation have a `readAt`.
 
-## 9. Manual attendance: first live result (28 Oct 2026)
+## 6. Manual attendance: first live result (28 Oct 2026)
 
 Production backend baaefb7 (Part B manual attendance and the overlap fix), migration ledger 67. Company web 369e665 (`dpl_V9nCw5offPRBWSoLJ51hWwbCDMkK`).
 
@@ -101,7 +101,7 @@ Production backend baaefb7 (Part B manual attendance and the overlap fix), migra
 - **Rollback note:** a manual record now exists, so the backend must not be restored to a build older than 671fb9f.
 - **Still open, not part of this test:** missed Welfare Check alert 45371 on shift 69 (raised 13:08) is still open, for the control room.
 
-## 6. Not yet verified
+## 7. Not yet verified
 
 Nothing below has a production record yet. Each stays unverified until it does.
 
@@ -112,12 +112,12 @@ Nothing below has a production record yet. Each stays unverified until it does.
 - The unread side of the inbox: a notice staying unread until it is opened, and the badge count.
 - Guard 28 is still on 1.1.0.
 
-## 7. Operational note
+## 8. Operational note
 
 - missed_checkcall alert 45046 (shift 68, 22:05, before activation) was still open at 00:09. The control room is
   to resolve it under the normal procedure. It is not a push defect: it predates activation.
 
-## 8. Known missing notification events at 88e8a27
+## 9. Known missing notification events at 88e8a27
 
 These events produce no push, no in-app notification and no email on the current production backend. They are
 known gaps, not regressions from activation.
