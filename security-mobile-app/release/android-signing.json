@@ -32,9 +32,21 @@
     "keySizeNote": "Corrected 2026-10-20 from 2048: keytool on the keystore and jarsigner on the 1.1.0 (15) AAB both report a 4096-bit RSA key. The certificate SHA-256 (which covers the public key) was always correct; only the size field was mis-recorded."
   },
   "expectedRelease": {
-    "versionName": "1.1.1",
-    "versionCode": 19,
+    "versionName": "1.1.2",
+    "versionCode": 20,
     "minSdkVersion": 24
+  },
+  "preparedArtefact": {
+    "versionName": "1.1.2",
+    "versionCode": 20,
+    "status": "prepared-not-built",
+    "easBuildProfile": "production",
+    "distribution": "STORE",
+    "sourceBranch": "release-prep/guard-app-1.1.2",
+    "sourceFixCommit": "f2baeb7fca0bb5af1bf657244f7fee6ef6598455",
+    "sourceCommit": "the commit on release-prep/guard-app-1.1.2 that sets 1.1.2 / versionCode 20 in app.json, directly on top of f2baeb7 (the merge of fix/push-registration-loop 00710f0 into release/s4-pilot-rc1 bca5047); a commit cannot record its own id, the build record names it once built",
+    "requiredUploadCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
+    "note": "Guard app 1.1.2 (20): the distributed 1.1.1 (19) (Guard notifications inbox, push-registration loop fix, offer answers without waiting on the re-read, session renewal timeout) merged with release/s4-pilot-rc1 bca5047 (Guard timesheets in hours and minutes, the return reason with reviewer and time, review history, verified attendance beside the claim). Same package com.sfour.s4, same upload key as vc17, vc18 and vc19 (the permanent S4 certificate above), same Firebase setup, production API. Prepared only: not built, not uploaded to Google Play, so there is no EAS build id, AAB hash or Play state for it. 1.1.1 (19) stays the distributed Android build until 1.1.2 (20) is built, certified and uploaded on owner approval."
   },
   "approvedArtefact": {
     "versionName": "1.1.1",

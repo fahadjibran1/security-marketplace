@@ -37,7 +37,9 @@ const easJson = JSON.parse(read('eas.json'));
 
 // ═══════════════════ the controlled version ═══════════════════
 
-test('BUILD-01-APP-VERSION-IS-1-1-1-AND-ANDROID-BUILD-19', () => {
+test('BUILD-01-APP-VERSION-IS-1-1-2-AND-ANDROID-BUILD-20', () => {
+  // Guard app 1.1.2 (28 Oct 2026, prepared, not built): S4 1.1.2 / 20 is the 1.1.1 line merged with release/s4-pilot-rc1
+  // bca5047 (Guard timesheet UX). 1.1.1 / 19 is distributed in Google Play Internal Testing and stays so until 20 is built.
   // Maintenance release (25 Oct 2026): S4 1.1.1 / 19 adds the push-registration loop fix (808a55c) over 1.1.0 / 18, which
   // is Active in Google Play Internal Testing (owner-confirmed 25 Oct 2026) and stays distributed until 19 is built.
   // Guard notifications update (25 Oct 2026): S4 1.1.0 / 18 adds the Guard notifications inbox (PR #34) over 1.1.0 / 17,
@@ -49,8 +51,9 @@ test('BUILD-01-APP-VERSION-IS-1-1-1-AND-ANDROID-BUILD-19', () => {
   // first permanent-identity candidate (com.sfour.s4); it is retired because it predates Dashboard V2. It is a new
   // Android package, so nothing installs over anything — but the code keeps climbing, so every S4
   // artefact ever produced carries a distinct, increasing number. The development-package history:
-  assert.equal(appJson.expo.version, '1.1.1');
-  assert.equal(appJson.expo.android.versionCode, 19, 'the push-registration fix maintenance release candidate');
+  assert.equal(appJson.expo.version, '1.1.2');
+  assert.equal(appJson.expo.android.versionCode, 20, 'the Guard app 1.1.2 candidate');
+  assert.ok(appJson.expo.android.versionCode > 19, 'above the distributed push-registration fix maintenance release 19');
   assert.ok(appJson.expo.android.versionCode > 18, 'above the distributed Guard notifications update 18');
   assert.ok(appJson.expo.android.versionCode > 17, 'above the distributed Welfare Check push release 17');
   assert.ok(appJson.expo.android.versionCode > 16, 'above the built pilot update 16');
@@ -80,13 +83,18 @@ test('BUILD-01-APP-VERSION-IS-1-1-1-AND-ANDROID-BUILD-19', () => {
   // iOS has its own counter. Build 13 was uploaded to App Store Connect on 8 Oct 2026 (EAS Submit 90bd22f5), so
   // App Store Connect will never accept 13 again; the Guard release was build 14, the pilot update build 15, and the
   // Welfare Check push update build 16 (in TestFlight, owner-confirmed 24 Oct 2026), the Guard notifications update
-  // build 17 (in TestFlight, owner-confirmed 25 Oct 2026), and the 1.1.1 maintenance release is build 18.
-  assert.equal(appJson.expo.ios.buildNumber, '18', 'above the uploaded builds 13, 16 and 17 and the built builds 14 and 15');
+  // build 17 (in TestFlight, owner-confirmed 25 Oct 2026), the 1.1.1 maintenance release build 18 (uploaded to App Store
+  // Connect 26 Oct 2026, EAS Submit 5118fcda), and Guard app 1.1.2 is build 19.
+  assert.equal(appJson.expo.ios.buildNumber, '19', 'above the uploaded builds 13, 16, 17 and 18 and the built builds 14 and 15');
+  assert.ok(Number(appJson.expo.ios.buildNumber) > 18, 'above the uploaded build 18');
   assert.ok(Number(appJson.expo.ios.buildNumber) > 17, 'above the distributed build 17');
   assert.ok(Number(appJson.expo.ios.buildNumber) > 16, 'above the distributed build 16');
 });
 
-test('BUILD-01B-THE-1-1-1-BUILDS-MATCH-APP-JSON-AND-ARE-ABOVE-THE-DISTRIBUTED-ONES', () => {
+test('BUILD-01B-THE-1-1-1-BUILDS-ARE-KEPT-EXACTLY-AND-ARE-ABOVE-THE-DISTRIBUTED-ONES', () => {
+  // Since 28 Oct 2026 app.json carries the prepared 1.1.2 (Android 20, iOS 19; BUILD-01C). The 1.1.1 builds stay
+  // recorded exactly: Android 19 the distributed approved artefact, iOS 18 the submitted (uploaded) artefact, each
+  // exactly one number below what app.json now carries.
   // The release records name the 1.1.1 builds, first prepared (not built), then built and certified (26 Oct 2026, both
   // from 1a6c856). Android 19 is now distributed (Play Internal Testing; production devices report 1.1.1) and 18 is
   // distributed-superseded; iOS 18 is uploaded to App Store Connect (EAS Submit 5118fcda) with no confirmed TestFlight
@@ -106,13 +114,15 @@ test('BUILD-01B-THE-1-1-1-BUILDS-MATCH-APP-JSON-AND-ARE-ABOVE-THE-DISTRIBUTED-ON
 
   // Android 1.1.1 (19) is now distributed (owner upload approved 26 Oct 2026; production devices report 1.1.1), so it is
   // the approved artefact, and 1.1.0 (18) is retired as distributed-superseded, as 17 was when 18 replaced it.
-  assert.ok(!('preparedArtefact' in android), 'nothing is prepared in front of the distributed Android 1.1.1 (19)');
+  // Only a prepared (not built) 1.1.2 (20) stands in front of it (BUILD-01C); nothing built or uploaded does.
+  assert.equal(android.preparedArtefact.status, 'prepared-not-built', 'only the prepared, not built, 1.1.2 is in front of 1.1.1 (19)');
   const pa = android.approvedArtefact;
   const da = android.retiredArtefacts.find((entry) => entry.versionCode === 18);
   assert.equal(pa.status, 'distributed', 'Android 1.1.1 (19) is the distributed build');
-  assert.equal(pa.versionName, appJson.expo.version);
-  assert.equal(pa.versionCode, appJson.expo.android.versionCode);
+  assert.equal(pa.versionName, '1.1.1');
   assert.equal(pa.versionCode, 19);
+  assert.equal(pa.versionCode + 1, appJson.expo.android.versionCode, 'app.json carries the next versionCode, 20');
+  assert.ok(above(appJson.expo.version, pa.versionName), 'app.json carries a higher versionName than the distributed 1.1.1');
   assert.equal(da.status, 'distributed-superseded', 'Android 18 was distributed and is superseded');
   assert.equal(android.playConsole.internalTesting.activeRelease, `${pa.versionName} (${pa.versionCode})`, 'Play shows 1.1.1 (19)');
   assert.ok(pa.versionCode > da.versionCode, 'versionCode strictly above the superseded distributed one');
@@ -141,11 +151,15 @@ test('BUILD-01B-THE-1-1-1-BUILDS-MATCH-APP-JSON-AND-ARE-ABOVE-THE-DISTRIBUTED-ON
     assert.doesNotMatch(pa.note, /Not uploaded to Google Play/);
   }
 
-  const pi = ios.preparedArtefact;
+  // The iOS 1.1.1 (18) record moved, unchanged, from preparedArtefact to submittedArtefact when 1.1.2 (19) was prepared.
+  const pi = ios.submittedArtefact;
   const di = ios.artefact;
+  assert.equal(pi.status, SUBMITTED, 'iOS 1.1.1 (18) is uploaded to App Store Connect, not distributed');
   assert.ok([...STATES, SUBMITTED].includes(pi.status), `unexpected iOS 1.1.1 status ${pi.status}`);
-  assert.equal(pi.marketingVersion, appJson.expo.version);
-  assert.equal(pi.buildNumber, appJson.expo.ios.buildNumber);
+  assert.equal(pi.marketingVersion, '1.1.1');
+  assert.equal(pi.buildNumber, '18');
+  assert.equal(Number(pi.buildNumber) + 1, Number(appJson.expo.ios.buildNumber), 'app.json carries the next build, 19');
+  assert.ok(above(appJson.expo.version, pi.marketingVersion), 'app.json carries a higher version than the uploaded 1.1.1');
   assert.equal(ios.marketingVersion, appJson.expo.version, 'the record header tracks app.json');
   assert.equal(ios.buildNumber, appJson.expo.ios.buildNumber, 'the record header tracks app.json');
   assert.equal(ios.bundleIdentifier, appJson.expo.ios.bundleIdentifier);
@@ -235,6 +249,85 @@ test('BUILD-01B-THE-1-1-1-BUILDS-MATCH-APP-JSON-AND-ARE-ABOVE-THE-DISTRIBUTED-ON
   for (const p of [pa, pi]) {
     assert.equal(p.sourceBranch, 'fix/push-registration-loop');
     assert.equal(p.sourceFixCommit, '808a55c2d7f2bc8a803a3f23a18d6d24123922ac');
+  }
+});
+
+test('BUILD-01C-THE-PREPARED-1-1-2-BUILDS-MATCH-APP-JSON-AND-ARE-ABOVE-THE-1-1-1-ONES', () => {
+  // Guard app 1.1.2 (28 Oct 2026): the release records name the prepared (not built, not uploaded) 1.1.2 builds. Their
+  // numbers must be exactly what app.json carries, so a build cannot ship a number the record does not name, and
+  // strictly above the 1.1.1 builds (Android 19 distributed, iOS 18 uploaded), which stay recorded as they were.
+  const android = JSON.parse(read('release/android-signing.json'));
+  const ios = JSON.parse(read('release/ios-release.json'));
+  const semver = (v) => { assert.match(v, /^\d+\.\d+\.\d+$/); return v.split('.').map(Number); };
+  const above = (a, b) => { const [x, y] = [semver(a), semver(b)]; for (let i = 0; i < 3; i += 1) { if (x[i] !== y[i]) return x[i] > y[i]; } return false; };
+  const NOT_BUILT = /not built/;
+  const MERGE_COMMIT = 'f2baeb7fca0bb5af1bf657244f7fee6ef6598455';
+
+  const pa = android.preparedArtefact;
+  const da = android.approvedArtefact;
+  assert.equal(pa.status, 'prepared-not-built');
+  assert.equal(pa.versionName, '1.1.2');
+  assert.equal(pa.versionCode, 20);
+  assert.equal(pa.versionName, appJson.expo.version);
+  assert.equal(pa.versionCode, appJson.expo.android.versionCode);
+  assert.equal(android.expectedRelease.versionName, pa.versionName, 'the next AAB is checked against the prepared release');
+  assert.equal(android.expectedRelease.versionCode, pa.versionCode);
+  assert.equal(da.status, 'distributed', 'Android 19 stays the distributed build');
+  assert.equal(da.versionCode, 19);
+  assert.equal(android.playConsole.internalTesting.activeRelease, '1.1.1 (19)', 'Play still shows 1.1.1 (19)');
+  assert.ok(pa.versionCode > da.versionCode, 'prepared versionCode strictly above the distributed one');
+  assert.ok(above(pa.versionName, da.versionName), 'prepared versionName strictly above the distributed one');
+  for (const key of ['easBuildId', 'easBuildUrl', 'aabSha256', 'apkSha256', 'aabFilename', 'aabSizeBytes', 'gitCommit', 'completedAt', 'certifiedOn', 'verified', 'playInternalTesting', 'uploadCertificateSha256']) {
+    assert.ok(!(key in pa), `a prepared Android artefact records no ${key}`);
+  }
+  assert.match(pa.note, NOT_BUILT);
+  assert.match(pa.note, /not uploaded to Google Play/);
+  assert.equal(pa.easBuildProfile, 'production');
+  assert.equal(pa.distribution, 'STORE');
+  assert.equal(pa.requiredUploadCertificateSha256, da.uploadCertificateSha256, 'the same upload key as the distributed 19');
+
+  const pi = ios.preparedArtefact;
+  const si = ios.submittedArtefact;
+  const di = ios.artefact;
+  assert.equal(pi.status, 'prepared-not-built');
+  assert.equal(pi.marketingVersion, '1.1.2');
+  assert.equal(pi.buildNumber, '19');
+  assert.equal(pi.marketingVersion, appJson.expo.version);
+  assert.equal(pi.buildNumber, appJson.expo.ios.buildNumber);
+  assert.equal(ios.marketingVersion, appJson.expo.version, 'the record header tracks app.json');
+  assert.equal(ios.buildNumber, appJson.expo.ios.buildNumber, 'the record header tracks app.json');
+  assert.equal(ios.bundleIdentifier, appJson.expo.ios.bundleIdentifier);
+  assert.equal(si.status, 'uploaded-to-testflight', 'iOS 18 stays uploaded, not distributed');
+  assert.equal(di.status, 'distributed', 'iOS 17 stays the distributed build');
+  assert.equal(di.buildNumber, '17');
+  for (const earlier of [si, di]) {
+    assert.ok(Number(pi.buildNumber) > Number(earlier.buildNumber), `prepared build number strictly above ${earlier.buildNumber}`);
+    assert.ok(above(pi.marketingVersion, earlier.marketingVersion), `prepared marketing version strictly above ${earlier.marketingVersion}`);
+  }
+  for (const key of ['easBuildId', 'easBuildUrl', 'ipaSha256', 'ipaFilename', 'ipaSizeBytes', 'gitCommit', 'completedAt', 'certifiedOn', 'verified', 'testFlightUpload', 'testFlightDistribution']) {
+    assert.ok(!(key in pi), `a prepared iOS artefact records no ${key}`);
+  }
+  assert.deepEqual(Object.keys(pi).filter((key) => /testflight|submission|ascAppId|uploaded/i.test(key)), [], 'no submission facts');
+  assert.match(pi.note, NOT_BUILT);
+  assert.match(pi.note, /not submitted/);
+  assert.equal(pi.easBuildProfile, 'production');
+  assert.equal(pi.distribution, 'STORE');
+  // Same EAS-managed credentials as the distributed build 17 and the uploaded build 18.
+  assert.match(pi.requiredSigning.credentials, /EAS-managed/);
+  for (const earlier of [di, si]) {
+    assert.equal(pi.requiredSigning.teamId, earlier.verified.teamId);
+    assert.equal(pi.requiredSigning.distributionCertificateSha256, earlier.verified.distributionCertificateSha256);
+    assert.equal(pi.requiredSigning.distributionCertificateSerial, earlier.verified.distributionCertificateSerial);
+    assert.equal(earlier.verified.profileApsEnvironment, 'production');
+  }
+  assert.match(pi.requiredSigning.provisioningProfile, /B7539588YY/);
+  assert.equal(pi.requiredSigning.apsEnvironment, 'production');
+
+  // Both platforms are prepared from the same merge commit on the same branch, which contains the 1.1.1 fix.
+  for (const p of [pa, pi]) {
+    assert.equal(p.sourceBranch, 'release-prep/guard-app-1.1.2');
+    assert.equal(p.sourceFixCommit, MERGE_COMMIT);
+    assert.match(p.sourceCommit, /on top of f2baeb7/);
   }
 });
 
