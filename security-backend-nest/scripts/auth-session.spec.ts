@@ -154,6 +154,49 @@ async function main() {
       assert.equal([a, b].filter((r) => r.status === 'rejected').length, 1);
     });
 
+    await test('REFRESH-RACE-STRESS', async () => {
+      // REFRESH-RACE alone used to pass by luck: with a cold pool the second rotation waited for a
+      // new connection while the first finished (issue #53). Open enough connections first so
+      // every racer genuinely reaches the database at the same moment, then repeat.
+      const ITERATIONS = 25;
+      const PARALLEL = 5;
+      await Promise.all(
+        Array.from({ length: PARALLEL }, () => dataSource.query('SELECT pg_sleep(0.05)')),
+      );
+      for (let i = 0; i < ITERATIONS; i += 1) {
+        const raced = await service.create(guard.id);
+        const root = await sessions.findOneOrFail({ where: { tokenHash: sha(raced.refreshToken) } });
+        const auditsBefore = audits.length;
+
+        const outcomes = await Promise.allSettled(
+          Array.from({ length: PARALLEL }, () => service.rotate(raced.refreshToken)),
+        );
+        const wins = outcomes.filter((r) => r.status === 'fulfilled');
+        const losses = outcomes.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+        assert.equal(wins.length, 1, `iteration ${i}: exactly one concurrent rotation may succeed`);
+        for (const loss of losses) assert.match(String(loss.reason), /no longer valid/);
+
+        const family = await sessions.find({ where: { familyId: root.familyId } });
+        assert.equal(
+          family.filter((row) => row.rotatedFromId === root.id).length,
+          1,
+          `iteration ${i}: one token must never yield more than one successor`,
+        );
+        // A loser presented a token that is already rotated — indistinguishable from a replayed
+        // stolen token — so it takes the reuse path: the whole family, the winner's fresh
+        // successor included, is revoked and the reuse is audited. No live branch survives.
+        assert.ok(
+          family.every((row) => row.revokedAt),
+          `iteration ${i}: no session in a raced family may stay live`,
+        );
+        assert.ok(family.some((row) => row.revokedReason === 'reuse_detected'));
+        const reuseAudits = audits
+          .slice(auditsBefore)
+          .filter((a) => a.action === 'auth.session_reuse_detected').length;
+        assert.equal(reuseAudits, PARALLEL - 1, `iteration ${i}: every loser must be audited as reuse`);
+      }
+    });
+
     // ── INVALID / EXPIRED / REVOKED ────────────────────────────────────────────────────────────
     await test('INVALID-REFRESH', async () => {
       await assert.rejects(() => service.rotate('not-a-real-token-but-long-enough'), /no longer valid/);

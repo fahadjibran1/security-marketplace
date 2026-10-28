@@ -84,6 +84,71 @@ export class AuthSessionService {
     if (typeof presentedToken !== 'string' || presentedToken.length < 20) throw denied();
 
     const tokenHash = this.hash(presentedToken);
+    const now = new Date();
+
+    // Claim the presented session and write its successor in one transaction. The claim is a
+    // conditional UPDATE, so of any number of concurrent rotations of the same token exactly one
+    // matches the row: Postgres serialises them on the row lock, and every other one re-checks
+    // `"revokedAt" IS NULL` after the winner commits and matches nothing. A read-then-write here
+    // would let each racer see the row as live and mint its own successor (issue #53).
+    const rotated = await this.sessions.manager.transaction(async (manager) => {
+      const repo = manager.getRepository(AuthSession);
+      const claim = await repo
+        .createQueryBuilder()
+        .update(AuthSession)
+        .set({ revokedAt: now, revokedReason: 'rotated', lastUsedAt: now })
+        .where('"tokenHash" = :tokenHash', { tokenHash })
+        .andWhere('"revokedAt" IS NULL')
+        .andWhere('"expiresAt" > :now', { now })
+        .andWhere('"absoluteExpiresAt" > :now', { now })
+        .returning('"id", "userId", "familyId", "absoluteExpiresAt"')
+        .execute();
+      const claimed = (claim.raw as Array<{
+        id: number;
+        userId: number;
+        familyId: string;
+        absoluteExpiresAt: Date;
+      }>)[0];
+      if (!claimed) return null;
+
+      const absoluteExpiresAt = new Date(claimed.absoluteExpiresAt);
+      const token = this.mint();
+      // The successor inherits the family's absolute ceiling; the idle window is extended but
+      // clamped so a long-lived family can never outlive its 90-day limit.
+      const idleTarget = new Date(now.getTime() + IDLE_SESSION_MS);
+      const expiresAt = idleTarget < absoluteExpiresAt ? idleTarget : absoluteExpiresAt;
+
+      const successor = await repo.save(
+        repo.create({
+          user: { id: claimed.userId } as never,
+          tokenHash: this.hash(token),
+          familyId: claimed.familyId,
+          rotatedFromId: claimed.id,
+          expiresAt,
+          absoluteExpiresAt,
+        }),
+      );
+
+      return { claimed, successor, token, expiresAt, absoluteExpiresAt };
+    });
+
+    if (rotated) {
+      const { claimed, successor, token, expiresAt, absoluteExpiresAt } = rotated;
+      await this.audit(claimed.userId, 'auth.session_rotated', {
+        sessionId: successor.id,
+        rotatedFromId: claimed.id,
+        familyId: claimed.familyId,
+        expiresAt: expiresAt.toISOString(),
+      });
+
+      return {
+        userId: claimed.userId,
+        issued: { refreshToken: token, expiresAt, absoluteExpiresAt },
+      };
+    }
+
+    // The claim matched nothing: the token is unknown, already revoked (including by a
+    // concurrent rotation that won the claim), or expired. Read it back to say which.
     const existing = await this.sessions.findOne({
       where: { tokenHash },
       relations: { user: true },
@@ -91,7 +156,6 @@ export class AuthSessionService {
     if (!existing) throw denied();
 
     const userId = existing.user.id;
-    const now = new Date();
 
     if (existing.revokedAt) {
       // A rotated token is revoked the moment its successor is issued, so presenting one again
@@ -113,40 +177,9 @@ export class AuthSessionService {
       throw denied();
     }
 
-    const token = this.mint();
-    // The successor inherits the family's absolute ceiling; the idle window is extended but
-    // clamped so a long-lived family can never outlive its 90-day limit.
-    const idleTarget = new Date(now.getTime() + IDLE_SESSION_MS);
-    const expiresAt =
-      idleTarget < existing.absoluteExpiresAt ? idleTarget : existing.absoluteExpiresAt;
-
-    const successor = await this.sessions.save(
-      this.sessions.create({
-        user: { id: userId } as never,
-        tokenHash: this.hash(token),
-        familyId: existing.familyId,
-        rotatedFromId: existing.id,
-        expiresAt,
-        absoluteExpiresAt: existing.absoluteExpiresAt,
-      }),
-    );
-
-    await this.sessions.update(
-      { id: existing.id },
-      { revokedAt: now, revokedReason: 'rotated', lastUsedAt: now },
-    );
-
-    await this.audit(userId, 'auth.session_rotated', {
-      sessionId: successor.id,
-      rotatedFromId: existing.id,
-      familyId: existing.familyId,
-      expiresAt: expiresAt.toISOString(),
-    });
-
-    return {
-      userId,
-      issued: { refreshToken: token, expiresAt, absoluteExpiresAt: existing.absoluteExpiresAt },
-    };
+    // Live and unexpired yet unclaimed cannot normally happen (only at the exact expiry instant);
+    // refuse rather than retry, like any other unusable token.
+    throw denied();
   }
 
   /** Explicit logout. Idempotent, and never reveals whether the token was real. */
