@@ -128,9 +128,10 @@ async function main() {
     await test('M66-01-A-65-DATABASE-MIGRATES-TO-66-AND-66-IS-LAST', () => {
       assert.equal(applied.length, 1, 'only 66 is pending on a 65 database');
       assert.equal(applied[0].name, MIGRATION_66);
-      assert.equal(allFiles.length, 67);
+      assert.equal(allFiles.length, 68);
       assert.equal(allFiles[65], '1720900000012-AddGuardNotificationDispatches.ts');
       assert.equal(allFiles[66], '1720900000013-AddManualAttendance.ts', 'Migration 67 follows 66 and is certified by m67-migration.spec.ts');
+      assert.equal(allFiles[67], '1720900000014-AddPatrolManagement.ts', 'Migration 68 follows 67 and is certified by m68-migration.spec.ts');
     });
     const head = await schema();
     const headLabels = await labels();
@@ -270,7 +271,9 @@ async function main() {
       // This database stops at 66, so Migration 67's nine added columns are absent by design (m67-migration.spec.ts
       // M67-10 certifies them); they are set aside statement by statement. Nothing else is.
       const m67 = /^ALTER TABLE "(attendance_events" ADD "(source|recordedAt|recordedByUserId|reason|verificationMethod|verificationNote|correctionOfEventId)|company_memberships" ADD "canManageAttendance|timesheets" ADD "verifiedSource)" /;
-      const semantic = drift.filter((x) => !m67.test(x) &&
+      // …and Migration 68's eleven patrol tables and companies.patrolsEnabled (m68-migration.spec.ts M68-10 certifies them).
+      const m68 = /^CREATE TABLE "patrol_(policies|schedules|checkpoints|routes|route_checkpoints|runs|checkpoint_visits|evidence|exceptions|evidence_holds|storage_usage_daily)" |^ALTER TABLE "companies" ADD "patrolsEnabled" /;
+      const semantic = drift.filter((x) => !m67.test(x) && !m68.test(x) &&
         /CREATE TABLE|DROP TABLE|CREATE TYPE|DROP TYPE|ALTER TYPE|ALTER TABLE.*ALTER COLUMN|ALTER TABLE.*DROP COLUMN|ALTER TABLE.*ADD "/i.test(x));
       assert.deepEqual(semantic, [], `semantic drift (the release gate would fail):\n${semantic.join('\n')}`);
       console.log(`      (diagnostic-only drift elsewhere, unchanged by 66: ${drift.length} statement(s))`);

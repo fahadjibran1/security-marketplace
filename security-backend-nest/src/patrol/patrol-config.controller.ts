@@ -1,0 +1,173 @@
+import { Body, Controller, Delete, Get, HttpCode, Param, ParseIntPipe, Patch, Post, Put, Query, UseGuards } from '@nestjs/common';
+import { JwtPayload } from '../auth/types/jwt-payload.type';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { Roles } from '../common/decorators/roles.decorator';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { COMPANY_VIEW_ROLES } from '../user/entities/user.entity';
+import {
+  CreatePatrolCheckpointDto,
+  CreatePatrolRouteDto,
+  CreatePatrolScheduleDto,
+  PatrolListQueryDto,
+  PatrolOverviewQueryDto,
+  PatrolRunsQueryDto,
+  UpdatePatrolCheckpointDto,
+  UpdatePatrolRouteDto,
+  UpdatePatrolScheduleDto,
+  UpsertPatrolPolicyDto,
+} from './dto/patrol.dto';
+import { PatrolConfigService } from './patrol-config.service';
+import { PatrolQueryService } from './patrol-query.service';
+
+/**
+ * Company Patrol Management (Migration 68). Company accounts only (Guards and S4 platform admins are refused by the
+ * role guard). The deciding checks — the caller's company, the company's patrolsEnabled switch (404 when off) and the
+ * patrols.* permission — are in PatrolAccessService.
+ */
+@Controller('patrols')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(...COMPANY_VIEW_ROLES)
+export class PatrolConfigController {
+  constructor(
+    private readonly config: PatrolConfigService,
+    private readonly query: PatrolQueryService,
+  ) {}
+
+  // ── Policies (patrols.view / patrols.manage; 90-day retention: Owner / Admin) ──
+  @Get('policies')
+  getPolicies(@CurrentUser() user: JwtPayload) {
+    return this.config.getPolicies(user);
+  }
+
+  @Put('policies/default')
+  putCompanyDefault(@CurrentUser() user: JwtPayload, @Body() dto: UpsertPatrolPolicyDto) {
+    return this.config.upsertPolicy(user, null, dto);
+  }
+
+  @Put('policies/sites/:siteId')
+  putSitePolicy(@CurrentUser() user: JwtPayload, @Param('siteId', ParseIntPipe) siteId: number, @Body() dto: UpsertPatrolPolicyDto) {
+    return this.config.upsertPolicy(user, siteId, dto);
+  }
+
+  // ── Schedules ──
+  @Get('schedules')
+  listSchedules(@CurrentUser() user: JwtPayload, @Query() q: PatrolListQueryDto) {
+    return this.config.listSchedules(user, q);
+  }
+
+  @Get('schedules/:id')
+  getSchedule(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
+    return this.config.getSchedule(user, id);
+  }
+
+  @Post('schedules')
+  createSchedule(@CurrentUser() user: JwtPayload, @Body() dto: CreatePatrolScheduleDto) {
+    return this.config.createSchedule(user, dto);
+  }
+
+  @Patch('schedules/:id')
+  updateSchedule(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number, @Body() dto: UpdatePatrolScheduleDto) {
+    return this.config.updateSchedule(user, id, dto);
+  }
+
+  /** Archives (never deletes). */
+  @Delete('schedules/:id')
+  archiveSchedule(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
+    return this.config.archiveSchedule(user, id);
+  }
+
+  // ── Checkpoints ──
+  @Get('checkpoints')
+  listCheckpoints(@CurrentUser() user: JwtPayload, @Query() q: PatrolListQueryDto) {
+    return this.config.listCheckpoints(user, q);
+  }
+
+  @Get('checkpoints/:id')
+  getCheckpoint(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
+    return this.config.getCheckpoint(user, id);
+  }
+
+  @Post('checkpoints')
+  createCheckpoint(@CurrentUser() user: JwtPayload, @Body() dto: CreatePatrolCheckpointDto) {
+    return this.config.createCheckpoint(user, dto);
+  }
+
+  @Patch('checkpoints/:id')
+  updateCheckpoint(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number, @Body() dto: UpdatePatrolCheckpointDto) {
+    return this.config.updateCheckpoint(user, id, dto);
+  }
+
+  @Post('checkpoints/:id/rotate')
+  @HttpCode(200)
+  rotateCheckpoint(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
+    return this.config.rotateCheckpoint(user, id);
+  }
+
+  @Post('checkpoints/:id/revoke')
+  @HttpCode(200)
+  revokeCheckpoint(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
+    return this.config.revokeCheckpoint(user, id);
+  }
+
+  /** The signed QR payload to print (503 PATROL_QR_SIGNING_KEY_UNAVAILABLE without a server key). */
+  @Get('checkpoints/:id/label')
+  checkpointLabel(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
+    return this.config.checkpointLabel(user, id);
+  }
+
+  // ── Routes ──
+  @Get('routes')
+  listRoutes(@CurrentUser() user: JwtPayload, @Query() q: PatrolListQueryDto) {
+    return this.config.listRoutes(user, q);
+  }
+
+  @Get('routes/:id')
+  getRoute(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
+    return this.config.getRoute(user, id);
+  }
+
+  @Post('routes')
+  createRoute(@CurrentUser() user: JwtPayload, @Body() dto: CreatePatrolRouteDto) {
+    return this.config.createRoute(user, dto);
+  }
+
+  @Patch('routes/:id')
+  updateRoute(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number, @Body() dto: UpdatePatrolRouteDto) {
+    return this.config.updateRoute(user, id, dto);
+  }
+
+  /** Archives (never deletes). */
+  @Delete('routes/:id')
+  archiveRoute(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
+    return this.config.archiveRoute(user, id);
+  }
+
+  // ── Reads of stored patrols ──
+  @Get('overview')
+  overview(@CurrentUser() user: JwtPayload, @Query() q: PatrolOverviewQueryDto) {
+    return this.query.overview(user, q);
+  }
+
+  @Get('runs')
+  listRuns(@CurrentUser() user: JwtPayload, @Query() q: PatrolRunsQueryDto) {
+    return this.query.listRuns(user, q);
+  }
+
+  @Get('runs/:id')
+  getRun(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
+    return this.query.getRun(user, id);
+  }
+
+  /** Evidence metadata (patrols.evidence). Upload and viewing are P1-C. */
+  @Get('runs/:id/evidence')
+  getRunEvidence(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
+    return this.query.getRunEvidence(user, id);
+  }
+
+  /** Active evidence holds (patrols.holds). Placing / releasing is P1-C. */
+  @Get('holds')
+  listHolds(@CurrentUser() user: JwtPayload) {
+    return this.query.listHolds(user);
+  }
+}

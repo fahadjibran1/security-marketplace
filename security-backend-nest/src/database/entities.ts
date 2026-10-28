@@ -50,6 +50,7 @@ import { CompanyShiftPolicy } from '../shift-amendment/entities/company-shift-po
 import { PushDevice } from '../welfare-push/entities/push-device.entity';
 import { WelfareReminder } from '../welfare-push/entities/welfare-reminder.entity';
 import { GuardNotificationDispatch } from '../guard-notification/entities/guard-notification-dispatch.entity';
+import { patrolEntities } from '../patrol/entities';
 
 export const appEntities = [
   AuthSession,
@@ -110,4 +111,6 @@ export const appEntities = [
   WelfareReminder,
   GuardNotificationDispatch,
   UserVerificationToken,
+  // Patrol Management (Migration 68)
+  ...patrolEntities,
 ];

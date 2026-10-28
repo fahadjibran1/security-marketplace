@@ -22,6 +22,7 @@ import {
   CompanyMembershipRole,
   CompanyMembershipStatus,
   CompanyPermission,
+  PATROL_PERMISSIONS,
   ROLE_PERMISSIONS,
 } from '../company-membership/company-membership-types';
 
@@ -261,6 +262,24 @@ export class AuthService {
    *
    * Never throws — returns [] on any unexpected error (fail-safe for auth flow).
    */
+  /**
+   * Patrol Management (Migration 68): the patrols.* permissions are only listed while the company's patrolsEnabled
+   * switch is on, so with it off the session (and so every client) is exactly as before Patrols existed. Display only:
+   * every patrol route re-checks the switch and the permission on the server. Fails closed for patrols alone: if the
+   * switch cannot be read, only the patrol permissions are withheld.
+   */
+  private async withPatrolSwitch(permissions: string[], where: string, value: number): Promise<string[]> {
+    if (!permissions.some((p) => (PATROL_PERMISSIONS as readonly string[]).includes(p))) return permissions;
+    let enabled = false;
+    try {
+      const [row] = await this.dataSource.query(`SELECT "patrolsEnabled" FROM "companies" WHERE ${where} ORDER BY "id" LIMIT 1`, [value]);
+      enabled = row?.patrolsEnabled === true;
+    } catch {
+      enabled = false;
+    }
+    return enabled ? permissions : permissions.filter((p) => !(PATROL_PERMISSIONS as readonly string[]).includes(p));
+  }
+
   async computeCompanyPermissions(userId: number, userRole: UserRole): Promise<string[]> {
     if (!isCompanyRole(userRole)) return [];
 
@@ -285,12 +304,12 @@ export class AuthService {
         if (membership.membershipRole === CompanyMembershipRole.CONTROL_ROOM && membership.canManageAttendance) {
           if (!permissions.includes(CompanyPermission.ATTENDANCE_MANAGE)) permissions.push(CompanyPermission.ATTENDANCE_MANAGE);
         }
-        return permissions;
+        return this.withPatrolSwitch(permissions, `"id" = $1`, membership.companyId);
       }
 
       // Legacy fallback: pre-P1I owner accounts with no membership row
       if (userRole === UserRole.COMPANY || userRole === UserRole.COMPANY_ADMIN) {
-        return Array.from(ROLE_PERMISSIONS[CompanyMembershipRole.OWNER]) as string[];
+        return this.withPatrolSwitch(Array.from(ROLE_PERMISSIONS[CompanyMembershipRole.OWNER]) as string[], `"userId" = $1`, userId);
       }
     } catch {
       // Fail-safe: never break authentication due to a permissions lookup error

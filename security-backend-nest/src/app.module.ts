@@ -51,6 +51,7 @@ import { RotaSlotModule } from './rota-slot/rota-slot.module';
 import { ShiftAmendmentModule } from './shift-amendment/shift-amendment.module';
 import { WelfarePushModule } from './welfare-push/welfare-push.module';
 import { OperationsModule } from './operations/operations.module';
+import { PatrolModule } from './patrol/patrol.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, validate: validateRuntimeEnv }),
@@ -126,6 +127,7 @@ import { OperationsModule } from './operations/operations.module';
     ShiftAmendmentModule,
     WelfarePushModule,
     OperationsModule,
+    PatrolModule,
   ],
   controllers: [HealthController],
   providers: [PoolDiagnosticsService],
