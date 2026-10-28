@@ -118,7 +118,8 @@ test('WPUSH-04-BUTTONS-NEED-AN-UNLOCKED-PHONE-AND-OPEN-S4', () => {
 
 test('WPUSH-05-APP-WIRING', () => {
   const app = codeOf('App.tsx');
-  assert.match(app, /async function handleLogout\(\) \{ await unregisterWelfarePush\(\); await logout\(\);/, 'unregistered while the session still works');
+  // (#61: logout() reports false on web when another account owns the stored session; it still runs right after.)
+  assert.match(app, /async function handleLogout\(\) \{ await unregisterWelfarePush\(\); (?:await logout\(\);|if \(\(await logout\(\)\) === false\) return;)/, 'unregistered while the session still works');
   assert.match(app, /const guardUserId = surface === 'guard' \? session\?\.user\.id \?\? null : null;/, 'only Guards register');
   assert.match(app, /if \(!booting && !session\) setWelfareTap\(\(tap\) => \(tap && tap\.sessionLive \? \{ \.\.\.tap, sessionLive: false \} : tap\)\);/,
     'a tap held while signed out is never submitted automatically after sign-in');
