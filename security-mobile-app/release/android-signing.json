@@ -36,10 +36,10 @@
     "versionCode": 20,
     "minSdkVersion": 24
   },
-  "preparedArtefact": {
+  "approvedArtefact": {
     "versionName": "1.1.2",
     "versionCode": 20,
-    "status": "built-not-uploaded",
+    "status": "distributed",
     "easBuildId": "8a1a4145-94c8-443f-a25b-1d145abf3064",
     "easBuildUrl": "https://expo.dev/accounts/fahadjibran/projects/security-marketplace/builds/8a1a4145-94c8-443f-a25b-1d145abf3064",
     "easBuildProfile": "production",
@@ -65,50 +65,14 @@
       "pushRegistrationFixInBundle": "yes: getDevicePushTokenAsync and the offer-answer 'screen could not refresh' note are in the JS bundle",
       "timesheetHoursMinutesInBundle": "yes: the Guard timesheet history and the Hours / Minutes input are in the JS bundle"
     },
-    "note": "Guard app 1.1.2 (20): the distributed 1.1.1 (19) (Guard notifications inbox, push-registration loop fix, offer answers without waiting on the re-read, session renewal timeout) merged with release/s4-pilot-rc1 bca5047 (Guard timesheets in hours and minutes, the return reason with reviewer and time, review history, verified attendance beside the claim). Built by EAS (8a1a4145, production profile, STORE) from c45dce7 on release-prep/guard-app-1.1.2 (draft PR #59), owner-approved, with the existing upload key: the signing material was staged as temporary copies for the EAS upload and deleted afterwards, the originals unchanged; nothing was generated or replaced. Certified locally from the downloaded AAB: manifest (com.sfour.s4, versionCode 20, versionName 1.1.2), JS bundle (production API, no staging API, Guard inbox, the push-registration fix, timesheet history and the Hours / Minutes input), and the signer certificate through scripts/verify-apk-signer.cjs, full SHA-256 equal to the vc17, vc18 and vc19 upload certificate. Not uploaded to Google Play; 1.1.1 (19) stays the distributed Android build and the Play active release."
-  },
-  "approvedArtefact": {
-    "versionName": "1.1.1",
-    "versionCode": 19,
-    "status": "distributed",
-    "easBuildId": "b0506fbb-8644-4c51-b509-987b3d6b5796",
-    "easBuildUrl": "https://expo.dev/accounts/fahadjibran/projects/security-marketplace/builds/b0506fbb-8644-4c51-b509-987b3d6b5796",
-    "easBuildProfile": "production",
-    "distribution": "STORE",
-    "sourceBranch": "fix/push-registration-loop",
-    "sourceFixCommit": "808a55c2d7f2bc8a803a3f23a18d6d24123922ac",
-    "gitCommit": "1a6c856504c64bf41758fb1cfd73bf81dfd06040",
-    "aabFilename": "s4-1.1.1-vc19-b0506fbb.aab",
-    "aabSha256": "168c3f116ad84be0b41225ac5658b815968d7af5006e9ccd012e8a0363f731ca",
-    "aabSizeBytes": 59102350,
-    "requiredUploadCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
-    "uploadCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
-    "certifiedOn": "2026-10-26",
-    "verified": {
-      "package": "com.sfour.s4",
-      "versionCode": 19,
-      "versionName": "1.1.1",
-      "signerCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
-      "signerCheck": "scripts/verify-apk-signer.cjs: upload certificate equal to the permanent S4 key, the same as vc17 and vc18 (vc18 re-checked in the same run)",
-      "apiBaseUrl": "https://security-marketplace-api.onrender.com",
-      "stagingApiUrls": 0,
-      "guardInboxInBundle": "yes: 'guard_notification' and the 'shift-updates' channel id are in the JS bundle",
-      "pushRegistrationFixInBundle": "yes: the fix's 'screen could not refresh' note is in the JS bundle"
-    },
-    "note": "Maintenance release 1.1.1 (19): the distributed 1.1.0 (18) plus the push-registration loop fix (808a55c). Built by EAS (b0506fbb, production profile, STORE) from 1a6c856 on fix/push-registration-loop (draft PR #42), owner-approved, with the existing upload key; nothing was generated or replaced. Certified locally from the downloaded AAB: manifest (com.sfour.s4, versionCode 19, versionName 1.1.1), JS bundle (production API, no staging API, Guard inbox, the fix), and the signer certificate through scripts/verify-apk-signer.cjs, full SHA-256 equal to the vc17 and vc18 upload certificate. Uploaded by the owner to Google Play Internal Testing (owner-approved 26 Oct 2026) and in the field: production push_devices shows two Android devices on appVersion 1.1.1 (observed 27 Oct 2026). Play Console active release 1.1.1 (19); 1.1.0 (18) is superseded.",
+    "note": "Guard app 1.1.2 (20): the distributed 1.1.1 (19) (Guard notifications inbox, push-registration loop fix, offer answers without waiting on the re-read, session renewal timeout) merged with release/s4-pilot-rc1 bca5047 (Guard timesheets in hours and minutes, the return reason with reviewer and time, review history, verified attendance beside the claim). Built by EAS (8a1a4145, production profile, STORE) from c45dce7 on release-prep/guard-app-1.1.2 (draft PR #59), owner-approved, with the existing upload key: the signing material was staged as temporary copies for the EAS upload and deleted afterwards, the originals unchanged; nothing was generated or replaced. Certified locally from the downloaded AAB: manifest (com.sfour.s4, versionCode 20, versionName 1.1.2), JS bundle (production API, no staging API, Guard inbox, the push-registration fix, timesheet history and the Hours / Minutes input), and the signer certificate through scripts/verify-apk-signer.cjs, full SHA-256 equal to the vc17, vc18 and vc19 upload certificate. Uploaded by the owner to Google Play Internal Testing and Active there (owner-confirmed 28 Oct 2026): Play Console active internal release 1.1.2 (20). The uploaded file's hash was not read back from Play Console. 1.1.1 (19) is superseded.",
     "playInternalTesting": {
       "status": "active",
       "confirmedBy": "owner",
-      "confirmedOn": "2026-10-26",
-      "evidence": "owner uploaded to Play Internal Testing (approved 26 Oct); production devices report 1.1.1",
-      "productionDevices": {
-        "source": "production push_devices",
-        "platform": "android",
-        "appVersion": "1.1.1",
-        "devices": 2,
-        "observedOn": "2026-10-27"
-      },
-      "note": "The owner uploaded 1.1.1 (19) to Google Play Internal Testing on approval (26 Oct 2026); production push_devices then showed two Android devices reporting appVersion 1.1.1, consistent with that release. The uploaded file's hash was not read back from Play Console. Not inspected from the build machine."
+      "confirmedOn": "2026-10-28",
+      "activeRelease": "1.1.2 (20)",
+      "evidence": "owner uploaded to Play Internal Testing; Play active internal release 1.1.2 (20)",
+      "note": "Owner-confirmed 28 Oct 2026: the owner uploaded 1.1.2 (20) to Google Play Internal Testing and it is the active internal release, \"1.1.2 (20)\". The uploaded file's hash was not read back from Play Console. Not inspected from the build machine."
     }
   },
   "retiredArtefacts": [
@@ -281,6 +245,52 @@
       },
       "retiredOn": "2026-10-26",
       "retiredReason": "Superseded by versionCode 19 (1.1.1), which adds the push-registration loop fix (808a55c) on the same identity and upload key. versionCode 18 was Active in Google Play Internal Testing (owner-confirmed 25 Oct 2026), so it can never be reused; its build, hash, signer and Play facts are kept exactly."
+    },
+    {
+      "versionName": "1.1.1",
+      "versionCode": 19,
+      "status": "distributed-superseded",
+      "easBuildId": "b0506fbb-8644-4c51-b509-987b3d6b5796",
+      "easBuildUrl": "https://expo.dev/accounts/fahadjibran/projects/security-marketplace/builds/b0506fbb-8644-4c51-b509-987b3d6b5796",
+      "easBuildProfile": "production",
+      "distribution": "STORE",
+      "sourceBranch": "fix/push-registration-loop",
+      "sourceFixCommit": "808a55c2d7f2bc8a803a3f23a18d6d24123922ac",
+      "gitCommit": "1a6c856504c64bf41758fb1cfd73bf81dfd06040",
+      "aabFilename": "s4-1.1.1-vc19-b0506fbb.aab",
+      "aabSha256": "168c3f116ad84be0b41225ac5658b815968d7af5006e9ccd012e8a0363f731ca",
+      "aabSizeBytes": 59102350,
+      "requiredUploadCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
+      "uploadCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
+      "certifiedOn": "2026-10-26",
+      "verified": {
+        "package": "com.sfour.s4",
+        "versionCode": 19,
+        "versionName": "1.1.1",
+        "signerCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
+        "signerCheck": "scripts/verify-apk-signer.cjs: upload certificate equal to the permanent S4 key, the same as vc17 and vc18 (vc18 re-checked in the same run)",
+        "apiBaseUrl": "https://security-marketplace-api.onrender.com",
+        "stagingApiUrls": 0,
+        "guardInboxInBundle": "yes: 'guard_notification' and the 'shift-updates' channel id are in the JS bundle",
+        "pushRegistrationFixInBundle": "yes: the fix's 'screen could not refresh' note is in the JS bundle"
+      },
+      "note": "Maintenance release 1.1.1 (19): the distributed 1.1.0 (18) plus the push-registration loop fix (808a55c). Built by EAS (b0506fbb, production profile, STORE) from 1a6c856 on fix/push-registration-loop (draft PR #42), owner-approved, with the existing upload key; nothing was generated or replaced. Certified locally from the downloaded AAB: manifest (com.sfour.s4, versionCode 19, versionName 1.1.1), JS bundle (production API, no staging API, Guard inbox, the fix), and the signer certificate through scripts/verify-apk-signer.cjs, full SHA-256 equal to the vc17 and vc18 upload certificate. Uploaded by the owner to Google Play Internal Testing (owner-approved 26 Oct 2026) and in the field: production push_devices shows two Android devices on appVersion 1.1.1 (observed 27 Oct 2026). Play Console active release 1.1.1 (19); 1.1.0 (18) is superseded.",
+      "playInternalTesting": {
+        "status": "active",
+        "confirmedBy": "owner",
+        "confirmedOn": "2026-10-26",
+        "evidence": "owner uploaded to Play Internal Testing (approved 26 Oct); production devices report 1.1.1",
+        "productionDevices": {
+          "source": "production push_devices",
+          "platform": "android",
+          "appVersion": "1.1.1",
+          "devices": 2,
+          "observedOn": "2026-10-27"
+        },
+        "note": "The owner uploaded 1.1.1 (19) to Google Play Internal Testing on approval (26 Oct 2026); production push_devices then showed two Android devices reporting appVersion 1.1.1, consistent with that release. The uploaded file's hash was not read back from Play Console. Not inspected from the build machine."
+      },
+      "retiredOn": "2026-10-28",
+      "retiredReason": "Superseded by versionCode 20 (1.1.2), which merges the 1.1.1 line with release/s4-pilot-rc1 bca5047 (Guard timesheets in hours and minutes, return reasons, review history) on the same identity and upload key. versionCode 19 was Active in Google Play Internal Testing (owner upload approved 26 Oct 2026; production devices reported 1.1.1), so it can never be reused; its build, hash, signer and Play facts are kept exactly."
     }
   ],
   "playAppSigning": {
@@ -337,8 +347,8 @@
     "app": "S4 (com.sfour.s4)",
     "internalTesting": {
       "testers": 5,
-      "activeRelease": "1.1.1 (19)"
+      "activeRelease": "1.1.2 (20)"
     },
-    "source": "Owner-confirmed 2026-10-20 (account, testers); active release 1.1.0 (18) owner-confirmed 2026-10-25; active release 1.1.1 (19): owner uploaded to Play Internal Testing (approved 26 Oct); production devices report 1.1.1 (production push_devices, 27 Oct 2026). Not inspected from the build machine."
+    "source": "Owner-confirmed 2026-10-20 (account, testers); active release 1.1.0 (18) owner-confirmed 2026-10-25; active release 1.1.1 (19): owner uploaded to Play Internal Testing (approved 26 Oct); production devices report 1.1.1 (production push_devices, 27 Oct 2026); active release 1.1.2 (20): owner uploaded to Play Internal Testing, owner-confirmed 2026-10-28. Not inspected from the build machine."
   }
 }
