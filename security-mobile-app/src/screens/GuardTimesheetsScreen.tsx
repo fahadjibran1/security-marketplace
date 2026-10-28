@@ -4,11 +4,13 @@ import { Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-nativ
 import { FeatureCard } from '../components/FeatureCard';
 import { StatePanel } from '../components/StatePanel';
 import { StatusBadge } from '../components/StatusBadge';
-import { formatApiErrorMessage, submitTimesheet, updateTimesheet } from '../services/api';
+import { formatApiErrorMessage, getTimesheetHistory, submitTimesheet, updateTimesheet } from '../services/api';
 import { AttendanceEvent, Timesheet } from '../types/models';
 import { formatInstantDate, formatInstantDateTime, formatInstantTime } from '../services/siteTime';
 import { colors, control, radii, spacing, typography } from '../theme';
 import { verifiedAttendanceView } from '../components/company/timesheetAttendance';
+import { formatHoursHM, hoursToMinutes, minutesToDecimalHours, parseHoursMinutes, splitMinutes } from '../services/timesheetHours';
+import { guardDecisionBanner, historyLines, TimesheetHistoryItem } from '../services/timesheetReview';
 
 export interface GuardTimesheetsScreenProps {
   timesheets: Timesheet[];
@@ -38,14 +40,14 @@ function statusLabel(status?: string | null) { const s = normalizeStatus(status)
 function statusMeaning(status: string) {
   return ({
     draft: 'Add or check your hours, then submit when they are correct.',
-    returned: 'Your company sent this back for a correction. Update it and submit again.',
-    rejected: 'This submission was not accepted. Read the company note before taking further action.',
+    returned: 'Your company sent this back for a correction. Read the reason above, update it and submit again.',
+    rejected: 'This submission was not accepted. Read the reason above before taking further action.',
     submitted: 'Waiting for company review. You do not need to act unless it is returned.',
     approved: 'Accepted and recorded for payroll.',
   } as Record<string,string>)[status] || 'Check the details below or contact your office if the status is unclear.';
 }
-function parseHours(text: string) { const value = text.trim().replace(',', '.'); return value === '' ? 0 : Number.parseFloat(value); }
 function approvedHours(timesheet: Timesheet) {
+  if (timesheet.approvedMinutes !== undefined && timesheet.approvedMinutes !== null && Number.isFinite(Number(timesheet.approvedMinutes))) return Number(timesheet.approvedMinutes) / 60;
   if (timesheet.approvedHours !== undefined && timesheet.approvedHours !== null && Number.isFinite(Number(timesheet.approvedHours))) return Number(timesheet.approvedHours);
   if (normalizeStatus(timesheet.approvalStatus) === 'approved') return Number(timesheet.hoursWorked) || 0;
   return null;
@@ -58,14 +60,31 @@ function TimesheetCard({ timesheet, attendanceSlice, onReload, onNotify, onTimes
   onNotify?: GuardTimesheetsScreenProps['onNotify'];
   onTimesheetSubmitted?: GuardTimesheetsScreenProps['onTimesheetSubmitted'];
 }) {
-  const [hoursText, setHoursText] = useState(String(timesheet.hoursWorked ?? ''));
+  // The claim is entered as whole Hours and Minutes (never a decimal that can be read two ways) and stored as the
+  // existing decimal hoursWorked; the server derives workedMinutes = round(hours × 60), which equals the minutes typed.
+  const initial = splitMinutes(hoursToMinutes(timesheet.hoursWorked));
+  const [hoursText, setHoursText] = useState(initial.hours);
+  const [minutesText, setMinutesText] = useState(initial.minutes);
   const [noteText, setNoteText] = useState(timesheet.guardNote ?? '');
   const [saving, setSaving] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [history, setHistory] = useState<TimesheetHistoryItem[] | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const status = normalizeStatus(timesheet.approvalStatus);
   const editable = status === 'draft' || status === 'returned';
+  const decided = status === 'returned' || status === 'rejected';
 
-  useEffect(() => { setHoursText(String(timesheet.hoursWorked ?? '')); setNoteText(timesheet.guardNote ?? ''); }, [timesheet.id, timesheet.hoursWorked, timesheet.guardNote, timesheet.updatedAt, timesheet.approvalStatus]);
+  useEffect(() => { const s = splitMinutes(hoursToMinutes(timesheet.hoursWorked)); setHoursText(s.hours); setMinutesText(s.minutes); setNoteText(timesheet.guardNote ?? ''); }, [timesheet.id, timesheet.hoursWorked, timesheet.guardNote, timesheet.updatedAt, timesheet.approvalStatus]);
+  // The review history (with every return reason) is read for a returned / rejected card straight away — its reviewer
+  // and time head the card — and for any other card when the Guard opens it. An older server: no history, no error.
+  useEffect(() => {
+    if (!decided && !historyOpen) return;
+    let live = true;
+    getTimesheetHistory(timesheet.id)
+      .then((answer) => { if (live) setHistory(Array.isArray(answer?.items) ? answer.items : []); })
+      .catch(() => { if (live) setHistory([]); });
+    return () => { live = false; };
+  }, [timesheet.id, timesheet.updatedAt, timesheet.approvalStatus, decided, historyOpen]);
 
   const schedStart = timesheet.scheduledStartAt ?? timesheet.shift?.start ?? null;
   const schedEnd = timesheet.scheduledEndAt ?? timesheet.shift?.end ?? null;
@@ -76,43 +95,65 @@ function TimesheetCard({ timesheet, attendanceSlice, onReload, onNotify, onTimes
   const verified = verifiedAttendanceView(timesheet, (value) => formatDateTimeLabel(value, siteZone), 'guard');
   const checkIn = (verified.supported ? timesheet.verifiedCheckInAt : null) ?? timesheet.actualCheckInAt ?? attendanceSlice?.checkInAt ?? null;
   const checkOut = (verified.supported ? timesheet.verifiedCheckOutAt : null) ?? timesheet.actualCheckOutAt ?? attendanceSlice?.checkOutAt ?? null;
-  const claimed = parseHours(hoursText);
-  const valid = Number.isFinite(claimed) && claimed >= 0;
-  const dirty = !valid || Math.abs(claimed - Number(timesheet.hoursWorked || 0)) > 0.01 || noteText.trim() !== (timesheet.guardNote ?? '').trim();
-  const canSubmit = Number.isFinite(claimed) && claimed > 0;
+  const parsed = parseHoursMinutes(hoursText, minutesText);
+  const empty = !hoursText.trim() && !minutesText.trim();
+  // Saving a draft accepts empty inputs (a note-only change); submitting needs a valid time worked.
+  const valid = parsed.ok || empty;
+  const claimedMinutes = parsed.ok ? parsed.minutes : null;
+  const storedMinutes = hoursToMinutes(timesheet.hoursWorked) ?? 0;
+  const dirty = (claimedMinutes !== null && claimedMinutes !== storedMinutes) || noteText.trim() !== (timesheet.guardNote ?? '').trim();
+  const canSubmit = parsed.ok;
   const missingCheckout = canSubmit && !Boolean(checkOut || timesheet.actualCheckOutAt);
   const approved = approvedHours(timesheet);
-  const companyNote = timesheet.companyNote?.trim() || timesheet.rejectionReason?.trim() || null;
+  const companyNote = timesheet.companyNote?.trim() || null;
+  const formatWhen = (value: string) => formatDateTimeLabel(value, siteZone);
+  const banner = guardDecisionBanner(timesheet, history, formatWhen);
+  const lines = historyLines(history, 'guard', formatWhen);
+  const claimPayload = () => ({
+    ...(claimedMinutes !== null ? { hoursWorked: minutesToDecimalHours(claimedMinutes) } : {}),
+    guardNote: noteText.trim() || null,
+  });
 
   async function saveDraft() {
     if (!editable || !valid) return;
-    try { setSaving(true); await updateTimesheet(timesheet.id, { hoursWorked: claimed, guardNote: noteText.trim() || null }); await onReload(); onNotify?.('success', 'Draft saved', 'Your timesheet draft was updated.'); showAlert('Draft saved', 'Your timesheet draft was updated.'); }
+    try { setSaving(true); await updateTimesheet(timesheet.id, claimPayload()); await onReload(); onNotify?.('success', 'Draft saved', 'Your timesheet draft was updated.'); showAlert('Draft saved', 'Your timesheet draft was updated.'); }
     catch (err) { const message = formatApiErrorMessage(err, 'Unable to save this timesheet.'); onNotify?.('error', 'Save failed', message); showAlert('Save failed', message); }
     finally { setSaving(false); }
   }
   async function submit() {
-    if (!editable || !canSubmit || !valid) return;
-    try { setSubmitting(true); await submitTimesheet(timesheet.id, { hoursWorked: claimed, guardNote: noteText.trim() || null }); if (timesheet.shiftId) onTimesheetSubmitted?.(timesheet.shiftId); await onReload(); onNotify?.('success', 'Timesheet submitted', 'Your hours were sent for company review.'); showAlert('Timesheet submitted', 'Your hours were sent for company review.'); }
+    if (!editable || !canSubmit) return;
+    try { setSubmitting(true); await submitTimesheet(timesheet.id, claimPayload()); if (timesheet.shiftId) onTimesheetSubmitted?.(timesheet.shiftId); await onReload(); onNotify?.('success', 'Timesheet submitted', 'Your hours were sent for company review.'); showAlert('Timesheet submitted', 'Your hours were sent for company review.'); }
     catch (err) { const message = formatApiErrorMessage(err, 'Unable to submit this timesheet.'); onNotify?.('error', 'Submit failed', message); showAlert('Submit failed', message); }
     finally { setSubmitting(false); }
   }
 
   return <View style={styles.card}>
     <View style={styles.headerRow}><View style={styles.flex}><Text style={styles.siteTitle}>{timesheet.shift?.siteName || `Shift #${timesheet.shiftId}`}</Text><Text style={styles.schedule}>{formatDateLabel(schedStart, siteZone)} · {formatTimeLabel(schedStart, siteZone)}–{formatTimeLabel(schedEnd, siteZone)}</Text></View><StatusBadge label={statusLabel(timesheet.approvalStatus)} /></View>
+    {banner ? <View style={banner.tone === 'danger' ? styles.dangerBox : styles.warningBox}><Text style={styles.noteTitle}>{banner.title}</Text><Text style={styles.reasonText}>{banner.reason}</Text><Text style={styles.noteBody}>{banner.whatToDo}</Text></View> : null}
     <Text style={styles.meaning}>{statusMeaning(status)}</Text>
 
     <View style={styles.infoGrid}><Info label="Booked on" value={formatDateTimeLabel(checkIn, siteZone)} /><Info label="Booked off" value={formatDateTimeLabel(checkOut, siteZone)} /></View>
     {verified.flagged ? <View style={styles.warningBox}><Text style={styles.noteTitle}>{verified.flagTitle}</Text>{verified.flagLines.map((line) => <Text key={line} style={styles.noteBody}>{line}</Text>)}<Text style={styles.noteBody}>{verified.toleranceNote}</Text></View> : null}
 
-    <View style={styles.field}><Text style={styles.label}>{editable ? 'Hours you are claiming' : 'Claimed hours'}</Text>{editable ? <TextInput style={styles.input} value={hoursText} onChangeText={setHoursText} keyboardType="decimal-pad" placeholder="e.g. 8 or 7.5" placeholderTextColor={colors.fieldPlaceholder} editable={!saving && !submitting} /> : <Text style={styles.readonly}>{Number(timesheet.hoursWorked) || 0} h</Text>}</View>
+    <View style={styles.field}><Text style={styles.label}>{editable ? 'Time you are claiming' : 'Claimed hours'}</Text>{editable ? <>
+      <View style={styles.hmRow}>
+        <View style={styles.hmField}><Text style={styles.hmLabel}>Hours</Text><TextInput style={styles.input} value={hoursText} onChangeText={setHoursText} keyboardType="number-pad" placeholder="e.g. 9" placeholderTextColor={colors.fieldPlaceholder} editable={!saving && !submitting} accessibilityLabel="Hours worked" maxLength={2} /></View>
+        <View style={styles.hmField}><Text style={styles.hmLabel}>Minutes (0–59)</Text><TextInput style={styles.input} value={minutesText} onChangeText={setMinutesText} keyboardType="number-pad" placeholder="e.g. 30" placeholderTextColor={colors.fieldPlaceholder} editable={!saving && !submitting} accessibilityLabel="Minutes worked" maxLength={2} /></View>
+      </View>
+      {parsed.ok ? <Text style={styles.parsedText}>= {parsed.label}</Text> : !empty ? <Text style={styles.errorText}>{parsed.error}</Text> : null}
+    </> : <Text style={styles.readonly}>{formatHoursHM(timesheet.hoursWorked, { withDecimal: true })}</Text>}</View>
     <View style={styles.field}><Text style={styles.label}>Note</Text>{editable ? <TextInput style={[styles.input, styles.noteInput]} value={noteText} onChangeText={setNoteText} placeholder="Optional note for payroll or reviewer" placeholderTextColor={colors.fieldPlaceholder} multiline textAlignVertical="top" editable={!saving && !submitting} /> : <Text style={styles.readonly}>{timesheet.guardNote?.trim() || '—'}</Text>}</View>
 
-    {companyNote ? <View style={status === 'rejected' ? styles.dangerBox : styles.warningBox}><Text style={styles.noteTitle}>{status === 'returned' ? 'Returned for correction' : 'Company note'}</Text><Text style={styles.noteBody}>{companyNote}</Text></View> : null}
-    {approved !== null ? <View style={styles.approvedBox}><Text style={styles.label}>Approved hours</Text><Text style={styles.readonly}>{approved.toFixed(2)} h</Text></View> : null}
+    {companyNote ? <View style={styles.noteBox}><Text style={styles.noteTitle}>Company note</Text><Text style={styles.noteBody}>{companyNote}</Text></View> : null}
+    {approved !== null ? <View style={styles.approvedBox}><Text style={styles.label}>Approved hours</Text><Text style={styles.readonly}>{formatHoursHM(approved, { withDecimal: true })}</Text>{timesheet.overrideReason?.trim() ? <Text style={styles.noteBody}>Reason: {timesheet.overrideReason.trim()}</Text> : null}</View> : null}
     {missingCheckout ? <View style={styles.warningBox}><Text style={styles.noteTitle}>No Book Off recorded</Text><Text style={styles.noteBody}>You can still submit. Add a note if the company needs context.</Text></View> : null}
-    {editable && !canSubmit ? <View style={styles.dangerBox}><Text style={styles.noteTitle}>Hours required</Text><Text style={styles.noteBody}>Enter the hours you are claiming before submitting.</Text></View> : null}
+    {editable && !canSubmit ? <View style={styles.dangerBox}><Text style={styles.noteTitle}>Hours required</Text><Text style={styles.noteBody}>Enter the hours and minutes you are claiming before submitting.</Text></View> : null}
 
-    {editable ? <View style={styles.actions}><Pressable onPress={submit} disabled={!canSubmit || submitting || !valid} style={({ pressed }: { pressed: boolean }) => [styles.primary, pressed && styles.pressed, (!canSubmit || submitting || !valid) && styles.disabled]}><Text style={styles.primaryText}>{submitting ? 'Submitting…' : 'Submit timesheet'}</Text></Pressable><Pressable onPress={saveDraft} disabled={saving || !dirty || !valid} style={({ pressed }: { pressed: boolean }) => [styles.secondary, pressed && styles.pressed, (saving || !dirty || !valid) && styles.disabled]}><Text style={styles.secondaryText}>{saving ? 'Saving…' : 'Save draft'}</Text></Pressable></View> : null}
+    {editable ? <View style={styles.actions}><Pressable onPress={submit} disabled={!canSubmit || submitting} style={({ pressed }: { pressed: boolean }) => [styles.primary, pressed && styles.pressed, (!canSubmit || submitting) && styles.disabled]}><Text style={styles.primaryText}>{submitting ? 'Submitting…' : 'Submit timesheet'}</Text></Pressable><Pressable onPress={saveDraft} disabled={saving || !dirty || !valid} style={({ pressed }: { pressed: boolean }) => [styles.secondary, pressed && styles.pressed, (saving || !dirty || !valid) && styles.disabled]}><Text style={styles.secondaryText}>{saving ? 'Saving…' : 'Save draft'}</Text></Pressable></View> : null}
+    {decided || historyOpen ? <View style={styles.historyBox}>
+      <Text style={styles.noteTitle}>History</Text>
+      {history === null ? <Text style={styles.noteBody}>Loading…</Text> : lines.length === 0 ? <Text style={styles.noteBody}>No history recorded yet.</Text> : lines.map((line) => <View key={line.key} style={styles.historyItem}><Text style={styles.historyTitle}>{line.title}</Text><Text style={styles.historyWhen}>{line.when}</Text>{line.details.map((d) => <Text key={d} style={styles.noteBody}>{d}</Text>)}</View>)}
+    </View> : <Pressable onPress={() => setHistoryOpen(true)} style={({ pressed }: { pressed: boolean }) => [styles.linkButton, pressed && styles.pressed]}><Text style={styles.linkText}>Show history</Text></Pressable>}
     <Text style={styles.reference}>Reference #{timesheet.id}</Text>
   </View>;
 }
@@ -144,6 +185,19 @@ const styles = StyleSheet.create({
   warningBox: { backgroundColor: colors.warningSurface, borderRadius: radii.md, padding: spacing.md, gap: spacing.xs },
   dangerBox: { backgroundColor: colors.dangerSurface, borderRadius: radii.md, padding: spacing.md, gap: spacing.xs },
   approvedBox: { backgroundColor: colors.successSurface, borderRadius: radii.md, padding: spacing.md, gap: spacing.xs },
+  noteBox: { backgroundColor: colors.surfaceSubtle, borderRadius: radii.md, padding: spacing.md, gap: spacing.xs },
+  historyBox: { borderWidth: 1, borderColor: colors.border, borderRadius: radii.md, padding: spacing.md, gap: spacing.sm },
+  historyItem: { gap: 2, borderLeftWidth: 3, borderLeftColor: colors.border, paddingLeft: spacing.sm },
+  historyTitle: { color: colors.textPrimary, ...typography.caption, fontWeight: '700' },
+  historyWhen: { color: colors.textMuted, ...typography.caption },
+  reasonText: { color: colors.textPrimary, ...typography.bodyStrong },
+  hmRow: { flexDirection: 'row', gap: spacing.sm },
+  hmField: { flex: 1, gap: 4 },
+  hmLabel: { color: colors.textSecondary, ...typography.caption },
+  parsedText: { color: colors.textPrimary, ...typography.caption, fontWeight: '700' },
+  errorText: { color: colors.danger, ...typography.caption },
+  linkButton: { minHeight: control.minTouchTarget, justifyContent: 'center' },
+  linkText: { color: colors.primaryNavy, ...typography.label },
   noteTitle: { color: colors.textPrimary, ...typography.label },
   noteBody: { color: colors.textSecondary, ...typography.caption },
   actions: { gap: spacing.sm },

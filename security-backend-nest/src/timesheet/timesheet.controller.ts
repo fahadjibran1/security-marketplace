@@ -48,6 +48,16 @@ export class TimesheetController {
     return this.timesheetService.findMine(user.sub);
   }
 
+  /**
+   * The timesheet's review history (submitted / returned / rejected / approved), from the audit log. The owning Guard
+   * and the owning company only (and admins); any other timesheet is 404. No ids in the answer.
+   */
+  @Get(':id/history')
+  @Roles(UserRole.ADMIN, ...COMPANY_VIEW_ROLES, UserRole.GUARD)
+  findHistory(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
+    return this.timesheetService.findHistory(user, id);
+  }
+
   @Patch(':id')
   @Roles(UserRole.ADMIN, ...COMPANY_VIEW_ROLES, UserRole.GUARD)
   update(

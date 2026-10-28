@@ -421,6 +421,13 @@ jobs:
       - name: Verify verified attendance alongside Guard timesheets (company review and Guard view)
         run: npm run test:timesheet-attendance-ui
 
+      # Timesheet review UX (pilot finding, timesheet 40): hours shown and entered as hours and minutes; Return / Reject
+      # need a reason (no generic default) that the Guard sees at the top of the card with the reviewer and time; the
+      # review history keeps every reason and earlier claim after resubmission; approval says which hours are paid and
+      # asks for the reason up front whenever they differ from verified attendance or the claim.
+      - name: Verify timesheet hours and minutes, required review reasons, history and payable-hours approval
+        run: npm run test:timesheet-review-ux
+
       - name: Verify Expo dependency compatibility
         run: npx expo install --check
 
