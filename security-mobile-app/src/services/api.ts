@@ -1,5 +1,6 @@
 import Constants from 'expo-constants';
 import { resolveApiBaseUrl } from './api-base-url';
+import type { TimesheetHistoryItem } from './timesheetReview';
 import {
   Attachment,
   AuditLog,
@@ -1038,6 +1039,14 @@ export function updateTimesheet(id: number, payload: UpdateTimesheetPayload) {
     method: 'PATCH',
     body: JSON.stringify(payload),
   });
+}
+
+/**
+ * The timesheet's review history (submissions, returns with their reasons, approvals), for the owning Guard or the
+ * owning company. An older server has no such route; callers treat a failure as "no history".
+ */
+export function getTimesheetHistory(id: number) {
+  return request<{ items: TimesheetHistoryItem[] }>(`/timesheets/${id}/history`);
 }
 
 export function submitTimesheet(id: number, payload: UpdateTimesheetPayload = {}) {

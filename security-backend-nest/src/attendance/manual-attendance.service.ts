@@ -233,7 +233,7 @@ export class ManualAttendanceService {
         occurredAtMs: input.occurredAtMs, nowMs: now.getTime(), scheduledStartMs: new Date(locked.start).getTime(),
         scheduledEndMs: new Date(locked.end).getTime(), role: actor.role,
       });
-      await this.assertNoOverlap(manager, guardId, locked.id, { from: input.occurredAtMs, to: input.occurredAtMs });
+      await this.assertNoOverlap(manager, actor.companyId, guardId, locked.id, { from: input.occurredAtMs, to: input.occurredAtMs });
 
       const event = await this.insertEvent(manager, {
         shiftId: locked.id, guardId, type: CHECK_IN, occurredAtMs: input.occurredAtMs, nowMs: now.getTime(), userId: actor.userId,
@@ -295,8 +295,11 @@ export class ManualAttendanceService {
           bookOnAt: effective.bookOnAt.toISOString(),
         });
       }
-      await this.assertNoOverlap(manager, guardId, locked.id, { from: effective.bookOnAt.getTime(), to: input.occurredAtMs });
-      await this.assertTimesheetOpen(manager, locked.id);
+      await this.assertNoOverlap(manager, actor.companyId, guardId, locked.id, { from: effective.bookOnAt.getTime(), to: input.occurredAtMs });
+      // A settled timesheet (approved, rejected or payroll-batched) does NOT refuse the Book Off (owner decision 27 Oct
+      // 2026): the attendance is recorded, the timesheet is left exactly as approved, and the review screens flag where
+      // the verified attendance differs from it. A correction of an existing time is still refused (409) instead.
+      const timesheetBefore = await this.timesheetState(manager, locked.id);
 
       const event = await this.insertEvent(manager, {
         shiftId: locked.id, guardId, type: CHECK_OUT, occurredAtMs: input.occurredAtMs, nowMs: now.getTime(), userId: actor.userId,
@@ -334,7 +337,8 @@ export class ManualAttendanceService {
         );
       }
 
-      // The timesheet carries the attendance-verified actuals, as on a Guard-app Book Off (written once).
+      // The timesheet carries the attendance-verified duration, as on a Guard-app Book Off (written once; the Guard's
+      // own claim is kept; a settled timesheet is left untouched).
       await this.timesheetService.recordAttendanceActuals(
         manager,
         locked.id,
@@ -373,9 +377,15 @@ export class ManualAttendanceService {
           reason: input.reason, verificationMethod: input.verificationMethod, verificationNote: input.verificationNote,
           bookOnAt: effective.bookOnAt.toISOString(), closedMissingBookOffAlertIds: closed.map((a) => Number(a.id)),
           afterReconciliation: status === 'completed',
+          timesheetStatus: timesheetBefore?.approvalStatus ?? null,
+          timesheetLeftUnchanged: timesheetBefore?.settled ?? false,
         },
       });
-      return { event: await this.view(manager, event, [...events, event]), shift: { id: locked.id, status: 'completed' } };
+      return {
+        event: await this.view(manager, event, [...events, event]),
+        shift: { id: locked.id, status: 'completed' },
+        timesheet: { approvalStatus: timesheetBefore?.approvalStatus ?? 'draft', leftUnchanged: timesheetBefore?.settled ?? false },
+      };
     });
   }
 
@@ -422,7 +432,7 @@ export class ManualAttendanceService {
         throw attendanceError(HttpStatus.UNPROCESSABLE_ENTITY, E.BOOK_OFF_BEFORE_BOOK_ON, 'The Book Off must be after the Book On.');
       }
       if (bookOnMs !== null) {
-        await this.assertNoOverlap(manager, guardId, locked.id, { from: bookOnMs, to: bookOffMs ?? bookOnMs });
+        await this.assertNoOverlap(manager, actor.companyId, guardId, locked.id, { from: bookOnMs, to: bookOffMs ?? bookOnMs });
       }
       // Approved / rejected or payroll-batched timesheets stay locked: the correction is refused as a whole.
       await this.assertTimesheetOpen(manager, locked.id);
@@ -449,6 +459,8 @@ export class ManualAttendanceService {
             manager,
             locked.id,
             { checkInAt: after.bookOnAt, checkOutAt: after.bookOffAt },
+            // What the Guard's claim was pre-filled from: a claimed time that still equals it follows the correction.
+            { checkInAt: before.bookOnAt, checkOutAt: before.bookOffAt },
             after.verifiedSource,
             timesheetLockedForAttendance,
             () => this.timesheetLockedError(),
@@ -557,13 +569,21 @@ export class ManualAttendanceService {
   }
 
   private async assertTimesheetOpen(manager: EntityManager, shiftId: number) {
+    if ((await this.timesheetState(manager, shiftId))?.settled) throw this.timesheetLockedError();
+  }
+
+  /** The shift's timesheet status, and whether it is settled (approved, rejected or payroll-batched); null when none. */
+  private async timesheetState(manager: EntityManager, shiftId: number): Promise<{ approvalStatus: string; settled: boolean } | null> {
     const rows = (await manager.query(
-      `SELECT "approvalStatus"::text AS "approvalStatus", "payrollBatchId" FROM "timesheets" WHERE "shiftId" = $1`,
+      `SELECT "approvalStatus"::text AS "approvalStatus", "payrollBatchId" FROM "timesheets" WHERE "shiftId" = $1 ORDER BY "id" ASC`,
       [shiftId],
     )) as Array<{ approvalStatus: string; payrollBatchId: number | null }>;
-    if (rows.some((row) => timesheetLockedForAttendance({ approvalStatus: row.approvalStatus, payrollBatchId: row.payrollBatchId === null ? null : Number(row.payrollBatchId) }))) {
-      throw this.timesheetLockedError();
-    }
+    if (!rows.length) return null;
+    const settled = rows.some((row) => timesheetLockedForAttendance({
+      approvalStatus: row.approvalStatus,
+      payrollBatchId: row.payrollBatchId === null ? null : Number(row.payrollBatchId),
+    }));
+    return { approvalStatus: rows[0].approvalStatus, settled };
   }
 
   private assertBookOnStatus(status: string) {
@@ -658,22 +678,37 @@ export class ManualAttendanceService {
    * Another shift's attendance with no Book Off is bounded by `overlapBoundary` (owner decision 27 Oct 2026): open-ended
    * while that shift is in progress (or not closed), and up to its scheduled end — a PROVISIONAL boundary for this check
    * only, never written or shown as attendance — once it is closed (e.g. completed by Close without Book Off).
+   *
+   * The check is Guard-wide, across companies (that is what keeps the Guard's attendance consistent). The refusal is
+   * not: a clash with ANOTHER company's shift says only that it is another shift — no id, times, site or company, just
+   * `{ otherCompany: true }`. A clash with the operator's own company's shift keeps the detail they need to fix it.
    */
-  private async assertNoOverlap(manager: EntityManager, guardId: number, shiftId: number, interval: { from: number; to: number | null }) {
+  private async assertNoOverlap(
+    manager: EntityManager,
+    companyId: number,
+    guardId: number,
+    shiftId: number,
+    interval: { from: number; to: number | null },
+  ) {
     const rows = (await manager.query(
-      `SELECT ${OTHER_SHIFT_EVENT_COLUMNS}, s."status" AS "shiftStatus", s."end" AS "shiftEnd"
+      `SELECT ${OTHER_SHIFT_EVENT_COLUMNS}, s."status" AS "shiftStatus", s."end" AS "shiftEnd", s."companyId" AS "shiftCompanyId"
          FROM "attendance_events" e JOIN "shifts" s ON s."id" = e."shiftId"
         WHERE e."guardId" = $1 AND e."shiftId" <> $2`,
       [guardId, shiftId],
-    )) as Array<EventRow & { shiftStatus: string; shiftEnd: Date }>;
-    const byShift = new Map<number, { status: string; end: Date; events: EventRow[] }>();
+    )) as Array<EventRow & { shiftStatus: string; shiftEnd: Date; shiftCompanyId: number | null }>;
+    const byShift = new Map<number, { status: string; end: Date; companyId: number | null; events: EventRow[] }>();
     for (const raw of rows) {
       const row = this.normalise(raw);
-      const entry = byShift.get(row.shiftId) ?? { status: raw.shiftStatus, end: new Date(raw.shiftEnd), events: [] };
+      const entry = byShift.get(row.shiftId) ?? {
+        status: raw.shiftStatus,
+        end: new Date(raw.shiftEnd),
+        companyId: raw.shiftCompanyId === null ? null : Number(raw.shiftCompanyId),
+        events: [],
+      };
       entry.events.push(row);
       byShift.set(row.shiftId, entry);
     }
-    for (const [otherShiftId, { status, end, events }] of byShift) {
+    for (const [otherShiftId, { status, end, companyId: otherCompanyId, events }] of byShift) {
       const other = effectiveAttendance(events);
       if (!other.bookOnAt) continue;
       const boundary = overlapBoundary({
@@ -683,6 +718,11 @@ export class ManualAttendanceService {
         scheduledEndMs: end.getTime(),
       });
       if (intervalsOverlap(interval, { from: other.bookOnAt.getTime(), to: boundary.to })) {
+        if (otherCompanyId !== companyId) {
+          throw attendanceError(HttpStatus.CONFLICT, E.OVERLAP, "This would overlap the Guard's attendance on another shift.", {
+            otherCompany: true,
+          });
+        }
         throw attendanceError(
           HttpStatus.CONFLICT,
           E.OVERLAP,

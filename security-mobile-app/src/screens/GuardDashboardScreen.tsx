@@ -113,6 +113,7 @@ import {
   type GuardActionOutcome,
 } from '../components/guard/guardActionDispatch';
 import { colors } from '../theme';
+import { formatHoursHM } from '../services/timesheetHours';
 import { AccountSettingsPanel } from '../components/account/AccountSettingsPanel';
 
 interface GuardDashboardScreenProps {
@@ -3396,7 +3397,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
                   <View style={[styles.summaryBlock, styles.summaryTimesheetBlock]}>
                     <Text style={styles.summaryLabel}>Timesheet (payroll)</Text>
                     <Text style={styles.summaryValue}>
-                      {Number(historySummaryTimesheet.hoursWorked) || 0} h claimed
+                      {formatHoursHM(Number(historySummaryTimesheet.hoursWorked) || 0, { withDecimal: true })} claimed
                     </Text>
                     <Text style={styles.summaryValueSecondary}>
                       Status: {formatHistoryTimesheetStatus(historySummaryTimesheet.approvalStatus)}

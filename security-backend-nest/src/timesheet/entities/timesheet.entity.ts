@@ -12,6 +12,7 @@ import { GuardProfile } from '../../guard-profile/entities/guard-profile.entity'
 import { Company } from '../../company/entities/company.entity';
 import { InvoiceBatch } from '../../invoice-batch/entities/invoice-batch.entity';
 import { PayrollBatch } from '../../payroll-batch/entities/payroll-batch.entity';
+import type { TimesheetAttendanceDiscrepancy } from '../timesheet-attendance';
 
 export enum TimesheetStatus {
   DRAFT = 'draft',
@@ -214,6 +215,16 @@ export class Timesheet {
 
   @UpdateDateColumn()
   updatedAt!: Date;
+
+  /**
+   * Read-only, derived on the review reads (TimesheetService.withVerifiedAttendance), never stored: the shift's
+   * EFFECTIVE Book On / Book Off from its append-only attendance events, their duration, and where they differ from the
+   * Guard's claim (open timesheet) or the approved timesheet. actualCheckInAt / actualCheckOutAt are the Guard's claim.
+   */
+  verifiedCheckInAt?: Date | null;
+  verifiedCheckOutAt?: Date | null;
+  verifiedAttendanceMinutes?: number | null;
+  attendanceDiscrepancy?: TimesheetAttendanceDiscrepancy | null;
 
   billingRate?: number | null;
   effectiveBillingRate?: number | null;

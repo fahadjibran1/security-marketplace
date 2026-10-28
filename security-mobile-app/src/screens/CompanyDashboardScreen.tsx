@@ -3047,10 +3047,12 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
     try {
       const payload = manualAttendancePayload(input, { reason: input.reason, method: input.verificationMethod, note: input.verificationNote });
       let timesheetRestamped: boolean | null = null;
+      let timesheetLeftUnchanged: boolean | null = null;
       if (target.kind === 'book_on') {
         await manualBookOn(target.shiftId, payload);
       } else if (target.kind === 'book_off') {
-        await manualBookOff(target.shiftId, payload);
+        const result = await manualBookOff(target.shiftId, payload);
+        timesheetLeftUnchanged = result?.timesheet?.leftUnchanged ?? null;
       } else if (target.eventId != null) {
         const result = await correctAttendanceEvent(target.eventId, payload);
         timesheetRestamped = result?.timesheet?.restamped ?? null;
@@ -3066,6 +3068,7 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
           occurredAt: input.occurredAt,
           timeZone: target.timeZone,
           timesheetRestamped,
+          timesheetLeftUnchanged,
         }),
       });
       setAttendanceHistorySignal((value) => value + 1);
