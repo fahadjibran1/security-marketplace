@@ -19,16 +19,40 @@ No existing row changes. Nothing is grandfathered: at activation, **every compan
 so no Guard is eligible for any company until that company records its checks**, and any Guard on a live shift
 at that moment raises "missing check" alerts (see the go/no-go in §3).
 
-## 1a. Compliance alerts: who sees, who is told, who acts
+## 1a. Company alerts: who sees, who is told, who acts
 
-| Who | Sees in the company alert list | In-app notification | May acknowledge / resolve |
+**Owner decision, 28 October 2026 (replaces the earlier owner-only rule for non-compliance alerts).** Authorised
+company staff may view, acknowledge and resolve their own company's operational safety alerts — panic / SOS, the
+missed Welfare Check summary, Missing Book Off, site requests (including the legacy `welfare` label) and the other
+operational types (`other`, `late_checkin`, legacy `check_call`). This is the `alerts.manage` company permission,
+held by role by **Owner, Admin, Operations and Control Room** memberships and by no other role (not Viewer, Finance
+or HR / Compliance). Compliance lapse alerts are **not** covered by `alerts.manage` and keep their own rule below.
+
+| Who | Sees in the company alert list | Compliance lapse in-app notification | May acknowledge / resolve |
 | --- | --- | --- | --- |
 | Company owner account (legacy owner) | Every alert, as before | "Urgent compliance review required": Guard, site and what lapsed (for example "SIA licence check expired on 11/10/2026") | Every alert, as before |
-| Members with compliance.manage (Owner, Admin, HR / Compliance memberships) | Their own company's Compliance alerts | Same as the owner | **Compliance alerts only**, own company only, with a reason from the compliance set and a mandatory note. Never panic / SOS, welfare, Missing Book Off, site requests or incidents. |
-| Operations and Control Room members | Their own company's Compliance alerts (they already hold compliance.view) | "Urgent eligibility review required": Guard, site and shift time only. **No check category, reason, expiry, licence, immigration status or evidence.** | No |
+| Owner and Admin members (alerts.manage + compliance.manage) | Every alert of their own company | Same as the owner | Every alert of their own company |
+| Operations and Control Room members (alerts.manage, compliance.view) | Every alert of their own company | "Urgent eligibility review required": Guard, site and shift time only. **No check category, reason, expiry, licence, immigration status or evidence.** | Operational alerts of their own company. **Never Compliance alerts** (unchanged). |
+| HR / Compliance members (compliance.manage) | Their own company's Compliance alerts | Same as the owner | **Compliance alerts only**, own company only, with a reason from the compliance set and a mandatory note. Never panic / SOS, welfare, Missing Book Off, site requests or incidents. |
 | Finance members | Nothing new | None | No |
 | Viewer members | Their own company's Compliance alerts (compliance.view) | None | No |
 | Guards, other companies | Nothing | None | No |
+
+- **Interaction of the two rules:** an alert's stored type decides which permission applies. `compliance_lapse` →
+  compliance.manage; every other type → alerts.manage. Holding one never grants the other, so a Control Room member
+  sees a Compliance alert and is told about it but cannot close it, and an HR / Compliance member cannot close an SOS.
+- **Other companies (PR #56 isolation hardening, not part of the owner decision):** another company's alert is
+  answered exactly like an alert that does not exist (404, previously 400), for members and for the owner account
+  alike, so alert ids cannot be probed; nothing is changed or audited.
+- **Resolution evidence is unchanged:** a missed Welfare Check and a Compliance alert always need a reason and a note;
+  any other manual close needs a reason from that alert type's own set (and a note where the set requires one).
+- **Nothing else is granted:** alerts.manage gives no payroll or timesheet approval, no staff, role or permission
+  management, and no attendance editing. Manual Book On / Book Off for a Control Room member still needs their
+  individual `canManageAttendance` grant; extensions still need `canAmendShifts`.
+- **Who is notified is unchanged:** the welfare sweep, Missing Book Off, push and the compliance lapse sweep notify
+  exactly the same people at the same times as before this decision.
+- **Platform Admin (S4 operator)** is not a company member; its existing acknowledge / close path is unchanged by
+  this decision.
 
 - **Channels:** in-app notifications only. No email, SMS, WhatsApp or push.
 - **Deduplication:** a notification is written only when an alert is newly created, in the same transaction, so
@@ -38,7 +62,8 @@ at that moment raises "missing check" alerts (see the go/no-go in §3).
   compliance.manage roles can open.
 - **Audit:** detection (`shift.compliance_lapse_detected`, system), acknowledgement (`safety_alert.acknowledged`)
   and resolution (`safety_alert.closed`) each record the actor, the time and the before / after state. Resolution
-  also records the reason and the note.
+  also records the reason and the note. For every alert type, the recorded actor is the member who acted, never the
+  company's account holder.
 - **Detection delay:** up to five minutes after a check lapses (for an expiry, after 00:00 UK time on the day after
   the expiry date), and up to five minutes after a backend start, because the first sweep runs one interval after
   boot.
@@ -63,7 +88,8 @@ answered differently (404) from someone else's shift (400), so shift ids could b
 - Company, site and Guard always come from the authenticated Guard's own in-progress shift. Any company, site, guard
   or status field in the request is rejected (global whitelist). Another Guard's shift, another company's shift and a
   shift that does not exist all get the same refusal.
-- Acknowledgement and resolution permissions are unchanged by the fix.
+- Acknowledgement and resolution permissions are unchanged by the fix (they were later widened to alerts.manage
+  holders by the owner decision of 28 October 2026; see §1a).
 - Shipped Guard apps (Android vc14, iOS build 13) send only `panic` and `site_request`: unaffected.
 
 **Verification before deployment:** `alert-creation-security.spec.ts` (SEC-01..10) must pass in the release gate. It

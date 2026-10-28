@@ -64,6 +64,14 @@ export enum CompanyPermission {
   BILLING_MANAGE = 'billing.manage',
   INCIDENTS_VIEW = 'incidents.view',
   INCIDENTS_MANAGE = 'incidents.manage',
+  /**
+   * Company alerts (owner decision, 28 Oct 2026): view, acknowledge and resolve the company's operational safety
+   * alerts — panic / SOS, missed Welfare Check (the shift's welfare summary), Missing Book Off, site requests and the
+   * other operational alert types. Owner, Admin, Operations and Control Room by role. It does NOT cover compliance
+   * lapse alerts, which keep their own rule (act: compliance.manage; see: compliance.view), and it grants nothing
+   * else: no payroll, no staff or permission management, no attendance editing.
+   */
+  ALERTS_MANAGE = 'alerts.manage',
   PERSONNEL_BASIC_VIEW = 'personnel_basic.view',
   PERSONNEL_HR_VIEW = 'personnel_hr.view',
   PERSONNEL_HR_MANAGE = 'personnel_hr.manage',
@@ -114,6 +122,7 @@ const ADMIN_PERMISSIONS: Set<CompanyPermission> = new Set([
   CompanyPermission.BILLING_MANAGE,
   CompanyPermission.INCIDENTS_VIEW,
   CompanyPermission.INCIDENTS_MANAGE,
+  CompanyPermission.ALERTS_MANAGE,
   CompanyPermission.PERSONNEL_BASIC_VIEW,
   CompanyPermission.PERSONNEL_HR_VIEW,
   CompanyPermission.PERSONNEL_HR_MANAGE,
@@ -147,6 +156,7 @@ const OPERATIONS_PERMISSIONS: Set<CompanyPermission> = new Set([
   // billing.* excluded — contract pricing is commercially sensitive
   CompanyPermission.INCIDENTS_VIEW,
   CompanyPermission.INCIDENTS_MANAGE,
+  CompanyPermission.ALERTS_MANAGE,
   CompanyPermission.PERSONNEL_BASIC_VIEW,
   CompanyPermission.REPORTS_OPERATIONAL,
   // reports.financial excluded — reveals billing rates / profit margins
@@ -164,6 +174,8 @@ const CONTROL_ROOM_PERMISSIONS: Set<CompanyPermission> = new Set([
   CompanyPermission.TIMESHEETS_VIEW,
   CompanyPermission.INCIDENTS_VIEW,
   CompanyPermission.INCIDENTS_MANAGE,
+  // Acknowledge / resolve operational safety alerts (owner decision, 28 Oct 2026); never compliance lapse alerts.
+  CompanyPermission.ALERTS_MANAGE,
   CompanyPermission.PERSONNEL_BASIC_VIEW,
   CompanyPermission.REPORTS_OPERATIONAL,
 ]);

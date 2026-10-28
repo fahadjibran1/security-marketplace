@@ -284,7 +284,8 @@ async function main() {
         assert.equal(mayManageAttendance(role, true), expected[role] || role === CompanyMembershipRole.CONTROL_ROOM, `${role} with a grant`);
       }
       assert.equal(mayManageAttendance(CompanyMembershipRole.CONTROL_ROOM, false), false);
-      assert.equal(Object.values(CompanyPermission).length, 37, '36 + attendance.manage');
+      // 38 since alerts.manage (owner decision, 28 Oct 2026: Control Room acknowledges / resolves operational alerts).
+      assert.equal(Object.values(CompanyPermission).length, 38, '36 + attendance.manage + alerts.manage');
     });
 
     await test('MA-02-CAPABILITIES-PER-ROLE', async () => {

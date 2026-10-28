@@ -4,7 +4,11 @@ import { ConfigService } from '@nestjs/config';
 export const RESEND_API_URL = 'https://api.resend.com/emails';
 export const DEFAULT_WEB_APP_URL = 'https://app.sfour.co.uk';
 
-export type TransactionalEmailKind = 'password_reset' | 'email_verification' | 'shift_amendment_confirmation';
+export type TransactionalEmailKind =
+  | 'password_reset'
+  | 'email_verification'
+  | 'shift_amendment_confirmation'
+  | 'company_staff_invitation';
 
 export interface TransactionalEmail {
   kind: TransactionalEmailKind;

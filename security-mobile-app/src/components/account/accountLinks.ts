@@ -1,12 +1,13 @@
 /**
- * Emailed account links on the S4 web app: /reset-password?token=… and /verify-email?token=…
+ * Emailed account links on the S4 web app: /reset-password?token=…, /verify-email?token=… and (company staff
+ * invitations) /accept-invitation?token=…
  *
  * Pure so the certification suite executes it. The token is read once, then immediately removed from the
  * address bar (history.replaceState) so it is not kept in browser history, bookmarks, screenshots of the
  * URL, or a Referer header — the screen holds it in memory only for as long as it needs it.
  */
 
-export type AccountLinkKind = 'reset-password' | 'verify-email';
+export type AccountLinkKind = 'reset-password' | 'verify-email' | 'accept-invitation';
 
 export interface AccountLink {
   kind: AccountLinkKind;
@@ -20,6 +21,7 @@ export const PASSWORD_MAX_LENGTH = 128;
 const PATHS: Record<string, AccountLinkKind> = {
   '/reset-password': 'reset-password',
   '/verify-email': 'verify-email',
+  '/accept-invitation': 'accept-invitation',
 };
 
 export function parseAccountLink(pathname: string, search: string): AccountLink | null {

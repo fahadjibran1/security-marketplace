@@ -490,6 +490,9 @@ const ALLOWED_AUTOMATIC = {
   },
   'src/screens/AccountLinkScreen.tsx': {
     verifyEmailAddress: 'opening the emailed verification link IS the user action; the token is single-use and idempotent',
+    // A POST only so the token travels in the body, never a URL. The backend writes nothing for a preview (certified by
+    // company-staff.spec.ts CS-04); accepting needs a press (company-staff-ui.spec.cjs).
+    previewStaffInvitation: 'read-only preview of an emailed staff invitation: writes nothing, consumes nothing',
   },
   'src/components/company/CompanyShiftAmendmentDrawer.tsx': {
     assessShiftAmendment: 'a POST dry run while the operator types a proposed end; the backend writes no row, notification or audit',

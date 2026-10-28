@@ -36,8 +36,11 @@ export class IncidentController {
     return this.incidentService.createForGuard(user.sub, dto);
   }
 
+  // Company accounts including staff: the deciding check is incidents.manage on the caller's own company, in the
+  // service (Owner, Admin, Operations, Control Room). It used to be COMPANY_ADMIN_ROLES, which refused invited
+  // Operations / Control Room members (company_staff) that the membership already permits.
   @Patch(':id/status')
-  @Roles(UserRole.ADMIN, ...COMPANY_ADMIN_ROLES)
+  @Roles(UserRole.ADMIN, ...COMPANY_VIEW_ROLES)
   updateStatus(
     @CurrentUser() user: JwtPayload,
     @Param('id', ParseIntPipe) id: number,
@@ -64,8 +67,10 @@ export class IncidentController {
 
   /** The reasons an incident may be resolved with, so the UI offers nothing the API will refuse. */
   @Get('resolution-reasons')
-  @Roles(UserRole.ADMIN, ...COMPANY_ADMIN_ROLES)
-  resolutionReasons() {
+  @Roles(UserRole.ADMIN, ...COMPANY_VIEW_ROLES)
+  async resolutionReasons(@CurrentUser() user: JwtPayload) {
+    // Offered to whoever may resolve an incident: incidents.manage, the same check the status change makes.
+    if (user.role !== UserRole.ADMIN) await this.incidentService.assertMayManageIncidents(user.sub, user.role);
     return {
       reasons: INCIDENT_RESOLUTION_REASONS.map((value) => ({ value, noteRequired: true })),
     };

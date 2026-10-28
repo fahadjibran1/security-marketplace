@@ -43,9 +43,11 @@ export class ShiftController {
   }
 
   // Company accounts only, with shifts.manage on the shift's own company (checked in the service). Platform
-  // administrators do not bypass tenant authorisation to edit or delete a company's shifts.
+  // administrators do not bypass tenant authorisation to edit or delete a company's shifts. Company staff accounts
+  // reach it too, so an invited Operations member (company_staff, shifts.manage) can Mark Missed; companyForShiftChange
+  // still refuses every membership without shifts.manage (Control Room, HR, Finance, Viewer).
   @Patch(':id')
-  @Roles(...COMPANY_ADMIN_ROLES)
+  @Roles(...COMPANY_VIEW_ROLES)
   update(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number, @Body() dto: UpdateShiftDto) {
     return this.shiftService.updateForUser(user, id, dto);
   }
@@ -56,7 +58,7 @@ export class ShiftController {
    * Guards and platform administrators cannot call it.
    */
   @Post(':id/replace-guard')
-  @Roles(...COMPANY_ADMIN_ROLES)
+  @Roles(...COMPANY_VIEW_ROLES)
   replaceGuard(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number, @Body() dto: ReplaceGuardDto) {
     return this.shiftService.replaceGuardForUser(user, id, dto);
   }

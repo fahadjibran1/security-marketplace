@@ -138,6 +138,7 @@ import {
   RotaUpdateMetadataPayload,
   RotaAssignMultipleResult,
 } from '../types/models';
+import type { StaffAuditEntry, StaffDirectory, StaffInvitation, StaffRole } from '../components/company/companyStaff';
 
 const hasBrowserWindow =
   typeof window !== 'undefined' &&
@@ -456,6 +457,83 @@ export function resendVerificationEmail(email: string) {
     method: 'POST',
     body: JSON.stringify({ email: email.trim() }),
   });
+}
+
+// ── Company staff invitation (unauthenticated, behind the emailed /accept-invitation link) ──────────
+
+export interface StaffInvitationPreview {
+  companyName: string;
+  role: StaffRole;
+  roleLabel: string;
+  email: string;
+  expiresAt: string;
+  /** The address already has an S4 account: it keeps its password and is only linked. */
+  accountExists: boolean;
+}
+
+/** Read-only: what the link is for. The token travels in the body, never in a URL. */
+export function previewStaffInvitation(token: string) {
+  return request<StaffInvitationPreview>('/auth/staff-invitations/preview', {
+    method: 'POST',
+    body: JSON.stringify({ token }),
+  });
+}
+
+/** A new S4 account sends its own chosen password; an existing account sends none and keeps its password. */
+export function acceptStaffInvitation(token: string, details: { newPassword?: string; firstName?: string; lastName?: string } = {}) {
+  const body: Record<string, string> = { token };
+  if (details.newPassword) body.newPassword = details.newPassword;
+  if (details.firstName && details.firstName.trim()) body.firstName = details.firstName.trim();
+  if (details.lastName && details.lastName.trim()) body.lastName = details.lastName.trim();
+  return request<AccountMessage & { accepted: boolean; accountCreated: boolean; companyName: string; role: StaffRole; roleLabel: string }>(
+    '/auth/staff-invitations/accept',
+    { method: 'POST', body: JSON.stringify(body) },
+  );
+}
+
+// ── Company staff management (Owner / Admin). The API checks staff.manage, the role rules and the company under
+// lock; these only send the request. Control Room grants use the existing setControlRoom*Authorisation calls. ──
+
+export function getCompanyStaff() {
+  return request<StaffDirectory>('/company-staff');
+}
+
+export function getCompanyStaffAudit(limit = 200) {
+  return request<{ entries: StaffAuditEntry[] }>(`/company-staff/audit?limit=${limit}`);
+}
+
+export function inviteCompanyStaff(email: string, role: StaffRole) {
+  return request<{ invitation: StaffInvitation; emailSent: boolean }>('/company-staff/invitations', {
+    method: 'POST',
+    body: JSON.stringify({ email: email.trim(), role }),
+  });
+}
+
+export function resendCompanyStaffInvitation(invitationId: number) {
+  return request<{ invitation: StaffInvitation; emailSent: boolean }>(`/company-staff/invitations/${invitationId}/resend`, { method: 'POST' });
+}
+
+export function revokeCompanyStaffInvitation(invitationId: number) {
+  return request<{ invitation: StaffInvitation }>(`/company-staff/invitations/${invitationId}/revoke`, { method: 'POST' });
+}
+
+export function changeCompanyStaffRole(userId: number, role: StaffRole) {
+  return request<{ userId: number; role: StaffRole; changed: boolean }>(`/company-staff/members/${userId}/role`, {
+    method: 'PATCH',
+    body: JSON.stringify({ role }),
+  });
+}
+
+export function suspendCompanyStaff(userId: number) {
+  return request<{ userId: number; status: string }>(`/company-staff/members/${userId}/suspend`, { method: 'POST' });
+}
+
+export function reactivateCompanyStaff(userId: number) {
+  return request<{ userId: number; status: string }>(`/company-staff/members/${userId}/reactivate`, { method: 'POST' });
+}
+
+export function removeCompanyStaff(userId: number) {
+  return request<{ userId: number; status: string }>(`/company-staff/members/${userId}/remove`, { method: 'POST' });
 }
 
 // ── Account deletion (authenticated) ───────────────────────────────────────────────────────────────
