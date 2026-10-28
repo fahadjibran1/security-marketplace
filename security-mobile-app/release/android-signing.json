@@ -39,14 +39,33 @@
   "preparedArtefact": {
     "versionName": "1.1.2",
     "versionCode": 20,
-    "status": "prepared-not-built",
+    "status": "built-not-uploaded",
+    "easBuildId": "8a1a4145-94c8-443f-a25b-1d145abf3064",
+    "easBuildUrl": "https://expo.dev/accounts/fahadjibran/projects/security-marketplace/builds/8a1a4145-94c8-443f-a25b-1d145abf3064",
     "easBuildProfile": "production",
     "distribution": "STORE",
     "sourceBranch": "release-prep/guard-app-1.1.2",
     "sourceFixCommit": "f2baeb7fca0bb5af1bf657244f7fee6ef6598455",
-    "sourceCommit": "the commit on release-prep/guard-app-1.1.2 that sets 1.1.2 / versionCode 20 in app.json, directly on top of f2baeb7 (the merge of fix/push-registration-loop 00710f0 into release/s4-pilot-rc1 bca5047); a commit cannot record its own id, the build record names it once built",
+    "gitCommit": "c45dce74109ed2efd0efcf6f5a766a07c10f0ecd",
+    "aabFilename": "s4-1.1.2-vc20-8a1a4145.aab",
+    "aabSha256": "4252cc986296c09f7f97df497dc6433829f0f8d15cb653af85f906d8c23f4c4e",
+    "aabSizeBytes": 59135520,
     "requiredUploadCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
-    "note": "Guard app 1.1.2 (20): the distributed 1.1.1 (19) (Guard notifications inbox, push-registration loop fix, offer answers without waiting on the re-read, session renewal timeout) merged with release/s4-pilot-rc1 bca5047 (Guard timesheets in hours and minutes, the return reason with reviewer and time, review history, verified attendance beside the claim). Same package com.sfour.s4, same upload key as vc17, vc18 and vc19 (the permanent S4 certificate above), same Firebase setup, production API. Prepared only: not built, not uploaded to Google Play, so there is no EAS build id, AAB hash or Play state for it. 1.1.1 (19) stays the distributed Android build until 1.1.2 (20) is built, certified and uploaded on owner approval."
+    "uploadCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
+    "certifiedOn": "2026-10-28",
+    "verified": {
+      "package": "com.sfour.s4",
+      "versionCode": 20,
+      "versionName": "1.1.2",
+      "signerCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
+      "signerCheck": "scripts/verify-apk-signer.cjs: upload certificate equal to the permanent S4 key, the same as vc17, vc18 and vc19",
+      "apiBaseUrl": "https://security-marketplace-api.onrender.com",
+      "stagingApiUrls": 0,
+      "guardInboxInBundle": "yes: 'guard_notification' and the 'shift-updates' channel id are in the JS bundle",
+      "pushRegistrationFixInBundle": "yes: getDevicePushTokenAsync and the offer-answer 'screen could not refresh' note are in the JS bundle",
+      "timesheetHoursMinutesInBundle": "yes: the Guard timesheet history and the Hours / Minutes input are in the JS bundle"
+    },
+    "note": "Guard app 1.1.2 (20): the distributed 1.1.1 (19) (Guard notifications inbox, push-registration loop fix, offer answers without waiting on the re-read, session renewal timeout) merged with release/s4-pilot-rc1 bca5047 (Guard timesheets in hours and minutes, the return reason with reviewer and time, review history, verified attendance beside the claim). Built by EAS (8a1a4145, production profile, STORE) from c45dce7 on release-prep/guard-app-1.1.2 (draft PR #59), owner-approved, with the existing upload key: the signing material was staged as temporary copies for the EAS upload and deleted afterwards, the originals unchanged; nothing was generated or replaced. Certified locally from the downloaded AAB: manifest (com.sfour.s4, versionCode 20, versionName 1.1.2), JS bundle (production API, no staging API, Guard inbox, the push-registration fix, timesheet history and the Hours / Minutes input), and the signer certificate through scripts/verify-apk-signer.cjs, full SHA-256 equal to the vc17, vc18 and vc19 upload certificate. Not uploaded to Google Play; 1.1.1 (19) stays the distributed Android build and the Play active release."
   },
   "approvedArtefact": {
     "versionName": "1.1.1",
