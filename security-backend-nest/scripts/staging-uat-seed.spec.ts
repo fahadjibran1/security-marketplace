@@ -243,8 +243,8 @@ test('SEED-12-THE-LEDGER-IS-THIS-CODE-S-OWN-HEAD-AND-NO-IN-PROCESS-TIMER-RUNS', 
   try {
     const real = path.join(__dirname, '..', 'src', 'database', 'migrations');
     for (const f of fs.readdirSync(real)) fs.copyFileSync(path.join(real, f), path.join(tmp, f));
-    fs.writeFileSync(path.join(tmp, '1720900000014-SomethingLater.ts'), 'export class SomethingLater1720900000014 {}\n');
-    assert.deepEqual(repositoryMigrationHead(tmp), { count: 68, last: 'SomethingLater1720900000014' });
+    fs.writeFileSync(path.join(tmp, '1720900000015-SomethingLater.ts'), 'export class SomethingLater1720900000015 {}\n');
+    assert.deepEqual(repositoryMigrationHead(tmp), { count: 69, last: 'SomethingLater1720900000015' });
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
