@@ -101,7 +101,43 @@ Production backend baaefb7 (Part B manual attendance and the overlap fix), migra
 - **Rollback note:** a manual record now exists, so the backend must not be restored to a build older than 671fb9f.
 - **Still open, not part of this test:** missed Welfare Check alert 45371 on shift 69 (raised 13:08) is still open, for the control room.
 
-## 7. Not yet verified
+## 7. Timesheet review end to end: timesheet 40 (28 Oct 2026)
+
+Production backend bca5047, then 6d7dd3c (auth fix only); company web `dpl_7PRnbctsC1gxU6CKHWbzL34YyX3B`.
+
+**OBSERVED (production records, read-only) and USER-CONFIRMED (owner): PASS.**
+
+**Shift 71** (company 9, Guard 11, scheduled 28 Oct 00:30–10:00):
+- Manual Book On, attendance event 56: actual 00:30:00, recorded 00:36:32 by user 32.
+- App Book Off, event 57: 09:03:37.
+- Verified time: **514 min (8h 34m)**.
+
+**Timesheet 40 history:**
+
+| Time | Event |
+|---|---|
+| 09:42:25 | Submitted, 9.50 h. Guard note "Site finished early". |
+| 09:45:02 | Returned by user 32 with the old web default reason. Notice `timesheet_rejected` sent. |
+| 13:14:03 | Resubmitted from the installed 1.1.1 app with **9.30 h**. Decimal entry, stored as 558 min = **9h 18m**. |
+| 14:59:06 | **Approved** by user 32: approved minutes **570 (9h 30m)**, `overrideReason` "site finished early" (`overrideBy` 32, `overrideAt` 14:59:06). Audit `timesheet.approved` and `timesheet.approved_duration_overridden`. Notice `timesheet_approved` sent. |
+
+- **State now:** unpaid, uninvoiced, `rejectionReason` cleared on approval.
+- **Unchanged:** attendance events 56 and 57, verified minutes 514, and the Guard's claim (9.30 h, 558 min).
+
+**What this proves:**
+- verified attendance, the Guard's claim and the approved payable hours are kept separately;
+- an approval that differs from verified attendance requires and records an override reason, the reviewer and the time;
+- the review history (submission, return, resubmission, approval) is preserved;
+- payroll and billing are untouched until their own processes run.
+
+**Notes:**
+- The approved 9h 30m is 56 min more than verified and 12 min more than the Guard's stored claim (9h 18m from "9.30").
+- The resubmission came from 1.1.1, before Guard 11 updated to 1.1.2 at 14:56. So the 1.1.2 Hours/Minutes entry and the Guard-side return banner were **not** exercised in this run. They still need a live test on 1.1.2.
+
+**1.1.2 rollout (Guard 11 Android):**
+- Updated to 1.1.2 at 14:56 with exactly one push-device registration (cumulative push_devices writes 7,010 → 7,011). No registration loop.
+
+## 8. Not yet verified
 
 Nothing below has a production record yet. Each stays unverified until it does.
 
@@ -112,12 +148,12 @@ Nothing below has a production record yet. Each stays unverified until it does.
 - The unread side of the inbox: a notice staying unread until it is opened, and the badge count.
 - Guard 28 is still on 1.1.0.
 
-## 8. Operational note
+## 9. Operational note
 
 - missed_checkcall alert 45046 (shift 68, 22:05, before activation) was still open at 00:09. The control room is
   to resolve it under the normal procedure. It is not a push defect: it predates activation.
 
-## 9. Known missing notification events at 88e8a27
+## 10. Known missing notification events at 88e8a27
 
 These events produce no push, no in-app notification and no email on the current production backend. They are
 known gaps, not regressions from activation.
