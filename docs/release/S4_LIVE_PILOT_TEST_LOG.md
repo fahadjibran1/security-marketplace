@@ -83,6 +83,24 @@ shift-extension notifications were observed during live testing.
   - Revoked devices: 0.
 - Inbox read: both `shift_amendment_requested` notices sent since activation have a `readAt`.
 
+## 9. Manual attendance: first live result (28 Oct 2026)
+
+Production backend baaefb7 (Part B manual attendance and the overlap fix), migration ledger 67. Company web 369e665 (`dpl_V9nCw5offPRBWSoLJ51hWwbCDMkK`).
+
+**OBSERVED (production records, read-only) and USER-CONFIRMED (owner, 28 Oct): PASS on all eight checks.**
+- Shift 69 (company 9, Guard 26, Totmonslow, scheduled 27 Oct 11:00–19:00):
+  - **Book On:** app Book On (attendance event 54) at 27 Oct 11:26:19. Unchanged.
+  - **Book Off:** manual Book Off (attendance event 55, `source = manual`) with actual time **27 Oct 19:00:00**. Recorded separately at **28 Oct 00:08:30** by user 32 (Owner), verification method `phone_call`, reason present. Audit `attendance.manual_book_off`.
+  - **Shift status:** `completed`. The Missing Book Off alert 45446 was closed (`shift.missing_book_off_resolved`).
+  - **Timesheet:** timesheet 39 created as a **draft** with actual times 11:26:19–19:00:00, **454 verified minutes**, `verifiedSource = manual`, unpaid, approved minutes empty. It is subject to the existing Guard submission and company approval.
+- **Earlier evidence untouched:**
+  - All 44 earlier attendance events are unchanged (fingerprint `d0474986e194ad0cf1763a63c164e52b`).
+  - Shift 53 and its `shift.reconciled_without_book_off` audit are unchanged.
+  - No duplicate effective attendance, and no manual records on any other shift.
+- **Before this fix:** the same Book Off was refused with 409 "overlap … shift #53". A closed shift without a Book Off was being treated as open-ended; fixed in baaefb7 (PR #54).
+- **Rollback note:** a manual record now exists, so the backend must not be restored to a build older than 671fb9f.
+- **Still open, not part of this test:** missed Welfare Check alert 45371 on shift 69 (raised 13:08) is still open, for the control room.
+
 ## 6. Not yet verified
 
 Nothing below has a production record yet. Each stays unverified until it does.
