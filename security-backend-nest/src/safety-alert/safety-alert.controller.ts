@@ -36,8 +36,8 @@ export class SafetyAlertController {
     return this.safetyAlertService.createForGuard(user.sub, dto);
   }
 
-  // Entry gate. Company staff reach this only to act on their own company's compliance lapse alerts with
-  // compliance.manage; that, and everything else, is enforced in the service.
+  // Entry gate. Company staff act only on their own company's alerts: operational alerts with alerts.manage (Owner,
+  // Admin, Operations, Control Room) and compliance lapse alerts with compliance.manage; enforced in the service.
   @Patch(':id/ack')
   @Roles(UserRole.ADMIN, ...COMPANY_ADMIN_ROLES, UserRole.COMPANY_STAFF)
   acknowledge(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {

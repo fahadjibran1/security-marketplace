@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, EntityManager, In, IsNull, MoreThan, MoreThanOrEqual, Repository } from 'typeorm';
+import { DataSource, EntityManager, In, IsNull, MoreThan, MoreThanOrEqual, Not, Repository } from 'typeorm';
 import {
   GUARD_RAISABLE_ALERT_TYPES,
   SafetyAlert,
@@ -1097,11 +1097,21 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
         order: { createdAt: 'DESC' },
       });
     }
-    // A company member (not the owner account) sees only its own company's compliance lapse alerts, and
-    // only with compliance.view. Every other alert type stays as before: owner and Platform Admin only.
-    if (!hasPermission(actor.role, CompanyPermission.COMPLIANCE_VIEW)) throw new NotFoundException('Company not found');
+    // A company member (not the owner account) sees only its own company's alerts, and of those:
+    //   - the operational alerts (every type but compliance lapse) with alerts.manage — Owner, Admin, Operations and
+    //     Control Room memberships (owner decision, 28 Oct 2026);
+    //   - the compliance lapse alerts with compliance.view, exactly as before (S4_COMPLIANCE_PHASE1_ACTIVATION.md §1a).
+    // A member with neither (Finance) is refused as before.
+    const operational = hasPermission(actor.role, CompanyPermission.ALERTS_MANAGE);
+    const compliance = hasPermission(actor.role, CompanyPermission.COMPLIANCE_VIEW);
+    if (!operational && !compliance) throw new NotFoundException('Company not found');
+    const type = operational && compliance
+      ? undefined
+      : operational
+        ? Not(SafetyAlertType.COMPLIANCE_LAPSE)
+        : SafetyAlertType.COMPLIANCE_LAPSE;
     return this.safetyAlertRepo.find({
-      where: { company: { id: actor.companyId }, type: SafetyAlertType.COMPLIANCE_LAPSE },
+      where: { company: { id: actor.companyId }, ...(type ? { type } : {}) },
       order: { createdAt: 'DESC' },
     });
   }
@@ -1124,27 +1134,45 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * A company member (Owner / Admin / HR-Compliance membership, i.e. compliance.manage) may acknowledge and
-   * resolve its own company's COMPLIANCE LAPSE alerts and nothing else: panic / SOS, welfare, Missing Book
-   * Off, site requests and incidents stay with the owner account and Platform Admin, as before.
+   * Which company members may acknowledge and resolve an alert of their own company (the caller has already
+   * established it is their own company):
+   *   - a COMPLIANCE LAPSE alert: compliance.manage (Owner / Admin / HR-Compliance memberships) — unchanged, see
+   *     S4_COMPLIANCE_PHASE1_ACTIVATION.md §1a. alerts.manage does not reach it, so Operations and Control Room
+   *     still only see it and are told about it;
+   *   - every other alert (panic / SOS, missed Welfare Check summary, Missing Book Off, site requests and the other
+   *     operational types): alerts.manage — Owner, Admin, Operations and Control Room memberships (owner decision,
+   *     28 Oct 2026). Never Viewer, Finance or HR / Compliance.
    */
   private assertMemberMayAct(role: CompanyMembershipRole, alert: SafetyAlert) {
-    if (alert.type !== SafetyAlertType.COMPLIANCE_LAPSE) {
-      throw new ForbiddenException('Your role can act only on compliance alerts.');
+    if (alert.type === SafetyAlertType.COMPLIANCE_LAPSE) {
+      if (!hasPermission(role, CompanyPermission.COMPLIANCE_MANAGE)) {
+        throw new ForbiddenException('Insufficient permissions.');
+      }
+      return;
     }
-    if (!hasPermission(role, CompanyPermission.COMPLIANCE_MANAGE)) {
-      throw new ForbiddenException('Insufficient permissions.');
+    if (!hasPermission(role, CompanyPermission.ALERTS_MANAGE)) {
+      throw new ForbiddenException(
+        hasPermission(role, CompanyPermission.COMPLIANCE_MANAGE)
+          ? 'Your role can act only on compliance alerts.'
+          : 'Insufficient permissions.',
+      );
     }
+  }
+
+  /**
+   * The alert, only when it belongs to the caller's own company. Another company's alert is reported exactly as
+   * one that does not exist, so a company cannot probe for another's alert ids.
+   */
+  private async companyAlert(alertId: number, companyId: number): Promise<SafetyAlert> {
+    const alert = await this.safetyAlertRepo.findOne({ where: { id: alertId } });
+    if (!alert || alert.company?.id !== companyId) throw new NotFoundException('Safety alert not found');
+    return alert;
   }
 
   async acknowledgeForCompany(userId: number, alertId: number): Promise<SafetyAlert> {
     const actor = await this.alertActor(userId);
 
-    const alert = await this.safetyAlertRepo.findOne({ where: { id: alertId } });
-    if (!alert) throw new NotFoundException('Safety alert not found');
-    if (alert.company.id !== actor.companyId) {
-      throw new BadRequestException('This alert does not belong to the current company');
-    }
+    const alert = await this.companyAlert(alertId, actor.companyId);
     if (!actor.owner) this.assertMemberMayAct(actor.role, alert);
 
     return this.acknowledge(alert, userId, actor.owner ? actor.company : alert.company);
@@ -1163,11 +1191,7 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
   ): Promise<SafetyAlert> {
     const actor = await this.alertActor(userId);
 
-    const alert = await this.safetyAlertRepo.findOne({ where: { id: alertId } });
-    if (!alert) throw new NotFoundException('Safety alert not found');
-    if (alert.company.id !== actor.companyId) {
-      throw new BadRequestException('This alert does not belong to the current company');
-    }
+    const alert = await this.companyAlert(alertId, actor.companyId);
     if (!actor.owner) this.assertMemberMayAct(actor.role, alert);
 
     return this.close(alert, userId, actor.owner ? actor.company : alert.company, resolution);
@@ -1191,14 +1215,14 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
    * without the client re-deriving the rule.
    */
   async resolutionOptions(userId: number, alertId: number, asAdmin: boolean) {
-    const alert = await this.safetyAlertRepo.findOne({ where: { id: alertId } });
-    if (!alert) throw new NotFoundException('Safety alert not found');
-
-    if (!asAdmin) {
+    let alert: SafetyAlert;
+    if (asAdmin) {
+      const found = await this.safetyAlertRepo.findOne({ where: { id: alertId } });
+      if (!found) throw new NotFoundException('Safety alert not found');
+      alert = found;
+    } else {
       const actor = await this.alertActor(userId);
-      if (alert.company.id !== actor.companyId) {
-        throw new BadRequestException('This alert does not belong to the current company');
-      }
+      alert = await this.companyAlert(alertId, actor.companyId);
       if (!actor.owner) this.assertMemberMayAct(actor.role, alert);
     }
 

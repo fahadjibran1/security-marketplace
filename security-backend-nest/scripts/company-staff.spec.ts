@@ -34,11 +34,20 @@
  *   CS-19  the Control Room / Operations / Admin job as INVITED members (never the account holder): every dashboard
  *          load call, Live Operations projection, alerts, incidents, daily logs, Close without Book Off, manual Book
  *          On / Off, extensions, Mark Missed — the full status matrix, 403 only where the membership lacks the
- *          permission or under the documented owner-only rule for non-compliance alerts
+ *          permission (alerts: alerts.manage, owner decision 28 Oct 2026)
  *   CS-20  the widened route guards (incident status, Mark Missed / shift edit, replace Guard) still refuse Viewer,
  *          Finance, HR, Guards, platform admins, Control Room (shifts.manage), suspended members and other companies
  *   CS-21  /notifications/company: an invited member sees only notifications addressed to them in their company
  *   CS-22  the actions took effect, recorded against the member who performed them
+ *   CS-23  alerts.manage (owner decision, 28 Oct 2026): Control Room, Operations and Admin members acknowledge and
+ *          resolve panic / SOS, the welfare summary, Missing Book Off, site requests (new and legacy) and other
+ *          operational alerts of their own company; audited against the member, never the account holder
+ *   CS-24  refused: Viewer, Finance, HR / Compliance (operational alerts), Guards, suspended members; another company's
+ *          alert is 404 like a missing one; nothing changes and nothing is audited; who sees which alerts
+ *   CS-25  compliance lapse alerts keep their own rule: compliance.manage acts (HR, Admin); Control Room and
+ *          Operations still only see them
+ *   CS-26  Control Room gains nothing else: no payroll approval, no staff / permission management, no manual
+ *          attendance without the individual grant
  *
  * Needs COMPANY_STAFF_DATABASE_URL pointing at a DISPOSABLE local database — it drops the schema.
  */
@@ -800,16 +809,14 @@ async function main() {
     }
 
     await test('CS-19-CONTROL-ROOM-OPERATIONS-ADMIN-JOB-MATRIX', () => {
-      // 403 entries are BY DESIGN: the membership lacks the permission (Control Room: screening.view, shifts.manage),
-      // or the documented owner-only rule for non-compliance alerts (S4_COMPLIANCE_PHASE1_ACTIVATION.md §1a), which no
-      // CompanyPermission grants. Everything else must work for an invited member.
+      // 403 entries are BY DESIGN: the membership lacks the permission (Control Room: screening.view, shifts.manage).
+      // Alerts: the earlier owner-only rule for non-compliance alerts was replaced by alerts.manage (owner decision,
+      // 28 Oct 2026; S4_COMPLIANCE_PHASE1_ACTIVATION.md §1a), held by Owner, Admin, Operations and Control Room.
+      // Everything else must work for an invited member.
       const ok = (cr: number, ops: number, adm: number) => ({ control_room: cr, operations: ops, admin: adm });
       const expected: Record<string, Record<string, number>> = {};
       for (const [label] of Object.entries(matrix)) expected[label] = ok(200, 200, 200);
       expected['GET /screening/company/outcomes'] = ok(403, 200, 200);
-      expected['GET /alerts/:id/resolution-reasons'] = ok(403, 403, 403);
-      expected['PATCH /alerts/:id/ack (panic)'] = ok(403, 403, 403);
-      expected['PATCH /alerts/:id/close (welfare)'] = ok(403, 403, 403);
       for (const label of ['POST reconcile-without-book-off', 'POST manual book-on', 'POST manual book-off', 'POST shift extension']) expected[label] = ok(201, 201, 201);
       expected['PATCH /shifts/:id (Mark Missed)'] = ok(403, 200, 200);
       assert.deepEqual(matrix, expected);
@@ -876,6 +883,191 @@ async function main() {
       const reviewed = await q(`SELECT DISTINCT "reviewedByUserId" FROM incidents WHERE status = 'in_review'`);
       const reviewers = new Set(reviewed.map((r) => Number(r.reviewedByUserId)));
       for (const who of [jobControl, jobOps, jobAdmin]) assert.ok(reviewers.has(who.id), `incident reviewed by ${who.email}`);
+    });
+
+    // ═══ CS-23..CS-26: alerts.manage (owner decision, 28 Oct 2026) ═══
+    // Authorised Control Room staff (and Operations, Admin, Owner) view, acknowledge and resolve the company's
+    // operational safety alerts. Compliance lapse alerts keep their own rule. Nothing else is granted.
+    const alertGuard = await jobGuard();
+    const OPERATIONAL_TYPES = ['panic', 'missed_checkcall', 'missing_book_off', 'site_request', 'welfare', 'other'] as const;
+    const mkAlert = async (type: string, co: Co = A, extra: { category?: string; shiftId?: number } = {}) => {
+      // A shift of its own per alert: Missing Book Off (and the welfare summary) are one per shift by design.
+      const shiftId = extra.shiftId ?? (await mkShift(alertGuard, 'in_progress', -2)).id;
+      const row = type === 'compliance_lapse'
+        ? await one(`INSERT INTO safety_alerts ("companyId","guardId","shiftId",type,priority,status,message,"complianceCategory","complianceReason","lapseKey")
+            VALUES ($1,$2,$3,'compliance_lapse','critical','open','Urgent compliance review required',$4,'expired',$5) RETURNING id`,
+            [co.id, alertGuard, shiftId, extra.category ?? 'sia', `cs-lapse-${Date.now()}-${Math.random()}`])
+        : await one(`INSERT INTO safety_alerts ("companyId","guardId","shiftId",type,priority,status,message)
+            VALUES ($1,$2,$3,$4,'high','open',$5) RETURNING id`, [co.id, alertGuard, shiftId, type, `Spec ${type}`]);
+      return Number(row.id);
+    };
+    const alertState = (id: number) => one(`SELECT status::text AS status, "acknowledgedByUserId", "closedByUserId", "resolutionReason", "resolutionNote"
+      FROM safety_alerts WHERE id = $1`, [id]);
+    const alertAudits = (id: number) => q(`SELECT action, "userId", "companyId", "afterData" FROM audit_logs
+      WHERE "entityType" = 'safety_alert' AND "entityId" = $1 AND action IN ('safety_alert.acknowledged','safety_alert.closed') ORDER BY id`, [id]);
+    /** Acknowledge, then resolve with the first reason the API itself offers for this alert, always with a note. */
+    const ackAndClose = async (id: number, tok: string, note: string) => {
+      const reasons = await api('GET', `/alerts/${id}/resolution-reasons`, tok);
+      const ack = await api('PATCH', `/alerts/${id}/ack`, tok);
+      const reason = reasons.body?.reasons?.[0]?.value ?? 'other';
+      const close = await api('PATCH', `/alerts/${id}/close`, tok, { resolutionReason: reason, resolutionNote: note });
+      return { reasons: reasons.status, ack: ack.status, close: close.status, reason, closeText: close.text };
+    };
+
+    await test('CS-23-ALERTS-MANAGE-ACKNOWLEDGES-AND-RESOLVES-OPERATIONAL-ALERTS-AS-THE-MEMBER', async () => {
+      const alertMatrix: Record<string, Record<string, string>> = {};
+      for (const [name, who] of [['control_room', jobControl], ['operations', jobOps], ['admin', jobAdmin]] as const) {
+        for (const type of OPERATIONAL_TYPES) {
+          const id = await mkAlert(type);
+          const note = `${name} handled the ${type} alert; Guard called back`;
+          const r = await ackAndClose(id, who.token, note);
+          (alertMatrix[type] ??= {})[name] = `${r.reasons}/${r.ack}/${r.close}`;
+          assert.equal(r.close, 200, `${name} closes ${type}: ${r.closeText}`);
+          const row = await alertState(id);
+          assert.equal(row.status, 'closed', `${name} ${type}`);
+          assert.equal(Number(row.acknowledgedByUserId), who.id, 'acknowledged by the member');
+          assert.equal(Number(row.closedByUserId), who.id, 'closed by the member');
+          assert.equal(row.resolutionReason, r.reason);
+          assert.equal(row.resolutionNote, note);
+          const audits = await alertAudits(id);
+          assert.deepEqual(audits.map((a) => [a.action, Number(a.userId), Number(a.companyId)]), [
+            ['safety_alert.acknowledged', who.id, A.id],
+            ['safety_alert.closed', who.id, A.id],
+          ], `${name} ${type}: audited against the member in their company, never the account holder (${A.ownerId})`);
+          assert.equal(audits[1].afterData.resolutionReason, r.reason, 'the reason is audited');
+          assert.equal(audits[1].afterData.resolutionNote, note, 'the note is audited');
+        }
+      }
+      console.log('\n      alert type          control_room  operations  admin   (reasons/ack/close)');
+      for (const [type, row] of Object.entries(alertMatrix)) {
+        console.log(`      ${type.padEnd(19)} ${row.control_room.padEnd(13)} ${row.operations.padEnd(11)} ${row.admin}`);
+      }
+      for (const row of Object.values(alertMatrix)) assert.deepEqual(row, { control_room: '200/200/200', operations: '200/200/200', admin: '200/200/200' });
+      // A welfare summary still needs a reason and note from a member, as from the owner: the rule is unchanged.
+      const welfare = await mkAlert('missed_checkcall');
+      expect(await api('PATCH', `/alerts/${welfare}/close`, jobControl.token, {}), 400, 'no bare close of a welfare alert');
+      // A closed alert stays closed for a member too.
+      expect(await ackAndClose(welfare, jobControl.token, 'Guard confirmed safe by phone').then(() => api('PATCH', `/alerts/${welfare}/ack`, jobControl.token)), 409, 'already closed');
+    });
+
+    await test('CS-24-EVERYONE-ELSE-REFUSED-OTHER-COMPANIES-404-AND-WHO-SEES-WHAT', async () => {
+      const suspended = await invited('job.control.suspended', 'control_room');
+      expect(await api('POST', `/company-staff/members/${suspended.id}/suspend`, A.token), 200);
+      const refused: Array<[string, string, number]> = [
+        ['viewer', viewer.token, 403], ['finance', finance.token, 403], ['hr_compliance', hr.token, 403],
+        // A suspended member has no active membership, so has no company at all here: "Company not found", as for any
+        // company route that resolves the caller's company by active membership (unchanged).
+        ['guard', guardToken, 403], ['suspended control_room', suspended.token, 404],
+        // Another company's members: the alert is reported exactly as a missing one (PR #56 isolation hardening).
+        ["another company's control_room", bControl.token, 404], ["another company's admin", bAdmin.token, 404],
+      ];
+      for (const type of ['panic', 'missed_checkcall', 'missing_book_off', 'site_request']) {
+        const id = await mkAlert(type);
+        for (const [who, tok, status] of refused) {
+          expect(await api('GET', `/alerts/${id}/resolution-reasons`, tok), status, `${who} reasons ${type}`);
+          expect(await api('PATCH', `/alerts/${id}/ack`, tok), status, `${who} ack ${type}`);
+          expect(await api('PATCH', `/alerts/${id}/close`, tok, { resolutionReason: 'other', resolutionNote: 'not mine to close' }), status, `${who} close ${type}`);
+        }
+        assert.equal((await alertState(id)).status, 'open', `${type} untouched`);
+        assert.equal((await alertAudits(id)).length, 0, `${type}: nothing audited`);
+      }
+      // HR / Compliance is told which alerts it may act on; everyone else simply lacks the permission.
+      const hrPanic = await api('PATCH', `/alerts/${await mkAlert('panic')}/ack`, hr.token);
+      assert.match(hrPanic.text, /only on compliance alerts/);
+      // Another company's alert is indistinguishable from one that does not exist.
+      const bPanic = await mkAlert('panic', B);
+      const missing = await api('PATCH', '/alerts/987654321/ack', jobControl.token);
+      const foreign = await api('PATCH', `/alerts/${bPanic}/ack`, jobControl.token);
+      expect(foreign, 404, "company A's Control Room on company B's alert");
+      assert.deepEqual(foreign.body, missing.body, 'same answer as a missing alert');
+      expect(await api('PATCH', `/alerts/${bPanic}/close`, jobAdmin.token, { resolutionReason: 'other', resolutionNote: 'x' }), 404);
+      expect(await api('GET', `/alerts/${bPanic}/resolution-reasons`, jobOps.token), 404);
+      expect(await api('PATCH', `/alerts/${bPanic}/ack`, A.token), 404, "the account holder on another company's alert");
+      const bRow = await alertState(bPanic);
+      assert.deepEqual([bRow.status, bRow.acknowledgedByUserId, bRow.closedByUserId], ['open', null, null], 'cross-company attempts leave the alert unchanged');
+      // Who sees what in GET /alerts/company.
+      await mkAlert('compliance_lapse', A, { category: 'right_to_work' });
+      const types = async (tok: string) => {
+        const r = await api('GET', '/alerts/company', tok);
+        return { status: r.status, types: new Set<string>((r.body ?? []).map((a: any) => a.type)), companies: new Set<number>((r.body ?? []).map((a: any) => a.company?.id)) };
+      };
+      for (const [who, tok] of [['control_room', jobControl.token], ['operations', jobOps.token], ['admin', jobAdmin.token]] as const) {
+        const seen = await types(tok);
+        assert.equal(seen.status, 200, who);
+        for (const type of ['panic', 'missed_checkcall', 'missing_book_off', 'site_request', 'compliance_lapse']) assert.ok(seen.types.has(type), `${who} sees ${type}`);
+        assert.deepEqual([...seen.companies], [A.id], `${who} sees only its own company`);
+      }
+      for (const [who, tok] of [['viewer', viewer.token], ['hr_compliance', hr.token]] as const) {
+        const seen = await types(tok);
+        assert.equal(seen.status, 200, who);
+        assert.deepEqual([...seen.types], ['compliance_lapse'], `${who}: compliance alerts only, unchanged`);
+      }
+      expect(await api('GET', '/alerts/company', finance.token), 404, 'Finance: unchanged');
+      const bSeen = await types(bControl.token);
+      assert.ok(!bSeen.companies.has(A.id), "another company's Control Room sees none of company A's alerts");
+      expect(await api('GET', '/alerts/company', guardToken), 403, 'a Guard');
+    });
+
+    await test('CS-25-COMPLIANCE-ALERTS-KEEP-THEIR-OWN-RULE', async () => {
+      const shiftFor = async () => (await mkShift(alertGuard, 'in_progress', -1)).id;
+      const lapse = await mkAlert('compliance_lapse', A, { shiftId: await shiftFor() });
+      for (const [who, tok] of [['control_room', jobControl.token], ['operations', jobOps.token], ['viewer', viewer.token], ['finance', finance.token]] as const) {
+        expect(await api('GET', `/alerts/${lapse}/resolution-reasons`, tok), 403, `${who} reasons`);
+        expect(await api('PATCH', `/alerts/${lapse}/ack`, tok), 403, `${who} ack`);
+        expect(await api('PATCH', `/alerts/${lapse}/close`, tok, { resolutionReason: 'valid_check_recorded', resolutionNote: 'x' }), 403, `${who} close`);
+      }
+      assert.equal((await alertState(lapse)).status, 'open', 'alerts.manage does not reach a compliance alert');
+      const r = await ackAndClose(lapse, hr.token, 'Renewed licence checked and recorded');
+      assert.deepEqual([r.reasons, r.ack, r.close], [200, 200, 200], `HR / Compliance acts, as before: ${r.closeText}`);
+      assert.deepEqual((await alertAudits(lapse)).map((a) => Number(a.userId)), [hr.id, hr.id], 'audited against the HR member');
+      const adminLapse = await mkAlert('compliance_lapse', A, { shiftId: await shiftFor() });
+      const adm = await ackAndClose(adminLapse, jobAdmin.token, 'Guard stood down pending a valid check');
+      assert.equal(adm.close, 200, 'Admin holds compliance.manage, as before');
+      // The sweep's recipients are untouched: Operations and Control Room are told (operationally), not asked to act.
+      const svc = app.get(SafetyAlertService) as any;
+      const recipients = await svc.lapseRecipients(ds.manager, A.id);
+      assert.ok(recipients.compliance.includes(hr.id) && recipients.compliance.includes(A.ownerId), 'compliance.manage holders get the compliance notice');
+      assert.ok(recipients.operational.includes(jobControl.id) && recipients.operational.includes(jobOps.id), 'operations / control room get the operational notice');
+      assert.ok(!recipients.compliance.includes(jobControl.id), 'Control Room is not a compliance recipient');
+    });
+
+    await test('CS-26-CONTROL-ROOM-GAINS-NOTHING-ELSE', async () => {
+      const { CompanyPermission: P, hasPermission } = await import('../src/company-membership/company-membership-types');
+      const holders = Object.values(R).filter((role) => hasPermission(role, P.ALERTS_MANAGE)).sort();
+      assert.deepEqual(holders, ['admin', 'control_room', 'operations', 'owner'], 'alerts.manage: Owner, Admin, Operations, Control Room only');
+      for (const p of [P.PAYROLL_VIEW, P.PAYROLL_MANAGE, P.STAFF_MANAGE, P.COMPANY_MANAGE, P.ATTENDANCE_MANAGE, P.TIMESHEETS_REVIEW, P.SHIFTS_MANAGE, P.COMPLIANCE_MANAGE]) {
+        assert.equal(hasPermission(R.CONTROL_ROOM, p), false, `Control Room by role has no ${p}`);
+      }
+      // A Control Room member with NO individual grants.
+      const plain = await invited('job.control.plain', 'control_room');
+      const perms = (await api('GET', '/auth/me', plain.token)).body.companyPermissions as string[];
+      assert.ok(perms.includes('alerts.manage'), 'the session carries alerts.manage');
+      for (const p of ['payroll.manage', 'payroll.view', 'staff.manage', 'attendance.manage', 'timesheets.review', 'company.manage']) {
+        assert.ok(!perms.includes(p), `the session has no ${p}`);
+      }
+      // Both Control Room members (with and without grants) are refused payroll, staff and permission management.
+      for (const [who, m] of [['plain', plain], ['granted', jobControl]] as const) {
+        expect(await api('PATCH', '/timesheets/company/payroll', m.token, { ids: [1], payrollStatus: 'approved' }), 403, `${who}: payroll approval`);
+        expect(await api('POST', '/payroll-batches', m.token, { periodStart: ukDay(-7), periodEnd: ukDay(0), timesheetIds: [1] }), 403, `${who}: payroll batch`);
+        expect(await api('PATCH', '/timesheets/1', m.token, { approvalStatus: 'approved' }), 403, `${who}: timesheet approval`);
+        expect(await api('GET', '/company-staff', m.token), 403, `${who}: staff list`);
+        expect(await api('POST', '/company-staff/invitations', m.token, { email: `${who}.x@example.invalid`, role: 'control_room' }), 403, `${who}: invite`);
+        expect(await api('PATCH', `/company-staff/members/${jobOps.id}/role`, m.token, { role: 'viewer' }), 403, `${who}: role change`);
+        expect(await api('POST', `/company-staff/members/${jobOps.id}/suspend`, m.token), 403, `${who}: suspend`);
+        expect(await api('PUT', `/attendance/control-room/${plain.id}`, m.token, { canManageAttendance: true }), 403, `${who}: attendance grant`);
+        expect(await api('PUT', `/shift-amendments/control-room/${plain.id}`, m.token, { canAmendShifts: true }), 403, `${who}: extension grant`);
+      }
+      const row = await membership(plain.id);
+      assert.equal(row.role, 'control_room');
+      assert.equal(row.canManageAttendance, false, 'no grant was given');
+      assert.equal(row.canAmendShifts, false);
+      assert.equal((await membership(jobOps.id)).role, 'operations', 'nobody was changed');
+      // Manual attendance stays behind the per-person grant.
+      const g = await jobGuard();
+      const ready = await mkShift(g, 'ready', -0.25);
+      assert.equal((await api('GET', '/attendance/manual/capabilities', plain.token)).body?.canManage ?? false, false);
+      expect(await api('POST', '/attendance/manual/book-on', plain.token, { shiftId: ready.id, occurredAt: new Date(Date.now() - MIN).toISOString(), reason: REASON, verificationMethod: 'phone_call' }), 403, 'no manual Book On without the grant');
+      assert.equal((await q(`SELECT id FROM attendance_events WHERE "shiftId" = $1`, [ready.id])).length, 0, 'nothing recorded');
     });
 
     // ═══ CS-18 ═══

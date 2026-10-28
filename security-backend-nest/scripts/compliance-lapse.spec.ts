@@ -373,8 +373,10 @@ async function main() {
 
       // A Guard cannot act on it.
       assert.equal((await api('PATCH', `/alerts/${alert.id}/ack`, dedupeGuard.token)).status, 403);
-      // Another company cannot act on it.
-      assert.equal((await api('PATCH', `/alerts/${alert.id}/ack`, B.token)).status, 400);
+      // Another company cannot act on it. PR #56 isolation hardening: answered 404 exactly like a missing alert (was 400),
+      // so alert ids cannot be probed across companies; the row is untouched.
+      assert.equal((await api('PATCH', `/alerts/${alert.id}/ack`, B.token)).status, 404);
+      assert.deepEqual((await q(`SELECT status::text AS status, "acknowledgedByUserId", "closedByUserId" FROM safety_alerts WHERE id = $1`, [alert.id]))[0], { status: 'open', acknowledgedByUserId: null, closedByUserId: null }, 'cross-company ack leaves the alert unchanged');
 
       const ack = await api('PATCH', `/alerts/${alert.id}/ack`, A.token);
       assert.equal(ack.status, 200, JSON.stringify(ack.body));
@@ -536,18 +538,32 @@ async function main() {
         assert.equal(r.status, 403, `${role}: ${r.status}`);
       }
       const otherHr = await memberToken(B, 'hr_compliance');
-      assert.equal((await api('PATCH', `/alerts/${alert.id}/ack`, otherHr)).status, 400, 'another company’s HR cannot act');
-      assert.equal((await api('PATCH', `/alerts/${alert.id}/close`, otherHr, { resolutionReason: 'other', resolutionNote: 'x' })).status, 400);
+      // PR #56 isolation hardening: another company's alert answers 404 exactly like a missing one (was 400), so alert ids
+      // cannot be probed across companies. Still refused.
+      assert.equal((await api('PATCH', `/alerts/${alert.id}/ack`, otherHr)).status, 404, 'another company’s HR cannot act');
+      assert.equal((await api('PATCH', `/alerts/${alert.id}/close`, otherHr, { resolutionReason: 'other', resolutionNote: 'x' })).status, 404);
       assert.equal((await api('PATCH', `/alerts/${alert.id}/ack`, g.token)).status, 403, 'nor the Guard');
       assert.equal((await one(`SELECT status::text AS s FROM safety_alerts WHERE id = $1`, [alert.id])).s, 'open');
+      assert.deepEqual((await q(`SELECT status::text AS status, "acknowledgedByUserId", "closedByUserId" FROM safety_alerts WHERE id = $1`, [alert.id]))[0], { status: 'open', acknowledgedByUserId: null, closedByUserId: null }, 'cross-company ack / close leave the alert unchanged');
     });
 
     await test('LAPSE-21-MEMBERS-SEE-ONLY-THEIR-OWN-COMPANYS-COMPLIANCE-ALERTS', async () => {
-      for (const role of ['hr_compliance', 'operations', 'control_room', 'viewer']) {
+      // HR / Compliance and Viewer: compliance alerts only, unchanged.
+      for (const role of ['hr_compliance', 'viewer']) {
         const list = await api('GET', '/alerts/company', await memberToken(A, role));
         assert.equal(list.status, 200, role);
         assert.ok(list.body.length > 0, `${role} sees the company's compliance alerts`);
         assert.ok(list.body.every((a: any) => a.type === 'compliance_lapse'), `${role} sees no other alert type`);
+        assert.ok(list.body.every((a: any) => a.company?.id === A.id), `${role} sees no other company`);
+      }
+      // Owner decision, 28 Oct 2026: Operations and Control Room hold alerts.manage, so they now see every alert of their
+      // own company (they always saw the compliance ones via compliance.view). Acting on a compliance alert is still
+      // refused to them (LAPSE-20).
+      for (const role of ['operations', 'control_room']) {
+        const list = await api('GET', '/alerts/company', await memberToken(A, role));
+        assert.equal(list.status, 200, role);
+        const types = new Set((list.body as any[]).map((a) => a.type));
+        assert.ok(types.has('compliance_lapse') && types.has('panic') && types.has('missing_book_off'), `${role} sees operational and compliance alerts`);
         assert.ok(list.body.every((a: any) => a.company?.id === A.id), `${role} sees no other company`);
       }
       assert.equal((await api('GET', '/alerts/company', await memberToken(A, 'finance'))).status, 404, 'finance has no compliance.view: unchanged');
