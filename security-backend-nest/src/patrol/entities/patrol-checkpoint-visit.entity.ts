@@ -1,5 +1,5 @@
 import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn, Unique } from 'typeorm';
-import type { PatrolScanFlag, PatrolVisitResult } from '../patrol-constants';
+import type { PatrolScanFlag, PatrolSyncFlag, PatrolVisitResult } from '../patrol-constants';
 
 /**
  * One checkpoint label scan (Migration 68): evidence that the LABEL was scanned, never proof that the Guard was there.
@@ -72,6 +72,18 @@ export class PatrolCheckpointVisit {
 
   @Column({ type: 'varchar', length: 64 })
   clientVisitId!: string;
+
+  /** Migration 69: reached the server after the shift ended. */
+  @Column({ type: 'boolean', default: false })
+  syncedLate!: boolean;
+
+  /** Migration 69: how the scan synced (separate from the scan's verification flags). */
+  @Column({ type: 'jsonb', default: () => `'[]'` })
+  syncFlags!: PatrolSyncFlag[];
+
+  /** Migration 69: server receipt − the device's sentAtDevice, when the app sent it. */
+  @Column({ type: 'int', nullable: true })
+  clockDriftMs!: number | null;
 
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt!: Date;

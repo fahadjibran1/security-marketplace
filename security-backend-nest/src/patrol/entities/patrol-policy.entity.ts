@@ -51,6 +51,22 @@ export class PatrolPolicy {
   @Column({ type: 'boolean', default: true })
   incompleteNeedsAction!: boolean;
 
+  /** Migration 69: hours after Book Off (or the shift end) in which offline patrol data is still accepted. */
+  @Column({ type: 'int', default: 24 })
+  postShiftSyncHours!: number;
+
+  /** Migration 69: device clock drift beyond this is flagged clock_drift_suspect. */
+  @Column({ type: 'int', default: 5 })
+  clockDriftThresholdMinutes!: number;
+
+  /** Migration 69: a run with no schedule needs no matching window. */
+  @Column({ type: 'boolean', default: true })
+  allowUnscheduledPatrols!: boolean;
+
+  /** Migration 69: evidence still not on the server at the sync deadline also raises a Live Operations alert. */
+  @Column({ type: 'boolean', default: false })
+  escalateUnverified!: boolean;
+
   /** Disabled until the privacy assessment: always false (the API refuses true). */
   @Column({ type: 'boolean', default: false })
   qrRequireProximity!: boolean;
