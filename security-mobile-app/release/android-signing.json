@@ -32,9 +32,21 @@
     "keySizeNote": "Corrected 2026-10-20 from 2048: keytool on the keystore and jarsigner on the 1.1.0 (15) AAB both report a 4096-bit RSA key. The certificate SHA-256 (which covers the public key) was always correct; only the size field was mis-recorded."
   },
   "expectedRelease": {
-    "versionName": "1.1.2",
-    "versionCode": 20,
+    "versionName": "1.2.0",
+    "versionCode": 21,
     "minSdkVersion": 24
+  },
+  "preparedArtefact": {
+    "versionName": "1.2.0",
+    "versionCode": 21,
+    "status": "prepared-not-built",
+    "easBuildProfile": "production",
+    "distribution": "STORE",
+    "sourceBranch": "integration/s4-1.2.0-patrols",
+    "sourceFixCommit": "5bb60b80ce9effbfe955068b663b92a2f5454b9a",
+    "sourceCommit": "the commit on integration/s4-1.2.0-patrols that sets 1.2.0 / versionCode 21 in app.json, directly on top of 5bb60b8 (the merge of release-prep/guard-app-1.1.2 c6d2d4c into feature/patrols-p1e faba512); a commit cannot record its own id, the build record names it once built",
+    "requiredUploadCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
+    "note": "S4 1.2.0 (21): Patrol Management P1-A to P1-E (Guard patrols with in-app QR scans and patrol photos, offline outbox) integrated with the distributed Guard app 1.1.2 (20) line (Guard notifications inbox, push-registration loop fix, offer answers without waiting on the re-read, session renewal timeout, Guard timesheets in hours and minutes), plus the patrol backup exclusion and stale camera file cleanup. Same package com.sfour.s4, same upload key as vc17 to vc20 (the permanent S4 certificate above), same Firebase setup, production API. Prepared only: not built, not uploaded to Google Play, so there is no EAS build id, AAB hash or Play state for it. 1.1.2 (20) stays the distributed Android build until 1.2.0 (21) is built, certified and uploaded on owner approval."
   },
   "approvedArtefact": {
     "versionName": "1.1.2",
