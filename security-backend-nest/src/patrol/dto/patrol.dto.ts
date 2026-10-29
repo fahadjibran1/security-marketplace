@@ -20,6 +20,8 @@ import {
 import { IsInstantString } from '../../common/validators/is-instant-string.validator';
 import {
   PATROL_CLIENT_ID_PATTERN,
+  PATROL_EXCEPTION_STATUSES,
+  PATROL_EXCEPTION_TYPES,
   PATROL_HH_MM_PATTERN,
   PATROL_METHODS,
   PATROL_ORDER_MODES,
@@ -87,6 +89,22 @@ export class UpsertPatrolPolicyDto {
 
   @IsOptional() @IsBoolean()
   incompleteNeedsAction?: boolean;
+
+  /** P1-B: hours after Book Off in which offline patrol data is still accepted (default 24). */
+  @IsOptional() @IsInt() @Min(1) @Max(72)
+  postShiftSyncHours?: number;
+
+  /** P1-B: device clock drift beyond this many minutes is flagged (default 5). */
+  @IsOptional() @IsInt() @Min(1) @Max(120)
+  clockDriftThresholdMinutes?: number;
+
+  /** P1-B: a run started without a schedule needs no matching window (default true). */
+  @IsOptional() @IsBoolean()
+  allowUnscheduledPatrols?: boolean;
+
+  /** P1-B: evidence still missing at the sync deadline also raises a Live Operations alert (default false). */
+  @IsOptional() @IsBoolean()
+  escalateUnverified?: boolean;
 
   /** Refused unless false (location verification is disabled). */
   @IsOptional() @IsBoolean()
@@ -304,6 +322,10 @@ export class StartPatrolRunDto extends PatrolLocationProbe {
 
   @IsInstantString()
   startedAtDevice!: string;
+
+  /** P1-B: the device clock when this request was sent; the server measures drift from it (optional). */
+  @IsOptional() @IsInstantString()
+  sentAtDevice?: string;
 }
 
 export class RecordPatrolVisitDto extends PatrolLocationProbe {
@@ -320,6 +342,10 @@ export class RecordPatrolVisitDto extends PatrolLocationProbe {
 
   @IsInstantString()
   scannedAtDevice!: string;
+
+  /** P1-B: the device clock when this request was sent (optional). */
+  @IsOptional() @IsInstantString()
+  sentAtDevice?: string;
 }
 
 export class CompletePatrolRunDto extends PatrolLocationProbe {
@@ -329,6 +355,32 @@ export class CompletePatrolRunDto extends PatrolLocationProbe {
   /** Completing with a reason records the run as incomplete. */
   @IsOptional() @IsString() @MinLength(1) @MaxLength(500)
   exceptionReason?: string;
+
+  /** P1-B: the device clock when this request was sent (optional). */
+  @IsOptional() @IsInstantString()
+  sentAtDevice?: string;
+}
+
+// ── Patrol exceptions (P1-B) ──────────────────────────────────────────────────────────────────────────
+
+export class PatrolExceptionsQueryDto {
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1)
+  siteId?: number;
+
+  @IsOptional() @IsIn(PATROL_EXCEPTION_STATUSES)
+  status?: string;
+
+  @IsOptional() @IsIn(PATROL_EXCEPTION_TYPES)
+  type?: string;
+}
+
+/** Resolving a patrol exception: a reason from the patrol set (see resolution-reasons.ts) and, for most, a note. */
+export class ResolvePatrolExceptionDto {
+  @IsString() @MinLength(1) @MaxLength(64)
+  resolutionReason!: string;
+
+  @IsOptional() @IsString() @MaxLength(2000)
+  resolutionNote?: string;
 }
 
 // ── S4 platform admin ─────────────────────────────────────────────────────────────────────────────────

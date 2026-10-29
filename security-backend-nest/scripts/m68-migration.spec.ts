@@ -146,11 +146,12 @@ async function main() {
     await ds.initialize();
     const applied = await ds.runMigrations({ transaction: 'each' });
 
-    await test('M68-01-A-67-DATABASE-MIGRATES-TO-68-AND-68-IS-LAST', () => {
+    await test('M68-01-A-67-DATABASE-MIGRATES-TO-68-AND-ONLY-69-FOLLOWS', () => {
       assert.equal(applied.length, 1, 'only 68 is pending on a 67 database');
       assert.equal(applied[0].name, MIGRATION_68);
-      assert.equal(allFiles.length, 68);
+      assert.equal(allFiles.length, 69);
       assert.equal(allFiles[67], '1720900000014-AddPatrolManagement.ts');
+      assert.equal(allFiles[68], '1720900000015-AddPatrolScheduling.ts', 'Migration 69 follows 68 and is certified by m69-migration.spec.ts');
     });
     const head = await schema();
 
@@ -230,7 +231,9 @@ async function main() {
 
     await test('M68-05-CHECK-VOCABULARIES-ARE-THE-CONSTANTS-AND-DEFAULTS-ARE-THE-OWNER-APPROVED-ONES', async () => {
       const [policy] = await q(`INSERT INTO patrol_policies ("companyId") VALUES ($1) RETURNING *`, [coA]);
-      const { PATROL_POLICY_DEFAULTS: d } = { PATROL_POLICY_DEFAULTS };
+      // Migration 68's columns: the four sync / review settings PATROL_POLICY_DEFAULTS also holds arrive with Migration 69
+      // (m69-migration.spec.ts certifies their defaults).
+      const { postShiftSyncHours: _h, clockDriftThresholdMinutes: _c, allowUnscheduledPatrols: _u, escalateUnverified: _e, ...d } = PATROL_POLICY_DEFAULTS;
       assert.deepEqual(
         { methods: policy.methods, photosPerRun: policy.photosPerRun, photosPerCheckpoint: policy.photosPerCheckpoint, orderMode: policy.orderMode,
           startGraceMinutes: policy.startGraceMinutes, maxPatrolDurationMinutes: policy.maxPatrolDurationMinutes, completionGraceMinutes: policy.completionGraceMinutes,
@@ -297,7 +300,9 @@ async function main() {
 
       const exc = { companyId: String(coA), siteId: String(siteA1), windowKey: `'s1:2026-10-28:3'`, type: `'patrol_missed'` };
       const x1 = await insert('patrol_exceptions', exc);
-      for (const t of PATROL_EXCEPTION_TYPES) await q(`UPDATE patrol_exceptions SET type = $1 WHERE id = $2`, [t, x1.id]);
+      // 'patrol_abandoned' is Migration 69's (m69-migration.spec.ts); at 68 it is still refused.
+      for (const t of PATROL_EXCEPTION_TYPES.filter((t) => t !== 'patrol_abandoned')) await q(`UPDATE patrol_exceptions SET type = $1 WHERE id = $2`, [t, x1.id]);
+      await assert.rejects(() => q(`UPDATE patrol_exceptions SET type = 'patrol_abandoned' WHERE id = $1`, [x1.id]), /CHK_patrol_exceptions_type/);
       await assert.rejects(() => q(`UPDATE patrol_exceptions SET type = 'other' WHERE id = $1`, [x1.id]), /CHK_patrol_exceptions_type/);
       for (const s of PATROL_EXCEPTION_STATUSES.filter((s) => s !== 'resolved')) await q(`UPDATE patrol_exceptions SET status = $1 WHERE id = $2`, [s, x1.id]);
       await q(`UPDATE patrol_exceptions SET status = 'resolved', "resolvedAt" = now() WHERE id = $1`, [x1.id]);
@@ -404,10 +409,13 @@ async function main() {
 
     await test('M68-10-NO-SEMANTIC-DRIFT-AND-NO-COLUMN-DRIFT-ON-PATROL-TABLES', async () => {
       const drift = (await ds.driver.createSchemaBuilder().log()).upQueries.map((x) => x.query);
-      const semantic = drift.filter((x) =>
+      // This database stops at 68, so Migration 69's labels, columns and indexes are absent by design; they are set aside
+      // statement by statement (m69-migration.spec.ts M69-09 certifies them). Nothing else is.
+      const m69 = /safety_alerts_type_enum|^ALTER TABLE "safety_alerts" ALTER COLUMN "type" |^ALTER TABLE "safety_alerts" ADD "patrol(ExceptionId|RunId|WindowKey|LateSyncAt|Annotation)" |^ALTER TABLE "patrol_(policies|runs|checkpoint_visits|exceptions)" ADD "(postShiftSyncHours|clockDriftThresholdMinutes|allowUnscheduledPatrols|escalateUnverified|lateStart|provisional|needsReview|syncFlags|clockDriftMs|verificationFinalAt|syncedLate|guardId|windowStart|windowEnd|acknowledgedAt|acknowledgedByUserId|lateEvidenceAt|annotations)" |^CREATE (UNIQUE )?INDEX "(uq_safety_alerts_patrol_exception|IDX_patrol_runs_open|IDX_patrol_exceptions_window_type)" /;
+      const semantic = drift.filter((x) => !m69.test(x) &&
         /CREATE TABLE|DROP TABLE|CREATE TYPE|DROP TYPE|ALTER TYPE|ALTER TABLE.*ALTER COLUMN|ALTER TABLE.*DROP COLUMN|ALTER TABLE.*ADD "/i.test(x));
       assert.deepEqual(semantic, [], `semantic drift (the release gate would fail):\n${semantic.join('\n')}`);
-      const ours = drift.filter((x) => /"patrol_|patrolsEnabled/.test(x));
+      const ours = drift.filter((x) => /"patrol_|patrolsEnabled/.test(x) && !m69.test(x));
       // Foreign keys (most are composite, which TypeORM cannot declare) and CHECKs live in the migration only, as for
       // several existing tables; every column, unique key and index agrees.
       const unexpected = ours.filter((x) => !/^ALTER TABLE "patrol_[a-z_]+" DROP CONSTRAINT "(FK|CHK)_patrol_/.test(x));

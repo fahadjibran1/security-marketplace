@@ -1,8 +1,10 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, EntityManager, In, IsNull, MoreThan, MoreThanOrEqual, Repository } from 'typeorm';
+import { DataSource, EntityManager, In, IsNull, MoreThan, MoreThanOrEqual, Not, Repository } from 'typeorm';
 import {
   GUARD_RAISABLE_ALERT_TYPES,
+  isPatrolAlertType,
+  PATROL_ALERT_TYPES,
   SafetyAlert,
   SafetyAlertPriority,
   SafetyAlertStatus,
@@ -14,7 +16,8 @@ import { ShiftService } from '../shift/shift.service';
 import { CompanyService } from '../company/company.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { ResolveSafetyAlertDto } from './dto/resolve-safety-alert.dto';
-import { alertRequiresResolutionNote, alertResolutionReasons } from './resolution-reasons';
+import { alertRequiresResolutionNote, alertResolutionReasons, PATROL_LATE_SYNC_RESOLUTION } from './resolution-reasons';
+import { syncPatrolExceptionFromAlert } from '../patrol/patrol-alert-link';
 import { NotificationService } from '../notification/notification.service';
 import { NotificationType } from '../notification/entities/notification.entity';
 import { DailyLog } from '../daily-log/entities/daily-log.entity';
@@ -200,8 +203,41 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
     return this.safetySweep?.stats() ?? null;
   }
 
-  findAll(): Promise<SafetyAlert[]> {
-    return this.safetyAlertRepo.find({ order: { createdAt: 'DESC' } });
+  async findAll(): Promise<SafetyAlert[]> {
+    return this.attachPatrolLinks(await this.safetyAlertRepo.find({ order: { createdAt: 'DESC' } }));
+  }
+
+  /**
+   * Patrols (Migration 69): the patrol link columns are select: false on the entity, so every other alert reads exactly
+   * as before; patrol alerts get them here (patrolExceptionId, patrolRunId, patrolWindowKey — what the web links to —
+   * plus the late-sync marker and annotation). One query, only when the list holds a patrol alert.
+   */
+  async attachPatrolLinks<T extends SafetyAlert | null>(alerts: T[]): Promise<T[]> {
+    const patrol = alerts.filter((alert): alert is NonNullable<T> => Boolean(alert) && isPatrolAlertType(alert!.type));
+    if (!patrol.length) return alerts;
+    const rows = await this.dataSource.query(
+      `SELECT "id", "patrolExceptionId", "patrolRunId", "patrolWindowKey", "patrolLateSyncAt", "patrolAnnotation" FROM "safety_alerts" WHERE "id" = ANY($1::int[])`,
+      [patrol.map((alert) => alert!.id)],
+    );
+    const byId = new Map<number, any>(rows.map((r: any) => [Number(r.id), r]));
+    for (const alert of patrol) {
+      const row = byId.get(alert!.id);
+      if (!row) continue;
+      Object.assign(alert!, {
+        patrolExceptionId: row.patrolExceptionId == null ? null : Number(row.patrolExceptionId),
+        patrolRunId: row.patrolRunId == null ? null : Number(row.patrolRunId),
+        patrolWindowKey: row.patrolWindowKey ?? null,
+        patrolLateSyncAt: row.patrolLateSyncAt ?? null,
+        patrolAnnotation: row.patrolAnnotation ?? null,
+      });
+    }
+    return alerts;
+  }
+
+  /** One alert by id, with its patrol links when it is a patrol alert. */
+  private async loadAlert(alertId: number): Promise<SafetyAlert | null> {
+    const [alert] = await this.attachPatrolLinks([await this.safetyAlertRepo.findOne({ where: { id: alertId } })]);
+    return alert;
   }
 
   async createForGuard(userId: number, dto: CreateSafetyAlertDto): Promise<SafetyAlert> {
@@ -1083,8 +1119,10 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
     const guard = await this.guardProfileService.findByUserId(userId);
     if (!guard) throw new NotFoundException('Guard profile not found');
 
+    // Patrol alerts (Migration 69) are control-room records about a patrol, not something the Guard raised or acts on:
+    // the Guard's own list stays exactly what it was before Patrols.
     return this.safetyAlertRepo.find({
-      where: { guard: { id: guard.id } },
+      where: { guard: { id: guard.id }, type: Not(In([...PATROL_ALERT_TYPES])) },
       order: { createdAt: 'DESC' },
     });
   }
@@ -1092,18 +1130,28 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
   async findForCompany(userId: number): Promise<SafetyAlert[]> {
     const actor = await this.alertActor(userId);
     if (actor.owner) {
-      return this.safetyAlertRepo.find({
+      return this.attachPatrolLinks(await this.safetyAlertRepo.find({
         where: { company: { id: actor.companyId } },
         order: { createdAt: 'DESC' },
-      });
+      }));
     }
     // A company member (not the owner account) sees only its own company's compliance lapse alerts, and
     // only with compliance.view. Every other alert type stays as before: owner and Platform Admin only.
-    if (!hasPermission(actor.role, CompanyPermission.COMPLIANCE_VIEW)) throw new NotFoundException('Company not found');
-    return this.safetyAlertRepo.find({
-      where: { company: { id: actor.companyId }, type: SafetyAlertType.COMPLIANCE_LAPSE },
+    // Patrols (Migration 69): with the company's Patrol switch on, a member with patrols.view also sees its patrol
+    // alerts. With the switch off nothing changes for anyone.
+    const types: SafetyAlertType[] = [];
+    if (hasPermission(actor.role, CompanyPermission.COMPLIANCE_VIEW)) types.push(SafetyAlertType.COMPLIANCE_LAPSE);
+    if (hasPermission(actor.role, CompanyPermission.PATROLS_VIEW) && (await this.patrolsEnabled(actor.companyId))) types.push(...PATROL_ALERT_TYPES);
+    if (!types.length) throw new NotFoundException('Company not found');
+    return this.attachPatrolLinks(await this.safetyAlertRepo.find({
+      where: { company: { id: actor.companyId }, type: types.length === 1 ? types[0] : In(types) },
       order: { createdAt: 'DESC' },
-    });
+    }));
+  }
+
+  private async patrolsEnabled(companyId: number): Promise<boolean> {
+    const [row] = await this.dataSource.query('SELECT "patrolsEnabled" FROM "companies" WHERE "id" = $1', [companyId]);
+    return row?.patrolsEnabled === true;
   }
 
   /**
@@ -1129,6 +1177,11 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
    * Off, site requests and incidents stay with the owner account and Platform Admin, as before.
    */
   private assertMemberMayAct(role: CompanyMembershipRole, alert: SafetyAlert) {
+    // Patrols (Migration 69): a member who manages patrols (patrols.manage) may act on its company's patrol alerts.
+    if (isPatrolAlertType(alert.type)) {
+      if (!hasPermission(role, CompanyPermission.PATROLS_MANAGE)) throw new ForbiddenException('Insufficient permissions.');
+      return;
+    }
     if (alert.type !== SafetyAlertType.COMPLIANCE_LAPSE) {
       throw new ForbiddenException('Your role can act only on compliance alerts.');
     }
@@ -1140,7 +1193,7 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
   async acknowledgeForCompany(userId: number, alertId: number): Promise<SafetyAlert> {
     const actor = await this.alertActor(userId);
 
-    const alert = await this.safetyAlertRepo.findOne({ where: { id: alertId } });
+    const alert = await this.loadAlert(alertId);
     if (!alert) throw new NotFoundException('Safety alert not found');
     if (alert.company.id !== actor.companyId) {
       throw new BadRequestException('This alert does not belong to the current company');
@@ -1150,8 +1203,24 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
     return this.acknowledge(alert, userId, actor.owner ? actor.company : alert.company);
   }
 
+  /**
+   * Patrols (Migration 69): the patrol API acting on an exception's alert. The caller has already been authorised for the
+   * company with patrols.manage (PatrolAccessService); this applies the SAME lifecycle as the alert endpoints.
+   */
+  async acknowledgePatrolAlert(userId: number, companyId: number, alertId: number): Promise<SafetyAlert> {
+    const alert = await this.loadAlert(alertId);
+    if (!alert || alert.company.id !== companyId || !isPatrolAlertType(alert.type)) throw new NotFoundException('Safety alert not found');
+    return this.acknowledge(alert, userId, alert.company);
+  }
+
+  async closePatrolAlert(userId: number, companyId: number, alertId: number, resolution: ResolveSafetyAlertDto): Promise<SafetyAlert> {
+    const alert = await this.loadAlert(alertId);
+    if (!alert || alert.company.id !== companyId || !isPatrolAlertType(alert.type)) throw new NotFoundException('Safety alert not found');
+    return this.close(alert, userId, alert.company, resolution);
+  }
+
   async acknowledgeAsAdmin(userId: number, alertId: number): Promise<SafetyAlert> {
-    const alert = await this.safetyAlertRepo.findOne({ where: { id: alertId } });
+    const alert = await this.loadAlert(alertId);
     if (!alert) throw new NotFoundException('Safety alert not found');
     return this.acknowledge(alert, userId, alert.company);
   }
@@ -1163,7 +1232,7 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
   ): Promise<SafetyAlert> {
     const actor = await this.alertActor(userId);
 
-    const alert = await this.safetyAlertRepo.findOne({ where: { id: alertId } });
+    const alert = await this.loadAlert(alertId);
     if (!alert) throw new NotFoundException('Safety alert not found');
     if (alert.company.id !== actor.companyId) {
       throw new BadRequestException('This alert does not belong to the current company');
@@ -1178,7 +1247,7 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
     alertId: number,
     resolution?: ResolveSafetyAlertDto,
   ): Promise<SafetyAlert> {
-    const alert = await this.safetyAlertRepo.findOne({ where: { id: alertId } });
+    const alert = await this.loadAlert(alertId);
     if (!alert) throw new NotFoundException('Safety alert not found');
     return this.close(alert, userId, alert.company, resolution);
   }
@@ -1191,7 +1260,7 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
    * without the client re-deriving the rule.
    */
   async resolutionOptions(userId: number, alertId: number, asAdmin: boolean) {
-    const alert = await this.safetyAlertRepo.findOne({ where: { id: alertId } });
+    const alert = await this.loadAlert(alertId);
     if (!alert) throw new NotFoundException('Safety alert not found');
 
     if (!asAdmin) {
@@ -1205,7 +1274,7 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
     return {
       alertId: alert.id,
       type: alert.type,
-      reasons: alertResolutionReasons(alert.type).map((reason) => ({
+      reasons: this.allowedReasons(alert).map((reason) => ({
         value: reason,
         noteRequired: alertRequiresResolutionNote(alert.type, reason),
       })),
@@ -1220,11 +1289,26 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
    * than stored, because a Missing Book Off closed as "network signal issue" is a sentence that is
    * not true about that record, and no later report can tell it apart from one that is.
    */
+  /**
+   * The reasons this alert may be closed with. A patrol alert offers "patrol completed — late sync" only once evidence
+   * actually reached the server after it was raised (patrolLateSyncAt): a late sync is never assumed.
+   */
+  private allowedReasons(alert: SafetyAlert): readonly string[] {
+    const all = alertResolutionReasons(alert.type);
+    if (isPatrolAlertType(alert.type) && !alert.patrolLateSyncAt) return all.filter((reason) => reason !== PATROL_LATE_SYNC_RESOLUTION);
+    return all;
+  }
+
   private resolveEvidence(alert: SafetyAlert, resolution?: ResolveSafetyAlertDto) {
     const reason = resolution?.resolutionReason?.trim() || null;
     const note = resolution?.resolutionNote?.trim() || null;
 
-    const allowed = alertResolutionReasons(alert.type);
+    const allowed = this.allowedReasons(alert);
+
+    // A patrol alert is a record of an unmet patrol obligation: closing it always states why (owner policy, P1-B).
+    if (isPatrolAlertType(alert.type) && !reason) {
+      throw new BadRequestException('A resolution reason is required to close a patrol alert.');
+    }
 
     // A compliance lapse is evidence of how possible illegal or unlicensed working was handled, and nothing
     // closes one automatically: closing it ALWAYS states a reason and a note, even from a caller that sends
@@ -1298,6 +1382,8 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
     alert.acknowledgedAt = new Date();
     alert.acknowledgedByUserId = userId;
     const saved = await this.safetyAlertRepo.save(alert);
+    // Patrols (Migration 69): the alert's patrol exception follows it, audited (patrol-alert-link.ts).
+    await syncPatrolExceptionFromAlert(this.dataSource, this.auditLogService, saved, 'acknowledged', userId);
     await this.auditLogService.log({
       company,
       user: { id: userId },
@@ -1339,6 +1425,8 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
     if (note) alert.resolutionNote = note;
 
     const saved = await this.safetyAlertRepo.save(alert);
+    // Patrols (Migration 69): resolving the alert resolves its patrol exception, with the same reason, audited.
+    await syncPatrolExceptionFromAlert(this.dataSource, this.auditLogService, saved, 'resolved', userId, { reason, note });
     await this.auditLogService.log({
       company,
       user: { id: userId },

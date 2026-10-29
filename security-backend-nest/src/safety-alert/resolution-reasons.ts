@@ -78,6 +78,26 @@ export const COMPLIANCE_LAPSE_RESOLUTION_REASONS = [
   'other',
 ] as const;
 
+/**
+ * Patrol alerts (Migration 69): missed, abandoned, incomplete, checkpoint missed, unverified. The same set for each type
+ * so the queue is consistent; every value is a statement about what the company established. "patrol_completed_late_sync"
+ * is offered only once evidence has reached the server after the alert (safety_alerts.patrolLateSyncAt): a late sync is
+ * never assumed. Resolving the alert resolves its patrol exception (and the reverse), audited both ways.
+ */
+export const PATROL_RESOLUTION_REASONS = [
+  'patrol_completed_late_sync',
+  'patrol_completed_confirmed',
+  'guard_contacted',
+  'site_inaccessible',
+  'guard_unavailable',
+  'device_network_issue',
+  'patrol_not_required',
+  'false_duplicate',
+  'other',
+] as const;
+/** The patrol reason that needs late evidence to exist before it may be chosen. */
+export const PATROL_LATE_SYNC_RESOLUTION = 'patrol_completed_late_sync';
+
 /** Anything else durable on the alert table: late check-in and `other`. */
 export const GENERAL_ALERT_RESOLUTION_REASONS = [
   'resolved_by_control',
@@ -105,6 +125,7 @@ export type ResolutionReason =
   | (typeof EMERGENCY_RESOLUTION_REASONS)[number]
   | (typeof GENERAL_ALERT_RESOLUTION_REASONS)[number]
   | (typeof COMPLIANCE_LAPSE_RESOLUTION_REASONS)[number]
+  | (typeof PATROL_RESOLUTION_REASONS)[number]
   | (typeof INCIDENT_RESOLUTION_REASONS)[number];
 
 /** The reasons a given alert type may be closed with. */
@@ -124,6 +145,12 @@ export function alertResolutionReasons(type: SafetyAlertType): readonly string[]
       return EMERGENCY_RESOLUTION_REASONS;
     case SafetyAlertType.COMPLIANCE_LAPSE:
       return COMPLIANCE_LAPSE_RESOLUTION_REASONS;
+    case SafetyAlertType.PATROL_MISSED:
+    case SafetyAlertType.PATROL_ABANDONED:
+    case SafetyAlertType.PATROL_INCOMPLETE:
+    case SafetyAlertType.CHECKPOINT_MISSED:
+    case SafetyAlertType.PATROL_UNVERIFIED:
+      return PATROL_RESOLUTION_REASONS;
     default:
       return GENERAL_ALERT_RESOLUTION_REASONS;
   }
@@ -137,6 +164,11 @@ export function alertResolutionReasons(type: SafetyAlertType): readonly string[]
  */
 export function alertRequiresResolutionNote(type: SafetyAlertType, reason: string): boolean {
   if (reason === 'other') return true;
+  // A patrol completed and synced late is the whole story once the evidence is on the server; every other patrol reason
+  // needs words, as every safety-relevant alert does.
+  if (reason === PATROL_LATE_SYNC_RESOLUTION && (PATROL_RESOLUTION_REASONS as readonly string[]).includes(reason)
+    && [SafetyAlertType.PATROL_MISSED, SafetyAlertType.PATROL_ABANDONED, SafetyAlertType.PATROL_INCOMPLETE,
+      SafetyAlertType.CHECKPOINT_MISSED, SafetyAlertType.PATROL_UNVERIFIED].includes(type)) return false;
   return type !== SafetyAlertType.SITE_REQUEST && type !== SafetyAlertType.WELFARE;
 }
 

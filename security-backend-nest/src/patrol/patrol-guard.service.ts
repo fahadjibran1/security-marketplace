@@ -1,13 +1,32 @@
 import { HttpStatus, Injectable } from '@nestjs/common';
 import { DataSource, QueryFailedError } from 'typeorm';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { effectiveAttendance } from '../attendance/effective-attendance';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { CompletePatrolRunDto, RecordPatrolVisitDto, StartPatrolRunDto } from './dto/patrol.dto';
 import { PatrolAccessService, PatrolGuardActor } from './patrol-access.service';
 import { PatrolConfigService } from './patrol-config.service';
-import { PATROL_UNVERIFIED_ONLY_FLAGS, PatrolErrorCode, PatrolScanFlag, PatrolVisitResult, patrolError } from './patrol-constants';
+import {
+  PATROL_REVIEW_FLAGS,
+  PATROL_UNVERIFIED_ONLY_FLAGS,
+  PatrolErrorCode,
+  PatrolScanFlag,
+  PatrolSyncFlag,
+  PatrolVisitResult,
+  patrolError,
+} from './patrol-constants';
+import { PatrolExceptionService } from './patrol-exception.service';
+import {
+  adjustForDrift,
+  clockDriftMs,
+  evaluatePostShiftStart,
+  isClockDriftSuspect,
+  syncAcceptanceEndsAt,
+  withinSyncAcceptance,
+} from './patrol-late-sync';
 import { checkLabelSignature, parseCheckpointLabel, patrolQrKeyring } from './patrol-qr';
 import { serializeRun, serializeVisit, updateRows } from './patrol-serializers';
+import { PatrolWindow, windowForStart } from './patrol-window.service';
 
 const INT32_MAX = 2_147_483_647;
 
@@ -19,6 +38,15 @@ const INT32_MAX = 2_147_483_647;
  * after the shift ends, so an offline outbox can retry safely. Every write is idempotent on a client-generated id that
  * is unique per company: concurrent duplicates resolve to one row (INSERT … ON CONFLICT DO NOTHING, then read), and the
  * same id with different content is 409 PATROL_IDEMPOTENCY_CONFLICT. No location is ever accepted.
+ *
+ * P1-B (offline sync after Book Off, see patrol-late-sync.ts): once the shift has ended (Book Off), a run in progress may
+ * still receive its scans and completion, and a run created offline may first arrive, within the post-shift sync
+ * acceptance window (policy postShiftSyncHours, default 24 h after Book Off). Such writes are marked syncedLate; a
+ * post-shift-created run is provisional and flagged, needsReview when its legitimacy is only partly supported. The
+ * optional sentAtDevice measures device clock drift. A run is assigned at start to the ONE window it is for (the
+ * schedule's window containing its drift-adjusted device start, or the window it started late for, within the start
+ * grace); evidence arriving after a missed / abandoned alert annotates that exception and downgrades its alert, never
+ * closing either (PatrolExceptionService.recordLateEvidence).
  */
 @Injectable()
 export class PatrolGuardService {
@@ -27,7 +55,41 @@ export class PatrolGuardService {
     private readonly access: PatrolAccessService,
     private readonly config: PatrolConfigService,
     private readonly auditLogService: AuditLogService,
+    private readonly exceptions: PatrolExceptionService,
   ) {}
+
+  /** The Guard's own effective Book On / Book Off on a shift (Migration 67 rules), from their attendance rows. */
+  private async guardAttendance(shiftId: number, guardId: number): Promise<{ bookOnAt: Date | null; bookOffAt: Date | null }> {
+    const rows = await this.dataSource.query(
+      `SELECT "id", "type"::text AS "type", "occurredAt", "recordedAt", "correctionOfEventId", "source" FROM "attendance_events"
+        WHERE "shiftId" = $1 AND "guardId" = $2`,
+      [shiftId, guardId],
+    );
+    const effective = effectiveAttendance(rows);
+    return { bookOnAt: effective.bookOnAt, bookOffAt: effective.bookOffAt };
+  }
+
+  /**
+   * A new write to a run whose shift has ended: allowed only inside the post-shift sync acceptance window (else 409
+   * PATROL_SYNC_WINDOW_CLOSED). A shift that did not end normally (cancelled, never started) keeps P1-A's refusal.
+   */
+  private async assertPostShiftWrite(run: any, now: Date) {
+    if (run.shiftStatus !== 'completed') {
+      throw patrolError(HttpStatus.CONFLICT, PatrolErrorCode.SHIFT_NOT_IN_PROGRESS, 'Patrols can only be recorded during your shift, after Book On.', {
+        shiftStatus: run.shiftStatus,
+      });
+    }
+    const policy = await this.config.effectivePolicy(Number(run.companyId), Number(run.siteId));
+    const attendance = await this.guardAttendance(Number(run.shiftId), Number(run.guardId));
+    const shiftEnd = new Date(run.shiftEnd);
+    if (!withinSyncAcceptance(now, attendance.bookOffAt, shiftEnd, policy.postShiftSyncHours)) {
+      const endsAt = syncAcceptanceEndsAt(attendance.bookOffAt, shiftEnd, policy.postShiftSyncHours);
+      throw patrolError(HttpStatus.CONFLICT, PatrolErrorCode.SYNC_WINDOW_CLOSED,
+        `Patrol data for this shift could only be sent until ${endsAt.toISOString()} (${policy.postShiftSyncHours} h after it ended).`,
+        { acceptanceEndsAt: endsAt.toISOString() });
+    }
+    return { policy, attendance, shiftEnd };
+  }
 
   /** Everything the app needs to patrol this shift's site offline: policy, schedules, routes, checkpoint publicIds. */
   async plan(user: JwtPayload, shiftId: number) {
@@ -125,14 +187,27 @@ export class PatrolGuardService {
     const replay = await this.findRunByClientId(shift.companyId, dto.clientRunId);
     if (replay) return this.replayRun(replay, actor, dto, startedAtDevice);
 
-    this.access.assertShiftInProgress(shift);
+    // P1-B: a run may first reach the server after Book Off (offline). Only for a shift that ended normally, from a Guard
+    // who booked on to it; every other state keeps P1-A's refusal.
+    const postShift = shift.status !== 'in_progress';
+    let attendance: { bookOnAt: Date | null; bookOffAt: Date | null } | null = null;
+    if (postShift) {
+      if (shift.status !== 'completed') this.access.assertShiftInProgress(shift);
+      attendance = await this.guardAttendance(shift.id, actor.guardId);
+      if (!attendance.bookOnAt) {
+        throw patrolError(HttpStatus.CONFLICT, PatrolErrorCode.SYNC_NOT_BOOKED_ON, 'This patrol cannot be accepted: you did not Book On to this shift.');
+      }
+    }
     if (shift.siteId == null) {
       throw patrolError(HttpStatus.CONFLICT, PatrolErrorCode.SHIFT_HAS_NO_SITE, 'This shift has no site, so it has no patrols.');
     }
     let routeId = dto.routeId ?? null;
+    let schedule: any = null;
     if (dto.scheduleId != null) {
-      const [schedule] = await this.dataSource.query(
-        `SELECT "id", "siteId", "routeId", "active", "archivedAt" FROM "patrol_schedules" WHERE "id" = $1 AND "companyId" = $2`,
+      [schedule] = await this.dataSource.query(
+        `SELECT "id", "siteId", "routeId", "active", "archivedAt", "daysOfWeek", "activeFrom", "activeTo", "frequencyMinutes", "windowMinutes",
+                "startsOn"::text AS "startsOn", "endsOn"::text AS "endsOn"
+           FROM "patrol_schedules" WHERE "id" = $1 AND "companyId" = $2`,
         [dto.scheduleId, shift.companyId],
       );
       if (!schedule || Number(schedule.siteId) !== shift.siteId || !schedule.active || schedule.archivedAt) {
@@ -152,16 +227,66 @@ export class PatrolGuardService {
     const offset = now.getTime() - startedAtDevice.getTime();
     const clockOffsetMs = Math.abs(offset) > INT32_MAX ? null : offset;
 
-    let inserted: any;
-    try {
-      [inserted] = await this.dataSource.query(
+    // P1-B: drift, the window this run is for, and (after Book Off) whether it is legitimate.
+    const policy = await this.config.effectivePolicy(shift.companyId, shift.siteId);
+    const driftMs = clockDriftMs(now, dto.sentAtDevice ? new Date(dto.sentAtDevice) : null);
+    const adjustedStart = adjustForDrift(startedAtDevice, driftMs);
+    let assigned: { window: PatrolWindow; lateStart: boolean } | null = null;
+    if (schedule) {
+      const [site] = await this.dataSource.query(`SELECT "timezone" FROM "sites" WHERE "id" = $1`, [shift.siteId]);
+      assigned = windowForStart(schedule, site?.timezone || 'Europe/London', adjustedStart, policy.startGraceMinutes);
+    }
+    const flags: PatrolSyncFlag[] = [];
+    if (postShift && attendance) {
+      const decision = evaluatePostShiftStart({
+        now,
+        bookOnAt: attendance.bookOnAt,
+        bookOffAt: attendance.bookOffAt,
+        shiftEnd: new Date(shift.end),
+        postShiftSyncHours: policy.postShiftSyncHours,
+        clockDriftThresholdMinutes: policy.clockDriftThresholdMinutes,
+        startedAtDevice,
+        driftMs,
+        scheduled: schedule != null,
+        matchingWindow: assigned != null,
+        allowUnscheduledPatrols: policy.allowUnscheduledPatrols,
+      });
+      if (!decision.accept) {
+        throw patrolError(HttpStatus.CONFLICT, decision.code, decision.message,
+          decision.acceptanceEndsAt ? { acceptanceEndsAt: decision.acceptanceEndsAt.toISOString() } : undefined);
+      }
+      flags.push(...decision.flags);
+    } else if (isClockDriftSuspect(driftMs, policy.clockDriftThresholdMinutes)) {
+      flags.push('clock_drift_suspect');
+    }
+    const scopeKey = policy.requirementScope === 'per_guard' ? `sh${shift.id}` : 'site';
+
+    const insertRun = async (withWindow: boolean) => {
+      const window = withWindow ? assigned : null;
+      const runFlags = withWindow || !assigned ? flags : [...flags, 'window_already_covered' as PatrolSyncFlag];
+      const [row] = await this.dataSource.query(
         `INSERT INTO "patrol_runs" ("companyId", "siteId", "shiftId", "guardId", "startedByUserId", "scheduleId", "routeId",
-            "startedAtDevice", "startedAtServer", "clockOffsetMs", "clientRunId")
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            "startedAtDevice", "startedAtServer", "clockOffsetMs", "clientRunId", "windowKey", "windowStart", "windowEnd", "scopeKey",
+            "lateStart", "provisional", "syncedLate", "needsReview", "syncFlags", "clockDriftMs")
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $17, $18, $19::jsonb, $20)
          ON CONFLICT ("companyId", "clientRunId") DO NOTHING RETURNING *`,
         [shift.companyId, shift.siteId, shift.id, actor.guardId, actor.userId, dto.scheduleId ?? null, routeId, startedAtDevice, now,
-          clockOffsetMs, dto.clientRunId],
+          clockOffsetMs, dto.clientRunId, window?.window.windowKey ?? null, window?.window.start ?? null, window?.window.end ?? null, scopeKey,
+          window?.lateStart ?? false, postShift, runFlags.some((f) => PATROL_REVIEW_FLAGS.includes(f)), JSON.stringify(runFlags), driftMs],
       );
+      return row;
+    };
+
+    let inserted: any;
+    try {
+      try {
+        inserted = await insertRun(true);
+      } catch (error) {
+        // The window already has a run for this scope (another Guard covered the site, or a duplicate): this run is still
+        // recorded, satisfying no window.
+        if (!isUniqueViolation(error, 'UQ_patrol_runs_schedule_window_scope')) throw error;
+        inserted = await insertRun(false);
+      }
     } catch (error) {
       if (isUniqueViolation(error, 'UQ_patrol_runs_one_open_per_guard_shift')) {
         // A concurrent duplicate of THIS request can trip the one-open index before the clientRunId arbiter sees it.
@@ -178,10 +303,61 @@ export class PatrolGuardService {
       }
       throw error;
     }
-    if (inserted) return serializeRun(inserted);
+    if (inserted) return serializeRun(await this.afterRunCreated(inserted, actor, flags, now));
     // A concurrent request with the same clientRunId won the insert: answer with that row, or 409 if it differs.
     const winner = await this.findRunByClientId(shift.companyId, dto.clientRunId);
     return this.replayRun(winner, actor, dto, startedAtDevice);
+  }
+
+  /** Audit a flagged acceptance; annotate a missed exception of the window this late-arriving run is for. */
+  private async afterRunCreated(row: any, actor: PatrolGuardActor, flags: PatrolSyncFlag[], now: Date) {
+    const companyId = Number(row.companyId);
+    let current = row;
+    if (row.windowKey) {
+      const annotated = await this.exceptions.recordLateEvidence(this.dataSource, {
+        companyId,
+        runId: Number(row.id),
+        kind: 'run_started_after_alert',
+        match: { windowKey: row.windowKey, scopeKey: row.scopeKey, types: ['patrol_missed'] },
+        deviceTime: new Date(row.startedAtDevice),
+        now,
+        userId: actor.userId,
+      });
+      if (annotated > 0) current = await this.markLate(Number(row.id), ['evidence_after_alert'], false);
+    }
+    const allFlags: PatrolSyncFlag[] = current.syncFlags ?? flags;
+    if (allFlags.length) {
+      await this.auditLogService.log({
+        company: { id: companyId },
+        user: { id: actor.userId },
+        action: 'patrol.late_sync_flagged',
+        entityType: 'patrol_run',
+        entityId: Number(row.id),
+        afterData: {
+          shiftId: Number(row.shiftId),
+          flags: allFlags,
+          provisional: Boolean(current.provisional),
+          needsReview: Boolean(current.needsReview),
+          startedAtDevice: new Date(row.startedAtDevice).toISOString(),
+          startedAtServer: new Date(row.startedAtServer).toISOString(),
+          clockDriftMs: current.clockDriftMs == null ? null : Number(current.clockDriftMs),
+          windowKey: row.windowKey ?? null,
+        },
+      });
+    }
+    return current;
+  }
+
+  /** Mark a run as having synced late, adding flags (deduplicated) and optionally needsReview. */
+  private async markLate(runId: number, add: PatrolSyncFlag[], needsReview: boolean) {
+    const [row] = await updateRows(this.dataSource,
+      `UPDATE "patrol_runs" SET "syncedLate" = true,
+          "syncFlags" = (SELECT COALESCE(jsonb_agg(DISTINCT f), '[]'::jsonb) FROM jsonb_array_elements("syncFlags" || $2::jsonb) AS f),
+          "needsReview" = "needsReview" OR $3, "updatedAt" = now()
+        WHERE "id" = $1 RETURNING *`,
+      [runId, JSON.stringify(add), needsReview],
+    );
+    return row;
   }
 
   private async findRunByClientId(companyId: number, clientRunId: string) {
@@ -202,7 +378,7 @@ export class PatrolGuardService {
 
   // ── Scan ───────────────────────────────────────────────────────────────────────────────────────────
 
-  async recordVisit(user: JwtPayload, runId: number, dto: RecordPatrolVisitDto) {
+  async recordVisit(user: JwtPayload, runId: number, dto: RecordPatrolVisitDto, now: Date = new Date()) {
     const actor = await this.access.guardActor(user);
     const run = await this.ownRun(actor, runId);
     this.access.rejectLocation(dto);
@@ -224,24 +400,59 @@ export class PatrolGuardService {
     if (run.status !== 'in_progress') {
       throw patrolError(HttpStatus.CONFLICT, PatrolErrorCode.RUN_NOT_IN_PROGRESS, 'This patrol is already finished.', { runStatus: run.status });
     }
+    const syncFlags: PatrolSyncFlag[] = [];
+    let thresholdMinutes: number | null = null;
     if (run.shiftStatus !== 'in_progress') {
-      throw patrolError(HttpStatus.CONFLICT, PatrolErrorCode.SHIFT_NOT_IN_PROGRESS, 'Patrols can only be recorded during your shift, after Book On.', {
-        shiftStatus: run.shiftStatus,
-      });
+      const { policy } = await this.assertPostShiftWrite(run, now);
+      syncFlags.push('synced_after_book_off');
+      thresholdMinutes = policy.clockDriftThresholdMinutes;
+    }
+    const driftMs = clockDriftMs(now, dto.sentAtDevice ? new Date(dto.sentAtDevice) : null);
+    if (driftMs !== null) {
+      thresholdMinutes ??= (await this.config.effectivePolicy(companyId, Number(run.siteId))).clockDriftThresholdMinutes;
+      if (isClockDriftSuspect(driftMs, thresholdMinutes)) syncFlags.push('clock_drift_suspect');
     }
 
     const verdict = await this.verifyScan(run, parsed, Boolean(dto.scanPayload), scannedPublicId);
     const [inserted] = await this.dataSource.query(
       `INSERT INTO "patrol_checkpoint_visits" ("companyId", "runId", "checkpointId", "scannedPublicId", "scannedTokenVersion", "scannedKeyId",
-          "scanPayload", "method", "result", "flags", "provisional", "scannedAtDevice", "clientVisitId")
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 'qr', $8, $9::jsonb, true, $10, $11)
+          "scanPayload", "method", "result", "flags", "provisional", "scannedAtDevice", "clientVisitId", "syncedLate", "syncFlags", "clockDriftMs",
+          "receivedAtServer")
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'qr', $8, $9::jsonb, true, $10, $11, $12, $13::jsonb, $14, $15)
        ON CONFLICT ("companyId", "clientVisitId") DO NOTHING RETURNING *`,
       [companyId, runId, verdict.checkpointId, scannedPublicId, parsed?.tokenVersion ?? null, parsed?.keyId ?? null, scanPayload,
-        verdict.result, JSON.stringify(verdict.flags), scannedAtDevice, dto.clientVisitId],
+        verdict.result, JSON.stringify(verdict.flags), scannedAtDevice, dto.clientVisitId, syncFlags.includes('synced_after_book_off'),
+        JSON.stringify(syncFlags), driftMs, now],
     );
     if (!inserted) {
       const winner = await this.findVisitByClientId(companyId, dto.clientVisitId);
       return this.replayVisit(winner, runId, scanPayload, scannedPublicId, scannedAtDevice);
+    }
+    const lateScan = await this.exceptions.recordLateEvidence(this.dataSource, {
+      companyId,
+      runId,
+      kind: 'scan_after_alert',
+      match: { runId, types: ['patrol_abandoned'] },
+      deviceTime: scannedAtDevice,
+      now,
+      userId: actor.userId,
+    });
+    if (syncFlags.length || lateScan > 0) {
+      const runFlags: PatrolSyncFlag[] = [
+        ...(syncFlags.includes('synced_after_book_off') ? ['synced_after_book_off' as PatrolSyncFlag] : []),
+        ...(lateScan > 0 ? ['evidence_after_alert' as PatrolSyncFlag] : []),
+      ];
+      if (runFlags.length) await this.markLate(runId, runFlags, false);
+      if (syncFlags.length) {
+        await this.auditLogService.log({
+          company: { id: companyId },
+          user: { id: actor.userId },
+          action: 'patrol.late_sync_flagged',
+          entityType: 'patrol_checkpoint_visit',
+          entityId: Number(inserted.id),
+          afterData: { runId, flags: syncFlags, scannedAtDevice: scannedAtDevice.toISOString(), receivedAtServer: now.toISOString(), clockDriftMs: driftMs },
+        });
+      }
     }
     if (verdict.result === 'flagged') {
       await this.auditLogService.log({
@@ -341,17 +552,51 @@ export class PatrolGuardService {
       throw patrolError(HttpStatus.BAD_REQUEST, PatrolErrorCode.VALIDATION, 'exceptionReason cannot be blank.');
     }
     if (run.status !== 'in_progress') return this.replayCompletion(run, completedAtDevice, reason);
+    const flags: PatrolSyncFlag[] = [];
+    const driftMs = clockDriftMs(now, dto.sentAtDevice ? new Date(dto.sentAtDevice) : null);
+    let thresholdMinutes: number | null = null;
     if (run.shiftStatus !== 'in_progress') {
-      throw patrolError(HttpStatus.CONFLICT, PatrolErrorCode.SHIFT_NOT_IN_PROGRESS, 'Patrols can only be recorded during your shift, after Book On.', {
-        shiftStatus: run.shiftStatus,
-      });
+      const { policy, attendance, shiftEnd } = await this.assertPostShiftWrite(run, now);
+      thresholdMinutes = policy.clockDriftThresholdMinutes;
+      flags.push('synced_after_book_off');
+      if (adjustForDrift(completedAtDevice, driftMs).getTime() > (attendance.bookOffAt ?? shiftEnd).getTime()) flags.push('completed_after_book_off');
     }
+    if (driftMs !== null) {
+      thresholdMinutes ??= (await this.config.effectivePolicy(Number(run.companyId), Number(run.siteId))).clockDriftThresholdMinutes;
+      if (isClockDriftSuspect(driftMs, thresholdMinutes)) flags.push('clock_drift_suspect');
+    }
+    const mergedFlags = [...new Set([...(run.syncFlags ?? []), ...flags])] as PatrolSyncFlag[];
     const [updated] = await updateRows(this.dataSource,
-      `UPDATE "patrol_runs" SET "status" = $2, "completedAtDevice" = $3, "completedAtServer" = $4, "exceptionReason" = $5, "updatedAt" = now()
+      `UPDATE "patrol_runs" SET "status" = $2, "completedAtDevice" = $3, "completedAtServer" = $4, "exceptionReason" = $5,
+          "syncedLate" = "syncedLate" OR $6, "syncFlags" = $7::jsonb, "needsReview" = "needsReview" OR $8, "updatedAt" = now()
         WHERE "id" = $1 AND "status" = 'in_progress' RETURNING *`,
-      [runId, reason ? 'incomplete' : 'completed', completedAtDevice, now, reason],
+      [runId, reason ? 'incomplete' : 'completed', completedAtDevice, now, reason, flags.includes('synced_after_book_off'),
+        JSON.stringify(mergedFlags), flags.some((f) => PATROL_REVIEW_FLAGS.includes(f))],
     );
-    if (updated) return serializeRun(updated);
+    if (updated) {
+      let current = updated;
+      const late = await this.exceptions.recordLateEvidence(this.dataSource, {
+        companyId: Number(run.companyId),
+        runId,
+        kind: 'run_completed_after_alert',
+        match: { runId, types: ['patrol_abandoned'] },
+        deviceTime: completedAtDevice,
+        now,
+        userId: actor.userId,
+      });
+      if (late > 0) current = await this.markLate(runId, ['evidence_after_alert'], false);
+      if (flags.length) {
+        await this.auditLogService.log({
+          company: { id: Number(run.companyId) },
+          user: { id: actor.userId },
+          action: 'patrol.late_sync_flagged',
+          entityType: 'patrol_run',
+          entityId: runId,
+          afterData: { step: 'complete', flags, completedAtDevice: completedAtDevice.toISOString(), completedAtServer: now.toISOString(), clockDriftMs: driftMs },
+        });
+      }
+      return serializeRun(current);
+    }
     // A concurrent completion won: same content → that row; different → 409.
     const [current] = await this.dataSource.query(`SELECT * FROM "patrol_runs" WHERE "id" = $1`, [runId]);
     return this.replayCompletion(current, completedAtDevice, reason);
@@ -371,7 +616,7 @@ export class PatrolGuardService {
   /** The Guard's own run (anyone else's is 404), with its shift status and the company switch on. */
   private async ownRun(actor: PatrolGuardActor, runId: number) {
     const [run] = await this.dataSource.query(
-      `SELECT r.*, s."status" AS "shiftStatus", c."patrolsEnabled" FROM "patrol_runs" r
+      `SELECT r.*, s."status" AS "shiftStatus", s."end" AS "shiftEnd", c."patrolsEnabled" FROM "patrol_runs" r
          JOIN "shifts" s ON s."id" = r."shiftId" JOIN "companies" c ON c."id" = r."companyId"
         WHERE r."id" = $1`,
       [runId],

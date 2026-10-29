@@ -22,6 +22,7 @@ import { serializeCheckpoint, serializePolicyFields, serializeRoute, serializeSc
 const POLICY_FIELDS = [
   'methods', 'photosPerRun', 'photosPerCheckpoint', 'orderMode', 'startGraceMinutes', 'maxPatrolDurationMinutes',
   'completionGraceMinutes', 'syncGraceMinutes', 'requirementScope', 'retentionDays', 'incompleteNeedsAction',
+  'postShiftSyncHours', 'clockDriftThresholdMinutes', 'allowUnscheduledPatrols', 'escalateUnverified',
   'qrRequireProximity', 'proximityMeters',
 ] as const;
 type PolicyFields = ReturnType<typeof serializePolicyFields>;
@@ -131,12 +132,14 @@ export class PatrolConfigService {
         `UPDATE "patrol_policies" SET "methods" = $2::jsonb, "photosPerRun" = $3, "photosPerCheckpoint" = $4, "orderMode" = $5,
             "startGraceMinutes" = $6, "maxPatrolDurationMinutes" = $7, "completionGraceMinutes" = $8, "syncGraceMinutes" = $9,
             "requirementScope" = $10, "retentionDays" = $11, "incompleteNeedsAction" = $12, "qrRequireProximity" = false,
-            "proximityMeters" = NULL, "updatedByUserId" = $13, "updatedAt" = now()
+            "proximityMeters" = NULL, "updatedByUserId" = $13, "postShiftSyncHours" = $14, "clockDriftThresholdMinutes" = $15,
+            "allowUnscheduledPatrols" = $16, "escalateUnverified" = $17, "updatedAt" = now()
           WHERE "id" = $1 RETURNING *`,
         [
           existing.id, JSON.stringify(after.methods), after.photosPerRun, after.photosPerCheckpoint, after.orderMode,
           after.startGraceMinutes, after.maxPatrolDurationMinutes, after.completionGraceMinutes, after.syncGraceMinutes,
           after.requirementScope, after.retentionDays, after.incompleteNeedsAction, actor.userId,
+          after.postShiftSyncHours, after.clockDriftThresholdMinutes, after.allowUnscheduledPatrols, after.escalateUnverified,
         ],
       );
       await this.auditLogService.logInTransaction(manager, {

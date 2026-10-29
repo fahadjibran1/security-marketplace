@@ -22,7 +22,8 @@
  *          Guard and platform admin refused on company routes; evidence metadata hidden from a Viewer
  *   PF-12  the Guard plan: own shift only (another Guard's / company's shift 404), publicIds and labels, never secrets
  *   PF-13  the Guard run lifecycle: start, scan, complete / incomplete; shift must be in progress; one open run
- *   PF-14  idempotent replay of every Guard write (same row, one DB row), also after the shift has ended
+ *   PF-14  idempotent replay of every Guard write (same row, one DB row), also after the shift has ended; a NEW run after
+ *          the shift ended is accepted only as P1-B's provisional, flagged post-shift creation (patrol-schedule.spec.ts)
  *   PF-15  concurrent duplicates (Promise.all) resolve to one row for start, scan and complete
  *   PF-16  same client id, different content → 409 PATROL_IDEMPOTENCY_CONFLICT; ids are per company
  *   PF-17  QR: valid label verified; tampered MAC, rotated (old) label, unknown publicId, another company's label,
@@ -159,6 +160,10 @@ async function main() {
     const ds = app.get(DataSource);
     const [{ current_database: db }] = await ds.query('SELECT current_database()');
     if (db !== new URL(url!).pathname.slice(1)) throw new Error(`Refusing: connected to ${db}`);
+    // The P1-B patrol sweep's five-minute timer is stopped: these P1-A assertions count stored rows exactly, and the
+    // sweep is certified on its own clock by patrol-schedule.spec.ts.
+    const { PatrolSweepService } = await import('../src/patrol/patrol-sweep.service');
+    app.get(PatrolSweepService).onModuleDestroy();
     const { AuthService } = await import('../src/auth/auth.service');
     return { app, ds, base: `http://127.0.0.1:${address.port}`, auth: app.get(AuthService) };
   };
@@ -208,11 +213,12 @@ async function main() {
   const before = await existingResponses({ ownerLegacy: tokens.ownerLegacy, viewer: tokens.viewer, operations: tokens.operations, guardA: tokens.guardA });
   await ctx.app.close();
 
-  // ── Migration 68 and the second boot ───────────────────────────────────────────────────────────────────────
+  // ── Migrations 68 and 69 and the second boot ────────────────────────────────────────────────────────────────
   const to68 = new DataSource({ ...base, entities: [], migrations: allFiles.map((f) => path.join(migrationsDir, f)) } as never);
   await to68.initialize();
   const migrated = await to68.runMigrations({ transaction: 'each' });
-  assert.deepEqual(migrated.map((m) => m.name), ['AddPatrolManagement1720900000014'], 'only Migration 68 applies');
+  assert.deepEqual(migrated.map((m) => m.name), ['AddPatrolManagement1720900000014', 'AddPatrolScheduling1720900000015'],
+    'only Migrations 68 (P1-A) and 69 (P1-B scheduling) apply');
   await to68.destroy();
   ctx = await boot();
   const q = async (sql: string, params: unknown[] = []) => ctx.ds.query(sql, params);
@@ -317,6 +323,8 @@ async function main() {
       const expected = {
         methods: ['qr'], photosPerRun: 0, photosPerCheckpoint: 0, orderMode: 'any', startGraceMinutes: 15, maxPatrolDurationMinutes: 45,
         completionGraceMinutes: 30, syncGraceMinutes: 60, requirementScope: 'site', retentionDays: 30, incompleteNeedsAction: true,
+        // P1-B (Migration 69): offline sync after Book Off, clock drift, unscheduled patrols, unverified escalation.
+        postShiftSyncHours: 24, clockDriftThresholdMinutes: 5, allowUnscheduledPatrols: true, escalateUnverified: false,
         qrRequireProximity: false, proximityMeters: null,
       };
       assert.deepEqual({ ...PATROL_POLICY_DEFAULTS }, expected);
@@ -572,7 +580,14 @@ async function main() {
           [s1.body.id, s1.body.clientRunId, s1.body.startedAtDevice, s1.body.startedAtServer, 'incomplete'], 'the same run, in its current state');
         assert.deepEqual((await api('POST', `/patrols/runs/${s1.body.id}/visits`, gA.token, visitBody)).body, v1.body);
         assert.deepEqual((await api('POST', `/patrols/runs/${s1.body.id}/complete`, gA.token, doneBody)).body, c1.body);
-        expect(await api('POST', '/patrols/runs', gA.token, { ...startBody, clientRunId: cid('new') }), 409, 'PATROL_SHIFT_NOT_IN_PROGRESS', 'a NEW run still needs the shift in progress');
+        // P1-B: a NEW run reaching the server after the shift ended is never a plain on-shift run. This Guard booked on, so
+        // it is accepted only as a provisional, flagged post-shift creation (the full matrix is patrol-schedule.spec.ts),
+        // and completed here so the shift has no open run afterwards.
+        const late = await api('POST', '/patrols/runs', gA.token, { ...startBody, clientRunId: cid('new') });
+        expect(late, 201, undefined, 'a NEW run after the shift ended');
+        assert.deepEqual([late.body.provisional, late.body.syncedLate, late.body.syncFlags.includes('post_shift_creation')], [true, true, true]);
+        expect(await api('POST', `/patrols/runs/${late.body.id}/complete`, gA.token, { completedAtDevice: iso() }), 200);
+        expect(await api('POST', '/patrols/runs', gA2.token, { ...startBody, clientRunId: cid('new') }), 404, 'PATROL_SHIFT_NOT_FOUND', 'never on another Guard\'s shift');
       } finally {
         await q(`UPDATE shifts SET status = 'in_progress' WHERE id = $1`, [shiftA]);
       }
