@@ -122,11 +122,12 @@ async function main() {
     await test('M65-01-A-64-DATABASE-MIGRATES-TO-65-AND-65-IS-LAST', () => {
       assert.equal(applied.length, 1, 'only 65 is pending on a 64 database');
       assert.equal(applied[0].name, MIGRATION_65);
-      assert.equal(allFiles.length, 68);
+      assert.equal(allFiles.length, 69);
       assert.equal(allFiles[64], '1720900000011-AddWelfarePushReminders.ts');
       assert.equal(allFiles[65], '1720900000012-AddGuardNotificationDispatches.ts', 'Migration 66 follows 65 and is certified by m66-migration.spec.ts');
       assert.equal(allFiles[66], '1720900000013-AddManualAttendance.ts', 'Migration 67 follows 66 and is certified by m67-migration.spec.ts');
       assert.equal(allFiles[67], '1720900000014-AddPatrolManagement.ts', 'Migration 68 follows 67 and is certified by m68-migration.spec.ts');
+      assert.equal(allFiles[68], '1720900000015-AddPatrolScheduling.ts', 'Migration 69 follows 68 and is certified by m69-migration.spec.ts');
     });
     const head = await schema();
 
@@ -248,7 +249,10 @@ async function main() {
       const m67 = /^ALTER TABLE "(attendance_events" ADD "(source|recordedAt|recordedByUserId|reason|verificationMethod|verificationNote|correctionOfEventId)|company_memberships" ADD "canManageAttendance|timesheets" ADD "verifiedSource)" /;
       // …and Migration 68's eleven patrol tables and companies.patrolsEnabled (m68-migration.spec.ts M68-10 certifies them).
       const m68 = /^CREATE TABLE "patrol_(policies|schedules|checkpoints|routes|route_checkpoints|runs|checkpoint_visits|evidence|exceptions|evidence_holds|storage_usage_daily)" |^ALTER TABLE "companies" ADD "patrolsEnabled" /;
-      const semantic = drift.filter((x) => !after65.test(x) && !m67.test(x) && !m68.test(x) &&
+      // …and Migration 69's five alert labels (the enum's re-creation), its safety_alerts and patrol columns and its three
+      // indexes, statement by statement (m69-migration.spec.ts M69-09 certifies that its entities and migration agree).
+      const m69 = /safety_alerts_type_enum|^ALTER TABLE "safety_alerts" ALTER COLUMN "type" |^ALTER TABLE "safety_alerts" ADD "patrol(ExceptionId|RunId|WindowKey|LateSyncAt|Annotation)" |^ALTER TABLE "patrol_(policies|runs|checkpoint_visits|exceptions)" ADD "(postShiftSyncHours|clockDriftThresholdMinutes|allowUnscheduledPatrols|escalateUnverified|lateStart|provisional|needsReview|syncFlags|clockDriftMs|verificationFinalAt|syncedLate|guardId|windowStart|windowEnd|acknowledgedAt|acknowledgedByUserId|lateEvidenceAt|annotations)" |^CREATE (UNIQUE )?INDEX "(uq_safety_alerts_patrol_exception|IDX_patrol_runs_open|IDX_patrol_exceptions_window_type)" /;
+      const semantic = drift.filter((x) => !after65.test(x) && !m67.test(x) && !m68.test(x) && !m69.test(x) &&
         /CREATE TABLE|DROP TABLE|CREATE TYPE|DROP TYPE|ALTER TYPE|ALTER TABLE.*ALTER COLUMN|ALTER TABLE.*DROP COLUMN|ALTER TABLE.*ADD "/i.test(x));
       assert.deepEqual(semantic, [], `semantic drift (the release gate would fail):\n${semantic.join('\n')}`);
       console.log(`      (diagnostic-only drift elsewhere, unchanged by 65: ${drift.length} statement(s))`);

@@ -162,9 +162,10 @@ async function main() {
     await test('M67-01-A-66-DATABASE-MIGRATES-TO-67-AND-67-IS-LAST', () => {
       assert.equal(applied.length, 1, 'only 67 is pending on a 66 database');
       assert.equal(applied[0].name, MIGRATION_67);
-      assert.equal(allFiles.length, 68);
+      assert.equal(allFiles.length, 69);
       assert.equal(allFiles[66], '1720900000013-AddManualAttendance.ts');
       assert.equal(allFiles[67], '1720900000014-AddPatrolManagement.ts', 'Migration 68 follows 67 and is certified by m68-migration.spec.ts');
+      assert.equal(allFiles[68], '1720900000015-AddPatrolScheduling.ts', 'Migration 69 follows 68 and is certified by m69-migration.spec.ts');
     });
     const head = await schema();
 
@@ -334,7 +335,10 @@ async function main() {
       // This database stops at 67, so Migration 68's eleven patrol tables and companies.patrolsEnabled are absent by
       // design (m68-migration.spec.ts M68-10 certifies them); they are set aside statement by statement. Nothing else is.
       const m68 = /^CREATE TABLE "patrol_(policies|schedules|checkpoints|routes|route_checkpoints|runs|checkpoint_visits|evidence|exceptions|evidence_holds|storage_usage_daily)" |^ALTER TABLE "companies" ADD "patrolsEnabled" /;
-      const semantic = drift.filter((x) => !m68.test(x) &&
+      // …and Migration 69's five alert labels (the enum's re-creation), its safety_alerts and patrol columns and its three
+      // indexes, statement by statement (m69-migration.spec.ts M69-09 certifies that its entities and migration agree).
+      const m69 = /safety_alerts_type_enum|^ALTER TABLE "safety_alerts" ALTER COLUMN "type" |^ALTER TABLE "safety_alerts" ADD "patrol(ExceptionId|RunId|WindowKey|LateSyncAt|Annotation)" |^ALTER TABLE "patrol_(policies|runs|checkpoint_visits|exceptions)" ADD "(postShiftSyncHours|clockDriftThresholdMinutes|allowUnscheduledPatrols|escalateUnverified|lateStart|provisional|needsReview|syncFlags|clockDriftMs|verificationFinalAt|syncedLate|guardId|windowStart|windowEnd|acknowledgedAt|acknowledgedByUserId|lateEvidenceAt|annotations)" |^CREATE (UNIQUE )?INDEX "(uq_safety_alerts_patrol_exception|IDX_patrol_runs_open|IDX_patrol_exceptions_window_type)" /;
+      const semantic = drift.filter((x) => !m68.test(x) && !m69.test(x) &&
         /CREATE TABLE|DROP TABLE|CREATE TYPE|DROP TYPE|ALTER TYPE|ALTER TABLE.*ALTER COLUMN|ALTER TABLE.*DROP COLUMN|ALTER TABLE.*ADD "/i.test(x));
       assert.deepEqual(semantic, [], `semantic drift (the release gate would fail):\n${semantic.join('\n')}`);
       console.log(`      (diagnostic-only drift elsewhere: ${drift.length} statement(s))`);

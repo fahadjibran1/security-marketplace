@@ -92,9 +92,9 @@ async function main() {
       assert.equal(applied.length, 63, `got ${applied.length}`);
       assert.equal(applied[61].name, MIGRATION_62);
       assert.equal(applied[62].name, MIGRATION_63);
-      assert.equal(allFiles.length, 68);
+      assert.equal(allFiles.length, 69);
       assert.equal(allFiles[62], '1720900000009-AddComplianceLapseAlerts.ts');
-      assert.deepEqual(allFiles.slice(63), ['1720900000010-AddShiftAmendments.ts', '1720900000011-AddWelfarePushReminders.ts', '1720900000012-AddGuardNotificationDispatches.ts', '1720900000013-AddManualAttendance.ts', '1720900000014-AddPatrolManagement.ts'], 'after 63 come only 64 (AddShiftAmendments), 65 (AddWelfarePushReminders), 66 (AddGuardNotificationDispatches), 67 (AddManualAttendance) and 68 (AddPatrolManagement)');
+      assert.deepEqual(allFiles.slice(63), ['1720900000010-AddShiftAmendments.ts', '1720900000011-AddWelfarePushReminders.ts', '1720900000012-AddGuardNotificationDispatches.ts', '1720900000013-AddManualAttendance.ts', '1720900000014-AddPatrolManagement.ts', '1720900000015-AddPatrolScheduling.ts'], 'after 63 come only 64 (AddShiftAmendments), 65 (AddWelfarePushReminders), 66 (AddGuardNotificationDispatches), 67 (AddManualAttendance), 68 (AddPatrolManagement) and 69 (AddPatrolScheduling)');
     });
     const head = await schema();
     const headLabels = await enumLabels();
@@ -243,7 +243,10 @@ async function main() {
     });
 
     await test('M63-10-NO-DRIFT-INTRODUCED-BY-63', () => {
-      const ours = driftAt63.filter((q) => /compliance_lapse|complianceCategory|complianceReason|lapseKey/.test(q));
+      // Migration 69 appends five patrol labels the entity already declares; the enum's re-creation statements (which list
+      // every label, compliance_lapse among them) are Migration 69's, certified by m69-migration.spec.ts, and set aside here.
+      const m69 = /safety_alerts_type_enum|^ALTER TABLE "safety_alerts" ALTER COLUMN "type" |^ALTER TABLE "safety_alerts" ADD "patrol(ExceptionId|RunId|WindowKey|LateSyncAt|Annotation)" |^ALTER TABLE "patrol_(policies|runs|checkpoint_visits|exceptions)" ADD "(postShiftSyncHours|clockDriftThresholdMinutes|allowUnscheduledPatrols|escalateUnverified|lateStart|provisional|needsReview|syncFlags|clockDriftMs|verificationFinalAt|syncedLate|guardId|windowStart|windowEnd|acknowledgedAt|acknowledgedByUserId|lateEvidenceAt|annotations)" |^CREATE (UNIQUE )?INDEX "(uq_safety_alerts_patrol_exception|IDX_patrol_runs_open|IDX_patrol_exceptions_window_type)" /;
+      const ours = driftAt63.filter((q) => /compliance_lapse|complianceCategory|complianceReason|lapseKey/.test(q) && !m69.test(q));
       assert.deepEqual(ours, [], `entity and migration 63 disagree:\n${ours.join('\n')}`);
       const added = driftAt63.filter((q) => !driftAt62.includes(q));
       assert.deepEqual(added, [], `Migration 63 introduced drift:\n${added.join('\n')}`);
