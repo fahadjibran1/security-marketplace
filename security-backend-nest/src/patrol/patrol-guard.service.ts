@@ -26,9 +26,11 @@ import {
 } from './patrol-late-sync';
 import { checkLabelSignature, parseCheckpointLabel, patrolQrKeyring } from './patrol-qr';
 import { serializeRun, serializeVisit, updateRows } from './patrol-serializers';
-import { PatrolWindow, windowForStart } from './patrol-window.service';
+import { PatrolWindow, windowForStart, windowsBetween } from './patrol-window.service';
 
 const INT32_MAX = 2_147_483_647;
+/** The most windows GET /patrols/mine/plan lists (a 24 h shift with a 15-minute schedule has 96). */
+const PATROL_PLAN_MAX_WINDOWS = 200;
 
 /**
  * The Guard's side of Patrols (the S4 Guard app; the distributed 1.1.2 app never calls any of this).
@@ -132,6 +134,7 @@ export class PatrolGuardService {
       });
     }
     const { qrRequireProximity: _q, proximityMeters: _p, ...policyOut } = policy;
+    const windows = await this.shiftWindows(shift, site?.timezone || 'Europe/London', schedules, policy.requirementScope);
     return {
       shift: { id: shift.id, status: shift.status, start: new Date(shift.start).toISOString(), end: new Date(shift.end).toISOString() },
       site: { id: Number(site.id), name: site.name, timezone: site.timezone },
@@ -152,7 +155,46 @@ export class PatrolGuardService {
       })),
       routes: routeOut,
       checkpoints: checkpoints.map((c: any) => ({ publicId: c.publicId, label: c.label, description: c.description ?? null, photoRequired: Boolean(c.photoRequired) })),
+      windows,
     };
+  }
+
+  /**
+   * Patrols P1-E: the scheduled windows of this shift (every active schedule's window overlapping the shift's start → end),
+   * computed by the same site-local engine the sweep judges with, so the Guard app never derives a due time itself.
+   * `covered` says a run is already recorded for that window and the policy's scope (site-wide, or this shift when
+   * per-Guard) — it names no Guard. At most PATROL_PLAN_MAX_WINDOWS, earliest first.
+   */
+  private async shiftWindows(shift: { id: number; companyId: number; siteId: number | null; start: Date; end: Date }, timeZone: string, schedules: any[], scope: string) {
+    if (!schedules.length || shift.siteId == null) return [];
+    const from = new Date(shift.start);
+    const to = new Date(shift.end);
+    const cache = new Map<string, number>();
+    const all = schedules
+      .flatMap((s: any) => windowsBetween(
+        { id: Number(s.id), daysOfWeek: s.daysOfWeek, activeFrom: s.activeFrom, activeTo: s.activeTo, frequencyMinutes: Number(s.frequencyMinutes),
+          windowMinutes: Number(s.windowMinutes), startsOn: s.startsOn ?? null, endsOn: s.endsOn ?? null },
+        timeZone, from, to, cache,
+      ).map((w) => ({ w, schedule: s })))
+      .sort((a, b) => a.w.start.getTime() - b.w.start.getTime() || a.w.windowKey.localeCompare(b.w.windowKey))
+      .slice(0, PATROL_PLAN_MAX_WINDOWS);
+    if (!all.length) return [];
+    const scopeKey = scope === 'per_guard' ? `sh${shift.id}` : 'site';
+    const covered = await this.dataSource.query(
+      `SELECT DISTINCT "windowKey" FROM "patrol_runs" WHERE "companyId" = $1 AND "siteId" = $2 AND "scopeKey" = $3 AND "windowKey" = ANY($4::text[])`,
+      [shift.companyId, shift.siteId, scopeKey, all.map((x) => x.w.windowKey)],
+    );
+    const coveredKeys = new Set(covered.map((r: any) => r.windowKey));
+    return all.map(({ w, schedule }) => ({
+      windowKey: w.windowKey,
+      scheduleId: w.scheduleId,
+      scheduleName: schedule.name,
+      routeId: schedule.routeId == null ? null : Number(schedule.routeId),
+      localDate: w.localDate,
+      start: w.start.toISOString(),
+      end: w.end.toISOString(),
+      covered: coveredKeys.has(w.windowKey),
+    }));
   }
 
   async myRuns(user: JwtPayload, shiftId: number) {

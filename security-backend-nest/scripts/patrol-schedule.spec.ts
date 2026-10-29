@@ -1006,6 +1006,35 @@ async function main() {
       await bookOff(shift.id, rg.id, new Date(nowMs() - MIN));
     });
 
+    await test('PS-G02-THE-GUARD-PLAN-LISTS-THE-SHIFT-S-WINDOWS-FROM-THE-SWEEP-S-ENGINE-AND-WHICH-ARE-COVERED', async () => {
+      // Patrols P1-E: the Guard app shows upcoming patrols from these windows and never computes a due time itself.
+      const shift = await rShift(2, null);
+      const plan = await api('GET', `/patrols/mine/plan?shiftId=${shift.id}`, gtok);
+      expect(plan, 200);
+      const expected = W.windowsBetween(allDay, 'Europe/London', shift.start, shift.end);
+      assert.ok(expected.length >= 5, 'an all-day hourly schedule has a window every hour of a 5 h shift');
+      assert.deepEqual(plan.body.windows.map((w: any) => [w.windowKey, w.start, w.end]), expected.map((w) => [w.windowKey, iso(w.start), iso(w.end)]),
+        'exactly the sweep engine\'s windows of the shift, earliest first; the future-dated schedule has none');
+      const coveredInDb = async () => new Set((await q(`SELECT "windowKey" FROM patrol_runs WHERE "siteId" = $1 AND "scopeKey" = 'site' AND "windowKey" IS NOT NULL`, [R.site]))
+        .map((x: any) => x.windowKey));
+      const before = await coveredInDb();
+      for (const w of plan.body.windows) {
+        assert.deepEqual(Object.keys(w).sort(), ['covered', 'end', 'localDate', 'routeId', 'scheduleId', 'scheduleName', 'start', 'windowKey']);
+        assert.equal(w.scheduleId, Number(allDay.id));
+        assert.equal(w.covered, before.has(w.windowKey), `${w.windowKey} covered exactly when a site-scope run holds it`);
+      }
+      const startedAt = nowMs() - 5 * MIN;
+      const r = await start({ shiftId: shift.id, scheduleId: allDay.id, startedAtDevice: iso(startedAt) });
+      expect(r, 201);
+      assert.ok(r.body.windowKey && !before.has(r.body.windowKey), 'the current window was open');
+      const again = await api('GET', `/patrols/mine/plan?shiftId=${shift.id}`, gtok);
+      const newlyCovered = again.body.windows.filter((w: any) => w.covered && !before.has(w.windowKey)).map((w: any) => w.windowKey);
+      assert.deepEqual(newlyCovered, [r.body.windowKey], 'the started window is now covered, no other changed');
+      assert.ok(!/guardId|guardName|clientRunId/.test(JSON.stringify(again.body.windows)), 'coverage names no Guard and no run');
+      expect(await complete(r.body.id, { completedAtDevice: iso(startedAt + 2 * MIN) }), 200);
+      await bookOff(shift.id, rg.id, new Date(nowMs() - MIN));
+    });
+
     await test('PS-O01-A-RUN-STARTED-ON-SHIFT-SYNCS-ITS-SCANS-AND-COMPLETION-AFTER-BOOK-OFF', async () => {
       const shift = await rShift(4, null);
       const run = await start({ shiftId: shift.id, startedAtDevice: iso(nowMs() - 2 * HOUR - 5 * MIN) });
