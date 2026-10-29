@@ -10,7 +10,7 @@ import { PatrolConfigService } from '../patrol-config.service';
 import { PatrolErrorCode, patrolError } from '../patrol-constants';
 import { clockDriftMs, isClockDriftSuspect, syncAcceptanceEndsAt, withinSyncAcceptance } from '../patrol-late-sync';
 import { serializeEvidenceMetadata, serializeHold, updateRows } from '../patrol-serializers';
-import { patrolObjectKey, siblingKey } from './patrol-evidence-keys';
+import { keyBelongsTo, patrolObjectKey, siblingKey } from './patrol-evidence-keys';
 import { PatrolEvidenceLifecycleService } from './patrol-evidence-lifecycle.service';
 import { PATROL_EVIDENCE_MAX_PER_RUN, heldSql, patrolRetentionMode } from './patrol-evidence-shared';
 import { PATROL_EVIDENCE_ALLOWED_TYPES, PatrolObjectStore } from './patrol-object-store';
@@ -234,6 +234,8 @@ export class PatrolEvidenceService {
         uploadStatus: row.uploadStatus, retentionStatus: row.retentionStatus,
       });
     }
+    // Defence in depth: the key itself must be this company's (keys are server-generated and tenant-scoped).
+    if (!keyBelongsTo(row.storageKey, actor.companyId)) throw patrolError(HttpStatus.NOT_FOUND, PatrolErrorCode.NOT_FOUND, 'Photo not found.');
     const mime = row.detectedMimeType ?? row.mimeType;
     const access = this.store.presignDownload(row.storageKey, { contentType: mime, fileName: `patrol-evidence-${row.id}.${EXTENSION[mime] ?? 'img'}`, now });
     const ttlSeconds = Math.round((new Date(access.expiresAt).getTime() - now.getTime()) / 1000);

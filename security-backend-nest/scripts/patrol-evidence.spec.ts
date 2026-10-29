@@ -44,6 +44,7 @@
  *   PE-E01  authorisation, tenancy, scope validation and bounds (31 days, 500 photos, 2 in flight)
  *   PE-E02  ZIP + manifest: included / held / quarantined / rejected / pending / purged items listed; manifest hash; ZIP
  *           hash; photo bytes re-hashed; download audited; 24 h expiry removes the ZIP and keeps the record
+ *   PE-E03  a failed build is recorded with a safe error, audited, and retried on a later pass (never immediately)
  * Metering, late sync, recovery
  *   PE-M01  live usage equals a recount through every transition; Owner / Admin only; tenant-scoped
  *   PE-L01  late sync with P1-B: a photo after Book Off (within 24 h) is accepted and flagged; after the window refused;
@@ -1053,6 +1054,25 @@ async function main() {
       assert.ok(!fake.objects.has(exp.storageKey));
       expect(await api('GET', `/patrols/exports/${req.body.id}/download`, s.co.token), 409, 'PATROL_EXPORT_NOT_READY');
       await usageMatches(s.co.id, 'after export expiry');
+    });
+
+    await test('PE-E03-A-FAILED-EXPORT-IS-RECORDED-SAFELY-AND-RETRIED-LATER-NOT-IMMEDIATELY', async () => {
+      const s = exportCo;
+      await exportsSvc.whenIdle();
+      fake.failures.push({ method: 'GET', keyPrefix: `patrol/${s.co.id}/`, status: 500, times: 1 });
+      const req = await api('POST', '/patrols/exports', s.co.token, { purpose: 'investigation', runIds: [Number(s.run.id)] });
+      expect(req, 202);
+      await exportsSvc.whenIdle();
+      const failed = await one(`SELECT * FROM patrol_evidence_exports WHERE id = $1`, [req.body.id]);
+      assert.deepEqual([failed.status, failed.attempts, failed.storageKey], ['failed', 1, null]);
+      assert.ok(failed.error && !/https?:|X-Amz/.test(failed.error), 'a safe error is recorded');
+      assert.equal(await count(`SELECT count(*) FROM audit_logs WHERE action = 'patrol.evidence_export_failed' AND "entityId" = $1`, [req.body.id]), 1);
+      await exportsSvc.processPending(new Date());
+      assert.equal((await one(`SELECT status FROM patrol_evidence_exports WHERE id = $1`, [req.body.id])).status, 'failed', 'not retried immediately');
+      await exportsSvc.processPending(new Date(Date.now() + 6 * MIN));
+      const retried = await one(`SELECT * FROM patrol_evidence_exports WHERE id = $1`, [req.body.id]);
+      assert.deepEqual([retried.status, retried.attempts], ['ready', 2], 'retried on a later pass');
+      await usageMatches(s.co.id, 'after a retried export');
     });
 
     // ═══════════════════ Metering, late sync, recovery, tenancy ═══════════════════

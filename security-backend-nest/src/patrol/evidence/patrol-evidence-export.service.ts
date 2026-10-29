@@ -189,10 +189,11 @@ export class PatrolEvidenceExportService {
             "startedAt" = COALESCE("startedAt", $1), "attempts" = "attempts" + 1, "error" = NULL, "updatedAt" = now()
           WHERE "id" = (
             SELECT "id" FROM "patrol_evidence_exports"
-             WHERE "status" = 'queued' OR ("status" = 'failed' AND "attempts" < $2) OR ("status" = 'running' AND "claimedAt" < $3)
+             WHERE "status" = 'queued' OR ("status" = 'failed' AND "attempts" < $2 AND "updatedAt" < $4) OR ("status" = 'running' AND "claimedAt" < $3)
              ORDER BY "id" LIMIT 1 FOR UPDATE SKIP LOCKED)
           RETURNING *`,
-        [now, PATROL_EXPORT_MAX_ATTEMPTS, new Date(now.getTime() - PATROL_EXPORT_STALE_RUNNING_MS)],
+        // A failed build is retried on a later pass (≥ 5 minutes on), never immediately, so a failing store is not hammered.
+        [now, PATROL_EXPORT_MAX_ATTEMPTS, new Date(now.getTime() - PATROL_EXPORT_STALE_RUNNING_MS), new Date(now.getTime() - 5 * 60 * 1000)],
       );
       if (!claimed) break;
       await this.build(claimed, now);
