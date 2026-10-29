@@ -41,7 +41,7 @@ declare module 'react-native' {
     ): { remove: () => void };
   };
   export const KeyboardAvoidingView: any;
-  export const Linking: { openURL: (url: string) => Promise<unknown> };
+  export const Linking: { openURL: (url: string) => Promise<unknown>; openSettings: () => Promise<void> };
   export const Modal: any;
   export const Pressable: any;
   export const RefreshControl: any;

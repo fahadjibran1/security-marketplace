@@ -412,3 +412,53 @@ export interface PatrolStorageUsage {
   retentionMode: 'off' | 'report' | 'enforce' | string;
   storageConfigured: boolean;
 }
+
+// ─── Guard app (Patrols P1-E) ───────────────────────────────────────────────────────────────────────────────────────
+// GET /patrols/mine/plan and GET /patrols/mine/runs (security-backend-nest/src/patrol/patrol-guard.service.ts). The plan
+// carries no signing key, label payload or token version; `windows` are the server's own site-local windows of the shift.
+
+export interface GuardPatrolPlanWindow {
+  windowKey: string;
+  scheduleId: number;
+  scheduleName: string;
+  routeId: number | null;
+  localDate: string;
+  start: string;
+  end: string;
+  /** A run is already recorded for this window and scope (no Guard is named). */
+  covered: boolean;
+}
+
+export interface GuardPatrolPlan {
+  shift: { id: number; status: string; start: string; end: string };
+  site: { id: number; name: string; timezone: string };
+  policy: Omit<PatrolPolicyFields, 'qrRequireProximity' | 'proximityMeters'> & { source?: string };
+  locationVerification: false;
+  schedules: Array<{
+    id: number;
+    routeId: number | null;
+    name: string;
+    daysOfWeek: number[] | null;
+    activeFrom: string;
+    activeTo: string;
+    timeBasis: 'site_local';
+    frequencyMinutes: number;
+    windowMinutes: number;
+    startsOn: string | null;
+    endsOn: string | null;
+  }>;
+  routes: Array<{ id: number; name: string; orderMode: PatrolOrderMode; checkpoints: Array<{ position: number; required: boolean; publicId: string; label: string }> }>;
+  checkpoints: Array<{ publicId: string; label: string; description: string | null; photoRequired: boolean }>;
+  /** Present from P1-E; an older backend omits it (the app then shows no due times rather than inventing them). */
+  windows?: GuardPatrolPlanWindow[];
+}
+
+export interface GuardPatrolRun extends PatrolRun {
+  visits: PatrolVisit[];
+}
+
+export interface GuardEvidenceUploadIntent {
+  evidence: PatrolEvidence;
+  /** A short-lived presigned PUT, or null once the photo is settled. Never logged or stored. */
+  upload: { method: 'PUT'; url: string; expiresAt: string; headers: Record<string, string> } | null;
+}

@@ -8,7 +8,8 @@
  *   STORE-01  display name, package, bundle id, scheme, version, versionCode, buildNumber
  *   STORE-02  the existing EAS project is kept; OTA stays off; the internal slug is unchanged
  *   STORE-03  nothing depends on the retired securitymarketplace:// scheme; HTTPS auth links stay canonical
- *   STORE-04  Android permissions are the minimum the pilot uses: foreground location, nothing else
+ *   STORE-04  Android permissions are the minimum the app uses: foreground location (Book On) and, from Patrols P1-E,
+ *             the camera (in-app checkpoint QR scans and patrol photos); nothing else
  *   STORE-05  location copy is truthful: Book On only, no background tracking
  *   STORE-06  the store profile can only reach the production API
  *   STORE-07  no user-facing source carries a deprecated product name
@@ -18,6 +19,8 @@
  *             environment, the two Android permissions the library adds (show notifications, keep scheduled ones after
  *             a restart) and nothing else; Firebase's client file is supplied by EAS, never committed
  *   STORE-12  the resolved iOS config (what EAS syncs App ID capabilities from) requests aps-environment production
+ *   STORE-13  Patrols P1-E camera: a truthful purpose string, no microphone, no photo library; the camera library's own
+ *             RECORD_AUDIO stays blocked
  *
  * Executed against the real files, and the API resolver is executed rather than read.
  */
@@ -89,16 +92,18 @@ test('STORE-03-NOTHING-DEPENDS-ON-THE-RETIRED-SCHEME', () => {
 });
 
 test('STORE-04-ANDROID-PERMISSIONS-ARE-THE-PILOT-MINIMUM', () => {
-  assert.deepEqual([...expo.android.permissions].sort(), ['ACCESS_COARSE_LOCATION', 'ACCESS_FINE_LOCATION']);
+  // Patrols P1-E added CAMERA (in-app checkpoint QR scans and patrol photos, STORE-13). It is the only addition.
+  assert.deepEqual([...expo.android.permissions].sort(), ['ACCESS_COARSE_LOCATION', 'ACCESS_FINE_LOCATION', 'CAMERA']);
   const blocked = new Set(expo.android.blockedPermissions);
   for (const permission of [
     'ACCESS_BACKGROUND_LOCATION', 'FOREGROUND_SERVICE', 'FOREGROUND_SERVICE_LOCATION',
-    'READ_EXTERNAL_STORAGE', 'WRITE_EXTERNAL_STORAGE', 'SYSTEM_ALERT_WINDOW', 'RECORD_AUDIO', 'CAMERA',
+    'READ_EXTERNAL_STORAGE', 'WRITE_EXTERNAL_STORAGE', 'SYSTEM_ALERT_WINDOW', 'RECORD_AUDIO',
   ]) {
     assert.ok(blocked.has(`android.permission.${permission}`), `${permission} is blocked from the merged manifest`);
   }
+  assert.ok(!blocked.has('android.permission.CAMERA'), 'CAMERA is no longer blocked: Patrols uses it');
   const requested = JSON.stringify(expo.android.permissions);
-  for (const deferred of ['CAMERA', 'NFC', 'BLUETOOTH', 'RECORD_AUDIO', 'READ_CONTACTS', 'SMS', 'BACKGROUND_LOCATION']) {
+  for (const deferred of ['NFC', 'BLUETOOTH', 'RECORD_AUDIO', 'READ_CONTACTS', 'SMS', 'BACKGROUND_LOCATION', 'READ_MEDIA_IMAGES', 'READ_MEDIA_VIDEO']) {
     assert.ok(!requested.includes(deferred), `${deferred} is not requested for a deferred feature`);
   }
 });
@@ -276,6 +281,33 @@ test('STORE-12-THE-STORE-APP-REQUESTS-THE-PRODUCTION-PUSH-ENTITLEMENT', () => {
   const resolved = JSON.parse(out);
   assert.equal(resolved.ios.bundleIdentifier, 'com.sfour.s4');
   assert.deepEqual(resolved.ios.entitlements, { 'aps-environment': 'production' }, 'push, and no other capability');
+  // STORE-13 in the resolved config: the camera purpose string is the app's own; no microphone or photo-library string.
+  const [, camera] = expo.plugins.find((plugin) => Array.isArray(plugin) && plugin[0] === 'expo-camera');
+  assert.equal(resolved.ios.infoPlist.NSCameraUsageDescription, camera.cameraPermission);
+  assert.ok(!('NSMicrophoneUsageDescription' in resolved.ios.infoPlist), 'no microphone purpose string');
+  assert.ok(!Object.keys(resolved.ios.infoPlist).some((k) => /PhotoLibrary/.test(k)), 'no photo-library purpose string');
+  const androidPermissions = resolved.android.permissions || [];
+  assert.ok(androidPermissions.some((p) => /CAMERA$/.test(p)), 'CAMERA requested');
+  assert.ok(!androidPermissions.some((p) => /RECORD_AUDIO$/.test(p)), 'RECORD_AUDIO not requested');
+});
+
+test('STORE-13-THE-PATROL-CAMERA-ASKS-FOR-THE-CAMERA-ONLY', () => {
+  const entry = expo.plugins.find((plugin) => Array.isArray(plugin) && plugin[0] === 'expo-camera');
+  assert.ok(entry, 'expo-camera is configured');
+  const [, options] = entry;
+  assert.deepEqual(Object.keys(options).sort(), ['cameraPermission', 'microphonePermission', 'recordAudioAndroid']);
+  assert.match(options.cameraPermission, /^S4 uses the camera only while you patrol/, 'names the app and its one use');
+  assert.match(options.cameraPermission, /not saved to your photo library and carry no location/);
+  assert.doesNotMatch(options.cameraPermission, DEPRECATED_NAMES);
+  assert.equal(options.microphonePermission, false, 'false deletes the default microphone string');
+  assert.equal(options.recordAudioAndroid, false);
+  // The library's own manifest still declares RECORD_AUDIO; the app blocks it from the merged manifest.
+  const manifest = read('node_modules/expo-camera/android/src/main/AndroidManifest.xml');
+  const added = [...manifest.matchAll(/<uses-permission android:name="android\.permission\.([A-Z_]+)"/g)].map((m) => m[1]).sort();
+  assert.deepEqual(added, ['CAMERA', 'RECORD_AUDIO']);
+  assert.ok(expo.android.blockedPermissions.includes('android.permission.RECORD_AUDIO'));
+  const names = expo.plugins.map((plugin) => (Array.isArray(plugin) ? plugin[0] : plugin));
+  assert.ok(!names.includes('expo-image-picker') && !names.includes('expo-media-library'), 'no photo-library plugin');
 });
 
 console.log(`\n${passed} store identity checks passed`);

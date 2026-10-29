@@ -436,6 +436,14 @@ jobs:
       - name: Verify Patrol Management (company dashboard)
         run: npm run test:patrol-management-ui
 
+      # Patrols P1-E: Patrol Management on the Guard's phone. Camera access states; QR format agrees with the backend's
+      # parser; photos re-encoded to JPEG with EXIF / GPS removed, size cap, SHA-256 in the backend's format; the offline
+      # outbox survives restart, Book Off, sign-out and network loss; an expired session pauses and drops nothing;
+      # shared-phone isolation; idempotent replays; post-shift window and refusals kept and shown; verified only when
+      # the server says so; no gallery and no background location anywhere; Welfare Checks independent.
+      - name: Verify Patrols on the Guard app
+        run: npm run test:guard-patrols
+
       - name: Verify Expo dependency compatibility
         run: npx expo install --check
 

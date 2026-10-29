@@ -75,7 +75,8 @@
       },
       "permissions": [
         "ACCESS_COARSE_LOCATION",
-        "ACCESS_FINE_LOCATION"
+        "ACCESS_FINE_LOCATION",
+        "CAMERA"
       ],
       "blockedPermissions": [
         "android.permission.ACCESS_BACKGROUND_LOCATION",
@@ -84,8 +85,7 @@
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.WRITE_EXTERNAL_STORAGE",
         "android.permission.SYSTEM_ALERT_WINDOW",
-        "android.permission.RECORD_AUDIO",
-        "android.permission.CAMERA"
+        "android.permission.RECORD_AUDIO"
       ]
     },
     "web": {
@@ -114,6 +114,14 @@
           "mode": "production",
           "defaultChannel": "welfare-checks",
           "enableBackgroundRemoteNotifications": false
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "S4 uses the camera only while you patrol, to scan checkpoint QR labels and take patrol photos inside S4. Patrol photos are not saved to your photo library and carry no location.",
+          "microphonePermission": false,
+          "recordAudioAndroid": false
         }
       ]
     ],
