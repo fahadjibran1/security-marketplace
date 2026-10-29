@@ -24,6 +24,14 @@ export const GUARD_ASSIGNMENT_LOCK_NAMESPACE = 534_401_402;
  */
 export const WELFARE_ACTION_LOCK_NAMESPACE = 534_401_403;
 
+/**
+ * Patrols P1-B: one lock per COMPANY id, taken with a TRY lock by the patrol sweep for the length of its per-company
+ * transaction. A second concurrent sweep (another tick or another instance) skips that company rather than waiting; the
+ * partial unique indexes on patrol_exceptions and safety_alerts remain the final guard. Nothing else takes it, and the
+ * sweep takes no other advisory lock while holding it. Welfare's namespaces are never touched by Patrols.
+ */
+export const PATROL_SWEEP_LOCK_NAMESPACE = 534_401_404;
+
 export async function lockGuardsForAssignment(
   manager: { query: (sql: string, parameters?: unknown[]) => Promise<unknown> },
   guardIds: Array<number | null | undefined>,

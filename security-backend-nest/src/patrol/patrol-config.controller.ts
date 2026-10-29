@@ -9,15 +9,18 @@ import {
   CreatePatrolCheckpointDto,
   CreatePatrolRouteDto,
   CreatePatrolScheduleDto,
+  PatrolExceptionsQueryDto,
   PatrolListQueryDto,
   PatrolOverviewQueryDto,
   PatrolRunsQueryDto,
   UpdatePatrolCheckpointDto,
   UpdatePatrolRouteDto,
   UpdatePatrolScheduleDto,
+  ResolvePatrolExceptionDto,
   UpsertPatrolPolicyDto,
 } from './dto/patrol.dto';
 import { PatrolConfigService } from './patrol-config.service';
+import { PatrolExceptionService } from './patrol-exception.service';
 import { PatrolQueryService } from './patrol-query.service';
 
 /**
@@ -32,6 +35,7 @@ export class PatrolConfigController {
   constructor(
     private readonly config: PatrolConfigService,
     private readonly query: PatrolQueryService,
+    private readonly exceptions: PatrolExceptionService,
   ) {}
 
   // ── Policies (patrols.view / patrols.manage; 90-day retention: Owner / Admin) ──
@@ -163,6 +167,25 @@ export class PatrolConfigController {
   @Get('runs/:id/evidence')
   getRunEvidence(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
     return this.query.getRunEvidence(user, id);
+  }
+
+  // ── Exceptions (P1-B): patrols.view to list, patrols.manage to act. An exception with an alert is acted on through the
+  // alert's own lifecycle, so the alert and the exception always agree (the alert endpoints work equally).
+  @Get('exceptions')
+  listExceptions(@CurrentUser() user: JwtPayload, @Query() q: PatrolExceptionsQueryDto) {
+    return this.exceptions.list(user, q);
+  }
+
+  @Post('exceptions/:id/acknowledge')
+  @HttpCode(200)
+  acknowledgeException(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
+    return this.exceptions.acknowledge(user, id);
+  }
+
+  @Post('exceptions/:id/resolve')
+  @HttpCode(200)
+  resolveException(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number, @Body() dto: ResolvePatrolExceptionDto) {
+    return this.exceptions.resolve(user, id, dto);
   }
 
   /** Active evidence holds (patrols.holds). Placing / releasing is P1-C. */

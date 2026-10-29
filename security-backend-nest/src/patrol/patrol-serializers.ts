@@ -31,6 +31,10 @@ export function serializePolicyFields(row: any) {
     requirementScope: row.requirementScope,
     retentionDays: Number(row.retentionDays),
     incompleteNeedsAction: Boolean(row.incompleteNeedsAction),
+    postShiftSyncHours: Number(row.postShiftSyncHours),
+    clockDriftThresholdMinutes: Number(row.clockDriftThresholdMinutes),
+    allowUnscheduledPatrols: Boolean(row.allowUnscheduledPatrols),
+    escalateUnverified: Boolean(row.escalateUnverified),
     qrRequireProximity: Boolean(row.qrRequireProximity),
     proximityMeters: n(row.proximityMeters),
   };
@@ -121,6 +125,13 @@ export function serializeRun(row: any) {
     clockOffsetMs: n(row.clockOffsetMs),
     exceptionReason: row.exceptionReason ?? null,
     syncedLate: Boolean(row.syncedLate),
+    lateStart: Boolean(row.lateStart),
+    provisional: Boolean(row.provisional),
+    needsReview: Boolean(row.needsReview),
+    syncFlags: row.syncFlags ?? [],
+    clockDriftMs: n(row.clockDriftMs),
+    verifiedAt: iso(row.verifiedAt),
+    verificationFinalAt: iso(row.verificationFinalAt),
   };
 }
 
@@ -138,6 +149,9 @@ export function serializeVisit(row: any) {
     provisional: Boolean(row.provisional),
     scannedAtDevice: iso(row.scannedAtDevice),
     receivedAtServer: iso(row.receivedAtServer),
+    syncedLate: Boolean(row.syncedLate),
+    syncFlags: row.syncFlags ?? [],
+    clockDriftMs: n(row.clockDriftMs),
   };
 }
 
@@ -181,6 +195,12 @@ export function serializeException(row: any) {
     resolution: row.resolution ?? null,
     resolvedAt: iso(row.resolvedAt),
     createdAt: iso(row.createdAt),
+    guardId: n(row.guardId),
+    windowStart: iso(row.windowStart),
+    windowEnd: iso(row.windowEnd),
+    acknowledgedAt: iso(row.acknowledgedAt),
+    lateEvidenceAt: iso(row.lateEvidenceAt),
+    annotations: row.annotations ?? [],
   };
 }
 
