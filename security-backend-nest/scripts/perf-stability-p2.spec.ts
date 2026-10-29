@@ -608,11 +608,19 @@ async function main() {
     assert.deepEqual(intervals, [
       'src/database/pool-diagnostics/pool-diagnostics.service.ts',
       'src/guard-notification/guard-notification.service.ts',
+      'src/patrol/patrol-sweep.service.ts',
       'src/safety-alert/safety-alert.service.ts',
       'src/scheduler/scheduler.service.ts',
       'src/shift-amendment/shift-amendment.service.ts',
       'src/welfare-push/welfare-push.service.ts',
     ]);
+    // Patrols P1-B sweep: single-flight, every five minutes, and the timer only ticks the job.
+    const pss = src('../src/patrol/patrol-sweep.service.ts');
+    const pssInit = pss.split('onModuleInit() {')[1].split('onModuleDestroy()')[0];
+    assert.match(pssInit, /new SingleFlightJob\(\s*'patrol-sweep'/);
+    assert.match(pssInit, /setInterval\(\(\) => void this\.tick\(\), PATROL_SWEEP_INTERVAL_MS\)/);
+    assert.match(pss, /export const PATROL_SWEEP_INTERVAL_MS = 5 \* 60 \* 1000;/, 'patrol sweep cadence pinned');
+    assert.equal((pss.match(/setInterval\(/g) ?? []).length, 1, 'one timer, and it only ticks the single-flight job');
     // Welfare push reminders: single-flight, every minute, and the timer only ticks the job.
     const wpr = src('../src/welfare-push/welfare-push.service.ts');
     const wprInit = wpr.split('onModuleInit() {')[1].split('onModuleDestroy()')[0];
