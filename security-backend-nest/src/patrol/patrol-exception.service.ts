@@ -2,7 +2,7 @@ import { HttpStatus, Injectable } from '@nestjs/common';
 import { DataSource, EntityManager } from 'typeorm';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
-import { CompanyPermission } from '../company-membership/company-membership-types';
+import { CompanyPermission, PATROL_ALERT_ACT_PERMISSIONS } from '../company-membership/company-membership-types';
 import { SafetyAlert, SafetyAlertPriority, SafetyAlertStatus, SafetyAlertType } from '../safety-alert/entities/safety-alert.entity';
 import {
   alertRequiresResolutionNote,
@@ -53,7 +53,7 @@ export type RaisePatrolException = {
   now: Date;
 };
 
-export type LateEvidenceKind = 'run_started_after_alert' | 'run_completed_after_alert' | 'scan_after_alert';
+export type LateEvidenceKind = 'run_started_after_alert' | 'run_completed_after_alert' | 'scan_after_alert' | 'photo_after_alert';
 
 /**
  * Patrol exceptions and their alerts (Patrols P1-B, Migration 69).
@@ -248,7 +248,7 @@ export class PatrolExceptionService {
     return manager ? this.auditLogService.logInTransaction(manager, entry) : this.auditLogService.log(entry);
   }
 
-  // ── Company API (patrols.view to read, patrols.manage to act) ─────────────────────────────────────────
+  // ── Company API (patrols.view to read; alerts.manage or patrols.manage to act — owner decision, P1-C) ──
 
   async list(user: JwtPayload, query: PatrolExceptionsQueryDto) {
     const actor = await this.access.companyActor(user, CompanyPermission.PATROLS_VIEW);
@@ -264,7 +264,7 @@ export class PatrolExceptionService {
   }
 
   async acknowledge(user: JwtPayload, id: number) {
-    const actor = await this.access.companyActor(user, CompanyPermission.PATROLS_MANAGE);
+    const actor = await this.access.companyActorAny(user, PATROL_ALERT_ACT_PERMISSIONS);
     const exception = await this.row(actor.companyId, id);
     if (exception.status === 'resolved') {
       throw patrolError(HttpStatus.CONFLICT, PatrolErrorCode.EXCEPTION_RESOLVED, 'This patrol exception is already resolved.');
@@ -300,7 +300,7 @@ export class PatrolExceptionService {
   }
 
   async resolve(user: JwtPayload, id: number, dto: ResolvePatrolExceptionDto) {
-    const actor = await this.access.companyActor(user, CompanyPermission.PATROLS_MANAGE);
+    const actor = await this.access.companyActorAny(user, PATROL_ALERT_ACT_PERMISSIONS);
     const exception = await this.row(actor.companyId, id);
     if (exception.status === 'resolved') {
       throw patrolError(HttpStatus.CONFLICT, PatrolErrorCode.EXCEPTION_RESOLVED, 'This patrol exception is already resolved.');

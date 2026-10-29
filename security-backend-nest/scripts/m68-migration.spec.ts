@@ -149,9 +149,10 @@ async function main() {
     await test('M68-01-A-67-DATABASE-MIGRATES-TO-68-AND-ONLY-69-FOLLOWS', () => {
       assert.equal(applied.length, 1, 'only 68 is pending on a 67 database');
       assert.equal(applied[0].name, MIGRATION_68);
-      assert.equal(allFiles.length, 69);
+      assert.equal(allFiles.length, 70);
       assert.equal(allFiles[67], '1720900000014-AddPatrolManagement.ts');
       assert.equal(allFiles[68], '1720900000015-AddPatrolScheduling.ts', 'Migration 69 follows 68 and is certified by m69-migration.spec.ts');
+      assert.equal(allFiles[69], '1720900000016-AddPatrolEvidenceStorage.ts', 'Migration 70 follows 69 and is certified by m70-migration.spec.ts');
     });
     const head = await schema();
 
@@ -412,10 +413,13 @@ async function main() {
       // This database stops at 68, so Migration 69's labels, columns and indexes are absent by design; they are set aside
       // statement by statement (m69-migration.spec.ts M69-09 certifies them). Nothing else is.
       const m69 = /safety_alerts_type_enum|^ALTER TABLE "safety_alerts" ALTER COLUMN "type" |^ALTER TABLE "safety_alerts" ADD "patrol(ExceptionId|RunId|WindowKey|LateSyncAt|Annotation)" |^ALTER TABLE "patrol_(policies|runs|checkpoint_visits|exceptions)" ADD "(postShiftSyncHours|clockDriftThresholdMinutes|allowUnscheduledPatrols|escalateUnverified|lateStart|provisional|needsReview|syncFlags|clockDriftMs|verificationFinalAt|syncedLate|guardId|windowStart|windowEnd|acknowledgedAt|acknowledgedByUserId|lateEvidenceAt|annotations)" |^CREATE (UNIQUE )?INDEX "(uq_safety_alerts_patrol_exception|IDX_patrol_runs_open|IDX_patrol_exceptions_window_type)" /;
-      const semantic = drift.filter((x) => !m69.test(x) &&
+      // …and Migration 70's eleven patrol_evidence columns, its two tables (evidence exports, live storage usage) and their
+      // indexes, statement by statement (m70-migration.spec.ts M70-09 certifies that its entities and migration agree).
+      const m70 = /^CREATE TABLE "patrol_(evidence_exports|storage_usage)" |^ALTER TABLE "patrol_evidence" ADD "(declaredSizeBytes|detectedMimeType|uploadUrlIssuedAt|completionToken|completionStartedAt|syncFlags|needsReview|purgeAfter|primaryDeletedAt|objectDeletedAt|deletionRequestedByUserId)" |^CREATE (UNIQUE )?INDEX "(IDX_patrol_evidence_(lifecycle|pending_upload|exports_company|exports_open)|UQ_patrol_evidence_exports_storage_key|UQ_patrol_storage_usage_(site|company))" |^ALTER TABLE "patrol_(evidence_exports|storage_usage)" /;
+      const semantic = drift.filter((x) => !m69.test(x) && !m70.test(x) &&
         /CREATE TABLE|DROP TABLE|CREATE TYPE|DROP TYPE|ALTER TYPE|ALTER TABLE.*ALTER COLUMN|ALTER TABLE.*DROP COLUMN|ALTER TABLE.*ADD "/i.test(x));
       assert.deepEqual(semantic, [], `semantic drift (the release gate would fail):\n${semantic.join('\n')}`);
-      const ours = drift.filter((x) => /"patrol_|patrolsEnabled/.test(x) && !m69.test(x));
+      const ours = drift.filter((x) => /"patrol_|patrolsEnabled/.test(x) && !m69.test(x) && !m70.test(x));
       // Foreign keys (most are composite, which TypeORM cannot declare) and CHECKs live in the migration only, as for
       // several existing tables; every column, unique key and index agrees.
       const unexpected = ours.filter((x) => !/^ALTER TABLE "patrol_[a-z_]+" DROP CONSTRAINT "(FK|CHK)_patrol_/.test(x));

@@ -169,9 +169,9 @@ test('ENTITY-6 CompanyMembershipModule is imported in AppModule', () => {
 // C.  PERMISSION FOUNDATION
 // ═══════════════════════════════════════════════════════════════════════
 
-test('PERMISSION-1 hasPermission returns true for OWNER on all 41 permissions', () => {
+test('PERMISSION-1 hasPermission returns true for OWNER on all 42 permissions', () => {
   const all = Object.values(CompanyPermission);
-  assert(all.length === 41, `Expected 41 permissions (31 + shifts.reconcile + the four Live Shift Amendment permissions + attendance.manage + the four patrols.* permissions), got ${all.length}`);
+  assert(all.length === 42, `Expected 42 permissions (31 + shifts.reconcile + the four Live Shift Amendment permissions + attendance.manage + the four patrols.* permissions + alerts.manage), got ${all.length}`);
   for (const p of all) {
     assert(hasPermission(CompanyMembershipRole.OWNER, p), `OWNER must have ${p}`);
   }

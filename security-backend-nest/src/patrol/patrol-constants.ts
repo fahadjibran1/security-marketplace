@@ -180,6 +180,31 @@ export enum PatrolErrorCode {
   RESOLUTION_INVALID = 'PATROL_RESOLUTION_INVALID',
   /** P1-B: the exception is already resolved (a settled record). */
   EXCEPTION_RESOLVED = 'PATROL_EXCEPTION_ALREADY_RESOLVED',
+  /** P1-C: private patrol evidence storage is not configured / not reachable (the feature fails closed). */
+  EVIDENCE_STORAGE_UNAVAILABLE = 'PATROL_EVIDENCE_STORAGE_UNAVAILABLE',
+  /** P1-C: the declared content type is not an allowed photo type. */
+  EVIDENCE_TYPE_NOT_ALLOWED = 'PATROL_EVIDENCE_TYPE_NOT_ALLOWED',
+  /** P1-C: the declared size is over the cap. */
+  EVIDENCE_TOO_LARGE = 'PATROL_EVIDENCE_TOO_LARGE',
+  /** P1-C: completion was asked for, but the object has not reached storage (retry after uploading). */
+  EVIDENCE_NOT_UPLOADED = 'PATROL_EVIDENCE_NOT_UPLOADED',
+  /** P1-C: another completion of the same photo is still being verified (retry shortly). */
+  EVIDENCE_COMPLETION_IN_PROGRESS = 'PATROL_EVIDENCE_COMPLETION_IN_PROGRESS',
+  /** P1-C: the photo is not verified, or has been deleted / quarantined, so it cannot be viewed or deleted. */
+  EVIDENCE_NOT_AVAILABLE = 'PATROL_EVIDENCE_NOT_AVAILABLE',
+  /** P1-C: an active hold protects this photo from deletion. */
+  EVIDENCE_HELD = 'PATROL_EVIDENCE_HELD',
+  /** P1-C: the photo is not in a state that allows this (e.g. restoring one that was purged). */
+  EVIDENCE_STATE_CONFLICT = 'PATROL_EVIDENCE_STATE_CONFLICT',
+  /** P1-C: the run already has the maximum number of photos. */
+  EVIDENCE_LIMIT_REACHED = 'PATROL_EVIDENCE_LIMIT_REACHED',
+  /** P1-C: the hold was already released. */
+  HOLD_RELEASED = 'PATROL_HOLD_ALREADY_RELEASED',
+  /** P1-C: an export scope over the item / byte bounds, or too many exports in flight. */
+  EXPORT_TOO_LARGE = 'PATROL_EXPORT_TOO_LARGE',
+  EXPORT_LIMIT_REACHED = 'PATROL_EXPORT_LIMIT_REACHED',
+  /** P1-C: the export is not ready (or has expired). */
+  EXPORT_NOT_READY = 'PATROL_EXPORT_NOT_READY',
 }
 
 export function patrolError(status: HttpStatus, code: PatrolErrorCode, message: string, details?: Record<string, unknown>) {

@@ -41,10 +41,13 @@
  * Alerts and the existing lifecycle
  *   PS-A01  acknowledge / resolve through the EXISTING alert endpoints mirror onto the exception (audited); patrol
  *           reasons; the late-sync reason is not offered without late evidence; a resolved exception is never re-raised
- *   PS-A02  resolving the exception (Patrols API) closes its alert; permissions (patrols.manage) and tenant isolation
+ *   PS-A02  resolving the exception (Patrols API) closes its alert; permissions (alerts.manage or patrols.manage) and tenant isolation
  *   PS-A03  Live Operations: patrol alerts are in the company alert list with link fields; other alerts unchanged; Guards
  *           never see them
  *   PS-A04  Welfare is untouched: the patrol sweep writes no Welfare row and the Welfare sweep no patrol row
+ *   PS-A05  owner decision (P1-C): Control Room acknowledges / resolves patrol alerts with alerts.manage (alert and Patrols
+ *           endpoints, audited, the exception follows the alert); neither-permission roles, Viewers, Guards and another
+ *           company cannot; Control Room still cannot change patrol configuration (no patrols.manage)
  * The Guard API and offline sync after Book Off
  *   PS-G01  a start is assigned to its one window and scope
  *   PS-O01  a run started on shift syncs its scans and completion after Book Off (accepted, syncedLate)
@@ -127,7 +130,7 @@ async function main() {
   const migrate = new DataSource({ ...base, entities: [], migrations: allFiles.map((f) => path.join(migrationsDir, f)), dropSchema: true } as never);
   await migrate.initialize();
   const migrated = await migrate.runMigrations({ transaction: 'each' });
-  assert.equal(migrated[migrated.length - 1]?.name, 'AddPatrolScheduling1720900000015', 'the head is Migration 69');
+  assert.equal(migrated[migrated.length - 1]?.name, 'AddPatrolEvidenceStorage1720900000016', 'the head is Migration 70');
   await migrate.destroy();
 
   const { AppModule } = await import('../src/app.module');
@@ -750,7 +753,7 @@ async function main() {
     let ownerA = '';
     await test('PS-A01-ACKNOWLEDGE-AND-RESOLVE-THROUGH-THE-EXISTING-ALERT-ENDPOINTS', async () => {
       await focus(s01.co.id);
-      for (const role of ['operations', 'viewer', 'control_room']) {
+      for (const role of ['operations', 'viewer', 'control_room', 'hr_compliance']) {
         const email = `ps.s01.${role}@example.invalid`;
         const id = await mkUser(email, 'company_admin');
         await q(`INSERT INTO company_memberships ("userId","companyId","membershipRole",status) VALUES ($1,$2,$3,'active')`, [id, s01.co.id, role]);
@@ -764,7 +767,9 @@ async function main() {
       assert.ok(!reasons.body.reasons.some((r: any) => r.value === 'patrol_completed_late_sync'), 'no late sync without late evidence');
       assert.ok(reasons.body.reasons.some((r: any) => r.value === 'guard_contacted' && r.noteRequired === true));
       expect(await api('PATCH', `/alerts/${alert.id}/ack`, members.viewer), 403, undefined, 'viewer');
-      expect(await api('PATCH', `/alerts/${alert.id}/ack`, members.control_room), 403, undefined, 'control room (no patrols.manage)');
+      // Owner decision (P1-C): Control Room acts on patrol alerts through alerts.manage (PS-A05). A role with neither
+      // alerts.manage nor patrols.manage still cannot.
+      expect(await api('PATCH', `/alerts/${alert.id}/ack`, members.hr_compliance), 403, undefined, 'HR / compliance (neither alerts.manage nor patrols.manage)');
       expect(await api('PATCH', `/alerts/${alert.id}/ack`, ownerA), 200);
       const acked = await one(`SELECT * FROM patrol_exceptions WHERE id = $1`, [exception.id]);
       assert.deepEqual([acked.status, Number(acked.acknowledgedByUserId)], ['acknowledged', s01.co.ownerId]);
@@ -865,6 +870,94 @@ async function main() {
       assert.ok((await welfare()) > welfareBefore, 'the Welfare sweep judged its own windows');
       assert.deepEqual(await patrolRows(), patrolAfterSweep, 'and wrote no patrol row');
       assert.equal(await count(`SELECT count(*) FROM safety_alerts WHERE "patrolExceptionId" IS NOT NULL AND type::text = 'missed_checkcall'`), 0, 'no shared alert');
+    });
+
+    await test('PS-A05-CONTROL-ROOM-ACTS-ON-PATROL-ALERTS-WITH-ALERTS-MANAGE-BUT-NEVER-CONFIGURES', async () => {
+      // Owner decision (Patrols P1-C): Control Room operators acknowledge, investigate, escalate and resolve patrol alerts
+      // through alerts.manage; they are NOT given patrols.manage.
+      const { CompanyPermission, CompanyMembershipRole, hasPermission, mayActOnPatrolAlerts } = await import('../src/company-membership/company-membership-types');
+      assert.equal(hasPermission(CompanyMembershipRole.CONTROL_ROOM, CompanyPermission.ALERTS_MANAGE), true);
+      assert.equal(hasPermission(CompanyMembershipRole.CONTROL_ROOM, CompanyPermission.PATROLS_MANAGE), false, 'never patrols.manage');
+      const expected: Record<string, boolean> = { owner: true, admin: true, operations: true, control_room: true, hr_compliance: false, finance: false, viewer: false };
+      for (const role of Object.values(CompanyMembershipRole)) {
+        assert.equal(hasPermission(role, CompanyPermission.ALERTS_MANAGE), expected[role], `${role}: alerts.manage`);
+        assert.equal(mayActOnPatrolAlerts(role), expected[role], `${role}: may act on patrol alerts`);
+      }
+
+      const s = await scenario('a05');
+      const [g] = s.guards;
+      await mkSchedule(s.co.id, s.site, { name: 'Perimeter', from: '08:00', to: '12:00', freq: 60 });
+      const shift = await mkShift(s.co.id, s.site, g.id, day('06:00:00'), day('14:00:00'));
+      await bookOn(shift, g.id, day('05:55:00'));
+      await sweep(day('12:20:00'));
+      const alerts = await alertsOf(s.co.id);
+      const exceptions = await exceptionsOf(s.co.id);
+      assert.ok(alerts.length >= 3, `three or more missed windows raised alerts (${alerts.length})`);
+      const tok: Record<string, string> = {};
+      for (const role of ['control_room', 'hr_compliance', 'viewer']) {
+        const email = `ps.a05.${role}@example.invalid`;
+        const id = await mkUser(email, 'company_admin');
+        await q(`INSERT INTO company_memberships ("userId","companyId","membershipRole",status) VALUES ($1,$2,$3,'active')`, [id, s.co.id, role]);
+        tok[role] = await login(email);
+      }
+      const cr = tok.control_room;
+      const crId = Number(await scalar(`SELECT id FROM users WHERE email = 'ps.a05.control_room@example.invalid'`));
+      const exceptionOf = (alert: any) => exceptions.find((e: any) => Number(e.safetyAlertId) === Number(alert.id));
+
+      // Through the existing alert endpoints: acknowledge, see the resolution options, resolve.
+      const [a1, a2, a3] = alerts;
+      expect(await api('GET', `/alerts/${a1.id}/resolution-reasons`, cr), 200, undefined, 'control room reads the resolution options');
+      expect(await api('PATCH', `/alerts/${a1.id}/ack`, cr), 200, undefined, 'control room acknowledges');
+      const acked = await one(`SELECT * FROM patrol_exceptions WHERE id = $1`, [exceptionOf(a1).id]);
+      assert.deepEqual([acked.status, Number(acked.acknowledgedByUserId)], ['acknowledged', crId], 'the exception follows the alert');
+      assert.equal(await count(`SELECT count(*) FROM audit_logs WHERE action = 'patrol.exception_acknowledged' AND "entityId" = $1 AND "userId" = $2`, [acked.id, crId]), 1, 'audited as the operator');
+      const closed = await api('PATCH', `/alerts/${a1.id}/close`, cr, { resolutionReason: 'guard_contacted', resolutionNote: 'Guard was dealing with a delivery; patrol walked at 08:40.' });
+      expect(closed, 200, undefined, 'control room resolves');
+      const resolved = await one(`SELECT * FROM patrol_exceptions WHERE id = $1`, [acked.id]);
+      assert.deepEqual([resolved.status, resolved.resolution, Number(resolved.resolvedByUserId)], ['resolved', 'guard_contacted', crId]);
+      assert.equal(await count(`SELECT count(*) FROM audit_logs WHERE action = 'patrol.exception_resolved' AND "entityId" = $1 AND "userId" = $2`, [acked.id, crId]), 1);
+
+      // Through the Patrols API (the same action): alerts.manage is accepted there too.
+      const e2 = exceptionOf(a2);
+      expect(await api('POST', `/patrols/exceptions/${e2.id}/acknowledge`, cr), 200, undefined, 'control room acknowledges via /patrols');
+      const r2 = await api('POST', `/patrols/exceptions/${e2.id}/resolve`, cr, { resolutionReason: 'patrol_not_required', resolutionNote: 'Site closed by the client.' });
+      expect(r2, 200);
+      assert.equal(r2.body.status, 'resolved');
+      assert.equal((await one(`SELECT status FROM safety_alerts WHERE id = $1`, [a2.id])).status, 'closed', 'its alert closed through the alert lifecycle');
+
+      // A role with neither alerts.manage nor patrols.manage, a Viewer and a Guard cannot act.
+      const e3 = exceptionOf(a3);
+      expect(await api('PATCH', `/alerts/${a3.id}/ack`, tok.hr_compliance), 403, undefined, 'HR / compliance');
+      expect(await api('PATCH', `/alerts/${a3.id}/close`, tok.hr_compliance, { resolutionReason: 'guard_contacted', resolutionNote: 'x' }), 403);
+      expect(await api('POST', `/patrols/exceptions/${e3.id}/acknowledge`, tok.hr_compliance), 403, 'PATROL_FORBIDDEN');
+      expect(await api('PATCH', `/alerts/${a3.id}/ack`, tok.viewer), 403, undefined, 'viewer');
+      expect(await api('POST', `/patrols/exceptions/${e3.id}/resolve`, tok.viewer, { resolutionReason: 'guard_contacted', resolutionNote: 'x' }), 403, 'PATROL_FORBIDDEN');
+      const guardToken = await login(g.email);
+      expect(await api('PATCH', `/alerts/${a3.id}/ack`, guardToken), 403, undefined, 'the Guard');
+      expect(await api('POST', `/patrols/exceptions/${e3.id}/acknowledge`, guardToken), 403, undefined, 'the Guard (company route)');
+      assert.equal((await one(`SELECT status FROM patrol_exceptions WHERE id = $1`, [e3.id])).status, 'open', 'nothing changed');
+
+      // Another company's Control Room cannot touch these.
+      const other = await mkCompany('a05other');
+      const otherCrEmail = 'ps.a05other.control_room@example.invalid';
+      const otherCr = await mkUser(otherCrEmail, 'company_admin');
+      await q(`INSERT INTO company_memberships ("userId","companyId","membershipRole",status) VALUES ($1,$2,'control_room','active')`, [otherCr, other.id]);
+      await q(`UPDATE companies SET "patrolsEnabled" = true WHERE id IN ($1, $2)`, [other.id, s.co.id]);
+      const otherTok = await login(otherCrEmail);
+      expect(await api('PATCH', `/alerts/${a3.id}/ack`, otherTok), 400, undefined, 'another company\'s alert');
+      expect(await api('POST', `/patrols/exceptions/${e3.id}/acknowledge`, otherTok), 404, 'PATROL_NOT_FOUND');
+      expect(await api('POST', `/patrols/exceptions/${e3.id}/resolve`, otherTok, { resolutionReason: 'guard_contacted', resolutionNote: 'x' }), 404, 'PATROL_NOT_FOUND');
+      assert.equal((await one(`SELECT status FROM patrol_exceptions WHERE id = $1`, [e3.id])).status, 'open');
+
+      // …and Control Room still cannot change patrol configuration.
+      await focus(s.co.id);
+      expect(await api('PUT', '/patrols/policies/default', cr, { startGraceMinutes: 10 }), 403, 'PATROL_FORBIDDEN', 'policy');
+      expect(await api('PUT', `/patrols/policies/sites/${s.site}`, cr, { startGraceMinutes: 10 }), 403, 'PATROL_FORBIDDEN', 'site policy');
+      expect(await api('POST', '/patrols/schedules', cr, { siteId: s.site, name: 'x', activeFrom: '08:00', activeTo: '12:00', frequencyMinutes: 60 }), 403, 'PATROL_FORBIDDEN', 'schedule');
+      expect(await api('POST', '/patrols/checkpoints', cr, { siteId: s.site, label: 'x' }), 403, 'PATROL_FORBIDDEN', 'checkpoint');
+      const cp = await mkCheckpoint(s.co.id, s.site, 'A05 Gate');
+      expect(await api('PATCH', `/patrols/checkpoints/${cp.id}`, cr, { description: 'probe' }), 403, 'PATROL_FORBIDDEN', 'checkpoint edit');
+      expect(await api('POST', '/patrols/routes', cr, { siteId: s.site, name: 'x', checkpoints: [{ checkpointId: Number(cp.id) }] }), 403, 'PATROL_FORBIDDEN', 'route');
     });
 
     // ═══════════════════ Guard API and offline sync after Book Off ═══════════════════

@@ -32,6 +32,15 @@ export const WELFARE_ACTION_LOCK_NAMESPACE = 534_401_403;
  */
 export const PATROL_SWEEP_LOCK_NAMESPACE = 534_401_404;
 
+/**
+ * Patrols P1-C: one lock per COMPANY id, taken with a session-level TRY lock (on its own connection) by the patrol
+ * evidence maintenance pass for the length of that company's pass (orphaned-upload verification, retention claims,
+ * quarantine moves, purges). Another instance's pass skips the company rather than waiting; the row-level claim and
+ * completion tokens in PatrolEvidenceLifecycleService remain the final guard, so an HTTP deletion / restore racing a pass is
+ * safe without it. Nothing else takes it, and the pass takes no other advisory lock while holding it.
+ */
+export const PATROL_EVIDENCE_LOCK_NAMESPACE = 534_401_405;
+
 export async function lockGuardsForAssignment(
   manager: { query: (sql: string, parameters?: unknown[]) => Promise<unknown> },
   guardIds: Array<number | null | undefined>,

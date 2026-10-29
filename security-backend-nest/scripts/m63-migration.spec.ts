@@ -92,9 +92,9 @@ async function main() {
       assert.equal(applied.length, 63, `got ${applied.length}`);
       assert.equal(applied[61].name, MIGRATION_62);
       assert.equal(applied[62].name, MIGRATION_63);
-      assert.equal(allFiles.length, 69);
+      assert.equal(allFiles.length, 70);
       assert.equal(allFiles[62], '1720900000009-AddComplianceLapseAlerts.ts');
-      assert.deepEqual(allFiles.slice(63), ['1720900000010-AddShiftAmendments.ts', '1720900000011-AddWelfarePushReminders.ts', '1720900000012-AddGuardNotificationDispatches.ts', '1720900000013-AddManualAttendance.ts', '1720900000014-AddPatrolManagement.ts', '1720900000015-AddPatrolScheduling.ts'], 'after 63 come only 64 (AddShiftAmendments), 65 (AddWelfarePushReminders), 66 (AddGuardNotificationDispatches), 67 (AddManualAttendance), 68 (AddPatrolManagement) and 69 (AddPatrolScheduling)');
+      assert.deepEqual(allFiles.slice(63), ['1720900000010-AddShiftAmendments.ts', '1720900000011-AddWelfarePushReminders.ts', '1720900000012-AddGuardNotificationDispatches.ts', '1720900000013-AddManualAttendance.ts', '1720900000014-AddPatrolManagement.ts', '1720900000015-AddPatrolScheduling.ts', '1720900000016-AddPatrolEvidenceStorage.ts'], 'after 63 come only 64 (AddShiftAmendments), 65 (AddWelfarePushReminders), 66 (AddGuardNotificationDispatches), 67 (AddManualAttendance), 68 (AddPatrolManagement), 69 (AddPatrolScheduling) and 70 (AddPatrolEvidenceStorage)');
     });
     const head = await schema();
     const headLabels = await enumLabels();

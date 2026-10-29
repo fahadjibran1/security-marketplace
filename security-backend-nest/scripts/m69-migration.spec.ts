@@ -146,8 +146,9 @@ async function main() {
 
     await test('M69-01-A-68-DATABASE-MIGRATES-TO-69-AND-69-IS-LAST', () => {
       assert.deepEqual(applied.map((m) => m.name), [MIGRATION_69], 'only 69 is pending on a 68 database');
-      assert.equal(allFiles.length, 69);
+      assert.equal(allFiles.length, 70);
       assert.equal(allFiles[68], '1720900000015-AddPatrolScheduling.ts');
+      assert.equal(allFiles[69], '1720900000016-AddPatrolEvidenceStorage.ts', 'Migration 70 follows 69 and is certified by m70-migration.spec.ts');
     });
     const head = await schema();
 
@@ -282,10 +283,13 @@ async function main() {
 
     await test('M69-09-NO-SEMANTIC-DRIFT-AND-NO-COLUMN-DRIFT-ON-PATROL-OR-ALERT-COLUMNS', async () => {
       const drift = (await ds.driver.createSchemaBuilder().log()).upQueries.map((x) => x.query);
-      const semantic = drift.filter((x) =>
+      // This database stops at 69, so Migration 70's eleven patrol_evidence columns, its two tables and their indexes are
+      // absent by design; they are set aside statement by statement (m70-migration.spec.ts M70-09 certifies them).
+      const m70 = /^CREATE TABLE "patrol_(evidence_exports|storage_usage)" |^ALTER TABLE "patrol_evidence" ADD "(declaredSizeBytes|detectedMimeType|uploadUrlIssuedAt|completionToken|completionStartedAt|syncFlags|needsReview|purgeAfter|primaryDeletedAt|objectDeletedAt|deletionRequestedByUserId)" |^CREATE (UNIQUE )?INDEX "(IDX_patrol_evidence_(lifecycle|pending_upload|exports_company|exports_open)|UQ_patrol_evidence_exports_storage_key|UQ_patrol_storage_usage_(site|company))" |^ALTER TABLE "patrol_(evidence_exports|storage_usage)" /;
+      const semantic = drift.filter((x) => !m70.test(x) &&
         /CREATE TABLE|DROP TABLE|CREATE TYPE|DROP TYPE|ALTER TYPE|ALTER TABLE.*ALTER COLUMN|ALTER TABLE.*DROP COLUMN|ALTER TABLE.*ADD "/i.test(x));
       assert.deepEqual(semantic, [], `semantic drift (the release gate would fail):\n${semantic.join('\n')}`);
-      const ours = drift.filter((x) => /"patrol_|patrolsEnabled|patrol(ExceptionId|RunId|WindowKey|LateSyncAt|Annotation)|uq_safety_alerts_patrol_exception/.test(x));
+      const ours = drift.filter((x) => /"patrol_|patrolsEnabled|patrol(ExceptionId|RunId|WindowKey|LateSyncAt|Annotation)|uq_safety_alerts_patrol_exception/.test(x) && !m70.test(x));
       // Foreign keys (most composite) and CHECKs live in the migration only, as for M68's patrol tables; every column, unique
       // key and index agrees.
       const unexpected = ours.filter((x) => !/^ALTER TABLE "(patrol_[a-z_]+|safety_alerts)" DROP CONSTRAINT "(FK|CHK)_(patrol_|safety_alerts_patrol_)/.test(x));

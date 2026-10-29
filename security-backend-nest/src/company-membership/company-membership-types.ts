@@ -82,6 +82,14 @@ export enum CompanyPermission {
   PATROLS_MANAGE = 'patrols.manage',
   PATROLS_EVIDENCE = 'patrols.evidence',
   PATROLS_HOLDS = 'patrols.holds',
+  /**
+   * Act on patrol alerts (owner decision, 29 Oct 2026, Patrols P1-C): acknowledge, investigate, escalate and resolve the
+   * company's patrol alerts (and with them their patrol exceptions) through the existing alert lifecycle. Owner, Admin,
+   * Operations and Control Room. It is deliberately separate from patrols.manage: a Control Room operator handles patrol
+   * alerts but can never change patrol configuration (site settings, schedules, checkpoints, routes, labels). It changes
+   * nothing for any other alert type (panic / SOS, welfare, Missing Book Off, compliance lapse, site requests, incidents).
+   */
+  ALERTS_MANAGE = 'alerts.manage',
 }
 
 /** The four Patrol Management permissions (Migration 68). */
@@ -144,6 +152,7 @@ const ADMIN_PERMISSIONS: Set<CompanyPermission> = new Set([
   CompanyPermission.PATROLS_MANAGE,
   CompanyPermission.PATROLS_EVIDENCE,
   CompanyPermission.PATROLS_HOLDS,
+  CompanyPermission.ALERTS_MANAGE,
 ]);
 
 const OPERATIONS_PERMISSIONS: Set<CompanyPermission> = new Set([
@@ -178,6 +187,7 @@ const OPERATIONS_PERMISSIONS: Set<CompanyPermission> = new Set([
   CompanyPermission.PATROLS_MANAGE,
   CompanyPermission.PATROLS_EVIDENCE,
   // patrols.holds excluded — evidence holds are an Owner / Admin decision
+  CompanyPermission.ALERTS_MANAGE,
 ]);
 
 const CONTROL_ROOM_PERMISSIONS: Set<CompanyPermission> = new Set([
@@ -197,6 +207,8 @@ const CONTROL_ROOM_PERMISSIONS: Set<CompanyPermission> = new Set([
   // Patrols: watch and review (including photo evidence), never configure (no patrols.manage) or hold.
   CompanyPermission.PATROLS_VIEW,
   CompanyPermission.PATROLS_EVIDENCE,
+  // Patrol alerts: acknowledge, investigate, escalate and resolve them (owner decision, P1-C). Still no patrols.manage.
+  CompanyPermission.ALERTS_MANAGE,
 ]);
 
 const HR_COMPLIANCE_PERMISSIONS: Set<CompanyPermission> = new Set([
@@ -257,4 +269,14 @@ export const ROLE_PERMISSIONS: Record<CompanyMembershipRole, Set<CompanyPermissi
 
 export function hasPermission(role: CompanyMembershipRole, permission: CompanyPermission): boolean {
   return ROLE_PERMISSIONS[role]?.has(permission) ?? false;
+}
+
+/**
+ * Who may acknowledge / resolve a patrol alert (and its patrol exception): alerts.manage (owner decision, P1-C), or
+ * patrols.manage (P1-B's rule, kept so no role that could act before loses the right). Never grants patrols.manage.
+ */
+export const PATROL_ALERT_ACT_PERMISSIONS: readonly CompanyPermission[] = [CompanyPermission.ALERTS_MANAGE, CompanyPermission.PATROLS_MANAGE];
+
+export function mayActOnPatrolAlerts(role: CompanyMembershipRole): boolean {
+  return PATROL_ALERT_ACT_PERMISSIONS.some((permission) => hasPermission(role, permission));
 }
