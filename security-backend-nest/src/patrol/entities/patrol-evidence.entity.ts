@@ -5,7 +5,9 @@ import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn, Unique
  * integrity checks are P1-C. The row outlives the image: after expiry it becomes a tombstone that keeps the hashes,
  * times and actor ids. retentionStatus carries the P1-C deletion state machine
  * (active → claimed → quarantined → purged → tombstone, with restore), with claimToken / claimedAt / quarantinedAt /
- * purgedAt / restoredAt / deletionAttempts / lastDeletionError, so P1-C needs no further migration for it.
+ * purgedAt / restoredAt / deletionAttempts / lastDeletionError. Migration 70 (P1-C) adds the upload / verification
+ * columns, the end of the quarantine (purgeAfter) and the object-removal confirmations (primaryDeletedAt,
+ * objectDeletedAt); the state machine itself is described in evidence/patrol-evidence-lifecycle.service.ts.
  */
 @Entity('patrol_evidence')
 @Unique('UQ_patrol_evidence_id_company', ['id', 'companyId'])
@@ -13,6 +15,8 @@ import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn, Unique
 @Index('UQ_patrol_evidence_storage_key', ['storageKey'], { unique: true, where: '"storageKey" IS NOT NULL' })
 @Index('IDX_patrol_evidence_expiry', ['expiresAt'], { where: `"retentionStatus" = 'active' AND "expiresAt" IS NOT NULL` })
 @Index('IDX_patrol_evidence_run', ['runId'])
+@Index('IDX_patrol_evidence_lifecycle', ['companyId', 'retentionStatus'], { where: `"retentionStatus" <> 'tombstone'` })
+@Index('IDX_patrol_evidence_pending_upload', ['uploadUrlIssuedAt'], { where: `"uploadStatus" IN ('pending', 'uploaded')` })
 export class PatrolEvidence {
   @PrimaryGeneratedColumn({ primaryKeyConstraintName: 'PK_patrol_evidence' })
   id!: number;
@@ -127,6 +131,50 @@ export class PatrolEvidence {
 
   @Column({ type: 'varchar', length: 64 })
   clientEvidenceId!: string;
+
+  // ── Migration 70 (P1-C): upload, verification and the deletion state machine ─────────────────────────
+
+  /** The size the Guard declared for the upload (≤ the configured cap); sizeBytes is what the server found. */
+  @Column({ type: 'bigint', nullable: true })
+  declaredSizeBytes!: string | null;
+
+  /** What the server found the bytes to be (their signature), whatever was declared. */
+  @Column({ type: 'varchar', length: 64, nullable: true })
+  detectedMimeType!: string | null;
+
+  /** When the last upload URL was handed out (always inside the post-shift sync acceptance window). */
+  @Column({ type: 'timestamptz', nullable: true })
+  uploadUrlIssuedAt!: Date | null;
+
+  /** The completion lease: one verifier at a time; a concurrent completion waits for its result. */
+  @Column({ type: 'uuid', nullable: true })
+  completionToken!: string | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  completionStartedAt!: Date | null;
+
+  /** synced_after_book_off, evidence_after_alert (and, with the designed recovery grant, recovered_via_grant). */
+  @Column({ type: 'jsonb', default: () => `'[]'` })
+  syncFlags!: string[];
+
+  @Column({ type: 'boolean', default: false })
+  needsReview!: boolean;
+
+  /** End of the quarantine: until then the photo can be restored; after it (and with no hold) it is purged. */
+  @Column({ type: 'timestamptz', nullable: true })
+  purgeAfter!: Date | null;
+
+  /** The object under storageKey was confirmed removed (only after its quarantined copy was verified). */
+  @Column({ type: 'timestamptz', nullable: true })
+  primaryDeletedAt!: Date | null;
+
+  /** The quarantined copy was confirmed removed: the row is a tombstone (hashes, sizes and times are kept). */
+  @Column({ type: 'timestamptz', nullable: true })
+  objectDeletedAt!: Date | null;
+
+  /** The Owner / Admin who asked for a manual deletion (it goes through the same state machine as retention). */
+  @Column({ type: 'int', nullable: true })
+  deletionRequestedByUserId!: number | null;
 
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt!: Date;
