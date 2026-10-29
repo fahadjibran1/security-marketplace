@@ -428,6 +428,14 @@ jobs:
       - name: Verify timesheet hours and minutes, required review reasons, history and payable-hours approval
         run: npm run test:timesheet-review-ux
 
+      # Patrols P1-D: the company dashboard's Patrol Management page. Placement after Live Operations; the
+      # Owner / Admin / Operations / Control Room / Viewer / Guard matrix on the real page; no entry, card or request
+      # with the switch off; a company change drops all patrol state; QR labels only from the server-signed payload;
+      # no photo link without patrols.evidence and none logged or kept; only actionable patrol alerts in Live
+      # Operations, each linked to its record, with the backend's patrol resolution reasons; no fabricated figure.
+      - name: Verify Patrol Management (company dashboard)
+        run: npm run test:patrol-management-ui
+
       - name: Verify Expo dependency compatibility
         run: npx expo install --check
 

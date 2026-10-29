@@ -1889,8 +1889,21 @@ export interface SafetyAlert {
     | 'missed_checkcall'
     | 'missing_book_off'
     | 'other'
+    /** Patrols (Migration 69): raised by S4 only, for an ACTIONABLE patrol exception. */
+    | 'patrol_missed'
+    | 'patrol_abandoned'
+    | 'patrol_incomplete'
+    | 'checkpoint_missed'
+    | 'patrol_unverified'
     /** Migration 63: a company SIA / Right to Work check lapsed while the Guard was on shift. Raised by S4 only. */
     | 'compliance_lapse';
+  /** Patrol alerts only: the records this alert is about (Patrol Management links to them). */
+  patrolExceptionId?: number | null;
+  patrolRunId?: number | null;
+  patrolWindowKey?: string | null;
+  /** Set once patrol evidence reached the server after the alert: "completed — late sync" may then be chosen. */
+  patrolLateSyncAt?: string | null;
+  patrolAnnotation?: string | null;
   priority: 'low' | 'medium' | 'high' | 'critical';
   message: string;
   status: 'open' | 'acknowledged' | 'closed';

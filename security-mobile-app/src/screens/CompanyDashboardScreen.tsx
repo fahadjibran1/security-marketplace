@@ -30,7 +30,12 @@ import {
 } from '../components/company/manualAttendance';
 import { completedWithoutBookOffLabel, isCompletedWithoutBookOff } from '../components/company/shiftReconciliation';
 import { formatElapsedSinceEnd } from '../components/company/operationsTimeline';
-import { alertTypeLabel, missingBookOffSummary, resolutionFamilyForAlert } from '../components/company/alertResolution';
+import { alertTypeLabel, missingBookOffSummary, resolutionFamilyForAlertRecord } from '../components/company/alertResolution';
+import { CompanyPatrolsWorkspace } from '../components/patrols/CompanyPatrolsWorkspace';
+import { PatrolsSummaryCard } from '../components/patrols/PatrolsSummaryCard';
+import { resolvePatrolPermissions, withPatrolNavEntry } from '../components/patrols/patrolAccess';
+import type { PatrolNavTarget } from '../components/patrols/patrolContext';
+import { actionablePatrolAlerts, patrolAlertTitle, patrolRecordTarget } from '../components/patrols/patrolPresentation';
 import { CompanyIncidentReportDrawer } from '../components/company/CompanyIncidentReportDrawer';
 import { CompanyLogBookWorkspace, type LogBookDayPeriod } from '../components/company/CompanyLogBookWorkspace';
 import { CompanyLogBookEntryDrawer, type LogBookEntryDetail } from '../components/company/CompanyLogBookEntryDrawer';
@@ -268,6 +273,8 @@ type CompanySection =
   | 'rota-planner'
   | 'shift-offers'
   | 'live-operations'
+  /** Patrol Management (Patrols P1-D): only with patrols.view, directly after Live Operations. */
+  | 'patrols'
   | 'analytics'
   | 'coverage'
   | 'guards'
@@ -355,12 +362,18 @@ type UrgentOperationalItem = {
     | 'missing_book_off'
     /** A mandatory company compliance check lapsed during a live shift. Urgent, but never an SOS. */
     | 'compliance_lapse'
+    /** An actionable patrol exception (P1-B patrol alert). Links to its patrol record. */
+    | 'patrol'
     | 'upcoming_risk'
     | 'missed_shift'
     | 'uncovered_shift';
   issueType: string;
   message: string;
   occurredAt: string;
+  /** Patrol alerts only: the run / exception the alert is about. */
+  patrolTarget?: ReturnType<typeof patrolRecordTarget>;
+  /** Patrol alerts only: alerts.manage (acknowledge / resolve). */
+  canAct?: boolean;
 };
 
 type ManagementActionItem = {
@@ -380,6 +393,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'rota-planner', label: 'Rota Planner', caption: 'Plan weekly cover and assignments.' },
   { id: 'shift-offers', label: 'Shift Offers', caption: 'Track pending responses and re-cover needs.' },
   { id: 'live-operations', label: 'Live Operations', caption: 'Monitor book-ons, logs, and incidents.' },
+  { id: 'patrols', label: 'Patrol Management', caption: 'Patrol schedules, checkpoints, live patrols, history and photo evidence. Actionable patrol exceptions also appear in Live Operations.' },
   { id: 'analytics', label: 'Analytics', caption: 'Incident, welfare, and site-risk reporting.' },
   { id: 'coverage', label: 'Coverage', caption: 'Coverage gaps and eligible guards.' },
   { id: 'guards', label: 'Guards', caption: 'Available platform guards and linked team.' },
@@ -1358,9 +1372,52 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
   React.useEffect(() => {
     setGuardTarget((current) => reconcileGuardTarget(current, activeSection));
   }, [activeSection]);
+  /**
+   * Patrol Management (Patrols P1-D): from the session's patrols.* list, which the server fills only while the company's
+   * patrolsEnabled switch is on — no legacy-role fallback, so a session without it shows and requests nothing patrol.
+   */
+  const patrolPermissions = React.useMemo(
+    () => resolvePatrolPermissions(user?.companyPermissions, user?.role),
+    [user?.companyPermissions, user?.role],
+  );
+  /** Every patrol read is keyed on the signed-in company: another company never sees this one's patrol state. */
+  const patrolCompanyKey = `${user?.companyId ?? 'none'}:${user?.id ?? 'none'}`;
+  const [patrolTarget, setPatrolTarget] = React.useState<PatrolNavTarget | null>(null);
+  const patrolTargetSeq = React.useRef(0);
+  const openPatrolRecord = React.useCallback((target: ReturnType<typeof patrolRecordTarget> | 'overview') => {
+    if (!patrolPermissions.canView) return;
+    patrolTargetSeq.current += 1;
+    const requestId = patrolTargetSeq.current;
+    if (target === 'overview' || !target) setPatrolTarget({ requestId, kind: 'tab', tab: 'overview' });
+    else if (target.kind === 'run') setPatrolTarget({ requestId, kind: 'run', runId: target.runId });
+    else setPatrolTarget({ requestId, kind: 'exception', exceptionId: target.exceptionId });
+    setActiveSection('patrols');
+  }, [patrolPermissions.canView]);
+  const handlePatrolTargetConsumed = React.useCallback((requestId: number) => {
+    setPatrolTarget((current) => (current && current.requestId === requestId ? null : current));
+  }, []);
+  // The switch turned off, or the permission went (a session refresh, a different company): leave the page at once.
+  React.useEffect(() => {
+    if (!patrolPermissions.canView) {
+      setPatrolTarget(null);
+      setActiveSection((current) => (current === 'patrols' ? 'dashboard' : current));
+    }
+  }, [patrolPermissions.canView]);
+  React.useEffect(() => { setPatrolTarget(null); }, [patrolCompanyKey]);
   const navGroups = React.useMemo(
-    () => COMPANY_NAV_GROUPS.map((group) => ({ ...group, itemIds: group.itemIds.filter((id) => id !== 'compliance' || canViewCompliance) })),
-    [canViewCompliance],
+    () => COMPANY_NAV_GROUPS
+      .map((group) => ({ ...group, itemIds: group.itemIds.filter((id) => id !== 'compliance' || canViewCompliance) }))
+      // Patrol Management: in the primary group, directly after Live Operations, only with patrols.view.
+      .map((group) => ({
+        ...group,
+        itemIds: withPatrolNavEntry<CompanySection>(
+          group.itemIds,
+          'patrols',
+          'live-operations',
+          group.id === 'primary' ? patrolPermissions : { ...patrolPermissions, canView: false },
+        ),
+      })),
+    [canViewCompliance, patrolPermissions],
   );
   const [loading, setLoading] = React.useState(true);
   const [refreshing, setRefreshing] = React.useState(false);
@@ -2488,6 +2545,26 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
         });
       });
 
+    // Patrols (P1-D): ONLY actionable patrol exceptions reach Live Operations — the patrol alerts the server raised
+    // (one per actionable exception). Routine patrols, scans and photos never become an alert and stay in Patrol
+    // Management. Every patrol item links to its patrol record; acting on it needs alerts.manage.
+    actionablePatrolAlerts(outstandingAlerts).forEach((alert) => {
+      items.push({
+        id: `patrol-${alert.id}`,
+        alertId: alert.id,
+        shiftId: alert.shift?.id ?? null,
+        status: alert.status,
+        siteName: alert.shift?.site?.name || alert.shift?.siteName || 'Patrol site',
+        guardName: alert.guard?.fullName || 'No Guard recorded',
+        category: 'patrol',
+        issueType: patrolAlertTitle(alert.type),
+        message: alert.patrolAnnotation || alert.message || 'A patrol needs attention.',
+        occurredAt: alert.createdAt,
+        patrolTarget: patrolRecordTarget(alert),
+        canAct: patrolPermissions.canActOnAlerts,
+      });
+    });
+
     const deduped = items.filter(
       (item, index, current) => current.findIndex((candidate) => candidate.id === item.id) === index,
     );
@@ -2500,6 +2577,7 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
     openIncidents,
     operationalNow,
     outstandingAlerts,
+    patrolPermissions.canActOnAlerts,
     rejectedShiftOffers,
     shifts,
     uncoveredShifts,
@@ -2808,7 +2886,8 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
     setResolveTarget({
       kind: 'alert',
       id: item.alertId,
-      family: resolutionFamilyForAlert(alert?.type),
+      // A patrol alert offers "completed — late sync" only once late evidence reached the server (patrolLateSyncAt).
+      family: resolutionFamilyForAlertRecord(alert),
       title: alertTypeLabel(alert?.type) || item.issueType,
       siteName: item.siteName,
       guardName: item.guardName,
@@ -3919,6 +3998,16 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
       return;
     }
 
+    // A patrol alert opens its patrol record (the run, or the missed window's exception) in Patrol Management.
+    if (item.category === 'patrol') {
+      if (!patrolPermissions.canView) {
+        setLiveOperationsFeedback({ tone: 'error', message: 'Patrol Management is not available to your role.' });
+        return;
+      }
+      openPatrolRecord(item.patrolTarget ?? 'overview');
+      return;
+    }
+
     /**
      * An incident, before the linked-shift guard below.
      *
@@ -4750,6 +4839,7 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
     const updatedAt = lastSuccessfulLoad?.section === 'dashboard' ? lastSuccessfulLoad.at : null;
 
     return (
+      <>
       <CompanyDashboardOverview
         // Desktop control-room density from the laptop breakpoint; tablet and phone keep touch sizes.
         density={layoutWidth >= 1024 ? 'compact' : 'comfortable'}
@@ -4801,6 +4891,11 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
           setActiveSection('live-operations');
         }}
       />
+      {/* Patrols (P1-D): concise, links to Patrol Management; renders and requests nothing without patrols.view. */}
+      {patrolPermissions.canView ? (
+        <PatrolsSummaryCard key={patrolCompanyKey} companyKey={patrolCompanyKey} permissions={patrolPermissions} onOpen={() => openPatrolRecord('overview')} />
+      ) : null}
+      </>
     );
   };
 
@@ -5363,6 +5458,18 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
         return renderShiftOffersSection();
       case 'live-operations':
         return renderLiveOperationsSection();
+      case 'patrols':
+        // Keyed on the company: a different company mounts a fresh page with no state or reads carried over.
+        return patrolPermissions.canView ? (
+          <CompanyPatrolsWorkspace
+            key={patrolCompanyKey}
+            companyKey={patrolCompanyKey}
+            permissions={patrolPermissions}
+            layoutWidth={layoutWidth}
+            target={patrolTarget}
+            onTargetConsumed={handlePatrolTargetConsumed}
+          />
+        ) : null;
       case 'analytics':
         return <CompanyAnalyticsWorkspace />;
       case 'coverage':

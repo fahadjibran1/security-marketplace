@@ -138,6 +138,31 @@ import {
   RotaUpdateMetadataPayload,
   RotaAssignMultipleResult,
 } from '../types/models';
+import type {
+  PatrolCheckpoint,
+  PatrolCheckpointInput,
+  PatrolCheckpointLabel,
+  PatrolEffectivePolicy,
+  PatrolEvidence,
+  PatrolEvidenceAccessPurpose,
+  PatrolException,
+  PatrolExport,
+  PatrolExportInput,
+  PatrolHold,
+  PatrolHoldInput,
+  PatrolOverview,
+  PatrolPolicies,
+  PatrolPolicyUpdate,
+  PatrolRoute,
+  PatrolRouteInput,
+  PatrolRunDetail,
+  PatrolRunsPage,
+  PatrolRunsQuery,
+  PatrolSchedule,
+  PatrolScheduleInput,
+  PatrolSignedLink,
+  PatrolStorageUsage,
+} from '../types/patrols';
 
 const hasBrowserWindow =
   typeof window !== 'undefined' &&
@@ -1947,4 +1972,146 @@ export function cancelRotaSlot(id: number) {
   return request<RotaSlotDetail>(`/rota-slots/${id}/cancel`, {
     method: 'POST',
   });
+}
+
+// ─── Patrol Management (company dashboard, Patrols P1-D) ───────────────────────────────────────────────────────────
+//
+// Thin calls onto the P1-A/B/C API. The server is the authority on everything: the company comes from the session, the
+// company's patrolsEnabled switch answers 404 PATROLS_NOT_ENABLED when off, and each route checks its own patrols.*
+// permission (403 PATROL_FORBIDDEN). Labels are signed ONLY by the server. Responses carrying a presigned URL are
+// returned to the caller and never logged, stored or cached here.
+
+function patrolQuery(params: Record<string, string | number | boolean | null | undefined>): string {
+  const parts = Object.entries(params)
+    .filter(([, value]) => value !== undefined && value !== null && value !== '')
+    .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`);
+  return parts.length ? `?${parts.join('&')}` : '';
+}
+
+export function getPatrolOverview(params: { siteId?: number | null; date?: string | null } = {}) {
+  return request<PatrolOverview>(`/patrols/overview${patrolQuery(params)}`);
+}
+
+export function listPatrolRuns(params: PatrolRunsQuery = {}) {
+  return request<PatrolRunsPage>(`/patrols/runs${patrolQuery({ ...params })}`);
+}
+
+export function getPatrolRun(id: number) {
+  return request<PatrolRunDetail>(`/patrols/runs/${id}`);
+}
+
+export function listPatrolExceptions(params: { siteId?: number | null; status?: string | null; type?: string | null } = {}) {
+  return request<PatrolException[]>(`/patrols/exceptions${patrolQuery(params)}`);
+}
+
+export function getPatrolPolicies() {
+  return request<PatrolPolicies>('/patrols/policies');
+}
+
+export function savePatrolSitePolicy(siteId: number | null, update: PatrolPolicyUpdate) {
+  return request<{ siteId: number | null; policy: PatrolEffectivePolicy }>(
+    siteId == null ? '/patrols/policies/default' : `/patrols/policies/sites/${siteId}`,
+    { method: 'PUT', body: JSON.stringify(update) },
+  );
+}
+
+export function listPatrolSchedules(params: { siteId?: number | null; includeInactive?: boolean } = {}) {
+  return request<PatrolSchedule[]>(`/patrols/schedules${patrolQuery({ siteId: params.siteId, includeInactive: params.includeInactive ? 'true' : undefined })}`);
+}
+
+export function createPatrolSchedule(input: PatrolScheduleInput) {
+  return request<PatrolSchedule>('/patrols/schedules', { method: 'POST', body: JSON.stringify(input) });
+}
+
+export function updatePatrolSchedule(id: number, input: PatrolScheduleInput) {
+  return request<PatrolSchedule>(`/patrols/schedules/${id}`, { method: 'PATCH', body: JSON.stringify(input) });
+}
+
+/** Archives (the server never deletes a schedule). */
+export function archivePatrolSchedule(id: number) {
+  return request<PatrolSchedule>(`/patrols/schedules/${id}`, { method: 'DELETE' });
+}
+
+export function listPatrolCheckpoints(params: { siteId?: number | null; includeInactive?: boolean } = {}) {
+  return request<PatrolCheckpoint[]>(`/patrols/checkpoints${patrolQuery({ siteId: params.siteId, includeInactive: params.includeInactive ? 'true' : undefined })}`);
+}
+
+export function createPatrolCheckpoint(input: PatrolCheckpointInput) {
+  return request<PatrolCheckpoint>('/patrols/checkpoints', { method: 'POST', body: JSON.stringify(input) });
+}
+
+export function updatePatrolCheckpoint(id: number, input: PatrolCheckpointInput) {
+  return request<PatrolCheckpoint>(`/patrols/checkpoints/${id}`, { method: 'PATCH', body: JSON.stringify(input) });
+}
+
+export function rotatePatrolCheckpoint(id: number) {
+  return request<PatrolCheckpoint>(`/patrols/checkpoints/${id}/rotate`, { method: 'POST' });
+}
+
+export function revokePatrolCheckpoint(id: number) {
+  return request<PatrolCheckpoint>(`/patrols/checkpoints/${id}/revoke`, { method: 'POST' });
+}
+
+/** The server-signed label payload (s4cp:1:…). The client renders it as a QR code and never signs anything itself. */
+export function getPatrolCheckpointLabel(id: number) {
+  return request<PatrolCheckpointLabel>(`/patrols/checkpoints/${id}/label`);
+}
+
+export function listPatrolRoutes(params: { siteId?: number | null; includeInactive?: boolean } = {}) {
+  return request<PatrolRoute[]>(`/patrols/routes${patrolQuery({ siteId: params.siteId, includeInactive: params.includeInactive ? 'true' : undefined })}`);
+}
+
+export function createPatrolRoute(input: PatrolRouteInput) {
+  return request<PatrolRoute>('/patrols/routes', { method: 'POST', body: JSON.stringify(input) });
+}
+
+export function updatePatrolRoute(id: number, input: PatrolRouteInput) {
+  return request<PatrolRoute>(`/patrols/routes/${id}`, { method: 'PATCH', body: JSON.stringify(input) });
+}
+
+/** Archives (the server never deletes a route). */
+export function archivePatrolRoute(id: number) {
+  return request<PatrolRoute>(`/patrols/routes/${id}`, { method: 'DELETE' });
+}
+
+/** patrols.evidence. Metadata only. */
+export function listPatrolRunEvidence(runId: number) {
+  return request<PatrolEvidence[]>(`/patrols/runs/${runId}/evidence`);
+}
+
+/** patrols.evidence. A short-lived, audited link to ONE verified photo. The caller holds it in memory until it expires. */
+export function getPatrolEvidenceLink(evidenceId: number, purpose: PatrolEvidenceAccessPurpose) {
+  return request<PatrolSignedLink & { evidenceId: number }>(`/patrols/evidence/${evidenceId}/download${patrolQuery({ purpose })}`);
+}
+
+/** patrols.holds. Active holds by default; 'all' includes released ones. */
+export function listPatrolHolds(status: 'active' | 'all' = 'active') {
+  return request<PatrolHold[]>(`/patrols/holds${patrolQuery({ status })}`);
+}
+
+export function placePatrolHold(input: PatrolHoldInput) {
+  return request<PatrolHold>('/patrols/holds', { method: 'POST', body: JSON.stringify(input) });
+}
+
+export function releasePatrolHold(id: number, reason: string) {
+  return request<PatrolHold>(`/patrols/holds/${id}/release`, { method: 'POST', body: JSON.stringify({ reason }) });
+}
+
+/** patrols.holds. Live storage metering per site, exports and totals. */
+export function getPatrolStorageUsage() {
+  return request<PatrolStorageUsage>('/patrols/storage-usage');
+}
+
+/** patrols.holds. A bulk ZIP export request (202: queued). */
+export function requestPatrolExport(input: PatrolExportInput) {
+  return request<PatrolExport>('/patrols/exports', { method: 'POST', body: JSON.stringify(input) });
+}
+
+export function listPatrolExports() {
+  return request<PatrolExport[]>('/patrols/exports');
+}
+
+/** patrols.holds. A short-lived, audited link to a ready export ZIP. Opened at once; never kept. */
+export function getPatrolExportLink(id: number) {
+  return request<PatrolSignedLink & { exportId: number }>(`/patrols/exports/${id}/download`);
 }

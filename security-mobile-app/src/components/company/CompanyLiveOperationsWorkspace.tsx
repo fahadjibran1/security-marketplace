@@ -78,12 +78,21 @@ type UrgentCategory =
   | 'missing_book_off'
   /** A mandatory company compliance check lapsed during a live shift. Urgent, but never an SOS. */
   | 'compliance_lapse'
+  /** An actionable patrol exception (Patrols P1-B alert). Routine patrols, scans and photos never come here. */
+  | 'patrol'
   | 'upcoming_risk'
   | 'missed_shift'
   | 'uncovered_shift';
 
 export type UrgentOperationalItem = {
   id: string;
+  /** Patrol alerts only: the patrol record it links to (run detail, or the exception / missed window). */
+  patrolTarget?: { kind: 'run'; runId: number; exceptionId: number | null } | { kind: 'exception'; exceptionId: number; windowKey: string | null } | null;
+  /**
+   * Patrol alerts only: whether this person may acknowledge / resolve it (alerts.manage). A Viewer sees the alert and
+   * its link but no action. Absent on every other item, which keeps its existing behaviour.
+   */
+  canAct?: boolean;
   /** A Ready shift with no Book On past start + 15 minutes: minutes since the scheduled start. Display only. */
   noBookOnOverdueMinutes?: number | null;
   /** An incident's own recorded severity (low / medium / high / critical); absent for other items. */
@@ -416,7 +425,7 @@ function getExceptionSummary(status?: string | null): { title: string; message: 
 
 function getAttentionSeverity(category: UrgentCategory): 'red' | 'amber' | 'blue' {
   if (['panic', 'incident', 'missed_shift', 'compliance_lapse'].includes(category)) return 'red';
-  if (['late_start', 'missed_check_call', 'uncovered_shift', 'rejected_offer', 'safety'].includes(category)) return 'amber';
+  if (['late_start', 'missed_check_call', 'uncovered_shift', 'rejected_offer', 'safety', 'patrol'].includes(category)) return 'amber';
   // A Site Request is a need, not a risk. Colouring it like a welfare lapse would train the control
   // room to discount the colour that matters.
   return 'blue';
@@ -435,6 +444,7 @@ function getAttentionLabel(category: UrgentCategory): string {
     case 'missed_shift':     return 'Missed';
     case 'missing_book_off': return 'Missing Book Off';
     case 'compliance_lapse': return 'Compliance';
+    case 'patrol':           return 'Patrol';
     case 'uncovered_shift':  return 'Coverage gap';
     default:                 return 'Alert';
   }
@@ -449,6 +459,7 @@ function getUrgentPrimaryLabel(item: UrgentOperationalItem): string {
     case 'missed_check_call': return item.status === 'acknowledged' ? 'Close Follow-up' : 'View Safety Detail';
     case 'safety':          return item.status === 'acknowledged' ? 'Close Alert' : 'View Safety Detail';
     case 'site_request':    return item.status === 'acknowledged' ? 'Close Request' : 'View Request';
+    case 'patrol':          return 'Open patrol record';
     default:                return 'Open Shift';
   }
 }
@@ -1036,6 +1047,13 @@ function getPrimaryAttentionAction(
       : () => onOpenUrgentDetail(item);
     return { label, onPress, disabled: isDisabled };
   }
+  /**
+   * A patrol alert always leads to its patrol record (the run, or the missed window's exception) in Patrol Management.
+   * Acknowledge / Resolve sit beside it, through the same alert path as every other durable alert, for alerts.manage.
+   */
+  if (item.category === 'patrol') {
+    return { label: getUrgentPrimaryLabel(item), onPress: () => onOpenUrgentDetail(item), disabled: false };
+  }
   return { label: getUrgentPrimaryLabel(item), onPress: () => onOpenUrgentDetail(item), disabled: false };
 }
 
@@ -1071,12 +1089,14 @@ function AttentionItem({
   const busy = urgentActionItemId === item.id;
 
   const handleRowPress = () => {
-    if (item.category === 'uncovered_shift') {
+    if (item.category === 'uncovered_shift' || item.category === 'patrol') {
       onOpenUrgentDetail(item);
     } else if (item.shiftId) {
       onOpenUrgentShift(item);
     }
   };
+  const isPatrol = item.category === 'patrol';
+  const patrolMayAct = isPatrol && item.canAct === true && Boolean(item.alertId);
 
   const primary = getPrimaryAttentionAction(
     item, busy, onOpenUrgentDetail, onUrgentAlertFollowUp, onOpenIncidentResolution,
@@ -1093,6 +1113,8 @@ function AttentionItem({
    * alert and gets its own transition below.
    */
   const canAcknowledge = !isIncident && Boolean(item.alertId);
+  // A patrol alert is acted on only with alerts.manage (canAct); every other item keeps its existing rule.
+  const patrolActionAllowed = !isPatrol || patrolMayAct;
   const incidentActions = isIncident
     ? incidentAttentionActions(item.status)
     : { canMarkInReview: false, resolveLabel: null, stateLabel: null };
@@ -1160,7 +1182,7 @@ function AttentionItem({
             <Text style={styles.aBtnSecondaryText}>Mark Missed</Text>
           </Pressable>
         ) : null}
-        {canAcknowledge && !acknowledged ? (
+        {patrolActionAllowed && canAcknowledge && !acknowledged ? (
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Acknowledge"
@@ -1169,6 +1191,17 @@ function AttentionItem({
             disabled={busy}
           >
             <Text style={styles.aBtnSecondaryText}>Acknowledge</Text>
+          </Pressable>
+        ) : null}
+        {patrolMayAct ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Resolve"
+            style={[styles.aBtn, styles.aBtnSecondary, IS_WEB ? (WEB_PTR as any) : null]}
+            onPress={() => { void onUrgentAlertFollowUp(item, 'close'); }}
+            disabled={busy}
+          >
+            <Text style={styles.aBtnSecondaryText}>{busy ? '…' : 'Resolve'}</Text>
           </Pressable>
         ) : null}
         <Pressable

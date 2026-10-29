@@ -296,6 +296,11 @@ export const PERSISTED_ATTENTION_CATEGORIES: readonly string[] = [
    * safety_alerts.compliance_lapse and cleared only by a person resolving it.
    */
   'compliance_lapse',
+  /**
+   * Patrols P1-B: an actionable patrol exception (missed, abandoned, incomplete, checkpoint missed, unverified).
+   * Persisted as a patrol safety_alert and cleared only by a person resolving it (or the alert lifecycle).
+   */
+  'patrol',
 ];
 
 export function isDerivedAttentionCategory(category: string): boolean {
