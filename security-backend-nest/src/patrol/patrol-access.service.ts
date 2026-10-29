@@ -37,6 +37,11 @@ export class PatrolAccessService {
   ) {}
 
   async companyActor(user: JwtPayload, permission: CompanyPermission): Promise<PatrolCompanyActor> {
+    return this.companyActorAny(user, [permission]);
+  }
+
+  /** As companyActor, when holding ANY ONE of the permissions is enough (e.g. alerts.manage or patrols.manage). */
+  async companyActorAny(user: JwtPayload, permissions: readonly CompanyPermission[]): Promise<PatrolCompanyActor> {
     if (user.role === UserRole.GUARD || user.role === UserRole.ADMIN) {
       throw patrolError(HttpStatus.FORBIDDEN, PatrolErrorCode.FORBIDDEN, 'Patrol Management is for company staff.');
     }
@@ -44,7 +49,7 @@ export class PatrolAccessService {
     if (!(await this.isEnabled(company.id))) {
       throw patrolError(HttpStatus.NOT_FOUND, PatrolErrorCode.NOT_ENABLED, 'Patrol Management is not available for this company.');
     }
-    if (!hasPermission(membershipRole, permission)) {
+    if (!permissions.some((permission) => hasPermission(membershipRole, permission))) {
       throw patrolError(HttpStatus.FORBIDDEN, PatrolErrorCode.FORBIDDEN, 'Insufficient permissions.');
     }
     return { companyId: company.id, userId: user.sub, role: membershipRole };

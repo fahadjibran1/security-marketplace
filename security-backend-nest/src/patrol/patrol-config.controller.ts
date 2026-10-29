@@ -169,7 +169,7 @@ export class PatrolConfigController {
     return this.query.getRunEvidence(user, id);
   }
 
-  // ── Exceptions (P1-B): patrols.view to list, patrols.manage to act. An exception with an alert is acted on through the
+  // ── Exceptions (P1-B): patrols.view to list; alerts.manage or patrols.manage to act (owner decision, P1-C). An exception with an alert is acted on through the
   // alert's own lifecycle, so the alert and the exception always agree (the alert endpoints work equally).
   @Get('exceptions')
   listExceptions(@CurrentUser() user: JwtPayload, @Query() q: PatrolExceptionsQueryDto) {

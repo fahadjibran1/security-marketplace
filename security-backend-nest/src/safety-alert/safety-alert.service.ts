@@ -34,6 +34,7 @@ import {
   CompanyMembershipStatus,
   CompanyPermission,
   hasPermission,
+  mayActOnPatrolAlerts,
 } from '../company-membership/company-membership-types';
 import { AuditLog } from '../audit-log/entities/audit-log.entity';
 import { Notification } from '../notification/entities/notification.entity';
@@ -1177,9 +1178,11 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
    * Off, site requests and incidents stay with the owner account and Platform Admin, as before.
    */
   private assertMemberMayAct(role: CompanyMembershipRole, alert: SafetyAlert) {
-    // Patrols (Migration 69): a member who manages patrols (patrols.manage) may act on its company's patrol alerts.
+    // Patrols: a member with alerts.manage (owner decision, P1-C: Owner, Admin, Operations, Control Room) may act on its
+    // company's patrol alerts; patrols.manage (which every such configuring role also holds) keeps P1-B's right. A Control
+    // Room operator therefore handles patrol alerts without being able to change any patrol configuration.
     if (isPatrolAlertType(alert.type)) {
-      if (!hasPermission(role, CompanyPermission.PATROLS_MANAGE)) throw new ForbiddenException('Insufficient permissions.');
+      if (!mayActOnPatrolAlerts(role)) throw new ForbiddenException('Insufficient permissions.');
       return;
     }
     if (alert.type !== SafetyAlertType.COMPLIANCE_LAPSE) {
@@ -1205,7 +1208,8 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Patrols (Migration 69): the patrol API acting on an exception's alert. The caller has already been authorised for the
-   * company with patrols.manage (PatrolAccessService); this applies the SAME lifecycle as the alert endpoints.
+   * company with alerts.manage or patrols.manage (PatrolAccessService); this applies the SAME lifecycle as the alert
+   * endpoints.
    */
   async acknowledgePatrolAlert(userId: number, companyId: number, alertId: number): Promise<SafetyAlert> {
     const alert = await this.loadAlert(alertId);

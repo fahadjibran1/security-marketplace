@@ -284,7 +284,7 @@ async function main() {
         assert.equal(mayManageAttendance(role, true), expected[role] || role === CompanyMembershipRole.CONTROL_ROOM, `${role} with a grant`);
       }
       assert.equal(mayManageAttendance(CompanyMembershipRole.CONTROL_ROOM, false), false);
-      assert.equal(Object.values(CompanyPermission).length, 41, '36 + attendance.manage + the four patrols.* permissions (Migration 68)');
+      assert.equal(Object.values(CompanyPermission).length, 42, '36 + attendance.manage + the four patrols.* permissions (Migration 68) + alerts.manage (Patrols P1-C owner decision)');
     });
 
     await test('MA-02-CAPABILITIES-PER-ROLE', async () => {
