@@ -130,7 +130,7 @@ async function main() {
   const migrate = new DataSource({ ...base, entities: [], migrations: allFiles.map((f) => path.join(migrationsDir, f)), dropSchema: true } as never);
   await migrate.initialize();
   const migrated = await migrate.runMigrations({ transaction: 'each' });
-  assert.equal(migrated[migrated.length - 1]?.name, 'AddPatrolScheduling1720900000015', 'the head is Migration 69');
+  assert.equal(migrated[migrated.length - 1]?.name, 'AddPatrolEvidenceStorage1720900000016', 'the head is Migration 70');
   await migrate.destroy();
 
   const { AppModule } = await import('../src/app.module');

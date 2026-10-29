@@ -122,12 +122,13 @@ async function main() {
     await test('M65-01-A-64-DATABASE-MIGRATES-TO-65-AND-65-IS-LAST', () => {
       assert.equal(applied.length, 1, 'only 65 is pending on a 64 database');
       assert.equal(applied[0].name, MIGRATION_65);
-      assert.equal(allFiles.length, 69);
+      assert.equal(allFiles.length, 70);
       assert.equal(allFiles[64], '1720900000011-AddWelfarePushReminders.ts');
       assert.equal(allFiles[65], '1720900000012-AddGuardNotificationDispatches.ts', 'Migration 66 follows 65 and is certified by m66-migration.spec.ts');
       assert.equal(allFiles[66], '1720900000013-AddManualAttendance.ts', 'Migration 67 follows 66 and is certified by m67-migration.spec.ts');
       assert.equal(allFiles[67], '1720900000014-AddPatrolManagement.ts', 'Migration 68 follows 67 and is certified by m68-migration.spec.ts');
       assert.equal(allFiles[68], '1720900000015-AddPatrolScheduling.ts', 'Migration 69 follows 68 and is certified by m69-migration.spec.ts');
+      assert.equal(allFiles[69], '1720900000016-AddPatrolEvidenceStorage.ts', 'Migration 70 follows 69 and is certified by m70-migration.spec.ts');
     });
     const head = await schema();
 
@@ -252,7 +253,10 @@ async function main() {
       // …and Migration 69's five alert labels (the enum's re-creation), its safety_alerts and patrol columns and its three
       // indexes, statement by statement (m69-migration.spec.ts M69-09 certifies that its entities and migration agree).
       const m69 = /safety_alerts_type_enum|^ALTER TABLE "safety_alerts" ALTER COLUMN "type" |^ALTER TABLE "safety_alerts" ADD "patrol(ExceptionId|RunId|WindowKey|LateSyncAt|Annotation)" |^ALTER TABLE "patrol_(policies|runs|checkpoint_visits|exceptions)" ADD "(postShiftSyncHours|clockDriftThresholdMinutes|allowUnscheduledPatrols|escalateUnverified|lateStart|provisional|needsReview|syncFlags|clockDriftMs|verificationFinalAt|syncedLate|guardId|windowStart|windowEnd|acknowledgedAt|acknowledgedByUserId|lateEvidenceAt|annotations)" |^CREATE (UNIQUE )?INDEX "(uq_safety_alerts_patrol_exception|IDX_patrol_runs_open|IDX_patrol_exceptions_window_type)" /;
-      const semantic = drift.filter((x) => !after65.test(x) && !m67.test(x) && !m68.test(x) && !m69.test(x) &&
+      // …and Migration 70's eleven patrol_evidence columns, its two tables (evidence exports, live storage usage) and their
+      // indexes, statement by statement (m70-migration.spec.ts M70-09 certifies that its entities and migration agree).
+      const m70 = /^CREATE TABLE "patrol_(evidence_exports|storage_usage)" |^ALTER TABLE "patrol_evidence" ADD "(declaredSizeBytes|detectedMimeType|uploadUrlIssuedAt|completionToken|completionStartedAt|syncFlags|needsReview|purgeAfter|primaryDeletedAt|objectDeletedAt|deletionRequestedByUserId)" |^CREATE (UNIQUE )?INDEX "(IDX_patrol_evidence_(lifecycle|pending_upload|exports_company|exports_open)|UQ_patrol_evidence_exports_storage_key|UQ_patrol_storage_usage_(site|company))" |^ALTER TABLE "patrol_(evidence_exports|storage_usage)" /;
+      const semantic = drift.filter((x) => !after65.test(x) && !m67.test(x) && !m68.test(x) && !m69.test(x) && !m70.test(x) &&
         /CREATE TABLE|DROP TABLE|CREATE TYPE|DROP TYPE|ALTER TYPE|ALTER TABLE.*ALTER COLUMN|ALTER TABLE.*DROP COLUMN|ALTER TABLE.*ADD "/i.test(x));
       assert.deepEqual(semantic, [], `semantic drift (the release gate would fail):\n${semantic.join('\n')}`);
       console.log(`      (diagnostic-only drift elsewhere, unchanged by 65: ${drift.length} statement(s))`);

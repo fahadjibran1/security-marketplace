@@ -608,6 +608,7 @@ async function main() {
     assert.deepEqual(intervals, [
       'src/database/pool-diagnostics/pool-diagnostics.service.ts',
       'src/guard-notification/guard-notification.service.ts',
+      'src/patrol/evidence/patrol-evidence-maintenance.service.ts',
       'src/patrol/patrol-sweep.service.ts',
       'src/safety-alert/safety-alert.service.ts',
       'src/scheduler/scheduler.service.ts',
@@ -621,6 +622,13 @@ async function main() {
     assert.match(pssInit, /setInterval\(\(\) => void this\.tick\(\), PATROL_SWEEP_INTERVAL_MS\)/);
     assert.match(pss, /export const PATROL_SWEEP_INTERVAL_MS = 5 \* 60 \* 1000;/, 'patrol sweep cadence pinned');
     assert.equal((pss.match(/setInterval\(/g) ?? []).length, 1, 'one timer, and it only ticks the single-flight job');
+    // Patrols P1-C evidence maintenance: single-flight, every five minutes, and the timer only ticks the job.
+    const pem = src('../src/patrol/evidence/patrol-evidence-maintenance.service.ts');
+    const pemInit = pem.split('onModuleInit() {')[1].split('onModuleDestroy()')[0];
+    assert.match(pemInit, /new SingleFlightJob\(\s*'patrol-evidence-maintenance'/);
+    assert.match(pemInit, /setInterval\(\(\) => void this\.tick\(\), PATROL_EVIDENCE_MAINTENANCE_INTERVAL_MS\)/);
+    assert.match(pem, /export const PATROL_EVIDENCE_MAINTENANCE_INTERVAL_MS = 5 \* 60 \* 1000;/, 'evidence maintenance cadence pinned');
+    assert.equal((pem.match(/setInterval\(/g) ?? []).length, 1, 'one timer, and it only ticks the single-flight job');
     // Welfare push reminders: single-flight, every minute, and the timer only ticks the job.
     const wpr = src('../src/welfare-push/welfare-push.service.ts');
     const wprInit = wpr.split('onModuleInit() {')[1].split('onModuleDestroy()')[0];
