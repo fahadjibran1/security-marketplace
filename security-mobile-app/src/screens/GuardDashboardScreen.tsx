@@ -20,6 +20,7 @@ import { GuardCompliancePanel } from '../components/guard/GuardCompliancePanel';
 import { GuardScreeningJourney, GuardScreeningPanel } from '../components/guard/GuardScreeningPanel';
 import { GuardShiftOffersWorkspace } from '../components/guard/GuardShiftOffersWorkspace';
 import { GuardShiftExtensionCard } from '../components/guard/GuardShiftExtensionCard';
+import { GuardPatrolPanel } from '../components/guard/patrol/GuardPatrolPanel';
 import {
   GUARD_AMENDMENT_FOREGROUND_MIN_MS,
   GUARD_AMENDMENT_REFRESH_MS,
@@ -2155,6 +2156,13 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
               ) : (
                 <Text style={styles.helperText}>No active shift requiring action.</Text>
               )}
+              {/* ── Patrols (P1-E) ── its own component, outbox and timers; it shares nothing with the
+                  Welfare Check block. Rendered on every Home state, so patrol items still waiting to send
+                  (or refused) stay visible after Book Off. */}
+              <GuardPatrolPanel
+                userId={user.id}
+                shift={currentHomeShift ? { id: currentHomeShift.id, status: normalizeShiftLifecycleStatus(currentHomeShift.status), companyId: currentHomeShift.companyId ?? null, siteName: currentHomeShift.siteName } : null}
+              />
             </FeatureCard>
 
             {normalizeShiftLifecycleStatus(currentHomeShift?.status) === 'in_progress'

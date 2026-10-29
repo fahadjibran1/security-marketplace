@@ -162,6 +162,11 @@ import type {
   PatrolScheduleInput,
   PatrolSignedLink,
   PatrolStorageUsage,
+  GuardEvidenceUploadIntent,
+  GuardPatrolPlan,
+  GuardPatrolRun,
+  PatrolRun,
+  PatrolVisit,
 } from '../types/patrols';
 
 const hasBrowserWindow =
@@ -2114,4 +2119,39 @@ export function listPatrolExports() {
 /** patrols.holds. A short-lived, audited link to a ready export ZIP. Opened at once; never kept. */
 export function getPatrolExportLink(id: number) {
   return request<PatrolSignedLink & { exportId: number }>(`/patrols/exports/${id}/download`);
+}
+
+// ─── Patrols on the Guard's phone (Patrols P1-E) ───────────────────────────────────────────────────────────────────
+// Guard-only routes (security-backend-nest/src/patrol/patrol-guard.controller.ts and the evidence Guard controller).
+// These are called by the outbox engine (src/components/guard/patrol/patrolOutbox.ts) with bodies it stored before
+// sending; none of them ever carries a location. The presigned PUT itself is NOT sent through request(): it goes straight
+// to storage with exactly the headers the server signed (src/services/patrolNative.ts).
+
+export function getMyPatrolPlan(shiftId: number) {
+  return request<GuardPatrolPlan>(`/patrols/mine/plan${patrolQuery({ shiftId })}`);
+}
+
+export function getMyPatrolRuns(shiftId: number) {
+  return request<GuardPatrolRun[]>(`/patrols/mine/runs${patrolQuery({ shiftId })}`);
+}
+
+export function startGuardPatrolRun(body: Record<string, unknown>) {
+  return request<PatrolRun>('/patrols/runs', { method: 'POST', body: JSON.stringify(body) });
+}
+
+export function recordGuardPatrolVisit(runId: number, body: Record<string, unknown>) {
+  return request<PatrolVisit>(`/patrols/runs/${runId}/visits`, { method: 'POST', body: JSON.stringify(body) });
+}
+
+export function completeGuardPatrolRun(runId: number, body: Record<string, unknown>) {
+  return request<PatrolRun>(`/patrols/runs/${runId}/complete`, { method: 'POST', body: JSON.stringify(body) });
+}
+
+/** The upload intent: the evidence record and a short-lived presigned PUT (null once settled). The URL is never stored. */
+export function requestGuardPatrolEvidenceUpload(runId: number, body: Record<string, unknown>) {
+  return request<GuardEvidenceUploadIntent>(`/patrols/runs/${runId}/evidence`, { method: 'POST', body: JSON.stringify(body) });
+}
+
+export function completeGuardPatrolEvidence(evidenceId: number) {
+  return request<PatrolEvidence>(`/patrols/evidence/${evidenceId}/complete`, { method: 'POST' });
 }
