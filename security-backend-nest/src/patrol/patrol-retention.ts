@@ -1,9 +1,11 @@
 /**
- * Patrol metadata retention, by category (owner-approved 28 Oct 2026). P1-A only records the rules and the columns
- * they need; nothing here deletes anything. The purge / tombstone jobs are P1-C, ship disabled and "report only" first,
- * and never touch anything under an active hold (patrol_evidence_holds).
+ * Patrol metadata retention, by category (owner-approved 28 Oct 2026). P1-A recorded the rules and the columns they
+ * need. P1-C implements the photo rule: PatrolEvidenceMaintenanceService moves expired photos through the deletion state
+ * machine (PatrolEvidenceLifecycleService) — shipped "report only" (PATROL_EVIDENCE_RETENTION_MODE=report) — and never
+ * touches anything under an active hold (patrol_evidence_holds). The other categories are not purged by Phase 1.
  *
- *   photos (the image object)          30 days from verified receipt; 90 where the site policy says so
+ *   photos (the image object)          30 days from cloud receipt (receivedAt, set when the server first finds the
+ *                                      uploaded object); 90 where the site policy says so
  *                                      (patrol_evidence.retentionDays / expiresAt, set at verification)
  *   precise coordinates                30 days, then nulled (coordinatesPurgedAt) — none are collected while
  *                                      location verification is disabled
@@ -48,7 +50,7 @@ export function addUtcMonths(from: Date, months: number): Date {
   return d;
 }
 
-/** Photo expiry: expiresAt = verifiedAt + retentionDays (UTC). Lengthening extends; P1-C never shortens an existing one. */
-export function photoExpiresAt(verifiedAt: Date, retentionDays: number): Date {
-  return new Date(verifiedAt.getTime() + retentionDays * 86_400_000);
+/** Photo expiry: expiresAt = cloud receipt (receivedAt) + retentionDays. P1-C never shortens an existing one (a restore only extends). */
+export function photoExpiresAt(receivedAt: Date, retentionDays: number): Date {
+  return new Date(receivedAt.getTime() + retentionDays * 86_400_000);
 }

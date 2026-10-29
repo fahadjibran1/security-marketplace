@@ -5,6 +5,12 @@ import { CompanyMembershipModule } from '../company-membership/company-membershi
 import { OperationsModule } from '../operations/operations.module';
 import { SafetyAlertModule } from '../safety-alert/safety-alert.module';
 import { patrolEntities } from './entities';
+import { PatrolEvidenceController, PatrolEvidenceGuardController } from './evidence/patrol-evidence.controller';
+import { PatrolEvidenceExportService } from './evidence/patrol-evidence-export.service';
+import { PatrolEvidenceLifecycleService } from './evidence/patrol-evidence-lifecycle.service';
+import { PatrolEvidenceMaintenanceService } from './evidence/patrol-evidence-maintenance.service';
+import { PatrolEvidenceService } from './evidence/patrol-evidence.service';
+import { PatrolObjectStore } from './evidence/patrol-object-store';
 import { PatrolAccessService } from './patrol-access.service';
 import { PatrolAdminController } from './patrol-admin.controller';
 import { PatrolAdminService } from './patrol-admin.service';
@@ -22,17 +28,22 @@ import { PatrolWindowService } from './patrol-window.service';
  * patrols.* permissions, company configuration and reads, and the Guard's idempotent run / scan / complete API.
  * P1-B (Migration 69) adds scheduling: site-local windows (PatrolWindowService), the deadline rules (patrol-state.ts), offline
  * sync after Book Off (patrol-late-sync.ts), exceptions with one SafetyAlert each (PatrolExceptionService) and the
- * five-minute sweep (PatrolSweepService). Evidence upload, retention and holds (P1-C) build on this module.
+ * five-minute sweep (PatrolSweepService).
+ * P1-C (Migration 70) adds photo evidence: private S3-compatible storage (PatrolObjectStore), presigned upload with
+ * server-side verification, audited downloads, holds, the deletion state machine with quarantine and restore
+ * (PatrolEvidenceLifecycleService), bounded ZIP exports with manifests, live metering, and the five-minute maintenance job
+ * (PatrolEvidenceMaintenanceService). See docs/patrols/P1-C-evidence-storage.md.
  *
  * Patrol imports SafetyAlertModule (to act on its alerts through the existing lifecycle); the safety-alert side reaches
  * patrol exceptions only through patrol-alert-link.ts (plain SQL), so there is no module cycle.
  */
 @Module({
   imports: [TypeOrmModule.forFeature(patrolEntities), CompanyMembershipModule, AuditLogModule, OperationsModule, SafetyAlertModule],
-  controllers: [PatrolConfigController, PatrolGuardController, PatrolAdminController],
+  controllers: [PatrolConfigController, PatrolGuardController, PatrolAdminController, PatrolEvidenceController, PatrolEvidenceGuardController],
   providers: [
     PatrolAccessService, PatrolConfigService, PatrolQueryService, PatrolGuardService, PatrolAdminService,
     PatrolWindowService, PatrolExceptionService, PatrolSweepService,
+    PatrolObjectStore, PatrolEvidenceLifecycleService, PatrolEvidenceService, PatrolEvidenceExportService, PatrolEvidenceMaintenanceService,
   ],
   exports: [PatrolAccessService, PatrolConfigService, PatrolSweepService],
 })

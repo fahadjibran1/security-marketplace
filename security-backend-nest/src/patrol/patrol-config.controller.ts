@@ -19,6 +19,7 @@ import {
   ResolvePatrolExceptionDto,
   UpsertPatrolPolicyDto,
 } from './dto/patrol.dto';
+import { PatrolEvidenceHoldsQueryDto } from './dto/patrol-evidence.dto';
 import { PatrolConfigService } from './patrol-config.service';
 import { PatrolExceptionService } from './patrol-exception.service';
 import { PatrolQueryService } from './patrol-query.service';
@@ -163,7 +164,7 @@ export class PatrolConfigController {
     return this.query.getRun(user, id);
   }
 
-  /** Evidence metadata (patrols.evidence). Upload and viewing are P1-C. */
+  /** Evidence metadata (patrols.evidence). Viewing a photo: GET /patrols/evidence/:id/download (P1-C). */
   @Get('runs/:id/evidence')
   getRunEvidence(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
     return this.query.getRunEvidence(user, id);
@@ -188,9 +189,9 @@ export class PatrolConfigController {
     return this.exceptions.resolve(user, id, dto);
   }
 
-  /** Active evidence holds (patrols.holds). Placing / releasing is P1-C. */
+  /** Evidence holds (patrols.holds): active by default, ?status=all with releases. Placing / releasing: PatrolEvidenceController. */
   @Get('holds')
-  listHolds(@CurrentUser() user: JwtPayload) {
-    return this.query.listHolds(user);
+  listHolds(@CurrentUser() user: JwtPayload, @Query() q: PatrolEvidenceHoldsQueryDto) {
+    return this.query.listHolds(user, q.status === 'all' ? 'all' : 'active');
   }
 }

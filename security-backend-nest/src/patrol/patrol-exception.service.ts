@@ -53,7 +53,7 @@ export type RaisePatrolException = {
   now: Date;
 };
 
-export type LateEvidenceKind = 'run_started_after_alert' | 'run_completed_after_alert' | 'scan_after_alert';
+export type LateEvidenceKind = 'run_started_after_alert' | 'run_completed_after_alert' | 'scan_after_alert' | 'photo_after_alert';
 
 /**
  * Patrol exceptions and their alerts (Patrols P1-B, Migration 69).

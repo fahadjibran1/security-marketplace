@@ -176,6 +176,45 @@ export function serializeEvidenceMetadata(row: any) {
     retentionDays: n(row.retentionDays),
     expiresAt: iso(row.expiresAt),
     retentionStatus: row.retentionStatus,
+    // P1-C (Migration 70). Never a storage key or URL: images are reached only through an audited, short-lived link.
+    declaredSizeBytes: row.declaredSizeBytes == null ? null : Number(row.declaredSizeBytes),
+    detectedMimeType: row.detectedMimeType ?? null,
+    rejectionReason: row.rejectionReason ?? null,
+    syncFlags: row.syncFlags ?? [],
+    needsReview: Boolean(row.needsReview),
+    deletionReason: row.deletionReason ?? null,
+    quarantinedAt: iso(row.quarantinedAt),
+    purgeAfter: iso(row.purgeAfter),
+    purgedAt: iso(row.purgedAt),
+    restoredAt: iso(row.restoredAt),
+    objectDeletedAt: iso(row.objectDeletedAt),
+  };
+}
+
+/** An evidence export record (P1-C). Never the storage key; the ZIP is reached only through an audited, short-lived link. */
+export function serializeExport(row: any) {
+  return {
+    id: Number(row.id),
+    status: row.status,
+    purpose: row.purpose,
+    siteId: n(row.siteId),
+    fromDate: dateOnly(row.fromDate),
+    toDate: dateOnly(row.toDate),
+    runIds: (row.runIds ?? []).map(Number),
+    itemCount: Number(row.itemCount),
+    includedCount: Number(row.includedCount),
+    excludedCount: Number(row.excludedCount),
+    includedBytes: Number(row.includedBytes),
+    zipBytes: row.zipBytes == null ? null : Number(row.zipBytes),
+    zipSha256: row.zipSha256 ?? null,
+    manifestSha256: row.manifestSha256 ?? null,
+    requestedByUserId: Number(row.requestedByUserId),
+    error: row.status === 'failed' ? row.error ?? null : null,
+    attempts: Number(row.attempts),
+    createdAt: iso(row.createdAt),
+    startedAt: iso(row.startedAt),
+    completedAt: iso(row.completedAt),
+    expiresAt: iso(row.expiresAt),
   };
 }
 
@@ -218,5 +257,12 @@ export function serializeHold(row: any) {
     source: row.source,
     createdAt: iso(row.createdAt),
     releasedAt: iso(row.releasedAt),
+    // P1-C: who placed / released it and what it is linked to.
+    createdByUserId: n(row.createdByUserId),
+    releasedByUserId: n(row.releasedByUserId),
+    releaseReason: row.releaseReason ?? null,
+    incidentId: n(row.incidentId),
+    safetyAlertId: n(row.safetyAlertId),
+    exceptionId: n(row.exceptionId),
   };
 }
