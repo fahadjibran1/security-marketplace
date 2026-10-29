@@ -2,7 +2,6 @@ import * as React from 'react';
 import { Text, View } from 'react-native';
 import { getPatrolPolicies, listPatrolHolds, listPatrolRoutes } from '../../services/api';
 import { StatePanel } from '../StatePanel';
-import { PageHeader } from '../ui/PageHeader';
 import { PATROL_TABS, resolvePatrolTab, visiblePatrolTabs, type PatrolPermissions, type PatrolTab } from './patrolAccess';
 import { DEFAULT_SITE_ZONE, type PatrolNavTarget, type PatrolPageContext } from './patrolContext';
 import { PatrolCheckpointsTab } from './PatrolCheckpointsTab';
@@ -101,7 +100,7 @@ export function CompanyPatrolsWorkspace({ companyKey, companyName = null, permis
 
   return (
     <View style={{ gap: 16 }} testID="patrol-management">
-      <PageHeader title="Patrol Management" description="Patrol schedules, checkpoints, live patrols, history and photo evidence. Actionable patrol exceptions also appear in Live Operations." />
+      {/* The dashboard shell already titles the page (NAV_ITEMS label and caption). */}
       <View accessibilityRole="tablist" accessibilityLabel="Patrol Management sections">
         <ChipSelect options={tabOptions} value={tab} onChange={(v) => setTab(v)} scroll={layout.tabsScroll} />
       </View>

@@ -393,7 +393,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'rota-planner', label: 'Rota Planner', caption: 'Plan weekly cover and assignments.' },
   { id: 'shift-offers', label: 'Shift Offers', caption: 'Track pending responses and re-cover needs.' },
   { id: 'live-operations', label: 'Live Operations', caption: 'Monitor book-ons, logs, and incidents.' },
-  { id: 'patrols', label: 'Patrol Management', caption: 'Patrol schedules, checkpoints, live patrols, history and photo evidence.' },
+  { id: 'patrols', label: 'Patrol Management', caption: 'Patrol schedules, checkpoints, live patrols, history and photo evidence. Actionable patrol exceptions also appear in Live Operations.' },
   { id: 'analytics', label: 'Analytics', caption: 'Incident, welfare, and site-risk reporting.' },
   { id: 'coverage', label: 'Coverage', caption: 'Coverage gaps and eligible guards.' },
   { id: 'guards', label: 'Guards', caption: 'Available platform guards and linked team.' },
