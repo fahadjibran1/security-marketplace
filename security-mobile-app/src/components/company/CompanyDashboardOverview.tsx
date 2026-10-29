@@ -102,6 +102,7 @@ function severityOf(category: UrgentOperationalItem['category']): Severity {
     case 'rejected_offer':
     case 'safety':
     case 'missing_book_off':
+    case 'patrol':
       return 'amber';
     default:
       return 'blue';
@@ -119,6 +120,7 @@ export function attentionBadgeLabel(category: UrgentOperationalItem['category'])
     case 'missed_check_call': return 'Missed Welfare Check';
     case 'missing_book_off':  return 'Missing Book Off';
     case 'compliance_lapse':  return 'Compliance';
+    case 'patrol':            return 'Patrol';
     case 'rejected_offer':    return 'Offer rejected';
     case 'safety':            return 'Safety';
     case 'site_request':      return 'Site Request';

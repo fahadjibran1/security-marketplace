@@ -27,7 +27,11 @@ export type ResolutionFamily =
   | 'site_request'
   | 'emergency'
   | 'general'
-  | 'incident';
+  | 'incident'
+  /** Patrol alerts (Migration 69 / P1-C). */
+  | 'patrol'
+  /** A patrol alert whose evidence reached the server after it was raised: "completed — late sync" is offered too. */
+  | 'patrol_late_sync';
 
 const WELFARE: ResolutionOption[] = [
   { value: 'guard_confirmed_safe', label: 'Guard confirmed safe' },
@@ -102,6 +106,25 @@ const INCIDENT: ResolutionOption[] = [
   { value: 'other', label: 'Other' },
 ];
 
+/**
+ * Patrol alerts: missed, abandoned, incomplete, checkpoint missed, unverified. Mirrors PATROL_RESOLUTION_REASONS on the
+ * backend, in its order. "Patrol completed — late sync" is offered ONLY once evidence has reached the server after the
+ * alert (safety_alerts.patrolLateSyncAt): the server refuses it otherwise, so the dialog never offers it then.
+ */
+export const PATROL_LATE_SYNC_REASON = 'patrol_completed_late_sync';
+const PATROL_LATE_SYNC: ResolutionOption[] = [
+  { value: PATROL_LATE_SYNC_REASON, label: 'Patrol completed — late sync' },
+  { value: 'patrol_completed_confirmed', label: 'Patrol completed (confirmed)' },
+  { value: 'guard_contacted', label: 'Guard contacted' },
+  { value: 'site_inaccessible', label: 'Site inaccessible' },
+  { value: 'guard_unavailable', label: 'Guard unavailable' },
+  { value: 'device_network_issue', label: 'Device / network issue' },
+  { value: 'patrol_not_required', label: 'Patrol not required' },
+  { value: 'false_duplicate', label: 'False / duplicate alert' },
+  { value: 'other', label: 'Other' },
+];
+const PATROL: ResolutionOption[] = PATROL_LATE_SYNC.filter((option) => option.value !== PATROL_LATE_SYNC_REASON);
+
 const FAMILIES: Record<ResolutionFamily, ResolutionOption[]> = {
   welfare: WELFARE,
   missing_book_off: MISSING_BOOK_OFF,
@@ -110,7 +133,17 @@ const FAMILIES: Record<ResolutionFamily, ResolutionOption[]> = {
   emergency: EMERGENCY,
   general: GENERAL,
   incident: INCIDENT,
+  patrol: PATROL,
+  patrol_late_sync: PATROL_LATE_SYNC,
 };
+
+const PATROL_ALERT_TYPES = ['patrol_missed', 'patrol_abandoned', 'patrol_incomplete', 'checkpoint_missed', 'patrol_unverified'];
+
+/** The family for one alert record: a patrol alert offers the late-sync reason only when late evidence exists. */
+export function resolutionFamilyForAlertRecord(alert: { type?: string | null; patrolLateSyncAt?: string | null } | null | undefined): ResolutionFamily {
+  const family = resolutionFamilyForAlert(alert?.type);
+  return family === 'patrol' && alert?.patrolLateSyncAt ? 'patrol_late_sync' : family;
+}
 
 /**
  * Which reason family an alert type belongs to.
@@ -133,7 +166,7 @@ export function resolutionFamilyForAlert(type: string | null | undefined): Resol
     case 'panic':
       return 'emergency';
     default:
-      return 'general';
+      return PATROL_ALERT_TYPES.includes((type || '').trim().toLowerCase()) ? 'patrol' : 'general';
   }
 }
 
@@ -154,6 +187,8 @@ export function resolutionLabel(family: ResolutionFamily, value: string | null |
  */
 export function requiresResolutionNote(family: ResolutionFamily, reason: string | null | undefined): boolean {
   if (reason === 'other') return true;
+  // A patrol completed and synced late is the whole story once the evidence is on the server (as the backend rules).
+  if (family === 'patrol_late_sync' && reason === PATROL_LATE_SYNC_REASON) return false;
   return family !== 'site_request';
 }
 
@@ -219,6 +254,16 @@ export function alertTypeLabel(type: string | null | undefined): string {
       return 'Site Request';
     case 'late_checkin':
       return 'Late Book On';
+    case 'patrol_missed':
+      return 'Patrol missed';
+    case 'patrol_abandoned':
+      return 'Patrol abandoned';
+    case 'patrol_incomplete':
+      return 'Patrol incomplete';
+    case 'checkpoint_missed':
+      return 'Checkpoint missed';
+    case 'patrol_unverified':
+      return 'Patrol evidence not verified';
     case 'other':
       return 'Safety alert';
     default:

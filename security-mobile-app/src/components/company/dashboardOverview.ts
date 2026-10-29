@@ -60,6 +60,8 @@ export const ATTENTION_PRIORITY_RANK: Record<UrgentOperationalItem['category'], 
   safety: 1,
   incident: 3,
   missed_check_call: 4,
+  // An actionable patrol exception: alongside a missed Welfare Check, below anything about a Guard's safety.
+  patrol: 4,
   late_start: 5,
   missed_shift: 5,
   missing_book_off: 6,

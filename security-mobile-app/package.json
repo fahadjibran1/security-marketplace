@@ -86,7 +86,8 @@
     "test:no-browser-status-mutations": "node scripts/no-browser-status-mutations.spec.cjs",
     "test:manual-attendance-ui": "node scripts/manual-attendance-ui.spec.cjs",
     "test:timesheet-attendance-ui": "node scripts/timesheet-attendance-ui.spec.cjs",
-    "test:timesheet-review-ux": "node scripts/timesheet-review-ux.spec.cjs"
+    "test:timesheet-review-ux": "node scripts/timesheet-review-ux.spec.cjs",
+    "test:patrol-management-ui": "node scripts/patrol-management-ui.spec.cjs"
   },
   "dependencies": {
     "@expo/metro-runtime": "~6.1.2",
@@ -97,6 +98,7 @@
     "expo-location": "~19.0.8",
     "expo-notifications": "~0.32.17",
     "expo-secure-store": "~15.0.8",
+    "qrcode-generator": "1.4.4",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "react-native": "0.81.5",
