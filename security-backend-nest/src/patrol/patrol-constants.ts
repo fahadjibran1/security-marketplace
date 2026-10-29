@@ -57,7 +57,12 @@ export const PATROL_UNVERIFIED_ONLY_FLAGS: readonly PatrolScanFlag[] = ['unsigne
 export const PATROL_EVIDENCE_UPLOAD_STATUSES = ['pending', 'uploaded', 'verified', 'rejected', 'local_corrupt'] as const;
 /** The P1-C deletion state machine: active → claimed → quarantined → purged → tombstone (restore back to active). */
 export const PATROL_EVIDENCE_RETENTION_STATUSES = ['active', 'claimed', 'quarantined', 'purged', 'tombstone'] as const;
-export const PATROL_EXCEPTION_TYPES = ['patrol_missed', 'patrol_late', 'patrol_incomplete', 'checkpoint_missed', 'evidence_unverified'] as const;
+/**
+ * Migration 68's five plus Migration 69's 'patrol_abandoned' (started, not completed by the completion deadline). 'patrol_late'
+ * stays allowed by the CHECK constraint but P1-B never raises it: a late start is a flag on the run (lateStart).
+ */
+export const PATROL_EXCEPTION_TYPES = ['patrol_missed', 'patrol_late', 'patrol_incomplete', 'checkpoint_missed', 'evidence_unverified', 'patrol_abandoned'] as const;
+export type PatrolExceptionType = (typeof PATROL_EXCEPTION_TYPES)[number];
 export const PATROL_EXCEPTION_STATUSES = ['open', 'acknowledged', 'resolved'] as const;
 export const PATROL_HOLD_SCOPES = ['evidence', 'run', 'shift', 'site_date_range'] as const;
 export const PATROL_HOLD_SOURCES = ['manual', 'incident', 'alert', 'exception'] as const;
@@ -75,6 +80,11 @@ export const PATROL_POLICY_DEFAULTS = Object.freeze({
   requirementScope: 'site' as PatrolRequirementScope,
   retentionDays: 30 as PatrolRetentionDays,
   incompleteNeedsAction: true,
+  // Migration 69 (P1-B): offline sync after Book Off, clock-drift detection, unscheduled patrols, unverified escalation.
+  postShiftSyncHours: 24,
+  clockDriftThresholdMinutes: 5,
+  allowUnscheduledPatrols: true,
+  escalateUnverified: false,
   // Location-based verification is DISABLED until the privacy assessment is approved: the fields exist, default off,
   // and the API refuses to enable them (PATROL_LOCATION_VERIFICATION_DISABLED).
   qrRequireProximity: false,
@@ -88,7 +98,41 @@ export const PATROL_POLICY_LIMITS = Object.freeze({
   maxPatrolDurationMinutes: [5, 720],
   completionGraceMinutes: [0, 720],
   syncGraceMinutes: [0, 1440],
+  postShiftSyncHours: [1, 72],
+  clockDriftThresholdMinutes: [1, 120],
 } as const);
+
+/**
+ * Offline sync after Book Off (owner requirement, P1-B). A patrol legitimately started during an authorised shift may
+ * sync its scans and completion — and an offline-created run may first reach the server — for this many hours after the
+ * shift's Book Off (or its scheduled end when there is no Book Off). This is the default; a policy may set 1–72
+ * (postShiftSyncHours). After it, new writes are refused (PATROL_SYNC_WINDOW_CLOSED) while a replay of an accepted write
+ * still succeeds. Separate from the 60-minute operational sync grace (syncGraceMinutes), which only decides when missing
+ * evidence is reported.
+ */
+export const PATROL_POST_SHIFT_SYNC_HOURS = 24;
+/** Device clock drift (server receipt − the device's sentAtDevice) beyond this is flagged clock_drift_suspect. */
+export const PATROL_CLOCK_DRIFT_THRESHOLD_MINUTES = 5;
+/** A run's verification settles this long after its sync deadline: later evidence no longer changes it. */
+export const PATROL_VERIFICATION_FINAL_HOURS = 24;
+
+/**
+ * Why a run or scan synced late, or why a person should review it (patrol_runs.syncFlags, patrol_checkpoint_visits.syncFlags).
+ * Recorded, never a reason to reject on its own (the refusal rules are in patrol-late-sync.ts).
+ */
+export const PATROL_SYNC_FLAGS = [
+  'post_shift_creation', // the run first reached the server after the shift ended (Book Off)
+  'outside_on_duty_interval', // its (drift-adjusted) device start is outside the Guard's Book On → Book Off interval
+  'no_matching_window', // no scheduled window of the site contains its start (and the policy does not allow unscheduled patrols)
+  'clock_drift_suspect', // |server receipt − sentAtDevice| beyond the policy threshold
+  'synced_after_book_off', // a scan or completion that reached the server after the shift ended
+  'completed_after_book_off', // the (drift-adjusted) device completion time is after the Guard's Book Off
+  'window_already_covered', // its window already had a run for this scope, so it satisfies none
+  'evidence_after_alert', // it arrived after a missed / abandoned alert for its window or run was raised
+] as const;
+export type PatrolSyncFlag = (typeof PATROL_SYNC_FLAGS)[number];
+/** Flags meaning legitimacy is only partly supported: the write is accepted but the run gets needsReview = true. */
+export const PATROL_REVIEW_FLAGS: readonly PatrolSyncFlag[] = ['outside_on_duty_interval', 'no_matching_window', 'clock_drift_suspect', 'completed_after_book_off'];
 
 export const PATROL_SCHEDULE_FREQUENCY_MINUTES = [15, 1440] as const;
 export const PATROL_SCHEDULE_WINDOW_MINUTES = [5, 1440] as const;
@@ -128,6 +172,14 @@ export enum PatrolErrorCode {
   ROUTE_DUPLICATE_CHECKPOINT = 'PATROL_ROUTE_DUPLICATE_CHECKPOINT',
   CHECKPOINT_REVOKED = 'PATROL_CHECKPOINT_REVOKED',
   QR_SIGNING_KEY_UNAVAILABLE = 'PATROL_QR_SIGNING_KEY_UNAVAILABLE',
+  /** P1-B: a new write after the post-shift sync acceptance window (replays of accepted writes still succeed). */
+  SYNC_WINDOW_CLOSED = 'PATROL_SYNC_WINDOW_CLOSED',
+  /** P1-B: a run first reaching the server after its shift ended, from a Guard with no Book On on that shift. */
+  SYNC_NOT_BOOKED_ON = 'PATROL_SYNC_NOT_BOOKED_ON',
+  /** P1-B: a resolution reason outside the patrol set, or a required note missing. */
+  RESOLUTION_INVALID = 'PATROL_RESOLUTION_INVALID',
+  /** P1-B: the exception is already resolved (a settled record). */
+  EXCEPTION_RESOLVED = 'PATROL_EXCEPTION_ALREADY_RESOLVED',
 }
 
 export function patrolError(status: HttpStatus, code: PatrolErrorCode, message: string, details?: Record<string, unknown>) {
