@@ -9,6 +9,7 @@ import { SafetyAlert, SafetyAlertPriority, SafetyAlertStatus, SafetyAlertType } 
 import { PatrolExceptionType } from './patrol-constants';
 import { PatrolExceptionService } from './patrol-exception.service';
 import { syncAcceptanceEndsAt } from './patrol-late-sync';
+import { PatrolRecoveryGrantService, grantKey } from './patrol-recovery-grant.service';
 import {
   completionDeadline,
   completionFindings,
@@ -134,6 +135,7 @@ export class PatrolSweepService implements OnModuleInit, OnModuleDestroy {
     private readonly config: PatrolConfigService,
     private readonly exceptions: PatrolExceptionService,
     private readonly auditLogService: AuditLogService,
+    private readonly grants: PatrolRecoveryGrantService,
   ) {}
 
   onModuleInit() {
@@ -713,6 +715,8 @@ export class PatrolSweepService implements OnModuleInit, OnModuleDestroy {
     );
     const attendanceByShift = new Map<number, any[]>();
     const openShiftIds = [...new Set(runs.filter((r: any) => r.status === 'in_progress' && r.shiftStatus !== 'in_progress').map((r: any) => Number(r.shiftId)))];
+    // #68: a run whose Guard holds an active recovery grant for its shift is not closed while the grant lasts.
+    const granted = openShiftIds.length ? await this.grants.activeGrantKeys(manager, companyId, now) : new Set<string>();
     if (openShiftIds.length) {
       for (const a of await manager.query(
         `SELECT "id", "shiftId", "type"::text AS "type", "occurredAt", "recordedAt", "correctionOfEventId", "source" FROM "attendance_events" WHERE "shiftId" = ANY($1::int[])`,
@@ -752,7 +756,7 @@ export class PatrolSweepService implements OnModuleInit, OnModuleDestroy {
         if (run.shiftStatus !== 'in_progress') {
           const effective = effectiveAttendance(attendanceByShift.get(Number(run.shiftId)) ?? []);
           const closesAt = syncAcceptanceEndsAt(effective.bookOffAt, new Date(run.shiftEnd), policy.postShiftSyncHours);
-          if (now.getTime() > closesAt.getTime()) {
+          if (now.getTime() > closesAt.getTime() && !granted.has(grantKey(Number(run.shiftId), Number(run.guardId)))) {
             const result = await manager.query(
               `UPDATE "patrol_runs" SET "status" = 'closed_by_system', "completedAtServer" = $2, "verificationStatus" = 'unverified',
                   "verificationFinalAt" = $2, "updatedAt" = now() WHERE "id" = $1 AND "status" = 'in_progress' RETURNING "id"`,

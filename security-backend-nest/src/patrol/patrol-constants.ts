@@ -129,10 +129,20 @@ export const PATROL_SYNC_FLAGS = [
   'completed_after_book_off', // the (drift-adjusted) device completion time is after the Guard's Book Off
   'window_already_covered', // its window already had a run for this scope, so it satisfies none
   'evidence_after_alert', // it arrived after a missed / abandoned alert for its window or run was raised
+  'recovered_via_grant', // accepted after the post-shift sync window closed, under an Owner / Admin recovery grant (#68)
 ] as const;
 export type PatrolSyncFlag = (typeof PATROL_SYNC_FLAGS)[number];
 /** Flags meaning legitimacy is only partly supported: the write is accepted but the run gets needsReview = true. */
-export const PATROL_REVIEW_FLAGS: readonly PatrolSyncFlag[] = ['outside_on_duty_interval', 'no_matching_window', 'clock_drift_suspect', 'completed_after_book_off'];
+export const PATROL_REVIEW_FLAGS: readonly PatrolSyncFlag[] = ['outside_on_duty_interval', 'no_matching_window', 'clock_drift_suspect', 'completed_after_book_off', 'recovered_via_grant'];
+
+/**
+ * Exceptional offline recovery (issue #68, Migration 72). An Owner / Admin (patrols.holds) may let ONE Guard send patrol
+ * data for ONE shift after the post-shift sync window has closed, for a limited time: by default 24 h from issue, at most
+ * 72 h (the database CHECKs the maximum too). A grant is consulted ONLY when the standard window has closed; everything
+ * it lets in is flagged recovered_via_grant, needsReview, provisional.
+ */
+export const PATROL_RECOVERY_GRANT_DEFAULT_HOURS = 24;
+export const PATROL_RECOVERY_GRANT_MAX_HOURS = 72;
 
 export const PATROL_SCHEDULE_FREQUENCY_MINUTES = [15, 1440] as const;
 export const PATROL_SCHEDULE_WINDOW_MINUTES = [5, 1440] as const;
@@ -205,6 +215,12 @@ export enum PatrolErrorCode {
   EXPORT_LIMIT_REACHED = 'PATROL_EXPORT_LIMIT_REACHED',
   /** P1-C: the export is not ready (or has expired). */
   EXPORT_NOT_READY = 'PATROL_EXPORT_NOT_READY',
+  /** #68: an unrevoked, unexpired recovery grant already exists for this Guard on this shift. */
+  RECOVERY_GRANT_ACTIVE = 'PATROL_RECOVERY_GRANT_ALREADY_ACTIVE',
+  /** #68: the grant was already revoked (or has expired), so it cannot be revoked. */
+  RECOVERY_GRANT_ENDED = 'PATROL_RECOVERY_GRANT_ENDED',
+  /** #68: that Guard was not on that shift, or the shift cannot carry patrol data (cancelled, never started, no site). */
+  RECOVERY_GRANT_INELIGIBLE = 'PATROL_RECOVERY_GRANT_INELIGIBLE',
 }
 
 export function patrolError(status: HttpStatus, code: PatrolErrorCode, message: string, details?: Record<string, unknown>) {

@@ -129,7 +129,7 @@ async function main() {
   } as never);
   await migrator.initialize();
   const migrated = await migrator.runMigrations({ transaction: 'each' });
-  assert.equal(migrated[migrated.length - 1]?.name, 'AddPatrolSweepReconciliation1720900000017', 'the head is Migration 71 (patrol sweep reconciliation); manual attendance is Migration 67');
+  assert.equal(migrated[migrated.length - 1]?.name, 'AddPatrolSyncRecoveryGrants1720900000018', 'the head is Migration 72 (patrol sync recovery grants); manual attendance is Migration 67');
   await migrator.destroy();
 
   const { AppModule } = await import('../src/app.module');

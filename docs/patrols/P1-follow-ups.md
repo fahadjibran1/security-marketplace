@@ -8,7 +8,7 @@ changes to the P1-B sweep / sync core).
 | --- | --- | --- |
 | 1 | Control Room acts on patrol alerts with `alerts.manage`, never `patrols.manage` | **Done in P1-C** (commit "feat(patrols): Control Room acts on patrol alerts with alerts.manage…") |
 | 2 | Outage reconciliation: no missed-patrol record is permanently lost after a long outage | **Implemented** on `fix/patrols-71-67-lifecycle` (Migration 71) — [#67](https://github.com/fahadjibran1/security-marketplace/issues/67) |
-| 3 | Exceptional offline recovery beyond the 24 h post-shift sync window | **Designed** — [#68](https://github.com/fahadjibran1/security-marketplace/issues/68) |
+| 3 | Exceptional offline recovery beyond the 24 h post-shift sync window | **Built** on `fix/patrols-68-recovery-grant` (Migration 72) — [#68](https://github.com/fahadjibran1/security-marketplace/issues/68) |
 | 4 | The Patrols switch never suspends retention, holds, deletion or exports of existing evidence | **Implemented** on `fix/patrols-71-67-lifecycle` — [#71](https://github.com/fahadjibran1/security-marketplace/issues/71) |
 
 ---
@@ -91,7 +91,7 @@ duplicates; summary alert content; audit trail.
 
 ---
 
-## 3. Exceptional offline recovery — designed ([#68](https://github.com/fahadjibran1/security-marketplace/issues/68))
+## 3. Exceptional offline recovery — built ([#68](https://github.com/fahadjibran1/security-marketplace/issues/68))
 
 **Keep** the standard 24 h post-shift sync window (`postShiftSyncHours`, 1–72 h).
 
@@ -111,6 +111,32 @@ duplicates; summary alert content; audit trail.
 
 **Tests.** No grant → refused; another Guard / shift / company → refused; expired / revoked → refused; inside a grant →
 accepted, flagged, needsReview; alerts never closed; audit; Owner / Admin only.
+
+**As built (`fix/patrols-68-recovery-grant`, Migration 72 = `1720900000018-AddPatrolSyncRecoveryGrants`; it follows
+Migration 71 = `1720900000017-AddPatrolSweepReconciliation`; 019 is reserved by another branch).**
+* Table `patrol_sync_recovery_grants` (+ `lastUsedAt`); CHECKs: `expiresAt` after issue and ≤ issue + 72 h, a real reason,
+  revocation all-or-none with its own reason, `uses`/`lastUsedAt` consistent. Composite FK `(shiftId, companyId)` →
+  `shifts(id, companyId)` via a new `UQ_shifts_id_company` (id is the PK, so it rejects nothing). down() refuses while
+  grants exist.
+* Permission: the existing `patrols.holds` (Owner / Admin) — no new permission, so no session inventory changes.
+* API: `POST /patrols/recovery-grants` `{ shiftId, guardId?, durationHours? (1–72, default 24), reason }` — guardId
+  defaults to the shift's Guard; another Guard only if they have attendance or a patrol run on the shift; the shift must
+  be in progress or completed and have a site; one active grant per Guard and shift (409
+  `PATROL_RECOVERY_GRANT_ALREADY_ACTIVE`). `GET /patrols/recovery-grants?status=active|all&shiftId=`.
+  `POST /patrols/recovery-grants/:id/revoke` `{ reason }` (409 `PATROL_RECOVERY_GRANT_ENDED` once revoked or expired).
+  Another company's shift or grant: 404. Audit: `patrol.recovery_grant_issued` / `_revoked` (in the change's
+  transaction) and `patrol.recovery_grant_used` (step, record, run) for every acceptance a grant allowed.
+* Sync paths: run start, scan, completion, photo upload intent and a re-issued upload URL consult an active grant only
+  when the window has closed. Accepted data: `recovered_via_grant` (a review flag) on the run / visit / photo, the run
+  and photo `needsReview`, provisional as every post-shift write. Photo completion needs no grant (as in P1-C, a URL
+  already issued can complete) and verifies exactly as P1-C.
+* Sweep: a run in progress is not closed by the sync-window rule while its Guard holds an active grant for its shift; a
+  run already `closed_by_system` takes its scans and completion under a grant (status becomes completed / incomplete,
+  the settled verification is not reopened — a person reviews it).
+* Dashboard: "Late-sync recovery grants" panel on Patrol Management → Downloads, retention & holds (Owner / Admin).
+  Guard app: a window-closed refusal shows "Send again" (P1-E-guard-app.md); nothing is retried automatically.
+* Specs: `scripts/m72-migration.spec.ts` (10), `scripts/patrol-recovery-grants.spec.ts` (PR-01 … PR-10); mobile
+  `patrol-management-ui.spec.cjs` PM-19 / PM-20 and `guard-patrols.spec.cjs` GPAT-22.
 
 ---
 

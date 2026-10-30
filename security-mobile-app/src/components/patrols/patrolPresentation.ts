@@ -65,6 +65,7 @@ const SYNC_FLAG_LABELS: Record<string, string> = {
   completed_after_book_off: 'Completed after Book Off',
   window_already_covered: 'Window already covered',
   evidence_after_alert: 'Evidence arrived after the alert',
+  recovered_via_grant: 'Recovered late under a recovery grant',
 };
 
 const SCAN_FLAG_LABELS: Record<string, string> = {
@@ -421,6 +422,29 @@ export function holdDraftProblem(draft: HoldDraft): string | null {
     return 'Enter the record number to hold.';
   }
   return holdReasonProblem(draft.reason);
+}
+
+/** #68: a recovery grant lasts 1–72 hours from issue (24 by default); the server holds the same bounds. */
+export const PATROL_RECOVERY_GRANT_DEFAULT_HOURS = 24;
+export const PATROL_RECOVERY_GRANT_MAX_HOURS = 72;
+
+export type RecoveryGrantDraft = { shiftId: string; hours: string; reason: string };
+
+export function recoveryGrantDraftProblem(draft: RecoveryGrantDraft): string | null {
+  const shift = Number(draft.shiftId);
+  if (!(shift > 0) || !Number.isInteger(shift)) return 'Enter the shift number.';
+  const hours = draft.hours.trim() === '' ? PATROL_RECOVERY_GRANT_DEFAULT_HOURS : Number(draft.hours);
+  if (!Number.isInteger(hours) || hours < 1 || hours > PATROL_RECOVERY_GRANT_MAX_HOURS) {
+    return `A recovery grant lasts 1 to ${PATROL_RECOVERY_GRANT_MAX_HOURS} hours.`;
+  }
+  return holdReasonProblem(draft.reason);
+}
+
+export function recoveryGrantStatusLabel(status: string): string {
+  if (status === 'active') return 'Active';
+  if (status === 'revoked') return 'Revoked';
+  if (status === 'expired') return 'Expired';
+  return status;
 }
 
 /** P1-C bounds: a date-range export covers at most 31 days. */

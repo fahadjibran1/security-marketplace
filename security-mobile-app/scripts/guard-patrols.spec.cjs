@@ -1015,6 +1015,61 @@ test('GPAT-21-EVIDENCE-AND-OUTBOX-ARE-KEPT-OUT-OF-BACKUPS-AND-DEVICE-TRANSFER', 
   assert.throws(() => plugin.applyAppDelegate('@implementation AppDelegate', 'objcpp'), /Swift AppDelegate/);
 });
 
+test('GPAT-22-SEND-AGAIN-AFTER-A-RECOVERY-GRANT-RESENDS-ONLY-WINDOW-CLOSED-REFUSALS-WITH-THE-SAME-IDS', async () => {
+  // Issue #68: S4 refused a patrol because the sync window had closed; the control room then issued a recovery grant.
+  const backend = new FakeBackend();
+  const files = filesFor(93);
+  const engine = engineFor(93, new FileStore(path.join(TMP, 'recovery.json')), backend, { files });
+  backend.offline = true;
+  const p = await recordPatrol(engine, files);
+  await engine.sync();
+  backend.offline = false;
+  backend.windowClosed = true;
+  clock += 30 * HOUR;
+  await engine.sync();
+  const mine = async () => (await engine.items()).filter((i) => i.clientRunId === p.clientRunId);
+  assert.deepEqual((await mine()).map((i) => i.status), ['refused', 'refused', 'refused', 'refused']);
+  const refusedAt = (await mine())[0].settledAt;
+  // Something refused for another reason, and something that failed, are never re-sent by "Send again".
+  const other = { ...(await mine())[0], id: cid('other'), clientRunId: cid('run-other'), seq: 9_000, lastErrorCode: 'PATROL_SYNC_NOT_BOOKED_ON' };
+  const failed = { ...(await mine())[0], id: cid('failed'), clientRunId: cid('run-failed'), seq: 9_001, status: 'failed', lastErrorCode: 'PATROL_IDEMPOTENCY_CONFLICT' };
+  const store = new FileStore(path.join(TMP, 'recovery.json'));
+  await store.put(other);
+  await store.put(failed);
+  // Nothing is ever retried automatically.
+  clock += HOUR;
+  const callsBefore = backend.calls.length;
+  await engine.sync();
+  assert.equal(backend.calls.length, callsBefore, 'a refusal is never retried on its own');
+  // "Send again" while S4 still refuses: re-sent once with the same ids, refused again, still kept (and the photo too).
+  assert.equal(await engine.retryWindowClosed(), 4, 'only the window-closed refusals are re-queued');
+  assert.deepEqual((await mine()).map((i) => i.status), ['pending', 'pending', 'pending', 'pending']);
+  await engine.sync({ eager: true });
+  assert.deepEqual((await mine()).map((i) => [i.status, i.lastErrorCode]), Array(4).fill(['refused', 'PATROL_SYNC_WINDOW_CLOSED']));
+  assert.ok(fs.existsSync(p.filePath), 'the photo is still kept');
+  assert.notEqual((await mine())[0].settledAt, refusedAt, 'the 14-day retention restarts from the new refusal');
+  // The grant is issued (the server accepts again): "Send again" delivers everything with the SAME client ids.
+  backend.windowClosed = false;
+  assert.equal(await engine.retryWindowClosed(), 4);
+  const report = await engine.sync({ eager: true });
+  assert.equal(report.sent, 4, 'start, scan, photo and completion accepted under the grant');
+  assert.deepEqual((await mine()).map((i) => i.status), ['done', 'done', 'done', 'done']);
+  const starts = backend.sent('startRun').filter((c) => c.body.clientRunId === p.clientRunId);
+  assert.ok(starts.length >= 2 && starts.every((c) => c.body.clientRunId === p.clientRunId), 'the same clientRunId every time (idempotent on the server)');
+  assert.deepEqual(backend.sent('recordVisit').filter((c) => c.body.clientVisitId === p.clientVisitId).map((c) => c.body.clientVisitId), [p.clientVisitId]);
+  assert.ok(!fs.existsSync(p.filePath), 'the photo is removed only once the server verified it');
+  const left = await engine.items();
+  assert.equal(left.find((i) => i.id === other.id).status, 'refused', 'a Book On refusal is left alone');
+  assert.equal(left.find((i) => i.id === failed.id).status, 'failed', 'a failure is left alone');
+  assert.equal(await engine.retryWindowClosed(), 0, 'nothing left to re-send');
+  // The Guard's control: shown only for a window-closed refusal, wired to retryWindowClosed and an eager send.
+  const panel = fs.readFileSync(path.join(ROOT, 'src/components/guard/patrol/GuardPatrolPanel.tsx'), 'utf8');
+  assert.match(panel, /item\.status === 'refused' && item\.lastErrorCode === PATROL_SYNC_WINDOW_CLOSED\) \? \(/);
+  assert.match(panel, /<Button label="Send again"/);
+  assert.match(panel, /engine\.retryWindowClosed\(\)[\s\S]{0,400}outbox\.kick\(\)/);
+  assert.equal(outbox.RECOVERY_RETRY_HINT, 'If your control room has arranged late recovery for this shift, tap Send again.');
+});
+
 (async () => {
   try {
     for (const [id, fn] of tests) {

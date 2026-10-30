@@ -9,6 +9,7 @@ import { PatrolAccessService, PatrolGuardActor } from '../patrol-access.service'
 import { PatrolConfigService } from '../patrol-config.service';
 import { PatrolErrorCode, patrolError } from '../patrol-constants';
 import { clockDriftMs, isClockDriftSuspect, syncAcceptanceEndsAt, withinSyncAcceptance } from '../patrol-late-sync';
+import { ActiveRecoveryGrant, PatrolRecoveryGrantService } from '../patrol-recovery-grant.service';
 import { serializeEvidenceMetadata, serializeHold, updateRows } from '../patrol-serializers';
 import { keyBelongsTo, patrolObjectKey, siblingKey } from './patrol-evidence-keys';
 import { PatrolEvidenceLifecycleService } from './patrol-evidence-lifecycle.service';
@@ -29,6 +30,9 @@ const EXTENSION: Record<string, string> = { 'image/jpeg': 'jpg', 'image/png': 'p
  *   POST /patrols/evidence/:id/complete    the server verifies what arrived (PatrolEvidenceLifecycleService.complete).
  *                                          A photo whose URL was issued inside the window can be completed after it: the
  *                                          bytes reached storage while the URL was valid. Repeats return the settled result.
+ *                                          #68: after the window, an active Owner / Admin recovery grant for this Guard
+ *                                          and shift lets a new photo (or a new URL) in, flagged recovered_via_grant and
+ *                                          needsReview; completion needs no grant (as above) and verifies exactly as P1-C.
  *   Guards cannot download photos from the server (they hold the original on the device).
  *
  * COMPANY (resolveCompanyContext via PatrolAccessService; another company's id is 404):
@@ -50,6 +54,7 @@ export class PatrolEvidenceService {
     private readonly store: PatrolObjectStore,
     private readonly lifecycle: PatrolEvidenceLifecycleService,
     private readonly auditLogService: AuditLogService,
+    private readonly grants: PatrolRecoveryGrantService,
   ) {}
 
   // ═══════════════════════ Guard ═══════════════════════
@@ -82,12 +87,17 @@ export class PatrolEvidenceService {
       throw patrolError(HttpStatus.BAD_REQUEST, PatrolErrorCode.VALIDATION, 'A run photo has no visitId.');
     }
     const flags: string[] = [];
+    let needsReview = false;
+    let grant: ActiveRecoveryGrant | null = null;
     if (run.shiftStatus !== 'in_progress') {
-      await this.assertWithinSyncWindow(run, now);
+      grant = await this.assertWithinSyncWindow(run, now);
       flags.push('synced_after_book_off');
+      if (grant) {
+        flags.push('recovered_via_grant');
+        needsReview = true;
+      }
     }
     const driftMs = clockDriftMs(now, dto.sentAtDevice ? new Date(dto.sentAtDevice) : null);
-    let needsReview = false;
     if (driftMs !== null) {
       const policy = await this.config.effectivePolicy(companyId, Number(run.siteId));
       if (isClockDriftSuspect(driftMs, policy.clockDriftThresholdMinutes)) {
@@ -123,7 +133,22 @@ export class PatrolEvidenceService {
         capturedAtDevice: capturedAtDevice.toISOString(), syncFlags: flags, clockDriftMs: driftMs,
       },
     });
+    if (grant) await this.recovered(grant, run, actor, 'photo_upload_intent', Number(inserted.id), now);
     return { evidence: serializeEvidenceMetadata(inserted), upload: this.uploadAccess(inserted, now) };
+  }
+
+  /**
+   * Issue #68: a photo let in by a recovery grant puts its run up for review too (recovered_via_grant, needsReview) and the
+   * grant's use is counted and audited. The photo itself is verified exactly as any other (hash, image checks, quarantine).
+   */
+  private async recovered(grant: ActiveRecoveryGrant, run: any, actor: PatrolGuardActor, step: 'photo_upload_intent' | 'photo_upload_url_reissued', evidenceId: number, now: Date) {
+    await this.dataSource.query(
+      `UPDATE "patrol_runs" SET "syncedLate" = true, "needsReview" = true, "updatedAt" = now(),
+          "syncFlags" = (SELECT COALESCE(jsonb_agg(DISTINCT f), '[]'::jsonb) FROM jsonb_array_elements("syncFlags" || '["synced_after_book_off","recovered_via_grant"]'::jsonb) AS f)
+        WHERE "id" = $1`,
+      [run.id],
+    );
+    await this.grants.recordUse(grant, { userId: actor.userId, step, entityType: 'patrol_evidence', entityId: evidenceId, runId: Number(run.id), now });
   }
 
   private uploadAccess(row: any, now: Date) {
@@ -147,12 +172,18 @@ export class PatrolEvidenceService {
         'This clientEvidenceId was already used for a different photo. Generate a new id for a new photo.');
     }
     if (!['pending', 'uploaded'].includes(row.uploadStatus)) return { evidence: serializeEvidenceMetadata(row), upload: null };
-    // A fresh upload URL is a new acceptance: only during the shift or inside the post-shift window.
-    if (run.shiftStatus !== 'in_progress') await this.assertWithinSyncWindow(run, now);
+    // A fresh upload URL is a new acceptance: only during the shift or inside the post-shift window (or, #68, under an
+    // active recovery grant, which then flags the photo recovered_via_grant / needsReview).
+    const grant = run.shiftStatus !== 'in_progress' ? await this.assertWithinSyncWindow(run, now) : null;
     const [updated] = await updateRows(this.dataSource,
-      `UPDATE "patrol_evidence" SET "uploadUrlIssuedAt" = $2, "updatedAt" = now() WHERE "id" = $1 AND "uploadStatus" IN ('pending', 'uploaded') RETURNING *`,
-      [row.id, now],
+      `UPDATE "patrol_evidence" SET "uploadUrlIssuedAt" = $2, "updatedAt" = now(),
+          "needsReview" = "needsReview" OR $3,
+          "syncFlags" = CASE WHEN $3 THEN (SELECT COALESCE(jsonb_agg(DISTINCT f), '[]'::jsonb) FROM jsonb_array_elements("syncFlags" || '["recovered_via_grant"]'::jsonb) AS f)
+                             ELSE "syncFlags" END
+        WHERE "id" = $1 AND "uploadStatus" IN ('pending', 'uploaded') RETURNING *`,
+      [row.id, now, grant != null],
     );
+    if (updated && grant) await this.recovered(grant, run, actor, 'photo_upload_url_reissued', Number(row.id), now);
     const current = updated ?? (await this.lifecycle.row(Number(row.id)));
     return { evidence: serializeEvidenceMetadata(current), upload: updated ? this.uploadAccess(updated, now) : null };
   }
@@ -190,8 +221,11 @@ export class PatrolEvidenceService {
     return run;
   }
 
-  /** P1-B's post-shift sync acceptance window applies to photos exactly as to scans and completions. */
-  private async assertWithinSyncWindow(run: any, now: Date) {
+  /**
+   * P1-B's post-shift sync acceptance window applies to photos exactly as to scans and completions. #68: once it has
+   * closed, an active recovery grant for this Guard on this shift lets the photo in (returned); otherwise 409.
+   */
+  private async assertWithinSyncWindow(run: any, now: Date): Promise<ActiveRecoveryGrant | null> {
     if (run.shiftStatus !== 'completed') {
       throw patrolError(HttpStatus.CONFLICT, PatrolErrorCode.SHIFT_NOT_IN_PROGRESS, 'Patrols can only be recorded during your shift, after Book On.', {
         shiftStatus: run.shiftStatus,
@@ -206,11 +240,14 @@ export class PatrolEvidenceService {
     const { bookOffAt } = effectiveAttendance(rows);
     const shiftEnd = new Date(run.shiftEnd);
     if (!withinSyncAcceptance(now, bookOffAt, shiftEnd, policy.postShiftSyncHours)) {
+      const grant = await this.grants.activeGrant(Number(run.companyId), Number(run.guardId), Number(run.shiftId), now);
+      if (grant) return grant;
       const endsAt = syncAcceptanceEndsAt(bookOffAt, shiftEnd, policy.postShiftSyncHours);
       throw patrolError(HttpStatus.CONFLICT, PatrolErrorCode.SYNC_WINDOW_CLOSED,
         `Patrol data for this shift could only be sent until ${endsAt.toISOString()} (${policy.postShiftSyncHours} h after it ended).`,
         { acceptanceEndsAt: endsAt.toISOString() });
     }
+    return null;
   }
 
   private async findByClientId(companyId: number, clientEvidenceId: string) {

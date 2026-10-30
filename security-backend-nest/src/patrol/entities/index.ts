@@ -13,6 +13,7 @@ import { PatrolSchedule } from './patrol-schedule.entity';
 import { PatrolStorageUsage } from './patrol-storage-usage.entity';
 import { PatrolStorageUsageDaily } from './patrol-storage-usage-daily.entity';
 import { PatrolSweepWatermark } from './patrol-sweep-watermark.entity';
+import { PatrolSyncRecoveryGrant } from './patrol-sync-recovery-grant.entity';
 
 export {
   PatrolCheckpoint,
@@ -30,11 +31,12 @@ export {
   PatrolStorageUsage,
   PatrolStorageUsageDaily,
   PatrolSweepWatermark,
+  PatrolSyncRecoveryGrant,
 };
 
 /**
  * Migration 68's eleven tables, plus Migration 70's evidence exports and live storage metering (P1-C), plus Migration 71's
- * sweep watermarks and reconciliation runs (#67).
+ * sweep watermarks and reconciliation runs (#67), plus Migration 72's sync recovery grants (issue #68).
  */
 export const patrolEntities = [
   PatrolPolicy,
@@ -52,4 +54,5 @@ export const patrolEntities = [
   PatrolStorageUsage,
   PatrolSweepWatermark,
   PatrolReconciliationRun,
+  PatrolSyncRecoveryGrant,
 ];

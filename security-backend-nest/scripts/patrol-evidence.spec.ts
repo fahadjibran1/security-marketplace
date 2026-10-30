@@ -139,7 +139,7 @@ async function main() {
   const migrate = new DataSource({ ...base, entities: [], migrations: allFiles.map((f) => path.join(migrationsDir, f)), dropSchema: true } as never);
   await migrate.initialize();
   const migrated = await migrate.runMigrations({ transaction: 'each' });
-  assert.equal(migrated[migrated.length - 1]?.name, 'AddPatrolSweepReconciliation1720900000017', 'the head is Migration 71');
+  assert.equal(migrated[migrated.length - 1]?.name, 'AddPatrolSyncRecoveryGrants1720900000018', 'the head is Migration 72');
   await migrate.destroy();
 
   const { AppModule } = await import('../src/app.module');

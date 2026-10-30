@@ -1,7 +1,7 @@
 import { Type } from 'class-transformer';
 import { ArrayMaxSize, ArrayMinSize, ArrayUnique, IsArray, IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
 import { IsInstantString } from '../../common/validators/is-instant-string.validator';
-import { PATROL_CLIENT_ID_PATTERN, PATROL_HOLD_SCOPES } from '../patrol-constants';
+import { PATROL_CLIENT_ID_PATTERN, PATROL_HOLD_SCOPES, PATROL_RECOVERY_GRANT_MAX_HOURS } from '../patrol-constants';
 import { PATROL_EVIDENCE_ACCESS_PURPOSES, PATROL_EXPORT_MAX_RUN_IDS, PATROL_EXPORT_PURPOSES } from '../evidence/patrol-evidence-shared';
 import { PatrolLocationProbe } from './patrol.dto';
 
@@ -111,6 +111,38 @@ export class CreatePatrolEvidenceExportDto {
 export class PatrolEvidenceHoldsQueryDto {
   @IsOptional() @IsIn(['active', 'all'])
   status?: string;
+}
+
+/**
+ * An exceptional offline recovery grant (issue #68): one Guard, one shift, time-boxed, with a mandatory reason. guardId
+ * defaults to the shift's Guard; another Guard is accepted only if they recorded attendance or patrols on that shift.
+ */
+export class CreatePatrolRecoveryGrantDto {
+  @IsInt() @Min(1)
+  shiftId!: number;
+
+  @IsOptional() @IsInt() @Min(1)
+  guardId?: number;
+
+  /** How long the grant lasts from now: default 24 h, at most 72 h. */
+  @IsOptional() @IsInt() @Min(1) @Max(PATROL_RECOVERY_GRANT_MAX_HOURS)
+  durationHours?: number;
+
+  @IsString() @MinLength(3) @MaxLength(1000)
+  reason!: string;
+}
+
+export class RevokePatrolRecoveryGrantDto {
+  @IsString() @MinLength(3) @MaxLength(1000)
+  reason!: string;
+}
+
+export class PatrolRecoveryGrantsQueryDto {
+  @IsOptional() @IsIn(['active', 'all'])
+  status?: string;
+
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1)
+  shiftId?: number;
 }
 
 export class PatrolEvidenceListQueryDto {

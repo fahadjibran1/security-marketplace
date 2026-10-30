@@ -60,7 +60,7 @@ cannot ship over the air, and OTA is off for this app anyway. Device testing is 
 | --- | --- | --- |
 | pending | not yet accepted | **never expires** — kept through restarts, Book Off, sign-out, until sent or refused |
 | done | the server accepted it (a photo: the server **verified** it) | the row 7 days (on-phone history); a photo file is deleted at verification |
-| refused | `PATROL_SYNC_WINDOW_CLOSED`, `PATROL_SYNC_NOT_BOOKED_ON`, `PATROL_SHIFT_NOT_IN_PROGRESS` | row **and photo** kept **14 days after the refusal**, shown as "Could not be sent — contact your control room", then removed. Recovery beyond the window is issue #68 (owner-approved design, not built). |
+| refused | `PATROL_SYNC_WINDOW_CLOSED`, `PATROL_SYNC_NOT_BOOKED_ON`, `PATROL_SHIFT_NOT_IN_PROGRESS` | row **and photo** kept **14 days after the refusal**, shown as "Could not be sent — contact your control room", then removed. Never retried automatically. **Recovery beyond the window (#68):** an Owner / Admin issues a recovery grant for the shift on the dashboard; a `PATROL_SYNC_WINDOW_CLOSED` refusal (and the steps that settled with it) shows **Send again**, which re-queues exactly those rows with the same client ids and runs one eager pass — accepted under the grant, or refused again and kept (the 14 days restart). Other refusals and failures are never re-sent. |
 | failed | any other permanent answer (409 payload mismatch, rejected photo, 404 …) | as refused |
 
 Queued evidence is **never** discarded on sign-out or Book Off: neither the sign-out path nor the session store touches
