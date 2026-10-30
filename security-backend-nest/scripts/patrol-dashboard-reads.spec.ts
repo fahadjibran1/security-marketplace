@@ -6,6 +6,11 @@
  *   PD-76-01  one checkpoint count: the History list and the run detail report the SAME checkpointsVisited /
  *             checkpointsTotal, computed by the server with the checkpoint_missed rule's definition (distinct
  *             checkpoints with an unflagged scan; a duplicate / off-route / other-site scan never counts)
+ *   PD-77-01  site-local day bounds: 25 h on 26 Oct 2025, 23 h on 30 Mar 2025 (Europe/London), BST, GMT, another zone
+ *   PD-77-02  History (dateBasis=site_local) across the 26 Oct 2025 clocks-back day; the UTC default is unchanged
+ *   PD-77-03  History across the 30 Mar 2025 clocks-forward day; inclusive ranges
+ *   PD-77-04  all sites: each run on its OWN site's day (New York vs London); tenant isolation; patrols.view; validation
+ *   PD-77-05  the Overview on the site-local day (runs, flagged scans), the UTC default unchanged, today by default
  *
  * Needs PATROL_DASHBOARD_DATABASE_URL pointing at a DISPOSABLE local database — it drops the schema.
  */
@@ -85,6 +90,7 @@ async function main() {
   app.get(SafetyAlertService).onModuleDestroy();
   const auth = app.get(AuthService);
   const S = await import('../src/patrol/patrol-state');
+  const W = await import('../src/patrol/patrol-window.service');
 
   const q = (sql: string, params: unknown[] = []) => ds.query(sql, params);
   const one = async (sql: string, params: unknown[] = []) => (await q(sql, params))[0];
@@ -214,6 +220,86 @@ async function main() {
       expect(await api('GET', `/patrols/runs/${run.id}`, tokOwnerB), 404, 'PATROL_NOT_FOUND', 'another company');
       await q(`DELETE FROM patrol_checkpoint_visits WHERE "runId" = ANY($1::int[])`, [[run.id, bare.id]]);
       await q(`DELETE FROM patrol_runs WHERE id = ANY($1::int[])`, [[run.id, bare.id]]);
+    });
+
+    // ═══════════════════ #77 site-local days ═══════════════════
+    await test('PD-77-01-SITE-DAY-BOUNDS-ARE-23-OR-25-HOURS-ON-UK-DST-DAYS', () => {
+      const span = (d: string, tz = 'Europe/London') => { const b = W.siteDayBounds(d, tz); return [b.start.toISOString(), b.end.toISOString()]; };
+      assert.deepEqual(span('2025-10-26'), ['2025-10-25T23:00:00.000Z', '2025-10-27T00:00:00.000Z'], 'clocks back: 25 hours');
+      assert.deepEqual(span('2025-03-30'), ['2025-03-30T00:00:00.000Z', '2025-03-30T23:00:00.000Z'], 'clocks forward: 23 hours');
+      assert.deepEqual(span('2025-07-01'), ['2025-06-30T23:00:00.000Z', '2025-07-01T23:00:00.000Z'], 'BST');
+      assert.deepEqual(span('2025-12-01'), ['2025-12-01T00:00:00.000Z', '2025-12-02T00:00:00.000Z'], 'GMT');
+      assert.deepEqual(span('2025-10-26', 'UTC'), ['2025-10-26T00:00:00.000Z', '2025-10-27T00:00:00.000Z']);
+      assert.deepEqual(span('2025-11-02', 'America/New_York'), ['2025-11-02T04:00:00.000Z', '2025-11-03T05:00:00.000Z'], 'another zone, its own DST');
+    });
+
+    const dstSite = await mkSite(A.id, 'Alpha DST Wharf');
+    const nySite = await mkSite(A.id, 'Alpha Hudson Pier', 'America/New_York');
+    const at = async (siteId: number, startedAt: string, status = 'completed') =>
+      Number((await insRun({ companyId: A.id, siteId, shiftId: shiftA, guard: gA, status, startedAt: Z(startedAt) })).id);
+    const ids = (r: Res) => r.body.items.map((x: any) => x.id).sort((a: number, b: number) => a - b);
+    const runs = async (qs: string, tok = tokViewerA) => { const r = await api('GET', `/patrols/runs?pageSize=100&${qs}`, tok); expect(r, 200, undefined, qs); return ids(r); };
+
+    await test('PD-77-02-HISTORY-SITE-LOCAL-DAYS-ACROSS-THE-26-OCT-2025-CLOCKS-BACK', async () => {
+      const lateOn25 = await at(dstSite, '2025-10-25T22:59:59Z'); // 23:59:59 BST on the 25th
+      const midnight = await at(dstSite, '2025-10-25T23:00:00Z'); // 00:00 BST on the 26th
+      const repeated = await at(dstSite, '2025-10-26T01:30:00Z'); // 01:30 GMT, after the repeated hour
+      const lateOn26 = await at(dstSite, '2025-10-26T23:30:00Z'); // 23:30 GMT on the 26th
+      const on27 = await at(dstSite, '2025-10-27T00:00:00Z');
+      const sorted = (xs: number[]) => [...xs].sort((a, b) => a - b);
+      assert.deepEqual(await runs(`siteId=${dstSite}&from=2025-10-26&to=2025-10-26&dateBasis=site_local`), sorted([midnight, repeated, lateOn26]), 'the 25-hour London day');
+      assert.deepEqual(await runs(`siteId=${dstSite}&from=2025-10-25&to=2025-10-25&dateBasis=site_local`), [lateOn25]);
+      assert.deepEqual(await runs(`siteId=${dstSite}&from=2025-10-27&dateBasis=site_local`), [on27], 'open end');
+      assert.deepEqual(await runs(`siteId=${dstSite}&to=2025-10-25&dateBasis=site_local`), [lateOn25], 'open start');
+      assert.deepEqual(await runs(`siteId=${dstSite}&from=2025-10-26&to=2025-10-26`), sorted([repeated, lateOn26]), 'the default UTC basis is unchanged');
+      assert.deepEqual(await runs(`siteId=${dstSite}&from=2025-10-27&to=2025-10-26&dateBasis=site_local`), [], 'from after to: nothing');
+    });
+
+    await test('PD-77-03-HISTORY-SITE-LOCAL-DAYS-ACROSS-THE-30-MAR-2025-CLOCKS-FORWARD', async () => {
+      const on29 = await at(dstSite, '2025-03-29T23:59:00Z'); // 23:59 GMT on the 29th
+      const first = await at(dstSite, '2025-03-30T00:00:00Z'); // 00:00 GMT on the 30th
+      const last = await at(dstSite, '2025-03-30T22:59:00Z'); // 23:59 BST on the 30th
+      const on31 = await at(dstSite, '2025-03-30T23:00:00Z'); // 00:00 BST on the 31st
+      assert.deepEqual(await runs(`siteId=${dstSite}&from=2025-03-30&to=2025-03-30&dateBasis=site_local`), [first, last], 'the 23-hour London day');
+      assert.deepEqual(await runs(`siteId=${dstSite}&from=2025-03-31&to=2025-03-31&dateBasis=site_local`), [on31]);
+      assert.deepEqual(await runs(`siteId=${dstSite}&from=2025-03-29&to=2025-03-30&dateBasis=site_local`), [on29, first, last], 'an inclusive range');
+      assert.deepEqual(await runs(`siteId=${dstSite}&from=2025-03-30&to=2025-03-30`), [first, last, on31], 'UTC: 23:00Z is still the 30th');
+    });
+
+    await test('PD-77-04-ALL-SITES-EACH-RUN-ON-ITS-OWN-SITE-DAY-AND-TENANT-SCOPED', async () => {
+      const ny = await at(nySite, '2025-10-26T03:30:00Z'); // 23:30 EDT on 25 Oct in New York (04:30 GMT on the 26th in London)
+      const london = await runs(`from=2025-10-26&to=2025-10-26&dateBasis=site_local`);
+      assert.ok(!london.includes(ny), 'New York is still on the 25th');
+      assert.ok((await runs(`from=2025-10-25&to=2025-10-25&dateBasis=site_local`)).includes(ny));
+      assert.ok((await runs(`from=2025-10-26&to=2025-10-26`)).includes(ny), 'a UTC day would have put it on the 26th');
+      // Company B never sees A's runs, and A's site filter does not reach B's site.
+      const bRun = Number((await insRun({ companyId: B.id, siteId: bSite, shiftId: shiftB, guard: gB, status: 'completed', startedAt: Z('2025-10-26T10:00:00Z') })).id);
+      assert.ok(!(await runs(`from=2025-10-26&to=2025-10-26&dateBasis=site_local`)).includes(bRun));
+      assert.deepEqual(await runs(`siteId=${bSite}&from=2025-10-26&to=2025-10-26&dateBasis=site_local`), [], "another company's site: nothing");
+      assert.deepEqual(await runs(`from=2025-10-26&to=2025-10-26&dateBasis=site_local`, tokOwnerB), [bRun]);
+      expect(await api('GET', `/patrols/runs?from=2025-10-26&dateBasis=site_local`, tokFinanceA), 403, 'PATROL_FORBIDDEN', 'no patrols.view');
+      expect(await api('GET', `/patrols/runs?dateBasis=local`, tokViewerA), 400, undefined, 'an unknown basis');
+    });
+
+    await test('PD-77-05-OVERVIEW-ON-THE-SITE-LOCAL-DAY', async () => {
+      const ov = async (qs: string) => { const r = await api('GET', `/patrols/overview?${qs}`, tokViewerA); expect(r, 200, undefined, qs); return r.body; };
+      const runOn26 = (await q(`SELECT id FROM patrol_runs WHERE "siteId" = $1 AND "startedAtServer" = $2`, [dstSite, Z('2025-10-25T23:00:00Z')]))[0].id;
+      const cp = await mkCheckpoint(A.id, dstSite, 'Wharf gate');
+      const v = await insVisit(A.id, runOn26, cp, 'flagged', Z('2025-10-25T23:10:00Z'), ['tampered_signature']);
+      await q(`UPDATE patrol_checkpoint_visits SET "receivedAtServer" = $2 WHERE id = $1`, [v.id, Z('2025-10-25T23:30:00Z')]);
+      const local = await ov(`siteId=${dstSite}&date=2025-10-26&dateBasis=site_local`);
+      assert.deepEqual([local.date, local.dateBasis, local.timeZone, local.runsStarted, local.runsByStatus.completed, local.flaggedScans],
+        ['2025-10-26', 'site_local', 'Europe/London', 3, 3, 1], 'the 25-hour site day');
+      const utc = await ov(`siteId=${dstSite}&date=2025-10-26`);
+      assert.deepEqual([utc.dateBasis, utc.timeZone, utc.runsStarted, utc.flaggedScans], ['utc', null, 2, 0], 'the UTC default is unchanged');
+      const spring = await ov(`siteId=${dstSite}&date=2025-03-30&dateBasis=site_local`);
+      assert.equal(spring.runsStarted, 2, 'the 23-hour site day');
+      const all = await ov(`date=2025-10-25&dateBasis=site_local`);
+      assert.equal(all.timeZone, null, 'all sites: each on its own zone');
+      assert.ok(all.runsStarted >= 2, 'London 23:59:59 BST and New York 23:30 EDT are both on the 25th');
+      const today = await ov(`siteId=${dstSite}&dateBasis=site_local`);
+      assert.equal(today.date, W.localDateOf(new Date(), 'Europe/London'), "today at the site by default");
+      expect(await api('GET', `/patrols/overview?dateBasis=site_local`, tokFinanceA), 403, 'PATROL_FORBIDDEN');
     });
   } finally {
     await app.close();

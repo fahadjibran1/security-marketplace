@@ -6,8 +6,10 @@ import type { PatrolPageContext } from './patrolContext';
 import {
   buildPatrolKpis,
   exceptionTypeLabel,
+  formatPatrolDate,
   formatPatrolDateTime,
-  utcDateKey,
+  overviewDayBasisLabel,
+  siteTodayKey,
 } from './patrolPresentation';
 import { Badge, Notice, PatrolPanel, ResourceState, RowCard, ui, usePatrolResource } from './patrolUi';
 
@@ -16,13 +18,16 @@ import { Badge, Notice, PatrolPanel, ResourceState, RowCard, ui, usePatrolResour
  * provide reads "Not available"; nothing is estimated. Polls modestly while on screen.
  */
 export function PatrolOverviewTab({ ctx }: { ctx: PatrolPageContext }) {
-  const today = utcDateKey();
-  const key = `${ctx.companyKey}|${ctx.siteId ?? 'all'}|${today}`;
-  const overview = usePatrolResource(`ov|${key}`, () => getPatrolOverview({ siteId: ctx.siteId, date: today }), { poll: true });
+  // #77: the site-local day (the chosen site's zone; Europe/London across all sites, where the server judges each site on
+  // its own day). Requests carry the date and dateBasis 'site_local'; the server turns it into that day's instants.
+  const zone = ctx.siteZone(ctx.siteId);
+  const today = siteTodayKey(zone);
+  const key = `${ctx.companyKey}|${ctx.siteId ?? 'all'}|${today}|site_local`;
+  const overview = usePatrolResource(`ov|${key}`, () => getPatrolOverview({ siteId: ctx.siteId, date: today, dateBasis: 'site_local' }), { poll: true });
   const exceptions = usePatrolResource(`ex|${key}`, () => listPatrolExceptions({ siteId: ctx.siteId }), { poll: true });
-  const todaysRuns = usePatrolResource(`tr|${key}`, () => listPatrolRuns({ siteId: ctx.siteId, from: today, to: today, pageSize: 100 }), { poll: true });
+  const todaysRuns = usePatrolResource(`tr|${key}`, () => listPatrolRuns({ siteId: ctx.siteId, from: today, to: today, dateBasis: 'site_local', pageSize: 100 }), { poll: true });
 
-  const kpis = buildPatrolKpis({ overview: overview.data, exceptions: exceptions.data, todaysRuns: todaysRuns.data });
+  const kpis = buildPatrolKpis({ overview: overview.data, exceptions: exceptions.data, todaysRuns: todaysRuns.data, siteZone: ctx.siteZone });
   const open = (exceptions.data ?? []).filter((e) => e.status !== 'resolved').slice(0, 10);
   const state = ResourceState({ resource: overview, empty: false, emptyMessage: '', what: 'the patrol overview' });
 
@@ -31,7 +36,7 @@ export function PatrolOverviewTab({ ctx }: { ctx: PatrolPageContext }) {
       {state}
       {overview.data ? (
         <Text style={ui.muted}>
-          Figures for {overview.data.date} (UTC day){ctx.siteId ? ` · ${ctx.siteName(ctx.siteId)}` : ' · all sites'}. Updated every 30 seconds while this page is open.
+          Figures for {formatPatrolDate(overview.data.date)} ({overviewDayBasisLabel(overview.data, zone, ctx.siteId != null)}){ctx.siteId ? ` · ${ctx.siteName(ctx.siteId)}` : ' · all sites'}. Updated every 30 seconds while this page is open.
         </Text>
       ) : null}
       <View style={ui.grid} accessibilityLabel="Patrol KPIs">

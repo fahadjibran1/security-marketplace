@@ -5,30 +5,45 @@ import { PATROL_RUN_STATUSES, type PatrolRunStatus } from '../../types/patrols';
 import { Button } from '../ui/Button';
 import type { PatrolPageContext } from './patrolContext';
 import { PatrolEvidenceList } from './PatrolEvidenceList';
-import { formatPatrolDateTime, runCheckpointProgress, runFlagBadges, runStatusLabel, runTone, verificationLabel } from './patrolPresentation';
-import { Badge, BadgeRow, ChipSelect, Notice, PatrolPanel, ResourceState, RowCard, TextField, ui, usePatrolResource } from './patrolUi';
+import { NativeDateInput } from '../company/NativeDateInput';
+import { FormField } from '../ui/FormField';
+import { formatPatrolDateTime, historyDateFilter, runCheckpointProgress, runFlagBadges, runStatusLabel, runTone, verificationLabel } from './patrolPresentation';
+import { Badge, BadgeRow, ChipSelect, Notice, PatrolPanel, ResourceState, RowCard, ui, usePatrolResource } from './patrolUi';
 
-const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 const PAGE_SIZE = 25;
 
 type Filters = { from: string; to: string; status: PatrolRunStatus | '' };
 
+/**
+ * #77: the From / To dates are SITE-LOCAL calendar dates from the dashboard's date picker, sent as dates with dateBasis
+ * 'site_local'; the server bounds each run by its own site's day (DST-safe). See historyDateFilter.
+ */
 function useRunPage(ctx: PatrolPageContext, filters: Filters, page: number) {
-  const from = DATE_ONLY.test(filters.from.trim()) ? filters.from.trim() : null;
-  const to = DATE_ONLY.test(filters.to.trim()) ? filters.to.trim() : null;
+  const { from, to, dateBasis } = historyDateFilter(filters.from, filters.to);
   return usePatrolResource(
-    `hist|${ctx.companyKey}|${ctx.siteId ?? 'all'}|${from}|${to}|${filters.status}|${page}`,
-    () => listPatrolRuns({ siteId: ctx.siteId, from, to, status: filters.status || null, page, pageSize: PAGE_SIZE }),
+    `hist|${ctx.companyKey}|${ctx.siteId ?? 'all'}|${from}|${to}|${dateBasis}|${filters.status}|${page}`,
+    () => listPatrolRuns({ siteId: ctx.siteId, from, to, dateBasis, status: filters.status || null, page, pageSize: PAGE_SIZE }),
   );
 }
 
-function RunFilters({ filters, setFilters }: { filters: Filters; setFilters: (f: Filters) => void }) {
+function RunFilters({ ctx, filters, setFilters }: { ctx: PatrolPageContext; filters: Filters; setFilters: (f: Filters) => void }) {
+  const { problem } = historyDateFilter(filters.from, filters.to);
+  const basis = ctx.siteId ? `site time, ${ctx.siteZone(ctx.siteId)}` : "each site's local time";
   return (
     <View style={{ gap: 8 }}>
       <View style={ui.grid}>
-        <View style={{ flexGrow: 1, minWidth: 160 }}><TextField label="From (YYYY-MM-DD, UTC)" value={filters.from} onChangeText={(v) => setFilters({ ...filters, from: v })} /></View>
-        <View style={{ flexGrow: 1, minWidth: 160 }}><TextField label="To (YYYY-MM-DD, UTC)" value={filters.to} onChangeText={(v) => setFilters({ ...filters, to: v })} /></View>
+        <View style={{ flexGrow: 1, minWidth: 160 }}>
+          <FormField label="From (site date)" helperText={`Patrols started on or after this day (${basis}).`}>
+            <NativeDateInput value={filters.from} onChange={(v) => setFilters({ ...filters, from: v })} accessibilityLabel="From date" />
+          </FormField>
+        </View>
+        <View style={{ flexGrow: 1, minWidth: 160 }}>
+          <FormField label="To (site date)" helperText={`Patrols started on or before this day (${basis}).`}>
+            <NativeDateInput value={filters.to} onChange={(v) => setFilters({ ...filters, to: v })} accessibilityLabel="To date" />
+          </FormField>
+        </View>
       </View>
+      {problem ? <Notice tone="error" message={problem} /> : null}
       <ChipSelect
         label="Status"
         scroll
@@ -60,7 +75,7 @@ export function PatrolHistoryTab({ ctx }: { ctx: PatrolPageContext }) {
   const items = runs.data?.items ?? [];
   return (
     <View style={{ gap: 12 }}>
-      <RunFilters filters={filters} setFilters={setFilters} />
+      <RunFilters ctx={ctx} filters={filters} setFilters={setFilters} />
       {ResourceState({ resource: runs, empty: runs.data != null && items.length === 0, emptyMessage: 'No patrols match these filters.', what: 'patrols' })}
       {runs.error && runs.data ? <Notice tone="error" message={runs.error} /> : null}
       {items.map((run) => (
@@ -97,7 +112,7 @@ export function PatrolEvidenceTab({ ctx }: { ctx: PatrolPageContext }) {
   return (
     <View style={{ gap: 12 }}>
       <Text style={ui.muted}>Photos open through a short-lived link and each view is recorded. Links are never saved.</Text>
-      <RunFilters filters={filters} setFilters={setFilters} />
+      <RunFilters ctx={ctx} filters={filters} setFilters={setFilters} />
       {ResourceState({ resource: runs, empty: runs.data != null && items.length === 0, emptyMessage: 'No patrols match these filters.', what: 'patrols' })}
       <View style={ctx.layout.mode === 'desktop' ? { flexDirection: 'row', gap: 16, alignItems: 'flex-start' } : { gap: 12 }}>
         <View style={{ flex: 1, gap: 8, minWidth: 260 }}>

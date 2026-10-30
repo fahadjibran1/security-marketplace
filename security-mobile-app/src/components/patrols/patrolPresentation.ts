@@ -150,9 +150,35 @@ export function formatClockDrift(ms: number | null | undefined): string {
   return `Device clock ${ms > 0 ? 'behind' : 'ahead'} by ${amount}`;
 }
 
-/** Today as YYYY-MM-DD in UTC: the overview's own date basis (dateBasis: 'utc'). */
-export function utcDateKey(now: Date = new Date()): string {
-  return now.toISOString().slice(0, 10);
+/**
+ * Today as YYYY-MM-DD at a site (#77): the dashboard's day basis (dateBasis: 'site_local'). At 23:30Z on 25 Oct 2025 it
+ * is already the 26th in London (BST); at 23:30Z on 30 Mar 2025 already the 31st.
+ */
+export function siteTodayKey(timeZone: string | null | undefined, now: Date = new Date()): string {
+  return zonedDateKey(now.toISOString(), timeZone) ?? now.toISOString().slice(0, 10);
+}
+
+/** How the Overview names its day: the basis the SERVER answered with (an older API answers 'utc'). */
+export function overviewDayBasisLabel(overview: Pick<PatrolOverview, 'dateBasis' | 'timeZone'>, zone: string, oneSite: boolean): string {
+  if (overview.dateBasis !== 'site_local') return 'UTC day';
+  return oneSite ? `site-local day, ${overview.timeZone || zone}` : "each site's local day";
+}
+
+/**
+ * The History date filters (#77). The picker gives SITE-LOCAL calendar dates (YYYY-MM-DD); they are sent as dates with
+ * dateBasis 'site_local' and the server turns each into its site's own day instants (midnight to the next midnight,
+ * 23 or 25 hours on a DST day), so the client never converts a date with a fixed offset. A half-typed or invalid entry
+ * is not sent; a range that ends before it starts is said so.
+ */
+export function historyDateFilter(from: string, to: string): { from: string | null; to: string | null; dateBasis: 'site_local' | null; problem: string | null } {
+  const f = DATE_ONLY.test(from.trim()) ? from.trim() : null;
+  const t = DATE_ONLY.test(to.trim()) ? to.trim() : null;
+  return {
+    from: f,
+    to: t,
+    dateBasis: f || t ? 'site_local' : null,
+    problem: f && t && f > t ? 'The "From" date is after the "To" date, so no patrol can match.' : null,
+  };
 }
 
 /** YYYY-MM-DD in a site's time zone. */
@@ -203,8 +229,9 @@ function countLabel(n: number, lowerBound: boolean): string {
 
 /**
  * The Overview figures, ONLY from real responses:
- *   - the overview endpoint (UTC day): runs by status, live runs, flagged scans, open exceptions, configuration counts;
- *   - the exceptions list: today's missed / abandoned / incomplete windows (created on the overview's UTC date);
+ *   - the overview endpoint (the site-local day, #77): runs by status, live runs, flagged scans, open exceptions,
+ *     configuration counts;
+ *   - the exceptions list: today's missed / abandoned / incomplete windows (created on the overview's date, on its basis);
  *   - today's runs page: runs still awaiting verification (a lower bound when the page is not the whole day).
  * Windows due is not reported by the API, so it is shown as not available rather than estimated.
  */
@@ -212,6 +239,8 @@ export function buildPatrolKpis(input: {
   overview: PatrolOverview | null;
   exceptions: PatrolException[] | null;
   todaysRuns: PatrolRunsPage | null;
+  /** Each site's zone, for the site-local day of an exception. */
+  siteZone?: (siteId: number | null | undefined) => string;
 }): PatrolKpi[] {
   const { overview, exceptions, todaysRuns } = input;
   const na = (id: string, label: string, note = 'Not available'): PatrolKpi => ({ id, label, value: '—', available: false, tone: 'neutral', note });
@@ -231,7 +260,11 @@ export function buildPatrolKpis(input: {
   }
   if (exceptions && overview) {
     const lowerBound = exceptions.length >= PATROL_EXCEPTIONS_PAGE_LIMIT;
-    const today = exceptions.filter((e) => (e.createdAt || '').slice(0, 10) === overview.date);
+    // The exception's day on the overview's own basis: its site's local day (#77), or the UTC day.
+    const dayOf = (e: PatrolException) => (overview.dateBasis === 'site_local'
+      ? zonedDateKey(e.createdAt, input.siteZone ? input.siteZone(e.siteId) : 'Europe/London')
+      : (e.createdAt || '').slice(0, 10));
+    const today = exceptions.filter((e) => dayOf(e) === overview.date);
     const count = (type: string) => today.filter((e) => e.type === type).length;
     const missed = count('patrol_missed');
     const abandoned = count('patrol_abandoned');

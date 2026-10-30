@@ -219,6 +219,8 @@ export interface PatrolRunsQuery {
   from?: string | null;
   to?: string | null;
   status?: PatrolRunStatus | null;
+  /** How from / to are read: the UTC day (API default) or each run's site-local day (#77). */
+  dateBasis?: 'utc' | 'site_local' | null;
   page?: number;
   pageSize?: number;
 }
@@ -312,7 +314,10 @@ export interface PatrolRunDetail {
 
 export interface PatrolOverview {
   date: string;
-  dateBasis: 'utc';
+  /** utc (the API default) or site_local: each site's own local day (#77). */
+  dateBasis: 'utc' | 'site_local';
+  /** site_local with one site: its zone; null otherwise. Absent from an older API. */
+  timeZone?: string | null;
   siteId: number | null;
   runsStarted: number;
   runsByStatus: Record<PatrolRunStatus, number>;
