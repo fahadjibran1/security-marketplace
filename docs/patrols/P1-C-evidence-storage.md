@@ -42,6 +42,26 @@ retentionStatus   active ─claim→ claimed ─move→ quarantined ─purge→ 
 * Certified by `scripts/patrol-evidence.spec.ts` (PE-P01 observes the database state at the moment of every storage
   DELETE; PE-P02 injects storage failures).
 
+## Photo previews in the dashboard (issue #79)
+
+* `GET /patrols/runs/:id/evidence/thumbnails?page=&pageSize=` (patrols.evidence; page size default 12, max 24): for one
+  page of the run's photos, in the metadata order, the SAME short-lived presigned GET of the stored photo that
+  `/patrols/evidence/:id/download` issues, for each photo that rule allows (verified, `active` / `claimed`, key of this
+  company); every other photo is listed with `url: null`. ONE audit entry per page view
+  (`patrol.evidence_thumbnails_accessed`, entity `patrol_run`, purpose `browse`, the photo ids granted, TTL — never a URL);
+  nothing granted, nothing audited. Opening a photo full-size is still `download` with a stated purpose, audited per photo.
+* The dashboard draws the links at 56 px with the browser's native lazy loading (`<img loading="lazy">`, no referrer),
+  a page at a time, keeps them in memory only and discards them at expiry (asked for again only on request).
+* **Why no server-generated thumbnail objects:** the Guard app already re-encodes every photo to JPEG, long edge ≤ 2048 px,
+  quality 0.7 (typically a few hundred KB), so a page of 12 lazy-loaded photos is modest. Writing downscaled copies would
+  need an image-decoding dependency on the server (a native library parsing untrusted uploads) and a second object per
+  photo in every retention, hold, quarantine, purge, restore, metering and export path. Serving the original keeps one
+  object per photo: a preview is covered by exactly the photo's retention, holds and deletion, with no migration. If
+  photo sizes grow (or HEIC/PNG uploads become common — browsers other than Safari cannot draw HEIC; the tile then says
+  "No preview" and the full photo still opens), revisit with stored thumbnails.
+* Certified by `scripts/patrol-evidence-thumbnails.spec.ts` (backend) and PM-19–PM-22 in
+  `security-mobile-app/scripts/patrol-management-ui.spec.cjs` (dashboard).
+
 ## Metadata and privacy
 
 * EXIF / XMP are not parsed. The JPEG walk reads only segment lengths to find the frame header. No location metadata is

@@ -388,6 +388,21 @@ export interface PatrolSignedLink {
   expiresAt: string;
 }
 
+/**
+ * One page of a run's photo previews (issue #79): GET /patrols/runs/:id/evidence/thumbnails. Each viewable photo carries
+ * the same short-lived link as a single view; anything else has url null. One audit entry per page (purpose browse).
+ * Held in memory only until expiresAt; never logged, stored or cached.
+ */
+export interface PatrolEvidenceThumbnailPage {
+  runId: number;
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+  expiresAt: string | null;
+  items: Array<{ evidenceId: number; url: string | null; expiresAt: string | null }>;
+}
+
 export interface PatrolStorageSite {
   siteId: number;
   siteName: string | null;

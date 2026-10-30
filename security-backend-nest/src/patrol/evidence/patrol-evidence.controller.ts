@@ -10,6 +10,7 @@ import {
   CreatePatrolEvidenceHoldDto,
   PatrolEvidenceAccessQueryDto,
   PatrolEvidenceReasonDto,
+  PatrolEvidenceThumbnailsQueryDto,
   ReleasePatrolEvidenceHoldDto,
   RequestPatrolEvidenceUploadDto,
 } from '../dto/patrol-evidence.dto';
@@ -35,6 +36,16 @@ export class PatrolEvidenceController {
   @Header('Cache-Control', 'no-store')
   download(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number, @Query() q: PatrolEvidenceAccessQueryDto) {
     return this.evidence.download(user, id, q.purpose);
+  }
+
+  /**
+   * patrols.evidence (issue #79): one page of a run's photos as short-lived links for small, lazy-loaded previews. One
+   * audit entry per page (purpose browse). Viewer has no patrols.evidence: 403, and the dashboard never asks.
+   */
+  @Get('runs/:id/evidence/thumbnails')
+  @Header('Cache-Control', 'no-store')
+  thumbnails(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number, @Query() q: PatrolEvidenceThumbnailsQueryDto) {
+    return this.evidence.thumbnails(user, id, q);
   }
 
   /** patrols.holds (Owner / Admin): delete through the state machine (quarantined, recoverable until the purge). */
