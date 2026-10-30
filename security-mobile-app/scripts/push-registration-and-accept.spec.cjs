@@ -182,6 +182,13 @@ function loadWith(relativePath, { overrides = {}, notifications }) {
       // Device modules the dashboard imports (document upload, location); never used by these tests.
       if (request === 'expo-document-picker') return { getDocumentAsync: async () => ({ canceled: true }) };
       if (request === 'expo-location') return { requestForegroundPermissionsAsync: async () => ({ granted: false }), getCurrentPositionAsync: async () => null };
+      // Patrols (S4 1.2.0): the dashboard's patrol panel reaches the camera / SQLite / file-system / image / crypto
+      // modules; never used by these tests (scripts/guard-patrols.spec.cjs executes the patrol code).
+      if (['expo-camera', 'expo-sqlite', 'expo-file-system', 'expo-file-system/legacy', 'expo-image-manipulator', 'expo-crypto'].includes(request)) {
+        const Unused = () => null;
+        class StubPath { constructor(...parts) { this.uri = 'file:///stub/' + parts.map((p) => (typeof p === 'string' ? p : p.uri.slice(13))).join('/'); this.exists = false; } list() { return []; } }
+        return { CameraView: Unused, useCameraPermissions: () => [null, async () => null], openDatabaseAsync: async () => ({ execAsync: async () => undefined, runAsync: async () => undefined, getAllAsync: async () => [] }), Directory: StubPath, File: StubPath, Paths: { document: new StubPath('document'), cache: new StubPath('cache') }, ImageManipulator: {}, SaveFormat: {}, CryptoDigestAlgorithm: {}, FileSystemSessionType: {}, FileSystemUploadType: {}, uploadAsync: async () => ({ status: 0 }), randomUUID: () => 'unused', digest: async () => new ArrayBuffer(0) };
+      }
       if (request === 'expo-constants') return { __esModule: true, default: { expoConfig: { version: '1.2.0', extra: { eas: { projectId: 'project-1' } } } } };
       if (request === 'react-native-safe-area-context') {
         const Pass = ({ children }) => h(React.Fragment, null, children);
