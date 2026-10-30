@@ -44,7 +44,7 @@ function loadApi({ timers } = {}) {
     module: mod,
     require: (id) => {
       if (id === 'expo-constants') return { default: { expoConfig: { extra: { apiBaseUrl: 'https://test.example' } } } };
-      if (id.endsWith('api-base-url')) return { resolveApiBaseUrl: () => 'https://test.example' };
+      if (id.endsWith('api-base-url')) return { resolveApiBaseUrl: () => 'https://test.example', isUatBuild: () => false, resolveUatApiBaseUrl: () => ({ ok: false, reason: 'store-app spec' }) };
       if (id.endsWith('models')) return {};
       return require(id);
     },

@@ -1,5 +1,5 @@
 import Constants from 'expo-constants';
-import { resolveApiBaseUrl } from './api-base-url';
+import { isUatBuild, resolveApiBaseUrl, resolveUatApiBaseUrl } from './api-base-url';
 import type { TimesheetHistoryItem } from './timesheetReview';
 import {
   Attachment,
@@ -173,11 +173,33 @@ const hasBrowserWindow =
   typeof window !== 'undefined' &&
   typeof window.location !== 'undefined' &&
   typeof window.location.hostname === 'string';
-const API_BASE_URL = resolveApiBaseUrl({
-  environmentUrl: process.env.EXPO_PUBLIC_API_URL,
-  configuredUrl: Constants.expoConfig?.extra?.apiBaseUrl as string | undefined,
-  webHostname: hasBrowserWindow ? window.location.hostname : undefined,
-});
+const configuredApiUrl = Constants.expoConfig?.extra?.apiBaseUrl as string | undefined;
+// The UAT app fails closed: staging or nothing. It never reaches resolveApiBaseUrl and its live-API fallback, so a UAT
+// build with missing or wrong API configuration sends no request anywhere and says why instead.
+const uatApi = isUatBuild({
+  appVariant: Constants.expoConfig?.extra?.appVariant,
+  buildLabel: process.env.EXPO_PUBLIC_BUILD_LABEL,
+  androidPackage: Constants.expoConfig?.android?.package,
+  iosBundleIdentifier: Constants.expoConfig?.ios?.bundleIdentifier,
+})
+  ? resolveUatApiBaseUrl({ environmentUrl: process.env.EXPO_PUBLIC_API_URL, configuredUrl: configuredApiUrl })
+  : null;
+const API_BASE_URL = uatApi
+  ? uatApi.ok
+    ? uatApi.url
+    : ''
+  : resolveApiBaseUrl({
+      environmentUrl: process.env.EXPO_PUBLIC_API_URL,
+      configuredUrl: configuredApiUrl,
+      webHostname: hasBrowserWindow ? window.location.hostname : undefined,
+    });
+const API_CONFIGURATION_ERROR = uatApi && !uatApi.ok ? uatApi.reason : null;
+
+/** Every request URL comes from here, so a refused UAT configuration can never produce one. */
+function apiUrl(path: string): string {
+  if (API_CONFIGURATION_ERROR) throw new NetworkError(API_CONFIGURATION_ERROR);
+  return `${API_BASE_URL}${path}`;
+}
 let accessToken: string | null = null;
 /** Renewable session token. Mirrored into SecureStore by the persister below; never on web. */
 let refreshToken: string | null = null;
@@ -263,12 +285,13 @@ async function request<T>(path: string, options?: RequestInit, retried = false):
     headers.set('Authorization', `Bearer ${accessToken}`);
   }
 
+  const url = apiUrl(path);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 30_000);
 
   let response: Response;
   try {
-    response = await fetch(`${API_BASE_URL}${path}`, {
+    response = await fetch(url, {
       ...options,
       // headers last: it already folds in options.headers via the constructor, and spreading
       // options after it would drop the Authorization header we just set.
@@ -547,7 +570,7 @@ async function refreshAccessToken(): Promise<RefreshOutcome> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30_000);
     try {
-      const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
+      const response = await fetch(apiUrl('/auth/refresh'), {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ refreshToken: presented }),
