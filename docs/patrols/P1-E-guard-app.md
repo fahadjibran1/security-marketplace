@@ -60,7 +60,7 @@ cannot ship over the air, and OTA is off for this app anyway. Device testing is 
 | --- | --- | --- |
 | pending | not yet accepted | **never expires** — kept through restarts, Book Off, sign-out, until sent or refused |
 | done | the server accepted it (a photo: the server **verified** it) | the row 7 days (on-phone history); a photo file is deleted at verification |
-| refused | `PATROL_SYNC_WINDOW_CLOSED`, `PATROL_SYNC_NOT_BOOKED_ON`, `PATROL_SHIFT_NOT_IN_PROGRESS` | row **and photo** kept **14 days after the refusal**, shown as "Could not be sent — contact your control room", then removed. Recovery beyond the window is issue #68 (owner-approved design, not built). |
+| refused | `PATROL_SYNC_WINDOW_CLOSED`, `PATROL_SYNC_NOT_BOOKED_ON`, `PATROL_SHIFT_NOT_IN_PROGRESS` | row **and photo** kept **14 days after the refusal**, shown as "Could not be sent — contact your control room", then removed. Never retried automatically. **Recovery beyond the window (#68):** an Owner / Admin issues a recovery grant for the shift on the dashboard; a `PATROL_SYNC_WINDOW_CLOSED` refusal (and the steps that settled with it) shows **Send again**, which re-queues exactly those rows with the same client ids and runs one eager pass — accepted under the grant, or refused again and kept (the 14 days restart). Other refusals and failures are never re-sent. |
 | failed | any other permanent answer (409 payload mismatch, rejected photo, 404 …) | as refused |
 
 Queued evidence is **never** discarded on sign-out or Book Off: neither the sign-out path nor the session store touches
@@ -75,11 +75,76 @@ the outbox (asserted by the spec).
   not shared storage or the photo library). Only paths inside the signed-in user's folder are read, uploaded or deleted.
 * When Guard B signs in on Guard A's phone, B sees and sends nothing of A's; A's data stays dormant and is sent when A
   signs in again.
+* **What Guard B sees.** Nothing of Guard A's: no item, count, photo or "not sent" notice. B's own patrols go into the
+  same database under B's id and B's own folder `patrol-evidence/u<B>/`; B's queue sends only B's rows, B's retention
+  prune removes only B's rows, and B cannot enqueue, upload or delete a file outside B's folder.
+* **A's dormant items.** While B (or nobody) is signed in, A's pending rows and photos stay untouched in the database and
+  in `patrol-evidence/u<A>/` — through app restarts, B's whole session and the temporary-file sweep (which never touches
+  `patrol-evidence/` and never removes a file any row references). Nothing on the phone sends them.
+* **How A recovers.** A signs in again **on the same phone**: A's queue resumes and sends everything in order, from A's
+  own folder. The server still applies the post-shift rules (P1-B: accepted and flagged for 24 h after Book Off; later
+  writes are refused, kept and shown as "Could not be sent — contact your control room"). If A cannot sign in on that
+  phone in time, the recovery path is the control room / issue #68 — the data cannot be moved to another phone.
+* **Uninstall, "Clear storage" or a device reset loses unsent patrol evidence.** It is deliberately **not** in any
+  device backup or device-to-device transfer (below), so restoring a backup or moving to a new phone does not bring it
+  back. Guards should send everything (stay signed in with a connection) before handing a phone in; anything lost this
+  way goes to the control room / #68.
+* Certified by `scripts/guard-patrols.spec.cjs` GPAT-07 (B cannot read, send or delete A's items) and GPAT-20 (both
+  Guards with pending work in one real SQLite database: B sends only B's, A's survives B's session, a restart and the
+  sweep, and A recovers everything by signing back in).
 * **Not encrypted at the application level.** The files and the database sit in the app sandbox, which iOS protects
   with Data Protection and Android with file-based encryption of app-private storage; another app cannot read them.
   Another S4 user on the same phone is kept out by the per-user namespace, not by cryptography. Application-level
   encryption (e.g. SQLCipher via expo-sqlite and per-user keys in SecureStore) was not added: a lost key would make
   queued evidence unrecoverable, which conflicts with "never lose evidence". Recorded as a risk for the owner.
+
+### Backups and device transfer (S4 1.2.0 hardening, owner-mandated)
+
+Queued patrol evidence (`<files | Documents>/patrol-evidence/`) and the outbox database (expo-sqlite 16's
+`defaultDatabaseDirectory`: Android `filesDir/SQLite/s4-patrol-outbox.db` with its `-wal` / `-shm` / `-journal`, iOS
+`Documents/SQLite/…`) are **never** copied off the phone by a backup or a device transfer. No encryption is added.
+Implemented by the local config plugin `security-mobile-app/plugins/withPatrolBackupExclusion.js`:
+
+* **Android (Auto Backup ≤ 11 and Android 12+ cloud backup and device-to-device transfer).** The application points at
+  S4's own `@xml/s4_backup_rules` (`android:fullBackupContent`) and `@xml/s4_data_extraction_rules`
+  (`android:dataExtractionRules`, both `<cloud-backup>` and `<device-transfer>`). They are an **allow-list**: shared
+  preferences, minus expo-secure-store's `SecureStore` file — exactly expo-secure-store's own rules, which were in force
+  before. Once a rules file has an `<include>`, Android backs up nothing else, so no `file`, `database`, `root` or
+  external path — and therefore neither `patrol-evidence/` nor `SQLite/` — is ever backed up or transferred.
+  expo-secure-store is configured with `configureAndroidBackup: false` so the two plugins do not compete for the
+  manifest attributes (its exclusion is carried in S4's file instead). Explicit `<exclude>` lines for the patrol paths
+  were deliberately not added: an exclude outside an included path is an Android lint error (`FullBackupContent`) that
+  can fail a release build, and it adds nothing to an allow-list.
+* **Why not `android:allowBackup="false"`.** It would also be safe for patrols, but it changes what the rest of the app
+  backs up (the shared preferences that are backed up today). The allow-list keeps everything else exactly as before;
+  sign-in tokens are in SecureStore and were never backed up either way. `allowBackup` stays `true`.
+* **iOS.** Neither expo-file-system 19 nor expo-sqlite 16 exposes `NSURLIsExcludedFromBackupKey`, and moving the data
+  to `Library/Caches` is not acceptable (the OS may purge it). The plugin adds a reviewed Swift function to
+  `AppDelegate.swift`, called first in `application(_:didFinishLaunchingWithOptions:)` (before any JavaScript): it
+  creates `Documents/patrol-evidence` and `Documents/SQLite` if missing and sets `isExcludedFromBackup = true` on both,
+  which excludes the directories and everything in them from iCloud and computer backups. It runs on every launch, so a
+  directory recreated later is covered again at the next start. A changed Expo template fails the prebuild loudly
+  instead of shipping without it.
+* **Verified.** Android: `npx expo prebuild --no-install --platform android` into a throw-away copy (store and
+  `APP_VARIANT=uat`) — the merged `<application>` carries `android:allowBackup="true"`,
+  `android:fullBackupContent="@xml/s4_backup_rules"`, `android:dataExtractionRules="@xml/s4_data_extraction_rules"`,
+  and both rules files are generated as above. iOS prebuild cannot run on Windows: the Swift change is certified
+  against the SDK 54 template `AppDelegate.swift` (`expo-template-bare-minimum` 54.0.54, kept as
+  `scripts/fixtures/…`), and `expo config --type introspect` confirms the Info.plist side (bundle id, 1.2.0 / 20, camera
+  string only). Static spec: GPAT-21. **Still to check on the first device build:** `xcodebuild` compiles the snippet
+  (EAS), and on a device the evidence folder is absent from an iCloud backup / `adb shell bmgr` backup.
+* **Consequence (accepted):** uninstall, "Clear storage", a device reset or a move to a new phone loses any patrol
+  evidence that was not yet sent; recovery is the control room / #68.
+
+### Stale temporary camera files
+
+`src/components/guard/patrol/patrolTempCleanup.ts` (pure) + `src/services/patrolTempNative.ts` (device). A patrol
+photo passes through the camera's capture (`<cache>/Camera/`) and the re-encoded JPEG (`<cache>/ImageManipulator/`),
+both removed in `processCapturedPhoto`'s `finally`; an app killed mid-photo can leave them (possibly with EXIF). When a
+Guard's queue starts, and then at most every 10 minutes before a sync pass, files **directly inside those two cache
+folders** that were last modified **more than 1 hour ago** and are **not referenced by any outbox row of any Guard** are
+deleted. Never anything under `patrol-evidence/`; a file whose age cannot be read is kept; if the outbox cannot be read
+nothing is removed; a failed delete is ignored. `patrolNative.ts` still never touches the cache. Certified by GPAT-19.
 
 ## Backend change (minimal, no migration)
 
@@ -117,6 +182,9 @@ does not already declare.
 
 ## Release note for the owner
 
-The live Guard app line is **1.1.2** on `release-prep/guard-app-1.1.2` (PR #59). A P1-E device build must be produced
-from a branch that combines the 1.1.2 line with P1-E, with a version / build number the owner decides. This branch
-deliberately keeps 1.1.0 / 17 / 16.
+The live Guard app line is **1.1.2** on `release-prep/guard-app-1.1.2` (PR #59; Android 20 distributed, iOS 19
+uploaded). `feature/patrols-p1e` itself kept 1.1.0 / 17 / 16. The combined branch is `integration/s4-1.2.0-patrols`:
+P1-E merged with the 1.1.2 line, prepared as **S4 1.2.0 — Android versionCode 21, iOS build 20, UAT Android 22** (not
+built), with the backup exclusion and temporary-file sweep above. The version lines in "Configuration" describe P1-E as
+first certified; on the integration branch the expected values are 1.2.0 / 21 / 20 (GPAT-16, store-identity,
+pilot-build-provenance, signer-provenance, uat-variant).

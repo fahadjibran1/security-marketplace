@@ -7,6 +7,9 @@
 //     directory) — not the cache, not shared storage;
 //   * evidence files live in `<document directory>/patrol-evidence/u<userId>/` — app-private, never the cache (which the
 //     OS may purge), never the photo library or shared media, and namespaced per signed-in user;
+//   * both are kept out of device backups and device-to-device transfer by plugins/withPatrolBackupExclusion.js
+//     (Android backup rules; iOS NSURLIsExcludedFromBackupKey on Documents/patrol-evidence and Documents/SQLite);
+//   * stale camera / re-encode temporaries in the cache are swept by patrolTempNative.ts (never patrol-evidence/);
 //   * nothing here asks for location, the photo library or background execution.
 
 import * as Crypto from 'expo-crypto';

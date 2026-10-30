@@ -18,7 +18,7 @@ import { getAppSurface } from './src/navigation/role-routing';
 import { brand, colors, control, radii, spacing, typography } from './src/theme';
 import Constants from 'expo-constants';
 import { productLabelFor, resolveAppVariant } from './src/services/appVariant';
-import { configureWelfareNotifications, registerWelfarePush, subscribeTokenChanges, subscribeWelfareResponses, unregisterWelfarePush, type PushRegistration } from './src/services/pushNotifications';
+import { configureWelfareNotifications, registerWelfarePush, subscribeTokenChanges, subscribeWelfareResponses, unregisterWelfarePush, type DevicePushToken, type PushRegistration } from './src/services/pushNotifications';
 import { WelfareCheckPrompt } from './src/components/guard/WelfareCheckPrompt';
 import type { WelfareIntent } from './src/components/guard/welfarePush';
 
@@ -104,9 +104,10 @@ export default function App() {
   useEffect(() => {
     if (!guardUserId) { setPushState(null); return; }
     let live = true;
-    const register = () => registerWelfarePush().then((state) => { if (live) setPushState(state); });
+    // A rotated token is passed through, so it is registered without fetching it again (a fetch reports it once more).
+    const register = (rotated?: DevicePushToken) => registerWelfarePush(rotated).then((state) => { if (live) setPushState(state); });
     void register();
-    const unsubscribe = subscribeTokenChanges(() => { void register(); });
+    const unsubscribe = subscribeTokenChanges((token) => { void register(token); });
     return () => { live = false; unsubscribe(); };
   }, [guardUserId]);
   const surfaceLabel = surface === 'admin' ? 'Platform Admin' : surface === 'company' ? 'Company' : surface === 'client' ? 'Client' : surface === 'guard' ? 'Guard' : 'Access Denied';

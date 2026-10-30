@@ -9,7 +9,7 @@ import { usePatrolOutbox } from '../../../services/patrolSync';
 import type { GuardPatrolPlan, GuardPatrolRun } from '../../../types/patrols';
 import { GuardPatrolCamera } from './GuardPatrolCamera';
 import { photoErrorMessage, processCapturedPhoto } from './patrolImage';
-import { NOT_SENT_MESSAGE, type OutboxItem } from './patrolOutbox';
+import { NOT_SENT_MESSAGE, PATROL_SYNC_WINDOW_CLOSED, RECOVERY_RETRY_HINT, type OutboxItem } from './patrolOutbox';
 import { decideScan, scanVerdictMessage } from './patrolQrScan';
 import {
   activePatrol,
@@ -97,6 +97,16 @@ export function GuardPatrolPanel({ userId, shift }: { userId: number; shift: { i
       return null;
     } finally {
       setWorking(false);
+    }
+  }
+
+  /** #68: re-send what was refused only because the sync window closed (the control room may have issued a recovery grant). */
+  async function sendAgain() {
+    if (!engine) return;
+    const requeued = await guard(() => engine.retryWindowClosed(), 'Could not prepare the items to send again.');
+    if (requeued) {
+      setNotice({ tone: 'info', text: `Sending ${requeued} item(s) again. If S4 still cannot accept them, they stay listed here.` });
+      outbox.kick();
     }
   }
 
@@ -256,6 +266,12 @@ export function GuardPatrolPanel({ userId, shift }: { userId: number; shift: { i
           {refused.slice(0, 3).map(({ item }) => (
             <Text key={item.id} style={styles.refusedText}>{`${describe(item)} — ${item.lastErrorMessage ?? item.lastErrorCode ?? ''}`}</Text>
           ))}
+          {refused.some(({ item }) => item.status === 'refused' && item.lastErrorCode === PATROL_SYNC_WINDOW_CLOSED) ? (
+            <>
+              <Text style={styles.refusedText}>{RECOVERY_RETRY_HINT}</Text>
+              <Button label="Send again" variant="secondary" onPress={() => { void sendAgain(); }} loading={working} />
+            </>
+          ) : null}
         </View>
       ) : null}
       {notice && !open ? <Text style={[styles.notice, toneStyle(notice.tone)]}>{notice.text}</Text> : null}

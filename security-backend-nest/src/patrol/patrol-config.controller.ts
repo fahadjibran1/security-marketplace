@@ -13,6 +13,7 @@ import {
   PatrolListQueryDto,
   PatrolOverviewQueryDto,
   PatrolRunsQueryDto,
+  PatrolWindowsDayQueryDto,
   UpdatePatrolCheckpointDto,
   UpdatePatrolRouteDto,
   UpdatePatrolScheduleDto,
@@ -23,6 +24,7 @@ import { PatrolEvidenceHoldsQueryDto } from './dto/patrol-evidence.dto';
 import { PatrolConfigService } from './patrol-config.service';
 import { PatrolExceptionService } from './patrol-exception.service';
 import { PatrolQueryService } from './patrol-query.service';
+import { PatrolWindowsDayService } from './patrol-windows-day.service';
 
 /**
  * Company Patrol Management (Migration 68). Company accounts only (Guards and S4 platform admins are refused by the
@@ -37,6 +39,7 @@ export class PatrolConfigController {
     private readonly config: PatrolConfigService,
     private readonly query: PatrolQueryService,
     private readonly exceptions: PatrolExceptionService,
+    private readonly windowsDay: PatrolWindowsDayService,
   ) {}
 
   // ── Policies (patrols.view / patrols.manage; 90-day retention: Owner / Admin) ──
@@ -152,6 +155,12 @@ export class PatrolConfigController {
   @Get('overview')
   overview(@CurrentUser() user: JwtPayload, @Query() q: PatrolOverviewQueryDto) {
     return this.query.overview(user, q);
+  }
+
+  /** #78: scheduled windows due / completed / outstanding in the site-local day, from the P1-B window engine (patrols.view). */
+  @Get('windows/day')
+  windowsForDay(@CurrentUser() user: JwtPayload, @Query() q: PatrolWindowsDayQueryDto) {
+    return this.windowsDay.day(user, q);
   }
 
   @Get('runs')

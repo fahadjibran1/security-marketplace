@@ -14,6 +14,7 @@ import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn, Update
 })
 @Index('IDX_patrol_exceptions_company_status', ['companyId', 'status'])
 @Index('IDX_patrol_exceptions_window_type', ['companyId', 'windowKey', 'scopeKey', 'type'])
+@Index('IDX_patrol_exceptions_reconciliation', ['reconciliationRunId'], { where: '"reconciliationRunId" IS NOT NULL' })
 export class PatrolException {
   @PrimaryGeneratedColumn({ primaryKeyConstraintName: 'PK_patrol_exceptions' })
   id!: number;
@@ -83,6 +84,13 @@ export class PatrolException {
   /** Migration 69: append-only notes ({ at, kind, text, runId? }); never rewritten. */
   @Column({ type: 'jsonb', default: () => `'[]'` })
   annotations!: Array<Record<string, unknown>>;
+
+  /**
+   * Migration 71 (#67): set when the exception was raised by outage reconciliation (not the live sweep). Such an exception
+   * raises no alert of its own: its site's reconciliation summary alert carries it.
+   */
+  @Column({ type: 'int', nullable: true })
+  reconciliationRunId!: number | null;
 
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt!: Date;

@@ -198,6 +198,13 @@ export interface PatrolRun {
   guardName?: string;
   visitCount?: number;
   flaggedVisitCount?: number;
+  /**
+   * Company reads (#76): the distinct checkpoints visited by a scan that was not flagged, computed once by the server
+   * for the History list and the run detail alike. Absent from the Guard API.
+   */
+  checkpointsVisited?: number;
+  /** Checkpoints on the run's route; null without a route. */
+  checkpointsTotal?: number | null;
 }
 
 export interface PatrolRunsPage {
@@ -212,6 +219,8 @@ export interface PatrolRunsQuery {
   from?: string | null;
   to?: string | null;
   status?: PatrolRunStatus | null;
+  /** How from / to are read: the UTC day (API default) or each run's site-local day (#77). */
+  dateBasis?: 'utc' | 'site_local' | null;
   page?: number;
   pageSize?: number;
 }
@@ -305,7 +314,10 @@ export interface PatrolRunDetail {
 
 export interface PatrolOverview {
   date: string;
-  dateBasis: 'utc';
+  /** utc (the API default) or site_local: each site's own local day (#77). */
+  dateBasis: 'utc' | 'site_local';
+  /** site_local with one site: its zone; null otherwise. Absent from an older API. */
+  timeZone?: string | null;
   siteId: number | null;
   runsStarted: number;
   runsByStatus: Record<PatrolRunStatus, number>;
@@ -315,6 +327,34 @@ export interface PatrolOverview {
   activeCheckpoints: number;
   activeSchedules: number;
   activeRoutes: number;
+}
+
+/** GET /patrols/windows/day (#78): computed by the server from schedules and site time zones (the P1-B window engine). */
+export interface PatrolWindowsDaySite {
+  siteId: number;
+  timeZone: string;
+  date: string;
+  dayStart: string;
+  dayEnd: string;
+  windowsDue: number;
+  windowsCompleted: number;
+  windowsOutstanding: number;
+}
+
+export interface PatrolWindowsDay {
+  /** The site-local date counted (null across sites whose "today" differs). */
+  date: string | null;
+  dateBasis: 'site_local';
+  siteId: number | null;
+  generatedAt: string;
+  /** Windows of active schedules starting in the site-local day. */
+  windowsDue: number;
+  /** Of those, windows with a completed run. */
+  windowsCompleted: number;
+  /** due − completed: still to do, in progress, incomplete or missed. */
+  windowsOutstanding: number;
+  completionBasis: 'window_with_a_completed_run';
+  sites: PatrolWindowsDaySite[];
 }
 
 export interface PatrolHold {
@@ -336,6 +376,39 @@ export interface PatrolHold {
   incidentId: number | null;
   safetyAlertId: number | null;
   exceptionId: number | null;
+}
+
+/**
+ * An exceptional offline recovery grant (issue #68): an Owner / Admin lets ONE Guard send ONE shift's patrol data after
+ * the post-shift sync window, until expiresAt (default 24 h, at most 72 h). Data accepted under it is flagged
+ * recovered_via_grant and needs review.
+ */
+export interface PatrolRecoveryGrant {
+  id: number;
+  shiftId: number;
+  guardId: number;
+  guardName: string | null;
+  siteId: number | null;
+  siteName: string | null;
+  shiftStart: string | null;
+  shiftEnd: string | null;
+  reason: string;
+  status: 'active' | 'expired' | 'revoked';
+  createdAt: string | null;
+  createdByUserId: number;
+  expiresAt: string | null;
+  revokedAt: string | null;
+  revokedByUserId: number | null;
+  revokeReason: string | null;
+  uses: number;
+  lastUsedAt: string | null;
+}
+
+export interface PatrolRecoveryGrantInput {
+  shiftId: number;
+  guardId?: number;
+  durationHours?: number;
+  reason: string;
 }
 
 export interface PatrolHoldInput {
@@ -386,6 +459,21 @@ export interface PatrolSignedLink {
   method: string;
   url: string;
   expiresAt: string;
+}
+
+/**
+ * One page of a run's photo previews (issue #79): GET /patrols/runs/:id/evidence/thumbnails. Each viewable photo carries
+ * the same short-lived link as a single view; anything else has url null. One audit entry per page (purpose browse).
+ * Held in memory only until expiresAt; never logged, stored or cached.
+ */
+export interface PatrolEvidenceThumbnailPage {
+  runId: number;
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+  expiresAt: string | null;
+  items: Array<{ evidenceId: number; url: string | null; expiresAt: string | null }>;
 }
 
 export interface PatrolStorageSite {

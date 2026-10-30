@@ -25,6 +25,7 @@ import {
   withinSyncAcceptance,
 } from './patrol-late-sync';
 import { checkLabelSignature, parseCheckpointLabel, patrolQrKeyring } from './patrol-qr';
+import { ActiveRecoveryGrant, PatrolRecoveryGrantService } from './patrol-recovery-grant.service';
 import { serializeRun, serializeVisit, updateRows } from './patrol-serializers';
 import { PatrolWindow, windowForStart, windowsBetween } from './patrol-window.service';
 
@@ -49,6 +50,14 @@ const PATROL_PLAN_MAX_WINDOWS = 200;
  * schedule's window containing its drift-adjusted device start, or the window it started late for, within the start
  * grace); evidence arriving after a missed / abandoned alert annotates that exception and downgrades its alert, never
  * closing either (PatrolExceptionService.recordLateEvidence).
+ *
+ * Issue #68 (exceptional offline recovery): after the window has closed, a write is refused (409 PATROL_SYNC_WINDOW_CLOSED)
+ * unless an Owner / Admin recovery grant is active for THIS Guard on THIS shift (PatrolRecoveryGrantService). Under a grant
+ * the start, scan or completion is accepted exactly as inside the window, plus: flagged recovered_via_grant, the run
+ * needsReview (provisional as every post-shift write), the use counted and audited (patrol.recovery_grant_used). A run the
+ * sweep closed (closed_by_system) because the window closed takes its scans and completion under a grant; its settled
+ * verification is not reopened. Book On is still required; replays work exactly as before; late evidence still only
+ * annotates exceptions and alerts, never closes them.
  */
 @Injectable()
 export class PatrolGuardService {
@@ -58,6 +67,7 @@ export class PatrolGuardService {
     private readonly config: PatrolConfigService,
     private readonly auditLogService: AuditLogService,
     private readonly exceptions: PatrolExceptionService,
+    private readonly grants: PatrolRecoveryGrantService,
   ) {}
 
   /** The Guard's own effective Book On / Book Off on a shift (Migration 67 rules), from their attendance rows. */
@@ -74,8 +84,10 @@ export class PatrolGuardService {
   /**
    * A new write to a run whose shift has ended: allowed only inside the post-shift sync acceptance window (else 409
    * PATROL_SYNC_WINDOW_CLOSED). A shift that did not end normally (cancelled, never started) keeps P1-A's refusal.
+   * Issue #68: once the window has closed, an active Owner / Admin recovery grant for THIS Guard on THIS shift lets the
+   * write in; it is returned so the caller flags the write recovered_via_grant / needsReview and records the use.
    */
-  private async assertPostShiftWrite(run: any, now: Date) {
+  private async assertPostShiftWrite(run: any, now: Date): Promise<{ policy: Awaited<ReturnType<PatrolConfigService['effectivePolicy']>>; attendance: { bookOnAt: Date | null; bookOffAt: Date | null }; shiftEnd: Date; grant: ActiveRecoveryGrant | null }> {
     if (run.shiftStatus !== 'completed') {
       throw patrolError(HttpStatus.CONFLICT, PatrolErrorCode.SHIFT_NOT_IN_PROGRESS, 'Patrols can only be recorded during your shift, after Book On.', {
         shiftStatus: run.shiftStatus,
@@ -85,12 +97,23 @@ export class PatrolGuardService {
     const attendance = await this.guardAttendance(Number(run.shiftId), Number(run.guardId));
     const shiftEnd = new Date(run.shiftEnd);
     if (!withinSyncAcceptance(now, attendance.bookOffAt, shiftEnd, policy.postShiftSyncHours)) {
+      const grant = await this.grants.activeGrant(Number(run.companyId), Number(run.guardId), Number(run.shiftId), now);
+      if (grant) return { policy, attendance, shiftEnd, grant };
       const endsAt = syncAcceptanceEndsAt(attendance.bookOffAt, shiftEnd, policy.postShiftSyncHours);
       throw patrolError(HttpStatus.CONFLICT, PatrolErrorCode.SYNC_WINDOW_CLOSED,
         `Patrol data for this shift could only be sent until ${endsAt.toISOString()} (${policy.postShiftSyncHours} h after it ended).`,
         { acceptanceEndsAt: endsAt.toISOString() });
     }
-    return { policy, attendance, shiftEnd };
+    return { policy, attendance, shiftEnd, grant: null };
+  }
+
+  /**
+   * Issue #68: a run the sweep closed (closed_by_system) only because the sync window closed while it was in progress can
+   * still take its late scans and completion — but only under an active recovery grant for its Guard and shift.
+   */
+  private async recoverableClosedRun(run: any, now: Date): Promise<boolean> {
+    if (run.status !== 'closed_by_system' || run.shiftStatus !== 'completed') return false;
+    return (await this.grants.activeGrant(Number(run.companyId), Number(run.guardId), Number(run.shiftId), now)) != null;
   }
 
   /** Everything the app needs to patrol this shift's site offline: policy, schedules, routes, checkpoint publicIds. */
@@ -279,8 +302,14 @@ export class PatrolGuardService {
       assigned = windowForStart(schedule, site?.timezone || 'Europe/London', adjustedStart, policy.startGraceMinutes);
     }
     const flags: PatrolSyncFlag[] = [];
+    let grant: ActiveRecoveryGrant | null = null;
     if (postShift && attendance) {
+      // #68: a recovery grant is looked up only once the standard window has closed.
+      if (!withinSyncAcceptance(now, attendance.bookOffAt, new Date(shift.end), policy.postShiftSyncHours)) {
+        grant = await this.grants.activeGrant(shift.companyId, actor.guardId, shift.id, now);
+      }
       const decision = evaluatePostShiftStart({
+        recoveryGrant: grant != null,
         now,
         bookOnAt: attendance.bookOnAt,
         bookOffAt: attendance.bookOffAt,
@@ -345,7 +374,13 @@ export class PatrolGuardService {
       }
       throw error;
     }
-    if (inserted) return serializeRun(await this.afterRunCreated(inserted, actor, flags, now));
+    if (inserted) {
+      const created = await this.afterRunCreated(inserted, actor, flags, now);
+      if (grant) {
+        await this.grants.recordUse(grant, { userId: actor.userId, step: 'run_start', entityType: 'patrol_run', entityId: Number(inserted.id), runId: Number(inserted.id), now });
+      }
+      return serializeRun(created);
+    }
     // A concurrent request with the same clientRunId won the insert: answer with that row, or 409 if it differs.
     const winner = await this.findRunByClientId(shift.companyId, dto.clientRunId);
     return this.replayRun(winner, actor, dto, startedAtDevice);
@@ -439,15 +474,22 @@ export class PatrolGuardService {
     const replay = await this.findVisitByClientId(companyId, dto.clientVisitId);
     if (replay) return this.replayVisit(replay, runId, scanPayload, scannedPublicId, scannedAtDevice);
 
-    if (run.status !== 'in_progress') {
+    if (run.status !== 'in_progress' && !(await this.recoverableClosedRun(run, now))) {
       throw patrolError(HttpStatus.CONFLICT, PatrolErrorCode.RUN_NOT_IN_PROGRESS, 'This patrol is already finished.', { runStatus: run.status });
     }
     const syncFlags: PatrolSyncFlag[] = [];
     let thresholdMinutes: number | null = null;
+    let grant: ActiveRecoveryGrant | null = null;
     if (run.shiftStatus !== 'in_progress') {
-      const { policy } = await this.assertPostShiftWrite(run, now);
+      const post = await this.assertPostShiftWrite(run, now);
+      grant = post.grant;
       syncFlags.push('synced_after_book_off');
-      thresholdMinutes = policy.clockDriftThresholdMinutes;
+      if (grant) syncFlags.push('recovered_via_grant');
+      thresholdMinutes = post.policy.clockDriftThresholdMinutes;
+    }
+    if (run.status !== 'in_progress' && !grant) {
+      // A system-closed run takes a scan only under a grant (the window cannot have reopened without one).
+      throw patrolError(HttpStatus.CONFLICT, PatrolErrorCode.RUN_NOT_IN_PROGRESS, 'This patrol is already finished.', { runStatus: run.status });
     }
     const driftMs = clockDriftMs(now, dto.sentAtDevice ? new Date(dto.sentAtDevice) : null);
     if (driftMs !== null) {
@@ -482,9 +524,11 @@ export class PatrolGuardService {
     if (syncFlags.length || lateScan > 0) {
       const runFlags: PatrolSyncFlag[] = [
         ...(syncFlags.includes('synced_after_book_off') ? ['synced_after_book_off' as PatrolSyncFlag] : []),
+        ...(grant ? ['recovered_via_grant' as PatrolSyncFlag] : []),
         ...(lateScan > 0 ? ['evidence_after_alert' as PatrolSyncFlag] : []),
       ];
-      if (runFlags.length) await this.markLate(runId, runFlags, false);
+      // #68: anything a grant let in puts its run up for review.
+      if (runFlags.length) await this.markLate(runId, runFlags, grant != null);
       if (syncFlags.length) {
         await this.auditLogService.log({
           company: { id: companyId },
@@ -495,6 +539,9 @@ export class PatrolGuardService {
           afterData: { runId, flags: syncFlags, scannedAtDevice: scannedAtDevice.toISOString(), receivedAtServer: now.toISOString(), clockDriftMs: driftMs },
         });
       }
+    }
+    if (grant) {
+      await this.grants.recordUse(grant, { userId: actor.userId, step: 'scan', entityType: 'patrol_checkpoint_visit', entityId: Number(inserted.id), runId, now });
     }
     if (verdict.result === 'flagged') {
       await this.auditLogService.log({
@@ -593,16 +640,23 @@ export class PatrolGuardService {
     if (dto.exceptionReason !== undefined && !reason) {
       throw patrolError(HttpStatus.BAD_REQUEST, PatrolErrorCode.VALIDATION, 'exceptionReason cannot be blank.');
     }
-    if (run.status !== 'in_progress') return this.replayCompletion(run, completedAtDevice, reason);
+    // #68: the completion of a run the sweep closed when the window closed is accepted under a recovery grant (the run's
+    // final verification stays as the sweep settled it; the completion is flagged for review).
+    const recovering = run.status === 'closed_by_system' && run.completedAtDevice == null && (await this.recoverableClosedRun(run, now));
+    if (run.status !== 'in_progress' && !recovering) return this.replayCompletion(run, completedAtDevice, reason);
     const flags: PatrolSyncFlag[] = [];
     const driftMs = clockDriftMs(now, dto.sentAtDevice ? new Date(dto.sentAtDevice) : null);
     let thresholdMinutes: number | null = null;
+    let grant: ActiveRecoveryGrant | null = null;
     if (run.shiftStatus !== 'in_progress') {
-      const { policy, attendance, shiftEnd } = await this.assertPostShiftWrite(run, now);
+      const { policy, attendance, shiftEnd, grant: active } = await this.assertPostShiftWrite(run, now);
+      grant = active;
       thresholdMinutes = policy.clockDriftThresholdMinutes;
       flags.push('synced_after_book_off');
       if (adjustForDrift(completedAtDevice, driftMs).getTime() > (attendance.bookOffAt ?? shiftEnd).getTime()) flags.push('completed_after_book_off');
+      if (grant) flags.push('recovered_via_grant');
     }
+    if (recovering && !grant) return this.replayCompletion(run, completedAtDevice, reason);
     if (driftMs !== null) {
       thresholdMinutes ??= (await this.config.effectivePolicy(Number(run.companyId), Number(run.siteId))).clockDriftThresholdMinutes;
       if (isClockDriftSuspect(driftMs, thresholdMinutes)) flags.push('clock_drift_suspect');
@@ -611,9 +665,9 @@ export class PatrolGuardService {
     const [updated] = await updateRows(this.dataSource,
       `UPDATE "patrol_runs" SET "status" = $2, "completedAtDevice" = $3, "completedAtServer" = $4, "exceptionReason" = $5,
           "syncedLate" = "syncedLate" OR $6, "syncFlags" = $7::jsonb, "needsReview" = "needsReview" OR $8, "updatedAt" = now()
-        WHERE "id" = $1 AND "status" = 'in_progress' RETURNING *`,
+        WHERE "id" = $1 AND "status" = $9 AND "completedAtDevice" IS NULL RETURNING *`,
       [runId, reason ? 'incomplete' : 'completed', completedAtDevice, now, reason, flags.includes('synced_after_book_off'),
-        JSON.stringify(mergedFlags), flags.some((f) => PATROL_REVIEW_FLAGS.includes(f))],
+        JSON.stringify(mergedFlags), flags.some((f) => PATROL_REVIEW_FLAGS.includes(f)), recovering ? 'closed_by_system' : 'in_progress'],
     );
     if (updated) {
       let current = updated;
@@ -634,8 +688,14 @@ export class PatrolGuardService {
           action: 'patrol.late_sync_flagged',
           entityType: 'patrol_run',
           entityId: runId,
-          afterData: { step: 'complete', flags, completedAtDevice: completedAtDevice.toISOString(), completedAtServer: now.toISOString(), clockDriftMs: driftMs },
+          afterData: {
+            step: 'complete', flags, completedAtDevice: completedAtDevice.toISOString(), completedAtServer: now.toISOString(), clockDriftMs: driftMs,
+            ...(recovering ? { previousStatus: 'closed_by_system', previousCompletedAtServer: new Date(run.completedAtServer).toISOString() } : {}),
+          },
         });
+      }
+      if (grant) {
+        await this.grants.recordUse(grant, { userId: actor.userId, step: 'completion', entityType: 'patrol_run', entityId: runId, runId, now });
       }
       return serializeRun(current);
     }

@@ -30,7 +30,8 @@
  *          revoked checkpoint, wrong site, duplicate, malformed payload flagged (audited); publicId alone unverified;
  *          no server key → labels refused (503) and scans unverified
  *   PF-18  company reads: runs list (filters, pagination), run detail (visits, exceptions, evidence metadata), overview
- *   PF-19  switching off again hides everything at once and deletes nothing
+ *   PF-19  switching off again hides everything at once and deletes nothing (only evidence lifecycle management stays
+ *           with Owner / Admin while evidence exists, #71)
  *
  * Needs PATROL_FOUNDATION_DATABASE_URL pointing at a DISPOSABLE local database — it drops the schema.
  */
@@ -213,12 +214,14 @@ async function main() {
   const before = await existingResponses({ ownerLegacy: tokens.ownerLegacy, viewer: tokens.viewer, operations: tokens.operations, guardA: tokens.guardA });
   await ctx.app.close();
 
-  // ── Migrations 68, 69 and 70 and the second boot ────────────────────────────────────────────────────────────
+  // ── Migrations 68, 69, 70, 71 and 72 and the second boot ────────────────────────────────────────────────────
   const to68 = new DataSource({ ...base, entities: [], migrations: allFiles.map((f) => path.join(migrationsDir, f)) } as never);
   await to68.initialize();
   const migrated = await to68.runMigrations({ transaction: 'each' });
-  assert.deepEqual(migrated.map((m) => m.name), ['AddPatrolManagement1720900000014', 'AddPatrolScheduling1720900000015', 'AddPatrolEvidenceStorage1720900000016'],
-    'only Migrations 68 (P1-A), 69 (P1-B scheduling) and 70 (P1-C evidence storage) apply');
+  assert.deepEqual(migrated.map((m) => m.name),
+    ['AddPatrolManagement1720900000014', 'AddPatrolScheduling1720900000015', 'AddPatrolEvidenceStorage1720900000016', 'AddPatrolSweepReconciliation1720900000017',
+      'AddPatrolSyncRecoveryGrants1720900000018'],
+    'only Migrations 68 (P1-A), 69 (P1-B scheduling), 70 (P1-C evidence storage), 71 (sweep reconciliation) and 72 (#68 recovery grants) apply');
   await to68.destroy();
   ctx = await boot();
   const q = async (sql: string, params: unknown[] = []) => ctx.ds.query(sql, params);
@@ -836,7 +839,14 @@ async function main() {
       const counts = await patrolRowCounts();
       expect(await setSwitch(A.id, false), 200);
       const ids = { schedule: schedule.id, checkpoint: checkpoints.gate.id, route: route.id, run: runA.id, site: A.site1 };
-      for (const [method, p, body] of companyRoutes(ids)) expect(await api(method, p, tA, body), 404, 'PATROLS_NOT_ENABLED', `${method} ${p}`);
+      // Owner decision (#71): A has patrol evidence, so its evidence lifecycle management (holds, here) stays available to
+      // Owner / Admin with the switch off; every other route, and every other role, sees no Patrols at all.
+      for (const [method, p, body] of companyRoutes(ids)) {
+        if (p === '/patrols/holds') continue;
+        expect(await api(method, p, tA, body), 404, 'PATROLS_NOT_ENABLED', `${method} ${p}`);
+      }
+      expect(await api('GET', '/patrols/holds', tA), 200, undefined, 'evidence holds stay manageable by the owner (#71)');
+      for (const role of ['viewer', 'operations', 'control_room']) expect(await api('GET', '/patrols/holds', tokens[role]), 404, 'PATROLS_NOT_ENABLED', role);
       for (const [method, p, body] of guardRoutes(shiftA, runA.id)) expect(await api(method, p, gA.token, body), 404, 'PATROLS_NOT_ENABLED', `${method} ${p}`);
       assert.deepEqual(await patrolRowCounts(), counts, 'nothing deleted');
       const me = await api('GET', '/auth/me', tA);

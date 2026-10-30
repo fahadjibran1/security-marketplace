@@ -119,6 +119,19 @@ export function wallMinutesToInstant(localDate: string, minutes: number, timeZon
   return result;
 }
 
+/**
+ * The instants bounding one site-local calendar day (#77, #78): [its midnight, the NEXT day's midnight). A DST day is 23
+ * or 25 hours long (Europe/London: 30 Mar 2025 runs 00:00Z → 23:00Z, 26 Oct 2025 runs 23:00Z on the 25th → 00:00Z on
+ * the 27th), so the end is never "start + 24 h". Both ends go through wallMinutesToInstant, the window engine's own
+ * conversion, so a dashboard day and the windows due in it always agree.
+ */
+export function siteDayBounds(localDate: string, timeZone: string): { start: Date; end: Date } {
+  return {
+    start: new Date(wallMinutesToInstant(localDate, 0, timeZone)),
+    end: new Date(wallMinutesToInstant(localDate, MINUTES_PER_DAY, timeZone)),
+  };
+}
+
 /** Whether the schedule runs on this local date (days of week, first and last date). */
 export function scheduleRunsOn(schedule: PatrolScheduleLike, localDate: string): boolean {
   if (!schedule.daysOfWeek?.map(Number).includes(isoWeekday(localDate))) return false;

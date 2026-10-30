@@ -87,6 +87,8 @@
     "test:manual-attendance-ui": "node scripts/manual-attendance-ui.spec.cjs",
     "test:timesheet-attendance-ui": "node scripts/timesheet-attendance-ui.spec.cjs",
     "test:timesheet-review-ux": "node scripts/timesheet-review-ux.spec.cjs",
+    "test:guard-inbox": "node scripts/guard-inbox.spec.cjs",
+    "test:push-registration-accept": "node scripts/push-registration-and-accept.spec.cjs",
     "test:patrol-management-ui": "node scripts/patrol-management-ui.spec.cjs",
     "test:guard-patrols": "node scripts/guard-patrols.spec.cjs"
   },

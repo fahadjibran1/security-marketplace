@@ -28,6 +28,15 @@ export type PatrolGuardShift = {
  *
  * Guard routes: the Guard acts only on their OWN shift (shifts.guardId = their guard profile); anyone else's shift is
  * 404. The shift's company must have the switch on (404 PATROLS_NOT_ENABLED otherwise).
+ *
+ * Evidence lifecycle routes (owner decision, #71): switching Patrols off stops new patrol ACTIVITY (runs, scans, uploads,
+ * configuration, the sweep) but never suspends the lifecycle of evidence that already exists. The evidence-management
+ * routes (holds: list / place / release; deletion and restore; exports: request / list / status / download; storage
+ * usage) use evidenceLifecycleActor: with the switch on it is exactly companyActor(patrols.holds); with it off those
+ * routes stay available to the roles holding patrols.holds (Owner / Admin) while the company has any patrol evidence
+ * record, hold or export, and answer 404 PATROLS_NOT_ENABLED to everyone else, so a company that never used Patrols
+ * still sees nothing. Viewing a photo (patrols.evidence) — one link or a page of thumbnail links (#79) — and every other
+ * route stay behind the switch.
  */
 @Injectable()
 export class PatrolAccessService {
@@ -53,6 +62,38 @@ export class PatrolAccessService {
       throw patrolError(HttpStatus.FORBIDDEN, PatrolErrorCode.FORBIDDEN, 'Insufficient permissions.');
     }
     return { companyId: company.id, userId: user.sub, role: membershipRole };
+  }
+
+  /**
+   * Evidence lifecycle management (patrols.holds), kept available with the Patrols switch off while evidence exists (#71).
+   * Switch on: identical to companyActor(user, patrols.holds). Switch off: a patrols.holds role of a company with any
+   * patrol evidence record, hold or export; anyone else 404 PATROLS_NOT_ENABLED (the feature stays invisible).
+   */
+  async evidenceLifecycleActor(user: JwtPayload): Promise<PatrolCompanyActor> {
+    if (user.role === UserRole.GUARD || user.role === UserRole.ADMIN) {
+      throw patrolError(HttpStatus.FORBIDDEN, PatrolErrorCode.FORBIDDEN, 'Patrol Management is for company staff.');
+    }
+    const { company, membershipRole } = await this.membershipService.resolveCompanyContext(user.sub, user.role);
+    const mayManage = hasPermission(membershipRole, CompanyPermission.PATROLS_HOLDS);
+    if (!(await this.isEnabled(company.id))) {
+      if (!mayManage || !(await this.hasExistingEvidence(company.id))) {
+        throw patrolError(HttpStatus.NOT_FOUND, PatrolErrorCode.NOT_ENABLED, 'Patrol Management is not available for this company.');
+      }
+    } else if (!mayManage) {
+      throw patrolError(HttpStatus.FORBIDDEN, PatrolErrorCode.FORBIDDEN, 'Insufficient permissions.');
+    }
+    return { companyId: company.id, userId: user.sub, role: membershipRole };
+  }
+
+  /** Whether the company has any patrol evidence record (tombstones included), evidence hold or evidence export. */
+  async hasExistingEvidence(companyId: number, manager?: EntityManager): Promise<boolean> {
+    const [row] = await (manager ?? this.dataSource).query(
+      `SELECT (EXISTS (SELECT 1 FROM "patrol_evidence" WHERE "companyId" = $1)
+            OR EXISTS (SELECT 1 FROM "patrol_evidence_holds" WHERE "companyId" = $1)
+            OR EXISTS (SELECT 1 FROM "patrol_evidence_exports" WHERE "companyId" = $1)) AS "exists"`,
+      [companyId],
+    );
+    return row?.exists === true;
   }
 
   /** Whether the actor's role also holds another patrol permission (e.g. evidence metadata in a run's detail). */

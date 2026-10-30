@@ -27,6 +27,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import {
+  companyBPreflightProblem, COMPANY_B, UAT_COMPANY_B_OWNER_EMAIL,
   confirmOnce, createdShift, fictionalPdf, recoveryUsersProblem, redact, registerSecret, repositoryMigrationHead, REQUEST_TIMEOUT_MS,
   stagingEvidenceProblem, UAT_ACCOUNT_EMAILS, UAT_PLATFORM_ADMIN_EMAIL, writeLogins,
 } from './staging-uat-seed';
@@ -98,8 +99,8 @@ test('SEED-04-DATABASE-GUARDS-ARE-PRESENT', () => {
   assert.match(source, /target host equals the production database host/);
   assert.match(source, /Supabase \/ pooler host/);
   assert.match(source, /seed only a fresh database/);
-  assert.match(source, /const EXPECTED_MIGRATIONS = 70;/);
-  assert.match(source, /const LAST_MIGRATION = 'AddPatrolEvidenceStorage1720900000016';/);
+  assert.match(source, /const EXPECTED_MIGRATIONS = 72;/);
+  assert.match(source, /const LAST_MIGRATION = 'AddPatrolSyncRecoveryGrants1720900000018';/);
   assert.match(source, /S4_STAGING_SEED_CONFIRM !== CONFIRM/);
   assert.match(source, /DATABASE_SYNCHRONIZE: 'false'/, 'the in-process app never alters the schema');
   assert.match(source, /DATABASE_POOLER_URL: ''/, 'no pooler URL can be picked up');
@@ -236,15 +237,15 @@ test('SEED-11-RECOVERY-USES-THE-PRODUCT-RESET-FLOW-FOR-THE-FICTIONAL-ACCOUNTS-ON
 });
 
 test('SEED-12-THE-LEDGER-IS-THIS-CODE-S-OWN-HEAD-AND-NO-IN-PROCESS-TIMER-RUNS', () => {
-  // The constants are exactly this repository's migration head (Migration 70 today) …
-  assert.deepEqual(repositoryMigrationHead(), { count: 70, last: 'AddPatrolEvidenceStorage1720900000016' });
+  // The constants are exactly this repository's migration head (Migration 72 today) …
+  assert.deepEqual(repositoryMigrationHead(), { count: 72, last: 'AddPatrolSyncRecoveryGrants1720900000018' });
   // … and a migration added later moves the head, so the seeder would refuse until it is updated with it.
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 's4-seed-head-'));
   try {
     const real = path.join(__dirname, '..', 'src', 'database', 'migrations');
     for (const f of fs.readdirSync(real)) fs.copyFileSync(path.join(real, f), path.join(tmp, f));
-    fs.writeFileSync(path.join(tmp, '1720900000017-SomethingLater.ts'), 'export class SomethingLater1720900000017 {}\n');
-    assert.deepEqual(repositoryMigrationHead(tmp), { count: 71, last: 'SomethingLater1720900000017' });
+    fs.writeFileSync(path.join(tmp, '1720900000999-SomethingLater.ts'), 'export class SomethingLater1720900000999 {}\n');
+    assert.deepEqual(repositoryMigrationHead(tmp), { count: 73, last: 'SomethingLater1720900000999' });
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
@@ -287,11 +288,72 @@ test('SEED-13-THE-ACCOUNT-ALLOWLIST-IS-THE-UAT-SET-PLUS-AT-MOST-THE-APPROVED-ADM
   assert.match(String(recoveryUsersProblem([...uat, { ...admin, role: 'guard' }])), /non-administrator/);
   assert.match(String(recoveryUsersProblem([...uat, { email: 'someone@example.com', role: 'admin' }])), /not one of the approved/, 'an arbitrary extra user, even a fictional admin');
   assert.match(String(recoveryUsersProblem([...uat, { email: 'real.person@gmail.com', role: 'guard' }])), /not one of the approved/);
-  assert.match(String(recoveryUsersProblem([...uat, admin, { email: 'uat-s4-admin2@example.com', role: 'admin' }])), /2 users besides/, 'a second extra user');
+  assert.match(String(recoveryUsersProblem([...uat, admin, { email: 'uat-s4-admin2@example.com', role: 'admin' }])), /not one of the approved/, 'a second, unapproved extra user');
   assert.match(String(recoveryUsersProblem([...uat, admin, admin])), /2 users besides/, 'the same administrator twice');
   assert.match(String(recoveryUsersProblem([])), /not all present/, 'an empty database is not the UAT set');
   // The seed path is unchanged: it still requires an EMPTY users table.
   assert.match(code, /seed only a fresh database/);
+});
+
+test('SEED-14-COMPANY-B-IS-ONE-APPROVED-OWNER-ADDED-THROUGH-THE-PRODUCT-ROUTES-ONLY-TO-THE-UAT-SET', () => {
+  assert.equal(UAT_COMPANY_B_OWNER_EMAIL, 'uat-company-b-owner@example.com');
+  const uat = [
+    { email: 'uat-owner@example.com', role: 'company_admin' },
+    { email: 'uat-guard-a@example.com', role: 'guard' },
+    { email: 'uat-guard-b@example.com', role: 'guard' },
+  ];
+  const admin = { email: 'uat-s4-admin@example.com', role: 'admin' };
+  const ownerB = { email: 'uat-company-b-owner@example.com', role: 'company_admin' };
+  // The allowlist: the UAT set plus at most the admin and at most the Company B owner, each with exactly its role.
+  assert.equal(recoveryUsersProblem([...uat, ownerB]), null);
+  assert.equal(recoveryUsersProblem([...uat, admin, ownerB]), null);
+  assert.equal(recoveryUsersProblem([...uat, admin, { ...ownerB, email: 'UAT-Company-B-Owner@Example.com' }]), null);
+  assert.match(String(recoveryUsersProblem([...uat, admin, ownerB, ownerB])), /3 users besides.*more than once/, 'the Company B owner twice');
+  assert.match(String(recoveryUsersProblem([...uat, { ...ownerB, role: 'admin' }])), /non-owner/, 'the approved email as a platform admin');
+  assert.match(String(recoveryUsersProblem([...uat, { ...ownerB, role: 'guard' }])), /non-owner/);
+  assert.match(String(recoveryUsersProblem([...uat, admin, ownerB, { email: 'uat-company-c-owner@example.com', role: 'company_admin' }])), /not one of the approved/, 'a third company owner');
+  assert.match(String(recoveryUsersProblem([admin, ownerB])), /not all present/, 'Company B never replaces the UAT set');
+
+  // Preflight: only the UAT set with exactly one company and no Company B yet.
+  const ok = { users: [...uat, admin], companies: 1, companyIds: [1] };
+  assert.equal(companyBPreflightProblem(ok), null);
+  assert.equal(companyBPreflightProblem({ ...ok, users: uat }), null, 'without the admin too');
+  assert.match(String(companyBPreflightProblem({ ...ok, users: [...uat, admin, ownerB], companies: 2, companyIds: [1, 2] })), /already exists/, 'never twice');
+  assert.match(String(companyBPreflightProblem({ ...ok, companies: 2, companyIds: [1, 2] })), /exactly 1 company/, 'an unexpected second company');
+  assert.match(String(companyBPreflightProblem({ ...ok, companies: 0, companyIds: [] })), /exactly 1 company/);
+  assert.match(String(companyBPreflightProblem({ ...ok, users: [...uat, { email: 'someone@example.com', role: 'guard' }] })), /not the approved staging set/);
+  assert.match(String(companyBPreflightProblem({ ...ok, users: [] })), /not the approved staging set/, 'an empty database');
+
+  // Fictional data only.
+  assert.match(COMPANY_B.companyName, /^UAT /);
+  assert.match(COMPANY_B.contactDetails, /@example\.com$/);
+  assert.match(COMPANY_B.address, /ZZ99 9ZZ/);
+
+  // The mode: its own confirmation, product HTTP routes under the strict pipe, login saved before verification, the
+  // deployed API proves sign-in, the result is read back; it returns before the seed path and never toggles Patrols.
+  const body = code.slice(code.indexOf('async function companyB('), code.indexOf('async function report('));
+  assert.ok(body.length > 0);
+  assert.match(code, /S4_STAGING_COMPANY_B_CONFIRM !== COMPANY_B_CONFIRM/);
+  assert.match(code, /const COMPANY_B_CONFIRM = 's4-staging-company-b';/);
+  assert.notEqual('s4-staging-company-b', 's4-staging-db', 'its own confirmation, not the seed one');
+  assert.match(body, /companyBPreflightProblem\(before\)/);
+  assert.ok(body.indexOf('companyBPreflightProblem(before)') < body.indexOf('bootApp(t)'), 'checked before the app starts');
+  assert.ok(body.indexOf('existsSync(loginsFile)') < body.indexOf('bootApp(t)'), 'an existing logins file is never overwritten');
+  assert.match(body, /new ValidationPipe\(\{ whitelist: true, transform: true, forbidNonWhitelisted: true \}\)/);
+  assert.match(body, /post\(base, '\/auth\/register'/);
+  assert.match(body, /post\(base, '\/auth\/verify-email'/);
+  assert.doesNotMatch(body, /auth\.register\(|AuthService/, 'never the service directly: the HTTP route with its validation');
+  assert.ok(body.indexOf('writeLogins(loginsFile') < body.indexOf("'/auth/verify-email'"), 'login saved before verification');
+  assert.match(body, /post\(liveBase, '\/auth\/login'/);
+  assert.match(body, /companyBId === companyA/);
+  assert.match(body, /readCompanyBState\(t\);\r?\n  const afterProblem/);
+  assert.doesNotMatch(body, /"patrolsEnabled"\s*=|\/admin\/patrols|'PUT'/, 'it never switches Patrols on');
+  // The in-process app runs no patrol timer either (only the deployed staging service sweeps).
+  assert.match(code, /app\.get\(PatrolSweepService\) as any, app\.get\(PatrolEvidenceMaintenanceService\) as any\]\) svc\.onModuleDestroy\(\);/);
+  assert.doesNotMatch(body, /\bdelete\b|DELETE|update |UPDATE /i, 'it never deletes or updates rows itself');
+  assert.match(code, /path\.join\(SECRETS, 'staging-patrol-probe\.env'\)/);
+  const main = code.slice(code.indexOf('if (addCompanyB) {'));
+  assert.ok(main.indexOf('return;') < main.indexOf('await seed(t)'), 'the mode returns before the seed path');
 });
 
 queue.then(

@@ -55,7 +55,11 @@ export type PatrolEvidenceMaintenanceCounters = {
  *                         object removal failed are retried; quarantined rows whose primary removal failed are retried
  *   5. exports            queued / retryable exports are built; ready ones past 24 h are deleted (always, when storage is up)
  *   6. metering snapshot  today's patrol_storage_usage_daily per site from the live counters
- * Only companies with patrolsEnabled are processed for 1–4 (a switched-off company's evidence is left exactly as it is).
+ * Steps 1–4 run for every company with Patrols switched on AND every company that has any patrol evidence record,
+ * whatever its switch (owner decision, #71): switching Patrols off stops new patrol activity, never retention expiry,
+ * holds or the deletion state machine (claim → quarantine → purge → tombstone) for evidence that already exists. Holds
+ * keep protecting switched-off evidence because every step checks them (heldSql) exactly as before. Exports already
+ * requested are built and expired regardless of the switch (step 5 is global).
  */
 @Injectable()
 export class PatrolEvidenceMaintenanceService implements OnModuleInit, OnModuleDestroy {
@@ -91,14 +95,28 @@ export class PatrolEvidenceMaintenanceService implements OnModuleInit, OnModuleD
     return this.job.tick();
   }
 
-  async run(now: Date = new Date(), mode: PatrolRetentionMode = patrolRetentionMode()): Promise<PatrolEvidenceMaintenanceCounters> {
+  /**
+   * One maintenance pass. `scope.companyIds` restricts steps 1–4 to those companies (an operator / certification tool;
+   * the timer never passes it).
+   */
+  async run(
+    now: Date = new Date(),
+    mode: PatrolRetentionMode = patrolRetentionMode(),
+    scope?: { companyIds?: readonly number[] },
+  ): Promise<PatrolEvidenceMaintenanceCounters> {
     const c: PatrolEvidenceMaintenanceCounters = {
       mode, storageAvailable: this.store.available(), companies: 0, companiesSkippedLocked: 0, orphansCompleted: 0, wouldClaim: 0, claimed: 0,
       quarantined: 0, cancelledByHold: 0, wouldPurge: 0, purged: 0, purgePending: 0, primaryRemoved: 0, failures: 0, exportsBuilt: 0,
       exportsExpired: 0, snapshots: 0,
     };
     if (!c.storageAvailable) return c; // nothing can be verified, moved or deleted without storage
-    const companies = await this.dataSource.query(`SELECT "id" FROM "companies" WHERE "patrolsEnabled" = true ORDER BY "id"`);
+    const companies = await this.dataSource.query(
+      `SELECT c."id" FROM "companies" c
+        WHERE (c."patrolsEnabled" = true OR EXISTS (SELECT 1 FROM "patrol_evidence" e WHERE e."companyId" = c."id"))
+          AND ($1::int[] IS NULL OR c."id" = ANY($1::int[]))
+        ORDER BY c."id"`,
+      [scope?.companyIds ? [...scope.companyIds] : null],
+    );
     for (const { id } of companies) {
       const companyId = Number(id);
       const runner = this.dataSource.createQueryRunner();

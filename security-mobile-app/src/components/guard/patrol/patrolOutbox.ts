@@ -24,7 +24,9 @@
 //             its local file is deleted then.
 //   refused   the server will not accept it under the sync rules — PATROL_SYNC_WINDOW_CLOSED (more than the policy's
 //             post-shift hours after Book Off), PATROL_SYNC_NOT_BOOKED_ON, PATROL_SHIFT_NOT_IN_PROGRESS. Kept and shown
-//             ("could not be sent — contact your control room"), never retried, never silently deleted.
+//             ("could not be sent — contact your control room"), never retried automatically, never silently deleted.
+//             Issue #68: a window-closed refusal is re-sent only when the Guard presses "Send again"
+//             (retryWindowClosed) — after their control room issued a recovery grant for the shift.
 //   failed    any other permanent answer (409 PATROL_IDEMPOTENCY_CONFLICT payload mismatch, a rejected photo, 404 …).
 //             Kept and shown the same way.
 //   auth      401 after the shared session renewal failed: the WHOLE queue pauses (nothing is dropped or counted as an
@@ -121,7 +123,8 @@ export type ErrorClass =
   | { kind: 'failed'; code: string; message: string }
   | { kind: 'reupload'; code: string; message: string };
 
-const REFUSED_CODES = new Set(['PATROL_SYNC_WINDOW_CLOSED', 'PATROL_SYNC_NOT_BOOKED_ON', 'PATROL_SHIFT_NOT_IN_PROGRESS']);
+export const PATROL_SYNC_WINDOW_CLOSED = 'PATROL_SYNC_WINDOW_CLOSED';
+const REFUSED_CODES = new Set([PATROL_SYNC_WINDOW_CLOSED, 'PATROL_SYNC_NOT_BOOKED_ON', 'PATROL_SHIFT_NOT_IN_PROGRESS']);
 
 function errorBody(error: unknown): { status: number | null; code: string | null; message: string | null; name: string | null } {
   const e = (error ?? {}) as { status?: unknown; body?: unknown; name?: unknown; message?: unknown };
@@ -158,6 +161,8 @@ export function backoffMs(attempts: number, random: () => number = Math.random):
 }
 
 export const NOT_SENT_MESSAGE = 'Could not be sent — contact your control room.';
+/** #68: shown with "Send again" when something was refused only because the sync window had closed. */
+export const RECOVERY_RETRY_HINT = 'If your control room has arranged late recovery for this shift, tap Send again.';
 
 /** A Guard's exception reasons and their own words, as the completion's exceptionReason (≤ 500 characters). */
 export function composeExceptionReason(exceptions: Array<{ label: string; reason: string }>, note: string | null): string | null {
@@ -343,6 +348,24 @@ export class PatrolOutboxEngine {
       return report;
     })();
     return this.running;
+  }
+
+  /**
+   * Issue #68: the Guard asks to send again what S4 refused ONLY because the post-shift sync window had closed (their
+   * control room may since have issued a recovery grant for that shift). Those rows — and the steps that settled with
+   * them — go back to pending with their SAME client ids and bodies; nothing else changes (no other refusal or failure is
+   * retried, attempts are kept). The server decides again: under an active grant they are accepted; otherwise they are
+   * refused again and stay listed. Returns how many rows were re-queued; the caller then runs an eager sync.
+   */
+  async retryWindowClosed(): Promise<number> {
+    let requeued = 0;
+    for (const row of await this.items()) {
+      if (row.status !== 'refused' || row.lastErrorCode !== PATROL_SYNC_WINDOW_CLOSED || row.kind === 'exception') continue;
+      await this.store.put({ ...row, status: 'pending', settledAt: null, nextAttemptAt: null });
+      requeued += 1;
+    }
+    if (requeued) this.emit();
+    return requeued;
   }
 
   /** The earliest time a waiting item may be retried, or null when nothing is waiting on a timer. */

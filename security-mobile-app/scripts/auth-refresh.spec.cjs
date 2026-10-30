@@ -14,7 +14,8 @@ const path = require('node:path');
 const vm = require('node:vm');
 const ts = require('typescript');
 
-function loadApi() {
+/** `timers` replaces setTimeout/clearTimeout inside api.ts only (to run its 30 s limits without waiting 30 s). */
+function loadApi({ timers } = {}) {
   const apiSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'api.ts'), 'utf8');
   const compiled = ts.transpileModule(apiSource, {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
@@ -43,13 +44,15 @@ function loadApi() {
     module: mod,
     require: (id) => {
       if (id === 'expo-constants') return { default: { expoConfig: { extra: { apiBaseUrl: 'https://test.example' } } } };
-      if (id.endsWith('api-base-url')) return { resolveApiBaseUrl: () => 'https://test.example' };
+      if (id.endsWith('api-base-url')) return { resolveApiBaseUrl: () => 'https://test.example', isUatBuild: () => false, resolveUatApiBaseUrl: () => ({ ok: false, reason: 'store-app spec' }) };
       if (id.endsWith('models')) return {};
       return require(id);
     },
     process, console, Error, TypeError, Promise, JSON, Array, Object,
     fetch: fetchStub,
-    AbortController, setTimeout, clearTimeout,
+    AbortController,
+    setTimeout: timers ? timers.setTimeout : setTimeout,
+    clearTimeout: timers ? timers.clearTimeout : clearTimeout,
     Headers: class Headers {
       constructor(init) { this._h = {}; if (init) for (const k of Object.keys(init)) this._h[k.toLowerCase()] = init[k]; }
       has(k) { return k.toLowerCase() in this._h; }
@@ -161,6 +164,47 @@ async function test(id, fn) { await fn(); passed += 1; console.log(`PASS  ${id}`
       assert.deepEqual(notices, []);
     });
   }
+
+  // Production, 25 Oct 2026: a renewal that never answered had no time limit, and every request waiting on it (the 401
+  // retries all share it) hung with it, which left a Guard on "Accepting…". It now has the same 30 s limit as every
+  // other request, and running out of time is the service being unavailable: the session is kept.
+  await test('REFRESH-TIMEOUT-KEEPS-SESSION', async () => {
+    const delays = [];
+    // Each 30 s limit fires after 5 ms instead; nothing else in api.ts uses a timer.
+    const timers = {
+      setTimeout: (fn, ms) => { delays.push(ms); return setTimeout(fn, ms >= 30_000 ? 5 : ms); },
+      clearTimeout: (id) => clearTimeout(id),
+    };
+    const { api, calls, setRouter } = loadApi({ timers });
+    api.restoreSession({ accessToken: 'expired', refreshToken: 'r1' });
+    const notices = [];
+    api.setUnauthorizedHandler(async (m) => notices.push(m));
+    let stalled = true;
+    setRouter((url, init) => {
+      if (url.endsWith('/auth/refresh')) {
+        if (!stalled) return { status: 200, body: { accessToken: 'a2', refreshToken: 'r2', user } };
+        // The renewal never answers; only its abort signal ends it, as fetch does.
+        return new Promise((_, reject) => {
+          // (Without a signal it simply never settles: the defect.)
+          if (init.signal) init.signal.addEventListener('abort', () => reject(Object.assign(new Error('Aborted'), { name: 'AbortError' })));
+        });
+      }
+      const auth = calls.at(-1).init.headers.get('authorization');
+      return auth === 'Bearer a2' ? { status: 200, body: [{ id: 1 }] } : { status: 401, body: {} };
+    });
+    const outcome = await Promise.race([
+      api.listCompanies().then(() => 'resolved', (e) => e),
+      new Promise((resolve) => setTimeout(() => resolve('still hanging'), 2_000)),
+    ]);
+    assert.notEqual(outcome, 'still hanging', 'a stalled renewal must end');
+    assert.ok(outcome.status === 503 && /still signed in/.test(outcome.body.message), 'reported as unavailable, not as signed out');
+    assert.ok(delays.includes(30_000), 'the renewal has the same 30 s limit as other requests');
+    assert.deepEqual(notices, [], 'no login screen');
+    assert.equal(api.getRefreshToken(), 'r1', 'the session is kept for the next attempt');
+    stalled = false;
+    assert.deepEqual(await api.listCompanies(), [{ id: 1 }], 'and renews once the service answers');
+    assert.equal(api.getRefreshToken(), 'r2');
+  });
 
   await test('REFRESH-REFUSED-STILL-ENDS-SESSION', async () => {
     // 400/401/403 from refresh are refusals: the session is over, exactly as before.

@@ -1,0 +1,2 @@
+# Byte-exact copies of upstream templates (LF, as EAS prebuild sees them). Never convert line endings on checkout.
+* text eol=lf

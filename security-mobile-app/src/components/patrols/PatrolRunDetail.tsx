@@ -7,14 +7,12 @@ import { patrolFailureMessage } from './patrolAccess';
 import type { PatrolPageContext } from './patrolContext';
 import { PatrolEvidenceList } from './PatrolEvidenceList';
 import {
-  checkpointProgress,
-  distinctScannedCheckpoints,
+  runCheckpointProgress,
   exceptionTypeLabel,
   formatClockDrift,
   formatPatrolDateTime,
   holdReasonProblem,
   pendingSyncLabel,
-  routeCheckpointTotal,
   runFlagBadges,
   runStatusLabel,
   runTone,
@@ -38,7 +36,7 @@ export function PatrolRunDetail({ ctx, runId, onClose }: { ctx: PatrolPageContex
   const data = detail.data;
   const run = data?.run;
   const zone = ctx.siteZone(run?.siteId);
-  const progress = run && data ? checkpointProgress(distinctScannedCheckpoints(data.visits), routeCheckpointTotal(run, ctx.routes)) : null;
+  const progress = run ? runCheckpointProgress(run) : null;
   const runHeld = run && ctx.holds ? ctx.holds.some((h) => !h.releasedAt && h.scope === 'run' && h.runId === run.id) : null;
 
   const placeHold = async () => {

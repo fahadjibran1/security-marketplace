@@ -1,5 +1,5 @@
 import Constants from 'expo-constants';
-import { resolveApiBaseUrl } from './api-base-url';
+import { isUatBuild, resolveApiBaseUrl, resolveUatApiBaseUrl } from './api-base-url';
 import type { TimesheetHistoryItem } from './timesheetReview';
 import {
   Attachment,
@@ -145,6 +145,7 @@ import type {
   PatrolEffectivePolicy,
   PatrolEvidence,
   PatrolEvidenceAccessPurpose,
+  PatrolEvidenceThumbnailPage,
   PatrolException,
   PatrolExport,
   PatrolExportInput,
@@ -153,6 +154,8 @@ import type {
   PatrolOverview,
   PatrolPolicies,
   PatrolPolicyUpdate,
+  PatrolRecoveryGrant,
+  PatrolRecoveryGrantInput,
   PatrolRoute,
   PatrolRouteInput,
   PatrolRunDetail,
@@ -162,6 +165,7 @@ import type {
   PatrolScheduleInput,
   PatrolSignedLink,
   PatrolStorageUsage,
+  PatrolWindowsDay,
   GuardEvidenceUploadIntent,
   GuardPatrolPlan,
   GuardPatrolRun,
@@ -173,11 +177,33 @@ const hasBrowserWindow =
   typeof window !== 'undefined' &&
   typeof window.location !== 'undefined' &&
   typeof window.location.hostname === 'string';
-const API_BASE_URL = resolveApiBaseUrl({
-  environmentUrl: process.env.EXPO_PUBLIC_API_URL,
-  configuredUrl: Constants.expoConfig?.extra?.apiBaseUrl as string | undefined,
-  webHostname: hasBrowserWindow ? window.location.hostname : undefined,
-});
+const configuredApiUrl = Constants.expoConfig?.extra?.apiBaseUrl as string | undefined;
+// The UAT app fails closed: staging or nothing. It never reaches resolveApiBaseUrl and its live-API fallback, so a UAT
+// build with missing or wrong API configuration sends no request anywhere and says why instead.
+const uatApi = isUatBuild({
+  appVariant: Constants.expoConfig?.extra?.appVariant,
+  buildLabel: process.env.EXPO_PUBLIC_BUILD_LABEL,
+  androidPackage: Constants.expoConfig?.android?.package,
+  iosBundleIdentifier: Constants.expoConfig?.ios?.bundleIdentifier,
+})
+  ? resolveUatApiBaseUrl({ environmentUrl: process.env.EXPO_PUBLIC_API_URL, configuredUrl: configuredApiUrl })
+  : null;
+const API_BASE_URL = uatApi
+  ? uatApi.ok
+    ? uatApi.url
+    : ''
+  : resolveApiBaseUrl({
+      environmentUrl: process.env.EXPO_PUBLIC_API_URL,
+      configuredUrl: configuredApiUrl,
+      webHostname: hasBrowserWindow ? window.location.hostname : undefined,
+    });
+const API_CONFIGURATION_ERROR = uatApi && !uatApi.ok ? uatApi.reason : null;
+
+/** Every request URL comes from here, so a refused UAT configuration can never produce one. */
+function apiUrl(path: string): string {
+  if (API_CONFIGURATION_ERROR) throw new NetworkError(API_CONFIGURATION_ERROR);
+  return `${API_BASE_URL}${path}`;
+}
 let accessToken: string | null = null;
 /** Renewable session token. Mirrored into SecureStore by the persister below; never on web. */
 let refreshToken: string | null = null;
@@ -263,12 +289,13 @@ async function request<T>(path: string, options?: RequestInit, retried = false):
     headers.set('Authorization', `Bearer ${accessToken}`);
   }
 
+  const url = apiUrl(path);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 30_000);
 
   let response: Response;
   try {
-    response = await fetch(`${API_BASE_URL}${path}`, {
+    response = await fetch(url, {
       ...options,
       // headers last: it already folds in options.headers via the constructor, and spreading
       // options after it would drop the Authorization header we just set.
@@ -542,11 +569,16 @@ async function refreshAccessToken(): Promise<RefreshOutcome> {
 
   const presented = refreshToken;
   inFlightRefresh = (async () => {
+    // The same 30 s limit as every other request. Without it a stalled renewal left every request waiting on it (each
+    // 401 retry shares this promise) hanging for good; a timeout is the service being unavailable, not the session ending.
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30_000);
     try {
-      const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
+      const response = await fetch(apiUrl('/auth/refresh'), {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ refreshToken: presented }),
+        signal: controller.signal,
       });
       if (!response.ok) {
         // Only a refusal ends the session. A server error or rate limit is the service, not the session.
@@ -566,6 +598,7 @@ async function refreshAccessToken(): Promise<RefreshOutcome> {
       // Offline or unreachable — not an auth failure. Keep the token so a later attempt can work.
       return 'unavailable';
     } finally {
+      clearTimeout(timeout);
       inFlightRefresh = null;
     }
   })();
@@ -1993,8 +2026,13 @@ function patrolQuery(params: Record<string, string | number | boolean | null | u
   return parts.length ? `?${parts.join('&')}` : '';
 }
 
-export function getPatrolOverview(params: { siteId?: number | null; date?: string | null } = {}) {
+export function getPatrolOverview(params: { siteId?: number | null; date?: string | null; dateBasis?: 'utc' | 'site_local' | null } = {}) {
   return request<PatrolOverview>(`/patrols/overview${patrolQuery(params)}`);
+}
+
+/** #78: the scheduled windows due / completed / outstanding in the site-local day (computed by the server's window engine). */
+export function getPatrolWindowsDay(params: { siteId?: number | null; date?: string | null } = {}) {
+  return request<PatrolWindowsDay>(`/patrols/windows/day${patrolQuery(params)}`);
 }
 
 export function listPatrolRuns(params: PatrolRunsQuery = {}) {
@@ -2089,6 +2127,14 @@ export function getPatrolEvidenceLink(evidenceId: number, purpose: PatrolEvidenc
   return request<PatrolSignedLink & { evidenceId: number }>(`/patrols/evidence/${evidenceId}/download${patrolQuery({ purpose })}`);
 }
 
+/**
+ * patrols.evidence (issue #79). One page (≤ 24) of a run's photos as short-lived links for small, lazy-loaded previews;
+ * the server audits the page once (purpose browse). The caller holds the links in memory until they expire.
+ */
+export function getPatrolEvidenceThumbnails(runId: number, params: { page: number; pageSize: number }) {
+  return request<PatrolEvidenceThumbnailPage>(`/patrols/runs/${runId}/evidence/thumbnails${patrolQuery(params)}`);
+}
+
 /** patrols.holds. Active holds by default; 'all' includes released ones. */
 export function listPatrolHolds(status: 'active' | 'all' = 'active') {
   return request<PatrolHold[]>(`/patrols/holds${patrolQuery({ status })}`);
@@ -2100,6 +2146,19 @@ export function placePatrolHold(input: PatrolHoldInput) {
 
 export function releasePatrolHold(id: number, reason: string) {
   return request<PatrolHold>(`/patrols/holds/${id}/release`, { method: 'POST', body: JSON.stringify({ reason }) });
+}
+
+/** patrols.holds (Owner / Admin). Exceptional offline recovery grants (#68): active ones by default, 'all' includes ended ones. */
+export function listPatrolRecoveryGrants(status: 'active' | 'all' = 'active') {
+  return request<PatrolRecoveryGrant[]>(`/patrols/recovery-grants${patrolQuery({ status })}`);
+}
+
+export function issuePatrolRecoveryGrant(input: PatrolRecoveryGrantInput) {
+  return request<PatrolRecoveryGrant>('/patrols/recovery-grants', { method: 'POST', body: JSON.stringify(input) });
+}
+
+export function revokePatrolRecoveryGrant(id: number, reason: string) {
+  return request<PatrolRecoveryGrant>(`/patrols/recovery-grants/${id}/revoke`, { method: 'POST', body: JSON.stringify({ reason }) });
 }
 
 /** patrols.holds. Live storage metering per site, exports and totals. */

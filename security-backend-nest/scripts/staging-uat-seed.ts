@@ -16,8 +16,9 @@
  *     it must differ from the production database host in production-read.env; strict TLS with the staging CA;
  *     S4_STAGING_SEED_CONFIRM must equal "s4-staging-db".
  *   - local: the host must be 127.0.0.1 / localhost.
- *   - any target: no Supabase or pooler host; the migration ledger must hold exactly 70 entries ending in
- *     AddPatrolEvidenceStorage1720900000016 (Migration 70, patrol evidence storage) — the same head as this repository's own
+ *   - any target: no Supabase or pooler host; the migration ledger must hold exactly 72 entries ending in
+ *     AddPatrolSyncRecoveryGrants1720900000018 (Migration 72, patrol sync recovery grants; Migration 71 =
+ *     AddPatrolSweepReconciliation1720900000017 comes just before it) — the same head as this repository's own
  *     migrations, which is checked too, so the in-process app and the database always agree; the users table must be
  *     EMPTY (seed once; reset to re-seed). --recover-logins applies the same ledger check before it boots the app.
  * Logins are written only to a git-ignored file (~/.s4-pilot-secrets/staging-uat.env for staging) and are never
@@ -30,6 +31,15 @@
  *     ambiguous response the seeder reads the state back (confirmOnce) and stops if it is not what was asked for;
  *   - --report prints what already exists in the target, READ ONLY, without starting the app:
  *       npx ts-node -r tsconfig-paths/register scripts/staging-uat-seed.ts --target staging --report
+ *
+ * Company B (owner approval, 30 Oct 2026) — the second fictional company the patrol tenant-isolation certification
+ * needs (scripts/staging-patrol-evidence-probe.cjs). It never re-seeds and never touches Company A:
+ *       S4_STAGING_COMPANY_B_CONFIRM=s4-staging-company-b npx ts-node -r tsconfig-paths/register scripts/staging-uat-seed.ts --target staging --company-b
+ *   It refuses unless the target's users are exactly the approved staging set (recoveryUsersProblem) with ONE company and
+ *   no Company B yet. The Owner registers through the product's own HTTP routes (POST /auth/register under the strict
+ *   ValidationPipe and its throttle, then POST /auth/verify-email with the token from the in-process outbox), its login is
+ *   written to ~/.s4-pilot-secrets/staging-patrol-probe.env before verification, sign-in is proved on the DEPLOYED staging
+ *   API, and the result is read back. Patrols stays off for Company B. --dry-run runs the read-only preflight only.
  */
 import 'reflect-metadata';
 import * as fs from 'fs';
@@ -43,8 +53,8 @@ const STAGING_HOST = 'dpg-dbbq13afngtc73a5ls20-a.oregon-postgres.render.com';
 const STAGING_DB = 's4_staging';
 const STAGING_API = 'https://security-marketplace-api-staging.onrender.com';
 const CONFIRM = 's4-staging-db';
-const EXPECTED_MIGRATIONS = 70;
-const LAST_MIGRATION = 'AddPatrolEvidenceStorage1720900000016';
+const EXPECTED_MIGRATIONS = 72;
+const LAST_MIGRATION = 'AddPatrolSyncRecoveryGrants1720900000018';
 const SECRETS = path.join(os.homedir(), '.s4-pilot-secrets');
 
 const args = process.argv.slice(2);
@@ -52,6 +62,7 @@ const target = args[args.indexOf('--target') + 1];
 const dryRun = args.includes('--dry-run');
 const reportOnly = args.includes('--report');
 const recoverLogins = args.includes('--recover-logins');
+const addCompanyB = args.includes('--company-b');
 /** The only accounts --recover-logins will touch: the three fictional UAT accounts, nothing else in the database. */
 export const UAT_ACCOUNT_EMAILS = ['uat-guard-a@example.com', 'uat-guard-b@example.com', 'uat-owner@example.com'];
 /**
@@ -60,22 +71,37 @@ export const UAT_ACCOUNT_EMAILS = ['uat-guard-a@example.com', 'uat-guard-b@examp
  * seeder: recovery resets only the three UAT accounts.
  */
 export const UAT_PLATFORM_ADMIN_EMAIL = 'uat-s4-admin@example.com';
+/**
+ * The one approved fictional Company B owner (owner approval, 30 Oct 2026): the Owner of a second, separate company used
+ * only by the patrol tenant-isolation certification. Created by --company-b; never touched by recovery.
+ */
+export const UAT_COMPANY_B_OWNER_EMAIL = 'uat-company-b-owner@example.com';
+/** Besides the three UAT accounts, only these may exist — each at most once, and only with exactly this role. */
+const APPROVED_EXTRA_ACCOUNTS: Record<string, { role: string; wrongRole: string }> = {
+  [UAT_PLATFORM_ADMIN_EMAIL]: { role: 'admin', wrongRole: 'the approved platform administrator email belongs to a non-administrator account' },
+  [UAT_COMPANY_B_OWNER_EMAIL]: { role: 'company_admin', wrongRole: 'the approved Company B owner email belongs to a non-owner account' },
+};
 
 /**
  * Why the target's users are not exactly the staging UAT set, or null when they are: the three fictional UAT accounts
- * (all present), plus at most the approved platform administrator — exactly that email AND the platform-admin role.
- * Any other user, a second extra user, or that email with any other role is refused.
+ * (all present), plus at most the approved platform administrator and at most the approved Company B owner — each
+ * exactly that email AND that role. Any other user, an approved account twice, or an approved email with any other
+ * role is refused.
  */
 export function recoveryUsersProblem(users: Array<{ email: string; role: string }>): string | null {
   const emails = users.map((u) => String(u.email).trim().toLowerCase());
   const missing = UAT_ACCOUNT_EMAILS.filter((e) => !emails.includes(e));
   if (missing.length) return `the ${missing.length} expected fictional UAT account(s) are not all present`;
   const extra = users.filter((u) => !UAT_ACCOUNT_EMAILS.includes(String(u.email).trim().toLowerCase()));
-  if (extra.length === 0) return null;
-  if (extra.length > 1) return `${extra.length} users besides the three UAT accounts (at most the approved platform administrator is allowed)`;
-  const [admin] = extra;
-  if (String(admin.email).trim().toLowerCase() !== UAT_PLATFORM_ADMIN_EMAIL) return 'a user that is not one of the approved staging accounts';
-  if (admin.role !== 'admin') return 'the approved platform administrator email belongs to a non-administrator account';
+  const seen = new Set<string>();
+  for (const user of extra) {
+    const email = String(user.email).trim().toLowerCase();
+    const approved = APPROVED_EXTRA_ACCOUNTS[email];
+    if (!approved) return 'a user that is not one of the approved staging accounts';
+    if (seen.has(email)) return `${extra.length} users besides the three UAT accounts: an approved account appears more than once`;
+    seen.add(email);
+    if (user.role !== approved.role) return approved.wrongRole;
+  }
   return null;
 }
 const RECOVER_CONFIRM = 's4-staging-db';
@@ -413,6 +439,10 @@ async function bootApp(t: Target) {
   const push = app.get(WelfarePushService) as any;
   if (push.reminderInterval) clearInterval(push.reminderInterval);
   push.reminderJob?.stop();
+  // Nor the patrol sweep or the patrol evidence maintenance (Migrations 68–70): only the deployed service runs them.
+  const { PatrolSweepService } = await import('../src/patrol/patrol-sweep.service');
+  const { PatrolEvidenceMaintenanceService } = await import('../src/patrol/evidence/patrol-evidence-maintenance.service');
+  for (const svc of [app.get(PatrolSweepService) as any, app.get(PatrolEvidenceMaintenanceService) as any]) svc.onModuleDestroy();
   return app;
 }
 
@@ -608,6 +638,115 @@ async function seed(t: Target) {
  * strict TLS); one READ ONLY transaction, rolled back. Prints fictional names, ids, statuses and counts — no
  * passwords, hashes, tokens, storage keys or URLs. The logins file is reported by its keys only.
  */
+// ─── Company B: the second fictional company for patrol tenant isolation ───────────────────────────────────────
+
+const COMPANY_B_CONFIRM = 's4-staging-company-b';
+export const COMPANY_B = {
+  companyName: 'UAT Isolation Test Ltd', companyNumber: '99000002', address: 'Unit 2, Example Park, Testtown, ZZ99 9ZZ', contactDetails: 'uat-ops-b@example.com',
+};
+const COMPANY_B_OWNER = { fullName: 'UAT Company B Owner', phone: '01632960009' };
+
+type CompanyBState = { users: Array<{ email: string; role: string }>; companies: number; companyIds: number[] };
+
+async function readCompanyBState(t: Target): Promise<CompanyBState> {
+  const c = new Client({ connectionString: t.url, ssl: t.ssl });
+  await c.connect();
+  try {
+    await c.query('BEGIN TRANSACTION READ ONLY');
+    // The app booted below is this code: it must run only on the migration head it was built for.
+    await assertLedger(c);
+    const users = (await c.query(`select lower(email) email, role::text role from users order by 1`)).rows;
+    const companyIds = (await c.query(`select id from companies order by id`)).rows.map((r: any) => Number(r.id));
+    await c.query('ROLLBACK');
+    return { users, companies: companyIds.length, companyIds };
+  } finally {
+    await c.end();
+  }
+}
+
+/** Why --company-b must not run on this state, or null. Pure, so the refusal rules are executed in the spec. */
+export function companyBPreflightProblem(state: CompanyBState): string | null {
+  const problem = recoveryUsersProblem(state.users);
+  if (problem) return `users are not the approved staging set (${state.users.length} users): ${problem}`;
+  if (state.users.some((u) => String(u.email).trim().toLowerCase() === UAT_COMPANY_B_OWNER_EMAIL)) return 'the Company B owner already exists';
+  if (state.companies !== 1) return `expected exactly 1 company (the UAT company) before adding Company B, found ${state.companies}`;
+  return null;
+}
+
+async function companyB(t: Target, loginsFile: string) {
+  const before = await readCompanyBState(t);
+  const problem = companyBPreflightProblem(before);
+  if (problem) fail(`${problem}; nothing written`);
+  if (fs.existsSync(loginsFile)) fail(`${path.basename(loginsFile)} already exists; nothing written (it would be overwritten)`);
+  const companyA = before.companyIds[0];
+  console.log(`company-b preflight OK: ${EXPECTED_MIGRATIONS} migrations, the approved staging users (${before.users.length}), 1 company (id ${companyA}), no Company B`);
+  if (dryRun) { console.log('DRY RUN: nothing written.'); return; }
+
+  const { ValidationPipe } = await import('@nestjs/common');
+  const app = await bootApp(t);
+  // The same strict validation as the deployed API: nothing is created that the product's own route would refuse.
+  app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: true }));
+  await app.listen(0, '127.0.0.1');
+  const base = (await app.getUrl()).replace('[::1]', '127.0.0.1');
+  const liveBase = target === 'staging' ? STAGING_API : base;
+  const post = async (root: string, route: string, body: unknown) => {
+    const res = await fetch(root + route, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    const json: any = await res.json().catch(() => null);
+    return { status: res.status, json };
+  };
+  let companyBId: number;
+  try {
+    const { TransactionalEmailService } = await import('../src/email/transactional-email.service');
+    const pass = `${randomBytes(12).toString('base64url')}Aa1!`;
+    registerSecret(pass);
+    // One attempt; a refusal stops here with nothing to undo (the product's own registration is atomic).
+    const registered = await post(base, '/auth/register', {
+      email: UAT_COMPANY_B_OWNER_EMAIL, password: pass, role: 'company', fullName: COMPANY_B_OWNER.fullName, phone: COMPANY_B_OWNER.phone, ...COMPANY_B,
+    });
+    if (registered.status >= 300) throw new Error(`registration refused: HTTP ${registered.status} ${JSON.stringify(registered.json?.message ?? '')}`);
+    writeLogins(loginsFile, { UAT_COMPANY_B_OWNER_EMAIL: UAT_COMPANY_B_OWNER_EMAIL, UAT_COMPANY_B_OWNER_PASSWORD: pass });
+    console.log(`  Company B owner registered through POST /auth/register; login written to ${path.basename(loginsFile)} (not printed)`);
+
+    const message: any = [...app.get(TransactionalEmailService).capturedMessages()].reverse()
+      .find((m: any) => m.kind === 'email_verification' && m.to === UAT_COMPANY_B_OWNER_EMAIL);
+    const token = message && /verify-email\?token=([A-Za-z0-9_-]+)/.exec(message.text)?.[1];
+    if (!token) throw new Error('verification email not captured; the account exists unverified (re-run is refused: verify it through the product)');
+    registerSecret(token);
+    const verified = await post(base, '/auth/verify-email', { token });
+    if (verified.status >= 300) throw new Error(`email verification refused: HTTP ${verified.status}`);
+    console.log('  email verified through POST /auth/verify-email');
+
+    // Proof on the deployed service, exactly as the probe will sign in.
+    const login = await post(liveBase, '/auth/login', { email: UAT_COMPANY_B_OWNER_EMAIL, password: pass });
+    if (login.status >= 300 || !login.json?.accessToken) throw new Error(`the ${target} API refused sign-in (HTTP ${login.status})`);
+    registerSecret(login.json.accessToken);
+    companyBId = Number(login.json.user?.companyId);
+    if (!Number.isInteger(companyBId) || companyBId === companyA) throw new Error(`Company B owner resolved to company ${companyBId}, not a new company`);
+    console.log(`  signs in to the ${target === 'staging' ? 'deployed staging' : 'local'} API as the Owner of company ${companyBId}`);
+  } finally {
+    await app.close();
+  }
+
+  const after = await readCompanyBState(t);
+  const afterProblem = recoveryUsersProblem(after.users);
+  if (afterProblem) fail(`read-back: ${afterProblem}`);
+  if (after.companies !== 2 || !after.companyIds.includes(companyA) || !after.companyIds.includes(companyBId)) {
+    fail(`read-back: expected companies ${companyA} and ${companyBId}, found ${after.companyIds.join(', ')}`);
+  }
+  const c = new Client({ connectionString: t.url, ssl: t.ssl });
+  await c.connect();
+  try {
+    await c.query('BEGIN TRANSACTION READ ONLY');
+    const flags = (await c.query(`select id, "patrolsEnabled" from companies order by id`)).rows;
+    await c.query('ROLLBACK');
+    console.log(`read-back OK: ${after.users.length} users (the approved set), companies ${flags.map((f: any) => `${f.id} patrolsEnabled=${f.patrolsEnabled}`).join('; ')}`);
+  } finally {
+    await c.end();
+  }
+}
+
 async function report(t: Target) {
   const host = new URL(t.url).hostname;
   if (/supabase|pooler/i.test(host)) fail('Supabase / pooler host');
@@ -669,6 +808,14 @@ if (require.main === module) (async () => {
     if (target !== 'staging') fail('--recover-logins is for the staging UAT accounts only');
     if (process.env.S4_STAGING_RECOVER_CONFIRM !== RECOVER_CONFIRM) fail(`set S4_STAGING_RECOVER_CONFIRM=${RECOVER_CONFIRM} to reset the fictional UAT passwords`);
     await recover(t);
+    return;
+  }
+  if (addCompanyB) {
+    if (target === 'staging' && !dryRun && process.env.S4_STAGING_COMPANY_B_CONFIRM !== COMPANY_B_CONFIRM) {
+      fail(`set S4_STAGING_COMPANY_B_CONFIRM=${COMPANY_B_CONFIRM} to add Company B to staging`);
+    }
+    const loginsFile = target === 'staging' ? path.join(SECRETS, 'staging-patrol-probe.env') : path.join(os.tmpdir(), `s4-company-b-local-${Date.now()}.env`);
+    await companyB(t, loginsFile);
     return;
   }
   if (target === 'staging' && !dryRun && process.env.S4_STAGING_SEED_CONFIRM !== CONFIRM) fail(`set S4_STAGING_SEED_CONFIRM=${CONFIRM} to write to staging`);
