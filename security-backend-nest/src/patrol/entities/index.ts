@@ -11,6 +11,7 @@ import { PatrolRun } from './patrol-run.entity';
 import { PatrolSchedule } from './patrol-schedule.entity';
 import { PatrolStorageUsage } from './patrol-storage-usage.entity';
 import { PatrolStorageUsageDaily } from './patrol-storage-usage-daily.entity';
+import { PatrolSyncRecoveryGrant } from './patrol-sync-recovery-grant.entity';
 
 export {
   PatrolCheckpoint,
@@ -26,9 +27,13 @@ export {
   PatrolSchedule,
   PatrolStorageUsage,
   PatrolStorageUsageDaily,
+  PatrolSyncRecoveryGrant,
 };
 
-/** Migration 68's eleven tables, plus Migration 70's evidence exports and live storage metering (P1-C). */
+/**
+ * Migration 68's eleven tables, plus Migration 70's evidence exports and live storage metering (P1-C), plus Migration 72's
+ * sync recovery grants (issue #68).
+ */
 export const patrolEntities = [
   PatrolPolicy,
   PatrolSchedule,
@@ -43,4 +48,5 @@ export const patrolEntities = [
   PatrolStorageUsageDaily,
   PatrolEvidenceExport,
   PatrolStorageUsage,
+  PatrolSyncRecoveryGrant,
 ];
