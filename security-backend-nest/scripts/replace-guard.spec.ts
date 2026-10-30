@@ -137,7 +137,7 @@ async function main() {
   const migrated = await migrator.runMigrations({ transaction: 'each' });
   // Replace Guard needs no schema change: Migration 66 already allows shift_replaced. Code at the #35 head runs over
   // exactly this database.
-  assert.equal(migrated[migrated.length - 1]?.name, 'AddPatrolEvidenceStorage1720900000016', 'the head is Migration 70 (patrol evidence storage); Replace Guard needs nothing from 67, 68, 69 or 70');
+  assert.equal(migrated[migrated.length - 1]?.name, 'AddPatrolSweepReconciliation1720900000017', 'the head is Migration 71 (patrol sweep reconciliation); Replace Guard needs nothing from 67, 68, 69, 70 or 71');
   await migrator.destroy();
 
   const { AppModule } = await import('../src/app.module');

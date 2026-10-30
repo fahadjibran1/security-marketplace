@@ -162,11 +162,12 @@ async function main() {
     await test('M67-01-A-66-DATABASE-MIGRATES-TO-67-AND-67-IS-LAST', () => {
       assert.equal(applied.length, 1, 'only 67 is pending on a 66 database');
       assert.equal(applied[0].name, MIGRATION_67);
-      assert.equal(allFiles.length, 70);
+      assert.equal(allFiles.length, 71);
       assert.equal(allFiles[66], '1720900000013-AddManualAttendance.ts');
       assert.equal(allFiles[67], '1720900000014-AddPatrolManagement.ts', 'Migration 68 follows 67 and is certified by m68-migration.spec.ts');
       assert.equal(allFiles[68], '1720900000015-AddPatrolScheduling.ts', 'Migration 69 follows 68 and is certified by m69-migration.spec.ts');
       assert.equal(allFiles[69], '1720900000016-AddPatrolEvidenceStorage.ts', 'Migration 70 follows 69 and is certified by m70-migration.spec.ts');
+      assert.equal(allFiles[70], '1720900000017-AddPatrolSweepReconciliation.ts', 'Migration 71 follows 70 and is certified by m71-migration.spec.ts');
     });
     const head = await schema();
 
@@ -342,7 +343,10 @@ async function main() {
       // …and Migration 70's eleven patrol_evidence columns, its two tables (evidence exports, live storage usage) and their
       // indexes, statement by statement (m70-migration.spec.ts M70-09 certifies that its entities and migration agree).
       const m70 = /^CREATE TABLE "patrol_(evidence_exports|storage_usage)" |^ALTER TABLE "patrol_evidence" ADD "(declaredSizeBytes|detectedMimeType|uploadUrlIssuedAt|completionToken|completionStartedAt|syncFlags|needsReview|purgeAfter|primaryDeletedAt|objectDeletedAt|deletionRequestedByUserId)" |^CREATE (UNIQUE )?INDEX "(IDX_patrol_evidence_(lifecycle|pending_upload|exports_company|exports_open)|UQ_patrol_evidence_exports_storage_key|UQ_patrol_storage_usage_(site|company))" |^ALTER TABLE "patrol_(evidence_exports|storage_usage)" /;
-      const semantic = drift.filter((x) => !m68.test(x) && !m69.test(x) && !m70.test(x) &&
+      // …and Migration 71's two tables (sweep watermarks, reconciliation runs), its patrol_exceptions / safety_alerts columns
+      // and their indexes, statement by statement (m71-migration.spec.ts M71-09 certifies that its entities and migration agree).
+      const m71 = /^CREATE TABLE "patrol_(sweep_watermarks|reconciliation_runs)" |^ALTER TABLE "patrol_exceptions" ADD "reconciliationRunId" |^ALTER TABLE "safety_alerts" ADD "patrolReconciliationRunId" |^CREATE (UNIQUE )?INDEX "(IDX_patrol_exceptions_reconciliation|uq_safety_alerts_patrol_reconciliation|UQ_patrol_reconciliation_runs_running|IDX_patrol_reconciliation_runs_company)" |^ALTER TABLE "patrol_(sweep_watermarks|reconciliation_runs)" /;
+      const semantic = drift.filter((x) => !m68.test(x) && !m69.test(x) && !m70.test(x) && !m71.test(x) &&
         /CREATE TABLE|DROP TABLE|CREATE TYPE|DROP TYPE|ALTER TYPE|ALTER TABLE.*ALTER COLUMN|ALTER TABLE.*DROP COLUMN|ALTER TABLE.*ADD "/i.test(x));
       assert.deepEqual(semantic, [], `semantic drift (the release gate would fail):\n${semantic.join('\n')}`);
       console.log(`      (diagnostic-only drift elsewhere: ${drift.length} statement(s))`);

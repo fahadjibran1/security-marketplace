@@ -80,7 +80,7 @@ async function main() {
   assert.ok(applied.some((m) => m.name === 'AddAccountLifecycleAndVerificationTokens1720900000007'), 'Migration 61 applied');
   assert.ok(applied.some((m) => m.name === 'AddGuardComplianceChecks1720900000008'), 'Migration 62 applied');
   assert.ok(applied.some((m) => m.name === 'AddComplianceLapseAlerts1720900000009'), 'Migration 63 applied');
-  assert.equal(applied[applied.length - 1]?.name, 'AddPatrolEvidenceStorage1720900000016');
+  assert.equal(applied[applied.length - 1]?.name, 'AddPatrolSweepReconciliation1720900000017');
 
   const { User, UserRole, UserStatus } = await import('../src/user/entities/user.entity');
   const { GuardProfile } = await import('../src/guard-profile/entities/guard-profile.entity');
