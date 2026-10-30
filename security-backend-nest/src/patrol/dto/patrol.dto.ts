@@ -31,6 +31,9 @@ import {
 } from '../patrol-constants';
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+/** How a company read turns a calendar date into instants: the UTC day, or each site's own local day (#77). */
+export const PATROL_DATE_BASES = ['utc', 'site_local'] as const;
+export type PatrolDateBasis = (typeof PATROL_DATE_BASES)[number];
 
 /**
  * Location fields are DECLARED (so the global whitelist does not turn them into an anonymous 400) and then REFUSED by
@@ -265,12 +268,19 @@ export class PatrolRunsQueryDto {
   @IsOptional() @Type(() => Number) @IsInt() @Min(1)
   siteId?: number;
 
-  /** UTC calendar dates (YYYY-MM-DD), inclusive, on the server start time. */
+  /**
+   * Calendar dates (YYYY-MM-DD), inclusive, on the server start time. Read as UTC days unless dateBasis is site_local,
+   * when each run is judged by its OWN site's local day (#77; DST-safe: see siteDayBounds).
+   */
   @IsOptional() @Matches(DATE_ONLY)
   from?: string;
 
   @IsOptional() @Matches(DATE_ONLY)
   to?: string;
+
+  /** utc (the default, unchanged) or site_local. */
+  @IsOptional() @IsIn(PATROL_DATE_BASES)
+  dateBasis?: PatrolDateBasis;
 
   @IsOptional() @IsIn(PATROL_RUN_STATUSES)
   status?: string;
@@ -286,7 +296,23 @@ export class PatrolOverviewQueryDto {
   @IsOptional() @Type(() => Number) @IsInt() @Min(1)
   siteId?: number;
 
-  /** UTC calendar date (YYYY-MM-DD); today (UTC) by default. */
+  /**
+   * Calendar date (YYYY-MM-DD). utc (the default): the UTC day, today (UTC) when omitted. site_local (#77): each site's
+   * own local day of that date; when omitted, today at the chosen site (or in Europe/London across all sites).
+   */
+  @IsOptional() @Matches(DATE_ONLY)
+  date?: string;
+
+  @IsOptional() @IsIn(PATROL_DATE_BASES)
+  dateBasis?: PatrolDateBasis;
+}
+
+/** GET /patrols/windows/day (#78): the scheduled windows due in one site-local day. */
+export class PatrolWindowsDayQueryDto {
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1)
+  siteId?: number;
+
+  /** The site-local date (YYYY-MM-DD), read at each site's own zone; today at each site by default. */
   @IsOptional() @Matches(DATE_ONLY)
   date?: string;
 }

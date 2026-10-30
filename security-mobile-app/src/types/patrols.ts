@@ -198,6 +198,13 @@ export interface PatrolRun {
   guardName?: string;
   visitCount?: number;
   flaggedVisitCount?: number;
+  /**
+   * Company reads (#76): the distinct checkpoints visited by a scan that was not flagged, computed once by the server
+   * for the History list and the run detail alike. Absent from the Guard API.
+   */
+  checkpointsVisited?: number;
+  /** Checkpoints on the run's route; null without a route. */
+  checkpointsTotal?: number | null;
 }
 
 export interface PatrolRunsPage {
@@ -212,6 +219,8 @@ export interface PatrolRunsQuery {
   from?: string | null;
   to?: string | null;
   status?: PatrolRunStatus | null;
+  /** How from / to are read: the UTC day (API default) or each run's site-local day (#77). */
+  dateBasis?: 'utc' | 'site_local' | null;
   page?: number;
   pageSize?: number;
 }
@@ -305,7 +314,10 @@ export interface PatrolRunDetail {
 
 export interface PatrolOverview {
   date: string;
-  dateBasis: 'utc';
+  /** utc (the API default) or site_local: each site's own local day (#77). */
+  dateBasis: 'utc' | 'site_local';
+  /** site_local with one site: its zone; null otherwise. Absent from an older API. */
+  timeZone?: string | null;
   siteId: number | null;
   runsStarted: number;
   runsByStatus: Record<PatrolRunStatus, number>;
@@ -315,6 +327,34 @@ export interface PatrolOverview {
   activeCheckpoints: number;
   activeSchedules: number;
   activeRoutes: number;
+}
+
+/** GET /patrols/windows/day (#78): computed by the server from schedules and site time zones (the P1-B window engine). */
+export interface PatrolWindowsDaySite {
+  siteId: number;
+  timeZone: string;
+  date: string;
+  dayStart: string;
+  dayEnd: string;
+  windowsDue: number;
+  windowsCompleted: number;
+  windowsOutstanding: number;
+}
+
+export interface PatrolWindowsDay {
+  /** The site-local date counted (null across sites whose "today" differs). */
+  date: string | null;
+  dateBasis: 'site_local';
+  siteId: number | null;
+  generatedAt: string;
+  /** Windows of active schedules starting in the site-local day. */
+  windowsDue: number;
+  /** Of those, windows with a completed run. */
+  windowsCompleted: number;
+  /** due − completed: still to do, in progress, incomplete or missed. */
+  windowsOutstanding: number;
+  completionBasis: 'window_with_a_completed_run';
+  sites: PatrolWindowsDaySite[];
 }
 
 export interface PatrolHold {

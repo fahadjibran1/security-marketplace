@@ -10,6 +10,7 @@ import type {
   PatrolRun,
   PatrolRunsPage,
   PatrolSignedLink,
+  PatrolWindowsDay,
 } from '../../types/patrols';
 
 // ─── words ────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -151,9 +152,35 @@ export function formatClockDrift(ms: number | null | undefined): string {
   return `Device clock ${ms > 0 ? 'behind' : 'ahead'} by ${amount}`;
 }
 
-/** Today as YYYY-MM-DD in UTC: the overview's own date basis (dateBasis: 'utc'). */
-export function utcDateKey(now: Date = new Date()): string {
-  return now.toISOString().slice(0, 10);
+/**
+ * Today as YYYY-MM-DD at a site (#77): the dashboard's day basis (dateBasis: 'site_local'). At 23:30Z on 25 Oct 2025 it
+ * is already the 26th in London (BST); at 23:30Z on 30 Mar 2025 already the 31st.
+ */
+export function siteTodayKey(timeZone: string | null | undefined, now: Date = new Date()): string {
+  return zonedDateKey(now.toISOString(), timeZone) ?? now.toISOString().slice(0, 10);
+}
+
+/** How the Overview names its day: the basis the SERVER answered with (an older API answers 'utc'). */
+export function overviewDayBasisLabel(overview: Pick<PatrolOverview, 'dateBasis' | 'timeZone'>, zone: string, oneSite: boolean): string {
+  if (overview.dateBasis !== 'site_local') return 'UTC day';
+  return oneSite ? `site-local day, ${overview.timeZone || zone}` : "each site's local day";
+}
+
+/**
+ * The History date filters (#77). The picker gives SITE-LOCAL calendar dates (YYYY-MM-DD); they are sent as dates with
+ * dateBasis 'site_local' and the server turns each into its site's own day instants (midnight to the next midnight,
+ * 23 or 25 hours on a DST day), so the client never converts a date with a fixed offset. A half-typed or invalid entry
+ * is not sent; a range that ends before it starts is said so.
+ */
+export function historyDateFilter(from: string, to: string): { from: string | null; to: string | null; dateBasis: 'site_local' | null; problem: string | null } {
+  const f = DATE_ONLY.test(from.trim()) ? from.trim() : null;
+  const t = DATE_ONLY.test(to.trim()) ? to.trim() : null;
+  return {
+    from: f,
+    to: t,
+    dateBasis: f || t ? 'site_local' : null,
+    problem: f && t && f > t ? 'The "From" date is after the "To" date, so no patrol can match.' : null,
+  };
 }
 
 /** YYYY-MM-DD in a site's time zone. */
@@ -170,31 +197,25 @@ export function zonedDateKey(iso: string | null | undefined, timeZone: string | 
 
 // ─── progress ─────────────────────────────────────────────────────────────────────────────────────────────────────
 
-/** How many checkpoints the run's route has (the y of "x of y"), or null when the run follows no known route. */
-export function routeCheckpointTotal(run: Pick<PatrolRun, 'routeId'>, routes: PatrolRoute[]): number | null {
-  if (run.routeId == null) return null;
-  const route = routes.find((candidate) => candidate.id === run.routeId);
-  return route?.checkpoints ? route.checkpoints.length : null;
-}
-
 /**
- * "x of y checkpoints". x is what the server recorded: in a list, the run's scan count without the flagged scans
- * (a duplicate or a label of another site is flagged and does not move progress); in a run detail, the distinct
- * checkpoints actually scanned. Without a route there is no y, so it reads as a count.
+ * "x of y checkpoints", formatted. Without a route there is no y, so it reads as a count of checkpoints visited.
  */
-export function checkpointProgress(scanned: number, total: number | null): { label: string; ratio: number | null } {
-  const x = Math.max(0, Math.floor(scanned));
-  if (total == null || total <= 0) return { label: `${x} scan${x === 1 ? '' : 's'} recorded`, ratio: null };
+export function checkpointProgress(visited: number, total: number | null): { label: string; ratio: number | null } {
+  const x = Math.max(0, Math.floor(visited));
+  if (total == null || total <= 0) return { label: `${x} checkpoint${x === 1 ? '' : 's'} visited`, ratio: null };
   return { label: `${Math.min(x, total)} of ${total} checkpoints`, ratio: Math.min(1, x / total) };
 }
 
-export function listProgress(run: Pick<PatrolRun, 'routeId' | 'visitCount' | 'flaggedVisitCount'>, routes: PatrolRoute[]) {
-  const scanned = Math.max(0, (run.visitCount ?? 0) - (run.flaggedVisitCount ?? 0));
-  return checkpointProgress(scanned, routeCheckpointTotal(run, routes));
-}
-
-export function distinctScannedCheckpoints(visits: Array<{ checkpointId: number | null; result: string }>): number {
-  return new Set(visits.filter((v) => v.checkpointId != null && v.result !== 'flagged').map((v) => v.checkpointId)).size;
+/**
+ * A run's checkpoint progress — the ONE value every view shows (#76): the History list, Live Patrols and the run
+ * detail all read the server's own `checkpointsVisited` / `checkpointsTotal` (patrol-query.service.ts, computed with
+ * the definition the checkpoint_missed rule uses: distinct checkpoints with a scan that was not flagged — a duplicate,
+ * off-route or other-site scan never counts). Nothing is recounted here from scans or the route list. When the server
+ * did not report it, null: the page shows no progress rather than a figure of its own.
+ */
+export function runCheckpointProgress(run: Pick<PatrolRun, 'checkpointsVisited' | 'checkpointsTotal'>): { label: string; ratio: number | null } | null {
+  if (typeof run.checkpointsVisited !== 'number' || !Number.isFinite(run.checkpointsVisited)) return null;
+  return checkpointProgress(run.checkpointsVisited, typeof run.checkpointsTotal === 'number' ? run.checkpointsTotal : null);
 }
 
 // ─── overview KPIs ────────────────────────────────────────────────────────────────────────────────────────────────
@@ -210,20 +231,36 @@ function countLabel(n: number, lowerBound: boolean): string {
 
 /**
  * The Overview figures, ONLY from real responses:
- *   - the overview endpoint (UTC day): runs by status, live runs, flagged scans, open exceptions, configuration counts;
- *   - the exceptions list: today's missed / abandoned / incomplete windows (created on the overview's UTC date);
+ *   - the overview endpoint (the site-local day, #77): runs by status, live runs, flagged scans, open exceptions,
+ *     configuration counts;
+ *   - the exceptions list: today's missed / abandoned / incomplete windows (created on the overview's date, on its basis);
  *   - today's runs page: runs still awaiting verification (a lower bound when the page is not the whole day).
- * Windows due is not reported by the API, so it is shown as not available rather than estimated.
+ *   - the windows endpoint (#78): today's scheduled windows due / completed / outstanding, computed by the server's window
+ *     engine from schedules and site time zones. Any figure without a response is shown as not available, never estimated.
  */
 export function buildPatrolKpis(input: {
   overview: PatrolOverview | null;
   exceptions: PatrolException[] | null;
   todaysRuns: PatrolRunsPage | null;
+  /** #78: today's scheduled windows, from the server (absent: not available). */
+  windows?: PatrolWindowsDay | null;
+  /** Each site's zone, for the site-local day of an exception. */
+  siteZone?: (siteId: number | null | undefined) => string;
 }): PatrolKpi[] {
   const { overview, exceptions, todaysRuns } = input;
   const na = (id: string, label: string, note = 'Not available'): PatrolKpi => ({ id, label, value: '—', available: false, tone: 'neutral', note });
   const kpis: PatrolKpi[] = [];
-  kpis.push(na('windows-due', 'Windows due today', 'Not reported by the patrol API'));
+  // #78: the server's own count of today's scheduled windows (GET /patrols/windows/day), or "Not available".
+  const w = input.windows;
+  if (w && [w.windowsDue, w.windowsCompleted, w.windowsOutstanding].every((n) => typeof n === 'number' && Number.isFinite(n))) {
+    kpis.push({ id: 'windows-due', label: 'Windows due today', value: String(w.windowsDue), available: true, tone: 'neutral' });
+    kpis.push({ id: 'windows-completed', label: 'Windows completed today', value: String(w.windowsCompleted), available: true, tone: w.windowsDue > 0 && w.windowsOutstanding === 0 ? 'good' : 'neutral' });
+    kpis.push({ id: 'windows-outstanding', label: 'Windows outstanding today', value: String(w.windowsOutstanding), available: true, tone: w.windowsOutstanding > 0 ? 'warning' : 'good' });
+  } else {
+    kpis.push(na('windows-due', 'Windows due today'));
+    kpis.push(na('windows-completed', 'Windows completed today'));
+    kpis.push(na('windows-outstanding', 'Windows outstanding today'));
+  }
   if (overview) {
     const s = overview.runsByStatus || ({} as PatrolOverview['runsByStatus']);
     kpis.push({ id: 'completed', label: 'Completed today', value: String(s.completed ?? 0), available: true, tone: 'good' });
@@ -238,7 +275,11 @@ export function buildPatrolKpis(input: {
   }
   if (exceptions && overview) {
     const lowerBound = exceptions.length >= PATROL_EXCEPTIONS_PAGE_LIMIT;
-    const today = exceptions.filter((e) => (e.createdAt || '').slice(0, 10) === overview.date);
+    // The exception's day on the overview's own basis: its site's local day (#77), or the UTC day.
+    const dayOf = (e: PatrolException) => (overview.dateBasis === 'site_local'
+      ? zonedDateKey(e.createdAt, input.siteZone ? input.siteZone(e.siteId) : 'Europe/London')
+      : (e.createdAt || '').slice(0, 10));
+    const today = exceptions.filter((e) => dayOf(e) === overview.date);
     const count = (type: string) => today.filter((e) => e.type === type).length;
     const missed = count('patrol_missed');
     const abandoned = count('patrol_abandoned');

@@ -5,8 +5,8 @@ import type { PatrolPageContext } from './patrolContext';
 import {
   formatClockDrift,
   formatPatrolDateTime,
-  listProgress,
   pendingSyncLabel,
+  runCheckpointProgress,
   runFlagBadges,
   verificationLabel,
 } from './patrolPresentation';
@@ -26,7 +26,7 @@ export function PatrolLiveTab({ ctx }: { ctx: PatrolPageContext }) {
       {runs.error && runs.data ? <Notice tone="error" message={runs.error} /> : null}
       {runs.data && runs.data.total > items.length ? <Text style={ui.muted}>Showing {items.length} of {runs.data.total} live patrols.</Text> : null}
       {items.map((run) => {
-        const progress = listProgress(run, ctx.routes);
+        const progress = runCheckpointProgress(run);
         const pending = pendingSyncLabel(run);
         const zone = ctx.siteZone(run.siteId);
         return (
@@ -36,7 +36,7 @@ export function PatrolLiveTab({ ctx }: { ctx: PatrolPageContext }) {
               <Badge label="In progress" tone="info" />
               <Badge label={verificationLabel(run.verificationStatus)} tone={run.verificationStatus === 'flagged' ? 'danger' : 'pending'} />
             </View>
-            <Text style={ui.rowMeta} accessibilityLabel="Checkpoint progress">{progress.label}{run.flaggedVisitCount ? ` · ${run.flaggedVisitCount} flagged scan${run.flaggedVisitCount === 1 ? '' : 's'}` : ''}</Text>
+            <Text style={ui.rowMeta} accessibilityLabel="Checkpoint progress">{progress ? progress.label : 'Checkpoint progress not reported'}{run.flaggedVisitCount ? ` · ${run.flaggedVisitCount} flagged scan${run.flaggedVisitCount === 1 ? '' : 's'}` : ''}</Text>
             <Text style={ui.rowMeta}>Started {formatPatrolDateTime(run.startedAtDevice, zone)} (device) · received {formatPatrolDateTime(run.startedAtServer, zone)} (S4)</Text>
             {run.clockDriftMs != null && Math.abs(run.clockDriftMs) >= 1000 ? <Text style={ui.rowMeta}>{formatClockDrift(run.clockDriftMs)}</Text> : null}
             <BadgeRow badges={runFlagBadges(run)} />

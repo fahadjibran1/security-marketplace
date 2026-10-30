@@ -95,14 +95,41 @@ const recorded = (e: RequirementEvidence) => !['rejected', 'local_corrupt'].incl
 /** On the server (P1-C sets these after the upload completes). */
 const onServer = (e: RequirementEvidence) => ['uploaded', 'verified'].includes(e.uploadStatus);
 
+/** The scans that count towards a run: an identified checkpoint, not flagged. */
+function countedVisits<V extends Pick<RequirementVisit, 'checkpointId' | 'result'>>(visits: readonly V[]): V[] {
+  return visits.filter((v) => v.checkpointId != null && v.result !== 'flagged');
+}
+
+/**
+ * THE definition of "a checkpoint visited in this run" (#76), used by the requirement rules below AND by every company
+ * read that reports progress (patrol-query.service.ts), so the History list and the run detail can never disagree:
+ * the DISTINCT checkpoints with at least one scan that was not flagged. A flagged scan (duplicate in the run, off-route,
+ * another site's label, revoked, tampered …) proves nothing and never counts; scanning one checkpoint twice counts once;
+ * an unverified (unsigned) scan counts, as it does for the checkpoint_missed rule.
+ */
+export function visitedCheckpointIds(visits: ReadonlyArray<Pick<RequirementVisit, 'checkpointId' | 'result'>>): Set<number> {
+  return new Set(countedVisits(visits).map((v) => Number(v.checkpointId)));
+}
+
+/**
+ * A run's checkpoint progress as the company dashboard shows it ("x of y checkpoints"): x is visitedCheckpointIds, y the
+ * number of checkpoints on the run's route (null without a route, when there is no y).
+ */
+export function checkpointProgress(
+  visits: ReadonlyArray<Pick<RequirementVisit, 'checkpointId' | 'result'>>,
+  routeCheckpointCount: number | null,
+): { checkpointsVisited: number; checkpointsTotal: number | null } {
+  return { checkpointsVisited: visitedCheckpointIds(visits).size, checkpointsTotal: routeCheckpointCount };
+}
+
 /**
  * What a finished run lacks. A checkpoint counts as visited only by a scan that was not flagged (a flagged scan — wrong
  * site, revoked, tampered — proves nothing). Photos: photosPerRun run photos; for each required (or photo-required)
  * checkpoint visited, max(photosPerCheckpoint, 1 if the checkpoint asks for one) checkpoint photos linked to its visit.
  */
 export function evaluateRequirements(input: RequirementInput): RequirementResult {
-  const counted = input.visits.filter((v) => v.checkpointId != null && v.result !== 'flagged');
-  const visited = new Set(counted.map((v) => Number(v.checkpointId)));
+  const counted = countedVisits(input.visits);
+  const visited = visitedCheckpointIds(input.visits);
   const missingCheckpointIds = [...new Set(input.requiredCheckpointIds.map(Number))].filter((id) => !visited.has(id)).sort((a, b) => a - b);
 
   const runPhotos = input.evidence.filter((e) => e.kind === 'run_photo');

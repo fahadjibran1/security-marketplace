@@ -164,6 +164,7 @@ import type {
   PatrolScheduleInput,
   PatrolSignedLink,
   PatrolStorageUsage,
+  PatrolWindowsDay,
   GuardEvidenceUploadIntent,
   GuardPatrolPlan,
   GuardPatrolRun,
@@ -2024,8 +2025,13 @@ function patrolQuery(params: Record<string, string | number | boolean | null | u
   return parts.length ? `?${parts.join('&')}` : '';
 }
 
-export function getPatrolOverview(params: { siteId?: number | null; date?: string | null } = {}) {
+export function getPatrolOverview(params: { siteId?: number | null; date?: string | null; dateBasis?: 'utc' | 'site_local' | null } = {}) {
   return request<PatrolOverview>(`/patrols/overview${patrolQuery(params)}`);
+}
+
+/** #78: the scheduled windows due / completed / outstanding in the site-local day (computed by the server's window engine). */
+export function getPatrolWindowsDay(params: { siteId?: number | null; date?: string | null } = {}) {
+  return request<PatrolWindowsDay>(`/patrols/windows/day${patrolQuery(params)}`);
 }
 
 export function listPatrolRuns(params: PatrolRunsQuery = {}) {

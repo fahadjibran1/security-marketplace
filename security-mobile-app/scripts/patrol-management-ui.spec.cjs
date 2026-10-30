@@ -193,6 +193,8 @@ const MIN = 60_000;
 const NOW = Date.now();
 const iso = (ms) => new Date(ms).toISOString();
 const TODAY = new Date(NOW).toISOString().slice(0, 10);
+// The Overview's day (#77): the site-local day — Europe/London across all sites.
+const LONDON_TODAY = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/London', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(NOW));
 const LABEL_PAYLOAD = `s4cp:1:k1:${'0123456789abcdef'.repeat(2)}:3:${'Ab_-'.repeat(10)}xyz`;
 const SIGNED_URL = 'https://evidence.example.invalid/patrol/obj-1?X-Amz-Signature=deadbeefcafe';
 
@@ -216,7 +218,7 @@ function run(over = {}) {
     startedAtDevice: iso(NOW - 10 * MIN), startedAtServer: iso(NOW - 10 * MIN + 2000), completedAtDevice: null, completedAtServer: null,
     clockOffsetMs: null, exceptionReason: null, syncedLate: false, lateStart: true, provisional: false, needsReview: false,
     syncFlags: [], clockDriftMs: 125_000, verifiedAt: null, verificationFinalAt: null, siteName: 'Alpha Site', guardName: 'Ava Guard',
-    visitCount: 3, flaggedVisitCount: 1, ...over,
+    visitCount: 3, flaggedVisitCount: 1, checkpointsVisited: 2, checkpointsTotal: 4, ...over,
   };
 }
 const ROUTE = { id: 3, siteId: 10, name: 'Perimeter', orderMode: 'any', active: true, archivedAt: null, createdAt: null, updatedAt: null,
@@ -235,9 +237,11 @@ function baseAnswers(over = {}) {
     getPatrolPolicies: policies(),
     listPatrolRoutes: [ROUTE],
     listPatrolHolds: [],
-    getPatrolOverview: { date: TODAY, dateBasis: 'utc', siteId: null, runsStarted: 4, runsByStatus: { in_progress: 1, completed: 2, incomplete: 1, closed_by_system: 0 },
+    getPatrolOverview: { date: LONDON_TODAY, dateBasis: 'site_local', timeZone: null, siteId: null, runsStarted: 4, runsByStatus: { in_progress: 1, completed: 2, incomplete: 1, closed_by_system: 0 },
       inProgressNow: 1, flaggedScans: 1, openExceptions: 2, activeCheckpoints: 4, activeSchedules: 1, activeRoutes: 1 },
     listPatrolExceptions: [],
+    getPatrolWindowsDay: { date: LONDON_TODAY, dateBasis: 'site_local', siteId: null, generatedAt: iso(NOW), windowsDue: 8, windowsCompleted: 3, windowsOutstanding: 5,
+      completionBasis: 'window_with_a_completed_run', sites: [{ siteId: 10, timeZone: 'Europe/London', date: LONDON_TODAY, dayStart: iso(NOW - 3_600_000), dayEnd: iso(NOW + 3_600_000), windowsDue: 8, windowsCompleted: 3, windowsOutstanding: 5 }] },
     listPatrolRuns: { items: [run()], total: 1, page: 1, pageSize: 25 },
     listPatrolSchedules: [],
     listPatrolCheckpoints: [],
@@ -647,7 +651,7 @@ test('PM-15-NO-FIGURE-IS-FABRICATED', async () => {
     todaysRuns: { items: [run(), run({ id: 6, verificationStatus: 'verified' })], total: 2, page: 1, pageSize: 100 },
   });
   const by = Object.fromEntries(kpis.map((k) => [k.id, k]));
-  assert.equal(by['windows-due'].available, false, 'the API does not report due windows: never estimated');
+  for (const id of ['windows-due', 'windows-completed', 'windows-outstanding']) assert.equal(by[id].available, false, `${id}: no windows response, never estimated`);
   assert.equal(by.completed.value, '2');
   assert.equal(by.live.value, '1');
   assert.equal(by.missed.value, '1', "only today's");
@@ -660,7 +664,8 @@ test('PM-15-NO-FIGURE-IS-FABRICATED', async () => {
   const renderer = await mount({ permissions: perms('viewer') });
   const shown = textOf(renderer.root);
   // (The KPI icon glyph sits between a label and its value.)
-  assert.match(shown, /Windows due today◎—Not reported by the patrol API/, 'not available, said so');
+  assert.match(shown, /Windows due today◎8/, "the server's own count of today's windows (#78)");
+  assert.ok(!shown.includes('Not reported by the patrol API'), 'the placeholder is gone');
   assert.match(shown, /Completed today◎2/, "the server's own count");
   assert.match(shown, /Open patrol exceptions◎2/);
   act(() => renderer.unmount());
@@ -817,9 +822,146 @@ test('PM-18-WIRING-DEPENDENCY-AND-THE-RELEASE-GATE', () => {
   assert.ok(workflow.includes('run: npm run test:patrol-management-ui'));
   // Patrol calls go to the P1-A/B/C routes only.
   const apiSrc = read('src/services/api.ts');
-  for (const route of ['/patrols/overview', '/patrols/runs', '/patrols/exceptions', '/patrols/policies', '/patrols/schedules', '/patrols/checkpoints', '/patrols/routes', '/patrols/holds', '/patrols/storage-usage', '/patrols/exports', '/download', '/patrols/recovery-grants']) {
+  for (const route of ['/patrols/overview', '/patrols/windows/day', '/patrols/runs', '/patrols/exceptions', '/patrols/policies', '/patrols/schedules', '/patrols/checkpoints', '/patrols/routes', '/patrols/holds', '/patrols/storage-usage', '/patrols/exports', '/download', '/patrols/recovery-grants']) {
     assert.ok(apiSrc.includes(route), route);
   }
+});
+
+// ═══ P1-D corrections (#76, #77, #78) ═══
+
+test('PM-21-ONE-CHECKPOINT-COUNT-IN-HISTORY-AND-DETAIL-76', async () => {
+  // The #76 shape: a duplicate (flagged) scan in the run. Raw scan counts would say 4 − 1 = 3 and the visits 3 distinct
+  // checkpoints; the server's one definition (distinct checkpoints with an unflagged scan) says 2. Both views show 2.
+  const visit = (id, checkpointId, result, flags = []) => ({ id, clientVisitId: `v-${id}-abcdefgh`, runId: 5, checkpointId, checkpointPublicId: 'x'.repeat(32),
+    checkpointLabel: `Gate ${checkpointId}`, method: 'qr', result, flags, provisional: false, scannedAtDevice: iso(NOW - id * MIN), receivedAtServer: iso(NOW - id * MIN),
+    syncedLate: false, syncFlags: [], clockDriftMs: null });
+  const r = run({ status: 'completed', visitCount: 4, flaggedVisitCount: 1, checkpointsVisited: 2, checkpointsTotal: 4 });
+  answers = baseAnswers({
+    listPatrolRuns: { items: [r], total: 1, page: 1, pageSize: 25 },
+    // Visits whose naive client recount would differ from the server's figure: the page must not recount.
+    getPatrolRun: { run: r, visits: [visit(1, 1, 'verified'), visit(2, 1, 'flagged', ['duplicate_in_run']), visit(3, 2, 'verified'), visit(4, 3, 'unverified')],
+      exceptions: [], evidenceCount: 0, evidenceRestricted: false, evidence: [] },
+  });
+  const renderer = await mount({ permissions: perms('viewer') });
+  await pressByText(renderer.root, 'History');
+  const list = textOf(renderer.root);
+  assert.ok(list.includes('2 of 4 checkpoints'), 'History shows the server figure');
+  await pressByText(renderer.root, 'Open patrol 5');
+  const detail = textOf(renderer.root);
+  assert.ok(detail.includes('Checkpoints2 of 4 checkpoints') || /Checkpoints\s*2 of 4 checkpoints/.test(detail), 'the detail shows the SAME figure');
+  assert.ok(!detail.includes('3 of 4 checkpoints'), 'never a second, client-side count');
+  act(() => renderer.unmount());
+  // Pure: the figure is the server's; absent means not reported, never derived.
+  assert.deepEqual(P.runCheckpointProgress({ checkpointsVisited: 2, checkpointsTotal: 4 }), { label: '2 of 4 checkpoints', ratio: 0.5 });
+  assert.deepEqual(P.runCheckpointProgress({ checkpointsVisited: 1, checkpointsTotal: null }), { label: '1 checkpoint visited', ratio: null });
+  assert.equal(P.runCheckpointProgress({ visitCount: 3, flaggedVisitCount: 1 }), null);
+  // No patrol view recounts progress from scans or the route list.
+  for (const file of ['PatrolHistoryTab.tsx', 'PatrolLiveTab.tsx', 'PatrolRunDetail.tsx', 'patrolPresentation.ts']) {
+    const src = stripComments(read(`src/components/patrols/${file}`));
+    assert.doesNotMatch(src, /visitCount \?\? 0\) - |distinctScannedCheckpoints|routeCheckpointTotal|new Set\(visits/, `${file}: no client-side recount`);
+  }
+  // The backend computes it once, with the rule checkpoint_missed is judged by.
+  const query = read('../security-backend-nest/src/patrol/patrol-query.service.ts');
+  assert.ok(query.includes('...progress.get(Number(r.id))!') && query.includes('...progress.get(Number(run.id))!'), 'list and detail use the same server computation');
+  const state = read('../security-backend-nest/src/patrol/patrol-state.ts');
+  assert.ok(state.includes('const visited = visitedCheckpointIds(input.visits);'), 'the same definition as the checkpoint_missed rule');
+});
+
+test('PM-22-SITE-LOCAL-DATES-FOR-HISTORY-AND-THE-OVERVIEW-77', async () => {
+  // Pure: today at the site across the UK clock changes (BST ↔ GMT).
+  const today = (instant) => P.siteTodayKey('Europe/London', new Date(instant));
+  assert.equal(today('2025-10-25T22:59:59Z'), '2025-10-25', '23:59:59 BST');
+  assert.equal(today('2025-10-25T23:00:00Z'), '2025-10-26', '00:00 BST: already the 26th (a UTC day would say the 25th)');
+  assert.equal(today('2025-10-26T23:59:59Z'), '2025-10-26', '23:59:59 GMT: the 25-hour day');
+  assert.equal(today('2025-03-29T23:59:00Z'), '2025-03-29', 'GMT');
+  assert.equal(today('2025-03-30T22:59:00Z'), '2025-03-30', '23:59 BST: the 23-hour day');
+  assert.equal(today('2025-03-30T23:00:00Z'), '2025-03-31', '00:00 BST on the 31st');
+  assert.equal(P.siteTodayKey('America/New_York', new Date('2025-10-26T03:30:00Z')), '2025-10-25', "another site's own day");
+  // The History filter: site dates, sent with the site-local basis; nothing half-typed is sent.
+  assert.deepEqual(P.historyDateFilter('2025-10-26', '2025-10-26'), { from: '2025-10-26', to: '2025-10-26', dateBasis: 'site_local', problem: null });
+  assert.deepEqual(P.historyDateFilter('', ''), { from: null, to: null, dateBasis: null, problem: null });
+  assert.deepEqual(P.historyDateFilter('26-10-20', ''), { from: null, to: null, dateBasis: null, problem: null }, 'a half-typed date is not sent');
+  assert.ok(P.historyDateFilter('2025-03-31', '2025-03-30').problem, 'a reversed range is said so');
+  // Missed / abandoned today: an exception's day is its SITE's day when the overview is site-local.
+  const exc = (id, createdAt) => ({ id, type: 'patrol_missed', createdAt, status: 'open', siteId: 10 });
+  const excs = [exc(1, '2025-10-25T23:30:00Z'), exc(2, '2025-10-26T23:30:00Z'), exc(3, '2025-10-25T22:30:00Z')];
+  const ov = (dateBasis) => ({ ...baseAnswers().getPatrolOverview, date: '2025-10-26', dateBasis });
+  const missed = (dateBasis) => P.buildPatrolKpis({ overview: ov(dateBasis), exceptions: excs, todaysRuns: null, siteZone: () => 'Europe/London' }).find((k) => k.id === 'missed').value;
+  assert.equal(missed('site_local'), '2', '00:30 BST and 23:30 GMT on the 26th; not 23:30 BST on the 25th');
+  assert.equal(missed('utc'), '1', 'an older API answering on the UTC day is read on the UTC day');
+  assert.equal(P.overviewDayBasisLabel({ dateBasis: 'site_local', timeZone: 'Europe/London' }, 'Europe/London', true), 'site-local day, Europe/London');
+  assert.equal(P.overviewDayBasisLabel({ dateBasis: 'utc' }, 'Europe/London', false), 'UTC day');
+
+  // The real page: the Overview asks for today's SITE day; History uses the dashboard's date picker.
+  answers = baseAnswers();
+  calls.length = 0;
+  const renderer = await mount({ permissions: perms('viewer') });
+  const londonToday = P.siteTodayKey('Europe/London');
+  assert.deepEqual(calls.filter(([k]) => k === 'getPatrolOverview').map(([, a]) => a[0]).pop(), { siteId: null, date: londonToday, dateBasis: 'site_local' });
+  const todays = calls.filter(([k]) => k === 'listPatrolRuns').map(([, a]) => a[0]).find((a) => a.from);
+  assert.deepEqual([todays.from, todays.to, todays.dateBasis], [londonToday, londonToday, 'site_local'], "today's runs on the site day");
+  assert.ok(textOf(renderer.root).includes("each site's local day"), 'the Overview names its day basis');
+  assert.ok(!textOf(renderer.root).includes('UTC day'));
+  await pressByText(renderer.root, 'History');
+  const text = textOf(renderer.root);
+  assert.ok(text.includes('From (site date)') && text.includes('To (site date)'), 'site dates');
+  assert.ok(!/YYYY-MM-DD|UTC\)/.test(text), 'no UTC text box any more');
+  const input = (label) => renderer.root.findAll((n) => n.props && n.props.accessibilityLabel === label && typeof n.props.onChangeText === 'function')[0];
+  assert.ok(input('From date') && input('To date'), 'the shared NativeDateInput picker');
+  await act(async () => { input('From date').props.onChangeText('26-10-2025'); });
+  await settle();
+  await act(async () => { input('To date').props.onChangeText('26-10-2025'); });
+  await settle();
+  const last = calls.filter(([k]) => k === 'listPatrolRuns').map(([, a]) => a[0]).pop();
+  assert.deepEqual([last.from, last.to, last.dateBasis, last.page], ['2025-10-26', '2025-10-26', 'site_local', 1], 'DD-MM-YYYY in, the site date and basis out');
+  await act(async () => { input('From date').props.onChangeText('27-10-2025'); });
+  await settle();
+  assert.ok(textOf(renderer.root).includes('The "From" date is after the "To" date'));
+  act(() => renderer.unmount());
+  // Nothing in Patrol Management reads a day off a UTC string any more.
+  const dir = path.join(ROOT, 'src/components/patrols');
+  for (const file of fs.readdirSync(dir)) {
+    const src = stripComments(fs.readFileSync(path.join(dir, file), 'utf8'));
+    assert.doesNotMatch(src, /utcDateKey|\(YYYY-MM-DD, UTC\)/, file);
+  }
+});
+
+test('PM-23-WINDOWS-DUE-TODAY-FROM-THE-BACKEND-78', async () => {
+  const windows = baseAnswers().getPatrolWindowsDay;
+  const kpis = Object.fromEntries(P.buildPatrolKpis({ overview: null, exceptions: null, todaysRuns: null, windows }).map((k) => [k.id, k]));
+  assert.deepEqual(['windows-due', 'windows-completed', 'windows-outstanding'].map((id) => [kpis[id].value, kpis[id].available]), [['8', true], ['3', true], ['5', true]], 'exactly the server figures');
+  assert.equal(kpis['windows-outstanding'].tone, 'warning');
+  // A malformed or absent answer is not available — never a guess, never a zero.
+  for (const bad of [null, undefined, [], { windowsDue: 8 }, { windowsDue: 'x', windowsCompleted: 0, windowsOutstanding: 0 }]) {
+    const k = P.buildPatrolKpis({ overview: null, exceptions: null, todaysRuns: null, windows: bad }).find((x) => x.id === 'windows-due');
+    assert.deepEqual([k.value, k.available], ['—', false], JSON.stringify(bad));
+  }
+  // The real Overview asks for today's SITE day, for the chosen site, and shows the three figures.
+  answers = baseAnswers();
+  calls.length = 0;
+  let renderer = await mount({ permissions: perms('viewer') });
+  assert.deepEqual(calls.filter(([k]) => k === 'getPatrolWindowsDay').map(([, a]) => a[0]).pop(), { siteId: null, date: P.siteTodayKey('Europe/London') });
+  const shown = textOf(renderer.root);
+  assert.match(shown, /Windows due today◎8/);
+  assert.match(shown, /Windows completed today◎3/);
+  assert.match(shown, /Windows outstanding today◎5/);
+  await pressByText(renderer.root, 'Site: Alpha Site');
+  assert.equal(calls.filter(([k]) => k === 'getPatrolWindowsDay').map(([, a]) => a[0]).pop().siteId, 10, 'site-scoped');
+  act(() => renderer.unmount());
+  // The endpoint failing (e.g. not permitted) leaves the figures "Not available", the rest of the Overview intact.
+  answers = baseAnswers({ getPatrolWindowsDay: () => { throw new api.ApiError(403, 'Forbidden', { code: 'PATROL_FORBIDDEN', message: 'Insufficient permissions.' }); } });
+  renderer = await mount({ permissions: perms('viewer') });
+  assert.match(textOf(renderer.root), /Windows due today◎—Not available/);
+  assert.match(textOf(renderer.root), /Completed today◎2/);
+  act(() => renderer.unmount());
+  // The client calls the backend read; it never derives windows from schedules itself.
+  assert.ok(read('src/services/api.ts').includes('`/patrols/windows/day${patrolQuery(params)}`'));
+  const overviewSrc = stripComments(read('src/components/patrols/PatrolOverviewTab.tsx'));
+  assert.doesNotMatch(overviewSrc, /listPatrolSchedules|frequencyMinutes|activeFrom/, 'no client-side window arithmetic');
+  const controller = read('../security-backend-nest/src/patrol/patrol-config.controller.ts');
+  assert.ok(controller.includes("@Get('windows/day')"));
+  const service = read('../security-backend-nest/src/patrol/patrol-windows-day.service.ts');
+  assert.ok(service.includes('this.access.companyActor(user, CompanyPermission.PATROLS_VIEW)') && service.includes('this.windows.windowsBetween('), 'patrols.view; the P1-B engine');
 });
 
 (async () => {
