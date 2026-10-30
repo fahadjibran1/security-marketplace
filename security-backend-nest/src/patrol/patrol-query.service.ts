@@ -33,7 +33,8 @@ const DEFAULT_PAGE_SIZE = 25;
 /**
  * Company reads of stored patrol records. Runs, scans and exceptions need patrols.view; photo evidence metadata needs
  * patrols.evidence (a viewer sees only how many photos a run has); holds need patrols.holds. Nothing here schedules
- * or computes due windows — that is P1-B — so the overview counts only what is stored.
+ * or computes due windows — the windows due in a day are PatrolWindowsDayService (#78) — so the overview counts only
+ * what is stored.
  */
 @Injectable()
 export class PatrolQueryService {

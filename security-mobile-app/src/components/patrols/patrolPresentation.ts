@@ -10,6 +10,7 @@ import type {
   PatrolRun,
   PatrolRunsPage,
   PatrolSignedLink,
+  PatrolWindowsDay,
 } from '../../types/patrols';
 
 // ─── words ────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -233,19 +234,32 @@ function countLabel(n: number, lowerBound: boolean): string {
  *     configuration counts;
  *   - the exceptions list: today's missed / abandoned / incomplete windows (created on the overview's date, on its basis);
  *   - today's runs page: runs still awaiting verification (a lower bound when the page is not the whole day).
- * Windows due is not reported by the API, so it is shown as not available rather than estimated.
+ *   - the windows endpoint (#78): today's scheduled windows due / completed / outstanding, computed by the server's window
+ *     engine from schedules and site time zones. Any figure without a response is shown as not available, never estimated.
  */
 export function buildPatrolKpis(input: {
   overview: PatrolOverview | null;
   exceptions: PatrolException[] | null;
   todaysRuns: PatrolRunsPage | null;
+  /** #78: today's scheduled windows, from the server (absent: not available). */
+  windows?: PatrolWindowsDay | null;
   /** Each site's zone, for the site-local day of an exception. */
   siteZone?: (siteId: number | null | undefined) => string;
 }): PatrolKpi[] {
   const { overview, exceptions, todaysRuns } = input;
   const na = (id: string, label: string, note = 'Not available'): PatrolKpi => ({ id, label, value: '—', available: false, tone: 'neutral', note });
   const kpis: PatrolKpi[] = [];
-  kpis.push(na('windows-due', 'Windows due today', 'Not reported by the patrol API'));
+  // #78: the server's own count of today's scheduled windows (GET /patrols/windows/day), or "Not available".
+  const w = input.windows;
+  if (w && [w.windowsDue, w.windowsCompleted, w.windowsOutstanding].every((n) => typeof n === 'number' && Number.isFinite(n))) {
+    kpis.push({ id: 'windows-due', label: 'Windows due today', value: String(w.windowsDue), available: true, tone: 'neutral' });
+    kpis.push({ id: 'windows-completed', label: 'Windows completed today', value: String(w.windowsCompleted), available: true, tone: w.windowsDue > 0 && w.windowsOutstanding === 0 ? 'good' : 'neutral' });
+    kpis.push({ id: 'windows-outstanding', label: 'Windows outstanding today', value: String(w.windowsOutstanding), available: true, tone: w.windowsOutstanding > 0 ? 'warning' : 'good' });
+  } else {
+    kpis.push(na('windows-due', 'Windows due today'));
+    kpis.push(na('windows-completed', 'Windows completed today'));
+    kpis.push(na('windows-outstanding', 'Windows outstanding today'));
+  }
   if (overview) {
     const s = overview.runsByStatus || ({} as PatrolOverview['runsByStatus']);
     kpis.push({ id: 'completed', label: 'Completed today', value: String(s.completed ?? 0), available: true, tone: 'good' });

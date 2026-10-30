@@ -329,6 +329,34 @@ export interface PatrolOverview {
   activeRoutes: number;
 }
 
+/** GET /patrols/windows/day (#78): computed by the server from schedules and site time zones (the P1-B window engine). */
+export interface PatrolWindowsDaySite {
+  siteId: number;
+  timeZone: string;
+  date: string;
+  dayStart: string;
+  dayEnd: string;
+  windowsDue: number;
+  windowsCompleted: number;
+  windowsOutstanding: number;
+}
+
+export interface PatrolWindowsDay {
+  /** The site-local date counted (null across sites whose "today" differs). */
+  date: string | null;
+  dateBasis: 'site_local';
+  siteId: number | null;
+  generatedAt: string;
+  /** Windows of active schedules starting in the site-local day. */
+  windowsDue: number;
+  /** Of those, windows with a completed run. */
+  windowsCompleted: number;
+  /** due − completed: still to do, in progress, incomplete or missed. */
+  windowsOutstanding: number;
+  completionBasis: 'window_with_a_completed_run';
+  sites: PatrolWindowsDaySite[];
+}
+
 export interface PatrolHold {
   id: number;
   scope: PatrolHoldScope;

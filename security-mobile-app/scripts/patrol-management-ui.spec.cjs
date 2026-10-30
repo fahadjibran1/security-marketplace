@@ -240,6 +240,8 @@ function baseAnswers(over = {}) {
     getPatrolOverview: { date: LONDON_TODAY, dateBasis: 'site_local', timeZone: null, siteId: null, runsStarted: 4, runsByStatus: { in_progress: 1, completed: 2, incomplete: 1, closed_by_system: 0 },
       inProgressNow: 1, flaggedScans: 1, openExceptions: 2, activeCheckpoints: 4, activeSchedules: 1, activeRoutes: 1 },
     listPatrolExceptions: [],
+    getPatrolWindowsDay: { date: LONDON_TODAY, dateBasis: 'site_local', siteId: null, generatedAt: iso(NOW), windowsDue: 8, windowsCompleted: 3, windowsOutstanding: 5,
+      completionBasis: 'window_with_a_completed_run', sites: [{ siteId: 10, timeZone: 'Europe/London', date: LONDON_TODAY, dayStart: iso(NOW - 3_600_000), dayEnd: iso(NOW + 3_600_000), windowsDue: 8, windowsCompleted: 3, windowsOutstanding: 5 }] },
     listPatrolRuns: { items: [run()], total: 1, page: 1, pageSize: 25 },
     listPatrolSchedules: [],
     listPatrolCheckpoints: [],
@@ -649,7 +651,7 @@ test('PM-15-NO-FIGURE-IS-FABRICATED', async () => {
     todaysRuns: { items: [run(), run({ id: 6, verificationStatus: 'verified' })], total: 2, page: 1, pageSize: 100 },
   });
   const by = Object.fromEntries(kpis.map((k) => [k.id, k]));
-  assert.equal(by['windows-due'].available, false, 'the API does not report due windows: never estimated');
+  for (const id of ['windows-due', 'windows-completed', 'windows-outstanding']) assert.equal(by[id].available, false, `${id}: no windows response, never estimated`);
   assert.equal(by.completed.value, '2');
   assert.equal(by.live.value, '1');
   assert.equal(by.missed.value, '1', "only today's");
@@ -662,7 +664,8 @@ test('PM-15-NO-FIGURE-IS-FABRICATED', async () => {
   const renderer = await mount({ permissions: perms('viewer') });
   const shown = textOf(renderer.root);
   // (The KPI icon glyph sits between a label and its value.)
-  assert.match(shown, /Windows due today◎—Not reported by the patrol API/, 'not available, said so');
+  assert.match(shown, /Windows due today◎8/, "the server's own count of today's windows (#78)");
+  assert.ok(!shown.includes('Not reported by the patrol API'), 'the placeholder is gone');
   assert.match(shown, /Completed today◎2/, "the server's own count");
   assert.match(shown, /Open patrol exceptions◎2/);
   act(() => renderer.unmount());
@@ -717,7 +720,7 @@ test('PM-18-WIRING-DEPENDENCY-AND-THE-RELEASE-GATE', () => {
   assert.ok(workflow.includes('run: npm run test:patrol-management-ui'));
   // Patrol calls go to the P1-A/B/C routes only.
   const apiSrc = read('src/services/api.ts');
-  for (const route of ['/patrols/overview', '/patrols/runs', '/patrols/exceptions', '/patrols/policies', '/patrols/schedules', '/patrols/checkpoints', '/patrols/routes', '/patrols/holds', '/patrols/storage-usage', '/patrols/exports', '/download']) {
+  for (const route of ['/patrols/overview', '/patrols/windows/day', '/patrols/runs', '/patrols/exceptions', '/patrols/policies', '/patrols/schedules', '/patrols/checkpoints', '/patrols/routes', '/patrols/holds', '/patrols/storage-usage', '/patrols/exports', '/download']) {
     assert.ok(apiSrc.includes(route), route);
   }
 });
@@ -819,6 +822,44 @@ test('PM-20-SITE-LOCAL-DATES-FOR-HISTORY-AND-THE-OVERVIEW-77', async () => {
     const src = stripComments(fs.readFileSync(path.join(dir, file), 'utf8'));
     assert.doesNotMatch(src, /utcDateKey|\(YYYY-MM-DD, UTC\)/, file);
   }
+});
+
+test('PM-21-WINDOWS-DUE-TODAY-FROM-THE-BACKEND-78', async () => {
+  const windows = baseAnswers().getPatrolWindowsDay;
+  const kpis = Object.fromEntries(P.buildPatrolKpis({ overview: null, exceptions: null, todaysRuns: null, windows }).map((k) => [k.id, k]));
+  assert.deepEqual(['windows-due', 'windows-completed', 'windows-outstanding'].map((id) => [kpis[id].value, kpis[id].available]), [['8', true], ['3', true], ['5', true]], 'exactly the server figures');
+  assert.equal(kpis['windows-outstanding'].tone, 'warning');
+  // A malformed or absent answer is not available — never a guess, never a zero.
+  for (const bad of [null, undefined, [], { windowsDue: 8 }, { windowsDue: 'x', windowsCompleted: 0, windowsOutstanding: 0 }]) {
+    const k = P.buildPatrolKpis({ overview: null, exceptions: null, todaysRuns: null, windows: bad }).find((x) => x.id === 'windows-due');
+    assert.deepEqual([k.value, k.available], ['—', false], JSON.stringify(bad));
+  }
+  // The real Overview asks for today's SITE day, for the chosen site, and shows the three figures.
+  answers = baseAnswers();
+  calls.length = 0;
+  let renderer = await mount({ permissions: perms('viewer') });
+  assert.deepEqual(calls.filter(([k]) => k === 'getPatrolWindowsDay').map(([, a]) => a[0]).pop(), { siteId: null, date: P.siteTodayKey('Europe/London') });
+  const shown = textOf(renderer.root);
+  assert.match(shown, /Windows due today◎8/);
+  assert.match(shown, /Windows completed today◎3/);
+  assert.match(shown, /Windows outstanding today◎5/);
+  await pressByText(renderer.root, 'Site: Alpha Site');
+  assert.equal(calls.filter(([k]) => k === 'getPatrolWindowsDay').map(([, a]) => a[0]).pop().siteId, 10, 'site-scoped');
+  act(() => renderer.unmount());
+  // The endpoint failing (e.g. not permitted) leaves the figures "Not available", the rest of the Overview intact.
+  answers = baseAnswers({ getPatrolWindowsDay: () => { throw new api.ApiError(403, 'Forbidden', { code: 'PATROL_FORBIDDEN', message: 'Insufficient permissions.' }); } });
+  renderer = await mount({ permissions: perms('viewer') });
+  assert.match(textOf(renderer.root), /Windows due today◎—Not available/);
+  assert.match(textOf(renderer.root), /Completed today◎2/);
+  act(() => renderer.unmount());
+  // The client calls the backend read; it never derives windows from schedules itself.
+  assert.ok(read('src/services/api.ts').includes('`/patrols/windows/day${patrolQuery(params)}`'));
+  const overviewSrc = stripComments(read('src/components/patrols/PatrolOverviewTab.tsx'));
+  assert.doesNotMatch(overviewSrc, /listPatrolSchedules|frequencyMinutes|activeFrom/, 'no client-side window arithmetic');
+  const controller = read('../security-backend-nest/src/patrol/patrol-config.controller.ts');
+  assert.ok(controller.includes("@Get('windows/day')"));
+  const service = read('../security-backend-nest/src/patrol/patrol-windows-day.service.ts');
+  assert.ok(service.includes('this.access.companyActor(user, CompanyPermission.PATROLS_VIEW)') && service.includes('this.windows.windowsBetween('), 'patrols.view; the P1-B engine');
 });
 
 (async () => {

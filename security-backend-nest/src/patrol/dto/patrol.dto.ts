@@ -307,6 +307,16 @@ export class PatrolOverviewQueryDto {
   dateBasis?: PatrolDateBasis;
 }
 
+/** GET /patrols/windows/day (#78): the scheduled windows due in one site-local day. */
+export class PatrolWindowsDayQueryDto {
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1)
+  siteId?: number;
+
+  /** The site-local date (YYYY-MM-DD), read at each site's own zone; today at each site by default. */
+  @IsOptional() @Matches(DATE_ONLY)
+  date?: string;
+}
+
 export class PatrolListQueryDto {
   @IsOptional() @Type(() => Number) @IsInt() @Min(1)
   siteId?: number;

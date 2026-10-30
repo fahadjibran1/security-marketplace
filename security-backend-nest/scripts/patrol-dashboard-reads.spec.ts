@@ -11,6 +11,12 @@
  *   PD-77-03  History across the 30 Mar 2025 clocks-forward day; inclusive ranges
  *   PD-77-04  all sites: each run on its OWN site's day (New York vs London); tenant isolation; patrols.view; validation
  *   PD-77-05  the Overview on the site-local day (runs, flagged scans), the UTC default unchanged, today by default
+ *   PD-78-01  GET /patrols/windows/day: windows due from the P1-B engine on the site day — 24 / 23 hourly slots on the
+ *             26 Oct / 30 Mar 2025 transitions, overnight slots on the day they start; inactive / archived / ended
+ *             schedules owe nothing; all sites summed, each on its own day
+ *   PD-78-02  completed = windows with a completed run (once per window); in progress / incomplete stay outstanding
+ *   PD-78-03  tenant- and site-scoped, patrols.view, Guards refused, the switch, validation; an unscheduled site owes 0
+ *   PD-78-04  today at the site by default; another zone's own day
  *
  * Needs PATROL_DASHBOARD_DATABASE_URL pointing at a DISPOSABLE local database — it drops the schema.
  */
@@ -158,10 +164,11 @@ async function main() {
     companyId: number; siteId: number; shiftId: number; guard: { id: number; userId: number }; scheduleId?: number | null; routeId?: number | null;
     windowKey?: string | null; windowStart?: Date | null; windowEnd?: Date | null; scopeKey?: string; status?: string; startedAt: Date;
   }) => one(`INSERT INTO patrol_runs ("companyId","siteId","shiftId","guardId","startedByUserId","scheduleId","routeId","windowKey","windowStart","windowEnd","scopeKey",
-       status,"startedAtDevice","startedAtServer","completedAtDevice","completedAtServer","clientRunId")
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$13,$14,$14,$15) RETURNING *`,
+       status,"startedAtDevice","startedAtServer","completedAtDevice","completedAtServer","clientRunId","exceptionReason")
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$13,$14,$14,$15,$16) RETURNING *`,
     [r.companyId, r.siteId, r.shiftId, r.guard.id, r.guard.userId, r.scheduleId ?? null, r.routeId ?? null, r.windowKey ?? null, r.windowStart ?? null,
-      r.windowEnd ?? null, r.scopeKey ?? 'site', r.status ?? 'in_progress', r.startedAt, r.status && r.status !== 'in_progress' ? r.startedAt : null, cid('run')]);
+      r.windowEnd ?? null, r.scopeKey ?? 'site', r.status ?? 'in_progress', r.startedAt, r.status && r.status !== 'in_progress' ? r.startedAt : null, cid('run'),
+      r.status === 'incomplete' ? 'Gate locked' : null]);
   const insVisit = (companyId: number, runId: number, checkpoint: any, result: string, at: Date, flags: string[] = []) =>
     one(`INSERT INTO patrol_checkpoint_visits ("companyId","runId","checkpointId","scannedPublicId",result,flags,"scannedAtDevice","clientVisitId")
        VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8) RETURNING *`, [companyId, runId, checkpoint?.id ?? null, checkpoint?.publicId ?? null, result, JSON.stringify(flags), at, cid('visit')]);
@@ -300,6 +307,91 @@ async function main() {
       const today = await ov(`siteId=${dstSite}&dateBasis=site_local`);
       assert.equal(today.date, W.localDateOf(new Date(), 'Europe/London'), "today at the site by default");
       expect(await api('GET', `/patrols/overview?dateBasis=site_local`, tokFinanceA), 403, 'PATROL_FORBIDDEN');
+    });
+
+    // ═══════════════════ #78 windows due today ═══════════════════
+    const mkSchedule = async (companyId: number, siteId: number, s: { from: string; to: string; freq: number; win?: number; days?: number[]; active?: boolean; archived?: boolean; endsOn?: string | null }) =>
+      one(`INSERT INTO patrol_schedules ("companyId","siteId",name,"daysOfWeek","activeFrom","activeTo","frequencyMinutes","windowMinutes","endsOn",active,"archivedAt","createdAt","updatedAt")
+         VALUES ($1,$2,'Patrol',$3::jsonb,$4,$5,$6,$7,$8,$9,$10,'2025-01-01','2025-01-01') RETURNING *`,
+        [companyId, siteId, JSON.stringify(s.days ?? [1, 2, 3, 4, 5, 6, 7]), s.from, s.to, s.freq, s.win ?? s.freq, s.endsOn ?? null, s.archived ? false : s.active ?? true, s.archived ? Z('2025-02-01T00:00:00Z') : null]);
+    const day = async (qs: string, tok = tokViewerA) => { const r = await api('GET', `/patrols/windows/day?${qs}`, tok); expect(r, 200, undefined, qs); return r.body; };
+    const figures = (b: any) => [b.windowsDue, b.windowsCompleted, b.windowsOutstanding];
+    const allDay = await mkSite(A.id, 'Alpha Depot');
+    const nights = await mkSite(A.id, 'Alpha Car Park');
+    const hourly = await mkSchedule(A.id, allDay, { from: '00:00', to: '00:00', freq: 60 });
+    await mkSchedule(A.id, allDay, { from: '08:00', to: '12:00', freq: 60, active: false }); // inactive: nothing due
+    await mkSchedule(A.id, allDay, { from: '08:00', to: '12:00', freq: 60, archived: true }); // archived (and so inactive): nothing due
+    await mkSchedule(A.id, allDay, { from: '08:00', to: '12:00', freq: 60, endsOn: '2025-01-31' }); // ended: nothing due
+    const overnight = await mkSchedule(A.id, nights, { from: '22:00', to: '06:00', freq: 60 });
+
+    await test('PD-78-01-WINDOWS-DUE-FROM-THE-ENGINE-ON-THE-SITE-DAY-ACROSS-UK-DST', async () => {
+      const autumn = await day(`siteId=${allDay}&date=2025-10-26`);
+      assert.deepEqual([autumn.date, autumn.dateBasis, ...figures(autumn)], ['2025-10-26', 'site_local', 24, 0, 24], 'clocks back: 24 slots (01:00 lasts two real hours), not 25');
+      assert.deepEqual([autumn.sites[0].dayStart, autumn.sites[0].dayEnd, autumn.sites[0].timeZone], ['2025-10-25T23:00:00.000Z', '2025-10-27T00:00:00.000Z', 'Europe/London']);
+      assert.deepEqual(figures(await day(`siteId=${allDay}&date=2025-03-30`)), [23, 0, 23], 'clocks forward: the 01:00 slot does not exist');
+      assert.deepEqual(figures(await day(`siteId=${allDay}&date=2025-07-01`)), [24, 0, 24], 'BST');
+      assert.deepEqual(figures(await day(`siteId=${allDay}&date=2025-12-01`)), [24, 0, 24], 'GMT');
+      // Overnight 22:00–06:00: the slots after midnight are due on the day they start.
+      assert.deepEqual(figures(await day(`siteId=${nights}&date=2025-10-26`)), [8, 0, 8], "00:00–05:00 of the 25th's night (01:00 once) + 22:00, 23:00");
+      assert.deepEqual(figures(await day(`siteId=${nights}&date=2025-03-30`)), [7, 0, 7], "00:00, 02:00–05:00 of the 29th's night + 22:00, 23:00");
+      assert.deepEqual(figures(await day(`siteId=${nights}&date=2025-12-01`)), [8, 0, 8]);
+      // The same windows as the engine itself.
+      const engine = [...W.windowsForLocalDate(hourly, '2025-03-30', 'Europe/London')];
+      assert.equal(engine.length, 23);
+      // All of A's sites: each counted on its own day, summed.
+      const all = await day(`date=2025-10-26`);
+      assert.deepEqual(figures(all), [32, 0, 32]);
+      assert.deepEqual(all.sites.map((s: any) => s.siteId).sort((a: number, b: number) => a - b), [allDay, nights].sort((a, b) => a - b), 'only sites with schedules');
+    });
+
+    await test('PD-78-02-COMPLETED-AND-OUTSTANDING-COME-FROM-RUNS-OF-THOSE-WINDOWS', async () => {
+      const key = (date: string, slot: number) => `s${hourly.id}:${date}:${slot}`;
+      const win = (date: string, slot: number) => W.windowsForLocalDate(hourly, date, 'Europe/London').find((w) => w.slotIndex === slot)!;
+      const run = (date: string, slot: number, status: string, scopeKey = 'site') => insRun({
+        companyId: A.id, siteId: allDay, shiftId: shiftA, guard: gA, scheduleId: Number(hourly.id), windowKey: key(date, slot),
+        windowStart: win(date, slot).start, windowEnd: win(date, slot).end, scopeKey, status, startedAt: win(date, slot).start,
+      });
+      await run('2025-10-26', 1, 'completed'); // the two-hour 01:00 slot
+      await run('2025-10-26', 2, 'in_progress');
+      await run('2025-10-26', 3, 'incomplete');
+      await run('2025-10-26', 4, 'completed');
+      await run('2025-10-26', 4, 'completed', 'sh999'); // a second completed run of the same window counts once
+      await run('2025-10-25', 1, 'completed'); // another day
+      const b = await day(`siteId=${allDay}&date=2025-10-26`);
+      assert.deepEqual(figures(b), [24, 2, 22], 'completed: windows with a completed run; in progress / incomplete stay outstanding');
+      assert.deepEqual(figures(await day(`siteId=${allDay}&date=2025-10-25`)), [24, 1, 23]);
+    });
+
+    await test('PD-78-03-TENANT-AND-SITE-SCOPED-PATROLS-VIEW', async () => {
+      await mkSchedule(B.id, bSite, { from: '09:00', to: '17:00', freq: 120 });
+      const b = await day(`date=2025-10-26`, tokOwnerB);
+      assert.deepEqual(figures(b), [4, 0, 4], "B sees only B's schedule");
+      assert.deepEqual(b.sites.map((s: any) => s.siteId), [bSite]);
+      assert.deepEqual(figures(await day(`date=2025-10-26`)), [32, 2, 30], "A's figures are untouched by B");
+      expect(await api('GET', `/patrols/windows/day?siteId=${bSite}`, tokViewerA), 404, 'PATROL_SITE_NOT_FOUND', "another company's site");
+      expect(await api('GET', `/patrols/windows/day?siteId=999999`, tokViewerA), 404, 'PATROL_SITE_NOT_FOUND');
+      expect(await api('GET', `/patrols/windows/day`, tokFinanceA), 403, 'PATROL_FORBIDDEN', 'no patrols.view');
+      expect(await api('GET', `/patrols/windows/day`, await login(gA.email)), 403, undefined, 'a Guard');
+      expect(await api('GET', `/patrols/windows/day?date=26-10-2025`, tokViewerA), 400, undefined, 'a malformed date');
+      await q(`UPDATE companies SET "patrolsEnabled" = false WHERE id = $1`, [B.id]);
+      expect(await api('GET', `/patrols/windows/day`, tokOwnerB), 404, 'PATROLS_NOT_ENABLED', 'switch off');
+      await q(`UPDATE companies SET "patrolsEnabled" = true WHERE id = $1`, [B.id]);
+      // A site asked for with no schedule: listed, nothing due (never an invented figure).
+      const empty = await day(`siteId=${dstSite}&date=2025-10-26`);
+      assert.deepEqual([...figures(empty), empty.sites.length], [0, 0, 0, 1]);
+    });
+
+    await test('PD-78-04-TODAY-AT-THE-SITE-BY-DEFAULT', async () => {
+      const now = await day(`siteId=${allDay}`);
+      assert.equal(now.date, W.localDateOf(new Date(), 'Europe/London'));
+      assert.equal(now.windowsDue, W.windowsForLocalDate(hourly, now.date, 'Europe/London').length, 'whatever today is, the engine figure');
+      const ny = await mkSite(A.id, 'Alpha Hudson Yard', 'America/New_York');
+      await mkSchedule(A.id, ny, { from: '00:00', to: '00:00', freq: 60 });
+      const nyDay = await day(`siteId=${ny}&date=2025-07-01`);
+      assert.deepEqual([nyDay.sites[0].timeZone, nyDay.sites[0].dayStart, nyDay.sites[0].dayEnd, nyDay.windowsDue],
+        ['America/New_York', '2025-07-01T04:00:00.000Z', '2025-07-02T04:00:00.000Z', 24], "another zone's own day (EDT)");
+      const today = await day(``);
+      assert.equal(today.date, today.sites.every((s: any) => s.date === today.sites[0].date) ? today.sites[0].date : null, 'one date only when every site shares it');
     });
   } finally {
     await app.close();

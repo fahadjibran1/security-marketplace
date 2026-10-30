@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { Text, View } from 'react-native';
-import { getPatrolOverview, listPatrolExceptions, listPatrolRuns } from '../../services/api';
+import { getPatrolOverview, getPatrolWindowsDay, listPatrolExceptions, listPatrolRuns } from '../../services/api';
 import { KpiCard } from '../ui/KpiCard';
 import type { PatrolPageContext } from './patrolContext';
 import {
@@ -26,8 +26,10 @@ export function PatrolOverviewTab({ ctx }: { ctx: PatrolPageContext }) {
   const overview = usePatrolResource(`ov|${key}`, () => getPatrolOverview({ siteId: ctx.siteId, date: today, dateBasis: 'site_local' }), { poll: true });
   const exceptions = usePatrolResource(`ex|${key}`, () => listPatrolExceptions({ siteId: ctx.siteId }), { poll: true });
   const todaysRuns = usePatrolResource(`tr|${key}`, () => listPatrolRuns({ siteId: ctx.siteId, from: today, to: today, dateBasis: 'site_local', pageSize: 100 }), { poll: true });
+  // #78: today's scheduled windows, computed by the server (same site-local day).
+  const windows = usePatrolResource(`win|${key}`, () => getPatrolWindowsDay({ siteId: ctx.siteId, date: today }), { poll: true });
 
-  const kpis = buildPatrolKpis({ overview: overview.data, exceptions: exceptions.data, todaysRuns: todaysRuns.data, siteZone: ctx.siteZone });
+  const kpis = buildPatrolKpis({ overview: overview.data, exceptions: exceptions.data, todaysRuns: todaysRuns.data, windows: windows.data, siteZone: ctx.siteZone });
   const open = (exceptions.data ?? []).filter((e) => e.status !== 'resolved').slice(0, 10);
   const state = ResourceState({ resource: overview, empty: false, emptyMessage: '', what: 'the patrol overview' });
 

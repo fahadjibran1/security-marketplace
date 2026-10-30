@@ -22,6 +22,7 @@ import { PatrolGuardService } from './patrol-guard.service';
 import { PatrolQueryService } from './patrol-query.service';
 import { PatrolSweepService } from './patrol-sweep.service';
 import { PatrolWindowService } from './patrol-window.service';
+import { PatrolWindowsDayService } from './patrol-windows-day.service';
 
 /**
  * Patrol Management, S4 Patrols Phase 1 package P1-A (Migration 68): the data model, the per-company switch, the
@@ -42,7 +43,7 @@ import { PatrolWindowService } from './patrol-window.service';
   controllers: [PatrolConfigController, PatrolGuardController, PatrolAdminController, PatrolEvidenceController, PatrolEvidenceGuardController],
   providers: [
     PatrolAccessService, PatrolConfigService, PatrolQueryService, PatrolGuardService, PatrolAdminService,
-    PatrolWindowService, PatrolExceptionService, PatrolSweepService,
+    PatrolWindowService, PatrolWindowsDayService, PatrolExceptionService, PatrolSweepService,
     PatrolObjectStore, PatrolEvidenceLifecycleService, PatrolEvidenceService, PatrolEvidenceExportService, PatrolEvidenceMaintenanceService,
   ],
   exports: [PatrolAccessService, PatrolConfigService, PatrolSweepService],
