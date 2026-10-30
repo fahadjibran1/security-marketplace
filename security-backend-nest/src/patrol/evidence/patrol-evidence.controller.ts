@@ -8,11 +8,15 @@ import { COMPANY_VIEW_ROLES, UserRole } from '../../user/entities/user.entity';
 import {
   CreatePatrolEvidenceExportDto,
   CreatePatrolEvidenceHoldDto,
+  CreatePatrolRecoveryGrantDto,
   PatrolEvidenceAccessQueryDto,
   PatrolEvidenceReasonDto,
+  PatrolRecoveryGrantsQueryDto,
   ReleasePatrolEvidenceHoldDto,
   RequestPatrolEvidenceUploadDto,
+  RevokePatrolRecoveryGrantDto,
 } from '../dto/patrol-evidence.dto';
+import { PatrolRecoveryGrantService } from '../patrol-recovery-grant.service';
 import { PatrolEvidenceExportService } from './patrol-evidence-export.service';
 import { PatrolEvidenceService } from './patrol-evidence.service';
 
@@ -28,6 +32,7 @@ export class PatrolEvidenceController {
   constructor(
     private readonly evidence: PatrolEvidenceService,
     private readonly exports: PatrolEvidenceExportService,
+    private readonly grants: PatrolRecoveryGrantService,
   ) {}
 
   /** patrols.evidence: a short-lived, audited link to one verified photo. */
@@ -90,6 +95,23 @@ export class PatrolEvidenceController {
   @Header('Cache-Control', 'no-store')
   downloadExport(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
     return this.exports.download(user, id);
+  }
+
+  // ── Exceptional offline recovery grants (issue #68; patrols.holds: Owner / Admin) ──
+  @Post('recovery-grants')
+  issueRecoveryGrant(@CurrentUser() user: JwtPayload, @Body() dto: CreatePatrolRecoveryGrantDto) {
+    return this.grants.issue(user, dto);
+  }
+
+  @Get('recovery-grants')
+  listRecoveryGrants(@CurrentUser() user: JwtPayload, @Query() q: PatrolRecoveryGrantsQueryDto) {
+    return this.grants.list(user, { status: q.status, shiftId: q.shiftId });
+  }
+
+  @Post('recovery-grants/:id/revoke')
+  @HttpCode(200)
+  revokeRecoveryGrant(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number, @Body() dto: RevokePatrolRecoveryGrantDto) {
+    return this.grants.revoke(user, id, dto.reason);
   }
 }
 

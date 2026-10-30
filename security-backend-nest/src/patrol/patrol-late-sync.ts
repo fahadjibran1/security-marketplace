@@ -10,7 +10,9 @@ import { PATROL_REVIEW_FLAGS, PatrolErrorCode, PatrolSyncFlag } from './patrol-c
  *
  * The documented rule for a run first reaching the server after its shift ended ("post-shift creation"):
  *   REFUSE (409)       PATROL_SYNC_NOT_BOOKED_ON   the Guard had no effective Book On on that shift;
- *                      PATROL_SYNC_WINDOW_CLOSED   the acceptance window has closed.
+ *                      PATROL_SYNC_WINDOW_CLOSED   the acceptance window has closed — unless an Owner / Admin recovery
+ *                                                  grant (issue #68) is active for this Guard and shift: then the run is
+ *                                                  accepted and also flagged recovered_via_grant (needsReview).
  *   ACCEPT AND FLAG    otherwise. The run is stored provisional (its device times stand until reviewed), syncedLate,
  *                      flagged post_shift_creation, plus:
  *                        outside_on_duty_interval  its drift-adjusted device start is outside Book On → Book Off;
@@ -72,6 +74,11 @@ export type PostShiftStartInput = {
   /** A scheduled window of the site contains the adjusted start (windowForStart found one). */
   matchingWindow: boolean;
   allowUnscheduledPatrols: boolean;
+  /**
+   * Issue #68: an Owner / Admin recovery grant is active for this Guard on this shift. Consulted ONLY when the window has
+   * closed: the run is then accepted, flagged recovered_via_grant (a review flag: needsReview). Book On is still required.
+   */
+  recoveryGrant?: boolean;
 };
 
 export type PostShiftStartDecision =
@@ -88,7 +95,8 @@ export function evaluatePostShiftStart(input: PostShiftStartInput): PostShiftSta
     };
   }
   const acceptanceEndsAt = syncAcceptanceEndsAt(input.bookOffAt, input.shiftEnd, input.postShiftSyncHours);
-  if (input.now.getTime() > acceptanceEndsAt.getTime()) {
+  const windowClosed = input.now.getTime() > acceptanceEndsAt.getTime();
+  if (windowClosed && !input.recoveryGrant) {
     return {
       accept: false,
       code: PatrolErrorCode.SYNC_WINDOW_CLOSED,
@@ -99,6 +107,7 @@ export function evaluatePostShiftStart(input: PostShiftStartInput): PostShiftSta
   const adjustedStart = adjustForDrift(input.startedAtDevice, input.driftMs);
   const dutyEnd = input.bookOffAt ?? input.shiftEnd;
   const flags: PatrolSyncFlag[] = ['post_shift_creation'];
+  if (windowClosed) flags.push('recovered_via_grant');
   if (adjustedStart.getTime() < input.bookOnAt.getTime() || adjustedStart.getTime() > dutyEnd.getTime()) flags.push('outside_on_duty_interval');
   if (input.scheduled ? !input.matchingWindow : !input.allowUnscheduledPatrols) flags.push('no_matching_window');
   if (isClockDriftSuspect(input.driftMs, input.clockDriftThresholdMinutes)) flags.push('clock_drift_suspect');

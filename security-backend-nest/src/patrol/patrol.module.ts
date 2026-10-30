@@ -20,6 +20,7 @@ import { PatrolExceptionService } from './patrol-exception.service';
 import { PatrolGuardController } from './patrol-guard.controller';
 import { PatrolGuardService } from './patrol-guard.service';
 import { PatrolQueryService } from './patrol-query.service';
+import { PatrolRecoveryGrantService } from './patrol-recovery-grant.service';
 import { PatrolSweepService } from './patrol-sweep.service';
 import { PatrolWindowService } from './patrol-window.service';
 
@@ -33,6 +34,8 @@ import { PatrolWindowService } from './patrol-window.service';
  * server-side verification, audited downloads, holds, the deletion state machine with quarantine and restore
  * (PatrolEvidenceLifecycleService), bounded ZIP exports with manifests, live metering, and the five-minute maintenance job
  * (PatrolEvidenceMaintenanceService). See docs/patrols/P1-C-evidence-storage.md.
+ * Issue #68 (Migration 72) adds exceptional offline recovery grants (PatrolRecoveryGrantService): an Owner / Admin lets one
+ * Guard send one shift's patrol data after the post-shift sync window, time-boxed, audited, flagged recovered_via_grant.
  *
  * Patrol imports SafetyAlertModule (to act on its alerts through the existing lifecycle); the safety-alert side reaches
  * patrol exceptions only through patrol-alert-link.ts (plain SQL), so there is no module cycle.
@@ -44,6 +47,7 @@ import { PatrolWindowService } from './patrol-window.service';
     PatrolAccessService, PatrolConfigService, PatrolQueryService, PatrolGuardService, PatrolAdminService,
     PatrolWindowService, PatrolExceptionService, PatrolSweepService,
     PatrolObjectStore, PatrolEvidenceLifecycleService, PatrolEvidenceService, PatrolEvidenceExportService, PatrolEvidenceMaintenanceService,
+    PatrolRecoveryGrantService,
   ],
   exports: [PatrolAccessService, PatrolConfigService, PatrolSweepService],
 })
