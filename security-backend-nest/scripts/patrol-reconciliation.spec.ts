@@ -19,6 +19,9 @@
  *   PR-09  reconciled exceptions through the API (reconciliationRunId, resolvable on their own); the summary alert closes
  *          through the existing alert lifecycle without touching them; audit trail (started / batch / completed counts)
  *   PR-10  a batch judges at most 500 windows (ties at the cut-off kept together); the next batch continues from there
+ *   PR-11  #67 × #68: a run kept open by an active recovery grant satisfies its window in reconciliation exactly as in the
+ *          live pass (and exactly as an ungranted run does); only the run's closure waits for the grant to end, and that
+ *          closure changes no window's judgement
  *
  * Needs PATROL_RECONCILIATION_DATABASE_URL pointing at a DISPOSABLE local database — it drops the schema.
  */
@@ -509,6 +512,82 @@ async function main() {
       assert.equal(all.filter((e: any) => e.reconciliationRunId).length, 600);
       const [summary] = await reconAlertsOf(s.co);
       assert.match(summary.message, /600 patrol windows were missed at r10 Gate A .*; and 590 more\./);
+      await noDuplicates(s.co);
+    });
+
+    await test('PR-11-A-RUN-KEPT-OPEN-BY-A-RECOVERY-GRANT-IS-JUDGED-THE-SAME-BY-RECONCILIATION-AND-THE-LIVE-PASS', async () => {
+      // #67 × #68. Two sites, identical schedules; each Guard's shift ended (Booked Off) Mon 20:30Z and each Guard has a run
+      // for two windows: 17:00–18:00Z (deadline 18:15Z: reconciled; finished — at site A it reached the server only under
+      // the grant) and 18:00–19:00Z (deadline 19:15Z: judged live; still in progress). Only site A's Guard holds an active
+      // recovery grant. A 40-hour outage ends at T2 = Tue 21:00Z, after both shifts' 24 h sync windows closed (Tue 20:30Z),
+      // so the live pass and a reconciliation run both judge Monday.
+      const s = await scenario('r11', T1, new Date(T1.getTime() + 3 * DAY), { sites: 2 });
+      await focus(s.co);
+      const bookOff = new Date('2026-10-05T20:30:00Z');
+      const T2 = new Date(T1.getTime() + 40 * HOUR);
+      const runs: Record<string, number[]> = {};
+      const guards: Record<string, { guardId: number; userId: number }> = {};
+      for (const site of s.sites) {
+        await q(`UPDATE shifts SET status = 'completed', "end" = $2 WHERE id = $1`, [site.shift, bookOff]);
+        const guard = await one(`SELECT s."guardId", g."userId" FROM shifts s JOIN guard_profiles g ON g.id = s."guardId" WHERE s.id = $1`, [site.shift]);
+        guards[site.name] = { guardId: Number(guard.guardId), userId: Number(guard.userId) };
+        await q(`INSERT INTO attendance_events ("shiftId","guardId",type,"occurredAt","recordedAt","gpsVerified") VALUES ($1,$2,'check-out',$3,$3,false)`,
+          [site.shift, guard.guardId, bookOff]);
+        const covered = W.windowsBetween(site.schedule, 'Europe/London', new Date('2026-10-05T17:00:00Z'), new Date('2026-10-05T19:00:00Z'))
+          .filter((w) => w.start.getTime() >= new Date('2026-10-05T17:00:00Z').getTime());
+        assert.deepEqual(covered.map((w) => w.start.toISOString()), ['2026-10-05T17:00:00.000Z', '2026-10-05T18:00:00.000Z']);
+        runs[site.name] = [];
+        // One open run per Guard and shift: the earlier window's run is finished (at site A it reached the server under the
+        // grant, as PR-07 of patrol-recovery-grants.spec.ts certifies), the later one is still in progress.
+        for (const [index, w] of covered.entries()) {
+          const finished = index === 0;
+          const viaGrant = finished && site === s.sites[0];
+          const [r] = await q(`INSERT INTO patrol_runs ("companyId","siteId","shiftId","guardId","startedByUserId","scheduleId","windowKey","windowStart","windowEnd","scopeKey",
+              status,"startedAtDevice","startedAtServer","completedAtDevice","completedAtServer","clientRunId","syncedLate","provisional","needsReview","syncFlags")
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'site',$10,$11,$12,$13,$14,$15,$16,$16,$16,$17::jsonb) RETURNING id`,
+            [s.co, site.id, site.shift, guard.guardId, guard.userId, site.schedule.id, w.windowKey, w.start, w.end, finished ? 'completed' : 'in_progress',
+              new Date(w.start.getTime() + 5 * MIN), viaGrant ? new Date(T2.getTime() - 30 * MIN) : new Date(w.start.getTime() + 5 * MIN),
+              finished ? new Date(w.start.getTime() + 30 * MIN) : null, finished ? (viaGrant ? new Date(T2.getTime() - 20 * MIN) : new Date(w.start.getTime() + 30 * MIN)) : null,
+              cid('r11'), viaGrant, JSON.stringify(viaGrant ? ['post_shift_creation', 'synced_after_book_off', 'recovered_via_grant'] : [])]);
+          runs[site.name].push(Number(r.id));
+        }
+      }
+      const [granted, plain] = s.sites;
+      const ownerId = Number((await one(`SELECT "userId" FROM companies WHERE id = $1`, [s.co])).userId);
+      // Issued an hour before the outage ended, for 24 h (as the API would store it).
+      await q(`INSERT INTO patrol_sync_recovery_grants ("companyId","shiftId","guardId",reason,"createdByUserId","createdAt","expiresAt") VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+        [s.co, granted.shift, guards[granted.name].guardId, 'Phone lost during the outage', ownerId, new Date(T2.getTime() - HOUR), new Date(T2.getTime() + 23 * HOUR)]);
+
+      await sweep(T1);
+      await sweepUntilCaughtUp(s.co, T2);
+
+      const all = await exceptionsOf(s.co);
+      const missedAt = (siteId: number, reconciled: boolean) => all
+        .filter((e: any) => e.type === 'patrol_missed' && Number(e.siteId) === siteId && (e.reconciliationRunId !== null) === reconciled)
+        .map((e: any) => new Date(e.windowStart).toISOString()).sort();
+      for (const reconciled of [true, false]) {
+        assert.deepEqual(missedAt(granted.id, reconciled), missedAt(plain.id, reconciled),
+          `${reconciled ? 'reconciliation' : 'the live pass'} judges the granted site's windows exactly as the other site's`);
+      }
+      const reconciledA = missedAt(granted.id, true);
+      const liveA = missedAt(granted.id, false);
+      assert.ok(reconciledA.includes('2026-10-05T16:00:00.000Z') && !reconciledA.includes('2026-10-05T17:00:00.000Z'),
+        `the reconciled window with a granted run is satisfied, its neighbour is missed: ${reconciledA}`);
+      assert.ok(!liveA.includes('2026-10-05T18:00:00.000Z'), 'the live window with a granted run is satisfied');
+      assert.ok(!all.some((e: any) => e.type === 'patrol_missed' && new Date(e.windowStart).getTime() >= new Date('2026-10-05T17:00:00Z').getTime()),
+        'no window covered by a run (granted or not) is missed');
+      // The live pass's run rule: the grant keeps site A's open run open, site B's closes; judging windows did not depend on it.
+      const statuses = async (ids: number[]) => (await q(`SELECT status FROM patrol_runs WHERE id = ANY($1::int[]) ORDER BY id`, [ids])).map((r: any) => r.status);
+      assert.deepEqual(await statuses(runs[granted.name]), ['completed', 'in_progress'], 'the open run is kept open while the grant lasts');
+      assert.deepEqual(await statuses(runs[plain.name]), ['completed', 'closed_by_system']);
+      // The grant ends: the open run closes, and no window's judgement changes.
+      const before = await exceptionsOf(s.co);
+      await q(`UPDATE patrol_sync_recovery_grants SET "revokedAt" = $2, "revokedByUserId" = $3, "revokeReason" = 'Recovery finished' WHERE "shiftId" = $1`,
+        [granted.shift, new Date(T2.getTime() + 10 * MIN), ownerId]);
+      await sweep(new Date(T2.getTime() + 15 * MIN));
+      assert.deepEqual(await statuses(runs[granted.name]), ['completed', 'closed_by_system'], 'closed once the grant ended');
+      const after = await exceptionsOf(s.co);
+      assert.deepEqual(keysOf(after), keysOf(before), 'no missed window is added or removed by the closure');
       await noDuplicates(s.co);
     });
   } finally {
