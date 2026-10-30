@@ -140,6 +140,11 @@ export enum SafetyAlertStatus {
   unique: true,
   where: '"patrolExceptionId" IS NOT NULL',
 })
+/** Migration 71. One reconciliation alert per (reconciliation run, key): summaries per site, and the horizon alert. */
+@Index('uq_safety_alerts_patrol_reconciliation', ['patrolReconciliationRunId', 'patrolWindowKey'], {
+  unique: true,
+  where: '"patrolReconciliationRunId" IS NOT NULL',
+})
 @Entity('safety_alerts')
 export class SafetyAlert {
   @PrimaryGeneratedColumn()
@@ -255,6 +260,14 @@ export class SafetyAlert {
 
   @Column({ type: 'varchar', length: 500, nullable: true, select: false })
   patrolAnnotation?: string | null;
+
+  /**
+   * Migration 71 (#67): a patrol reconciliation alert — the summary of the windows found missed after a sweep outage (one
+   * per site and reconciliation run, patrolWindowKey 'reconciliation:site:{siteId}') or the one alert for windows beyond
+   * the reconciliation horizon that were NOT judged (patrolWindowKey 'reconciliation:horizon'). It carries no exception.
+   */
+  @Column({ type: 'int', nullable: true, select: false })
+  patrolReconciliationRunId?: number | null;
 
   @CreateDateColumn()
   createdAt!: Date;
