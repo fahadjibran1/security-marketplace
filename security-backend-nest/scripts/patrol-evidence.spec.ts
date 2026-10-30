@@ -53,7 +53,8 @@
  *   PE-O01  an upload whose completion never arrived is verified by the maintenance job (after 10 minutes)
  *   PE-W01  switch off (#71): new uploads / completions / other routes stay 404, but retention expiry, holds, manual
  *           deletion and restore, the quarantine → purge → tombstone machine, orphan verification and exports (already
- *           requested and new) continue; Owner / Admin only; a switched-off company without evidence sees nothing
+ *           requested and new) continue; Owner / Admin only; a switched-off company without evidence sees nothing;
+ *           viewing photos (one link, or a page of thumbnail links, #79) stays 404 for everyone, Owner and Admin included
  *   PE-T01  cross-tenant: every new route refuses another company's ids (404) and another company's Guard
  *   PE-X01  compliance / screening EvidenceStorageService is untouched and refuses patrol keys; no signed URL, signature or
  *           credential is ever stored in the database (audit, errors) or returned in metadata
@@ -1202,8 +1203,14 @@ async function main() {
         // New patrol activity stays blocked, and so does everything that is not evidence lifecycle management.
         expect(await intent(s.guard.token, s.run.id, body(jpeg())), 404, 'PATROLS_NOT_ENABLED', 'no new upload');
         expect(await complete(s.guard.token, orphan.body.evidence.id), 404, 'PATROLS_NOT_ENABLED', 'no Guard completion');
-        for (const p of ['/patrols/schedules', '/patrols/runs', `/patrols/runs/${s.run.id}/evidence`, `/patrols/evidence/${expiring.id}/download?purpose=review`]) {
+        // Viewing photos stays behind the switch: the single-photo link and (#79) a page of thumbnail links alike, for the
+        // Owner and for an Admin, although evidence lifecycle management stays available to them.
+        for (const p of ['/patrols/schedules', '/patrols/runs', `/patrols/runs/${s.run.id}/evidence`, `/patrols/evidence/${expiring.id}/download?purpose=review`,
+          `/patrols/runs/${s.run.id}/evidence/thumbnails`, `/patrols/runs/${s.run.id}/evidence/thumbnails?page=1&pageSize=12`]) {
           expect(await api('GET', p, s.co.token), 404, 'PATROLS_NOT_ENABLED', p);
+        }
+        for (const p of [`/patrols/evidence/${expiring.id}/download?purpose=review`, `/patrols/runs/${s.run.id}/evidence/thumbnails`]) {
+          expect(await api('GET', p, admin.token), 404, 'PATROLS_NOT_ENABLED', `admin: ${p}`);
         }
         // Evidence lifecycle management: Owner / Admin only; everyone else still sees no Patrols at all (404, not 403).
         for (const [who, tok] of [['operations', ops.token], ['control room', cr.token]] as Array<[string, string]>) {

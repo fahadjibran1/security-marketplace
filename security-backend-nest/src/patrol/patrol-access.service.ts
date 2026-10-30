@@ -35,7 +35,8 @@ export type PatrolGuardShift = {
  * usage) use evidenceLifecycleActor: with the switch on it is exactly companyActor(patrols.holds); with it off those
  * routes stay available to the roles holding patrols.holds (Owner / Admin) while the company has any patrol evidence
  * record, hold or export, and answer 404 PATROLS_NOT_ENABLED to everyone else, so a company that never used Patrols
- * still sees nothing. Viewing a photo (patrols.evidence) and every other route stay behind the switch.
+ * still sees nothing. Viewing a photo (patrols.evidence) — one link or a page of thumbnail links (#79) — and every other
+ * route stay behind the switch.
  */
 @Injectable()
 export class PatrolAccessService {

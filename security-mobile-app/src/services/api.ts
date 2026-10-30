@@ -145,6 +145,7 @@ import type {
   PatrolEffectivePolicy,
   PatrolEvidence,
   PatrolEvidenceAccessPurpose,
+  PatrolEvidenceThumbnailPage,
   PatrolException,
   PatrolExport,
   PatrolExportInput,
@@ -2124,6 +2125,14 @@ export function listPatrolRunEvidence(runId: number) {
 /** patrols.evidence. A short-lived, audited link to ONE verified photo. The caller holds it in memory until it expires. */
 export function getPatrolEvidenceLink(evidenceId: number, purpose: PatrolEvidenceAccessPurpose) {
   return request<PatrolSignedLink & { evidenceId: number }>(`/patrols/evidence/${evidenceId}/download${patrolQuery({ purpose })}`);
+}
+
+/**
+ * patrols.evidence (issue #79). One page (≤ 24) of a run's photos as short-lived links for small, lazy-loaded previews;
+ * the server audits the page once (purpose browse). The caller holds the links in memory until they expire.
+ */
+export function getPatrolEvidenceThumbnails(runId: number, params: { page: number; pageSize: number }) {
+  return request<PatrolEvidenceThumbnailPage>(`/patrols/runs/${runId}/evidence/thumbnails${patrolQuery(params)}`);
 }
 
 /** patrols.holds. Active holds by default; 'all' includes released ones. */

@@ -13,7 +13,7 @@ import { ActiveRecoveryGrant, PatrolRecoveryGrantService } from '../patrol-recov
 import { serializeEvidenceMetadata, serializeHold, updateRows } from '../patrol-serializers';
 import { keyBelongsTo, patrolObjectKey, siblingKey } from './patrol-evidence-keys';
 import { PatrolEvidenceLifecycleService } from './patrol-evidence-lifecycle.service';
-import { PATROL_EVIDENCE_MAX_PER_RUN, heldSql, patrolRetentionMode } from './patrol-evidence-shared';
+import { PATROL_EVIDENCE_MAX_PER_RUN, PATROL_EVIDENCE_THUMBNAIL_PAGE_DEFAULT, heldSql, patrolRetentionMode } from './patrol-evidence-shared';
 import { PATROL_EVIDENCE_ALLOWED_TYPES, PatrolObjectStore } from './patrol-object-store';
 
 const EXTENSION: Record<string, string> = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/heic': 'heic', 'image/webp': 'webp' };
@@ -38,6 +38,8 @@ const EXTENSION: Record<string, string> = { 'image/jpeg': 'jpg', 'image/png': 'p
  * COMPANY (resolveCompanyContext via PatrolAccessService; another company's id is 404):
  *   GET  /patrols/evidence/:id/download?purpose=   patrols.evidence: a presigned GET (60–300 s), every issue audited
  *                                                  (who, which photo, why) — the URL itself is never logged or audited
+ *   GET  /patrols/runs/:id/evidence/thumbnails?page=&pageSize=   patrols.evidence: one page (≤ 24) of the run's photos
+ *                                                  as the same short-lived GETs, ONE audit entry per page (purpose browse)
  *   POST /patrols/evidence/:id/delete              patrols.holds (Owner / Admin): through the deletion state machine
  *   POST /patrols/evidence/:id/restore             patrols.holds: from quarantine, until the purge
  *   POST /patrols/holds, POST /patrols/holds/:id/release (GET /patrols/holds?status=active|all is PatrolQueryService)   patrols.holds
@@ -285,6 +287,53 @@ export class PatrolEvidenceService {
       afterData: { runId: Number(row.runId), siteId: Number(row.siteId), purpose, ttlSeconds, linkExpiresAt: access.expiresAt, sha256: row.sha256Stored },
     });
     return { evidenceId: Number(row.id), method: access.method, url: access.url, expiresAt: access.expiresAt };
+  }
+
+  /**
+   * Issue #79: one page of a run's photos as small previews. The page is the run's evidence in the same order as its
+   * metadata (capturedAtDevice, id), so page N here is page N of the dashboard's list. Each item that could be opened
+   * through download() — verified, active or claimed, its key this company's — gets the same short-lived presigned GET of
+   * the stored photo (the browser shows it small and lazy-loads it); every other item is listed with url null. No new
+   * object is ever written, so retention, holds, quarantine, purge, restore, metering and exports are exactly the
+   * original photo's. ONE audit entry per page view (purpose 'browse'), naming the photos it covered — never a URL.
+   */
+  async thumbnails(user: JwtPayload, runId: number, query: { page?: number; pageSize?: number }, now: Date = new Date()) {
+    const actor = await this.access.companyActor(user, CompanyPermission.PATROLS_EVIDENCE);
+    const [run] = await this.dataSource.query(`SELECT "id", "siteId" FROM "patrol_runs" WHERE "id" = $1 AND "companyId" = $2`, [runId, actor.companyId]);
+    if (!run) throw patrolError(HttpStatus.NOT_FOUND, PatrolErrorCode.NOT_FOUND, 'Patrol not found.');
+    const storage = this.store.config(); // 503 when storage is unavailable (after the caller's own authorisation)
+    const pageSize = query.pageSize ?? PATROL_EVIDENCE_THUMBNAIL_PAGE_DEFAULT;
+    const page = query.page ?? 1;
+    const [{ total }] = await this.dataSource.query(`SELECT count(*)::int AS "total" FROM "patrol_evidence" WHERE "runId" = $1 AND "companyId" = $2`,
+      [runId, actor.companyId]);
+    const rows: any[] = await this.dataSource.query(
+      `SELECT * FROM "patrol_evidence" WHERE "runId" = $1 AND "companyId" = $2 ORDER BY "capturedAtDevice", "id" LIMIT $3 OFFSET $4`,
+      [runId, actor.companyId, pageSize, (page - 1) * pageSize],
+    );
+    const items: Array<{ evidenceId: number; url: string | null; expiresAt: string | null }> = rows.map((row) => {
+      // Exactly download()'s rule: pending, rejected, quarantined, purged and tombstoned photos never get a link.
+      const viewable = row.uploadStatus === 'verified' && ['active', 'claimed'].includes(row.retentionStatus)
+        && typeof row.storageKey === 'string' && keyBelongsTo(row.storageKey, actor.companyId);
+      if (!viewable) return { evidenceId: Number(row.id), url: null, expiresAt: null };
+      const mime = row.detectedMimeType ?? row.mimeType;
+      const access = this.store.presignDownload(row.storageKey, { contentType: mime, fileName: `patrol-evidence-${row.id}.${EXTENSION[mime] ?? 'img'}`, now });
+      return { evidenceId: Number(row.id), url: access.url, expiresAt: access.expiresAt };
+    });
+    const granted = items.filter((i) => i.url !== null).map((i) => i.evidenceId);
+    const expiresAt = items.find((i) => i.expiresAt)?.expiresAt ?? null;
+    if (granted.length) {
+      await this.auditLogService.log({
+        company: { id: actor.companyId },
+        user: { id: actor.userId },
+        action: 'patrol.evidence_thumbnails_accessed',
+        entityType: 'patrol_run',
+        entityId: runId,
+        afterData: {
+          purpose: 'browse', runId, siteId: Number(run.siteId), page, pageSize, evidenceIds: granted, ttlSeconds: storage.urlTtlSeconds, linkExpiresAt: expiresAt,
+        },
+      });
+    }
+    return { runId, page, pageSize, total: Number(total), totalPages: Math.max(1, Math.ceil(Number(total) / pageSize)), expiresAt, items };
   }
 
   async requestDeletion(user: JwtPayload, id: number, reason: string) {

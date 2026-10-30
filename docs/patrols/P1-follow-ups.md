@@ -149,8 +149,9 @@ Migration 71 = `1720900000017-AddPatrolSweepReconciliation`; 019 is reserved by 
   evidence record, hold or export: holds (list / place / release), delete and restore, exports (request / list / status /
   download) and storage usage. Everyone else, and a company that never had evidence, still gets 404 PATROLS_NOT_ENABLED.
 * Still blocked with the switch off: Guard uploads and completions, runs, scans, configuration, the sweep, viewing a
-  photo (`patrols.evidence`). The session permission list is unchanged (it omits `patrols.*` while off), so a web UI for
-  switched-off evidence management needs its own cue.
+  photo (`patrols.evidence`), including a page of thumbnail links (#79, `GET /patrols/runs/:id/evidence/thumbnails`).
+  The session permission list is unchanged (it omits `patrols.*` while off), so a web UI for switched-off evidence
+  management needs its own cue.
 * Tests: `scripts/patrol-evidence.spec.ts` PE-W01; `scripts/patrol-foundation.spec.ts` PF-19.
 
 ---

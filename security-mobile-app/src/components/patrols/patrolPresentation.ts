@@ -395,6 +395,39 @@ export function signedLinkLifetimeMs(link: Pick<PatrolSignedLink, 'expiresAt'>, 
   return Math.max(0, Math.min(15 * 60_000, expires - SIGNED_LINK_SAFETY_MS - nowMs));
 }
 
+// ─── photo previews (issue #79) ───────────────────────────────────────────────────────────────────────────────────
+
+/** Photos per page of a run's evidence list; the server allows at most 24 per preview grant. */
+export const PATROL_THUMBNAIL_PAGE_SIZE = 12;
+
+/** One page of the run's photos (1-based), the page count, and the "Photos a–b of n" label. */
+export function evidencePage<T>(evidence: readonly T[], page: number, pageSize: number = PATROL_THUMBNAIL_PAGE_SIZE) {
+  const totalPages = Math.max(1, Math.ceil(evidence.length / pageSize));
+  const current = Math.min(Math.max(1, Math.trunc(page) || 1), totalPages);
+  const from = (current - 1) * pageSize;
+  const items = evidence.slice(from, from + pageSize);
+  const label = evidence.length ? `Photos ${from + 1}–${from + items.length} of ${evidence.length}` : 'No photos';
+  return { page: current, totalPages, items, label };
+}
+
+/**
+ * The preview links of a grant the server answered, by photo id — only well-formed, still-usable https links, and only
+ * for the photos the caller asked about. Anything else (an empty or malformed answer, an expired grant) gives no links.
+ */
+export function thumbnailLinks(
+  grant: { expiresAt?: string | null; items?: Array<{ evidenceId: number; url: string | null }> } | null | undefined,
+  wanted: readonly number[],
+  nowMs: number,
+): Map<number, string> {
+  const links = new Map<number, string>();
+  if (!grant || !Array.isArray(grant.items) || typeof grant.expiresAt !== 'string') return links;
+  if (!signedLinkUsable({ expiresAt: grant.expiresAt }, nowMs)) return links;
+  for (const item of grant.items) {
+    if (item && wanted.includes(item.evidenceId) && typeof item.url === 'string' && /^https:\/\//.test(item.url)) links.set(item.evidenceId, item.url);
+  }
+  return links;
+}
+
 // ─── forms ────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 const HH_MM = /^([01][0-9]|2[0-3]):[0-5][0-9]$/;

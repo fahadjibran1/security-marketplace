@@ -25,6 +25,13 @@ export const PATROL_EXPORT_TTL_HOURS = 24;
 export const PATROL_EXPORT_MAX_ATTEMPTS = 3;
 export const PATROL_EXPORT_STALE_RUNNING_MS = 30 * 60 * 1000;
 
+/**
+ * Thumbnail browsing (issue #79): one page of a run's photos at a time, one short-lived link grant and ONE audit entry
+ * (purpose 'browse') per page view. The page size is bounded so a grant never covers more than a screenful.
+ */
+export const PATROL_EVIDENCE_THUMBNAIL_PAGE_DEFAULT = 12;
+export const PATROL_EVIDENCE_THUMBNAIL_PAGE_MAX = 24;
+
 export const PATROL_EVIDENCE_ACCESS_PURPOSES = ['review', 'incident', 'investigation', 'client_request', 'legal', 'audit', 'other'] as const;
 export const PATROL_EXPORT_PURPOSES = ['incident', 'investigation', 'client_request', 'legal', 'audit', 'other'] as const;
 

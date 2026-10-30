@@ -15,6 +15,9 @@
  *     printable sheet escapes text and carries only server labels.
  *   - Photo evidence: no link is requested without patrols.evidence (a Viewer sees no photo); a link is requested on
  *     demand, is never logged or persisted, and is dropped when it expires.
+ *   - Photo previews (issue #79): ONE preview grant per page view (12 photos a page, server bound 24), only with
+ *     patrols.evidence, drawn as lazy <img loading="lazy" referrerPolicy="no-referrer">, only for viewable photos,
+ *     discarded at expiry and asked for again only on request; malformed, http or expired answers draw nothing.
  *   - Live Operations: only actionable patrol alerts appear, every one links to its patrol record, acting needs
  *     alerts.manage, and the patrol resolution reasons (with "completed — late sync" only after late evidence) match
  *     the backend exactly.
@@ -514,6 +517,140 @@ test('PM-10-A-PHOTO-LINK-IS-FETCHED-ON-DEMAND-NEVER-LOGGED-OR-KEPT', async () =>
     const src = stripComments(fs.readFileSync(path.join(dir, file), 'utf8'));
     assert.doesNotMatch(src, /console\.|localStorage|sessionStorage|AsyncStorage|SecureStore|indexedDB/, `${file}: no logging, no storage`);
   }
+});
+
+// ═══ evidence previews (issue #79) ═══
+
+const thumbUrl = (id) => `https://evidence.example.invalid/patrol/thumb-${id}?X-Amz-Signature=feedface${id}`;
+/** The server's answer for one page: a link for each verified, active photo of the page; url null otherwise. */
+const thumbGrant = (list, ttlMs = 120_000) => (runId, { page, pageSize }) => {
+  const items = list.slice((page - 1) * pageSize, page * pageSize).map((e) => ({
+    evidenceId: e.id, url: P.canOpenEvidence(e) ? thumbUrl(e.id) : null, expiresAt: P.canOpenEvidence(e) ? iso(Date.now() + ttlMs) : null,
+  }));
+  return { runId, page, pageSize, total: list.length, totalPages: Math.max(1, Math.ceil(list.length / pageSize)), expiresAt: iso(Date.now() + ttlMs), items };
+};
+const previews = (root) => root.findAll((n) => n.type === 'img' && n.props.loading === 'lazy');
+const thumbCalls = () => calls.filter(([k]) => k === 'getPatrolEvidenceThumbnails').map(([, a]) => [a[0], a[1].page, a[1].pageSize]);
+async function openRun(role, list, extra = {}) {
+  answers = baseAnswers({
+    getPatrolRun: { run: run(), visits: [], exceptions: [], evidenceCount: list.length, evidenceRestricted: false, evidence: list },
+    getPatrolEvidenceThumbnails: thumbGrant(list),
+    ...extra,
+  });
+  calls.length = 0;
+  const renderer = await mount({ permissions: perms(role) });
+  await pressByText(renderer.root, 'Live Patrols');
+  await pressByText(renderer.root, 'Open patrol 5');
+  return renderer;
+}
+
+test('PM-24-PREVIEWS-NEED-PATROLS-EVIDENCE-A-VIEWER-REQUESTS-NOTHING', async () => {
+  answers = baseAnswers({ getPatrolRun: { run: run(), visits: [], exceptions: [], evidenceCount: 3, evidenceRestricted: true, evidence: null } });
+  calls.length = 0;
+  const renderer = await mount({ permissions: perms('viewer') });
+  await pressByText(renderer.root, 'Live Patrols');
+  await pressByText(renderer.root, 'Open patrol 5');
+  assert.equal(thumbCalls().length, 0, 'a Viewer never asks for previews');
+  assert.equal(previews(renderer.root).length, 0, 'and sees no photo');
+  act(() => renderer.unmount());
+  // Even if a stale response carried metadata, a session without patrols.evidence mounts no list and asks for nothing.
+  const list = [evidence({ id: 901 })];
+  const r2 = await openRun('viewer', list);
+  assert.equal(thumbCalls().length, 0);
+  assert.equal(previews(r2.root).length, 0);
+  act(() => r2.unmount());
+});
+
+test('PM-25-ONE-PREVIEW-GRANT-PER-PAGE-LAZY-NO-REFERRER-NEVER-LOGGED-OR-KEPT', async () => {
+  logged.length = 0;
+  storageWrites.length = 0;
+  const list = [
+    evidence({ id: 901 }), evidence({ id: 902, uploadStatus: 'pending', verifiedAt: null, expiresAt: null }),
+    evidence({ id: 903, retentionStatus: 'quarantined' }), evidence({ id: 904, retentionStatus: 'claimed' }), evidence({ id: 905, uploadStatus: 'rejected', rejectionReason: 'trailing_data' }),
+  ];
+  const renderer = await openRun('control_room', list);
+  assert.deepEqual(thumbCalls(), [[5, 1, 12]], 'ONE request for the page on screen (the server audits it once, purpose browse)');
+  assert.equal(calls.filter(([k]) => k === 'getPatrolEvidenceLink').length, 0, 'previews never mint per-photo links');
+  const imgs = previews(renderer.root);
+  assert.deepEqual(imgs.map((n) => n.props.src), [thumbUrl(901), thumbUrl(904)], 'only verified, active or claimed photos are drawn');
+  for (const n of imgs) {
+    assert.equal(n.props.referrerPolicy, 'no-referrer');
+    assert.equal(n.props.decoding, 'async');
+    assert.ok(/^Preview of patrol photo \d+$/.test(n.props.alt));
+  }
+  assert.equal(renderer.root.findAll((n) => n.props && n.props.accessibilityLabel === 'Photo placeholder').length >= 3, true, 'the rest keep the placeholder');
+  assert.ok(textOf(renderer.root).includes('Previews of this page are recorded once in the audit log'));
+  assert.ok(!logged.some((line) => line.includes('X-Amz-Signature') || line.includes('evidence.example.invalid')), 'never logged');
+  assert.ok(!storageWrites.some(([, v]) => String(v).includes('evidence.example.invalid')), 'never persisted');
+  // A preview the browser cannot draw (e.g. HEIC outside Safari) falls back without breaking the row.
+  await act(async () => { imgs[0].props.onError(); });
+  await settle();
+  assert.deepEqual(previews(renderer.root).map((n) => n.props.src), [thumbUrl(904)]);
+  assert.ok(renderer.root.findAll((n) => n.props && n.props.accessibilityLabel === 'Preview unavailable').length >= 1);
+  assert.ok(has(renderer.root, 'View photo'), 'the full photo can still be opened');
+  // Closing the patrol drops the links with the list.
+  act(() => renderer.unmount());
+});
+
+test('PM-26-PAGINATION-ONE-GRANT-PER-PAGE-VIEW', async () => {
+  const list = Array.from({ length: 30 }, (_, i) => evidence({ id: 1000 + i, capturedAtDevice: iso(NOW - (60 - i) * MIN) }));
+  list[25] = evidence({ id: 1025, uploadStatus: 'pending', verifiedAt: null });
+  const renderer = await openRun('operations', list);
+  assert.deepEqual(thumbCalls(), [[5, 1, 12]]);
+  assert.equal(previews(renderer.root).length, 12, 'page 1: 12 photos');
+  assert.ok(textOf(renderer.root).includes('Photos 1–12 of 30'));
+  assert.ok(!textOf(renderer.root).includes('#1012'), 'page 2 is not rendered');
+  await pressByText(renderer.root, 'Next photos');
+  assert.deepEqual(thumbCalls(), [[5, 1, 12], [5, 2, 12]], 'one request per page view');
+  assert.deepEqual(previews(renderer.root).map((n) => n.props.src), list.slice(12, 24).map((e) => thumbUrl(e.id)));
+  await pressByText(renderer.root, 'Next photos');
+  assert.ok(textOf(renderer.root).includes('Photos 25–30 of 30'));
+  assert.equal(previews(renderer.root).length, 5, 'page 3: 6 photos, one still pending');
+  assert.deepEqual(thumbCalls().length, 3);
+  await pressByText(renderer.root, 'Previous photos');
+  assert.deepEqual(thumbCalls()[3], [5, 2, 12], 'going back is a new page view');
+  act(() => renderer.unmount());
+  // A page with nothing that can be shown makes no request at all.
+  const nothing = [evidence({ id: 1100, uploadStatus: 'pending', verifiedAt: null }), evidence({ id: 1101, retentionStatus: 'tombstone' })];
+  const r2 = await openRun('owner', nothing);
+  assert.deepEqual(thumbCalls(), []);
+  act(() => r2.unmount());
+  // Pure page rules.
+  assert.deepEqual(P.evidencePage([1, 2, 3], 9, 2).page, 2, 'clamped to the last page');
+  assert.equal(P.evidencePage([], 1).label, 'No photos');
+  assert.equal(P.PATROL_THUMBNAIL_PAGE_SIZE <= 24, true, 'within the server bound');
+});
+
+test('PM-27-PREVIEW-LINKS-EXPIRE-AND-BAD-ANSWERS-SHOW-NOTHING', async () => {
+  const list = [evidence({ id: 901 })];
+  const renderer = await openRun('owner', list, { getPatrolEvidenceThumbnails: thumbGrant(list, 6_200) });
+  assert.equal(previews(renderer.root).length, 1);
+  // Lifetime = expiry − 5 s safety margin.
+  await act(async () => { await new Promise((r) => setTimeout(r, 1_500)); });
+  await settle();
+  assert.equal(previews(renderer.root).length, 0, 'discarded at expiry');
+  assert.ok(textOf(renderer.root).includes('Photo previews expired and were discarded.'));
+  answers.getPatrolEvidenceThumbnails = thumbGrant(list);
+  await pressByText(renderer.root, 'Show previews again');
+  assert.equal(thumbCalls().length, 2, 'asked again only on request');
+  assert.equal(previews(renderer.root).length, 1);
+  act(() => renderer.unmount());
+  // Malformed or unsafe answers draw nothing.
+  for (const bad of [[], null, { expiresAt: iso(Date.now() + 60_000), items: [{ evidenceId: 901, url: 'http://evidence.example.invalid/x' }] },
+    { expiresAt: iso(Date.now() + 1_000), items: [{ evidenceId: 901, url: thumbUrl(901) }] }]) {
+    const r = await openRun('owner', list, { getPatrolEvidenceThumbnails: () => bad });
+    assert.equal(previews(r.root).length, 0, JSON.stringify(bad));
+    assert.ok(has(r.root, 'Try previews again'));
+    act(() => r.unmount());
+  }
+  const failing = await openRun('owner', list, { getPatrolEvidenceThumbnails: () => { throw Object.assign(new Error('404'), { status: 404, code: 'PATROLS_NOT_ENABLED' }); } });
+  assert.equal(previews(failing.root).length, 0);
+  act(() => failing.unmount());
+  assert.equal(P.thumbnailLinks({ expiresAt: iso(NOW + 60_000), items: [{ evidenceId: 7, url: thumbUrl(7) }] }, [8], NOW).size, 0, 'only photos on the page');
+  // The route and its server bound.
+  assert.ok(read('src/services/api.ts').includes('/patrols/runs/${runId}/evidence/thumbnails'));
+  const backend = read('../security-backend-nest/src/patrol/evidence/patrol-evidence-shared.ts');
+  assert.ok(backend.includes('PATROL_EVIDENCE_THUMBNAIL_PAGE_MAX = 24'));
 });
 
 // ═══ Live Operations ═══
