@@ -51,6 +51,8 @@ export type RaisePatrolException = {
   /** What the engine found, kept on the exception. */
   note: string | null;
   now: Date;
+  /** Migration 71 (#67): the reconciliation run that raised it (never set by the live sweep). */
+  reconciliationRunId?: number | null;
 };
 
 export type LateEvidenceKind = 'run_started_after_alert' | 'run_completed_after_alert' | 'scan_after_alert' | 'photo_after_alert';
@@ -85,12 +87,12 @@ export class PatrolExceptionService {
   async raise(manager: EntityManager, input: RaisePatrolException): Promise<{ created: boolean; exceptionId: number | null; alertId: number | null }> {
     const [inserted] = await manager.query(
       `INSERT INTO "patrol_exceptions" ("companyId", "siteId", "runId", "scheduleId", "shiftId", "windowKey", "scopeKey", "type", "note",
-          "guardId", "windowStart", "windowEnd")
-       SELECT $1::int, $2::int, $3::int, $4::int, $5::int, $6::varchar, $7::varchar, $8::varchar, $9::varchar, $10::int, $11::timestamptz, $12::timestamptz
+          "guardId", "windowStart", "windowEnd", "reconciliationRunId")
+       SELECT $1::int, $2::int, $3::int, $4::int, $5::int, $6::varchar, $7::varchar, $8::varchar, $9::varchar, $10::int, $11::timestamptz, $12::timestamptz, $13::int
         WHERE NOT EXISTS (SELECT 1 FROM "patrol_exceptions" WHERE "companyId" = $1::int AND "windowKey" = $6::varchar AND "scopeKey" = $7::varchar AND "type" = $8::varchar)
        ON CONFLICT DO NOTHING RETURNING "id"`,
       [input.companyId, input.siteId, input.runId, input.scheduleId, input.shiftId, input.windowKey, input.scopeKey, input.type,
-        input.note?.slice(0, 1000) ?? null, input.guardId, input.windowStart, input.windowEnd],
+        input.note?.slice(0, 1000) ?? null, input.guardId, input.windowStart, input.windowEnd, input.reconciliationRunId ?? null],
     );
     if (!inserted) return { created: false, exceptionId: null, alertId: null };
     const exceptionId = Number(inserted.id);
@@ -113,6 +115,7 @@ export class PatrolExceptionService {
         windowEnd: input.windowEnd?.toISOString() ?? null,
         actionable: input.actionable,
         detectedAt: input.now.toISOString(),
+        ...(input.reconciliationRunId ? { reconciled: true, reconciliationRunId: input.reconciliationRunId } : {}),
       },
     });
 

@@ -240,6 +240,8 @@ export function serializeException(row: any) {
     acknowledgedAt: iso(row.acknowledgedAt),
     lateEvidenceAt: iso(row.lateEvidenceAt),
     annotations: row.annotations ?? [],
+    /** Migration 71 (#67): raised by outage reconciliation (its site's summary alert carries it), else null. */
+    reconciliationRunId: n(row.reconciliationRunId),
   };
 }
 
