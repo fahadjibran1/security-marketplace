@@ -2,7 +2,7 @@
  * Migration 70 (AddPatrolEvidenceStorage1720900000016) certification, on a disposable database built from the
  * repository's own migrations.
  *
- *   M70-01  a database at 69 migrates to 70 and 70 is the last migration
+ *   M70-01  a database at 69 migrates to 70, and only Migration 72 (m72-migration.spec.ts) follows it
  *   M70-02  the schema it adds and nothing else: eleven patrol_evidence columns, two tables (patrol_evidence_exports,
  *           patrol_storage_usage), their constraints and indexes; every new time is timestamptz; varchar + CHECK, no enum;
  *           no other table, column, constraint, index or enum changes
@@ -136,10 +136,11 @@ async function main() {
     await ds.initialize();
     const applied = await ds.runMigrations({ transaction: 'each' });
 
-    await test('M70-01-A-69-DATABASE-MIGRATES-TO-70-AND-70-IS-LAST', () => {
+    await test('M70-01-A-69-DATABASE-MIGRATES-TO-70-AND-ONLY-72-FOLLOWS', () => {
       assert.deepEqual(applied.map((m) => m.name), [MIGRATION_70], 'only 70 is pending on a 69 database');
-      assert.equal(allFiles.length, 70);
+      assert.equal(allFiles.length, 71);
       assert.equal(allFiles[69], '1720900000016-AddPatrolEvidenceStorage.ts');
+      assert.equal(allFiles[70], '1720900000018-AddPatrolSyncRecoveryGrants.ts', 'Migration 72 follows 70 (71 is on another branch) and is certified by m72-migration.spec.ts');
     });
     const head = await schema();
 
@@ -278,10 +279,13 @@ async function main() {
 
     await test('M70-09-NO-SEMANTIC-DRIFT-AND-NO-COLUMN-DRIFT-ON-PATROL-TABLES', async () => {
       const drift = (await ds.driver.createSchemaBuilder().log()).upQueries.map((x) => x.query);
-      const semantic = drift.filter((x) =>
+      // This database stops at 70, so Migration 72's recovery grant table and its indexes are absent by design; they are set
+      // aside statement by statement (m72-migration.spec.ts M72-09 certifies them).
+      const m72 = /^CREATE TABLE "patrol_sync_recovery_grants" |^CREATE INDEX "IDX_patrol_sync_recovery_grants_(active|company)" |^ALTER TABLE "patrol_sync_recovery_grants" /;
+      const semantic = drift.filter((x) => !m72.test(x) &&
         /CREATE TABLE|DROP TABLE|CREATE TYPE|DROP TYPE|ALTER TYPE|ALTER TABLE.*ALTER COLUMN|ALTER TABLE.*DROP COLUMN|ALTER TABLE.*ADD "/i.test(x));
       assert.deepEqual(semantic, [], `semantic drift (the release gate would fail):\n${semantic.join('\n')}`);
-      const ours = drift.filter((x) => /"patrol_|patrolsEnabled|patrol(ExceptionId|RunId|WindowKey|LateSyncAt|Annotation)|uq_safety_alerts_patrol_exception/.test(x));
+      const ours = drift.filter((x) => /"patrol_|patrolsEnabled|patrol(ExceptionId|RunId|WindowKey|LateSyncAt|Annotation)|uq_safety_alerts_patrol_exception/.test(x) && !m72.test(x));
       // Foreign keys and CHECKs live in the migration only, as for M68's and M69's patrol tables; every column, unique key and
       // index agrees.
       const unexpected = ours.filter((x) => !/^ALTER TABLE "(patrol_[a-z_]+|safety_alerts)" DROP CONSTRAINT "(FK|CHK)_(patrol_|safety_alerts_patrol_)/.test(x));

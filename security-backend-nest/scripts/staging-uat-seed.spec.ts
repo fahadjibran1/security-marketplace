@@ -99,8 +99,8 @@ test('SEED-04-DATABASE-GUARDS-ARE-PRESENT', () => {
   assert.match(source, /target host equals the production database host/);
   assert.match(source, /Supabase \/ pooler host/);
   assert.match(source, /seed only a fresh database/);
-  assert.match(source, /const EXPECTED_MIGRATIONS = 70;/);
-  assert.match(source, /const LAST_MIGRATION = 'AddPatrolEvidenceStorage1720900000016';/);
+  assert.match(source, /const EXPECTED_MIGRATIONS = 71;/);
+  assert.match(source, /const LAST_MIGRATION = 'AddPatrolSyncRecoveryGrants1720900000018';/);
   assert.match(source, /S4_STAGING_SEED_CONFIRM !== CONFIRM/);
   assert.match(source, /DATABASE_SYNCHRONIZE: 'false'/, 'the in-process app never alters the schema');
   assert.match(source, /DATABASE_POOLER_URL: ''/, 'no pooler URL can be picked up');
@@ -237,15 +237,15 @@ test('SEED-11-RECOVERY-USES-THE-PRODUCT-RESET-FLOW-FOR-THE-FICTIONAL-ACCOUNTS-ON
 });
 
 test('SEED-12-THE-LEDGER-IS-THIS-CODE-S-OWN-HEAD-AND-NO-IN-PROCESS-TIMER-RUNS', () => {
-  // The constants are exactly this repository's migration head (Migration 70 today) …
-  assert.deepEqual(repositoryMigrationHead(), { count: 70, last: 'AddPatrolEvidenceStorage1720900000016' });
+  // The constants are exactly this repository's migration head (Migration 72 today; 71 files on this branch) …
+  assert.deepEqual(repositoryMigrationHead(), { count: 71, last: 'AddPatrolSyncRecoveryGrants1720900000018' });
   // … and a migration added later moves the head, so the seeder would refuse until it is updated with it.
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 's4-seed-head-'));
   try {
     const real = path.join(__dirname, '..', 'src', 'database', 'migrations');
     for (const f of fs.readdirSync(real)) fs.copyFileSync(path.join(real, f), path.join(tmp, f));
-    fs.writeFileSync(path.join(tmp, '1720900000017-SomethingLater.ts'), 'export class SomethingLater1720900000017 {}\n');
-    assert.deepEqual(repositoryMigrationHead(tmp), { count: 71, last: 'SomethingLater1720900000017' });
+    fs.writeFileSync(path.join(tmp, '1720900000020-SomethingLater.ts'), 'export class SomethingLater1720900000020 {}\n');
+    assert.deepEqual(repositoryMigrationHead(tmp), { count: 72, last: 'SomethingLater1720900000020' });
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }

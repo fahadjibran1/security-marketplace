@@ -213,12 +213,13 @@ async function main() {
   const before = await existingResponses({ ownerLegacy: tokens.ownerLegacy, viewer: tokens.viewer, operations: tokens.operations, guardA: tokens.guardA });
   await ctx.app.close();
 
-  // ── Migrations 68, 69 and 70 and the second boot ────────────────────────────────────────────────────────────
+  // ── Migrations 68, 69, 70 and 72 and the second boot ────────────────────────────────────────────────────────
   const to68 = new DataSource({ ...base, entities: [], migrations: allFiles.map((f) => path.join(migrationsDir, f)) } as never);
   await to68.initialize();
   const migrated = await to68.runMigrations({ transaction: 'each' });
-  assert.deepEqual(migrated.map((m) => m.name), ['AddPatrolManagement1720900000014', 'AddPatrolScheduling1720900000015', 'AddPatrolEvidenceStorage1720900000016'],
-    'only Migrations 68 (P1-A), 69 (P1-B scheduling) and 70 (P1-C evidence storage) apply');
+  assert.deepEqual(migrated.map((m) => m.name), ['AddPatrolManagement1720900000014', 'AddPatrolScheduling1720900000015', 'AddPatrolEvidenceStorage1720900000016',
+    'AddPatrolSyncRecoveryGrants1720900000018'],
+    'only Migrations 68 (P1-A), 69 (P1-B scheduling), 70 (P1-C evidence storage) and 72 (#68 recovery grants) apply');
   await to68.destroy();
   ctx = await boot();
   const q = async (sql: string, params: unknown[] = []) => ctx.ds.query(sql, params);

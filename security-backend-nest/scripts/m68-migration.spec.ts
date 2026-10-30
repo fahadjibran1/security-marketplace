@@ -149,10 +149,11 @@ async function main() {
     await test('M68-01-A-67-DATABASE-MIGRATES-TO-68-AND-ONLY-69-FOLLOWS', () => {
       assert.equal(applied.length, 1, 'only 68 is pending on a 67 database');
       assert.equal(applied[0].name, MIGRATION_68);
-      assert.equal(allFiles.length, 70);
+      assert.equal(allFiles.length, 71);
       assert.equal(allFiles[67], '1720900000014-AddPatrolManagement.ts');
       assert.equal(allFiles[68], '1720900000015-AddPatrolScheduling.ts', 'Migration 69 follows 68 and is certified by m69-migration.spec.ts');
       assert.equal(allFiles[69], '1720900000016-AddPatrolEvidenceStorage.ts', 'Migration 70 follows 69 and is certified by m70-migration.spec.ts');
+      assert.equal(allFiles[70], '1720900000018-AddPatrolSyncRecoveryGrants.ts', 'Migration 72 follows 70 (71 is on another branch) and is certified by m72-migration.spec.ts');
     });
     const head = await schema();
 
@@ -416,10 +417,12 @@ async function main() {
       // …and Migration 70's eleven patrol_evidence columns, its two tables (evidence exports, live storage usage) and their
       // indexes, statement by statement (m70-migration.spec.ts M70-09 certifies that its entities and migration agree).
       const m70 = /^CREATE TABLE "patrol_(evidence_exports|storage_usage)" |^ALTER TABLE "patrol_evidence" ADD "(declaredSizeBytes|detectedMimeType|uploadUrlIssuedAt|completionToken|completionStartedAt|syncFlags|needsReview|purgeAfter|primaryDeletedAt|objectDeletedAt|deletionRequestedByUserId)" |^CREATE (UNIQUE )?INDEX "(IDX_patrol_evidence_(lifecycle|pending_upload|exports_company|exports_open)|UQ_patrol_evidence_exports_storage_key|UQ_patrol_storage_usage_(site|company))" |^ALTER TABLE "patrol_(evidence_exports|storage_usage)" /;
-      const semantic = drift.filter((x) => !m69.test(x) && !m70.test(x) &&
+      // …and Migration 72's recovery grant table and its indexes (m72-migration.spec.ts M72-09 certifies them).
+      const m72 = /^CREATE TABLE "patrol_sync_recovery_grants" |^CREATE INDEX "IDX_patrol_sync_recovery_grants_(active|company)" |^ALTER TABLE "patrol_sync_recovery_grants" /;
+      const semantic = drift.filter((x) => !m72.test(x) && !m69.test(x) && !m70.test(x) &&
         /CREATE TABLE|DROP TABLE|CREATE TYPE|DROP TYPE|ALTER TYPE|ALTER TABLE.*ALTER COLUMN|ALTER TABLE.*DROP COLUMN|ALTER TABLE.*ADD "/i.test(x));
       assert.deepEqual(semantic, [], `semantic drift (the release gate would fail):\n${semantic.join('\n')}`);
-      const ours = drift.filter((x) => /"patrol_|patrolsEnabled/.test(x) && !m69.test(x) && !m70.test(x));
+      const ours = drift.filter((x) => /"patrol_|patrolsEnabled/.test(x) && !m69.test(x) && !m70.test(x) && !m72.test(x));
       // Foreign keys (most are composite, which TypeORM cannot declare) and CHECKs live in the migration only, as for
       // several existing tables; every column, unique key and index agrees.
       const unexpected = ours.filter((x) => !/^ALTER TABLE "patrol_[a-z_]+" DROP CONSTRAINT "(FK|CHK)_patrol_/.test(x));
