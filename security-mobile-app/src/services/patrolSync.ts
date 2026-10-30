@@ -17,9 +17,25 @@ import {
   startGuardPatrolRun,
 } from './api';
 import { PatrolOutboxEngine, type OutboxItem, type SyncReport } from '../components/guard/patrol/patrolOutbox';
+import { cleanStalePatrolTempFiles, PATROL_TEMP_SWEEP_INTERVAL_MS } from '../components/guard/patrol/patrolTempCleanup';
 import { evidenceFilesFor, patrolOutboxStore, putEvidenceObject } from './patrolNative';
+import { patrolTempCleanupPorts } from './patrolTempNative';
 
 const engines = new Map<number, PatrolOutboxEngine>();
+
+let lastTempSweepAt = 0;
+
+/**
+ * Sweeps stale camera / re-encode temporaries from the cache (patrolTempCleanup.ts): when a Guard's queue first starts
+ * in this app process, then at most every PATROL_TEMP_SWEEP_INTERVAL_MS before a sync pass. Never touches queued
+ * evidence; a failure is ignored (the sweep is housekeeping and never holds up sending).
+ */
+export function sweepStalePatrolTempFiles(): void {
+  const at = Date.now();
+  if (lastTempSweepAt && at - lastTempSweepAt < PATROL_TEMP_SWEEP_INTERVAL_MS) return;
+  lastTempSweepAt = at;
+  cleanStalePatrolTempFiles(patrolTempCleanupPorts(), at).catch(() => undefined);
+}
 
 export function patrolEngineFor(ownerUserId: number): PatrolOutboxEngine {
   let engine = engines.get(ownerUserId);
@@ -73,6 +89,7 @@ export function usePatrolOutbox(ownerUserId: number | null | undefined): PatrolO
       timer.current = setTimeout(() => kickRef.current(false), Math.max(1_000, at.getTime() - Date.now()));
     };
     kickRef.current = (eager = true) => {
+      sweepStalePatrolTempFiles();
       engine.sync({ eager })
         .then((r) => { if (live) setReport(r); })
         .catch(() => undefined)

@@ -95,7 +95,8 @@
       [
         "expo-secure-store",
         {
-          "faceIDPermission": false
+          "faceIDPermission": false,
+          "configureAndroidBackup": false
         }
       ],
       [
@@ -123,7 +124,8 @@
           "microphonePermission": false,
           "recordAudioAndroid": false
         }
-      ]
+      ],
+      "./plugins/withPatrolBackupExclusion"
     ],
     "extra": {
       "apiBaseUrl": "https://security-marketplace-api.onrender.com",

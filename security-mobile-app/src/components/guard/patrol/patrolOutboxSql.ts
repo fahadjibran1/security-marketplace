@@ -3,7 +3,9 @@
 // the phone runs them through expo-sqlite (src/services/patrolNative.ts).
 //
 // Every statement that reads, changes or deletes rows is filtered on owner_user_id: one Guard's rows are never
-// returned to, or removable by, another user signed in on the same phone.
+// returned to, or removable by, another user signed in on the same phone. The ONE exception is referencedFilePaths():
+// it returns only the photo file locations of every row, solely so the stale temporary-file sweep never deletes a file
+// that any Guard's queue still needs. It changes nothing, and nothing it returns is shown or sent.
 
 import type { OutboxItem, OutboxStore } from './patrolOutbox';
 
@@ -57,6 +59,22 @@ export class SqlOutboxStore implements OutboxStore {
        ON CONFLICT (owner_user_id, id) DO UPDATE SET status = excluded.status, data = excluded.data, updated_at = excluded.updated_at`,
       [item.ownerUserId, item.id, item.companyId, item.shiftId, item.clientRunId, item.seq, item.kind, item.status, JSON.stringify(item), this.now().toISOString()],
     );
+  }
+
+  /** Every photo file location any row references (any owner): only so a cleanup never deletes a queued file. */
+  async referencedFilePaths(): Promise<string[]> {
+    await this.init();
+    const rows = await this.db.getAllAsync<{ data: string }>("SELECT data FROM patrol_outbox WHERE kind = 'photo'", []);
+    const paths: string[] = [];
+    for (const row of rows) {
+      try {
+        const filePath = (JSON.parse(row.data) as OutboxItem).photo?.filePath;
+        if (typeof filePath === 'string' && filePath) paths.push(filePath);
+      } catch {
+        // An unreadable row protects nothing by itself; the sweep only ever touches cache folders anyway.
+      }
+    }
+    return paths;
   }
 
   async remove(ownerUserId: number, id: string): Promise<void> {

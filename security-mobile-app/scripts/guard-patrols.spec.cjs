@@ -23,6 +23,12 @@
  *   GPAT-16  camera permission configuration; the store identity, version and signing inputs are unchanged
  *   GPAT-17  upcoming patrols come from the server's windows only; card visibility
  *   GPAT-18  the web app has no patrol panel and never loads the device modules
+ *   GPAT-19  stale camera / re-encode temporaries are swept (older than 1 h, unreferenced, cache folders only); queued
+ *            evidence is never touched; a doubt deletes nothing (S4 1.2.0 hardening)
+ *   GPAT-20  shared phone, both Guards with pending work in one database: B sends only B's, A's stays dormant through
+ *            B's session, restart and the sweep, and A recovers everything by signing back in (S4 1.2.0 hardening)
+ *   GPAT-21  patrol evidence and the outbox are kept out of Android backup / device transfer and iOS backups by the
+ *            config plugin; expo-secure-store's exclusion is kept (S4 1.2.0 hardening)
  */
 const assert = require('node:assert').strict;
 const fs = require('node:fs');
@@ -43,6 +49,7 @@ const image = loadTs('src/components/guard/patrol/patrolImage.ts');
 const outbox = loadTs('src/components/guard/patrol/patrolOutbox.ts');
 const sql = loadTs('src/components/guard/patrol/patrolOutboxSql.ts');
 const state = loadTs('src/components/guard/patrol/patrolState.ts');
+const tempCleanup = loadTs('src/components/guard/patrol/patrolTempCleanup.ts');
 const backendQr = loadTs('../security-backend-nest/src/patrol/patrol-qr.ts');
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 's4-patrol-spec-'));
@@ -59,7 +66,11 @@ class FileStore {
   async list(owner) { return this.read().filter((r) => r.ownerUserId === owner).sort((a, b) => a.seq - b.seq); }
   async put(item) { const rows = this.read().filter((r) => !(r.ownerUserId === item.ownerUserId && r.id === item.id)); rows.push(JSON.parse(JSON.stringify(item))); this.write(rows); }
   async remove(owner, id) { this.write(this.read().filter((r) => !(r.ownerUserId === owner && r.id === id))); }
+  async referencedFilePaths() { return this.read().filter((r) => r.kind === 'photo' && r.photo).map((r) => r.photo.filePath); }
 }
+
+/** node:sqlite (Node >= 22.5) when present; otherwise null and the SQL-specific checks are skipped, as in GPAT-05. */
+const sqliteEngine = () => { try { return require('node:sqlite').DatabaseSync; } catch { return null; } };
 
 /** Each Guard's private evidence folder. */
 function filesFor(userId) {
@@ -728,7 +739,7 @@ test('GPAT-14-NO-GALLERY-OR-PHOTO-LIBRARY-AND-NO-BACKGROUND-LOCATION-ANYWHERE', 
     if (/startLocationUpdatesAsync|requestBackgroundPermissionsAsync|watchPositionAsync|expo-task-manager|TaskManager|startGeofencingAsync/.test(src)) offenders.push(`${path.relative(ROOT, file)}: background location`);
   }
   assert.deepEqual(offenders, []);
-  for (const rel of walk(path.join(ROOT, 'src/components/guard/patrol')).concat([path.join(ROOT, 'src/services/patrolNative.ts'), path.join(ROOT, 'src/services/patrolSync.ts')])) {
+  for (const rel of walk(path.join(ROOT, 'src/components/guard/patrol')).concat([path.join(ROOT, 'src/services/patrolNative.ts'), path.join(ROOT, 'src/services/patrolTempNative.ts'), path.join(ROOT, 'src/services/patrolSync.ts')])) {
     assert.doesNotMatch(fs.readFileSync(rel, 'utf8'), /from 'expo-location'|attendanceLocation/, `${path.relative(ROOT, rel)} does not use location`);
   }
   const expo = JSON.parse(codeOf('app.json')).expo;
@@ -745,7 +756,7 @@ test('GPAT-14-NO-GALLERY-OR-PHOTO-LIBRARY-AND-NO-BACKGROUND-LOCATION-ANYWHERE', 
 });
 
 test('GPAT-15-WELFARE-CHECKS-STAY-INDEPENDENT-OF-PATROLS', () => {
-  const patrolFiles = walk(path.join(ROOT, 'src/components/guard/patrol')).concat([path.join(ROOT, 'src/services/patrolNative.ts'), path.join(ROOT, 'src/services/patrolSync.ts')]);
+  const patrolFiles = walk(path.join(ROOT, 'src/components/guard/patrol')).concat([path.join(ROOT, 'src/services/patrolNative.ts'), path.join(ROOT, 'src/services/patrolTempNative.ts'), path.join(ROOT, 'src/services/patrolSync.ts')]);
   for (const file of patrolFiles) {
     const src = stripComments(fs.readFileSync(file, 'utf8'));
     assert.doesNotMatch(src, /welfare|Welfare|pushNotifications|expo-notifications|confirmWelfare/, `${path.relative(ROOT, file)} shares nothing with Welfare Checks`);
@@ -829,6 +840,179 @@ test('GPAT-18-THE-WEB-APP-HAS-NO-PATROL-PANEL-AND-LOADS-NO-DEVICE-MODULE', () =>
   assert.doesNotMatch(codeOf('src/components/guard/patrol/GuardPatrolPanel.web.tsx'), /^import /m, 'imports nothing');
   assert.match(codeOf('src/components/guard/patrol/GuardPatrolPanel.tsx'), /from '\.\.\/\.\.\/\.\.\/services\/patrolNative'/, 'only the phone build reaches the device modules');
   assert.match(codeOf('src/screens/GuardDashboardScreen.tsx'), /from '\.\.\/components\/guard\/patrol\/GuardPatrolPanel'/, 'resolved per platform by the bundler');
+});
+
+test('GPAT-19-STALE-CAMERA-TEMPORARIES-ARE-SWEPT-AND-QUEUED-EVIDENCE-NEVER-IS', async () => {
+  const cache = path.join(TMP, 'cache');
+  const camDir = path.join(cache, 'Camera');
+  const manipDir = path.join(cache, 'ImageManipulator');
+  const otherDir = path.join(cache, 'Other');
+  for (const d of [camDir, manipDir, otherDir]) fs.mkdirSync(d, { recursive: true });
+  // The real layout: <files>/patrol-evidence/u<id>/ (patrolNative.ts).
+  const evidenceRoot = path.join(TMP, 'patrol-evidence', 'u191') + path.sep;
+  fs.mkdirSync(evidenceRoot, { recursive: true });
+  const files = { root: evidenceRoot, write: (name, bytes) => { const p = path.join(evidenceRoot, name); fs.writeFileSync(p, bytes); return p; } };
+  const T = clock;
+  const mk = (dir, name, ageMs) => { const p = path.join(dir, name); fs.writeFileSync(p, 'x'); fs.utimesSync(p, (T - ageMs) / 1000, (T - ageMs) / 1000); return p; };
+  const staleCapture = mk(camDir, 'stale-capture.jpg', 2 * HOUR);
+  const staleEncoded = mk(manipDir, 'stale-encoded.jpg', 90 * 60_000);
+  const freshCapture = mk(camDir, 'fresh-capture.jpg', 5 * 60_000); // a photo being processed right now
+  const referencedTemp = mk(camDir, 'referenced.jpg', 5 * HOUR);
+  const otherCache = mk(otherDir, 'not-ours.jpg', 9 * HOUR);
+  const evidence = files.write('ev-queued0001.jpg', Buffer.from('queued'));
+  fs.utimesSync(evidence, (T - 30 * DAY) / 1000, (T - 30 * DAY) / 1000);
+  const prefixes = [camDir, manipDir].map((d) => d + path.sep);
+  const deleted = [];
+  const ports = (over = {}) => ({
+    listTempFiles: async () => [camDir, manipDir, otherDir, files.root].flatMap((d) => fs.readdirSync(d).map((n) => path.join(d, n)))
+      .map((p) => ({ uri: p.split(path.sep).join('/'), modifiedAtMs: fs.statSync(p).mtimeMs })),
+    referencedPaths: async () => [referencedTemp.split(path.sep).join('/')],
+    isTempLocation: (uri) => prefixes.some((pre) => { const u = uri.split('/').join(path.sep); return u.startsWith(pre) && !u.slice(pre.length).includes(path.sep); }),
+    deleteFile: async (uri) => { deleted.push(uri); fs.unlinkSync(uri.split('/').join(path.sep)); },
+    ...over,
+  });
+  const report = await tempCleanup.cleanStalePatrolTempFiles(ports(), T);
+  assert.deepEqual(report.removed.map((u) => path.basename(u)).sort(), ['stale-capture.jpg', 'stale-encoded.jpg'], 'only stale, unreferenced camera / re-encode temporaries');
+  assert.ok(!fs.existsSync(staleCapture) && !fs.existsSync(staleEncoded));
+  for (const kept of [freshCapture, referencedTemp, otherCache, evidence]) assert.ok(fs.existsSync(kept), `${path.basename(kept)} is kept`);
+  assert.equal(tempCleanup.PATROL_TEMP_MAX_AGE_MS, HOUR);
+  // Queued evidence is never temporary, even if a port wrongly called its folder a temp location.
+  const evidenceUri = evidence.split(path.sep).join('/');
+  const wrong = await tempCleanup.cleanStalePatrolTempFiles(ports({ isTempLocation: () => true, referencedPaths: async () => [] }), T);
+  assert.ok(fs.existsSync(evidence), 'patrol-evidence/ is never touched');
+  assert.ok(!wrong.removed.includes(evidenceUri));
+  assert.equal(tempCleanup.isPatrolEvidenceLocation('file:///data/user/0/com.sfour.s4/files/patrol-evidence/u7/ev-1.jpg'), true);
+  assert.equal(tempCleanup.isPatrolEvidenceLocation('file:///data/user/0/com.sfour.s4/cache/Camera/a.jpg'), false);
+  // A doubt deletes nothing: an unreadable outbox stops the sweep; an unknown age keeps the file.
+  const before = deleted.length;
+  const blocked = await tempCleanup.cleanStalePatrolTempFiles(ports({ referencedPaths: async () => { throw new Error('db locked'); } }), T + 10 * DAY);
+  assert.deepEqual([blocked.skipped, blocked.removed.length, deleted.length], ['outbox_unreadable', 0, before]);
+  const unknownAge = mk(camDir, 'unknown-age.jpg', 3 * HOUR);
+  const noAge = await tempCleanup.cleanStalePatrolTempFiles(ports({ listTempFiles: async () => [{ uri: unknownAge.split(path.sep).join('/'), modifiedAtMs: null }] }), T);
+  assert.deepEqual([noAge.removed.length, fs.existsSync(unknownAge)], [0, true]);
+  const failing = await tempCleanup.cleanStalePatrolTempFiles(ports({ deleteFile: async () => { throw new Error('EBUSY'); } }), T);
+  assert.equal(failing.failed, 1, 'a failed delete is counted, not thrown');
+  // The SQL read that protects queued files returns every Guard's photo paths (and nothing else).
+  const DatabaseSync = sqliteEngine();
+  if (!DatabaseSync) console.log('      (node:sqlite is not available on this Node; referencedFilePaths is executed on Node >= 22.5)');
+  else {
+  const db = new DatabaseSync(':memory:');
+  const api = { execAsync: async (s) => db.exec(s), runAsync: async (s, p) => db.prepare(s).run(...p), getAllAsync: async (s, p) => db.prepare(s).all(...p) };
+  const backend = new FakeBackend();
+  backend.offline = true;
+  const fa = filesFor(192); const fb = filesFor(193);
+  const pa = await recordPatrol(engineFor(192, new sql.SqlOutboxStore(api, now), backend, { files: fa }), fa);
+  const pb = await recordPatrol(engineFor(193, new sql.SqlOutboxStore(api, now), backend, { files: fb }), fb);
+  assert.deepEqual((await new sql.SqlOutboxStore(api, now).referencedFilePaths()).sort(), [pa.filePath, pb.filePath].sort());
+  db.close();
+  }
+  assert.match(codeOf('src/components/guard/patrol/patrolOutboxSql.ts'), /SELECT data FROM patrol_outbox WHERE kind = 'photo'/, 'the one cross-owner read returns photo rows only');
+  // Wiring: swept from the queue's own trigger, only the two cache folders, never the evidence folder; failures ignored.
+  const native = stripComments(codeOf('src/services/patrolTempNative.ts'));
+  assert.match(native, /const TEMP_FOLDERS = \['Camera', 'ImageManipulator'\]/);
+  assert.match(native, /new Directory\(Paths\.cache, name\)/);
+  assert.match(native, /referencedPaths: \(\) => patrolOutboxStore\(\)\.referencedFilePaths\(\)/);
+  const syncSrc = stripComments(codeOf('src/services/patrolSync.ts'));
+  assert.match(syncSrc, /kickRef\.current = \(eager = true\) => \{\s*sweepStalePatrolTempFiles\(\);/, 'swept before a sync pass');
+  assert.match(syncSrc, /cleanStalePatrolTempFiles\(patrolTempCleanupPorts\(\), at\)\.catch\(\(\) => undefined\)/);
+  assert.equal(tempCleanup.PATROL_TEMP_SWEEP_INTERVAL_MS, 10 * 60_000);
+});
+
+test('GPAT-20-SHARED-PHONE-BOTH-GUARDS-PENDING-B-SENDS-ONLY-B-AND-A-RECOVERS-AFTER-B', async () => {
+  // A real SQLite database where available (Node >= 22.5), else the file-backed store that filters like the SQL.
+  const DatabaseSync = sqliteEngine();
+  const dbFile = path.join(TMP, 'shared-phone.db');
+  const jsonFile = path.join(TMP, 'shared-phone.json');
+  const open = () => { if (!DatabaseSync) return { db: { close: () => undefined }, store: new FileStore(jsonFile) }; const db = new DatabaseSync(dbFile); return { db, store: new sql.SqlOutboxStore({ execAsync: async (s) => db.exec(s), runAsync: async (s, p) => db.prepare(s).run(...p), getAllAsync: async (s, p) => db.prepare(s).all(...p) }, now) }; };
+  const backend = new FakeBackend();
+  const filesA = filesFor(201);
+  const filesB = filesFor(202);
+  // Guard A patrols offline and signs out with everything pending.
+  backend.offline = true;
+  let h = open();
+  const A = engineFor(201, h.store, backend, { files: filesA });
+  const a = await recordPatrol(A, filesA, 601);
+  await A.sync();
+  // Guard B signs in on the same phone, patrols, and is online.
+  const B = engineFor(202, h.store, backend, { files: filesB });
+  assert.deepEqual(await B.items(), [], 'B sees nothing of A\'s');
+  const b = await recordPatrol(B, filesB, 602);
+  backend.offline = false;
+  backend.calls = [];
+  const rb = await B.sync({ eager: true });
+  assert.deepEqual([rb.sent, rb.pending], [4, 0], 'B sends exactly B\'s four steps');
+  assert.ok(backend.calls.every((c) => !c.body || c.body.shiftId === undefined || c.body.shiftId === 602), 'nothing of A\'s shift was sent');
+  assert.ok(backend.sent('putObject').every((c) => c.filePath === b.filePath), 'only B\'s photo was uploaded');
+  assert.ok(fs.existsSync(a.filePath), 'A\'s queued photo is untouched by B\'s session');
+  // B's retention prune (a week later) never reaches A's rows.
+  clock += 8 * DAY;
+  await B.sync();
+  // The app restarts while B is signed out; A's rows are still pending in the same database.
+  h.db.close();
+  h = open();
+  assert.deepEqual((await h.store.list(201)).map((i) => [i.kind, i.status]), [['start', 'pending'], ['scan', 'pending'], ['photo', 'pending'], ['complete', 'pending']], 'A\'s work stays dormant and intact');
+  assert.ok((await h.store.referencedFilePaths()).includes(a.filePath), 'and protected from the temporary-file sweep');
+  // A signs back in on the same phone: everything is sent, in order, from A's own folder (inside the post-shift rules,
+  // which the server decides).
+  backend.calls = [];
+  const again = engineFor(201, h.store, backend, { files: filesA });
+  const ra = await again.sync({ eager: true });
+  assert.deepEqual([ra.sent, ra.pending, ra.paused], [4, 0, null], 'A recovers everything by signing back in');
+  assert.ok(backend.sent('putObject').every((c) => c.filePath === a.filePath));
+  assert.equal([...backend.runs.values()].filter((r) => r.shiftId === 601).length, 1, 'A\'s patrol is recorded once');
+  assert.ok(!fs.existsSync(a.filePath), 'A\'s photo is deleted only after the server verified it');
+  h.db.close();
+});
+
+test('GPAT-21-EVIDENCE-AND-OUTBOX-ARE-KEPT-OUT-OF-BACKUPS-AND-DEVICE-TRANSFER', () => {
+  const plugin = require(path.join(ROOT, 'plugins', 'withPatrolBackupExclusion.js'));
+  const expo = JSON.parse(codeOf('app.json')).expo;
+  const names = expo.plugins.map((p) => (Array.isArray(p) ? p[0] : p));
+  assert.ok(names.includes('./plugins/withPatrolBackupExclusion'), 'the plugin is applied');
+  const [, secureStore] = expo.plugins.find((p) => Array.isArray(p) && p[0] === 'expo-secure-store');
+  assert.equal(secureStore.configureAndroidBackup, false, 'expo-secure-store hands its backup rules to S4\'s plugin (no competing manifest values)');
+  // Android: the manifest points at S4's own rules, whatever was there before.
+  const manifest = { manifest: { application: [{ $: { 'android:name': '.MainApplication', 'android:allowBackup': 'true', 'android:fullBackupContent': '@xml/secure_store_backup_rules' } }] } };
+  const app = plugin.applyManifest(manifest).manifest.application[0].$;
+  assert.equal(app['android:fullBackupContent'], '@xml/s4_backup_rules');
+  assert.equal(app['android:dataExtractionRules'], '@xml/s4_data_extraction_rules');
+  assert.equal(app['android:allowBackup'], 'true', 'allowBackup is left as it was');
+  // The rules are an allow-list: shared preferences minus SecureStore (expo-secure-store's own rules, kept exactly), and
+  // no file / database / root / external domain — so patrol-evidence/ and SQLite/ are never backed up or transferred.
+  const full = plugin.backupRulesXml();
+  const extraction = plugin.dataExtractionRulesXml();
+  const secureStoreRules = codeOf('node_modules/expo-secure-store/android/src/main/res/xml/secure_store_data_extraction_rules.xml');
+  for (const line of ['<include domain="sharedpref" path="."/>', '<exclude domain="sharedpref" path="SecureStore"/>']) {
+    assert.ok(secureStoreRules.includes(line), `expo-secure-store's rules still say ${line}`);
+    assert.ok(full.includes(line) && extraction.includes(line), `kept: ${line}`);
+  }
+  const includes = (xml) => [...xml.matchAll(/<include domain="([a-z_]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(includes(full), ['sharedpref']);
+  assert.deepEqual(includes(extraction), ['sharedpref', 'sharedpref'], 'cloud backup and device transfer');
+  assert.match(full, /^<\?xml version="1\.0" encoding="utf-8"\?>\n[\s\S]*<full-backup-content>[\s\S]*<\/full-backup-content>\n$/);
+  assert.match(extraction, /<cloud-backup>[\s\S]*<\/cloud-backup>\s*<device-transfer>[\s\S]*<\/device-transfer>/);
+  for (const xml of [full, extraction]) assert.doesNotMatch(xml, /domain="(file|database|root|external|device_[a-z]+)"/, 'nothing from app files or databases');
+  // The paths the rules keep out are the ones the app really uses.
+  assert.match(codeOf('src/services/patrolNative.ts'), /const DATABASE_NAME = 's4-patrol-outbox\.db';/);
+  assert.match(codeOf('src/services/patrolNative.ts'), /const EVIDENCE_ROOT = 'patrol-evidence';/);
+  assert.match(codeOf('node_modules/expo-sqlite/android/src/main/java/expo/modules/sqlite/SQLiteModule.kt'), /context\.filesDir\.canonicalPath \+ File\.separator \+ "SQLite"/);
+  assert.match(codeOf('node_modules/expo-sqlite/ios/SQLiteModule.swift'), /documentDirectory\?\.appendingPathComponent\("SQLite"\)/);
+  // iOS: the reviewed Swift snippet on the SDK 54 template AppDelegate (scripts/fixtures, from expo-template-bare-minimum
+  // 54.0.54): called first in didFinishLaunching, sets isExcludedFromBackup on both directories, idempotent.
+  const template = codeOf('scripts/fixtures/expo-template-bare-minimum-54.0.54-AppDelegate.swift');
+  const swift = plugin.applyAppDelegate(template, 'swift');
+  assert.equal(plugin.applyAppDelegate(swift, 'swift'), swift, 'a second prebuild changes nothing');
+  assert.match(swift, /\) -> Bool \{\n\/\/ @generated begin s4-patrol-backup-exclusion-call[^\n]*\n    s4ExcludePatrolDataFromBackup\(\)\n\/\/ @generated end s4-patrol-backup-exclusion-call\n    let delegate = ReactNativeDelegate\(\)/);
+  assert.match(swift, /for name in \["patrol-evidence", "SQLite"\]/);
+  assert.match(swift, /FileManager\.default\.urls\(for: \.documentDirectory, in: \.userDomainMask\)/);
+  assert.match(swift, /values\.isExcludedFromBackup = true\n\s*try url\.setResourceValues\(values\)/);
+  assert.match(swift, /createDirectory\(at: url, withIntermediateDirectories: true\)/);
+  const added = swift.split('\n').filter((line) => !template.split('\n').includes(line) && !/^\s*\/\//.test(line)).join('\n');
+  assert.match(added, /isExcludedFromBackup/);
+  assert.doesNotMatch(added, /cachesDirectory|removeItem|moveItem|CryptoKit|CommonCrypto|SecKey|kSecAttr|FileProtectionType/, 'nothing moved, deleted, encrypted or re-protected');
+  assert.equal((swift.match(/s4ExcludePatrolDataFromBackup\(\)/g) || []).length, 2, 'one declaration, one call');
+  assert.throws(() => plugin.applyAppDelegate(template.replace('let delegate = ReactNativeDelegate()', ''), 'swift'), /Failed to match/, 'a changed template fails the prebuild rather than shipping without the exclusion');
+  assert.throws(() => plugin.applyAppDelegate('@implementation AppDelegate', 'objcpp'), /Swift AppDelegate/);
 });
 
 (async () => {
