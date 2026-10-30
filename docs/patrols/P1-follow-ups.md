@@ -7,8 +7,9 @@ changes to the P1-B sweep / sync core).
 | # | Decision | Status |
 | --- | --- | --- |
 | 1 | Control Room acts on patrol alerts with `alerts.manage`, never `patrols.manage` | **Done in P1-C** (commit "feat(patrols): Control Room acts on patrol alerts with alerts.manage…") |
-| 2 | Outage reconciliation: no missed-patrol record is permanently lost after a long outage | **Designed** — [#67](https://github.com/fahadjibran1/security-marketplace/issues/67) |
+| 2 | Outage reconciliation: no missed-patrol record is permanently lost after a long outage | **Implemented** on `fix/patrols-71-67-lifecycle` (Migration 71) — [#67](https://github.com/fahadjibran1/security-marketplace/issues/67) |
 | 3 | Exceptional offline recovery beyond the 24 h post-shift sync window | **Designed** — [#68](https://github.com/fahadjibran1/security-marketplace/issues/68) |
+| 4 | The Patrols switch never suspends retention, holds, deletion or exports of existing evidence | **Implemented** on `fix/patrols-71-67-lifecycle` — [#71](https://github.com/fahadjibran1/security-marketplace/issues/71) |
 
 ---
 
@@ -41,7 +42,7 @@ is now asserted for a role with neither permission. Permission-count inventories
 
 ---
 
-## 2. Outage reconciliation — designed ([#67](https://github.com/fahadjibran1/security-marketplace/issues/67))
+## 2. Outage reconciliation — implemented ([#67](https://github.com/fahadjibran1/security-marketplace/issues/67))
 
 **Problem.** `PATROL_SWEEP_LOOKBACK_HOURS = 26`. After an outage longer than that (server, database, or the sweep itself),
 windows that ended before `now − 26 h` are never judged, so a missed patrol in the gap is never recorded.
@@ -68,6 +69,26 @@ windows that ended before `now − 26 h` are never judged, so a missed patrol in
 **Tests.** 30 h, 5-day and 20-day outages; crash mid-batch and resume; concurrent sweeps; DST nights inside the gap; no
 duplicates; summary alert content; audit trail.
 
+**As implemented (Migration 71, `AddPatrolSweepReconciliation1720900000017`).**
+* `judgedThrough` means: every window whose **start deadline** is ≤ it has been judged. The first pass after deploy sets it
+  to now (nothing is backdated); every normal pass sets it to now in the same transaction that judged.
+* Gap ≤ 26 h: the live pass widens its window-start floor back to `judgedThrough − 26 h` (never beyond now − 52 h), which
+  also closes the smaller hole the fixed lookback had after outages shorter than 26 h. No run.
+* Gap > 26 h: the live pass keeps alerting normally for deadlines after now − 26 h; deadlines in
+  `(judgedThrough, now − 26 h]` go to reconciliation batches (≤ 6 h of deadlines, ≤ 500 judged windows with ties at the
+  cut-off kept together, ≤ 8 batches per company per five-minute pass, each batch its own transaction under the
+  per-company `PATROL_SWEEP_LOCK_NAMESPACE` TRY lock, advancing both the watermark and the run's `throughAt`).
+* Reconciled exceptions: `reconciliationRunId`, `actionable = false` (no alert each), note "found by outage reconciliation";
+  exposed as `reconciliationRunId` by `GET /patrols/exceptions` and resolvable on their own. On completion ONE
+  `patrol_missed` summary SafetyAlert per site (`patrolReconciliationRunId`, `patrolWindowKey = reconciliation:site:{id}`),
+  listing the first ten windows and "and N more"; closing it never touches the exceptions.
+* Beyond 14 days: `unjudgedFrom / unjudgedTo` on the run, audit `patrol.reconciliation_horizon_exceeded`, and ONE alert
+  (`reconciliation:horizon`) when the company has an active schedule.
+* Audit: `patrol.reconciliation_started`, `…_batch` (per batch, with `boundedByWindowLimit`), `…_completed` (counts,
+  summary alerts), `…_alert_raised`; each reconciled `patrol.exception_raised` carries `reconciled: true`.
+* Not changed: run re-evaluation (`judgeRuns`: abandoned / incomplete / verification) keeps its 4-day review window.
+* Tests: `scripts/patrol-reconciliation.spec.ts` (PR-01…PR-10), `scripts/m71-migration.spec.ts` (M71-01…M71-10).
+
 ---
 
 ## 3. Exceptional offline recovery — designed ([#68](https://github.com/fahadjibran1/security-marketplace/issues/68))
@@ -90,6 +111,21 @@ duplicates; summary alert content; audit trail.
 
 **Tests.** No grant → refused; another Guard / shift / company → refused; expired / revoked → refused; inside a grant →
 accepted, flagged, needsReview; alerts never closed; audit; Owner / Admin only.
+
+---
+
+## 4. Switch-off never suspends the evidence lifecycle — implemented ([#71](https://github.com/fahadjibran1/security-marketplace/issues/71))
+
+* Evidence maintenance (orphan verification, retention claims, quarantine moves, purge / tombstone) runs for every
+  company with Patrols on **and** every company with any patrol evidence record, whatever its switch. Holds protect
+  exactly as before. Exports already requested are built (the former `patrols_disabled` build failure is gone).
+* With the switch off, Owner / Admin (`patrols.holds`) keep the evidence-management routes while the company has any
+  evidence record, hold or export: holds (list / place / release), delete and restore, exports (request / list / status /
+  download) and storage usage. Everyone else, and a company that never had evidence, still gets 404 PATROLS_NOT_ENABLED.
+* Still blocked with the switch off: Guard uploads and completions, runs, scans, configuration, the sweep, viewing a
+  photo (`patrols.evidence`). The session permission list is unchanged (it omits `patrols.*` while off), so a web UI for
+  switched-off evidence management needs its own cue.
+* Tests: `scripts/patrol-evidence.spec.ts` PE-W01; `scripts/patrol-foundation.spec.ts` PF-19.
 
 ---
 
