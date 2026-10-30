@@ -338,6 +338,39 @@ export interface PatrolHold {
   exceptionId: number | null;
 }
 
+/**
+ * An exceptional offline recovery grant (issue #68): an Owner / Admin lets ONE Guard send ONE shift's patrol data after
+ * the post-shift sync window, until expiresAt (default 24 h, at most 72 h). Data accepted under it is flagged
+ * recovered_via_grant and needs review.
+ */
+export interface PatrolRecoveryGrant {
+  id: number;
+  shiftId: number;
+  guardId: number;
+  guardName: string | null;
+  siteId: number | null;
+  siteName: string | null;
+  shiftStart: string | null;
+  shiftEnd: string | null;
+  reason: string;
+  status: 'active' | 'expired' | 'revoked';
+  createdAt: string | null;
+  createdByUserId: number;
+  expiresAt: string | null;
+  revokedAt: string | null;
+  revokedByUserId: number | null;
+  revokeReason: string | null;
+  uses: number;
+  lastUsedAt: string | null;
+}
+
+export interface PatrolRecoveryGrantInput {
+  shiftId: number;
+  guardId?: number;
+  durationHours?: number;
+  reason: string;
+}
+
 export interface PatrolHoldInput {
   scope: PatrolHoldScope;
   evidenceId?: number;

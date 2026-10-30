@@ -1,7 +1,17 @@
 import * as React from 'react';
 import { Linking, Platform, Text, View } from 'react-native';
-import { getPatrolExportLink, listPatrolExports, listPatrolHolds, placePatrolHold, releasePatrolHold, requestPatrolExport } from '../../services/api';
-import { PATROL_EXPORT_PURPOSES, type PatrolExport, type PatrolExportPurpose, type PatrolHold } from '../../types/patrols';
+import {
+  getPatrolExportLink,
+  issuePatrolRecoveryGrant,
+  listPatrolExports,
+  listPatrolHolds,
+  listPatrolRecoveryGrants,
+  placePatrolHold,
+  releasePatrolHold,
+  requestPatrolExport,
+  revokePatrolRecoveryGrant,
+} from '../../services/api';
+import { PATROL_EXPORT_PURPOSES, type PatrolExport, type PatrolExportPurpose, type PatrolHold, type PatrolRecoveryGrant } from '../../types/patrols';
 import { Button } from '../ui/Button';
 import { patrolFailureMessage } from './patrolAccess';
 import type { PatrolPageContext } from './patrolContext';
@@ -13,8 +23,13 @@ import {
   holdDraftProblem,
   holdReasonProblem,
   holdScopeLabel,
+  PATROL_RECOVERY_GRANT_DEFAULT_HOURS,
+  PATROL_RECOVERY_GRANT_MAX_HOURS,
+  recoveryGrantDraftProblem,
+  recoveryGrantStatusLabel,
   signedLinkUsable,
   type HoldDraft,
+  type RecoveryGrantDraft,
 } from './patrolPresentation';
 import { Badge, ChipSelect, KeyValue, Notice, PatrolPanel, ResourceState, RowCard, TextField, ui, usePatrolResource } from './patrolUi';
 
@@ -37,8 +52,9 @@ function beginOpenLink(): { ok: boolean; finish: (url: string) => void; abandon:
 }
 
 /**
- * Downloads, retention & holds. Everyone with patrols.view reads the retention period; holds and bulk exports need
- * patrols.holds (Owner / Admin). Retention is changed in Site settings (90 days by an Owner or Admin only).
+ * Downloads, retention & holds. Everyone with patrols.view reads the retention period; holds, bulk exports and late-sync
+ * recovery grants (#68) need patrols.holds (Owner / Admin). Retention is changed in Site settings (90 days by an Owner or
+ * Admin only).
  */
 export function PatrolRetentionTab({ ctx }: { ctx: PatrolPageContext }) {
   const canHolds = ctx.permissions.canManageHolds;
@@ -62,7 +78,89 @@ export function PatrolRetentionTab({ ctx }: { ctx: PatrolPageContext }) {
       </PatrolPanel>
       {canHolds ? <HoldsPanel ctx={ctx} setNotice={setNotice} /> : <Text style={ui.muted}>Evidence holds and bulk exports are managed by an Owner or Admin.</Text>}
       {canHolds ? <ExportsPanel ctx={ctx} setNotice={setNotice} /> : null}
+      {canHolds ? <RecoveryGrantsPanel ctx={ctx} setNotice={setNotice} /> : null}
     </View>
+  );
+}
+
+/**
+ * Exceptional offline recovery (issue #68). An Owner / Admin lets the Guard of ONE shift send that shift's patrol data
+ * after the standard post-shift sync window, for a limited time, with a reason. Everything accepted under it is marked
+ * "Recovered late under a recovery grant" and needs review. Issue, use and revoke are audited by the server.
+ */
+function RecoveryGrantsPanel({ ctx, setNotice }: { ctx: PatrolPageContext; setNotice: (n: { tone: 'success' | 'error' | 'info'; message: string } | null) => void }) {
+  const [showAll, setShowAll] = React.useState(false);
+  const grants = usePatrolResource(`recoveryGrants|${ctx.companyKey}|${showAll}`, () => listPatrolRecoveryGrants(showAll ? 'all' : 'active'));
+  const [draft, setDraft] = React.useState<RecoveryGrantDraft>({ shiftId: '', hours: String(PATROL_RECOVERY_GRANT_DEFAULT_HOURS), reason: '' });
+  const [busy, setBusy] = React.useState(false);
+  const [revoking, setRevoking] = React.useState<{ grant: PatrolRecoveryGrant; reason: string } | null>(null);
+
+  const issue = async () => {
+    const problem = recoveryGrantDraftProblem(draft);
+    if (problem) { setNotice({ tone: 'error', message: problem }); return; }
+    setBusy(true);
+    try {
+      const hours = draft.hours.trim() === '' ? PATROL_RECOVERY_GRANT_DEFAULT_HOURS : Number(draft.hours);
+      const grant = await issuePatrolRecoveryGrant({ shiftId: Number(draft.shiftId), durationHours: hours, reason: draft.reason.trim() });
+      setNotice({ tone: 'success', message: `Recovery grant issued for shift ${grant.shiftId}${grant.guardName ? ` (${grant.guardName})` : ''}. Ask the Guard to open the S4 app and tap "Send again".` });
+      setDraft({ shiftId: '', hours: String(PATROL_RECOVERY_GRANT_DEFAULT_HOURS), reason: '' });
+      await grants.reload(true);
+    } catch (error) {
+      setNotice({ tone: 'error', message: patrolFailureMessage(error, 'Unable to issue the recovery grant.') });
+    } finally { setBusy(false); }
+  };
+
+  const doRevoke = async () => {
+    if (!revoking) return;
+    const problem = holdReasonProblem(revoking.reason);
+    if (problem) { setNotice({ tone: 'error', message: problem }); return; }
+    setBusy(true);
+    try {
+      await revokePatrolRecoveryGrant(revoking.grant.id, revoking.reason.trim());
+      setNotice({ tone: 'success', message: `Recovery grant #${revoking.grant.id} revoked. Late patrol data for that shift is refused again.` });
+      setRevoking(null);
+      await grants.reload(true);
+    } catch (error) {
+      setNotice({ tone: 'error', message: patrolFailureMessage(error, 'Unable to revoke the recovery grant.') });
+    } finally { setBusy(false); }
+  };
+
+  const list = grants.data ?? [];
+  return (
+    <PatrolPanel title="Late-sync recovery grants"
+      subtitle={`Patrol data is accepted until the post-shift sync window closes. For an exceptional delay (an outage, a recovered phone) you can let one shift's Guard send it for up to ${PATROL_RECOVERY_GRANT_MAX_HOURS} hours. Anything sent this way is marked for review.`}
+      right={<Button label={showAll ? 'Active only' : 'Include ended'} size="sm" variant="tertiary" onPress={() => setShowAll(!showAll)} />}>
+      {ResourceState({ resource: grants, empty: grants.data != null && list.length === 0, emptyMessage: showAll ? 'No recovery grants have been issued.' : 'No active recovery grants.', what: 'recovery grants' })}
+      {list.map((g) => (
+        <RowCard key={g.id}>
+          <View style={ui.actions}>
+            <Text style={ui.rowTitle}>Shift {g.shiftId}{g.guardName ? ` · ${g.guardName}` : ''}{g.siteName ? ` · ${g.siteName}` : ''}</Text>
+            <Badge label={recoveryGrantStatusLabel(g.status)} tone={g.status === 'active' ? 'warning' : 'neutral'} />
+          </View>
+          <Text style={ui.rowMeta}>Issued {formatPatrolDateTime(g.createdAt, ctx.siteZone(g.siteId))} · until {formatPatrolDateTime(g.expiresAt, ctx.siteZone(g.siteId))} · {g.reason}</Text>
+          <Text style={ui.rowMeta}>{g.uses === 0 ? 'Not used yet' : `Used ${g.uses} time${g.uses === 1 ? '' : 's'}${g.lastUsedAt ? `, last ${formatPatrolDateTime(g.lastUsedAt, ctx.siteZone(g.siteId))}` : ''}`}</Text>
+          {g.revokedAt ? <Text style={ui.rowMeta}>Revoked {formatPatrolDateTime(g.revokedAt, ctx.siteZone(g.siteId))}{g.revokeReason ? ` · ${g.revokeReason}` : ''}</Text> : null}
+          {g.status === 'active' ? (
+            revoking?.grant.id === g.id ? (
+              <View style={{ gap: 8 }}>
+                <TextField label="Reason for revoking" value={revoking.reason} onChangeText={(v) => setRevoking({ grant: g, reason: v })} multiline />
+                <View style={ui.actions}>
+                  <Button label="Cancel" size="sm" variant="secondary" onPress={() => setRevoking(null)} />
+                  <Button label="Revoke grant" size="sm" variant="danger" loading={busy} onPress={() => { void doRevoke(); }} />
+                </View>
+              </View>
+            ) : <View style={ui.actions}><Button label="Revoke" size="sm" variant="tertiary" onPress={() => setRevoking({ grant: g, reason: '' })} /></View>
+          ) : null}
+        </RowCard>
+      ))}
+      <View style={{ gap: 8 }}>
+        <Text style={ui.fieldLabel}>Issue a recovery grant</Text>
+        <TextField label="Shift number" value={draft.shiftId} onChangeText={(v) => setDraft({ ...draft, shiftId: v })} helper="The shift's own Guard receives the grant." />
+        <TextField label={`Hours (1–${PATROL_RECOVERY_GRANT_MAX_HOURS})`} value={draft.hours} onChangeText={(v) => setDraft({ ...draft, hours: v })} />
+        <TextField label="Reason for the grant" value={draft.reason} onChangeText={(v) => setDraft({ ...draft, reason: v })} multiline helper="Required, at least 3 characters. Recorded in the audit log." />
+        <View style={ui.actions}><Button label="Issue grant" loading={busy} onPress={() => { void issue(); }} /></View>
+      </View>
+    </PatrolPanel>
   );
 }
 

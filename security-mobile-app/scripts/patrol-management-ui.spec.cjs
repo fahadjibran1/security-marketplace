@@ -703,6 +703,108 @@ test('PM-17-RETENTION-WORDING-NEVER-IMPLIES-LIFECYCLE-STOPS', () => {
   }
 });
 
+// ═══ exceptional offline recovery grants (issue #68) ═══
+
+const typeInto = async (root, label, value) => {
+  const nodes = root.findAll((n) => n.props && n.props.label === label && typeof n.props.onChangeText === 'function');
+  assert.ok(nodes.length > 0, `a "${label}" field`);
+  await act(async () => { nodes[0].props.onChangeText(value); });
+  await settle();
+};
+function grant(over = {}) {
+  return {
+    id: 41, shiftId: 71, guardId: 11, guardName: 'Ava Guard', siteId: 10, siteName: 'Alpha Site', shiftStart: iso(NOW - 40 * 60 * MIN),
+    shiftEnd: iso(NOW - 32 * 60 * MIN), reason: 'Phone recovered after the outage', status: 'active', createdAt: iso(NOW - 10 * MIN), createdByUserId: 1,
+    expiresAt: iso(NOW + 24 * 60 * MIN - 10 * MIN), revokedAt: null, revokedByUserId: null, revokeReason: null, uses: 2, lastUsedAt: iso(NOW - 5 * MIN), ...over,
+  };
+}
+
+test('PM-19-RECOVERY-GRANTS-OWNER-AND-ADMIN-ONLY-ON-THE-EXISTING-PAGE', async () => {
+  for (const role of ['owner', 'admin', 'operations', 'control_room', 'viewer']) {
+    answers = baseAnswers({ listPatrolRecoveryGrants: [grant()] });
+    calls.length = 0;
+    const p = perms(role);
+    const renderer = await mount({ permissions: p });
+    await pressByText(renderer.root, 'Downloads, retention & holds');
+    const text = textOf(renderer.root);
+    assert.equal(text.includes('Late-sync recovery grants'), p.canManageHolds, `${role}: the recovery grants panel`);
+    assert.equal(has(renderer.root, 'Issue grant'), p.canManageHolds, `${role}: issue`);
+    assert.equal(has(renderer.root, 'Revoke'), p.canManageHolds, `${role}: revoke`);
+    assert.equal(calls.some(([k]) => k === 'listPatrolRecoveryGrants'), p.canManageHolds, `${role}: grants are read only with patrols.holds`);
+    assert.equal(calls.some(([k]) => k === 'issuePatrolRecoveryGrant' || k === 'revokePatrolRecoveryGrant'), false, `${role}: nothing written without a press`);
+    act(() => renderer.unmount());
+  }
+  assert.ok(!perms('operations').canManageHolds && !perms('control_room').canManageHolds && !perms('viewer').canManageHolds && !perms('guard').canView,
+    'Operations, Control Room, Viewer and Guards never get the controls');
+});
+
+test('PM-20-RECOVERY-GRANTS-ISSUE-LIST-AND-REVOKE-THROUGH-THE-API', async () => {
+  answers = baseAnswers({
+    listPatrolRecoveryGrants: (status) => (status === 'all' ? [grant(), grant({ id: 40, status: 'revoked', revokedAt: iso(NOW - 60 * MIN), revokeReason: 'Issued in error', uses: 0, lastUsedAt: null })] : [grant()]),
+    issuePatrolRecoveryGrant: (input) => grant({ id: 42, shiftId: input.shiftId, uses: 0, lastUsedAt: null }),
+    revokePatrolRecoveryGrant: (id, reason) => grant({ id, status: 'revoked', revokedAt: iso(NOW), revokeReason: reason }),
+  });
+  calls.length = 0;
+  const renderer = await mount({ permissions: perms('owner') });
+  const root = renderer.root;
+  await pressByText(root, 'Downloads, retention & holds');
+  // The list: shift, Guard, site, status, expiry, reason and uses — from the server only.
+  let text = textOf(root);
+  assert.ok(text.includes('Shift 71 · Ava Guard · Alpha Site'), text);
+  assert.ok(text.includes('Phone recovered after the outage'));
+  assert.ok(text.includes('Used 2 times'));
+  assert.ok(text.includes('Active'));
+  // Validation before any request: shift number, 1–72 hours, a reason.
+  const issued = () => calls.filter(([k]) => k === 'issuePatrolRecoveryGrant');
+  await pressByText(root, 'Issue grant');
+  assert.equal(issued().length, 0, 'no shift number');
+  assert.ok(textOf(root).includes('Enter the shift number.'));
+  await typeInto(root, 'Shift number', '71');
+  await typeInto(root, 'Hours (1–72)', '73');
+  await typeInto(root, 'Reason for the grant', 'Phone recovered after the outage');
+  await pressByText(root, 'Issue grant');
+  assert.equal(issued().length, 0, 'more than 72 hours is refused on the page too');
+  assert.ok(textOf(root).includes('A recovery grant lasts 1 to 72 hours.'));
+  await typeInto(root, 'Hours (1–72)', '24');
+  await typeInto(root, 'Reason for the grant', 'ab');
+  await pressByText(root, 'Issue grant');
+  assert.equal(issued().length, 0, 'a reason is mandatory');
+  await typeInto(root, 'Reason for the grant', 'Phone recovered after the outage');
+  await pressByText(root, 'Issue grant');
+  assert.deepEqual(issued().map(([, a]) => a[0]), [{ shiftId: 71, durationHours: 24, reason: 'Phone recovered after the outage' }]);
+  text = textOf(root);
+  assert.ok(text.includes('Recovery grant issued for shift 71'), text);
+  assert.ok(text.includes('Send again'), 'the Owner is told how the Guard re-sends');
+  // Revoke: a reason is required, then the server is asked.
+  const revoked = () => calls.filter(([k]) => k === 'revokePatrolRecoveryGrant');
+  await pressByText(root, 'Revoke');
+  await pressByText(root, 'Revoke grant');
+  assert.equal(revoked().length, 0, 'no reason, no request');
+  await typeInto(root, 'Reason for revoking', 'Evidence received');
+  await pressByText(root, 'Revoke grant');
+  assert.deepEqual(revoked().map(([, a]) => a), [[41, 'Evidence received']]);
+  assert.ok(textOf(root).includes('Recovery grant #41 revoked'));
+  // Ended grants on request.
+  await pressByText(root, 'Include ended');
+  assert.ok(calls.some(([k, a]) => k === 'listPatrolRecoveryGrants' && a[0] === 'all'));
+  assert.ok(textOf(root).includes('Revoked'));
+  assert.ok(textOf(root).includes('Issued in error'));
+  // A server refusal is shown as the server's message (e.g. an active grant already exists).
+  answers.issuePatrolRecoveryGrant = async () => { const e = new Error('x'); e.status = 409; e.body = { code: 'PATROL_RECOVERY_GRANT_ALREADY_ACTIVE', message: 'This Guard already has an active recovery grant for this shift.' }; throw e; };
+  await typeInto(root, 'Shift number', '71');
+  await typeInto(root, 'Reason for the grant', 'Second attempt');
+  await pressByText(root, 'Issue grant');
+  assert.ok(textOf(root).includes('This Guard already has an active recovery grant for this shift.'));
+  act(() => renderer.unmount());
+  // Data accepted under a grant is labelled for reviewers wherever sync flags are shown.
+  assert.equal(P.syncFlagLabel('recovered_via_grant'), 'Recovered late under a recovery grant');
+  assert.equal(P.recoveryGrantDraftProblem({ shiftId: '71', hours: '', reason: 'Valid reason' }), null, 'blank hours means the 24 h default');
+  assert.equal(P.PATROL_RECOVERY_GRANT_MAX_HOURS, 72);
+  const backend = read('../security-backend-nest/src/patrol/patrol-constants.ts');
+  assert.ok(backend.includes('export const PATROL_RECOVERY_GRANT_MAX_HOURS = 72;') && backend.includes('export const PATROL_RECOVERY_GRANT_DEFAULT_HOURS = 24;'), 'the same bounds as the server');
+  assert.ok(backend.includes("'recovered_via_grant'"), 'the server\'s flag name');
+});
+
 // ═══ wiring ═══
 
 test('PM-18-WIRING-DEPENDENCY-AND-THE-RELEASE-GATE', () => {
@@ -715,7 +817,7 @@ test('PM-18-WIRING-DEPENDENCY-AND-THE-RELEASE-GATE', () => {
   assert.ok(workflow.includes('run: npm run test:patrol-management-ui'));
   // Patrol calls go to the P1-A/B/C routes only.
   const apiSrc = read('src/services/api.ts');
-  for (const route of ['/patrols/overview', '/patrols/runs', '/patrols/exceptions', '/patrols/policies', '/patrols/schedules', '/patrols/checkpoints', '/patrols/routes', '/patrols/holds', '/patrols/storage-usage', '/patrols/exports', '/download']) {
+  for (const route of ['/patrols/overview', '/patrols/runs', '/patrols/exceptions', '/patrols/policies', '/patrols/schedules', '/patrols/checkpoints', '/patrols/routes', '/patrols/holds', '/patrols/storage-usage', '/patrols/exports', '/download', '/patrols/recovery-grants']) {
     assert.ok(apiSrc.includes(route), route);
   }
 });

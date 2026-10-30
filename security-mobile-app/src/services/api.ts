@@ -153,6 +153,8 @@ import type {
   PatrolOverview,
   PatrolPolicies,
   PatrolPolicyUpdate,
+  PatrolRecoveryGrant,
+  PatrolRecoveryGrantInput,
   PatrolRoute,
   PatrolRouteInput,
   PatrolRunDetail,
@@ -2129,6 +2131,19 @@ export function placePatrolHold(input: PatrolHoldInput) {
 
 export function releasePatrolHold(id: number, reason: string) {
   return request<PatrolHold>(`/patrols/holds/${id}/release`, { method: 'POST', body: JSON.stringify({ reason }) });
+}
+
+/** patrols.holds (Owner / Admin). Exceptional offline recovery grants (#68): active ones by default, 'all' includes ended ones. */
+export function listPatrolRecoveryGrants(status: 'active' | 'all' = 'active') {
+  return request<PatrolRecoveryGrant[]>(`/patrols/recovery-grants${patrolQuery({ status })}`);
+}
+
+export function issuePatrolRecoveryGrant(input: PatrolRecoveryGrantInput) {
+  return request<PatrolRecoveryGrant>('/patrols/recovery-grants', { method: 'POST', body: JSON.stringify(input) });
+}
+
+export function revokePatrolRecoveryGrant(id: number, reason: string) {
+  return request<PatrolRecoveryGrant>(`/patrols/recovery-grants/${id}/revoke`, { method: 'POST', body: JSON.stringify({ reason }) });
 }
 
 /** patrols.holds. Live storage metering per site, exports and totals. */
