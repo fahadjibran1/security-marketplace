@@ -51,6 +51,9 @@
  *           a URL issued inside the window can still be completed; a photo after an "evidence missing" alert annotates
  *           the exception and downgrades the alert — NEVER closes it
  *   PE-O01  an upload whose completion never arrived is verified by the maintenance job (after 10 minutes)
+ *   PE-W01  switch off (#71): new uploads / completions / other routes stay 404, but retention expiry, holds, manual
+ *           deletion and restore, the quarantine → purge → tombstone machine, orphan verification and exports (already
+ *           requested and new) continue; Owner / Admin only; a switched-off company without evidence sees nothing
  *   PE-T01  cross-tenant: every new route refuses another company's ids (404) and another company's Guard
  *   PE-X01  compliance / screening EvidenceStorageService is untouched and refuses patrol keys; no signed URL, signature or
  *           credential is ever stored in the database (audit, errors) or returned in metadata
@@ -255,12 +258,19 @@ async function main() {
       ON CONFLICT ("companyId","siteId") WHERE "siteId" IS NOT NULL DO UPDATE SET ${cols.map((c, i) => `"${c}" = $${i + 3}`).join(',')}`,
       [companyId, siteId, ...cols.map((c) => fields[c])]);
   };
-  /** Only this company has Patrols switched on while fn runs (so a maintenance / sweep pass touches only it). */
+  /**
+   * Only this company is processed while fn runs: Patrols is switched on for it alone (so a sweep judges only it) and
+   * maintenance passes are scoped to it (since #71 maintenance also processes switched-off companies' evidence).
+   */
+  let maintScope: number[] | null = null;
+  const maintRun = (at: Date, mode: 'report' | 'enforce') => maint.run(at, mode, maintScope ? { companyIds: maintScope } : undefined);
   const only = async <T>(companyId: number, fn: () => Promise<T>): Promise<T> => {
     await q(`UPDATE companies SET "patrolsEnabled" = (id = $1) WHERE id = ANY($2::int[])`, [companyId, testCompanies]);
+    maintScope = [companyId];
     try {
       return await fn();
     } finally {
+      maintScope = null;
       await q(`UPDATE companies SET "patrolsEnabled" = true WHERE id = ANY($1::int[])`, [testCompanies]);
     }
   };
@@ -532,7 +542,7 @@ async function main() {
         expect(await api('POST', `/patrols/evidence/${firstEvidence.id}/delete`, A.co.token, { reason: 'test' }), 503, 'PATROL_EVIDENCE_STORAGE_UNAVAILABLE', 'delete');
         expect(await intent(B.guard.token, A.run.id, body(jpeg())), 404, 'PATROL_NOT_FOUND', 'authorisation still comes first');
         expect(await api('GET', `/patrols/evidence/${firstEvidence.id}/download?purpose=review`, B.co.token), 404, 'PATROL_NOT_FOUND', 'and for another company');
-        const counters = await maint.run(new Date(), 'enforce');
+        const counters = await maintRun(new Date(), 'enforce');
         assert.equal(counters.storageAvailable, false, 'maintenance does nothing without storage');
         expect(await api('GET', '/patrols/storage-usage', A.co.token), 200, undefined, 'metering still reads');
       } finally {
@@ -723,12 +733,12 @@ async function main() {
       const r30 = await row(ev30.id);
       const expiry = new Date(r30.expiresAt).getTime();
       await only(s.co.id, async () => {
-        const report = await maint.run(new Date(expiry + 1), 'report');
+        const report = await maintRun(new Date(expiry + 1), 'report');
         assert.equal(report.wouldClaim, 1, 'report mode counts it');
         assert.equal((await row(ev30.id)).retentionStatus, 'active', 'and changes nothing');
-        await maint.run(new Date(expiry - 1), 'enforce');
+        await maintRun(new Date(expiry - 1), 'enforce');
         assert.equal((await row(ev30.id)).retentionStatus, 'active', 'one millisecond before expiry: kept');
-        const c = await maint.run(new Date(expiry), 'enforce');
+        const c = await maintRun(new Date(expiry), 'enforce');
         assert.deepEqual([c.claimed, c.quarantined], [1, 1]);
       });
       const gone = await row(ev30.id);
@@ -743,9 +753,9 @@ async function main() {
       const r90 = await row(ev90.id);
       assert.equal(Number(r90.retentionDays), 90);
       await only(s.co.id, async () => {
-        await maint.run(new Date(new Date(r90.receivedAt).getTime() + 31 * DAY), 'enforce');
+        await maintRun(new Date(new Date(r90.receivedAt).getTime() + 31 * DAY), 'enforce');
         assert.equal((await row(ev90.id)).retentionStatus, 'active', 'kept past 30 days');
-        await maint.run(new Date(new Date(r90.expiresAt).getTime()), 'enforce');
+        await maintRun(new Date(new Date(r90.expiresAt).getTime()), 'enforce');
         assert.equal((await row(ev90.id)).retentionStatus, 'quarantined', 'claimed at 90 days');
       });
     });
@@ -775,7 +785,7 @@ async function main() {
       assert.equal(await count(`SELECT count(*) FROM audit_logs WHERE action = 'patrol.evidence_hold_placed' AND "entityId" = $1`, [hold.body.id]), 1);
       expect(await api('POST', `/patrols/evidence/${ev.id}/delete`, s.co.token, { reason: 'Duplicate photo' }), 409, 'PATROL_EVIDENCE_HELD', 'manual deletion is refused');
       await only(s.co.id, async () => {
-        await maint.run(new Date(Date.now() + 40 * DAY), 'enforce');
+        await maintRun(new Date(Date.now() + 40 * DAY), 'enforce');
       });
       assert.deepEqual([(await row(ev.id)).retentionStatus, (await row(ev2.id)).retentionStatus], ['active', 'active'], 'retention never touches held evidence');
       const list = await api('GET', '/patrols/holds', admin.token);
@@ -790,7 +800,7 @@ async function main() {
       const all = await api('GET', '/patrols/holds?status=all', admin.token);
       assert.ok(all.body.some((h: any) => h.id === hold.body.id && h.releasedAt), 'released holds stay on record');
       await only(s.co.id, async () => {
-        await maint.run(new Date(Date.now() + 40 * DAY), 'enforce');
+        await maintRun(new Date(Date.now() + 40 * DAY), 'enforce');
       });
       assert.deepEqual([(await row(ev.id)).retentionStatus, (await row(ev2.id)).retentionStatus], ['quarantined', 'quarantined'], 'released: retention proceeds');
       // Photo, shift and site/date-range holds also protect (checked by the predicate the state machine uses).
@@ -869,9 +879,9 @@ async function main() {
       };
       try {
         await only(s.co.id, async () => {
-          await maint.run(new Date(new Date(quarantined.purgeAfter).getTime() - 1), 'enforce');
+          await maintRun(new Date(new Date(quarantined.purgeAfter).getTime() - 1), 'enforce');
           assert.equal((await row(ev.id)).retentionStatus, 'quarantined', 'not before purgeAfter');
-          await maint.run(new Date(new Date(quarantined.purgeAfter).getTime()), 'enforce');
+          await maintRun(new Date(new Date(quarantined.purgeAfter).getTime()), 'enforce');
         });
       } finally {
         fake.onRequest = null;
@@ -902,24 +912,24 @@ async function main() {
       assert.deepEqual([claimed.retentionStatus, claimed.deletionAttempts], ['claimed', 1]);
       assert.ok(claimed.lastDeletionError && !/https?:|X-Amz/.test(claimed.lastDeletionError), 'a safe error is recorded');
       assert.ok(fake.objects.get(original.storageKey)!.body.equals(image), 'the photo is untouched');
-      await only(s.co.id, () => maint.run(new Date(), 'report'));
+      await only(s.co.id, () => maintRun(new Date(), 'report'));
       assert.equal((await row(ev.id)).retentionStatus, 'quarantined', 'the move is finished by the next pass (in any mode)');
       const quarantined = await row(ev.id);
       // The purge's object removal fails: the row stays "purged" (the decision is committed, the record intact) and is retried.
       fake.failures.push({ method: 'DELETE', keyPrefix: `patrol-quarantine/${s.co.id}/`, status: 503, times: 2 });
       const at = new Date(new Date(quarantined.purgeAfter).getTime() + 1000);
-      await only(s.co.id, () => maint.run(at, 'enforce'));
+      await only(s.co.id, () => maintRun(at, 'enforce'));
       const pending = await row(ev.id);
       assert.deepEqual([pending.retentionStatus, pending.sha256Stored], ['purged', sha256(image)]);
       assert.ok(pending.deletionAttempts >= 1 && pending.lastDeletionError);
       assert.ok(fake.objects.has(pending.quarantineKey), 'object still there');
-      await only(s.co.id, () => maint.run(at, 'enforce'));
+      await only(s.co.id, () => maintRun(at, 'enforce'));
       const tomb = await row(ev.id);
       assert.equal(tomb.retentionStatus, 'tombstone', 'retried to completion');
       assert.ok(!fake.objects.has(tomb.quarantineKey));
       const snapshot = JSON.stringify(await q(`SELECT * FROM patrol_evidence WHERE "companyId" = $1 ORDER BY id`, [s.co.id]));
       const audits = await count(`SELECT count(*) FROM audit_logs WHERE "companyId" = $1`, [s.co.id]);
-      await only(s.co.id, () => maint.run(at, 'enforce'));
+      await only(s.co.id, () => maintRun(at, 'enforce'));
       assert.equal(JSON.stringify(await q(`SELECT * FROM patrol_evidence WHERE "companyId" = $1 ORDER BY id`, [s.co.id])), snapshot, 'purge is idempotent');
       assert.equal(await count(`SELECT count(*) FROM audit_logs WHERE "companyId" = $1`, [s.co.id]), audits, 'and writes nothing more');
       await usageMatches(s.co.id, 'after retried purge');
@@ -969,7 +979,7 @@ async function main() {
       const tombImage = jpeg();
       const t = await uploadPhoto(s.guard.token, s.run.id, tombImage);
       expect(await api('POST', `/patrols/evidence/${t.id}/delete`, s.co.token, { reason: 'Purge me' }), 200);
-      await only(s.co.id, () => maint.run(new Date(Date.now() + 8 * DAY), 'enforce'));
+      await only(s.co.id, () => maintRun(new Date(Date.now() + 8 * DAY), 'enforce'));
       assert.equal((await row(t.id)).retentionStatus, 'tombstone');
       const vImage = jpeg({ width: 24, height: 24 });
       const v = await uploadPhoto(s.guard.token, s.run.id, vImage);
@@ -1090,7 +1100,7 @@ async function main() {
       assert.ok(b.body.sites.every((x: any) => x.siteId === B.site));
       assert.equal(a.body.retentionMode, 'report', 'retention ships report-only');
       for (const co of testCompanies) await usageMatches(co, `company ${co}`);
-      const snapshot = await maint.run(new Date(), 'report');
+      const snapshot = await maintRun(new Date(), 'report');
       assert.ok(snapshot.snapshots >= 1);
       assert.ok(await count(`SELECT count(*) FROM patrol_storage_usage_daily WHERE "companyId" = $1 AND day = CURRENT_DATE`, [A.co.id]) >= 1, 'daily snapshot');
     });
@@ -1156,15 +1166,109 @@ async function main() {
       const image = jpeg();
       const r = await intent(s.guard.token, s.run.id, body(image));
       assert.equal((await put(r.body.upload, image)).status, 200);
-      await only(s.co.id, () => maint.run(new Date(Date.now() + 5 * MIN), 'report'));
+      await only(s.co.id, () => maintRun(new Date(Date.now() + 5 * MIN), 'report'));
       assert.equal((await row(r.body.evidence.id)).uploadStatus, 'pending', 'not before 10 minutes (the app may still complete it)');
-      const c = await only(s.co.id, () => maint.run(new Date(Date.now() + 11 * MIN), 'report'));
+      const c = await only(s.co.id, () => maintRun(new Date(Date.now() + 11 * MIN), 'report'));
       assert.equal(c.orphansCompleted, 1);
       const done = await row(r.body.evidence.id);
       assert.deepEqual([done.uploadStatus, done.sha256Stored], ['verified', sha256(image)]);
       const [audit] = await q(`SELECT * FROM audit_logs WHERE action = 'patrol.evidence_verified' AND "entityId" = $1`, [r.body.evidence.id]);
       assert.deepEqual([audit.afterData.via, audit.userId], ['maintenance', null]);
       expect(await complete(s.guard.token, r.body.evidence.id), 200, undefined, 'the app\'s late completion just returns the result');
+    });
+
+    await test('PE-W01-SWITCH-OFF-NEVER-SUSPENDS-RETENTION-HOLDS-DELETION-OR-EXPORTS', async () => {
+      // Owner decision (#71): switching Patrols off stops new patrol activity; the evidence that exists keeps its lifecycle.
+      const s = await scenario('w01');
+      const admin = await mkMember(s.co.id, 'w01', 'admin');
+      const ops = await mkMember(s.co.id, 'w01', 'operations');
+      const cr = await mkMember(s.co.id, 'w01', 'control_room');
+      const expiring = await uploadPhoto(s.guard.token, s.run.id, jpeg());
+      const held = await uploadPhoto(s.guard.token, s.run.id, jpeg());
+      const toDelete = await uploadPhoto(s.guard.token, s.run.id, jpeg());
+      const toRestore = await uploadPhoto(s.guard.token, s.run.id, jpeg());
+      const orphanImage = jpeg();
+      const orphan = await intent(s.guard.token, s.run.id, body(orphanImage));
+      expect(orphan, 201);
+      assert.equal((await put(orphan.body.upload, orphanImage)).status, 200, 'the bytes reached storage; the completion never came');
+      await exportsSvc.whenIdle();
+      // An export requested before the switch-off and not yet built.
+      const queued = await one(`INSERT INTO patrol_evidence_exports ("companyId","requestedByUserId","purpose","runIds","itemCount") VALUES ($1,$2,'incident',$3::jsonb,5) RETURNING *`,
+        [s.co.id, s.co.ownerId, JSON.stringify([Number(s.run.id)])]);
+      const none = await mkCompany('w01none'); // a company that never had patrol evidence
+      expect(await api('PUT', `/admin/patrols/companies/${s.co.id}`, platform, { patrolsEnabled: false }), 200, undefined, 'switch off');
+      expect(await api('PUT', `/admin/patrols/companies/${none.id}`, platform, { patrolsEnabled: false }), 200, undefined, 'switch off (no evidence)');
+      try {
+        // New patrol activity stays blocked, and so does everything that is not evidence lifecycle management.
+        expect(await intent(s.guard.token, s.run.id, body(jpeg())), 404, 'PATROLS_NOT_ENABLED', 'no new upload');
+        expect(await complete(s.guard.token, orphan.body.evidence.id), 404, 'PATROLS_NOT_ENABLED', 'no Guard completion');
+        for (const p of ['/patrols/schedules', '/patrols/runs', `/patrols/runs/${s.run.id}/evidence`, `/patrols/evidence/${expiring.id}/download?purpose=review`]) {
+          expect(await api('GET', p, s.co.token), 404, 'PATROLS_NOT_ENABLED', p);
+        }
+        // Evidence lifecycle management: Owner / Admin only; everyone else still sees no Patrols at all (404, not 403).
+        for (const [who, tok] of [['operations', ops.token], ['control room', cr.token]] as Array<[string, string]>) {
+          expect(await api('GET', '/patrols/holds', tok), 404, 'PATROLS_NOT_ENABLED', who);
+          expect(await api('POST', '/patrols/holds', tok, { scope: 'evidence', evidenceId: held.id, reason: 'Not my call' }), 404, 'PATROLS_NOT_ENABLED', who);
+          expect(await api('GET', '/patrols/exports', tok), 404, 'PATROLS_NOT_ENABLED', who);
+          expect(await api('POST', `/patrols/evidence/${toDelete.id}/delete`, tok, { reason: 'Not my call' }), 404, 'PATROLS_NOT_ENABLED', who);
+        }
+        expect(await api('GET', '/patrols/holds', none.token), 404, 'PATROLS_NOT_ENABLED', 'a switched-off company without evidence sees nothing');
+        expect(await api('GET', '/patrols/storage-usage', none.token), 404, 'PATROLS_NOT_ENABLED');
+        expect(await api('GET', '/patrols/holds', s.co.token), 200, undefined, 'owner lists holds');
+        const hold = await api('POST', '/patrols/holds', admin.token, { scope: 'evidence', evidenceId: held.id, reason: 'Client complaint after switch-off' });
+        expect(hold, 201, undefined, 'admin places a hold');
+        expect(await api('POST', `/patrols/evidence/${held.id}/delete`, s.co.token, { reason: 'try' }), 409, 'PATROL_EVIDENCE_HELD', 'the hold protects');
+        const del = await api('POST', `/patrols/evidence/${toDelete.id}/delete`, s.co.token, { reason: 'Photo of the wrong site' });
+        expect(del, 200, undefined, 'manual deletion');
+        assert.equal(del.body.retentionStatus, 'quarantined');
+        expect(await api('POST', `/patrols/evidence/${toRestore.id}/delete`, s.co.token, { reason: 'Deleted by mistake' }), 200);
+        expect(await api('POST', `/patrols/evidence/${toRestore.id}/restore`, admin.token, { reason: 'Deleted by mistake' }), 200, undefined, 'restore');
+        assert.equal((await row(toRestore.id)).retentionStatus, 'active');
+        expect(await api('GET', '/patrols/storage-usage', s.co.token), 200, undefined, 'metering');
+        // The export requested before the switch-off is built; a new one can be requested and downloaded.
+        assert.ok(await exportsSvc.processPending() >= 1);
+        const built = await api('GET', `/patrols/exports/${queued.id}`, s.co.token);
+        expect(built, 200);
+        assert.equal(built.body.status, 'ready', JSON.stringify(built.body.error));
+        expect(await api('GET', `/patrols/exports/${queued.id}/download`, admin.token), 200, undefined, 'download the export');
+        const fresh = await api('POST', '/patrols/exports', s.co.token, { purpose: 'legal', runIds: [Number(s.run.id)] });
+        expect(fresh, 202, undefined, 'a new export of existing evidence');
+        await exportsSvc.whenIdle();
+        await exportsSvc.processPending();
+        assert.equal((await one(`SELECT status FROM patrol_evidence_exports WHERE id = $1`, [fresh.body.id])).status, 'ready');
+        assert.ok((await api('GET', '/patrols/exports', s.co.token)).body.some((e: any) => e.id === Number(queued.id)));
+
+        // Maintenance keeps running for the switched-off company (and only where evidence exists).
+        const scope = { companyIds: [s.co.id, none.id] };
+        const first = await maint.run(new Date(Date.now() + 11 * MIN), 'report', scope);
+        assert.equal(first.companies, 1, 'the switched-off company with evidence is processed; the one without is not');
+        assert.equal(first.orphansCompleted, 1, 'an upload that reached storage is still verified');
+        assert.equal((await row(orphan.body.evidence.id)).uploadStatus, 'verified');
+        const deleted = await row(toDelete.id);
+        await maint.run(new Date(new Date(deleted.purgeAfter).getTime() + 1000), 'enforce', scope);
+        assert.equal((await row(toDelete.id)).retentionStatus, 'tombstone', 'the deletion state machine finishes: quarantine → purge → tombstone');
+        assert.ok(!fake.objects.has(deleted.quarantineKey));
+        const exp = await row(expiring.id);
+        const expiry = new Date(exp.expiresAt).getTime();
+        assert.equal((await maint.run(new Date(expiry - 1), 'enforce', scope)).claimed, 0, 'not before expiry');
+        const atExpiry = await maint.run(new Date(expiry), 'enforce', scope);
+        assert.ok(atExpiry.claimed >= 1 && atExpiry.quarantined >= 1, JSON.stringify(atExpiry));
+        assert.deepEqual([(await row(expiring.id)).retentionStatus, (await row(expiring.id)).deletionReason], ['quarantined', 'retention_expired'], 'retention expiry continues');
+        assert.equal((await row(held.id)).retentionStatus, 'active', 'held evidence is never claimed');
+        assert.equal(await count(`SELECT count(*) FROM audit_logs WHERE action = 'patrol.evidence_retention_claimed' AND "entityId" = $1`, [expiring.id]), 1);
+        const quarantined = await row(expiring.id);
+        await maint.run(new Date(new Date(quarantined.purgeAfter).getTime()), 'enforce', scope);
+        assert.equal((await row(expiring.id)).retentionStatus, 'tombstone', 'and is purged after the quarantine period');
+        assert.equal((await row(held.id)).retentionStatus, 'active', 'still held');
+        // Releasing the hold (switch still off) lets retention proceed.
+        expect(await api('POST', `/patrols/holds/${hold.body.id}/release`, s.co.token, { reason: 'Complaint withdrawn' }), 200);
+        await maint.run(new Date(new Date(quarantined.purgeAfter).getTime() + 1000), 'enforce', scope);
+        assert.equal((await row(held.id)).retentionStatus, 'quarantined', 'released: retention proceeds');
+        await usageMatches(s.co.id, 'switched off');
+        assert.equal(await count(`SELECT count(*) FROM patrol_runs WHERE "companyId" = $1`, [s.co.id]), 1, 'no new patrol activity was recorded');
+      } finally {
+        await q(`UPDATE companies SET "patrolsEnabled" = true WHERE id = ANY($1::int[])`, [[s.co.id, none.id]]);
+      }
     });
 
     await test('PE-T01-CROSS-TENANT-EVERY-NEW-ROUTE', async () => {

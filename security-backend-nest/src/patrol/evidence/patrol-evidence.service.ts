@@ -251,14 +251,14 @@ export class PatrolEvidenceService {
   }
 
   async requestDeletion(user: JwtPayload, id: number, reason: string) {
-    const actor = await this.access.companyActor(user, CompanyPermission.PATROLS_HOLDS);
+    const actor = await this.access.evidenceLifecycleActor(user);
     await this.companyEvidence(actor.companyId, id);
     this.store.config();
     return serializeEvidenceMetadata(await this.lifecycle.requestDeletion(actor.companyId, id, actor.userId, reason.trim()));
   }
 
   async restore(user: JwtPayload, id: number, reason: string) {
-    const actor = await this.access.companyActor(user, CompanyPermission.PATROLS_HOLDS);
+    const actor = await this.access.evidenceLifecycleActor(user);
     await this.companyEvidence(actor.companyId, id);
     this.store.config();
     return serializeEvidenceMetadata(await this.lifecycle.restore(actor.companyId, id, actor.userId, reason.trim()));
@@ -267,7 +267,7 @@ export class PatrolEvidenceService {
   // ── Holds ──
 
   async placeHold(user: JwtPayload, dto: CreatePatrolEvidenceHoldDto) {
-    const actor = await this.access.companyActor(user, CompanyPermission.PATROLS_HOLDS);
+    const actor = await this.access.evidenceLifecycleActor(user);
     const companyId = actor.companyId;
     const target = { evidenceId: dto.evidenceId ?? null, runId: dto.runId ?? null, shiftId: dto.shiftId ?? null, siteId: dto.siteId ?? null,
       fromDate: dto.fromDate ?? null, toDate: dto.toDate ?? null };
@@ -338,7 +338,7 @@ export class PatrolEvidenceService {
   }
 
   async releaseHold(user: JwtPayload, id: number, reason: string) {
-    const actor = await this.access.companyActor(user, CompanyPermission.PATROLS_HOLDS);
+    const actor = await this.access.evidenceLifecycleActor(user);
     return this.dataSource.transaction(async (manager) => {
       const [hold] = await manager.query(`SELECT * FROM "patrol_evidence_holds" WHERE "id" = $1 AND "companyId" = $2 FOR UPDATE`, [id, actor.companyId]);
       if (!hold) throw patrolError(HttpStatus.NOT_FOUND, PatrolErrorCode.NOT_FOUND, 'Hold not found.');
@@ -363,7 +363,7 @@ export class PatrolEvidenceService {
   // ── Metering ──
 
   async usage(user: JwtPayload) {
-    const actor = await this.access.companyActor(user, CompanyPermission.PATROLS_HOLDS);
+    const actor = await this.access.evidenceLifecycleActor(user);
     const rows = await this.dataSource.query(
       `SELECT u.*, s."name" AS "siteName" FROM "patrol_storage_usage" u LEFT JOIN "sites" s ON s."id" = u."siteId"
         WHERE u."companyId" = $1 ORDER BY u."siteId" NULLS LAST`,

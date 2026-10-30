@@ -146,7 +146,7 @@ export class PatrolQueryService {
 
   /** Evidence holds: active ones by default, or all (with releases) — placing and releasing them is P1-C. patrols.holds. */
   async listHolds(user: JwtPayload, status: 'active' | 'all' = 'active') {
-    const actor = await this.access.companyActor(user, CompanyPermission.PATROLS_HOLDS);
+    const actor = await this.access.evidenceLifecycleActor(user);
     const rows = await this.dataSource.query(
       `SELECT * FROM "patrol_evidence_holds" WHERE "companyId" = $1 AND ($2::boolean OR "releasedAt" IS NULL)
         ORDER BY "createdAt" DESC, "id" DESC LIMIT 1000`,

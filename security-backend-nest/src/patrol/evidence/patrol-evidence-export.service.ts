@@ -6,7 +6,6 @@ import * as path from 'path';
 import { DataSource } from 'typeorm';
 import { AuditLogService } from '../../audit-log/audit-log.service';
 import { JwtPayload } from '../../auth/types/jwt-payload.type';
-import { CompanyPermission } from '../../company-membership/company-membership-types';
 import { CreatePatrolEvidenceExportDto } from '../dto/patrol-evidence.dto';
 import { PatrolAccessService } from '../patrol-access.service';
 import { PatrolErrorCode, patrolError } from '../patrol-constants';
@@ -67,7 +66,7 @@ export class PatrolEvidenceExportService {
   // ═══════════════════════ API ═══════════════════════
 
   async request(user: JwtPayload, dto: CreatePatrolEvidenceExportDto, now: Date = new Date()) {
-    const actor = await this.access.companyActor(user, CompanyPermission.PATROLS_HOLDS);
+    const actor = await this.access.evidenceLifecycleActor(user);
     const companyId = actor.companyId;
     const scope: Scope = { siteId: dto.siteId ?? null, fromDate: dto.fromDate ?? null, toDate: dto.toDate ?? null, runIds: dto.runIds ?? [] };
     if (!scope.runIds.length && !(scope.fromDate && scope.toDate)) {
@@ -126,18 +125,18 @@ export class PatrolEvidenceExportService {
   }
 
   async list(user: JwtPayload) {
-    const actor = await this.access.companyActor(user, CompanyPermission.PATROLS_HOLDS);
+    const actor = await this.access.evidenceLifecycleActor(user);
     const rows = await this.dataSource.query(`SELECT * FROM "patrol_evidence_exports" WHERE "companyId" = $1 ORDER BY "createdAt" DESC, "id" DESC LIMIT 200`, [actor.companyId]);
     return rows.map(serializeExport);
   }
 
   async get(user: JwtPayload, id: number) {
-    const actor = await this.access.companyActor(user, CompanyPermission.PATROLS_HOLDS);
+    const actor = await this.access.evidenceLifecycleActor(user);
     return serializeExport(await this.companyExport(actor.companyId, id));
   }
 
   async download(user: JwtPayload, id: number, now: Date = new Date()) {
-    const actor = await this.access.companyActor(user, CompanyPermission.PATROLS_HOLDS);
+    const actor = await this.access.evidenceLifecycleActor(user);
     const row = await this.companyExport(actor.companyId, id);
     if (row.status !== 'ready' || !row.expiresAt || new Date(row.expiresAt).getTime() <= now.getTime()) {
       throw patrolError(HttpStatus.CONFLICT, PatrolErrorCode.EXPORT_NOT_READY, 'This export is not ready, or has expired.', { status: row.status });
@@ -227,8 +226,8 @@ export class PatrolEvidenceExportService {
     let uploadedKey: string | null = null;
     let zip: ZipFileWriter | null = null;
     try {
-      const [company] = await this.dataSource.query(`SELECT "patrolsEnabled" FROM "companies" WHERE "id" = $1`, [companyId]);
-      if (company?.patrolsEnabled !== true) throw new Error('patrols_disabled');
+      // An export already requested is built whether or not Patrols is still switched on (#71): the switch stops new
+      // patrol activity, never the handling of evidence that already exists.
       const config = this.store.config();
       const scope: Scope = { siteId: exp.siteId == null ? null : Number(exp.siteId), fromDate: dateOnly(exp.fromDate), toDate: dateOnly(exp.toDate), runIds: (exp.runIds ?? []).map(Number) };
       const rows = await this.scopeRows(companyId, scope);
