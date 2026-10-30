@@ -5,6 +5,7 @@ import { CompanyPermission } from '../company-membership/company-membership-type
 import { PatrolOverviewQueryDto, PatrolRunsQueryDto } from './dto/patrol.dto';
 import { PatrolAccessService } from './patrol-access.service';
 import { PATROL_RUN_STATUSES, PatrolErrorCode, patrolError } from './patrol-constants';
+import { checkpointProgress } from './patrol-state';
 import {
   serializeEvidenceMetadata,
   serializeException,
@@ -48,6 +49,7 @@ export class PatrolQueryService {
         LIMIT $6 OFFSET $7`,
       [...params, pageSize, (page - 1) * pageSize],
     );
+    const progress = await this.progressFor(actor.companyId, rows);
     return {
       items: rows.map((r: any) => ({
         ...serializeRun(r),
@@ -55,6 +57,7 @@ export class PatrolQueryService {
         guardName: r.guardName,
         visitCount: Number(r.visitCount),
         flaggedVisitCount: Number(r.flaggedVisitCount),
+        ...progress.get(Number(r.id))!,
       })),
       total: Number(total),
       page,
@@ -80,8 +83,9 @@ export class PatrolQueryService {
       `SELECT * FROM "patrol_evidence" WHERE "runId" = $1 AND "companyId" = $2 ORDER BY "capturedAtDevice", "id"`,
       [id, actor.companyId],
     );
+    const progress = await this.progressFor(actor.companyId, [run]);
     return {
-      run: { ...serializeRun(run), siteName: run.siteName, guardName: run.guardName },
+      run: { ...serializeRun(run), siteName: run.siteName, guardName: run.guardName, ...progress.get(Number(run.id))! },
       visits: visits.map(serializeVisit),
       exceptions: exceptions.map(serializeException),
       evidenceCount: evidence.length,
@@ -153,6 +157,37 @@ export class PatrolQueryService {
       [actor.companyId, status === 'all'],
     );
     return rows.map(serializeHold);
+  }
+
+  /**
+   * Checkpoint progress of runs (#76), computed HERE, once, with the one definition in patrol-state.ts (checkpointProgress
+   * / visitedCheckpointIds — the rule checkpoint_missed is judged by), for the History list and the run detail alike, so
+   * the two views can never show different counts.
+   */
+  private async progressFor(companyId: number, runs: any[]) {
+    const out = new Map<number, { checkpointsVisited: number; checkpointsTotal: number | null }>();
+    if (!runs.length) return out;
+    const routeIds = [...new Set(runs.filter((r) => r.routeId != null).map((r) => Number(r.routeId)))];
+    const visits = await this.dataSource.query(
+      `SELECT "runId", "checkpointId", "result" FROM "patrol_checkpoint_visits" WHERE "companyId" = $1 AND "runId" = ANY($2::int[])`,
+      [companyId, runs.map((r) => Number(r.id))],
+    );
+    const routeCounts = new Map<number, number>();
+    if (routeIds.length) {
+      const counts = await this.dataSource.query(
+        `SELECT "routeId", count(*)::int AS n FROM "patrol_route_checkpoints" WHERE "companyId" = $1 AND "routeId" = ANY($2::int[]) GROUP BY "routeId"`,
+        [companyId, routeIds],
+      );
+      for (const row of counts) routeCounts.set(Number(row.routeId), Number(row.n));
+    }
+    for (const run of runs) {
+      const id = Number(run.id);
+      const runVisits = visits
+        .filter((v: any) => Number(v.runId) === id)
+        .map((v: any) => ({ checkpointId: v.checkpointId == null ? null : Number(v.checkpointId), result: String(v.result) }));
+      out.set(id, checkpointProgress(runVisits, run.routeId == null ? null : routeCounts.get(Number(run.routeId)) ?? 0));
+    }
+    return out;
   }
 
   private async runRow(companyId: number, id: number) {

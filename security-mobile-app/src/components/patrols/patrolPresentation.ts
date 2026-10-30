@@ -169,31 +169,25 @@ export function zonedDateKey(iso: string | null | undefined, timeZone: string | 
 
 // ─── progress ─────────────────────────────────────────────────────────────────────────────────────────────────────
 
-/** How many checkpoints the run's route has (the y of "x of y"), or null when the run follows no known route. */
-export function routeCheckpointTotal(run: Pick<PatrolRun, 'routeId'>, routes: PatrolRoute[]): number | null {
-  if (run.routeId == null) return null;
-  const route = routes.find((candidate) => candidate.id === run.routeId);
-  return route?.checkpoints ? route.checkpoints.length : null;
-}
-
 /**
- * "x of y checkpoints". x is what the server recorded: in a list, the run's scan count without the flagged scans
- * (a duplicate or a label of another site is flagged and does not move progress); in a run detail, the distinct
- * checkpoints actually scanned. Without a route there is no y, so it reads as a count.
+ * "x of y checkpoints", formatted. Without a route there is no y, so it reads as a count of checkpoints visited.
  */
-export function checkpointProgress(scanned: number, total: number | null): { label: string; ratio: number | null } {
-  const x = Math.max(0, Math.floor(scanned));
-  if (total == null || total <= 0) return { label: `${x} scan${x === 1 ? '' : 's'} recorded`, ratio: null };
+export function checkpointProgress(visited: number, total: number | null): { label: string; ratio: number | null } {
+  const x = Math.max(0, Math.floor(visited));
+  if (total == null || total <= 0) return { label: `${x} checkpoint${x === 1 ? '' : 's'} visited`, ratio: null };
   return { label: `${Math.min(x, total)} of ${total} checkpoints`, ratio: Math.min(1, x / total) };
 }
 
-export function listProgress(run: Pick<PatrolRun, 'routeId' | 'visitCount' | 'flaggedVisitCount'>, routes: PatrolRoute[]) {
-  const scanned = Math.max(0, (run.visitCount ?? 0) - (run.flaggedVisitCount ?? 0));
-  return checkpointProgress(scanned, routeCheckpointTotal(run, routes));
-}
-
-export function distinctScannedCheckpoints(visits: Array<{ checkpointId: number | null; result: string }>): number {
-  return new Set(visits.filter((v) => v.checkpointId != null && v.result !== 'flagged').map((v) => v.checkpointId)).size;
+/**
+ * A run's checkpoint progress — the ONE value every view shows (#76): the History list, Live Patrols and the run
+ * detail all read the server's own `checkpointsVisited` / `checkpointsTotal` (patrol-query.service.ts, computed with
+ * the definition the checkpoint_missed rule uses: distinct checkpoints with a scan that was not flagged — a duplicate,
+ * off-route or other-site scan never counts). Nothing is recounted here from scans or the route list. When the server
+ * did not report it, null: the page shows no progress rather than a figure of its own.
+ */
+export function runCheckpointProgress(run: Pick<PatrolRun, 'checkpointsVisited' | 'checkpointsTotal'>): { label: string; ratio: number | null } | null {
+  if (typeof run.checkpointsVisited !== 'number' || !Number.isFinite(run.checkpointsVisited)) return null;
+  return checkpointProgress(run.checkpointsVisited, typeof run.checkpointsTotal === 'number' ? run.checkpointsTotal : null);
 }
 
 // ─── overview KPIs ────────────────────────────────────────────────────────────────────────────────────────────────

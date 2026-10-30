@@ -198,6 +198,13 @@ export interface PatrolRun {
   guardName?: string;
   visitCount?: number;
   flaggedVisitCount?: number;
+  /**
+   * Company reads (#76): the distinct checkpoints visited by a scan that was not flagged, computed once by the server
+   * for the History list and the run detail alike. Absent from the Guard API.
+   */
+  checkpointsVisited?: number;
+  /** Checkpoints on the run's route; null without a route. */
+  checkpointsTotal?: number | null;
 }
 
 export interface PatrolRunsPage {

@@ -216,7 +216,7 @@ function run(over = {}) {
     startedAtDevice: iso(NOW - 10 * MIN), startedAtServer: iso(NOW - 10 * MIN + 2000), completedAtDevice: null, completedAtServer: null,
     clockOffsetMs: null, exceptionReason: null, syncedLate: false, lateStart: true, provisional: false, needsReview: false,
     syncFlags: [], clockDriftMs: 125_000, verifiedAt: null, verificationFinalAt: null, siteName: 'Alpha Site', guardName: 'Ava Guard',
-    visitCount: 3, flaggedVisitCount: 1, ...over,
+    visitCount: 3, flaggedVisitCount: 1, checkpointsVisited: 2, checkpointsTotal: 4, ...over,
   };
 }
 const ROUTE = { id: 3, siteId: 10, name: 'Perimeter', orderMode: 'any', active: true, archivedAt: null, createdAt: null, updatedAt: null,
@@ -718,6 +718,46 @@ test('PM-18-WIRING-DEPENDENCY-AND-THE-RELEASE-GATE', () => {
   for (const route of ['/patrols/overview', '/patrols/runs', '/patrols/exceptions', '/patrols/policies', '/patrols/schedules', '/patrols/checkpoints', '/patrols/routes', '/patrols/holds', '/patrols/storage-usage', '/patrols/exports', '/download']) {
     assert.ok(apiSrc.includes(route), route);
   }
+});
+
+// ═══ P1-D corrections (#76, #77, #78) ═══
+
+test('PM-19-ONE-CHECKPOINT-COUNT-IN-HISTORY-AND-DETAIL-76', async () => {
+  // The #76 shape: a duplicate (flagged) scan in the run. Raw scan counts would say 4 − 1 = 3 and the visits 3 distinct
+  // checkpoints; the server's one definition (distinct checkpoints with an unflagged scan) says 2. Both views show 2.
+  const visit = (id, checkpointId, result, flags = []) => ({ id, clientVisitId: `v-${id}-abcdefgh`, runId: 5, checkpointId, checkpointPublicId: 'x'.repeat(32),
+    checkpointLabel: `Gate ${checkpointId}`, method: 'qr', result, flags, provisional: false, scannedAtDevice: iso(NOW - id * MIN), receivedAtServer: iso(NOW - id * MIN),
+    syncedLate: false, syncFlags: [], clockDriftMs: null });
+  const r = run({ status: 'completed', visitCount: 4, flaggedVisitCount: 1, checkpointsVisited: 2, checkpointsTotal: 4 });
+  answers = baseAnswers({
+    listPatrolRuns: { items: [r], total: 1, page: 1, pageSize: 25 },
+    // Visits whose naive client recount would differ from the server's figure: the page must not recount.
+    getPatrolRun: { run: r, visits: [visit(1, 1, 'verified'), visit(2, 1, 'flagged', ['duplicate_in_run']), visit(3, 2, 'verified'), visit(4, 3, 'unverified')],
+      exceptions: [], evidenceCount: 0, evidenceRestricted: false, evidence: [] },
+  });
+  const renderer = await mount({ permissions: perms('viewer') });
+  await pressByText(renderer.root, 'History');
+  const list = textOf(renderer.root);
+  assert.ok(list.includes('2 of 4 checkpoints'), 'History shows the server figure');
+  await pressByText(renderer.root, 'Open patrol 5');
+  const detail = textOf(renderer.root);
+  assert.ok(detail.includes('Checkpoints2 of 4 checkpoints') || /Checkpoints\s*2 of 4 checkpoints/.test(detail), 'the detail shows the SAME figure');
+  assert.ok(!detail.includes('3 of 4 checkpoints'), 'never a second, client-side count');
+  act(() => renderer.unmount());
+  // Pure: the figure is the server's; absent means not reported, never derived.
+  assert.deepEqual(P.runCheckpointProgress({ checkpointsVisited: 2, checkpointsTotal: 4 }), { label: '2 of 4 checkpoints', ratio: 0.5 });
+  assert.deepEqual(P.runCheckpointProgress({ checkpointsVisited: 1, checkpointsTotal: null }), { label: '1 checkpoint visited', ratio: null });
+  assert.equal(P.runCheckpointProgress({ visitCount: 3, flaggedVisitCount: 1 }), null);
+  // No patrol view recounts progress from scans or the route list.
+  for (const file of ['PatrolHistoryTab.tsx', 'PatrolLiveTab.tsx', 'PatrolRunDetail.tsx', 'patrolPresentation.ts']) {
+    const src = stripComments(read(`src/components/patrols/${file}`));
+    assert.doesNotMatch(src, /visitCount \?\? 0\) - |distinctScannedCheckpoints|routeCheckpointTotal|new Set\(visits/, `${file}: no client-side recount`);
+  }
+  // The backend computes it once, with the rule checkpoint_missed is judged by.
+  const query = read('../security-backend-nest/src/patrol/patrol-query.service.ts');
+  assert.ok(query.includes('...progress.get(Number(r.id))!') && query.includes('...progress.get(Number(run.id))!'), 'list and detail use the same server computation');
+  const state = read('../security-backend-nest/src/patrol/patrol-state.ts');
+  assert.ok(state.includes('const visited = visitedCheckpointIds(input.visits);'), 'the same definition as the checkpoint_missed rule');
 });
 
 (async () => {

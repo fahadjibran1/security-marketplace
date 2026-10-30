@@ -5,7 +5,7 @@ import { PATROL_RUN_STATUSES, type PatrolRunStatus } from '../../types/patrols';
 import { Button } from '../ui/Button';
 import type { PatrolPageContext } from './patrolContext';
 import { PatrolEvidenceList } from './PatrolEvidenceList';
-import { formatPatrolDateTime, listProgress, runFlagBadges, runStatusLabel, runTone, verificationLabel } from './patrolPresentation';
+import { formatPatrolDateTime, runCheckpointProgress, runFlagBadges, runStatusLabel, runTone, verificationLabel } from './patrolPresentation';
 import { Badge, BadgeRow, ChipSelect, Notice, PatrolPanel, ResourceState, RowCard, TextField, ui, usePatrolResource } from './patrolUi';
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
@@ -70,7 +70,7 @@ export function PatrolHistoryTab({ ctx }: { ctx: PatrolPageContext }) {
             <Badge label={runStatusLabel(run.status)} tone={runTone(run)} />
             <Badge label={verificationLabel(run.verificationStatus)} tone={run.verificationStatus === 'verified' ? 'success' : run.verificationStatus === 'flagged' ? 'danger' : 'pending'} />
           </View>
-          <Text style={ui.rowMeta}>{run.guardName || `Guard #${run.guardId}`} · started {formatPatrolDateTime(run.startedAtServer, ctx.siteZone(run.siteId))} · {listProgress(run, ctx.routes).label}</Text>
+          <Text style={ui.rowMeta}>{run.guardName || `Guard #${run.guardId}`} · started {formatPatrolDateTime(run.startedAtServer, ctx.siteZone(run.siteId))} · {runCheckpointProgress(run)?.label ?? 'Checkpoint progress not reported'}</Text>
           <BadgeRow badges={runFlagBadges(run)} />
         </RowCard>
       ))}
