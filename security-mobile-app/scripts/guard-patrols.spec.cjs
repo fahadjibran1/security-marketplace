@@ -29,6 +29,8 @@
  *            B's session, restart and the sweep, and A recovers everything by signing back in (S4 1.2.0 hardening)
  *   GPAT-21  patrol evidence and the outbox are kept out of Android backup / device transfer and iOS backups by the
  *            config plugin; expo-secure-store's exclusion is kept (S4 1.2.0 hardening)
+ *   GPAT-23  the camera hardware is declared optional (android:required="false") so Google Play does not imply it as
+ *            required and drop camera-less devices; the CAMERA permission is kept (S4 1.2.0 Android 22)
  */
 const assert = require('node:assert').strict;
 const fs = require('node:fs');
@@ -779,7 +781,7 @@ test('GPAT-15-WELFARE-CHECKS-STAY-INDEPENDENT-OF-PATROLS', () => {
 test('GPAT-16-CAMERA-CONFIG-AND-UNCHANGED-IDENTITY-VERSION-AND-RELEASE-INPUTS', () => {
   const expo = JSON.parse(codeOf('app.json')).expo;
   assert.deepEqual([expo.android.package, expo.ios.bundleIdentifier, expo.version, expo.android.versionCode, expo.ios.buildNumber, expo.name, expo.scheme],
-    ['com.sfour.s4', 'com.sfour.s4', '1.2.0', 21, '20', 'S4', 's4security'], 'identity unchanged; the version is the prepared S4 1.2.0 (Android 21, iOS 20)');
+    ['com.sfour.s4', 'com.sfour.s4', '1.2.0', 22, '20', 'S4', 's4security'], 'identity unchanged; the version is the prepared S4 1.2.0 (Android 22, iOS 20)');
   assert.deepEqual(expo.updates, { enabled: false });
   assert.ok(!('runtimeVersion' in expo));
   assert.equal(expo.extra.eas.projectId, 'c786f15c-7d60-4122-9001-02cabbb7692b');
@@ -1068,6 +1070,60 @@ test('GPAT-22-SEND-AGAIN-AFTER-A-RECOVERY-GRANT-RESENDS-ONLY-WINDOW-CLOSED-REFUS
   assert.match(panel, /<Button label="Send again"/);
   assert.match(panel, /engine\.retryWindowClosed\(\)[\s\S]{0,400}outbox\.kick\(\)/);
   assert.equal(outbox.RECOVERY_RETRY_HINT, 'If your control room has arranged late recovery for this shift, tap Send again.');
+});
+
+test('GPAT-23-CAMERA-HARDWARE-IS-OPTIONAL-SO-PLAY-KEEPS-CAMERA-LESS-DEVICES', () => {
+  // Google Play reported 1.2.0 (21) dropping 436 devices that 1.1.2 (20) supported: CAMERA with no <uses-feature> makes
+  // Play imply android.hardware.camera and android.hardware.camera.autofocus as REQUIRED. The plugin declares both
+  // optional; a phone without a camera installs S4 and the patrol camera reports itself unavailable (GPAT-01).
+  const plugin = require(path.join(ROOT, 'plugins', 'withOptionalCameraHardware.js'));
+  const expo = JSON.parse(codeOf('app.json')).expo;
+  const names = expo.plugins.map((p) => (Array.isArray(p) ? p[0] : p));
+  assert.ok(names.includes('./plugins/withOptionalCameraHardware'), 'the plugin is applied');
+  assert.equal(names.indexOf('./plugins/withOptionalCameraHardware'), names.indexOf('./plugins/withPatrolBackupExclusion') + 1, 'right after the backup exclusion');
+  const CAMERA_FEATURES = ['android.hardware.camera', 'android.hardware.camera.autofocus'];
+  assert.deepEqual(plugin.OPTIONAL_FEATURES, CAMERA_FEATURES);
+  const featuresOf = (m) => (m.manifest['uses-feature'] || []).map((f) => [f.$['android:name'], f.$['android:required']]);
+  const exactlyOnceOptional = (m, label) => {
+    for (const name of CAMERA_FEATURES) {
+      const found = featuresOf(m).filter(([n]) => n === name);
+      assert.deepEqual(found, [[name, 'false']], `${label}: ${name} exactly once, android:required="false"`);
+    }
+  };
+  const permission = { $: { 'android:name': 'android.permission.CAMERA' } };
+  // 1. A manifest with no <uses-feature> at all (what 1.2.0 (21) shipped).
+  const bare = { manifest: { $: { 'xmlns:android': 'http://schemas.android.com/apk/res/android' }, 'uses-permission': [permission], application: [{ $: { 'android:name': '.MainApplication' } }] } };
+  const fromBare = plugin.applyManifest(bare);
+  exactlyOnceOptional(fromBare, 'no uses-feature before');
+  assert.deepEqual(featuresOf(fromBare), CAMERA_FEATURES.map((n) => [n, 'false']), 'nothing else is added');
+  assert.deepEqual(fromBare.manifest['uses-permission'], [permission], 'the CAMERA permission is untouched');
+  // 2. An existing required camera entry (and a duplicate of it) becomes one optional entry; unrelated features are kept.
+  const touch = { $: { 'android:name': 'android.hardware.touchscreen', 'android:required': 'false' } };
+  const existing = { manifest: { 'uses-feature': [
+    { $: { 'android:name': 'android.hardware.camera', 'android:required': 'true' } },
+    touch,
+    { $: { 'android:name': 'android.hardware.camera' } },
+  ], application: [{ $: {} }] } };
+  const fromExisting = plugin.applyManifest(existing);
+  exactlyOnceOptional(fromExisting, 'camera required=true before');
+  assert.deepEqual(featuresOf(fromExisting).filter(([n]) => !CAMERA_FEATURES.includes(n)), [['android.hardware.touchscreen', 'false']], 'an unrelated feature is kept as it was');
+  // 3. Idempotent: a second prebuild adds nothing and changes nothing.
+  for (const m of [fromBare, fromExisting]) {
+    const once = JSON.stringify(m);
+    assert.equal(JSON.stringify(plugin.applyManifest(JSON.parse(once))), once, 'a second prebuild changes nothing');
+  }
+  // 4. No new REQUIRED feature anywhere: every feature the plugin produces is optional.
+  for (const m of [fromBare, fromExisting]) {
+    assert.ok(featuresOf(m).every(([, required]) => required === 'false'), 'no required hardware feature');
+  }
+  // Android only, and the permission and its handling are kept.
+  const src = codeOf('plugins/withOptionalCameraHardware.js');
+  assert.match(src, /require\('expo\/config-plugins'\)/);
+  assert.doesNotMatch(src, /withInfoPlist|withAppDelegate|withEntitlementsPlist|withIos|withDangerousMod|uses-permission/, 'no iOS mod and no permission change');
+  assert.ok(expo.android.permissions.includes('CAMERA'), 'CAMERA is still requested');
+  assert.ok(!expo.android.blockedPermissions.includes('android.permission.CAMERA'), 'and not blocked');
+  assert.ok(!('features' in expo.android) && !('usesFeatures' in expo.android), 'no other feature declaration in app.json');
+  assert.match(codeOf('src/components/guard/patrol/GuardPatrolCamera.tsx'), /CameraView\.isAvailableAsync\(\)\.then\(setAvailable\)/, 'a missing camera is detected at run time');
 });
 
 (async () => {

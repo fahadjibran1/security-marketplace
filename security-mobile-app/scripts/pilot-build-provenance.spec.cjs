@@ -37,7 +37,11 @@ const easJson = JSON.parse(read('eas.json'));
 
 // ═══════════════════ the controlled version ═══════════════════
 
-test('BUILD-01-APP-VERSION-IS-1-2-0-AND-ANDROID-BUILD-21', () => {
+test('BUILD-01-APP-VERSION-IS-1-2-0-AND-ANDROID-BUILD-22', () => {
+  // S4 1.2.0 Android 22 (31 Oct 2026, prepared, not built): 1.2.0 (21) was built (EAS a9f475ad from 4f4de31) and uploaded
+  // by the owner to Google Play as an unpublished Internal Testing draft, never released. Play reported 436 devices no
+  // longer supported because CAMERA implied required camera hardware, so 22 declares the camera optional (BUILD-01E).
+  // 21 is consumed in Play and is never reused; iOS stays build 20.
   // S4 1.2.0 (29 Oct 2026, prepared, not built): Patrol Management P1-A..P1-E integrated with the Guard app 1.1.2 line
   // on integration/s4-1.2.0-patrols (BUILD-01D). 1.1.2 (Android 20, iOS 19) stays as recorded until 1.2.0 is built.
   // Guard app 1.1.2 (28 Oct 2026): S4 1.1.2 / 20 is the 1.1.1 line merged with release/s4-pilot-rc1 bca5047 (Guard
@@ -55,7 +59,8 @@ test('BUILD-01-APP-VERSION-IS-1-2-0-AND-ANDROID-BUILD-21', () => {
   // Android package, so nothing installs over anything — but the code keeps climbing, so every S4
   // artefact ever produced carries a distinct, increasing number. The development-package history:
   assert.equal(appJson.expo.version, '1.2.0');
-  assert.equal(appJson.expo.android.versionCode, 21, 'the prepared S4 1.2.0 candidate');
+  assert.equal(appJson.expo.android.versionCode, 22, 'the prepared S4 1.2.0 candidate with optional camera hardware');
+  assert.ok(appJson.expo.android.versionCode > 21, 'above the superseded 1.2.0 (21), consumed in Play as a draft');
   assert.ok(appJson.expo.android.versionCode > 20, 'above the distributed Guard app 1.1.2 (20)');
   assert.ok(appJson.expo.android.versionCode > 19, 'above the distributed push-registration fix maintenance release 19');
   assert.ok(appJson.expo.android.versionCode > 18, 'above the distributed Guard notifications update 18');
@@ -122,8 +127,9 @@ test('BUILD-01B-THE-1-1-1-BUILDS-ARE-KEPT-EXACTLY-AND-ARE-ABOVE-THE-DISTRIBUTED-
   // Android 1.1.1 (19) was distributed (owner upload approved 26 Oct 2026; production devices reported 1.1.1) and since
   // 28 Oct 2026 is retired as distributed-superseded by the distributed 1.1.2 (20) (BUILD-01C), as 18 was when 19
   // replaced it. Nothing is prepared in front of 20.
-  // Only the prepared, not built 1.2.0 (21) is in front of the distributed 20 (BUILD-01D).
-  assert.equal(android.preparedArtefact.versionCode, android.approvedArtefact.versionCode + 1, 'only the prepared 1.2.0 (21) is in front of the distributed 1.1.2 (20)');
+  // Only the prepared, not built 1.2.0 (22) is in front of the distributed 20 (BUILD-01D), above the superseded, never
+  // released 1.2.0 (21) draft (BUILD-01E).
+  assert.equal(android.preparedArtefact.versionCode, android.approvedArtefact.versionCode + 2, 'only the prepared 1.2.0 (22) is in front of the distributed 1.1.2 (20), past the consumed 21');
   const pa = android.retiredArtefacts.find((entry) => entry.versionCode === 19);
   const da = android.retiredArtefacts.find((entry) => entry.versionCode === 18);
   assert.equal(android.retiredArtefacts.filter((entry) => entry.versionCode === 19).length, 1, 'recorded once');
@@ -132,7 +138,7 @@ test('BUILD-01B-THE-1-1-1-BUILDS-ARE-KEPT-EXACTLY-AND-ARE-ABOVE-THE-DISTRIBUTED-
   assert.match(pa.retiredReason, /^Superseded by versionCode 20 \(1\.1\.2\)/);
   assert.equal(pa.versionName, '1.1.1');
   assert.equal(pa.versionCode, 19);
-  assert.equal(pa.versionCode + 2, appJson.expo.android.versionCode, 'app.json carries the prepared 1.2.0 versionCode, 21');
+  assert.equal(pa.versionCode + 3, appJson.expo.android.versionCode, 'app.json carries the prepared 1.2.0 versionCode, 22');
   assert.ok(above(appJson.expo.version, pa.versionName), 'app.json carries a higher versionName than 1.1.1');
   assert.equal(da.status, 'distributed-superseded', 'Android 18 was distributed and is superseded');
   assert.equal(android.approvedArtefact.versionCode, pa.versionCode + 1, 'the distributed approved artefact is 20');
@@ -288,8 +294,8 @@ test('BUILD-01C-THE-1-1-2-BUILDS-ANDROID-DISTRIBUTED-IOS-UPLOADED-AWAITING-BETA-
   const PRODUCTION_API = 'https://security-marketplace-api.onrender.com';
   const S4_CERT_SHA256 = '0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b';
 
-  // The 1.1.2 (20) moved from preparedArtefact to approvedArtefact; only the prepared, not built 1.2.0 (21) is in front of it
-  // (BUILD-01D).
+  // The 1.1.2 (20) moved from preparedArtefact to approvedArtefact; only the prepared, not built 1.2.0 (22) is in front of it
+  // (BUILD-01D), past the superseded 1.2.0 (21) draft (BUILD-01E).
   assert.equal(android.preparedArtefact.versionName, '1.2.0');
   assert.equal(android.preparedArtefact.status, 'prepared-not-built');
   const pa = android.approvedArtefact;
@@ -298,9 +304,9 @@ test('BUILD-01C-THE-1-1-2-BUILDS-ANDROID-DISTRIBUTED-IOS-UPLOADED-AWAITING-BETA-
   assert.equal(pa.versionName, '1.1.2');
   assert.equal(pa.versionCode, 20);
   assert.ok(above(appJson.expo.version, pa.versionName), 'app.json carries the prepared 1.2.0, above the distributed 1.1.2');
-  assert.equal(pa.versionCode + 1, appJson.expo.android.versionCode, 'app.json carries the prepared 21, one above the distributed 20');
+  assert.equal(pa.versionCode + 2, appJson.expo.android.versionCode, 'app.json carries the prepared 22, two above the distributed 20 (21 is consumed)');
   assert.equal(android.expectedRelease.versionName, appJson.expo.version, 'the expected release is the prepared 1.2.0 (BUILD-01D)');
-  assert.equal(android.expectedRelease.versionCode, pa.versionCode + 1);
+  assert.equal(android.expectedRelease.versionCode, pa.versionCode + 2);
   assert.equal(da.status, 'distributed-superseded', 'Android 19 was distributed and is superseded');
   assert.equal(da.versionCode, 19);
   // Distributed only on the owner's confirmation, as Play's active internal release, with the certified hash unchanged.
@@ -479,17 +485,21 @@ test('BUILD-01D-THE-PREPARED-1-2-0-BUILDS-ARE-NOT-BUILT-AND-MATCH-APP-JSON', () 
   // S4 1.2.0 (29 Oct 2026): Patrol Management P1-A..P1-E merged with the Guard app 1.1.2 line (5bb60b8 on
   // integration/s4-1.2.0-patrols). Prepared only: Android 21 and iOS 20 are set in app.json and named in the release
   // records with no build, file, hash, upload or store fact. The 1.1.2 builds stay exactly as recorded (BUILD-01C).
+  // 31 Oct 2026: Android 21 was built and is superseded (BUILD-01E); the prepared Android release is now 22 on
+  // fix/android-optional-camera-hardware, on top of 4f4de31 (the commit 21 was built from). iOS 20 is unchanged.
   const android = JSON.parse(read('release/android-signing.json'));
   const ios = JSON.parse(read('release/ios-release.json'));
   const MERGE_COMMIT = '5bb60b80ce9effbfe955068b663b92a2f5454b9a';
   const BRANCH = 'integration/s4-1.2.0-patrols';
+  const ANDROID_BRANCH = 'fix/android-optional-camera-hardware';
+  const ANDROID_BASE_COMMIT = '4f4de31f5d00d04f953662662c4775e463d0bc3d';
   const S4_CERT_SHA256 = '0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b';
   const pa = android.preparedArtefact;
   const pi = ios.preparedArtefact;
   assert.equal(pa.status, 'prepared-not-built');
   assert.equal(pi.status, 'prepared-not-built');
   assert.equal(pa.versionName, '1.2.0');
-  assert.equal(pa.versionCode, 21);
+  assert.equal(pa.versionCode, 22);
   assert.equal(pi.marketingVersion, '1.2.0');
   assert.equal(pi.buildNumber, '20');
   assert.equal(pa.versionName, appJson.expo.version);
@@ -500,8 +510,8 @@ test('BUILD-01D-THE-PREPARED-1-2-0-BUILDS-ARE-NOT-BUILT-AND-MATCH-APP-JSON', () 
   assert.equal(android.expectedRelease.versionCode, pa.versionCode);
   assert.equal(ios.marketingVersion, pi.marketingVersion);
   assert.equal(ios.buildNumber, pi.buildNumber);
-  // Exactly one above the 1.1.2 builds, which stay where BUILD-01C holds them.
-  assert.equal(pa.versionCode, android.approvedArtefact.versionCode + 1);
+  // Above the 1.1.2 builds, which stay where BUILD-01C holds them: Android two above (21 is consumed, BUILD-01E), iOS one.
+  assert.equal(pa.versionCode, android.approvedArtefact.versionCode + 2);
   assert.equal(Number(pi.buildNumber), Number(ios.submittedArtefact.buildNumber) + 1);
   assert.equal(android.approvedArtefact.aabSha256, '4252cc986296c09f7f97df497dc6433829f0f8d15cb653af85f906d8c23f4c4e', 'the 1.1.2 AAB hash is kept');
   assert.equal(ios.submittedArtefact.ipaSha256, '82c6c54af9114abc73105b9c6c43f71fd6a8470cdc19049235b87fa42da7c18f', 'the 1.1.2 IPA hash is kept');
@@ -514,10 +524,16 @@ test('BUILD-01D-THE-PREPARED-1-2-0-BUILDS-ARE-NOT-BUILT-AND-MATCH-APP-JSON', () 
   }
   assert.match(pa.note, /Prepared only: not built, not uploaded to Google Play/);
   assert.match(pi.note, /Prepared only: not built, not submitted/);
-  // The same branch and merge commit on both platforms, the store profile and the unchanged signing.
+  // iOS keeps its branch and merge commit; Android is prepared on the camera fix branch, on top of the commit 21 was built
+  // from (which contains that merge). The store profile and the unchanged signing on both.
+  assert.equal(pi.sourceBranch, BRANCH);
+  assert.equal(pi.sourceFixCommit, MERGE_COMMIT);
+  assert.equal(pa.sourceBranch, ANDROID_BRANCH);
+  assert.equal(pa.sourceFixCommit, ANDROID_BASE_COMMIT);
+  assert.match(pa.sourceCommit, /withOptionalCameraHardware/);
+  assert.match(pa.note, /android\.hardware\.camera and android\.hardware\.camera\.autofocus with android:required="false"/);
+  assert.match(pa.note, /adds no hardware requirement over 1\.1\.2/);
   for (const p of [pa, pi]) {
-    assert.equal(p.sourceBranch, BRANCH);
-    assert.equal(p.sourceFixCommit, MERGE_COMMIT);
     assert.match(p.sourceCommit, /a commit cannot record its own id/);
     assert.equal(p.easBuildProfile, 'production');
     assert.equal(p.distribution, 'STORE');
@@ -531,6 +547,41 @@ test('BUILD-01D-THE-PREPARED-1-2-0-BUILDS-ARE-NOT-BUILT-AND-MATCH-APP-JSON', () 
   assert.match(pi.requiredSigning.provisioningProfile, /B7539588YY, UUID 1f19cdf5-67cd-4e7b-af8b-131c87c13964/);
   assert.equal(android.playConsole.internalTesting.activeRelease, '1.1.2 (20)', 'Play still shows the distributed 1.1.2 (20)');
   assert.equal(ios.artefact.buildNumber, '17', 'iOS 17 stays the distributed build');
+});
+
+test('BUILD-01E-THE-BUILT-1-2-0-VC21-IS-A-SUPERSEDED-NEVER-RELEASED-PLAY-DRAFT', () => {
+  // 31 Oct 2026: 1.2.0 (21) was built by EAS (a9f475ad) from 4f4de31 and uploaded by the owner to Google Play as an
+  // unpublished Internal Testing draft, never released. Play reported 436 devices (69 phone models) no longer supported:
+  // CAMERA with no <uses-feature> made Play imply the camera hardware as required. It is kept exactly as a superseded
+  // artefact; 21 is consumed in Play, so app.json and the expected release moved to 22, never back to 21.
+  const android = JSON.parse(read('release/android-signing.json'));
+  const vc21 = android.retiredArtefacts.filter((entry) => entry.versionCode === 21);
+  assert.equal(vc21.length, 1, 'recorded once');
+  const s = vc21[0];
+  assert.equal(s.versionName, '1.2.0');
+  assert.equal(s.status, 'uploaded-draft-superseded');
+  assert.equal(s.easBuildId, 'a9f475ad-690f-411d-bf16-3e37ead73274');
+  assert.ok(s.easBuildUrl.endsWith(`/builds/${s.easBuildId}`), 'the build URL names the same build');
+  assert.equal(s.easBuildProfile, 'production');
+  assert.equal(s.distribution, 'STORE');
+  assert.equal(s.gitCommit, '4f4de31f5d00d04f953662662c4775e463d0bc3d');
+  assert.equal(s.aabFilename, 's4-1.2.0-vc21-a9f475ad.aab');
+  assert.equal(s.aabSha256, 'b057144fc92159065e6ec50d51397bd8ce2805e9ba71881181764d2719842ee0');
+  assert.equal(s.aabSizeBytes, 64049992);
+  assert.equal(s.uploadCertificateSha256, '0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b');
+  assert.equal(s.uploadCertificateSha256, android.approvedArtefact.uploadCertificateSha256, 'the same upload key as the distributed 20');
+  assert.equal(s.playInternalTesting.status, 'draft-not-released');
+  assert.equal(s.playInternalTesting.confirmedBy, 'owner');
+  assert.match(s.note, /unpublished Internal Testing DRAFT and NOT released/);
+  assert.match(s.retiredReason, /^Superseded by versionCode 22 \(1\.2\.0\)/);
+  assert.match(s.retiredReason, /436 devices \(69 phone models\)/);
+  assert.match(s.retiredReason, /must never be reused/);
+  // Never released, so never distributed: Play still shows 1.1.2 (20), and the prepared 22 is the only thing after 21.
+  assert.equal(android.playConsole.internalTesting.activeRelease, '1.1.2 (20)');
+  assert.ok(s.versionCode > android.approvedArtefact.versionCode && s.versionCode < android.preparedArtefact.versionCode, 'between the distributed 20 and the prepared 22');
+  assert.equal(android.preparedArtefact.versionCode, s.versionCode + 1);
+  assert.notEqual(appJson.expo.android.versionCode, s.versionCode, 'app.json never carries the consumed 21 again');
+  assert.equal(android.retiredArtefacts.filter((entry) => entry.versionCode >= 20).length, 1, 'only the 21 draft is retired at 20 or above');
 });
 
 test('BUILD-02-APP-JSON-IS-THE-AUTHORITATIVE-VERSION-SOURCE', () => {

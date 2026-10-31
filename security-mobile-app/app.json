@@ -67,7 +67,7 @@
     },
     "android": {
       "softwareKeyboardLayoutMode": "resize",
-      "versionCode": 21,
+      "versionCode": 22,
       "package": "com.sfour.s4",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
@@ -125,7 +125,8 @@
           "recordAudioAndroid": false
         }
       ],
-      "./plugins/withPatrolBackupExclusion"
+      "./plugins/withPatrolBackupExclusion",
+      "./plugins/withOptionalCameraHardware"
     ],
     "extra": {
       "apiBaseUrl": "https://security-marketplace-api.onrender.com",

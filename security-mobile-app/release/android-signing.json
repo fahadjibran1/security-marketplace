@@ -33,20 +33,20 @@
   },
   "expectedRelease": {
     "versionName": "1.2.0",
-    "versionCode": 21,
+    "versionCode": 22,
     "minSdkVersion": 24
   },
   "preparedArtefact": {
     "versionName": "1.2.0",
-    "versionCode": 21,
+    "versionCode": 22,
     "status": "prepared-not-built",
     "easBuildProfile": "production",
     "distribution": "STORE",
-    "sourceBranch": "integration/s4-1.2.0-patrols",
-    "sourceFixCommit": "5bb60b80ce9effbfe955068b663b92a2f5454b9a",
-    "sourceCommit": "the commit on integration/s4-1.2.0-patrols that sets 1.2.0 / versionCode 21 in app.json, directly on top of 5bb60b8 (the merge of release-prep/guard-app-1.1.2 c6d2d4c into feature/patrols-p1e faba512); a commit cannot record its own id, the build record names it once built",
+    "sourceBranch": "fix/android-optional-camera-hardware",
+    "sourceFixCommit": "4f4de31f5d00d04f953662662c4775e463d0bc3d",
+    "sourceCommit": "the commit on fix/android-optional-camera-hardware that adds plugins/withOptionalCameraHardware.js and sets versionCode 22 in app.json, directly on top of 4f4de31 (the commit the superseded 1.2.0 (21) was built from); a commit cannot record its own id, the build record names it once built",
     "requiredUploadCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
-    "note": "S4 1.2.0 (21): Patrol Management P1-A to P1-E (Guard patrols with in-app QR scans and patrol photos, offline outbox) integrated with the distributed Guard app 1.1.2 (20) line (Guard notifications inbox, push-registration loop fix, offer answers without waiting on the re-read, session renewal timeout, Guard timesheets in hours and minutes), plus the patrol backup exclusion and stale camera file cleanup. Same package com.sfour.s4, same upload key as vc17 to vc20 (the permanent S4 certificate above), same Firebase setup, production API. Prepared only: not built, not uploaded to Google Play, so there is no EAS build id, AAB hash or Play state for it. 1.1.2 (20) stays the distributed Android build until 1.2.0 (21) is built, certified and uploaded on owner approval."
+    "note": "S4 1.2.0 (22): the same 1.2.0 content as the superseded 1.2.0 (21) (Patrol Management P1-A to P1-E with in-app QR scans and patrol photos, integrated with the distributed Guard app 1.1.2 (20) line), plus one Android compatibility fix: the manifest declares android.hardware.camera and android.hardware.camera.autofocus with android:required=\"false\" (plugins/withOptionalCameraHardware.js). Without those declarations the CAMERA permission made Google Play imply both features as required, and Play reported 1.2.0 (21) dropping 436 devices (69 phone models) that 1.1.2 (20) supported. With them 1.2.0 adds no hardware requirement over 1.1.2; the CAMERA permission and its runtime handling are unchanged, and a phone without a camera shows the patrol camera as unavailable. Same package com.sfour.s4, same upload key as vc17 to vc21 (the permanent S4 certificate above), same Firebase setup, production API. Prepared only: not built, not uploaded to Google Play, so there is no EAS build id, AAB hash or Play state for it. 1.1.2 (20) stays the distributed Android build until 1.2.0 (22) is built, certified and uploaded on owner approval."
   },
   "approvedArtefact": {
     "versionName": "1.1.2",
@@ -303,6 +303,30 @@
       },
       "retiredOn": "2026-10-28",
       "retiredReason": "Superseded by versionCode 20 (1.1.2), which merges the 1.1.1 line with release/s4-pilot-rc1 bca5047 (Guard timesheets in hours and minutes, return reasons, review history) on the same identity and upload key. versionCode 19 was Active in Google Play Internal Testing (owner upload approved 26 Oct 2026; production devices reported 1.1.1), so it can never be reused; its build, hash, signer and Play facts are kept exactly."
+    },
+    {
+      "versionName": "1.2.0",
+      "versionCode": 21,
+      "status": "uploaded-draft-superseded",
+      "easBuildId": "a9f475ad-690f-411d-bf16-3e37ead73274",
+      "easBuildUrl": "https://expo.dev/accounts/fahadjibran/projects/security-marketplace/builds/a9f475ad-690f-411d-bf16-3e37ead73274",
+      "easBuildProfile": "production",
+      "distribution": "STORE",
+      "gitCommit": "4f4de31f5d00d04f953662662c4775e463d0bc3d",
+      "aabFilename": "s4-1.2.0-vc21-a9f475ad.aab",
+      "aabSha256": "b057144fc92159065e6ec50d51397bd8ce2805e9ba71881181764d2719842ee0",
+      "aabSizeBytes": 64049992,
+      "requiredUploadCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
+      "uploadCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
+      "note": "S4 1.2.0 (21): Patrol Management P1-A to P1-E integrated with the distributed Guard app 1.1.2 (20) line. Built by EAS (a9f475ad, production profile, STORE) from 4f4de31 with the existing upload key (the permanent S4 certificate above). Uploaded by the owner to Google Play as an unpublished Internal Testing DRAFT and NOT released: it never reached a tester or a device. Its manifest requests android.permission.CAMERA with no <uses-feature> declaration, so Google Play implied android.hardware.camera and android.hardware.camera.autofocus as required.",
+      "playInternalTesting": {
+        "status": "draft-not-released",
+        "confirmedBy": "owner",
+        "confirmedOn": "2026-10-31",
+        "note": "Owner-reported: the owner uploaded 1.2.0 (21) to Google Play Internal Testing as an unpublished draft release and did not release it; Play then reported 436 previously supported devices (69 phone models) no longer supported. The uploaded file's hash was not read back from Play Console. Not inspected from the build machine. versionCode 21 is consumed in Play."
+      },
+      "retiredOn": "2026-10-31",
+      "retiredReason": "Superseded by versionCode 22 (1.2.0), which declares the camera hardware optional (android:required=\"false\" for android.hardware.camera and android.hardware.camera.autofocus) on the same identity and upload key. Play reported 436 devices (69 phone models) no longer supported by 1.2.0 (21) because of the implied required camera hardware. versionCode 21 was uploaded to Google Play as a draft, so it is consumed there and must never be reused; its build, hash and signer are kept exactly. 1.1.2 (20) stays the distributed build."
     }
   ],
   "playAppSigning": {
