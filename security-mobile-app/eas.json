@@ -45,7 +45,7 @@
         "APP_VARIANT": "uat",
         "EXPO_PUBLIC_API_URL": "https://security-marketplace-api-staging.onrender.com",
         "EXPO_PUBLIC_BUILD_LABEL": "UAT",
-        "UAT_ANDROID_VERSION_CODE": "22"
+        "UAT_ANDROID_VERSION_CODE": "23"
       }
     },
     "production": {
