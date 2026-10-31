@@ -31,6 +31,16 @@
  *            config plugin; expo-secure-store's exclusion is kept (S4 1.2.0 hardening)
  *   GPAT-23  the camera hardware is declared optional (android:required="false") so Google Play does not imply it as
  *            required and drop camera-less devices; the CAMERA permission is kept (S4 1.2.0 Android 22)
+ * S4 1.2.1 (patrol correctness + mobile visibility)
+ *   GPAT-24  the plan is refetched every 5 min in the foreground while the shift is in progress, paused in background,
+ *            on returning to the app, after Book On and on Refresh (injected timers); one fetch at a time
+ *   GPAT-25  a failed refresh keeps the LAST GOOD plan and says when it was last updated; only an authoritative refusal
+ *            removes it; a refresh never touches the outbox
+ *   GPAT-26  an active patrol keeps its own route (snapshot at start) when a refreshed plan drops it; never the whole site
+ *   GPAT-27  photos are "required: yes / no"; the reason box appears whenever ANY requirement is unmet (photos too)
+ *   GPAT-28  photo-only sites: card visible, no "Scan checkpoint", no checkpoints required, start → photo → complete
+ *   GPAT-29  QR without a route: the configuration problem is shown plainly; checkpoints are optional, never required
+ *   GPAT-30  NFC is offered nowhere in the Guard app
  */
 const assert = require('node:assert').strict;
 const fs = require('node:fs');
@@ -52,6 +62,7 @@ const outbox = loadTs('src/components/guard/patrol/patrolOutbox.ts');
 const sql = loadTs('src/components/guard/patrol/patrolOutboxSql.ts');
 const state = loadTs('src/components/guard/patrol/patrolState.ts');
 const tempCleanup = loadTs('src/components/guard/patrol/patrolTempCleanup.ts');
+const refresh = loadTs('src/components/guard/patrol/patrolPlanRefresh.ts');
 const backendQr = loadTs('../security-backend-nest/src/patrol/patrol-qr.ts');
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 's4-patrol-spec-'));
@@ -828,12 +839,290 @@ test('GPAT-17-UPCOMING-PATROLS-FROM-THE-SERVER-WINDOWS-ONLY-AND-CARD-VISIBILITY'
   assert.equal(state.patrolCardVisible({ shiftStatus: 'in_progress', plan: { ...plan, checkpoints: [], schedules: [] } }), false, 'a site without patrols');
   const local = { clientRunId: 'r', shiftId: 5, start: { body: { routeId: 9 } }, scans: [{ meta: { publicId: GATE } }], photos: [], exceptions: [], complete: null };
   const sum = state.completionSummary(plan, 9, local);
-  assert.deepEqual([sum.checkpointsTotal, sum.checkpointsScanned, sum.missing.length, sum.photosRequired, sum.needsReason], [2, 1, 0, 2, false], 'Yard is optional on the route; gate needs a photo; one run photo');
-  const strict = state.completionSummary(plan, null, local);
-  assert.deepEqual([strict.missing.map((m) => m.label), strict.needsReason], [['Yard'], true]);
+  // S4 1.2.1 (owner decision): a required photo that was not taken now also needs a reason (was: false — photos were
+  // never part of needsReason). Yard is optional on the route; the gate needs a photo; one run photo.
+  assert.deepEqual([sum.checkpointsTotal, sum.checkpointsScanned, sum.missing.length, sum.photosRequired, sum.photosMissing, sum.needsReason], [2, 1, 0, 2, 2, true], 'Yard is optional on the route; gate needs a photo; one run photo');
+  const done = { ...local, scans: [{ id: 'v1', meta: { publicId: GATE } }], photos: [{ dependsOn: 'r', body: { kind: 'run_photo' } }, { dependsOn: 'v1', body: { kind: 'checkpoint_photo' } }] };
+  const sumDone = state.completionSummary(plan, 9, done);
+  assert.deepEqual([sumDone.photosMissing, sumDone.unmet, sumDone.needsReason], [0, false, false], 'every requirement met: no reason needed');
+  // S4 1.2.1 (decision A1): with no route the site's checkpoints are OPTIONAL — the server requires none (was: every site
+  // checkpoint required, so Yard was "missing" and needed a reason).
+  const noRoute = state.completionSummary(plan, null, done);
+  assert.deepEqual([noRoute.missing.map((m) => m.label), noRoute.checkpointsTotal, noRoute.needsReason], [[], 2, false]);
   assert.doesNotMatch(stripComments(codeOf('src/components/guard/patrol/patrolState.ts')), /frequencyMinutes|activeFrom|windowMinutes/, 'the phone never computes a window from the schedule');
   const service = codeOf('../security-backend-nest/src/patrol/patrol-guard.service.ts');
   assert.match(service, /windowsBetween\(/, 'the plan\'s windows come from the sweep\'s engine');
+});
+
+// ─── S4 1.2.1 ──────────────────────────────────────────────────────────────────────────────────────────────────────
+
+/** Fake timers: setInterval is recorded and fired by hand. */
+function fakeTimers() {
+  const timers = new Map();
+  let next = 1;
+  return {
+    timers,
+    setInterval: (fn, ms) => { const h = next++; timers.set(h, { fn, ms }); return h; },
+    clearInterval: (h) => { timers.delete(h); },
+    fire: async () => { for (const { fn } of [...timers.values()]) fn(); await new Promise((r) => setImmediate(r)); },
+  };
+}
+const flush = () => new Promise((r) => setImmediate(r));
+
+function planFixture(over = {}) {
+  return {
+    shift: { id: 5, status: 'in_progress', start: '2026-10-29T20:00:00.000Z', end: '2026-10-30T06:00:00.000Z' },
+    site: { id: 1, name: 'North Gate', timezone: 'Europe/London' },
+    policy: { methods: ['qr'], photosPerRun: 0, photosPerCheckpoint: 0 },
+    schedules: [{ id: 3 }],
+    routes: [{ id: 9, name: 'Perimeter', orderMode: 'any', checkpoints: [{ position: 1, required: true, publicId: GATE, label: 'Main gate' }, { position: 2, required: true, publicId: YARD, label: 'Yard' }] }],
+    checkpoints: [{ publicId: GATE, label: 'Main gate', description: null, photoRequired: false }, { publicId: YARD, label: 'Yard', description: null, photoRequired: false }],
+    windows: [],
+    ...over,
+  };
+}
+
+test('GPAT-24-PLAN-REFRESH-INTERVAL-FOREGROUND-AFTER-BOOK-ON-AND-MANUAL', async () => {
+  const t = fakeTimers();
+  const reasons = [];
+  let release = null;
+  const r = new refresh.PatrolPlanRefresher(async (reason) => { reasons.push(reason); if (release === 'hold') await new Promise((res) => { release = res; }); }, t, refresh.PATROL_PLAN_REFRESH_MS);
+  assert.equal(refresh.PATROL_PLAN_REFRESH_MS, 5 * 60 * 1000, 'every five minutes');
+  // Not live (before Book On): nothing is fetched or scheduled; Refresh does nothing.
+  assert.equal(await r.refreshNow(), false);
+  await t.fire();
+  assert.deepEqual([reasons, r.scheduled], [[], false]);
+  // Book On: the shift becomes in progress → fetched at once, and the 5-minute refresh is scheduled.
+  r.setShiftLive(true);
+  await flush();
+  assert.deepEqual(reasons, ['shift_live']);
+  assert.equal(r.scheduled, true);
+  assert.deepEqual([...t.timers.values()].map((x) => x.ms), [300_000]);
+  await t.fire();
+  await t.fire();
+  assert.deepEqual(reasons, ['shift_live', 'interval', 'interval']);
+  // Background: the interval is paused (cleared), nothing fires.
+  r.setAppState('background');
+  assert.equal(r.scheduled, false);
+  await t.fire();
+  assert.equal(reasons.length, 3);
+  // Back to the foreground: fetched at once and rescheduled.
+  r.setAppState('active');
+  await flush();
+  assert.deepEqual(reasons.slice(3), ['foreground']);
+  assert.equal(r.scheduled, true);
+  r.setAppState('active');
+  await flush();
+  assert.equal(reasons.length, 4, 'a repeated "active" is not a new foreground');
+  // Manual Refresh.
+  assert.equal(await r.refreshNow(), true);
+  assert.deepEqual(reasons.slice(4), ['manual']);
+  // One fetch at a time: a trigger while one is in flight is dropped.
+  release = 'hold';
+  const first = r.refreshNow();
+  await flush();
+  assert.equal(await r.refreshNow(), false, 'in flight: dropped');
+  release();
+  assert.equal(await first, true);
+  // A fetch that throws never breaks the schedule.
+  const failing = new refresh.PatrolPlanRefresher(async () => { throw new Error('boom'); }, fakeTimers());
+  failing.setShiftLive(true);
+  await flush();
+  assert.equal(await failing.refreshNow(), false, 'a failure resolves (false), never rejects');
+  assert.equal(failing.scheduled, true, 'and the 5-minute refresh stays scheduled');
+  failing.dispose();
+  // Book Off / shift ended: the interval stops; dispose clears everything.
+  r.setShiftLive(false);
+  assert.equal(r.scheduled, false);
+  r.setShiftLive(true);
+  r.dispose();
+  assert.equal(r.scheduled, false);
+  assert.equal(t.timers.size, 0, 'no timer left behind');
+  // The panel wires it: AppState listener, Refresh control, the refresher on the live shift.
+  const panel = stripComments(codeOf('src/components/guard/patrol/GuardPatrolPanel.tsx'));
+  assert.match(panel, /AppState\.addEventListener\('change', \(state: string\) => refresher\.setAppState\(state\)\)/);
+  assert.match(panel, /refresher\.setShiftLive\(true\)/);
+  assert.match(panel, /label="Refresh"/);
+  assert.match(panel, /refresher\.dispose\(\)/);
+});
+
+test('GPAT-25-LAST-GOOD-PLAN-KEPT-STALE-INDICATOR-AND-THE-OUTBOX-UNTOUCHED', async () => {
+  const plan = planFixture();
+  const at = new Date('2026-10-29T14:05:00.000Z'); // 14:05 UTC = 14:05 GMT (after the clocks went back)
+  let cache = refresh.applyPlanResult(refresh.EMPTY_PLAN_CACHE, 5, { ok: true, plan, at });
+  assert.equal(cache.plan, plan);
+  assert.equal(refresh.planFreshnessText(cache, 'Europe/London'), null, 'a fresh plan needs no note');
+  // Offline: the last good plan stays, marked stale with its time on the site's clock.
+  cache = refresh.applyPlanResult(cache, 5, { ok: false, error: networkError(), at: new Date('2026-10-29T14:10:00.000Z') });
+  assert.equal(cache.plan, plan, 'the last successful plan is kept');
+  assert.equal(refresh.planFreshnessText(cache, 'Europe/London'), 'Patrol plan last updated 14:05 — offline; will update when connected.');
+  // A server error: kept as well.
+  cache = refresh.applyPlanResult(cache, 5, { ok: false, error: apiError(503, 'UNAVAILABLE'), at });
+  assert.equal(cache.plan, plan);
+  assert.match(refresh.planFreshnessText(cache, 'Europe/London'), /^Patrol plan last updated 14:05 — S4 could not be reached/);
+  // Back online: fresh again.
+  const later = planFixture({ schedules: [{ id: 3 }, { id: 4 }] });
+  cache = refresh.applyPlanResult(cache, 5, { ok: true, plan: later, at: new Date('2026-10-29T14:15:00.000Z') });
+  assert.deepEqual([cache.plan, cache.failure], [later, null]);
+  // An authoritative refusal (switch off / not the Guard's shift / no site) removes the card.
+  for (const status of [404, 409, 403]) {
+    const gone = refresh.applyPlanResult(cache, 5, { ok: false, error: apiError(status, 'PATROLS_NOT_ENABLED'), at });
+    assert.equal(gone.plan, null, `${status}: no plan`);
+  }
+  // Another shift never shows this shift's plan.
+  const other = refresh.applyPlanResult(cache, 6, { ok: false, error: networkError(), at });
+  assert.equal(other.plan, null);
+  assert.match(refresh.planFreshnessText(other, 'Europe/London'), /could not be loaded \(no connection\)/);
+  // A refresh cycle against a real outbox: every item is exactly as it was (the refresher never sees the outbox).
+  const file = path.join(TMP, 'refresh-outbox.json');
+  const backend = new FakeBackend();
+  backend.offline = true;
+  const files = filesFor(61);
+  const engine = engineFor(61, new FileStore(file), backend, { files });
+  await recordPatrol(engine, files);
+  const before = fs.readFileSync(file, 'utf8');
+  let c = refresh.EMPTY_PLAN_CACHE;
+  const t = fakeTimers();
+  let answer = () => { throw networkError(); };
+  const r = new refresh.PatrolPlanRefresher(async () => {
+    try { c = refresh.applyPlanResult(c, 501, { ok: true, plan: answer(), at: new Date() }); } catch (error) { c = refresh.applyPlanResult(c, 501, { ok: false, error, at: new Date() }); }
+  }, t);
+  answer = () => plan;
+  r.setShiftLive(true);
+  await flush();
+  answer = () => { throw networkError(); };
+  await t.fire();
+  await r.refreshNow();
+  r.setAppState('background');
+  r.setAppState('active');
+  await flush();
+  r.dispose();
+  assert.equal(c.plan, plan, 'still the last good plan');
+  assert.equal(fs.readFileSync(file, 'utf8'), before, 'the outbox rows are byte-for-byte unchanged');
+  assert.equal((await engine.items()).length, 4);
+  const sources = ['src/components/guard/patrol/patrolPlanRefresh.ts'].map((rel) => stripComments(codeOf(rel))).join('\n');
+  assert.doesNotMatch(sources, /outbox|enqueue|store\.|remove\(/i, 'the refresh module knows nothing of the outbox');
+  const panel = stripComments(codeOf('src/components/guard/patrol/GuardPatrolPanel.tsx'));
+  assert.doesNotMatch(panel, /setPlan\(null\)/, 'a failed load no longer drops the plan (1.2.0 did)');
+  assert.match(panel, /planFreshnessText\(planCache, tz\)/, 'the stale note is shown');
+  assert.match(panel, /waiting to send/, 'the waiting counter is still shown');
+});
+
+test('GPAT-26-AN-ACTIVE-PATROL-KEEPS-ITS-OWN-ROUTE', () => {
+  const plan = planFixture();
+  const snapshot = state.routeSnapshot(plan, 9);
+  assert.deepEqual(snapshot.checkpoints.map((c) => [c.label, c.required]), [['Main gate', true], ['Yard', true]]);
+  assert.equal(state.routeSnapshot(plan, null), null);
+  const local = { clientRunId: 'r', shiftId: 5, start: { body: { routeId: 9 }, meta: { route: snapshot } }, scans: [{ id: 'v1', meta: { publicId: GATE } }], photos: [], exceptions: [], complete: null };
+  // The refreshed plan no longer has route 9 (archived, or edited away): the patrol follows its stored copy.
+  const refreshed = planFixture({ routes: [], checkpoints: [...plan.checkpoints, { publicId: 'c'.repeat(32), label: 'Car park', description: null, photoRequired: false }] });
+  assert.equal(state.patrolRoute(refreshed, 9, local).source, 'snapshot');
+  const rows = state.patrolCheckpoints(refreshed, 9, local);
+  assert.deepEqual(rows.map((r) => [r.label, r.required, r.scanned]), [['Main gate', true, true], ['Yard', true, false]], 'its own route, not the site');
+  assert.deepEqual(state.completionSummary(refreshed, 9, local).missing.map((m) => m.label), ['Yard']);
+  // An older start with no stored copy: nothing listed and a warning — never every checkpoint of the site.
+  const old = { ...local, start: { body: { routeId: 9 }, meta: {} } };
+  assert.equal(state.patrolRoute(refreshed, 9, old).source, 'missing');
+  assert.deepEqual(state.patrolCheckpoints(refreshed, 9, old), []);
+  // The plan still has it: the plan's copy is used.
+  assert.equal(state.patrolRoute(plan, 9, local).source, 'plan');
+  const panel = stripComments(codeOf('src/components/guard/patrol/GuardPatrolPanel.tsx'));
+  assert.match(panel, /route: routeSnapshot\(plan, window\?\.routeId \?\? null\)/, 'the route is stored with the start');
+  assert.match(panel, /activeRoute\?\.source === 'missing'/, 'a missing route is said, not hidden');
+});
+
+test('GPAT-27-PHOTOS-YES-NO-AND-THE-REASON-BOX-FOR-ANY-UNMET-REQUIREMENT', () => {
+  const plan = planFixture({ policy: { methods: ['qr'], photosPerRun: 3, photosPerCheckpoint: 0 } });
+  const base = { clientRunId: 'r', shiftId: 5, start: { body: { routeId: 9 }, meta: {} }, exceptions: [], complete: null };
+  const scans = [{ id: 'v1', meta: { publicId: GATE } }, { id: 'v2', meta: { publicId: YARD } }];
+  // photosPerRun 3 (an older setting) still means ONE photo: "required: yes".
+  let s = state.completionSummary(plan, 9, { ...base, scans, photos: [] });
+  assert.deepEqual([s.photosRequired, s.photosMissing, s.missing.length, s.unmet, s.needsReason], [1, 1, 0, true, true], 'every checkpoint scanned but the photo is missing: a reason is required');
+  s = state.completionSummary(plan, 9, { ...base, scans, photos: [{ dependsOn: 'r', body: { kind: 'run_photo' } }] });
+  assert.deepEqual([s.photosMissing, s.unmet, s.needsReason], [0, false, false]);
+  // Photo at each (required) checkpoint.
+  const perCheckpoint = planFixture({ policy: { methods: ['qr'], photosPerRun: 0, photosPerCheckpoint: 1 } });
+  s = state.completionSummary(perCheckpoint, 9, { ...base, scans, photos: [{ dependsOn: 'v1', body: { kind: 'checkpoint_photo' } }] });
+  assert.deepEqual([s.photosRequired, s.photosMissing, s.needsReason], [2, 1, true], 'Yard was scanned without its photo');
+  // The policy includes photos as a method: one run photo is required.
+  s = state.completionSummary(planFixture({ policy: { methods: ['qr', 'photo'], photosPerRun: 0, photosPerCheckpoint: 0 } }), 9, { ...base, scans, photos: [] });
+  assert.deepEqual([s.photosRequired, s.photosMissing], [1, 1]);
+  // The UI: the reason box follows `unmet` (checkpoints OR photos), and completion is refused without a reason.
+  const panel = stripComments(codeOf('src/components/guard/patrol/GuardPatrolPanel.tsx'));
+  const review = panel.slice(panel.indexOf('function CompletionReview'), panel.indexOf('function CompletionConfirmation'));
+  assert.match(review, /\{s\.unmet \? \(/, 'the reason box shows whenever any requirement is unmet');
+  assert.doesNotMatch(review, /\{s\.missing\.length \? \(/, '1.2.0 showed it only for missed checkpoints');
+  assert.match(review, /Required photo/);
+  assert.match(panel, /summary\.needsReason && !completionNote\.trim\(\)/);
+  assert.match(panel, /A required photo was not taken/);
+});
+
+test('GPAT-28-PHOTO-ONLY-CARD-VISIBLE-NO-SCAN-START-PHOTO-COMPLETE', async () => {
+  const photoOnly = planFixture({ policy: { methods: ['photo'], photosPerRun: 0, photosPerCheckpoint: 0 }, schedules: [], routes: [], checkpoints: [], windows: [] });
+  assert.equal(state.patrolCardVisible({ shiftStatus: 'in_progress', plan: photoOnly }), true, 'a photo-only site without a schedule or checkpoint still has its card');
+  assert.equal(state.patrolCardVisible({ shiftStatus: 'in_progress', plan: { ...photoOnly, schedules: [{ id: 3 }] } }), true);
+  assert.equal(state.patrolCardVisible({ shiftStatus: 'ready', plan: photoOnly }), false, 'still only on a live shift');
+  assert.equal(state.patrolCardVisible({ shiftStatus: 'in_progress', plan: { ...photoOnly, policy: { methods: ['qr'] } } }), false, '1.2.0: a QR site without patrols has no card');
+  assert.equal(state.qrScansEnabled(photoOnly), false);
+  assert.equal(state.qrScansEnabled(planFixture()), true);
+  assert.equal(state.qrScansEnabled({ ...planFixture(), policy: {} }), true, 'an older backend without methods: QR as before');
+  assert.equal(state.qrConfigurationProblem(photoOnly, null, null), null, 'photo patrols need no route');
+  // Start → photo → complete, through the real outbox and engine.
+  const backend = new FakeBackend();
+  const files = filesFor(71);
+  const engine = engineFor(71, new FileStore(path.join(TMP, 'photo-only.json')), backend, { files });
+  const clientRunId = cid('run');
+  await engine.enqueueStart({ clientRunId, shiftId: 5, companyId: 7, scheduleId: null, routeId: null, startedAtDevice: now().toISOString(), meta: { route: state.routeSnapshot(photoOnly, null) } });
+  const local0 = state.localPatrols(await engine.items(), 5)[0];
+  let s = state.completionSummary(photoOnly, null, local0);
+  assert.deepEqual([s.checkpointsTotal, s.photosRequired, s.photosMissing, s.needsReason], [0, 1, 1, true], 'no checkpoints; the photo is required');
+  const bytes = Buffer.from([0xff, 0xd8, 0xff, 0xdb, 0x00, 0x03, 0x01, 0xff, 0xda, 0x00, 0x02, 0x11, 0x22, 0xff, 0xd9]);
+  const clientEvidenceId = cid('photo');
+  const filePath = files.write(`${clientEvidenceId}.jpg`, bytes);
+  await engine.enqueuePhoto({ clientRunId, clientEvidenceId, kind: 'run_photo', capturedAtDevice: now().toISOString(), file: { path: filePath, sha256: sha256(bytes), sizeBytes: bytes.length } });
+  s = state.completionSummary(photoOnly, null, state.localPatrols(await engine.items(), 5)[0]);
+  assert.deepEqual([s.photosMissing, s.needsReason], [0, false], 'complete without a reason');
+  await engine.enqueueComplete({ clientRunId, completedAtDevice: now().toISOString() });
+  const report = await engine.sync();
+  assert.deepEqual([report.sent, report.pending], [3, 0]);
+  assert.equal([...backend.runs.values()][0].status, 'completed');
+  assert.equal(backend.sent('recordVisit').length, 0, 'no scan was ever needed');
+  // The UI hides "Scan checkpoint" when the site's methods exclude QR.
+  const panel = stripComments(codeOf('src/components/guard/patrol/GuardPatrolPanel.tsx'));
+  assert.match(panel, /const scanOffered = plan \? qrScansEnabled\(plan\) : true;/);
+  assert.match(panel, /\{scanOffered \? <Button label="Scan checkpoint"/);
+  assert.match(panel, /<Button label="Take patrol photo"/, 'the photo action stays');
+});
+
+test('GPAT-29-QR-WITHOUT-A-ROUTE-IS-SHOWN-PLAINLY-AND-REQUIRES-NO-CHECKPOINT', () => {
+  const plan = planFixture();
+  const local = { clientRunId: 'r', shiftId: 5, start: { body: { routeId: null, scheduleId: 3 }, meta: {} }, scans: [], photos: [], exceptions: [], complete: null };
+  const rows = state.patrolCheckpoints(plan, null, local);
+  assert.deepEqual(rows.map((r) => r.required), [false, false], 'site checkpoints are optional without a route (the server requires none)');
+  assert.equal(state.completionSummary(plan, null, local).needsReason, false);
+  const problem = state.qrConfigurationProblem(plan, null, 3, local);
+  assert.match(problem, /S4 cannot verify it from scans/);
+  assert.match(problem, /Choose a route with required checkpoints, or switch this site to photos\./);
+  // The server's own warning is used when the plan carries one (for this schedule, or the site).
+  const warned = { ...plan, configurationWarnings: [{ code: 'QR_ROUTE_REQUIRED', message: 'Server words.', scheduleId: 3 }] };
+  assert.match(state.qrConfigurationProblem(warned, 9, 3, local), /Server words\./, 'even with a route the server says is not usable');
+  assert.equal(state.qrConfigurationProblem({ ...plan, configurationWarnings: [{ code: 'QR_ROUTE_REQUIRED', message: 'x', scheduleId: 4 }] }, 9, 3, local), null, 'another schedule\'s warning');
+  // A route whose checkpoints are all optional is no QR rule either.
+  const optional = planFixture({ routes: [{ id: 9, name: 'P', orderMode: 'any', checkpoints: [{ position: 1, required: false, publicId: GATE, label: 'Main gate' }] }] });
+  assert.ok(state.qrConfigurationProblem(optional, 9, 3, local));
+  assert.equal(state.qrConfigurationProblem(plan, 9, 3, local), null, 'a route with required checkpoints is fine');
+  assert.match(stripComments(codeOf('src/components/guard/patrol/GuardPatrolPanel.tsx')), /\{qrProblem \? <Text/);
+  assert.match(stripComments(codeOf('src/types/patrols.ts')), /configurationWarnings\?: PatrolConfigurationWarning\[\]/);
+});
+
+test('GPAT-30-NFC-IS-OFFERED-NOWHERE-IN-THE-GUARD-APP', () => {
+  const dir = path.join(ROOT, 'src/components/guard/patrol');
+  for (const name of fs.readdirSync(dir)) {
+    assert.doesNotMatch(stripComments(fs.readFileSync(path.join(dir, name), 'utf8')), /\bnfc\b/i, `${name} offers no NFC`);
+  }
+  assert.doesNotMatch(stripComments(codeOf('src/screens/GuardDashboardScreen.tsx')), /\bnfc\b/i);
+  assert.doesNotMatch(JSON.stringify(JSON.parse(codeOf('app.json'))), /nfc/i, 'no NFC permission or plugin');
+  assert.match(codeOf('src/types/patrols.ts'), /export type PatrolMethod = 'qr' \| 'photo';/, 'the methods are QR and photos only');
 });
 
 test('GPAT-18-THE-WEB-APP-HAS-NO-PATROL-PANEL-AND-LOADS-NO-DEVICE-MODULE', () => {

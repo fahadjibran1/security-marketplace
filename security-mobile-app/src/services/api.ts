@@ -142,6 +142,7 @@ import type {
   PatrolCheckpoint,
   PatrolCheckpointInput,
   PatrolCheckpointLabel,
+  PatrolConfigurationWarning,
   PatrolEffectivePolicy,
   PatrolEvidence,
   PatrolEvidenceAccessPurpose,
@@ -2052,7 +2053,7 @@ export function getPatrolPolicies() {
 }
 
 export function savePatrolSitePolicy(siteId: number | null, update: PatrolPolicyUpdate) {
-  return request<{ siteId: number | null; policy: PatrolEffectivePolicy }>(
+  return request<{ siteId: number | null; policy: PatrolEffectivePolicy; configurationWarnings?: PatrolConfigurationWarning[] }>(
     siteId == null ? '/patrols/policies/default' : `/patrols/policies/sites/${siteId}`,
     { method: 'PUT', body: JSON.stringify(update) },
   );
