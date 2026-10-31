@@ -32,21 +32,21 @@
     "keySizeNote": "Corrected 2026-10-20 from 2048: keytool on the keystore and jarsigner on the 1.1.0 (15) AAB both report a 4096-bit RSA key. The certificate SHA-256 (which covers the public key) was always correct; only the size field was mis-recorded."
   },
   "expectedRelease": {
-    "versionName": "1.2.0",
-    "versionCode": 23,
+    "versionName": "1.2.1",
+    "versionCode": 24,
     "minSdkVersion": 24
   },
   "preparedArtefact": {
-    "versionName": "1.2.0",
-    "versionCode": 23,
+    "versionName": "1.2.1",
+    "versionCode": 24,
     "status": "prepared-not-built",
     "easBuildProfile": "production",
     "distribution": "STORE",
-    "sourceBranch": "fix/android-optional-camera-hardware",
-    "sourceFixCommit": "61526c972df25a0309517ced112215b12f32ce3d",
-    "sourceCommit": "the commit on fix/android-optional-camera-hardware that sets versionCode 23 in app.json, directly on top of 61526c9 (which adds plugins/withOptionalCameraHardware.js and from which the superseded 1.2.0 (22) was built); a commit cannot record its own id, the build record names it once built",
+    "sourceBranch": "feature/s4-1.2.1-patrol-correctness",
+    "sourceFixCommit": "5f64b3d04f686ff438c0713ed971607baba62a86",
+    "sourceCommit": "the commit on feature/s4-1.2.1-patrol-correctness that sets 1.2.1 / versionCode 24 in app.json, on top of the S4 1.2.1 Guard app and dashboard commits (1ee04d8, 5f64b3d) and the Package A backend commits, all on 625bea0 (the commit 1.2.0 (23) was built from); a commit cannot record its own id, the build record names it once built",
     "requiredUploadCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
-    "note": "S4 1.2.0 (23): the same content as the superseded 1.2.0 (22), built from 61526c9; only the versionCode differs. Google Play Console reports versionCode 22 as already used although it is not in the App bundle library, so 22 is consumed in Play and can never be reused; 23 is the next free number. S4 1.2.0 (22) was: the same 1.2.0 content as the superseded 1.2.0 (21) (Patrol Management P1-A to P1-E with in-app QR scans and patrol photos, integrated with the distributed Guard app 1.1.2 (20) line), plus one Android compatibility fix: the manifest declares android.hardware.camera and android.hardware.camera.autofocus with android:required=\"false\" (plugins/withOptionalCameraHardware.js). Without those declarations the CAMERA permission made Google Play imply both features as required, and Play reported 1.2.0 (21) dropping 436 devices (69 phone models) that 1.1.2 (20) supported. With them 1.2.0 adds no hardware requirement over 1.1.2; the CAMERA permission and its runtime handling are unchanged, and a phone without a camera shows the patrol camera as unavailable. Same package com.sfour.s4, same upload key as vc17 to vc22 (the permanent S4 certificate above), same Firebase setup, production API. Prepared only: not built, not uploaded to Google Play, so there is no EAS build id, AAB hash or Play state for it. 1.1.2 (20) stays the distributed Android build until 1.2.0 (23) is built, certified and uploaded on owner approval."
+    "note": "S4 1.2.1 (24): 1.2.0 (23) plus Package A (patrol correctness and Guard app visibility): the Guard app refreshes the patrol plan while the shift is in progress (every 5 minutes in the foreground, on returning to the app, after Book On and on Refresh) and keeps the last good plan when offline, an active patrol keeps its own route, photos are required yes / no and a missing photo needs a reason, photo-only sites patrol without QR, and a QR site without a route is shown as a configuration problem. Same package com.sfour.s4, same upload key as vc17 to vc23 (the permanent S4 certificate above), same plugins (withOptionalCameraHardware, withPatrolBackupExclusion) and permissions, same Firebase setup, production API. Prepared only: not built, not uploaded to Google Play, so there is no EAS build id, AAB hash or Play state for it. 1.1.2 (20) stays the distributed Android build until 1.2.1 (24) is built, certified and uploaded on owner approval."
   },
   "approvedArtefact": {
     "versionName": "1.1.2",
@@ -352,6 +352,25 @@
       },
       "retiredOn": "2026-10-31",
       "retiredReason": "Superseded by versionCode 23 (1.2.0), the same content as 22 under the next free versionCode, on the same identity and upload key. Play reports versionCode 22 as used but unavailable in the App bundle library, so it is consumed there and must never be reused; its build, hash and signer are kept exactly. 1.1.2 (20) stays the distributed build."
+    },
+    {
+      "versionName": "1.2.0",
+      "versionCode": 23,
+      "status": "built-not-uploaded-superseded",
+      "easBuildId": "b5d6a189-6ad0-4530-b685-689c6115a674",
+      "easBuildUrl": "https://expo.dev/accounts/fahadjibran/projects/security-marketplace/builds/b5d6a189-6ad0-4530-b685-689c6115a674",
+      "easBuildProfile": "production",
+      "distribution": "STORE",
+      "sourceBranch": "fix/android-optional-camera-hardware",
+      "sourceFixCommit": "61526c972df25a0309517ced112215b12f32ce3d",
+      "gitCommit": "625bea0b5e03d232e6c6ee9c2cfe874a4dcbbec4",
+      "aabFilename": "s4-1.2.0-vc23-b5d6a189.aab",
+      "aabSha256": "eab6a4d55b1e1cb9c07b3b062364f07b803698572dd669a44ef4ac98e45567a3",
+      "aabSizeBytes": 64050099,
+      "requiredUploadCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
+      "note": "S4 1.2.0 (23): the same content as 1.2.0 (22) (Patrol Management P1-A to P1-E on the Guard app 1.1.2 line, camera hardware declared optional), under the next free versionCode. Built by EAS (b5d6a189, production profile, STORE) from 625bea0 on fix/android-optional-camera-hardware, which sets versionCode 23 on top of 61526c9. Not uploaded to Google Play: it never reached Play, a tester or a device, so versionCode 23 is not consumed in Play. The AAB is kept outside Git; its upload certificate is not re-read in this record.",
+      "retiredOn": "2026-10-31",
+      "retiredReason": "Superseded by versionCode 24 (1.2.1), which adds the S4 1.2.1 patrol correctness and Guard app visibility changes on the same identity and upload key, unless the owner releases 1.2.0 (23) instead. Not uploaded to Google Play, so nothing is consumed there; its build, hash and size are kept exactly and versionCode 23 is never rebuilt with other content. 1.1.2 (20) stays the distributed build."
     }
   ],
   "playAppSigning": {
