@@ -8,7 +8,7 @@ import { Drawer } from '../ui/Drawer';
 import { patrolFailureMessage } from './patrolAccess';
 import type { PatrolPageContext } from './patrolContext';
 import { DAY_NAMES, daysLabel, requirementScopeLabel, scheduleDraftProblem, type ScheduleDraft } from './patrolPresentation';
-import { Badge, ChipSelect, Notice, PatrolPanel, ResourceState, RowCard, TextField, Toggle, ui, usePatrolResource } from './patrolUi';
+import { Badge, ChipSelect, ConfigurationRequired, Notice, PatrolPanel, ResourceState, RowCard, TextField, Toggle, ui, usePatrolResource } from './patrolUi';
 
 const EMPTY: ScheduleDraft = {
   siteId: '', name: '', routeId: '', daysOfWeek: [1, 2, 3, 4, 5, 6, 7], activeFrom: '18:00', activeTo: '06:00',
@@ -34,6 +34,9 @@ function toInput(d: ScheduleDraft, creating: boolean): PatrolScheduleInput {
   return input;
 }
 
+/** S4 1.2.1 (decision B1): editing a schedule's timing ends it and starts a successor from now. */
+export const TIMING_VERSION_NOTE = 'Timing changes apply from now as a new version.';
+
 /** Schedules per site, in the SITE's local time (timeBasis site_local). Create / edit / archive need patrols.manage. */
 export function PatrolSchedulesTab({ ctx }: { ctx: PatrolPageContext }) {
   const schedules = usePatrolResource(`sch|${ctx.companyKey}|${ctx.siteId ?? 'all'}`, () => listPatrolSchedules({ siteId: ctx.siteId }));
@@ -55,10 +58,16 @@ export function PatrolSchedulesTab({ ctx }: { ctx: PatrolPageContext }) {
     setSaving(true);
     setFormError(null);
     try {
-      if (editing.id == null) await createPatrolSchedule(toInput(editing.draft, true));
-      else await updatePatrolSchedule(editing.id, toInput(editing.draft, false));
-      setNotice({ tone: 'success', message: editing.id == null ? 'Schedule created.' : 'Schedule saved.' });
+      const saved = editing.id == null
+        ? await createPatrolSchedule(toInput(editing.draft, true))
+        : await updatePatrolSchedule(editing.id, toInput(editing.draft, false));
+      setNotice({
+        tone: 'success',
+        message: editing.id == null ? 'Schedule created.'
+          : saved?.timingChanged ? `Schedule saved. ${TIMING_VERSION_NOTE} The earlier version is kept with its patrol history.` : 'Schedule saved.',
+      });
       setEditing(null);
+      // A timing change answers with a NEW schedule id (the successor): re-read the list rather than patch it in place.
       await schedules.reload(true);
     } catch (error) {
       setFormError(patrolFailureMessage(error, 'Unable to save this schedule.'));
@@ -107,8 +116,9 @@ export function PatrolSchedulesTab({ ctx }: { ctx: PatrolPageContext }) {
                   <Badge label={s.archivedAt ? 'Archived' : s.active ? 'Active' : 'Paused'} tone={s.archivedAt ? 'neutral' : s.active ? 'success' : 'pending'} />
                 </View>
                 <Text style={ui.rowMeta}>{daysLabel(s.daysOfWeek)} · {s.activeFrom}–{s.activeTo} site time ({ctx.siteZone(s.siteId)})</Text>
-                <Text style={ui.rowMeta}>Every {s.frequencyMinutes} min · window {s.windowMinutes} min{s.routeId ? ` · route ${ctx.routes.find((r) => r.id === s.routeId)?.name ?? `#${s.routeId}`}` : ' · any checkpoints'}</Text>
+                <Text style={ui.rowMeta}>Every {s.frequencyMinutes} min · window {s.windowMinutes} min{s.routeId ? ` · route ${ctx.routes.find((r) => r.id === s.routeId)?.name ?? `#${s.routeId}`}` : ' · no route'}</Text>
                 {s.startsOn || s.endsOn ? <Text style={ui.rowMeta}>From {s.startsOn ?? 'now'} to {s.endsOn ?? 'no end date'}</Text> : null}
+                {s.archivedAt ? null : <ConfigurationRequired warnings={s.configurationWarnings} />}
                 {canManage && !s.archivedAt ? (
                   <View style={ui.actions}>
                     <Button label="Edit" size="sm" variant="secondary" onPress={() => { setFormError(null); setEditing({ id: s.id, draft: toDraft(s) }); }} />
@@ -126,12 +136,13 @@ export function PatrolSchedulesTab({ ctx }: { ctx: PatrolPageContext }) {
         {draft ? (
           <View style={{ gap: 12 }}>
             {formError ? <Notice tone="error" message={formError} /> : null}
+            {editing?.id != null ? <Text style={ui.muted}>{`${TIMING_VERSION_NOTE} Changing the times, frequency, window, days or dates ends this version now and starts a new one; patrols, exceptions and photos already recorded stay with the earlier version. Renaming changes nothing else.`}</Text> : null}
             {editing?.id == null ? (
               <ChipSelect label="Site" options={ctx.sites.map((s) => ({ value: String(s.siteId), label: s.siteName }))} value={draft.siteId || null} onChange={(v) => setDraft({ siteId: v, routeId: '' })} />
             ) : <Text style={ui.rowMeta}>Site: {ctx.siteName(Number(draft.siteId))}</Text>}
             {draftSiteId ? <Text style={ui.muted}>Site time zone: {ctx.siteZone(draftSiteId)}</Text> : null}
             <TextField label="Schedule name" value={draft.name} onChangeText={(v) => setDraft({ name: v })} />
-            <ChipSelect label="Route" options={[{ value: '', label: 'Any checkpoints' }, ...siteRoutes.map((r) => ({ value: String(r.id), label: r.name }))]} value={draft.routeId} onChange={(v) => setDraft({ routeId: v })} />
+            <ChipSelect label="Route" options={[{ value: '', label: 'No route' }, ...siteRoutes.map((r) => ({ value: String(r.id), label: r.name }))]} value={draft.routeId} onChange={(v) => setDraft({ routeId: v })} />
             <View style={{ gap: 4 }}>
               <Text style={ui.fieldLabel}>Days</Text>
               <View style={ui.chipRowWrap}>

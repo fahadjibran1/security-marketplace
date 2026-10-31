@@ -18,6 +18,7 @@ import {
   formatPatrolDateTime,
   signedLinkLifetimeMs,
   signedLinkUsable,
+  syncFlagLabel,
   thumbnailLinks,
 } from './patrolPresentation';
 import { Badge, ChipSelect, Notice, RowCard, ui } from './patrolUi';
@@ -182,6 +183,7 @@ export function PatrolEvidenceList({ ctx, run, evidence }: { ctx: PatrolPageCont
                 </Text>
                 {item.sizeBytes ? <Text style={ui.rowMeta}>{formatBytes(item.sizeBytes)}{item.widthPx && item.heightPx ? ` · ${item.widthPx}×${item.heightPx}` : ''}</Text> : null}
                 {item.rejectionReason ? <Text style={ui.rowMeta}>Rejected: {item.rejectionReason}</Text> : null}
+                {item.syncFlags?.length ? <Text style={ui.rowMeta}>{item.syncFlags.map(syncFlagLabel).join(' · ')}</Text> : null}
               </View>
               {canOpenEvidence(item) ? (
                 <Button label="View photo" size="sm" variant="secondary" loading={opening === item.id} onPress={() => { void open(item); }} />

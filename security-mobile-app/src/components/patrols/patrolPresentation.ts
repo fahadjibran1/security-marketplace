@@ -67,6 +67,9 @@ const SYNC_FLAG_LABELS: Record<string, string> = {
   window_already_covered: 'Window already covered',
   evidence_after_alert: 'Evidence arrived after the alert',
   recovered_via_grant: 'Recovered late under a recovery grant',
+  // S4 1.2.1. Neutral wording: a repeated image is counted once and reviewed — it alleges nothing.
+  duplicate_sha256: 'Duplicate photo (same image already submitted) — review',
+  qr_rule_missing: 'No QR checkpoint rule — choose a route with required checkpoints, or switch this site to photos',
 };
 
 const SCAN_FLAG_LABELS: Record<string, string> = {

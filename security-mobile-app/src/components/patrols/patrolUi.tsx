@@ -145,6 +145,21 @@ export function ResourceState({ resource, empty, emptyMessage, what }: { resourc
   return null;
 }
 
+/**
+ * S4 1.2.1 (decision A1): what the server accepted but cannot judge as asked — shown prominently, never hidden. Renders
+ * nothing when there is no warning.
+ */
+export function ConfigurationRequired({ warnings }: { warnings: ReadonlyArray<{ code: string; message: string }> | null | undefined }) {
+  const list = (warnings ?? []).filter((w) => w && w.message);
+  if (!list.length) return null;
+  return (
+    <View accessibilityRole="alert" style={[ui.notice, { backgroundColor: colors.warningSurface, borderColor: colors.warningBorder }]}>
+      <Text style={[ui.noticeText, { color: colors.warning, fontWeight: '700' }]}>Configuration required</Text>
+      {list.map((w, i) => <Text key={`${w.code}-${i}`} style={[ui.noticeText, { color: colors.textPrimary }]}>{w.message}</Text>)}
+    </View>
+  );
+}
+
 export function Notice({ tone, message }: { tone: 'success' | 'error' | 'info'; message: string }) {
   const palette = tone === 'success'
     ? { bg: colors.successSurface, border: colors.successBorder, fg: colors.success }

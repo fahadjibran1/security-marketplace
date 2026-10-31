@@ -24,6 +24,9 @@
  *   - Responsive breakpoints, loading / empty / error / pending-sync states, polling limits and cleanup, and that no
  *     figure is fabricated.
  *   - The release-gate wiring and the pinned QR dependency.
+ *   - S4 1.2.1: photos required are Yes/No toggles writing 1/0 (PM-28); the server's "Configuration required" warnings
+ *     on Settings and Schedules, and a timing edit answered with a new schedule version (PM-29); neutral duplicate-photo
+ *     and QR-rule labels (PM-30); NFC offered nowhere (PM-31).
  */
 const Module = require('node:module');
 const originalLoad = Module._load;
@@ -945,6 +948,111 @@ test('PM-20-RECOVERY-GRANTS-ISSUE-LIST-AND-REVOKE-THROUGH-THE-API', async () => 
   const backend = read('../security-backend-nest/src/patrol/patrol-constants.ts');
   assert.ok(backend.includes('export const PATROL_RECOVERY_GRANT_MAX_HOURS = 72;') && backend.includes('export const PATROL_RECOVERY_GRANT_DEFAULT_HOURS = 24;'), 'the same bounds as the server');
   assert.ok(backend.includes("'recovered_via_grant'"), 'the server\'s flag name');
+});
+
+// ═══ S4 1.2.1 (patrol correctness) ═══
+
+const QR_WARNING = { code: 'QR_ROUTE_REQUIRED', message: 'Choose a route with required checkpoints, or switch this site to photos.', scheduleId: 1, siteId: 10 };
+const SCHEDULE = {
+  id: 1, siteId: 10, routeId: null, name: 'Night rounds', daysOfWeek: [1, 2, 3, 4, 5, 6, 7], activeFrom: '22:00', activeTo: '06:00', timeBasis: 'site_local',
+  frequencyMinutes: 60, windowMinutes: 60, startsOn: null, endsOn: null, active: true, archivedAt: null, createdAt: null, updatedAt: null, configurationWarnings: [QR_WARNING],
+};
+
+test('PM-28-PHOTOS-REQUIRED-ARE-YES-NO-TOGGLES-WRITING-1-OR-0', async () => {
+  const Settings = loadSource('src/components/patrols/PatrolSettingsTab.tsx');
+  assert.deepEqual(Settings.PHOTO_TOGGLES.map((t) => [t.key, t.label]), [['photosPerRun', 'Photos required for each patrol'], ['photosPerCheckpoint', 'Photo at each checkpoint']]);
+  const before = { ...policies().companyDefault, photosPerRun: 3, photosPerCheckpoint: 0 };
+  // An older numeric value (3) reads as "Yes"; keeping it changes nothing; switching off writes 0, on writes 1.
+  const draftOf = (over) => ({ ...before, startGraceMinutes: '15', maxPatrolDurationMinutes: '45', completionGraceMinutes: '30', syncGraceMinutes: '60', postShiftSyncHours: '24', clockDriftThresholdMinutes: '5', ...over });
+  assert.deepEqual(Settings.policyChanges(before, draftOf({})).update, {});
+  assert.deepEqual(Settings.policyChanges(before, draftOf({ photosPerRun: 0, photosPerCheckpoint: 1 })).update, { photosPerRun: 0, photosPerCheckpoint: 1 });
+  answers = baseAnswers({ savePatrolSitePolicy: (siteId, update) => ({ siteId, policy: { ...policies().companyDefault, ...update, source: 'company' }, configurationWarnings: [] }) });
+  calls.length = 0;
+  const renderer = await mount({ permissions: perms('owner') });
+  const root = renderer.root;
+  await pressByText(root, 'Site settings');
+  const text = textOf(root);
+  assert.ok(!text.includes('Photos required per patrol') && !text.includes('Photos required per checkpoint'), 'no number fields for photos');
+  assert.equal(root.findAll((n) => n.props && /^Photos? required|^Photo at each/.test(String(n.props.label ?? '')) && typeof n.props.onChangeText === 'function').length, 0, 'no text input for photos');
+  const toggle = (label) => root.findAll((n) => n.props && n.props.accessibilityRole === 'switch' && n.props.accessibilityLabel === label)[0];
+  assert.equal(toggle('Photos required for each patrol').props.accessibilityState.checked, false);
+  assert.ok(toggle('Photo at each checkpoint'), 'a Yes/No toggle');
+  assert.ok(toggle('QR checkpoint scans') && toggle('Photos'), 'the method toggles are kept');
+  await pressByText(root, 'Photos required for each patrol');
+  await pressByText(root, 'Save settings');
+  const saved = calls.filter(([k]) => k === 'savePatrolSitePolicy');
+  assert.deepEqual(saved.map(([, a]) => a), [[null, { photosPerRun: 1 }]], 'Yes writes 1');
+  act(() => renderer.unmount());
+});
+
+test('PM-29-CONFIGURATION-REQUIRED-ON-SETTINGS-AND-SCHEDULES-AND-THE-NEW-VERSION-NOTE', async () => {
+  const pol = policies();
+  pol.sites[0].configurationWarnings = [QR_WARNING];
+  let updated = null;
+  answers = baseAnswers({
+    getPatrolPolicies: pol,
+    listPatrolSchedules: () => [updated ?? SCHEDULE],
+    updatePatrolSchedule: (id, input) => { updated = { ...SCHEDULE, ...input, id: 2, predecessorId: id, timingChanged: true }; return updated; },
+    savePatrolSitePolicy: (siteId, update) => ({ siteId, policy: { ...pol.companyDefault, ...update, source: 'company' }, configurationWarnings: [QR_WARNING] }),
+  });
+  calls.length = 0;
+  const renderer = await mount({ permissions: perms('owner') });
+  const root = renderer.root;
+  await pressByText(root, 'Site settings');
+  let text = textOf(root);
+  assert.ok(text.includes('Configuration required'), 'Settings shows the warning prominently');
+  assert.ok(text.includes('Choose a route with required checkpoints, or switch this site to photos.'));
+  await pressByText(root, 'Schedules');
+  text = textOf(root);
+  assert.ok(text.includes('Night rounds') && text.includes('Configuration required'), 'the Schedules tab shows it on the schedule');
+  assert.ok(text.includes('no route'));
+  // Editing the timing: the note, then a NEW id comes back and the list is re-read.
+  await pressByText(root, 'Edit');
+  assert.ok(textOf(root).includes('Timing changes apply from now as a new version.'));
+  await typeInto(root, 'Frequency (minutes)', '30');
+  await typeInto(root, 'Window (minutes)', '30');
+  const listsBefore = calls.filter(([k]) => k === 'listPatrolSchedules').length;
+  await pressByText(root, 'Save schedule');
+  assert.deepEqual(calls.filter(([k]) => k === 'updatePatrolSchedule').map(([, a]) => [a[0], a[1].frequencyMinutes]), [[1, 30]]);
+  assert.ok(calls.filter(([k]) => k === 'listPatrolSchedules').length > listsBefore, 'the list is re-read (the successor has a new id)');
+  text = textOf(root);
+  assert.ok(text.includes('Schedule saved. Timing changes apply from now as a new version.'), text);
+  assert.ok(text.includes('Every 30 min'), 'the successor is listed');
+  // No warning: nothing shown.
+  act(() => renderer.unmount());
+  answers = baseAnswers({ listPatrolSchedules: [{ ...SCHEDULE, routeId: 3, configurationWarnings: [] }] });
+  const clean = await mount({ permissions: perms('owner') });
+  await pressByText(clean.root, 'Schedules');
+  assert.ok(!textOf(clean.root).includes('Configuration required'));
+  act(() => clean.unmount());
+});
+
+test('PM-30-DUPLICATE-PHOTO-AND-QR-RULE-LABELS-ARE-NEUTRAL', async () => {
+  assert.equal(P.syncFlagLabel('duplicate_sha256'), 'Duplicate photo (same image already submitted) — review');
+  assert.equal(P.syncFlagLabel('qr_rule_missing'), 'No QR checkpoint rule — choose a route with required checkpoints, or switch this site to photos');
+  assert.doesNotMatch(P.syncFlagLabel('duplicate_sha256'), /fraud|suspicious|tamper|misconduct|fake|cheat/i, 'it alleges nothing');
+  // Shown on the photo in the run detail.
+  answers = baseAnswers({ getPatrolRun: { run: run({ status: 'completed', needsReview: true, syncFlags: ['duplicate_sha256'] }), visits: [], exceptions: [], evidenceCount: 2, evidenceRestricted: false,
+    evidence: [evidence(), evidence({ id: 901, clientEvidenceId: 'ev-bcdefghi', syncFlags: ['duplicate_sha256'], needsReview: true })] } });
+  const Detail = loadSource('src/components/patrols/PatrolRunDetail.tsx');
+  assert.match(read('src/components/patrols/PatrolEvidenceList.tsx'), /item\.syncFlags\?\.length \? <Text style=\{ui\.rowMeta\}>\{item\.syncFlags\.map\(syncFlagLabel\)/, 'evidence flags are labelled');
+  assert.match(read('src/components/patrols/PatrolRunDetail.tsx'), /run\.syncFlags\.map\(syncFlagLabel\)/, 'run flags are labelled');
+  assert.ok(Detail, 'the run detail loads');
+});
+
+test('PM-31-NFC-IS-OFFERED-NOWHERE-ON-THE-DASHBOARD', async () => {
+  const dir = path.join(ROOT, 'src/components/patrols');
+  for (const name of fs.readdirSync(dir)) {
+    assert.doesNotMatch(stripComments(fs.readFileSync(path.join(dir, name), 'utf8')), /\bnfc\b/i, `${name} offers no NFC`);
+  }
+  assert.match(read('src/components/patrols/PatrolSettingsTab.tsx'), /\(\['qr', 'photo'\] as const\)\.map/, 'the only methods offered are QR and photos');
+  const backend = read('../security-backend-nest/src/patrol/patrol-constants.ts');
+  assert.ok(backend.includes("export const PATROL_METHODS = ['qr', 'photo'] as const;"), 'the server accepts no other method');
+  answers = baseAnswers();
+  const renderer = await mount({ permissions: perms('owner') });
+  await pressByText(renderer.root, 'Site settings');
+  assert.doesNotMatch(textOf(renderer.root), /nfc/i);
+  act(() => renderer.unmount());
 });
 
 // ═══ wiring ═══

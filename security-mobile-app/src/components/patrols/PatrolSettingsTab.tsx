@@ -1,14 +1,14 @@
 import * as React from 'react';
 import { Text, View } from 'react-native';
 import { getPatrolStorageUsage, savePatrolSitePolicy } from '../../services/api';
-import type { PatrolEffectivePolicy, PatrolPolicyUpdate } from '../../types/patrols';
+import type { PatrolConfigurationWarning, PatrolEffectivePolicy, PatrolPolicyUpdate } from '../../types/patrols';
 import { Button } from '../ui/Button';
 import { patrolFailureMessage } from './patrolAccess';
 import type { PatrolPageContext } from './patrolContext';
 import { formatBytes, formatPatrolDateTime, requirementScopeLabel } from './patrolPresentation';
-import { ChipSelect, KeyValue, Notice, PatrolPanel, ResourceState, TextField, Toggle, ui, usePatrolResource } from './patrolUi';
+import { ChipSelect, ConfigurationRequired, KeyValue, Notice, PatrolPanel, ResourceState, TextField, Toggle, ui, usePatrolResource } from './patrolUi';
 
-type NumberField = 'photosPerRun' | 'photosPerCheckpoint' | 'startGraceMinutes' | 'maxPatrolDurationMinutes' | 'completionGraceMinutes' | 'syncGraceMinutes' | 'postShiftSyncHours' | 'clockDriftThresholdMinutes';
+type NumberField = 'startGraceMinutes' | 'maxPatrolDurationMinutes' | 'completionGraceMinutes' | 'syncGraceMinutes' | 'postShiftSyncHours' | 'clockDriftThresholdMinutes';
 
 const NUMBER_FIELDS: Array<{ key: NumberField; label: string; min: number; max: number }> = [
   { key: 'startGraceMinutes', label: 'Start grace (minutes)', min: 0, max: 240 },
@@ -17,9 +17,17 @@ const NUMBER_FIELDS: Array<{ key: NumberField; label: string; min: number; max: 
   { key: 'syncGraceMinutes', label: 'Evidence sync grace (minutes)', min: 0, max: 1440 },
   { key: 'postShiftSyncHours', label: 'Offline sync after Book Off (hours)', min: 1, max: 72 },
   { key: 'clockDriftThresholdMinutes', label: 'Clock drift flag threshold (minutes)', min: 1, max: 120 },
-  { key: 'photosPerRun', label: 'Photos required per patrol', min: 0, max: 20 },
-  { key: 'photosPerCheckpoint', label: 'Photos required per checkpoint', min: 0, max: 5 },
 ];
+
+/**
+ * S4 1.2.1 (owner decision): photos are "required: yes / no", never a count. The server keeps the numeric columns and
+ * reads any value above 0 as "required"; the dashboard writes 1 (yes) or 0 (no).
+ */
+export const PHOTO_TOGGLES: Array<{ key: 'photosPerRun' | 'photosPerCheckpoint'; label: string }> = [
+  { key: 'photosPerRun', label: 'Photos required for each patrol' },
+  { key: 'photosPerCheckpoint', label: 'Photo at each checkpoint' },
+];
+export const photoRequired = (value: number | null | undefined) => Number(value) > 0;
 
 type Draft = Omit<PatrolEffectivePolicy, NumberField | 'source' | 'qrRequireProximity' | 'proximityMeters'> & Record<NumberField, string>;
 
@@ -38,6 +46,10 @@ export function policyChanges(before: PatrolEffectivePolicy, draft: Draft): { up
     const value = Number(raw);
     if (!/^\d+$/.test(raw) || value < f.min || value > f.max) return { update: {}, problem: `${f.label} must be a whole number from ${f.min} to ${f.max}.` };
     if (value !== before[f.key]) (update as any)[f.key] = value;
+  }
+  for (const f of PHOTO_TOGGLES) {
+    const on = photoRequired(draft[f.key]);
+    if (on !== photoRequired(before[f.key])) (update as any)[f.key] = on ? 1 : 0;
   }
   if (!draft.methods.length) return { update: {}, problem: 'Choose at least one patrol method.' };
   if (draft.methods.slice().sort().join() !== before.methods.slice().sort().join()) update.methods = draft.methods;
@@ -58,7 +70,8 @@ export function PatrolSettingsTab({ ctx }: { ctx: PatrolPageContext }) {
   const [draft, setDraft] = React.useState<Draft | null>(null);
   const [saving, setSaving] = React.useState(false);
   const [notice, setNotice] = React.useState<{ tone: 'success' | 'error'; message: string } | null>(null);
-  React.useEffect(() => { setDraft(current ? toDraft(current) : null); setNotice(null); }, [current, target]);
+  const [savedWarnings, setSavedWarnings] = React.useState<PatrolConfigurationWarning[] | null>(null);
+  React.useEffect(() => { setDraft(current ? toDraft(current) : null); setNotice(null); setSavedWarnings(null); }, [current, target]);
   const canManage = ctx.permissions.canManage;
 
   const save = async () => {
@@ -68,8 +81,9 @@ export function PatrolSettingsTab({ ctx }: { ctx: PatrolPageContext }) {
     if (!Object.keys(update).length) { setNotice({ tone: 'success', message: 'Nothing has changed.' }); return; }
     setSaving(true);
     try {
-      await savePatrolSitePolicy(target === 'default' ? null : Number(target), update);
+      const saved = await savePatrolSitePolicy(target === 'default' ? null : Number(target), update);
       setNotice({ tone: 'success', message: 'Patrol settings saved.' });
+      setSavedWarnings(saved?.configurationWarnings ?? null);
       ctx.reloadPolicies();
     } catch (error) {
       setNotice({ tone: 'error', message: patrolFailureMessage(error, 'Unable to save these settings.') });
@@ -78,10 +92,14 @@ export function PatrolSettingsTab({ ctx }: { ctx: PatrolPageContext }) {
 
   if (!policies) return <Text style={ui.muted}>Loading patrol settings…</Text>;
   const site = policies.sites.find((s) => String(s.siteId) === target);
+  // The server's own warnings: this site's, or (company default) those of every site that uses the default.
+  const warnings = savedWarnings
+    ?? (site ? site.configurationWarnings ?? [] : policies.sites.filter((s) => s.policy.source !== 'site').flatMap((s) => s.configurationWarnings ?? []));
   return (
     <View style={{ gap: 12 }}>
       <ChipSelect label="Settings for" scroll options={[{ value: 'default', label: 'Company default' }, ...policies.sites.map((s) => ({ value: String(s.siteId), label: s.siteName }))]} value={target} onChange={setTarget} />
       {notice ? <Notice tone={notice.tone} message={notice.message} /> : null}
+      <ConfigurationRequired warnings={warnings} />
       {!canManage ? <Text style={ui.muted}>You can view these settings. Changing them needs the patrols.manage permission.</Text> : null}
       {current && draft ? (
         <PatrolPanel
@@ -102,6 +120,10 @@ export function PatrolSettingsTab({ ctx }: { ctx: PatrolPageContext }) {
             value={draft.retentionDays}
             onChange={(v) => { if (canManage && (v !== 90 || policies.extendedRetentionAllowed || current.retentionDays === 90)) setDraft({ ...draft, retentionDays: v }); }}
           />
+          {PHOTO_TOGGLES.map((f) => (
+            <Toggle key={f.key} disabled={!canManage} label={f.label} value={photoRequired(draft[f.key])} onChange={(on) => setDraft({ ...draft, [f.key]: on ? 1 : 0 })} />
+          ))}
+          <Text style={ui.muted}>Only photos S4 has received and checked count towards verifying a patrol. A patrol missing a required photo can still be completed with a reason; it is then recorded as incomplete.</Text>
           {NUMBER_FIELDS.map((f) => (
             <TextField key={f.key} label={f.label} value={draft[f.key]} onChangeText={(v) => setDraft({ ...draft, [f.key]: v })} editable={canManage} helper={`${f.min}–${f.max}`} />
           ))}
