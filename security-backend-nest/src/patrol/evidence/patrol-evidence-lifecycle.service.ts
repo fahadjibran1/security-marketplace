@@ -219,6 +219,25 @@ export class PatrolEvidenceLifecycleService {
             retentionDays, expiresAt],
         );
         if (!done) return null;
+        // S4 1.2.1: the same image (server hash) already verified under another evidence id of this run counts ONCE
+        // towards verification (patrol-state.ts) and is flagged duplicate_sha256 for review — neutral, never an
+        // allegation. The run row is locked first so two photos of one run verifying at once cannot both miss each
+        // other. A retry of the SAME photo (same clientEvidenceId) never reaches here twice (uploadStatus guard above).
+        await manager.query(`SELECT 1 FROM "patrol_runs" WHERE "id" = $1 FOR UPDATE`, [runId]);
+        const [dup] = await manager.query(
+          `SELECT "id" FROM "patrol_evidence" WHERE "runId" = $1 AND "id" <> $2 AND "sha256Stored" = $3 AND "uploadStatus" = 'verified'
+              AND "retentionStatus" IN ('active', 'claimed') ORDER BY "id" LIMIT 1`,
+          [runId, row.id, inspection.sha256],
+        );
+        if (dup) {
+          const addDup = `(SELECT COALESCE(jsonb_agg(DISTINCT f), '[]'::jsonb) FROM jsonb_array_elements("syncFlags" || '["duplicate_sha256"]'::jsonb) AS f)`;
+          await manager.query(`UPDATE "patrol_evidence" SET "syncFlags" = ${addDup}, "needsReview" = true, "updatedAt" = now() WHERE "id" = $1`, [row.id]);
+          await manager.query(`UPDATE "patrol_runs" SET "syncFlags" = ${addDup}, "needsReview" = true, "updatedAt" = now() WHERE "id" = $1`, [runId]);
+          await this.audit(manager, {
+            companyId, userId: opts.userId, action: 'patrol.evidence_duplicate_flagged', entityId: Number(row.id),
+            afterData: { runId, sha256: inspection.sha256, sameImageAsEvidenceId: Number(dup.id), flag: 'duplicate_sha256' },
+          });
+        }
         await adjustUsage(manager, companyId, siteId, { activeObjects: 1, activeBytes: inspection.size });
         await this.audit(manager, {
           companyId, userId: opts.userId, action: 'patrol.evidence_verified', entityId: Number(row.id),
