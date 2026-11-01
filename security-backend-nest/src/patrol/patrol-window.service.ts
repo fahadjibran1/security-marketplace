@@ -41,6 +41,13 @@ export type PatrolScheduleLike = {
   windowMinutes: number;
   startsOn?: string | null;
   endsOn?: string | null;
+  /**
+   * S4 1.2.1 schedule versions (patrol-schedule-versions.ts): a successor created by a timing change has windows only from
+   * the instant it took effect, and the version it replaced only before that instant. A window belongs to the version in
+   * force at its START. Absent: unbounded (every schedule that was never superseded).
+   */
+  effectiveFrom?: Date | null;
+  effectiveUntil?: Date | null;
 };
 
 export type PatrolWindow = {
@@ -59,6 +66,16 @@ const GAP_SCAN_LIMIT_MINUTES = 180;
 
 export function patrolWindowKey(scheduleId: number, localDate: string, slotIndex: number): string {
   return `s${scheduleId}:${localDate}:${slotIndex}`;
+}
+
+/**
+ * What a run covers (S4 1.2.1): its schedule, window key, scope AND the window's actual start (patrol_runs.windowStart, the
+ * assigned window's own start — also for a late start or a run sent under a recovery grant). Every reader that asks "does
+ * this window have a run" (the sweep, the Guard plan's `covered`, the windows-due-today count) matches on this key, so a
+ * run can never satisfy a window with a different start that happens to share a key.
+ */
+export function runCoverageKey(scheduleId: number | string, windowKey: string, scopeKey: string | null, windowStart: Date | string | null): string {
+  return `${Number(scheduleId)}|${windowKey}|${scopeKey ?? '*'}|${windowStart == null ? '' : new Date(windowStart).getTime()}`;
 }
 
 const pad = (n: number) => String(n).padStart(2, '0');
@@ -158,12 +175,17 @@ export function windowsForLocalDate(schedule: PatrolScheduleLike, localDate: str
   let to = minutesOf(schedule.activeTo);
   if (to <= from) to += MINUTES_PER_DAY; // overnight (or the whole day when equal): belongs to the start day
   const windows: PatrolWindow[] = [];
+  const effectiveFrom = schedule.effectiveFrom ? new Date(schedule.effectiveFrom).getTime() : null;
+  const effectiveUntil = schedule.effectiveUntil ? new Date(schedule.effectiveUntil).getTime() : null;
   for (let slot = 0; from + slot * frequency < to; slot += 1) {
     const startMinutes = from + slot * frequency;
     const endMinutes = Math.min(startMinutes + length, to);
     const start = wallMinutesToInstant(localDate, startMinutes, timeZone, cache);
     const end = wallMinutesToInstant(localDate, endMinutes, timeZone, cache);
     if (end <= start) continue; // the whole slot is inside a spring-forward gap
+    // Schedule versions: the window belongs to the version in force at its start (never to both, never to neither).
+    if (effectiveFrom !== null && start < effectiveFrom) continue;
+    if (effectiveUntil !== null && start >= effectiveUntil) continue;
     windows.push({
       scheduleId: Number(schedule.id),
       windowKey: patrolWindowKey(Number(schedule.id), localDate, slot),

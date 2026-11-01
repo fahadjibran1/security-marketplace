@@ -6,7 +6,7 @@ import { PATROL_SWEEP_LOCK_NAMESPACE } from '../operations/advisory-locks';
 import { SingleFlightJob, SingleFlightOutcome } from '../scheduler/single-flight-job';
 import { EffectivePolicy, PatrolConfigService } from './patrol-config.service';
 import { SafetyAlert, SafetyAlertPriority, SafetyAlertStatus, SafetyAlertType } from '../safety-alert/entities/safety-alert.entity';
-import { PatrolExceptionType } from './patrol-constants';
+import { PatrolExceptionType, PatrolSyncFlag } from './patrol-constants';
 import { PatrolExceptionService } from './patrol-exception.service';
 import { syncAcceptanceEndsAt } from './patrol-late-sync';
 import { PatrolRecoveryGrantService, grantKey } from './patrol-recovery-grant.service';
@@ -14,13 +14,15 @@ import {
   completionDeadline,
   completionFindings,
   evaluateRequirements,
+  RequirementResult,
   runProgressState,
   startDeadline,
   syncDeadline,
   verificationFinalAt,
   verificationState,
 } from './patrol-state';
-import { PatrolDutyShift, PatrolWindow, PatrolWindowService } from './patrol-window.service';
+import { scheduleVersionBounds, supersededSince, withVersionBounds } from './patrol-schedule-versions';
+import { PatrolDutyShift, PatrolWindow, PatrolWindowService, runCoverageKey } from './patrol-window.service';
 
 /** The sweep's cadence, as the safety sweep's. */
 export const PATROL_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
@@ -361,17 +363,25 @@ export class PatrolSweepService implements OnModuleInit, OnModuleDestroy {
       list.push(duty);
       bySite.set(Number(shift.siteId), list);
     }
+    // Schedule versions (S4 1.2.1, patrol-schedule-versions.ts): a schedule replaced by a timing change is still judged for
+    // the windows that had ENDED before the change (they were patrolled, or not, under its timing); the window open at the
+    // change is never judged (no retrospective "missed" from an edit), and nothing after the change is its own.
+    const versions = await scheduleVersionBounds(manager, companyId);
+    const replaced = supersededSince(versions, new Date(startFloor.getTime() - 86_400_000));
     const schedules = await manager.query(
-      `SELECT * FROM "patrol_schedules" WHERE "companyId" = $1 AND "siteId" = ANY($2::int[]) AND "active" AND "archivedAt" IS NULL ORDER BY "id"`,
-      [companyId, [...bySite.keys()]],
+      `SELECT * FROM "patrol_schedules" WHERE "companyId" = $1 AND "siteId" = ANY($2::int[])
+          AND (("active" AND "archivedAt" IS NULL) OR "id" = ANY($3::int[])) ORDER BY "id"`,
+      [companyId, [...bySite.keys()], replaced],
     );
     if (!schedules.length) return result;
     const runRows = await manager.query(
-      `SELECT "scheduleId", "windowKey", "scopeKey" FROM "patrol_runs"
+      `SELECT "scheduleId", "windowKey", "scopeKey", "windowStart" FROM "patrol_runs"
         WHERE "companyId" = $1 AND "windowKey" IS NOT NULL AND "scheduleId" = ANY($2::int[]) AND "windowEnd" > $3`,
       [companyId, schedules.map((s: any) => Number(s.id)), new Date(startFloor.getTime() - 86_400_000)],
     );
-    const runKeys = new Set(runRows.map((r: any) => `${r.scheduleId}|${r.windowKey}|${r.scopeKey}`));
+    // S4 1.2.1: a run covers the window it was assigned to — its schedule, key, scope AND the window's actual start — so a
+    // run can never satisfy a different window that happens to reuse a key.
+    const runKeys = new Set(runRows.map((r: any) => runCoverageKey(r.scheduleId, r.windowKey, r.scopeKey, r.windowStart)));
 
     // Every window due in the range, in schedule then time order (the order alerts are raised in).
     const due: Array<{ schedule: any; site: SiteInfo; policy: EffectivePolicy; window: PatrolWindow; deadline: Date; onDuty: PatrolDutyShift[] }> = [];
@@ -384,8 +394,10 @@ export class PatrolSweepService implements OnModuleInit, OnModuleDestroy {
       // A window is judged only if it started after the schedule was last changed (and after the range's start floor).
       const floor = new Date(Math.max(startFloor.getTime(), new Date(schedule.updatedAt).getTime()));
       const cache = new Map<string, number>();
-      for (const window of this.windows.windowsBetween(schedule, site.timezone, floor, deadlineTo, cache)) {
+      const until = schedule.archivedAt ? versions.get(Number(schedule.id))?.effectiveUntil ?? null : null;
+      for (const window of this.windows.windowsBetween(withVersionBounds(schedule, versions), site.timezone, floor, deadlineTo, cache)) {
         if (window.start.getTime() < floor.getTime()) continue;
+        if (until && window.end.getTime() > until.getTime()) continue; // open at the change: never judged
         const deadline = startDeadline(window.end, policy.startGraceMinutes);
         if (now.getTime() < deadline.getTime() || deadline.getTime() > deadlineTo.getTime()) continue;
         if (deadlineFrom && deadline.getTime() <= deadlineFrom.getTime()) continue;
@@ -409,7 +421,7 @@ export class PatrolSweepService implements OnModuleInit, OnModuleDestroy {
         ? onDuty.map((shift) => ({ scopeKey: `sh${shift.shiftId}`, shift }))
         : [{ scopeKey: 'site', shift: onDuty[0] }];
       for (const scope of scopes) {
-        if (runKeys.has(`${schedule.id}|${window.windowKey}|${scope.scopeKey}`)) continue;
+        if (runKeys.has(runCoverageKey(schedule.id, window.windowKey, scope.scopeKey, window.start))) continue;
         const raised = await raise({
           companyId,
           siteId: Number(schedule.siteId),
@@ -697,7 +709,7 @@ export class PatrolSweepService implements OnModuleInit, OnModuleDestroy {
       [runIds],
     );
     const evidence = await manager.query(
-      `SELECT "runId", "visitId", "kind", "uploadStatus" FROM "patrol_evidence" WHERE "runId" = ANY($1::int[])`,
+      `SELECT "id", "runId", "visitId", "kind", "uploadStatus", "retentionStatus", "sha256Stored", "syncFlags" FROM "patrol_evidence" WHERE "runId" = ANY($1::int[])`,
       [runIds],
     );
     const routeIds = [...new Set(runs.filter((r: any) => r.routeId != null).map((r: any) => Number(r.routeId)))];
@@ -783,6 +795,9 @@ export class PatrolSweepService implements OnModuleInit, OnModuleDestroy {
 
       const routeRows = run.routeId == null ? [] : routeCheckpoints.filter((rc: any) => Number(rc.routeId) === Number(run.routeId));
       const runVisits = visits.filter((v: any) => Number(v.runId) === runId);
+      const runEvidence = evidence.filter((e: any) => Number(e.runId) === runId);
+      // The checkpoint rule is the run's route's required checkpoints (none ⇒ no rule; evaluateRequirements flags it when
+      // QR is required). Never every checkpoint of the site, and never "one scan is enough".
       const requirements = evaluateRequirements({
         requiredCheckpointIds: routeRows.filter((rc: any) => rc.required).map((rc: any) => Number(rc.checkpointId)),
         photoRequiredCheckpointIds: [
@@ -791,11 +806,14 @@ export class PatrolSweepService implements OnModuleInit, OnModuleDestroy {
         ],
         photosPerRun: policy.photosPerRun,
         photosPerCheckpoint: policy.photosPerCheckpoint,
+        methods: policy.methods,
         visits: runVisits.map((v: any) => ({ visitId: Number(v.id), checkpointId: v.checkpointId == null ? null : Number(v.checkpointId), result: v.result })),
-        evidence: evidence.filter((e: any) => Number(e.runId) === runId).map((e: any) => ({
-          kind: e.kind, visitId: e.visitId == null ? null : Number(e.visitId), uploadStatus: e.uploadStatus,
+        evidence: runEvidence.map((e: any) => ({
+          id: Number(e.id), kind: e.kind, visitId: e.visitId == null ? null : Number(e.visitId), uploadStatus: e.uploadStatus,
+          retentionStatus: e.retentionStatus, sha256Stored: e.sha256Stored ?? null,
         })),
       });
+      await this.flagForReview(manager, companyId, run, requirements, runEvidence, now);
       const pastCompletionDeadline = now.getTime() >= compDl.getTime();
       for (const finding of completionFindings({
         status: run.status,
@@ -826,19 +844,64 @@ export class PatrolSweepService implements OnModuleInit, OnModuleDestroy {
         );
         if (state === 'verified') counters.runsVerified += 1;
       }
-      if (state === 'unverified' && requirements.photosNotOnServer > 0) {
+      if (state === 'unverified' && requirements.photosNotVerified > 0) {
         await raise({
           ...base,
           type: 'evidence_unverified',
           actionable: policy.escalateUnverified,
-          message: `Patrol evidence missing: ${what} at ${site.name} — ${requirements.photosNotOnServer} required photo(s) had not reached S4 by ${this.time(syncDl, site.timezone)}.`,
-          note: `${requirements.photosNotOnServer} required photo(s) not on the server at the sync deadline`,
+          message: `Patrol evidence missing: ${what} at ${site.name} — ${requirements.photosNotVerified} required photo(s) had not reached S4 by ${this.time(syncDl, site.timezone)}.`,
+          note: `${requirements.photosNotVerified} required photo(s) not verified on the server at the sync deadline`,
         });
       }
       if (now.getTime() >= verificationFinalAt(syncDl).getTime()) {
         await manager.query(`UPDATE "patrol_runs" SET "verificationFinalAt" = $2, "updatedAt" = now() WHERE "id" = $1 AND "verificationFinalAt" IS NULL`, [runId, now]);
       }
     }
+  }
+
+  /**
+   * S4 1.2.1 review flags on a finished run, added once and never removed (audited patrol.run_flagged_for_review):
+   *   qr_rule_missing    QR is required but the run has no route with required checkpoints — it can never be verified;
+   *   duplicate_sha256   the same verified image (server hash) under two evidence ids of the run — counted once; the later
+   *                      photo(s) are flagged too. A neutral "review" marker, never an allegation.
+   * Both put the run up for review (needsReview). The verification commit flags duplicates as they arrive; this is the
+   * backstop for anything verified before 1.2.1 or concurrently.
+   */
+  private async flagForReview(manager: EntityManager, companyId: number, run: any, requirements: RequirementResult, runEvidence: any[], now: Date) {
+    const existing: string[] = Array.isArray(run.syncFlags) ? run.syncFlags : [];
+    const add: PatrolSyncFlag[] = [];
+    if (requirements.qrRuleMissing && !existing.includes('qr_rule_missing')) add.push('qr_rule_missing');
+    const unflagged = requirements.duplicateEvidenceIds.filter((id) => {
+      const flags = runEvidence.find((e: any) => Number(e.id) === id)?.syncFlags;
+      return !(Array.isArray(flags) && flags.includes('duplicate_sha256'));
+    });
+    if (unflagged.length) {
+      await manager.query(
+        `UPDATE "patrol_evidence" SET "needsReview" = true, "updatedAt" = now(),
+            "syncFlags" = (SELECT COALESCE(jsonb_agg(DISTINCT f), '[]'::jsonb) FROM jsonb_array_elements("syncFlags" || '["duplicate_sha256"]'::jsonb) AS f)
+          WHERE "id" = ANY($1::int[])`,
+        [unflagged],
+      );
+    }
+    if (requirements.duplicateEvidenceIds.length && !existing.includes('duplicate_sha256')) add.push('duplicate_sha256');
+    if (!add.length && !unflagged.length) return;
+    if (add.length) {
+      await manager.query(
+        `UPDATE "patrol_runs" SET "needsReview" = true, "updatedAt" = now(),
+            "syncFlags" = (SELECT COALESCE(jsonb_agg(DISTINCT f), '[]'::jsonb) FROM jsonb_array_elements("syncFlags" || $2::jsonb) AS f)
+          WHERE "id" = $1`,
+        [Number(run.id), JSON.stringify(add)],
+      );
+      run.syncFlags = [...existing, ...add];
+    }
+    await this.auditLogService.logInTransaction(manager, {
+      company: { id: companyId },
+      user: null,
+      action: 'patrol.run_flagged_for_review',
+      entityType: 'patrol_run',
+      entityId: Number(run.id),
+      afterData: { flags: add, duplicateEvidenceIds: unflagged, detectedAt: now.toISOString() },
+    });
   }
 
   private label(window: Pick<PatrolWindow, 'start' | 'end'>, timeZone: string) {

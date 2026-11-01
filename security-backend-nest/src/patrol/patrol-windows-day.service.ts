@@ -6,7 +6,8 @@ import { PatrolWindowsDayQueryDto } from './dto/patrol.dto';
 import { PatrolAccessService } from './patrol-access.service';
 import { PatrolErrorCode, patrolError } from './patrol-constants';
 import { usableZone } from './patrol-query.service';
-import { PatrolWindow, PatrolWindowService, localDateOf, siteDayBounds } from './patrol-window.service';
+import { scheduleVersionBounds, supersededSince, withVersionBounds } from './patrol-schedule-versions';
+import { PatrolWindow, PatrolWindowService, localDateOf, runCoverageKey, siteDayBounds } from './patrol-window.service';
 
 export type PatrolWindowsDaySite = {
   siteId: number;
@@ -29,8 +30,10 @@ export type PatrolWindowsDaySite = {
  *                site-local wall-clock slots; on a DST night a slot inside the spring gap does not exist and the repeated
  *                autumn hour is not a second slot). An overnight period's slots after midnight are due on the day they
  *                start. Due regardless of who is on duty: it is the schedule's demand for the day, not a judgement.
- *   completed    of those, the windows with at least one run recorded against the window (its schedule and windowKey)
- *                whose status is `completed`. Counted per WINDOW: with a per-guard requirement one completed run marks
+ *                S4 1.2.1: a schedule replaced by a timing change (patrol-schedule-versions.ts) still contributes its windows
+ *                that started before the change, and its successor only those from the change.
+ *   completed    of those, the windows with at least one run recorded against the window (its schedule, windowKey and
+ *                the window's actual start) whose status is `completed`. Counted per WINDOW: with a per-guard requirement one completed run marks
  *                the window completed here, while missed scopes are still raised as exceptions by the sweep.
  *   outstanding  due − completed: still to do, in progress, incomplete, or missed.
  *
@@ -56,10 +59,16 @@ export class PatrolWindowsDayService {
     if (siteId != null && !siteRows.length) {
       throw patrolError(HttpStatus.NOT_FOUND, PatrolErrorCode.SITE_NOT_FOUND, 'Site not found.');
     }
-    const schedules = await this.dataSource.query(
-      `SELECT * FROM "patrol_schedules" WHERE "companyId" = $1 AND ($2::int IS NULL OR "siteId" = $2) AND "active" AND "archivedAt" IS NULL ORDER BY "id"`,
-      [actor.companyId, siteId],
-    );
+    // Schedule versions (S4 1.2.1): a schedule replaced by a timing change still counts its windows that started before the
+    // change; its successor counts only windows from then — so an edit never makes the day's earlier windows "outstanding"
+    // under the new timing, and never counts a window twice.
+    const versions = await scheduleVersionBounds(this.dataSource, actor.companyId);
+    const replaced = supersededSince(versions, new Date(0));
+    const schedules = (await this.dataSource.query(
+      `SELECT * FROM "patrol_schedules" WHERE "companyId" = $1 AND ($2::int IS NULL OR "siteId" = $2)
+          AND (("active" AND "archivedAt" IS NULL) OR "id" = ANY($3::int[])) ORDER BY "id"`,
+      [actor.companyId, siteId, replaced],
+    )).map((s: any) => withVersionBounds(s, versions));
 
     // Each site's day and its due windows, from the engine.
     const sites: PatrolWindowsDaySite[] = [];
@@ -86,15 +95,16 @@ export class PatrolWindowsDayService {
     // Which of them have a completed run (company-scoped; keys are distinct per schedule).
     const completedKeys = new Set<string>();
     if (due.length) {
+      // Matched on the window's actual start too (S4 1.2.1): a run only ever completes the window it was assigned to.
       const rows = await this.dataSource.query(
-        `SELECT DISTINCT "scheduleId", "windowKey" FROM "patrol_runs"
+        `SELECT DISTINCT "scheduleId", "windowKey", "windowStart" FROM "patrol_runs"
           WHERE "companyId" = $1 AND "status" = 'completed' AND "scheduleId" = ANY($2::int[]) AND "windowKey" = ANY($3::text[])`,
         [actor.companyId, [...new Set(due.map((d) => d.window.scheduleId))], due.map((d) => d.window.windowKey)],
       );
-      for (const r of rows) completedKeys.add(`${Number(r.scheduleId)}|${r.windowKey}`);
+      for (const r of rows) completedKeys.add(runCoverageKey(r.scheduleId, r.windowKey, null, r.windowStart));
     }
     for (const { siteId: id, window } of due) {
-      if (!completedKeys.has(`${window.scheduleId}|${window.windowKey}`)) continue;
+      if (!completedKeys.has(runCoverageKey(window.scheduleId, window.windowKey, null, window.start))) continue;
       const site = sites.find((s) => s.siteId === id)!;
       site.windowsCompleted += 1;
       site.windowsOutstanding -= 1;

@@ -15,7 +15,8 @@
  *   PE-U01  own run: a pending record and a presigned PUT to the tenant's incoming area (structure only; never printed)
  *   PE-U02  authorisation: another Guard's run, another company's Guard, company staff, switch off, location fields
  *   PE-U03  content-type allow-list, size cap, hash format; a client-supplied storage key is refused
- *   PE-U04  idempotent per clientEvidenceId (same → same record, new URL; different → 409; concurrent → one row)
+ *   PE-U04  idempotent per clientEvidenceId (same → same record, new URL; different → 409; concurrent → one row); the same
+ *           image under another clientEvidenceId of the run is accepted, verified and flagged duplicate_sha256 (review)
  *   PE-U05  unconfigured storage: 503 PATROL_EVIDENCE_STORAGE_UNAVAILABLE on every evidence route (after authorisation)
  * Completion and integrity
  *   PE-C01  verified: the bytes are copied into the server-only area and hashed there; size, type, dimensions, SHA-256,
@@ -529,6 +530,42 @@ async function main() {
       const settled = await intent(A.guard.token, A.run.id, b);
       expect(settled, 201);
       assert.deepEqual([settled.body.evidence.uploadStatus, settled.body.upload], ['verified', null]);
+      assert.deepEqual((await row(first.body.evidence.id)).syncFlags ?? [], [], 'a retry of the same photo is never a duplicate');
+
+      // S4 1.2.1 duplicates: the SAME image under a different clientEvidenceId in the same run is accepted and verified
+      // (never refused), then flagged duplicate_sha256 for review — it counts once towards verification (patrol-state.ts).
+      const runBefore = await one(`SELECT "needsReview", "syncFlags" FROM patrol_runs WHERE id = $1`, [A.run.id]);
+      const copy = body(image);
+      assert.notEqual(copy.clientEvidenceId, b.clientEvidenceId);
+      const dup = await intent(A.guard.token, A.run.id, copy);
+      expect(dup, 201, undefined, 'a second copy of an image is accepted');
+      assert.equal((await put(dup.body.upload, image)).status, 200);
+      expect(await complete(A.guard.token, dup.body.evidence.id), 200);
+      const dupRow = await row(dup.body.evidence.id);
+      assert.deepEqual([dupRow.uploadStatus, dupRow.sha256Stored, dupRow.needsReview, dupRow.syncFlags], ['verified', sha256(image), true, ['duplicate_sha256']]);
+      assert.deepEqual((await row(first.body.evidence.id)).syncFlags ?? [], [], 'the first copy is not flagged');
+      const runAfter = await one(`SELECT "needsReview", "syncFlags" FROM patrol_runs WHERE id = $1`, [A.run.id]);
+      assert.deepEqual([runAfter.needsReview, runAfter.syncFlags.includes('duplicate_sha256')], [true, true], 'the run is up for review');
+      assert.ok(runBefore.syncFlags.every((f: string) => runAfter.syncFlags.includes(f)), 'existing run flags are kept');
+      const dupAudit = await q(`SELECT "afterData" FROM audit_logs WHERE action = 'patrol.evidence_duplicate_flagged' AND "entityId" = $1`, [dup.body.evidence.id]);
+      assert.equal(dupAudit.length, 1);
+      assert.deepEqual([dupAudit[0].afterData.sameImageAsEvidenceId, dupAudit[0].afterData.flag], [first.body.evidence.id, 'duplicate_sha256']);
+      noSecretsIn(dupAudit[0], 'the duplicate audit entry');
+      // Retrying the duplicate (same clientEvidenceId) is idempotent: same record, no second flag or audit entry.
+      const dupAgain = await intent(A.guard.token, A.run.id, copy);
+      expect(dupAgain, 201);
+      assert.deepEqual([dupAgain.body.evidence.id, dupAgain.body.upload], [dup.body.evidence.id, null]);
+      expect(await complete(A.guard.token, dup.body.evidence.id), 200, undefined, 'completing again changes nothing');
+      assert.equal(await count(`SELECT count(*) FROM audit_logs WHERE action = 'patrol.evidence_duplicate_flagged' AND "entityId" = $1`, [dup.body.evidence.id]), 1);
+      assert.deepEqual((await row(dup.body.evidence.id)).syncFlags, ['duplicate_sha256']);
+      // The same image in ANOTHER run is not a duplicate of this run's photo.
+      const other = await one(`INSERT INTO patrol_runs ("companyId","siteId","shiftId","guardId","startedByUserId","startedAtDevice","clientRunId",status,"completedAtDevice","completedAtServer")
+         SELECT "companyId","siteId","shiftId","guardId","startedByUserId", now(), $2, 'completed', now(), now() FROM patrol_runs WHERE id = $1 RETURNING id`, [A.run.id, cid('run')]);
+      const e = await intent(A.guard.token, Number(other.id), body(image));
+      expect(e, 201, undefined, 'the same image for another patrol');
+      assert.equal((await put(e.body.upload, image)).status, 200);
+      expect(await complete(A.guard.token, e.body.evidence.id), 200);
+      assert.deepEqual((await row(e.body.evidence.id)).syncFlags ?? [], [], 'another run: not a duplicate');
     });
 
     await test('PE-U05-UNCONFIGURED-STORAGE-FAILS-CLOSED-WITH-503-AFTER-AUTHORISATION', async () => {
@@ -1176,6 +1213,93 @@ async function main() {
       const [audit] = await q(`SELECT * FROM audit_logs WHERE action = 'patrol.evidence_verified' AND "entityId" = $1`, [r.body.evidence.id]);
       assert.deepEqual([audit.afterData.via, audit.userId], ['maintenance', null]);
       expect(await complete(s.guard.token, r.body.evidence.id), 200, undefined, 'the app\'s late completion just returns the result');
+    });
+
+    // ═══════════════════ S4 1.2.1: photo patrols end to end ═══════════════════
+    /** A Guard on an in-progress shift at a photo-only site (no route, no checkpoint, no schedule). */
+    const photoSite = async (label: string) => {
+      const co = await mkCompany(label);
+      const site = await mkSite(co.id, `${label} Yard`);
+      const guard = await mkGuard(`${label}g`);
+      const now = Date.now();
+      const shift = await mkShift(co.id, site, guard.id, new Date(now - 2 * HOUR), new Date(now + 6 * HOUR));
+      await bookOn(shift, guard.id, new Date(now - 2 * HOUR));
+      const pol = await api('PUT', `/patrols/policies/sites/${site}`, co.token, { methods: ['photo'] });
+      expect(pol, 200);
+      assert.deepEqual(pol.body.configurationWarnings, [], 'a photo site needs no route');
+      return { co, site, guard, shift };
+    };
+    const startRun = async (tok: string, shiftId: number, startedAt: Date) => {
+      const r = await api('POST', '/patrols/runs', tok, { clientRunId: cid('run'), shiftId, startedAtDevice: startedAt.toISOString() });
+      expect(r, 201, undefined, 'start');
+      return r.body;
+    };
+    const runState = (id: number) => one(`SELECT status, "verificationStatus", "needsReview", "syncFlags", "exceptionReason" FROM patrol_runs WHERE id = $1`, [id]);
+    const runExceptions = async (id: number) => (await q(`SELECT type, note, "safetyAlertId" FROM patrol_exceptions WHERE "runId" = $1 ORDER BY id`, [id])).map((e: any) => e.type);
+
+    await test('PE-V01-PHOTO-ONLY-PATROL-START-PHOTO-COMPLETE-IS-VERIFIED-WITH-NO-CHECKPOINTS', async () => {
+      const s = await photoSite('v01');
+      const plan = await api('GET', `/patrols/mine/plan?shiftId=${s.shift}`, s.guard.token);
+      expect(plan, 200);
+      assert.deepEqual([plan.body.policy.methods, plan.body.checkpoints.length, plan.body.routes.length, plan.body.schedules.length, plan.body.configurationWarnings],
+        [['photo'], 0, 0, 0, []]);
+      const now = Date.now();
+      const run = await startRun(s.guard.token, s.shift, new Date(now - 20 * MIN));
+      const photo = await uploadPhoto(s.guard.token, run.id, jpeg());
+      assert.equal(photo.uploadStatus, 'verified');
+      const done = await api('POST', `/patrols/runs/${run.id}/complete`, s.guard.token, { completedAtDevice: new Date(now - 5 * MIN).toISOString() });
+      expect(done, 200);
+      assert.equal(done.body.status, 'completed');
+      await only(s.co.id, () => sweeper.sweep(new Date()));
+      assert.deepEqual(await runState(run.id), { status: 'completed', verificationStatus: 'verified', needsReview: false, syncFlags: [], exceptionReason: null },
+        'verified with zero checkpoints');
+      assert.deepEqual(await runExceptions(run.id), []);
+    });
+
+    await test('PE-V02-A-LATE-UPLOAD-IS-PENDING-NOT-INCOMPLETE-AND-FLIPS-TO-VERIFIED-WHEN-IT-IS-VERIFIED', async () => {
+      const s = await photoSite('v02');
+      const now = Date.now();
+      const startedAt = new Date(now - 20 * MIN);
+      const run = await startRun(s.guard.token, s.shift, startedAt);
+      const image = jpeg();
+      const pending = await intent(s.guard.token, run.id, body(image)); // taken on the phone, still uploading
+      expect(pending, 201);
+      expect(await api('POST', `/patrols/runs/${run.id}/complete`, s.guard.token, { completedAtDevice: new Date(now - 5 * MIN).toISOString() }), 200);
+      const completionDeadline = startedAt.getTime() + 45 * MIN;
+      const syncDeadline = completionDeadline + 60 * MIN;
+      await only(s.co.id, () => sweeper.sweep(new Date()));
+      assert.equal((await runState(run.id)).verificationStatus, 'pending', 'completed · pending sync');
+      await only(s.co.id, () => sweeper.sweep(new Date(completionDeadline + 1000)));
+      assert.deepEqual(await runExceptions(run.id), [], 'the photo was taken: never "incomplete" while it is on its way');
+      assert.equal((await runState(run.id)).verificationStatus, 'pending', 'not verified before the server has verified the photo');
+      await only(s.co.id, () => sweeper.sweep(new Date(syncDeadline + 1000)));
+      assert.deepEqual([(await runState(run.id)).verificationStatus, await runExceptions(run.id)], ['unverified', ['evidence_unverified']], 'reported only after the sync deadline');
+      assert.equal((await put(pending.body.upload, image)).status, 200);
+      expect(await complete(s.guard.token, pending.body.evidence.id), 200);
+      await only(s.co.id, () => sweeper.sweep(new Date(syncDeadline + 2 * HOUR)));
+      const after = await runState(run.id);
+      assert.deepEqual([after.status, after.verificationStatus], ['completed', 'verified'], 'the verified late photo verifies the run before its verification settles');
+      assert.deepEqual(await runExceptions(run.id), ['evidence_unverified'], 'nothing else raised; the earlier exception is kept');
+      const ex = await one(`SELECT * FROM patrol_exceptions WHERE "runId" = $1`, [run.id]);
+      assert.deepEqual([ex.status, ex.annotations.map((a: any) => a.kind)], ['open', ['photo_after_alert']], 'annotated, never closed automatically');
+    });
+
+    await test('PE-V03-PHOTOS-MISSING-COMPLETED-AS-INCOMPLETE-WITH-A-REASON', async () => {
+      const s = await photoSite('v03');
+      const now = Date.now();
+      const run = await startRun(s.guard.token, s.shift, new Date(now - 20 * MIN));
+      const done = await api('POST', `/patrols/runs/${run.id}/complete`, s.guard.token,
+        { completedAtDevice: new Date(now - 5 * MIN).toISOString(), exceptionReason: 'Camera would not open' });
+      expect(done, 200);
+      assert.deepEqual([done.body.status, done.body.exceptionReason], ['incomplete', 'Camera would not open']);
+      await only(s.co.id, () => sweeper.sweep(new Date()));
+      const ex = await q(`SELECT type, note FROM patrol_exceptions WHERE "runId" = $1`, [run.id]);
+      assert.deepEqual(ex.map((e: any) => [e.type, e.note]), [['patrol_incomplete', 'Camera would not open']]);
+      assert.notEqual((await runState(run.id)).verificationStatus, 'verified');
+      const long = 'x'.repeat(501);
+      const other = await startRun(s.guard.token, s.shift, new Date(now - 4 * MIN));
+      expect(await api('POST', `/patrols/runs/${other.id}/complete`, s.guard.token, { completedAtDevice: new Date(now - MIN).toISOString(), exceptionReason: long }), 400,
+        undefined, 'a reason is at most 500 characters');
     });
 
     await test('PE-W01-SWITCH-OFF-NEVER-SUSPENDS-RETENTION-HOLDS-DELETION-OR-EXPORTS', async () => {
