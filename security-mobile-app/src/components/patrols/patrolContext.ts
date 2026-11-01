@@ -23,6 +23,11 @@ export type PatrolPageContext = {
   reloadHolds: () => void;
   openRun: (runId: number) => void;
   openException: (exceptionId: number) => void;
+  /**
+   * S4 1.2.1: leave Patrol Management for Live Operations, focused on the alert's shift (the dashboard's existing focus
+   * mechanism; Live Operations has no per-alert focus). Absent where the page is mounted without the dashboard.
+   */
+  openLiveOperationsAlert?: (target: { alertId: number; shiftId: number | null }) => void;
 };
 
 /** A one-shot request to open a patrol record (from a Live Operations alert or the dashboard card). */

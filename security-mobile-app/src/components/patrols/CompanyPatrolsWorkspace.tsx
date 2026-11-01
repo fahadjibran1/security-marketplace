@@ -24,6 +24,8 @@ export type CompanyPatrolsWorkspaceProps = {
   /** A one-shot request to open a record (Live Operations alert, dashboard card). */
   target?: PatrolNavTarget | null;
   onTargetConsumed?: (requestId: number) => void;
+  /** S4 1.2.1: open Live Operations at a patrol exception's alert (its shift). */
+  onOpenLiveOperationsAlert?: (target: { alertId: number; shiftId: number | null }) => void;
   key?: string;
 };
 
@@ -32,7 +34,7 @@ export type CompanyPatrolsWorkspaceProps = {
  * patrols.view — which the session omits while the company's switch is off — nothing here mounts and nothing is
  * requested. Routine patrols, scans and photos live here; only actionable patrol alerts reach Live Operations.
  */
-export function CompanyPatrolsWorkspace({ companyKey, companyName = null, permissions, layoutWidth, target, onTargetConsumed }: CompanyPatrolsWorkspaceProps) {
+export function CompanyPatrolsWorkspace({ companyKey, companyName = null, permissions, layoutWidth, target, onTargetConsumed, onOpenLiveOperationsAlert }: CompanyPatrolsWorkspaceProps) {
   const layout = patrolLayout(layoutWidth);
   const [tab, setTab] = React.useState<PatrolTab | null>(() => resolvePatrolTab('overview', permissions));
   const [siteId, setSiteId] = React.useState<number | null>(null);
@@ -85,8 +87,9 @@ export function CompanyPatrolsWorkspace({ companyKey, companyName = null, permis
     reloadHolds: () => { void holds.reload(true); },
     openRun: (id) => { setExceptionId(null); setRunId(id); },
     openException: (id) => { setRunId(null); setExceptionId(id); },
+    openLiveOperationsAlert: onOpenLiveOperationsAlert,
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [companyKey, companyName, permissions, layout.mode, siteId, sites, policies.data, routes.data, holds.data]);
+  }), [companyKey, companyName, permissions, layout.mode, siteId, sites, policies.data, routes.data, holds.data, onOpenLiveOperationsAlert]);
 
   if (!enabled || !tab) {
     return <StatePanel title="Patrol Management is not available" message="Patrol Management is not enabled for this company, or your role does not include it." tone="empty" />;

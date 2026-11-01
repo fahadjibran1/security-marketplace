@@ -5468,6 +5468,12 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
             layoutWidth={layoutWidth}
             target={patrolTarget}
             onTargetConsumed={handlePatrolTargetConsumed}
+            onOpenLiveOperationsAlert={({ alertId, shiftId }) => {
+              // Live Operations has no per-alert focus: focus the alert's shift (its detail carries the alert), else the board.
+              if (shiftId != null) focusShiftDetail(shiftId);
+              else setActiveSection('live-operations');
+              setLiveOperationsFeedback({ tone: 'success', message: `Opening Live Operations for alert #${alertId}${shiftId != null ? ` (Shift #${shiftId})` : ''}.` });
+            }}
           />
         ) : null;
       case 'analytics':

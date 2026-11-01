@@ -285,6 +285,9 @@ export interface PatrolException {
   annotations: Array<{ at?: string; kind?: string; text?: string }>;
   alertStatus?: string | null;
   alertPriority?: string | null;
+  /** S4 1.2.1 (GET /patrols/exceptions only): who acknowledged / resolved it — a display name, never an email. */
+  acknowledgedByName?: string | null;
+  resolvedByName?: string | null;
 }
 
 /** Metadata only. An image is reached only through GET /patrols/evidence/:id/download (short-lived, audited). */

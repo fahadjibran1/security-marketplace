@@ -6,8 +6,11 @@ import { Drawer } from '../ui/Drawer';
 import { patrolFailureMessage } from './patrolAccess';
 import type { PatrolPageContext } from './patrolContext';
 import { PatrolEvidenceList } from './PatrolEvidenceList';
+import { PatrolExceptionActions } from './PatrolExceptionActions';
 import {
   runCheckpointProgress,
+  exceptionStatusLabel,
+  exceptionStatusTone,
   exceptionTypeLabel,
   formatClockDrift,
   formatPatrolDateTime,
@@ -27,7 +30,8 @@ import { Badge, BadgeRow, KeyValue, Notice, PatrolPanel, ResourceState, RowCard,
  * Live Operations alerts, and its photo evidence (patrols.evidence). Holds on the run need patrols.holds.
  */
 export function PatrolRunDetail({ ctx, runId, onClose }: { ctx: PatrolPageContext; runId: number | null; onClose: () => void }) {
-  const detail = usePatrolResource(`run|${ctx.companyKey}|${runId ?? 'none'}`, () => getPatrolRun(runId as number), { enabled: runId != null });
+  const detail = usePatrolResource(`run|${ctx.companyKey}|${runId ?? 'none'}`, () => getPatrolRun(runId as number), { enabled: runId != null, poll: true });
+  // ↑ Polls while open (S4 1.2.1), so an exception resolved elsewhere (Live Operations, another person) never reads as open.
   const [holdReason, setHoldReason] = React.useState('');
   const [holdBusy, setHoldBusy] = React.useState(false);
   const [notice, setNotice] = React.useState<{ tone: 'success' | 'error'; message: string } | null>(null);
@@ -98,16 +102,16 @@ export function PatrolRunDetail({ ctx, runId, onClose }: { ctx: PatrolPageContex
               ))}
             </PatrolPanel>
 
-            <PatrolPanel title="Exceptions and alerts">
+            <PatrolPanel title="Exceptions and alerts" subtitle="Acknowledge and resolve here or in Live Operations — a linked alert moves with its exception.">
               {data.exceptions.length === 0 ? <Text style={ui.muted}>No exceptions were raised for this patrol.</Text> : null}
               {data.exceptions.map((e) => (
                 <RowCard key={e.id}>
                   <View style={ui.actions}>
                     <Text style={ui.rowTitle}>{exceptionTypeLabel(e.type)}</Text>
-                    <Badge label={e.status === 'resolved' ? 'Resolved' : e.status === 'acknowledged' ? 'Acknowledged' : 'Open'} tone={e.status === 'resolved' ? 'success' : 'warning'} />
+                    <Badge label={exceptionStatusLabel(e.status)} tone={exceptionStatusTone(e.status)} />
                   </View>
-                  <Text style={ui.rowMeta}>{e.safetyAlertId ? `Live Operations alert #${e.safetyAlertId} — acknowledge and resolve it in Live Operations.` : 'Recorded for review (no Live Operations alert).'}</Text>
-                  {e.resolution ? <Text style={ui.rowMeta}>Resolution: {e.resolution.replace(/_/g, ' ')}</Text> : null}
+                  <Text style={ui.rowMeta}>{e.safetyAlertId ? `Live Operations alert #${e.safetyAlertId}.` : 'Recorded for review (no Live Operations alert).'}</Text>
+                  <PatrolExceptionActions ctx={ctx} exception={e} onChanged={() => { void detail.reload(true); }} />
                   {e.annotations.map((a, i) => (a.text ? <Text key={i} style={ui.rowMeta}>{a.text}</Text> : null))}
                 </RowCard>
               ))}
@@ -135,7 +139,9 @@ export function PatrolRunDetail({ ctx, runId, onClose }: { ctx: PatrolPageContex
 
 /** An exception without a run (a missed window): what was due, where, and its alert. */
 export function PatrolExceptionDetail({ ctx, exceptionId, onClose }: { ctx: PatrolPageContext; exceptionId: number | null; onClose: () => void }) {
-  const list = usePatrolResource(`exc|${ctx.companyKey}|${exceptionId ?? 'none'}`, () => listPatrolExceptions({}), { enabled: exceptionId != null });
+  const list = usePatrolResource(`exc|${ctx.companyKey}|${exceptionId ?? 'none'}`, () => listPatrolExceptions({}), { enabled: exceptionId != null, poll: true });
+  // ↑ Polls like the overview (PATROL_POLL_MS) while open, re-reads after every action (onChanged) and on reopen (the key
+  // changes when the drawer closes), so a cached "Open" never outlives the server's "Resolved" (S4 1.2.1).
   const e = (list.data ?? []).find((x) => x.id === exceptionId) ?? null;
   const zone = ctx.siteZone(e?.siteId);
   return (
@@ -144,13 +150,12 @@ export function PatrolExceptionDetail({ ctx, exceptionId, onClose }: { ctx: Patr
         {ResourceState({ resource: list, empty: list.data != null && !e, emptyMessage: 'This exception is not in the latest patrol exceptions.', what: 'patrol exception' })}
         {e ? (
           <PatrolPanel title={`Exception #${e.id}`} subtitle={`Times in site time (${zone}).`}>
-            <KeyValue label="Status" value={e.status === 'resolved' ? 'Resolved' : e.status === 'acknowledged' ? 'Acknowledged' : 'Open'} />
             <KeyValue label="Window" value={`${formatPatrolDateTime(e.windowStart, zone)} – ${formatPatrolDateTime(e.windowEnd, zone)}`} />
             <KeyValue label="Raised" value={formatPatrolDateTime(e.createdAt, zone)} />
             {e.shiftId ? <KeyValue label="Shift" value={`#${e.shiftId}`} /> : null}
             <KeyValue label="Live Operations alert" value={e.safetyAlertId ? `#${e.safetyAlertId}${e.alertStatus ? ` (${e.alertStatus})` : ''}` : 'None'} />
-            {e.resolution ? <KeyValue label="Resolution" value={e.resolution.replace(/_/g, ' ')} /> : null}
             {e.lateEvidenceAt ? <Notice tone="info" message={`Evidence reached S4 after the alert (${formatPatrolDateTime(e.lateEvidenceAt, zone)}). Confirm before resolving.`} /> : null}
+            <PatrolExceptionActions ctx={ctx} exception={e} onChanged={() => { void list.reload(true); }} />
             {e.runId ? <Button label="Open the patrol" variant="secondary" onPress={() => ctx.openRun(e.runId as number)} /> : null}
           </PatrolPanel>
         ) : null}

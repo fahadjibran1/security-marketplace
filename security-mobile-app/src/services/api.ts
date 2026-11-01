@@ -2048,6 +2048,15 @@ export function listPatrolExceptions(params: { siteId?: number | null; status?: 
   return request<PatrolException[]>(`/patrols/exceptions${patrolQuery(params)}`);
 }
 
+/** S4 1.2.1: the EXISTING patrol exception actions (alerts.manage or patrols.manage; a linked alert moves with it). */
+export function acknowledgePatrolException(id: number) {
+  return request<PatrolException>(`/patrols/exceptions/${id}/acknowledge`, { method: 'POST' });
+}
+
+export function resolvePatrolException(id: number, input: { resolutionReason: string; resolutionNote?: string }) {
+  return request<PatrolException>(`/patrols/exceptions/${id}/resolve`, { method: 'POST', body: JSON.stringify(input) });
+}
+
 export function getPatrolPolicies() {
   return request<PatrolPolicies>('/patrols/policies');
 }

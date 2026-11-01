@@ -57,6 +57,23 @@ export function exceptionTypeLabel(type: string | null | undefined): string {
   }
 }
 
+/**
+ * A patrol exception's status, as the server states it (S4 1.2.1). Every screen uses this one mapping, so a status is
+ * never shown as "Open" unless the server says open; an unknown value is shown as itself, never guessed.
+ */
+export function exceptionStatusLabel(status: string | null | undefined): string {
+  switch (status) {
+    case 'open': return 'Open';
+    case 'acknowledged': return 'Acknowledged';
+    case 'resolved': return 'Resolved';
+    default: return status ? String(status).replace(/_/g, ' ') : 'Unknown';
+  }
+}
+
+export function exceptionStatusTone(status: string | null | undefined): PatrolTone {
+  return status === 'resolved' ? 'success' : status === 'acknowledged' ? 'info' : 'warning';
+}
+
 const SYNC_FLAG_LABELS: Record<string, string> = {
   post_shift_creation: 'Reached S4 after the shift ended',
   outside_on_duty_interval: 'Outside the on-duty interval',
