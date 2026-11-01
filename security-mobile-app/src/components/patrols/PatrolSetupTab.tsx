@@ -16,6 +16,7 @@ import { Button } from '../ui/Button';
 import type { PatrolPageContext } from './patrolContext';
 import { formatPatrolDateTime, patrolColumn, patrolColumns } from './patrolPresentation';
 import { isServerLabelPayload, renderLabelSheetHtml } from './patrolQr';
+import { PatrolCheckpointCamera } from './PatrolCheckpointCamera';
 import { PatrolQrCode } from './PatrolQrCode';
 import {
   ANCHOR_OPTIONS,
@@ -174,8 +175,9 @@ export function PatrolSetupTab({ ctx, onSelectSite }: { ctx: PatrolPageContext; 
     if (!printIncidentReport(html)) setFlash({ tone: 'error', message: 'The browser blocked the print window. Allow pop-ups for S4 and try again.' });
   };
 
-  const confirmScan = async (cp: PatrolSetupCheckpoint) => {
-    const payload = scanText.trim();
+  /** The test scan: what a handheld scanner typed / was pasted, or (camera) what the camera read — never shown. */
+  const confirmScan = async (cp: PatrolSetupCheckpoint, fromCamera?: string) => {
+    const payload = (fromCamera ?? scanText).trim();
     if (!payload) { setFlash({ tone: 'error', message: 'Scan the printed label (or paste what the scanner read) first.' }); return; }
     setScanBusy(true); setFlash(null);
     try {
@@ -284,6 +286,7 @@ export function PatrolSetupTab({ ctx, onSelectSite }: { ctx: PatrolPageContext; 
                   {canManage ? (
                     scanFor === cp.id ? (
                       <View style={{ gap: 8 }}>
+                        <PatrolCheckpointCamera label={cp.label} disabled={scanBusy} onScanned={(payload) => { void confirmScan(cp, payload); }} />
                         <TextField
                           label={`Test scan of "${cp.label}"`}
                           value={scanText}

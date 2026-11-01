@@ -1650,7 +1650,7 @@ test('PM-41-EVIDENCE-ORIGINAL-VS-STAMPED-NO-LINK-IN-TEXT-LOGS-OR-STORAGE', async
   // Stamped: derived by the server, no link of any kind.
   await pressByText(root, 'Stamped');
   assert.equal(root.findAll((n) => n.props && n.props.accessibilityLabel === 'Patrol photo 900 (original)').length, 0, 'switching drops the original');
-  assert.ok(textOf(root).includes('www.sfour.co.uk printed on it'));
+  assert.ok(textOf(root).includes('a band added below it giving the company, client, site, Guard, both times and www.sfour.co.uk'));
   await pressByText(root, 'View stamped');
   assert.deepEqual(calls.filter(([k]) => k === 'getPatrolEvidenceStampedImage').map(([, a]) => a), [[900]]);
   assert.equal(calls.filter(([k]) => k === 'getPatrolEvidenceLink').length, 1, 'the stamped view asks for no link');
@@ -1826,6 +1826,135 @@ test('PM-43-NARROW-WIDTHS-STACK-IN-NORMAL-FLOW-NO-FLEX-COLUMNS-NO-OVERLAP', asyn
   for (const file of ['PatrolSetupTab.tsx', 'PatrolEvidenceBrowser.tsx']) {
     assert.doesNotMatch(stripComments(read(`src/components/patrols/${file}`)), /position: 'absolute'|position: 'fixed'|\bheight: \d+, (?!resizeMode)/, `${file}: no absolute or fixed-height containers`);
   }
+});
+
+test('PM-44-CAMERA-TEST-SCAN-IS-BUTTON-GATED-STOPS-EVERY-TRACK-AND-FALLS-BACK-TO-MANUAL', async () => {
+  const cam = loadSource('src/components/patrols/checkpointCamera.ts');
+  const env = cam.cameraEnvironment;
+  const saved = { ...env };
+  const tracksOf = [];
+  const stream = () => { const tracks = [{ stopped: false, stop() { this.stopped = true; } }]; tracksOf.push(tracks); return { getTracks: () => tracks }; };
+  let gum = [];
+  let decodes = [];
+  const useCamera = ({ result = () => stream(), decode = async () => null, secure = true, devices = true } = {}) => {
+    gum = []; decodes = [];
+    env.secureContext = () => secure;
+    env.mediaDevices = () => (devices ? { getUserMedia: async (c) => { gum.push(c); return result(); } } : null);
+    env.createDecoder = () => ({ engine: 'built-in', decode: async (v) => { decodes.push(v); return decode(); } });
+    env.intervalMs = 5;
+    env.timeoutMs = 60_000;
+  };
+  const wait = async (ms) => { await act(async () => { await new Promise((r) => setTimeout(r, ms)); }); await settle(); };
+  const open = async () => {
+    const renderer = await mountPrimary({ permissions: perms('owner') });
+    await pressByText(renderer.root, 'Setup');
+    await pressByText(renderer.root, 'Test scan Gate 1');
+    return renderer;
+  };
+  const err = (name) => Object.assign(new Error(name), { name });
+  try {
+    // Nothing touches the camera until the button is pressed; then exactly one request, rear camera preferred.
+    answers = baseAnswers({ getPatrolSiteSetup: setupView(), confirmPatrolCheckpoint: (id) => setupCheckpoint(id, 'Gate 1', true) });
+    calls.length = 0;
+    useCamera({ decode: async () => (decodes.length >= 2 ? LABEL_PAYLOAD : null) });
+    let r = await open();
+    assert.ok(has(r.root, 'Scan Gate 1 with camera') && has(r.root, 'Confirm scan'), 'camera alongside the manual input');
+    assert.equal(gum.length, 0, 'no camera request before the press');
+    const before = logged.length;
+    await pressByText(r.root, 'Scan Gate 1 with camera');
+    await wait(60);
+    assert.equal(gum.length, 1);
+    assert.deepEqual(gum[0], { audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } } });
+    // Success: the label goes to the existing confirm call; the camera is off; the payload is never shown or logged.
+    const confirm = calls.filter(([k]) => k === 'confirmPatrolCheckpoint');
+    assert.deepEqual(confirm.map(([, a]) => a), [[1, { scanPayload: LABEL_PAYLOAD, siteId: 10 }]]);
+    assert.ok(tracksOf[tracksOf.length - 1].every((t) => t.stopped), 'every track stopped on success');
+    assert.ok(!textOf(r.root).includes(LABEL_PAYLOAD) && !logged.slice(before).some((l) => l.includes(LABEL_PAYLOAD)), 'the payload is never shown or logged');
+    assert.ok(textOf(r.root).includes('"Gate 1" confirmed'));
+    act(() => r.unmount());
+
+    // Cancel: a QR that is not a label is reported, nothing is confirmed, Stop camera stops every track.
+    answers = baseAnswers({ getPatrolSiteSetup: setupView() });
+    calls.length = 0;
+    useCamera({ decode: async () => 'https://example.invalid/not-a-label' });
+    r = await open();
+    await pressByText(r.root, 'Scan Gate 1 with camera');
+    await wait(40);
+    assert.ok(textOf(r.root).includes('That QR code is not an S4 checkpoint label.'));
+    await pressByText(r.root, 'Stop camera');
+    assert.ok(tracksOf[tracksOf.length - 1].every((t) => t.stopped), 'cancel stops every track');
+    assert.equal(calls.some(([k]) => k === 'confirmPatrolCheckpoint'), false);
+    // Unmount while scanning stops the camera too.
+    await pressByText(r.root, 'Scan Gate 1 with camera');
+    await wait(20);
+    const live = tracksOf[tracksOf.length - 1];
+    assert.ok(live.every((t) => !t.stopped));
+    act(() => r.unmount());
+    assert.ok(live.every((t) => t.stopped), 'unmount stops every track');
+
+    // Each problem: plain English, and the manual input still confirms.
+    const cases = [
+      [{ result: () => { throw err('NotAllowedError'); } }, 'Camera access is blocked for this page.'],
+      [{ result: () => { throw err('NotFoundError'); } }, 'No camera was found on this device.'],
+      [{ result: () => { throw err('NotReadableError'); } }, 'The camera is being used by another app or browser tab.'],
+      [{ devices: false }, 'This browser cannot open a camera from this page.'],
+      [{ secure: false }, 'The camera can only be used on a secure (https) page.'],
+    ];
+    for (const [setup, message] of cases) {
+      answers = baseAnswers({ getPatrolSiteSetup: setupView(), confirmPatrolCheckpoint: (id) => setupCheckpoint(id, 'Gate 1', true) });
+      calls.length = 0;
+      useCamera(setup);
+      r = await open();
+      await pressByText(r.root, 'Scan Gate 1 with camera');
+      await wait(20);
+      const text = textOf(r.root);
+      assert.ok(text.includes(message), message);
+      assert.ok(text.includes('You can still scan with a handheld scanner, or type or paste the label text below.'), `${message}: manual fallback`);
+      assert.equal(setup.devices === false || setup.secure === false ? gum.length : 1, setup.devices === false || setup.secure === false ? 0 : 1);
+      await typeInto(r.root, 'Test scan of "Gate 1"', LABEL_PAYLOAD);
+      await pressByText(r.root, 'Confirm scan');
+      assert.deepEqual(calls.filter(([k]) => k === 'confirmPatrolCheckpoint').map(([, a]) => a), [[1, { scanPayload: LABEL_PAYLOAD, siteId: 10 }]], `${message}: manual still works`);
+      act(() => r.unmount());
+    }
+
+    // Decode timeout: the camera is turned off and the person is told what to do.
+    answers = baseAnswers({ getPatrolSiteSetup: setupView() });
+    useCamera();
+    env.timeoutMs = 60;
+    r = await open();
+    await pressByText(r.root, 'Scan Gate 1 with camera');
+    await wait(150);
+    assert.ok(textOf(r.root).includes('No checkpoint label was read within'), 'timeout message');
+    assert.ok(tracksOf[tracksOf.length - 1].every((t) => t.stopped), 'timeout stops every track');
+    act(() => r.unmount());
+  } finally {
+    Object.assign(env, saved);
+  }
+  // The rules, and the decoder bundled for the web only.
+  assert.equal(cam.classifyCameraError(err('SecurityError')), 'denied');
+  assert.equal(cam.classifyCameraError(err('OverconstrainedError')), 'no_camera');
+  assert.equal(cam.classifyCameraError(err('AbortError')), 'in_use');
+  assert.equal(cam.classifyCameraError(new Error('x')), 'error');
+  const nativeDecoder = stripComments(read('src/components/patrols/checkpointQrDecoder.ts'));
+  const webDecoder = stripComments(read('src/components/patrols/checkpointQrDecoder.web.ts'));
+  assert.ok(!/jsqr/i.test(nativeDecoder) && /from 'jsqr'/.test(webDecoder), 'jsQR only in the .web.ts file (native bundles never include it)');
+  assert.ok(!/https?:\/\//.test(webDecoder), 'no decoder loaded from the network');
+  const importers = [];
+  const walk = (dir) => { for (const f of fs.readdirSync(dir)) { const p = path.join(dir, f); if (fs.statSync(p).isDirectory()) walk(p); else if (/\.(t|j)sx?$/.test(f) && /from 'jsqr'|require\('jsqr'\)/.test(fs.readFileSync(p, 'utf8'))) importers.push(path.relative(ROOT, p).replace(/\\/g, '/')); } };
+  walk(path.join(ROOT, 'src'));
+  assert.deepEqual(importers, ['src/components/patrols/checkpointQrDecoder.web.ts']);
+  const pkg = JSON.parse(read('package.json'));
+  assert.equal(pkg.dependencies.jsqr, '1.4.0', 'exact-pinned');
+  assert.equal(JSON.parse(read('package-lock.json')).packages['node_modules/jsqr'].version, '1.4.0');
+  assert.equal(JSON.parse(read('package-lock.json')).packages['node_modules/jsqr'].license, 'Apache-2.0');
+});
+
+test('PM-45-NO-PROTOCOL-BEFORE-THE-S4-ADDRESS-ANYWHERE-USER-VISIBLE', () => {
+  const roots = [path.join(ROOT, 'src'), path.join(ROOT, '..', 'security-backend-nest', 'src')];
+  const hits = [];
+  const walk = (dir) => { for (const f of fs.readdirSync(dir)) { const p = path.join(dir, f); if (fs.statSync(p).isDirectory()) walk(p); else if (/\.(t|j)sx?$/.test(f) && /https?:\/\/www\.sfour\.co\.uk/i.test(fs.readFileSync(p, 'utf8'))) hits.push(p); } };
+  roots.forEach(walk);
+  assert.deepEqual(hits, [], 'the evidence brand reads exactly www.sfour.co.uk');
 });
 
 (async () => {

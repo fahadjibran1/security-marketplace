@@ -261,7 +261,7 @@ export function PatrolEvidenceRecord({ ctx, card, timeZone, siteName }: { ctx: P
           <Text style={ui.muted}>
             {view === 'original'
               ? 'The photo exactly as the Guard\'s phone sent it, opened through a short-lived link. Each view is recorded with your reason.'
-              : 'A copy with the company, client, site, Guard, both times and www.sfour.co.uk printed on it, made for you on request. The original is unchanged; each view is recorded.'}
+              : 'The whole photo with a band added below it giving the company, client, site, Guard, both times and www.sfour.co.uk, made for you on request. The original is unchanged; each view is recorded.'}
           </Text>
           {view === 'original' ? (
             <ChipSelect label="Why are you viewing these photos?" scroll options={PATROL_EVIDENCE_ACCESS_PURPOSES.map((p) => ({ value: p, label: PURPOSE_LABELS[p] }))} value={purpose} onChange={setPurpose} />
