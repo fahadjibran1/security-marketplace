@@ -63,6 +63,14 @@ export class PatrolSchedule {
   @Column({ type: 'timestamptz', nullable: true })
   supersededAt!: Date | null;
 
+  /**
+   * Migration 74 (S4 1.3.0 B1): 'clock' (site-local wall-clock windows, every schedule before 1.3.0) or 'shift' (windows
+   * anchored to each required shift, patrol-shift-windows.ts). A shift-anchored row is managed by the site setup and is
+   * stored inactive with startsOn = endsOn = 2000-01-01, so the 1.2.1 clock engine yields no window for it on a rollback.
+   */
+  @Column({ type: 'varchar', length: 16, default: 'clock' })
+  anchor!: 'clock' | 'shift';
+
   @Column({ type: 'int', nullable: true })
   createdByUserId!: number | null;
 

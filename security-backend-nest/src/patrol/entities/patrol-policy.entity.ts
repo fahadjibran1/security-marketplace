@@ -1,5 +1,5 @@
 import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm';
-import type { PatrolMethod, PatrolOrderMode, PatrolRequirementScope } from '../patrol-constants';
+import type { PatrolMethod, PatrolOrderMode, PatrolRequirementScope, PatrolSetupMode, PatrolWindowAnchor } from '../patrol-constants';
 
 /**
  * A patrol policy (Migration 68): the company default (siteId NULL) or one site's settings. A site without its own row
@@ -76,6 +76,23 @@ export class PatrolPolicy {
 
   @Column({ type: 'int', nullable: true })
   updatedByUserId!: number | null;
+
+  /**
+   * Migration 74 (S4 1.3.0 B1): the site's patrol setup. setupMode 'every_shift' / 'per_shift' / 'off' (NULL: never set
+   * up — no shift-based windows); windowAnchor 'scheduled_start' (NULL, the default) or 'book_on'; setupConfirmedAt /
+   * setupConfirmedByUserId: when (and by whom) the setup was activated. Only a SITE row's setup is read.
+   */
+  @Column({ type: 'varchar', length: 16, nullable: true })
+  setupMode!: PatrolSetupMode | null;
+
+  @Column({ type: 'varchar', length: 16, nullable: true })
+  windowAnchor!: PatrolWindowAnchor | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  setupConfirmedAt!: Date | null;
+
+  @Column({ type: 'int', nullable: true })
+  setupConfirmedByUserId!: number | null;
 
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt!: Date;

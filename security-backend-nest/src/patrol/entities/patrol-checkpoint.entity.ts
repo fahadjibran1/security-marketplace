@@ -57,6 +57,19 @@ export class PatrolCheckpoint {
   @Column({ type: 'int', nullable: true })
   revokedByUserId!: number | null;
 
+  /**
+   * Migration 74: the authorised test scan of the CURRENT label (patrols.manage): when, by whom, and the tokenVersion it
+   * proved. All three or none. Rotating or revoking clears it; only a confirmed checkpoint joins the automatic route.
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  confirmedAt!: Date | null;
+
+  @Column({ type: 'int', nullable: true })
+  confirmedByUserId!: number | null;
+
+  @Column({ type: 'int', nullable: true })
+  confirmedTokenVersion!: number | null;
+
   @Column({ type: 'int', nullable: true })
   createdByUserId!: number | null;
 

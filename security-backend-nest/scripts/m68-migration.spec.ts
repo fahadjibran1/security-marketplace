@@ -149,13 +149,15 @@ async function main() {
     await test('M68-01-A-67-DATABASE-MIGRATES-TO-68-AND-ONLY-69-FOLLOWS', () => {
       assert.equal(applied.length, 1, 'only 68 is pending on a 67 database');
       assert.equal(applied[0].name, MIGRATION_68);
-      assert.equal(allFiles.length, 73);
+      assert.equal(allFiles.length, 74);
       assert.equal(allFiles[67], '1720900000014-AddPatrolManagement.ts');
       assert.equal(allFiles[68], '1720900000015-AddPatrolScheduling.ts', 'Migration 69 follows 68 and is certified by m69-migration.spec.ts');
       assert.equal(allFiles[69], '1720900000016-AddPatrolEvidenceStorage.ts', 'Migration 70 follows 69 and is certified by m70-migration.spec.ts');
       assert.equal(allFiles[70], '1720900000017-AddPatrolSweepReconciliation.ts', 'Migration 71 follows 70 and is certified by m71-migration.spec.ts');
       assert.equal(allFiles[71], '1720900000018-AddPatrolSyncRecoveryGrants.ts', 'Migration 72 follows 71 and is certified by m72-migration.spec.ts');
       assert.equal(allFiles[72], '1720900000020-AddPatrolScheduleSuccessors.ts', 'Migration 73 follows 72 (1720900000019 is reserved by another branch) and is certified by m73-migration.spec.ts');
+
+      assert.equal(allFiles[73], '1720900000021-AddPatrolSiteSetup.ts', 'Migration 74 follows 73 and is certified by m74-migration.spec.ts');
     });
     const head = await schema();
 
@@ -426,10 +428,12 @@ async function main() {
       const m72 = /^CREATE TABLE "patrol_sync_recovery_grants" |^CREATE INDEX "IDX_patrol_sync_recovery_grants_(active|company)" |^ALTER TABLE "patrol_sync_recovery_grants" /;
       // …and Migration 73's schedule successor columns and indexes (m73-migration.spec.ts M73-08 certifies them).
       const m73 = /^ALTER TABLE "patrol_schedules" ADD "superseded(ByScheduleId|At)" |^CREATE (UNIQUE )?INDEX "(UQ_patrol_schedules_superseded_by|IDX_patrol_schedules_superseded)" /;
-      const semantic = drift.filter((x) => !m69.test(x) && !m70.test(x) && !m71.test(x) && !m72.test(x) && !m73.test(x) &&
+
+      const m74 = /^ALTER TABLE "(patrol_policies|patrol_schedules|patrol_routes|patrol_checkpoints|shifts)" ADD "(setupMode|windowAnchor|setupConfirmedAt|setupConfirmedByUserId|anchor|kind|supersededByRouteId|supersededAt|confirmedAt|confirmedByUserId|confirmedTokenVersion|patrolRequirement)" |^CREATE (UNIQUE )?INDEX "(UQ_patrol_routes_superseded_by|IDX_patrol_routes_superseded)" /;
+      const semantic = drift.filter((x) => !m69.test(x) && !m70.test(x) && !m71.test(x) && !m72.test(x) && !m73.test(x) && !m74.test(x) &&
         /CREATE TABLE|DROP TABLE|CREATE TYPE|DROP TYPE|ALTER TYPE|ALTER TABLE.*ALTER COLUMN|ALTER TABLE.*DROP COLUMN|ALTER TABLE.*ADD "/i.test(x));
       assert.deepEqual(semantic, [], `semantic drift (the release gate would fail):\n${semantic.join('\n')}`);
-      const ours = drift.filter((x) => /"patrol_|patrolsEnabled/.test(x) && !m69.test(x) && !m70.test(x) && !m71.test(x) && !m72.test(x) && !m73.test(x));
+      const ours = drift.filter((x) => /"patrol_|patrolsEnabled/.test(x) && !m69.test(x) && !m70.test(x) && !m71.test(x) && !m72.test(x) && !m73.test(x) && !m74.test(x));
       // Foreign keys (most are composite, which TypeORM cannot declare) and CHECKs live in the migration only, as for
       // several existing tables; every column, unique key and index agrees.
       const unexpected = ours.filter((x) => !/^ALTER TABLE "patrol_[a-z_]+" DROP CONSTRAINT "(FK|CHK)_patrol_/.test(x));

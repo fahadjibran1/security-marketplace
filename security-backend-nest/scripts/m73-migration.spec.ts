@@ -163,9 +163,11 @@ async function main() {
 
     await test('M73-01-A-72-DATABASE-MIGRATES-TO-73-AND-73-IS-LAST', () => {
       assert.deepEqual(applied.map((m) => m.name), [MIGRATION_73], 'only 73 is pending on a 72 database');
-      assert.equal(allFiles.length, 73);
+      assert.equal(allFiles.length, 74);
       assert.equal(allFiles[71], '1720900000018-AddPatrolSyncRecoveryGrants.ts', 'Migration 72 comes just before 73');
       assert.equal(allFiles[72], '1720900000020-AddPatrolScheduleSuccessors.ts', '1720900000019 is reserved by another branch');
+
+      assert.equal(allFiles[73], '1720900000021-AddPatrolSiteSetup.ts', 'Migration 74 follows 73 and is certified by m74-migration.spec.ts');
     });
     const head = await schema();
 
@@ -259,7 +261,9 @@ async function main() {
 
     await test('M73-08-NO-SEMANTIC-DRIFT', async () => {
       const drift = (await ds.driver.createSchemaBuilder().log()).upQueries.map((x) => x.query);
-      const semantic = drift.filter((x) =>
+      // Migration 74 (1720900000021, certified by m74-migration.spec.ts) follows 73: its columns and indexes are not drift here.
+      const m74 = /^ALTER TABLE "(patrol_policies|patrol_schedules|patrol_routes|patrol_checkpoints|shifts)" ADD "(setupMode|windowAnchor|setupConfirmedAt|setupConfirmedByUserId|anchor|kind|supersededByRouteId|supersededAt|confirmedAt|confirmedByUserId|confirmedTokenVersion|patrolRequirement)" |^CREATE (UNIQUE )?INDEX "(UQ_patrol_routes_superseded_by|IDX_patrol_routes_superseded)" /;
+      const semantic = drift.filter((x) => !m74.test(x) &&
         /CREATE TABLE|DROP TABLE|CREATE TYPE|DROP TYPE|ALTER TYPE|ALTER TABLE.*ALTER COLUMN|ALTER TABLE.*DROP COLUMN|ALTER TABLE.*ADD "/i.test(x));
       assert.deepEqual(semantic, [], `semantic drift (the release gate would fail):\n${semantic.join('\n')}`);
       const ours = drift.filter((x) => /patrol_schedules.*superseded|_patrol_schedules_superseded/i.test(x));

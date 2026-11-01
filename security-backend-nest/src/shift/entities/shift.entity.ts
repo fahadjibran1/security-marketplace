@@ -74,6 +74,18 @@ export class Shift {
   @Column({ default: 'unfilled' })
   status!: string;
 
+  /**
+   * Migration 74 (S4 1.3.0 B1): whether this shift must patrol — 'required', 'not_required', or null for the site's
+   * default (its patrol setup mode). `select: false`, as companies.patrolsEnabled: the raw value is never serialised with
+   * the shift; it is read and written explicitly (ShiftService, patrol/patrol-shift-requirement.ts), and shift reads of a
+   * company with Patrols on expose the RESOLVED view as `patrolRequirement` below.
+   */
+  @Column({ name: 'patrolRequirement', type: 'varchar', length: 16, nullable: true, select: false })
+  patrolRequirementSetting?: 'required' | 'not_required' | null;
+
+  /** Not a column: the resolved patrol requirement attached to shift reads (value, effectiveRequired, source, summary). */
+  patrolRequirement?: unknown;
+
   @OneToMany(() => Timesheet, (timesheet) => timesheet.shift)
   timesheets?: Timesheet[];
 

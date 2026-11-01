@@ -86,11 +86,11 @@ async function main() {
       assert.equal(applied.length, 61, `61 migrations apply to a fresh database (got ${applied.length})`);
       assert.equal(applied[59].name, MIGRATION_60);
       assert.equal(applied[60].name, MIGRATION_61, 'Migration 61 is the subject');
-      assert.equal(allMigrationFiles.length, 73, 'exactly 73 migration files');
+      assert.equal(allMigrationFiles.length, 74, 'exactly 74 migration files');
       assert.deepEqual(
         allMigrationFiles.slice(61),
-        ['1720900000008-AddGuardComplianceChecks.ts', '1720900000009-AddComplianceLapseAlerts.ts', '1720900000010-AddShiftAmendments.ts', '1720900000011-AddWelfarePushReminders.ts', '1720900000012-AddGuardNotificationDispatches.ts', '1720900000013-AddManualAttendance.ts', '1720900000014-AddPatrolManagement.ts', '1720900000015-AddPatrolScheduling.ts', '1720900000016-AddPatrolEvidenceStorage.ts', '1720900000017-AddPatrolSweepReconciliation.ts', '1720900000018-AddPatrolSyncRecoveryGrants.ts', '1720900000020-AddPatrolScheduleSuccessors.ts'],
-        'the only migrations after 61 are 62 (AddGuardComplianceChecks), 63 (AddComplianceLapseAlerts), 64 (AddShiftAmendments), 65 (AddWelfarePushReminders), 66 (AddGuardNotificationDispatches), 67 (AddManualAttendance), 68 (AddPatrolManagement), 69 (AddPatrolScheduling), 70 (AddPatrolEvidenceStorage), 71 (AddPatrolSweepReconciliation), 72 (AddPatrolSyncRecoveryGrants) and 73 (AddPatrolScheduleSuccessors)',
+        ['1720900000008-AddGuardComplianceChecks.ts', '1720900000009-AddComplianceLapseAlerts.ts', '1720900000010-AddShiftAmendments.ts', '1720900000011-AddWelfarePushReminders.ts', '1720900000012-AddGuardNotificationDispatches.ts', '1720900000013-AddManualAttendance.ts', '1720900000014-AddPatrolManagement.ts', '1720900000015-AddPatrolScheduling.ts', '1720900000016-AddPatrolEvidenceStorage.ts', '1720900000017-AddPatrolSweepReconciliation.ts', '1720900000018-AddPatrolSyncRecoveryGrants.ts', '1720900000020-AddPatrolScheduleSuccessors.ts', '1720900000021-AddPatrolSiteSetup.ts'],
+        'the only migrations after 61 are 62 (AddGuardComplianceChecks), 63 (AddComplianceLapseAlerts), 64 (AddShiftAmendments), 65 (AddWelfarePushReminders), 66 (AddGuardNotificationDispatches), 67 (AddManualAttendance), 68 (AddPatrolManagement), 69 (AddPatrolScheduling), 70 (AddPatrolEvidenceStorage), 71 (AddPatrolSweepReconciliation), 72 (AddPatrolSyncRecoveryGrants), 73 (AddPatrolScheduleSuccessors) and 74 (AddPatrolSiteSetup)',
       );
     });
     const head = await snapshot();
