@@ -137,7 +137,6 @@ async function main() {
       assert.equal(allFiles[70], '1720900000017-AddPatrolSweepReconciliation.ts', 'Migration 71 follows 70 and is certified by m71-migration.spec.ts');
       assert.equal(allFiles[71], '1720900000018-AddPatrolSyncRecoveryGrants.ts', 'Migration 72 follows 71 and is certified by m72-migration.spec.ts');
       assert.equal(allFiles[72], '1720900000020-AddPatrolScheduleSuccessors.ts', 'Migration 73 follows 72 (1720900000019 is reserved by another branch) and is certified by m73-migration.spec.ts');
-
       assert.equal(allFiles[73], '1720900000021-AddPatrolSiteSetup.ts', 'Migration 74 follows 73 and is certified by m74-migration.spec.ts');
     });
     const head = await schema();
@@ -291,7 +290,9 @@ async function main() {
       const m71 = /^CREATE TABLE "patrol_(sweep_watermarks|reconciliation_runs)" |^ALTER TABLE "patrol_exceptions" ADD "reconciliationRunId" |^ALTER TABLE "safety_alerts" ADD "patrolReconciliationRunId" |^CREATE (UNIQUE )?INDEX "(IDX_patrol_exceptions_reconciliation|uq_safety_alerts_patrol_reconciliation|UQ_patrol_reconciliation_runs_running|IDX_patrol_reconciliation_runs_company)" |^ALTER TABLE "patrol_(sweep_watermarks|reconciliation_runs)" /;
       // …and Migration 72's recovery grant table and its indexes (m72-migration.spec.ts M72-09 certifies them).
       const m72 = /^CREATE TABLE "patrol_sync_recovery_grants" |^CREATE INDEX "IDX_patrol_sync_recovery_grants_(active|company)" |^ALTER TABLE "patrol_sync_recovery_grants" /;
-      const semantic = drift.filter((x) => !m67.test(x) && !m68.test(x) && !m69.test(x) && !m70.test(x) && !m71.test(x) && !m72.test(x) &&
+      // …and Migration 74's shifts."patrolRequirement" (m74-migration.spec.ts M74-08 certifies it; its patrol columns are inside the tables above).
+      const m74 = /^ALTER TABLE "shifts" ADD "patrolRequirement" /;
+      const semantic = drift.filter((x) => !m67.test(x) && !m68.test(x) && !m69.test(x) && !m70.test(x) && !m71.test(x) && !m72.test(x) && !m74.test(x) &&
         /CREATE TABLE|DROP TABLE|CREATE TYPE|DROP TYPE|ALTER TYPE|ALTER TABLE.*ALTER COLUMN|ALTER TABLE.*DROP COLUMN|ALTER TABLE.*ADD "/i.test(x));
       assert.deepEqual(semantic, [], `semantic drift (the release gate would fail):\n${semantic.join('\n')}`);
       console.log(`      (diagnostic-only drift elsewhere, unchanged by 66: ${drift.length} statement(s))`);
