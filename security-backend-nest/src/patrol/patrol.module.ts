@@ -22,6 +22,8 @@ import { PatrolGuardService } from './patrol-guard.service';
 import { PatrolQueryService } from './patrol-query.service';
 import { PatrolRecoveryGrantService } from './patrol-recovery-grant.service';
 import { PatrolSweepService } from './patrol-sweep.service';
+import { PatrolSetupService } from './patrol-setup.service';
+import { PatrolEvidenceReadService } from './evidence/patrol-evidence-read.service';
 import { PatrolWindowService } from './patrol-window.service';
 import { PatrolWindowsDayService } from './patrol-windows-day.service';
 
@@ -48,7 +50,7 @@ import { PatrolWindowsDayService } from './patrol-windows-day.service';
     PatrolAccessService, PatrolConfigService, PatrolQueryService, PatrolGuardService, PatrolAdminService,
     PatrolWindowService, PatrolWindowsDayService, PatrolExceptionService, PatrolSweepService,
     PatrolObjectStore, PatrolEvidenceLifecycleService, PatrolEvidenceService, PatrolEvidenceExportService, PatrolEvidenceMaintenanceService,
-    PatrolRecoveryGrantService,
+    PatrolRecoveryGrantService, PatrolSetupService, PatrolEvidenceReadService,
   ],
   exports: [PatrolAccessService, PatrolConfigService, PatrolSweepService],
 })

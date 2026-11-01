@@ -220,8 +220,8 @@ async function main() {
   const migrated = await to68.runMigrations({ transaction: 'each' });
   assert.deepEqual(migrated.map((m) => m.name),
     ['AddPatrolManagement1720900000014', 'AddPatrolScheduling1720900000015', 'AddPatrolEvidenceStorage1720900000016', 'AddPatrolSweepReconciliation1720900000017',
-      'AddPatrolSyncRecoveryGrants1720900000018', 'AddPatrolScheduleSuccessors1720900000020'],
-    'only Migrations 68 (P1-A), 69 (P1-B scheduling), 70 (P1-C evidence storage), 71 (sweep reconciliation), 72 (#68 recovery grants) and 73 (durable schedule successors) apply');
+      'AddPatrolSyncRecoveryGrants1720900000018', 'AddPatrolScheduleSuccessors1720900000020', 'AddPatrolSiteSetup1720900000021'],
+    'only Migrations 68 (P1-A), 69 (P1-B scheduling), 70 (P1-C evidence storage), 71 (sweep reconciliation), 72 (#68 recovery grants), 73 (durable schedule successors) and 74 (patrol site setup) apply');
   await to68.destroy();
   ctx = await boot();
   const q = async (sql: string, params: unknown[] = []) => ctx.ds.query(sql, params);
@@ -306,9 +306,20 @@ async function main() {
       expect(await setSwitch(B.id, true), 200);
 
       const after = await existingResponses({ ownerLegacy: tA, viewer: tokens.viewer, operations: tokens.operations, guardA: gA.token });
+      // S4 1.3.0 B1 (owner-approved): with Patrols on, shift reads also carry the resolved `patrolRequirement`; it is the only
+      // other addition (asserted below), so it is set aside here with the session permissions.
+      const dropRequirement = (body: any) => (Array.isArray(body) ? body.map((s: any) => ({ ...s, patrolRequirement: undefined })) : body);
       const strip = (o: Record<string, any>) => Object.fromEntries(Object.entries(o).map(([k, v]) =>
-        [k, k.endsWith('/auth/me') ? { ...v, body: { ...v.body, companyPermissions: undefined } } : v]));
-      assert.deepEqual(strip(after), strip(before), 'with the switch on, existing responses are unchanged apart from the session permissions');
+        [k, k.endsWith('/auth/me') ? { ...v, body: { ...v.body, companyPermissions: undefined } }
+          : k.endsWith('/shifts') || k.endsWith('/shifts/my') ? { ...v, body: dropRequirement(v.body) } : v]));
+      assert.deepEqual(strip(after), strip(before), 'with the switch on, existing responses are unchanged apart from the session permissions and the shifts\' patrol requirement');
+      for (const [k, v] of Object.entries(after as Record<string, any>)) {
+        if (!(k.endsWith('/shifts') || k.endsWith('/shifts/my')) || !Array.isArray(v.body)) continue;
+        for (const s of v.body) {
+          assert.deepEqual(s.patrolRequirement, { value: 'site_default', effectiveRequired: false, source: 'site', summary: 'No patrols: patrols are not set up for this site.' },
+            `${k}: a shift of a site without a patrol setup owes no shift patrols`);
+        }
+      }
       for (const [who, role] of [['ownerLegacy', CompanyMembershipRole.OWNER], ['viewer', CompanyMembershipRole.VIEWER], ['operations', CompanyMembershipRole.OPERATIONS]] as const) {
         const prior = ((before as any)[`${who} /auth/me`].body.companyPermissions ?? []) as string[];
         const now = ((after as any)[`${who} /auth/me`].body.companyPermissions ?? []) as string[];

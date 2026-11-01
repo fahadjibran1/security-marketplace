@@ -27,10 +27,29 @@ import {
 import { checkLabelSignature, parseCheckpointLabel, patrolQrKeyring } from './patrol-qr';
 import { ActiveRecoveryGrant, PatrolRecoveryGrantService } from './patrol-recovery-grant.service';
 import { serializeRun, serializeVisit, updateRows } from './patrol-serializers';
-import { scheduleVersionBounds, supersededSince, withVersionBounds } from './patrol-schedule-versions';
+import { explainRuns } from './patrol-run-evaluation';
+import { RouteVersionLinks, routeHead, routeVersionAt, routeVersionLinks, sameRouteChain } from './patrol-route-versions';
+import { ScheduleVersionBounds, scheduleVersionBounds, supersededSince, withVersionBounds } from './patrol-schedule-versions';
+import { setupFor, shiftAnchoredSchedules, siteSetups } from './patrol-shift-context';
+import { effectiveShiftRequirement, setupActive, shiftAnchoredWindows, shiftScopeKey, shiftWindowForStart } from './patrol-shift-windows';
 import { PatrolWindow, runCoverageKey, windowForStart, windowsBetween } from './patrol-window.service';
 
 const INT32_MAX = 2_147_483_647;
+/** The configuration problem a Guard is shown for shift windows without a confirmed checkpoint (rule A1). */
+export const SITE_SETUP_INCOMPLETE_MESSAGE = 'Site setup incomplete: no confirmed checkpoints.';
+
+/** One window of GET /patrols/mine/plan. `anchor` is added in 1.3.0 (absent on clock windows; the 1.2.1 app ignores it). */
+type PlanWindow = {
+  windowKey: string;
+  scheduleId: number;
+  scheduleName: string;
+  routeId: number | null;
+  localDate: string;
+  start: string;
+  end: string;
+  covered: boolean;
+  anchor?: 'shift';
+};
 /** The most windows GET /patrols/mine/plan lists (a 24 h shift with a 15-minute schedule has 96). */
 const PATROL_PLAN_MAX_WINDOWS = 200;
 
@@ -129,7 +148,8 @@ export class PatrolGuardService {
     const schedules = await this.dataSource.query(
       `SELECT "id", "routeId", "name", "daysOfWeek", "activeFrom", "activeTo", "frequencyMinutes", "windowMinutes",
               "startsOn"::text AS "startsOn", "endsOn"::text AS "endsOn"
-         FROM "patrol_schedules" WHERE "companyId" = $1 AND "siteId" = $2 AND "active" AND "archivedAt" IS NULL ORDER BY "name", "id"`,
+         FROM "patrol_schedules" WHERE "companyId" = $1 AND "siteId" = $2 AND "active" AND "archivedAt" IS NULL AND "anchor" = 'clock'
+        ORDER BY "name", "id"`,
       [shift.companyId, shift.siteId],
     );
     const checkpoints = await this.dataSource.query(
@@ -137,10 +157,34 @@ export class PatrolGuardService {
         WHERE "companyId" = $1 AND "siteId" = $2 AND "active" AND "revokedAt" IS NULL ORDER BY "label", "id"`,
       [shift.companyId, shift.siteId],
     );
+    const { qrRequireProximity: _q, proximityMeters: _p, ...policyOut } = policy;
+    // Schedule versions (S4 1.2.1): a successor's windows start when it took effect; a schedule it replaced during this
+    // shift still lists its windows that started before the change (a patrol already due then can still be done).
+    const versions = await scheduleVersionBounds(this.dataSource, shift.companyId);
+    const supersededIds = supersededSince(versions, new Date(shift.start));
+    const superseded = supersededIds.length
+      ? await this.dataSource.query(
+        `SELECT "id", "routeId", "name", "daysOfWeek", "activeFrom", "activeTo", "frequencyMinutes", "windowMinutes",
+                "startsOn"::text AS "startsOn", "endsOn"::text AS "endsOn"
+           FROM "patrol_schedules" WHERE "companyId" = $1 AND "siteId" = $2 AND "archivedAt" IS NOT NULL AND "anchor" = 'clock' AND "id" = ANY($3::int[]) ORDER BY "id"`,
+        [shift.companyId, shift.siteId, supersededIds],
+      )
+      : [];
+    const timeZone = site?.timezone || 'Europe/London';
+    // 1.3.0 B1: a window's route is the version of its schedule's route in force at the window's START.
+    const links = await routeVersionLinks(this.dataSource, shift.companyId);
+    const clockWindows = await this.shiftWindows(shift, timeZone,
+      [...schedules, ...superseded].map((s: any) => withVersionBounds(s, versions)), policy.requirementScope, links);
+    // 1.3.0 B1: this shift's shift-anchored windows, when the site's setup is active and this shift must patrol.
+    const shiftAnchored = await this.shiftAnchoredPlan(shift, actor.guardId, timeZone, versions, links);
+    const windows = [...clockWindows, ...shiftAnchored.windows]
+      .sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime() || a.windowKey.localeCompare(b.windowKey))
+      .slice(0, PATROL_PLAN_MAX_WINDOWS);
     const routes = await this.dataSource.query(
       `SELECT "id", "name", "orderMode" FROM "patrol_routes"
-        WHERE "companyId" = $1 AND "siteId" = $2 AND "active" AND "archivedAt" IS NULL ORDER BY "name", "id"`,
-      [shift.companyId, shift.siteId],
+        WHERE "companyId" = $1 AND "siteId" = $2
+          AND (("active" AND "archivedAt" IS NULL) OR ("id" = ANY($3::int[]) AND "supersededByRouteId" IS NOT NULL)) ORDER BY "name", "id"`,
+      [shift.companyId, shift.siteId, [...new Set(windows.map((w) => w.routeId).filter((id): id is number => id != null))]],
     );
     const routeOut = [];
     for (const route of routes) {
@@ -157,45 +201,113 @@ export class PatrolGuardService {
         checkpoints: items.map((i: any) => ({ position: Number(i.position), required: Boolean(i.required), publicId: i.publicId, label: i.label })),
       });
     }
-    const { qrRequireProximity: _q, proximityMeters: _p, ...policyOut } = policy;
-    // Schedule versions (S4 1.2.1): a successor's windows start when it took effect; a schedule it replaced during this
-    // shift still lists its windows that started before the change (a patrol already due then can still be done).
-    const versions = await scheduleVersionBounds(this.dataSource, shift.companyId);
-    const supersededIds = supersededSince(versions, new Date(shift.start));
-    const superseded = supersededIds.length
-      ? await this.dataSource.query(
-        `SELECT "id", "routeId", "name", "daysOfWeek", "activeFrom", "activeTo", "frequencyMinutes", "windowMinutes",
-                "startsOn"::text AS "startsOn", "endsOn"::text AS "endsOn"
-           FROM "patrol_schedules" WHERE "companyId" = $1 AND "siteId" = $2 AND "archivedAt" IS NOT NULL AND "id" = ANY($3::int[]) ORDER BY "id"`,
-        [shift.companyId, shift.siteId, supersededIds],
-      )
-      : [];
-    const windows = await this.shiftWindows(shift, site?.timezone || 'Europe/London',
-      [...schedules, ...superseded].map((s: any) => withVersionBounds(s, versions)), policy.requirementScope);
     const warnings = await this.config.configurationWarnings(shift.companyId, [shift.siteId]);
+    // 1.3.0 B1: a QR site whose shift windows have no route version with a required checkpoint cannot be QR-verified
+    // (rule A1). The 1.2.1 app shows QR_ROUTE_REQUIRED (with this message) as a configuration problem; newer clients read
+    // SITE_SETUP_INCOMPLETE. Unknown codes are ignored by the 1.2.1 app.
+    const shiftWarnings: Array<{ code: string; message: string; scheduleId: number | null }> = [];
+    if (shiftAnchored.windows.length && policy.methods.includes('qr')) {
+      const routed = new Map(routeOut.map((r) => [r.id, r.checkpoints.some((c: { required: boolean }) => c.required)]));
+      const missing = [...new Set(shiftAnchored.windows.filter((w) => w.routeId == null || !routed.get(w.routeId)).map((w) => w.scheduleId))];
+      for (const scheduleId of missing) {
+        shiftWarnings.push({ code: 'QR_ROUTE_REQUIRED', message: SITE_SETUP_INCOMPLETE_MESSAGE, scheduleId });
+        shiftWarnings.push({ code: 'SITE_SETUP_INCOMPLETE', message: SITE_SETUP_INCOMPLETE_MESSAGE, scheduleId });
+      }
+    }
     return {
       shift: { id: shift.id, status: shift.status, start: new Date(shift.start).toISOString(), end: new Date(shift.end).toISOString() },
       site: { id: Number(site.id), name: site.name, timezone: site.timezone },
       policy: policyOut,
       locationVerification: false,
-      schedules: schedules.map((s: any) => ({
-        id: Number(s.id),
-        routeId: s.routeId == null ? null : Number(s.routeId),
-        name: s.name,
-        daysOfWeek: s.daysOfWeek,
-        activeFrom: s.activeFrom,
-        activeTo: s.activeTo,
-        timeBasis: 'site_local',
-        frequencyMinutes: Number(s.frequencyMinutes),
-        windowMinutes: Number(s.windowMinutes),
-        startsOn: s.startsOn ?? null,
-        endsOn: s.endsOn ?? null,
-      })),
+      schedules: [
+        ...schedules.map((s: any) => ({
+          id: Number(s.id),
+          routeId: s.routeId == null ? null : Number(s.routeId),
+          name: s.name,
+          daysOfWeek: s.daysOfWeek,
+          activeFrom: s.activeFrom,
+          activeTo: s.activeTo,
+          timeBasis: 'site_local',
+          frequencyMinutes: Number(s.frequencyMinutes),
+          windowMinutes: Number(s.windowMinutes),
+          startsOn: s.startsOn ?? null,
+          endsOn: s.endsOn ?? null,
+        })),
+        ...shiftAnchored.schedules,
+      ],
       routes: routeOut,
       checkpoints: checkpoints.map((c: any) => ({ publicId: c.publicId, label: c.label, description: c.description ?? null, photoRequired: Boolean(c.photoRequired) })),
       windows,
       // Decision A1: a QR schedule (or site) with no route with required checkpoints — its patrols cannot be QR-verified.
-      configurationWarnings: (warnings.get(shift.siteId) ?? []).map(({ code, message, scheduleId }) => ({ code, message, scheduleId })),
+      // The shift windows' own problem first: the 1.2.1 app shows the FIRST QR_ROUTE_REQUIRED that applies.
+      configurationWarnings: [
+        ...shiftWarnings,
+        ...(warnings.get(shift.siteId) ?? []).map(({ code, message, scheduleId }) => ({ code, message, scheduleId })),
+      ],
+      /** 1.3.0 B1: whether this shift must patrol (owner decision 5) — additive; the 1.2.1 app ignores it. */
+      patrolRequirement: shiftAnchored.requirement,
+    };
+  }
+
+  /**
+   * 1.3.0 B1: this shift's shift-anchored windows (patrol-shift-windows.ts) when the site's setup is active and the shift is
+   * effectively required — the whole shift, as for clock windows; the route of each is the version in force at its start.
+   * Covered = a run assigned to that window for this shift's scope (sh{shiftId}).
+   */
+  private async shiftAnchoredPlan(
+    shift: { id: number; companyId: number; siteId: number | null; start: Date; end: Date },
+    guardId: number,
+    timeZone: string,
+    versions: Map<number, ScheduleVersionBounds>,
+    links: RouteVersionLinks,
+  ) {
+    const setup = setupFor(await siteSetups(this.dataSource, shift.companyId, [shift.siteId!]), shift.siteId!);
+    const [row] = await this.dataSource.query(`SELECT "patrolRequirement" FROM "shifts" WHERE "id" = $1`, [shift.id]);
+    const requirement = effectiveShiftRequirement(row?.patrolRequirement ?? null, setup);
+    const none = { windows: [] as PlanWindow[], schedules: [] as any[], requirement };
+    if (!setupActive(setup) || !requirement.effectiveRequired) return none;
+    const schedules = await shiftAnchoredSchedules(this.dataSource, shift.companyId, [shift.siteId!], versions, new Date(shift.start));
+    if (!schedules.length) return none;
+    const bookOnAt = setup.windowAnchor === 'book_on' ? (await this.guardAttendance(shift.id, guardId)).bookOnAt : null;
+    const all = schedules.flatMap((s: any) => shiftAnchoredWindows(s, shift, setup.windowAnchor, bookOnAt, timeZone).map((w) => ({ w, s })));
+    const scopeKey = shiftScopeKey(shift.id);
+    const covered = all.length
+      ? await this.dataSource.query(
+        `SELECT DISTINCT "scheduleId", "windowKey", "windowStart" FROM "patrol_runs"
+          WHERE "companyId" = $1 AND "siteId" = $2 AND "scopeKey" = $3 AND "windowKey" = ANY($4::text[])`,
+        [shift.companyId, shift.siteId, scopeKey, all.map((x) => x.w.windowKey)],
+      )
+      : [];
+    const coveredKeys = new Set(covered.map((r: any) => runCoverageKey(r.scheduleId, r.windowKey, null, r.windowStart)));
+    const head = schedules.find((s: any) => s.archivedAt == null);
+    return {
+      requirement,
+      windows: all.map(({ w, s }): PlanWindow => ({
+        windowKey: w.windowKey,
+        scheduleId: w.scheduleId,
+        scheduleName: s.name,
+        routeId: routeVersionAt(links, s.routeId == null ? null : Number(s.routeId), w.start),
+        localDate: w.localDate,
+        start: w.start.toISOString(),
+        end: w.end.toISOString(),
+        covered: coveredKeys.has(runCoverageKey(w.scheduleId, w.windowKey, null, w.start)),
+        anchor: 'shift',
+      })),
+      schedules: head ? [{
+        id: Number(head.id),
+        routeId: routeHead(links, head.routeId == null ? null : Number(head.routeId)),
+        name: head.name,
+        daysOfWeek: head.daysOfWeek,
+        activeFrom: head.activeFrom,
+        activeTo: head.activeTo,
+        timeBasis: 'site_local',
+        frequencyMinutes: Number(head.frequencyMinutes),
+        windowMinutes: Number(head.windowMinutes),
+        startsOn: null,
+        endsOn: null,
+        anchor: 'shift',
+        windowAnchor: setup.windowAnchor,
+      }] : [],
     };
   }
 
@@ -205,7 +317,13 @@ export class PatrolGuardService {
    * `covered` says a run is already recorded for that window and the policy's scope (site-wide, or this shift when
    * per-Guard) — it names no Guard. At most PATROL_PLAN_MAX_WINDOWS, earliest first.
    */
-  private async shiftWindows(shift: { id: number; companyId: number; siteId: number | null; start: Date; end: Date }, timeZone: string, schedules: any[], scope: string) {
+  private async shiftWindows(
+    shift: { id: number; companyId: number; siteId: number | null; start: Date; end: Date },
+    timeZone: string,
+    schedules: any[],
+    scope: string,
+    links: RouteVersionLinks,
+  ): Promise<PlanWindow[]> {
     if (!schedules.length || shift.siteId == null) return [];
     const from = new Date(shift.start);
     const to = new Date(shift.end);
@@ -232,7 +350,9 @@ export class PatrolGuardService {
       windowKey: w.windowKey,
       scheduleId: w.scheduleId,
       scheduleName: schedule.name,
-      routeId: schedule.routeId == null ? null : Number(schedule.routeId),
+      // 1.3.0 B1: the version of the schedule's route in force at the window's start (the schedule's own id when the
+      // route was never versioned, exactly as in 1.2.1).
+      routeId: routeVersionAt(links, schedule.routeId == null ? null : Number(schedule.routeId), w.start),
       localDate: w.localDate,
       start: w.start.toISOString(),
       end: w.end.toISOString(),
@@ -255,8 +375,12 @@ export class PatrolGuardService {
           [runs.map((r: any) => r.id)],
         )
       : [];
+    // 1.3.0 B1: the server's plain-English reason for each run's verification state (additive; 1.2.1 ignores it).
+    const policy = await this.config.effectivePolicy(shift.companyId, shift.siteId);
+    const explained = await explainRuns(this.dataSource, shift.companyId, runs, async () => policy);
     return runs.map((r: any) => ({
       ...serializeRun(r),
+      verificationExplanation: explained.get(Number(r.id)) ?? null,
       visits: visits.filter((v: any) => Number(v.runId) === Number(r.id)).map(serializeVisit),
     }));
   }
@@ -286,11 +410,10 @@ export class PatrolGuardService {
     if (shift.siteId == null) {
       throw patrolError(HttpStatus.CONFLICT, PatrolErrorCode.SHIFT_HAS_NO_SITE, 'This shift has no site, so it has no patrols.');
     }
-    let routeId = dto.routeId ?? null;
     let schedule: any = null;
     if (dto.scheduleId != null) {
       [schedule] = await this.dataSource.query(
-        `SELECT "id", "siteId", "routeId", "active", "archivedAt", "daysOfWeek", "activeFrom", "activeTo", "frequencyMinutes", "windowMinutes",
+        `SELECT "id", "siteId", "routeId", "active", "archivedAt", "anchor", "daysOfWeek", "activeFrom", "activeTo", "frequencyMinutes", "windowMinutes",
                 "startsOn"::text AS "startsOn", "endsOn"::text AS "endsOn"
            FROM "patrol_schedules" WHERE "id" = $1 AND "companyId" = $2`,
         [dto.scheduleId, shift.companyId],
@@ -300,20 +423,12 @@ export class PatrolGuardService {
       const versions = schedule ? await scheduleVersionBounds(this.dataSource, shift.companyId) : new Map();
       const replacedVersion = schedule?.archivedAt ? versions.get(Number(schedule.id)) : undefined;
       const supersededWhileOn = replacedVersion?.effectiveUntil != null;
-      if (!schedule || Number(schedule.siteId) !== shift.siteId || (!supersededWhileOn && (!schedule.active || schedule.archivedAt))) {
+      // 1.3.0 B1: a shift-anchored schedule is stored inactive (for the 1.2.1 engine); its current version is in force.
+      const inForce = schedule?.anchor === 'shift' ? !schedule.archivedAt : schedule?.active && !schedule?.archivedAt;
+      if (!schedule || Number(schedule.siteId) !== shift.siteId || (!supersededWhileOn && !inForce)) {
         throw patrolError(HttpStatus.UNPROCESSABLE_ENTITY, PatrolErrorCode.SCHEDULE_NOT_FOR_SITE, 'That patrol schedule is not active for this shift\'s site.');
       }
       schedule = withVersionBounds(schedule, versions);
-      if (routeId == null && schedule.routeId != null) routeId = Number(schedule.routeId);
-    }
-    if (routeId != null) {
-      const [route] = await this.dataSource.query(
-        `SELECT "id", "siteId", "active", "archivedAt" FROM "patrol_routes" WHERE "id" = $1 AND "companyId" = $2`,
-        [routeId, shift.companyId],
-      );
-      if (!route || Number(route.siteId) !== shift.siteId || !route.active || route.archivedAt) {
-        throw patrolError(HttpStatus.UNPROCESSABLE_ENTITY, PatrolErrorCode.ROUTE_NOT_FOR_SITE, 'That patrol route is not active for this shift\'s site.');
-      }
     }
     const offset = now.getTime() - startedAtDevice.getTime();
     const clockOffsetMs = Math.abs(offset) > INT32_MAX ? null : offset;
@@ -325,10 +440,35 @@ export class PatrolGuardService {
     let assigned: { window: PatrolWindow; lateStart: boolean } | null = null;
     if (schedule) {
       const [site] = await this.dataSource.query(`SELECT "timezone" FROM "sites" WHERE "id" = $1`, [shift.siteId]);
-      assigned = windowForStart(schedule, site?.timezone || 'Europe/London', adjustedStart, policy.startGraceMinutes);
+      const timeZone = site?.timezone || 'Europe/London';
+      if (schedule.anchor === 'shift') {
+        // 1.3.0 B1: the window of THIS shift (its scheduled start, or the Guard's Book On when the site anchors there).
+        const setup = setupFor(await siteSetups(this.dataSource, shift.companyId, [shift.siteId]), shift.siteId);
+        const bookOnAt = setup.windowAnchor === 'book_on' ? (attendance ?? await this.guardAttendance(shift.id, actor.guardId)).bookOnAt : null;
+        assigned = shiftWindowForStart(shiftAnchoredWindows(schedule, shift, setup.windowAnchor, bookOnAt, timeZone), adjustedStart, policy.startGraceMinutes);
+      } else {
+        assigned = windowForStart(schedule, timeZone, adjustedStart, policy.startGraceMinutes);
+      }
       // A replaced version takes only a patrol for one of its own windows (one that started before the change).
       if (schedule.archivedAt && !assigned) {
         throw patrolError(HttpStatus.UNPROCESSABLE_ENTITY, PatrolErrorCode.SCHEDULE_NOT_FOR_SITE, 'That patrol schedule is not active for this shift\'s site.');
+      }
+    }
+    // 1.3.0 B1 (owner decision 3): the route this run follows is the version in force at its window's start (or at its
+    // own start without a window) — of the route the app sent, or else of the schedule's route. A version replaced since
+    // then is still accepted for that run; a route archived by hand (no successor) is refused as before.
+    const routeAt = assigned?.window.start ?? adjustedStart;
+    const links = await routeVersionLinks(this.dataSource, shift.companyId);
+    const requestedRoute = dto.routeId ?? (schedule?.routeId != null ? Number(schedule.routeId) : null);
+    const routeId = routeVersionAt(links, requestedRoute, routeAt);
+    if (routeId != null) {
+      const [route] = await this.dataSource.query(
+        `SELECT "id", "siteId", "active", "archivedAt", "supersededByRouteId" FROM "patrol_routes" WHERE "id" = $1 AND "companyId" = $2`,
+        [routeId, shift.companyId],
+      );
+      const usable = route && ((route.active && !route.archivedAt) || route.supersededByRouteId != null);
+      if (!usable || Number(route.siteId) !== shift.siteId) {
+        throw patrolError(HttpStatus.UNPROCESSABLE_ENTITY, PatrolErrorCode.ROUTE_NOT_FOR_SITE, 'That patrol route is not active for this shift\'s site.');
       }
     }
     const flags: PatrolSyncFlag[] = [];
@@ -360,7 +500,8 @@ export class PatrolGuardService {
     } else if (isClockDriftSuspect(driftMs, policy.clockDriftThresholdMinutes)) {
       flags.push('clock_drift_suspect');
     }
-    const scopeKey = policy.requirementScope === 'per_guard' ? `sh${shift.id}` : 'site';
+    // 1.3.0 B1: a shift-anchored window is owed by its shift, whatever the policy's requirement scope.
+    const scopeKey = schedule?.anchor === 'shift' ? shiftScopeKey(shift.id) : policy.requirementScope === 'per_guard' ? `sh${shift.id}` : 'site';
 
     const insertRun = async (withWindow: boolean) => {
       const window = withWindow ? assigned : null;
@@ -472,13 +613,20 @@ export class PatrolGuardService {
     return row ?? null;
   }
 
-  private replayRun(row: any, actor: PatrolGuardActor, dto: StartPatrolRunDto, startedAtDevice: Date) {
+  private async replayRun(row: any, actor: PatrolGuardActor, dto: StartPatrolRunDto, startedAtDevice: Date) {
+    const sameRoute = async () => {
+      if (dto.routeId == null) return true;
+      if (row.routeId == null) return false;
+      if (Number(row.routeId) === dto.routeId) return true;
+      // 1.3.0 B1: the run stored the version of the sent route in force at its window's start — the same route.
+      return sameRouteChain(await routeVersionLinks(this.dataSource, Number(row.companyId)), dto.routeId, Number(row.routeId));
+    };
     const same = row
       && Number(row.guardId) === actor.guardId
       && Number(row.shiftId) === dto.shiftId
       && (row.scheduleId == null ? null : Number(row.scheduleId)) === (dto.scheduleId ?? null)
-      && (dto.routeId == null || (row.routeId != null && Number(row.routeId) === dto.routeId))
-      && new Date(row.startedAtDevice).getTime() === startedAtDevice.getTime();
+      && new Date(row.startedAtDevice).getTime() === startedAtDevice.getTime()
+      && await sameRoute();
     if (!same) throw idempotencyConflict('clientRunId');
     return serializeRun(row);
   }

@@ -1,4 +1,6 @@
-import { Body, Controller, Get, Header, HttpCode, Param, ParseIntPipe, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Header, HttpCode, Param, ParseIntPipe, Post, Query, StreamableFile, UseGuards } from '@nestjs/common';
+import { PatrolEvidencePatrolsQueryDto, PatrolEvidenceTreeQueryDto } from '../dto/patrol.dto';
+import { PatrolEvidenceReadService } from './patrol-evidence-read.service';
 import { JwtPayload } from '../../auth/types/jwt-payload.type';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -34,7 +36,35 @@ export class PatrolEvidenceController {
     private readonly evidence: PatrolEvidenceService,
     private readonly exports: PatrolEvidenceExportService,
     private readonly grants: PatrolRecoveryGrantService,
+    private readonly reads: PatrolEvidenceReadService,
   ) {}
+
+  /** S4 1.3.0 B1 (patrols.view): clients → sites → site-local days with patrols, with and without photos. */
+  @Get('evidence/tree')
+  evidenceTree(@CurrentUser() user: JwtPayload, @Query() q: PatrolEvidenceTreeQueryDto) {
+    return this.reads.tree(user, q);
+  }
+
+  /** S4 1.3.0 B1 (patrols.view; photo details with patrols.evidence): one site's patrols on one site-local day as cards. */
+  @Get('evidence/patrols')
+  evidencePatrols(@CurrentUser() user: JwtPayload, @Query() q: PatrolEvidencePatrolsQueryDto) {
+    return this.reads.patrols(user, q);
+  }
+
+  /**
+   * S4 1.3.0 B1 (patrols.evidence): the verified photo with the S4 stamp — a JPEG derived per request and streamed, never
+   * stored; the original object and its SHA-256 are untouched. Audited patrol.evidence_stamped_accessed.
+   */
+  @Get('evidence/:id/stamped')
+  @Header('Cache-Control', 'no-store')
+  async stamped(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
+    const result = await this.reads.stamped(user, id);
+    return new StreamableFile(result.jpeg, {
+      type: 'image/jpeg',
+      disposition: `inline; filename="${result.fileName}"`,
+      length: result.jpeg.length,
+    });
+  }
 
   /** patrols.evidence: a short-lived, audited link to one verified photo. */
   @Get('evidence/:id/download')

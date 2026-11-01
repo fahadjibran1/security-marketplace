@@ -190,6 +190,61 @@ window belongs to the version in force at its start. 1.2.1 first linked the two 
 
 ---
 
+## 6. S4 1.3.0 Package B, stage B1 — site setup and shift-based patrols (Migration 74; backend only)
+
+* **Migration 74 = `1720900000021-AddPatrolSiteSetup`** (follows 73 = `1720900000020`; `1720900000019` stays reserved).
+  Additive: `shifts.patrolRequirement` (`required` / `not_required`, NULL = site default; `select: false` on the entity);
+  `patrol_policies.setupMode` (`off` / `every_shift` / `per_shift`), `windowAnchor` (`scheduled_start` / `book_on`, NULL =
+  scheduled start), `setupConfirmedAt` + `setupConfirmedByUserId`; `patrol_schedules.anchor` (`clock` default / `shift`);
+  `patrol_routes.kind` (`custom` default / `auto`), `supersededByRouteId` + `supersededAt` (constraints as Migration 73's,
+  same company and site); `patrol_checkpoints.confirmedAt` / `confirmedByUserId` / `confirmedTokenVersion` (all or none).
+  `down()` refuses while any of that data exists. Certified by `scripts/m74-migration.spec.ts`.
+* **Setup** (`GET` / `PUT /patrols/sites/:siteId/setup`, `POST …/setup/confirm`): one view; one save writes the site
+  policy (evidence mode as `methods` / `photosPerRun`, photos stay yes / no; `photosPerCheckpoint` 0), the site's
+  shift-anchored schedule and the automatic route version in one transaction, under a per-site advisory lock; saving
+  never activates; activation is refused (422 `PATROL_SETUP_INCOMPLETE`, `details.checklist`) until complete.
+* **Checkpoint test scan** (`POST /patrols/checkpoints/:id/confirm`, patrols.manage): the scanned payload must be this
+  checkpoint's current signed label at its site; rotation and revocation clear the confirmation. Every change to the set
+  of confirmed checkpoints creates a new automatic route version.
+* **Route versions:** a referenced route's checkpoint change (any route; the automatic one always) archives it and links
+  a successor (409 `PATROL_ROUTE_SUPERSEDED` to a concurrent edit); schedules keep their routeId; a window owes the version
+  in force at its start; a run keeps the version it started under.
+* **Shift-based windows** (`patrol-shift-windows.ts`): the operational window grid from the shift's scheduled start
+  (Book On by explicit override), whole windows, owed by each effectively required shift on duty (scope `sh{shiftId}`),
+  judged only after the latest of the setup's activation, the site's last requirement / anchor change and the shift's
+  last requirement change (future windows only). Frequency changes are Migration 73 successors.
+* **Stamped photos** (`GET /patrols/evidence/:id/stamped`): derived per request with `sharp` (0.34.5, prebuilt binaries;
+  text drawn from an embedded bitmap font as SVG paths, so no system font is needed), streamed, never stored.
+
+### Rollback to 1.2.1 (5d749fa) over a 74 database
+
+Rehearsed locally (`scripts/rehearsals/patrol-b1-compat-scenario.ts` run under both codes; the 5d749fa patrol specs and
+boot checks run against databases migrated to 74, only their "head is Migration 73" assertion relaxed in a scratch copy):
+
+* 1.2.1 never names the new columns; its migrations find nothing to run. Pilot-shaped data (a schedule with a Migration 73
+  successor, an unconfirmed checkpoint, a run flagged `qr_rule_missing`) reads, plans, counts and is judged identically
+  by both codes.
+* A shift-anchored schedule is stored inactive with `startsOn = endsOn = 2000-01-01`: the 1.2.1 clock engine yields no
+  window for it, so 1.2.1 shows, counts and raises nothing for shift patrols. It lists it as a paused "Shift patrol"
+  schedule (do not switch it on under 1.2.1).
+* A custom route versioned under 1.3.0 is an archived route to 1.2.1. Runs that name it are judged as before, but a clock
+  schedule still names the replaced version, so 1.2.1 warns "route required" for it and refuses a new patrol on it (422
+  `PATROL_ROUTE_NOT_FOR_SITE`). After a rollback, point such schedules at their newest version (rehearsed; changes only
+  `patrol_schedules.routeId` of clock schedules whose route has a successor):
+
+  ```sql
+  WITH RECURSIVE chain AS (
+    SELECT s.id AS "scheduleId", s."routeId" AS "routeId", 0 AS depth FROM patrol_schedules s WHERE s."routeId" IS NOT NULL
+    UNION ALL SELECT c."scheduleId", r."supersededByRouteId", c.depth + 1 FROM chain c
+      JOIN patrol_routes r ON r.id = c."routeId" WHERE r."supersededByRouteId" IS NOT NULL AND c.depth < 1000)
+  UPDATE patrol_schedules s SET "routeId" = h."routeId"
+    FROM (SELECT DISTINCT ON ("scheduleId") "scheduleId", "routeId" FROM chain ORDER BY "scheduleId", depth DESC) h
+   WHERE s.id = h."scheduleId" AND s."routeId" IS DISTINCT FROM h."routeId" AND s.anchor = 'clock';
+  ```
+* Do not revert Migration 74 for an application rollback.
+
+---
+
 ## Also recorded with P1-C (not owner decisions)
 
 * Retention ships in `report` mode (`PATROL_EVIDENCE_RETENTION_MODE`); switch to `enforce` after reviewing the counts.

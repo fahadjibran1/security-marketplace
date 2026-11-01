@@ -1,0 +1,366 @@
+/**
+ * S4 1.3.0 B1 evidence reads and stamped photos, over HTTP against the in-process SigV4-verifying storage server
+ * (scripts/fixtures/fake-s3-server.ts), on a disposable database built from the repository's own migrations.
+ *
+ *   PEB-01  GET /patrols/evidence/tree: clients → sites → site-local days with patrols (with / without photos); patrols.view;
+ *           client and site filters; range validation; another company's client or site 404; Guards refused
+ *   PEB-02  GET /patrols/evidence/patrols: cards (P-ref, run, window, Guard display name, QR scans, photo states, links to the
+ *           existing thumbnail page and the stamped view, verification + explanation); QR-only patrols INCLUDED; photos=only
+ *           keeps patrols with a photo; a viewer (no patrols.evidence) sees no photo detail; another company 404
+ *   PEB-03  GET /patrols/evidence/:id/stamped: a JPEG derived per request (the stamp drawn on it), streamed with no-store;
+ *           the stored original's bytes and SHA-256 are unchanged and nothing is written to storage (only a GET); audited
+ *           patrol.evidence_stamped_accessed (never a URL); patrols.evidence only; another company 404; pending /
+ *           rejected / quarantined / purged photos refused exactly as viewing the original (409 PATROL_EVIDENCE_NOT_AVAILABLE)
+ *   PEB-04  a stored object that no longer matches its verified SHA-256, or cannot be decoded, is refused (409 / 422) and
+ *           nothing is audited as accessed; storage unconfigured: 503 after authorisation
+ *
+ * Needs PATROL_EVIDENCE_B1_DATABASE_URL pointing at a DISPOSABLE local database — it drops the schema.
+ */
+process.env.TZ = 'UTC';
+
+import 'reflect-metadata';
+import { strict as assert } from 'node:assert';
+import { createHash } from 'node:crypto';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { ValidationPipe } from '@nestjs/common';
+import { NestFactory } from '@nestjs/core';
+import { DataSource } from 'typeorm';
+import * as bcrypt from 'bcrypt';
+import { startFakeS3 } from './fixtures/fake-s3-server';
+
+const url = process.env.PATROL_EVIDENCE_B1_DATABASE_URL;
+if (!url) throw new Error('PATROL_EVIDENCE_B1_DATABASE_URL is required (disposable database)');
+if (!['127.0.0.1', 'localhost'].includes(new URL(url).hostname)) throw new Error('Patrol evidence B1 database must be local');
+process.env.DATABASE_URL = url;
+delete process.env.DATABASE_POOLER_URL;
+process.env.DATABASE_SSL = 'false';
+process.env.DATABASE_SYNCHRONIZE = 'false';
+process.env.NODE_ENV = 'test';
+process.env.JWT_SECRET = 'patrol-evidence-b1-local-certification-secret-not-production';
+process.env.GUARD_DATA_ENCRYPTION_KEY ||= '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+process.env.GUARD_DATA_HMAC_KEY ||= 'fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210';
+for (const key of ['RESEND_API_KEY', 'EXPO_ACCESS_TOKEN', 'PUSH_WELFARE_REMINDERS_ENABLED', 'PUSH_GUARD_NOTIFICATIONS_ENABLED', 'PATROL_QR_SIGNING_KEY',
+  'PATROL_QR_PREVIOUS_SIGNING_KEY', 'PATROL_EVIDENCE_STORAGE_PREFIX', 'PATROL_EVIDENCE_MAX_BYTES', 'PATROL_EVIDENCE_URL_TTL_SECONDS',
+  'PATROL_EVIDENCE_STORAGE_CHECKSUM_HEADER', 'PATROL_EVIDENCE_STORAGE_SIGN_CONTENT_LENGTH', 'PATROL_EVIDENCE_RETENTION_MODE']) {
+  delete process.env[key];
+}
+// Synthetic test-only credentials for the in-process storage server (not a real account, never used anywhere else).
+const STORAGE = { accessKeyId: 'S4TESTACCESSKEY000074', secretAccessKey: 'synthetic-test-secret-not-a-real-credential-0074', bucket: 's4-patrol-b1-test', region: 'auto' };
+
+let passed = 0;
+const failures: string[] = [];
+const scrub = (text: string) => text.replace(/https?:\/\/\S+/g, '[url]').replace(/X-Amz-[A-Za-z]+=[^&\s"]+/g, '[redacted]');
+const test = async (id: string, fn: () => Promise<void> | void) => {
+  try {
+    await fn();
+    passed += 1;
+    console.log(`PASS  ${id}`);
+  } catch (error) {
+    failures.push(id);
+    console.log(`FAIL  ${id}\n      ${scrub(String((error as Error)?.stack ?? error)).split('\n').slice(0, 12).join('\n      ')}`);
+  }
+};
+
+type Res = { status: number; body: any; headers: Headers; bytes: Buffer };
+const PASSWORD = 'patrol-evidence-b1-spec-only-password-1';
+const MIN = 60_000;
+let seqId = 0;
+const cid = (p: string) => `${p}-${Date.now().toString(36)}-${(++seqId).toString().padStart(5, '0')}`;
+const sha256 = (b: Buffer) => createHash('sha256').update(b).digest('hex');
+
+async function main() {
+  const sharp = require('sharp');
+  const fake = await startFakeS3(STORAGE);
+  const setStorageEnv = () => {
+    process.env.PATROL_EVIDENCE_STORAGE_ENDPOINT = fake.url;
+    process.env.PATROL_EVIDENCE_STORAGE_REGION = STORAGE.region;
+    process.env.PATROL_EVIDENCE_STORAGE_BUCKET = STORAGE.bucket;
+    process.env.PATROL_EVIDENCE_STORAGE_ACCESS_KEY_ID = STORAGE.accessKeyId;
+    process.env.PATROL_EVIDENCE_STORAGE_SECRET_ACCESS_KEY = STORAGE.secretAccessKey;
+  };
+  setStorageEnv();
+
+  const migrationsDir = path.join(__dirname, '..', 'src', 'database', 'migrations');
+  const allFiles: string[] = fs.readdirSync(migrationsDir).filter((f: string) => /\.ts$/.test(f)).sort();
+  const { buildTypeOrmOptions } = await import('../src/database/typeorm.config');
+  const base = buildTypeOrmOptions({ DATABASE_URL: url!, DATABASE_SSL: 'false', DATABASE_SYNCHRONIZE: 'false', NODE_ENV: 'test' });
+  const migrate = new DataSource({ ...base, entities: [], migrations: allFiles.map((f) => path.join(migrationsDir, f)), dropSchema: true } as never);
+  await migrate.initialize();
+  const migrated = await migrate.runMigrations({ transaction: 'each' });
+  assert.equal(migrated[migrated.length - 1]?.name, 'AddPatrolSiteSetup1720900000021');
+  await migrate.destroy();
+
+  const { AppModule } = await import('../src/app.module');
+  const app = await NestFactory.create(AppModule, { logger: false });
+  app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: true }));
+  await app.listen(0, '127.0.0.1');
+  const address = app.getHttpServer().address();
+  if (!address || typeof address === 'string') throw new Error('No test port');
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  const ds = app.get(DataSource);
+  const [{ current_database: db }] = await ds.query('SELECT current_database()');
+  if (db !== new URL(url!).pathname.slice(1)) throw new Error(`Refusing: connected to ${db}`);
+  const { PatrolSweepService } = await import('../src/patrol/patrol-sweep.service');
+  const { SafetyAlertService } = await import('../src/safety-alert/safety-alert.service');
+  const { AuthService } = await import('../src/auth/auth.service');
+  const { PatrolEvidenceMaintenanceService } = await import('../src/patrol/evidence/patrol-evidence-maintenance.service');
+  app.get(PatrolSweepService).onModuleDestroy();
+  app.get(SafetyAlertService).onModuleDestroy();
+  app.get(PatrolEvidenceMaintenanceService).onModuleDestroy();
+  const auth = app.get(AuthService);
+  const ST = await import('../src/patrol/evidence/patrol-evidence-stamp');
+
+  const q = (sql: string, params: unknown[] = []) => ds.query(sql, params);
+  const one = async (sql: string, params: unknown[] = []) => (await q(sql, params))[0];
+  const api = async (method: string, p: string, tok: string | null, body?: unknown): Promise<Res> => {
+    const res = await fetch(baseUrl + p, {
+      method,
+      headers: { 'content-type': 'application/json', ...(tok ? { authorization: `Bearer ${tok}` } : {}) },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const bytes = Buffer.from(await res.arrayBuffer());
+    let json: any = null;
+    if (/json/.test(res.headers.get('content-type') ?? '')) {
+      try { json = JSON.parse(bytes.toString('utf8')); } catch { json = null; }
+    }
+    return { status: res.status, body: json, headers: res.headers, bytes };
+  };
+  const expect = (r: Res, status: number, code?: string, what = '') => {
+    const safeBody = scrub(JSON.stringify(r.body));
+    assert.equal(r.status, status, `${what} expected ${status}${code ? ` ${code}` : ''}, got ${r.status} ${safeBody}`);
+    if (code) assert.equal(r.body?.code, code, `${what} code: ${safeBody}`);
+    return r.body;
+  };
+  const login = async (email: string) => ((await auth.login({ email, password: PASSWORD } as never)) as any).accessToken as string;
+
+  // ── Fixtures ────────────────────────────────────────────────────────────────────────────────────────────
+  const hash = await bcrypt.hash(PASSWORD, 4);
+  let seq = 0;
+  const mkUser = async (email: string, role: string) =>
+    Number((await one(`INSERT INTO users (email,"passwordHash",role,status,"isEmailVerified","emailVerificationRequired","firstName","lastName")
+       VALUES ($1,$2,$3,'active',true,false,$4,'Spec') RETURNING id`, [email, hash, role, email.split('@')[0]])).id);
+  const mkCompany = async (label: string, name: string) => {
+    seq += 1;
+    const ownerEmail = `peb.${label}.owner@example.invalid`;
+    const ownerId = await mkUser(ownerEmail, 'company_admin');
+    const { id } = await one(`INSERT INTO companies ("userId",name,"companyNumber",address,"contactDetails","patrolsEnabled") VALUES ($1,$2,$3,'1 Way','ops@example.invalid',true) RETURNING id`,
+      [ownerId, name, String(74100000 + seq)]);
+    return { id: Number(id), ownerId, token: await login(ownerEmail) };
+  };
+  const mkMember = async (companyId: number, label: string, role: string) => {
+    const email = `peb.${label}.${role}@example.invalid`;
+    const userId = await mkUser(email, 'company_admin');
+    await q(`INSERT INTO company_memberships ("userId","companyId","membershipRole",status) VALUES ($1,$2,$3,'active')`, [userId, companyId, role]);
+    return login(email);
+  };
+  const mkGuard = async (label: string, fullName: string) => {
+    seq += 1;
+    const email = `peb.${label}@example.invalid`;
+    const userId = await mkUser(email, 'guard');
+    const { id } = await one(`INSERT INTO guard_profiles ("userId","fullName","siaLicenseNumber",phone) VALUES ($1,$2,$3,$4) RETURNING id`,
+      [userId, fullName, `741${String(seq).padStart(13, '0')}`, `0774${String(seq).padStart(7, '1')}`]);
+    return { id: Number(id), userId, token: await login(email) };
+  };
+  const mkClient = async (companyId: number, name: string) => Number((await one(`INSERT INTO clients ("companyId",name) VALUES ($1,$2) RETURNING id`, [companyId, name])).id);
+  const mkSite = async (companyId: number, name: string, clientId: number | null, tz = 'Europe/London') =>
+    Number((await one(`INSERT INTO sites ("companyId",name,address,timezone,"clientId") VALUES ($1,$2,'3 Quay',$3,$4) RETURNING id`, [companyId, name, tz, clientId])).id);
+  const now = Date.now();
+  const mkShift = async (companyId: number, siteId: number, guardId: number) => {
+    const id = Number((await one(`INSERT INTO shifts ("companyId","siteId","siteName","guardId",status,start,"end") VALUES ($1,$2,'Gate',$3,'in_progress',$4,$5) RETURNING id`,
+      [companyId, siteId, guardId, new Date(now - 3 * 60 * MIN), new Date(now + 5 * 60 * MIN)])).id);
+    await q(`INSERT INTO attendance_events ("shiftId","guardId",type,"occurredAt","recordedAt","gpsVerified") VALUES ($1,$2,'check-in',$3,$3,false)`, [id, guardId, new Date(now - 3 * 60 * MIN)]);
+    return id;
+  };
+  const startRun = async (guard: any, shiftId: number, minutesAgo: number) =>
+    expect(await api('POST', '/patrols/runs', guard.token, { shiftId, clientRunId: cid('run'), startedAtDevice: new Date(now - minutesAgo * MIN).toISOString() }), 201, undefined, 'start');
+  const photo = async (seed: number) => sharp({ create: { width: 640, height: 480, channels: 3, background: { r: 120 + seed, g: 160, b: 200 } } }).jpeg({ quality: 80 }).toBuffer() as Promise<Buffer>;
+  const upload = async (guard: any, runId: number, image: Buffer, complete = true) => {
+    const r = expect(await api('POST', `/patrols/runs/${runId}/evidence`, guard.token, {
+      clientEvidenceId: cid('ev'), kind: 'run_photo', contentType: 'image/jpeg', sizeBytes: image.length, sha256: sha256(image),
+      capturedAtDevice: new Date(now - 20 * MIN).toISOString(),
+    }), 201, undefined, 'intent');
+    if (!complete) return r.evidence;
+    assert.equal((await fetch(r.upload.url, { method: 'PUT', headers: r.upload.headers, body: new Uint8Array(image) })).status, 200);
+    return expect(await api('POST', `/patrols/evidence/${r.evidence.id}/complete`, guard.token), 200, undefined, 'complete');
+  };
+
+  const A = await mkCompany('alpha', 'Harbour Watch Security Ltd');
+  const B = await mkCompany('bravo', 'Bravo Guarding Ltd');
+  const viewerA = await mkMember(A.id, 'alpha', 'viewer');
+  const controlA = await mkMember(A.id, 'alpha', 'control_room');
+  const clientA = await mkClient(A.id, 'Harbour Estates');
+  const clientA2 = await mkClient(A.id, 'Dock Holdings');
+  const clientB = await mkClient(B.id, 'Bravo Client');
+  const siteA = await mkSite(A.id, 'Quay Gate', clientA);
+  const siteA2 = await mkSite(A.id, 'Dock Yard', clientA2);
+  const siteB = await mkSite(B.id, 'Bravo Yard', clientB);
+  const gA = await mkGuard('ava', 'Ava Okafor');
+  const gB = await mkGuard('ben', 'Ben Cole');
+  const shiftA = await mkShift(A.id, siteA, gA.id);
+  const shiftA2 = await mkShift(A.id, siteA2, gA.id);
+  const shiftB = await mkShift(B.id, siteB, gB.id);
+  await q(`UPDATE shifts SET status = 'completed' WHERE id = $1`, [shiftA2]); // the second site's shift is not the Guard's live one
+  await q(`UPDATE shifts SET status = 'in_progress' WHERE id = $1`, [shiftA2]);
+
+  // Site A today: a photo patrol (verified photo), a QR-only patrol (no photo), a patrol with only a rejected-free pending photo.
+  const runPhoto = await startRun(gA, shiftA, 60);
+  const original = await photo(1);
+  const verified = await upload(gA, runPhoto.id, original);
+  assert.equal(verified.uploadStatus, 'verified', 'the photo passed the server checks');
+  expect(await api('POST', `/patrols/runs/${runPhoto.id}/complete`, gA.token, { completedAtDevice: new Date(now - 50 * MIN).toISOString() }), 200);
+  const runQr = await startRun(gA, shiftA, 45);
+  expect(await api('POST', `/patrols/runs/${runQr.id}/complete`, gA.token, { completedAtDevice: new Date(now - 40 * MIN).toISOString() }), 200);
+  const runPending = await startRun(gA, shiftA, 30);
+  const pending = await upload(gA, runPending.id, await photo(2), false);
+  expect(await api('POST', `/patrols/runs/${runPending.id}/complete`, gA.token, { completedAtDevice: new Date(now - 25 * MIN).toISOString() }), 200);
+  const runA2 = await startRun(gA, shiftA2, 20);
+  const runB = await startRun(gB, shiftB, 20);
+  const evB = await upload(gB, runB.id, await photo(3));
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/London', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(now - 60 * MIN));
+
+  try {
+    await test('PEB-01-THE-EVIDENCE-TREE', async () => {
+      const tree = expect(await api('GET', `/patrols/evidence/tree?from=${today}&to=${today}`, viewerA), 200, undefined, 'patrols.view');
+      assert.deepEqual([tree.from, tree.to, tree.dateBasis], [today, today, 'site_local']);
+      const names = tree.clients.map((c: any) => [c.clientName, c.sites.map((s: any) => [s.siteName, s.patrols, s.withPhotos])]);
+      assert.deepEqual(names, [['Dock Holdings', [['Dock Yard', 1, 0]]], ['Harbour Estates', [['Quay Gate', 3, 2]]]], 'every client and site of the company, never another company\'s');
+      const quay = tree.clients[1].sites[0];
+      assert.deepEqual(quay.days, [{ date: today, patrols: 3, withPhotos: 2, withoutPhotos: 1 }]);
+      const filtered = expect(await api('GET', `/patrols/evidence/tree?clientId=${clientA}&from=${today}&to=${today}`, A.token), 200);
+      assert.deepEqual(filtered.clients.map((c: any) => c.clientId), [clientA]);
+      const bySite = expect(await api('GET', `/patrols/evidence/tree?siteId=${siteA2}`, A.token), 200, undefined, 'default range: the last 7 days');
+      assert.deepEqual(bySite.clients.map((c: any) => c.sites.map((s: any) => s.siteId)), [[siteA2]]);
+      expect(await api('GET', `/patrols/evidence/tree?clientId=${clientB}`, A.token), 404, 'PATROL_NOT_FOUND', 'another company\'s client');
+      expect(await api('GET', `/patrols/evidence/tree?siteId=${siteB}`, A.token), 404, 'PATROL_SITE_NOT_FOUND', 'another company\'s site');
+      expect(await api('GET', '/patrols/evidence/tree?from=2026-11-05&to=2026-11-01', A.token), 400, 'PATROL_VALIDATION_FAILED');
+      expect(await api('GET', '/patrols/evidence/tree?from=2026-01-01&to=2026-12-31', A.token), 400, 'PATROL_VALIDATION_FAILED', 'at most 92 days');
+      expect(await api('GET', '/patrols/evidence/tree?from=yesterday', A.token), 400);
+      expect(await api('GET', '/patrols/evidence/tree', gA.token), 403, undefined, 'Guards');
+    });
+
+    await test('PEB-02-PATROL-CARDS-INCLUDE-QR-ONLY-AND-PHOTOS-ONLY-FILTERS', async () => {
+      const all = expect(await api('GET', `/patrols/evidence/patrols?siteId=${siteA}&date=${today}`, controlA), 200, undefined, 'control room: view + evidence');
+      assert.deepEqual([all.siteName, all.clientName, all.evidenceRestricted, all.photos], ['Quay Gate', 'Harbour Estates', false, 'all']);
+      assert.deepEqual(all.patrols.map((p: any) => p.reference), [`P-${runPhoto.id}`, `P-${runQr.id}`, `P-${runPending.id}`], 'QR-only patrols are included');
+      const card = all.patrols[0];
+      assert.deepEqual([card.guard, card.photoCount, card.photosRestricted, card.window], [{ id: gA.id, displayName: 'Ava Okafor' }, 1, false, null]);
+      assert.deepEqual(card.photos.map((p: any) => [p.id, p.uploadStatus, p.viewable, p.stampedPath]), [[verified.id, 'verified', true, `/patrols/evidence/${verified.id}/stamped`]]);
+      assert.equal(card.thumbnailsPath, `/patrols/runs/${runPhoto.id}/evidence/thumbnails`, 'thumbnails through the existing audited page');
+      assert.ok(card.verification.status && card.verification.code && card.verification.text, 'verification and its plain-English explanation');
+      assert.ok(!JSON.stringify(all).includes(fake.url) && !/X-Amz-|storageKey/.test(JSON.stringify(all)), 'never a URL or storage key');
+      const qrOnly = all.patrols[1];
+      assert.deepEqual([qrOnly.photoCount, qrOnly.photos, qrOnly.thumbnailsPath, qrOnly.qrScans], [0, [], null, []]);
+      const pendingCard = all.patrols[2];
+      assert.deepEqual(pendingCard.photos.map((p: any) => [p.uploadStatus, p.viewable, p.stampedPath]), [['pending', false, null]]);
+      const only = expect(await api('GET', `/patrols/evidence/patrols?siteId=${siteA}&date=${today}&photos=only`, A.token), 200);
+      assert.deepEqual(only.patrols.map((p: any) => p.reference), [`P-${runPhoto.id}`, `P-${runPending.id}`], 'photos=only drops photo-free patrols');
+      const viewer = expect(await api('GET', `/patrols/evidence/patrols?siteId=${siteA}&date=${today}`, viewerA), 200);
+      assert.equal(viewer.evidenceRestricted, true);
+      assert.ok(viewer.patrols.every((p: any) => p.photos === null && p.thumbnailsPath === null && p.photosRestricted === true), 'no photo detail without patrols.evidence');
+      assert.equal(viewer.patrols[0].photoCount, 1, 'only how many');
+      expect(await api('GET', `/patrols/evidence/patrols?siteId=${siteB}&date=${today}`, A.token), 404, 'PATROL_SITE_NOT_FOUND');
+      expect(await api('GET', `/patrols/evidence/patrols?siteId=${siteA}`, A.token), 400, undefined, 'date required');
+      expect(await api('GET', `/patrols/evidence/patrols?siteId=${siteA}&date=${today}&photos=some`, A.token), 400);
+      const empty = expect(await api('GET', `/patrols/evidence/patrols?siteId=${siteA}&date=2026-01-01`, A.token), 200);
+      assert.deepEqual(empty.patrols, []);
+      void runA2;
+    });
+
+    await test('PEB-03-THE-STAMPED-VIEW-IS-DERIVED-STREAMED-NEVER-STORED-AND-AUDITED', async () => {
+      const row = await one(`SELECT * FROM patrol_evidence WHERE id = $1`, [verified.id]);
+      const storedBefore = Buffer.from(fake.objects.get(row.storageKey)!.body);
+      const keysBefore = fake.keys();
+      const logFrom = fake.log.length;
+      const r = await api('GET', `/patrols/evidence/${verified.id}/stamped`, A.token);
+      assert.equal(r.status, 200, scrub(r.bytes.toString('utf8').slice(0, 300)));
+      assert.equal(r.headers.get('content-type'), 'image/jpeg');
+      assert.equal(r.headers.get('cache-control'), 'no-store');
+      assert.match(r.headers.get('content-disposition') ?? '', /inline; filename="patrol-evidence-\d+-stamped\.jpg"/);
+      assert.deepEqual([r.bytes[0], r.bytes[1], r.bytes[2]], [0xff, 0xd8, 0xff], 'a JPEG');
+      assert.notEqual(sha256(r.bytes), sha256(original), 'a derived image, not the original');
+      // The original is untouched: the same bytes, the same verified SHA-256, and storage saw only one GET.
+      assert.ok(fake.objects.get(row.storageKey)!.body.equals(storedBefore) && storedBefore.equals(original));
+      assert.equal(sha256(storedBefore), row.sha256Stored);
+      assert.equal((await one(`SELECT "sha256Stored" FROM patrol_evidence WHERE id = $1`, [verified.id])).sha256Stored, row.sha256Stored);
+      assert.deepEqual(fake.keys(), keysBefore, 'nothing new in storage');
+      assert.deepEqual(fake.log.slice(logFrom).map((l) => [l.method, l.key === row.storageKey]), [['GET', true]], 'one read of the original, no write');
+      // The stamp is on it: the bottom band is dark with light text, the top is the photo.
+      const { data, info } = await sharp(r.bytes).raw().toBuffer({ resolveWithObject: true });
+      assert.deepEqual([info.width, info.height], [640, 480]);
+      const px = (x: number, y: number) => data[(y * info.width + x) * info.channels];
+      assert.ok(Math.abs(px(320, 20) - (120 + 1)) < 25, 'the photo above the band is unchanged');
+      const band = ST.stampSvg(640, 480, ST.stampLines({
+        companyName: 'Harbour Watch Security Ltd', clientName: 'Harbour Estates', siteName: 'Quay Gate', guardName: 'Ava Okafor', capturedAtDevice: new Date(row.capturedAtDevice),
+        receivedAtServer: new Date(row.receivedAt), timeZone: 'Europe/London', runId: runPhoto.id, window: null,
+      }));
+      let dark = 0;
+      let light = 0;
+      for (let y = 480 - band.bandHeight + 1; y < 479; y += 1) for (let x = 0; x < 640; x += 2) (px(x, y) < 110 ? (dark += 1) : px(x, y) > 200 ? (light += 1) : 0);
+      assert.ok(dark > 1000 && light > 150, `the stamp band and its text (${dark} dark, ${light} light)`);
+      const audit = await one(`SELECT * FROM audit_logs WHERE action = 'patrol.evidence_stamped_accessed' AND "entityId" = $1 ORDER BY id DESC`, [verified.id]);
+      assert.deepEqual([audit.userId, audit.companyId, audit.afterData.runId, audit.afterData.sha256, audit.afterData.stored, audit.afterData.derived],
+        [A.ownerId, A.id, runPhoto.id, row.sha256Stored, false, true]);
+      assert.ok(!JSON.stringify(audit).includes(fake.url), 'no URL in the audit');
+      // The same permission as viewing an original; tenancy; availability.
+      expect(await api('GET', `/patrols/evidence/${verified.id}/stamped`, viewerA), 403, 'PATROL_FORBIDDEN', 'no patrols.evidence');
+      assert.equal((await api('GET', `/patrols/evidence/${verified.id}/stamped`, controlA)).status, 200, 'control room has patrols.evidence');
+      expect(await api('GET', `/patrols/evidence/${verified.id}/stamped`, B.token), 404, 'PATROL_NOT_FOUND', 'another company');
+      expect(await api('GET', `/patrols/evidence/${evB.id}/stamped`, A.token), 404, 'PATROL_NOT_FOUND', 'another company\'s photo');
+      expect(await api('GET', `/patrols/evidence/${verified.id}/stamped`, gA.token), 403, undefined, 'a Guard');
+      expect(await api('GET', `/patrols/evidence/${pending.id}/stamped`, A.token), 409, 'PATROL_EVIDENCE_NOT_AVAILABLE', 'pending');
+      for (const state of ['quarantined', 'purged']) {
+        // The states as the lifecycle leaves them (quarantined: moved aside with a purge date; purged: gone).
+        await q(`UPDATE patrol_evidence SET "retentionStatus" = $2::varchar,
+            "quarantinedAt" = CASE WHEN $2::varchar = 'quarantined' THEN now() ELSE "quarantinedAt" END,
+            "purgeAfter" = CASE WHEN $2::varchar = 'quarantined' THEN now() + interval '7 days' ELSE "purgeAfter" END,
+            "quarantineKey" = CASE WHEN $2::varchar = 'quarantined' THEN "storageKey" ELSE "quarantineKey" END,
+            "purgedAt" = CASE WHEN $2::varchar = 'purged' THEN now() ELSE "purgedAt" END WHERE id = $1`, [verified.id, state]);
+        const refused = expect(await api('GET', `/patrols/evidence/${verified.id}/stamped`, A.token), 409, 'PATROL_EVIDENCE_NOT_AVAILABLE', state);
+        assert.equal(refused.details.retentionStatus, state);
+        expect(await api('GET', `/patrols/evidence/${verified.id}/download?purpose=review`, A.token), 409, 'PATROL_EVIDENCE_NOT_AVAILABLE', `the original is refused alike (${state})`);
+      }
+      await q(`UPDATE patrol_evidence SET "retentionStatus" = 'active', "purgedAt" = NULL, "quarantinedAt" = NULL, "purgeAfter" = NULL, "quarantineKey" = NULL WHERE id = $1`, [verified.id]);
+      await q(`UPDATE patrol_evidence SET "uploadStatus" = 'rejected' WHERE id = $1`, [verified.id]);
+      expect(await api('GET', `/patrols/evidence/${verified.id}/stamped`, A.token), 409, 'PATROL_EVIDENCE_NOT_AVAILABLE', 'rejected');
+      await q(`UPDATE patrol_evidence SET "uploadStatus" = 'verified' WHERE id = $1`, [verified.id]);
+    });
+
+    await test('PEB-04-A-CHANGED-OR-UNREADABLE-ORIGINAL-IS-NOT-STAMPED-AND-STORAGE-503', async () => {
+      const row = await one(`SELECT * FROM patrol_evidence WHERE id = $1`, [verified.id]);
+      const stored = fake.objects.get(row.storageKey)!;
+      const real = Buffer.from(stored.body);
+      const audits = async () => Number((await one(`SELECT count(*)::int n FROM audit_logs WHERE action = 'patrol.evidence_stamped_accessed'`)).n);
+      const before = await audits();
+      stored.body = Buffer.concat([real.subarray(0, real.length - 10), Buffer.alloc(10, 0)]);
+      expect(await api('GET', `/patrols/evidence/${verified.id}/stamped`, A.token), 409, 'PATROL_EVIDENCE_STAMP_UNAVAILABLE', 'bytes no longer match the verified SHA-256');
+      // Unreadable by the image library (bytes that match a recorded fingerprint but are not an image).
+      const junk = Buffer.from('this is not an image at all, only text');
+      stored.body = junk;
+      await q(`UPDATE patrol_evidence SET "sha256Stored" = $2 WHERE id = $1`, [verified.id, sha256(junk)]);
+      expect(await api('GET', `/patrols/evidence/${verified.id}/stamped`, A.token), 422, 'PATROL_EVIDENCE_STAMP_UNAVAILABLE');
+      assert.equal(await audits(), before, 'a refused stamp is not recorded as accessed');
+      stored.body = real;
+      await q(`UPDATE patrol_evidence SET "sha256Stored" = $2 WHERE id = $1`, [verified.id, row.sha256Stored]);
+      for (const k of ['ENDPOINT', 'REGION', 'BUCKET', 'ACCESS_KEY_ID', 'SECRET_ACCESS_KEY']) delete process.env[`PATROL_EVIDENCE_STORAGE_${k}`];
+      try {
+        expect(await api('GET', `/patrols/evidence/${verified.id}/stamped`, viewerA), 403, 'PATROL_FORBIDDEN', 'authorisation first');
+        expect(await api('GET', `/patrols/evidence/${verified.id}/stamped`, A.token), 503, 'PATROL_EVIDENCE_STORAGE_UNAVAILABLE');
+      } finally {
+        setStorageEnv();
+      }
+      assert.equal((await api('GET', `/patrols/evidence/${verified.id}/stamped`, A.token)).status, 200);
+    });
+  } finally {
+    await app.close();
+    await fake.stop();
+  }
+  console.log(`\n${passed} passed, ${failures.length} failed${failures.length ? `: ${failures.join(', ')}` : ''}`);
+  console.log(JSON.stringify({ event: 'patrol_evidence_b1_certified', tests: passed }));
+  if (failures.length) process.exit(1);
+}
+
+main().catch((error) => {
+  console.error(scrub(String(error?.stack ?? error)));
+  process.exit(1);
+});

@@ -41,6 +41,14 @@ export const PATROL_SWEEP_LOCK_NAMESPACE = 534_401_404;
  */
 export const PATROL_EVIDENCE_LOCK_NAMESPACE = 534_401_405;
 
+/**
+ * S4 1.3.0 B1: one lock per SITE id, taken (waiting) at the start of every write that changes the site's patrol setup,
+ * the confirmed state of one of its checkpoints, its automatic route or its shift-anchored schedule. Two such writes for
+ * one site therefore decide one after the other, so the automatic route gets exactly one successor per change and never
+ * a lost update. Taken before any row lock; nothing that holds it takes another advisory lock.
+ */
+export const PATROL_SITE_SETUP_LOCK_NAMESPACE = 534_401_406;
+
 export async function lockGuardsForAssignment(
   manager: { query: (sql: string, parameters?: unknown[]) => Promise<unknown> },
   guardIds: Array<number | null | undefined>,

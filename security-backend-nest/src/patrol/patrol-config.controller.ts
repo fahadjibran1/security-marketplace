@@ -6,8 +6,10 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { COMPANY_VIEW_ROLES } from '../user/entities/user.entity';
 import {
+  ConfirmPatrolCheckpointDto,
   CreatePatrolCheckpointDto,
   CreatePatrolRouteDto,
+  PutPatrolSiteSetupDto,
   CreatePatrolScheduleDto,
   PatrolExceptionsQueryDto,
   PatrolListQueryDto,
@@ -25,6 +27,7 @@ import { PatrolConfigService } from './patrol-config.service';
 import { PatrolExceptionService } from './patrol-exception.service';
 import { PatrolQueryService } from './patrol-query.service';
 import { PatrolWindowsDayService } from './patrol-windows-day.service';
+import { PatrolSetupService } from './patrol-setup.service';
 
 /**
  * Company Patrol Management (Migration 68). Company accounts only (Guards and S4 platform admins are refused by the
@@ -40,6 +43,7 @@ export class PatrolConfigController {
     private readonly query: PatrolQueryService,
     private readonly exceptions: PatrolExceptionService,
     private readonly windowsDay: PatrolWindowsDayService,
+    private readonly setup: PatrolSetupService,
   ) {}
 
   // ── Policies (patrols.view / patrols.manage; 90-day retention: Owner / Admin) ──
@@ -56,6 +60,25 @@ export class PatrolConfigController {
   @Put('policies/sites/:siteId')
   putSitePolicy(@CurrentUser() user: JwtPayload, @Param('siteId', ParseIntPipe) siteId: number, @Body() dto: UpsertPatrolPolicyDto) {
     return this.config.upsertPolicy(user, siteId, dto);
+  }
+
+  // ── Site patrol setup (S4 1.3.0 B1; patrols.view to read, patrols.manage to save / activate) ──
+  @Get('sites/:siteId/setup')
+  getSiteSetup(@CurrentUser() user: JwtPayload, @Param('siteId', ParseIntPipe) siteId: number) {
+    return this.setup.getSetup(user, siteId);
+  }
+
+  /** Saves the whole setup in one transaction; never activates it. */
+  @Put('sites/:siteId/setup')
+  putSiteSetup(@CurrentUser() user: JwtPayload, @Param('siteId', ParseIntPipe) siteId: number, @Body() dto: PutPatrolSiteSetupDto) {
+    return this.setup.putSetup(user, siteId, dto);
+  }
+
+  /** Activation: 422 PATROL_SETUP_INCOMPLETE (details.checklist) unless the setup is complete. */
+  @Post('sites/:siteId/setup/confirm')
+  @HttpCode(200)
+  confirmSiteSetup(@CurrentUser() user: JwtPayload, @Param('siteId', ParseIntPipe) siteId: number) {
+    return this.setup.confirmSetup(user, siteId);
   }
 
   // ── Schedules ──
@@ -116,6 +139,13 @@ export class PatrolConfigController {
   @HttpCode(200)
   revokeCheckpoint(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
     return this.config.revokeCheckpoint(user, id);
+  }
+
+  /** S4 1.3.0 B1: an authorised test scan of the checkpoint's current label (patrols.manage); confirms it. */
+  @Post('checkpoints/:id/confirm')
+  @HttpCode(200)
+  confirmCheckpoint(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number, @Body() dto: ConfirmPatrolCheckpointDto) {
+    return this.setup.confirmCheckpoint(user, id, dto);
   }
 
   /** The signed QR payload to print (503 PATROL_QR_SIGNING_KEY_UNAVAILABLE without a server key). */

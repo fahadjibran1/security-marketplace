@@ -17,6 +17,8 @@ import {
 import { PatrolAccessService, PatrolCompanyActor } from './patrol-access.service';
 import { PATROL_EXTENDED_RETENTION_DAYS, PATROL_POLICY_DEFAULTS, PatrolErrorCode, patrolError } from './patrol-constants';
 import { newCheckpointPublicId, signCheckpointLabel, patrolQrKeyring } from './patrol-qr';
+import { PATROL_SITE_SETUP_LOCK_NAMESPACE } from '../operations/advisory-locks';
+import { AUTO_ROUTE_NAME, PATROL_ROUTE_SUPERSEDED_ACTION, routeContentKey, routeHead, routeVersionLinks } from './patrol-route-versions';
 import { PATROL_SCHEDULE_SUPERSEDED_ACTION, timingChanged } from './patrol-schedule-versions';
 import { serializeCheckpoint, serializePolicyFields, serializeRoute, serializeSchedule, updateRows } from './patrol-serializers';
 
@@ -171,9 +173,11 @@ export class PatrolConfigService {
 
   async listSchedules(user: JwtPayload, query: PatrolListQueryDto) {
     const actor = await this.access.companyActor(user, CompanyPermission.PATROLS_VIEW);
+    // Clock schedules only: a site's shift-anchored schedule (Migration 74) is managed and shown by its site setup
+    // (GET /patrols/sites/:siteId/setup), never edited through the schedule routes.
     const rows = await this.dataSource.query(
       `SELECT * FROM "patrol_schedules" WHERE "companyId" = $1 AND ($2::int IS NULL OR "siteId" = $2)
-          AND ($3::boolean OR "archivedAt" IS NULL) ORDER BY "siteId", "name", "id"`,
+          AND ($3::boolean OR "archivedAt" IS NULL) AND "anchor" = 'clock' ORDER BY "siteId", "name", "id"`,
       [actor.companyId, query.siteId ?? null, query.includeInactive === 'true'],
     );
     const warnings = await this.configurationWarnings(actor.companyId, null);
@@ -222,6 +226,7 @@ export class PatrolConfigService {
     return this.dataSource.transaction(async (manager) => {
       // FOR UPDATE: a concurrent edit of the same schedule waits here, then finds it replaced (409) — never a second successor.
       const current = await this.scheduleRow(actor, id, manager, true);
+      assertClockSchedule(current);
       if (current.supersededByScheduleId != null) {
         throw patrolError(HttpStatus.CONFLICT, PatrolErrorCode.VALIDATION, 'This schedule was replaced by a newer version. Reload the schedules and edit the current one.', {
           supersededByScheduleId: Number(current.supersededByScheduleId),
@@ -354,6 +359,7 @@ export class PatrolConfigService {
     const actor = await this.access.companyActor(user, CompanyPermission.PATROLS_MANAGE);
     return this.dataSource.transaction(async (manager) => {
       const current = await this.scheduleRow(actor, id, manager, true);
+      assertClockSchedule(current);
       if (current.archivedAt) return serializeSchedule(current);
       const [row] = await updateRows(manager,
         `UPDATE "patrol_schedules" SET "active" = false, "archivedAt" = now(), "updatedByUserId" = $2, "updatedAt" = now()
@@ -401,7 +407,7 @@ export class PatrolConfigService {
     const actor = await this.access.companyActor(user, CompanyPermission.PATROLS_MANAGE);
     this.rejectCheckpointLocation(dto);
     return this.dataSource.transaction(async (manager) => {
-      const current = await this.checkpointRow(actor, id, manager, true);
+      const current = await this.lockedCheckpoint(manager, actor, id);
       if (current.revokedAt) {
         throw patrolError(HttpStatus.CONFLICT, PatrolErrorCode.CHECKPOINT_REVOKED, 'This checkpoint is revoked. Create a new checkpoint instead.');
       }
@@ -418,43 +424,66 @@ export class PatrolConfigService {
         ],
       );
       await this.audit(manager, actor, 'patrol.checkpoint.updated', 'patrol_checkpoint', id, serializeCheckpoint(current), serializeCheckpoint(row));
+      // 1.3.0 B1: deactivating (or reactivating) a confirmed checkpoint changes the site's automatic route — a new version.
+      await this.syncAutoRoute(manager, actor, Number(row.siteId), 'checkpoint_updated');
       return serializeCheckpoint(row);
     });
   }
 
-  /** "Reprint labels": tokenVersion + 1, so every older printed label of this checkpoint is flagged revoked_label. */
+  /**
+   * "Reprint labels": tokenVersion + 1, so every older printed label of this checkpoint is flagged revoked_label. 1.3.0
+   * B1: the new label has not been test-scanned, so the checkpoint's confirmation is cleared (and it leaves the site's
+   * automatic route until it is confirmed again).
+   */
   async rotateCheckpoint(user: JwtPayload, id: number) {
     const actor = await this.access.companyActor(user, CompanyPermission.PATROLS_MANAGE);
     return this.dataSource.transaction(async (manager) => {
-      const current = await this.checkpointRow(actor, id, manager, true);
+      const current = await this.lockedCheckpoint(manager, actor, id);
       if (current.revokedAt) {
         throw patrolError(HttpStatus.CONFLICT, PatrolErrorCode.CHECKPOINT_REVOKED, 'This checkpoint is revoked; its labels cannot be reissued.');
       }
       const [row] = await updateRows(manager,
-        `UPDATE "patrol_checkpoints" SET "tokenVersion" = "tokenVersion" + 1, "rotatedAt" = now(), "updatedByUserId" = $2, "updatedAt" = now()
+        `UPDATE "patrol_checkpoints" SET "tokenVersion" = "tokenVersion" + 1, "rotatedAt" = now(), "updatedByUserId" = $2, "updatedAt" = now(),
+            "confirmedAt" = NULL, "confirmedByUserId" = NULL, "confirmedTokenVersion" = NULL
           WHERE "id" = $1 RETURNING *`,
         [id, actor.userId],
       );
+      // A cleared test-scan confirmation (1.3.0 B1) is recorded with the rotation; otherwise the entry is as before.
+      const cleared = current.confirmedAt != null;
       await this.audit(manager, actor, 'patrol.checkpoint.rotated', 'patrol_checkpoint', id,
-        { tokenVersion: Number(current.tokenVersion) }, { tokenVersion: Number(row.tokenVersion) });
+        { tokenVersion: Number(current.tokenVersion), ...(cleared ? { confirmedTokenVersion: Number(current.confirmedTokenVersion) } : {}) },
+        { tokenVersion: Number(row.tokenVersion), ...(cleared ? { confirmationCleared: true } : {}) });
+      await this.syncAutoRoute(manager, actor, Number(row.siteId), 'checkpoint_rotated');
       return serializeCheckpoint(row);
     });
   }
 
-  /** Revocation is final: every later scan of this checkpoint is flagged checkpoint_revoked. Repeating it changes nothing. */
+  /**
+   * Revocation is final: every later scan of this checkpoint is flagged checkpoint_revoked. Repeating it changes nothing.
+   * 1.3.0 B1: its confirmation is cleared and it leaves the site's automatic route (a new version).
+   */
   async revokeCheckpoint(user: JwtPayload, id: number) {
     const actor = await this.access.companyActor(user, CompanyPermission.PATROLS_MANAGE);
     return this.dataSource.transaction(async (manager) => {
-      const current = await this.checkpointRow(actor, id, manager, true);
+      const current = await this.lockedCheckpoint(manager, actor, id);
       if (current.revokedAt) return serializeCheckpoint(current);
       const [row] = await updateRows(manager,
-        `UPDATE "patrol_checkpoints" SET "active" = false, "revokedAt" = now(), "revokedByUserId" = $2, "updatedByUserId" = $2, "updatedAt" = now()
+        `UPDATE "patrol_checkpoints" SET "active" = false, "revokedAt" = now(), "revokedByUserId" = $2, "updatedByUserId" = $2, "updatedAt" = now(),
+            "confirmedAt" = NULL, "confirmedByUserId" = NULL, "confirmedTokenVersion" = NULL
           WHERE "id" = $1 RETURNING *`,
         [id, actor.userId],
       );
       await this.audit(manager, actor, 'patrol.checkpoint.revoked', 'patrol_checkpoint', id, serializeCheckpoint(current), serializeCheckpoint(row));
+      await this.syncAutoRoute(manager, actor, Number(row.siteId), 'checkpoint_revoked');
       return serializeCheckpoint(row);
     });
+  }
+
+  /** The company's checkpoint, locked FOR UPDATE after its site's setup lock (the order every setup write takes). */
+  async lockedCheckpoint(manager: EntityManager, actor: PatrolCompanyActor, id: number) {
+    const peek = await this.checkpointRow(actor, id, manager);
+    await lockPatrolSite(manager, Number(peek.siteId));
+    return this.checkpointRow(actor, id, manager, true);
   }
 
   /**
@@ -532,26 +561,159 @@ export class PatrolConfigService {
     });
   }
 
+  /**
+   * 1.3.0 B1 (owner decision 3, patrol-route-versions.ts): a change to the route's CHECKPOINTS (the list, their order or
+   * required flags) or its order rule is a new VERSION — the route is archived and a successor with a new id is created
+   * and linked in this transaction — unless nothing could ever have relied on it (no run and no schedule has named it, and
+   * it is not itself a successor), when it is changed in place as before. A name or on / off change stays in place. A
+   * concurrent second edit waits on the row lock, then finds the route replaced: 409 PATROL_ROUTE_SUPERSEDED (with
+   * details.supersededByRouteId), never a second successor. The automatic route is managed by the site setup (409).
+   * The response is the route as it now stands (the successor, with predecessorId, when one was created).
+   */
   async updateRoute(user: JwtPayload, id: number, dto: UpdatePatrolRouteDto) {
     const actor = await this.access.companyActor(user, CompanyPermission.PATROLS_MANAGE);
     return this.dataSource.transaction(async (manager) => {
       const current = await this.routeRow(actor, id, manager, true);
+      if (current.supersededByRouteId != null) {
+        throw patrolError(HttpStatus.CONFLICT, PatrolErrorCode.ROUTE_SUPERSEDED, 'This route was replaced by a newer version. Reload the routes and edit the current one.', {
+          supersededByRouteId: Number(current.supersededByRouteId),
+        });
+      }
       if (current.archivedAt) throw patrolError(HttpStatus.CONFLICT, PatrolErrorCode.VALIDATION, 'This route is archived.');
-      const before = serializeRoute(current, await this.routeCheckpoints(manager, id));
+      if (current.kind === 'auto') {
+        throw patrolError(HttpStatus.CONFLICT, PatrolErrorCode.MANAGED_BY_SETUP,
+          'The automatic route always holds every confirmed checkpoint of the site. Confirm, rotate or revoke checkpoints instead.');
+      }
+      const currentItems = await this.routeCheckpoints(manager, id);
+      const before = serializeRoute(current, currentItems);
       if (dto.checkpoints) await this.assertRouteCheckpoints(manager, actor, Number(current.siteId), dto.checkpoints);
+      const values = {
+        name: dto.name !== undefined ? dto.name.trim() : current.name,
+        orderMode: dto.orderMode ?? current.orderMode,
+        active: dto.active ?? Boolean(current.active),
+      };
+      const nextItems = dto.checkpoints
+        ? dto.checkpoints.map((c) => ({ checkpointId: c.checkpointId, required: c.required ?? true }))
+        : currentItems.map((c: any) => ({ checkpointId: Number(c.checkpointId), required: Boolean(c.required) }));
+      const contentChanged = routeContentKey(currentItems.map((c: any) => ({ checkpointId: Number(c.checkpointId), required: Boolean(c.required) })), current.orderMode)
+        !== routeContentKey(nextItems, values.orderMode);
+      if (contentChanged && await this.routeReferenced(manager, id)) {
+        return this.supersedeRoute(manager, actor, current, { ...values, kind: 'custom', items: nextItems }, 'checkpoints_changed');
+      }
       const [row] = await updateRows(manager,
         `UPDATE "patrol_routes" SET "name" = $2, "orderMode" = $3, "active" = $4, "updatedByUserId" = $5, "updatedAt" = now()
           WHERE "id" = $1 RETURNING *`,
-        [id, dto.name !== undefined ? dto.name.trim() : current.name, dto.orderMode ?? current.orderMode, dto.active ?? current.active, actor.userId],
+        [id, values.name, values.orderMode, values.active, actor.userId],
       );
-      if (dto.checkpoints) {
+      if (dto.checkpoints && contentChanged) {
         await manager.query(`DELETE FROM "patrol_route_checkpoints" WHERE "routeId" = $1`, [id]);
         await this.writeRouteCheckpoints(manager, actor, row, dto.checkpoints);
       }
       const after = serializeRoute(row, await this.routeCheckpoints(manager, id));
       await this.audit(manager, actor, 'patrol.route.updated', 'patrol_route', id, before, after);
-      return after;
+      return { ...after, predecessorId: null, versioned: false };
     });
+  }
+
+  /**
+   * Whether anything could have relied on the route's checkpoints: a run or a schedule (any state) names it, or it is
+   * itself a successor. Judged after the route row is locked FOR UPDATE: a run or schedule insert naming it takes a
+   * key-share lock on that row (their foreign keys), so none can appear between this check and the edit.
+   */
+  private async routeReferenced(manager: EntityManager, routeId: number): Promise<boolean> {
+    const [refs] = await manager.query(
+      `SELECT EXISTS (SELECT 1 FROM "patrol_runs" WHERE "routeId" = $1) AS "runs",
+              EXISTS (SELECT 1 FROM "patrol_schedules" WHERE "routeId" = $1) AS "schedules",
+              EXISTS (SELECT 1 FROM "patrol_routes" WHERE "supersededByRouteId" = $1) AS "successor"`,
+      [routeId],
+    );
+    return Boolean(refs.runs || refs.schedules || refs.successor);
+  }
+
+  /**
+   * A new version of a route (patrol-route-versions.ts), in the caller's transaction with the route row locked FOR
+   * UPDATE: insert the successor and its checkpoints, then archive and link the predecessor — only while it is still
+   * unlinked and unarchived (UQ_patrol_routes_superseded_by is the backstop; a lost race rolls the successor back, 409).
+   * updatedAt of the predecessor is left as it was. Audited on both: patrol.route.superseded and patrol.route.created.
+   */
+  async supersedeRoute(
+    manager: EntityManager,
+    actor: PatrolCompanyActor,
+    current: any,
+    values: { name: string; orderMode: string; active: boolean; kind: 'custom' | 'auto'; items: Array<{ checkpointId: number; required: boolean }> },
+    reason: string,
+  ) {
+    const predecessorId = Number(current.id);
+    const before = serializeRoute(current, await this.routeCheckpoints(manager, predecessorId));
+    const [successor] = await manager.query(
+      `INSERT INTO "patrol_routes" ("companyId", "siteId", "name", "orderMode", "active", "kind", "createdByUserId", "updatedByUserId", "createdAt", "updatedAt")
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $7, now(), now()) RETURNING *`,
+      [actor.companyId, Number(current.siteId), values.name, values.orderMode, values.active, values.kind, actor.userId],
+    );
+    await this.writeRouteCheckpoints(manager, actor, successor, values.items);
+    let archived: any;
+    try {
+      [archived] = await updateRows(manager,
+        `UPDATE "patrol_routes" SET "active" = false, "archivedAt" = $3, "supersededByRouteId" = $4, "supersededAt" = $3, "updatedByUserId" = $2
+          WHERE "id" = $1 AND "archivedAt" IS NULL AND "supersededByRouteId" IS NULL RETURNING *`,
+        [predecessorId, actor.userId, successor.createdAt, Number(successor.id)],
+      );
+    } catch (error) {
+      if (isUniqueViolation(error, 'UQ_patrol_routes_superseded_by')) archived = null;
+      else throw error;
+    }
+    if (!archived) {
+      throw patrolError(HttpStatus.CONFLICT, PatrolErrorCode.ROUTE_SUPERSEDED, 'This route was replaced by a newer version. Reload the routes and edit the current one.');
+    }
+    const effectiveAt = new Date(successor.createdAt).toISOString();
+    const after = serializeRoute(successor, await this.routeCheckpoints(manager, Number(successor.id)));
+    await this.audit(manager, actor, PATROL_ROUTE_SUPERSEDED_ACTION, 'patrol_route', predecessorId, before, {
+      ...serializeRoute(archived, null), successorId: Number(successor.id), effectiveAt, reason,
+    });
+    await this.audit(manager, actor, 'patrol.route.created', 'patrol_route', Number(successor.id), null, { ...after, predecessorId, effectiveAt, reason });
+    return { ...after, predecessorId, versioned: true };
+  }
+
+  /**
+   * The site's automatic route (kind 'auto'): every CONFIRMED, active, unrevoked checkpoint of the site, in label order,
+   * all required (owner decision 1). Called — with the site's setup lock held — by every write that can change that set
+   * (a test scan, a rotation, a revocation, a checkpoint switched on or off) and by the setup save / activation. When the
+   * site has a current automatic route and its checkpoints differ from the set, a SUCCESSOR version is created (never an
+   * in-place change: windows that started earlier keep the version in force at their start). `create` makes the first
+   * version when the site has none (the setup chose the automatic route). Returns the current version (or null).
+   */
+  async syncAutoRoute(manager: EntityManager, actor: PatrolCompanyActor, siteId: number, reason: string, create = false): Promise<any | null> {
+    const [head] = await manager.query(
+      `SELECT * FROM "patrol_routes" WHERE "companyId" = $1 AND "siteId" = $2 AND "kind" = 'auto' AND "archivedAt" IS NULL
+        ORDER BY "id" DESC LIMIT 1 FOR UPDATE`,
+      [actor.companyId, siteId],
+    );
+    if (!head && !create) return null;
+    const confirmed = await manager.query(
+      `SELECT "id" FROM "patrol_checkpoints"
+        WHERE "companyId" = $1 AND "siteId" = $2 AND "active" AND "revokedAt" IS NULL AND "confirmedAt" IS NOT NULL
+          AND "confirmedTokenVersion" = "tokenVersion"
+        ORDER BY "label", "id"`,
+      [actor.companyId, siteId],
+    );
+    const items = confirmed.map((c: any) => ({ checkpointId: Number(c.id), required: true }));
+    if (!head) {
+      const [route] = await manager.query(
+        `INSERT INTO "patrol_routes" ("companyId", "siteId", "name", "orderMode", "active", "kind", "createdByUserId", "updatedByUserId")
+         VALUES ($1, $2, $3, 'any', true, 'auto', $4, $4) RETURNING *`,
+        [actor.companyId, siteId, AUTO_ROUTE_NAME, actor.userId],
+      );
+      await this.writeRouteCheckpoints(manager, actor, route, items);
+      await this.audit(manager, actor, 'patrol.route.created', 'patrol_route', Number(route.id), null, {
+        ...serializeRoute(route, await this.routeCheckpoints(manager, Number(route.id))), reason,
+      });
+      return route;
+    }
+    const current = (await this.routeCheckpoints(manager, Number(head.id))).map((c: any) => ({ checkpointId: Number(c.checkpointId), required: Boolean(c.required) }));
+    if (routeContentKey(current, 'any') === routeContentKey(items, 'any') && head.orderMode === 'any') return head;
+    const successor = await this.supersedeRoute(manager, actor, head, { name: AUTO_ROUTE_NAME, orderMode: 'any', active: true, kind: 'auto', items }, reason);
+    const [row] = await manager.query(`SELECT * FROM "patrol_routes" WHERE "id" = $1`, [successor.id]);
+    return row;
   }
 
   async archiveRoute(user: JwtPayload, id: number) {
@@ -559,6 +721,10 @@ export class PatrolConfigService {
     return this.dataSource.transaction(async (manager) => {
       const current = await this.routeRow(actor, id, manager, true);
       if (current.archivedAt) return serializeRoute(current, await this.routeCheckpoints(manager, id));
+      if (current.kind === 'auto') {
+        throw patrolError(HttpStatus.CONFLICT, PatrolErrorCode.MANAGED_BY_SETUP,
+          'The automatic route is managed by the site setup. Switch the site to photos or to a chosen route instead.');
+      }
       const [row] = await updateRows(manager,
         `UPDATE "patrol_routes" SET "active" = false, "archivedAt" = now(), "updatedByUserId" = $2, "updatedAt" = now() WHERE "id" = $1 RETURNING *`,
         [id, actor.userId],
@@ -602,6 +768,8 @@ export class PatrolConfigService {
         WHERE "companyId" = $1 AND "siteId" = ANY($2::int[]) AND "active" AND "archivedAt" IS NULL ORDER BY "id"`,
       [companyId, ids],
     );
+    // 1.3.0 B1: a schedule keeps the route id it was given; the route it uses NOW is the newest version of that route.
+    const links = await routeVersionLinks(runner, companyId);
     for (const siteId of ids) {
       const own = policies.find((p: any) => p.siteId != null && Number(p.siteId) === siteId);
       const methods: string[] = (own ?? companyRow)?.methods ?? PATROL_POLICY_DEFAULTS.methods;
@@ -609,7 +777,8 @@ export class PatrolConfigService {
       const list: PatrolConfigurationWarning[] = [];
       const siteSchedules = schedules.filter((s: any) => Number(s.siteId) === siteId);
       for (const s of siteSchedules) {
-        if (s.routeId == null || !validRoutes.has(Number(s.routeId))) list.push(qrRouteWarning(siteId, Number(s.id)));
+        const routeNow = routeHead(links, s.routeId == null ? null : Number(s.routeId));
+        if (routeNow == null || !validRoutes.has(routeNow)) list.push(qrRouteWarning(siteId, Number(s.id)));
       }
       if (!siteSchedules.length && own && !validRouteSites.has(siteId)) list.push(qrRouteWarning(siteId, null));
       if (list.length) out.set(siteId, list);
@@ -754,6 +923,19 @@ function qrRouteWarning(siteId: number, scheduleId: number | null): PatrolConfig
 /** One schedule's warnings out of its site's. */
 export function scheduleWarningsOf(warnings: Map<number, PatrolConfigurationWarning[]>, row: any): PatrolConfigurationWarning[] {
   return (warnings.get(Number(row.siteId)) ?? []).filter((w) => w.scheduleId === Number(row.id));
+}
+
+/** A shift-anchored schedule (Migration 74) is changed only through its site setup. */
+function assertClockSchedule(row: any) {
+  if (row.anchor === 'shift') {
+    throw patrolError(HttpStatus.CONFLICT, PatrolErrorCode.MANAGED_BY_SETUP,
+      'This is the site\'s shift patrol schedule. Change it in the site\'s patrol setup.', { siteId: Number(row.siteId) });
+  }
+}
+
+/** The site's setup lock (PATROL_SITE_SETUP_LOCK_NAMESPACE), held to the end of the caller's transaction. */
+export async function lockPatrolSite(manager: { query: EntityManager['query'] }, siteId: number) {
+  await manager.query('SELECT pg_advisory_xact_lock($1, $2)', [PATROL_SITE_SETUP_LOCK_NAMESPACE, siteId]);
 }
 
 function isUniqueViolation(error: unknown, constraint: string): boolean {

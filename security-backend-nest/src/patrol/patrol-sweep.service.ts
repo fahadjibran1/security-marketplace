@@ -10,10 +10,10 @@ import { PatrolExceptionType, PatrolSyncFlag } from './patrol-constants';
 import { PatrolExceptionService } from './patrol-exception.service';
 import { syncAcceptanceEndsAt } from './patrol-late-sync';
 import { PatrolRecoveryGrantService, grantKey } from './patrol-recovery-grant.service';
+import { loadRunEvaluationContext, runRequirements } from './patrol-run-evaluation';
 import {
   completionDeadline,
   completionFindings,
-  evaluateRequirements,
   RequirementResult,
   runProgressState,
   startDeadline,
@@ -22,6 +22,8 @@ import {
   verificationState,
 } from './patrol-state';
 import { scheduleVersionBounds, supersededSince, withVersionBounds } from './patrol-schedule-versions';
+import { latest, requirementChangedAt, setupChangedAt, setupFor, shiftAnchoredSchedules, siteSetups } from './patrol-shift-context';
+import { effectiveShiftRequirement, setupActive, shiftAnchoredWindows, shiftScopeKey } from './patrol-shift-windows';
 import { PatrolDutyShift, PatrolWindow, PatrolWindowService, runCoverageKey } from './patrol-window.service';
 
 /** The sweep's cadence, as the safety sweep's. */
@@ -339,7 +341,7 @@ export class PatrolSweepService implements OnModuleInit, OnModuleDestroy {
     if (startFloor.getTime() >= deadlineTo.getTime()) return result;
     // Shifts that may have been on duty in the range. A cancelled shift is on duty for nothing (its windows are dropped).
     const shifts = await manager.query(
-      `SELECT "id", "siteId", "guardId", "status", "start", "end" FROM "shifts"
+      `SELECT "id", "siteId", "guardId", "status", "start", "end", "patrolRequirement" FROM "shifts"
         WHERE "companyId" = $1 AND "siteId" IS NOT NULL AND "status" IN ('in_progress', 'completed') AND "start" < $2 AND "end" > $3`,
       [companyId, deadlineTo, startFloor],
     );
@@ -351,6 +353,7 @@ export class PatrolSweepService implements OnModuleInit, OnModuleDestroy {
       [shiftIds],
     );
     const bySite = new Map<number, PatrolDutyShift[]>();
+    const dutyById = new Map<number, { duty: PatrolDutyShift; shift: any; bookOnAt: Date | null }>();
     for (const shift of shifts) {
       const rows = attendance.filter((a: any) => Number(a.shiftId) === Number(shift.id));
       const effective = effectiveAttendance(rows);
@@ -362,6 +365,7 @@ export class PatrolSweepService implements OnModuleInit, OnModuleDestroy {
       const list = bySite.get(Number(shift.siteId)) ?? [];
       list.push(duty);
       bySite.set(Number(shift.siteId), list);
+      dutyById.set(Number(shift.id), { duty, shift, bookOnAt: effective.bookOnAt });
     }
     // Schedule versions (S4 1.2.1, patrol-schedule-versions.ts): a schedule replaced by a timing change is still judged for
     // the windows that had ENDED before the change (they were patrolled, or not, under its timing); the window open at the
@@ -369,22 +373,31 @@ export class PatrolSweepService implements OnModuleInit, OnModuleDestroy {
     const versions = await scheduleVersionBounds(manager, companyId);
     const replaced = supersededSince(versions, new Date(startFloor.getTime() - 86_400_000));
     const schedules = await manager.query(
-      `SELECT * FROM "patrol_schedules" WHERE "companyId" = $1 AND "siteId" = ANY($2::int[])
+      `SELECT * FROM "patrol_schedules" WHERE "companyId" = $1 AND "siteId" = ANY($2::int[]) AND "anchor" = 'clock'
           AND (("active" AND "archivedAt" IS NULL) OR "id" = ANY($3::int[])) ORDER BY "id"`,
       [companyId, [...bySite.keys()], replaced],
     );
-    if (!schedules.length) return result;
+    // S4 1.3.0 B1: the shift-anchored schedules of sites whose setup is active (patrol-shift-windows.ts).
+    const setups = await siteSetups(manager, companyId, [...bySite.keys()]);
+    const activeSites = [...bySite.keys()].filter((id) => setupActive(setupFor(setups, id)));
+    const shiftSchedules = activeSites.length
+      ? await shiftAnchoredSchedules(manager, companyId, activeSites, versions, new Date(startFloor.getTime() - 86_400_000))
+      : [];
+    if (!schedules.length && !shiftSchedules.length) return result;
     const runRows = await manager.query(
       `SELECT "scheduleId", "windowKey", "scopeKey", "windowStart" FROM "patrol_runs"
         WHERE "companyId" = $1 AND "windowKey" IS NOT NULL AND "scheduleId" = ANY($2::int[]) AND "windowEnd" > $3`,
-      [companyId, schedules.map((s: any) => Number(s.id)), new Date(startFloor.getTime() - 86_400_000)],
+      [companyId, [...schedules, ...shiftSchedules].map((s: any) => Number(s.id)), new Date(startFloor.getTime() - 86_400_000)],
     );
     // S4 1.2.1: a run covers the window it was assigned to — its schedule, key, scope AND the window's actual start — so a
     // run can never satisfy a different window that happens to reuse a key.
     const runKeys = new Set(runRows.map((r: any) => runCoverageKey(r.scheduleId, r.windowKey, r.scopeKey, r.windowStart)));
 
     // Every window due in the range, in schedule then time order (the order alerts are raised in).
-    const due: Array<{ schedule: any; site: SiteInfo; policy: EffectivePolicy; window: PatrolWindow; deadline: Date; onDuty: PatrolDutyShift[] }> = [];
+    const due: Array<{
+      schedule: any; site: SiteInfo; policy: EffectivePolicy; window: PatrolWindow; deadline: Date; onDuty: PatrolDutyShift[];
+      scopes?: Array<{ scopeKey: string; shift: PatrolDutyShift }>;
+    }> = [];
     for (const schedule of schedules) {
       const siteId = Number(schedule.siteId);
       const site = sites.get(siteId);
@@ -406,6 +419,37 @@ export class PatrolSweepService implements OnModuleInit, OnModuleDestroy {
         due.push({ schedule, site, policy, window, deadline, onDuty });
       }
     }
+    // S4 1.3.0 B1 (owner decisions 4 and 5): shift-anchored windows, owed by each EFFECTIVELY REQUIRED shift on duty, scope
+    // the shift. Judged only from the latest of: the range floor, the schedule version's last change, the setup's
+    // activation, the site's last change to who patrols / how windows anchor, and this shift's last requirement change —
+    // so every such change applies to future windows only. An ad-hoc (unscheduled) patrol never raises a missed window.
+    if (shiftSchedules.length) {
+      const reqFloors = await requirementChangedAt(manager, companyId, [...dutyById.keys()]);
+      const setupFloors = await setupChangedAt(manager, companyId);
+      for (const schedule of shiftSchedules) {
+        const siteId = Number(schedule.siteId);
+        const site = sites.get(siteId);
+        if (!site) continue;
+        const setup = setupFor(setups, siteId);
+        const policy = await policyFor(siteId);
+        const until = schedule.archivedAt ? versions.get(Number(schedule.id))?.effectiveUntil ?? null : null;
+        for (const duty of bySite.get(siteId) ?? []) {
+          const entry = dutyById.get(duty.shiftId)!;
+          if (!effectiveShiftRequirement(entry.shift.patrolRequirement, setup).effectiveRequired) continue;
+          const floor = latest(startFloor, new Date(schedule.updatedAt), setup.setupConfirmedAt, setupFloors.get(siteId), reqFloors.get(duty.shiftId));
+          for (const window of shiftAnchoredWindows(schedule, entry.shift, setup.windowAnchor, entry.bookOnAt, site.timezone)) {
+            if (window.start.getTime() < floor.getTime()) continue;
+            if (until && window.end.getTime() > until.getTime()) continue; // open at the change: never judged
+            const deadline = startDeadline(window.end, policy.startGraceMinutes);
+            if (now.getTime() < deadline.getTime() || deadline.getTime() > deadlineTo.getTime()) continue;
+            if (deadlineFrom && deadline.getTime() <= deadlineFrom.getTime()) continue;
+            const onDuty = this.windows.onDutyShifts(window, [duty]);
+            if (!onDuty.length) continue;
+            due.push({ schedule, site, policy, window, deadline, onDuty, scopes: [{ scopeKey: shiftScopeKey(duty.shiftId), shift: duty }] });
+          }
+        }
+      }
+    }
     // Reconciliation bound: the oldest `limit` deadlines (and any window sharing the last one), judged through that deadline.
     let judged = due;
     if (range.limit !== undefined && due.length > range.limit) {
@@ -415,11 +459,11 @@ export class PatrolSweepService implements OnModuleInit, OnModuleDestroy {
     }
 
     const reconciled = range.reconciliationRunId !== undefined;
-    for (const { schedule, site, policy, window, deadline, onDuty } of judged) {
+    for (const { schedule, site, policy, window, deadline, onDuty, scopes: owedBy } of judged) {
       result.windowsJudged += 1;
-      const scopes = policy.requirementScope === 'per_guard'
+      const scopes = owedBy ?? (policy.requirementScope === 'per_guard'
         ? onDuty.map((shift) => ({ scopeKey: `sh${shift.shiftId}`, shift }))
-        : [{ scopeKey: 'site', shift: onDuty[0] }];
+        : [{ scopeKey: 'site', shift: onDuty[0] }]);
       for (const scope of scopes) {
         if (runKeys.has(runCoverageKey(schedule.id, window.windowKey, scope.scopeKey, window.start))) continue;
         const raised = await raise({
@@ -703,28 +747,8 @@ export class PatrolSweepService implements OnModuleInit, OnModuleDestroy {
       [companyId, new Date(now.getTime() - RUN_REVIEW_DAYS * 86_400_000)],
     );
     if (!runs.length) return;
-    const runIds = runs.map((r: any) => Number(r.id));
-    const visits = await manager.query(
-      `SELECT "id", "runId", "checkpointId", "result" FROM "patrol_checkpoint_visits" WHERE "runId" = ANY($1::int[])`,
-      [runIds],
-    );
-    const evidence = await manager.query(
-      `SELECT "id", "runId", "visitId", "kind", "uploadStatus", "retentionStatus", "sha256Stored", "syncFlags" FROM "patrol_evidence" WHERE "runId" = ANY($1::int[])`,
-      [runIds],
-    );
-    const routeIds = [...new Set(runs.filter((r: any) => r.routeId != null).map((r: any) => Number(r.routeId)))];
-    const routeCheckpoints = routeIds.length
-      ? await manager.query(
-        `SELECT rc."routeId", rc."checkpointId", rc."required", c."photoRequired" FROM "patrol_route_checkpoints" rc
-           JOIN "patrol_checkpoints" c ON c."id" = rc."checkpointId"
-          WHERE rc."routeId" = ANY($1::int[]) AND c."active" AND c."revokedAt" IS NULL`,
-        [routeIds],
-      )
-      : [];
-    const photoRequiredAtSite = await manager.query(
-      `SELECT "id" FROM "patrol_checkpoints" WHERE "companyId" = $1 AND "photoRequired" AND "active" AND "revokedAt" IS NULL`,
-      [companyId],
-    );
+    // Visits, evidence and the runs' route versions (patrol-run-evaluation.ts: the one rule the reads explain too).
+    const evaluation = await loadRunEvaluationContext(manager, companyId, runs);
     const attendanceByShift = new Map<number, any[]>();
     const openShiftIds = [...new Set(runs.filter((r: any) => r.status === 'in_progress' && r.shiftStatus !== 'in_progress').map((r: any) => Number(r.shiftId)))];
     // #68: a run whose Guard holds an active recovery grant for its shift is not closed while the grant lasts.
@@ -793,26 +817,10 @@ export class PatrolSweepService implements OnModuleInit, OnModuleDestroy {
       }
       if (run.status === 'closed_by_system' || run.verificationFinalAt) continue;
 
-      const routeRows = run.routeId == null ? [] : routeCheckpoints.filter((rc: any) => Number(rc.routeId) === Number(run.routeId));
-      const runVisits = visits.filter((v: any) => Number(v.runId) === runId);
-      const runEvidence = evidence.filter((e: any) => Number(e.runId) === runId);
-      // The checkpoint rule is the run's route's required checkpoints (none ⇒ no rule; evaluateRequirements flags it when
-      // QR is required). Never every checkpoint of the site, and never "one scan is enough".
-      const requirements = evaluateRequirements({
-        requiredCheckpointIds: routeRows.filter((rc: any) => rc.required).map((rc: any) => Number(rc.checkpointId)),
-        photoRequiredCheckpointIds: [
-          ...routeRows.filter((rc: any) => rc.photoRequired).map((rc: any) => Number(rc.checkpointId)),
-          ...photoRequiredAtSite.map((c: any) => Number(c.id)).filter((id: number) => runVisits.some((v: any) => Number(v.checkpointId) === id)),
-        ],
-        photosPerRun: policy.photosPerRun,
-        photosPerCheckpoint: policy.photosPerCheckpoint,
-        methods: policy.methods,
-        visits: runVisits.map((v: any) => ({ visitId: Number(v.id), checkpointId: v.checkpointId == null ? null : Number(v.checkpointId), result: v.result })),
-        evidence: runEvidence.map((e: any) => ({
-          id: Number(e.id), kind: e.kind, visitId: e.visitId == null ? null : Number(e.visitId), uploadStatus: e.uploadStatus,
-          retentionStatus: e.retentionStatus, sha256Stored: e.sha256Stored ?? null,
-        })),
-      });
+      const runEvidence = evaluation.evidence.filter((e: any) => Number(e.runId) === runId);
+      // The checkpoint rule is the run's route version's required checkpoints (none ⇒ no rule; evaluateRequirements flags
+      // it when QR is required). Never every checkpoint of the site, and never "one scan is enough".
+      const requirements = runRequirements(run, policy, evaluation);
       await this.flagForReview(manager, companyId, run, requirements, runEvidence, now);
       const pastCompletionDeadline = now.getTime() >= compDl.getTime();
       for (const finding of completionFindings({

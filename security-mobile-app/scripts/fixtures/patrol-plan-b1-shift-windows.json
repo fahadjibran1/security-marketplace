@@ -1,0 +1,280 @@
+{
+  "plan": {
+    "shift": {
+      "id": 13,
+      "status": "in_progress",
+      "start": "2026-11-14T22:00:00.000Z",
+      "end": "2026-11-15T02:00:00.000Z"
+    },
+    "site": {
+      "id": 13,
+      "name": "Foxtrot",
+      "timezone": "Europe/London"
+    },
+    "policy": {
+      "methods": [
+        "qr"
+      ],
+      "photosPerRun": 0,
+      "photosPerCheckpoint": 0,
+      "orderMode": "any",
+      "startGraceMinutes": 15,
+      "maxPatrolDurationMinutes": 45,
+      "completionGraceMinutes": 30,
+      "syncGraceMinutes": 60,
+      "requirementScope": "site",
+      "retentionDays": 30,
+      "incompleteNeedsAction": true,
+      "postShiftSyncHours": 24,
+      "clockDriftThresholdMinutes": 5,
+      "allowUnscheduledPatrols": true,
+      "escalateUnverified": false,
+      "source": "site"
+    },
+    "locationVerification": false,
+    "schedules": [
+      {
+        "id": 12,
+        "routeId": 17,
+        "name": "Shift patrol",
+        "daysOfWeek": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "activeFrom": "00:00",
+        "activeTo": "00:00",
+        "timeBasis": "site_local",
+        "frequencyMinutes": 60,
+        "windowMinutes": 60,
+        "startsOn": null,
+        "endsOn": null,
+        "anchor": "shift",
+        "windowAnchor": "scheduled_start"
+      }
+    ],
+    "routes": [
+      {
+        "id": 17,
+        "name": "All confirmed checkpoints",
+        "orderMode": "any",
+        "checkpoints": [
+          {
+            "position": 1,
+            "required": true,
+            "publicId": "0a51a4d693cafda3e8c98e33ede3e83b",
+            "label": "Foxtrot Gate"
+          }
+        ]
+      }
+    ],
+    "checkpoints": [
+      {
+        "publicId": "0a51a4d693cafda3e8c98e33ede3e83b",
+        "label": "Foxtrot Gate",
+        "description": null,
+        "photoRequired": false
+      }
+    ],
+    "windows": [
+      {
+        "windowKey": "s12:sh13:20261114T2200Z:0",
+        "scheduleId": 12,
+        "scheduleName": "Shift patrol",
+        "routeId": 17,
+        "localDate": "2026-11-14",
+        "start": "2026-11-14T22:00:00.000Z",
+        "end": "2026-11-14T23:00:00.000Z",
+        "covered": false,
+        "anchor": "shift"
+      },
+      {
+        "windowKey": "s12:sh13:20261114T2200Z:1",
+        "scheduleId": 12,
+        "scheduleName": "Shift patrol",
+        "routeId": 17,
+        "localDate": "2026-11-14",
+        "start": "2026-11-14T23:00:00.000Z",
+        "end": "2026-11-15T00:00:00.000Z",
+        "covered": false,
+        "anchor": "shift"
+      },
+      {
+        "windowKey": "s12:sh13:20261114T2200Z:2",
+        "scheduleId": 12,
+        "scheduleName": "Shift patrol",
+        "routeId": 17,
+        "localDate": "2026-11-15",
+        "start": "2026-11-15T00:00:00.000Z",
+        "end": "2026-11-15T01:00:00.000Z",
+        "covered": false,
+        "anchor": "shift"
+      },
+      {
+        "windowKey": "s12:sh13:20261114T2200Z:3",
+        "scheduleId": 12,
+        "scheduleName": "Shift patrol",
+        "routeId": 17,
+        "localDate": "2026-11-15",
+        "start": "2026-11-15T01:00:00.000Z",
+        "end": "2026-11-15T02:00:00.000Z",
+        "covered": false,
+        "anchor": "shift"
+      }
+    ],
+    "configurationWarnings": [],
+    "patrolRequirement": {
+      "value": "site_default",
+      "effectiveRequired": true,
+      "source": "site",
+      "summary": "Patrols required (site default: every shift)."
+    }
+  },
+  "emptyRoutePlan": {
+    "shift": {
+      "id": 13,
+      "status": "in_progress",
+      "start": "2026-11-14T22:00:00.000Z",
+      "end": "2026-11-15T02:00:00.000Z"
+    },
+    "site": {
+      "id": 13,
+      "name": "Foxtrot",
+      "timezone": "Europe/London"
+    },
+    "policy": {
+      "methods": [
+        "qr"
+      ],
+      "photosPerRun": 0,
+      "photosPerCheckpoint": 0,
+      "orderMode": "any",
+      "startGraceMinutes": 15,
+      "maxPatrolDurationMinutes": 45,
+      "completionGraceMinutes": 30,
+      "syncGraceMinutes": 60,
+      "requirementScope": "site",
+      "retentionDays": 30,
+      "incompleteNeedsAction": true,
+      "postShiftSyncHours": 24,
+      "clockDriftThresholdMinutes": 5,
+      "allowUnscheduledPatrols": true,
+      "escalateUnverified": false,
+      "source": "site"
+    },
+    "locationVerification": false,
+    "schedules": [
+      {
+        "id": 12,
+        "routeId": 20,
+        "name": "Shift patrol",
+        "daysOfWeek": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "activeFrom": "00:00",
+        "activeTo": "00:00",
+        "timeBasis": "site_local",
+        "frequencyMinutes": 60,
+        "windowMinutes": 60,
+        "startsOn": null,
+        "endsOn": null,
+        "anchor": "shift",
+        "windowAnchor": "scheduled_start"
+      }
+    ],
+    "routes": [
+      {
+        "id": 17,
+        "name": "All confirmed checkpoints",
+        "orderMode": "any",
+        "checkpoints": []
+      },
+      {
+        "id": 20,
+        "name": "All confirmed checkpoints",
+        "orderMode": "any",
+        "checkpoints": []
+      }
+    ],
+    "checkpoints": [],
+    "windows": [
+      {
+        "windowKey": "s12:sh13:20261114T2200Z:0",
+        "scheduleId": 12,
+        "scheduleName": "Shift patrol",
+        "routeId": 17,
+        "localDate": "2026-11-14",
+        "start": "2026-11-14T22:00:00.000Z",
+        "end": "2026-11-14T23:00:00.000Z",
+        "covered": false,
+        "anchor": "shift"
+      },
+      {
+        "windowKey": "s12:sh13:20261114T2200Z:1",
+        "scheduleId": 12,
+        "scheduleName": "Shift patrol",
+        "routeId": 17,
+        "localDate": "2026-11-14",
+        "start": "2026-11-14T23:00:00.000Z",
+        "end": "2026-11-15T00:00:00.000Z",
+        "covered": true,
+        "anchor": "shift"
+      },
+      {
+        "windowKey": "s12:sh13:20261114T2200Z:2",
+        "scheduleId": 12,
+        "scheduleName": "Shift patrol",
+        "routeId": 20,
+        "localDate": "2026-11-15",
+        "start": "2026-11-15T00:00:00.000Z",
+        "end": "2026-11-15T01:00:00.000Z",
+        "covered": true,
+        "anchor": "shift"
+      },
+      {
+        "windowKey": "s12:sh13:20261114T2200Z:3",
+        "scheduleId": 12,
+        "scheduleName": "Shift patrol",
+        "routeId": 20,
+        "localDate": "2026-11-15",
+        "start": "2026-11-15T01:00:00.000Z",
+        "end": "2026-11-15T02:00:00.000Z",
+        "covered": false,
+        "anchor": "shift"
+      }
+    ],
+    "configurationWarnings": [
+      {
+        "code": "QR_ROUTE_REQUIRED",
+        "message": "Site setup incomplete: no confirmed checkpoints.",
+        "scheduleId": 12
+      },
+      {
+        "code": "SITE_SETUP_INCOMPLETE",
+        "message": "Site setup incomplete: no confirmed checkpoints.",
+        "scheduleId": 12
+      },
+      {
+        "code": "QR_ROUTE_REQUIRED",
+        "message": "Choose a route with required checkpoints, or switch this site to photos.",
+        "scheduleId": null
+      }
+    ],
+    "patrolRequirement": {
+      "value": "site_default",
+      "effectiveRequired": true,
+      "source": "site",
+      "summary": "Patrols required (site default: every shift)."
+    }
+  }
+}

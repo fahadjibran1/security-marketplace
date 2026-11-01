@@ -56,6 +56,8 @@ import { resolveShiftWelfareInterval } from './shift-welfare-interval';
 import { offerAcceptanceWindow, shiftOfferExpiredException } from './offer-acceptance-window';
 import { lockGuardsForAssignment, returningRows } from '../operations/advisory-locks';
 import { assertNoShiftClash } from '../availability/shift-clash';
+import { shiftPatrolRequirementSetting, shiftPatrolRequirements, storedPatrolRequirement } from '../patrol/patrol-shift-requirement';
+import { SHIFT_PATROL_REQUIREMENT_CHANGED_ACTION } from '../patrol/patrol-shift-windows';
 import {
   COMPANY_FORBIDDEN_TRANSITIONS,
   DELETABLE_STATUSES,
@@ -133,9 +135,24 @@ export class ShiftService {
     });
   }
 
+  /**
+   * S4 1.3.0 B1: every shift read carries `patrolRequirement` — { value, effectiveRequired, source, summary } — resolved
+   * against its site's patrol setup (patrol/patrol-shift-requirement.ts). One read for the whole list; additive.
+   */
+  async withPatrolRequirements<T extends Shift>(shifts: T[]): Promise<T[]> {
+    const views = await shiftPatrolRequirements(this.dataSource, shifts.map((s) => s.id));
+    for (const shift of shifts) {
+      // The raw column (select: false) is never serialised; TypeORM may set it to null on an entity it just inserted.
+      delete shift.patrolRequirementSetting;
+      const view = views.get(shift.id);
+      if (view) shift.patrolRequirement = view; // only for a company with Patrols on (otherwise the response is unchanged)
+    }
+    return shifts;
+  }
+
   async findAllForUser(user: JwtPayload): Promise<Shift[]> {
     if (user.role === UserRole.ADMIN) {
-      return this.findAll();
+      return this.withPatrolRequirements(await this.findAll());
     }
 
     if (isCompanyRole(user.role)) {
@@ -143,11 +160,11 @@ export class ShiftService {
         user.sub, user.role, CompanyPermission.SHIFTS_VIEW,
       );
 
-      return this.shiftRepo.find({
+      return this.withPatrolRequirements(await this.shiftRepo.find({
         where: { company: { id: company.id } },
         relations: ['assignment', 'company', 'guard', 'site', 'job', 'jobApplication'],
         order: { start: 'DESC' },
-      });
+      }));
     }
 
     const guard = await this.guardProfileService.findByUserId(user.sub);
@@ -155,11 +172,11 @@ export class ShiftService {
       throw new NotFoundException('Guard profile not found');
     }
 
-    return this.shiftRepo.find({
+    return this.withPatrolRequirements(await this.shiftRepo.find({
       where: { guard: { id: guard.id } },
       relations: ['assignment', 'company', 'guard', 'site', 'job', 'jobApplication'],
       order: { start: 'DESC' },
-    });
+    }));
   }
 
   /**
@@ -191,6 +208,7 @@ export class ShiftService {
     const relevant = shifts.filter((shift) => needsGuardOperations(shift, now));
     const operations = await this.operationsProjection.projectForShifts(relevant, now);
 
+    await this.withPatrolRequirements(shifts);
     return shifts.map((shift) => {
       const view = Object.assign(Object.create(Object.getPrototypeOf(shift)), shift) as GuardShiftResponse;
       view.operations = toGuardShiftOperations(operations.get(shift.id));
@@ -228,7 +246,7 @@ export class ShiftService {
     const shift = await this.findOne(id);
 
     if (user.role === UserRole.ADMIN) {
-      return shift;
+      return (await this.withPatrolRequirements([shift]))[0];
     }
 
     if (isCompanyRole(user.role)) {
@@ -238,7 +256,7 @@ export class ShiftService {
       if (shift.company.id !== company.id) {
         throw new NotFoundException(`Shift with id ${id} not found`);
       }
-      return shift;
+      return (await this.withPatrolRequirements([shift]))[0];
     }
 
     const guard = await this.guardProfileService.findByUserId(user.sub);
@@ -246,7 +264,7 @@ export class ShiftService {
       throw new NotFoundException(`Shift with id ${id} not found`);
     }
 
-    return shift;
+    return (await this.withPatrolRequirements([shift]))[0];
   }
 
   async create(
@@ -380,6 +398,11 @@ export class ShiftService {
     shift.status = status;
 
     const savedShift: Shift = await shiftRepo.save(shift);
+    // S4 1.3.0 B1: the shift's patrol requirement (NULL = the site's default), written explicitly (select: false column).
+    const requirement = storedPatrolRequirement(dto.patrolRequirement);
+    if (requirement) {
+      await (manager ?? this.dataSource).query(`UPDATE "shifts" SET "patrolRequirement" = $2 WHERE "id" = $1`, [savedShift.id, requirement]);
+    }
     const timesheet = savedShift.guard
       ? await this.timesheetService.createForShift(savedShift, manager)
       : null;
@@ -395,7 +418,9 @@ export class ShiftService {
 
   async createForUser(user: JwtPayload, dto: CreateShiftDto) {
     if (user.role === UserRole.ADMIN) {
-      return this.create(dto);
+      const created = await this.create(dto);
+      await this.withPatrolRequirements([created.shift]);
+      return created;
     }
 
     const { company } = await this.membershipService.resolveCompanyContext(
@@ -459,7 +484,7 @@ export class ShiftService {
       throw new ForbiddenException('Site does not belong to the current company');
     }
 
-    return this.create({
+    const created = await this.create({
       ...dto,
       assignmentId: assignment?.id ?? dto.assignmentId,
       companyId: company.id,
@@ -474,6 +499,8 @@ export class ShiftService {
       ),
       status: dto.status ?? (contextGuard ? 'offered' : 'unfilled'),
     });
+    await this.withPatrolRequirements([created.shift]);
+    return created;
   }
 
   /**
@@ -703,6 +730,15 @@ export class ShiftService {
       );
     }
 
+    // S4 1.3.0 B1: the shift's patrol requirement. A change applies to future patrol windows only (the sweep never judges
+    // a window that started before the audited change); a closed shift's requirement is part of its record.
+    const requirementBefore = dto.patrolRequirement !== undefined ? await shiftPatrolRequirementSetting(this.dataSource, shift.id) : null;
+    const requirementAfter = dto.patrolRequirement !== undefined ? storedPatrolRequirement(dto.patrolRequirement) : null;
+    const requirementChanged = dto.patrolRequirement !== undefined && requirementAfter !== requirementBefore;
+    if (requirementChanged && ['completed', 'cancelled', 'missed'].includes(currentStatus)) {
+      throw new ConflictException(`This shift is ${currentStatus}. Its patrol requirement is part of its record and cannot be changed.`);
+    }
+
     const requestedStatusChange = dto.status?.trim() ? this.normalizeLifecycleStatus(dto.status) : null;
     if (requestedStatusChange && requestedStatusChange !== currentStatus) {
       const forbidden = COMPANY_FORBIDDEN_TRANSITIONS[currentStatus]?.[requestedStatusChange];
@@ -849,6 +885,19 @@ export class ShiftService {
           afterData: changes.after,
         });
       }
+      // S4 1.3.0 B1: the patrol requirement change has its own entry — the sweep's "future windows only" floor reads it.
+      if (requirementChanged) {
+        await manager.query(`UPDATE "shifts" SET "patrolRequirement" = $2 WHERE "id" = $1`, [shift.id, requirementAfter]);
+        await this.auditLogService.logInTransaction(manager, {
+          company: { id: actorCompany.id },
+          user: { id: user.sub },
+          action: SHIFT_PATROL_REQUIREMENT_CHANGED_ACTION,
+          entityType: 'shift',
+          entityId: shift.id,
+          beforeData: { patrolRequirement: requirementBefore ?? 'site_default' },
+          afterData: { patrolRequirement: requirementAfter ?? 'site_default', status: currentStatus, effectiveFrom: new Date().toISOString() },
+        });
+      }
       // Mark Missed has its own entry, with the reason when one was given (optional: an older web release sends none).
       if (nextStatus === 'missed' && currentStatus !== 'missed') {
         await this.auditLogService.logInTransaction(manager, {
@@ -925,7 +974,7 @@ export class ShiftService {
       return saved;
     });
 
-    return this.findOne(savedShift.id);
+    return (await this.withPatrolRequirements([await this.findOne(savedShift.id)]))[0];
   }
 
   /**

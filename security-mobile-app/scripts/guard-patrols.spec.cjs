@@ -41,6 +41,9 @@
  *   GPAT-28  photo-only sites: card visible, no "Scan checkpoint", no checkpoints required, start → photo → complete
  *   GPAT-29  QR without a route: the configuration problem is shown plainly; checkpoints are optional, never required
  *   GPAT-30  NFC is offered nowhere in the Guard app
+ * S4 1.3.0 B1 (backend only; the app is unchanged)
+ *   GPAT-31  the 1.2.1 app logic handles a 1.3.0 plan: shift-anchored windows (opaque keys), automatic route versions and
+ *            the new SITE_SETUP_INCOMPLETE warning (fixture written by the backend's patrol-site-setup.spec.ts)
  */
 const assert = require('node:assert').strict;
 const fs = require('node:fs');
@@ -1123,6 +1126,48 @@ test('GPAT-30-NFC-IS-OFFERED-NOWHERE-IN-THE-GUARD-APP', () => {
   assert.doesNotMatch(stripComments(codeOf('src/screens/GuardDashboardScreen.tsx')), /\bnfc\b/i);
   assert.doesNotMatch(JSON.stringify(JSON.parse(codeOf('app.json'))), /nfc/i, 'no NFC permission or plugin');
   assert.match(codeOf('src/types/patrols.ts'), /export type PatrolMethod = 'qr' \| 'photo';/, 'the methods are QR and photos only');
+});
+
+// S4 1.3.0 B1 contract: the DEPLOYED 1.2.1 app logic (unchanged) against a plan from the 1.3.0 backend that carries
+// shift-anchored windows, an automatic route version and the new warning code. scripts/fixtures/
+// patrol-plan-b1-shift-windows.json is written by the backend's patrol-site-setup.spec.ts (PSS-08), which also checks
+// that the live plan still has the fixture's shape.
+test('GPAT-31-THE-1.2.1-APP-HANDLES-A-1.3.0-PLAN-WITH-SHIFT-WINDOWS-ROUTE-VERSIONS-AND-NEW-WARNINGS', () => {
+  const { plan, emptyRoutePlan } = JSON.parse(codeOf('scripts/fixtures/patrol-plan-b1-shift-windows.json'));
+  // Window keys are opaque to the app: only ever a list key, never parsed.
+  for (const rel of ['src/components/guard/patrol/patrolState.ts', 'src/components/guard/patrol/GuardPatrolPanel.tsx', 'src/components/guard/patrol/patrolOutbox.ts', 'src/services/patrolSync.ts']) {
+    const src = stripComments(codeOf(rel));
+    assert.doesNotMatch(src, /windowKey\s*\.\s*(split|match|slice|startsWith|indexOf|replace)|scopeKey/, `${rel} never parses a window key or scope`);
+  }
+  assert.ok(plan.windows.every((w) => /^s\d+:sh\d+:\d{8}T\d{4}Z:\d+$/.test(w.windowKey) && w.anchor === 'shift'), 'the fixture has shift-anchored windows');
+  assert.equal(state.patrolCardVisible({ shiftStatus: 'in_progress', plan }), true, 'the card shows (a shift schedule and checkpoints)');
+  const tz = plan.site.timezone;
+  const first = new Date(plan.windows[0].start).getTime();
+  const during = new Date(first + 70 * 60_000); // inside the second window
+  const rows = state.upcomingWindows(plan, during);
+  assert.deepEqual(rows.map((r) => [r.windowKey, r.state]), plan.windows.filter((w) => new Date(w.end) > during).slice(0, 4).map((w, i) => [w.windowKey, i === 0 ? 'due_now' : 'upcoming']));
+  assert.match(rows[0].time, /^\d{2}:\d{2}–\d{2}:\d{2}$/, 'times on the site clock');
+  const due = state.dueWindow(plan, during);
+  assert.deepEqual([due.windowKey, due.scheduleId, due.routeId], [plan.windows[1].windowKey, plan.windows[1].scheduleId, plan.windows[1].routeId], 'the patrol starts on the open shift window');
+  // The route the app stores with the start is the window's route VERSION, found in plan.routes, all checkpoints required.
+  const snapshot = state.routeSnapshot(plan, due.routeId);
+  assert.ok(snapshot && snapshot.checkpoints.length > 0 && snapshot.checkpoints.every((c) => c.required === true), 'the automatic route version is in the plan');
+  const local = { clientRunId: 'r', shiftId: plan.shift.id, start: { body: { routeId: due.routeId, scheduleId: due.scheduleId }, meta: { route: snapshot } }, scans: [], photos: [], exceptions: [], complete: null };
+  assert.equal(state.patrolRoute(plan, due.routeId, local).source, 'plan');
+  assert.deepEqual(state.patrolCheckpoints(plan, due.routeId, local).map((c) => [c.publicId, c.required]), snapshot.checkpoints.map((c) => [c.publicId, true]));
+  assert.equal(state.qrConfigurationProblem(plan, due.routeId, due.scheduleId, local), null, 'a confirmed checkpoint: no configuration problem shown');
+  const summary = state.completionSummary(plan, due.routeId, local);
+  assert.deepEqual([summary.checkpointsTotal, summary.photosRequired, summary.unmet], [snapshot.checkpoints.length, 0, true], 'QR-only: checkpoints, no photo');
+  // A later refresh no longer lists that version (the route moved on): the patrol keeps its stored copy.
+  const refreshed = { ...plan, routes: [] };
+  assert.equal(state.patrolRoute(refreshed, due.routeId, local).source, 'snapshot');
+  // The new fields and warning codes are ignored safely; the empty automatic version is shown as a configuration problem.
+  const problem = state.qrConfigurationProblem(emptyRoutePlan, emptyRoutePlan.windows[0].routeId, emptyRoutePlan.windows[0].scheduleId, null);
+  assert.equal(problem, 'QR checkpoints are not set up for this patrol, so S4 cannot verify it from scans. Tell the control room: Site setup incomplete: no confirmed checkpoints.');
+  assert.ok(emptyRoutePlan.configurationWarnings.some((w) => w.code === 'SITE_SETUP_INCOMPLETE'), 'a code the 1.2.1 app does not know');
+  assert.equal(state.patrolCardVisible({ shiftStatus: 'in_progress', plan: emptyRoutePlan }), true);
+  assert.deepEqual(state.patrolCheckpoints(emptyRoutePlan, emptyRoutePlan.windows[0].routeId, null).filter((c) => c.required), [], 'never every site checkpoint as required');
+  assert.ok(plan.patrolRequirement && typeof plan.patrolRequirement.effectiveRequired === 'boolean', 'an additive field the app ignores');
 });
 
 test('GPAT-18-THE-WEB-APP-HAS-NO-PATROL-PANEL-AND-LOADS-NO-DEVICE-MODULE', () => {

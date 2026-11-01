@@ -28,6 +28,9 @@ import {
   PATROL_REQUIREMENT_SCOPES,
   PATROL_RETENTION_DAYS,
   PATROL_RUN_STATUSES,
+  PATROL_EVIDENCE_MODES,
+  PATROL_SETUP_MODES,
+  PATROL_WINDOW_ANCHORS,
 } from '../patrol-constants';
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
@@ -414,4 +417,65 @@ export class ResolvePatrolExceptionDto {
 export class SetPatrolsEnabledDto {
   @IsBoolean()
   patrolsEnabled!: boolean;
+}
+
+// ── S4 1.3.0 B1: site patrol setup, checkpoint test scans, evidence reads ─────────────────────────────
+
+/**
+ * PUT /patrols/sites/:siteId/setup — the whole setup of one site. Saving never activates it (POST …/setup/confirm).
+ * routeId: a chosen (custom) route of the site for QR patrols; absent or null = the automatic route (every confirmed
+ * checkpoint). windowAnchor: absent = the shift's scheduled start.
+ */
+export class PutPatrolSiteSetupDto {
+  @IsIn(PATROL_SETUP_MODES)
+  setupMode!: string;
+
+  @IsIn(PATROL_EVIDENCE_MODES)
+  evidenceMode!: string;
+
+  @IsInt() @Min(15) @Max(1440)
+  frequencyMinutes!: number;
+
+  @IsOptional() @IsIn(PATROL_WINDOW_ANCHORS)
+  windowAnchor?: string;
+
+  @IsOptional() @IsInt() @Min(1)
+  routeId?: number | null;
+}
+
+/** POST /patrols/checkpoints/:id/confirm — the label payload an authorised person just scanned at the checkpoint. */
+export class ConfirmPatrolCheckpointDto {
+  @IsString() @MinLength(1) @MaxLength(256)
+  scanPayload!: string;
+
+  /** Optional: the site the person is at (checked against the checkpoint's site). */
+  @IsOptional() @IsInt() @Min(1)
+  siteId?: number;
+}
+
+/** GET /patrols/evidence/tree — clients → sites → site-local days with patrols. */
+export class PatrolEvidenceTreeQueryDto {
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1)
+  clientId?: number;
+
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1)
+  siteId?: number;
+
+  @IsOptional() @Matches(DATE_ONLY)
+  from?: string;
+
+  @IsOptional() @Matches(DATE_ONLY)
+  to?: string;
+}
+
+/** GET /patrols/evidence/patrols — one site's patrols on one site-local day (photos=only: patrols with photos only). */
+export class PatrolEvidencePatrolsQueryDto {
+  @Type(() => Number) @IsInt() @Min(1)
+  siteId!: number;
+
+  @Matches(DATE_ONLY)
+  date!: string;
+
+  @IsOptional() @IsIn(['all', 'only'])
+  photos?: string;
 }

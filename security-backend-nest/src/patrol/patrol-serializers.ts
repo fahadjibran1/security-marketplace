@@ -59,9 +59,16 @@ export function serializeSchedule(row: any) {
     /** Migration 73: the version that replaced this schedule after a timing change, and when (null otherwise). */
     supersededByScheduleId: n(row.supersededByScheduleId),
     supersededAt: iso(row.supersededAt),
+    /** Migration 74: 'clock' (site-local slots) or 'shift' (anchored to each required shift; managed by the site setup). */
+    anchor: row.anchor ?? 'clock',
     createdAt: iso(row.createdAt),
     updatedAt: iso(row.updatedAt),
   };
+}
+
+/** Migration 74: whether a checkpoint's CURRENT label was proved by an authorised test scan (and it is usable). */
+export function checkpointConfirmed(row: any): boolean {
+  return row.confirmedAt != null && Number(row.confirmedTokenVersion) === Number(row.tokenVersion) && Boolean(row.active) && row.revokedAt == null;
 }
 
 export function serializeCheckpoint(row: any) {
@@ -76,6 +83,11 @@ export function serializeCheckpoint(row: any) {
     active: Boolean(row.active),
     rotatedAt: iso(row.rotatedAt),
     revokedAt: iso(row.revokedAt),
+    /** Migration 74: the authorised test scan of the current label (cleared by a rotation or revocation). */
+    confirmed: checkpointConfirmed(row),
+    confirmedAt: iso(row.confirmedAt),
+    confirmedByUserId: n(row.confirmedByUserId),
+    confirmedTokenVersion: n(row.confirmedTokenVersion),
     createdAt: iso(row.createdAt),
     updatedAt: iso(row.updatedAt),
   };
@@ -89,6 +101,10 @@ export function serializeRoute(row: any, checkpoints: any[] | null) {
     orderMode: row.orderMode,
     active: Boolean(row.active),
     archivedAt: iso(row.archivedAt),
+    /** Migration 74: 'custom' or 'auto' (every confirmed checkpoint), and the version that replaced this one, if any. */
+    kind: row.kind ?? 'custom',
+    supersededByRouteId: n(row.supersededByRouteId),
+    supersededAt: iso(row.supersededAt),
     createdAt: iso(row.createdAt),
     updatedAt: iso(row.updatedAt),
     ...(checkpoints

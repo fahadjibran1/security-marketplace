@@ -7,6 +7,9 @@ import { PatrolAccessService } from './patrol-access.service';
 import { PatrolErrorCode, patrolError } from './patrol-constants';
 import { usableZone } from './patrol-query.service';
 import { scheduleVersionBounds, supersededSince, withVersionBounds } from './patrol-schedule-versions';
+import { effectiveAttendance } from '../attendance/effective-attendance';
+import { setupFor, shiftAnchoredSchedules, siteSetups } from './patrol-shift-context';
+import { effectiveShiftRequirement, setupActive, shiftAnchoredWindows, shiftScopeKey } from './patrol-shift-windows';
 import { PatrolWindow, PatrolWindowService, localDateOf, runCoverageKey, siteDayBounds } from './patrol-window.service';
 
 export type PatrolWindowsDaySite = {
@@ -49,6 +52,22 @@ export class PatrolWindowsDayService {
     private readonly windows: PatrolWindowService,
   ) {}
 
+  /** Each shift's effective Book On (for sites anchored to Book On). */
+  private async bookOns(shifts: any[]): Promise<Map<number, Date | null>> {
+    const out = new Map<number, Date | null>();
+    if (!shifts.length) return out;
+    const rows = await this.dataSource.query(
+      `SELECT "id", "shiftId", "guardId", "type"::text AS "type", "occurredAt", "recordedAt", "correctionOfEventId", "source"
+         FROM "attendance_events" WHERE "shiftId" = ANY($1::int[])`,
+      [shifts.map((s) => Number(s.id))],
+    );
+    for (const shift of shifts) {
+      const own = rows.filter((a: any) => Number(a.shiftId) === Number(shift.id) && (shift.guardId == null || Number(a.guardId) === Number(shift.guardId)));
+      out.set(Number(shift.id), effectiveAttendance(own).bookOnAt);
+    }
+    return out;
+  }
+
   async day(user: JwtPayload, query: PatrolWindowsDayQueryDto, now: Date = new Date()) {
     const actor = await this.access.companyActor(user, CompanyPermission.PATROLS_VIEW);
     const siteId = query.siteId ?? null;
@@ -65,18 +84,38 @@ export class PatrolWindowsDayService {
     const versions = await scheduleVersionBounds(this.dataSource, actor.companyId);
     const replaced = supersededSince(versions, new Date(0));
     const schedules = (await this.dataSource.query(
-      `SELECT * FROM "patrol_schedules" WHERE "companyId" = $1 AND ($2::int IS NULL OR "siteId" = $2)
+      `SELECT * FROM "patrol_schedules" WHERE "companyId" = $1 AND ($2::int IS NULL OR "siteId" = $2) AND "anchor" = 'clock'
           AND (("active" AND "archivedAt" IS NULL) OR "id" = ANY($3::int[])) ORDER BY "id"`,
       [actor.companyId, siteId, replaced],
     )).map((s: any) => withVersionBounds(s, versions));
+    // 1.3.0 B1: shift-anchored windows of the sites whose setup is active — owed by each effectively required shift that
+    // is not cancelled (scheduled start; with a Book On anchor, only once the Guard has booked on).
+    const siteIds = siteRows.map((r: any) => Number(r.id));
+    const setups = await siteSetups(this.dataSource, actor.companyId, siteIds);
+    const activeSites = siteIds.filter((id: number) => setupActive(setupFor(setups, id)));
+    const shiftSchedules = activeSites.length ? await shiftAnchoredSchedules(this.dataSource, actor.companyId, activeSites, versions, new Date(0)) : [];
+    const dayBounds = siteRows.map((r: any) => {
+      const timeZone = usableZone(r.timezone);
+      return siteDayBounds(query.date ?? localDateOf(now, timeZone), timeZone);
+    });
+    const shiftRows = shiftSchedules.length
+      ? await this.dataSource.query(
+        `SELECT "id", "siteId", "guardId", "status", "start", "end", "patrolRequirement" FROM "shifts"
+          WHERE "companyId" = $1 AND "siteId" = ANY($2::int[]) AND "status" <> 'cancelled' AND "start" < $3 AND "end" > $4`,
+        [actor.companyId, activeSites, new Date(Math.max(...dayBounds.map((b: any) => b.end.getTime()))),
+          new Date(Math.min(...dayBounds.map((b: any) => b.start.getTime())))],
+      )
+      : [];
+    const bookOns = await this.bookOns(shiftRows.filter((s: any) => setupFor(setups, Number(s.siteId)).windowAnchor === 'book_on'));
 
     // Each site's day and its due windows, from the engine.
     const sites: PatrolWindowsDaySite[] = [];
-    const due: Array<{ siteId: number; window: PatrolWindow }> = [];
+    const due: Array<{ siteId: number; window: PatrolWindow; scopeKey: string | null }> = [];
     for (const row of siteRows) {
       const id = Number(row.id);
       const own = schedules.filter((s: any) => Number(s.siteId) === id);
-      if (!own.length && id !== siteId) continue; // a site with no schedule has nothing due (listed only when asked for)
+      const ownShift = shiftSchedules.filter((s: any) => Number(s.siteId) === id);
+      if (!own.length && !ownShift.length && id !== siteId) continue; // a site with no schedule has nothing due (listed only when asked for)
       const timeZone = usableZone(row.timezone);
       const date = query.date ?? localDateOf(now, timeZone);
       const { start, end } = siteDayBounds(date, timeZone);
@@ -85,12 +124,25 @@ export class PatrolWindowsDayService {
       for (const schedule of own) {
         for (const window of this.windows.windowsBetween(schedule, timeZone, start, end, cache)) {
           if (window.start.getTime() < start.getTime() || window.start.getTime() >= end.getTime()) continue;
-          due.push({ siteId: id, window });
+          due.push({ siteId: id, window, scopeKey: null });
           count += 1;
+        }
+      }
+      const setup = setupFor(setups, id);
+      for (const schedule of ownShift) {
+        for (const shift of shiftRows.filter((s: any) => Number(s.siteId) === id)) {
+          if (new Date(shift.end).getTime() <= start.getTime() || new Date(shift.start).getTime() >= end.getTime()) continue;
+          if (!effectiveShiftRequirement(shift.patrolRequirement, setup).effectiveRequired) continue;
+          for (const window of shiftAnchoredWindows(schedule, shift, setup.windowAnchor, bookOns.get(Number(shift.id)) ?? null, timeZone)) {
+            if (window.start.getTime() < start.getTime() || window.start.getTime() >= end.getTime()) continue;
+            due.push({ siteId: id, window, scopeKey: shiftScopeKey(Number(shift.id)) });
+            count += 1;
+          }
         }
       }
       sites.push({ siteId: id, timeZone, date, dayStart: start.toISOString(), dayEnd: end.toISOString(), windowsDue: count, windowsCompleted: 0, windowsOutstanding: count });
     }
+    // (A shift window's key names its shift, so a completed run is matched to it by schedule, key and start as any other.)
 
     // Which of them have a completed run (company-scoped; keys are distinct per schedule).
     const completedKeys = new Set<string>();

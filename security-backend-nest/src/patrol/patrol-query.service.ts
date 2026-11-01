@@ -4,6 +4,8 @@ import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { CompanyPermission } from '../company-membership/company-membership-types';
 import { PatrolOverviewQueryDto, PatrolRunsQueryDto } from './dto/patrol.dto';
 import { PatrolAccessService } from './patrol-access.service';
+import { PatrolConfigService } from './patrol-config.service';
+import { explainRuns } from './patrol-run-evaluation';
 import { PATROL_RUN_STATUSES, PatrolErrorCode, patrolError } from './patrol-constants';
 import { checkpointProgress } from './patrol-state';
 import { localDateOf, siteDayBounds } from './patrol-window.service';
@@ -41,7 +43,18 @@ export class PatrolQueryService {
   constructor(
     private readonly dataSource: DataSource,
     private readonly access: PatrolAccessService,
+    private readonly config: PatrolConfigService,
   ) {}
+
+  /** 1.3.0 B1: explainVerification for a page of runs (one policy read per site). Additive on every run read. */
+  async explanations(companyId: number, runs: any[], now: Date = new Date()) {
+    const policies = new Map<number, Promise<any>>();
+    const policyFor = (siteId: number) => {
+      if (!policies.has(siteId)) policies.set(siteId, this.config.effectivePolicy(companyId, siteId));
+      return policies.get(siteId)!;
+    };
+    return explainRuns(this.dataSource, companyId, runs, policyFor, now);
+  }
 
   async listRuns(user: JwtPayload, query: PatrolRunsQueryDto) {
     const actor = await this.access.companyActor(user, CompanyPermission.PATROLS_VIEW);
@@ -77,6 +90,7 @@ export class PatrolQueryService {
       [...params, pageSize, (page - 1) * pageSize],
     );
     const progress = await this.progressFor(actor.companyId, rows);
+    const explained = await this.explanations(actor.companyId, rows);
     return {
       items: rows.map((r: any) => ({
         ...serializeRun(r),
@@ -85,6 +99,7 @@ export class PatrolQueryService {
         visitCount: Number(r.visitCount),
         flaggedVisitCount: Number(r.flaggedVisitCount),
         ...progress.get(Number(r.id))!,
+        verificationExplanation: explained.get(Number(r.id)) ?? null,
       })),
       total: Number(total),
       page,
@@ -111,8 +126,12 @@ export class PatrolQueryService {
       [id, actor.companyId],
     );
     const progress = await this.progressFor(actor.companyId, [run]);
+    const explained = await this.explanations(actor.companyId, [run]);
     return {
-      run: { ...serializeRun(run), siteName: run.siteName, guardName: run.guardName, ...progress.get(Number(run.id))! },
+      run: {
+        ...serializeRun(run), siteName: run.siteName, guardName: run.guardName, ...progress.get(Number(run.id))!,
+        verificationExplanation: explained.get(Number(run.id)) ?? null,
+      },
       visits: visits.map(serializeVisit),
       exceptions: exceptions.map(serializeException),
       evidenceCount: evidence.length,

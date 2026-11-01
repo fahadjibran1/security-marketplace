@@ -17,6 +17,22 @@ export type PatrolOrderMode = (typeof PATROL_ORDER_MODES)[number];
 export const PATROL_REQUIREMENT_SCOPES = ['site', 'per_guard'] as const;
 export type PatrolRequirementScope = (typeof PATROL_REQUIREMENT_SCOPES)[number];
 
+/**
+ * S4 1.3.0 B1 (Migration 74) site patrol setup. setupMode: 'every_shift' (every shift at the site patrols unless the
+ * shift says not required), 'per_shift' (only shifts marked required), 'off' (no shift-based patrols). windowAnchor:
+ * mandatory windows run from the shift's SCHEDULED start (default) or, by explicit site override, from Book On.
+ * evidence mode: how a patrol is proved, mapped onto the policy's methods / photosPerRun.
+ */
+export const PATROL_SETUP_MODES = ['off', 'every_shift', 'per_shift'] as const;
+export type PatrolSetupMode = (typeof PATROL_SETUP_MODES)[number];
+export const PATROL_WINDOW_ANCHORS = ['scheduled_start', 'book_on'] as const;
+export type PatrolWindowAnchor = (typeof PATROL_WINDOW_ANCHORS)[number];
+export const PATROL_EVIDENCE_MODES = ['qr', 'photo', 'qr_photo'] as const;
+export type PatrolEvidenceMode = (typeof PATROL_EVIDENCE_MODES)[number];
+/** shifts."patrolRequirement" (NULL = the site's default). The API also accepts 'site_default' for NULL. */
+export const SHIFT_PATROL_REQUIREMENTS = ['required', 'not_required'] as const;
+export type ShiftPatrolRequirement = (typeof SHIFT_PATROL_REQUIREMENTS)[number];
+
 /** Evidence retention (days from verified receipt). 90 only by a company Owner or Admin. */
 export const PATROL_RETENTION_DAYS = [30, 90] as const;
 export type PatrolRetentionDays = (typeof PATROL_RETENTION_DAYS)[number];
@@ -228,6 +244,16 @@ export enum PatrolErrorCode {
   RECOVERY_GRANT_ENDED = 'PATROL_RECOVERY_GRANT_ENDED',
   /** #68: that Guard was not on that shift, or the shift cannot carry patrol data (cancelled, never started, no site). */
   RECOVERY_GRANT_INELIGIBLE = 'PATROL_RECOVERY_GRANT_INELIGIBLE',
+  /** 1.3.0 B1: the site setup cannot be activated yet (details.checklist lists what is missing). */
+  SETUP_INCOMPLETE = 'PATROL_SETUP_INCOMPLETE',
+  /** 1.3.0 B1: a test scan that does not prove this checkpoint's current, signed label. */
+  CHECKPOINT_TEST_SCAN_INVALID = 'PATROL_CHECKPOINT_TEST_SCAN_INVALID',
+  /** 1.3.0 B1: a shift-anchored schedule or an automatic route is managed through the site setup, not its own routes. */
+  MANAGED_BY_SETUP = 'PATROL_MANAGED_BY_SETUP',
+  /** 1.3.0 B1: the route (or its automatic version) was replaced by a newer version meanwhile. */
+  ROUTE_SUPERSEDED = 'PATROL_ROUTE_SUPERSEDED',
+  /** 1.3.0 B1: the photo cannot be stamped (its format cannot be decoded, or its bytes no longer match). */
+  EVIDENCE_STAMP_UNAVAILABLE = 'PATROL_EVIDENCE_STAMP_UNAVAILABLE',
 }
 
 export function patrolError(status: HttpStatus, code: PatrolErrorCode, message: string, details?: Record<string, unknown>) {
