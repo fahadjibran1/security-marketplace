@@ -136,6 +136,33 @@ export class PatrolGuardService {
     return (await this.grants.activeGrant(Number(run.companyId), Number(run.guardId), Number(run.shiftId), now)) != null;
   }
 
+  /**
+   * B2 correction (the 1.2.1 app's checkpoint-photo prompt). The deployed 1.2.1 app asks for a checkpoint photo after a
+   * scan when the PLAN's `checkpoints[].photoRequired` is true for that checkpoint (or policy.photosPerCheckpoint > 0), and
+   * then demands a reason at completion if it was declined — it cannot tell one route from another. The plan now reports
+   * the photo per shift (see plan()), so the prompt only appears where the server requires the photo. Where a shift mixes
+   * both (a custom-route clock schedule and automatic-route windows), this is the server's guarantee: a completion reason
+   * on a run that needs NO checkpoint photo, whose route's required checkpoints were all scanned, at a checkpoint whose own
+   * setting asks for a photo, and that names no unreached checkpoint (the 1.2.1 app writes "Checkpoint not reached — …"
+   * for those), is the declined prompt — the run is completed, not incomplete. A run that needs a photo is never excused.
+   */
+  private async reasonOnlyForUnrequiredCheckpointPhoto(run: any, reason: string): Promise<boolean> {
+    if (/checkpoint not reached/i.test(reason)) return false;
+    const [ctx] = await this.dataSource.query(
+      `SELECT (SELECT "kind" FROM "patrol_routes" WHERE "id" = $2) AS "routeKind",
+              EXISTS (SELECT 1 FROM "patrol_policies" WHERE "companyId" = $1 AND "siteId" = $3 AND "setupConfirmedAt" IS NOT NULL
+                       AND "setupMode" IN ('every_shift', 'per_shift')) AS "setupActive",
+              EXISTS (SELECT 1 FROM "patrol_route_checkpoints" rc WHERE rc."routeId" = $2 AND rc."required"
+                       AND NOT EXISTS (SELECT 1 FROM "patrol_checkpoint_visits" v WHERE v."runId" = $4 AND v."checkpointId" = rc."checkpointId"
+                                        AND v."result" <> 'flagged')) AS "missingRequired",
+              EXISTS (SELECT 1 FROM "patrol_checkpoint_visits" v JOIN "patrol_checkpoints" c ON c."id" = v."checkpointId"
+                       WHERE v."runId" = $4 AND c."photoRequired") AS "promptedCheckpoint"`,
+      [Number(run.companyId), run.routeId == null ? null : Number(run.routeId), Number(run.siteId), Number(run.id)],
+    );
+    const noCheckpointPhoto = run.routeId != null ? ctx?.routeKind === 'auto' : Boolean(ctx?.setupActive);
+    return noCheckpointPhoto && !ctx?.missingRequired && Boolean(ctx?.promptedCheckpoint);
+  }
+
   /** Everything the app needs to patrol this shift's site offline: policy, schedules, routes, checkpoint publicIds. */
   async plan(user: JwtPayload, shiftId: number) {
     const actor = await this.access.guardActor(user);
@@ -154,18 +181,8 @@ export class PatrolGuardService {
     );
     const checkpoints = await this.dataSource.query(
       `SELECT c."publicId", c."label", c."description",
-              -- 1.3.0 B1: the EFFECTIVE photo requirement. A checkpoint's own "photo required" is ignored on an automatic
-              -- route and at a site whose setup is active (owner decision 6; patrol-run-evaluation.ts), so such a checkpoint
-              -- reports false unless an active custom route includes it — the 1.2.1 app then never asks for a photo the
-              -- server will not require. Unchanged for every other checkpoint (sites without a setup behave as in 1.2.1).
-              (c."photoRequired" AND NOT (
-                (EXISTS (SELECT 1 FROM "patrol_route_checkpoints" rc JOIN "patrol_routes" r ON r."id" = rc."routeId"
-                          WHERE rc."checkpointId" = c."id" AND r."kind" = 'auto')
-                 OR EXISTS (SELECT 1 FROM "patrol_policies" p WHERE p."companyId" = c."companyId" AND p."siteId" = c."siteId"
-                             AND p."setupConfirmedAt" IS NOT NULL AND p."setupMode" IN ('every_shift', 'per_shift')))
-                AND NOT EXISTS (SELECT 1 FROM "patrol_route_checkpoints" rc JOIN "patrol_routes" r ON r."id" = rc."routeId"
-                         WHERE rc."checkpointId" = c."id" AND r."kind" = 'custom' AND r."active" AND r."archivedAt" IS NULL)
-              )) AS "photoRequired"
+              -- B2 correction: the checkpoint's own setting; plan() applies whether THIS shift's patrols ask for checkpoint photos.
+              c."photoRequired" AS "photoRequired"
          FROM "patrol_checkpoints" c
         WHERE c."companyId" = $1 AND c."siteId" = $2 AND c."active" AND c."revokedAt" IS NULL ORDER BY c."label", c."id"`,
       [shift.companyId, shift.siteId],
@@ -194,7 +211,7 @@ export class PatrolGuardService {
       .sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime() || a.windowKey.localeCompare(b.windowKey))
       .slice(0, PATROL_PLAN_MAX_WINDOWS);
     const routes = await this.dataSource.query(
-      `SELECT "id", "name", "orderMode" FROM "patrol_routes"
+      `SELECT "id", "name", "orderMode", "kind" FROM "patrol_routes"
         WHERE "companyId" = $1 AND "siteId" = $2
           AND (("active" AND "archivedAt" IS NULL) OR ("id" = ANY($3::int[]) AND "supersededByRouteId" IS NOT NULL)) ORDER BY "name", "id"`,
       [shift.companyId, shift.siteId, [...new Set(windows.map((w) => w.routeId).filter((id): id is number => id != null))]],
@@ -215,6 +232,13 @@ export class PatrolGuardService {
       });
     }
     const warnings = await this.config.configurationWarnings(shift.companyId, [shift.siteId]);
+    // B2 correction: whether ANY patrol this shift can do is judged with checkpoint photos. The server asks for none on an
+    // automatic route, nor on a route-less patrol at a site whose setup is active (runRequirements); every other run keeps
+    // the checkpoints' own setting. The 1.2.1 app reads only checkpoints[].photoRequired, so it is reported per shift:
+    // false when every window of this shift (and an unscheduled patrol) needs no checkpoint photo.
+    const kinds = new Map<number, string>((routes as any[]).map((r: any) => [Number(r.id), String(r.kind ?? 'custom')]));
+    const contexts: Array<number | null> = [...windows.map((w) => w.routeId ?? null), null];
+    const photoForShift = contexts.some((routeId) => (routeId != null ? kinds.get(routeId) !== 'auto' : !shiftAnchored.setupActive));
     // 1.3.0 B1: a QR site whose shift windows have no route version with a required checkpoint cannot be QR-verified
     // (rule A1). The 1.2.1 app shows QR_ROUTE_REQUIRED (with this message) as a configuration problem; newer clients read
     // SITE_SETUP_INCOMPLETE. Unknown codes are ignored by the 1.2.1 app.
@@ -249,7 +273,8 @@ export class PatrolGuardService {
         ...shiftAnchored.schedules,
       ],
       routes: routeOut,
-      checkpoints: checkpoints.map((c: any) => ({ publicId: c.publicId, label: c.label, description: c.description ?? null, photoRequired: Boolean(c.photoRequired) })),
+      // B2 correction: the photo the server will require on THIS shift's patrols (see photoForShift above).
+      checkpoints: checkpoints.map((c: any) => ({ publicId: c.publicId, label: c.label, description: c.description ?? null, photoRequired: Boolean(c.photoRequired) && photoForShift })),
       windows,
       // Decision A1: a QR schedule (or site) with no route with required checkpoints — its patrols cannot be QR-verified.
       // The shift windows' own problem first: the 1.2.1 app shows the FIRST QR_ROUTE_REQUIRED that applies.
@@ -277,7 +302,7 @@ export class PatrolGuardService {
     const setup = setupFor(await siteSetups(this.dataSource, shift.companyId, [shift.siteId!]), shift.siteId!);
     const [row] = await this.dataSource.query(`SELECT "patrolRequirement" FROM "shifts" WHERE "id" = $1`, [shift.id]);
     const requirement = effectiveShiftRequirement(row?.patrolRequirement ?? null, setup);
-    const none = { windows: [] as PlanWindow[], schedules: [] as any[], requirement };
+    const none = { windows: [] as PlanWindow[], schedules: [] as any[], requirement, setupActive: setupActive(setup) };
     if (!setupActive(setup) || !requirement.effectiveRequired) return none;
     const schedules = await shiftAnchoredSchedules(this.dataSource, shift.companyId, [shift.siteId!], versions, new Date(shift.start));
     if (!schedules.length) return none;
@@ -295,6 +320,7 @@ export class PatrolGuardService {
     const head = schedules.find((s: any) => s.archivedAt == null);
     return {
       requirement,
+      setupActive: true,
       windows: all.map(({ w, s }): PlanWindow => ({
         windowKey: w.windowKey,
         scheduleId: w.scheduleId,
@@ -853,11 +879,15 @@ export class PatrolGuardService {
       if (isClockDriftSuspect(driftMs, thresholdMinutes)) flags.push('clock_drift_suspect');
     }
     const mergedFlags = [...new Set([...(run.syncFlags ?? []), ...flags])] as PatrolSyncFlag[];
+    // B2 correction: a reason that can only be about a checkpoint photo the server does not require for THIS run (its
+    // route is automatic / it is a route-less patrol at an active setup site) does not make the patrol incomplete. The
+    // Guard's words are still kept on the run. Anything the server does require is still judged as before.
+    const status = reason && !(await this.reasonOnlyForUnrequiredCheckpointPhoto(run, reason)) ? 'incomplete' : 'completed';
     const [updated] = await updateRows(this.dataSource,
       `UPDATE "patrol_runs" SET "status" = $2, "completedAtDevice" = $3, "completedAtServer" = $4, "exceptionReason" = $5,
           "syncedLate" = "syncedLate" OR $6, "syncFlags" = $7::jsonb, "needsReview" = "needsReview" OR $8, "updatedAt" = now()
         WHERE "id" = $1 AND "status" = $9 AND "completedAtDevice" IS NULL RETURNING *`,
-      [runId, reason ? 'incomplete' : 'completed', completedAtDevice, now, reason, flags.includes('synced_after_book_off'),
+      [runId, status, completedAtDevice, now, reason, flags.includes('synced_after_book_off'),
         JSON.stringify(mergedFlags), flags.some((f) => PATROL_REVIEW_FLAGS.includes(f)), recovering ? 'closed_by_system' : 'in_progress'],
     );
     if (updated) {

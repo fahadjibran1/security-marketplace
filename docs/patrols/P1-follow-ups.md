@@ -215,7 +215,8 @@ window belongs to the version in force at its start. 1.2.1 first linked the two 
   (Book On by explicit override), whole windows, owed by each effectively required shift on duty (scope `sh{shiftId}`),
   judged only after the latest of the setup's activation, the site's last requirement / anchor change and the shift's
   last requirement change (future windows only). Frequency changes are Migration 73 successors.
-* **Stamped photos** (`GET /patrols/evidence/:id/stamped`): derived per request with `sharp` (0.34.5, prebuilt binaries;
+* **Stamped photos** (`GET /patrols/evidence/:id/stamped`; B2 correction: the stamp is a footer band APPENDED below the
+  upright photo — output = photo width × (photo height + band), the whole photograph visible above it): derived per request with `sharp` (0.34.5, prebuilt binaries;
   text drawn from an embedded bitmap font as SVG paths, so no system font is needed), streamed, never stored.
 
 ### Rollback to 1.2.1 (5d749fa) over a 74 database
@@ -244,26 +245,33 @@ boot checks run against databases migrated to 74, only their "head is Migration 
   and every restored row is unchanged.
 * Do not revert Migration 74 for an application rollback.
 
-### Known limitation (1.2.1 Guard app): a checkpoint photo prompt on an automatic route
+### Checkpoint photos follow the patrol's own route (B2 correction; the former known limitation is removed)
 
-The Guard plan reports each checkpoint's EFFECTIVE photo requirement: a checkpoint's own "photo required" is ignored on
-an automatic route and at a site whose setup is active, UNLESS an active custom route includes that checkpoint. So when
-a site's setup follows the automatic route (every test-scanned checkpoint) and a checkpoint marked "photo required" is
-also on an active custom route that the site does not use, the plan says `photoRequired: true` and the deployed 1.2.1
-Guard app opens the camera for a checkpoint photo after the scan.
+**How the unchanged 1.2.1 Guard app decides to prompt.** After a scan it opens the camera for a checkpoint photo when
+the PLAN's `checkpoints[].photoRequired` is true for that checkpoint, or `policy.photosPerCheckpoint > 0`
+(`GuardPatrolPanel.tsx`: `needsPhoto = (decision.checkpoint?.photoRequired ?? false) || plan.policy.photosPerCheckpoint > 0`).
+At completion it counts the same flag (`completionSummary`; a route snapshot copies the flag from `plan.checkpoints`) and
+asks for a reason when a prompted photo is missing. It never reads a per-route or per-window photo flag, so per-route
+requirements cannot be expressed to it — but the plan is built PER SHIFT, so the flag can be set per shift.
 
-* The server does not require that photo: verification is scans + the patrol photo (owner decision 6), whatever the
-  Guard does. Taking the photo changes nothing; it is kept as evidence like any other.
-* Worst case: the Guard declines the photo, and the 1.2.1 app asks for a reason (the reason box) before completing. The
-  patrol completes — never blocked — and is recorded exactly as any 1.2.1 completion with a reason: status
-  `incomplete` ("Completed with a reason"), one `patrol_incomplete` exception carrying the Guard's words. Its
-  verification is unaffected (verified when the scans and the patrol photo are there); no missed-checkpoint or
-  unverified exception is raised.
-* Certified by `security-backend-nest/scripts/patrol-evidence-b1.spec.ts` PEB-06 (the edge case: prompt reported, photo
-  taken → verified; photo declined with a reason → completed, verified, one `patrol_incomplete`) alongside PEB-05 (the
-  1.2.1 request sequence on a shift window verifies; no prompt without a custom route).
-* Avoid it by not keeping a spare custom route over checkpoints that are marked "photo required" at a site that follows
-  the automatic route, or by clearing "photo required" on those checkpoints.
+**What the server does now.**
+* The plan reports `photoRequired` per shift: the checkpoint's own setting, and only if some patrol of THIS shift is
+  judged with checkpoint photos — a window on a custom route, or a route-less (unscheduled) patrol at a site without an
+  active setup. Every window on an automatic route (and an unscheduled patrol at an active setup site) needs none, so at
+  an automatic-route site the 1.2.1 app never prompts — a spare custom route over the same checkpoint no longer matters.
+  A custom route chosen by the setup keeps the photo (the plan says true; the server requires it).
+* Remaining mixed case (one shift with both a custom-route clock schedule and automatic-route windows): the 1.2.1 app may
+  prompt on an automatic-route patrol. The server's guarantee: a completion reason on a run that needs no checkpoint photo
+  (automatic route, or route-less at an active setup site), whose route's required checkpoints were all scanned, at a
+  checkpoint whose own setting asks for a photo, and that names no unreached checkpoint ("Checkpoint not reached — …") is
+  the declined prompt: the run is COMPLETED (not incomplete), no `patrol_incomplete` is raised, and the Guard's words
+  are kept on the run. A run that does need the photo is never excused: a missing required custom-route photo with a
+  reason is `incomplete` + `patrol_incomplete` exactly as before; without a reason, "required photo(s) not taken".
+* Certified by `patrol-evidence-b1.spec.ts` PEB-06 (overlap site: no prompt, verified, no exception; a declined-prompt
+  reason there: completed, verified, no exception; an unreached checkpoint still incomplete; custom route: prompt,
+  supplied → verified, declined → incomplete + `patrol_incomplete`), `patrol-site-setup.spec.ts` PSS-08 (the plans,
+  written as the mobile fixture) and the mobile `guard-patrols.spec.cjs` GPAT-33 (the unchanged 1.2.1 prompt rule on those
+  server-built plans).
 
 ## 7. S4 1.3.0 Package B, stage B2 — Company Dashboard patrol management usability
 
@@ -272,8 +280,10 @@ Guard app opens the camera for a checkpoint photo after the scan.
   retention & holds, Site settings, Storage usage), each with its own permission rule. Nothing was removed.
 * **Setup** (the B1 setup API): one workflow per site — which shifts patrol, evidence method (QR only / Photos only /
   QR + Photos; no photo-count setting), frequency and anchor (scheduled start by default, Book On as the override),
-  checkpoints with printable labels and the authorised test scan (`POST /patrols/checkpoints/:id/confirm`; the scanned
-  text from a handheld scanner or pasted). A plain-English checklist sits beside it; **Activate** stays disabled until
+  checkpoints with printable labels and the authorised test scan (`POST /patrols/checkpoints/:id/confirm`): **Scan with
+  camera** in the browser (the camera is requested only on that press, rear camera preferred, every track stopped on
+  success / cancel / close / hidden tab; decoded on the device with the browser's BarcodeDetector where it reads QR, else
+  the bundled jsQR 1.4.0 — web bundle only), or the text from a handheld scanner / pasted as the fallback. A plain-English checklist sits beside it; **Activate** stays disabled until
   every item passes and the changes are saved, and the server's 422 `PATROL_SETUP_INCOMPLETE` is shown as "Not
   activated yet. Still to do: …". A final summary says what will happen before activation.
 * **Rota Planner:** the shift (slot) create form and the shift drawer have **Patrol Requirement** — Use Site Default /

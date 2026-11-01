@@ -16,11 +16,10 @@
  *   PEB-05  the deployed 1.2.1 Guard app's request sequence on a shift-anchored window of a QR + photos site (plan → start
  *           with the window's scheduleId / routeId → signed scan → photo intent / PUT / complete → run complete) verifies;
  *           the plan never asks it for the checkpoint's own photo
- *   PEB-06  (B2, the recorded 1.2.1 limitation) the same site and checkpoint, but the checkpoint is ALSO on an active
- *           custom route the site does not use: the plan reports photoRequired true, so the 1.2.1 app asks for a checkpoint
- *           photo. Taking it, or declining it and giving a reason, never blocks completion and never changes what the
- *           server requires or how it verifies the patrol (scans + the patrol photo; no checkpoint photo is required). A
- *           reason is recorded as any 1.2.1 completion with a reason is: status incomplete, one patrol_incomplete exception
+ *   PEB-06  (B2 correction) the checkpoint photo follows the RUN's own route: at an overlap site (an automatic route,
+ *           the checkpoint also on a spare custom route) the plan asks the 1.2.1 app for no photo and the run verifies;
+ *           a declined-prompt reason there neither makes the run incomplete nor raises an exception (an unreached checkpoint
+ *           still does); a custom route keeps its photo — supplied: verified, declined: incomplete + patrol_incomplete
  *
  * Needs PATROL_EVIDENCE_B1_DATABASE_URL pointing at a DISPOSABLE local database — it drops the schema.
  */
@@ -293,18 +292,21 @@ async function main() {
       assert.equal((await one(`SELECT "sha256Stored" FROM patrol_evidence WHERE id = $1`, [verified.id])).sha256Stored, row.sha256Stored);
       assert.deepEqual(fake.keys(), keysBefore, 'nothing new in storage');
       assert.deepEqual(fake.log.slice(logFrom).map((l) => [l.method, l.key === row.storageKey]), [['GET', true]], 'one read of the original, no write');
-      // The stamp is on it: the bottom band is dark with light text, the top is the photo.
+      // B2 correction: the stamp is a footer band APPENDED below the photo — 640 × (480 + band), the photo whole above it.
       const { data, info } = await sharp(r.bytes).raw().toBuffer({ resolveWithObject: true });
-      assert.deepEqual([info.width, info.height], [640, 480]);
-      const px = (x: number, y: number) => data[(y * info.width + x) * info.channels];
-      assert.ok(Math.abs(px(320, 20) - (120 + 1)) < 25, 'the photo above the band is unchanged');
       const band = ST.stampSvg(640, 480, ST.stampLines({
         companyName: 'Harbour Watch Security Ltd', clientName: 'Harbour Estates', siteName: 'Quay Gate', guardName: 'Ava Okafor', capturedAtDevice: new Date(row.capturedAtDevice),
         receivedAtServer: new Date(row.receivedAt), timeZone: 'Europe/London', runId: runPhoto.id, window: null,
       }));
+      assert.deepEqual([info.width, info.height], [640, 480 + band.bandHeight], 'output height = photo height + band');
+      const px = (x: number, y: number) => data[(y * info.width + x) * info.channels];
+      const src = await sharp(original).raw().toBuffer({ resolveWithObject: true });
+      let diff = 0;
+      for (let y = 0; y < 480; y += 4) for (let x = 0; x < 640; x += 4) diff = Math.max(diff, Math.abs(px(x, y) - src.data[(y * 640 + x) * src.info.channels]));
+      assert.ok(diff < 40, `the whole photo, bottom rows included, is unchanged (worst ${diff})`);
       let dark = 0;
       let light = 0;
-      for (let y = 480 - band.bandHeight + 1; y < 479; y += 1) for (let x = 0; x < 640; x += 2) (px(x, y) < 110 ? (dark += 1) : px(x, y) > 200 ? (light += 1) : 0);
+      for (let y = 481; y < 480 + band.bandHeight - 1; y += 1) for (let x = 0; x < 640; x += 2) (px(x, y) < 60 ? (dark += 1) : px(x, y) > 200 ? (light += 1) : 0);
       assert.ok(dark > 1000 && light > 150, `the stamp band and its text (${dark} dark, ${light} light)`);
       const audit = await one(`SELECT * FROM audit_logs WHERE action = 'patrol.evidence_stamped_accessed' AND "entityId" = $1 ORDER BY id DESC`, [verified.id]);
       assert.deepEqual([audit.userId, audit.companyId, audit.afterData.runId, audit.afterData.sha256, audit.afterData.stored, audit.afterData.derived],
@@ -405,27 +407,21 @@ async function main() {
       }
     });
 
-    await test('PEB-06-THE-1.2.1-CHECKPOINT-PHOTO-PROMPT-EDGE-CASE-NEVER-BLOCKS-OR-CHANGES-VERIFICATION', async () => {
+    await test('PEB-06-CHECKPOINT-PHOTO-FOLLOWS-THE-RUNS-OWN-ROUTE-AUTO-NO-PROMPT-CUSTOM-REQUIRED', async () => {
       process.env.PATROL_QR_SIGNING_KEY = 'patrol-evidence-b1-spec-only-signing-key-0006';
       try {
         const D = await mkCompany('delta', 'Delta Patrols Ltd');
-        const site = await mkSite(D.id, 'Delta Gate', null);
-        const cp = expect(await api('POST', '/patrols/checkpoints', D.token, { siteId: site, label: 'Front gate', photoRequired: true }), 201);
-        const label = expect(await api('GET', `/patrols/checkpoints/${cp.id}/label`, D.token), 200).payload;
-        expect(await api('POST', `/patrols/checkpoints/${cp.id}/confirm`, D.token, { scanPayload: label }), 200);
-        expect(await api('PUT', `/patrols/sites/${site}/setup`, D.token, { setupMode: 'every_shift', evidenceMode: 'qr_photo', frequencyMinutes: 60 }), 200);
-        expect(await api('POST', `/patrols/sites/${site}/setup/confirm`, D.token), 200);
-        // The edge case: an active custom route that includes the checkpoint, although the site's setup follows the automatic route.
-        expect(await api('POST', '/patrols/routes', D.token, { siteId: site, name: 'Spare route', checkpoints: [{ checkpointId: cp.id }] }), 201);
-        const patrol = async (guardLabel: string, guardName: string, takeCheckpointPhoto: boolean) => {
-          const g = await mkGuard(guardLabel, guardName);
+        const sent = () => new Date().toISOString();
+        let gs = 0;
+        // One patrol with the deployed 1.2.1 app's calls: plan → start on the open window → scan → photos → complete.
+        const patrol = async (site: number, label: string, opts: { checkpointPhoto: boolean; reason?: string }) => {
+          gs += 1;
+          const g = await mkGuard(`d${gs}`, `Delta Guard ${gs}`);
           const shiftId = await mkShift(D.id, site, g.id);
           const plan = expect(await api('GET', `/patrols/mine/plan?shiftId=${shiftId}`, g.token), 200);
-          assert.deepEqual(plan.checkpoints.map((c: any) => c.photoRequired), [true], 'the recorded limitation: the 1.2.1 app is asked for a checkpoint photo');
           const t = Date.now();
           const window = plan.windows.find((w: any) => !w.covered && new Date(w.start).getTime() <= t && t < new Date(w.end).getTime());
-          assert.ok(window && window.anchor === 'shift' && window.routeId !== null, 'an open shift window on the automatic route');
-          const sent = () => new Date().toISOString();
+          assert.ok(window && window.anchor === 'shift' && window.routeId !== null, 'an open shift window with a route');
           const run = expect(await api('POST', '/patrols/runs', g.token, {
             clientRunId: cid('run'), shiftId, startedAtDevice: new Date(t).toISOString(), scheduleId: window.scheduleId, routeId: window.routeId, sentAtDevice: sent(),
           }), 201, undefined, 'start');
@@ -442,29 +438,58 @@ async function main() {
             assert.equal(expect(await api('POST', `/patrols/evidence/${intent.evidence.id}/complete`, g.token), 200).uploadStatus, 'verified');
           };
           await send('run_photo', 11);
-          if (takeCheckpointPhoto) await send('checkpoint_photo', 12);
-          // Declined: the 1.2.1 app asks for a reason (the "reason box") and completes with it — never blocked.
-          const reason = takeCheckpointPhoto ? undefined : 'Checkpoint photo not taken: camera would not focus.';
+          if (opts.checkpointPhoto) await send('checkpoint_photo', 12);
           const done = expect(await api('POST', `/patrols/runs/${run.id}/complete`, g.token, {
-            completedAtDevice: new Date(t + 15_000).toISOString(), sentAtDevice: sent(), ...(reason ? { exceptionReason: reason } : {}),
+            completedAtDevice: new Date(t + 15_000).toISOString(), sentAtDevice: sent(), ...(opts.reason ? { exceptionReason: opts.reason } : {}),
           }), 200, undefined, 'complete');
-          assert.equal(done.status, takeCheckpointPhoto ? 'completed' : 'incomplete', 'a reason is recorded as the Guard gave it');
-          await app.get(PatrolSweepService).sweep(new Date(t + 60_000));
+          await app.get(PatrolSweepService).sweep(new Date(Date.now() + 60_000));
           const judged = expect(await api('GET', `/patrols/mine/runs?shiftId=${shiftId}`, g.token), 200).find((r: any) => r.id === run.id);
-          return judged;
+          const exceptions = await q(`SELECT type FROM patrol_exceptions WHERE "companyId" = $1 AND "runId" = $2 ORDER BY id`, [D.id, run.id]);
+          return { plan, done, judged, exceptions: exceptions.map((e: any) => e.type) };
         };
-        const withPhoto = await patrol('dan', 'Dan Okoye', true);
-        assert.deepEqual([withPhoto.status, withPhoto.verificationStatus, withPhoto.verificationExplanation.code], ['completed', 'verified', 'verified'],
-          'taking the extra photo changes nothing');
-        const declined = await patrol('dee', 'Dee Marsh', false);
-        assert.equal(declined.verificationStatus, 'verified', 'declining the checkpoint photo does not change verification: no checkpoint photo is required');
-        const missing = await one(`SELECT count(*)::int AS n FROM patrol_exceptions WHERE "companyId" = $1 AND type IN ('checkpoint_missed', 'patrol_unverified')`, [D.id]);
-        assert.equal(missing.n, 0, 'no missed-checkpoint or unverified exception from the prompt');
-        // What the reason box does record: the patrol is "completed with a reason" (status incomplete), raised as patrol_incomplete
-        // with the Guard's own words, exactly as any 1.2.1 completion with a reason; the photo run is still verified.
-        const incomplete = await q(`SELECT "runId", note, "safetyAlertId" FROM patrol_exceptions WHERE "companyId" = $1 AND type = 'patrol_incomplete'`, [D.id]);
-        assert.deepEqual(incomplete.map((e: any) => Number(e.runId)), [declined.id], 'one patrol_incomplete, for the declined patrol only');
-        assert.equal(declined.exceptionReason, 'Checkpoint photo not taken: camera would not focus.', 'the Guard\'s own words, on the patrol');
+        const photoCheckpoint = async (site: number, name: string) => {
+          const cp = expect(await api('POST', '/patrols/checkpoints', D.token, { siteId: site, label: name, photoRequired: true }), 201);
+          const label = expect(await api('GET', `/patrols/checkpoints/${cp.id}/label`, D.token), 200).payload;
+          expect(await api('POST', `/patrols/checkpoints/${cp.id}/confirm`, D.token, { scanPayload: label }), 200);
+          return { cp, label };
+        };
+
+        // ── AUTOMATIC route at an OVERLAP site: the checkpoint asks for a photo and is also on an active custom route the
+        //    site does not use (the former known limitation). The server requires no checkpoint photo on this run.
+        const autoSite = await mkSite(D.id, 'Delta Gate', null);
+        const a = await photoCheckpoint(autoSite, 'Front gate');
+        expect(await api('PUT', `/patrols/sites/${autoSite}/setup`, D.token, { setupMode: 'every_shift', evidenceMode: 'qr_photo', frequencyMinutes: 60 }), 200);
+        expect(await api('POST', `/patrols/sites/${autoSite}/setup/confirm`, D.token), 200);
+        expect(await api('POST', '/patrols/routes', D.token, { siteId: autoSite, name: 'Spare route', checkpoints: [{ checkpointId: a.cp.id }] }), 201);
+        const noPrompt = await patrol(autoSite, a.label, { checkpointPhoto: false });
+        assert.deepEqual(noPrompt.plan.checkpoints.map((c: any) => c.photoRequired), [false], 'the 1.2.1 app is not asked for a checkpoint photo (no prompt)');
+        assert.deepEqual([noPrompt.judged.status, noPrompt.judged.verificationStatus], ['completed', 'verified']);
+        assert.deepEqual(noPrompt.exceptions, [], 'no exception');
+        // The server's guarantee for a shift that DOES see a prompt (a mixed shift): the declined photo's reason box does not
+        // make this run incomplete, raises nothing, and the Guard's words are kept on the run.
+        const declined = await patrol(autoSite, a.label, { checkpointPhoto: false, reason: 'Camera would not focus.' });
+        assert.deepEqual([declined.done.status, declined.judged.status, declined.judged.verificationStatus], ['completed', 'completed', 'verified']);
+        assert.equal(declined.judged.exceptionReason, 'Camera would not focus.', 'the Guard\'s words are kept');
+        assert.deepEqual(declined.exceptions, [], 'no patrol_incomplete for a photo the server does not require');
+        // A reason about an unreached checkpoint is never excused (the 1.2.1 app writes "Checkpoint not reached — …").
+        const unreached = await patrol(autoSite, a.label, { checkpointPhoto: false, reason: 'Checkpoint not reached — Front gate: blocked' });
+        assert.equal(unreached.done.status, 'incomplete');
+        assert.deepEqual(unreached.exceptions, ['patrol_incomplete']);
+
+        // ── CUSTOM route chosen by the setup: the checkpoint's photo requirement is preserved.
+        const customSite = await mkSite(D.id, 'Delta Yard', null);
+        const c = await photoCheckpoint(customSite, 'Yard gate');
+        const route = expect(await api('POST', '/patrols/routes', D.token, { siteId: customSite, name: 'Yard route', checkpoints: [{ checkpointId: c.cp.id, required: true }] }), 201);
+        expect(await api('PUT', `/patrols/sites/${customSite}/setup`, D.token, { setupMode: 'every_shift', evidenceMode: 'qr_photo', frequencyMinutes: 60, routeId: route.id }), 200);
+        expect(await api('POST', `/patrols/sites/${customSite}/setup/confirm`, D.token), 200);
+        const supplied = await patrol(customSite, c.label, { checkpointPhoto: true });
+        assert.deepEqual(supplied.plan.checkpoints.map((x: any) => x.photoRequired), [true], 'the 1.2.1 app is asked for the photo (prompt)');
+        assert.deepEqual([supplied.judged.status, supplied.judged.verificationStatus], ['completed', 'verified'], 'photo supplied: verified');
+        assert.deepEqual(supplied.exceptions, []);
+        const missing = await patrol(customSite, c.label, { checkpointPhoto: false, reason: 'Camera would not focus.' });
+        assert.equal(missing.done.status, 'incomplete', 'a required photo declined with a reason: incomplete, as today');
+        assert.notEqual(missing.judged.verificationStatus, 'verified', 'and not verified (the photo is required)');
+        assert.deepEqual(missing.exceptions, ['patrol_incomplete'], 'one patrol_incomplete, as today');
       } finally {
         delete process.env.PATROL_QR_SIGNING_KEY;
       }

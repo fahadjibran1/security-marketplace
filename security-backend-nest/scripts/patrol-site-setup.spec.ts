@@ -572,9 +572,11 @@ async function main() {
       await bookOn(shiftId, g.id, start);
       const plan = expect(await api('GET', `/patrols/mine/plan?shiftId=${shiftId}`, g.token), 200);
       assert.deepEqual(plan.checkpoints.map((c: any) => [c.publicId, c.photoRequired]), [[site.checkpoint.publicId, false]], 'effective: no checkpoint photo');
-      // The same checkpoint on an active CUSTOM route keeps its own setting (unchanged from 1.2.1).
+      // B2 correction: the same checkpoint ALSO on a spare active custom route that this shift does not patrol no longer
+      // makes the plan ask for its photo (the former known limitation): every patrol of this shift is on the automatic route.
       const custom = expect(await api('POST', '/patrols/routes', F.token, { siteId: site.siteId, name: 'Custom', checkpoints: [{ checkpointId: site.checkpoint.id }] }), 201);
-      assert.equal(expect(await api('GET', `/patrols/mine/plan?shiftId=${shiftId}`, g.token), 200).checkpoints[0].photoRequired, true);
+      const overlapPlan = expect(await api('GET', `/patrols/mine/plan?shiftId=${shiftId}`, g.token), 200);
+      assert.equal(overlapPlan.checkpoints[0].photoRequired, false, 'overlap site: no checkpoint-photo prompt');
       expect(await api('DELETE', `/patrols/routes/${custom.id}`, F.token), 200);
       // A site without a setup: exactly as in 1.2.1.
       const plainSite = await mkSite(F.id, 'Foxtrot plain');
@@ -591,6 +593,19 @@ async function main() {
       };
       const photoPlan = await modePlan('photo', '2026-11-18T22:00:00Z');
       const qrPhotoPlan = await modePlan('qr_photo', '2026-11-19T22:00:00Z');
+      // A setup on a CUSTOM route whose checkpoint asks for a photo: the plan keeps the photo (the server requires it).
+      const customSite = await mkSite(F.id, 'Foxtrot custom');
+      const customCp = await mkCheckpoint(F.token, customSite, 'Custom gate');
+      expect(await api('PATCH', `/patrols/checkpoints/${customCp.id}`, F.token, { photoRequired: true }), 200);
+      expect(await testScan(F.token, customCp.id, await labelOf(F.token, customCp.id)), 200);
+      const customRoute = expect(await api('POST', '/patrols/routes', F.token, { siteId: customSite, name: 'Custom gate route', checkpoints: [{ checkpointId: customCp.id, required: true }] }), 201);
+      expect(await setup(F.token, customSite, { setupMode: 'every_shift', evidenceMode: 'qr_photo', frequencyMinutes: 60, routeId: customRoute.id }), 200);
+      expect(await api('POST', `/patrols/sites/${customSite}/setup/confirm`, F.token), 200);
+      await backdate(customSite, '2026-01-01T00:00:00Z');
+      const customShift = await mkShift(F.id, customSite, g.id, Z('2026-11-20T22:00:00Z'), Z('2026-11-21T02:00:00Z'));
+      const customPhotoPlan = expect(await api('GET', `/patrols/mine/plan?shiftId=${customShift}`, g.token), 200);
+      assert.ok(customPhotoPlan.windows.length > 0 && customPhotoPlan.windows.every((w: any) => w.routeId === customRoute.id), 'windows on the custom route');
+      assert.equal(customPhotoPlan.checkpoints[0].photoRequired, true, 'custom route: the checkpoint photo is asked for');
       assert.deepEqual([photoPlan.policy.methods, photoPlan.policy.photosPerRun, photoPlan.windows.length, photoPlan.routes.length], [['photo'], 1, 4, 0]);
       assert.deepEqual([qrPhotoPlan.policy.methods, qrPhotoPlan.policy.photosPerRun, qrPhotoPlan.checkpoints[0].photoRequired], [['qr', 'photo'], 1, false]);
       assert.deepEqual(plan.windows.map((w: any) => [w.windowKey, w.start, w.covered, w.anchor]), [0, 1, 2, 3].map((k) => [
@@ -631,13 +646,16 @@ async function main() {
       const fixturePath = path.join(__dirname, '..', '..', 'security-mobile-app', 'scripts', 'fixtures', 'patrol-plan-b1-shift-windows.json');
       const shape = (o: any): any => (Array.isArray(o) ? (o.length ? [shape(o[0])] : []) : o && typeof o === 'object' ? Object.fromEntries(Object.keys(o).sort().map((k) => [k, shape(o[k])])) : typeof o);
       if (process.env.WRITE_MOBILE_CONTRACT_FIXTURE === '1') {
-        fs.writeFileSync(fixturePath, `${JSON.stringify({ plan, emptyRoutePlan: empty, photoPlan, qrPhotoPlan }, null, 2)}\n`);
+        fs.writeFileSync(fixturePath, `${JSON.stringify({ plan, emptyRoutePlan: empty, photoPlan, qrPhotoPlan, overlapPlan, customPhotoPlan }, null, 2)}\n`);
       }
       const fixture = JSON.parse(fs.readFileSync(fixturePath, 'utf8'));
       assert.deepEqual(shape(fixture.plan), shape(plan), 'the committed mobile fixture has the live plan\'s shape');
       assert.deepEqual(shape(fixture.qrPhotoPlan), shape(qrPhotoPlan));
       assert.deepEqual(shape(fixture.photoPlan), shape(photoPlan));
-      assert.ok([fixture.plan, fixture.qrPhotoPlan].every((p: any) => p.checkpoints.every((c: any) => c.photoRequired === false)), 'the fixture carries the effective requirement');
+      assert.ok([fixture.plan, fixture.qrPhotoPlan, fixture.overlapPlan].every((p: any) => p.checkpoints.every((c: any) => c.photoRequired === false)), 'the fixture carries the effective requirement');
+      assert.deepEqual(shape(fixture.overlapPlan), shape(overlapPlan));
+      assert.deepEqual(shape(fixture.customPhotoPlan), shape(customPhotoPlan));
+      assert.equal(fixture.customPhotoPlan.checkpoints[0].photoRequired, true);
     });
 
     // ═══════════════════ Shift DTO ═══════════════════

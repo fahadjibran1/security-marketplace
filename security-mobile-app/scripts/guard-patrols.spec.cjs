@@ -46,6 +46,10 @@
  *            the new SITE_SETUP_INCOMPLETE warning (fixture written by the backend's patrol-site-setup.spec.ts)
  *   GPAT-32  with the plan's EFFECTIVE checkpoint photo requirement the 1.2.1 app asks exactly what the server requires
  *            (QR-only / photo-only / QR + photos) and is never hard-blocked (worst case: the reason box)
+ *   GPAT-33  (B2 correction) the UNCHANGED 1.2.1 prompt rule on server-built plans: at an overlap site (automatic route,
+ *            the checkpoint also on a spare custom route) no checkpoint-photo prompt and nothing to explain; on a custom
+ *            route that asks for the photo the prompt appears, and declining it needs the reason (the server then records
+ *            the patrol as incomplete, PEB-06); taking it completes cleanly
  */
 const assert = require('node:assert').strict;
 const fs = require('node:fs');
@@ -1218,6 +1222,45 @@ test('GPAT-32-THE-1.2.1-APP-ASKS-EXACTLY-WHAT-A-1.3.0-SERVER-REQUIRES-AND-IS-NEV
   const body = panel.slice(panel.indexOf('async function completePatrol()'), panel.indexOf('enqueueComplete('));
   assert.match(body, /if \(summary\.needsReason && !completionNote\.trim\(\)\)/, 'the only gate is "a reason is needed"');
   assert.equal((body.match(/return;/g) ?? []).length, 2, 'no other early return than the missing-plan guard and the reason gate');
+});
+
+test('GPAT-33-THE-1.2.1-PROMPT-FOLLOWS-THE-RUNS-ROUTE-AUTO-NO-PROMPT-CUSTOM-PROMPT', () => {
+  const { overlapPlan, customPhotoPlan } = JSON.parse(codeOf('scripts/fixtures/patrol-plan-b1-shift-windows.json'));
+  // The deployed app's prompt rule, verbatim (GuardPatrolPanel): the PLAN's checkpoint flag or a per-checkpoint policy.
+  const panel = stripComments(codeOf('src/components/guard/patrol/GuardPatrolPanel.tsx'));
+  assert.ok(panel.includes('const needsPhoto = (decision.checkpoint?.photoRequired ?? false) || plan.policy.photosPerCheckpoint > 0;'), 'the 1.2.1 prompt rule is unchanged');
+  const prompts = (p, publicId) => {
+    const decision = qr.decideScan(`s4cp:1:b1:${publicId}:1:${'A'.repeat(43)}`, p, []);
+    assert.equal(decision.kind, 'record', 'a recordable scan');
+    return (decision.checkpoint?.photoRequired ?? false) || p.policy.photosPerCheckpoint > 0;
+  };
+  const startOn = (p) => {
+    const w = p.windows.find((x) => x.routeId != null);
+    return { w, local: { clientRunId: 'r', shiftId: p.shift.id, start: { body: { routeId: w.routeId, scheduleId: w.scheduleId }, meta: { route: state.routeSnapshot(p, w.routeId) } }, scans: [], photos: [], exceptions: [], complete: null } };
+  };
+  const runPhoto = { id: 'p1', body: { kind: 'run_photo' }, dependsOn: null };
+  // Overlap site, automatic route: no prompt; scans + the run photo complete with nothing to explain.
+  {
+    const { w, local } = startOn(overlapPlan);
+    const cps = state.patrolCheckpoints(overlapPlan, w.routeId, local);
+    assert.ok(cps.length > 0);
+    for (const c of cps) assert.equal(prompts(overlapPlan, c.publicId), false, `no checkpoint-photo prompt at ${c.label}`);
+    const scans = cps.map((c, i) => ({ id: `s${i}`, meta: { publicId: c.publicId } }));
+    const photos = overlapPlan.policy.photosPerRun > 0 || overlapPlan.policy.methods.includes('photo') ? [runPhoto] : [];
+    const s = state.completionSummary(overlapPlan, w.routeId, { ...local, scans, photos });
+    assert.deepEqual([s.photosMissing, s.unmet, s.needsReason], [0, false, false], 'no reason box');
+  }
+  // Custom route asking for the photo: the prompt appears; declined → the reason box; taken → complete.
+  {
+    const { w, local } = startOn(customPhotoPlan);
+    const cps = state.patrolCheckpoints(customPhotoPlan, w.routeId, local);
+    assert.equal(prompts(customPhotoPlan, cps[0].publicId), true, 'the checkpoint photo is asked for');
+    const scans = cps.map((c, i) => ({ id: `s${i}`, meta: { publicId: c.publicId } }));
+    const declined = state.completionSummary(customPhotoPlan, w.routeId, { ...local, scans, photos: [runPhoto] });
+    assert.deepEqual([declined.photosMissing, declined.needsReason], [1, true], 'declined: the reason is needed (never blocked otherwise)');
+    const taken = state.completionSummary(customPhotoPlan, w.routeId, { ...local, scans, photos: [runPhoto, { id: 'p2', body: { kind: 'checkpoint_photo' }, dependsOn: 's0' }] });
+    assert.deepEqual([taken.photosMissing, taken.unmet, taken.needsReason], [0, false, false], 'taken: complete');
+  }
 });
 
 test('GPAT-18-THE-WEB-APP-HAS-NO-PATROL-PANEL-AND-LOADS-NO-DEVICE-MODULE', () => {
