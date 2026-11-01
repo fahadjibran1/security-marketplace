@@ -90,6 +90,9 @@
  *           the database refuses self / cross-site / unarchived / half / second-predecessor links
  *   PS-C16  exception actions through the Patrols API: acknowledge / resolve audited on the exception and its alert, the
  *           list names who acted (display name only), validation (note, late sync, 2000), a resolved exception is final
+ *   PS-C17  owner rule: a PAUSED schedule's timing changes in place only with no history (no run, no exception in any
+ *           status, not a successor, audited as created paused and never on); otherwise a successor that stays paused,
+ *           one successor under concurrent edits; active schedules unchanged
  *
  * Needs PATROL_SCHEDULE_DATABASE_URL pointing at a DISPOSABLE local database — it drops the schema.
  */
@@ -1935,6 +1938,79 @@ async function main() {
       expect(direct, 200);
       const audit = await one(`SELECT "afterData" FROM audit_logs WHERE action = 'patrol.exception_resolved' AND "entityId" = $1`, [quiet.id]);
       assert.deepEqual([audit.afterData.via, audit.afterData.resolution], ['patrols', 'patrol_completed_confirmed']);
+    });
+
+    await test('PS-C17-A-PAUSED-SCHEDULE-CHANGES-IN-PLACE-ONLY-WITHOUT-HISTORY', async () => {
+      const s = await scenario('c17');
+      const [g] = s.guards;
+      const tok = await login(s.co.ownerEmail);
+      const mk = async (name: string, active: boolean) => {
+        const r = await api('POST', '/patrols/schedules', tok, { siteId: s.site, name, activeFrom: '08:00', activeTo: '20:00', frequencyMinutes: 60, active });
+        expect(r, 201, undefined, name);
+        return r.body.id as number;
+      };
+      const shift = await mkShift(s.co.id, s.site, g.id, day('05:00:00'), day('13:00:00'));
+      const supersededAudit = (id: number) => count(`SELECT count(*) FROM audit_logs WHERE action = 'patrol.schedule.superseded' AND "entityId" = $1`, [id]);
+
+      // Paused since creation, nothing names it: in place — same id, no successor, audited as an update.
+      const clean = await mk('Never on', false);
+      const inPlace = await api('PATCH', `/patrols/schedules/${clean}`, tok, { frequencyMinutes: 30 });
+      expect(inPlace, 200);
+      assert.deepEqual([inPlace.body.id, inPlace.body.timingChanged, inPlace.body.predecessorId, inPlace.body.frequencyMinutes, inPlace.body.active],
+        [clean, false, null, 30, false]);
+      assert.deepEqual([await count(`SELECT count(*) FROM audit_logs WHERE action = 'patrol.schedule.updated' AND "entityId" = $1`, [clean]), await supersededAudit(clean)], [1, 0]);
+
+      // Paused, with a historical run: a successor (new id, linked, audited), and it stays paused.
+      const withRun = await mk('Had a run', true);
+      await insRun({ companyId: s.co.id, siteId: s.site, shiftId: shift, guard: g, scheduleId: withRun, status: 'completed', startedAt: day('07:05:00'), completedAt: day('07:20:00') });
+      expect(await api('PATCH', `/patrols/schedules/${withRun}`, tok, { active: false }), 200, undefined, 'pausing is in place');
+      const r1 = await api('PATCH', `/patrols/schedules/${withRun}`, tok, { frequencyMinutes: 30 });
+      expect(r1, 200);
+      assert.deepEqual([r1.body.timingChanged, r1.body.predecessorId, r1.body.active, r1.body.frequencyMinutes], [true, withRun, false, 30], 'the successor stays paused');
+      assert.notEqual(r1.body.id, withRun);
+      assert.equal(Number((await one(`SELECT "supersededByScheduleId" FROM patrol_schedules WHERE id = $1`, [withRun])).supersededByScheduleId), r1.body.id);
+      assert.equal(await supersededAudit(withRun), 1);
+      assert.equal(Number((await one(`SELECT "scheduleId" FROM patrol_runs WHERE "companyId" = $1 AND "scheduleId" = $2`, [s.co.id, withRun])).scheduleId), withRun, 'the run keeps its version');
+
+      // Paused since creation, only a RESOLVED exception names it: a successor too (any status counts).
+      const withException = await mk('Had an exception', false);
+      await q(`INSERT INTO patrol_exceptions ("companyId","siteId","scheduleId","shiftId","windowKey","scopeKey",type,status,resolution,"resolvedAt","windowStart","windowEnd")
+         VALUES ($1,$2,$3,$4,'c17-exc','site','patrol_missed','resolved','patrol_not_required',now(),$5,$6)`, [s.co.id, s.site, withException, shift, day('08:00:00'), day('09:00:00')]);
+      const r2 = await api('PATCH', `/patrols/schedules/${withException}`, tok, { activeTo: '21:00' });
+      expect(r2, 200);
+      assert.deepEqual([r2.body.timingChanged, r2.body.predecessorId, r2.body.active], [true, withException, false]);
+
+      // Switched on at some point (it may have had windows), now paused, nothing names it: a successor (conservative).
+      const wasOn = await mk('Was on', true);
+      expect(await api('PATCH', `/patrols/schedules/${wasOn}`, tok, { active: false }), 200);
+      const r3 = await api('PATCH', `/patrols/schedules/${wasOn}`, tok, { activeFrom: '09:00' });
+      assert.deepEqual([r3.status, r3.body.timingChanged, r3.body.predecessorId], [200, true, wasOn]);
+      // No audit trail at all (cannot prove it never had a window): a successor.
+      const unaudited = await mkSchedule(s.co.id, s.site, { name: 'Unaudited', from: '08:00', to: '12:00', freq: 60 });
+      await q(`UPDATE patrol_schedules SET active = false WHERE id = $1`, [unaudited.id]);
+      const r4 = await api('PATCH', `/patrols/schedules/${unaudited.id}`, tok, { frequencyMinutes: 30 });
+      assert.deepEqual([r4.status, r4.body.timingChanged, r4.body.predecessorId], [200, true, Number(unaudited.id)]);
+      // A paused successor is itself history-bearing: its next timing change is a successor again (a chain).
+      const r5 = await api('PATCH', `/patrols/schedules/${r4.body.id}`, tok, { frequencyMinutes: 120 });
+      assert.deepEqual([r5.status, r5.body.timingChanged, r5.body.predecessorId, r5.body.active], [200, true, r4.body.id, false]);
+
+      // Paused with history, two timing edits at once: one successor, the other a clean 409.
+      const busy = await mk('Concurrent paused', true);
+      await insRun({ companyId: s.co.id, siteId: s.site, shiftId: shift, guard: g, scheduleId: busy, status: 'completed', startedAt: day('08:05:00'), completedAt: day('08:20:00') });
+      expect(await api('PATCH', `/patrols/schedules/${busy}`, tok, { active: false }), 200);
+      const both = await Promise.all([
+        api('PATCH', `/patrols/schedules/${busy}`, tok, { frequencyMinutes: 30 }),
+        api('PATCH', `/patrols/schedules/${busy}`, tok, { frequencyMinutes: 120 }),
+      ]);
+      assert.deepEqual(both.map((r) => r.status).sort(), [200, 409], JSON.stringify(both.map((r) => r.body)));
+      assert.equal(both.find((r) => r.status === 409)!.body.code, 'PATROL_VALIDATION_FAILED');
+      assert.equal(await supersededAudit(busy), 1, 'exactly one successor');
+      assert.equal(await count(`SELECT count(*) FROM patrol_schedules WHERE "companyId" = $1 AND name = 'Concurrent paused'`, [s.co.id]), 2);
+
+      // Active schedules are unchanged: a timing change is always a successor.
+      const active = await mk('Active', true);
+      const r6 = await api('PATCH', `/patrols/schedules/${active}`, tok, { frequencyMinutes: 30 });
+      assert.deepEqual([r6.status, r6.body.timingChanged, r6.body.predecessorId, r6.body.active], [200, true, active, true]);
     });
   } finally {
     await app.close();

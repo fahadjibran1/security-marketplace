@@ -250,9 +250,12 @@ export class PatrolConfigService {
         frequencyMinutes: Number(current.frequencyMinutes), windowMinutes: Number(current.windowMinutes),
         startsOn: dateText(current.startsOn), endsOn: dateText(current.endsOn),
       };
-      // A timing change to an ACTIVE schedule is a new version (patrol-schedule-versions.ts). A paused schedule has no
-      // windows anywhere, so its timing (like a name, route or on / off change) is updated in place.
-      if (current.active && timingChanged(before, values)) return this.supersedeSchedule(manager, actor, current, values);
+      // A timing change is a new version (patrol-schedule-versions.ts) — for an active schedule always, and for a paused
+      // one whenever anything could be reinterpreted by the new timing (owner rule, S4 1.2.1): see timingHistory. Only a
+      // paused schedule with no history at all has its timing updated in place (like a name, route or on / off change).
+      if (timingChanged(before, values) && (current.active || await this.timingHistory(manager, actor.companyId, current))) {
+        return this.supersedeSchedule(manager, actor, current, values);
+      }
       const [row] = await updateRows(manager,
         `UPDATE "patrol_schedules" SET "routeId" = $2, "name" = $3, "daysOfWeek" = $4::jsonb, "activeFrom" = $5, "activeTo" = $6,
             "frequencyMinutes" = $7, "windowMinutes" = $8, "startsOn" = $9, "endsOn" = $10, "active" = $11,
@@ -264,6 +267,35 @@ export class PatrolConfigService {
       await this.audit(manager, actor, 'patrol.schedule.updated', 'patrol_schedule', id, serializeSchedule(current), serializeSchedule(row));
       return { ...serializeSchedule(row), configurationWarnings: await this.scheduleWarnings(manager, actor.companyId, row), predecessorId: null, timingChanged: false };
     });
+  }
+
+  /**
+   * Whether a PAUSED schedule has anything its timing could reinterpret (owner rule, S4 1.2.1), judged conservatively in
+   * the caller's transaction, after the schedule row was locked FOR UPDATE — a run or exception insert naming it takes a
+   * key-share lock on that row (their foreign keys), so none can appear between this check and the edit:
+   *   • any patrol run, or any patrol exception in any status, naming it;
+   *   • it is itself a successor (another schedule's supersededByScheduleId points at it);
+   *   • it may ever have had windows: in place only when its creation is audited as paused and no audited change ever
+   *     switched it on (no audit trail at all counts as "may have had windows").
+   */
+  private async timingHistory(manager: EntityManager, companyId: number, current: any): Promise<boolean> {
+    const id = Number(current.id);
+    const [refs] = await manager.query(
+      `SELECT EXISTS (SELECT 1 FROM "patrol_runs" WHERE "scheduleId" = $1) AS "runs",
+              EXISTS (SELECT 1 FROM "patrol_exceptions" WHERE "scheduleId" = $1) AS "exceptions",
+              EXISTS (SELECT 1 FROM "patrol_schedules" WHERE "supersededByScheduleId" = $1) AS "successor"`,
+      [id],
+    );
+    if (refs.runs || refs.exceptions || refs.successor) return true;
+    const [trail] = await manager.query(
+      `SELECT count(*) FILTER (WHERE "action" = 'patrol.schedule.created' AND ("afterData"->>'active') = 'false')::int AS "createdPaused",
+              count(*) FILTER (WHERE ("afterData"->>'active') = 'true')::int AS "everActive"
+         FROM "audit_logs"
+        WHERE "companyId" = $1 AND "entityType" = 'patrol_schedule' AND "entityId" = $2
+          AND "action" IN ('patrol.schedule.created', 'patrol.schedule.updated')`,
+      [companyId, id],
+    );
+    return !(Number(trail.createdPaused) > 0 && Number(trail.everActive) === 0);
   }
 
   /**

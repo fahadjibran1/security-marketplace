@@ -173,7 +173,10 @@ window belongs to the version in force at its start. 1.2.1 first linked the two 
   `down()` refuses while any link exists (as Migration 72 does for grants).
 * **Service:** the predecessor is locked `FOR UPDATE`; the link is written `WHERE "supersededByScheduleId" IS NULL`; a
   concurrent second edit gets 409 (`PATROL_VALIDATION_FAILED`, `details.supersededByScheduleId`), never a second
-  successor; the unique index is the backstop. A paused schedule's timing changes in place (it has no windows). The
+  successor; the unique index is the backstop. Owner rule for a PAUSED schedule: its timing changes in place only when
+  nothing could be reinterpreted (no patrol run, no patrol exception in any status, not itself a successor, and audited
+  as created paused and never switched on); otherwise it gets a successor like an active one, and the successor stays
+  paused. The check runs after the row is locked `FOR UPDATE`, so a run or exception cannot appear meanwhile. The
   audit entry is still written as evidence; the window engine, sweep, Guard plan and windows-due count read the columns.
 * **Rollback to 1.2.0 (4f4de31):** the old code never names the columns (raw `SELECT *` carries two extra null keys;
   the old entity maps only its own columns; inserts leave them null). Locally, the 4f4de31 patrol specs (foundation,

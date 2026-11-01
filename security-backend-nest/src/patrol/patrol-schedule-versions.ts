@@ -3,14 +3,17 @@ import type { PatrolScheduleLike } from './patrol-window.service';
 /**
  * Schedule versions (S4 1.2.1, owner decision B1; durable since Migration 73).
  *
- * A change to an ACTIVE schedule's TIMING (frequencyMinutes, windowMinutes, activeFrom, activeTo, daysOfWeek, startsOn,
- * endsOn) is never applied in place: PatrolConfigService.updateSchedule ARCHIVES the current schedule (active = false,
+ * A change to a schedule's TIMING (frequencyMinutes, windowMinutes, activeFrom, activeTo, daysOfWeek, startsOn, endsOn)
+ * is not applied in place: PatrolConfigService.updateSchedule ARCHIVES the current schedule (active = false,
  * archivedAt = the change instant; kept for history — its runs, exceptions, evidence and audit keep pointing at it) and
  * CREATES a successor with a NEW id in the same transaction. A new id means new window keys ("s{id}:{date}:{slot}"), so
  * the successor never collides with the predecessor's runs (UQ_patrol_runs_schedule_window_scope) or exceptions (raised
- * once per windowKey), and an old run can never satisfy a new window. A name, route or on/off change stays in place, and
- * so does a timing change to a PAUSED schedule: it has no windows anywhere (plan, sweep, windows-due count all read
- * active schedules only), runs are matched on their actual window start, and re-activation never judges earlier windows.
+ * once per windowKey), and an old run can never satisfy a new window. A name, route or on/off change stays in place. Owner
+ * rule: a timing change to a PAUSED schedule is applied in place ONLY when nothing could be reinterpreted — no patrol run
+ * and no patrol exception (any status) names it, it is not itself a successor, and its audit trail shows it was created
+ * paused and never switched on (so it never had a window). Otherwise it gets a successor exactly as an active one does,
+ * and the successor keeps the paused state. The check runs after the row is locked FOR UPDATE
+ * (PatrolConfigService.timingHistory).
  *
  * The link is patrol_schedules."supersededByScheduleId" / "supersededAt" (Migration 73; composite FK to the same company
  * and site, one predecessor per successor). The patrol.schedule.superseded audit entry is still written as evidence, but
