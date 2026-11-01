@@ -113,7 +113,8 @@ export class PatrolSetupService {
       let routeId: number | null = null;
       if (evidence.methods.includes('qr')) {
         if (dto.routeId != null) {
-          const [route] = await manager.query(`SELECT * FROM "patrol_routes" WHERE "id" = $1 AND "companyId" = $2`, [dto.routeId, actor.companyId]);
+          // FOR SHARE: never name a version that a concurrent route edit is replacing (see assertRouteForSite).
+          const [route] = await manager.query(`SELECT * FROM "patrol_routes" WHERE "id" = $1 AND "companyId" = $2 FOR SHARE`, [dto.routeId, actor.companyId]);
           if (!route) throw patrolError(HttpStatus.NOT_FOUND, PatrolErrorCode.NOT_FOUND, 'Route not found.');
           if (Number(route.siteId) !== siteId || route.archivedAt || route.kind === 'auto') {
             throw patrolError(HttpStatus.UNPROCESSABLE_ENTITY, PatrolErrorCode.ROUTE_NOT_FOR_SITE,
@@ -316,7 +317,7 @@ export class PatrolSetupService {
    * and no run or exception names it, and it is not itself a successor); otherwise the current version is archived and
    * linked to a successor with a new id, so every window belongs to the version in force at its start. A route switch
    * (automatic ↔ chosen route) is applied in place, as for clock schedules; a newer version of the same route is not a
-   * change (the schedule keeps the id it was given).
+   * change (supersedeRoute already moved the schedule onto it).
    */
   private async saveShiftSchedule(manager: EntityManager, actor: PatrolCompanyActor, siteId: number, frequency: number, routeId: number | null, policy: any, setupMode: PatrolSetupMode) {
     const current = await this.currentShiftSchedule(manager, actor, siteId, true);

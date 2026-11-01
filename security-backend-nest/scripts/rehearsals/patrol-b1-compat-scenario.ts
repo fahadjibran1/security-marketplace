@@ -11,8 +11,10 @@
  *   setup     data only 1.3.0 writes (when the columns exist): an active every-shift setup, its shift-anchored schedule
  *             (current + superseded), automatic route versions, a confirmed checkpoint, a shift marked required — the
  *             1.2.1 code must show no shift window, count none and raise nothing for it                 (compatibility b)
- *   routes    a custom route versioned by 1.3.0 (archived + linked) that a clock schedule still names, and a run that
- *             names the replaced version — what the 1.2.1 code does with it, before and after the documented repoint
+ *   routes    a custom route versioned by 1.3.0 (R1 archived + linked to R2) exactly as 1.3.0 leaves it — the clock schedule
+ *             names the CURRENT version R2 — and a run that names R1: the 1.2.1 code shows no "route required" warning,
+ *             starts a new patrol on R2 and judges the old run on R1, with no manual step (B1 code: windows before the
+ *             change still owe R1)
  *
  * Usage (disposable local database): COMPAT_SCENARIO_DATABASE_URL=postgresql://…/s4_compat_scenario \
  *   ts-node -r tsconfig-paths/register scripts/rehearsals/patrol-b1-compat-scenario.ts > out.json
@@ -132,8 +134,8 @@ async function main() {
     const a2 = await route(setupSite, 'All confirmed checkpoints', [setupCp]);
     await q(`UPDATE patrol_routes SET kind = 'auto' WHERE id = ANY($1::int[])`, [[a1, a2]]);
     await q(`UPDATE patrol_routes SET "supersededByRouteId" = $2, "supersededAt" = '2026-11-21T12:00:00Z' WHERE id = $1`, [a1, a2]);
-    const sh1 = await schedule(setupSite, 'Shift patrol', 60, a1, { from: '00:00', to: '00:00', active: false, archivedAt: '2026-11-21T13:00:00Z', inertDate: '2000-01-01' });
-    const sh2 = await schedule(setupSite, 'Shift patrol', 30, a1, { from: '00:00', to: '00:00', active: false, inertDate: '2000-01-01' });
+    const sh1 = await schedule(setupSite, 'Shift patrol', 60, a2, { from: '00:00', to: '00:00', active: false, archivedAt: '2026-11-21T13:00:00Z', inertDate: '2000-01-01' });
+    const sh2 = await schedule(setupSite, 'Shift patrol', 30, a2, { from: '00:00', to: '00:00', active: false, inertDate: '2000-01-01' });
     await q(`UPDATE patrol_schedules SET anchor = 'shift' WHERE id = ANY($1::int[])`, [[sh1, sh2]]);
     await q(`UPDATE patrol_schedules SET "supersededByScheduleId" = $2, "supersededAt" = '2026-11-21T13:00:00Z' WHERE id = $1`, [sh1, sh2]);
     await q(`UPDATE shifts SET "patrolRequirement" = 'required' WHERE id = $1`, [setupShift]);
@@ -148,7 +150,8 @@ async function main() {
   const r1 = await route(routesSite, 'Perimeter', [rc1], true);
   const r2 = await route(routesSite, 'Perimeter', [rc1, rc2]);
   if (m74) await q(`UPDATE patrol_routes SET "supersededByRouteId" = $2, "supersededAt" = '2026-11-21T12:00:00Z' WHERE id = $1`, [r1, r2]);
-  const routeSchedule = await schedule(routesSite, 'Perimeter hourly', 60, r1);
+  // Exactly as 1.3.0 leaves it: the schedule names the CURRENT version (PatrolConfigService.supersedeRoute repoints it).
+  const routeSchedule = await schedule(routesSite, 'Perimeter hourly', 60, m74 ? r2 : r1);
   const routesShift = await shift(routesSite, '2026-11-21T08:00:00Z', '2026-11-21T20:00:00Z');
   const oldRouteRun = Number((await one(`INSERT INTO patrol_runs ("companyId","siteId","shiftId","guardId","startedByUserId","scheduleId","routeId","windowKey","windowStart","windowEnd","startedAtDevice","startedAtServer",
       status,"completedAtDevice","completedAtServer","clientRunId")
@@ -207,14 +210,6 @@ async function main() {
     return { windowRouteId: w?.routeId ?? null, status: r.status, code: r.body?.code ?? null, routeId: r.body?.routeId ?? null };
   };
   out.routesStart = await startFromPlan();
-  // The documented rollback repoint (docs/patrols/P1-follow-ups.md §6): a clock schedule names the newest version.
-  await q(`WITH RECURSIVE chain AS (
-      SELECT s.id AS "scheduleId", s."routeId" AS "routeId", 0 AS depth FROM patrol_schedules s WHERE s."routeId" IS NOT NULL
-      UNION ALL SELECT c."scheduleId", r."supersededByRouteId", c.depth + 1 FROM chain c JOIN patrol_routes r ON r.id = c."routeId" WHERE r."supersededByRouteId" IS NOT NULL AND c.depth < 1000)
-    UPDATE patrol_schedules s SET "routeId" = h."routeId" FROM (SELECT DISTINCT ON ("scheduleId") "scheduleId", "routeId" FROM chain ORDER BY "scheduleId", depth DESC) h
-     WHERE s.id = h."scheduleId" AND s."routeId" IS DISTINCT FROM h."routeId" AND s.anchor = 'clock'`).catch((e: any) => { out.repointError = String(e?.message ?? e); });
-  out.routesStartAfterRepoint = await startFromPlan();
-  out.routesPlanAfterRepoint = (await planOf(routesShift)).warnings;
   await app.close();
   console.log(JSON.stringify(out, null, 2));
 }

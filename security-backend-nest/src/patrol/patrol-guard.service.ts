@@ -153,8 +153,21 @@ export class PatrolGuardService {
       [shift.companyId, shift.siteId],
     );
     const checkpoints = await this.dataSource.query(
-      `SELECT "publicId", "label", "description", "photoRequired" FROM "patrol_checkpoints"
-        WHERE "companyId" = $1 AND "siteId" = $2 AND "active" AND "revokedAt" IS NULL ORDER BY "label", "id"`,
+      `SELECT c."publicId", c."label", c."description",
+              -- 1.3.0 B1: the EFFECTIVE photo requirement. A checkpoint's own "photo required" is ignored on an automatic
+              -- route and at a site whose setup is active (owner decision 6; patrol-run-evaluation.ts), so such a checkpoint
+              -- reports false unless an active custom route includes it — the 1.2.1 app then never asks for a photo the
+              -- server will not require. Unchanged for every other checkpoint (sites without a setup behave as in 1.2.1).
+              (c."photoRequired" AND NOT (
+                (EXISTS (SELECT 1 FROM "patrol_route_checkpoints" rc JOIN "patrol_routes" r ON r."id" = rc."routeId"
+                          WHERE rc."checkpointId" = c."id" AND r."kind" = 'auto')
+                 OR EXISTS (SELECT 1 FROM "patrol_policies" p WHERE p."companyId" = c."companyId" AND p."siteId" = c."siteId"
+                             AND p."setupConfirmedAt" IS NOT NULL AND p."setupMode" IN ('every_shift', 'per_shift')))
+                AND NOT EXISTS (SELECT 1 FROM "patrol_route_checkpoints" rc JOIN "patrol_routes" r ON r."id" = rc."routeId"
+                         WHERE rc."checkpointId" = c."id" AND r."kind" = 'custom' AND r."active" AND r."archivedAt" IS NULL)
+              )) AS "photoRequired"
+         FROM "patrol_checkpoints" c
+        WHERE c."companyId" = $1 AND c."siteId" = $2 AND c."active" AND c."revokedAt" IS NULL ORDER BY c."label", c."id"`,
       [shift.companyId, shift.siteId],
     );
     const { qrRequireProximity: _q, proximityMeters: _p, ...policyOut } = policy;

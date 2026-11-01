@@ -8,7 +8,8 @@
  *   PB1-03  applicability: late Book On, early Book Off and a cancelled shift (the shared operational rule)
  *   PB1-04  the shift patrol requirement matrix (every_shift / per_shift / off / not set up / not activated × site
  *           default / required / not required) and its plain-English summary
- *   PB1-05  route versions: the version in force at a window's start, the head, the same chain, content keys
+ *   PB1-05  route versions: the version in force at a window's start whichever version the schedule names (it names the
+ *           current one), the root and the head, the same chain either way round, content keys
  *   PB1-06  evidence modes ↔ policy methods / photosPerRun (photos stay yes / no, 0 / 1)
  *   PB1-07  evidence rules (owner decision 6) through the sweep's own runRequirements: photo-only, QR-only, QR + photos,
  *           no per-checkpoint photo on an automatic route, pending / rejected / quarantined / purged photos never count,
@@ -139,14 +140,21 @@ async function main() {
     assert.equal(RV.routeVersionAt(links, 10, Z('2026-11-02T10:00:00Z')), 10, 'a window that started before the change keeps the version then in force');
     assert.equal(RV.routeVersionAt(links, 10, Z('2026-11-02T10:30:00Z')), 11, 'at the change instant: the successor');
     assert.equal(RV.routeVersionAt(links, 10, Z('2026-11-02T13:00:00Z')), 12);
-    assert.equal(RV.routeVersionAt(links, 11, Z('2026-11-02T09:00:00Z')), 11, 'never back to a predecessor');
+    // A schedule names the CURRENT version (12); the window still owes the version in force at its start.
+    for (const named of [10, 11, 12]) {
+      assert.deepEqual([Z('2026-11-02T09:00:00Z'), Z('2026-11-02T11:00:00Z'), Z('2026-11-02T12:00:00Z')].map((at) => RV.routeVersionAt(links, named, at)), [10, 11, 12],
+        `the same answer whichever version (${named}) the schedule names`);
+    }
+    assert.equal(RV.routeRoot(links, 12), 10);
     assert.equal(RV.routeHead(links, 10), 12);
     assert.equal(RV.routeVersionAt(links, null, Z('2026-11-02T13:00:00Z')), null);
+    assert.equal(RV.routeVersionAt(links, 77, Z('2026-11-02T13:00:00Z')), 77, 'a route never versioned is itself');
     assert.equal(RV.sameRouteChain(links, 10, 12), true);
-    assert.equal(RV.sameRouteChain(links, 12, 10), false);
+    assert.equal(RV.sameRouteChain(links, 12, 10), true, 'either way round');
     assert.equal(RV.sameRouteChain(links, 10, 99), false);
     const loop = new Map([[1, { successorId: 2, at: Z('2026-01-01T00:00:00Z') }], [2, { successorId: 1, at: Z('2026-01-01T00:00:00Z') }]]);
     assert.ok([1, 2].includes(RV.routeHead(loop, 1)!), 'a corrupt cycle terminates');
+    assert.ok([1, 2].includes(RV.routeRoot(loop, 1)) && [1, 2].includes(RV.routeVersionAt(loop, 1, Z('2026-02-01T00:00:00Z'))!), 'backwards too');
     assert.notEqual(RV.routeContentKey([{ checkpointId: 1 }, { checkpointId: 2 }], 'any'), RV.routeContentKey([{ checkpointId: 2 }, { checkpointId: 1 }], 'any'), 'order is content');
     assert.notEqual(RV.routeContentKey([{ checkpointId: 1, required: true }], 'any'), RV.routeContentKey([{ checkpointId: 1, required: false }], 'any'));
     assert.notEqual(RV.routeContentKey([{ checkpointId: 1 }], 'any'), RV.routeContentKey([{ checkpointId: 1 }], 'strict'));
@@ -201,6 +209,11 @@ async function main() {
     // A chosen (custom) route keeps 1.2.1's per-checkpoint photo setting exactly.
     assert.equal(req('qr_photo', { kind: 'custom', route: [{ id: 1, photoRequired: true }], visits: [1], photos: [['verified']] }).missingCheckpointPhotos, 1,
       'custom route: the checkpoint\'s own photo is still required (unchanged from 1.2.1)');
+    // A route-less patrol: the checkpoint's own photo counts at a site without a setup (1.2.1), never at an active setup site.
+    const routeless = (setup: boolean) => RE.runRequirements({ id: 1, routeId: null, siteId: 3 }, policy('qr_photo'),
+      { ...(ctx({ visits: [1], photos: [['verified']], sitePhoto: [1] }) as any), setupSites: new Set(setup ? [3] : []) });
+    assert.equal(routeless(false).missingCheckpointPhotos, 1, 'no setup: as in 1.2.1');
+    assert.equal(routeless(true).missingCheckpointPhotos, 0, 'active setup: no per-checkpoint photo');
   });
 
   await test('PB1-08-EXPLAIN-VERIFICATION-EVERY-CODE-IN-PLAIN-ENGLISH', () => {

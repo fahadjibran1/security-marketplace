@@ -379,6 +379,15 @@ async function main() {
         const listed = await previous.query(`SELECT id FROM patrol_routes WHERE "companyId" = $1 AND "archivedAt" IS NULL ORDER BY id`, [coA]);
         assert.ok(!listed.some((x: any) => Number(x.id) === rA1) && listed.some((x: any) => Number(x.id) === Number(succ.id)), 'the replaced route is hidden, the successor listed');
         assert.equal(Number((await previous.query(`SELECT "routeId" FROM patrol_runs WHERE "clientRunId" = 'm74-run-0002'`))[0].routeId), rA1, 'the run still names the version it started under');
+        // 1.3.0 moves every schedule naming the replaced version onto the new one in the same transaction
+        // (PatrolConfigService.supersedeRoute; patrol-site-setup.spec.ts PSS-05). As it leaves the schedule, 1.2.1's own
+        // route checks — the plan's active routes and the run start's "active and not archived" — accept it, with no
+        // manual step on a rollback.
+        await previous.query(`UPDATE patrol_schedules SET "routeId" = $2 WHERE "routeId" = $1`, [rA1, succ.id]);
+        const [named] = await previous.query(`SELECT r.id, r.active, r."archivedAt" FROM patrol_schedules s JOIN patrol_routes r ON r.id = s."routeId" WHERE s.id = $1`, [s3]);
+        assert.deepEqual([Number(named.id), named.active, named.archivedAt], [Number(succ.id), true, null], '1.2.1 finds an active, unarchived route');
+        const planRoutes = await previous.query(`SELECT id FROM patrol_routes WHERE "companyId" = $1 AND "siteId" = $2 AND "active" AND "archivedAt" IS NULL`, [coA, siteA1]);
+        assert.ok(planRoutes.some((x: any) => Number(x.id) === Number(succ.id)), 'and lists it in the Guard plan');
       } finally {
         await previous.destroy();
       }

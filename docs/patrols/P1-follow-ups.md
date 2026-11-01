@@ -207,8 +207,10 @@ window belongs to the version in force at its start. 1.2.1 first linked the two 
   checkpoint's current signed label at its site; rotation and revocation clear the confirmation. Every change to the set
   of confirmed checkpoints creates a new automatic route version.
 * **Route versions:** a referenced route's checkpoint change (any route; the automatic one always) archives it and links
-  a successor (409 `PATROL_ROUTE_SUPERSEDED` to a concurrent edit); schedules keep their routeId; a window owes the version
-  in force at its start; a run keeps the version it started under.
+  a successor (409 `PATROL_ROUTE_SUPERSEDED` to a concurrent edit); every schedule naming the replaced version is moved
+  onto the new current one in the same transaction; a window owes the version in force at its start (the chain walked
+  back); a run keeps the version it started under. The Guard plan reports each checkpoint's EFFECTIVE photo requirement
+  (false on an automatic route / at an active setup site unless an active custom route includes it), matching the server.
 * **Shift-based windows** (`patrol-shift-windows.ts`): the operational window grid from the shift's scheduled start
   (Book On by explicit override), whole windows, owed by each effectively required shift on duty (scope `sh{shiftId}`),
   judged only after the latest of the setup's activation, the site's last requirement / anchor change and the shift's
@@ -227,20 +229,19 @@ boot checks run against databases migrated to 74, only their "head is Migration 
 * A shift-anchored schedule is stored inactive with `startsOn = endsOn = 2000-01-01`: the 1.2.1 clock engine yields no
   window for it, so 1.2.1 shows, counts and raises nothing for shift patrols. It lists it as a paused "Shift patrol"
   schedule (do not switch it on under 1.2.1).
-* A custom route versioned under 1.3.0 is an archived route to 1.2.1. Runs that name it are judged as before, but a clock
-  schedule still names the replaced version, so 1.2.1 warns "route required" for it and refuses a new patrol on it (422
-  `PATROL_ROUTE_NOT_FOR_SITE`). After a rollback, point such schedules at their newest version (rehearsed; changes only
-  `patrol_schedules.routeId` of clock schedules whose route has a successor):
-
-  ```sql
-  WITH RECURSIVE chain AS (
-    SELECT s.id AS "scheduleId", s."routeId" AS "routeId", 0 AS depth FROM patrol_schedules s WHERE s."routeId" IS NOT NULL
-    UNION ALL SELECT c."scheduleId", r."supersededByRouteId", c.depth + 1 FROM chain c
-      JOIN patrol_routes r ON r.id = c."routeId" WHERE r."supersededByRouteId" IS NOT NULL AND c.depth < 1000)
-  UPDATE patrol_schedules s SET "routeId" = h."routeId"
-    FROM (SELECT DISTINCT ON ("scheduleId") "scheduleId", "routeId" FROM chain ORDER BY "scheduleId", depth DESC) h
-   WHERE s.id = h."scheduleId" AND s."routeId" IS DISTINCT FROM h."routeId" AND s.anchor = 'clock';
-  ```
+* Versioned routes need no rollback step. When a route gets a successor, 1.3.0 moves every schedule that named the
+  replaced version onto the new current version in the same locked transaction (audited in `repointedScheduleIds`; not a
+  timing change, so no schedule successor, and `updatedAt` — the sweep's judging floor — is untouched). A schedule
+  therefore never names an archived route, which is all 1.2.1 follows: its plan lists the route, it shows no "route
+  required" warning, and a new patrol starts. History is kept by the chain walked backwards: a window still owes the
+  version in force at its start, and a run keeps the routeId it started under (1.2.1 judges such a run on that archived
+  version exactly as before). Enforced by `patrol-site-setup.spec.ts` PSS-05 (no schedule ever names a replaced version)
+  and `m74-migration.spec.ts` M74-09.
+* Rehearsed on a restored copy of the pre-1.2.1 pilot backup in a local scratch cluster
+  (`scripts/rehearsals/patrol-b1-restored-setup.ts` with the 1.3.0 code, then `patrol-b1-restored-observe.ts` with the
+  5d749fa code): migrating to 74 changes no restored row; after a custom route edit and a shift-patrol setup on site 15,
+  5d749fa shows no "route required" warning, starts a new patrol on the current version (201), shows no shift window,
+  and every restored row is unchanged.
 * Do not revert Migration 74 for an application rollback.
 
 ---

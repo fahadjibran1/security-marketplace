@@ -25,6 +25,8 @@ export type RunEvaluationContext = {
   labels: Map<number, string>;
   /** The kind of each run's route version ('custom' / 'auto'). */
   routeKinds: Map<number, string>;
+  /** The runs' sites whose patrol setup is active (shift-based patrols in force). */
+  setupSites?: Set<number>;
 };
 
 export async function loadRunEvaluationContext(runner: Runner, companyId: number, runs: any[]): Promise<RunEvaluationContext> {
@@ -53,10 +55,16 @@ export async function loadRunEvaluationContext(runner: Runner, companyId: number
   )).map((c: any) => Number(c.id));
   const labelRows = await runner.query(`SELECT "id", "label" FROM "patrol_checkpoints" WHERE "companyId" = $1`, [companyId]);
   const kindRows = routeIds.length ? await runner.query(`SELECT "id", "kind" FROM "patrol_routes" WHERE "id" = ANY($1::int[])`, [routeIds]) : [];
+  const setupRows = await runner.query(
+    `SELECT "siteId" FROM "patrol_policies" WHERE "companyId" = $1 AND "siteId" = ANY($2::int[])
+        AND "setupConfirmedAt" IS NOT NULL AND "setupMode" IN ('every_shift', 'per_shift')`,
+    [companyId, [...new Set(runs.map((r) => Number(r.siteId)))]],
+  );
   return {
     visits, evidence, routeCheckpoints, photoRequiredAtSite,
     labels: new Map(labelRows.map((c: any) => [Number(c.id), String(c.label)])),
     routeKinds: new Map(kindRows.map((r: any) => [Number(r.id), String(r.kind ?? 'custom')])),
+    setupSites: new Set(setupRows.map((r: any) => Number(r.siteId))),
   };
 }
 
@@ -66,8 +74,12 @@ export function runRequirements(run: any, policy: { photosPerRun: number; photos
   const routeRows = run.routeId == null ? [] : ctx.routeCheckpoints.filter((rc: any) => Number(rc.routeId) === Number(run.routeId));
   const runVisits = ctx.visits.filter((v: any) => Number(v.runId) === runId);
   const runEvidence = ctx.evidence.filter((e: any) => Number(e.runId) === runId);
-  // An automatic route (every confirmed checkpoint) asks for no per-checkpoint photo (owner decision 6).
-  const auto = run.routeId != null && ctx.routeKinds.get(Number(run.routeId)) === 'auto';
+  // An automatic route (every confirmed checkpoint) asks for no per-checkpoint photo (owner decision 6); nor does a
+  // route-less patrol at a site whose setup is active. A custom route keeps its checkpoints' own photo settings. The Guard
+  // plan reports the same effective requirement (PatrolGuardService.plan), so the 1.2.1 app asks for exactly these.
+  const auto = run.routeId != null
+    ? ctx.routeKinds.get(Number(run.routeId)) === 'auto'
+    : ctx.setupSites?.has(Number(run.siteId)) === true;
   // The checkpoint rule is the run's route version's required checkpoints (none ⇒ no rule; evaluateRequirements flags it
   // when QR is required). Never every checkpoint of the site, and never "one scan is enough".
   return evaluateRequirements({

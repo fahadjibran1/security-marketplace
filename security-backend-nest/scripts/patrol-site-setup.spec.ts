@@ -14,8 +14,10 @@
  *           clear the confirmation (and leave the automatic route as a new version); audited; permissions
  *   PSS-05  route versions: a referenced route's checkpoint change is a successor (new id, link, audit) — never in place;
  *           an unreferenced route changes in place; the replaced id 409; concurrent edits: one successor, one 409; the
- *           automatic route is managed by the setup (409); a run keeps the route version it started under and is judged
- *           against it; a window uses the version in force at its start
+ *           automatic route is managed by the setup (409); every schedule naming the replaced version is moved onto the
+ *           new current one in the same transaction (no schedule successor, updatedAt untouched; no schedule ever names a
+ *           replaced version — what the 1.2.1 backend relies on after a rollback); a run keeps the route version it started
+ *           under and is judged against it; a window uses the version in force at its start
  *   PSS-06  shift-based windows through the sweep: scheduled start (default), Book On override, early Book Off, cancelled
  *           shift, every_shift / per_shift / off × the shift's own value, scope = the shift, ad-hoc patrols never missed
  *   PSS-07  a mid-shift requirement change applies to future windows only (both directions); a frequency change is a
@@ -403,9 +405,18 @@ async function main() {
       const old = await one(`SELECT * FROM patrol_routes WHERE id = $1`, [route.id]);
       assert.deepEqual([Number(old.supersededByRouteId), old.active, old.archivedAt != null], [v2.id, false, true]);
       assert.deepEqual(await routeItems(route.id), [c1.id, c2.id], 'version 1 is never edited in place');
-      assert.equal(Number((await one(`SELECT "routeId" FROM patrol_schedules WHERE id = $1`, [sched.id])).routeId), route.id, 'the schedule keeps its original routeId');
+      // The schedule now names the CURRENT version (rollback-safe: 1.2.1 only follows routeId), in the same transaction —
+      // not a timing change: no schedule successor, and its updatedAt (the sweep's judging floor) is untouched.
+      const after = await one(`SELECT * FROM patrol_schedules WHERE id = $1`, [sched.id]);
+      assert.equal(Number(after.routeId), v2.id, 'the schedule names the new current version');
+      assert.equal(new Date(after.updatedAt).toISOString(), new Date(sched.updatedAt).toISOString(), 'updatedAt untouched');
+      assert.deepEqual([after.supersededByScheduleId, after.archivedAt], [null, null], 'no schedule successor');
       const audit = await one(`SELECT * FROM audit_logs WHERE action = 'patrol.route.superseded' AND "entityId" = $1`, [route.id]);
-      assert.deepEqual([audit.afterData.successorId, audit.afterData.reason], [v2.id, 'checkpoints_changed']);
+      assert.deepEqual([audit.afterData.successorId, audit.afterData.reason, audit.afterData.repointedScheduleIds], [v2.id, 'checkpoints_changed', [sched.id]]);
+      // The 1.2.1 schedule edit paths still behave: a name change in place, a timing change a successor (on the current route).
+      const renamed = expect(await api('PATCH', `/patrols/schedules/${sched.id}`, C.token, { name: 'Hourly (gate)' }), 200);
+      assert.deepEqual([renamed.id, renamed.routeId, renamed.timingChanged], [sched.id, v2.id, false]);
+      expect(await api('PATCH', `/patrols/schedules/${sched.id}`, C.token, { routeId: route.id }), 422, 'PATROL_ROUTE_NOT_FOR_SITE', 'a replaced version cannot be named again');
       expect(await api('PATCH', `/patrols/routes/${route.id}`, C.token, { name: 'again' }), 409, 'PATROL_ROUTE_SUPERSEDED', 'the replaced id');
       // Concurrent edits of the current version: exactly one successor.
       const [x, y] = await Promise.all([
@@ -415,6 +426,13 @@ async function main() {
       assert.deepEqual([x.status, y.status].sort(), [200, 409], `one wins, one 409 (${x.status} ${y.status})`);
       assert.equal(await count(`SELECT count(*) FROM patrol_routes WHERE "supersededByRouteId" IS NOT NULL AND "siteId" = $1`, [site]), 2, 'never a second successor of one version');
       const head = await one(`SELECT * FROM patrol_routes WHERE "siteId" = $1 AND name = 'Perimeter' AND "archivedAt" IS NULL`, [site]);
+      // The invariant 1.2.1 relies on: no schedule ever names a replaced version.
+      assert.equal(await count(`SELECT count(*) FROM patrol_schedules s JOIN patrol_routes r ON r.id = s."routeId" WHERE r."supersededByRouteId" IS NOT NULL`), 0);
+      assert.equal(Number((await one(`SELECT "routeId" FROM patrol_schedules WHERE id = $1`, [sched.id])).routeId), Number(head.id));
+      // A timing change of the schedule now: the successor takes the current route too.
+      const retimed = expect(await api('PATCH', `/patrols/schedules/${sched.id}`, C.token, { frequencyMinutes: 120 }), 200);
+      assert.deepEqual([retimed.timingChanged, retimed.routeId], [true, Number(head.id)]);
+      await q(`UPDATE patrol_schedules SET "archivedAt" = '2026-11-04T00:00:00Z', "supersededAt" = '2026-11-04T00:00:00Z' WHERE id = $1`, [sched.id]);
       // The run keeps version 1 and is judged against it: C3 (added later) is not required.
       await q(`INSERT INTO patrol_checkpoint_visits ("companyId","runId","checkpointId","scannedPublicId",result,"scannedAtDevice","clientVisitId") VALUES ($1,$2,$3,$4,'verified','2026-11-03T10:10:00Z',$5),($1,$2,$6,$7,'verified','2026-11-03T10:12:00Z',$8)`,
         [C.id, run1.id, c1.id, c1.publicId, cid('v'), c2.id, c2.publicId, cid('v')]);
@@ -438,7 +456,7 @@ async function main() {
       expect(await api('DELETE', `/patrols/routes/${autoId}`, C.token), 409, 'PATROL_MANAGED_BY_SETUP');
       // configurationWarnings follow the chain: a schedule on a versioned route is not "route required".
       const list = expect(await api('GET', `/patrols/schedules?siteId=${site}`, C.token), 200);
-      assert.deepEqual(list.find((s: any) => s.id === sched.id).configurationWarnings, [], 'the schedule\'s route is the head of its chain');
+      assert.deepEqual(list.find((s: any) => s.id === retimed.id).configurationWarnings, [], 'the schedule names the current route');
     });
 
     // ═══════════════════ Shift-based windows through the sweep ═══════════════════
@@ -542,10 +560,35 @@ async function main() {
       const F = await mkCompany('foxtrot');
       const g = await mkGuard('fay');
       const site = await activeSite(F, 'Foxtrot', { setupMode: 'every_shift', evidenceMode: 'qr' });
+      // The checkpoint asks for its own photo; on an automatic route the server ignores that (owner decision 6), so the
+      // plan reports the EFFECTIVE requirement and the 1.2.1 app never asks for it.
+      expect(await api('PATCH', `/patrols/checkpoints/${site.checkpoint.id}`, F.token, { photoRequired: true }), 200);
       const start = Z('2026-11-14T22:00:00Z');
       const shiftId = await mkShift(F.id, site.siteId, g.id, start, Z('2026-11-15T02:00:00Z'));
       await bookOn(shiftId, g.id, start);
       const plan = expect(await api('GET', `/patrols/mine/plan?shiftId=${shiftId}`, g.token), 200);
+      assert.deepEqual(plan.checkpoints.map((c: any) => [c.publicId, c.photoRequired]), [[site.checkpoint.publicId, false]], 'effective: no checkpoint photo');
+      // The same checkpoint on an active CUSTOM route keeps its own setting (unchanged from 1.2.1).
+      const custom = expect(await api('POST', '/patrols/routes', F.token, { siteId: site.siteId, name: 'Custom', checkpoints: [{ checkpointId: site.checkpoint.id }] }), 201);
+      assert.equal(expect(await api('GET', `/patrols/mine/plan?shiftId=${shiftId}`, g.token), 200).checkpoints[0].photoRequired, true);
+      expect(await api('DELETE', `/patrols/routes/${custom.id}`, F.token), 200);
+      // A site without a setup: exactly as in 1.2.1.
+      const plainSite = await mkSite(F.id, 'Foxtrot plain');
+      const plainCp = await mkCheckpoint(F.token, plainSite, 'Plain gate');
+      expect(await api('PATCH', `/patrols/checkpoints/${plainCp.id}`, F.token, { photoRequired: true }), 200);
+      const plainShift = await mkShift(F.id, plainSite, g.id, Z('2026-11-16T22:00:00Z'), Z('2026-11-17T02:00:00Z'));
+      assert.equal(expect(await api('GET', `/patrols/mine/plan?shiftId=${plainShift}`, g.token), 200).checkpoints[0].photoRequired, true);
+      // Photo-only and QR + photos plans for the mobile contract fixture.
+      const modePlan = async (evidenceMode: string, at: string) => {
+        const s = await activeSite(F, `Foxtrot ${evidenceMode}`, { setupMode: 'every_shift', evidenceMode });
+        if (s.checkpoint) expect(await api('PATCH', `/patrols/checkpoints/${s.checkpoint.id}`, F.token, { photoRequired: true }), 200);
+        const id = await mkShift(F.id, s.siteId, g.id, Z(at), new Date(Z(at).getTime() + 4 * HOUR));
+        return expect(await api('GET', `/patrols/mine/plan?shiftId=${id}`, g.token), 200);
+      };
+      const photoPlan = await modePlan('photo', '2026-11-18T22:00:00Z');
+      const qrPhotoPlan = await modePlan('qr_photo', '2026-11-19T22:00:00Z');
+      assert.deepEqual([photoPlan.policy.methods, photoPlan.policy.photosPerRun, photoPlan.windows.length, photoPlan.routes.length], [['photo'], 1, 4, 0]);
+      assert.deepEqual([qrPhotoPlan.policy.methods, qrPhotoPlan.policy.photosPerRun, qrPhotoPlan.checkpoints[0].photoRequired], [['qr', 'photo'], 1, false]);
       assert.deepEqual(plan.windows.map((w: any) => [w.windowKey, w.start, w.covered, w.anchor]), [0, 1, 2, 3].map((k) => [
         `s${site.schedule.id}:sh${shiftId}:20261114T2200Z:${k}`, new Date(start.getTime() + k * HOUR).toISOString(), false, 'shift']));
       const autoId = Number((await one(`SELECT id FROM patrol_routes WHERE "siteId" = $1 AND kind = 'auto' AND "archivedAt" IS NULL`, [site.siteId])).id);
@@ -583,11 +626,14 @@ async function main() {
       // The mobile contract fixture (security-mobile-app/scripts/fixtures/patrol-plan-b1-shift-windows.json) is this plan's shape.
       const fixturePath = path.join(__dirname, '..', '..', 'security-mobile-app', 'scripts', 'fixtures', 'patrol-plan-b1-shift-windows.json');
       const shape = (o: any): any => (Array.isArray(o) ? (o.length ? [shape(o[0])] : []) : o && typeof o === 'object' ? Object.fromEntries(Object.keys(o).sort().map((k) => [k, shape(o[k])])) : typeof o);
-      if (process.env.WRITE_MOBILE_CONTRACT_FIXTURE === '1') fs.writeFileSync(fixturePath, `${JSON.stringify({ plan, emptyRoutePlan: empty }, null, 2)}\n`);
-      if (fs.existsSync(fixturePath)) {
-        const fixture = JSON.parse(fs.readFileSync(fixturePath, 'utf8'));
-        assert.deepEqual(shape(fixture.plan), shape(plan), 'the committed mobile fixture has the live plan\'s shape');
+      if (process.env.WRITE_MOBILE_CONTRACT_FIXTURE === '1') {
+        fs.writeFileSync(fixturePath, `${JSON.stringify({ plan, emptyRoutePlan: empty, photoPlan, qrPhotoPlan }, null, 2)}\n`);
       }
+      const fixture = JSON.parse(fs.readFileSync(fixturePath, 'utf8'));
+      assert.deepEqual(shape(fixture.plan), shape(plan), 'the committed mobile fixture has the live plan\'s shape');
+      assert.deepEqual(shape(fixture.qrPhotoPlan), shape(qrPhotoPlan));
+      assert.deepEqual(shape(fixture.photoPlan), shape(photoPlan));
+      assert.ok([fixture.plan, fixture.qrPhotoPlan].every((p: any) => p.checkpoints.every((c: any) => c.photoRequired === false)), 'the fixture carries the effective requirement');
     });
 
     // ═══════════════════ Shift DTO ═══════════════════

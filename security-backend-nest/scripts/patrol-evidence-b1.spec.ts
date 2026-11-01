@@ -13,6 +13,9 @@
  *           rejected / quarantined / purged photos refused exactly as viewing the original (409 PATROL_EVIDENCE_NOT_AVAILABLE)
  *   PEB-04  a stored object that no longer matches its verified SHA-256, or cannot be decoded, is refused (409 / 422) and
  *           nothing is audited as accessed; storage unconfigured: 503 after authorisation
+ *   PEB-05  the deployed 1.2.1 Guard app's request sequence on a shift-anchored window of a QR + photos site (plan → start
+ *           with the window's scheduleId / routeId → signed scan → photo intent / PUT / complete → run complete) verifies;
+ *           the plan never asks it for the checkpoint's own photo
  *
  * Needs PATROL_EVIDENCE_B1_DATABASE_URL pointing at a DISPOSABLE local database — it drops the schema.
  */
@@ -350,6 +353,51 @@ async function main() {
         setStorageEnv();
       }
       assert.equal((await api('GET', `/patrols/evidence/${verified.id}/stamped`, A.token)).status, 200);
+    });
+    await test('PEB-05-THE-1.2.1-APP-REQUEST-SEQUENCE-ON-A-SHIFT-WINDOW-VERIFIES', async () => {
+      // The deployed Guard app's exact calls (patrolOutbox.ts / patrolSync.ts): plan → start (the open window's scheduleId
+      // and routeId) → scan (the signed label) → photo intent → PUT → complete upload → complete run; then the sweep.
+      process.env.PATROL_QR_SIGNING_KEY = 'patrol-evidence-b1-spec-only-signing-key-0005';
+      try {
+        const C = await mkCompany('charlie', 'Charlie Patrols Ltd');
+        const site = await mkSite(C.id, 'Charlie Gate', null);
+        const cp = expect(await api('POST', '/patrols/checkpoints', C.token, { siteId: site, label: 'Front gate', photoRequired: true }), 201);
+        const label = expect(await api('GET', `/patrols/checkpoints/${cp.id}/label`, C.token), 200).payload;
+        expect(await api('POST', `/patrols/checkpoints/${cp.id}/confirm`, C.token, { scanPayload: label }), 200);
+        expect(await api('PUT', `/patrols/sites/${site}/setup`, C.token, { setupMode: 'every_shift', evidenceMode: 'qr_photo', frequencyMinutes: 60 }), 200);
+        expect(await api('POST', `/patrols/sites/${site}/setup/confirm`, C.token), 200);
+        const g = await mkGuard('cal', 'Cal Reyes');
+        const shiftId = await mkShift(C.id, site, g.id);
+        const plan = expect(await api('GET', `/patrols/mine/plan?shiftId=${shiftId}`, g.token), 200);
+        const t = Date.now();
+        const window = plan.windows.find((w: any) => !w.covered && new Date(w.start).getTime() <= t && t < new Date(w.end).getTime()); // dueWindow
+        assert.ok(window && window.anchor === 'shift', 'an open shift window');
+        assert.deepEqual(plan.checkpoints.map((c: any) => c.photoRequired), [false], 'the app is not asked for a checkpoint photo');
+        const sent = () => new Date().toISOString();
+        const run = expect(await api('POST', '/patrols/runs', g.token, {
+          clientRunId: cid('run'), shiftId, startedAtDevice: new Date(t).toISOString(), scheduleId: window.scheduleId, routeId: window.routeId, sentAtDevice: sent(),
+        }), 201, undefined, 'start');
+        assert.equal(run.windowKey, window.windowKey);
+        const visit = expect(await api('POST', `/patrols/runs/${run.id}/visits`, g.token, {
+          clientVisitId: cid('visit'), scanPayload: label, scannedAtDevice: new Date(t + 5_000).toISOString(), sentAtDevice: sent(),
+        }), 201, undefined, 'scan');
+        assert.equal(visit.result, 'verified');
+        const image = await photo(9);
+        const intent = expect(await api('POST', `/patrols/runs/${run.id}/evidence`, g.token, {
+          clientEvidenceId: cid('ev'), kind: 'run_photo', contentType: 'image/jpeg', sizeBytes: image.length, sha256: sha256(image),
+          capturedAtDevice: new Date(t + 10_000).toISOString(), sentAtDevice: sent(),
+        }), 201, undefined, 'photo intent');
+        assert.equal((await fetch(intent.upload.url, { method: 'PUT', headers: intent.upload.headers, body: new Uint8Array(image) })).status, 200);
+        assert.equal(expect(await api('POST', `/patrols/evidence/${intent.evidence.id}/complete`, g.token), 200).uploadStatus, 'verified');
+        expect(await api('POST', `/patrols/runs/${run.id}/complete`, g.token, { completedAtDevice: new Date(t + 15_000).toISOString(), sentAtDevice: sent() }), 200, undefined, 'complete');
+        await app.get(PatrolSweepService).sweep(new Date(t + 60_000));
+        const mine = expect(await api('GET', `/patrols/mine/runs?shiftId=${shiftId}`, g.token), 200);
+        const judged = mine.find((r: any) => r.id === run.id);
+        assert.deepEqual([judged.status, judged.verificationStatus, judged.verificationExplanation.code], ['completed', 'verified', 'verified'],
+          'scans + one photo verify; the checkpoint\'s own photo setting is not required on the automatic route');
+      } finally {
+        delete process.env.PATROL_QR_SIGNING_KEY;
+      }
     });
   } finally {
     await app.close();

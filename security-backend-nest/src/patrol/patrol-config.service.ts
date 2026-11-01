@@ -665,10 +665,20 @@ export class PatrolConfigService {
     if (!archived) {
       throw patrolError(HttpStatus.CONFLICT, PatrolErrorCode.ROUTE_SUPERSEDED, 'This route was replaced by a newer version. Reload the routes and edit the current one.');
     }
+    // Every schedule (clock or shift-anchored, current or historical) that named the replaced version now names the new
+    // current one, so a schedule never points at an archived route — the 1.2.1 backend, which knows no versions, keeps
+    // working on a rollback with no manual step. Not a timing change (no schedule successor) and updatedAt — the sweep's
+    // judging floor — is left as it was. Windows still owe the version in force at their start (routeVersionAt), and runs
+    // keep the routeId they started under. The route row is locked FOR UPDATE, so a concurrent schedule write naming the
+    // old version waits (assertRouteForSite takes FOR SHARE) and then finds it archived.
+    const repointed = (await updateRows(manager,
+      `UPDATE "patrol_schedules" SET "routeId" = $2 WHERE "companyId" = $3 AND "routeId" = $1 RETURNING "id"`,
+      [predecessorId, Number(successor.id), actor.companyId],
+    )).map((r: any) => Number(r.id));
     const effectiveAt = new Date(successor.createdAt).toISOString();
     const after = serializeRoute(successor, await this.routeCheckpoints(manager, Number(successor.id)));
     await this.audit(manager, actor, PATROL_ROUTE_SUPERSEDED_ACTION, 'patrol_route', predecessorId, before, {
-      ...serializeRoute(archived, null), successorId: Number(successor.id), effectiveAt, reason,
+      ...serializeRoute(archived, null), successorId: Number(successor.id), effectiveAt, reason, repointedScheduleIds: repointed,
     });
     await this.audit(manager, actor, 'patrol.route.created', 'patrol_route', Number(successor.id), null, { ...after, predecessorId, effectiveAt, reason });
     return { ...after, predecessorId, versioned: true };
@@ -768,7 +778,8 @@ export class PatrolConfigService {
         WHERE "companyId" = $1 AND "siteId" = ANY($2::int[]) AND "active" AND "archivedAt" IS NULL ORDER BY "id"`,
       [companyId, ids],
     );
-    // 1.3.0 B1: a schedule keeps the route id it was given; the route it uses NOW is the newest version of that route.
+    // 1.3.0 B1: a schedule names the current version of its route (supersedeRoute repoints it); routeHead is a no-op
+    // safeguard for any row that predates that rule.
     const links = await routeVersionLinks(runner, companyId);
     for (const siteId of ids) {
       const own = policies.find((p: any) => p.siteId != null && Number(p.siteId) === siteId);
@@ -837,7 +848,9 @@ export class PatrolConfigService {
   }
 
   private async assertRouteForSite(manager: EntityManager, actor: PatrolCompanyActor, routeId: number, siteId: number) {
-    const [route] = await manager.query(`SELECT "id", "siteId", "archivedAt" FROM "patrol_routes" WHERE "id" = $1 AND "companyId" = $2`, [routeId, actor.companyId]);
+    // FOR SHARE: a concurrent new version of this route (FOR UPDATE in updateRoute / syncAutoRoute) commits first, and the
+    // route is then seen archived — a schedule is never left naming a replaced version.
+    const [route] = await manager.query(`SELECT "id", "siteId", "archivedAt" FROM "patrol_routes" WHERE "id" = $1 AND "companyId" = $2 FOR SHARE`, [routeId, actor.companyId]);
     if (!route) throw patrolError(HttpStatus.NOT_FOUND, PatrolErrorCode.NOT_FOUND, 'Route not found.');
     if (Number(route.siteId) !== siteId || route.archivedAt) {
       throw patrolError(HttpStatus.UNPROCESSABLE_ENTITY, PatrolErrorCode.ROUTE_NOT_FOR_SITE, 'The route must be an active route of the same site.');

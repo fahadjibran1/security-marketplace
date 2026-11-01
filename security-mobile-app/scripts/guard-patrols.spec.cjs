@@ -44,6 +44,8 @@
  * S4 1.3.0 B1 (backend only; the app is unchanged)
  *   GPAT-31  the 1.2.1 app logic handles a 1.3.0 plan: shift-anchored windows (opaque keys), automatic route versions and
  *            the new SITE_SETUP_INCOMPLETE warning (fixture written by the backend's patrol-site-setup.spec.ts)
+ *   GPAT-32  with the plan's EFFECTIVE checkpoint photo requirement the 1.2.1 app asks exactly what the server requires
+ *            (QR-only / photo-only / QR + photos) and is never hard-blocked (worst case: the reason box)
  */
 const assert = require('node:assert').strict;
 const fs = require('node:fs');
@@ -1168,6 +1170,54 @@ test('GPAT-31-THE-1.2.1-APP-HANDLES-A-1.3.0-PLAN-WITH-SHIFT-WINDOWS-ROUTE-VERSIO
   assert.equal(state.patrolCardVisible({ shiftStatus: 'in_progress', plan: emptyRoutePlan }), true);
   assert.deepEqual(state.patrolCheckpoints(emptyRoutePlan, emptyRoutePlan.windows[0].routeId, null).filter((c) => c.required), [], 'never every site checkpoint as required');
   assert.ok(plan.patrolRequirement && typeof plan.patrolRequirement.effectiveRequired === 'boolean', 'an additive field the app ignores');
+});
+
+// S4 1.3.0 B1 follow-up: the 1.3.0 plan reports the EFFECTIVE checkpoint photo requirement (false on an automatic route,
+// even when the checkpoint itself asks for a photo), so the unchanged 1.2.1 app asks for exactly what the server requires:
+// QR-only → scans, no photo, no reason; photo-only → one photo; QR + photos → scans + one photo. And the app can never be
+// hard-blocked: the only gate before completing is "needs a reason", which a typed reason always satisfies.
+test('GPAT-32-THE-1.2.1-APP-ASKS-EXACTLY-WHAT-A-1.3.0-SERVER-REQUIRES-AND-IS-NEVER-BLOCKED', () => {
+  const { plan, qrPhotoPlan, photoPlan } = JSON.parse(codeOf('scripts/fixtures/patrol-plan-b1-shift-windows.json'));
+  const startOn = (p) => {
+    const w = p.windows[1];
+    const snapshot = state.routeSnapshot(p, w.routeId);
+    return { w, local: { clientRunId: 'r', shiftId: p.shift.id, start: { body: { routeId: w.routeId, scheduleId: w.scheduleId }, meta: { route: snapshot } }, scans: [], photos: [], exceptions: [], complete: null } };
+  };
+  const scanAll = (p, local, routeId) => state.patrolCheckpoints(p, routeId, local).map((c, i) => ({ id: `s${i}`, meta: { publicId: c.publicId } }));
+  const runPhoto = { id: 'p1', body: { kind: 'run_photo' }, dependsOn: null };
+  // QR-only on an automatic route: the fixture's checkpoint asks for its own photo, the plan says false.
+  {
+    assert.ok(plan.checkpoints.every((c) => c.photoRequired === false), 'effective requirement in the plan');
+    const { w, local } = startOn(plan);
+    assert.equal(state.qrConfigurationProblem(plan, w.routeId, w.scheduleId, local), null);
+    const done = { ...local, scans: scanAll(plan, local, w.routeId) };
+    const s = state.completionSummary(plan, w.routeId, done);
+    assert.deepEqual([s.photosRequired, s.photosMissing, s.unmet, s.needsReason], [0, 0, false, false], 'QR-only: complete with no photo and no reason');
+  }
+  // Photo-only: one run photo, no checkpoint.
+  {
+    const { w, local } = startOn(photoPlan);
+    assert.equal(state.qrScansEnabled(photoPlan), false);
+    assert.deepEqual(state.patrolCheckpoints(photoPlan, w.routeId, local), []);
+    assert.deepEqual([state.completionSummary(photoPlan, w.routeId, local).photosMissing, state.completionSummary(photoPlan, w.routeId, local).needsReason], [1, true]);
+    const s = state.completionSummary(photoPlan, w.routeId, { ...local, photos: [runPhoto] });
+    assert.deepEqual([s.photosRequired, s.photosMissing, s.unmet, s.needsReason], [1, 0, false, false], 'photo-only: one photo');
+  }
+  // QR + photos: every checkpoint scanned + one run photo; no per-checkpoint photo.
+  {
+    const { w, local } = startOn(qrPhotoPlan);
+    const scans = scanAll(qrPhotoPlan, local, w.routeId);
+    assert.ok(scans.length > 0);
+    const noPhoto = state.completionSummary(qrPhotoPlan, w.routeId, { ...local, scans });
+    assert.deepEqual([noPhoto.photosRequired, noPhoto.photosMissing, noPhoto.needsReason], [1, 1, true], 'scans alone: the run photo is still asked for');
+    const s = state.completionSummary(qrPhotoPlan, w.routeId, { ...local, scans, photos: [runPhoto] });
+    assert.deepEqual([s.photosRequired, s.photosMissing, s.unmet, s.needsReason], [1, 0, false, false], 'scans + one photo: complete, no checkpoint photo');
+  }
+  // Never hard-blocked: completing is refused only while a reason is needed and none was typed.
+  const panel = stripComments(codeOf('src/components/guard/patrol/GuardPatrolPanel.tsx'));
+  const body = panel.slice(panel.indexOf('async function completePatrol()'), panel.indexOf('enqueueComplete('));
+  assert.match(body, /if \(summary\.needsReason && !completionNote\.trim\(\)\)/, 'the only gate is "a reason is needed"');
+  assert.equal((body.match(/return;/g) ?? []).length, 2, 'no other early return than the missing-plan guard and the reason gate');
 });
 
 test('GPAT-18-THE-WEB-APP-HAS-NO-PATROL-PANEL-AND-LOADS-NO-DEVICE-MODULE', () => {
