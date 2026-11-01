@@ -606,6 +606,13 @@ test('BUILD-01G-THE-PREPARED-1-2-1-BUILDS-ARE-NOT-BUILT-AND-MATCH-APP-JSON', () 
     assert.equal(p.distribution, 'STORE');
   }
   assert.equal(pa.sourceFixCommit, pi.sourceFixCommit, 'the same commit for both platforms');
+  // Pinned exactly: the LAST S4 1.2.1 app-code commit (the dashboard's patrol exception actions). The records are committed
+  // after it (a commit cannot name itself); the build record will name the built commit.
+  assert.equal(pa.sourceFixCommit, '63b706a1ed5ba9af5bf1526243ae0ce71ce3dcb0');
+  assert.equal(pi.sourceFixCommit, '63b706a1ed5ba9af5bf1526243ae0ce71ce3dcb0');
+  for (const p of [pa, pi]) assert.match(p.sourceCommit, /63b706a/, 'the prose names the same commit');
+  assert.match(pa.note, /Migration 73 \(1720900000020-AddPatrolScheduleSuccessors/, '1.2.1 includes Migration 73');
+  assert.match(pi.note, /Migration 73 \(1720900000020-AddPatrolScheduleSuccessors/, '1.2.1 includes Migration 73');
   assert.match(pa.note, /withOptionalCameraHardware, withPatrolBackupExclusion/, 'the plugins are unchanged');
   assert.equal(pa.requiredUploadCertificateSha256, S4_CERT_SHA256);
   assert.equal(pa.requiredUploadCertificateSha256, android.approvedArtefact.uploadCertificateSha256);

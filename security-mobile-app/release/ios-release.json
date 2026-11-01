@@ -36,8 +36,8 @@
     "easBuildProfile": "production",
     "distribution": "STORE",
     "sourceBranch": "feature/s4-1.2.1-patrol-correctness",
-    "sourceFixCommit": "5f64b3d04f686ff438c0713ed971607baba62a86",
-    "sourceCommit": "the commit on feature/s4-1.2.1-patrol-correctness that sets 1.2.1 / build 21 in app.json, on top of the S4 1.2.1 Guard app and dashboard commits (1ee04d8, 5f64b3d) and the Package A backend commits; a commit cannot record its own id, the build record names it once built",
+    "sourceFixCommit": "63b706a1ed5ba9af5bf1526243ae0ce71ce3dcb0",
+    "sourceCommit": "the head of feature/s4-1.2.1-patrol-correctness when 1.2.1 / build 21 is built: on top of 63b706a (the last S4 1.2.1 app-code commit: the dashboard's patrol exception actions, after the Guard app and dashboard commits 1ee04d8 and 5f64b3d) and the Package A backend commits including Migration 73; this record is committed after the commit it names, and a commit cannot record its own id, so the build record names the built commit once built",
     "requiredSigning": {
       "credentials": "EAS-managed (remote), unchanged",
       "teamId": "SXH4TLU2B5",
@@ -46,7 +46,7 @@
       "provisioningProfile": "*[expo] com.sfour.s4 AppStore 2026-10-23T23:54:04.112Z (B7539588YY, UUID 1f19cdf5-67cd-4e7b-af8b-131c87c13964), as recorded for builds 17, 18, 19 and 20",
       "apsEnvironment": "production"
     },
-    "note": "S4 1.2.1 (21), the same source as Android 1.2.1 (24): 1.2.0 (20) plus Package A (patrol correctness and Guard app visibility: the patrol plan refreshed while the shift is in progress and kept when offline, an active patrol keeps its own route, photos required yes / no with a reason when one is missing, photo-only patrols, a QR site without a route shown as a configuration problem). Same bundle id, the EAS-managed distribution certificate and profile, aps-environment production, APNs key CXFMNB4HHN held by EAS, production API. Prepared only: not built, not submitted to App Store Connect or TestFlight, so there is no EAS build id, IPA hash or submission for it. 1.1.0 (17) stays the distributed iOS build and 1.1.2 (19) stays uploaded to App Store Connect until 1.2.1 (21) is built, certified and submitted on owner approval."
+    "note": "S4 1.2.1 (21), the same source as Android 1.2.1 (24): 1.2.0 (20) plus Package A (patrol correctness and Guard app visibility: the patrol plan refreshed while the shift is in progress and kept when offline, an active patrol keeps its own route, photos required yes / no with a reason when one is missing, photo-only patrols, a QR site without a route shown as a configuration problem). Same bundle id, the EAS-managed distribution certificate and profile, aps-environment production, APNs key CXFMNB4HHN held by EAS, production API. The 1.2.1 backend includes Migration 73 (1720900000020-AddPatrolScheduleSuccessors: durable schedule successor links, additive; after Migration 72, 1720900000018). Prepared only: not built, not submitted to App Store Connect or TestFlight, so there is no EAS build id, IPA hash or submission for it. 1.1.0 (17) stays the distributed iOS build and 1.1.2 (19) stays uploaded to App Store Connect until 1.2.1 (21) is built, certified and submitted on owner approval."
   },
   "submittedArtefact": {
     "status": "uploaded-to-testflight",
