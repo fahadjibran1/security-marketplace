@@ -325,14 +325,8 @@ test('SIGNER-06E-THE-APPROVED-ARTEFACT-IS-EXPLICIT', () => {
       assert.equal(prepared.verified.versionCode, prepared.versionCode);
       assert.equal(prepared.verified.versionName, prepared.versionName);
       assert.equal(prepared.verified.signerCertificateSha256, config.signer.certificateSha256, 'read from the AAB signature');
-      // What was checked is stated: a built record either verified the production API and no staging API, or names them
-      // as not re-read (1.2.1 (24): the coordinator verified manifest, camera features, permissions and the signer only).
-      const notReRead = prepared.verified.notReRead || [];
-      assert.ok(notReRead.every((k) => ['apiBaseUrl', 'stagingApiUrls'].includes(k)), 'only the API checks may be left unread');
-      if (!notReRead.includes('apiBaseUrl')) assert.equal(prepared.verified.apiBaseUrl, 'https://security-marketplace-api.onrender.com');
-      else assert.ok(!('apiBaseUrl' in prepared.verified), 'an unread API URL is not claimed');
-      if (!notReRead.includes('stagingApiUrls')) assert.equal(prepared.verified.stagingApiUrls, 0);
-      else assert.ok(!('stagingApiUrls' in prepared.verified), 'an unread staging count is not claimed');
+      assert.equal(prepared.verified.apiBaseUrl, 'https://security-marketplace-api.onrender.com');
+      assert.equal(prepared.verified.stagingApiUrls, 0);
       assert.notEqual(prepared.aabSha256, current.aabSha256, 'a different artefact from the distributed one');
       assert.notEqual(prepared.easBuildId, current.easBuildId);
       assert.notEqual(prepared.gitCommit, current.gitCommit, 'built from a newer commit than the distributed one');
@@ -360,14 +354,7 @@ test('SIGNER-06E-THE-APPROVED-ARTEFACT-IS-EXPLICIT', () => {
     assert.match(current.gitCommit, /^[0-9a-f]{40}$/, 'the full source commit');
     assert.match(current.aabSha256, /^[0-9a-f]{64}$/, 'the AAB hash');
     assert.match(current.aabFilename, /\.aab$/, 'an App Bundle, not an APK');
-    if ('uploadCertificateSha256' in current) {
-      assert.equal(current.uploadCertificateSha256, config.signer.certificateSha256, 'verified against the permanent upload key');
-    } else {
-      // 1.2.0 (23), published by the owner (owner correction, 1 Nov 2026): built for the permanent key, its signer not
-      // re-read in the record — stated, never assumed.
-      assert.equal(current.requiredUploadCertificateSha256, config.signer.certificateSha256, 'built for the permanent upload key');
-      assert.match(current.note, /upload certificate is not re-read/, 'an unread signer is stated as unread');
-    }
+    assert.equal(current.uploadCertificateSha256, config.signer.certificateSha256, 'verified against the permanent upload key');
     // Until Play signs anything, the upload certificate is the only one known; it is never overwritten.
     assert.equal(config.playAppSigning.uploadCertificateSha256, config.signer.certificateSha256);
     if (current.status === 'distributed') {
@@ -927,7 +914,14 @@ test('SIGNER-13J-THE-1-2-1-VC24-IS-BUILT-NOT-UPLOADED-AND-SIGNED-BY-THE-SAME-UPL
   assert.equal(prepared.verified.signerCertificateSha256, S4_CERT_SHA256);
   assert.match(prepared.verified.cameraFeatures, /android\.hardware\.camera and android\.hardware\.camera\.autofocus declared android:required="false"/);
   assert.equal(prepared.verified.permissions, 'identical to 1.2.0 (23)');
-  assert.deepEqual(prepared.verified.notReRead, ['apiBaseUrl', 'stagingApiUrls'], 'what was not re-read is stated');
+  assert.ok(!('notReRead' in prepared.verified), 'every check was read');
+  assert.deepEqual([prepared.verified.package, prepared.verified.versionCode, prepared.verified.versionName, prepared.verified.minSdkVersion, prepared.verified.targetSdkVersion],
+    ['com.sfour.s4', 24, '1.2.1', 24, 36]);
+  assert.deepEqual(prepared.verified.abis, ['arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64']);
+  assert.deepEqual([prepared.verified.apiBaseUrl, prepared.verified.productionApiUrls, prepared.verified.stagingApiUrls], ['https://security-marketplace-api.onrender.com', 1, 0]);
+  assert.match(prepared.verified.patrolOutboxInBundle, /^yes/);
+  assert.match(prepared.verified.servicesAndBackup, /s4_backup_rules \/ s4_data_extraction_rules, excluding SecureStore/);
+  assert.match(prepared.verified.signerCheck, /keytool -printcert -jarfile/);
   for (const key of ['apkSha256', 'completedAt', 'playInternalTesting', 'sourceCommit']) {
     assert.ok(!(key in prepared), `the built, not uploaded 1.2.1 records no ${key}`);
   }
@@ -1085,8 +1079,12 @@ test('SIGNER-13M-THE-BUILT-1-2-0-VC23-WAS-PUBLISHED-TO-PLAY-INTERNAL-TESTING-AND
   assert.equal(vc23.aabSizeBytes, 64050099);
   assert.equal(vc23.requiredUploadCertificateSha256, S4_CERT_SHA256, 'built for the permanent S4 upload key');
   assert.equal(vc23.requiredUploadCertificateSha256, config.preparedArtefact.requiredUploadCertificateSha256, 'the key 24 must carry too');
-  assert.ok(!('uploadCertificateSha256' in vc23) && !('verified' in vc23), 'its signer was not re-read, so none is claimed');
-  assert.match(vc23.note, /upload certificate is not re-read/);
+  // The EAS artefact was verified on 31 Oct 2026: the permanent S4 upload key, both camera features optional.
+  assert.equal(vc23.uploadCertificateSha256, S4_CERT_SHA256, 'signed by the permanent S4 upload key');
+  assert.equal(vc23.certifiedOn, '2026-10-31');
+  assert.deepEqual([vc23.verified.package, vc23.verified.versionCode, vc23.verified.versionName, vc23.verified.signerCertificateSha256], ['com.sfour.s4', 23, '1.2.0', S4_CERT_SHA256]);
+  assert.match(vc23.verified.cameraFeatures, /android\.hardware\.camera and android\.hardware\.camera\.autofocus declared android:required="false"/);
+  assert.equal(vc23.uploadCertificateSha256, config.retiredArtefacts.find((entry) => entry.versionCode === 20).uploadCertificateSha256, 'the same upload key as the certified 20');
   for (const other of config.retiredArtefacts) {
     assert.notEqual(vc23.aabSha256, other.aabSha256, `a different artefact from vc${other.versionCode}`);
     assert.notEqual(vc23.easBuildId, other.easBuildId, `a different build from vc${other.versionCode}`);
@@ -1098,7 +1096,8 @@ test('SIGNER-13M-THE-BUILT-1-2-0-VC23-WAS-PUBLISHED-TO-PLAY-INTERNAL-TESTING-AND
   assert.equal(play.uploadedBy, 'owner (not S4)');
   assert.ok(!('uploadedAabSha256' in play), 'no uploaded hash is claimed that was not read back from Play');
   assert.match(play.note, /hash was not read back from Play Console/);
-  assert.deepEqual(play.unknown, ['uploaded file hash (not read back from Play Console)', 'rollout', 'tester count', 'exact publication time']);
+  assert.deepEqual(play.unknown, ['whether the uploaded file is byte-identical to the verified EAS artefact (the Play-side hash was not read back from Play Console)', 'rollout', 'tester count', 'exact publication time']);
+  assert.match(vc23.note, /Whether the file the owner uploaded to Play is byte-identical to this artefact is not known/);
   assert.match(vc23.note, /Published to Google Play Internal Testing on 31 Oct 2026 \(owner-confirmed; S4 did not upload it\), so versionCode 23 is consumed in Play/);
   assert.doesNotMatch(JSON.stringify(vc23), /never uploaded|Not uploaded|not consumed|never reached Play/i, 'never described as not uploaded');
   assert.equal(config.playConsole.internalTesting.activeRelease, '1.2.0 (23)', 'Play\'s active internal release');

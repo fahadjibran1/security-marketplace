@@ -548,7 +548,12 @@ test('BUILD-01D-THE-1-2-0-BUILDS-ANDROID-23-PUBLISHED-TO-PLAY-INTERNAL-TESTING-A
     assert.ok(pa.playInternalTesting.unknown.some((u) => u.includes(unknown)), `${unknown} is recorded as unknown, not invented`);
   }
   for (const key of ['testers', 'rolloutPercentage', 'publishedAt']) assert.ok(!(key in pa.playInternalTesting), `no ${key} is claimed`);
-  assert.ok(!('uploadCertificateSha256' in pa) && !('verified' in pa) && !('certifiedOn' in pa), 'its signer was not re-read, so no certification is claimed');
+  // The EAS artefact was verified on 31 Oct 2026; only whether Play holds the byte-identical file is unknown.
+  assert.equal(pa.uploadCertificateSha256, S4_CERT_SHA256, 'the verified upload signer of the EAS artefact');
+  assert.equal(pa.certifiedOn, '2026-10-31');
+  assert.equal(pa.verified.signerCertificateSha256, S4_CERT_SHA256);
+  assert.match(pa.verified.cameraFeatures, /required="false"/);
+  assert.match(pa.playInternalTesting.unknown[0], /byte-identical to the verified EAS artefact/);
   assert.match(pa.note, /Published to Google Play Internal Testing on 31 Oct 2026 \(owner-confirmed; S4 did not upload it\), so versionCode 23 is consumed in Play/);
   assert.doesNotMatch(JSON.stringify(pa), /never uploaded|Not uploaded|not consumed|never reached Play/i, 'the corrected record never says 23 was not uploaded');
   assert.ok(!('retiredReason' in pa) && !('retiredOn' in pa), 'the distributed build is not retired');
@@ -638,9 +643,13 @@ test('BUILD-01G-THE-1-2-1-BUILDS-ANDROID-24-BUILT-NOT-UPLOADED-IOS-21-UPLOADED-M
   assert.deepEqual([pa.verified.package, pa.verified.versionCode, pa.verified.versionName, pa.verified.signerCertificateSha256], ['com.sfour.s4', 24, '1.2.1', S4_CERT_SHA256]);
   assert.match(pa.verified.cameraFeatures, /android\.hardware\.camera and android\.hardware\.camera\.autofocus declared android:required="false"/);
   assert.equal(pa.verified.permissions, 'identical to 1.2.0 (23)');
+  assert.deepEqual([pa.verified.apiBaseUrl, pa.verified.productionApiUrls, pa.verified.stagingApiUrls], ['https://security-marketplace-api.onrender.com', 1, 0], 'read from index.android.bundle');
+  assert.match(pa.verified.patrolOutboxInBundle, /^yes/);
+  assert.ok(!('notReRead' in pa.verified), 'every check was read');
   assert.equal(pi.ipaFilename, 's4-1.2.1-ios21-b5a46d30.ipa');
   assert.equal(pi.ipaSha256, 'e5e4d4be5eea07684573e6d29676628ffe921d4b6d289b5a1678eec196a9a47a');
   assert.equal(pi.ipaSizeBytes, 12868425);
+  assert.deepEqual([pi.verified.apiBaseUrl, pi.verified.productionApiUrls, pi.verified.stagingApiUrls], ['https://security-marketplace-api.onrender.com', 1, 0], 'read from main.jsbundle');
   assert.deepEqual([pi.verified.provisioningProfileUuid, pi.verified.teamId, pi.verified.distributionCertificateSha256, pi.verified.apsEnvironment],
     ['1f19cdf5-67cd-4e7b-af8b-131c87c13964', 'SXH4TLU2B5', 'c1f9c5b6c04f4f37939ade278960a16870c88afd2efca94a75b570aab5830196', 'production']);
   // Store facts: Android 24 has none (not uploaded); iOS 21 only its App Store Connect upload, processing unconfirmed.

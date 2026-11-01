@@ -57,15 +57,26 @@
       "package": "com.sfour.s4",
       "versionCode": 24,
       "versionName": "1.2.1",
+      "minSdkVersion": 24,
+      "targetSdkVersion": 36,
+      "abis": [
+        "arm64-v8a",
+        "armeabi-v7a",
+        "x86",
+        "x86_64"
+      ],
       "signerCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
+      "signerCheck": "keytool -printcert -jarfile on the downloaded AAB (2026-11-01): upload certificate SHA-256 0D:58:94:49:...:EC:76:31:1B, the permanent S4 key, the same as vc17 to vc23",
+      "apiBaseUrl": "https://security-marketplace-api.onrender.com",
+      "productionApiUrls": 1,
+      "stagingApiUrls": 0,
+      "bundleCheck": "base/assets/index.android.bundle: the production API URL present once, no staging URL, the patrol outbox code present",
+      "patrolOutboxInBundle": "yes: the patrol outbox code is in the JS bundle",
       "cameraFeatures": "android.hardware.camera and android.hardware.camera.autofocus declared android:required=\"false\"",
       "permissions": "identical to 1.2.0 (23)",
-      "notReRead": [
-        "apiBaseUrl",
-        "stagingApiUrls"
-      ]
+      "servicesAndBackup": "services and backup identical to 1.2.0 (23): backup rules s4_backup_rules / s4_data_extraction_rules, excluding SecureStore"
     },
-    "note": "S4 1.2.1 (24): 1.2.0 (23) plus Package A (patrol correctness and Guard app visibility): the Guard app refreshes the patrol plan while the shift is in progress (every 5 minutes in the foreground, on returning to the app, after Book On and on Refresh) and keeps the last good plan when offline, an active patrol keeps its own route, photos are required yes / no and a missing photo needs a reason, photo-only sites patrol without QR, a QR site without a route is shown as a configuration problem, and the dashboard can acknowledge and resolve patrol exceptions. Same package com.sfour.s4, same upload key as vc17 to vc23 (the permanent S4 certificate above), same plugins (withOptionalCameraHardware, withPatrolBackupExclusion) and permissions, same Firebase setup, production API. The 1.2.1 backend includes Migration 73 (1720900000020-AddPatrolScheduleSuccessors: durable schedule successor links, additive; after Migration 72, 1720900000018). Built by EAS (85a98a03, production profile, STORE) from 5d749fa and verified (coordinator-verified 1 Nov 2026): manifest com.sfour.s4 / 24 / 1.2.1, both camera features required=\"false\", permissions identical to 1.2.0 (23), upload certificate equal to the permanent S4 key. Not uploaded to Google Play: the owner will upload it manually to Internal Testing; until then 1.2.0 (23) is the active Internal Testing release. The AAB is kept outside Git."
+    "note": "S4 1.2.1 (24): 1.2.0 (23) plus Package A (patrol correctness and Guard app visibility): the Guard app refreshes the patrol plan while the shift is in progress (every 5 minutes in the foreground, on returning to the app, after Book On and on Refresh) and keeps the last good plan when offline, an active patrol keeps its own route, photos are required yes / no and a missing photo needs a reason, photo-only sites patrol without QR, a QR site without a route is shown as a configuration problem, and the dashboard can acknowledge and resolve patrol exceptions. Same package com.sfour.s4, same upload key as vc17 to vc23 (the permanent S4 certificate above), same plugins (withOptionalCameraHardware, withPatrolBackupExclusion) and permissions, same Firebase setup, production API. The 1.2.1 backend includes Migration 73 (1720900000020-AddPatrolScheduleSuccessors: durable schedule successor links, additive; after Migration 72, 1720900000018). Built by EAS (85a98a03, production profile, STORE) from 5d749fa and verified from the downloaded AAB (coordinator, 1 Nov 2026): manifest com.sfour.s4 / 24 / 1.2.1, minSdk 24 / targetSdk 36, ABIs arm64-v8a, armeabi-v7a, x86 and x86_64, both camera features required=\"false\", permissions, services and backup rules (s4_backup_rules / s4_data_extraction_rules excluding SecureStore) identical to 1.2.0 (23), the JS bundle on the production API with no staging API and with the patrol outbox, and the upload certificate (keytool -printcert -jarfile) equal to the permanent S4 key.sfour.s4 / 24 / 1.2.1, both camera features required=\"false\", permissions identical to 1.2.0 (23), upload certificate equal to the permanent S4 key. Not uploaded to Google Play: the owner will upload it manually to Internal Testing; until then 1.2.0 (23) is the active Internal Testing release. The AAB is kept outside Git."
   },
   "approvedArtefact": {
     "versionName": "1.2.0",
@@ -82,7 +93,18 @@
     "aabSha256": "eab6a4d55b1e1cb9c07b3b062364f07b803698572dd669a44ef4ac98e45567a3",
     "aabSizeBytes": 64050099,
     "requiredUploadCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
-    "note": "S4 1.2.0 (23): the same content as 1.2.0 (22) (Patrol Management P1-A to P1-E on the Guard app 1.1.2 line, camera hardware declared optional), under the next free versionCode. Built by EAS (b5d6a189, production profile, STORE) from 625bea0 on fix/android-optional-camera-hardware, which sets versionCode 23 on top of 61526c9. Published to Google Play Internal Testing on 31 Oct 2026 (owner-confirmed; S4 did not upload it), so versionCode 23 is consumed in Play and is the active internal release. The uploaded file's hash was not read back from Play Console; the rollout, the tester count and the exact publication time were not recorded. The AAB is kept outside Git; its upload certificate is not re-read in this record. 1.1.2 (20) is superseded.",
+    "uploadCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
+    "certifiedOn": "2026-10-31",
+    "verified": {
+      "package": "com.sfour.s4",
+      "versionCode": 23,
+      "versionName": "1.2.0",
+      "signerCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
+      "signerCheck": "the downloaded EAS artefact (b5d6a189) checked on 2026-10-31: upload certificate SHA-256 0D:58:94:49:...:EC:76:31:1B, the permanent S4 key",
+      "cameraFeatures": "android.hardware.camera and android.hardware.camera.autofocus declared android:required=\"false\"",
+      "permissions": "as expected (coordinator check of the EAS artefact, 2026-10-31)"
+    },
+    "note": "S4 1.2.0 (23): the same content as 1.2.0 (22) (Patrol Management P1-A to P1-E on the Guard app 1.1.2 line, camera hardware declared optional), under the next free versionCode. Built by EAS (b5d6a189, production profile, STORE) from 625bea0 on fix/android-optional-camera-hardware, which sets versionCode 23 on top of 61526c9. Published to Google Play Internal Testing on 31 Oct 2026 (owner-confirmed; S4 did not upload it), so versionCode 23 is consumed in Play and is the active internal release. The EAS artefact was verified on 31 Oct 2026 (coordinator): upload certificate equal to the permanent S4 key, both camera features required=\"false\", permissions as expected. Whether the file the owner uploaded to Play is byte-identical to this artefact is not known: the Play-side hash was not read back from Play Console. The rollout, the tester count and the exact publication time were not recorded. The AAB is kept outside Git. 1.1.2 (20) is superseded.",
     "playInternalTesting": {
       "status": "active",
       "confirmedBy": "owner",
@@ -92,7 +114,7 @@
       "uploadedBy": "owner (not S4)",
       "evidence": "owner-confirmed: 1.2.0 (23) published to Google Play Internal Testing on 31 Oct 2026",
       "unknown": [
-        "uploaded file hash (not read back from Play Console)",
+        "whether the uploaded file is byte-identical to the verified EAS artefact (the Play-side hash was not read back from Play Console)",
         "rollout",
         "tester count",
         "exact publication time"

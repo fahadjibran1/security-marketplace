@@ -59,7 +59,10 @@
       "provisioningProfileUuid": "1f19cdf5-67cd-4e7b-af8b-131c87c13964",
       "teamId": "SXH4TLU2B5",
       "distributionCertificateSha256": "c1f9c5b6c04f4f37939ade278960a16870c88afd2efca94a75b570aab5830196",
-      "apsEnvironment": "production"
+      "apsEnvironment": "production",
+      "apiBaseUrl": "https://security-marketplace-api.onrender.com",
+      "stagingApiUrls": 0,
+      "productionApiUrls": 1
     },
     "note": "S4 1.2.1 (21), the same commit as Android 1.2.1 (24) (5d749fa): 1.2.0 (20) plus Package A (patrol correctness and Guard app visibility: the patrol plan refreshed while the shift is in progress and kept when offline, an active patrol keeps its own route, photos required yes / no with a reason when one is missing, photo-only patrols, a QR site without a route shown as a configuration problem, patrol exceptions acknowledged and resolved from the dashboard). The 1.2.1 backend includes Migration 73 (1720900000020-AddPatrolScheduleSuccessors: durable schedule successor links, additive; after Migration 72, 1720900000018). Built by EAS (b5a46d30, production profile, STORE) with the existing EAS-managed credentials and verified (coordinator-verified 1 Nov 2026): profile UUID 1f19cdf5..., team SXH4TLU2B5, distribution certificate c1f9c5b6..., aps-environment production. Uploaded to App Store Connect by EAS Submit (below) on 1 Nov 2026. Apple processing is not yet confirmed; S4 assigned it to no TestFlight group and it is not submitted for App Store review. 1.1.0 (17) stays the distributed iOS build and 1.1.2 (19) stays uploaded to App Store Connect. The IPA is kept outside Git.",
     "testFlightUpload": {
