@@ -150,7 +150,7 @@ test('SIGNER-04-THE-EXPECTED-RELEASE-MATCHES-APP-JSON', () => {
   assert.equal(config.package, appJson.expo.android.package);
   assert.equal(appJson.expo.version, '1.2.1');
   assert.equal(appJson.expo.android.versionCode, 24, 'the prepared S4 1.2.1 (1.2.0 plus patrol correctness and Guard app visibility) candidate');
-  assert.ok(appJson.expo.android.versionCode > 23, 'above the built, never uploaded 1.2.0 (23), which it supersedes');
+  assert.ok(appJson.expo.android.versionCode > 23, 'above the distributed 1.2.0 (23) (published to Play Internal Testing on 31 Oct 2026), which it supersedes');
   assert.ok(appJson.expo.android.versionCode > 22, 'above the superseded 1.2.0 (22), which Play reports as used');
   assert.ok(appJson.expo.android.versionCode > 21, 'above the superseded 1.2.0 (21) Play draft, which is consumed');
   assert.ok(appJson.expo.android.versionCode > 20, 'above the distributed Guard app 1.1.2 (20)');
@@ -325,8 +325,14 @@ test('SIGNER-06E-THE-APPROVED-ARTEFACT-IS-EXPLICIT', () => {
       assert.equal(prepared.verified.versionCode, prepared.versionCode);
       assert.equal(prepared.verified.versionName, prepared.versionName);
       assert.equal(prepared.verified.signerCertificateSha256, config.signer.certificateSha256, 'read from the AAB signature');
-      assert.equal(prepared.verified.apiBaseUrl, 'https://security-marketplace-api.onrender.com');
-      assert.equal(prepared.verified.stagingApiUrls, 0);
+      // What was checked is stated: a built record either verified the production API and no staging API, or names them
+      // as not re-read (1.2.1 (24): the coordinator verified manifest, camera features, permissions and the signer only).
+      const notReRead = prepared.verified.notReRead || [];
+      assert.ok(notReRead.every((k) => ['apiBaseUrl', 'stagingApiUrls'].includes(k)), 'only the API checks may be left unread');
+      if (!notReRead.includes('apiBaseUrl')) assert.equal(prepared.verified.apiBaseUrl, 'https://security-marketplace-api.onrender.com');
+      else assert.ok(!('apiBaseUrl' in prepared.verified), 'an unread API URL is not claimed');
+      if (!notReRead.includes('stagingApiUrls')) assert.equal(prepared.verified.stagingApiUrls, 0);
+      else assert.ok(!('stagingApiUrls' in prepared.verified), 'an unread staging count is not claimed');
       assert.notEqual(prepared.aabSha256, current.aabSha256, 'a different artefact from the distributed one');
       assert.notEqual(prepared.easBuildId, current.easBuildId);
       assert.notEqual(prepared.gitCommit, current.gitCommit, 'built from a newer commit than the distributed one');
@@ -354,7 +360,14 @@ test('SIGNER-06E-THE-APPROVED-ARTEFACT-IS-EXPLICIT', () => {
     assert.match(current.gitCommit, /^[0-9a-f]{40}$/, 'the full source commit');
     assert.match(current.aabSha256, /^[0-9a-f]{64}$/, 'the AAB hash');
     assert.match(current.aabFilename, /\.aab$/, 'an App Bundle, not an APK');
-    assert.equal(current.uploadCertificateSha256, config.signer.certificateSha256, 'verified against the permanent upload key');
+    if ('uploadCertificateSha256' in current) {
+      assert.equal(current.uploadCertificateSha256, config.signer.certificateSha256, 'verified against the permanent upload key');
+    } else {
+      // 1.2.0 (23), published by the owner (owner correction, 1 Nov 2026): built for the permanent key, its signer not
+      // re-read in the record — stated, never assumed.
+      assert.equal(current.requiredUploadCertificateSha256, config.signer.certificateSha256, 'built for the permanent upload key');
+      assert.match(current.note, /upload certificate is not re-read/, 'an unread signer is stated as unread');
+    }
     // Until Play signs anything, the upload certificate is the only one known; it is never overwritten.
     assert.equal(config.playAppSigning.uploadCertificateSha256, config.signer.certificateSha256);
     if (current.status === 'distributed') {
@@ -380,8 +393,9 @@ test('SIGNER-06E-THE-APPROVED-ARTEFACT-IS-EXPLICIT', () => {
           // release.
           const UNRELEASED = { 'uploaded-draft-superseded': 'draft-not-released', 'consumed-unreleased-superseded': 'consumed-not-in-library' };
           if (entry.status === 'built-not-uploaded-superseded') {
-            // S4 1.2.1: a build that never reached Play at all (1.2.0 (23)) — no Play fact, its exact build kept, and its
-            // number is not consumed in Play but is never rebuilt with other content.
+            // A build that never reached Play at all — no Play fact, its exact build kept, and its number is not consumed in
+            // Play but is never rebuilt with other content. (No such record today: 1.2.0 (23), once recorded this way, was
+            // published to Play Internal Testing on 31 Oct 2026 — owner correction, SIGNER-13M.)
             assert.deepEqual(Object.keys(entry).filter((key) => /^play|internalTesting|uploaded/i.test(key)), [], `vc${entry.versionCode} has no Play fact`);
             assert.match(entry.note, /Not uploaded to Google Play/, `vc${entry.versionCode} says it was not uploaded`);
             assert.match(entry.retiredReason, /never rebuilt with other content/, `vc${entry.versionCode} keeps its number for its own build`);
@@ -406,7 +420,13 @@ test('SIGNER-06E-THE-APPROVED-ARTEFACT-IS-EXPLICIT', () => {
           assert.equal(entry.playInternalTesting.confirmedBy, 'owner', `vc${entry.versionCode} keeps its owner confirmation`);
           assert.ok(['uploaded', 'active'].includes(entry.playInternalTesting.status), `vc${entry.versionCode} keeps its Play state`);
           assert.match(entry.retiredOn, /^\d{4}-\d{2}-\d{2}$/);
-          assert.match(entry.retiredReason, new RegExp(`^Superseded by versionCode ${entry.versionCode + 1}\\b`), `vc${entry.versionCode} names its successor`);
+          // It names the versionCode that replaced it: the very next one, or the next RELEASED one when the numbers in
+          // between were consumed in Play without a release (20 → 23: 21 a draft, 22 used but not in the library).
+          const next = Number((entry.retiredReason.match(/^Superseded by versionCode (\d+)\b/) || [])[1]);
+          assert.ok(next > entry.versionCode, `vc${entry.versionCode} names its successor`);
+          for (const between of (config.retiredArtefacts || []).filter((e) => e.versionCode > entry.versionCode && e.versionCode < next)) {
+            assert.ok(['uploaded-draft-superseded', 'consumed-unreleased-superseded'].includes(between.status), `vc${between.versionCode}, skipped by vc${entry.versionCode}'s successor, was never released`);
+          }
         }
       }
     }
@@ -543,7 +563,7 @@ test('SIGNER-13-A-CORRECT-1-1-0-COM-SFOUR-S4-ARTEFACT-WOULD-PASS', () => {
   assert.equal(verifier.assessApk(config, { ...candidate, versionCode: 20 }).ok, false, 'the distributed 20 is not the prepared release');
   assert.equal(verifier.assessApk(config, { ...candidate, versionCode: 21 }).ok, false, 'the superseded 1.2.0 (21) Play draft is not the prepared release');
   assert.equal(verifier.assessApk(config, { ...candidate, versionCode: 22 }).ok, false, 'the superseded 1.2.0 (22), consumed in Play, is not the prepared release');
-  assert.equal(verifier.assessApk(config, { ...candidate, versionCode: 23 }).ok, false, 'the built, never uploaded 1.2.0 (23) is not the prepared release');
+  assert.equal(verifier.assessApk(config, { ...candidate, versionCode: 23 }).ok, false, 'the distributed 1.2.0 (23) is not the expected release');
   assert.equal(verifier.assessApk(config, { ...candidate, versionCode: 25 }).ok, false, 'nor the UAT app\'s 25');
   assert.equal(verifier.assessApk(config, { ...candidate, versionName: '1.2.0' }).ok, false, 'the 1.2.0 name is not the prepared release');
   assert.equal(verifier.assessApk(config, { ...candidate, versionName: '1.1.0' }).ok, false, 'the 1.1.0 name is not the prepared release');
@@ -646,11 +666,12 @@ test('SIGNER-13F-THE-DISTRIBUTED-VC17-ARTEFACT-IS-SUPERSEDED-BY-THE-GUARD-NOTIFI
   const vc19 = (config.retiredArtefacts || []).find((entry) => entry.versionCode === 19);
   assert.ok(vc19, 'the 1.1.1 maintenance release 19 is recorded');
   assert.match(vc19.note, /808a55c/);
-  assert.equal(config.approvedArtefact.versionCode, 20);
-  // S4 1.2.1: the built, never uploaded 1.2.0 (23) is superseded (SIGNER-13M); the prepared 1.2.1 (24) is expected.
+  // Owner correction (1 Nov 2026): 1.2.0 (23) was published to Play Internal Testing on 31 Oct 2026 and is the distributed
+  // approved artefact (SIGNER-13M); 1.1.2 (20) is distributed-superseded (SIGNER-13I); 1.2.1 (24) is built, not uploaded.
+  assert.equal(config.approvedArtefact.versionCode, 23);
   assert.equal(config.expectedRelease.versionCode, 24);
   assert.equal(config.expectedRelease.versionCode, config.preparedArtefact.versionCode);
-  assert.equal(config.preparedArtefact.status, 'prepared-not-built', 'only the prepared 1.2.1 (24) is in front of the distributed 1.1.2 (20)');
+  assert.equal(config.preparedArtefact.status, 'built-not-uploaded', 'only the built, not uploaded 1.2.1 (24) is in front of the distributed 1.2.0 (23)');
 });
 
 test('SIGNER-13G-THE-DISTRIBUTED-VC18-ARTEFACT-IS-SIGNED-BY-THE-SAME-UPLOAD-KEY-AS-VC17-AND-SUPERSEDED-BY-VC19', () => {
@@ -717,7 +738,7 @@ test('SIGNER-13H-THE-1-1-1-VC19-WAS-DISTRIBUTED-AND-IS-SUPERSEDED-BY-VC20-ON-THE
   assert.equal(prepared.versionCode, 19);
   // The distributed 1.1.2 (20) is exactly one above it; the expected release (and app.json) is the prepared 1.2.0 (23),
   // past the consumed 21 and 22 (SIGNER-13K, 13L).
-  assert.equal(prepared.versionCode + 1, config.approvedArtefact.versionCode, 'the distributed artefact is the next one, 20');
+  assert.equal(prepared.versionCode + 1, config.retiredArtefacts.find((entry) => entry.versionCode === 20).versionCode, 'the artefact distributed next was 20 (itself superseded by 23)');
   assert.equal(prepared.versionCode + 5, config.expectedRelease.versionCode, 'the expected release is 24, after the consumed 21 and 22 and the built, superseded 23');
   assert.equal(prepared.versionCode + 5, appJson.expo.android.versionCode);
   assert.ok(above(appJson.expo.version, prepared.versionName), 'app.json carries a higher versionName than 1.1.1');
@@ -775,7 +796,7 @@ test('SIGNER-13H-THE-1-1-1-VC19-WAS-DISTRIBUTED-AND-IS-SUPERSEDED-BY-VC20-ON-THE
   assert.equal(vc18.status, 'distributed-superseded');
   assert.equal(vc18.versionCode, 18);
   assert.equal(vc18.aabSha256, '936bfe7531dfd94fa4afc5006b7d6755ef5b9d07e8e3a21c0baa67dd6a4f4bc8');
-  assert.deepEqual((config.retiredArtefacts || []).filter((entry) => entry.versionCode >= 20).map((entry) => [entry.versionCode, entry.status]), [[21, 'uploaded-draft-superseded'], [22, 'consumed-unreleased-superseded'], [23, 'built-not-uploaded-superseded']], 'only the never-released 21, 22 and 23 are retired at 20 or above');
+  assert.deepEqual((config.retiredArtefacts || []).filter((entry) => entry.versionCode >= 20).map((entry) => [entry.versionCode, entry.status]), [[20, 'distributed-superseded'], [21, 'uploaded-draft-superseded'], [22, 'consumed-unreleased-superseded']], 'retired at 20 or above: the distributed-superseded 20 and the never-released 21 and 22 (23 is distributed, owner correction 1 Nov 2026)');
   assert.doesNotMatch(JSON.stringify(config), /private_key|api_key|current_key|BEGIN [A-Z ]*PRIVATE KEY/);
 });
 
@@ -785,15 +806,21 @@ test('SIGNER-13I-THE-1-1-2-VC20-IS-DISTRIBUTED-AND-USES-THE-VC17-VC18-VC19-UPLOA
   // (8a1a4145) from exactly c45dce7 on owner approval and certified from the downloaded AAB (28 Oct 2026). The owner
   // uploaded it to Google Play Internal Testing, where it is Active and Play's active internal release "1.1.2 (20)"
   // (owner-confirmed 28 Oct 2026). No uploaded hash was read back from Play, so none is claimed; 1.1.1 (19) is superseded.
-  assert.equal(config.preparedArtefact.status, 'prepared-not-built', 'only the prepared, not built 1.2.1 (24) is in front of the distributed 1.1.2 (20) (SIGNER-13J)');
-  const current = config.approvedArtefact;
+  // Owner correction (1 Nov 2026): superseded on 31 Oct 2026 by 1.2.0 (23), published to Play Internal Testing (SIGNER-13M);
+  // the 1.1.2 (20) record moved, unchanged apart from status and retirement, into retiredArtefacts.
+  assert.equal(config.preparedArtefact.status, 'built-not-uploaded', 'the built, not uploaded 1.2.1 (24) is in front of the distributed 1.2.0 (23) (SIGNER-13J)');
+  assert.equal((config.retiredArtefacts || []).filter((entry) => entry.versionCode === 20).length, 1, 'recorded once');
+  const current = config.retiredArtefacts.find((entry) => entry.versionCode === 20);
   const vc19 = config.retiredArtefacts.find((entry) => entry.versionCode === 19);
   const vc18 = config.retiredArtefacts.find((entry) => entry.versionCode === 18);
   const vc17 = config.retiredArtefacts.find((entry) => entry.versionCode === 17);
   const semver = (v) => v.split('.').map(Number);
   const above = (a, b) => { const [x, y] = [semver(a), semver(b)]; for (let i = 0; i < 3; i += 1) { if (x[i] !== y[i]) return x[i] > y[i]; } return false; };
   assert.ok(current, 'the 1.1.2 release is recorded');
-  assert.equal(current.status, 'distributed', 'built, certified and distributed');
+  assert.equal(current.status, 'distributed-superseded', 'built, certified, distributed and now superseded');
+  assert.equal(current.retiredOn, '2026-10-31');
+  assert.match(current.retiredReason, /^Superseded by versionCode 23 \(1\.2\.0\), published to Google Play Internal Testing on 31 Oct 2026 \(owner-confirmed\)/);
+  assert.match(current.retiredReason, /Active in Google Play Internal Testing \(owner-confirmed 28 Oct 2026\), so it can never be reused/);
   assert.equal(current.versionName, '1.1.2');
   assert.equal(current.versionCode, 20);
   // It stays the distributed approved artefact three below the prepared 1.2.0 (23) that app.json and the expected release
@@ -854,56 +881,74 @@ test('SIGNER-13I-THE-1-1-2-VC20-IS-DISTRIBUTED-AND-USES-THE-VC17-VC18-VC19-UPLOA
   assert.match(play.note, /hash was not read back from Play Console/);
   assert.match(current.note, /Uploaded by the owner to Google Play Internal Testing and Active there \(owner-confirmed 28 Oct 2026\)/);
   assert.doesNotMatch(current.note, /Not uploaded to Google Play/, 'no longer presented as not uploaded');
-  assert.equal(config.playConsole.internalTesting.activeRelease, '1.1.2 (20)');
-  assert.match(config.playConsole.source, /active release 1\.1\.2 \(20\): owner uploaded to Play Internal Testing, owner-confirmed 2026-10-28\. Not inspected from the build machine\.$/);
+  assert.equal(config.playConsole.internalTesting.activeRelease, '1.2.0 (23)', 'Play now shows 1.2.0 (23)');
+  assert.match(config.playConsole.source, /active release 1\.1\.2 \(20\): owner uploaded to Play Internal Testing, owner-confirmed 2026-10-28\. Not inspected from the build machine\.; active release 1\.2\.0 \(23\): published to Internal Testing 2026-10-31, owner-confirmed \(S4 did not upload it; rollout, testers and time not recorded\)\.$/);
   // vc19 is kept exactly as the distributed-superseded build below it (SIGNER-13H).
   assert.equal(vc19.status, 'distributed-superseded');
   assert.equal(vc19.aabSha256, '168c3f116ad84be0b41225ac5658b815968d7af5006e9ccd012e8a0363f731ca');
-  assert.deepEqual((config.retiredArtefacts || []).filter((entry) => entry.versionCode >= 20).map((entry) => [entry.versionCode, entry.status]), [[21, 'uploaded-draft-superseded'], [22, 'consumed-unreleased-superseded'], [23, 'built-not-uploaded-superseded']], 'only the never-released 21, 22 and 23 are retired at 20 or above');
+  assert.deepEqual((config.retiredArtefacts || []).filter((entry) => entry.versionCode >= 20).map((entry) => [entry.versionCode, entry.status]), [[20, 'distributed-superseded'], [21, 'uploaded-draft-superseded'], [22, 'consumed-unreleased-superseded']], 'retired at 20 or above: the distributed-superseded 20 and the never-released 21 and 22 (23 is distributed, owner correction 1 Nov 2026)');
   assert.doesNotMatch(JSON.stringify(config), /private_key|api_key|current_key|BEGIN [A-Z ]*PRIVATE KEY/);
 });
 
-test('SIGNER-13J-THE-PREPARED-1-2-1-VC24-IS-NOT-BUILT-AND-REQUIRES-THE-SAME-UPLOAD-KEY', () => {
-  // S4 1.2.1 (31 Oct 2026): 1.2.0 (23) was built by EAS (b5d6a189) from 625bea0 and never uploaded (SIGNER-13M); the
-  // prepared release is 1.2.1 (24): 1.2.0 plus Package A (patrol correctness, Guard app plan refresh and visibility) on
-  // feature/s4-1.2.1-patrol-correctness, on top of 625bea0. Same identity, plugins and upload key.
-  // Earlier, later on 31 Oct 2026: 1.2.0 (22) was built from 61526c9 and Play reports 22 as used (SIGNER-13L), so the
-  // prepared release was 1.2.0 (23), the same content, on top of 61526c9.
-  // S4 1.2.0 (29 Oct 2026): Patrol Management P1-A..P1-E (feature/patrols-p1e faba512) merged with the distributed Guard
-  // app 1.1.2 line (release-prep/guard-app-1.1.2 c6d2d4c) in 5bb60b8 on integration/s4-1.2.0-patrols. 1.2.0 (21) was
-  // built from 4f4de31 and is superseded (SIGNER-13K). 1.2.0 (22) (31 Oct 2026) is 4f4de31 plus the optional camera
-  // hardware declarations on fix/android-optional-camera-hardware. Prepared only: the version is set in app.json and
-  // nothing is built or uploaded, so it carries no build fact and no Play state. It is the expected release, so the
-  // post-build check accepts only 1.2.0 (22) signed by the permanent upload key.
+test('SIGNER-13J-THE-1-2-1-VC24-IS-BUILT-NOT-UPLOADED-AND-SIGNED-BY-THE-SAME-UPLOAD-KEY', () => {
+  // S4 1.2.1: 1.2.0 plus Package A (patrol correctness, Guard app plan refresh and visibility, dashboard patrol exception
+  // actions) on feature/s4-1.2.1-patrol-correctness, on top of 625bea0 (the commit 1.2.0 (23) was built from). First
+  // prepared only (no build fact, no Play state; sourceFixCommit 63b706a, the last 1.2.1 app-code commit). Owner update
+  // (1 Nov 2026): built by EAS (85a98a03, production, STORE) from 5d749fa and verified — manifest com.sfour.s4 / 24 /
+  // 1.2.1, both camera features required="false", permissions identical to 23, the permanent upload certificate — and NOT
+  // uploaded (the owner uploads it manually to Internal Testing). It is the expected release, so the post-build check
+  // accepts only 1.2.1 (24) signed by the permanent upload key.
+  // History of this test: 1.2.0 (21) (29 Oct) was built from 4f4de31 and is superseded (SIGNER-13K); 1.2.0 (22) (31 Oct)
+  // was built from 61526c9 and Play reports 22 as used (SIGNER-13L); 1.2.0 (23), the same content, was published to Play
+  // Internal Testing on 31 Oct 2026 (SIGNER-13M).
   const prepared = config.preparedArtefact;
   const current = config.approvedArtefact;
-  assert.ok(prepared, 'the prepared 1.2.1 release is recorded');
-  assert.equal(prepared.status, 'prepared-not-built');
+  const vc20 = config.retiredArtefacts.find((entry) => entry.versionCode === 20);
+  assert.ok(prepared, 'the 1.2.1 release is recorded');
+  assert.equal(prepared.status, 'built-not-uploaded');
   assert.equal(prepared.versionName, '1.2.1');
   assert.equal(prepared.versionCode, 24);
   assert.equal(prepared.versionName, appJson.expo.version);
   assert.equal(prepared.versionCode, appJson.expo.android.versionCode);
   assert.equal(prepared.versionName, config.expectedRelease.versionName);
   assert.equal(prepared.versionCode, config.expectedRelease.versionCode);
-  assert.equal(prepared.versionCode, current.versionCode + 4, 'four above the distributed 1.1.2 (20): 21 and 22 are consumed in Play, 23 is built and superseded');
-  for (const key of ['easBuildId', 'easBuildUrl', 'aabSha256', 'aabFilename', 'aabSizeBytes', 'gitCommit', 'certifiedOn', 'verified', 'uploadCertificateSha256', 'apkSha256', 'completedAt', 'playInternalTesting']) {
-    assert.ok(!(key in prepared), `a prepared artefact records no ${key}`);
+  assert.equal(prepared.versionCode, current.versionCode + 1, 'one above the distributed 1.2.0 (23)');
+  assert.equal(prepared.versionCode, vc20.versionCode + 4, 'four above 1.1.2 (20): 21 and 22 consumed in Play, 23 published');
+  // Built and verified: exactly these facts.
+  assert.equal(prepared.easBuildId, '85a98a03-f279-45f4-8e38-2dc730c95b3e');
+  assert.equal(prepared.easBuildUrl, 'https://expo.dev/accounts/fahadjibran/projects/security-marketplace/builds/85a98a03-f279-45f4-8e38-2dc730c95b3e');
+  assert.equal(prepared.gitCommit, '5d749fa1bd5797ff69fa16c4432ee13a2437b602');
+  assert.equal(prepared.aabFilename, 's4-1.2.1-vc24-85a98a03.aab');
+  assert.ok(prepared.aabFilename.includes(`vc${prepared.versionCode}-`), 'the file is named for its versionCode');
+  assert.equal(prepared.aabSha256, '8a948d6b9b370bdded279454e0b16d085a9e9ca7cc9b62d6112e2f961d855a6a');
+  assert.equal(prepared.aabSizeBytes, 64057635);
+  assert.equal(prepared.certifiedOn, '2026-11-01');
+  assert.equal(prepared.uploadCertificateSha256, S4_CERT_SHA256, 'signed by the permanent S4 upload key');
+  assert.equal(prepared.verified.signerCertificateSha256, S4_CERT_SHA256);
+  assert.match(prepared.verified.cameraFeatures, /android\.hardware\.camera and android\.hardware\.camera\.autofocus declared android:required="false"/);
+  assert.equal(prepared.verified.permissions, 'identical to 1.2.0 (23)');
+  assert.deepEqual(prepared.verified.notReRead, ['apiBaseUrl', 'stagingApiUrls'], 'what was not re-read is stated');
+  for (const key of ['apkSha256', 'completedAt', 'playInternalTesting', 'sourceCommit']) {
+    assert.ok(!(key in prepared), `the built, not uploaded 1.2.1 records no ${key}`);
+  }
+  for (const other of [current, ...config.retiredArtefacts]) {
+    assert.notEqual(prepared.aabSha256, other.aabSha256, `a different artefact from vc${other.versionCode}`);
+    assert.notEqual(prepared.easBuildId, other.easBuildId, `a different build from vc${other.versionCode}`);
   }
   assert.equal(prepared.easBuildProfile, 'production');
   assert.equal(prepared.distribution, 'STORE');
   assert.equal(prepared.sourceBranch, 'feature/s4-1.2.1-patrol-correctness');
-  assert.match(prepared.sourceFixCommit, /^[0-9a-f]{40}$/, 'the full commit it is prepared from');
-  assert.match(prepared.sourceCommit, /on 625bea0 \(the commit 1\.2\.0 \(23\) was built from\)/, 'on top of the commit the superseded 23 was built from');
-  assert.match(prepared.sourceCommit, /a commit cannot record its own id/);
+  assert.equal(prepared.sourceFixCommit, '63b706a1ed5ba9af5bf1526243ae0ce71ce3dcb0', 'the last 1.2.1 app-code commit');
   assert.equal(prepared.requiredUploadCertificateSha256, S4_CERT_SHA256, 'the permanent S4 upload key');
-  assert.equal(prepared.requiredUploadCertificateSha256, current.uploadCertificateSha256, 'the same upload key as the distributed 20');
-  assert.match(prepared.note, /Prepared only: not built, not uploaded to Google Play/);
+  assert.equal(prepared.requiredUploadCertificateSha256, vc20.uploadCertificateSha256, 'the same upload key as the certified 20');
+  assert.equal(prepared.requiredUploadCertificateSha256, current.requiredUploadCertificateSha256, 'and as the distributed 23 requires');
+  assert.match(prepared.note, /Not uploaded to Google Play: the owner will upload it manually to Internal Testing/);
   assert.match(prepared.note, /withOptionalCameraHardware, withPatrolBackupExclusion/, 'the plugins (optional camera hardware, backup exclusion) are kept');
   assert.match(prepared.note, /same upload key as vc17 to vc23/);
   assert.doesNotMatch(prepared.note, /Uploaded by the owner/);
   assert.equal(config.package, 'com.sfour.s4', 'the package is unchanged');
-  assert.equal(config.playConsole.internalTesting.activeRelease, '1.1.2 (20)', 'Play still shows the distributed 1.1.2 (20)');
-  assert.deepEqual((config.retiredArtefacts || []).filter((entry) => entry.versionCode >= 20).map((entry) => [entry.versionCode, entry.status]), [[21, 'uploaded-draft-superseded'], [22, 'consumed-unreleased-superseded'], [23, 'built-not-uploaded-superseded']], 'only the never-released 21, 22 and 23 are retired at 20 or above');
+  assert.equal(config.playConsole.internalTesting.activeRelease, '1.2.0 (23)', 'Play shows the distributed 1.2.0 (23), not 24');
+  assert.deepEqual((config.retiredArtefacts || []).filter((entry) => entry.versionCode >= 20).map((entry) => [entry.versionCode, entry.status]), [[20, 'distributed-superseded'], [21, 'uploaded-draft-superseded'], [22, 'consumed-unreleased-superseded']], 'retired at 20 or above: the distributed-superseded 20 and the never-released 21 and 22 (23 is distributed, owner correction 1 Nov 2026)');
 });
 
 test('SIGNER-13K-THE-BUILT-1-2-0-VC21-IS-A-SUPERSEDED-UNRELEASED-PLAY-DRAFT-ON-THE-SAME-UPLOAD-KEY', () => {
@@ -928,9 +973,10 @@ test('SIGNER-13K-THE-BUILT-1-2-0-VC21-IS-A-SUPERSEDED-UNRELEASED-PLAY-DRAFT-ON-T
   assert.equal(vc21.aabSizeBytes, 64049992);
   assert.equal(vc21.uploadCertificateSha256, S4_CERT_SHA256, 'signed by the permanent S4 upload key');
   assert.equal(vc21.requiredUploadCertificateSha256, S4_CERT_SHA256);
-  assert.equal(vc21.uploadCertificateSha256, config.approvedArtefact.uploadCertificateSha256, 'the same upload key as the distributed 20');
+  assert.equal(vc21.uploadCertificateSha256, config.retiredArtefacts.find((entry) => entry.versionCode === 20).uploadCertificateSha256, 'the same upload key as the then-distributed 20');
   assert.equal(vc21.uploadCertificateSha256, vc19.uploadCertificateSha256, 'and as vc19');
-  assert.equal(vc21.uploadCertificateSha256, config.preparedArtefact.requiredUploadCertificateSha256, 'the key 23 must carry too');
+  assert.equal(vc21.uploadCertificateSha256, config.approvedArtefact.requiredUploadCertificateSha256, 'the key the distributed 23 requires');
+  assert.equal(vc21.uploadCertificateSha256, config.preparedArtefact.requiredUploadCertificateSha256, 'the key 24 must carry too');
   for (const other of [config.approvedArtefact, ...config.retiredArtefacts.filter((entry) => entry !== vc21)]) {
     assert.notEqual(vc21.aabSha256, other.aabSha256, `a different artefact from vc${other.versionCode}`);
     assert.notEqual(vc21.easBuildId, other.easBuildId, `a different build from vc${other.versionCode}`);
@@ -947,10 +993,11 @@ test('SIGNER-13K-THE-BUILT-1-2-0-VC21-IS-A-SUPERSEDED-UNRELEASED-PLAY-DRAFT-ON-T
   assert.match(vc21.retiredReason, /^Superseded by versionCode 22 \(1\.2\.0\)/);
   assert.match(vc21.retiredReason, /436 devices \(69 phone models\)/);
   assert.match(vc21.retiredReason, /consumed there and must never be reused/);
-  assert.equal(config.playConsole.internalTesting.activeRelease, '1.1.2 (20)', 'never Play\'s active release');
-  // The number line: distributed 20 < superseded draft 21 < consumed 22 (SIGNER-13L) < built, superseded 23 (SIGNER-13M)
-  // < prepared / expected 24 = app.json.
-  assert.equal(vc21.versionCode, config.approvedArtefact.versionCode + 1);
+  assert.equal(config.playConsole.internalTesting.activeRelease, '1.2.0 (23)', 'never Play\'s active release (23 is, owner correction)');
+  // The number line: distributed-superseded 20 < superseded draft 21 < consumed 22 (SIGNER-13L) < distributed 23, published
+  // 31 Oct 2026 (SIGNER-13M) < built / expected 24 = app.json.
+  assert.equal(vc21.versionCode, config.retiredArtefacts.find((entry) => entry.versionCode === 20).versionCode + 1);
+  assert.equal(vc21.versionCode + 2, config.approvedArtefact.versionCode);
   assert.equal(vc21.versionCode + 3, config.expectedRelease.versionCode);
   assert.equal(vc21.versionCode + 3, config.preparedArtefact.versionCode);
   assert.notEqual(appJson.expo.android.versionCode, vc21.versionCode, 'app.json never carries the consumed 21 again');
@@ -978,9 +1025,10 @@ test('SIGNER-13L-THE-BUILT-1-2-0-VC22-IS-CONSUMED-IN-PLAY-NEVER-RELEASED-ON-THE-
   assert.equal(vc22.aabSizeBytes, 64050088);
   assert.equal(vc22.uploadCertificateSha256, S4_CERT_SHA256, 'signed by the permanent S4 upload key');
   assert.equal(vc22.requiredUploadCertificateSha256, S4_CERT_SHA256);
-  assert.equal(vc22.uploadCertificateSha256, config.approvedArtefact.uploadCertificateSha256, 'the same upload key as the distributed 20');
+  assert.equal(vc22.uploadCertificateSha256, config.retiredArtefacts.find((entry) => entry.versionCode === 20).uploadCertificateSha256, 'the same upload key as the then-distributed 20');
   assert.equal(vc22.uploadCertificateSha256, vc21.uploadCertificateSha256, 'and as 21');
-  assert.equal(vc22.uploadCertificateSha256, config.preparedArtefact.requiredUploadCertificateSha256, 'the key 23 must carry too');
+  assert.equal(vc22.uploadCertificateSha256, config.approvedArtefact.requiredUploadCertificateSha256, 'the key the distributed 23 requires');
+  assert.equal(vc22.uploadCertificateSha256, config.preparedArtefact.requiredUploadCertificateSha256, 'the key 24 must carry too');
   for (const other of [config.approvedArtefact, ...config.retiredArtefacts.filter((entry) => entry !== vc22)]) {
     assert.notEqual(vc22.aabSha256, other.aabSha256, `a different artefact from vc${other.versionCode}`);
     assert.notEqual(vc22.easBuildId, other.easBuildId, `a different build from vc${other.versionCode}`);
@@ -997,13 +1045,14 @@ test('SIGNER-13L-THE-BUILT-1-2-0-VC22-IS-CONSUMED-IN-PLAY-NEVER-RELEASED-ON-THE-
   assert.equal(vc22.retiredOn, '2026-10-31');
   assert.match(vc22.retiredReason, /^Superseded by versionCode 23 \(1\.2\.0\)/);
   assert.match(vc22.retiredReason, /consumed there and must never be reused/);
-  assert.equal(config.playConsole.internalTesting.activeRelease, '1.1.2 (20)', 'never Play\'s active release');
-  // The number line: 21 < 22 < built, superseded 23 (SIGNER-13M) < prepared / expected 24 = app.json.
-  const vc23 = config.retiredArtefacts.find((entry) => entry.versionCode === 23);
+  assert.equal(config.playConsole.internalTesting.activeRelease, '1.2.0 (23)', 'never Play\'s active release (23 is, owner correction)');
+  // The number line: 21 < 22 < distributed 23, published 31 Oct 2026 (SIGNER-13M) < built / expected 24 = app.json.
+  const vc23 = config.approvedArtefact;
+  assert.equal(vc23.versionCode, vc22.versionCode + 1);
   assert.equal(vc22.versionCode, vc21.versionCode + 1);
   assert.equal(vc22.versionCode + 2, config.expectedRelease.versionCode);
   assert.equal(vc22.versionCode + 2, config.preparedArtefact.versionCode);
-  assert.equal(vc23.sourceFixCommit, vc22.gitCommit, 'the built 23 sits on the commit 22 was built from');
+  assert.equal(vc23.sourceFixCommit, vc22.gitCommit, 'the published 23 sits on the commit 22 was built from');
   assert.notEqual(appJson.expo.android.versionCode, vc22.versionCode, 'app.json never carries the consumed 22 again');
   // vc21 is kept exactly as recorded.
   assert.equal(vc21.status, 'uploaded-draft-superseded');
@@ -1011,16 +1060,19 @@ test('SIGNER-13L-THE-BUILT-1-2-0-VC22-IS-CONSUMED-IN-PLAY-NEVER-RELEASED-ON-THE-
   assert.doesNotMatch(JSON.stringify(config), /private_key|api_key|current_key|BEGIN [A-Z ]*PRIVATE KEY/);
 });
 
-test('SIGNER-13M-THE-BUILT-1-2-0-VC23-WAS-NEVER-UPLOADED-AND-IS-SUPERSEDED-BY-THE-PREPARED-1-2-1-VC24', () => {
-  // S4 1.2.1 (31 Oct 2026): 1.2.0 (23) was built by EAS (b5d6a189, production, STORE) from 625bea0 and NOT uploaded to
-  // Google Play, so nothing is consumed in Play. It is kept exactly and superseded by the prepared 1.2.1 (24) unless the
-  // owner releases it instead; 23 is never rebuilt with other content.
-  const entries = (config.retiredArtefacts || []).filter((entry) => entry.versionCode === 23);
-  assert.equal(entries.length, 1, 'recorded once');
-  const vc23 = entries[0];
+test('SIGNER-13M-THE-BUILT-1-2-0-VC23-WAS-PUBLISHED-TO-PLAY-INTERNAL-TESTING-AND-IS-CONSUMED', () => {
+  // 1.2.0 (23) was built by EAS (b5d6a189, production, STORE) from 625bea0. OWNER CORRECTION (1 Nov 2026): it WAS
+  // published to Google Play Internal Testing on 31 Oct 2026 (the owner published it; S4 did not upload it), so versionCode
+  // 23 is consumed in Play and is Play's active internal release. This replaces the earlier "never uploaded, nothing
+  // consumed in Play" record and assertions. Its exact build is kept; facts not known (uploaded hash, rollout, tester count,
+  // exact time, a re-read signer) are stated as unknown, never invented.
+  assert.equal((config.retiredArtefacts || []).filter((entry) => entry.versionCode === 23).length, 0, 'no longer a retired record');
+  const vc23 = config.approvedArtefact;
   const vc22 = config.retiredArtefacts.find((entry) => entry.versionCode === 22);
+  const vc20 = config.retiredArtefacts.find((entry) => entry.versionCode === 20);
+  assert.equal(vc23.versionCode, 23);
   assert.equal(vc23.versionName, '1.2.0');
-  assert.equal(vc23.status, 'built-not-uploaded-superseded');
+  assert.equal(vc23.status, 'distributed');
   assert.equal(vc23.easBuildId, 'b5d6a189-6ad0-4530-b685-689c6115a674');
   assert.equal(vc23.easBuildUrl, 'https://expo.dev/accounts/fahadjibran/projects/security-marketplace/builds/b5d6a189-6ad0-4530-b685-689c6115a674');
   assert.equal(vc23.easBuildProfile, 'production');
@@ -1033,20 +1085,27 @@ test('SIGNER-13M-THE-BUILT-1-2-0-VC23-WAS-NEVER-UPLOADED-AND-IS-SUPERSEDED-BY-TH
   assert.equal(vc23.aabSizeBytes, 64050099);
   assert.equal(vc23.requiredUploadCertificateSha256, S4_CERT_SHA256, 'built for the permanent S4 upload key');
   assert.equal(vc23.requiredUploadCertificateSha256, config.preparedArtefact.requiredUploadCertificateSha256, 'the key 24 must carry too');
-  for (const other of [config.approvedArtefact, ...config.retiredArtefacts.filter((entry) => entry !== vc23)]) {
+  assert.ok(!('uploadCertificateSha256' in vc23) && !('verified' in vc23), 'its signer was not re-read, so none is claimed');
+  assert.match(vc23.note, /upload certificate is not re-read/);
+  for (const other of config.retiredArtefacts) {
     assert.notEqual(vc23.aabSha256, other.aabSha256, `a different artefact from vc${other.versionCode}`);
     assert.notEqual(vc23.easBuildId, other.easBuildId, `a different build from vc${other.versionCode}`);
   }
-  // Never uploaded: no Play fact of any kind, and nothing claimed that was not read.
-  assert.deepEqual(Object.keys(vc23).filter((key) => /^play|internalTesting|uploaded/i.test(key)), [], 'no Play fact');
-  assert.match(vc23.note, /Not uploaded to Google Play/);
-  assert.doesNotMatch(vc23.note, /Uploaded by the owner/);
-  assert.equal(vc23.retiredOn, '2026-10-31');
-  assert.match(vc23.retiredReason, /^Superseded by versionCode 24 \(1\.2\.1\)/);
-  assert.match(vc23.retiredReason, /unless the owner releases 1\.2\.0 \(23\) instead/);
-  assert.match(vc23.retiredReason, /never rebuilt with other content/);
-  assert.equal(config.playConsole.internalTesting.activeRelease, '1.1.2 (20)', 'never Play\'s active release');
-  // The number line: 22 < 23 < prepared / expected 24 = app.json.
+  // Published: exactly the attributed Play facts, the unknowns stated as such.
+  assert.deepEqual(Object.keys(vc23).filter((key) => /^play|internalTesting|uploaded/i.test(key)), ['playInternalTesting'], 'one Play fact');
+  const play = vc23.playInternalTesting;
+  assert.deepEqual([play.status, play.confirmedBy, play.confirmedOn, play.publishedOn, play.activeRelease], ['active', 'owner', '2026-10-31', '2026-10-31', '1.2.0 (23)']);
+  assert.equal(play.uploadedBy, 'owner (not S4)');
+  assert.ok(!('uploadedAabSha256' in play), 'no uploaded hash is claimed that was not read back from Play');
+  assert.match(play.note, /hash was not read back from Play Console/);
+  assert.deepEqual(play.unknown, ['uploaded file hash (not read back from Play Console)', 'rollout', 'tester count', 'exact publication time']);
+  assert.match(vc23.note, /Published to Google Play Internal Testing on 31 Oct 2026 \(owner-confirmed; S4 did not upload it\), so versionCode 23 is consumed in Play/);
+  assert.doesNotMatch(JSON.stringify(vc23), /never uploaded|Not uploaded|not consumed|never reached Play/i, 'never described as not uploaded');
+  assert.equal(config.playConsole.internalTesting.activeRelease, '1.2.0 (23)', 'Play\'s active internal release');
+  // It supersedes the distributed 1.1.2 (20).
+  assert.equal(vc20.status, 'distributed-superseded');
+  assert.match(vc20.retiredReason, /^Superseded by versionCode 23 \(1\.2\.0\)/);
+  // The number line: 20 < 21 < 22 < published 23 < built / expected 24 = app.json.
   assert.equal(vc23.versionCode, vc22.versionCode + 1);
   assert.equal(vc23.versionCode + 1, config.expectedRelease.versionCode);
   assert.equal(vc23.versionCode + 1, config.preparedArtefact.versionCode);

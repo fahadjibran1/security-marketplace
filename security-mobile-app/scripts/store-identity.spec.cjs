@@ -62,9 +62,10 @@ test('STORE-01-THE-PERMANENT-S4-IDENTITY', () => {
   assert.equal(expo.version, '1.2.1');
   assert.equal(expo.android.versionCode, 24);
   assert.equal(expo.ios.buildNumber, '21');
-  // S4 1.2.1 (31 Oct 2026, prepared, not built): 1.2.0 Android 23 and iOS 20 were built and never sent to a store; 1.2.1
-  // (Android 24, iOS 21) supersedes them on the same store identity.
-  assert.ok(expo.android.versionCode > 23, 'above the built, never uploaded Android 23');
+  // S4 1.2.1 (built 1 Nov 2026: Android 24 not uploaded, iOS 21 uploaded to App Store Connect) on the same store identity,
+  // above 1.2.0 Android 23 (published to Play Internal Testing on 31 Oct 2026, owner correction) and iOS 20 (built, never
+  // submitted).
+  assert.ok(expo.android.versionCode > 23, 'above the distributed Android 23 (published to Play Internal Testing on 31 Oct 2026)');
   assert.ok(Number(expo.ios.buildNumber) > 20, 'above the built, never submitted iOS 20');
   assert.ok(expo.android.versionCode > 22, 'above the superseded Android 22, consumed in Play');
   assert.ok(expo.android.versionCode > 21, 'above the superseded Android 21, consumed in Play as a draft');
