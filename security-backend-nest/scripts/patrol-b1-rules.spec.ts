@@ -16,7 +16,9 @@
  *           QR without a route version never verified (A1)
  *   PB1-08  explainVerification: every code, plain English, the deadline on the site's clock
  *   PB1-09  the stamp: fields present (company, client, site, guard, both times distinct and zoned, P-ref, window,
- *           www.sfour.co.uk), ASCII-only text, glyph paths, and a real JPEG rendered by sharp without any font
+ *           www.sfour.co.uk), ASCII-only text, glyph paths, and a real JPEG rendered by sharp without any font; (B2
+ *           correction) the stamp is a footer band APPENDED below the photo — output = photo height + band, the photo's
+ *           pixels above it unchanged — for landscape, portrait, small and EXIF-rotated photos; no "http" anywhere
  */
 process.env.TZ = 'UTC';
 
@@ -272,30 +274,67 @@ async function main() {
     assert.equal(ST.textPath('-', 0, 0, 1), 'M0 3h5v1h-5z', 'the dash is one row of five cells');
     assert.equal(ST.textPath('I', 10, 0, 2).split('M').length - 1, 7, 'one run per row of the I');
     const { svg, bandHeight, scale } = ST.stampSvg(1600, 1200, { title, lines });
-    assert.ok(scale >= 2 && bandHeight < 1200 * 0.45 && /<path d="M/.test(svg) && !/<text|font/i.test(svg), 'paths only — no <text>, no font');
-    // A real JPEG through sharp: the original bytes are untouched and the stamp darkens the bottom band only.
+    assert.ok(scale >= 2 && /<path d="M/.test(svg) && !/<text|font/i.test(svg), 'paths only — no <text>, no font');
+    assert.ok(svg.includes(`width="1600" height="${bandHeight}"`), 'the band is its own strip, the photo\'s width');
+    // A real JPEG through sharp: the original bytes are untouched; the band is APPENDED below the photo, which stays whole.
     const sharp = require('sharp');
-    const original: Buffer = await sharp({ create: { width: 800, height: 600, channels: 3, background: { r: 200, g: 200, b: 200 } } }).jpeg().toBuffer();
-    const sha = createHash('sha256').update(original).digest('hex');
-    const copy = Buffer.from(original);
-    const { jpeg, width, height } = await ST.renderStampedJpeg(original, fields);
-    assert.equal(createHash('sha256').update(original).digest('hex'), sha, 'the original buffer is never modified');
-    assert.ok(original.equals(copy));
-    assert.deepEqual([width, height], [800, 600]);
-    assert.deepEqual([jpeg[0], jpeg[1], jpeg[2]], [0xff, 0xd8, 0xff], 'a JPEG');
-    const { data, info } = await sharp(jpeg).raw().toBuffer({ resolveWithObject: true });
-    const px = (x: number, y: number) => data[(y * info.width + x) * info.channels];
-    assert.ok(px(400, 50) > 180, 'the top of the photo is untouched (still light)');
-    const band = ST.stampSvg(800, 600, ST.stampLines(fields));
-    let dark = 0;
-    let light = 0;
-    for (let y = 600 - band.bandHeight + 1; y < 599; y += 1) for (let x = 0; x < 800; x += 2) (px(x, y) < 120 ? (dark += 1) : px(x, y) > 200 ? (light += 1) : 0);
-    assert.ok(dark > 1000, `the band is darkened (${dark})`);
-    assert.ok(light > 200, `white text is drawn without any font (${light} light pixels in the band)`);
-    // EXIF orientation 6 (rotated): the stamp is drawn on the upright image.
+    // A non-uniform photo (a gradient), so "the photo's pixels are unchanged" is a real comparison.
+    const gradient = (w: number, h: number) => {
+      const raw = Buffer.alloc(w * h * 3);
+      for (let y = 0; y < h; y += 1) for (let x = 0; x < w; x += 1) {
+        const i = (y * w + x) * 3;
+        raw[i] = Math.round(40 + (180 * x) / w); raw[i + 1] = Math.round(60 + (160 * y) / h); raw[i + 2] = 200;
+      }
+      return sharp(raw, { raw: { width: w, height: h, channels: 3 } }).jpeg({ quality: 95 }).toBuffer() as Promise<Buffer>;
+    };
+    const decode = async (b: Buffer) => sharp(b).rotate().raw().toBuffer({ resolveWithObject: true });
+    const checkAppended = async (original: Buffer, w: number, h: number, what: string) => {
+      const sha = createHash('sha256').update(original).digest('hex');
+      const copy = Buffer.from(original);
+      const out = await ST.renderStampedJpeg(original, fields);
+      assert.equal(createHash('sha256').update(original).digest('hex'), sha, `${what}: the original buffer is never modified`);
+      assert.ok(original.equals(copy));
+      assert.deepEqual([out.jpeg[0], out.jpeg[1], out.jpeg[2]], [0xff, 0xd8, 0xff], `${what}: a JPEG`);
+      assert.deepEqual([out.width, out.height], [w, h], `${what}: the upright photo's size`);
+      const stamped = await sharp(out.jpeg).raw().toBuffer({ resolveWithObject: true });
+      assert.deepEqual([stamped.info.width, stamped.info.height], [w, h + out.bandHeight], `${what}: output height = photo height + band`);
+      assert.ok(out.bandHeight > 0 && out.bandHeight === ST.stampSvg(w, h, ST.stampLines(fields)).bandHeight);
+      // The whole photo area matches the source (within JPEG re-encoding tolerance): nothing is drawn over the picture.
+      const src = await decode(original);
+      let worst = 0;
+      let sum = 0;
+      let count = 0;
+      for (let y = 0; y < h; y += 1) for (let x = 0; x < w; x += 1) for (let c = 0; c < 3; c += 1) {
+        const d = Math.abs(stamped.data[(y * w + x) * stamped.info.channels + c] - src.data[(y * w + x) * src.info.channels + c]);
+        worst = Math.max(worst, d); sum += d; count += 1;
+      }
+      assert.ok(sum / count < 3 && worst < 40, `${what}: the photo above the band is unchanged (mean diff ${(sum / count).toFixed(2)}, worst ${worst})`);
+      // The band: dark, with white text drawn from the glyph paths (no font).
+      let dark = 0;
+      let light = 0;
+      for (let y = h + 1; y < h + out.bandHeight - 1; y += 1) for (let x = 0; x < w; x += 1) {
+        const v = stamped.data[(y * w + x) * stamped.info.channels];
+        if (v < 60) dark += 1; else if (v > 200) light += 1;
+      }
+      assert.ok(dark > light && light > 50, `${what}: a dark band with light text (${dark} dark, ${light} light)`);
+      return out;
+    };
+    await checkAppended(await gradient(800, 600), 800, 600, 'landscape');
+    await checkAppended(await gradient(600, 900), 600, 900, 'portrait');
+    const small = await checkAppended(await gradient(160, 120), 160, 120, 'small');
+    const narrow = ST.stampSvg(160, 120, ST.stampLines(fields));
+    assert.ok(narrow.lines.length > ST.stampLines(fields).lines.length + 1, 'a narrow photo wraps the stamp text instead of cutting it');
+    assert.ok(narrow.lines.join(' ').includes('www.sfour.co.uk'), 'the address survives wrapping');
+    assert.ok(small.bandHeight > 120 * 0.5, 'small photos keep a readable band (appended, so it never hides the photo)');
+    const big = ST.stampSvg(4000, 3000, ST.stampLines(fields));
+    assert.ok(big.scale >= 8 && big.bandHeight <= 3000 * 0.5, `a large photo gets larger text, band at most half the height (scale ${big.scale}, band ${big.bandHeight})`);
+    for (const l of [title, ...lines, ...narrow.lines]) assert.doesNotMatch(l, /https?:|:\/\//i, 'no protocol anywhere in the stamp');
+    // EXIF orientation 6 (rotated): the band is appended below the upright image.
     const rotated: Buffer = await sharp({ create: { width: 300, height: 200, channels: 3, background: '#888888' } }).jpeg().withMetadata({ orientation: 6 }).toBuffer();
     const upright = await ST.renderStampedJpeg(rotated, fields);
     assert.deepEqual([upright.width, upright.height], [200, 300], 'axes swapped for orientation 6');
+    const uprightInfo = (await sharp(upright.jpeg).metadata());
+    assert.deepEqual([uprightInfo.width, uprightInfo.height], [200, 300 + upright.bandHeight], 'appended below the upright photo');
     await assert.rejects(() => ST.renderStampedJpeg(Buffer.from('not an image'), fields), 'an undecodable original throws (the API answers 422)');
   });
 

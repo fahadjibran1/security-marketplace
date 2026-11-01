@@ -10,7 +10,9 @@ import sharp = require('sharp');
  * fontconfig and no network: librsvg (inside sharp) only fills rectangles. Characters outside printable ASCII are
  * transliterated (accents dropped, dashes and quotes simplified) or shown as '?'.
  *
- * The stamp is a translucent band across the bottom of the photo:
+ * The stamp is a SEPARATE footer band appended BELOW the photograph (S4 1.3.0 B2 correction): the output is the upright
+ * original (EXIF orientation applied) at its full size, untouched, with a dark band of the same width added underneath —
+ * nothing is drawn over the picture. The band carries:
  *   the security company's name (large),
  *   Client · Site, Guard (display name),
  *   "Captured (device)" and "Received by S4 (server)" — two clearly different times, in the SITE's time zone with the
@@ -208,37 +210,60 @@ export function textPath(text: string, x: number, y: number, scale: number): str
   return out.join('');
 }
 
-/** The overlay for an image `width` × `height`: a band at the bottom with the stamp's text. */
-export function stampSvg(width: number, height: number, stamp: { title: string; lines: string[] }): { svg: string; bandHeight: number; scale: number } {
-  const longest = Math.max(...stamp.lines.map((l) => l.length), 1);
-  const usable = Math.max(1, Math.floor(width * 0.94));
-  let scale = Math.max(1, Math.floor(usable / (longest * CELL_W)));
-  const titleScaleFor = (s: number) => Math.max(s, Math.min(2 * s, Math.floor(usable / (Math.max(stamp.title.length, 1) * CELL_W))));
-  const bandFor = (s: number) => Math.ceil(CELL_H * titleScaleFor(s) + stamp.lines.length * CELL_H * s + 4 * s);
-  while (scale > 1 && bandFor(scale) > height * 0.45) scale -= 1;
-  const titleScale = titleScaleFor(scale);
-  const bandHeight = Math.min(height, bandFor(scale));
-  const pad = Math.max(2, Math.floor(width * 0.03));
-  const top = height - bandHeight;
-  let y = top + 2 * scale;
-  const paths: string[] = [textPath(stamp.title, pad, y, titleScale)];
-  y += CELL_H * titleScale;
-  for (const line of stamp.lines) {
-    paths.push(textPath(line, pad, y, scale));
-    y += CELL_H * scale;
+/** Splits one line into pieces of at most `max` characters, at " | " or spaces where possible (pure). */
+export function wrapStampLine(line: string, max: number): string[] {
+  const out: string[] = [];
+  let rest = line;
+  while (rest.length > max) {
+    const window = rest.slice(0, max + 1);
+    const at = Math.max(window.lastIndexOf(' |'), window.lastIndexOf(' '));
+    const cut = at > Math.floor(max / 3) ? at : max;
+    out.push(rest.slice(0, cut).trimEnd());
+    rest = rest.slice(cut).replace(/^\s*\|?\s*/, '');
   }
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`
-    + `<rect x="0" y="${top}" width="${width}" height="${bandHeight}" fill="#000000" fill-opacity="0.62"/>`
-    + `<path d="${paths.join('')}" fill="#FFFFFF"/>`
-    + '</svg>';
-  return { svg, bandHeight, scale };
+  if (rest.length) out.push(rest);
+  return out;
 }
 
 /**
- * The stamped JPEG of an original photo (EXIF orientation applied, all metadata dropped). Throws when sharp cannot
+ * The footer band for an upright photo `width` × `height`: an SVG exactly `width` × `bandHeight`, drawn BELOW the photo.
+ * Text scales with the photo's width (whole pixels per font cell, so it stays crisp); on a narrow photo long lines wrap
+ * rather than being cut. The band is at most about half the photo's height for a large photo, never less than one
+ * readable scale.
+ */
+export function stampSvg(width: number, height: number, stamp: { title: string; lines: string[] }): { svg: string; bandHeight: number; scale: number; lines: string[] } {
+  const usable = Math.max(CELL_W, Math.floor(width * 0.94));
+  const longest = Math.max(...stamp.lines.map((l) => l.length), 1);
+  let scale = Math.max(1, Math.floor(usable / (longest * CELL_W)));
+  const maxChars = (s: number) => Math.max(8, Math.floor(usable / (CELL_W * s)));
+  const layout = (s: number) => {
+    const lines = stamp.lines.flatMap((l) => wrapStampLine(l, maxChars(s)));
+    const titleScale = Math.max(s, Math.min(2 * s, Math.floor(usable / (Math.max(stamp.title.length, 1) * CELL_W))));
+    const title = wrapStampLine(stamp.title, maxChars(titleScale));
+    const bandHeight = Math.ceil(title.length * CELL_H * titleScale + lines.length * CELL_H * s + 4 * s);
+    return { lines, title, titleScale, bandHeight };
+  };
+  let fit = layout(scale);
+  while (scale > 1 && fit.bandHeight > Math.max(height * 0.5, 120)) { scale -= 1; fit = layout(scale); }
+  const pad = Math.max(2, Math.floor(width * 0.03));
+  let y = 2 * scale;
+  const paths: string[] = [];
+  for (const t of fit.title) { paths.push(textPath(t, pad, y, fit.titleScale)); y += CELL_H * fit.titleScale; }
+  for (const line of fit.lines) { paths.push(textPath(line, pad, y, scale)); y += CELL_H * scale; }
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${fit.bandHeight}" viewBox="0 0 ${width} ${fit.bandHeight}">`
+    + `<rect x="0" y="0" width="${width}" height="${fit.bandHeight}" fill="#0B1F33"/>`
+    + `<path d="${paths.join('')}" fill="#FFFFFF"/>`
+    + '</svg>';
+  return { svg, bandHeight: fit.bandHeight, scale, lines: [...fit.title, ...fit.lines] };
+}
+
+/**
+ * The stamped JPEG of an original photo (EXIF orientation applied, all metadata dropped): the upright photo at its full
+ * size with the footer band appended below it, so the output is width × (height + bandHeight) and the photograph is
+ * entirely visible. `width` / `height` are the PHOTO's (upright); `bandHeight` is the band's. Throws when sharp cannot
  * decode the original (the caller answers 422).
  */
-export async function renderStampedJpeg(original: Buffer, fields: StampFields): Promise<{ jpeg: Buffer; width: number; height: number }> {
+export async function renderStampedJpeg(original: Buffer, fields: StampFields): Promise<{ jpeg: Buffer; width: number; height: number; bandHeight: number }> {
   const options = { failOn: 'error' as const, limitInputPixels: 100_000_000 };
   const meta = await sharp(original, options).metadata();
   if (!meta.width || !meta.height) throw new Error('undecodable image');
@@ -246,11 +271,14 @@ export async function renderStampedJpeg(original: Buffer, fields: StampFields): 
   const swap = (meta.orientation ?? 1) >= 5;
   const width = swap ? meta.height : meta.width;
   const height = swap ? meta.width : meta.height;
-  const { svg } = stampSvg(width, height, stampLines(fields));
-  const oriented = await sharp(original, options).rotate().toBuffer();
-  const jpeg = await sharp(oriented, options)
-    .composite([{ input: Buffer.from(svg), top: 0, left: 0 }])
-    .jpeg({ quality: 88 })
+  const { svg, bandHeight } = stampSvg(width, height, stampLines(fields));
+  // Upright pixels first (raw, no re-encode), then a canvas extended DOWNWARDS by the band, which is drawn in the new area.
+  const oriented = await sharp(original, options).rotate().raw().toBuffer({ resolveWithObject: true });
+  const jpeg = await sharp(oriented.data, { raw: { width: oriented.info.width, height: oriented.info.height, channels: oriented.info.channels } })
+    .extend({ top: 0, left: 0, right: 0, bottom: bandHeight, background: { r: 11, g: 31, b: 51, alpha: 1 } })
+    .composite([{ input: Buffer.from(svg), top: height, left: 0 }])
+    .flatten({ background: { r: 11, g: 31, b: 51 } })
+    .jpeg({ quality: 90, chromaSubsampling: '4:4:4' })
     .toBuffer();
-  return { jpeg, width, height };
+  return { jpeg, width, height, bandHeight };
 }
