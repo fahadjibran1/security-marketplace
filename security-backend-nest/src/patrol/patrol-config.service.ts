@@ -1,5 +1,5 @@
 import { HttpStatus, Injectable } from '@nestjs/common';
-import { DataSource, EntityManager } from 'typeorm';
+import { DataSource, EntityManager, QueryFailedError } from 'typeorm';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { CompanyMembershipRole, CompanyPermission } from '../company-membership/company-membership-types';
@@ -220,7 +220,13 @@ export class PatrolConfigService {
   async updateSchedule(user: JwtPayload, id: number, dto: UpdatePatrolScheduleDto) {
     const actor = await this.access.companyActor(user, CompanyPermission.PATROLS_MANAGE);
     return this.dataSource.transaction(async (manager) => {
+      // FOR UPDATE: a concurrent edit of the same schedule waits here, then finds it replaced (409) — never a second successor.
       const current = await this.scheduleRow(actor, id, manager, true);
+      if (current.supersededByScheduleId != null) {
+        throw patrolError(HttpStatus.CONFLICT, PatrolErrorCode.VALIDATION, 'This schedule was replaced by a newer version. Reload the schedules and edit the current one.', {
+          supersededByScheduleId: Number(current.supersededByScheduleId),
+        });
+      }
       if (current.archivedAt) throw patrolError(HttpStatus.CONFLICT, PatrolErrorCode.VALIDATION, 'This schedule is archived.');
       const frequencyMinutes = dto.frequencyMinutes ?? Number(current.frequencyMinutes);
       const values = {
@@ -244,12 +250,16 @@ export class PatrolConfigService {
         frequencyMinutes: Number(current.frequencyMinutes), windowMinutes: Number(current.windowMinutes),
         startsOn: dateText(current.startsOn), endsOn: dateText(current.endsOn),
       };
-      if (timingChanged(before, values)) return this.supersedeSchedule(manager, actor, current, values);
-      // Name, route and on / off changes apply in place (the windows themselves are unchanged).
+      // A timing change to an ACTIVE schedule is a new version (patrol-schedule-versions.ts). A paused schedule has no
+      // windows anywhere, so its timing (like a name, route or on / off change) is updated in place.
+      if (current.active && timingChanged(before, values)) return this.supersedeSchedule(manager, actor, current, values);
       const [row] = await updateRows(manager,
-        `UPDATE "patrol_schedules" SET "routeId" = $2, "name" = $3, "active" = $4, "updatedByUserId" = $5, "updatedAt" = now()
+        `UPDATE "patrol_schedules" SET "routeId" = $2, "name" = $3, "daysOfWeek" = $4::jsonb, "activeFrom" = $5, "activeTo" = $6,
+            "frequencyMinutes" = $7, "windowMinutes" = $8, "startsOn" = $9, "endsOn" = $10, "active" = $11,
+            "updatedByUserId" = $12, "updatedAt" = now()
           WHERE "id" = $1 RETURNING *`,
-        [id, values.routeId, values.name, values.active, actor.userId],
+        [id, values.routeId, values.name, JSON.stringify(values.daysOfWeek), values.activeFrom, values.activeTo, values.frequencyMinutes,
+          values.windowMinutes, values.startsOn, values.endsOn, values.active, actor.userId],
       );
       await this.audit(manager, actor, 'patrol.schedule.updated', 'patrol_schedule', id, serializeSchedule(current), serializeSchedule(row));
       return { ...serializeSchedule(row), configurationWarnings: await this.scheduleWarnings(manager, actor.companyId, row), predecessorId: null, timingChanged: false };
@@ -259,33 +269,42 @@ export class PatrolConfigService {
   /**
    * B1 (S4 1.2.1): a timing change ends the current schedule and creates a successor with a NEW id, in the caller's
    * transaction (see patrol-schedule-versions.ts). The predecessor is archived at the change instant and kept for history;
-   * the successor's windows apply from that instant. Audited on both: patrol.schedule.superseded (predecessor, with the
-   * successor id and effectiveAt — the link the window engine reads) and patrol.schedule.created (successor, with the
-   * predecessor id). Returns the successor with predecessorId and timingChanged = true, so the dashboard refreshes.
+   * the successor's windows apply from that instant. The link is the Migration 73 columns (supersededByScheduleId,
+   * supersededAt), written only while the predecessor is still unlinked and unarchived (the row is locked FOR UPDATE by
+   * the caller; UQ_patrol_schedules_superseded_by is the backstop). Audited on both: patrol.schedule.superseded
+   * (predecessor, with the successor id and effectiveAt — evidence; nothing reads it) and patrol.schedule.created
+   * (successor, with the predecessor id). Returns the successor with predecessorId and timingChanged = true.
    */
   private async supersedeSchedule(manager: EntityManager, actor: PatrolCompanyActor, current: any, values: {
     routeId: number | null; name: string; daysOfWeek: number[]; activeFrom: string; activeTo: string; frequencyMinutes: number;
     windowMinutes: number; startsOn: string | null; endsOn: string | null; active: boolean;
   }) {
     const predecessorId = Number(current.id);
-    // updatedAt is deliberately NOT bumped: it stays the last change of the old version's definition — the sweep's judging
-    // floor — so the windows that ended under it before the change are still judged (archivedAt marks the change).
-    const [archived] = await updateRows(manager,
-      `UPDATE "patrol_schedules" SET "active" = false, "archivedAt" = now(), "updatedByUserId" = $2
-        WHERE "id" = $1 AND "archivedAt" IS NULL RETURNING *`,
-      [predecessorId, actor.userId],
-    );
-    if (!archived) throw patrolError(HttpStatus.CONFLICT, PatrolErrorCode.VALIDATION, 'This schedule is archived.');
     const [successor] = await manager.query(
       `INSERT INTO "patrol_schedules" ("companyId", "siteId", "routeId", "name", "daysOfWeek", "activeFrom", "activeTo",
           "frequencyMinutes", "windowMinutes", "startsOn", "endsOn", "active", "createdByUserId", "updatedByUserId", "createdAt", "updatedAt")
-       VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11, $12, $13, $13, $14, $14) RETURNING *`,
+       VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11, $12, $13, $13, now(), now()) RETURNING *`,
       [actor.companyId, Number(current.siteId), values.routeId, values.name, JSON.stringify(values.daysOfWeek), values.activeFrom, values.activeTo,
-        values.frequencyMinutes, values.windowMinutes, values.startsOn, values.endsOn, values.active, actor.userId, archived.archivedAt],
+        values.frequencyMinutes, values.windowMinutes, values.startsOn, values.endsOn, values.active, actor.userId],
     );
-    const effectiveAt = new Date(archived.archivedAt).toISOString();
+    // updatedAt is deliberately NOT bumped: it stays the last change of the old version's definition — the sweep's judging
+    // floor — so the windows that ended under it before the change are still judged (archivedAt marks the change).
+    let archived: any;
+    try {
+      [archived] = await updateRows(manager,
+        `UPDATE "patrol_schedules" SET "active" = false, "archivedAt" = $3, "supersededByScheduleId" = $4, "supersededAt" = $3, "updatedByUserId" = $2
+          WHERE "id" = $1 AND "archivedAt" IS NULL AND "supersededByScheduleId" IS NULL RETURNING *`,
+        [predecessorId, actor.userId, successor.createdAt, Number(successor.id)],
+      );
+    } catch (error) {
+      if (isUniqueViolation(error, 'UQ_patrol_schedules_superseded_by')) archived = null;
+      else throw error;
+    }
+    // The transaction rolls back (successor included) when the schedule was replaced or archived meanwhile.
+    if (!archived) throw patrolError(HttpStatus.CONFLICT, PatrolErrorCode.VALIDATION, 'This schedule was replaced by a newer version. Reload the schedules and edit the current one.');
+    const effectiveAt = new Date(successor.createdAt).toISOString();
     await this.audit(manager, actor, PATROL_SCHEDULE_SUPERSEDED_ACTION, 'patrol_schedule', predecessorId, serializeSchedule(current), {
-      ...serializeSchedule(archived), successorId: Number(successor.id), effectiveAt, wasActive: Boolean(current.active), reason: 'timing_changed',
+      ...serializeSchedule(archived), successorId: Number(successor.id), effectiveAt, reason: 'timing_changed',
     });
     await this.audit(manager, actor, 'patrol.schedule.created', 'patrol_schedule', successor.id, null, {
       ...serializeSchedule(successor), predecessorId, effectiveAt,
@@ -703,6 +722,11 @@ function qrRouteWarning(siteId: number, scheduleId: number | null): PatrolConfig
 /** One schedule's warnings out of its site's. */
 export function scheduleWarningsOf(warnings: Map<number, PatrolConfigurationWarning[]>, row: any): PatrolConfigurationWarning[] {
   return (warnings.get(Number(row.siteId)) ?? []).filter((w) => w.scheduleId === Number(row.id));
+}
+
+function isUniqueViolation(error: unknown, constraint: string): boolean {
+  const driverError = (error as QueryFailedError & { driverError?: { code?: string; constraint?: string } })?.driverError;
+  return error instanceof QueryFailedError && driverError?.code === '23505' && driverError?.constraint === constraint;
 }
 
 function stripSource(policy: EffectivePolicy): PolicyFields {

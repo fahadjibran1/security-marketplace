@@ -134,10 +134,13 @@ async function main() {
 
     await test('M72-01-A-71-DATABASE-MIGRATES-TO-72-AND-72-IS-LAST', () => {
       assert.deepEqual(applied.map((m) => m.name), [MIGRATION_72], 'only 72 is pending on a 71 database');
-      assert.equal(allFiles.length, 72);
+      // S4 1.2.1: Migration 73 (1720900000020, certified by m73-migration.spec.ts) now follows 72 in the repository; this spec
+      // still migrates exactly through 72, so 72 is the last migration applied here.
+      assert.equal(allFiles.length, 73);
       assert.equal(allFiles[69], '1720900000016-AddPatrolEvidenceStorage.ts');
       assert.equal(allFiles[70], '1720900000017-AddPatrolSweepReconciliation.ts', 'Migration 71 comes just before 72');
       assert.equal(allFiles[71], '1720900000018-AddPatrolSyncRecoveryGrants.ts');
+      assert.equal(allFiles[72], '1720900000020-AddPatrolScheduleSuccessors.ts', 'Migration 73 follows 72 (1720900000019 is reserved by another branch)');
     });
     const head = await schema();
 
@@ -263,7 +266,10 @@ async function main() {
 
     await test('M72-09-NO-SEMANTIC-DRIFT-AND-NO-COLUMN-DRIFT-ON-THE-NEW-TABLE', async () => {
       const drift = (await ds.driver.createSchemaBuilder().log()).upQueries.map((x) => x.query);
-      const semantic = drift.filter((x) =>
+      // This database stops at 72, so Migration 73's columns and indexes on patrol_schedules are absent by design.
+      // …and Migration 73's schedule successor columns and indexes (m73-migration.spec.ts M73-08 certifies them).
+      const m73 = /^ALTER TABLE "patrol_schedules" ADD "superseded(ByScheduleId|At)" |^CREATE (UNIQUE )?INDEX "(UQ_patrol_schedules_superseded_by|IDX_patrol_schedules_superseded)" /;
+      const semantic = drift.filter((x) => !m73.test(x) &&
         /CREATE TABLE|DROP TABLE|CREATE TYPE|DROP TYPE|ALTER TYPE|ALTER TABLE.*ALTER COLUMN|ALTER TABLE.*DROP COLUMN|ALTER TABLE.*ADD "/i.test(x));
       assert.deepEqual(semantic, [], `semantic drift (the release gate would fail):\n${semantic.join('\n')}`);
       const ours = drift.filter((x) => /patrol_sync_recovery_grants|UQ_shifts_id_company/.test(x));

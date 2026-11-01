@@ -299,7 +299,7 @@ export class PatrolGuardService {
       // before the change — e.g. one started offline then — checked below once the start time is known.
       const versions = schedule ? await scheduleVersionBounds(this.dataSource, shift.companyId) : new Map();
       const replacedVersion = schedule?.archivedAt ? versions.get(Number(schedule.id)) : undefined;
-      const supersededWhileOn = replacedVersion?.effectiveUntil != null && replacedVersion.wasActive !== false;
+      const supersededWhileOn = replacedVersion?.effectiveUntil != null;
       if (!schedule || Number(schedule.siteId) !== shift.siteId || (!supersededWhileOn && (!schedule.active || schedule.archivedAt))) {
         throw patrolError(HttpStatus.UNPROCESSABLE_ENTITY, PatrolErrorCode.SCHEDULE_NOT_FOR_SITE, 'That patrol schedule is not active for this shift\'s site.');
       }

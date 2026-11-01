@@ -220,8 +220,8 @@ async function main() {
   const migrated = await to68.runMigrations({ transaction: 'each' });
   assert.deepEqual(migrated.map((m) => m.name),
     ['AddPatrolManagement1720900000014', 'AddPatrolScheduling1720900000015', 'AddPatrolEvidenceStorage1720900000016', 'AddPatrolSweepReconciliation1720900000017',
-      'AddPatrolSyncRecoveryGrants1720900000018'],
-    'only Migrations 68 (P1-A), 69 (P1-B scheduling), 70 (P1-C evidence storage), 71 (sweep reconciliation) and 72 (#68 recovery grants) apply');
+      'AddPatrolSyncRecoveryGrants1720900000018', 'AddPatrolScheduleSuccessors1720900000020'],
+    'only Migrations 68 (P1-A), 69 (P1-B scheduling), 70 (P1-C evidence storage), 71 (sweep reconciliation), 72 (#68 recovery grants) and 73 (durable schedule successors) apply');
   await to68.destroy();
   ctx = await boot();
   const q = async (sql: string, params: unknown[] = []) => ctx.ds.query(sql, params);

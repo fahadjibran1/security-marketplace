@@ -122,7 +122,7 @@ async function main() {
     await test('M65-01-A-64-DATABASE-MIGRATES-TO-65-AND-65-IS-LAST', () => {
       assert.equal(applied.length, 1, 'only 65 is pending on a 64 database');
       assert.equal(applied[0].name, MIGRATION_65);
-      assert.equal(allFiles.length, 72);
+      assert.equal(allFiles.length, 73);
       assert.equal(allFiles[64], '1720900000011-AddWelfarePushReminders.ts');
       assert.equal(allFiles[65], '1720900000012-AddGuardNotificationDispatches.ts', 'Migration 66 follows 65 and is certified by m66-migration.spec.ts');
       assert.equal(allFiles[66], '1720900000013-AddManualAttendance.ts', 'Migration 67 follows 66 and is certified by m67-migration.spec.ts');
@@ -131,6 +131,7 @@ async function main() {
       assert.equal(allFiles[69], '1720900000016-AddPatrolEvidenceStorage.ts', 'Migration 70 follows 69 and is certified by m70-migration.spec.ts');
       assert.equal(allFiles[70], '1720900000017-AddPatrolSweepReconciliation.ts', 'Migration 71 follows 70 and is certified by m71-migration.spec.ts');
       assert.equal(allFiles[71], '1720900000018-AddPatrolSyncRecoveryGrants.ts', 'Migration 72 follows 71 and is certified by m72-migration.spec.ts');
+      assert.equal(allFiles[72], '1720900000020-AddPatrolScheduleSuccessors.ts', 'Migration 73 follows 72 (1720900000019 is reserved by another branch) and is certified by m73-migration.spec.ts');
     });
     const head = await schema();
 

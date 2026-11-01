@@ -8,6 +8,8 @@ import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn, Unique
 @Entity('patrol_schedules')
 @Unique('UQ_patrol_schedules_id_company_site', ['id', 'companyId', 'siteId'])
 @Index('IDX_patrol_schedules_company_site', ['companyId', 'siteId'])
+@Index('UQ_patrol_schedules_superseded_by', ['supersededByScheduleId'], { unique: true, where: '"supersededByScheduleId" IS NOT NULL' })
+@Index('IDX_patrol_schedules_superseded', ['companyId'], { where: '"supersededByScheduleId" IS NOT NULL' })
 export class PatrolSchedule {
   @PrimaryGeneratedColumn({ primaryKeyConstraintName: 'PK_patrol_schedules' })
   id!: number;
@@ -50,6 +52,16 @@ export class PatrolSchedule {
 
   @Column({ type: 'timestamptz', nullable: true })
   archivedAt!: Date | null;
+
+  /**
+   * Migration 73 (S4 1.2.1): the schedule that replaced this one after a timing change (same company and site, enforced by
+   * the composite FK_patrol_schedules_superseded_by), and the instant it took effect. Both set or both null.
+   */
+  @Column({ type: 'int', nullable: true })
+  supersededByScheduleId!: number | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  supersededAt!: Date | null;
 
   @Column({ type: 'int', nullable: true })
   createdByUserId!: number | null;

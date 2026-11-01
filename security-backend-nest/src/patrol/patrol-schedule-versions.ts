@@ -1,23 +1,26 @@
 import type { PatrolScheduleLike } from './patrol-window.service';
 
 /**
- * Schedule versions (S4 1.2.1, owner decision B1) — without a migration.
+ * Schedule versions (S4 1.2.1, owner decision B1; durable since Migration 73).
  *
- * A change to a schedule's TIMING (frequencyMinutes, windowMinutes, activeFrom, activeTo, daysOfWeek, startsOn, endsOn)
- * is never applied in place: PatrolConfigService.updateSchedule ARCHIVES the current schedule (active = false,
+ * A change to an ACTIVE schedule's TIMING (frequencyMinutes, windowMinutes, activeFrom, activeTo, daysOfWeek, startsOn,
+ * endsOn) is never applied in place: PatrolConfigService.updateSchedule ARCHIVES the current schedule (active = false,
  * archivedAt = the change instant; kept for history — its runs, exceptions, evidence and audit keep pointing at it) and
  * CREATES a successor with a NEW id in the same transaction. A new id means new window keys ("s{id}:{date}:{slot}"), so
  * the successor never collides with the predecessor's runs (UQ_patrol_runs_schedule_window_scope) or exceptions (raised
- * once per windowKey), and an old run can never satisfy a new window. A name, route or on/off change stays in place.
+ * once per windowKey), and an old run can never satisfy a new window. A name, route or on/off change stays in place, and
+ * so does a timing change to a PAUSED schedule: it has no windows anywhere (plan, sweep, windows-due count all read
+ * active schedules only), runs are matched on their actual window start, and re-activation never judges earlier windows.
  *
- * The link is the audit entry written in that transaction — action PATROL_SCHEDULE_SUPERSEDED on the predecessor, with
- * { successorId, effectiveAt } — so no column is needed. effectiveAt is the successor's createdAt (the same transaction
- * instant as the predecessor's archivedAt). A window belongs to the version in force at its START:
- *   predecessor  windows starting before effectiveAt (history, and a window already open at the change, which a Guard may
- *                still start or finish a patrol for). The sweep still judges its windows that had ENDED by the change
+ * The link is patrol_schedules."supersededByScheduleId" / "supersededAt" (Migration 73; composite FK to the same company
+ * and site, one predecessor per successor). The patrol.schedule.superseded audit entry is still written as evidence, but
+ * nothing reads it. supersededAt is the successor's createdAt (the same transaction instant as the predecessor's
+ * archivedAt). A window belongs to the version in force at its START:
+ *   predecessor  windows starting before supersededAt (history, and a window already open at the change, which a Guard
+ *                may still start or finish a patrol for). The sweep still judges its windows that had ENDED by the change
  *                (its updatedAt — the judging floor — is left as it was), but never the window open at the change, so an
  *                edit never raises a retrospective "missed";
- *   successor    windows starting at or after effectiveAt ("timing changes apply from now"); its updatedAt is the same
+ *   successor    windows starting at or after supersededAt ("timing changes apply from now"); its updatedAt is the same
  *                instant, so the sweep judges it from then.
  * daysOfWeek is a timing field: it decides which local dates have windows at all.
  */
@@ -30,24 +33,22 @@ export type ScheduleVersionBounds = {
   effectiveUntil?: Date;
   predecessorId?: number;
   successorId?: number;
-  /** A superseded schedule that was switched on until the change (only then does it still have windows before it). */
-  wasActive?: boolean;
 };
 
-/** Superseded schedules that still had windows in force after `since` (they were on, and replaced after it). */
+/** Superseded schedules whose own windows reach past `since` (replaced after it). */
 export function supersededSince(versions: Map<number, ScheduleVersionBounds>, since: Date): number[] {
   return [...versions.entries()]
-    .filter(([, v]) => v.effectiveUntil && v.wasActive !== false && v.effectiveUntil.getTime() > since.getTime())
+    .filter(([, v]) => v.effectiveUntil && v.effectiveUntil.getTime() > since.getTime())
     .map(([id]) => id);
 }
 
 type Runner = { query: (sql: string, params?: unknown[]) => Promise<any> };
 
-/** Every supersession recorded for the company, keyed by schedule id (both ends of each link). */
+/** Every successor link of the company (Migration 73 columns), keyed by schedule id (both ends of each link). */
 export async function scheduleVersionBounds(runner: Runner, companyId: number): Promise<Map<number, ScheduleVersionBounds>> {
   const rows = await runner.query(
-    `SELECT "entityId", "afterData" FROM "audit_logs" WHERE "companyId" = $1 AND "action" = $2 AND "entityType" = 'patrol_schedule'`,
-    [companyId, PATROL_SCHEDULE_SUPERSEDED_ACTION],
+    `SELECT "id", "supersededByScheduleId", "supersededAt" FROM "patrol_schedules" WHERE "companyId" = $1 AND "supersededByScheduleId" IS NOT NULL`,
+    [companyId],
   );
   const map = new Map<number, ScheduleVersionBounds>();
   const entry = (id: number) => {
@@ -59,12 +60,10 @@ export async function scheduleVersionBounds(runner: Runner, companyId: number): 
     return e;
   };
   for (const row of rows) {
-    const data = typeof row.afterData === 'string' ? JSON.parse(row.afterData) : row.afterData;
-    const predecessorId = Number(row.entityId);
-    const successorId = Number(data?.successorId);
-    const at = data?.effectiveAt ? new Date(data.effectiveAt) : null;
-    if (!Number.isFinite(predecessorId) || !Number.isFinite(successorId) || !at || Number.isNaN(at.getTime())) continue;
-    Object.assign(entry(predecessorId), { effectiveUntil: at, successorId, wasActive: data?.wasActive !== false });
+    const predecessorId = Number(row.id);
+    const successorId = Number(row.supersededByScheduleId);
+    const at = new Date(row.supersededAt);
+    Object.assign(entry(predecessorId), { effectiveUntil: at, successorId });
     Object.assign(entry(successorId), { effectiveFrom: at, predecessorId });
   }
   return map;

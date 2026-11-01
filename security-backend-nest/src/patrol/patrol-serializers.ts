@@ -56,6 +56,9 @@ export function serializeSchedule(row: any) {
     endsOn: dateOnly(row.endsOn),
     active: Boolean(row.active),
     archivedAt: iso(row.archivedAt),
+    /** Migration 73: the version that replaced this schedule after a timing change, and when (null otherwise). */
+    supersededByScheduleId: n(row.supersededByScheduleId),
+    supersededAt: iso(row.supersededAt),
     createdAt: iso(row.createdAt),
     updatedAt: iso(row.updatedAt),
   };

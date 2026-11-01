@@ -85,6 +85,9 @@
  *   PS-C13  the sweep counts a repeated verified image once and flags the copy duplicate_sha256 (review), once
  *   PS-C14  a patrol started (offline) under the old version before a timing change still syncs for that version's window;
  *           the old version takes nothing after the change; the plan shows each version on its side of the change
+ *   PS-C15  Migration 73: the successor link is durable — concurrent timing edits make ONE successor (the other edit 409),
+ *           chains A → B → C bound each version, the reads need no audit entry, a paused schedule changes in place, and
+ *           the database refuses self / cross-site / unarchived / half / second-predecessor links
  *
  * Needs PATROL_SCHEDULE_DATABASE_URL pointing at a DISPOSABLE local database — it drops the schema.
  */
@@ -149,7 +152,7 @@ async function main() {
   const migrate = new DataSource({ ...base, entities: [], migrations: allFiles.map((f) => path.join(migrationsDir, f)), dropSchema: true } as never);
   await migrate.initialize();
   const migrated = await migrate.runMigrations({ transaction: 'each' });
-  assert.equal(migrated[migrated.length - 1]?.name, 'AddPatrolSyncRecoveryGrants1720900000018', 'the head is Migration 72');
+  assert.equal(migrated[migrated.length - 1]?.name, 'AddPatrolScheduleSuccessors1720900000020', 'the head is Migration 73 (durable schedule successors; 72 = patrol sync recovery grants)');
   await migrate.destroy();
 
   const { AppModule } = await import('../src/app.module');
@@ -1485,13 +1488,12 @@ async function main() {
 
     /** What PatrolConfigService.updateSchedule does on a timing change, at a chosen instant (PS-C10 checks the API does exactly this). */
     const supersedeAt = async (companyId: number, pred: any, at: Date, changes: { activeFrom?: string; activeTo?: string; freq?: number; win?: number }) => {
-      await q(`UPDATE patrol_schedules SET active = false, "archivedAt" = $2 WHERE id = $1`, [pred.id, at]); // updatedAt kept, as the service does
       const succ = await one(`INSERT INTO patrol_schedules ("companyId","siteId","routeId",name,"daysOfWeek","activeFrom","activeTo","frequencyMinutes","windowMinutes","startsOn",active,"createdAt","updatedAt")
          VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10,true,$11,$11) RETURNING *`,
         [companyId, pred.siteId, pred.routeId, pred.name, JSON.stringify(pred.daysOfWeek), changes.activeFrom ?? pred.activeFrom, changes.activeTo ?? pred.activeTo,
           changes.freq ?? pred.frequencyMinutes, changes.win ?? changes.freq ?? pred.windowMinutes, pred.startsOn, at]);
-      await q(`INSERT INTO audit_logs ("companyId",action,"entityType","entityId","afterData","createdAt") VALUES ($1,'patrol.schedule.superseded','patrol_schedule',$2,$3,$4)`,
-        [companyId, pred.id, JSON.stringify({ successorId: Number(succ.id), effectiveAt: at.toISOString(), wasActive: true }), at]);
+      // The Migration 73 link, as the service writes it (updatedAt kept: the old version's judging floor).
+      await q(`UPDATE patrol_schedules SET active = false, "archivedAt" = $2, "supersededByScheduleId" = $3, "supersededAt" = $2 WHERE id = $1`, [pred.id, at, succ.id]);
       return succ;
     };
     const keysOf = async (companyId: number) => (await exceptionsOf(companyId)).filter((e: any) => e.type === 'patrol_missed').map((e: any) => e.windowKey).sort();
@@ -1641,8 +1643,12 @@ async function main() {
       assert.equal(iso(pred.archivedAt), iso(succ.createdAt), 'the new version takes effect the instant the old one ends');
       const sup = await q(`SELECT "afterData", "userId" FROM audit_logs WHERE action = 'patrol.schedule.superseded' AND "entityId" = $1`, [predId]);
       assert.equal(sup.length, 1);
-      assert.deepEqual([sup[0].afterData.successorId, sup[0].afterData.effectiveAt, sup[0].afterData.wasActive, Number(sup[0].userId)],
-        [succId, iso(succ.createdAt), true, s.co.ownerId]);
+      assert.deepEqual([sup[0].afterData.successorId, sup[0].afterData.effectiveAt, Number(sup[0].userId)], [succId, iso(succ.createdAt), s.co.ownerId],
+        'the audit entry is kept as evidence');
+      assert.deepEqual([Number(pred.supersededByScheduleId), iso(pred.supersededAt), succ.supersededByScheduleId], [succId, iso(succ.createdAt), null],
+        'the durable link (Migration 73)');
+      const predRead = await api('GET', `/patrols/schedules/${predId}`, tok);
+      assert.deepEqual([predRead.body.supersededByScheduleId, predRead.body.supersededAt], [succId, iso(succ.createdAt)]);
       const cre = await one(`SELECT "afterData" FROM audit_logs WHERE action = 'patrol.schedule.created' AND "entityId" = $1`, [succId]);
       assert.deepEqual([cre.afterData.predecessorId, cre.afterData.effectiveAt], [predId, iso(succ.createdAt)]);
       const bounds = await V.scheduleVersionBounds(ds, s.co.id);
@@ -1800,6 +1806,65 @@ async function main() {
       const rows = plan.body.windows;
       assert.ok(rows.every((w: any) => (w.scheduleId === predId ? Date.parse(w.start) < effectiveAt : w.scheduleId === p.body.id && Date.parse(w.start) >= effectiveAt)));
       assert.deepEqual(rows.filter((w: any) => w.covered).map((w: any) => [w.scheduleId, w.windowKey]), [[predId, expected.windowKey]]);
+    });
+
+    await test('PS-C15-THE-SUCCESSOR-LINK-IS-DURABLE-ONE-SUCCESSOR-UNDER-CONCURRENT-EDITS-AND-READS-NEED-NO-AUDIT', async () => {
+      const s = await scenario('c15');
+      const tok = await login(s.co.ownerEmail);
+      const mk = async (name: string, extra: Record<string, unknown> = {}) => {
+        const r = await api('POST', '/patrols/schedules', tok, { siteId: s.site, name, activeFrom: '08:00', activeTo: '20:00', frequencyMinutes: 60, ...extra });
+        expect(r, 201, undefined, name);
+        return r.body.id as number;
+      };
+      // Concurrent timing edits of the same schedule: one successor, the other edit gets a clean 409.
+      const a = await mk('Concurrent');
+      const results = await Promise.all([
+        api('PATCH', `/patrols/schedules/${a}`, tok, { frequencyMinutes: 30 }),
+        api('PATCH', `/patrols/schedules/${a}`, tok, { frequencyMinutes: 120 }),
+      ]);
+      assert.deepEqual(results.map((r) => r.status).sort(), [200, 409], JSON.stringify(results.map((r) => r.body)));
+      const refused = results.find((r) => r.status === 409)!;
+      assert.equal(refused.body.code, 'PATROL_VALIDATION_FAILED');
+      const winner = results.find((r) => r.status === 200)!.body;
+      assert.equal(await count(`SELECT count(*) FROM patrol_schedules WHERE "companyId" = $1 AND name = 'Concurrent'`, [s.co.id]), 2, 'one successor, never two');
+      assert.equal(Number((await one(`SELECT "supersededByScheduleId" FROM patrol_schedules WHERE id = $1`, [a])).supersededByScheduleId), winner.id);
+      assert.equal(await count(`SELECT count(*) FROM audit_logs WHERE action = 'patrol.schedule.superseded' AND "entityId" = $1`, [a]), 1);
+      const again = await api('PATCH', `/patrols/schedules/${a}`, tok, { name: 'x' });
+      assert.deepEqual([again.status, again.body.code, again.body.details?.supersededByScheduleId], [409, 'PATROL_VALIDATION_FAILED', winner.id], 'the replaced version is not editable');
+
+      // A chain A → B → C: each link bounds its two versions, read from the columns.
+      const b = winner.id;
+      const c = (await api('PATCH', `/patrols/schedules/${b}`, tok, { activeTo: '21:00' })).body;
+      assert.deepEqual([c.timingChanged, c.predecessorId], [true, b]);
+      const bounds = await V.scheduleVersionBounds(ds, s.co.id);
+      const rows = await q(`SELECT id, "supersededAt" FROM patrol_schedules WHERE id = ANY($1::int[]) ORDER BY id`, [[a, b]]);
+      assert.deepEqual([bounds.get(a)!.successorId, bounds.get(b)!.predecessorId, bounds.get(b)!.successorId, bounds.get(c.id)!.predecessorId], [b, a, c.id, b]);
+      assert.deepEqual([iso(bounds.get(b)!.effectiveFrom!), iso(bounds.get(b)!.effectiveUntil!)], rows.map((r: any) => iso(r.supersededAt)));
+
+      // The reads never depend on audit_logs: with the audit entries gone (a test database only), the bounds are the same.
+      await q(`DELETE FROM audit_logs WHERE "companyId" = $1 AND action = 'patrol.schedule.superseded'`, [s.co.id]);
+      const afterAudit = await V.scheduleVersionBounds(ds, s.co.id);
+      assert.deepEqual([...afterAudit.entries()].map(([k, v]) => [k, v.effectiveFrom?.toISOString() ?? null, v.effectiveUntil?.toISOString() ?? null]).sort(),
+        [...bounds.entries()].map(([k, v]) => [k, v.effectiveFrom?.toISOString() ?? null, v.effectiveUntil?.toISOString() ?? null]).sort());
+
+      // A paused schedule has no windows: its timing changes in place (no successor, no link).
+      const paused = await mk('Paused', { active: false });
+      const pp = await api('PATCH', `/patrols/schedules/${paused}`, tok, { frequencyMinutes: 30 });
+      expect(pp, 200);
+      assert.deepEqual([pp.body.id, pp.body.timingChanged, pp.body.predecessorId, pp.body.frequencyMinutes, pp.body.supersededByScheduleId], [paused, false, null, 30, null]);
+
+      // The database refuses an invalid link whatever the service does.
+      const other = await mkSite(s.co.id, 'c15 Other');
+      const foreign = await mkSchedule(s.co.id, other, { from: '08:00', to: '12:00', freq: 60 });
+      const loose = await mkSchedule(s.co.id, s.site, { from: '08:00', to: '12:00', freq: 60 });
+      const link = (id: number, to: number, archived = true) =>
+        q(`UPDATE patrol_schedules SET active = false, "archivedAt" = ${archived ? 'now()' : 'NULL'}, "supersededByScheduleId" = $2, "supersededAt" = now() WHERE id = $1`, [id, to]);
+      await assert.rejects(() => link(loose.id, loose.id), /CHK_patrol_schedules_superseded_not_self/, 'never itself');
+      await assert.rejects(() => link(loose.id, foreign.id), /FK_patrol_schedules_superseded_by/, 'never another site');
+      await assert.rejects(() => link(loose.id, c.id, false), /CHK_patrol_schedules_superseded_archived/, 'a replaced schedule is archived');
+      await assert.rejects(() => link(loose.id, b), /UQ_patrol_schedules_superseded_by/, 'a successor replaces exactly one schedule');
+      await assert.rejects(() => q(`UPDATE patrol_schedules SET "supersededAt" = NULL WHERE id = $1`, [a]), /CHK_patrol_schedules_superseded_pair/);
+      await assert.rejects(() => q(`DELETE FROM patrol_schedules WHERE id = $1`, [b]), /FK_patrol_schedules_superseded_by/, 'a successor is never deleted from under its link');
     });
   } finally {
     await app.close();
