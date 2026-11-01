@@ -16,6 +16,8 @@ import { DEFAULT_SITE_ZONE, type PatrolPageContext } from './patrolContext';
 import {
   formatPatrolDate,
   formatPatrolDateTime,
+  patrolColumn,
+  patrolColumns,
   runStatusLabel,
   scanFlagLabel,
   signedLinkLifetimeMs,
@@ -94,7 +96,7 @@ export function PatrolEvidenceBrowser({ ctx }: { ctx: PatrolPageContext }) {
   const cards = patrols.data?.patrols ?? [];
   const selected = cards.find((c) => c.reference === reference) ?? null;
   const zone = patrols.data?.timezone ?? ctx.siteZone(day?.siteId);
-  const desktop = ctx.layout.mode === 'desktop';
+
   const daySite = sites.find((s) => s.siteId === day?.siteId) ?? null;
   const dayClient = clients.find((c) => c.sites.some((s) => s.siteId === day?.siteId)) ?? null;
 
@@ -141,8 +143,8 @@ export function PatrolEvidenceBrowser({ ctx }: { ctx: PatrolPageContext }) {
       </Text>
       {ResourceState({ resource: tree, empty, emptyMessage: photos === 'only' ? 'No patrols with photos in this range.' : 'No patrols in this range.', what: 'patrol evidence' })}
 
-      <View style={desktop ? { flexDirection: 'row', gap: 16, alignItems: 'flex-start' } : { gap: 12 }}>
-        <View style={{ flex: 1, gap: 8, minWidth: 0 }}>
+      <View style={patrolColumns(ctx.layout)} testID="patrol-evidence-columns">
+        <View style={[{ gap: 8 }, patrolColumn(ctx.layout, 1)]} testID="patrol-evidence-tree">
           {clients.map((client) => (
             <View key={`${client.clientId ?? 'none'}|${client.clientName ?? ''}`} style={{ gap: 6 }}>
               <Text style={ui.fieldLabel} accessibilityRole="header">{client.clientName ?? 'No client'}</Text>
@@ -151,7 +153,7 @@ export function PatrolEvidenceBrowser({ ctx }: { ctx: PatrolPageContext }) {
           ))}
         </View>
 
-        <View style={{ flex: 1, gap: 8, minWidth: 0 }}>
+        <View style={[{ gap: 8 }, patrolColumn(ctx.layout, 1)]} testID="patrol-evidence-day">
           {day ? (
             <PatrolPanel
               title={`${daySite?.siteName ?? ctx.siteName(day.siteId)} · ${formatPatrolDate(day.date)}`}
@@ -181,7 +183,7 @@ export function PatrolEvidenceBrowser({ ctx }: { ctx: PatrolPageContext }) {
           )}
         </View>
 
-        <View style={{ flex: desktop ? 1.4 : 1, minWidth: 0 }}>
+        <View style={patrolColumn(ctx.layout, 1.4)} testID="patrol-evidence-record">
           {selected ? <PatrolEvidenceRecord ctx={ctx} card={selected} timeZone={zone} siteName={patrols.data?.siteName ?? ''} /> : (
             <PatrolPanel title="Patrol record" subtitle="Choose a patrol to see its scans, photos and verification."><Text style={ui.muted}>No patrol chosen.</Text></PatrolPanel>
           )}

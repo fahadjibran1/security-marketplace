@@ -113,7 +113,7 @@ export function PatrolPanel({ title, subtitle, right, children }: React.PropsWit
   return (
     <View style={ui.panel}>
       <View style={ui.panelHead}>
-        <View style={{ flex: 1, gap: 2 }}>
+        <View style={{ flex: 1, gap: 2, minWidth: 180 }}>
           <Text style={ui.panelTitle} accessibilityRole="header">{title}</Text>
           {subtitle ? <Text style={ui.panelSubtitle}>{subtitle}</Text> : null}
         </View>

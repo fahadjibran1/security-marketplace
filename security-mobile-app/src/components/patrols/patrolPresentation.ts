@@ -631,6 +631,20 @@ export function patrolLayout(width: number): PatrolLayout {
 }
 
 /** Modest: live patrols and the overview refresh every 30 seconds while the page is on screen. */
+/**
+ * S4 1.3.0 B2: a column of a multi-column patrol layout. Side by side (desktop) a column flexes; stacked (tablet and
+ * mobile) it takes its natural height in normal flow — never flex: N in a column, whose zero basis lets stacked columns
+ * overlap each other and the page footer.
+ */
+export function patrolColumn(layout: Pick<PatrolLayout, 'mode'>, grow: number, minWidth = 0): { flex?: number; minWidth?: number; alignSelf?: 'stretch' } {
+  return layout.mode === 'desktop' ? { flex: grow, minWidth } : { alignSelf: 'stretch' };
+}
+
+/** The container of patrolColumn columns: a row on desktop, normal stacked flow otherwise. */
+export function patrolColumns(layout: Pick<PatrolLayout, 'mode'>, gap = 16): { flexDirection: 'row' | 'column'; gap: number; alignItems?: 'flex-start' } {
+  return layout.mode === 'desktop' ? { flexDirection: 'row', gap, alignItems: 'flex-start' } : { flexDirection: 'column', gap: 12 };
+}
+
 export const PATROL_POLL_MS = 30_000;
 
 export function shouldPollPatrols(state: { enabled: boolean; hidden: boolean; failure: string | null }): boolean {

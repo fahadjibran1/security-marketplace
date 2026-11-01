@@ -14,7 +14,7 @@ import { printIncidentReport } from '../company/incidentReportPrint';
 import { StatePanel } from '../StatePanel';
 import { Button } from '../ui/Button';
 import type { PatrolPageContext } from './patrolContext';
-import { formatPatrolDateTime } from './patrolPresentation';
+import { formatPatrolDateTime, patrolColumn, patrolColumns } from './patrolPresentation';
 import { isServerLabelPayload, renderLabelSheetHtml } from './patrolQr';
 import { PatrolQrCode } from './PatrolQrCode';
 import {
@@ -189,7 +189,7 @@ export function PatrolSetupTab({ ctx, onSelectSite }: { ctx: PatrolPageContext; 
     } finally { setScanBusy(false); }
   };
 
-  const desktop = ctx.layout.mode === 'desktop';
+
   const labelCount = Object.keys(labels).length;
 
   return (
@@ -205,8 +205,8 @@ export function PatrolSetupTab({ ctx, onSelectSite }: { ctx: PatrolPageContext; 
       {!canManage ? <Text style={ui.muted}>You can view this setup. Changing it needs the patrols.manage permission (Owner, Admin or Operations).</Text> : null}
       {flash ? <Notice tone={flash.tone} message={flash.message} /> : null}
 
-      <View style={desktop ? { flexDirection: 'row', gap: 16, alignItems: 'flex-start' } : { gap: 12 }}>
-        <View style={{ flex: 2, gap: 12, minWidth: 0 }}>
+      <View style={patrolColumns(ctx.layout)} testID="patrol-setup-columns">
+        <View style={[{ gap: 12 }, patrolColumn(ctx.layout, 2)]} testID="patrol-setup-form">
           <PatrolPanel title="1. Which shifts patrol" subtitle="The site default. A shift can still be set to Required or Not Required in the Rota Planner.">
             <ChipSelect options={SETUP_MODE_OPTIONS.map((o) => ({ value: o.value, label: o.label }))} value={draft.setupMode} onChange={(v) => set({ setupMode: v })} />
             <Text style={ui.rowMeta}>{SETUP_MODE_OPTIONS.find((o) => o.value === draft.setupMode)?.help ?? 'Not chosen yet.'}</Text>
@@ -316,7 +316,7 @@ export function PatrolSetupTab({ ctx, onSelectSite }: { ctx: PatrolPageContext; 
           ) : null}
         </View>
 
-        <View style={{ flex: 1, gap: 12, minWidth: desktop ? 300 : 0 }}>
+        <View style={[{ gap: 12 }, patrolColumn(ctx.layout, 1, 300)]} testID="patrol-setup-checklist">
           <PatrolPanel title="Activation checklist" subtitle="Everything must be ticked before patrols can start.">
             {rows.map((row) => (
               <View key={row.code} style={ui.actions} accessibilityLabel={`${row.ok ? 'Done' : 'To do'}: ${row.text}`}>

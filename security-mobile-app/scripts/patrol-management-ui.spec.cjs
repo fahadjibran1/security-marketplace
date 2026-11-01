@@ -1780,6 +1780,54 @@ test('PM-42-ROTA-PLANNER-PATROL-REQUIREMENT-ROUND-TRIP-DEFAULT-PRESERVED', async
   assert.ok(screen.includes('patrolsEnabled={patrolPermissions.canView}'));
 });
 
+test('PM-43-NARROW-WIDTHS-STACK-IN-NORMAL-FLOW-NO-FLEX-COLUMNS-NO-OVERLAP', async () => {
+  // The B2 multi-column layouts: side by side on desktop (flexing columns), stacked in normal flow below 1024px. A column
+  // with flex: N inside a stacked container has a zero basis and overlapped its neighbours and the page footer at 390px.
+  const RNW = require('react-native-web');
+  const styleOf = (root, testID) => {
+    const node = root.findAll((n) => n.props && n.props.testID === testID && n.props.style !== undefined)[0];
+    assert.ok(node, `a ${testID} container`);
+    return RNW.StyleSheet.flatten(node.props.style) || {};
+  };
+  const stacked = (s, what) => {
+    assert.notEqual(s.flexDirection, 'row', `${what}: stacked`);
+    for (const k of ['flex', 'flexGrow', 'flexBasis', 'height', 'maxHeight', 'position']) assert.equal(s[k], undefined, `${what}: no ${k} at a narrow width`);
+  };
+  const columns = [['patrol-setup-columns', 'patrol-setup-form', 'patrol-setup-checklist'], ['patrol-evidence-columns', 'patrol-evidence-tree', 'patrol-evidence-day', 'patrol-evidence-record']];
+  for (const width of [390, 768, 1440]) {
+    answers = evidenceAnswers({ getPatrolSiteSetup: readyView() });
+    const renderer = await mountPrimary({ permissions: perms('owner'), layoutWidth: width });
+    const root = renderer.root;
+    await pressByText(root, 'Setup');
+    const check = (ids) => {
+      const [container, ...cols] = ids;
+      if (width >= 1024) {
+        assert.equal(styleOf(root, container).flexDirection, 'row', `${width}: ${container} side by side (desktop unchanged)`);
+        for (const id of cols) assert.ok(styleOf(root, id).flex > 0, `${width}: ${id} flexes`);
+      } else {
+        stacked(styleOf(root, container), `${width}: ${container}`);
+        for (const id of cols) stacked(styleOf(root, id), `${width}: ${id}`);
+      }
+    };
+    check(columns[0]);
+    await pressByText(root, 'Evidence');
+    await pressByText(root, 'Site Alpha Site');
+    await pressByText(root, `Alpha Site ${LONDON_TODAY}`);
+    await pressByText(root, 'Open P-6 Ben Guard');
+    check(columns[1]);
+    act(() => renderer.unmount());
+  }
+  assert.deepEqual(P.patrolColumn(P.patrolLayout(390), 2), { alignSelf: 'stretch' });
+  assert.deepEqual(P.patrolColumn(P.patrolLayout(1440), 2), { flex: 2, minWidth: 0 });
+  // A panel title keeps a readable width: its header wraps the actions below it instead of squeezing it.
+  const panel = stripComments(read('src/components/patrols/patrolUi.tsx'));
+  assert.ok(panel.includes("panelHead: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, flexWrap: 'wrap' }"));
+  assert.ok(panel.includes('<View style={{ flex: 1, gap: 2, minWidth: 180 }}>'), 'the title column has a minimum width, so the header wraps');
+  for (const file of ['PatrolSetupTab.tsx', 'PatrolEvidenceBrowser.tsx']) {
+    assert.doesNotMatch(stripComments(read(`src/components/patrols/${file}`)), /position: 'absolute'|position: 'fixed'|\bheight: \d+, (?!resizeMode)/, `${file}: no absolute or fixed-height containers`);
+  }
+});
+
 (async () => {
   for (const [name, fn] of pending) {
     try {

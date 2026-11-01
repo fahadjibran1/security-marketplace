@@ -7,7 +7,7 @@ import type { PatrolPageContext } from './patrolContext';
 import { PatrolEvidenceList } from './PatrolEvidenceList';
 import { NativeDateInput } from '../company/NativeDateInput';
 import { FormField } from '../ui/FormField';
-import { formatPatrolDateTime, historyDateFilter, runCheckpointProgress, runFlagBadges, runStatusLabel, runTone, verificationLabel } from './patrolPresentation';
+import { formatPatrolDateTime, historyDateFilter, patrolColumn, patrolColumns, runCheckpointProgress, runFlagBadges, runStatusLabel, runTone, verificationLabel } from './patrolPresentation';
 import { Badge, BadgeRow, ChipSelect, Notice, PatrolPanel, ResourceState, RowCard, ui, usePatrolResource } from './patrolUi';
 
 const PAGE_SIZE = 25;
@@ -114,8 +114,8 @@ export function PatrolEvidenceTab({ ctx }: { ctx: PatrolPageContext }) {
       <Text style={ui.muted}>Photos open through a short-lived link and each view is recorded. Links are never saved.</Text>
       <RunFilters ctx={ctx} filters={filters} setFilters={setFilters} />
       {ResourceState({ resource: runs, empty: runs.data != null && items.length === 0, emptyMessage: 'No patrols match these filters.', what: 'patrols' })}
-      <View style={ctx.layout.mode === 'desktop' ? { flexDirection: 'row', gap: 16, alignItems: 'flex-start' } : { gap: 12 }}>
-        <View style={{ flex: 1, gap: 8, minWidth: 260 }}>
+      <View style={patrolColumns(ctx.layout)} testID="patrol-photos-columns">
+        <View style={[{ gap: 8 }, patrolColumn(ctx.layout, 1, 260)]}>
           {items.map((run) => (
             <RowCard key={run.id} accessibilityLabel={`Show photos of patrol ${run.id}`} onPress={() => setRunId(run.id)}>
               <View style={ui.actions}>
@@ -127,7 +127,7 @@ export function PatrolEvidenceTab({ ctx }: { ctx: PatrolPageContext }) {
           ))}
           {runs.data && runs.data.total > 0 ? <Pager page={page} total={runs.data.total} onPage={setPage} /> : null}
         </View>
-        <View style={{ flex: 1, minWidth: 260 }}>
+        <View style={patrolColumn(ctx.layout, 1, 260)}>
           <PatrolPanel title={selected ? `Photos of patrol #${selected.id}` : 'Photos'} subtitle={selected ? ctx.siteName(selected.siteId) : 'Choose a patrol to see its photos.'}>
             {runId != null ? ResourceState({ resource: evidence, empty: false, emptyMessage: '', what: 'photo evidence' }) : null}
             {selected && evidence.data ? <PatrolEvidenceList ctx={ctx} run={selected} evidence={evidence.data} /> : null}
