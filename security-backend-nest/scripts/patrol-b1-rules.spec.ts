@@ -261,6 +261,8 @@ async function main() {
       'Patrol P-123 | Window 14:00-15:00 (Shift patrol)',
       'Times in Europe/London | www.sfour.co.uk',
     ]);
+    assert.ok([title, ...lines].every((l) => !/https?:|:\/\//i.test(l)) && lines[lines.length - 1].endsWith(' www.sfour.co.uk'),
+      'B2: the stamp reads "www.sfour.co.uk" with no protocol prefix');
     assert.notEqual(lines[2].split(': ')[1], lines[3].split(': ')[1], 'device capture and server receipt are two distinct times');
     assert.ok([title, ...lines].every((l) => /^[\x20-\x7E]*$/.test(l)), 'printable ASCII only');
     assert.equal(ST.stampTime(Z('2026-12-02T13:32:05Z'), 'Europe/London'), '02 Dec 2026 13:32:05 GMT', 'GMT in winter');

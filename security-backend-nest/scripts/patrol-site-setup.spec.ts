@@ -31,6 +31,10 @@
  *           checkpoint is "Site setup incomplete"
  *   PSS-11  compatibility (c): pilot-shaped data — a clock schedule with a successor, an unconfirmed checkpoint, a run
  *           flagged qr_rule_missing — reads, plans, counts and is judged exactly as in 1.2.1
+ *   PSS-12  (B2) the Rota Planner: a slot's Patrol Requirement on create and on edit (shifts.manage; validation), written to
+ *           its positions, absent = NULL (the site's default, as before); added and replacement positions inherit it;
+ *           an edit changes open positions only, one audited shift.patrol_requirement_changed each; the slot detail adds
+ *           the value, its effect and the site default with its frequency, and nothing with Patrols off
  *
  * Needs PATROL_SITE_SETUP_DATABASE_URL pointing at a DISPOSABLE local database — it drops the schema.
  */
@@ -736,6 +740,79 @@ async function main() {
       assert.equal(await count(`SELECT count(*) FROM patrol_schedules WHERE "companyId" = $1 AND anchor <> 'clock'`, [P.id]), 0);
       assert.equal(await count(`SELECT count(*) FROM patrol_routes WHERE "companyId" = $1`, [P.id]), 0, 'no automatic route is ever created for a site without a setup');
       assert.equal((await one(`SELECT "confirmedAt" FROM patrol_checkpoints WHERE id = $1`, [cp.id])).confirmedAt, null);
+    });
+
+    // ═══════════════════ S4 1.3.0 B2: the Rota Planner's Patrol Requirement ═══════════════════
+    await test('PSS-12-ROTA-SLOT-PATROL-REQUIREMENT-ROUND-TRIP-DEFAULT-PRESERVED-AND-AUDITED', async () => {
+      const R = await mkCompany('romeo');
+      const viewer = await mkMember(R.id, 'romeo', 'viewer');
+      const site = await activeSite(R, 'Romeo', { setupMode: 'per_shift', evidenceMode: 'photo' });
+      const slotShifts = (slotId: number) => q(`SELECT id, status, "patrolRequirement" FROM shifts WHERE "rotaSlotId" = $1 ORDER BY id`, [slotId]);
+      const times = { startAt: '2026-12-02T08:00:00+00:00', endAt: '2026-12-02T16:00:00+00:00' };
+
+      // Create with an explicit value: every position carries it; the response shows it with the site default + frequency.
+      const created = expect(await api('POST', '/rota-slots', R.token, { siteId: site.siteId, ...times, requiredGuardCount: 2, patrolRequirement: 'required' }), 201);
+      assert.deepEqual([created.patrolRequirement.value, created.patrolRequirement.effectiveRequired, created.patrolRequirement.source],
+        ['required', true, 'shift']);
+      assert.deepEqual(created.patrolRequirement.site, {
+        setupMode: 'per_shift', active: true, frequencyMinutes: 60, windowAnchor: 'scheduled_start',
+        summary: 'Site default: only shifts marked "Required" patrol, every hour, from the scheduled start.',
+      });
+      assert.deepEqual((await slotShifts(created.id)).map((s: any) => s.patrolRequirement), ['required', 'required']);
+      const viaShift = expect(await api('GET', `/shifts/${created.positions[0].shiftId}`, R.token), 200);
+      assert.equal(viaShift.patrolRequirement.value, 'required', 'the same value on the shift read');
+
+      // Create without one (every existing client): positions stay NULL = the site's default, exactly as before.
+      const plain = expect(await api('POST', '/rota-slots', R.token, { siteId: site.siteId, ...times }), 201);
+      assert.deepEqual([plain.patrolRequirement.value, plain.patrolRequirement.effectiveRequired, plain.patrolRequirement.source], ['site_default', false, 'site']);
+      assert.deepEqual((await slotShifts(plain.id)).map((s: any) => s.patrolRequirement), [null]);
+      const read = expect(await api('GET', `/rota-slots/${plain.id}`, viewer), 200, undefined, 'a viewer reads it');
+      assert.equal(read.patrolRequirement.value, 'site_default');
+      const titled = expect(await api('PATCH', `/rota-slots/${plain.id}`, R.token, { title: 'Days' }), 200, undefined, 'title only');
+      assert.equal(titled.title, 'Days');
+      assert.deepEqual((await slotShifts(plain.id)).map((s: any) => s.patrolRequirement), [null], 'a title edit leaves the requirement alone');
+
+      // Validation and permissions.
+      expect(await api('POST', '/rota-slots', R.token, { siteId: site.siteId, ...times, patrolRequirement: 'sometimes' }), 400);
+      expect(await api('PATCH', `/rota-slots/${created.id}`, R.token, { patrolRequirement: 'sometimes' }), 400);
+      expect(await api('PATCH', `/rota-slots/${created.id}`, viewer, { patrolRequirement: 'not_required' }), 403, undefined, 'shifts.manage only');
+
+      // More positions take the slot's value; a replacement takes the replaced position's.
+      expect(await api('PATCH', `/rota-slots/${created.id}/requirement`, R.token, { requiredGuardCount: 3 }), 200);
+      assert.deepEqual((await slotShifts(created.id)).map((s: any) => s.patrolRequirement), ['required', 'required', 'required']);
+      const [first] = await slotShifts(created.id);
+      await q(`UPDATE shifts SET status = 'rejected' WHERE id = $1`, [first.id]);
+      const replaced = expect(await api('POST', `/rota-slots/${created.id}/positions/${first.id}/replace`, R.token), 201);
+      const replacementId = Math.max(...replaced.positions.map((p: any) => Number(p.shiftId)));
+      assert.ok(replacementId > Number(first.id) && replaced.positions.length === 4, 'a replacement position');
+      assert.equal((await one(`SELECT "patrolRequirement" FROM shifts WHERE id = $1`, [replacementId])).patrolRequirement, 'required');
+
+      // Change on the slot: every open position, one audited entry each (the sweep's floor); a closed position keeps its value.
+      const positions = await slotShifts(created.id);
+      const closed = positions[1];
+      await q(`UPDATE shifts SET status = 'completed' WHERE id = $1`, [closed.id]);
+      const changed = expect(await api('PATCH', `/rota-slots/${created.id}`, R.token, { patrolRequirement: 'not_required' }), 200);
+      const after = await slotShifts(created.id);
+      const open = after.filter((s: any) => !['completed', 'missed', 'cancelled'].includes(s.status));
+      assert.ok(open.length >= 2 && open.every((s: any) => s.patrolRequirement === 'not_required'));
+      assert.equal(after.find((s: any) => s.id === closed.id).patrolRequirement, 'required', 'a completed position keeps its record');
+      assert.equal(changed.patrolRequirement.value, 'mixed', 'positions now differ');
+      assert.match(changed.patrolRequirement.summary, /^Positions differ: 1 of \d+ require patrols/);
+      const audits = await q(`SELECT * FROM audit_logs WHERE action = 'shift.patrol_requirement_changed' AND "entityId" = ANY($1::int[]) ORDER BY "entityId"`, [open.map((s: any) => s.id)]);
+      assert.equal(audits.length, open.length);
+      assert.ok(audits.every((a: any) => a.beforeData.patrolRequirement === 'required' && a.afterData.patrolRequirement === 'not_required'
+        && a.afterData.rotaSlotId === created.id && a.userId === R.ownerId && a.afterData.effectiveFrom));
+      expect(await api('PATCH', `/rota-slots/${created.id}`, R.token, { patrolRequirement: 'not_required' }), 200);
+      assert.equal(await count(`SELECT count(*) FROM audit_logs WHERE action = 'shift.patrol_requirement_changed' AND "entityId" = ANY($1::int[])`, [after.map((s: any) => s.id)]),
+        open.length, 'no change, no entry');
+      const back = expect(await api('PATCH', `/rota-slots/${plain.id}`, R.token, { patrolRequirement: 'site_default', title: 'Days 2' }), 200);
+      assert.deepEqual([back.title, back.patrolRequirement.value], ['Days 2', 'site_default']);
+
+      // Patrols off: the slot responses are exactly as before (no patrolRequirement key).
+      await q(`UPDATE companies SET "patrolsEnabled" = false WHERE id = $1`, [R.id]);
+      const off = expect(await api('GET', `/rota-slots/${created.id}`, R.token), 200);
+      assert.equal('patrolRequirement' in off, false);
+      await q(`UPDATE companies SET "patrolsEnabled" = true WHERE id = $1`, [R.id]);
     });
   } finally {
     await app.close();

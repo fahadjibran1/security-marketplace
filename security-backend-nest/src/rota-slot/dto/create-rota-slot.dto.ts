@@ -1,4 +1,4 @@
-import { IsInt, IsOptional, IsString, MaxLength, Min } from 'class-validator';
+import { IsIn, IsInt, IsOptional, IsString, MaxLength, Min } from 'class-validator';
 import { IsInstantString } from '../../common/validators/is-instant-string.validator';
 
 export class CreateRotaSlotDto {
@@ -36,4 +36,9 @@ export class CreateRotaSlotDto {
   @IsInt()
   @Min(1)
   jobId?: number;
+
+  /** S4 1.3.0 B2: the positions' patrol requirement ('site_default' = the site's guided setup decides). */
+  @IsOptional()
+  @IsIn(['required', 'not_required', 'site_default'])
+  patrolRequirement?: 'required' | 'not_required' | 'site_default' | null;
 }

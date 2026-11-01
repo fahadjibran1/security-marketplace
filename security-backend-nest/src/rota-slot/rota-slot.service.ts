@@ -36,6 +36,18 @@ import {
   reacceptanceAuditData,
 } from '../shift/shift-edit-policy';
 import { GuardNotificationService } from '../guard-notification/guard-notification.service';
+import {
+  inheritSlotPatrolRequirement,
+  setShiftsPatrolRequirement,
+  shiftPatrolRequirementColumnExists,
+  slotPatrolRequirement,
+  SlotPatrolRequirementView,
+  storedPatrolRequirement,
+} from '../patrol/patrol-shift-requirement';
+import { SHIFT_PATROL_REQUIREMENT_CHANGED_ACTION } from '../patrol/patrol-shift-windows';
+
+// S4 1.3.0 B2: a closed position's patrol requirement is part of its record (as on the shift itself).
+const PATROL_REQUIREMENT_LOCKED_STATUSES = ['completed', 'missed', 'cancelled'];
 
 // Guard positions whose presence means execution is live or historical
 const EXECUTION_LOCK_STATUSES = ['in_progress', 'completed', 'missed'];
@@ -135,8 +147,9 @@ export class RotaSlotService {
         }),
       );
 
+      const createdShiftIds: number[] = [];
       for (let i = 0; i < requiredGuardCount; i++) {
-        await shiftRepo.save(
+        const created = await shiftRepo.save(
           shiftRepo.create({
             company,
             site,
@@ -149,7 +162,12 @@ export class RotaSlotService {
             rotaSlotId: saved.id,
           }),
         );
+        createdShiftIds.push(created.id);
       }
+
+      // S4 1.3.0 B2: the Rota Planner's Patrol Requirement, on every position (absent / site_default = NULL, as before).
+      const requirement = storedPatrolRequirement(input.patrolRequirement);
+      if (requirement) await setShiftsPatrolRequirement(manager, createdShiftIds, requirement);
 
       return saved;
     });
@@ -238,6 +256,8 @@ export class RotaSlotService {
           );
           addedShiftIds.push(saved.id);
         }
+        // S4 1.3.0 B2: added positions take the slot's patrol requirement.
+        await inheritSlotPatrolRequirement(manager, slotId, addedShiftIds);
       } else {
         const floor = await shiftRepo.count({
           where: { rotaSlotId: slotId, status: In(COMMITTED_STATUSES) },
@@ -680,7 +700,7 @@ export class RotaSlotService {
       const site = await manager.getRepository(Site).findOne({ where: { id: slot.siteId } });
       if (!site) throw new NotFoundException('Site not found');
 
-      return shiftRepo.save(
+      const created = await shiftRepo.save(
         shiftRepo.create({
           company: { id: slot.companyId } as any,
           site,
@@ -693,6 +713,9 @@ export class RotaSlotService {
           rotaSlotId: slotId,
         }),
       );
+      // S4 1.3.0 B2: the replacement takes the replaced position's patrol requirement.
+      await inheritSlotPatrolRequirement(manager, slotId, [created.id], rejectedShiftId);
+      return created;
     });
 
     await this.auditLogService.log({
@@ -839,7 +862,11 @@ export class RotaSlotService {
   async updateMetadata(
     user: JwtPayload,
     slotId: number,
-    input: { title?: string | null; instructions?: string | null },
+    input: {
+      title?: string | null;
+      instructions?: string | null;
+      patrolRequirement?: 'required' | 'not_required' | 'site_default' | null;
+    },
   ): Promise<RotaSlot> {
     const { company } = await this.membershipService.resolveCompanyContext(
       user.sub, user.role, CompanyPermission.SHIFTS_MANAGE,
@@ -850,20 +877,77 @@ export class RotaSlotService {
       throw new UnprocessableEntityException('Cancelled slots cannot be modified');
     }
 
+    const metadataChanged = input.title !== undefined || input.instructions !== undefined;
     if (input.title !== undefined) slot.title = input.title?.trim() || null;
     if (input.instructions !== undefined) slot.instructions = input.instructions?.trim() || null;
 
-    const saved = await this.slotRepo.save(slot);
+    // Title / instructions only: exactly as before (one save, one audit entry).
+    if (input.patrolRequirement === undefined) {
+      const saved = await this.slotRepo.save(slot);
+      await this.auditMetadata(company.id, user.sub, slot);
+      return saved;
+    }
 
+    // S4 1.3.0 B2: the Rota Planner's Patrol Requirement. It lives on the slot's positions (shifts."patrolRequirement");
+    // each open position that changes gets the same audited entry as a shift edit (shift.patrol_requirement_changed),
+    // which is what the patrol sweep reads as "future windows only". Closed positions keep theirs.
+    const requirementAfter = storedPatrolRequirement(input.patrolRequirement);
+    const saved = await this.dataSource.transaction(async (manager) => {
+      const locked = await manager.getRepository(RotaSlot)
+        .createQueryBuilder('slot')
+        .setLock('pessimistic_write')
+        .where('slot.id = :id AND slot.companyId = :companyId', { id: slotId, companyId: company.id })
+        .getOne();
+      if (!locked) throw new NotFoundException('Rota slot not found');
+      if (locked.status === 'cancelled') throw new UnprocessableEntityException('Cancelled slots cannot be modified');
+      if (!(await shiftPatrolRequirementColumnExists(manager))) {
+        throw new UnprocessableEntityException('Patrol requirements are not available on this server yet.');
+      }
+      const positions: Array<{ id: number; status: string; patrolRequirement: string | null }> = await manager.query(
+        `SELECT "id", "status", "patrolRequirement" FROM "shifts" WHERE "rotaSlotId" = $1 AND "companyId" = $2 ORDER BY "id" FOR UPDATE`,
+        [slotId, company.id],
+      );
+      const changing = positions.filter((p) => !PATROL_REQUIREMENT_LOCKED_STATUSES.includes(p.status)
+        && storedPatrolRequirement(p.patrolRequirement) !== requirementAfter);
+      await setShiftsPatrolRequirement(manager, changing.map((p) => Number(p.id)), requirementAfter);
+      for (const position of changing) {
+        await this.auditLogService.logInTransaction(manager, {
+          company: { id: company.id },
+          user: { id: user.sub },
+          action: SHIFT_PATROL_REQUIREMENT_CHANGED_ACTION,
+          entityType: 'shift',
+          entityId: Number(position.id),
+          beforeData: { patrolRequirement: storedPatrolRequirement(position.patrolRequirement) ?? 'site_default' },
+          afterData: {
+            patrolRequirement: requirementAfter ?? 'site_default', status: position.status, effectiveFrom: new Date().toISOString(),
+            rotaSlotId: slotId,
+          },
+        });
+      }
+      if (metadataChanged) {
+        if (input.title !== undefined) locked.title = slot.title;
+        if (input.instructions !== undefined) locked.instructions = slot.instructions;
+        return manager.getRepository(RotaSlot).save(locked);
+      }
+      return locked;
+    });
+    if (metadataChanged) await this.auditMetadata(company.id, user.sub, saved);
+    return saved;
+  }
+
+  private async auditMetadata(companyId: number, userId: number, slot: RotaSlot) {
     await this.auditLogService.log({
-      company: { id: company.id },
-      user: { id: user.sub },
+      company: { id: companyId },
+      user: { id: userId },
       action: 'rota_slot.metadata_updated',
       entityType: 'rota_slot',
-      entityId: slotId,
+      entityId: slot.id,
       afterData: { title: slot.title, instructions: slot.instructions },
     });
+  }
 
-    return saved;
+  /** S4 1.3.0 B2: the slot's patrol requirement for the Rota Planner (null when the company has Patrols off). */
+  async slotPatrolRequirement(slot: RotaSlot, shifts: Shift[]): Promise<SlotPatrolRequirementView | null> {
+    return slotPatrolRequirement(this.dataSource, slot.companyId, slot.siteId, shifts);
   }
 }

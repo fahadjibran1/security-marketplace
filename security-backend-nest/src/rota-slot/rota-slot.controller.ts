@@ -35,6 +35,17 @@ import { RotaSlotService } from './rota-slot.service';
 export class RotaSlotController {
   constructor(private readonly rotaSlotService: RotaSlotService) {}
 
+  /**
+   * A slot detail response. S4 1.3.0 B2: with Patrols on, it also carries patrolRequirement (the positions' value, its
+   * effect, and the site default with its frequency) for the Rota Planner; with Patrols off the response is unchanged.
+   */
+  private async detail(user: JwtPayload, id: number) {
+    const { slot, shifts } = await this.rotaSlotService.getSlotDetail(user, id);
+    const response = toSlotDetail(slot, shifts);
+    const patrolRequirement = await this.rotaSlotService.slotPatrolRequirement(slot, shifts);
+    return patrolRequirement ? { ...response, patrolRequirement } : response;
+  }
+
   @Get()
   @Roles(...COMPANY_VIEW_ROLES)
   async list(@CurrentUser() user: JwtPayload, @Query() query: ListRotaSlotsDto) {
@@ -52,8 +63,7 @@ export class RotaSlotController {
   @Get(':id')
   @Roles(...COMPANY_VIEW_ROLES)
   async findOne(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
-    const { slot, shifts } = await this.rotaSlotService.getSlotDetail(user, id);
-    return toSlotDetail(slot, shifts);
+    return this.detail(user, id);
   }
 
   @Post()
@@ -69,10 +79,10 @@ export class RotaSlotController {
       instructions: dto.instructions,
       title: dto.title,
       jobId: dto.jobId,
+      patrolRequirement: dto.patrolRequirement,
     });
     // Re-load with site relation for the response
-    const { slot: detail, shifts } = await this.rotaSlotService.getSlotDetail(user, slot.id);
-    return toSlotDetail(detail, shifts);
+    return this.detail(user, slot.id);
   }
 
   @Patch(':id')
@@ -85,9 +95,9 @@ export class RotaSlotController {
     await this.rotaSlotService.updateMetadata(user, id, {
       title: dto.title,
       instructions: dto.instructions,
+      patrolRequirement: dto.patrolRequirement,
     });
-    const { slot, shifts } = await this.rotaSlotService.getSlotDetail(user, id);
-    return toSlotDetail(slot, shifts);
+    return this.detail(user, id);
   }
 
   @Patch(':id/requirement')
@@ -118,8 +128,7 @@ export class RotaSlotController {
       startAt: dto.startAt,
       endAt: dto.endAt,
     });
-    const { slot, shifts } = await this.rotaSlotService.getSlotDetail(user, id);
-    return toSlotDetail(slot, shifts);
+    return this.detail(user, id);
   }
 
   @Patch(':id/check-call')
@@ -130,8 +139,7 @@ export class RotaSlotController {
     @Body() dto: ChangeRotaSlotCheckCallDto,
   ) {
     await this.rotaSlotService.changeCheckCallInterval(user, id, dto.checkCallIntervalMinutes);
-    const { slot, shifts } = await this.rotaSlotService.getSlotDetail(user, id);
-    return toSlotDetail(slot, shifts);
+    return this.detail(user, id);
   }
 
   @Post(':id/assign')
@@ -145,8 +153,7 @@ export class RotaSlotController {
       shiftId: dto.shiftId,
       guardId: dto.guardId,
     });
-    const { slot, shifts } = await this.rotaSlotService.getSlotDetail(user, id);
-    return toSlotDetail(slot, shifts);
+    return this.detail(user, id);
   }
 
   @Post(':id/assign-multiple')
@@ -177,8 +184,7 @@ export class RotaSlotController {
     @Param('shiftId', ParseIntPipe) shiftId: number,
   ) {
     await this.rotaSlotService.replacePosition(user, id, shiftId);
-    const { slot, shifts } = await this.rotaSlotService.getSlotDetail(user, id);
-    return toSlotDetail(slot, shifts);
+    return this.detail(user, id);
   }
 
   @Delete(':id/positions/:shiftId')
@@ -189,8 +195,7 @@ export class RotaSlotController {
     @Param('shiftId', ParseIntPipe) shiftId: number,
   ) {
     await this.rotaSlotService.cancelPosition(user, id, shiftId);
-    const { slot, shifts } = await this.rotaSlotService.getSlotDetail(user, id);
-    return toSlotDetail(slot, shifts);
+    return this.detail(user, id);
   }
 
   @Post(':id/cancel')
@@ -200,7 +205,6 @@ export class RotaSlotController {
     @Param('id', ParseIntPipe) id: number,
   ) {
     await this.rotaSlotService.cancelSlot(user, id);
-    const { slot, shifts } = await this.rotaSlotService.getSlotDetail(user, id);
-    return toSlotDetail(slot, shifts);
+    return this.detail(user, id);
   }
 }

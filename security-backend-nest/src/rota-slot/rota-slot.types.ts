@@ -23,6 +23,8 @@ export interface CreateSlotInput {
   instructions?: string | null;
   title?: string | null;
   jobId?: number | null;
+  /** S4 1.3.0 B2: written to every position created (NULL / 'site_default' = the site decides). */
+  patrolRequirement?: 'required' | 'not_required' | 'site_default' | null;
 }
 
 export interface ChangeRequirementResult {
