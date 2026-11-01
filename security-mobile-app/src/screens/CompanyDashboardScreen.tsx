@@ -36,6 +36,7 @@ import { PatrolsSummaryCard } from '../components/patrols/PatrolsSummaryCard';
 import { resolvePatrolPermissions, withPatrolNavEntry } from '../components/patrols/patrolAccess';
 import type { PatrolNavTarget } from '../components/patrols/patrolContext';
 import { actionablePatrolAlerts, patrolAlertTitle, patrolRecordTarget } from '../components/patrols/patrolPresentation';
+import { siteDefaultFromSetup } from '../components/patrols/patrolSetupText';
 import { CompanyIncidentReportDrawer } from '../components/company/CompanyIncidentReportDrawer';
 import { CompanyLogBookWorkspace, type LogBookDayPeriod } from '../components/company/CompanyLogBookWorkspace';
 import { CompanyLogBookEntryDrawer, type LogBookEntryDetail } from '../components/company/CompanyLogBookEntryDrawer';
@@ -164,6 +165,7 @@ import {
   listSites,
   getRotaWeek,
   getRotaSlot,
+  getPatrolSiteSetup,
   createRotaSlot,
   updateRotaSlotMetadata,
   changeRotaSlotRequirement,
@@ -3563,9 +3565,18 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
     return createRotaSlot(data);
   }, []);
 
+  // S4 1.3.0 B2: the site's patrol default for the Rota Planner's create form (patrols.view; null when unreadable).
+  const handleRotaSitePatrolDefault = React.useCallback(async (siteId: number): Promise<string | null> => {
+    try {
+      return siteDefaultFromSetup(await getPatrolSiteSetup(siteId));
+    } catch {
+      return null;
+    }
+  }, []);
+
   const handleRotaSaveEdits = React.useCallback(
     async (slotId: number, changes: RotaSlotChanges): Promise<RotaSlotDetail> => {
-      const { startAt, endAt, requiredGuardCount, checkCallIntervalMinutes, title, instructions } = changes;
+      const { startAt, endAt, requiredGuardCount, checkCallIntervalMinutes, title, instructions, patrolRequirement } = changes;
       let needsRefetch = false;
       let latest: RotaSlotDetail | null = null;
 
@@ -3579,10 +3590,12 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
       if (checkCallIntervalMinutes !== undefined) {
         latest = await changeRotaSlotCheckCall(slotId, checkCallIntervalMinutes);
       }
-      if (title !== undefined || instructions !== undefined) {
+      // S4 1.3.0 B2: the Patrol Requirement travels with the metadata edit (PATCH /rota-slots/:id).
+      if (title !== undefined || instructions !== undefined || patrolRequirement !== undefined) {
         latest = await updateRotaSlotMetadata(slotId, {
           ...(title !== undefined ? { title } : {}),
           ...(instructions !== undefined ? { instructions } : {}),
+          ...(patrolRequirement !== undefined ? { patrolRequirement } : {}),
         });
       }
       if (needsRefetch || !latest) {
@@ -4949,6 +4962,8 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
       onLoadSlot={handleRotaLoadSlot}
       onCreateSlot={handleRotaCreateSlot}
       onSaveSlotEdits={handleRotaSaveEdits}
+      patrolsEnabled={patrolPermissions.canView}
+      onLoadSitePatrolDefault={patrolPermissions.canView ? handleRotaSitePatrolDefault : undefined}
       onAssignPosition={handleRotaAssignPosition}
       onAssignMultiple={handleRotaAssignMultiple}
       onCancelPosition={handleRotaCancelPosition}

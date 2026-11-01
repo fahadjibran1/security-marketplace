@@ -98,6 +98,26 @@ export function resolvePatrolTab(requested: PatrolTab | null | undefined, permis
   return requested && tabs.includes(requested) ? requested : tabs[0];
 }
 
+/**
+ * S4 1.3.0 B2: the page's primary navigation — Setup / Today / Evidence — with everything else (schedules, checkpoints
+ * and routes, history, the photo list, downloads / retention / holds / exports, site settings, storage usage) one tap
+ * away under Advanced, which shows the tabs above exactly as before. Nothing is removed; each Advanced tab keeps its own
+ * permission rule (visiblePatrolTabs).
+ */
+export type PatrolSection = 'setup' | 'today' | 'evidence' | 'advanced';
+
+export const PATROL_SECTIONS: Array<{ id: PatrolSection; label: string }> = [
+  { id: 'setup', label: 'Setup' },
+  { id: 'today', label: 'Today' },
+  { id: 'evidence', label: 'Evidence' },
+  { id: 'advanced', label: 'Advanced' },
+];
+
+/** Every section needs patrols.view only: Setup is read-only without patrols.manage, Evidence shows photos only with patrols.evidence. */
+export function visiblePatrolSections(permissions: PatrolPermissions): PatrolSection[] {
+  return permissions.canView ? PATROL_SECTIONS.map((s) => s.id) : [];
+}
+
 /** Where the Patrol Management entry sits in the company navigation: directly after Live Operations. */
 export function withPatrolNavEntry<T extends string>(itemIds: T[], patrolId: T, liveOperationsId: T, permissions: PatrolPermissions): T[] {
   const without = itemIds.filter((id) => id !== patrolId);

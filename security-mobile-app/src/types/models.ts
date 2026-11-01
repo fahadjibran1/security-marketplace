@@ -1,4 +1,5 @@
 import type { TimesheetAttendanceDiscrepancy } from '../components/company/timesheetAttendance';
+import type { RotaSlotPatrolRequirement } from './patrols';
 
 export type AppRole = 'admin' | 'company' | 'company_admin' | 'company_staff' | 'guard' | 'client_admin' | 'client_viewer';
 export type TimesheetApprovalStatus = 'draft' | 'submitted' | 'approved' | 'rejected' | 'returned';
@@ -2247,6 +2248,8 @@ export interface RotaSlotSummary {
 
 export interface RotaSlotDetail extends RotaSlotSummary {
   positions: RotaSlotPositionSummary[];
+  /** S4 1.3.0 B2: the positions' patrol requirement and the site default (only for companies with Patrols on). */
+  patrolRequirement?: RotaSlotPatrolRequirement;
 }
 
 export interface RotaSlotCell {
@@ -2313,11 +2316,17 @@ export interface RotaCreatePayload {
   checkCallIntervalMinutes?: number;
   title?: string;
   instructions?: string;
+  /** S4 1.3.0 B2: absent = the site's default (as before). */
+  patrolRequirement?: RotaPatrolRequirementChoice;
 }
+
+/** S4 1.3.0 B2: the Rota Planner's Patrol Requirement choices. */
+export type RotaPatrolRequirementChoice = 'site_default' | 'required' | 'not_required';
 
 export interface RotaUpdateMetadataPayload {
   title?: string | null;
   instructions?: string | null;
+  patrolRequirement?: RotaPatrolRequirementChoice;
 }
 
 /** Diff bag sent by the workspace when saving slot edits. Parent calls appropriate ops. */
@@ -2328,6 +2337,7 @@ export interface RotaSlotChanges {
   checkCallIntervalMinutes?: number;
   title?: string | null;
   instructions?: string | null;
+  patrolRequirement?: RotaPatrolRequirementChoice;
 }
 
 export interface RotaAssignMultipleResult {

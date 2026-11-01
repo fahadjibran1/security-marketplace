@@ -244,6 +244,52 @@ boot checks run against databases migrated to 74, only their "head is Migration 
   and every restored row is unchanged.
 * Do not revert Migration 74 for an application rollback.
 
+### Known limitation (1.2.1 Guard app): a checkpoint photo prompt on an automatic route
+
+The Guard plan reports each checkpoint's EFFECTIVE photo requirement: a checkpoint's own "photo required" is ignored on
+an automatic route and at a site whose setup is active, UNLESS an active custom route includes that checkpoint. So when
+a site's setup follows the automatic route (every test-scanned checkpoint) and a checkpoint marked "photo required" is
+also on an active custom route that the site does not use, the plan says `photoRequired: true` and the deployed 1.2.1
+Guard app opens the camera for a checkpoint photo after the scan.
+
+* The server does not require that photo: verification is scans + the patrol photo (owner decision 6), whatever the
+  Guard does. Taking the photo changes nothing; it is kept as evidence like any other.
+* Worst case: the Guard declines the photo, and the 1.2.1 app asks for a reason (the reason box) before completing. The
+  patrol completes — never blocked — and is recorded exactly as any 1.2.1 completion with a reason: status
+  `incomplete` ("Completed with a reason"), one `patrol_incomplete` exception carrying the Guard's words. Its
+  verification is unaffected (verified when the scans and the patrol photo are there); no missed-checkpoint or
+  unverified exception is raised.
+* Certified by `security-backend-nest/scripts/patrol-evidence-b1.spec.ts` PEB-06 (the edge case: prompt reported, photo
+  taken → verified; photo declined with a reason → completed, verified, one `patrol_incomplete`) alongside PEB-05 (the
+  1.2.1 request sequence on a shift window verifies; no prompt without a custom route).
+* Avoid it by not keeping a spare custom route over checkpoints that are marked "photo required" at a site that follows
+  the automatic route, or by clearing "photo required" on those checkpoints.
+
+## 7. S4 1.3.0 Package B, stage B2 — Company Dashboard patrol management usability
+
+* **Navigation:** Patrol Management opens on **Setup / Today / Evidence**. **Advanced** shows every earlier tab
+  unchanged (Overview, Live Patrols, Schedules, Checkpoints & Routes, History, Photographic Evidence, Downloads /
+  retention & holds, Site settings, Storage usage), each with its own permission rule. Nothing was removed.
+* **Setup** (the B1 setup API): one workflow per site — which shifts patrol, evidence method (QR only / Photos only /
+  QR + Photos; no photo-count setting), frequency and anchor (scheduled start by default, Book On as the override),
+  checkpoints with printable labels and the authorised test scan (`POST /patrols/checkpoints/:id/confirm`; the scanned
+  text from a handheld scanner or pasted). A plain-English checklist sits beside it; **Activate** stays disabled until
+  every item passes and the changes are saved, and the server's 422 `PATROL_SETUP_INCOMPLETE` is shown as "Not
+  activated yet. Still to do: …". A final summary says what will happen before activation.
+* **Rota Planner:** the shift (slot) create form and the shift drawer have **Patrol Requirement** — Use Site Default /
+  Required / Not Required — beside the site default (which shifts patrol, how often, from when). Backend:
+  `POST /rota-slots` and `PATCH /rota-slots/:id` accept an optional `patrolRequirement` (written to the slot's
+  positions, `shifts.patrolRequirement`; absent = NULL = the site default, exactly as before); added and replacement
+  positions inherit it; an edit changes open positions only, with one audited `shift.patrol_requirement_changed` each
+  (the sweep's future-windows floor); slot detail responses add `patrolRequirement` (value or `mixed`, effect, site
+  default with its frequency) only for companies with Patrols on. No migration. Certified by
+  `patrol-site-setup.spec.ts` PSS-12.
+* **Evidence:** Client → Site → Date → Patrol time → Guard (`/patrols/evidence/tree`, `/patrols/evidence/patrols`); QR-only
+  patrols included, "Photos only" filter; one patrol record with its QR scans, photos, verification status and the
+  server's explanation. A photo opens as the **original** (the existing short-lived audited link, with a stated reason)
+  or **stamped** (`/patrols/evidence/:id/stamped`, fetched with the session into memory; the stamp reads
+  `www.sfour.co.uk` with no protocol prefix — PB1-09). No link or image data is ever shown as text, logged or stored.
+
 ---
 
 ## Also recorded with P1-C (not owner decisions)

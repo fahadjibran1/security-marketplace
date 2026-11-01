@@ -2,9 +2,10 @@ import * as React from 'react';
 import { Text, View } from 'react-native';
 import { getPatrolPolicies, listPatrolHolds, listPatrolRoutes } from '../../services/api';
 import { StatePanel } from '../StatePanel';
-import { PATROL_TABS, resolvePatrolTab, visiblePatrolTabs, type PatrolPermissions, type PatrolTab } from './patrolAccess';
+import { PATROL_SECTIONS, PATROL_TABS, resolvePatrolTab, visiblePatrolSections, visiblePatrolTabs, type PatrolPermissions, type PatrolSection, type PatrolTab } from './patrolAccess';
 import { DEFAULT_SITE_ZONE, type PatrolNavTarget, type PatrolPageContext } from './patrolContext';
 import { PatrolCheckpointsTab } from './PatrolCheckpointsTab';
+import { PatrolEvidenceBrowser } from './PatrolEvidenceBrowser';
 import { PatrolEvidenceTab, PatrolHistoryTab } from './PatrolHistoryTab';
 import { PatrolLiveTab } from './PatrolLiveTab';
 import { PatrolOverviewTab } from './PatrolOverviewTab';
@@ -13,7 +14,8 @@ import { PatrolRetentionTab } from './PatrolRetentionTab';
 import { PatrolExceptionDetail, PatrolRunDetail } from './PatrolRunDetail';
 import { PatrolSchedulesTab } from './PatrolSchedulesTab';
 import { PatrolSettingsTab, PatrolStorageTab } from './PatrolSettingsTab';
-import { ChipSelect, Notice, ui, usePatrolResource } from './patrolUi';
+import { PatrolSetupTab } from './PatrolSetupTab';
+import { ChipSelect, Notice, PatrolPanel, ui, usePatrolResource } from './patrolUi';
 
 export type CompanyPatrolsWorkspaceProps = {
   /** The signed-in company. Every patrol read is keyed on it, so a different company never sees another's data. */
@@ -33,10 +35,13 @@ export type CompanyPatrolsWorkspaceProps = {
  * The Patrol Management page (Patrols P1-D). Sections as tabs; every figure from the P1-A/B/C API. Without
  * patrols.view — which the session omits while the company's switch is off — nothing here mounts and nothing is
  * requested. Routine patrols, scans and photos live here; only actionable patrol alerts reach Live Operations.
+ *
+ * S4 1.3.0 B2: the primary navigation is Setup / Today / Evidence. Advanced holds every earlier tab, unchanged.
  */
 export function CompanyPatrolsWorkspace({ companyKey, companyName = null, permissions, layoutWidth, target, onTargetConsumed, onOpenLiveOperationsAlert }: CompanyPatrolsWorkspaceProps) {
   const layout = patrolLayout(layoutWidth);
   const [tab, setTab] = React.useState<PatrolTab | null>(() => resolvePatrolTab('overview', permissions));
+  const [section, setSection] = React.useState<PatrolSection>('today');
   const [siteId, setSiteId] = React.useState<number | null>(null);
   const [runId, setRunId] = React.useState<number | null>(null);
   const [exceptionId, setExceptionId] = React.useState<number | null>(null);
@@ -47,6 +52,7 @@ export function CompanyPatrolsWorkspace({ companyKey, companyName = null, permis
     if (seenCompany.current === companyKey) return;
     seenCompany.current = companyKey;
     setTab(resolvePatrolTab('overview', permissions));
+    setSection('today');
     setSiteId(null);
     setRunId(null);
     setExceptionId(null);
@@ -63,9 +69,9 @@ export function CompanyPatrolsWorkspace({ companyKey, companyName = null, permis
   // Live Operations → the patrol record. One-shot: consumed once, never replayed.
   React.useEffect(() => {
     if (!target || !enabled) return;
-    if (target.kind === 'run') { setTab('history'); setExceptionId(null); setRunId(target.runId); }
-    else if (target.kind === 'exception') { setTab('overview'); setRunId(null); setExceptionId(target.exceptionId); }
-    else setTab(resolvePatrolTab(target.tab, permissions));
+    if (target.kind === 'run') { setSection('advanced'); setTab('history'); setExceptionId(null); setRunId(target.runId); }
+    else if (target.kind === 'exception') { setSection('today'); setTab('overview'); setRunId(null); setExceptionId(target.exceptionId); }
+    else { setSection('today'); setTab(resolvePatrolTab(target.tab, permissions)); }
     onTargetConsumed?.(target.requestId);
   }, [target, enabled, onTargetConsumed, permissions]);
 
@@ -100,14 +106,23 @@ export function CompanyPatrolsWorkspace({ companyKey, companyName = null, permis
 
   const tabs = visiblePatrolTabs(permissions);
   const tabOptions = PATROL_TABS.filter((t) => tabs.includes(t.id)).map((t) => ({ value: t.id, label: t.label }));
+  const sections = visiblePatrolSections(permissions);
+  const sectionOptions = PATROL_SECTIONS.filter((s) => sections.includes(s.id)).map((s) => ({ value: s.id, label: s.label }));
+  const advanced = section === 'advanced';
 
   return (
     <View style={{ gap: 16 }} testID="patrol-management">
       {/* The dashboard shell already titles the page (NAV_ITEMS label and caption). */}
-      <View accessibilityRole="tablist" accessibilityLabel="Patrol Management sections">
-        <ChipSelect options={tabOptions} value={tab} onChange={(v) => setTab(v)} scroll={layout.tabsScroll} />
+      <View accessibilityRole="tablist" accessibilityLabel="Patrol Management">
+        <ChipSelect options={sectionOptions} value={section} onChange={(v) => setSection(v)} scroll={layout.tabsScroll} />
       </View>
-      {tab !== 'settings' ? (
+      {advanced ? (
+        <View accessibilityRole="tablist" accessibilityLabel="Patrol Management sections">
+          <Text style={ui.muted}>Advanced: schedules, checkpoints and routes, history, photos, downloads, retention and holds, site settings and storage.</Text>
+          <ChipSelect options={tabOptions} value={tab} onChange={(v) => setTab(v)} scroll={layout.tabsScroll} />
+        </View>
+      ) : null}
+      {section !== 'setup' && !(advanced && tab === 'settings') ? (
         <ChipSelect
           label="Site"
           scroll
@@ -119,15 +134,26 @@ export function CompanyPatrolsWorkspace({ companyKey, companyName = null, permis
       {policies.error && !policies.data ? <Notice tone="error" message={policies.error} /> : null}
       {siteId ? <Text style={ui.muted}>Site time: {ctx.siteZone(siteId)}</Text> : null}
 
-      {tab === 'overview' ? <PatrolOverviewTab ctx={ctx} /> : null}
-      {tab === 'live' ? <PatrolLiveTab ctx={ctx} /> : null}
-      {tab === 'schedules' ? <PatrolSchedulesTab ctx={ctx} /> : null}
-      {tab === 'checkpoints' ? <PatrolCheckpointsTab ctx={ctx} /> : null}
-      {tab === 'history' ? <PatrolHistoryTab ctx={ctx} /> : null}
-      {tab === 'evidence' && permissions.canViewEvidence ? <PatrolEvidenceTab ctx={ctx} /> : null}
-      {tab === 'retention' ? <PatrolRetentionTab ctx={ctx} /> : null}
-      {tab === 'settings' ? <PatrolSettingsTab ctx={ctx} /> : null}
-      {tab === 'storage' && permissions.canManageHolds ? <PatrolStorageTab ctx={ctx} /> : null}
+      {section === 'setup' ? <PatrolSetupTab ctx={ctx} onSelectSite={(id) => setSiteId(id)} /> : null}
+      {section === 'today' ? (
+        <View style={{ gap: 16 }}>
+          <PatrolOverviewTab ctx={ctx} />
+          <PatrolPanel title="Live patrols" subtitle="Patrols in progress right now.">
+            <PatrolLiveTab ctx={ctx} />
+          </PatrolPanel>
+        </View>
+      ) : null}
+      {section === 'evidence' ? <PatrolEvidenceBrowser ctx={ctx} /> : null}
+
+      {advanced && tab === 'overview' ? <PatrolOverviewTab ctx={ctx} /> : null}
+      {advanced && tab === 'live' ? <PatrolLiveTab ctx={ctx} /> : null}
+      {advanced && tab === 'schedules' ? <PatrolSchedulesTab ctx={ctx} /> : null}
+      {advanced && tab === 'checkpoints' ? <PatrolCheckpointsTab ctx={ctx} /> : null}
+      {advanced && tab === 'history' ? <PatrolHistoryTab ctx={ctx} /> : null}
+      {advanced && tab === 'evidence' && permissions.canViewEvidence ? <PatrolEvidenceTab ctx={ctx} /> : null}
+      {advanced && tab === 'retention' ? <PatrolRetentionTab ctx={ctx} /> : null}
+      {advanced && tab === 'settings' ? <PatrolSettingsTab ctx={ctx} /> : null}
+      {advanced && tab === 'storage' && permissions.canManageHolds ? <PatrolStorageTab ctx={ctx} /> : null}
 
       <PatrolRunDetail ctx={ctx} runId={runId} onClose={() => setRunId(null)} />
       <PatrolExceptionDetail ctx={ctx} exceptionId={exceptionId} onClose={() => setExceptionId(null)} />

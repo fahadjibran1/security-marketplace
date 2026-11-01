@@ -21,6 +21,7 @@ import { buildBlockers } from './compliance-model';
 import { workRestrictionNotice } from './compliance-checks';
 import { NativeDateInput, nativeInputErrorStyle, nativeInputStyle } from './NativeDateInput';
 import { ReplaceGuardPanel, ReplaceGuardUnavailableNote } from './ReplaceGuardForm';
+import { ROTA_PATROL_OPTIONS, rotaPatrolValueLabel, type RotaPatrolChoice } from '../patrols/patrolSetupText';
 import {
   isHireLinkedShift,
   replaceGuardAvailability,
@@ -312,6 +313,15 @@ type CompanyRotaPlannerWorkspaceProps = {
    * not carry (the marketplace hire link, an extended end). Absent → the server's refusal explains instead.
    */
   lookupShift?: (shiftId: number) => Shift | null | undefined;
+
+  // ── Patrols (S4 1.3.0 B2) ────────────────────────────────────────────────────
+  /**
+   * The company has Patrols on (the session lists patrols.view). Shows the Patrol Requirement on the create form and in
+   * the shift drawer. Off: the planner is exactly as before and no patrol value is ever sent.
+   */
+  patrolsEnabled?: boolean;
+  /** The site's patrol default in one line ("Site default: every shift patrols, every hour, …"), for the create form. */
+  onLoadSitePatrolDefault?: (siteId: number) => Promise<string | null>;
 };
 
 // ── Day name constants ─────────────────────────────────────────────────────────
@@ -360,6 +370,8 @@ export function CompanyRotaPlannerWorkspace({
   replacementGuards,
   onReplaceGuard,
   lookupShift,
+  patrolsEnabled = false,
+  onLoadSitePatrolDefault,
 }: CompanyRotaPlannerWorkspaceProps) {
 
   // ── Slot detail state ──────────────────────────────────────────────────────
@@ -378,6 +390,8 @@ export function CompanyRotaPlannerWorkspace({
   const [createCheckCall, setCreateCheckCall] = React.useState('');
   const [createTitle, setCreateTitle]     = React.useState('');
   const [createInstructions, setCreateInstructions] = React.useState('');
+  const [createPatrol, setCreatePatrol]   = React.useState<RotaPatrolChoice>('site_default');
+  const [createSiteDefault, setCreateSiteDefault] = React.useState<string | null>(null);
   const [createErrors, setCreateErrors]   = React.useState<Record<string, string>>({});
   const [creating, setCreating]           = React.useState(false);
   const [createError, setCreateError]     = React.useState<string | null>(null);
@@ -391,6 +405,8 @@ export function CompanyRotaPlannerWorkspace({
   const [editCheckCall, setEditCheckCall] = React.useState('');
   const [editTitle, setEditTitle]         = React.useState('');
   const [editInstructions, setEditInstructions] = React.useState('');
+  /** 'mixed' = positions differ and the person has not chosen a value (nothing is sent). */
+  const [editPatrol, setEditPatrol]       = React.useState<RotaPatrolChoice | 'mixed'>('site_default');
   const [editSaving, setEditSaving]       = React.useState(false);
   const [editError, setEditError]         = React.useState<string | null>(null);
 
@@ -494,6 +510,7 @@ export function CompanyRotaPlannerWorkspace({
     setEditCheckCall(String(slotDetail.checkCallIntervalMinutes));
     setEditTitle(slotDetail.title ?? '');
     setEditInstructions(slotDetail.instructions ?? '');
+    setEditPatrol(slotDetail.patrolRequirement?.value ?? 'site_default');
     setEditError(null);
     setEditMode(true);
   }, [slotDetail]);
@@ -536,6 +553,11 @@ export function CompanyRotaPlannerWorkspace({
     if (newTitle !== slotDetail.title) changes.title = newTitle;
     if (newInstructions !== slotDetail.instructions) changes.instructions = newInstructions;
 
+    // S4 1.3.0 B2: sent only when Patrols are on, the server reported the slot's value, and the person changed it.
+    if (patrolsEnabled && slotDetail.patrolRequirement && editPatrol !== 'mixed' && editPatrol !== slotDetail.patrolRequirement.value) {
+      changes.patrolRequirement = editPatrol;
+    }
+
     if (Object.keys(changes).length === 0) { setEditMode(false); return; }
 
     setEditSaving(true);
@@ -550,7 +572,7 @@ export function CompanyRotaPlannerWorkspace({
     } finally {
       setEditSaving(false);
     }
-  }, [slotDetail, editDate, editStart, editEnd, editGuards, editCheckCall, editTitle, editInstructions, onSaveSlotEdits, onRefreshWeek]);
+  }, [slotDetail, editDate, editStart, editEnd, editGuards, editCheckCall, editTitle, editInstructions, editPatrol, patrolsEnabled, onSaveSlotEdits, onRefreshWeek]);
 
   // ── Create slot ────────────────────────────────────────────────────────────
 
@@ -569,6 +591,7 @@ export function CompanyRotaPlannerWorkspace({
     setCreateCheckCall('');
     setCreateTitle('');
     setCreateInstructions('');
+    setCreatePatrol('site_default');
     setCreateErrors({});
     setCreateError(null);
     setCreateOpen(true);
@@ -622,6 +645,8 @@ export function CompanyRotaPlannerWorkspace({
         ...(checkNum !== undefined ? { checkCallIntervalMinutes: checkNum } : {}),
         ...(createTitle.trim() ? { title: createTitle.trim() } : {}),
         ...(createInstructions.trim() ? { instructions: createInstructions.trim() } : {}),
+        // S4 1.3.0 B2: only an explicit choice is sent; "Use Site Default" sends nothing (exactly as before).
+        ...(patrolsEnabled && createPatrol !== 'site_default' ? { patrolRequirement: createPatrol } : {}),
       };
       const detail = await onCreateSlot(payload);
       setCreateOpen(false);
@@ -635,7 +660,18 @@ export function CompanyRotaPlannerWorkspace({
     } finally {
       setCreating(false);
     }
-  }, [createSiteId, createDate, createStart, createEnd, createGuards, createCheckCall, createTitle, createInstructions, onCreateSlot, onRefreshWeek]);
+  }, [createSiteId, createDate, createStart, createEnd, createGuards, createCheckCall, createTitle, createInstructions, createPatrol, patrolsEnabled, onCreateSlot, onRefreshWeek]);
+
+  // S4 1.3.0 B2: the chosen site's patrol default, for the create form (read only when Patrols are on).
+  React.useEffect(() => {
+    setCreateSiteDefault(null);
+    if (!createOpen || !patrolsEnabled || !onLoadSitePatrolDefault || !createSiteId) return undefined;
+    let live = true;
+    onLoadSitePatrolDefault(Number(createSiteId))
+      .then((text) => { if (live) setCreateSiteDefault(text); })
+      .catch(() => { if (live) setCreateSiteDefault(null); });
+    return () => { live = false; };
+  }, [createOpen, createSiteId, patrolsEnabled, onLoadSitePatrolDefault]);
 
   // ── Single assign ──────────────────────────────────────────────────────────
 
@@ -1073,6 +1109,9 @@ export function CompanyRotaPlannerWorkspace({
           checkCall={createCheckCall} onCheckCall={setCreateCheckCall}
           title={createTitle} onTitle={setCreateTitle}
           instructions={createInstructions} onInstructions={setCreateInstructions}
+          patrolsEnabled={patrolsEnabled}
+          patrol={createPatrol} onPatrol={setCreatePatrol}
+          siteDefault={createSiteDefault}
           errors={createErrors}
           submitError={createError}
         />
@@ -1125,6 +1164,8 @@ export function CompanyRotaPlannerWorkspace({
           editCheckCall={editCheckCall} onEditCheckCall={setEditCheckCall}
           editTitle={editTitle} onEditTitle={setEditTitle}
           editInstructions={editInstructions} onEditInstructions={setEditInstructions}
+          patrolsEnabled={patrolsEnabled}
+          editPatrol={editPatrol} onEditPatrol={setEditPatrol}
           editError={editError}
           cancelSlotError={cancelSlotError}
           assignShiftId={assignShiftId}
@@ -1283,6 +1324,7 @@ function CreateSlotBody({
   date, onDate, start, onStart, end, onEnd,
   guards, onGuards, checkCall, onCheckCall,
   title, onTitle, instructions, onInstructions,
+  patrolsEnabled = false, patrol = 'site_default', onPatrol, siteDefault = null,
   errors, submitError,
 }: {
   siteOptions: Array<{ label: string; value: string }>;
@@ -1294,6 +1336,9 @@ function CreateSlotBody({
   checkCall: string; onCheckCall: (v: string) => void;
   title: string; onTitle: (v: string) => void;
   instructions: string; onInstructions: (v: string) => void;
+  patrolsEnabled?: boolean;
+  patrol?: RotaPatrolChoice; onPatrol?: (v: RotaPatrolChoice) => void;
+  siteDefault?: string | null;
   errors: Record<string, string>;
   submitError: string | null;
 }) {
@@ -1372,6 +1417,17 @@ function CreateSlotBody({
           />
         </FormField>
 
+        {patrolsEnabled && onPatrol ? (
+          <>
+            <SectionLabel label="Patrols" spaced />
+            <PatrolRequirementField
+              value={patrol}
+              onChange={onPatrol}
+              siteDefault={siteDefault ?? (siteId ? null : 'Choose a site to see its patrol default.')}
+            />
+          </>
+        ) : null}
+
         <SectionLabel label="Notes" spaced />
 
         <FormField label="Instructions" error={errors.instructions}>
@@ -1396,6 +1452,7 @@ function SlotDetailBody({
   editDate, onEditDate, editStart, onEditStart, editEnd, onEditEnd,
   editGuards, onEditGuards, editCheckCall, onEditCheckCall,
   editTitle, onEditTitle, editInstructions, onEditInstructions,
+  patrolsEnabled = false, editPatrol = 'site_default', onEditPatrol,
   editError, cancelSlotError,
   assignShiftId, onOpenAssign, onCloseAssign,
   eligibleGuards, loadingEligible, assessCandidateRow, onFixCompliance,
@@ -1419,6 +1476,8 @@ function SlotDetailBody({
   editCheckCall: string; onEditCheckCall: (v: string) => void;
   editTitle: string; onEditTitle: (v: string) => void;
   editInstructions: string; onEditInstructions: (v: string) => void;
+  patrolsEnabled?: boolean;
+  editPatrol?: RotaPatrolChoice | 'mixed'; onEditPatrol?: (v: RotaPatrolChoice) => void;
   editError: string | null;
   cancelSlotError: string | null;
   assignShiftId: number | null;
@@ -1557,6 +1616,29 @@ function SlotDetailBody({
         ) : (
           <DetailRow label="Interval" value={`${detail.checkCallIntervalMinutes} min`} />
         )}
+
+        {/* Patrols (S4 1.3.0 B2): the slot's Patrol Requirement, its effect and the site default with its frequency */}
+        {patrolsEnabled && detail.patrolRequirement ? (
+          <>
+            <SectionLabel label="Patrols" spaced />
+            {editMode && onEditPatrol ? (
+              <PatrolRequirementField
+                value={editPatrol === 'mixed' ? null : editPatrol}
+                onChange={onEditPatrol}
+                siteDefault={detail.patrolRequirement.site.summary}
+                note={editPatrol === 'mixed'
+                  ? 'Positions on this shift were set differently. Choose a value to apply it to every open position.'
+                  : 'Applies to every open position of this shift; patrol times already passed are not changed.'}
+              />
+            ) : (
+              <>
+                <DetailRow label="Patrol Requirement" value={rotaPatrolValueLabel(detail.patrolRequirement.value)} />
+                <Text style={db.instructionsText} accessibilityLabel="Patrol effect">{detail.patrolRequirement.summary}</Text>
+                <Text style={db.instructionsText} accessibilityLabel="Site patrol default">{detail.patrolRequirement.site.summary}</Text>
+              </>
+            )}
+          </>
+        ) : null}
 
         {/* Metadata */}
         {editMode ? (
@@ -2063,6 +2145,40 @@ function SectionLabel({ label, spaced }: { label: string; spaced?: boolean }) {
   );
 }
 
+/**
+ * S4 1.3.0 B2: Patrol Requirement — Use Site Default / Required / Not Required — with the site's default (which shifts
+ * patrol, how often, from when) shown beside it. One control for the create form and the shift drawer.
+ */
+function PatrolRequirementField({ value, onChange, siteDefault, note }: {
+  value: RotaPatrolChoice | null;
+  onChange: (v: RotaPatrolChoice) => void;
+  siteDefault: string | null;
+  note?: string;
+}) {
+  return (
+    <FormField label="Patrol Requirement" helperText={note}>
+      <View style={db.patrolChoiceRow} accessibilityRole="radiogroup" accessibilityLabel="Patrol Requirement">
+        {ROTA_PATROL_OPTIONS.map((option) => {
+          const active = option.value === value;
+          return (
+            <Pressable
+              key={option.value}
+              accessibilityRole="radio"
+              accessibilityState={{ checked: active }}
+              accessibilityLabel={`Patrol Requirement: ${option.label}`}
+              onPress={() => onChange(option.value)}
+              style={[db.patrolChoice, active && db.patrolChoiceActive]}
+            >
+              <Text style={[db.patrolChoiceText, active && db.patrolChoiceTextActive]}>{option.label}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+      {siteDefault ? <Text style={db.patrolSiteDefault} accessibilityLabel="Site patrol default">{siteDefault}</Text> : null}
+    </FormField>
+  );
+}
+
 function DetailRow({ label, value }: { label: string; value: string }) {
   return (
     <View style={db.detailRow}>
@@ -2157,6 +2273,12 @@ const db = StyleSheet.create({
   detailValue: { fontSize: 13, fontWeight: '600', color: colors.textPrimary },
 
   instructionsText: { fontSize: 13, color: colors.textSecondary, lineHeight: 20 },
+  patrolChoiceRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
+  patrolChoice: { borderWidth: 1, borderColor: colors.border, borderRadius: radii.pill, paddingHorizontal: spacing.md, paddingVertical: 6, backgroundColor: colors.card },
+  patrolChoiceActive: { backgroundColor: colors.primaryNavy, borderColor: colors.primaryNavy },
+  patrolChoiceText: { ...typography.caption, color: colors.textPrimary, fontWeight: '600' },
+  patrolChoiceTextActive: { color: colors.textOnBrand },
+  patrolSiteDefault: { fontSize: 12, color: colors.textSecondary, lineHeight: 18, marginTop: spacing.xs },
 
   // Cover summary
   coverSummary: {

@@ -176,6 +176,9 @@ export interface PatrolRoute {
   createdAt: string | null;
   updatedAt: string | null;
   checkpoints?: PatrolRouteCheckpoint[];
+  /** S4 1.3.0 (Migration 74): 'auto' = the site setup's route of every confirmed checkpoint; absent from older servers. */
+  kind?: 'custom' | 'auto';
+  supersededByRouteId?: number | null;
 }
 
 export interface PatrolRouteInput {
@@ -573,4 +576,153 @@ export interface GuardEvidenceUploadIntent {
   evidence: PatrolEvidence;
   /** A short-lived presigned PUT, or null once the photo is settled. Never logged or stored. */
   upload: { method: 'PUT'; url: string; expiresAt: string; headers: Record<string, string> } | null;
+}
+
+// ─── S4 1.3.0: guided site patrol setup (B1 API, B2 dashboard) ─────────────────────────────────────────────────────
+
+export type PatrolSetupMode = 'off' | 'every_shift' | 'per_shift';
+export type PatrolEvidenceMode = 'qr' | 'photo' | 'qr_photo';
+export type PatrolWindowAnchor = 'scheduled_start' | 'book_on';
+
+export interface PatrolSetupChecklistItem {
+  code: 'setup_mode' | 'frequency' | 'confirmed_checkpoints' | 'route_checkpoints' | string;
+  ok: boolean;
+  text: string;
+}
+
+export interface PatrolSetupCheckpoint extends PatrolCheckpoint {
+  /** The authorised test scan of the CURRENT label (cleared by a rotation or revocation). */
+  confirmed: boolean;
+  confirmedAt: string | null;
+  confirmedByUserId: number | null;
+  confirmedTokenVersion: number | null;
+  onCurrentRoute: boolean;
+}
+
+/** GET /patrols/sites/:siteId/setup (and the answer to every setup write). */
+export interface PatrolSiteSetup {
+  siteId: number;
+  siteName: string | null;
+  timezone: string | null;
+  setupMode: PatrolSetupMode | null;
+  evidenceMode: PatrolEvidenceMode;
+  frequencyMinutes: number | null;
+  windowAnchor: PatrolWindowAnchor;
+  active: boolean;
+  confirmedAt: string | null;
+  confirmedByUserId: number | null;
+  schedule: { id: number } & Record<string, unknown> | null;
+  route: {
+    mode: 'auto' | 'custom' | 'none';
+    scheduleRouteId: number | null;
+    versions: number;
+    currentVersion: {
+      id: number;
+      kind: string;
+      name: string;
+      createdAt: string;
+      checkpoints: Array<{ checkpointId: number; label: string; required: boolean; position: number }>;
+    } | null;
+  } | null;
+  checkpoints: PatrolSetupCheckpoint[];
+  checklist: PatrolSetupChecklistItem[];
+  ready: boolean;
+  warnings: Array<{ code: string; message: string }>;
+}
+
+/** PUT /patrols/sites/:siteId/setup. Saving never activates. */
+export interface PatrolSiteSetupInput {
+  setupMode: PatrolSetupMode;
+  evidenceMode: PatrolEvidenceMode;
+  frequencyMinutes: number;
+  windowAnchor?: PatrolWindowAnchor;
+  /** A custom route of the site; null / absent = every confirmed checkpoint (the automatic route). */
+  routeId?: number | null;
+}
+
+// ─── S4 1.3.0: evidence browsing (Client → Site → Date → Patrol time → Guard) ──────────────────────────────────────
+
+export interface PatrolEvidenceTreeDay {
+  date: string;
+  patrols: number;
+  withPhotos: number;
+  withoutPhotos: number;
+}
+
+export interface PatrolEvidenceTreeSite {
+  siteId: number;
+  siteName: string;
+  timezone: string;
+  patrols: number;
+  withPhotos: number;
+  days: PatrolEvidenceTreeDay[];
+}
+
+export interface PatrolEvidenceTree {
+  from: string;
+  to: string;
+  dateBasis: 'site_local';
+  clients: Array<{ clientId: number | null; clientName: string | null; sites: PatrolEvidenceTreeSite[] }>;
+}
+
+export interface PatrolEvidenceCardPhoto {
+  id: number;
+  kind: string;
+  uploadStatus: PatrolEvidenceUploadStatus;
+  retentionStatus: PatrolEvidenceRetentionStatus;
+  capturedAtDevice: string | null;
+  receivedAt: string | null;
+  verifiedAt: string | null;
+  viewable: boolean;
+  /** An API path (authenticated), never a signed link. */
+  stampedPath: string | null;
+}
+
+export interface PatrolEvidenceCard {
+  reference: string;
+  run: PatrolRun;
+  window: { scheduleId: number | null; scheduleName: string | null; anchor: string | null; windowKey: string; start: string; end: string; label: string } | null;
+  guard: { id: number; displayName: string };
+  photoCount: number;
+  photosRestricted: boolean;
+  photos: PatrolEvidenceCardPhoto[] | null;
+  thumbnailsPath: string | null;
+  qrScans: Array<{
+    id: number;
+    checkpointId: number | null;
+    label: string | null;
+    result: string;
+    flags: string[];
+    scannedAtDevice: string | null;
+    receivedAtServer: string | null;
+  }>;
+  verification: { status: PatrolVerificationStatus; code: string; text: string; deadline: string | null };
+}
+
+export interface PatrolEvidencePatrols {
+  siteId: number;
+  siteName: string;
+  clientName: string | null;
+  timezone: string;
+  date: string;
+  dayStart: string;
+  dayEnd: string;
+  photos: 'all' | 'only';
+  evidenceRestricted: boolean;
+  patrols: PatrolEvidenceCard[];
+}
+
+/** S4 1.3.0 B2: a Rota Planner slot's patrol requirement (present only for companies with Patrols on). */
+export interface RotaSlotPatrolRequirement {
+  value: 'required' | 'not_required' | 'site_default' | 'mixed';
+  effectiveRequired: boolean | null;
+  source: 'site' | 'shift' | 'mixed';
+  summary: string;
+  site: {
+    setupMode: PatrolSetupMode | null;
+    active: boolean;
+    frequencyMinutes: number | null;
+    windowAnchor: PatrolWindowAnchor;
+    summary: string;
+  };
 }

@@ -30,6 +30,12 @@
  *   - S4 1.2.1: photos required are Yes/No toggles writing 1/0 (PM-28); the server's "Configuration required" warnings
  *     on Settings and Schedules, and a timing edit answered with a new schedule version (PM-29); neutral duplicate-photo
  *     and QR-rule labels (PM-30); NFC offered nowhere (PM-31).
+ *   - S4 1.3.0 B2 (PM-37–42): the primary navigation Setup / Today / Evidence with every earlier tab reachable under
+ *     Advanced; the guided site setup (evidence method without a photo count, frequency, scheduled start / Book On,
+ *     checkpoints, printable labels, the authorised test scan) whose Activate stays disabled until the checklist passes
+ *     and whose 422 PATROL_SETUP_INCOMPLETE reads in plain English; the evidence browser (Client → Site → Date → Patrol
+ *     time → Guard, QR-only patrols included, Photos only, original vs stamped, no link or image data in text or logs);
+ *     the Rota Planner's Patrol Requirement (create and edit round trip, the default preserved, nothing with Patrols off).
  */
 const Module = require('node:module');
 const originalLoad = Module._load;
@@ -260,10 +266,20 @@ function baseAnswers(over = {}) {
   };
 }
 
-async function mount(props) {
+/** The page as it opens (S4 1.3.0 B2: the primary navigation, Setup / Today / Evidence / Advanced, on Today). */
+async function mountPrimary(props) {
   let renderer;
   await act(async () => { renderer = TestRenderer.create(h(CompanyPatrolsWorkspace, { companyKey: 'co-1', layoutWidth: 1440, ...props })); });
   await settle();
+  return renderer;
+}
+/**
+ * The page with its Advanced area open. S4 1.3.0 B2 moved the P1-D tab row (Overview … Storage usage, unchanged) under
+ * Advanced, so the checks written against that row open Advanced first — one press, exactly as a person now does.
+ */
+async function mount(props) {
+  const renderer = await mountPrimary(props);
+  if (has(renderer.root, 'Advanced')) await pressByText(renderer.root, 'Advanced');
   return renderer;
 }
 
@@ -371,6 +387,7 @@ test('PM-05-A-COMPANY-CHANGE-DROPS-EVERYTHING', async () => {
   let renderer;
   await act(async () => { renderer = TestRenderer.create(h(CompanyPatrolsWorkspace, { companyKey: 'co-A', layoutWidth: 1440, permissions: perms('owner') })); });
   await settle();
+  await pressByText(renderer.root, 'Advanced');
   await pressByText(renderer.root, 'Live Patrols');
   await pressByText(renderer.root, 'Open patrol 5');
   assert.ok(textOf(renderer.root).includes('Patrol #5'), 'run detail open for company A');
@@ -1366,6 +1383,401 @@ test('PM-23-WINDOWS-DUE-TODAY-FROM-THE-BACKEND-78', async () => {
   assert.ok(controller.includes("@Get('windows/day')"));
   const service = read('../security-backend-nest/src/patrol/patrol-windows-day.service.ts');
   assert.ok(service.includes('this.access.companyActor(user, CompanyPermission.PATROLS_VIEW)') && service.includes('this.windows.windowsBetween('), 'patrols.view; the P1-B engine');
+});
+
+// ═══ S4 1.3.0 B2: dashboard usability ═══
+
+function setupCheckpoint(id, label, confirmed) {
+  return { id, siteId: 10, publicId: 'x'.repeat(32), label, description: null, tokenVersion: 1, photoRequired: false, active: true, rotatedAt: null, revokedAt: null,
+    createdAt: null, updatedAt: null, confirmed, confirmedAt: confirmed ? iso(NOW - 3_600_000) : null, confirmedByUserId: confirmed ? 1 : null,
+    confirmedTokenVersion: confirmed ? 1 : null, onCurrentRoute: confirmed };
+}
+function setupView(over = {}) {
+  return {
+    siteId: 10, siteName: 'Alpha Site', timezone: 'Europe/London', setupMode: 'every_shift', evidenceMode: 'qr', frequencyMinutes: 60, windowAnchor: 'scheduled_start',
+    active: false, confirmedAt: null, confirmedByUserId: null, policy: {}, schedule: { id: 7 },
+    route: { mode: 'auto', scheduleRouteId: 40, versions: 1, currentVersion: { id: 40, kind: 'auto', name: 'Every confirmed checkpoint', createdAt: iso(NOW), checkpoints: [] } },
+    checkpoints: [setupCheckpoint(1, 'Gate 1', false), setupCheckpoint(2, 'Gate 2', false)],
+    checklist: [
+      { code: 'setup_mode', ok: true, text: 'Choose which shifts patrol: every shift, or only shifts marked as requiring patrols.' },
+      { code: 'frequency', ok: true, text: 'Set how often a patrol is due during a shift.' },
+      { code: 'confirmed_checkpoints', ok: false, text: 'Site setup incomplete: no confirmed checkpoints. Test-scan at least one printed checkpoint label.' },
+    ],
+    ready: false,
+    warnings: [
+      { code: 'CHECKPOINTS_NOT_CONFIRMED', message: '2 checkpoints have not been test-scanned and are not part of the automatic route: Gate 1, Gate 2.' },
+      { code: 'SETUP_NOT_ACTIVE', message: 'Saved but not active: confirm the setup to start shift patrols.' },
+    ],
+    ...over,
+  };
+}
+function readyView(over = {}) {
+  return setupView({
+    checkpoints: [setupCheckpoint(1, 'Gate 1', true), setupCheckpoint(2, 'Gate 2', false)],
+    route: { mode: 'auto', scheduleRouteId: 41, versions: 2, currentVersion: { id: 41, kind: 'auto', name: 'Every confirmed checkpoint', createdAt: iso(NOW), checkpoints: [{ checkpointId: 1, label: 'Gate 1', required: true, position: 1 }] } },
+    checklist: setupView().checklist.map((c) => ({ ...c, ok: true })),
+    ready: true,
+    warnings: [{ code: 'CHECKPOINTS_NOT_CONFIRMED', message: '1 checkpoint has not been test-scanned and is not part of the automatic route: Gate 2.' }],
+    ...over,
+  });
+}
+const disabled = (root, label) => {
+  const nodes = pressables(root, label);
+  assert.ok(nodes.length > 0, `a "${label}" control`);
+  return nodes.some((n) => n.props.disabled === true || n.props.accessibilityState?.disabled === true);
+};
+
+test('PM-37-PRIMARY-NAVIGATION-SETUP-TODAY-EVIDENCE-AND-ADVANCED-KEEPS-EVERY-TAB', async () => {
+  assert.deepEqual(access.PATROL_SECTIONS.map((s) => s.label), ['Setup', 'Today', 'Evidence', 'Advanced']);
+  assert.deepEqual(access.visiblePatrolSections(perms('viewer')), ['setup', 'today', 'evidence', 'advanced']);
+  assert.deepEqual(access.visiblePatrolSections(perms('guard')), []);
+  for (const role of ['owner', 'viewer']) {
+    answers = baseAnswers();
+    calls.length = 0;
+    const p = perms(role);
+    const renderer = await mountPrimary({ permissions: p });
+    const root = renderer.root;
+    for (const label of ['Setup', 'Today', 'Evidence', 'Advanced']) assert.ok(has(root, label), `${role}: ${label}`);
+    // Today: the day's figures and live patrols, without the Advanced tab row.
+    assert.match(textOf(root), /Windows due today◎8/, 'Today opens with the overview');
+    assert.ok(textOf(root).includes('Live patrols') && textOf(root).includes('2 of 4 checkpoints'), 'and live patrols');
+    assert.equal(has(root, 'Schedules'), false, 'the earlier tabs are not on the primary row');
+    // Advanced: every earlier tab, by the same permission rules.
+    await pressByText(root, 'Advanced');
+    for (const tab of access.PATROL_TABS) {
+      assert.equal(has(root, tab.label), access.visiblePatrolTabs(p).includes(tab.id), `${role}: Advanced → ${tab.label}`);
+    }
+    await pressByText(root, 'Downloads, retention & holds');
+    assert.equal(has(root, 'Request export'), p.canManageHolds, `${role}: exports still reachable`);
+    await pressByText(root, 'Today');
+    assert.equal(has(root, 'Schedules'), false);
+    act(() => renderer.unmount());
+  }
+  // A record opened from Live Operations still lands on its tab (History) under Advanced.
+  answers = baseAnswers();
+  const target = await mountPrimary({ permissions: perms('owner'), target: { requestId: 9, kind: 'run', runId: 5 } });
+  assert.ok(has(target.root, 'History') && textOf(target.root).includes('Patrol #5'));
+  act(() => target.unmount());
+  // Mobile width: the same three sections and Advanced.
+  answers = baseAnswers();
+  const narrow = await mountPrimary({ permissions: perms('owner'), layoutWidth: 390 });
+  for (const label of ['Setup', 'Today', 'Evidence', 'Advanced']) assert.ok(has(narrow.root, label));
+  act(() => narrow.unmount());
+});
+
+test('PM-38-SETUP-CHECKLIST-GATES-ACTIVATE-AND-422-READS-IN-PLAIN-ENGLISH', async () => {
+  answers = baseAnswers({ getPatrolSiteSetup: setupView() });
+  calls.length = 0;
+  let renderer = await mountPrimary({ permissions: perms('owner') });
+  await pressByText(renderer.root, 'Setup');
+  const root = renderer.root;
+  assert.deepEqual(calls.filter(([k]) => k === 'getPatrolSiteSetup').map(([, a]) => a[0]), [10], 'the first site, by default');
+  let text = textOf(root);
+  for (const label of ['QR only', 'Photos only', 'QR + Photos', 'Every hour', 'From the scheduled start', 'From Book On', 'Every shift', 'Only shifts marked Required']) {
+    assert.ok(has(root, label), label);
+  }
+  assert.doesNotMatch(text, /photos per|number of photos|photo count/i, 'no photo-count setting');
+  assert.ok(text.includes('Site setup incomplete: no confirmed checkpoints. Test-scan at least one printed checkpoint label.'), 'the failed item, as the server words it');
+  assert.ok(text.includes('2 checkpoints have not been test-scanned'), 'the warning');
+  assert.ok(text.includes('Not test-scanned'));
+  assert.equal(disabled(root, 'Activate patrols'), true, 'Activate disabled while the checklist fails');
+  assert.ok(text.includes('Activate is available once every checklist item is ticked.'));
+  // An edit: "save first", and Activate stays disabled; Save sends exactly the setup (no photo count, no route id for auto).
+  answers.savePatrolSiteSetup = (siteId, body) => readyView({ windowAnchor: body.windowAnchor });
+  await pressByText(root, 'From Book On');
+  assert.ok(textOf(root).includes('Save your changes before activating.'));
+  await pressByText(root, 'Every 2 hours');
+  await pressByText(root, 'Save setup');
+  const save = calls.filter(([k]) => k === 'savePatrolSiteSetup').pop();
+  assert.deepEqual(save[1], [10, { setupMode: 'every_shift', evidenceMode: 'qr', frequencyMinutes: 120, windowAnchor: 'book_on' }]);
+  // Frequency validation in plain English (Other → a bad value).
+  await pressByText(root, 'Other');
+  await typeInto(root, 'Minutes between patrols', '5');
+  assert.ok(textOf(root).includes('A patrol can be due at most every 15 minutes.'));
+  assert.equal(disabled(root, 'Save setup'), true);
+  act(() => renderer.unmount());
+
+  // Ready: the summary, and Activate enabled; the server's 422 is shown in plain English.
+  answers = baseAnswers({
+    getPatrolSiteSetup: readyView(),
+    activatePatrolSiteSetup: () => { throw new api.ApiError(422, 'Unprocessable Entity', { code: 'PATROL_SETUP_INCOMPLETE', message: 'x', details: { checklist: [{ code: 'confirmed_checkpoints', ok: false, text: 'Site setup incomplete: no confirmed checkpoints. Test-scan at least one printed checkpoint label.' }] } }); },
+  });
+  calls.length = 0;
+  renderer = await mountPrimary({ permissions: perms('operations') });
+  await pressByText(renderer.root, 'Setup');
+  text = textOf(renderer.root);
+  assert.ok(text.includes('Ready to activate'));
+  assert.ok(text.includes('Every shift at Alpha Site will patrol, unless a shift is marked "Not Required" in the Rota Planner.'));
+  assert.ok(text.includes('A patrol is due every hour, counted from the shift\'s scheduled start.'));
+  assert.ok(text.includes('Evidence: QR scans of 1 test-scanned checkpoint (Gate 1).'));
+  assert.equal(disabled(renderer.root, 'Activate patrols'), false, 'enabled once every item passes');
+  await pressByText(renderer.root, 'Activate patrols');
+  assert.ok(calls.some(([k, a]) => k === 'activatePatrolSiteSetup' && a[0] === 10));
+  assert.ok(textOf(renderer.root).includes('Not activated yet. Still to do: Site setup incomplete: no confirmed checkpoints.'), 'the 422, in plain English');
+  assert.doesNotMatch(textOf(renderer.root), /PATROL_SETUP_INCOMPLETE|422/);
+  act(() => renderer.unmount());
+
+  // A Viewer reads the setup; no Save, no Activate, no test scan.
+  answers = baseAnswers({ getPatrolSiteSetup: readyView() });
+  renderer = await mountPrimary({ permissions: perms('viewer') });
+  await pressByText(renderer.root, 'Setup');
+  for (const label of ['Save setup', 'Activate patrols', 'Test scan Gate 2', 'Prepare labels', 'Add checkpoint']) assert.equal(has(renderer.root, label), false, `viewer: no ${label}`);
+  act(() => renderer.unmount());
+  // The setup wording mirrors the server's.
+  const svc = read('../security-backend-nest/src/patrol/patrol-shift-requirement.ts');
+  const S = loadSource('src/components/patrols/patrolSetupText.ts');
+  assert.ok(svc.includes("'Site default: no patrols (patrols are not set up for this site).'"));
+  assert.equal(S.siteDefaultSummary('every_shift', true, 60, 'scheduled_start'), 'Site default: every shift patrols, every hour, from the scheduled start.');
+  assert.equal(S.siteDefaultSummary('per_shift', true, 90, 'book_on'), 'Site default: only shifts marked "Required" patrol, every 90 minutes, from Book On.');
+});
+
+test('PM-39-TEST-SCAN-CONFIRMS-AND-LABELS-PRINT-FROM-SERVER-PAYLOADS', async () => {
+  answers = baseAnswers({
+    getPatrolSiteSetup: setupView(),
+    getPatrolCheckpointLabel: (id) => ({ checkpointId: id, siteId: 10, publicId: 'x'.repeat(32), label: `Gate ${id}`, tokenVersion: 1, keyId: 'k1', payload: LABEL_PAYLOAD }),
+    confirmPatrolCheckpoint: () => { throw new api.ApiError(422, 'Unprocessable Entity', { code: 'PATROL_CHECKPOINT_TEST_SCAN_INVALID', message: 'This label belongs to another checkpoint.', details: { reason: 'wrong_checkpoint' } }); },
+  });
+  calls.length = 0;
+  const renderer = await mountPrimary({ permissions: perms('owner') });
+  const root = renderer.root;
+  await pressByText(root, 'Setup');
+  await pressByText(root, 'Prepare labels');
+  assert.deepEqual(calls.filter(([k]) => k === 'getPatrolCheckpointLabel').map(([, a]) => a[0]), [1, 2]);
+  assert.equal(root.findAll((n) => n.props && n.props.testID === 'patrol-qr').length >= 2, true, 'the QR of each server label');
+  assert.equal(disabled(root, 'Print labels (2)'), false);
+  // A refused test scan: plain English, nothing confirmed.
+  await pressByText(root, 'Test scan Gate 1');
+  await pressByText(root, 'Confirm scan');
+  assert.ok(textOf(root).includes('Scan the printed label (or paste what the scanner read) first.'));
+  await typeInto(root, 'Test scan of "Gate 1"', LABEL_PAYLOAD);
+  await pressByText(root, 'Confirm scan');
+  const confirm = calls.filter(([k]) => k === 'confirmPatrolCheckpoint').pop();
+  assert.deepEqual(confirm[1], [1, { scanPayload: LABEL_PAYLOAD, siteId: 10 }]);
+  assert.ok(textOf(root).includes('That scan was not accepted: This label belongs to another checkpoint.'));
+  // Accepted: confirmed and re-read.
+  answers.confirmPatrolCheckpoint = (id) => ({ ...setupCheckpoint(id, 'Gate 1', true) });
+  answers.getPatrolSiteSetup = readyView();
+  await pressByText(root, 'Confirm scan');
+  assert.ok(textOf(root).includes('"Gate 1" confirmed: the label scans correctly and it is part of the patrol route.'));
+  assert.ok(textOf(root).includes('Ready to activate'));
+  assert.ok(!logged.some((l) => l.includes(LABEL_PAYLOAD)), 'a label payload is never logged');
+  act(() => renderer.unmount());
+});
+
+function evidenceCard(over = {}) {
+  return {
+    reference: 'P-5', run: run({ status: 'completed', verificationStatus: 'verified' }),
+    window: { scheduleId: 7, scheduleName: 'Shift patrol', anchor: 'shift', windowKey: 'sh1', start: iso(NOW - 60 * MIN), end: iso(NOW), label: '09:00–10:00' },
+    guard: { id: 11, displayName: 'Ava Guard' }, photoCount: 0, photosRestricted: false, photos: [], thumbnailsPath: null,
+    qrScans: [{ id: 1, checkpointId: 1, label: 'Gate 1', result: 'verified', flags: [], scannedAtDevice: iso(NOW - 50 * MIN), receivedAtServer: iso(NOW - 50 * MIN) }],
+    verification: { status: 'verified', code: 'verified', text: 'Verified: every required checkpoint was scanned in the patrol window.', deadline: null },
+    ...over,
+  };
+}
+const PHOTO_CARD = evidenceCard({
+  reference: 'P-6', run: run({ id: 6, guardId: 12, status: 'completed', verificationStatus: 'pending' }), guard: { id: 12, displayName: 'Ben Guard' }, photoCount: 1, qrScans: [],
+  photos: [{ id: 900, kind: 'run_photo', uploadStatus: 'verified', retentionStatus: 'active', capturedAtDevice: iso(NOW - 40 * MIN), receivedAt: iso(NOW - 39 * MIN), verifiedAt: iso(NOW - 39 * MIN), viewable: true, stampedPath: '/patrols/evidence/900/stamped' }],
+  verification: { status: 'pending', code: 'awaiting_photo', text: 'Waiting for the photo to finish uploading from the phone.', deadline: null },
+});
+const STAMPED_URI = 'data:image/jpeg;base64,U1RBTVBFRC1CWVRFUw==';
+function evidenceAnswers(over = {}) {
+  const day = LONDON_TODAY;
+  return baseAnswers({
+    getPatrolEvidenceTree: { from: day, to: day, dateBasis: 'site_local', clients: [{ clientId: 3, clientName: 'Harbour Estates', sites: [
+      { siteId: 10, siteName: 'Alpha Site', timezone: 'Europe/London', patrols: 2, withPhotos: 1, days: [{ date: day, patrols: 2, withPhotos: 1, withoutPhotos: 1 }] }] }] },
+    getPatrolEvidencePatrols: (q) => ({ siteId: 10, siteName: 'Alpha Site', clientName: 'Harbour Estates', timezone: 'Europe/London', date: q.date, dayStart: iso(NOW), dayEnd: iso(NOW),
+      photos: q.photos === 'only' ? 'only' : 'all', evidenceRestricted: false, patrols: q.photos === 'only' ? [PHOTO_CARD] : [evidenceCard(), PHOTO_CARD] }),
+    getPatrolEvidenceStampedImage: (id) => ({ evidenceId: id, dataUri: STAMPED_URI }),
+    getPatrolEvidenceLink: (id) => ({ evidenceId: id, url: SIGNED_URL, expiresAt: iso(Date.now() + 120_000) }),
+    ...over,
+  });
+}
+
+test('PM-40-EVIDENCE-CLIENT-SITE-DATE-TIME-GUARD-QR-ONLY-INCLUDED-AND-PHOTOS-ONLY', async () => {
+  answers = evidenceAnswers();
+  calls.length = 0;
+  const renderer = await mountPrimary({ permissions: perms('control_room') });
+  const root = renderer.root;
+  await pressByText(root, 'Evidence');
+  assert.ok(calls.some(([k]) => k === 'getPatrolEvidenceTree'));
+  let text = textOf(root);
+  assert.ok(text.includes('Harbour Estates'), 'client');
+  await pressByText(root, 'Site Alpha Site');
+  await pressByText(root, `Alpha Site ${LONDON_TODAY}`);
+  const first = calls.filter(([k]) => k === 'getPatrolEvidencePatrols').pop();
+  assert.deepEqual(first[1][0], { siteId: 10, date: LONDON_TODAY, photos: 'all' });
+  text = textOf(root);
+  assert.ok(text.includes('09:00–10:00 · Shift patrol'), 'patrol time');
+  assert.ok(text.includes('Ava Guard') && text.includes('Ben Guard'), 'guards under it');
+  assert.ok(text.includes('P-5 · 1 QR scan · 0 photos'), 'the QR-only patrol is listed by default');
+  await pressByText(root, 'Open P-5 Ava Guard');
+  text = textOf(root);
+  assert.ok(text.includes('Verified: every required checkpoint was scanned in the patrol window.'), 'explainVerification');
+  assert.ok(text.includes('Gate 1') && text.includes('No photos in this patrol.'));
+  await pressByText(root, 'Photos only');
+  const only = calls.filter(([k]) => k === 'getPatrolEvidencePatrols').pop();
+  assert.equal(only[1][0].photos, 'only');
+  text = textOf(root);
+  assert.ok(!text.includes('P-5 ·') && text.includes('P-6 · 0 QR scans · 1 photo'), 'Photos only keeps patrols with a photo');
+  assert.ok(P.verificationLabel('pending') && text.includes('Awaiting verification'));
+  act(() => renderer.unmount());
+  const E = loadSource('src/components/patrols/PatrolEvidenceBrowser.tsx');
+  assert.equal(E.minusDays('2026-03-01', 1), '2026-02-28');
+  const groups = E.patrolTimeGroups([evidenceCard(), PHOTO_CARD, evidenceCard({ reference: 'P-7', window: null, run: run({ id: 7, startedAtServer: '2026-11-01T12:34:00Z' }) })], 'Europe/London');
+  assert.deepEqual(groups.map((g) => g.label).sort(), ['09:00–10:00 · Shift patrol', 'Unscheduled · started 12:34'], 'one group per patrol time');
+  assert.deepEqual(groups.find((g) => g.label.startsWith('09:00')).cards.map((c) => c.guard.displayName), ['Ava Guard', 'Ben Guard'], 'the Guards under one time');
+});
+
+test('PM-41-EVIDENCE-ORIGINAL-VS-STAMPED-NO-LINK-IN-TEXT-LOGS-OR-STORAGE', async () => {
+  answers = evidenceAnswers();
+  calls.length = 0;
+  storageWrites.length = 0;
+  const before = logged.length;
+  const renderer = await mountPrimary({ permissions: perms('owner') });
+  const root = renderer.root;
+  await pressByText(root, 'Evidence');
+  await pressByText(root, 'Site Alpha Site');
+  await pressByText(root, `Alpha Site ${LONDON_TODAY}`);
+  await pressByText(root, 'Open P-6 Ben Guard');
+  assert.ok(has(root, 'Original') && has(root, 'Stamped'));
+  assert.equal(calls.some(([k]) => k === 'getPatrolEvidenceLink' || k === 'getPatrolEvidenceStampedImage'), false, 'nothing fetched before a press');
+  // Original: the existing audited link, with the reason.
+  await pressByText(root, 'Investigation');
+  await pressByText(root, 'View original');
+  assert.deepEqual(calls.filter(([k]) => k === 'getPatrolEvidenceLink').map(([, a]) => a), [[900, 'investigation']]);
+  const original = root.findAll((n) => n.props && n.props.accessibilityLabel === 'Patrol photo 900 (original)' && n.props.source)[0];
+  assert.equal(original.props.source.uri, SIGNED_URL);
+  // Stamped: derived by the server, no link of any kind.
+  await pressByText(root, 'Stamped');
+  assert.equal(root.findAll((n) => n.props && n.props.accessibilityLabel === 'Patrol photo 900 (original)').length, 0, 'switching drops the original');
+  assert.ok(textOf(root).includes('www.sfour.co.uk printed on it'));
+  await pressByText(root, 'View stamped');
+  assert.deepEqual(calls.filter(([k]) => k === 'getPatrolEvidenceStampedImage').map(([, a]) => a), [[900]]);
+  assert.equal(calls.filter(([k]) => k === 'getPatrolEvidenceLink').length, 1, 'the stamped view asks for no link');
+  const stamped = root.findAll((n) => n.props && n.props.accessibilityLabel === 'Patrol photo 900 (stamped)' && n.props.source)[0];
+  assert.equal(stamped.props.source.uri, STAMPED_URI);
+  const shown = textOf(root);
+  assert.ok(!shown.includes(SIGNED_URL) && !shown.includes('data:image') && !shown.includes('X-Amz'), 'no link or image data as text');
+  assert.ok(!logged.slice(before).some((l) => l.includes(SIGNED_URL) || l.includes('data:image')), 'nothing logged');
+  assert.ok(!storageWrites.some(([, v]) => String(v).includes(SIGNED_URL) || String(v).includes('data:image')), 'nothing stored');
+  act(() => renderer.unmount());
+  // A Viewer: patrols listed, photos restricted, no photo request of any kind.
+  answers = evidenceAnswers({ getPatrolEvidencePatrols: (q) => ({ ...evidenceAnswers().getPatrolEvidencePatrols(q), evidenceRestricted: true,
+    patrols: [{ ...PHOTO_CARD, photos: null, photosRestricted: true }] }) });
+  calls.length = 0;
+  const viewer = await mountPrimary({ permissions: perms('viewer') });
+  await pressByText(viewer.root, 'Evidence');
+  await pressByText(viewer.root, 'Site Alpha Site');
+  await pressByText(viewer.root, `Alpha Site ${LONDON_TODAY}`);
+  await pressByText(viewer.root, 'Open P-6 Ben Guard');
+  assert.ok(textOf(viewer.root).includes('Photos are visible to Owner, Admin, Operations and Control Room.'));
+  assert.equal(has(viewer.root, 'View original') || has(viewer.root, 'View stamped'), false);
+  assert.equal(calls.some(([k]) => /EvidenceLink|Stamped|Thumbnails/.test(k)), false);
+  act(() => viewer.unmount());
+  // The client fetches the stamped photo with the session and never builds a link to it.
+  const apiSrc = stripComments(read('src/services/api.ts'));
+  assert.ok(apiSrc.includes('const path = `/patrols/evidence/${evidenceId}/stamped`;') && apiSrc.includes('reader.readAsDataURL(blob)'));
+  const browser = stripComments(read('src/components/patrols/PatrolEvidenceBrowser.tsx'));
+  assert.doesNotMatch(browser, /console\.|localStorage|sessionStorage|AsyncStorage|stampedPath/, 'no logging, storage, or client-built links');
+});
+
+test('PM-42-ROTA-PLANNER-PATROL-REQUIREMENT-ROUND-TRIP-DEFAULT-PRESERVED', async () => {
+  const { CompanyRotaPlannerWorkspace } = loadSource('src/components/company/CompanyRotaPlannerWorkspace.tsx');
+  const HOUR = 60 * MIN;
+  const view = (value, summary) => ({ value, effectiveRequired: value === 'required' ? true : value === 'not_required' ? false : true, source: value === 'site_default' ? 'site' : 'shift', summary,
+    site: { setupMode: 'every_shift', active: true, frequencyMinutes: 60, windowAnchor: 'scheduled_start', summary: 'Site default: every shift patrols, every hour, from the scheduled start.' } });
+  const detail = (patrolRequirement) => ({
+    id: 500, siteId: 10, siteName: 'Northgate', clientId: null, clientName: null, jobId: null, title: null,
+    startAt: iso(NOW + 26 * HOUR), endAt: iso(NOW + 34 * HOUR), requiredGuardCount: 1, checkCallIntervalMinutes: 60, instructions: null, status: 'active',
+    coveragePhase: 'future', coverageState: 'open', counts: { required: 1, assigned: 0, confirmed: 0, offered: 0, open: 1, problem: 0, onShift: 0, completed: 0 },
+    createdAt: iso(NOW), updatedAt: iso(NOW), positions: [{ shiftId: 111, guardId: null, guardName: null, status: 'unfilled' }],
+    ...(patrolRequirement ? { patrolRequirement } : {}),
+  });
+  const emptyDay = { slots: [] };
+  const SITES = [{ siteId: 10, siteName: 'Northgate', clientId: null, clientName: null, days: {
+    monday: { slots: [{ slotId: 500, title: null, startAt: iso(NOW + 26 * HOUR), endAt: iso(NOW + 34 * HOUR), isNightShift: false, coveragePhase: 'future', coverageState: 'open',
+      counts: { required: 1, assigned: 0, confirmed: 0, offered: 0, open: 1, problem: 0, onShift: 0, completed: 0 }, positions: [] }] },
+    tuesday: emptyDay, wednesday: emptyDay, thursday: emptyDay, friday: emptyDay, saturday: emptyDay, sunday: emptyDay } }];
+  const WEEK = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].map((label, i) => ({ date: `2026-11-${String(2 + i).padStart(2, '0')}`, label, shortLabel: label.slice(0, 3) }));
+  const mountRota = async (props) => {
+    const seen = { saved: [], created: [] };
+    const noop = () => undefined;
+    let renderer;
+    await act(async () => {
+      renderer = TestRenderer.create(h(CompanyRotaPlannerWorkspace, {
+        plannerClientId: '', plannerSiteId: '10', setPlannerClientId: noop, setPlannerSiteId: noop, siteClientOptions: [], plannerSiteOptions: [{ label: 'Northgate', value: '10' }],
+        weekCommencing: '2026-11-02', weekEnding: '2026-11-08', plannerWeekDays: WEEK, onPrevWeek: noop, onNextWeek: noop, onTodayWeek: noop,
+        sites: SITES, slotsByDayName: new Map(), weekSnapshot: null, loadingRota: false, rotaError: null, onRetryLoadRota: noop, onRefreshWeek: noop, legacyShiftsByDate: new Map(),
+        onLoadSlot: async () => props.detail,
+        onCreateSlot: async (payload) => { seen.created.push(payload); return props.detail; },
+        onSaveSlotEdits: async (id, changes) => { seen.saved.push([id, changes]); return detail(view(changes.patrolRequirement ?? 'site_default', 'Patrols required (set on this shift).')); },
+        onAssignPosition: async () => props.detail, onAssignMultiple: async () => ({ result: { assigned: [], failed: [] }, detail: props.detail }),
+        onCancelPosition: async () => props.detail, onCancelSlot: async () => undefined, onGetEligibleGuards: async () => [], resolveSiteZone: () => 'Europe/London',
+        ...props,
+      }));
+    });
+    await settle();
+    return { renderer, seen };
+  };
+  const openSlot = async (renderer) => {
+    const card = renderer.root.findAll((n) => typeof n.type === 'function' && n.type.name === 'SlotMiniCard')[0];
+    assert.ok(card, 'the week shows the slot');
+    await act(async () => { await card.props.onPress(); });
+    await settle();
+  };
+
+  // The drawer shows the value, its effect and the site default with its frequency.
+  let { renderer, seen } = await mountRota({ patrolsEnabled: true, detail: detail(view('site_default', 'Patrols required (site default: every shift).')) });
+  await openSlot(renderer);
+  let text = textOf(renderer.root);
+  assert.ok(text.includes('Patrol Requirement') && text.includes('Use Site Default'));
+  assert.ok(text.includes('Patrols required (site default: every shift).'));
+  assert.ok(text.includes('Site default: every shift patrols, every hour, from the scheduled start.'), 'site policy and frequency');
+  // Edit without touching it: nothing patrol-related is sent (the default is preserved).
+  await pressByText(renderer.root, 'Edit');
+  for (const label of ['Use Site Default', 'Required', 'Not Required']) assert.ok(has(renderer.root, `Patrol Requirement: ${label}`), label);
+  await pressByText(renderer.root, 'Save Changes');
+  assert.deepEqual(seen.saved, [], 'no change, no request');
+  // Choose Required: exactly that change is sent, and the answer is shown.
+  await pressByText(renderer.root, 'Edit');
+  await pressByText(renderer.root, 'Patrol Requirement: Required');
+  await pressByText(renderer.root, 'Save Changes');
+  assert.deepEqual(seen.saved, [[500, { patrolRequirement: 'required' }]]);
+  assert.ok(textOf(renderer.root).includes('Patrols required (set on this shift).'));
+  act(() => renderer.unmount());
+
+  // Create: the field defaults to Use Site Default (nothing sent); an explicit choice is sent.
+  for (const [choice, expected] of [[null, undefined], ['Not Required', 'not_required']]) {
+    ({ renderer, seen } = await mountRota({ patrolsEnabled: true, createShiftIntent: 1, detail: detail(view('site_default', 'x')),
+      onLoadSitePatrolDefault: async (siteId) => (siteId === 10 ? 'Site default: every shift patrols, every hour, from the scheduled start.' : null) }));
+    await settle();
+    assert.ok(textOf(renderer.root).includes('Site default: every shift patrols, every hour, from the scheduled start.'), 'the create form shows the site default');
+    const byName = (name) => renderer.root.findAll((n) => typeof n.type === 'function' && n.type.name === name);
+    await act(async () => { byName('NativeDateInput')[0].props.onChange('2026-12-02'); });
+    const times = byName('NativeTimeInput');
+    await act(async () => { times[0].props.onChange('08:00'); times[1].props.onChange('16:00'); });
+    await settle();
+    if (choice) await pressByText(renderer.root, `Patrol Requirement: ${choice}`);
+    await pressByText(renderer.root, 'Create Shift');
+    assert.equal(seen.created.length, 1, 'created');
+    assert.equal(seen.created[0].patrolRequirement, expected, `create sends ${expected ?? 'nothing'}`);
+    if (!choice) assert.equal('patrolRequirement' in seen.created[0], false, 'Use Site Default: the payload is exactly as before');
+    act(() => renderer.unmount());
+  }
+
+  // Patrols off: no field, no value, no site-default read.
+  let reads = 0;
+  ({ renderer, seen } = await mountRota({ patrolsEnabled: false, detail: detail(null), onLoadSitePatrolDefault: async () => { reads += 1; return 'x'; } }));
+  await openSlot(renderer);
+  assert.equal(textOf(renderer.root).includes('Patrol Requirement'), false);
+  await pressByText(renderer.root, 'Edit');
+  assert.equal(has(renderer.root, 'Patrol Requirement: Required'), false);
+  act(() => renderer.unmount());
+  assert.equal(reads, 0);
+  // The dashboard sends it with the metadata edit, only when present.
+  const screen = stripComments(read('src/screens/CompanyDashboardScreen.tsx'));
+  assert.ok(screen.includes('...(patrolRequirement !== undefined ? { patrolRequirement } : {}),'));
+  assert.ok(screen.includes('patrolsEnabled={patrolPermissions.canView}'));
 });
 
 (async () => {

@@ -147,6 +147,10 @@ import type {
   PatrolEvidence,
   PatrolEvidenceAccessPurpose,
   PatrolEvidenceThumbnailPage,
+  PatrolEvidencePatrols,
+  PatrolEvidenceTree,
+  PatrolSiteSetup,
+  PatrolSiteSetupInput,
   PatrolException,
   PatrolExport,
   PatrolExportInput,
@@ -2143,6 +2147,61 @@ export function getPatrolEvidenceLink(evidenceId: number, purpose: PatrolEvidenc
  */
 export function getPatrolEvidenceThumbnails(runId: number, params: { page: number; pageSize: number }) {
   return request<PatrolEvidenceThumbnailPage>(`/patrols/runs/${runId}/evidence/thumbnails${patrolQuery(params)}`);
+}
+
+// ─── S4 1.3.0: guided site patrol setup and evidence browsing (B1 API) ─────────────────────────────────────────────
+
+/** patrols.view. The site's setup: mode, evidence, frequency, anchor, checkpoints (confirmed or not), checklist, warnings. */
+export function getPatrolSiteSetup(siteId: number) {
+  return request<PatrolSiteSetup>(`/patrols/sites/${siteId}/setup`);
+}
+
+/** patrols.manage. Saves the whole setup in one transaction; never activates it. */
+export function savePatrolSiteSetup(siteId: number, input: PatrolSiteSetupInput) {
+  return request<PatrolSiteSetup>(`/patrols/sites/${siteId}/setup`, { method: 'PUT', body: JSON.stringify(input) });
+}
+
+/** patrols.manage. Activation: 422 PATROL_SETUP_INCOMPLETE (details.checklist) unless the checklist is complete. */
+export function activatePatrolSiteSetup(siteId: number) {
+  return request<PatrolSiteSetup>(`/patrols/sites/${siteId}/setup/confirm`, { method: 'POST' });
+}
+
+/** patrols.manage. The authorised test scan of a printed label: the scanned text, checked by the server. */
+export function confirmPatrolCheckpoint(checkpointId: number, input: { scanPayload: string; siteId?: number }) {
+  return request<PatrolCheckpoint>(`/patrols/checkpoints/${checkpointId}/confirm`, { method: 'POST', body: JSON.stringify(input) });
+}
+
+/** patrols.view. Clients → sites → site-local days with patrols (counts only). Default range: the last 7 days. */
+export function getPatrolEvidenceTree(params: { clientId?: number | null; siteId?: number | null; from?: string | null; to?: string | null } = {}) {
+  return request<PatrolEvidenceTree>(`/patrols/evidence/tree${patrolQuery(params)}`);
+}
+
+/** patrols.view (photos only with patrols.evidence). One site's patrols on one site-local day, QR-only patrols included. */
+export function getPatrolEvidencePatrols(params: { siteId: number; date: string; photos?: 'all' | 'only' }) {
+  return request<PatrolEvidencePatrols>(`/patrols/evidence/patrols${patrolQuery(params)}`);
+}
+
+/**
+ * patrols.evidence. The verified photo with the S4 stamp, derived by the server per request (audited, never stored).
+ * Fetched with the session like any API call and handed back as an in-memory data URI for display: no link is issued,
+ * logged or kept, and the original photo is untouched.
+ */
+export async function getPatrolEvidenceStampedImage(evidenceId: number): Promise<{ evidenceId: number; dataUri: string }> {
+  const path = `/patrols/evidence/${evidenceId}/stamped`;
+  const send = () => fetch(apiUrl(path), { headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {} });
+  let response = await send();
+  if (response.status === 401 && (accessToken || refreshToken)) {
+    if ((await refreshAccessToken()) === 'renewed') response = await send();
+  }
+  if (!response.ok) throw new ApiError(response.status, response.statusText, await parseResponseBody(response));
+  const blob = await response.blob();
+  const dataUri = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error('The stamped photo could not be read.'));
+    reader.readAsDataURL(blob);
+  });
+  return { evidenceId, dataUri };
 }
 
 /** patrols.holds. Active holds by default; 'all' includes released ones. */
