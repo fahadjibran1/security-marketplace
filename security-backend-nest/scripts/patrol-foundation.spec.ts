@@ -220,8 +220,8 @@ async function main() {
   const migrated = await to68.runMigrations({ transaction: 'each' });
   assert.deepEqual(migrated.map((m) => m.name),
     ['AddPatrolManagement1720900000014', 'AddPatrolScheduling1720900000015', 'AddPatrolEvidenceStorage1720900000016', 'AddPatrolSweepReconciliation1720900000017',
-      'AddPatrolSyncRecoveryGrants1720900000018'],
-    'only Migrations 68 (P1-A), 69 (P1-B scheduling), 70 (P1-C evidence storage), 71 (sweep reconciliation) and 72 (#68 recovery grants) apply');
+      'AddPatrolSyncRecoveryGrants1720900000018', 'AddPatrolScheduleSuccessors1720900000020'],
+    'only Migrations 68 (P1-A), 69 (P1-B scheduling), 70 (P1-C evidence storage), 71 (sweep reconciliation), 72 (#68 recovery grants) and 73 (durable schedule successors) apply');
   await to68.destroy();
   ctx = await boot();
   const q = async (sql: string, params: unknown[] = []) => ctx.ds.query(sql, params);
@@ -352,12 +352,13 @@ async function main() {
       // A site inherits 90; Operations may change other settings without touching retention.
       const s = await api('PUT', `/patrols/policies/sites/${A.site1}`, ops, { photosPerRun: 2, requirementScope: 'per_guard' });
       expect(s, 200, undefined, 'operations edits a site inheriting 90');
-      assert.deepEqual([s.body.policy.retentionDays, s.body.policy.photosPerRun, s.body.policy.requirementScope, s.body.policy.startGraceMinutes], [90, 2, 'per_guard', 20]);
+      // S4 1.2.1: photos are Yes / No — any count above 0 is stored as 1 ("required").
+      assert.deepEqual([s.body.policy.retentionDays, s.body.policy.photosPerRun, s.body.policy.requirementScope, s.body.policy.startGraceMinutes], [90, 1, 'per_guard', 20]);
       expect(await api('PUT', `/patrols/policies/sites/${A.site1}`, ops, { retentionDays: 30 }), 200, undefined, 'shortening for new evidence is allowed');
       expect(await api('PUT', `/patrols/policies/sites/${A.site1}`, ops, { retentionDays: 90 }), 403, 'PATROL_RETENTION_REQUIRES_OWNER_ADMIN');
       expect(await api('PUT', `/patrols/policies/sites/${A.site1}`, tokens.admin, { retentionDays: 90 }), 200, undefined, 'admin');
       expect(await api('PUT', `/patrols/policies/sites/${A.site2}`, tokens.owner, { retentionDays: 90 }), 200, undefined, 'membership owner');
-      for (const bad of [{ retentionDays: 60 }, { methods: ['gps'] }, { methods: [] }, { requirementScope: 'all' }, { startGraceMinutes: -1 }, { syncGraceMinutes: 1441 }, { unknownField: 1 }]) {
+      for (const bad of [{ retentionDays: 60 }, { methods: ['gps'] }, { methods: ['nfc'] }, { methods: ['qr', 'nfc'] }, { methods: [] }, { requirementScope: 'all' }, { startGraceMinutes: -1 }, { syncGraceMinutes: 1441 }, { unknownField: 1 }]) {
         expect(await api('PUT', '/patrols/policies/default', tA, bad), 400, undefined, JSON.stringify(bad));
       }
       expect(await api('PUT', `/patrols/policies/sites/999999`, tA, {}), 404, 'PATROL_SITE_NOT_FOUND');
@@ -404,6 +405,14 @@ async function main() {
       const p = await api('PATCH', `/patrols/schedules/${schedule.id}`, tokens.operations, { frequencyMinutes: 30 });
       expect(p, 200);
       assert.deepEqual([p.body.frequencyMinutes, p.body.windowMinutes], [30, 30], 'window follows frequency when it was equal');
+      // S4 1.2.1 (B1): a timing change is a NEW version — a successor with a new id; the old schedule is archived for history.
+      assert.deepEqual([p.body.timingChanged, p.body.predecessorId], [true, schedule.id]);
+      assert.notEqual(p.body.id, schedule.id);
+      const old = (await api('GET', `/patrols/schedules/${schedule.id}`, tA)).body;
+      assert.deepEqual([old.active, Boolean(old.archivedAt), old.frequencyMinutes], [false, true, 60], 'the predecessor is kept unchanged, archived');
+      schedule = p.body;
+      const renamed = await api('PATCH', `/patrols/schedules/${schedule.id}`, tA, { name: 'Night perimeter' });
+      assert.deepEqual([renamed.status, renamed.body.id, renamed.body.timingChanged, renamed.body.predecessorId], [200, schedule.id, false, null], 'a name-only edit stays in place');
       expect(await api('PATCH', `/patrols/schedules/${schedule.id}`, tA, { windowMinutes: 31 }), 400, 'PATROL_VALIDATION_FAILED');
       expect(await api('PATCH', `/patrols/schedules/${schedule.id}`, tA, { siteId: A.site2 }), 400, undefined, 'the site of a schedule never changes');
       expect(await api('GET', `/patrols/schedules/${schedule.id}`, tokens.viewer), 200);
@@ -418,10 +427,12 @@ async function main() {
       expect(await api('DELETE', `/patrols/schedules/${edge.id}`, tA), 200, undefined, 'archiving twice changes nothing');
       expect(await api('PATCH', `/patrols/schedules/${edge.id}`, tA, { name: 'z' }), 409, 'PATROL_VALIDATION_FAILED');
       assert.equal((await api('GET', '/patrols/schedules', tA)).body.length, 2, 'archived schedules are hidden by default');
-      assert.equal((await api('GET', '/patrols/schedules?includeInactive=true', tA)).body.length, 3);
-      assert.equal(Number(await scalar(`SELECT count(*)::int FROM patrol_schedules`)), 3, 'never deleted');
+      // S4 1.2.1: + the superseded 60-minute version, kept for history.
+      assert.equal((await api('GET', '/patrols/schedules?includeInactive=true', tA)).body.length, 4);
+      assert.equal(Number(await scalar(`SELECT count(*)::int FROM patrol_schedules`)), 4, 'never deleted');
       const actions = (await q(`SELECT action FROM audit_logs WHERE "entityType" = 'patrol_schedule' ORDER BY id`)).map((a: any) => a.action);
-      assert.deepEqual(actions, ['patrol.schedule.created', 'patrol.schedule.created', 'patrol.schedule.created', 'patrol.schedule.updated', 'patrol.schedule.archived']);
+      assert.deepEqual(actions, ['patrol.schedule.created', 'patrol.schedule.created', 'patrol.schedule.created', 'patrol.schedule.superseded',
+        'patrol.schedule.created', 'patrol.schedule.updated', 'patrol.schedule.archived']);
     });
 
     const checkpoints: Record<string, any> = {};

@@ -16,9 +16,9 @@
  *     it must differ from the production database host in production-read.env; strict TLS with the staging CA;
  *     S4_STAGING_SEED_CONFIRM must equal "s4-staging-db".
  *   - local: the host must be 127.0.0.1 / localhost.
- *   - any target: no Supabase or pooler host; the migration ledger must hold exactly 72 entries ending in
- *     AddPatrolSyncRecoveryGrants1720900000018 (Migration 72, patrol sync recovery grants; Migration 71 =
- *     AddPatrolSweepReconciliation1720900000017 comes just before it) — the same head as this repository's own
+ *   - any target: no Supabase or pooler host; the migration ledger must hold exactly 73 entries ending in
+ *     AddPatrolScheduleSuccessors1720900000020 (Migration 73, durable schedule successors; Migration 72 =
+ *     AddPatrolSyncRecoveryGrants1720900000018 comes just before it) — the same head as this repository's own
  *     migrations, which is checked too, so the in-process app and the database always agree; the users table must be
  *     EMPTY (seed once; reset to re-seed). --recover-logins applies the same ledger check before it boots the app.
  * Logins are written only to a git-ignored file (~/.s4-pilot-secrets/staging-uat.env for staging) and are never
@@ -53,8 +53,8 @@ const STAGING_HOST = 'dpg-dbbq13afngtc73a5ls20-a.oregon-postgres.render.com';
 const STAGING_DB = 's4_staging';
 const STAGING_API = 'https://security-marketplace-api-staging.onrender.com';
 const CONFIRM = 's4-staging-db';
-const EXPECTED_MIGRATIONS = 72;
-const LAST_MIGRATION = 'AddPatrolSyncRecoveryGrants1720900000018';
+const EXPECTED_MIGRATIONS = 73;
+const LAST_MIGRATION = 'AddPatrolScheduleSuccessors1720900000020';
 const SECRETS = path.join(os.homedir(), '.s4-pilot-secrets');
 
 const args = process.argv.slice(2);

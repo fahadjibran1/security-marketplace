@@ -6,6 +6,7 @@
 //   patrols.evidence  Owner, Admin, Operations, Control Room   (photo evidence and its metadata)
 //   patrols.holds     Owner, Admin                      (holds, exports, storage usage)
 //   alerts.manage     Owner, Admin, Operations, Control Room   (act on patrol alerts)
+//   act on a patrol exception: alerts.manage OR patrols.manage (PATROL_ALERT_ACT_PERMISSIONS), or the legacy owner
 //
 // THE FEATURE SWITCH. The session lists the patrols.* permissions only while the company's patrolsEnabled switch is on
 // (auth.service withPatrolSwitch), so "no patrols.view in the session" is exactly "the page does not exist". There is
@@ -19,6 +20,11 @@ export type PatrolPermissions = {
   canViewEvidence: boolean;
   canManageHolds: boolean;
   canActOnAlerts: boolean;
+  /**
+   * Acknowledge / resolve a patrol EXCEPTION on this page (S4 1.2.1): the backend allows alerts.manage OR patrols.manage
+   * (PATROL_ALERT_ACT_PERMISSIONS), and the legacy owner account. Only with patrols.view (the page itself).
+   */
+  canActOnExceptions: boolean;
 };
 
 export const NO_PATROL_PERMISSIONS: PatrolPermissions = Object.freeze({
@@ -27,6 +33,7 @@ export const NO_PATROL_PERMISSIONS: PatrolPermissions = Object.freeze({
   canViewEvidence: false,
   canManageHolds: false,
   canActOnAlerts: false,
+  canActOnExceptions: false,
 });
 
 const LEGACY_OWNER_ROLES = new Set(['company', 'company_admin']);
@@ -43,6 +50,7 @@ export function resolvePatrolPermissions(companyPermissions: string[] | null | u
     canViewEvidence: canView && has('patrols.evidence'),
     canManageHolds: canView && has('patrols.holds'),
     canActOnAlerts: list ? has('alerts.manage') : LEGACY_OWNER_ROLES.has(String(role || '')),
+    canActOnExceptions: canView && (list ? has('alerts.manage') || has('patrols.manage') : LEGACY_OWNER_ROLES.has(String(role || ''))),
   };
 }
 

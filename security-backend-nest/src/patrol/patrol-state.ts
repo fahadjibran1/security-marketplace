@@ -67,33 +67,60 @@ export function runProgressState(input: { status: string; completionDeadline: Da
 }
 
 export type RequirementVisit = { checkpointId: number | null; result: string; visitId: number };
-export type RequirementEvidence = { kind: string; visitId: number | null; uploadStatus: string };
+export type RequirementEvidence = {
+  kind: string;
+  visitId: number | null;
+  uploadStatus: string;
+  /** The P1-C retention state (absent ⇒ 'active', as a row that never entered the deletion state machine). */
+  retentionStatus?: string | null;
+  /** The hash the SERVER computed when it verified the bytes (null until verified). */
+  sha256Stored?: string | null;
+  id?: number;
+};
 
 export type RequirementInput = {
-  /** The route's required, active checkpoints (none for a run without a route). */
+  /** The route's required, active checkpoints (none for a run without a route). Ignored when `methods` excludes 'qr'. */
   requiredCheckpointIds: number[];
   /** Checkpoints whose own setting asks for a photo. */
   photoRequiredCheckpointIds: number[];
+  /** Any value > 0 means "a photo is required for each patrol" (S4 1.2.1: Yes/No, not a count). */
   photosPerRun: number;
+  /** Any value > 0 means "a photo is required at each checkpoint visited" (Yes/No, not a count). */
   photosPerCheckpoint: number;
   visits: RequirementVisit[];
   evidence: RequirementEvidence[];
+  /**
+   * The policy's methods (S4 1.2.1). 'photo' requires a run photo; 'qr' requires a checkpoint rule (a route with required
+   * checkpoints). Absent: the pre-1.2.1 reading (no QR-rule check, a run photo only when photosPerRun > 0).
+   */
+  methods?: readonly string[];
 };
 
 export type RequirementResult = {
   missingCheckpointIds: number[];
-  /** Photos the Guard has not recorded at all (no evidence row). */
+  /** Photos the Guard has not TAKEN at all (no evidence row, or refused / corrupt): Guard completeness. */
   missingRunPhotos: number;
   missingCheckpointPhotos: number;
-  /** Required photos recorded but not yet on the server (uploaded or verified). */
+  /**
+   * Required photos taken but not (yet) SERVER-VERIFIED and eligible (uploadStatus 'verified' and retention 'active' or
+   * 'claimed'; one image counts once). Pending, uploaded (pre-inspection), quarantined, purged … never count. Before the
+   * sync deadline this only keeps verification pending; after it, it is reported as evidence_unverified.
+   */
+  photosNotVerified: number;
+  /** The pre-1.2.1 name of photosNotVerified (the same value). */
   photosNotOnServer: number;
   anyFlaggedScan: boolean;
+  /** QR is required but the run has no route with required checkpoints: no valid checkpoint rule, so never verified. */
+  qrRuleMissing: boolean;
+  /** Verified photos whose server hash repeats one already counted in this run (counted once, flagged for review). */
+  duplicateEvidenceIds: number[];
 };
 
-/** Recorded (any state except refused / corrupt on the device). */
+/** Taken (any state except refused / corrupt on the device): what Guard completeness counts. */
 const recorded = (e: RequirementEvidence) => !['rejected', 'local_corrupt'].includes(e.uploadStatus);
-/** On the server (P1-C sets these after the upload completes). */
-const onServer = (e: RequirementEvidence) => ['uploaded', 'verified'].includes(e.uploadStatus);
+/** Server-verified and still eligible: the ONLY evidence that counts towards verification (S4 1.2.1). */
+export const verifiedEligible = (e: Pick<RequirementEvidence, 'uploadStatus' | 'retentionStatus'>) =>
+  e.uploadStatus === 'verified' && ['active', 'claimed'].includes(e.retentionStatus ?? 'active');
 
 /** The scans that count towards a run: an identified checkpoint, not flagged. */
 function countedVisits<V extends Pick<RequirementVisit, 'checkpointId' | 'result'>>(visits: readonly V[]): V[] {
@@ -123,37 +150,79 @@ export function checkpointProgress(
 }
 
 /**
- * What a finished run lacks. A checkpoint counts as visited only by a scan that was not flagged (a flagged scan — wrong
- * site, revoked, tampered — proves nothing). Photos: photosPerRun run photos; for each required (or photo-required)
- * checkpoint visited, max(photosPerCheckpoint, 1 if the checkpoint asks for one) checkpoint photos linked to its visit.
+ * What a finished run lacks (S4 1.2.1 rules).
+ *   Checkpoints  only when the policy's methods include 'qr': the route's required checkpoints, each visited by a scan that
+ *                was not flagged. QR required but no route with required checkpoints ⇒ qrRuleMissing (one scan is never
+ *                enough; the run can never be QR-verified). Methods without 'qr' (photo-only) require no checkpoint.
+ *   Photos       Yes/No, never a count: ONE run photo when the methods include 'photo' or photosPerRun > 0; ONE photo for
+ *                each visited checkpoint when photosPerCheckpoint > 0 or the checkpoint asks for one.
+ * Two counts are kept: TAKEN (any photo the Guard recorded that was not refused) decides the completeness findings ("photo
+ * not taken"), so photos still in the outbox never make a run look incomplete; VERIFIED-ELIGIBLE (server-verified, retention
+ * active / claimed, one image hash counted once) decides verification.
  */
 export function evaluateRequirements(input: RequirementInput): RequirementResult {
+  const methods = input.methods;
+  const qrRequired = methods ? methods.includes('qr') : true;
   const counted = countedVisits(input.visits);
   const visited = visitedCheckpointIds(input.visits);
-  const missingCheckpointIds = [...new Set(input.requiredCheckpointIds.map(Number))].filter((id) => !visited.has(id)).sort((a, b) => a - b);
+  const required = qrRequired ? [...new Set(input.requiredCheckpointIds.map(Number))] : [];
+  const missingCheckpointIds = required.filter((id) => !visited.has(id)).sort((a, b) => a - b);
+  const qrRuleMissing = methods ? qrRequired && required.length === 0 : false;
 
-  const runPhotos = input.evidence.filter((e) => e.kind === 'run_photo');
-  const missingRunPhotos = Math.max(0, input.photosPerRun - runPhotos.filter(recorded).length);
-  let notOnServer = Math.max(0, Math.min(input.photosPerRun, runPhotos.filter(recorded).length) - runPhotos.filter(onServer).length);
-
-  let missingCheckpointPhotos = 0;
+  // The photo requirements ("buckets"): the run, then each visited checkpoint that needs one. Each needs 0 or 1 photo.
+  type Bucket = { photos: RequirementEvidence[]; run: boolean };
+  const buckets: Bucket[] = [];
+  if (input.photosPerRun > 0 || (methods?.includes('photo') ?? false)) {
+    buckets.push({ photos: input.evidence.filter((e) => e.kind === 'run_photo'), run: true });
+  }
   const photoRequired = new Set(input.photoRequiredCheckpointIds.map(Number));
-  const needingPhotos = new Set([...input.requiredCheckpointIds.map(Number), ...photoRequired].filter((id) => visited.has(id)));
-  for (const checkpointId of needingPhotos) {
-    const need = Math.max(input.photosPerCheckpoint, photoRequired.has(checkpointId) ? 1 : 0);
-    if (need === 0) continue;
+  const needingPhotos = new Set([...required, ...photoRequired].filter((id) => visited.has(id)));
+  for (const checkpointId of [...needingPhotos].sort((a, b) => a - b)) {
+    if (!(input.photosPerCheckpoint > 0 || photoRequired.has(checkpointId))) continue;
     const visitIds = new Set(counted.filter((v) => Number(v.checkpointId) === checkpointId).map((v) => v.visitId));
-    const photos = input.evidence.filter((e) => e.kind === 'checkpoint_photo' && e.visitId != null && visitIds.has(e.visitId));
-    const have = photos.filter(recorded).length;
-    missingCheckpointPhotos += Math.max(0, need - have);
-    notOnServer += Math.max(0, Math.min(need, have) - photos.filter(onServer).length);
+    buckets.push({ photos: input.evidence.filter((e) => e.kind === 'checkpoint_photo' && e.visitId != null && visitIds.has(e.visitId)), run: false });
+  }
+
+  // Each verified image counts ONCE in the run: a hash already used satisfies nothing else. Requirements with the fewest
+  // candidate photos choose first, so one image never starves a requirement another image could have met.
+  const used = new Set<string>();
+  const imageKey = (e: RequirementEvidence, i: number, b: number) => e.sha256Stored ?? `row:${e.id ?? `${b}.${i}`}`;
+  const order = buckets
+    .map((b, index) => ({ b, index, options: b.photos.filter(verifiedEligible).length }))
+    .sort((x, y) => x.options - y.options || x.index - y.index);
+  let missingRunPhotos = 0;
+  let missingCheckpointPhotos = 0;
+  let notVerified = 0;
+  for (const { b, index } of order) {
+    const taken = b.photos.filter(recorded).length;
+    const missing = taken > 0 ? 0 : 1;
+    if (b.run) missingRunPhotos += missing;
+    else missingCheckpointPhotos += missing;
+    const counts = b.photos.find((e, i) => verifiedEligible(e) && !used.has(imageKey(e, i, index)));
+    if (counts) used.add(imageKey(counts, b.photos.indexOf(counts), index));
+    else if (taken > 0) notVerified += 1;
+  }
+
+  // Repeated images among ALL verified, eligible photos of the run (whatever requirement they were taken for).
+  const seen = new Set<string>();
+  const duplicateEvidenceIds: number[] = [];
+  for (const e of input.evidence.filter(verifiedEligible).sort((a, b) => Number(a.id ?? 0) - Number(b.id ?? 0))) {
+    if (!e.sha256Stored) continue;
+    if (seen.has(e.sha256Stored)) {
+      if (e.id != null) duplicateEvidenceIds.push(Number(e.id));
+    } else {
+      seen.add(e.sha256Stored);
+    }
   }
   return {
     missingCheckpointIds,
     missingRunPhotos,
     missingCheckpointPhotos,
-    photosNotOnServer: notOnServer,
+    photosNotVerified: notVerified,
+    photosNotOnServer: notVerified,
     anyFlaggedScan: input.visits.some((v) => v.result === 'flagged'),
+    qrRuleMissing,
+    duplicateEvidenceIds,
   };
 }
 
@@ -184,14 +253,16 @@ export function completionFindings(input: { status: string; exceptionReason: str
 /**
  * Verification of a finished run, separate from its completion:
  *   flagged     a scan was flagged;
- *   verified    every required item is on the server;
- *   unverified  the sync deadline passed with required evidence missing from the server;
- *   pending     otherwise (completed · pending sync).
+ *   verified    every required item is server-verified and eligible — and, when QR is required, the run has a valid
+ *               checkpoint rule (a run with qrRuleMissing is NEVER verified);
+ *   unverified  the sync deadline passed with a requirement still unmet (or no checkpoint rule);
+ *   pending     otherwise (completed · pending sync), so a late upload is never judged before the sync deadline.
  */
 export function verificationState(input: { requirements: RequirementResult; now: Date; syncDeadline: Date }): 'flagged' | 'verified' | 'unverified' | 'pending' {
-  if (input.requirements.anyFlaggedScan) return 'flagged';
-  const missing = input.requirements.missingCheckpointIds.length + input.requirements.missingRunPhotos
-    + input.requirements.missingCheckpointPhotos + input.requirements.photosNotOnServer;
-  if (missing === 0) return 'verified';
+  const r = input.requirements;
+  if (r.anyFlaggedScan) return 'flagged';
+  const notVerified = r.photosNotVerified ?? r.photosNotOnServer;
+  const missing = r.missingCheckpointIds.length + r.missingRunPhotos + r.missingCheckpointPhotos + notVerified;
+  if (missing === 0 && !r.qrRuleMissing) return 'verified';
   return input.now.getTime() >= input.syncDeadline.getTime() ? 'unverified' : 'pending';
 }

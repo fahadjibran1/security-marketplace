@@ -32,59 +32,94 @@
     "keySizeNote": "Corrected 2026-10-20 from 2048: keytool on the keystore and jarsigner on the 1.1.0 (15) AAB both report a 4096-bit RSA key. The certificate SHA-256 (which covers the public key) was always correct; only the size field was mis-recorded."
   },
   "expectedRelease": {
-    "versionName": "1.2.0",
-    "versionCode": 23,
+    "versionName": "1.2.1",
+    "versionCode": 24,
     "minSdkVersion": 24
   },
   "preparedArtefact": {
+    "versionName": "1.2.1",
+    "versionCode": 24,
+    "status": "built-not-uploaded",
+    "easBuildId": "85a98a03-f279-45f4-8e38-2dc730c95b3e",
+    "easBuildUrl": "https://expo.dev/accounts/fahadjibran/projects/security-marketplace/builds/85a98a03-f279-45f4-8e38-2dc730c95b3e",
+    "easBuildProfile": "production",
+    "distribution": "STORE",
+    "sourceBranch": "feature/s4-1.2.1-patrol-correctness",
+    "sourceFixCommit": "63b706a1ed5ba9af5bf1526243ae0ce71ce3dcb0",
+    "gitCommit": "5d749fa1bd5797ff69fa16c4432ee13a2437b602",
+    "aabFilename": "s4-1.2.1-vc24-85a98a03.aab",
+    "aabSha256": "8a948d6b9b370bdded279454e0b16d085a9e9ca7cc9b62d6112e2f961d855a6a",
+    "aabSizeBytes": 64057635,
+    "requiredUploadCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
+    "uploadCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
+    "certifiedOn": "2026-11-01",
+    "verified": {
+      "package": "com.sfour.s4",
+      "versionCode": 24,
+      "versionName": "1.2.1",
+      "minSdkVersion": 24,
+      "targetSdkVersion": 36,
+      "abis": [
+        "arm64-v8a",
+        "armeabi-v7a",
+        "x86",
+        "x86_64"
+      ],
+      "signerCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
+      "signerCheck": "keytool -printcert -jarfile on the downloaded AAB (2026-11-01): upload certificate SHA-256 0D:58:94:49:...:EC:76:31:1B, the permanent S4 key, the same as vc17 to vc23",
+      "apiBaseUrl": "https://security-marketplace-api.onrender.com",
+      "productionApiUrls": 1,
+      "stagingApiUrls": 0,
+      "bundleCheck": "base/assets/index.android.bundle: the production API URL present once, no staging URL, the patrol outbox code present",
+      "patrolOutboxInBundle": "yes: the patrol outbox code is in the JS bundle",
+      "cameraFeatures": "android.hardware.camera and android.hardware.camera.autofocus declared android:required=\"false\"",
+      "permissions": "identical to 1.2.0 (23)",
+      "servicesAndBackup": "services and backup identical to 1.2.0 (23): backup rules s4_backup_rules / s4_data_extraction_rules, excluding SecureStore"
+    },
+    "note": "S4 1.2.1 (24): 1.2.0 (23) plus Package A (patrol correctness and Guard app visibility): the Guard app refreshes the patrol plan while the shift is in progress (every 5 minutes in the foreground, on returning to the app, after Book On and on Refresh) and keeps the last good plan when offline, an active patrol keeps its own route, photos are required yes / no and a missing photo needs a reason, photo-only sites patrol without QR, a QR site without a route is shown as a configuration problem, and the dashboard can acknowledge and resolve patrol exceptions. Same package com.sfour.s4, same upload key as vc17 to vc23 (the permanent S4 certificate above), same plugins (withOptionalCameraHardware, withPatrolBackupExclusion) and permissions, same Firebase setup, production API. The 1.2.1 backend includes Migration 73 (1720900000020-AddPatrolScheduleSuccessors: durable schedule successor links, additive; after Migration 72, 1720900000018). Built by EAS (85a98a03, production profile, STORE) from 5d749fa and verified from the downloaded AAB (coordinator, 1 Nov 2026): manifest com.sfour.s4 / 24 / 1.2.1, minSdk 24 / targetSdk 36, ABIs arm64-v8a, armeabi-v7a, x86 and x86_64, both camera features required=\"false\", permissions, services and backup rules (s4_backup_rules / s4_data_extraction_rules excluding SecureStore) identical to 1.2.0 (23), the JS bundle on the production API with no staging API and with the patrol outbox, and the upload certificate (keytool -printcert -jarfile) equal to the permanent S4 key.sfour.s4 / 24 / 1.2.1, both camera features required=\"false\", permissions identical to 1.2.0 (23), upload certificate equal to the permanent S4 key. Not uploaded to Google Play: the owner will upload it manually to Internal Testing; until then 1.2.0 (23) is the active Internal Testing release. The AAB is kept outside Git."
+  },
+  "approvedArtefact": {
     "versionName": "1.2.0",
     "versionCode": 23,
-    "status": "prepared-not-built",
+    "status": "distributed",
+    "easBuildId": "b5d6a189-6ad0-4530-b685-689c6115a674",
+    "easBuildUrl": "https://expo.dev/accounts/fahadjibran/projects/security-marketplace/builds/b5d6a189-6ad0-4530-b685-689c6115a674",
     "easBuildProfile": "production",
     "distribution": "STORE",
     "sourceBranch": "fix/android-optional-camera-hardware",
     "sourceFixCommit": "61526c972df25a0309517ced112215b12f32ce3d",
-    "sourceCommit": "the commit on fix/android-optional-camera-hardware that sets versionCode 23 in app.json, directly on top of 61526c9 (which adds plugins/withOptionalCameraHardware.js and from which the superseded 1.2.0 (22) was built); a commit cannot record its own id, the build record names it once built",
-    "requiredUploadCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
-    "note": "S4 1.2.0 (23): the same content as the superseded 1.2.0 (22), built from 61526c9; only the versionCode differs. Google Play Console reports versionCode 22 as already used although it is not in the App bundle library, so 22 is consumed in Play and can never be reused; 23 is the next free number. S4 1.2.0 (22) was: the same 1.2.0 content as the superseded 1.2.0 (21) (Patrol Management P1-A to P1-E with in-app QR scans and patrol photos, integrated with the distributed Guard app 1.1.2 (20) line), plus one Android compatibility fix: the manifest declares android.hardware.camera and android.hardware.camera.autofocus with android:required=\"false\" (plugins/withOptionalCameraHardware.js). Without those declarations the CAMERA permission made Google Play imply both features as required, and Play reported 1.2.0 (21) dropping 436 devices (69 phone models) that 1.1.2 (20) supported. With them 1.2.0 adds no hardware requirement over 1.1.2; the CAMERA permission and its runtime handling are unchanged, and a phone without a camera shows the patrol camera as unavailable. Same package com.sfour.s4, same upload key as vc17 to vc22 (the permanent S4 certificate above), same Firebase setup, production API. Prepared only: not built, not uploaded to Google Play, so there is no EAS build id, AAB hash or Play state for it. 1.1.2 (20) stays the distributed Android build until 1.2.0 (23) is built, certified and uploaded on owner approval."
-  },
-  "approvedArtefact": {
-    "versionName": "1.1.2",
-    "versionCode": 20,
-    "status": "distributed",
-    "easBuildId": "8a1a4145-94c8-443f-a25b-1d145abf3064",
-    "easBuildUrl": "https://expo.dev/accounts/fahadjibran/projects/security-marketplace/builds/8a1a4145-94c8-443f-a25b-1d145abf3064",
-    "easBuildProfile": "production",
-    "distribution": "STORE",
-    "sourceBranch": "release-prep/guard-app-1.1.2",
-    "sourceFixCommit": "f2baeb7fca0bb5af1bf657244f7fee6ef6598455",
-    "gitCommit": "c45dce74109ed2efd0efcf6f5a766a07c10f0ecd",
-    "aabFilename": "s4-1.1.2-vc20-8a1a4145.aab",
-    "aabSha256": "4252cc986296c09f7f97df497dc6433829f0f8d15cb653af85f906d8c23f4c4e",
-    "aabSizeBytes": 59135520,
+    "gitCommit": "625bea0b5e03d232e6c6ee9c2cfe874a4dcbbec4",
+    "aabFilename": "s4-1.2.0-vc23-b5d6a189.aab",
+    "aabSha256": "eab6a4d55b1e1cb9c07b3b062364f07b803698572dd669a44ef4ac98e45567a3",
+    "aabSizeBytes": 64050099,
     "requiredUploadCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
     "uploadCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
-    "certifiedOn": "2026-10-28",
+    "certifiedOn": "2026-10-31",
     "verified": {
       "package": "com.sfour.s4",
-      "versionCode": 20,
-      "versionName": "1.1.2",
+      "versionCode": 23,
+      "versionName": "1.2.0",
       "signerCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
-      "signerCheck": "scripts/verify-apk-signer.cjs: upload certificate equal to the permanent S4 key, the same as vc17, vc18 and vc19",
-      "apiBaseUrl": "https://security-marketplace-api.onrender.com",
-      "stagingApiUrls": 0,
-      "guardInboxInBundle": "yes: 'guard_notification' and the 'shift-updates' channel id are in the JS bundle",
-      "pushRegistrationFixInBundle": "yes: getDevicePushTokenAsync and the offer-answer 'screen could not refresh' note are in the JS bundle",
-      "timesheetHoursMinutesInBundle": "yes: the Guard timesheet history and the Hours / Minutes input are in the JS bundle"
+      "signerCheck": "the downloaded EAS artefact (b5d6a189) checked on 2026-10-31: upload certificate SHA-256 0D:58:94:49:...:EC:76:31:1B, the permanent S4 key",
+      "cameraFeatures": "android.hardware.camera and android.hardware.camera.autofocus declared android:required=\"false\"",
+      "permissions": "as expected (coordinator check of the EAS artefact, 2026-10-31)"
     },
-    "note": "Guard app 1.1.2 (20): the distributed 1.1.1 (19) (Guard notifications inbox, push-registration loop fix, offer answers without waiting on the re-read, session renewal timeout) merged with release/s4-pilot-rc1 bca5047 (Guard timesheets in hours and minutes, the return reason with reviewer and time, review history, verified attendance beside the claim). Built by EAS (8a1a4145, production profile, STORE) from c45dce7 on release-prep/guard-app-1.1.2 (draft PR #59), owner-approved, with the existing upload key: the signing material was staged as temporary copies for the EAS upload and deleted afterwards, the originals unchanged; nothing was generated or replaced. Certified locally from the downloaded AAB: manifest (com.sfour.s4, versionCode 20, versionName 1.1.2), JS bundle (production API, no staging API, Guard inbox, the push-registration fix, timesheet history and the Hours / Minutes input), and the signer certificate through scripts/verify-apk-signer.cjs, full SHA-256 equal to the vc17, vc18 and vc19 upload certificate. Uploaded by the owner to Google Play Internal Testing and Active there (owner-confirmed 28 Oct 2026): Play Console active internal release 1.1.2 (20). The uploaded file's hash was not read back from Play Console. 1.1.1 (19) is superseded.",
+    "note": "S4 1.2.0 (23): the same content as 1.2.0 (22) (Patrol Management P1-A to P1-E on the Guard app 1.1.2 line, camera hardware declared optional), under the next free versionCode. Built by EAS (b5d6a189, production profile, STORE) from 625bea0 on fix/android-optional-camera-hardware, which sets versionCode 23 on top of 61526c9. Published to Google Play Internal Testing on 31 Oct 2026 (owner-confirmed; S4 did not upload it), so versionCode 23 is consumed in Play and is the active internal release. The EAS artefact was verified on 31 Oct 2026 (coordinator): upload certificate equal to the permanent S4 key, both camera features required=\"false\", permissions as expected. Whether the file the owner uploaded to Play is byte-identical to this artefact is not known: the Play-side hash was not read back from Play Console. The rollout, the tester count and the exact publication time were not recorded. The AAB is kept outside Git. 1.1.2 (20) is superseded.",
     "playInternalTesting": {
       "status": "active",
       "confirmedBy": "owner",
-      "confirmedOn": "2026-10-28",
-      "activeRelease": "1.1.2 (20)",
-      "evidence": "owner uploaded to Play Internal Testing; Play active internal release 1.1.2 (20)",
-      "note": "Owner-confirmed 28 Oct 2026: the owner uploaded 1.1.2 (20) to Google Play Internal Testing and it is the active internal release, \"1.1.2 (20)\". The uploaded file's hash was not read back from Play Console. Not inspected from the build machine."
+      "confirmedOn": "2026-10-31",
+      "publishedOn": "2026-10-31",
+      "activeRelease": "1.2.0 (23)",
+      "uploadedBy": "owner (not S4)",
+      "evidence": "owner-confirmed: 1.2.0 (23) published to Google Play Internal Testing on 31 Oct 2026",
+      "unknown": [
+        "whether the uploaded file is byte-identical to the verified EAS artefact (the Play-side hash was not read back from Play Console)",
+        "rollout",
+        "tester count",
+        "exact publication time"
+      ],
+      "note": "Owner-confirmed: 1.2.0 (23) was published to Google Play Internal Testing on 31 Oct 2026 and is the active internal release, \"1.2.0 (23)\". S4 did not upload it. The uploaded file's hash was not read back from Play Console. Not inspected from the build machine."
     }
   },
   "retiredArtefacts": [
@@ -305,6 +340,47 @@
       "retiredReason": "Superseded by versionCode 20 (1.1.2), which merges the 1.1.1 line with release/s4-pilot-rc1 bca5047 (Guard timesheets in hours and minutes, return reasons, review history) on the same identity and upload key. versionCode 19 was Active in Google Play Internal Testing (owner upload approved 26 Oct 2026; production devices reported 1.1.1), so it can never be reused; its build, hash, signer and Play facts are kept exactly."
     },
     {
+      "versionName": "1.1.2",
+      "versionCode": 20,
+      "status": "distributed-superseded",
+      "easBuildId": "8a1a4145-94c8-443f-a25b-1d145abf3064",
+      "easBuildUrl": "https://expo.dev/accounts/fahadjibran/projects/security-marketplace/builds/8a1a4145-94c8-443f-a25b-1d145abf3064",
+      "easBuildProfile": "production",
+      "distribution": "STORE",
+      "sourceBranch": "release-prep/guard-app-1.1.2",
+      "sourceFixCommit": "f2baeb7fca0bb5af1bf657244f7fee6ef6598455",
+      "gitCommit": "c45dce74109ed2efd0efcf6f5a766a07c10f0ecd",
+      "aabFilename": "s4-1.1.2-vc20-8a1a4145.aab",
+      "aabSha256": "4252cc986296c09f7f97df497dc6433829f0f8d15cb653af85f906d8c23f4c4e",
+      "aabSizeBytes": 59135520,
+      "requiredUploadCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
+      "uploadCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
+      "certifiedOn": "2026-10-28",
+      "verified": {
+        "package": "com.sfour.s4",
+        "versionCode": 20,
+        "versionName": "1.1.2",
+        "signerCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
+        "signerCheck": "scripts/verify-apk-signer.cjs: upload certificate equal to the permanent S4 key, the same as vc17, vc18 and vc19",
+        "apiBaseUrl": "https://security-marketplace-api.onrender.com",
+        "stagingApiUrls": 0,
+        "guardInboxInBundle": "yes: 'guard_notification' and the 'shift-updates' channel id are in the JS bundle",
+        "pushRegistrationFixInBundle": "yes: getDevicePushTokenAsync and the offer-answer 'screen could not refresh' note are in the JS bundle",
+        "timesheetHoursMinutesInBundle": "yes: the Guard timesheet history and the Hours / Minutes input are in the JS bundle"
+      },
+      "note": "Guard app 1.1.2 (20): the distributed 1.1.1 (19) (Guard notifications inbox, push-registration loop fix, offer answers without waiting on the re-read, session renewal timeout) merged with release/s4-pilot-rc1 bca5047 (Guard timesheets in hours and minutes, the return reason with reviewer and time, review history, verified attendance beside the claim). Built by EAS (8a1a4145, production profile, STORE) from c45dce7 on release-prep/guard-app-1.1.2 (draft PR #59), owner-approved, with the existing upload key: the signing material was staged as temporary copies for the EAS upload and deleted afterwards, the originals unchanged; nothing was generated or replaced. Certified locally from the downloaded AAB: manifest (com.sfour.s4, versionCode 20, versionName 1.1.2), JS bundle (production API, no staging API, Guard inbox, the push-registration fix, timesheet history and the Hours / Minutes input), and the signer certificate through scripts/verify-apk-signer.cjs, full SHA-256 equal to the vc17, vc18 and vc19 upload certificate. Uploaded by the owner to Google Play Internal Testing and Active there (owner-confirmed 28 Oct 2026): Play Console active internal release 1.1.2 (20). The uploaded file's hash was not read back from Play Console. 1.1.1 (19) is superseded.",
+      "playInternalTesting": {
+        "status": "active",
+        "confirmedBy": "owner",
+        "confirmedOn": "2026-10-28",
+        "activeRelease": "1.1.2 (20)",
+        "evidence": "owner uploaded to Play Internal Testing; Play active internal release 1.1.2 (20)",
+        "note": "Owner-confirmed 28 Oct 2026: the owner uploaded 1.1.2 (20) to Google Play Internal Testing and it is the active internal release, \"1.1.2 (20)\". The uploaded file's hash was not read back from Play Console. Not inspected from the build machine."
+      },
+      "retiredOn": "2026-10-31",
+      "retiredReason": "Superseded by versionCode 23 (1.2.0), published to Google Play Internal Testing on 31 Oct 2026 (owner-confirmed), on the same identity and upload key. versionCode 20 was Active in Google Play Internal Testing (owner-confirmed 28 Oct 2026), so it can never be reused; its build, hash, signer and Play facts are kept exactly."
+    },
+    {
       "versionName": "1.2.0",
       "versionCode": 21,
       "status": "uploaded-draft-superseded",
@@ -408,8 +484,8 @@
     "app": "S4 (com.sfour.s4)",
     "internalTesting": {
       "testers": 5,
-      "activeRelease": "1.1.2 (20)"
+      "activeRelease": "1.2.0 (23)"
     },
-    "source": "Owner-confirmed 2026-10-20 (account, testers); active release 1.1.0 (18) owner-confirmed 2026-10-25; active release 1.1.1 (19): owner uploaded to Play Internal Testing (approved 26 Oct); production devices report 1.1.1 (production push_devices, 27 Oct 2026); active release 1.1.2 (20): owner uploaded to Play Internal Testing, owner-confirmed 2026-10-28. Not inspected from the build machine."
+    "source": "Owner-confirmed 2026-10-20 (account, testers); active release 1.1.0 (18) owner-confirmed 2026-10-25; active release 1.1.1 (19): owner uploaded to Play Internal Testing (approved 26 Oct); production devices report 1.1.1 (production push_devices, 27 Oct 2026); active release 1.1.2 (20): owner uploaded to Play Internal Testing, owner-confirmed 2026-10-28. Not inspected from the build machine.; active release 1.2.0 (23): published to Internal Testing 2026-10-31, owner-confirmed (S4 did not upload it; rollout, testers and time not recorded)."
   }
 }

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { AppState, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { AppModal } from '../../ui/Modal';
 import { Button } from '../../ui/Button';
 import { colors, radii, spacing, typography } from '../../../theme';
@@ -10,6 +10,7 @@ import type { GuardPatrolPlan, GuardPatrolRun } from '../../../types/patrols';
 import { GuardPatrolCamera } from './GuardPatrolCamera';
 import { photoErrorMessage, processCapturedPhoto } from './patrolImage';
 import { NOT_SENT_MESSAGE, PATROL_SYNC_WINDOW_CLOSED, RECOVERY_RETRY_HINT, type OutboxItem } from './patrolOutbox';
+import { EMPTY_PLAN_CACHE, PatrolPlanRefresher, applyPlanResult, planFreshnessText, type PlanCache } from './patrolPlanRefresh';
 import { decideScan, scanVerdictMessage } from './patrolQrScan';
 import {
   activePatrol,
@@ -19,7 +20,11 @@ import {
   notSentItems,
   patrolCardVisible,
   patrolCheckpoints,
+  patrolRoute,
   patrolView,
+  qrConfigurationProblem,
+  qrScansEnabled,
+  routeSnapshot,
   timePair,
   upcomingWindows,
   waitingCount,
@@ -36,7 +41,7 @@ type CameraTask = { mode: 'scan' } | { mode: 'photo'; kind: 'run_photo' } | { mo
  */
 export function GuardPatrolPanel({ userId, shift }: { userId: number; shift: { id: number; status: string; companyId?: number | null; siteName?: string | null } | null }) {
   const outbox = usePatrolOutbox(userId);
-  const [plan, setPlan] = React.useState<GuardPatrolPlan | null>(null);
+  const [planCache, setPlanCache] = React.useState<PlanCache>(EMPTY_PLAN_CACHE);
   const [serverRuns, setServerRuns] = React.useState<GuardPatrolRun[]>([]);
   const [open, setOpen] = React.useState(false);
   const [camera, setCamera] = React.useState<CameraTask>(null);
@@ -50,21 +55,36 @@ export function GuardPatrolPanel({ userId, shift }: { userId: number; shift: { i
   const shiftId = shift?.id ?? null;
   const live = String(shift?.status ?? '').toLowerCase() === 'in_progress';
 
+  // S4 1.2.1: the plan is refreshed while the shift is in progress (every 5 min in the foreground, on returning to the
+  // app, after Book On, on Refresh) — patrolPlanRefresh.ts. A failed refresh keeps the LAST GOOD plan and says it may be
+  // out of date; only an authoritative refusal (404 PATROLS_NOT_ENABLED / not the Guard's shift, 409 no site) removes
+  // the card. Refreshing never touches the outbox: what this phone recorded keeps syncing on its own.
+  const shiftRef = React.useRef<number | null>(shiftId);
+  shiftRef.current = shiftId;
+  const refresher = React.useMemo(() => new PatrolPlanRefresher(async () => {
+    const id = shiftRef.current;
+    if (!id) return;
+    try {
+      const fetched = await getMyPatrolPlan(id);
+      if (shiftRef.current === id) setPlanCache((c) => applyPlanResult(c, id, { ok: true, plan: fetched, at: new Date() }));
+    } catch (error) {
+      if (shiftRef.current === id) setPlanCache((c) => applyPlanResult(c, id, { ok: false, error, at: new Date() }));
+    }
+  }, { setInterval: (fn, ms) => setInterval(fn, ms), clearInterval: (h) => clearInterval(h as ReturnType<typeof setInterval>) }), []);
+
+  React.useEffect(() => () => refresher.dispose(), [refresher]);
   React.useEffect(() => {
-    let alive = true;
-    setPlan(null);
-    if (!shiftId || !live) return;
-    getMyPatrolPlan(shiftId)
-      .then((p) => { if (alive) setPlan(p); })
-      .catch((error) => {
-        // 404 PATROLS_NOT_ENABLED / not the Guard's shift, 409 no site: no patrol card. A network failure leaves the
-        // card out too — patrols already on this phone keep syncing and are listed below.
-        if (!alive) return;
-        setPlan(null);
-        if (!(error instanceof ApiError)) setNotice({ tone: 'info', text: 'Patrols could not be loaded (no connection). Anything already recorded on this phone is kept and sent later.' });
-      });
-    return () => { alive = false; };
-  }, [shiftId, live]);
+    // A different shift starts from nothing; the same shift keeps its last good plan.
+    setPlanCache((c) => (c.shiftId === shiftId ? c : { ...EMPTY_PLAN_CACHE, shiftId }));
+    refresher.setShiftLive(false);
+    if (shiftId && live) refresher.setShiftLive(true);
+  }, [shiftId, live, refresher]);
+  React.useEffect(() => {
+    const sub = AppState.addEventListener('change', (state: string) => refresher.setAppState(state));
+    return () => sub.remove();
+  }, [refresher]);
+
+  const plan: GuardPatrolPlan | null = live && planCache.shiftId === shiftId ? planCache.plan : null;
 
   React.useEffect(() => {
     let alive = true;
@@ -81,12 +101,23 @@ export function GuardPatrolPanel({ userId, shift }: { userId: number; shift: { i
   const active = shiftId ? activePatrol(items, shiftId) : null;
   const now = new Date();
 
-  if (!visible && waiting === 0 && refused.length === 0) return null;
+  const loadProblem = live && !planCache.plan ? planFreshnessText(planCache, 'Europe/London') : null;
+  if (!visible && waiting === 0 && refused.length === 0 && !loadProblem) return null;
 
   const serverFor = (p: LocalPatrol) => serverRuns.find((r) => r.clientRunId === p.clientRunId) ?? null;
   const tz = plan?.site.timezone ?? 'Europe/London';
   const windows = plan ? upcomingWindows(plan, now) : null;
   const routeId = active ? (active.start.body.routeId as number | undefined) ?? null : null;
+  const scheduleId = active ? (active.start.body.scheduleId as number | undefined) ?? null : null;
+  const freshness = live ? planFreshnessText(planCache, tz) : null;
+  const activeRoute = active && plan ? patrolRoute(plan, routeId, active) : null;
+  const qrProblem = active && plan ? qrConfigurationProblem(plan, routeId, scheduleId, active) : null;
+  const scanOffered = plan ? qrScansEnabled(plan) : true;
+
+  async function refreshPlan() {
+    const ran = await refresher.refreshNow();
+    if (!ran) setNotice({ tone: 'info', text: 'The patrol plan is already being updated.' });
+  }
 
   async function guard<T>(fn: () => Promise<T>, failure: string): Promise<T | null> {
     setWorking(true);
@@ -121,7 +152,8 @@ export function GuardPatrolPanel({ userId, shift }: { userId: number; shift: { i
       scheduleId: window?.scheduleId ?? null,
       routeId: window?.routeId ?? null,
       startedAtDevice: new Date().toISOString(), // captured now, stored before any network call
-      meta: { siteName: plan.site.name, scheduleName: window?.scheduleName ?? null, timezone: plan.site.timezone },
+      // The route's checkpoints as they are now: the patrol keeps following ITS route even if a later plan drops it.
+      meta: { siteName: plan.site.name, scheduleName: window?.scheduleName ?? null, timezone: plan.site.timezone, route: routeSnapshot(plan, window?.routeId ?? null) },
     }), 'Could not save the patrol on this phone.');
     if (ok) {
       setNotice({ tone: 'info', text: window ? `Patrol started for ${window.scheduleName}.` : 'Unscheduled patrol started.' });
@@ -207,7 +239,12 @@ export function GuardPatrolPanel({ userId, shift }: { userId: number; shift: { i
     if (!engine || !active || !plan) return;
     const summary = completionSummary(plan, routeId, active);
     if (summary.needsReason && !completionNote.trim()) {
-      setNotice({ tone: 'warning', text: 'Some checkpoints were not scanned. Give a reason, or record why each one could not be reached.' });
+      setNotice({
+        tone: 'warning',
+        text: summary.missingWithoutReason.length
+          ? 'Some checkpoints were not scanned. Give a reason, or record why each one could not be reached.'
+          : 'A required photo was not taken. Take it, or give a reason why the patrol could not be finished.',
+      });
       return;
     }
     const ok = await guard(() => engine.enqueueComplete({ clientRunId: active.clientRunId, completedAtDevice: new Date().toISOString(), note: completionNote.trim() || null }), 'Could not save the completion on this phone.');
@@ -225,6 +262,7 @@ export function GuardPatrolPanel({ userId, shift }: { userId: number; shift: { i
   return (
     <View style={styles.section}>
       <Text style={styles.sectionLabel}>Patrols</Text>
+      {freshness ? <Text style={styles.stale}>{freshness}</Text> : null}
       {visible && plan ? (
         <>
           {windows === null ? (
@@ -244,6 +282,9 @@ export function GuardPatrolPanel({ userId, shift }: { userId: number; shift: { i
             <Button label="Start patrol" onPress={() => { void startPatrol(); }} loading={working} fullWidth />
           )}
         </>
+      ) : null}
+      {live && (visible || freshness) ? (
+        <Button label="Refresh" variant="tertiary" onPress={() => { void refreshPlan(); }} />
       ) : null}
       {recent.map((p) => {
         const view = patrolView(p, serverFor(p));
@@ -291,6 +332,11 @@ export function GuardPatrolPanel({ userId, shift }: { userId: number; shift: { i
             <CompletionReview plan={plan} local={active} routeId={routeId} note={completionNote} onNote={setCompletionNote} onConfirm={() => { void completePatrol(); }} onBack={() => setCompleting(false)} busy={working} />
           ) : active && plan ? (
             <>
+              {freshness ? <Text style={styles.stale}>{freshness}</Text> : null}
+              {activeRoute?.source === 'missing' ? (
+                <Text style={[styles.notice, styles.warn]}>This patrol's route is no longer in the patrol plan, so its checkpoints cannot be listed. Scan the checkpoints you were given — S4 checks them against the route — and tell the control room.</Text>
+              ) : null}
+              {qrProblem ? <Text style={[styles.notice, styles.warn]}>{qrProblem}</Text> : null}
               {patrolCheckpoints(plan, routeId, active).map((c) => (
                 <View key={c.publicId} style={styles.checkpointRow}>
                   <Text style={[styles.checkpointLabel, c.scanned ? styles.scanned : null]}>
@@ -320,7 +366,7 @@ export function GuardPatrolPanel({ userId, shift }: { userId: number; shift: { i
                 </View>
               ) : null}
               <View style={styles.actions}>
-                <Button label="Scan checkpoint" onPress={() => setCamera({ mode: 'scan' })} disabled={working} fullWidth />
+                {scanOffered ? <Button label="Scan checkpoint" onPress={() => setCamera({ mode: 'scan' })} disabled={working} fullWidth /> : null}
                 <Button label="Take patrol photo" variant="secondary" onPress={() => setCamera({ mode: 'photo', kind: 'run_photo' })} disabled={working} fullWidth />
                 <Button label="Complete patrol" variant="secondary" onPress={() => setCompleting(true)} disabled={working} fullWidth />
               </View>
@@ -350,10 +396,11 @@ function CompletionReview({ plan, local, routeId, note, onNote, onConfirm, onBac
   const s = completionSummary(plan, routeId, local);
   return (
     <View style={styles.summary}>
-      <Text style={styles.label}>{`Checkpoints scanned: ${s.checkpointsScanned} of ${s.checkpointsTotal}`}</Text>
-      <Text style={styles.label}>{`Photos taken: ${s.photosTaken}${s.photosRequired ? ` (expected ${s.photosRequired})` : ''}`}</Text>
+      {s.checkpointsTotal > 0 ? <Text style={styles.label}>{`Checkpoints scanned: ${s.checkpointsScanned} of ${s.checkpointsTotal}`}</Text> : null}
+      <Text style={styles.label}>{`Photos taken: ${s.photosTaken}${s.photosRequired ? ` (required: ${s.photosRequired})` : ''}`}</Text>
       {s.missing.map((m) => <Text key={m.publicId} style={styles.muted}>{`Not scanned: ${m.label}${m.exception ? ` — ${m.exception}` : ''}`}</Text>)}
-      {s.missing.length ? (
+      {s.photosMissing > 0 ? <Text style={styles.muted}>{`Required photo${s.photosMissing === 1 ? '' : 's'} not taken: ${s.photosMissing}`}</Text> : null}
+      {s.unmet ? (
         <>
           <Text style={styles.label}>{s.needsReason ? 'Reason (required)' : 'Anything to add (optional)'}</Text>
           <TextInput value={note} onChangeText={onNote} placeholder="Why the patrol could not be finished" style={styles.input} maxLength={300} multiline />
@@ -377,7 +424,7 @@ function CompletionConfirmation({ plan, local, serverRun, routeId }: { plan: Gua
       <Text style={styles.label}>{`Status: ${view.label}`}</Text>
       <Text style={styles.muted}>{`Started ${timePair(view.startedAtDevice, view.startedAtServer, tz)}`}</Text>
       <Text style={styles.muted}>{`Completed ${timePair(view.completedAtDevice, view.completedAtServer, tz)}`}</Text>
-      <Text style={styles.label}>{`Checkpoints scanned: ${s.checkpointsScanned} of ${s.checkpointsTotal}`}</Text>
+      {s.checkpointsTotal > 0 ? <Text style={styles.label}>{`Checkpoints scanned: ${s.checkpointsScanned} of ${s.checkpointsTotal}`}</Text> : null}
       <Text style={styles.label}>{`Photos: ${s.photosTaken}`}</Text>
       {view.waiting ? <Text style={styles.waiting}>{`${view.waiting} item(s) waiting to send. They stay on this phone until S4 has them.`}</Text> : <Text style={styles.muted}>Everything recorded on this phone has reached S4.</Text>}
       {view.notSent.length ? <Text style={styles.refusedTitle}>{`${view.notSent.length} item(s): ${NOT_SENT_MESSAGE}`}</Text> : null}
@@ -406,6 +453,7 @@ const styles = StyleSheet.create({
   muted: { color: colors.textSecondary, ...typography.caption },
   runRow: { color: colors.textPrimary, ...typography.caption },
   waiting: { color: colors.info, ...typography.caption },
+  stale: { color: colors.warning, ...typography.caption },
   refused: { backgroundColor: colors.dangerSurface, borderColor: colors.dangerBorder, borderWidth: 1, borderRadius: radii.sm, padding: spacing.sm, gap: spacing.xs },
   refusedTitle: { color: colors.danger, ...typography.label },
   refusedText: { color: colors.textPrimary, ...typography.caption },

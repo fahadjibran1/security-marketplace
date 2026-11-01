@@ -255,15 +255,28 @@ export class PatrolExceptionService {
 
   async list(user: JwtPayload, query: PatrolExceptionsQueryDto) {
     const actor = await this.access.companyActor(user, CompanyPermission.PATROLS_VIEW);
+    // S4 1.2.1 (additive): who acknowledged / resolved it, as a display name only (first and last name, never an email or
+    // user id beyond what was already exposed), so the dashboard can show the decision without another request.
     const rows = await this.dataSource.query(
-      `SELECT e.*, a."status" AS "alertStatus", a."priority" AS "alertPriority" FROM "patrol_exceptions" e
+      `SELECT e.*, a."status" AS "alertStatus", a."priority" AS "alertPriority",
+              ack."firstName" AS "ackFirstName", ack."lastName" AS "ackLastName",
+              res."firstName" AS "resFirstName", res."lastName" AS "resLastName"
+         FROM "patrol_exceptions" e
          LEFT JOIN "safety_alerts" a ON a."id" = e."safetyAlertId"
+         LEFT JOIN "users" ack ON ack."id" = e."acknowledgedByUserId"
+         LEFT JOIN "users" res ON res."id" = e."resolvedByUserId"
         WHERE e."companyId" = $1 AND ($2::int IS NULL OR e."siteId" = $2) AND ($3::text IS NULL OR e."status" = $3)
           AND ($4::text IS NULL OR e."type" = $4)
         ORDER BY e."createdAt" DESC, e."id" DESC LIMIT 200`,
       [actor.companyId, query.siteId ?? null, query.status ?? null, query.type ?? null],
     );
-    return rows.map((r: any) => ({ ...serializeException(r), alertStatus: r.alertStatus ?? null, alertPriority: r.alertPriority ?? null }));
+    return rows.map((r: any) => ({
+      ...serializeException(r),
+      alertStatus: r.alertStatus ?? null,
+      alertPriority: r.alertPriority ?? null,
+      acknowledgedByName: r.acknowledgedByUserId == null ? null : actorName(r.ackFirstName, r.ackLastName),
+      resolvedByName: r.resolvedByUserId == null ? null : actorName(r.resFirstName, r.resLastName),
+    }));
   }
 
   async acknowledge(user: JwtPayload, id: number) {
@@ -359,4 +372,9 @@ export class PatrolExceptionService {
     if (!row) throw patrolError(HttpStatus.NOT_FOUND, PatrolErrorCode.NOT_FOUND, 'Patrol exception not found.');
     return row;
   }
+}
+
+/** A person's display name from their profile (never an email); "Staff member" when they have none. */
+function actorName(firstName: string | null, lastName: string | null): string {
+  return [firstName, lastName].map((p) => (p ?? '').trim()).filter(Boolean).join(' ') || 'Staff member';
 }

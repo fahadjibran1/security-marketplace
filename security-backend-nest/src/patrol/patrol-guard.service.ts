@@ -27,7 +27,8 @@ import {
 import { checkLabelSignature, parseCheckpointLabel, patrolQrKeyring } from './patrol-qr';
 import { ActiveRecoveryGrant, PatrolRecoveryGrantService } from './patrol-recovery-grant.service';
 import { serializeRun, serializeVisit, updateRows } from './patrol-serializers';
-import { PatrolWindow, windowForStart, windowsBetween } from './patrol-window.service';
+import { scheduleVersionBounds, supersededSince, withVersionBounds } from './patrol-schedule-versions';
+import { PatrolWindow, runCoverageKey, windowForStart, windowsBetween } from './patrol-window.service';
 
 const INT32_MAX = 2_147_483_647;
 /** The most windows GET /patrols/mine/plan lists (a 24 h shift with a 15-minute schedule has 96). */
@@ -157,7 +158,21 @@ export class PatrolGuardService {
       });
     }
     const { qrRequireProximity: _q, proximityMeters: _p, ...policyOut } = policy;
-    const windows = await this.shiftWindows(shift, site?.timezone || 'Europe/London', schedules, policy.requirementScope);
+    // Schedule versions (S4 1.2.1): a successor's windows start when it took effect; a schedule it replaced during this
+    // shift still lists its windows that started before the change (a patrol already due then can still be done).
+    const versions = await scheduleVersionBounds(this.dataSource, shift.companyId);
+    const supersededIds = supersededSince(versions, new Date(shift.start));
+    const superseded = supersededIds.length
+      ? await this.dataSource.query(
+        `SELECT "id", "routeId", "name", "daysOfWeek", "activeFrom", "activeTo", "frequencyMinutes", "windowMinutes",
+                "startsOn"::text AS "startsOn", "endsOn"::text AS "endsOn"
+           FROM "patrol_schedules" WHERE "companyId" = $1 AND "siteId" = $2 AND "archivedAt" IS NOT NULL AND "id" = ANY($3::int[]) ORDER BY "id"`,
+        [shift.companyId, shift.siteId, supersededIds],
+      )
+      : [];
+    const windows = await this.shiftWindows(shift, site?.timezone || 'Europe/London',
+      [...schedules, ...superseded].map((s: any) => withVersionBounds(s, versions)), policy.requirementScope);
+    const warnings = await this.config.configurationWarnings(shift.companyId, [shift.siteId]);
     return {
       shift: { id: shift.id, status: shift.status, start: new Date(shift.start).toISOString(), end: new Date(shift.end).toISOString() },
       site: { id: Number(site.id), name: site.name, timezone: site.timezone },
@@ -179,6 +194,8 @@ export class PatrolGuardService {
       routes: routeOut,
       checkpoints: checkpoints.map((c: any) => ({ publicId: c.publicId, label: c.label, description: c.description ?? null, photoRequired: Boolean(c.photoRequired) })),
       windows,
+      // Decision A1: a QR schedule (or site) with no route with required checkpoints — its patrols cannot be QR-verified.
+      configurationWarnings: (warnings.get(shift.siteId) ?? []).map(({ code, message, scheduleId }) => ({ code, message, scheduleId })),
     };
   }
 
@@ -196,18 +213,21 @@ export class PatrolGuardService {
     const all = schedules
       .flatMap((s: any) => windowsBetween(
         { id: Number(s.id), daysOfWeek: s.daysOfWeek, activeFrom: s.activeFrom, activeTo: s.activeTo, frequencyMinutes: Number(s.frequencyMinutes),
-          windowMinutes: Number(s.windowMinutes), startsOn: s.startsOn ?? null, endsOn: s.endsOn ?? null },
+          windowMinutes: Number(s.windowMinutes), startsOn: s.startsOn ?? null, endsOn: s.endsOn ?? null,
+          effectiveFrom: s.effectiveFrom ?? null, effectiveUntil: s.effectiveUntil ?? null },
         timeZone, from, to, cache,
       ).map((w) => ({ w, schedule: s })))
       .sort((a, b) => a.w.start.getTime() - b.w.start.getTime() || a.w.windowKey.localeCompare(b.w.windowKey))
       .slice(0, PATROL_PLAN_MAX_WINDOWS);
     if (!all.length) return [];
     const scopeKey = scope === 'per_guard' ? `sh${shift.id}` : 'site';
+    // Covered = a run assigned to THIS window: same schedule, key, scope and actual window start (S4 1.2.1).
     const covered = await this.dataSource.query(
-      `SELECT DISTINCT "windowKey" FROM "patrol_runs" WHERE "companyId" = $1 AND "siteId" = $2 AND "scopeKey" = $3 AND "windowKey" = ANY($4::text[])`,
+      `SELECT DISTINCT "scheduleId", "windowKey", "windowStart" FROM "patrol_runs"
+        WHERE "companyId" = $1 AND "siteId" = $2 AND "scopeKey" = $3 AND "windowKey" = ANY($4::text[])`,
       [shift.companyId, shift.siteId, scopeKey, all.map((x) => x.w.windowKey)],
     );
-    const coveredKeys = new Set(covered.map((r: any) => r.windowKey));
+    const coveredKeys = new Set(covered.map((r: any) => runCoverageKey(r.scheduleId, r.windowKey, null, r.windowStart)));
     return all.map(({ w, schedule }) => ({
       windowKey: w.windowKey,
       scheduleId: w.scheduleId,
@@ -216,7 +236,7 @@ export class PatrolGuardService {
       localDate: w.localDate,
       start: w.start.toISOString(),
       end: w.end.toISOString(),
-      covered: coveredKeys.has(w.windowKey),
+      covered: coveredKeys.has(runCoverageKey(w.scheduleId, w.windowKey, null, w.start)),
     }));
   }
 
@@ -275,9 +295,15 @@ export class PatrolGuardService {
            FROM "patrol_schedules" WHERE "id" = $1 AND "companyId" = $2`,
         [dto.scheduleId, shift.companyId],
       );
-      if (!schedule || Number(schedule.siteId) !== shift.siteId || !schedule.active || schedule.archivedAt) {
+      // S4 1.2.1: a schedule replaced by a timing change (a new version) still takes a patrol for a window that started
+      // before the change — e.g. one started offline then — checked below once the start time is known.
+      const versions = schedule ? await scheduleVersionBounds(this.dataSource, shift.companyId) : new Map();
+      const replacedVersion = schedule?.archivedAt ? versions.get(Number(schedule.id)) : undefined;
+      const supersededWhileOn = replacedVersion?.effectiveUntil != null;
+      if (!schedule || Number(schedule.siteId) !== shift.siteId || (!supersededWhileOn && (!schedule.active || schedule.archivedAt))) {
         throw patrolError(HttpStatus.UNPROCESSABLE_ENTITY, PatrolErrorCode.SCHEDULE_NOT_FOR_SITE, 'That patrol schedule is not active for this shift\'s site.');
       }
+      schedule = withVersionBounds(schedule, versions);
       if (routeId == null && schedule.routeId != null) routeId = Number(schedule.routeId);
     }
     if (routeId != null) {
@@ -300,6 +326,10 @@ export class PatrolGuardService {
     if (schedule) {
       const [site] = await this.dataSource.query(`SELECT "timezone" FROM "sites" WHERE "id" = $1`, [shift.siteId]);
       assigned = windowForStart(schedule, site?.timezone || 'Europe/London', adjustedStart, policy.startGraceMinutes);
+      // A replaced version takes only a patrol for one of its own windows (one that started before the change).
+      if (schedule.archivedAt && !assigned) {
+        throw patrolError(HttpStatus.UNPROCESSABLE_ENTITY, PatrolErrorCode.SCHEDULE_NOT_FOR_SITE, 'That patrol schedule is not active for this shift\'s site.');
+      }
     }
     const flags: PatrolSyncFlag[] = [];
     let grant: ActiveRecoveryGrant | null = null;

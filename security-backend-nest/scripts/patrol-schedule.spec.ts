@@ -33,7 +33,7 @@
  *   PS-S10  incomplete: required checkpoints missed ⇒ checkpoint_missed; a stated reason ⇒ patrol_incomplete, alerted
  *           only when the policy says it needs action
  *   PS-S11  photos: not taken ⇒ incomplete at the completion deadline; not on the server ⇒ unverified at the sync
- *           deadline (Patrols only unless escalated); uploaded ⇒ verified; settled after 24 h
+ *           deadline (Patrols only unless escalated); server-verified ⇒ verified; settled after 24 h
  *   PS-S12  Replace Guard: windows follow the shift; the outgoing Guard's run in progress closes incomplete guard_replaced
  *   PS-S13  exactly one alert under concurrent sweeps (Promise.all)
  *   PS-S14  switch off stops the sweep at once; switching on never judges earlier windows
@@ -66,6 +66,33 @@
  *   PS-O13  another company's Guard cannot sync into this company
  *   PS-O14  a run left open past the acceptance window is closed by the system (abandonment already raised)
  *   PS-O15  the post-shift acceptance window is the policy's (postShiftSyncHours)
+ * S4 1.2.1 patrol correctness
+ *   PS-C01  only server-verified, eligible photos count towards verification (pending, uploaded, rejected, quarantined,
+ *           purged, tombstone never do); "taken" keeps Guard completeness; 8 rejected photos are not 8 verified
+ *   PS-C02  one image (server hash) counts once in a run; later copies are listed for review
+ *   PS-C03  photos are Yes / No: any count above 0 means one photo
+ *   PS-C04  QR needs a checkpoint rule (a route with required checkpoints) — never verified without one, one scan is never
+ *           enough; photo-only needs no checkpoint; NFC is not a method
+ *   PS-C05  schedule versions: a window belongs to the version in force at its start — same day, overnight, UK DST nights
+ *   PS-C06  a same-day timing edit: no false missed, old runs never satisfy new windows, exceptions / evidence / audit kept
+ *   PS-C07  an overnight edit across midnight (sweep and the day count)
+ *   PS-C08  overlapping windows: the old window open at the change and the successor's first are independent (plan, sweep)
+ *   PS-C09  UK DST nights (29 Mar, 25 Oct 2026) with an edit: one exception per real window, split at the change
+ *   PS-C10  the API ends the schedule and creates a successor on a timing change (atomic, audited, history kept)
+ *   PS-C11  a run covers only the window with its actual start: the sweep, the Guard plan and the day count
+ *   PS-C12  QR without a route is saved with a "Configuration required" warning (schedule, policy, plan) and its patrols
+ *           are never verified (flagged qr_rule_missing, needs review); NFC refused
+ *   PS-C13  the sweep counts a repeated verified image once and flags the copy duplicate_sha256 (review), once
+ *   PS-C14  a patrol started (offline) under the old version before a timing change still syncs for that version's window;
+ *           the old version takes nothing after the change; the plan shows each version on its side of the change
+ *   PS-C15  Migration 73: the successor link is durable — concurrent timing edits make ONE successor (the other edit 409),
+ *           chains A → B → C bound each version, the reads need no audit entry, a paused schedule changes in place, and
+ *           the database refuses self / cross-site / unarchived / half / second-predecessor links
+ *   PS-C16  exception actions through the Patrols API: acknowledge / resolve audited on the exception and its alert, the
+ *           list names who acted (display name only), validation (note, late sync, 2000), a resolved exception is final
+ *   PS-C17  owner rule: a PAUSED schedule's timing changes in place only with no history (no run, no exception in any
+ *           status, not a successor, audited as created paused and never on); otherwise a successor that stays paused,
+ *           one successor under concurrent edits; active schedules unchanged
  *
  * Needs PATROL_SCHEDULE_DATABASE_URL pointing at a DISPOSABLE local database — it drops the schema.
  */
@@ -130,7 +157,7 @@ async function main() {
   const migrate = new DataSource({ ...base, entities: [], migrations: allFiles.map((f) => path.join(migrationsDir, f)), dropSchema: true } as never);
   await migrate.initialize();
   const migrated = await migrate.runMigrations({ transaction: 'each' });
-  assert.equal(migrated[migrated.length - 1]?.name, 'AddPatrolSyncRecoveryGrants1720900000018', 'the head is Migration 72');
+  assert.equal(migrated[migrated.length - 1]?.name, 'AddPatrolScheduleSuccessors1720900000020', 'the head is Migration 73 (durable schedule successors; 72 = patrol sync recovery grants)');
   await migrate.destroy();
 
   const { AppModule } = await import('../src/app.module');
@@ -397,7 +424,9 @@ async function main() {
       const clean = { ...r, missingCheckpointIds: [], anyFlaggedScan: false };
       assert.equal(S.verificationState({ requirements: clean, now: Z('2026-06-02T08:49:59Z'), syncDeadline: Z('2026-06-02T08:50:00Z') }), 'pending');
       assert.equal(S.verificationState({ requirements: clean, now: Z('2026-06-02T08:50:00Z'), syncDeadline: Z('2026-06-02T08:50:00Z') }), 'unverified');
-      assert.equal(S.verificationState({ requirements: { ...clean, photosNotOnServer: 0 }, now: Z('2026-06-02T08:00:00Z'), syncDeadline: Z('2026-06-02T08:50:00Z') }), 'verified');
+      // S4 1.2.1: the photo still to be VERIFIED is photosNotVerified (photosNotOnServer is its old name, the same value).
+      assert.equal(r.photosNotVerified, 1);
+      assert.equal(S.verificationState({ requirements: { ...clean, photosNotOnServer: 0, photosNotVerified: 0 }, now: Z('2026-06-02T08:00:00Z'), syncDeadline: Z('2026-06-02T08:50:00Z') }), 'verified');
     });
 
     await test('PS-L01-THE-POST-SHIFT-LEGITIMACY-RULE', () => {
@@ -635,9 +664,11 @@ async function main() {
     await test('PS-S11-PHOTOS-INCOMPLETE-UNVERIFIED-VERIFIED-AND-SETTLED', async () => {
       const s = await scenario('s11');
       const [g] = s.guards;
-      await setPolicy(s.co.id, s.site, { photosPerRun: 1 });
+      // S4 1.2.1: these unrouted runs are photo patrols (methods ['photo']) — under a QR policy a run with no route has no
+      // checkpoint rule and is never verified (patrol-correctness.spec.ts PC-S03).
+      await setPolicy(s.co.id, s.site, { photosPerRun: 1, methods: JSON.stringify(['photo']) });
       const loud = await mkSite(s.co.id, 's11 Loud');
-      await setPolicy(s.co.id, loud, { photosPerRun: 1, escalateUnverified: true });
+      await setPolicy(s.co.id, loud, { photosPerRun: 1, escalateUnverified: true, methods: JSON.stringify(['photo']) });
       const shift = await mkShift(s.co.id, s.site, g.id, day('06:00:00'), day('14:00:00'));
       await bookOn(shift, g.id, day('05:55:00'));
       const mk = (siteId: number) => insRun({ companyId: s.co.id, siteId, shiftId: shift, guard: g, status: 'completed', startedAt: day('07:05:00'), completedAt: day('07:30:00') });
@@ -1305,6 +1336,681 @@ async function main() {
         await q(`DELETE FROM patrol_policies WHERE "companyId" = $1 AND "siteId" = $2`, [R.co.id, R.site]);
       }
       assert.equal(o03Run.provisional, true);
+    });
+
+    // ═══════════════════ S4 1.2.1 patrol correctness ═══════════════════
+    const V = await import('../src/patrol/patrol-schedule-versions');
+    const { PATROL_METHODS } = await import('../src/patrol/patrol-constants');
+    const ev = (o: Partial<{ id: number; kind: string; visitId: number | null; uploadStatus: string; retentionStatus: string; sha256Stored: string | null }>) => ({
+      id: o.id, kind: o.kind ?? 'run_photo', visitId: o.visitId ?? null, uploadStatus: o.uploadStatus ?? 'verified',
+      retentionStatus: o.retentionStatus ?? 'active', sha256Stored: o.sha256Stored === undefined ? null : o.sha256Stored,
+    });
+    const photoOnly = (evidence: any[], extra: Record<string, unknown> = {}) => S.evaluateRequirements({
+      requiredCheckpointIds: [], photoRequiredCheckpointIds: [], photosPerRun: 0, photosPerCheckpoint: 0, visits: [], evidence, methods: ['photo'], ...extra,
+    });
+    const dl = Z('2026-06-02T08:50:00Z');
+    const verdict = (r: any, at: string) => S.verificationState({ requirements: r, now: Z(at), syncDeadline: dl });
+
+    await test('PS-C01-ONLY-SERVER-VERIFIED-ELIGIBLE-PHOTOS-COUNT-TOWARDS-VERIFICATION', () => {
+      // [evidence, missing (not taken), not verified]
+      const cases: Array<[string, any, number, number]> = [
+        ['pending (still in the outbox / uploading)', ev({ uploadStatus: 'pending' }), 0, 1],
+        ['uploaded (pre-inspection lease)', ev({ uploadStatus: 'uploaded' }), 0, 1],
+        ['rejected by the server', ev({ uploadStatus: 'rejected' }), 1, 0],
+        ['local_corrupt', ev({ uploadStatus: 'local_corrupt' }), 1, 0],
+        ['verified, quarantined', ev({ retentionStatus: 'quarantined' }), 0, 1],
+        ['verified, purged', ev({ retentionStatus: 'purged' }), 0, 1],
+        ['verified, tombstone', ev({ retentionStatus: 'tombstone' }), 0, 1],
+        ['verified, active', ev({}), 0, 0],
+        ['verified, claimed (deletion requested, not yet moved)', ev({ retentionStatus: 'claimed' }), 0, 0],
+      ];
+      for (const [what, e, missing, notVerified] of cases) {
+        const r = photoOnly([e]);
+        assert.deepEqual([r.missingRunPhotos, r.photosNotVerified, r.photosNotOnServer], [missing, notVerified, notVerified], what);
+        assert.equal(verdict(r, '2026-06-02T08:00:00Z'), missing + notVerified === 0 ? 'verified' : 'pending', `${what}: before the sync deadline`);
+        assert.equal(verdict(r, '2026-06-02T08:50:00Z'), missing + notVerified === 0 ? 'verified' : 'unverified', `${what}: at the sync deadline`);
+      }
+      const eightRejected = photoOnly(Array.from({ length: 8 }, (_, i) => ev({ id: i + 1, uploadStatus: 'rejected', sha256Stored: `${i}`.repeat(64).slice(0, 64) })));
+      assert.deepEqual([eightRejected.missingRunPhotos, eightRejected.photosNotVerified], [1, 0], '8 rejected photos are not 8 verified photos: nothing usable was taken');
+      assert.equal(verdict(eightRejected, '2026-06-02T09:00:00Z'), 'unverified');
+      const eightVerified = photoOnly(Array.from({ length: 8 }, (_, i) => ev({ id: i + 1, sha256Stored: String.fromCharCode(97 + i).repeat(64) })));
+      assert.equal(verdict(eightVerified, '2026-06-02T08:00:00Z'), 'verified');
+      const mixed = photoOnly([ev({ id: 1, uploadStatus: 'pending' }), ev({ id: 2, uploadStatus: 'rejected' }), ev({ id: 3, retentionStatus: 'purged' })]);
+      assert.deepEqual([mixed.missingRunPhotos, mixed.photosNotVerified], [0, 1], 'taken (pending) keeps completeness; nothing counts as verified');
+      // Completeness findings use what was TAKEN: a pending photo is never "not taken".
+      assert.deepEqual(S.completionFindings({ status: 'completed', exceptionReason: null, incompleteNeedsAction: true, requirements: photoOnly([ev({ uploadStatus: 'pending' })]) }), []);
+      assert.deepEqual(S.completionFindings({ status: 'completed', exceptionReason: null, incompleteNeedsAction: true, requirements: photoOnly([]) }).map((f) => f.reason),
+        ['1 required photo(s) not taken']);
+    });
+
+    await test('PS-C02-ONE-IMAGE-COUNTS-ONCE-DUPLICATES-ARE-LISTED-FOR-REVIEW', () => {
+      const A = 'a'.repeat(64);
+      const B = 'b'.repeat(64);
+      const two = photoOnly([ev({ id: 11, sha256Stored: A }), ev({ id: 12, sha256Stored: A })]);
+      assert.deepEqual([two.photosNotVerified, two.duplicateEvidenceIds], [0, [12]], 'one run photo needed: met once; the later copy is listed');
+      assert.deepEqual(photoOnly([ev({ id: 11, sha256Stored: A }), ev({ id: 12, sha256Stored: B })]).duplicateEvidenceIds, [], 'different images');
+      assert.deepEqual(photoOnly([ev({ id: 11, sha256Stored: A }), ev({ id: 12, sha256Stored: A, uploadStatus: 'uploaded' })]).duplicateEvidenceIds, [],
+        'only verified, eligible copies are compared');
+      // The same image as the run photo AND the checkpoint photo satisfies only one of the two requirements.
+      const visits = [{ visitId: 5, checkpointId: 50, result: 'verified' }];
+      const both = (evidence: any[]) => S.evaluateRequirements({
+        requiredCheckpointIds: [50], photoRequiredCheckpointIds: [], photosPerRun: 1, photosPerCheckpoint: 1, visits, evidence, methods: ['qr', 'photo'],
+      });
+      const shared = both([ev({ id: 1, sha256Stored: A }), ev({ id: 2, kind: 'checkpoint_photo', visitId: 5, sha256Stored: A })]);
+      assert.deepEqual([shared.photosNotVerified, shared.duplicateEvidenceIds, shared.missingRunPhotos + shared.missingCheckpointPhotos], [1, [2], 0]);
+      assert.equal(verdict(shared, '2026-06-02T09:00:00Z'), 'unverified', 'one image never verifies two requirements');
+      // The requirement with fewer candidate photos chooses first, so a second image is used where it can be.
+      const choice = both([ev({ id: 1, sha256Stored: A }), ev({ id: 2, sha256Stored: B }), ev({ id: 3, kind: 'checkpoint_photo', visitId: 5, sha256Stored: A })]);
+      assert.deepEqual([choice.photosNotVerified, choice.duplicateEvidenceIds], [0, [3]]);
+      assert.equal(verdict(choice, '2026-06-02T08:00:00Z'), 'verified');
+    });
+
+    await test('PS-C03-PHOTOS-ARE-YES-OR-NO-NEVER-A-COUNT', () => {
+      const one = [ev({ id: 1, sha256Stored: 'c'.repeat(64) })];
+      const r = S.evaluateRequirements({ requiredCheckpointIds: [], photoRequiredCheckpointIds: [], photosPerRun: 5, photosPerCheckpoint: 0, visits: [], evidence: one });
+      assert.deepEqual([r.missingRunPhotos, r.photosNotVerified], [0, 0], 'a legacy count of 5 means "required": one verified photo meets it');
+      const cp = S.evaluateRequirements({
+        requiredCheckpointIds: [1], photoRequiredCheckpointIds: [], photosPerRun: 0, photosPerCheckpoint: 3, visits: [{ visitId: 9, checkpointId: 1, result: 'verified' }],
+        evidence: [ev({ id: 2, kind: 'checkpoint_photo', visitId: 9, sha256Stored: 'd'.repeat(64) })], methods: ['qr'],
+      });
+      assert.deepEqual([cp.missingCheckpointPhotos, cp.photosNotVerified, verdict(cp, '2026-06-02T08:00:00Z')], [0, 0, 'verified']);
+      const none = S.evaluateRequirements({ requiredCheckpointIds: [1], photoRequiredCheckpointIds: [], photosPerRun: 0, photosPerCheckpoint: 0,
+        visits: [{ visitId: 9, checkpointId: 1, result: 'verified' }], evidence: [], methods: ['qr'] });
+      assert.equal(verdict(none, '2026-06-02T08:00:00Z'), 'verified', 'QR only, photos not required');
+    });
+
+    await test('PS-C04-QR-NEEDS-A-CHECKPOINT-RULE-PHOTO-ONLY-NEEDS-NONE', () => {
+      const scan = [{ visitId: 1, checkpointId: 7, result: 'verified' }];
+      const noRule = S.evaluateRequirements({ requiredCheckpointIds: [], photoRequiredCheckpointIds: [], photosPerRun: 0, photosPerCheckpoint: 0, visits: scan, evidence: [], methods: ['qr'] });
+      assert.deepEqual([noRule.qrRuleMissing, noRule.missingCheckpointIds], [true, []]);
+      assert.equal(verdict(noRule, '2026-06-02T08:00:00Z'), 'pending', 'one scan is never enough: never verified');
+      assert.equal(verdict(noRule, '2026-06-02T08:50:00Z'), 'unverified');
+      const ruled = S.evaluateRequirements({ requiredCheckpointIds: [7], photoRequiredCheckpointIds: [], photosPerRun: 0, photosPerCheckpoint: 0, visits: scan, evidence: [], methods: ['qr'] });
+      assert.deepEqual([ruled.qrRuleMissing, verdict(ruled, '2026-06-02T08:00:00Z')], [false, 'verified']);
+      // Photo-only: checkpoints on a route are not required (the Guard is never asked to scan); one verified photo verifies it.
+      const photo = S.evaluateRequirements({ requiredCheckpointIds: [7, 8], photoRequiredCheckpointIds: [], photosPerRun: 0, photosPerCheckpoint: 0, visits: [], evidence: [], methods: ['photo'] });
+      assert.deepEqual([photo.qrRuleMissing, photo.missingCheckpointIds, photo.missingRunPhotos], [false, [], 1]);
+      const photoDone = S.evaluateRequirements({ requiredCheckpointIds: [], photoRequiredCheckpointIds: [], photosPerRun: 0, photosPerCheckpoint: 0, visits: [],
+        evidence: [ev({ id: 1, sha256Stored: 'e'.repeat(64) })], methods: ['photo'] });
+      assert.equal(verdict(photoDone, '2026-06-02T08:00:00Z'), 'verified', 'photo-only with zero checkpoints');
+      const both = S.evaluateRequirements({ requiredCheckpointIds: [], photoRequiredCheckpointIds: [], photosPerRun: 0, photosPerCheckpoint: 0, visits: [],
+        evidence: [ev({ id: 1, sha256Stored: 'e'.repeat(64) })], methods: ['qr', 'photo'] });
+      assert.deepEqual([both.qrRuleMissing, verdict(both, '2026-06-02T09:00:00Z')], [true, 'unverified'], 'QR + photo: the photo does not replace the checkpoint rule');
+      // NFC is not a method anywhere.
+      assert.deepEqual([...PATROL_METHODS], ['qr', 'photo']);
+    });
+
+    // Schedule versions (B1). The engine with version bounds; then the sweep, the plan and the day count.
+    const partition = (def: any, at: Date, succDef: any, from: string, to: string) => ({
+      all: W.windowsBetween(def, 'Europe/London', Z(from), Z(to)),
+      pred: W.windowsBetween({ ...def, effectiveUntil: at }, 'Europe/London', Z(from), Z(to)),
+      succ: W.windowsBetween({ ...succDef, effectiveFrom: at }, 'Europe/London', Z(from), Z(to)),
+    });
+    const starts = (ws: any[]) => ws.map((w) => w.start.toISOString().slice(0, 16));
+
+    await test('PS-C05-A-WINDOW-BELONGS-TO-THE-VERSION-IN-FORCE-AT-ITS-START-SAME-DAY-OVERNIGHT-AND-UK-DST', () => {
+      // Same definition on both sides: the two versions partition the windows exactly (nothing twice, nothing lost).
+      const cases: Array<[string, any, string, string, string]> = [
+        ['same day', sched({ id: 31, from: '08:00', to: '12:00', freq: 60 }), '2026-06-02T09:20:00Z', '2026-06-02T00:00:00Z', '2026-06-03T00:00:00Z'],
+        ['overnight', sched({ id: 32, from: '22:00', to: '06:00', freq: 60 }), '2026-06-03T00:30:00Z', '2026-06-02T12:00:00Z', '2026-06-03T12:00:00Z'],
+        ['spring forward 29 Mar 2026', sched({ id: 33, from: '22:00', to: '06:00', freq: 30 }), '2026-03-29T00:30:00Z', '2026-03-28T12:00:00Z', '2026-03-29T12:00:00Z'],
+        ['spring forward, edit at the jump', sched({ id: 34, from: '22:00', to: '06:00', freq: 30 }), '2026-03-29T01:00:00Z', '2026-03-28T12:00:00Z', '2026-03-29T12:00:00Z'],
+        ['clocks back 25 Oct 2026', sched({ id: 35, from: '22:00', to: '06:00', freq: 30 }), '2026-10-25T00:30:00Z', '2026-10-24T12:00:00Z', '2026-10-25T12:00:00Z'],
+        ['clocks back, edit in the repeated hour', sched({ id: 36, from: '22:00', to: '06:00', freq: 30 }), '2026-10-25T01:15:00Z', '2026-10-24T12:00:00Z', '2026-10-25T12:00:00Z'],
+      ];
+      for (const [what, def, at, from, to] of cases) {
+        const p = partition(def, Z(at), def, from, to);
+        assert.deepEqual([...starts(p.pred), ...starts(p.succ)].sort(), starts(p.all).sort(), `${what}: the versions partition the windows`);
+        assert.ok(p.pred.every((w: any) => w.start < Z(at)) && p.succ.every((w: any) => w.start >= Z(at)), `${what}: split at the change`);
+        assert.equal(new Set(starts(p.succ)).size, p.succ.length, `${what}: no duplicate`);
+      }
+      // A real change, with exact windows (site clock in comments).
+      const sameDay = partition(sched({ id: 41, freq: 60 }), Z('2026-06-02T09:20:00Z'), sched({ id: 42, freq: 30 }), '2026-06-02T00:00:00Z', '2026-06-03T00:00:00Z');
+      assert.deepEqual(starts(sameDay.pred), ['2026-06-02T07:00', '2026-06-02T08:00', '2026-06-02T09:00'], '08, 09 and the 10:00 window open at the change (10:20 BST)');
+      assert.deepEqual(sameDay.succ.map((w: any) => [w.windowKey, w.start.toISOString().slice(11, 16)]),
+        [['s42:2026-06-02:5', '09:30'], ['s42:2026-06-02:6', '10:00'], ['s42:2026-06-02:7', '10:30']], 'every 30 min from the change: 10:30, 11:00, 11:30 BST');
+      const night = partition(sched({ id: 43, from: '22:00', to: '06:00', freq: 60 }), Z('2026-06-03T00:30:00Z'), sched({ id: 44, from: '22:00', to: '06:00', freq: 120 }),
+        '2026-06-02T12:00:00Z', '2026-06-03T12:00:00Z');
+      assert.deepEqual(starts(night.pred), ['2026-06-02T21:00', '2026-06-02T22:00', '2026-06-02T23:00', '2026-06-03T00:00'], '22:00–01:00 BST, the 01:00 window open at 01:30');
+      assert.deepEqual(night.succ.map((w: any) => [w.windowKey, w.start.toISOString().slice(0, 16)]),
+        [['s44:2026-06-02:2', '2026-06-03T01:00'], ['s44:2026-06-02:3', '2026-06-03T03:00']], 'across midnight: still the night that started on the 2nd');
+      const spring = partition(sched({ id: 45, from: '22:00', to: '06:00', freq: 60 }), Z('2026-03-29T00:30:00Z'), sched({ id: 46, from: '22:00', to: '06:00', freq: 30 }),
+        '2026-03-28T12:00:00Z', '2026-03-29T12:00:00Z');
+      assert.deepEqual([spring.all.length, spring.pred.length, spring.succ.length], [7, 3, 9], 'spring forward: 22, 23, 00 GMT before; 00:30 GMT then 02:00–05:30 BST after');
+      assert.deepEqual(starts(spring.succ).slice(0, 3), ['2026-03-29T00:30', '2026-03-29T01:00', '2026-03-29T01:30']);
+      const autumn = partition(sched({ id: 47, from: '22:00', to: '06:00', freq: 60 }), Z('2026-10-25T00:30:00Z'), sched({ id: 48, from: '22:00', to: '06:00', freq: 30 }),
+        '2026-10-24T12:00:00Z', '2026-10-25T12:00:00Z');
+      assert.deepEqual([autumn.all.length, autumn.pred.length, autumn.succ.length], [8, 4, 9], 'clocks back: 22–01 BST before; 01:30 BST (first) … 05:30 GMT after');
+      assert.deepEqual([autumn.succ[0].start.toISOString(), autumn.succ[0].end.toISOString()], ['2026-10-25T00:30:00.000Z', '2026-10-25T02:00:00.000Z'],
+        'the 01:30 slot runs to 02:00 GMT (the repeated hour is covered once)');
+      // What counts as a timing change.
+      const base = { daysOfWeek: [1, 3, 5], activeFrom: '22:00', activeTo: '06:00', frequencyMinutes: 60, windowMinutes: 60, startsOn: null, endsOn: null };
+      assert.equal(V.timingChanged(base, { ...base, daysOfWeek: [5, 3, 1] }), false, 'the same days in another order');
+      for (const change of [{ frequencyMinutes: 30 }, { windowMinutes: 30 }, { activeFrom: '21:00' }, { activeTo: '07:00' }, { daysOfWeek: [1, 3] }, { startsOn: '2026-11-01' }, { endsOn: '2026-12-01' }]) {
+        assert.equal(V.timingChanged(base, { ...base, ...change }), true, JSON.stringify(change));
+      }
+    });
+
+    /** What PatrolConfigService.updateSchedule does on a timing change, at a chosen instant (PS-C10 checks the API does exactly this). */
+    const supersedeAt = async (companyId: number, pred: any, at: Date, changes: { activeFrom?: string; activeTo?: string; freq?: number; win?: number }) => {
+      const succ = await one(`INSERT INTO patrol_schedules ("companyId","siteId","routeId",name,"daysOfWeek","activeFrom","activeTo","frequencyMinutes","windowMinutes","startsOn",active,"createdAt","updatedAt")
+         VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10,true,$11,$11) RETURNING *`,
+        [companyId, pred.siteId, pred.routeId, pred.name, JSON.stringify(pred.daysOfWeek), changes.activeFrom ?? pred.activeFrom, changes.activeTo ?? pred.activeTo,
+          changes.freq ?? pred.frequencyMinutes, changes.win ?? changes.freq ?? pred.windowMinutes, pred.startsOn, at]);
+      // The Migration 73 link, as the service writes it (updatedAt kept: the old version's judging floor).
+      await q(`UPDATE patrol_schedules SET active = false, "archivedAt" = $2, "supersededByScheduleId" = $3, "supersededAt" = $2 WHERE id = $1`, [pred.id, at, succ.id]);
+      return succ;
+    };
+    const keysOf = async (companyId: number) => (await exceptionsOf(companyId)).filter((e: any) => e.type === 'patrol_missed').map((e: any) => e.windowKey).sort();
+    const sorted = (a: string[]) => [...a].sort();
+
+    await test('PS-C06-SAME-DAY-EDIT-NO-FALSE-MISSED-OLD-RUNS-NEVER-SATISFY-NEW-WINDOWS-HISTORY-KEPT', async () => {
+      const s = await scenario('c06');
+      const [g] = s.guards;
+      const pred = await mkSchedule(s.co.id, s.site, { name: 'Yard', from: '08:00', to: '12:00', freq: 60 });
+      const shift = await mkShift(s.co.id, s.site, g.id, day('05:00:00'), day('13:00:00'));
+      await bookOn(shift, g.id, day('04:55:00'));
+      const run0 = await insRun({ companyId: s.co.id, siteId: s.site, shiftId: shift, guard: g, scheduleId: pred.id, window: windowAt(pred, '2026-06-02T07:05:00Z'),
+        status: 'completed', startedAt: day('07:05:00'), completedAt: day('07:20:00') });
+      await insEvidence(run0, 'run_photo', 'verified');
+      await sweep(day('09:19:00'));
+      assert.deepEqual(await keysOf(s.co.id), sorted([`s${pred.id}:2026-06-02:1`]), 'before the edit: the 09:00 BST window was missed');
+      const before = await exceptionsOf(s.co.id);
+      const succ = await supersedeAt(s.co.id, pred, day('09:20:00'), { freq: 30 }); // 10:20 BST: every 30 minutes from now
+      await insRun({ companyId: s.co.id, siteId: s.site, shiftId: shift, guard: g, scheduleId: succ.id, window: windowAt(withBounds(succ), '2026-06-02T09:35:00Z'),
+        status: 'completed', startedAt: day('09:35:00'), completedAt: day('09:50:00') });
+      await sweep(day('12:00:00'));
+      assert.deepEqual(await keysOf(s.co.id), sorted([`s${pred.id}:2026-06-02:1`, `s${succ.id}:2026-06-02:6`, `s${succ.id}:2026-06-02:7`]),
+        'the 10:00 window open at the change is not judged (no false missed); the successor is judged from the change; 10:30 had its run');
+      const after = await exceptionsOf(s.co.id);
+      const kept = after.find((e: any) => Number(e.id) === Number(before[0].id));
+      assert.deepEqual([Number(kept.scheduleId), kept.status, kept.windowKey], [Number(pred.id), 'open', before[0].windowKey], 'the earlier exception is kept as it was');
+      assert.equal(await count(`SELECT count(*) FROM patrol_runs WHERE "scheduleId" = $1`, [pred.id]), 1, 'the old run still points at its version');
+      assert.equal(await count(`SELECT count(*) FROM patrol_evidence WHERE "runId" = $1`, [run0.id]), 1, 'its evidence is kept');
+      assert.equal(await count(`SELECT count(*) FROM audit_logs WHERE action = 'patrol.exception_raised' AND "entityId" = $1`, [before[0].id]), 1, 'its audit is kept');
+      assert.ok(after.every((e: any) => e.type !== 'patrol_missed' || Number(e.scheduleId) !== Number(succ.id) || new Date(e.windowStart) >= day('09:20:00')),
+        'no successor window before the change');
+    });
+    /** A schedule row with its version bounds from the audit trail (what the services read). */
+    function withBounds(row: any) {
+      return { ...row, effectiveFrom: new Date(row.createdAt) };
+    }
+
+    await test('PS-C07-OVERNIGHT-EDIT-ACROSS-MIDNIGHT', async () => {
+      const s = await scenario('c07');
+      const [g] = s.guards;
+      const pred = await mkSchedule(s.co.id, s.site, { name: 'Night', from: '22:00', to: '06:00', freq: 60 });
+      const shift = await mkShift(s.co.id, s.site, g.id, Z('2026-06-02T20:00:00Z'), Z('2026-06-03T06:30:00Z'));
+      await bookOn(shift, g.id, Z('2026-06-02T20:00:00Z'));
+      await insRun({ companyId: s.co.id, siteId: s.site, shiftId: shift, guard: g, scheduleId: pred.id, window: windowAt(pred, '2026-06-02T22:05:00Z'),
+        status: 'completed', startedAt: Z('2026-06-02T22:05:00Z'), completedAt: Z('2026-06-02T22:20:00Z') });
+      await sweep(Z('2026-06-03T00:29:00Z'));
+      const succ = await supersedeAt(s.co.id, pred, Z('2026-06-03T00:30:00Z'), { freq: 120 }); // 01:30 BST: every two hours from now
+      await insRun({ companyId: s.co.id, siteId: s.site, shiftId: shift, guard: g, scheduleId: succ.id, window: windowAt(withBounds(succ), '2026-06-03T01:10:00Z'),
+        status: 'completed', startedAt: Z('2026-06-03T01:10:00Z'), completedAt: Z('2026-06-03T01:30:00Z') });
+      await sweep(Z('2026-06-03T06:00:00Z'));
+      assert.deepEqual(await keysOf(s.co.id), sorted([`s${pred.id}:2026-06-02:0`, `s${pred.id}:2026-06-02:2`, `s${succ.id}:2026-06-02:3`]),
+        '22:00 and 00:00 BST missed before the change (23:00 had its run); 01:00 open at the change is not judged; the successor\'s 04:00 missed, 02:00 had its run');
+      // The day count for the night's date: the old version's windows before the change, the new one's from it — none twice.
+      const ownerTok = await login(s.co.ownerEmail);
+      const d = await api('GET', `/patrols/windows/day?siteId=${s.site}&date=2026-06-03`, ownerTok);
+      expect(d, 200);
+      assert.equal(d.body.windowsDue, 2 + 3, 'on 3 June: 00:00 and 01:00 BST (old, before the change) + 02:00, 04:00 and 22:00 BST (new)');
+    });
+
+    await test('PS-C08-OVERLAPPING-WINDOWS-THE-OPEN-OLD-WINDOW-AND-THE-SUCCESSOR-S-FIRST-ARE-INDEPENDENT', async () => {
+      const s = await scenario('c08');
+      const [g] = s.guards;
+      const pred = await mkSchedule(s.co.id, s.site, { name: 'Lot', from: '08:00', to: '12:00', freq: 60 });
+      const shift = await mkShift(s.co.id, s.site, g.id, day('05:00:00'), day('13:00:00'));
+      await bookOn(shift, g.id, day('04:55:00'));
+      await sweep(day('09:09:00'));
+      const succ = await supersedeAt(s.co.id, pred, day('09:10:00'), { activeFrom: '10:15', freq: 30 }); // 10:10 BST
+      const open = windowAt({ ...pred, effectiveUntil: day('09:10:00') }, '2026-06-02T09:12:00Z');
+      const first = windowAt(withBounds(succ), '2026-06-02T09:20:00Z');
+      assert.deepEqual([iso(open.start), iso(open.end), iso(first.start), iso(first.end)],
+        ['2026-06-02T09:00:00.000Z', '2026-06-02T10:00:00.000Z', '2026-06-02T09:15:00.000Z', '2026-06-02T09:45:00.000Z'], 'they overlap');
+      // A run for the old open window covers only it.
+      await insRun({ companyId: s.co.id, siteId: s.site, shiftId: shift, guard: g, scheduleId: pred.id, window: open, status: 'completed',
+        startedAt: day('09:12:00'), completedAt: day('09:30:00') });
+      const plan = await api('GET', `/patrols/mine/plan?shiftId=${shift}`, await login(g.email));
+      expect(plan, 200);
+      const rows = plan.body.windows.map((w: any) => [w.scheduleId, w.start.slice(11, 16), w.covered]);
+      assert.deepEqual(rows.filter((r: any) => r[0] === Number(pred.id)), [[Number(pred.id), '07:00', false], [Number(pred.id), '08:00', false], [Number(pred.id), '09:00', true]],
+        'the old version until the change, its open window covered');
+      assert.deepEqual(rows.filter((r: any) => r[0] === Number(succ.id)).map((r: any) => r.slice(1)), [['09:15', false], ['09:45', false], ['10:15', false], ['10:45', false]],
+        'the new version from the change');
+      assert.deepEqual(plan.body.schedules.map((x: any) => x.id), [Number(succ.id)], 'only the version in force is offered as a schedule');
+      await sweep(day('11:30:00'));
+      assert.deepEqual(await keysOf(s.co.id), sorted([`s${pred.id}:2026-06-02:0`, `s${pred.id}:2026-06-02:1`, `s${succ.id}:2026-06-02:0`, `s${succ.id}:2026-06-02:1`, `s${succ.id}:2026-06-02:2`, `s${succ.id}:2026-06-02:3`]),
+        'the old run does not satisfy the overlapping new window; the old window open at the change is never judged; 08:00 BST (judged before the change) and 09:00 BST (ended before it) were missed');
+    });
+
+    await test('PS-C09-UK-DST-NIGHTS-WITH-AN-EDIT-ONE-EXCEPTION-PER-REAL-WINDOW', async () => {
+      for (const [label, night, at, before, after, want] of [
+        ['c09s', '2026-03-28', '2026-03-29T00:30:00Z', '2026-03-29T00:29:00Z', '2026-03-29T06:00:00Z', [2, 9]],
+        ['c09a', '2026-10-24', '2026-10-25T00:30:00Z', '2026-10-25T00:29:00Z', '2026-10-25T07:00:00Z', [3, 9]],
+      ] as Array<[string, string, string, string, string, number[]]>) {
+        const s = await scenario(label);
+        const [g] = s.guards;
+        const pred = await mkSchedule(s.co.id, s.site, { name: 'Night', from: '22:00', to: '06:00', freq: 60 });
+        const shift = await mkShift(s.co.id, s.site, g.id, Z(`${night}T19:00:00Z`), Z(addDay(night) + 'T07:30:00Z'));
+        await bookOn(shift, g.id, Z(`${night}T19:00:00Z`));
+        await sweep(Z(before));
+        const succ = await supersedeAt(s.co.id, pred, Z(at), { freq: 30 });
+        await sweep(Z(after));
+        const ex = (await exceptionsOf(s.co.id)).filter((e: any) => e.type === 'patrol_missed');
+        const old = ex.filter((e: any) => Number(e.scheduleId) === Number(pred.id));
+        const neu = ex.filter((e: any) => Number(e.scheduleId) === Number(succ.id));
+        assert.deepEqual([old.length, neu.length], want, `${label}: old windows judged before the change, every new window after`);
+        assert.equal(new Set(ex.map((e: any) => e.windowKey)).size, ex.length, `${label}: no window twice`);
+        assert.equal(new Set(ex.map((e: any) => iso(e.windowStart))).size, ex.length, `${label}: no instant twice`);
+        assert.ok(old.every((e: any) => new Date(e.windowStart) < Z(at)) && neu.every((e: any) => new Date(e.windowStart) >= Z(at)), `${label}: split at the change`);
+        const expected = W.windowsBetween({ ...succ, effectiveFrom: Z(at) }, 'Europe/London', Z(`${night}T12:00:00Z`), Z(after)).map((w: any) => w.windowKey).sort();
+        assert.deepEqual(neu.map((e: any) => e.windowKey).sort(), expected, `${label}: exactly the engine's windows`);
+      }
+    });
+    function addDay(date: string) {
+      return W.addLocalDays(date, 1);
+    }
+
+    await test('PS-C10-THE-API-ENDS-THE-SCHEDULE-AND-CREATES-A-SUCCESSOR-ON-A-TIMING-CHANGE', async () => {
+      const s = await scenario('c10');
+      const [g] = s.guards;
+      const tok = await login(s.co.ownerEmail);
+      const created = await api('POST', '/patrols/schedules', tok, { siteId: s.site, name: 'Gatehouse', activeFrom: '08:00', activeTo: '20:00', frequencyMinutes: 60 });
+      expect(created, 201);
+      const predId = created.body.id;
+      const shift = await mkShift(s.co.id, s.site, g.id, day('05:00:00'), day('13:00:00'));
+      const oldRun = await insRun({ companyId: s.co.id, siteId: s.site, shiftId: shift, guard: g, scheduleId: predId, status: 'completed', startedAt: day('07:05:00'), completedAt: day('07:20:00') });
+      await insEvidence(oldRun, 'run_photo', 'verified');
+      const schedulesBefore = await count(`SELECT count(*) FROM patrol_schedules WHERE "companyId" = $1`, [s.co.id]);
+      // Atomic: a timing change that fails validation (another site's route) creates nothing and ends nothing.
+      const other = await mkSite(s.co.id, 'c10 Other');
+      const foreign = await one(`INSERT INTO patrol_routes ("companyId","siteId",name) VALUES ($1,$2,'Elsewhere') RETURNING id`, [s.co.id, other]);
+      expect(await api('PATCH', `/patrols/schedules/${predId}`, tok, { frequencyMinutes: 30, routeId: Number(foreign.id) }), 422, 'PATROL_ROUTE_NOT_FOR_SITE');
+      assert.equal(await count(`SELECT count(*) FROM patrol_schedules WHERE "companyId" = $1`, [s.co.id]), schedulesBefore);
+      assert.equal((await one(`SELECT active FROM patrol_schedules WHERE id = $1`, [predId])).active, true);
+      // Name only: in place.
+      const renamed = await api('PATCH', `/patrols/schedules/${predId}`, tok, { name: 'Gatehouse loop', daysOfWeek: [7, 6, 5, 4, 3, 2, 1] });
+      expect(renamed, 200);
+      assert.deepEqual([renamed.body.id, renamed.body.timingChanged, renamed.body.predecessorId, renamed.body.name], [predId, false, null, 'Gatehouse loop']);
+      // Timing: a successor.
+      const p = await api('PATCH', `/patrols/schedules/${predId}`, tok, { frequencyMinutes: 30, activeTo: '22:00' });
+      expect(p, 200);
+      const succId = p.body.id;
+      assert.notEqual(succId, predId);
+      assert.deepEqual([p.body.timingChanged, p.body.predecessorId, p.body.frequencyMinutes, p.body.windowMinutes, p.body.activeTo, p.body.name, p.body.active],
+        [true, predId, 30, 30, '22:00', 'Gatehouse loop', true]);
+      const pred = await one(`SELECT * FROM patrol_schedules WHERE id = $1`, [predId]);
+      const succ = await one(`SELECT * FROM patrol_schedules WHERE id = $1`, [succId]);
+      assert.deepEqual([pred.active, Number(pred.frequencyMinutes), pred.activeTo], [false, 60, '20:00'], 'the old version is kept as it was, archived');
+      assert.equal(iso(pred.archivedAt), iso(succ.createdAt), 'the new version takes effect the instant the old one ends');
+      const sup = await q(`SELECT "afterData", "userId" FROM audit_logs WHERE action = 'patrol.schedule.superseded' AND "entityId" = $1`, [predId]);
+      assert.equal(sup.length, 1);
+      assert.deepEqual([sup[0].afterData.successorId, sup[0].afterData.effectiveAt, Number(sup[0].userId)], [succId, iso(succ.createdAt), s.co.ownerId],
+        'the audit entry is kept as evidence');
+      assert.deepEqual([Number(pred.supersededByScheduleId), iso(pred.supersededAt), succ.supersededByScheduleId], [succId, iso(succ.createdAt), null],
+        'the durable link (Migration 73)');
+      const predRead = await api('GET', `/patrols/schedules/${predId}`, tok);
+      assert.deepEqual([predRead.body.supersededByScheduleId, predRead.body.supersededAt], [succId, iso(succ.createdAt)]);
+      const cre = await one(`SELECT "afterData" FROM audit_logs WHERE action = 'patrol.schedule.created' AND "entityId" = $1`, [succId]);
+      assert.deepEqual([cre.afterData.predecessorId, cre.afterData.effectiveAt], [predId, iso(succ.createdAt)]);
+      const bounds = await V.scheduleVersionBounds(ds, s.co.id);
+      assert.deepEqual([iso(bounds.get(predId)!.effectiveUntil!), bounds.get(predId)!.successorId, iso(bounds.get(succId)!.effectiveFrom!), bounds.get(succId)!.predecessorId],
+        [iso(succ.createdAt), succId, iso(succ.createdAt), predId]);
+      // History is untouched; the old version can no longer be edited; the list shows the version in force.
+      assert.equal(Number((await one(`SELECT "scheduleId" FROM patrol_runs WHERE id = $1`, [oldRun.id])).scheduleId), predId);
+      assert.equal(await count(`SELECT count(*) FROM patrol_evidence WHERE "runId" = $1`, [oldRun.id]), 1);
+      expect(await api('PATCH', `/patrols/schedules/${predId}`, tok, { frequencyMinutes: 15 }), 409, 'PATROL_VALIDATION_FAILED');
+      const list = await api('GET', `/patrols/schedules?siteId=${s.site}`, tok);
+      assert.deepEqual(list.body.map((x: any) => x.id), [succId]);
+      const all = await api('GET', `/patrols/schedules?siteId=${s.site}&includeInactive=true`, tok);
+      assert.deepEqual(all.body.map((x: any) => x.id).sort((a: number, b: number) => a - b), [predId, succId]);
+      // A second timing change chains: the successor ends and a third version starts.
+      const p2 = await api('PATCH', `/patrols/schedules/${succId}`, tok, { activeFrom: '07:00' });
+      expect(p2, 200);
+      assert.deepEqual([p2.body.timingChanged, p2.body.predecessorId], [true, succId]);
+      const chain = await V.scheduleVersionBounds(ds, s.co.id);
+      assert.ok(chain.get(succId)!.effectiveFrom && chain.get(succId)!.effectiveUntil, 'the middle version is bounded on both sides');
+    });
+
+    await test('PS-C11-A-RUN-COVERS-ONLY-THE-WINDOW-WITH-ITS-ACTUAL-START-SWEEP-PLAN-AND-DAY', async () => {
+      const s = await scenario('c11');
+      const [g] = s.guards;
+      const schedule = await mkSchedule(s.co.id, s.site, { name: 'Dock', from: '08:00', to: '12:00', freq: 60 });
+      const shift = await mkShift(s.co.id, s.site, g.id, day('05:00:00'), day('13:00:00'));
+      await bookOn(shift, g.id, day('04:55:00'));
+      const w0 = windowAt(schedule, '2026-06-02T07:05:00Z');
+      const w1 = windowAt(schedule, '2026-06-02T08:05:00Z');
+      await insRun({ companyId: s.co.id, siteId: s.site, shiftId: shift, guard: g, scheduleId: schedule.id, window: w0, status: 'completed', startedAt: day('07:05:00'), completedAt: day('07:20:00') });
+      // A run recorded under w1's key but for a window with a different start (as an in-place timing edit used to leave).
+      await insRun({ companyId: s.co.id, siteId: s.site, shiftId: shift, guard: g, scheduleId: schedule.id,
+        window: { windowKey: w1.windowKey, start: new Date(w1.start.getTime() + 30 * MIN), end: new Date(w1.end.getTime() + 30 * MIN) },
+        status: 'completed', startedAt: day('08:35:00'), completedAt: day('08:50:00') });
+      await sweep(day('12:00:00'));
+      assert.deepEqual(await keysOf(s.co.id), sorted([1, 2, 3].map((k) => `s${schedule.id}:2026-06-02:${k}`)), 'sweep: only w0 is covered');
+      const plan = await api('GET', `/patrols/mine/plan?shiftId=${shift}`, await login(g.email));
+      expect(plan, 200);
+      assert.deepEqual(plan.body.windows.map((w: any) => w.covered), [true, false, false, false], 'plan: only w0 is covered');
+      const d = await api('GET', `/patrols/windows/day?siteId=${s.site}&date=2026-06-02`, await login(s.co.ownerEmail));
+      expect(d, 200);
+      assert.deepEqual([d.body.windowsDue, d.body.windowsCompleted, d.body.windowsOutstanding], [4, 1, 3], 'day: only w0 is completed');
+    });
+
+    await test('PS-C12-QR-WITHOUT-A-ROUTE-IS-SAVED-WITH-A-WARNING-AND-ITS-PATROLS-ARE-NEVER-VERIFIED', async () => {
+      const s = await scenario('c12');
+      const [g] = s.guards;
+      const tok = await login(s.co.ownerEmail);
+      const sch = await api('POST', '/patrols/schedules', tok, { siteId: s.site, name: 'No route', activeFrom: '08:00', activeTo: '12:00', frequencyMinutes: 60 });
+      expect(sch, 201, undefined, 'saving a QR schedule with no route is allowed');
+      assert.deepEqual(sch.body.configurationWarnings, [{ code: 'QR_ROUTE_REQUIRED', message: 'Choose a route with required checkpoints, or switch this site to photos.', siteId: s.site, scheduleId: sch.body.id }]);
+      const cp = await mkCheckpoint(s.co.id, s.site, 'Rear door');
+      const optional = await api('POST', '/patrols/routes', tok, { siteId: s.site, name: 'Optional only', checkpoints: [{ checkpointId: Number(cp.id), required: false }] });
+      expect(optional, 201);
+      const withOptional = await api('POST', '/patrols/schedules', tok, { siteId: s.site, name: 'Optional route', activeFrom: '08:00', activeTo: '12:00', frequencyMinutes: 60, routeId: optional.body.id });
+      assert.equal(withOptional.body.configurationWarnings.length, 1, 'a route without a required checkpoint is no checkpoint rule');
+      const route = await api('POST', '/patrols/routes', tok, { siteId: s.site, name: 'Loop', checkpoints: [{ checkpointId: Number(cp.id) }] });
+      const good = await api('POST', '/patrols/schedules', tok, { siteId: s.site, name: 'Routed', activeFrom: '08:00', activeTo: '12:00', frequencyMinutes: 60, routeId: route.body.id });
+      assert.deepEqual(good.body.configurationWarnings, []);
+      const pol = await api('GET', '/patrols/policies', tok);
+      assert.deepEqual(pol.body.sites.find((x: any) => x.siteId === s.site).configurationWarnings.map((w: any) => w.scheduleId).sort(), [sch.body.id, withOptional.body.id].sort());
+      const put = await api('PUT', `/patrols/policies/sites/${s.site}`, tok, { methods: ['qr'], photosPerRun: 3 });
+      expect(put, 200);
+      assert.deepEqual([put.body.policy.photosPerRun, put.body.configurationWarnings.length], [1, 2], 'saving the QR policy returns the warnings (and photos are Yes/No)');
+      const shift = await mkShift(s.co.id, s.site, g.id, day('05:00:00'), day('13:00:00'));
+      const plan = await api('GET', `/patrols/mine/plan?shiftId=${shift}`, await login(g.email));
+      assert.deepEqual(plan.body.configurationWarnings.map((w: any) => [w.code, w.scheduleId]).sort(), [['QR_ROUTE_REQUIRED', sch.body.id], ['QR_ROUTE_REQUIRED', withOptional.body.id]].sort(),
+        'the Guard is told plainly');
+      const photo = await api('PUT', `/patrols/policies/sites/${s.site}`, tok, { methods: ['photo'], photosPerRun: 0 });
+      assert.deepEqual(photo.body.configurationWarnings, [], 'a photo site needs no route');
+      assert.deepEqual((await api('GET', `/patrols/schedules?siteId=${s.site}`, tok)).body.map((x: any) => x.configurationWarnings.length), [0, 0, 0]);
+      expect(await api('PUT', `/patrols/policies/sites/${s.site}`, tok, { methods: ['nfc'] }), 400, undefined, 'NFC is never accepted');
+      await api('PUT', `/patrols/policies/sites/${s.site}`, tok, { methods: ['qr'] });
+
+      // The sweep: a QR run with no route is never verified (even with a scan), flagged once for review.
+      await bookOn(shift, g.id, day('04:55:00'));
+      const bare = await insRun({ companyId: s.co.id, siteId: s.site, shiftId: shift, guard: g, status: 'completed', startedAt: day('07:05:00'), completedAt: day('07:20:00') });
+      await insVisit(s.co.id, bare.id, cp, 'verified', day('07:10:00'));
+      const routed = await insRun({ companyId: s.co.id, siteId: s.site, shiftId: shift, guard: g, routeId: route.body.id, status: 'completed', startedAt: day('07:25:00'), completedAt: day('07:40:00') });
+      await insVisit(s.co.id, routed.id, cp, 'verified', day('07:30:00'));
+      const reasoned = await insRun({ companyId: s.co.id, siteId: s.site, shiftId: shift, guard: g, status: 'incomplete', reason: 'No labels on site', startedAt: day('07:45:00'), completedAt: day('07:50:00') });
+      await sweep(day('07:55:00'));
+      const st = async (id: number) => one(`SELECT "verificationStatus", "needsReview", "syncFlags" FROM patrol_runs WHERE id = $1`, [id]);
+      assert.deepEqual(await st(bare.id), { verificationStatus: 'pending', needsReview: true, syncFlags: ['qr_rule_missing'] }, 'never "verified" by one scan; up for review');
+      assert.deepEqual(await st(routed.id), { verificationStatus: 'verified', needsReview: false, syncFlags: [] });
+      assert.deepEqual([(await st(reasoned.id)).syncFlags], [['qr_rule_missing']]);
+      await sweep(day('10:00:00'));
+      assert.equal((await st(bare.id)).verificationStatus, 'unverified', 'after the sync deadline: unverified, never verified');
+      assert.equal(await count(`SELECT count(*) FROM audit_logs WHERE action = 'patrol.run_flagged_for_review' AND "entityId" = $1`, [bare.id]), 1, 'flagged once');
+      const inc = (await exceptionsOf(s.co.id)).filter((e: any) => Number(e.runId) === Number(reasoned.id));
+      assert.deepEqual(inc.map((e: any) => [e.type, e.note]), [['patrol_incomplete', 'No labels on site']], 'an incomplete patrol with a reason is still recorded as such');
+      assert.equal((await exceptionsOf(s.co.id)).filter((e: any) => e.type === 'evidence_unverified').length, 0, 'no photo was required');
+    });
+
+    await test('PS-C13-THE-SWEEP-COUNTS-A-REPEATED-IMAGE-ONCE-AND-FLAGS-IT-FOR-REVIEW', async () => {
+      const s = await scenario('c13');
+      const [g] = s.guards;
+      await setPolicy(s.co.id, s.site, { methods: JSON.stringify(['photo']), photosPerRun: 1 });
+      const shift = await mkShift(s.co.id, s.site, g.id, day('05:00:00'), day('13:00:00'));
+      await bookOn(shift, g.id, day('04:55:00'));
+      const run = await insRun({ companyId: s.co.id, siteId: s.site, shiftId: shift, guard: g, status: 'completed', startedAt: day('07:05:00'), completedAt: day('07:20:00') });
+      const photo = async (status: string, sha: string | null, retention = 'active') => one(
+        `INSERT INTO patrol_evidence ("companyId","siteId","runId","guardId","shiftId",kind,"uploadStatus","retentionStatus","sha256Client","sha256Stored","capturedAtDevice","clientEvidenceId","purgedAt")
+         VALUES ($1,$2,$3,$4,$5,'run_photo',$6,$7::varchar,$8,$9,$10,$11,CASE WHEN $7::varchar IN ('purged','tombstone') THEN $10::timestamptz END) RETURNING id`,
+        [s.co.id, s.site, run.id, g.id, shift, status, retention, 'f'.repeat(64), sha, day('07:10:00'), cid('ev')]);
+      const first = await photo('verified', 'f'.repeat(64));
+      const copy = await photo('verified', 'f'.repeat(64));
+      const purgedCopy = await photo('verified', 'f'.repeat(64), 'purged');
+      await sweep(day('07:30:00'));
+      const r = await one(`SELECT "verificationStatus", "needsReview", "syncFlags" FROM patrol_runs WHERE id = $1`, [run.id]);
+      assert.deepEqual([r.verificationStatus, r.needsReview, r.syncFlags], ['verified', true, ['duplicate_sha256']], 'one photo needed and met once; the run is up for review');
+      const flags = async (id: number) => (await one(`SELECT "syncFlags", "needsReview" FROM patrol_evidence WHERE id = $1`, [id]));
+      assert.deepEqual(await flags(first.id), { syncFlags: [], needsReview: false });
+      assert.deepEqual(await flags(copy.id), { syncFlags: ['duplicate_sha256'], needsReview: true });
+      assert.deepEqual(await flags(purgedCopy.id), { syncFlags: [], needsReview: false }, 'a purged copy is no longer evidence at all');
+      await sweep(day('07:40:00'));
+      assert.equal(await count(`SELECT count(*) FROM audit_logs WHERE action = 'patrol.run_flagged_for_review' AND "entityId" = $1`, [run.id]), 1, 'flagged once');
+      // Two different images: no flag. Only copies of the SAME verified image are duplicates.
+      const run2 = await insRun({ companyId: s.co.id, siteId: s.site, shiftId: shift, guard: g, status: 'completed', startedAt: day('08:05:00'), completedAt: day('08:20:00') });
+      await one(`INSERT INTO patrol_evidence ("companyId","siteId","runId","guardId","shiftId",kind,"uploadStatus","sha256Client","sha256Stored","capturedAtDevice","clientEvidenceId")
+         VALUES ($1,$2,$3,$4,$5,'run_photo','verified',$6,$6,$7,$8),($1,$2,$3,$4,$5,'run_photo','verified',$9,$9,$7,$10) RETURNING id`,
+        [s.co.id, s.site, run2.id, g.id, shift, '1'.repeat(64), day('08:10:00'), cid('ev'), '2'.repeat(64), cid('ev')]);
+      await sweep(day('08:30:00'));
+      assert.deepEqual((await one(`SELECT "needsReview", "syncFlags" FROM patrol_runs WHERE id = $1`, [run2.id])), { needsReview: false, syncFlags: [] });
+    });
+
+    await test('PS-C14-A-PATROL-STARTED-UNDER-THE-OLD-VERSION-STILL-SYNCS-AFTER-A-TIMING-CHANGE', async () => {
+      const s = await scenario('c14');
+      const [g] = s.guards;
+      const tok = await login(s.co.ownerEmail);
+      const created = await api('POST', '/patrols/schedules', tok, { siteId: s.site, name: 'Round the clock', activeFrom: '00:00', activeTo: '00:00', frequencyMinutes: 60 });
+      expect(created, 201);
+      const predId = created.body.id;
+      const now = Date.now();
+      const shift = await mkShift(s.co.id, s.site, g.id, new Date(now - 3 * HOUR), new Date(now + 3 * HOUR));
+      await bookOn(shift, g.id, new Date(now - 3 * HOUR));
+      const p = await api('PATCH', `/patrols/schedules/${predId}`, tok, { frequencyMinutes: 30 });
+      expect(p, 200);
+      const gt = await login(g.email);
+      // Started on the phone (offline) 30 minutes before the change, synced after it: accepted for the old version's window.
+      const startedAt = new Date(now - 30 * MIN);
+      const old = await api('POST', '/patrols/runs', gt, { clientRunId: cid('r'), shiftId: shift, scheduleId: predId, startedAtDevice: startedAt.toISOString() });
+      expect(old, 201, undefined, 'a patrol for a window of the old version');
+      const expected = W.windowForStart({ ...created.body, effectiveUntil: new Date(p.body.createdAt) }, 'Europe/London', startedAt, 15)!.window;
+      assert.deepEqual([old.body.scheduleId, old.body.windowKey, old.body.windowStart], [predId, expected.windowKey, iso(expected.start)]);
+      expect(await api('POST', `/patrols/runs/${old.body.id}/complete`, gt, { completedAtDevice: new Date(now - 10 * MIN).toISOString() }), 200);
+      // The old version takes nothing that starts after the change.
+      const nextHour = Math.ceil((Date.now() + MIN) / HOUR) * HOUR;
+      expect(await api('POST', '/patrols/runs', gt, { clientRunId: cid('r'), shiftId: shift, scheduleId: predId, startedAtDevice: new Date(nextHour + 30 * MIN).toISOString() }),
+        422, 'PATROL_SCHEDULE_NOT_FOR_SITE', 'after the change the old version has no window');
+      // The plan lists the old version's windows up to the change, the new one's after it, and its run as covering only its own.
+      const plan = await api('GET', `/patrols/mine/plan?shiftId=${shift}`, gt);
+      expect(plan, 200);
+      const effectiveAt = new Date(p.body.createdAt).getTime();
+      const rows = plan.body.windows;
+      assert.ok(rows.every((w: any) => (w.scheduleId === predId ? Date.parse(w.start) < effectiveAt : w.scheduleId === p.body.id && Date.parse(w.start) >= effectiveAt)));
+      assert.deepEqual(rows.filter((w: any) => w.covered).map((w: any) => [w.scheduleId, w.windowKey]), [[predId, expected.windowKey]]);
+    });
+
+    await test('PS-C15-THE-SUCCESSOR-LINK-IS-DURABLE-ONE-SUCCESSOR-UNDER-CONCURRENT-EDITS-AND-READS-NEED-NO-AUDIT', async () => {
+      const s = await scenario('c15');
+      const tok = await login(s.co.ownerEmail);
+      const mk = async (name: string, extra: Record<string, unknown> = {}) => {
+        const r = await api('POST', '/patrols/schedules', tok, { siteId: s.site, name, activeFrom: '08:00', activeTo: '20:00', frequencyMinutes: 60, ...extra });
+        expect(r, 201, undefined, name);
+        return r.body.id as number;
+      };
+      // Concurrent timing edits of the same schedule: one successor, the other edit gets a clean 409.
+      const a = await mk('Concurrent');
+      const results = await Promise.all([
+        api('PATCH', `/patrols/schedules/${a}`, tok, { frequencyMinutes: 30 }),
+        api('PATCH', `/patrols/schedules/${a}`, tok, { frequencyMinutes: 120 }),
+      ]);
+      assert.deepEqual(results.map((r) => r.status).sort(), [200, 409], JSON.stringify(results.map((r) => r.body)));
+      const refused = results.find((r) => r.status === 409)!;
+      assert.equal(refused.body.code, 'PATROL_VALIDATION_FAILED');
+      const winner = results.find((r) => r.status === 200)!.body;
+      assert.equal(await count(`SELECT count(*) FROM patrol_schedules WHERE "companyId" = $1 AND name = 'Concurrent'`, [s.co.id]), 2, 'one successor, never two');
+      assert.equal(Number((await one(`SELECT "supersededByScheduleId" FROM patrol_schedules WHERE id = $1`, [a])).supersededByScheduleId), winner.id);
+      assert.equal(await count(`SELECT count(*) FROM audit_logs WHERE action = 'patrol.schedule.superseded' AND "entityId" = $1`, [a]), 1);
+      const again = await api('PATCH', `/patrols/schedules/${a}`, tok, { name: 'x' });
+      assert.deepEqual([again.status, again.body.code, again.body.details?.supersededByScheduleId], [409, 'PATROL_VALIDATION_FAILED', winner.id], 'the replaced version is not editable');
+
+      // A chain A → B → C: each link bounds its two versions, read from the columns.
+      const b = winner.id;
+      const c = (await api('PATCH', `/patrols/schedules/${b}`, tok, { activeTo: '21:00' })).body;
+      assert.deepEqual([c.timingChanged, c.predecessorId], [true, b]);
+      const bounds = await V.scheduleVersionBounds(ds, s.co.id);
+      const rows = await q(`SELECT id, "supersededAt" FROM patrol_schedules WHERE id = ANY($1::int[]) ORDER BY id`, [[a, b]]);
+      assert.deepEqual([bounds.get(a)!.successorId, bounds.get(b)!.predecessorId, bounds.get(b)!.successorId, bounds.get(c.id)!.predecessorId], [b, a, c.id, b]);
+      assert.deepEqual([iso(bounds.get(b)!.effectiveFrom!), iso(bounds.get(b)!.effectiveUntil!)], rows.map((r: any) => iso(r.supersededAt)));
+
+      // The reads never depend on audit_logs: with the audit entries gone (a test database only), the bounds are the same.
+      await q(`DELETE FROM audit_logs WHERE "companyId" = $1 AND action = 'patrol.schedule.superseded'`, [s.co.id]);
+      const afterAudit = await V.scheduleVersionBounds(ds, s.co.id);
+      assert.deepEqual([...afterAudit.entries()].map(([k, v]) => [k, v.effectiveFrom?.toISOString() ?? null, v.effectiveUntil?.toISOString() ?? null]).sort(),
+        [...bounds.entries()].map(([k, v]) => [k, v.effectiveFrom?.toISOString() ?? null, v.effectiveUntil?.toISOString() ?? null]).sort());
+
+      // A paused schedule has no windows: its timing changes in place (no successor, no link).
+      const paused = await mk('Paused', { active: false });
+      const pp = await api('PATCH', `/patrols/schedules/${paused}`, tok, { frequencyMinutes: 30 });
+      expect(pp, 200);
+      assert.deepEqual([pp.body.id, pp.body.timingChanged, pp.body.predecessorId, pp.body.frequencyMinutes, pp.body.supersededByScheduleId], [paused, false, null, 30, null]);
+
+      // The database refuses an invalid link whatever the service does.
+      const other = await mkSite(s.co.id, 'c15 Other');
+      const foreign = await mkSchedule(s.co.id, other, { from: '08:00', to: '12:00', freq: 60 });
+      const loose = await mkSchedule(s.co.id, s.site, { from: '08:00', to: '12:00', freq: 60 });
+      const link = (id: number, to: number, archived = true) =>
+        q(`UPDATE patrol_schedules SET active = false, "archivedAt" = ${archived ? 'now()' : 'NULL'}, "supersededByScheduleId" = $2, "supersededAt" = now() WHERE id = $1`, [id, to]);
+      await assert.rejects(() => link(loose.id, loose.id), /CHK_patrol_schedules_superseded_not_self/, 'never itself');
+      await assert.rejects(() => link(loose.id, foreign.id), /FK_patrol_schedules_superseded_by/, 'never another site');
+      await assert.rejects(() => link(loose.id, c.id, false), /CHK_patrol_schedules_superseded_archived/, 'a replaced schedule is archived');
+      await assert.rejects(() => link(loose.id, b), /UQ_patrol_schedules_superseded_by/, 'a successor replaces exactly one schedule');
+      await assert.rejects(() => q(`UPDATE patrol_schedules SET "supersededAt" = NULL WHERE id = $1`, [a]), /CHK_patrol_schedules_superseded_pair/);
+      await assert.rejects(() => q(`DELETE FROM patrol_schedules WHERE id = $1`, [b]), /FK_patrol_schedules_superseded_by/, 'a successor is never deleted from under its link');
+    });
+
+    await test('PS-C16-EXCEPTION-ACTIONS-ARE-AUDITED-THE-LIST-NAMES-WHO-ACTED-AND-A-RESOLVED-EXCEPTION-IS-FINAL', async () => {
+      const s = await scenario('c16');
+      const [g] = s.guards;
+      await mkSchedule(s.co.id, s.site, { from: '08:00', to: '10:00', freq: 60 });
+      const shift = await mkShift(s.co.id, s.site, g.id, day('05:00:00'), day('13:00:00'));
+      await bookOn(shift, g.id, day('04:55:00'));
+      await sweep(day('09:30:00'));
+      const [a, b] = (await exceptionsOf(s.co.id)).filter((e: any) => e.type === 'patrol_missed');
+      assert.ok(a?.safetyAlertId && b?.safetyAlertId, 'two missed windows, each with its Live Operations alert');
+      await q(`UPDATE users SET "firstName" = 'Olive', "lastName" = 'Owner' WHERE id = $1`, [s.co.ownerId]);
+      const tok = await login(s.co.ownerEmail);
+      const viewerEmail = 'ps.c16.viewer@example.invalid';
+      const viewerId = (await one(`INSERT INTO users (email,"passwordHash",role,status,"isEmailVerified","emailVerificationRequired","firstName","lastName")
+         VALUES ($1,$2,'company_admin','active',true,false,'Vic','Viewer') RETURNING id`, [viewerEmail, hash])).id;
+      await q(`INSERT INTO company_memberships ("userId","companyId","membershipRole",status) VALUES ($1,$2,'viewer','active')`, [viewerId, s.co.id]);
+      const viewer = await login(viewerEmail);
+      expect(await api('POST', `/patrols/exceptions/${a.id}/acknowledge`, viewer), 403, undefined, 'a Viewer cannot act');
+      const auditCount = async (action: string, entityId: number) => count(`SELECT count(*) FROM audit_logs WHERE action = $1 AND "entityId" = $2`, [action, entityId]);
+
+      // Acknowledge, then resolve, through the Patrols API: the alert's own lifecycle runs and both sides are audited.
+      const ack = await api('POST', `/patrols/exceptions/${a.id}/acknowledge`, tok);
+      expect(ack, 200);
+      assert.equal(ack.body.status, 'acknowledged');
+      assert.deepEqual([await auditCount('patrol.exception_acknowledged', Number(a.id)), await auditCount('safety_alert.acknowledged', Number(a.safetyAlertId))], [1, 1]);
+      expect(await api('POST', `/patrols/exceptions/${b.id}/resolve`, tok, { resolutionReason: 'guard_contacted' }), 400, undefined, 'a note is required for this reason');
+      expect(await api('POST', `/patrols/exceptions/${b.id}/resolve`, tok, { resolutionReason: 'patrol_completed_late_sync' }), 400, undefined, 'no late evidence: late sync is refused');
+      expect(await api('POST', `/patrols/exceptions/${b.id}/resolve`, tok, { resolutionReason: 'guard_contacted', resolutionNote: 'x'.repeat(2001) }), 400, undefined, 'a note is at most 2000 characters');
+      const res = await api('POST', `/patrols/exceptions/${a.id}/resolve`, tok, { resolutionReason: 'guard_contacted', resolutionNote: 'Guard rang in: gate blocked.' });
+      expect(res, 200);
+      assert.deepEqual([res.body.status, res.body.resolution], ['resolved', 'guard_contacted']);
+      assert.deepEqual([await auditCount('patrol.exception_resolved', Number(a.id)), await auditCount('safety_alert.closed', Number(a.safetyAlertId))], [1, 1]);
+      const alert = await one(`SELECT status, "resolutionReason" FROM safety_alerts WHERE id = $1`, [a.safetyAlertId]);
+      assert.deepEqual([alert.status, alert.resolutionReason], ['closed', 'guard_contacted']);
+
+      // The list says who acted and when — a display name only, never an email.
+      const list = await api('GET', '/patrols/exceptions', viewer);
+      expect(list, 200);
+      const item = list.body.find((e: any) => e.id === Number(a.id));
+      assert.deepEqual([item.status, item.resolution, item.acknowledgedByName, item.resolvedByName, Boolean(item.acknowledgedAt), Boolean(item.resolvedAt)],
+        ['resolved', 'guard_contacted', 'Olive Owner', 'Olive Owner', true, true]);
+      const other = list.body.find((e: any) => e.id === Number(b.id));
+      assert.deepEqual([other.status, other.acknowledgedByName, other.resolvedByName], ['open', null, null]);
+      assert.ok(!JSON.stringify(list.body).includes('@'), 'no email in the exceptions list');
+      for (const key of ['id', 'siteId', 'runId', 'scheduleId', 'shiftId', 'windowKey', 'scopeKey', 'type', 'status', 'safetyAlertId', 'note', 'resolution',
+        'resolvedAt', 'createdAt', 'guardId', 'windowStart', 'windowEnd', 'acknowledgedAt', 'lateEvidenceAt', 'annotations', 'reconciliationRunId', 'alertStatus', 'alertPriority']) {
+        assert.ok(key in item, `existing field ${key} is still there`);
+      }
+
+      // A resolved exception is final: 409, and nothing about it (or its alert, or the audit trail) changes.
+      const snapshot = async () => ({
+        exception: await one(`SELECT md5(to_jsonb(x)::text) h FROM patrol_exceptions x WHERE id = $1`, [a.id]),
+        alert: await one(`SELECT md5(to_jsonb(x)::text) h FROM safety_alerts x WHERE id = $1`, [a.safetyAlertId]),
+        audits: await count(`SELECT count(*) FROM audit_logs WHERE "companyId" = $1`, [s.co.id]),
+      });
+      const before = await snapshot();
+      expect(await api('POST', `/patrols/exceptions/${a.id}/resolve`, tok, { resolutionReason: 'other', resolutionNote: 'again' }), 409, 'PATROL_EXCEPTION_ALREADY_RESOLVED');
+      expect(await api('POST', `/patrols/exceptions/${a.id}/acknowledge`, tok), 409, 'PATROL_EXCEPTION_ALREADY_RESOLVED');
+      assert.deepEqual(await snapshot(), before, 'unchanged');
+
+      // An exception without an alert is acted on directly, and audited as such.
+      const quiet = await one(`INSERT INTO patrol_exceptions ("companyId","siteId","shiftId","windowKey","scopeKey",type,"windowStart","windowEnd")
+         VALUES ($1,$2,$3,'c16-quiet','site','patrol_incomplete',$4,$5) RETURNING id`, [s.co.id, s.site, shift, day('08:00:00'), day('09:00:00')]);
+      const direct = await api('POST', `/patrols/exceptions/${quiet.id}/resolve`, tok, { resolutionReason: 'patrol_completed_confirmed', resolutionNote: 'Supervisor walked it.' });
+      expect(direct, 200);
+      const audit = await one(`SELECT "afterData" FROM audit_logs WHERE action = 'patrol.exception_resolved' AND "entityId" = $1`, [quiet.id]);
+      assert.deepEqual([audit.afterData.via, audit.afterData.resolution], ['patrols', 'patrol_completed_confirmed']);
+    });
+
+    await test('PS-C17-A-PAUSED-SCHEDULE-CHANGES-IN-PLACE-ONLY-WITHOUT-HISTORY', async () => {
+      const s = await scenario('c17');
+      const [g] = s.guards;
+      const tok = await login(s.co.ownerEmail);
+      const mk = async (name: string, active: boolean) => {
+        const r = await api('POST', '/patrols/schedules', tok, { siteId: s.site, name, activeFrom: '08:00', activeTo: '20:00', frequencyMinutes: 60, active });
+        expect(r, 201, undefined, name);
+        return r.body.id as number;
+      };
+      const shift = await mkShift(s.co.id, s.site, g.id, day('05:00:00'), day('13:00:00'));
+      const supersededAudit = (id: number) => count(`SELECT count(*) FROM audit_logs WHERE action = 'patrol.schedule.superseded' AND "entityId" = $1`, [id]);
+
+      // Paused since creation, nothing names it: in place — same id, no successor, audited as an update.
+      const clean = await mk('Never on', false);
+      const inPlace = await api('PATCH', `/patrols/schedules/${clean}`, tok, { frequencyMinutes: 30 });
+      expect(inPlace, 200);
+      assert.deepEqual([inPlace.body.id, inPlace.body.timingChanged, inPlace.body.predecessorId, inPlace.body.frequencyMinutes, inPlace.body.active],
+        [clean, false, null, 30, false]);
+      assert.deepEqual([await count(`SELECT count(*) FROM audit_logs WHERE action = 'patrol.schedule.updated' AND "entityId" = $1`, [clean]), await supersededAudit(clean)], [1, 0]);
+
+      // Paused, with a historical run: a successor (new id, linked, audited), and it stays paused.
+      const withRun = await mk('Had a run', true);
+      await insRun({ companyId: s.co.id, siteId: s.site, shiftId: shift, guard: g, scheduleId: withRun, status: 'completed', startedAt: day('07:05:00'), completedAt: day('07:20:00') });
+      expect(await api('PATCH', `/patrols/schedules/${withRun}`, tok, { active: false }), 200, undefined, 'pausing is in place');
+      const r1 = await api('PATCH', `/patrols/schedules/${withRun}`, tok, { frequencyMinutes: 30 });
+      expect(r1, 200);
+      assert.deepEqual([r1.body.timingChanged, r1.body.predecessorId, r1.body.active, r1.body.frequencyMinutes], [true, withRun, false, 30], 'the successor stays paused');
+      assert.notEqual(r1.body.id, withRun);
+      assert.equal(Number((await one(`SELECT "supersededByScheduleId" FROM patrol_schedules WHERE id = $1`, [withRun])).supersededByScheduleId), r1.body.id);
+      assert.equal(await supersededAudit(withRun), 1);
+      assert.equal(Number((await one(`SELECT "scheduleId" FROM patrol_runs WHERE "companyId" = $1 AND "scheduleId" = $2`, [s.co.id, withRun])).scheduleId), withRun, 'the run keeps its version');
+
+      // Paused since creation, only a RESOLVED exception names it: a successor too (any status counts).
+      const withException = await mk('Had an exception', false);
+      await q(`INSERT INTO patrol_exceptions ("companyId","siteId","scheduleId","shiftId","windowKey","scopeKey",type,status,resolution,"resolvedAt","windowStart","windowEnd")
+         VALUES ($1,$2,$3,$4,'c17-exc','site','patrol_missed','resolved','patrol_not_required',now(),$5,$6)`, [s.co.id, s.site, withException, shift, day('08:00:00'), day('09:00:00')]);
+      const r2 = await api('PATCH', `/patrols/schedules/${withException}`, tok, { activeTo: '21:00' });
+      expect(r2, 200);
+      assert.deepEqual([r2.body.timingChanged, r2.body.predecessorId, r2.body.active], [true, withException, false]);
+
+      // Switched on at some point (it may have had windows), now paused, nothing names it: a successor (conservative).
+      const wasOn = await mk('Was on', true);
+      expect(await api('PATCH', `/patrols/schedules/${wasOn}`, tok, { active: false }), 200);
+      const r3 = await api('PATCH', `/patrols/schedules/${wasOn}`, tok, { activeFrom: '09:00' });
+      assert.deepEqual([r3.status, r3.body.timingChanged, r3.body.predecessorId], [200, true, wasOn]);
+      // No audit trail at all (cannot prove it never had a window): a successor.
+      const unaudited = await mkSchedule(s.co.id, s.site, { name: 'Unaudited', from: '08:00', to: '12:00', freq: 60 });
+      await q(`UPDATE patrol_schedules SET active = false WHERE id = $1`, [unaudited.id]);
+      const r4 = await api('PATCH', `/patrols/schedules/${unaudited.id}`, tok, { frequencyMinutes: 30 });
+      assert.deepEqual([r4.status, r4.body.timingChanged, r4.body.predecessorId], [200, true, Number(unaudited.id)]);
+      // A paused successor is itself history-bearing: its next timing change is a successor again (a chain).
+      const r5 = await api('PATCH', `/patrols/schedules/${r4.body.id}`, tok, { frequencyMinutes: 120 });
+      assert.deepEqual([r5.status, r5.body.timingChanged, r5.body.predecessorId, r5.body.active], [200, true, r4.body.id, false]);
+
+      // Paused with history, two timing edits at once: one successor, the other a clean 409.
+      const busy = await mk('Concurrent paused', true);
+      await insRun({ companyId: s.co.id, siteId: s.site, shiftId: shift, guard: g, scheduleId: busy, status: 'completed', startedAt: day('08:05:00'), completedAt: day('08:20:00') });
+      expect(await api('PATCH', `/patrols/schedules/${busy}`, tok, { active: false }), 200);
+      const both = await Promise.all([
+        api('PATCH', `/patrols/schedules/${busy}`, tok, { frequencyMinutes: 30 }),
+        api('PATCH', `/patrols/schedules/${busy}`, tok, { frequencyMinutes: 120 }),
+      ]);
+      assert.deepEqual(both.map((r) => r.status).sort(), [200, 409], JSON.stringify(both.map((r) => r.body)));
+      assert.equal(both.find((r) => r.status === 409)!.body.code, 'PATROL_VALIDATION_FAILED');
+      assert.equal(await supersededAudit(busy), 1, 'exactly one successor');
+      assert.equal(await count(`SELECT count(*) FROM patrol_schedules WHERE "companyId" = $1 AND name = 'Concurrent paused'`, [s.co.id]), 2);
+
+      // Active schedules are unchanged: a timing change is always a successor.
+      const active = await mk('Active', true);
+      const r6 = await api('PATCH', `/patrols/schedules/${active}`, tok, { frequencyMinutes: 30 });
+      assert.deepEqual([r6.status, r6.body.timingChanged, r6.body.predecessorId, r6.body.active], [200, true, active, true]);
     });
   } finally {
     await app.close();

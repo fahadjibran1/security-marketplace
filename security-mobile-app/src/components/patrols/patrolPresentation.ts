@@ -57,6 +57,23 @@ export function exceptionTypeLabel(type: string | null | undefined): string {
   }
 }
 
+/**
+ * A patrol exception's status, as the server states it (S4 1.2.1). Every screen uses this one mapping, so a status is
+ * never shown as "Open" unless the server says open; an unknown value is shown as itself, never guessed.
+ */
+export function exceptionStatusLabel(status: string | null | undefined): string {
+  switch (status) {
+    case 'open': return 'Open';
+    case 'acknowledged': return 'Acknowledged';
+    case 'resolved': return 'Resolved';
+    default: return status ? String(status).replace(/_/g, ' ') : 'Unknown';
+  }
+}
+
+export function exceptionStatusTone(status: string | null | undefined): PatrolTone {
+  return status === 'resolved' ? 'success' : status === 'acknowledged' ? 'info' : 'warning';
+}
+
 const SYNC_FLAG_LABELS: Record<string, string> = {
   post_shift_creation: 'Reached S4 after the shift ended',
   outside_on_duty_interval: 'Outside the on-duty interval',
@@ -67,6 +84,9 @@ const SYNC_FLAG_LABELS: Record<string, string> = {
   window_already_covered: 'Window already covered',
   evidence_after_alert: 'Evidence arrived after the alert',
   recovered_via_grant: 'Recovered late under a recovery grant',
+  // S4 1.2.1. Neutral wording: a repeated image is counted once and reviewed — it alleges nothing.
+  duplicate_sha256: 'Duplicate photo (same image already submitted) — review',
+  qr_rule_missing: 'No QR checkpoint rule — choose a route with required checkpoints, or switch this site to photos',
 };
 
 const SCAN_FLAG_LABELS: Record<string, string> = {

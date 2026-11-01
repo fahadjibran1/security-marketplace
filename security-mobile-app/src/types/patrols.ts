@@ -53,11 +53,25 @@ export interface PatrolEffectivePolicy extends PatrolPolicyFields {
   source: 'site' | 'company' | 'default';
 }
 
+/**
+ * S4 1.2.1: a configuration the server accepted but cannot judge as asked (QR scans required on a schedule with no route
+ * of required checkpoints). Saving is allowed; the dashboard shows it as "Configuration required". Older backends omit it.
+ */
+export type PatrolConfigurationWarningCode = 'QR_ROUTE_REQUIRED';
+export interface PatrolConfigurationWarning {
+  code: PatrolConfigurationWarningCode | string;
+  message: string;
+  scheduleId?: number | null;
+  siteId?: number | null;
+}
+
 export interface PatrolSitePolicy {
   siteId: number;
   siteName: string;
   timezone: string | null;
   policy: PatrolEffectivePolicy;
+  /** S4 1.2.1; an older backend omits it. */
+  configurationWarnings?: PatrolConfigurationWarning[];
 }
 
 export interface PatrolPolicies {
@@ -87,6 +101,11 @@ export interface PatrolSchedule {
   archivedAt: string | null;
   createdAt: string | null;
   updatedAt: string | null;
+  /** S4 1.2.1; an older backend omits it. */
+  configurationWarnings?: PatrolConfigurationWarning[];
+  /** PATCH only (S4 1.2.1): a timing change ends the old schedule and answers with its successor (a NEW id). */
+  predecessorId?: number | null;
+  timingChanged?: boolean;
 }
 
 export interface PatrolScheduleInput {
@@ -266,6 +285,9 @@ export interface PatrolException {
   annotations: Array<{ at?: string; kind?: string; text?: string }>;
   alertStatus?: string | null;
   alertPriority?: string | null;
+  /** S4 1.2.1 (GET /patrols/exceptions only): who acknowledged / resolved it — a display name, never an email. */
+  acknowledgedByName?: string | null;
+  resolvedByName?: string | null;
 }
 
 /** Metadata only. An image is reached only through GET /patrols/evidence/:id/download (short-lived, audited). */
@@ -539,6 +561,8 @@ export interface GuardPatrolPlan {
   checkpoints: Array<{ publicId: string; label: string; description: string | null; photoRequired: boolean }>;
   /** Present from P1-E; an older backend omits it (the app then shows no due times rather than inventing them). */
   windows?: GuardPatrolPlanWindow[];
+  /** S4 1.2.1: what the server cannot judge as configured (QR required without a route); older backends omit it. */
+  configurationWarnings?: PatrolConfigurationWarning[];
 }
 
 export interface GuardPatrolRun extends PatrolRun {

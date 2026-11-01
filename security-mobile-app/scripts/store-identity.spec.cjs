@@ -59,9 +59,14 @@ test('STORE-01-THE-PERMANENT-S4-IDENTITY', () => {
   // until these are built; no earlier number can be reused.
   // Maintenance release (25 Oct 2026): 1.1.1, Android versionCode 19 and iOS build 18, with the push-registration loop
   // fix, over the Guard notifications update (Android 18, iOS 17).
-  assert.equal(expo.version, '1.2.0');
-  assert.equal(expo.android.versionCode, 23);
-  assert.equal(expo.ios.buildNumber, '20');
+  assert.equal(expo.version, '1.2.1');
+  assert.equal(expo.android.versionCode, 24);
+  assert.equal(expo.ios.buildNumber, '21');
+  // S4 1.2.1 (built 1 Nov 2026: Android 24 not uploaded, iOS 21 uploaded to App Store Connect) on the same store identity,
+  // above 1.2.0 Android 23 (published to Play Internal Testing on 31 Oct 2026, owner correction) and iOS 20 (built, never
+  // submitted).
+  assert.ok(expo.android.versionCode > 23, 'above the distributed Android 23 (published to Play Internal Testing on 31 Oct 2026)');
+  assert.ok(Number(expo.ios.buildNumber) > 20, 'above the built, never submitted iOS 20');
   assert.ok(expo.android.versionCode > 22, 'above the superseded Android 22, consumed in Play');
   assert.ok(expo.android.versionCode > 21, 'above the superseded Android 21, consumed in Play as a draft');
   assert.ok(expo.android.versionCode > 20, 'above the distributed Android 20');
@@ -207,7 +212,7 @@ test('STORE-08-ONE-PRODUCT-NAME-FOR-EVERY-ROLE', () => {
 
 test('STORE-09-IOS-IDENTITY-IS-SET-AND-NOTHING-IS-BUILT', () => {
   assert.equal(expo.ios.bundleIdentifier, 'com.sfour.s4');
-  assert.equal(expo.ios.buildNumber, '20');
+  assert.equal(expo.ios.buildNumber, '21');
   assert.equal(expo.ios.infoPlist.ITSAppUsesNonExemptEncryption, false);
   assert.equal(expo.ios.config.usesNonExemptEncryption, false);
   // No hand-written usage strings that could drift from the plugin's, and none for unused capabilities.

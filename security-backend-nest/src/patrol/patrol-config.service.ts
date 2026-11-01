@@ -1,5 +1,5 @@
 import { HttpStatus, Injectable } from '@nestjs/common';
-import { DataSource, EntityManager } from 'typeorm';
+import { DataSource, EntityManager, QueryFailedError } from 'typeorm';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { CompanyMembershipRole, CompanyPermission } from '../company-membership/company-membership-types';
@@ -17,6 +17,7 @@ import {
 import { PatrolAccessService, PatrolCompanyActor } from './patrol-access.service';
 import { PATROL_EXTENDED_RETENTION_DAYS, PATROL_POLICY_DEFAULTS, PatrolErrorCode, patrolError } from './patrol-constants';
 import { newCheckpointPublicId, signCheckpointLabel, patrolQrKeyring } from './patrol-qr';
+import { PATROL_SCHEDULE_SUPERSEDED_ACTION, timingChanged } from './patrol-schedule-versions';
 import { serializeCheckpoint, serializePolicyFields, serializeRoute, serializeSchedule, updateRows } from './patrol-serializers';
 
 const POLICY_FIELDS = [
@@ -68,10 +69,11 @@ export class PatrolConfigService {
       [actor.companyId],
     );
     const companyDefault = await this.effectivePolicy(actor.companyId, null);
+    const warnings = await this.configurationWarnings(actor.companyId, null);
     const out = [];
     for (const site of sites) {
       const policy = await this.effectivePolicy(actor.companyId, Number(site.id));
-      out.push({ siteId: Number(site.id), siteName: site.name, timezone: site.timezone, policy });
+      out.push({ siteId: Number(site.id), siteName: site.name, timezone: site.timezone, policy, configurationWarnings: warnings.get(Number(site.id)) ?? [] });
     }
     return {
       defaults: serializePolicyFields(PATROL_POLICY_DEFAULTS),
@@ -111,6 +113,10 @@ export class PatrolConfigService {
       }
       after.qrRequireProximity = false;
       after.proximityMeters = null;
+      // S4 1.2.1: photos are Yes / No, not a count. Any value above 0 is stored as 1 (the columns and their 0–20 / 0–5
+      // CHECKs are unchanged, so no migration); readers treat any value above 0 as required either way.
+      after.photosPerRun = after.photosPerRun > 0 ? 1 : 0;
+      after.photosPerCheckpoint = after.photosPerCheckpoint > 0 ? 1 : 0;
 
       if (after.retentionDays === PATROL_EXTENDED_RETENTION_DAYS && before.retentionDays !== PATROL_EXTENDED_RETENTION_DAYS
         && !mayExtendPatrolRetention(actor.role)) {
@@ -151,7 +157,13 @@ export class PatrolConfigService {
         beforeData: { siteId, ...before },
         afterData: { siteId, ...serializePolicyFields(row) },
       });
-      return { siteId, policy: { ...serializePolicyFields(row), source: siteId == null ? 'company' : 'site' } };
+      const warnings = await this.configurationWarnings(actor.companyId, siteId == null ? null : [siteId], manager);
+      return {
+        siteId,
+        policy: { ...serializePolicyFields(row), source: siteId == null ? 'company' : 'site' },
+        // Saving a QR policy where a schedule has no route with required checkpoints is allowed, with this warning (A1).
+        configurationWarnings: [...warnings.values()].flat(),
+      };
     });
   }
 
@@ -164,12 +176,14 @@ export class PatrolConfigService {
           AND ($3::boolean OR "archivedAt" IS NULL) ORDER BY "siteId", "name", "id"`,
       [actor.companyId, query.siteId ?? null, query.includeInactive === 'true'],
     );
-    return rows.map(serializeSchedule);
+    const warnings = await this.configurationWarnings(actor.companyId, null);
+    return rows.map((row: any) => ({ ...serializeSchedule(row), configurationWarnings: scheduleWarningsOf(warnings, row) }));
   }
 
   async getSchedule(user: JwtPayload, id: number) {
     const actor = await this.access.companyActor(user, CompanyPermission.PATROLS_VIEW);
-    return serializeSchedule(await this.scheduleRow(actor, id));
+    const row = await this.scheduleRow(actor, id);
+    return { ...serializeSchedule(row), configurationWarnings: await this.scheduleWarnings(this.dataSource.manager, actor.companyId, row) };
   }
 
   async createSchedule(user: JwtPayload, dto: CreatePatrolScheduleDto) {
@@ -198,14 +212,21 @@ export class PatrolConfigService {
           values.frequencyMinutes, values.windowMinutes, values.startsOn, values.endsOn, values.active, actor.userId],
       );
       await this.audit(manager, actor, 'patrol.schedule.created', 'patrol_schedule', row.id, null, serializeSchedule(row));
-      return serializeSchedule(row);
+      // A QR schedule without a route with required checkpoints is SAVED, with a prominent warning (decision A1).
+      return { ...serializeSchedule(row), configurationWarnings: await this.scheduleWarnings(manager, actor.companyId, row) };
     });
   }
 
   async updateSchedule(user: JwtPayload, id: number, dto: UpdatePatrolScheduleDto) {
     const actor = await this.access.companyActor(user, CompanyPermission.PATROLS_MANAGE);
     return this.dataSource.transaction(async (manager) => {
+      // FOR UPDATE: a concurrent edit of the same schedule waits here, then finds it replaced (409) — never a second successor.
       const current = await this.scheduleRow(actor, id, manager, true);
+      if (current.supersededByScheduleId != null) {
+        throw patrolError(HttpStatus.CONFLICT, PatrolErrorCode.VALIDATION, 'This schedule was replaced by a newer version. Reload the schedules and edit the current one.', {
+          supersededByScheduleId: Number(current.supersededByScheduleId),
+        });
+      }
       if (current.archivedAt) throw patrolError(HttpStatus.CONFLICT, PatrolErrorCode.VALIDATION, 'This schedule is archived.');
       const frequencyMinutes = dto.frequencyMinutes ?? Number(current.frequencyMinutes);
       const values = {
@@ -224,6 +245,17 @@ export class PatrolConfigService {
       };
       this.assertScheduleValues(values);
       if (values.routeId != null) await this.assertRouteForSite(manager, actor, values.routeId, Number(current.siteId));
+      const before = {
+        daysOfWeek: (current.daysOfWeek as number[]).map(Number), activeFrom: current.activeFrom, activeTo: current.activeTo,
+        frequencyMinutes: Number(current.frequencyMinutes), windowMinutes: Number(current.windowMinutes),
+        startsOn: dateText(current.startsOn), endsOn: dateText(current.endsOn),
+      };
+      // A timing change is a new version (patrol-schedule-versions.ts) — for an active schedule always, and for a paused
+      // one whenever anything could be reinterpreted by the new timing (owner rule, S4 1.2.1): see timingHistory. Only a
+      // paused schedule with no history at all has its timing updated in place (like a name, route or on / off change).
+      if (timingChanged(before, values) && (current.active || await this.timingHistory(manager, actor.companyId, current))) {
+        return this.supersedeSchedule(manager, actor, current, values);
+      }
       const [row] = await updateRows(manager,
         `UPDATE "patrol_schedules" SET "routeId" = $2, "name" = $3, "daysOfWeek" = $4::jsonb, "activeFrom" = $5, "activeTo" = $6,
             "frequencyMinutes" = $7, "windowMinutes" = $8, "startsOn" = $9, "endsOn" = $10, "active" = $11,
@@ -233,8 +265,88 @@ export class PatrolConfigService {
           values.windowMinutes, values.startsOn, values.endsOn, values.active, actor.userId],
       );
       await this.audit(manager, actor, 'patrol.schedule.updated', 'patrol_schedule', id, serializeSchedule(current), serializeSchedule(row));
-      return serializeSchedule(row);
+      return { ...serializeSchedule(row), configurationWarnings: await this.scheduleWarnings(manager, actor.companyId, row), predecessorId: null, timingChanged: false };
     });
+  }
+
+  /**
+   * Whether a PAUSED schedule has anything its timing could reinterpret (owner rule, S4 1.2.1), judged conservatively in
+   * the caller's transaction, after the schedule row was locked FOR UPDATE — a run or exception insert naming it takes a
+   * key-share lock on that row (their foreign keys), so none can appear between this check and the edit:
+   *   • any patrol run, or any patrol exception in any status, naming it;
+   *   • it is itself a successor (another schedule's supersededByScheduleId points at it);
+   *   • it may ever have had windows: in place only when its creation is audited as paused and no audited change ever
+   *     switched it on (no audit trail at all counts as "may have had windows").
+   */
+  private async timingHistory(manager: EntityManager, companyId: number, current: any): Promise<boolean> {
+    const id = Number(current.id);
+    const [refs] = await manager.query(
+      `SELECT EXISTS (SELECT 1 FROM "patrol_runs" WHERE "scheduleId" = $1) AS "runs",
+              EXISTS (SELECT 1 FROM "patrol_exceptions" WHERE "scheduleId" = $1) AS "exceptions",
+              EXISTS (SELECT 1 FROM "patrol_schedules" WHERE "supersededByScheduleId" = $1) AS "successor"`,
+      [id],
+    );
+    if (refs.runs || refs.exceptions || refs.successor) return true;
+    const [trail] = await manager.query(
+      `SELECT count(*) FILTER (WHERE "action" = 'patrol.schedule.created' AND ("afterData"->>'active') = 'false')::int AS "createdPaused",
+              count(*) FILTER (WHERE ("afterData"->>'active') = 'true')::int AS "everActive"
+         FROM "audit_logs"
+        WHERE "companyId" = $1 AND "entityType" = 'patrol_schedule' AND "entityId" = $2
+          AND "action" IN ('patrol.schedule.created', 'patrol.schedule.updated')`,
+      [companyId, id],
+    );
+    return !(Number(trail.createdPaused) > 0 && Number(trail.everActive) === 0);
+  }
+
+  /**
+   * B1 (S4 1.2.1): a timing change ends the current schedule and creates a successor with a NEW id, in the caller's
+   * transaction (see patrol-schedule-versions.ts). The predecessor is archived at the change instant and kept for history;
+   * the successor's windows apply from that instant. The link is the Migration 73 columns (supersededByScheduleId,
+   * supersededAt), written only while the predecessor is still unlinked and unarchived (the row is locked FOR UPDATE by
+   * the caller; UQ_patrol_schedules_superseded_by is the backstop). Audited on both: patrol.schedule.superseded
+   * (predecessor, with the successor id and effectiveAt — evidence; nothing reads it) and patrol.schedule.created
+   * (successor, with the predecessor id). Returns the successor with predecessorId and timingChanged = true.
+   */
+  private async supersedeSchedule(manager: EntityManager, actor: PatrolCompanyActor, current: any, values: {
+    routeId: number | null; name: string; daysOfWeek: number[]; activeFrom: string; activeTo: string; frequencyMinutes: number;
+    windowMinutes: number; startsOn: string | null; endsOn: string | null; active: boolean;
+  }) {
+    const predecessorId = Number(current.id);
+    const [successor] = await manager.query(
+      `INSERT INTO "patrol_schedules" ("companyId", "siteId", "routeId", "name", "daysOfWeek", "activeFrom", "activeTo",
+          "frequencyMinutes", "windowMinutes", "startsOn", "endsOn", "active", "createdByUserId", "updatedByUserId", "createdAt", "updatedAt")
+       VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11, $12, $13, $13, now(), now()) RETURNING *`,
+      [actor.companyId, Number(current.siteId), values.routeId, values.name, JSON.stringify(values.daysOfWeek), values.activeFrom, values.activeTo,
+        values.frequencyMinutes, values.windowMinutes, values.startsOn, values.endsOn, values.active, actor.userId],
+    );
+    // updatedAt is deliberately NOT bumped: it stays the last change of the old version's definition — the sweep's judging
+    // floor — so the windows that ended under it before the change are still judged (archivedAt marks the change).
+    let archived: any;
+    try {
+      [archived] = await updateRows(manager,
+        `UPDATE "patrol_schedules" SET "active" = false, "archivedAt" = $3, "supersededByScheduleId" = $4, "supersededAt" = $3, "updatedByUserId" = $2
+          WHERE "id" = $1 AND "archivedAt" IS NULL AND "supersededByScheduleId" IS NULL RETURNING *`,
+        [predecessorId, actor.userId, successor.createdAt, Number(successor.id)],
+      );
+    } catch (error) {
+      if (isUniqueViolation(error, 'UQ_patrol_schedules_superseded_by')) archived = null;
+      else throw error;
+    }
+    // The transaction rolls back (successor included) when the schedule was replaced or archived meanwhile.
+    if (!archived) throw patrolError(HttpStatus.CONFLICT, PatrolErrorCode.VALIDATION, 'This schedule was replaced by a newer version. Reload the schedules and edit the current one.');
+    const effectiveAt = new Date(successor.createdAt).toISOString();
+    await this.audit(manager, actor, PATROL_SCHEDULE_SUPERSEDED_ACTION, 'patrol_schedule', predecessorId, serializeSchedule(current), {
+      ...serializeSchedule(archived), successorId: Number(successor.id), effectiveAt, reason: 'timing_changed',
+    });
+    await this.audit(manager, actor, 'patrol.schedule.created', 'patrol_schedule', successor.id, null, {
+      ...serializeSchedule(successor), predecessorId, effectiveAt,
+    });
+    return {
+      ...serializeSchedule(successor),
+      configurationWarnings: await this.scheduleWarnings(manager, actor.companyId, successor),
+      predecessorId,
+      timingChanged: true,
+    };
   }
 
   /** DELETE archives: runs keep pointing at the schedule they were started for. Repeating it changes nothing. */
@@ -456,6 +568,59 @@ export class PatrolConfigService {
     });
   }
 
+  // ── Configuration warnings (S4 1.2.1, decision A1) ─────────────────────────────────────────────────
+
+  /**
+   * "Configuration required", per site: where the effective policy requires QR, every ACTIVE schedule must have an active
+   * route with at least one required, active checkpoint — otherwise its patrols have no checkpoint rule and can never be
+   * QR-verified (the sweep flags them qr_rule_missing). A site with its OWN QR policy, no active schedule and no such route
+   * is warned too (its unscheduled patrols would have no rule). Saving is never refused for this; the warning is returned
+   * with the schedule / policy and shown on the dashboard and to the Guard (the plan).
+   */
+  async configurationWarnings(companyId: number, siteIds: number[] | null, runner: { query: EntityManager['query'] } = this.dataSource): Promise<Map<number, PatrolConfigurationWarning[]>> {
+    const sites = await runner.query(
+      `SELECT "id" FROM "sites" WHERE "companyId" = $1 AND ($2::int[] IS NULL OR "id" = ANY($2::int[])) ORDER BY "id"`,
+      [companyId, siteIds],
+    );
+    const out = new Map<number, PatrolConfigurationWarning[]>();
+    if (!sites.length) return out;
+    const ids = sites.map((s: any) => Number(s.id));
+    const policies = await runner.query(`SELECT "siteId", "methods" FROM "patrol_policies" WHERE "companyId" = $1`, [companyId]);
+    const companyRow = policies.find((p: any) => p.siteId == null);
+    const validRoutes = new Set<number>((await runner.query(
+      `SELECT r."id" FROM "patrol_routes" r
+        WHERE r."companyId" = $1 AND r."active" AND r."archivedAt" IS NULL
+          AND EXISTS (SELECT 1 FROM "patrol_route_checkpoints" rc JOIN "patrol_checkpoints" c ON c."id" = rc."checkpointId"
+                       WHERE rc."routeId" = r."id" AND rc."required" AND c."active" AND c."revokedAt" IS NULL)`,
+      [companyId],
+    )).map((r: any) => Number(r.id)));
+    const validRouteSites = new Set<number>((await runner.query(
+      `SELECT DISTINCT "siteId" FROM "patrol_routes" WHERE "id" = ANY($1::int[])`, [[...validRoutes]],
+    )).map((r: any) => Number(r.siteId)));
+    const schedules = await runner.query(
+      `SELECT "id", "siteId", "routeId" FROM "patrol_schedules"
+        WHERE "companyId" = $1 AND "siteId" = ANY($2::int[]) AND "active" AND "archivedAt" IS NULL ORDER BY "id"`,
+      [companyId, ids],
+    );
+    for (const siteId of ids) {
+      const own = policies.find((p: any) => p.siteId != null && Number(p.siteId) === siteId);
+      const methods: string[] = (own ?? companyRow)?.methods ?? PATROL_POLICY_DEFAULTS.methods;
+      if (!methods.includes('qr')) continue;
+      const list: PatrolConfigurationWarning[] = [];
+      const siteSchedules = schedules.filter((s: any) => Number(s.siteId) === siteId);
+      for (const s of siteSchedules) {
+        if (s.routeId == null || !validRoutes.has(Number(s.routeId))) list.push(qrRouteWarning(siteId, Number(s.id)));
+      }
+      if (!siteSchedules.length && own && !validRouteSites.has(siteId)) list.push(qrRouteWarning(siteId, null));
+      if (list.length) out.set(siteId, list);
+    }
+    return out;
+  }
+
+  private async scheduleWarnings(runner: { query: EntityManager['query'] }, companyId: number, row: any): Promise<PatrolConfigurationWarning[]> {
+    return scheduleWarningsOf(await this.configurationWarnings(companyId, [Number(row.siteId)], runner), row);
+  }
+
   // ── Helpers ────────────────────────────────────────────────────────────────────────────────────────
 
   async routeCheckpoints(manager: EntityManager, routeId: number) {
@@ -576,6 +741,24 @@ export class PatrolConfigService {
       afterData,
     });
   }
+}
+
+/** Decision A1: the warning a QR site gets when a schedule (or the site) has no route with required checkpoints. */
+export const QR_ROUTE_REQUIRED_MESSAGE = 'Choose a route with required checkpoints, or switch this site to photos.';
+export type PatrolConfigurationWarning = { code: 'QR_ROUTE_REQUIRED'; message: string; siteId: number; scheduleId: number | null };
+
+function qrRouteWarning(siteId: number, scheduleId: number | null): PatrolConfigurationWarning {
+  return { code: 'QR_ROUTE_REQUIRED', message: QR_ROUTE_REQUIRED_MESSAGE, siteId, scheduleId };
+}
+
+/** One schedule's warnings out of its site's. */
+export function scheduleWarningsOf(warnings: Map<number, PatrolConfigurationWarning[]>, row: any): PatrolConfigurationWarning[] {
+  return (warnings.get(Number(row.siteId)) ?? []).filter((w) => w.scheduleId === Number(row.id));
+}
+
+function isUniqueViolation(error: unknown, constraint: string): boolean {
+  const driverError = (error as QueryFailedError & { driverError?: { code?: string; constraint?: string } })?.driverError;
+  return error instanceof QueryFailedError && driverError?.code === '23505' && driverError?.constraint === constraint;
 }
 
 function stripSource(policy: EffectivePolicy): PolicyFields {

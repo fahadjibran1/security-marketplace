@@ -24,6 +24,12 @@
  *   - Responsive breakpoints, loading / empty / error / pending-sync states, polling limits and cleanup, and that no
  *     figure is fabricated.
  *   - The release-gate wiring and the pinned QR dependency.
+ *   - S4 1.2.1: patrol exceptions are acknowledged / resolved on the page through the existing endpoints, by alerts.manage or
+ *     patrols.manage only, with the Live Operations reasons and note rules; the drawers poll and re-read after every action
+ *     (a 409 shows the latest decision); Live Operations is linked only with an alert; statuses never mislabel (PM-32–36).
+ *   - S4 1.2.1: photos required are Yes/No toggles writing 1/0 (PM-28); the server's "Configuration required" warnings
+ *     on Settings and Schedules, and a timing edit answered with a new schedule version (PM-29); neutral duplicate-photo
+ *     and QR-rule labels (PM-30); NFC offered nowhere (PM-31).
  */
 const Module = require('node:module');
 const originalLoad = Module._load;
@@ -283,12 +289,12 @@ test('PM-01-THE-ENTRY-SITS-DIRECTLY-AFTER-LIVE-OPERATIONS', () => {
 
 test('PM-02-THE-PERMISSION-MATRIX', () => {
   const expect = {
-    owner: { canView: true, canManage: true, canViewEvidence: true, canManageHolds: true, canActOnAlerts: true },
-    admin: { canView: true, canManage: true, canViewEvidence: true, canManageHolds: true, canActOnAlerts: true },
-    operations: { canView: true, canManage: true, canViewEvidence: true, canManageHolds: false, canActOnAlerts: true },
-    control_room: { canView: true, canManage: false, canViewEvidence: true, canManageHolds: false, canActOnAlerts: true },
-    viewer: { canView: true, canManage: false, canViewEvidence: false, canManageHolds: false, canActOnAlerts: false },
-    guard: { canView: false, canManage: false, canViewEvidence: false, canManageHolds: false, canActOnAlerts: false },
+    owner: { canView: true, canManage: true, canViewEvidence: true, canManageHolds: true, canActOnAlerts: true, canActOnExceptions: true },
+    admin: { canView: true, canManage: true, canViewEvidence: true, canManageHolds: true, canActOnAlerts: true, canActOnExceptions: true },
+    operations: { canView: true, canManage: true, canViewEvidence: true, canManageHolds: false, canActOnAlerts: true, canActOnExceptions: true },
+    control_room: { canView: true, canManage: false, canViewEvidence: true, canManageHolds: false, canActOnAlerts: true, canActOnExceptions: true },
+    viewer: { canView: true, canManage: false, canViewEvidence: false, canManageHolds: false, canActOnAlerts: false, canActOnExceptions: false },
+    guard: { canView: false, canManage: false, canViewEvidence: false, canManageHolds: false, canActOnAlerts: false, canActOnExceptions: false },
   };
   for (const [role, want] of Object.entries(expect)) assert.deepEqual({ ...perms(role) }, want, role);
   assert.deepEqual(access.visiblePatrolTabs(perms('viewer')), ['overview', 'live', 'schedules', 'checkpoints', 'history', 'retention', 'settings'], 'a Viewer: no evidence, no storage');
@@ -947,7 +953,268 @@ test('PM-20-RECOVERY-GRANTS-ISSUE-LIST-AND-REVOKE-THROUGH-THE-API', async () => 
   assert.ok(backend.includes("'recovered_via_grant'"), 'the server\'s flag name');
 });
 
+// ═══ S4 1.2.1 (patrol correctness) ═══
+
+const QR_WARNING = { code: 'QR_ROUTE_REQUIRED', message: 'Choose a route with required checkpoints, or switch this site to photos.', scheduleId: 1, siteId: 10 };
+const SCHEDULE = {
+  id: 1, siteId: 10, routeId: null, name: 'Night rounds', daysOfWeek: [1, 2, 3, 4, 5, 6, 7], activeFrom: '22:00', activeTo: '06:00', timeBasis: 'site_local',
+  frequencyMinutes: 60, windowMinutes: 60, startsOn: null, endsOn: null, active: true, archivedAt: null, createdAt: null, updatedAt: null, configurationWarnings: [QR_WARNING],
+};
+
+test('PM-28-PHOTOS-REQUIRED-ARE-YES-NO-TOGGLES-WRITING-1-OR-0', async () => {
+  const Settings = loadSource('src/components/patrols/PatrolSettingsTab.tsx');
+  assert.deepEqual(Settings.PHOTO_TOGGLES.map((t) => [t.key, t.label]), [['photosPerRun', 'Photos required for each patrol'], ['photosPerCheckpoint', 'Photo at each checkpoint']]);
+  const before = { ...policies().companyDefault, photosPerRun: 3, photosPerCheckpoint: 0 };
+  // An older numeric value (3) reads as "Yes"; keeping it changes nothing; switching off writes 0, on writes 1.
+  const draftOf = (over) => ({ ...before, startGraceMinutes: '15', maxPatrolDurationMinutes: '45', completionGraceMinutes: '30', syncGraceMinutes: '60', postShiftSyncHours: '24', clockDriftThresholdMinutes: '5', ...over });
+  assert.deepEqual(Settings.policyChanges(before, draftOf({})).update, {});
+  assert.deepEqual(Settings.policyChanges(before, draftOf({ photosPerRun: 0, photosPerCheckpoint: 1 })).update, { photosPerRun: 0, photosPerCheckpoint: 1 });
+  answers = baseAnswers({ savePatrolSitePolicy: (siteId, update) => ({ siteId, policy: { ...policies().companyDefault, ...update, source: 'company' }, configurationWarnings: [] }) });
+  calls.length = 0;
+  const renderer = await mount({ permissions: perms('owner') });
+  const root = renderer.root;
+  await pressByText(root, 'Site settings');
+  const text = textOf(root);
+  assert.ok(!text.includes('Photos required per patrol') && !text.includes('Photos required per checkpoint'), 'no number fields for photos');
+  assert.equal(root.findAll((n) => n.props && /^Photos? required|^Photo at each/.test(String(n.props.label ?? '')) && typeof n.props.onChangeText === 'function').length, 0, 'no text input for photos');
+  const toggle = (label) => root.findAll((n) => n.props && n.props.accessibilityRole === 'switch' && n.props.accessibilityLabel === label)[0];
+  assert.equal(toggle('Photos required for each patrol').props.accessibilityState.checked, false);
+  assert.ok(toggle('Photo at each checkpoint'), 'a Yes/No toggle');
+  assert.ok(toggle('QR checkpoint scans') && toggle('Photos'), 'the method toggles are kept');
+  await pressByText(root, 'Photos required for each patrol');
+  await pressByText(root, 'Save settings');
+  const saved = calls.filter(([k]) => k === 'savePatrolSitePolicy');
+  assert.deepEqual(saved.map(([, a]) => a), [[null, { photosPerRun: 1 }]], 'Yes writes 1');
+  act(() => renderer.unmount());
+});
+
+test('PM-29-CONFIGURATION-REQUIRED-ON-SETTINGS-AND-SCHEDULES-AND-THE-NEW-VERSION-NOTE', async () => {
+  const pol = policies();
+  pol.sites[0].configurationWarnings = [QR_WARNING];
+  let updated = null;
+  answers = baseAnswers({
+    getPatrolPolicies: pol,
+    listPatrolSchedules: () => [updated ?? SCHEDULE],
+    updatePatrolSchedule: (id, input) => { updated = { ...SCHEDULE, ...input, id: 2, predecessorId: id, timingChanged: true }; return updated; },
+    savePatrolSitePolicy: (siteId, update) => ({ siteId, policy: { ...pol.companyDefault, ...update, source: 'company' }, configurationWarnings: [QR_WARNING] }),
+  });
+  calls.length = 0;
+  const renderer = await mount({ permissions: perms('owner') });
+  const root = renderer.root;
+  await pressByText(root, 'Site settings');
+  let text = textOf(root);
+  assert.ok(text.includes('Configuration required'), 'Settings shows the warning prominently');
+  assert.ok(text.includes('Choose a route with required checkpoints, or switch this site to photos.'));
+  await pressByText(root, 'Schedules');
+  text = textOf(root);
+  assert.ok(text.includes('Night rounds') && text.includes('Configuration required'), 'the Schedules tab shows it on the schedule');
+  assert.ok(text.includes('no route'));
+  // Editing the timing: the note, then a NEW id comes back and the list is re-read.
+  await pressByText(root, 'Edit');
+  assert.ok(textOf(root).includes('Timing changes apply from now as a new version.'));
+  await typeInto(root, 'Frequency (minutes)', '30');
+  await typeInto(root, 'Window (minutes)', '30');
+  const listsBefore = calls.filter(([k]) => k === 'listPatrolSchedules').length;
+  await pressByText(root, 'Save schedule');
+  assert.deepEqual(calls.filter(([k]) => k === 'updatePatrolSchedule').map(([, a]) => [a[0], a[1].frequencyMinutes]), [[1, 30]]);
+  assert.ok(calls.filter(([k]) => k === 'listPatrolSchedules').length > listsBefore, 'the list is re-read (the successor has a new id)');
+  text = textOf(root);
+  assert.ok(text.includes('Schedule saved. Timing changes apply from now as a new version.'), text);
+  assert.ok(text.includes('Every 30 min'), 'the successor is listed');
+  // No warning: nothing shown.
+  act(() => renderer.unmount());
+  answers = baseAnswers({ listPatrolSchedules: [{ ...SCHEDULE, routeId: 3, configurationWarnings: [] }] });
+  const clean = await mount({ permissions: perms('owner') });
+  await pressByText(clean.root, 'Schedules');
+  assert.ok(!textOf(clean.root).includes('Configuration required'));
+  act(() => clean.unmount());
+});
+
+test('PM-30-DUPLICATE-PHOTO-AND-QR-RULE-LABELS-ARE-NEUTRAL', async () => {
+  assert.equal(P.syncFlagLabel('duplicate_sha256'), 'Duplicate photo (same image already submitted) — review');
+  assert.equal(P.syncFlagLabel('qr_rule_missing'), 'No QR checkpoint rule — choose a route with required checkpoints, or switch this site to photos');
+  assert.doesNotMatch(P.syncFlagLabel('duplicate_sha256'), /fraud|suspicious|tamper|misconduct|fake|cheat/i, 'it alleges nothing');
+  // Shown on the photo in the run detail.
+  answers = baseAnswers({ getPatrolRun: { run: run({ status: 'completed', needsReview: true, syncFlags: ['duplicate_sha256'] }), visits: [], exceptions: [], evidenceCount: 2, evidenceRestricted: false,
+    evidence: [evidence(), evidence({ id: 901, clientEvidenceId: 'ev-bcdefghi', syncFlags: ['duplicate_sha256'], needsReview: true })] } });
+  const Detail = loadSource('src/components/patrols/PatrolRunDetail.tsx');
+  assert.match(read('src/components/patrols/PatrolEvidenceList.tsx'), /item\.syncFlags\?\.length \? <Text style=\{ui\.rowMeta\}>\{item\.syncFlags\.map\(syncFlagLabel\)/, 'evidence flags are labelled');
+  assert.match(read('src/components/patrols/PatrolRunDetail.tsx'), /run\.syncFlags\.map\(syncFlagLabel\)/, 'run flags are labelled');
+  assert.ok(Detail, 'the run detail loads');
+});
+
+test('PM-31-NFC-IS-OFFERED-NOWHERE-ON-THE-DASHBOARD', async () => {
+  const dir = path.join(ROOT, 'src/components/patrols');
+  for (const name of fs.readdirSync(dir)) {
+    assert.doesNotMatch(stripComments(fs.readFileSync(path.join(dir, name), 'utf8')), /\bnfc\b/i, `${name} offers no NFC`);
+  }
+  assert.match(read('src/components/patrols/PatrolSettingsTab.tsx'), /\(\['qr', 'photo'\] as const\)\.map/, 'the only methods offered are QR and photos');
+  const backend = read('../security-backend-nest/src/patrol/patrol-constants.ts');
+  assert.ok(backend.includes("export const PATROL_METHODS = ['qr', 'photo'] as const;"), 'the server accepts no other method');
+  answers = baseAnswers();
+  const renderer = await mount({ permissions: perms('owner') });
+  await pressByText(renderer.root, 'Site settings');
+  assert.doesNotMatch(textOf(renderer.root), /nfc/i);
+  act(() => renderer.unmount());
+});
+
 // ═══ wiring ═══
+
+// ═══ S4 1.2.1: acknowledge / resolve patrol exceptions on the page ═══
+
+function exc(over = {}) {
+  return {
+    id: 40, siteId: 10, runId: null, scheduleId: 1, shiftId: 71, windowKey: 'w9', scopeKey: 'site', type: 'patrol_missed', status: 'open',
+    safetyAlertId: 501, note: null, resolution: null, resolvedAt: null, createdAt: iso(NOW - 30 * MIN), guardId: 11,
+    windowStart: iso(NOW - 90 * MIN), windowEnd: iso(NOW - 60 * MIN), acknowledgedAt: null, lateEvidenceAt: null, annotations: [],
+    alertStatus: 'open', alertPriority: 'high', acknowledgedByName: null, resolvedByName: null, ...over,
+  };
+}
+const EXC_TARGET = { requestId: 1, kind: 'exception', exceptionId: 40 };
+const noteLabel = (root) => (root.findAll((n) => n.props && typeof n.props.onChangeText === 'function' && /^Resolution note/.test(n.props.accessibilityLabel || ''))[0] || {}).props?.accessibilityLabel;
+
+test('PM-32-EXCEPTION-ACTIONS-ARE-GATED-BY-PERMISSION', async () => {
+  const resolve = (list, role = 'company_staff') => access.resolvePatrolPermissions(list, role).canActOnExceptions;
+  assert.equal(resolve(['patrols.view', 'patrols.manage']), true, 'patrols.manage (Operations without alerts.manage)');
+  assert.equal(resolve(['patrols.view', 'alerts.manage']), true, 'alerts.manage (Control Room)');
+  assert.equal(resolve(['patrols.view']), false, 'a Viewer');
+  assert.equal(resolve(['alerts.manage']), false, 'never without the page (patrols.view)');
+  assert.equal(resolve(null, 'company_admin'), false, 'a session without a list never reaches the page');
+  const backend = read('../security-backend-nest/src/company-membership/company-membership-types.ts');
+  assert.match(backend, /PATROL_ALERT_ACT_PERMISSIONS[\s\S]{0,200}ALERTS_MANAGE[\s\S]{0,80}PATROLS_MANAGE|PATROL_ALERT_ACT_PERMISSIONS[\s\S]{0,200}PATROLS_MANAGE[\s\S]{0,80}ALERTS_MANAGE/,
+    'mirrors the backend: alerts.manage OR patrols.manage');
+  for (const role of ['owner', 'operations', 'control_room', 'viewer']) {
+    answers = baseAnswers({ listPatrolExceptions: [exc()] });
+    const p = perms(role);
+    const renderer = await mount({ permissions: p, target: EXC_TARGET });
+    const root = renderer.root;
+    assert.equal(has(root, 'Acknowledge'), p.canActOnExceptions, `${role}: acknowledge`);
+    assert.equal(has(root, 'Resolve'), p.canActOnExceptions, `${role}: resolve`);
+    if (!p.canActOnExceptions) assert.ok(textOf(root).includes('needs the alerts or patrol management permission'), `${role}: told why`);
+    act(() => renderer.unmount());
+  }
+  // A resolved exception offers no action to anyone.
+  answers = baseAnswers({ listPatrolExceptions: [exc({ status: 'resolved', resolution: 'guard_contacted', resolvedAt: iso(NOW - MIN), resolvedByName: 'Rae Resolver' })] });
+  const done = await mount({ permissions: perms('owner'), target: EXC_TARGET });
+  assert.equal(has(done.root, 'Acknowledge') || has(done.root, 'Resolve'), false);
+  act(() => done.unmount());
+  // 403 is shown as a permission message, the page stays.
+  answers = baseAnswers({ listPatrolExceptions: [exc()], acknowledgePatrolException: async () => { const e = new Error('forbidden'); e.status = 403; e.body = { code: 'PATROL_FORBIDDEN' }; throw e; } });
+  const refused = await mount({ permissions: perms('owner'), target: EXC_TARGET });
+  await pressByText(refused.root, 'Acknowledge');
+  assert.ok(textOf(refused.root).includes('You do not have permission for this part of Patrol Management.'));
+  act(() => refused.unmount());
+});
+
+test('PM-33-RESOLUTION-REASONS-NOTE-RULES-AND-LATE-SYNC-ONLY-WITH-LATE-EVIDENCE', async () => {
+  let list = [exc()];
+  answers = baseAnswers({ listPatrolExceptions: () => list, resolvePatrolException: async (id, body) => { list = [exc({ status: 'resolved', resolution: body.resolutionReason, resolvedAt: iso(NOW), resolvedByName: 'Ola Owner' })]; return list[0]; } });
+  calls.length = 0;
+  let renderer = await mount({ permissions: perms('owner'), target: EXC_TARGET });
+  await pressByText(renderer.root, 'Resolve');
+  const patrolValues = R.resolutionOptions('patrol').map((o) => o.label);
+  for (const label of patrolValues) assert.ok(has(renderer.root, label), `offers ${label}`);
+  assert.equal(has(renderer.root, 'Patrol completed — late sync'), false, 'no late sync without late evidence');
+  await pressByText(renderer.root, 'Guard contacted');
+  assert.equal(noteLabel(renderer.root), 'Resolution note (required)');
+  await pressByText(renderer.root, 'Confirm resolution');
+  assert.ok(textOf(renderer.root).includes('A resolution note is required.'));
+  await typeInto(renderer.root, 'Resolution note (required)', 'x'.repeat(2001));
+  await pressByText(renderer.root, 'Confirm resolution');
+  assert.ok(textOf(renderer.root).includes('Keep the note under 2000 characters.'));
+  assert.equal(calls.filter(([k]) => k === 'resolvePatrolException').length, 0, 'nothing sent until the rules are met');
+  await typeInto(renderer.root, 'Resolution note (required)', '  Rang the Guard: gate locked.  ');
+  await pressByText(renderer.root, 'Confirm resolution');
+  assert.deepEqual(calls.filter(([k]) => k === 'resolvePatrolException').map(([, a]) => a), [[40, { resolutionReason: 'guard_contacted', resolutionNote: 'Rang the Guard: gate locked.' }]]);
+  assert.ok(textOf(renderer.root).includes('Resolved'), 'the server\'s new state is shown');
+  assert.ok(textOf(renderer.root).includes('by Ola Owner'));
+  act(() => renderer.unmount());
+  // With late evidence: "Patrol completed — late sync" is offered and needs no note.
+  list = [exc({ lateEvidenceAt: iso(NOW - 5 * MIN) })];
+  calls.length = 0;
+  renderer = await mount({ permissions: perms('control_room'), target: EXC_TARGET });
+  await pressByText(renderer.root, 'Resolve');
+  await pressByText(renderer.root, 'Patrol completed — late sync');
+  assert.equal(noteLabel(renderer.root), 'Resolution note (optional)');
+  await pressByText(renderer.root, 'Confirm resolution');
+  assert.deepEqual(calls.filter(([k]) => k === 'resolvePatrolException').map(([, a]) => a), [[40, { resolutionReason: 'patrol_completed_late_sync' }]]);
+  act(() => renderer.unmount());
+  assert.equal(R.RESOLUTION_NOTE_MAX_LENGTH, 2000);
+  const backendDto = read('../security-backend-nest/src/patrol/dto/patrol.dto.ts');
+  assert.match(backendDto, /class ResolvePatrolExceptionDto[\s\S]{0,300}@MaxLength\(2000\)\s*resolutionNote/, 'the same limit as the API');
+});
+
+test('PM-34-THE-SERVER-STATE-WINS-POLLING-REFRESH-AFTER-ACTIONS-AND-409', async () => {
+  let list = [exc()];
+  answers = baseAnswers({
+    listPatrolExceptions: () => list,
+    acknowledgePatrolException: async () => { list = [exc({ status: 'acknowledged', acknowledgedAt: iso(NOW), acknowledgedByName: 'Cara Control' })]; return list[0]; },
+    resolvePatrolException: async () => {
+      list = [exc({ status: 'resolved', resolution: 'site_inaccessible', resolvedAt: iso(NOW), resolvedByName: 'Rae Resolver', acknowledgedAt: iso(NOW - MIN), acknowledgedByName: 'Cara Control' })];
+      const e = new Error('conflict'); e.status = 409; e.body = { code: 'PATROL_EXCEPTION_ALREADY_RESOLVED' }; throw e;
+    },
+  });
+  calls.length = 0;
+  const renderer = await mount({ permissions: perms('control_room'), target: EXC_TARGET });
+  const reads = () => calls.filter(([k]) => k === 'listPatrolExceptions').length;
+  const before = reads();
+  await pressByText(renderer.root, 'Acknowledge');
+  assert.ok(reads() > before, 're-read after acknowledging');
+  assert.ok(textOf(renderer.root).includes('Acknowledged'));
+  assert.ok(textOf(renderer.root).includes('by Cara Control'));
+  assert.equal(has(renderer.root, 'Acknowledge'), false, 'no second acknowledge');
+  await pressByText(renderer.root, 'Resolve');
+  await pressByText(renderer.root, 'Site inaccessible');
+  await typeInto(renderer.root, 'Resolution note (required)', 'Barrier down');
+  const beforeConflict = reads();
+  await pressByText(renderer.root, 'Confirm resolution');
+  assert.ok(reads() > beforeConflict, 're-read after the 409');
+  const text = textOf(renderer.root);
+  assert.ok(text.includes('already resolved') && text.includes('Resolved') && text.includes('by Rae Resolver') && text.includes('Site inaccessible'),
+    'someone else resolved it: the latest decision, never a cached "Open"');
+  assert.equal(has(renderer.root, 'Resolve'), false);
+  act(() => renderer.unmount());
+  // Both drawers poll while open, as the overview does.
+  const detail = stripComments(read('src/components/patrols/PatrolRunDetail.tsx'));
+  assert.match(detail, /getPatrolRun\(runId as number\), \{ enabled: runId != null, poll: true \}/);
+  assert.match(detail, /listPatrolExceptions\(\{\}\), \{ enabled: exceptionId != null, poll: true \}/);
+  assert.equal((detail.match(/onChanged=\{\(\) => \{ void (detail|list)\.reload\(true\); \}\}/g) || []).length, 2, 'every action re-reads its drawer');
+});
+
+test('PM-35-OPEN-IN-LIVE-OPERATIONS-ONLY-WITH-AN-ALERT', async () => {
+  const opened = [];
+  answers = baseAnswers({ listPatrolExceptions: [exc()] });
+  let renderer = await mount({ permissions: perms('viewer'), target: EXC_TARGET, onOpenLiveOperationsAlert: (t) => opened.push(t) });
+  await pressByText(renderer.root, 'Open in Live Operations');
+  assert.deepEqual(opened, [{ alertId: 501, shiftId: 71 }], 'its alert and shift');
+  act(() => renderer.unmount());
+  answers = baseAnswers({ listPatrolExceptions: [exc({ safetyAlertId: null, alertStatus: null })] });
+  renderer = await mount({ permissions: perms('owner'), target: EXC_TARGET, onOpenLiveOperationsAlert: (t) => opened.push(t) });
+  assert.equal(has(renderer.root, 'Open in Live Operations'), false, 'no alert, no link');
+  act(() => renderer.unmount());
+  const screen = stripComments(read('src/screens/CompanyDashboardScreen.tsx'));
+  assert.match(screen, /onOpenLiveOperationsAlert=\{\(\{ alertId, shiftId \}\) => \{[\s\S]{0,200}if \(shiftId != null\) focusShiftDetail\(shiftId\);\s*else setActiveSection\('live-operations'\);/,
+    'the dashboard\'s existing Live Operations focus');
+});
+
+test('PM-36-STATUS-LABELS-NEVER-MISLABEL-AND-RESOLVED-SHOWS-WHO-AND-WHEN', async () => {
+  assert.deepEqual(['open', 'acknowledged', 'resolved', 'escalated', null].map(P.exceptionStatusLabel), ['Open', 'Acknowledged', 'Resolved', 'escalated', 'Unknown']);
+  answers = baseAnswers({ listPatrolExceptions: [exc({ id: 41, status: 'acknowledged' }), exc({ id: 42, status: 'open' }), exc({ id: 43, status: 'resolved' })] });
+  let renderer = await mount({ permissions: perms('viewer') });
+  const rows = renderer.root.findAll((n) => n.props && /^Open exception 4[123]$/.test(n.props.accessibilityLabel || '') && typeof n.props.onPress === 'function');
+  const labels = Object.fromEntries(rows.map((r) => [r.props.accessibilityLabel, textOf(r)]));
+  assert.ok(labels['Open exception 41'].includes('Acknowledged') && labels['Open exception 42'].includes('Open'), 'each row says the server\'s status');
+  assert.equal(labels['Open exception 43'], undefined, 'resolved exceptions are not listed as open');
+  assert.ok(!textOf(renderer.root).includes('where they are acknowledged and resolved'), 'exceptions are no longer actioned only in Live Operations');
+  act(() => renderer.unmount());
+  answers = baseAnswers({ listPatrolExceptions: [exc({ status: 'resolved', resolution: 'patrol_completed_late_sync', resolvedAt: '2026-06-02T09:30:00.000Z', resolvedByName: 'Rae Resolver',
+    acknowledgedAt: '2026-06-02T09:10:00.000Z', acknowledgedByName: 'Cara Control', lateEvidenceAt: '2026-06-02T09:00:00.000Z' })] });
+  renderer = await mount({ permissions: perms('viewer'), target: EXC_TARGET });
+  const text = textOf(renderer.root);
+  for (const want of ['Resolved', 'Patrol completed — late sync', 'by Rae Resolver', 'by Cara Control', '10:30', '10:10']) assert.ok(text.includes(want), `shows ${want}`);
+  assert.ok(!/@/.test(text.replace(/s4cp:[^\s]*/g, '')), 'never an email');
+  act(() => renderer.unmount());
+});
 
 test('PM-18-WIRING-DEPENDENCY-AND-THE-RELEASE-GATE', () => {
   const pkg = JSON.parse(read('package.json'));

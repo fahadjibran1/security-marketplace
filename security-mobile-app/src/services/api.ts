@@ -142,6 +142,7 @@ import type {
   PatrolCheckpoint,
   PatrolCheckpointInput,
   PatrolCheckpointLabel,
+  PatrolConfigurationWarning,
   PatrolEffectivePolicy,
   PatrolEvidence,
   PatrolEvidenceAccessPurpose,
@@ -2047,12 +2048,21 @@ export function listPatrolExceptions(params: { siteId?: number | null; status?: 
   return request<PatrolException[]>(`/patrols/exceptions${patrolQuery(params)}`);
 }
 
+/** S4 1.2.1: the EXISTING patrol exception actions (alerts.manage or patrols.manage; a linked alert moves with it). */
+export function acknowledgePatrolException(id: number) {
+  return request<PatrolException>(`/patrols/exceptions/${id}/acknowledge`, { method: 'POST' });
+}
+
+export function resolvePatrolException(id: number, input: { resolutionReason: string; resolutionNote?: string }) {
+  return request<PatrolException>(`/patrols/exceptions/${id}/resolve`, { method: 'POST', body: JSON.stringify(input) });
+}
+
 export function getPatrolPolicies() {
   return request<PatrolPolicies>('/patrols/policies');
 }
 
 export function savePatrolSitePolicy(siteId: number | null, update: PatrolPolicyUpdate) {
-  return request<{ siteId: number | null; policy: PatrolEffectivePolicy }>(
+  return request<{ siteId: number | null; policy: PatrolEffectivePolicy; configurationWarnings?: PatrolConfigurationWarning[] }>(
     siteId == null ? '/patrols/policies/default' : `/patrols/policies/sites/${siteId}`,
     { method: 'PUT', body: JSON.stringify(update) },
   );

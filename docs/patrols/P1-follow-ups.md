@@ -156,6 +156,40 @@ Migration 71 = `1720900000017-AddPatrolSweepReconciliation`; 019 is reserved by 
 
 ---
 
+## 5. S4 1.2.1 — schedule versions are durable (Migration 73)
+
+Owner decision B1 (1.2.1): a timing change to an active schedule archives it and creates a successor with a new id; a
+window belongs to the version in force at its start. 1.2.1 first linked the two versions only through the
+`patrol.schedule.superseded` audit entry; **1.2.1 includes Migration 73**, which makes the link a column.
+
+* **Migration 73 = `1720900000020-AddPatrolScheduleSuccessors`** (follows Migration 72 = `1720900000018`;
+  `1720900000019` stays reserved by another branch — no file with that timestamp exists on any branch). Additive:
+  `patrol_schedules."supersededByScheduleId"` (int, null) and `"supersededAt"` (timestamptz, null); CHECKs both-or-none,
+  never itself, only on an archived schedule; composite FK `("supersededByScheduleId", "companyId", "siteId")` →
+  `patrol_schedules ("id", "companyId", "siteId")` (the existing `UQ_patrol_schedules_id_company_site`), so a successor is
+  always the same company AND site — declarative, chosen over a trigger; partial UNIQUE on the successor (one
+  predecessor per successor); partial index on `companyId` for the reads. Backfill from the audit entries is idempotent
+  (earliest valid entry per schedule and per successor; never across a site or company). Nothing else is written.
+  `down()` refuses while any link exists (as Migration 72 does for grants).
+* **Service:** the predecessor is locked `FOR UPDATE`; the link is written `WHERE "supersededByScheduleId" IS NULL`; a
+  concurrent second edit gets 409 (`PATROL_VALIDATION_FAILED`, `details.supersededByScheduleId`), never a second
+  successor; the unique index is the backstop. Owner rule for a PAUSED schedule: its timing changes in place only when
+  nothing could be reinterpreted (no patrol run, no patrol exception in any status, not itself a successor, and audited
+  as created paused and never switched on); otherwise it gets a successor like an active one, and the successor stays
+  paused. The check runs after the row is locked `FOR UPDATE`, so a run or exception cannot appear meanwhile. The
+  audit entry is still written as evidence; the window engine, sweep, Guard plan and windows-due count read the columns.
+* **Rollback to 1.2.0 (4f4de31):** the old code never names the columns (raw `SELECT *` carries two extra null keys;
+  the old entity maps only its own columns; inserts leave them null). Locally, the 4f4de31 patrol specs (foundation,
+  schedule, evidence, recovery grants, reconciliation, dashboard reads) and boot checks were run against a database
+  migrated to 73 (only their "head is Migration 72" assertion relaxed in a scratch copy). After a rollback an
+  already-replaced schedule stays archived (hidden) and its successor is an ordinary active schedule: 1.2.0 shows its
+  windows from the start of the shift in the Guard plan and day count (those before the edit cannot be covered by old
+  runs and are never judged, because its judging floor is its creation), and the predecessor's open window at the edit
+  is no longer offered. No row is changed by a rollback; do not revert Migration 73 for an application rollback.
+* Specs: `scripts/m73-migration.spec.ts` (M73-01 … M73-09); `scripts/patrol-schedule.spec.ts` PS-C10, PS-C14, PS-C15.
+
+---
+
 ## Also recorded with P1-C (not owner decisions)
 
 * Retention ships in `report` mode (`PATROL_EVIDENCE_RETENTION_MODE`); switch to `enforce` after reviewing the counts.

@@ -5,6 +5,8 @@ import { KpiCard } from '../ui/KpiCard';
 import type { PatrolPageContext } from './patrolContext';
 import {
   buildPatrolKpis,
+  exceptionStatusLabel,
+  exceptionStatusTone,
   exceptionTypeLabel,
   formatPatrolDate,
   formatPatrolDateTime,
@@ -53,7 +55,7 @@ export function PatrolOverviewTab({ ctx }: { ctx: PatrolPageContext }) {
           Configured: {overview.data.activeSchedules} active schedule{overview.data.activeSchedules === 1 ? '' : 's'}, {overview.data.activeRoutes} route{overview.data.activeRoutes === 1 ? '' : 's'}, {overview.data.activeCheckpoints} checkpoint{overview.data.activeCheckpoints === 1 ? '' : 's'}.
         </Text>
       ) : null}
-      <PatrolPanel title="Open patrol exceptions" subtitle="Actionable exceptions also appear in Live Operations, where they are acknowledged and resolved.">
+      <PatrolPanel title="Open patrol exceptions" subtitle="Open an exception to acknowledge or resolve it here; actionable ones also appear in Live Operations, and either place updates both.">
         {ResourceState({ resource: exceptions, empty: exceptions.data != null && open.length === 0, emptyMessage: 'There are no open patrol exceptions.', what: 'open patrol exceptions' })}
         {exceptions.error && exceptions.data ? <Notice tone="error" message={exceptions.error} /> : null}
         {open.map((e) => (
@@ -64,7 +66,7 @@ export function PatrolOverviewTab({ ctx }: { ctx: PatrolPageContext }) {
           >
             <View style={ui.actions}>
               <Text style={ui.rowTitle}>{exceptionTypeLabel(e.type)}</Text>
-              <Badge label={e.status === 'acknowledged' ? 'Acknowledged' : 'Open'} tone={e.status === 'acknowledged' ? 'info' : 'warning'} />
+              <Badge label={exceptionStatusLabel(e.status)} tone={exceptionStatusTone(e.status)} />
             </View>
             <Text style={ui.rowMeta}>
               {ctx.siteName(e.siteId)} · window {formatPatrolDateTime(e.windowStart, ctx.siteZone(e.siteId))}–{formatPatrolDateTime(e.windowEnd, ctx.siteZone(e.siteId)).slice(-5)}
