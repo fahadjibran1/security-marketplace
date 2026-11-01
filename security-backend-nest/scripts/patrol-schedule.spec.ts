@@ -88,6 +88,8 @@
  *   PS-C15  Migration 73: the successor link is durable — concurrent timing edits make ONE successor (the other edit 409),
  *           chains A → B → C bound each version, the reads need no audit entry, a paused schedule changes in place, and
  *           the database refuses self / cross-site / unarchived / half / second-predecessor links
+ *   PS-C16  exception actions through the Patrols API: acknowledge / resolve audited on the exception and its alert, the
+ *           list names who acted (display name only), validation (note, late sync, 2000), a resolved exception is final
  *
  * Needs PATROL_SCHEDULE_DATABASE_URL pointing at a DISPOSABLE local database — it drops the schema.
  */
@@ -1865,6 +1867,74 @@ async function main() {
       await assert.rejects(() => link(loose.id, b), /UQ_patrol_schedules_superseded_by/, 'a successor replaces exactly one schedule');
       await assert.rejects(() => q(`UPDATE patrol_schedules SET "supersededAt" = NULL WHERE id = $1`, [a]), /CHK_patrol_schedules_superseded_pair/);
       await assert.rejects(() => q(`DELETE FROM patrol_schedules WHERE id = $1`, [b]), /FK_patrol_schedules_superseded_by/, 'a successor is never deleted from under its link');
+    });
+
+    await test('PS-C16-EXCEPTION-ACTIONS-ARE-AUDITED-THE-LIST-NAMES-WHO-ACTED-AND-A-RESOLVED-EXCEPTION-IS-FINAL', async () => {
+      const s = await scenario('c16');
+      const [g] = s.guards;
+      await mkSchedule(s.co.id, s.site, { from: '08:00', to: '10:00', freq: 60 });
+      const shift = await mkShift(s.co.id, s.site, g.id, day('05:00:00'), day('13:00:00'));
+      await bookOn(shift, g.id, day('04:55:00'));
+      await sweep(day('09:30:00'));
+      const [a, b] = (await exceptionsOf(s.co.id)).filter((e: any) => e.type === 'patrol_missed');
+      assert.ok(a?.safetyAlertId && b?.safetyAlertId, 'two missed windows, each with its Live Operations alert');
+      await q(`UPDATE users SET "firstName" = 'Olive', "lastName" = 'Owner' WHERE id = $1`, [s.co.ownerId]);
+      const tok = await login(s.co.ownerEmail);
+      const viewerEmail = 'ps.c16.viewer@example.invalid';
+      const viewerId = (await one(`INSERT INTO users (email,"passwordHash",role,status,"isEmailVerified","emailVerificationRequired","firstName","lastName")
+         VALUES ($1,$2,'company_admin','active',true,false,'Vic','Viewer') RETURNING id`, [viewerEmail, hash])).id;
+      await q(`INSERT INTO company_memberships ("userId","companyId","membershipRole",status) VALUES ($1,$2,'viewer','active')`, [viewerId, s.co.id]);
+      const viewer = await login(viewerEmail);
+      expect(await api('POST', `/patrols/exceptions/${a.id}/acknowledge`, viewer), 403, undefined, 'a Viewer cannot act');
+      const auditCount = async (action: string, entityId: number) => count(`SELECT count(*) FROM audit_logs WHERE action = $1 AND "entityId" = $2`, [action, entityId]);
+
+      // Acknowledge, then resolve, through the Patrols API: the alert's own lifecycle runs and both sides are audited.
+      const ack = await api('POST', `/patrols/exceptions/${a.id}/acknowledge`, tok);
+      expect(ack, 200);
+      assert.equal(ack.body.status, 'acknowledged');
+      assert.deepEqual([await auditCount('patrol.exception_acknowledged', Number(a.id)), await auditCount('safety_alert.acknowledged', Number(a.safetyAlertId))], [1, 1]);
+      expect(await api('POST', `/patrols/exceptions/${b.id}/resolve`, tok, { resolutionReason: 'guard_contacted' }), 400, undefined, 'a note is required for this reason');
+      expect(await api('POST', `/patrols/exceptions/${b.id}/resolve`, tok, { resolutionReason: 'patrol_completed_late_sync' }), 400, undefined, 'no late evidence: late sync is refused');
+      expect(await api('POST', `/patrols/exceptions/${b.id}/resolve`, tok, { resolutionReason: 'guard_contacted', resolutionNote: 'x'.repeat(2001) }), 400, undefined, 'a note is at most 2000 characters');
+      const res = await api('POST', `/patrols/exceptions/${a.id}/resolve`, tok, { resolutionReason: 'guard_contacted', resolutionNote: 'Guard rang in: gate blocked.' });
+      expect(res, 200);
+      assert.deepEqual([res.body.status, res.body.resolution], ['resolved', 'guard_contacted']);
+      assert.deepEqual([await auditCount('patrol.exception_resolved', Number(a.id)), await auditCount('safety_alert.closed', Number(a.safetyAlertId))], [1, 1]);
+      const alert = await one(`SELECT status, "resolutionReason" FROM safety_alerts WHERE id = $1`, [a.safetyAlertId]);
+      assert.deepEqual([alert.status, alert.resolutionReason], ['closed', 'guard_contacted']);
+
+      // The list says who acted and when — a display name only, never an email.
+      const list = await api('GET', '/patrols/exceptions', viewer);
+      expect(list, 200);
+      const item = list.body.find((e: any) => e.id === Number(a.id));
+      assert.deepEqual([item.status, item.resolution, item.acknowledgedByName, item.resolvedByName, Boolean(item.acknowledgedAt), Boolean(item.resolvedAt)],
+        ['resolved', 'guard_contacted', 'Olive Owner', 'Olive Owner', true, true]);
+      const other = list.body.find((e: any) => e.id === Number(b.id));
+      assert.deepEqual([other.status, other.acknowledgedByName, other.resolvedByName], ['open', null, null]);
+      assert.ok(!JSON.stringify(list.body).includes('@'), 'no email in the exceptions list');
+      for (const key of ['id', 'siteId', 'runId', 'scheduleId', 'shiftId', 'windowKey', 'scopeKey', 'type', 'status', 'safetyAlertId', 'note', 'resolution',
+        'resolvedAt', 'createdAt', 'guardId', 'windowStart', 'windowEnd', 'acknowledgedAt', 'lateEvidenceAt', 'annotations', 'reconciliationRunId', 'alertStatus', 'alertPriority']) {
+        assert.ok(key in item, `existing field ${key} is still there`);
+      }
+
+      // A resolved exception is final: 409, and nothing about it (or its alert, or the audit trail) changes.
+      const snapshot = async () => ({
+        exception: await one(`SELECT md5(to_jsonb(x)::text) h FROM patrol_exceptions x WHERE id = $1`, [a.id]),
+        alert: await one(`SELECT md5(to_jsonb(x)::text) h FROM safety_alerts x WHERE id = $1`, [a.safetyAlertId]),
+        audits: await count(`SELECT count(*) FROM audit_logs WHERE "companyId" = $1`, [s.co.id]),
+      });
+      const before = await snapshot();
+      expect(await api('POST', `/patrols/exceptions/${a.id}/resolve`, tok, { resolutionReason: 'other', resolutionNote: 'again' }), 409, 'PATROL_EXCEPTION_ALREADY_RESOLVED');
+      expect(await api('POST', `/patrols/exceptions/${a.id}/acknowledge`, tok), 409, 'PATROL_EXCEPTION_ALREADY_RESOLVED');
+      assert.deepEqual(await snapshot(), before, 'unchanged');
+
+      // An exception without an alert is acted on directly, and audited as such.
+      const quiet = await one(`INSERT INTO patrol_exceptions ("companyId","siteId","shiftId","windowKey","scopeKey",type,"windowStart","windowEnd")
+         VALUES ($1,$2,$3,'c16-quiet','site','patrol_incomplete',$4,$5) RETURNING id`, [s.co.id, s.site, shift, day('08:00:00'), day('09:00:00')]);
+      const direct = await api('POST', `/patrols/exceptions/${quiet.id}/resolve`, tok, { resolutionReason: 'patrol_completed_confirmed', resolutionNote: 'Supervisor walked it.' });
+      expect(direct, 200);
+      const audit = await one(`SELECT "afterData" FROM audit_logs WHERE action = 'patrol.exception_resolved' AND "entityId" = $1`, [quiet.id]);
+      assert.deepEqual([audit.afterData.via, audit.afterData.resolution], ['patrols', 'patrol_completed_confirmed']);
     });
   } finally {
     await app.close();
