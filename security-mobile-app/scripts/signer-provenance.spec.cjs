@@ -29,6 +29,34 @@ const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
 const verifier = require('./verify-apk-signer.cjs');
 const config = JSON.parse(read('release/android-signing.json'));
+
+/**
+ * SIGNER-06E rule 3, strict (release-record validation only). A distributed-superseded artefact (vc) that says
+ * "Superseded by versionCode N" is fully recorded only when:
+ *   1. N = vc + 1, or every k with vc < k < N is in retiredArtefacts EXACTLY ONCE with an unreleased status
+ *      ('uploaded-draft-superseded' or 'consumed-unreleased-superseded') — a number missing from the record fails;
+ *   2. N itself is a recorded RELEASED artefact: the approved artefact, or a retiredArtefacts entry with a released
+ *      (distributed) status — never an unreleased one.
+ * Returns the problems (empty = fully recorded). Takes the config so the self-tests can run it on mutated copies.
+ */
+const UNRELEASED_SUPERSEDED = ['uploaded-draft-superseded', 'consumed-unreleased-superseded'];
+const RELEASED_SUPERSEDED = ['distributed-superseded'];
+function supersededByProblems(cfg, entry) {
+  const vc = Number(entry.versionCode);
+  const next = Number((String(entry.retiredReason || '').match(/^Superseded by versionCode (\d+)\b/) || [])[1]);
+  if (!Number.isInteger(next) || next <= vc) return [`vc${vc} names no later successor`];
+  const retired = cfg.retiredArtefacts || [];
+  const problems = [];
+  for (let k = vc + 1; k < next; k += 1) {
+    const rows = retired.filter((e) => Number(e.versionCode) === k);
+    if (rows.length !== 1) problems.push(`vc${k} (between ${vc} and ${next}) is recorded ${rows.length} times, not exactly once`);
+    else if (!UNRELEASED_SUPERSEDED.includes(rows[0].status)) problems.push(`vc${k} (between ${vc} and ${next}) has status ${rows[0].status}, not an unreleased one`);
+  }
+  const successor = (cfg.approvedArtefact && Number(cfg.approvedArtefact.versionCode) === next)
+    || retired.some((e) => Number(e.versionCode) === next && RELEASED_SUPERSEDED.includes(e.status));
+  if (!successor) problems.push(`vc${next} is not a recorded released artefact`);
+  return problems;
+}
 const appJson = JSON.parse(read('app.json'));
 const easJson = JSON.parse(read('eas.json'));
 /** What the retired com.securitymarketplace.mobile builds (1.0.4 to Build 12) are checked against. */
@@ -407,13 +435,10 @@ test('SIGNER-06E-THE-APPROVED-ARTEFACT-IS-EXPLICIT', () => {
           assert.equal(entry.playInternalTesting.confirmedBy, 'owner', `vc${entry.versionCode} keeps its owner confirmation`);
           assert.ok(['uploaded', 'active'].includes(entry.playInternalTesting.status), `vc${entry.versionCode} keeps its Play state`);
           assert.match(entry.retiredOn, /^\d{4}-\d{2}-\d{2}$/);
-          // It names the versionCode that replaced it: the very next one, or the next RELEASED one when the numbers in
-          // between were consumed in Play without a release (20 → 23: 21 a draft, 22 used but not in the library).
-          const next = Number((entry.retiredReason.match(/^Superseded by versionCode (\d+)\b/) || [])[1]);
-          assert.ok(next > entry.versionCode, `vc${entry.versionCode} names its successor`);
-          for (const between of (config.retiredArtefacts || []).filter((e) => e.versionCode > entry.versionCode && e.versionCode < next)) {
-            assert.ok(['uploaded-draft-superseded', 'consumed-unreleased-superseded'].includes(between.status), `vc${between.versionCode}, skipped by vc${entry.versionCode}'s successor, was never released`);
-          }
+          // It names the versionCode that replaced it: the very next one, or the next RELEASED one when EVERY number in
+          // between is recorded as consumed in Play without a release (20 → 23: 21 a draft, 22 used but not in the
+          // library) — strict, see supersededByProblems (SIGNER-06F).
+          assert.deepEqual(supersededByProblems(config, entry), [], `vc${entry.versionCode}'s successor is fully recorded`);
         }
       }
     }
@@ -433,6 +458,51 @@ test('SIGNER-06E-THE-APPROVED-ARTEFACT-IS-EXPLICIT', () => {
       assert.notEqual(approved.easBuildId, entry.easBuildId, 'approved must not be a superseded build');
       assert.notEqual(approved.apkSha256, entry.apkSha256, 'nor the same artefact');
     }
+  }
+});
+
+test('SIGNER-06F-SUPERSEDED-BY-IS-STRICT-SELF-TESTS', () => {
+  // The recorded chain passes: 17→18, 18→19, 19→20 (the very next one) and 20→23 (21 and 22 recorded as unreleased).
+  const distributed = (config.retiredArtefacts || []).filter((e) => e.status === 'distributed-superseded');
+  assert.ok(distributed.length >= 4);
+  for (const entry of distributed) assert.deepEqual(supersededByProblems(config, entry), [], `vc${entry.versionCode} as recorded`);
+  const copy = () => JSON.parse(JSON.stringify(config));
+  const vc20 = (c) => c.retiredArtefacts.find((e) => e.versionCode === 20);
+  assert.match(vc20(config).retiredReason, /^Superseded by versionCode 23\b/, '20 → 23 as recorded');
+  // A number in between that is missing from the record fails (before: it passed silently).
+  {
+    const c = copy();
+    c.retiredArtefacts = c.retiredArtefacts.filter((e) => e.versionCode !== 22);
+    assert.ok(supersededByProblems(c, vc20(c)).some((p) => /vc22 .*recorded 0 times/.test(p)), 'a gap number missing from the record fails');
+  }
+  // A number in between recorded twice fails.
+  {
+    const c = copy();
+    c.retiredArtefacts.push({ ...c.retiredArtefacts.find((e) => e.versionCode === 21) });
+    assert.ok(supersededByProblems(c, vc20(c)).some((p) => /vc21 .*recorded 2 times/.test(p)), 'a duplicated gap number fails');
+  }
+  // A number in between with a RELEASED status fails (it, not the named one, would be the successor).
+  {
+    const c = copy();
+    c.retiredArtefacts.find((e) => e.versionCode === 21).status = 'distributed-superseded';
+    assert.ok(supersededByProblems(c, vc20(c)).some((p) => /vc21 .*distributed-superseded/.test(p)), 'a released number in between fails');
+  }
+  // The named successor not recorded as a released artefact fails.
+  {
+    const c = copy();
+    c.approvedArtefact.versionCode = 24;
+    assert.ok(supersededByProblems(c, vc20(c)).some((p) => /vc23 is not a recorded released artefact/.test(p)), 'an unrecorded successor fails');
+    const d = copy();
+    d.retiredArtefacts.push({ versionCode: 25, status: 'consumed-unreleased-superseded' });
+    const e19 = d.retiredArtefacts.find((e) => e.versionCode === 19);
+    e19.retiredReason = e19.retiredReason.replace(/^Superseded by versionCode 20\b/, 'Superseded by versionCode 25');
+    assert.ok(supersededByProblems(d, e19).some((p) => /vc25 is not a recorded released artefact/.test(p)), 'a successor recorded only as unreleased fails');
+  }
+  // No successor named, or one not above it, fails.
+  {
+    const c = copy();
+    vc20(c).retiredReason = 'Superseded by versionCode 20 (itself)';
+    assert.ok(supersededByProblems(c, vc20(c)).length > 0);
   }
 });
 
