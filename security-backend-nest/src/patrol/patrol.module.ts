@@ -26,6 +26,8 @@ import { PatrolSetupService } from './patrol-setup.service';
 import { PatrolEvidenceReadService } from './evidence/patrol-evidence-read.service';
 import { PatrolWindowService } from './patrol-window.service';
 import { PatrolWindowsDayService } from './patrol-windows-day.service';
+import { PatrolMonitorController } from './patrol-monitor.controller';
+import { PatrolMonitorService } from './patrol-monitor.service';
 
 /**
  * Patrol Management, S4 Patrols Phase 1 package P1-A (Migration 68): the data model, the per-company switch, the
@@ -40,17 +42,19 @@ import { PatrolWindowsDayService } from './patrol-windows-day.service';
  * Issue #68 (Migration 72) adds exceptional offline recovery grants (PatrolRecoveryGrantService): an Owner / Admin lets one
  * Guard send one shift's patrol data after the post-shift sync window, time-boxed, audited, flagged recovered_via_grant.
  *
+ * S4 Patrol Monitor S1 adds read-only monitor reads (PatrolMonitorService, GET /patrols/monitor/*): no schema change.
+ *
  * Patrol imports SafetyAlertModule (to act on its alerts through the existing lifecycle); the safety-alert side reaches
  * patrol exceptions only through patrol-alert-link.ts (plain SQL), so there is no module cycle.
  */
 @Module({
   imports: [TypeOrmModule.forFeature(patrolEntities), CompanyMembershipModule, AuditLogModule, OperationsModule, SafetyAlertModule],
-  controllers: [PatrolConfigController, PatrolGuardController, PatrolAdminController, PatrolEvidenceController, PatrolEvidenceGuardController],
+  controllers: [PatrolConfigController, PatrolGuardController, PatrolAdminController, PatrolEvidenceController, PatrolEvidenceGuardController, PatrolMonitorController],
   providers: [
     PatrolAccessService, PatrolConfigService, PatrolQueryService, PatrolGuardService, PatrolAdminService,
     PatrolWindowService, PatrolWindowsDayService, PatrolExceptionService, PatrolSweepService,
     PatrolObjectStore, PatrolEvidenceLifecycleService, PatrolEvidenceService, PatrolEvidenceExportService, PatrolEvidenceMaintenanceService,
-    PatrolRecoveryGrantService, PatrolSetupService, PatrolEvidenceReadService,
+    PatrolRecoveryGrantService, PatrolSetupService, PatrolEvidenceReadService, PatrolMonitorService,
   ],
   exports: [PatrolAccessService, PatrolConfigService, PatrolSweepService],
 })
