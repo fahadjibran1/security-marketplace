@@ -27,7 +27,7 @@ import {
 import { checkLabelSignature, parseCheckpointLabel, patrolQrKeyring } from './patrol-qr';
 import { ActiveRecoveryGrant, PatrolRecoveryGrantService } from './patrol-recovery-grant.service';
 import { serializeRun, serializeVisit, updateRows } from './patrol-serializers';
-import { explainRuns } from './patrol-run-evaluation';
+import { explainRuns, loadRunEvaluationContext, runRequirements } from './patrol-run-evaluation';
 import { RouteVersionLinks, routeHead, routeVersionAt, routeVersionLinks, sameRouteChain } from './patrol-route-versions';
 import { ScheduleVersionBounds, scheduleVersionBounds, supersededSince, withVersionBounds } from './patrol-schedule-versions';
 import { setupFor, shiftAnchoredSchedules, siteSetups } from './patrol-shift-context';
@@ -138,29 +138,52 @@ export class PatrolGuardService {
 
   /**
    * B2 correction (the 1.2.1 app's checkpoint-photo prompt). The deployed 1.2.1 app asks for a checkpoint photo after a
-   * scan when the PLAN's `checkpoints[].photoRequired` is true for that checkpoint (or policy.photosPerCheckpoint > 0), and
-   * then demands a reason at completion if it was declined — it cannot tell one route from another. The plan now reports
-   * the photo per shift (see plan()), so the prompt only appears where the server requires the photo. Where a shift mixes
-   * both (a custom-route clock schedule and automatic-route windows), this is the server's guarantee: a completion reason
-   * on a run that needs NO checkpoint photo, whose route's required checkpoints were all scanned, at a checkpoint whose own
-   * setting asks for a photo, and that names no unreached checkpoint (the 1.2.1 app writes "Checkpoint not reached — …"
-   * for those), is the declined prompt — the run is completed, not incomplete. A run that needs a photo is never excused.
+   * scan when the PLAN's `checkpoints[].photoRequired` is true (or policy.photosPerCheckpoint > 0), and its completion
+   * summary demands a reason when a route checkpoint is unreached OR any photo it counts is missing — the run photo
+   * included. The plan now reports the checkpoint photo per shift (see plan()), so the prompt only appears where the
+   * server requires it, except on a shift that mixes custom- and automatic-route patrols.
+   *
+   * For that case, a completion reason is EXCUSED (the run is completed, not incomplete) only when the server proves —
+   * structurally, from the run's own records with the evaluator's own rules (runRequirements / evaluateRequirements) —
+   * that the only thing the app could have asked a reason for is a checkpoint photo this run does not require:
+   *   (a) the run needs no checkpoint photo: an automatic route, or route-less at a site whose setup is active;
+   *   (b) every required checkpoint of the run's route has a non-flagged visit, there is a route with required
+   *       checkpoints when QR is required, and no scan of the run is flagged;
+   *   (c) the run's OWN photo requirement (photo-only, QR + photos, photosPerRun > 0) is met at completion by a run
+   *       photo that is already SERVER-VERIFIED and eligible (not pending, rejected, quarantined or purged). The 1.2.1
+   *       outbox sends photos independently of the completion (a photo waits only for its start or scan; the completion
+   *       does not wait for photos), so a run photo can legitimately arrive after the completion: the conservative
+   *       choice is applied — not there and verified yet ⇒ no excuse;
+   *   (d) at least one counted (non-flagged) scan of a checkpoint whose own setting asks for a photo has no checkpoint
+   *       photo at all — the prompt was really declined;
+   *   (e) belt and braces only: the reason does not name an unreached checkpoint ("Checkpoint not reached — …").
+   * Otherwise the run is incomplete exactly as in 1.2.1. The Guard's words are always kept on the run (exceptionReason),
+   * shown to reviewers in the run detail ("Guard's reason") and the evidence record, and appended to the explanation.
    */
   private async reasonOnlyForUnrequiredCheckpointPhoto(run: any, reason: string): Promise<boolean> {
-    if (/checkpoint not reached/i.test(reason)) return false;
-    const [ctx] = await this.dataSource.query(
-      `SELECT (SELECT "kind" FROM "patrol_routes" WHERE "id" = $2) AS "routeKind",
-              EXISTS (SELECT 1 FROM "patrol_policies" WHERE "companyId" = $1 AND "siteId" = $3 AND "setupConfirmedAt" IS NOT NULL
-                       AND "setupMode" IN ('every_shift', 'per_shift')) AS "setupActive",
-              EXISTS (SELECT 1 FROM "patrol_route_checkpoints" rc WHERE rc."routeId" = $2 AND rc."required"
-                       AND NOT EXISTS (SELECT 1 FROM "patrol_checkpoint_visits" v WHERE v."runId" = $4 AND v."checkpointId" = rc."checkpointId"
-                                        AND v."result" <> 'flagged')) AS "missingRequired",
-              EXISTS (SELECT 1 FROM "patrol_checkpoint_visits" v JOIN "patrol_checkpoints" c ON c."id" = v."checkpointId"
-                       WHERE v."runId" = $4 AND c."photoRequired") AS "promptedCheckpoint"`,
-      [Number(run.companyId), run.routeId == null ? null : Number(run.routeId), Number(run.siteId), Number(run.id)],
+    if (/checkpoint not reached/i.test(reason)) return false; // (e)
+    const companyId = Number(run.companyId);
+    const ctx = await loadRunEvaluationContext(this.dataSource, companyId, [run]);
+    // (a) the evaluator's own "no checkpoint photo" condition (runRequirements).
+    const auto = run.routeId != null ? ctx.routeKinds.get(Number(run.routeId)) === 'auto' : ctx.setupSites?.has(Number(run.siteId)) === true;
+    if (!auto) return false;
+    const policy = await this.config.effectivePolicy(companyId, Number(run.siteId));
+    const r = runRequirements(run, policy, ctx);
+    // (b) checkpoints: every required one visited by a counted (non-flagged) scan; a rule exists; nothing flagged.
+    if (r.missingCheckpointIds.length || r.qrRuleMissing || r.anyFlaggedScan) return false;
+    // (c) the run photo (and any other photo the evaluator requires): taken AND already verified + eligible.
+    if (r.missingRunPhotos || r.missingCheckpointPhotos || r.photosNotVerified) return false;
+    // (d) a declined prompt: a counted scan of a photo-flagged checkpoint without any checkpoint photo for its visits.
+    const [declined] = await this.dataSource.query(
+      `SELECT EXISTS (
+         SELECT 1 FROM "patrol_checkpoint_visits" v JOIN "patrol_checkpoints" c ON c."id" = v."checkpointId"
+          WHERE v."runId" = $1 AND v."result" <> 'flagged' AND (c."photoRequired" OR $2::int > 0)
+            AND NOT EXISTS (SELECT 1 FROM "patrol_checkpoint_visits" v2 JOIN "patrol_evidence" e ON e."visitId" = v2."id"
+                             WHERE v2."runId" = $1 AND v2."checkpointId" = v."checkpointId" AND e."kind" = 'checkpoint_photo')
+       ) AS "declined"`,
+      [Number(run.id), Number(policy.photosPerCheckpoint ?? 0)],
     );
-    const noCheckpointPhoto = run.routeId != null ? ctx?.routeKind === 'auto' : Boolean(ctx?.setupActive);
-    return noCheckpointPhoto && !ctx?.missingRequired && Boolean(ctx?.promptedCheckpoint);
+    return Boolean(declined?.declined);
   }
 
   /** Everything the app needs to patrol this shift's site offline: policy, schedules, routes, checkpoint publicIds. */

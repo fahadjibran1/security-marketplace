@@ -260,18 +260,44 @@ requirements cannot be expressed to it — but the plan is built PER SHIFT, so t
   active setup. Every window on an automatic route (and an unscheduled patrol at an active setup site) needs none, so at
   an automatic-route site the 1.2.1 app never prompts — a spare custom route over the same checkpoint no longer matters.
   A custom route chosen by the setup keeps the photo (the plan says true; the server requires it).
-* Remaining mixed case (one shift with both a custom-route clock schedule and automatic-route windows): the 1.2.1 app may
-  prompt on an automatic-route patrol. The server's guarantee: a completion reason on a run that needs no checkpoint photo
-  (automatic route, or route-less at an active setup site), whose route's required checkpoints were all scanned, at a
-  checkpoint whose own setting asks for a photo, and that names no unreached checkpoint ("Checkpoint not reached — …") is
-  the declined prompt: the run is COMPLETED (not incomplete), no `patrol_incomplete` is raised, and the Guard's words
-  are kept on the run. A run that does need the photo is never excused: a missing required custom-route photo with a
-  reason is `incomplete` + `patrol_incomplete` exactly as before; without a reason, "required photo(s) not taken".
-* Certified by `patrol-evidence-b1.spec.ts` PEB-06 (overlap site: no prompt, verified, no exception; a declined-prompt
+* Remaining mixed case (one shift with both a custom-route clock schedule and automatic-route windows): the 1.2.1 app
+  may prompt on an automatic-route patrol, and its completion summary then demands ONE reason for everything it counts
+  as missing — an unreached route checkpoint, the prompted checkpoint photo AND the run photo. The text cannot be
+  trusted to say which, so the server decides STRUCTURALLY. A completion reason is excused (the run is `completed`,
+  not `incomplete`, and no `patrol_incomplete` is raised) ONLY when, at completion, from the run's own records and with
+  the evaluator's own rules (`runRequirements` / `evaluateRequirements`):
+  * **(a)** the run needs no checkpoint photo — an automatic route, or route-less at a site whose setup is active;
+  * **(b)** every required checkpoint of the run's route has a non-flagged visit, the run has a QR rule (a route with
+    required checkpoints) when QR is required, and no scan of the run is flagged — this alone rules out a missing
+    checkpoint, whatever the text says;
+  * **(c)** the run's OWN photo requirement (photo-only, QR + photos, `photosPerRun` > 0) is met by a run photo that is
+    already SERVER-VERIFIED and eligible (not pending, rejected, quarantined or purged). Outbox order (1.2.1
+    `patrolOutbox.ts`): start → scans → completion are strictly ordered, but a photo waits only for its start or scan and
+    never holds up the completion, so a run photo can legitimately arrive after the completion. The conservative choice
+    applies: a run photo that is not yet there and verified at completion ⇒ no excuse;
+  * **(d)** at least one counted scan of a checkpoint whose own setting asks for a photo (or a per-checkpoint policy)
+    has no checkpoint photo at all — the prompt was really declined;
+  * **(e)** belt and braces only: the reason does not name an unreached checkpoint ("Checkpoint not reached — …"). The
+    text never proves completeness.
+  Otherwise the run is `incomplete` with `patrol_incomplete`, exactly as in 1.2.1. When excused, the Guard's words are
+  kept on the run (`exceptionReason`), shown in the run detail ("Guard's reason") and the evidence record ("Guard's
+  note"), and appended to the verification explanation ("Verified: … Guard's note: "…".").
+* Certified by `patrol-evidence-b1.spec.ts` PEB-07 (the structural rule, cases 1–9: excused only with every checkpoint
+  and the verified run photo present; a missing / rejected / quarantined run photo, an unreached or flagged checkpoint —
+  with or without the 1.2.1 phrase — photo-only, a custom route's photo and an unprompted reason all stay incomplete +
+  `patrol_incomplete`), GPAT-34 (the unchanged 1.2.1 reason box also covers a missing run photo), PEB-06 (overlap site: no prompt, verified, no exception; a declined-prompt
   reason there: completed, verified, no exception; an unreached checkpoint still incomplete; custom route: prompt,
   supplied → verified, declined → incomplete + `patrol_incomplete`), `patrol-site-setup.spec.ts` PSS-08 (the plans,
   written as the mobile fixture) and the mobile `guard-patrols.spec.cjs` GPAT-33 (the unchanged 1.2.1 prompt rule on those
   server-built plans).
+
+### Future improvement: structured completion reason codes
+
+The next Guard app (Package B4) should send machine-readable reasons per item with the completion, for example
+`CHECKPOINT_NOT_REACHED { checkpointId }`, `CHECKPOINT_PHOTO_DECLINED { checkpointId }`, `RUN_PHOTO_MISSING`,
+`OTHER { text }`. The server then judges on the codes when they are present (excusing only a declined photo the run does
+not require) and falls back to the structural rule above for 1.2.1 clients. No free-text parsing either way; the
+Guard's own words stay attached for reviewers.
 
 ## 7. S4 1.3.0 Package B, stage B2 — Company Dashboard patrol management usability
 

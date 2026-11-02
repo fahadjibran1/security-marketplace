@@ -240,6 +240,7 @@ export function PatrolEvidenceRecord({ ctx, card, timeZone, siteName }: { ctx: P
       <KeyValue label="Started (device)" value={formatPatrolDateTime(run.startedAtDevice, timeZone)} />
       <KeyValue label="Received by S4" value={formatPatrolDateTime(run.startedAtServer, timeZone)} />
       {run.completedAtServer ? <KeyValue label="Completed" value={formatPatrolDateTime(run.completedAtServer, timeZone)} /> : null}
+      {run.exceptionReason ? <KeyValue label="Guard's note" value={run.exceptionReason} /> : null}
 
       <Text style={ui.fieldLabel}>QR scans ({card.qrScans.length})</Text>
       {card.qrScans.length ? card.qrScans.map((scan) => (

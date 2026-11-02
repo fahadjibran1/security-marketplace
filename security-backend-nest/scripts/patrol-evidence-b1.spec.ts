@@ -20,6 +20,10 @@
  *           the checkpoint also on a spare custom route) the plan asks the 1.2.1 app for no photo and the run verifies;
  *           a declined-prompt reason there neither makes the run incomplete nor raises an exception (an unreached checkpoint
  *           still does); a custom route keeps its photo — supplied: verified, declined: incomplete + patrol_incomplete
+ *   PEB-07  the excuse is STRUCTURAL: a reason completes the run only when the run needs no checkpoint photo, every
+ *           required checkpoint has a non-flagged visit, the run's own photo is already verified, and a photo-flagged
+ *           checkpoint's photo was really declined — cases 1–9 (run photo missing / rejected / quarantined, unreached or
+ *           flagged checkpoint, free text, photo-only, custom route, nothing prompted) stay incomplete + patrol_incomplete
  *
  * Needs PATROL_EVIDENCE_B1_DATABASE_URL pointing at a DISPOSABLE local database — it drops the schema.
  */
@@ -490,6 +494,134 @@ async function main() {
         assert.equal(missing.done.status, 'incomplete', 'a required photo declined with a reason: incomplete, as today');
         assert.notEqual(missing.judged.verificationStatus, 'verified', 'and not verified (the photo is required)');
         assert.deepEqual(missing.exceptions, ['patrol_incomplete'], 'one patrol_incomplete, as today');
+      } finally {
+        delete process.env.PATROL_QR_SIGNING_KEY;
+      }
+    });
+
+    await test('PEB-07-A-REASON-IS-EXCUSED-ONLY-WHEN-THE-SERVER-PROVES-THE-SOLE-GAP-IS-AN-UNREQUIRED-CHECKPOINT-PHOTO', async () => {
+      process.env.PATROL_QR_SIGNING_KEY = 'patrol-evidence-b1-spec-only-signing-key-0007';
+      try {
+        const E = await mkCompany('echo', 'Echo Patrols Ltd');
+        const sent = () => new Date().toISOString();
+        let gs = 0;
+        type Cp = { cp: any; label: string };
+        const checkpointAt = async (site: number, name: string, photoRequired: boolean): Promise<Cp> => {
+          const cp = expect(await api('POST', '/patrols/checkpoints', E.token, { siteId: site, label: name, photoRequired }), 201);
+          const label = expect(await api('GET', `/patrols/checkpoints/${cp.id}/label`, E.token), 200).payload;
+          expect(await api('POST', `/patrols/checkpoints/${cp.id}/confirm`, E.token, { scanPayload: label }), 200);
+          return { cp, label };
+        };
+        const activate = async (site: number, body: Record<string, unknown>) => {
+          expect(await api('PUT', `/patrols/sites/${site}/setup`, E.token, { setupMode: 'every_shift', frequencyMinutes: 60, ...body }), 200);
+          expect(await api('POST', `/patrols/sites/${site}/setup/confirm`, E.token), 200);
+        };
+        type Opts = {
+          scans: Cp[]; flag?: Cp[]; runPhoto: 'verified' | 'missing' | 'rejected' | 'quarantined'; checkpointPhoto?: Cp; reason?: string;
+        };
+        /** One patrol through the 1.2.1 app's calls; returns what the server recorded after the sweep. */
+        const patrol = async (site: number, o: Opts) => {
+          gs += 1;
+          const g = await mkGuard(`e${gs}`, `Echo Guard ${gs}`);
+          const shiftId = await mkShift(E.id, site, g.id);
+          const plan = expect(await api('GET', `/patrols/mine/plan?shiftId=${shiftId}`, g.token), 200);
+          const t = Date.now();
+          const window = plan.windows.find((w: any) => !w.covered && new Date(w.start).getTime() <= t && t < new Date(w.end).getTime());
+          assert.ok(window, 'an open window');
+          const run = expect(await api('POST', '/patrols/runs', g.token, {
+            clientRunId: cid('run'), shiftId, startedAtDevice: new Date(t).toISOString(), scheduleId: window.scheduleId, routeId: window.routeId, sentAtDevice: sent(),
+          }), 201, undefined, 'start');
+          const visits = new Map<number, number>();
+          let k = 0;
+          for (const s of o.scans) {
+            k += 1;
+            const v = expect(await api('POST', `/patrols/runs/${run.id}/visits`, g.token, {
+              clientVisitId: cid('visit'), scanPayload: s.label, scannedAtDevice: new Date(t + k * 1000).toISOString(), sentAtDevice: sent(),
+            }), 201, undefined, 'scan');
+            visits.set(Number(s.cp.id), Number(v.id));
+          }
+          // A flagged scan (as the server would flag an old, foreign or repeated label).
+          for (const f of o.flag ?? []) await q(`UPDATE patrol_checkpoint_visits SET result = 'flagged' WHERE id = $1`, [visits.get(Number(f.cp.id))]);
+          const upload = async (kind: 'run_photo' | 'checkpoint_photo', seed: number, visitId?: number) => {
+            const image = await photo(seed);
+            const intent = expect(await api('POST', `/patrols/runs/${run.id}/evidence`, g.token, {
+              clientEvidenceId: cid('ev'), kind, ...(visitId ? { visitId } : {}), contentType: 'image/jpeg', sizeBytes: image.length,
+              sha256: sha256(image), capturedAtDevice: new Date(t + 10_000).toISOString(), sentAtDevice: sent(),
+            }), 201, undefined, `${kind} intent`);
+            assert.equal((await fetch(intent.upload.url, { method: 'PUT', headers: intent.upload.headers, body: new Uint8Array(image) })).status, 200);
+            expect(await api('POST', `/patrols/evidence/${intent.evidence.id}/complete`, g.token), 200);
+            return Number(intent.evidence.id);
+          };
+          if (o.runPhoto !== 'missing') {
+            const id = await upload('run_photo', 20 + gs);
+            if (o.runPhoto === 'rejected') await q(`UPDATE patrol_evidence SET "uploadStatus" = 'rejected', "rejectionReason" = 'spec' WHERE id = $1`, [id]);
+            if (o.runPhoto === 'quarantined') await q(`UPDATE patrol_evidence SET "retentionStatus" = 'quarantined', "quarantinedAt" = now(), "purgeAfter" = now() + interval '30 days', "quarantineKey" = 'quarantine/spec/' || id WHERE id = $1`, [id]);
+          }
+          if (o.checkpointPhoto) await upload('checkpoint_photo', 60 + gs, visits.get(Number(o.checkpointPhoto.cp.id)));
+          const done = expect(await api('POST', `/patrols/runs/${run.id}/complete`, g.token, {
+            completedAtDevice: new Date(t + 15_000).toISOString(), sentAtDevice: sent(), ...(o.reason ? { exceptionReason: o.reason } : {}),
+          }), 200, undefined, 'complete');
+          await app.get(PatrolSweepService).sweep(new Date(Date.now() + 60_000));
+          const judged = expect(await api('GET', `/patrols/mine/runs?shiftId=${shiftId}`, g.token), 200).find((r: any) => r.id === run.id);
+          const exceptions = (await q(`SELECT type FROM patrol_exceptions WHERE "companyId" = $1 AND "runId" = $2`, [E.id, run.id])).map((e: any) => e.type);
+          return { plan, status: done.status, judged, exceptions, incomplete: exceptions.filter((x: string) => x === 'patrol_incomplete').length };
+        };
+        const NOTE = 'Camera would not focus.';
+
+        // Automatic route, QR + photos: "Front gate" asks for its own photo (also on a spare custom route — the overlap).
+        const auto = await mkSite(E.id, 'Echo Gate', null);
+        const front = await checkpointAt(auto, 'Front gate', true);
+        const rear = await checkpointAt(auto, 'Rear gate', false);
+        await activate(auto, { evidenceMode: 'qr_photo' });
+        expect(await api('POST', '/patrols/routes', E.token, { siteId: auto, name: 'Spare', checkpoints: [{ checkpointId: front.cp.id }] }), 201);
+
+        // 1. everything required is there; only the (unrequired) checkpoint photo was declined → excused.
+        const c1 = await patrol(auto, { scans: [front, rear], runPhoto: 'verified', reason: NOTE });
+        assert.deepEqual([c1.status, c1.judged.status, c1.judged.verificationStatus, c1.exceptions.length], ['completed', 'completed', 'verified', 0], '1: excused');
+        assert.equal(c1.judged.exceptionReason, NOTE, '1: the Guard\'s words are kept');
+        assert.ok(c1.judged.verificationExplanation.text.includes(`Guard's note: "${NOTE}"`), '1: and shown with the explanation');
+        // 2. THE GAP: the run photo is missing → incomplete + patrol_incomplete (never excused).
+        const c2 = await patrol(auto, { scans: [front, rear], runPhoto: 'missing', reason: NOTE });
+        assert.deepEqual([c2.status, c2.incomplete], ['incomplete', 1], '2: a missing run photo is never excused');
+        assert.notEqual(c2.judged.verificationStatus, 'verified');
+        // 4. a required checkpoint not scanned, said as the 1.2.1 app says it.
+        const c4 = await patrol(auto, { scans: [rear], runPhoto: 'verified', reason: 'Checkpoint not reached — Front gate: blocked' });
+        assert.deepEqual([c4.status, c4.incomplete], ['incomplete', 1], '4');
+        // 5. a required checkpoint not scanned, free text WITHOUT the phrase: the records decide, not the text.
+        const c5 = await patrol(auto, { scans: [rear], runPhoto: 'verified', reason: 'Gate was locked tonight.' });
+        assert.deepEqual([c5.status, c5.incomplete], ['incomplete', 1], '5: text cannot excuse a missing checkpoint');
+        // 6. the required checkpoint's only visit is flagged.
+        const c6 = await patrol(auto, { scans: [front, rear], flag: [front], runPhoto: 'verified', reason: NOTE });
+        assert.equal(c6.status, 'incomplete', '6: a flagged scan satisfies nothing');
+        assert.equal(c6.incomplete, 1);
+        // 7. the run photo rejected / quarantined at completion.
+        const c7a = await patrol(auto, { scans: [front, rear], runPhoto: 'rejected', reason: NOTE });
+        assert.deepEqual([c7a.status, c7a.incomplete], ['incomplete', 1], '7: rejected run photo');
+        const c7b = await patrol(auto, { scans: [front, rear], runPhoto: 'quarantined', reason: NOTE });
+        assert.deepEqual([c7b.status, c7b.incomplete], ['incomplete', 1], '7: quarantined run photo');
+
+        // 3. photo-only automatic site, the run photo missing.
+        const photoSite = await mkSite(E.id, 'Echo Yard', null);
+        await activate(photoSite, { evidenceMode: 'photo' });
+        const c3 = await patrol(photoSite, { scans: [], runPhoto: 'missing', reason: NOTE });
+        assert.deepEqual([c3.status, c3.incomplete], ['incomplete', 1], '3');
+
+        // 8. custom route that needs the checkpoint photo: declined → incomplete + exception; supplied → verified.
+        const customSite = await mkSite(E.id, 'Echo Dock', null);
+        const dock = await checkpointAt(customSite, 'Dock gate', true);
+        const route = expect(await api('POST', '/patrols/routes', E.token, { siteId: customSite, name: 'Dock route', checkpoints: [{ checkpointId: dock.cp.id, required: true }] }), 201);
+        await activate(customSite, { evidenceMode: 'qr_photo', routeId: route.id });
+        const c8a = await patrol(customSite, { scans: [dock], runPhoto: 'verified', reason: NOTE });
+        assert.deepEqual([c8a.status, c8a.incomplete], ['incomplete', 1], '8: required checkpoint photo declined');
+        const c8b = await patrol(customSite, { scans: [dock], runPhoto: 'verified', checkpointPhoto: dock });
+        assert.deepEqual([c8b.status, c8b.judged.verificationStatus, c8b.exceptions.length], ['completed', 'verified', 0], '8: supplied');
+
+        // 9. nothing was prompted (no photo-flagged checkpoint scanned): a reason is incomplete exactly as in 1.2.1.
+        const plainSite = await mkSite(E.id, 'Echo Lane', null);
+        const lane = await checkpointAt(plainSite, 'Lane gate', false);
+        await activate(plainSite, { evidenceMode: 'qr_photo' });
+        const c9 = await patrol(plainSite, { scans: [lane], runPhoto: 'verified', reason: NOTE });
+        assert.deepEqual([c9.status, c9.incomplete], ['incomplete', 1], '9');
       } finally {
         delete process.env.PATROL_QR_SIGNING_KEY;
       }

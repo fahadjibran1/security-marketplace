@@ -50,6 +50,9 @@
  *            the checkpoint also on a spare custom route) no checkpoint-photo prompt and nothing to explain; on a custom
  *            route that asks for the photo the prompt appears, and declining it needs the reason (the server then records
  *            the patrol as incomplete, PEB-06); taking it completes cleanly
+ *   GPAT-34  (B2 preflight) the scenario the server must never excuse is real: on a QR + photos automatic-route plan where
+ *            a mixed shift prompts for a checkpoint photo, the UNCHANGED completionSummary asks for a reason when the RUN
+ *            photo is missing too (photosMissing counts it) — the server keeps such a patrol incomplete (PEB-07 case 2)
  */
 const assert = require('node:assert').strict;
 const fs = require('node:fs');
@@ -1261,6 +1264,28 @@ test('GPAT-33-THE-1.2.1-PROMPT-FOLLOWS-THE-RUNS-ROUTE-AUTO-NO-PROMPT-CUSTOM-PROM
     const taken = state.completionSummary(customPhotoPlan, w.routeId, { ...local, scans, photos: [runPhoto, { id: 'p2', body: { kind: 'checkpoint_photo' }, dependsOn: 's0' }] });
     assert.deepEqual([taken.photosMissing, taken.unmet, taken.needsReason], [0, false, false], 'taken: complete');
   }
+});
+
+test('GPAT-34-THE-1.2.1-REASON-BOX-ALSO-COVERS-A-MISSING-RUN-PHOTO', () => {
+  const { qrPhotoPlan } = JSON.parse(codeOf('scripts/fixtures/patrol-plan-b1-shift-windows.json'));
+  // A mixed shift: the plan asks for this checkpoint's photo (the prompt the server may excuse).
+  const p = JSON.parse(JSON.stringify(qrPhotoPlan));
+  p.checkpoints = p.checkpoints.map((c) => ({ ...c, photoRequired: true }));
+  const w = p.windows.find((x) => x.routeId != null);
+  const local = { clientRunId: 'r', shiftId: p.shift.id, start: { body: { routeId: w.routeId, scheduleId: w.scheduleId }, meta: { route: state.routeSnapshot(p, w.routeId) } }, scans: [], photos: [], exceptions: [], complete: null };
+  const scans = state.patrolCheckpoints(p, w.routeId, local).map((c, i) => ({ id: `s${i}`, meta: { publicId: c.publicId } }));
+  assert.ok(scans.length > 0);
+  const runPhoto = { id: 'p1', body: { kind: 'run_photo' }, dependsOn: null };
+  // Checkpoint photo declined, run photo present: the reason box (what the server may excuse, PEB-07 case 1).
+  const declinedOnly = state.completionSummary(p, w.routeId, { ...local, scans, photos: [runPhoto] });
+  assert.deepEqual([declinedOnly.photosRequired, declinedOnly.photosMissing, declinedOnly.needsReason], [1 + scans.length, scans.length, true]);
+  // Checkpoint photo declined AND the run photo missing: one reason box covers both (PEB-07 case 2: never excused).
+  const both = state.completionSummary(p, w.routeId, { ...local, scans });
+  assert.deepEqual([both.photosMissing, both.needsReason], [1 + scans.length, true], 'the run photo is part of what the reason covers');
+  // The 1.2.1 rule, verbatim: a reason is demanded for an unreached checkpoint OR any missing photo.
+  const src = stripComments(codeOf('src/components/guard/patrol/patrolState.ts'));
+  assert.ok(src.includes('needsReason: missingWithoutReason.length > 0 || photosMissing > 0,'));
+  assert.ok(src.includes('const photosMissing = Math.max(0, runPhotoRequired - runPhotos) + checkpointPhotosMissing;'));
 });
 
 test('GPAT-18-THE-WEB-APP-HAS-NO-PATROL-PANEL-AND-LOADS-NO-DEVICE-MODULE', () => {

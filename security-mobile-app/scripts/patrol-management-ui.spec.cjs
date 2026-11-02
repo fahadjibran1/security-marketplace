@@ -1957,6 +1957,18 @@ test('PM-45-NO-PROTOCOL-BEFORE-THE-S4-ADDRESS-ANYWHERE-USER-VISIBLE', () => {
   assert.deepEqual(hits, [], 'the evidence brand reads exactly www.sfour.co.uk');
 });
 
+test('PM-46-AN-EXCUSED-GUARD-NOTE-IS-SHOWN-ON-THE-PATROL-RECORD', async () => {
+  const noted = evidenceCard({ run: run({ status: 'completed', verificationStatus: 'verified', exceptionReason: 'Camera would not focus.' }) });
+  answers = evidenceAnswers({ getPatrolEvidencePatrols: (q) => ({ ...evidenceAnswers().getPatrolEvidencePatrols(q), patrols: [noted] }) });
+  const r = await mountPrimary({ permissions: perms('viewer') });
+  await pressByText(r.root, 'Evidence');
+  await pressByText(r.root, 'Site Alpha Site');
+  await pressByText(r.root, `Alpha Site ${LONDON_TODAY}`);
+  await pressByText(r.root, 'Open P-5 Ava Guard');
+  assert.ok(/Guard's note\s*Camera would not focus\./.test(textOf(r.root)), 'the Guard\'s words are visible to reviewers');
+  act(() => r.unmount());
+});
+
 (async () => {
   for (const [name, fn] of pending) {
     try {

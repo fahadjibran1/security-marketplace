@@ -150,7 +150,9 @@ export function explainVerification(input: {
     const photo = policy.methods.includes('photo');
     const qr = policy.methods.includes('qr');
     const what = qr && photo ? 'every required checkpoint was scanned and the patrol photo reached S4' : qr ? 'every required checkpoint was scanned' : 'the patrol photo reached S4 and passed its checks';
-    return { code: 'verified', text: `Verified: ${what}.`, deadline: null };
+    // B2: a completed run can carry the Guard's words (an excused reason): never dropped, shown with the explanation.
+    const note = run.status === 'completed' && run.exceptionReason ? ` Guard's note: "${run.exceptionReason}".` : '';
+    return { code: 'verified', text: `Verified: ${what}.${note}`, deadline: null };
   }
   if (!r) return { code: 'awaiting_check', text: 'Waiting for S4 to check this patrol.', deadline: syncDl.toISOString() };
   if (r.anyFlaggedScan) return { code: 'scan_flagged', text: 'A checkpoint scan was flagged for review (for example an old, foreign or repeated label).', deadline: null };
