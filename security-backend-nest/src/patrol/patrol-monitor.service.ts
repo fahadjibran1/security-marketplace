@@ -24,18 +24,38 @@ import { scheduleVersionBounds, supersededSince, withVersionBounds } from './pat
 import { serializePolicyFields } from './patrol-serializers';
 import { setupFor, shiftAnchoredSchedules, siteSetups } from './patrol-shift-context';
 import { setupActive } from './patrol-shift-windows';
-import { localDateOf, siteDayBounds } from './patrol-window.service';
+import { localDateOf, wallMinutesToInstant } from './patrol-window.service';
 
 /** The live view's longest range (a night shift plus context, on one screen). */
 export const PATROL_MONITOR_MAX_RANGE_HOURS = 36;
 const DAY_MS = 86_400_000;
 const HOUR_MS = 3_600_000;
+const DAY_MINUTES = 1440;
 /** The patrol safety-alert types (safety-alert.entity.ts PATROL_ALERT_TYPES; Live Operations shows these). */
 const PATROL_ALERT_TYPES = ['patrol_missed', 'patrol_abandoned', 'patrol_incomplete', 'checkpoint_missed', 'patrol_unverified'];
 const STATUS_ORDER: MonitorSiteStatus[] = ['attention', 'watch', 'on_track', 'not_started', 'no_patrols'];
 
 type SiteRow = { id: number; name: string; timeZone: string; clientId: number | null; clientName: string | null };
 type Range = { from: Date; to: Date };
+/** Request-scoped wall-clock conversion caches, one per time zone (dropped with the request; never global). */
+type ConversionCaches = Map<string, Map<string, number>> | null;
+
+/** The cache of one zone, or none when caching is off. */
+function cacheFor(caches: ConversionCaches, timeZone: string): Map<string, number> | undefined {
+  if (!caches) return undefined;
+  let cache = caches.get(timeZone);
+  if (!cache) {
+    cache = new Map();
+    caches.set(timeZone, cache);
+  }
+  return cache;
+}
+
+/** siteDayBounds through the zone's request cache: the same two wallMinutesToInstant conversions, each made once. */
+function dayBounds(localDate: string, timeZone: string, caches: ConversionCaches): Range {
+  const cache = cacheFor(caches, timeZone);
+  return { from: new Date(wallMinutesToInstant(localDate, 0, timeZone, cache)), to: new Date(wallMinutesToInstant(localDate, DAY_MINUTES, timeZone, cache)) };
+}
 
 /** Site row → company default row → PATROL_POLICY_DEFAULTS (PatrolConfigService.effectivePolicy, from rows read once). */
 export function resolvePolicy(rows: any[], siteId: number) {
@@ -70,13 +90,13 @@ export class PatrolMonitorService {
     }
     const sites = await this.sites(companyId, query.siteId ?? null, query.clientId ?? null);
     if (query.siteId != null && !sites.length) throw patrolError(HttpStatus.NOT_FOUND, PatrolErrorCode.SITE_NOT_FOUND, 'Site not found.');
+    const caches = this.conversionCaches();
     const days = new Map<number, Range & { date: string }>();
     for (const s of sites) {
       const date = query.date ?? localDateOf(now, s.timeZone);
-      const { start, end } = siteDayBounds(date, s.timeZone);
-      days.set(s.id, { date, from: start, to: end });
+      days.set(s.id, { date, ...dayBounds(date, s.timeZone, caches) });
     }
-    const loaded = await this.load(companyId, sites, (s) => days.get(s.id)!, now);
+    const loaded = await this.load(companyId, sites, (s) => days.get(s.id)!, now, caches);
     const rows = sites
       .map((s) => ({ site: s, day: days.get(s.id)!, model: loaded.models.get(s.id)!, configured: loaded.configured.has(s.id) }))
       .filter((r) => r.configured || query.siteId != null)
@@ -105,7 +125,7 @@ export class PatrolMonitorService {
       date: query.date ?? (dates.length === 1 ? dates[0] : null),
       sweep: { judgedThrough: loaded.judgedThrough?.toISOString() ?? null },
       totals: { sites: rows.length, byStatus, ...totals },
-      liveOps: await this.liveOps(companyId, now),
+      liveOps: await this.liveOps(companyId, now, caches),
       sites: rows,
     };
   }
@@ -115,8 +135,9 @@ export class PatrolMonitorService {
     const companyId = actor.companyId;
     const [site] = await this.sites(companyId, siteId, null);
     if (!site) throw patrolError(HttpStatus.NOT_FOUND, PatrolErrorCode.SITE_NOT_FOUND, 'Site not found.');
-    const range = this.siteRange(site, query, now);
-    const loaded = await this.load(companyId, [site], () => range, now);
+    const caches = this.conversionCaches();
+    const range = this.siteRange(site, query, now, caches);
+    const loaded = await this.load(companyId, [site], () => range, now, caches);
     const model = loaded.models.get(site.id)!;
     const policy = loaded.policies.get(site.id)!;
 
@@ -158,7 +179,7 @@ export class PatrolMonitorService {
   }
 
   /** The site day (date, today by default) or a live range [from, to) of at most 36 h, starting on a site-local hour. */
-  private siteRange(site: SiteRow, query: PatrolMonitorSiteQueryDto, now: Date): Range & { date: string | null } {
+  private siteRange(site: SiteRow, query: PatrolMonitorSiteQueryDto, now: Date, caches: ConversionCaches): Range & { date: string | null } {
     const invalid = (message: string) => patrolError(HttpStatus.BAD_REQUEST, PatrolErrorCode.VALIDATION, message);
     if (query.from || query.to) {
       if (query.date) throw invalid('Give either date or from and to, not both.');
@@ -172,8 +193,16 @@ export class PatrolMonitorService {
       return { from, to, date: null };
     }
     const date = query.date ?? localDateOf(now, site.timeZone);
-    const { start, end } = siteDayBounds(date, site.timeZone);
-    return { from: start, to: end, date };
+    return { ...dayBounds(date, site.timeZone, caches), date };
+  }
+
+  /**
+   * One request's conversion caches (one per time zone), so a clock schedule's windows are computed once per site and
+   * the conversions are shared by every site in the zone. Null computes every lane on its own — the original path, which
+   * the equivalence tests use as the reference.
+   */
+  protected conversionCaches(): ConversionCaches {
+    return new Map();
   }
 
   private async sites(companyId: number, siteId: number | null, clientId: number | null): Promise<SiteRow[]> {
@@ -191,7 +220,7 @@ export class PatrolMonitorService {
   }
 
   /** Everything the model needs for these sites, in one batch of company-scoped queries (never one per site or hour). */
-  private async load(companyId: number, sites: SiteRow[], rangeOf: (s: SiteRow) => Range, now: Date) {
+  private async load(companyId: number, sites: SiteRow[], rangeOf: (s: SiteRow) => Range, now: Date, caches: ConversionCaches) {
     const siteIds = sites.map((s) => s.id);
     const ranges = new Map(sites.map((s) => [s.id, rangeOf(s)]));
     const minFrom = new Date(Math.min(...[...ranges.values()].map((r) => r.from.getTime()), now.getTime()));
@@ -304,6 +333,7 @@ export class PatrolMonitorService {
         runs: runs.filter((r) => r.siteId === site.id),
         exceptions: exceptions.filter((e) => e.siteId === site.id),
         judgedThrough,
+        conversionCache: cacheFor(caches, site.timeZone),
       }));
     }
     return { models, configured, policies, setups: setupBySite, shifts, runs, exceptions, judgedThrough };
@@ -318,13 +348,13 @@ export class PatrolMonitorService {
    *                      today at their site (site-local day), in any status — the history of the day, including windows
    *                      found by outage reconciliation; missedTodayOpen = those not resolved.
    */
-  private async liveOps(companyId: number, now: Date) {
+  private async liveOps(companyId: number, now: Date, caches: ConversionCaches) {
     const [alerts] = await this.dataSource.query(
       `SELECT count(*)::int AS n FROM "safety_alerts" WHERE "companyId" = $1 AND "type"::text = ANY($2::text[]) AND "status"::text <> 'closed'`,
       [companyId, PATROL_ALERT_TYPES],
     );
     const sites = await this.sites(companyId, null, null);
-    const days = sites.map((s) => siteDayBounds(localDateOf(now, s.timeZone), s.timeZone));
+    const days = sites.map((s) => dayBounds(localDateOf(now, s.timeZone), s.timeZone, caches));
     const [missed] = sites.length
       ? await this.dataSource.query(
         `SELECT count(DISTINCT (e."windowKey", e."scopeKey"))::int AS "total",
@@ -332,7 +362,7 @@ export class PatrolMonitorService {
            FROM "patrol_exceptions" e
            JOIN unnest($2::int[], $3::timestamptz[], $4::timestamptz[]) AS b("siteId", "fromAt", "toAt") ON b."siteId" = e."siteId"
           WHERE e."companyId" = $1 AND e."type" = 'patrol_missed' AND e."windowStart" >= b."fromAt" AND e."windowStart" < b."toAt"`,
-        [companyId, sites.map((s) => s.id), days.map((d) => d.start.toISOString()), days.map((d) => d.end.toISOString())],
+        [companyId, sites.map((s) => s.id), days.map((d) => d.from.toISOString()), days.map((d) => d.to.toISOString())],
       )
       : [{ total: 0, open: 0 }];
     return { openPatrolAlerts: Number(alerts.n), missedToday: Number(missed.total), missedTodayOpen: Number(missed.open) };

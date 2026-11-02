@@ -27,6 +27,14 @@
  *   PMON-12  read-only: no row of any table changes and no audit entry is written by any monitor read; no storage key,
  *            URL or hash in a response
  *   PMON-13  bounded queries: the same number of queries for one site or every site
+ *   PMON-14  window reuse (performance correction): each clock schedule's windows computed once per site with a
+ *            request cache per zone give a model identical to the original path — site-wide, per-guard and shift-based
+ *            sites; overlapping, overnight, missed and cancelled shifts; a schedule version change; UK spring and autumn days,
+ *            New York's autumn day, Kolkata (+05:30), Adelaide (+09:30); a cache shared between zones is caught; no
+ *            Guard's patrol completes another Guard's window
+ *   PMON-15  window calculation before and after the correction (timed; at least 5x faster)
+ *   PMON-16  complete API responses (summary and site, every site, three zones, DST days, the live range, two clocks)
+ *            identical to the original path
  *
  * Needs PATROL_MONITOR_DATABASE_URL pointing at a DISPOSABLE local database — it drops the schema.
  */
@@ -146,6 +154,129 @@ async function main() {
     assert.equal(hours('2026-06-01', 'Asia/Kolkata').length, 24);
     assert.equal(M.floorToLocalHour(Z('2026-06-01T10:20:00Z'), 'Asia/Kolkata').toISOString(), '2026-06-01T09:30:00.000Z', 'a half-hour zone floors to its own hour');
     assert.equal(M.floorToLocalHour(Z('2026-06-01T10:20:00Z'), 'Europe/London').toISOString(), '2026-06-01T10:00:00.000Z');
+  });
+
+  // ── Window reuse (performance correction, 2 Nov 2026): the shared-cache path must equal the original path exactly ──
+  const W = require('../src/patrol/patrol-window.service');
+  const allDays = [1, 2, 3, 4, 5, 6, 7];
+  const clockSchedule = (id: number, activeFrom: string, activeTo: string, frequencyMinutes: number, windowMinutes: number, o: any = {}) =>
+    ({ id, siteId: 1, daysOfWeek: allDays, activeFrom, activeTo, frequencyMinutes, windowMinutes, startsOn: null, endsOn: null, anchor: 'clock', ...o });
+  /** A day at one site: whole-day, overnight and noon-versioned clock schedules; day, night, overlapping, overnight-future, missed and cancelled shifts. */
+  const fixtureDay = (tz: string, date: string, scope: 'site' | 'per_guard', shiftBased = false) => {
+    const local = (d: string, minutes: number) => new Date(W.wallMinutesToInstant(d, minutes, tz));
+    const prev = W.addLocalDays(date, -1);
+    const { start: from, end: to } = W.siteDayBounds(date, tz);
+    const noon = local(date, 12 * 60);
+    const clockSchedules = [
+      clockSchedule(101, '00:00', '00:00', 60, 60),
+      clockSchedule(102, '22:00', '04:00', 60, 30),
+      clockSchedule(103, '07:00', '19:00', 60, 30, { effectiveUntil: noon }),
+      clockSchedule(104, '07:00', '19:00', 60, 20, { effectiveFrom: noon }),
+    ];
+    const shift = (id: number, guardId: number, status: string, start: Date, end: Date, bookOn: Date | null = null, bookOff: Date | null = null) =>
+      ({ id, siteId: 1, guardId, status, start, end, patrolRequirement: shiftBased && id !== 3 ? 'required' : null, monitoredFrom: bookOn, bookOnAt: bookOn, bookOffAt: bookOff });
+    const shifts = [
+      shift(1, 11, 'in_progress', local(date, 7 * 60), local(date, 19 * 60), local(date, 7 * 60 + 5)),
+      shift(2, 12, 'completed', local(prev, 19 * 60), local(date, 7 * 60), local(prev, 19 * 60), local(date, 7 * 60)),
+      shift(3, 13, 'in_progress', local(date, 12 * 60), local(date, 20 * 60), local(date, 12 * 60)),
+      shift(4, 14, 'ready', local(date, 18 * 60), local(date, 26 * 60)),
+      shift(5, 15, 'missed', local(date, 60), local(date, 5 * 60)),
+      shift(6, 16, 'cancelled', local(date, 8 * 60), local(date, 16 * 60)),
+    ];
+    const at = (minutes: number) => W.windowsBetween(clockSchedules[0], tz, from, to).find((w: any) => w.start.getTime() === local(date, minutes).getTime());
+    const w8 = at(8 * 60);
+    const w10 = at(10 * 60);
+    const w13 = at(13 * 60);
+    const w14 = at(14 * 60);
+    let runId = 500;
+    const mkRun = (o: any) => ({
+      id: ++runId, siteId: 1, routeId: 7, scheduleId: 101, windowKey: null, scopeKey: 'site', windowStart: null, windowEnd: null, status: 'completed',
+      verificationStatus: 'verified', lateStart: false, startedAtDevice: local(date, 13 * 60 + 5), startedAtServer: local(date, 13 * 60 + 5),
+      completedAtServer: local(date, 13 * 60 + 25), guardId: 11, shiftId: 1, syncFlags: [], ...o,
+    });
+    const own = scope === 'site' ? 'site' : 'sh1';
+    const runs = [
+      mkRun({ windowKey: w8.windowKey, windowStart: w8.start, windowEnd: w8.end, scopeKey: own, lateStart: true, startedAtDevice: local(date, 9 * 60 + 5) }),
+      mkRun({ windowKey: w13.windowKey, windowStart: w13.start, windowEnd: w13.end, scopeKey: own }),
+      mkRun({ scheduleId: null, windowKey: w13.windowKey, scopeKey: 'sh3', guardId: 13, shiftId: 3, syncFlags: ['window_already_covered'] }),
+      mkRun({ scheduleId: null, windowKey: null, verificationStatus: 'pending', guardId: 13, shiftId: 3 }),
+      mkRun({ status: 'in_progress', verificationStatus: 'pending', windowKey: w14.windowKey, windowStart: w14.start, windowEnd: w14.end, scopeKey: scope === 'site' ? 'site' : 'sh3',
+        guardId: 13, shiftId: 3, startedAtDevice: local(date, 14 * 60 + 2), completedAtServer: null }),
+    ];
+    const exceptions = [
+      { id: 901, type: 'patrol_missed', status: 'open', windowKey: w10.windowKey, scopeKey: own, runId: null, safetyAlertId: 9901, alertStatus: 'open' },
+      { id: 902, type: 'patrol_missed', status: 'resolved', windowKey: w10.windowKey, scopeKey: scope === 'site' ? 'sh1' : 'site', runId: null, safetyAlertId: 9902, alertStatus: 'closed' },
+      { id: 903, type: 'checkpoint_missed', status: 'acknowledged', windowKey: w13.windowKey, scopeKey: own, runId: runs[1].id, safetyAlertId: 9903, alertStatus: 'acknowledged' },
+      { id: 904, type: 'patrol_abandoned', status: 'open', windowKey: null, scopeKey: null, runId: runs[3].id, safetyAlertId: null, alertStatus: null },
+    ];
+    const setup = shiftBased
+      ? { setupMode: 'per_shift', windowAnchor: 'scheduled_start', setupConfirmedAt: Z('2026-01-01T00:00:00Z'), setupConfirmedByUserId: 1 }
+      : { setupMode: null, windowAnchor: 'scheduled_start', setupConfirmedAt: null, setupConfirmedByUserId: null };
+    const shiftSchedules = shiftBased ? [{ ...clockSchedule(201, '00:00', '00:00', 120, 120), anchor: 'shift' }] : [];
+    return {
+      input: {
+        now: local(date, 14 * 60 + 10), from, to, timeZone: tz,
+        policy: { startGraceMinutes: 15, maxPatrolDurationMinutes: 45, completionGraceMinutes: 30, syncGraceMinutes: 30, requirementScope: scope, methods: ['qr'], photosPerRun: 0, photosPerCheckpoint: 0 },
+        setup, clockSchedules, shiftSchedules, shifts, runs, exceptions, judgedThrough: local(date, 13 * 60),
+      } as any,
+      w13, runs,
+    };
+  };
+  const ZONE_DAYS: Array<[string, string]> = [
+    ['Europe/London', '2026-03-10'], ['Europe/London', '2026-03-29'], ['Europe/London', '2026-10-25'],
+    ['America/New_York', '2026-11-01'], ['Asia/Kolkata', '2026-06-01'], ['Australia/Adelaide', '2026-06-01'],
+  ];
+  // (Adelaide's own transition days are left out: the shared engine's siteLocalToInstant cannot resolve some times near
+  // them — a pre-existing engine limit for zones far from UTC, reported separately and untouched by this correction.)
+
+  await test('PMON-14-WINDOW-REUSE-EQUALS-THE-ORIGINAL-MODEL', () => {
+    // One request: a cache per zone, shared by every site and day in it (as the service shares it).
+    const caches = new Map<string, Map<string, number>>();
+    const cacheOf = (tz: string) => caches.get(tz) ?? caches.set(tz, new Map()).get(tz)!;
+    let compared = 0;
+    for (const [tz, date] of ZONE_DAYS) {
+      for (const [scope, shiftBased] of [['site', false], ['per_guard', false], ['per_guard', true]] as const) {
+        const { input } = fixtureDay(tz, date, scope, shiftBased);
+        const original = JSON.stringify(M.buildSiteModel(input));
+        const reused = JSON.stringify(M.buildSiteModel({ ...input, conversionCache: cacheOf(tz) }));
+        assert.equal(reused, original, `${tz} ${date} ${scope}${shiftBased ? ' + shift-based' : ''}: identical model (window keys, times, deadlines, states, cells, counts, status)`);
+        assert.equal(JSON.stringify(M.buildSiteModel({ ...input, conversionCache: cacheOf(tz) })), original, `${tz} ${date} ${scope}: identical again from a warm cache`);
+        compared += 1;
+      }
+    }
+    assert.equal(compared, ZONE_DAYS.length * 3);
+    assert.ok(caches.get('Europe/London')!.size > 0 && caches.size === 4, 'one cache per zone');
+
+    // The comparison would catch a cache shared between zones (keys are date + minute only).
+    const ny = fixtureDay('America/New_York', '2026-03-10', 'site').input;
+    assert.notEqual(JSON.stringify(M.buildSiteModel({ ...ny, conversionCache: cacheOf('Europe/London') })), JSON.stringify(M.buildSiteModel(ny)),
+      "a London cache gives New York London's instants: zones must never share a cache");
+
+    // No cross-guard leakage: Ann (shift 1) covered 13:00; Cal (shift 3) overlaps 13:00 but did not do it.
+    const { input, w13, runs } = fixtureDay('Europe/London', '2026-03-10', 'per_guard');
+    const model = M.buildSiteModel({ ...input, conversionCache: new Map() });
+    const laneOf = (shiftId: number) => model.lanes.find((l: any) => l.shiftId === shiftId)!;
+    const annAt13 = laneOf(1).windows.find((w: any) => w.windowKey === w13.windowKey)!;
+    const calAt13 = laneOf(3).windows.find((w: any) => w.windowKey === w13.windowKey)!;
+    assert.deepEqual([annAt13.scopeKey, annAt13.runId, annAt13.runGuardId, annAt13.state], ['sh1', runs[1].id, 11, 'verified']);
+    assert.deepEqual([calAt13.scopeKey, calAt13.runId, calAt13.runGuardId], ['sh3', null, null], "Ann's patrol never completes Cal's window");
+    assert.notEqual(calAt13.state, 'verified');
+    assert.ok(!calAt13.exceptionIds.includes(903), "Ann's checkpoint exception stays on Ann's window");
+    assert.notEqual(annAt13, calAt13, 'each lane has its own window objects');
+    assert.ok(laneOf(4).windows.every((w: any) => w.end > laneOf(4).shiftStart!), 'a lane shows only the windows its shift overlaps');
+    assert.ok(!model.lanes.some((l: any) => l.shiftId === 6), 'a cancelled shift has no lane');
+    assert.deepEqual(model.otherRuns.map((o: any) => o.reason).sort(), ['unscheduled', 'window_already_covered']);
+  });
+
+  await test('PMON-15-WINDOW-CALCULATION-BEFORE-AND-AFTER', () => {
+    // Ten per-guard sites in one zone and one request: the original path vs one calculation per schedule and a shared cache.
+    const sites = Array.from({ length: 10 }, () => fixtureDay('Europe/London', '2026-03-10', 'per_guard').input);
+    const time = (f: () => void) => { const t = process.hrtime.bigint(); f(); return Number(process.hrtime.bigint() - t) / 1e6; };
+    const before = time(() => sites.forEach((s) => M.buildSiteModel(s)));
+    const cache = new Map<string, number>();
+    const after = time(() => sites.forEach((s) => M.buildSiteModel({ ...s, conversionCache: cache })));
+    console.log(`      window calculation, 10 per-guard sites: before ${before.toFixed(0)} ms, after ${after.toFixed(0)} ms (${(before / Math.max(after, 0.001)).toFixed(0)}x)`);
+    assert.ok(after * 5 < before, `at least 5x faster (before ${before.toFixed(0)} ms, after ${after.toFixed(0)} ms)`);
   });
 
   // ═══════════════════ The application ═══════════════════
@@ -577,6 +708,47 @@ async function main() {
       } finally {
         (ds as any).query = original;
       }
+    });
+
+    await test('PMON-16-COMPLETE-API-RESPONSES-EQUAL-THE-ORIGINAL-PATH', async () => {
+      // Two more zones: a site-wide New York site across its autumn change, a per-guard Kolkata (+05:30) site with overlapping shifts.
+      const liberty = await mkSite(A.id, 'Liberty', 'America/New_York');
+      await mkSchedule(A.id, liberty, null, '00:00', '00:00', 60);
+      await mkShift(A.id, liberty, ava.id, '2026-10-31T20:00:00Z', '2026-11-02T12:00:00Z', 'completed', { bookOn: '2026-10-31T20:00:00Z', bookOff: '2026-11-02T12:00:00Z' });
+      const lotus = await mkSite(A.id, 'Lotus', 'Asia/Kolkata');
+      await q(`INSERT INTO patrol_policies ("companyId","siteId","requirementScope") VALUES ($1,$2,'per_guard')`, [A.id, lotus]);
+      await mkSchedule(A.id, lotus, null, '06:00', '22:00', 60);
+      await mkShift(A.id, lotus, dee.id, '2026-03-10T02:30:00Z', '2026-03-10T12:30:00Z', 'in_progress', { bookOn: '2026-03-10T02:30:00Z' });
+      await mkShift(A.id, lotus, eve.id, '2026-03-10T06:30:00Z', '2026-03-10T16:30:00Z', 'in_progress', { bookOn: '2026-03-10T06:40:00Z' });
+
+      // The original path: no request cache, every lane computes its own windows (the code before the correction).
+      const { PatrolAccessService } = await import('../src/patrol/patrol-access.service');
+      class OriginalPathMonitor extends PatrolMonitorService {
+        protected conversionCaches() { return null; }
+      }
+      const reference = new OriginalPathMonitor(ds, app.get(PatrolAccessService));
+      const siteIds: number[] = (await q(`SELECT id FROM sites WHERE "companyId" = $1 ORDER BY id`, [A.id])).map((r: any) => Number(r.id));
+      let compared = 0;
+      const same = async (what: string, call: (m: any) => Promise<unknown>) => {
+        const [a, b] = [JSON.stringify(await call(monitor)), JSON.stringify(await call(reference))];
+        assert.equal(a, b, `${what}: the complete response is identical`);
+        compared += 1;
+      };
+      for (const nowIso of [at('13:40'), '2026-11-01T15:00:00Z']) {
+        const now = Z(nowIso);
+        for (const date of [undefined, DAY, '2026-03-29', '2026-10-25', '2026-11-01']) {
+          await same(`summary ${date ?? 'today'} @${nowIso}`, (m) => m.summary(A.user, date ? { date } : {}, now));
+        }
+        for (const id of siteIds) {
+          for (const date of [DAY, '2026-03-29', '2026-10-25', '2026-11-01']) {
+            await same(`site ${id} ${date} @${nowIso}`, (m) => m.site(A.user, id, { date }, now));
+          }
+          await same(`site ${id} live range @${nowIso}`, (m) => m.site(A.user, id, { from: at('00:00'), to: '2026-03-11T11:00:00Z' }, now)); // ≤ 36 h after Kolkata's floor to 23:30Z
+        }
+      }
+      console.log(`      ${compared} complete responses identical (${siteIds.length} sites, 3 zones)`);
+      assert.equal(compared, 2 * (5 + siteIds.length * 5));
+      assert.ok(siteIds.length >= 7, `every site compared (${siteIds.length})`);
     });
   } finally {
     await app.close();

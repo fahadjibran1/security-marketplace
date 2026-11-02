@@ -313,6 +313,12 @@ export type MonitorSiteInput = {
   runs: MonitorRun[];
   exceptions: MonitorException[];
   judgedThrough: Date | null;
+  /**
+   * The wall-clock conversions already made in this request for THIS time zone (windowsBetween's cache, keyed by date and
+   * minute only, so never shared between zones). Given: each clock schedule's windows are computed once for the site and
+   * shared by its lanes. Omitted: every lane computes its own (the original path, kept as the equivalence reference).
+   */
+  conversionCache?: Map<string, number>;
 };
 
 export type MonitorSiteModel = {
@@ -416,13 +422,24 @@ export function buildSiteModel(input: MonitorSiteInput): MonitorSiteModel {
   };
 
   const lanes: MonitorLane[] = [];
-  const clockWindows = (schedule: PatrolScheduleLike, a: Date, b: Date) => windowsBetween(schedule, timeZone, a, b).filter(inRange);
+  // A clock schedule's windows in the range: computed once per site and schedule version when the request shares its
+  // conversion cache; each lane still applies its own shift overlap, duty and scope, so no lane sees another's runs.
+  const clockMemo = new Map<PatrolScheduleLike, PatrolWindow[]>();
+  const clockWindows = (schedule: PatrolScheduleLike): PatrolWindow[] => {
+    if (!input.conversionCache) return windowsBetween(schedule, timeZone, from, to).filter(inRange);
+    let windows = clockMemo.get(schedule);
+    if (!windows) {
+      windows = windowsBetween(schedule, timeZone, from, to, input.conversionCache).filter(inRange);
+      clockMemo.set(schedule, windows);
+    }
+    return windows;
+  };
 
   // Site-wide obligations: ONE shared "Site patrol" lane (never assigned to a Guard; the run says who did it).
   if (policy.requirementScope === 'site' && input.clockSchedules.length) {
     const windows: MonitorWindow[] = [];
     for (const schedule of input.clockSchedules) {
-      for (const w of clockWindows(schedule, from, to)) {
+      for (const w of clockWindows(schedule)) {
         const expected = lanesShifts.some((s) => overlaps(s.start, s.end, w.start, w.end));
         const dutyNow = duties.some((d) => onDuty(w, d));
         const mw = toWindow(w, SITE_SCOPE, 'clock', expected, dutyNow);
@@ -442,7 +459,7 @@ export function buildSiteModel(input: MonitorSiteInput): MonitorSiteModel {
       const windows: MonitorWindow[] = [];
       if (perGuardClock) {
         for (const schedule of input.clockSchedules) {
-          for (const w of clockWindows(schedule, from, to)) {
+          for (const w of clockWindows(schedule)) {
             if (!overlaps(shift.start, shift.end, w.start, w.end)) continue;
             const mw = toWindow(w, scope, 'clock', true, onDuty(w, duty));
             if (mw) windows.push(mw);

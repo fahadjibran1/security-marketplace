@@ -45,12 +45,49 @@ const NOW = new Date(`${TODAY}T13:40:00Z`);
 const PASSWORD = 'patrol-monitor-perf-only-password-1';
 const ITER = Number(process.env.PERF_ITERATIONS ?? 20);
 
+/**
+ * Candidate indexes, each aimed at one monitor query that otherwise reads history:
+ *   runs        windows starting in the range (history is everything before it)
+ *   exceptions  the same, for exceptions
+ *   shifts      "end" > range start excludes every shift that ended before the range, with no assumption about shift length
+ *   alerts      only open alerts are indexed (partial), so closed history is never read for the Live Operations count
+ * `table` and `insert` measure the write overhead: the same batch inserted with and without the index, rolled back.
+ */
 const CANDIDATES = [
-  { name: 'IDX_perf_patrol_runs_company_site_window_start', sql: `CREATE INDEX "IDX_perf_patrol_runs_company_site_window_start" ON "patrol_runs" ("companyId", "siteId", "windowStart")` },
-  { name: 'IDX_perf_patrol_exceptions_company_site_window_start', sql: `CREATE INDEX "IDX_perf_patrol_exceptions_company_site_window_start" ON "patrol_exceptions" ("companyId", "siteId", "windowStart")` },
-  { name: 'IDX_perf_shifts_company_site_start', sql: `CREATE INDEX "IDX_perf_shifts_company_site_start" ON "shifts" ("companyId", "siteId", "start")` },
-  { name: 'IDX_perf_safety_alerts_company_open', sql: `CREATE INDEX "IDX_perf_safety_alerts_company_open" ON "safety_alerts" ("companyId", "type") WHERE "status" <> 'closed'` },
+  {
+    key: 'runs', name: 'IDX_perf_patrol_runs_company_site_window_start', table: 'patrol_runs',
+    sql: `CREATE INDEX "IDX_perf_patrol_runs_company_site_window_start" ON "patrol_runs" ("companyId", "siteId", "windowStart")`,
+    insert: `INSERT INTO patrol_runs ("companyId","siteId","shiftId","guardId","startedByUserId","scheduleId","routeId","windowKey","windowStart","windowEnd","scopeKey",
+               status,"verificationStatus","startedAtDevice","startedAtServer","completedAtDevice","completedAtServer","clientRunId")
+             SELECT r."companyId", r."siteId", r."shiftId", r."guardId", r."startedByUserId", r."scheduleId", r."routeId", r."windowKey" || ':w' || g, r."windowStart", r."windowEnd",
+                    r."scopeKey", r.status, r."verificationStatus", r."startedAtDevice", r."startedAtServer", r."completedAtDevice", r."completedAtServer", 'perfw-' || r.id || '-' || g
+               FROM (SELECT * FROM patrol_runs WHERE "windowStart" >= '${'2026-10-31'}' ORDER BY id LIMIT 4000) r CROSS JOIN generate_series(1, 5) g`,
+    rows: 20000,
+  },
+  {
+    key: 'exceptions', name: 'IDX_perf_patrol_exceptions_company_site_window_start', table: 'patrol_exceptions',
+    sql: `CREATE INDEX "IDX_perf_patrol_exceptions_company_site_window_start" ON "patrol_exceptions" ("companyId", "siteId", "windowStart")`,
+    insert: `INSERT INTO patrol_exceptions ("companyId","siteId","scheduleId","shiftId","guardId","windowKey","scopeKey","windowStart","windowEnd",type,status,"resolvedAt")
+             SELECT "companyId","siteId","scheduleId","shiftId","guardId","windowKey" || ':w', "scopeKey","windowStart","windowEnd",type,'resolved', now()
+               FROM patrol_exceptions ORDER BY id LIMIT 2000`,
+    rows: 2000,
+  },
+  {
+    key: 'shifts', name: 'IDX_perf_shifts_company_site_end', table: 'shifts',
+    sql: `CREATE INDEX "IDX_perf_shifts_company_site_end" ON "shifts" ("companyId", "siteId", "end")`,
+    insert: `INSERT INTO shifts ("companyId","siteId","siteName","guardId",status,start,"end") SELECT "companyId","siteId","siteName","guardId",status,start,"end" FROM shifts ORDER BY id LIMIT 2000`,
+    rows: 2000,
+  },
+  {
+    key: 'alerts', name: 'IDX_perf_safety_alerts_company_open', table: 'safety_alerts',
+    sql: `CREATE INDEX "IDX_perf_safety_alerts_company_open" ON "safety_alerts" ("companyId", "type") WHERE "status" <> 'closed'`,
+    insert: `INSERT INTO safety_alerts ("companyId","guardId","shiftId",type,priority,message,status)
+             SELECT "companyId","guardId","shiftId",type,priority,message,status FROM safety_alerts WHERE "patrolExceptionId" IS NULL ORDER BY id LIMIT 2000`,
+    rows: 2000,
+  },
 ];
+/** The benchmark refuses to start (or continue) with less free memory than this (owner: never force it). */
+const MIN_FREE_GB = Number(process.env.PERF_MIN_FREE_GB ?? 3);
 
 const ms = (t0: bigint) => Number(process.hrtime.bigint() - t0) / 1e6;
 const pct = (xs: number[], p: number) => { const s = [...xs].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.ceil((p / 100) * s.length) - 1)]; };
@@ -234,12 +271,12 @@ async function main() {
     return [...captured];
   };
 
-  const bench = async (label: string) => {
+  const bench = async (label: string, iterations = ITER) => {
     console.log(`\n── ${label} ──`);
     const run = async (name: string, fn: () => Promise<unknown>) => {
       await fn(); // warm
       const xs: number[] = [];
-      for (let i = 0; i < ITER; i += 1) { const t0 = process.hrtime.bigint(); await fn(); xs.push(ms(t0)); }
+      for (let i = 0; i < iterations; i += 1) { const t0 = process.hrtime.bigint(); await fn(); xs.push(ms(t0)); }
       console.log(`  ${name.padEnd(46)} ${fmt(xs)}`);
       return xs;
     };
@@ -286,16 +323,66 @@ async function main() {
     console.log(`  queries per request: summary ${summaryQueries.length}, site ${siteQueries.length}`);
   };
 
+  /** Write overhead: the candidate's insert batch, in a transaction that is rolled back, median of 3. */
+  const writeCost = async (c: (typeof CANDIDATES)[number]) => {
+    const xs: number[] = [];
+    for (let i = 0; i < 3; i += 1) {
+      const runner = ds.createQueryRunner();
+      await runner.connect();
+      try {
+        await runner.query('BEGIN');
+        const t0 = process.hrtime.bigint();
+        await runner.query(c.insert);
+        xs.push(ms(t0));
+      } finally {
+        await runner.query('ROLLBACK').catch(() => undefined);
+        await runner.release();
+      }
+    }
+    return pct(xs, 50);
+  };
+  const memoryGuard = (stage: string) => {
+    const free = require('node:os').freemem() / 1024 ** 3;
+    if (free < MIN_FREE_GB) throw new Error(`Stopped before "${stage}": ${free.toFixed(1)} GB free, below ${MIN_FREE_GB} GB (not forcing the benchmark)`);
+    console.log(`  [memory] ${free.toFixed(1)} GB free before ${stage}`);
+  };
+
   try {
     for (const c of CANDIDATES) await q(`DROP INDEX IF EXISTS "${c.name}"`);
+    await q('ANALYZE');
+    memoryGuard('baseline');
     await explain('existing indexes only');
     await bench('existing indexes only');
+    const baseWrites = new Map<string, number>();
+    for (const c of CANDIDATES) baseWrites.set(c.key, await writeCost(c));
+
+    // Each candidate on its own: the plans it changes, the reads, its size and its write overhead.
+    const sizes = new Map<string, string>();
+    for (const c of CANDIDATES) {
+      memoryGuard(`index ${c.key}`);
+      const t0 = process.hrtime.bigint();
+      await q(c.sql);
+      const built = ms(t0);
+      await q(`ANALYZE "${c.table}"`);
+      const [{ s, b }] = await q(`SELECT pg_size_pretty(pg_relation_size(oid)) s, pg_relation_size(oid)::bigint b FROM pg_class WHERE relname = $1`, [c.name]);
+      sizes.set(c.key, s);
+      const [{ t }] = await q(`SELECT pg_size_pretty(pg_relation_size($1::regclass)) t`, [c.table]);
+      const w = await writeCost(c);
+      const base = baseWrites.get(c.key)!;
+      console.log(`\n▶ ${c.name}: ${s} (table ${t}), built in ${built.toFixed(0)} ms; insert ${c.rows} rows ${base.toFixed(1)} → ${w.toFixed(1)} ms ` +
+        `(${(((w - base) / base) * 100).toFixed(0)} %, ${(((w - base) / c.rows) * 1000).toFixed(1)} µs a row)`);
+      await explain(`only ${c.key}`);
+      await bench(`only ${c.key}`, 10);
+      await q(`DROP INDEX "${c.name}"`);
+    }
+
+    // All together.
+    memoryGuard('all candidates');
     for (const c of CANDIDATES) await q(c.sql);
     await q('ANALYZE');
-    await explain('with the candidate indexes');
-    await bench('with the candidate indexes');
-    const sizes = await q(`SELECT relname n, pg_size_pretty(pg_relation_size(oid)) s FROM pg_class WHERE relname = ANY($1::text[])`, [CANDIDATES.map((c) => c.name)]);
-    console.log(`\nCandidate index sizes: ${sizes.map((r: any) => `${r.n} ${r.s}`).join(' · ')}`);
+    await explain('all candidates');
+    await bench('all candidates');
+    console.log(`\nCandidate index sizes: ${CANDIDATES.map((c) => `${c.key} ${sizes.get(c.key)}`).join(' · ')}`);
   } finally {
     for (const c of CANDIDATES) await q(`DROP INDEX IF EXISTS "${c.name}"`);
     await app.close();

@@ -141,7 +141,15 @@ existing audited evidence endpoints.
 
 Each request runs a fixed batch of company-scoped queries, independent of the number of sites or hours:
 - a summary of every site uses the same number of queries as one site (asserted in PMON-13);
-- windows are computed in memory.
+- windows are computed in memory, each clock schedule's windows once per site. A request-scoped cache of site-local
+  time conversions is kept per time zone (its keys are date and minute only, so zones never share one) and dropped
+  with the request. Without it, a per-guard site recomputed the same windows for every shift lane at about 2 ms per
+  conversion (the 50-site summary took about 63 s). PMON-14 and PMON-16 prove the output is identical to the original
+  path; PMON-15 times it.
+
+Known engine limit (unchanged by S1): `siteLocalToInstant` in `common/site-time.ts` resolves some times wrongly near a
+clock change in zones more than about 2 hours from UTC (for example New York's change days, or Adelaide's evening before
+its spring change). UK sites are unaffected. A fix belongs to the shared engine and needs its own approval.
 
 `scripts/patrol-monitor-perf.ts` measures the reads on a synthetic dataset (50 sites, about 1.3 M patrol runs, 216 k
 photos), with and without candidate indexes. Index decisions come from its output and need separate approval.
