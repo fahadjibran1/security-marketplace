@@ -448,6 +448,13 @@ jobs:
       - name: Verify Patrol Management (company dashboard)
         run: npm run test:patrol-management-ui
 
+      # S4 Patrol Monitor S2: the compact Monitor, the default Patrol Management section. Green only for on-time verified,
+      # red only for sweep-confirmed missed, a label and symbol on every state; attention first; a site read only when
+      # expanded and refreshed only while expanded, on screen and on today; Site Patrol and guard rows, "1/2" hours,
+      # clock-change days; cell counts with no evidence request; 375 / 1280 px; read-only, no NFC.
+      - name: Verify the Patrol Monitor (company dashboard)
+        run: npm run test:patrol-monitor-ui
+
       # Patrols P1-E: Patrol Management on the Guard's phone. Camera access states; QR format agrees with the backend's
       # parser; photos re-encoded to JPEG with EXIF / GPS removed, size cap, SHA-256 in the backend's format; the offline
       # outbox survives restart, Book Off, sign-out and network loss; an expired session pauses and drops nothing;

@@ -171,6 +171,8 @@ import type {
   PatrolSignedLink,
   PatrolStorageUsage,
   PatrolWindowsDay,
+  PatrolMonitorSite,
+  PatrolMonitorSummary,
   GuardEvidenceUploadIntent,
   GuardPatrolPlan,
   GuardPatrolRun,
@@ -2038,6 +2040,19 @@ export function getPatrolOverview(params: { siteId?: number | null; date?: strin
 /** #78: the scheduled windows due / completed / outstanding in the site-local day (computed by the server's window engine). */
 export function getPatrolWindowsDay(params: { siteId?: number | null; date?: string | null } = {}) {
   return request<PatrolWindowsDay>(`/patrols/windows/day${patrolQuery(params)}`);
+}
+
+/**
+ * S4 Patrol Monitor: one compact row per site with patrols (status, counts, next window) and the Live Operations counts.
+ * `date` is the site-local day (YYYY-MM-DD), read at each site's own zone; omitted, each site's today. Read-only.
+ */
+export function getPatrolMonitorSummary(params: { date?: string | null; clientId?: number | null; siteId?: number | null } = {}) {
+  return request<PatrolMonitorSummary>(`/patrols/monitor/summary${patrolQuery(params)}`);
+}
+
+/** S4 Patrol Monitor: one site's lanes × hours for its site-local day (today by default), read only when its card is expanded. */
+export function getPatrolMonitorSite(siteId: number, params: { date?: string | null } = {}) {
+  return request<PatrolMonitorSite>(`/patrols/monitor/sites/${siteId}${patrolQuery(params)}`);
 }
 
 export function listPatrolRuns(params: PatrolRunsQuery = {}) {

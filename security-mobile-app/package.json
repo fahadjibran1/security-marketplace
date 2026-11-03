@@ -90,6 +90,7 @@
     "test:guard-inbox": "node scripts/guard-inbox.spec.cjs",
     "test:push-registration-accept": "node scripts/push-registration-and-accept.spec.cjs",
     "test:patrol-management-ui": "node scripts/patrol-management-ui.spec.cjs",
+    "test:patrol-monitor-ui": "node scripts/patrol-monitor-ui.spec.cjs",
     "test:guard-patrols": "node scripts/guard-patrols.spec.cjs"
   },
   "dependencies": {

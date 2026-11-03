@@ -103,10 +103,16 @@ export function resolvePatrolTab(requested: PatrolTab | null | undefined, permis
  * and routes, history, the photo list, downloads / retention / holds / exports, site settings, storage usage) one tap
  * away under Advanced, which shows the tabs above exactly as before. Nothing is removed; each Advanced tab keeps its own
  * permission rule (visiblePatrolTabs).
+ *
+ * S4 Patrol Monitor S2 (owner-approved 3 Nov 2026): Monitor comes first and is the section the page opens on; Setup,
+ * Today, Evidence and Advanced are unchanged.
  */
-export type PatrolSection = 'setup' | 'today' | 'evidence' | 'advanced';
+export type PatrolSection = 'monitor' | 'setup' | 'today' | 'evidence' | 'advanced';
+
+export const DEFAULT_PATROL_SECTION: PatrolSection = 'monitor';
 
 export const PATROL_SECTIONS: Array<{ id: PatrolSection; label: string }> = [
+  { id: 'monitor', label: 'Monitor' },
   { id: 'setup', label: 'Setup' },
   { id: 'today', label: 'Today' },
   { id: 'evidence', label: 'Evidence' },

@@ -726,3 +726,158 @@ export interface RotaSlotPatrolRequirement {
     summary: string;
   };
 }
+
+// ─── Patrol Monitor (S4 Patrol Monitor S1 API, read by the S2 dashboard) ──────────────────────────────────────────
+
+/** Window states, most severe first (the server's MONITOR_WINDOW_STATES). */
+export type PatrolMonitorWindowState =
+  | 'missed' | 'incomplete' | 'flagged' | 'not_verified' | 'overdue' | 'late_verified' | 'awaiting_check'
+  | 'awaiting_verification' | 'in_progress' | 'due' | 'verified' | 'not_judged' | 'not_on_duty' | 'future';
+/** An hour cell: a window state, or none (no window that hour), not_required (on duty, nothing owed), off_duty. */
+export type PatrolMonitorCellState = PatrolMonitorWindowState | 'none' | 'not_required' | 'off_duty';
+export type PatrolMonitorSiteStatus = 'attention' | 'watch' | 'on_track' | 'not_started' | 'no_patrols';
+
+export interface PatrolMonitorCounts {
+  windows: number;
+  owed: number;
+  verified: number;
+  verifiedOnTime: number;
+  lateVerified: number;
+  inProgress: number;
+  awaitingVerification: number;
+  missed: number;
+  missedOpen: number;
+  incomplete: number;
+  flagged: number;
+  notVerified: number;
+  overdue: number;
+  due: number;
+  awaitingCheck: number;
+  future: number;
+  verificationOverdue: number;
+  openExceptions: number;
+  openAlerts: number;
+}
+
+export interface PatrolMonitorSummarySite {
+  siteId: number;
+  siteName: string;
+  clientId: number | null;
+  clientName: string | null;
+  timeZone: string;
+  /** The site-local day (YYYY-MM-DD) and its instants. */
+  date: string;
+  dayStart: string;
+  dayEnd: string;
+  status: PatrolMonitorSiteStatus;
+  counts: PatrolMonitorCounts;
+  /** The number of lanes (Site Patrol and shift rows). */
+  lanes: number;
+  nextWindowStart: string | null;
+}
+
+export interface PatrolMonitorSummary {
+  generatedAt: string;
+  dateBasis: 'site_local';
+  date: string | null;
+  sweep: { judgedThrough: string | null };
+  totals: PatrolMonitorCounts & { sites: number; byStatus: Record<PatrolMonitorSiteStatus, number> };
+  liveOps: { openPatrolAlerts: number; missedToday: number; missedTodayOpen: number };
+  sites: PatrolMonitorSummarySite[];
+}
+
+export interface PatrolMonitorHour {
+  index: number;
+  start: string;
+  end: string;
+  /** Site-local hour "HH". */
+  label: string;
+  /** The site's UTC offset in that hour, e.g. "GMT+1". */
+  offset: string;
+  /** The second of two hours with the same label (the repeated autumn hour). */
+  repeated: boolean;
+  current: boolean;
+}
+
+export interface PatrolMonitorWindow {
+  key: string;
+  scheduleId: number;
+  windowKey: string;
+  scopeKey: string;
+  anchor: 'clock' | 'shift';
+  start: string;
+  end: string;
+  startDeadline: string;
+  state: PatrolMonitorWindowState;
+  runId: number | null;
+  runGuardId: number | null;
+  lateStart: boolean;
+  verificationOverdue: boolean;
+  exceptionId: number | null;
+  exceptionStatus: string | null;
+  exceptionIds: number[];
+  alertId: number | null;
+  alertStatus: string | null;
+}
+
+export interface PatrolMonitorCell {
+  hour: number;
+  state: PatrolMonitorCellState;
+  total: number;
+  owed: number;
+  verified: number;
+  windowKeys: string[];
+}
+
+export interface PatrolMonitorLane {
+  key: string;
+  kind: 'site' | 'shift';
+  shiftId: number | null;
+  guardId: number | null;
+  guardName: string | null;
+  shiftStart: string | null;
+  shiftEnd: string | null;
+  shiftStatus: string | null;
+  requirement: { effectiveRequired: boolean; value: string; source: string; summary: string } | null;
+  windows: PatrolMonitorWindow[];
+  cells: PatrolMonitorCell[];
+}
+
+/** A patrol a cell opens: counts only (no evidence object, URL or image). */
+export interface PatrolMonitorRun {
+  id: number;
+  guardId: number;
+  guardName: string | null;
+  shiftId: number;
+  status: PatrolRunStatus;
+  verificationStatus: PatrolVerificationStatus;
+  lateStart: boolean;
+  windowStart: string | null;
+  windowEnd: string | null;
+  startedAtServer: string;
+  startedAtDevice: string;
+  completedAtServer: string | null;
+  checkpoints: { required: number | null; verified: number | null; scans: number; repeatScans: number; flaggedScans: number; qrRuleMissing: boolean };
+  photos: { taken: number; verified: number; missing: number };
+}
+
+export interface PatrolMonitorSite {
+  generatedAt: string;
+  siteId: number;
+  siteName: string;
+  clientId: number | null;
+  clientName: string | null;
+  timeZone: string;
+  range: { from: string; to: string; date: string | null };
+  sweep: { judgedThrough: string | null };
+  policy: { requirementScope: PatrolRequirementScope; methods: PatrolMethod[]; startGraceMinutes: number; photoRequired: boolean };
+  setup: { active: boolean; mode: string | null };
+  status: PatrolMonitorSiteStatus;
+  counts: PatrolMonitorCounts;
+  nextWindowStart: string | null;
+  hours: PatrolMonitorHour[];
+  lanes: PatrolMonitorLane[];
+  runs: Record<string, PatrolMonitorRun>;
+  otherRuns: Array<{ runId: number; reason: 'unscheduled' | 'window_already_covered' | 'unmatched'; exceptionIds: number[] }>;
+  exceptions: Record<string, { id: number; type: string; status: string; runId: number | null; alertId: number | null; alertStatus: string | null }>;
+}

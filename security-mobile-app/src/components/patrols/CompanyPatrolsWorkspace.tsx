@@ -2,12 +2,13 @@ import * as React from 'react';
 import { Text, View } from 'react-native';
 import { getPatrolPolicies, listPatrolHolds, listPatrolRoutes } from '../../services/api';
 import { StatePanel } from '../StatePanel';
-import { PATROL_SECTIONS, PATROL_TABS, resolvePatrolTab, visiblePatrolSections, visiblePatrolTabs, type PatrolPermissions, type PatrolSection, type PatrolTab } from './patrolAccess';
+import { DEFAULT_PATROL_SECTION, PATROL_SECTIONS, PATROL_TABS, resolvePatrolTab, visiblePatrolSections, visiblePatrolTabs, type PatrolPermissions, type PatrolSection, type PatrolTab } from './patrolAccess';
 import { DEFAULT_SITE_ZONE, type PatrolNavTarget, type PatrolPageContext } from './patrolContext';
 import { PatrolCheckpointsTab } from './PatrolCheckpointsTab';
 import { PatrolEvidenceBrowser } from './PatrolEvidenceBrowser';
 import { PatrolEvidenceTab, PatrolHistoryTab } from './PatrolHistoryTab';
 import { PatrolLiveTab } from './PatrolLiveTab';
+import { PatrolMonitorTab } from './PatrolMonitorTab';
 import { PatrolOverviewTab } from './PatrolOverviewTab';
 import { patrolLayout } from './patrolPresentation';
 import { PatrolRetentionTab } from './PatrolRetentionTab';
@@ -37,11 +38,12 @@ export type CompanyPatrolsWorkspaceProps = {
  * requested. Routine patrols, scans and photos live here; only actionable patrol alerts reach Live Operations.
  *
  * S4 1.3.0 B2: the primary navigation is Setup / Today / Evidence. Advanced holds every earlier tab, unchanged.
+ * S4 Patrol Monitor S2: Monitor (one compact card per site) comes first and is the section the page opens on.
  */
 export function CompanyPatrolsWorkspace({ companyKey, companyName = null, permissions, layoutWidth, target, onTargetConsumed, onOpenLiveOperationsAlert }: CompanyPatrolsWorkspaceProps) {
   const layout = patrolLayout(layoutWidth);
   const [tab, setTab] = React.useState<PatrolTab | null>(() => resolvePatrolTab('overview', permissions));
-  const [section, setSection] = React.useState<PatrolSection>('today');
+  const [section, setSection] = React.useState<PatrolSection>(DEFAULT_PATROL_SECTION);
   const [siteId, setSiteId] = React.useState<number | null>(null);
   const [runId, setRunId] = React.useState<number | null>(null);
   const [exceptionId, setExceptionId] = React.useState<number | null>(null);
@@ -52,7 +54,7 @@ export function CompanyPatrolsWorkspace({ companyKey, companyName = null, permis
     if (seenCompany.current === companyKey) return;
     seenCompany.current = companyKey;
     setTab(resolvePatrolTab('overview', permissions));
-    setSection('today');
+    setSection(DEFAULT_PATROL_SECTION);
     setSiteId(null);
     setRunId(null);
     setExceptionId(null);
@@ -122,7 +124,7 @@ export function CompanyPatrolsWorkspace({ companyKey, companyName = null, permis
           <ChipSelect options={tabOptions} value={tab} onChange={(v) => setTab(v)} scroll={layout.tabsScroll} />
         </View>
       ) : null}
-      {section !== 'setup' && !(advanced && tab === 'settings') ? (
+      {section !== 'setup' && section !== 'monitor' && !(advanced && tab === 'settings') ? (
         <ChipSelect
           label="Site"
           scroll
@@ -132,8 +134,10 @@ export function CompanyPatrolsWorkspace({ companyKey, companyName = null, permis
         />
       ) : null}
       {policies.error && !policies.data ? <Notice tone="error" message={policies.error} /> : null}
-      {siteId ? <Text style={ui.muted}>Site time: {ctx.siteZone(siteId)}</Text> : null}
+      {siteId && section !== 'monitor' ? <Text style={ui.muted}>Site time: {ctx.siteZone(siteId)}</Text> : null}
 
+      {/* Keyed on the company: a different company starts with no filter, day or open card carried over. */}
+      {section === 'monitor' ? <PatrolMonitorTab key={companyKey} ctx={ctx} /> : null}
       {section === 'setup' ? <PatrolSetupTab ctx={ctx} onSelectSite={(id) => setSiteId(id)} /> : null}
       {section === 'today' ? (
         <View style={{ gap: 16 }}>

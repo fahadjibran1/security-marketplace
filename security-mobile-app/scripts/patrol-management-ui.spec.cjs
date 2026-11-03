@@ -407,6 +407,9 @@ test('PM-05-A-COMPANY-CHANGE-DROPS-EVERYTHING', async () => {
   assert.ok(calls.slice(before).some(([k]) => k === 'getPatrolPolicies'), 'B is read afresh');
   await act(async () => { releaseB(); });
   await settle();
+  // S4 Patrol Monitor S2: a company change returns to the default section, Monitor (which has no page-level site picker).
+  assert.equal(pressables(renderer.root, 'Monitor')[0].props.accessibilityState.selected, true, 'back on the default section');
+  await pressByText(renderer.root, 'Today');
   assert.ok(textOf(renderer.root).includes('Bravo Site'));
   act(() => renderer.unmount());
 });
@@ -1428,8 +1431,10 @@ const disabled = (root, label) => {
 };
 
 test('PM-37-PRIMARY-NAVIGATION-SETUP-TODAY-EVIDENCE-AND-ADVANCED-KEEPS-EVERY-TAB', async () => {
-  assert.deepEqual(access.PATROL_SECTIONS.map((s) => s.label), ['Setup', 'Today', 'Evidence', 'Advanced']);
-  assert.deepEqual(access.visiblePatrolSections(perms('viewer')), ['setup', 'today', 'evidence', 'advanced']);
+  // S4 Patrol Monitor S2 (owner-approved 3 Nov 2026): Monitor is added first and is the default; Setup / Today / Evidence /
+  // Advanced are unchanged (the Monitor itself is certified by patrol-monitor-ui.spec.cjs).
+  assert.deepEqual(access.PATROL_SECTIONS.map((s) => s.label), ['Monitor', 'Setup', 'Today', 'Evidence', 'Advanced']);
+  assert.deepEqual(access.visiblePatrolSections(perms('viewer')), ['monitor', 'setup', 'today', 'evidence', 'advanced']);
   assert.deepEqual(access.visiblePatrolSections(perms('guard')), []);
   for (const role of ['owner', 'viewer']) {
     answers = baseAnswers();
@@ -1437,9 +1442,11 @@ test('PM-37-PRIMARY-NAVIGATION-SETUP-TODAY-EVIDENCE-AND-ADVANCED-KEEPS-EVERY-TAB
     const p = perms(role);
     const renderer = await mountPrimary({ permissions: p });
     const root = renderer.root;
-    for (const label of ['Setup', 'Today', 'Evidence', 'Advanced']) assert.ok(has(root, label), `${role}: ${label}`);
+    for (const label of ['Monitor', 'Setup', 'Today', 'Evidence', 'Advanced']) assert.ok(has(root, label), `${role}: ${label}`);
+    assert.equal(pressables(root, 'Monitor')[0].props.accessibilityState.selected, true, `${role}: the page opens on Monitor`);
     // Today: the day's figures and live patrols, without the Advanced tab row.
-    assert.match(textOf(root), /Windows due today◎8/, 'Today opens with the overview');
+    await pressByText(root, 'Today');
+    assert.match(textOf(root), /Windows due today◎8/, 'Today shows the overview');
     assert.ok(textOf(root).includes('Live patrols') && textOf(root).includes('2 of 4 checkpoints'), 'and live patrols');
     assert.equal(has(root, 'Schedules'), false, 'the earlier tabs are not on the primary row');
     // Advanced: every earlier tab, by the same permission rules.
@@ -1458,10 +1465,10 @@ test('PM-37-PRIMARY-NAVIGATION-SETUP-TODAY-EVIDENCE-AND-ADVANCED-KEEPS-EVERY-TAB
   const target = await mountPrimary({ permissions: perms('owner'), target: { requestId: 9, kind: 'run', runId: 5 } });
   assert.ok(has(target.root, 'History') && textOf(target.root).includes('Patrol #5'));
   act(() => target.unmount());
-  // Mobile width: the same three sections and Advanced.
+  // Mobile width: the same sections and Advanced.
   answers = baseAnswers();
   const narrow = await mountPrimary({ permissions: perms('owner'), layoutWidth: 390 });
-  for (const label of ['Setup', 'Today', 'Evidence', 'Advanced']) assert.ok(has(narrow.root, label));
+  for (const label of ['Monitor', 'Setup', 'Today', 'Evidence', 'Advanced']) assert.ok(has(narrow.root, label));
   act(() => narrow.unmount());
 });
 
