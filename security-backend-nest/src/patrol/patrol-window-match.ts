@@ -36,7 +36,7 @@ export type MatchCandidate<S = unknown> = {
   window: unknown;
 };
 
-export type WindowMatchOutcome = 'auto_assigned' | 'ambiguous' | 'covered' | 'missed' | 'none';
+export type WindowMatchOutcome = 'auto_assigned' | 'ambiguous' | 'covered' | 'missed' | 'none' | 'route_not_shown';
 
 export type WindowMatch<S = unknown> =
   | { outcome: 'auto_assigned'; candidate: MatchCandidate<S>; lateStart: boolean; message: string }
@@ -78,4 +78,26 @@ export function matchStartWindow<S>(candidates: ReadonlyArray<MatchCandidate<S>>
     return { outcome: 'covered', candidates: sorted, message: `Recorded as an ad-hoc patrol: the scheduled patrol ${describe(sorted[0], timeZone)} already has a patrol.` };
   }
   return { outcome: 'none', candidates: [], message: 'Recorded as an ad-hoc patrol: no scheduled patrol window was open.' };
+}
+
+/**
+ * Compatibility safeguard (owner, 3 Nov 2026). Guard app 1.2.1 keeps the route IT sent when the patrol started: a patrol
+ * started with no schedule follows no route there, so the app shows the site's checkpoints as optional and never learns
+ * a window's required checkpoints from the start answer. On a QR site (QR or QR + photos) linking such a patrol to a
+ * window would make S4 judge it against checkpoints the Guard was never shown. So a QR window is linked only when the
+ * phone sent THAT window's route (the same route chain); otherwise the patrol stays ad hoc ("route_not_shown"). Photo-only
+ * sites are unaffected: their photo rule is the site's policy, which the app already shows.
+ */
+export function requireShownRoute<S>(
+  match: WindowMatch<S>,
+  input: { qr: boolean; sentRouteId: number | null; windowRouteId: (c: MatchCandidate<S>) => number | null; sameRoute: (a: number, b: number) => boolean },
+): WindowMatch<S> {
+  if (match.outcome !== 'auto_assigned' || !input.qr) return match;
+  const routeId = input.windowRouteId(match.candidate);
+  if (input.sentRouteId != null && routeId != null && input.sameRoute(input.sentRouteId, routeId)) return match;
+  return {
+    outcome: 'route_not_shown',
+    candidates: [match.candidate],
+    message: `Recorded as an ad-hoc patrol: the scheduled patrol ${match.message.replace(/^Linked to the scheduled patrol /, '').replace(/\.$/, '')} needs QR checkpoints the phone was not showing for this patrol, so S4 did not link it.`,
+  };
 }

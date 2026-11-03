@@ -757,6 +757,7 @@ test('PMUI-19-AN-AD-HOC-PATROL-IS-SHOWN-IN-ITS-HOUR-WITH-WHY-IT-DOES-NOT-COUNT',
   assert.match(M.monitorAdHocExplanation('ad_hoc'), /phone started it without a scheduled patrol window/);
   assert.match(M.monitorAdHocExplanation('ambiguous'), /More than one scheduled patrol window was open/);
   assert.match(M.monitorAdHocExplanation('already_covered'), /already had a patrol/);
+  assert.match(M.monitorAdHocExplanation('route_not_shown'), /phone was not showing its checkpoints/, 'a QR window S4 would not link (Guard app 1.2.1)');
   // P-6 as production saw it: the shift's 10:10 window still owed, an ad-hoc patrol with 4 verified photos at 10:10.
   const hours = GMT_DAY_HOURS;
   const ws = [{ ...win('s10', '10:10', 'due'), scopeKey: 'sh81', anchor: 'shift', adHocRunIds: [6] }, { ...win('s40', '10:40', 'future'), scopeKey: 'sh81', anchor: 'shift', end: Z('11:10') }];

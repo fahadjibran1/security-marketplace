@@ -113,6 +113,8 @@ export function monitorAdHocExplanation(code: string | null | undefined): string
   switch (code) {
     case 'ambiguous':
       return 'More than one scheduled patrol window was open when it started, so S4 could not tell which one it was for. It counts towards neither.';
+    case 'route_not_shown':
+      return 'A scheduled QR patrol was open, but the Guard\'s phone was not showing its checkpoints for this patrol, so S4 did not link it (the Guard could not see what it required).';
     case 'already_covered':
       return 'Its scheduled patrol window already had a patrol, so this is an extra patrol. It does not count again.';
     case 'unmatched':

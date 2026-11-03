@@ -838,7 +838,7 @@ export interface PatrolMonitorCell {
 }
 
 /** Why a patrol counts towards no window (S4 patrol assignment correctness). */
-export type PatrolMonitorAdHocExplanation = 'ad_hoc' | 'ambiguous' | 'already_covered' | 'unmatched';
+export type PatrolMonitorAdHocExplanation = 'ad_hoc' | 'ambiguous' | 'route_not_shown' | 'already_covered' | 'unmatched';
 
 export interface PatrolMonitorLane {
   key: string;

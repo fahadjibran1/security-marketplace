@@ -21,6 +21,9 @@
  *   PA-06  isolation: another company's schedules and another shift's windows are never candidates
  *   PA-07  explicit starts unchanged: a start naming a schedule is linked by that schedule as before (no assignment
  *          flag, no assignment audit, answer "scheduled"); a start with no window open stays ad hoc ("none")
+ *   PA-09  compatibility safeguard (Guard app 1.2.1 never learns a window's route from the start answer): on a QR-only or
+ *          QR + photos site a no-schedule start is NOT linked (window_match_needs_route, "route_not_shown", audited, the
+ *          Monitor explains it) unless the phone sent that window's route; photo-only sites are still linked
  *   PA-08  the Patrol Monitor: an ad-hoc patrol is placed in its lane and hour (otherRuns laneKey / hour / explanation),
  *          marked on the cell (adHoc) and on the window it was received in (adHocRunIds), never counted; cells count
  *          later windows apart (later)
@@ -223,7 +226,15 @@ async function main() {
       assert.equal(both.outcome, 'ambiguous');
       assert.match(both.message, /2 scheduled patrol windows were open \(Gatehouse 10:00-11:00; Shift patrol 10:10-10:40\)/);
       assert.equal(M.matchStartWindow([{ ...w1, missed: true }], at('2026-11-10T10:20:00Z'), 15, 'Europe/London').outcome, 'missed');
-      assert.deepEqual(C.PATROL_ASSIGNMENT_FLAGS, ['window_auto_assigned', 'window_match_ambiguous']);
+      assert.deepEqual(C.PATROL_ASSIGNMENT_FLAGS, ['window_auto_assigned', 'window_match_ambiguous', 'window_match_needs_route']);
+      // The compatibility safeguard: a QR window is linked only when the phone sent its route.
+      const linked = M.matchStartWindow([w1], at('2026-11-10T10:12:00Z'), 15, 'Europe/London');
+      const keep = (sent: number | null, qr = true) => M.requireShownRoute(linked, { qr, sentRouteId: sent, windowRouteId: () => 41, sameRoute: (a, b) => a === b });
+      assert.equal(keep(null).outcome, 'route_not_shown', 'QR, no route sent (Guard app 1.2.1): not linked');
+      assert.match(keep(null).message, /needs QR checkpoints the phone was not showing/);
+      assert.equal(keep(41).outcome, 'auto_assigned', 'QR, the window\'s own route sent: linked');
+      assert.equal(keep(99).outcome, 'route_not_shown', 'QR, another route sent: not linked');
+      assert.equal(keep(null, false).outcome, 'auto_assigned', 'photo-only: linked as before');
       assert.ok(C.PATROL_ASSIGNMENT_FLAGS.every((f) => !C.PATROL_REVIEW_FLAGS.includes(f)), 'never a review reason');
     });
 
@@ -417,6 +428,49 @@ async function main() {
       const early = await mkShift(A.id, siteId, ben.id, Z('2026-11-17T12:00:00Z'), Z('2026-11-17T13:00:00Z'));
       const e = expect(await start(ben, early, '2026-11-17T11:55:00Z'), 201);
       assert.deepEqual([e.windowKey, e.windowAssignment.outcome], [null, 'ad_hoc']);
+    });
+
+    await test('PA-09-QR-WINDOWS-ARE-NEVER-LINKED-UNLESS-THE-PHONE-SHOWED-THEIR-ROUTE', async () => {
+      const qrSite = async (name: string, methods: string[]) => {
+        const siteId = await mkSite(A.id, name);
+        expect(await api('PUT', `/patrols/policies/sites/${siteId}`, A.token, { methods, photosPerRun: methods.includes('photo') ? 1 : 0 }), 200);
+        const cp1 = expect(await api('POST', '/patrols/checkpoints', A.token, { siteId, label: `${name} Gate 1` }), 201);
+        const cp2 = expect(await api('POST', '/patrols/checkpoints', A.token, { siteId, label: `${name} Gate 2` }), 201);
+        const route = expect(await api('POST', '/patrols/routes', A.token, { siteId, name: 'Perimeter', checkpoints: [{ checkpointId: cp1.id, required: true }, { checkpointId: cp2.id, required: true }] }), 201);
+        await clockSchedule(A, siteId, { activeFrom: '08:00', activeTo: '12:00', frequencyMinutes: 60, windowMinutes: 60, routeId: route.id });
+        return { siteId, route };
+      };
+      for (const [name, methods] of [['QR-only yard', ['qr']], ['QR and photos yard', ['qr', 'photo']]] as const) {
+        const { siteId, route } = await qrSite(name, [...methods]);
+        const shiftId = await mkShift(A.id, siteId, cara.id, Z('2026-11-19T08:00:00Z'), Z('2026-11-19T12:00:00Z'));
+        await bookOn(shiftId, cara.id, Z('2026-11-19T07:55:00Z'));
+        // Guard app 1.2.1, stale plan: no schedule, no route.
+        const r = expect(await start(cara, shiftId, '2026-11-19T09:05:00Z'), 201, undefined, name);
+        assert.deepEqual([r.scheduleId, r.windowKey, r.routeId], [null, null, null], `${name}: not linked — the Guard was never shown the window's required checkpoints`);
+        assert.ok(r.syncFlags.includes('window_match_needs_route') && !r.syncFlags.includes('window_auto_assigned'), JSON.stringify(r.syncFlags));
+        assert.equal(r.windowAssignment.outcome, 'route_not_shown');
+        assert.match(r.windowAssignment.message, /needs QR checkpoints the phone was not showing/);
+        const [audit] = await auditsFor(r.id);
+        assert.deepEqual([audit.action, audit.afterData.outcome, audit.afterData.candidates.length], ['patrol.run.window_not_assigned', 'route_not_shown', 1]);
+        assert.match(audit.afterData.message, /Gatehouse 09:00-10:00 needs QR checkpoints/);
+        assert.equal(await count(`SELECT count(*) FROM patrol_runs WHERE "siteId" = $1 AND "windowKey" IS NOT NULL`, [siteId]), 0, 'the window stays owed, visibly');
+        // The Monitor says why.
+        await q(`UPDATE patrol_runs SET "startedAtServer" = "startedAtDevice" WHERE id = $1`, [r.id]);
+        const v = expect(await api('GET', `/patrols/monitor/sites/${siteId}?date=2026-11-19`, A.token), 200);
+        assert.equal(v.otherRuns.find((o: any) => o.runId === r.id)?.explanation, 'route_not_shown');
+        await complete(cara, r.id, '2026-11-19T09:15:00Z');
+        // A phone that sent the window's own route (a start from the plan, or a later app): linked as before.
+        const sent = expect(await start(cara, shiftId, '2026-11-19T10:05:00Z', { routeId: route.id }), 201);
+        assert.ok(sent.windowKey && sent.syncFlags.includes('window_auto_assigned'), `${name}: linked when the route was shown`);
+        assert.equal(sent.windowStart, '2026-11-19T10:00:00.000Z');
+        await complete(cara, sent.id, '2026-11-19T10:15:00Z');
+      }
+      // Photo-only is unaffected (PA-01 is the production case): no route needed, linked.
+      const { siteId: photoSite } = await shiftSite(A, 'Photo yard', 30);
+      const ps = await mkShift(A.id, photoSite, ben.id, Z('2026-11-19T08:00:00Z'), Z('2026-11-19T09:00:00Z'));
+      await bookOn(ps, ben.id, Z('2026-11-19T07:55:00Z'));
+      const p = expect(await start(ben, ps, '2026-11-19T08:05:00Z'), 201);
+      assert.ok(p.windowKey && p.syncFlags.includes('window_auto_assigned'), 'photo-only: still linked');
     });
 
     await test('PA-08-THE-MONITOR-SHOWS-AD-HOC-PATROLS-IN-THEIR-HOUR-NEVER-COUNTED-AND-LATER-WINDOWS-APART', async () => {

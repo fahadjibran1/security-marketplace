@@ -22,6 +22,12 @@ phone's cached plan had no window, "Start patrol" sent no schedule, and the patr
   `patrol.run.window_auto_assigned`; unlinked starts `patrol.run.window_not_assigned` (the windows weighed, in words).
 - The answer adds `windowAssignment { outcome, message }`, read from the stored run, so replays and concurrent
   duplicates answer identically. A replay without a schedule matches a run S4 linked.
+- Compatibility safeguard (Guard app 1.2.1): the app keeps the route it sent at start and never learns a linked
+  window's route from the answer, so on a QR or QR + photos site it would show the checkpoints as optional while S4
+  judged the window's required ones. A QR window is therefore linked only when the phone sent that window's route
+  (same route chain); otherwise the run stays ad hoc with `window_match_needs_route` (outcome `route_not_shown`,
+  audited, explained on the Monitor). Photo-only sites are linked as described (their photo rule is the site policy,
+  which the app shows).
 - Post-shift (offline) starts follow the same matching, then the existing post-shift rules. Verification and evidence
   rules are unchanged. No migration (sync flags are validated in code).
 

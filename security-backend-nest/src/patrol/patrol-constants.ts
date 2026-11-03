@@ -153,10 +153,11 @@ export const PATROL_SYNC_FLAGS = [
   // S4 patrol assignment correctness (3 Nov 2026; no migration, as above). Recorded only, never a review reason.
   'window_auto_assigned', // started with no schedule; S4 linked it to the ONE scheduled window it was started in
   'window_match_ambiguous', // started with no schedule while more than one scheduled window was open: kept ad hoc
+  'window_match_needs_route', // started with no schedule in a QR window whose route the phone did not show: kept ad hoc
 ] as const;
 export type PatrolSyncFlag = (typeof PATROL_SYNC_FLAGS)[number];
 /** How a run was linked to its window (S4 patrol assignment correctness): not a late-sync reason, never a review reason. */
-export const PATROL_ASSIGNMENT_FLAGS: readonly PatrolSyncFlag[] = ['window_auto_assigned', 'window_match_ambiguous'];
+export const PATROL_ASSIGNMENT_FLAGS: readonly PatrolSyncFlag[] = ['window_auto_assigned', 'window_match_ambiguous', 'window_match_needs_route'];
 /** Flags meaning legitimacy is only partly supported: the write is accepted but the run gets needsReview = true. */
 export const PATROL_REVIEW_FLAGS: readonly PatrolSyncFlag[] = [
   'outside_on_duty_interval', 'no_matching_window', 'clock_drift_suspect', 'completed_after_book_off', 'recovered_via_grant',

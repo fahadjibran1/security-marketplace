@@ -348,7 +348,7 @@ export type MonitorSiteModel = {
     laneKey: string | null;
     hour: number | null;
     startedAt: string;
-    explanation: 'ad_hoc' | 'ambiguous' | 'already_covered' | 'unmatched';
+    explanation: 'ad_hoc' | 'ambiguous' | 'route_not_shown' | 'already_covered' | 'unmatched';
   }>;
   counts: MonitorCounts;
   status: MonitorSiteStatus;
@@ -538,7 +538,8 @@ export function buildSiteModel(input: MonitorSiteInput): MonitorSiteModel {
       hour: hour?.index ?? null,
       startedAt: started.toISOString(),
       explanation: reason === 'window_already_covered' ? 'already_covered' : reason === 'unmatched' ? 'unmatched'
-        : r.syncFlags.includes('window_match_ambiguous') ? 'ambiguous' : 'ad_hoc',
+        : r.syncFlags.includes('window_match_ambiguous') ? 'ambiguous'
+        : r.syncFlags.includes('window_match_needs_route') ? 'route_not_shown' : 'ad_hoc',
     });
   }
 

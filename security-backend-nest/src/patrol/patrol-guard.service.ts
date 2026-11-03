@@ -34,7 +34,7 @@ import { ScheduleVersionBounds, scheduleVersionBounds, supersededSince, withVers
 import { setupFor, shiftAnchoredSchedules, siteSetups } from './patrol-shift-context';
 import { effectiveShiftRequirement, setupActive, shiftAnchoredWindows, shiftScopeKey, shiftWindowForStart } from './patrol-shift-windows';
 import { PatrolWindow, runCoverageKey, windowForStart, windowsBetween } from './patrol-window.service';
-import { MatchCandidate, matchStartWindow, WindowMatch } from './patrol-window-match';
+import { MatchCandidate, matchStartWindow, requireShownRoute, WindowMatch } from './patrol-window-match';
 
 const INT32_MAX = 2_147_483_647;
 /** The configuration problem a Guard is shown for shift windows without a confirmed checkpoint (rule A1). */
@@ -507,6 +507,16 @@ export class PatrolGuardService {
     if (dto.scheduleId == null) {
       match = await this.matchWindow(shift, actor.guardId, policy, adjustedStart, attendance);
       if (match.outcome === 'auto_assigned') {
+        // Compatibility safeguard: a QR window only when the phone sent its route (Guard app 1.2.1 shows no other).
+        const routeLinks = await routeVersionLinks(this.dataSource, shift.companyId);
+        match = requireShownRoute(match, {
+          qr: policy.methods.includes('qr'),
+          sentRouteId: dto.routeId ?? null,
+          windowRouteId: (c) => routeVersionAt(routeLinks, c.schedule?.routeId == null ? null : Number(c.schedule.routeId), c.start),
+          sameRoute: (a, b) => a === b || sameRouteChain(routeLinks, a, b),
+        });
+      }
+      if (match.outcome === 'auto_assigned') {
         schedule = match.candidate.schedule;
         assigned = { window: match.candidate.window as PatrolWindow, lateStart: match.lateStart };
       }
@@ -578,6 +588,7 @@ export class PatrolGuardService {
 
     const autoAssigned = match?.outcome === 'auto_assigned';
     if (match?.outcome === 'ambiguous') flags.push('window_match_ambiguous');
+    if (match?.outcome === 'route_not_shown') flags.push('window_match_needs_route');
     const insertRun = async (withWindow: boolean) => {
       const window = withWindow ? assigned : null;
       const runFlags: PatrolSyncFlag[] = withWindow || !assigned ? [...flags] : [...flags, 'window_already_covered'];
@@ -1127,6 +1138,9 @@ export function runWindowAssignment(row: any, match: WindowMatch<unknown> | null
     return { outcome: match.outcome, message: match.message };
   }
   if (flags.includes('window_auto_assigned')) return { outcome: 'auto_assigned', message: 'Linked by S4 to the scheduled patrol window it was started in.' };
+  if (flags.includes('window_match_needs_route')) {
+    return { outcome: 'route_not_shown', message: 'Recorded as an ad-hoc patrol: the scheduled patrol open then needs QR checkpoints the phone was not showing for this patrol, so S4 did not link it.' };
+  }
   if (flags.includes('window_match_ambiguous')) {
     return { outcome: 'ambiguous', message: 'Recorded as an ad-hoc patrol: more than one scheduled patrol window was open, so S4 could not tell which one it was for.' };
   }
