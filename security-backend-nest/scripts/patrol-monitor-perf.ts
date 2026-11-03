@@ -355,8 +355,7 @@ async function main() {
     await bench('existing indexes only');
     // PERF_BASELINE_ONLY: measure the schema as it is (for example with Migration 75 applied) without the candidate runs.
     if (process.env.PERF_BASELINE_ONLY) {
-      console.log('
-(baseline only: candidate comparison skipped)');
+      console.log('(baseline only: candidate comparison skipped)');
       return;
     }
     const baseWrites = new Map<string, number>();
